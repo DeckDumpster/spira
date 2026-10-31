@@ -206,6 +206,7 @@ runtime_publish_backlog_secs = 900
 runtime_repo_events_secs = 45
 runtime_overrides_secs = 60
 runtime_view_secs = 3
+runtime_reconciler_flow_secs = 1800
 batcher_orphan_redrive_secs = 600
 lc_store_path = ""
 lc_lock_ttl_min_ms = 1000

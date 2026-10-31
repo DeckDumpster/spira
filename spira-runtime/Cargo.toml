@@ -23,6 +23,7 @@ libc = "0.2"
 mail = { path = "../mail" }
 reconciler = { path = "../reconciler" }
 reconciler-engine = { path = "../reconciler-engine" }
+reconciler-flow = { path = "../reconciler-flow" }
 runtime = { path = "../runtime" }
 unit-run = { path = "../unit-run" }
 spira-config = { path = "../spira-config" }

@@ -304,8 +304,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-gate-worker.service", false));
     m.units.push(t("spira-gate-worker.timer", true));
 
-    m.units.push(t("spira-reconciler-flow.service", false));
-    m.units.push(t("spira-reconciler-flow.timer", true));
 
     m.watch_names = inputs.watch_names.clone()?;
 
@@ -469,6 +467,15 @@ mod tests {
         }
         assert!(m2.notes.iter().any(|n| n.contains("SPIRA_REPO") && n.contains("git checkout")), "{:?}", m2.notes);
         assert!(m2.unlisted(cert_sweep_names).is_empty(), "declined units must never be UNLISTED");
+    }
+
+    /// The flow pass runs inside spira-runtime; a timer that still fired the binary would run it twice.
+    #[test]
+    fn the_reconciler_flow_timer_and_service_are_not_shipped() {
+        let m = build(&inputs()).unwrap();
+        let shipped: Vec<&str> = m.units.iter().map(|u| u.name.as_str()).filter(|n| n.starts_with("spira-reconciler-flow")).collect();
+        assert!(shipped.is_empty(), "{shipped:?}");
+        assert!(!std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd/spira-reconciler-flow.timer").exists());
     }
 
     #[test]

@@ -28,7 +28,7 @@ const FOREIGN_POLL_MS: u64 = 30_000;
 
 /// Every workflow the service hosts. The heartbeat is registered here and nowhere else.
 pub fn registrations(s: &Settings) -> Vec<Registration> {
-    vec![Heartbeat { interval_ms: s.heartbeat_secs * 1000, ping_deadline_ms: s.ping_deadline_ms() }.registration(), s.round_duty.clone().registration(), s.inbox_keeper.clone().registration(), s.pr_notify.clone().registration(), s.asks.clone().registration(), s.design_asks.clone().registration(), s.brain_dirty.clone().registration(), s.supersede_duty.clone().registration(), s.bead_sweep.clone().registration(), s.publish_backlog.clone().registration(), s.repo_events.clone().registration(), s.overrides.clone().registration(), s.view.clone().registration(), s.reconciler.clone().registration()]
+    vec![Heartbeat { interval_ms: s.heartbeat_secs * 1000, ping_deadline_ms: s.ping_deadline_ms() }.registration(), s.round_duty.clone().registration(), s.inbox_keeper.clone().registration(), s.pr_notify.clone().registration(), s.asks.clone().registration(), s.design_asks.clone().registration(), s.brain_dirty.clone().registration(), s.supersede_duty.clone().registration(), s.bead_sweep.clone().registration(), s.publish_backlog.clone().registration(), s.repo_events.clone().registration(), s.overrides.clone().registration(), s.view.clone().registration(), s.reconciler.clone().registration(), s.reconciler_flow.clone().registration()]
 }
 
 pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, extra: Vec<Registration>) -> runtime::Result<Engine> {
@@ -58,6 +58,7 @@ pub struct Effects {
     pub bus: Option<String>,
     pub enabled: OnceLock<String>,
     pub reconciling: AtomicBool,
+    pub concierge_mail: Option<Arc<mail::env::Env>>,
 }
 
 /// The mail environment operator notes are sent under: no bd (a note needs no tracking bead, and an empty db keeps the mailer from launching one), and the repeat guard overridden because consecutive merges normalise to one subject.
@@ -67,7 +68,21 @@ pub fn operator_mail(mut env: mail::env::Env) -> mail::env::Env {
     env
 }
 
+/// The mail environment the Concierge's alerts are sent under: no bd, as for a note, and the repeat guard left on.
+pub fn concierge_mail(mut env: mail::env::Env) -> mail::env::Env {
+    env.db.clear();
+    env
+}
+
 impl Effects {
+    fn concierge_note(&self, input: &str) -> Result<String, String> {
+        let env = self.concierge_mail.as_deref().ok_or("no concierge mail environment configured")?;
+        let note: watchers::reconciler_flow::Mail = serde_json::from_str(input).map_err(|e| e.to_string())?;
+        let args = mail::cmds::SendArgs { mailbox: "concierge", from: Some(reconciler_engine::mail::FROM), subject: &note.subject, kind: "note", default: "", class: "", bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" };
+        let bd = mail::bead::BdCli { bin: String::new(), db: String::new(), conn_retries: 1 };
+        mail::cmds::send(&bd, env, &args, note.body).map(|o| o.delivered_path.display().to_string()).inspect_err(|_| eprintln!("reconciler-flow: concierge alert failed for: {}", note.subject))
+    }
+
     fn operator_note(&self, input: &str) -> Result<String, String> {
         let env = self.mail.as_deref().ok_or("no mail environment configured")?;
         let note: watchers::pr_notify::Note = serde_json::from_str(input).map_err(|e| e.to_string())?;
@@ -202,6 +217,9 @@ impl EffectRunner for Effects {
             watchers::publish_backlog::OBSERVE => self.world.publish_backlog_snapshot(),
             watchers::repo_events::OBSERVE => self.world.repo_events_snapshot(&self.forge, &spec.input),
             watchers::overrides::APPLY => self.world.overrides_apply(),
+            watchers::reconciler_flow::OBSERVE => self.world.flow_snapshot(&spec.input),
+            watchers::reconciler_flow::STATUS => self.world.flow_status(&spec.input),
+            watchers::reconciler_flow::MAIL => self.concierge_note(&spec.input),
             watchers::view::OBSERVE => self.world.view_snapshot(&spec.input),
             watchers::view::FLIP => self.world.view_flip(&spec.input),
             watchers::view::FORGET => self.world.view_forget(&spec.input),

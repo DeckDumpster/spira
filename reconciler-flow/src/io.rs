@@ -246,6 +246,49 @@ pub fn append_backlog_sample(tsd_bin: &str, root: &Path, count: u64) {
         .status();
 }
 
+/// [`backlog_baseline`] read in-process: the mean of the `count` field over the window, `0.0`
+/// when the family has no file or no row in it.
+pub fn backlog_baseline_in_process(root: &Path, now: u64, baseline_hours: f64) -> Result<f64, String> {
+    let since = cutoff(now, baseline_hours).max(0.0) as u64;
+    let rows = match (tsd::query::Source { reader: None, root }).rows("backlog", since) {
+        Ok(rows) => rows,
+        Err(f) if f.code == tsd::query::ERR_NO_FAMILY => return Ok(0.0),
+        Err(f) => return Err(f.message),
+    };
+    let counts: Vec<f64> = rows.iter().filter_map(|r| tsd::query::num(r, "count")).collect();
+    Ok(if counts.is_empty() { 0.0 } else { counts.iter().sum::<f64>() / counts.len() as f64 })
+}
+
+/// [`append_backlog_sample`] through the library `tsd-write` itself calls, stamped `now`.
+pub fn append_backlog_sample_in_process(root: &Path, now: u64, count: u64) -> Result<(), String> {
+    let field = tsd::parse_field(&format!("count={count}"))?;
+    let line = tsd::build_row(&tsd::iso_utc(now), &tsd::default_host(), "backlog", &[field])?;
+    tsd::append_line(&family_path(root, "backlog"), &line)
+}
+
+/// [`slots_samples`] read in-process.
+pub fn slots_samples_in_process(root: &Path) -> Result<(crate::core::SlotsSample, crate::core::SlotsSample), String> {
+    let path = family_path(root, "slots");
+    let rows = match (tsd::query::Source { reader: None, root }).rows("slots", 0) {
+        Ok(rows) => rows,
+        Err(f) if f.code == tsd::query::ERR_NO_FAMILY => return Err(format!("{}: no rows yet", path.display())),
+        Err(f) => return Err(f.message),
+    };
+    let mut stamped: Vec<(u64, usize, &Value)> = rows.iter().enumerate().filter_map(|(i, r)| Some((tsd::query::ts_of(r)?, i, r))).collect();
+    stamped.sort_by(|a, b| (b.0, b.1).cmp(&(a.0, a.1)));
+    if stamped.len() < 2 {
+        return Err(format!("{}: fewer than two samples yet", path.display()));
+    }
+    let sample = |row: &Value| -> Result<crate::core::SlotsSample, String> {
+        let int = |key: &str| tsd::query::num(row, key).filter(|n| n.fract() == 0.0 && *n >= 0.0).map(|n| n as u64);
+        let live = int("live").ok_or_else(|| "slots: unreadable live field".to_string())?;
+        let ceiling = int("ceiling").ok_or_else(|| "slots: unreadable ceiling field".to_string())?;
+        let ready = int("ready").ok_or_else(|| "slots: unreadable ready field".to_string())?;
+        Ok(crate::core::SlotsSample { live, ceiling, ready, capacity_paused: tsd::query::flag(row, "capacity_paused") || int("capacity_paused").unwrap_or(0) != 0 })
+    };
+    Ok((sample(stamped[1].2)?, sample(stamped[0].2)?))
+}
+
 /// The last two `slots` samples, most recent second — "two samples a pass apart" (design §3).
 /// `Err` when fewer than two rows exist yet (a fresh install, or the collector not running
 /// long enough), or when a sample has a field the collector could not read (written as the

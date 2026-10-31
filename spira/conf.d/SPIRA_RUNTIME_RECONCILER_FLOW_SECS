@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between spira-runtime reconciler-flow passes over the backlog, stage velocity, dwell and round-health series.
+SCHEMA=Seconds between spira-runtime reconciler-flow passes (unit: seconds; integer; default 1800). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_RECONCILER_FLOW_SECS:=1800}"
+SPIRA_CONF_DEFAULT_EOF

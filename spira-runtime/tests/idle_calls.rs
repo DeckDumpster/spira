@@ -7,7 +7,7 @@ use runtime::event::*;
 use runtime::journal::{Journal, Offset, Poison, ScheduleRow};
 use runtime::ports::{Clock, VirtualClock};
 use runtime::{Executor, MemJournal, Outcome, Result};
-use spira_runtime::watchers::{asks::Asks, bead_sweep::BeadSweep, design_asks::DesignAsks, supersede_duty::SupersedeDuty, inbox_keeper::InboxKeeper, pr_notify::PrNotify, publish_backlog::PublishBacklog, repo_events::RepoEvents, reconciler::Reconciler, round_duty::RoundDuty, view::View};
+use spira_runtime::watchers::{asks::Asks, bead_sweep::BeadSweep, design_asks::DesignAsks, supersede_duty::SupersedeDuty, inbox_keeper::InboxKeeper, pr_notify::PrNotify, publish_backlog::PublishBacklog, reconciler_flow::ReconcilerFlow, repo_events::RepoEvents, reconciler::Reconciler, round_duty::RoundDuty, view::View};
 use runtime::marker::NullMarker;
 use runtime::wide::NullSink;
 use spira_runtime::{open_engine, Settings};
@@ -112,6 +112,14 @@ fn production() -> Settings {
             "SPIRA_UNTAGGED_IMAGES_MAX" => "19".into(),
             "SPIRA_RECONCILER_GRACE_SECS" => "13".into(),
             "SPIRA_MAIN_HEALTH_ACTIVATION_GRACE_SECS" | "SPIRA_MAIN_HEALTH_FENCE_DEADLINE_SECS" | "SPIRA_PREFLIGHT_WALL_SECS" | "SPIRA_STRANDED_RUNNER_MIN_AGE" => "17".into(),
+            "SPIRA_RUNTIME_RECONCILER_FLOW_SECS" => "1800".into(),
+            "SPIRA_FLOW_WINDOW_HOURS" => "0.5".into(),
+            "SPIRA_FLOW_BASELINE_HOURS" => "24".into(),
+            "SPIRA_FLOW_GRACE_SECS" => "1800".into(),
+            "SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS" => "3600".into(),
+            "SPIRA_FLOW_REWORK_WINDOW_HOURS" => "6".into(),
+            "SPIRA_FLOW_SENTINEL_PERIOD_SECS" => "900".into(),
+            "SPIRA_SCOPE_LABEL" => "/unused".into(),
             "SPIRA_RUNTIME_BEAD_SWEEP_SECS" => "1800".into(),
             "SPIRA_BEAD_SWEEP_HOLD_MIN" | "SPIRA_BEAD_SWEEP_WAIT_MIN" => "120".into(),
             "SPIRA_BEAD_SWEEP_REWORK_MIN" => "20".into(),
@@ -169,7 +177,7 @@ fn ten_minutes(world: fn(&str, u64) -> String) -> Run {
     let clock = VirtualClock::new(1_800_000_000_000);
     let start = clock.now_ms();
     let mut e = open_engine(&production(), counting.clone(), Arc::new(clock.clone()), Arc::new(NullMarker), Arc::new(NullSink), vec![]).unwrap();
-    for (_, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), RoundDuty::boot(), InboxKeeper::boot(), PrNotify::boot(), Asks::boot(), DesignAsks::boot(), SupersedeDuty::boot(), BeadSweep::boot(), PublishBacklog::boot(), RepoEvents::boot(), View::boot(), Reconciler::boot()] {
+    for (_, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), RoundDuty::boot(), InboxKeeper::boot(), PrNotify::boot(), Asks::boot(), DesignAsks::boot(), SupersedeDuty::boot(), BeadSweep::boot(), PublishBacklog::boot(), RepoEvents::boot(), View::boot(), Reconciler::boot(), ReconcilerFlow::boot()] {
         e.start(stream, kind);
     }
     let (mut wakes, mut polls) = (0, 0);

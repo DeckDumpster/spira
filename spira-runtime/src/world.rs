@@ -23,6 +23,7 @@ use crate::watchers::brain_dirty;
 use crate::watchers::supersede_duty::{self, Act, Held, Reading, Verb};
 use crate::watchers::bead_sweep::{self, Bead, Repair, Repaired, Reservation, Row, Stop};
 use crate::watchers::publish_backlog::{self, Read};
+use crate::watchers::reconciler_flow::{FlowSnapshot, Params, Slots, Stage, Statuses};
 use crate::watchers::round_duty::{RoundState, Snapshot};
 
 const STORE_ATTEMPTS: u32 = 3;
@@ -47,6 +48,9 @@ pub struct World {
     pub cockpit_state: PathBuf,
     pub cockpit_session: String,
     pub tmux: PathBuf,
+    pub metrics_endpoint: Option<String>,
+    pub scope_label: String,
+    pub desired_dir: PathBuf,
 }
 
 struct MapRow {
@@ -464,6 +468,70 @@ impl World {
     fn lc_json(&self, argv: &[&str]) -> Result<Value, String> {
         let text = lc_call(&self.lc_socket, argv).map_err(|e| e.to_string())?;
         serde_json::from_str(&text).map_err(|e| format!("{} unparsed: {e}", argv[0]))
+    }
+
+    /// The beads still in the backlog: the non-terminal lifecycle rows of the scope's repository.
+    fn flow_backlog(&self) -> Result<u64, String> {
+        let mut argv = vec!["list", "--live"];
+        if !self.scope_label.is_empty() {
+            argv.extend(["--repo", &self.scope_label]);
+        }
+        let rows = spira_config::lc_state::parse_rows(&self.lc_named(&argv)?).map_err(|e| format!("lifecycle state unreadable: {e}"))?;
+        let ids: Vec<String> = rows.iter().map(|r| r.bead_id.clone()).collect();
+        Ok(::reconciler_flow::io::backlog_of(&ids, &spira_config::lc_state::index(rows)))
+    }
+
+    /// Brings `bead-stage` up to the lifecycle log, launching its exporter only when the log is ahead of it.
+    fn flow_export(&self) -> Result<(), String> {
+        let logged = self.lc_json(&["event-seq"])?["seq"].as_u64().ok_or("event-seq: no seq")?;
+        let checkpoint = self.run_dir.join("tsd").join(".bead-stage-checkpoint-lifecycle.json");
+        let exported = fs::read_to_string(checkpoint).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["last_seq"].as_u64()).unwrap_or(0);
+        if logged <= exported {
+            return Ok(());
+        }
+        let bin = "tsd-lifecycle-export";
+        let out = spira_config::bounded::bounded(bin).arg("lifecycle").stdin(std::process::Stdio::null()).output().map_err(|e| format!("{bin}: {e}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        Err(format!("{bin} lifecycle: exit {}: {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
+    }
+
+    pub fn flow_snapshot(&self, input: &str) -> Result<String, String> {
+        use ::reconciler_flow::io as flow;
+        let p: Params = serde_json::from_str(input).map_err(|e| format!("reconciler-flow params unparsed: {e}"))?;
+        if self.run_dir.join("world.halted").exists() {
+            return serde_json::to_string(&FlowSnapshot::halted()).map_err(|e| e.to_string());
+        }
+        let export = self.flow_export();
+        let (velocity_floor, dwell_limit) = flow::flow_floors(&self.desired_dir);
+        let baseline = flow::backlog_baseline_in_process(&self.run_dir, p.now, p.baseline_hours);
+        let backlog = self.flow_backlog();
+        if let Ok(count) = &backlog {
+            let _ = flow::append_backlog_sample_in_process(&self.run_dir, p.now, *count);
+        }
+        let endpoint = self.metrics_endpoint.as_deref();
+        let stage = flow::stage_rows(endpoint).map(|rows| Stage {
+            waiting: flow::waiting_to_land(&rows),
+            velocity: flow::velocity_metrics(&rows, p.now, p.window_hours, p.baseline_hours),
+            dwell: flow::dwell_metrics(&rows, p.now, p.window_hours, p.baseline_hours),
+            round_health: flow::round_health_metrics(&rows, p.now, p.window_hours, p.baseline_hours),
+            rework: flow::rework_metrics(&rows, p.now, p.rework_window_hours),
+            regression: flow::dwell_regression_metrics(&rows, p.now, p.window_hours, p.baseline_hours),
+        });
+        let slots = flow::slots_samples_in_process(&self.run_dir).map(|(prev, cur)| (Slots::from(prev), Slots::from(cur)));
+        let sentinel = flow::sentinel_pass_wall_seconds(endpoint, p.now, (p.sentinel_timer_secs * 3).max(3600));
+        serde_json::to_string(&FlowSnapshot { halted: false, export, velocity_floor, dwell_limit, backlog, baseline, stage, slots, sentinel }).map_err(|e| e.to_string())
+    }
+
+    /// Records each verdict as a `reconciler-status` row; a row the store refuses is dropped, as the pass always did.
+    pub fn flow_status(&self, input: &str) -> Result<String, String> {
+        let s: Statuses = serde_json::from_str(input).map_err(|e| format!("reconciler-flow statuses unparsed: {e}"))?;
+        let store = tsd::store::Pusher::new(self.metrics_endpoint.clone());
+        for row in &s.rows {
+            reconciler_engine::io::push(&store, reconciler_engine::io::STATUS_FAMILY, &s.ts, row);
+        }
+        Ok(format!("{} rows", s.rows.len()))
     }
 
     pub fn sweep_snapshot(&self) -> Result<String, String> {

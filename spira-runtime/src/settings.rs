@@ -15,13 +15,14 @@ use crate::watchers::supersede_duty::SupersedeDuty;
 use crate::watchers::bead_sweep::BeadSweep;
 use crate::watchers::publish_backlog::PublishBacklog;
 use crate::watchers::overrides::Overrides;
+use crate::watchers::reconciler_flow::ReconcilerFlow;
 use crate::watchers::repo_events::RepoEvents;
 use crate::watchers::reconciler::Reconciler;
 use crate::watchers::round_duty::RoundDuty;
 use crate::watchers::view::View;
 use crate::world::World;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub heartbeat_url: String,
     pub heartbeat_secs: u64,
@@ -41,6 +42,7 @@ pub struct Settings {
     pub publish_backlog: PublishBacklog,
     pub repo_events: RepoEvents,
     pub overrides: Overrides,
+    pub reconciler_flow: ReconcilerFlow,
     pub view: View,
     pub reconciler: Reconciler,
     pub world: World,
@@ -126,6 +128,14 @@ impl Settings {
         "SPIRA_DESIRED_DIR",
         "SPIRA_NO_PROGRESS_BREAKER_CLAIMS",
         "SPIRA_NO_PROGRESS_BREAKER_WINDOW_MINUTES",
+        "SPIRA_RUNTIME_RECONCILER_FLOW_SECS",
+        "SPIRA_FLOW_WINDOW_HOURS",
+        "SPIRA_FLOW_BASELINE_HOURS",
+        "SPIRA_FLOW_GRACE_SECS",
+        "SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS",
+        "SPIRA_FLOW_REWORK_WINDOW_HOURS",
+        "SPIRA_FLOW_SENTINEL_PERIOD_SECS",
+        "SPIRA_SCOPE_LABEL",
     ];
 
     pub fn load() -> Result<Settings, String> {
@@ -196,6 +206,16 @@ impl Settings {
             max_age_secs: get("SPIRA_LOCAL_BACKLOG_AGE")?.trim().parse().map_err(|_| "SPIRA_LOCAL_BACKLOG_AGE must be a non-negative integer".to_string())?,
         };
         let repo_events = RepoEvents { interval_ms: secs("SPIRA_RUNTIME_REPO_EVENTS_SECS")? * 1000 };
+        let hours = |key: &str| -> Result<f64, String> { get(key)?.trim().parse::<f64>().ok().filter(|h| h.is_finite() && *h > 0.0).ok_or_else(|| format!("{key} must be a positive number of hours")) };
+        let reconciler_flow = ReconcilerFlow {
+            interval_ms: secs("SPIRA_RUNTIME_RECONCILER_FLOW_SECS")? * 1000,
+            window_hours: hours("SPIRA_FLOW_WINDOW_HOURS")?,
+            baseline_hours: hours("SPIRA_FLOW_BASELINE_HOURS")?,
+            grace_secs: get("SPIRA_FLOW_GRACE_SECS")?.trim().parse().map_err(|_| "SPIRA_FLOW_GRACE_SECS must be a non-negative integer".to_string())?,
+            unobservable_grace_secs: get("SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS")?.trim().parse().map_err(|_| "SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS must be a non-negative integer".to_string())?,
+            rework_window_hours: hours("SPIRA_FLOW_REWORK_WINDOW_HOURS")?,
+            sentinel_timer_secs: secs("SPIRA_FLOW_SENTINEL_PERIOD_SECS")?,
+        };
         let view_program = get("SPIRA_VIEW")?;
         let view_session = get("SPIRA_VIEW_SESSION")?;
         if !view_program.trim().is_empty() && view_session.trim().is_empty() {
@@ -219,6 +239,9 @@ impl Settings {
             ask_label: get("SPIRA_ASK_LABEL")?,
             wiki: PathBuf::from(get("SPIRA_WIKI")?),
             run_dir: run_dir.clone(),
+            metrics_endpoint: Some(get("SPIRA_METRICS_ENDPOINT")?).filter(|e| !e.trim().is_empty()),
+            scope_label: get("SPIRA_SCOPE_LABEL")?,
+            desired_dir: PathBuf::from(get("SPIRA_DESIRED_DIR")?),
             ..World::default()
         };
         Ok(Settings {
@@ -234,6 +257,7 @@ impl Settings {
             publish_backlog,
             repo_events,
             overrides,
+            reconciler_flow,
             view,
             reconciler,
             world,
@@ -261,7 +285,7 @@ impl Settings {
 
     /// FNV-1a over the pinned values, so two records with one hash ran on one configuration.
     pub fn hash(&self) -> String {
-        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.repo_events, self.overrides, self.view, self.reconciler, self.world);
+        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.repo_events, self.overrides, self.view, self.reconciler, self.reconciler_flow, self.world);
         let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
         format!("{h:016x}")
     }
@@ -285,6 +309,9 @@ mod tests {
                 "SPIRA_RUNTIME_INBOX_KEEPER_SECS" | "SPIRA_RUNTIME_PR_NOTIFY_SECS" | "SPIRA_RUNTIME_ASKS_SECS" | "SPIRA_RUNTIME_SUPERSEDE_DUTY_SECS" | "SPIRA_RUNTIME_DESIGN_ASKS_SECS" | "SPIRA_RUNTIME_BRAIN_DIRTY_SECS" | "SPIRA_BRAIN_DIRTY_AGE" | "SPIRA_DESIGN_ASKS_REPEAT" | "SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS" | "SPIRA_RUNTIME_REPO_EVENTS_SECS" | "SPIRA_RUNTIME_OVERRIDES_SECS" | "SPIRA_RUNTIME_VIEW_SECS" | "SPIRA_LOCAL_BACKLOG_COUNT" | "SPIRA_LOCAL_BACKLOG_AGE" | "SPIRA_RUNTIME_BEAD_SWEEP_SECS" | "SPIRA_BEAD_SWEEP_HOLD_MIN" | "SPIRA_BEAD_SWEEP_REWORK_MIN" | "SPIRA_BEAD_SWEEP_CERT_MIN" | "SPIRA_BEAD_SWEEP_WAIT_MIN" | "SPIRA_BEAD_SWEEP_BATCH_MIN" | "SPIRA_SCOPED_STOP_REVIEW_SECS" | "SPIRA_PR_DEPLOY_GIVEUP" | "SPIRA_CONCIERGE_INBOX_STALL" | "SPIRA_CONCIERGE_INBOX_BACKOFF" | "SPIRA_RUNTIME_ROUND_DUTY_SECS" | "SPIRA_ROUND_MIN" | "SPIRA_ROUND_MAX_OPEN" | "SPIRA_ROUND_DUE_REMIND" | "SPIRA_ROUND_IDLE_CUT" => "5",
                 "SPIRA_WIKI" | "SPIRA_MAIL" | "SPIRA_ASK_LABEL" | "SPIRA_QUEUE_DIR" | "SPIRA_REPO_MAP" | "SPIRA_CONCIERGE_INBOX" => "/q",
                 "SPIRA_HOME_REPO" => "spira",
+                "SPIRA_RUNTIME_RECONCILER_FLOW_SECS" | "SPIRA_FLOW_GRACE_SECS" | "SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS" | "SPIRA_FLOW_SENTINEL_PERIOD_SECS" => "5",
+                "SPIRA_FLOW_WINDOW_HOURS" | "SPIRA_FLOW_BASELINE_HOURS" | "SPIRA_FLOW_REWORK_WINDOW_HOURS" => "0.5",
+                "SPIRA_SCOPE_LABEL" => "/q",
                 "SPIRA_VIEW" => "/bin/view",
                 "SPIRA_VIEW_SESSION" => "pit",
                 k if reconciler_fixture(k).is_some() => reconciler_fixture(k).unwrap_or_default(),
