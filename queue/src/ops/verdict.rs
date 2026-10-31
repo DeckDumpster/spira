@@ -395,18 +395,26 @@ fn rerun_could_not_start(w: &World, c: &Ctx, marker: &str, head: &str, what: &st
 /// The forge says the run is decided on an unchanged tree, so it will not run again: record the
 /// cause on each member and hand the PR to the red settlement, which closes it and files the
 /// fix-forward bead. Left open it would block every later publish.
+fn decided_red_note(what: &str, out: &str, reason: &str, closed: &str) -> String {
+    let evidence = failure_evidence(out).trim().replace('\n', " | ");
+    let cause = if evidence.is_empty() {
+        String::new()
+    } else {
+        format!(" Cause: {evidence}.")
+    };
+    crate::ident::bounded_text(&format!(
+        "{what} red, rerun refused (no input changed).{cause} {closed} Forge: {reason}"
+    ))
+}
+
 fn publish_decided_red(w: &World, c: &Ctx, kv: &Kv, pr: &str, out: &str, reason: &str) -> i32 {
     let name = c.r.name.as_str();
-    let evidence = failure_evidence(out).trim().replace('\n', " | ");
-    let note = format!(
-        "Publish PR {pr} red, rerun refused (no input changed).{} Closed; fix-forward bead follows. Forge: {reason}",
-        if evidence.is_empty() {
-            String::new()
-        } else {
-            format!(" Cause: {evidence}.")
-        }
+    let note = decided_red_note(
+        &format!("Publish PR {pr}"),
+        out,
+        reason,
+        "Closed; fix-forward bead follows.",
     );
-    let note = crate::ident::bounded_text(&note);
     for m in kv.members().into_iter().filter(|m| !m.id.is_empty()) {
         w.lib.comment(&m.id, &note);
     }
@@ -1335,20 +1343,11 @@ fn capacity_fault(w: &World, c: &Ctx, b: &Batch, marker: &str) -> i32 {
 }
 
 /// The forge will not re-run a batch run that is decided on an unchanged tree: record the cause
-/// on each member and close the PR, requeuing them so the next cut changes the input. Left open
+/// on each member and close the PR, requeuing them. Left open
 /// it would be re-attempted every pass.
 fn batch_decided_red(w: &World, c: &Ctx, b: &Batch, out: &str, reason: &str) -> i32 {
     let (name, pr) = (b.name, &b.pr);
-    let evidence = failure_evidence(out).trim().replace('\n', " | ");
-    let note = format!(
-        "Batch PR {pr} red, rerun refused (no input changed).{} Closed; requeued. Forge: {reason}",
-        if evidence.is_empty() {
-            String::new()
-        } else {
-            format!(" Cause: {evidence}.")
-        }
-    );
-    let note = crate::ident::bounded_text(&note);
+    let note = decided_red_note(&format!("Batch PR {pr}"), out, reason, "Closed; requeued.");
     for m in &b.members {
         w.lib.comment(&m.id, &note);
     }
