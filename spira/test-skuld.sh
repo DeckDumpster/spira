@@ -43,6 +43,28 @@ done
 bead_labels="fixscope plan"
 claims skuld && bad "skuld must not claim plan work" "predicate matches" || ok "skuld does not claim plan work"
 
+echo; echo "SELECT: spira-claim picks the draft request for skuld and never for the builder"
+cat > "$T/beads.json" <<JSON
+[{"id":"sp-d1","status":"open","issue_type":"task","priority":2,"labels":["fixscope","fixdraft"]},
+ {"id":"sp-p1","status":"open","issue_type":"task","priority":2,"labels":["fixscope","plan"]}]
+JSON
+cat > "$T/fake-bd" <<SH
+#!/bin/sh
+echo "\$*" >> "$T/bd.args"
+case " \$* " in *" list "*) cat "$T/beads.json" ;; *) echo '[]' ;; esac
+SH
+chmod +x "$T/fake-bd"; lc_mirror_bd "$T/lc"
+tl_config SPIRA_BD="$T/fake-bd"
+ready_set() {   # ready_set <rune> -> the rows spira-claim's ready set for that rune holds
+    env -i HOME="$T" PATH="$T/lc:$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$T/none.conf" \
+        SPIRA_HOME="$HERE" SPIRA_RUNES_DIR="$HERE/runes" SPIRA_BD="$T/fake-bd" SPIRA_DB=/fake/db \
+        spira-claim rune-ready "$1" --json 2>&1
+}
+want   "skuld's ready set holds the draft request" "sp-d1" "$(ready_set skuld)"
+nowant "skuld's ready set holds no plan bead" "sp-p1" "$(ready_set skuld)"
+want   "positive control: the builder's ready set holds the plan bead" "sp-p1" "$(ready_set builder)"
+nowant "the builder's ready set never holds the draft request" "sp-d1" "$(ready_set builder)"
+
 echo; echo "LANE: its own lane, two at a time, declared, and counted by dwarves.sh"
 is "skuld lane" "skuld" "$(rune_get skuld RUNE_LANE)"
 is "two designs draft at once" "2" "$(rune_get skuld RUNE_MAX_CONCURRENT)"
@@ -50,7 +72,9 @@ want "the lane is declared" "skuld" "$(cat "$HERE/conf.d/SPIRA_LANES")"
 want "spira_lane_runes lists skuld" "skuld" "$(spira_lane_runes)"
 nowant "spira_task_runes does not list skuld" "skuld" "$(spira_task_runes)"
 dw="$(env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$T/none.conf" SPIRA_HOME="$HERE" dwarves.sh 2>&1)"
-want "dwarves.sh names the skuld lane" "skuld" "$dw"
+laneline="$(printf '%s\n' "$dw" | grep -E '^  lanes +[0-9]+ +\(' || true)"
+want "dwarves.sh lane report counts skuld at its concurrency" "skuld=2" "$laneline"
+nowant "positive control: the lane report omits a lane that is not declared" "nosuchlane=" "$laneline"
 [ -f "$HERE/conf.d/SPIRA_SKULD_LABEL" ] && ok "the label is a registered key" || bad "the label is a registered key" "no conf.d/SPIRA_SKULD_LABEL"
 
 echo; echo "MODEL: Opus, in the rune and in the live-config fixture"
