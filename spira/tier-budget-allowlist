@@ -62,7 +62,6 @@ test-batch-timing.sh	T1	5.0
 test-bd-schema-stamp.sh	T1	2.5
 test-bead-file.sh	T1	27.0
 test-bead-lint.sh	T1	29.5
-test-bead-repo-guard.sh	T1	8.5
 test-beads-sparklines.sh	T1	3.0
 test-bin-manifest.sh	T1	3.0
 test-boundary.sh	T1	3.5
@@ -76,11 +75,9 @@ test-cadence-tool.sh	T1	2.0
 test-cadence.sh	T1	1.5
 test-canary.sh	T1	33.0
 test-capacity-probe.sh	T1	3.5
-test-census-events.sh	T1	73.0
 test-census-reopen.sh	T1	78.5
 test-census-tz-boundary.sh	T1	65.0
 test-census-watermark.sh	T1	52.5
-test-census.sh	T1	79.5
 test-certify.sh	T1	114.0
 test-check2-reclaim.sh	T1	23.0
 test-check4-batch.sh	T1	50.5
@@ -184,7 +181,6 @@ test-governor-deleted.sh	T1	3.0
 test-groom-trigger.sh	T1	4.0
 test-groomer.sh	T1	3.0
 test-guards.sh	T1	10.0
-test-held.sh	T2	12.5
 test-hold.sh	T1	12.0
 test-host-reason.sh	T1	15.5
 test-id-prefix.sh	T1	5.0
@@ -259,14 +255,10 @@ test-requeue.sh	T1	30.5
 test-rollback.sh	T1	2.0
 test-roster-warn.sh	T1	2.0
 test-runner-deps.sh	T1	1.5
-test-schema-apply.sh	T1	223.0
-test-schema.sh	T1	7.0
 test-scratch-fence.sh	T1	2.0
 test-hel-certified-guard.sh	T1	7.5
-test-hel-closed-reap.sh	T1	13.0
 test-hel-content-label.sh	T1	11.5
 test-hel-empty-commit.sh	T1	7.5
-test-hel-metrics.sh	T1	2.5
 test-hel-squash-merged.sh	T1	8.0
 test-hel-unlanded-guard.sh	T1	6.0
 test-sentinel-capacity.sh	T1	6.0
@@ -305,7 +297,6 @@ test-timeout.sh	T1	17.5
 test-timer-templates.sh	T1	2.0
 test-tmux-env.sh	T1	2.0
 test-tokens.sh	T1	2.0
-test-tsd.sh	T1	13.0
 test-unclaimable-worktree.sh	T1	5.0
 test-uninstall.sh	T1	17.0
 test-unit-drift.sh	T1	15.0
