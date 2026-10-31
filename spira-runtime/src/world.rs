@@ -16,7 +16,9 @@ use crate::watchers::pr_notify::{self, RepoObs};
 use crate::watchers::repo_events;
 use crate::watchers::asks;
 use crate::watchers::design_asks::{self, Page};
-use crate::wiki_git::git;
+use crate::hunk;
+use crate::watchers::view;
+use crate::wiki_git::{git, tmux};
 use crate::watchers::brain_dirty;
 use crate::watchers::supersede_duty::{self, Act, Held, Reading, Verb};
 use crate::watchers::bead_sweep::{self, Bead, Repair, Repaired, Reservation, Row, Stop};
@@ -26,6 +28,7 @@ use crate::watchers::round_duty::{RoundState, Snapshot};
 const STORE_ATTEMPTS: u32 = 3;
 // batch-job: the call deadline; the verb answers inside 4s on its own
 const UNPUBLISHED_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+const TMUX_DEADLINE: std::time::Duration = std::time::Duration::from_secs(3);
 const STORE_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250);
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -40,6 +43,10 @@ pub struct World {
     pub mail: PathBuf,
     pub ask_label: String,
     pub wiki: PathBuf,
+    pub hunk_dir: PathBuf,
+    pub cockpit_state: PathBuf,
+    pub cockpit_session: String,
+    pub tmux: PathBuf,
 }
 
 struct MapRow {
@@ -573,6 +580,54 @@ impl World {
             (_, a) => Some(a.as_u64()?),
         };
         Some(Some(Read::Measured { count, arrival }))
+    }
+
+    pub fn view_snapshot(&self, input: &str) -> Result<String, String> {
+        let (live, error) = match hunk::live_ids(&self.hunk_dir) {
+            Ok(live) => (Some(live), None),
+            Err(e) => (None, Some(e)),
+        };
+        let lines = |name: &str| fs::read_to_string(self.cockpit_state.join(name)).unwrap_or_default();
+        let ids = lines("dismissed").lines().filter(|l| !l.is_empty()).map(str::to_string).collect();
+        let absent = lines("dismissed.absent").lines().filter_map(|l| l.split_once(' ')).filter_map(|(id, since)| Some((id.to_string(), since.parse().ok()?))).fold(BTreeMap::new(), |mut m, (id, since)| {
+            m.entry(id).or_insert(since);
+            m
+        });
+        serde_json::to_string(&view::Snapshot { seed: input == view::SEED, live, error, dismissed: view::Dismissed { ids, absent } }).map_err(|e| e.to_string())
+    }
+
+    fn tmux(&self, args: &[&str]) -> Result<String, String> {
+        tmux(&self.tmux, args, TMUX_DEADLINE)
+    }
+
+    /// Shows the cockpit window linked to `<to>:0`: the cockpit-local index whose window id is that window's.
+    pub fn view_flip(&self, to: &str) -> Result<String, String> {
+        if !matches!(to, view::HUNK | view::BRAIN) {
+            return Err(format!("no such view {to:?}"));
+        }
+        let cockpit = format!("={}", self.cockpit_session);
+        let id = self.tmux(&["display-message", "-p", "-t", &format!("={to}:0"), "#{window_id}"])?.trim().to_string();
+        let windows = self.tmux(&["list-windows", "-t", &cockpit, "-F", "#{window_index} #{window_id}"])?;
+        let idx = windows.lines().filter_map(|l| l.split_once(' ')).find(|(_, w)| !id.is_empty() && *w == id).map(|(i, _)| i.to_string()).ok_or_else(|| format!("no cockpit window shows {to}"))?;
+        self.tmux(&["select-window", "-t", &format!("{cockpit}:{idx}")])?;
+        Ok(format!("showing {to}"))
+    }
+
+    pub fn view_forget(&self, input: &str) -> Result<String, String> {
+        let forget: view::Forget = serde_json::from_str(input).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&self.cockpit_state).map_err(|e| e.to_string())?;
+        let path = |name: &str| self.cockpit_state.join(name);
+        let marks: String = forget.dismissed.absent.iter().map(|(id, since)| format!("{id} {since}\n")).collect();
+        if marks.is_empty() {
+            let _ = fs::remove_file(path("dismissed.absent"));
+        } else {
+            fs::write(path("dismissed.absent"), marks).map_err(|e| e.to_string())?;
+        }
+        if forget.rewrite {
+            let ids: String = forget.dismissed.ids.iter().map(|id| format!("{id}\n")).collect();
+            fs::write(path("dismissed.tmp"), ids).and_then(|()| fs::rename(path("dismissed.tmp"), path("dismissed"))).map_err(|e| e.to_string())?;
+        }
+        Ok("forgot".into())
     }
 
     pub fn inbox_append(&self, line: &str) -> Result<String, String> {

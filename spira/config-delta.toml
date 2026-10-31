@@ -186,6 +186,7 @@ bead_sweep_wait_min = 120
 bead_sweep_batch_min = 180
 runtime_publish_backlog_secs = 900
 runtime_repo_events_secs = 45
+runtime_view_secs = 3
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok

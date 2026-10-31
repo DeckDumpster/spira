@@ -1,5 +1,6 @@
-//! The one process the runtime launches: git on the wiki checkout. The wiki is not store state,
-//! so spira-lc has no verb over it. Effects run on the offload pool, never on the event loop.
+//! The processes the runtime launches, each under a deadline: git on the wiki checkout (not store
+//! state, so spira-lc has no verb over it) and tmux on a view flip. Effects run on the offload
+//! pool, never on the event loop.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -14,6 +15,17 @@ pub fn git(dir: &Path, args: &[&str]) -> Result<(Option<i32>, Vec<u8>), String> 
     let mut cmd = Command::new("git");
     cmd.arg("-C").arg(dir).args(args);
     bounded(cmd, GIT_DEADLINE)
+}
+
+/// Runs tmux under `deadline` and returns its stdout. `TMUX` is cleared: it names whatever server
+/// the service was started from, not the cockpit's own.
+pub fn tmux(program: &Path, args: &[&str], deadline: Duration) -> Result<String, String> {
+    let mut cmd = Command::new(program);
+    cmd.args(args).env_remove("TMUX");
+    match bounded(cmd, deadline)? {
+        (Some(0), out) => Ok(String::from_utf8_lossy(&out).into_owned()),
+        (code, _) => Err(format!("tmux {} exited {code:?}", args.first().unwrap_or(&""))),
+    }
 }
 
 fn bounded(mut cmd: Command, deadline: Duration) -> Result<(Option<i32>, Vec<u8>), String> {

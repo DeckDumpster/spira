@@ -403,7 +403,7 @@ mod tests {
     #[test]
     fn an_optional_row_with_an_unset_key_becomes_off_naming_that_key() {
         let r = resolver(&[]);
-        let (rows, faults) = parse("?view|daemon|@SPIRA_VIEW@ watch|watchd health-view @SPIRA_VIEW@ @SPIRA_VIEW_SESSION@\n", &r);
+        let (rows, faults) = parse("?view|daemon|@SPIRA_VIEW@ watch|watchd health-ids @SPIRA_VIEW@ @SPIRA_VIEW_SESSION@\n", &r);
         assert!(faults.is_empty());
         assert_eq!(rows, vec![Row { name: "view".into(), kind: Kind::Off, target: "@SPIRA_VIEW@".into(), health: String::new() }]);
     }
@@ -411,7 +411,7 @@ mod tests {
     #[test]
     fn an_optional_row_whose_health_key_is_unset_becomes_off() {
         let r = resolver(&[("SPIRA_VIEW", "/usr/bin/view")]);
-        let (rows, faults) = parse("?view|daemon|@SPIRA_VIEW@ watch|watchd health-view @SPIRA_VIEW@ @SPIRA_VIEW_SESSION@\n", &r);
+        let (rows, faults) = parse("?view|daemon|@SPIRA_VIEW@ watch|watchd health-ids @SPIRA_VIEW@ @SPIRA_VIEW_SESSION@\n", &r);
         assert!(faults.is_empty());
         assert_eq!(rows[0].kind, Kind::Off);
         assert_eq!(rows[0].target, "@SPIRA_VIEW_SESSION@");
@@ -420,11 +420,11 @@ mod tests {
     #[test]
     fn placeholders_expand_when_set() {
         let r = resolver(&[("SPIRA_VIEW", "/usr/bin/view"), ("SPIRA_VIEW_SESSION", "ops")]);
-        let (rows, faults) = parse("?view|daemon|@SPIRA_VIEW@ watch|watchd health-view @SPIRA_VIEW@ @SPIRA_VIEW_SESSION@\n", &r);
+        let (rows, faults) = parse("?view|daemon|@SPIRA_VIEW@ watch|watchd health-ids @SPIRA_VIEW@ @SPIRA_VIEW_SESSION@\n", &r);
         assert!(faults.is_empty());
         assert_eq!(rows[0].kind, Kind::Daemon);
         assert_eq!(rows[0].target, "/usr/bin/view watch");
-        assert_eq!(rows[0].health, "watchd health-view /usr/bin/view ops");
+        assert_eq!(rows[0].health, "watchd health-ids /usr/bin/view ops");
     }
 
     #[test]

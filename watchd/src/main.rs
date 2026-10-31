@@ -22,7 +22,7 @@ use manifest::Row;
 use ops::Real;
 
 fn usage() -> &'static str {
-    "usage: watchd manifest|units|keys|exec <name>|status|drain [name] [--all]|peek [name] [--all] [--limit N]|tail <name> [--all] [--takeover] [--from-start]|next <name> [--timeout SECS]|tailers|restart [name]|notify|page <row> <text> [key=value ...]|prune|health-ids <file>|health-view <program> <session>"
+    "usage: watchd manifest|units|keys|exec <name>|status|drain [name] [--all]|peek [name] [--all] [--limit N]|tail <name> [--all] [--takeover] [--from-start]|next <name> [--timeout SECS]|tailers|restart [name]|notify|page <row> <text> [key=value ...]|prune|health-ids <file>"
 }
 
 fn load_context() -> context::Context {
@@ -246,13 +246,6 @@ fn main() {
             };
             let ctx = load_context();
             commands::cmd_health_ids(&ctx, file)
-        }
-        "health-view" => {
-            let (Some(prog), Some(sess)) = (rest.first(), rest.get(1)) else {
-                eprintln!("usage: watchd health-view <program> <session>");
-                std::process::exit(2);
-            };
-            commands::cmd_health_view(prog, sess)
         }
         _ => {
             eprintln!("{}", usage());

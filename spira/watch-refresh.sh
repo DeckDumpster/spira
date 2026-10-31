@@ -319,7 +319,7 @@ wr_reap_orphans() {
         [ -n "$prog" ] || continue
 
         # Only the supervised daemon verb is a reap target. Every other `watchd` verb (tail,
-        # notify, health-view, manifest, ...) is a short-lived command run by a session or a
+        # notify, manifest, ...) is a short-lived command run by a session or a
         # timer unit that is not named spira-watch*.
         [ "$prog" = watchd ] && [ "${parts[$verb_idx]:-}" != exec ] && continue
 

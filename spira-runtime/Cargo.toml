@@ -17,10 +17,12 @@ path = "src/main.rs"
 test = false
 
 [dependencies]
+base64 = "0.22"
 mail = { path = "../mail" }
 runtime = { path = "../runtime" }
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
+ring = "0.17"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }

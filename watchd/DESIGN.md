@@ -64,8 +64,6 @@ watchd restart [name]          restart the unit behind a watcher
 watchd notify                  escalate events nobody has drained, and watchers unwell too long
 watchd prune                   remove lock/cursor/pending files and retired units
 watchd health-ids <file>       assert a state file names at least one of our own beads
-watchd health-view <prog> <session>
-                                assert the view a follower steers matches the one it wants
 ```
 
 Argument parsing, exit codes (0 pass, 1 finding/fault, 2 usage/argument, 3 could-not-check —

@@ -1,23 +1,13 @@
 #!/usr/bin/env bash
 #
-# test-cockpit-watcher-owner.sh — two properties of the watcher ownership fix:
+# test-cockpit-watcher-owner.sh — a failed daemon unit's escalation names the lock holder.
 #
-#   1. START DELEGATES WHEN A UNIT EXISTS. cockpit-remote start must call
-#      systemctl --user start rather than forking a setsid orphan when the
-#      watcher's systemd unit is installed.  Test asserts the running watcher's
-#      pid is the one systemctl started — the unit's MainPID.
+#   watchd notify must include the pid holding the lock and the lock path in the escalation
+#   when a daemon unit is in failed/inactive state and an orphan holds the lock that keeps the
+#   unit from starting.
 #
-#   2. FAILED UNIT ESCALATION NAMES THE LOCK HOLDER. watchd notify must
-#      include the pid holding the lock and the lock path in the escalation
-#      when a daemon unit is in failed/inactive state and an orphan holds the
-#      lock that keeps the unit from starting.
-#
-# POSITIVE CONTROLS (law-a-regression-test-must-be-seen-to-fail):
-#   For (1): when is-enabled returns false, cockpit-remote forks a setsid
-#             orphan — no systemctl start call.  Proves the start-delegation
-#             check is live.
-#   For (2): when no orphan holds the lock, the escalation carries no "pid"
-#             line — proves the orphan probe is live.
+# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail): when no orphan holds the lock,
+#   the escalation carries no "pid" line — proves the orphan probe is live.
 #
 # sp-mczuy: PART 2's orphan fixture flipped in round 213's certification (VM, maxpar 16):
 # "not ok 2 - notify fixture: orphan holds the lock # lock acquisition failed", checks 3-4
@@ -35,7 +25,7 @@
 # list to keep the race reproducible.
 #
 # tier: T1
-# covers: cockpit/remote/cockpit-remote watchd/* UC-cockpit-observability-48
+# covers: watchd/* UC-cockpit-observability-48
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -112,10 +102,9 @@ cat > "$FAKE_HOME/conf.sh" <<'CONFEOF'
 watch_unit_name() { printf 'spira-watch-view-test.service'; }
 CONFEOF
 
-# watchd (sp-48f6g: a compiled binary, looked up by bare name — cockpit-remote's own
-# _watch_unit_name does `command -v watchd`, so this stub goes on PATH ahead of the real
-# one, never referenced by a constructed "$h/watchd" path): manifest returns a daemon row
-# pointing at the cockpit-remote binary.
+# watchd (a compiled binary, looked up by bare name, never by a constructed "$h/watchd" path):
+# this stub goes on PATH ahead of the real one, and its manifest returns a daemon row pointing
+# at the cockpit-remote binary.
 cat > "$FAKE_HOME/watchd" <<WDEOF
 #!/usr/bin/env bash
 case "\${1:-}" in manifest) printf 'view|daemon|%s watch|\n' "$CR" ;; esac
@@ -249,144 +238,6 @@ else
 fi
 
 kill "$ORPHAN_PID" 2>/dev/null; wait "$ORPHAN_PID" 2>/dev/null || true
-
-# ===========================================================================
-echo
-echo "PART 3 — cockpit-remote start: delegates to systemctl when unit is enabled"
-# ===========================================================================
-
-CR_LOCK="$TMP/cockpit-watch.lock"
-CALLS_LOG="$TMP/calls.log"
-UNIT_PID_FILE="$TMP/unit-main.pid"
-
-# Mock systemctl: exports needed at mock-script creation time are passed via env.
-export CALLS_LOG CR_LOCK UNIT_PID_FILE
-
-cat > "$MOCK_BIN/systemctl" <<'SCTLEOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$CALLS_LOG"
-[ "$1" = "--user" ] && shift
-cmd="${1:-}"; shift
-case "$cmd" in
-    is-enabled) exit 0 ;;
-    start)
-        flock -n "$CR_LOCK" bash -c "exec sleep 60" &
-        printf '%s\n' "$!" > "$UNIT_PID_FILE"
-        exit 0 ;;
-    stop)
-        [ -r "$UNIT_PID_FILE" ] && kill "$(cat "$UNIT_PID_FILE")" 2>/dev/null || true
-        exit 0 ;;
-    *) exit 0 ;;
-esac
-SCTLEOF
-chmod +x "$MOCK_BIN/systemctl"
-
-# tmux stub: always succeeds so watch_loop stays alive holding the lock.
-cat > "$MOCK_BIN/tmux" <<'TMUXEOF'
-#!/usr/bin/env bash
-exit 0
-TMUXEOF
-chmod +x "$MOCK_BIN/tmux"
-
-run_cr() {
-    env -i \
-        HOME="$TMP/fake-home" \
-        PATH="$FAKE_HOME:$MOCK_BIN:$PATH" \
-        TMPDIR="$TMP" \
-        SPIRA_HOME="$FAKE_HOME" \
-        COCKPIT_SELF="$CR" \
-        COCKPIT_POLL=0 \
-        CALLS_LOG="$CALLS_LOG" \
-        CR_LOCK="$CR_LOCK" \
-        UNIT_PID_FILE="$UNIT_PID_FILE" \
-        bash "$CR" "$@" 2>/dev/null
-}
-
-# -- POSITIVE CONTROL: unit disabled → setsid fork, no systemctl start call --------
-cat > "$MOCK_BIN/systemctl" <<'SDEOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$CALLS_LOG"
-[ "$1" = "--user" ] && shift
-cmd="${1:-}"; shift
-case "$cmd" in is-enabled) exit 1 ;; *) exit 0 ;; esac
-SDEOF
-chmod +x "$MOCK_BIN/systemctl"
-
-rm -f "$CR_LOCK" "$UNIT_PID_FILE"; : > "$CALLS_LOG"
-run_cr start || true
-# Give setsid fork time to start.
-wait_locked "$CR_LOCK" || true
-
-if lock_free "$CR_LOCK"; then
-    bad "pc: unit disabled → setsid orphan created (lock held)" "lock is free"
-else
-    ok "pc: unit disabled → setsid orphan created (lock held)"
-fi
-start_calls="$(grep -c ' start ' "$CALLS_LOG" 2>/dev/null || true)"
-is "pc: unit disabled → systemctl start NOT called" "0" "$start_calls"
-
-# Clean up setsid orphan and any children still holding the lock.
-if command -v fuser >/dev/null 2>&1; then
-    fuser -k "$CR_LOCK" 2>/dev/null || true
-else
-    orphan_pid="$(lock_pid "$CR_LOCK" 2>/dev/null || true)"
-    [ -n "$orphan_pid" ] && kill "$orphan_pid" 2>/dev/null || true
-fi
-wait_free "$CR_LOCK" || true
-
-# -- Unit enabled: systemctl start is called, lock holder = started pid --------------
-cat > "$MOCK_BIN/systemctl" <<'SCTLEOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$CALLS_LOG"
-[ "$1" = "--user" ] && shift
-cmd="${1:-}"; shift
-case "$cmd" in
-    is-enabled) exit 0 ;;
-    start)
-        flock -w 5 "$CR_LOCK" bash -c "exec sleep 60" &
-        printf '%s\n' "$!" > "$UNIT_PID_FILE"
-        exit 0 ;;
-    stop)
-        [ -r "$UNIT_PID_FILE" ] && kill "$(cat "$UNIT_PID_FILE")" 2>/dev/null || true ;;
-    *) exit 0 ;;
-esac
-SCTLEOF
-chmod +x "$MOCK_BIN/systemctl"
-
-rm -f "$CR_LOCK" "$UNIT_PID_FILE"; : > "$CALLS_LOG"
-run_cr start || true
-wait_locked "$CR_LOCK" || true
-
-start_calls="$(grep -c ' start ' "$CALLS_LOG" 2>/dev/null || true)"
-if [ "${start_calls:-0}" -gt 0 ]; then
-    ok "unit enabled → systemctl start called"
-else
-    bad "unit enabled → systemctl start called" \
-        "calls: $(cat "$CALLS_LOG" 2>/dev/null | tr '\n' ' ')"
-fi
-
-want "unit name passed to systemctl" "spira-watch-view-test.service" \
-    "$(cat "$CALLS_LOG" 2>/dev/null)"
-
-# The mock unit takes the lock with a bounded blocking wait (a non-blocking attempt races the
-# probe flock in lock_free), and the assertion polls for it rather than reading one instant.
-if wait_locked "$CR_LOCK"; then
-    ok "unit enabled → watcher running (lock held)"
-else
-    bad "unit enabled → watcher running (lock held)" "lock never became held"
-fi
-
-lock_holder="$(lock_pid "$CR_LOCK" 2>/dev/null || true)"
-main_pid="$(cat "$UNIT_PID_FILE" 2>/dev/null || true)"
-if [ -n "$lock_holder" ] && [ -n "$main_pid" ] && [ "$lock_holder" = "$main_pid" ]; then
-    ok "watcher pid matches unit's MainPID ($lock_holder)"
-else
-    bad "watcher pid matches unit's MainPID" \
-        "lock holder=$lock_holder, systemctl started=$main_pid"
-fi
-
-# Clean up.
-[ -r "$UNIT_PID_FILE" ] && kill "$(cat "$UNIT_PID_FILE")" 2>/dev/null || true
 
 # ===========================================================================
 echo

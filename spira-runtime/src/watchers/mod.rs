@@ -12,6 +12,7 @@ pub mod publish_backlog;
 pub mod repo_events;
 pub mod round_duty;
 pub mod supersede_duty;
+pub mod view;
 
 use runtime::event::*;
 use serde::de::DeserializeOwned;

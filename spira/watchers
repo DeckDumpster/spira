@@ -73,18 +73,7 @@
 
 # PR-NOTIFY has no row: spira-runtime hosts it as the pr-notify handler (spira-runtime/src/watchers).
 
-# THE VIEW FOLLOWER is the highest-consequence watcher here — it decides which window the
-# operator is looking at — and it is the hardest one to catch failing, because it acts on
-# TRANSITIONS ONLY. A process that is not running misses transitions silently, so a stopped
-# follower is mute in exactly the way a healthy idle one is. It was once found stopped with
-# its state machine perfectly right, and a review ran its whole length in a window nobody was
-# looking at.
-#
-# So the assertion does not ask it whether it is well. It asks what SHOULD be visible and then
-# asks the multiplexer what IS, and calls the two disagreeing DEGRADED. Optional, because the
-# surface it steers is the operator's own: SPIRA_VIEW names the program and is empty until it
-# is set.
-?view|daemon|@SPIRA_VIEW@ watch|watchd health-view @SPIRA_VIEW@ @SPIRA_VIEW_SESSION@
+# VIEW has no row: spira-runtime hosts the cockpit view follower as the view handler (spira-runtime/src/watchers).
 
 # MAIL-DELIVER monitors the delivery daemon that wakes registered readers on new mail.
 # It is not owned by watchd (it has its own unit), so the kind is `extern`. The health
