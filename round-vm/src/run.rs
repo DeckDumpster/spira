@@ -4580,17 +4580,15 @@ mod tests {
 
     #[test]
     fn a_failed_rsync_carries_what_rsync_or_ssh_said() {
-        if std::process::Command::new("rsync").arg("--version").output().is_err() {
-            eprintln!("skip: rsync is not installed here");
-            return;
-        }
         let fx = fixture();
         let key = fx.d.path().join("host_key");
         let remote = SshRemote { user: "u".into(), port: 1, key };
+        let has_rsync = std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("rsync").is_file()));
+        let says = |e: &str| if has_rsync { e.contains("exited") && !e.ends_with("no output") } else { e.starts_with("rsync: ") };
         let e = remote.pull("127.0.0.1", "x/", &fx.d.path().join("into")).unwrap_err();
-        assert!(e.contains("exited") && !e.ends_with("no output"), "{e}");
+        assert!(says(&e), "{e}");
         let e = remote.push("127.0.0.1", fx.d.path(), "x/").unwrap_err();
-        assert!(e.contains("exited") && !e.ends_with("no output"), "{e}");
+        assert!(says(&e), "{e}");
     }
 
     #[test]
