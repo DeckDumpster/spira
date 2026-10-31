@@ -60,7 +60,6 @@ spira/test-dwarf-worktree-collision.sh
 spira/test-heimdall.sh
 spira/test-batcher-cut.sh
 spira/test-bead-file.sh
-spira/test-branch-sweep.sh
 spira/test-broker.sh
 spira/test-build-fence.sh
 spira/test-census-pipeline.sh
@@ -68,7 +67,6 @@ spira/test-certify.sh
 spira/test-runes-repo-labels.sh
 spira/test-cockpit-bd-contract.sh
 spira/test-cockpit-queue-section.sh
-spira/test-cockpit-repo-labels.sh
 spira/test-cockpit-unlanded.sh
 spira/test-cockpit-unsent.sh
 spira/test-concierge-inbox.sh
