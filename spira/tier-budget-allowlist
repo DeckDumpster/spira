@@ -134,7 +134,6 @@ test-ctx-pointer.sh	T1	5.0
 test-czar-partition.sh	T1	17.0
 test-czar-pass.sh	T1	20.0
 test-dependents.sh	T1	18.0
-test-deploy-preflight-new-unit.sh	T1	12.0
 test-deploy.sh	T1	17.5
 test-destroy-branch.sh	T2	18.5
 test-destructive-bead.sh	T1	8.0
@@ -176,11 +175,9 @@ test-install-bootstrap-release.sh	T1	7.5
 test-install-conf-seed.sh	T1	61.0
 test-install-conflicts.sh	T1	9.0
 test-install-dolt-port-wait.sh	T1	1.5
-test-install-instance.sh	T1	62.5
 test-install-landref.sh	T1	15.0
 test-install-loom-broker.sh	T1	2.5
 test-install-mail-deliver.sh	T1	3.5
-test-install-migrate.sh	T1	48.0
 test-install-prod-checkout.sh	T1	9.5
 test-install-rehearsal.sh	T1	1.5
 test-install-unit-directive.sh	T1	2.0
@@ -213,7 +210,6 @@ test-poison-ask.sh	T1	37.5
 test-poison-edge.sh	T1	77.5
 test-pr-notify.sh	T1	3.0
 test-pr-stall.sh	T1	4.0
-test-pre-activate.sh	T1	4.0
 test-queue-flush.sh	T1	2.0
 test-queue-ops.sh	T1	12.5
 test-queue-protect.sh	T1	2.0
@@ -273,7 +269,6 @@ test-tokens.sh	T1	2.0
 test-unclaimable-worktree.sh	T1	5.0
 test-uninstall.sh	T1	17.0
 test-unit-drift.sh	T1	15.0
-test-unit-name.sh	T1	2.0
 test-unit-restart-limits.sh	T1	2.0
 test-units-lint.sh	T0	19.5
 test-verdict-timer.sh	T1	1.5
