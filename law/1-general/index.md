@@ -15,3 +15,4 @@ Placeholder Part until the table of contents is approved.
 - §1.11 law-unit-tests-run-under-a-second — A unit test runs in 10 to 100 ms against a pure core: no database, git repo, container, sleep or other program.
 - §1.12 law-diagnose-before-you-buy-capacity — When a run suddenly takes longer, find the cause before changing a capacity knob: compare per-suite and per-phase timings of a fast pass and a slow one, file what you find, then choose between fixing the cause and buying capacity.
 - §1.13 law-a-kit-mechanizes-the-sites-it-never-competes — Shared-platform code mechanizes the pattern its sites already run correctly; it never builds a parallel path beside it.
+- §1.14 law-the-harness-switches-his-cockpit — Whatever puts a design, diff or report in front of Ryan switches his cockpit to it itself, every iteration; it never asks him to switch, and only he dismisses it.
