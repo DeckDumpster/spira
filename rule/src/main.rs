@@ -439,8 +439,7 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
     };
     match land_law(home, &repo, "enact", &key, &toc_after, &pointers, &strings(&after)) {
         Ok((bead, _)) => {
-            let n = toc_after.iter().find(|p| p.number == part).and_then(|p| p.slugs.iter().position(|s| *s == key)).map_or(0, |i| i + 1);
-            println!("law/: {key} is §{part}.{n}; bead {bead} lands it from the store when a builder submits.");
+            println!("law/: {key} goes in Part {part}; bead {bead} numbers it and lands it from the store when a builder submits.");
             0
         }
         Err(e) => {
