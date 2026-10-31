@@ -2295,16 +2295,20 @@ pub fn head_on_base(repo: &Repo, head: &str) -> bool {
 /// that has not landed has the unlanded head as its one cause, whichever round asks next, so those
 /// share a key and incident.sh counts them as recurrences of one incident.
 pub fn land_unverified_key(repo: &Repo, head: &str, detail: &str) -> (String, String) {
-    if STACKED_REFUSAL.iter().all(|m| detail.contains(m)) {
+    if let Some(parent) = stacked_parent(detail) {
         return (
-            format!("{}: rounds stacked on an unlanded round are refused at land", repo.name),
-            format!("land-unverified:{}:stacked", repo.name),
+            format!("{}: rounds stacked on unlanded round {parent} are refused at land", repo.name),
+            format!("land-unverified:{}:stacked:{parent}", repo.name),
         );
     }
     (format!("{}: round head {head} did not reach {}", repo.name, repo.base), format!("land-unverified:{}:{head}", repo.name))
 }
 
-const STACKED_REFUSAL: [&str; 2] = [" is stacked on round ", ", which has not landed"];
+fn stacked_parent(detail: &str) -> Option<&str> {
+    let rest = detail.split(" is stacked on round ").nth(1)?;
+    let (parent, _) = rest.split_once(", which has not landed")?;
+    (!parent.is_empty() && !parent.contains(char::is_whitespace)).then_some(parent)
+}
 
 /// Alarm for a round that did not land: the incident names the refusal line.
 pub fn file_land_unverified_incident(env: &Env, repo: &Repo, head: &str, detail: &str) -> Result<String, String> {
@@ -3588,12 +3592,13 @@ mod land_exit_tests {
     }
 
     #[test]
-    fn three_rounds_stacked_on_an_unlanded_head_share_one_incident_key() {
+    fn rounds_stacked_on_one_unlanded_head_share_one_incident_key() {
         let d = testkit::TempDir::new("batcher-cut-stacked-key");
         let repo = repo_at(&d);
         let refusal = |parent: &str| format!("refused: queue.sh round land: round r3 is stacked on round {parent}, which has not landed — land {parent} first; nothing changed");
         let keys: Vec<_> = [("h1", "r1"), ("h2", "r1"), ("h3", "r2")].iter().map(|(h, p)| land_unverified_key(&repo, h, &refusal(p))).collect();
-        assert!(keys.iter().all(|k| *k == keys[0]), "{keys:?}");
+        assert_eq!(keys[0], keys[1], "{keys:?}");
+        assert_ne!(keys[0], keys[2], "a second unlanded head is a second incident: {keys:?}");
         assert_ne!(land_unverified_key(&repo, "h1", "refused: not a fast-forward"), land_unverified_key(&repo, "h2", "refused: not a fast-forward"), "positive control: other refusals stay one incident per head");
     }
 
