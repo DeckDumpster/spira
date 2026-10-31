@@ -502,8 +502,10 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
     }
     let pr = kv.as_ref().map(|kv| observe(w, c, &path, kv));
     let action = decide(pr);
-    if !matches!(action, Settle::Wait | Settle::Parked | Settle::Alarm) {
-        let deferred_file = c.queue_file("publish-deferred");
+    let deferred_file = c.queue_file("publish-deferred");
+    if matches!(action, Settle::Wait | Settle::Parked | Settle::Alarm) {
+        let _ = std::fs::remove_file(&deferred_file);
+    } else {
         let deferred = records::read_kv(&deferred_file)
             .ok()
             .flatten()

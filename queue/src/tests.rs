@@ -4897,6 +4897,21 @@ fn settle_runs_after_the_deferral_bound_while_local_passes_run_back_to_back() {
 }
 
 #[test]
+fn a_tick_that_does_not_defer_restarts_the_deferral_count() {
+    let t = T::new(LandMode::QueueLocal);
+    red_publish_awaiting_rerun(&t);
+    for _ in 0..3 {
+        t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
+    }
+    live_progress(&t, "proxmox", 900);
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(t.qfile("publish-deferred").exists());
+    live_progress(&t, "ec2", 900);
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(!t.qfile("publish-deferred").exists());
+}
+
+#[test]
 fn settle_exits_zero_and_logs_when_the_queue_lock_is_held() {
     let t = T::new(LandMode::QueueLocal);
     publishable(&t);

@@ -1773,7 +1773,7 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
         }
     };
     env.pool.label(&vm.handle, &run_label(args));
-    progress.place(&results_dir, if crate::ec2::is_ec2_handle(&vm.handle) { "ec2" } else { "proxmox" });
+    progress.place(&results_dir, place_of(&vm.handle));
     let instance_type = (env.deps.factory)().ok().and_then(|a| a.provider.instance_type(&vm.handle));
     {
         let mut f = facts.lock().unwrap_or_else(|e| e.into_inner());
@@ -1887,6 +1887,14 @@ fn pool_detail(state_file: &Path) -> Option<String> {
     }
     let e = s.events.last()?;
     Some(format!("VM {} {:?}: {}", e.vm, e.to, e.reason).to_lowercase())
+}
+
+fn place_of(handle: &str) -> &'static str {
+    if crate::ec2::is_ec2_handle(handle) {
+        "ec2"
+    } else {
+        "proxmox"
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2441,6 +2449,12 @@ mod tests {
         assert!(progress_refusal("b1", Some(2), b"", b"").contains("said nothing"));
     }
     use super::*;
+
+    #[test]
+    fn a_pass_is_placed_on_ec2_exactly_when_its_handle_is_an_ec2_one() {
+        assert_eq!(place_of(&format!("{}i-0abc", crate::ec2::HANDLE_PREFIX)), "ec2");
+        assert_eq!(place_of("vm-9001"), "proxmox");
+    }
 
     #[test]
     fn the_image_tag_is_computed_from_a_tree_by_a_process_standing_elsewhere() {
