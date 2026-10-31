@@ -2,6 +2,7 @@
 //! systemd notifier the dispatch loop kicks, and the OTLP log sink for wide events.
 
 pub mod forge;
+pub mod hunk;
 pub mod notify;
 pub mod settings;
 pub mod sink;
@@ -25,7 +26,7 @@ const FOREIGN_POLL_MS: u64 = 30_000;
 
 /// Every workflow the service hosts. The heartbeat is registered here and nowhere else.
 pub fn registrations(s: &Settings) -> Vec<Registration> {
-    vec![Heartbeat { interval_ms: s.heartbeat_secs * 1000, ping_deadline_ms: s.ping_deadline_ms() }.registration(), s.round_duty.clone().registration(), s.inbox_keeper.clone().registration(), s.pr_notify.clone().registration(), s.asks.clone().registration(), s.design_asks.clone().registration(), s.brain_dirty.clone().registration(), s.supersede_duty.clone().registration(), s.bead_sweep.clone().registration(), s.publish_backlog.clone().registration(), s.repo_events.clone().registration()]
+    vec![Heartbeat { interval_ms: s.heartbeat_secs * 1000, ping_deadline_ms: s.ping_deadline_ms() }.registration(), s.round_duty.clone().registration(), s.inbox_keeper.clone().registration(), s.pr_notify.clone().registration(), s.asks.clone().registration(), s.design_asks.clone().registration(), s.brain_dirty.clone().registration(), s.supersede_duty.clone().registration(), s.bead_sweep.clone().registration(), s.publish_backlog.clone().registration(), s.repo_events.clone().registration(), s.view.clone().registration()]
 }
 
 pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, extra: Vec<Registration>) -> runtime::Result<Engine> {
@@ -87,6 +88,9 @@ impl EffectRunner for Effects {
             watchers::bead_sweep::REPAIR => self.world.sweep_repair(&spec.input),
             watchers::publish_backlog::OBSERVE => self.world.publish_backlog_snapshot(),
             watchers::repo_events::OBSERVE => self.world.repo_events_snapshot(&self.forge, &spec.input),
+            watchers::view::OBSERVE => self.world.view_snapshot(&spec.input),
+            watchers::view::FLIP => self.world.view_flip(&spec.input),
+            watchers::view::FORGET => self.world.view_forget(&spec.input),
             watchers::INBOX_APPEND => self.world.inbox_append(&spec.input),
             other => Err(format!("no runner for effect {other}")),
         }

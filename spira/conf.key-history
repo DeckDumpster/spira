@@ -546,3 +546,4 @@ bead_sweep_batch_min
 test_case_deadline
 runtime_publish_backlog_secs
 runtime_repo_events_secs
+runtime_view_secs

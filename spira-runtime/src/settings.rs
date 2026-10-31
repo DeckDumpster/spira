@@ -16,6 +16,7 @@ use crate::watchers::bead_sweep::BeadSweep;
 use crate::watchers::publish_backlog::PublishBacklog;
 use crate::watchers::repo_events::RepoEvents;
 use crate::watchers::round_duty::RoundDuty;
+use crate::watchers::view::View;
 use crate::world::World;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,8 +38,11 @@ pub struct Settings {
     pub bead_sweep: BeadSweep,
     pub publish_backlog: PublishBacklog,
     pub repo_events: RepoEvents,
+    pub view: View,
     pub world: World,
 }
+
+const DEFAULT_FORGET_SECS: u64 = 86_400;
 
 fn num<T: std::str::FromStr + PartialOrd + Default>(key: &str, raw: &str) -> Result<T, String> {
     raw.trim().parse::<T>().ok().filter(|v| *v > T::default()).ok_or_else(|| format!("{key} must be a positive integer, got {raw:?}"))
@@ -88,10 +92,25 @@ impl Settings {
         "SPIRA_LOCAL_BACKLOG_COUNT",
         "SPIRA_LOCAL_BACKLOG_AGE",
         "SPIRA_RUNTIME_REPO_EVENTS_SECS",
+        "SPIRA_VIEW",
+        "SPIRA_VIEW_SESSION",
+        "SPIRA_RUNTIME_VIEW_SECS",
     ];
 
     pub fn load() -> Result<Settings, String> {
-        Self::from_lookup(&cfg)
+        Self::from_lookup(&cfg)?.with_environment(&|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
+    }
+
+    /// The cockpit's own state and hunk's runtime directory are where those programs put them,
+    /// which only the service's environment says.
+    pub fn with_environment(mut self, env: &dyn Fn(&str) -> Option<String>) -> Result<Settings, String> {
+        let path = |k: &str| env(k).map(PathBuf::from);
+        self.world.hunk_dir = path("XDG_RUNTIME_DIR").map(|d| d.join("hunk-mcp")).unwrap_or_default();
+        self.world.cockpit_state = path("COCKPIT_STATE").or_else(|| path("HOME").map(|h| h.join(".local/state/cockpit"))).unwrap_or_default();
+        if let Some(secs) = env("COCKPIT_FORGET_SECS") {
+            self.view.forget_secs = num("COCKPIT_FORGET_SECS", &secs)?;
+        }
+        Ok(self)
     }
 
     pub fn from_lookup(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Settings, String> {
@@ -144,7 +163,15 @@ impl Settings {
             max_age_secs: get("SPIRA_LOCAL_BACKLOG_AGE")?.trim().parse().map_err(|_| "SPIRA_LOCAL_BACKLOG_AGE must be a non-negative integer".to_string())?,
         };
         let repo_events = RepoEvents { interval_ms: secs("SPIRA_RUNTIME_REPO_EVENTS_SECS")? * 1000 };
+        let view_program = get("SPIRA_VIEW")?;
+        let view_session = get("SPIRA_VIEW_SESSION")?;
+        if !view_program.trim().is_empty() && view_session.trim().is_empty() {
+            return Err("SPIRA_VIEW_SESSION is empty — the view follower has no session to steer".into());
+        }
+        let view = View { interval_ms: secs("SPIRA_RUNTIME_VIEW_SECS")? * 1000, forget_secs: DEFAULT_FORGET_SECS, enabled: !view_program.trim().is_empty() };
         let world = World {
+            cockpit_session: view_session,
+            tmux: PathBuf::from("tmux"),
             proc_dir: PathBuf::from("/proc"),
             queue_dir: PathBuf::from(get("SPIRA_QUEUE_DIR")?),
             repo_map: PathBuf::from(get("SPIRA_REPO_MAP")?),
@@ -155,6 +182,7 @@ impl Settings {
             ask_label: get("SPIRA_ASK_LABEL")?,
             wiki: PathBuf::from(get("SPIRA_WIKI")?),
             run_dir: run_dir.clone(),
+            ..World::default()
         };
         Ok(Settings {
             round_duty,
@@ -168,6 +196,7 @@ impl Settings {
             bead_sweep,
             publish_backlog,
             repo_events,
+            view,
             world,
             heartbeat_url: get("SPIRA_RUNTIME_HEARTBEAT_URL")?,
             heartbeat_secs: num("SPIRA_RUNTIME_HEARTBEAT_SECS", &get("SPIRA_RUNTIME_HEARTBEAT_SECS")?)?,
@@ -193,7 +222,7 @@ impl Settings {
 
     /// FNV-1a over the pinned values, so two records with one hash ran on one configuration.
     pub fn hash(&self) -> String {
-        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.repo_events, self.world);
+        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.repo_events, self.view, self.world);
         let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
         format!("{h:016x}")
     }
@@ -214,9 +243,11 @@ mod tests {
                 "SPIRA_LC_SOCKET" => "/d/sock",
                 "SPIRA_GH_API" => "http://forge",
                 "SPIRA_BROKER_GH_TOKEN" => "",
-                "SPIRA_RUNTIME_INBOX_KEEPER_SECS" | "SPIRA_RUNTIME_PR_NOTIFY_SECS" | "SPIRA_RUNTIME_ASKS_SECS" | "SPIRA_RUNTIME_SUPERSEDE_DUTY_SECS" | "SPIRA_RUNTIME_DESIGN_ASKS_SECS" | "SPIRA_RUNTIME_BRAIN_DIRTY_SECS" | "SPIRA_BRAIN_DIRTY_AGE" | "SPIRA_DESIGN_ASKS_REPEAT" | "SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS" | "SPIRA_RUNTIME_REPO_EVENTS_SECS" | "SPIRA_LOCAL_BACKLOG_COUNT" | "SPIRA_LOCAL_BACKLOG_AGE" | "SPIRA_RUNTIME_BEAD_SWEEP_SECS" | "SPIRA_BEAD_SWEEP_HOLD_MIN" | "SPIRA_BEAD_SWEEP_REWORK_MIN" | "SPIRA_BEAD_SWEEP_CERT_MIN" | "SPIRA_BEAD_SWEEP_WAIT_MIN" | "SPIRA_BEAD_SWEEP_BATCH_MIN" | "SPIRA_SCOPED_STOP_REVIEW_SECS" | "SPIRA_PR_DEPLOY_GIVEUP" | "SPIRA_CONCIERGE_INBOX_STALL" | "SPIRA_CONCIERGE_INBOX_BACKOFF" | "SPIRA_RUNTIME_ROUND_DUTY_SECS" | "SPIRA_ROUND_MIN" | "SPIRA_ROUND_MAX_OPEN" | "SPIRA_ROUND_DUE_REMIND" | "SPIRA_ROUND_IDLE_CUT" => "5",
+                "SPIRA_RUNTIME_INBOX_KEEPER_SECS" | "SPIRA_RUNTIME_PR_NOTIFY_SECS" | "SPIRA_RUNTIME_ASKS_SECS" | "SPIRA_RUNTIME_SUPERSEDE_DUTY_SECS" | "SPIRA_RUNTIME_DESIGN_ASKS_SECS" | "SPIRA_RUNTIME_BRAIN_DIRTY_SECS" | "SPIRA_BRAIN_DIRTY_AGE" | "SPIRA_DESIGN_ASKS_REPEAT" | "SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS" | "SPIRA_RUNTIME_REPO_EVENTS_SECS" | "SPIRA_RUNTIME_VIEW_SECS" | "SPIRA_LOCAL_BACKLOG_COUNT" | "SPIRA_LOCAL_BACKLOG_AGE" | "SPIRA_RUNTIME_BEAD_SWEEP_SECS" | "SPIRA_BEAD_SWEEP_HOLD_MIN" | "SPIRA_BEAD_SWEEP_REWORK_MIN" | "SPIRA_BEAD_SWEEP_CERT_MIN" | "SPIRA_BEAD_SWEEP_WAIT_MIN" | "SPIRA_BEAD_SWEEP_BATCH_MIN" | "SPIRA_SCOPED_STOP_REVIEW_SECS" | "SPIRA_PR_DEPLOY_GIVEUP" | "SPIRA_CONCIERGE_INBOX_STALL" | "SPIRA_CONCIERGE_INBOX_BACKOFF" | "SPIRA_RUNTIME_ROUND_DUTY_SECS" | "SPIRA_ROUND_MIN" | "SPIRA_ROUND_MAX_OPEN" | "SPIRA_ROUND_DUE_REMIND" | "SPIRA_ROUND_IDLE_CUT" => "5",
                 "SPIRA_WIKI" | "SPIRA_MAIL" | "SPIRA_ASK_LABEL" | "SPIRA_QUEUE_DIR" | "SPIRA_REPO_MAP" | "SPIRA_CONCIERGE_INBOX" => "/q",
                 "SPIRA_HOME_REPO" => "spira",
+                "SPIRA_VIEW" => "/bin/view",
+                "SPIRA_VIEW_SESSION" => "pit",
                 _ => return Err(format!("{k} unknown")),
             }
             .to_string())
@@ -240,6 +271,29 @@ mod tests {
         let b = Settings::from_lookup(&distinct).unwrap().bead_sweep;
         assert_eq!((b.interval_ms, b.hold_min, b.rework_min, b.cert_min, b.wait_min, b.batch_min, b.stop_review_secs), (11_000, 12, 13, 14, 15, 16, 17));
         assert_eq!((b.ask_label.as_str(), b.home_repo.as_str()), ("/q", "spira"));
+    }
+
+    #[test]
+    fn the_view_follower_finds_hunk_and_the_cockpit_state_where_the_environment_puts_them() {
+        let s = Settings::from_lookup(&lookup("7")).unwrap();
+        assert_eq!((s.view.enabled, s.view.interval_ms, s.view.forget_secs, s.world.cockpit_session.as_str()), (true, 5000, 86_400, "pit"));
+        let env = |pairs: &'static [(&'static str, &'static str)]| move |k: &str| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string());
+        let full = s.clone().with_environment(&env(&[("XDG_RUNTIME_DIR", "/run/u1"), ("COCKPIT_STATE", "/st"), ("HOME", "/h"), ("COCKPIT_FORGET_SECS", "77")])).unwrap();
+        assert_eq!((full.world.hunk_dir.as_path(), full.world.cockpit_state.as_path(), full.view.forget_secs), (std::path::Path::new("/run/u1/hunk-mcp"), std::path::Path::new("/st"), 77));
+        let home = s.clone().with_environment(&env(&[("HOME", "/h")])).unwrap();
+        assert_eq!(home.world.cockpit_state, PathBuf::from("/h/.local/state/cockpit"));
+        assert!(home.world.hunk_dir.as_os_str().is_empty(), "no runtime dir is no daemon, not a guessed one");
+        assert!(s.with_environment(&env(&[("COCKPIT_FORGET_SECS", "0")])).unwrap_err().contains("positive"));
+    }
+
+    #[test]
+    fn a_view_follower_that_is_on_needs_a_session_and_an_empty_program_turns_it_off() {
+        let with = |key: &'static str, val: &'static str| {
+            let base = lookup("7");
+            move |k: &str| if k == key { Ok(val.to_string()) } else { base(k) }
+        };
+        assert!(Settings::from_lookup(&with("SPIRA_VIEW_SESSION", " ")).unwrap_err().contains("SPIRA_VIEW_SESSION"));
+        assert!(!Settings::from_lookup(&with("SPIRA_VIEW", "")).unwrap().view.enabled);
     }
 
     #[test]

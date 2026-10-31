@@ -262,4 +262,21 @@ if kill -0 "$VICTIM" 2>/dev/null; then kill "$VICTIM"; is "finish ends the sessi
 rm -rf "$HD"
 
 echo
+echo "nothing here launches the view follower: spira-runtime hosts it"
+# `start` once detached a watch loop beside the service's own. It must now be an unknown verb, and
+# `status` must no longer claim a watcher of its own. The positive control is the verb that does exist.
+LD="$(mktemp -d)"
+_cr() { env -i PATH="$PATH" HOME="$LD" TMPDIR="$LD" COCKPIT_SELF=/bin/true COCKPIT_SESSION=nosuch-$$ bash "$CR" "$@" 2>&1; }
+_cr sync >/dev/null; is "positive control: a verb that exists exits 0 on a missing cockpit" "0" "$?"
+out="$(_cr start)"; rc=$?
+is "start is an unknown verb (non-zero)" "2" "$rc"
+want "and the usage no longer offers it" "usage:" "$out"
+out="$(_cr stop)"; is "stop is an unknown verb (non-zero)" "2" "$?"
+sleep 0.3
+is "start launched no watch loop" "0" "$(pgrep -f "$LD" | wc -l | tr -d ' ')"
+out="$(_cr status)"
+is "status reports no watcher line" "0" "$(printf '%s\n' "$out" | grep -c '^watcher:')"
+rm -rf "$LD"
+
+echo
 tl_summary

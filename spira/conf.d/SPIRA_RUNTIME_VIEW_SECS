@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between spira-runtime view-follower observations of hunk's live review sessions.
+SCHEMA=Seconds between spira-runtime view-follower observations (unit: seconds; integer; default 3). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_VIEW_SECS:=3}"
+SPIRA_CONF_DEFAULT_EOF

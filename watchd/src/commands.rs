@@ -1,5 +1,5 @@
 //! `manifest`, `units`, `keys`, `exec`, `status`, `drain`/`peek`, `tailers`, `restart`,
-//! `prune`, `health-ids`, `health-view` — every subcommand except `tail` (its own module,
+//! `prune`, `health-ids` — every subcommand except `tail` (its own module,
 //! `tail.rs`, for the streaming/locking machinery) and `notify` (`notify.rs`, for the
 //! two-half escalation logic).
 
@@ -415,59 +415,6 @@ pub fn cmd_health_ids(ctx: &Context, file: &str) -> i32 {
     }
 }
 
-pub fn cmd_health_view(prog: &str, sess: &str) -> i32 {
-    if !std::path::Path::new(prog).is_file() || std::fs::metadata(prog).map(|m| m.permissions().mode() & 0o111 == 0).unwrap_or(true) {
-        eprintln!("{prog} is not executable — nothing here can say what should be visible");
-        return 2;
-    }
-    if which("tmux").is_none() {
-        eprintln!("no multiplexer on PATH — what is visible cannot be read");
-        return 2;
-    }
-    let out = spira_config::bounded::bounded(prog).arg("status").output();
-    let (stdout, rc) = match &out {
-        Ok(o) => (String::from_utf8_lossy(&o.stdout).into_owned(), o.status.code().unwrap_or(-1)),
-        Err(_) => (String::new(), -1),
-    };
-    let want = stdout.lines().find_map(|l| l.strip_prefix("want:")).map(|s| s.trim().to_string());
-    let Some(want) = want.filter(|w| !w.is_empty()) else {
-        eprintln!("{prog} status printed no 'want:' line (exit {rc}) — it cannot say which view it is steering to");
-        return 1;
-    };
-    if want.chars().any(|c| c.is_whitespace()) {
-        eprintln!("{prog} status said 'want: {want}', which is not a session name");
-        return 1;
-    }
-    let showing = tmux_active_window(sess);
-    let Some(showing) = showing else {
-        eprintln!("there is no '{sess}' session — the surface this steers is not there");
-        return 1;
-    };
-    let wanted = tmux_window0(&want);
-    let Some(wanted) = wanted else {
-        eprintln!("want: {want}, but there is no '{want}' session to show");
-        return 1;
-    };
-    if showing != wanted {
-        eprintln!("want: {want} ({wanted}) but '{sess}' is showing {showing} — the state is right and nothing is enacting it");
-        return 1;
-    }
-    0
-}
-
-fn tmux_active_window(session: &str) -> Option<String> {
-    let out = spira_config::bounded::bounded("tmux").args(["list-windows", "-t", &format!("={session}"), "-F", "#{window_id}", "-f", "#{window_active}"]).output().ok()?;
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (!s.is_empty()).then_some(s)
-}
-
-fn tmux_window0(session: &str) -> Option<String> {
-    let out = spira_config::bounded::bounded("tmux").args(["list-windows", "-t", &format!("={session}"), "-F", "#{window_id}", "-f", "#{==:#{window_index},0}"]).output().ok()?;
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (!s.is_empty()).then_some(s)
-}
-
-use std::os::unix::fs::PermissionsExt;
 
 /// `prune` — removes lock/cursor/pending files and retired `daemon` units for watchers no
 /// longer named by the manifest. The log itself is never pruned: it is evidence, not state.
@@ -724,19 +671,6 @@ mod tests {
         assert!(!units.join("spira-watch-gone-prod.service").exists());
         assert!(units.join("spira-watch-kept-prod.service").exists());
         assert_eq!(*ops.disabled.borrow(), vec!["spira-watch-gone-prod.service".to_string()]);
-    }
-
-    #[test]
-    fn health_view_refuses_when_the_program_is_not_executable() {
-        let d = TempDir::new("watchd-health-view");
-        let p = d.join("not-a-program");
-        std::fs::write(&p, "not executable").unwrap();
-        assert_eq!(cmd_health_view(p.to_str().unwrap(), "sess"), 2);
-    }
-
-    #[test]
-    fn health_view_refuses_when_the_program_does_not_exist() {
-        assert_eq!(cmd_health_view("/no/such/program", "sess"), 2);
     }
 
     // health-ids: ported from test-watchd-health-ids.sh (retired, UC-operator-channel-34;
