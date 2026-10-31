@@ -11,7 +11,6 @@ sentinel/src/open_children.rs
 spira-config/src/lc_call.rs
 spira-config/src/scratch.rs
 spira-lint/src/lib.rs
-spira/test-batcher-cut.sh
 spira/test-czar-pass.sh
 spira/test-gate-cap.sh
 spira/test-gate-wait.sh
