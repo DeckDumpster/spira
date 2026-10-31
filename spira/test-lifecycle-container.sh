@@ -20,7 +20,6 @@
 #     and the event log has exactly one applied row and the rest refused;
 #   - a transaction killed after its UPDATE but before COMMIT leaves no trace: the row and
 #     the event log are exactly as they were;
-#   - bench: p99 latency of a `spira-lc event` round trip through the service, observed only.
 #
 # host-reason: starts its own disposable `dolt sql-server` as a background process, the
 # same shape every testdb.sh server-mode suite already uses without a container call —
@@ -46,8 +45,7 @@ DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 export PATH="$(dirname "$DOLT_BIN"):$PATH"
 
 # Never let an ambient SPIRA_LC_SOCKET (or a stray real one at the hardcoded default path)
-# make a direct-connection assertion silently go through a socket instead. Set back only
-# where this suite means to exercise the socket path, in the bench section below.
+# make a direct-connection assertion silently go through a socket instead.
 unset SPIRA_LC_SOCKET
 
 REPO="$(cd "$HERE/.." && pwd)"
@@ -302,64 +300,5 @@ wait "$KILL_PID" 2>/dev/null
 survivor="$(root_sql --use-db spira_lifecycle sql -q "SELECT version, reason FROM bead WHERE bead_id='sp-kill'" -r json 2>&1)"
 nowant "a transaction killed mid-flight left no partial UPDATE" "should-never-be-seen" "$survivor"
 want "the row is exactly as it was before the killed transaction" "\"version\":\"0\"" "$survivor"
-
-# ── bench: p99 latency per spira-lc event round trip, through the persistent service ──
-# A one-shot `dolt` process pays a fresh TCP + auth handshake and its own process start on
-# every call (measured below, informational only: same-user fallback is correct but not
-# fast, by construction — see db.rs's module doc). The design's p99 < 50ms bench is a
-# property of the service holding a live connection, so this suite starts `spira-lc serve`
-# on a private socket and benches calls routed through it, which is what a real deploy with
-# the system-user service installed would give every caller.
-SOCK="$TMP/spira-lc.sock"
-tl_config SPIRA_LC_SOCKET="$SOCK"
-"$BIN" serve "$SOCK" >"$TMP/serve.log" 2>&1 &
-SERVE_PID=$!
-for _ in $(seq 1 50); do
-    [ -S "$SOCK" ] && break
-    sleep 0.1
-done
-[ -S "$SOCK" ] || bail "spira-lc serve never created its socket: $(cat "$TMP/serve.log")"
-
-BENCH_N=100
-> "$TMP/bench.times"
-> "$TMP/fallback.times"
-for i in $(seq 1 "$BENCH_N"); do
-    bid="sp-bench-$i"
-    seed_bead "$bid"
-    # Reset to the real socket: the previous iteration's direct case below left the
-    # override declared empty, and SPIRA_LC_SOCKET is registered — no plain
-    # env prefix reaches spira-lc any more, only this suite's own SPIRA_TOML override.
-    tl_config SPIRA_LC_SOCKET="$SOCK"
-    start_ns=$(date +%s%N)
-    "$BIN" event bead "$bid" --expect READY --version 0 --actor bench \
-        --kind '{"Claim":{"holder":"bench","lease_until":1}}' >/dev/null 2>&1
-    end_ns=$(date +%s%N)
-    echo $(( (end_ns - start_ns) / 1000000 )) >> "$TMP/bench.times"
-
-    fbid="sp-fallback-$i"
-    seed_bead "$fbid"
-    # Direct mode is declared (an empty socket), never a fallback from a dead one (sp-yvyvzd).
-    tl_config SPIRA_LC_SOCKET=""
-    start_ns=$(date +%s%N)
-    "$BIN" event bead "$fbid" --expect READY --version 0 --actor bench \
-        --kind '{"Claim":{"holder":"bench","lease_until":1}}' >/dev/null 2>&1
-    end_ns=$(date +%s%N)
-    echo $(( (end_ns - start_ns) / 1000000 )) >> "$TMP/fallback.times"
-done
-kill "$SERVE_PID" >/dev/null 2>&1
-
-# The 99th of 100 sorted samples (the second-largest), not the bare maximum: with only 100
-# points the single largest is dominated by one scheduler hiccup on a shared box, and the
-# design's bench is about the mechanism's cost, not this sandbox's noisiest moment.
-p99_ms="$(sort -n "$TMP/bench.times" | sed -n '99p')"
-fallback_p99_ms="$(sort -n "$TMP/fallback.times" | sed -n '99p')"
-echo "# informational: same-user fallback (no service), p99 of $BENCH_N: ${fallback_p99_ms}ms" >&2
-
-# Observation only: the figure includes a fresh spira-lc process per call, and no p99 floor
-# held on the round VM, so a wall-clock assertion flipped with load, not with the code
-# (law-a-test-that-flips-is-deleted). The mechanism (one persistent connection, the only
-# `dolt` session this suite spawns) is asserted above.
-echo "# informational: through spira-lc serve, p99 of $BENCH_N event round trips: ${p99_ms}ms" >&2
-ok "bench: $BENCH_N event round trips through spira-lc serve completed (p99 ${p99_ms}ms, observed not asserted)"
 
 tl_summary

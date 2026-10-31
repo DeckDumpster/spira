@@ -111,15 +111,30 @@ id = "UC-config-store-preflight-19"
 tier = "T1"
 statement = "schema.sh resolves the declared schema additions (_is_work, the priority CHECK) and kinds map to types"
 
+[use_case.uncovered]
+reason = "test-schema.sh deleted by the 2026-10-31 test review (per Ryan): flipped red then green 1 time(s) on an unchanged tree (law-a-test-that-flips-is-deleted); loses sole coverage of UC-config-store-preflight-19"
+date = "2026-10-31"
+bead = "sp-oy529j"
+
 [[use_case]]
 id = "UC-config-store-preflight-20"
 tier = "T3"
 statement = "schema-apply.sh applies the schema additions to a server store idempotently and compatibly"
 
+[use_case.uncovered]
+reason = "test-schema-apply.sh deleted by the 2026-10-31 test review (per Ryan): flipped; its UCs (schema apply on bare store, idempotent rerun) are partly also exercised by test-schema.sh's schema-apply.sh cases"
+date = "2026-10-31"
+bead = "sp-oy529j"
+
 [[use_case]]
 id = "UC-config-store-preflight-21"
 tier = "T1"
 statement = "schema-apply.sh refuses an embedded-mode store, naming cause and remedy"
+
+[use_case.uncovered]
+reason = "test-schema-apply.sh deleted by the 2026-10-31 test review (per Ryan): flipped; its UCs (schema apply on bare store, idempotent rerun) are partly also exercised by test-schema.sh's schema-apply.sh cases"
+date = "2026-10-31"
+bead = "sp-oy529j"
 
 [[use_case]]
 id = "UC-config-store-preflight-22"

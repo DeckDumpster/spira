@@ -202,6 +202,6 @@ tier = "T2"
 statement = "`held.sh` classifies branches in hold repos: HELD (ahead, bead exists), EMPTY (zero ahead) or ORPHAN (no bead). `--summary` stays silent when nothing is held. A repo argument restricts output to that repo and excludes the others. An unreadable bead store must not be reported as \"bead is gone\"."
 
 [use_case.uncovered]
-reason = "test-held.sh exists and exercises this, but its # covers: line names no use case; the 2026-09-27 corpus audit flagged it ADD-USE-CASE rather than a tag onto this id"
+reason = "test-held.sh exercised this, but its # covers: line named no use case, and it was deleted by sp-oy529j (2026-10-31 test review); the 2026-09-27 corpus audit flagged it ADD-USE-CASE rather than a tag onto this id"
 date = "2026-09-27"
 bead = "sp-v4f42"
