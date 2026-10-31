@@ -1424,7 +1424,13 @@ fn paced_cut(env_: &Env, name: &str, one: &Opts) -> Result<(), String> {
     let inbox = PathBuf::from(cfg("SPIRA_CONCIERGE_INBOX")?);
     let stamp = utc_stamp;
     let sm = pace::Seams { repo: name, now: now(), inbox: &inbox, stamp: &stamp };
-    pace::paced(&pace::Files::new(&env_.run, name), &sm, || io::open_round_id(env_, &repo), |id| io::certify_driven(env_, name, id), || io::read_local_verdict(env_, name), || cut(one))
+    let (fit, redrive, incident) = (
+        |id: &str| io::round_certifiable(env_, &repo, id),
+        |id: &str| io::redrive_round(&repo, id),
+        |id: &str, why: &str| io::file_orphan_round_incident(env_, &repo, id, why),
+    );
+    let orphans = pace::Orphans { fit: &fit, redrive: &redrive, incident: &incident };
+    pace::paced(&pace::Files::new(&env_.run, name), &sm, || io::open_round_id(env_, &repo), |id| io::certify_driven(env_, name, id), || io::read_local_verdict(env_, name), &orphans, || cut(one))
 }
 
 /// One scheduler pass over the repo map. `Pass::Local` is the harness's VM rounds, run one repo

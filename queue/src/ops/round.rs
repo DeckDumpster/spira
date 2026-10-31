@@ -1483,7 +1483,7 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
         "phase={}",
         phase_of(w, kv.get("batch_id").unwrap_or(""))
     ));
-    for k in ["batch_id", "repo", "head", "base", "members"] {
+    for k in ["batch_id", "repo", "head", "base", "members", "worktree"] {
         w.out(format!("{k}={}", kv.get(k).unwrap_or("")));
     }
     if let Some(red) = kv.get("red").filter(|r| !r.is_empty()) {
@@ -1496,7 +1496,7 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
             "round{n}=open\nround{n}_phase={}",
             phase_of(w, kv.get("batch_id").unwrap_or(""))
         ));
-        for k in ["batch_id", "repo", "head", "base", "members"] {
+        for k in ["batch_id", "repo", "head", "base", "members", "worktree"] {
             w.out(format!("round{n}_{k}={}", kv.get(k).unwrap_or("")));
         }
         if let Some(red) = kv.get("red").filter(|r| !r.is_empty()) {

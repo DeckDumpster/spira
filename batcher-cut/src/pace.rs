@@ -19,12 +19,16 @@ pub const BACKOFF_SECS: u64 = 600;
 pub const STOP_AFTER: u32 = 2;
 pub const REFUSAL_WINDOW_SECS: u64 = 1800;
 pub const REFUSAL_STOP_AFTER: u32 = 2;
+pub const ORPHAN_REDRIVE_AFTER_SECS: u64 = 600;
 
 #[derive(Default, Clone, PartialEq, Debug)]
 pub struct State {
     pub infra: u32,
     pub backoff_until: u64,
     pub paged_open: String,
+    pub orphan: String,
+    pub orphan_since: u64,
+    pub redriven: String,
 }
 
 #[derive(PartialEq, Debug)]
@@ -112,15 +116,45 @@ pub fn advance(st: &State, outcome: &Outcome, repo: &str, now: u64, detail: &str
     (next, fx)
 }
 
-/// An open round at the start of a pass has no driver (the pass is the only driver and passes
-/// do not overlap): page it once per batch, never re-cut it.
-pub fn open_page(st: &State, repo: &str, open_id: &str) -> (State, Option<String>) {
-    if st.paged_open == open_id {
-        return (st.clone(), None);
-    }
+/// What an open round with no driver is owed this pass.
+#[derive(PartialEq, Debug)]
+pub enum Orphan {
+    /// Seen undriven for less than [`ORPHAN_REDRIVE_AFTER_SECS`].
+    Wait,
+    /// Undriven long enough, and its worktree still stands at its head: certify can drive it.
+    Redrive,
+    /// Cannot be driven by certify, or was re-driven once and is undriven again: a person decides.
+    Incident(String),
+}
+
+/// Tracks how long `open_id` has gone undriven and decides what it is owed. `fit` is `Err(why)`
+/// when certify would refuse the round at once, so a re-drive would change nothing.
+pub fn orphan_step(st: &State, open_id: &str, now: u64, fit: Result<(), String>) -> (State, Orphan) {
     let mut next = st.clone();
-    next.paged_open = open_id.to_string();
-    (next, Some(format!("ROUND OPEN {repo} {open_id} with no driver — finish, eject or abandon it")))
+    if next.orphan != open_id {
+        next.orphan = open_id.to_string();
+        next.orphan_since = now;
+    }
+    let since = next.orphan_since;
+    let verdict = if now.saturating_sub(since) < ORPHAN_REDRIVE_AFTER_SECS {
+        Orphan::Wait
+    } else if let Err(why) = fit {
+        Orphan::Incident(format!("it cannot be re-driven: {why}"))
+    } else if next.redriven == open_id {
+        Orphan::Incident("it was re-driven once and has no driver again".to_string())
+    } else {
+        next.redriven = open_id.to_string();
+        next.orphan_since = now;
+        Orphan::Redrive
+    };
+    (next, verdict)
+}
+
+/// The open round's own ways out, run by the rounds loop; each is a seam so the loop is testable.
+pub struct Orphans<'a> {
+    pub fit: &'a dyn Fn(&str) -> Result<(), String>,
+    pub redrive: &'a dyn Fn(&str) -> Result<(), String>,
+    pub incident: &'a dyn Fn(&str, &str) -> Result<String, String>,
 }
 
 pub struct Files {
@@ -147,11 +181,17 @@ impl Files {
             infra: kv.get("infra").and_then(|v| v.parse().ok()).unwrap_or(0),
             backoff_until: kv.get("backoff_until").and_then(|v| v.parse().ok()).unwrap_or(0),
             paged_open: kv.get("paged_open").cloned().unwrap_or_default(),
+            orphan: kv.get("orphan").cloned().unwrap_or_default(),
+            orphan_since: kv.get("orphan_since").and_then(|v| v.parse().ok()).unwrap_or(0),
+            redriven: kv.get("redriven").cloned().unwrap_or_default(),
         }
     }
     pub fn save(&self, st: &State) -> Result<(), String> {
         fs::create_dir_all(&self.dir).map_err(|e| format!("{}: {e}", self.dir.display()))?;
-        let body = format!("infra={}\nbackoff_until={}\npaged_open={}\n", st.infra, st.backoff_until, st.paged_open);
+        let body = format!(
+            "infra={}\nbackoff_until={}\npaged_open={}\norphan={}\norphan_since={}\nredriven={}\n",
+            st.infra, st.backoff_until, st.paged_open, st.orphan, st.orphan_since, st.redriven
+        );
         fs::write(self.dir.join("state"), body).map_err(|e| format!("rounds-pace state: {e}"))
     }
     fn touch(&self, p: PathBuf) -> Result<(), String> {
@@ -238,6 +278,7 @@ pub fn paced(
     open_round: impl FnOnce() -> Result<Option<String>, String>,
     driven: impl FnOnce(&str) -> bool,
     verdict: impl FnOnce() -> Option<(String, u64)>,
+    orphans: &Orphans,
     cut: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
     let mut st = files.load();
@@ -248,14 +289,31 @@ pub fn paced(
     if let Some(id) = open_round()? {
         if driven(&id) {
             println!("batcher rounds: {}: round {id} is open and being certified — not re-cut", sm.repo);
+            if !st.orphan.is_empty() {
+                files.save(&State { orphan: String::new(), orphan_since: 0, ..st })?;
+            }
             return Ok(());
         }
-        let (next, pg) = open_page(&st, sm.repo, &id);
-        if let Some(text) = pg {
-            page(sm, &text)?;
+        let (mut next, step) = orphan_step(&st, &id, sm.now, (orphans.fit)(&id));
+        match step {
+            Orphan::Wait => println!("batcher rounds: {}: round {id} is open with no driver — not re-cut", sm.repo),
+            Orphan::Redrive => match (orphans.redrive)(&id) {
+                Ok(()) => println!("batcher rounds: {}: round {id} had no driver; re-driving it once", sm.repo),
+                Err(e) => println!("batcher rounds: {}: round {id} had no driver; the re-drive did not start: {e}", sm.repo),
+            },
+            Orphan::Incident(why) => {
+                if next.paged_open != id {
+                    match (orphans.incident)(&id, &why) {
+                        Ok(inc) => {
+                            println!("batcher rounds: {}: round {id} is stranded ({why}) — filed {inc}", sm.repo);
+                            next.paged_open = id.clone();
+                        }
+                        Err(e) => println!("batcher rounds: {}: round {id} is stranded ({why}) — could not file the incident: {e}", sm.repo),
+                    }
+                }
+            }
         }
         files.save(&next)?;
-        println!("batcher rounds: {}: round {id} is open — not re-cut", sm.repo);
         return Ok(());
     }
     let res = cut();
@@ -292,7 +350,8 @@ mod tests {
         let inbox = d.join("inbox.log");
         let sm = Seams { repo, now, inbox: &inbox, stamp: &stamp };
         let cut_ran = Cell::new(false);
-        let r = paced(&Files::new(d, repo), &sm, || Ok(open.map(String::from)), |_| false, || verdict.map(|(s, a)| (s.to_string(), a)), || {
+        let none = Orphans { fit: &|_| Ok(()), redrive: &|_| Ok(()), incident: &|_, _| Ok(String::new()) };
+        let r = paced(&Files::new(d, repo), &sm, || Ok(open.map(String::from)), |_| false, || verdict.map(|(s, a)| (s.to_string(), a)), &none, || {
             cut_ran.set(true);
             res
         });
@@ -395,34 +454,88 @@ mod tests {
         assert!(!Files::new(d, "a").pause_file().exists());
     }
 
-    #[test]
-    fn an_open_round_is_never_re_cut_and_is_paged_once_per_batch() {
-        let t = dir("open");
-        let d = t.path();
-        let ran = run(d, "a", 1000, Some("b-1"), None, Ok(()));
-        assert!(!ran);
-        run(d, "a", 1100, Some("b-1"), None, Ok(()));
-        assert_eq!(inbox(d).matches("ROUND OPEN a b-1 with no driver").count(), 1);
-        run(d, "a", 1200, Some("b-2"), None, Ok(()));
-        assert_eq!(inbox(d).matches("ROUND OPEN").count(), 2);
-    }
+    type Calls = std::cell::RefCell<Vec<String>>;
 
-    #[test]
-    fn an_open_round_a_certify_is_driving_is_not_paged() {
-        let t = dir("driven");
-        let d = t.path();
+    fn orphan_pass(d: &Path, now: u64, id: &str, driven: bool, fit: Result<(), String>, calls: &Calls) -> bool {
         let inbox_p = d.join("inbox.log");
-        let sm = Seams { repo: "a", now: 1000, inbox: &inbox_p, stamp: &stamp };
+        let sm = Seams { repo: "a", now, inbox: &inbox_p, stamp: &stamp };
+        let (fit_f, redrive_f, incident_f) = (
+            |_: &str| fit.clone(),
+            |id: &str| {
+                calls.borrow_mut().push(format!("redrive {id}"));
+                Ok(())
+            },
+            |id: &str, why: &str| {
+                calls.borrow_mut().push(format!("incident {id}: {why}"));
+                Ok("sp-inc".to_string())
+            },
+        );
+        let o = Orphans { fit: &fit_f, redrive: &redrive_f, incident: &incident_f };
         let cut = Cell::new(false);
-        paced(&Files::new(d, "a"), &sm, || Ok(Some("b-1".into())), |id| id == "b-1", || None, || {
+        paced(&Files::new(d, "a"), &sm, || Ok(Some(id.into())), |_| driven, || None, &o, || {
             cut.set(true);
             Ok(())
         })
         .unwrap();
-        assert!(!cut.get());
-        assert_eq!(inbox(d), "");
-        run(d, "a", 1100, Some("b-1"), None, Ok(()));
-        assert_eq!(inbox(d).matches("ROUND OPEN a b-1").count(), 1, "undriven it still pages");
+        cut.get()
+    }
+
+    #[test]
+    fn an_open_round_with_no_driver_is_redriven_once_after_the_wait_and_never_re_cut() {
+        let t = dir("orphan");
+        let (d, calls) = (t.path(), Calls::default());
+        assert!(!orphan_pass(d, 1000, "b-1", false, Ok(()), &calls));
+        assert!(!orphan_pass(d, 1000 + ORPHAN_REDRIVE_AFTER_SECS - 1, "b-1", false, Ok(()), &calls));
+        assert!(calls.borrow().is_empty(), "not before the wait: {:?}", calls.borrow());
+        assert!(!orphan_pass(d, 1000 + ORPHAN_REDRIVE_AFTER_SECS, "b-1", false, Ok(()), &calls));
+        assert_eq!(*calls.borrow(), vec!["redrive b-1".to_string()]);
+    }
+
+    #[test]
+    fn a_redriven_round_that_is_undriven_again_files_one_incident_and_no_second_redrive() {
+        let t = dir("orphan-twice");
+        let (d, calls) = (t.path(), Calls::default());
+        let n = ORPHAN_REDRIVE_AFTER_SECS;
+        orphan_pass(d, 1000, "b-1", false, Ok(()), &calls);
+        orphan_pass(d, 1000 + n, "b-1", false, Ok(()), &calls);
+        orphan_pass(d, 1000 + n + 1, "b-1", false, Ok(()), &calls);
+        assert_eq!(calls.borrow().len(), 1, "the re-driven round gets its own wait: {:?}", calls.borrow());
+        orphan_pass(d, 1000 + 2 * n, "b-1", false, Ok(()), &calls);
+        orphan_pass(d, 1000 + 3 * n, "b-1", false, Ok(()), &calls);
+        let c = calls.borrow();
+        assert_eq!(c.iter().filter(|x| x.starts_with("redrive")).count(), 1, "{c:?}");
+        assert_eq!(c.iter().filter(|x| x.starts_with("incident b-1")).count(), 1, "{c:?}");
+    }
+
+    #[test]
+    fn a_round_whose_worktree_moved_on_is_not_redriven_and_files_an_incident_naming_why() {
+        let t = dir("orphan-moved");
+        let (d, calls) = (t.path(), Calls::default());
+        orphan_pass(d, 1000, "b-1", false, Err("the worktree is at d7aa8f08, not 07da4601".into()), &calls);
+        orphan_pass(d, 1000 + ORPHAN_REDRIVE_AFTER_SECS, "b-1", false, Err("the worktree is at d7aa8f08, not 07da4601".into()), &calls);
+        let c = calls.borrow();
+        assert_eq!(c.len(), 1, "{c:?}");
+        assert!(c[0].starts_with("incident b-1") && c[0].contains("d7aa8f08"), "{c:?}");
+    }
+
+    #[test]
+    fn a_driver_seen_resets_the_orphan_wait() {
+        let t = dir("orphan-driven");
+        let (d, calls) = (t.path(), Calls::default());
+        orphan_pass(d, 1000, "b-1", false, Ok(()), &calls);
+        orphan_pass(d, 1000 + ORPHAN_REDRIVE_AFTER_SECS - 10, "b-1", true, Ok(()), &calls);
+        orphan_pass(d, 1000 + ORPHAN_REDRIVE_AFTER_SECS, "b-1", false, Ok(()), &calls);
+        assert!(calls.borrow().is_empty(), "{:?}", calls.borrow());
+    }
+
+    #[test]
+    fn an_open_round_a_certify_is_driving_is_never_acted_on() {
+        let t = dir("driven");
+        let (d, calls) = (t.path(), Calls::default());
+        for k in 0..5 {
+            assert!(!orphan_pass(d, 1000 + k * ORPHAN_REDRIVE_AFTER_SECS, "b-1", true, Ok(()), &calls));
+        }
+        assert!(calls.borrow().is_empty());
     }
 
     #[test]
