@@ -503,7 +503,7 @@ fi
 disk_preflight() {
     local need=$(( disk_need_gib * 1073741824 )) have dir graph
     graph="$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null || true)"
-    for dir in "$HOME/round-work" "${TMPDIR:-/tmp}" $graph; do
+    for dir in "$HOME/round-work" "${TMPDIR:-/tmp}" ${graph:+"$graph"}; do
         have="$(df -B1 --output=avail "$dir" | tail -n1 | tr -d ' ')"
         case "$have" in ''|*[!0-9]*) echo "round-vm: FAULT disk: cannot read free space under $dir" >&2; return 3 ;; esac
         if [ "$have" -lt "$need" ]; then
