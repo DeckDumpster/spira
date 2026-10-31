@@ -21,7 +21,7 @@ pub fn inventory_refusal(text: &str) -> Option<String> {
         Ok(re) => re,
         Err(e) => return Some(format!("rule: refusing — spira-lint's inventory patterns do not compile ({e}), so the text cannot be checked against the fence.")),
     };
-    let hit = String::from_utf8_lossy(re.find(text.as_bytes())?.as_bytes()).into_owned();
+    let hit = spira_lint::rules::inventory::scan(text.as_bytes(), &re).into_iter().next()?;
     Some(format!("rule: refusing — the text holds {hit:?}, which spira-lint's inventory fence refuses in the shipped law/ tree. Cite the mechanism, not the case: drop the provenance, then enact again."))
 }
 
