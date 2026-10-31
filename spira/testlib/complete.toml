@@ -161,6 +161,7 @@ runes = [
     "warden",
     "mender",
     "pilgrim",
+    "skuld",
 ]
 flake_quarantine_at = "2"
 flake_window = "604800"
@@ -207,7 +208,7 @@ incident_priority = "3"
 instance = "prod"
 land_gate_reserve = "2700"
 land_maxsec = "5400"
-lanes = "ops groomer mimir czar warden mender pilgrimage"
+lanes = "ops groomer mimir czar warden mender pilgrimage skuld"
 lanes_max_live = 2
 ffx_vocabulary_mode = "enforce"
 lc_live_check_secs = 60
@@ -274,6 +275,7 @@ operator_actor = "ryan"
 overrides = "/fixture/userhome/.config/spira/overrides"
 path = "/fixture/userhome/.local/bin:/fixture/userhome/.cargo/bin"
 pilgrim_label = "pilgrimage"
+skuld_label = "draft"
 plan_label = "plan"
 preflight_wall_secs = "240"
 prod = "/fixture/userhome/spira/spira-releases/current/spira"
@@ -714,6 +716,46 @@ system_prompt = "replace"
 
 [persona.pilgrim.lease]
 minutes = 70
+heartbeat_seconds = 30
+
+[persona.skuld]
+model = "claude-opus-5-5"
+tools = [
+    "Bash(work note*)",
+    "Bash(work show*)",
+    "Bash(rule.sh list*)",
+    "Bash(rule.sh show *)",
+    "Bash(*/rule.sh list*)",
+    "Bash(*/rule.sh show *)",
+    "Bash(git show*)",
+    "Bash(git grep*)",
+    "Bash(git status*)",
+    "Bash(git ls-tree*)",
+    "Bash(git for-each-ref*)",
+    "Bash(git rev-parse*)",
+    "Bash(git -C * show*)",
+    "Bash(git -C * grep*)",
+    "Bash(git -C * status*)",
+    "Bash(git -C * ls-tree*)",
+    "Bash(git -C * for-each-ref*)",
+    "Bash(git -C * rev-parse*)",
+    "Bash(cat *)",
+    "Bash(head *)",
+    "Bash(tail *)",
+    "Bash(ls *)",
+    "Bash(grep *)",
+    "Bash(wc *)",
+    "Read",
+    "Glob",
+    "Grep",
+    "TodoWrite",
+]
+labels = ["draft"]
+lane = "skuld"
+system_prompt = "replace"
+
+[persona.skuld.lease]
+minutes = 45
 heartbeat_seconds = 30
 
 [persona.spike]

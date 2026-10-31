@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=skuld
+DOC=THE SKULD PARTITION LABEL — the label on a drafting request bead that calls a skuld dwarf.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE SKULD PARTITION LABEL — the label on a drafting request bead that calls a skuld
+    # dwarf. Read by skuld.rune's predicate and stamped by `bead.sh file --for skuld`, so the
+    # two agree (law-schema-over-code). Disjoint from the plan label: a skuld must never
+    # claim plan work.
+    : "${SPIRA_SKULD_LABEL:=draft}"
+SPIRA_CONF_DEFAULT_EOF

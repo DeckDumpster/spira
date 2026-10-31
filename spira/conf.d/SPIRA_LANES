@@ -18,5 +18,6 @@ DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # The warden lane is declared because warden.rune ships using it.
     # The mender lane is declared because mender.rune ships using it.
     # The pilgrimage lane is declared because pilgrim.rune ships using it.
-    : "${SPIRA_LANES:=ops groomer qa mimir czar warden mender pilgrimage}"
+    # The skuld lane is declared because skuld.rune ships using it.
+    : "${SPIRA_LANES:=ops groomer qa mimir czar warden mender pilgrimage skuld}"
 SPIRA_CONF_DEFAULT_EOF
