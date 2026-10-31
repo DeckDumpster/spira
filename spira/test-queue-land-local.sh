@@ -78,7 +78,7 @@ seed() {   # seed <id>
 }
 
 tl_config SPIRA_RUN="$RUN" SPIRA_QUEUE_DIR="$QDIR" SPIRA_REPO_MAP="$RMAP" \
-    SPIRA_RELEASES="$RELEASES" SPIRA_HOME_REPO=fixq
+    SPIRA_RELEASES="$RELEASES" SPIRA_HOME_REPO=fixq SPIRA_QUEUE_LOCK_WAIT=2
 run() {
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$SH" \

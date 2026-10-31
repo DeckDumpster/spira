@@ -100,7 +100,7 @@ cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$DWARF_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$DWARF_HOME/"
 cp -r "$HERE/actors" "$DWARF_HOME/" 2>/dev/null || true
 DWARF_RUN="$TMP/dwarfrun"; mkdir -p "$DWARF_RUN"
-DWARF_REPO_MAP="$TMP/repo-map"
+DWARF_REPO_MAP="$TMP/repomap"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$DWARF_REPO_MAP"
 cat > "$DWARF_HOME/runes/builder.rune" <<RUNE
 RUNE_NAME=builder
