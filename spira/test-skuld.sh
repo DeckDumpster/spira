@@ -27,21 +27,25 @@ out="$(env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" SPIRA_TOML="
 want "contract lists skuld" "$(printf '  %-14s %s' skuld 'fixscope,fixdraft')" "$out"
 want "contract still lists builder (positive control)" "  builder" "$out"
 
-echo; echo "PARTITION: a draft request is claimable only by the skuld lane"
-bead_labels="fixscope fixdraft"
-claims() {   # claims <persona> -> 0 when every RUNE_LABELS label is on the fixture bead
-    local l p=1
-    for l in $(rune_get "$1" RUNE_LABELS | tr ',' ' '); do
-        case " $bead_labels " in *" $l "*) ;; *) p=0 ;; esac
-    done
-    [ "$p" = 1 ] && [ -n "$(rune_get "$1" RUNE_LABELS)" ]
-}
-claims skuld && ok "skuld claims the fixture draft request" || bad "skuld claims the fixture draft request" "predicate does not match"
-for p in $(ls "$HERE/runes" | sed -n 's/\.rune$//p' | grep -vx skuld); do
-    claims "$p" && bad "$p must not claim a draft request" "predicate matches" || ok "$p does not claim a draft request"
-done
-bead_labels="fixscope plan"
-claims skuld && bad "skuld must not claim plan work" "predicate matches" || ok "skuld does not claim plan work"
+echo; echo "FILE: bead.sh file --for skuld stamps the draft partition"
+cat > "$T/stub-bd" <<'STUB'
+#!/usr/bin/env bash
+[ "${1:-}" = "-C" ] && shift 2
+case "${1:-}" in
+    create) printf '%s\n' "$*" >> "$BD_LOG_PATH"; echo sp-n1 ;;
+    *) exit 0 ;;
+esac
+STUB
+chmod +x "$T/stub-bd"; printf '#!/usr/bin/env bash\nexit 0\n' > "$T/stub-lc"; chmod +x "$T/stub-lc"
+echo "testrepo | $T/testrepo | push | origin/main | | true | plan" > "$T/repos.map"
+tl_config SPIRA_BD="$T/stub-bd" SPIRA_DB="$T/db" SPIRA_REPO_MAP="$T/repos.map" SPIRA_RUN="$T/run"
+: > "$T/bd.log"
+fid="$(env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$T/none.conf" \
+    BD_LOG_PATH="$T/bd.log" SPIRA_LC_BIN="$T/stub-lc" SPIRA_HOME="$HERE" SPIRA_REPO="$T" \
+    bead.sh file "draft a thing" --for skuld --repo testrepo --body-file /dev/null 2>&1)"
+is "bead.sh file --for skuld files a bead" "sp-n1" "$fid"
+want "the filed bead carries the skuld partition" "fixdraft" "$(cat "$T/bd.log")"
+want "the filed bead carries the scope label" "fixscope" "$(cat "$T/bd.log")"
 
 echo; echo "SELECT: spira-claim picks the draft request for skuld and never for the builder"
 cat > "$T/beads.json" <<JSON
@@ -90,6 +94,9 @@ want "skuld can note on its bead" "Bash(work note*)" "$tools"
 want "skuld can read the code" "Bash(git -C * show*)" "$tools"
 persona_tools="$(sed -n '/^\[persona.skuld\]/,/^\[persona.skuld.lease\]/p' "$HERE/testlib/complete.toml")"
 for t in Edit Write bead.sh; do lack "persona.skuld.tools has no $t" "\"$t" "$persona_tools"; done
+rune_tools_n="$(rune_get skuld RUNE_TOOLS | tr ',' '\n' | sort)"
+toml_tools_n="$(printf '%s\n' "$persona_tools" | sed -n 's/^ *"\(.*\)",$/\1/p' | sort)"
+is "persona.skuld.tools agrees with the rune's RUNE_TOOLS" "$rune_tools_n" "$toml_tools_n"
 want "persona.skuld.tools carries work note" "Bash(work note*)" "$persona_tools"
 want "positive control: the builder does have Edit" "Edit" "$(rune_get builder RUNE_TOOLS)"
 want "positive control: the matcher sees a bead.sh grant" "bead.sh" "$(rune_get warden RUNE_TOOLS)"
