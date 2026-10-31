@@ -258,6 +258,14 @@ pub fn run(ctx: &Ctx) -> Report {
     ordered.sort_by_key(|u| if u == "dolt-beads.service" { 0 } else { 1 });
 
     let new_by_inst: std::collections::BTreeSet<&String> = new_units.iter().collect();
+    let live: Vec<String> = ordered.iter().filter(|u| !masked.contains(*u)).cloned().collect();
+    let enabled_all: BTreeMap<&String, Option<String>> = live.iter().zip(ctx.systemctl.is_enabled_many(&live)).collect();
+    let active_all: BTreeMap<&String, bool> = live.iter().zip(ctx.systemctl.is_active_many(&live)).collect();
+
+    // Units whose action is a bare enable / enable --now go out in one call each, flushed
+    // before anything that must run in order (a drain, a restart, the database unit).
+    let mut batch: Vec<String> = Vec::new();
+    let mut batch_now = false;
     for u in &ordered {
         if masked.contains(u) {
             r.enabled_actions.push((u.clone(), Action::Masked));
@@ -265,18 +273,29 @@ pub fn run(ctx: &Ctx) -> Report {
         }
         let subject = ctrl_subject(u, &ctx.host.instance);
         let suspended = (ctx.suspended)(&subject);
-        let enabled_str = ctx.systemctl.is_enabled(u);
-        let disabled = enabled_str.as_deref() == Some("disabled") && !new_by_inst.contains(u) && !is_convergence_root(u, &ctx.host.instance);
+        let disabled = enabled_all[u].as_deref() == Some("disabled") && !new_by_inst.contains(u) && !is_convergence_root(u, &ctx.host.instance);
         // A changed template (spira-watch@.service) counts as a change to every instance.
         let tmpl_of_u = rendered.iter().find(|(inst, _, _)| inst == u).map(|(_, t, _)| t.clone());
         let changed = tmpl_of_u.as_deref().map(|t| changed_templates.contains(t)).unwrap_or(false);
-        let active = ctx.systemctl.is_active(u);
-        let action = decide(State { changed, masked: false, suspended, disabled, halted: ctx.world_halted, active });
-        apply(ctx, u, action);
+        let action = decide(State { changed, masked: false, suspended, disabled, halted: ctx.world_halted, active: active_all[u] });
         r.enabled_actions.push((u.clone(), action));
+        let batchable = u != "dolt-beads.service" && matches!(action, Action::Enable | Action::EnableNow);
+        let now = action == Action::EnableNow;
+        if !batch.is_empty() && !(batchable && now == batch_now) {
+            ctx.systemctl.enable_many(&std::mem::take(&mut batch), batch_now);
+        }
+        if batchable {
+            batch_now = now;
+            batch.push(u.clone());
+            continue;
+        }
+        apply(ctx, u, action);
         if u == "dolt-beads.service" && !ctx.world_halted {
             db_server_wait(ctx);
         }
+    }
+    if !batch.is_empty() {
+        ctx.systemctl.enable_many(&batch, batch_now);
     }
 
     r
