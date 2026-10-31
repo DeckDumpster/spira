@@ -73,7 +73,7 @@ impl Journal for Counting {
     }
 }
 
-const PER_EVENT: u64 = 6;
+const PER_EVENT: u64 = 7;
 const IDLE_CALLS_PER_MINUTE: u64 = 12;
 
 /// The registration set the service builds from its shipped intervals, not a hand-copied one.
