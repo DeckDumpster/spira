@@ -145,20 +145,20 @@ fn same_wakes(s: Scenario) -> Option<Vec<String>> {
 }
 
 #[test]
-fn a_stalled_monitor_with_events_waiting_is_woken_once() {
+fn e2e_a_stalled_monitor_with_events_waiting_is_woken_once() {
     let Some(w) = same_wakes(Scenario { name: "wake", inbox_ahead: true, triage: false }) else { return };
     assert!(w.len() == 1 && w[0].contains("re-arm: Monitor inbox-triage"), "{w:?}");
 }
 
 #[test]
-fn an_inbox_older_than_the_last_sighting_wakes_nobody() {
+fn e2e_an_inbox_older_than_the_last_sighting_wakes_nobody() {
     if let Some(w) = same_wakes(Scenario { name: "old", inbox_ahead: false, triage: false }) {
         assert!(w.is_empty(), "{w:?}");
     }
 }
 
 #[test]
-fn a_running_monitor_wakes_nobody() {
+fn e2e_a_running_monitor_wakes_nobody() {
     if let Some(w) = same_wakes(Scenario { name: "alive", inbox_ahead: true, triage: true }) {
         assert!(w.is_empty(), "{w:?}");
     }

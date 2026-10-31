@@ -421,7 +421,7 @@ A fence red is still a `branch-red`; a unit test the branch breaks is the round'
 | `unit`, any **script** touched | `suites(script)` | the same |
 | `unit`, `SPIRA_GATE_ALL=1` | `suites(gate-all)` | the same — the caller asked for the corpus |
 | `unit`, the touched set or the graph unreadable | `suites(no-diff)` / `suites(no-metadata)` | the same — no guessing a cheaper gate |
-| `unit`, crates (± docs, config, suites) | `unit` | the gate string with **suites off** and **without the build fence** (below), then on the host: `cargo build --profile dwarf -j J --workspace --bins && cargo build --profile dwarf -j J --all-targets -p …` (build) and `cargo test --profile dwarf -j J -p … -- --test-threads=J` (test) |
+| `unit`, crates (± docs, config, suites) | `unit` | the gate string with **suites off** and **without the build fence** (below), then on the host: `cargo build --profile dwarf -j J --workspace --bins && cargo build --profile dwarf -j J --all-targets -p …` (build) and `cargo nextest run --fail-fast --cargo-profile dwarf -j J -p …` (test: one process per test, each under `SPIRA_UNIT_TEST_SLOW_SECS` × `SPIRA_UNIT_TEST_TERMINATE_AFTER`; the first red, a timeout included, stops the run and names the test) |
 | `unit`, nothing buildable | `fences` | the gate string with **suites off** |
 | `fences`, a fresh bead | `fences` | the gate string **without its suites step** ("Fences mode") |
 | `fences`, a re-entering bead (named suites) or a changed suite | `fences+reentry` | the same, then the re-entry phase: exactly those suites |
@@ -460,6 +460,8 @@ they have no build phase of their own, so the build fence stays their compile ch
 string as the branch trial. `gate-touched.sh` no longer calls `build-fence.sh` (it had since
 sp-9uro3, a second call once the gate string named the fence itself); `doctor.sh` fails a row
 whose gate names no `build-fence.sh`.
+
+Doc-tests are not run: nextest has no doc-test mode, and the workspace carries none.
 
 **The build phase is `cargo build --all-targets`**, not `cargo test --no-run`: without
 integration tests (23 of the workspace's binary crates have none) the latter compiles a binary

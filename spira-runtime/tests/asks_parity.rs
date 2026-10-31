@@ -174,46 +174,46 @@ fn same_rows_with(name: &str, ticks: usize, change: bool, prep: impl Fn(&Fixture
 }
 
 #[test]
-fn a_baseline_ask_is_quiet_and_a_newly_opened_one_is_announced_once() {
+fn e2e_a_baseline_ask_is_quiet_and_a_newly_opened_one_is_announced_once() {
     let r = same_rows("new", 3, true);
     assert_eq!(r.iter().filter(|l| l.contains("[watch:asks] NEW ASK sp-new: decide X")).count(), 1, "{r:?}");
     assert!(r.iter().all(|l| !l.contains("sp-old")), "{r:?}");
 }
 
 #[test]
-fn a_held_ask_is_announced_with_its_mail_or_with_how_to_answer_without_one() {
+fn e2e_a_held_ask_is_announced_with_its_mail_or_with_how_to_answer_without_one() {
     let r = same_rows("hold", 3, true);
     assert!(r.iter().any(|l| l.contains("NEW ASK HOLD sp-held: Which branch? | default: take main | message-id: <m9@spira>")), "{r:?}");
     assert!(r.iter().any(|l| l.contains("NEW ASK HOLD sp-nomail: no build spec: which repo? | NO MAIL for the question; answer with spira-lc reply sp-nomail seq:7")), "{r:?}");
 }
 
 #[test]
-fn a_world_that_never_changes_says_nothing() {
+fn e2e_a_world_that_never_changes_says_nothing() {
     assert!(same_rows("quiet", 2, false).is_empty());
 }
 
 #[test]
-fn a_title_is_cut_with_its_id_to_170_characters() {
+fn e2e_a_title_is_cut_with_its_id_to_170_characters() {
     let r = same_rows("long", 3, true);
     let line = r.iter().find(|l| l.contains("NEW ASK sp-long")).expect("the long ask is announced");
     assert!(line.ends_with(&"x".repeat(169 - "sp-long".len())), "{line}");
 }
 
 #[test]
-fn a_store_that_never_answers_announces_nothing() {
+fn e2e_a_store_that_never_answers_announces_nothing() {
     let r = same_rows_with("down", 3, false, |f| fs::write(f.p("bdfail"), "").unwrap());
     assert!(r.is_empty(), "{r:?}");
 }
 
 #[test]
-fn a_title_with_a_quote_or_backslash_is_announced_as_its_text_not_its_json() {
+fn e2e_a_title_with_a_quote_or_backslash_is_announced_as_its_text_not_its_json() {
     let r = same_rows("quoted", 3, true);
     assert!(r.iter().any(|l| l.ends_with("NEW ASK sp-ws: two lines and tab")), "{r:?}");
     assert!(r.iter().any(|l| l.ends_with(r#"NEW ASK sp-quote: say "hi" in C:\dir"#)), "{r:?}");
 }
 
 #[test]
-fn the_last_mail_naming_a_bead_wins_with_every_cur_after_every_new() {
+fn e2e_the_last_mail_naming_a_bead_wins_with_every_cur_after_every_new() {
     let r = same_rows_with("mailorder", 3, true, |f| {
         fs::create_dir_all(f.p("mail/other/new")).unwrap();
         let mail = |s: &str| format!("Subject: {s}\nX-Spira-Default: d\nX-Spira-Work-Bead: sp-held\nMessage-ID: <{s}@spira>\n\nbody\n");

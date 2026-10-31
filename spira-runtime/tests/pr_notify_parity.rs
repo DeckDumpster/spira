@@ -378,7 +378,7 @@ fn widgets() -> Parity {
 }
 
 #[test]
-fn a_pr_is_opened_failed_and_greened_once_each_in_every_land_mode() {
+fn e2e_a_pr_is_opened_failed_and_greened_once_each_in_every_land_mode() {
     let mut p = Parity::build("modes", vec![("widgets", "pr"), ("gadgets", "queue.forge")], &[]);
     let (lines, _) = p.phase(|f| f.get_mut("gadgets").unwrap().open = vec![pr(3, &[RUNNING])]);
     assert_eq!(lines, [format!("OPENED #3 {} [gadgets]", title(3))]);
@@ -394,7 +394,7 @@ fn a_pr_is_opened_failed_and_greened_once_each_in_every_land_mode() {
 }
 
 #[test]
-fn a_merge_mails_the_operator_and_its_deploy_is_reported_when_the_run_completes() {
+fn e2e_a_merge_mails_the_operator_and_its_deploy_is_reported_when_the_run_completes() {
     let mut p = widgets();
     p.phase(|f| f.get_mut("widgets").unwrap().open = vec![pr(5, &[PASS])]);
     let body = "Batch\n\n- sp-aaa11 — first change\n- sp-bbb22 — second change\nnot a bead line";
@@ -421,7 +421,7 @@ fn a_merge_mails_the_operator_and_its_deploy_is_reported_when_the_run_completes(
 }
 
 #[test]
-fn a_failed_deploy_run_is_named_as_failed() {
+fn e2e_a_failed_deploy_run_is_named_as_failed() {
     let mut p = widgets();
     p.phase(|f| f.get_mut("widgets").unwrap().open = vec![pr(6, &[PASS])]);
     p.phase(|f| {
@@ -437,7 +437,7 @@ fn a_failed_deploy_run_is_named_as_failed() {
 }
 
 #[test]
-fn a_pr_the_forge_cannot_account_for_stays_tracked_until_it_can() {
+fn e2e_a_pr_the_forge_cannot_account_for_stays_tracked_until_it_can() {
     let mut p = widgets();
     p.phase(|f| f.get_mut("widgets").unwrap().open = vec![pr(4, &[RUNNING])]);
     assert!(p.phase(|f| f.get_mut("widgets").unwrap().open.clear()).0.is_empty(), "gone from the list, unexplained");
@@ -448,7 +448,7 @@ fn a_pr_the_forge_cannot_account_for_stays_tracked_until_it_can() {
 }
 
 #[test]
-fn a_forge_that_is_down_leaves_state_untouched_and_the_next_answer_is_judged_against_it() {
+fn e2e_a_forge_that_is_down_leaves_state_untouched_and_the_next_answer_is_judged_against_it() {
     let mut p = widgets();
     p.phase(|f| f.get_mut("widgets").unwrap().open = vec![pr(8, &[RUNNING])]);
     assert!(p.phase(|f| f.get_mut("widgets").unwrap().down = true).0.is_empty(), "down is not an empty list");
@@ -461,7 +461,7 @@ fn a_forge_that_is_down_leaves_state_untouched_and_the_next_answer_is_judged_aga
 }
 
 #[test]
-fn a_pushed_branch_without_a_pr_is_named_only_where_prs_are_the_land_mode() {
+fn e2e_a_pushed_branch_without_a_pr_is_named_only_where_prs_are_the_land_mode() {
     let mut p = Parity::build("stray", vec![("widgets", "pr"), ("gadgets", "queue.forge")], &["spira/covered", "spira/stray", "feature/nope"]);
     let (lines, _) = p.phase(|f| {
         let mut covered = pr(2, &[RUNNING]);
@@ -476,7 +476,7 @@ fn a_pushed_branch_without_a_pr_is_named_only_where_prs_are_the_land_mode() {
 }
 
 #[test]
-fn the_forge_token_rides_the_request_and_is_not_in_the_debug_output() {
+fn e2e_the_forge_token_rides_the_request_and_is_not_in_the_debug_output() {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let api = format!("http://{}", l.local_addr().unwrap());
     let seen = std::thread::spawn(move || {
@@ -493,7 +493,7 @@ fn the_forge_token_rides_the_request_and_is_not_in_the_debug_output() {
 }
 
 #[test]
-fn a_list_that_fills_a_page_is_not_taken_for_the_whole_list() {
+fn e2e_a_list_that_fills_a_page_is_not_taken_for_the_whole_list() {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let api = format!("http://{}", l.local_addr().unwrap());
     std::thread::spawn(move || {

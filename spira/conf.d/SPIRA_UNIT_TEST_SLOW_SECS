@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=gate
+DOC=A unit test running this many seconds is flagged slow (cargo-nextest slow-timeout; gate and round).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_UNIT_TEST_SLOW_SECS:=5}"
+SPIRA_CONF_DEFAULT_EOF

@@ -141,7 +141,7 @@ fn same_rows(name: &str, repo: bool, ticks: usize, world: impl Fn(&Fixture)) -> 
 }
 
 #[test]
-fn stale_paths_are_alarmed_once_and_fresh_ones_and_deletions_are_not() {
+fn e2e_stale_paths_are_alarmed_once_and_fresh_ones_and_deletions_are_not() {
     let r = same_rows("stale", true, 2, Fixture::dirty_world);
     let named = |p: &str| r.iter().filter(|l| l.contains(&format!("BRAIN DIRTY: {p} has been"))).count();
     for p in ["wiki/notes/old new.md", "wiki/notes/edited.md", "wiki/notes/renamed.md", "wiki/notes/deep/er/leaf.md"] {
@@ -154,19 +154,19 @@ fn stale_paths_are_alarmed_once_and_fresh_ones_and_deletions_are_not() {
 }
 
 #[test]
-fn a_clean_tree_says_nothing() {
+fn e2e_a_clean_tree_says_nothing() {
     assert!(same_rows("clean", true, 2, |_| {}).is_empty());
 }
 
 #[test]
-fn a_wiki_that_is_not_a_repository_is_said_once() {
+fn e2e_a_wiki_that_is_not_a_repository_is_said_once() {
     let r = same_rows("notrepo", false, 2, |_| {});
     assert_eq!(r.len(), 1, "{r:?}");
     assert!(r[0].contains("is not a git repository"), "{r:?}");
 }
 
 #[test]
-fn an_unset_wiki_says_nothing_and_a_git_that_cannot_answer_is_not_a_clean_tree() {
+fn e2e_an_unset_wiki_says_nothing_and_a_git_that_cannot_answer_is_not_a_clean_tree() {
     let g = Fixture::build("unset", true);
     g.dirty_world();
     let fx = Effects { world: World { inbox: g.p("inbox"), ..World::default() }, ..Effects::default() };

@@ -337,7 +337,7 @@ fn same(name: &str, ticks: usize, prep: impl Fn(&Fixture)) -> Outcome2 {
 }
 
 #[test]
-fn every_kind_of_request_is_adjudicated_as_the_script_does() {
+fn e2e_every_kind_of_request_is_adjudicated_as_the_script_does() {
     let (say, writes) = same("all", 2, |_| {});
     let once = |needle: &str| say.iter().filter(|l| l.contains(needle)).count();
     assert_eq!(
@@ -379,7 +379,7 @@ fn every_kind_of_request_is_adjudicated_as_the_script_does() {
 }
 
 #[test]
-fn a_failing_write_is_reported_once_across_repeated_ticks() {
+fn e2e_a_failing_write_is_reported_once_across_repeated_ticks() {
     let (say, writes) = same("failing", 3, |f| fs::write(f.p("fail-unhold"), "").unwrap());
     assert_eq!(
         say.iter()
@@ -402,26 +402,26 @@ fn a_failing_write_is_reported_once_across_repeated_ticks() {
 }
 
 #[test]
-fn a_bd_supersede_that_fails_is_reported_and_not_retried() {
+fn e2e_a_bd_supersede_that_fails_is_reported_and_not_retried() {
     let (say, _) = same("bd-supersede-down", 3, |f| fs::write(f.p("fail-bd-supersede"), "").unwrap());
     let failed = say.iter().filter(|l| l.ends_with("lifecycle row SUPERSEDED but bd supersede failed (not retried)")).count();
     assert_eq!(failed, 1, "{say:?}");
 }
 
 #[test]
-fn an_evidence_note_that_fails_is_reported_and_the_request_still_settles() {
+fn e2e_an_evidence_note_that_fails_is_reported_and_the_request_still_settles() {
     let (say, _) = same("bd-note-down", 2, |f| fs::write(f.p("fail-bd-note"), "").unwrap());
     assert!(say.iter().any(|l| l.contains("NOTE FAILED sp-open")), "{say:?}");
 }
 
 #[test]
-fn a_store_that_does_not_answer_says_nothing() {
+fn e2e_a_store_that_does_not_answer_says_nothing() {
     let (say, writes) = same("down", 2, |f| fs::remove_file(f.p("held.txt")).unwrap());
     assert!(say.is_empty() && writes.is_empty(), "{say:?} {writes:?}");
 }
 
 #[test]
-fn the_watchers_manifest_no_longer_carries_the_row() {
+fn e2e_the_watchers_manifest_no_longer_carries_the_row() {
     let manifest =
         fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/watchers"))
             .unwrap();
