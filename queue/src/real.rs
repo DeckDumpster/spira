@@ -1370,8 +1370,25 @@ impl Forge for RealForge {
             .arg(run)
             .stderr(Stdio::null()));
     }
-    fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str) -> bool {
-        ok(Command::new(forge).arg("workflow-rerun").arg(repo).arg(run))
+    fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str) -> Rerun {
+        let mut cmd = Command::new(forge);
+        cmd.arg("workflow-rerun").arg(repo).arg(run);
+        close_inherited_fds(&mut cmd);
+        let Ok(o) = cmd.stdin(Stdio::null()).output() else {
+            return Rerun::Failed;
+        };
+        let err = String::from_utf8_lossy(&o.stderr);
+        eprint!("{err}");
+        match o.status.code() {
+            Some(0) => Rerun::Started,
+            Some(3) => Rerun::Decided(
+                err.lines()
+                    .find_map(|l| l.strip_prefix("forge: workflow-rerun refused: "))
+                    .unwrap_or("the forge refused the re-run")
+                    .to_string(),
+            ),
+            _ => Rerun::Failed,
+        }
     }
     fn ami_runs(&self, forge: &Path, repo: &Path) -> Option<Vec<String>> {
         let text = stdout_of(Command::new(forge).arg("ami-runs").arg(repo))?;
