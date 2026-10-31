@@ -198,6 +198,7 @@ struct Config {
     cockpit_mail: String,
     dolt_data: String,
     max_live_dwarves: String,
+    lanes_max_live: String,
     max_dwarves: String,
     disk_floor_pct: u32,
     grace_secs: u64,
@@ -257,6 +258,7 @@ impl Config {
             cockpit_mail: cfg("COCKPIT_MAIL")?,
             dolt_data: cfg("SPIRA_DOLT_DATA")?,
             max_live_dwarves: cfg("SPIRA_MAX_LIVE_DWARVES")?,
+            lanes_max_live: cfg("SPIRA_LANES_MAX_LIVE")?,
             max_dwarves: cfg("SPIRA_MAX_DWARVES")?,
             disk_floor_pct: cfg_parse::<u32>("SPIRA_DISK_FLOOR_PCT")?,
             grace_secs: cfg_parse::<u64>("SPIRA_RECONCILER_GRACE_SECS")?,
@@ -694,7 +696,9 @@ struct FleetReadings {
     /// `(labels, ready, live, is_task)` per builder partition.
     rows: Vec<(String, i64, i64, bool)>,
     live_lanes: i64,
+    live_total: i64,
     max_live: Option<i64>,
+    lanes_max: Option<i64>,
     pool: Option<i64>,
 }
 
@@ -710,7 +714,9 @@ fn fleet_readings(cfg: &Config) -> FleetReadings {
     let task_runes = words(run_cmd(sc, &["rune", "task"]));
     let live_of = |rune: &str| count_of(&run_cmd(&cfg.seams.strand, &["dwarf-count", rune]));
 
-    let live_lanes = words(run_cmd(sc, &["rune", "lane"])).iter().filter(|f| !task_runes.contains(f)).map(|f| live_of(f)).sum();
+    let lane_runes: Vec<String> = words(run_cmd(sc, &["rune", "lane"])).into_iter().filter(|f| !task_runes.contains(f)).collect();
+    let live_lanes: i64 = lane_runes.iter().map(|f| live_of(f)).sum();
+    let live_total = live_lanes + task_runes.iter().map(|f| live_of(f)).sum::<i64>();
 
     let mut rows = Vec::new();
     for line in run_cmd(sc, &["rune", "partitions"]).lines() {
@@ -729,13 +735,15 @@ fn fleet_readings(cfg: &Config) -> FleetReadings {
     FleetReadings {
         rows,
         live_lanes,
+        live_total,
         max_live: cfg.max_live_dwarves.trim().parse().ok(),
+        lanes_max: cfg.lanes_max_live.trim().parse().ok(),
         pool: cfg.max_dwarves.trim().parse().ok(),
     }
 }
 
 fn observe_fleet(cfg: &Config) -> Vec<Check> {
-    let FleetReadings { rows, live_lanes, max_live, pool } = fleet_readings(cfg);
+    let FleetReadings { rows, live_lanes, live_total, max_live, lanes_max, pool } = fleet_readings(cfg);
 
     // The Composite's FleetSpec.ceiling is the declared desired state; an install that has
     // not materialised one yet falls back to SPIRA_MAX_LIVE_DWARVES.
@@ -768,7 +776,14 @@ fn observe_fleet(cfg: &Config) -> Vec<Check> {
         // pool 0) — a deliberate state, not a fault. A lane partition draws outside the
         // pool, so its own gap still means something.
         let deliberately_paused = is_task && pool == Some(0);
-        let raw = if live >= desired_live || deliberately_paused {
+        // Mirrors the sentinel's CHECK7: a task partition needs a fleet slot; a lane needs a
+        // lane share, and may spill past the ceiling by at most the lane cap.
+        let slot_free = if is_task {
+            live_total < max_live
+        } else {
+            lanes_max.map_or(live_total < max_live, |m| live_lanes < m && live_total < max_live + m)
+        };
+        let raw = if live >= desired_live || deliberately_paused || !slot_free {
             RawStatus::Satisfied
         } else {
             RawStatus::Gap {
@@ -2383,6 +2398,66 @@ mod tests {
         }
     }
 
+    fn saturation_seams(dir: &Path, live: &str) -> Seams {
+        let sc = dir.join("spira-config");
+        testkit::write_exe(
+            &sc,
+            "#!/bin/sh\ncase \"$1 $2\" in\n  'rune partitions') printf 'groom\\t\\nops\\t\\nwarden\\t\\nwork\\t\\n' ;;\n  'rune task') echo 'p-work' ;;\n  'rune lane') echo 'p-groom p-ops p-warden' ;;\n  'rune for-labels') echo \"p-$3\" ;;\nesac\n",
+        );
+        let claim = dir.join("spira-claim");
+        testkit::write_exe(&claim, "#!/bin/sh\necho 1\n");
+        let strand = dir.join("strand");
+        testkit::write_exe(&strand, &format!("#!/bin/sh\ncase \"$2\" in\n{live}\n  *) echo 0 ;;\nesac\n"));
+        Seams {
+            spira_config: sc.to_string_lossy().to_string(),
+            spira_claim: claim.to_string_lossy().to_string(),
+            strand: strand.to_string_lossy().to_string(),
+            ..Seams::production()
+        }
+    }
+
+    fn saturation_cfg(dir: &Path, live: &str) -> Config {
+        Config {
+            seams: saturation_seams(dir, live),
+            max_live_dwarves: "4".into(),
+            lanes_max_live: "2".into(),
+            max_dwarves: "6".into(),
+            ..test_config()
+        }
+    }
+
+    fn raw_of(checks: Vec<Check>, key: &str) -> RawStatus {
+        checks.into_iter().find(|c| c.key == key).unwrap_or_else(|| panic!("no check {key}")).raw
+    }
+
+    #[test]
+    fn a_lane_waiting_on_a_full_lane_cap_and_full_fleet_is_not_a_gap() {
+        let dir = scratch_dir("fleet-saturated");
+        let cfg = saturation_cfg(&dir, "p-ops) echo 1 ;;\n  p-warden) echo 1 ;;\n  p-work) echo 2 ;;");
+        assert_eq!(raw_of(observe_fleet(&cfg), "fleet:groom"), RawStatus::Satisfied);
+    }
+
+    #[test]
+    fn a_lane_waiting_on_a_full_lane_cap_alone_is_not_a_gap() {
+        let dir = scratch_dir("fleet-lane-cap-full");
+        let cfg = saturation_cfg(&dir, "p-ops) echo 1 ;;\n  p-warden) echo 1 ;;");
+        assert_eq!(raw_of(observe_fleet(&cfg), "fleet:groom"), RawStatus::Satisfied);
+    }
+
+    #[test]
+    fn a_task_partition_waiting_on_a_full_fleet_is_not_a_gap() {
+        let dir = scratch_dir("fleet-task-full");
+        let cfg = saturation_cfg(&dir, "p-ops) echo 2 ;;\n  p-warden) echo 2 ;;");
+        assert_eq!(raw_of(observe_fleet(&cfg), "fleet:work"), RawStatus::Satisfied);
+    }
+
+    #[test]
+    fn a_lane_with_a_free_slot_and_no_dwarf_is_a_gap() {
+        let dir = scratch_dir("fleet-free-slot");
+        let cfg = saturation_cfg(&dir, "p-ops) echo 1 ;;\n  p-work) echo 1 ;;");
+        assert!(matches!(raw_of(observe_fleet(&cfg), "fleet:groom"), RawStatus::Gap { .. }));
+    }
+
     #[test]
     fn a_paused_task_pool_satisfies_task_partitions_but_not_a_lane() {
         let dir = scratch_dir("fleet-pool-zero");
@@ -2886,6 +2961,7 @@ mod tests {
             cockpit_mail: String::new(),
             dolt_data: String::new(),
             max_live_dwarves: String::new(),
+            lanes_max_live: String::new(),
             max_dwarves: String::new(),
             disk_floor_pct: 15,
             grace_secs: 300,
