@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-batcher-cut-base.sh — cases H (a red base), C (a stale member), E (judgement-ci) and F (spira-lc wiring) of test-batcher-cut.sh, split off for
+# test-batcher-cut-base.sh — cases H (a red base), C (a stale member) and E (judgement-ci) of test-batcher-cut.sh, split off for
 # wall time. It runs that file with CUT_PART=base.
 #
 # tier: T2

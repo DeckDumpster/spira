@@ -50,12 +50,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 CUT_PART="${CUT_PART:-main}"
 case "$CUT_PART" in
     main)  CUT_SECTIONS="A D" ;;
-    attr)  CUT_SECTIONS="B Gf" ;;
-    base)  CUT_SECTIONS="H C E F" ;;
+    attr)  CUT_SECTIONS="B" ;;
+    base)  CUT_SECTIONS="H C E" ;;
+    wiring) CUT_SECTIONS="F Gf" ;;
     land)  CUT_SECTIONS="Gl I J O Nr" ;;
     round) CUT_SECTIONS="K" ;;
     local) CUT_SECTIONS="L" ;;
-    deps)  CUT_SECTIONS="M Np" ;;
+    pace)  CUT_SECTIONS="Np" ;;
+    stack) CUT_SECTIONS="M" ;;
     *) echo "test-batcher-cut: unknown CUT_PART $CUT_PART" >&2; exit 1 ;;
 esac
 cut_runs() { case " $CUT_SECTIONS " in *" $1 "*) return 0 ;; esac; return 1; }
