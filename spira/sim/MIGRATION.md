@@ -17,7 +17,7 @@ seconds from the bead; `?` is unmeasured.
 | test-landing-queue-early | 56 | a green forge verdict is landed at the top of the pass (`queue early:`), a pending one at the end (`queue late:`) | `long-gate-interleaving` (ordering of gate vs. landing) | a forge whose verdict changes mid-pass; the pass log as an event stream | `forge-green-early` and `forge-green-late`: scripted forge verdict flip, expect the landing seq before/after the gate event |
 | test-landing-rebase | 64 | survivors are rebased when the base moves; the loop-defer guard (live dwarf holds the bead) defers; the checkout refresh runs unconditionally; the escalate path reopens | `conflicting-siblings` (conflict resolution order) | a withheld branch rebased on a base move; a live-dwarf hold; operator-checkout state (skew); the reopen count | `survivor-rebase`, `dwarf-holds-bead` (needs a dwarf-claim actor), and a skew probe on the checkout |
 | test-certify | 89 | one gate per tip; PASS certifies without a local rebase; FAIL reopens and does not certify; NO_VERDICT neither certifies nor reopens; ten branches in one pass cost ten gate runs | `certify-twice` (repeat verdict refused), `resubmit-moved-tip` (re-gate on a moved tip) | gate verdict kinds FAIL and NO_VERDICT; a gate-invocation count; the fan-out of ten | gate-worker modes `fail` and `no-verdict`, an expect on invocations per tip, and a ten-branch scenario (the heaviest world; weigh it against the 89 s) |
-| test-lifecycle-cert | ? | a GatePass whose tip mismatches is refused; moved tip on CERTIFIED returns to SUBMITTED with the gate key cleared; GateRed to REWORK; GateInfra stays SUBMITTED but advances the version; WORKING is auto-submitted before a verdict | `certify-twice`, `landstate-lifecycle-agree` | a tip-mismatched verdict; GateInfra; the row version and gate key in the view | gate-worker mode `infra`, a mismatched-tip step, and `lc_version` / `gate_key` columns in `bead_state` |
+| test-lifecycle-cert | ? | a GatePass whose tip mismatches is refused; moved tip on CERTIFIED returns to SUBMITTED with the gate key cleared; GateRed to REWORK; GateInfra stays SUBMITTED but advances the version; WORKING is auto-submitted before a verdict | `certify-twice` | a tip-mismatched verdict; GateInfra; the row version and gate key in the view | gate-worker mode `infra`, a mismatched-tip step, and `lc_version` / `gate_key` columns in `bead_state` |
 | test-submitted-lands | ? | a bead submitted with `work submit` lands and closes in push mode; a RED gate sends it to REWORK and the next dwarf reclaims and resubmits; pr/hold mode closes a bead found landed off-box; a CERTIFIED row is still landed by the same pass | `happy-path` (queue.local only) | the non-queue modes (push, pr, hold); a red then a re-claim by a dwarf; an off-box merge; bead close state | a repo-mode parameter in the world and four scenarios (`push-lands`, `red-then-reclaim`, `offbox-merge`, `certified-in-pass`) |
 | test-queue-land-local | ? | a green round fast-forwards the landing ref, marks members LANDED, closes beads citing the commit, archives the head; a non-fast-forward head, a repo not in queue.local mode and a held per-repo lock are refused; `SPIRA_QUEUE_LOCK_HELD=1` skips the wait; a quarantine edit lands as a change bead | `happy-path` (the success path) | refusals and their exit codes; lock contention between two actors; bead close reason; the archive | `land-refused`: non-ff head, wrong mode, held lock, lock-held bypass; assert ref unchanged |
 | test-land-local-release | ? | landing the harness builds, verifies and activates a release from the round's own corpus; no corpus is refused before anything changes; a failed build keeps `current` and the ref; no release in force skips activation; rollback re-activates and resets the ref; skew refresh only checks; an empty commit lands cleanly | `happy-path`, `cut-in-bare-env` (a build that succeeds) | build failure; absent corpus; rollback; skew match and mismatch; the empty-commit landing; the mock systemctl calls | `release-build-fails`, `release-rollback`, `release-skew`, and an empty-commit step (the first needs a failing build step in the cut actor) |
@@ -147,7 +147,7 @@ line naming a bead picks `fail` (exit 1), `no-verdict` (75, timeout) or `infra` 
 Each run is appended to `config/gate-calls`. Steps steer it with `steps/gate-mode.sh`; `steps/gate-verdicts.sh` waits for a
 bead's gate to have run, fails the step unless the bead sits in the expected state, then steers the next mode.
 
-`gate-verdict-kinds` runs three beads through FAIL (REWORK, re-claimed, lands), NO_VERDICT and infra (both stay
+`gate-verdict-red` runs a bead through FAIL (REWORK, re-claimed, lands); `gate-verdict-silent` runs two through NO_VERDICT and infra (both stay
 SUBMITTED, then land once the gate passes). Seen red with `fail` planted to exit 0: `red_gate_returned_it` unmet.
 
 No bash suite is deleted. Of the suites whose only gap is G6, each still needs something this does not add:
@@ -203,19 +203,9 @@ test-dispatch-open-children (full-pass checks and dispatch), test-strand-submitt
 test-strand-truncated (the strand binary), test-czar-partition (czar-pass), test-warden, test-rune,
 test-lanes (lane concurrency needs live dwarf units), and the 30-odd suites that read the dwarf's brief.
 
-The sim lane reads `claim-order` for the real sentinel's claim rank and lease; gate-verdict-kinds fails its first gate once so the rework is steered before the next minute's call.
-
-Retired bash twins are listed above only once their scenario was seen red on the planted defect; gate-verdict-kinds was re-run green alone under testenv on the tip rebased onto the current landing ref, after the red-tip ejection.
+The sim lane reads `claim-order` for the real sentinel's claim rank and lease; gate-verdict-red fails its first gate once so the rework is steered before the next minute's call.
 
 The sim lane build-fence failure on the last closeout was a reaped warm target directory, not the tree; `cargo check -p spira-config -p spira-sim` is clean.
-
-A second isolated testenv run of gate-verdict-kinds at the same content passed in 57s, so the ejection was not reproducible from the tree.
-
-A third isolated testenv run of gate-verdict-kinds at the rebased tip passed in 55s; the tip is recommitted so a round can re-certify it.
-
-A fourth gate-verdict-kinds run on the same tip was green (55s); the ejection did not reproduce.
-
-A fifth gate-verdict-kinds run under testenv on the tip rebased onto the landing ref was green (62s); sim lane and lint clean for the bead's files.
 
 # Sim D3/G1 part 2: the real dwarf runs under the sentinel
 

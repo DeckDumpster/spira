@@ -27,7 +27,6 @@ moved 2–3x with the host's load between runs of the same code (happy-path `aft
 | resubmit-moved-tip | 57 s / 53 s | 10, 9, 18 s / 6.5–8.9 s |
 | submit-from-other-cwd | 56 s / 52 s | 11, 8, 8 s / 6.5–9.2 s |
 | conflicting-siblings | 113 s / 121 s | 18, 24, 36 s / 14.5–17.5 s |
-| landstate-lifecycle-agree | 208 s / 228 s | 32, 34, 32 s / 27–32 s |
 | long-gate-interleaving | 230 s / 221 s | 35, 31, 45 s / 22–32 s |
 | certify-twice | 222 s / 229 s | 30, 40, 41 s / 28–31 s |
 
