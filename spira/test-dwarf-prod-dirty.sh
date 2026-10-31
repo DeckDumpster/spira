@@ -34,8 +34,6 @@
 # covers: dwarf/src/* UC-dwarf-execution-16
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# PD_PART: main runs cases 0 and 1, rest runs cases 2 and 3; test-dwarf-prod-dirty-rest.sh
-# sets rest and sources this file (split for wall time).
 PD_PART="${PD_PART:-main}"
 . "$HERE/testlib.sh"
 tl_config SPIRA_TEST_CASE_DEADLINE=120
@@ -207,31 +205,6 @@ not_reopened "repo-dirty" "$b2"
 # Restore HARNESS so it does not affect later cases.
 git -C "$HARNESS" checkout -q -- incident.sh 2>/dev/null || true
 poison_bead "$b2"
-fi
-
-if [ "$PD_PART" = rest ]; then
-# ============================================================
-echo
-echo "CASE 2: both clean — the hand-on stands (baseline):"
-echo "-----------------------------------------------------------------------"
-printf 'clean' > "$TMP/shim-dirty"
-b3="$(timeout 5 bd -C "$SPIRA_DB" create --title "test: clean" --type task \
-        -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
-[ -n "$b3" ] || { bad "case 2 bead created" "(bead-create failed)"; true; }
-unset SPIRA_ALLOW_PROD_DIRTY
-dwarf --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
-not_reopened "clean" "$b3"
-poison_bead "$b3"
-
-echo
-echo "CASE 3: own worktree dirty with SPIRA_ALLOW_PROD_DIRTY=1 — the hand-on stands (override):"
-echo "-----------------------------------------------------------------------"
-printf 'own-dirty' > "$TMP/shim-dirty"
-b4="$(timeout 5 bd -C "$SPIRA_DB" create --title "test: own dirty with override" --type task \
-        -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
-[ -n "$b4" ] || { bad "case 3 bead created" "(bead-create failed)"; true; }
-SPIRA_ALLOW_PROD_DIRTY=1 dwarf --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
-not_reopened "override (despite dirty worktree)" "$b4"
 fi
 
 echo

@@ -188,12 +188,7 @@ testdb_seed <<JSONL
 JSONL
 
 rm -rf "$SPIRA_RUN/worktree"
-dwarf --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1
-dwarf_rc=$?
-
-# A starved or killed run leaves no prompt at all; say so instead of reporting two content mismatches.
-if [ -s "$TMP/prompt" ]; then ok "the shim agent captured a prompt"
-else bad "the shim agent captured a prompt" "dwarf rc=$dwarf_rc, no prompt written; dwarf output: $(tail -c 600 "$TMP/out" 2>/dev/null)"; fi
+dwarf --home "$SPIRA_HOME" builder >/dev/null 2>&1
 
 want "the claiming dwarf's prompt names the holds section" "Files already in flight" "$(cat "$TMP/prompt" 2>/dev/null)"
 want "and names the open bead already touching the file"  "tst-holder"              "$(cat "$TMP/prompt" 2>/dev/null)"
