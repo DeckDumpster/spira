@@ -1428,6 +1428,7 @@ dependencies = [
  "mail",
  "reconciler-engine",
  "runtime",
+ "serde",
  "serde_json",
  "spira-config",
  "spira-ctrl",
@@ -2077,17 +2078,24 @@ name = "spira-runtime"
 version = "1.0.0"
 dependencies = [
  "base64",
+ "forge",
+ "install",
  "libc",
  "mail",
+ "reconciler",
+ "reconciler-engine",
  "release",
  "ring",
  "runtime",
  "serde",
  "serde_json",
  "spira-config",
+ "spira-ctrl",
  "spira-otel",
  "testkit",
  "tokio",
+ "tsd",
+ "unit-run",
  "ureq",
 ]
 

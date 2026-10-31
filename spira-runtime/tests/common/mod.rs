@@ -16,6 +16,16 @@ pub fn settings(url: &str, run: &std::path::Path) -> Settings {
             "SPIRA_HOME_REPO" => "spira".into(),
             "SPIRA_VIEW" => "/unused".into(),
             "SPIRA_VIEW_SESSION" => "pit".into(),
+            "SPIRA_RUNTIME_RECONCILER_SECS" => "60".into(),
+            "COCKPIT_SESSIONS" => "one two".into(),
+            "COCKPIT_MAIL" | "SPIRA_RECONCILER_SHADOW_KINDS" | "SPIRA_DOLT_DATA" | "SPIRA_MAX_LIVE_DWARVES" | "SPIRA_LANES_MAX_LIVE" | "SPIRA_MAX_DWARVES" => String::new(),
+            "SPIRA_RELEASES" | "SPIRA_CTRL" | "SPIRA_DESIRED_DIR" | "SPIRA_RUNES" | "SPIRA_LC_PASSWORD_FILE" => "/unused".into(),
+            "SPIRA_INSTANCE" => "prod".into(),
+            "SPIRA_RECONCILER_EFFECT_PASSES" | "SPIRA_NO_PROGRESS_BREAKER_CLAIMS" | "SPIRA_NO_PROGRESS_BREAKER_WINDOW_MINUTES" => "3".into(),
+            "SPIRA_DISK_FLOOR_PCT" => "11".into(),
+            "SPIRA_UNTAGGED_IMAGES_MAX" => "19".into(),
+            "SPIRA_RECONCILER_GRACE_SECS" => "13".into(),
+            "SPIRA_MAIN_HEALTH_ACTIVATION_GRACE_SECS" | "SPIRA_MAIN_HEALTH_FENCE_DEADLINE_SECS" | "SPIRA_PREFLIGHT_WALL_SECS" | "SPIRA_STRANDED_RUNNER_MIN_AGE" => "17".into(),
             _ => return Err(k.to_string()),
         })
     };

@@ -10,7 +10,7 @@
 use serde::{Deserialize, Serialize};
 
 /// What one pass observed for one invariant, before hysteresis.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RawStatus {
     Satisfied,
     /// `since_hint` is the true since-when when the observation itself carries one (e.g. a

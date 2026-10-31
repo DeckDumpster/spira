@@ -93,8 +93,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-archivist.timer", true));
     m.units.push(t("spira-czar-pass.service", false));
     m.units.push(t("spira-czar-pass.timer", true));
-    m.units.push(t("spira-reconciler.service", false));
-    m.units.push(t("spira-reconciler.timer", true));
     m.units.push(t("spira-cockpit.service", true));
     // spira-watch@.service is the template, not an installed unit — never enabled directly.
     m.units.push(t("spira-watch@.service", false));

@@ -10,6 +10,7 @@ pub mod inbox_keeper;
 pub mod pr_notify;
 pub mod publish_backlog;
 pub mod repo_events;
+pub mod reconciler;
 pub mod round_duty;
 pub mod supersede_duty;
 pub mod view;
@@ -32,6 +33,13 @@ pub fn answered_effect(view: &Projection, ev: &Event) -> Option<String> {
     serde_json::from_str::<serde_json::Value>(&requested.kind.body).ok()?["spec"]["name"].as_str().map(str::to_string)
 }
 
+/// The spec of the effect that `ev` is the outcome of, when its stream requested one.
+pub fn answered_spec(view: &Projection, ev: &Event) -> Option<EffectSpec> {
+    let cause = ev.cause.as_ref()?;
+    let requested = view.events(&ev.stream).iter().rev().find(|e| &e.id == cause && e.kind.tag == EFFECT_REQUESTED)?;
+    serde_json::from_value(serde_json::from_str::<serde_json::Value>(&requested.kind.body).ok()?["spec"].clone()).ok()
+}
+
 /// Whether `ev` is the outcome of the effect named `observe` that its stream requested.
 pub fn answers_observe(view: &Projection, ev: &Event, observe: &str) -> bool {
     answered_effect(view, ev).is_some_and(|n| n == observe)
@@ -52,9 +60,7 @@ pub fn civil(days: i64) -> (i64, i64, i64) {
 
 /// `YYYY-MM-DDTHH:MM:SSZ` for a UTC epoch-seconds value.
 pub fn iso8601(secs: u64) -> String {
-    let (y, m, d) = civil((secs / 86_400) as i64);
-    let rem = secs % 86_400;
-    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
+    reconciler_engine::clock::iso_of(secs)
 }
 
 #[cfg(test)]

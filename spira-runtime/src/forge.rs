@@ -72,6 +72,16 @@ fn epoch(stamp: &str) -> Option<u64> {
     u64::try_from(((era * 146_097 + doe - 719_468) * 86_400) + h * 3600 + mi * 60 + s).ok()
 }
 
+/// The first run of two or more digits in a runner's name, else the name itself.
+fn vmid_of(name: &str) -> String {
+    let first = name.split(|c: char| !c.is_ascii_digit()).find(|run| run.len() >= 2);
+    match first {
+        Some(d) => d.to_string(),
+        None if name.is_empty() => "?".into(),
+        None => name.to_string(),
+    }
+}
+
 impl Forge {
     /// A static token when one is set, else whatever `gh auth token` answers now under the
     /// configured gh config dir. Read per call, so a rotated login is picked up; never logged.
@@ -153,6 +163,48 @@ impl Forge {
             .collect())
     }
 
+    /// One `STRANDED run=<id> job="<name>" label=<labels> queued=<n>s runner=<name> vmid=<id>` line per
+    /// queued job older than `min_age` whose per-run label no online runner carries; the lines
+    /// `forge stranded-runners` prints. A call that fails reads as nothing stranded, as it does there.
+    pub fn stranded_runners(&self, slug: &str, now: u64, min_age: u64) -> Vec<String> {
+        const GENERIC: [&str; 9] = ["self-hosted", "linux", "macos", "windows", "x64", "arm64", "x86_64", "arm", "ubuntu-latest"];
+        let Some(runs) = self.get(&format!("/repos/{slug}/actions/runs?per_page=50")) else { return vec![] };
+        let ids: Vec<String> = runs["workflow_runs"].as_array().map(|a| a.iter().filter(|r| r["status"] != "completed").filter_map(|r| r.get("id").map(|i| i.to_string())).collect()).unwrap_or_default();
+        if ids.is_empty() {
+            return vec![];
+        }
+        let runners: Vec<Value> = self.get(&format!("/repos/{slug}/actions/runners?per_page=100")).and_then(|v| v["runners"].as_array().cloned()).unwrap_or_default();
+        let mut lines = vec![];
+        for id in ids {
+            let Some(jobs) = self.get(&format!("/repos/{slug}/actions/runs/{id}/jobs")) else { continue };
+            for j in jobs["jobs"].as_array().cloned().unwrap_or_default() {
+                if j["status"] != "queued" {
+                    continue;
+                }
+                let created = epoch(j["created_at"].as_str().unwrap_or("")).unwrap_or(0);
+                let age = now.saturating_sub(created);
+                if created == 0 || age < min_age {
+                    continue;
+                }
+                let labels: Vec<String> = j["labels"].as_array().map(|a| a.iter().filter_map(|l| l.as_str().map(str::to_string)).filter(|l| !GENERIC.contains(&l.to_lowercase().as_str())).collect()).unwrap_or_default();
+                if labels.is_empty() {
+                    continue;
+                }
+                let carrying: Vec<&Value> = runners.iter().filter(|r| r["labels"].as_array().is_some_and(|ls| ls.iter().any(|l| l["name"].as_str().is_some_and(|n| labels.iter().any(|x| x == n))))).collect();
+                if carrying.iter().any(|r| r["status"] == "online") {
+                    continue;
+                }
+                let (runner, vmid) = carrying.first().map_or(("none".to_string(), "?".to_string()), |r| {
+                    let name = text(r, "name");
+                    let vmid = vmid_of(&name);
+                    (name, vmid)
+                });
+                lines.push(format!("STRANDED run={id} job=\"{}\" label={} queued={age}s runner={runner} vmid={vmid}", text(&j, "name"), labels.join(",")));
+            }
+        }
+        lines
+    }
+
     /// `spira/*` branches ahead of `base` that none of `open_heads` is the head of.
     pub fn stray_branches(&self, slug: &str, base: &str, open_heads: &[String]) -> Option<Vec<String>> {
         let branches = self.listed(&format!("/repos/{slug}/branches?{PAGE}"))?;
@@ -200,6 +252,11 @@ mod tests {
         assert!(forge.credential().unwrap_err().starts_with(NO_CREDENTIAL));
         assert_eq!(forge.open_prs("a/b"), None);
         assert!(forge.completed_runs("a/b").unwrap_err().starts_with(NO_CREDENTIAL));
+    }
+
+    #[test]
+    fn a_runner_is_known_by_the_first_run_of_two_digits_in_its_name_else_its_name() {
+        assert_eq!((vmid_of("ci-vm-9001-a7").as_str(), vmid_of("r1").as_str(), vmid_of("").as_str()), ("9001", "r1", "?"));
     }
 
     #[test]

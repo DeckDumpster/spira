@@ -39,6 +39,10 @@ fn main() {
         println!("ok {}", settings.hash());
         return;
     }
+    if let Some(credential) = settings.reconciler.values.get("SPIRA_LC_PASSWORD_FILE") {
+        // Before any thread exists: the programs the reconciler launches read the store's credential from their environment.
+        std::env::set_var("SPIRA_LC_PASSWORD_FILE", credential);
+    }
     let notifier = match spira_runtime::notify::Notifier::from_env() {
         Ok(n) => Arc::new(n),
         Err(e) => {
@@ -68,7 +72,7 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
         let (settings, clock, sink) = (settings.clone(), clock.clone(), sink.clone());
         move || -> Result<runtime::Engine, String> {
             let mut engine = open_engine(&settings, journal, clock, Arc::new(FileMarker(settings.marker_path())), sink, vec![]).map_err(|e| e.to_string())?;
-            for (_, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), spira_runtime::watchers::round_duty::RoundDuty::boot(), spira_runtime::watchers::inbox_keeper::InboxKeeper::boot(), spira_runtime::watchers::pr_notify::PrNotify::boot(), spira_runtime::watchers::asks::Asks::boot(), spira_runtime::watchers::design_asks::DesignAsks::boot(), spira_runtime::watchers::brain_dirty::BrainDirty::boot(), spira_runtime::watchers::supersede_duty::SupersedeDuty::boot(), spira_runtime::watchers::bead_sweep::BeadSweep::boot(), spira_runtime::watchers::publish_backlog::PublishBacklog::boot(), spira_runtime::watchers::repo_events::RepoEvents::boot(), spira_runtime::watchers::view::View::boot()] {
+            for (_, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), spira_runtime::watchers::round_duty::RoundDuty::boot(), spira_runtime::watchers::inbox_keeper::InboxKeeper::boot(), spira_runtime::watchers::pr_notify::PrNotify::boot(), spira_runtime::watchers::asks::Asks::boot(), spira_runtime::watchers::design_asks::DesignAsks::boot(), spira_runtime::watchers::brain_dirty::BrainDirty::boot(), spira_runtime::watchers::supersede_duty::SupersedeDuty::boot(), spira_runtime::watchers::bead_sweep::BeadSweep::boot(), spira_runtime::watchers::publish_backlog::PublishBacklog::boot(), spira_runtime::watchers::repo_events::RepoEvents::boot(), spira_runtime::watchers::view::View::boot(), spira_runtime::watchers::reconciler::Reconciler::boot()] {
                 engine.start(stream, kind);
             }
             Ok(engine)
@@ -80,5 +84,5 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
     let (_keep_open, rx) = mpsc::channel(1);
     notifier.ready();
     let opts = ServeOpts { kick: Some(kick), max_sleep_ms: max_sleep.map(|d| d.as_millis() as u64), sink: Some(sink), pool: None };
-    serve_with(engine, clock, Arc::new(Effects { heartbeat_url: settings.heartbeat_url.clone(), world: settings.world.clone(), forge: settings.forge.clone(), mail: Some(Arc::new(mail_env)) }), 4, rx, opts).await.map_err(|e| e.to_string())
+    serve_with(engine, clock, Arc::new(Effects { heartbeat_url: settings.heartbeat_url.clone(), world: settings.world.clone(), forge: settings.forge.clone(), mail: Some(Arc::new(mail_env)), reconciler: Some(settings.reconciler.clone()), ..Effects::default() }), 4, rx, opts).await.map_err(|e| e.to_string())
 }

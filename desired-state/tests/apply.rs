@@ -74,8 +74,8 @@ fn the_default_document_declares_the_reconciler_timer_enabled_and_active() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|u| u["name"].as_str() == Some("spira-reconciler.timer"))
-        .expect("the reconciler timer is declared");
+        .find(|u| u["name"].as_str() == Some("spira-watchtower.timer"))
+        .expect("the watchtower timer is declared");
     assert_eq!(row["enabled"].as_bool(), Some(true));
     assert_eq!(row["active"].as_bool(), Some(true));
 }

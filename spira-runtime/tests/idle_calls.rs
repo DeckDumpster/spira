@@ -7,7 +7,7 @@ use runtime::event::*;
 use runtime::journal::{Journal, Offset, Poison, ScheduleRow};
 use runtime::ports::{Clock, VirtualClock};
 use runtime::{Executor, MemJournal, Outcome, Result};
-use spira_runtime::watchers::{asks::Asks, bead_sweep::BeadSweep, design_asks::DesignAsks, supersede_duty::SupersedeDuty, inbox_keeper::InboxKeeper, pr_notify::PrNotify, publish_backlog::PublishBacklog, repo_events::RepoEvents, round_duty::RoundDuty, view::View};
+use spira_runtime::watchers::{asks::Asks, bead_sweep::BeadSweep, design_asks::DesignAsks, supersede_duty::SupersedeDuty, inbox_keeper::InboxKeeper, pr_notify::PrNotify, publish_backlog::PublishBacklog, repo_events::RepoEvents, reconciler::Reconciler, round_duty::RoundDuty, view::View};
 use runtime::marker::NullMarker;
 use runtime::wide::NullSink;
 use spira_runtime::{open_engine, Settings};
@@ -102,6 +102,16 @@ fn production() -> Settings {
             "SPIRA_CONCIERGE_INBOX_BACKOFF" => "3600".into(),
             "SPIRA_RUN" | "SPIRA_QUEUE_DIR" | "SPIRA_REPO_MAP" | "SPIRA_CONCIERGE_INBOX" | "SPIRA_LC_SOCKET" => "/unused".into(),
             "SPIRA_HOME_REPO" => "spira".into(),
+            "SPIRA_RUNTIME_RECONCILER_SECS" => "60".into(),
+            "COCKPIT_SESSIONS" => "one two".into(),
+            "COCKPIT_MAIL" | "SPIRA_RECONCILER_SHADOW_KINDS" | "SPIRA_DOLT_DATA" | "SPIRA_MAX_LIVE_DWARVES" | "SPIRA_LANES_MAX_LIVE" | "SPIRA_MAX_DWARVES" => String::new(),
+            "SPIRA_DB" | "SPIRA_BD" | "SPIRA_RELEASES" | "SPIRA_CTRL" | "SPIRA_DESIRED_DIR" | "SPIRA_RUNES" | "SPIRA_LC_PASSWORD_FILE" => "/unused".into(),
+            "SPIRA_INSTANCE" => "prod".into(),
+            "SPIRA_RECONCILER_EFFECT_PASSES" | "SPIRA_NO_PROGRESS_BREAKER_CLAIMS" | "SPIRA_NO_PROGRESS_BREAKER_WINDOW_MINUTES" => "3".into(),
+            "SPIRA_DISK_FLOOR_PCT" => "11".into(),
+            "SPIRA_UNTAGGED_IMAGES_MAX" => "19".into(),
+            "SPIRA_RECONCILER_GRACE_SECS" => "13".into(),
+            "SPIRA_MAIN_HEALTH_ACTIVATION_GRACE_SECS" | "SPIRA_MAIN_HEALTH_FENCE_DEADLINE_SECS" | "SPIRA_PREFLIGHT_WALL_SECS" | "SPIRA_STRANDED_RUNNER_MIN_AGE" => "17".into(),
             "SPIRA_RUNTIME_BEAD_SWEEP_SECS" => "1800".into(),
             "SPIRA_BEAD_SWEEP_HOLD_MIN" | "SPIRA_BEAD_SWEEP_WAIT_MIN" => "120".into(),
             "SPIRA_BEAD_SWEEP_REWORK_MIN" => "20".into(),
@@ -132,6 +142,7 @@ fn quiet_world(effect: &str, _poll: u64) -> String {
         spira_runtime::watchers::publish_backlog::OBSERVE => r#"{"repos":[]}"#.into(),
         spira_runtime::watchers::repo_events::OBSERVE => r#"{"seed":[],"repos":[]}"#.into(),
         spira_runtime::watchers::view::OBSERVE => r#"{"seed":false,"live":["0f2a9c1e-8b3d-4a6e-9c1f-123456789abc"],"error":null,"dismissed":{"ids":[],"absent":{}}}"#.into(),
+        spira_runtime::watchers::reconciler::OBSERVE => r#"{"now_secs":0,"halted":false,"groups":[],"reminders":{"live":[],"due":[]},"holds":{"ran":false,"breaker_unconfigured":null,"cannot_tell":null,"visited":0,"wanted":[],"skipped":[],"taken":[]}}"#.into(),
         _ => String::new(),
     }
 }
@@ -157,7 +168,7 @@ fn ten_minutes(world: fn(&str, u64) -> String) -> Run {
     let clock = VirtualClock::new(1_800_000_000_000);
     let start = clock.now_ms();
     let mut e = open_engine(&production(), counting.clone(), Arc::new(clock.clone()), Arc::new(NullMarker), Arc::new(NullSink), vec![]).unwrap();
-    for (_, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), RoundDuty::boot(), InboxKeeper::boot(), PrNotify::boot(), Asks::boot(), DesignAsks::boot(), SupersedeDuty::boot(), BeadSweep::boot(), PublishBacklog::boot(), RepoEvents::boot(), View::boot()] {
+    for (_, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), RoundDuty::boot(), InboxKeeper::boot(), PrNotify::boot(), Asks::boot(), DesignAsks::boot(), SupersedeDuty::boot(), BeadSweep::boot(), PublishBacklog::boot(), RepoEvents::boot(), View::boot(), Reconciler::boot()] {
         e.start(stream, kind);
     }
     let (mut wakes, mut polls) = (0, 0);

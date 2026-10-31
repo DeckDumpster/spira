@@ -17,7 +17,6 @@ broker/src/repo_map.rs
 czar-pass/src/main.rs
 queue-watch/src/io.rs
 queue-watch/src/main.rs
-reconciler/src/main.rs
 spira/acceptance-ci.sh
 spira/acceptance-local.sh
 spira/dwarves.sh
