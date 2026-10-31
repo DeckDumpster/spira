@@ -31,6 +31,12 @@ id = "UC-dwarf-execution-04"
 tier = "T1"
 statement = "the world-halt fence refuses a halt bead (one carrying the configured halt label) with a live dwarf and releases the claim; with none it runs stop → session → start"
 
+[use_case.uncovered]
+# literal-ok: names the deleted suite's file, not the halt label
+reason = "test-dwarf-world-stop.sh deleted by the 2026-10-31 test review (per Ryan): dwarf/src/tests.rs whole-run tests assert world stop precedes start and live-peer release; this repeats it through the 23 s real binary; loses sole coverage of UC-dwarf-execution-04"
+date = "2026-10-31"
+bead = "sp-eikm6x"
+
 [[use_case]]
 id = "UC-dwarf-execution-05"
 tier = "T1"
@@ -52,7 +58,7 @@ tier = "T1"
 statement = "the lease renews on trace growth and lapses on silence past `RUNE_LEASE_SECONDS`, killing `-$$`"
 
 [use_case.uncovered]
-reason = "hb_tick, rune_lease_seconds and hb_wait_outcome (lib.sh) retired dead (sp-j89pd, wave 4.2: zero live callers) — the renew/lapse/thrash decision is dwarf::decide::hb_tick, exercised by dwarf/src/decide.rs::tests::hb_tick_table (its own comment names the retired test-dwarf-lease.sh / test-thrash.sh rows it replaces); test-dwarf-lease.sh keeps only its still-live dwarf_lease_minutes/rune_get rows"
+reason = "hb_tick, rune_lease_seconds and hb_wait_outcome (lib.sh) retired dead (sp-j89pd, wave 4.2: zero live callers) — the renew/lapse/thrash decision is dwarf::decide::hb_tick, exercised by dwarf/src/decide.rs::tests::hb_tick_table (its own comment names the retired test-dwarf-lease.sh / test-thrash.sh rows it replaces); test-dwarf-lease.sh, which kept only its still-live dwarf_lease_minutes/rune_get rows, was deleted by sp-eikm6x (2026-10-31 test review)"
 date = "2026-09-30"
 bead = "sp-j89pd"
 
@@ -101,13 +107,18 @@ id = "UC-dwarf-execution-14"
 tier = "T1"
 statement = "an eviction-race reopen fires only for a live eviction reason at the current tip, capped at 2/hour"
 
+[use_case.uncovered]
+reason = "test-dwarf-eviction-race.sh deleted by the 2026-10-31 test review (per Ryan): race is unreachable since sp-mve9i (dwarf never reads bd status); every dwarf e2e reads row state; covered only UC-dwarf-execution-14 end state; loses sole coverage of UC-dwarf-execution-14"
+date = "2026-10-31"
+bead = "sp-eikm6x"
+
 [[use_case]]
 id = "UC-dwarf-execution-15"
 tier = "T1"
 statement = "closing with the gate still running, FAIL, or no gate run leaves a distinct note but does not reopen"
 
 [use_case.uncovered]
-reason = "test-dwarf-gate-close-silent.sh's dwarf rows are deleted (the suite keeps only gate-run.sh's own --status codes): sp-v62vn made every dwarf session restricted, and a restricted session hands its bead on only through the work verbs, so the close fences (dwarf decide::builder_closed, now deleted) — where this behaviour lived — is deleted (sp-nyo1m). The subject is unreachable, not regressed."
+reason = "test-dwarf-gate-close-silent.sh's dwarf rows are deleted, and the suite itself (which had kept only gate-run.sh's own --status codes) was deleted by sp-eikm6x (2026-10-31 test review): sp-v62vn made every dwarf session restricted, and a restricted session hands its bead on only through the work verbs, so the close fences (dwarf decide::builder_closed, now deleted) — where this behaviour lived — is deleted (sp-nyo1m). The subject is unreachable, not regressed."
 date = "2026-10-05"
 bead = "sp-v62vn"
 
@@ -127,7 +138,7 @@ tier = "T1"
 statement = "the dwarf's exit code and ledger `done` line reflect the real rc, status and spend fields, `?` never 0 when missing"
 
 [use_case.uncovered]
-reason = "the shell row (test-dwarf-teardown-e2e-exit.sh) moved to a sub-second whole-run test: dwarf/src/tests.rs::a_submitted_session_that_exits_nonzero_ledgers_the_models_rc"
+reason = "the shell row (test-dwarf-teardown-e2e-exit.sh, since deleted by sp-eikm6x in the 2026-10-31 test review) moved to a sub-second whole-run test: dwarf/src/tests.rs::a_submitted_session_that_exits_nonzero_ledgers_the_models_rc"
 date = "2026-10-11"
 bead = "sp-86zzx5"
 

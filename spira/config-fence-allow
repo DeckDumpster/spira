@@ -35,7 +35,6 @@ spira/runes/spike.rune
 spira/configure.sh
 spira/conf.sh
 spira/deploy.sh
-spira/full-dwarf-fixture.sh
 spira/gate-check.sh
 spira/gate-run.sh
 spira/gate.sh
@@ -52,18 +51,12 @@ spira/pr-notify.sh
 spira/publish-backlog.sh
 spira/release.sh
 spira/stage.sh
-spira/test-dwarf-base-ref-qualify.sh
-spira/test-dwarf-eviction-race.sh
-spira/test-dwarf-gate-close-silent.sh
-spira/test-dwarf-lifecycle-cutover.sh
 spira/test-dwarf-prod-dirty.sh
-spira/test-dwarf-resume-collision.sh
 spira/test-dwarf-resume.sh
 spira/test-dwarf-sweep.sh
 spira/test-dwarf-wiki-dirty.sh
 spira/test-dwarf-worktree-collision.sh
 # literal-ok: a file path, not the world-stop literal itself
-spira/test-dwarf-world-stop.sh
 spira/test-heimdall.sh
 spira/test-batcher-cut.sh
 spira/test-bead-contract.sh
@@ -113,7 +106,6 @@ spira/test-gate-preflight.sh
 spira/test-gate-tree.sh
 spira/test-gh-intake.sh
 spira/test-gh-run-gate.sh
-spira/test-groom-escalation-check.sh
 spira/test-guards.sh
 spira/test-held.sh
 spira/test-hold-liveness.sh
@@ -172,7 +164,6 @@ spira/test-spike.sh
 spira/test-strand-truncated.sh
 spira/test-superseded.sh
 spira/test-thrash-teardown.sh
-spira/test-unclaimable.sh
 spira/test-uninstall.sh
 spira/test-units-lint.sh
 spira/test-watch-refresh.sh
