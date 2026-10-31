@@ -1,7 +1,7 @@
 # Where one sim world's time goes
 
-`sim run` prints `sim: profile …` on success (also for `--keep`); the `test-sim-<scenario>.sh`
-suites and `test-sim-happy-path.sh` echo it per world. `cpu=` is the CPU of every process the world ran and
+`sim run` prints `sim: profile …` on success (also for `--keep`); `test-sim-happy-path.sh`,
+`test-sim-supersede-holds.sh` and `test-sim-claim-vs-batch.sh` echo it per world. `cpu=` is the CPU of every process the world ran and
 reaped: it does not stretch when the box is busy the way wall does, so compare worlds by it.
 
 To see which program spent it, run a suite with `SIM_PROC_TRACE=1`: every command's process tree

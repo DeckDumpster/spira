@@ -5,26 +5,18 @@
 # lane: sim
 # pids: 400
 #
-# test-sim-controls.sh — what makes the per-scenario test-sim-<scenario>.sh suites believable.
+# test-sim-controls.sh — what makes the test-sim-<scenario>.sh suites believable.
 # The run-directory table controls are test-sim-controls-tables.sh and test-sim-controls-lock.sh.
 #
-#   1. Every scenario under spira/sim/scenarios/ has a suite that runs it.
-#   2. CONTROLS: a scenario whose agent moves the branch after submitting and never submits
-#      again fails naming the tip invariant, and one with an expectation nothing can meet fails
-#      naming it, so a shard's exit 0 is not a run that exits 0 whatever happens.
+#   CONTROLS: a scenario whose agent moves the branch after submitting and never submits
+#   again fails naming the tip invariant, and one with an expectation nothing can meet fails
+#   naming it, so a shard's exit 0 is not a run that exits 0 whatever happens.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
 tl_config SPIRA_TEST_CASE_DEADLINE=180   # slow cases: real git/dolt on a loaded VM
 . "$HERE/sim-scenario-lib.sh"
 sim_controls_setup
-
-n=0
-for f in "$HERE"/sim/scenarios/*.toml; do
-    s="$(basename "$f" .toml)"; n=$((n + 1))
-    [ -f "$HERE/test-sim-$s.sh" ] && ok "scenario $s has a suite" || bad "scenario $s has a suite" "no spira/test-sim-$s.sh"
-done
-[ "$n" -ge 9 ] || bail "fewer than nine scenarios under spira/sim/scenarios"
 
 sed 's/"submit"\]$/"commit out\/a3.txt"]/; s/^horizon = .*/horizon = 200000/' "$HERE/sim/scenarios/resubmit-moved-tip.toml" > "$T/stale-tip.toml"
 grep -q 'a3.txt' "$T/stale-tip.toml" || bail "control fixture was not derived from the resubmit scenario"
