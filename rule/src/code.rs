@@ -504,6 +504,19 @@ pub fn seed_drift(wt: &Path, toc: &[Part], pointers: &Pointers) -> Vec<String> {
     drift(&wt.join("law"), &generate(toc, pointers, text))
 }
 
+/// A checkout outruns the 5s default on a loaded disk; the kill leaves stderr empty, so the status is reported.
+const WORKTREE_ADD_SECS: &str = "120";
+
+fn add_worktree(repo_path: &Path, branch: &str, wt: &str, base: &str) -> Result<(), String> {
+    let args = ["worktree", "add", "-q", "-b", branch, wt, base];
+    let out = spira_config::bounded::bounded_for("git", WORKTREE_ADD_SECS).arg("-C").arg(repo_path).args(args).output().map_err(|e| format!("rule: git: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let code = out.status.code().map_or("killed by a signal".to_string(), |c| format!("exit {c}"));
+    Err(format!("rule: git {} ({code}): {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()))
+}
+
 /// Regenerates `law/` in a short-lived worktree of `repo`, commits it on a branch of its own and
 /// removes the worktree. The caller's directory and the repo's own checkout are never touched.
 #[allow(clippy::too_many_arguments)]
@@ -518,7 +531,11 @@ pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, verb: &s
         spira_config::repos::landref(&reg, &repo_path.display().to_string())
     });
     let base = base.ok_or_else(|| format!("rule: no landing ref resolves for {} — refusing to cut law/ from its checkout's HEAD", repo_path.display()))?;
-    git_in(repo_path, &["worktree", "add", "-q", "-b", &branch, &wt_s, &base])?;
+    if let Err(e) = add_worktree(repo_path, &branch, &wt_s, &base) {
+        let _ = git_in(repo_path, &["worktree", "remove", "--force", &wt_s]);
+        let _ = git_in(repo_path, &["branch", "-D", &branch]);
+        return Err(e);
+    }
     let done = (|| {
         write_law(&wt.join("law"), toc, pointers, book)?;
         write_seeds(&wt, toc, book)?;
@@ -547,6 +564,9 @@ pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, verb: &s
         }
     })();
     let _ = git_in(repo_path, &["worktree", "remove", "--force", &wt_s]);
+    if done.is_err() {
+        let _ = git_in(repo_path, &["branch", "-D", &branch]);
+    }
     done.map(|()| branch)
 }
 

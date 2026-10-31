@@ -299,6 +299,7 @@ fn enact_finds_the_repo_itself_and_leaves_the_callers_directory_alone() {
 
 #[test]
 fn commit_law_adds_the_section_on_its_own_branch_and_leaves_the_checkout_alone() {
+    let _env = testkit::env_read();
     let repo = fixture_repo("law-commit-branch");
     let wt_root = testkit::TempDir::new("law-commit-wt");
     let toc = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
@@ -316,6 +317,7 @@ fn commit_law_adds_the_section_on_its_own_branch_and_leaves_the_checkout_alone()
 
 #[test]
 fn commit_law_commits_the_seed_text_so_the_branch_is_what_toc_toml_generates() {
+    let _env = testkit::env_read();
     let repo = fixture_repo("law-commit-seed");
     let wt_root = testkit::TempDir::new("law-commit-seed-wt");
     let toc = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
@@ -446,6 +448,7 @@ fn land_with(repo: &Path, wt_root: &Path, verb: &str, key: &str, toc: &[rule::co
 
 #[test]
 fn commit_law_twice_for_one_slug_in_one_second_gives_two_branches() {
+    let _env = testkit::env_read();
     let repo = fixture_repo("law-commit-twice");
     let wt_root = testkit::TempDir::new("law-commit-twice-wt");
     let toc = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
@@ -722,6 +725,7 @@ fn enact_checks_every_line_and_the_sending_keys_phrase() {
 
 #[test]
 fn commit_law_cuts_from_the_landing_ref_not_the_checkouts_head_and_reports_git_stdout() {
+    let _env = testkit::env_read();
     let repo = fixture_repo("law-commit-landref");
     let git = |args: &[&str]| assert!(Command::new("git").arg("-C").arg(repo.path()).args(args).status().unwrap().success());
     git(&["branch", "local/main"]);
@@ -748,6 +752,7 @@ fn commit_law_cuts_from_the_landing_ref_not_the_checkouts_head_and_reports_git_s
 
 #[test]
 fn commit_law_with_no_base_resolves_the_landing_ref_and_refuses_when_none_resolves() {
+    let _env = testkit::env_read();
     let repo = fixture_repo("law-commit-nobase");
     let wt_root = testkit::TempDir::new("law-commit-nobase-wt");
     let toc = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
@@ -760,4 +765,42 @@ fn commit_law_with_no_base_resolves_the_landing_ref_and_refuses_when_none_resolv
     assert!(Command::new("git").arg("-C").arg(bare.path()).args(["init", "-q"]).status().unwrap().success());
     let err = rule::code::commit_law(bare.path(), None, wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &book).unwrap_err();
     assert!(err.contains("no landing ref resolves"), "{err}");
+}
+
+#[test]
+fn a_worktree_add_that_fails_says_why_and_leaves_no_law_branch() {
+    let repo = fixture_repo("law-wt-fails");
+    let wt_root = testkit::TempDir::new("law-wt-fails-wt");
+    let shim = testkit::TempDir::new("law-wt-fails-git");
+    let real = Command::new("sh").args(["-c", "command -v git"]).output().unwrap();
+    let real = String::from_utf8_lossy(&real.stdout).trim().to_string();
+    testkit::write_exe(
+        shim.join("git"),
+        &format!("#!/bin/sh\nif [ \"$3 $4\" = \"worktree add\" ]; then {real} -C \"$2\" branch \"$7\" HEAD; echo 'fatal: disk on fire' >&2; exit 7; fi\nexec {real} \"$@\"\n"),
+    );
+    let path = format!("{}:{}", shim.path().display(), std::env::var("PATH").unwrap_or_default());
+    let _env = testkit::env(&[("PATH", Some(path.as_str()))]);
+    let toc = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
+    let book = book_of(&[("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three."), ("law-four", "Do four.")]);
+    let err = rule::code::commit_law(repo.path(), Some("HEAD"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &book).unwrap_err();
+    assert!(err.contains("fatal: disk on fire") && err.contains("exit 7"), "{err}");
+    let branches = Command::new("git").arg("-C").arg(repo.path()).args(["branch", "--list", "law/*"]).output().unwrap();
+    assert!(String::from_utf8_lossy(&branches.stdout).trim().is_empty(), "stray branch: {}", String::from_utf8_lossy(&branches.stdout));
+}
+
+#[test]
+fn a_failure_after_the_worktree_exists_leaves_no_law_branch() {
+    let _env = testkit::env_read();
+    let repo = fixture_repo("law-late-fail");
+    let wt_root = testkit::TempDir::new("law-late-fail-wt");
+    let toc = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
+    let book = book_of(&[("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three."), ("law-four", "Do four.")]);
+    let git = |args: &[&str]| assert!(Command::new("git").arg("-C").arg(repo.path()).args(args).status().unwrap().success());
+    git(&["branch", "base"]);
+    let first = rule::code::commit_law(repo.path(), Some("base"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &book).unwrap();
+    git(&["branch", "-f", "base", &first]);
+    let err = rule::code::commit_law(repo.path(), Some("base"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &book).unwrap_err();
+    assert!(err.contains("nothing to commit"), "{err}");
+    let branches = Command::new("git").arg("-C").arg(repo.path()).args(["branch", "--list", "law/*"]).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&branches.stdout).lines().count(), 1, "only the first law branch remains");
 }
