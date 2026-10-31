@@ -981,13 +981,13 @@ fn rune_ready_cli_a_guarded_or_declared_literal_empty_never_refuses() {
 /// runes genuinely has no builder.rune", and skipped every rune every pass forever,
 /// silently (this bead's own repro).
 ///
-/// The refusal is rc 1 ("could not evaluate") with the `0` count `rune-ready` always prints,
-/// never rc 2 ("no rune in the runes").
+/// With neither `SPIRA_HOME` nor `SPIRA_RELEASE` set, config load refuses before the verb runs:
+/// rc 1 ("could not evaluate"), never rc 2 ("no rune in the runes").
 #[test]
 fn rune_ready_cli_unresolvable_home_is_rc1_not_rc2_the_sp_hh599_defect() {
-    let o = run_cfg(&["rune-ready", "builder"], "", &[], &[("SPIRA_HOME", None)]);
-    assert_eq!((o.code, o.out.as_str()), (1, "0"), "stderr: {}", o.err);
-    assert!(o.err.contains("cannot resolve SPIRA_HOME"), "stderr: {}", o.err);
+    let o = run_cfg(&["rune-ready", "builder"], "", &[], &[("SPIRA_HOME", None), ("SPIRA_RELEASE", None)]);
+    assert_eq!((o.code, o.out.as_str()), (1, ""), "stderr: {}", o.err);
+    assert!(o.err.contains("neither SPIRA_HOME nor SPIRA_RELEASE is set"), "stderr: {}", o.err);
     assert!(!o.err.contains("no rune in the runes"), "stderr: {}", o.err);
 }
 
