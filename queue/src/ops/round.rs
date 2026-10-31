@@ -1539,6 +1539,17 @@ pub fn suite_statuses(dir: &Path, found: &mut Vec<(String, String)>, depth: u32)
     }
 }
 
+/// The verdict the entry itself wrote to `ci.result`, which outranks how the run around it ended:
+/// the entry finished, so a fault after it is the machinery's, not the candidate's.
+fn ci_result_exit(results: &Path) -> Option<i32> {
+    let text = fs::read_to_string(results.join("ci.result")).ok()?;
+    match text.split_whitespace().next()? {
+        "ok" => Some(0),
+        "red" => Some(1),
+        _ => None,
+    }
+}
+
 /// Names the suites whose verdict cannot be read: a word that is neither passing nor blocking
 /// (an empty file included), or a corpus suite with no result at all. A red lint or fence ends the
 /// pass before any suite runs, so it is the verdict and the missing suites are not a fault.
@@ -2362,6 +2373,10 @@ fn certify_pass(
             suites_s: wall,
             build_s: 0,
         };
+        let mut out = out;
+        if let Some(rc) = ci_result_exit(&results) {
+            out.rc = rc;
+        }
         if out.rc == 1 {
             let _ = fs::write(
                 results.join(format!("{REPO_TESTENV_RED}.out")),
