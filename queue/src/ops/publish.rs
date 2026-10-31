@@ -502,10 +502,22 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
     }
     let pr = kv.as_ref().map(|kv| observe(w, c, &path, kv));
     let action = decide(pr);
-    if !matches!(action, Settle::Wait | Settle::Parked | Settle::Alarm) && round_pass_running(w, c)
-    {
-        w.out(format!("{} publish-settle {name}: a round pass holds the hypervisor; deferring {action:?} to the next tick", w.clock.now()));
-        return OK;
+    if !matches!(action, Settle::Wait | Settle::Parked | Settle::Alarm) {
+        let deferred_file = c.queue_file("publish-deferred");
+        let deferred = records::read_kv(&deferred_file)
+            .ok()
+            .flatten()
+            .and_then(|kv| kv.get("ticks").and_then(|t| t.parse::<usize>().ok()))
+            .unwrap_or(0);
+        if round_pass_holds_hypervisor(w, c) {
+            if deferred < c.s.publish_defer_max {
+                let _ = records::write_atomic(&deferred_file, &format!("ticks={}\n", deferred + 1));
+                w.out(format!("{} publish-settle {name}: a round pass holds the hypervisor; deferring {action:?} to the next tick", w.clock.now()));
+                return OK;
+            }
+            w.out(format!("{} publish-settle {name}: deferred {deferred} ticks to round passes on the hypervisor; running {action:?} now", w.clock.now()));
+        }
+        let _ = std::fs::remove_file(&deferred_file);
     }
     let now = w.clock.now();
     let pr_no = kv
@@ -685,12 +697,15 @@ fn rerun_or_alarm(
 const LIVE_PHASES: [&str; 5] = ["vm", "build", "unit-build", "suites", "unit-tests"];
 const PROGRESS_FRESH_SECS: u64 = 600;
 
-/// A publish PR's CI provisions VMs beside the round VM and starves its pass, so the cut waits.
-/// A pass counts as running when its progress file is in a live phase and fresh, or its batch is
-/// CI_RUNNING; an unreadable round record or batch state counts as running.
-fn round_pass_running(w: &World, c: &Ctx) -> bool {
-    if progress_live(&c.s.run, w.clock.now()) {
-        return true;
+/// A publish PR's CI provisions VMs beside the round VM and starves a pass on the local
+/// hypervisor, so the cut waits; a pass leased on EC2 shares nothing with it. A pass counts as
+/// running when its progress file is in a live phase and fresh, or its batch is CI_RUNNING; an
+/// unreadable round record or batch state counts as running.
+fn round_pass_holds_hypervisor(w: &World, c: &Ctx) -> bool {
+    match progress_live(&c.s.run, w.clock.now()) {
+        Some(Place::Ec2) => return false,
+        Some(Place::Local) => return true,
+        None => {}
     }
     crate::ops::round::open_records(c)
         .iter()
@@ -701,18 +716,23 @@ fn round_pass_running(w: &World, c: &Ctx) -> bool {
         })
 }
 
-fn progress_live(run: &std::path::Path, now: u64) -> bool {
-    let Some(v) = std::fs::read_to_string(run.join("round-progress.json"))
+enum Place {
+    Ec2,
+    Local,
+}
+
+fn progress_live(run: &std::path::Path, now: u64) -> Option<Place> {
+    let v = std::fs::read_to_string(run.join("round-progress.json"))
         .ok()
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-    else {
-        return false;
-    };
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())?;
     let live = v["phase"]
         .as_str()
         .is_some_and(|p| LIVE_PHASES.contains(&p));
     let at = v["updated_at"].as_u64().unwrap_or(0);
-    live && now.saturating_sub(at) < PROGRESS_FRESH_SECS
+    if !live || now.saturating_sub(at) >= PROGRESS_FRESH_SECS {
+        return None;
+    }
+    Some(if v["place"].as_str() == Some("ec2") { Place::Ec2 } else { Place::Local })
 }
 
 fn observe(w: &World, c: &Ctx, path: &std::path::Path, kv: &Kv) -> Pr {

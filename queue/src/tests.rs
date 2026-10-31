@@ -1506,6 +1506,7 @@ impl T {
             rounds_max: 1,
             publish_red_priority: "1".into(),
             publish_red_escalate_after: 3,
+            publish_defer_max: 3,
         };
         fs::create_dir_all(s.queue_dir.join("spira")).unwrap();
         let landref = match mode {
@@ -4822,6 +4823,77 @@ fn settle_defers_the_cut_while_round_progress_is_live_and_fresh() {
         "a stale file does not hold the cut: {:?}",
         t.forge.calls.borrow()
     );
+}
+
+fn live_progress(t: &T, place: &str, updated_at: u64) {
+    fs::create_dir_all(t.dir.join("run")).unwrap();
+    fs::write(
+        t.dir.join("run/round-progress.json"),
+        format!("{{\"phase\":\"suites\",\"place\":\"{place}\",\"updated_at\":{updated_at}}}\n"),
+    )
+    .unwrap();
+}
+
+fn reruns(t: &T) -> usize {
+    t.forge
+        .calls
+        .borrow()
+        .iter()
+        .filter(|c| c.as_str() == "workflow-rerun 4242")
+        .count()
+}
+
+fn red_publish_awaiting_rerun(t: &T) {
+    stale_publish(t, "harness_fault\n");
+    t.git.set("refs/heads/local/main", "m3");
+    *t.forge.run.borrow_mut() = Some("4242".into());
+    t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
+}
+
+#[test]
+fn settle_reruns_in_the_same_tick_while_the_live_round_pass_runs_on_ec2() {
+    let t = T::new(LandMode::QueueLocal);
+    red_publish_awaiting_rerun(&t);
+    fs::write(t.qfile("round"), "batch_id=b-1\n").unwrap();
+    t.lc.batch_states
+        .borrow_mut()
+        .insert("b-1".into(), ("CI_RUNNING".into(), "4".into()));
+    live_progress(&t, "ec2", 900);
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(!t.out().contains("holds the hypervisor"), "{}", t.out());
+    assert_eq!(reruns(&t), 1, "{:?}", t.forge.calls.borrow());
+}
+
+#[test]
+fn settle_supersedes_in_the_same_tick_while_the_live_round_pass_runs_on_ec2() {
+    let t = T::new(LandMode::QueueLocal);
+    stale_publish(&t, "red\n");
+    live_progress(&t, "ec2", 900);
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(!t.out().contains("holds the hypervisor"), "{}", t.out());
+    assert!(
+        t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-close")),
+        "{:?}",
+        t.forge.calls.borrow()
+    );
+}
+
+#[test]
+fn settle_runs_after_the_deferral_bound_while_local_passes_run_back_to_back() {
+    let t = T::new(LandMode::QueueLocal);
+    red_publish_awaiting_rerun(&t);
+    for _ in 0..3 {
+        t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
+    }
+    for tick in 1..=3 {
+        live_progress(&t, "proxmox", 900);
+        assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+        assert_eq!(reruns(&t), 0, "tick {tick} defers: {}", t.out());
+    }
+    live_progress(&t, "proxmox", 900);
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert_eq!(reruns(&t), 1, "{}", t.out());
+    assert!(t.out().contains("deferred 3 ticks"), "{}", t.out());
 }
 
 #[test]

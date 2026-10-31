@@ -96,6 +96,7 @@ pub struct Progress {
     suites_started: Option<u64>,
     suites_reported: bool,
     unpublished: Option<String>,
+    place: Option<&'static str>,
     last: Option<Value>,
     base: &'static str,
     detail: Option<String>,
@@ -169,6 +170,7 @@ impl Progress {
             suites_started: None,
             suites_reported: false,
             unpublished: None,
+            place: None,
             last: None,
             base: "vm",
             detail: Some("leasing a VM".into()),
@@ -236,6 +238,12 @@ impl Progress {
     pub fn enter(&mut self, results_dir: &Path, phase: &'static str, detail: Option<String>) {
         self.base = phase;
         self.detail = detail;
+        self.write(results_dir, None);
+    }
+
+    /// Where the pass's VM was leased; readers that must not wait on the local hypervisor key on it.
+    pub fn place(&mut self, results_dir: &Path, place: &'static str) {
+        self.place = Some(place);
         self.write(results_dir, None);
     }
 
@@ -310,6 +318,7 @@ impl Progress {
             "build_started": self.build_started,
             "suites_started": self.suites_started,
             "cap": self.cap,
+            "place": self.place,
         });
         if self.last.as_ref() == Some(&body) {
             return;
@@ -376,6 +385,17 @@ mod tests {
 
     fn read(p: &Path) -> Value {
         serde_json::from_str(&fs::read_to_string(p.join(FILE)).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn the_file_names_where_the_pass_was_leased_once_it_is() {
+        let d = TempDir::new();
+        let (run, res) = (d.path().join("run"), d.path().join("res"));
+        fs::create_dir_all(&res).unwrap();
+        let mut p = Progress::start(&run, &res, "r1", "p1", 3, 777, BUDGETS);
+        assert!(read(&run)["place"].is_null());
+        p.place(&res, "ec2");
+        assert_eq!(read(&run)["place"], "ec2");
     }
 
     #[test]

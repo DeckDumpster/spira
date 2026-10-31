@@ -1773,6 +1773,7 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
         }
     };
     env.pool.label(&vm.handle, &run_label(args));
+    progress.place(&results_dir, if crate::ec2::is_ec2_handle(&vm.handle) { "ec2" } else { "proxmox" });
     let instance_type = (env.deps.factory)().ok().and_then(|a| a.provider.instance_type(&vm.handle));
     {
         let mut f = facts.lock().unwrap_or_else(|e| e.into_inner());

@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=queue
+DOC=CONSECUTIVE TICKS a publish rerun or supersede defers to a local round pass before it runs anyway.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # CONSECUTIVE TICKS a publish rerun or supersede defers to a round pass on the local
+    # hypervisor before it runs anyway. A pass on EC2 never defers it.
+    : "${SPIRA_PUBLISH_SETTLE_DEFER_MAX:=3}"
+SPIRA_CONF_DEFAULT_EOF
