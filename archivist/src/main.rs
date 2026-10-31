@@ -9,7 +9,9 @@
 //!   archivist digest <t> [<from-turn>] [--full]
 //!                              the transcript rendered small enough for an agent to read
 //!   archivist record <line>    register one durably-filed finding for today's digest
-//!   archivist claim <s> <key>  take the right to file one item (exit 3: already filed)
+//!   archivist claim <s> <key> [--ask <question> [--bead <id>]...]
+//!                              take the right to file one item (exit 3: already filed;
+//!                              exit 4: --ask is held by an open ask or the session itself)
 //!   archivist progress <s> <turn>   advance the covered mark: everything to <turn> is handled
 //!   archivist digest-send      mail today's digest (at most once a day) and empty the queue
 
@@ -106,11 +108,47 @@ fn dispatch(cmd: &str, rest: &[String]) {
         "claim" => {
             let sid = rest.first().unwrap_or_else(|| die("claim needs a session"));
             let key = rest.get(1).unwrap_or_else(|| die("claim needs a key"));
-            match run::claim(&run_arc_dir(), sid, key) {
-                Ok(true) => {}
-                Ok(false) => {
+            let mut question = None;
+            let mut beads = Vec::new();
+            let mut it = rest.iter().skip(2);
+            while let Some(a) = it.next() {
+                let v = it.next().unwrap_or_else(|| die(&format!("{a} needs a value")));
+                match a.as_str() {
+                    "--ask" => question = Some(v.clone()),
+                    "--bead" => beads.push(v.clone()),
+                    _ => die(&format!("claim: unknown argument {a}")),
+                }
+            }
+            let Some(question) = question else {
+                match run::claim(&run_arc_dir(), sid, key) {
+                    Ok(true) => return,
+                    Ok(false) => {
+                        eprintln!("archivist: already filed: {key}");
+                        std::process::exit(3);
+                    }
+                    Err(e) => die(&e),
+                }
+            };
+            let cfg = config::resolve().unwrap_or_else(|e| die(&e));
+            let label = spira_config::process::cfg("SPIRA_ASK_LABEL").unwrap_or_else(|e| die(&e));
+            let listed = spira_config::bounded::bounded("work").args(["list", "--label", &label, "--json"]).stdin(std::process::Stdio::null()).output();
+            let open = match listed {
+                Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+                _ => {
+                    eprintln!("archivist: cannot list open asks; checking the transcript only");
+                    String::new()
+                }
+            };
+            let tp = archivist::transcripts::find_transcript(Path::new(&cfg.token_projects), sid);
+            match run::claim_ask(&run_arc_dir(), sid, key, &question, &beads, &open, tp.as_deref(), run::now_epoch()) {
+                Ok(run::AskClaim::File) => {}
+                Ok(run::AskClaim::AlreadyFiled) => {
                     eprintln!("archivist: already filed: {key}");
                     std::process::exit(3);
+                }
+                Ok(run::AskClaim::Held(why)) => {
+                    eprintln!("archivist: not filing, already covered: {why}");
+                    std::process::exit(4);
                 }
                 Err(e) => die(&e),
             }
