@@ -108,5 +108,6 @@ for s in "Read the code the change will touch" "Check every mechanism you name a
 done
 want "the brief leaves drafts as notes" "work note" "$(cat "$BRIEF")"
 want "the brief exits through work done" "work done" "$(cat "$BRIEF")"
+for s in "bead.sh" "bdq" "mail.sh"; do lack "the brief does not name $s" "$s" "$(cat "$BRIEF")"; done
 
 tl_summary
