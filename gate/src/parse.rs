@@ -28,33 +28,17 @@ pub fn red_suites(out: &str) -> Vec<String> {
     suites_where(out, &["RED", "TIMEOUT", "FAILED"], true)
 }
 
-/// `failed_tests`: the `<name>` of each failing test, in order, unique: a cargo `test <name> ...
-/// FAILED` line, or a nextest `FAIL|TIMEOUT [ <secs>] (<k>/<n>) <binary> <name>` line.
+/// `failed_tests`: the `<name>` of each cargo `test <name> ... FAILED` line, in order, unique.
 pub fn failed_tests(out: &str) -> Vec<String> {
     let mut seen = Vec::new();
     for l in out.lines() {
-        let l = l.trim();
-        let name = match l.strip_prefix("test ") {
-            Some(rest) => rest.strip_suffix(" ... FAILED"),
-            None => nextest_red(l),
-        };
-        let Some(name) = name else { continue };
+        let Some(rest) = l.trim().strip_prefix("test ") else { continue };
+        let Some(name) = rest.strip_suffix(" ... FAILED") else { continue };
         if !name.is_empty() && !name.contains(char::is_whitespace) && !seen.iter().any(|x| x == name) {
             seen.push(name.to_string());
         }
     }
     seen
-}
-
-fn nextest_red(l: &str) -> Option<&str> {
-    let (status, rest) = l.split_once(' ')?;
-    if !matches!(status, "FAIL" | "TIMEOUT" | "LEAK-FAIL" | "EXEC-FAIL") && !status.starts_with("SIG") {
-        return None;
-    }
-    let after = rest.trim_start().strip_prefix('[')?.split_once(']')?.1;
-    let mut words = after.split_whitespace().filter(|w| !(w.starts_with('(') && w.ends_with(')')));
-    let (_binary, name) = (words.next()?, words.next()?);
-    words.next().is_none().then_some(name)
 }
 
 /// The fence named by the first `<fence>: REFUSED` line, e.g. `lifecycle-guard`; failing that,
@@ -379,8 +363,6 @@ mod tests {
         let out = "test a::ok ... ok\ntest a::bad ... FAILED\ntest a::bad ... FAILED\ntest result: FAILED. 1 passed\n";
         assert_eq!(failed_tests(out), vec!["a::bad".to_string()]);
         assert!(failed_tests("test result: FAILED\n").is_empty());
-        let nx = "        PASS [   0.007s] (1/2) fx t::quick\n     TIMEOUT [   4.002s] (2/2) fx t::sleeper\n        FAIL [   0.1s] fx t::bad\n     TIMEOUT [   4.002s] (2/2) fx t::sleeper\n";
-        assert_eq!(failed_tests(nx), vec!["t::sleeper".to_string(), "t::bad".to_string()]);
     }
 
     #[test]

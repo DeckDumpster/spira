@@ -168,7 +168,7 @@ fn same_rows(name: &str, prep: impl Fn(&Fixture)) -> Vec<String> {
 }
 
 #[test]
-fn e2e_an_unasked_draft_is_told_once_with_its_writer_and_an_approved_one_never() {
+fn an_unasked_draft_is_told_once_with_its_writer_and_an_approved_one_never() {
     let r = same_rows("told", |f| {
         f.design("unasked", "status: draft\nbead: sp-writer1\n", "# x");
         f.design("done", "status: approved\nbead: sp-writer3\n", "# x");
@@ -178,7 +178,7 @@ fn e2e_an_unasked_draft_is_told_once_with_its_writer_and_an_approved_one_never()
 }
 
 #[test]
-fn e2e_the_writer_falls_through_bead_session_author_and_then_unknown() {
+fn the_writer_falls_through_bead_session_author_and_then_unknown() {
     let r = same_rows("writer", |f| {
         f.design("a", "status: in-review\nsession: \"sess-9\"\nauthor: someone\n", "");
         f.design("b", "status: draft\nauthor: 'someone'\n", "");
@@ -191,7 +191,7 @@ fn e2e_the_writer_falls_through_bead_session_author_and_then_unknown() {
 }
 
 #[test]
-fn e2e_an_ask_naming_the_path_slug_or_artifact_url_covers_the_page() {
+fn an_ask_naming_the_path_slug_or_artifact_url_covers_the_page() {
     let r = same_rows("covered", |f| {
         f.design("bypath", "status: draft\n", "");
         f.design("byslug", "status: draft\n", "");
@@ -204,7 +204,7 @@ fn e2e_an_ask_naming_the_path_slug_or_artifact_url_covers_the_page() {
 }
 
 #[test]
-fn e2e_the_mail_of_a_held_ask_covers_a_page_too() {
+fn the_mail_of_a_held_ask_covers_a_page_too() {
     let r = same_rows("held", |f| {
         f.design("heldpage", "status: draft\n", "");
         f.design("bare", "status: draft\n", "");
@@ -216,7 +216,7 @@ fn e2e_the_mail_of_a_held_ask_covers_a_page_too() {
 }
 
 #[test]
-fn e2e_a_store_that_never_answers_is_a_failure_said_once_and_not_an_empty_brain() {
+fn a_store_that_never_answers_is_a_failure_said_once_and_not_an_empty_brain() {
     let r = same_rows("down", |f| {
         f.design("unasked", "status: draft\nbead: sp-w\n", "");
         fs::write(f.p("bdfail"), "").unwrap();
@@ -226,7 +226,7 @@ fn e2e_a_store_that_never_answers_is_a_failure_said_once_and_not_an_empty_brain(
 }
 
 #[test]
-fn e2e_a_failed_store_call_names_the_command_and_what_the_store_said() {
+fn a_failed_store_call_names_the_command_and_what_the_store_said() {
     let g = Fixture::build("cause");
     g.design("unasked", "status: draft\nbead: sp-w\n", "");
     fs::write(g.p("bdfail"), "").unwrap();
@@ -237,7 +237,7 @@ fn e2e_a_failed_store_call_names_the_command_and_what_the_store_said() {
 }
 
 #[test]
-fn e2e_a_store_that_fails_once_and_then_answers_raises_nothing() {
+fn a_store_that_fails_once_and_then_answers_raises_nothing() {
     let g = Fixture::build("restart");
     g.design("covered", "status: draft\n", "");
     g.asks(&format!("approve {DESIGNS}/covered.md"));
@@ -248,7 +248,7 @@ fn e2e_a_store_that_fails_once_and_then_answers_raises_nothing() {
 }
 
 #[test]
-fn e2e_a_notice_before_the_ask_list_is_not_a_failure() {
+fn a_notice_before_the_ask_list_is_not_a_failure() {
     let g = Fixture::build("notice");
     g.design("unasked", "status: draft\nbead: sp-w\n", "");
     fs::write(g.p("asks.json"), "warning: slow store\n[]").unwrap();
@@ -258,19 +258,19 @@ fn e2e_a_notice_before_the_ask_list_is_not_a_failure() {
 }
 
 #[test]
-fn e2e_a_missing_brain_is_a_failure_said_once() {
+fn a_missing_brain_is_a_failure_said_once() {
     let r = same_rows("nobrain", |f| fs::remove_dir_all(f.p("brain/wiki/projects")).unwrap());
     assert_eq!(r.len(), 1, "{r:?}");
     assert!(r[0].contains("is not a directory"), "{r:?}");
 }
 
 #[test]
-fn e2e_a_world_with_no_designs_says_nothing() {
+fn a_world_with_no_designs_says_nothing() {
     assert!(same_rows("quiet", |_| {}).is_empty());
 }
 
 #[test]
-fn e2e_only_the_git_log_fallback_for_a_writer_diverges_from_the_script() {
+fn only_the_git_log_fallback_for_a_writer_diverges_from_the_script() {
     let prep = |f: &Fixture| {
         f.design("nowriter", "status: draft\n", "");
         let git = |args: &[&str]| assert!(Command::new("git").args(["-C", f.p("brain").to_str().unwrap()]).args(args).env_clear().env("GIT_AUTHOR_NAME", "a").env("GIT_AUTHOR_EMAIL", "a@a").env("GIT_COMMITTER_NAME", "a").env("GIT_COMMITTER_EMAIL", "a@a").env("PATH", "/usr/bin:/bin").status().unwrap().success());
@@ -289,7 +289,7 @@ fn e2e_only_the_git_log_fallback_for_a_writer_diverges_from_the_script() {
 }
 
 #[test]
-fn e2e_a_hidden_project_directory_is_not_read_for_designs() {
+fn a_hidden_project_directory_is_not_read_for_designs() {
     let r = same_rows("hidden", |f| {
         let dir = f.p("brain/wiki/projects/.x/designs");
         fs::create_dir_all(&dir).unwrap();

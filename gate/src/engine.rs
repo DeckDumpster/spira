@@ -807,10 +807,6 @@ impl<'w, W: World> Trial<'w, W> {
         let Some(deadline) = key::digits(ctx.var("SPIRA_GATE_DEADLINE")) else {
             return v(NOVERDICT, "config", format!("gate: SPIRA_GATE_DEADLINE={:?} is not a number of seconds — refusing to run a gate with no wall-clock bound.", ctx.var("SPIRA_GATE_DEADLINE")));
         };
-        let (Some(slow_secs), Some(terminate_after)) = (key::digits(ctx.var("SPIRA_UNIT_TEST_SLOW_SECS")).filter(|n| *n > 0), key::digits(ctx.var("SPIRA_UNIT_TEST_TERMINATE_AFTER")).filter(|n| *n > 0)) else {
-            return v(NOVERDICT, "config", "gate: SPIRA_UNIT_TEST_SLOW_SECS and SPIRA_UNIT_TEST_TERMINATE_AFTER must be positive numbers — refusing to run unit tests with no per-test deadline.");
-        };
-        let unit_deadline = compose::UnitDeadline { slow_secs, terminate_after };
         let by_deadline = key::digits(&timeout).is_none_or(|t| deadline <= t);
         let t_start = self.s.start;
         let eff = || {
@@ -841,7 +837,6 @@ impl<'w, W: World> Trial<'w, W> {
                 &cmd,
                 tools.as_ref(),
                 jobs,
-                &unit_deadline,
                 &re.required,
                 "",
                 fkey.as_ref(),
@@ -1049,7 +1044,6 @@ impl<'w, W: World> Trial<'w, W> {
                 base_cmd,
                 base_tools.as_ref(),
                 jobs,
-                &unit_deadline,
                 &base_required,
                 "base-",
                 self.fences_key(&base_tree).as_ref(),
@@ -2289,7 +2283,6 @@ pub fn run_composed<W: World>(
     cmd: &str,
     tools: Option<&Tools>,
     jobs: u64,
-    unit_deadline: &compose::UnitDeadline,
     reentry: &[String],
     prefix: &str,
     fences: Option<&crate::fencecache::Key>,
@@ -2377,7 +2370,7 @@ pub fn run_composed<W: World>(
         }
     };
     let mut steps: Vec<(&str, String)> = match comp {
-        Composition::Unit { crates, .. } => compose::unit_commands(crates, jobs, unit_deadline).into(),
+        Composition::Unit { crates, .. } => compose::unit_commands(crates, jobs).into(),
         _ => Vec::new(),
     };
     // THE RE-ENTRY PHASE, last: whatever of the named suites the phases before did not show

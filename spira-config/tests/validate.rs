@@ -287,6 +287,16 @@ mod retired_keys {
     }
 
     #[test]
+    fn a_config_written_while_the_unit_test_deadline_keys_shipped_still_validates() {
+        let (_, warnings) = validate_with_warnings(
+            "[spira]\nid_prefix = \"sp\"\nunit_test_slow_secs = 60\nunit_test_terminate_after = 2\n",
+        )
+        .expect("a retired key must validate, not error");
+        assert!(warnings.iter().any(|w| w.contains("unit_test_slow_secs")), "got {warnings:?}");
+        assert!(warnings.iter().any(|w| w.contains("unit_test_terminate_after")), "got {warnings:?}");
+    }
+
+    #[test]
     fn a_misspelt_key_warns_and_is_ignored() {
         let (_, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_batch_idle_cutt = 1\n").unwrap();
         assert!(w.iter().any(|m| m.starts_with("spira.queue_batch_idle_cutt")), "{w:?}");

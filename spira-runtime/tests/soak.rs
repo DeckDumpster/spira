@@ -219,7 +219,7 @@ fn journal(socket: &Path) -> Result<Vec<Value>, String> {
 }
 
 #[test]
-fn e2e_spira_runtime_serves_for_twenty_beats_against_the_production_store() {
+fn spira_runtime_serves_for_twenty_beats_against_the_production_store() {
     let t = testkit::TempDir::new("runtime-soak");
     let root = t.path().to_path_buf();
     let run = root.join("run");

@@ -223,7 +223,7 @@ fn has(r: &[String], needle: &str) -> bool {
 }
 
 #[test]
-fn e2e_every_suspect_class_is_announced_once_across_repeated_passes() {
+fn every_suspect_class_is_announced_once_across_repeated_passes() {
     let old = 3 * HOUR;
     let rows = [
         row("sp-pois", "READY", 0, &["poison"], &[], "bad tip"),
@@ -258,7 +258,7 @@ fn e2e_every_suspect_class_is_announced_once_across_repeated_passes() {
 }
 
 #[test]
-fn e2e_a_manual_hold_is_judged_by_its_review_date_read_from_the_row_or_the_hold_history() {
+fn a_manual_hold_is_judged_by_its_review_date_read_from_the_row_or_the_hold_history() {
     let (fut, past) = (date_in(10 * 86_400), date_in(-3 * 86_400));
     let rows = [
         row("sp-hfut", "READY", 3 * HOUR, &["manual"], &[], &format!("review-by:{fut} waits on tenancy")),
@@ -282,7 +282,7 @@ fn e2e_a_manual_hold_is_judged_by_its_review_date_read_from_the_row_or_the_hold_
 }
 
 #[test]
-fn e2e_an_open_batch_a_stop_a_reservation_and_an_integration_each_explain_a_wait() {
+fn an_open_batch_a_stop_a_reservation_and_an_integration_each_explain_a_wait() {
     let rows = [
         row("sp-q", "CERTIFIED", 8 * MIN, &[], &[], "r"),
         row("sp-bm", "IN_DELIVERY", 90 * MIN, &[], &[], "r"),
@@ -333,7 +333,7 @@ fn e2e_an_open_batch_a_stop_a_reservation_and_an_integration_each_explain_a_wait
 }
 
 #[test]
-fn e2e_an_open_bead_with_no_row_is_given_one_and_a_refused_repair_stays_a_suspect() {
+fn an_open_bead_with_no_row_is_given_one_and_a_refused_repair_stays_a_suspect() {
     let orphan = json!({"id": "sp-orph", "labels": ["repo:widgets"], "issue_type": "task", "status": "open", "priority": 0, "title": "fix\tthe thing"});
     let norepo = json!({"id": "sp-norepo", "labels": ["spira"], "issue_type": "task", "status": "open", "priority": 3, "title": "Warden sweep landed"});
     let idea = json!({"id": "sp-idea", "labels": ["spira"], "issue_type": "proposal", "status": "open", "priority": 2, "title": "a parked idea"});
@@ -353,7 +353,7 @@ fn e2e_an_open_bead_with_no_row_is_given_one_and_a_refused_repair_stays_a_suspec
 }
 
 #[test]
-fn e2e_a_healthy_board_is_quiet_and_a_blind_pass_announces_nothing() {
+fn a_healthy_board_is_quiet_and_a_blind_pass_announces_nothing() {
     let rows = [row("sp-ok", "READY", 0, &[], &[], "r")];
     let content = [bead("sp-ok", &["repo:widgets"])];
     assert!(same_rows("healthy", 2, &rows, &content, |_| {}).0.is_empty());
