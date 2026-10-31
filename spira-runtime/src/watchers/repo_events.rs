@@ -47,12 +47,22 @@ pub struct Snapshot {
 
 /// Carried between ticks as the body of the latest `repo-events.state` event, and the question
 /// each observe asks: `runs` are the `run|<slug>|<id>|<conclusion>` keys already settled, oldest
-/// first; `seeded` that a forge has answered once; `failed` the forge failures already said.
+/// first; `seeded` that a forge has answered once; `adopted` the repositories whose forge has
+/// answered; `failed` the forge failures already said.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Carry {
     pub seeded: bool,
     pub runs: Vec<String>,
+    #[serde(default)]
+    pub adopted: Vec<String>,
     pub failed: Vec<String>,
+}
+
+impl Carry {
+    fn has_adopted(&self, slug: &str) -> bool {
+        let prefix = format!("run|{slug}|");
+        self.adopted.iter().any(|a| a == slug) || self.runs.iter().any(|k| k.starts_with(&prefix))
+    }
 }
 
 pub fn key(slug: &str, r: &Run) -> String {
@@ -75,10 +85,9 @@ fn line(slug: &str, r: &Run) -> Option<String> {
 }
 
 /// The lines a snapshot calls for, and the state to carry into the next tick. With nothing carried
-/// and nothing seeded the runs on the forge are adopted silently: announcing a repository's whole
-/// history would wake the pane for nothing.
+/// and nothing seeded, a repository's first answer adopts its runs silently, whenever it comes:
+/// announcing a repository's whole history would wake the pane for nothing.
 pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<String>) {
-    let silent = !carry.seeded && snap.seed.is_empty();
     let mut next = carry.clone();
     if !carry.seeded {
         next.runs = snap.seed.clone();
@@ -96,6 +105,10 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<String>) {
             }
             Ok(runs) => {
                 next.seeded = true;
+                let silent = !carry.has_adopted(slug) && (carry.seeded || snap.seed.is_empty());
+                if !next.adopted.iter().any(|a| a == slug) {
+                    next.adopted.push(slug.clone());
+                }
                 let fresh: Vec<&Run> = runs.iter().filter(|r| !next.runs.contains(&key(slug, r))).collect();
                 for r in &fresh {
                     if !silent {
@@ -167,7 +180,7 @@ mod tests {
     fn a_full_carry_fits_the_journal_column() {
         let slug = "DeckDumpster/remarkable-pipeline-extended";
         let runs = (0..KEEP as u64).map(|i| format!("run|{slug}|{}|action_required", 90_000_000_000 + i)).collect();
-        let carry = Carry { seeded: true, runs, failed: vec![] };
+        let carry = Carry { seeded: true, runs, adopted: vec![], failed: vec![] };
         let body = serde_json::to_string(&carry).unwrap();
         assert!(body.len() < KIND_BODY_MAX, "a full carry is {} bytes; kind_body holds {KIND_BODY_MAX}", body.len());
     }
@@ -207,17 +220,35 @@ mod tests {
 
     #[test]
     fn the_carry_keeps_only_the_newest_keys() {
-        let carry = Carry { seeded: true, runs: (0..KEEP as u64).map(|i| format!("run|o/r|{i}|success")).collect(), failed: vec![] };
+        let carry = Carry { seeded: true, runs: (0..KEEP as u64).map(|i| format!("run|o/r|{i}|success")).collect(), adopted: vec![], failed: vec![] };
         let (c, _) = decide(&carry, &snap(vec![run(9_999, "CI", "success", "main")]));
         assert_eq!((c.runs.len(), c.runs[0].as_str(), c.runs.last().unwrap().as_str()), (KEEP, "run|o/r|1|success", "run|o/r|9999|success"));
     }
 
     #[test]
     fn a_full_carry_drops_its_oldest_keys_not_the_newest_of_a_batch() {
-        let carry = Carry { seeded: true, runs: (0..KEEP as u64).map(|i| format!("run|o/r|{i}|success")).collect(), failed: vec![] };
+        let carry = Carry { seeded: true, runs: (0..KEEP as u64).map(|i| format!("run|o/r|{i}|success")).collect(), adopted: vec![], failed: vec![] };
         let (c, _) = decide(&carry, &snap(vec![run(20_002, "CI", "success", "main"), run(20_001, "CI", "success", "main")]));
         assert_eq!(c.runs.len(), KEEP);
         assert_eq!(&c.runs[KEEP - 2..], ["run|o/r|20001|success", "run|o/r|20002|success"]);
+    }
+
+    #[test]
+    fn a_repository_that_failed_its_first_polls_adopts_its_history_silently_when_it_answers() {
+        let both = |b: Result<Vec<Run>, String>| Snapshot { seed: vec![], repos: vec![("o/a".into(), Ok(vec![])), ("o/b".into(), b)] };
+        let (c, _) = decide(&Carry::default(), &both(Err("403".into())));
+        assert!(c.seeded);
+        let (c, say) = decide(&c, &both(Ok(vec![run(1, "Deploy", "failure", "main")])));
+        assert!(say.is_empty(), "{say:?}");
+        let (_, say) = decide(&c, &both(Ok(vec![run(2, "Deploy", "failure", "main"), run(1, "Deploy", "failure", "main")])));
+        assert_eq!(say, ["o/b Deploy on main FAILURE (run 2) — t2"]);
+    }
+
+    #[test]
+    fn a_carry_from_before_adoption_was_tracked_counts_a_repository_with_runs_as_adopted() {
+        let carry = Carry { seeded: true, runs: vec!["run|o/r|1|failure".into()], adopted: vec![], failed: vec![] };
+        let s = Snapshot { seed: vec![], repos: vec![("o/r".into(), Ok(vec![run(2, "CI", "failure", "main")])), ("o/new".into(), Ok(vec![run(3, "CI", "failure", "main")]))] };
+        assert_eq!(decide(&carry, &s).1, ["o/r CI on main FAILURE (run 2) — t2"]);
     }
 
     #[test]

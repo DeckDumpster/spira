@@ -6,6 +6,7 @@ use std::fmt;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use serde_json::Value;
@@ -21,11 +22,15 @@ const PAGE: &str = "per_page=100";
 pub struct Forge {
     pub api: String,
     pub token: String,
+    pub gh_config_dir: String,
+    pub gh: String,
 }
+
+pub const NO_CREDENTIAL: &str = "no forge credential";
 
 impl fmt::Debug for Forge {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Forge").field("api", &self.api).field("token", &(!self.token.is_empty())).finish()
+        f.debug_struct("Forge").field("api", &self.api).field("token", &(!self.token.is_empty())).field("gh_config_dir", &self.gh_config_dir).finish()
     }
 }
 
@@ -68,15 +73,33 @@ fn epoch(stamp: &str) -> Option<u64> {
 }
 
 impl Forge {
+    /// A static token when one is set, else whatever `gh auth token` answers now under the
+    /// configured gh config dir. Read per call, so a rotated login is picked up; never logged.
+    pub fn credential(&self) -> Result<String, String> {
+        if !self.token.is_empty() {
+            return Ok(self.token.clone());
+        }
+        let mut gh = Command::new(if self.gh.is_empty() { "gh" } else { &self.gh });
+        gh.args(["auth", "token"]).stdin(Stdio::null()).stderr(Stdio::null());
+        if !self.gh_config_dir.is_empty() {
+            gh.env("GH_CONFIG_DIR", &self.gh_config_dir);
+        }
+        let out = gh.output().map_err(|e| format!("{NO_CREDENTIAL}: gh: {e}"))?;
+        let token = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if out.status.success() && !token.is_empty() {
+            Ok(token)
+        } else {
+            Err(format!("{NO_CREDENTIAL}: SPIRA_BROKER_GH_TOKEN is empty and gh has no login"))
+        }
+    }
+
     fn get(&self, path: &str) -> Option<Value> {
         self.try_get(path).ok()
     }
 
     fn try_get(&self, path: &str) -> Result<Value, String> {
-        let mut req = ureq::AgentBuilder::new().timeout(CALL_TIMEOUT).build().get(&format!("{}{path}", self.api.trim_end_matches('/'))).set("Accept", "application/vnd.github+json").set("User-Agent", "spira-runtime");
-        if !self.token.is_empty() {
-            req = req.set("Authorization", &format!("Bearer {}", self.token));
-        }
+        let token = self.credential()?;
+        let req = ureq::AgentBuilder::new().timeout(CALL_TIMEOUT).build().get(&format!("{}{path}", self.api.trim_end_matches('/'))).set("Accept", "application/vnd.github+json").set("User-Agent", "spira-runtime").set("Authorization", &format!("Bearer {token}"));
         let mut body = String::new();
         req.call().map_err(|e| e.to_string())?.into_reader().take(16 << 20).read_to_string(&mut body).map_err(|e| e.to_string())?;
         serde_json::from_str(&body).map_err(|e| format!("{path}: {e}"))

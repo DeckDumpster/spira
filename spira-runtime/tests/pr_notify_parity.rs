@@ -260,7 +260,7 @@ impl Parity {
         let api = serve_forge(forges.clone());
         let fx = Effects {
             world: World { run_dir: root.join("run"), queue_dir: root.join("run/queue"), repo_map: root.join("rows"), home_repo: "home".into(), inbox: root.join("new-inbox"), lc_socket: root.join("no.sock"), ..World::default() },
-            forge: Forge { api, token: "t0ken".into() },
+            forge: Forge { api, token: "t0ken".into(), ..Forge::default() },
             mail: Some(Arc::new(spira_runtime::operator_mail(mail_env(&root)))),
             ..Effects::default()
         };
@@ -486,7 +486,7 @@ fn the_forge_token_rides_the_request_and_is_not_in_the_debug_output() {
         let _ = c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n[]");
         String::from_utf8_lossy(&buf[..n]).to_lowercase()
     });
-    let forge = Forge { api, token: "sekrit-token".into() };
+    let forge = Forge { api, token: "sekrit-token".into(), ..Forge::default() };
     assert_eq!(forge.open_prs("acme/widgets"), Some(vec![]));
     assert!(seen.join().unwrap().contains("authorization: bearer sekrit-token"));
     assert!(!format!("{forge:?}").contains("sekrit"));
@@ -504,7 +504,7 @@ fn a_list_that_fills_a_page_is_not_taken_for_the_whole_list() {
             let _ = write!(c, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
         }
     });
-    let forge = Forge { api, token: String::new() };
+    let forge = Forge { api, token: "t0ken".into(), ..Forge::default() };
     assert_eq!(forge.open_prs("acme/widgets"), None);
     assert_eq!(forge.stray_branches("acme/widgets", "main", &[]), None);
 }
