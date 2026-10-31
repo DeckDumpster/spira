@@ -831,7 +831,7 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
         }
     };
     if code::section_of(&toc, &key).is_none() {
-        eprintln!("rule: refusing — {key} holds no section in law/toc.toml, so no pointer can be left for it. Enact it into a Part first.");
+        eprintln!("rule: refusing — {key} holds no section in law/toc.toml, so no pointer can be left for it. If its law bead has not landed, land it first (rule.sh code on the tip lists it in a Part).");
         return 1;
     }
     let on = today();
