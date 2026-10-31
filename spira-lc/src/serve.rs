@@ -313,7 +313,7 @@ fn request_deadline(argv: &[String]) -> Duration {
         Some("work") if argv.get(2).is_some_and(|v| crate::work::brokers_tool(v)) => TOOL_DEADLINE,
         // batch-job: census's aggregate, bounded at the query deadline.
         Some("work") | Some("facts-query") => crate::db::QUERY_DEADLINE,
-        // batch-job: a fetch from the forge, then git reads, for one repo.
+        // batch-job: bounded under the client's 5 s wait; the verb owns its own shorter budget.
         Some("unpublished") => crate::unpublished::DEADLINE,
         _ => REQUEST_DEADLINE,
     }
@@ -389,6 +389,7 @@ mod tests {
         assert!(reply.contains("unpublished: usage"), "the verb answered, not the store: {reply}");
         let argv = |v: &str| vec![v.to_string()];
         assert!(super::request_deadline(&argv("unpublished")) > super::request_deadline(&argv("show")));
+        assert!(super::request_deadline(&argv("unpublished")) < std::time::Duration::from_secs(5), "the server answers before the 5 s client gives up");
     }
 
     #[test]
