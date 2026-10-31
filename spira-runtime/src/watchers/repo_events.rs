@@ -95,16 +95,13 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<String>) {
             }
             Ok(runs) => {
                 next.seeded = true;
-                for r in runs {
-                    let k = key(slug, r);
-                    if next.runs.contains(&k) {
-                        continue;
-                    }
-                    next.runs.push(k);
+                let fresh: Vec<&Run> = runs.iter().filter(|r| !next.runs.contains(&key(slug, r))).collect();
+                for r in &fresh {
                     if !silent {
                         say.extend(line(slug, r));
                     }
                 }
+                next.runs.extend(fresh.iter().rev().map(|r| key(slug, r)));
             }
         }
     }
@@ -200,6 +197,14 @@ mod tests {
         let carry = Carry { seeded: true, runs: (0..KEEP as u64).map(|i| format!("run|o/r|{i}|success")).collect(), failed: vec![] };
         let (c, _) = decide(&carry, &snap(vec![run(9_999, "CI", "success", "main")]));
         assert_eq!((c.runs.len(), c.runs[0].as_str(), c.runs.last().unwrap().as_str()), (KEEP, "run|o/r|1|success", "run|o/r|9999|success"));
+    }
+
+    #[test]
+    fn a_full_carry_drops_its_oldest_keys_not_the_newest_of_a_batch() {
+        let carry = Carry { seeded: true, runs: (0..KEEP as u64).map(|i| format!("run|o/r|{i}|success")).collect(), failed: vec![] };
+        let (c, _) = decide(&carry, &snap(vec![run(20_002, "CI", "success", "main"), run(20_001, "CI", "success", "main")]));
+        assert_eq!(c.runs.len(), KEEP);
+        assert_eq!(&c.runs[KEEP - 2..], ["run|o/r|20001|success", "run|o/r|20002|success"]);
     }
 
     #[test]
