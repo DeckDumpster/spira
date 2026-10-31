@@ -20,8 +20,7 @@ fn the_unit_command_runs_under_a_real_cargo_llvm_cov_and_yields_line_coverage() 
     std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[profile.unittest]\ninherits = \"dev\"\n").unwrap();
     std::fs::write(dir.join("src/lib.rs"), "pub fn f(x: u32) -> u32 { x + 1 }\n#[cfg(test)]\nmod t { #[test] fn a() { assert_eq!(super::f(1), 2); } }\n").unwrap();
     let script = format!(
-        "set -euo pipefail\nexport CARGO_HOME={cargo_home:?} RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\n{}\n{}\n{}\nunit_cov_init\ntest -n \"$unit_cov_env\"\nunit_cargo --no-run\nunit_cargo --no-fail-fast\neval \"$unit_cov_env\"\ncargo llvm-cov report --profile unittest --json --summary-only --output-path out.json\n",
-        function("unit_env"),
+        "set -euo pipefail\nexport CARGO_HOME={cargo_home:?} RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\n{}\n{}\nunit_cov_init\ntest -n \"$unit_cov_env\"\nunit_cargo --no-run\nunit_cargo --no-fail-fast\neval \"$unit_cov_env\"\ncargo llvm-cov report --profile unittest --json --summary-only --output-path out.json\n",
         function("unit_cargo"),
         function("unit_cov_init"),
     );

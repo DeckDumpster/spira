@@ -61,7 +61,6 @@
             jq
             zstd
             sccache
-            cargo-nextest     # the gate's unit phase runs each test under its own deadline (round-vm/ami-setup.sh pins the round image's)
             awscli2
             inotify-tools
             aerc
