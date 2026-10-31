@@ -13,6 +13,7 @@ use crate::ports::*;
 use crate::testutil::tmpdir;
 
 mod mend;
+mod publish_push;
 mod rebase;
 mod round;
 mod verdict;
@@ -271,6 +272,8 @@ struct FLib {
     by_name: RefCell<BTreeMap<String, Result<RepoCtx, String>>>,
     /// `bead_close` fails (bd refused the close).
     close_fail: Cell<bool>,
+    /// `push` and `divergence` run real git in the repository instead of answering from the fake.
+    real_git: Cell<bool>,
 }
 
 impl FLib {
@@ -355,12 +358,17 @@ impl Lib for FLib {
         &self,
         _mailbox: &str,
         _: &Path,
-        _: &str,
-        _: &Path,
+        _repo: &str,
+        _path: &Path,
         forge: &str,
         local: &str,
     ) -> Divergence {
         self.log(format!("divergence {forge} {local}"));
+        if self.real_git.get() {
+            return crate::ops::helpers::check_divergence(
+                _mailbox, &self.s.queue_dir, _repo, _path, forge, local,
+            );
+        }
         if self.cannot_check.get() {
             Divergence::CannotCheck("no queue dir".into())
         } else if self.diverged.get() {
@@ -369,8 +377,16 @@ impl Lib for FLib {
             Divergence::Ancestor
         }
     }
-    fn push(&self, _: &Path, remote: &str, refspec: &str) -> bool {
+    fn push(&self, path: &Path, remote: &str, refspec: &str) -> bool {
         self.log(format!("push {remote} {refspec}"));
+        if self.real_git.get() {
+            return std::process::Command::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(["push", "-q", remote, refspec])
+                .status()
+                .is_ok_and(|s| s.success());
+        }
         self.push_ok.get()
     }
     fn rebase(&self, br: &str, onto: &str, _: &Path, _: &str) -> Result<(), String> {
@@ -1497,6 +1513,7 @@ impl T {
             map_base: landref.into(),
             publish: Some(("origin".into(), "main".into())),
             unpublished: false,
+            publish_mode: spira_config::PublishMode::Pr,
             remotes: vec!["origin".into()],
         };
         let git = FGit::default();
@@ -1518,6 +1535,7 @@ impl T {
             repos: RefCell::new(Ok(vec!["spira".into()])),
             by_name: RefCell::default(),
             close_fail: Cell::new(false),
+            real_git: Cell::new(false),
         };
         let scripts = FScripts::default();
         scripts.fence_ok.set(true);
@@ -1548,6 +1566,10 @@ impl T {
     }
 
     fn run(&self, args: &[&str]) -> i32 {
+        self.run_on(&self.git, args)
+    }
+
+    fn run_on(&self, git: &dyn Git, args: &[&str]) -> i32 {
         let argv: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         let cmd = match cli::parse(&argv) {
             Ok(c) => c,
@@ -1557,7 +1579,7 @@ impl T {
             }
         };
         let w = World {
-            git: &self.git,
+            git,
             bd: &self.bd,
             lib: &self.lib,
             scripts: &self.scripts,

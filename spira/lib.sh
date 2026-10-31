@@ -1945,6 +1945,9 @@ spira_landrefs() {       # spira_landrefs <repo> -> the land ref, plus its local
 spira_publish_forge() {  # spira_publish_forge <name> -> "<remote> <branch>"
     _spira_config_repo publish-forge "$1"
 }
+spira_publishes_nowhere() {  # spira_publishes_nowhere <name> -> 0 only when declared unpublished
+    _spira_config_repo publishes-nowhere "$1"
+}
 
 # --------------------------------------------------------------------------------------
 # worktree_of <branch> [repo] -> the registered worktree path holding it, or empty.

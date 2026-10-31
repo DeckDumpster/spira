@@ -532,22 +532,28 @@ impl World {
             if !git.is_dir() || r.land != "queue.local" {
                 continue;
             }
-            let read = self.unpublished(&r.name).unwrap_or_else(|| Read::Blind("the unpublished range could not be computed".into()));
-            repos.push((r.name.clone(), read));
+            match self.unpublished(&r.name) {
+                Some(None) => {}
+                Some(Some(read)) => repos.push((r.name.clone(), read)),
+                None => repos.push((r.name.clone(), Read::Blind("the unpublished range could not be computed".into()))),
+            }
         }
         serde_json::to_string(&publish_backlog::Snapshot { repos }).map_err(|e| e.to_string())
     }
 
-    /// `None` when the verb cannot measure the range.
-    fn unpublished(&self, name: &str) -> Option<Read> {
+    /// `None` when the verb cannot measure the range; `Some(None)` for a repo declared to publish nowhere.
+    fn unpublished(&self, name: &str) -> Option<Option<Read>> {
         let out = lc_call_within(&self.lc_socket, &["unpublished", name], UNPUBLISHED_WAIT).ok()?;
         let v: Value = serde_json::from_str(&out).ok()?;
+        if v["declared_unpublished"] == true {
+            return Some(None);
+        }
         let count = v["count"].as_u64()?;
         let arrival = match (count, &v["oldest_arrival"]) {
             (0, _) => None,
             (_, a) => Some(a.as_u64()?),
         };
-        Some(Read::Measured { count, arrival })
+        Some(Some(Read::Measured { count, arrival }))
     }
 
     pub fn inbox_append(&self, line: &str) -> Result<String, String> {

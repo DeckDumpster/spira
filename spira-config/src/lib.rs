@@ -415,6 +415,16 @@ pub struct SpiraToml {
 pub struct PublishSection {
     pub remote: Option<String>,
     pub branch: Option<String>,
+    /// `pr` (the default) opens a forge PR; `push` fast-forward-pushes the green head and uses no forge API.
+    pub mode: Option<PublishMode>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum PublishMode {
+    #[default]
+    Pr,
+    Push,
 }
 
 /// on/off, spelled as an enum rather than a bool so a TOML reader sees the word `spira.conf`

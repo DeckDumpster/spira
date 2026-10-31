@@ -100,7 +100,7 @@ impl Fixture {
     fn layer(&self, count: u64, age: u64) {
         fs::write(
             self.p("layer.toml"),
-            format!("[spira]\nrun = \"{}\"\nrepo_map = \"{}\"\nhome_repo = \"fixlocal\"\nlocal_backlog_count = {count}\nlocal_backlog_age = {age}\n", self.p("run").display(), self.p("rows").display()),
+            format!("[spira]\nrun = \"{}\"\nrepo_map = \"{}\"\nhome_repo = \"fixlocal\"\nlocal_backlog_count = {count}\nlocal_backlog_age = {age}\n{}", self.p("run").display(), self.p("rows").display(), fs::read_to_string(self.p("layer-extra")).unwrap_or_default()),
         )
         .unwrap();
     }
@@ -272,4 +272,20 @@ fn partly_publishing_a_multi_commit_backlog_still_counts_what_is_left() {
     let r = same_rows(Scenario { name: "partial", count: 1, ticks: 3, setup: |f| { f.land("c1", 400, 300); f.land("c2", 200, 200); f.land("c3", 100, 100); }, change: Some(|f| f.git("repo", &["push", "-q", "origin", "local/main~1:main"], None)), ..QUIET });
     assert!(r[0].starts_with("OVER fixlocal: 3 unpublished commit(s)"), "{r:?}");
     assert!(r[1].starts_with("CLEAR fixlocal: back under threshold (1 unpublished, oldest N"), "{r:?}");
+}
+
+#[test]
+fn a_repo_declared_to_publish_nowhere_is_skipped_never_blind() {
+    let r = same_rows(Scenario {
+        name: "nowhere",
+        count: 0,
+        age: 0,
+        setup: |f| {
+            f.land("c1", 5, 5);
+            fs::write(f.p("layer-extra"), "[publish.fixlocal]\nremote = \"none\"\n").unwrap();
+            f.git("repo", &["remote", "remove", "origin"], None);
+        },
+        ..QUIET
+    });
+    assert!(r.is_empty(), "{r:?}");
 }

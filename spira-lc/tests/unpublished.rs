@@ -140,14 +140,30 @@ fn what_it_cannot_measure_is_refused_never_a_zero() {
     let (code, out) = f.lc("nosuch");
     assert_eq!(code, 2, "{out}");
 
-    let g = Fixture::build("nowhere", "[publish.fixlocal]\nremote = \"none\"\n");
-    let (code, out) = g.lc("fixlocal");
-    assert_eq!(code, 2, "{out}");
-    assert!(out.contains("publishes nowhere"), "{out}");
-
     let h = Fixture::build("unreachable", "");
     h.git("repo", &["remote", "set-url", "origin", "/nonexistent/forge.git"], None);
     let (code, out) = h.lc("fixlocal");
     assert_eq!(code, 2, "a forge that cannot be fetched is not a zero backlog: {out}");
     assert!(out.contains("fetch of origin/main failed"), "{out}");
+}
+
+#[test]
+fn a_repo_declared_to_publish_nowhere_is_skipped_not_refused() {
+    let g = Fixture::build("nowhere", "[publish.fixlocal]\nremote = \"none\"\n");
+    g.commit("repo", "c1", 60);
+    let v = g.range("fixlocal");
+    assert_eq!(v["declared_unpublished"], true, "{v}");
+    assert!(v.get("count").is_none(), "a declared-unpublished repo has no backlog to count: {v}");
+}
+
+#[test]
+fn a_push_mode_repo_is_measured_against_its_remote_branch() {
+    let f = Fixture::build("push", "[publish.fixlocal]\nremote = \"upstream\"\nbranch = \"release\"\nmode = \"push\"\n");
+    f.commit("repo", "c1", 60);
+    f.git("repo", &["push", "-q", "origin", "local/main:main"], None);
+    let v = f.range("fixlocal");
+    assert_eq!(v["count"], 1, "origin is level but the push target is not: {v}");
+    assert_eq!(v["forge_tip"], f.git("repo", &["rev-parse", "upstream/release"], None));
+    f.git("repo", &["push", "-q", "upstream", "local/main:release"], None);
+    assert_eq!(f.range("fixlocal")["count"], 0);
 }

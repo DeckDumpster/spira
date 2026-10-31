@@ -162,6 +162,10 @@ _pb_tick_repo() {
     repo="$(repo_root "$name" 2>/dev/null)" || { _pb_blind "$name" "repo-map has no checkout for it"; return 0; }
     [ -d "$repo/.git" ] || return 0
     [ "$(repo_land "$name" 2>/dev/null)" = "queue.local" ] || return 0
+    if spira_publishes_nowhere "$name" 2>/dev/null; then
+        _pb_unblind "$name"
+        return 0
+    fi
 
     local errf; errf="$(mktemp)"
     out="$(_pb_backlog "$name" "$repo" 2>"$errf")" || {
