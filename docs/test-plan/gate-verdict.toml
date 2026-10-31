@@ -126,15 +126,30 @@ id = "UC-gate-verdict-16"
 tier = "T3"
 statement = "Gates on different branches run concurrently in separate trees and never see each other's content. Gates on the same branch serialise, and the wait is metered `waited=Ns`. (sp-64v0)"
 
+[use_case.uncovered]
+reason = "test-gate-tree.sh deleted by the 2026-10-31 test review (per Ryan): flipped (law); loses UC-gate-verdict-16..18 same-branch gate serialisation; 7 s case waits out a barrier timeout"
+date = "2026-10-31"
+bead = "sp-51q2ks"
+
 [[use_case]]
 id = "UC-gate-verdict-17"
 tier = "T2"
 statement = "A gate that cannot get its tree lock within `SPIRA_GATE_LOCK_WAIT` gives NO_VERDICT `lock-timeout` (\"not a fault\") and never removes the holder's tree. Missing `flock` or an unopenable lockfile gives NO_VERDICT (`no-flock`, `no-lockfile`). (sp-d8h0r)"
 
+[use_case.uncovered]
+reason = "test-gate-tree.sh deleted by the 2026-10-31 test review (per Ryan): flipped (law); loses UC-gate-verdict-16..18 same-branch gate serialisation; 7 s case waits out a barrier timeout"
+date = "2026-10-31"
+bead = "sp-51q2ks"
+
 [[use_case]]
 id = "UC-gate-verdict-18"
 tier = "T2"
 statement = "Tree lifecycle. PASS keeps the detached worktree for reuse. Non-PASS removes it, but only when this process held the lock. A worktree that cannot be created gives NO_VERDICT `tree-unidentified`."
+
+[use_case.uncovered]
+reason = "test-gate-tree.sh deleted by the 2026-10-31 test review (per Ryan): flipped (law); loses UC-gate-verdict-16..18 same-branch gate serialisation; 7 s case waits out a barrier timeout"
+date = "2026-10-31"
+bead = "sp-51q2ks"
 
 [[use_case]]
 id = "UC-gate-verdict-19"

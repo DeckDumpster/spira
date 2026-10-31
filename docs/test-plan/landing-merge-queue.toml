@@ -57,7 +57,7 @@ tier = "T1"
 statement = "With `SPIRA_GATE_SUITES=off`, certification is fences-only and uses a distinct gate cache key. Push mode never gets the switch."
 
 [use_case.uncovered]
-reason = "the distinct fences-only gate cache key is gate/landing-pass Rust; only the admission bypass is asserted in bash (test-gate-admission-suites-only.sh)"
+reason = "the distinct fences-only gate cache key is gate/landing-pass Rust; the admission bypass was asserted in bash by test-gate-admission-suites-only.sh, deleted by sp-51q2ks (2026-10-31 test review)"
 date = "2026-10-08"
 bead = "sp-94lbj.2"
 

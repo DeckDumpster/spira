@@ -24,7 +24,6 @@
 #
 # tier: T3
 # covers: spira/testdb.sh spira/test-cockpit-bd-contract.sh UC-test-infrastructure-22
-#         spira/test-landing.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -113,9 +112,7 @@ suite_env=(
     TESTDB_SERVER_BD="$TMP/fail-bd"
 )
 
-# test-landing.sh uses testdb with real bd writes and guards with `testdb_up ... ||
-# exit 1`; it is included here to confirm the failsafe protects it when the
-# shared-fixture reset fails and SPIRA_DB is left unset.
+# test-landing.sh, which used testdb with real bd writes, was deleted by sp-51q2ks.
 #
 # test-bd-close-unacked-guard.sh (its testdb-backed predecessor) was merged into
 # spira/test-guards.sh by sp-qsr44, which drives the guard through a stub bd instead
@@ -128,7 +125,7 @@ suite_env=(
 # section tested timeouts_of/bump_timeout/spira_ask_timeout_loop, all retired outright
 # (zero live callers); what remains (SP_OPS_AGE, a pure /proc read) sources lib.sh
 # directly and never calls testdb_up, so it has nothing left to protect here either.
-for suite in test-cockpit-bd-contract test-landing; do
+for suite in test-cockpit-bd-contract; do
     [ -f "$HERE/$suite.sh" ] || { bad "$suite is listed but does not exist" "missing $HERE/$suite.sh"; continue; }
     out="$("${suite_env[@]}" bash "$HERE/$suite.sh" 2>&1)"; rc=$?
     if [ $rc -ne 0 ]; then
@@ -139,7 +136,7 @@ for suite in test-cockpit-bd-contract test-landing; do
     fi
 done
 
-# After both suites ran against the stand-in, its bead count must be unchanged.
+# After the suite ran against the stand-in, its bead count must be unchanged.
 count_after="$("$PROD_BD" -C "$PROD_DB" list --limit 0 --json 2>/dev/null \
     | grep -c '"id"' 2>/dev/null || printf '0')"
 is "production stand-in bead count unchanged after all suite runs" \
