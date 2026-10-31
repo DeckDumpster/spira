@@ -67,7 +67,7 @@ printf 'repo | %s | push | origin/main |  | echo EJECTED=$SPIRA_GATE_EJECTED_SUI
 
 seen_ejected() {   # seen_ejected <bead> -> the suites gate.sh's own subprocess was handed
     : > "$EJDUMP"
-    gate_fixture_run "$BR" repo SPIRA_GATE_BEAD="$1" >/dev/null 2>&1
+    gate_fixture_run "$BR" repo SPIRA_GATE_BEAD="$1" SPIRA_TESTENV_LOAD_WAIT=0 >/dev/null 2>&1
     sed -n 's/^EJECTED=//p' "$EJDUMP"
 }
 

@@ -101,7 +101,6 @@ spira/test-deploy.sh
 spira/test-destroy-branch.sh
 spira/test-doctor-config-files.sh
 spira/test-doctor-gate-compile-check.sh
-spira/test-epic-claim-order.sh
 spira/test-escape-classify.sh
 spira/test-express-lane.sh
 spira/test-rune.sh
@@ -131,7 +130,6 @@ spira/test-landing-pr.sh
 spira/test-landing-queue-early.sh
 spira/test-landing-race.sh
 spira/test-landing-rebase.sh
-spira/test-landing.sh
 spira/test-land-local-release.sh
 spira/test-land-mode-local.sh
 spira/testlib/gate-fixture.sh
@@ -172,7 +170,6 @@ spira/test-skew-refresh.sh
 spira/test-slay.sh
 spira/test-spike.sh
 spira/test-strand-truncated.sh
-spira/test-submitted-lands.sh
 spira/test-superseded.sh
 spira/test-thrash-teardown.sh
 spira/test-unclaimable.sh
