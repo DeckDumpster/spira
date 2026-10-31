@@ -2028,6 +2028,28 @@ mod tests {
     }
     use super::*;
 
+    fn forge_script(body: &str) -> (testkit::TempDir, PathBuf) {
+        let dir = crate::testutil::tmpdir("forge-rerun");
+        let f = dir.path().join("forge");
+        testkit::write_exe(&f, &format!("#!/bin/sh\n{body}\n"));
+        (dir, f)
+    }
+
+    #[test]
+    fn a_forge_refusal_of_a_decided_run_is_told_apart_from_a_failed_call() {
+        let (dir, f) = forge_script(
+            "echo 'forge: workflow-rerun refused: run 9 concluded failure, no input changed' >&2; exit 3",
+        );
+        assert_eq!(
+            RealForge.workflow_rerun(&f, dir.path(), "9"),
+            Rerun::Decided("run 9 concluded failure, no input changed".into())
+        );
+        let (dir, f) = forge_script("exit 1");
+        assert_eq!(RealForge.workflow_rerun(&f, dir.path(), "9"), Rerun::Failed);
+        let (dir, f) = forge_script("exit 0");
+        assert_eq!(RealForge.workflow_rerun(&f, dir.path(), "9"), Rerun::Started);
+    }
+
     /// This tree's real `spira/` dir (where `conf.d` actually lives) — `$SPIRA_HOME` for any
     /// test that reaches `spira_config::resolve::locate_home`/`resolve_for_process` (directly,
     /// via `process::cfg`, or via `resolve::run_dir_for_process`/`resolve::suite_state_file`

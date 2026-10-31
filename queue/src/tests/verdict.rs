@@ -262,7 +262,10 @@ fn a_publish_run_decided_red_on_an_unchanged_tree_is_settled_not_rerun_forever()
     assert!(!t.qfile("publish").exists());
     assert!(t.qfile("publish-red").exists());
     assert!(!t.err().contains("could not start"), "{}", t.err());
+    assert!(!t.qfile("publish-fault-retries").exists());
+    assert!(!t.qfile("publish-rerun-refused").exists());
     let lib = t.lib.calls.borrow();
+    assert!(!lib.iter().any(|c| c.starts_with("notify spira re-run")));
     for id in ["sp-a", "sp-b"] {
         let note = lib
             .iter()
