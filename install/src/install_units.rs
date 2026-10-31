@@ -262,10 +262,6 @@ pub fn run(ctx: &Ctx) -> Report {
     let enabled_all: BTreeMap<&String, Option<String>> = live.iter().zip(ctx.systemctl.is_enabled_many(&live)).collect();
     let active_all: BTreeMap<&String, bool> = live.iter().zip(ctx.systemctl.is_active_many(&live)).collect();
 
-    // Units whose action is a bare enable / enable --now go out in one call each, flushed
-    // before anything that must run in order (a drain, a restart, the database unit).
-    let mut batch: Vec<String> = Vec::new();
-    let mut batch_now = false;
     for u in &ordered {
         if masked.contains(u) {
             r.enabled_actions.push((u.clone(), Action::Masked));
@@ -278,24 +274,11 @@ pub fn run(ctx: &Ctx) -> Report {
         let tmpl_of_u = rendered.iter().find(|(inst, _, _)| inst == u).map(|(_, t, _)| t.clone());
         let changed = tmpl_of_u.as_deref().map(|t| changed_templates.contains(t)).unwrap_or(false);
         let action = decide(State { changed, masked: false, suspended, disabled, halted: ctx.world_halted, active: active_all[u] });
-        r.enabled_actions.push((u.clone(), action));
-        let batchable = u != "dolt-beads.service" && matches!(action, Action::Enable | Action::EnableNow);
-        let now = action == Action::EnableNow;
-        if !batch.is_empty() && !(batchable && now == batch_now) {
-            ctx.systemctl.enable_many(&std::mem::take(&mut batch), batch_now);
-        }
-        if batchable {
-            batch_now = now;
-            batch.push(u.clone());
-            continue;
-        }
         apply(ctx, u, action);
+        r.enabled_actions.push((u.clone(), action));
         if u == "dolt-beads.service" && !ctx.world_halted {
             db_server_wait(ctx);
         }
-    }
-    if !batch.is_empty() {
-        ctx.systemctl.enable_many(&batch, batch_now);
     }
 
     r

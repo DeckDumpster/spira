@@ -19,10 +19,6 @@ pub trait Systemctl {
     fn is_active_many(&self, units: &[String]) -> Vec<bool> {
         units.iter().map(|u| self.is_active(u)).collect()
     }
-    /// `enable` (or `enable --now`) for each of `units`, one result per unit in order.
-    fn enable_many(&self, units: &[String], now: bool) -> Vec<Result<(), String>> {
-        units.iter().map(|u| if now { self.enable_now(u) } else { self.enable(u) }).collect()
-    }
     fn disable_now(&self, unit: &str) -> Result<(), String>;
     /// `systemctl disable` — unlike [`Self::disable_now`], leaves a running unit running
     /// (`unit-ensure`'s producer guard: withdrawing the opt-in stops it firing again, not
@@ -110,17 +106,6 @@ impl Systemctl for RealSystemctl {
             Some(lines) => lines.iter().map(|l| l == "active").collect(),
             None => units.iter().map(|u| self.is_active(u)).collect(),
         }
-    }
-    fn enable_many(&self, units: &[String], now: bool) -> Vec<Result<(), String>> {
-        let mut args: Vec<&str> = vec!["enable"];
-        if now {
-            args.push("--now");
-        }
-        args.extend(units.iter().map(String::as_str));
-        if units.len() > 1 && self.run(&args).0 {
-            return units.iter().map(|_| Ok(())).collect();
-        }
-        units.iter().map(|u| if now { self.enable_now(u) } else { self.enable(u) }).collect()
     }
     fn enable(&self, unit: &str) -> Result<(), String> {
         let (ok, _, err) = self.run(&["enable", unit]);
@@ -347,15 +332,6 @@ mod tests {
         let (_d, sc, log) = stub("case \"$*\" in *a.service*b.service*) printf 'enabled\\n';; *a.service) echo enabled;; esac");
         let got = sc.is_enabled_many(&names(&["a.service", "b.service"]));
         assert_eq!(got, vec![Some("enabled".into()), None]);
-        assert_eq!(calls(&log), 3);
-    }
-
-    #[test]
-    fn a_failed_batch_enable_is_retried_per_unit_so_each_unit_gets_its_own_result() {
-        let (_d, sc, log) = stub("case \"$*\" in *a.service*b.service*) exit 1;; *b.service) echo nope >&2; exit 1;; esac");
-        let got = sc.enable_many(&names(&["a.service", "b.service"]), true);
-        assert!(got[0].is_ok());
-        assert!(got[1].is_err());
         assert_eq!(calls(&log), 3);
     }
 }
