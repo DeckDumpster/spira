@@ -261,14 +261,14 @@ fn e2e_a_landing_ref_whose_arrival_cannot_be_read_is_blind_once_never_clear() {
 }
 
 #[test]
-fn a_multi_commit_backlog_is_counted_commit_by_commit_and_ages_from_its_oldest() {
+fn e2e_a_multi_commit_backlog_is_counted_commit_by_commit_and_ages_from_its_oldest() {
     let r = same_rows(Scenario { name: "multi", count: 2, age: 10_800, setup: |f| { f.land("c1", 400, 300); f.land("c2", 200, 200); f.land("c3", 100, 100); }, ..QUIET });
     assert_eq!(r.len(), 1, "{r:?}");
     assert!(r[0].starts_with("OVER fixlocal: 3 unpublished commit(s), oldest N"), "{r:?}");
 }
 
 #[test]
-fn partly_publishing_a_multi_commit_backlog_still_counts_what_is_left() {
+fn e2e_partly_publishing_a_multi_commit_backlog_still_counts_what_is_left() {
     let r = same_rows(Scenario { name: "partial", count: 1, ticks: 3, setup: |f| { f.land("c1", 400, 300); f.land("c2", 200, 200); f.land("c3", 100, 100); }, change: Some(|f| f.git("repo", &["push", "-q", "origin", "local/main~1:main"], None)), ..QUIET });
     assert!(r[0].starts_with("OVER fixlocal: 3 unpublished commit(s)"), "{r:?}");
     assert!(r[1].starts_with("CLEAR fixlocal: back under threshold (1 unpublished, oldest N"), "{r:?}");
