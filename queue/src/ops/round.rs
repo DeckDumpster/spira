@@ -2369,7 +2369,7 @@ fn certify_pass(
             build_s: 0,
         };
         let mut out = out;
-        if ci_result_ok(&results) && out.rc != VM_LOST && !matches!(out.rc, 124 | 137) {
+        if ci_result_ok(&results) && out.rc == 2 {
             out.rc = 0;
         }
         if out.rc == 1 {
