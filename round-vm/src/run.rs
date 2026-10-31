@@ -501,13 +501,16 @@ else
     exit 3
 fi
 disk_preflight() {
-    local need=$(( disk_need_gib * 1073741824 )) have
-    have="$(df -B1 --output=avail "$HOME/round-work" | tail -n1 | tr -d ' ')"
-    case "$have" in ''|*[!0-9]*) echo "round-vm: FAULT disk: cannot read free space under $HOME/round-work" >&2; return 3 ;; esac
-    if [ "$have" -lt "$need" ]; then
-        echo "round-vm: FAULT disk: need $disk_need_gib GiB, have $(( have / 1073741824 )) GiB (short $(( need - have )) bytes) — refusing to start the suites pass on a disk that fills mid-pass" >&2
-        return 3
-    fi
+    local need=$(( disk_need_gib * 1073741824 )) have dir graph
+    graph="$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null || true)"
+    for dir in "$HOME/round-work" "${TMPDIR:-/tmp}" $graph; do
+        have="$(df -B1 --output=avail "$dir" | tail -n1 | tr -d ' ')"
+        case "$have" in ''|*[!0-9]*) echo "round-vm: FAULT disk: cannot read free space under $dir" >&2; return 3 ;; esac
+        if [ "$have" -lt "$need" ]; then
+            echo "round-vm: FAULT disk: need $disk_need_gib GiB, have $(( have / 1073741824 )) GiB under $dir (short $(( need - have )) bytes) — refusing to start the suites pass on a disk that fills mid-pass" >&2
+            return 3
+        fi
+    done
 }
 disk_preflight || exit 3
 setup_secs=$(( $(date +%s) - t_start - unit_build_secs ))
