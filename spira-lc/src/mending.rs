@@ -444,6 +444,12 @@ mod tests {
         assert!(msg.contains("batch_id is 65 chars (max 64)"), "{msg}");
         let (_, msg) = check_widths("b", 1, &"s".repeat(SUITE_MAX + 1)).unwrap_err();
         assert!(msg.contains("suite is 161 chars (max 160)"), "{msg}");
+        let schema = include_str!("../../lifecycle/schema.sql");
+        for (table, column, max) in [("mending", "batch_id", BATCH_MAX), ("mending", "suite", SUITE_MAX), ("mend", "batch_id", BATCH_MAX), ("mend", "suite", SUITE_MAX), ("event", "lc_key", KEY_MAX)] {
+            let body = schema.split(&format!("CREATE TABLE IF NOT EXISTS {table} (")).nth(1).and_then(|t| t.split(");").next()).unwrap_or_default();
+            let line = body.lines().find(|l| l.split_whitespace().next() == Some(column)).unwrap_or_default();
+            assert!(line.contains(&format!("VARCHAR({max})")), "{table}.{column} in schema.sql is not {max} wide: {line:?}");
+        }
         assert!(KEY_MAX >= BATCH_MAX + SUITE_MAX + 2 + u32::MAX.to_string().len(), "the widest triple fits the key column");
     }
 }

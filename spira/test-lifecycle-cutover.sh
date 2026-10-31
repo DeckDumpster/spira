@@ -1020,5 +1020,12 @@ OVER="$(printf 'y%.0s' $(seq 1 161))"
 out="$(lc mending pickup "$WIDE_BATCH" --pass 1 --suite "$OVER" --deadline-secs 600 --actor mender-w 2>&1)"
 wantrc "an over-long suite is refused" 2 $?
 want "the refusal names the field" "suite is 161 chars (max 160)" "$out"
+OVER_BATCH="$(printf 'z%.0s' $(seq 1 65))"
+out="$(lc mending event "$OVER_BATCH" --pass 1 --suite s.sh --actor mender-w --kind '{"TriageEnded":{"at":0}}' 2>&1)"
+wantrc "an over-long batch id is refused on the event verb" 2 $?
+want "that refusal names batch_id" "batch_id is 65 chars (max 64)" "$out"
+out="$(pev "$WIDE_BATCH" "{\"Failed\":{\"suite\":\"$OVER\",\"n\":1}}" 2>&1)"
+wantrc "a failed suite with an over-long name is refused before it opens a row" 2 $?
+want "that refusal names suite" "suite is 161 chars (max 160)" "$out"
 
 tl_summary
