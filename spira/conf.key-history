@@ -326,6 +326,7 @@ round_vm_host_key
 round_vm_host_pubkey
 round_vm_maxpar
 round_vm_mem_mib
+round_vm_disk_need_gib
 round_vm_max_retries
 round_vm_mirror_port
 round_vm_provider

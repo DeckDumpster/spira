@@ -48,6 +48,7 @@ forge_workflow = "Gate"
 forge_workflows = ""
 hypervisor_mem_mib = 0
 round_vm_mem_mib = 0
+round_vm_disk_need_gib = 40
 ci_runner_mem_mib = 16384
 mender_max = 8
 mender_deadline_secs = 300

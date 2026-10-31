@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=batcher
+DOC=GiB free the round VM's work filesystem must hold before a suites pass starts; less is refused, naming the shortfall in bytes.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # GiB free the round VM's work filesystem must hold before a suites pass starts; less is refused, naming the shortfall in bytes.
+    : "${SPIRA_ROUND_VM_DISK_NEED_GIB:=40}"
+SPIRA_CONF_DEFAULT_EOF

@@ -70,6 +70,8 @@ pub struct Config {
     pub testenv_limits: String,
     /// How long the VM waits for the unit-test job after the cap clock stops before killing it.
     pub post_guard_secs: u64,
+    /// GiB free the VM's work filesystem must hold before the suites start; less is a named refusal.
+    pub disk_need_gib: u64,
     /// A progress phase with no change for this long reports itself stalled.
     pub vm_budget_secs: u64,
     pub build_budget_secs: u64,
@@ -111,6 +113,7 @@ pub(crate) struct Fields {
     pub cap_secs: u64,
     pub testenv_limits: String,
     pub post_guard_secs: u64,
+    pub disk_need_gib: u64,
     pub vm_budget_secs: u64,
     pub build_budget_secs: u64,
 }
@@ -261,6 +264,7 @@ impl Config {
             cap_secs: must_cfg_parse("SPIRA_ROUND_CERTIFY_WALL_SECS")?,
             testenv_limits: testenv_limits()?,
             post_guard_secs: num_env("SPIRA_ROUND_VM_POST_GUARD_SECS", 600)?,
+            disk_need_gib: must_cfg_parse("SPIRA_ROUND_VM_DISK_NEED_GIB")?,
             vm_budget_secs: num_env("SPIRA_ROUND_VM_PHASE_VM_SECS", 300)?,
             build_budget_secs: num_env("SPIRA_ROUND_VM_PHASE_BUILD_SECS", 600)?,
         }))
@@ -302,6 +306,7 @@ impl Config {
             cap_secs: f.cap_secs,
             testenv_limits: f.testenv_limits,
             post_guard_secs: f.post_guard_secs,
+            disk_need_gib: f.disk_need_gib,
             vm_budget_secs: f.vm_budget_secs,
             build_budget_secs: f.build_budget_secs,
         }
@@ -435,6 +440,7 @@ mod tests {
             cap_secs: 900,
             testenv_limits: "testenv_suite_cap = 600\n".into(),
             post_guard_secs: 600,
+            disk_need_gib: 40,
             vm_budget_secs: 300,
             build_budget_secs: 600,
         }

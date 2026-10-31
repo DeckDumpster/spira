@@ -132,6 +132,7 @@ pub struct BatchJob {
     pub testenv_limits: String,
     /// Seconds the VM waits for the unit-test job once the cap clock has stopped.
     pub post_guard_secs: u64,
+    pub disk_need_gib: u64,
     /// Mirror ref `base` holds the landing ref; set: the round lints before its suites.
     pub lint: bool,
     /// The head's image tag differs from what the template (or the landing ref) holds: the VM
@@ -223,7 +224,7 @@ printf '%s %s %s - - - %s\n' "$status" 1 "$(( $(date +%s) - t0 ))" "$rc" > "$res
 /// into `~/round-bins/` so the host pulls the binaries and not cargo's target directory.
 pub const REMOTE_SCRIPT: &str = concat!(r#"set -euo pipefail
 host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" build_image="${12}" round_ref="${13}" round_sha="${14}"
-testenv_limits="${16:-}" resume_url="${17:-}"
+testenv_limits="${16:-}" resume_url="${17:-}" disk_need_gib="${18:-}"
 [ -n "$testenv_limits" ] || { echo "round-vm: the host sent no testenv limits; a round never takes them from the tree's test fixture" >&2; exit 2; }
 t_start=$(date +%s)
 export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -499,6 +500,19 @@ else
     echo "round-vm: IMAGE-ABSENT: localhost/spira-testenv:$tag is not on this VM — refusing to cold-build it (law-unexpected-image-builds-are-killed-then-fixed); refresh the template with round-vm template and recycle the warm pool" >&2
     exit 3
 fi
+disk_preflight() {
+    local need=$(( disk_need_gib * 1073741824 )) have dir graph
+    graph="$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null || true)"
+    for dir in "$HOME/round-work" "${TMPDIR:-/tmp}" ${graph:+"$graph"}; do
+        have="$(df -B1 --output=avail "$dir" | tail -n1 | tr -d ' ')"
+        case "$have" in ''|*[!0-9]*) echo "round-vm: FAULT disk: cannot read free space under $dir" >&2; return 3 ;; esac
+        if [ "$have" -lt "$need" ]; then
+            echo "round-vm: FAULT disk: need $disk_need_gib GiB, have $(( have / 1073741824 )) GiB under $dir (short $(( need - have )) bytes) — refusing to start the suites pass on a disk that fills mid-pass" >&2
+            return 3
+        fi
+    done
+}
+disk_preflight || exit 3
 setup_secs=$(( $(date +%s) - t_start - unit_build_secs ))
 if [ -n "$registry" ]; then export SPIRA_TESTENV_REGISTRY="$registry"; fi
 # Each passed suite is recorded to the resume prefix as it passes, so a VM that dies loses none.
@@ -895,6 +909,7 @@ pub fn remote_command(job: &BatchJob) -> String {
     args.push(job.ci_entry.clone().unwrap_or_default());
     args.push(job.testenv_limits.clone());
     args.push(job.resume_url.clone().unwrap_or_default());
+    args.push(job.disk_need_gib.to_string());
     let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
     format!("bash -c {} launcher {}", shell_quote(REMOTE_LAUNCHER), quoted.join(" "))
 }
@@ -1953,6 +1968,7 @@ fn on_vm_run(
         cap_secs: cfg.cap_secs,
         testenv_limits: cfg.testenv_limits.clone(),
         post_guard_secs: cfg.post_guard_secs,
+        disk_need_gib: cfg.disk_need_gib,
         lint: args.base.is_some() && args.ci_entry.is_none(),
         build_image,
         round_ref: round_ref.to_string(),
@@ -2558,6 +2574,44 @@ mod tests {
         assert!(lane.contains("--results \"$bare_out\"") || REMOTE_SCRIPT[bare..corpus].contains("--results \"$bare_out\""), "its results are copied beside the corpus's once the corpus has written its own");
         assert!(lane.contains("[ \"$rc\" -eq 0 ] && rc=1"), "a red bare suite makes the round red");
         assert!(REMOTE_SCRIPT.contains("--selected \"$suites\"") && REMOTE_SCRIPT.contains("--suites all"));
+    }
+
+    #[test]
+    fn the_remote_script_refuses_a_disk_below_the_need_naming_the_shortfall_in_bytes() {
+        let a = REMOTE_SCRIPT.find("disk_preflight() {").expect("the disk preflight");
+        let b = REMOTE_SCRIPT.find("disk_preflight || exit 3").unwrap();
+        let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
+        assert!(b < batch, "refused before the suites start");
+        let func = &REMOTE_SCRIPT[a..b];
+        let run = |work: u64, tmp: u64, graph: u64, need: &str| {
+            let t = testkit::TempDir::new("rvm-disk");
+            let d = t.path().to_path_buf();
+            std::fs::create_dir_all(d.join("bin")).unwrap();
+            std::fs::create_dir_all(d.join("round-work")).unwrap();
+            testkit::write_exe(d.join("bin/podman"), "#!/bin/sh\necho /stub/graphroot\n");
+            let df = format!(
+                "#!/bin/sh\nfor a; do last=$a; done\ncase \"$last\" in\n*round-work) v={work};;\n/stub/graphroot) v={graph};;\n*) v={tmp};;\nesac\nprintf 'Avail\\n%s\\n' $v\n"
+            );
+            testkit::write_exe(d.join("bin/df"), &df);
+            let script = format!("set -uo pipefail\ndisk_need_gib={need}\n{func}disk_preflight\n");
+            let out = std::process::Command::new("bash").arg("-c").arg(script).env_clear().env("HOME", &d)
+                .env("TMPDIR", "/stub/tmp").env("PATH", format!("{}:/usr/bin:/bin", d.join("bin").display())).output().unwrap();
+            (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).into_owned())
+        };
+        let gib: u64 = 1 << 30;
+        let (code, err) = run(10 * gib, 90 * gib, 90 * gib, "40");
+        assert_eq!(code, 3, "{err}");
+        assert!(err.contains("FAULT disk: need 40 GiB, have 10 GiB"), "{err}");
+        assert!(err.contains(&format!("short {} bytes", 30 * gib)), "{err}");
+        assert!(err.contains("round-work"), "{err}");
+        let (code, err) = run(90 * gib, 5 * gib, 90 * gib, "40");
+        assert_eq!(code, 3, "{err}");
+        assert!(err.contains("under /stub/tmp"), "a short TMPDIR is named: {err}");
+        let (code, err) = run(90 * gib, 90 * gib, 7 * gib, "40");
+        assert_eq!(code, 3, "{err}");
+        assert!(err.contains("under /stub/graphroot"), "short container storage is named: {err}");
+        let (code, err) = run(40 * gib, 40 * gib, 40 * gib, "40");
+        assert_eq!(code, 0, "exactly the need is enough: {err}");
     }
 
     #[test]
@@ -3237,6 +3291,7 @@ mod tests {
             cap_secs: 900,
             testenv_limits: "testenv_suite_cap = 600\n".into(),
             post_guard_secs: 600,
+            disk_need_gib: 7,
             lint: false,
             build_image: false,
             ssh_log: PathBuf::from("ssh.log"),
@@ -3244,7 +3299,7 @@ mod tests {
             round_sha: "abc".into(),
             ci_entry: Some("deploy/ci.sh all".into()),
         });
-        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' ''", shell_quote(REMOTE_LAUNCHER)));
+        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '7'", shell_quote(REMOTE_LAUNCHER)));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -3341,10 +3396,10 @@ mod tests {
         let job = BatchJob {
             host_addr: "h".into(), mirror_port: 1, suites: None, maxpar: 1, toolchain: None, cache_home: None,
             testenv_registry: None, resume_url: Some("s3://bkt/pre".into()), setup_alarm_secs: 1, cap_secs: 1,
-            testenv_limits: "x".into(), post_guard_secs: 1, lint: false, build_image: false,
+            testenv_limits: "x".into(), post_guard_secs: 1, disk_need_gib: 1, lint: false, build_image: false,
             ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None,
         };
-        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre'"));
+        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '1'"));
         assert!(!REMOTE_SCRIPT.contains("AWS_SECRET_ACCESS_KEY"), "the script never carries a key");
         let remote = FakeRemote::green();
         push_resume_credentials(&remote, "10.0.0.2", Path::new("/creds"));
@@ -3862,6 +3917,7 @@ mod tests {
             cap_secs: 1234,
             testenv_limits: "testenv_suite_cap = 600\n".into(),
             post_guard_secs: 77,
+            disk_need_gib: 40,
             vm_budget_secs: 300,
             build_budget_secs: 600,
         });
