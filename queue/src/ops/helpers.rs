@@ -296,6 +296,8 @@ pub fn cancel_branch_runs(forge: &Path, repo: &Path, branch: &str, tag: &str) ->
 /// it within seconds — never by polling the queue by hand. Best-effort, as the bash body
 /// was (`|| true`): a mail failure never blocks the mutation it is reporting on.
 pub fn notify(mailbox: &str, name: &str, subject: &str, body: &str) {
+    #[cfg(test)]
+    refuse_unless_mail_is_test_owned();
     let full_subject = format!("Merge queue: {name} {subject}");
     let full_body = format!("## Alert\n{body}\n");
     if let Ok(mut child) = spira_config::bounded::bounded("mail")
@@ -320,6 +322,20 @@ pub fn notify(mailbox: &str, name: &str, subject: &str, body: &str) {
         }
         let _ = child.wait();
     }
+}
+
+#[cfg(test)]
+fn refuse_unless_mail_is_test_owned() {
+    const MARK: &[u8] = b"# test-owned-mail";
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let found = std::env::split_paths(&path)
+        .map(|d| d.join("mail"))
+        .find(|p| p.is_file());
+    let stub = found
+        .as_ref()
+        .and_then(|p| std::fs::read(p).ok())
+        .is_some_and(|b| b.windows(MARK.len()).any(|w| w == MARK));
+    assert!(stub, "a test would deliver mail through {found:?}, not a `mail` carrying the test-owned marker");
 }
 
 /// Row 4 of the local/main design: is `forge_sha` an ancestor of `local_sha`? Under
