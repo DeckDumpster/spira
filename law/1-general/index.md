@@ -17,3 +17,5 @@ Placeholder Part until the table of contents is approved.
 - §1.13 law-a-kit-mechanizes-the-sites-it-never-competes — Shared-platform code mechanizes the pattern its sites already run correctly; it never builds a parallel path beside it.
 - §1.14 law-the-harness-switches-his-cockpit — Whatever puts a design, diff or report in front of Ryan switches his cockpit to it itself, every iteration; it never asks him to switch, and only he dismisses it.
 - §1.15 law-calls-have-deadlines — Every request/response call (a query, a socket RPC, a CLI lookup) carries a client timeout of at most 5 s, and the receiver stops working 3 s after receiving it.
+- §1.16 law-fix-the-harness-not-the-instance — Repair a harness-managed surface by changing the harness, never by hand-wiring the running instance: if the next refresh, rebuild or timer would undo your change, it is not a fix.
+- §1.17 law-a-required-key-ships-with-the-change-that-needs-it — A change that makes a configuration key required ships the key in the same change: its spira/conf.d file, conf.key-history line and config-delta.toml entry, so activating the release adds it to the live config.
