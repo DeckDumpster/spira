@@ -62,7 +62,7 @@ echo "install — world.halted pre-created; units are enabled but not started:"
 # SPIRA_INSTALL_FORCE=1 bypasses the landref check (we are on a worktree branch,
 # not the base branch) and the live-dwarves guard.
 "${CEXEC[@]}" "$CNAME" bash -c \
-    "mkdir -p '${SPIRA_RUN_CTR}' && touch '${SPIRA_RUN_CTR}/world.halted'" >&2
+    "mkdir -p '${REH_RUN_CTR}' && touch '${REH_RUN_CTR}/world.halted'" >&2
 iszero "world.halted created" "$?"
 
 # A fresh host exports neither SPIRA_TOML nor SPIRA_RELEASES: install runs from the release it
@@ -89,7 +89,7 @@ unit_count="$("${CEXEC[@]}" "$CNAME" bash -c \
 
 # Remove world.halted and start the sentinel timer so ready.sh sees it as active.
 "${CEXEC[@]}" "$CNAME" bash -c \
-    "rm -f '${SPIRA_RUN_CTR}/world.halted'" >&2
+    "rm -f '${REH_RUN_CTR}/world.halted'" >&2
 iszero "world.halted removed" "$?"
 
 "${CEXEC[@]}" "$CNAME" bash -c \
@@ -102,7 +102,7 @@ want "sentinel timer active" "active" "$active_out"
 
 # 3. World not halted — stamp file is gone.
 "${CEXEC[@]}" "$CNAME" bash -c \
-    "[ ! -f '${SPIRA_RUN_CTR}/world.halted' ]" \
+    "[ ! -f '${REH_RUN_CTR}/world.halted' ]" \
     && ok "world not halted (stamp absent)" \
     || bad "world not halted" "world.halted still present after removal"
 

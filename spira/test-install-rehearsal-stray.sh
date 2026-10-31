@@ -12,7 +12,7 @@
 # SKIP CONDITION: no podman on PATH, or user systemd not available in the container.
 #
 # runtime: ~1m
-# tier: T3
+# tier: T2
 # bare-host: builds its own podman containers; the corpus container has no podman
 # covers: spira/lib-test-install-rehearsal.sh spira/podman-exec-diag.sh install/src/bin/install.rs spira/uninstall.sh spira/configure.sh testenv/src/container.rs spira/testenv/Containerfile UC-instance-lifecycle-40
 set -uo pipefail

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# lib-test-install-rehearsal.sh — the container both install-rehearsal suites run in: up, stubbed
-# bd/loom, the fake release root, the tree's built binaries streamed in, configure.sh run.
-# Sourced by test-install-rehearsal.sh and test-install-rehearsal-stray.sh after they source
-# testlib.sh and podman-exec-diag.sh and define iszero. Never executed. What is real and what
-# is stubbed is stated in test-install-rehearsal.sh's header.
+# lib-test-install-rehearsal.sh — Sourced, never executed: the container both install-rehearsal
+# suites run in (up, stubbed bd/loom, fake release root, the tree's binaries streamed in,
+# configure.sh run). Sourced by test-install-rehearsal.sh and test-install-rehearsal-stray.sh after
+# they source testlib.sh and podman-exec-diag.sh and define iszero.
+# What is real and what is stubbed is stated in test-install-rehearsal.sh's header.
 
 command -v podman >/dev/null 2>&1 || skip "podman not on PATH"
 CNAME="spira-testenv-reh-$$"
@@ -44,7 +44,7 @@ ok "user systemd running (probe exits 0)"
 # container and disappears when the container is removed. The host filesystem is
 # not polluted.
 # ---------------------------------------------------------------------------
-SPIRA_RUN_CTR="/tmp/spira-reh"
+REH_RUN_CTR="/tmp/spira-reh"
 # The timeout is a hang guard, never a budget (law-no-wall-clock-budgets-in-the-corpus): a 5 s cap
 # killed a successful exec on a loaded 4-vCPU publish runner (PR 537, case 30, exit 124).
 CEXEC=(timeout 120 podman exec --user spirauser
@@ -53,7 +53,7 @@ CEXEC=(timeout 120 podman exec --user spirauser
     -e "PATH=${STUBS_CTR}:/tmp/spira-prod/bin:/tmp/spira-prod/spira:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     -e "SPIRA_PATH=${STUBS_CTR}"
     -e "SPIRA_BD=${STUBS_CTR}/bd"
-    -e "SPIRA_RUN=${SPIRA_RUN_CTR}"
+    -e "SPIRA_RUN=${REH_RUN_CTR}"
     -e "SPIRA_WORKSPACES=/tmp"
     -e "SPIRA_HOME_REPO=home"
     -e "SPIRA_ADOPT_CONFIGURE_DEFAULT=1"
@@ -165,7 +165,7 @@ echo "configure — non-interactive spira.conf bootstrap:"
     -e "CONFIGURE_HOME_REPO=home" \
     -e "CONFIGURE_HOME_REPO_PATH=/tmp/spira-reh-home" \
     -e "CONFIGURE_RELEASES=/tmp/spira-reh-rel" \
-    -e "CONFIGURE_RUN=${SPIRA_RUN_CTR}" \
+    -e "CONFIGURE_RUN=${REH_RUN_CTR}" \
     -e "CONFIGURE_OPERATED=0" \
     -e "CONFIGURE_MAX_DWARVES=1" \
     -e "CONFIGURE_MAX_LIVE_DWARVES=1" \
@@ -181,7 +181,7 @@ iszero "configure.sh exits 0" "$?"
     -e "CONFIGURE_OUT=/tmp/spira-reh-nopath.conf" \
     -e "CONFIGURE_PROD=/tmp/spira-reh-rel/current/spira" \
     -e "CONFIGURE_RELEASES=/tmp/spira-reh-rel" \
-    -e "CONFIGURE_RUN=${SPIRA_RUN_CTR}" \
+    -e "CONFIGURE_RUN=${REH_RUN_CTR}" \
     -e "CONFIGURE_MAX_DWARVES=1" \
     -e "CONFIGURE_MAX_LIVE_DWARVES=1" \
     -e "CONFIGURE_LOOM_ADDR=127.0.0.1:7300" \
