@@ -540,8 +540,11 @@ impl Lib for RealLib {
         let publish_red_priority = spira_config::process::cfg("SPIRA_PUBLISH_RED_PRIORITY")?;
         let publish_red_escalate_after =
             spira_config::process::cfg_parse::<usize>("SPIRA_PUBLISH_RED_ESCALATE_AFTER")?;
-        let publish_defer_max =
-            spira_config::process::cfg_parse::<usize>("SPIRA_PUBLISH_SETTLE_DEFER_MAX").ok();
+        let publish_defer_max = match spira_config::process::cfg_parse::<usize>("SPIRA_PUBLISH_SETTLE_DEFER_MAX") {
+            Ok(n) => Some(n),
+            Err(e) if e.contains("not a registered config key") => None,
+            Err(e) => return Err(e),
+        };
         let s = Settings {
             home: PathBuf::from(g("home")),
             run: PathBuf::from(g("run")),
