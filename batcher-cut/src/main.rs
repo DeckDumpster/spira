@@ -1749,7 +1749,7 @@ mod tests {
         let dir = testkit::TempDir::new("batcher-cut-env-for");
         let toml = spira_config::process::fixture_toml(
             &dir,
-            &[("SPIRA_BD", "bd-fixture"), ("SPIRA_FORGE", "forge-fixture"), ("SPIRA_BATCHER_WALL_SECS", "3600"), ("SPIRA_BATCHER_ORPHAN_REDRIVE_SECS", "600")],
+            &[("SPIRA_BD", "bd-fixture"), ("SPIRA_FORGE", "forge-fixture"), ("SPIRA_BATCHER_WALL_SECS", "3600"), ("SPIRA_BATCHER_ORPHAN_REDRIVE_SECS", "737")],
         );
         // The real, checked-in spira/conf.d (this crate's own repo layout: `batcher-cut/`
         // sits beside `spira/`) — `cfg`'s resolution needs a real registry to validate every
@@ -1767,6 +1767,7 @@ mod tests {
         assert_eq!(env_.bd, "bd-fixture", "a registered key's declared value must reach Env, not a Rust-level default");
         assert_eq!(env_.forge, PathBuf::from("forge-fixture"));
         assert_eq!(env_.wall_secs, 3600);
+        assert_eq!(env_.orphan_redrive_after, 737, "the orphan wait comes from the configured key, not a literal");
     }
 }
 
