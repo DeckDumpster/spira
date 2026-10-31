@@ -1334,6 +1334,31 @@ fn capacity_fault(w: &World, c: &Ctx, b: &Batch, marker: &str) -> i32 {
     OK
 }
 
+/// The forge will not re-run a batch run that is decided on an unchanged tree: record the cause
+/// on each member and close the PR, requeuing them so the next cut changes the input. Left open
+/// it would be re-attempted every pass.
+fn batch_decided_red(w: &World, c: &Ctx, b: &Batch, out: &str, reason: &str) -> i32 {
+    let (name, pr) = (b.name, &b.pr);
+    let evidence = failure_evidence(out).trim().replace('\n', " | ");
+    let note = format!(
+        "Batch PR {pr} red, rerun refused (no input changed).{} Closed; requeued. Forge: {reason}",
+        if evidence.is_empty() {
+            String::new()
+        } else {
+            format!(" Cause: {evidence}.")
+        }
+    );
+    let note = crate::ident::bounded_text(&note);
+    for m in &b.members {
+        w.lib.comment(&m.id, &note);
+    }
+    w.out(format!(
+        "verdict {name}: PR {pr} gate run is red on an unchanged tree ({reason}) — closing batch; members requeued"
+    ));
+    close_and_certify(w, c, b);
+    OK
+}
+
 fn harness_fault(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
     let (name, pr) = (b.name, &b.pr);
     if let Some(marker) = tagged(out, "capacity: ").last() {
@@ -1361,6 +1386,9 @@ fn harness_fault(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
     }
     if classify_fault_rerun(retries, max) {
         if let Err(why) = rerun_gate(w, c, b.path, &b.branch) {
+            if let NoRerun::Decided(reason) = &why {
+                return batch_decided_red(w, c, b, out, reason);
+            }
             rerun_could_not_start(
                 w,
                 c,
