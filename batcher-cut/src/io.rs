@@ -2005,7 +2005,7 @@ pub fn round_certifiable(env: &Env, repo: &Repo, batch: &str) -> Result<(), Stri
 }
 
 fn git_head(dir: &Path) -> Option<String> {
-    let o = Command::new("git").arg("-C").arg(dir).args(["rev-parse", "HEAD"]).output().ok()?;
+    let o = spira_config::bounded::bounded("git").arg("-C").arg(dir).args(["rev-parse", "HEAD"]).output().ok()?;
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|h| !h.is_empty())
 }
 
@@ -2021,7 +2021,7 @@ fn round_head_and_worktree(out: &str, batch: &str) -> Option<(String, String)> {
 
 /// `round-recert --batch <id> --repo <repo>`: starts the round's driver in its own unit and returns.
 pub fn redrive_round(repo: &Repo, batch: &str) -> Result<(), String> {
-    let out = run(Command::new("round-recert").args(["--batch", batch, "--repo", &repo.name]), "round-recert")?;
+    let out = run(spira_config::bounded::bounded_for(spira_config::release_env::tool("round-recert"), "60").args(["--batch", batch, "--repo", &repo.name]), "round-recert")?;
     println!("{}", out.trim());
     Ok(())
 }
