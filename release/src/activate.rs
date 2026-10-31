@@ -594,6 +594,11 @@ pub fn delegate_target_in(releases: &Path, sha: &str, me: &Path) -> Result<Optio
     Ok(Some(bin))
 }
 
+/// The home and repo a release's own `spira-config resolve` is pointed at: the release itself.
+pub(crate) fn resolve_env(rel: &Path) -> [(&'static str, PathBuf); 2] {
+    [("SPIRA_HOME", rel.join("spira")), ("SPIRA_REPO", rel.to_path_buf())]
+}
+
 /// `release activate <sha> [--hotfix <reason>]`.
 pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Switched, String> {
     let state = ctx.cfg.state_dir()?;

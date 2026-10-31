@@ -527,7 +527,7 @@ impl Txn {
         // `validate` is green on a config missing a registered key; only `resolve` refuses it.
         let mut cmd = Command::new("timeout");
         cmd.arg("60").arg(bin).args(["resolve", "--sh-all"]).env_clear().env("SPIRA_TOML", spec);
-        cmd.env("SPIRA_HOME", rel.join("spira")).env("SPIRA_REPO", rel);
+        cmd.envs(crate::activate::resolve_env(rel));
         for var in ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"] {
             if let Some(v) = std::env::var_os(var) {
                 cmd.env(var, v);
