@@ -61,6 +61,10 @@ impl Fixture {
     }
 
     fn lc(&self, repo: &str) -> (i32, String) {
+        self.lc_with(repo, &[])
+    }
+
+    fn lc_with(&self, repo: &str, extra: &[(&str, String)]) -> (i32, String) {
         let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
         let out = Command::new(env!("CARGO_BIN_EXE_spira-lc"))
             .args(["unpublished", repo])
@@ -70,6 +74,7 @@ impl Fixture {
             .env("SPIRA_TOML", format!("{}:{}", home.join("testlib/complete.toml").display(), self.p("layer.toml").display()))
             .env("SPIRA_HOME", &home)
             .env("SPIRA_REPO", self.p("repo"))
+            .envs(extra.iter().map(|(k, v)| (*k, v)))
             .output()
             .unwrap();
         (out.status.code().unwrap(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
@@ -166,4 +171,38 @@ fn a_push_mode_repo_is_measured_against_its_remote_branch() {
     assert_eq!(v["forge_tip"], f.git("repo", &["rev-parse", "upstream/release"], None));
     f.git("repo", &["push", "-q", "upstream", "local/main:release"], None);
     assert_eq!(f.range("fixlocal")["count"], 0);
+}
+
+#[test]
+fn a_forge_that_never_answers_gets_a_stale_answer_inside_the_call_deadline() {
+    let f = Fixture::build("slowforge", "");
+    f.commit("repo", "c1", 60);
+    f.commit("repo", "c2", 30);
+    let tip = f.git("repo", &["rev-parse", "origin/main"], None);
+    f.git("repo", &["remote", "set-url", "origin", "ssh://forge.invalid/never.git"], None);
+    let ssh = f.p("slow-ssh");
+    testkit::write_exe(&ssh, "#!/bin/sh\nsleep 60\n");
+    let (code, out) = f.lc_with("fixlocal", &[("GIT_SSH_COMMAND", ssh.display().to_string())]);
+    assert_eq!(code, 0, "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!((v["stale"].as_bool(), v["count"].as_u64(), v["forge_tip"].as_str()), (Some(true), Some(2), Some(tip.as_str())), "{v}");
+    assert!(v["forge_tip_age_secs"].as_u64().is_some(), "a stale tip says how old it is: {v}");
+}
+
+#[test]
+fn a_fresh_fetch_is_not_marked_stale() {
+    let f = Fixture::build("notstale", "");
+    f.commit("repo", "c1", 60);
+    assert!(f.range("fixlocal").get("stale").is_none());
+}
+
+#[test]
+fn the_oldest_arrival_is_found_across_many_landings() {
+    let f = Fixture::build("many", "");
+    for i in 0..9u64 {
+        f.commit("repo", &format!("c{i}"), 9_000 - i * 100);
+    }
+    let v = f.range("fixlocal");
+    assert_eq!(v["count"], 9, "{v}");
+    assert!(v["oldest_arrival"].as_u64().unwrap().abs_diff(now() - 9_000) < 120, "{v}");
 }
