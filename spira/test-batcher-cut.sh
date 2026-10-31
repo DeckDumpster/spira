@@ -45,9 +45,20 @@
 # covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* spira/conf.sh spira/lib.sh spira/bead.sh spira/runes/batcher.rune spira/runes/batcher.md spira/testlib/lc-fixture.sh UC-landing-merge-queue-48
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-# CUT_PART: main runs cases A-F and H, land runs G (land mode) onward; test-batcher-cut-land.sh
-# sets land and sources this file, so the two halves share one fixture build and neither nears the wall bound.
+# CUT_PART names the slice of cases this run owns; test-batcher-cut-<part>.sh sets it and
+# sources this file, so every slice shares one fixture build and none nears the wall bound.
 CUT_PART="${CUT_PART:-main}"
+case "$CUT_PART" in
+    main)  CUT_SECTIONS="A D" ;;
+    attr)  CUT_SECTIONS="B Gf" ;;
+    base)  CUT_SECTIONS="H C E F" ;;
+    land)  CUT_SECTIONS="Gl I J O Nr" ;;
+    round) CUT_SECTIONS="K" ;;
+    local) CUT_SECTIONS="L" ;;
+    deps)  CUT_SECTIONS="M Np" ;;
+    *) echo "test-batcher-cut: unknown CUT_PART $CUT_PART" >&2; exit 1 ;;
+esac
+cut_runs() { case " $CUT_SECTIONS " in *" $1 "*) return 0 ;; esac; return 1; }
 ROOT="$(cd "$HERE/.." && pwd -P)"
 . "$HERE/testlib.sh"
 tl_config SPIRA_TEST_CASE_DEADLINE=180
@@ -396,7 +407,8 @@ lc_certify() {   # lc_certify <id> <tip-sha> [epoch] — a CERTIFIED row on the 
 echo "test-batcher-cut.sh ($CUT_PART)"
 testdb_reset
 
-if [ "$CUT_PART" = main ]; then
+
+if cut_runs A; then
 
 # =============================================================================
 # CASE A — happy path: an express member merges, the stub corpus is green, a PR
@@ -440,6 +452,10 @@ head_case_a="$(open_field head)"
 base_case_a="$(open_field base)"
 members_case_a="$(open_field members)"
 branch_case_a="$(open_field branch)"
+
+fi
+
+if cut_runs B; then
 
 # =============================================================================
 # CASE B — concurrent attribution (sp-hvtgs, law-a-round-takes-certified-tips as amended
@@ -486,6 +502,10 @@ is     "B: open-batch carries only the bystander" "sp-cbbb3:$tip_b3" "$(open_fie
 nowant "B: open-batch does not carry the ejected member" "sp-cbbb2" "$(open_field members)"
 is     "B: forge pr-create called (once more than before this case)" "$((prcreate_before_b + 1))" "$(grep -c '^pr-create' "$FORGE_LOG")"
 
+fi
+
+if cut_runs Gf; then
+
 # =============================================================================
 # CASE G — a flake is charged to nobody: test-b.sh is red on the corpus run and green on the
 # plain rerun with every member present. The batcher marks it flaky, ejects nobody, and the
@@ -516,6 +536,10 @@ if command -v tsd-write >/dev/null 2>&1; then
 fi
 rm -f "$(open_batch_file)"
 
+fi
+
+if cut_runs H; then
+
 # =============================================================================
 # CASE H — base red: a suite red with every member removed is the base's. It is filed as an
 # Ops incident, charged to nobody, and does not hold the round (sp-hvtgs).
@@ -540,6 +564,10 @@ nowant "H: nobody is ejected"                       "ejected"       "$out_h"
 is     "H: the round proceeds to its PR"  "$((prcreate_before_h + 1))" "$(grep -c '^pr-create' "$FORGE_LOG")"
 want   "H: the incident names the base-red reason" "local-round-red" "$(cat "$INCIDENT_LOG")"
 rm -f "$(open_batch_file)"
+
+fi
+
+if cut_runs C; then
 
 # =============================================================================
 # CASE C — a stale member: an express-certified branch that conflicts with the
@@ -573,6 +601,10 @@ is   "C: sp-cccc3 is reopened"   "open" "$(status_of sp-cccc3)"
 is   "C: the pre-round screen sent sp-cccc3 to REWORK (no-rebase)" "REWORK" "$(cut -d' ' -f1 < "$LCSTUB/sp-cccc3")"
 want "C: the screen says so" "SIFT sent sp-cccc3 to REWORK" "$out_c"
 nowant "C: no PR opened for the conflicting-only round" "PR " "$out_c"
+
+fi
+
+if cut_runs D; then
 
 # =============================================================================
 # CASE D — stacking: with case A's batch PR still open, the next round is built on its
@@ -636,6 +668,10 @@ is     "D: exactly one new PR" "$((prcreate_before + 1))" "$(grep -c '^pr-create
 want   "D: open-batch members carries the express member" "sp-cddd4:$tip_d" "$(open_field members)"
 is     "D: prepared record consumed" "0" "$([ -f "$QUEUEDIR/$REPONAME/prepared" ] && echo 1 || echo 0)"
 
+fi
+
+if cut_runs E; then
+
 # =============================================================================
 # CASE E — judgement-ci (sp-lomk3): verdict.sh's own CI-red producer, on a red CI
 # check for a PR the batcher owns, calls this subcommand instead of running its
@@ -663,6 +699,10 @@ want "E: judgement bead body carries the evidence" "https://example.invalid/acti
 
 out_e2="$(judge_ci --suites '' --members sp-caaa1 --evidence x)"
 is "E: no suites given is refused, not filed" "1" "$([ -z "$(printf '%s\n' "$out_e2" | sed -n 's/^id=//p')" ] && echo 1 || echo 0)"
+
+fi
+
+if cut_runs F; then
 
 # =============================================================================
 # CASE F — spira-lc wiring (sp-o7nbr.4): BATCHED at a fresh cut and a stack both call
@@ -731,7 +771,8 @@ is   "F: PLANTED REFUSAL — open-batch batch_id stays unset" "" "$(open_field b
 is   "F: PLANTED REFUSAL — open-batch version stays unset"  "" "$(open_field version)"
 fi
 
-if [ "$CUT_PART" = land ]; then
+
+if cut_runs Gl; then
 
 # =============================================================================
 # CASE G — land mode (sp-o1jm6): find_repo accepts queue.local, never just queue, and
@@ -774,6 +815,10 @@ out_g_local="$(cut_other localmode)"
 nowant "G: queue.local is accepted by find_repo (SEEN RED on today's code: refuses it)" "not queue" "$out_g_local"
 want   "G: queue.local reaches no-trigger cleanly, never a push" "no round cut: no trigger" "$out_g_local"
 
+fi
+
+if cut_runs I; then
+
 # =============================================================================
 # CASE I — batcher parity: the round's suite corpus comes from the round branch's
 # own tree, not the production checkout's working directory (law-batcher-earns-
@@ -805,6 +850,10 @@ is "I: the round's deleted suite is not requested" "0" "$([ -f "$results_i/test-
 is "I: an untracked stray in the checkout is not requested" "0" "$([ -f "$results_i/test-stray.sh.result" ] && echo 1 || echo 0)"
 rm -f "$REPO/spira/test-stray.sh"
 
+fi
+
+if cut_runs J; then
+
 # =============================================================================
 # CASE J — batcher parity (sp-5xki9): a member whose tip is already an ancestor
 # of the round head — reset to an old base, or with no commits of its own —
@@ -829,6 +878,10 @@ want "J: reports the member set aside as EMPTY, not a member" "EMPTY sp-cjjjj: t
 nowant "J: no PR opens crediting a no-op tip" "PR " "$out_j"
 is   "J: sp-cjjjj stays CERTIFIED, never marked BATCHED" "CERTIFIED" "$(cut -d' ' -f1 < "$LCSTUB/sp-cjjjj")"
 is   "J: forge pr-create not called for the empty round" "$prcreate_before_j" "$(grep -c '^pr-create' "$FORGE_LOG")"
+
+fi
+
+if cut_runs K; then
 
 # =============================================================================
 # CASE K — batcher parity (sp-myi6w, sp-o3o6z): the corpus runs through round-vm.sh run, and
@@ -927,6 +980,10 @@ else
 fi
 want "K4: reports the wall bound as the cause" "wall bound" "$out_g4"
 
+fi
+
+if cut_runs L; then
+
 # =============================================================================
 # CASE L — queue.local's terminal step (sp-828tp, epic sp-hq9x8): a round lands locally via
 # queue land-local — no push, no forge call, no open-batch record — and terminal_ready
@@ -1011,6 +1068,10 @@ if command -v tsd-write >/dev/null 2>&1; then
         "$(tail -1 "$RUN/tsd/batch-round.jsonl" 2>/dev/null)"
 fi
 
+fi
+
+if cut_runs Np; then
+
 # =============================================================================
 # CASE N — pacing parity (sp-ffezo, law-batcher-earns-the-round-by-parity): a pool of ONE
 # non-express certified member, no batch open, cuts even though queue_batch_wait is a year —
@@ -1034,6 +1095,10 @@ out_n="$(SPIRA_QUEUE_BATCH_WAIT_OVERRIDE=31536000 STUB_INSTALL_BINS=1 cut_local)
 nowant "N: never reports no-trigger — a pool of one is enough" "no round cut: no trigger" "$out_n"
 want   "N: reports landing locally"                             "landed locally"          "$out_n"
 is     "N: sp-cnaa1 is LANDED on the lifecycle machine"          "LANDED" "$(lcfix_state sp-cnaa1)"
+
+fi
+
+if cut_runs M; then
 
 # =============================================================================
 # CASE M — stacked dependents (sp-lno75, design stacked-dependents-2026-09-28): a round that
@@ -1095,6 +1160,10 @@ is     "M: merged in topological order A, B, C" \
        "$(printf 'sp-cmaa1\nsp-cmbb2\nsp-cmcc3')" \
        "$(git -C "$LREPO" log --first-parent --format=%s "$head_m" | sed -n 's/^spira: land \(sp-cm[a-z0-9]*\).*/\1/p' | tac)"
 
+fi
+
+if cut_runs Nr; then
+
 # =============================================================================
 # CASE N — batcher parity (sp-7qk8u): a bead back with its dwarf after an eject (sp-pedat) is
 # not a member. Since sp-mve9i that is its lifecycle row — REWORK, not CERTIFIED — and never
@@ -1124,6 +1193,10 @@ is     "N: no open-batch file" "0" "$([ -f "$(open_batch_file)" ] && echo 1 || e
 is     "N: sp-ciiii stub row stays REWORK — untouched, not re-ejected" \
        "REWORK" "$(cut -d' ' -f1 < "$LCSTUB/sp-ciiii")"
 is     "N: sp-ciiii bead status stays open" "open" "$(status_of sp-ciiii)"
+
+fi
+
+if cut_runs O; then
 
 # =============================================================================
 # CASE O — sift screens ahead of rounds, never inside the cut (sp-9sbdvw): a cut takes a bead only
