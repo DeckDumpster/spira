@@ -86,3 +86,4 @@ is   "and the bead is closed by the landing"                         closed "$(f
 want "with the landed outcome as its close reason"                   "OUTCOME: landed" "$(field sp-sl1 close_reason)"
 nowant "never the 'not landed — its bead is open' skip"              "its bead is open" "$out"
 
+tl_summary

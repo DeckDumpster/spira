@@ -98,5 +98,3 @@ nowant "and does NOT mention other beads"    "check whether" "$notes"
 drop_branch sp-mine
 
 tl_summary
-
-tl_summary

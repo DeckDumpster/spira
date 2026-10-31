@@ -38,6 +38,10 @@
 # (2, the re-claim, from a seeded REWORK row) and test-submitted-lands-hel-certified.sh (3, 4).
 # The shared fixture is testlib/sl-fixture.sh.
 #
+# The red gate's REWORK (-rework.sh) and the re-claim from a REWORK row (-reclaim.sh) each seed
+# the row the previous step leaves, so neither pays a dwarf run to reach it; the dwarf's own
+# submit and the gate-to-land chain stay end to end in test-submitted-lands.sh case 1.
+#
 # defect: sp-qsona (acceptance phase A stage 5)
 # tier: T3
 # covers: landing-pass/* hel/src/* spira/lib.sh dwarf/src/* work/* spira-lc/*
