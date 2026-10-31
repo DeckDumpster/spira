@@ -49,6 +49,8 @@ is "two designs draft at once" "2" "$(rune_get skuld RUNE_MAX_CONCURRENT)"
 want "the lane is declared" "skuld" "$(cat "$HERE/conf.d/SPIRA_LANES")"
 want "spira_lane_runes lists skuld" "skuld" "$(spira_lane_runes)"
 nowant "spira_task_runes does not list skuld" "skuld" "$(spira_task_runes)"
+dw="$(env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$T/none.conf" SPIRA_HOME="$HERE" dwarves.sh 2>&1)"
+want "dwarves.sh names the skuld lane" "skuld" "$dw"
 [ -f "$HERE/conf.d/SPIRA_SKULD_LABEL" ] && ok "the label is a registered key" || bad "the label is a registered key" "no conf.d/SPIRA_SKULD_LABEL"
 
 echo; echo "MODEL: Opus, in the rune and in the live-config fixture"
@@ -62,6 +64,9 @@ for t in bead.sh "bd " "git commit" "git pu""sh"; do lack "skuld has no $t grant
 lack "skuld has no bare Bash" ",Bash," "$tools"
 want "skuld can note on its bead" "Bash(work note*)" "$tools"
 want "skuld can read the code" "Bash(git -C * show*)" "$tools"
+persona_tools="$(sed -n '/^\[persona.skuld\]/,/^\[persona.skuld.lease\]/p' "$HERE/testlib/complete.toml")"
+for t in Edit Write bead.sh; do lack "persona.skuld.tools has no $t" "\"$t" "$persona_tools"; done
+want "persona.skuld.tools carries work note" "Bash(work note*)" "$persona_tools"
 want "positive control: the builder does have Edit" "Edit" "$(rune_get builder RUNE_TOOLS)"
 want "positive control: the matcher sees a bead.sh grant" "bead.sh" "$(rune_get warden RUNE_TOOLS)"
 
