@@ -65,7 +65,6 @@ test-beads-sparklines.sh	T1	3.0
 test-bin-manifest.sh	T1	3.0
 test-boundary.sh	T1	3.5
 test-branch-guard.sh	T1	3.0
-test-brief-mail-options.sh	T0	3.0
 test-broker-allowlist-lint.sh	T0	5.0
 test-broker.sh	T1	15.0
 test-build-bd-release.sh	T1	2.0
@@ -213,8 +212,6 @@ test-mimir-blind-window.sh	T1	21.5
 test-mimir-sibling-blind.sh	T1	2.0
 test-mimir-trigger.sh	T1	12.0
 test-mimir.sh	T1	3.0
-test-mail-bead-render.sh	T1	6.0
-test-mail-deliver.sh	T2	13.5
 test-mail-dismiss-sweep.sh	T2	24.0
 test-mail-pane.sh	T1	4.0
 test-model-switch-report.sh	T1	2.0
@@ -253,7 +250,6 @@ test-hel-squash-merged.sh	T1	8.0
 test-hel-unlanded-guard.sh	T1	6.0
 test-sentinel-capacity.sh	T1	6.0
 test-sentinel-order.sh	T1	32.0
-test-session-hook.sh	T1	18.0
 test-set-state-writers.sh	T1	9.5
 test-fenrir-exempt.sh	T1	134.0
 test-skew-check-release.sh	T1	3.5
@@ -261,9 +257,7 @@ test-skew-escalate.sh	T1	4.0
 test-skew-foreign.sh	T1	5.0
 test-skew-refresh.sh	T1	4.0
 test-slay.sh	T1	61.0
-test-sop.sh	T1	41.0
 test-spike.sh	T1	32.0
-test-statute-projection.sh	T1	9.0
 test-strand-capacity.sh	T1	4.0
 test-strand-deferred.sh	T1	2.0
 test-strand-lock.sh	T1	3.0

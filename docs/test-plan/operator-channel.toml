@@ -6,20 +6,40 @@ id = "UC-operator-channel-01"
 tier = "T2"
 statement = "send delivers atomically via tmp/ into new/; read prints headers+body and moves new→cur; read with nothing unread fails; list [--unread], count and unread-age…"
 
+[use_case.uncovered]
+reason = "test-mail.sh deleted by the 2026-10-31 test review (per Ryan): flipped red then green 1 time(s) on an unchanged tree (law-a-test-that-flips-is-deleted); loses sole coverage of UC-operator-channel-01, UC-operator-channel-02, UC-operator-channel-03 +4 more"
+date = "2026-10-31"
+bead = "sp-lu6zap"
+
 [[use_case]]
 id = "UC-operator-channel-02"
 tier = "T1"
 statement = "Lint refuses a message with no From or no Subject, a subject that is or starts with a bead id, a context-free bead id in the body (key:value metadata allowed),…"
+
+[use_case.uncovered]
+reason = "test-mail.sh deleted by the 2026-10-31 test review (per Ryan): flipped red then green 1 time(s) on an unchanged tree (law-a-test-that-flips-is-deleted); loses sole coverage of UC-operator-channel-01, UC-operator-channel-02, UC-operator-channel-03 +4 more"
+date = "2026-10-31"
+bead = "sp-lu6zap"
 
 [[use_case]]
 id = "UC-operator-channel-03"
 tier = "T1"
 statement = "Kinds are data. An unknown kind is refused and named. template <kind> prints the skeleton. The requires: fields in a kind file drive validation:…"
 
+[use_case.uncovered]
+reason = "test-mail.sh deleted by the 2026-10-31 test review (per Ryan): flipped red then green 1 time(s) on an unchanged tree (law-a-test-that-flips-is-deleted); loses sole coverage of UC-operator-channel-01, UC-operator-channel-02, UC-operator-channel-03 +4 more"
+date = "2026-10-31"
+bead = "sp-lu6zap"
+
 [[use_case]]
 id = "UC-operator-channel-04"
 tier = "T1"
 statement = "SPIRA_MAIL_LINT_CONSIDERED bypasses lint and records X-Spira-Lint-Override: <reason>."
+
+[use_case.uncovered]
+reason = "test-mail.sh deleted by the 2026-10-31 test review (per Ryan): flipped red then green 1 time(s) on an unchanged tree (law-a-test-that-flips-is-deleted); loses sole coverage of UC-operator-channel-01, UC-operator-channel-02, UC-operator-channel-03 +4 more"
+date = "2026-10-31"
+bead = "sp-lu6zap"
 
 [[use_case]]
 id = "UC-operator-channel-05"
@@ -31,10 +51,20 @@ id = "UC-operator-channel-06"
 tier = "T1"
 statement = "Operator-mailbox repeat guard: a send whose normalised subject matches one inside SPIRA_MAIL_REPEAT_WINDOW is refused, names the override and is recorded under…"
 
+[use_case.uncovered]
+reason = "test-mail.sh deleted by the 2026-10-31 test review (per Ryan): flipped red then green 1 time(s) on an unchanged tree (law-a-test-that-flips-is-deleted); loses sole coverage of UC-operator-channel-01, UC-operator-channel-02, UC-operator-channel-03 +4 more"
+date = "2026-10-31"
+bead = "sp-lu6zap"
+
 [[use_case]]
 id = "UC-operator-channel-07"
 tier = "T2"
 statement = "done sets the Maildir R flag idempotently (it fails on an unknown id), and a sendmail reply marks the original R."
+
+[use_case.uncovered]
+reason = "test-mail.sh deleted by the 2026-10-31 test review (per Ryan): flipped red then green 1 time(s) on an unchanged tree (law-a-test-that-flips-is-deleted); loses sole coverage of UC-operator-channel-01, UC-operator-channel-02, UC-operator-channel-03 +4 more"
+date = "2026-10-31"
+bead = "sp-lu6zap"
 
 [[use_case]]
 id = "UC-operator-channel-08"
@@ -50,6 +80,11 @@ statement = "Aged unread backlog in a registered mailbox alerts the operator onc
 id = "UC-operator-channel-10"
 tier = "T2"
 statement = "The delivery daemon treats a SIGTERM exit (143) as clean, and world.sh start revives an enabled-but-inactive mail-deliver without restarting an active one.…"
+
+[use_case.uncovered]
+reason = "test-mail-deliver.sh deleted by the 2026-10-31 test review (per Ryan): flipped; uniquely covered mail-deliver unit, wake retry and settle windows (UC-operator-channel-10); its 8b/8c cases assert elapsed time, the likely flip"
+date = "2026-10-31"
+bead = "sp-lu6zap"
 
 [[use_case]]
 id = "UC-operator-channel-11"
@@ -85,6 +120,11 @@ statement = "The mail client's accept-default key (aerc/accept-default.sh) close
 id = "UC-operator-channel-17"
 tier = "T2"
 statement = "Reply routing: a reply goes to the sender's mailbox when one exists. It goes to concierge when the sender is a runes persona, when the sender has no mailbox,…"
+
+[use_case.uncovered]
+reason = "test-mail.sh deleted by the 2026-10-31 test review (per Ryan): flipped red then green 1 time(s) on an unchanged tree (law-a-test-that-flips-is-deleted); loses sole coverage of UC-operator-channel-01, UC-operator-channel-02, UC-operator-channel-03 +4 more"
+date = "2026-10-31"
+bead = "sp-lu6zap"
 
 [[use_case]]
 id = "UC-operator-channel-18"
@@ -297,7 +337,7 @@ tier = "T2"
 statement = "The SOP ledger: applied appends one complete JSON record at the configured path, append-only in epoch order, and refuses bad arguments while writing nothing. A…"
 
 [use_case.uncovered]
-reason = "sop.sh is retired (sp-8fsql); applied's ledger-append decision tree (bad-argument refusals write nothing, one complete JSON record per call, epoch order, the three-valued log read) is now `logic::applied`/`ledger.rs` in the `sop` crate, covered by `cargo test -p sop` (sop/DESIGN.md §5), which plan-matrix's suite-header scan over spira/test-*.sh cannot see. spira/test-sop.sh is repointed to a thin T1 wiring smoke test of the real binary against a real scratch store; it still exercises `applied` end to end but the decision-tree cases it used to carry by name are what moved."
+reason = "sop.sh is retired (sp-8fsql); applied's ledger-append decision tree (bad-argument refusals write nothing, one complete JSON record per call, epoch order, the three-valued log read) is now `logic::applied`/`ledger.rs` in the `sop` crate, covered by `cargo test -p sop` (sop/DESIGN.md §5), which plan-matrix's suite-header scan over spira/test-*.sh cannot see. spira/test-sop.sh, repointed to a thin T1 wiring smoke test of the real binary against a real scratch store that still exercised `applied` end to end, was deleted by sp-lu6zap (2026-10-31 test review); the decision-tree cases it used to carry by name are what moved."
 date = "2026-09-30"
 bead = "sp-8fsql"
 

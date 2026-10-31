@@ -134,7 +134,6 @@ spira/test-release.sh
 spira/test-repo-map.sh
 spira/test-hel.sh
 spira/test-sentinel-pass.sh
-spira/test-session-hook.sh
 spira/test-skew-foreign.sh
 spira/test-skew-refresh.sh
 spira/test-slay.sh
