@@ -667,27 +667,28 @@ impl World {
                 continue;
             }
             match self.unpublished(&r.name) {
-                Some(None) => {}
-                Some(Some(read)) => repos.push((r.name.clone(), read)),
-                None => repos.push((r.name.clone(), Read::Blind("the unpublished range could not be computed".into()))),
+                Ok(None) => {}
+                Ok(Some(read)) => repos.push((r.name.clone(), read)),
+                Err(why) => repos.push((r.name.clone(), Read::Blind(format!("the unpublished range could not be computed: {why}")))),
             }
         }
         serde_json::to_string(&publish_backlog::Snapshot { repos }).map_err(|e| e.to_string())
     }
 
-    /// `None` when the verb cannot measure the range; `Some(None)` for a repo declared to publish nowhere.
-    fn unpublished(&self, name: &str) -> Option<Option<Read>> {
-        let out = lc_call_within(&self.lc_socket, &["unpublished", name], UNPUBLISHED_WAIT).ok()?;
-        let v: Value = serde_json::from_str(&out).ok()?;
+    /// `Err` carries the verb's own refusal; `Ok(None)` is a repo declared to publish nowhere.
+    fn unpublished(&self, name: &str) -> Result<Option<Read>, String> {
+        let out = lc_call_within(&self.lc_socket, &["unpublished", name], UNPUBLISHED_WAIT).map_err(|e| e.0.split_whitespace().collect::<Vec<_>>().join(" "))?;
+        let v: Value = serde_json::from_str(&out).map_err(|e| format!("unreadable answer: {e}"))?;
         if v["declared_unpublished"] == true {
-            return Some(None);
+            return Ok(None);
         }
-        let count = v["count"].as_u64()?;
+        let count = v["count"].as_u64().ok_or("the answer has no count")?;
         let arrival = match (count, &v["oldest_arrival"]) {
             (0, _) => None,
-            (_, a) => Some(a.as_u64()?),
+            (_, a) => Some(a.as_u64().ok_or("the answer has no arrival for a nonzero count")?),
         };
-        Some(Some(Read::Measured { count, arrival }))
+        let forge_tip_age_secs = if v["stale"] == true { v["forge_tip_age_secs"].as_u64() } else { None };
+        Ok(Some(Read::Measured { count, arrival, forge_tip_age_secs }))
     }
 
     pub fn view_snapshot(&self, input: &str) -> Result<String, String> {

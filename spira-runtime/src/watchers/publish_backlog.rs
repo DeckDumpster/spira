@@ -30,7 +30,13 @@ pub struct PublishBacklog {
 pub enum Read {
     Blind(String),
     /// `arrival` is when the oldest unpublished commit reached the landing ref; absent when nothing is unpublished.
-    Measured { count: u64, arrival: Option<u64> },
+    /// `forge_tip_age_secs` is set only when the forge did not answer and the count was taken against an older tip.
+    Measured {
+        count: u64,
+        arrival: Option<u64>,
+        #[serde(default)]
+        forge_tip_age_secs: Option<u64>,
+    },
 }
 
 /// One entry per queue.local repo, or per reason the map itself could not be read.
@@ -49,6 +55,8 @@ pub enum Standing {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Carry {
     pub standing: BTreeMap<String, Standing>,
+    #[serde(default)]
+    pub blind_since: BTreeMap<String, u64>,
 }
 
 impl PublishBacklog {
@@ -57,27 +65,30 @@ impl PublishBacklog {
         let mut say = vec![];
         for (name, read) in &snap.repos {
             let prev = c.standing.get(name).copied().unwrap_or(Standing::Ok);
-            let (count, arrival) = match read {
+            let (count, arrival, stale) = match read {
                 Read::Blind(why) => {
                     if prev != Standing::Blind {
                         say.push(format!("BLIND {name}: the backlog watcher cannot measure — {why}"));
                         c.standing.insert(name.clone(), Standing::Blind);
+                        c.blind_since.insert(name.clone(), now);
                     }
                     continue;
                 }
-                Read::Measured { count, arrival } => (*count, *arrival),
+                Read::Measured { count, arrival, forge_tip_age_secs } => (*count, *arrival, *forge_tip_age_secs),
             };
             if prev == Standing::Blind {
                 c.standing.remove(name);
-                say.push(format!("SIGHTED {name}: the backlog watcher can measure again"));
+                let spell = c.blind_since.remove(name).map_or(String::new(), |t| format!(" after {}s blind", now.saturating_sub(t)));
+                say.push(format!("SIGHTED {name}: the backlog watcher can measure again{spell}"));
             }
+            let tip = stale.map_or(String::new(), |a| format!("; forge unreachable, measured against a tip {a}s old"));
             let age = arrival.map_or(0, |t| now.saturating_sub(t));
             let over = count > self.max_count || age > self.max_age_secs;
             let was_over = prev == Standing::Over;
             if over && !was_over {
-                say.push(format!("OVER {name}: {count} unpublished commit(s), oldest {age}s old (threshold {} commits / {}s) — the publish queue is falling behind", self.max_count, self.max_age_secs));
+                say.push(format!("OVER {name}: {count} unpublished commit(s), oldest {age}s old (threshold {} commits / {}s) — the publish queue is falling behind{tip}", self.max_count, self.max_age_secs));
             } else if !over && was_over {
-                say.push(format!("CLEAR {name}: back under threshold ({count} unpublished, oldest {age}s)"));
+                say.push(format!("CLEAR {name}: back under threshold ({count} unpublished, oldest {age}s{tip})"));
             }
             c.standing.insert(name.clone(), if over { Standing::Over } else { Standing::Ok });
         }
@@ -142,7 +153,7 @@ mod tests {
     }
 
     fn measured(count: u64, age: u64) -> Read {
-        Read::Measured { count, arrival: (count > 0).then_some(NOW - age) }
+        Read::Measured { count, arrival: (count > 0).then_some(NOW - age), forge_tip_age_secs: None }
     }
 
     #[test]
@@ -175,7 +186,27 @@ mod tests {
         assert!(w.decide(&c, &snap(Read::Blind("no reflog".into())), NOW).1.is_empty());
         let (_, say) = w.decide(&c, &snap(measured(99, 1)), NOW);
         assert_eq!(say.len(), 2, "{say:?}");
-        assert_eq!(say[0], "SIGHTED r: the backlog watcher can measure again");
+        assert_eq!(say[0], "SIGHTED r: the backlog watcher can measure again after 0s blind");
         assert!(say[1].starts_with("OVER r:"), "blindness resets the standing: {say:?}");
+    }
+
+    #[test]
+    fn a_stale_forge_tip_is_named_with_its_age_in_the_line_it_qualifies() {
+        let w = watcher();
+        let stale = Read::Measured { count: 51, arrival: Some(NOW - 5), forge_tip_age_secs: Some(777) };
+        let (c, say) = w.decide(&Carry::default(), &snap(stale), NOW);
+        assert_eq!(say.len(), 1);
+        assert!(say[0].ends_with("falling behind; forge unreachable, measured against a tip 777s old"), "{say:?}");
+        let clear = Read::Measured { count: 1, arrival: Some(NOW - 5), forge_tip_age_secs: Some(900) };
+        let (_, say) = w.decide(&c, &snap(clear), NOW);
+        assert_eq!(say, ["CLEAR r: back under threshold (1 unpublished, oldest 5s; forge unreachable, measured against a tip 900s old)"]);
+    }
+
+    #[test]
+    fn a_sighted_line_says_how_long_the_watcher_was_blind() {
+        let w = watcher();
+        let (c, _) = w.decide(&Carry::default(), &snap(Read::Blind("fetch timed out".into())), NOW);
+        let (_, say) = w.decide(&c, &snap(measured(0, 0)), NOW + 125);
+        assert_eq!(say, ["SIGHTED r: the backlog watcher can measure again after 125s blind"]);
     }
 }
