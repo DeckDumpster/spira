@@ -11,6 +11,8 @@
 #              PATH at its version_min
 #   config     spira.toml, if one is in force on this host, validates against
 #              THIS release's spira-config schema — not the host's
+#   registry   every key a binary in the release reads (`check-config`) is registered in the
+#              release's own spira/conf.d, so a binary is never promoted ahead of its keys
 #   store      the bead store is reachable and its schema matches the bd on
 #              PATH (deps' version_min already pins which bd that is)
 #   units      every systemd unit renders with no unresolved placeholder
@@ -110,15 +112,20 @@ PY
     fi
 }
 
-# --- config: spira.toml (if any is in force) validates against the release's schema ---
-check_config() {
-    local toml="" c
+toml_in_force() {
+    local c
     for c in "${SPIRA_TOML:-}" \
              "${SPIRA_REPO:-}/spira.toml" \
              "${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml" \
              /etc/spira/spira.toml; do
-        [ -n "$c" ] && [ -f "$c" ] && { toml="$c"; break; }
+        [ -n "$c" ] && [ -f "$c" ] && { printf '%s' "$c"; return; }
     done
+}
+
+# --- config: spira.toml (if any is in force) validates against the release's schema ---
+check_config() {
+    local toml
+    toml="$(toml_in_force)"
     if [ -z "$toml" ]; then
         ok "config (no spira.toml in force — nothing to validate)"
         return
@@ -149,6 +156,23 @@ check_config() {
     else
         fail config "$toml does not resolve under this release: $out"
     fi
+}
+
+# --- registry: every key a binary reads is registered in the conf.d it will resolve against ---
+check_registry() {
+    local toml bin out rc
+    toml="$(toml_in_force)"
+    if [ -z "$toml" ]; then
+        ok "registry (no spira.toml in force — nothing to resolve)"
+        return
+    fi
+    for bin in queue; do
+        [ -x "$REL/bin/$bin" ] || continue
+        out="$(SPIRA_RELEASE="$REL" SPIRA_TOML="$toml" "$REL/bin/$bin" check-config 2>&1)"
+        rc=$?
+        [ "$rc" -eq 0 ] || fail registry "$bin reads a key $REL/spira/conf.d does not register: $out"
+    done
+    [ "$FAIL" -ne 0 ] || ok registry
 }
 
 # --- store: the bead store is reachable and its schema matches the bd on PATH ---
@@ -283,6 +307,7 @@ check_ami() {
 
 check_deps
 check_config
+check_registry
 check_store
 check_units
 check_self_test

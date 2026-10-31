@@ -63,8 +63,10 @@ pub struct Settings {
     /// repo after which the operator is mailed once.
     pub publish_red_escalate_after: usize,
     /// `SPIRA_PUBLISH_SETTLE_DEFER_MAX` (declared value): consecutive ticks a publish rerun or
-    /// supersede may defer to a local round pass before it runs anyway.
-    pub publish_defer_max: usize,
+    /// supersede may defer to a local round pass before it runs anyway. `None` when the key
+    /// does not resolve, so only the settle that needs it refuses; a round verb must stay able
+    /// to abandon a round under a registry that lacks it.
+    pub publish_defer_max: Option<usize>,
 }
 
 /// `SPIRA_QUEUE_CI_MAXSEC[_<NAME>]`, `SPIRA_QUEUE_CI_IDLE_SEC[_<NAME>]` (already resolved for

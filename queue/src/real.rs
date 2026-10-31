@@ -489,6 +489,20 @@ fn git_remotes(repo: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Every key `context` must resolve; `queue check-config` refuses a registry that lacks one.
+pub const CONFIG_KEYS: &[&str] = &[
+    "SPIRA_CERTIFY_SUITES",
+    "SPIRA_GIT_NAME",
+    "SPIRA_GIT_EMAIL",
+    "SPIRA_MAIL_SESSION_MAILBOX",
+    "SPIRA_ROUND_CERTIFY_WALL_SECS",
+    "SPIRA_ROUND_AMI_WAIT_SECS",
+    "SPIRA_QUEUE_ROUNDS_MAX",
+    "SPIRA_PUBLISH_RED_PRIORITY",
+    "SPIRA_PUBLISH_RED_ESCALATE_AFTER",
+    "SPIRA_PUBLISH_SETTLE_DEFER_MAX",
+];
+
 impl Lib for RealLib {
     fn context(&self, repo: Option<&str>) -> Result<(Settings, RepoCtx), String> {
         // spira_home_repo/repo_root/repo_land/repo_field (family U) and spira_landref/
@@ -526,8 +540,11 @@ impl Lib for RealLib {
         let publish_red_priority = spira_config::process::cfg("SPIRA_PUBLISH_RED_PRIORITY")?;
         let publish_red_escalate_after =
             spira_config::process::cfg_parse::<usize>("SPIRA_PUBLISH_RED_ESCALATE_AFTER")?;
-        let publish_defer_max =
-            spira_config::process::cfg_parse::<usize>("SPIRA_PUBLISH_SETTLE_DEFER_MAX")?;
+        let publish_defer_max = match spira_config::process::cfg_parse::<usize>("SPIRA_PUBLISH_SETTLE_DEFER_MAX") {
+            Ok(n) => Some(n),
+            Err(e) if e.contains("not a registered config key") => None,
+            Err(e) => return Err(e),
+        };
         let s = Settings {
             home: PathBuf::from(g("home")),
             run: PathBuf::from(g("run")),
@@ -2004,6 +2021,21 @@ impl Emit for StdEmit {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn check_config_names_every_key_context_reads() {
+        let src = include_str!("real.rs");
+        let body = &src[src.find("fn context(").unwrap()..src.find("let s = Settings {").unwrap()];
+        let mut read = Vec::new();
+        for part in body.split("process::cfg").skip(1) {
+            let after = &part[part.find("(\"").unwrap() + 2..];
+            read.push(&after[..after.find('"').unwrap()]);
+        }
+        assert!(read.len() >= 8, "the scan must find the reads it is checking: {read:?}");
+        for k in &read {
+            assert!(CONFIG_KEYS.contains(k), "{k} is read by context but not checked by check-config");
+        }
+    }
+
 
     #[test]
     fn a_resubmit_suite_check_passes_testenv_a_repeat_reason_flag() {

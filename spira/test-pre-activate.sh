@@ -116,6 +116,26 @@ run() {
     rc=$?
 }
 
+# ── registry: a binary reading a key the release's conf.d lacks is refused ───────────────
+REL="$TMP/rel-registry"; DEP_VMIN=1.0.0 DEP_PROBE_OUT=2.3.4 mkrel "$REL"
+: > "$TMP/in-force.toml"
+run_toml() {
+    out="$(
+        HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/home/.config" SPIRA_REPO="$TMP/emptyrepo" \
+        SPIRA_TOML="$TMP/in-force.toml" PATH="$TMP/binstub:$PATH" \
+        pre-activate.sh "$1" 2>&1
+    )"
+    rc=$?
+}
+printf '#!/usr/bin/env bash\n[ "$1" = check-config ] || exit 2\necho "queue: unregistered or unresolved config keys: SPIRA_PLANTED_KEY — refusing" >&2\nexit 1\n' > "$REL/bin/queue"; chmod +x "$REL/bin/queue"
+run_toml "$REL"
+is   "registry: a binary reading an unregistered key: refused (exit 1)" 1 "$rc"
+want "registry: names the key" "SPIRA_PLANTED_KEY" "$out"
+printf '#!/usr/bin/env bash\n[ "$1" = check-config ] || exit 2\necho "ok 1 registered keys, 1 checked"\n' > "$REL/bin/queue"
+run_toml "$REL"
+is   "registry: every key registered: activates (exit 0)" 0 "$rc"
+want "registry: reports ok" "ok   registry" "$out"
+
 # ── ami: a release whose recipe has no AMI is warned about, never refused ───────────────
 REL="$TMP/rel-ami"; DEP_VMIN=1.0.0 DEP_PROBE_OUT=2.3.4 DEP_PROBE_RC=0 mkrel "$REL"
 printf '#!/usr/bin/env bash\necho "no AMI carries recipe-sha abc" >&2\nexit 1\n' > "$REL/bin/round-vm"; chmod +x "$REL/bin/round-vm"

@@ -11,6 +11,10 @@ use queue::conf::harness_home;
 fn main() -> ExitCode {
     spira_config::release_env::ensure_release_path();
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    if argv.len() == 1 && argv[0] == "check-config" {
+        let rc = spira_config::process::check_config_verb("queue", queue::real::CONFIG_KEYS);
+        return ExitCode::from(u8::try_from(rc).unwrap_or(1));
+    }
     let cmd = match cli::parse(&argv) {
         Ok(c) => c,
         Err(cli::Usage(m)) => {
