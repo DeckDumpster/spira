@@ -4,7 +4,7 @@
 # matches, a drafting brief, and tools that cannot file what it drafts.
 #
 # tier: T1
-# covers: spira/runes/skuld.* spira/conf.d/SPIRA_SKULD_LABEL spira/conf.d/SPIRA_LANES spira/bead.sh sentinel/src/*.rs
+# covers: spira/runes/skuld.* spira/conf.d/SPIRA_SKULD_LABEL spira/conf.d/SPIRA_LANES spira/bead.sh sentinel/src/*.rs spira/testlib/complete.toml spira-config/src/*.rs spira-world/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 TOOLS="$(command -v spira-config)" && TOOLS="$(dirname "$TOOLS")"
@@ -77,7 +77,7 @@ want "spira_lane_runes lists skuld" "skuld" "$(spira_lane_runes)"
 nowant "spira_task_runes does not list skuld" "skuld" "$(spira_task_runes)"
 dw="$(env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$T/none.conf" SPIRA_HOME="$HERE" dwarves.sh 2>&1)"
 laneline="$(printf '%s\n' "$dw" | grep -E '^  lanes +[0-9]+ +\(' || true)"
-want "dwarves.sh lane report counts skuld at its concurrency" "skuld=2" "$laneline"
+want "dwarves.sh lane report counts skuld at its concurrency" "skuld=2" "${laneline:-no lane line in dwarves.sh output: $dw}"
 nowant "positive control: the lane report omits a lane that is not declared" "nosuchlane=" "$laneline"
 [ -f "$HERE/conf.d/SPIRA_SKULD_LABEL" ] && ok "the label is a registered key" || bad "the label is a registered key" "no conf.d/SPIRA_SKULD_LABEL"
 
