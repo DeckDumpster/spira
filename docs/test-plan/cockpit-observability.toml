@@ -226,6 +226,11 @@ id = "UC-cockpit-observability-35"
 tier = "T1"
 statement = "`ready.sh` reports FAIL/`?`/WARN/pass/skip for each check (sentinel timer, halt stamp, DB, dolt starting-port, statutes, ready work, loom latency, agent, snapshot freshness, panes) and exits 1 on any FAIL or `?`"
 
+[use_case.uncovered]
+reason = "test-ready-timers.sh deleted by the 2026-10-31 test review (per Ryan): flipped (law); loses UC-cockpit-observability-35, ready.sh timers-with-no-next-trigger check (sp-ly6l9)"
+date = "2026-10-31"
+bead = "sp-jqp0m0"
+
 [[use_case]]
 id = "UC-cockpit-observability-36"
 tier = "T1"

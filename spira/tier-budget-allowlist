@@ -99,9 +99,6 @@ test-cockpit-collect-concurrency.sh	T1	3.0
 test-cockpit-collect-probes.sh	T1	1.5
 test-cockpit-collector-quota.sh	T1	2.0
 test-cockpit-collector-watchdog.sh	T1	2.0
-test-cockpit-czar-triggers.sh	T1	2.0
-test-cockpit-dup-refs.sh	T1	3.0
-test-cockpit-fuse.sh	T1	28.5
 test-cockpit-gate.sh	T1	17.5
 test-cockpit-history-leak.sh	T1	1.5
 test-cockpit-landed.sh	T1	13.0
@@ -109,28 +106,23 @@ test-cockpit-layout-conf.sh	T1	5.5
 test-cockpit-layout-ensure-focus.sh	T1	4.5
 test-cockpit-layout-identity.sh	T1	3.5
 test-cockpit-layout-mail.sh	T1	6.0
-test-cockpit-layout.sh	T1	7.0
 test-cockpit-probe-fault.sh	T1	13.0
 test-cockpit-queue-section.sh	T1	27.5
-test-cockpit-queue-wait.sh	T1	3.5
 test-cockpit-queue.sh	T1	15.5
 test-cockpit-reachable.sh	T1	4.5
 test-cockpit-ready.sh	T1	7.0
 test-cockpit-rebuild.sh	T1	24.0
 test-cockpit-remote.sh	T1	2.0
-test-cockpit-repo-labels.sh	T1	3.5
 test-cockpit-self.sh	T1	4.0
 test-cockpit-snap-absent.sh	T1	3.5
 test-cockpit-sop.sh	T1	5.0
 test-cockpit-well.sh	T1	3.0
-test-cockpit-strand-keys.sh	T1	3.0
 test-cockpit-tmp.sh	T1	7.0
 test-cockpit-unadopted-queue.sh	T1	15.5
 test-cockpit-unclaimable.sh	T1	6.0
 test-cockpit-unit-notify.sh	T1	2.0
 test-cockpit-unlanded.sh	T1	19.0
 test-cockpit-unsent.sh	T1	47.0
-test-cockpit-watcher-owner.sh	T1	5.0
 test-cockpit.sh	T1	13.0
 test-concierge.sh	T1	28.0
 test-conf.sh	T1	3.0
@@ -214,7 +206,6 @@ test-mimir-trigger.sh	T1	12.0
 test-mimir.sh	T1	3.0
 test-mail-dismiss-sweep.sh	T2	24.0
 test-mail-pane.sh	T1	4.0
-test-model-switch-report.sh	T1	2.0
 test-now.sh	T1	8.5
 test-ops-allowlist.sh	T1	2.0
 test-ops-closing.sh	T1	152.5
@@ -289,9 +280,7 @@ test-unit-restart-limits.sh	T1	2.0
 test-units-lint.sh	T0	19.5
 test-verdict-timer.sh	T1	1.5
 test-verify-asks.sh	T1	8.5
-test-watchd-unit-name.sh	T1	2.0
 test-watchtower-czar-outcome.sh	T1	11.5
-test-watchtower-failed-units.sh	T1	10.5
 test-watchtower-lapse.sh	T1	126.0
 test-watchtower-queue.sh	T1	26.0
 test-watchtower-throttle.sh	T1	11.0
@@ -302,9 +291,7 @@ test-worktree-absent.sh	T1	2.0
 test-world-drain-deadline.sh	T1	3.0
 test-world-drain.sh	T1	3.0
 test-world-start-honours-ctrl.sh	T1	5.0
-test-world-timer-names.sh	T1	4.0
 test-world-timer-service-result.sh	T1	4.0
-test-world.sh	T1	10.0
 test-yield.sh	T1	44.5
 # exposure: test-mimir-blind-window.sh sp-vt8lbr
 # exposure: test-mimir-sibling-blind.sh sp-vt8lbr
