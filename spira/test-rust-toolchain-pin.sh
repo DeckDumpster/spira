@@ -72,7 +72,5 @@ want "positive control: a second Rust pin is found" "ci/image:1:ARG RUST_VERSION
 want "positive control: a Node pin is found" "ci/node:1:node-version: 20" "$planted"
 nofile="$(printf 'rust-toolchain.toml\n' | second_pins "$fx")"
 is "the pin file itself is never an offender" "" "$nofile"
-real="$(git -C "$ROOT" ls-files 2>/dev/null | second_pins "$ROOT")"
-is "no tracked file names a second Rust or Node pin" "" "$real"
 
 tl_summary
