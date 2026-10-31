@@ -2452,6 +2452,22 @@ mod tests {
     }
 
     #[test]
+    fn a_lane_may_spill_past_a_full_fleet_while_it_has_a_lane_share() {
+        let dir = scratch_dir("fleet-spill");
+        let cfg = saturation_cfg(&dir, "p-ops) echo 1 ;;\n  p-work) echo 3 ;;");
+        assert!(matches!(raw_of(observe_fleet(&cfg), "fleet:groom"), RawStatus::Gap { .. }), "4 live of 4 but 1 of 2 lane shares used");
+    }
+
+    #[test]
+    fn without_a_lane_cap_a_lane_waits_on_the_fleet_ceiling_alone() {
+        let dir = scratch_dir("fleet-no-lane-cap");
+        let full = Config { lanes_max_live: String::new(), ..saturation_cfg(&dir, "p-work) echo 4 ;;") };
+        assert_eq!(raw_of(observe_fleet(&full), "fleet:groom"), RawStatus::Satisfied);
+        let open = Config { lanes_max_live: String::new(), ..saturation_cfg(&dir, "p-work) echo 3 ;;") };
+        assert!(matches!(raw_of(observe_fleet(&open), "fleet:groom"), RawStatus::Gap { .. }));
+    }
+
+    #[test]
     fn a_lane_with_a_free_slot_and_no_dwarf_is_a_gap() {
         let dir = scratch_dir("fleet-free-slot");
         let cfg = saturation_cfg(&dir, "p-ops) echo 1 ;;\n  p-work) echo 1 ;;");
