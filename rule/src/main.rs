@@ -362,6 +362,12 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         return 1;
     }
 
+    if let Some(m) = rule::inventory_refusal(&text) {
+        eprintln!("{m}");
+        spira_otel::oneshot::event("spira_statute_refused", 1, &[("reason", "inventory-fence")]);
+        return 1;
+    }
+
     let (recall_code, recall_out, _) = run_bd(db, &["recall", &key]);
     if recall_code == 0 {
         println!("rule: '{key}' already exists — this enact overwrites it.");
@@ -432,9 +438,9 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         }
     };
     match land_law(home, &repo, "enact", &key, &toc_after, &pointers, &strings(&after)) {
-        Ok((branch, bead)) => {
+        Ok((bead, _)) => {
             let n = toc_after.iter().find(|p| p.number == part).and_then(|p| p.slugs.iter().position(|s| *s == key)).map_or(0, |i| i + 1);
-            println!("law/: {key} is §{part}.{n}; committed on {branch}, submitted under {bead}.");
+            println!("law/: {key} is §{part}.{n}; bead {bead} lands it from the store when a builder submits.");
             0
         }
         Err(e) => {
@@ -620,7 +626,8 @@ fn cmd_code(db: &str, rest: &[String]) -> i32 {
     for m in new_moves {
         println!("§{} moved: {} is now §{}", m.section, m.slug, code::section_of(&toc, &m.slug).unwrap_or_default());
     }
-    match code::write_law(&law, &toc, &pointers, &strings(&book)) {
+    let seeds = texts.is_none().then(|| code::write_seeds(law.parent().unwrap_or(&law), &toc, &strings(&book)));
+    match code::write_law(&law, &toc, &pointers, &strings(&book)).and(seeds.unwrap_or(Ok(()))) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("{e}");

@@ -14,6 +14,13 @@ pub fn slugify(raw: &str) -> String {
     format!("law-{}", raw.strip_prefix("law-").unwrap_or(raw))
 }
 
+/// The refusal for statute text the `inventory` fence of spira-lint would refuse in the
+/// projected files, or `None` when it is clean.
+pub fn inventory_refusal(text: &str) -> Option<String> {
+    let hit = spira_lint::rules::inventory::PATTERNS.iter().filter_map(|p| regex::Regex::new(p).ok()).find_map(|re| re.find(text).map(|m| m.as_str().to_string()))?;
+    Some(format!("rule: refusing — the text holds {hit:?}, which spira-lint's inventory fence refuses in the shipped law/ tree. Cite the mechanism, not the case: drop the provenance, then enact again."))
+}
+
 /// The refusal for a slug or statute text holding a term spira-lint's `ffx-vocabulary` would flag
 /// in the projected files, or `None` when it is clean.
 pub fn vocabulary_refusal(key: &str, text: &str) -> Option<String> {

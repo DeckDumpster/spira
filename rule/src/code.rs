@@ -581,8 +581,68 @@ pub struct LawRepo<'a> {
 /// bead, so the next round lands it. Returns the bead id and the branch the queue holds.
 pub fn land_law(repo: &LawRepo, wt_root: &Path, verb: &str, key: &str, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Result<(String, String), String> {
     let (repo_path, repo_name) = (repo.path, repo.name);
+    if verb == "enact" {
+        let part = toc.iter().find(|p| p.slugs.iter().any(|s| s == key)).map(|p| p.number).ok_or_else(|| format!("rule: {key} is in no Part of the toc"))?;
+        return file_enact_bead(repo, wt_root, key, part).map(|id| (id.clone(), format!("spira/{id}")));
+    }
     let law_branch = commit_law(repo_path, repo.base, wt_root, verb, key, toc, pointers, book)?;
     submit_law(repo_path, repo_name, wt_root, &law_branch, verb, key).map_err(|e| format!("{e}\nrule: the law/ commit is on branch {law_branch}"))
+}
+
+fn enact_bead_title(key: &str) -> String {
+    format!("law: enact {key} — land the statute book")
+}
+
+/// Marks the bead that lands a statute's enactment, so a re-enact finds it without matching titles.
+fn enact_bead_label(key: &str) -> String {
+    format!("law-enact:{key}")
+}
+
+/// The id of the not-closed bead carrying `label`, from `spira-lc content-rows`.
+fn open_bead_labelled(label: &str) -> Result<Option<String>, String> {
+    let out = spira_config::bounded::bounded("spira-lc").args(["content-rows", "--label", label]).stdin(Stdio::null()).output().map_err(|e| format!("rule: spira-lc: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("rule: spira-lc content-rows: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    let rows: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("rule: spira-lc content-rows output is not JSON: {e}"))?;
+    let found = rows.as_array().into_iter().flatten().find(|r| r.get("status").and_then(|t| t.as_str()) != Some("closed"));
+    Ok(found.and_then(|r| r.get("id")).and_then(|i| i.as_str()).map(str::to_string))
+}
+
+/// Files the one bead that lands `key`'s enactment, or amends the open one. The deliverable is
+/// a procedure run on the builder's own rebased tip, never a commit cut now, so the text it
+/// lands is the store's at submit time and a later re-enact cannot strand it.
+fn file_enact_bead(repo: &LawRepo, wt_root: &Path, key: &str, part: u32) -> Result<String, String> {
+    let (title, label) = (enact_bead_title(key), enact_bead_label(key));
+    if let Some(id) = open_bead_labelled(&label)? {
+        let note = format!("{key} was enacted again. Nothing here changes: the procedure reads the statute book when you run it, so it lands the latest text.");
+        let amended = spira_config::bounded::bounded("bead.sh").args(["amend", &id, "--note", &note]).stdin(Stdio::null()).output().map_err(|e| format!("rule: bead.sh: {e}"))?;
+        if !amended.status.success() {
+            return Err(format!("rule: bead.sh amend {id}: {}", String::from_utf8_lossy(&amended.stderr).trim()));
+        }
+        return Ok(id);
+    }
+    let body = format!(
+        "## Outcome\n\n`{key}` is on the landing ref, projected into law/ from the statute book as it stands when you submit.\n\n\
+         ## Build\n\nOn your rebased tip, in `law/toc.toml` list `{key}` under Part {part} if it is not already there, then run `rule.sh code` and commit what it writes under `law/` and `{SEEDS_DIR}/`. Do not edit statute text by hand, and do not submit a law/ commit made before your rebase: `rule.sh code` regenerates it from the store.\n\n\
+         ## Acceptance\n\n- `{key}` is in `law/toc.toml` under Part {part}.\n- `rule.sh code --check` is clean at your tip.\n"
+    );
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    std::fs::create_dir_all(wt_root).map_err(|e| format!("rule: {}: {e}", wt_root.display()))?;
+    let body_file = wt_root.join(format!("rule-enact-{key}-{}-{stamp}.bead.txt", std::process::id()));
+    std::fs::write(&body_file, body).map_err(|e| format!("rule: {}: {e}", body_file.display()))?;
+    let filed = spira_config::bounded::bounded("bead.sh").args(["file", &title, "--for", "builder", "--repo", repo.name, "--json", "--body-file"]).arg(&body_file).stdin(Stdio::null()).output();
+    let _ = std::fs::remove_file(&body_file);
+    let filed = filed.map_err(|e| format!("rule: bead.sh: {e}"))?;
+    if !filed.status.success() {
+        return Err(format!("rule: bead.sh file: {}", String::from_utf8_lossy(&filed.stderr).trim()));
+    }
+    let id = filed_id(&String::from_utf8_lossy(&filed.stdout))?;
+    let labelled = spira_config::bounded::bounded("bead.sh").args(["label", "add", &id, &label]).stdin(Stdio::null()).output().map_err(|e| format!("rule: bead.sh: {e}"))?;
+    if !labelled.status.success() {
+        return Err(format!("rule: bead {id} is filed but bead.sh label add {label} failed, so a re-enact would file a second: {}", String::from_utf8_lossy(&labelled.stderr).trim()));
+    }
+    Ok(id)
 }
 
 /// `toc` plus every slug that a branch not yet on `base` has filed in a Part (a `law/` branch,
