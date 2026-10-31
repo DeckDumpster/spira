@@ -119,3 +119,26 @@ fn push_mode_refuses_while_a_publish_pr_record_is_still_open() {
     assert!(f.t.err().contains("already open"), "{}", f.t.err());
     assert_eq!(git(&f.remote, &["rev-parse", "main"]), before);
 }
+
+#[test]
+fn a_divergence_alert_reaches_the_tests_own_mailbox_never_the_hosts() {
+    let f = fixture(PublishMode::Push);
+    let host = f.t.dir.join("host");
+    let host_log = host.join("spool");
+    fs::create_dir_all(&host).unwrap();
+    testkit::write_exe(
+        host.join("mail"),
+        &format!("#!/bin/sh\ncat >> {}\n", host_log.display()),
+    );
+    *f.t.lib.host_path.borrow_mut() = Some(format!("{}:/usr/bin:/bin", host.display()));
+    let other = f.t.dir.join("git/other");
+    git(&f.t.dir.join("git"), &["clone", "-q", f.remote.to_str().unwrap(), other.to_str().unwrap()]);
+    git(&other, &["commit", "-q", "--allow-empty", "-m", "someone else"]);
+    git(&other, &["push", "-q", "origin", "main"]);
+
+    assert_ne!(f.t.run_on(&RealGit, &["publish"]), 0);
+
+    assert!(!host_log.exists(), "the host's mailbox received a test's alert");
+    let own = fs::read_to_string(f.t.dir.join("run/mail-log")).unwrap_or_default();
+    assert!(own.contains("divergence") && own.contains("someone else"), "{own}");
+}

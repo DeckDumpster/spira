@@ -274,6 +274,8 @@ struct FLib {
     close_fail: Cell<bool>,
     /// `push` and `divergence` run real git in the repository instead of answering from the fake.
     real_git: Cell<bool>,
+    /// The PATH a real-git `divergence` finds beneath its own `mail`; unset, the process's.
+    host_path: RefCell<Option<String>>,
 }
 
 impl FLib {
@@ -365,6 +367,21 @@ impl Lib for FLib {
     ) -> Divergence {
         self.log(format!("divergence {forge} {local}"));
         if self.real_git.get() {
+            let bin = self.s.run.join("bin");
+            fs::create_dir_all(&bin).unwrap();
+            testkit::write_exe(
+                bin.join("mail"),
+                &format!(
+                    "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {0}\n/bin/cat >> {0}\n",
+                    self.s.run.join("mail-log").display()
+                ),
+            );
+            let host = self.host_path.borrow().clone().unwrap_or_else(|| {
+                let _read = testkit::env_read();
+                std::env::var("PATH").unwrap_or_default()
+            });
+            let path = format!("{}:{host}", bin.display());
+            let _env = testkit::env(&[("PATH", Some(&path))]);
             return crate::ops::helpers::check_divergence(
                 _mailbox, &self.s.queue_dir, _repo, _path, forge, local,
             );
@@ -1544,6 +1561,7 @@ impl T {
             by_name: RefCell::default(),
             close_fail: Cell::new(false),
             real_git: Cell::new(false),
+            host_path: RefCell::default(),
         };
         let scripts = FScripts::default();
         scripts.fence_ok.set(true);
