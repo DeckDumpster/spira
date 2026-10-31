@@ -10,6 +10,7 @@ use crate::model::{LandMode, Member};
 use crate::ports::Divergence;
 use crate::records::{self, write_atomic, Kv};
 use spira_config::local_pass;
+use spira_config::PublishMode;
 
 pub fn publish(w: &World, repo: Option<&str>) -> i32 {
     publish_with(w, repo, lock_held_by_caller(w))
@@ -84,8 +85,9 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
             Err(rc) => return rc,
         }
     };
+    let push_mode = c.r.publish_mode == PublishMode::Push;
     let pfile = c.queue_file("publish");
-    if let Ok(Some(kv)) = records::read_kv(&pfile) {
+    if let Some(kv) = records::read_kv(&pfile).ok().flatten().filter(|_| !push_mode) {
         w.err(format!(
             "queue.sh publish: a publish PR is already open for {name} (pr={}) — settle it first",
             kv.get("pr").unwrap_or("")
@@ -120,6 +122,12 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         &head_sha,
     ) {
         Divergence::Ancestor => {}
+        Divergence::Diverged(foreign) if push_mode => {
+            w.err(format!(
+                "queue.sh publish: {remote}/{forge_branch} ({forge_sha}) is not an ancestor of {base} ({head_sha}) — refusing a non-fast-forward push (something else moved the remote; foreign range {foreign})"
+            ));
+            return FAIL;
+        }
         Divergence::Diverged(foreign) => {
             w.err(format!(
                 "queue.sh publish: {remote}/{forge_branch} is not an ancestor of {base} — refusing to publish (something else moved the forge; foreign range {foreign})"
@@ -179,7 +187,7 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
             return FAIL;
         }
     };
-    if members.is_empty() {
+    if members.is_empty() && !push_mode {
         w.err(format!("queue.sh publish: {name} has new commits on {base} but no land commit (spira: land <id>) in range — refusing"));
         return FAIL;
     }
@@ -211,6 +219,29 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
             ));
             return FAIL;
         }
+    }
+
+    if push_mode {
+        if !w
+            .lib
+            .push(&path, &remote, &format!("{head_sha}:refs/heads/{forge_branch}"))
+        {
+            w.err(format!(
+                "queue.sh publish: could not push {head_sha} to {remote}/{forge_branch}"
+            ));
+            return FAIL;
+        }
+        landing_log(
+            &c.s.run,
+            &format!(
+                "QUEUE PUBLISH_PUSH {} repo={name} remote={remote} branch={forge_branch} from={forge_sha} to={head_sha}",
+                w.clock.now()
+            ),
+        );
+        w.out(format!(
+            "queue.sh publish: pushed {name} {base} ({head_sha}) to {remote}/{forge_branch}, was {forge_sha}"
+        ));
+        return OK;
     }
 
     let stamp = w.clock.stamp();
@@ -453,6 +484,10 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
             return FAIL;
         }
     };
+    if c.r.publish_mode == PublishMode::Push {
+        w.out(format!("{} publish-settle {name}: publish mode is push -> Open", w.clock.now()));
+        return publish_with(w, Some(&name), true);
+    }
     let pfile = c.queue_file("publish");
     let mut kv = records::read_kv(&pfile).ok().flatten();
     if kv.is_none() {

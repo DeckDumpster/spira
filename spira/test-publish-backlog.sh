@@ -291,5 +291,23 @@ SPIRA_TOML="$BAD" pb watch --ticks 1 >/dev/null
 pb health >/dev/null; rc=$?
 is   "9: the health probe fails while blind (the mailer reads the same broken toml)" "1" "$rc"
 
+# ============================================================================
+echo
+echo "11 — a repo declared to publish nowhere is skipped, not BLIND; the same repo undeclared is BLIND"
+# ============================================================================
+clear_mail
+rm -rf "$RUN/watchd"
+NREPO="$TMP/norepo"
+git init -q -b main "$NREPO"
+git -C "$NREPO" commit -q --allow-empty -m base
+git -C "$NREPO" branch local/main main
+printf 'fixnone | %s | queue.local | local/main | | |\n' "$NREPO" >> "$RMAP"
+out="$(pb --show)"
+want "11: positive control — undeclared and remoteless, the repo is BLIND" "BLIND fixnone" "$out"
+clear_mail
+out="$(SPIRA_PUBLISH_REMOTE_FIXNONE=none pb --show)"
+nowant "11: declared unpublished, it is not BLIND" "BLIND fixnone" "$out"
+want   "11: and the blindness it had is cleared" "SIGHTED fixnone" "$out"
+
 grep -q '^publish-backlog|' "$HERE/watchers"; is "watchers manifest has no publish-backlog row: spira-runtime hosts it" "1" "$?"
 tl_summary

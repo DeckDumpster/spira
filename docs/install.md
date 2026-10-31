@@ -126,7 +126,7 @@ would make the gate test the code already in force.
 | `[spira]` | the registered keys (`id_prefix` is required) |
 | `[repo.<name>]` | `path`, `mode`, `base`, `format`, `lanes`, `forge`, `gate_mode` (`suites` default, `unit`, or `fences`) |
 | `[persona.<name>]` | `model`, `tools`, `labels`, `lane`, `lease`, `system_prompt`, `escalation_model` |
-| `[publish.<name>]` | `remote` (`none` = publishes nowhere) and `branch`, for `queue.local` repositories |
+| `[publish.<name>]` | `remote` (`none` = publishes nowhere), `branch`, and `mode` (`pr`, the default, opens a forge PR; `push` fast-forward-pushes the green head and calls no forge API), for `queue.local` repositories |
 
 **Repositories.** The registry is the pipe-delimited file named by `spira.repo_map` when it
 exists (`name | path | mode | base | format | gate | lanes`), else the `[repo.*]` tables.

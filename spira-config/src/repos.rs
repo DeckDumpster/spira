@@ -632,6 +632,11 @@ pub fn publish_forge(reg: &Registry, name: &str, env: &BTreeMap<String, String>)
     Some((remote, branch))
 }
 
+/// How `name`'s green head reaches its publish remote: a forge PR unless `[publish.<name>] mode = "push"`.
+pub fn publish_mode(reg: &Registry, name: &str) -> crate::PublishMode {
+    reg.publish.get(name).and_then(|p| p.mode).unwrap_or_default()
+}
+
 /// The publish remote value that declares a repository publishes nowhere.
 pub const NO_PUBLISH: &str = "none";
 
@@ -1265,6 +1270,17 @@ oldshape | /h/old | pr | fmt-tool | gate --flag
         // base is "release" (no slash at all), so ref_branch(base) == base: never a distinct
         // "local counterpart" to go looking for.
         assert_eq!(landrefs(&reg, repo.to_str().unwrap()), Some(("release".to_string(), None)));
+    }
+
+    #[test]
+    fn publish_mode_is_pr_unless_the_row_declares_push() {
+        let mut reg = Registry::new(None, &env(&[]), Path::new("q"));
+        assert_eq!(publish_mode(&reg, "q"), crate::PublishMode::Pr);
+        let doc: crate::SpiraToml = toml::from_str("[publish.q]\nmode = \"push\"\n").unwrap();
+        reg = reg.with_publish(doc.publish);
+        assert_eq!(publish_mode(&reg, "q"), crate::PublishMode::Push);
+        assert_eq!(publish_mode(&reg, "other"), crate::PublishMode::Pr);
+        assert!(toml::from_str::<crate::SpiraToml>("[publish.q]\nmode = \"ssh\"\n").is_err());
     }
 
     #[test]

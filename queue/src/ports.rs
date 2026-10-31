@@ -114,6 +114,8 @@ pub struct RepoCtx {
     pub publish: Option<(String, String)>,
     /// The repository is declared to publish nowhere (`SPIRA_PUBLISH_REMOTE_<NAME>=none`).
     pub unpublished: bool,
+    /// `[publish.<name>] mode`: whether green work goes out as a forge PR or a fast-forward push.
+    pub publish_mode: spira_config::PublishMode,
     /// `git remote` of the checkout.
     pub remotes: Vec<String>,
 }

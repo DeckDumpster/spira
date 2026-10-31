@@ -677,7 +677,7 @@ fn cmd_repo_check(reg: &Registry, args: &[String]) -> ExitCode {
 }
 
 /// `repo <field|names|all|home-repo|root|land|land-queued|gate|format|base|name-at|same|
-/// containment-check|landref|ref-remote|ref-branch|qualify-base-ref|landrefs|publish-forge>
+/// containment-check|landref|ref-remote|ref-branch|qualify-base-ref|landrefs|publish-forge|publishes-nowhere>
 /// ...` — the CLI door onto [`spira_config::repos`] for the bash scripts that still call
 /// lib.sh's `repo_field`/`repo_root`/`spira_landref`/... by name (now one-line shims onto
 /// this), and for any Rust crate that has not yet been switched to call the library
@@ -908,11 +908,25 @@ fn cmd_repo(args: &[String]) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Some("publishes-nowhere") => match args.get(1) {
+            Some(name) => {
+                let env_map: BTreeMap<String, String> = env::vars().collect();
+                if spira_config::repos::publishes_nowhere(&reg, name, &env_map) {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                }
+            }
+            None => {
+                eprintln!("usage: spira-config repo publishes-nowhere <name>");
+                ExitCode::FAILURE
+            }
+        },
         _ => {
             eprintln!(
                 "usage: spira-config repo <field|names|all|home-repo|root|land|land-queued|\n\
                  \x20            gate|format|base|name-at|same|containment-check|landref|\n\
-                 \x20            ref-remote|ref-branch|qualify-base-ref|landrefs|publish-forge|add|check> ..."
+                 \x20            ref-remote|ref-branch|qualify-base-ref|landrefs|publish-forge|publishes-nowhere|add|check> ..."
             );
             ExitCode::FAILURE
         }
