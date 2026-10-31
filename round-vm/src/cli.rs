@@ -805,6 +805,7 @@ mod tests {
             cap_secs: 1,
             testenv_limits: String::new(),
             post_guard_secs: 1,
+            disk_need_gib: 1,
             vm_budget_secs: 300,
             build_budget_secs: 600,
         });
