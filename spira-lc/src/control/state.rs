@@ -22,6 +22,7 @@ pub fn is_verb(verb: &str) -> bool {
         || rounds::VERBS.contains(&verb)
         || cascades::VERBS.contains(&verb)
         || asks::VERBS.contains(&verb)
+        || mending::VERBS.contains(&verb)
 }
 
 /// What one call carries besides its argv: the clock it is judged at and the request id its
@@ -45,6 +46,7 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
         Some(v) if rounds::VERBS.contains(&v) => rounds::run(store, args, call),
         Some(v) if cascades::VERBS.contains(&v) => cascades::run(store, args, call),
         Some(v) if asks::VERBS.contains(&v) => asks::run(store, args, call),
+        Some(v) if mending::VERBS.contains(&v) => mending::run(store, args, call),
         other => (
             CANNOT_TELL,
             format!("{other:?} is not a control-store verb"),
@@ -475,6 +477,7 @@ fn create<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, S
 
 mod asks;
 mod cascades;
+mod mending;
 mod rounds;
 
 #[cfg(test)]

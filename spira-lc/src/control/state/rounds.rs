@@ -235,6 +235,18 @@ pub(super) fn event<B: Backend>(
                     )
                 }
             };
+            if let BatchEventKind::Failed { suite, n } = &kind {
+                if let Err(e) = crate::mending::check_widths(key, *n, suite) {
+                    return e;
+                }
+                match store.mending(key, *n, suite) {
+                    Ok(Some(_)) => {
+                        return (0, format!("already recorded: {suite} failed in pass {n}"))
+                    }
+                    Ok(None) => {}
+                    Err(e) => return cannot_tell(e),
+                }
+            }
             let ev = BatchEvent {
                 expect,
                 version,

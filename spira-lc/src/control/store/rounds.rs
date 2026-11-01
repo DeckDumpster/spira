@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use state_store::{Backend, Compare, Error, Item, Object, Request, Result, Rev, Selector, Txn};
 
+use super::mending::MendingRecord;
 use super::{Read, Store};
 use crate::control::keys;
 use crate::control::records::{
@@ -333,24 +334,24 @@ impl<B: Backend> Store<B> {
         })
     }
 
-    /// One batch-machine event on `id`, CAS'd on the round's own key. A batch event that opens
-    /// a mending row (`Failed`) belongs to the mending machine, which this store does not serve.
+    /// One batch-machine event on `id`, CAS'd on the round's own key. A `Failed` opens its
+    /// failure's mending row, compared absent, in the same txn.
     pub fn batch_event(&self, id: &str, ev: &BatchEvent, at: i64, req: &Request) -> Result<Ran> {
-        if matches!(ev.kind, BatchEventKind::Failed { .. }) {
-            return Ok(Ran::Turned(Turned::CannotTell(
-                "a Failed batch event opens a mending row, and the control store does not serve the mending machine yet".into(),
-            )));
-        }
         let Some((key, rec)) = self.batch(id)? else {
             return Ok(Ran::Turned(Turned::CannotTell(format!(
                 "event: no batch row for {id}"
             ))));
         };
         let mut c = Cascade::new();
-        match self.batch_step(&mut c, &key, &rec.value, ev, at)? {
-            Ok(_) => self.commit(c, req, "apply"),
-            Err((audit, refusal)) => self.refuse_audit(audit, refusal, req),
+        if let Err((audit, refusal)) = self.batch_step(&mut c, &key, &rec.value, ev, at)? {
+            return self.refuse_audit(audit, refusal, req);
         }
+        if let BatchEventKind::Failed { suite, n } = &ev.kind {
+            let failed = MendingRecord::failed(id, *n, suite, at);
+            let row = keys::mending(&failed.row.key());
+            c.put(self, &row, &failed, &[])?;
+        }
+        self.commit(c, req, "apply")
     }
 
     /// Plans `ev` on the round at `key`: the next row, or the audited refusal.
