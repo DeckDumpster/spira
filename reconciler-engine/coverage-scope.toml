@@ -1,0 +1,9 @@
+# The goodput pass's assembler and its pass record: the bead's own gate reports any branch in
+# them no test takes.
+[[scope]]
+path = "reconciler-engine/src/assemble.rs"
+functions = ["listed", "Snapshot::parse", "Verb::snapshot", "answer", "assemble", "unacknowledged", "age"]
+
+[[scope]]
+path = "reconciler-engine/src/pass_record.rs"
+functions = ["PassRecord::next_n", "history_key"]

@@ -1443,6 +1443,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "spira-desired-state",
  "spira-otel",
  "testkit",
  "tsd",
@@ -2004,6 +2005,7 @@ version = "1.0.0"
 dependencies = [
  "lifecycle",
  "opentelemetry-proto",
+ "reconciler-engine",
  "runtime",
  "serde",
  "serde_json",
