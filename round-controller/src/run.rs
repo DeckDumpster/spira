@@ -160,11 +160,14 @@ pub fn parse_args(args: &[&str]) -> Result<RunArgs, String> {
         need(k)
             .and_then(|v| token_of_word(v).ok_or_else(|| format!("{k} {v:?} is not <main>-<sub>")))
     };
+    let repo = need("--repo")?.to_string();
+    let batch = need("--batch")?.to_string();
+    let lease = token("--lease-token")?;
     let slot = need("--slot")?;
     Ok(RunArgs {
-        repo: need("--repo")?.to_string(),
-        batch: need("--batch")?.to_string(),
-        lease: token("--lease-token")?,
+        repo,
+        batch,
+        lease,
         slot: slot_of_word(slot).ok_or_else(|| format!("--slot {slot:?} is not <pool>/<n>"))?,
         slot_token: token("--slot-token")?,
     })
