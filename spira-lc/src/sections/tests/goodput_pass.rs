@@ -24,7 +24,7 @@ impl<B: Backend> Rig<B> {
     }
 
     fn intents(&self) -> Vec<(String, Value)> {
-        let (items, _) = self.store.contract().list(&["intents/"], &state_store::Selector::Everything).unwrap();
+        let (items, _) = self.store.list(&["intents/"], &state_store::Selector::Everything).unwrap();
         items.into_iter().map(|i| (i.key, i.value.data)).collect()
     }
 
@@ -36,7 +36,7 @@ impl<B: Backend> Rig<B> {
     }
 
     fn record(&self) -> PassRecord {
-        serde_json::from_value(self.store.contract().get(PASS_KEY).unwrap().expect("a pass record").value.data).unwrap()
+        serde_json::from_value(self.store.get(PASS_KEY).unwrap().expect("a pass record").value.data).unwrap()
     }
 
     fn owner(&self, argv: &[&str]) -> Value {
@@ -126,7 +126,7 @@ impl<B: Backend> Rig<B> {
             self.publish(&s.body(&at));
             for a in &s.actions {
                 let knob = format!("knobs/Probe/{}/{}", s.name, a["name"].as_str().unwrap());
-                if self.store.contract().get(&knob).unwrap().is_none() {
+                if self.store.get(&knob).unwrap().is_none() {
                     self.put_knob(&knob, json!(0));
                 }
             }
@@ -158,7 +158,7 @@ fn a_step_is_written_read_back_and_holds_its_neighbourhood_until_it_is_judged() 
     assert_eq!(intents.len(), 1);
     assert_eq!(intents[0].0, key);
     assert_eq!((intents[0].1["from"].clone(), intents[0].1["to"].clone()), (json!(0), json!(1)));
-    assert!(r.store.contract().get("telemetry/reconciler/passes/1").unwrap().is_some(), "the day of history holds pass 1");
+    assert!(r.store.get("telemetry/reconciler/passes/1").unwrap().is_some(), "the day of history holds pass 1");
 
     // Unacknowledged, inside its horizon: no new step in its neighbourhood.
     r.clock.advance(MIN);
@@ -193,7 +193,7 @@ fn an_acked_intent_past_its_horizon_is_judged_on_the_field_it_moves() {
     let rec = r.record();
     assert_eq!(rec.judged.len(), 1, "{rec:?}");
     assert_eq!((rec.judged[0].result, rec.judged[0].baseline, rec.judged[0].observed), (JudgementResult::Fulfilled, 3.0, 2.0));
-    let stored = r.store.contract().get(&key).unwrap().unwrap().value.data;
+    let stored = r.store.get(&key).unwrap().unwrap().value.data;
     assert_eq!(stored["judgement"]["result"], "fulfilled", "the judgement is written to the intent");
     assert_eq!(stepped(&rec), ["Probe/a"], "a fulfilled step frees its neighbourhood, and Deep is still open");
     assert_eq!(rec.steps[0].from, json!(1), "the next step starts from the knob the owner moved");
@@ -399,7 +399,7 @@ fn a_knob_the_step_cannot_read_refuses_the_step() {
     let r = rig();
     let a = sec("a", vec![local("drain")]);
     r.world(&[&a]);
-    r.store.contract().txn(&Txn::new().delete("knobs/Probe/a/drain"), &Request::new("rm", "test", "t")).unwrap();
+    r.store.txn(&Txn::new().delete("knobs/Probe/a/drain"), &Request::new("rm", "test", "t")).unwrap();
     r.passed(&cfg());
     assert_eq!(codes(&r.record()), [("Probe/a".to_string(), "knob-absent".to_string())]);
 }
@@ -413,9 +413,9 @@ fn a_second_pass_finding_the_lock_held_stands_by_naming_the_holder_and_writes_no
     other.holder = "inv-2".into();
     let got = pass(&Through(&r), &r.clock, &other).unwrap();
     assert_eq!(got, Outcome::Standby { held_by: json!("inv-0") });
-    assert!(r.store.contract().get(PASS_KEY).unwrap().is_none(), "a standby pass writes no pass record");
+    assert!(r.store.get(PASS_KEY).unwrap().is_none(), "a standby pass writes no pass record");
     assert!(r.intents().is_empty());
-    let standby = r.store.contract().get(STANDBY_KEY).unwrap().unwrap().value.data;
+    let standby = r.store.get(STANDBY_KEY).unwrap().unwrap().value.data;
     assert_eq!((standby["holder"].clone(), standby["held_by"].clone()), (json!("inv-2"), json!("inv-0")));
     r.ok(&["lock", "release", "reconciler", "--token", held["token"].as_str().unwrap()], None);
 }
@@ -473,7 +473,7 @@ fn under_a_halt_or_a_shadow_an_intent_due_for_judgement_is_left_unjudged() {
         r.passed(&PassConfig { holder: "inv-1".into(), timeout_secs: 50, shadow, halted });
         let rec = r.record();
         assert!(rec.judged.is_empty() && rec.steps.is_empty(), "{rec:?}");
-        let stored = r.store.contract().get(&key).unwrap().unwrap().value.data;
+        let stored = r.store.get(&key).unwrap().unwrap().value.data;
         assert!(stored.get("judgement").is_none_or(Value::is_null), "intents/ is not written: {stored}");
     }
 }
@@ -528,7 +528,7 @@ fn the_pass_stops_writing_at_its_own_deadline_and_still_releases_the_lock() {
     assert!(p.deadline_hit && !p.recorded && p.released, "{p:?}");
     assert_eq!(*slow.calls.borrow(), ["lock acquire", "section snapshot", "lock release"], "past 50 s on its clock no write is made");
     assert!(r.intents().is_empty());
-    assert!(r.store.contract().get(PASS_KEY).unwrap().is_none());
+    assert!(r.store.get(PASS_KEY).unwrap().is_none());
 
     let r = rig();
     r.world(&[&sec("a", vec![local("drain")])]);
@@ -537,7 +537,7 @@ fn the_pass_stops_writing_at_its_own_deadline_and_still_releases_the_lock() {
     assert!(p.deadline_hit && !p.recorded && p.released, "{p:?}");
     assert_eq!(*slow.calls.borrow(), ["lock acquire", "section snapshot", "intent put", "intent get", "lock release"], "the step lands, the record after the deadline does not");
     assert_eq!(r.intents().len(), 1);
-    assert!(r.store.contract().get(PASS_KEY).unwrap().is_none());
+    assert!(r.store.get(PASS_KEY).unwrap().is_none());
 }
 
 /// Every call answered, except that an intent never reads back.

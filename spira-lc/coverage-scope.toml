@@ -1,7 +1,7 @@
 # The section, intent and lock verbs on the control store: the bead's own gate reports any
 # branch in them no test takes.
 [[scope]]
-path = "spira-lc/src/control/sections.rs"
+path = "spira-lc/src/sections.rs"
 functions = [
     "run",
     "apply_spec_doc",

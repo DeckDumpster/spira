@@ -1,0 +1,28 @@
+# The replay's decisions: the bead's own gate reports any branch in them no test takes.
+[[scope]]
+path = "sim/src/replay.rs"
+functions = [
+    "load",
+    "ReplayWorld::apply",
+    "ReplayWorld::round",
+    "ReplayWorld::cut",
+    "ReplayWorld::landed",
+    "ReplayWorld::bead",
+    "ReplayWorld::attribution",
+    "ReplayWorld::stop",
+    "OpenRound::leased",
+    "Inner::apply_due",
+    "ScriptedOwner::answer",
+    "Replay::from_dir",
+    "Replay::run",
+    "Store::call",
+    "Slice::window",
+]
+
+[[scope]]
+path = "sim/src/replay/round_controller.rs"
+functions = ["status", "blocker", "cond", "section", "Publisher::publish"]
+
+[[scope]]
+path = "desired-state/src/sections/round_controller.rs"
+functions = ["check_spec", "check_status"]

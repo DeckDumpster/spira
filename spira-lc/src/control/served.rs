@@ -107,7 +107,7 @@ fn request_id() -> String {
 /// store does not serve, or any verb while the key is unset. `watch` has no dolt path.
 pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
     let verb = args.first()?;
-    if sections::VERBS.contains(&verb.as_str()) {
+    if sections::VERBS.contains(&verb.as_str()) || verb == sections::lifecycle::VERB {
         return Some(dispatch_sections(args));
     }
     let lifecycle = state::is_verb(verb) || readiness::VERBS.contains(&verb.as_str());
@@ -170,7 +170,7 @@ fn dispatch_sections(args: &[String]) -> (i32, String) {
                 metrics: &metrics,
             };
             if args[0] != sections::lifecycle::VERB {
-                return sections::run(&store, args, &call);
+                return sections::run(store.contract(), args, &call);
             }
             match crate::lifecycle_run_dir() {
                 Ok(run) => sections::lifecycle::run(&store, args, &call, &sections::lifecycle::RunDir(run)),
@@ -178,5 +178,19 @@ fn dispatch_sections(args: &[String]) -> (i32, String) {
             }
         }
         Err(e) => sections::cannot_tell(&format!("the control store: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_new_verbs_take_no_name_an_existing_verb_answers() {
+        for v in sections::VERBS.iter().chain([&sections::lifecycle::VERB]) {
+            assert!(!state::VERBS.contains(v), "{v}");
+            assert!(!verbs::VERBS.contains(v), "{v}");
+            assert!(!crate::callers::is_verb(v), "{v}");
+        }
     }
 }

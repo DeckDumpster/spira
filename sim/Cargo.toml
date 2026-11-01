@@ -13,13 +13,21 @@ name = "sim-fit"
 path = "src/bin/sim-fit.rs"
 test = false
 
+[[bin]]
+name = "sim-replay"
+path = "src/bin/sim-replay.rs"
+test = false
+
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 spira-config = { path = "../spira-config" }
 runtime = { path = "../runtime" }
+serde_json = "1"
+spira-desired-state = { path = "../desired-state" }
+spira-lc = { path = "../spira-lc" }
+state-store = { path = "../state-store" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
-serde_json = "1"
