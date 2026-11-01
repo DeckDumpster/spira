@@ -84,6 +84,8 @@ PROD="$(install_fixture_prod "$TMP/prod" "$HERE")"   # release-shaped prod root:
 MOCK_LOG="$TMP/systemctl.log"
 # DRAIN_STATE is read by the oneshot-drain mock to simulate a transitioning service.
 DRAIN_STATE="$TMP/drain_state"
+# ACTIVATE_STATE is read by the end-state readiness mock to simulate a unit still starting.
+ACTIVATE_STATE="$TMP/activate_state"
 
 # ---------------------------------------------------------------------------
 # Mock systemctl records every call and returns scenario-controlled output.
@@ -93,6 +95,9 @@ DRAIN_STATE="$TMP/drain_state"
 #   MOCK_ONESHOT_SVC   service name that is-active should report as a transitioning
 #                      oneshot (active on first query, inactive thereafter)
 #   DRAIN_STATE        file holding current state for MOCK_ONESHOT_SVC queries
+#   MOCK_ACTIVATING_SVC  unit that is-active should report as still starting
+#                        (activating while ACTIVATE_STATE holds a count above 0, active after)
+#   ACTIVATE_STATE     file holding how many more MOCK_ACTIVATING_SVC queries answer activating
 # ---------------------------------------------------------------------------
 cat > "$MOCK_BIN/systemctl" <<'MOCK'
 #!/usr/bin/env bash
@@ -114,6 +119,12 @@ case "$*" in
         state="$(cat "${DRAIN_STATE}" 2>/dev/null || printf 'inactive')"
         printf '%s\n' "$state"
         printf 'inactive\n' > "${DRAIN_STATE}"
+        ;;
+    *is-active*"${MOCK_ACTIVATING_SVC:-__none__}")
+        # Readiness: "activating" for the first N queries, then "active" (a Type=notify unit).
+        left="$(cat "${ACTIVATE_STATE}" 2>/dev/null || printf 0)"
+        if [ "$left" -gt 0 ]; then printf 'activating\n'; else printf 'active\n'; fi
+        printf '%s\n' "$(( left > 0 ? left - 1 : 0 ))" > "${ACTIVATE_STATE}"
         ;;
     *is-active*)
         printf '%s\n' "${MOCK_IS_ACTIVE:-active}"
@@ -159,6 +170,8 @@ inst() {
         "MOCK_IS_ACTIVE=${MOCK_IS_ACTIVE:-active}" \
         "MOCK_ONESHOT_SVC=${MOCK_ONESHOT_SVC:-__none__}" \
         "DRAIN_STATE=$DRAIN_STATE" \
+        "MOCK_ACTIVATING_SVC=${MOCK_ACTIVATING_SVC:-__none__}" \
+        "ACTIVATE_STATE=$ACTIVATE_STATE" \
         "SPIRA_INSTALL_FORCE=${MOCK_FORCE:-}" \
         SPIRA_DRAIN_INTERVAL=0 \
         units-install "$@" 2>&1
@@ -243,6 +256,24 @@ badstate_rc=$?
 
 nonzero "end-state: exit non-zero when units are not active"       "$badstate_rc"
 want    "end-state: output names the failure"                      "not active" "$badstate_out"
+# The wait is spira.install_active_wait, which the fixture declares 0: a unit that is not
+# active is polled once and the verdict follows at once, rather than after the shipped 45 s.
+# Two lines: the apply pass probes each unit once before the end-state check polls it.
+is      "end-state: each unit is polled once under a 0 s wait"     2 \
+        "$(grep -c 'is-active spira-sentinel-prod.timer$' "$MOCK_LOG")"
+
+# The path the wait exists for: a unit still starting (Type=notify readiness) when the
+# install reaches its check is polled again and passes once it reports active. It answers
+# activating to the apply pass's probe and to the first end-state poll, so only a second poll
+# inside the wait sees it active. Counts, never elapsed time
+# (law-no-wall-clock-budgets-in-the-corpus).
+printf '2\n' > "$ACTIVATE_STATE"
+ready_out="$(SPIRA_TOML="$(tl_layer SPIRA_INSTALL_ACTIVE_WAIT=5)" MOCK_DWARVES= MOCK_IS_ACTIVE=active \
+             MOCK_FORCE= MOCK_ONESHOT_SVC=__none__ MOCK_ACTIVATING_SVC=spira-sentinel-prod.timer inst)"
+ready_rc=$?
+wantrc  "end-state: a unit that turns active inside the wait passes" 0 "$ready_rc"
+is      "end-state: the starting unit is polled until it is active"  3 \
+        "$(grep -c 'is-active spira-sentinel-prod.timer$' "$MOCK_LOG")"
 
 # ==========================================================================
 tl_summary

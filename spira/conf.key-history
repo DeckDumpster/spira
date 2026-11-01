@@ -145,6 +145,7 @@ hook_lines
 id_prefix
 incident_label
 incident_priority
+install_active_wait
 instance
 land_cpu_quota
 land_gate_reserve

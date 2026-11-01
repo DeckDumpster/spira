@@ -100,7 +100,9 @@ template this box ever actually renders, not a synthetic fixture.
   not a bug this bead owns. Re-verified byte-identical against `render.py` on all 63
   templates after reverting (**Parity**, above).
 - **The end-state check (`units-install`'s last act) bounds its wait instead of polling
-  once** (`SPIRA_INSTALL_ACTIVE_WAIT`, default 45s, raised from an initial 20s — see below).
+  once** (`spira.install_active_wait`: 45 s shipped, raised from an initial 20s — see below;
+  0 in the test fixture, so a suite whose stub never reports active gets its verdict after one
+  poll per unit).
   A real `testenv` batch-container gate run reproduced, twice, identically:
   `spira-cockpit.service` (`Type=notify`) enabled but reported not-active right after
   `enable --now`. The original bash's own check was also a single immediate poll with no

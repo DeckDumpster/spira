@@ -418,7 +418,13 @@ fn run_main() -> ExitCode {
                 !(systemctl.is_enabled(u).as_deref() == Some("disabled") && !report.written.contains(u))
             })
             .collect();
-        let max_wait = nonempty_env("SPIRA_INSTALL_ACTIVE_WAIT").and_then(|v| v.parse().ok()).unwrap_or(45u64);
+        let max_wait = match spira_config::process::cfg_parse::<u64>("SPIRA_INSTALL_ACTIVE_WAIT") {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("units-install: {e}");
+                return ExitCode::from(1);
+            }
+        };
         let start = std::time::Instant::now();
         let in_testenv = nonempty_env("SPIRA_IN_TESTENV").is_some();
         let mut not_active: Vec<String> = candidates.iter().filter(|u| !systemctl.is_active(u)).cloned().collect();

@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=install
+DOC=Seconds units-install waits, polling once a second, for the units it enabled to report active before it names the stragglers and exits non-zero; the margin covers Type=notify units that are still activating when the install reaches its check.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Seconds units-install waits, polling once a second, for the units it enabled to report active before it names the stragglers and exits non-zero; the margin covers Type=notify units that are still activating when the install reaches its check.
+    : "${SPIRA_INSTALL_ACTIVE_WAIT:=45}"
+SPIRA_CONF_DEFAULT_EOF
