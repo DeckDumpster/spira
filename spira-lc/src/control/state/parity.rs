@@ -42,6 +42,8 @@ const DIVERGES: &[(&str, &str)] = &[
     ("deliver-push", "sp-delivering is IN_DELIVERY only through the unserved cut"),
     ("returned", "sp-delivering is IN_DELIVERY only through the unserved cut"),
     ("express", "list --express shows sp-ready's title, a planning field"),
+    ("list-batches", "batches are the batch machine's, served by sp-pcalr6; until then the key answers cannot tell rather than read dolt"),
+    ("list-delivery", "deliveries are the delivery machine's, served by sp-pcalr6; until then the key answers cannot tell rather than read dolt"),
     ("supersede", "the dolt path retires the bead's mends through bd on a terminal move, and with bd absent from the capture its golden carries that failure on stderr; the control store retires no mends yet"),
     ("content-on-base", "as supersede: the golden's stderr is the dolt path's mend retirement failing on the absent bd"),
 ];
