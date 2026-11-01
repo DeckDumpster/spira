@@ -8,8 +8,8 @@ use std::time::Duration;
 use runtime::ports::{Proc, ProcSpec};
 
 use crate::ports::{
-    fields, Certified, Done, EjectReq, Ejected, Fields, OpenReq, Opened, Pending, RoundVerbs,
-    Status, Verb, VerbRefusal,
+    fields, Certified, Done, EjectReq, Ejected, Fields, OpenReq, Opened, Pending, Place,
+    RoundVerbs, Status, Superseded, Verb, VerbRefusal,
 };
 
 pub struct Deadlines {
@@ -138,6 +138,10 @@ impl RoundVerbs for RealVerbs {
         if let Some(n) = &r.name {
             c.args.extend(["--name".to_string(), n.clone()]);
         }
+        match &r.place {
+            Place::OnBase => c.args.push("--on-base".into()),
+            Place::StackOn(k) => c.args.extend(["--stack-on".to_string(), k.clone()]),
+        }
         let members: String = r
             .members
             .iter()
@@ -193,6 +197,19 @@ impl RoundVerbs for RealVerbs {
 
     fn pass_start(&self, repo: &str, batch: &str) -> Result<Done, VerbRefusal> {
         self.done(Call::new(Verb::PassStart, &[batch, repo]))
+    }
+
+    fn supersede(
+        &self,
+        repo: &str,
+        batch: &str,
+        lease_token: Option<&str>,
+    ) -> Result<Superseded, VerbRefusal> {
+        let mut c = Call::new(Verb::Supersede, &[batch, repo]);
+        if let Some(t) = lease_token {
+            c.args.extend(["--lease-token".to_string(), t.to_string()]);
+        }
+        self.call(c).map(|f| Superseded::from_fields(&f))
     }
 }
 
@@ -295,6 +312,7 @@ mod tests {
             repo: "r".into(),
             members: vec![],
             name: None,
+            place: Place::OnBase,
         };
         assert!(verbs(&fake(Some(0), "batch=b1\n", ""))
             .open(&req)
@@ -367,19 +385,41 @@ mod tests {
                 tip: "1".into(),
             }],
             name: Some("n1".into()),
+            place: Place::OnBase,
         };
         assert_eq!(verbs(&p).open(&req).unwrap().batch, "b1");
         let spec = p.seen.lock().unwrap()[0].clone();
         assert_eq!(
             spec.args,
-            ["round", "open", "r", "--name", "n1", "--members-file", "-"]
+            [
+                "round",
+                "open",
+                "r",
+                "--name",
+                "n1",
+                "--on-base",
+                "--members-file",
+                "-"
+            ]
         );
         assert_eq!(spec.stdin, b"sp-a:1\n");
-        let unnamed = OpenReq { name: None, ..req };
-        verbs(&p).open(&unnamed).unwrap();
+        let stacked = OpenReq {
+            name: None,
+            place: Place::StackOn("k1".into()),
+            ..req
+        };
+        verbs(&p).open(&stacked).unwrap();
         assert_eq!(
             p.seen.lock().unwrap()[1].args,
-            ["round", "open", "r", "--members-file", "-"]
+            [
+                "round",
+                "open",
+                "r",
+                "--stack-on",
+                "k1",
+                "--members-file",
+                "-"
+            ]
         );
     }
 
@@ -405,6 +445,27 @@ mod tests {
             )
         );
         assert_eq!(seen[3].args, ["round", "pass-start", "b1", "r"]);
+    }
+
+    #[test]
+    fn supersede_names_the_batch_then_the_repo_and_passes_the_lease_token_when_it_has_one() {
+        let p = fake(Some(0), "released=sp-a:1 sp-b:2\n", "");
+        let v = verbs(&p);
+        assert_eq!(
+            v.supersede("r", "b2", Some("41")).unwrap().released,
+            "sp-a:1 sp-b:2"
+        );
+        v.supersede("r", "b3", None).unwrap();
+        let seen = p.seen.lock().unwrap();
+        assert_eq!(
+            seen[0].args,
+            ["round", "supersede", "b2", "r", "--lease-token", "41"]
+        );
+        assert_eq!(seen[1].args, ["round", "supersede", "b3", "r"]);
+        let e = verbs(&fake(Some(1), "", "leased by another holder"))
+            .supersede("r", "b2", None)
+            .unwrap_err();
+        assert_eq!((e.verb, e.code), (Verb::Supersede, Some(1)));
     }
 
     /// Polls until the certify thread answers; the fake proc answers at once.

@@ -75,10 +75,11 @@ pub enum Verb {
     Land,
     Abandon,
     PassStart,
+    Supersede,
 }
 
 impl Verb {
-    pub const ALL: [Verb; 7] = [
+    pub const ALL: [Verb; 8] = [
         Verb::Open,
         Verb::Status,
         Verb::Certify,
@@ -86,6 +87,7 @@ impl Verb {
         Verb::Land,
         Verb::Abandon,
         Verb::PassStart,
+        Verb::Supersede,
     ];
 
     /// The verb's name on `queue round`'s command line.
@@ -98,6 +100,7 @@ impl Verb {
             Verb::Land => "land",
             Verb::Abandon => "abandon",
             Verb::PassStart => "pass-start",
+            Verb::Supersede => "supersede",
         }
     }
 
@@ -150,11 +153,28 @@ pub struct Member {
     pub tip: String,
 }
 
+/// Where `open` cuts a round: on the landing ref, or on the head of live round `k`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Place {
+    OnBase,
+    StackOn(String),
+}
+
+impl Place {
+    pub fn word(&self) -> String {
+        match self {
+            Place::OnBase => "on-base".into(),
+            Place::StackOn(k) => format!("stack-on:{k}"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OpenReq {
     pub repo: String,
     pub members: Vec<Member>,
     pub name: Option<String>,
+    pub place: Place,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -244,6 +264,20 @@ impl Ejected {
     }
 }
 
+/// A superseded round: the members `supersede` released to the pool.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Superseded {
+    pub released: String,
+}
+
+impl Superseded {
+    pub fn from_fields(f: &Fields) -> Self {
+        Superseded {
+            released: f.get("released").cloned().unwrap_or_default(),
+        }
+    }
+}
+
 /// The verbs whose only answer is that they did it: land, abandon, pass-start.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Done {
@@ -263,6 +297,15 @@ pub trait RoundVerbs {
     fn land(&self, repo: &str, batch: &str) -> Result<Done, VerbRefusal>;
     fn abandon(&self, repo: &str, batch: &str, reason: &str) -> Result<Done, VerbRefusal>;
     fn pass_start(&self, repo: &str, batch: &str) -> Result<Done, VerbRefusal>;
+    /// Moves a round whose tested base can no longer land to SUPERSEDED, keeping its verdicts,
+    /// releasing its members and deleting its lease in one txn; `lease_token` lets the
+    /// controller through a lease its runner holds.
+    fn supersede(
+        &self,
+        repo: &str,
+        batch: &str,
+        lease_token: Option<&str>,
+    ) -> Result<Superseded, VerbRefusal>;
 }
 
 // The verdict ledger's port: the ledger's own types, and the calls the Judge makes. Each call
@@ -383,6 +426,17 @@ mod tests {
             vec!["b1", "b2"]
         );
         assert!(Status::from_fields(&fields("round=none\n")).open.is_empty());
+    }
+
+    #[test]
+    fn a_place_names_itself_and_a_supersede_answers_what_it_released() {
+        assert_eq!(Place::OnBase.word(), "on-base");
+        assert_eq!(Place::StackOn("k1".into()).word(), "stack-on:k1");
+        assert_eq!(
+            Superseded::from_fields(&fields("released=sp-a:1 sp-b:2\n")).released,
+            "sp-a:1 sp-b:2"
+        );
+        assert_eq!(Superseded::from_fields(&fields("")).released, "");
     }
 
     #[test]

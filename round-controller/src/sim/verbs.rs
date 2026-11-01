@@ -9,10 +9,13 @@ use runtime::ports::{Clock, VirtualClock};
 use serde::Deserialize;
 
 use crate::ports::{
-    Certified, Done, EjectReq, Ejected, Fields, OpenReq, Opened, Pending, RoundVerbs, Status, Verb,
-    VerbRefusal,
+    Certified, Done, EjectReq, Ejected, Fields, OpenReq, Opened, Pending, Place, RoundVerbs,
+    Status, Store, Superseded, Verb, VerbRefusal,
 };
+use crate::resources::{round_key, Round};
 use crate::sim::vm::FakeVm;
+use lifecycle::batch::BatchRow;
+use state_store::{Object, Request, Txn};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -78,6 +81,8 @@ pub struct Call {
     pub verb: Verb,
     pub repo: String,
     pub batch: Option<String>,
+    /// Where an `open` asked for its round: `on-base` or `stack-on:<k>`.
+    pub place: Option<String>,
     pub at: u64,
     pub lock_hold_ms: u64,
 }
@@ -89,6 +94,9 @@ pub struct FakeVerbs {
     heads: Mutex<BTreeMap<String, String>>,
     vm: Arc<FakeVm>,
     clock: VirtualClock,
+    /// The queue's own writes: with a store, `open` writes the round it cut and `supersede`
+    /// takes it out of the live set.
+    store: Option<Arc<dyn Store>>,
 }
 
 impl FakeVerbs {
@@ -108,7 +116,49 @@ impl FakeVerbs {
             heads: Mutex::default(),
             vm,
             clock,
+            store: None,
         })
+    }
+
+    /// Lets the fake queue write the rounds it opens and supersedes into `store`.
+    pub fn with_store(mut self, store: Arc<dyn Store>) -> FakeVerbs {
+        self.store = Some(store);
+        self
+    }
+
+    /// The round `open` cut, as the queue records it: tested on the head of the round it is
+    /// stacked on, or on the lane's landing ref, unless the script names its `tested_base`.
+    /// SUPERSEDED is not a batch state yet (queue-stacking adds it), so a superseded round
+    /// leaves the live set by its key going.
+    fn wrote_open(&self, r: &OpenReq, o: &Opened, scripted: Option<&String>) {
+        let Some(st) = &self.store else { return };
+        let read = |key: String, field: &str| {
+            st.get(&key)
+                .ok()
+                .flatten()
+                .and_then(|i| i.value.data.get(field)?.as_str().map(str::to_string))
+        };
+        let (parent, base) = match &r.place {
+            Place::OnBase => (None, read(crate::stack::lane_key(&r.repo), "landing_ref")),
+            Place::StackOn(k) => (Some(k.clone()), read(round_key(&r.repo, k), "head")),
+        };
+        let tested_base = scripted.cloned().or(base);
+        let mut row = BatchRow::cut(
+            o.batch.clone(),
+            r.repo.clone(),
+            o.head.clone(),
+            tested_base.clone().unwrap_or_default(),
+        );
+        row.parent = parent;
+        let round = Round {
+            row,
+            members: r.members.clone(),
+            tested_base,
+            last_lease_token: None,
+        };
+        let key = round_key(&r.repo, &o.batch);
+        let data = serde_json::to_value(&round).unwrap_or_default();
+        put(&**st, &key, Txn::new().put(&key, Object::new(data)));
     }
 
     pub fn calls(&self) -> Vec<Call> {
@@ -135,6 +185,7 @@ impl FakeVerbs {
             verb,
             repo: repo.into(),
             batch: batch.map(str::to_string),
+            place: None,
             at: self.clock.now_ms(),
             lock_hold_ms: a.as_ref().map_or(0, |a| a.lock_hold_ms),
         };
@@ -179,10 +230,27 @@ impl FakeVerbs {
     }
 }
 
+/// One fake-queue write; its request id is the key and the store's head, so each is new.
+fn put(st: &dyn Store, key: &str, t: Txn) {
+    let head = st
+        .list(&[key], &state_store::Selector::Everything)
+        .map_or(0, |(_, h)| h);
+    let _ = st.txn(
+        &t,
+        &Request::new(&format!("fake-queue-{key}-{head}"), "queue", "fake"),
+    );
+}
+
 impl RoundVerbs for FakeVerbs {
     fn open(&self, r: &OpenReq) -> Result<Opened, VerbRefusal> {
-        let o = Opened::from_fields(&self.answer(Verb::Open, &r.repo, None)?)?;
+        let answered = self.answer(Verb::Open, &r.repo, None);
+        if let Some(c) = crate::lock(&self.calls).last_mut() {
+            c.place = Some(r.place.word());
+        }
+        let f = answered?;
+        let o = Opened::from_fields(&f)?;
         self.head(&o.batch, &o.head);
+        self.wrote_open(r, &o, f.get("tested_base"));
         Ok(o)
     }
 
@@ -219,6 +287,20 @@ impl RoundVerbs for FakeVerbs {
 
     fn pass_start(&self, repo: &str, batch: &str) -> Result<Done, VerbRefusal> {
         self.done(Verb::PassStart, repo, batch)
+    }
+
+    fn supersede(
+        &self,
+        repo: &str,
+        batch: &str,
+        _lease_token: Option<&str>,
+    ) -> Result<Superseded, VerbRefusal> {
+        let s = Superseded::from_fields(&self.answer(Verb::Supersede, repo, Some(batch))?);
+        if let Some(st) = &self.store {
+            let key = round_key(repo, batch);
+            put(&**st, &key, Txn::new().delete(&key));
+        }
+        Ok(s)
     }
 }
 
@@ -273,6 +355,7 @@ mod tests {
                 tip: "1".into(),
             }],
             name: None,
+            place: Place::OnBase,
         }
     }
 
@@ -315,6 +398,7 @@ mod tests {
                 verb: Verb::Open,
                 repo: "r".into(),
                 batch: None,
+                place: Some("on-base".into()),
                 at: 5_000,
                 lock_hold_ms: 40
             }
@@ -416,5 +500,48 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["h1", "b7"]
         );
+    }
+
+    #[test]
+    fn with_a_store_the_fake_queue_records_the_round_it_opened_and_forgets_the_one_it_superseded() {
+        use state_store::{Config, Contract, MemBackend};
+        let clock = VirtualClock::new(0);
+        let store = Arc::new(
+            Contract::open(
+                MemBackend::new(),
+                state_store::Ports::virtual_clock(&clock),
+                Config {
+                    min_lock_ttl_ms: 1000,
+                },
+            )
+            .unwrap(),
+        );
+        let (v, _, _) = fake(concat!(
+            "[[verb]]\nverb = \"open\"\nok = { batch = \"k1\", head = \"h1\", tested_base = \"t0\" }\n",
+            "[[verb]]\nverb = \"open\"\nok = { batch = \"k2\", head = \"h2\" }\n",
+            "[[verb]]\nverb = \"supersede\"\nok = {}\n",
+        ))
+        .unwrap();
+        let v = v.with_store(store.clone());
+        v.open(&open_req("r")).unwrap();
+        let mut on_k1 = open_req("r");
+        on_k1.place = Place::StackOn("k1".into());
+        v.open(&on_k1).unwrap();
+        let read = |b: &str| crate::resources::RoundView::read(&*store, "r", b).unwrap();
+        let k1 = read("k1").unwrap().round;
+        assert_eq!(
+            (k1.tested_base.as_deref(), k1.row.parent),
+            (Some("t0"), None)
+        );
+        let k2 = read("k2").unwrap().round;
+        assert_eq!(
+            (k2.tested_base.as_deref(), k2.row.parent.as_deref()),
+            (Some("h1"), Some("k1"))
+        );
+        assert_eq!(v.calls()[1].place.as_deref(), Some("stack-on:k1"));
+        v.supersede("r", "k2", Some("7")).unwrap();
+        assert!(read("k2").is_none());
+        assert!(v.supersede("r", "k1", None).is_err(), "unscripted");
+        assert!(read("k1").is_some(), "a refused supersede changes nothing");
     }
 }

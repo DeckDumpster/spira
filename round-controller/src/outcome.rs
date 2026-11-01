@@ -34,6 +34,8 @@ pub enum Kind {
     PriorRunnerAlive,
     RedriveExhausted,
     StoreRefused,
+    /// A step withheld its act for a typed cause, which [`Cause::Refusal`] keys.
+    Declined,
 }
 
 impl Kind {
@@ -49,6 +51,7 @@ impl Kind {
             Kind::PriorRunnerAlive,
             Kind::RedriveExhausted,
             Kind::StoreRefused,
+            Kind::Declined,
         ]
         .into_iter()
         .chain(acts)
@@ -73,8 +76,10 @@ impl Kind {
                 Verb::Land => "landed",
                 Verb::Abandon => "abandoned",
                 Verb::PassStart => "pass-started",
+                Verb::Supersede => "superseded",
             },
             Kind::Refused(_) => "refused",
+            Kind::Declined => "declined",
         }
     }
 }
@@ -101,6 +106,12 @@ pub enum Cause {
     Store {
         text: String,
     },
+    /// A step's own refusal: its word, and the key that names its cause, so a repeat of the
+    /// same refusal is the same key.
+    Refusal {
+        word: &'static str,
+        key: String,
+    },
 }
 
 impl Cause {
@@ -112,6 +123,7 @@ impl Cause {
             Cause::NotRun { .. } => "not-run",
             Cause::Orphan { .. } => "orphan",
             Cause::Store { .. } => "store",
+            Cause::Refusal { word, .. } => word,
         }
     }
 }
@@ -127,6 +139,20 @@ pub struct Outcome {
 }
 
 impl Outcome {
+    /// A step withheld its act: `word` is the refusal's, `key` names its cause.
+    pub fn declined(at: u64, repo: &str, word: &'static str, key: &str) -> Outcome {
+        Outcome {
+            at,
+            repo: repo.into(),
+            batch: None,
+            kind: Kind::Declined,
+            cause: Cause::Refusal {
+                word,
+                key: key.into(),
+            },
+        }
+    }
+
     pub fn visited(at: u64, repo: &str) -> Outcome {
         Outcome {
             at,
@@ -186,6 +212,7 @@ impl Outcome {
             Cause::Orphan { expired, text } => {
                 s += &format!(" expired={}-{} text={text:?}", expired.main, expired.sub)
             }
+            Cause::Refusal { key, .. } => s += &format!(" key={key}"),
             Cause::Steps | Cause::Ok => {}
         }
         s
@@ -328,9 +355,18 @@ mod tests {
     }
 
     #[test]
+    fn a_declined_step_names_its_refusal_and_the_key_of_its_cause() {
+        let o = Outcome::declined(0, "pokebot", "lane-fault", "faults/pokebot/b0/sha256:d1");
+        assert_eq!(
+            o.line(),
+            "1970-01-01T00:00:00Z declined lane-fault repo=pokebot batch=- key=faults/pokebot/b0/sha256:d1"
+        );
+    }
+
+    #[test]
     fn every_kind_has_its_own_word() {
         let words: std::collections::BTreeSet<&str> = Kind::words().into_iter().collect();
-        assert_eq!(words.len(), Verb::ALL.len() + 8);
+        assert_eq!(words.len(), Verb::ALL.len() + 9);
         assert!(
             words.contains("visited")
                 && words.contains("refused")

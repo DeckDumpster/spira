@@ -22,3 +22,15 @@ functions = ["grant", "take", "SlotSettings::budget", "budget", "grant_for_hand"
 [[scope]]
 path = "round-controller/src/judge.rs"
 functions = ["judge", "type_pass", "type_lane_fault", "judge_red", "removal_sets", "finish"]
+# The Planner's decisions: the cut, its explicit verb, and supersede on a broken base.
+[[scope]]
+path = "round-controller/src/cut.rs"
+functions = ["cut", "explicit", "select"]
+
+[[scope]]
+path = "round-controller/src/supersede.rs"
+functions = ["check"]
+
+[[scope]]
+path = "round-controller/src/stack.rs"
+functions = ["Stack::of", "Stack::place"]

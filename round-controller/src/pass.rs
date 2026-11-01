@@ -9,10 +9,18 @@ pub struct Step {
     pub run: fn(&Ports, &str),
 }
 
-pub const STEPS: &[Step] = &[Step {
-    name: "orphans",
-    run: crate::orphans::step,
-}];
+/// Supersede runs first, so the members it releases are in the pool for the cut the schedule
+/// step makes later in the same pass with a slot it holds (round-controller/pass).
+pub const STEPS: &[Step] = &[
+    Step {
+        name: crate::supersede::STEP,
+        run: crate::supersede::step,
+    },
+    Step {
+        name: "orphans",
+        run: crate::orphans::step,
+    },
+];
 
 pub fn pass(p: &Ports, repos: &[String]) {
     pass_with(p, repos, STEPS)

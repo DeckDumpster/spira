@@ -42,6 +42,13 @@ pub struct Round {
     pub row: BatchRow,
     #[serde(default)]
     pub members: Vec<Member>,
+    /// The commit this round is tested on: the landing ref, or the head of the live round it is
+    /// stacked on. A round cut before stacking carries none.
+    #[serde(default)]
+    pub tested_base: Option<String>,
+    /// The token of the lease its runner was last launched under.
+    #[serde(default)]
+    pub last_lease_token: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -385,6 +392,8 @@ mod tests {
         let mut round = Round {
             row: BatchRow::cut("b1", "lane", "h1", "b0"),
             members: vec![m("sp-a", "1")],
+            tested_base: Some("b0".into()),
+            last_lease_token: None,
         };
         round.row.pass = 2;
         let put = |k: &str, v: serde_json::Value| {

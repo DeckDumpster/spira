@@ -2,6 +2,7 @@
 //! through [`ports::Ports`], so [`pass::pass`] runs the same code against the real queue and
 //! against the scenario harness in [`sim`]. Inert: nothing installs it (DESIGN.md).
 
+pub mod cut;
 pub mod death;
 pub mod judge;
 pub mod lease;
@@ -13,10 +14,13 @@ pub mod pass;
 pub mod ports;
 pub mod probe;
 pub mod real;
+pub mod refusal;
 pub mod resources;
 #[cfg(feature = "sim")]
 pub mod sim;
 pub mod slots;
+pub mod stack;
+pub mod supersede;
 pub mod telemetry;
 
 /// A mutex's guard, poisoned or not: every lock here guards data a panic cannot leave half-written.

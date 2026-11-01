@@ -2,7 +2,7 @@
 //! to hand to the library through [`Bench::ports`].
 
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use runtime::ports::{Proc, ProcOutput, ProcSpec, SeededRng, VirtualClock};
 use state_store::{
@@ -169,7 +169,8 @@ enum Front {
 
 pub struct Bench {
     pub clock: VirtualClock,
-    pub store: Contract<MemBackend>,
+    /// Shared with the fake queue, which writes the rounds it opens.
+    pub store: Arc<Contract<MemBackend>>,
     pub rng: Mutex<SeededRng>,
     pub log: MemLog,
     pub proc_: NoProc,
@@ -213,14 +214,16 @@ impl Bench {
 
     fn build(settings: LeaseSettings, epoch_ms: u64, seed: u64, front: Front) -> Bench {
         let clock = VirtualClock::new(epoch_ms);
-        let store = Contract::open(
-            MemBackend::new(),
-            state_store::Ports::virtual_clock(&clock),
-            Config {
-                min_lock_ttl_ms: 1000,
-            },
-        )
-        .expect("a fresh in-memory store opens");
+        let store = Arc::new(
+            Contract::open(
+                MemBackend::new(),
+                state_store::Ports::virtual_clock(&clock),
+                Config {
+                    min_lock_ttl_ms: 1000,
+                },
+            )
+            .expect("a fresh in-memory store opens"),
+        );
         let vm = FakeVm::new(
             vec![],
             crate::sim::profiles()
