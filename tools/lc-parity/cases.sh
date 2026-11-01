@@ -85,6 +85,9 @@ case_ops_gantt() { lc ops-gantt; }
 case_ops_view() { lc ops-view ops_live; lc ops-view ops_round; lc ops-view ops_edges; }
 case_ops_refusals() { lc ops-refusals 86400; }
 case_mending_list() { lc mending list; }
+case_mending_tips() { lc mending tips --beads sp-delivering,sp-ready; }
+case_mending_sweep() { lc mending sweep --actor test; lc mending close-ended --actor test; }
+case_mending_pickup() { lc mending pickup b-open --pass 1 --suite test-a.sh --deadline-secs 600 --actor test; lc mending list --batch b-open; }
 case_usage() { lc no-such-verb; }
 
 # The bead machine.
@@ -101,6 +104,7 @@ case_phase() { lc phase sp-working dwarf-1 building; lc show sp-working; }
 case_disposition() { lc disposition sp-working lapsed "a note" test; lc show sp-working; }
 case_hold_unhold() { lc hold sp-ready wait "snooze-until:1767300000 later" test; lc holds sp-ready; lc unhold sp-ready wait test; lc holds sp-ready; }
 case_unhold_absent() { lc unhold sp-ready manual test; }
+case_hold_reason() { lc hold sp-ready manual --reason "parked" test; lc hold sp-certified wait --review-by 2026-02-01 test; lc show sp-ready; lc show sp-certified; }
 case_reply() { lc reply sp-asked msg-1 test; lc holds sp-asked; }
 case_withdraw_ask() { lc withdraw-ask sp-asked test; lc holds sp-asked; }
 case_express() { lc express sp-ready test; lc list --express; lc unexpress sp-ready test; lc show sp-ready; }

@@ -1,0 +1,11 @@
+mending
+pickup
+b-open
+--pass
+1
+--suite
+test-a.sh
+--deadline-secs
+600
+--actor
+test

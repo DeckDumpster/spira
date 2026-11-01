@@ -45,7 +45,10 @@ DOLT="$(command -v dolt)" || die "dolt not on PATH"
 [ -n "${SPIRA_TOML:-}" ] || die "SPIRA_TOML is not set — cannot tell where the production store is; refusing"
 protected=()
 for key in spira.dolt_data spira.dolt_durable; do
-    v="$(spira-config get "$key" 2>/dev/null)"; rc=$?
+    v="$(spira-config get "$key" 2>"${TMPDIR:-/tmp}/lc-parity-conf.$$")"; rc=$?
+    err="$(cat "${TMPDIR:-/tmp}/lc-parity-conf.$$" 2>/dev/null)"; rm -f "${TMPDIR:-/tmp}/lc-parity-conf.$$"
+    # An undeclared key fails silently; an unreadable config says why, and is a refusal.
+    [ "$rc" -eq 0 ] || [ -z "$err" ] || die "cannot read $key from SPIRA_TOML: $err"
     if [ "$rc" -ne 0 ] && [ "$key" = spira.dolt_data ]; then
         v="${XDG_DATA_HOME:-$HOME/.local/share}/spira/dolt"
     fi
@@ -65,12 +68,19 @@ guard() {  # guard <what> <path>
     done
 }
 
+# A directory this tool may empty: absent, empty, or one it wrote before (it carries the marker).
+MARK=.lc-parity
+ours() { [ ! -e "$1" ] || [ -f "$1/$MARK" ] || [ -z "$(ls -A "$1" 2>/dev/null)" ]; }
 guard OUT_DIR "$out"
+ours "$out" || die "OUT_DIR $out is neither empty nor an earlier capture (no $MARK); refusing to empty it"
+[ -z "$work" ] || ours "$work" || die "the work directory $work is neither empty nor an earlier one; refusing"
 [ -z "$work" ] || guard "the work directory" "$work"
 [ -z "$save_seed" ] || { [ -z "$source_dir" ] || die "--save-seed seeds a fresh testdb; it takes no --source"; guard "the seed copy" "$save_seed"; }
 if [ -n "$source_dir" ]; then
     guard "the source" "$source_dir"
     [ -d "$source_dir/spira_lifecycle/.dolt" ] || die "$source_dir holds no spira_lifecycle store"
+    # A link inside the copy would reach whatever it points at, the live store included.
+    [ -z "$(find "$source_dir" -type l 2>/dev/null | head -1)" ] || die "$source_dir holds a symbolic link; copy only a plain store"
     if [ -n "$(find "$source_dir" -maxdepth 3 -name sql-server.lock 2>/dev/null | head -1)" ]; then
         die "a server is running on $source_dir; copy only a stopped store"
     fi
@@ -82,6 +92,7 @@ if [ -z "$work" ]; then
 fi
 guard "the work directory" "$work"
 mkdir -p "$work" || die "cannot create $work"
+: > "$work/$MARK"
 work="$(realpath "$work")"
 
 SERVER_PID="" STORE="" PORT=""
@@ -163,8 +174,9 @@ run_lc() {  # run_lc <stdin-file-or-empty> args...
 }
 
 # A harness log line (`<UTC stamp> spira: ...`) is stamped from the wall clock, not SPIRA_NOW.
+re() { printf '%s' "$1" | sed -e 's/[][\.*^$#+?(){}|]/\\&/g'; }  # a path, as an ERE matching only itself
 normalize() {
-    sed -E -e "s#$STORE#@STORE@#g" -e "s#$work#@WORK@#g" -e "s#\\b$PORT\\b#@PORT@#g" \
+    sed -E -e "s#$(re "$STORE")#@STORE@#g" -e "s#$(re "$work")#@WORK@#g" -e "s#:$PORT\\b#:@PORT@#g" \
         -e 's#^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z spira: #@WALL@ spira: #'
 }
 
@@ -194,6 +206,7 @@ declare -F seed >/dev/null || die "$cases defines no seed"
 mkdir -p "$out" || die "cannot create $out"
 out="$(realpath "$out")"
 rm -rf "${out:?}"/*
+: > "$out/$MARK"
 mkdir -p "$out/_seed"
 
 # The testdb: either the caller's stopped store, copied, or a fresh one seeded here.

@@ -49,17 +49,37 @@ is "...which match the fresh capture's" "" "$(diff -r -x _seed "$TMP/a" "$TMP/c"
 echo
 echo "it never copies the production store:"
 tl_config SPIRA_DOLT_DATA="$TMP/seed"
+LIVE="$(realpath "$TMP/seed")"
 for src in "$TMP/seed" "$TMP/seed/spira_lifecycle/.." "$TMP"; do
     out="$(capture --source "$src" "$TMP/out-refused")"; rc=$?
     wantrc "a source overlapping the configured store is refused ($src)" 2 "$rc"
-    want "...naming the store" "overlaps the production store $TMP/seed" "$out"
+    want "...naming the store" "overlaps the production store $LIVE" "$out"
 done
 capture --work "$TMP/seed/w" "$TMP/out-refused" >/dev/null
 wantrc "a work directory inside it is refused" 2 $?
 capture "$TMP/seed/out" >/dev/null
 wantrc "an output directory inside it is refused" 2 $?
 is "...and nothing was written" "" "$(ls -d "$TMP/out-refused" "$TMP/seed/out" "$TMP/seed/w" 2>/dev/null)"
+mkdir -p "$TMP/linked"
+ln -s "$TMP/seed/spira_lifecycle" "$TMP/linked/spira_lifecycle"
+out="$(capture --source "$TMP/linked" "$TMP/out-refused")"; rc=$?
+wantrc "a source whose store is a link to it is refused" 2 "$rc"
+want "...saying so" "symbolic link" "$out"
 tl_config SPIRA_DOLT_DATA="$TMP/elsewhere"
+tl_config SPIRA_DOLT_DURABLE="$TMP/seed"
+capture --source "$TMP/seed" "$TMP/out-refused" >/dev/null
+wantrc "the configured durable copy is protected too" 2 $?
+tl_config SPIRA_DOLT_DURABLE=""
+out="$(SPIRA_TOML="$TMP/no-such.toml" bash "$CAPTURE" --source "$TMP/seed" "$TMP/out-refused" 2>&1)"; rc=$?
+wantrc "a config that cannot be read is a refusal, not a default" 2 "$rc"
+want "...saying why" "cannot read spira.dolt_data" "$out"
+
+mkdir -p "$TMP/precious" && echo keep > "$TMP/precious/file"
+capture "$TMP/precious" >/dev/null
+wantrc "an OUT_DIR holding something else is not emptied" 2 $?
+is "...and its file survives" "keep" "$(cat "$TMP/precious/file")"
+capture "$TMP/a" >/dev/null
+wantrc "an earlier capture is overwritten" 0 $?
 
 cp -a "$TMP/seed" "$TMP/live"
 : > "$TMP/live/spira_lifecycle/.dolt/sql-server.lock"
