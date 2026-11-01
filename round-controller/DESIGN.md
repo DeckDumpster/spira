@@ -108,8 +108,12 @@ counts.
 - `description`, `repos` — what it is about, and the registered repos `pass` visits.
 - `[run]` — `epoch` (virtual epoch seconds), `passes`, `every_secs`, and `jitter_secs` drawn
   from the seeded generator (`SPIRA_SEED`, else 1).
-- `[[store]]` — `key`, `data`, optional `ttl_secs`: seeded through the contract on the
-  in-memory backend before the first pass.
+- `same_without` — step names: the scenario is run again without them, its expectations
+  aside, and fails on the first verb call or line (the section's and its acks' aside) the two
+  runs differ on.
+- `[[store]]` — `key`, one of `data` and `json` (for a value TOML cannot spell, such as
+  `null`), optional `ttl_secs`: seeded through the contract on the in-memory backend before
+  the first pass. `[[store_step]]` takes the same value.
 - `[[verb]]` — `verb`, optional `repo` and `batch`, one of `ok = { key = "value" }` or
   `refuse = { code, text }`, and the `lock_hold_ms` the verb reports. Answers are taken in
   order. `certify` is answered by the fake round VM unless a refusal is scripted.
@@ -144,8 +148,11 @@ counts.
   `store-writes`, `vm-runs`, `lock-hold-ms`, `launches`, `launches:<unit>`, `renewals`, `redrive-attempts`,
   `first-orphan-secs`, `slot-grants[:<pool>]`, `slot-refusals[:hand]`,
   `refusals-naming-holder` (refusals naming the holder of every slot not given back),
-  `vms-at-once[:<pool>]`, `first-grant-secs`), exactly one of `equals` and `at_most`, optional
-  `inverted`.
+  `vms-at-once[:<pool>]`, `first-grant-secs`, `section-writes`, `section-refusals`,
+  `section-raised:<Type>`, `section-distance:positive`, `section-last-distance` (rounded up),
+  `section-green-with-blocker`, `acks:<applied|already-applied|refused>`, `acks-stale:<json>`,
+  `opened-with:<bead>`), exactly one of `equals` and `at_most`, optional `inverted`.
+  `store-writes` leaves out the section door's own writes.
 
 The store's GC ticks before every pass, so a lapsed lock is gone by the pass that follows it.
 
@@ -193,3 +200,17 @@ holder lapsed unreleased is granted again only on `death::prove_runner_dead` of 
 unit and VM; one that recorded no unit launched none. `grant_for_hand` is the same grant, so a
 hand round and a controller round share the one Proxmox slot. A refusal names every slot's
 holder, its unit and TTL left, each pool offering none and the key that opens it.
+
+## Section and intents
+
+`pass` ends with `intents` and then `section`, so the section shows what every other step did.
+Both reach the store's section and intent verbs only through the `Lc` port: the binary spawns
+`spira-lc`, and the scenario bench runs spira-lc's own dispatch on its store, so admission
+judges each write in both. `section` builds `RoundController/<repo>` from the store and
+publishes it when a status field changed, and otherwise once per `target_latency` (5 min);
+a write another one moved first is re-read once. `intents` applies each unacknowledged intent
+with `intent apply`, the from→to compare-and-swap on its knob and its ack in one txn, or acks it
+refused with the bound it breaks, and sets the concurrency knob once at the lane's depth. The
+knobs are `knobs/RoundController/<repo>/concurrency`, which the cut reads its stack depth from,
+and `knobs/RoundController/<repo>/hold/<id>/<tip>`, each naming who lifts it, whose member the
+cut leaves out at that tip. A stopped or halted repo takes no step; its section says which.
