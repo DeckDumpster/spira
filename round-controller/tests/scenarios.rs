@@ -32,7 +32,7 @@ macro_rules! scenario {
     };
 }
 
-scenario!(scenario_harness_smoke);
+scenario!(scenario_harness_smoke, scenario_ledger_attempts);
 
 #[test]
 fn every_scenario_file_is_its_own_test() {

@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=round
+DOC=Retries the round controller gives a pass identity after its first transient fault before the fault stands and only a changed input admits it; a knob, not policy
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Retries the round controller gives a pass identity after its first transient fault before
+    # the fault stands and only a changed input admits it; a knob, not policy.
+    : "${SPIRA_ROUND_FAULT_RETRIES:=3}"
+SPIRA_CONF_DEFAULT_EOF

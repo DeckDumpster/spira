@@ -2,6 +2,7 @@
 //! VM, runs `pass` on a virtual clock and asserts counts, under every profile in
 //! `scenarios/profiles.toml`.
 
+pub mod ledger;
 pub mod scenario;
 pub mod verbs;
 pub mod vm;

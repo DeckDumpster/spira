@@ -2,3 +2,12 @@
 # a scenario or a unit test, and the bead's own gate reports any branch none of them takes.
 [crate]
 per_test = true
+
+# The ledger's decisions, named for the aggregate run as well.
+[[scope]]
+path = "round-controller/src/ledger.rs"
+functions = ["record_attempt", "mark_proven", "refuses"]
+
+[[scope]]
+path = "round-controller/src/resources.rs"
+functions = ["PassIdentity::hash"]
