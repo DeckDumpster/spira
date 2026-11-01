@@ -1,0 +1,1 @@
+A replacement for the round machinery cuts over with the world stopped, for every registered repo at once, once its 2026-10-31 replay passes in the simulator, its coverage gate passes, and one real round per repo lands on it; no shadow run and no per-repo handover. Recovery from a bad cutover is gitops, the reconciler and repo rollback.

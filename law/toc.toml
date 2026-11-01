@@ -27,4 +27,10 @@ slugs = [
   "law-diagnosis-is-time-boxed",
   "law-bisect-by-time-first",
   "law-the-direct-path-wins",
+  "law-faster-over-safer",
+  "law-throughput-floor",
+  "law-batcher-earns-the-round-by-parity",
+  "law-tests-are-the-unit-of-measure",
+  "law-bead-facts-come-from-the-lifecycle",
+  "law-a-tool-bounds-the-state-it-leaves",
 ]
