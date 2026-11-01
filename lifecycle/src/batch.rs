@@ -143,9 +143,10 @@ pub enum BatchEventKind {
     /// event only proves the batch was still accepting members when it was added.
     MemberAdded { bead_id: String, tip: String },
     CiStarted { run: String },
-    /// OPEN or REBUILDING -> CI_RUNNING, phase build. `n` must be the next pass number.
+    /// OPEN, REBUILDING or ATTRIBUTING -> CI_RUNNING, phase build. `n` must be the next pass number.
     PassStarted { n: u32, head: String },
-    /// Phase build -> suites: the test cap's clock starts here.
+    /// Phase build -> suites: the test cap's clock starts here. For a pass that already has its
+    /// verdict it is `LateBoundary`: done, and nothing changes.
     SuitesStarted { n: u32 },
     /// Phase suites -> GREEN.
     PassGreen { n: u32, suites_s: u64, build_s: u64 },
@@ -157,8 +158,8 @@ pub enum BatchEventKind {
     /// suites finished and `red_suites` already red.
     PassPreempted { n: u32, done: u32, total: u32, red_suites: Vec<String> },
     /// One suite of the running pass went red, reported mid-pass; the pass itself is untouched.
-    /// Valid only in phase suites, for the current pass. Per-failure bookkeeping: the batch
-    /// does not move, and a mender's MENDING row is opened for it.
+    /// Valid only in phase suites, for the current pass; for a judged pass it is `LateBoundary`.
+    /// Per-failure bookkeeping: the batch does not move, and a mender's MENDING row is opened for it.
     Failed { suite: String, n: u32 },
     /// ATTRIBUTING -> OPEN for the next pass, at the head the survivors were rebuilt to.
     PassRebuilt { head: String },
@@ -211,6 +212,10 @@ fn where_is(row: &BatchRow) -> String {
 
 fn illegal(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow> {
     Outcome::refuse(row.clone(), Refusal::IllegalTransition { state: where_is(row), event: format!("{kind:?}") })
+}
+
+fn late(row: &BatchRow, kind: &BatchEventKind, n: u32) -> Outcome<BatchRow> {
+    Outcome::refuse(row.clone(), Refusal::LateBoundary { state: where_is(row), event: format!("{kind:?}"), pass: n })
 }
 
 fn terminal(row: &BatchRow) -> Outcome<BatchRow> {
@@ -319,6 +324,7 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
         },
 
         BatchState::CiRunning => match kind {
+            SuitesStarted { n } | Failed { n, .. } if *n < row.pass => late(row, kind, *n),
             Green => Outcome::applied(moved(BatchState::Green, None)),
             Red => Outcome::applied(moved(BatchState::Attributing, None)),
             Eject { .. } => Outcome::applied(stays()),
@@ -334,6 +340,7 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
         },
 
         BatchState::Green => match kind {
+            SuitesStarted { n } | Failed { n, .. } if *n <= row.pass => late(row, kind, *n),
             FastForward { sha } => {
                 let mut new = moved(BatchState::Landed, None);
                 new.reason = Some(sha.clone());
@@ -350,6 +357,7 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
         },
 
         BatchState::Landing => match kind {
+            SuitesStarted { n } | Failed { n, .. } if *n <= row.pass => late(row, kind, *n),
             FastForward { sha } => {
                 let mut new = moved(BatchState::Deploying, None);
                 new.reason = Some(sha.clone());
@@ -366,6 +374,7 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
         },
 
         BatchState::Deploying => match kind {
+            SuitesStarted { n } | Failed { n, .. } if *n <= row.pass => late(row, kind, *n),
             Deployed => Outcome::applied(moved(BatchState::Landed, None)),
             DeployFaulted { why } => {
                 let mut new = moved(BatchState::Landed, None);
@@ -379,6 +388,7 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
         },
 
         BatchState::Rebuilding => match kind {
+            SuitesStarted { n } | Failed { n, .. } if *n <= row.pass => late(row, kind, *n),
             Rebuilt => {
                 let mut new = moved(BatchState::CiRunning, Some(BatchPhase::Build));
                 new.pass += 1;
@@ -391,6 +401,8 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
         },
 
         BatchState::Attributing => match kind {
+            SuitesStarted { n } | Failed { n, .. } if *n <= row.pass => late(row, kind, *n),
+            PassStarted { n, head } => started(n, Some(head)),
             Attributed { .. } | Eject { .. } => Outcome::applied(stays()),
             Settle => Outcome::applied(moved(BatchState::Settled, None)),
             PassRebuilt { head } => {
@@ -398,7 +410,7 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
                 new.head = Some(head.clone());
                 Outcome::applied(new)
             }
-            MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
+            MemberAdded { .. } | CiStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
             | PassIncomplete { .. } | PassPreempted { .. } | Failed { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Abandon { .. } | Promote { .. } | Discard { .. } | LandStarted | LandAborted { .. } | Deployed | DeployFaulted { .. } => illegal(row, kind),
         },
 
@@ -768,6 +780,79 @@ mod tests {
         r.pass = 1;
         let r = step(&r, BatchEventKind::PassStarted { n: 2, head: "h2".into() });
         assert_eq!((r.state, r.pass), (BatchState::CiRunning, 2));
+    }
+
+    fn at_pass(state: BatchState, pass: u32) -> BatchRow {
+        let mut r = rows_in(state);
+        r.pass = pass;
+        r
+    }
+
+    fn boundaries(n: u32) -> [BatchEventKind; 2] {
+        [BatchEventKind::SuitesStarted { n }, BatchEventKind::Failed { suite: "spira-lint".into(), n }]
+    }
+
+    #[test]
+    fn a_boundary_for_a_pass_that_has_its_verdict_is_late_in_every_state_and_changes_nothing() {
+        let judged = [BatchState::Green, BatchState::Landing, BatchState::Deploying, BatchState::Rebuilding, BatchState::Attributing];
+        for &state in &ALL_STATES {
+            let r = at_pass(state, 2);
+            for n in [1, 2, 3] {
+                for kind in boundaries(n) {
+                    let out = apply(&r, &ev(state, r.version, kind.clone()));
+                    let late = match state {
+                        s if judged.contains(&s) => n <= 2,
+                        BatchState::CiRunning => n < 2,
+                        _ => false,
+                    };
+                    if late {
+                        assert!(!out.applied, "{state:?} {kind:?}");
+                        assert_eq!(out.row, r, "{state:?} {kind:?}: a late boundary never mutates");
+                        assert_eq!(out.refusal, Some(Refusal::LateBoundary { state: where_is(&r), event: format!("{kind:?}"), pass: n }), "{state:?} {kind:?}");
+                    } else {
+                        assert!(!matches!(out.refusal, Some(Refusal::LateBoundary { .. })), "{state:?} {kind:?}: {:?}", out.refusal);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_boundary_for_the_pass_running_now_still_applies_and_a_future_pass_is_still_illegal() {
+        let building = at_pass(BatchState::CiRunning, 2);
+        let mut building = building;
+        building.phase = Some(BatchPhase::Build);
+        let suites = step(&building, BatchEventKind::SuitesStarted { n: 2 });
+        let failed = step(&suites, BatchEventKind::Failed { suite: "test-a.sh".into(), n: 2 });
+        assert_eq!((failed.state, failed.phase), (BatchState::CiRunning, Some(BatchPhase::Suites)));
+        for kind in boundaries(3) {
+            refused(&failed, kind.clone());
+            refused(&at_pass(BatchState::Attributing, 2), kind);
+        }
+    }
+
+    #[test]
+    fn attributing_starts_its_next_pass_at_the_head_it_names_and_no_other_pass() {
+        let r = at_pass(BatchState::Attributing, 1);
+        let next = step(&r, BatchEventKind::PassStarted { n: 2, head: "h2".into() });
+        assert_eq!((next.state, next.phase, next.pass, next.head.as_deref()), (BatchState::CiRunning, Some(BatchPhase::Build), 2, Some("h2")));
+        for n in [0, 1, 3] {
+            assert_eq!(refused(&r, BatchEventKind::PassStarted { n, head: "h2".into() }), "ATTRIBUTING (pass 1)");
+        }
+    }
+
+    #[test]
+    fn a_red_lint_pass_then_its_late_boundaries_then_a_green_second_pass() {
+        let r = step(&row(BatchState::Open), BatchEventKind::PassStarted { n: 1, head: "h1".into() });
+        let r = step(&r, BatchEventKind::PassRed { n: 1, red_suites: vec!["spira-lint".into()], suites_s: 0, build_s: 9 });
+        for kind in boundaries(1) {
+            let out = apply(&r, &ev(r.state, r.version, kind));
+            assert!(matches!(out.refusal, Some(Refusal::LateBoundary { pass: 1, .. })), "{:?}", out.refusal);
+        }
+        let r = step(&r, BatchEventKind::PassStarted { n: 2, head: "h1".into() });
+        let r = step(&r, BatchEventKind::SuitesStarted { n: 2 });
+        let r = step(&r, BatchEventKind::PassGreen { n: 2, suites_s: 80, build_s: 20 });
+        assert_eq!((r.state, r.pass), (BatchState::Green, 2));
     }
 
     fn staged() -> BatchRow {
