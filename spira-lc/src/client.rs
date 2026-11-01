@@ -60,7 +60,7 @@ pub fn try_socket(args: &[String]) -> Option<(i32, String)> {
     // `classify` reads bd, git and the ledger files from the CALLER's environment and runs far
     // past this client's timeout on a real store: forwarded, the service would read its own
     // environment and the timed-out caller would fall back and run it a second time.
-    if matches!(args.first().map(|s| s.as_str()), Some("serve") | Some("admin-apply-ddl") | Some("admin-create-store") | Some("admin-migrate") | Some("admin-accounts") | Some("verify-login") | Some("classify")) {
+    if matches!(args.first().map(|s| s.as_str()), Some("serve") | Some("admin-apply-ddl") | Some("admin-create-store") | Some("admin-migrate") | Some("admin-import") | Some("admin-parity") | Some("admin-accounts") | Some("verify-login") | Some("classify")) {
         return None;
     }
     if let Some(out) = crate::snapshot::answer(args) {
@@ -79,7 +79,7 @@ pub fn try_socket(args: &[String]) -> Option<(i32, String)> {
 }
 
 /// One request to the service on `socket_path`.
-fn forward(socket_path: &str, args: &[String]) -> (i32, String) {
+pub(crate) fn forward(socket_path: &str, args: &[String]) -> (i32, String) {
     let stream = match UnixStream::connect(socket_path) {
         Ok(s) => s,
         Err(e) => return down(socket_path, &e),

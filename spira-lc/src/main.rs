@@ -34,6 +34,8 @@ mod db;
 mod durability;
 mod facts;
 mod git_evidence;
+mod import;
+mod parity;
 mod goodput;
 mod group;
 mod journal;
@@ -182,6 +184,11 @@ fn main() {
         Some("close-epic") => std::process::exit(emit(&args[1..], callers::close_epic(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd))),
         Some("unpublished") => {
             let (code, out) = unpublished::run(&args[1..]);
+            spira_config::lc_call::print_answer(code, &out);
+            std::process::exit(code)
+        }
+        Some("admin-parity") => {
+            let (code, out) = parity::cmd_admin_parity(&args[1..]);
             spira_config::lc_call::print_answer(code, &out);
             std::process::exit(code)
         }
@@ -372,6 +379,8 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         // after schema.sql, so a fresh database and an old one converge (sp-xfqnr), and
         // what release pre-activate runs (`--if-enforced`) before every flip (sp-vf9iu).
         Some("admin-migrate") => migrate::run(&args[1..], conn),
+        // The stopped-world cutover: the dolt store into a new control store at one revision.
+        Some("admin-import") => import::cmd_admin_import(&args[1..], conn),
         // The ops read model (lifecycle/migrations/0007): a view as JSON, and the one-time title backfill.
         Some("ops-view") => ops::cmd_ops_view(&args[1..], conn),
         Some("ops-refusals") => ops::cmd_ops_refusals(&args[1..], conn),

@@ -57,13 +57,30 @@ fn branch_audits(events: &Item) -> Vec<Audit> {
 }
 
 impl<B: Backend> Store<B> {
-    /// Every audited change to `id`, in revision order, refusals and lost races included.
+    /// Every audited change to `id`, in revision order, refusals and lost races included. The
+    /// changes imported from the old store come first, each at its old seq, which is below
+    /// every revision since.
     pub fn history(&self, id: &str, machine: Option<&str>) -> Result<Vec<Change>> {
         let (entries, _) = self
             .contract()
             .list(&[keys::history(id).as_str()], &Selector::Everything)?;
-        let revs: BTreeSet<u64> = entries.iter().map(|e| e.mod_rev.main).collect();
+        let wanted = |a: &Audit| a.lc_key == id && machine.is_none_or(|m| a.machine == m);
+        let (imported, entries): (Vec<_>, Vec<_>) =
+            entries.iter().partition(|e| e.value.data.get("seq").is_some());
         let mut out = Vec::new();
+        for e in imported {
+            let (Some(rev), Ok(audit)) = (
+                e.value.data["seq"].as_u64(),
+                serde_json::from_value::<Audit>(e.value.data["audit"].clone()),
+            ) else {
+                return Err(Error::Backend(format!("{}: an undecodable imported change", e.key)));
+            };
+            if wanted(&audit) {
+                out.push(Change { rev, audit });
+            }
+        }
+        out.sort_by_key(|c| c.rev);
+        let revs: BTreeSet<u64> = entries.iter().map(|e| e.mod_rev.main).collect();
         for rev in revs {
             let Some(events) = self.contract().get(&events_key(rev))? else {
                 return Err(Error::Backend(format!(
@@ -74,7 +91,7 @@ impl<B: Backend> Store<B> {
             out.extend(
                 branch_audits(&events)
                     .into_iter()
-                    .filter(|a| a.lc_key == id && machine.is_none_or(|m| a.machine == m))
+                    .filter(|a| wanted(a))
                     .map(|audit| Change { rev, audit }),
             );
         }

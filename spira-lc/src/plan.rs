@@ -551,6 +551,14 @@ fn by_type(conn: &Conn, kind: &str, full: bool, open: bool) -> Result<Vec<Value>
     fetch_with(conn, &ids, full, open)
 }
 
+/// Every bead the planning plane types as never having a lifecycle record (`NO_ROW_TYPES`).
+pub fn no_record_ids(conn: &Conn) -> Result<std::collections::BTreeSet<String>, String> {
+    let cdb = content_db()?;
+    let types = spira_config::nonwork::NO_ROW_TYPES.iter().map(|t| format!("'{}'", rows::escape(t))).collect::<Vec<_>>().join(",");
+    let found = conn.query(&format!("SELECT id FROM {cdb}.issues WHERE issue_type IN ({types})")).map_err(|e| format!("cannot tell: {e:?}"))?;
+    Ok(found.iter().filter_map(|r| s(r, "id")).map(str::to_string).collect())
+}
+
 fn fetch_with(conn: &Conn, ids: &[&str], full: bool, open: bool) -> Result<Vec<Value>, String> {
     // An empty id list is an empty answer: it needs no store, so it is decided before the
     // content database is resolved (r-auto-148: an unconfigured test process was refused here).

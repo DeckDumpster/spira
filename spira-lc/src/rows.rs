@@ -15,20 +15,20 @@ pub fn escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('\'', "\\'")
 }
 
-fn text(row: &Value, col: &str) -> Option<String> {
+pub(crate) fn text(row: &Value, col: &str) -> Option<String> {
     match row.get(col) {
         Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
         _ => None,
     }
 }
 
-fn number(row: &Value, col: &str) -> Option<i64> {
+pub(crate) fn number(row: &Value, col: &str) -> Option<i64> {
     text(row, col).and_then(|s| s.parse::<i64>().ok())
 }
 
 /// A JSON column comes back from `dolt sql -r json` as a JSON-encoded string (the whole
 /// row is already string-valued); normalize either that or a directly-nested value.
-fn json_col(row: &Value, col: &str) -> Value {
+pub(crate) fn json_col(row: &Value, col: &str) -> Value {
     match row.get(col) {
         Some(Value::String(s)) => serde_json::from_str(s).unwrap_or(Value::Null),
         Some(v) => v.clone(),
@@ -49,8 +49,12 @@ pub fn fetch_bead(conn: &Conn, bead_id: &str) -> Result<Option<BeadRow>, DbError
         escape(bead_id)
     ))?;
     let Some(row) = rows.first() else { return Ok(None) };
-    let state = BeadState::from_str(&text(row, "state").unwrap_or_default())
-        .ok_or_else(|| DbError::CannotTell(format!("bad state in bead row: {row}")))?;
+    bead_of(bead_id, row).map(Some).map_err(DbError::CannotTell)
+}
+
+/// A `bead` row as the server returns it, every column a string or null.
+pub fn bead_of(bead_id: &str, row: &Value) -> Result<BeadRow, String> {
+    let state = BeadState::from_str(&text(row, "state").unwrap_or_default()).ok_or_else(|| format!("bad state in bead row: {row}"))?;
     let holds: BTreeSet<HoldKind> = json_col(row, "holds")
         .as_array()
         .map(|a| a.iter().filter_map(|v| v.as_str()).filter_map(HoldKind::from_str).collect())
@@ -59,7 +63,7 @@ pub fn fetch_bead(conn: &Conn, bead_id: &str) -> Result<Option<BeadRow>, DbError
         .as_object()
         .map(|m| m.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
         .unwrap_or_default();
-    Ok(Some(BeadRow {
+    Ok(BeadRow {
         bead_id: bead_id.to_string(),
         state,
         tip: text(row, "tip"),
@@ -80,7 +84,7 @@ pub fn fetch_bead(conn: &Conn, bead_id: &str) -> Result<Option<BeadRow>, DbError
         ejected_red_tip: text(row, "ejected_red_tip"),
         sifted_tip: text(row, "sifted_tip"),
         claimed_from: text(row, "claimed_from").as_deref().and_then(BeadState::from_str),
-    }))
+    })
 }
 
 pub fn bead_set_clause(row: &BeadRow) -> String {
@@ -117,11 +121,13 @@ pub fn fetch_delivery(conn: &Conn, bead_id: &str) -> Result<Option<DeliveryRow>,
         escape(bead_id)
     ))?;
     let Some(row) = rows.first() else { return Ok(None) };
-    let mode = Mode::from_str(&text(row, "mode").unwrap_or_default())
-        .ok_or_else(|| DbError::CannotTell(format!("bad mode in delivery row: {row}")))?;
-    let state = DeliveryState::from_str(&text(row, "state").unwrap_or_default())
-        .ok_or_else(|| DbError::CannotTell(format!("bad state in delivery row: {row}")))?;
-    Ok(Some(DeliveryRow {
+    delivery_of(bead_id, row).map(Some).map_err(DbError::CannotTell)
+}
+
+pub fn delivery_of(bead_id: &str, row: &Value) -> Result<DeliveryRow, String> {
+    let mode = Mode::from_str(&text(row, "mode").unwrap_or_default()).ok_or_else(|| format!("bad mode in delivery row: {row}"))?;
+    let state = DeliveryState::from_str(&text(row, "state").unwrap_or_default()).ok_or_else(|| format!("bad state in delivery row: {row}"))?;
+    Ok(DeliveryRow {
         bead_id: bead_id.to_string(),
         mode,
         state,
@@ -131,7 +137,7 @@ pub fn fetch_delivery(conn: &Conn, bead_id: &str) -> Result<Option<DeliveryRow>,
         exit: None,
         ci: text(row, "ci").and_then(|c| lifecycle::delivery::CiState::from_str(&c)),
         version: number(row, "version").unwrap_or(0) as u64,
-    }))
+    })
 }
 
 pub fn delivery_set_clause(row: &DeliveryRow) -> String {
@@ -159,9 +165,12 @@ pub fn fetch_batch(conn: &Conn, batch_id: &str) -> Result<Option<BatchRow>, DbEr
         escape(batch_id)
     ))?;
     let Some(row) = rows.first() else { return Ok(None) };
-    let state = BatchState::from_str(&text(row, "state").unwrap_or_default())
-        .ok_or_else(|| DbError::CannotTell(format!("bad state in batch row: {row}")))?;
-    Ok(Some(BatchRow {
+    batch_of(batch_id, row).map(Some).map_err(DbError::CannotTell)
+}
+
+pub fn batch_of(batch_id: &str, row: &Value) -> Result<BatchRow, String> {
+    let state = BatchState::from_str(&text(row, "state").unwrap_or_default()).ok_or_else(|| format!("bad state in batch row: {row}"))?;
+    Ok(BatchRow {
         batch_id: batch_id.to_string(),
         repo: text(row, "repo").unwrap_or_default(),
         state,
@@ -173,7 +182,7 @@ pub fn fetch_batch(conn: &Conn, batch_id: &str) -> Result<Option<BatchRow>, DbEr
         pass: number(row, "pass").unwrap_or(0) as u32,
         phase: text(row, "phase").as_deref().and_then(lifecycle::batch::BatchPhase::from_str),
         version: number(row, "version").unwrap_or(0) as u64,
-    }))
+    })
 }
 
 pub fn batch_set_clause(row: &BatchRow) -> String {
@@ -197,9 +206,12 @@ pub fn fetch_ask(conn: &Conn, ask_id: &str) -> Result<Option<AskRow>, DbError> {
         escape(ask_id)
     ))?;
     let Some(row) = rows.first() else { return Ok(None) };
-    let state = AskState::from_str(&text(row, "state").unwrap_or_default())
-        .ok_or_else(|| DbError::CannotTell(format!("bad state in ask row: {row}")))?;
-    Ok(Some(AskRow {
+    ask_of(ask_id, row).map(Some).map_err(DbError::CannotTell)
+}
+
+pub fn ask_of(ask_id: &str, row: &Value) -> Result<AskRow, String> {
+    let state = AskState::from_str(&text(row, "state").unwrap_or_default()).ok_or_else(|| format!("bad state in ask row: {row}"))?;
+    Ok(AskRow {
         ask_id: ask_id.to_string(),
         state,
         work_bead: text(row, "work_bead"),
@@ -207,7 +219,7 @@ pub fn fetch_ask(conn: &Conn, ask_id: &str) -> Result<Option<AskRow>, DbError> {
         quote: text(row, "quote"),
         channel: text(row, "channel"),
         version: number(row, "version").unwrap_or(0) as u64,
-    }))
+    })
 }
 
 pub fn ask_set_clause(row: &AskRow) -> String {

@@ -12,6 +12,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 spira-otel = { path = "../spira-otel" }
 spira-desired-state = { path = "../desired-state" }
 serde_path_to_error = "0.1"
+sha2 = "0.10"
 state-store = { path = "../state-store" }
 state-store-sqlite = { path = "../state-store-sqlite" }
 runtime = { path = "../runtime" }

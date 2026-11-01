@@ -125,7 +125,7 @@ fn object_like(prev: &Item, data: Value) -> Object {
     }
 }
 
-fn gate_object(id: &str, gate: &Gate) -> Result<Object> {
+pub(crate) fn gate_object(id: &str, gate: &Gate) -> Result<Object> {
     Ok(Object::new(encode(gate)?).with_owners(&[keys::lifecycle(id).as_str()]))
 }
 
@@ -961,7 +961,7 @@ mod sweeps;
 
 pub use asks::{AskClose, AskRecord};
 pub use direct::{Edge, RepoSet};
-pub use mending::{MendingRecord, Move, Stepped};
+pub use mending::{MendRecord, MendingRecord, Move, Stepped};
 pub use readiness::{Judged, Pass};
 pub use rounds::{Cut, Ran, Turned, Withdrawn};
 pub use sweeps::Filing;
