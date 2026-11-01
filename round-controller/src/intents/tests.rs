@@ -317,3 +317,74 @@ fn an_ack_reads_as_its_result_s_word() {
         "refused"
     );
 }
+
+/// The reconciler's own pass, through the same spira-lc verbs against this bench's store.
+struct ReconcilerLc<'a>(&'a Bench);
+
+impl reconciler_engine::goodput_pass::Lc for ReconcilerLc<'_> {
+    fn call(&self, args: &[String]) -> (i32, Value) {
+        Lc::call(self.0, args)
+    }
+}
+
+fn red_repeated(b: &Bench, hash: &str, member: &str, tip: &str) {
+    use crate::sim::bench::EPOCH_MS;
+    b.seed(
+        &format!("verdicts/lane/{hash}"),
+        json!({ "class": "red", "step": "unit", "attempts": 2, "last_attempt": EPOCH_MS }),
+    );
+    for n in 1..=2u64 {
+        b.seed(
+            &format!("verdicts/lane/{hash}/attempt/{n}"),
+            json!({ "class": "red", "step": "unit", "initiated_by": "planner", "at": EPOCH_MS - (3 - n) * 600_000 }),
+        );
+    }
+    b.seed(
+        &format!("verdicts/lane/by-member/{member}/{tip}"),
+        json!({ "hash": hash }),
+    );
+}
+
+#[test]
+fn a_reconciler_pass_over_an_open_repeat_identity_writes_a_hold_this_applier_applies() {
+    use reconciler_engine::goodput_pass::{run, Outcome as Pass, PassConfig};
+    let b = Bench::new();
+    lane(&b);
+    red_repeated(&b, "h1", "sp-a", "a1");
+    red_repeated(&b, "h2", "sp-b", "b1");
+    let p = b.ports();
+    crate::section::publish(&p, "lane").unwrap();
+
+    let cfg = PassConfig {
+        holder: "test".into(),
+        timeout_secs: 60,
+        shadow: Vec::new(),
+        halted: false,
+    };
+    let Pass::Passed(pass) = run(&ReconcilerLc(&b), &b.clock, &cfg).unwrap() else {
+        panic!("the reconciler's lock was free");
+    };
+    let steps: Vec<(&str, &str)> = pass
+        .record
+        .steps
+        .iter()
+        .map(|s| (s.action.as_str(), s.target.as_str()))
+        .collect();
+    assert_eq!(
+        steps,
+        [(HOLD_MEMBER, HOLD)],
+        "refused: {:?}",
+        pass.record.refused
+    );
+    let key = pass.record.steps[0].intent.clone().unwrap();
+
+    assert_eq!(apply(&p, "lane").unwrap(), [(key.clone(), "applied")]);
+    assert_eq!(ack(&b, &key), "applied");
+    assert_eq!(knob(&b, HOLD), Some(json!({ "lifted_by": "reconciler" })));
+    let held = crate::knobs::held(&p, "lane").unwrap();
+    assert_eq!(
+        held.into_iter().map(|m| format!("{}@{}", m.id, m.tip)).collect::<Vec<_>>(),
+        ["sp-a@a1"],
+        "the first open identity's proven member, at its tip, is out of every cut"
+    );
+}

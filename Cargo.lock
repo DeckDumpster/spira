@@ -1551,6 +1551,7 @@ dependencies = [
  "batcher",
  "lifecycle",
  "migration-numbers",
+ "reconciler-engine",
  "round-controller",
  "runtime",
  "serde",
