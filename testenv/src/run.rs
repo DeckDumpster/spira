@@ -255,6 +255,9 @@ pub struct Deps<'a> {
     pub spawn_sweep: &'a (dyn Fn(&Path) + Sync),
     /// This executable: linked into the worktree as the in-container setup runner (§11.4).
     pub runner_exe: PathBuf,
+    /// The host's 1-minute load average, for load admission.
+    pub load1: &'a (dyn Fn() -> Option<f64> + Sync),
+    pub sleep: &'a (dyn Fn(Duration) + Sync),
 }
 
 impl Deps<'_> {
@@ -842,15 +845,14 @@ fn note(r: Result<(), String>) {
 pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     let results = std::cell::RefCell::new(None);
     let cap = cap::limit(deps.settings.suite_cap, deps.settings.gate_cap, args.deadline);
-    let armed = cap::arm(cap);
     if args.deadline.is_none() {
         let say = |l: &str| deps.log(l);
         match load::admit(
             deps.settings.load_max_pct,
             deps.settings.load_wait,
             util::nproc(),
-            &timing::load1,
-            &|d| std::thread::sleep(d),
+            deps.load1,
+            deps.sleep,
             &cancelled,
             &mut |l: &str| say(l),
         ) {
@@ -859,6 +861,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             load::Admit::Immediate => {}
         }
     }
+    let armed = cap::arm(cap);
     let mut fin = run_recorded(args, deps, &results);
     if let Some((what, secs)) = armed.finish() {
         deps.log(&cap::over_cap_line(&what, secs, cap.source));

@@ -1,15 +1,16 @@
 //! testenv-cap against real processes: a stand-in for a testenv run is killed past
-//! cap + grace and logged once; one under the cap is left alone.
+//! cap + load wait + grace and logged once; one under that is left alone.
 
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 
-fn config(dir: &Path, suite: &str, gate: &str) -> std::path::PathBuf {
+fn config(dir: &Path, suite: &str, gate: &str, load_wait: &str) -> std::path::PathBuf {
     spira_config::process::fixture_toml(
         dir,
         &[
             ("SPIRA_TESTENV_SUITE_CAP", suite),
             ("SPIRA_TESTENV_GATE_CAP", gate),
+            ("SPIRA_TESTENV_LOAD_WAIT", load_wait),
             ("SPIRA_CONCIERGE_INBOX", &dir.join("inbox").display().to_string()),
         ],
     )
@@ -46,15 +47,19 @@ fn a_run_past_cap_plus_grace_is_killed_and_reported_once_and_one_under_it_is_not
     let mut gate = stand_in(t.path(), &["--deadline", "300"]);
     std::thread::sleep(std::time::Duration::from_millis(2200));
 
-    let under = scan(t.path(), &config(t.path(), "900", "300"), "0");
+    let under = scan(t.path(), &config(t.path(), "900", "300", "0"), "0");
     assert_eq!(under, "", "nothing is killed under the cap");
     assert!(run.try_wait().unwrap().is_none() && gate.try_wait().unwrap().is_none());
 
-    let within_grace = scan(t.path(), &config(t.path(), "1", "1"), "60");
+    let within_grace = scan(t.path(), &config(t.path(), "1", "1", "0"), "60");
     assert_eq!(within_grace, "", "nothing is killed inside the grace");
     assert!(run.try_wait().unwrap().is_none());
 
-    let over = scan(t.path(), &config(t.path(), "1", "0"), "0");
+    let within_load_wait = scan(t.path(), &config(t.path(), "1", "0", "60"), "0");
+    assert_eq!(within_load_wait, "", "a suite run is allowed its load wait past the cap");
+    assert!(run.try_wait().unwrap().is_none());
+
+    let over = scan(t.path(), &config(t.path(), "1", "0", "0"), "0");
     assert_eq!(over.lines().count(), 1, "only the suite run is over: {over}");
     assert!(over.contains("tier=suite") && over.contains(&format!("pid {}", run.id())), "{over}");
     assert!(run.wait().is_ok_and(|s| !s.success()), "the over-cap run was killed");
@@ -64,6 +69,6 @@ fn a_run_past_cap_plus_grace_is_killed_and_reported_once_and_one_under_it_is_not
     assert_eq!(inbox.lines().count(), 1, "one inbox line: {inbox}");
     assert!(inbox.contains("testenv over-cap killed") && inbox.contains("tier=suite") && inbox.contains("wall="));
 
-    assert_eq!(scan(t.path(), &config(t.path(), "1", "0"), "0"), "", "reported once");
+    assert_eq!(scan(t.path(), &config(t.path(), "1", "0", "0"), "0"), "", "reported once");
     gate.kill().ok();
 }

@@ -10,10 +10,11 @@ use testenv::cap::{self, Breach};
 
 const USAGE: &str = "usage: testenv-cap scan [--dry-run] | watch --interval SECS | health";
 
-fn caps() -> Result<(u64, u64), String> {
+fn caps() -> Result<(u64, u64, u64), String> {
     Ok((
         spira_config::process::cfg_parse("SPIRA_TESTENV_SUITE_CAP")?,
         spira_config::process::cfg_parse("SPIRA_TESTENV_GATE_CAP")?,
+        spira_config::process::cfg_parse("SPIRA_TESTENV_LOAD_WAIT")?,
     ))
 }
 
@@ -39,10 +40,10 @@ fn report(inbox: &str, b: &Breach) {
 }
 
 fn scan(dry: bool, grace: u64, exe: Option<&str>) -> Result<usize, String> {
-    let (suite, gate) = caps()?;
+    let (suite, gate, load_wait) = caps()?;
     let inbox = spira_config::process::cfg("SPIRA_CONCIERGE_INBOX")?;
     let mut killed = 0;
-    for b in cap::breaches(&cap::live(), suite, gate, grace, exe) {
+    for b in cap::breaches(&cap::live(), suite, gate, load_wait, grace, exe) {
         if dry {
             println!("would kill pid {} tier={} wall={}s cap={}s", b.proc.pid, b.tier, b.proc.age_secs, b.cap);
         } else if cap::kill_verified(&b.proc) {

@@ -118,6 +118,10 @@ struct World {
     refills: Mutex<Vec<usize>>,
     sweeps: Mutex<usize>,
     config: Option<super::RunConfig>,
+    /// Load-average readings the admission probe returns in turn; idle once spent.
+    loads: Mutex<Vec<f64>>,
+    /// Whether the cap was armed at each admission sleep.
+    sleeps: Mutex<Vec<bool>>,
 }
 
 /// `Settings` from a fake env map, exactly as the old Source-based `Settings::load` built it
@@ -264,6 +268,8 @@ impl World {
             refills: Mutex::new(vec![]),
             sweeps: Mutex::new(0),
             config: None,
+            loads: Mutex::new(vec![]),
+            sleeps: Mutex::new(vec![]),
         }
     }
 
@@ -280,6 +286,11 @@ impl World {
         let input = stdin.to_string();
         let read_stdin = move || input.clone();
         let out = |l: &str| self.lines.lock().unwrap().push(l.to_string());
+        let load1 = || {
+            let mut q = self.loads.lock().unwrap();
+            Some(if q.is_empty() { 0.0 } else { q.remove(0) })
+        };
+        let sleep = |_: Duration| self.sleeps.lock().unwrap().push(crate::cap::armed_here());
         let deps = Deps {
             rt,
             builder: b,
@@ -298,6 +309,8 @@ impl World {
             warm_refill: &|i, _| self.refills.lock().unwrap().push(i),
             spawn_sweep: &|_| *self.sweeps.lock().unwrap() += 1,
             runner_exe: self.runner_exe(),
+            load1: &load1,
+            sleep: &sleep,
         };
         let mut full = vec![];
         full.extend(args.iter().map(|s| s.to_string()));
@@ -2002,6 +2015,8 @@ fn resolve_repo_names_a_hash_named_dir_outside_the_map_by_its_basename() {
         warm_refill: &|_, _| {},
         spawn_sweep: &|_| {},
         runner_exe: w.runner_exe(),
+        load1: &|| Some(0.0),
+        sleep: &|_| {},
     };
     let r = resolve_repo(Some(dir.to_str().unwrap()), &deps).unwrap();
     assert_eq!(r.name, "ab12cd34ef56");
@@ -2039,6 +2054,8 @@ fn a_non_git_harness_root_resolves_to_the_home_repo_by_the_map() {
         warm_refill: &|_, _| {},
         spawn_sweep: &|_| {},
         runner_exe: t.path().join("exe"),
+        load1: &|| Some(0.0),
+        sleep: &|_| {},
     };
     let r = resolve_repo(None, &mk(&hash_dir)).unwrap();
     assert_eq!((r.name.as_str(), r.path.as_path()), ("homey", home.as_path()));
@@ -2087,6 +2104,8 @@ fn a_linked_worktree_resolves_to_its_owning_repos_map_name_and_finds_a_base() {
         warm_refill: &|_, _| {},
         spawn_sweep: &|_| {},
         runner_exe: w.runner_exe(),
+        load1: &|| Some(0.0),
+        sleep: &|_| {},
     };
     let arg = linked.display().to_string();
     let unmapped = resolve_repo(Some(&arg), &deps(None)).unwrap();
@@ -2136,6 +2155,8 @@ fn landref_falls_back_to_local_main_for_an_unmapped_checkout() {
         warm_refill: &|_, _| {},
         spawn_sweep: &|_| {},
         runner_exe: w.runner_exe(),
+        load1: &|| Some(0.0),
+        sleep: &|_| {},
     };
     let r = resolve_repo(Some(dir.to_str().unwrap()), &deps).unwrap();
     assert_eq!(landref(&r, &deps), None);
@@ -2378,6 +2399,8 @@ fn a_registered_name_outside_spira_toml_resolves_through_the_repo_map() {
         warm_refill: &|_, _| {},
         spawn_sweep: &|_| {},
         runner_exe: w.runner_exe(),
+        load1: &|| Some(0.0),
+        sleep: &|_| {},
     };
     let r = resolve_repo(Some("registered"), &deps).unwrap();
     assert_eq!((r.name.as_str(), r.path.as_path()), ("registered", w.repo.as_path()));
@@ -2406,6 +2429,21 @@ fn a_run_under_its_cap_is_not_cut() {
     let rt = runtime();
     let b = FakeBuilder::new(None);
     assert_eq!(w.run(&rt, &b, &["topic"], "", &w.root), 0);
+    assert_eq!(w.last(), "VERDICT GREEN ran=1");
+}
+
+#[test]
+fn the_cap_is_armed_only_after_load_admission() {
+    let mut w = foreign_world("foreign-load-wait", Some(FOREIGN_DECL));
+    w.env.insert("SPIRA_TESTENV_LOAD_MAX_PCT".into(), "50".into());
+    w.env.insert("SPIRA_TESTENV_LOAD_WAIT".into(), "60".into());
+    *w.loads.lock().unwrap() = vec![1e9, 1e9];
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(w.run(&rt, &b, &["topic"], "", &w.root), 0);
+    let sleeps = w.sleeps.lock().unwrap().clone();
+    assert!(!sleeps.is_empty() && sleeps.iter().all(|armed| !armed), "cap armed during the load wait: {sleeps:?}");
+    assert!(w.has_line(|l| l.contains("load-wait: admitted after")), "{:?}", w.lines.lock().unwrap());
     assert_eq!(w.last(), "VERDICT GREEN ran=1");
 }
 
