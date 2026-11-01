@@ -48,3 +48,8 @@ functions = [
     "publish_lifecycle",
     "round_events",
 ]
+
+# The skew guard: the planes' planning watermarks judged, served and asked.
+[[scope]]
+path = "spira-lc/src/skew.rs"
+functions = ["judge", "served", "guard", "both", "parse_control", "parse_bd_kv"]

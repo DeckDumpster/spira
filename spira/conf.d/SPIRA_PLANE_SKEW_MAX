@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=lc
+DOC=Largest difference between the control plane's planning/watermark and bd's spira.planning_watermark at which reconcile-content, drop-orphans and the rowless repair still act; past it they refuse and name the restore procedure.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_PLANE_SKEW_MAX:=25}"
+SPIRA_CONF_DEFAULT_EOF

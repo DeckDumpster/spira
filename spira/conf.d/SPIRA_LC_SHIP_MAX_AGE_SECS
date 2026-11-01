@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=lc
+DOC=Seconds the oldest staged, not yet uploaded control-store object may wait before lc-serve writes a RED line to SPIRA_RUN/lc-ship.log, which the lc-ship watchd row delivers.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_SHIP_MAX_AGE_SECS:=60}"
+SPIRA_CONF_DEFAULT_EOF

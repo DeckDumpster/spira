@@ -295,7 +295,7 @@ fn shipped_store(dir: &Path, clock: &VirtualClock) -> (Contract<SqliteBackend>, 
     let c = suite::open(open(&dir.join("live.db")), clock);
     put(
         &c,
-        "beads/sp-1",
+        "lifecycle/sp-1",
         Object::new(json!({"state": "READY"})),
         "s1",
     );
@@ -319,13 +319,13 @@ fn shipped_store(dir: &Path, clock: &VirtualClock) -> (Contract<SqliteBackend>, 
     assert!(s.tick().unwrap().snapshot.is_some());
     put(
         &c,
-        "beads/sp-1",
+        "lifecycle/sp-1",
         Object::new(json!({"state": "WORKING"})),
         "r1",
     );
     put(
         &c,
-        "beads/sp-2",
+        "lifecycle/sp-2",
         Object::new(json!({"state": "READY"})),
         "r2",
     );
@@ -365,7 +365,7 @@ fn shipped_store(dir: &Path, clock: &VirtualClock) -> (Contract<SqliteBackend>, 
     c.release(&fence, &req("l2")).unwrap();
     put(
         &c,
-        "beads/sp-2",
+        "lifecycle/sp-2",
         Object::new(json!({"state": "WORKING"})),
         "r3",
     );
@@ -463,7 +463,7 @@ fn a_flipped_byte_in_a_restored_value_fails_the_drill_naming_the_key() {
     let dir = TempDir::new("drill-flip");
     let clock = VirtualClock::new(1_000);
     let (c, s) = shipped_store(dir.path(), &clock);
-    for key in ["beads/sp-1", "intents/claim/sp-1"] {
+    for key in ["lifecycle/sp-1", "intents/claim/sp-1"] {
         let sub = dir.path().join(key.replace('/', "-"));
         std::fs::create_dir_all(&sub).unwrap();
         let (out, base, runs) = restored_copy(&sub, &s);
@@ -487,7 +487,7 @@ fn a_live_key_no_audited_write_produced_fails_the_drill_under_any_other_prefix()
     let b = c.backend();
     let head = b.head().unwrap();
     let raw = Write::Put {
-        key: "beads/sp-ghost".into(),
+        key: "lifecycle/sp-ghost".into(),
         value: Object::new(json!(1)).encode(),
         create_rev: state_store::Rev::new(head + 1, 0),
         prev: None,
@@ -499,7 +499,7 @@ fn a_live_key_no_audited_write_produced_fails_the_drill_under_any_other_prefix()
     assert_eq!(
         rep.mismatches,
         [Mismatch::Unfolded {
-            key: "beads/sp-ghost".into()
+            key: "lifecycle/sp-ghost".into()
         }],
         "{}",
         drill::render(&rep)
@@ -586,4 +586,83 @@ fn a_snapshot_stepped_while_commits_run_opens_with_the_live_keys_at_its_revision
         "the snapshot is tagged with the revision it holds"
     );
     assert_eq!(keys_at(&copy, rev), keys_at(c.backend(), rev));
+}
+
+#[test]
+fn an_audit_record_that_does_not_describe_its_txn_fails_the_drill_naming_it() {
+    let dir = TempDir::new("drill-event");
+    let clock = VirtualClock::new(1_000);
+    let (c, s) = shipped_store(dir.path(), &clock);
+    let head = c.backend().head().unwrap();
+    let key = state_store::events_key(head);
+    for (name, value) in [
+        ("empty", Object::new(json!({"subs": []})).encode()),
+        ("garbled", b"not json".to_vec()),
+    ] {
+        let sub = dir.path().join(name);
+        std::fs::create_dir_all(&sub).unwrap();
+        let (out, base, runs) = restored_copy(&sub, &s);
+        tamper(&out, &key, &value);
+        let rep =
+            drill::fold_compare(&open(&base), &runs, &open(&out), Exclusions::CONTRACT).unwrap();
+        assert!(
+            matches!(rep.mismatches.as_slice(), [Mismatch::Event { main, .. }] if *main == head),
+            "{name}: {}",
+            drill::render(&rep)
+        );
+        assert!(
+            drill::render(&rep).contains(&format!("mismatch {key}: ")),
+            "{}",
+            drill::render(&rep)
+        );
+    }
+}
+
+#[test]
+fn local_copies_keep_two_snapshots_and_the_runs_after_the_older_and_still_drill() {
+    let dir = TempDir::new("ship-prune");
+    let clock = VirtualClock::new(1_000);
+    let c = suite::open(open(&dir.path().join("live.db")), &clock);
+    let mut s = Shipper::open(
+        c.backend().clone(),
+        ship_cfg(dir.path(), 0),
+        file_put(&dir.path().join("off")),
+        Arc::new(clock.clone()),
+    )
+    .unwrap();
+    let mut snaps = Vec::new();
+    for i in 0..4 {
+        put(
+            &c,
+            &format!("lifecycle/sp-{i}"),
+            Object::new(json!(i)),
+            &format!("p{i}"),
+        );
+        snaps.push(s.tick().unwrap().snapshot.unwrap());
+    }
+    let kept: Vec<u64> = std::fs::read_dir(s.sent(SNAPSHOT))
+        .unwrap()
+        .map(|e| revlog::parse_snapshot_name(&e.unwrap().file_name().to_string_lossy()).unwrap())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    assert_eq!(kept, snaps[2..]);
+    let runs: Vec<(u64, u64)> = std::fs::read_dir(s.sent(REVLOG))
+        .unwrap()
+        .map(|e| revlog::parse_run_name(&e.unwrap().file_name().to_string_lossy()).unwrap())
+        .collect();
+    assert!(
+        runs.iter().all(|(_, to)| *to > snaps[2]),
+        "a run no kept snapshot needs was kept: {runs:?}"
+    );
+    assert!(
+        std::fs::read_dir(dir.path().join("off").join(REVLOG))
+            .unwrap()
+            .count()
+            == 4,
+        "the destination's copies are never pruned"
+    );
+    let (_, rep) =
+        drill::drill(s.dir(), &dir.path().join("scratch"), Exclusions::CONTRACT).unwrap();
+    assert!(rep.passed(), "{}", drill::render(&rep));
 }

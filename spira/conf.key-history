@@ -577,3 +577,7 @@ testenv_sandbox_target_root
 reconciler_deadman_secs
 reconciler_heartbeat_url
 testenv_sandbox_target_keep
+lc_ship_secs
+lc_ship_max_age_secs
+lc_ship_snapshot_secs
+plane_skew_max

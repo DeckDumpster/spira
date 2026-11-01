@@ -142,10 +142,57 @@ pub(crate) fn request_id() -> String {
     )
 }
 
+/// The control plane's planning watermark, `planning/watermark {seq}`: `None` while no control
+/// store is configured, `Ok(None)` while nothing is stamped.
+pub fn planning_watermark() -> Option<Result<Option<u64>, String>> {
+    let store = match configured()? {
+        Ok(s) => s,
+        Err(e) => return Some(Err(e)),
+    };
+    let item = store.contract().get(crate::skew::CONTROL_KEY);
+    Some(match item {
+        Err(e) => Err(e.to_string()),
+        Ok(None) => Ok(None),
+        Ok(Some(i)) => i.value.data["seq"]
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| format!("{} holds no seq", crate::skew::CONTROL_KEY)),
+    })
+}
+
+/// `planning-watermark`, `plane-watermarks` and `skew-check`, which answer with or without a
+/// control store.
+fn dispatch_watermark(args: &[String]) -> Option<(i32, String)> {
+    match args[0].as_str() {
+        crate::skew::BOTH_VERB => {
+            let control = match planning_watermark() {
+                None => Ok(None),
+                Some(r) => r,
+            };
+            let planning = crate::callers::Bd::planning_watermark(&mut crate::bd::LiveBd);
+            let manifest = args.iter().any(|a| a == "--manifest");
+            Some(crate::skew::both(control, planning, manifest))
+        }
+        crate::skew::VERB => Some(match planning_watermark() {
+            None | Some(Ok(None)) => (0, "null".into()),
+            Some(Ok(Some(seq))) => (0, serde_json::json!({ "seq": seq }).to_string()),
+            Some(Err(e)) => (CANNOT_TELL, format!("cannot tell: the control store: {e}")),
+        }),
+        crate::skew::CHECK_VERB => {
+            let max = spira_config::process::cfg_parse::<u64>("SPIRA_PLANE_SKEW_MAX");
+            Some(crate::skew::served(planning_watermark(), &mut crate::bd::LiveBd, max))
+        }
+        _ => None,
+    }
+}
+
 /// The control store's answer to `args`, or `None` when the dolt path answers it: a verb this
 /// store does not serve, or any verb while the key is unset. `watch` has no dolt path.
 pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
     let verb = args.first()?;
+    if let Some(answer) = dispatch_watermark(args) {
+        return Some(answer);
+    }
     if sections::VERBS.contains(&verb.as_str()) || verb == sections::lifecycle::VERB || verb == spira_lc::rc::VERB {
         return Some(dispatch_sections(args));
     }

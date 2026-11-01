@@ -36,6 +36,9 @@ struct Fake {
     changed: Vec<String>,
     content_reads: usize,
     deleted: Vec<String>,
+    /// The `skew-check` answer; `None` is the planes agreeing.
+    skew: Option<(i32, String)>,
+    skew_checks: usize,
 }
 
 fn opt(v: &Option<String>) -> Value {
@@ -181,6 +184,10 @@ impl Machine for Fake {
             "close-ask" => {
                 self.ask_closes.push(args.to_vec());
                 if self.ask_rows.contains(&args[1]) { (0, String::new()) } else { (1, format!("close-ask: {} is no ask", args[1])) }
+            }
+            "skew-check" => {
+                self.skew_checks += 1;
+                self.skew.clone().unwrap_or((0, "skew-check: the planes agree".into()))
             }
             other => panic!("unexpected primitive {other}"),
         }
@@ -901,6 +908,9 @@ struct FakeBd {
 }
 
 impl Bd for FakeBd {
+    fn planning_watermark(&mut self) -> Result<Option<u64>, String> {
+        Ok(None)
+    }
     fn children(&mut self, id: &str) -> Result<Vec<String>, String> {
         if self.down {
             return Err("bd down".into());
@@ -1323,6 +1333,46 @@ fn drop_orphans_cannot_tell_when_bd_is_down_or_knows_nothing() {
     f.bead("sp-b", BeadState::Ready);
     assert_eq!(drop_orphans(&[], &mut f, &mut b).code, CANNOT_TELL);
     assert_eq!(drop_orphans(&v(&["--bogus"]), &mut f, &mut b).code, 2);
+}
+
+// ---- the skew guard ------------------------------------------------------------------------
+
+const SKEWED: &str = "refused: the planes' planning watermarks differ by 50, past SPIRA_PLANE_SKEW_MAX 25 (control plane 90, bd 40); the exit is the restore procedure: after a restore: (1) restore bd";
+
+#[test]
+fn with_the_planes_skewed_reconcile_content_and_drop_orphans_refuse_to_act_and_name_the_exit() {
+    let mut f = Fake::default();
+    let mut b = FakeBd::default();
+    f.bead("sp-landed", BeadState::Landed);
+    f.content.insert("sp-landed".into(), "open".into());
+    f.bead("sp-gone", BeadState::Ready);
+    f.bead("sp-real", BeadState::Ready);
+    b.rows.insert("sp-real".into(), ("task".into(), None));
+    b.rows.insert("sp-landed".into(), ("task".into(), None));
+    f.skew = Some((REFUSED, SKEWED.into()));
+
+    let rc = reconcile_content(&v(&["--apply"]), &mut f, &mut b);
+    assert_eq!(rc.code, REFUSED, "{rc:?}");
+    assert!(rc.stderr.contains(SKEWED), "{}", rc.stderr);
+    let dropped = drop_orphans(&v(&["--apply"]), &mut f, &mut b);
+    assert_eq!(dropped.code, REFUSED, "{dropped:?}");
+    assert!(dropped.stderr.contains("the exit is the restore procedure"), "{}", dropped.stderr);
+    assert!(b.closed.is_empty() && f.events.is_empty(), "a refused sweep writes nothing");
+
+    let checks = f.skew_checks;
+    let dry = reconcile_content(&v(&["--dry-run"]), &mut f, &mut b);
+    assert!(dry.code == APPLIED && dry.stdout.ends_with("1 would close (dry run; --apply to write)"), "{dry:?}");
+    let dry = drop_orphans(&v(&["--dry-run"]), &mut f, &mut b);
+    assert!(dry.code == APPLIED && dry.stdout.contains("would move sp-gone READY -> DROPPED"), "{dry:?}");
+    assert_eq!(f.skew_checks, checks, "a dry run acts on nothing, so it is never refused");
+
+    f.skew = Some((CANNOT_TELL, "cannot tell: bd's planning watermark: down".into()));
+    assert_eq!(drop_orphans(&v(&["--apply"]), &mut f, &mut b).code, CANNOT_TELL);
+    f.skew = None;
+    assert_eq!(drop_orphans(&v(&["--apply"]), &mut f, &mut b).code, APPLIED);
+    assert_eq!(f.state("sp-gone"), "DROPPED");
+    assert_eq!(reconcile_content(&v(&["--apply", "--dry-run"]), &mut f, &mut b).code, 2);
+    assert_eq!(drop_orphans(&v(&["--dry-run", "--apply"]), &mut f, &mut b).code, 2);
 }
 
 #[test]

@@ -261,6 +261,38 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "control store off-box: age of the oldest unshipped object (alarm past SPIRA_LC_SHIP_MAX_AGE_SECS)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max_over_time(spira_lc_ship_oldest_unshipped_seconds[$__interval])",
+          "legendFormat": "oldest unshipped",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }
