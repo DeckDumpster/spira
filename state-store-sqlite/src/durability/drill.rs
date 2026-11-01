@@ -199,7 +199,10 @@ pub fn fold_compare(
                 Ok(subs) => subs,
                 Err(detail) => {
                     rep.mismatches.push(Mismatch::Event { main, detail });
-                    continue;
+                    writes
+                        .iter()
+                        .map(|e| (e.key.clone(), e.rev.sub, e.value.is_some()))
+                        .collect()
                 }
             };
             let ran: BTreeSet<(String, u32, bool)> = writes

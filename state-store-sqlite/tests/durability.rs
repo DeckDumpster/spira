@@ -81,7 +81,8 @@ impl Endpoint {
         let me = self.clone();
         std::thread::spawn(move || {
             for s in l.incoming().flatten() {
-                me.answer(s);
+                let me = me.clone();
+                std::thread::spawn(move || me.answer(s));
             }
         });
         format!("http://{addr}")
@@ -108,6 +109,7 @@ impl Endpoint {
                 headers.push((k.trim().to_ascii_lowercase(), v.trim().to_string()));
             }
         }
+        eprintln!("endpoint: {method} {path} {headers:?}");
         let header = |k: &str| headers.iter().find(|(h, _)| h == k).map(|(_, v)| v.clone());
         let mut w = s;
         if header("expect").is_some_and(|e| e.eq_ignore_ascii_case("100-continue")) {
@@ -166,7 +168,20 @@ fn the_shipper_puts_every_revision_to_a_put_only_endpoint_and_retries_a_refusal_
     .unwrap();
     put(&c, "a", Object::new(json!(1)), "1");
     let first = s.tick().unwrap();
-    assert_eq!(first.uploaded.len(), 2, "{first:?}");
+    let saw = |ep: &Endpoint| {
+        ep.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(m, p, b, h)| format!("{m} {p} {}B {h:?}", b.len()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        first.uploaded.len(),
+        2,
+        "{first:?}; the endpoint saw {:?}",
+        saw(&ep)
+    );
     put(&c, "b", Object::new(json!(2)), "2");
     put(&c, "a", Object::new(json!(3)), "3");
     *ep.refuse_next.lock().unwrap() = true;

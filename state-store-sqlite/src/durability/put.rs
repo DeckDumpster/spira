@@ -130,7 +130,10 @@ impl Uploader {
         }
         let secs = self.deadline.as_secs().max(1).to_string();
         let args = [
+            "-q",
             "-sS",
+            "--connect-timeout",
+            "5",
             "--fail-with-body",
             "--max-time",
             &secs,
