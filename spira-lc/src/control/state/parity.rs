@@ -38,7 +38,8 @@ const DIVERGES: &[(&str, &str)] = &[
     ("claim-verdicts", "list --ids shows the titles and priorities, planning fields"),
     ("express", "list --express shows sp-ready's title, a planning field"),
     ("supersede", "the dolt path retires the bead's mends through bd on a terminal move, and with bd absent from the capture its golden carries that failure on stderr; the control store retires no mends yet"),
-    ("content-on-base", "as supersede: the golden's stderr is the dolt path's mend retirement failing on the absent bd"),
+    ("requeue-orphans", "the control store lists a never-begun round whose lease is live under `leased`; the dolt path has no leases"),
+    ("content-on-base", "as supersede:the golden's stderr is the dolt path's mend retirement failing on the absent bd"),
     ("close-ask", "the dolt path closes the ask's bead through bd, absent from the capture, so its golden is that failure; on the control plane the bead's status is the planning plane's, written from the ask's state"),
 ];
 
