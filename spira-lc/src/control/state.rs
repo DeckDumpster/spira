@@ -34,7 +34,10 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
         Some("list") => list(store, rest, call),
         Some("event") => event(store, rest, call),
         Some("create-bead") => create(store, rest, call),
-        other => (CANNOT_TELL, format!("{other:?} is not a control-store verb")),
+        other => (
+            CANNOT_TELL,
+            format!("{other:?} is not a control-store verb"),
+        ),
     }
 }
 
@@ -45,7 +48,10 @@ fn cannot_tell(e: impl std::fmt::Display) -> (i32, String) {
 /// A JSON column as the SQL server renders it: `", "` between items and `": "` after keys.
 fn sql_json(v: &Value) -> String {
     match v {
-        Value::Array(a) => format!("[{}]", a.iter().map(sql_json).collect::<Vec<_>>().join(", ")),
+        Value::Array(a) => format!(
+            "[{}]",
+            a.iter().map(sql_json).collect::<Vec<_>>().join(", ")
+        ),
         Value::Object(o) => format!(
             "{{{}}}",
             o.iter()
@@ -77,7 +83,10 @@ fn column(rec: &LifecycleRecord, r: Option<&Readiness>, name: &str) -> Value {
         "persona" => text(row.persona.as_deref()),
         "lease_until" => number(row.lease_until),
         "holds" => Value::String(sql_json(&Value::Array(
-            row.holds.iter().map(|h| Value::String(h.as_str().into())).collect(),
+            row.holds
+                .iter()
+                .map(|h| Value::String(h.as_str().into()))
+                .collect(),
         ))),
         "reason" => text(row.reason.as_deref()),
         "version" => number(Some(row.version as i64)),
@@ -115,16 +124,56 @@ fn column(rec: &LifecycleRecord, r: Option<&Readiness>, name: &str) -> Value {
 }
 
 const SHOWN: &[&str] = &[
-    "bead_id", "state", "tip", "gate_key", "holder", "persona", "lease_until", "holds", "reason",
-    "version", "stack", "stack_depth", "express", "dwarf_phase", "disposition",
-    "disposition_note", "ejected_red_tip", "sifted_tip", "updated_at", "blocked_by",
+    "bead_id",
+    "state",
+    "tip",
+    "gate_key",
+    "holder",
+    "persona",
+    "lease_until",
+    "holds",
+    "reason",
+    "version",
+    "stack",
+    "stack_depth",
+    "express",
+    "dwarf_phase",
+    "disposition",
+    "disposition_note",
+    "ejected_red_tip",
+    "sifted_tip",
+    "updated_at",
+    "blocked_by",
 ];
 
 const LISTED: &[&str] = &[
-    "bead_id", "state", "tip", "holder", "persona", "lease_until", "holds", "reason",
-    "updated_at", "version", "stack", "stack_depth", "since", "express", "dwarf_phase",
-    "disposition", "disposition_note", "ejected_red_tip", "sifted_tip", "title", "priority",
-    "repo", "claim_verdict", "claim_blocker", "claim_runes", "claim_at", "blocked_by",
+    "bead_id",
+    "state",
+    "tip",
+    "holder",
+    "persona",
+    "lease_until",
+    "holds",
+    "reason",
+    "updated_at",
+    "version",
+    "stack",
+    "stack_depth",
+    "since",
+    "express",
+    "dwarf_phase",
+    "disposition",
+    "disposition_note",
+    "ejected_red_tip",
+    "sifted_tip",
+    "title",
+    "priority",
+    "repo",
+    "claim_verdict",
+    "claim_blocker",
+    "claim_runes",
+    "claim_at",
+    "blocked_by",
 ];
 
 fn row(rec: &LifecycleRecord, r: Option<&Readiness>, cols: &[&str]) -> Value {
@@ -158,7 +207,12 @@ fn show<B: Backend>(store: &Store<B>, args: &[String]) -> (i32, String) {
 }
 
 fn csv(v: Option<String>) -> Option<Vec<String>> {
-    v.map(|s| s.split(',').filter(|x| !x.is_empty()).map(String::from).collect())
+    v.map(|s| {
+        s.split(',')
+            .filter(|x| !x.is_empty())
+            .map(String::from)
+            .collect()
+    })
 }
 
 /// `list [--live] [--state S,...] [--ids a,...] [--hold K] [--express] [--repo R]`, in id order.
@@ -190,7 +244,9 @@ fn list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, Str
                 .as_deref()
                 .is_none_or(|k| row.holds.iter().any(|h| h.as_str() == k))
             && (!express || row.express)
-            && repo.as_deref().is_none_or(|r| rec.repo.as_deref() == Some(r))
+            && repo
+                .as_deref()
+                .is_none_or(|r| rec.repo.as_deref() == Some(r))
             && (!live
                 || (!row.state.is_terminal()
                     && (!LISTED_TERMINAL.contains(&state)
@@ -215,7 +271,9 @@ fn answer(outcome: state_store::Result<Outcome>) -> (i32, String) {
             ),
             other => (REFUSED, format!("refused: {:?}", Some(other))),
         },
-        Ok(Outcome::LostRace { .. }) => (REFUSED, "refused: lost the race to another writer".into()),
+        Ok(Outcome::LostRace { .. }) => {
+            (REFUSED, "refused: lost the race to another writer".into())
+        }
         Ok(Outcome::LockLost { .. }) => (
             REFUSED,
             "refused: the holder's claim lock has lapsed or been retaken".into(),
@@ -253,12 +311,17 @@ fn event<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, St
         );
     };
     let Ok(version) = version.parse::<u64>() else {
-        return (CANNOT_TELL, "event: --version must be a non-negative integer".into());
+        return (
+            CANNOT_TELL,
+            "event: --version must be a non-negative integer".into(),
+        );
     };
     if machine != "bead" {
         return (
             CANNOT_TELL,
-            format!("cannot tell: the control store serves only the bead machine yet, not {machine:?}"),
+            format!(
+                "cannot tell: the control store serves only the bead machine yet, not {machine:?}"
+            ),
         );
     }
     let Some(expect) = BeadState::from_str(&expect) else {
@@ -297,11 +360,33 @@ fn event<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, St
         BeadEventKind::Claim { .. } => store.claim(key, &ev, &req).map(|(o, _)| o),
         BeadEventKind::Renew { .. } => match store.holder_fence(key) {
             Ok(Some(fence)) => store.renew_lease(key, &fence, &ev, &req),
-            Ok(None) => store.contract().head().map(|rev| Outcome::LockLost { rev }),
+            Ok(None) => unfenced_renew(store, key, &ev, &req),
             Err(e) => Err(e),
         },
         _ => store.apply(key, &ev, &req),
     })
+}
+
+/// A renewal with no live claim lock: the machine's refusal when it has one, as the dolt path
+/// answers; otherwise the lock has lapsed, and a lapsed holder extends nothing.
+fn unfenced_renew<B: Backend>(
+    store: &Store<B>,
+    key: &str,
+    ev: &BeadEvent,
+    req: &Request,
+) -> state_store::Result<Outcome> {
+    let Some(cur) = store.record(key)? else {
+        return Err(Error::NotFound {
+            key: super::keys::lifecycle(key),
+        });
+    };
+    let out = bead::apply(&cur.value.row, ev);
+    match out.refusal {
+        Some(refusal) if !out.applied => store.refuse_event(key, ev, refusal, req),
+        _ => Ok(Outcome::LockLost {
+            rev: store.contract().head()?,
+        }),
+    }
 }
 
 /// A claim's stack names prerequisite tips; one that is no longer its prerequisite's current

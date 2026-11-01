@@ -40,15 +40,13 @@ fn lock_floor_ms() -> Result<u64, String> {
     }
 }
 
-/// The wall clock lock expiries are read on, pinned with the rest of the process by `SPIRA_NOW`.
+/// The wall clock lock expiries are read on: the whole second events are stamped at, pinned with
+/// the rest of the process by `SPIRA_NOW`, so a lease reads back as the second it was asked for.
 struct Wall;
 
 impl Clock for Wall {
     fn now_ms(&self) -> u64 {
-        match spira_config::vtime::override_epoch() {
-            Some(s) => s.saturating_mul(1_000),
-            None => runtime::ports::WallClock.now_ms(),
-        }
+        spira_config::vtime::now_epoch().saturating_mul(1_000)
     }
 }
 

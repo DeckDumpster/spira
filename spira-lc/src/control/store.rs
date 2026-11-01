@@ -510,10 +510,11 @@ impl<B: Backend> Store<B> {
             };
             if bead::apply(&cur.value.row, ev).applied {
                 let ttl_ms = self.lease_ttl_ms(*lease_until, at);
-                match self
-                    .contract
-                    .renew_for(fence, ttl_ms, &sub_request(req, "renew", Value::Null))
-                {
+                match self.contract.renew_for(
+                    fence,
+                    ttl_ms,
+                    &sub_request(req, "renew", Value::Null),
+                ) {
                     Err(Error::LockLost { .. }) => {
                         return Ok(Outcome::LockLost {
                             rev: self.contract.head()?,

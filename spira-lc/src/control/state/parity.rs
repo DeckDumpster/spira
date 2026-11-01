@@ -100,9 +100,24 @@ fn steps(dir: &Path) -> Vec<Step> {
 
 /// The verbs `main` answers before the caller verbs, so none of them is a caller verb here.
 const BEFORE_CALLERS: &[&str] = &[
-    "close-on-land", "unclaim", "reconcile-closed", "migrate-asks", "reconcile-epics",
-    "reconcile-content", "drop-orphans", "close", "drop-bead", "drop-row", "reopen",
-    "bd-supersede", "bd-note", "content", "close-epic", "unpublished", "content-landed", "drop",
+    "close-on-land",
+    "unclaim",
+    "reconcile-closed",
+    "migrate-asks",
+    "reconcile-epics",
+    "reconcile-content",
+    "drop-orphans",
+    "close",
+    "drop-bead",
+    "drop-row",
+    "reopen",
+    "bd-supersede",
+    "bd-note",
+    "content",
+    "close-epic",
+    "unpublished",
+    "content-landed",
+    "drop",
 ];
 
 fn primitive(verb: &str) -> bool {
@@ -153,7 +168,11 @@ fn run<B: Backend>(rig: &mut Rig<'_, B>, argv: &[String]) -> Answer {
     let verb = argv[0].as_str();
     if primitive(verb) {
         let (rc, out) = rig.call(argv);
-        let stdout = if out.is_empty() { out } else { format!("{out}\n") };
+        let stdout = if out.is_empty() {
+            out
+        } else {
+            format!("{out}\n")
+        };
         return Answer {
             rc,
             stdout,
@@ -192,15 +211,27 @@ fn seeded<B: Backend>(s: &Store<B>) {
         if UNSERVED_SEED.contains(&verb) || batch_event {
             continue;
         }
-        assert!(served(step), "seed step {} {:?} is neither served nor declared unserved", i + 1, step.argv);
-        assert_eq!(run(&mut rig, &step.argv), step.want, "seed step {}: {:?}", i + 1, step.argv);
+        assert!(
+            served(step),
+            "seed step {} {:?} is neither served nor declared unserved",
+            i + 1,
+            step.argv
+        );
+        assert_eq!(
+            run(&mut rig, &step.argv),
+            step.want,
+            "seed step {}: {:?}",
+            i + 1,
+            step.argv
+        );
     }
 }
 
 /// Every case whose steps are all served, each on a fresh seeded store from `open`: the ones
 /// whose answers differ from their goldens, with the first difference.
-fn diverging<B: Backend>(open: impl Fn() -> Store<B>) -> BTreeMap<String, String> {
+fn diverging<B: Backend>(open: impl Fn() -> Store<B>) -> Compared {
     let mut out = BTreeMap::new();
+    let mut ran = BTreeSet::new();
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(goldens())
         .unwrap()
         .map(|e| e.unwrap().path())
@@ -210,28 +241,62 @@ fn diverging<B: Backend>(open: impl Fn() -> Store<B>) -> BTreeMap<String, String
     for dir in dirs {
         let case = dir.file_name().unwrap().to_string_lossy().into_owned();
         let steps = steps(&dir);
+        assert!(!steps.is_empty(), "{case} records no step");
         if !steps.iter().all(served) {
             continue;
         }
+        ran.insert(case.clone());
         let s = open();
         seeded(&s);
-        let mut rig = Rig { store: &s, n: 1_000 };
+        let mut rig = Rig {
+            store: &s,
+            n: 1_000,
+        };
         for (i, step) in steps.iter().enumerate() {
             let got = run(&mut rig, &step.argv);
             if got != step.want {
                 out.insert(
                     case.clone(),
-                    format!("step {} {:?}: got {got:?}, want {:?}", i + 1, step.argv, step.want),
+                    format!(
+                        "step {} {:?}: got {got:?}, want {:?}",
+                        i + 1,
+                        step.argv,
+                        step.want
+                    ),
                 );
                 break;
             }
         }
     }
-    out
+    Compared {
+        ran,
+        diverging: out,
+    }
 }
 
-fn assert_parity(got: BTreeMap<String, String>) {
+struct Compared {
+    ran: BTreeSet<String>,
+    diverging: BTreeMap<String, String>,
+}
+
+/// The cases on served verbs that must match their goldens: fewer than this means the rig
+/// stopped comparing something.
+const MIN_MATCHING: usize = 36;
+
+fn assert_parity(c: Compared) {
     let declared: BTreeSet<&str> = DIVERGES.iter().map(|(c, _)| *c).collect();
+    let not_run: Vec<&&str> = declared.iter().filter(|d| !c.ran.contains(**d)).collect();
+    assert!(
+        not_run.is_empty(),
+        "declared divergent but no longer compared: {not_run:?}"
+    );
+    let matching = c.ran.len() - c.diverging.len();
+    assert!(
+        matching >= MIN_MATCHING,
+        "only {matching} served cases match their goldens, of {} compared",
+        c.ran.len()
+    );
+    let got = c.diverging;
     let unexplained: Vec<String> = got
         .iter()
         .filter(|(c, _)| !declared.contains(c.as_str()))
@@ -271,10 +336,33 @@ fn every_served_case_answers_as_its_golden_on_sqlite() {
 }
 
 #[test]
+fn the_parity_rig_reports_a_case_whose_answer_differs() {
+    let c = diverging(|| {
+        let s = store(MemBackend::new(), &at_now());
+        // A record the seed never made, so `list` answers with one row more than its golden.
+        let call = Call {
+            now: NOW,
+            request: "planted",
+        };
+        let argv: Vec<String> = ["create-bead", "sp-planted"].map(String::from).into();
+        assert_eq!(super::run(&s, &argv, &call).0, 0);
+        s
+    });
+    assert!(
+        c.diverging.contains_key("list-state-verb"),
+        "a planted READY record changes list-state READY: {:?}",
+        c.diverging.keys().collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn the_parity_rig_sees_a_wrong_answer() {
     let s = store(MemBackend::new(), &at_now());
     seeded(&s);
-    let mut rig = Rig { store: &s, n: 1_000 };
+    let mut rig = Rig {
+        store: &s,
+        n: 1_000,
+    };
     let argv: Vec<String> = ["state", "sp-working"].map(String::from).into();
     assert_eq!(run(&mut rig, &argv).stdout, "WORKING\n");
     assert_ne!(run(&mut rig, &argv).stdout, "READY\n");
