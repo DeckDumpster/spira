@@ -157,7 +157,8 @@ fn a_local_function_or_port_method_named_like_the_ledger_is_not_a_landstate_call
 }
 
 /// Resolving the callee keeps every real route refused: a bare call imported from the
-/// ledger, a path-qualified call, and a sibling reached through `super::*` of the ledger's
+/// ledger (a port adapter whose method shares the name included), `self::`, a type imported
+/// from it, a path-qualified call, and a sibling reached through `super::*` of the ledger's
 /// own module.
 #[test]
 fn a_call_that_resolves_to_the_ledger_is_still_a_landstate_call() {
@@ -169,7 +170,15 @@ fn a_call_that_resolves_to_the_ledger_is_still_a_landstate_call() {
         .collect();
     assert_eq!(
         calls,
-        vec![("check.rs", 4, "landed"), ("check.rs", 7, "landed_sha"), ("landstate/read.rs", 4, "land_state")],
+        vec![
+            ("adapter.rs", 9, "landed"),
+            ("adapter.rs", 12, "land_state"),
+            ("adapter.rs", 15, "landed_sha"),
+            ("adapter.rs", 20, "land_mark"),
+            ("check.rs", 4, "landed"),
+            ("check.rs", 7, "landed_sha"),
+            ("landstate/read.rs", 4, "land_state"),
+        ],
         "{findings:#?}"
     );
 }

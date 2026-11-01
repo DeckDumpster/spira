@@ -1,15 +1,8 @@
 //! The Rust half of this bead's landstate barrier: a call that resolves to the ledger's
 //! `land_mark`/`land_state`/`landed`/`landed_sha`, or an `fs` read of a path naming the
-//! landstate ledger, anywhere in the tree.
-//!
-//! A name is not an identity, so each call site is resolved before it is reported (see
-//! [`resolves_locally`]): a function this module defines, a sibling reached through
-//! `super::*` of a module that is not the ledger's, and a method on a receiver (`self`, a
-//! port, a trait object) are not the ledger. A port is no way around the rule: its adapter
-//! reaches the ledger by a path-qualified call or an `fs` read, and is reported there. Shell gets the same two checks in
-//! `shell.rs`, over its own tree-sitter parse; Rust has no grammar in this crate, so this is a
-//! line-oriented textual pass, the same shape already used here for credential/retired-label
-//! tokens.
+//! landstate ledger, anywhere in the tree. Shell gets the same two checks in `shell.rs`, over
+//! its own tree-sitter parse; Rust has no grammar in this crate, so this is a line-oriented
+//! textual pass that resolves each call site before reporting it ([`resolves_locally`]).
 
 use crate::finding::{Class, Finding};
 use std::path::{Path, PathBuf};
@@ -110,11 +103,12 @@ fn ends_with_word(text: &str, word: &str) -> bool {
     t.ends_with(word) && t[..t.len() - word.len()].bytes().next_back().is_none_or(|b| !is_word_byte(b))
 }
 
-/// What a call site can be resolved against: the functions its own module defines, and the
-/// module `use super::…` reaches, each only when it is not the ledger's own module.
+/// What a call site can be resolved against: this module's free functions, the `use`
+/// statements that import from a `landstate` path, and the parent module `use super::…` reaches.
 struct Module {
     ledger: bool,
     code: String,
+    ledger_uses: Vec<String>,
     glob_super: bool,
     super_names: String,
     parent: Option<(bool, String)>,
@@ -122,11 +116,8 @@ struct Module {
 
 impl Module {
     fn new(path: &Path, code: &str) -> Module {
-        let super_uses: Vec<&str> = code
-            .lines()
-            .map(str::trim_start)
-            .filter_map(|l| l.strip_prefix("pub ").unwrap_or(l).strip_prefix("use super::"))
-            .collect();
+        let uses = use_statements(code);
+        let super_uses: Vec<&str> = uses.iter().filter_map(|u| u.strip_prefix("super::")).collect();
         let parent = if super_uses.is_empty() {
             None
         } else {
@@ -138,18 +129,24 @@ impl Module {
         Module {
             ledger: is_ledger_module(path),
             code: code.to_string(),
-            glob_super: super_uses.iter().any(|u| u.trim_start().starts_with('*')),
+            glob_super: super_uses.iter().any(|u| u.starts_with('*') || u.starts_with("{*") || u.contains(",*")),
             super_names: super_uses.join("\n"),
+            ledger_uses: uses.iter().filter(|u| !word_sites(u, "landstate").is_empty()).cloned().collect(),
             parent,
         }
     }
 
+    /// True when `ident` may be the ledger's: a `landstate` import names it or globs.
+    fn imported_from_ledger(&self, ident: &str) -> bool {
+        self.ledger_uses.iter().any(|u| u.contains('*') || !word_sites(u, ident).is_empty())
+    }
+
     fn defines(&self, name: &str) -> bool {
-        !self.ledger && defines_fn(&self.code, name)
+        !self.ledger && !self.imported_from_ledger(name) && defines_free_fn(&self.code, name)
     }
 
     fn super_defines(&self, name: &str) -> bool {
-        matches!(&self.parent, Some((false, code)) if defines_fn(code, name))
+        !self.imported_from_ledger(name) && matches!(&self.parent, Some((false, code)) if defines_free_fn(code, name))
     }
 
     fn imports_from_super(&self, name: &str) -> bool {
@@ -157,17 +154,9 @@ impl Module {
     }
 }
 
-/// Whether the call to `name` whose text before the identifier is `before` resolves to
-/// something other than the ledger:
-/// - a method on a receiver (`p.git.landed(…)`, `self.landed(…)`, a chain's `.landed(`);
-/// - `Self::`/`self::`/`<dyn Port>::` qualified, or `Type::name(` where this file defines
-///   `fn name`;
-/// - `super::name(` where the parent module defines it;
-/// - a bare `name(` this module defines, or reaches through `use super::…` of a parent
-///   module that defines it.
-///
-/// Anything else — a bare name imported from elsewhere, a path through another module, any
-/// of these when the module is the ledger's own — is the ledger.
+/// Whether the call to `name`, `before` being the line's text ahead of it, resolves to
+/// something other than the ledger. A port is no way around the rule: its adapter reaches the
+/// ledger by an import, a qualified path or an `fs` read, and is reported there.
 fn resolves_locally(before: &str, name: &str, m: &Module) -> bool {
     let before = before.trim_end();
     if before.ends_with('.') {
@@ -178,21 +167,61 @@ fn resolves_locally(before: &str, name: &str, m: &Module) -> bool {
     };
     let path = path.trim_end();
     if path.ends_with('>') {
-        return true;
+        return !m.ledger;
     }
-    let qualifier_start = path.rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).map_or(0, |i| i + 1);
+    let qualifier_start = path
+        .char_indices()
+        .rev()
+        .find(|&(_, c)| !(c.is_alphanumeric() || c == '_'))
+        .map_or(0, |(i, c)| i + c.len_utf8());
     let qualifier = &path[qualifier_start..];
-    let single = !path[..qualifier_start].trim_end().ends_with("::");
+    if path[..qualifier_start].trim_end().ends_with("::") {
+        return false;
+    }
     match qualifier {
-        "Self" | "self" => !m.ledger,
-        "super" => single && m.super_defines(name),
-        q => single && q.starts_with(|c: char| c.is_ascii_uppercase()) && m.defines(name),
+        "Self" => !m.ledger,
+        "self" => m.defines(name),
+        "super" => m.super_defines(name),
+        q => q.starts_with(|c: char| c.is_uppercase()) && !m.imported_from_ledger(q) && !m.ledger && defines_fn(&m.code, name),
     }
 }
 
-/// True when masked `code` defines `fn name`.
+/// Every `use` statement in masked `code`, visibility stripped, whitespace removed, up to its `;`.
+fn use_statements(code: &str) -> Vec<String> {
+    word_sites(code, "use")
+        .into_iter()
+        .filter(|&at| {
+            let before = code[..at].trim_end();
+            before.is_empty() || before.ends_with([';', '{', '}', ']', ')']) || ends_with_word(before, "pub")
+        })
+        .filter_map(|at| {
+            let rest = &code[at + 3..];
+            let end = rest.find(';')?;
+            Some(rest[..end].chars().filter(|c| !c.is_whitespace()).collect())
+        })
+        .collect()
+}
+
+/// True when masked `code` defines `fn name` at all, a method included.
 fn defines_fn(code: &str, name: &str) -> bool {
     word_sites(code, name).into_iter().any(|at| ends_with_word(&code[..at], "fn"))
+}
+
+/// True when masked `code` defines `fn name` taking no `self`: a free or associated function a
+/// bare call can name. A method of the same name does not shadow an import of the ledger's.
+fn defines_free_fn(code: &str, name: &str) -> bool {
+    word_sites(code, name).into_iter().any(|at| {
+        if !ends_with_word(&code[..at], "fn") {
+            return false;
+        }
+        let rest = &code[at + name.len()..];
+        let Some(open) = rest.find('(') else {
+            return false;
+        };
+        let first: String = rest[open + 1..].chars().take_while(|&c| c != ',' && c != ')' && c != ':').collect();
+        let first: String = first.chars().filter(|c| !c.is_whitespace()).collect();
+        !matches!(first.as_str(), "self" | "&self" | "&mutself" | "mutself") && !first.starts_with("&'")
+    })
 }
 
 /// A module is the ledger's own when its file or a directory it sits in is named `landstate`.
