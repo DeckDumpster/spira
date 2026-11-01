@@ -12,9 +12,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use state_store::{Backend, Compare, Error, Item, Object, Request, Result, Rev, Selector, Txn};
 
+use super::mending::MendingRecord;
 use super::{Read, Store};
 use crate::control::keys;
-use crate::control::records::{decode, encode, Audit, BatchRecord, LifecycleRecord, Member};
+use crate::control::records::{
+    decode, encode, Audit, BatchIndex, BatchRecord, LifecycleRecord, Member,
+};
 
 /// A machine event's audit, in the dolt `event` row's terms.
 #[allow(clippy::too_many_arguments)]
@@ -123,7 +126,7 @@ impl Cascade {
         Ok(self.slots.last_mut().expect("just pushed"))
     }
 
-    fn get<B: Backend, T: for<'de> Deserialize<'de>>(
+    pub(super) fn get<B: Backend, T: for<'de> Deserialize<'de>>(
         &mut self,
         store: &Store<B>,
         key: &str,
@@ -133,7 +136,7 @@ impl Cascade {
     }
 
     /// Plans `value` at `key`, keeping the metadata it already had, or giving a new key `owners`.
-    fn put<B: Backend, T: Serialize>(
+    pub(super) fn put<B: Backend, T: Serialize>(
         &mut self,
         store: &Store<B>,
         key: &str,
@@ -154,7 +157,7 @@ impl Cascade {
     }
 
     /// A machine step: its audit when the cascade commits, and its loss when it does not.
-    fn step(&mut self, applied: Audit) {
+    pub(super) fn step(&mut self, applied: Audit) {
         let mut lost = applied.clone();
         lost.to_state = lost.from_state.clone();
         lost.applied = false;
@@ -171,6 +174,22 @@ impl Cascade {
 
     pub fn steps(&self) -> usize {
         self.steps
+    }
+
+    /// Names, in each `Returned` audit of `id` on either branch, the prerequisite it followed
+    /// out of the round.
+    fn name_prerequisite(&mut self, id: &str, prereq: &str) {
+        for a in self.then.iter_mut().chain(self.els.iter_mut()) {
+            if a.lc_key != id || a.event != "Returned" {
+                continue;
+            }
+            let mut evidence = match std::mem::take(&mut a.evidence) {
+                Value::Object(m) => m,
+                other => serde_json::Map::from_iter([("evidence".to_string(), other)]),
+            };
+            evidence.insert("stacked_on".into(), Value::String(prereq.into()));
+            a.evidence = Value::Object(evidence);
+        }
     }
 
     /// The txn: each written key compared at the revision it was read at, then written.
@@ -215,6 +234,17 @@ fn cannot_tell(msg: String) -> Planned {
     Planned::Ran(Ran::Turned(Turned::CannotTell(msg)))
 }
 
+/// A round past the member cap is refused before anything is read: every cascade on a round
+/// writes about three keys a member, so a larger round could not be settled or abandoned.
+fn over_cap(verb: &str, members: usize) -> Option<Planned> {
+    let cap = state_store::limits::MAX_CUT_MEMBERS;
+    (members > cap).then(|| {
+        refused(format!(
+            "refused: {verb}: a round holds at most {cap} members, and this one would hold {members}"
+        ))
+    })
+}
+
 /// A delivery still in `batch_id`: an ejected member keeps its place in the member list, but
 /// its delivery has left the batch.
 fn still_in_batch(row: &DeliveryRow, batch_id: &str) -> bool {
@@ -246,12 +276,13 @@ impl<B: Backend> Store<B> {
             .collect()
     }
 
-    /// The round `id` and its key, whichever repo it was cut in.
+    /// The round `id` and its key, whichever repo it was cut in, found through its id index.
     pub fn batch(&self, id: &str) -> Result<Option<(String, Read<BatchRecord>)>> {
-        Ok(self
-            .batches()?
-            .into_iter()
-            .find(|(_, r)| r.value.row.batch_id == id))
+        let Some((ix, _)) = self.read::<BatchIndex>(&keys::batch_index(id), None)? else {
+            return Ok(None);
+        };
+        let key = keys::batch(&ix.value.repo, id);
+        Ok(self.read(&key, None)?.map(|(r, _)| (key, r)))
     }
 
     /// Every round, from one snapshot, by key.
@@ -274,7 +305,7 @@ impl<B: Backend> Store<B> {
             .map(|i| i.value.data))
     }
 
-    fn commit(&self, c: Cascade, req: &Request, part: &str) -> Result<Ran> {
+    pub(super) fn commit(&self, c: Cascade, req: &Request, part: &str) -> Result<Ran> {
         let r = self.audited_txn(c.txn(), &c.then, &c.els, req, part)?;
         Ok(Ran::Done {
             rev: r.rev,
@@ -290,7 +321,12 @@ impl<B: Backend> Store<B> {
         }
     }
 
-    fn refuse_audit(&self, audit: Audit, refusal: Refusal, req: &Request) -> Result<Ran> {
+    pub(super) fn refuse_audit(
+        &self,
+        audit: Audit,
+        refusal: Refusal,
+        req: &Request,
+    ) -> Result<Ran> {
         let r = self.audited_txn(Txn::new(), &[audit], &[], req, "refuse")?;
         Ok(Ran::Refused {
             rev: r.rev,
@@ -298,24 +334,24 @@ impl<B: Backend> Store<B> {
         })
     }
 
-    /// One batch-machine event on `id`, CAS'd on the round's own key. A batch event that opens
-    /// a mending row (`Failed`) belongs to the mending machine, which this store does not serve.
+    /// One batch-machine event on `id`, CAS'd on the round's own key. A `Failed` opens its
+    /// failure's mending row, compared absent, in the same txn.
     pub fn batch_event(&self, id: &str, ev: &BatchEvent, at: i64, req: &Request) -> Result<Ran> {
-        if matches!(ev.kind, BatchEventKind::Failed { .. }) {
-            return Ok(Ran::Turned(Turned::CannotTell(
-                "a Failed batch event opens a mending row, and the control store does not serve the mending machine yet".into(),
-            )));
-        }
         let Some((key, rec)) = self.batch(id)? else {
             return Ok(Ran::Turned(Turned::CannotTell(format!(
                 "event: no batch row for {id}"
             ))));
         };
         let mut c = Cascade::new();
-        match self.batch_step(&mut c, &key, &rec.value, ev, at)? {
-            Ok(_) => self.commit(c, req, "apply"),
-            Err((audit, refusal)) => self.refuse_audit(audit, refusal, req),
+        if let Err((audit, refusal)) = self.batch_step(&mut c, &key, &rec.value, ev, at)? {
+            return self.refuse_audit(audit, refusal, req);
         }
+        if let BatchEventKind::Failed { suite, n } = &ev.kind {
+            let failed = MendingRecord::failed(id, *n, suite, at);
+            let row = keys::mending(&failed.row.key());
+            c.put(self, &row, &failed, &[])?;
+        }
+        self.commit(c, req, "apply")
     }
 
     /// Plans `ev` on the round at `key`: the next row, or the audited refusal.
@@ -403,7 +439,7 @@ impl<B: Backend> Store<B> {
 
     /// Plans a bead-machine event inside a cascade: applied, it is a step; refused, it is left
     /// out, as the dolt cascade leaves out a step its machine would not take.
-    fn bead_step(
+    pub(super) fn bead_step(
         &self,
         c: &mut Cascade,
         id: &str,
@@ -492,7 +528,41 @@ impl<B: Backend> Store<B> {
         members: &[(String, String)],
         allow_submitted: bool,
     ) -> Result<std::result::Result<Vec<Option<DeliveryRow>>, Planned>> {
+        if let Err(early) = self.admit_records(c, members, allow_submitted)? {
+            return Ok(Err(early));
+        }
         let mut deliveries = Vec::new();
+        for (id, _) in members {
+            deliveries.push(c.get::<B, DeliveryRow>(self, &keys::delivery(id))?);
+        }
+        for ((id, _), d) in members.iter().zip(&deliveries) {
+            match d.as_ref().map(|d| d.state) {
+                None | Some(DeliveryState::Queued | DeliveryState::Exited) => {}
+                Some(DeliveryState::Batched) => {
+                    let other = d.as_ref().and_then(|d| d.batch_id.as_deref());
+                    return Ok(Err(refused(format!(
+                        "refused: {id} is still BATCHED in {}",
+                        other.unwrap_or("another batch")
+                    ))));
+                }
+                Some(s) => {
+                    return Ok(Err(refused(format!(
+                        "refused: {id}'s delivery is {} and cannot be cut",
+                        s.as_str()
+                    ))))
+                }
+            }
+        }
+        Ok(Ok(deliveries))
+    }
+
+    /// Every member's record at its tip, in a state the verb admits.
+    fn admit_records(
+        &self,
+        c: &mut Cascade,
+        members: &[(String, String)],
+        allow_submitted: bool,
+    ) -> Result<std::result::Result<(), Planned>> {
         for (n, (id, tip)) in members.iter().enumerate() {
             if members[..n].iter().any(|(other, _)| other == id) {
                 return Ok(Err(cannot_tell(format!(
@@ -521,27 +591,8 @@ impl<B: Backend> Store<B> {
                     "refused: {id}'s certified tip does not match {tip}"
                 ))));
             }
-            deliveries.push(c.get::<B, DeliveryRow>(self, &keys::delivery(id))?);
         }
-        for ((id, _), d) in members.iter().zip(&deliveries) {
-            match d.as_ref().map(|d| d.state) {
-                None | Some(DeliveryState::Queued | DeliveryState::Exited) => {}
-                Some(DeliveryState::Batched) => {
-                    let other = d.as_ref().and_then(|d| d.batch_id.as_deref());
-                    return Ok(Err(refused(format!(
-                        "refused: {id} is still BATCHED in {}",
-                        other.unwrap_or("another batch")
-                    ))));
-                }
-                Some(s) => {
-                    return Ok(Err(refused(format!(
-                        "refused: {id}'s delivery is {} and cannot be cut",
-                        s.as_str()
-                    ))))
-                }
-            }
-        }
-        Ok(Ok(deliveries))
+        Ok(Ok(()))
     }
 
     /// Each member's `MemberAdded` on the round, `Deliver` on its record, and its delivery
@@ -624,22 +675,20 @@ impl<B: Backend> Store<B> {
     /// `cut`: the round born OPEN with its members inside it, and each member delivered into
     /// it, in one txn. A round of that id in any repo refuses the cut.
     pub fn plan_cut(&self, cut: &Cut) -> Result<Planned> {
-        if self.batch(cut.batch_id)?.is_some() {
-            return Ok(cannot_tell(format!(
-                "cut: a batch row for {} already exists",
-                cut.batch_id
-            )));
+        if let Some(over) = over_cap("cut", cut.members.len()) {
+            return Ok(over);
         }
-        // The round's own key is read first, so the txn compares it absent: a same-id cut that
-        // commits after this read makes this one lose rather than overwrite it.
+        self.plan_cut_uncapped(cut)
+    }
+
+    fn plan_cut_uncapped(&self, cut: &Cut) -> Result<Planned> {
         let mut c = Cascade::new();
-        let key = keys::batch(cut.repo, cut.batch_id);
-        if c.get::<B, BatchRecord>(self, &key)?.is_some() {
+        let Some(key) = self.new_round(&mut c, cut.repo, cut.batch_id)? else {
             return Ok(cannot_tell(format!(
                 "cut: a batch row for {} already exists",
                 cut.batch_id
             )));
-        }
+        };
         // Admission reads every member through the cascade, so what it judged is what is compared.
         let deliveries = match self.admitted(&mut c, cut.members, true)? {
             Ok(d) => d,
@@ -670,8 +719,34 @@ impl<B: Backend> Store<B> {
                 .collect(),
             opened_at: cut.at,
         };
-        c.put(self, &key, &rec, &[])?;
+        self.put_round(&mut c, &key, &rec)?;
         Ok(Planned::Cascade(c))
+    }
+
+    /// Reads round `id`'s index and its key in `repo` into the cascade, so its txn compares
+    /// both absent and a same-id round committed after this read, in any repo, makes it lose.
+    /// `None` when either exists already.
+    pub(super) fn new_round(
+        &self,
+        c: &mut Cascade,
+        repo: &str,
+        id: &str,
+    ) -> Result<Option<String>> {
+        let key = keys::batch(repo, id);
+        let indexed = c
+            .get::<B, BatchIndex>(self, &keys::batch_index(id))?
+            .is_some();
+        let stored = c.get::<B, BatchRecord>(self, &key)?.is_some();
+        Ok((!indexed && !stored).then_some(key))
+    }
+
+    /// Plans the round at `key` and, owned by it, its id index.
+    pub(super) fn put_round(&self, c: &mut Cascade, key: &str, rec: &BatchRecord) -> Result<()> {
+        c.put(self, key, rec, &[])?;
+        let ix = BatchIndex {
+            repo: rec.row.repo.clone(),
+        };
+        c.put(self, &keys::batch_index(&rec.row.batch_id), &ix, &[key])
     }
 
     /// `land`: `FastForward` on the round, and every member still in it `Delivered` on its
@@ -742,6 +817,10 @@ fn read_of<T: for<'de> Deserialize<'de>>(i: &Item) -> Result<Read<T>> {
         create_rev: i.create_rev,
     })
 }
+
+mod cascades;
+
+pub use cascades::Withdrawn;
 
 #[cfg(test)]
 mod tests;

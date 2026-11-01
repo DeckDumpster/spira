@@ -18,7 +18,11 @@ pub const VERBS: &[&str] = &["show", "list", "event", "create-bead"];
 
 /// Whether this module or the round's verbs answer `verb`.
 pub fn is_verb(verb: &str) -> bool {
-    VERBS.contains(&verb) || rounds::VERBS.contains(&verb)
+    VERBS.contains(&verb)
+        || rounds::VERBS.contains(&verb)
+        || cascades::VERBS.contains(&verb)
+        || asks::VERBS.contains(&verb)
+        || mending::VERBS.contains(&verb)
 }
 
 /// What one call carries besides its argv: the clock it is judged at and the request id its
@@ -40,6 +44,9 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
         Some("event") => event(store, rest, call),
         Some("create-bead") => create(store, rest, call),
         Some(v) if rounds::VERBS.contains(&v) => rounds::run(store, args, call),
+        Some(v) if cascades::VERBS.contains(&v) => cascades::run(store, args, call),
+        Some(v) if asks::VERBS.contains(&v) => asks::run(store, args, call),
+        Some(v) if mending::VERBS.contains(&v) => mending::run(store, args, call),
         other => (
             CANNOT_TELL,
             format!("{other:?} is not a control-store verb"),
@@ -468,6 +475,9 @@ fn create<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, S
     }
 }
 
+mod asks;
+mod cascades;
+mod mending;
 mod rounds;
 
 #[cfg(test)]

@@ -5,7 +5,11 @@ pub const READINESS: &str = "readiness/";
 pub const DELIVERIES: &str = "deliveries/";
 pub const ASKS: &str = "asks/";
 pub const MENDINGS: &str = "mendings/";
+/// Each member branch a mend moved, by bead: what a second mender must build on.
+pub const MENDS: &str = "mends/";
 pub const BATCHES: &str = "batches/";
+/// Each round's id, naming the repo it was cut in: a round id is unique across repos.
+pub const BATCH_IDS: &str = "batch-ids/";
 pub const RUNTIME: &str = "runtime/";
 pub const HISTORY: &str = "history/";
 /// Knobs a section owner moves by applying an intent from one value to another.
@@ -33,8 +37,22 @@ pub fn mending(id: &str) -> String {
     format!("{MENDINGS}{id}")
 }
 
+/// Every mend recorded on `bead`'s branch, oldest first.
+pub fn mends(bead: &str) -> String {
+    format!("{MENDS}{bead}/")
+}
+
+/// The `n`th member a mend planned at `planned_at` moved: its keys sort in the order mends land.
+pub fn mend(bead: &str, planned_at: u64, n: usize) -> String {
+    format!("{}{planned_at:020}/{n:04}", mends(bead))
+}
+
 pub fn batch(repo: &str, id: &str) -> String {
     format!("{BATCHES}{repo}/{id}")
+}
+
+pub fn batch_index(id: &str) -> String {
+    format!("{BATCH_IDS}{id}")
 }
 
 pub fn batch_progress(repo: &str, id: &str) -> String {
@@ -86,7 +104,10 @@ mod tests {
         assert_eq!(delivery("sp-a"), "deliveries/sp-a");
         assert_eq!(ask("sp-q"), "asks/sp-q");
         assert_eq!(mending("sp-a"), "mendings/sp-a");
+        assert_eq!(mend("sp-a", 7, 1), "mends/sp-a/00000000000000000007/0001");
+        assert!(!mend("sp-ab", 7, 1).starts_with(&mends("sp-a")));
         assert_eq!(batch("harness", "b-1"), "batches/harness/b-1");
+        assert_eq!(batch_index("b-1"), "batch-ids/b-1");
         assert_eq!(
             batch_progress("harness", "b-1"),
             "batches/harness/b-1/progress"
@@ -101,7 +122,8 @@ mod tests {
         assert!(!history_entry("sp-ab", 7, "r").starts_with(&history("sp-a")));
         assert_eq!(id_of(&claim_locks(), &claim_lock("sp-a")), Some("sp-a"));
         let prefixes = [
-            LIFECYCLE, READINESS, DELIVERIES, ASKS, MENDINGS, BATCHES, RUNTIME, HISTORY, KNOBS,
+            LIFECYCLE, READINESS, DELIVERIES, ASKS, MENDINGS, MENDS, BATCHES, BATCH_IDS, RUNTIME,
+            HISTORY, KNOBS,
         ];
         for (i, a) in prefixes.iter().enumerate() {
             for b in &prefixes[i + 1..] {
