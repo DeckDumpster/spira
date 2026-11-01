@@ -13,16 +13,17 @@ pub const MAX_TXN_COMPARES: usize = 128;
 pub const MAX_REQUEST_BYTES: usize = 1_572_864;
 
 /// Ops on the larger branch of a round's cut of `members`: each member's lifecycle and delivery
-/// put and its history entry; the round, its id index and its history entry; then the events
-/// and request keys the contract adds.
+/// put, its gate when the step moves it, and its history entry; the round, its id index and its
+/// history entry; then the events and request keys the contract adds. A landing moves every
+/// member's gate, so the bound counts one for each.
 pub const fn cut_ops(members: usize) -> usize {
-    3 * members + 5
+    4 * members + 5
 }
 
-/// Compares a cut makes: each member's record and delivery, the round's key and its id index
-/// absent, and each blocker gate it re-checks.
+/// Compares a cut makes: each member's record, delivery and gate, the round's key and its id
+/// index absent, and each blocker gate it re-checks.
 pub const fn cut_compares(members: usize, gates: usize) -> usize {
-    2 * members + 2 + gates
+    3 * members + 2 + gates
 }
 
 /// Whether a cut of `members` comparing `gates` blocker gates fits both limits.
@@ -106,7 +107,8 @@ mod tests {
         assert!(cut_fits(MAX_CUT_MEMBERS, MAX_CUT_GATES));
         assert!(!cut_fits(MAX_CUT_MEMBERS + 1, 0));
         assert!(!cut_fits(MAX_CUT_MEMBERS, MAX_CUT_GATES + 1));
-        assert_eq!(cut_ops(MAX_CUT_MEMBERS), MAX_TXN_OPS);
-        assert_eq!(MAX_CUT_MEMBERS, 41);
+        assert!(cut_ops(MAX_CUT_MEMBERS) <= MAX_TXN_OPS);
+        assert!(cut_ops(MAX_CUT_MEMBERS + 1) > MAX_TXN_OPS);
+        assert_eq!(MAX_CUT_MEMBERS, 30);
     }
 }

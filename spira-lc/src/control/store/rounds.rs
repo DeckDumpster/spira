@@ -10,6 +10,7 @@ use lifecycle::delivery::{self, DeliveryEvent, DeliveryEventKind, DeliveryRow, D
 use lifecycle::Refusal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use spira_config::edges::Gate;
 use state_store::{Backend, Compare, Error, Item, Object, Request, Result, Rev, Selector, Txn};
 
 use super::mending::MendingRecord;
@@ -235,7 +236,8 @@ fn cannot_tell(msg: String) -> Planned {
 }
 
 /// A round past the member cap is refused before anything is read: every cascade on a round
-/// writes about three keys a member, so a larger round could not be settled or abandoned.
+/// writes up to four keys a member (record, delivery, gate, history), so a larger round could
+/// not be settled or abandoned.
 fn over_cap(verb: &str, members: usize) -> Option<Planned> {
     let cap = state_store::limits::MAX_CUT_MEMBERS;
     (members > cap).then(|| {
@@ -438,7 +440,9 @@ impl<B: Backend> Store<B> {
     }
 
     /// Plans a bead-machine event inside a cascade: applied, it is a step; refused, it is left
-    /// out, as the dolt cascade leaves out a step its machine would not take.
+    /// out, as the dolt cascade leaves out a step its machine would not take. The record's gate
+    /// is written beside it whenever the step moves it, so a claim judged against a blocker
+    /// before a cut, a landing or a return compares what the blocker now is.
     pub(super) fn bead_step(
         &self,
         c: &mut Cascade,
@@ -474,7 +478,13 @@ impl<B: Backend> Store<B> {
             actor,
             at,
         ));
-        c.put(self, &key, &next_record(&cur, out.row, at), &[])?;
+        let next = next_record(&cur, out.row, at);
+        c.put(self, &key, &next, &[])?;
+        let gate = next.gate();
+        let gate_key = keys::gate(id);
+        if c.get::<B, Gate>(self, &gate_key)?.as_ref() != Some(&gate) {
+            c.put(self, &gate_key, &gate, &[key.as_str()])?;
+        }
         Ok(Ok(()))
     }
 

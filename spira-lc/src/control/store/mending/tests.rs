@@ -78,7 +78,7 @@ impl Rig {
 
     /// A round of sp-a at T1, its first pass running suites.
     fn suites(&self) {
-        self.ok(&["create-bead", "sp-a", "--repo", "spira"]);
+        self.ok(&["create-bead", "sp-a", "--repo", "spira", "--ready"]);
         let claim = r#"{"Claim":{"holder":"dwarf-1","lease_until":1767229200}}"#;
         self.event("bead", "sp-a", "READY", 0, claim);
         self.event(

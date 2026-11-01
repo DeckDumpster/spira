@@ -1065,10 +1065,10 @@ pub fn txn_compares_at_the_limit_pass_and_one_over_is_refused<R: Rig>(rig: &R) {
     );
 }
 
-/// A round's cut, shaped as `limits::cut_ops` counts it: each member's record and delivery
-/// written under compares of both, with its history entry; the round, its id index and its
-/// history entry, the round and index compared absent. The contract adds the events and request
-/// keys.
+/// A round's cut, shaped as `limits::cut_ops` counts it: each member's record, delivery and
+/// gate written under compares of all three, with its history entry; the round, its id index and
+/// its history entry, the round and index compared absent. The contract adds the events and
+/// request keys.
 fn cut(members: usize, round: &str) -> Txn {
     let batch = format!("batches/r/{round}");
     let index = format!("batch-ids/{round}");
@@ -1082,8 +1082,10 @@ fn cut(members: usize, round: &str) -> Txn {
     ids.iter().fold(t, |t, id| {
         t.when(Compare::ModRev(format!("lifecycle/{id}"), None))
             .when(Compare::ModRev(format!("deliveries/{id}"), None))
+            .when(Compare::ModRev(format!("gates/{id}"), None))
             .put(&format!("lifecycle/{id}"), obj(json!("IN_DELIVERY")))
             .put(&format!("deliveries/{id}"), obj(json!({ "round": round })))
+            .put(&format!("gates/{id}"), obj(json!({ "class": "finished" })))
             .put(&format!("history/{id}/0"), obj(json!("Enqueued")))
     })
 }

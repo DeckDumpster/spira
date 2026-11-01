@@ -104,27 +104,42 @@ impl<B: Backend> Rig<B> {
     }
 
     fn certified_with(&self, id: &str, tip: &str, claim: &str) {
-        self.ok(&["create-bead", id, "--repo", "spira"]);
-        let submit = format!(r#"{{"Submit":{{"tip":"{tip}"}}}}"#);
+        self.submitted_with(id, tip, claim);
         let pass = format!(r#"{{"GatePass":{{"tip":"{tip}","gate_key":"k1"}}}}"#);
-        let event = |expect: &str, v: &str, kind: &str| {
-            self.ok(&[
-                "event",
-                "bead",
-                id,
-                "--expect",
-                expect,
-                "--version",
-                v,
-                "--actor",
-                "test",
-                "--kind",
-                kind,
-            ])
-        };
-        event("READY", "0", claim);
-        event("WORKING", "1", &submit);
-        event("SUBMITTED", "2", &pass);
+        self.bead_event(id, "SUBMITTED", "2", &pass);
+    }
+
+    /// SUBMITTED at `tip`: a cut moves its gate from unfinished to stackable, so its cut writes
+    /// the member's gate as well as its record.
+    fn submitted(&self, id: &str, tip: &str) {
+        self.submitted_with(
+            id,
+            tip,
+            r#"{"Claim":{"holder":"dwarf-1","lease_until":1767229200}}"#,
+        );
+    }
+
+    fn submitted_with(&self, id: &str, tip: &str, claim: &str) {
+        self.ok(&["create-bead", id, "--repo", "spira", "--ready"]);
+        let submit = format!(r#"{{"Submit":{{"tip":"{tip}"}}}}"#);
+        self.bead_event(id, "READY", "0", claim);
+        self.bead_event(id, "WORKING", "1", &submit);
+    }
+
+    fn bead_event(&self, id: &str, expect: &str, version: &str, kind: &str) {
+        self.ok(&[
+            "event",
+            "bead",
+            id,
+            "--expect",
+            expect,
+            "--version",
+            version,
+            "--actor",
+            "test",
+            "--kind",
+            kind,
+        ]);
     }
 
     fn cut_spec<'a>(&self, members: &'a [(String, String)]) -> Cut<'a> {
@@ -495,9 +510,10 @@ fn ids(n: usize) -> Vec<(String, String)> {
 fn a_cut_at_the_member_cap_commits_and_one_more_is_refused_before_any_write<B: Backend>(
     r: &Rig<B>,
 ) {
+    // SUBMITTED members, so the cut moves every member's gate: the round's largest cascade.
     let over = ids(CAP + 1);
     for (id, tip) in &over {
-        r.certified(id, tip);
+        r.submitted(id, tip);
     }
     let head = r.s.contract().head().unwrap();
     let p = r.s.plan_cut(&r.cut_spec(&over)).unwrap();
@@ -863,4 +879,79 @@ fn a_round_that_opened_and_never_began_is_abandoned_and_its_members_requeued() {
     );
     assert_eq!(round_state(&r), BatchState::Abandoned);
     assert_eq!(r.state("sp-a"), BeadState::Certified);
+}
+
+/// The gate a claim would compare on `id`, as the store holds it.
+fn stored_gate<B: Backend>(r: &Rig<B>, id: &str) -> spira_config::edges::Gate {
+    let item = r.s.contract().get(&keys::gate(id)).unwrap().unwrap();
+    serde_json::from_value(item.value.data).unwrap()
+}
+
+#[test]
+fn a_landing_and_a_settle_move_each_members_gate_with_its_record() {
+    use spira_config::edges::GateClass;
+    let r = Rig::new();
+    green_round(&r);
+    let req = r.req();
+    let p = r.s.plan_land("b-1", &fast_forward(4), AT, &req).unwrap();
+    r.s.run_planned(p, &req, "land").unwrap();
+    for id in ["sp-a", "sp-b"] {
+        assert_eq!(stored_gate(&r, id).class, GateClass::Finished, "{id}");
+    }
+    let r = Rig::new();
+    attributing(&r);
+    r.ok(&[
+        "settle",
+        "b-1",
+        "--expect",
+        "ATTRIBUTING",
+        "--version",
+        "4",
+        "--actor",
+        "test",
+        "--eject",
+        "sp-a",
+    ]);
+    for id in ["sp-a", "sp-b"] {
+        let rec = r.s.record(id).unwrap().unwrap().value;
+        assert_eq!(stored_gate(&r, id), rec.gate(), "{id}");
+        assert_eq!(stored_gate(&r, id).class, GateClass::Unfinished, "{id}");
+    }
+}
+
+#[test]
+fn a_landing_at_the_member_cap_commits_with_every_members_gate() {
+    let r = Rig::new();
+    let at = ids(CAP);
+    for (id, tip) in &at {
+        r.submitted(id, tip);
+    }
+    let p = r.s.plan_cut(&r.cut_spec(&at)).unwrap();
+    r.s.run_planned(p, &r.req(), "cut").unwrap();
+    // The cut versions the round once per member it adds.
+    let v = r.s.batch("b-1").unwrap().unwrap().1.value.row.version;
+    batch_event(
+        &r,
+        BatchState::Open,
+        v,
+        BatchEventKind::CiStarted { run: "r1".into() },
+    );
+    batch_event(&r, BatchState::CiRunning, v + 1, BatchEventKind::Green);
+    let req = r.req();
+    let p =
+        r.s.plan_land("b-1", &fast_forward(v + 2), AT, &req)
+            .unwrap();
+    let ran = r.s.run_planned(p, &req, "land").unwrap();
+    assert!(
+        matches!(&ran, Ran::Done { applied, .. } if applied.iter().all(|a| *a)),
+        "{ran:?}"
+    );
+    for (id, _) in &at {
+        assert_eq!(r.state(id), BeadState::Landed, "{id}");
+        assert_eq!(
+            stored_gate(&r, id).class,
+            spira_config::edges::GateClass::Finished,
+            "{id}"
+        );
+    }
 }
