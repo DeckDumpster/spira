@@ -1228,6 +1228,19 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             }
             Ok(c) => {
                 deps.log(&format!("unit-tests: {} affected crate(s): {}", c.len(), c.join(" ")));
+                // law-absence-needs-a-positive-control: an empty list over a wrong base would
+                // pass having tested nothing.
+                match c.is_empty().then(|| crate::unit::no_crate_doubt(&repo.path, &base, br)) {
+                    Some(Ok(Some(why))) => {
+                        deps.log(&format!("unit-tests: the diff against {base} {why} — no verdict"));
+                        return Finish::fault(2, "unit-no-crates", 0);
+                    }
+                    Some(Err(e)) => {
+                        stderr(&format!("batch: unit-tests: {e}"));
+                        return Finish::fault(2, "unit-crates", 0);
+                    }
+                    _ => {}
+                }
                 c
             }
             Err(e) => {

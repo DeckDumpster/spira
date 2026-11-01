@@ -2734,3 +2734,29 @@ fn a_repeat_reason_flag_runs_the_tree_again_over_a_cached_green() {
     assert_eq!(b.calls.load(Ordering::SeqCst), 2);
     assert!(w.has_line(|l| l.contains("repeat allowed — reason: suspect the cached green")));
 }
+
+#[test]
+fn a_unit_run_whose_base_is_its_tip_is_a_fault_naming_the_base() {
+    let w = unit_world("unit-base-is-tip");
+    let rt = runtime();
+    libtest_over_fixture(&rt, &w.repo);
+    let b = FakeBuilder::new(None);
+    sh(&w.repo, "git branch -f local/main units");
+    let rc = w.run(&rt, &b, &["--suites", "unit-tests", "units"], "", &w.repo);
+    assert_eq!(rc, 2, "{:?}", w.lines.lock().unwrap());
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=unit-no-crates");
+    assert!(w.has_line(|l| l.ends_with("unit-tests: the diff against local/main selects no crate and is empty — no verdict")), "{:?}", w.lines.lock().unwrap());
+    assert_eq!(b.calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn a_unit_run_whose_diff_touches_rust_but_selects_no_crate_is_a_fault_naming_the_paths() {
+    let w = unit_world("unit-stray-rust");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    sh(&w.repo, "git checkout -q local/main && git checkout -qb stray && mkdir -p tools && echo 'fn main() {}' > tools/gen.rs && git add tools && git commit -qm stray");
+    let rc = w.run(&rt, &b, &["--suites", "unit-tests", "stray"], "", &w.repo);
+    assert_eq!(rc, 2, "{:?}", w.lines.lock().unwrap());
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=unit-no-crates");
+    assert!(w.has_line(|l| l.ends_with("unit-tests: the diff against local/main selects no crate but touches Rust sources: tools/gen.rs — no verdict")), "{:?}", w.lines.lock().unwrap());
+}

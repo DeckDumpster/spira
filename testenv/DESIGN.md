@@ -252,7 +252,10 @@ ISO timestamps→`TIMESTAMP`, `HH:MM:SS`→`TIME`, `[0-9]{3,}`→`N`; then POSIX
 * When `unit-tests` is selected, ` unit-base=<merge base of landref and branch> unit-crates=<sorted
   comma list>` is appended: one tree selects different crates over different bases, and a pass
   over some crates says nothing about the others. A unit tier that selected **no** crate tested
-  nothing, so its verdict is neither read from nor written to the cache.
+  nothing, so its verdict is neither read from nor written to the cache. An empty list is
+  believed only for a diff that touches no Rust: when `<landref>...<branch>` is empty (the base
+  is the tip) or touches a `*.rs` or `Cargo.toml`, the run is `FAULT rc=2 reason=unit-no-crates`,
+  logged with the base and the Rust paths.
 
 `$SPIRA_VERDICTS/batch-<key>`: `key=value` lines `verdict=green|red|partial`, `when=<ISO UTC>`,
 `by=testenv-batch`, `at=<epoch>`, `red_suites=<space list>` (red only),

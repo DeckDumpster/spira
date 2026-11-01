@@ -127,9 +127,49 @@ pub fn write_crates(repo: &Path, base: &str, rev: &str, tree: &Path) -> Result<V
     Ok(crates)
 }
 
+/// Why a crate list that came out empty cannot be believed, or None for a diff that genuinely
+/// touches no crate (docs, scripts). An empty diff is a base that is the tip itself, and a Rust
+/// source or manifest outside every crate is a selection that missed it.
+pub fn no_crate_doubt(repo: &Path, base: &str, rev: &str) -> Result<Option<String>, String> {
+    let names = output(
+        Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["diff", "--name-only", "-z", "--no-renames", &format!("{base}...{rev}")])
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE"),
+    )
+    .map_err(|e| format!("git diff {base}...{rev}: {e}"))?;
+    let paths: Vec<String> = names.split(|b| *b == 0).filter(|p| !p.is_empty()).map(|p| String::from_utf8_lossy(p).into_owned()).collect();
+    Ok(doubt(&paths))
+}
+
+fn doubt(paths: &[String]) -> Option<String> {
+    if paths.is_empty() {
+        return Some("selects no crate and is empty".into());
+    }
+    let rust: Vec<&str> = paths
+        .iter()
+        .map(String::as_str)
+        .filter(|p| p.ends_with(".rs") || p.rsplit('/').next() == Some("Cargo.toml"))
+        .collect();
+    (!rust.is_empty()).then(|| format!("selects no crate but touches Rust sources: {}", rust.join(" ")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_empty_crate_list_is_doubted_for_an_empty_diff_or_a_rust_path_and_believed_for_docs() {
+        let p = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(doubt(&[]).as_deref(), Some("selects no crate and is empty"));
+        assert_eq!(
+            doubt(&p(&["notes.md", "tools/gen.rs", "x/Cargo.toml"])).as_deref(),
+            Some("selects no crate but touches Rust sources: tools/gen.rs x/Cargo.toml")
+        );
+        assert_eq!(doubt(&p(&["notes.md", "spira/x.sh", "Cargo.toml.md"])), None);
+    }
 
     #[test]
     fn the_caller_name_resolves_to_the_script_and_other_names_pass_through() {
