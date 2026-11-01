@@ -2620,6 +2620,48 @@ fn a_tests_filter_runs_only_the_named_test_and_the_verdict_names_the_filter() {
     assert!(!w.repo.join(crate::unit::FILTER_REL).exists());
 }
 
+/// The `--cargo-target-volume` each `up` of the fake runtime mounted, in call order.
+fn target_volumes(rt: &FakeRuntime) -> Vec<String> {
+    rt.testenv_calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|a| a.first().map(String::as_str) == Some("up"))
+        .filter_map(|a| a.iter().position(|x| x == "--cargo-target-volume").map(|i| a[i + 1].clone()))
+        .collect()
+}
+
+#[test]
+fn each_branch_mounts_its_own_unit_target_volume_across_its_commits_and_a_bare_sha_its_trees() {
+    let w = unit_world("unit-volume-per-branch");
+    // Branch B: the same crate and tests, different bytes.
+    sh(&w.repo, "git checkout -qb units-b && echo '// b' >> fixture/src/lib.rs && git commit -qam b && git checkout -q units");
+    let rt = runtime();
+    libtest_over_fixture(&rt, &w.repo);
+    let fb = FakeBuilder::new(None);
+    // Each run is checked out in place and names its own test, so the verdict cache answers
+    // none of them and each mounts a target (four `up`s, asserted below).
+    let run = |rev: &str, test: &str| {
+        let rc = w.run(&rt, &fb, &["--suites", "unit-tests", "--tests", test, rev], "", &w.repo);
+        assert_eq!(rc, 0, "{rev}: {:?}", w.lines.lock().unwrap());
+    };
+    run("units", "one_name");
+    sh(&w.repo, "git checkout -q units-b");
+    run("units-b", "one_name");
+    // A second commit on A: a new tree, the same branch.
+    sh(&w.repo, "git checkout -q units && echo '// a2' >> fixture/src/lib.rs && git commit -qam a2");
+    run("units", "two_name");
+    let a2 = git(&w.repo, &["rev-parse", "units"]).unwrap();
+    run(&a2, "three_name");
+    let tree = git(&w.repo, &["rev-parse", "units^{tree}"]).unwrap();
+    let own = |k: &str| format!("spira-unit-cargo-target-{k}");
+    assert_eq!(
+        target_volumes(&rt),
+        vec![own("units"), own("units-b"), own("units"), own(&tree)],
+        "A's commits share A's volume, B never mounts it, and a bare SHA gets its tree's"
+    );
+}
+
 #[test]
 fn a_tests_filter_that_matches_no_test_is_a_fault_not_a_green() {
     let w = unit_world("unit-filter-none");

@@ -16,10 +16,21 @@ pub const CONTAINER_CHECKOUT: &str = "/workspace";
 pub const CONTAINER_CARGO: &str = "/var/spira/cargo";
 /// Cargo's build output lives on the named volume, never in the host-owned bind mount.
 pub const CONTAINER_CARGO_TARGET: &str = "/var/spira/cargo/target";
-/// The one named volume a unit-tests batch mounts as its cargo target, so the next batch
-/// rebuilds the workspace crates and not their dependencies. Safe to share only because unit
-/// batches are admitted one at a time host-wide.
+/// The stem of the named volume a unit-tests batch mounts as its cargo target; each branch
+/// mounts its own, [`unit_target_volume`]. The sweep (prune.rs) bounds them all together.
 pub const UNIT_TARGET_VOLUME: &str = "spira-unit-cargo-target";
+
+/// The cargo target volume a unit-tests batch mounts (sp-fnb2wa): the tested branch's own,
+/// so builders alternating branches in the one unit slot never clean each other's builds, and
+/// a branch's dependencies stay warm across its amends; a bare revision gets its tree's own.
+/// Inside a volume, `spira/unit-tests.sh` still cleans the workspace crates when the tree
+/// differs from the last one built there (sp-h6m43s), because cargo trusts mtimes.
+pub fn unit_target_volume(branch: Option<&str>, tree: &str) -> String {
+    match branch {
+        Some(b) => format!("{UNIT_TARGET_VOLUME}-{}", gate::parse::tree_key(b)),
+        None => format!("{UNIT_TARGET_VOLUME}-{tree}"),
+    }
+}
 /// pasta's default forwards a container's loopback to the host's; `-T none` and `--no-map-gw`
 /// close both, so a container never reaches a host service bound to loopback.
 pub const ISOLATED_NETWORK: &str = "pasta:-T,none,--no-map-gw";

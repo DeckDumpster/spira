@@ -1104,7 +1104,13 @@ default conf.sh carries — conf.sh is no longer sourced:
 `localhost/spira-testenv` image but that one and the newest other, then every dangling image;
 an `up` that mounts a cargo target volume first sweeps the unit tier's target volumes
 (`spira-unit-cargo-target` and any `spira-unit-cargo-target-<key>`) to the cap, least recently
-written first. Both find what to remove in podman's own listings and remove it by id; neither
+written first. Each unit-tests batch mounts its branch's own volume (sp-fnb2wa),
+`spira-unit-cargo-target-<branch>` (the gate's tree key of the local branch named), or
+`spira-unit-cargo-target-<git tree id>` for a revision that is no local branch: builders
+alternating branches in the unit slot never clean each other's builds, and a branch's
+dependencies stay warm across its commits. Inside a volume, `spira/unit-tests.sh` still cleans
+the workspace crates when the tree differs from the last one built there (sp-h6m43s); the sweep
+is what bounds the volumes. Both find what to remove in podman's own listings and remove it by id; neither
 removes anything a container in any state uses, nor anything at all when podman cannot list
 its containers; each removal is logged with its size. A build removes only the dangling
 images created since it started, never another build's in flight; `prune` by hand removes every
