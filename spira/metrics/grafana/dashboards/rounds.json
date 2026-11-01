@@ -607,6 +607,47 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "green-to-landed dwell p50 / p90 by repo",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max by (repo) (quantile_over_time(0.5, spira_round_controller_green_to_landed_seconds{repo=~\"$repo\"}[$__interval]))",
+          "legendFormat": "p50 {{repo}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max by (repo) (quantile_over_time(0.9, spira_round_controller_green_to_landed_seconds{repo=~\"$repo\"}[$__interval]))",
+          "legendFormat": "p90 {{repo}}",
+          "refId": "B"
+        }
+      ]
     }
   ]
 }

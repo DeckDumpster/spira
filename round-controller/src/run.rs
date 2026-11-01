@@ -799,6 +799,7 @@ pub fn run<R: SubPasses>(p: &Ports, env: &RunEnv, subs: &mut R, a: &RunArgs) -> 
         units: p.units,
         vms: p.vms,
         launcher: p.launcher,
+        git: p.git,
         leases: p.leases,
         slots: p.slots,
     };

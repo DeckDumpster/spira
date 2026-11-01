@@ -401,6 +401,7 @@ fn ports<'a>(
         units: &w.units,
         vms: &w.vms,
         launcher: &w.launch,
+        git: &crate::sim::git::NO_GIT,
         leases: &w.leases,
         slots: &w.slots,
     }

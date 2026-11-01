@@ -1,0 +1,69 @@
+description = "a land refused with the word refused leaves the round GREEN with blocker Refused, and the round stacked on it GREEN with blocker StackedOnUnlanded; nothing either was refused on changes, so land is not called again, and nothing is abandoned"
+repos = ["lane"]
+
+[run]
+epoch = 1800000000
+passes = 6
+every_secs = 300
+
+[[store]]
+key = "lanes/lane"
+data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
+
+[[git]]
+repo = "lane"
+landing = "base-0"
+
+[[store]]
+key = "batches/lane/k1"
+data = { batch_id = "k1", repo = "lane", state = "Green", head = "k1-h1", base = "base-0", pass = 1, version = 3, tested_base = "base-0", members = [{ id = "sp-a", tip = "a1" }] }
+
+[[store]]
+key = "batches/lane/k2"
+data = { batch_id = "k2", repo = "lane", state = "Green", parent = "k1", head = "k2-h1", base = "k1-h1", pass = 1, version = 3, tested_base = "k1-h1", members = [{ id = "sp-b", tip = "b1" }] }
+
+[[verb]]
+verb = "land"
+batch = "k1"
+refuse = { code = 1, text = "refused: round k1 has no release build at k1-h1 — build it, then land" }
+
+[[expect]]
+name = "land-called-once"
+count = "calls:land"
+equals = 1
+
+[[expect]]
+name = "held-refused"
+count = "blockers:refused"
+equals = 1
+
+[[expect]]
+name = "its-child-held-stacked"
+count = "blockers:stacked-on-unlanded"
+equals = 1
+
+[[expect]]
+name = "each-hold-told-once"
+count = "outcomes:held"
+equals = 2
+
+[[expect]]
+name = "both-stay-green"
+count = "rounds:GREEN"
+equals = 2
+
+[[expect]]
+name = "no-green-round-abandoned"
+count = "calls:abandon"
+equals = 0
+
+[[expect]]
+name = "nothing-landed"
+count = "outcomes:landed"
+equals = 0
+
+[[expect]]
+name = "inverted-retried-every-pass"
+count = "calls:land"
+equals = 6
+inverted = true

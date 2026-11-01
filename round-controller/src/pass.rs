@@ -10,7 +10,8 @@ pub struct Step {
 }
 
 /// Supersede runs first, so the members it releases are in the pool for the cut the schedule
-/// step makes later in the same pass with a slot it holds (round-controller/pass).
+/// step makes later in the same pass with a slot it holds (round-controller/pass). Land runs
+/// after both, so a round it lands moves the base the next cut is made on.
 pub const STEPS: &[Step] = &[
     Step {
         name: crate::supersede::STEP,
@@ -19,6 +20,10 @@ pub const STEPS: &[Step] = &[
     Step {
         name: "orphans",
         run: crate::orphans::step,
+    },
+    Step {
+        name: crate::land::STEP,
+        run: crate::land::step,
     },
 ];
 

@@ -178,8 +178,17 @@ impl RoundVerbs for RealVerbs {
         Ejected::from_fields(&self.call(c.stdin("--reason-file", r.reason.clone()))?)
     }
 
-    fn land(&self, repo: &str, batch: &str) -> Result<Done, VerbRefusal> {
-        self.done(Call::new(Verb::Land, &[batch, repo]))
+    fn land(
+        &self,
+        repo: &str,
+        batch: &str,
+        lease_token: Option<&str>,
+    ) -> Result<Done, VerbRefusal> {
+        let mut c = Call::new(Verb::Land, &[batch, repo]);
+        if let Some(t) = lease_token {
+            c.args.extend(["--lease-token".to_string(), t.to_string()]);
+        }
+        self.done(c)
     }
 
     fn abandon(&self, repo: &str, batch: &str, reason: &str) -> Result<Done, VerbRefusal> {
@@ -355,7 +364,7 @@ mod tests {
             answer: Err("queue exceeded its 120s deadline".into()),
             seen: Mutex::default(),
         });
-        let e = verbs(&p).land("r", "b1").unwrap_err();
+        let e = verbs(&p).land("r", "b1", None).unwrap_err();
         assert_eq!(
             (e.verb, e.code, e.text.as_str()),
             (Verb::Land, None, "queue exceeded its 120s deadline")
@@ -423,9 +432,10 @@ mod tests {
         let p = fake(Some(0), "open_batches=b1\nx=1\n", "");
         let v = verbs(&p);
         assert_eq!(v.status("r").unwrap().open, ["b1"]);
-        assert_eq!(v.land("r", "b1").unwrap().said, "open_batches=b1 x=1");
+        assert_eq!(v.land("r", "b1", None).unwrap().said, "open_batches=b1 x=1");
         v.abandon("r", "b1", "why").unwrap();
         v.pass_start("r", "b1").unwrap();
+        v.land("r", "b1", Some("9-0")).unwrap();
         let seen = p.seen.lock().unwrap();
         assert_eq!(seen[0].args, ["round", "status", "r"]);
         assert_eq!(seen[1].args, ["round", "land", "b1", "r"]);
@@ -440,6 +450,10 @@ mod tests {
             )
         );
         assert_eq!(seen[3].args, ["round", "pass-start", "b1", "r"]);
+        assert_eq!(
+            seen[4].args,
+            ["round", "land", "b1", "r", "--lease-token", "9-0"]
+        );
     }
 
     #[test]

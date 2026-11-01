@@ -37,6 +37,7 @@ fn open_ok(batch: &str) -> VerbScript {
     VerbScript {
         verb: "open".into(),
         repo: None,
+        batch: None,
         ok: Some(Fields::from([
             ("batch".to_string(), batch.to_string()),
             ("head".to_string(), format!("{batch}-head")),
@@ -104,6 +105,7 @@ impl World {
             units: &self.units,
             vms: &self.vms,
             launcher: &self.launch,
+            git: &crate::sim::git::NO_GIT,
             leases: &self.leases,
             slots: &self.slots,
         }
@@ -385,6 +387,7 @@ fn an_open_the_queue_refuses_is_a_verb_refusal_keyed_on_its_code() {
     let w = World::new(vec![VerbScript {
         verb: "open".into(),
         repo: None,
+        batch: None,
         ok: None,
         refuse: Some(Refuse {
             code: Some(3),
@@ -639,6 +642,7 @@ fn supersede_ok() -> VerbScript {
     VerbScript {
         verb: "supersede".into(),
         repo: None,
+        batch: None,
         ok: Some(Fields::from([("released".to_string(), "x".to_string())])),
         refuse: None,
         lock_hold_ms: 0,
@@ -686,6 +690,7 @@ fn supersede_hands_the_verb_the_rounds_lease_token_and_a_refusal_stops_the_step(
         VerbScript {
             verb: "supersede".into(),
             repo: None,
+        batch: None,
             ok: None,
             refuse: Some(Refuse {
                 code: Some(1),

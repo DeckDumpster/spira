@@ -58,6 +58,10 @@ scenario!(
     scenario_superseded_mid_pass,
     scenario_resume_from_progress,
     scenario_halt_mid_pass,
+    scenario_remarkable_stack,
+    scenario_remarkable_stack_eject,
+    scenario_land_refused_stays_green,
+    scenario_landed_from_git,
 );
 
 #[test]

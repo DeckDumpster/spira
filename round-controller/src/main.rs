@@ -12,6 +12,7 @@ use round_controller::pass::pass;
 use round_controller::ports::{Launched, Ports};
 use round_controller::probe::{probe, ThreadSleep};
 use round_controller::real::child::SysSpawn;
+use round_controller::real::git::RealGit;
 use round_controller::real::launch::{Programs, Systemd, SystemdUnits};
 use round_controller::real::liveness::NoVmRecords;
 use round_controller::real::verbs::{Deadlines, RealVerbs};
@@ -254,6 +255,21 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
             .ok()
             .filter(|r| !r.is_empty()),
     };
+    let registry = spira_config::resolve::locate_home_for_process()
+        .ok()
+        .map(|home| spira_config::repos::Registry::from_env(std::env::vars().collect(), &home));
+    let git = RealGit::new(
+        proc_.clone(),
+        Box::new(move |repo| {
+            let reg = registry.as_ref()?;
+            Some((reg.root(repo)?, spira_config::repos::landref(reg, repo)?))
+        }),
+    );
+    let sink = telemetry::sink();
+    let log = telemetry::DwellLog {
+        sink: &sink,
+        inner: &StdoutLog,
+    };
     let ports = Ports {
         clock: &*clock,
         proc_: &*proc_,
@@ -261,10 +277,11 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
         store: &Unserved,
         verbs: &verbs,
         ledger: &Unserved,
-        log: &StdoutLog,
+        log: &log,
         units: &units,
         vms: &NoVmRecords,
         launcher: &launcher,
+        git: &git,
         leases: &leases,
         slots: &slot_settings,
     };

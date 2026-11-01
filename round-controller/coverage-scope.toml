@@ -49,3 +49,9 @@ functions = ["start", "is_active"]
 [[scope]]
 path = "round-controller/src/death.rs"
 functions = ["unit_name"]
+
+# The Lander's decisions: which rounds it takes, the retry rule, the store-held stack, git's
+# fast-forward, the verb's refusal classifier and the landing's txn.
+[[scope]]
+path = "round-controller/src/land.rs"
+functions = ["land", "one", "Held::decide", "Held::refused", "Held::hold", "Held::record_landed", "landed_value"]

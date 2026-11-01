@@ -9,18 +9,40 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use state_store::{Compare, Object, Request, Rev, Selector, Txn};
 
+use lifecycle::batch::BatchState;
+
 use crate::death::{prove_dead, unit_name, Holder, Proof};
 use crate::lease::{self, acquire, holder_of, Held, LeaseError, Resource};
 use crate::outcome::Outcome;
 use crate::ports::{Launch, Launched, Ports};
 use crate::slots::{self, SlotGrant};
 
+/// A batch state as either writer spells it: the lifecycle's word (`CI_RUNNING`) or the round
+/// record's own serialisation (`CiRunning`).
+fn batch_state(state: &str) -> Option<BatchState> {
+    BatchState::from_str(state).or_else(|| serde_json::from_value(json!(state)).ok())
+}
+
 /// The states no reader re-drives. SUPERSEDED is the controller's own terminal state.
 pub fn terminal(state: &str) -> Option<bool> {
     if state == "SUPERSEDED" {
         return Some(true);
     }
-    lifecycle::batch::BatchState::from_str(state).map(|s| s.is_terminal())
+    batch_state(state).map(|s| s.is_terminal())
+}
+
+/// A round a runner drives: non-terminal, and not yet certified. A GREEN round is the Lander's,
+/// and LANDING and DEPLOYING are inside the land verb, so re-driving any of them would run a
+/// pass nothing asked for.
+fn runner_drives(state: &str) -> Option<bool> {
+    let driven = terminal(state).map(|t| !t)?;
+    Some(
+        driven
+            && !matches!(
+                batch_state(state),
+                Some(BatchState::Green | BatchState::Landing | BatchState::Deploying)
+            ),
+    )
 }
 
 /// The name the controller's own leases are held under.
@@ -46,7 +68,7 @@ pub fn orphans(p: &Ports, repo: &str) -> Result<Vec<Orphan>, String> {
         };
         let d = &i.value.data;
         // A state no reader can name is not re-driven: that might re-drive a terminal round.
-        if d.get("state").and_then(|s| s.as_str()).and_then(terminal) != Some(false) {
+        if d.get("state").and_then(|s| s.as_str()).and_then(runner_drives) != Some(true) {
             continue;
         }
         let Some(expired) = d.get(lease::LAST_TOKEN_FIELD).and_then(lease::token_of) else {
@@ -320,6 +342,12 @@ mod tests {
             json!({ lease::LAST_TOKEN_FIELD: lease::token_json(t) }),
         );
         batch(&b, "leased", "ATTRIBUTING", None);
+        batch(&b, "green", "GREEN", Some(t));
+        batch(&b, "green-record", "Green", Some(t));
+        batch(&b, "landing", "LANDING", Some(t));
+        batch(&b, "deploying", "Deploying", Some(t));
+        batch(&b, "landed-record", "Landed", Some(t));
+        batch(&b, "b2", "Attributing", Some(Rev::new(4, 0)));
         b.seed(
             "batches/r/b1/progress",
             json!({ "state": "OPEN", lease::LAST_TOKEN_FIELD: lease::token_json(t) }),
@@ -330,7 +358,9 @@ mod tests {
         );
         let p = b.ports();
         acquire(&p, &Resource::round("r", "leased"), "runner").unwrap();
-        assert_eq!(orphans(&p, "r").unwrap(), vec![orphan(t)]);
+        let mut b2 = orphan(Rev::new(4, 0));
+        b2.batch = "b2".into();
+        assert_eq!(orphans(&p, "r").unwrap(), vec![orphan(t), b2]);
         assert!(orphans(&Bench::unserved().ports(), "r").is_err());
     }
 

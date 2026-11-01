@@ -110,7 +110,7 @@ counts.
   from the seeded generator (`SPIRA_SEED`, else 1).
 - `[[store]]` — `key`, `data`, optional `ttl_secs`: seeded through the contract on the
   in-memory backend before the first pass.
-- `[[verb]]` — `verb`, optional `repo`, one of `ok = { key = "value" }` or
+- `[[verb]]` — `verb`, optional `repo` and `batch`, one of `ok = { key = "value" }` or
   `refuse = { code, text }`, and the `lock_hold_ms` the verb reports. Answers are taken in
   order. `certify` is answered by the fake round VM unless a refusal is scripted.
 - `[[vm]]` — `identity` (the batch's head), `verdict` (`green`, `red`, `fault`), `suites`,
@@ -135,7 +135,12 @@ counts.
   `retry_secs` (default the renewal interval): a round's runner or a hand driver that takes a
   runner slot through `slots::grant`, records its unit and VM, renews every TTL/3, and tears its
   VM down before it releases. A slot it loses while holding is an unscripted fault.
-- `[[expect]]` — `name`, `count` (`calls`, `calls:<verb>`, `outcomes`, `outcomes:<kind>`,
+- `[[git]]` — `repo`, `landing` (the sha its landing ref points at) and `history` (commits
+  already under it). A `land` that answers ok moves the ref to the round's head.
+- `[[lease_release]]` — `repo`, `batch`, `secs`: the round lease let go then, as a runner that
+  finished gives it back.
+- `[[expect]]` — `name`, `count` (`calls`, `calls:<verb>`, `outcomes`, `outcomes:<kind>[:<batch>]`,
+  `blockers:<word>` (rounds the Lander held so), `rounds:<STATE>` (round records in it),
   `store-writes`, `vm-runs`, `lock-hold-ms`, `launches`, `launches:<unit>`, `renewals`, `redrive-attempts`,
   `first-orphan-secs`, `slot-grants[:<pool>]`, `slot-refusals[:hand]`,
   `refusals-naming-holder` (refusals naming the holder of every slot not given back),
@@ -162,6 +167,19 @@ name. `real::launch::start` runs `systemd-run --user --unit=… --collect --quie
 `SPIRA_LAUNCH` and `SPIRA_LAUNCH_CTL` name the programs standing for `systemd-run` and
 `systemctl`; a world sets both to `sim-launch`. A re-drive grants a slot, takes the lease,
 records the unit under the slot, then launches; a failed launch gives both back and is recorded.
+
+## Lander
+
+`land::step` takes each GREEN round of a repo, lowest in its stack first, under a fresh lease of
+its own. A round stacked on a live, unlanded round is held `StackedOnUnlanded` from the store's
+own facts. A head already under the landing ref is recorded LANDED by `FastForward` from git,
+with no `land` call. Otherwise `queue round land --lease-token`: `Ok` lands it; a refusal is
+classified by its exit and first word only, `stacked` holding it `StackedOnUnlanded`,
+`base-moved` superseding it, the deploy-fault exit recording `DeployFault` (LANDED when the ref
+moved, GREEN when it did not), and any other word `Refused { text }`. Every landing moves the
+lane's `landing_ref` in the txn that records it. The blocker and the inputs it was refused
+against (head, base, parent, its state and head) are kept at `batches/<repo>/<id>/status`, and a
+held round is tried again only once one of them differs. Nothing here abandons a round.
 
 ## Slots
 

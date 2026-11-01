@@ -3,12 +3,15 @@
 
 use spira_otel::metrics::{self, MetricsSink, Point};
 
+use crate::outcome::{Cause, Log, Outcome};
 use crate::slots::Pool;
 
 pub const COMPONENT: &str = "round-controller";
 pub const OPERATIONS: &[&str] = &["version", "pass"];
 /// Runner slots held under a live lock, labelled by `pool`.
 pub const SLOTS_IN_USE: &str = "spira_round_controller_slots_in_use";
+/// Seconds a round waited GREEN before it landed, labelled by `repo`.
+pub const GREEN_TO_LANDED: &str = "spira_round_controller_green_to_landed_seconds";
 
 pub fn sink() -> MetricsSink {
     metrics::sink_for(
@@ -37,6 +40,27 @@ pub fn push_slots(sink: &MetricsSink, used: &[(Pool, u32)]) {
             }],
             &[("pool", pool.word())],
         );
+    }
+}
+
+/// Every outcome written to `inner`, and each landing's dwell pushed as one sample per repo.
+pub struct DwellLog<'a> {
+    pub sink: &'a MetricsSink,
+    pub inner: &'a dyn Log,
+}
+
+impl Log for DwellLog<'_> {
+    fn write(&self, o: &Outcome) {
+        self.inner.write(o);
+        if let Cause::Dwell { ms } = o.cause {
+            self.sink.push(
+                &[Point::Seconds {
+                    name: GREEN_TO_LANDED,
+                    value: ms as f64 / 1000.0,
+                }],
+                &[("repo", o.repo.as_str())],
+            );
+        }
     }
 }
 
@@ -84,6 +108,23 @@ mod tests {
         assert_eq!(
             by_pool,
             [("ec2".into(), "2".into()), ("proxmox".into(), "1".into())]
+        );
+    }
+
+    #[test]
+    fn a_landing_pushes_its_dwell_by_repo_and_every_outcome_reaches_the_inner_log() {
+        let mem = crate::outcome::MemLog::default();
+        let ((), got) = fixture::capture(|s| {
+            let log = DwellLog { sink: s, inner: &mem };
+            log.write(&Outcome::landing(0, "lane", "k1", 90_000));
+            log.write(&Outcome::visited(0, "lane"));
+        });
+        assert_eq!(mem.outcomes().len(), 2);
+        let dwell: Vec<_> = got.iter().filter(|c| c.name == GREEN_TO_LANDED).collect();
+        assert_eq!(dwell.len(), 1, "one sample, for the landing only");
+        assert_eq!(
+            (dwell[0].label("repo"), dwell[0].value.to_string()),
+            (Some("lane"), "90".to_string())
         );
     }
 

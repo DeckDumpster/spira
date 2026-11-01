@@ -1,0 +1,145 @@
+description = "a stuck parent's re-drive ejects a member, which gives it a new head: the green children stacked on its old head are SUPERSEDED, keeping their evidence, and their members are re-cut on the new head in the same pass; the parent lands; no green round is abandoned"
+repos = ["lane"]
+
+[run]
+epoch = 1800000000
+passes = 10
+every_secs = 600
+
+[lease]
+ttl_secs = 20000
+pass_wall_max_secs = 20000
+redrive_retries = 3
+ec2_max_lifetime_secs = 3600
+
+[lease.deadline_secs]
+boot = 600
+build = 600
+suites = 600
+subpass = 600
+certify = 600
+
+[[store]]
+key = "lanes/lane"
+data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
+
+[[git]]
+repo = "lane"
+landing = "base-0"
+
+[[store]]
+key = "batches/lane/p1"
+data = { batch_id = "p1", repo = "lane", state = "Attributing", head = "p1-h1", base = "base-0", pass = 1, version = 4, tested_base = "base-0", members = [{ id = "sp-a", tip = "a1" }, { id = "sp-e", tip = "e1" }], last_lease_token = { main = 7, sub = 0 } }
+
+[[store]]
+key = "batches/lane/c1"
+data = { batch_id = "c1", repo = "lane", state = "Green", parent = "p1", head = "c1-h1", base = "p1-h1", pass = 1, version = 3, tested_base = "p1-h1", members = [{ id = "sp-b", tip = "b1" }], last_lease_token = { main = 8, sub = 0 } }
+
+[[store]]
+key = "batches/lane/c2"
+data = { batch_id = "c2", repo = "lane", state = "Green", parent = "c1", head = "c2-h1", base = "c1-h1", pass = 1, version = 3, tested_base = "c1-h1", members = [{ id = "sp-c", tip = "c1" }], last_lease_token = { main = 9, sub = 0 } }
+
+[[store]]
+key = "lifecycle/sp-b"
+data = { repo = "lane", state = "CERTIFIED", tip = "b1" }
+
+[[store]]
+key = "lifecycle/sp-c"
+data = { repo = "lane", state = "CERTIFIED", tip = "c1" }
+
+[[unit]]
+name = "round-controller-run-p1-7-0"
+state = "inactive"
+
+[[launch]]
+ok = true
+
+[[slot]]
+repo = "lane"
+
+# Pass 6: the re-driven parent ejected sp-e, which moved its head.
+[[store_step]]
+pass = 6
+key = "batches/lane/p1"
+data = { batch_id = "p1", repo = "lane", state = "Attributing", head = "p1-h2", base = "base-0", pass = 2, version = 6, tested_base = "base-0", members = [{ id = "sp-a", tip = "a1" }], last_lease_token = { main = 7, sub = 0 } }
+
+[[lease_release]]
+repo = "lane"
+batch = "p1"
+secs = 4790
+
+# Pass 9: its pass on the new head is green.
+[[store_step]]
+pass = 9
+key = "batches/lane/p1"
+data = { batch_id = "p1", repo = "lane", state = "Green", head = "p1-h2", base = "base-0", pass = 3, version = 8, tested_base = "base-0", members = [{ id = "sp-a", tip = "a1" }] }
+
+[[verb]]
+verb = "supersede"
+batch = "c1"
+ok = { released = "sp-b:b1" }
+
+[[verb]]
+verb = "supersede"
+batch = "c2"
+ok = { released = "sp-c:c1" }
+
+[[verb]]
+verb = "open"
+ok = { batch = "k3", head = "k3-h1" }
+
+[[verb]]
+verb = "land"
+batch = "p1"
+ok = {}
+
+[[expect]]
+name = "both-children-superseded"
+count = "calls:supersede"
+equals = 2
+
+[[expect]]
+name = "each-supersede-is-the-act"
+count = "outcomes:superseded"
+equals = 2
+
+[[expect]]
+name = "their-members-re-cut-on-the-new-head"
+count = "opens:stack-on:p1"
+equals = 1
+
+[[expect]]
+name = "the-re-cut-round-stands"
+count = "rounds:OPEN"
+equals = 1
+
+[[expect]]
+name = "the-superseded-rounds-keep-their-evidence"
+count = "keys:batches/lane/c1/status"
+equals = 1
+
+[[expect]]
+name = "the-parent-lands-once"
+count = "outcomes:landed:p1"
+equals = 1
+
+[[expect]]
+name = "no-superseded-child-lands"
+count = "calls:land"
+equals = 1
+
+[[expect]]
+name = "each-child-held-stacked-until-superseded"
+count = "blockers:stacked-on-unlanded"
+equals = 2
+
+[[expect]]
+name = "no-green-round-abandoned"
+count = "calls:abandon"
+equals = 0
+
+[[expect]]
+name = "inverted-no-supersede"
+count = "calls:supersede"
+equals = 0
+inverted = true
