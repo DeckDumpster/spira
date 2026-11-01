@@ -16,16 +16,19 @@ fn var(k: &str) -> Option<String> {
     std::env::var(k).ok().filter(|v| !v.trim().is_empty())
 }
 
-/// `spira.run`, resolved through config; a resolution failure is named, not read as unset.
-fn run_dir() -> Option<PathBuf> {
-    match spira_config::process::cfg("SPIRA_RUN") {
-        Ok(r) if !r.is_empty() => Some(PathBuf::from(r)),
-        Ok(_) => None,
-        Err(e) => {
-            say(&e);
-            None
-        }
+/// `spira.run`, resolved through config. Without it no pool can be read or held.
+fn run_dir() -> Result<PathBuf, String> {
+    match spira_config::process::cfg("SPIRA_RUN")? {
+        r if r.is_empty() => Err("spira.run resolves empty: configure it in the file SPIRA_TOML names".into()),
+        r => Ok(PathBuf::from(r)),
     }
+}
+
+/// A compile the wrapper cannot admit fails: cargo then fails the build instead of compiling
+/// it outside the pool.
+fn refuse_compile(why: &str) -> ExitCode {
+    say(&format!("cannot admit this compile: {why}; refusing"));
+    ExitCode::from(2)
 }
 
 fn who() -> String {
@@ -70,28 +73,21 @@ fn wrapper(args: Vec<OsString>) -> ExitCode {
     let action = admission::wrapper_action(var(admission::INHERIT_ENV).as_deref(), &rest);
     if !matches!(action, admission::WrapperAction::Exec) {
         spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-admit", "wrapper");
-    }
-    match action {
-        admission::WrapperAction::Exec => {}
-        admission::WrapperAction::Wait => {
-            if let Some(run) = run_dir() {
-                let who = who();
-                admission::yield_to_round_real(&run, &mut |l: &str| say(l));
-                let q = admission::Request { run: &run, pool: Pool::Compile, holder_pid: std::os::unix::process::parent_id(), who: &who, inherit: None, weight: admission::build_weight(&rest) };
-                let g = admission::acquire_real(&q, &mut |l: &str| say(l));
-                // The lease is the cargo's, not ours: it ends when the cargo does.
-                std::mem::forget(g);
-            }
-        }
-        admission::WrapperAction::TakeNow => {
+        let run = match run_dir() {
+            Ok(run) => run,
+            Err(e) => return spira_otel::oneshot::finish(refuse_compile(&e)),
+        };
+        let who = who();
+        let q = admission::Request { run: &run, pool: Pool::Compile, holder_pid: std::os::unix::process::parent_id(), who: &who, inherit: None, weight: admission::build_weight(&rest) };
+        let g = if matches!(action, admission::WrapperAction::TakeNow) {
             // A gate's build (D11): a lease for the cargo at once, oversubscribing a full pool.
-            if let Some(run) = run_dir() {
-                let who = who();
-                let q = admission::Request { run: &run, pool: Pool::Compile, holder_pid: std::os::unix::process::parent_id(), who: &who, inherit: None, weight: admission::build_weight(&rest) };
-                let g = admission::take_now_guard(&q, admission::size_from_env(Pool::Compile), &RealProcs, &mut |l: &str| say(l));
-                std::mem::forget(g);
-            }
-        }
+            admission::take_now_guard(&q, admission::size_from_env(Pool::Compile), &RealProcs, &mut |l: &str| say(l))
+        } else {
+            admission::yield_to_round_real(&run, &mut |l: &str| say(l));
+            admission::acquire_real(&q, &mut |l: &str| say(l))
+        };
+        // The lease is the cargo's, not ours: it ends when the cargo does.
+        std::mem::forget(g);
     }
     spira_otel::oneshot::end(0);
     let (prog, argv): (OsString, &[OsString]) = match var(admission::INNER_ENV) {
@@ -106,9 +102,12 @@ fn wrapper(args: Vec<OsString>) -> ExitCode {
 
 fn status(args: &[OsString]) -> ExitCode {
     let json = args.iter().any(|a| a == "--json");
-    let Some(run) = run_dir() else {
-        say("no run directory: set SPIRA_RUN or configure spira.run");
-        return ExitCode::from(2);
+    let run = match run_dir() {
+        Ok(run) => run,
+        Err(e) => {
+            say(&e);
+            return ExitCode::from(2);
+        }
     };
     let occ: Vec<admission::Occupancy> = Pool::ALL
         .into_iter()
@@ -207,9 +206,12 @@ fn run(args: &[OsString]) -> ExitCode {
     let (Some(pool), Some(prog)) = (pool.filter(|p| *p != Pool::Gate), cmd.first()) else {
         return usage();
     };
-    let Some(run) = run_dir() else {
-        say("no run directory: set SPIRA_RUN or configure spira.run");
-        return ExitCode::from(2);
+    let run = match run_dir() {
+        Ok(run) => run,
+        Err(e) => {
+            say(&e);
+            return ExitCode::from(2);
+        }
     };
     let who = who_arg.unwrap_or_else(who);
     let inherit = var(admission::INHERIT_ENV);
