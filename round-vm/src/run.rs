@@ -3271,6 +3271,37 @@ mod tests {
         assert!(!w.join("stole").exists() && !fs::read_dir(results_of(&d)).unwrap().flatten().any(|e| e.path().extension().is_some_and(|x| x == "result")), "a green fence leaves no .result at the top of the results, where the host would take it for the suites' leaf");
     }
 
+    /// The environment `unit_cargo` hands cargo, after the round's setup exports and, with
+    /// `fences`, after the lint and fence segment has run them.
+    fn unit_env(fences: Option<&str>) -> String {
+        let d = TempDir::new();
+        let home = d.path();
+        let w = home.join("round-work");
+        fs::create_dir_all(w.join("target/release")).unwrap();
+        testkit::write_exe(w.join("target/release/spira-lint"), "#!/bin/sh\nexit 0\n");
+        testkit::write_exe(home.join("spira-env/bin/cargo"), "#!/bin/sh\nenv | sort > \"$HOME/unit.env\"\n");
+        let f = REMOTE_SCRIPT.find("unit_cargo() {").unwrap();
+        let unit_fn = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap() + 3];
+        let segment = fences.map(|l| format!("lint=1; fences={}; {}", shell_quote(l), lint_segment())).unwrap_or_default();
+        let script = format!(
+            "set -e; cd ~/round-work; git init -q -b main .; echo x > base.txt; git add base.txt; git commit -qm base; \
+             git update-ref refs/remotes/origin/base HEAD; set +e\n\
+             export CARGO_HOME=\"$HOME/cargo\" RUSTC_WRAPPER=/round/sccache SCCACHE_WEBDAV_ENDPOINT=http://h:9431 SCCACHE_WEBDAV_KEY_PREFIX=/ unit_cov_env=\n\
+             {unit_fn}{segment}\nunit_cargo --no-fail-fast; echo rc=$?"
+        );
+        let o = sh(home, &script);
+        assert!(String::from_utf8_lossy(&o.stdout).contains("rc=0"), "{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        fs::read_to_string(home.join("unit.env")).unwrap().replace(&home.display().to_string(), "$HOME")
+    }
+
+    #[test]
+    fn the_unit_tier_gets_the_same_environment_with_and_without_the_fence_loop() {
+        let leaky = "one\texport OTEL_EXPORTER_OTLP_ENDPOINT=http://x:4318 SCCACHE_DIR=/elsewhere LEAK=1; true\ntwo\tunset HOME PATH; true\n";
+        let without = unit_env(None);
+        assert!(without.contains("RUSTC_WRAPPER=/round/sccache"), "positive control: the unit tier's own wrapper is seen: {without}");
+        assert_eq!(unit_env(Some(leaky)), without, "a fence's exports and unsets stay in its subshell");
+    }
+
     #[test]
     fn the_fences_finish_before_the_unit_tier_starts() {
         let fences = REMOTE_SCRIPT.find("fence_run \"$fname\" \"$fcmd\"").expect("the fence loop");

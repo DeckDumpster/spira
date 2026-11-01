@@ -110,7 +110,8 @@ step's wall time is reported as `LINT: <n>s of the 900s cap`. Without `--base` n
 
 **The fences.** With `--base`, the host runs `gate fences --tree <tree-dir> --bin-dir
 target/release` before it takes a VM and ships the list (`name<TAB>command` per fence) to the
-VM; a tree whose fences cannot be listed is refused (exit 2). After the lint the VM runs each
+VM; a tree whose fences cannot be listed is refused (exit 2). The build fence is not listed: the
+round's workspace build and unit tier are its compile check. After the lint the VM runs each
 in the tree root with `SPIRA_GATE_BASE=origin/base` and records its seconds in `fence-times`; a
 red one is also a `fence-<name>.result` (status `red`) and ends the pass before any unit test or
 suite. The seconds reach the pass record as `fence_s` and the

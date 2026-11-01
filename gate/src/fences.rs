@@ -1,7 +1,9 @@
 //! `gate fences --tree <dir> [--bin-dir <dir>]`: the fences a round runs on its merged tree,
 //! one `name<TAB>command` line per step of the tree's [`crate::def::PATH`] that a suites-off
-//! gate runs ([`crate::compose::without_suites`]), less the spira-lint step, which the round
-//! runs itself. A runner takes this list (law-a-runner-takes-a-list); nothing else decides
+//! gate runs ([`crate::compose::without_suites`]), less the two steps the round runs as its own:
+//! the spira-lint step, and the build fence, whose compile check is the round's workspace build
+//! and unit tier (as in a unit composition, [`crate::compose::gate_string`]). A second
+//! whole-workspace build on the VM, just before the unit tier, only competes with it. A runner takes this list (law-a-runner-takes-a-list); nothing else decides
 //! which fences a round runs.
 
 use crate::def::{Bin, Def};
@@ -59,7 +61,7 @@ pub fn list(d: &Def, bin_dir: Option<&str>) -> Result<Vec<Fence>, String> {
         }
     }
     let mut out: Vec<Fence> = Vec::new();
-    for step in d.steps.iter().filter(|s| !crate::compose::is_suites_step(s)) {
+    for step in d.steps.iter().filter(|s| !crate::compose::is_suites_step(s) && s.as_str() != crate::compose::BUILD_FENCE_STEP) {
         let bins: Vec<&Bin> = d.bins.iter().filter(|b| reads(step, b)).collect();
         if bins.iter().any(|b| b.package == LINT_PACKAGE) {
             continue;
@@ -134,12 +136,12 @@ mod tests {
         let kept: Vec<String> = crate::compose::chain_steps(&crate::compose::without_suites(&d.command()))
             .unwrap()
             .into_iter()
-            .filter(|s| !s.contains("SPIRA_LINT_BIN"))
+            .filter(|s| !s.contains("SPIRA_LINT_BIN") && s != crate::compose::BUILD_FENCE_STEP)
             .collect();
         assert_eq!(got.iter().map(|f| f.command.clone()).collect::<Vec<_>>(), kept);
         let names: Vec<&str> = got.iter().map(|f| f.name.as_str()).collect();
         assert!(names.contains(&"lifecycle-guard") && names.contains(&"boundary"), "{names:?}");
-        assert!(!names.contains(&LINT_PACKAGE), "{names:?}");
+        assert!(!names.contains(&LINT_PACKAGE) && !names.contains(&"build-fence"), "{names:?}");
         for f in &got {
             assert!(!f.command.starts_with("bin ") && !f.command.contains("SPIRA_SELECT_BIN") && !f.command.contains("SPIRA_TESTENV_BIN"), "{f:?}");
         }
