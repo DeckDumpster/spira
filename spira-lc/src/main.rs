@@ -897,6 +897,7 @@ pub(crate) fn refusal_name(r: &lifecycle::Refusal) -> String {
         lifecycle::Refusal::ExpectMismatch { .. } => "ExpectMismatch".to_string(),
         lifecycle::Refusal::StaleVersion { .. } => "StaleVersion".to_string(),
         lifecycle::Refusal::IllegalTransition { .. } => "IllegalTransition".to_string(),
+        lifecycle::Refusal::LateBoundary { .. } => "LateBoundary".to_string(),
         lifecycle::Refusal::TipMismatch { .. } => "TipMismatch".to_string(),
         lifecycle::Refusal::Terminal { .. } => "Terminal".to_string(),
         lifecycle::Refusal::DepthExceeded { .. } => "DepthExceeded".to_string(),
@@ -936,6 +937,7 @@ mod tests {
             lifecycle::Refusal::DeadlinePassed { deadline: 0, at: 0 },
             lifecycle::Refusal::AwaitingReply { event: s(), exit: s() },
             lifecycle::Refusal::NotHolder { actor: s(), holder: None },
+            lifecycle::Refusal::LateBoundary { state: s(), event: s(), pass: 0 },
         ];
         for r in all {
             let n = refusal_name(&r);

@@ -216,11 +216,10 @@ where
 
 /// `strict` is a hand verb: it always sends the event, so the machine refuses a wrong-phase call
 /// and names the phase. certify and `pass-start --resume` are not strict: they resume a pass already recorded.
+/// A judged round (ATTRIBUTING) starts its next pass directly; PassRebuilt is for a rebuilt head.
 fn start_pass(w: &World, batch: &str, head: &str, strict: bool) -> Result<(), (i32, String)> {
-    let rebuilt = serde_json::json!({"PassRebuilt": {"head": head}}).to_string();
-    pass_event(w, batch, |s, _, _| (s == "ATTRIBUTING").then_some(rebuilt))?;
     pass_event(w, batch, |s, n, _| {
-        (strict || matches!(s, "OPEN" | "REBUILDING"))
+        (strict || matches!(s, "OPEN" | "REBUILDING" | "ATTRIBUTING"))
             .then(|| serde_json::json!({"PassStarted": {"n": n + 1, "head": head}}).to_string())
     })
 }
@@ -282,6 +281,16 @@ fn pass_verdict_event(
     })
 }
 
+/// The pass a `LateBoundary` refusal names: a boundary for a pass that already has its verdict,
+/// which the machine left untouched, so the event is done rather than refused.
+fn late_pass(refusal: &str) -> Option<u32> {
+    let rest = &refusal[refusal.find("refused: Some(LateBoundary {")?..];
+    let digits = rest[rest.rfind("pass: ")? + "pass: ".len()..]
+        .split(|c: char| !c.is_ascii_digit())
+        .next()?;
+    digits.parse().ok()
+}
+
 fn pass_verb<F>(w: &World, label: &str, batch: &str, repo: Option<&str>, f: F) -> i32
 where
     F: FnOnce(&Ctx, &Kv) -> Result<(), (i32, String)>,
@@ -301,6 +310,13 @@ where
     match f(&c, &kv) {
         Ok(()) => {
             w.out(format!("queue.sh {label}: recorded for {batch}"));
+            OK
+        }
+        Err((_, out)) if late_pass(&out).is_some() => {
+            let n = late_pass(&out).unwrap_or_default();
+            w.out(format!(
+                "queue.sh {label}: ignored: pass {n} already has its verdict"
+            ));
             OK
         }
         Err((rc, out)) => {
@@ -325,7 +341,7 @@ fn suites_started_verb(w: &World, batch: &str, repo: Option<&str>) -> i32 {
 }
 
 /// A suite went red mid-pass. A result arriving proves the suites phase began, so the phase is
-/// advanced first; the event itself is always sent, so a pass already judged is refused by name.
+/// advanced first; the event itself is always sent, and one for a pass already judged is ignored.
 fn failed_verb(w: &World, batch: &str, repo: Option<&str>, suite: &str) -> i32 {
     if idents(w, "round failed", &[("suite", suite)]).is_err() {
         return FAIL;
@@ -2311,7 +2327,7 @@ fn certify_pass(
         return FAIL;
     }
 
-    let (head, wt, run_id) = {
+    let (head, wt, run_id, pass) = {
         let Ok(_g) = lock(w, label, c) else {
             return FAIL;
         };
@@ -2397,7 +2413,8 @@ fn certify_pass(
             return FAIL;
         }
         mark_running(c, batch);
-        (head, wt, run_id)
+        let pass = w.lc.batch_pass(batch).map(|(n, _)| n);
+        (head, wt, run_id, pass)
     };
 
     let mut reds: Vec<String> = Vec::new();
@@ -2648,7 +2665,13 @@ fn certify_pass(
         return FAIL;
     };
     let already_green = reds.is_empty() && phase_of(w, batch) == "green";
-    if !(phase_of(w, batch) == "certifying" || already_green)
+    // round-vm records a red that ended the pass before its suites (lint, a fence) itself.
+    let judged_red = !reds.is_empty()
+        && reds.iter().all(|r| r == LINT_RED || r.starts_with(FENCE_RED_PREFIX))
+        && phase_of(w, batch) == "attributing"
+        && pass.is_some()
+        && w.lc.batch_pass(batch).map(|(n, _)| n) == pass;
+    if !(phase_of(w, batch) == "certifying" || already_green || judged_red)
         || kv.get("head") != Some(head.as_str())
     {
         w.err(format!("queue.sh {label}: the round {batch} changed while it was being certified — the result is discarded; certify again"));

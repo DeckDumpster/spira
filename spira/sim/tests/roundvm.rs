@@ -110,6 +110,59 @@ fn red_marks_exactly_the_named_suites_blocking() {
     assert_eq!(installed(&w), ["queue", "spira-lc"], "a red round still built");
 }
 
+/// A `queue` in the world's release that logs each call and refuses `round <verb>` for `refuse`.
+fn logging_queue(w: &W, refuse: &str) -> PathBuf {
+    let log = w.world.join("queue.log");
+    let q = w.world.join("release/bin/queue");
+    std::fs::remove_file(&q).unwrap();
+    testkit::write_exe(&q, &format!("#!/bin/sh\necho \"queue $*\" >> {log}\n[ \"$2\" = '{refuse}' ] && {{ echo refused >&2; exit 1; }}\nexit 0\n", log = log.display()));
+    log
+}
+
+fn round_args(w: &W, hook_log: &Path) -> Vec<String> {
+    let hook = w.world.join("on-red");
+    testkit::write_exe(&hook, &format!("#!/bin/sh\necho \"$1\" >> {}\n", hook_log.display()));
+    let mut a = args(w);
+    a.extend(["--round-batch", "b-1", "--round-repo", "sim", "--on-red"].map(String::from));
+    a.push(hook.display().to_string());
+    a
+}
+
+#[test]
+fn red_early_writes_only_the_red_steps_and_installs_nothing() {
+    let w = world();
+    write_verdict(&w.world, &Verdict::RedEarly(vec!["spira-lint".into()])).unwrap();
+    let (code, err) = roundvm::run(&w.world, &args(&w), &none, 946684800);
+    assert_eq!(code, 1, "{err}");
+    assert_eq!(read_back(&w), [("spira-lint".to_string(), "red".to_string())], "the pass ended before any suite ran");
+    assert!(installed(&w).is_empty(), "no tree was tested, so there is no build to install");
+}
+
+#[test]
+fn red_early_on_a_round_records_the_verdict_before_its_boundaries() {
+    let w = world();
+    let log = logging_queue(&w, "none");
+    let hooks = w.world.join("hooks.log");
+    write_verdict(&w.world, &Verdict::RedEarly(vec!["spira-lint".into()])).unwrap();
+    let (code, err) = roundvm::run(&w.world, &round_args(&w, &hooks), &none, 946684800);
+    assert_eq!(code, 1, "{err}");
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "queue round failed b-1 sim --suite spira-lint\nqueue round pass-verdict b-1 sim --verdict red --red-suites spira-lint\nqueue round suites-started b-1 sim\n"
+    );
+    assert!(std::fs::read_to_string(&hooks).unwrap().contains("spira-lint"), "the on-red hook fired for the red step");
+}
+
+#[test]
+fn red_early_whose_suites_boundary_is_refused_is_a_fault() {
+    let w = world();
+    logging_queue(&w, "suites-started");
+    write_verdict(&w.world, &Verdict::RedEarly(vec!["spira-lint".into()])).unwrap();
+    let (code, err) = roundvm::run(&w.world, &round_args(&w, &w.world.join("hooks.log")), &none, 946684800);
+    assert_eq!(code, FAULT, "{err}");
+    assert!(err.contains("queue round suites-started refused for b-1"), "{err}");
+}
+
 #[test]
 fn a_scripted_fault_leaves_no_verdict() {
     let w = world();
@@ -177,7 +230,7 @@ fn outside_a_world_it_refuses() {
 
 #[test]
 fn verdicts_round_trip() {
-    for v in [Verdict::Green, Verdict::Red(vec!["test-a.sh".into(), "test-b.sh".into()]), Verdict::Fault("vm lost".into())] {
+    for v in [Verdict::Green, Verdict::Red(vec!["test-a.sh".into(), "test-b.sh".into()]), Verdict::RedEarly(vec!["spira-lint".into()]), Verdict::Fault("vm lost".into())] {
         let t = testkit::TempDir::new("simrvm");
         write_verdict(&t, &v).unwrap();
         assert_eq!(parse_verdict(&std::fs::read_to_string(t.join(VERDICT_FILE)).unwrap()).unwrap(), v);

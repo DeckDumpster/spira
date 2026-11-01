@@ -29,6 +29,9 @@ pub enum Refusal {
     StaleVersion { given: Version, current: Version },
     /// No transition exists for this (state, event) pair.
     IllegalTransition { state: String, event: String },
+    /// A pass boundary (`SuitesStarted`, `Failed`) for pass `pass`, which already has its
+    /// verdict: the row is untouched and the caller treats the event as done, not as a fault.
+    LateBoundary { state: String, event: String, pass: u32 },
     /// The event's evidence names a tip other than the row's tip.
     TipMismatch { event_tip: String, row_tip: String },
     /// The row is in a terminal state; terminal states have no outgoing transitions.

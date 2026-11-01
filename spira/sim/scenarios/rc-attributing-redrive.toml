@@ -1,0 +1,55 @@
+epoch = 1800000000
+horizon = 1800000
+goal = "sp-ar01:LANDED"
+real_actors = ["sentinel-call", "sentinel-landing", "sift", "rounds"]
+
+# A round re-certified by hand while the batcher stands down: pass 1 ends red at lint before any
+# suite ran, so the round's own round-vm records the verdict and its suites boundary and on-red
+# hook arrive after it; pass 2 starts straight from ATTRIBUTING and goes green.
+
+[[actor]]
+name = "gate-worker"
+command = "gate-worker run"
+first = 20000
+every = 30000
+duration_min = 2000
+duration_max = 10000
+
+# The hand driver: it waits (exit 3) until the bead is CERTIFIED, drives the round once, and then
+# answers 0 for as long as the bead stays LANDED.
+[[actor]]
+name = "redrive"
+command = "sh spira/sim/scenarios/steps/rc-attributing-redrive.sh sp-ar01"
+first = 60000
+every = 30000
+duration_min = 1000
+duration_max = 2000
+
+[[step]]
+at = 0
+command = 'spira-config set spira.batcher_enable 0 "$SPIRA_TOML"'
+
+[[step]]
+at = 0
+file = "sp-ar01"
+
+[[step]]
+at = 0
+claim = "sp-ar01"
+script = ["commit out/ar01.txt", "submit"]
+
+[[invariant]]
+name = "step_failed"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (0, 3)"
+
+[[invariant]]
+name = "redrive_failed"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'complete' AND actor = 'redrive' AND exit NOT IN (0, 3)"
+
+[[expect]]
+name = "the_redriven_round_landed"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-ar01' AND lc_state = 'LANDED'"
+
+[[expect]]
+name = "the_member_was_never_returned"
+sql = "SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM bead_state WHERE bead = 'sp-ar01' AND lc_state = 'REWORK')"

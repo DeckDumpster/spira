@@ -1496,6 +1496,10 @@ pub trait Recorder: Sync {
     fn pass_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String>;
     fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String>;
     fn pass_incomplete(&self, batch: &str, repo: Option<&str>, reason: &str) -> Result<(), String>;
+    /// One red step of the running pass, so its mender is filed (`queue round failed`).
+    fn failed(&self, batch: &str, repo: Option<&str>, step: &str) -> Result<(), String>;
+    /// A red pass, naming its red steps.
+    fn pass_red(&self, batch: &str, repo: Option<&str>, red: &[String]) -> Result<(), String>;
     fn progress(&self, batch: &str, body: &str) -> Result<(), String>;
 
     /// The batch's current pass number and members, for the pass's record; `None` when the
@@ -1552,6 +1556,26 @@ impl Recorder for QueueRecorder {
         Err(format!("queue round pass-verdict incomplete refused for {batch} (rc={}): {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
     }
 
+    fn failed(&self, batch: &str, repo: Option<&str>, step: &str) -> Result<(), String> {
+        let mut cmd = command("timeout");
+        cmd.args(["-k", "5", spira_config::release_env::tool("60").as_str(), "queue", "round", "failed", "--suite", step, batch]).args(repo).stdin(Stdio::null());
+        let out = cmd.output().map_err(|e| format!("cannot run queue: {e}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        Err(format!("queue round failed {step} refused for {batch} (rc={}): {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
+    }
+
+    fn pass_red(&self, batch: &str, repo: Option<&str>, red: &[String]) -> Result<(), String> {
+        let mut cmd = command("timeout");
+        cmd.args(["-k", "5", spira_config::release_env::tool("60").as_str(), "queue", "round", "pass-verdict", "--verdict", "red", "--red-suites", &red.join(","), batch]).args(repo).stdin(Stdio::null());
+        let out = cmd.output().map_err(|e| format!("cannot run queue: {e}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        Err(format!("queue round pass-verdict red refused for {batch} (rc={}): {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
+    }
+
     fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String> {
         let mut cmd = command("timeout");
         cmd.args(["-k", "5", spira_config::release_env::tool("60").as_str(), "queue", "round", "suites-started", batch]).args(repo).stdin(Stdio::null());
@@ -1578,17 +1602,15 @@ fn publish_progress(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress
     }
 }
 
-/// The suites boundary, written the first time the pass is seen past its build. A refused write is
-/// kept so the pass ends a fault: a pass the batch row cannot follow is not one to certify. A single
-/// ci_entry has no suites to follow: its certify writes the boundary with its verdict, so a refusal
-/// here must not turn a green gate into a fault.
+/// The suites boundary, the first time the pass is past its build. A refusal faults the pass (the
+/// row cannot follow it), unless it is late or the pass is a ci_entry, whose certify writes it.
 fn record_boundary(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress::Progress, refused: &mut Option<String>) {
     let Some(batch) = args.round_batch.as_deref() else { return };
     publish_progress(env, args, progress);
     if progress.take_suites_began() {
         if let Err(e) = env.record.suites_started(batch, args.round_repo.as_deref()) {
             eprintln!("round-vm run: {e}");
-            if args.ci_entry.is_none() {
+            if args.ci_entry.is_none() && !e.contains("LateBoundary") {
                 refused.get_or_insert(e);
             }
         }
@@ -2191,6 +2213,39 @@ fn record_incomplete(env: &RunEnv, args: &RunArgs, why: &str) {
     }
 }
 
+/// A batch that ended before testing a tree: a RED cause is a red step (lint, a fence) and the
+/// pass's verdict, naming the steps; any other cause, or a RED no red result names, is no verdict.
+/// Each step is reported failed first: after the verdict a Failed is late and opens no mender.
+fn record_treeless_end(env: &RunEnv, args: &RunArgs, cause: &str, results: &Path) {
+    let red = red_steps(results);
+    if !cause.starts_with("RED") || red.is_empty() {
+        return record_incomplete(env, args, &format!("batch verdict {cause}"));
+    }
+    let Some(batch) = args.round_batch.as_deref() else { return };
+    for step in &red {
+        if let Err(e) = env.record.failed(batch, args.round_repo.as_deref(), step) {
+            eprintln!("round-vm run: {e}");
+        }
+    }
+    if let Err(e) = env.record.pass_red(batch, args.round_repo.as_deref(), &red) {
+        eprintln!("round-vm run: {e}");
+    }
+}
+
+/// The steps and suites whose result in `dir` (or one subdirectory) is `red`, sorted.
+fn red_steps(dir: &Path) -> Vec<String> {
+    let mut red: Vec<String> = result_dirs(dir)
+        .iter()
+        .filter_map(|d| fs::read_dir(d).ok())
+        .flat_map(|rd| rd.flatten().map(|e| e.path()).collect::<Vec<_>>())
+        .filter(|p| fs::read_to_string(p).is_ok_and(|t| t.split_whitespace().next() == Some("red")))
+        .filter_map(|p| p.file_name()?.to_str()?.strip_suffix(".result").map(str::to_string))
+        .collect();
+    red.sort();
+    red.dedup();
+    red
+}
+
 /// What a lease serves: the round's batch, else the run's tree directory.
 fn run_label(args: &RunArgs) -> String {
     args.round_batch.clone().unwrap_or_else(|| args.tree_dir.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default())
@@ -2432,7 +2487,7 @@ fn after_batch(
     if reported.is_none() && remote_rc != 0 {
         if let Some(c) = &cause {
             eprintln!("round-vm run: the batch ended without a tested tree: {c}");
-            record_incomplete(env, args, &format!("batch verdict {c}"));
+            record_treeless_end(env, args, c, &results_dir);
         }
     }
     if let Err(e) = install_bins(&bins, tree_sha, reported.as_deref(), cause.as_deref(), &target) {
@@ -3966,10 +4021,20 @@ mod tests {
         bodies: Mutex<Vec<(String, String)>>,
         reasons: Mutex<Vec<String>>,
         refuse: bool,
+        /// The suites boundary is refused as late: the pass already has its verdict.
+        late: bool,
         refuse_record: bool,
     }
 
     impl Recorder for FakeRecorder {
+        fn failed(&self, batch: &str, _: Option<&str>, step: &str) -> Result<(), String> {
+            self.calls.lock().unwrap().push(format!("failed {batch} {step}"));
+            Ok(())
+        }
+        fn pass_red(&self, batch: &str, _: Option<&str>, red: &[String]) -> Result<(), String> {
+            self.calls.lock().unwrap().push(format!("red {batch} {}", red.join(",")));
+            Ok(())
+        }
         fn pass_started(&self, batch: &str, _: Option<&str>) -> Result<(), String> {
             self.calls.lock().unwrap().push(format!("start {batch}"));
             Ok(())
@@ -3981,6 +4046,9 @@ mod tests {
         }
         fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String> {
             self.calls.lock().unwrap().push(format!("{batch} {}", repo.unwrap_or("-")));
+            if self.late {
+                return Err(format!("queue round suites-started refused for {batch} (rc=1): refused: Some(LateBoundary {{ state: \"ATTRIBUTING (pass 3)\", event: \"SuitesStarted {{ n: 3 }}\", pass: 3 }})"));
+            }
             if self.refuse { Err("the batch is ATTRIBUTING, not CI_RUNNING".into()) } else { Ok(()) }
         }
         fn progress(&self, batch: &str, body: &str) -> Result<(), String> {
@@ -4083,6 +4151,49 @@ mod tests {
         let rec = FakeRecorder { refuse_record: true, ..Default::default() };
         assert_eq!(go_recorded(&fx, &FakeRemote::green(), &batch_args(&fx, "b-1"), &rec), 2, "a green pass nobody can record is not judged");
         assert_eq!(*rec.calls.lock().unwrap().last().unwrap(), "incomplete b-1");
+    }
+
+    fn ended_without_a_tree(events: &'static str, results: Vec<(&'static str, &'static str)>, rc: i32) -> FakeRemote {
+        let mut remote = FakeRemote { rc: Ok(rc), ..FakeRemote::green() };
+        let mut files = vec![("KEY/run.events", events)];
+        files.extend(results);
+        remote.files.insert("round-work/.runtime/spira/batch-results/", files);
+        remote
+    }
+
+    #[test]
+    fn a_batch_ended_red_by_lint_records_a_red_pass_naming_the_step_not_an_incomplete_one() {
+        let fx = fixture();
+        let rec = FakeRecorder::default();
+        let remote = ended_without_a_tree("1 phase build\n2 verdict RED lint-or-fence\n", vec![("KEY/spira-lint.result", "red 1 4 - p e 1\n"), ("KEY/fence-boundary.result", "ok 1 1 - p e 0\n")], 1);
+        assert_eq!(go_recorded(&fx, &remote, &batch_args(&fx, "b-lint"), &rec), 1);
+        let calls = rec.calls.lock().unwrap();
+        let at = |c: &str| calls.iter().position(|x| x == c);
+        assert!(at("failed b-lint spira-lint").is_some() && at("failed b-lint spira-lint") < at("red b-lint spira-lint"), "the step is reported failed, so it gets a mender, before the verdict: {calls:?}");
+        assert!(!calls.iter().any(|c| c.starts_with("incomplete")), "a red step is a verdict: {calls:?}");
+    }
+
+    #[test]
+    fn a_batch_that_faulted_or_went_red_with_no_red_step_on_record_is_still_incomplete() {
+        let fx = fixture();
+        let rec = FakeRecorder::default();
+        let fault = ended_without_a_tree("1 phase up\n2 verdict FAULT install\n", vec![("KEY/test-a.sh.result", "skip 0 0 - p e 0\n")], 3);
+        go_recorded(&fx, &fault, &batch_args(&fx, "b-fault"), &rec);
+        let unnamed = ended_without_a_tree("1 phase build\n2 verdict RED lint-or-fence\n", vec![("KEY/spira-lint.result", "ok 1 4 - p e 0\n")], 1);
+        go_recorded(&fx, &unnamed, &batch_args(&fx, "b-unnamed"), &rec);
+        assert!(!rec.calls.lock().unwrap().iter().any(|c| c.starts_with("red ")), "{:?}", rec.calls.lock().unwrap());
+        let reasons = rec.reasons.lock().unwrap();
+        assert!(reasons.contains(&"batch verdict FAULT install (last phase up)".to_string()), "{reasons:?}");
+        assert!(reasons.iter().any(|r| r.starts_with("batch verdict RED lint-or-fence")), "{reasons:?}");
+    }
+
+    #[test]
+    fn a_suites_boundary_refused_as_late_leaves_the_pass_judged() {
+        let fx = fixture();
+        let rec = FakeRecorder { late: true, ..Default::default() };
+        assert_eq!(go_recorded(&fx, &FakeRemote::green(), &batch_args(&fx, "r-9"), &rec), 0, "a late boundary is done, not a fault");
+        let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join("round-progress.json")).unwrap()).unwrap();
+        assert_eq!(v["verdict"].as_str(), Some("green"));
     }
 
     #[test]

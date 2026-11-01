@@ -1557,6 +1557,103 @@ fn a_pass_ended_early_by(red: &str) {
     );
 }
 
+fn judged_red_world() -> (T, String) {
+    let mut t = round_world();
+    t.lib.s.verdict.mender_label = "mend-fixture".into();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "pass-verdict", &batch, "--verdict", "red", "--red-suites", "spira-lint"]),
+        0,
+        "{}",
+        t.err()
+    );
+    t.lc.late_boundaries.set(true);
+    (t, batch)
+}
+
+#[test]
+fn a_suites_boundary_after_the_pass_is_judged_is_ignored_and_exits_ok() {
+    let (t, batch) = judged_red_world();
+    assert_eq!(t.run(&["round", "suites-started", &batch]), 0, "{}", t.err());
+    assert!(
+        t.out().contains("queue.sh round suites-started: ignored: pass 1 already has its verdict"),
+        "{}",
+        t.out()
+    );
+    assert!(!t.out().contains("suites-started: recorded for"), "{}", t.out());
+    assert_eq!(round_phase(&t), "ATTRIBUTING");
+}
+
+#[test]
+fn a_failed_suite_after_the_pass_is_judged_is_ignored_files_no_mender_and_exits_ok() {
+    let (t, batch) = judged_red_world();
+    assert_eq!(t.run(&["round", "failed", &batch, "--suite", "spira-lint"]), 0, "{}", t.err());
+    assert!(
+        t.out().contains("queue.sh round failed: ignored: pass 1 already has its verdict"),
+        "{}",
+        t.out()
+    );
+    assert!(
+        !t.lib.calls.borrow().iter().any(|c| c.starts_with("create_bug")),
+        "no MENDING row was opened, so no mender bead: {:?}",
+        t.lib.calls.borrow()
+    );
+}
+
+#[test]
+fn a_boundary_the_machine_refuses_for_another_reason_still_fails() {
+    let (t, batch) = judged_red_world();
+    t.lc.batch_event_refused.set(Some("SuitesStarted"));
+    assert_ne!(t.run(&["round", "suites-started", &batch]), 0);
+    assert!(t.err().contains("IllegalTransition"), "{}", t.err());
+}
+
+#[test]
+fn pass_start_from_attributing_starts_the_next_pass_without_a_rebuild() {
+    let (t, batch) = judged_red_world();
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+    let events = events_of(&t, &batch);
+    assert_eq!(
+        events.last().map(String::as_str),
+        Some("{\"PassStarted\":{\"n\":2,\"head\":\"merged-ta\"}}"),
+        "{events:?}"
+    );
+    assert!(!events.iter().any(|e| e.starts_with("{\"PassRebuilt\"")), "{events:?}");
+}
+
+#[test]
+fn certify_ends_red_on_a_lint_red_the_round_vm_recorded_and_re_drives_pass_two() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    let spira = t.s().run.join("worktree").join(".round-spira").join("spira");
+    fs::create_dir_all(&spira).unwrap();
+    for s in ["test-a.sh", "test-b.sh"] {
+        fs::write(spira.join(s), "").unwrap();
+    }
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: String::new() };
+    *t.scripts.round_vm_results.borrow_mut() = vec![("spira-lint".into(), "red".into())];
+    *t.scripts.round_vm_records.borrow_mut() = Some((t.lc.batch_view.clone(), ("ATTRIBUTING".into(), 9, 1, String::new())));
+    t.lc.late_boundaries.set(true);
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    assert!(t.out().contains("red=spira-lint"), "{}\n{}", t.out(), t.err());
+    assert!(!t.err().contains("changed while it was being certified"), "{}", t.err());
+    assert_eq!(round_phase(&t), "ATTRIBUTING");
+
+    *t.scripts.round_vm_records.borrow_mut() = None;
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into()), ("test-b.sh".into(), "ok".into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    let events = events_of(&t, &batch);
+    assert!(events.iter().any(|e| e == "{\"PassStarted\":{\"n\":2,\"head\":\"merged-ta\"}}"), "{events:?}");
+    assert!(!events.iter().any(|e| e.starts_with("{\"PassRebuilt\"")), "{events:?}");
+    assert!(events.last().unwrap().starts_with("{\"PassGreen\":{\"n\":2"), "{events:?}");
+}
+
 #[test]
 fn the_blocking_only_reader_passed_what_unjudgeable_now_refuses() {
     let found = vec![
