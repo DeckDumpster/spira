@@ -124,6 +124,8 @@ pub struct Conf {
     pub heartbeat: u64,
     pub basic_wait_ticks: u32,
     pub basic_retry_sleep: u64,
+    /// Bytes the unit tier's cargo target volumes may hold between them; 0 = no cap.
+    pub target_cap: u64,
 }
 
 /// SPIRA_TESTENV_CPUS: trimmed and kept only when it parses as a positive number — a given
@@ -151,6 +153,7 @@ impl Conf {
             heartbeat: num("SPIRA_TESTENV_BUILD_HEARTBEAT").unwrap_or(60).max(1) as u64,
             basic_wait_ticks: num("SPIRA_TESTENV_BASIC_WAIT_TICKS").unwrap_or(20).max(0) as u32,
             basic_retry_sleep: num("SPIRA_TESTENV_BASIC_RETRY_SLEEP").unwrap_or(2).max(0) as u64,
+            target_cap: cfg_parse::<u64>("SPIRA_TESTENV_TARGET_CAP_MIB")?.saturating_mul(1 << 20),
             harness,
         })
     }
@@ -175,6 +178,7 @@ pub const USAGE: &[&str] = &[
     "  tag              # print the computed image tag (the build closure hash)",
     "  image            # acquire the image (pull if configured, else build); print its ref",
     "  publish          # push the image to SPIRA_TESTENV_REGISTRY under that tag",
+    "  prune   [--current REF]  # remove superseded and dangling images; sweep the unit target volumes to their cap",
 ];
 
 pub struct Driver<'a> {
@@ -322,6 +326,12 @@ impl Driver<'_> {
         (!self.conf.registry.is_empty()).then(|| format!("{reg}/spira-testenv:{tag}"))
     }
 
+    fn with_store<T>(&self, f: impl FnOnce(&crate::prune::Store) -> T) -> T {
+        let podman = |a: &[String]| self.host.podman(a, Io::Quiet);
+        let log = |l: &str| self.err(l);
+        f(&crate::prune::Store { podman: &podman, log: &log })
+    }
+
     fn pq(&self, args: &[&str]) -> bool {
         self.host.podman(&sv(args), Io::Quiet).0 == 0
     }
@@ -356,6 +366,7 @@ impl Driver<'_> {
             self.err(&format!("testenv: trying {remote}"));
             if self.pq(&["pull", "-q", &remote]) && self.pq(&["tag", &remote, &img]) {
                 self.err(&format!("testenv: pulled {remote}"));
+                self.with_store(|st| st.prune_images(&img, Some(i64::MAX)));
                 return Some(img);
             }
             if build {
@@ -370,7 +381,12 @@ impl Driver<'_> {
             ));
             return None;
         }
-        self.build_image(&img).then_some(img)
+        let started = self.host.now() as i64;
+        if !self.build_image(&img) {
+            return None;
+        }
+        self.with_store(|st| st.prune_images(&img, Some(started)));
+        Some(img)
     }
 
     /// One heartbeat: furthest STEP (multi-stage `[i/n] STEP` too, sp-dvfea), last output
@@ -548,6 +564,25 @@ impl Driver<'_> {
             }
         }
         false
+    }
+
+    pub fn cmd_prune(&self, args: &[String]) -> i32 {
+        let current = match args {
+            [] => match self.image_tag() {
+                Some(t) => self.image_ref(&t),
+                None => return 1,
+            },
+            [flag, r] if flag == "--current" && !r.is_empty() => r.clone(),
+            _ => {
+                self.err("usage: testenv container prune [--current REF]");
+                return 1;
+            }
+        };
+        self.with_store(|st| {
+            st.prune_images(&current, None);
+            st.sweep_target_volumes(self.conf.target_cap);
+        });
+        0
     }
 
     pub fn cmd_tag(&self) -> i32 {
@@ -861,6 +896,9 @@ impl Driver<'_> {
         if !self.admit(queue_bound) {
             return RC_QUEUE;
         }
+        if target_volume.is_some() {
+            self.with_store(|st| st.sweep_target_volumes(self.conf.target_cap));
+        }
         // sp-e5v53-3: a checkout whose build directories are themselves symlinks elsewhere
         // (a gate tree's `target/{dwarf,release,debug,gate-tools}`, gate/src/target.rs's
         // tmpfs root) needs that elsewhere mounted too — the bind mount below preserves the
@@ -1142,6 +1180,7 @@ impl Driver<'_> {
             Some("tag") => self.cmd_tag(),
             Some("image") => self.cmd_image(),
             Some("publish") => self.cmd_publish(),
+            Some("prune") => self.cmd_prune(rest),
             _ => {
                 for l in USAGE {
                     self.err(l);
