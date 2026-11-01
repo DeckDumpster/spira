@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use super::*;
-use crate::pass_record::{history_key, Gap, Goodput, Judged, Mode, Refused, Step, PASSES_PREFIX};
+use crate::pass_record::{history_key, AckRefused, Gap, Goodput, Judged, Mode, NoLever, Refused, Step, PASSES_PREFIX};
 use spira_desired_state::intent::JudgementResult;
 
 /// 2026-10-31T19:40:00Z.
@@ -33,7 +33,7 @@ fn record(n: u64) -> Value {
 }
 
 fn snap(sections: Vec<Value>, intents: Vec<Value>, pass: Value) -> Snapshot {
-    Snapshot::parse(&json!({ "list_rev": 9, "sections": sections, "intents": intents, "pass": pass, "undecodable": [] })).unwrap()
+    Snapshot::parse(&json!({ "list_rev": 9, "sections": sections, "intents": intents, "pass": pass, "knobs": {}, "undecodable": [] })).unwrap()
 }
 
 #[test]
@@ -44,15 +44,17 @@ fn a_snapshot_keeps_what_does_not_decode_and_refuses_what_it_cannot_read() {
         "undecodable": ["telemetry/sections/Probe/bad"],
         "intents": [intent("intents/Probe/a/1", NOW, "10m", Value::Null), { "key": "intents/Probe/a/2", "mod_rev": 3, "intent": {} }],
         "pass": null,
+        "knobs": { "knobs/Probe/a/drain": 4 },
     });
     let s = Snapshot::parse(&v).unwrap();
+    assert_eq!(s.knobs["knobs/Probe/a/drain"], json!(4));
     assert_eq!(s.list_rev, 9);
     assert_eq!(s.sections.len(), 1);
     assert_eq!(s.intents.len(), 1);
     assert_eq!(s.pass, None, "a null pass record reads as none");
     assert_eq!(s.undecodable, ["telemetry/sections/Probe/bad", "intents/Probe/a/2"]);
 
-    let full = || json!({ "list_rev": 1, "sections": [], "undecodable": [], "intents": [], "pass": null });
+    let full = || json!({ "list_rev": 1, "sections": [], "undecodable": [], "intents": [], "pass": null, "knobs": {} });
     let mut bad_sections = full();
     bad_sections["sections"] = json!([{ "section": { "kind": "Probe", "metadata": { "name": "x" }, "bogus": 1 } }, { "section": { "kind": 1 } }]);
     assert_eq!(Snapshot::parse(&bad_sections).unwrap().undecodable, ["telemetry/sections/Probe/x", "sections[1]"], "a bad section is kept by key and blinds no other");
@@ -62,7 +64,7 @@ fn a_snapshot_keeps_what_does_not_decode_and_refuses_what_it_cannot_read() {
         v.as_object_mut().unwrap().remove(field);
         v
     };
-    for field in ["list_rev", "sections", "undecodable", "intents", "pass"] {
+    for field in ["list_rev", "sections", "undecodable", "intents", "pass", "knobs"] {
         assert!(Snapshot::parse(&without(field)).is_err(), "a snapshot with no {field} was read");
     }
     for (what, ptr, x) in [
@@ -135,13 +137,25 @@ fn publish_latency_is_age_against_target_latency_and_unmeasured_without_a_status
 #[test]
 fn the_verb_source_reads_the_programs_answer_and_refuses_a_failed_or_garbled_one() {
     let sh = |script: &str| Verb { argv: vec!["sh".into(), "-c".into(), script.into(), "spira-lc".into()] };
-    let got = sh(r#"[ "$1 $2" = "section snapshot" ] && printf '%s' '{"list_rev": 7, "sections": [], "undecodable": [], "intents": [], "pass": null}'"#).snapshot().unwrap();
+    let got = sh(r#"[ "$1 $2" = "section snapshot" ] && printf '%s' '{"list_rev": 7, "sections": [], "undecodable": [], "intents": [], "pass": null, "knobs": {}}'"#).snapshot().unwrap();
     assert_eq!(got.list_rev, 7);
     let refused = sh(r#"printf '{"cannot_tell": "no store"}'; echo held >&2; exit 2"#).snapshot().unwrap_err();
     assert!(refused.contains("exited Some(2)") && refused.contains("no store") && refused.contains("held"), "{refused}");
     assert!(sh("printf 'not json'").snapshot().unwrap_err().contains("non-JSON"));
     assert!(Verb { argv: vec![] }.snapshot().is_err());
     assert_eq!(Verb::new("spira-lc").argv, ["spira-lc"]);
+}
+
+fn step(intent: Option<&str>, held: Option<&str>) -> Step {
+    Step {
+        section: "Probe/a".into(),
+        action: "drain".into(),
+        target: "knobs/Probe/a/drain".into(),
+        from: json!(1),
+        to: json!(2),
+        intent: intent.map(String::from),
+        held: held.map(String::from),
+    }
 }
 
 #[test]
@@ -156,11 +170,13 @@ fn a_pass_record_round_trips_with_every_age_shape() {
         goodput: Some(Goodput { ratio: Some(0.9), rate_per_day: None }),
         binding: Some("Probe/a".into()),
         gaps: vec![Gap { section: "Probe/a".into(), distance: 1.5, score: 3.0 }],
-        steps: vec![Step { section: "Probe/a".into(), action: "drain".into(), intent: None }],
-        judged: vec![Judged { intent: "intents/Probe/a/1".into(), result: JudgementResult::Failed }],
-        refused: vec![Refused { section: "Probe/b".into(), action: "drain".into(), reason: "stale".into() }],
+        steps: vec![step(Some("intents/Probe/a/1"), None)],
+        would_step: vec![step(None, Some("shadow"))],
+        judged: vec![Judged { intent: "intents/Probe/a/1".into(), result: JudgementResult::Failed, baseline: 3.0, observed: 3.0 }],
+        acks_refused: vec![AckRefused { intent: "intents/Probe/a/0".into(), reason: "stale".into() }],
+        refused: vec![Refused { section: "Probe/b".into(), action: "drain".into(), code: "stale-input".into(), reason: "stale".into() }],
         exhausted: vec!["Probe/c".into()],
-        no_lever: vec!["Probe/d".into()],
+        no_lever: vec![NoLever { section: "Probe/d".into(), conditions: vec!["Wedged".into()], since: 2 }],
         ages: [
             ("Probe/a".to_string(), fresh(Freshness::Fresh, PublishLatency::Within { target_secs: 300 })),
             ("Probe/b".to_string(), fresh(Freshness::Stale { age_secs: Some(901), reason: "old".into() }, PublishLatency::Late { target_secs: 300, over_secs: 601 })),

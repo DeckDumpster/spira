@@ -1,0 +1,22 @@
+[Unit]
+After=lc-serve.service
+Wants=lc-serve.service
+Description=Spira reconciler goodput pass — one step per gap, read back, under the reconciler lock
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+ExecStart=@SPIRA_PROD_ROOT@/bin/reconciler goodput-pass
+# A backstop only: the pass stops writing at SPIRA_RECONCILER_PASS_TIMEOUT_SECS on its own clock.
+TimeoutStartSec=60
+StandardOutput=append:@SPIRA_RUN@/reconciler-goodput.log
+StandardError=append:@SPIRA_RUN@/reconciler-goodput.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=observability

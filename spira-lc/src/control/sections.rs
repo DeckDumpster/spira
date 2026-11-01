@@ -2,7 +2,7 @@
 //! the operator's apply publishes spec targets, and the reconciler's steps are intents at
 //! their own keys. Every write passes the section schema's admission before its txn. Every
 //! answer is JSON: the value on exit 0, `{}`-shaped not-found on 1, `{"cannot_tell": …}` on 2
-//! and `{"refused": {"field", "rule"}}` on 3.
+//! and `{"refused": {"field", "rule", "code"}}` on 3.
 
 use serde_json::{json, Value};
 use spira_desired_state::intent::{
@@ -11,12 +11,12 @@ use spira_desired_state::intent::{
 };
 use spira_desired_state::section::{
     self, admit, admit_publish, caught_up, freshness, parse_ref, parse_section, registered,
-    section_key, Refusal, Section, SectionMeta, Target, COMPOSE, PASS_KEY, SECTIONS_PREFIX,
-    SECTION_TTL_SECS,
+    section_key, Refusal, Section, SectionMeta, Target, COMPOSE, PASSES_PREFIX,
+    PASS_HISTORY_TTL_SECS, PASS_KEY, SECTIONS_PREFIX, SECTION_TTL_SECS, STANDBY_KEY,
 };
 use spira_desired_state::store::format_rfc3339;
 use spira_otel::metrics::{MetricsSink, Point};
-use state_store::{Backend, Compare, Error, Fence, Item, Object, Request, Rev, Selector, Txn};
+use state_store::{events_key, Backend, Compare, Error, Fence, Item, Object, Request, Rev, Selector, Txn, LOCKS_PREFIX};
 
 use super::keys;
 use super::store::Store;
@@ -25,7 +25,7 @@ use crate::{flag, CANNOT_TELL, REFUSED};
 pub mod lifecycle;
 
 /// The verbs this module answers.
-pub const VERBS: &[&str] = &["section", "intent", "lock", lifecycle::VERB];
+pub const VERBS: &[&str] = &["section", "intent", "lock", "pass", lifecycle::VERB];
 
 pub const WRITES: &str = "spira_section_writes";
 pub const REFUSALS: &str = "spira_section_refusals";
@@ -65,7 +65,7 @@ fn render(a: Answer) -> (i32, String) {
         Answer::Missing(v) => (1, v.to_string()),
         Answer::Refused(r) => (
             REFUSED,
-            json!({ "refused": { "field": r.field, "rule": r.rule } }).to_string(),
+            json!({ "refused": { "field": r.field, "rule": r.rule, "code": r.code } }).to_string(),
         ),
         Answer::CannotTell(e) => (CANNOT_TELL, json!({ "cannot_tell": e }).to_string()),
     }
@@ -86,6 +86,7 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
         ("section", Some("snapshot")) => (section_snapshot(store, call), None),
         ("section", Some("apply-spec")) => written(apply_spec(store, rest, call)),
         ("section", Some("publish-status")) => written(publish_status(store, rest, call)),
+        ("intent", Some("get")) => (intent_get(store, rest), None),
         ("intent", Some("put")) => written(intent_put(store, rest, call)),
         ("intent", Some("ack")) => written(intent_ack(store, rest, call)),
         ("intent", Some("judge")) => written(intent_judge(store, rest, call)),
@@ -93,9 +94,11 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
         ("lock", Some("acquire")) => written(lock_acquire(store, rest, call)),
         ("lock", Some("renew")) => written(lock_renew(store, rest, call)),
         ("lock", Some("release")) => written(lock_release(store, rest, call)),
+        ("pass", Some("record")) => written(pass_record(store, rest, call)),
+        ("pass", Some("standby")) => written(pass_standby(store, rest, call)),
         _ => (
             Answer::CannotTell(format!(
-                "cannot tell: {verb:?} is not a verb: section get|list|snapshot|apply-spec|publish-status, intent put|ack|judge|apply, lock acquire|renew|release"
+                "cannot tell: {verb:?} is not a verb: section get|list|snapshot|apply-spec|publish-status, intent get|put|ack|judge|apply, lock acquire|renew|release, pass record|standby"
             )),
             None,
         ),
@@ -231,12 +234,17 @@ fn section_list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> A
     Answer::Ok(json!({ "sections": sections, "undecodable": undecodable, "list_rev": list_rev }))
 }
 
-/// `section snapshot`: every section, every intent and the pass record, from one list over the
-/// three prefixes, so the reconciler's pass reads one revision.
+/// `section snapshot`: every section, every intent, every knob and the pass record, all at one
+/// revision, so the reconciler's pass reads one. The pass record is read by key: its prefix is
+/// also the day of pass history's.
 fn section_snapshot<B: Backend>(store: &Store<B>, call: &Call) -> Answer {
-    let prefixes = [SECTIONS_PREFIX, INTENTS_PREFIX, PASS_KEY];
+    let prefixes = [SECTIONS_PREFIX, INTENTS_PREFIX, keys::KNOBS];
     let (items, list_rev) = match store.contract().list(&prefixes, &Selector::Everything) {
         Ok(x) => x,
+        Err(e) => return cannot(e),
+    };
+    let pass = match store.contract().get_at(PASS_KEY, list_rev) {
+        Ok(p) => p.map_or(Value::Null, |i| i.value.data),
         Err(e) => return cannot(e),
     };
     let (sections, undecodable) = sections_of(&items, call.now_ms);
@@ -245,11 +253,12 @@ fn section_snapshot<B: Backend>(store: &Store<B>, call: &Call) -> Answer {
         .filter(|i| i.key.starts_with(INTENTS_PREFIX))
         .map(|i| json!({ "key": i.key, "intent": i.value.data, "mod_rev": i.mod_rev.main }))
         .collect();
-    let pass = items
+    let knobs: serde_json::Map<String, Value> = items
         .iter()
-        .find(|i| i.key == PASS_KEY)
-        .map_or(Value::Null, |i| i.value.data.clone());
-    Answer::Ok(json!({ "sections": sections, "undecodable": undecodable, "intents": intents, "pass": pass, "list_rev": list_rev }))
+        .filter(|i| i.key.starts_with(keys::KNOBS))
+        .map(|i| (i.key.clone(), i.value.data.clone()))
+        .collect();
+    Answer::Ok(json!({ "sections": sections, "undecodable": undecodable, "intents": intents, "knobs": knobs, "pass": pass, "list_rev": list_rev }))
 }
 
 /// A spec document: the shape of a composite resource of a section kind.
@@ -527,6 +536,18 @@ fn read_intent<B: Backend>(store: &Store<B>, key: &str) -> Result<(Intent, Item)
     Ok((i, item))
 }
 
+/// `intent get <key>`: the intent as stored, which is how a step is read back before it counts.
+fn intent_get<B: Backend>(store: &Store<B>, args: &[String]) -> Answer {
+    let key = match positional(args, "<intent key>") {
+        Ok(k) => k,
+        Err(a) => return a,
+    };
+    match read_intent(store, &key) {
+        Ok((i, item)) => Answer::Ok(json!({ "key": key, "intent": i, "mod_rev": item.mod_rev.main })),
+        Err(a) => a,
+    }
+}
+
 /// The intent at `key`, whose target section's owner must be `actor`.
 fn owned_intent<B: Backend>(store: &Store<B>, args: &[String], key: &str) -> Result<(Intent, Item, String), Answer> {
     let actor = required(args, "--actor")?;
@@ -783,6 +804,68 @@ fn lock_release<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (
         Ok(Answer::Ok(json!({ "resource": fence.resource, "released": true })))
     })();
     (answer.unwrap_or_else(|a| a), "lock".into())
+}
+
+/// `pass record --token T --actor reconciler` (body: the pass record): the latest record and
+/// its day of history in one txn, fenced on the reconciler's lock like every other write a pass
+/// makes.
+fn pass_record<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (Answer, String) {
+    let answer = (|| {
+        let actor = required(args, "--actor")?;
+        if actor != RECONCILER {
+            return Err(refuse("actor", "ownership", format!("only {RECONCILER} writes its pass record, not {actor:?}")));
+        }
+        let fence = reconciler_fence(parse_token(&required(args, "--token")?)?);
+        let rec = body(args)?;
+        let n = rec
+            .get("n")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| refuse("n", "schema", "a pass record names its number"))?;
+        if !holds_lock(store, &fence)? {
+            return Err(lock_lost());
+        }
+        let history = format!("{PASSES_PREFIX}{n}");
+        let t = Txn::new()
+            .fenced(&fence)
+            .put(PASS_KEY, Object::new(rec.clone()).with_ttl(PASS_HISTORY_TTL_SECS))
+            .put(&history, Object::new(rec).with_ttl(PASS_HISTORY_TTL_SECS));
+        let req = Request::new(call.request, &actor, "lc.pass.record");
+        match store.contract().txn(&t, &req).map_err(cannot)? {
+            r if r.succeeded => Ok(Answer::Ok(json!({ "key": PASS_KEY, "history": history, "rev": r.rev }))),
+            _ => Err(lock_lost()),
+        }
+    })();
+    (answer.unwrap_or_else(|a| a), "pass".into())
+}
+
+/// Who holds `locks/<resource>`: the actor of the txn that took it, from its audit record.
+fn lock_holder<B: Backend>(store: &Store<B>, resource: &str) -> Result<Option<(String, Rev)>, Answer> {
+    let Some(lock) = store.contract().get(&format!("{LOCKS_PREFIX}{resource}")).map_err(cannot)? else {
+        return Ok(None);
+    };
+    let ev = store.contract().get(&events_key(lock.create_rev.main)).map_err(cannot)?;
+    let actor = ev
+        .and_then(|e| e.value.data.get("actor").and_then(Value::as_str).map(String::from))
+        .unwrap_or_else(|| "unknown".into());
+    Ok(Some((actor, lock.create_rev)))
+}
+
+/// `pass standby --holder H`: a pass that found the reconciler's lock held records that it
+/// stood by and who held it. It holds no lock, so it writes only this telemetry key.
+fn pass_standby<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (Answer, String) {
+    let answer = (|| {
+        let holder = required(args, "--holder")?;
+        let held = lock_holder(store, RECONCILER_LOCK)?;
+        let (held_by, token) = held.map_or((Value::Null, Value::Null), |(a, t)| (Value::from(a), Value::from(token_text(t))));
+        let rec = json!({ "at": rfc3339(call.now_ms), "holder": holder, "held_by": held_by, "token": token });
+        let t = Txn::new().put(STANDBY_KEY, Object::new(rec.clone()).with_ttl(PASS_HISTORY_TTL_SECS));
+        let req = Request::new(call.request, &holder, "lc.pass.standby");
+        match store.contract().txn(&t, &req).map_err(cannot)? {
+            r if r.succeeded => Ok(Answer::Ok(rec)),
+            _ => Err(cannot("the standby record did not commit")),
+        }
+    })();
+    (answer.unwrap_or_else(|a| a), "pass".into())
 }
 
 #[cfg(test)]

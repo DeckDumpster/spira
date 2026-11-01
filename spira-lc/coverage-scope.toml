@@ -24,6 +24,10 @@ functions = [
     "ttl_ms",
     "parse_token",
     "holds_lock",
+    "intent_get",
+    "pass_record",
+    "lock_holder",
+    "pass_standby",
 ]
 
 # Goodput and the lifecycle section's publisher.

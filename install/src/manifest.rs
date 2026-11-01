@@ -156,6 +156,7 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-event-continuity.timer", true));
     // No timer yet: the reconciler's arm step ships and enables one.
     m.units.push(t("spira-lifecycle-section.service", false));
+    m.units.push(t("spira-reconciler-goodput.service", false));
     m.units.push(t("spira-concierge-guard.service", false));
     m.units.push(t("spira-concierge-guard.timer", true));
     m.units.push(t("spira-mend-watch.service", false));
@@ -525,6 +526,19 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("systemd");
         let svc = std::fs::read_to_string(root.join("spira-lifecycle-section.service")).unwrap();
         assert!(svc.lines().any(|l| l.starts_with("ExecStart=") && l.ends_with("/bin/spira-lc publish-section lifecycle")), "{svc}");
+    }
+
+    #[test]
+    fn the_goodput_pass_ships_its_own_oneshot_and_leaves_its_timer_to_the_arm_step() {
+        let m = build(&inputs()).unwrap();
+        assert!(m.units.iter().any(|u| u.name == "spira-reconciler-goodput.service" && !u.enable), "the service is installed and not enabled");
+        assert!(!m.units.iter().any(|u| u.name == "spira-reconciler-goodput.timer"), "no timer ships before the arm step");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("systemd");
+        let svc = std::fs::read_to_string(root.join("spira-reconciler-goodput.service")).unwrap();
+        assert!(svc.lines().any(|l| l == "Type=oneshot"), "{svc}");
+        assert!(svc.lines().any(|l| l.starts_with("ExecStart=") && l.ends_with("/bin/reconciler goodput-pass")), "{svc}");
+        assert!(svc.lines().any(|l| l == "TimeoutStartSec=60"), "{svc}");
+        assert!(!root.join("spira-reconciler-goodput.timer").exists(), "a shipped timer must be enabled; this one waits for the arm step");
     }
 
     #[test]

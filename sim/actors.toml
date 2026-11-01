@@ -49,3 +49,12 @@ command = "round-controller pass"
 timer = "spira-round-controller.timer"
 duration = "land.phase.tools"
 sim_only = true
+
+# The reconciler's goodput pass, run only by world scenarios that name it in real_actors. Its
+# timer lives under sim/units until the arm step ships one.
+[[actor]]
+name = "reconciler-goodput"
+command = "reconciler goodput-pass"
+timer = "spira-reconciler-goodput.timer"
+duration = "land.phase.tools"
+sim_only = true

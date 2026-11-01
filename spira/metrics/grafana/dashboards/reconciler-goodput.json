@@ -1,0 +1,66 @@
+{
+  "uid": "spira-reconciler-goodput",
+  "title": "Spira reconciler goodput pass",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "time": { "from": "now-24h", "to": "now" },
+  "refresh": "1m",
+  "tags": ["spira"],
+  "templating": {
+    "list": [
+      { "name": "DS_VM", "type": "datasource", "query": "prometheus", "label": "data source" }
+    ]
+  },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "steps and would-steps per hour",
+      "datasource": { "type": "prometheus", "uid": "${DS_VM}" },
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${DS_VM}" }, "expr": "sum(sum_over_time(spira_goodput_pass_steps[1h]))", "legendFormat": "steps", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_VM}" }, "expr": "sum(sum_over_time(spira_goodput_pass_would_steps[1h]))", "legendFormat": "would-steps", "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_VM}" }, "expr": "sum(sum_over_time(spira_goodput_pass_judged[1h]))", "legendFormat": "judged", "refId": "C" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_VM}" }, "expr": "sum(sum_over_time(spira_goodput_pass_standby[1h]))", "legendFormat": "standby", "refId": "D" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "refusals per hour by reason",
+      "datasource": { "type": "prometheus", "uid": "${DS_VM}" },
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${DS_VM}" }, "expr": "sum by (reason) (sum_over_time(spira_goodput_pass_refusals[1h]))", "legendFormat": "{{reason}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Exhausted and NoLever passes per hour by section",
+      "datasource": { "type": "prometheus", "uid": "${DS_VM}" },
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${DS_VM}" }, "expr": "sum by (section) (sum_over_time(spira_goodput_pass_exhausted[1h]))", "legendFormat": "exhausted {{section}}", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_VM}" }, "expr": "sum by (section) (sum_over_time(spira_goodput_pass_no_lever[1h]))", "legendFormat": "no lever {{section}}", "refId": "B" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "pass duration",
+      "datasource": { "type": "prometheus", "uid": "${DS_VM}" },
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${DS_VM}" }, "expr": "max_over_time(spira_component_run_seconds{component=\"reconciler\",operation=\"goodput-pass\"}[$__interval])", "legendFormat": "goodput-pass", "refId": "A" }
+      ]
+    }
+  ]
+}
