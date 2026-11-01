@@ -15,6 +15,7 @@ serde_path_to_error = "0.1"
 state-store = { path = "../state-store" }
 state-store-sqlite = { path = "../state-store-sqlite" }
 runtime = { path = "../runtime" }
+tsd = { path = "../tsd" }
 
 [[bin]]
 name = "spira-lc"

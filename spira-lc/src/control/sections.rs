@@ -22,8 +22,10 @@ use super::keys;
 use super::store::Store;
 use crate::{flag, CANNOT_TELL, REFUSED};
 
+pub mod lifecycle;
+
 /// The verbs this module answers.
-pub const VERBS: &[&str] = &["section", "intent", "lock"];
+pub const VERBS: &[&str] = &["section", "intent", "lock", lifecycle::VERB];
 
 pub const WRITES: &str = "spira_section_writes";
 pub const REFUSALS: &str = "spira_section_refusals";

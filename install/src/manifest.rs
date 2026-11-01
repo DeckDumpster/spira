@@ -154,6 +154,9 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-sop-lint.timer", true));
     m.units.push(t("spira-event-continuity.service", false));
     m.units.push(t("spira-event-continuity.timer", true));
+    // Installed and not enabled: the reconciler's arm step enables it.
+    m.units.push(t("spira-lifecycle-section.service", false));
+    m.units.push(t("spira-lifecycle-section.timer", false));
     m.units.push(t("spira-concierge-guard.service", false));
     m.units.push(t("spira-concierge-guard.timer", true));
     m.units.push(t("spira-mend-watch.service", false));
@@ -513,6 +516,19 @@ mod tests {
         }
         let svc = std::fs::read_to_string(root.join("spira-worktree-reaper.service")).unwrap();
         assert!(svc.contains("hel reap-stale"));
+    }
+
+    #[test]
+    fn the_lifecycle_section_publisher_is_shipped_with_its_unit_files_and_left_for_the_arm_step() {
+        let m = build(&inputs()).unwrap();
+        for n in ["spira-lifecycle-section.service", "spira-lifecycle-section.timer"] {
+            assert!(m.units.iter().any(|u| u.name == n && !u.enable), "{n} is installed and not enabled");
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("systemd");
+        let svc = std::fs::read_to_string(root.join("spira-lifecycle-section.service")).unwrap();
+        assert!(svc.lines().any(|l| l.starts_with("ExecStart=") && l.ends_with("/bin/spira-lc publish-section lifecycle")), "{svc}");
+        let timer = std::fs::read_to_string(root.join("spira-lifecycle-section.timer")).unwrap();
+        assert!(timer.lines().any(|l| l == "OnUnitActiveSec=60s"), "{timer}");
     }
 
     #[test]

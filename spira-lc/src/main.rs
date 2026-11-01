@@ -33,6 +33,7 @@ mod deps;
 mod db;
 mod facts;
 mod git_evidence;
+mod goodput;
 mod group;
 mod journal;
 mod legacy_files;

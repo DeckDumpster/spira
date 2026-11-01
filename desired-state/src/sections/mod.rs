@@ -5,6 +5,7 @@
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+pub mod lifecycle;
 pub mod probe;
 
 /// The andon cord's kind. Its own design registers it; until then it is refused by name.
@@ -21,6 +22,8 @@ pub struct ConditionDecl {
 pub enum FieldShape {
     /// `{ value, window }`: the only shape a distance or an action's `moves` may name.
     Numeric,
+    /// A [`crate::section::Windowed`]: a term only while it holds a value.
+    Windowed,
     /// Detail for a reader; never a term.
     List,
 }
@@ -57,7 +60,7 @@ pub fn typed<T: DeserializeOwned>(v: &Value) -> Result<(), SchemaError> {
         .map_err(|e| (e.path().to_string(), e.inner().to_string()))
 }
 
-static KINDS: &[SectionKind] = &[probe::KIND];
+static KINDS: &[SectionKind] = &[lifecycle::KIND, probe::KIND];
 
 pub fn registry() -> &'static [SectionKind] {
     KINDS

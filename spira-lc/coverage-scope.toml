@@ -25,3 +25,22 @@ functions = [
     "parse_token",
     "holds_lock",
 ]
+
+# Goodput and the lifecycle section's publisher.
+[[scope]]
+path = "spira-lc/src/goodput.rs"
+functions = ["halts", "Window::new", "Window::contains", "Window::overlap", "goodput", "dwell_p95"]
+
+[[scope]]
+path = "spira-lc/src/control/sections/lifecycle.rs"
+functions = [
+    "run",
+    "windowed",
+    "certified_stays",
+    "repos_in",
+    "below_floor",
+    "distance",
+    "push_metrics",
+    "publish_lifecycle",
+    "round_events",
+]
