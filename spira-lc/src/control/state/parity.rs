@@ -1,4 +1,4 @@
-//! The bead-state verbs against the dolt path's goldens (`tools/lc-parity/goldens`): the seed's
+//! The control store's verbs against the dolt path's goldens (`tools/lc-parity/goldens`): the seed's
 //! recorded steps are replayed onto a fresh control store, then each case's steps, and every
 //! answer must match its golden byte for byte. A case whose golden this store cannot reproduce
 //! is named in `DIVERGES` with the reason; one named there that matches fails too, so the list
@@ -13,7 +13,7 @@ use state_store::{Backend, Config, Contract, MemBackend, Ports};
 use state_store_sqlite::{Options, SqliteBackend};
 use testkit::TempDir;
 
-use super::{Call, VERBS};
+use super::{is_verb, Call};
 use crate::callers::{self, Machine};
 use crate::control::store::Store;
 use crate::control::verbs;
@@ -22,28 +22,21 @@ use crate::control::verbs;
 const NOW: i64 = 1_767_225_600;
 const FLOOR_MS: u64 = 1_000;
 
-/// Seed steps whose verbs the control store does not serve yet, beside the batch machine's
-/// events. They are not replayed, so the state they would have built is absent: sp-blocked's
-/// edge, the asks, both batches, the deliveries, and the fact.
-const UNSERVED_SEED: &[&str] = &["dep-add", "create-ask", "cut", "land", "fact"];
+/// Seed steps whose verbs the control store does not serve yet. They are not replayed, so the
+/// state they would have built is absent: the ask and the fact.
+const UNSERVED_SEED: &[&str] = &["create-ask", "fact"];
 
 /// Cases on served verbs whose goldens this store does not reproduce, and why.
 const DIVERGES: &[(&str, &str)] = &[
-    ("show-blocked", "blocked_by comes from readiness/<id>, and no served verb publishes the seed's dep-add edge into it"),
-    ("show-delivering", "sp-delivering reached IN_DELIVERY through cut, which is not served; its delivery likewise"),
-    ("show-landed", "sp-landed reached LANDED through land, which is not served; its delivery likewise"),
-    ("list", "title and priority are planning-plane fields the control plane does not keep; and the unserved dep-add, cut and land"),
+    ("list", "title and priority are planning-plane fields the control plane does not keep"),
     ("list-live", "as list"),
-    ("list-state", "title and priority are planning fields; sp-blocked's blocked_by is the unserved dep-add"),
+    ("list-state", "title and priority are planning fields"),
     ("list-ids", "title and priority are planning fields"),
-    ("list-all", "sp-delivering and sp-landed reached their states through the unserved cut and land"),
-    ("claim-terminal", "sp-landed is LANDED only through the unserved land, so its refusal is not Terminal"),
     ("create-bead", "title and priority are planning fields; list --ids shows them"),
-    ("deliver-push", "sp-delivering is IN_DELIVERY only through the unserved cut"),
-    ("returned", "sp-delivering is IN_DELIVERY only through the unserved cut"),
+    ("set-repo", "list --ids shows sp-ready's title and priority, planning fields"),
+    ("set-repo-only-if", "as set-repo"),
+    ("claim-verdicts", "list --ids shows the titles and priorities, planning fields"),
     ("express", "list --express shows sp-ready's title, a planning field"),
-    ("list-batches", "batches are the batch machine's, served by sp-pcalr6; until then the key answers cannot tell rather than read dolt"),
-    ("list-delivery", "deliveries are the delivery machine's, served by sp-pcalr6; until then the key answers cannot tell rather than read dolt"),
     ("supersede", "the dolt path retires the bead's mends through bd on a terminal move, and with bd absent from the capture its golden carries that failure on stderr; the control store retires no mends yet"),
     ("content-on-base", "as supersede: the golden's stderr is the dolt path's mend retirement failing on the absent bd"),
 ];
@@ -61,9 +54,46 @@ struct Answer {
 
 struct Step {
     argv: Vec<String>,
-    /// No served verb reads stdin, so a step that gives it some is not served.
-    stdin: bool,
+    /// What the capture gave on stdin, which the CLI inlines as `--json` for the verbs that
+    /// take a payload; any other verb given stdin is not served.
+    stdin: Option<String>,
     want: Answer,
+}
+
+/// The verbs whose payload the CLI reads from stdin before it reaches either store.
+const PAYLOAD_VERBS: &[&str] = &["claim-verdicts", "batch-progress"];
+
+/// The argv either store receives: a payload verb's stdin travels as `--json <body>`.
+fn delivered_argv(step: &Step) -> Vec<String> {
+    match &step.stdin {
+        Some(body) => crate::cutover::inline_payload_from(step.argv.clone(), &mut body.as_bytes()),
+        None => step.argv.clone(),
+    }
+}
+
+/// A harness log line's wall-clock stamp as the capture writes it (`capture.sh`'s `normalize`).
+fn normalized(s: &str) -> String {
+    let stamped = |l: &str| {
+        let b = l.as_bytes();
+        b.len() >= 28
+            && l[20..].starts_with(" spira: ")
+            && b[19] == b'Z'
+            && b[..19].iter().enumerate().all(|(i, c)| match i {
+                4 | 7 => *c == b'-',
+                10 => *c == b'T',
+                13 | 16 => *c == b':',
+                _ => c.is_ascii_digit(),
+            })
+    };
+    s.split_inclusive('\n')
+        .map(|l| {
+            if stamped(l) {
+                format!("@WALL@{}", &l[20..])
+            } else {
+                l.to_string()
+            }
+        })
+        .collect()
 }
 
 fn read(p: &Path) -> String {
@@ -89,7 +119,10 @@ fn steps(dir: &Path) -> Vec<Step> {
             .collect();
         out.push(Step {
             argv,
-            stdin: base.with_extension("stdin").exists(),
+            stdin: base
+                .with_extension("stdin")
+                .exists()
+                .then(|| read(&base.with_extension("stdin"))),
             want: Answer {
                 rc: read(&base.with_extension("rc")).trim().parse().unwrap(),
                 stdout: read(&base.with_extension("stdout")),
@@ -123,21 +156,24 @@ const BEFORE_CALLERS: &[&str] = &[
 ];
 
 fn primitive(verb: &str) -> bool {
-    VERBS.contains(&verb) || verbs::VERBS.contains(&verb)
+    is_verb(verb) || verbs::VERBS.contains(&verb)
 }
 
 /// The verbs under test: this module's and the caller verbs built on them. The feed verbs
 /// answer a caller verb that reads them, and their own goldens are another module's to prove.
 fn served_verb(verb: &str) -> bool {
-    VERBS.contains(&verb) || (callers::is_verb(verb) && !BEFORE_CALLERS.contains(&verb))
+    is_verb(verb) || (callers::is_verb(verb) && !BEFORE_CALLERS.contains(&verb))
 }
 
-/// Whether the control store answers this step: a served verb, on the bead machine when it
-/// is an event, given no stdin.
+/// Whether the control store answers this step: a served verb, on a machine it keeps when it
+/// is an event, given stdin only when it takes a payload.
 fn served(step: &Step) -> bool {
     let argv = &step.argv;
     let machine = argv.get(1).map(String::as_str);
-    !step.stdin && served_verb(&argv[0]) && (argv[0] != "event" || machine == Some("bead"))
+    let stdin_ok = step.stdin.is_none() || PAYLOAD_VERBS.contains(&argv[0].as_str());
+    stdin_ok
+        && served_verb(&argv[0])
+        && (argv[0] != "event" || matches!(machine, Some("bead" | "batch" | "delivery")))
 }
 
 struct Rig<'a, B: Backend> {
@@ -150,7 +186,7 @@ impl<B: Backend> Machine for Rig<'_, B> {
         self.n += 1;
         let request = format!("parity/{}", self.n);
         match args.first().map(String::as_str) {
-            Some(v) if VERBS.contains(&v) => super::run(
+            Some(v) if is_verb(v) => super::run(
                 self.store,
                 args,
                 &Call {
@@ -165,11 +201,12 @@ impl<B: Backend> Machine for Rig<'_, B> {
 }
 
 /// One step as the binary prints it: a primitive's answer on stdout with a newline, a caller
-/// verb's streams as `emit` writes them.
-fn run<B: Backend>(rig: &mut Rig<'_, B>, argv: &[String]) -> Answer {
+/// verb's streams as `emit` writes them, each normalized as the capture normalized its golden.
+fn run<B: Backend>(rig: &mut Rig<'_, B>, step: &Step) -> Answer {
+    let argv = delivered_argv(step);
     let verb = argv[0].as_str();
     if primitive(verb) {
-        let (rc, out) = rig.call(argv);
+        let (rc, out) = rig.call(&argv);
         let stdout = if out.is_empty() {
             out
         } else {
@@ -177,7 +214,7 @@ fn run<B: Backend>(rig: &mut Rig<'_, B>, argv: &[String]) -> Answer {
         };
         return Answer {
             rc,
-            stdout,
+            stdout: normalized(&stdout),
             stderr: String::new(),
         };
     }
@@ -188,8 +225,8 @@ fn run<B: Backend>(rig: &mut Rig<'_, B>, argv: &[String]) -> Answer {
     }
     Answer {
         rc: a.code,
-        stdout,
-        stderr: a.stderr,
+        stdout: normalized(&stdout),
+        stderr: normalized(&a.stderr),
     }
 }
 
@@ -208,9 +245,7 @@ fn store<B: Backend>(b: B, clock: &VirtualClock) -> Store<B> {
 fn seeded<B: Backend>(s: &Store<B>) {
     let mut rig = Rig { store: s, n: 0 };
     for (i, step) in steps(&goldens().join("_seed")).iter().enumerate() {
-        let verb = step.argv[0].as_str();
-        let batch_event = verb == "event" && step.argv.get(1).map(String::as_str) == Some("batch");
-        if UNSERVED_SEED.contains(&verb) || batch_event {
+        if UNSERVED_SEED.contains(&step.argv[0].as_str()) {
             continue;
         }
         assert!(
@@ -220,7 +255,7 @@ fn seeded<B: Backend>(s: &Store<B>) {
             step.argv
         );
         assert_eq!(
-            run(&mut rig, &step.argv),
+            run(&mut rig, step),
             step.want,
             "seed step {}: {:?}",
             i + 1,
@@ -255,7 +290,7 @@ fn diverging<B: Backend>(open: impl Fn() -> Store<B>) -> Compared {
             n: 1_000,
         };
         for (i, step) in steps.iter().enumerate() {
-            let got = run(&mut rig, &step.argv);
+            let got = run(&mut rig, step);
             if got != step.want {
                 out.insert(
                     case.clone(),
@@ -283,7 +318,7 @@ struct Compared {
 
 /// The cases on served verbs that must match their goldens: fewer than this means the rig
 /// stopped comparing something.
-const MIN_MATCHING: usize = 36;
+const MIN_MATCHING: usize = 999;
 
 fn assert_parity(c: Compared) {
     let declared: BTreeSet<&str> = DIVERGES.iter().map(|(c, _)| *c).collect();
@@ -293,11 +328,6 @@ fn assert_parity(c: Compared) {
         "declared divergent but no longer compared: {not_run:?}"
     );
     let matching = c.ran.len() - c.diverging.len();
-    assert!(
-        matching >= MIN_MATCHING,
-        "only {matching} served cases match their goldens, of {} compared",
-        c.ran.len()
-    );
     let got = c.diverging;
     let unexplained: Vec<String> = got
         .iter()
@@ -307,8 +337,14 @@ fn assert_parity(c: Compared) {
     let stale: Vec<&&str> = declared.iter().filter(|c| !got.contains_key(**c)).collect();
     assert!(
         unexplained.is_empty() && stale.is_empty(),
-        "differs from its golden:\n{}\ndeclared divergent but matches: {stale:?}",
+        "{matching} of {} compared cases match; differs from its golden:\n{}\ndeclared divergent but matches: {stale:?}",
+        c.ran.len(),
         unexplained.join("\n")
+    );
+    assert!(
+        matching >= MIN_MATCHING,
+        "only {matching} served cases match their goldens, of {} compared",
+        c.ran.len()
     );
 }
 
@@ -357,6 +393,49 @@ fn the_parity_rig_reports_a_case_whose_answer_differs() {
     );
 }
 
+fn bare(argv: &[String]) -> Step {
+    Step {
+        argv: argv.to_vec(),
+        stdin: None,
+        want: Answer {
+            rc: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        },
+    }
+}
+
+#[test]
+fn a_log_lines_wall_stamp_is_written_as_the_capture_writes_it_and_nothing_else_is() {
+    assert_eq!(
+        normalized("2026-11-01T09:00:00Z spira: lc: x\nplain\n2026-11-01 spira: y"),
+        "@WALL@ spira: lc: x\nplain\n2026-11-01 spira: y"
+    );
+    assert_eq!(
+        normalized("x 2026-11-01T09:00:00Z spira: z"),
+        "x 2026-11-01T09:00:00Z spira: z"
+    );
+}
+
+#[test]
+fn a_payload_verbs_stdin_reaches_the_store_as_its_json_flag_and_only_it_is_served() {
+    let argv: Vec<String> = ["batch-progress", "b-open"].map(String::from).into();
+    let step = Step {
+        stdin: Some("{\"pass\":1}".into()),
+        ..bare(&argv)
+    };
+    assert_eq!(
+        delivered_argv(&step),
+        ["batch-progress", "b-open", "--json", "{\"pass\":1}"]
+    );
+    assert!(served(&step));
+    let show: Vec<String> = ["show", "sp-a"].map(String::from).into();
+    assert!(!served(&Step {
+        stdin: Some("x".into()),
+        ..bare(&show)
+    }));
+}
+
 #[test]
 fn the_parity_rig_sees_a_wrong_answer() {
     let s = store(MemBackend::new(), &at_now());
@@ -366,6 +445,6 @@ fn the_parity_rig_sees_a_wrong_answer() {
         n: 1_000,
     };
     let argv: Vec<String> = ["state", "sp-working"].map(String::from).into();
-    assert_eq!(run(&mut rig, &argv).stdout, "WORKING\n");
-    assert_ne!(run(&mut rig, &argv).stdout, "READY\n");
+    assert_eq!(run(&mut rig, &bare(&argv)).stdout, "WORKING\n");
+    assert_ne!(run(&mut rig, &bare(&argv)).stdout, "READY\n");
 }

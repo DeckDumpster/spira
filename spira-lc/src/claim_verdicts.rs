@@ -12,19 +12,19 @@ const CANNOT_TELL: i32 = 2;
 const REFUSED: i32 = 3;
 
 #[derive(Deserialize)]
-struct Payload {
-    computed_at: String,
-    entries: Vec<Entry>,
+pub(crate) struct Payload {
+    pub(crate) computed_at: String,
+    pub(crate) entries: Vec<Entry>,
 }
 
 #[derive(Deserialize)]
-struct Entry {
-    id: String,
-    verdict: String,
+pub(crate) struct Entry {
+    pub(crate) id: String,
+    pub(crate) verdict: String,
     #[serde(default)]
-    blocker: Option<String>,
+    pub(crate) blocker: Option<String>,
     #[serde(default)]
-    runes: Vec<String>,
+    pub(crate) runes: Vec<String>,
 }
 
 fn word(s: &str) -> bool {
@@ -56,6 +56,13 @@ fn script(p: &Payload) -> Result<(String, Vec<String>), String> {
         ));
     }
     Ok((sql, p.entries.iter().map(|e| e.id.clone()).collect()))
+}
+
+/// The payload as either store takes it: parsed, and every entry well formed, or the refusal.
+pub(crate) fn checked(body: &str) -> Result<Payload, String> {
+    let payload: Payload = serde_json::from_str(body).map_err(|e| format!("claim-verdicts: {e}"))?;
+    script(&payload).map_err(|e| format!("claim-verdicts: {e}"))?;
+    Ok(payload)
 }
 
 pub fn cmd_claim_verdicts(args: &[String], conn: &Conn) -> (i32, String) {
