@@ -203,10 +203,9 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
     let path = match store_path() {
         Some(Ok(p)) => p,
         Some(Err(e)) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
-        None if verb == "watch" => return Some((
+        None if verb == "watch" || verb == "condition" => return Some((
             CANNOT_TELL,
-            "cannot tell: watch is served by the control store, and SPIRA_LC_STORE_PATH is unset or unreadable"
-                .into(),
+            format!("cannot tell: {verb} is served by the control store, and SPIRA_LC_STORE_PATH is unset or unreadable"),
         )),
         None => return None,
     };

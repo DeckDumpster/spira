@@ -21,6 +21,8 @@ pub const GATES: &str = "gates/";
 pub const PLANNING_WATERMARK: &str = "planning/watermark";
 /// The finalizer that keeps a lifecycle record until the planning plane has closed its bead.
 pub const PLANNING_CLOSED: &str = "planning-closed";
+/// Each watcher's conditions, under its own name: `conditions/<owner>/<key>`.
+pub const CONDITIONS: &str = "conditions/";
 
 pub fn lifecycle(id: &str) -> String {
     format!("{LIFECYCLE}{id}")
@@ -41,6 +43,14 @@ pub fn delivery(id: &str) -> String {
 
 pub fn ask(id: &str) -> String {
     format!("{ASKS}{id}")
+}
+
+pub fn conditions(owner: &str) -> String {
+    format!("{CONDITIONS}{owner}/")
+}
+
+pub fn condition(owner: &str, key: &str) -> String {
+    format!("{}{key}", conditions(owner))
 }
 
 pub fn mending(id: &str) -> String {
@@ -115,6 +125,8 @@ mod tests {
         assert_eq!(delivery("sp-a"), "deliveries/sp-a");
         assert_eq!(ask("sp-q"), "asks/sp-q");
         assert_eq!(mending("sp-a"), "mendings/sp-a");
+        assert_eq!(condition("heimdall", "db-down"), "conditions/heimdall/db-down");
+        assert!(!condition("heimdall-x", "k").starts_with(&conditions("heimdall")));
         assert_eq!(mend("sp-a", 7, 1), "mends/sp-a/00000000000000000007/0001");
         assert!(!mend("sp-ab", 7, 1).starts_with(&mends("sp-a")));
         assert_eq!(batch("harness", "b-1"), "batches/harness/b-1");
@@ -135,7 +147,7 @@ mod tests {
         let prefixes = [
             LIFECYCLE, READINESS, DELIVERIES, ASKS, MENDINGS, MENDS, BATCHES, BATCH_IDS, RUNTIME,
             HISTORY, KNOBS, GATES,
-            PLANNING_WATERMARK,
+            PLANNING_WATERMARK, CONDITIONS,
         ];
         for (i, a) in prefixes.iter().enumerate() {
             for b in &prefixes[i + 1..] {
