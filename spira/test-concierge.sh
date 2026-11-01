@@ -370,6 +370,59 @@ EOF
 fi
 
 echo
+echo "start — the session carries SPIRA_TOML into its launcher and its transient unit (sp-p35wed)"
+
+# THE DEFECT: the launcher exported SPIRA_RUN and the systemd-run line set SPIRA_RELEASE, but
+# neither carried SPIRA_TOML, so every shell and subagent the Concierge started could resolve
+# no config — and once spira-admit's refusal is fatal (sp-yyrja9), every compile from them
+# fails. Driven end to end through `start` with a stand-in systemd-run that records its argv
+# and launches nothing, so this needs no systemd user session and no tmux server.
+ST="$TMP/toml-pass"; mkdir -p "$ST/bin" "$ST/run" "$ST/wiki"
+cat > "$ST/bin/systemd-run" <<EOF
+#!/bin/sh
+printf '%s\n' "\$@" > "$ST/systemd-run.argv"
+EOF
+chmod +x "$ST/bin/systemd-run"
+ST_SOCK="test-concierge-toml-$$"
+ST_TOML="$(tl_layer SPIRA_RUN="$ST/run" SPIRA_WIKI="$ST/wiki" SPIRA_RUNES_DIR="$FX/runes" \
+    SPIRA_MEMORIES_CACHE="")"
+st_start() {  # st_start <env-args...> — `start` under the fixture persona and the stand-in unit
+    env "$@" PATH="$ST/bin:$PATH" SPIRA_HOME="$FX" CONCIERGE_RUNE=fx \
+        CONCIERGE_SOCKET="$ST_SOCK" CONCIERGE_SESSION="$ST_SOCK" \
+        SPIRA_MEMORIES_CMD="$(fixture_cmd)" bash "$HARNESS/concierge.sh" start 2>&1 </dev/null
+}
+st_out="$(st_start SPIRA_TOML="$ST_TOML")"
+if [ -f "$ST/run/concierge-launch.sh" ]; then
+    want "the launcher exports the SPIRA_TOML start resolved" \
+        "export SPIRA_TOML=$(printf '%q' "$ST_TOML")" "$(cat "$ST/run/concierge-launch.sh")"
+    # POSITIVE CONTROL: the export the launcher always carried is there too, so a miss above
+    # is the missing key and not a launcher this case failed to read.
+    want "and still exports SPIRA_RUN (positive control)" \
+        "export SPIRA_RUN=$(printf '%q' "$ST/run")" "$(cat "$ST/run/concierge-launch.sh")"
+else
+    bad "the launcher exports the SPIRA_TOML start resolved" \
+        "start did not write a launcher: $(printf '%s\n' "$st_out" | tail -5)"
+fi
+st_argv="$(cat "$ST/systemd-run.argv" 2>/dev/null)"
+want "the transient unit is handed SPIRA_TOML" "--setenv=SPIRA_TOML=$ST_TOML" "$st_argv"
+want "beside SPIRA_RELEASE (positive control)"  "--setenv=SPIRA_RELEASE=$SPIRA_RELEASE" "$st_argv"
+
+# NO FALLBACK (law-a-config-value-has-no-fallback): with SPIRA_TOML unset, or naming a layer
+# that is not a file, start refuses and says which key — it launches no session that would
+# hand its shells nothing to resolve config from.
+rm -f "$ST/systemd-run.argv" "$ST/run/concierge-launch.sh"
+st_unset="$(st_start -u SPIRA_TOML)"; st_unset_rc=$?
+is   "start refuses with SPIRA_TOML unset"        1 "$st_unset_rc"
+want "and names SPIRA_TOML"                      "SPIRA_TOML" "$st_unset"
+[ ! -e "$ST/systemd-run.argv" ] && ok "and launches no unit" \
+    || bad "and launches no unit" "systemd-run was called: $(cat "$ST/systemd-run.argv")"
+st_nofile="$(st_start SPIRA_TOML="$ST_TOML:$ST/no-such.toml")"; st_nofile_rc=$?
+is   "start refuses when a SPIRA_TOML layer names no file" 1 "$st_nofile_rc"
+want "and names SPIRA_TOML"                      "SPIRA_TOML" "$st_nofile"
+[ ! -e "$ST/systemd-run.argv" ] && ok "and launches no unit" \
+    || bad "and launches no unit" "systemd-run was called: $(cat "$ST/systemd-run.argv")"
+
+echo
 echo "the ensure unit leaves the tmux server it starts alive"
 svc="$(sed -n '/^\[Service\]/,/^\[/p' "$HARNESS/systemd/concierge.service" | grep -v '^\s*#')"
 want "the unit is a oneshot, whose cgroup is reaped when start returns" "Type=oneshot" "$svc"
