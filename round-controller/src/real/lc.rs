@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use crate::ports::Lc;
 
 /// A control-store verb answers in milliseconds; spira-lc abandons a store call at 3 s itself.
-pub const LC_DEADLINE: Duration = Duration::from_secs(10);
+pub const LC_DEADLINE: Duration = Duration::from_secs(5);
 
 pub struct SpiraLc {
     pub proc_: Arc<dyn Proc>,
