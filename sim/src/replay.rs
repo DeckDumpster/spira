@@ -24,6 +24,9 @@ use state_store::{Config, Contract, MemBackend, Ports};
 use crate::Sim;
 
 pub const PASS_PERIOD_MS: u64 = 60_000;
+/// A pass runs this long after the minute, so it reads what that minute's publishers wrote
+/// whatever order the seed gives same-instant steps.
+pub const PASS_OFFSET_MS: u64 = 1;
 const MIN_LOCK_TTL_MS: u64 = 1_000;
 
 /// One captured slice: its directory under the fixtures root and the window (UTC epoch
@@ -393,19 +396,20 @@ impl ReplayWorld {
                 for m in &r.members {
                     self.verdicts.insert(m.clone(), PassVerdict::Green);
                     self.repeats.remove(m);
-                    self.green_waiting.entry(m.clone()).or_insert_with(|| GreenWait {
+                    let since = self.green_waiting.get(m).map_or(at, |g| g.since);
+                    let wait = GreenWait {
                         repo: r.repo.clone(),
-                        since: at,
+                        since,
                         batch: r.batch.clone(),
                         parent: r.parent.clone(),
-                    });
+                    };
+                    self.green_waiting.insert(m.clone(), wait);
                 }
             }
             BatchState::Landed => r.members.iter().for_each(|m| self.landed(&m.bead)),
-            _ if red => {
-                for m in &r.members {
-                    self.verdicts.insert(m.clone(), PassVerdict::Red);
-                }
+            // A red with several members is only some member's: its attribution names whose.
+            _ if red && r.members.len() == 1 => {
+                self.verdicts.insert(r.members[0].clone(), PassVerdict::Red);
             }
             _ => {}
         }
@@ -459,11 +463,14 @@ impl ReplayWorld {
         }
     }
 
-    /// The innocent members of an attributed red pass were not the red.
+    /// An attributed red pass is its owners' red, at the tips the round holds them at, and
+    /// not its innocent members'.
     fn attribution(&mut self, a: &Attribution) {
         let Some(round) = self.rounds.get(&a.batch) else { return };
-        for m in round.members.iter().filter(|m| a.innocent.contains(&m.bead)) {
-            if self.verdicts.get(m) == Some(&PassVerdict::Red) {
+        for m in &round.members {
+            if a.owner.contains(&m.bead) {
+                self.verdicts.insert(m.clone(), PassVerdict::Red);
+            } else if a.innocent.contains(&m.bead) && self.verdicts.get(m) == Some(&PassVerdict::Red) {
                 self.verdicts.remove(m);
             }
         }
@@ -556,6 +563,8 @@ pub struct ScriptedOwner {
     kind: String,
     name: String,
     script: ScriptFn,
+    /// Intents the script chose not to answer: it is asked once per intent.
+    unanswered: BTreeSet<String>,
     pub acked: Vec<(String, Scripted)>,
 }
 
@@ -566,6 +575,7 @@ impl ScriptedOwner {
             kind: kind.to_string(),
             name: name.to_string(),
             script: Box::new(|_| Scripted::Applied),
+            unanswered: BTreeSet::new(),
             acked: Vec::new(),
         }
     }
@@ -578,7 +588,7 @@ impl ScriptedOwner {
     /// Every unacknowledged intent on this section, answered per the script.
     fn answer(&mut self, store: &mut Store) {
         let owner = spira_desired_state::sections::lookup(&self.kind)
-            .unwrap_or_else(|| panic!("{} is not a registered section kind", self.kind))
+            .expect("a scripted owner's kind is registered")
             .owner;
         let prefix = spira_desired_state::intent::intent_key(&self.kind, &self.name, "");
         let snap = store.ok(&["section", "snapshot"], None);
@@ -588,7 +598,7 @@ impl ScriptedOwner {
             .flatten()
             .filter(|i| i["key"].as_str().is_some_and(|k| k.starts_with(&prefix)))
             .filter_map(|i| Some((i["key"].as_str()?.to_string(), parse_intent(&i["intent"]).ok()?)))
-            .filter(|(_, i)| i.ack.is_none())
+            .filter(|(k, i)| i.ack.is_none() && !self.unanswered.contains(k))
             .collect();
         for (key, intent) in pending {
             let reply = (self.script)(&intent);
@@ -599,7 +609,10 @@ impl ScriptedOwner {
                 Scripted::Refused(reason) => {
                     store.ok(&["intent", "ack", &key, "--actor", owner, "--result", "refused", "--reason", reason], None);
                 }
-                Scripted::NoAck => continue,
+                Scripted::NoAck => {
+                    self.unanswered.insert(key);
+                    continue;
+                }
             }
             self.acked.push((key, reply));
         }
@@ -763,7 +776,7 @@ impl Replay {
                 }
             }),
         );
-        self.sim.schedule_step(start, PASS);
+        self.sim.schedule_step(start + PASS_OFFSET_MS, PASS);
         self.sim.run();
     }
 

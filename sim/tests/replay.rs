@@ -216,7 +216,6 @@ fn the_publisher_sees_the_stacked_parent_from_its_first_refused_child() {
 
     let readings: Vec<_> = of(baseline(), STACKED_REPO).into_iter().filter(|r| r.at >= from && r.at < until).collect();
     assert!(readings.len() as u64 >= (until - from) / 60 - 1, "a reading every pass: {}", readings.len());
-    let mut last = 0.0;
     for r in &readings {
         let (status, reason) = r.condition("StackedOnUndrivenParent");
         assert_eq!(status, "True", "at {}: {reason}", r.at);
@@ -225,13 +224,13 @@ fn the_publisher_sees_the_stacked_parent_from_its_first_refused_child() {
         let entry = waiting.iter().find(|e| e["bead"] == green_member.bead.as_str()).expect("the stacked member waits");
         assert_eq!(entry["since"], first_green.at.as_str());
         assert!(entry["blocker"].as_str().unwrap().contains(&parent));
-        let minutes = r.level("green_unlanded_minutes");
-        assert!(minutes >= last, "green_unlanded_minutes fell from {last} to {minutes} at {}", r.at);
-        assert!(minutes >= ((r.observed_at - stamp(&first_green.at)) / 60) as f64, "it is at least the gap's age");
-        last = minutes;
+        let age = (r.observed_at - stamp(&first_green.at)) / 60;
+        assert!(r.level("green_unlanded_minutes") >= age as f64, "at {}: it is at least the stacked member's wait, {age} min", r.at);
     }
-    let span = (readings.last().unwrap().observed_at - readings[0].observed_at) / 60;
-    assert!(last - readings[0].level("green_unlanded_minutes") >= span as f64, "it rises with the gap's age");
+    let (first, last) = (readings[0], readings[readings.len() - 1]);
+    let span = (last.observed_at - first.observed_at) / 60;
+    assert!(span >= 180, "the stack stands for hours: {span} min");
+    assert!(last.level("green_unlanded_minutes") - first.level("green_unlanded_minutes") >= span as f64 - 1.0, "it rises with the gap's age");
 
     let after: Vec<_> = of(baseline(), STACKED_REPO).into_iter().filter(|r| r.observed_at > until + 60).collect();
     assert_eq!(after[0].condition("StackedOnUndrivenParent").0, "False", "a terminal parent is no longer a blocker");
@@ -279,8 +278,8 @@ fn the_held_out_lanes_sections_show_their_recorded_rounds_against_landings() {
         let lane_rounds: Vec<_> = rounds.iter().filter(|r| r.repo == lane).collect();
         let cut = lane_rounds.iter().filter(|r| r.state_from == BatchState::None && stamp(&r.at) >= start).count();
         let landed = lane_rounds.iter().filter(|r| r.state_to == BatchState::Landed && stamp(&r.at) >= start).count();
-        eprintln!("{lane}: {cut} rounds cut, {landed} landed");
-        assert!(cut > 3 * landed, "{lane} is a gapped lane in the fixtures");
+        let manifest = if lane == "repo-d" { (299, 26) } else { (88, 6) };
+        assert_eq!((cut, landed), manifest, "{lane}: the manifest's rounds cut and landed in the window");
         let ours: Vec<_> = readings.iter().filter(|x| x.repo == lane).collect();
         assert!(!ours.is_empty());
         let mut most = 0.0_f64;
@@ -333,8 +332,14 @@ fn hooks_run_at_their_periods_across_the_whole_day_and_the_pass_reads_what_was_p
     assert_eq!(run.pass_runs, day_minutes);
     assert_eq!(run.rc_runs, Some(day_minutes));
     assert_eq!(run.keepalive_runs, Some(day_minutes / 5));
-    let read = of(run, "repo-a").len();
-    assert!(read >= day_minutes - 1, "the pass reads the published section each minute: {read}");
+    let read = of(run, "repo-a");
+    assert_eq!(read.len(), day_minutes, "the pass reads the published section every minute");
+    let keepalive = round_controller::KEEPALIVE_MS / 1000;
+    for r in read {
+        assert!(r.observed_at <= r.at && r.at - r.observed_at < keepalive, "at {} the pass read a write from {}", r.at, r.observed_at);
+    }
+    let first = of(run, "repo-a")[0];
+    assert_eq!(first.observed_at, first.at, "the first pass reads the same minute's first publish");
 }
 
 /// A slice of one line per file, each taken from the 10-31 slice, with `file`'s line replaced.

@@ -1,6 +1,7 @@
 //! The replay-only round-controller publisher: each repo's `RoundController` section, computed
 //! from the replayed world and published through `section publish-status` on change and every
-//! 5 virtual minutes. A test fixture, never installed; the real section is the controller's.
+//! 5 virtual minutes. A test fixture, never installed; the real section is the controller's,
+//! and so is the judgement of a lane fault: passes that end with no verdict stand in for it.
 
 use std::collections::BTreeMap;
 
@@ -54,12 +55,13 @@ fn cond(type_: &'static str, raised: Option<String>) -> Cond {
     }
 }
 
-/// The blocker of a green member waiting on `parent`: the parent is not terminal and no pass
-/// runs on it.
-fn blocker(w: &ReplayWorld, parent: Option<&str>) -> Option<String> {
+/// The blocker of a green member waiting on `parent`: the parent is not terminal, no pass runs
+/// on it, and it is attributing or has waited past one keepalive for a slot or a landing.
+fn blocker(w: &ReplayWorld, parent: Option<&str>, now_s: u64) -> Option<String> {
     let p = parent?;
     let r = w.rounds.get(p)?;
-    (!r.leased()).then(|| format!("parent {p} {}, unleased", r.state.as_str()))
+    let stalled = r.state == BatchState::Attributing || now_s.saturating_sub(r.since) > KEEPALIVE_MS / 1000;
+    (!r.leased() && stalled).then(|| format!("parent {p} {}, unleased", r.state.as_str()))
 }
 
 pub fn status(w: &ReplayWorld, repo: &str, now_s: u64) -> RepoStatus {
@@ -69,23 +71,25 @@ pub fn status(w: &ReplayWorld, repo: &str, now_s: u64) -> RepoStatus {
         .iter()
         .map(|(m, g)| {
             let mut e = json!({ "bead": m.bead, "tip": m.tip, "batch": g.batch, "since": format_rfc3339(g.since) });
-            if let Some(b) = blocker(w, g.parent.as_deref()) {
+            if let Some(b) = blocker(w, g.parent.as_deref(), now_s) {
                 e["blocker"] = Value::from(b);
             }
             e
         })
         .collect();
     let green_unlanded_minutes = waiting.first().map_or(0, |(_, g)| now_s.saturating_sub(g.since) / 60);
-    let stacked = waiting.iter().find_map(|(_, g)| blocker(w, g.parent.as_deref()));
+    let stacked = waiting.iter().find_map(|(_, g)| blocker(w, g.parent.as_deref(), now_s));
 
     let mut repeats: Vec<_> = w.repeats.iter().filter(|(_, r)| r.repo == repo).collect();
     repeats.sort_by_key(|(m, r)| (r.since, *m));
     let repeat = repeats.first().map(|(m, r)| format!("{}@{} re-cut {} time(s) after red", m.bead, m.tip, r.cuts));
 
+    // A round a deliberate stop holds is not waiting for a slot.
+    let stopped = w.halted || w.paused.contains_key(repo);
     let waiting_with_no_slot = w
         .rounds
         .values()
-        .filter(|r| r.repo == repo && r.state == BatchState::Open && now_s.saturating_sub(r.since) >= SLOT_WAIT_SECS)
+        .filter(|r| !stopped && r.repo == repo && r.state == BatchState::Open && now_s.saturating_sub(r.since) >= SLOT_WAIT_SECS)
         .count();
     let lane = w.lanes.get(repo).cloned().unwrap_or_default();
     let lanes_blocked = u32::from(lane.passes_without_verdict >= LANE_BLOCKED_PASSES);
@@ -151,7 +155,7 @@ impl Publisher {
             let rev = answer["resourceVersion"]
                 .as_str()
                 .and_then(|r| r.parse().ok())
-                .unwrap_or_else(|| panic!("publish-status answered no resourceVersion: {answer}"));
+                .expect("publish-status answers the resourceVersion it wrote");
             self.writes += 1;
             self.last.insert(repo.clone(), Published { status: st, at_ms: now_ms, rev, since });
         }

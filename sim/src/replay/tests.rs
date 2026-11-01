@@ -133,15 +133,16 @@ fn a_red_tip_cut_again_is_a_repeat_until_it_goes_green_lands_or_leaves() {
 }
 
 #[test]
-fn an_innocent_member_of_an_attributed_red_is_not_red() {
+fn a_red_with_several_members_is_its_attributed_owners_and_not_the_innocents() {
     let (owner, innocent, stray) = (m("b-1", "a1"), m("b-2", "a2"), m("b-3", "a3"));
     let mut w = ReplayWorld::default();
     w.verdicts.insert(stray.clone(), PassVerdict::Green);
-    let both = [owner.clone(), innocent.clone(), stray.clone()];
-    w.apply(0, &round("R", CUT, Open, &both, None, "MemberAdded"));
-    w.apply(1, &round("R", Open, CiRunning, &both[..2], None, "PassStarted"));
-    w.apply(2, &round("R", CiRunning, Attributing, &both[..2], None, "PassRed"));
-    w.rounds.get_mut("R").unwrap().members = both.to_vec();
+    let all = [owner.clone(), innocent.clone(), stray.clone()];
+    w.apply(0, &round("R", CUT, Open, &all, None, "MemberAdded"));
+    w.apply(1, &round("R", Open, CiRunning, &all, None, "PassStarted"));
+    w.apply(2, &round("R", CiRunning, Attributing, &all, None, "PassRed"));
+    assert_eq!(w.verdicts.get(&owner), None, "an unattributed red with several members marks no one");
+    w.verdicts.insert(innocent.clone(), PassVerdict::Red);
     let att = |batch: &str| {
         Record::Attribution(Attribution {
             at: String::new(),
@@ -160,6 +161,52 @@ fn an_innocent_member_of_an_attributed_red_is_not_red() {
     let before = w.clone();
     w.apply(4, &att("gone"));
     assert_eq!(w.verdicts, before.verdicts, "an attribution of a closed round changes nothing");
+}
+
+#[test]
+fn a_parent_waiting_briefly_for_a_slot_is_driven_and_one_waiting_past_a_keepalive_is_not() {
+    let mut w = ReplayWorld::default();
+    let a = m("b-1", "aaa");
+    w.apply(0, &round("P", CUT, Open, &[m("b-0", "000")], None, "MemberAdded"));
+    w.apply(10, &round("C", CUT, Open, std::slice::from_ref(&a), Some("P"), "MemberAdded"));
+    w.apply(20, &round("C", Open, CiRunning, std::slice::from_ref(&a), Some("P"), "PassStarted"));
+    w.apply(30, &round("C", CiRunning, Green, std::slice::from_ref(&a), Some("P"), "green"));
+    let keepalive = super::round_controller::KEEPALIVE_MS / 1000;
+    assert_eq!(status(&w, "repo-b", keepalive).conditions[0].status, ConditionStatus::False);
+    assert_eq!(status(&w, "repo-b", keepalive + 1).conditions[0].reason, "parent P OPEN, unleased");
+}
+
+#[test]
+fn a_later_green_keeps_the_first_greens_age_but_names_the_latest_round() {
+    let a = m("b-1", "aaa");
+    let mut w = ReplayWorld::default();
+    w.apply(0, &round("U", CUT, Open, std::slice::from_ref(&a), None, "MemberAdded"));
+    w.apply(1, &round("U", Open, CiRunning, std::slice::from_ref(&a), None, "PassStarted"));
+    w.apply(2, &round("U", CiRunning, Green, std::slice::from_ref(&a), None, "green"));
+    w.apply(3, &round("U", Green, Abandoned, std::slice::from_ref(&a), None, "Abandon"));
+    w.apply(10, &round("P", CUT, Open, &[m("b-0", "000")], None, "MemberAdded"));
+    w.apply(11, &round("P", Open, CiRunning, &[m("b-0", "000")], None, "PassStarted"));
+    w.apply(12, &round("P", CiRunning, Attributing, &[m("b-0", "000")], None, "infra"));
+    w.apply(20, &round("S", CUT, Open, std::slice::from_ref(&a), Some("P"), "MemberAdded"));
+    w.apply(21, &round("S", Open, CiRunning, std::slice::from_ref(&a), Some("P"), "PassStarted"));
+    w.apply(22, &round("S", CiRunning, Green, std::slice::from_ref(&a), Some("P"), "green"));
+    let g = &w.green_waiting[&a];
+    assert_eq!((g.since, g.batch.as_str(), g.parent.as_deref()), (2, "S", Some("P")));
+    assert_eq!(status(&w, "repo-b", 30).conditions[0].status, ConditionStatus::True);
+}
+
+#[test]
+fn a_stopped_repo_has_no_round_waiting_for_a_slot() {
+    let mut w = ReplayWorld::default();
+    w.apply(0, &round("O", CUT, Open, &[m("b-4", "eee")], None, "MemberAdded"));
+    let stop = |kind, repo: Option<&str>| Record::Stop(Stop { at: String::new(), kind, repo: repo.map(String::from), lanes: None, bead: None });
+    w.apply(1, &stop(StopKind::Paused, Some("repo-b")));
+    assert_eq!(status(&w, "repo-b", SLOT_WAIT_SECS).waiting_with_no_slot, 0, "paused");
+    w.apply(2, &stop(StopKind::Unpaused, Some("repo-b")));
+    w.apply(3, &stop(StopKind::Halted, None));
+    assert_eq!(status(&w, "repo-b", SLOT_WAIT_SECS).waiting_with_no_slot, 0, "halted");
+    w.apply(4, &stop(StopKind::Released, None));
+    assert_eq!(status(&w, "repo-b", SLOT_WAIT_SECS).waiting_with_no_slot, 1);
 }
 
 #[test]

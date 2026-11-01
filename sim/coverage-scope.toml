@@ -14,11 +14,14 @@ functions = [
     "Inner::apply_due",
     "ScriptedOwner::answer",
     "Replay::from_dir",
+    "Replay::run",
+    "Store::call",
+    "Slice::window",
 ]
 
 [[scope]]
 path = "sim/src/replay/round_controller.rs"
-functions = ["status", "blocker", "cond", "Publisher::publish"]
+functions = ["status", "blocker", "cond", "section", "Publisher::publish"]
 
 [[scope]]
 path = "desired-state/src/sections/round_controller.rs"
