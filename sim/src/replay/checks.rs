@@ -16,6 +16,22 @@ use spira_desired_state::section::parse_rfc3339;
 use super::{round_controller, BatchState, Record, Replay, Scripted, ScriptedOwner, Slice};
 use crate::replay;
 const SEED: u64 = 31;
+
+static FIXTURES: OnceLock<std::path::PathBuf> = OnceLock::new();
+
+/// Reads the slices from `dir` instead of the source tree's: an installed binary was built
+/// elsewhere. Set it before the first check runs.
+pub fn use_fixtures(dir: std::path::PathBuf) {
+    assert!(FIXTURES.set(dir).is_ok(), "the fixtures root is set once, before any check");
+}
+
+fn fixtures() -> std::path::PathBuf {
+    FIXTURES.get().cloned().unwrap_or_else(replay::fixtures_root)
+}
+
+fn open(slice: Slice) -> Replay {
+    Replay::from_dir(SEED, &fixtures().join(slice.dir()), slice.window()).unwrap()
+}
 const STACKED_REPO: &str = "repo-b";
 const REPEAT_REPO: &str = "repo-c";
 /// The manifest's repeat-red member, at the tip it was re-cut at.
@@ -79,7 +95,7 @@ fn rounds(slice: Slice) -> &'static [replay::Round] {
     static HELD_OUT: OnceLock<Vec<replay::Round>> = OnceLock::new();
     let cell = if slice == Slice::Oct31 { &OCT31 } else { &HELD_OUT };
     cell.get_or_init(|| {
-        replay::load(&replay::fixtures_root().join(slice.dir()))
+        replay::load(&fixtures().join(slice.dir()))
             .unwrap()
             .into_iter()
             .filter_map(|(_, r)| match r {
@@ -91,7 +107,7 @@ fn rounds(slice: Slice) -> &'static [replay::Round] {
 }
 
 fn line_count(slice: Slice) -> usize {
-    let dir = replay::fixtures_root().join(slice.dir());
+    let dir = fixtures().join(slice.dir());
     replay::FILES
         .iter()
         .map(|(f, _)| std::fs::read_to_string(dir.join(f)).unwrap().lines().count())
@@ -160,7 +176,7 @@ fn intent_writer(replay: &mut Replay, repos: &'static [&'static str]) {
 
 fn run_oct31(with_intents: bool) -> Run {
     let t0 = std::time::Instant::now(); // clock-safe: reported against the 100 ms goal, never asserted
-    let mut r = Replay::new(SEED, Slice::Oct31).unwrap();
+    let mut r = open(Slice::Oct31);
     round_controller::register(&mut r);
     r.register_publisher("keepalive-probe", 300_000, |_, _, _| {});
     let prints = fingerprints(&mut r);
@@ -277,7 +293,7 @@ pub fn the_publisher_sees_the_repeat_red_member_re_cut_at_one_tip() {
 
 pub fn the_held_out_lanes_sections_show_their_recorded_rounds_against_landings() {
     let t0 = std::time::Instant::now(); // clock-safe: reported, never asserted
-    let mut r = Replay::new(SEED, Slice::HeldOut).unwrap();
+    let mut r = open(Slice::HeldOut);
     round_controller::register_publisher(&mut r, round_controller::Publisher::only(&HELD_OUT_LANES));
     let seen = reader(&mut r, &HELD_OUT_LANES);
     r.run();

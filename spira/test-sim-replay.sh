@@ -20,7 +20,7 @@ CHECKS=6
 
 command -v sim-replay >/dev/null 2>&1 || bail "sim-replay is not on PATH"
 
-out="$(sim-replay 2>&1)"
+out="$(sim-replay --fixtures "$(dirname "$HERE")/sim/fixtures/replay" 2>&1)"
 rc=$?
 printf '%s\n' "$out" | grep -E '^ok |^sim-replay:|panicked|assert'
 is "every replay check passes" 0 "$rc"
