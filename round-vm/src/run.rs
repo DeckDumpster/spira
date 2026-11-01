@@ -3279,6 +3279,7 @@ mod tests {
         let w = home.join("round-work");
         fs::create_dir_all(w.join("target/release")).unwrap();
         testkit::write_exe(w.join("target/release/spira-lint"), "#!/bin/sh\nexit 0\n");
+        fs::create_dir_all(home.join("spira-env/bin")).unwrap();
         testkit::write_exe(home.join("spira-env/bin/cargo"), "#!/bin/sh\nenv | sort > \"$HOME/unit.env\"\n");
         let f = REMOTE_SCRIPT.find("unit_cargo() {").unwrap();
         let unit_fn = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap() + 3];
