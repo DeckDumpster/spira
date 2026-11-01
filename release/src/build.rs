@@ -261,8 +261,19 @@ pub fn write_registry_index(stage: &Path) -> Result<(), String> {
         return Ok(());
     }
     let bin = stage.join("bin/spira-config");
-    // batch-job: reads and writes the staged registry once, as long as its files take
-    let out = Command::new(&bin).envs(spira_config::release_env::child_path_env_for_process()).arg("registry-index").arg(&home).output().map_err(|e| format!("cannot run {}: {e}", bin.display()))?;
+    // batch-job: reads and writes the staged registry once, as long as its files take.
+    // This process just wrote `bin`: a sibling thread's fork can hold the write descriptor
+    // until its exec, so ETXTBSY is retried on a bounded backoff.
+    let mut tries = 0;
+    let out = loop {
+        match Command::new(&bin).envs(spira_config::release_env::child_path_env_for_process()).arg("registry-index").arg(&home).output() {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && tries < 100 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(20)); // clock-safe: bounded ETXTBSY backoff
+            }
+            r => break r.map_err(|e| format!("cannot run {}: {e}", bin.display()))?,
+        }
+    };
     if !out.status.success() {
         return Err(format!("spira-config registry-index failed against the staged tree ({}): {}", out.status, String::from_utf8_lossy(&out.stderr).trim()));
     }
