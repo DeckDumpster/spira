@@ -1,0 +1,155 @@
+epoch = 1800000000
+horizon = 2400000
+goal = "sp-rp02:LANDED"
+real_actors = ["sentinel-landing", "sift"]
+
+[[actor]]
+name = "gate-worker"
+command = "gate-worker run"
+first = 20000
+every = 30000
+duration_min = 2000
+duration_max = 10000
+
+[[actor]]
+name = "submit-call"
+command = "sentinel --call-only"
+first = 1000
+duration_min = 1000
+duration_max = 2500
+
+[[step]]
+at = 0
+command = 'spira-config set spira.batcher_enable 0 "$SPIRA_TOML"'
+
+[[step]]
+at = 0
+command = 'spira-config set spira.queue_rounds_max 2 "$SPIRA_TOML"'
+
+[[step]]
+at = 0
+file = "sp-rp01"
+
+[[step]]
+at = 0
+file = "sp-rp02"
+
+[[step]]
+at = 0
+claim = "sp-rp01"
+script = ["commit out/a.txt", "submit"]
+
+[[step]]
+at = 0
+claim = "sp-rp02"
+script = ["commit out/b.txt", "submit"]
+
+# Each move runs 10 s after a gate-worker start, so the gate's verdicts are on disk when a
+# move lands the round.
+[[step]]
+name = "move-1"
+at = 150000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[step]]
+name = "move-2"
+at = 180000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[step]]
+name = "move-3"
+at = 210000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[step]]
+name = "move-4"
+at = 240000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[step]]
+name = "move-5"
+at = 270000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[step]]
+name = "move-6"
+at = 300000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[step]]
+name = "move-7"
+at = 330000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[step]]
+name = "move-8"
+at = 360000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[step]]
+name = "move-9"
+at = 390000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[step]]
+name = "move-10"
+at = 420000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[step]]
+name = "move-11"
+at = 450000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[step]]
+name = "move-12"
+at = 480000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[step]]
+name = "move-13"
+at = 510000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[step]]
+name = "move-14"
+at = 540000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[step]]
+name = "move-15"
+at = 570000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[step]]
+name = "move-16"
+at = 600000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[step]]
+name = "move-17"
+at = 630000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[step]]
+name = "move-18"
+at = 660000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[step]]
+name = "move-19"
+at = 690000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[step]]
+name = "move-20"
+at = 720000
+command = "sh spira/sim/scenarios/steps/rc-stale-round.sh sim sp-rp01 sp-rp02"
+
+[[invariant]]
+name = "no_move_answered_wrong"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (0, 3)"
+
+[[expect]]
+name = "b_landed_after_a_was_abandoned_under_its_record"
+sql = "SELECT 1 FROM run_landing_log WHERE event = 'ROUND-LAND' AND repo = 'sim' AND text LIKE '%batch=rc-b%'"

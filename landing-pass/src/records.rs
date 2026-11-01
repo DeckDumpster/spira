@@ -265,10 +265,10 @@ impl Files {
         let _ = fs::remove_file(self.deferred_file(branch));
     }
 
-    /// Delete verdict-cache entries older than the gate's own TTL — one file at a time,
-    /// never the directory (a gate may be writing into it).
+    /// Delete verdict-cache entries older than the gate's TTL, one file at a time (a gate may
+    /// be writing the directory). Age is the gate's own `at=` stamp, else the mtime.
     pub fn prune_verdicts(dir: &Path, ttl_secs: u64, now: u64) {
-        // find -mmin +N: strictly older than N whole minutes.
+        // Strictly older than N whole minutes.
         let mins = ttl_secs / 60;
         let Ok(rd) = fs::read_dir(dir) else { return };
         for e in rd.flatten() {
@@ -276,9 +276,13 @@ impl Files {
             if !md.is_file() {
                 continue;
             }
-            let Ok(mt) = md.modified() else { continue };
-            let mtime = mt.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(now);
-            let age_min_ceil = now.saturating_sub(mtime).div_ceil(60);
+            let stamped = fs::read_to_string(e.path()).ok().and_then(|t| {
+                let at = t.lines().filter_map(|l| l.strip_prefix("at=")).next_back()?;
+                at.bytes().all(|b| b.is_ascii_digit()).then(|| at.parse::<u64>().ok()).flatten()
+            });
+            let mtime = || md.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs());
+            let Some(at) = stamped.or_else(mtime) else { continue };
+            let age_min_ceil = now.saturating_sub(at).div_ceil(60);
             if age_min_ceil > mins {
                 let _ = fs::remove_file(e.path());
             }
@@ -331,5 +335,31 @@ mod tests {
         assert!(!f.backing_off("spira/sp-a", "t2", 150, 300));
         f.clear_noverdict("spira/sp-a");
         assert!(!f.backing_off("spira/sp-a", "t1", 150, 300));
+    }
+
+    #[test]
+    fn a_verdict_ages_by_the_stamp_the_gate_wrote_not_by_its_mtime() {
+        let d = crate::testutil::tmpdir("prune-stamp");
+        let now = 1_800_000_000;
+        let write = |name: &str, at: u64, mtime: std::time::SystemTime| {
+            let p = d.join(name);
+            fs::write(&p, format!("when=w\nat={at}\nby=b\nrepo=r\nbranch=spira/sp-a\nsuites=-\n")).unwrap();
+            fs::File::options().write(true).open(&p).unwrap().set_modified(mtime).unwrap();
+        };
+        let long_ago = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+        write("young", now - 60, long_ago);
+        write("old", now - 7_200, std::time::SystemTime::now());
+        let unstamped = |name: &str, mtime: u64| {
+            let p = d.join(name);
+            fs::write(&p, "when=w\nat=soon\n").unwrap();
+            fs::File::options().write(true).open(&p).unwrap().set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(mtime)).unwrap();
+        };
+        unstamped("unstamped-young", now - 60);
+        unstamped("unstamped-old", now - 7_200);
+        Files::prune_verdicts(&d, 3_600, now);
+        assert!(d.join("young").is_file(), "a verdict stamped a minute ago was pruned by its mtime");
+        assert!(!d.join("old").exists(), "a verdict stamped two hours ago outlived a one-hour TTL");
+        assert!(d.join("unstamped-young").is_file(), "an entry with no numeric at= is aged by its mtime");
+        assert!(!d.join("unstamped-old").exists(), "an entry with no numeric at= is aged by its mtime");
     }
 }

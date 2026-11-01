@@ -462,7 +462,7 @@ impl<'w, W: World> Trial<'w, W> {
         if !self.s.key.is_empty() {
             if let Some(entry) = w.read(&verdict_dir.join(&self.s.key)) {
                 if let Some((when, by)) =
-                    key::cache_fresh(&entry, ctx.var("SPIRA_VERDICT_TTL"), w.now())
+                    key::cache_fresh(&entry, ctx.var("SPIRA_VERDICT_TTL"), w.stamp())
                 {
                     self.s.pass_suites = key::cached_suites(&entry);
                     let hit = v(PASS, "cached", format!(
@@ -479,7 +479,7 @@ impl<'w, W: World> Trial<'w, W> {
         if cached.is_none() {
             if let Some(red) = crate::redcache::path(&verdict_dir, &self.s.key)
                 .and_then(|p| w.read(&p))
-                .and_then(|e| crate::redcache::fresh(&e, ctx.var("SPIRA_VERDICT_TTL"), w.now()))
+                .and_then(|e| crate::redcache::fresh(&e, ctx.var("SPIRA_VERDICT_TTL"), w.stamp()))
             {
                 self.s.suite = red.suite;
                 self.s.replayed = true;
@@ -893,7 +893,7 @@ impl<'w, W: World> Trial<'w, W> {
             if !self.s.key.is_empty() {
                 w.mkdir_p(&verdict_dir);
                 let by = ctx.var_or("SPIRA_GATE_CALLER", &br).to_string();
-                let entry = key::render_entry(&w.utc(), w.now(), &by, &name, &br, &pass_suites);
+                let entry = key::render_entry(&w.utc(), w.stamp(), &by, &name, &br, &pass_suites);
                 w.write_atomic(
                     &verdict_dir,
                     &self.s.key,
@@ -1196,7 +1196,7 @@ impl<'w, W: World> Trial<'w, W> {
                     let ran = parse::ran_suites(&o);
                     let fresh_reds = parse::red_suites(&o);
                     let when = w.utc();
-                    let at = w.now();
+                    let at = w.stamp();
                     for s in &unrun {
                         if !ran.contains(s) {
                             continue;
@@ -1685,7 +1685,7 @@ impl<'w, W: World> Trial<'w, W> {
         let Some(p) = crate::redcache::path(&self.s.verdict_dir, &self.s.key) else { return };
         let (Some(dir), Some(name)) = (p.parent(), p.file_name().and_then(|n| n.to_str())) else { return };
         w.mkdir_p(dir);
-        w.write_atomic(dir, name, &crate::redcache::render(vd.status, &vd.reason, &self.s.suite, &w.utc(), w.now(), &self.s.caller, &vd.msg));
+        w.write_atomic(dir, name, &crate::redcache::render(vd.status, &vd.reason, &self.s.suite, &w.utc(), w.stamp(), &self.s.caller, &vd.msg));
     }
 
     fn certify(&self) {
@@ -1705,7 +1705,7 @@ impl<'w, W: World> Trial<'w, W> {
             branch: self.a.branch.clone(),
             by: self.s.caller.clone(),
             when: w.utc(),
-            at: w.now(),
+            at: w.stamp(),
             harness: self.s.harness_h.clone(),
             suites: self.s.pass_suites.clone(),
         };
