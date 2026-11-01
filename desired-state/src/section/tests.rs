@@ -151,10 +151,12 @@ fn ownership_revision_name_flow_and_time_fields_are_checked() {
     assert_eq!(refused(with(good(), "/metadata/max_age", json!("15 min"))).code, "duration");
     assert_eq!(refused(with(good(), "/status/depth_24h/window", json!("banana"))).code, "window", "an unreferenced field's window is checked too");
     let mut v = good();
-    v["actions"][1] = v["actions"][0].clone();
+    let first = v["actions"][0].clone();
+    v["actions"].as_array_mut().unwrap().push(first);
     assert_eq!(refused(v).code, "action");
     let mut v = good();
-    v["actions"][1] = v["actions"][0].clone();
+    let first = v["actions"][0].clone();
+    v["actions"].as_array_mut().unwrap().push(first);
     v["actions"][1]["class"] = json!("capacity-raise");
     admit(&parse_section(&v).unwrap()).expect("a ±1 knob is one declaration per class");
 }
