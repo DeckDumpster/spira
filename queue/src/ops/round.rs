@@ -11,9 +11,9 @@ use super::batch::lc_return;
 use super::land::land_local_deferring;
 use super::stage;
 use super::{
-    actor, converge_orphans, czar_ok, idents, landing_log, lc_abandon, lc_cas, lc_eject_member,
-    lock_held_by_caller, read_text, repo_path, require_lc, resolve, statute_gate, take_lock, Ctx,
-    World, FAIL, OK, USAGE,
+    actor, batch_abandoned, converge_orphans, czar_ok, idents, landing_log, lc_abandon, lc_cas,
+    lc_eject_member, lock_held_by_caller, read_text, repo_path, require_lc, resolve, statute_gate,
+    take_lock, Ctx, World, FAIL, OK, USAGE,
 };
 use crate::cli::{Round, Text};
 use crate::ident::bounded_text;
@@ -671,12 +671,25 @@ pub(super) fn local_ctx(w: &World, label: &str, repo: Option<&str>) -> Result<(C
     Ok((c, path))
 }
 
+/// The queue lock, with every record of an ended round swept away under it.
 pub(super) fn lock(w: &World, label: &str, c: &Ctx) -> Result<Option<Guard>, i32> {
-    if lock_held_by_caller(w) {
-        Ok(None)
+    lock_sparing(w, label, c, None)
+}
+
+/// [`lock`], leaving the record of `spare` in place even if its round has ended.
+fn lock_sparing(
+    w: &World,
+    label: &str,
+    c: &Ctx,
+    spare: Option<&str>,
+) -> Result<Option<Guard>, i32> {
+    let g = if lock_held_by_caller(w) {
+        None
     } else {
-        take_lock(w, label, c, "")
-    }
+        take_lock(w, label, c, "")?
+    };
+    sweep(w, c, spare);
+    Ok(g)
 }
 
 /// The record of the batch a mender reports on: the open round of a queue.local repo, or the open
@@ -727,7 +740,7 @@ const EXTRA_PREFIX: &str = "round.";
 
 /// Every open round of the repo, oldest first. The oldest sits in `round`, which the tools
 /// outside the queue read; any other is `round.<batch>`.
-pub(crate) fn open_records(c: &Ctx) -> Vec<(PathBuf, Kv)> {
+fn open_records(c: &Ctx) -> Vec<(PathBuf, Kv)> {
     let mut extras: Vec<(u64, PathBuf, Kv)> = fs::read_dir(c.queue_file(""))
         .into_iter()
         .flatten()
@@ -758,28 +771,66 @@ pub(crate) fn open_records(c: &Ctx) -> Vec<(PathBuf, Kv)> {
         .collect()
 }
 
+/// A round whose batch row is terminal has ended; its record answers no reader. A row that
+/// cannot be read is not an ended round.
 fn lifecycle_dead(w: &World, kv: &Kv) -> bool {
-    matches!(w.lc.batch_state(kv.get("batch_id").unwrap_or("")), Some((s, _)) if matches!(s.as_str(), "ABANDONED" | "DISCARDED"))
+    w.lc.batch_state(kv.get("batch_id").unwrap_or(""))
+        .is_some_and(|(s, _)| {
+            lifecycle::batch::BatchState::from_str(&s)
+                .is_some_and(lifecycle::batch::BatchState::is_terminal)
+        })
 }
 
-/// The open rounds the lifecycle still holds; status and open both count these, so one never
-/// reports no round while the other refuses on it.
-fn live_records(w: &World, c: &Ctx) -> Vec<(PathBuf, Kv)> {
+/// The rounds the lifecycle still holds, oldest first: every reader of the round records asks
+/// this, never [`open_records`]. `ended` is handed each record whose round has ended.
+pub(crate) fn live_records(
+    w: &World,
+    c: &Ctx,
+    mut ended: impl FnMut(&Path, &Kv),
+) -> Vec<(PathBuf, Kv)> {
     open_records(c)
         .into_iter()
-        .filter(|(_, kv)| !lifecycle_dead(w, kv))
+        .filter(|(p, kv)| {
+            let dead = lifecycle_dead(w, kv);
+            if dead {
+                ended(p, kv);
+            }
+            !dead
+        })
         .collect()
 }
 
-pub(super) fn record_of(c: &Ctx, batch: &str) -> Option<(PathBuf, Kv)> {
-    open_records(c)
+/// For a reader that leaves the records as they are.
+pub(crate) fn keep(_: &Path, _: &Kv) {}
+
+/// Removes the records of ended rounds but `spare`'s and hands `round` to the oldest live one.
+/// The caller holds the queue lock.
+fn sweep(w: &World, c: &Ctx, spare: Option<&str>) {
+    let live = live_records(w, c, |p, kv| {
+        if kv.get("batch_id") != spare {
+            let _ = fs::remove_file(p);
+        }
+    });
+    promote(c, &live);
+}
+
+fn promote(c: &Ctx, live: &[(PathBuf, Kv)]) {
+    if !c.queue_file(RECORD).exists() {
+        if let Some((p, _)) = live.first() {
+            let _ = fs::rename(p, c.queue_file(RECORD));
+        }
+    }
+}
+
+pub(super) fn record_of(w: &World, c: &Ctx, batch: &str) -> Option<(PathBuf, Kv)> {
+    live_records(w, c, keep)
         .into_iter()
         .find(|(_, kv)| kv.get("batch_id") == Some(batch))
 }
 
-pub(super) fn save_record(c: &Ctx, kv: &Kv) -> Result<(), String> {
+pub(super) fn save_record(w: &World, c: &Ctx, kv: &Kv) -> Result<(), String> {
     let batch = kv.get("batch_id").unwrap_or("");
-    let path = match record_of(c, batch) {
+    let path = match record_of(w, c, batch) {
         Some((p, _)) => p,
         None if c.queue_file(RECORD).exists() => c.queue_file(&format!("{EXTRA_PREFIX}{batch}")),
         None => c.queue_file(RECORD),
@@ -787,23 +838,33 @@ pub(super) fn save_record(c: &Ctx, kv: &Kv) -> Result<(), String> {
     write_atomic(&path, &kv.render())
 }
 
-/// Removes the round's record; the oldest round left takes over `round`.
-pub(super) fn drop_record(c: &Ctx, batch: &str) {
-    if let Some((p, _)) = record_of(c, batch) {
+/// Removes the round's record, live or ended, with every other ended one; the oldest live
+/// round left takes over `round`. The caller holds the queue lock.
+pub(super) fn drop_record(w: &World, c: &Ctx, batch: &str) {
+    let live: Vec<(PathBuf, Kv)> = live_records(w, c, |p, _| {
         let _ = fs::remove_file(p);
-    }
-    if !c.queue_file(RECORD).exists() {
-        if let Some((p, _)) = open_records(c).into_iter().next() {
-            let _ = fs::rename(p, c.queue_file(RECORD));
+    })
+    .into_iter()
+    .filter(|(p, kv)| {
+        let ours = kv.get("batch_id") == Some(batch);
+        if ours {
+            let _ = fs::remove_file(p);
         }
-    }
+        !ours
+    })
+    .collect();
+    promote(c, &live);
 }
 
 pub(super) fn load(w: &World, label: &str, c: &Ctx, batch: &str) -> Result<Kv, i32> {
-    if let Some((_, kv)) = record_of(c, batch) {
-        return Ok(kv);
+    let live = live_records(w, c, keep);
+    if let Some((_, kv)) = live
+        .iter()
+        .find(|(_, kv)| kv.get("batch_id") == Some(batch))
+    {
+        return Ok(kv.clone());
     }
-    let open: Vec<String> = open_records(c)
+    let open: Vec<String> = live
         .iter()
         .map(|(_, kv)| kv.get("batch_id").unwrap_or("?").to_string())
         .collect();
@@ -823,7 +884,7 @@ pub(super) fn load(w: &World, label: &str, c: &Ctx, batch: &str) -> Result<Kv, i
 }
 
 fn save(w: &World, label: &str, c: &Ctx, kv: &Kv) -> Result<(), i32> {
-    save_record(c, kv).map_err(|e| {
+    save_record(w, c, kv).map_err(|e| {
         w.err(format!(
             "queue.sh {label}: cannot write the round record: {e}"
         ));
@@ -1086,7 +1147,7 @@ fn open(
     let Ok(_g) = lock(w, label, &c) else {
         return FAIL;
     };
-    let open_now = live_records(w, &c);
+    let open_now = live_records(w, &c, keep);
     let limit = c.s.rounds_max.max(1);
     if open_now.len() >= limit {
         let held: Vec<String> = open_now
@@ -1459,7 +1520,7 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
     let Ok(c) = resolve(w, label, repo) else {
         return FAIL;
     };
-    let open = live_records(w, &c);
+    let open = live_records(w, &c, keep);
     let Some((_, kv)) = open.first() else {
         w.out(format!("round=none\nrepo={}", c.r.name));
         return OK;
@@ -2095,8 +2156,8 @@ fn faulted_run(c: &Ctx, id: &str) -> usize {
     n
 }
 
-fn pass_members(c: &Ctx, batch: &str) -> Vec<String> {
-    record_of(c, batch).map(|(_, kv)| kv.members().into_iter().map(|m| m.id).collect()).unwrap_or_default()
+fn pass_members(w: &World, c: &Ctx, batch: &str) -> Vec<String> {
+    record_of(w, c, batch).map(|(_, kv)| kv.members().into_iter().map(|m| m.id).collect()).unwrap_or_default()
 }
 
 fn lost_vm_pass(w: &World, label: &str, batch: &str, err: &str) -> i32 {
@@ -2110,7 +2171,7 @@ fn lost_vm_pass(w: &World, label: &str, batch: &str, err: &str) -> i32 {
 /// been aboard for [`FAULTED_PASSES_RED`] such passes. When every member of a multi-member pass
 /// qualifies, nothing separates them from the host, so none is ejected. Returns [`FAULT`] either way.
 fn faulted_pass(w: &World, label: &str, c: &Ctx, batch: &str, why: &str) -> i32 {
-    let ids = pass_members(c, batch);
+    let ids = pass_members(w, c, batch);
     note_pass_end(c, &ids, PassEnd::Faulted);
     let suspects: Vec<(&String, usize)> =
         ids.iter().map(|id| (id, faulted_run(c, id))).filter(|(_, n)| *n >= FAULTED_PASSES_RED).collect();
@@ -2594,7 +2655,7 @@ fn certify_pass(
             let _ = save(w, label, c, &kv);
             return FAULT;
         }
-        note_pass_end(c, &pass_members(c, batch), PassEnd::Judged);
+        note_pass_end(c, &pass_members(w, c, batch), PassEnd::Judged);
         kv.remove("over-cap");
         set(&mut kv, "red", &reds.join(","));
         if save(w, label, c, &kv).is_err() {
@@ -2637,7 +2698,7 @@ fn certify_pass(
         w.err(format!("queue.sh {label}: spira-lc refused the GREEN for {batch} (rc={rc}): {out} — the round certificate for {head} is kept; certify again to finish without re-running"));
         return FAIL;
     }
-    note_pass_end(c, &pass_members(c, batch), PassEnd::Judged);
+    note_pass_end(c, &pass_members(w, c, batch), PassEnd::Judged);
     kv.remove("over-cap");
     set(&mut kv, "ran", &ran.to_string());
     if save(w, label, c, &kv).is_err() {
@@ -2993,7 +3054,7 @@ fn eject(
         if let Err((rc, out)) = lc_abandon(w, batch, LC_ACTOR, &emptied) {
             w.err(format!("queue.sh {label}: spira-lc abandon-batch refused for the emptied round {batch} (rc={rc}): {out}"));
         }
-        drop_record(&c, batch);
+        drop_record(w, &c, batch);
         w.git.worktree_remove(&path, &wt);
         finish(
             &c,
@@ -3269,7 +3330,7 @@ fn preempt(
     ));
 
     for id in &ids {
-        match record_of(&c, batch).map(|(_, kv)| kv) {
+        match record_of(w, &c, batch).map(|(_, kv)| kv) {
             Some(kv) if kv.members().iter().any(|m| &m.id == id) => {}
             Some(_) => {
                 w.out(format!(
@@ -3299,7 +3360,7 @@ fn preempt(
         }
     }
 
-    let Some((_, kv)) = record_of(&c, batch) else {
+    let Some((_, kv)) = record_of(w, &c, batch) else {
         w.out(format!(
             "queue.sh {label}: round {batch} has no member left; no pass to start"
         ));
@@ -3464,7 +3525,7 @@ fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
         }
     };
     retire_menders(w, &c, batch, "round landed");
-    drop_record(&c, batch);
+    drop_record(w, &c, batch);
     w.git.worktree_remove(&path, &wt);
     finish(
         &c,
@@ -3510,7 +3571,7 @@ fn settle_parent(
 ) -> Option<i32> {
     let parent = kv.get("parent").filter(|p| !p.is_empty())?.to_string();
     let stacked_on = kv.get("base").unwrap_or("").to_string();
-    let onto = match record_of(c, &parent) {
+    let onto = match record_of(w, c, &parent) {
         Some((_, pkv)) => {
             let phead = pkv.get("head").unwrap_or("").to_string();
             if phead == stacked_on {
@@ -3664,11 +3725,24 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text) -> i32 {
     if idents(w, label, &[("batch id", batch)]).is_err() || require_lc(w, label).is_err() {
         return FAIL;
     }
-    let Ok(_g) = lock(w, label, &c) else {
+    let Ok(_g) = lock_sparing(w, label, &c, Some(batch)) else {
         return FAIL;
     };
-    let Ok(kv) = load(w, label, &c, batch) else {
-        return FAIL;
+    let mut abandoned = None;
+    let _ = live_records(w, &c, |_, kv| {
+        if kv.get("batch_id") == Some(batch) && batch_abandoned(w, batch) {
+            abandoned = Some(kv.clone());
+        }
+    });
+    let kv = match abandoned {
+        Some(kv) => kv,
+        None => match load(w, label, &c, batch) {
+            Ok(kv) => kv,
+            Err(rc) => {
+                drop_record(w, &c, batch);
+                return rc;
+            }
+        },
     };
     let members = kv.members();
     let why = bounded_text(&reason);
@@ -3693,7 +3767,7 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text) -> i32 {
         w.out(format!("queue.sh {label}: {}: {state}", m.id));
     }
     retire_menders(w, &c, batch, "round abandoned");
-    drop_record(&c, batch);
+    drop_record(w, &c, batch);
     w.git.worktree_remove(&path, &worktree_of(&kv));
     finish(&c, batch, &format!("abandoned: {}", one_line(&reason)));
     stage::discard_behind(

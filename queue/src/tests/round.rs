@@ -5439,3 +5439,231 @@ fn a_round_vm_lost_mid_pass_exits_75_incomplete_and_never_counts_against_a_membe
     assert!(!t.lib.has("bead_reopen sp-a"), "a lost VM is not the member's fault: {:?}", t.lib.calls.borrow());
     assert!(!t.out().contains("red-output="), "never named a red");
 }
+
+const ENDED: [(&str, &str); 3] = [
+    ("r-abandoned", "ABANDONED"),
+    ("r-landed", "LANDED"),
+    ("r-settled", "SETTLED"),
+];
+
+/// Moves the open round `r-open` to `round.r-open` and plants the records of three ended rounds
+/// beside it, the abandoned one in `round` where the batcher leaves the oldest.
+fn ended_records_beside_the_open_round(t: &T) {
+    let open = fs::read_to_string(t.qfile("round")).unwrap();
+    assert!(open.contains("batch_id=r-open\n"), "{open}");
+    fs::rename(t.qfile("round"), t.qfile("round.r-open")).unwrap();
+    for (i, (name, state)) in ENDED.iter().enumerate() {
+        let file = if i == 0 {
+            "round".to_string()
+        } else {
+            format!("round.{name}")
+        };
+        let rec: String = open
+            .lines()
+            .map(|l| match l.split_once('=') {
+                Some(("batch_id", _)) => format!("batch_id={name}\n"),
+                Some(("opened", _)) => format!("opened={}\n", i + 1),
+                _ => format!("{l}\n"),
+            })
+            .collect();
+        fs::write(t.qfile(&file), rec).unwrap();
+        t.lc.batch_states
+            .borrow_mut()
+            .insert(name.to_string(), (state.to_string(), "9".into()));
+    }
+}
+
+fn open_beside_ended(t: &T, members: &str) {
+    assert_eq!(
+        t.run(&["round", "open", "--members", members, "--name", "r-open"]),
+        0,
+        "{}",
+        t.err()
+    );
+    ended_records_beside_the_open_round(t);
+}
+
+fn no_ended_record_left(t: &T) {
+    for (name, _) in ENDED {
+        assert!(
+            !t.qfile(&format!("round.{name}")).exists(),
+            "{name}'s record is gone"
+        );
+    }
+    if t.qfile("round").exists() {
+        assert_eq!(
+            kv_of(t, "round")["batch_id"],
+            "r-open",
+            "only a live round holds `round`"
+        );
+    }
+}
+
+#[test]
+fn status_lists_only_the_open_round_beside_landed_settled_and_abandoned_records() {
+    let t = round_world();
+    open_beside_ended(&t, "sp-a:ta");
+    let mark = t.io.out.borrow().len();
+    assert_eq!(t.run(&["round", "status"]), 0, "{}", t.err());
+    let status = t.out()[mark..].to_string();
+    assert!(
+        status.contains("rounds=1\n")
+            && status.contains("open_batches=r-open\n")
+            && status.contains("batch_id=r-open\n"),
+        "{status}"
+    );
+    assert!(
+        t.qfile("round.r-landed").exists(),
+        "status reads without the lock and removes nothing"
+    );
+}
+
+#[test]
+fn certify_acts_on_the_open_round_and_a_wrong_batch_is_told_only_the_open_one() {
+    let t = round_world();
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
+    open_beside_ended(&t, "sp-a:ta");
+    assert_eq!(t.run(&["round", "certify", "r-gone"]), 1);
+    assert!(
+        t.err()
+            .contains("the open round for spira is r-open, not r-gone"),
+        "{}",
+        t.err()
+    );
+    no_ended_record_left(&t);
+    ended_records_beside_the_open_round_again(&t);
+    assert_eq!(t.run(&["round", "certify", "r-open"]), 0, "{}", t.err());
+    assert_eq!(t.lc.batch_state("r-open").unwrap().0, "GREEN");
+    no_ended_record_left(&t);
+}
+
+/// The ended records again, after a verb swept them, beside `r-open` wherever it now is.
+fn ended_records_beside_the_open_round_again(t: &T) {
+    if !t.qfile("round").exists() {
+        fs::rename(t.qfile("round.r-open"), t.qfile("round")).unwrap();
+    }
+    ended_records_beside_the_open_round(t);
+}
+
+#[test]
+fn eject_acts_on_the_open_round_beside_ended_records() {
+    let t = round_world();
+    open_beside_ended(&t, "sp-a:ta,sp-b:tb");
+    assert_eq!(
+        t.run(&["round", "eject", "r-open", "sp-b", "--reason", "red"]),
+        0,
+        "{}",
+        t.err()
+    );
+    no_ended_record_left(&t);
+    assert_eq!(kv_of(&t, "round")["members"], "sp-a:ta");
+}
+
+#[test]
+fn land_acts_on_the_open_round_and_promotes_no_ended_record() {
+    let t = round_world();
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
+    open_beside_ended(&t, "sp-a:ta");
+    assert_eq!(t.run(&["round", "certify", "r-open"]), 0, "{}", t.err());
+    ended_records_beside_the_open_round_again(&t);
+    assert_eq!(t.run(&["round", "land", "r-open"]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("merged-ta"));
+    no_ended_record_left(&t);
+    assert!(!t.qfile("round").exists() && !t.qfile("round.r-open").exists());
+}
+
+#[test]
+fn abandon_acts_on_the_open_round_and_promotes_no_ended_record() {
+    let t = round_world();
+    open_beside_ended(&t, "sp-a:ta");
+    assert_eq!(
+        t.run(&["round", "abandon", "r-open", "--reason", "red"]),
+        0,
+        "{}",
+        t.err()
+    );
+    no_ended_record_left(&t);
+    assert!(!t.qfile("round").exists() && !t.qfile("round.r-open").exists());
+}
+
+#[test]
+fn abandon_of_a_landed_round_refuses_and_removes_its_record() {
+    let t = round_world();
+    open_beside_ended(&t, "sp-a:ta");
+    assert_eq!(
+        t.run(&["round", "abandon", "r-landed", "--reason", "stale"]),
+        1
+    );
+    assert!(
+        t.err()
+            .contains("the open round for spira is r-open, not r-landed"),
+        "{}",
+        t.err()
+    );
+    assert!(
+        !t.lc.has("abandon-batch r-landed"),
+        "{:?}",
+        t.lc.calls.borrow()
+    );
+    no_ended_record_left(&t);
+    assert_eq!(kv_of(&t, "round")["batch_id"], "r-open");
+}
+
+#[test]
+fn open_counts_only_the_open_round_toward_the_limit_and_stacks_on_it() {
+    let mut t = round_world();
+    t.lib.s.rounds_max = 2;
+    open_beside_ended(&t, "sp-a:ta");
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-b:tb", "--name", "r-next"]),
+        0,
+        "{}",
+        t.err()
+    );
+    no_ended_record_left(&t);
+    let next = kv_of(&t, "round.r-next");
+    assert_eq!(next["parent"], "r-open", "{next:?}");
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-c:tc", "--name", "r-third"]),
+        1
+    );
+    assert!(
+        t.err()
+            .contains("2 rounds are already open for spira (limit 2): r-open"),
+        "{}",
+        t.err()
+    );
+}
+
+#[test]
+fn stage_stages_behind_the_open_round_not_an_ended_record() {
+    let t = round_world();
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    open_beside_ended(&t, "sp-a:ta");
+    t.lc.batch_states
+        .borrow_mut()
+        .insert("r-open".into(), ("GREEN".into(), "5".into()));
+    t.git.ancestor("ta", "merged-ta");
+    t.git.ancestor("merged-ta", "merged-tb");
+    t.git
+        .trees
+        .borrow_mut()
+        .insert("merged-tb".into(), T_ROUND.into());
+    assert_eq!(
+        t.run(&[
+            "round",
+            "stage",
+            "--members",
+            "sp-b:tb",
+            "--name",
+            "r-staged"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert_eq!(kv_of(&t, "round-staged")["parent"], "r-open");
+    no_ended_record_left(&t);
+}

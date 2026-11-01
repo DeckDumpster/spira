@@ -713,7 +713,7 @@ fn round_pass_holds_hypervisor(w: &World, c: &Ctx) -> bool {
         Some(Place::Local) => return true,
         None => {}
     }
-    crate::ops::round::open_records(c)
+    crate::ops::round::live_records(w, c, crate::ops::round::keep)
         .iter()
         .filter_map(|(_, kv)| kv.get("batch_id"))
         .any(|batch| {
