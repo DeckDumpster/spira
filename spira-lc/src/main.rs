@@ -59,8 +59,7 @@ use db::Conn;
 use lifecycle::{batch, bead, delivery};
 use serde_json::Value;
 
-const CANNOT_TELL: i32 = 2;
-const REFUSED: i32 = 3;
+use spira_lc::{flag, CANNOT_TELL, REFUSED};
 
 fn main() {
     spira_config::release_env::ensure_release_path();
@@ -405,9 +404,6 @@ fn csv_literals(csv: &str) -> String {
     if items.is_empty() { "NULL".to_string() } else { items.join(",") }
 }
 
-fn flag(args: &[String], name: &str) -> Option<String> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
-}
 
 /// Derived table `blockers(waiting, blocked_by)`: per bead, the comma-joined ids of its
 /// blocks-type prerequisites that are still live (the same rule `ops_live` applies).

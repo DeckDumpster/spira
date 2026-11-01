@@ -1,7 +1,7 @@
 //! The control plane: lifecycle records, readiness and claims on the state-store contract.
 
 pub mod feed;
-pub mod keys;
+pub use spira_lc::keys;
 pub mod readiness;
 pub mod records;
 pub mod sections;

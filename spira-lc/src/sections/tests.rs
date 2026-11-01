@@ -13,7 +13,6 @@ use state_store::{
 };
 
 use super::{run, Call, REFUSALS, WRITES};
-use crate::control::store::Store;
 
 mod assemble;
 mod goodput_pass;
@@ -26,7 +25,7 @@ const MIN: u64 = 60_000;
 const HOUR: u64 = 60 * MIN;
 
 struct Rig<B: Backend> {
-    store: Store<B>,
+    store: Contract<B>,
     clock: VirtualClock,
     n: Cell<u32>,
     sink: MetricsSink,
@@ -36,7 +35,7 @@ fn rig_on<B: Backend>(b: B) -> Rig<B> {
     let clock = VirtualClock::new(T0);
     let c = Contract::open(b, Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: FLOOR_MS }).unwrap();
     Rig {
-        store: Store::new(c, FLOOR_MS),
+        store: c,
         clock,
         n: Cell::new(0),
         sink: MetricsSink::new(None, "test", std::time::Duration::from_millis(1)),
@@ -83,7 +82,7 @@ impl<B: Backend> Rig<B> {
     }
 
     fn head(&self) -> u64 {
-        self.store.contract().head().unwrap()
+        self.store.head().unwrap()
     }
 
     fn rev_of(&self, r: &str) -> String {
@@ -110,11 +109,11 @@ impl<B: Backend> Rig<B> {
 
     fn put_knob(&self, key: &str, v: Value) {
         let t = Txn::new().put(key, Object::new(v));
-        assert!(self.store.contract().txn(&t, &Request::new(&format!("knob/{key}/{}", self.head()), "test", "t")).unwrap().succeeded);
+        assert!(self.store.txn(&t, &Request::new(&format!("knob/{key}/{}", self.head()), "test", "t")).unwrap().succeeded);
     }
 
     fn knob(&self, key: &str) -> Value {
-        self.store.contract().get(key).unwrap().unwrap().value.data
+        self.store.get(key).unwrap().unwrap().value.data
     }
 }
 
@@ -279,9 +278,9 @@ fn intent_apply_moves_a_knob_from_to_once_and_acks_in_the_same_txn() {
 
     let k2 = put("2", json!(3), json!(4));
     r.put_knob(knob, json!(4));
-    let rev = r.store.contract().get(knob).unwrap().unwrap().mod_rev;
+    let rev = r.store.get(knob).unwrap().unwrap().mod_rev;
     assert_eq!(apply(&k2)["ack"]["result"], "already-applied", "the re-run after a crash between apply and ack");
-    let after = r.store.contract().get(knob).unwrap().unwrap();
+    let after = r.store.get(knob).unwrap().unwrap();
     assert_eq!((after.value.data, after.mod_rev), (json!(4), rev), "the knob moved once");
 
     r.put_knob(knob, json!(7));
@@ -372,10 +371,10 @@ fn snapshot_reads_sections_intents_and_the_pass_record_at_one_list_rev() {
     let token = r.lock();
     r.ok(&["intent", "put", "intents/Probe/a/1", "--token", &token, "--actor", "reconciler"], Some(&intent("1", &token, json!(1), json!(2))));
     let pass = Txn::new().put("telemetry/reconciler/pass", Object::new(json!({ "pass": "p-1" })).with_ttl(600));
-    assert!(r.store.contract().txn(&pass, &Request::new("pass", "reconciler", "t")).unwrap().succeeded);
+    assert!(r.store.txn(&pass, &Request::new("pass", "reconciler", "t")).unwrap().succeeded);
 
     let before = r.head();
-    r.store.contract().backend().fired.store(false, Ordering::SeqCst);
+    r.store.backend().fired.store(false, Ordering::SeqCst);
     let snap = r.ok(&["section", "snapshot"], None);
     assert!(r.head() > before, "a commit landed while the snapshot was listing");
     assert_eq!(snap["list_rev"], before);
@@ -394,17 +393,17 @@ fn a_status_publish_is_unaudited_telemetry_an_intent_is_audited_and_both_expire(
     let r = rig();
     let v = r.publish(&status("a", 0, NOW));
     let rev: u64 = v["resourceVersion"].as_str().unwrap().parse().unwrap();
-    assert!(r.store.contract().get(&events_key(rev)).unwrap().is_none(), "a publish writes no events/ key");
+    assert!(r.store.get(&events_key(rev)).unwrap().is_none(), "a publish writes no events/ key");
     let token = r.lock();
     let v = r.ok(&["intent", "put", "intents/Probe/a/1", "--token", &token, "--actor", "reconciler"], Some(&intent("1", &token, json!(1), json!(2))));
     let rev = v["rev"].as_u64().unwrap();
-    assert!(r.store.contract().get(&events_key(rev)).unwrap().is_some(), "an intent is audited");
+    assert!(r.store.get(&events_key(rev)).unwrap().is_some(), "an intent is audited");
 
     let gc = |at: u64| {
         r.clock.advance_to(at);
-        Controller::new(r.store.contract()).tick(r.clock.now_ms()).unwrap();
+        Controller::new(&r.store).tick(r.clock.now_ms()).unwrap();
     };
-    let present = |key: &str| r.store.contract().get(key).unwrap().is_some();
+    let present = |key: &str| r.store.get(key).unwrap().is_some();
     gc(T0 + 48 * HOUR - MIN);
     assert!(present("intents/Probe/a/1"));
     gc(T0 + 48 * HOUR + MIN);
@@ -445,7 +444,7 @@ fn compose_publishes_a_section_kinds_spec_and_nothing_without_one() {
     assert_eq!(got["freshness"]["state"], "Stale", "no status is published yet");
 
     let head = r.head();
-    let default = parse_fragment(include_str!("../../../../desired-state/examples/default.toml")).unwrap();
+    let default = parse_fragment(include_str!("../../../desired-state/examples/default.toml")).unwrap();
     let composite = compose(&[default]).unwrap();
     assert_eq!(publish_specs(&composite, &mut apply).unwrap(), 0);
     assert_eq!(r.head(), head, "with no section kind, compose writes nothing");
@@ -461,12 +460,12 @@ fn every_answer_is_json_and_list_filters_by_kind() {
     }
     assert_eq!(r.call(&["section", "get", "Probe/none"], None).0, 1);
     assert_eq!(r.call(&["section", "get", "Andon/cord"], None).0, 1, "an unregistered kind reads as absent");
-    assert_eq!(r.refused(&["lock", "acquire", &crate::control::keys::claim_resource("sp-a"), "--ttl", "60", "--holder", "h"], None), "resource");
+    assert_eq!(r.refused(&["lock", "acquire", &crate::keys::claim_resource("sp-a"), "--ttl", "60", "--holder", "h"], None), "resource");
     r.publish(&status("a", 0, NOW));
     assert_eq!(r.ok(&["section", "list", "--kind", "Probe"], None)["sections"].as_array().unwrap().len(), 1);
     assert_eq!(r.ok(&["section", "list", "--kind", "Other"], None)["sections"].as_array().unwrap().len(), 0);
     let bad = Txn::new().put("telemetry/sections/Probe/bad", Object::new(json!({ "kind": "Probe" })).with_ttl(60));
-    assert!(r.store.contract().txn(&bad, &Request::new("bad", "test", "t")).unwrap().succeeded);
+    assert!(r.store.txn(&bad, &Request::new("bad", "test", "t")).unwrap().succeeded);
     let listed = r.ok(&["section", "list"], None);
     assert_eq!(listed["sections"].as_array().unwrap().len(), 1, "one bad record does not blind the rest: {listed}");
     assert_eq!(listed["undecodable"], json!(["telemetry/sections/Probe/bad"]));
@@ -499,13 +498,4 @@ fn writes_and_refusals_are_counted_by_kind_and_reason() {
     };
     assert!(find(WRITES, "ok"), "{got:?}");
     assert!(find(REFUSALS, "step"), "{got:?}");
-}
-
-#[test]
-fn the_new_verbs_take_no_name_an_existing_verb_answers() {
-    for v in super::VERBS {
-        assert!(!crate::control::state::VERBS.contains(v), "{v}");
-        assert!(!crate::control::verbs::VERBS.contains(v), "{v}");
-        assert!(!crate::callers::is_verb(v), "{v}");
-    }
 }

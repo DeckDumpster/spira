@@ -95,7 +95,7 @@ impl<B: Backend> Rig<B> {
         let (code, out) = if argv[0] == super::VERB {
             run(&self.store, &args, &call, &self.outside)
         } else {
-            crate::control::sections::run(&self.store, &args, &call)
+            crate::control::sections::run(self.store.contract(), &args, &call)
         };
         (code, serde_json::from_str(&out).unwrap_or_else(|e| panic!("{argv:?} answered non-JSON {out:?}: {e}")))
     }

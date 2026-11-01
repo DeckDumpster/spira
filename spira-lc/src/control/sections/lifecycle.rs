@@ -195,7 +195,7 @@ fn push_metrics(call: &Call, repo: &str, hour: &goodput::Goodput, day: &goodput:
 fn publish_lifecycle<B: Backend>(store: &Store<B>, call: &Call, outside: &dyn Outside) -> Answer {
     let now = call.now_ms / 1000;
     let key = section_key(NAME, SECTION);
-    let existing = match read_section(store, &key) {
+    let existing = match read_section(store.contract(), &key) {
         Ok(e) => e,
         Err(a) => return a,
     };
@@ -307,7 +307,7 @@ fn publish_lifecycle<B: Backend>(store: &Store<B>, call: &Call, outside: &dyn Ou
     }
     let rev = existing.as_ref().map_or(0, |(_, i)| i.mod_rev.main).to_string();
     let args: Vec<String> = ["--actor", OWNER, "--expect-rev", &rev].map(String::from).to_vec();
-    publish(store, &args, call, section)
+    publish(store.contract(), &args, call, section)
 }
 
 /// The production source: the run directory's own typed records. Until halts and landing stops

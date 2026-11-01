@@ -44,7 +44,7 @@ impl<B: Backend> Rig<B> {
     fn write_pass(&self, n: u64) {
         let rec = json!({ "n": n, "list_rev": self.head(), "at": NOW, "holder": "goodput-pass", "mode": "shadow" });
         let t = Txn::new().put(PASS_KEY, Object::new(rec).with_ttl(600));
-        assert!(self.store.contract().txn(&t, &Request::new(&format!("pass/{n}"), "reconciler", "t")).unwrap().succeeded);
+        assert!(self.store.txn(&t, &Request::new(&format!("pass/{n}"), "reconciler", "t")).unwrap().succeeded);
     }
 
     fn stamp(&self) -> String {
@@ -82,7 +82,7 @@ fn both_documents_the_intents_and_the_pass_record_are_read_at_one_list_rev() {
     );
 
     let before = r.head();
-    r.store.contract().backend().fired.store(false, Ordering::SeqCst);
+    r.store.backend().fired.store(false, Ordering::SeqCst);
     let a = r.assembled();
     assert!(r.head() > before, "a section and an intent were committed while the snapshot was listing");
     assert_eq!((a.list_rev, a.current.list_rev, a.desired.list_rev), (before, before, before));
