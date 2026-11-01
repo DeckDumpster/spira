@@ -2643,7 +2643,7 @@ fn each_tree_mounts_its_own_unit_target_volume_so_switching_back_finds_it_warm()
     libtest_over_fixture(&rt, &w.repo);
     let fb = FakeBuilder::new(None);
     // A, B, A, each checked out in place; the second A names another test, so the verdict
-    // cache does not answer it and it mounts a target again.
+    // cache does not answer it and it mounts a target again (three `up`s, asserted below).
     for (br, test) in [("units", "one_name"), ("units-b", "one_name"), ("units", "two_name")] {
         sh(&w.repo, &format!("git checkout -q {br}"));
         let rc = w.run(&rt, &fb, &["--suites", "unit-tests", "--tests", test, br], "", &w.repo);

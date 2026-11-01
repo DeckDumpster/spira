@@ -91,24 +91,30 @@ run_own() {
     (cd "$WS" && env CARGO_TARGET_DIR="$TMP/$1" UNIT_TARGET_VOLUME="$1" bash spira/unit-tests.sh 2>&1)
 }
 
-echo "6. trees A, B, A, each on its own target: the second A is warm and judged on A:"
+# put_app <lib-tag> <test-name>: what a slot's checkout does on a switch — rewrite only the file
+# that differs, here app's test, with a fresh mtime; lc's files keep theirs.
+put_app() {
+    printf '#[cfg(test)]\nmod tests {\n    #[test]\n    fn %s() {\n        assert_eq!(lc::tag(), "%s");\n    }\n}\n' "$2" "$1" > "$WS/app/src/lib.rs"
+}
+
+echo "6. trees A, B, A, each on its own target: the second A rebuilds only what changed, judged on A:"
 put_tree a alpha_only
+backdate
 out="$(run_own vol-a)"; rc=$?
 wantrc "tree A passes" 0 "$rc"
 want "and lists A's test" "test tests::alpha_only ... ok" "$out"
-put_tree b beta_only
-backdate
+put_app a beta_only
 out="$(run_own vol-b)"; rc=$?
-wantrc "tree B passes against its own library" 0 "$rc"
+wantrc "tree B passes on its own target" 0 "$rc"
 want "and lists B's test" "test tests::beta_only ... ok" "$out"
 nowant "and not A's" "alpha_only" "$out"
-put_tree a alpha_only
-backdate
+put_app a alpha_only
 out="$(run_own vol-a)"; rc=$?
 wantrc "tree A passes again" 0 "$rc"
 want "and lists A's test" "test tests::alpha_only ... ok" "$out"
 nowant "and not B's" "beta_only" "$out"
-nowant "without recompiling the workspace" "Compiling app" "$out"
-[ ! -e "$TMP/vol-a/.unit-tests-built-tree" ] && ok "and without hashing the tree for a clean" || bad "and without hashing the tree for a clean" "$TMP/vol-a/.unit-tests-built-tree exists"
+want "rebuilding the crate the switch rewrote" "Compiling app" "$out"
+nowant "and not the crate it left alone" "Compiling lc" "$out"
+[ ! -e "$TMP/vol-a/.unit-tests-built-tree" ] && ok "and never hashing the tree for a clean" || bad "and never hashing the tree for a clean" "$TMP/vol-a/.unit-tests-built-tree exists"
 
 tl_summary
