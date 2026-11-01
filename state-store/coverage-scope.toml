@@ -1,0 +1,36 @@
+# The contract's functions: the aggregate branch-coverage run reports any branch in them that
+# the conformance suite leaves uncovered, naming path:line, and exits 1.
+[[scope]]
+path = "state-store/src/contract.rs"
+functions = [
+    "Contract::open",
+    "Contract::list_page",
+    "Contract::create",
+    "Contract::txn",
+    "Contract::delete",
+    "Contract::watch",
+    "Contract::lock",
+    "Contract::holder_write",
+    "Contract::holds",
+    "Contract::engine",
+    "Contract::stage",
+    "Contract::commit",
+    "Contract::expire",
+    "Contract::collect",
+    "validate",
+    "audited",
+    "ttl_ms",
+    "normalize",
+]
+
+[[scope]]
+path = "state-store/src/limits.rs"
+functions = ["check", "request_bytes"]
+
+[[scope]]
+path = "state-store/src/gc.rs"
+functions = ["Controller::tick"]
+
+[[scope]]
+path = "state-store/src/mem.rs"
+functions = ["MemBackend::range", "MemBackend::commit", "MemBackend::log", "MemBackend::compact"]

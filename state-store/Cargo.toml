@@ -1,0 +1,13 @@
+[package]
+name = "state-store"
+version = "0.1.0"
+edition = "2021"
+description = "state-store — the control-plane contract (revisions, txn, history, watch, locks with fencing, finalizers and GC, request ids, etcd v3's limits) above a minimal Backend trait, its conformance suite and the in-memory reference backend."
+
+[lib]
+name = "state_store"
+
+[dependencies]
+runtime = { path = "../runtime" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
