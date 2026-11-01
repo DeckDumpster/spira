@@ -2628,7 +2628,8 @@ fn a_tests_filter_that_matches_no_test_is_a_fault_not_a_green() {
     let b = FakeBuilder::new(None);
     let rc = w.run(&rt, &b, &["--suites", "unit-tests", "--tests", "no_such_test", "units"], "", &w.repo);
     assert_eq!(rc, 2);
-    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=1 reason=tests-matched-none tests=no_such_test");
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=tests-matched-none tests=no_such_test");
+    assert!(w.has_line(|l| l.ends_with("unit-tests: no affected crate's sources name no_such_test — no verdict")));
     // every name is its own claim: one that matched does not vouch for one that did not
     let rc = w.run(&rt, &b, &["--suites", "unit-tests", "--tests", "one_name,no_such_test", "units"], "", &w.repo);
     assert_eq!(rc, 2);
@@ -2656,6 +2657,64 @@ fn a_tests_filter_without_the_unit_tier_is_refused_before_any_work() {
     assert_eq!(rc, 2);
     assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=tests-without-unit-tier tests=one_name");
     assert_eq!(b.calls.load(Ordering::SeqCst), 0);
+}
+
+/// Three crates over base `local/main`: `core`, a library; `fixture`, which depends on it,
+/// holds [`FIXTURE_TESTS`] and declares `tool` its test-bin; and `tool`, a binary on `core`.
+/// Branch `units` changes `core`, so the diff affects all three.
+fn three_crate_world(tag: &str) -> World {
+    let w = World::new(tag);
+    fs::write(w.repo.join("spira/unit-tests.sh"), "#!/usr/bin/env bash\nset -uo pipefail\n").unwrap();
+    fs::write(w.repo.join("Cargo.toml"), "[workspace]\nmembers = [\"core\", \"fixture\", \"tool\"]\nresolver = \"2\"\n").unwrap();
+    let manifest = |c: &str, extra: &str| {
+        fs::create_dir_all(w.repo.join(format!("{c}/src"))).unwrap();
+        fs::write(
+            w.repo.join(format!("{c}/Cargo.toml")),
+            format!("[package]\nname = \"{c}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n{extra}"),
+        )
+        .unwrap();
+    };
+    manifest("core", "");
+    manifest("fixture", "\n[package.metadata.spira]\ntest-bins = [\"tool\"]\n\n[dependencies]\ncore = { path = \"../core\" }\n");
+    manifest("tool", "\n[dependencies]\ncore = { path = \"../core\" }\n");
+    fs::write(w.repo.join("core/src/lib.rs"), "").unwrap();
+    fs::write(w.repo.join("tool/src/main.rs"), "fn main() {}\n").unwrap();
+    let tests: String = FIXTURE_TESTS.iter().map(|t| format!("    #[test]\n    fn {}() {{}}\n", &t["tests::".len()..])).collect();
+    fs::write(w.repo.join("fixture/src/lib.rs"), format!("#[cfg(test)]\nmod tests {{\n{tests}}}\n")).unwrap();
+    sh(&w.repo, "git add . && git commit -qm crates && git branch local/main && git checkout -qb units");
+    fs::write(w.repo.join("core/src/lib.rs"), "pub fn core() {}\n").unwrap();
+    sh(&w.repo, "git commit -qam core");
+    w
+}
+
+#[test]
+fn a_tests_run_naming_one_crates_test_builds_only_that_crate_and_its_dependencies() {
+    let w = three_crate_world("unit-filter-narrow");
+    let rt = runtime();
+    libtest_over_fixture(&rt, &w.repo);
+    let b = FakeBuilder::new(None);
+    let rc = w.run(&rt, &b, &["--suites", "unit-tests", "--tests", "two_name", "units"], "", &w.repo);
+    assert_eq!(rc, 0, "{:?}", w.lines.lock().unwrap());
+    assert_eq!(w.last(), "VERDICT GREEN ran=1 tests=two_name");
+    assert!(w.has_line(|l| l.ends_with("unit-tests: 3 affected crate(s): core fixture tool")));
+    // `cargo test -p fixture` builds fixture and core; tool is built only as fixture's test-bin
+    assert_eq!(fs::read_to_string(crate::unit::crates_path(&w.repo)).unwrap(), "fixture\n");
+    assert_eq!(fs::read_to_string(crate::unit::bins_path(&w.repo)).unwrap(), "tool\n");
+    // and nothing is built on the host: no workspace build, no binary staged, no install
+    assert_eq!(b.calls.load(Ordering::SeqCst), 0);
+    let execs = rt.execs.lock().unwrap().clone();
+    let stage = execs
+        .iter()
+        .find(|r| r.argv.get(2).map(String::as_str) == Some(crate::fixture::STAGE_SCRIPT))
+        .expect("the release was staged");
+    assert_eq!(stage.argv.len(), 7, "no binary staged: {:?}", stage.argv);
+    assert!(!execs.iter().any(|r| r.argv.first().is_some_and(|a| a.ends_with("/bin/units-install"))));
+    // the unfiltered run of the same tree is the whole tier, built and installed as before
+    let rc = w.run(&rt, &b, &["--suites", "unit-tests", "units"], "", &w.repo);
+    assert_eq!(rc, 0, "{:?}", w.lines.lock().unwrap());
+    assert_eq!(fs::read_to_string(crate::unit::crates_path(&w.repo)).unwrap(), "core\nfixture\ntool\n");
+    assert_eq!(b.calls.load(Ordering::SeqCst), 1);
+    assert!(rt.execs.lock().unwrap().iter().any(|r| r.argv.first().is_some_and(|a| a.ends_with("/bin/units-install"))));
 }
 
 /// [`unit_world`] with a second crate, `other`, changed by the commit `local/main` sits on, so

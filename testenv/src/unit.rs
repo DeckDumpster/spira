@@ -101,9 +101,20 @@ fn output(cmd: &mut Command) -> Result<Vec<u8>, String> {
     }
 }
 
-/// Writes the affected crates (touched plus every transitive dependent), one per line; an
-/// empty file means the diff touches no crate.
-pub fn write_crates(repo: &Path, base: &str, rev: &str, tree: &Path) -> Result<Vec<String>, String> {
+/// The crates the unit tier runs: `affected` is what the diff selects (touched plus every
+/// transitive dependent); `crates` is what is written for the script, the same list, or under
+/// `--tests` only the affected crates that hold a named test.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Picked {
+    pub affected: Vec<String>,
+    pub crates: Vec<String>,
+}
+
+/// Writes the crates the tier runs, one per line, and the test-bins those crates declare; an
+/// empty file means the diff touches no crate. Under `--tests` the list is narrowed to the
+/// affected crates that hold a named test ([`holding`]), so `cargo test -p` builds those
+/// crates and their dependencies, never every dependent of the diff.
+pub fn write_crates(repo: &Path, base: &str, rev: &str, tree: &Path, tests: Option<&[String]>) -> Result<Picked, String> {
     let diff = output(
         Command::new("git")
             .arg("-C")
@@ -115,16 +126,77 @@ pub fn write_crates(repo: &Path, base: &str, rev: &str, tree: &Path) -> Result<V
     .map_err(|e| format!("git diff {base}...{rev}: {e}"))?;
     let meta = output(Command::new("cargo").current_dir(tree).args(["metadata", "--format-version", "1", "--no-deps", "--offline"]))
         .map_err(|e| format!("cargo metadata: {e}"))?;
-    let crates = gate::compose::select_crates(&diff, &String::from_utf8_lossy(&meta), true)?;
+    let meta = String::from_utf8_lossy(&meta);
+    let affected = gate::compose::select_crates(&diff, &meta, true)?;
+    let crates = match tests {
+        Some(names) => holding(tree, &gate::compose::parse_metadata(&meta)?, &affected, names),
+        None => affected.clone(),
+    };
     let path = crates_path(tree);
     let body: String = crates.iter().map(|c| format!("{c}\n")).collect();
     std::fs::create_dir_all(path.parent().unwrap_or(tree))
         .and_then(|_| std::fs::write(&path, body))
         .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-    let bins: String = test_bins(&String::from_utf8_lossy(&meta), &crates)?.iter().map(|c| format!("{c}\n")).collect();
+    let bins: String = test_bins(&meta, &crates)?.iter().map(|c| format!("{c}\n")).collect();
     let path = bins_path(tree);
     std::fs::write(&path, bins).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-    Ok(crates)
+    Ok(Picked { affected, crates })
+}
+
+/// The crates of `crates` whose own Rust sources name one of `tests`, in their order. A name
+/// is cargo's substring filter over a test's path, so its last `::` segment is part of the
+/// test function's name or of a module's, and either appears in the crate's sources or, for a
+/// module a build script generates from a file stem, in a source path: a crate where neither
+/// contains it holds no test the name can match. A nested member's directory and `target/`
+/// are not the crate's sources. A name with no segment (`::`) matches every test, so it keeps
+/// every crate.
+pub fn holding(tree: &Path, members: &[gate::compose::Member], crates: &[String], tests: &[String]) -> Vec<String> {
+    let needles: Vec<&str> = tests
+        .iter()
+        .filter_map(|t| t.rsplit("::").find(|s| !s.is_empty()))
+        .collect();
+    if needles.len() < tests.len() {
+        return crates.to_vec();
+    }
+    crates
+        .iter()
+        .filter(|c| {
+            let Some(m) = members.iter().find(|m| &m.name == *c) else {
+                return true;
+            };
+            let others: Vec<PathBuf> = members
+                .iter()
+                .filter(|o| o.name != m.name)
+                .map(|o| tree.join(&o.dir))
+                .collect();
+            names_any(&tree.join(&m.dir), &others, &needles)
+        })
+        .cloned()
+        .collect()
+}
+
+fn names_any(dir: &Path, others: &[PathBuf], needles: &[&str]) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        let path = e.path();
+        let name = e.file_name();
+        let name = name.to_string_lossy();
+        let named = || needles.iter().any(|n| name.contains(n));
+        match e.file_type() {
+            Ok(t) if t.is_dir() => {
+                name != "target"
+                    && !name.starts_with('.')
+                    && !others.contains(&path)
+                    && (named() || names_any(&path, others, needles))
+            }
+            Ok(t) if t.is_file() && name.ends_with(".rs") => {
+                named() || std::fs::read_to_string(&path).is_ok_and(|src| needles.iter().any(|n| src.contains(n)))
+            }
+            _ => false,
+        }
+    })
 }
 
 /// Why a crate list that came out empty cannot be believed, or None for a diff that genuinely
@@ -205,6 +277,34 @@ mod tests {
         let failing = "test tests::real ... FAILED\n\nfailures:\n\n---- tests::real stdout ----\ntest tests::printed ... ok\n\nfailures:\n    tests::real\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n";
         assert_eq!(tests_ran(failing), ["tests::real"]);
         assert!(tests_ran("running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out\n").is_empty());
+    }
+
+    #[test]
+    fn a_crate_holds_a_name_its_own_sources_or_source_paths_contain_and_never_one_only_a_nested_member_or_target_contains() {
+        let t = testkit::TempDir::new("testenv-unit-holding");
+        let put = |rel: &str, body: &str| {
+            let p = t.path().join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, body).unwrap();
+        };
+        put("outer/src/lib.rs", "mod sweep;\n");
+        put("outer/src/sweep/tests.rs", "#[test]\nfn a_stale_slot_is_swept() {}\n");
+        put("outer/inner/src/lib.rs", "#[test]\nfn only_inner_has_this() {}\n");
+        put("outer/target/debug/build/gen.rs", "fn only_target_has_this() {}\n");
+        put("plain/src/lib.rs", "include!(concat!(env!(\"OUT_DIR\"), \"/rules.rs\"));\n");
+        put("plain/src/rules/no_raw_pr.rs", "#[test]\nfn refused() {}\n");
+        let m = |name: &str, dir: &str| gate::compose::Member { name: name.into(), dir: dir.into(), deps: vec![], build_deps: vec![] };
+        let members = [m("outer", "outer"), m("inner", "outer/inner"), m("plain", "plain")];
+        let crates: Vec<String> = ["outer", "inner", "plain"].map(String::from).to_vec();
+        let held = |names: &[&str]| holding(t.path(), &members, &crates, &names.iter().map(|n| n.to_string()).collect::<Vec<_>>());
+        assert_eq!(held(&["sweep::tests::a_stale_slot"]), ["outer"]);
+        assert_eq!(held(&["sweep"]), ["outer"]);
+        assert_eq!(held(&["only_inner_has_this"]), ["inner"]);
+        assert!(held(&["only_target_has_this"]).is_empty());
+        assert_eq!(held(&["a_stale_slot_is_swept", "only_inner_has_this"]), ["outer", "inner"]);
+        // a module a build script makes from a file stem is named by the path alone
+        assert_eq!(held(&["rules::no_raw_pr"]), ["plain"]);
+        assert_eq!(held(&["::"]), ["outer", "inner", "plain"]);
     }
 
     #[test]
