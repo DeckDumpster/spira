@@ -182,7 +182,11 @@ impl Git for FGit {
         *self.cut_on.borrow_mut() = sha.into();
         true
     }
-    fn worktree_remove(&self, _: &Path, _: &Path) {}
+    fn worktree_remove(&self, _: &Path, p: &Path) {
+        self.calls
+            .borrow_mut()
+            .push(format!("worktree-remove {}", p.display()));
+    }
     fn merge_no_ff(
         &self,
         wt: &Path,

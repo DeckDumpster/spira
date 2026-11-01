@@ -87,11 +87,16 @@ const FILTER: &str = "live_records";
 
 fn fn_name(line: &str) -> Option<&str> {
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+(\w+)").expect("static regex"));
+    let re = RE.get_or_init(|| Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:(?:const|async|unsafe)\s+)*fn\s+(\w+)").expect("static regex"));
     re.captures(line).and_then(|c| c.get(1)).map(|m| m.as_str())
 }
 
-/// Each call of `open_records` outside the body of `live_records`.
+fn names_reader(code: &str) -> bool {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(&format!(r"\b{READER}\b")).expect("static regex")).is_match(code)
+}
+
+/// Each use of `open_records` (a call or a function value) outside the body of `live_records`.
 fn stray_calls(text: &str) -> Vec<(usize, String)> {
     let mut within = "";
     let mut out = Vec::new();
@@ -102,11 +107,11 @@ fn stray_calls(text: &str) -> Vec<(usize, String)> {
                 continue;
             }
         }
-        let t = l.trim_start();
-        if t.starts_with("//") || !l.contains(&format!("{READER}(")) || within == FILTER {
+        let code = l.split("//").next().unwrap_or("");
+        if within == FILTER || !names_reader(code) {
             continue;
         }
-        out.push((i + 1, t.to_string()));
+        out.push((i + 1, l.trim_start().to_string()));
     }
     out
 }
@@ -200,8 +205,10 @@ mod tests {
             "queue/src/ops/round.rs",
             "fn open_records(c: &Ctx) -> Vec<R> {\n    v\n}\nfn live_records(w: &World) -> Vec<R> {\n    open_records(c)\n}\npub(super) fn record_of(c: &Ctx) {\n    open_records(c).into_iter().find(f)\n}\n",
         );
-        let found = run_live_only(&t, &["queue/src/ops/stage.rs", "queue/src/ops/round.rs"]).unwrap();
-        assert_eq!(found.len(), 2, "{found:?}");
+        t.write("queue/src/ops/publish.rs", "async fn p() {}\nfn live_records() {}\nconst fn q() {\n    let f = rs.map(open_records);\n}\n");
+        let found = run_live_only(&t, &["queue/src/ops/stage.rs", "queue/src/ops/round.rs", "queue/src/ops/publish.rs"]).unwrap();
+        assert_eq!(found.len(), 3, "{found:?}");
+        assert!(found.iter().any(|f| f.contains("queue/src/ops/publish.rs:4")), "{found:?}");
         assert!(found.iter().any(|f| f.contains("queue/src/ops/round.rs:8")), "{found:?}");
         assert!(found.iter().any(|f| f.contains("queue/src/ops/stage.rs:2")), "{found:?}");
     }
@@ -213,8 +220,9 @@ mod tests {
             "queue/src/ops/round.rs",
             "/// never [`open_records`] directly\nfn open_records(c: &Ctx) -> Vec<R> {\n    v\n}\npub(crate) fn live_records(w: &World) -> Vec<R> {\n    // open_records(c) is filtered here\n    open_records(c)\n        .into_iter()\n}\n",
         );
+        t.write("queue/src/ops/simple.rs", "fn x() {\n    reopen_records(c); // open_records(c) is not called\n}\n");
         t.write("cockpit/a.rs", "fn x() { open_records(c); }\n");
-        assert_eq!(run_live_only(&t, &["queue/src/ops/round.rs", "cockpit/a.rs"]).unwrap(), Vec::<String>::new());
+        assert_eq!(run_live_only(&t, &["queue/src/ops/round.rs", "queue/src/ops/simple.rs", "cockpit/a.rs"]).unwrap(), Vec::<String>::new());
     }
 
     #[test]

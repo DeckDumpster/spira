@@ -803,13 +803,26 @@ pub(crate) fn live_records(
 /// For a reader that leaves the records as they are.
 pub(crate) fn keep(_: &Path, _: &Kv) {}
 
-/// Removes the records of ended rounds but `spare`'s and hands `round` to the oldest live one.
-/// The caller holds the queue lock.
+/// Closes out the rounds that ended without a verb closing them (record, worktree, running
+/// marker), but `spare`'s, and hands `round` to the oldest live one. The caller holds the
+/// queue lock.
 fn sweep(w: &World, c: &Ctx, spare: Option<&str>) {
     let live = live_records(w, c, |p, kv| {
-        if kv.get("batch_id") != spare {
-            let _ = fs::remove_file(p);
+        let batch = kv.get("batch_id").unwrap_or("");
+        if Some(batch) == spare {
+            return;
         }
+        let _ = fs::remove_file(p);
+        let wt = worktree_of(kv);
+        if let (Some(repo), false) = (&c.r.path, wt.as_os_str().is_empty()) {
+            w.git.worktree_remove(repo, &wt);
+        }
+        let state = w.lc.batch_state(batch).map(|(s, _)| s).unwrap_or_default();
+        finish(
+            c,
+            batch,
+            &format!("ended: {state} on the lifecycle; record swept"),
+        );
     });
     promote(c, &live);
 }

@@ -5568,6 +5568,7 @@ fn land_acts_on_the_open_round_and_promotes_no_ended_record() {
     open_beside_ended(&t, "sp-a:ta");
     assert_eq!(t.run(&["round", "certify", "r-open"]), 0, "{}", t.err());
     ended_records_beside_the_open_round_again(&t);
+    t.git.ancestor("ta", "merged-ta");
     assert_eq!(t.run(&["round", "land", "r-open"]), 0, "{}", t.err());
     assert_eq!(t.landed_ref().as_deref(), Some("merged-ta"));
     no_ended_record_left(&t);
@@ -5666,4 +5667,39 @@ fn stage_stages_behind_the_open_round_not_an_ended_record() {
     );
     assert_eq!(kv_of(&t, "round-staged")["parent"], "r-open");
     no_ended_record_left(&t);
+}
+
+#[test]
+fn a_round_the_lifecycle_abandoned_is_closed_out_by_the_next_locked_verb() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta", "--name", "r-gone"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let wt = kv_of(&t, "round")["worktree"].clone();
+    t.lc.batch_states
+        .borrow_mut()
+        .insert("r-gone".into(), ("ABANDONED".into(), "9".into()));
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-b:tb", "--name", "r-next"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert_eq!(kv_of(&t, "round")["batch_id"], "r-next");
+    assert!(!t.qfile("round.r-gone").exists() && !marker(&t, "r-gone", "running").exists());
+    assert!(
+        t.git
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.contains("worktree") && c.contains(&wt)),
+        "the ended round's worktree is removed: {:?}",
+        t.git.calls.borrow()
+    );
+    assert!(fs::read_to_string(marker(&t, "r-gone", "result"))
+        .unwrap()
+        .starts_with("ended: ABANDONED on the lifecycle"));
 }
