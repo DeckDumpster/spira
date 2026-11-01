@@ -22,8 +22,6 @@ pub enum Kind {
     /// the control plane; bd's status of its decision bead follows that record, so a read here
     /// is of the planning copy and may trail an answer by one reconcile-content pass.
     Ask,
-    /// An heimdall/watchtower alert: open while the condition fires.
-    Alert,
     /// A filed-closed observation (`bead file … insight`).
     Insight,
     /// A parked idea (`bead file … --kind idea`): open until dropped or started.
@@ -117,10 +115,10 @@ mod tests {
     #[test]
     fn filters_and_predicates() {
         assert_eq!(status_args(Kind::Ask, Which::Live), ["--status".to_string(), "open,in_progress,blocked,deferred".to_string()]);
-        assert_eq!(status_filter(Kind::Alert, Which::Closed), "closed");
+        assert_eq!(status_filter(Kind::Insight, Which::Closed), "closed");
         let row: Value = serde_json::from_str(r#"{"id":"sp-a","status":"closed"}"#).unwrap();
-        assert!(row_closed(Kind::Alert, &row));
-        assert!(is_active(Kind::Alert, "in_progress") && !is_active(Kind::Alert, "closed"));
+        assert!(row_closed(Kind::Insight, &row));
+        assert!(is_active(Kind::Insight, "in_progress") && !is_active(Kind::Insight, "closed"));
         assert!(!is_work_type(Some("decision")) && is_work_type(Some("task")) && is_work_type(None));
         assert_eq!(status_of(Kind::Ask, &serde_json::json!({})), "");
     }
