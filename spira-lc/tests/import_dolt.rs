@@ -214,7 +214,7 @@ fn seed(f: &Fixture) {
     assert_eq!(rc, 0, "{out}");
     assert_eq!(event(f, &old, "bead", "sp-epic", "READY", "0", json!("Express")).0, 0);
     f.ok(&old, &["dep-add", "sp-ready", "sp-work"]);
-    f.ok(&old, &["create-ask", "q-1", "--work-bead", "sp-work"]);
+    f.ok(&old, &["create-ask", "sp-q1", "--work-bead", "sp-work"]);
 
     let ev = json!({"id": "e1", "stream": "s", "kind": {"tag": "t", "body": "b"}, "at": 7, "cause": null, "correlation": "c"}).to_string();
     f.ok(&old, &["journal", "append", &ev]);
