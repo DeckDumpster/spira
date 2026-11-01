@@ -1,0 +1,7 @@
+# Functions of this crate whose every branch the gate's coverage step must see run. The batch
+# machine's transitions are shared by every driver of a round, so an untested arm is a refusal
+# nobody has seen.
+
+[[function]]
+file = "src/batch.rs"
+name = "primary_transition"

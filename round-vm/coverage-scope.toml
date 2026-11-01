@@ -1,0 +1,14 @@
+# Functions of this crate whose every branch the gate's coverage step must see run: how a pass's
+# verdict and boundaries reach its batch row, which every driver of a round shares.
+
+[[function]]
+file = "src/run.rs"
+name = "record_boundary"
+
+[[function]]
+file = "src/run.rs"
+name = "after_batch"
+
+[[function]]
+file = "src/run.rs"
+name = "record_treeless_end"
