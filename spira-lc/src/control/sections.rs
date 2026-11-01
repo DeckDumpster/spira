@@ -200,16 +200,19 @@ fn section_get<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> An
     }
 }
 
-/// Every listed section of a registered kind: a kind not registered reads as absent.
-fn sections_of(items: &[Item], now_ms: u64) -> Result<Vec<Value>, Answer> {
+/// Every listed section of a registered kind, and the keys of any that no longer decode: a
+/// kind not registered reads as absent, and one bad record does not blind the rest.
+fn sections_of(items: &[Item], now_ms: u64) -> (Vec<Value>, Vec<String>) {
     let mut out = Vec::new();
+    let mut undecodable = Vec::new();
     for i in items.iter().filter(|i| i.key.starts_with(SECTIONS_PREFIX)) {
-        let s = decode_section(i)?;
-        if registered(&s.kind).is_ok() {
-            out.push(shown(&s, now_ms));
+        match decode_section(i) {
+            Ok(s) if registered(&s.kind).is_ok() => out.push(shown(&s, now_ms)),
+            Ok(_) => {}
+            Err(_) => undecodable.push(i.key.clone()),
         }
     }
-    Ok(out)
+    (out, undecodable)
 }
 
 /// `section list [--kind K]`.
@@ -222,10 +225,8 @@ fn section_list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> A
         Ok(x) => x,
         Err(e) => return cannot(e),
     };
-    match sections_of(&items, call.now_ms) {
-        Ok(sections) => Answer::Ok(json!({ "sections": sections, "list_rev": list_rev })),
-        Err(a) => a,
-    }
+    let (sections, undecodable) = sections_of(&items, call.now_ms);
+    Answer::Ok(json!({ "sections": sections, "undecodable": undecodable, "list_rev": list_rev }))
 }
 
 /// `section snapshot`: every section, every intent and the pass record, from one list over the
@@ -236,10 +237,7 @@ fn section_snapshot<B: Backend>(store: &Store<B>, call: &Call) -> Answer {
         Ok(x) => x,
         Err(e) => return cannot(e),
     };
-    let sections = match sections_of(&items, call.now_ms) {
-        Ok(s) => s,
-        Err(a) => return a,
-    };
+    let (sections, undecodable) = sections_of(&items, call.now_ms);
     let intents: Vec<Value> = items
         .iter()
         .filter(|i| i.key.starts_with(INTENTS_PREFIX))
@@ -249,7 +247,7 @@ fn section_snapshot<B: Backend>(store: &Store<B>, call: &Call) -> Answer {
         .iter()
         .find(|i| i.key == PASS_KEY)
         .map_or(Value::Null, |i| i.value.data.clone());
-    Answer::Ok(json!({ "sections": sections, "intents": intents, "pass": pass, "list_rev": list_rev }))
+    Answer::Ok(json!({ "sections": sections, "undecodable": undecodable, "intents": intents, "pass": pass, "list_rev": list_rev }))
 }
 
 /// A spec document: the shape of a composite resource of a section kind.
@@ -277,6 +275,9 @@ fn parse_spec_doc(v: &Value) -> Result<SpecDoc, Refusal> {
         Refusal::new(field, "schema", e.inner().to_string())
     })
 }
+
+/// How far past this store's clock an owner's `observedAt` may be.
+const CLOCK_SKEW_SECS: u64 = 60;
 
 /// How often a write that lost its compare to a concurrent one is re-planned.
 const ATTEMPTS: usize = 5;
@@ -396,7 +397,7 @@ fn publish<B: Backend>(store: &Store<B>, args: &[String], call: &Call, mut s: Se
     }
     let (spec, generation) = existing
         .as_ref()
-        .map_or((Default::default(), 1), |(e, _)| (e.spec.clone(), e.metadata.generation.unwrap_or(0)));
+        .map_or((Default::default(), 0), |(e, _)| (e.spec.clone(), e.metadata.generation.unwrap_or(0)));
     if !s.spec.is_empty() && s.spec != spec {
         return refuse("spec", "ownership", format!("spec is written only by the operator's apply ({COMPOSE})"));
     }
@@ -414,6 +415,11 @@ fn publish<B: Backend>(store: &Store<B>, args: &[String], call: &Call, mut s: Se
     s.metadata.generation = Some(generation);
     if let Err(r) = admit_publish(&s) {
         return r.into();
+    }
+    // A future stamp would read fresh until the clock caught up with it.
+    let observed = s.metadata.observed_at.as_deref().and_then(section::parse_rfc3339);
+    if observed.is_some_and(|o| o > call.now_ms / 1000 + CLOCK_SKEW_SECS) {
+        return refuse("metadata.observedAt", "time", format!("is more than {CLOCK_SKEW_SECS}s past this store's clock"));
     }
     let prev = existing.map(|(_, i)| i.mod_rev);
     let t = Txn::new().when(Compare::ModRev(key.clone(), prev)).put(&key, stored(&s));
@@ -481,7 +487,12 @@ fn put<B: Backend>(store: &Store<B>, args: &[String], call: &Call, key: &str) ->
         Ok(false) => return lock_lost(),
         Err(a) => return a,
     }
-    let value = Object::new(serde_json::to_value(&i).unwrap_or(Value::Null)).with_ttl(INTENT_TTL_SECS);
+    match store.contract().get(key) {
+        Ok(Some(_)) => return refuse("key", "exists", format!("{key} is already written; an intent is written once")),
+        Ok(None) => {}
+        Err(e) => return cannot(e),
+    }
+    let value =Object::new(serde_json::to_value(&i).unwrap_or(Value::Null)).with_ttl(INTENT_TTL_SECS);
     let t = Txn::new()
         .fenced(&fence)
         .when(Compare::ModRev(key.into(), None))
@@ -646,6 +657,14 @@ fn intent_apply<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (
     let answer = (|| {
         let knob = knob_key(args)?;
         let (mut i, item, actor) = owned_intent(store, args, &key)?;
+        let own = parse_key(&key).map(|(k, n, _)| format!("{}{k}/{n}/", keys::KNOBS));
+        if knob != i.target || !own.is_some_and(|p| knob.starts_with(&p)) {
+            return Err(refuse(
+                "--knob",
+                "knob",
+                format!("{knob:?} is not this intent's target {:?} under its own section's knobs", i.target),
+            ));
+        }
         let cur = store.contract().get(&knob).map_err(cannot)?;
         let value = cur.as_ref().map(|c| c.value.data.clone());
         let result = match &value {

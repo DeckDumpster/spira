@@ -341,6 +341,9 @@ pub fn parse_step(step: &str) -> Result<(), String> {
             "{step:?} is not a bounded step (+N, −N, N% fewer|more with 1 ≤ N ≤ {MAX_STEP}, or one <thing>)"
         ))
     };
+    if words.contains(&"rebuild") {
+        return refuse();
+    }
     match words.as_slice() {
         ["one", thing @ ..] if !thing.is_empty() && unit(thing) => Ok(()),
         [pct, dir] if (*dir == "fewer" || *dir == "more") && pct.ends_with('%') => {
@@ -411,6 +414,11 @@ pub fn admit(s: &Section) -> Result<&'static SectionKind, Refusal> {
     (kind.check_spec)(&spec).map_err(|e| Refusal::new(format!("spec.{}", e.0), "schema", e.1))?;
     let fields = Value::Object(s.status.fields.clone().into_iter().collect());
     (kind.check_status)(&fields).map_err(|e| Refusal::new(format!("status.{}", e.0), "schema", e.1))?;
+    for (name, shape) in kind.fields {
+        if *shape == FieldShape::Numeric && s.status.fields.contains_key(*name) && s.numeric(kind, name).is_none() {
+            return Err(Refusal::new(format!("status.{name}.window"), "window", "is neither level nor a duration"));
+        }
+    }
 
     for (i, c) in s.status.conditions.iter().enumerate() {
         let field = format!("status.conditions[{i}]");

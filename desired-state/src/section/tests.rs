@@ -107,7 +107,7 @@ fn a_horizon_shorter_than_the_moved_fields_window_plus_target_latency_is_refused
 
 #[test]
 fn only_bounded_steps_are_admitted() {
-    for bad in ["set to 4", "rebuild", "+30", "+N", "26% fewer", "0% more", "one", "+1 SLOT", "−0"] {
+    for bad in ["set to 4", "rebuild", "+30", "+N", "26% fewer", "0% more", "one", "+1 SLOT", "−0", "one rebuild"] {
         let r = refused(with(good(), "/actions/0/step", json!(bad)));
         assert_eq!(r.code, "step", "{bad}: {r}");
     }
@@ -141,6 +141,7 @@ fn ownership_revision_name_flow_and_time_fields_are_checked() {
     assert_eq!(refused(with(good(), "/flow/consumes/0", json!("slots"))).code, "flow");
     assert_eq!(refused(with(good(), "/metadata/observedAt", json!("yesterday"))).code, "time");
     assert_eq!(refused(with(good(), "/metadata/max_age", json!("15 min"))).code, "duration");
+    assert_eq!(refused(with(good(), "/status/depth_24h/window", json!("banana"))).code, "window", "an unreferenced field's window is checked too");
     let mut v = good();
     v["actions"][1] = v["actions"][0].clone();
     assert_eq!(refused(v).code, "action");

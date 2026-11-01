@@ -226,8 +226,10 @@ fn intents_are_fenced_on_the_reconciler_lock_and_acked_and_judged_once_by_their_
     let snap = r.ok(&["section", "snapshot"], None);
     assert_eq!(snap["intents"][0]["key"], key);
     assert_eq!(snap["intents"][0]["intent"]["to"], 2);
+    let head = r.head();
     let (code, _) = put(key, "reconciler", &token, &intent("1", &token, json!(1), json!(2)));
     assert_eq!(code, 3, "an intent is written once");
+    assert_eq!(r.head(), head, "a second put is refused before its txn");
 
     let judge = |actor: &str| r.call(&["intent", "judge", key, "--token", &token, "--actor", actor, "--result", "failed", "--observed", "3"], None);
     assert_eq!(judge("reconciler").0, 3, "an unacknowledged intent is not judged");
@@ -278,6 +280,8 @@ fn intent_apply_moves_a_knob_from_to_once_and_acks_in_the_same_txn() {
     assert_eq!(r.knob(knob), json!(7));
 
     assert_eq!(r.refused(&["intent", "apply", &k3, "--knob", "lifecycle/sp-x", "--actor", "probe"], None), "--knob");
+    assert_eq!(r.refused(&["intent", "apply", &k3, "--knob", "knobs/Probe/a/other", "--actor", "probe"], None), "--knob", "only the intent's own target moves");
+    assert_eq!(r.knob(knob), json!(7));
 }
 
 #[test]
@@ -292,16 +296,18 @@ fn freshness_is_age_against_max_age_and_generation_lag_reads_apart() {
     assert!(got["freshness"]["reason"].as_str().unwrap().contains("max_age"), "{got}");
 
     let fresh_at = spira_desired_state::store::format_rfc3339(r.clock.now_ms() / 1000);
-    assert_eq!(r.apply_spec(&spec("a", 4.0))["generation"], 2);
-    r.publish(&status("a", 2, &fresh_at));
+    assert_eq!(r.apply_spec(&spec("a", 4.0))["generation"], 1, "a section published before any spec is at generation 0");
+    r.publish(&status("a", 1, &fresh_at));
     assert_eq!(r.apply_spec(&spec("a", 4.0))["applied"], false, "an unchanged spec writes nothing");
-    assert_eq!(r.apply_spec(&spec("a", 5.0))["generation"], 3, "a spec change bumps generation");
-    let v = r.publish(&status("a", 2, &fresh_at));
-    assert_eq!(v["generation"], 3, "a status write does not");
+    assert_eq!(r.apply_spec(&spec("a", 5.0))["generation"], 2, "a spec change bumps generation");
+    let v = r.publish(&status("a", 1, &fresh_at));
+    assert_eq!(v["generation"], 2, "a status write does not");
     let got = r.ok(&["section", "get", "Probe/a"], None);
     assert_eq!((got["freshness"]["state"].as_str(), got["caught_up"].as_bool()), (Some("Fresh"), Some(false)));
     let rev = r.rev_of("Probe/a");
-    assert_eq!(r.refused(&["section", "publish-status", "--actor", "probe", "--expect-rev", &rev], Some(&status("a", 4, &fresh_at))), "status.observedGeneration");
+    assert_eq!(r.refused(&["section", "publish-status", "--actor", "probe", "--expect-rev", &rev], Some(&status("a", 3, &fresh_at))), "status.observedGeneration");
+    let ahead = spira_desired_state::store::format_rfc3339(r.clock.now_ms() / 1000 + 120);
+    assert_eq!(r.refused(&["section", "publish-status", "--actor", "probe", "--expect-rev", &rev], Some(&status("a", 1, &ahead))), "metadata.observedAt", "a future stamp would read fresh until the clock caught up");
 }
 
 /// A backend that lands one commit the moment the snapshot reaches the sections prefix.
@@ -447,6 +453,11 @@ fn every_answer_is_json_and_list_filters_by_kind() {
     r.publish(&status("a", 0, NOW));
     assert_eq!(r.ok(&["section", "list", "--kind", "Probe"], None)["sections"].as_array().unwrap().len(), 1);
     assert_eq!(r.ok(&["section", "list", "--kind", "Other"], None)["sections"].as_array().unwrap().len(), 0);
+    let bad = Txn::new().put("telemetry/sections/Probe/bad", Object::new(json!({ "kind": "Probe" })).with_ttl(60));
+    assert!(r.store.contract().txn(&bad, &Request::new("bad", "test", "t")).unwrap().succeeded);
+    let listed = r.ok(&["section", "list"], None);
+    assert_eq!(listed["sections"].as_array().unwrap().len(), 1, "one bad record does not blind the rest: {listed}");
+    assert_eq!(listed["undecodable"], json!(["telemetry/sections/Probe/bad"]));
 }
 
 #[test]
