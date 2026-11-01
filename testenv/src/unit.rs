@@ -145,14 +145,19 @@ pub fn write_crates(repo: &Path, base: &str, rev: &str, tree: &Path, tests: Opti
 
 /// The crates of `crates` whose own Rust sources name one of `tests`, in their order. A name
 /// is cargo's substring filter over a test's path, so its last `::` segment is part of the
-/// test function's name or of a module's, and either appears in the crate's sources: a crate
-/// whose sources never contain it holds no test the name can match. A nested member's
-/// directory and `target/` are not the crate's sources.
+/// test function's name or of a module's, and either appears in the crate's sources or, for a
+/// module a build script generates from a file stem, in a source path: a crate where neither
+/// contains it holds no test the name can match. A nested member's directory and `target/`
+/// are not the crate's sources. A name with no segment (`::`) matches every test, so it keeps
+/// every crate.
 pub fn holding(tree: &Path, members: &[gate::compose::Member], crates: &[String], tests: &[String]) -> Vec<String> {
     let needles: Vec<&str> = tests
         .iter()
         .filter_map(|t| t.rsplit("::").find(|s| !s.is_empty()))
         .collect();
+    if needles.len() < tests.len() {
+        return crates.to_vec();
+    }
     crates
         .iter()
         .filter(|c| {
@@ -178,12 +183,16 @@ fn names_any(dir: &Path, others: &[PathBuf], needles: &[&str]) -> bool {
         let path = e.path();
         let name = e.file_name();
         let name = name.to_string_lossy();
+        let named = || needles.iter().any(|n| name.contains(n));
         match e.file_type() {
             Ok(t) if t.is_dir() => {
-                name != "target" && !name.starts_with('.') && !others.contains(&path) && names_any(&path, others, needles)
+                name != "target"
+                    && !name.starts_with('.')
+                    && !others.contains(&path)
+                    && (named() || names_any(&path, others, needles))
             }
             Ok(t) if t.is_file() && name.ends_with(".rs") => {
-                std::fs::read_to_string(&path).is_ok_and(|src| needles.iter().any(|n| src.contains(n)))
+                named() || std::fs::read_to_string(&path).is_ok_and(|src| needles.iter().any(|n| src.contains(n)))
             }
             _ => false,
         }
@@ -271,7 +280,7 @@ mod tests {
     }
 
     #[test]
-    fn a_crate_holds_a_name_its_own_sources_contain_and_never_one_only_a_nested_member_or_target_contains() {
+    fn a_crate_holds_a_name_its_own_sources_or_source_paths_contain_and_never_one_only_a_nested_member_or_target_contains() {
         let t = testkit::TempDir::new("testenv-unit-holding");
         let put = |rel: &str, body: &str| {
             let p = t.path().join(rel);
@@ -282,7 +291,8 @@ mod tests {
         put("outer/src/sweep/tests.rs", "#[test]\nfn a_stale_slot_is_swept() {}\n");
         put("outer/inner/src/lib.rs", "#[test]\nfn only_inner_has_this() {}\n");
         put("outer/target/debug/build/gen.rs", "fn only_target_has_this() {}\n");
-        put("plain/src/lib.rs", "");
+        put("plain/src/lib.rs", "include!(concat!(env!(\"OUT_DIR\"), \"/rules.rs\"));\n");
+        put("plain/src/rules/no_raw_pr.rs", "#[test]\nfn refused() {}\n");
         let m = |name: &str, dir: &str| gate::compose::Member { name: name.into(), dir: dir.into(), deps: vec![], build_deps: vec![] };
         let members = [m("outer", "outer"), m("inner", "outer/inner"), m("plain", "plain")];
         let crates: Vec<String> = ["outer", "inner", "plain"].map(String::from).to_vec();
@@ -292,6 +302,9 @@ mod tests {
         assert_eq!(held(&["only_inner_has_this"]), ["inner"]);
         assert!(held(&["only_target_has_this"]).is_empty());
         assert_eq!(held(&["a_stale_slot_is_swept", "only_inner_has_this"]), ["outer", "inner"]);
+        // a module a build script makes from a file stem is named by the path alone
+        assert_eq!(held(&["rules::no_raw_pr"]), ["plain"]);
+        assert_eq!(held(&["::"]), ["outer", "inner", "plain"]);
     }
 
     #[test]
