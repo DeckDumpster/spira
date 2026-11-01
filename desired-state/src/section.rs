@@ -532,12 +532,12 @@ pub fn admit_publish(s: &Section) -> Result<&'static SectionKind, Refusal> {
     Ok(kind)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state")]
 pub enum Freshness {
     Fresh,
     Stale {
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         age_secs: Option<u64>,
         reason: String,
     },

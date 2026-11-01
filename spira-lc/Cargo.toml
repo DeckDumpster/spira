@@ -29,3 +29,4 @@ strip = true
 [dev-dependencies]
 opentelemetry-proto = { version = "0.30", default-features = false, features = ["trace", "gen-tonic-messages", "with-serde"] }
 testkit = { path = "../testkit" }
+reconciler-engine = { path = "../reconciler-engine" }

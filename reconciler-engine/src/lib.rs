@@ -6,12 +6,14 @@
 //! store, the forge — and feed the result in as a [`core::RawStatus`].
 
 pub mod alert;
+pub mod assemble;
 pub mod clock;
 pub mod core;
 pub mod effect;
 pub mod holds;
 pub mod io;
 pub mod mail;
+pub mod pass_record;
 pub mod paths;
 
 pub use alert::{classify_escalation, compose_alert, should_alert, EscalationClass};

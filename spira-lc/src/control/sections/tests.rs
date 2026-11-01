@@ -15,6 +15,8 @@ use state_store::{
 use super::{run, Call, REFUSALS, WRITES};
 use crate::control::store::Store;
 
+mod assemble;
+
 const FLOOR_MS: u64 = 1_000;
 /// 2026-10-31T19:40:00Z.
 const T0: u64 = 1_793_475_600_000;
