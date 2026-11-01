@@ -9,9 +9,19 @@ pub mod ledger;
 pub mod run_pass;
 pub mod runner;
 pub mod scenario;
+pub mod sections;
 pub mod slot_user;
 pub mod verbs;
 pub mod vm;
+
+/// No switch is set: what the ports a test builds by hand run under.
+pub struct NoSwitches;
+
+impl crate::run::Switches for NoSwitches {
+    fn set(&self, _: &str) -> Option<String> {
+        None
+    }
+}
 
 pub use scenario::{harness_seed, parse, profiles, run, run_all, Profile, Report, Scenario};
 pub use verbs::{Call, FakeVerbs};

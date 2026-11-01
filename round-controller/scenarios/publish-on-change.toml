@@ -1,0 +1,32 @@
+description = "a section whose status does not change is written once and then once per 5-minute keepalive: 100 passes 30 s apart write 10 sections, not 100, and the controller itself writes nothing"
+repos = ["lane"]
+
+[run]
+epoch = 1800000000
+passes = 100
+every_secs = 30
+
+[[store]]
+key = "lanes/lane"
+data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
+
+[[expect]]
+name = "one-write-and-a-keepalive-every-5-virtual-minutes"
+count = "section-writes"
+equals = 10
+
+[[expect]]
+name = "nothing-refused"
+count = "section-refusals"
+equals = 0
+
+[[expect]]
+name = "the-controller-writes-nothing-of-its-own"
+count = "store-writes"
+equals = 0
+
+[[expect]]
+name = "inverted-one-write-a-pass"
+count = "section-writes"
+equals = 100
+inverted = true

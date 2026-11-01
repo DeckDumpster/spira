@@ -42,6 +42,10 @@ pub enum Kind {
     FastForward,
     /// A GREEN round the Lander did not land, kept with its typed blocker.
     Held,
+    /// The repo's section was written.
+    Published,
+    /// An intent on the repo's section was acknowledged, with its result as the cause.
+    Acked,
 }
 
 impl Kind {
@@ -61,6 +65,8 @@ impl Kind {
             Kind::Declined,
             Kind::FastForward,
             Kind::Held,
+            Kind::Published,
+            Kind::Acked,
         ]
         .into_iter()
         .chain(acts)
@@ -92,6 +98,8 @@ impl Kind {
             Kind::Declined => "declined",
             Kind::FastForward => "fast-forward",
             Kind::Held => "held",
+            Kind::Published => "published",
+            Kind::Acked => "acked",
         }
     }
 }
@@ -128,6 +136,21 @@ pub enum Cause {
     Dwell {
         ms: u64,
     },
+    /// A published section's levels the rounds dashboard plots.
+    Section {
+        green_unlanded_minutes: u64,
+        repeat_identity_passes_24h: u64,
+    },
+    /// An intent's ack: `applied`, `already-applied` or `refused`, and the intent's key.
+    Ack {
+        result: &'static str,
+        key: String,
+    },
+    /// spira-lc refused a write: the key and field it names, and the rule it broke.
+    Admission {
+        key: String,
+        rule: String,
+    },
 }
 
 impl Cause {
@@ -141,6 +164,9 @@ impl Cause {
             Cause::Store { .. } => "store",
             Cause::Refusal { word, .. } => word,
             Cause::Dwell { .. } => "dwell",
+            Cause::Section { .. } => "section",
+            Cause::Ack { result, .. } => result,
+            Cause::Admission { .. } => "admission-refused",
         }
     }
 }
@@ -262,11 +288,58 @@ impl Outcome {
             Cause::Orphan { expired, text } => {
                 s += &format!(" expired={}-{} text={text:?}", expired.main, expired.sub)
             }
-            Cause::Refusal { key, .. } => s += &format!(" key={key}"),
+            Cause::Refusal { key, .. } | Cause::Ack { key, .. } => s += &format!(" key={key}"),
             Cause::Dwell { ms } => s += &format!(" dwell_ms={ms}"),
+            Cause::Section {
+                green_unlanded_minutes,
+                repeat_identity_passes_24h,
+            } => {
+                s += &format!(" green_unlanded_minutes={green_unlanded_minutes} repeat_identity_passes_24h={repeat_identity_passes_24h}")
+            }
+            Cause::Admission { key, rule } => s += &format!(" key={key} rule={rule:?}"),
             Cause::Steps | Cause::Ok => {}
         }
         s
+    }
+
+    pub fn published(at: u64, repo: &str, green_unlanded_minutes: u64, repeat_identity_passes_24h: u64) -> Outcome {
+        Outcome {
+            at,
+            repo: repo.into(),
+            batch: None,
+            kind: Kind::Published,
+            cause: Cause::Section {
+                green_unlanded_minutes,
+                repeat_identity_passes_24h,
+            },
+        }
+    }
+
+    pub fn acked(at: u64, repo: &str, key: &str, result: &'static str) -> Outcome {
+        Outcome {
+            at,
+            repo: repo.into(),
+            batch: None,
+            kind: Kind::Acked,
+            cause: Cause::Ack {
+                result,
+                key: key.into(),
+            },
+        }
+    }
+
+    /// A write spira-lc's admission refused, with the rule it broke.
+    pub fn refused_write(at: u64, repo: &str, key: &str, rule: &str) -> Outcome {
+        Outcome {
+            at,
+            repo: repo.into(),
+            batch: None,
+            kind: Kind::Declined,
+            cause: Cause::Admission {
+                key: key.into(),
+                rule: rule.into(),
+            },
+        }
     }
 
     pub fn store_refused(at: u64, repo: &str, text: &str) -> Outcome {

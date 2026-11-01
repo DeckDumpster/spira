@@ -104,6 +104,10 @@ pub struct FakeSwitches {
 }
 
 impl Switches for FakeSwitches {
+    fn halted(&self) -> bool {
+        self.set("").is_some()
+    }
+
     fn set(&self, _: &str) -> Option<String> {
         self.halt_at_ms
             .filter(|t| self.clock.now_ms() >= *t)

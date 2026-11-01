@@ -380,8 +380,10 @@ fn the_run_dir_s_switches_are_the_halt_stamp_then_a_scoped_stop_on_rounds() {
         "home's rounds lane is stopped by ops: drill"
     );
     assert_eq!(s.set("other"), None);
+    assert!(!s.halted(), "a scoped stop is not the world's halt");
     std::fs::write(d.path().join(HALTED_FILE), "").unwrap();
     assert!(s.set("other").unwrap().contains("world.halted"));
+    assert!(s.halted());
 }
 
 fn seeded(b: &Bench) {

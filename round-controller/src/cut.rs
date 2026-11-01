@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use batcher::core;
 use state_store::Selector;
 
+use crate::knobs;
 use crate::ledger::{by_member_key, fault_key, refuses, summary_key, LedgerRefusal};
 use crate::outcome::Outcome;
 use crate::ports::{Member, OpenReq, Opened, Place, Ports, Verb};
@@ -34,7 +35,16 @@ pub fn cut(p: &Ports, repo: &str, slot: &SlotGrant) -> Result<Option<Opened>, Re
         return Ok(None);
     };
     lane_fault(p, repo, &lane, &base)?;
-    let pool = pool(p, repo, &rounds)?;
+    let held = knobs::held(p, repo)?;
+    let pool: Vec<core::Member> = pool(p, repo, &rounds)?
+        .into_iter()
+        .filter(|m| {
+            !held.contains(&Member {
+                id: m.id.clone(),
+                tip: m.tip.clone(),
+            })
+        })
+        .collect();
     let riding = riding(&stack, &rounds);
     let mut dropped: BTreeSet<String> = BTreeSet::new();
     loop {
@@ -135,10 +145,14 @@ pub fn record(p: &Ports, repo: &str, r: &Result<Option<Opened>, Refusal>) {
     }
 }
 
+/// The lane, at the depth the concurrency knob holds once it is set.
 fn lane_and_rounds(p: &Ports, repo: &str) -> Result<(Lane, Vec<Live>), Refusal> {
-    let lane = stack::lane(p, repo)?.ok_or_else(|| Refusal::LaneUnknown {
+    let mut lane = stack::lane(p, repo)?.ok_or_else(|| Refusal::LaneUnknown {
         key: stack::lane_key(repo),
     })?;
+    if let Some(depth) = knobs::concurrency(p, repo)? {
+        lane.concurrency = Some(depth);
+    }
     Ok((lane, stack::live(p, repo)?))
 }
 

@@ -14,6 +14,7 @@ use round_controller::probe::{probe, ThreadSleep};
 use round_controller::real::child::SysSpawn;
 use round_controller::real::git::RealGit;
 use round_controller::real::launch::{Programs, Systemd, SystemdUnits};
+use round_controller::real::lc::SpiraLc;
 use round_controller::real::liveness::NoVmRecords;
 use round_controller::real::verbs::{Deadlines, RealVerbs};
 use round_controller::real::vm_runner::{Repo, VmEnv, VmRunner};
@@ -265,6 +266,11 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
             Some((reg.root(repo)?, spira_config::repos::landref(reg, repo)?))
         }),
     );
+    let lc = SpiraLc {
+        proc_: proc_.clone(),
+        program: spira_config::release_env::tool("spira-lc"),
+    };
+    let switches = RunDir(spira_config::resolve::run_dir_for_process()?);
     let sink = telemetry::sink();
     let log = telemetry::DwellLog {
         sink: &sink,
@@ -284,6 +290,8 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
         git: &git,
         leases: &leases,
         slots: &slot_settings,
+        lc: &lc,
+        switches: &switches,
     };
     f(&ports)
 }

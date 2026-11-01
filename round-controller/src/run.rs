@@ -176,6 +176,10 @@ pub fn parse_args(args: &[&str]) -> Result<RunArgs, String> {
 /// The off switches a runner obeys before each pass or sub-pass: why it must start nothing.
 pub trait Switches {
     fn set(&self, repo: &str) -> Option<String>;
+    /// Whether the switch [`Switches::set`] names is the world's halt, not a scoped stop.
+    fn halted(&self) -> bool {
+        false
+    }
 }
 
 /// The run directory's switches: `world.halted`, and a scoped stop on the repo's rounds lane.
@@ -186,8 +190,12 @@ pub const HALTED_FILE: &str = "world.halted";
 pub const ROUNDS_LANE: &str = "rounds";
 
 impl Switches for RunDir {
+    fn halted(&self) -> bool {
+        self.0.join(HALTED_FILE).exists()
+    }
+
     fn set(&self, repo: &str) -> Option<String> {
-        if self.0.join(HALTED_FILE).exists() {
+        if self.halted() {
             return Some(format!("{HALTED_FILE} is present: the world is stopped"));
         }
         spira_config::scoped_stop::stop_for(&self.0, repo, ROUNDS_LANE).map(|s| {
@@ -802,6 +810,8 @@ pub fn run<R: SubPasses>(p: &Ports, env: &RunEnv, subs: &mut R, a: &RunArgs) -> 
         git: p.git,
         leases: p.leases,
         slots: p.slots,
+        lc: p.lc,
+        switches: p.switches,
     };
     let mut guard = Guard {
         last_progress: p.clock.now_ms(),

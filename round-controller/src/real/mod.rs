@@ -3,6 +3,7 @@
 pub mod child;
 pub mod git;
 pub mod launch;
+pub mod lc;
 pub mod liveness;
 pub mod verbs;
 pub mod vm_runner;
@@ -10,7 +11,7 @@ pub mod vm_runner;
 use runtime::ports::{Clock, VirtualClock, WallClock};
 use state_store::{Error, Fence, Item, Request, Selector, Txn, TxnResult};
 
-use crate::ports::{Attempt, Class, LaneFault, Ledger, Member, PassIdentity, Ports, Store};
+use crate::ports::{Attempt, Class, LaneFault, Lc, Ledger, Member, PassIdentity, Ports, Store};
 
 /// The wall clock, or `SPIRA_NOW` (epoch seconds) when the simulator sets it.
 pub fn clock(spira_now: Option<u64>) -> Box<dyn Clock> {
@@ -46,6 +47,16 @@ impl Store for Unserved {
     }
     fn release(&self, _: &Fence, _: &Request) -> state_store::Result<()> {
         unserved()
+    }
+}
+
+/// Its section verbs too: every call answers cannot-tell, as spira-lc does with no store.
+impl Lc for Unserved {
+    fn call(&self, _: &[String]) -> (i32, serde_json::Value) {
+        (
+            2,
+            serde_json::json!({ "cannot_tell": "the control-plane store has no spira-lc door yet: round-controller publishes no section" }),
+        )
     }
 }
 
@@ -115,6 +126,9 @@ mod tests {
                 .all(|e| e.to_string().contains("no spira-lc door")),
             "{errs:?}"
         );
+        let (code, v) = Unserved.call(&["section".into(), "get".into()]);
+        assert_eq!(code, 2);
+        assert!(v["cannot_tell"].as_str().unwrap().contains("no spira-lc door"));
     }
 
     #[test]

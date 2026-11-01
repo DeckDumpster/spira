@@ -108,6 +108,8 @@ impl World {
             git: &crate::sim::git::NO_GIT,
             leases: &self.leases,
             slots: &self.slots,
+            lc: &crate::real::Unserved,
+            switches: &crate::sim::NoSwitches,
         }
     }
 
