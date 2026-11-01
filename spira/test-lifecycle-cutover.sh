@@ -997,4 +997,35 @@ is "a closed batch's open row is ended with its triage stamped" "1" "$(lc mendin
 is "the row is no longer WAITING" "RETURNED/True" "$(ended_rows batch-ended)"
 is "a live batch's rows are untouched" "1" "$(lc mending list --live | python3 -c 'import json,sys; print(sum(x["batch_id"]=="batch-mend" for x in json.load(sys.stdin)) and 1)')"
 is "ending is idempotent" "0" "$(lc mending close-ended --actor concierge)"
+# ── the mending key is <batch>#<pass>#<suite>: the longest real suite name plus a margin must still fit ──
+LONGEST_SUITE="$(cd "$HERE" && ls test-*.sh | awk '{ if (length($0) > length(m)) m = $0 } END { print m }')"
+WIDE_SUITE="${LONGEST_SUITE%.sh}-$(printf 'x%.0s' $(seq 1 63)).sh"
+WIDE_BATCH="r-auto-748-1031T110442-$(printf 'b%.0s' $(seq 1 30))"
+is "the probe suite is the longest real name plus 64 characters" "$(( ${#LONGEST_SUITE} + 64 ))" "${#WIDE_SUITE}"
+certify sp-lc-m-3 c99c65e15e286c45e353db428bf9c3a0b4d89b43
+lc cut "$WIDE_BATCH" --repo fixture-repo --head headW --base baseW --members "sp-lc-m-3:c99c65e15e286c45e353db428bf9c3a0b4d89b43" --actor test >/dev/null
+pev "$WIDE_BATCH" '{"PassStarted":{"n":1,"head":"headW"}}' >/dev/null
+pev "$WIDE_BATCH" '{"SuitesStarted":{"n":1}}' >/dev/null
+out="$(pev "$WIDE_BATCH" "{\"Failed\":{\"suite\":\"$WIDE_SUITE\",\"n\":1}}" 2>&1)"
+rc=$?; [ "$rc" = 0 ] || echo "# $out" >&2
+wantrc "a failure of a wide-named suite opens its row" 0 $rc
+lc mending pickup "$WIDE_BATCH" --pass 1 --suite "$WIDE_SUITE" --deadline-secs 600 --actor mender-w >/dev/null
+wantrc "start: the mender picks up a wide-keyed row" 0 $?
+lc mending event "$WIDE_BATCH" --pass 1 --suite "$WIDE_SUITE" --actor mender-w --kind '{"TriageEnded":{"at":0}}' >/dev/null
+wantrc "triaged: the mender ends triage on a wide-keyed row" 0 $?
+lc mending event "$WIDE_BATCH" --pass 1 --suite "$WIDE_SUITE" --actor mender-w --kind '{"Unsure":{"at":0}}' >/dev/null
+wantrc "outcome: the mender settles a wide-keyed row" 0 $?
+is "the wide-keyed row is settled" "UNSURE" "$(lc mending list --batch "$WIDE_BATCH" | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["state"])')"
+OVER="$(printf 'y%.0s' $(seq 1 161))"
+out="$(lc mending pickup "$WIDE_BATCH" --pass 1 --suite "$OVER" --deadline-secs 600 --actor mender-w 2>&1)"
+wantrc "an over-long suite is refused" 2 $?
+want "the refusal names the field" "suite is 161 chars (max 160)" "$out"
+OVER_BATCH="$(printf 'z%.0s' $(seq 1 65))"
+out="$(lc mending event "$OVER_BATCH" --pass 1 --suite s.sh --actor mender-w --kind '{"TriageEnded":{"at":0}}' 2>&1)"
+wantrc "an over-long batch id is refused on the event verb" 2 $?
+want "that refusal names batch_id" "batch_id is 65 chars (max 64)" "$out"
+out="$(pev "$WIDE_BATCH" "{\"Failed\":{\"suite\":\"$OVER\",\"n\":1}}" 2>&1)"
+wantrc "a failed suite with an over-long name is refused before it opens a row" 2 $?
+want "that refusal names suite" "suite is 161 chars (max 160)" "$out"
+
 tl_summary

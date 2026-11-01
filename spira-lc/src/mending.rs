@@ -114,10 +114,27 @@ fn cannot(e: DbError) -> (i32, String) {
     (CANNOT_TELL, format!("cannot tell: {e:?}"))
 }
 
+const BATCH_MAX: usize = 64;
+const SUITE_MAX: usize = 160;
+const KEY_MAX: usize = 256;
+
+/// Refuse an over-long field by name before it reaches SQL, mirroring `mending` and `event.lc_key`.
+pub fn check_widths(batch: &str, pass: u32, suite: &str) -> Result<(), (i32, String)> {
+    let key = lifecycle::mending::key(batch, pass, suite);
+    for (name, value, max) in [("batch_id", batch, BATCH_MAX), ("suite", suite, SUITE_MAX), ("lc_key", key.as_str(), KEY_MAX)] {
+        let n = value.chars().count();
+        if n > max {
+            return Err((CANNOT_TELL, format!("mending: refused: {name} is {n} chars (max {max}); {name}={value}")));
+        }
+    }
+    Ok(())
+}
+
 fn target(args: &[String], conn: &Conn) -> Result<MendingRow, (i32, String)> {
     let (Some(batch), Some(pass), Some(suite)) = (args.first(), flag(args, "--pass").and_then(|p| p.parse::<u32>().ok()), flag(args, "--suite")) else {
         return Err((CANNOT_TELL, "mending: <batch>, --pass N and --suite S are required".into()));
     };
+    check_widths(batch, pass, &suite)?;
     fetch(conn, batch, pass, &suite).map_err(cannot)?.ok_or((CANNOT_TELL, format!("mending: no row for {batch} pass {pass} {suite}")))
 }
 
@@ -414,4 +431,25 @@ fn tips(args: &[String], conn: &Conn) -> Reply {
         out.insert(bead.to_string(), tip.map_or(Value::Null, Value::from));
     }
     Ok(Value::Object(out).to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_over_long_field_is_refused_by_name_before_sql() {
+        assert!(check_widths(&"b".repeat(BATCH_MAX), 1, &"s".repeat(SUITE_MAX)).is_ok());
+        let (_, msg) = check_widths(&"b".repeat(BATCH_MAX + 1), 1, "s").unwrap_err();
+        assert!(msg.contains("batch_id is 65 chars (max 64)"), "{msg}");
+        let (_, msg) = check_widths("b", 1, &"s".repeat(SUITE_MAX + 1)).unwrap_err();
+        assert!(msg.contains("suite is 161 chars (max 160)"), "{msg}");
+        let schema = include_str!("../../lifecycle/schema.sql");
+        for (table, column, max) in [("mending", "batch_id", BATCH_MAX), ("mending", "suite", SUITE_MAX), ("mend", "batch_id", BATCH_MAX), ("mend", "suite", SUITE_MAX), ("event", "lc_key", KEY_MAX)] {
+            let body = schema.split(&format!("CREATE TABLE IF NOT EXISTS {table} (")).nth(1).and_then(|t| t.split(");").next()).unwrap_or_default();
+            let line = body.lines().find(|l| l.split_whitespace().next() == Some(column)).unwrap_or_default();
+            assert!(line.contains(&format!("VARCHAR({max})")), "{table}.{column} in schema.sql is not {max} wide: {line:?}");
+        }
+        assert!(KEY_MAX >= BATCH_MAX + SUITE_MAX + 2 + u32::MAX.to_string().len(), "the widest triple fits the key column");
+    }
 }

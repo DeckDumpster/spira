@@ -52,6 +52,8 @@ use crate::db::Conn;
 pub enum Stmt {
     /// `ALTER TABLE <table> ADD [COLUMN] <column> ...` — applied only when the column is absent.
     AddColumn { table: String, column: String, sql: String },
+    /// `ALTER TABLE <table> MODIFY [COLUMN] <column> VARCHAR(<width>) ...` — applied only while the column is narrower.
+    WidenColumn { table: String, column: String, width: u32, sql: String },
     /// An ALTER this module cannot guard — refused.
     UnguardedAlter(String),
     /// Anything else — run as written (must be idempotent itself).
@@ -158,6 +160,13 @@ pub fn classify(sql: &str) -> Stmt {
             return Stmt::AddColumn { table: ident(toks[2]), column: ident(toks[col_at]), sql: sql.to_string() };
         }
     }
+    if up(1) == "TABLE" && toks.len() > 5 && up(3) == "MODIFY" && !sql.contains(',') {
+        let at = if up(4) == "COLUMN" { 5 } else { 4 };
+        let width = toks.get(at + 1).map(|t| t.to_ascii_uppercase()).and_then(|t| t.strip_prefix("VARCHAR(")?.split(')').next()?.parse::<u32>().ok());
+        if let Some(width) = width {
+            return Stmt::WidenColumn { table: ident(toks[2]), column: ident(toks[at]), width, sql: sql.to_string() };
+        }
+    }
     Stmt::UnguardedAlter(sql.to_string())
 }
 
@@ -168,7 +177,7 @@ pub fn plan(files: &[(String, String)]) -> Result<Vec<(String, Stmt)>, String> {
         for s in split_statements(text) {
             match classify(&s) {
                 Stmt::UnguardedAlter(sql) => {
-                    return Err(format!("{name}: refusing an ALTER that cannot be applied idempotently (only `ALTER TABLE t ADD COLUMN c ...` is guarded): {sql}"));
+                    return Err(format!("{name}: refusing an ALTER that cannot be applied idempotently (only `ALTER TABLE t ADD COLUMN c ...` and `ALTER TABLE t MODIFY c VARCHAR(n) ...` are guarded): {sql}"));
                 }
                 st => out.push((name.clone(), st)),
             }
@@ -184,6 +193,11 @@ fn quote(s: &str) -> String {
 /// The probe behind an `AddColumn`: every column `table` has, as this user sees them.
 pub fn table_columns_sql(table: &str) -> String {
     format!("SELECT column_name FROM information_schema.columns WHERE table_schema = 'spira_lifecycle' AND table_name = {}", quote(table))
+}
+
+/// The probe behind a `Width`: the declared character width of one column.
+pub fn column_width_sql(table: &str, column: &str) -> String {
+    format!("SELECT character_maximum_length FROM information_schema.columns WHERE table_schema = 'spira_lifecycle' AND table_name = {} AND column_name = {}", quote(table), quote(column))
 }
 
 /// `--if-enforced` (sp-vf9iu) once skipped the migration on an install with the lifecycle
@@ -219,6 +233,8 @@ pub enum Probe {
     /// A guarded `UPDATE t SET ... WHERE w` / `DELETE FROM t WHERE w`: applied when no row
     /// still matches `w` (the statement would change nothing) — this SELECT finds one.
     NoRowMatches(String),
+    /// `ALTER TABLE t MODIFY c VARCHAR(n)`: applied when `t.c` is already at least `n` characters wide.
+    Width { table: String, column: String, width: u32 },
     /// `CREATE TABLE [IF NOT EXISTS] t`: applied when `information_schema.tables` lists `t`.
     Table(String),
     /// `CREATE [UNIQUE] INDEX i ON t`: applied when `information_schema.statistics` lists it.
@@ -390,6 +406,7 @@ fn retry_deadline<T>(what: &str, pause: &dyn Fn(std::time::Duration), mut f: imp
 pub fn probe_for(st: &Stmt) -> Probe {
     let sql = match st {
         Stmt::AddColumn { table, column, .. } => return Probe::Column { table: table.clone(), column: column.clone() },
+        Stmt::WidenColumn { table, column, width, .. } => return Probe::Width { table: table.clone(), column: column.clone(), width: *width },
         Stmt::UnguardedAlter(_) => return Probe::Unprobeable,
         Stmt::Plain(sql) => sql.as_str(),
     };
@@ -447,6 +464,11 @@ pub fn is_applied(db: &dyn Sql, st: &Stmt) -> Result<bool, String> {
             }
             Ok(any_cell_is(&rows, &column))
         }
+        Probe::Width { table, column, width } => {
+            let rows = db.rows(&column_width_sql(&table, &column))?;
+            let have = rows.first().and_then(|r| r.as_object()).and_then(|o| o.values().next()).and_then(|v| v.as_str().and_then(|s| s.parse::<u32>().ok()).or_else(|| v.as_u64().map(|n| n as u32)));
+            have.map(|n| n >= width).ok_or_else(|| format!("information_schema shows no width of {table}.{column} to this user"))
+        }
         Probe::NoRowMatches(q) => Ok(db.rows(&q)?.is_empty()),
         Probe::Table(t) => Ok(!db.rows(&format!("SELECT table_name FROM information_schema.tables WHERE table_schema = 'spira_lifecycle' AND table_name = {}", quote(&t)))?.is_empty()),
         Probe::View(v) => Ok(!db.rows(&format!("SELECT table_name FROM information_schema.tables WHERE table_schema = 'spira_lifecycle' AND table_type = 'VIEW' AND table_name = {}", quote(&v)))?.is_empty()),
@@ -470,6 +492,7 @@ fn rows_touched(db: &dyn Sql, st: &Stmt) -> Option<u64> {
 fn what(st: &Stmt, applied: bool) -> String {
     let (yes, no) = match probe_for(st) {
         Probe::Column { table, column } => (format!("{table}.{column} present"), format!("{table}.{column} absent")),
+        Probe::Width { table, column, width } => (format!("{table}.{column} already {width} wide"), format!("{table}.{column} narrower than {width}")),
         Probe::NoRowMatches(_) => ("no row left for it to change".into(), "rows it still has to change".into()),
         Probe::Table(t) => (format!("table {t} present"), format!("table {t} absent")),
         Probe::View(v) => (format!("view {v} present"), format!("view {v} absent")),
@@ -626,6 +649,7 @@ fn migrate_paced(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, admi
     let refused = |name: &str, e: &str| (2, format!("admin-migrate: {name}: pending, and applying it as the database admin failed: {e} — check {ADMIN_VARS}"));
     let applied_as = |st: &Stmt, who: &str, touched: Option<u64>| match st {
         Stmt::AddColumn { table, column, .. } => format!("added {table}.{column}"),
+        Stmt::WidenColumn { table, column, width, .. } => format!("widened {table}.{column} to {width}"),
         _ => match touched {
             Some(n) => format!("applied as {who}, {n} row(s) touched"),
             None => format!("applied as {who}"),
@@ -656,7 +680,7 @@ fn migrate_paced(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, admi
             Err(e) => return (2, format!("admin-migrate: {name}: cannot tell whether it is applied (read as the lifecycle service user): {e}")),
         }
         let sql = match st {
-            Stmt::AddColumn { sql, .. } | Stmt::Plain(sql) => sql,
+            Stmt::AddColumn { sql, .. } | Stmt::WidenColumn { sql, .. } | Stmt::Plain(sql) => sql,
             Stmt::UnguardedAlter(_) => unreachable!("plan refuses these"),
         };
         let touched = rows_touched(prober, st);
@@ -802,6 +826,29 @@ mod tests {
     }
 
     #[test]
+    fn a_varchar_modify_is_a_guarded_widening_and_any_other_modify_is_refused() {
+        assert_eq!(
+            classify("ALTER TABLE event MODIFY COLUMN lc_key VARCHAR(256) NOT NULL"),
+            Stmt::WidenColumn { table: "event".into(), column: "lc_key".into(), width: 256, sql: "ALTER TABLE event MODIFY COLUMN lc_key VARCHAR(256) NOT NULL".into() }
+        );
+        for sql in ["ALTER TABLE event MODIFY COLUMN lc_key TEXT", "ALTER TABLE event MODIFY a VARCHAR(9), MODIFY b VARCHAR(9)", "ALTER TABLE event MODIFY a VARCHAR(x)"] {
+            assert!(matches!(classify(sql), Stmt::UnguardedAlter(_)), "{sql}");
+        }
+    }
+
+    #[test]
+    fn the_mending_key_columns_are_widened_and_a_widened_store_skips_them() {
+        let widened: Vec<_> = real_steps().into_iter().filter_map(|(_, s)| match s { Stmt::WidenColumn { table, column, width, .. } => Some((table, column, width)), _ => None }).collect();
+        assert!(widened.contains(&("event".into(), "lc_key".into(), 256)), "{widened:?}");
+        let narrow = Stmt::WidenColumn { table: "event".into(), column: "lc_key".into(), width: 256, sql: String::new() };
+        let db = service(&migrated());
+        assert_eq!(is_applied(&db, &narrow), Ok(true));
+        let old = migrated();
+        old.borrow_mut().widths.insert("lc_key".into(), 64);
+        assert_eq!(is_applied(&service(&old), &narrow), Ok(false));
+    }
+
+    #[test]
     fn content_grants_follow_the_configured_database_and_are_select_only() {
         let r = Recorder(Default::default());
         apply_content_grants(&r, Some("`acme_beads`")).unwrap();
@@ -932,6 +979,7 @@ mod tests {
         views: std::collections::BTreeSet<String>,
         tables: std::collections::BTreeSet<String>,
         users: std::collections::BTreeSet<String>,
+        widths: std::collections::BTreeMap<String, u32>,
         /// Terminal rows still carrying a holder (what 0003's guarded UPDATE corrects).
         stale_terminal_rows: bool,
         /// Live writers that re-dirty a guarded UPDATE's rows right after it is applied, this many times.
@@ -959,6 +1007,10 @@ mod tests {
             let st = self.state.borrow();
             if let Some(view) = sql.strip_prefix("SHOW COLUMNS FROM ") {
                 return Ok(st.columns.iter().filter(|(t, _)| t == view).map(|(_, c)| serde_json::json!({ "Field": c })).collect());
+            }
+            if sql.contains("character_maximum_length") {
+                let col = sql.split("column_name = '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
+                return Ok(st.widths.get(col).map(|w| vec![serde_json::json!({ "CHARACTER_MAXIMUM_LENGTH": w.to_string() })]).unwrap_or_default());
             }
             if sql.contains("information_schema.columns") {
                 let table = sql.split("table_name = '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
@@ -1000,6 +1052,9 @@ mod tests {
             }
             let mut st = self.state.borrow_mut();
             match classify(sql) {
+                Stmt::WidenColumn { column, width, .. } => {
+                    st.widths.insert(column, width);
+                }
                 Stmt::AddColumn { table, column, .. } => {
                     if !st.columns.insert((table, column)) {
                         return Err("duplicate column".into());
@@ -1062,6 +1117,9 @@ mod tests {
         for t in ["runtime_event", "runtime_applied", "runtime_cursor", "runtime_schedule", "runtime_poison"] {
             st.tables.insert(t.into());
         }
+        st.widths.insert("lc_key".into(), 256);
+        st.widths.insert("batch_id".into(), 64);
+        st.widths.insert("suite".into(), 160);
         st.users.insert("spira_lc".into());
         st.users.insert("spira_lc_ro".into());
         st.indexes.insert("bead_dep_target_idx".into());

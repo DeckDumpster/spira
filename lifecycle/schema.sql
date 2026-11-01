@@ -123,9 +123,9 @@ CREATE INDEX IF NOT EXISTS ask_state_idx ON ask (state, opened_at);
 -- One row per suite that went red in a pass: the mender's pickup, deadline and outcome
 -- (migrations/0024-mending.sql for an existing database).
 CREATE TABLE IF NOT EXISTS mending (
-    batch_id        VARCHAR(40) NOT NULL,
+    batch_id        VARCHAR(64) NOT NULL,
     pass            BIGINT NOT NULL,
-    suite           VARCHAR(80) NOT NULL,
+    suite           VARCHAR(160) NOT NULL,
     state           VARCHAR(16) NOT NULL,
     failed_at       BIGINT NOT NULL,
     picked_at       BIGINT NULL,
@@ -141,9 +141,9 @@ CREATE TABLE IF NOT EXISTS mending (
 -- branch's current tip are read from it (migrations/0025-mend.sql for an existing database).
 CREATE TABLE IF NOT EXISTS mend (
     seq        BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    batch_id   VARCHAR(40) NOT NULL,
+    batch_id   VARCHAR(64) NOT NULL,
     pass       BIGINT NOT NULL,
-    suite      VARCHAR(80) NOT NULL,
+    suite      VARCHAR(160) NOT NULL,
     bead_id    VARCHAR(40) NOT NULL,
     from_tip   VARCHAR(64) NOT NULL,
     tip        VARCHAR(64) NOT NULL,
@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS mend (
 CREATE TABLE IF NOT EXISTS event (
     seq        BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     machine    VARCHAR(8) NOT NULL,
-    lc_key     VARCHAR(64) NOT NULL,
+    lc_key     VARCHAR(256) NOT NULL,
     event      VARCHAR(32) NOT NULL,
     expect     VARCHAR(16) NOT NULL,
     from_state VARCHAR(16) NOT NULL,
