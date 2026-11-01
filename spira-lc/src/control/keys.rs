@@ -39,14 +39,15 @@ pub fn batch_progress(repo: &str, id: &str) -> String {
     format!("{}/progress", batch(repo, id))
 }
 
-/// The lock resource a claim holds; the contract keeps it at `locks/bead/<id>`.
+/// The lock resource a claim holds: the lifecycle record it guards, so the contract keeps it
+/// at `locks/lifecycle/<id>`.
 pub fn claim_resource(id: &str) -> String {
-    format!("bead/{id}")
+    lifecycle(id)
 }
 
 /// Where the contract keeps every claim's lock, so a listing reads them beside the records.
 pub fn claim_locks() -> String {
-    format!("{}bead/", state_store::LOCKS_PREFIX)
+    format!("{}{LIFECYCLE}", state_store::LOCKS_PREFIX)
 }
 
 /// The key of a claim's lock; its `create_rev` is the holder's fencing token.
@@ -88,8 +89,8 @@ mod tests {
             batch_progress("harness", "b-1"),
             "batches/harness/b-1/progress"
         );
-        assert_eq!(claim_resource("sp-a"), "bead/sp-a");
-        assert_eq!(claim_lock("sp-a"), "locks/bead/sp-a");
+        assert_eq!(claim_resource("sp-a"), "lifecycle/sp-a");
+        assert_eq!(claim_lock("sp-a"), "locks/lifecycle/sp-a");
         assert_eq!(history("sp-a"), "history/sp-a/");
         assert_eq!(
             history_entry("sp-a", 7, "r/apply"),

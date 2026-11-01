@@ -1,6 +1,6 @@
 //! Lifecycle records on the state-store contract. Each applied transition is one txn that
 //! compares the record's `mod_rev`; its audit rides into `events/<rev>` as the request's
-//! evidence, refusals included. A claim is the `locks/bead/<id>` lock, taken in the same txn
+//! evidence, refusals included. A claim is the `locks/lifecycle/<id>` lock, taken in the same txn
 //! that writes the record: the holder named on the record is the one whose claim created the
 //! lock, its fencing token is the lock's `create_rev`, and every write by the holder is fenced
 //! on it. The record keeps no lease of its own; reads project `lease_until` from the lock.
@@ -400,7 +400,7 @@ impl<B: Backend> Store<B> {
         }))
     }
 
-    /// A claim is one txn: it compares the record's `mod_rev`, takes `locks/bead/<id>`, and
+    /// A claim is one txn: it compares the record's `mod_rev`, takes `locks/lifecycle/<id>`, and
     /// writes the record. The holder's fencing token is that lock's `create_rev`, returned as
     /// the txn's first fence. A lost compare or a live lock writes nothing, so no lock is left
     /// behind to give back.
