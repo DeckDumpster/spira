@@ -539,6 +539,7 @@ impl World {
                 if let Some(repo) = &r.repo {
                     argv.extend(["--repo", repo]);
                 }
+                argv.push("--ready");
                 self.lc(&argv).is_some()
             })
             .map(|r| r.id.clone())

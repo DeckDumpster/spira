@@ -13,7 +13,7 @@ use crate::contract::{
     Compare, Config, Contract, Created, Deleted, Fence, Ports, Request, Selector, Txn, Watched,
 };
 use crate::gc::Controller;
-use crate::limits::{MAX_REQUEST_BYTES, MAX_TXN_COMPARES, MAX_TXN_OPS};
+use crate::limits::{self, MAX_REQUEST_BYTES, MAX_TXN_COMPARES, MAX_TXN_OPS};
 use crate::{events_key, request_key, Error, Limit, Object, Result, Rev};
 
 pub trait Rig {
@@ -1065,6 +1065,46 @@ pub fn txn_compares_at_the_limit_pass_and_one_over_is_refused<R: Rig>(rig: &R) {
     );
 }
 
+/// A round's cut, shaped as `limits::cut_ops` counts it: each member's record, delivery and
+/// gate written under compares of all three, with its history entry; the round, its id index and
+/// its history entry, the round and index compared absent. The contract adds the events and
+/// request keys.
+fn cut(members: usize, round: &str) -> Txn {
+    let batch = format!("batches/r/{round}");
+    let index = format!("batch-ids/{round}");
+    let ids: Vec<String> = (0..members).map(|i| format!("{round}-{i}")).collect();
+    let t = Txn::new()
+        .when(Compare::ModRev(batch.clone(), None))
+        .when(Compare::ModRev(index.clone(), None))
+        .put(&batch, obj(json!({ "members": ids })))
+        .put(&index, obj(json!({ "repo": "r" })))
+        .put(&format!("history/{round}/0"), obj(json!("Cut")));
+    ids.iter().fold(t, |t, id| {
+        t.when(Compare::ModRev(format!("lifecycle/{id}"), None))
+            .when(Compare::ModRev(format!("deliveries/{id}"), None))
+            .when(Compare::ModRev(format!("gates/{id}"), None))
+            .put(&format!("lifecycle/{id}"), obj(json!("IN_DELIVERY")))
+            .put(&format!("deliveries/{id}"), obj(json!({ "round": round })))
+            .put(&format!("gates/{id}"), obj(json!({ "class": "finished" })))
+            .put(&format!("history/{id}/0"), obj(json!("Enqueued")))
+    })
+}
+
+pub fn a_cut_at_the_member_cap_passes_the_limits_and_one_more_is_refused<R: Rig>(rig: &R) {
+    let clock = VirtualClock::new(T0);
+    let c = open(rig.fresh(), &clock);
+    assert!(limits::cut_fits(limits::MAX_CUT_MEMBERS, 0));
+    assert!(!limits::cut_fits(limits::MAX_CUT_MEMBERS + 1, 0));
+    let at = c.txn(&cut(limits::MAX_CUT_MEMBERS, "at"), &req("at")).unwrap();
+    assert!(at.succeeded);
+    let head = c.head().unwrap();
+    assert!(matches!(
+        c.txn(&cut(limits::MAX_CUT_MEMBERS + 1, "over"), &req("over")),
+        Err(Error::Limit(Limit::Ops { .. }))
+    ));
+    assert_eq!(c.head().unwrap(), head);
+}
+
 pub fn request_bytes_at_the_limit_pass_and_one_over_is_refused<R: Rig>(rig: &R) {
     let clock = VirtualClock::new(T0);
     let c = open(rig.fresh(), &clock);
@@ -1400,6 +1440,7 @@ scenarios!(
     a_multi_prefix_list_reads_one_snapshot_while_a_commit_lands_between_prefixes,
     txn_ops_at_the_limit_pass_and_one_over_is_refused,
     txn_compares_at_the_limit_pass_and_one_over_is_refused,
+    a_cut_at_the_member_cap_passes_the_limits_and_one_more_is_refused,
     request_bytes_at_the_limit_pass_and_one_over_is_refused,
     a_key_twice_in_one_txn_is_refused,
     caller_writes_to_the_contracts_own_prefixes_are_refused,

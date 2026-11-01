@@ -148,7 +148,7 @@ pub fn ensure_rows_with(bin: &str, ids: &[String]) -> Result<(), String> {
 /// `Ok(())`: the row exists now.
 pub fn ensure_row_with(bin: &str, id: &str) -> Result<(), String> {
     let out = Command::new("timeout")
-        .args([LC_TIMEOUT_SECS, bin, "create-bead", id])
+        .args([LC_TIMEOUT_SECS, bin, "create-bead", id, "--ready"])
         .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("cannot run {bin}: {e}"))?;
@@ -186,6 +186,29 @@ pub fn set_express_with(bin: &str, id: &str, on: bool) -> Result<(), String> {
 
 pub fn set_express(id: &str, on: bool) -> Result<(), String> {
     set_express_with(&lc_bin(), id, on)
+}
+
+/// Filing has finished: the row born OPEN before the bead's edges were written becomes READY.
+pub fn promote_with(bin: &str, id: &str) -> Result<(), String> {
+    let out = Command::new("timeout")
+        .args([LC_TIMEOUT_SECS, bin, "promote-filed", id])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run {bin}: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{bin} promote-filed {id} exited {}: {}{}",
+            out.status.code().map_or("signal".into(), |c| c.to_string()),
+            String::from_utf8_lossy(&out.stdout).trim(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
+    }
+}
+
+pub fn promote(id: &str) -> Result<(), String> {
+    promote_with(&lc_bin(), id)
 }
 
 pub fn ensure_row(id: &str) -> Result<(), String> {
@@ -426,7 +449,7 @@ mod tests {
         let bin = stub(t.path(), 0);
         assert_eq!(ensure_rows_with(&bin, &["sp-a".into(), "sp-b".into()]), Ok(()));
         let calls = std::fs::read_to_string(t.path().join("calls")).unwrap();
-        assert_eq!(calls, "create-bead sp-a\ncreate-bead sp-b\n");
+        assert_eq!(calls, "create-bead sp-a --ready\ncreate-bead sp-b --ready\n");
         assert!(after_create_ids("t", "no ids here").is_err());
     }
 
@@ -435,7 +458,7 @@ mod tests {
         let t = testkit::TempDir::new("lcrow");
         let bin = stub(t.path(), 0);
         assert_eq!(ensure_row_with(&bin, "sp-x"), Ok(()));
-        assert_eq!(std::fs::read_to_string(t.path().join("calls")).unwrap(), "create-bead sp-x\n");
+        assert_eq!(std::fs::read_to_string(t.path().join("calls")).unwrap(), "create-bead sp-x --ready\n");
     }
 
     #[test]

@@ -1509,10 +1509,10 @@ impl Lc for RealLc {
         ))
     }
     fn create_bead(&self, id: &str) {
-        let _ = self.run(&["create-bead", id]);
+        let _ = self.run(&["create-bead", id, "--ready"]);
     }
     fn create_bead_in(&self, id: &str, repo: &str) {
-        let _ = self.run(&["create-bead", id, "--repo", repo]);
+        let _ = self.run(&["create-bead", id, "--repo", repo, "--ready"]);
     }
     fn cut(
         &self,

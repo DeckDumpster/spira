@@ -253,6 +253,16 @@ fn a_member_whose_blocker_is_only_in_the_same_round_is_not_cut() {
 }
 
 #[test]
+fn a_round_at_the_cap_is_cut_whole_and_one_more_member_is_refused_naming_it() {
+    let pool = |n: usize| (0..n).map(|i| m(&format!("sp-{i}"), 1, false, 0)).collect::<Vec<_>>();
+    let (kept, refused) = cap_round(pool(3), 3);
+    assert_eq!((kept.len(), refused.len()), (3, 0));
+    let (kept, refused) = cap_round(pool(4), 3);
+    assert_eq!(kept.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["sp-0", "sp-1", "sp-2"]);
+    assert_eq!(refused, ["sp-3: the round is full at 3 members — not cut"]);
+}
+
+#[test]
 fn a_member_whose_blocker_has_landed_is_cut() {
     let (kept, refused) = refuse_blocked(vec![blocked("sp-b", &[])]);
     assert_eq!((kept.len(), refused.len()), (1, 0));

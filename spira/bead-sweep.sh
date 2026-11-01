@@ -221,6 +221,7 @@ _bs_converge_rowless() {
         [ -n "$id" ] || continue
         args=(create-bead "$id" --priority "$prio" --title "$title")
         [ "$repo" != "-" ] && args+=(--repo "$repo")
+        args+=(--ready)
         # batch-job: one point write per rowless bead, bounded by timeout(1)
         if timeout 30 spira-lc "${args[@]}" >/dev/null 2>&1; then
             _bs_say "REPAIRED $id open bead had no lifecycle row; created it (priority $prio, repo ${repo/#-/none})"

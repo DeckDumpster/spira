@@ -788,6 +788,7 @@ pub fn open_batch(
             )),
         }
     }
+    super::stage::refuse_over_cap(&mut admitted, &mut skips, |(id, _)| id);
 
     let wt =
         c.s.run

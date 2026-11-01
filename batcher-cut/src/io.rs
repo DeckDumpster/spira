@@ -244,7 +244,7 @@ pub fn lc_probe(env: &Env) -> Result<(), String> {
 /// open-batch file the same way sp-o7nbr.2's `_lc_cut_batch` does.
 pub fn lc_cut_batch(env: &Env, repo: &str, batch_id: &str, head: &str, base: &str, members: &[(String, String)]) -> Option<String> {
     for (id, _) in members {
-        let _ = lcq(env, &["create-bead", id]);
+        let _ = lcq(env, &["create-bead", id, "--ready"]);
     }
     let members_s = members.iter().map(|(id, tip)| format!("{id}:{tip}")).collect::<Vec<_>>().join(",");
     match lcq(env, &["cut", batch_id, "--repo", repo, "--head", head, "--base", base, "--members", &members_s, "--actor", "batcher"]) {
@@ -454,7 +454,7 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
     let mut content_blockers: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for it in items {
         let Some(id) = it.get("id").and_then(|x| x.as_str()) else { continue };
-        content_blockers.insert(id.to_string(), blocks_edges(&it));
+        content_blockers.insert(id.to_string(), blockers_of(&it));
         let priority = it.get("priority").and_then(|p| p.as_u64()).map(|p| p.min(9) as u8);
         let title = it.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
         let own_ref = it.get("external_ref").and_then(|x| x.as_str()).unwrap_or("");
@@ -483,12 +483,12 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
 
 /// The ids a content row's `dependencies` block it on. The lifecycle mirror of an edge is
 /// best-effort, so the content store is read too: a lagging mirror must not admit a member.
-fn blocks_edges(row: &serde_json::Value) -> Vec<String> {
+fn blockers_of(row: &serde_json::Value) -> Vec<String> {
     row.get("dependencies")
         .and_then(|d| d.as_array())
         .into_iter()
         .flatten()
-        .filter(|d| matches!(d.get("type").and_then(|t| t.as_str()), Some("blocks" | "blocked-by" | "depends-on")))
+        .filter(|d| spira_config::edges::blocks(spira_config::edges::Edge::Dep(d.get("type").and_then(|t| t.as_str()).unwrap_or(""))))
         .filter_map(|d| d.get("depends_on_id").and_then(|i| i.as_str()).map(str::to_string))
         .collect()
 }

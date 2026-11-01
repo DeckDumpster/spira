@@ -12,7 +12,7 @@ use state_store::{Config, Contract, MonotonicClock, Ports};
 use state_store_sqlite::{Options, SqliteBackend};
 
 use super::store::Store;
-use super::{sections, state, verbs};
+use super::{readiness, sections, state, verbs};
 use crate::CANNOT_TELL;
 
 /// A failed open is not kept, so the next call tries again.
@@ -110,7 +110,7 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
     if sections::VERBS.contains(&verb.as_str()) {
         return Some(dispatch_sections(args));
     }
-    let lifecycle = state::is_verb(verb);
+    let lifecycle = state::is_verb(verb) || readiness::VERBS.contains(&verb.as_str());
     if !lifecycle && !verbs::VERBS.contains(&verb.as_str()) {
         return None;
     }
@@ -131,7 +131,11 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
                 now: crate::db::now_epoch(),
                 request: &request,
             };
-            state::run(&store, args, &call)
+            if readiness::VERBS.contains(&verb.as_str()) {
+                readiness::run(&store, args, &call)
+            } else {
+                state::run(&store, args, &call)
+            }
         }
         Ok(store) => verbs::run(&store, args),
         Err(e) => (CANNOT_TELL, format!("cannot tell: the control store: {e}")),

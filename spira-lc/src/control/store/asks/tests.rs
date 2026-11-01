@@ -63,7 +63,7 @@ impl Rig {
 
     /// A READY record held on an ask, and the ask naming it.
     fn asked(&self) {
-        self.ok(&["create-bead", "sp-w", "--repo", "spira"]);
+        self.ok(&["create-bead", "sp-w", "--repo", "spira", "--ready"]);
         let mut m = self;
         let held = callers::run(
             "hold",

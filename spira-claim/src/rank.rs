@@ -342,26 +342,24 @@ pub fn blockers(r: &ReadyRow) -> Vec<String> {
     parent.chain(declared_blockers(r)).collect()
 }
 
-/// A parent that does not hold its child back: a container or rowless bead, or a coordination
-/// bead (READY, no tip) that itself waits on its children (sentinel open_children).
+/// A parent that does not hold its child back, by [`edges::blocks`].
 fn parent_exempt(cand: &ReadyRow, parent: &str, lc: &HashMap<String, LifecycleRow>) -> bool {
-    match lc.get(parent) {
-        None => true,
-        Some(row) => {
-            row.state == BeadState::Ready && row.tip.is_none() && !cand.labels.iter().any(|l| l == SPLIT_LABEL)
-        }
-    }
+    !edges::blocks(edges::Edge::Parent {
+        parent: lc.get(parent).map(|row| (row.state, row.tip.is_some())),
+        split: cand.labels.iter().any(|l| l == SPLIT_LABEL),
+    })
 }
 
 fn declared_blockers(r: &ReadyRow) -> impl Iterator<Item = String> + '_ {
     r.dependencies
         .iter()
-        .filter(|d| d.dep_type.as_deref() == Some("blocks"))
+        .filter(|d| edges::blocks(edges::Edge::Dep(d.dep_type.as_deref().unwrap_or(""))))
         .filter(|d| d.issue_id.as_deref().is_none_or(|i| i == r.id))
         .filter_map(|d| d.depends_on_id.clone())
         .filter(|b| r.parent.as_deref() != Some(b.as_str()))
 }
 
+use spira_config::edges;
 use spira_config::nonwork::SPLIT_LABEL;
 
 pub fn all_blockers(rows: &[ReadyRow]) -> Vec<String> {

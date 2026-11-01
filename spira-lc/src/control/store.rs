@@ -6,6 +6,8 @@
 //! on it. The record keeps no lease of its own; reads project `lease_until` from the lock.
 //! Every txn that carries an audit also writes, on the same branch, a `history/<id>/` entry
 //! for each id its audit names, so a bead's history is read without scanning `events/`.
+//! A transition that moves a record's gate (`edges::gate`) puts `lifecycle/<id>/gate` in the same
+//! txn, and no other transition writes it.
 
 use lifecycle::bead::{self, BeadEvent, BeadEventKind, BeadState};
 use serde_json::Value;
@@ -15,6 +17,7 @@ use state_store::{
 
 use super::keys;
 use super::records::{decode, encode, Audit, LifecycleRecord, Readiness};
+use spira_config::edges::Gate;
 
 /// A value read with the revisions it was read at.
 #[derive(Clone, Debug, PartialEq)]
@@ -41,6 +44,10 @@ pub enum Outcome {
     LockLost { rev: u64 },
     /// Another claim's lock is still live.
     Locked { token: Rev },
+    /// A blocker's gate is no longer what the claim was judged against.
+    BlockerMoved { rev: u64, blocker: String },
+    /// The last readiness pass judged the record not claimable; nothing is written.
+    JudgedUnclaimable { blocked_by: Vec<String> },
 }
 
 /// Every lifecycle record, each id's readiness, and the revision they were read at.
@@ -118,6 +125,45 @@ fn object_like(prev: &Item, data: Value) -> Object {
     }
 }
 
+fn gate_object(id: &str, gate: &Gate) -> Result<Object> {
+    Ok(Object::new(encode(gate)?).with_owners(&[keys::lifecycle(id).as_str()]))
+}
+
+/// The compare that holds when `id`'s gate still reads `gate`.
+fn gate_compare(id: &str, gate: Option<&Gate>) -> Result<Compare> {
+    Ok(Compare::Value(
+        keys::gate(id),
+        gate.map(|g| gate_object(id, g)).transpose()?,
+    ))
+}
+
+/// The blockers a claim compares, each with the gate it must still read: every one its
+/// readiness was judged against, and each prerequisite its stack builds on, at the tip stacked.
+fn claim_edges(judged: Option<&Readiness>, stack: &bead::Stack) -> Vec<(String, Option<Gate>)> {
+    let mut edges: Vec<(String, Option<Gate>)> = judged
+        .map(|r| r.gates.clone().into_iter().collect())
+        .unwrap_or_default();
+    for (prereq, tip) in stack {
+        let gate = spira_config::edges::gate(BeadState::Certified, Some(tip));
+        if !edges
+            .iter()
+            .any(|(b, g)| b == prereq && g.as_ref() == Some(&gate))
+        {
+            edges.push((prereq.clone(), Some(gate)));
+        }
+    }
+    edges
+}
+
+/// What a claim was judged against, for its event's evidence.
+fn judged_evidence(r: &Readiness) -> Result<Value> {
+    Ok(serde_json::json!({
+        "edges": encode(&r.gates)?,
+        "planning_watermark": r.judged_at_planning_watermark,
+        "judged_at_rev": r.judged_at_rev,
+    }))
+}
+
 fn audited_ids(audits: &[Audit]) -> std::collections::BTreeSet<&str> {
     audits.iter().map(|a| a.lc_key.as_str()).collect()
 }
@@ -145,6 +191,23 @@ impl<B: Backend> Store<B> {
 
     pub fn contract(&self) -> &Contract<B> {
         &self.contract
+    }
+
+    /// `t` with `id`'s gate put when the transition from `prev` to `next` moves it, or when the
+    /// record has none yet; no other transition writes it.
+    fn gated(
+        &self,
+        t: Txn,
+        id: &str,
+        prev: Option<&LifecycleRecord>,
+        next: &LifecycleRecord,
+    ) -> Result<Txn> {
+        let gate = next.gate();
+        let unmoved = prev.map(LifecycleRecord::gate).as_ref() == Some(&gate);
+        if unmoved && self.contract.get(&keys::gate(id))?.is_some() {
+            return Ok(t);
+        }
+        Ok(t.put(&keys::gate(id), gate_object(id, &gate)?))
     }
 
     fn read<T: for<'de> serde::Deserialize<'de>>(
@@ -255,31 +318,67 @@ impl<B: Backend> Store<B> {
         at: i64,
         req: &Request,
     ) -> Result<bool> {
-        let key = keys::lifecycle(id);
         let born = LifecycleRecord::born(id, repo, submitted_tip, at);
+        self.birth(id, born, submitted_tip, req)
+    }
+
+    /// A record for a bead whose filing is still under way: born OPEN, so no claim takes it
+    /// before [`Self::promote`]. Answers as [`Self::create`] does.
+    pub fn create_open(
+        &self,
+        id: &str,
+        repo: Option<&str>,
+        at: i64,
+        req: &Request,
+    ) -> Result<bool> {
+        self.birth(id, LifecycleRecord::born_open(id, repo, at), None, req)
+    }
+
+    /// Filing has finished: the OPEN record becomes READY. An already-promoted record is left.
+    pub fn promote(&self, id: &str, actor: &str, at: i64, req: &Request) -> Result<Outcome> {
+        let Some(cur) = self.record(id)? else {
+            return Err(Error::NotFound {
+                key: keys::lifecycle(id),
+            });
+        };
+        if cur.value.row.state != BeadState::Open {
+            return Ok(Outcome::Applied {
+                rev: self.contract.head()?,
+                record: Box::new(cur.value),
+            });
+        }
+        let ev = BeadEvent {
+            expect: BeadState::Open,
+            version: cur.value.row.version,
+            kind: BeadEventKind::Promote,
+            actor: actor.into(),
+            at: Some(at),
+        };
+        self.apply(id, &ev, req)
+    }
+
+    fn birth(
+        &self,
+        id: &str,
+        born: LifecycleRecord,
+        submitted_tip: Option<&str>,
+        req: &Request,
+    ) -> Result<bool> {
+        let key = keys::lifecycle(id);
         if let Some(existed) = self.compare_birth(&key, &born, submitted_tip, req)? {
             return Ok(existed);
         }
         let mut audits = Vec::new();
         if let Some(tip) = submitted_tip {
-            audits.push(born_submit_audit(id, tip, at, &req.actor));
+            audits.push(born_submit_audit(id, tip, born.updated_at, &req.actor));
         }
         let value = Object::new(encode(&born)?).with_finalizers(&[keys::PLANNING_CLOSED]);
         // A birth with no audit has no history entry, and `create` writes nothing on a lost race.
-        let won = if audits.is_empty() {
-            let sub = sub_request(req, "create", evidence(&[], &[]));
-            match self.contract.create(&key, value, &sub) {
-                Ok(c) => return Ok(c.existed),
-                Err(Error::Conflict { .. }) => false,
-                Err(e) => return Err(e),
-            }
-        } else {
-            let t = Txn::new()
-                .when(Compare::ModRev(key.clone(), None))
-                .put(&key, value);
-            self.audited_txn(t, &audits, &[], req, "create")?.succeeded
-        };
-        if won {
+        let t = Txn::new()
+            .when(Compare::ModRev(key.clone(), None))
+            .put(&key, value);
+        let t = self.gated(t, id, None, &born)?;
+        if self.audited_txn(t, &audits, &[], req, "create")?.succeeded {
             return Ok(false);
         }
         // Another create won between the read and the write, stamped at another second.
@@ -330,13 +429,12 @@ impl<B: Backend> Store<B> {
         if cur.value.same_birth(born) {
             return Ok(Some(true));
         }
-        let untouched = LifecycleRecord::born(
-            &born.row.bead_id,
-            born.repo.as_deref(),
-            None,
-            born.updated_at,
-        );
-        if submitted_tip.is_some() && cur.value.same_birth(&untouched) {
+        let (id, repo, at) = (&born.row.bead_id, born.repo.as_deref(), born.updated_at);
+        let untouched = [
+            LifecycleRecord::born(id, repo, None, at),
+            LifecycleRecord::born_open(id, repo, at),
+        ];
+        if submitted_tip.is_some() && untouched.iter().any(|u| cur.value.same_birth(u)) {
             self.promote_born(key, &item, &cur, born.clone(), req)?;
             return Ok(Some(false));
         }
@@ -361,6 +459,7 @@ impl<B: Backend> Store<B> {
         let t = Txn::new()
             .when(Compare::ModRev(key.into(), Some(cur.mod_rev)))
             .put(key, object_like(item, encode(&born)?));
+        let t = self.gated(t, &born.row.bead_id, Some(&cur.value), &born)?;
         let r = self.audited_txn(t, &audits, &[], req, "promote")?;
         if r.succeeded {
             Ok(())
@@ -402,7 +501,9 @@ impl<B: Backend> Store<B> {
 
     /// A claim is one txn: it compares the record's `mod_rev`, takes `locks/lifecycle/<id>`, and
     /// writes the record. The holder's fencing token is that lock's `create_rev`, returned as
-    /// the txn's first fence. A lost compare or a live lock writes nothing, so no lock is left
+    /// the txn's first fence. It also compares every blocker's gate as its readiness judged it
+    /// and each stacked prerequisite at its stacked tip, so a blocker that moved since conflicts
+    /// the claim. A lost compare or a live lock writes nothing, so no lock is left
     /// behind to give back.
     pub fn claim(
         &self,
@@ -451,11 +552,29 @@ impl<B: Backend> Store<B> {
                 .map(|o| (o, None));
         }
         let next = self.next_record(ev, &cur, out.row);
-        let (applied, lost) = self.audits(id, ev, &cur.value, &next);
-        let t = Txn::new()
-            .when(Compare::ModRev(key.clone(), Some(cur.mod_rev)))
+        let (mut applied, lost) = self.audits(id, ev, &cur.value, &next);
+        let judged = self.readiness(id)?.map(|r| r.value);
+        if let Some(j) = judged
+            .as_ref()
+            .filter(|j| j.judged_for_claim && !j.claimable)
+        {
+            let blocked_by = j.blocked_by.clone();
+            return Ok((Outcome::JudgedUnclaimable { blocked_by }, None));
+        }
+        let edges = claim_edges(judged.as_ref(), &next.row.stack);
+        if let Some(j) = &judged {
+            if let Some(Value::Object(claim)) = applied[0].evidence.get_mut("Claim") {
+                claim.insert("judged".into(), judged_evidence(j)?);
+            }
+        }
+        let mut t = Txn::new().when(Compare::ModRev(key.clone(), Some(cur.mod_rev)));
+        for (blocker, gate) in &edges {
+            t = t.when(gate_compare(blocker, gate.as_ref())?);
+        }
+        let t = t
             .lock_acquire(&resource, ttl_ms)
             .put(&key, object_like(&item, encode(&next)?));
+        let t = self.gated(t, id, Some(&cur.value), &next)?;
         let r = self.audited_txn(t, &applied, &[lost], req, "apply")?;
         if r.succeeded {
             let fence = r.fences.into_iter().next();
@@ -472,6 +591,19 @@ impl<B: Backend> Store<B> {
         // and the claimant tries again under a new request id.
         if r.already_applied || self.contract.get(&key)?.map(|i| i.mod_rev) != Some(cur.mod_rev) {
             return Ok((Outcome::LostRace { rev: r.rev }, None));
+        }
+        for (blocker, gate) in &edges {
+            let now = self.contract.get(&keys::gate(blocker))?.map(|i| i.value);
+            if now != gate.as_ref().map(|g| gate_object(blocker, g)).transpose()? {
+                let blocker = blocker.clone();
+                return Ok((
+                    Outcome::BlockerMoved {
+                        rev: r.rev,
+                        blocker,
+                    },
+                    None,
+                ));
+            }
         }
         Ok(match self.holder_fence(id)? {
             Some(live) => (Outcome::Locked { token: live.token }, None),
@@ -648,9 +780,10 @@ impl<B: Backend> Store<B> {
         let key = keys::lifecycle(id);
         let next = self.next_record(ev, cur, row);
         let (applied, lost) = self.audits(id, ev, &cur.value, &next);
-        let mut t = Txn::new()
+        let t = Txn::new()
             .when(Compare::ModRev(key.clone(), Some(cur.mod_rev)))
             .put(&key, object_like(item, encode(&next)?));
+        let mut t = self.gated(t, id, Some(&cur.value), &next)?;
         if let Some(f) = fence {
             t = t.lock_check(f);
         }
@@ -690,75 +823,28 @@ impl<B: Backend> Store<B> {
         })
     }
 
-    /// One dispatcher pass onto `readiness/<id>`, keeping what other publishers wrote there:
-    /// each put compares the readiness it merged into, and a chunk that lost a race is merged
-    /// again. A record that does not exist gets no readiness.
+    /// One dispatcher pass onto `readiness/<id>`, keeping what other publishers wrote there.
     pub fn publish_verdicts(
         &self,
         verdicts: &[Verdict],
         judged_at: &str,
         req: &Request,
     ) -> Result<u64> {
-        let mut rev = self.contract.head()?;
-        for (n, chunk) in verdicts.chunks(PASS_CHUNK).enumerate() {
-            rev = self.publish_chunk(chunk, judged_at, &format!("verdicts/{n}"), req)?;
-        }
-        Ok(rev)
-    }
-
-    fn publish_chunk(
-        &self,
-        chunk: &[Verdict],
-        judged_at: &str,
-        part: &str,
-        req: &Request,
-    ) -> Result<u64> {
-        for attempt in 0..MERGE_ATTEMPTS {
-            let head = self.contract.head()?;
-            let mut t = Txn::new();
-            for v in chunk {
-                let owner = keys::lifecycle(&v.id);
-                if self.contract.get_at(&owner, head)?.is_none() {
-                    continue;
-                }
-                let key = keys::readiness(&v.id);
-                let prior = self.read::<Readiness>(&key, Some(head))?;
-                t = t.when(Compare::ModRev(
-                    key.clone(),
-                    prior.as_ref().map(|(r, _)| r.mod_rev),
-                ));
-                let (mut r, value) = match prior {
-                    Some((r, item)) => (r.value, item.value),
-                    None => (
-                        Readiness::default(),
-                        Object::default().with_owners(&[owner.as_str()]),
-                    ),
-                };
+        self.merge_readiness(
+            verdicts,
+            |v| &v.id,
+            "verdicts",
+            req,
+            |r, v, head| {
                 r.verdict = Some(v.verdict.clone());
                 r.blocker = v.blocker.clone();
                 r.runes = v.runes.clone();
                 r.judged_at = Some(judged_at.to_string());
-                r.judged_at_rev = head;
-                t = t.put(
-                    &key,
-                    Object {
-                        data: encode(&r)?,
-                        ..value
-                    },
-                );
-            }
-            if t.ops.is_empty() {
-                return Ok(head);
-            }
-            let sub = sub_request(req, &format!("{part}/{attempt}"), Value::Null);
-            let r = self.contract.txn(&t, &sub)?;
-            if r.succeeded {
-                return Ok(r.rev);
-            }
-        }
-        Err(Error::Backend(format!(
-            "readiness pass {part} lost {MERGE_ATTEMPTS} races in a row"
-        )))
+                if !r.judged_for_claim {
+                    r.judged_at_rev = head;
+                }
+            },
+        )
     }
 
     /// The running pass's counts, under the batch's own progress key, which goes with the batch.
@@ -869,12 +955,16 @@ fn born_submit_audit(id: &str, tip: &str, at: i64, actor: &str) -> Audit {
 mod asks;
 mod direct;
 mod mending;
+mod readiness;
 mod rounds;
+mod sweeps;
 
 pub use asks::{AskClose, AskRecord};
 pub use direct::{Edge, RepoSet};
 pub use mending::{MendingRecord, Move, Stepped};
+pub use readiness::{Judged, Pass};
 pub use rounds::{Cut, Ran, Turned, Withdrawn};
+pub use sweeps::Filing;
 
 #[cfg(test)]
 mod tests;

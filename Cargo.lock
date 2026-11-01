@@ -124,6 +124,7 @@ dependencies = [
  "sift",
  "spira-config",
  "spira-otel",
+ "state-store",
  "suite-select",
  "testkit",
  "tsd",
@@ -1290,6 +1291,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "state-store",
  "testkit",
  "tsd",
 ]
@@ -1962,6 +1964,7 @@ name = "spira-config"
 version = "1.0.0"
 dependencies = [
  "libc",
+ "lifecycle",
  "schemars",
  "serde",
  "serde_json",

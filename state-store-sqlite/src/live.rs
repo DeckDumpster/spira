@@ -163,6 +163,7 @@ live_scenarios!(
     a_multi_prefix_list_reads_one_snapshot_while_a_commit_lands_between_prefixes,
     txn_ops_at_the_limit_pass_and_one_over_is_refused,
     txn_compares_at_the_limit_pass_and_one_over_is_refused,
+    a_cut_at_the_member_cap_passes_the_limits_and_one_more_is_refused,
     request_bytes_at_the_limit_pass_and_one_over_is_refused,
     a_key_twice_in_one_txn_is_refused,
     caller_writes_to_the_contracts_own_prefixes_are_refused,

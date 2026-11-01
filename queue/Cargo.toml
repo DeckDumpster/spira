@@ -16,6 +16,7 @@ landing-pass = { path = "../landing-pass" }
 migration-numbers = { path = "../migration-numbers" }
 lifecycle = { path = "../lifecycle" }
 bead = { path = "../bead" }
+state-store = { path = "../state-store" }
 tsd = { path = "../tsd" }
 
 [[bin]]

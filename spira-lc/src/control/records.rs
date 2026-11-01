@@ -1,10 +1,13 @@
 //! The values stored under the control plane's keys. A lifecycle record holds the state
 //! machine's fields plus `repo`; nothing here copies a planning-plane field.
 
+use std::collections::BTreeMap;
+
 use lifecycle::batch::BatchRow;
-use lifecycle::bead::BeadRow;
+use lifecycle::bead::{BeadRow, BeadState};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use spira_config::edges::Gate;
 use state_store::{Error, Object, Result};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -33,6 +36,18 @@ impl LifecycleRecord {
             repo: repo.map(str::to_string),
             updated_at: at,
         }
+    }
+
+    /// A record whose filing has not finished: OPEN, so nothing claims it before its edges exist.
+    pub fn born_open(id: &str, repo: Option<&str>, at: i64) -> Self {
+        let mut r = Self::born(id, repo, None, at);
+        r.row.state = BeadState::Open;
+        r
+    }
+
+    /// The projection a blocker's dependents compare.
+    pub fn gate(&self) -> Gate {
+        spira_config::edges::gate(self.row.state, self.row.tip.as_deref())
     }
 
     /// Whether `self` is the record `other` was born as, whenever each was stamped.
@@ -70,6 +85,17 @@ pub struct Readiness {
     pub judged_at_planning_watermark: Option<String>,
     #[serde(default)]
     pub judged_at_rev: u64,
+    /// Every blocker the judgement read, with its gate as judged (`None`: it had no record). A
+    /// claim compares each, so one that moved since conflicts the claim.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub gates: BTreeMap<String, Option<Gate>>,
+    /// A readiness pass has judged the record for claims: `claimable` and `gates` are its
+    /// answer, and a verdict pass no longer restamps `judged_at_rev`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub judged_for_claim: bool,
+    /// The record was escalated for staying OPEN with no open bead behind it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub open_escalated: bool,
 }
 
 /// One member of a round, at the tip it was cut at.
