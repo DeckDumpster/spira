@@ -1,0 +1,19 @@
+# The round controller's door to the control store: one step runs `round-controller lease probe`,
+# whose lease is a txn through `spira-lc rc` on the world's own control store, and reads the lock
+# back with `spira-lc watch`. The step exits 0 only when the probe did and the watch shows the
+# lock's put.
+epoch = 1800000000
+horizon = 60000
+
+[[step]]
+name = "store-door"
+at = 1000
+command = "sh spira/sim/scenarios/steps/rc-store-door.sh"
+
+[[invariant]]
+name = "the_door_step_failed"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit <> 0"
+
+[[expect]]
+name = "a_lease_was_taken_and_read_back"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND actor = 'store-door' AND exit = 0"

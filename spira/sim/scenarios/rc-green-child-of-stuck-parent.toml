@@ -1,7 +1,7 @@
 # The round controller's world twin of remarkable-stack: the sim-only actor runs `round-controller
-# pass` with the Lander registered after supersede and orphans. The control-plane store has no
-# door yet, so the Lander reads no lane and no round: every pass exits 0, abandons nothing, lands
-# nothing and leaves the world's run state untouched.
+# pass` with the Lander registered after supersede and orphans. The world's control store holds no
+# lane and no round, so the Lander finds nothing to land: every pass exits 0, abandons nothing,
+# lands nothing and leaves the world's run state untouched.
 epoch = 1800000000
 horizon = 150000
 real_actors = ["round-controller"]

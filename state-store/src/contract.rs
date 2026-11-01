@@ -64,7 +64,8 @@ impl Request {
 }
 
 /// Equality compares; `None` means the key is absent.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Compare {
     ModRev(String, Option<Rev>),
     CreateRev(String, Option<Rev>),
@@ -85,7 +86,8 @@ impl Compare {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Op {
     Put(String, Object),
     /// Marks the key for deletion instead while it has finalizers.
@@ -106,7 +108,7 @@ impl Op {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Txn {
     pub compares: Vec<Compare>,
     pub ops: Vec<Op>,
@@ -162,7 +164,7 @@ impl Txn {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TxnResult {
     /// The txn's main revision; for a refusal that stored nothing, the head it was judged at.
     pub rev: u64,
@@ -192,7 +194,8 @@ pub enum Deleted {
     },
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Selector {
     Everything,
     /// The value at this JSON pointer into `data` equals this.
@@ -233,7 +236,7 @@ pub enum Watched {
 }
 
 /// A lock holder's proof: `create_rev(locks/<resource>) == token`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Fence {
     pub resource: String,
     pub token: Rev,

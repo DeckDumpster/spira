@@ -31,4 +31,5 @@ toml = { version = "0.8", optional = true }
 
 [dev-dependencies]
 round-controller = { path = ".", features = ["sim"] }
+spira-lc = { path = "../spira-lc" }
 testkit = { path = "../testkit" }

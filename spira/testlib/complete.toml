@@ -39,6 +39,7 @@ pass_rate_window = 86400
 lc_backup_url = ""
 lc_store_path = ""
 lc_lock_ttl_min_ms = 1000
+lc_lifecycle_on_store = false
 lc_backup_db = "spira_lifecycle"
 lc_backup_max_age = 25200
 lc_backup_allow_local = false

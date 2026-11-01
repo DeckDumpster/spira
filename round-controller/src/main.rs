@@ -15,10 +15,12 @@ use round_controller::real::child::SysSpawn;
 use round_controller::real::git::RealGit;
 use round_controller::real::launch::{Programs, Systemd, SystemdUnits};
 use round_controller::real::lc::SpiraLc;
+use round_controller::ledger::{FaultPolicy, StoreLedger};
 use round_controller::real::liveness::NoVmRecords;
+use round_controller::real::store::LcStore;
 use round_controller::real::verbs::{Deadlines, RealVerbs};
 use round_controller::real::vm_runner::{Repo, VmEnv, VmRunner};
-use round_controller::real::{self, Unserved};
+use round_controller::real;
 use round_controller::resources::RoundView;
 use round_controller::run::{self, RunDir, RunEnv};
 use round_controller::slots::{self, SlotGrant, SlotSettings};
@@ -292,6 +294,13 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
         program: spira_config::release_env::tool("spira-lc"),
     };
     let switches = RunDir(spira_config::resolve::run_dir_for_process()?);
+    let store = LcStore {
+        proc_: proc_.clone(),
+        program: spira_config::release_env::tool("spira-lc"),
+    };
+    let ledger = StoreLedger {
+        policy: FaultPolicy::from_config()?,
+    };
     let sink = telemetry::sink();
     let log = telemetry::DwellLog {
         sink: &sink,
@@ -301,9 +310,9 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
         clock: &*clock,
         proc_: &*proc_,
         rng: &rng,
-        store: &Unserved,
+        store: &store,
         verbs: &verbs,
-        ledger: &Unserved,
+        ledger: &ledger,
         log: &log,
         units: &units,
         vms: &NoVmRecords,

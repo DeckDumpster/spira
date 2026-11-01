@@ -10,6 +10,7 @@ pub mod contract;
 pub mod gc;
 pub mod limits;
 pub mod mem;
+pub mod wire;
 
 use serde::{Deserialize, Serialize};
 
@@ -111,7 +112,7 @@ impl Object {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Item {
     pub key: String,
     pub value: Object,
@@ -123,7 +124,8 @@ pub struct Item {
 }
 
 /// Each etcd v3 limit, named in the refusal.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Limit {
     Ops { max: usize, got: usize },
     Compares { max: usize, got: usize },
@@ -131,7 +133,8 @@ pub enum Limit {
     DuplicateKey { key: String },
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Error {
     /// `create` found the key holding a different value.
     Conflict {
