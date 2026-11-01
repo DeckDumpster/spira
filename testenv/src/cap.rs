@@ -3,7 +3,8 @@
 //! A run with `--deadline` is a gate tier and carries the larger of the gate cap and its own
 //! deadline; any other run carries the suite cap. At the cap the run cancels itself (killing its containers through the same path a
 //! signal takes) and finishes `FAULT reason=over-cap`, naming what was running. `testenv-cap`
-//! scans live runs and kills any that outlive their cap plus [`GRACE`].
+//! scans live runs and kills any that outlive their cap plus [`GRACE`], plus the load-wait
+//! bound for a suite-tier run, whose cap starts only once load admission lets it in.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -27,6 +28,13 @@ static RUNNING: Mutex<Vec<String>> = Mutex::new(Vec::new());
 #[cfg(test)]
 thread_local! {
     pub static OBSERVE_CAP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static ARMED_HERE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether a watchdog armed on this thread is still running.
+#[cfg(test)]
+pub fn armed_here() -> bool {
+    ARMED_HERE.with(|a| a.get())
 }
 
 /// Ignores the per-thread opt-in: for a fake that stands in for a process outside the run.
@@ -115,6 +123,8 @@ impl Armed {
     /// Stops the watchdog; what was running when the cap fired, if it did.
     pub fn finish(self) -> Option<(String, u64)> {
         self.0.store(true, Ordering::SeqCst);
+        #[cfg(test)]
+        ARMED_HERE.with(|a| a.set(false));
         let trip = self.1.lock().unwrap().take();
         if trip.is_some() {
             TRIPPED.store(false, Ordering::SeqCst);
@@ -131,6 +141,8 @@ pub fn arm(cap: Cap) -> Armed {
     let trip: Trip = Arc::new(Mutex::new(None));
     let slot = trip.clone();
     let start = Instant::now();
+    #[cfg(test)]
+    ARMED_HERE.with(|a| a.set(true));
     std::thread::spawn(move || {
         let wait = |until: Duration| {
             while start.elapsed() < until {
@@ -209,14 +221,17 @@ pub struct Breach {
     pub cap: u64,
 }
 
-pub fn breaches(procs: &[Proc], suite_cap: u64, gate_cap: u64, grace: u64, exe: Option<&str>) -> Vec<Breach> {
+/// A suite-tier run may first wait up to `load_wait` on host load before its cap starts; a
+/// gate-tier run never waits on load.
+pub fn breaches(procs: &[Proc], suite_cap: u64, gate_cap: u64, load_wait: u64, grace: u64, exe: Option<&str>) -> Vec<Breach> {
     procs
         .iter()
         .filter(|p| is_run(&p.argv) && exe.is_none_or(|e| p.argv[0] == e))
         .filter_map(|p| {
             let gate = has_deadline(&p.argv);
             let cap = limit(suite_cap, gate_cap, gate.then(|| deadline_of(&p.argv).unwrap_or(0))).secs;
-            (p.age_secs > cap + grace).then(|| Breach { proc: p.clone(), tier: if gate { "gate" } else { "suite" }, cap })
+            let waited = if gate { 0 } else { load_wait };
+            (p.age_secs > cap + waited + grace).then(|| Breach { proc: p.clone(), tier: if gate { "gate" } else { "suite" }, cap })
         })
         .collect()
 }
@@ -279,9 +294,9 @@ mod tests {
         assert_eq!(deadline_of(&["testenv".into(), "--deadline=600".into()]), Some(600));
         assert_eq!(deadline_of(&["testenv".into(), "--deadline".into(), "600".into(), "b".into()]), Some(600));
         let long = p(1, 640, &["testenv", "--deadline", "600", "b"]);
-        assert!(breaches(std::slice::from_ref(&long), 900, 300, GRACE, None).is_empty());
+        assert!(breaches(std::slice::from_ref(&long), 900, 300, 0, GRACE, None).is_empty());
         let over = p(2, 600 + SETTLE + GRACE + 1, &["testenv", "--deadline", "600", "b"]);
-        assert_eq!(breaches(&[over], 900, 300, GRACE, None)[0].cap, 630);
+        assert_eq!(breaches(&[over], 900, 300, 0, GRACE, None)[0].cap, 630);
     }
 
     #[test]
@@ -295,8 +310,19 @@ mod tests {
             p(6, 99_999, &["sleep", "9999"]),
             p(7, 99_999, &["/bin/testenv-cap", "watch"]),
         ];
-        let got: Vec<(u32, &str)> = breaches(&procs, 900, 300, GRACE, None).iter().map(|b| (b.proc.pid, b.tier)).collect();
+        let got: Vec<(u32, &str)> = breaches(&procs, 900, 300, 0, GRACE, None).iter().map(|b| (b.proc.pid, b.tier)).collect();
         assert_eq!(got, vec![(2, "suite"), (4, "gate")]);
+    }
+
+    #[test]
+    fn a_suite_run_is_allowed_its_load_wait_on_top_of_cap_and_grace() {
+        let waited = p(1, 600 + 240 + GRACE, &["testenv", "b"]);
+        assert!(breaches(&[waited], 600, 300, 240, GRACE, None).is_empty());
+        let over = p(2, 600 + 240 + GRACE + 1, &["testenv", "b"]);
+        assert_eq!(breaches(&[over], 600, 300, 240, GRACE, None)[0].cap, 600);
+        let gate = [p(3, 300 + SETTLE + GRACE + 1, &["testenv", "--deadline", "120", "b"])];
+        assert_eq!(breaches(&gate, 600, 300, 240, GRACE, None), breaches(&gate, 600, 300, 0, GRACE, None));
+        assert_eq!(breaches(&gate, 600, 300, 240, GRACE, None).len(), 1);
     }
 
     #[test]

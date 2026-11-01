@@ -303,6 +303,8 @@ fn real_main() -> ExitCode {
         warm_refill: &spawn_refill,
         spawn_sweep: &spawn_sweep,
         runner_exe: std::env::current_exe().unwrap_or_default(),
+        load1: &testenv::timing::load1,
+        sleep: &std::thread::sleep,
     };
     let rc = match inv {
         Some(inv) => run::execute(inv, &deps),
