@@ -33,12 +33,12 @@ Each slice also holds the earlier events of every batch opened up to 6 h before 
 |---|---|
 | `b-1226` | the landing-stop bead |
 | `b-1254` | the repeat-red member |
-| `b-1261` | the its revert |
+| `b-1261` | the revert of the landing-stop bead |
 | `b-1264` | the disk-preflight bead |
 
 ## Provenance
 
-Captured by the operator's capture program (`capture.sh <capture-dir> <worktree>`, kept with the operator's tools, outside this repository). It reads production and never writes it: the lifecycle through read-only `spira-lc facts-query` SELECTs in 2-hour chunks, `run/tsd` and two logs by copying the window's lines, git through `git log` on each repo's landing ref.
+Captured by the operator's capture program (`replay-capture/capture.sh <capture-dir> <worktree>` at tools commit 087d2ad, kept with the operator's tools, outside this repository). It reads production and never writes it: the lifecycle through read-only `spira-lc facts-query` SELECTs in 2-hour chunks, `run/tsd` and two logs by copying the window's lines, git through `git log` on each repo's landing ref.
 
 | Step | Captured (UTC) |
 |---|---|
@@ -74,12 +74,15 @@ What the builder left out, and why:
 - 1031: 1 cert-pass rows with no pass number.
 - 1031: 147 red passes with no typed owner (no Eject followed).
 
-**Times.** Every lifecycle record keeps the lifecycle's own `at`, and every TSD record its `ts`. `run/rounds.log` has no timestamps, so nothing is timed from it: a round's `verdict` comes from `run/tsd/batch-round.jsonl`, joined to the same repo's lifecycle batch whose Abandon or FastForward is nearest within 120 s, and a batcher alarm is timed by the Abandon of the round its line names.
+**Times.** Every lifecycle record keeps the lifecycle's own `at`, and every TSD record its `ts`. `run/rounds.log` has no timestamps, so nothing is timed from it: a round's `verdict` comes from `run/tsd/batch-round.jsonl`, joined to the same repo's lifecycle batch whose Abandon or FastForward is nearest within 120 s, and a batcher alarm is timed by the Abandon of the round its line names. That join is greedy (earliest batch-round row first, each batch taken once), so a per-batch `verdict` is a nearest-time match, not a recorded link; the per-repo verdict counts are what it supports.
+
+**The .ndjson extension is deliberate.** These are fixtures, not a beads export; the rename keeps the fence's rule intact rather than carving an exception into it.
 
 **Typed by hand.** Two harm events were recorded only as prose, so their typed records were written by hand, in N-1's shape:
 
 - `b-1226` (the landing-stop bead): `paused` at its first over-cap pass after it landed (cert-pass, 11:23:43Z), `unpaused` when its revert `b-1261` entered LANDED (15:32:49Z). The revert's `land` record carries `reverts: b-1226`, typed from the revert commit's subject.
 - `b-1264` (the disk-preflight bead): `paused` at the first EC2 pass refused after it landed (17:24:31Z, `infra` with no suites run), `unpaused` at the next pass whose suites started (19:25:00Z).
+- **Where these differ from the work item's prose.** The work item puts the landing stop at about 04:43 to 15:30 PT; the records put it at 04:23 to 08:32 PT (11:23Z to 15:32Z), so its 15:30 reads as a UTC time labelled PT, and its 647-minute cost is about 249 minutes here. It also says the disk preflight refused every EC2 round; in the records only the home repo's EC2 passes stopped running suites (repo-c's kept running), so only repo-a is paused. Take times from these records, not from that prose.
 - The world halt at 19:44:36Z is the halt file's modification time. No release falls inside the slice. No stop history exists for 10-21..25, so that slice's `stop.ndjson` is empty.
 
 **The two ids a join needs.** `cert_pass.batch` is the lifecycle batch id, the same id `round.batch` and `attribution.batch` carry. The TSD `round-attribution` family does not: its `round` field is the batcher's start time in unix seconds, never a batch id, and over the 20 days it holds 0 rows. Reds and their owners are therefore taken from the lifecycle (`attribution.ndjson`), not from `round-attribution`.
@@ -88,9 +91,9 @@ What the builder left out, and why:
 
 `landed-20d.tsv` columns: `day`, `lifecycle_landed` (distinct bead ids entering LANDED that Pacific day), `git_land` (throughput-bounds §1's method), `hand_landed_dir` (beads landed by a direct first-parent commit or a round merge, with no land commit that day), `delta` (lifecycle minus git), `cause`. `cause` joins, with `+`, every cause found among that day's disagreeing ids, from the closed set `hand-landing`, `day-boundary`, `relanded`, `batch-multi-member`, `unexplained`; a day with any unexplained id reads `unexplained` first, and `-` means nothing differs.
 
-- **hand-landing**: the lifecycle landed it and git has a direct landing of it, or the lifecycle's own ContentOnBase landed it and no land commit names it.
+- **hand-landing**: the lifecycle landed it and git has a direct landing of it, or the lifecycle's own ContentOnBase landed it and no land commit names it (the second rests on the lifecycle's judgement alone, not on git evidence).
 - **day-boundary**: the other side has it on the adjacent day.
-- **relanded**: it entered LANDED, or got a land commit, on another day as well.
+- **relanded**: it entered LANDED, or got a land commit, on another day as well. This includes a lag of more than a day between the two sides, not only a second landing.
 - **batch-multi-member**: one land commit carried several ids (an integration land naming several beads, a member's own commits merged under another member's land, a dotted parent and child, or a member entering LANDED in the same second as one that has a land commit).
 - **unexplained**: none of these. Two of them are not beads: §1's token rule reads `: land law-…` subjects as landings, and the column keeps that so it stays equal to §1.
 
@@ -161,15 +164,15 @@ jq -r '"\(.repo) \(.cause)"' sim/fixtures/replay/1031/cert_pass.ndjson | sort | 
      97 repo-c red-attributed
 ```
 
-**10-31: green passes against landings, per repo (green landed)**
+**10-31: green passes against rounds landed, per repo (green landed)**
 
 ```sh
-for r in repo-a repo-b repo-c; do echo "$r $(jq -r --arg r $r 'select(.repo==$r and .cause=="green")|.at' sim/fixtures/replay/1031/cert_pass.ndjson | wc -l) $(jq -r --arg r $r 'select(.repo==$r and .at>="2026-10-31")|.at' sim/fixtures/replay/1031/land.ndjson | wc -l)"; done
+for r in repo-a repo-b repo-c; do echo "$r $(jq -r --arg r $r 'select(.repo==$r and .cause=="green")|.at' sim/fixtures/replay/1031/cert_pass.ndjson | wc -l) $(jq -r --arg r $r 'select(.repo==$r and .state_to=="LANDED" and .at>="2026-10-31")|.at' sim/fixtures/replay/1031/round.ndjson | wc -l)"; done
 ```
 
 ```
-repo-a 21 36
-repo-b 38 10
+repo-a 21 20
+repo-b 38 9
 repo-c 1 1
 ```
 

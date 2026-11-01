@@ -25,7 +25,7 @@ macro_rules! checked_string {
                 if ok(&s) {
                     Ok($name(s))
                 } else {
-                    Err(format!("{:?} is not {}", s, $what))
+                    Err(format!("{s:?} is not {}", $what))
                 }
             }
         }
@@ -77,17 +77,57 @@ fn batch(s: &str) -> bool {
             || rest.strip_prefix('r').and_then(|t| t.split_once('-')).is_some_and(|(n, t)| digits(n) && ts(t, 4)))
 }
 
-fn code(s: &str) -> bool {
-    s.len() <= 41 && s.as_bytes().first().is_some_and(u8::is_ascii_lowercase) && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-}
-
 checked_string!(Stamp, stamp, "a UTC stamp YYYY-MM-DDTHH:MM:SSZ");
 checked_string!(Repo, repo, "an anonymised repo (repo-a..repo-l)");
 checked_string!(Bead, bead, "an anonymised bead id (b-<n>)");
 checked_string!(Batch, batch, "an anonymised batch id");
 checked_string!(Sha, |s| hex(s, 12), "a 12-hex anonymised sha");
 checked_string!(PassKey, |s| hex(s, 16), "a 16-hex pass key");
-checked_string!(Code, code, "a closed reason code (a short kebab word)");
+
+/// A bead event's reason or cause, as the lifecycle records it: closed, so a later capture
+/// that carries some other word fails here rather than shipping it.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum BeadCode {
+    ClosedNoBranch,
+    Unwanted,
+    NoRebase,
+    PhantomBeadId,
+    PolicyViolation,
+    SuitesFailed,
+    ManualHold,
+    NoProgressBackoff,
+    OperatorQuestion,
+    SupersedeRequest,
+    BatchEjected,
+    BatchEjectedRed,
+    PushRejected,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum Caller {
+    Batcher,
+    Reconciler,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum AlarmKind {
+    LandUnverified,
+    Escalate,
+    NoEffectMail,
+    RaiseAsk,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum ReasonCode {
+    None,
+    IncidentNoId,
+    MailLint,
+    MailExit,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -268,7 +308,7 @@ enum Transition {
         to: BeadState,
         event: BeadEvent,
         tip: Option<Sha>,
-        code: Option<Code>,
+        code: Option<BeadCode>,
     },
 }
 
@@ -323,10 +363,10 @@ enum Outcome {
 #[allow(dead_code)]
 struct AlarmAttempt {
     at: Stamp,
-    caller: Code,
-    kind: Code,
+    caller: Caller,
+    kind: AlarmKind,
     outcome: Outcome,
-    reason_code: Code,
+    reason_code: ReasonCode,
 }
 
 #[derive(Debug, Deserialize)]
@@ -343,12 +383,10 @@ struct Attribution {
 }
 
 fn parse<T: for<'de> Deserialize<'de>>(text: &str) -> Result<usize, String> {
-    let mut n = 0;
     for (i, line) in text.lines().enumerate() {
         serde_json::from_str::<T>(line).map_err(|e| format!("line {}: {e}: {line}", i + 1))?;
-        n += 1;
     }
-    Ok(n)
+    Ok(text.lines().count())
 }
 
 /// Every file of one slice, each line into its type; the count of lines read per file.
@@ -385,14 +423,28 @@ fn every_line_of_every_slice_deserialises_into_its_closed_shape() {
     }
 }
 
+/// The first line of `file` in the 10-31 slice parses as `T`, and the same line with a
+/// free-text field planted in it does not.
+fn refuses_a_planted_field<T: for<'de> Deserialize<'de>>(file: &str) {
+    let text = std::fs::read_to_string(root().join("1031").join(file)).unwrap();
+    let first = text.lines().next().unwrap();
+    assert!(parse::<T>(first).is_ok(), "the unplanted line parses: {first}");
+    let planted = format!("{},\"note\":\"stacked on the parent, which never landed\"}}", first.trim_end_matches('}'));
+    let err = parse::<T>(&planted).expect_err("a free-text field must be refused");
+    assert!(err.contains("unknown field `note`"), "{file}: {err}");
+}
+
 #[test]
 fn a_line_with_an_extra_text_field_is_refused() {
-    let text = std::fs::read_to_string(root().join("1031").join("round.ndjson")).unwrap();
-    let first = text.lines().next().unwrap();
-    assert!(parse::<Round>(first).is_ok(), "the unplanted line parses: {first}");
-    let planted = format!("{},\"note\":\"stacked on the parent, which never landed\"}}", first.trim_end_matches('}'));
-    let err = parse::<Round>(&planted).expect_err("a free-text field must be refused");
-    assert!(err.contains("unknown field `note`"), "{err}");
+    refuses_a_planted_field::<Round>("round.ndjson");
+    refuses_a_planted_field::<Transition>("transition.ndjson");
+    refuses_a_planted_field::<AlarmAttempt>("alarm_attempt.ndjson");
+}
+
+#[test]
+fn a_reason_outside_the_closed_set_is_refused() {
+    let line = r#"{"at":"2026-10-31T00:00:00Z","kind":"bead","id":"b-1","from":"READY","to":"READY","event":"Hold","code":"some-host-name"}"#;
+    assert!(parse::<Transition>(line).is_err(), "an unknown code must be refused");
 }
 
 #[test]
