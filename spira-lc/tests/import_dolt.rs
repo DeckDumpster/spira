@@ -212,7 +212,7 @@ fn seed(f: &Fixture) {
     let verdicts = json!({"computed_at": "2026-01-01T00:00:00Z", "entries": [{"id": "sp-ready", "verdict": "blocked", "blocker": "sp-work", "runes": ["builder"]}]});
     let (rc, out) = f.lc_in(&old, &["claim-verdicts"], Some(&verdicts.to_string()));
     assert_eq!(rc, 0, "{out}");
-    assert_eq!(event(f, &old, "bead", "sp-epic", "READY", "0", json!({"Hold": {"kind": "Manual", "cause": "c"}})).0, 0);
+    assert_eq!(event(f, &old, "bead", "sp-epic", "READY", "0", json!("Express")).0, 0);
     f.ok(&old, &["dep-add", "sp-ready", "sp-work"]);
     f.ok(&old, &["create-ask", "q-1", "--work-bead", "sp-work"]);
 
@@ -250,7 +250,7 @@ fn stopped_and_imported(f: &mut Fixture) -> Value {
 }
 
 #[test]
-fn the_import_carries_every_table_at_one_revision_and_the_store_serves_it() {
+fn the_import_carries_every_table_at_one_revision_the_store_serves_it_and_parity_finds_only_the_listed_differences() {
     let mut f = fixture("import-happy");
     seed(&f);
     let old = f.old();
@@ -279,9 +279,22 @@ fn the_import_carries_every_table_at_one_revision_and_the_store_serves_it() {
     assert_eq!(listed[0]["repo"], json!("elsewhere"));
     assert_eq!(listed[0]["claim_verdict"], json!("blocked"));
 
+    let a = f.root.join("old.sock");
+    f.serve(&old, &a);
+    let parity = |f: &Fixture| f.lc_in(&old, &["admin-parity", "--old-socket", a.to_str().unwrap(), "--new-socket", sock.to_str().unwrap()], None);
+    let (rc, out) = parity(&f);
+    assert_eq!(rc, 0, "{out}");
+    let report: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(report["differences"], json!([]), "{report:#}");
+    assert_eq!(report["working_without_lock"], json!(["sp-work"]), "{report:#}");
+
     let claim = json!({"Claim": {"holder": "d3", "lease_until": LATER.parse::<i64>().unwrap()}});
     let (rc, out) = event(&f, &new, "bead", "sp-ready", "READY", "0", claim);
     assert_eq!(rc, 0, "a post-import claim: {out}");
+    let (rc, out) = parity(&f);
+    assert_eq!(rc, 3, "the claim is a planted difference parity reports: {out}");
+    let report: Value = serde_json::from_str(&out).unwrap();
+    assert!(report["differences"].as_array().unwrap().iter().any(|d| d["argv"] == json!(["show", "sp-ready"])), "{report:#}");
     assert_eq!(f.json(&new, &["event-seq", "--since", &r.to_string()]), json!({"seq": r + 1, "keys": ["sp-ready"]}), "the next txn is at R+1");
     let after: Vec<u64> = seqs(&f, &new, "sp-ready").into_iter().map(|(s, _)| s).collect();
     assert_eq!(after.last(), Some(&(r + 1)), "{after:?}");
@@ -334,26 +347,3 @@ fn a_running_lc_serve_refuses_the_import() {
     stopped_and_imported(&mut f);
 }
 
-#[test]
-fn parity_between_the_old_path_and_the_imported_store_finds_only_the_listed_differences() {
-    let mut f = fixture("import-parity");
-    seed(&f);
-    stopped_and_imported(&mut f);
-    let (old, new) = (f.old(), f.new_store());
-    let (a, b) = (f.root.join("old.sock"), f.root.join("new.sock"));
-    f.serve(&old, &a);
-    f.serve(&new, &b);
-    let parity = |f: &Fixture| f.lc_in(&old, &["admin-parity", "--old-socket", a.to_str().unwrap(), "--new-socket", b.to_str().unwrap()], None);
-    let (rc, out) = parity(&f);
-    assert_eq!(rc, 0, "{out}");
-    let report: Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(report["differences"], json!([]), "{report:#}");
-    assert_eq!(report["working_without_lock"], json!(["sp-work"]), "{report:#}");
-
-    let claim = json!({"Claim": {"holder": "d3", "lease_until": LATER.parse::<i64>().unwrap()}});
-    assert_eq!(event(&f, &new, "bead", "sp-ready", "READY", "0", claim).0, 0);
-    let (rc, out) = parity(&f);
-    assert_eq!(rc, 3, "a planted difference is reported: {out}");
-    let report: Value = serde_json::from_str(&out).unwrap();
-    assert!(report["differences"].as_array().unwrap().iter().any(|d| d["argv"] == json!(["show", "sp-ready"])), "{report:#}");
-}
