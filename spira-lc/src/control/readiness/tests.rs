@@ -372,3 +372,85 @@ fn an_expired_claim_returns_to_the_state_it_was_claimed_from_once_its_holder_is_
     assert_eq!(r.state("sp-ready"), "READY");
     assert_eq!(r.state("sp-live"), "WORKING");
 }
+
+#[test]
+fn a_coordination_parent_claimed_after_judgement_conflicts_its_childs_claim() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-p", "--ready"]);
+    r.ok(&["create-bead", "sp-c", "--ready"]);
+    let idle = serde_json::to_value(gate(BeadState::Ready, None)).unwrap();
+    r.judged_claimable("sp-c", json!({ "sp-p": idle }));
+    assert_eq!(r.claim("sp-p").0, 0);
+    let (code, out) = r.claim("sp-c");
+    assert_eq!(code, crate::REFUSED, "{out}");
+    assert!(out.contains("blocker sp-p moved"), "{out}");
+}
+
+#[test]
+fn a_record_judged_not_claimable_is_refused_its_claim_and_nothing_is_written() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--ready"]);
+    r.publish(json!([{ "id": "sp-a", "claimable": false, "blocked_by": ["sp-x"] }]));
+    let before = r.mod_rev(&keys::lifecycle("sp-a"));
+    let (code, out) = r.claim("sp-a");
+    assert_eq!(code, crate::REFUSED, "{out}");
+    assert!(
+        out.contains("judged not claimable (blocked by sp-x)"),
+        "{out}"
+    );
+    assert_eq!(r.mod_rev(&keys::lifecycle("sp-a")), before);
+}
+
+#[test]
+fn a_record_with_no_gate_gets_one_on_its_next_transition() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--ready"]);
+    let drop = state_store::Txn::new().delete(&keys::gate("sp-a"));
+    let req = state_store::Request::new("drop-gate", "test", "t");
+    assert!(r.store.contract().txn(&drop, &req).unwrap().succeeded);
+    assert!(r
+        .store
+        .contract()
+        .get(&keys::gate("sp-a"))
+        .unwrap()
+        .is_none());
+    r.applied("sp-a", json!("Express"));
+    assert!(r
+        .store
+        .contract()
+        .get(&keys::gate("sp-a"))
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+fn a_verdict_pass_after_a_readiness_pass_keeps_its_revision_and_a_readiness_pass_keeps_the_verdict()
+{
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--ready"]);
+    let verdicts = [crate::control::store::Verdict {
+        id: "sp-a".into(),
+        verdict: "claimable".into(),
+        blocker: None,
+        runes: vec!["builder".into()],
+    }];
+    let req = |id: &str| state_store::Request::new(id, "test", "t");
+    r.store
+        .publish_verdicts(&verdicts, STAMP, &req("v1"))
+        .unwrap();
+    let body = json!({ "computed_at": STAMP, "judged_at_rev": 3, "entries": [{ "id": "sp-a", "claimable": true }] });
+    r.ok(&["publish-readiness", "--json", &body.to_string()]);
+    r.store
+        .publish_verdicts(&verdicts, STAMP, &req("v2"))
+        .unwrap();
+    let got = r.store.readiness("sp-a").unwrap().unwrap().value;
+    assert_eq!(
+        (
+            got.judged_at_rev,
+            got.verdict.as_deref(),
+            got.runes.len(),
+            got.claimable
+        ),
+        (3, Some("claimable"), 1, true)
+    );
+}

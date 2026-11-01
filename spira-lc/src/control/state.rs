@@ -322,6 +322,13 @@ fn answer(outcome: state_store::Result<Outcome>) -> (i32, String) {
             REFUSED,
             format!("refused: blocker {blocker} moved since the claim was judged"),
         ),
+        Ok(Outcome::JudgedUnclaimable { blocked_by }) => (
+            REFUSED,
+            format!(
+                "refused: judged not claimable (blocked by {})",
+                blocked_by.join(",")
+            ),
+        ),
         Ok(Outcome::Locked { token }) => (
             REFUSED,
             format!(

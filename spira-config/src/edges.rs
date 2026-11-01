@@ -41,6 +41,8 @@ pub fn blocks(edge: Edge) -> bool {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GateClass {
+    /// READY with no tip: the one unfinished state in which a parent does not hold its child.
+    Idle,
     Unfinished,
     /// Certified work a dependent of the same repo may stack on.
     Stackable,
@@ -57,8 +59,9 @@ pub struct Gate {
     pub tip: Option<String>,
 }
 
-pub fn gate_class(state: BeadState) -> GateClass {
+pub fn gate_class(state: BeadState, has_tip: bool) -> GateClass {
     match state {
+        BeadState::Ready if !has_tip => GateClass::Idle,
         BeadState::Certified | BeadState::InDelivery => GateClass::Stackable,
         s if s.is_terminal() => GateClass::Finished,
         _ => GateClass::Unfinished,
@@ -68,7 +71,7 @@ pub fn gate_class(state: BeadState) -> GateClass {
 /// The gate of a record in `state` at `tip`. The tip is kept only while it is stackable: a
 /// dependent stacks on it then, and at no other time does a blocker's tip decide a claim.
 pub fn gate(state: BeadState, tip: Option<&str>) -> Gate {
-    let class = gate_class(state);
+    let class = gate_class(state, tip.is_some());
     Gate {
         class,
         tip: (class == GateClass::Stackable)
@@ -121,18 +124,42 @@ mod tests {
     fn the_gate_moves_with_the_class_and_a_stackable_tip_and_nothing_else() {
         let tip = Some("t1");
         assert_eq!(gate(BeadState::Ready, tip), gate(BeadState::Working, None));
-        assert_eq!(gate(BeadState::Submitted, tip), gate(BeadState::Rework, None));
+        assert_eq!(
+            gate(BeadState::Submitted, tip),
+            gate(BeadState::Rework, None)
+        );
         assert_eq!(gate(BeadState::Open, None).class, GateClass::Unfinished);
-        assert_eq!(gate(BeadState::Certified, tip), gate(BeadState::InDelivery, tip));
-        assert_ne!(gate(BeadState::Certified, tip), gate(BeadState::Certified, Some("t2")));
-        assert_ne!(gate(BeadState::Certified, tip), gate(BeadState::Rework, tip));
+        assert_eq!(gate(BeadState::Ready, None).class, GateClass::Idle);
+        assert_ne!(
+            gate(BeadState::Ready, None),
+            gate(BeadState::Working, None),
+            "a coordination parent claimed holds its child"
+        );
+        assert_eq!(
+            gate(BeadState::Certified, tip),
+            gate(BeadState::InDelivery, tip)
+        );
+        assert_ne!(
+            gate(BeadState::Certified, tip),
+            gate(BeadState::Certified, Some("t2"))
+        );
+        assert_ne!(
+            gate(BeadState::Certified, tip),
+            gate(BeadState::Rework, tip)
+        );
         for done in [
             BeadState::Landed,
             BeadState::Done,
             BeadState::Superseded,
             BeadState::Dropped,
         ] {
-            assert_eq!(gate(done, tip), Gate { class: GateClass::Finished, tip: None });
+            assert_eq!(
+                gate(done, tip),
+                Gate {
+                    class: GateClass::Finished,
+                    tip: None
+                }
+            );
         }
         assert_eq!(
             serde_json::to_value(gate(BeadState::Certified, tip)).unwrap(),

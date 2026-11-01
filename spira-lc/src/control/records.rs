@@ -89,6 +89,10 @@ pub struct Readiness {
     /// claim compares each, so one that moved since conflicts the claim.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub gates: BTreeMap<String, Option<Gate>>,
+    /// A readiness pass has judged the record for claims: `claimable` and `gates` are its
+    /// answer, and a verdict pass no longer restamps `judged_at_rev`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub judged_for_claim: bool,
     /// The record was escalated for staying OPEN with no open bead behind it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub open_escalated: bool,

@@ -46,6 +46,8 @@ pub enum Outcome {
     Locked { token: Rev },
     /// A blocker's gate is no longer what the claim was judged against.
     BlockerMoved { rev: u64, blocker: String },
+    /// The last readiness pass judged the record not claimable; nothing is written.
+    JudgedUnclaimable { blocked_by: Vec<String> },
 }
 
 /// Every lifecycle record, each id's readiness, and the revision they were read at.
@@ -127,20 +129,6 @@ fn gate_object(id: &str, gate: &Gate) -> Result<Object> {
     Ok(Object::new(encode(gate)?).with_owners(&[keys::lifecycle(id).as_str()]))
 }
 
-/// `t` with `id`'s gate put when the transition from `prev` to `next` moves it, and only then.
-fn with_gate(
-    t: Txn,
-    id: &str,
-    prev: Option<&LifecycleRecord>,
-    next: &LifecycleRecord,
-) -> Result<Txn> {
-    let gate = next.gate();
-    if prev.map(LifecycleRecord::gate).as_ref() == Some(&gate) {
-        return Ok(t);
-    }
-    Ok(t.put(&keys::gate(id), gate_object(id, &gate)?))
-}
-
 /// The compare that holds when `id`'s gate still reads `gate`.
 fn gate_compare(id: &str, gate: Option<&Gate>) -> Result<Compare> {
     Ok(Compare::Value(
@@ -203,6 +191,23 @@ impl<B: Backend> Store<B> {
 
     pub fn contract(&self) -> &Contract<B> {
         &self.contract
+    }
+
+    /// `t` with `id`'s gate put when the transition from `prev` to `next` moves it, or when the
+    /// record has none yet; no other transition writes it.
+    fn gated(
+        &self,
+        t: Txn,
+        id: &str,
+        prev: Option<&LifecycleRecord>,
+        next: &LifecycleRecord,
+    ) -> Result<Txn> {
+        let gate = next.gate();
+        let unmoved = prev.map(LifecycleRecord::gate).as_ref() == Some(&gate);
+        if unmoved && self.contract.get(&keys::gate(id))?.is_some() {
+            return Ok(t);
+        }
+        Ok(t.put(&keys::gate(id), gate_object(id, &gate)?))
     }
 
     fn read<T: for<'de> serde::Deserialize<'de>>(
@@ -372,7 +377,7 @@ impl<B: Backend> Store<B> {
         let t = Txn::new()
             .when(Compare::ModRev(key.clone(), None))
             .put(&key, value);
-        let t = with_gate(t, id, None, &born)?;
+        let t = self.gated(t, id, None, &born)?;
         if self.audited_txn(t, &audits, &[], req, "create")?.succeeded {
             return Ok(false);
         }
@@ -454,7 +459,7 @@ impl<B: Backend> Store<B> {
         let t = Txn::new()
             .when(Compare::ModRev(key.into(), Some(cur.mod_rev)))
             .put(key, object_like(item, encode(&born)?));
-        let t = with_gate(t, &born.row.bead_id, Some(&cur.value), &born)?;
+        let t = self.gated(t, &born.row.bead_id, Some(&cur.value), &born)?;
         let r = self.audited_txn(t, &audits, &[], req, "promote")?;
         if r.succeeded {
             Ok(())
@@ -549,6 +554,13 @@ impl<B: Backend> Store<B> {
         let next = self.next_record(ev, &cur, out.row);
         let (mut applied, lost) = self.audits(id, ev, &cur.value, &next);
         let judged = self.readiness(id)?.map(|r| r.value);
+        if let Some(j) = judged
+            .as_ref()
+            .filter(|j| j.judged_for_claim && !j.claimable)
+        {
+            let blocked_by = j.blocked_by.clone();
+            return Ok((Outcome::JudgedUnclaimable { blocked_by }, None));
+        }
         let edges = claim_edges(judged.as_ref(), &next.row.stack);
         if let Some(j) = &judged {
             if let Some(Value::Object(claim)) = applied[0].evidence.get_mut("Claim") {
@@ -562,7 +574,7 @@ impl<B: Backend> Store<B> {
         let t = t
             .lock_acquire(&resource, ttl_ms)
             .put(&key, object_like(&item, encode(&next)?));
-        let t = with_gate(t, id, Some(&cur.value), &next)?;
+        let t = self.gated(t, id, Some(&cur.value), &next)?;
         let r = self.audited_txn(t, &applied, &[lost], req, "apply")?;
         if r.succeeded {
             let fence = r.fences.into_iter().next();
@@ -771,7 +783,7 @@ impl<B: Backend> Store<B> {
         let t = Txn::new()
             .when(Compare::ModRev(key.clone(), Some(cur.mod_rev)))
             .put(&key, object_like(item, encode(&next)?));
-        let mut t = with_gate(t, id, Some(&cur.value), &next)?;
+        let mut t = self.gated(t, id, Some(&cur.value), &next)?;
         if let Some(f) = fence {
             t = t.lock_check(f);
         }
@@ -828,7 +840,9 @@ impl<B: Backend> Store<B> {
                 r.blocker = v.blocker.clone();
                 r.runes = v.runes.clone();
                 r.judged_at = Some(judged_at.to_string());
-                r.judged_at_rev = head;
+                if !r.judged_for_claim {
+                    r.judged_at_rev = head;
+                }
             },
         )
     }

@@ -35,7 +35,8 @@ pub struct Pass {
 }
 
 impl<B: Backend> Store<B> {
-    /// Publishes each judgement onto `readiness/<id>`. A record that does not exist gets none.
+    /// Publishes each judgement onto `readiness/<id>`. A record that does not exist gets none; a
+    /// judgement with no verdict leaves the verdict pass's verdict, blocker and runes.
     pub fn publish_readiness(&self, judged: &[Judged], pass: &Pass, req: &Request) -> Result<u64> {
         self.merge_readiness(
             judged,
@@ -46,9 +47,12 @@ impl<B: Backend> Store<B> {
                 r.claimable = j.claimable;
                 r.blocked_by = j.blocked_by.clone();
                 r.gates = j.gates.clone();
-                r.verdict = j.verdict.clone();
-                r.blocker = j.blocker.clone();
-                r.runes = j.runes.clone();
+                r.judged_for_claim = true;
+                if let Some(verdict) = &j.verdict {
+                    r.verdict = Some(verdict.clone());
+                    r.blocker = j.blocker.clone();
+                    r.runes = j.runes.clone();
+                }
                 r.judged_at = Some(pass.judged_at.clone());
                 r.judged_at_planning_watermark = pass.planning_watermark.clone();
                 r.judged_at_rev = pass.judged_at_rev.unwrap_or(head);
