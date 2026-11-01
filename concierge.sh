@@ -67,7 +67,10 @@ set -uo pipefail
 # `rune_get` to read the persona and `render_memories` to render the statute book — live in
 # lib.sh, which sources conf.sh itself. Sourcing only conf.sh left both as "command not
 # found", and the refusal below caught it on the first run, which is what the refusal is for.
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/spira" && pwd -P)/lib.sh"
+# `|| exit 1`: lib.sh RETURNS rather than exits when conf.sh refuses (an unset SPIRA_TOML, a
+# layer that names no file), and carrying on from there left every subcommand to die on
+# whichever unbound variable came first (sp-p35wed).
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/spira" && pwd -P)/lib.sh" || exit 1
 HARNESS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SESSION="${CONCIERGE_SESSION:-concierge}"
 SOCKET="${CONCIERGE_SOCKET:-concierge}"
@@ -359,6 +362,12 @@ start)
         echo "concierge: SPIRA_RELEASE is not set — start it from concierge.service, whose unit sets it" >&2
         exit 1
     }
+    # SPIRA_TOML RIDES INTO THE SESSION THE SAME WAY (sp-p35wed): every shell and subagent the
+    # Concierge starts resolves config from it, and spira-admit refuses a compile without it.
+    # No check here: conf.sh already refused, and the source line above exited, if it is unset
+    # or any layer names no file — so by now it holds the value this process resolved (the
+    # unit's, or a suite's base:override layers), handed on verbatim and never defaulted
+    # (law-a-config-value-has-no-fallback).
     # THE SESSION HOOK IS ENSURED ON EVERY start, not only the first — this is also what the
     # 10-minute re-ensure timer calls, so "start (and restart)" is the same code path. Runs
     # before the already-running check below so a concierge already up still gets it repaired.
@@ -467,17 +476,23 @@ start)
     # recorded session id. The hook reads the id from the hook payload rather than guessing
     # from the transcript directory, so a clear or compact inside the session updates the file.
     LAUNCHER="$SPIRA_RUN/concierge-launch.sh"
-    {
-        printf '#!/usr/bin/env bash\n'
-        printf 'export SPIRA_CONCIERGE=1\n'
-        printf 'export PATH=%q:$PATH\n' "$SHIM_DIR"
-        printf 'export SPIRA_RUN=%q\n' "$SPIRA_RUN"
-        printf 'exec claude --remote-control %q --dangerously-skip-permissions --settings %q ' "$SESSION" "$(session_settings)"
-        [ -n "$MODEL" ] && printf -- '--model %q ' "$MODEL"
-        [ -n "$RESUME_ID" ] && printf -- '--resume %q ' "$RESUME_ID"
-        printf -- '--append-system-prompt %q\n' "$(cat "$BRIEF")"
-    } > "$LAUNCHER"
-    chmod +x "$LAUNCHER"
+    # write_launcher [resume-id] — the one place the launcher is composed, so the fresh retry
+    # below cannot drift from the first launch in what it exports.
+    write_launcher() {
+        {
+            printf '#!/usr/bin/env bash\n'
+            printf 'export SPIRA_CONCIERGE=1\n'
+            printf 'export PATH=%q:$PATH\n' "$SHIM_DIR"
+            printf 'export SPIRA_RUN=%q\n' "$SPIRA_RUN"
+            printf 'export SPIRA_TOML=%q\n' "$SPIRA_TOML"
+            printf 'exec claude --remote-control %q --dangerously-skip-permissions --settings %q ' "$SESSION" "$(session_settings)"
+            [ -n "$MODEL" ] && printf -- '--model %q ' "$MODEL"
+            [ -n "${1:-}" ] && printf -- '--resume %q ' "$1"
+            printf -- '--append-system-prompt %q\n' "$(cat "$BRIEF")"
+        } > "$LAUNCHER"
+        chmod +x "$LAUNCHER"
+    }
+    write_launcher "$RESUME_ID"
     # concierge.service is Type=oneshot/KillMode=control-group: when start exits, systemd
     # kills the whole cgroup — the tmux server with it. A transient unit gives the server
     # its own cgroup that outlives the oneshot. Same trap and fix as lib.sh (dwarf call).
@@ -486,14 +501,17 @@ start)
     # PATH and HOME are the minimum the launcher needs: PATH to find claude, HOME for config.
     # SPIRA_RELEASE rides with them (sp-31gtu): the Concierge is a launcher too — the gates,
     # dwarves and cockpit it starts build their PATH from it.
+    # SPIRA_TOML rides with them too (sp-p35wed), so a window opened later on this tmux server
+    # resolves config like the launcher's own pane does.
     #
     # remain-on-exit ON, chained onto the same tmux invocation rather than set afterwards —
     # a set-option issued after the fact races the client's own exit. Without it, a client
     # that exits fast destroys the pane and the session with it, and the "session not found 3s
     # later" this function observes cannot be told apart from "the id truly cannot be resumed
     # any more" — which is the defect this whole branch exists to fix (sp-aaew9).
-    systemd-run --user --collect --quiet --remain-after-exit \
-        --setenv=SPIRA_RELEASE="$SPIRA_RELEASE" --setenv=PATH="$PATH" --setenv=HOME="$HOME" -- \
+    UNIT_ENV=(--setenv=SPIRA_RELEASE="$SPIRA_RELEASE" --setenv=SPIRA_TOML="$SPIRA_TOML" \
+        --setenv=PATH="$PATH" --setenv=HOME="$HOME")
+    systemd-run --user --collect --quiet --remain-after-exit "${UNIT_ENV[@]}" -- \
         tmux -L "$SOCKET" new-session -d -s "$SESSION" -c "$BRAIN" "$LAUNCHER" \
         ';' set-option -t "$SESSION" remain-on-exit on
     sleep 3
@@ -508,18 +526,8 @@ start)
         # hook keeps it as a `previous:` line the moment the fresh session records its own id.
         printf 'concierge: --resume %s has no transcript any more — starting fresh\n' "$RESUME_ID" >&2
         # Regenerate rather than filter: the launcher is one line, so grep -v would delete it.
-        {
-            printf '#!/usr/bin/env bash\n'
-            printf 'export SPIRA_CONCIERGE=1\n'
-            printf 'export PATH=%q:$PATH\n' "$SHIM_DIR"
-            printf 'export SPIRA_RUN=%q\n' "$SPIRA_RUN"
-            printf 'exec claude --remote-control %q --dangerously-skip-permissions --settings %q ' "$SESSION" "$(session_settings)"
-            [ -n "$MODEL" ] && printf -- '--model %q ' "$MODEL"
-            printf -- '--append-system-prompt %q\n' "$(cat "$BRIEF")"
-        } > "$LAUNCHER"
-        chmod +x "$LAUNCHER"
-        systemd-run --user --collect --quiet --remain-after-exit \
-            --setenv=SPIRA_RELEASE="$SPIRA_RELEASE" --setenv=PATH="$PATH" --setenv=HOME="$HOME" -- \
+        write_launcher
+        systemd-run --user --collect --quiet --remain-after-exit "${UNIT_ENV[@]}" -- \
             tmux -L "$SOCKET" new-session -d -s "$SESSION" -c "$BRAIN" "$LAUNCHER"
         sleep 3
         if $TM has-session -t "$SESSION" 2>/dev/null; then
