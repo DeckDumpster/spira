@@ -24,18 +24,26 @@ fn cargo_check_as(tag: &str, lib: &str, toml: Option<&Path>, inherit: Option<&st
     let tmp = testkit::TempDir::new(tag);
     let krate = tmp.join("crate");
     fixture_crate(&krate, lib);
+    cargo_check_crate(&tmp, &krate, toml, inherit, Some(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira")))
+}
+
+/// `cargo check` of `krate` through the wrapper. `spira_home` unset leaves SPIRA_HOME to the
+/// crate's own `.cargo/config.toml`, as a real tree's build sets it.
+fn cargo_check_crate(tmp: &testkit::TempDir, krate: &Path, toml: Option<&Path>, inherit: Option<&str>, spira_home: Option<&Path>) -> Output {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let mut c = Command::new(&cargo);
     c.env_clear()
-        .current_dir(&krate)
+        .current_dir(krate)
         .args(["check", "--offline", "--quiet"])
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("HOME", tmp.path())
         .env("CARGO_HOME", tmp.join("cargo-home"))
         .env("CARGO_TARGET_DIR", tmp.join("target"))
         .env("RUSTC_WRAPPER", env!("CARGO_BIN_EXE_spira-admit"))
-        .env("SPIRA_HOME", Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira"))
         .env("SPIRA_ADMIT_ROUND_HOLD_SECS", "0");
+    if let Some(h) = spira_home {
+        c.env("SPIRA_HOME", h);
+    }
     for k in ["RUSTUP_HOME", "RUSTUP_TOOLCHAIN"] {
         if let Ok(v) = std::env::var(k) {
             c.env(k, v);
@@ -94,4 +102,31 @@ fn an_admitted_compile_compiles() {
     let bad = cargo_check("admit-ok-planted", PLANTED, Some(&admitted_config(&tmp)));
     let err = stderr(&bad);
     assert!(!bad.status.success() && err.contains("E0308"), "an admitted compile with a planted type error: {err}");
+}
+
+/// A tree whose registry adds a key: its `spira/conf.d` is this harness's plus one key, and
+/// its `.cargo/config.toml` points SPIRA_HOME at it, as the harness's own build does.
+fn tree_adding_a_key(krate: &Path, key: &str) {
+    let tree = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+    let conf_d = krate.join("spira/conf.d");
+    std::fs::create_dir_all(&conf_d).unwrap();
+    for e in std::fs::read_dir(tree.join("conf.d")).unwrap() {
+        let e = e.unwrap();
+        std::os::unix::fs::symlink(e.path(), conf_d.join(e.file_name())).unwrap();
+    }
+    std::fs::write(conf_d.join(key), format!("TYPE=string\nGROUP=fixture\nDOC={key}\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${{{key}:=x}}\"\nSPIRA_CONF_DEFAULT_EOF\n")).unwrap();
+    std::os::unix::fs::symlink(tree.join("conf.toml.d"), krate.join("spira/conf.toml.d")).unwrap();
+    std::fs::create_dir_all(krate.join(".cargo")).unwrap();
+    std::fs::write(krate.join(".cargo/config.toml"), "[env]\nSPIRA_HOME = { value = \"spira\", relative = true }\n").unwrap();
+}
+
+#[test]
+fn a_tree_that_adds_a_config_key_compiles_under_a_config_without_it() {
+    let tmp = testkit::TempDir::new("admit-tree-adds-key");
+    let krate = tmp.join("crate");
+    fixture_crate(&krate, VALID);
+    tree_adding_a_key(&krate, "SPIRA_ADMIT_FIXTURE_ADDED_KEY");
+    let o = cargo_check_crate(&tmp, &krate, Some(&admitted_config(&tmp)), None, None);
+    let err = stderr(&o);
+    assert!(o.status.success() && !err.contains("cannot admit"), "a compile of a tree adding a key the config lacks was refused: {err}");
 }

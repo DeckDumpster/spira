@@ -16,12 +16,11 @@ fn var(k: &str) -> Option<String> {
     std::env::var(k).ok().filter(|v| !v.trim().is_empty())
 }
 
-/// `spira.run`, resolved through config. Without it no pool can be read or held.
+/// `spira.run` alone, never the whole registry: cargo hands the wrapper the SPIRA_HOME of the
+/// tree it compiles, and a tree that adds a config key must still compile under a spira.toml
+/// that does not declare it yet. Without a run dir no pool can be read or held.
 fn run_dir() -> Result<PathBuf, String> {
-    match spira_config::process::cfg("SPIRA_RUN")? {
-        r if r.is_empty() => Err("spira.run resolves empty: configure it in the file SPIRA_TOML names".into()),
-        r => Ok(PathBuf::from(r)),
-    }
+    spira_config::resolve::declared_run_dir_for_process()
 }
 
 /// A compile the wrapper cannot admit fails: cargo then fails the build instead of compiling
