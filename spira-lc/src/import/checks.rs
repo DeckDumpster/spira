@@ -159,6 +159,26 @@ pub fn fold_bead(id: &str, log: Log) -> Result<BeadRow, String> {
     Ok(row)
 }
 
+/// A delivery as its first event found it: the mode it was started in, nothing else.
+pub fn delivery_seed(d: &DeliveryRow) -> DeliveryRow {
+    DeliveryRow {
+        state: DeliveryState::Queued,
+        batch_id: None,
+        pr: None,
+        merge_sha: None,
+        exit: None,
+        ci: None,
+        version: 0,
+        ..d.clone()
+    }
+}
+
+/// How an imported delivery last exited, which dolt keeps only on the event: the replay's exit,
+/// when the replay reaches the imported row's state and version.
+pub fn delivery_exit(d: &DeliveryRow, log: Log) -> Option<delivery::Exit> {
+    fold_delivery(&delivery_seed(d), log).ok().filter(|f| (f.state, f.version) == (d.state, d.version)).and_then(|f| f.exit)
+}
+
 pub fn fold_delivery(seed: &DeliveryRow, log: Log) -> Result<DeliveryRow, String> {
     let mut row = seed.clone();
     for (n, (seq, a)) in log.iter().enumerate() {
@@ -225,10 +245,10 @@ pub fn fold_batch(seed: &BatchRow, log: Log) -> Result<BatchRow, String> {
 }
 
 /// Applied events by machine and key, each in seq order.
-type Logs = BTreeMap<(String, String), Vec<(u64, Audit)>>;
+pub type Logs = BTreeMap<(String, String), Vec<(u64, Audit)>>;
 
 /// Each record's applied events, by machine and key, in seq order.
-fn logs(a: &Archive) -> (Logs, Vec<String>) {
+pub fn logs(a: &Archive) -> (Logs, Vec<String>) {
     let mut out = Logs::new();
     let mut failures = Vec::new();
     for r in a.rows("event") {
@@ -267,17 +287,7 @@ pub fn replay(a: &Archive, no_record: &BTreeSet<String>) -> Vec<String> {
     for r in a.rows("delivery").iter().filter(|r| !no_record.contains(&r.key)) {
         match crate::rows::delivery_of(&r.key, &r.row) {
             Ok(d) => {
-                let seed = DeliveryRow {
-                    state: DeliveryState::Queued,
-                    batch_id: None,
-                    pr: None,
-                    merge_sha: None,
-                    exit: None,
-                    ci: None,
-                    version: 0,
-                    ..d.clone()
-                };
-                judge("delivery", &r.key, fold_delivery(&seed, log("delivery", &r.key)).map(|x| fields(&x, DELIVERY_UNEVENTED)), fields(&d, DELIVERY_UNEVENTED))
+                judge("delivery", &r.key, fold_delivery(&delivery_seed(&d), log("delivery", &r.key)).map(|x| fields(&x, DELIVERY_UNEVENTED)), fields(&d, DELIVERY_UNEVENTED))
             }
             Err(e) => judge("delivery", &r.key, Err(e), Map::new()),
         }

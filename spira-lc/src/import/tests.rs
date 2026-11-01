@@ -67,7 +67,7 @@ fn value(p: &Projection, key: &str) -> Object {
 }
 
 fn working(id: &str, holder: &str) -> Value {
-    with(bead(id, "WORKING", 1), &[("holder", json!(holder)), ("lease_until", json!("9")), ("claimed_from", json!("READY"))])
+    with(bead(id, "WORKING", 1), &[("holder", json!(holder)), ("lease_until", json!("9")), ("claimed_from", json!("READY")), ("dwarf_phase", json!("claimed"))])
 }
 
 #[test]
@@ -249,7 +249,7 @@ fn a_key_the_store_lost_changed_or_added_is_named_by_table() {
     assert_eq!(checks::loaded(&a, &p, &changed), ["ask: the store's checksum differs from the import's, first at asks/q-1"]);
     let mut lost = exact.clone();
     lost.remove("gates/sp-a");
-    assert_eq!(checks::loaded(&a, &p, &lost), ["bead: 3 keys imported, 2 read back; first missing gates/sp-a"]);
+    assert_eq!(checks::loaded(&a, &p, &lost), ["bead: 2 keys imported, 1 read back; first missing gates/sp-a"]);
     let mut added = exact;
     added.insert("lifecycle/sp-x".into(), b"{}".to_vec());
     assert_eq!(checks::loaded(&a, &p, &added), ["the store holds lifecycle/sp-x, which no archived row maps to"]);
@@ -286,4 +286,26 @@ fn an_imported_store_reads_old_history_in_seq_order_and_the_next_txn_is_one_past
     let (_, out) = lc(&["history", "sp-b"]);
     let rows: Vec<Value> = serde_json::from_str(&out).unwrap();
     assert_eq!(rows.iter().map(|r| r["seq"].as_u64().unwrap()).collect::<Vec<_>>(), [r + 1], "a post-import change is at its revision");
+}
+
+#[test]
+fn an_exited_delivery_carries_the_exit_its_events_left() {
+    let row = json!({"bead_id": "sp-a", "mode": "queue", "state": "EXITED", "batch_id": "b-1", "pr": null, "merge_sha": "m1", "ci": null, "version": "2"});
+    let a = archived(&[
+        ("bead", vec![bead("sp-a", "READY", 0)]),
+        ("delivery", vec![row]),
+        ("event", vec![
+            event(1, "delivery", "sp-a", "Enqueued", "NONE", "QUEUED", true, Value::Null),
+            event(2, "delivery", "sp-a", "Cut", "QUEUED", "BATCHED", true, json!({"Cut": {"batch_id": "b-1"}})),
+            event(3, "delivery", "sp-a", "Delivered", "BATCHED", "EXITED", true, json!({"Delivered": {"merge_sha": "m1", "proof": "p"}})),
+        ]),
+    ]);
+    assert_eq!(value(&projected(&a, &[]), "deliveries/sp-a").data["exit"], json!("Delivered"));
+}
+
+#[test]
+fn a_mend_at_or_above_the_import_revision_is_named() {
+    let mend = json!({"seq": "9", "batch_id": "b-1", "pass": "1", "suite": "u", "bead_id": "sp-a", "from_tip": "a", "tip": "b", "ask_id": null, "checked": "", "diagnosis": null, "at": "1"});
+    let a = archived(&[("event", vec![claim(3, "sp-a", "d1")]), ("mend", vec![mend])]);
+    assert_eq!(map::project(&a, &BTreeSet::new()).unwrap_err(), ["mend row 9: seq 9 is not below the import revision 4, so a later mend would sort before it"]);
 }

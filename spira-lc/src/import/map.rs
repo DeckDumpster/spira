@@ -218,21 +218,23 @@ pub fn project(a: &Archive, no_record: &BTreeSet<String>) -> Result<Projection, 
         if let Some(judged) = readiness_of(&r.row) {
             if let Some(data) = l.data("bead", &id, &judged) {
                 let owner = keys::lifecycle(&id);
-                let mut o = Object::new(data).with_owners(&[owner.as_str()]);
-                o.metadata.finalizers.clear();
-                l.put("bead", keys::readiness(&id), o);
+                l.put("bead", keys::readiness(&id), Object::new(data).with_owners(&[owner.as_str()]));
             }
         }
         l.imported("bead");
     }
 
+    let (logs, _) = super::checks::logs(a);
+    let none = Vec::new();
     for r in a.rows("delivery") {
         if skip(&r.key) {
             l.excluded("delivery");
             continue;
         }
         match crate::rows::delivery_of(&r.key, &r.row) {
-            Ok(d) => {
+            Ok(mut d) => {
+                let log = logs.get(&("delivery".to_string(), r.key.clone())).unwrap_or(&none);
+                d.exit = super::checks::delivery_exit(&d, log);
                 let Some(data) = l.data("delivery", &r.key, &d) else { continue };
                 let owner = keys::lifecycle(&r.key);
                 l.put(
@@ -334,6 +336,7 @@ pub fn project(a: &Archive, no_record: &BTreeSet<String>) -> Result<Projection, 
 
     for r in a.rows("mend") {
         match mend_of(&r.row) {
+            Ok((seq, _)) if seq >= rev => l.bad("mend", &r.key, format!("seq {seq} is not below the import revision {rev}, so a later mend would sort before it")),
             Ok((seq, m)) => {
                 let key = keys::mend(&m.bead_id, seq, 0);
                 let Some(data) = l.data("mend", &r.key, &m) else { continue };
