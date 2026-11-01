@@ -2006,6 +2006,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "state-store",
+ "state-store-sqlite",
  "testkit",
 ]
 

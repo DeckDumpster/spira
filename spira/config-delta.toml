@@ -192,6 +192,7 @@ runtime_publish_backlog_secs = 900
 runtime_repo_events_secs = 45
 runtime_view_secs = 3
 batcher_orphan_redrive_secs = 600
+lc_store_path = ""
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok
