@@ -1,0 +1,5 @@
+{"at":"2026-10-31T11:23:43Z","kind":"paused","repo":"repo-a","lanes":["rounds"],"bead":"b-1226"}
+{"at":"2026-10-31T15:32:49Z","kind":"unpaused","repo":"repo-a","lanes":["rounds"],"bead":"b-1226"}
+{"at":"2026-10-31T17:24:31Z","kind":"paused","repo":"repo-a","lanes":["rounds"],"bead":"b-1264"}
+{"at":"2026-10-31T19:25:00Z","kind":"unpaused","repo":"repo-a","lanes":["rounds"],"bead":"b-1264"}
+{"at":"2026-10-31T19:44:36Z","kind":"halted"}

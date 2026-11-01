@@ -1,0 +1,23 @@
+# landed-20d: lifecycle LANDED against git land commits, per Pacific day 2026-10-12..10-31 (to 2026-10-31T20:01:12Z).
+# Source: the lifecycle store and each repo's landing ref; method and causes: MANIFEST.md. Captured 2026-11-01T11:24:01Z.
+day	lifecycle_landed	git_land	hand_landed_dir	delta	cause
+2026-10-12	83	77	8	6	hand-landing+day-boundary
+2026-10-13	118	104	15	14	hand-landing+day-boundary+batch-multi-member
+2026-10-14	171	158	10	13	unexplained+hand-landing+day-boundary
+2026-10-15	119	119	0	0	unexplained+day-boundary
+2026-10-16	183	180	2	3	unexplained+hand-landing+day-boundary+batch-multi-member
+2026-10-17	122	103	14	19	unexplained+hand-landing+day-boundary+batch-multi-member
+2026-10-18	107	108	2	-1	hand-landing+day-boundary+batch-multi-member
+2026-10-19	39	33	1	6	hand-landing+day-boundary
+2026-10-20	102	100	1	2	hand-landing
+2026-10-21	93	93	1	0	hand-landing+day-boundary
+2026-10-22	67	65	0	2	unexplained+day-boundary
+2026-10-23	104	101	4	3	hand-landing+day-boundary
+2026-10-24	83	77	5	6	hand-landing+day-boundary
+2026-10-25	126	107	4	19	hand-landing+batch-multi-member
+2026-10-26	34	34	2	0	hand-landing+day-boundary
+2026-10-27	56	52	0	4	hand-landing+day-boundary
+2026-10-28	71	72	0	-1	unexplained+day-boundary+batch-multi-member
+2026-10-29	66	65	0	1	day-boundary+batch-multi-member
+2026-10-30	73	65	2	8	hand-landing+day-boundary+batch-multi-member
+2026-10-31	19	19	0	0	-
