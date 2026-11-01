@@ -6,6 +6,7 @@ pub mod deploy;
 pub mod helpers;
 pub mod integrate;
 pub mod land;
+pub mod lease;
 pub mod mend;
 pub mod publish;
 pub mod rebase;

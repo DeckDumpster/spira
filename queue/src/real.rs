@@ -1896,6 +1896,46 @@ impl Lc for RealLc {
             Err((rc, out.trim().to_string()))
         }
     }
+    fn round_lease(&self, repo: &str, batch: &str) -> Result<Option<RoundLease>, String> {
+        let bin = self.bin.as_ref().ok_or("no spira-lc program")?;
+        let timeout = crate::conf::nonempty("SPIRA_LC_TIMEOUT")?;
+        let resource = format!("round/{repo}/{batch}");
+        let o = Command::new("timeout")
+            .arg(&timeout)
+            .arg(bin)
+            .args(["lock", "show", &resource])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("spira-lc lock show {resource}: {e}"))?;
+        let out = String::from_utf8_lossy(&o.stdout);
+        let said = || {
+            format!(
+                "spira-lc lock show {resource} exited {:?}: {} {}",
+                o.status.code(),
+                out.trim(),
+                String::from_utf8_lossy(&o.stderr).trim()
+            )
+        };
+        match o.status.code() {
+            Some(0) => serde_json::from_str(out.trim())
+                .ok()
+                .and_then(|v| round_lease_of(&v))
+                .map(Some)
+                .ok_or_else(said),
+            Some(1) => Ok(None),
+            _ => Err(said()),
+        }
+    }
+}
+
+/// `lock show`'s answer: its token is `<main>.<sub>`, a holder's `--lease-token` is `<main>-<sub>`.
+pub fn round_lease_of(v: &serde_json::Value) -> Option<RoundLease> {
+    let (main, sub) = v.get("token")?.as_str()?.split_once('.')?;
+    Some(RoundLease {
+        holder: v.get("holder").and_then(|h| h.as_str()).map(str::to_string),
+        token: format!("{main}-{sub}"),
+        ttl_left_secs: v.get("ttl_left_secs")?.as_u64()?,
+    })
 }
 
 // ------------------------------------------------------------ config (spira-config library)

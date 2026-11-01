@@ -643,6 +643,18 @@ pub trait Lc {
         evidence: &str,
         evidence_tip: &str,
     ) -> Result<(), (i32, String)>;
+    /// `lock show round/<repo>/<batch>`: the round's live lease, `None` when nothing holds it.
+    /// Err = cannot tell.
+    fn round_lease(&self, repo: &str, batch: &str) -> Result<Option<RoundLease>, String>;
+}
+
+/// A live lease on a round, `locks/round/<repo>/<batch>`: who holds it, under which fencing
+/// token (`<main>-<sub>`, the form holders pass and unit names carry), and the TTL it has left.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoundLease {
+    pub holder: Option<String>,
+    pub token: String,
+    pub ttl_left_secs: u64,
 }
 
 /// The config documents, through the spira-config library only

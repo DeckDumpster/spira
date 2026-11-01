@@ -47,9 +47,29 @@ pub const ROUND_STEPS: [&str; 3] = [BUILD_RED, LINT_RED, UNIT_RED];
 /// The round steps `testenv --suites <step>` cannot run for a tip.
 pub const ROUND_ONLY_STEPS: [&str; 2] = [BUILD_RED, LINT_RED];
 
-/// A round step, or a base fence the round runs before its suites (`fence-<name>`).
+/// A round step, a base fence the round runs before its suites (`fence-<name>`), or the testenv
+/// run of a repository that judges itself.
 pub fn is_round_step(name: &str) -> bool {
-    ROUND_STEPS.contains(&name) || name.starts_with(FENCE_RED_PREFIX)
+    ROUND_STEPS.contains(&name) || name.starts_with(FENCE_RED_PREFIX) || name == REPO_TESTENV_RED
+}
+
+/// Whether a verb meets the round lease guard: on the caller's word, with the token it was
+/// given, or `Inside` a verb that has already met it or that cut the round itself.
+#[derive(Clone, Copy)]
+pub(super) enum LeaseCheck<'a> {
+    Check(Option<&'a str>),
+    Inside,
+}
+
+impl LeaseCheck<'_> {
+    fn guard(self, w: &World, label: &str, c: &Ctx, batch: &str) -> Result<(), i32> {
+        match self {
+            LeaseCheck::Check(token) => {
+                super::lease::lease_guard(w, label, &c.r.name, batch, token)
+            }
+            LeaseCheck::Inside => Ok(()),
+        }
+    }
 }
 /// The one red a repository that judges itself reports: its testenv run as a whole.
 pub(super) const REPO_TESTENV_RED: &str = "testenv";
@@ -77,6 +97,7 @@ pub fn run(w: &World, r: &Round) -> i32 {
             attest,
             ran,
             rehead,
+            lease_token,
         } => certify(
             w,
             batch,
@@ -84,6 +105,7 @@ pub fn run(w: &World, r: &Round) -> i32 {
             attest.as_deref(),
             ran.as_deref().and_then(|r| r.parse().ok()),
             rehead.as_deref(),
+            LeaseCheck::Check(lease_token.as_deref()),
         ),
         Round::Eject {
             batch,
@@ -95,6 +117,7 @@ pub fn run(w: &World, r: &Round) -> i32 {
             harness_fault,
             rebuild,
             with,
+            lease_token,
         } => eject(
             w,
             batch,
@@ -106,13 +129,19 @@ pub fn run(w: &World, r: &Round) -> i32 {
             *harness_fault,
             *rebuild,
             with,
+            LeaseCheck::Check(lease_token.as_deref()),
         ),
-        Round::Land { batch, repo } => land(w, batch, repo.as_deref()),
+        Round::Land {
+            batch,
+            repo,
+            lease_token,
+        } => land(w, batch, repo.as_deref(), lease_token.as_deref()),
         Round::Abandon {
             batch,
             repo,
             reason,
-        } => abandon(w, batch, repo.as_deref(), reason),
+            lease_token,
+        } => abandon(w, batch, repo.as_deref(), reason, lease_token.as_deref()),
         Round::Preempt {
             batch,
             repo,
@@ -2212,7 +2241,7 @@ fn faulted_pass(w: &World, label: &str, c: &Ctx, batch: &str, why: &str) -> i32 
             "{id} was aboard {n} consecutive passes of {} that ended without a verdict, and no pass without it faulted: the member is the cause, not the infrastructure.\nThe latest pass: {why}",
             c.r.name
         );
-        let rc = eject(w, batch, id, Some(&c.r.name), &Text::Arg(reason), UNIT_RED, true, false, true, "");
+        let rc = eject(w, batch, id, Some(&c.r.name), &Text::Arg(reason), UNIT_RED, true, false, true, "", LeaseCheck::Inside);
         if rc == OK {
             note_pass_end(c, std::slice::from_ref(id), PassEnd::Ejected);
         } else {
@@ -2234,6 +2263,7 @@ pub(super) fn certify(
     attest: Option<&str>,
     attested_ran: Option<usize>,
     rehead: Option<&str>,
+    lease: LeaseCheck,
 ) -> i32 {
     let label = "round certify";
     let Ok((c, path)) = local_ctx(w, label, repo) else {
@@ -2241,6 +2271,9 @@ pub(super) fn certify(
     };
     if idents(w, label, &[("batch id", batch)]).is_err() || require_lc(w, label).is_err() {
         return FAIL;
+    }
+    if let Err(rc) = lease.guard(w, label, &c, batch) {
+        return rc;
     }
     let _certify = match crate::lock::try_certify_lock(&c.s.queue_dir, &c.r.name, batch) {
         crate::lock::Acquire::Held(g) => g,
@@ -2890,6 +2923,7 @@ fn eject(
     harness_fault: bool,
     rebuild: bool,
     with: &str,
+    lease: LeaseCheck,
 ) -> i32 {
     let label = "round eject";
     if red && !harness_fault && suites.trim().is_empty() {
@@ -2930,6 +2964,9 @@ fn eject(
     }
     if require_lc(w, label).is_err() {
         return FAIL;
+    }
+    if let Err(rc) = lease.guard(w, label, &c, batch) {
+        return rc;
     }
     let Ok(_g) = lock(w, label, &c) else {
         return FAIL;
@@ -3387,6 +3424,7 @@ fn preempt(
             false,
             true,
             "",
+            LeaseCheck::Inside,
         );
         if rc != OK {
             w.err(format!(
@@ -3492,30 +3530,93 @@ pub(super) fn reconcile_unrecorded(w: &World, c: &Ctx, path: &Path) {
     }
 }
 
-fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
-    let label = "round land";
-    let Ok((c, path)) = local_ctx(w, label, repo) else {
-        return FAIL;
+/// Why `round land` landed nothing, as the first word of its stderr: a lander acts on the word
+/// and the exit, never on the prose after them (law-a-matcher-reads-code-not-prose).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LandRefusal {
+    /// Stacked on a round that has not landed: it waits for it.
+    Stacked,
+    /// The base it was certified on can no longer become the landing ref: it is cut again.
+    BaseMoved,
+    /// Anything else: it is held as it is.
+    Refused,
+}
+
+impl LandRefusal {
+    pub fn word(self) -> &'static str {
+        match self {
+            LandRefusal::Stacked => "stacked",
+            LandRefusal::BaseMoved => "base-moved",
+            LandRefusal::Refused => "refused",
+        }
+    }
+}
+
+/// `round land`'s stderr, held until the verb knows whether it refused, so that a refusal's
+/// word is the first thing it writes.
+struct HeldErr<'a> {
+    io: &'a dyn crate::ports::Emit,
+    err: std::cell::RefCell<String>,
+}
+
+impl crate::ports::Emit for HeldErr<'_> {
+    fn out(&self, s: &str) {
+        self.io.out(s);
+    }
+    fn err(&self, s: &str) {
+        self.err.borrow_mut().push_str(s);
+    }
+}
+
+fn land(w: &World, batch: &str, repo: Option<&str>, token: Option<&str>) -> i32 {
+    let held = HeldErr {
+        io: w.io,
+        err: Default::default(),
     };
+    let r = land_round(&World { io: &held, ..*w }, batch, repo, token);
+    let text = held.err.into_inner();
+    match r {
+        Ok(rc) => {
+            if !text.is_empty() {
+                w.io.err(&text);
+            }
+            rc
+        }
+        Err((why, rc)) => {
+            w.io.err(&format!("{}: {text}", why.word()));
+            rc
+        }
+    }
+}
+
+/// `Err` is a refusal that landed nothing; `Ok` is the exit of a land that ran.
+fn land_round(
+    w: &World,
+    batch: &str,
+    repo: Option<&str>,
+    token: Option<&str>,
+) -> Result<i32, (LandRefusal, i32)> {
+    let label = "round land";
+    let refused = |rc: i32| (LandRefusal::Refused, rc);
+    let (c, path) = local_ctx(w, label, repo).map_err(refused)?;
     reconcile_unrecorded(w, &c, &path);
     if idents(w, label, &[("batch id", batch)]).is_err() || require_lc(w, label).is_err() {
-        return FAIL;
+        return Err(refused(FAIL));
     }
-    let Ok(_g) = lock(w, label, &c) else {
-        return FAIL;
-    };
-    let Ok(mut kv) = load(w, label, &c, batch) else {
-        return FAIL;
-    };
+    LeaseCheck::Check(token)
+        .guard(w, label, &c, batch)
+        .map_err(refused)?;
+    let _g = lock(w, label, &c).map_err(refused)?;
+    let mut kv = load(w, label, &c, batch).map_err(refused)?;
     let phase = phase_of(w, batch);
     if phase != "green" {
         w.err(format!(
             "queue.sh {label}: round {batch} is {phase}, not green — certify it first"
         ));
-        return FAIL;
+        return Err(refused(FAIL));
     }
-    if let Some(rc) = remerge_if_moved(w, label, &c, &path, batch, &mut kv) {
-        return rc;
+    if let Some(r) = remerge_if_moved(w, label, &c, &path, batch, &mut kv) {
+        return Err(r);
     }
     let head = kv.get("head").unwrap_or("").to_string();
     let members = kv.members();
@@ -3539,7 +3640,7 @@ fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
         if let Some(p) = pending {
             p.discard();
         }
-        return rc;
+        return Err(refused(rc));
     }
 
     let recorded = match record_landing(w, batch, &head) {
@@ -3588,9 +3689,9 @@ fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
     };
     if !recorded {
         w.err(format!("queue.sh {label}: round {batch} has NO batch landing record; the release is live — exiting non-zero"));
-        return if rc == OK { FAIL } else { rc };
+        return Ok(if rc == OK { FAIL } else { rc });
     }
-    rc
+    Ok(rc)
 }
 
 /// A round stacked on an open round lands only after that round has: it holds while the parent is
@@ -3604,7 +3705,7 @@ fn settle_parent(
     batch: &str,
     kv: &mut Kv,
     base_now: &str,
-) -> Option<i32> {
+) -> Option<(LandRefusal, i32)> {
     let parent = kv.get("parent").filter(|p| !p.is_empty())?.to_string();
     let stacked_on = kv.get("base").unwrap_or("").to_string();
     let onto = match record_of(w, c, &parent) {
@@ -3612,7 +3713,7 @@ fn settle_parent(
             let phead = pkv.get("head").unwrap_or("").to_string();
             if phead == stacked_on {
                 w.err(format!("queue.sh {label}: round {batch} is stacked on round {parent}, which has not landed — land {parent} first; nothing changed"));
-                return Some(FAIL);
+                return Some((LandRefusal::Stacked, FAIL));
             }
             phead
         }
@@ -3632,7 +3733,7 @@ fn settle_parent(
         Ok(h) => h,
         Err(why) => {
             w.err(format!("queue.sh {label}: round {batch} no longer merges onto {onto}: {why} — nothing changed; eject the member and certify again"));
-            return Some(FAIL);
+            return Some((LandRefusal::BaseMoved, FAIL));
         }
     };
     set(kv, "head", &new_head);
@@ -3645,7 +3746,7 @@ fn settle_parent(
         w.err(format!("queue.sh {label}: spira-lc refused BaseMoved for {batch} (rc={rc}): {out} — the round worktree was rebuilt at {new_head}; certify it again"));
     }
     if save(w, label, c, kv).is_err() {
-        return Some(FAIL);
+        return Some((LandRefusal::Refused, FAIL));
     }
     mark_running(c, batch);
     landing_log(
@@ -3657,7 +3758,7 @@ fn settle_parent(
         ),
     );
     w.err(format!("queue.sh {label}: round {batch} was stacked on round {parent}, which changed or ended without landing — rebuilt at {new_head} on {onto}; run `queue round certify {batch}`, it is not landed"));
-    Some(FAIL)
+    Some((LandRefusal::BaseMoved, FAIL))
 }
 
 /// A round is cut from the landing ref and lands only on top of it. When an earlier round has
@@ -3671,11 +3772,11 @@ fn remerge_if_moved(
     path: &Path,
     batch: &str,
     kv: &mut Kv,
-) -> Option<i32> {
+) -> Option<(LandRefusal, i32)> {
     let base = c.r.landref.clone().unwrap_or_default();
     let base_now = w.git.rev_parse(path, &base)?;
-    if let Some(rc) = settle_parent(w, label, c, path, batch, kv, &base_now) {
-        return Some(rc);
+    if let Some(r) = settle_parent(w, label, c, path, batch, kv, &base_now) {
+        return Some(r);
     }
     let head = kv.get("head").unwrap_or("").to_string();
     if w.git.is_ancestor(path, &base_now, &head) {
@@ -3693,14 +3794,14 @@ fn remerge_if_moved(
     };
     let (Ok(landed), Ok(mine)) = (files(&old_base, &base_now), files(&old_base, &head)) else {
         w.err(format!("queue.sh {label}: cannot list the files of round {batch} or of what landed since it was cut — refused, nothing changed"));
-        return Some(FAIL);
+        return Some((LandRefusal::Refused, FAIL));
     };
     let shared: Vec<&String> = landed.intersection(&mine).collect();
     let new_head = match assemble(w, c, path, &wt, &base_now, &members, &head) {
         Ok(h) => h,
         Err(why) => {
             w.err(format!("queue.sh {label}: round {batch} no longer merges onto {base} ({base_now}): {why} — nothing changed; eject the member and certify again"));
-            return Some(FAIL);
+            return Some((LandRefusal::BaseMoved, FAIL));
         }
     };
     set(kv, "head", &new_head);
@@ -3713,7 +3814,7 @@ fn remerge_if_moved(
         w.err(format!("queue.sh {label}: spira-lc refused BaseMoved for {batch} (rc={rc}): {out} — the round worktree was rebuilt at {new_head}; certify it again"));
     }
     if save(w, label, c, kv).is_err() {
-        return Some(FAIL);
+        return Some((LandRefusal::Refused, FAIL));
     }
     mark_running(c, batch);
     landing_log(&c.s.run, &format!("QUEUE ROUND-REMERGE {} repo={} batch={batch} head={new_head} base={base_now} shared={}", w.clock.now(), c.r.name, shared.iter().map(|f| f.as_str()).collect::<Vec<_>>().join(",")));
@@ -3721,7 +3822,7 @@ fn remerge_if_moved(
         "queue.sh {label}: round {batch} was cut before {base} moved to {base_now} (files in common with what landed: {}) — re-merged to {new_head}; run `queue round certify {batch}`, it is not landed",
         if shared.is_empty() { "none".to_string() } else { shared.iter().take(5).map(|f| f.as_str()).collect::<Vec<_>>().join(" ") }
     ));
-    Some(FAIL)
+    Some((LandRefusal::BaseMoved, FAIL))
 }
 
 fn requeue_stranded(w: &World, label: &str, id: &str, tip: &str) -> Option<String> {
@@ -3748,7 +3849,7 @@ fn requeue_stranded(w: &World, label: &str, id: &str, tip: &str) -> Option<Strin
     None
 }
 
-fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text) -> i32 {
+fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text, token: Option<&str>) -> i32 {
     let label = "round abandon";
     let reason = read_text(w, reason).unwrap_or_default();
     if reason.trim().is_empty() {
@@ -3760,6 +3861,9 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text) -> i32 {
     };
     if idents(w, label, &[("batch id", batch)]).is_err() || require_lc(w, label).is_err() {
         return FAIL;
+    }
+    if let Err(rc) = LeaseCheck::Check(token).guard(w, label, &c, batch) {
+        return rc;
     }
     let Ok(_g) = lock_sparing(w, label, &c, Some(batch)) else {
         return FAIL;
