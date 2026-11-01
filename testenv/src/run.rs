@@ -1221,12 +1221,12 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     }
     let mut unit_selection: Option<verdict::UnitSelection> = None;
     if crate::unit::selected(&selected) {
-        let crates = match crate::unit::write_crates(&repo.path, &base, br, &wt.path) {
-            Ok(c) if c.is_empty() && args.tests.is_some() => {
+        let crates = match crate::unit::write_crates(&repo.path, &base, br, &wt.path, args.tests.as_deref()) {
+            Ok(p) if p.affected.is_empty() && args.tests.is_some() => {
                 stderr("batch: --tests: the diff touches no crate, so no named test can run");
                 return Finish::fault(2, "tests-no-crates", 0);
             }
-            Ok(c) => {
+            Ok(crate::unit::Picked { affected: c, crates }) => {
                 deps.log(&format!("unit-tests: {} affected crate(s): {}", c.len(), c.join(" ")));
                 // law-absence-needs-a-positive-control: an empty list over a wrong base would
                 // pass having tested nothing.
@@ -1241,7 +1241,14 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
                     }
                     _ => {}
                 }
-                c
+                if let Some(t) = &args.tests {
+                    if crates.is_empty() {
+                        deps.log(&format!("unit-tests: no affected crate's sources name {} — no verdict", t.join(",")));
+                        return Finish::fault(2, "tests-matched-none", 0);
+                    }
+                    deps.log(&format!("unit-tests: --tests {}: {} crate(s) hold them: {}", t.join(","), crates.len(), crates.join(" ")));
+                }
+                crates
             }
             Err(e) => {
                 stderr(&format!("batch: unit-tests: {e}"));
@@ -1514,6 +1521,10 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         ),
     };
     let mut build_wall_secs = 0u64;
+    // A filtered unit run needs no workspace: the script builds the crates that hold the named
+    // tests and the test-bins they declare in the container, so the host builds nothing, the
+    // release stages no binary and the instance is not installed (sp-gt2tar).
+    let unit_tests_only = args.tests.is_some() && active.len() == 1 && crate::unit::selected(&active);
     if let Some(p) = &prebuilt {
         if let Err(e) = prebuilt::stage(p, &artifacts) {
             stderr(&format!(
@@ -1528,6 +1539,8 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             p.dir.display(),
             artifacts.display()
         ));
+    } else if unit_tests_only {
+        deps.log("--tests: no workspace build and no install — the unit tier builds the crates that hold the named tests, and their test-bins, in the container");
     } else {
         let lease = admit(admission::Pool::Compile, admission::profile_weight(&args.profile));
         shift(lease.waited);
@@ -1570,6 +1583,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     // The staged release's bin/: every binary target of the tree under test (sp-isom7).
     session.bins = match &prebuilt {
         Some(p) => p.names.clone(),
+        None if unit_tests_only => Vec::new(),
         None => prebuilt::required(&wt.path),
     };
     session.liveness_retries = s.liveness_retries;
@@ -1756,7 +1770,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         let setup_res = up.is_ok().then(|| {
             session.setup(
                 &runner,
-                !s.skip_install,
+                !s.skip_install && !(unit_tests_only && prebuilt.is_none()),
                 active.iter().flat_map(|n| headers[n].checkable_requires()),
                 &|m| {
                     setup_log.lock().unwrap_or_else(|e| e.into_inner()).push(m.to_string());
