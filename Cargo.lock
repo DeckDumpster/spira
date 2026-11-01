@@ -124,6 +124,7 @@ dependencies = [
  "sift",
  "spira-config",
  "spira-otel",
+ "state-store",
  "suite-select",
  "testkit",
  "tsd",
@@ -1290,6 +1291,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "state-store",
  "testkit",
  "tsd",
 ]

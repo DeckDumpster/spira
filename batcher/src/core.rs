@@ -179,6 +179,14 @@ pub fn refuse_blocked(pool: Vec<Member>) -> (Vec<Member>, Vec<String>) {
     (ok, refusals)
 }
 
+/// Keeps the first `cap` members, the most one cut can write within the store's limits, and
+/// refuses the rest to a later round.
+pub fn cap_round(mut pool: Vec<Member>, cap: usize) -> (Vec<Member>, Vec<String>) {
+    let over = pool.split_off(cap.min(pool.len()));
+    let refusals = over.iter().map(|m| format!("{}: the round is full at {cap} members — not cut", m.id)).collect();
+    (pool, refusals)
+}
+
 /// A member whose diff touches a round-recipe input rounds alone. Ordinary members round first
 /// only while every recipe member is neither the oldest waiting, nor P0/P1, nor already skipped
 /// `max_skips` cuts (`skipped`); the first recipe member in rank order that is due is then the

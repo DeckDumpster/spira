@@ -262,7 +262,9 @@ fn cut(o: &Opts) -> Result<(), String> {
 
     let screened = screen::cut_pool(io::certified_pool(&env_, &repo)?, &io::sifted_tips(&env_)?);
     let (pool, kind) = batcher::core::select_round(batcher::core::base_fix_lane(screened));
-    let (pool, refused) = batcher::core::refuse_blocked(pool);
+    let (pool, mut refused) = batcher::core::refuse_blocked(pool);
+    let (pool, full) = batcher::core::cap_round(pool, state_store::limits::MAX_CUT_MEMBERS);
+    refused.extend(full);
     for r in &refused {
         println!("batcher {}: {r}", repo.name);
     }

@@ -30,6 +30,22 @@ fn branch_of(batch: &str) -> String {
     format!("spira/round-staged/{batch}")
 }
 
+/// Refuses the members past the most one cut can write within the store's limits, to a later
+/// round.
+pub(super) fn refuse_over_cap<T>(
+    admitted: &mut Vec<T>,
+    skips: &mut Vec<String>,
+    id: impl Fn(&T) -> &str,
+) {
+    let cap = state_store::limits::MAX_CUT_MEMBERS;
+    for m in admitted.split_off(cap.min(admitted.len())) {
+        skips.push(format!(
+            "{}: the round is full at {cap} members — not admitted",
+            id(&m)
+        ));
+    }
+}
+
 fn admit(
     w: &World,
     wanted: Vec<Member>,
@@ -60,6 +76,8 @@ fn admit(
             },
         }
     }
+    refuse_over_cap(&mut admitted, &mut skips, |m| &m.id);
+    blocked_by.retain(|id, _| admitted.iter().any(|m| &m.id == id));
     (admitted, blocked_by, skips)
 }
 
@@ -701,4 +719,27 @@ fn discarded(w: &World, c: &Ctx, path: &Path, kv: &Kv, why: &str) -> i32 {
         Err(e) => w.err(format!("queue.sh round promote: {batch} cannot be promoted ({why}) and was not discarded: {e}")),
     }
     FAIL
+}
+
+#[cfg(test)]
+mod tests {
+    use super::refuse_over_cap;
+    use state_store::limits::MAX_CUT_MEMBERS;
+
+    #[test]
+    fn a_round_at_the_store_cap_is_admitted_whole_and_one_more_member_is_refused() {
+        let ids = |n: usize| (0..n).map(|i| format!("sp-{i}")).collect::<Vec<_>>();
+        let (mut at, mut skips) = (ids(MAX_CUT_MEMBERS), Vec::new());
+        refuse_over_cap(&mut at, &mut skips, |s| s);
+        assert_eq!((at.len(), skips.len()), (MAX_CUT_MEMBERS, 0));
+        let mut over = ids(MAX_CUT_MEMBERS + 1);
+        refuse_over_cap(&mut over, &mut skips, |s| s);
+        assert_eq!(over, ids(MAX_CUT_MEMBERS));
+        assert_eq!(
+            skips,
+            [format!(
+                "sp-{MAX_CUT_MEMBERS}: the round is full at {MAX_CUT_MEMBERS} members — not admitted"
+            )]
+        );
+    }
 }
