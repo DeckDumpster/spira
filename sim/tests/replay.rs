@@ -1,7 +1,8 @@
 //! The captured days on the simulator: what the round-controller sections a reader would have
 //! seen say about them, read back through the store, and what the replay guarantees of itself.
 //! Every expectation is taken from the fixtures; per-replay wall time is reported against the
-//! 100 ms goal, never asserted.
+//! 100 ms goal, never asserted. A whole-slice replay costs seconds, so those tests are ignored
+//! by the unit tier and run by spira/test-sim-replay.sh.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -210,6 +211,7 @@ fn of<'a>(run: &'a Run, repo: &str) -> Vec<&'a Reading> {
 }
 
 #[test]
+#[ignore = "slice-sized: run by spira/test-sim-replay.sh"]
 fn the_publisher_sees_the_stacked_parent_from_its_first_refused_child() {
     let rounds = rounds(Slice::Oct31);
     let (start, _) = Slice::Oct31.window();
@@ -249,6 +251,7 @@ fn the_publisher_sees_the_stacked_parent_from_its_first_refused_child() {
 }
 
 #[test]
+#[ignore = "slice-sized: run by spira/test-sim-replay.sh"]
 fn the_publisher_sees_the_repeat_red_member_re_cut_at_one_tip() {
     let rounds = rounds(Slice::Oct31);
     let (bead, tip) = REPEAT_IDENTITY.split_once('@').unwrap();
@@ -275,6 +278,7 @@ fn the_publisher_sees_the_repeat_red_member_re_cut_at_one_tip() {
 }
 
 #[test]
+#[ignore = "slice-sized: run by spira/test-sim-replay.sh"]
 fn the_held_out_lanes_sections_show_their_recorded_rounds_against_landings() {
     let t0 = std::time::Instant::now(); // clock-safe: reported, never asserted
     let mut r = Replay::new(SEED, Slice::HeldOut).unwrap();
@@ -308,6 +312,7 @@ fn the_held_out_lanes_sections_show_their_recorded_rounds_against_landings() {
 }
 
 #[test]
+#[ignore = "slice-sized: run by spira/test-sim-replay.sh"]
 fn an_applied_ack_changes_nothing_in_the_replayed_world_and_no_record_is_dropped() {
     let (with, without) = (with_intents(), baseline());
     assert_eq!(with.fingerprints, without.fingerprints, "every world value is the run with no intents'");
@@ -330,6 +335,7 @@ fn an_applied_ack_changes_nothing_in_the_replayed_world_and_no_record_is_dropped
 }
 
 #[test]
+#[ignore = "slice-sized: run by spira/test-sim-replay.sh"]
 fn two_runs_with_one_seed_trace_the_same() {
     // Owners and passes schedule nothing and change no world value, so the run with intents is
     // a second run of the same schedule under the same seed.
@@ -340,6 +346,7 @@ fn two_runs_with_one_seed_trace_the_same() {
 }
 
 #[test]
+#[ignore = "slice-sized: run by spira/test-sim-replay.sh"]
 fn hooks_run_at_their_periods_across_the_whole_day_and_the_pass_reads_what_was_published() {
     let run = baseline();
     let day_minutes = 24 * 60;
