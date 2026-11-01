@@ -37,8 +37,9 @@ pub struct Out {
 
 pub trait Sys {
     fn exec(&self, program: &str, args: &[String], deadline_secs: u64) -> Out;
-    /// [`Sys::exec`], calling `tick` about every `every_secs` while the program runs.
-    fn exec_ticking(&self, program: &str, args: &[String], deadline_secs: u64, every_secs: u64, tick: &mut dyn FnMut()) -> Out;
+    /// [`Sys::exec`], calling `tick` about every `every_secs` while the program runs; once `tick`
+    /// answers false the program is sent SIGTERM and waited for.
+    fn exec_ticking(&self, program: &str, args: &[String], deadline_secs: u64, every_secs: u64, tick: &mut dyn FnMut() -> bool) -> Out;
     fn sleep(&self, secs: u64);
     fn now_ms(&self) -> u64;
     /// round-vm's latest progress mark, if it has written one.
@@ -117,7 +118,13 @@ impl Hold {
 /// progress mark is inside its phase's deadline and the pass inside its maximum wall.
 struct Keeper<'a, 'p> {
     p: &'a Ports<'p>,
-    hold: &'a Hold,
+    hold: &'a mut Hold,
+    unit: String,
+    batch: String,
+    /// The round's head once status names it: round-vm's progress file is the run directory's,
+    /// so a mark is this pass's only when it names this round, as the runner reads it.
+    head: Option<String>,
+    vm: Option<String>,
     started: u64,
     next_renew: u64,
     renewed: u64,
@@ -125,16 +132,27 @@ struct Keeper<'a, 'p> {
 }
 
 impl Keeper<'_, '_> {
-    fn tick(&mut self, now: u64, mark: Option<Mark>) {
-        if self.lost.is_some() || now < self.next_renew {
-            return;
+    /// Renews the hold when due; false once it is lost, so the verb running under it is stopped.
+    fn tick(&mut self, now: u64, mark: Option<Mark>) -> bool {
+        if self.lost.is_some() {
+            return false;
+        }
+        let ours = |m: &Mark| m.at_ms >= self.started && (Some(&m.round) == self.head.as_ref() || m.round == self.batch);
+        let mark = mark.filter(ours);
+        if let Some(vm) = mark.as_ref().and_then(|m| m.vm.clone()).filter(|v| Some(v) != self.vm.as_ref()) {
+            if self.hold.slot.record_holder(self.p, &self.unit, Some(&vm)).is_ok() {
+                self.vm = Some(vm);
+            }
+        }
+        if now < self.next_renew {
+            return true;
         }
         self.next_renew = now + self.p.leases.renew_every_ms();
-        // A mark older than this drive is an earlier pass's: until round-vm writes one, the pass is booting.
-        let (last, phase) = mark.filter(|m| m.at_ms >= self.started).map_or((self.started, Phase::Boot), |m| (m.at_ms, phase_of(&m.phase)));
+        // Until round-vm writes a mark for this pass, the pass is booting.
+        let (last, phase) = mark.map_or((self.started, Phase::Boot), |m| (m.at_ms, phase_of(&m.phase)));
         if !self.p.leases.gate().may_renew(now, last, phase, self.started) {
             self.lost = Some(format!("no progress mark inside the {} deadline, or the pass is past its maximum wall", phase.word()));
-            return;
+            return false;
         }
         match (self.hold.lease.renew(self.p), self.hold.slot.renew(self.p)) {
             (Ok(()), Ok(())) => self.renewed = now,
@@ -143,6 +161,7 @@ impl Keeper<'_, '_> {
             _ if now.saturating_sub(self.renewed) + self.p.leases.renew_every_ms() < self.p.leases.ttl_ms => {}
             (l, s) => self.lost = Some(format!("renewal failed past the TTL: lease {l:?}, slot {s:?}")),
         }
+        self.lost.is_none()
     }
 }
 
@@ -184,7 +203,7 @@ fn queue(sys: &dyn Sys, args: &[&str], deadline: u64) -> Out {
 }
 
 /// [`queue`] for a verb the hold is renewed across.
-fn queue_ticking(sys: &dyn Sys, args: &[&str], deadline: u64, every_secs: u64, tick: &mut dyn FnMut()) -> Out {
+fn queue_ticking(sys: &dyn Sys, args: &[&str], deadline: u64, every_secs: u64, tick: &mut dyn FnMut() -> bool) -> Out {
     queue_run(sys, args, &mut |argv| sys.exec_ticking("queue", argv, deadline, every_secs, tick))
 }
 
@@ -235,9 +254,21 @@ pub fn start(sys: &dyn Sys, l: &Launch, batch: &str, repo: &str, pools: Option<&
         Some(Err(NotTaken::Driving(unit))) => return Ok(Started::Running(unit)),
         Some(Err(NotTaken::Refused(why))) => return Err(why),
     };
+    let mut hold = hold;
     let unit = unit_for(batch, hold.as_ref().map(|h| h.lease.token()));
     if hold.is_none() && active(sys, &unit) {
         return Ok(Started::Running(unit));
+    }
+    // The slot names its unit before the unit exists: a holder that recorded none is taken to
+    // have launched none, so its slot would be granted again without proof of death.
+    if let (Some(h), Some(p)) = (hold.as_mut(), pools) {
+        if let Err(e) = h.slot.record_holder(p, &unit, None) {
+            let why = format!("cannot record {unit} as the holder of slot {}: {e:?}", h.slot.slot());
+            if let Some(h) = hold {
+                h.release(p);
+            }
+            return Err(why);
+        }
     }
     let mut args: Vec<String> = [
         "--user".to_string(),
@@ -296,25 +327,32 @@ fn not_green_line(batch: &str, cert: &Out) -> String {
 /// every verb carries its lease token, the hold is renewed while each runs, and it is given back
 /// at the end whatever the outcome.
 pub fn drive(sys: &dyn Sys, batch: &str, repo: &str, held: Option<(&Ports, Hold)>) -> u8 {
-    let Some((p, hold)) = held else {
+    let Some((p, mut hold)) = held else {
         return drive_pass(sys, batch, repo, None);
     };
-    let unit = unit_for(batch, Some(hold.lease.token()));
-    let mut slot = hold.slot;
-    let _ = slot.record_holder(p, &unit, None);
-    let hold = Hold { lease: hold.lease, slot };
     let now = sys.now_ms();
-    let mut keeper = Keeper { p, hold: &hold, started: now, next_renew: 0, renewed: now, lost: None };
+    let mut keeper = Keeper {
+        p,
+        unit: unit_for(batch, Some(hold.lease.token())),
+        hold: &mut hold,
+        batch: batch.into(),
+        head: None,
+        vm: None,
+        started: now,
+        next_renew: 0,
+        renewed: now,
+        lost: None,
+    };
     let rc = drive_pass(sys, batch, repo, Some(&mut keeper));
     let lost = keeper.lost.take();
     hold.release(p);
-    match lost {
-        Some(why) => {
-            println!("round-recert: lost the hold on {batch}: {why}");
-            1
+    if let Some(why) = lost {
+        println!("round-recert: lost the hold on {batch}: {why}");
+        if rc != 0 {
+            return 1;
         }
-        None => rc,
     }
+    rc
 }
 
 /// One verb of the pass: under a hold, with its token and the hold renewed while it runs.
@@ -339,6 +377,9 @@ fn drive_pass(sys: &dyn Sys, batch: &str, repo: &str, mut keeper: Option<&mut Ke
             return 1;
         }
     };
+    if let Some(k) = keeper.as_deref_mut() {
+        k.head = Some(round.head.clone());
+    }
     println!("round-recert: driving {batch} ({}) at {}", round.phase, round.head);
     let cert = verb(sys, &mut keeper, "certify", batch, repo, CERTIFY_DEADLINE_SECS);
     println!("{}", tail(&cert.text, 4));
@@ -394,7 +435,7 @@ impl Sys for Real {
         }
     }
 
-    fn exec_ticking(&self, program: &str, args: &[String], deadline_secs: u64, every_secs: u64, tick: &mut dyn FnMut()) -> Out {
+    fn exec_ticking(&self, program: &str, args: &[String], deadline_secs: u64, every_secs: u64, tick: &mut dyn FnMut() -> bool) -> Out {
         let mut c = match self.command(program, args, deadline_secs) {
             Ok(c) => c,
             Err(o) => return o,
@@ -415,15 +456,17 @@ impl Sys for Real {
         };
         let out = drain(child.stdout.take().map(|r| Box::new(r) as Box<dyn Read + Send>));
         let err = drain(child.stderr.take().map(|r| Box::new(r) as Box<dyn Read + Send>));
-        let mut waited = 0;
+        let (mut waited, mut stopped) = (0, false);
         let status = loop {
             match child.try_wait() {
                 Ok(Some(s)) => break Ok(s),
                 Ok(None) => {}
                 Err(e) => break Err(e),
             }
-            if waited % every_secs == 0 {
-                tick();
+            // The bound is `timeout`, which passes the signal on to the verb it runs.
+            if !stopped && waited % every_secs == 0 && !tick() {
+                stopped = true;
+                let _ = std::process::Command::new("kill").args(["-TERM", &child.id().to_string()]).status();
             }
             std::thread::sleep(std::time::Duration::from_secs(1));
             waited += 1;
@@ -596,7 +639,7 @@ mod tests {
         fn exec(&self, _: &str, _: &[String], _: u64) -> Out {
             self.answers.borrow_mut().remove(0)
         }
-        fn exec_ticking(&self, p: &str, a: &[String], d: u64, _: u64, _: &mut dyn FnMut()) -> Out {
+        fn exec_ticking(&self, p: &str, a: &[String], d: u64, _: u64, _: &mut dyn FnMut() -> bool) -> Out {
             self.exec(p, a, d)
         }
         fn sleep(&self, secs: u64) {
@@ -655,7 +698,7 @@ mod tests {
                 _ => Out { code: Some(0), text: "batch_id=b\nphase=opened\n".into() },
             }
         }
-        fn exec_ticking(&self, p: &str, a: &[String], d: u64, _: u64, _: &mut dyn FnMut()) -> Out {
+        fn exec_ticking(&self, p: &str, a: &[String], d: u64, _: u64, _: &mut dyn FnMut() -> bool) -> Out {
             self.exec(p, a, d)
         }
         fn sleep(&self, _: u64) {}
@@ -700,14 +743,32 @@ mod tests {
         stalled: bool,
         /// Another writer takes the lease from it after certify's first renewal.
         revoked: bool,
+        /// The round round-vm's progress file names.
+        mark_round: &'static str,
         landed: std::cell::Cell<bool>,
         /// Whether the round's lease was live under the token land was handed.
         held_at_land: std::cell::Cell<Option<bool>>,
+        /// The drive stopped a verb it had lost its hold under.
+        stopped: std::cell::Cell<bool>,
+        /// The VM the slot record named when land ran.
+        vm_at_land: RefCell<Option<String>>,
     }
 
     impl<'b> Driven<'b> {
         fn new(bench: &'b Bench) -> Driven<'b> {
-            Driven { bench, calls: RefCell::default(), ticks: 5, step_ms: 20_000, stalled: false, revoked: false, landed: Default::default(), held_at_land: Default::default() }
+            Driven {
+                bench,
+                calls: RefCell::default(),
+                ticks: 5,
+                step_ms: 20_000,
+                stalled: false,
+                revoked: false,
+                mark_round: "aaa",
+                landed: Default::default(),
+                held_at_land: Default::default(),
+                stopped: Default::default(),
+                vm_at_land: Default::default(),
+            }
         }
         fn verbs(&self) -> Vec<Vec<String>> {
             self.calls.borrow().iter().filter(|a| a.first().map(String::as_str) == Some("round")).cloned().collect()
@@ -723,18 +784,23 @@ mod tests {
                 _ => Out { code: Some(0), text: OPEN.into() },
             }
         }
-        fn exec_ticking(&self, _: &str, args: &[String], _: u64, _: u64, tick: &mut dyn FnMut()) -> Out {
+        fn exec_ticking(&self, _: &str, args: &[String], _: u64, _: u64, tick: &mut dyn FnMut() -> bool) -> Out {
             self.calls.borrow_mut().push(args.to_vec());
             if args[1] == "land" {
                 let token = args.iter().skip_while(|a| *a != "--lease-token").nth(1).cloned();
                 let held = holder_of(&self.bench.ports(), &Resource::round("spira", "r-1")).unwrap();
                 self.held_at_land.set(Some(held.is_some_and(|h| Some(token_word(h.token)) == token)));
+                let slot = Slot { pool: Pool::Proxmox, n: 0 };
+                *self.vm_at_land.borrow_mut() = slot_record(self.bench, slot)["vm"].as_str().map(str::to_string);
                 self.landed.set(true);
                 return Out { code: Some(0), text: "landed\n".into() };
             }
             for n in 0..self.ticks {
                 self.bench.clock.advance(self.step_ms);
-                tick();
+                if !tick() {
+                    self.stopped.set(true);
+                    return Out { code: Some(143), text: "terminated\n".into() };
+                }
                 if self.revoked && n == 0 {
                     let p = self.bench.ports();
                     let res = Resource::round("spira", "r-1");
@@ -751,7 +817,7 @@ mod tests {
         }
         fn progress(&self) -> Option<Mark> {
             let at_ms = if self.stalled { 0 } else { self.now_ms() };
-            Some(Mark { round: "aaa".into(), phase: "suites".into(), phases: vec![], at_ms, vm: None })
+            Some(Mark { round: self.mark_round.into(), phase: "suites".into(), phases: vec![], at_ms, vm: Some("vm-103".into()) })
         }
     }
 
@@ -772,7 +838,12 @@ mod tests {
         assert_eq!(unit, unit_for("r-1", Some(lease)));
         assert_eq!(arg("--lease-token"), token_word(lease));
         assert!(run.iter().any(|x| x == &format!("--unit={unit}")), "{run:?}");
+        assert_eq!(slot_record(b, slot)["unit"], unit.as_str(), "the slot names the unit before it is launched");
         Hold::handed(&p, "spira", "r-1", lease, slot, slot_token)
+    }
+
+    fn slot_record(b: &Bench, slot: Slot) -> serde_json::Value {
+        b.store.get(&slot.record_key()).unwrap().expect("a slot record").value.data
     }
 
     #[test]
@@ -788,20 +859,24 @@ mod tests {
         assert_eq!(of("certify"), ["round", "certify", "r-1", "spira", "--lease-token", &token]);
         assert_eq!(of("land"), ["round", "land", "r-1", "spira", "--lease-token", &token]);
         assert_eq!(sys.held_at_land.get(), Some(true), "certify ran past the 60 s TTL, and the lease was renewed through it");
+        assert_eq!(sys.vm_at_land.borrow().as_deref(), Some("vm-103"), "the slot records the VM round-vm named");
         assert_eq!(holder_of(&b.ports(), &Resource::round("spira", "r-1")).unwrap(), None, "the lease is given back");
         let again = grant_for_hand(&b.ports(), "next").expect("the slot is given back");
         assert_eq!(again.slot(), slot);
     }
 
     #[test]
-    fn a_hand_drive_whose_pass_stops_progressing_stops_renewing_and_does_not_land() {
-        let b = bench();
-        let mut sys = Driven::new(&b);
-        sys.stalled = true;
-        let hold = launched_hold(&b, &sys);
-        assert_eq!(drive(&sys, "r-1", "spira", Some((&b.ports(), hold))), 1);
-        assert!(!sys.verbs().iter().any(|a| a[1] == "land"), "{:?}", sys.verbs());
-        assert_eq!(holder_of(&b.ports(), &Resource::round("spira", "r-1")).unwrap(), None);
+    fn a_hand_drive_whose_pass_stops_progressing_stops_renewing_stops_certify_and_does_not_land() {
+        for (stalled, round) in [(true, "aaa"), (false, "another-round")] {
+            let b = bench();
+            let mut sys = Driven::new(&b);
+            (sys.stalled, sys.mark_round) = (stalled, round);
+            let hold = launched_hold(&b, &sys);
+            assert_eq!(drive(&sys, "r-1", "spira", Some((&b.ports(), hold))), 1, "{round}");
+            assert!(sys.stopped.get(), "certify is stopped once the hold is lost: {round}");
+            assert!(!sys.verbs().iter().any(|a| a[1] == "land"), "{round}: {:?}", sys.verbs());
+            assert_eq!(holder_of(&b.ports(), &Resource::round("spira", "r-1")).unwrap(), None);
+        }
     }
 
     #[test]

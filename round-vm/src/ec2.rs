@@ -158,6 +158,10 @@ pub struct Ec2Config {
 
 pub const MAX_LIFETIME_KEY: &str = "SPIRA_ROUND_VM_EC2_MAX_LIFETIME_SECS";
 
+/// The lifetime is counted from launch and the power-off is scheduled from user-data, after boot:
+/// it is scheduled this much early so that boot, the power-off and the terminate all fit inside it.
+pub const SHUTDOWN_MARGIN: Duration = Duration::from_secs(600);
+
 const LAUNCH_CONFIRM_TRIES: u32 = 3;
 const SSM_REGISTER_TRIES: u32 = 90;
 
@@ -427,7 +431,7 @@ for _i in $(seq 1 {tries}); do\n\
   sleep $((_i * {backoff}))\n\
 done\n\
 tailscale status >/dev/null 2>&1 || echo \"round-vm: tailscale never logged in after {tries} attempts\" >&2\n",
-        mins = lifetime.as_secs().div_ceil(60),
+        mins = lifetime.saturating_sub(SHUTDOWN_MARGIN).as_secs() / 60,
         ready = TAILSCALED_READY_SECS,
         tries = TAILSCALE_UP_TRIES,
         backoff = TAILSCALE_BACKOFF_SECS,
@@ -1070,7 +1074,7 @@ mod tests {
         Ec2::new(fake.clone(), &cfg).unwrap().clone_to("h1", "n1").unwrap();
         let u = fake.user_data()[0].clone();
         let first = u.lines().nth(2).unwrap_or_default();
-        assert_eq!(first, "shutdown -P +181", "10830 s rounds up to whole minutes, before anything that can hang: {u}");
+        assert_eq!(first, "shutdown -P +170", "10830 s less the boot margin, in whole minutes rounded down, before anything that can hang: {u}");
         let none = Ec2Config::from_lookup(&|_| None);
         assert!(none.missing().iter().any(|m| m.contains(MAX_LIFETIME_KEY)), "no instance launches without a lifetime");
     }

@@ -3280,6 +3280,10 @@ fn preempt(
     {
         return FAIL;
     }
+    // It ejects, so a leased round is refused here as eject refuses it; no holder preempts.
+    if let Err(rc) = LeaseCheck::Check(None).guard(w, label, &c, batch) {
+        return rc;
+    }
 
     let (wt, head, tips) = {
         let Ok(_g) = lock(w, label, &c) else {
@@ -3580,6 +3584,10 @@ fn land(w: &World, batch: &str, repo: Option<&str>, token: Option<&str>) -> i32 
             if !text.is_empty() {
                 w.io.err(&text);
             }
+            rc
+        }
+        Err((why, rc)) if text.is_empty() => {
+            w.io.err(&format!("{}: queue.sh round land: {batch} not landed\n", why.word()));
             rc
         }
         Err((why, rc)) => {

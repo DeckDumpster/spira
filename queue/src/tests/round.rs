@@ -5821,20 +5821,21 @@ fn err_of(t: &T, f: impl FnOnce() -> i32) -> (i32, String) {
 }
 
 #[test]
-fn a_round_leased_by_another_holder_refuses_abandon_eject_land_and_certify_naming_holder_token_and_ttl(
+fn a_round_leased_by_another_holder_refuses_every_verb_that_touches_it_naming_holder_token_and_ttl(
 ) {
     let (t, batch) = certified_round();
     seed_suite(&t, "test-b.sh");
     leased_by(&t, &batch, "round-recert", "7-0");
     let before = kv_of(&t, "round");
     let runs = vm_runs(&t);
-    let verbs: [&[&str]; 4] = [
+    let verbs: [&[&str]; 5] = [
         &["round", "abandon", &batch, "--reason", "batcher: stale"],
         &[
             "round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh",
         ],
         &["round", "land", &batch],
         &["round", "certify", &batch],
+        &["round", "preempt", &batch, "--eject", "sp-b", "--reason", "batcher: fresh"],
     ];
     for argv in verbs {
         let (rc, e) = err_of(&t, || t.run(argv));
