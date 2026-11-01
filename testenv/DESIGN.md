@@ -252,10 +252,12 @@ ISO timestamps→`TIMESTAMP`, `HH:MM:SS`→`TIME`, `[0-9]{3,}`→`N`; then POSIX
 * When `unit-tests` is selected, ` unit-base=<merge base of landref and branch> unit-crates=<sorted
   comma list>` is appended: one tree selects different crates over different bases, and a pass
   over some crates says nothing about the others. A unit tier that selected **no** crate tested
-  nothing, so its verdict is neither read from nor written to the cache. An empty list is
-  believed only for a diff that touches no Rust: when `<landref>...<branch>` is empty (the base
-  is the tip) or touches a `*.rs` or `Cargo.toml`, the run is `FAULT rc=2 reason=unit-no-crates`,
-  logged with the base and the Rust paths.
+  nothing, so the whole run's verdict, every co-selected suite's included and a red as much as
+  a green, is neither read from nor written to the cache. An empty list is believed only for a
+  diff that touches no Rust: when `<landref>...<branch>` is empty (the branch has no commit
+  beyond the base: the base is the tip, or the branch already landed) or touches a `*.rs` or
+  `Cargo.toml`, the run is `FAULT rc=2 reason=unit-no-crates`, logged with the base and the Rust
+  paths. Under `--tests`, `tests-no-crates` is reported first.
 
 `$SPIRA_VERDICTS/batch-<key>`: `key=value` lines `verdict=green|red|partial`, `when=<ISO UTC>`,
 `by=testenv-batch`, `at=<epoch>`, `red_suites=<space list>` (red only),
@@ -265,7 +267,9 @@ never a cache hit.
 Written only when `TTL > 0` and a key exists. A green within TTL exits 0 at once; a red
 within TTL exits 2 unless `SPIRA_VERDICT_REPEAT_CONSIDERED` is a ≥10-char sentence, which
 is then recorded as `override_reason` in the new verdict. `--repeat-reason WHY` (its argument
-form) also runs a cached green again: the caller is saying it doubts the prior verdict.
+form) also runs a cached green again, whatever the tier and whatever the reason's length: the
+caller is saying it doubts the prior verdict. A caller that passes the flag on every first check
+of a new tip pays only when that tree, selection and base already passed.
 
 ### 3.4 `SuiteTimingRow` — run/tsd family `suite-timing`
 
