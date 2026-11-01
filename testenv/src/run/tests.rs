@@ -2627,6 +2627,22 @@ fn a_tests_filter_that_matches_no_test_is_a_fault_not_a_green() {
     let rc = w.run(&rt, &b, &["--suites", "unit-tests", "--tests", "no_such_test", "units"], "", &w.repo);
     assert_eq!(rc, 2);
     assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=1 reason=tests-matched-none tests=no_such_test");
+    // every name is its own claim: one that matched does not vouch for one that did not
+    let rc = w.run(&rt, &b, &["--suites", "unit-tests", "--tests", "one_name,no_such_test", "units"], "", &w.repo);
+    assert_eq!(rc, 2);
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=1 reason=tests-matched-none tests=one_name,no_such_test");
+    assert!(w.has_line(|l| l.ends_with("unit-tests: no test matched no_such_test — no verdict")));
+}
+
+#[test]
+fn a_tests_filter_on_a_diff_that_touches_no_crate_is_a_fault() {
+    let w = unit_world("unit-filter-nocrate");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    sh(&w.repo, "git checkout -q main && git checkout -qb docs && echo x > notes.md && git add notes.md && git commit -qm docs");
+    let rc = w.run(&rt, &b, &["--suites", "unit-tests", "--tests", "one_name", "docs"], "", &w.repo);
+    assert_eq!(rc, 2);
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=tests-no-crates tests=one_name");
 }
 
 #[test]

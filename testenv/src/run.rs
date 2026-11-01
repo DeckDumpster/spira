@@ -1221,6 +1221,10 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     }
     if crate::unit::selected(&selected) {
         match crate::unit::write_crates(&repo.path, &base, br, &wt.path) {
+            Ok(c) if c.is_empty() && args.tests.is_some() => {
+                stderr("batch: --tests: the diff touches no crate, so no named test can run");
+                return Finish::fault(2, "tests-no-crates", 0);
+            }
             Ok(c) => deps.log(&format!("unit-tests: {} affected crate(s): {}", c.len(), c.join(" "))),
             Err(e) => {
                 stderr(&format!("batch: unit-tests: {e}"));
@@ -1989,6 +1993,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
 
     let host = util::hostname();
     let run_root = s.run.clone();
+    let filtered = args.tests.is_some();
     let branch = br.clone();
     let tiers: HashMap<String, String> = headers
         .iter()
@@ -2012,13 +2017,16 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             load_start: None,
             load_end: None,
         };
-        let _ = timing::append(
-            &run_root,
-            timing::SUITE_TIMING,
-            &iso_utc(now_epoch()),
-            &host,
-            &row,
-        );
+        // A filtered unit tier's seconds are no sample of the full tier's wall time.
+        if !filtered {
+            let _ = timing::append(
+                &run_root,
+                timing::SUITE_TIMING,
+                &iso_utc(now_epoch()),
+                &host,
+                &row,
+            );
+        }
     };
     let psi_threshold = s.psi_threshold;
     let psi = move || {
@@ -2345,9 +2353,10 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         let out = fs::read_to_string(results.join(format!("{}.out", crate::unit::SCRIPT))).unwrap_or_default();
         let names = crate::unit::tests_ran(&out);
         deps.log(&format!("unit-tests: --tests {} ran {} test(s): {}", t.join(","), names.len(), names.join(" ")));
-        // law-absence-needs-a-positive-control: a filter that selected nothing proved nothing.
-        if names.is_empty() && records.get(crate::unit::SCRIPT).is_some_and(|r| r.status == Status::Ok) {
-            deps.log("unit-tests: the filter matched no test — no verdict");
+        // law-absence-needs-a-positive-control: each name the verdict claims must have run a test.
+        let unmatched: Vec<&str> = t.iter().map(String::as_str).filter(|f| !names.iter().any(|n| n.contains(f))).collect();
+        if !unmatched.is_empty() && records.get(crate::unit::SCRIPT).is_some_and(|r| r.status == Status::Ok) {
+            deps.log(&format!("unit-tests: no test matched {} — no verdict", unmatched.join(",")));
             return Finish::fault(2, "tests-matched-none", ran);
         }
     }

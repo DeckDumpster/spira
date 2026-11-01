@@ -44,10 +44,19 @@ pub fn write_filter(tree: &Path, tests: Option<&[String]>) -> Result<(), String>
 }
 
 /// The tests libtest reports it ran, from its `test <name> ... ok|FAILED` lines; an ignored
-/// test did not run.
+/// test did not run. A `failures:` section is a failed test's captured output, never a report.
 pub fn tests_ran(output: &str) -> Vec<String> {
+    let mut in_failures = false;
     output
         .lines()
+        .filter(|l| {
+            if *l == "failures:" {
+                in_failures = true;
+            } else if l.starts_with("test result: ") {
+                in_failures = false;
+            }
+            !in_failures
+        })
         .filter_map(|l| {
             let (name, result) = l.strip_prefix("test ")?.split_once(" ... ")?;
             (result.starts_with("ok") || result.starts_with("FAILED")).then(|| name.to_string())
@@ -153,6 +162,8 @@ mod tests {
             test result: FAILED. 1 passed; 1 failed; 1 ignored; 0 measured; 0 filtered out\n\
             test src/lib.rs - doc (line 3) ... ok\n";
         assert_eq!(tests_ran(out), ["tests::one_name", "tests::two_name", "src/lib.rs - doc (line 3)"]);
+        let failing = "test tests::real ... FAILED\n\nfailures:\n\n---- tests::real stdout ----\ntest tests::printed ... ok\n\nfailures:\n    tests::real\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n";
+        assert_eq!(tests_ran(failing), ["tests::real"]);
         assert!(tests_ran("running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out\n").is_empty());
     }
 
