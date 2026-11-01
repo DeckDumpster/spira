@@ -1857,6 +1857,171 @@ fn a_caller_holding_the_lock_runs_the_verbs_under_it() {
     );
 }
 
+/// One verb's run and the queue-lock holds it took, then those a hand driver took while it ran.
+struct VerbHolds {
+    verb: &'static str,
+    rc: i32,
+    holds: Vec<crate::lock::Hold>,
+}
+
+/// Drives one round through open, certify (red), eject, certify (green) and land, each verb run by
+/// itself as the round controller runs them, the caller holding no lock between them. While each
+/// certify's round VM runs, a hand `round abandon` tries the queue lock once: it gets it at once,
+/// or it is told the lock is busy. Answers each verb's holds and each hand try's answer.
+fn drive_beside_a_hand_driver(t: &T) -> (Vec<VerbHolds>, Vec<bool>) {
+    let tries = std::rc::Rc::new(RefCell::new(Vec::new()));
+    let (dir, seen) = (t.s().queue_dir.clone(), tries.clone());
+    *t.scripts.during_vm.borrow_mut() = Some(Box::new(move || {
+        let got = crate::lock::try_lock_as(&dir, "spira", "round abandon");
+        seen.borrow_mut()
+            .push(matches!(got, crate::lock::Acquire::Held(_)));
+    }));
+    *t.scripts.round_vm_results.borrow_mut() = vec![
+        ("test-a.sh".into(), "ok".into()),
+        ("test-b.sh".into(), "red 1 2 fp p e 1".into()),
+    ];
+    crate::lock::take_holds();
+    let mut verbs = Vec::new();
+    let mut run = |verb: &'static str, args: &[&str]| {
+        let rc = t.run(args);
+        verbs.push(VerbHolds {
+            verb,
+            rc,
+            holds: crate::lock::take_holds(),
+        });
+    };
+    run(
+        "round open",
+        &["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"],
+    );
+    let batch = batch_of(t);
+    run("round certify", &["round", "certify", &batch]);
+    seed_suite(t, "test-b.sh");
+    run(
+        "round eject",
+        &[
+            "round",
+            "eject",
+            &batch,
+            "sp-b",
+            "--reason",
+            "red on test-b.sh",
+            "--suites",
+            "test-b.sh",
+        ],
+    );
+    *t.scripts.round_vm_results.borrow_mut() = vec![
+        ("test-a.sh".into(), "ok".into()),
+        ("test-b.sh".into(), "ok".into()),
+    ];
+    run("round certify", &["round", "certify", &batch]);
+    run("round land", &["round", "land", &batch]);
+    let answers = tries.borrow().clone();
+    (verbs, answers)
+}
+
+/// Each verb's own holds are its own label's, each one given back before the verb returned, and
+/// none outstanding when a hand driver took the lock.
+fn held_only_inside_their_verb(verbs: &[VerbHolds]) -> Result<(), String> {
+    use crate::lock::Hold;
+    for v in verbs {
+        let mut open = 0usize;
+        for h in &v.holds {
+            match h {
+                Hold::Taken { verb, .. } | Hold::Released { verb, .. }
+                    if verb != "round abandon" && verb != v.verb =>
+                {
+                    return Err(format!("{} took the lock as {verb}", v.verb))
+                }
+                Hold::Taken { verb, .. } if verb == "round abandon" && open > 0 => {
+                    return Err(format!(
+                        "a hand abandon took the lock while {} held it",
+                        v.verb
+                    ))
+                }
+                Hold::Taken { verb, .. } if verb == v.verb => open += 1,
+                Hold::Released { verb, .. } if verb == v.verb => open -= 1,
+                _ => {}
+            }
+        }
+        if open != 0 {
+            return Err(format!("{} returned still holding the lock", v.verb));
+        }
+        if !v.holds.iter().any(|h| matches!(h, Hold::Taken { verb, .. } if verb == v.verb)) {
+            return Err(format!("{} took no lock of its own", v.verb));
+        }
+    }
+    Ok(())
+}
+
+/// Every hand abandon got the lock the moment it asked, without waiting for a pass to end.
+fn hand_abandon_never_waits(tries: &[bool]) -> Result<(), String> {
+    if let Some(i) = tries.iter().position(|got| !got) {
+        return Err(format!(
+            "hand abandon {} found the lock busy while a round VM ran",
+            i + 1
+        ));
+    }
+    match tries.len() {
+        2 => Ok(()),
+        n => Err(format!(
+            "a hand abandon tried {n} times, not once per certify"
+        )),
+    }
+}
+
+#[test]
+fn each_round_verb_holds_the_queue_lock_only_for_its_own_transition_so_a_hand_abandon_gets_in_at_once(
+) {
+    let t = round_world();
+    let (verbs, tries) = drive_beside_a_hand_driver(&t);
+    let rcs: Vec<(&str, i32)> = verbs.iter().map(|v| (v.verb, v.rc)).collect();
+    assert_eq!(
+        rcs,
+        [
+            ("round open", 0),
+            ("round certify", 1),
+            ("round eject", 0),
+            ("round certify", 0),
+            ("round land", 0)
+        ],
+        "{}",
+        t.err()
+    );
+    held_only_inside_their_verb(&verbs).unwrap();
+    hand_abandon_never_waits(&tries).unwrap();
+    let certify: Vec<usize> = verbs
+        .iter()
+        .filter(|v| v.verb == "round certify")
+        .map(|v| {
+            v.holds
+                .iter()
+                .filter(|h| matches!(h, crate::lock::Hold::Taken { verb, .. } if verb == "round certify"))
+                .count()
+        })
+        .collect();
+    assert!(
+        certify.iter().all(|n| *n >= 2),
+        "certify locks once to prepare and again to record, around the VM run: {certify:?}"
+    );
+}
+
+#[test]
+fn a_caller_that_holds_the_lock_across_the_verbs_as_the_batcher_does_shuts_the_hand_abandon_out() {
+    let t = round_world();
+    let _held = t.hold_lock();
+    t.var("SPIRA_QUEUE_LOCK_HELD", "1");
+    let (verbs, tries) = drive_beside_a_hand_driver(&t);
+    assert!(verbs.iter().all(|v| v.holds.iter().all(
+        |h| matches!(h, crate::lock::Hold::Taken { verb, .. } | crate::lock::Hold::Released { verb, .. } if verb == "round abandon")
+    )), "under SPIRA_QUEUE_LOCK_HELD=1 the verbs take no lock of their own");
+    let e = hand_abandon_never_waits(&tries).unwrap_err();
+    assert_eq!(e, "hand abandon 1 found the lock busy while a round VM ran");
+    assert!(held_only_inside_their_verb(&verbs)
+        .unwrap_err()
+        .contains("took no lock of its own"));
+}
+
 #[test]
 fn eject_also_ejects_the_members_stacked_on_the_ejected_one() {
     let t = round_world();

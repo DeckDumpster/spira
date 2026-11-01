@@ -48,6 +48,12 @@ is "rounds.json queries only series the round controller pushes" "" "$(comm -13 
 want "positive control: the round controller's slots gauge was found" "spira_round_controller_slots_in_use" "$rc_pushed"
 want "rounds.json graphs runner slots in use per pool" "spira_round_controller_slots_in_use" "$rc_queried"
 
+q_pushed="$(grep -oh '"spira_queue_lock_[a-z_]*"' "$ROOT/queue/src/telemetry.rs" | tr -d '"' | sort -u)"
+q_queried="$(grep -o 'spira_queue_lock_[a-z_]*' "$DASH/rounds.json" | sort -u)"
+is "rounds.json queries only queue-lock series queue pushes" "" "$(comm -13 <(printf '%s\n' "$q_pushed") <(printf '%s\n' "$q_queried"))"
+want "positive control: queue's lock-hold series was found" "spira_queue_lock_hold_seconds" "$q_pushed"
+want "rounds.json graphs the queue lock hold per verb" "spira_queue_lock_hold_seconds" "$q_queried"
+
 pushed_otel="$(grep -ho '"spira_[a-z_]*"' "$ROOT/spira-otel/src/metrics.rs" "$ROOT/heimdall/src/main.rs" "$ROOT/inbox-triage/src/main.rs" "$ROOT/store-persist/src/main.rs" "$ROOT"/round-vm/src/telemetry.rs "$ROOT"/sccache-dav/src/telemetry.rs "$ROOT"/release/src/telemetry.rs | tr -d '"' | sort -u)"
 queried_c="$(grep -o 'spira_[a-z_]*' "$DASH/components.json" | sort -u)"
 missing_c="$(comm -13 <(printf '%s\n' "$pushed_otel") <(printf '%s\n' "$queried_c"))"

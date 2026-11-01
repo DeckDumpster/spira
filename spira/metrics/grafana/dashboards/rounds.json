@@ -746,6 +746,48 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "queue lock hold p50 / max by verb",
+      "description": "Seconds each queue verb held a repo's queue lock (queue/src/lock.rs). A hand verb gets in at once only while every hold stays short: no verb holds the lock across a test run.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 80,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max by (verb) (quantile_over_time(0.5, spira_queue_lock_hold_seconds{repo=~\"$repo\"}[$__interval]))",
+          "legendFormat": "p50 {{verb}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max by (verb) (max_over_time(spira_queue_lock_hold_seconds{repo=~\"$repo\"}[$__interval]))",
+          "legendFormat": "max {{verb}}",
+          "refId": "B"
+        }
+      ]
     }
   ]
 }

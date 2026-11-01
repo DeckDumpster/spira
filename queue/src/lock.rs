@@ -1,15 +1,53 @@
 //! The per-repo queue lock: `$SPIRA_QUEUE_DIR/<repo>/lock`, an exclusive non-blocking
 //! flock — the same file and the same lock queue verdict, batch.sh and batcher-cut's
 //! `try_lock` take, so every writer of a repo's queue state is serialised by one lock.
+//!
+//! Every hold a verb takes is recorded as it is taken and given back ([`take_holds`]), so the
+//! binary pushes each verb's hold over OTLP and a test sees where each hold began and ended.
 
+use std::cell::RefCell;
 use std::fs::{self, File, OpenOptions};
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 pub struct Guard {
     f: File,
     recorded: bool,
     beat: Option<Beat>,
+    hold: Option<Taken>,
+}
+
+/// A verb's hold of a repo's queue lock: taken, then given back after `held`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Hold {
+    Taken { repo: String, verb: String },
+    Released { repo: String, verb: String, held: Duration },
+}
+
+struct Taken {
+    repo: String,
+    verb: String,
+    at: Instant,
+}
+
+thread_local! {
+    /// The holds this thread's verbs took and gave back, in order, until [`take_holds`].
+    static HOLDS: RefCell<Vec<Hold>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Kept per thread: a verb takes and drops its guard on the thread it runs on, and `queue` runs
+/// its verb on the main thread, which drains the record once the verb returns. A guard dropped
+/// as its thread exits records nothing rather than panic in a drop.
+fn note(h: Hold) {
+    let _ = HOLDS.try_with(|v| v.borrow_mut().push(h));
+}
+
+/// Every queue-lock hold this thread's verbs took or gave back since the last call, in order.
+pub fn take_holds() -> Vec<Hold> {
+    HOLDS
+        .try_with(|v| std::mem::take(&mut *v.borrow_mut()))
+        .unwrap_or_default()
 }
 
 /// A recording holder touches `<lock>.beat` while it lives, so the reconciler tells a landing
@@ -77,6 +115,13 @@ impl Drop for Guard {
             let _ = self.f.set_len(0);
         }
         self.beat.take();
+        if let Some(t) = self.hold.take() {
+            note(Hold::Released {
+                repo: t.repo,
+                verb: t.verb,
+                held: t.at.elapsed(),
+            });
+        }
     }
 }
 
@@ -179,12 +224,24 @@ fn try_lock_file(queue_dir: &Path, repo: &str, file: &str, verb: Option<&str>) -
             use std::io::Write;
             let _ = (&f).write_all(format!("pid={} verb={v}\n", std::process::id()).as_bytes());
         }
-        let beat = (file == "lock" && verb.is_some())
-            .then(|| Beat::start(dir.join(BEAT_FILE), BEAT_EVERY));
+        let queue_lock = file == "lock" && verb.is_some();
+        let beat = queue_lock.then(|| Beat::start(dir.join(BEAT_FILE), BEAT_EVERY));
+        let hold = verb.filter(|_| queue_lock).map(|v| {
+            note(Hold::Taken {
+                repo: repo.into(),
+                verb: v.into(),
+            });
+            Taken {
+                repo: repo.into(),
+                verb: v.into(),
+                at: Instant::now(),
+            }
+        });
         Acquire::Held(Guard {
             f,
             recorded: true,
             beat,
+            hold,
         })
     } else {
         Acquire::Busy
@@ -205,6 +262,37 @@ mod tests {
         assert!(matches!(try_lock(&d, "spira"), Acquire::Busy));
         drop(a);
         assert!(matches!(try_lock(&d, "spira"), Acquire::Held(_)));
+    }
+
+    #[test]
+    fn a_verb_s_hold_of_the_queue_lock_is_recorded_taken_then_released_and_nothing_else_is() {
+        let _serial = crate::testutil::serial();
+        let d = tmpdir("lockhold");
+        take_holds();
+        let g = try_lock_as(&d, "spira", "round open");
+        assert!(matches!(try_lock_as(&d, "spira", "round abandon"), Acquire::Busy));
+        assert_eq!(
+            take_holds(),
+            [Hold::Taken {
+                repo: "spira".into(),
+                verb: "round open".into()
+            }],
+            "a refused taker records nothing"
+        );
+        drop(g);
+        let got = take_holds();
+        assert!(
+            matches!(got.as_slice(), [Hold::Released { repo, verb, .. }] if repo == "spira" && verb == "round open"),
+            "{got:?}"
+        );
+        drop(try_lock(&d, "spira"));
+        drop(try_certify_lock(&d, "spira", "b1"));
+        drop(try_step_lock(&d, "spira"));
+        assert_eq!(
+            take_holds(),
+            [],
+            "an unrecorded taker, the certify lock and the step lock are no verb's queue-lock hold"
+        );
     }
 
     #[test]

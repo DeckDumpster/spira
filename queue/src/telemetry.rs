@@ -44,9 +44,13 @@ pub fn operation(first_arg: Option<&str>) -> &'static str {
     metrics::operation(first_arg, OPERATIONS)
 }
 
+/// Seconds a verb held a repo's queue lock, labelled by `verb` and `repo`.
+pub const LOCK_HOLD: &str = "spira_queue_lock_hold_seconds";
+
 pub fn run(sink: &MetricsSink, first_arg: Option<&str>, f: impl FnOnce() -> i32) -> i32 {
     let op = operation(first_arg);
     let code = metrics::timed(sink, COMPONENT, op, f);
+    push_holds(sink, &crate::lock::take_holds());
     if let Some(event) = batch_event(op).filter(|_| code == 0) {
         sink.push(
             &[metrics::Point::Count {
@@ -57,6 +61,21 @@ pub fn run(sink: &MetricsSink, first_arg: Option<&str>, f: impl FnOnce() -> i32)
         );
     }
     code
+}
+
+/// One sample per hold a verb gave back.
+pub fn push_holds(sink: &MetricsSink, holds: &[crate::lock::Hold]) {
+    for h in holds {
+        if let crate::lock::Hold::Released { repo, verb, held } = h {
+            sink.push(
+                &[metrics::Point::Seconds {
+                    name: LOCK_HOLD,
+                    value: held.as_secs_f64(),
+                }],
+                &[("verb", verb), ("repo", repo)],
+            );
+        }
+    }
 }
 
 /// The batch lifecycle event a successful `queue` operation is.
@@ -95,6 +114,33 @@ mod tests {
         assert!(
             got.iter().any(|c| c.name == metrics::RUN_DURATION),
             "run seconds pushed"
+        );
+    }
+
+    #[test]
+    fn each_queue_lock_hold_a_verb_gave_back_is_one_sample_by_verb_and_repo() {
+        let (_, got) = fixture::capture(|s| {
+            push_holds(
+                s,
+                &[
+                    crate::lock::Hold::Taken {
+                        repo: "spira".into(),
+                        verb: "round open".into(),
+                    },
+                    crate::lock::Hold::Released {
+                        repo: "spira".into(),
+                        verb: "round open".into(),
+                        held: std::time::Duration::from_millis(1500),
+                    },
+                ],
+            );
+            0
+        });
+        let holds: Vec<_> = got.iter().filter(|c| c.name == LOCK_HOLD).collect();
+        assert_eq!(holds.len(), 1, "a hold still taken is no sample");
+        assert_eq!(
+            (holds[0].label("verb"), holds[0].label("repo")),
+            (Some("round open"), Some("spira"))
         );
     }
 
