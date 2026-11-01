@@ -1591,7 +1591,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     session.setup_deadline = setup_cutoff.get();
     let unit_batch = crate::unit::selected(&active);
     if unit_batch {
-        session.cargo_target_volume = Some(crate::container::UNIT_TARGET_VOLUME.to_string());
+        session.cargo_target_volume = Some(crate::container::unit_target_volume(&tree));
     }
     // A container slot may eat at most half of what is left of setup: past that the trial
     // judged nothing and says `queue`, rather than being cut mid-wait as `deadline-up`.
@@ -1624,7 +1624,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     let mut claimed = false;
     if let Some(i) = warm_slot {
         let claim = if unit_batch {
-            warm::Claim::Cold("a unit-tests batch mounts the shared cargo target volume, which a booted spare lacks".into())
+            warm::Claim::Cold("a unit-tests batch mounts its tree's cargo target volume, which a booted spare lacks".into())
         } else {
             warm::claim(
                 deps.rt,

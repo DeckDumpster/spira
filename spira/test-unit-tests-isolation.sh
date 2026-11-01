@@ -2,11 +2,12 @@
 #
 # test-unit-tests-isolation.sh — unit-tests.sh never reports a verdict built from another tree.
 #
-# Every unit-tests batch mounts one cargo target volume at the same checkout path, and cargo
-# decides freshness by mtime, so a tree whose files predate the last build of a different tree
-# reuses that tree's artifacts. Two trees that differ in one test name, and in what their
-# library returns, run in sequence on one target dir, at one path; each verdict must list only
-# its own tree's test, built against its own library.
+# Cargo decides freshness by mtime, so on a target shared between trees at one checkout path, a
+# tree whose files predate the last build of a different tree reuses that tree's artifacts.
+# Two trees that differ in one test name, and in what their library returns, run in sequence at
+# one path: on one shared target (a testenv that names no volume, cases 1-5), and each on its
+# own (SPIRA_UNIT_TARGET_VOLUME, case 6). Each verdict must list only its own tree's test,
+# built against its own library; on its own target a tree tested again rebuilds nothing.
 #
 # tier: T2
 # covers: spira/unit-tests.sh
@@ -82,5 +83,32 @@ out="$(run_unit)"; rc=$?
 chmod 600 "$WS/sealed/f"
 wantrc "tree A passes" 0 "$rc"
 want "after recompiling the workspace" "Compiling app" "$out"
+chmod -R u+rwx "$WS" 2>/dev/null
+
+# run_own <volume>: testenv's unit tier since sp-fnb2wa — each tree on its own target volume,
+# named to the script, which then has nothing to clean.
+run_own() {
+    (cd "$WS" && env CARGO_TARGET_DIR="$TMP/$1" SPIRA_UNIT_TARGET_VOLUME="$1" bash spira/unit-tests.sh 2>&1)
+}
+
+echo "6. trees A, B, A, each on its own target: the second A is warm and judged on A:"
+put_tree a alpha_only
+out="$(run_own vol-a)"; rc=$?
+wantrc "tree A passes" 0 "$rc"
+want "and lists A's test" "test tests::alpha_only ... ok" "$out"
+put_tree b beta_only
+backdate
+out="$(run_own vol-b)"; rc=$?
+wantrc "tree B passes against its own library" 0 "$rc"
+want "and lists B's test" "test tests::beta_only ... ok" "$out"
+nowant "and not A's" "alpha_only" "$out"
+put_tree a alpha_only
+backdate
+out="$(run_own vol-a)"; rc=$?
+wantrc "tree A passes again" 0 "$rc"
+want "and lists A's test" "test tests::alpha_only ... ok" "$out"
+nowant "and not B's" "beta_only" "$out"
+nowant "without recompiling the workspace" "Compiling app" "$out"
+[ ! -e "$TMP/vol-a/.unit-tests-built-tree" ] && ok "and without hashing the tree for a clean" || bad "and without hashing the tree for a clean" "$TMP/vol-a/.unit-tests-built-tree exists"
 
 tl_summary
