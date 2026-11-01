@@ -2561,8 +2561,8 @@ fn without_a_resume_store_every_suite_runs() {
 
 const FIXTURE_TESTS: [&str; 3] = ["tests::one_name", "tests::two_name", "tests::three_name"];
 
-/// A workspace whose one crate gains three tests on branch `units`, checked out in place so the
-/// tier's files land in `w.repo/target`.
+/// A workspace whose one crate gains three tests on branch `units` over base `local/main`,
+/// checked out in place so the tier's files land in `w.repo/target`.
 fn unit_world(tag: &str) -> World {
     let w = World::new(tag);
     fs::write(w.repo.join("spira/unit-tests.sh"), "#!/usr/bin/env bash\nset -uo pipefail\n").unwrap();
@@ -2570,7 +2570,9 @@ fn unit_world(tag: &str) -> World {
     fs::create_dir_all(w.repo.join("fixture/src")).unwrap();
     fs::write(w.repo.join("fixture/Cargo.toml"), "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
     fs::write(w.repo.join("fixture/src/lib.rs"), "").unwrap();
-    sh(&w.repo, "git add . && git commit -qm crate && git checkout -qb units");
+    // The checkout is moved to `units`, and a remote-less repo's land ref falls back to HEAD;
+    // `local/main` keeps the diff's base at the commit before the tests whatever is checked out.
+    sh(&w.repo, "git add . && git commit -qm crate && git branch local/main && git checkout -qb units");
     let tests: String = FIXTURE_TESTS.iter().map(|t| format!("    #[test]\n    fn {}() {{}}\n", &t["tests::".len()..])).collect();
     fs::write(w.repo.join("fixture/src/lib.rs"), format!("#[cfg(test)]\nmod tests {{\n{tests}}}\n")).unwrap();
     sh(&w.repo, "git commit -qam tests");
@@ -2639,7 +2641,7 @@ fn a_tests_filter_on_a_diff_that_touches_no_crate_is_a_fault() {
     let w = unit_world("unit-filter-nocrate");
     let rt = runtime();
     let b = FakeBuilder::new(None);
-    sh(&w.repo, "git checkout -q main && git checkout -qb docs && echo x > notes.md && git add notes.md && git commit -qm docs");
+    sh(&w.repo, "git checkout -q local/main && git checkout -qb docs && echo x > notes.md && git add notes.md && git commit -qm docs");
     let rc = w.run(&rt, &b, &["--suites", "unit-tests", "--tests", "one_name", "docs"], "", &w.repo);
     assert_eq!(rc, 2);
     assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=tests-no-crates tests=one_name");
