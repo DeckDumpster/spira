@@ -248,6 +248,14 @@ ISO timestamps→`TIMESTAMP`, `HH:MM:SS`→`TIME`, `[0-9]{3,}`→`N`; then POSIX
   every executable directly under DIR, sorted by name. A prebuilt green therefore never
   replays for a different set of binaries (another build of the same tree, a different
   toolchain), nor for a cargo run. Without the flag the key line is byte-for-byte what it was.
+* Under `--tests` only, ` tests=<names>` is appended the same way.
+* When `unit-tests` is selected, ` unit-base=<merge base of landref and branch> unit-crates=<sorted
+  comma list>` is appended: one tree selects different crates over different bases, and a pass
+  over some crates says nothing about the others. A unit tier that selected **no** crate tested
+  nothing, so its verdict is neither read from nor written to the cache. An empty list is
+  believed only for a diff that touches no Rust: when `<landref>...<branch>` is empty (the base
+  is the tip) or touches a `*.rs` or `Cargo.toml`, the run is `FAULT rc=2 reason=unit-no-crates`,
+  logged with the base and the Rust paths.
 
 `$SPIRA_VERDICTS/batch-<key>`: `key=value` lines `verdict=green|red|partial`, `when=<ISO UTC>`,
 `by=testenv-batch`, `at=<epoch>`, `red_suites=<space list>` (red only),
@@ -256,7 +264,8 @@ only). Absent `verdict` = green (old files). `partial` = a deadline-cut green (D
 never a cache hit.
 Written only when `TTL > 0` and a key exists. A green within TTL exits 0 at once; a red
 within TTL exits 2 unless `SPIRA_VERDICT_REPEAT_CONSIDERED` is a ≥10-char sentence, which
-is then recorded as `override_reason` in the new verdict.
+is then recorded as `override_reason` in the new verdict. `--repeat-reason WHY` (its argument
+form) also runs a cached green again: the caller is saying it doubts the prior verdict.
 
 ### 3.4 `SuiteTimingRow` — run/tsd family `suite-timing`
 

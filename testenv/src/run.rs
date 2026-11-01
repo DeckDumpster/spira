@@ -1219,18 +1219,40 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         deps.log("no suites selected — nothing to do");
         return Finish::nothing();
     }
+    let mut unit_selection: Option<verdict::UnitSelection> = None;
     if crate::unit::selected(&selected) {
-        match crate::unit::write_crates(&repo.path, &base, br, &wt.path) {
+        let crates = match crate::unit::write_crates(&repo.path, &base, br, &wt.path) {
             Ok(c) if c.is_empty() && args.tests.is_some() => {
                 stderr("batch: --tests: the diff touches no crate, so no named test can run");
                 return Finish::fault(2, "tests-no-crates", 0);
             }
-            Ok(c) => deps.log(&format!("unit-tests: {} affected crate(s): {}", c.len(), c.join(" "))),
+            Ok(c) => {
+                deps.log(&format!("unit-tests: {} affected crate(s): {}", c.len(), c.join(" ")));
+                // law-absence-needs-a-positive-control: an empty list over a wrong base would
+                // pass having tested nothing.
+                match c.is_empty().then(|| crate::unit::no_crate_doubt(&repo.path, &base, br)) {
+                    Some(Ok(Some(why))) => {
+                        deps.log(&format!("unit-tests: the diff against {base} {why} — no verdict"));
+                        return Finish::fault(2, "unit-no-crates", 0);
+                    }
+                    Some(Err(e)) => {
+                        stderr(&format!("batch: unit-tests: {e}"));
+                        return Finish::fault(2, "unit-crates", 0);
+                    }
+                    _ => {}
+                }
+                c
+            }
             Err(e) => {
                 stderr(&format!("batch: unit-tests: {e}"));
                 return Finish::fault(2, "unit-crates", 0);
             }
-        }
+        };
+        let Ok(diff_base) = git(&repo.path, &["merge-base", &base, br]) else {
+            stderr(&format!("batch: unit-tests: no merge base of {base} and {br}"));
+            return Finish::fault(2, "unit-crates", 0);
+        };
+        unit_selection = Some(verdict::UnitSelection { base: diff_base, crates });
         if let Err(e) = crate::unit::write_filter(&wt.path, args.tests.as_deref()) {
             stderr(&format!("batch: unit-tests: {e}"));
             return Finish::fault(2, "unit-filter", 0);
@@ -1295,8 +1317,17 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         profile: key_profile.clone(),
         artifacts_id: prebuilt.as_ref().map(|p| p.id.clone()),
         tests: args.tests.as_ref().map(|t| t.join(",")),
+        unit: unit_selection.clone(),
     };
     let key = key_inputs.key();
+    // law-absence-needs-a-positive-control: a unit tier over no crate tested nothing, and a
+    // cached green from it would answer for a later run that does select crates.
+    let verdict_ttl = if unit_selection.as_ref().is_some_and(|u| u.crates.is_empty()) {
+        deps.log("unit-tests: no crate selected — this verdict is not cached");
+        0
+    } else {
+        s.verdict_ttl
+    };
     let results = s.results_root.join(&key);
     if let Err(e) = fs::create_dir_all(&results) {
         stderr(&format!("batch: cannot create {}: {e}", results.display()));
@@ -1366,8 +1397,9 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     match verdict::decide(
         prior.as_ref(),
         now_epoch(),
-        s.verdict_ttl,
+        verdict_ttl,
         args.repeat_reason.as_deref().or(s.repeat_reason.as_deref()),
+        args.repeat_reason.is_some(),
     ) {
         CacheDecision::Miss => {}
         CacheDecision::Green { when } => {
@@ -1855,7 +1887,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
                 (deps.out)(l);
             }
         }
-        if s.verdict_ttl > 0 {
+        if verdict_ttl > 0 {
             let _ = fs::create_dir_all(&s.verdicts);
             let f = VerdictFile::new(
                 Verdict::Red,
@@ -2428,7 +2460,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
                 (deps.out)(l);
             }
         }
-        if s.verdict_ttl > 0 {
+        if verdict_ttl > 0 {
             let _ = fs::create_dir_all(&s.verdicts);
             let f = VerdictFile::new(
                 Verdict::Red,
@@ -2455,7 +2487,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             first_red: first_red_case(&results, &reds),
         };
     }
-    if s.verdict_ttl > 0 {
+    if verdict_ttl > 0 {
         let _ = fs::create_dir_all(&s.verdicts);
         // A deadline-cut green is recorded as partial, never as a full green (D7).
         let mut f = VerdictFile::new(

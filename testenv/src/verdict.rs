@@ -37,6 +37,17 @@ pub struct KeyInputs {
     /// exactly as it was before the flag existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tests: Option<String>,
+    /// The unit-tests tier only: the commit its crate list was diffed from and that list,
+    /// sorted. One tree selects different crates over different bases, and a pass over some
+    /// crates says nothing about the others; None leaves every other key line as it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<UnitSelection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnitSelection {
+    pub base: String,
+    pub crates: Vec<String>,
 }
 
 impl KeyInputs {
@@ -64,7 +75,17 @@ impl KeyInputs {
     }
 
     fn tests_suffix(&self) -> String {
-        self.tests.as_deref().map(|t| format!(" tests={t}")).unwrap_or_default()
+        let tests = self.tests.as_deref().map(|t| format!(" tests={t}")).unwrap_or_default();
+        let unit = self
+            .unit
+            .as_ref()
+            .map(|u| {
+                let mut c = u.crates.clone();
+                c.sort();
+                format!(" unit-base={} unit-crates={}", u.base, c.join(","))
+            })
+            .unwrap_or_default();
+        format!("{tests}{unit}")
     }
 
     pub fn key(&self) -> String {
@@ -213,11 +234,14 @@ pub enum CacheDecision {
 
 pub const MIN_REPEAT_REASON: usize = 10;
 
+/// `rerun` is an explicit `--repeat-reason`: the caller doubts the prior verdict, so a cached
+/// green is run again too, where the ambient variable only lifts a refused red.
 pub fn decide(
     file: Option<&VerdictFile>,
     now: u64,
     ttl: u64,
     repeat_reason: Option<&str>,
+    rerun: bool,
 ) -> CacheDecision {
     if ttl == 0 {
         return CacheDecision::Miss;
@@ -233,6 +257,9 @@ pub fn decide(
     }
     let when = f.when.clone().unwrap_or_else(|| "unknown".into());
     match f.verdict.unwrap_or(Verdict::Green) {
+        Verdict::Green if rerun => CacheDecision::RepeatAllowed {
+            reason: repeat_reason.unwrap_or_default().to_string(),
+        },
         Verdict::Green => CacheDecision::Green { when },
         // A deadline-cut green proves only the suites that finished: run the key again.
         Verdict::Partial => CacheDecision::Miss,
@@ -271,6 +298,7 @@ mod tests {
             profile: "dwarf".into(),
             artifacts_id: None,
             tests: None,
+            unit: None,
         }
     }
 
@@ -330,6 +358,34 @@ mod tests {
     }
 
     #[test]
+    fn a_unit_selection_moves_the_key_by_base_and_crate_set_and_not_by_crate_order() {
+        let v = inputs();
+        let unit = |base: &str, crates: &[&str]| KeyInputs {
+            unit: Some(UnitSelection { base: base.into(), crates: crates.iter().map(|c| c.to_string()).collect() }),
+            ..inputs()
+        };
+        assert_ne!(v.key(), unit("b1", &["a"]).key());
+        assert_ne!(unit("b1", &["a"]).key(), unit("b1", &["a", "b"]).key());
+        assert_ne!(unit("b1", &["a"]).key(), unit("b2", &["a"]).key());
+        assert_ne!(unit("b1", &["a"]).key(), unit("b1", &[]).key());
+        assert_eq!(unit("b1", &["a", "b"]).key(), unit("b1", &["b", "a"]).key());
+    }
+
+    #[test]
+    fn a_rerun_runs_a_cached_green_again_and_carries_its_reason() {
+        let f = VerdictFile::parse("verdict=green
+when=w
+at=100
+");
+        assert_eq!(
+            decide(Some(&f), 150, 86400, Some("doubt it"), true),
+            CacheDecision::RepeatAllowed { reason: "doubt it".into() }
+        );
+        // the ambient variable alone still serves the green
+        assert_eq!(decide(Some(&f), 150, 86400, Some("a long enough reason"), false), CacheDecision::Green { when: "w".into() });
+    }
+
+    #[test]
     fn selection_hash_matches_sha256sum_of_sorted_lines() {
         // printf 'test-a.sh\ntest-b.sh\n' | sha256sum
         assert_eq!(
@@ -360,9 +416,9 @@ mod tests {
         assert!(text.starts_with("verdict=partial\n"));
         assert!(text.contains("deferred_suites=test-p.sh test-z.sh\n"));
         assert_eq!(VerdictFile::parse(&text), f);
-        assert_eq!(decide(Some(&f), 150, 86400, None), CacheDecision::Miss);
+        assert_eq!(decide(Some(&f), 150, 86400, None, false), CacheDecision::Miss);
         assert_eq!(
-            decide(Some(&f), 150, 86400, Some("a long enough reason")),
+            decide(Some(&f), 150, 86400, Some("a long enough reason"), false),
             CacheDecision::Miss
         );
     }
@@ -371,7 +427,7 @@ mod tests {
     fn old_green_only_files_read_green() {
         let f = VerdictFile::parse("when=x\nat=100\n");
         assert_eq!(
-            decide(Some(&f), 150, 86400, None),
+            decide(Some(&f), 150, 86400, None, false),
             CacheDecision::Green { when: "x".into() }
         );
     }
@@ -379,18 +435,19 @@ mod tests {
     #[test]
     fn ttl_zero_or_expired_or_missing_is_a_miss() {
         let f = VerdictFile::parse("verdict=green\nat=100\n");
-        assert_eq!(decide(Some(&f), 150, 0, None), CacheDecision::Miss);
+        assert_eq!(decide(Some(&f), 150, 0, None, false), CacheDecision::Miss);
         assert_eq!(
-            decide(Some(&f), 100 + 86400, 86400, None),
+            decide(Some(&f), 100 + 86400, 86400, None, false),
             CacheDecision::Miss
         );
-        assert_eq!(decide(None, 150, 86400, None), CacheDecision::Miss);
+        assert_eq!(decide(None, 150, 86400, None, false), CacheDecision::Miss);
         assert_eq!(
             decide(
                 Some(&VerdictFile::parse("verdict=green\n")),
                 150,
                 86400,
-                None
+                None,
+                false
             ),
             CacheDecision::Miss
         );
@@ -401,7 +458,7 @@ mod tests {
         let f = VerdictFile::parse(
             "verdict=red\nwhen=w\nat=100\nred_suites=test-a.sh\nconcierge_notified=120\n",
         );
-        match decide(Some(&f), 150, 86400, Some("short")) {
+        match decide(Some(&f), 150, 86400, Some("short"), false) {
             CacheDecision::RepeatRefused {
                 short_reason,
                 already_notified,
@@ -415,7 +472,7 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(
-            decide(Some(&f), 150, 86400, Some("runner was destroyed")),
+            decide(Some(&f), 150, 86400, Some("runner was destroyed"), false),
             CacheDecision::RepeatAllowed {
                 reason: "runner was destroyed".into()
             }
