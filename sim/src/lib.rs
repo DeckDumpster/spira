@@ -3,6 +3,7 @@
 
 pub mod actors;
 pub mod fit;
+pub mod replay;
 pub mod units;
 
 use runtime::ports::{Clock, VirtualClock};
