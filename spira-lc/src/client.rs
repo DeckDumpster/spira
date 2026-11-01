@@ -128,7 +128,7 @@ mod tests {
     /// reads the caller's own bd, git and ledger files (see try_socket).
     #[test]
     fn admin_verbs_never_go_through_the_socket() {
-        for verb in ["admin-apply-ddl", "admin-migrate", "admin-accounts", "verify-login", "serve", "classify"] {
+        for verb in ["admin-apply-ddl", "admin-create-store", "admin-migrate", "admin-accounts", "verify-login", "serve", "classify"] {
             assert!(super::try_socket(&[verb.to_string(), "/x".to_string()]).is_none(), "{verb}");
         }
     }

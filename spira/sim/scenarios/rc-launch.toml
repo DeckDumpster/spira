@@ -2,7 +2,7 @@
 # pass` beside a hand `round-controller launch` of a round leased under token 1-0 on slot
 # proxmox/0. The launcher calls the world's SPIRA_LAUNCH, the sim's systemd stub, which records the
 # unit and runs the runner inline: the unit is named with the lease token, and the runner, whose
-# first renewal the doorless store refuses, exits 7 inside it.
+# first renewal the world's control store refuses with no round rc-b1 under it, exits 9 inside it.
 epoch = 1800000000
 horizon = 150000
 real_actors = ["round-controller"]
@@ -37,4 +37,4 @@ sql = "SELECT 1 FROM run_units WHERE name = 'round-controller-run-rc-b1-1-0'"
 
 [[expect]]
 name = "rc_runner_ran_inside_the_unit"
-sql = "SELECT 1 FROM run_units WHERE name = 'round-controller-run-rc-b1-1-0' AND state = 'inactive' AND exit = '7'"
+sql = "SELECT 1 FROM run_units WHERE name = 'round-controller-run-rc-b1-1-0' AND state = 'inactive' AND exit = '9'"

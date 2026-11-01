@@ -7,7 +7,7 @@
 #
 # test-sim-rc-runner-lease-loss.sh — the round controller's world twin of lease-lost-kills-vm.
 # rc-runner-lease-loss runs `round-controller run` in a sim world under the fixed seed list beside
-# the sim-only pass: a runner whose first renewal is refused exits 7, starts no round VM and leaves
+# the sim-only pass: a runner whose first renewal is refused, with no round under it, exits 9, starts no round VM and leaves
 # the world's run state untouched.
 #
 #   CONTROL: the same scenario expecting the runner to have recorded a pass (exit 0) fails naming

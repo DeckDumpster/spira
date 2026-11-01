@@ -1,8 +1,8 @@
 # The round controller's world twin of its lease-lost-kills-vm scenario: the sim-only actor runs
-# `round-controller pass` beside a runner handed a lease and a slot it cannot renew, because the
-# control-plane store has no door yet. The runner treats the refused first renewal as a lost lease:
-# it exits 7, starts no round VM on the world's stub round-vm, writes no attempt, and leaves the
-# world's run state untouched.
+# `round-controller pass` beside a runner handed a lease and a slot it cannot renew: the world's
+# control store holds no such lease and no round rc-b1. The runner treats the refused first renewal
+# as a lost lease and, finding no round under it, as superseded: it exits 9, starts no round VM on
+# the world's stub round-vm, writes no attempt, and leaves the world's run state untouched.
 epoch = 1800000000
 horizon = 150000
 real_actors = ["round-controller"]
@@ -21,7 +21,7 @@ sql = "SELECT seq, exit FROM events WHERE actor = 'round-controller' AND kind = 
 
 [[invariant]]
 name = "rc_runner_did_not_lose_its_lease"
-sql = "SELECT seq, exit FROM events WHERE actor = 'rc-runner' AND kind = 'complete' AND exit <> 7"
+sql = "SELECT seq, exit FROM events WHERE actor = 'rc-runner' AND kind = 'complete' AND exit <> 9"
 
 [[invariant]]
 name = "rc_changed_run_state"
@@ -29,4 +29,4 @@ sql = "SELECT seq, 'queue' AS family, key AS what FROM run_queue UNION ALL SELEC
 
 [[expect]]
 name = "rc_runner_ran_and_lost_its_lease"
-sql = "SELECT 1 FROM events WHERE actor = 'rc-runner' AND kind = 'complete' AND exit = 7"
+sql = "SELECT 1 FROM events WHERE actor = 'rc-runner' AND kind = 'complete' AND exit = 9"
