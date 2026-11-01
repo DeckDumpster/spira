@@ -85,7 +85,8 @@ impl Runner {
             let res = Resource::round(&self.script.repo, &self.script.batch);
             match acquire(p, &res, "round-controller-run") {
                 Ok(l) => {
-                    let unit = unit_name(&self.script.batch, l.token());
+                    let unit = unit_name(&self.script.batch, l.token())
+                        .expect("a scripted runner's batch names a unit");
                     b.units.set(&unit, UnitState::Running("active".into()));
                     b.vms.set(
                         &unit,

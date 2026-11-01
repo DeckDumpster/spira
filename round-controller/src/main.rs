@@ -9,16 +9,17 @@ use round_controller::cut;
 use round_controller::liveness::LeaseSettings;
 use round_controller::outcome::StdoutLog;
 use round_controller::pass::pass;
-use round_controller::ports::Ports;
+use round_controller::ports::{Launched, Ports};
 use round_controller::probe::{probe, ThreadSleep};
 use round_controller::real::child::SysSpawn;
-use round_controller::real::liveness::{NoLauncher, NoVmRecords, SystemdUnits};
+use round_controller::real::launch::{Programs, Systemd, SystemdUnits};
+use round_controller::real::liveness::NoVmRecords;
 use round_controller::real::verbs::{Deadlines, RealVerbs};
 use round_controller::real::vm_runner::{Repo, VmEnv, VmRunner};
 use round_controller::real::{self, Unserved};
 use round_controller::resources::RoundView;
 use round_controller::run::{self, RunDir, RunEnv};
-use round_controller::slots::{self, SlotSettings};
+use round_controller::slots::{self, SlotGrant, SlotSettings};
 use round_controller::telemetry;
 use runtime::ports::{Proc, SeededRng, SysProc};
 
@@ -28,6 +29,8 @@ const USAGE: &str = "usage: round-controller <verb>
   cut --repo <r> --members <id@tip,...>     open one round of exactly these members, refused through the ledger
   run --repo <r> --batch <b> --lease-token <t> --slot <pool>/<n> --slot-token <s>
                                             one pass and its Judge under the round lease and the slot pass handed over
+  launch --repo <r> --batch <b> --lease-token <t> --slot <pool>/<n> --slot-token <s>
+                                            start that run as the transient unit round-controller-run-<batch>-<lease-token>
   lease probe --secs <n> --out <file>       renew a lease of its own for n seconds and write each renewal's lateness
   version                                   print the version
   -h, --help";
@@ -77,6 +80,34 @@ fn dispatch(args: &[String]) -> i32 {
                 Err(e) => {
                     eprintln!("round-controller run: {e}");
                     run::RunEnd::Refused { why: e }.code()
+                }
+            },
+        },
+        ["launch", rest @ ..] => match run::parse_args(rest) {
+            Err(e) => {
+                eprintln!("round-controller launch: {e}\n{USAGE}");
+                2
+            }
+            // A hand launch records no unit under the slot; the runner records its own first.
+            Ok(a) => match with_ports(|p| {
+                let slot = SlotGrant::handed(p, a.slot, a.slot_token);
+                Ok(p.launcher.start(p, &a.repo, &a.batch, a.lease, &slot))
+            }) {
+                Ok(Launched::Started { unit }) => {
+                    println!("unit={unit}\nlaunched=started");
+                    0
+                }
+                Ok(Launched::Running { unit }) => {
+                    println!("unit={unit}\nlaunched=running");
+                    0
+                }
+                Ok(Launched::Failed { text }) => {
+                    eprintln!("round-controller launch: {}", text.trim_end());
+                    1
+                }
+                Err(e) => {
+                    eprintln!("round-controller launch: {e}");
+                    2
                 }
             },
         },
@@ -210,7 +241,19 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
         },
         spira_config::resolve::run_dir_for_process().ok(),
     );
-    let units = SystemdUnits { proc_: &*proc_ };
+    let programs = Programs::from_env(&|k| std::env::var(k).ok());
+    let units = SystemdUnits {
+        proc_: &*proc_,
+        ctl: programs.ctl.clone(),
+    };
+    let launcher = Systemd {
+        programs,
+        exe: spira_config::release_env::tool("round-controller"),
+        toml: spira_config::process::spec()?,
+        release: std::env::var(spira_config::RELEASE_ENV)
+            .ok()
+            .filter(|r| !r.is_empty()),
+    };
     let ports = Ports {
         clock: &*clock,
         proc_: &*proc_,
@@ -221,7 +264,7 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
         log: &StdoutLog,
         units: &units,
         vms: &NoVmRecords,
-        launcher: &NoLauncher,
+        launcher: &launcher,
         leases: &leases,
         slots: &slot_settings,
     };

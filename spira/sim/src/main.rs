@@ -5,6 +5,7 @@ use std::path::PathBuf;
 const USAGE: &str = "usage: sim world up <dir> [--tree <rev>] [--repo <name>:<mode>[:<trunk>]]...\n       sim world seed [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario|name> [--seed N] [--world <dir>] [--keep] [--repo <name>:<mode>[:<trunk>]]...\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>
        sim proc-summary <world|proc-trace.log>
        sim call <systemd-run argv ending in: dwarf --home H <rune>>   (also: invoked as sim-call)
+       sim launch <systemd-run argv | --user is-active <unit>>   (also: invoked as sim-launch)
        sim ci run <workflow.yml> <job> --sha <sha> --workspace <dir> [--skip <step name>]... [--path <dir>]... [--env KEY=VALUE]...";
 
 fn main() {
@@ -20,8 +21,14 @@ fn main() {
     if invoked_as.as_deref() == Some(world::CALL_TOOL) {
         args.insert(0, "call".to_string());
     }
+    if invoked_as.as_deref() == Some(world::LAUNCH_TOOL) {
+        args.insert(0, "launch".to_string());
+    }
     let op = args.first().map(String::as_str).unwrap_or("usage").to_string();
     spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-sim", &op);
+    if op == "launch" {
+        spira_otel::oneshot::exit(launch_main(&args[1..], &|k| std::env::var(k).ok()));
+    }
     let code = match run(&args) {
         Ok(()) => 0,
         Err(e) => {
@@ -143,6 +150,28 @@ fn ci_main(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<(), 
     let code = run_job(&j, &sim, |l| print!("{l}"))?;
     let _ = std::fs::remove_dir_all(&scratch);
     if code == 0 { Ok(()) } else { Err(format!("job {job} failed with exit {code}")) }
+}
+
+/// `sim-launch`: systemd-run or systemctl is-active against the world's recorded units.
+fn launch_main(argv: &[String], env: &dyn Fn(&str) -> Option<String>) -> i32 {
+    let answered = env(spira_sim::roundvm::WORLD_ENV)
+        .filter(|v| !v.is_empty())
+        .ok_or(format!("{} is not set: sim launch answers only inside a world", spira_sim::roundvm::WORLD_ENV))
+        .and_then(|w| {
+            let call = spira_sim::launch::parse(argv)?;
+            spira_sim::launch::answer(&PathBuf::from(w).join("run").join(spira_sim::launch::UNITS_DIR), &call)
+        });
+    match answered {
+        Ok(said) => {
+            print!("{}", said.out);
+            eprint!("{}", said.err);
+            said.code
+        }
+        Err(e) => {
+            eprintln!("sim launch: {e}");
+            1
+        }
+    }
 }
 
 fn call_main(env: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {

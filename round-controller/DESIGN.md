@@ -122,8 +122,9 @@ counts.
   `marks_stop_secs` (a hung child) and `hangs_secs` (a hung runner): a runner that takes the
   round's lease and renews it through the library every TTL/3, gated on its marks. When the gate
   shuts or a renewal is refused it tears down; a hung one stays alive.
-- `[[unit]]` — `name`, `state` (an `is-active` word, or `unreadable`); a unit never named is one
-  systemd does not know. `[[vm_fact]]` — `unit`, `fact` (`none`, `running`, `unreadable`,
+- `[[unit]]` — `name`, `state` (an `is-active` word, or `unreadable`), optional `until` (epoch
+  seconds) from which systemd no longer knows it; a unit never named is one systemd does not
+  know. `[[vm_fact]]` — `unit`, `fact` (`none`, `running`, `unreadable`,
   `ec2-unreadable` with `launched_at` in epoch seconds), optional `until` (epoch seconds) from
   which the VM is gone. `[[launch]]` — `ok = true` or
   `refuse = "<why>"`, answered in order; an unscripted launch is a fault.
@@ -135,7 +136,7 @@ counts.
   runner slot through `slots::grant`, records its unit and VM, renews every TTL/3, and tears its
   VM down before it releases. A slot it loses while holding is an unscripted fault.
 - `[[expect]]` — `name`, `count` (`calls`, `calls:<verb>`, `outcomes`, `outcomes:<kind>`,
-  `store-writes`, `vm-runs`, `lock-hold-ms`, `launches`, `renewals`, `redrive-attempts`,
+  `store-writes`, `vm-runs`, `lock-hold-ms`, `launches`, `launches:<unit>`, `renewals`, `redrive-attempts`,
   `first-orphan-secs`, `slot-grants[:<pool>]`, `slot-refusals[:hand]`,
   `refusals-naming-holder` (refusals naming the holder of every slot not given back),
   `vms-at-once[:<pool>]`, `first-grant-secs`), exactly one of `equals` and `at_most`, optional
@@ -149,6 +150,18 @@ pass or spawn, a pass started with no free runner slot, or a pass over its cap.
 
 `scenarios/profiles.toml` holds `default` and `reference-minimum`; every scenario runs under
 both.
+
+## Launcher
+
+A runner is the transient user unit `round-controller-run-<batch>-<lease-token>`
+(`death::unit_name`, which refuses a batch `round-recert` would refuse). A re-drive takes a new
+lease, so its unit never shares a name with the old runner's, and proof of death reads the old
+name. `real::launch::start` runs `systemd-run --user --unit=… --collect --quiet` with only
+`SPIRA_TOML` and `SPIRA_RELEASE` set, then `round-controller run` with both tokens; a non-zero
+`systemd-run` is `Failed` with its text whole unless `is-active` shows the unit running.
+`SPIRA_LAUNCH` and `SPIRA_LAUNCH_CTL` name the programs standing for `systemd-run` and
+`systemctl`; a world sets both to `sim-launch`. A re-drive grants a slot, takes the lease,
+records the unit under the slot, then launches; a failed launch gives both back and is recorded.
 
 ## Slots
 

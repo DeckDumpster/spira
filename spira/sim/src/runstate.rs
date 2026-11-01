@@ -1,5 +1,5 @@
 //! The world's `run/` directory as trace tables: one table per family of files the harness keeps
-//! there. A state family (`run_verdicts`, `run_queue`, `run_ejected`, `run_locks`) is the whole
+//! there. A state family (`run_verdicts`, `run_queue`, `run_ejected`, `run_locks`, `run_units`) is the whole
 //! family at each snapshot; a log family (`run_gate_log`, `run_landing_log`) is each line once,
 //! at the snapshot that first saw it.
 
@@ -22,6 +22,7 @@ pub const TABLES: &[Table] = &[
     Table { name: "run_queue", columns: &[("repo", "VARCHAR"), ("file", "VARCHAR"), ("key", "VARCHAR"), ("value", "VARCHAR")], log: false },
     Table { name: "run_ejected", columns: &[("bead", "VARCHAR"), ("suites", "VARCHAR")], log: false },
     Table { name: "run_locks", columns: &[("name", "VARCHAR"), ("holder", "VARCHAR"), ("held", "BOOLEAN")], log: false },
+    Table { name: "run_units", columns: &[("name", "VARCHAR"), ("state", "VARCHAR"), ("exit", "VARCHAR")], log: false },
     Table {
         name: "run_gate_log",
         columns: &[("line", "BIGINT"), ("ts", "VARCHAR"), ("repo", "VARCHAR"), ("branch", "VARCHAR"), ("rc", "INTEGER"), ("text", "VARCHAR")],
@@ -75,6 +76,12 @@ pub fn verdict_row(key: &str, text: &str) -> Value {
     let get = |k: &str| lookup(&p, k).map(str::to_string);
     json!({"key": key, "repo": get("repo"), "branch": get("branch"), "stamped": get("at").and_then(|a| a.parse::<i64>().ok()),
            "suites": get("suites"), "compose": get("compose"), "certified_by": get("by")})
+}
+
+/// A unit `sim-launch` recorded: its state on the first line, and `exit=` once it ran.
+pub fn unit_row(name: &str, text: &str) -> Value {
+    let state = text.lines().next().unwrap_or_default();
+    json!({"name": name, "state": state, "exit": lookup(&kv(text), "exit")})
 }
 
 /// `<ts> <repo> <branch> waited=.. ran=.. rc=N ...`
@@ -186,6 +193,9 @@ pub fn read(run: &Path, proc_locks: &str) -> Vec<(&'static str, Value)> {
         let is_held = std::fs::metadata(&path).is_ok_and(|m| held.contains(&m.ino()));
         let holder = holder_of(&std::fs::read_to_string(&path).unwrap_or_default());
         out.push(("run_locks", json!({"name": name, "holder": holder, "held": is_held})));
+    }
+    for (name, path) in files(&run.join(crate::launch::UNITS_DIR)) {
+        out.push(("run_units", unit_row(&name, &std::fs::read_to_string(path).unwrap_or_default())));
     }
     for (i, l) in lines_of(&run.join("gate.log")).iter().enumerate() {
         out.push(("run_gate_log", gate_log_row(i + 1, l)));

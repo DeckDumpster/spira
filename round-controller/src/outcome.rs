@@ -32,6 +32,8 @@ pub enum Kind {
     RedriveWaiting,
     /// An orphan whose old runner is not proven dead: held.
     PriorRunnerAlive,
+    /// An orphan proven dead with no runner slot free to re-drive it on.
+    RedriveNoSlot,
     RedriveExhausted,
     StoreRefused,
     /// A step withheld its act for a typed cause, which [`Cause::Refusal`] keys.
@@ -49,6 +51,7 @@ impl Kind {
             Kind::RedriveFailed,
             Kind::RedriveWaiting,
             Kind::PriorRunnerAlive,
+            Kind::RedriveNoSlot,
             Kind::RedriveExhausted,
             Kind::StoreRefused,
             Kind::Declined,
@@ -66,6 +69,7 @@ impl Kind {
             Kind::RedriveFailed => "redrive-failed",
             Kind::RedriveWaiting => "redrive-waiting",
             Kind::PriorRunnerAlive => "prior-runner-alive",
+            Kind::RedriveNoSlot => "redrive-no-slot",
             Kind::RedriveExhausted => "redrive-exhausted",
             Kind::StoreRefused => "store-refused",
             Kind::Did(a) => match a.0 {
@@ -245,6 +249,7 @@ impl Outcome {
                 format!("backing off until {}", utc_stamp(*until_ms)),
             ),
             Redrive::PriorRunnerAlive { why } => (Kind::PriorRunnerAlive, why.clone()),
+            Redrive::NoSlot { why } => (Kind::RedriveNoSlot, why.clone()),
             Redrive::Exhausted { failures } => (
                 Kind::RedriveExhausted,
                 format!("{failures} failed launches"),
@@ -366,7 +371,7 @@ mod tests {
     #[test]
     fn every_kind_has_its_own_word() {
         let words: std::collections::BTreeSet<&str> = Kind::words().into_iter().collect();
-        assert_eq!(words.len(), Verb::ALL.len() + 9);
+        assert_eq!(words.len(), Verb::ALL.len() + 10);
         assert!(
             words.contains("visited")
                 && words.contains("refused")
@@ -402,6 +407,9 @@ mod tests {
         assert!(line(Redrive::PriorRunnerAlive { why: "w".into() })
             .unwrap()
             .contains("prior-runner-alive orphan"));
+        assert!(line(Redrive::NoSlot { why: "n".into() })
+            .unwrap()
+            .contains("redrive-no-slot orphan"));
         assert!(line(Redrive::Exhausted { failures: 3 })
             .unwrap()
             .contains("text=\"3 failed launches\""));

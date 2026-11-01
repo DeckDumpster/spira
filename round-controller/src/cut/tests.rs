@@ -73,13 +73,13 @@ impl World {
             .unwrap();
         let w = World {
             vms: crate::sim::bench::FakeVms::new(clock.clone()),
+            units: crate::sim::bench::FakeUnits::new(clock.clone()),
             clock,
             store,
             rng: Mutex::new(SeededRng::new(1)),
             log: MemLog::default(),
             verbs,
             slot: SlotGrant::of_fence(slot, fence),
-            units: crate::sim::bench::FakeUnits::default(),
             launch: crate::sim::bench::FakeLaunch::default(),
             leases: crate::sim::bench::bench_settings(),
             slots: crate::sim::bench::bench_slot_settings(),

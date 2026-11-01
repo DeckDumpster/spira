@@ -1,6 +1,7 @@
 //! The ports' production implementations.
 
 pub mod child;
+pub mod launch;
 pub mod liveness;
 pub mod verbs;
 pub mod vm_runner;

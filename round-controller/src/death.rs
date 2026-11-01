@@ -6,10 +6,25 @@ use state_store::Rev;
 
 use crate::ports::Ports;
 
+/// A word a unit name may carry: the rule `release round-recert` applies to its own, so a name
+/// systemd would mangle or read as an option is refused before anything is launched under it.
+pub fn valid_token(s: &str) -> bool {
+    !s.is_empty()
+        && !s.starts_with(['-', '.'])
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+}
+
 /// The runner of `batch` under lease `token`. A re-drive takes a new token, so two re-drives of
 /// one batch never share a unit name.
-pub fn unit_name(batch: &str, token: Rev) -> String {
-    format!("round-controller-run-{batch}-{}-{}", token.main, token.sub)
+pub fn unit_name(batch: &str, token: Rev) -> Result<String, String> {
+    let token = crate::lease::token_word(token);
+    for (what, w) in [("batch", batch), ("lease token", token.as_str())] {
+        if !valid_token(w) {
+            return Err(format!("{what} {w:?} cannot name a unit"));
+        }
+    }
+    Ok(format!("round-controller-run-{batch}-{token}"))
 }
 
 /// A lease's past holder: the runner launched for `batch` under `token`.
@@ -21,7 +36,7 @@ pub struct Holder {
 }
 
 impl Holder {
-    pub fn unit(&self) -> String {
+    pub fn unit(&self) -> Result<String, String> {
         unit_name(&self.batch, self.token)
     }
 }
@@ -87,7 +102,10 @@ pub enum Proof {
 }
 
 pub fn prove_dead(p: &Ports, old: &Holder) -> Proof {
-    prove_runner_dead(p, &old.unit(), || p.vms.vm_of(old))
+    match old.unit() {
+        Ok(unit) => prove_runner_dead(p, &unit, || p.vms.vm_of(old)),
+        Err(why) => Proof::Unknown { why },
+    }
 }
 
 /// [`prove_dead`] for any runner unit; `vm` is asked only once the unit is shown stopped.
@@ -150,13 +168,32 @@ mod tests {
 
     #[test]
     fn unit_names_carry_the_token_so_two_redrives_of_one_batch_never_share_one() {
-        assert_eq!(old().unit(), "round-controller-run-b1-7-0");
+        assert_eq!(old().unit().unwrap(), "round-controller-run-b1-7-0");
         let names: std::collections::BTreeSet<String> =
             [Rev::new(7, 0), Rev::new(9, 0), Rev::new(9, 1)]
                 .into_iter()
-                .map(|t| unit_name("b1", t))
+                .map(|t| unit_name("b1", t).unwrap())
                 .collect();
         assert_eq!(names.len(), 3);
+    }
+
+    #[test]
+    fn a_batch_round_recert_would_refuse_names_no_unit_and_holds_its_proof() {
+        for bad in ["", "-b", ".b", "b 1", "b/1", "b;rm"] {
+            let e = unit_name(bad, Rev::new(7, 0)).unwrap_err();
+            assert!(e.contains("cannot name a unit"), "{bad:?}: {e}");
+        }
+        for good in ["b1", "rc_b.2", "20261101T0000Z-a"] {
+            assert!(unit_name(good, Rev::new(7, 0)).is_ok(), "{good:?}");
+        }
+        let h = Holder {
+            batch: "b 1".into(),
+            ..old()
+        };
+        assert!(matches!(
+            prove_dead(&Bench::new().ports(), &h),
+            Proof::Unknown { why } if why.contains("cannot name a unit")
+        ));
     }
 
     #[test]
@@ -189,7 +226,7 @@ mod tests {
     fn a_stopped_unit_and_no_vm_is_proof() {
         let b = Bench::new();
         b.units
-            .set(&old().unit(), UnitState::Stopped("inactive".into()));
+            .set(&old().unit().unwrap(), UnitState::Stopped("inactive".into()));
         assert_eq!(
             prove_dead(&b.ports(), &old()),
             Proof::Dead {
@@ -201,7 +238,7 @@ mod tests {
     #[test]
     fn a_running_or_unreadable_unit_or_vm_holds() {
         let b = Bench::new();
-        let u = old().unit();
+        let u = old().unit().unwrap();
         let why = |b: &Bench| match prove_dead(&b.ports(), &old()) {
             Proof::Unknown { why } => why,
             d => panic!("not held: {d:?}"),
@@ -226,7 +263,7 @@ mod tests {
     #[test]
     fn an_unreadable_ec2_instance_is_dead_only_past_its_lifetime_deadline() {
         let b = Bench::new();
-        let u = old().unit();
+        let u = old().unit().unwrap();
         b.units.set(&u, UnitState::Stopped("inactive".into()));
         let now = runtime::ports::Clock::now_ms(&b.clock);
         let life = b.ports().leases.ec2_max_lifetime_ms;

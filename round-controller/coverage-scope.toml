@@ -40,3 +40,12 @@ functions = ["Stack::of", "Stack::place"]
 [[scope]]
 path = "round-controller/src/run.rs"
 functions = ["run", "main_pass", "kill_child", "Keeper::tick", "Guard::launch", "Guard::wait", "pass_result", "setup_phase"]
+
+# The launcher: the systemd-run call and its failure path, the is-active mapping, and the unit name.
+[[scope]]
+path = "round-controller/src/real/launch.rs"
+functions = ["start", "is_active"]
+
+[[scope]]
+path = "round-controller/src/death.rs"
+functions = ["unit_name"]

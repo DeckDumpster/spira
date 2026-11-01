@@ -152,6 +152,8 @@ pub enum Count {
     Summary(String),
     /// Runner launches tried, started or not.
     Launches,
+    /// `launches:<unit>`: runner launches tried under exactly that unit name.
+    LaunchesOf(String),
     /// Lease renewals the scripted runners made.
     Renewals,
     /// Attempts recorded under every `batches/<repo>/<id>/redrive`.
@@ -223,6 +225,9 @@ impl Count {
                 ids.get(n).map(|id| Count::Summary(summary_key(id)))
             }
             ("launches", None) => Some(Count::Launches),
+            ("launches", Some(u)) if u.starts_with("round-controller-run-") => {
+                Some(Count::LaunchesOf(u.to_string()))
+            }
             ("renewals", None) => Some(Count::Renewals),
             ("redrive-attempts", None) => Some(Count::RedriveAttempts),
             ("first-orphan-secs", None) => Some(Count::FirstOrphanSecs),
@@ -339,12 +344,15 @@ impl LeaseSpec {
     }
 }
 
-/// A unit's `is-active` state, or `unreadable`.
+/// A unit's `is-active` state, or `unreadable`; `until`, in epoch seconds, is when systemd stops
+/// knowing it.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UnitSeed {
     pub name: String,
     pub state: String,
+    #[serde(default)]
+    pub until: Option<u64>,
 }
 
 /// What round-vm says of a unit's VM: `none`, `running`, `unreadable`, or `ec2-unreadable` with
@@ -476,7 +484,8 @@ pub struct Scenario {
     pub verbs: Vec<VerbScript>,
     pub vm: Vec<VmScript>,
     pub runners: Vec<RunnerScript>,
-    pub units: Vec<(String, UnitState)>,
+    /// Each unit's state, and the epoch milliseconds from which systemd no longer knows it.
+    pub units: Vec<(String, UnitState, Option<u64>)>,
     /// Each unit's VM fact, and the epoch milliseconds from which its VM is gone.
     pub vm_facts: Vec<(String, VmFact, Option<u64>)>,
     pub launches: Vec<Result<(), String>>,
@@ -547,7 +556,7 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
                 "unreadable" => UnitState::Unreadable("scripted".into()),
                 s => UnitState::from_is_active(s),
             };
-            (u.name, s)
+            (u.name, s, u.until.map(|t| t * 1000))
         })
         .collect();
     let vm_facts = f
@@ -638,8 +647,8 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
             )
             .map_err(|e| format!("store seed {}: {e}", s.key))?;
     }
-    for (u, s) in &sc.units {
-        b.units.set(u, s.clone());
+    for (u, s, until) in &sc.units {
+        b.units.set_until(u, s.clone(), *until);
     }
     for (u, f, until) in &sc.vm_facts {
         b.vms.set_until(u, f.clone(), *until);
@@ -806,6 +815,7 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
                 .and_then(|i| i.value.data.get("attempts").and_then(|a| a.as_u64()))
                 .unwrap_or(0),
             Count::Launches => b.launch.launched().len() as u64,
+            Count::LaunchesOf(u) => b.launch.launched().iter().filter(|l| *l == u).count() as u64,
             Count::Renewals => runners.iter().map(|r| r.renewals).sum(),
             Count::RedriveAttempts => redrive_attempts(&b),
             Count::SlotGrants(pool) => users
@@ -1471,7 +1481,7 @@ mod tests {
     #[test]
     fn units_vm_facts_and_launches_are_scripted_and_a_malformed_one_is_named() {
         let sc = parse(&format!(
-            "{BASE}[[unit]]\nname = \"u1\"\nstate = \"active\"\n[[unit]]\nname = \"u2\"\nstate = \"unreadable\"\n\
+            "{BASE}[[unit]]\nname = \"u1\"\nstate = \"active\"\nuntil = 1800000090\n[[unit]]\nname = \"u2\"\nstate = \"unreadable\"\n\
              [[vm_fact]]\nunit = \"u1\"\nfact = \"none\"\n[[vm_fact]]\nunit = \"u2\"\nfact = \"running\"\n\
              [[vm_fact]]\nunit = \"u3\"\nfact = \"unreadable\"\n[[vm_fact]]\nunit = \"u4\"\nfact = \"ec2-unreadable\"\nlaunched_at = 9\n\
              [[launch]]\nok = true\n[[launch]]\nrefuse = \"no\"\n"
@@ -1480,8 +1490,16 @@ mod tests {
         assert_eq!(
             sc.units,
             [
-                ("u1".to_string(), UnitState::Running("active".into())),
-                ("u2".to_string(), UnitState::Unreadable("scripted".into()))
+                (
+                    "u1".to_string(),
+                    UnitState::Running("active".into()),
+                    Some(1_800_000_090_000)
+                ),
+                (
+                    "u2".to_string(),
+                    UnitState::Unreadable("scripted".into()),
+                    None
+                )
             ]
         );
         assert_eq!(sc.vm_facts[0].1, VmFact::NoVm);

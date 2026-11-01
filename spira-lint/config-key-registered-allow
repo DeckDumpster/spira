@@ -498,7 +498,9 @@ SPIRA_LAPSED_DIR watchtower/src/main.rs
 SPIRA_LAPSED_MARKER watchtower/src/main.rs
 SPIRA_LAUNCH release/src/canary.rs
 SPIRA_LAUNCH release/src/stage.rs
+SPIRA_LAUNCH round-controller/src/real/launch.rs
 SPIRA_LAUNCH sentinel/src/cfg.rs
+SPIRA_LAUNCH_CTL round-controller/src/real/launch.rs
 SPIRA_LC_ADMIN_PASSWORD install/src/bin/install.rs
 SPIRA_LC_ADMIN_PASSWORD release/src/lifecycle_store.rs
 SPIRA_LC_ADMIN_PASSWORD spira-lc/src/migrate.rs
