@@ -216,9 +216,10 @@ pub fn resolve_run_dir(env: &BTreeMap<String, String>, home: &Path) -> Result<Pa
     Ok(PathBuf::from(run))
 }
 
-/// `spira.run` from the file `SPIRA_TOML` names in `env`, read alone: no registry is loaded,
-/// so a caller that needs only the run directory still gets it when the registry it would
-/// find (a tree whose `conf.d` adds a key) declares keys that file does not have yet. Judged
+/// `spira.run` from the file `SPIRA_TOML` names in `env`, read alone: the registry is not
+/// resolved key by key (loading the file still validates the values it declares), so a
+/// caller that needs only the run directory still gets it when the registry (a tree whose
+/// `conf.d` adds a key) declares keys that file does not have yet. Judged
 /// against the instance's confinement, as [`resolve_run_dir`] judges it.
 pub fn declared_run_dir(env: &BTreeMap<String, String>) -> Result<PathBuf, String> {
     let spec = env
