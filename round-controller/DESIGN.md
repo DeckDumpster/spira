@@ -213,4 +213,7 @@ with `intent apply`, the from→to compare-and-swap on its knob and its ack in o
 refused with the bound it breaks, and sets the concurrency knob once at the lane's depth. The
 knobs are `knobs/RoundController/<repo>/concurrency`, which the cut reads its stack depth from,
 and `knobs/RoundController/<repo>/hold/<id>/<tip>`, each naming who lifts it, whose member the
-cut leaves out at that tip. A stopped or halted repo takes no step; its section says which.
+cut leaves out at that tip. Both key shapes live in `spira_desired_state::sections::round_controller`,
+which the reconciler's selector builds its targets from too. The section's `repeat_identity_holds`
+names, for each open `RepeatIdentity`, the members proven red under it at their tips; the
+selector holds the first one not already held, from null. A stopped or halted repo takes no step; its section says which.

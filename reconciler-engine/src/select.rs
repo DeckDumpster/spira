@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::Value;
 use spira_desired_state::intent::{parse_key, AckResult, By, Intent, JudgementResult};
 use spira_desired_state::section::{parse_duration, parse_rfc3339, Action, ActionClass, ConditionStatus, Freshness};
+use spira_desired_state::sections::round_controller as rc;
 use spira_desired_state::sections::ANDON;
 use spira_desired_state::store::format_rfc3339;
 
@@ -87,6 +88,7 @@ pub enum Refusal {
     KnobAbsent(String),
     KnobNotNumeric(String),
     MovesUnreadable(String),
+    NoHoldTarget(String),
 }
 
 impl Refusal {
@@ -105,6 +107,7 @@ impl Refusal {
             Refusal::KnobAbsent(_) => "knob-absent",
             Refusal::KnobNotNumeric(_) => "knob-not-numeric",
             Refusal::MovesUnreadable(_) => "moves-unreadable",
+            Refusal::NoHoldTarget(_) => "no-hold-target",
         }
     }
 
@@ -123,6 +126,9 @@ impl Refusal {
             Refusal::KnobAbsent(k) => format!("{k} is absent, so no from can be read"),
             Refusal::KnobNotNumeric(k) => format!("{k} is not a number"),
             Refusal::MovesUnreadable(f) => format!("{f} has no value to take a baseline from"),
+            Refusal::NoHoldTarget(s) => {
+                format!("{s} names no member at a tip to hold in {} that is not held already", rc::REPEAT_IDENTITY_HOLDS)
+            }
         }
     }
 }
@@ -136,6 +142,40 @@ pub fn backoff_secs(horizon: u64, k: u32) -> u64 {
 /// applies to.
 pub fn knob_key(section: &str, action: &str) -> String {
     format!("knobs/{section}/{action}")
+}
+
+/// The repo a `RoundController` section's `hold-member` holds a member of; `None` for any other
+/// action, which steps the knob [`knob_key`] names.
+fn hold_repo<'s>(section: &'s str, action: &str) -> Option<&'s str> {
+    let (kind, repo) = section.split_once('/')?;
+    (kind == rc::NAME && action == rc::HOLD_MEMBER).then_some(repo)
+}
+
+/// The knob a step moves. A hold is a knob of its own per member at a tip, so it targets the
+/// first member the section names that is not held already.
+fn target_of(section: &str, cur: &Current, act: &Action, knobs: &BTreeMap<String, Value>) -> Result<String, Refusal> {
+    let Some(repo) = hold_repo(section, &act.name) else {
+        return Ok(knob_key(section, &act.name));
+    };
+    let holds: Vec<rc::RepeatHold> =
+        cur.status.fields.get(rc::REPEAT_IDENTITY_HOLDS).and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
+    holds
+        .iter()
+        .map(|h| rc::hold_key(repo, &h.id, &h.tip))
+        .find(|k| !knobs.contains_key(k))
+        .ok_or_else(|| Refusal::NoHoldTarget(section.into()))
+}
+
+/// `from` and `to` for a step on `target`: a hold is created from null and names who lifts it;
+/// any other knob is stepped from the value it holds.
+fn from_to(section: &str, act: &Action, target: &str, knobs: &BTreeMap<String, Value>) -> Result<(Value, Value), Refusal> {
+    if hold_repo(section, &act.name).is_some() {
+        let to = serde_json::to_value(rc::Hold { lifted_by: rc::HOLD_LIFTED_BY.into() }).unwrap_or_default();
+        return Ok((Value::Null, to));
+    }
+    let from = knobs.get(target).ok_or_else(|| Refusal::KnobAbsent(target.into()))?;
+    let to = step_to(&act.step, from).ok_or_else(|| Refusal::KnobNotNumeric(target.into()))?;
+    Ok((from.clone(), to))
 }
 
 fn section_of(key: &str) -> Option<String> {
@@ -402,7 +442,7 @@ impl<'a> Selector<'a> {
         if act.stopping == Some(true) {
             return Err(Refusal::Stopping);
         }
-        let target = knob_key(section, &act.name);
+        let target = target_of(section, cur, act, &a.knobs)?;
         let at = self.attempts.get(&(section.to_string(), act.name.clone(), target.clone()));
         if let Some(until) = at.and_then(|h| h.backoff_until(self.now)) {
             return Err(Refusal::BackOff { until });
@@ -417,8 +457,7 @@ impl<'a> Selector<'a> {
         if andon_pulled_on(a, section, &target) {
             return Err(Refusal::AndonPulled(section.into()));
         }
-        let from = a.knobs.get(&target).ok_or_else(|| Refusal::KnobAbsent(target.clone()))?;
-        let to = step_to(&act.step, from).ok_or_else(|| Refusal::KnobNotNumeric(target.clone()))?;
+        let (from, to) = from_to(section, act, &target, &a.knobs)?;
         let baseline = value_of(cur, &act.moves).ok_or_else(|| Refusal::MovesUnreadable(act.moves.clone()))?;
         let id = format!("p{}-r{}-{}", a.n, a.list_rev, act.name);
         let (kind, name) = section.split_once('/').unwrap_or((section, ""));
@@ -426,7 +465,7 @@ impl<'a> Selector<'a> {
             id: id.clone(),
             action: act.name.clone(),
             target: target.clone(),
-            from: from.clone(),
+            from,
             to,
             moves: act.moves.clone(),
             baseline,
@@ -454,10 +493,9 @@ impl<'a> Selector<'a> {
         })
     }
 
-    fn claim(&mut self, section: &str, act: &Action, key: &str) {
-        let target = knob_key(section, &act.name);
-        for m in self.flow.neighbourhood(section, act.class, &target) {
-            self.held.insert(m, key.to_string());
+    fn claim(&mut self, section: &str, act: &Action, p: &Planned) {
+        for m in self.flow.neighbourhood(section, act.class, &p.intent.target) {
+            self.held.insert(m, p.key.clone());
         }
     }
 
@@ -499,7 +537,7 @@ impl<'a> Selector<'a> {
         for act in candidates {
             match self.eligible(section, cur, act) {
                 Ok(p) => {
-                    self.claim(section, act, &p.key);
+                    self.claim(section, act, &p);
                     if p.held.is_some() {
                         plan.would_step.push(p);
                     } else {

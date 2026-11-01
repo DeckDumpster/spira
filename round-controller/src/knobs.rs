@@ -4,51 +4,23 @@
 
 use std::collections::BTreeSet;
 
-use serde::Deserialize;
-use spira_desired_state::sections::round_controller::NAME;
+use spira_desired_state::sections::round_controller as rc;
+pub use spira_desired_state::sections::round_controller::{concurrency_key, holds_prefix, Hold};
 use state_store::Selector;
 
 use crate::ports::{Member, Ports};
 use crate::refusal::Refusal;
 
-pub fn prefix(repo: &str) -> String {
-    format!("knobs/{NAME}/{repo}/")
-}
-
-pub fn concurrency_key(repo: &str) -> String {
-    format!("{}concurrency", prefix(repo))
-}
-
-pub fn holds_prefix(repo: &str) -> String {
-    format!("{}hold/", prefix(repo))
-}
-
 pub fn hold_key(repo: &str, m: &Member) -> String {
-    format!("{}{}/{}", holds_prefix(repo), m.id, m.tip)
+    rc::hold_key(repo, &m.id, &m.tip)
 }
 
 /// The member at the tip a hold key names, `None` for any other key.
 pub fn member_of_hold(repo: &str, key: &str) -> Option<Member> {
-    let (id, tip) = key.strip_prefix(&holds_prefix(repo))?.split_once('/')?;
-    let ok = [id, tip].iter().all(|p| !p.is_empty() && !p.contains('/'));
-    ok.then(|| Member {
+    rc::parse_hold_key(repo, key).map(|(id, tip)| Member {
         id: id.into(),
         tip: tip.into(),
     })
-}
-
-/// A hold's value: who lifts it (law-every-hold-names-who-lifts-it).
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-pub struct Hold {
-    pub lifted_by: String,
-}
-
-impl Hold {
-    pub fn of(v: &serde_json::Value) -> Option<Hold> {
-        serde_json::from_value::<Hold>(v.clone())
-            .ok()
-            .filter(|h| !h.lifted_by.trim().is_empty())
-    }
 }
 
 /// The stack depth the concurrency knob holds; `None` while it has never been set.
