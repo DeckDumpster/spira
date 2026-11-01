@@ -1,7 +1,8 @@
 //! `admin-parity --old-socket <a> --new-socket <b>`: every read verb the control store serves,
 //! with the same arguments, against the lc-serve on each socket, and the answers diffed.
 //!
-//! The ids come from the old store's own lists. Answers compare as values, not text: the dolt
+//! The ids come from the old store's own lists; a bead the planning plane types as never having a
+//! record is left out of both sides and named, since the import does not carry it. Answers compare as values, not text: the dolt
 //! path renders every column as a string and a JSON column as JSON text, the control store
 //! renders typed JSON, and the two are the same answer. A difference that `ALLOWED` names is
 //! counted, not reported; any other is reported with the verb, its arguments and the first path
@@ -50,7 +51,7 @@ pub fn normalize(v: &Value) -> Value {
         Value::Bool(b) => Value::String(if *b { "1" } else { "0" }.into()),
         Value::Number(n) => Value::String(n.to_string()),
         Value::String(s) => match serde_json::from_str::<Value>(s) {
-            Ok(inner @ (Value::Object(_) | Value::Array(_))) => normalize(&inner),
+            Ok(inner @ (Value::Object(_) | Value::Array(_) | Value::Null)) => normalize(&inner),
             _ => v.clone(),
         },
         Value::Array(a) => Value::Array(a.iter().map(normalize).collect()),
@@ -83,6 +84,27 @@ pub fn first_difference(a: &Value, b: &Value, path: &str) -> Option<(String, Val
         (Value::Array(x), Value::Array(y)) if x.len() == y.len() => x.iter().zip(y).enumerate().find_map(|(i, (p, q))| first_difference(p, q, &format!("{path}[{i}]"))),
         _ if a == b => None,
         _ => Some((path.to_string(), a.clone(), b.clone())),
+    }
+}
+
+/// `out` without the rows of the records the import leaves out, which only the old store holds.
+fn without(out: &str, skip: &BTreeSet<String>) -> String {
+    fn drop(v: &mut Value, skip: &BTreeSet<String>) {
+        match v {
+            Value::Array(a) => {
+                a.retain(|x| !x.get("bead_id").and_then(Value::as_str).is_some_and(|id| skip.contains(id)));
+                a.iter_mut().for_each(|x| drop(x, skip));
+            }
+            Value::Object(o) => o.values_mut().for_each(|x| drop(x, skip)),
+            _ => {}
+        }
+    }
+    match serde_json::from_str::<Value>(out.trim()) {
+        Ok(mut v) if !skip.is_empty() => {
+            drop(&mut v, skip);
+            v.to_string()
+        }
+        _ => out.to_string(),
     }
 }
 
@@ -125,6 +147,8 @@ struct Ids {
     beads: Vec<String>,
     batches: Vec<String>,
     asks: Vec<String>,
+    /// Beads the planning plane types as never having a record: the import leaves them out.
+    no_record: BTreeSet<String>,
 }
 
 fn ids_in(out: &str, field: &str) -> Vec<String> {
@@ -183,7 +207,13 @@ fn enumerate(call: &mut dyn FnMut(&[String]) -> (i32, String)) -> Result<(Ids, S
         asks.extend(ids_in(&ask(&["list-asks", "--state", s])?, "ask_id"));
     }
     let seq = parsed(&ask(&["event-seq"])?)["seq"].to_string().trim_matches('"').to_string();
-    Ok((Ids { beads, batches, asks }, seq))
+    let mut no_record = BTreeSet::new();
+    for chunk in beads.chunks(TIPS_CHUNK) {
+        let rows = parsed(&ask(&["content-rows", "--ids", &chunk.join(",")])?);
+        no_record.extend(rows.as_array().into_iter().flatten().filter(|r| !spira_config::nonwork::is_work_type(r.get("issue_type").and_then(Value::as_str))).filter_map(|r| r.get("id").and_then(Value::as_str)).map(str::to_string));
+    }
+    let beads = beads.into_iter().filter(|b| !no_record.contains(b)).collect();
+    Ok((Ids { beads, batches, asks, no_record }, seq))
 }
 
 /// Parity over two callers, one per store: the report and whether it found no difference.
@@ -194,6 +224,7 @@ pub fn run(old: &mut dyn FnMut(&[String]) -> (i32, String), new: &mut dyn FnMut(
     let all = calls(&ids, &seq);
     for a in &all {
         let (o, n) = (old(a), new(a));
+        let (o, n) = ((o.0, without(&o.1, &ids.no_record)), (n.0, without(&n.1, &ids.no_record)));
         match judge(&a[0], (o.0, &o.1), (n.0, &n.1)) {
             Verdict::Same => {}
             Verdict::Allowed(fields) => fields.into_iter().for_each(|f| *allowed.entry(f).or_default() += 1),
@@ -218,6 +249,7 @@ pub fn run(old: &mut dyn FnMut(&[String]) -> (i32, String), new: &mut dyn FnMut(
             "allowed": allowed,
             "allowed_because": why,
             "working_without_lock": unlocked,
+            "not_imported": ids.no_record,
         }),
     ))
 }

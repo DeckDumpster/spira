@@ -46,6 +46,7 @@ fn answers(state: &str, lease: Value) -> Vec<(&'static [&'static str], Value)> {
         (&["list-asks", "--state", "DEFAULT_TAKEN"], json!([])),
         (&["list-asks", "--state", "WITHDRAWN"], json!([])),
         (&["event-seq"], json!({"seq": 5, "keys": ["sp-a"]})),
+        (&["content-rows", "--ids", "sp-a"], json!([{"id": "sp-a", "issue_type": "task"}])),
         (&["show", "sp-a"], json!({"bead": row})),
         (&["show-batch", "b-1"], json!({"batch_id": "b-1", "state": "OPEN"})),
         (&["show-ask", "q-1"], json!({"ask_id": "q-1", "state": "OPEN"})),
@@ -79,4 +80,27 @@ fn an_old_store_that_cannot_list_is_cannot_tell() {
     let mut new = store(&[]);
     let e = run(&mut old, &mut new).unwrap_err();
     assert!(e.starts_with("list --state OPEN,READY"), "{e}");
+}
+
+#[test]
+fn a_record_the_planning_plane_types_as_never_having_one_is_named_not_imported_and_is_no_difference() {
+    let epic = json!({"bead_id": "sp-e", "state": "READY", "lease_until": null});
+    let mut with_epic = answers("READY", Value::Null);
+    for (argv, out) in with_epic.iter_mut() {
+        match *argv {
+            ["list", "--state", _] => out.as_array_mut().unwrap().push(epic.clone()),
+            ["content-rows", ..] => *argv = &["content-rows", "--ids", "sp-a,sp-e"],
+            _ => {}
+        }
+    }
+    for (argv, out) in with_epic.iter_mut() {
+        if argv[0] == "content-rows" {
+            *out = json!([{"id": "sp-a", "issue_type": "task"}, {"id": "sp-e", "issue_type": "epic"}]);
+        }
+    }
+    let mut old = store(&with_epic);
+    let mut new = store(&answers("READY", Value::Null));
+    let (clean, report) = run(&mut old, &mut new).unwrap();
+    assert!(clean, "{report:#}");
+    assert_eq!(report["not_imported"], json!(["sp-e"]));
 }

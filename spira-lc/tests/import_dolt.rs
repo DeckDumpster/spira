@@ -11,6 +11,12 @@ use serde_json::{json, Value};
 
 const TIP: &str = "0123456789abcdef0123456789abcdef01234567";
 const LATER: &str = "4000000000";
+/// The planning plane, as far as the import and parity read it: each bead's type.
+const CONTENT_STORE: &str = "CREATE DATABASE sptest_content;\n\
+    CREATE TABLE sptest_content.issues (id VARCHAR(64) PRIMARY KEY, title VARCHAR(255), priority INT, issue_type VARCHAR(32), status VARCHAR(32), defer_until DATETIME, created_at DATETIME, updated_at DATETIME);\n\
+    CREATE TABLE sptest_content.labels (issue_id VARCHAR(64), label VARCHAR(255));\n\
+    CREATE TABLE sptest_content.dependencies (issue_id VARCHAR(64), depends_on_issue_id VARCHAR(64), `type` VARCHAR(32));\n\
+    INSERT INTO sptest_content.issues (id, issue_type, status) VALUES ('sp-land', 'task', 'open'), ('sp-work', 'task', 'open'), ('sp-ready', 'bug', 'open'), ('sp-epic', 'epic', 'open');\n";
 
 struct Proc(Child);
 impl Drop for Proc {
@@ -163,7 +169,7 @@ fn fixture(tag: &str) -> Fixture {
                 let schema = Path::new(env!("CARGO_MANIFEST_DIR")).join("../lifecycle/schema.sql");
                 let (rc, out) = f.lc_in(&f.old(), &["admin-apply-ddl", schema.to_str().unwrap()], None);
                 assert_eq!(rc, 0, "schema.sql applies: {out}");
-                f.sql("CREATE DATABASE sptest_content;\nCREATE TABLE sptest_content.issues (id VARCHAR(64) PRIMARY KEY, issue_type VARCHAR(32));\nINSERT INTO sptest_content.issues VALUES ('sp-land', 'task'), ('sp-epic', 'epic');\n");
+                f.sql(CONTENT_STORE);
                 let (old, sock) = (f.old(), f.root.join("old.sock"));
                 f.serve(&old, &sock);
                 f._t = Some(t);
@@ -287,6 +293,7 @@ fn the_import_carries_every_table_at_one_revision_the_store_serves_it_and_parity
     let report: Value = serde_json::from_str(&out).unwrap();
     assert_eq!(report["differences"], json!([]), "{report:#}");
     assert_eq!(report["working_without_lock"], json!(["sp-work"]), "{report:#}");
+    assert_eq!(report["not_imported"], json!(["sp-epic"]), "{report:#}");
 
     let claim = json!({"Claim": {"holder": "d3", "lease_until": LATER.parse::<i64>().unwrap()}});
     let (rc, out) = event(&f, &new, "bead", "sp-ready", "READY", "0", claim);
