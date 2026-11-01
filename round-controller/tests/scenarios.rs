@@ -49,6 +49,10 @@ scenario!(
     scenario_base_runs_disagree,
     scenario_eject_refused_holds,
     scenario_judge_resumes,
+    scenario_cut_needs_slot,
+    scenario_dep_rides_stack,
+    scenario_pokebot_image_fault,
+    scenario_stack_supersede,
 );
 
 #[test]

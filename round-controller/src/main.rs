@@ -5,6 +5,7 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use round_controller::cut;
 use round_controller::liveness::LeaseSettings;
 use round_controller::outcome::StdoutLog;
 use round_controller::pass::pass;
@@ -19,9 +20,10 @@ use runtime::ports::{Proc, SeededRng, SysProc};
 
 const USAGE: &str = "usage: round-controller <verb>
 
-  pass                                  visit every registered repo once and run the controller's steps
-  lease probe --secs <n> --out <file>   renew a lease of its own for n seconds and write each renewal's lateness
-  version                               print the version
+  pass                                      visit every registered repo once and run the controller's steps
+  cut --repo <r> --members <id@tip,...>     open one round of exactly these members, refused through the ledger
+  lease probe --secs <n> --out <file>       renew a lease of its own for n seconds and write each renewal's lateness
+  version                                   print the version
   -h, --help";
 
 /// A transition verb takes the queue lock for its own transition only, but may merge, build a worktree or push.
@@ -71,6 +73,26 @@ fn dispatch(args: &[String]) -> i32 {
                 Ok(())
             }),
         ),
+        ["cut", rest @ ..] => match cut::parse_explicit(rest) {
+            Err(e) => {
+                eprintln!("round-controller cut: {e}\n{USAGE}");
+                2
+            }
+            Ok((repo, members)) => match with_ports(|p| Ok(cut::explicit(p, &repo, members))) {
+                Ok(Ok(o)) => {
+                    println!("batch={}\nhead={}", o.batch, o.head);
+                    0
+                }
+                Ok(Err(r)) => {
+                    eprintln!("round-controller cut: refused {r}");
+                    1
+                }
+                Err(e) => {
+                    eprintln!("round-controller cut: {e}");
+                    2
+                }
+            },
+        },
         ["lease", "probe", "--secs", secs, "--out", out] => {
             report("lease probe", run_probe(secs, out))
         }
@@ -89,7 +111,7 @@ fn run_probe(secs: &str, out: &str) -> Result<(), String> {
     })
 }
 
-fn with_ports(f: impl FnOnce(&Ports) -> Result<(), String>) -> Result<(), String> {
+fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, String> {
     let certify_wall: u64 = spira_config::process::cfg("SPIRA_ROUND_CERTIFY_WALL_SECS")?
         .parse()
         .map_err(|e| format!("SPIRA_ROUND_CERTIFY_WALL_SECS: {e}"))?;

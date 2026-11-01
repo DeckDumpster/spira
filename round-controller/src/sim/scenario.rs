@@ -7,6 +7,7 @@ use runtime::ports::Clock;
 use serde::Deserialize;
 use state_store::{Object, Request, Selector};
 
+use crate::cut;
 use crate::death::{UnitState, VmFact};
 use crate::ledger::summary_key;
 use crate::liveness::LeaseSettings;
@@ -21,7 +22,7 @@ use crate::sim::runner::{Runner, RunnerScript};
 use crate::sim::slot_user::{most_at_once, SlotUser, SlotUserScript};
 use crate::sim::verbs::{Call, FakeVerbs, VerbScript};
 use crate::sim::vm::{FakeVm, VmScript};
-use crate::slots::{Pool, SlotSettings, EC2_SLOTS_KEY, SPILL_KEY};
+use crate::slots::{Pool, Slot, SlotGrant, SlotSettings, EC2_SLOTS_KEY, SPILL_KEY};
 
 pub const PROFILES: &str = include_str!("../../scenarios/profiles.toml");
 /// The profiles every scenario runs under, in this order.
@@ -88,6 +89,53 @@ pub struct StoreSeed {
     pub ttl_secs: Option<u64>,
 }
 
+/// `[[slot]]`: a runner slot the harness holds for `repo`, standing in for the schedule step
+/// (round-controller/pass) until it lands. Each pass, after the steps, the harness cuts on every
+/// slot no round has taken yet; a cut that opens a round takes its slot. `released` hands the cut
+/// a grant whose lock was let go before the first pass.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HeldSlot {
+    pub repo: String,
+    #[serde(default = "proxmox")]
+    pub pool: String,
+    #[serde(default)]
+    pub n: u32,
+    #[serde(default = "a_day")]
+    pub ttl_secs: u64,
+    #[serde(default)]
+    pub released: bool,
+}
+
+/// `[[round_lease]]`: a round lease its runner holds, `locks/round/<repo>/<batch>` (`[lease]` is
+/// the lease settings).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoundLease {
+    pub repo: String,
+    pub batch: String,
+    #[serde(default = "a_day")]
+    pub ttl_secs: u64,
+}
+
+/// `[[store_step]]`: `key` set to `data` just before pass `pass` (1-based) runs: what another
+/// actor did in between, such as an eject moving a round's head or a new image digest.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StoreStep {
+    pub pass: u32,
+    pub key: String,
+    pub data: toml::Value,
+}
+
+fn proxmox() -> String {
+    "proxmox".into()
+}
+
+fn a_day() -> u64 {
+    86_400
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Count {
     Calls(Option<Verb>),
@@ -123,6 +171,8 @@ pub enum Count {
     FirstGrantSecs,
     /// What the scenario's `[judge]` recorded and ran.
     Judge(JudgeCount),
+    /// `opens:<place>`: `open` calls asking for that place, `on-base` or `stack-on:<k>`.
+    Opens(String),
 }
 
 impl Count {
@@ -164,6 +214,7 @@ impl Count {
             ("vms-at-once", None) => Some(Count::VmsAtOnce(None)),
             ("vms-at-once", Some(w)) => Pool::from_word(w).map(|p| Count::VmsAtOnce(Some(p))),
             ("first-grant-secs", None) => Some(Count::FirstGrantSecs),
+            ("opens", Some(w)) if !w.is_empty() => Some(Count::Opens(w.to_string())),
             _ => JudgeCount::parse(s).map(Count::Judge),
         }
     }
@@ -346,7 +397,14 @@ struct File {
     identity: Vec<IdentitySpec>,
     #[serde(default)]
     ledger_step: Vec<LedgerStep>,
+    #[serde(default)]
     judge: Option<JudgeSpec>,
+    #[serde(default)]
+    slot: Vec<HeldSlot>,
+    #[serde(default)]
+    round_lease: Vec<RoundLease>,
+    #[serde(default)]
+    store_step: Vec<StoreStep>,
 }
 
 #[derive(Clone, Debug)]
@@ -378,6 +436,9 @@ pub struct Scenario {
     pub identities: BTreeMap<String, PassIdentity>,
     pub ledger_steps: Vec<LedgerStep>,
     pub judge: Option<JudgeSpec>,
+    pub held_slots: Vec<HeldSlot>,
+    pub round_leases: Vec<RoundLease>,
+    pub store_steps: Vec<StoreStep>,
 }
 
 pub fn parse(text: &str) -> Result<Scenario, String> {
@@ -470,6 +531,9 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
         identities,
         ledger_steps: f.ledger_step,
         judge: f.judge,
+        held_slots: f.slot,
+        round_leases: f.round_lease,
+        store_steps: f.store_step,
     })
 }
 
@@ -539,10 +603,36 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
         .map(|u| SlotUser::new(u.clone(), epoch_ms))
         .collect::<Result<Vec<_>, String>>()
         .map_err(|e| format!("scenario: {e}"))?;
+    let lock = |resource: &str, ttl_secs: u64| {
+        b.store
+            .lock(
+                resource,
+                ttl_secs * 1000,
+                &Request::new(&format!("seed-lock-{resource}"), "scenario", "seed"),
+            )
+            .map_err(|e| format!("lock seed {resource}: {e}"))
+    };
+    for l in &sc.round_leases {
+        lock(&format!("round/{}/{}", l.repo, l.batch), l.ttl_secs)?;
+    }
+    let mut held: Vec<(String, Option<SlotGrant>)> = Vec::new();
+    for s in &sc.held_slots {
+        let pool = Pool::from_word(&s.pool)
+            .ok_or_else(|| format!("scenario: slot pool {:?} is no pool", s.pool))?;
+        let slot = Slot { pool, n: s.n };
+        let fence = lock(&slot.lock(), s.ttl_secs)?;
+        if s.released {
+            b.store
+                .release(&fence, &Request::new("seed-release", "scenario", "seed"))
+                .map_err(|e| format!("lock seed release: {e}"))?;
+        }
+        held.push((s.repo.clone(), Some(SlotGrant::of_fence(slot, fence))));
+    }
     let seeded = b.store.head().expect("the in-memory store has a head");
     let vm = FakeVm::new(sc.vm.clone(), profile.clone(), b.clock.clone());
     b.verbs = FakeVerbs::new(sc.verbs.clone(), vm.clone(), b.clock.clone())
-        .map_err(|e| format!("scenario: {e}"))?;
+        .map_err(|e| format!("scenario: {e}"))?
+        .with_store(b.store.clone());
     b.ledger = FakeLedger::seeded(sc.judge.as_ref(), profile);
     let judge = sc.judge.as_ref().map(|j| JudgeRun::new(j, profile));
     let b = b;
@@ -580,7 +670,29 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
         }
         b.clock.advance_to(next);
         gc.tick(next).map_err(|e| format!("store gc: {e}"))?;
+        for s in sc.store_steps.iter().filter(|s| s.pass == i + 1) {
+            let data = serde_json::to_value(&s.data).expect("a TOML value is JSON");
+            let req = Request::new(
+                &format!("store-step-{}-{}", s.pass, s.key),
+                "scenario",
+                "step",
+            );
+            b.store
+                .txn(
+                    &state_store::Txn::new().put(&s.key, Object::new(data)),
+                    &req,
+                )
+                .map_err(|e| format!("store step {} at pass {}: {e}", s.key, s.pass))?;
+        }
         go(&ports, &sc.repos);
+        for (repo, slot) in held.iter_mut() {
+            let Some(grant) = slot.as_ref() else { continue };
+            let r = cut::cut(&ports, repo, grant);
+            cut::record(&ports, repo, &r);
+            if matches!(r, Ok(Some(_))) {
+                *slot = None;
+            }
+        }
         broken.extend(sim_ledger::run(
             &ports,
             i + 1,
@@ -682,6 +794,10 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
                 .min()
                 .unwrap_or(u64::MAX),
             Count::Judge(c) => judge.as_ref().map_or(0, |j| j.count(c, &b.ledger)),
+            Count::Opens(w) => calls
+                .iter()
+                .filter(|c| c.verb == Verb::Open && c.place.as_deref() == Some(w.as_str()))
+                .count() as u64,
         };
         let unmet = format!(
             "expectation {} unmet under {at}: counted {got}, expected {}",
@@ -864,6 +980,7 @@ mod tests {
             repo: repo.into(),
             members: vec![],
             name: None,
+            place: crate::ports::Place::OnBase,
         });
     }
 
@@ -1026,6 +1143,32 @@ mod tests {
         )
         .unwrap_err();
         assert!(e.contains("exactly one of ok and refuse"), "{e}");
+    }
+
+    #[test]
+    fn a_lock_or_store_step_the_store_refuses_is_named() {
+        let e = go("[[round_lease]]\nrepo = \"a\"\nbatch = \"b1\"\nttl_secs = 0\n").unwrap_err();
+        assert!(e.starts_with("lock seed round/a/b1:"), "{e}");
+        let e = go("[[store_step]]\npass = 2\nkey = \"locks/x\"\ndata = 1\n").unwrap_err();
+        assert!(e.starts_with("store step locks/x at pass 2:"), "{e}");
+        assert!(parse(&format!("{BASE}[[slot]]\nrepo = \"a\"\nslots = 1\n"))
+            .unwrap_err()
+            .contains("slots"));
+    }
+
+    #[test]
+    fn a_held_slot_is_cut_on_once_and_a_cut_that_opens_takes_it() {
+        let lane = "[[store]]\nkey = \"lanes/a\"\ndata = { landing_ref = \"b0\", image_digest = \"d\", harness_version = \"h\" }\n";
+        let pool = "[[store]]\nkey = \"lifecycle/sp-a\"\ndata = { repo = \"a\", state = \"CERTIFIED\", tip = \"t\" }\n";
+        let open = "[[verb]]\nverb = \"open\"\nok = { batch = \"r1\", head = \"h1\" }\n";
+        let r = go(&format!("{lane}{pool}{open}[[slot]]\nrepo = \"a\"\n[[expect]]\nname = \"one\"\ncount = \"opens:on-base\"\nequals = 1\n")).unwrap();
+        assert!(
+            r.lines
+                .iter()
+                .any(|l| l.contains("opened ok repo=a batch=r1")),
+            "{:?}",
+            r.lines
+        );
     }
 
     #[test]

@@ -10,7 +10,7 @@ use state_store::{Compare, Error, Fence, Object, Request, Rev, Txn, LOCKS_PREFIX
 
 use crate::death::{prove_runner_dead, Proof};
 use crate::lease::{holder_of, LeaseError, Resource};
-use crate::ports::Ports;
+use crate::ports::{Ports, Store};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Pool {
@@ -343,6 +343,36 @@ impl SlotGrant {
     /// The proof that the slot's last holder was dead, when it lapsed without releasing.
     pub fn evidence(&self) -> Option<&str> {
         self.evidence.as_deref()
+    }
+
+    /// The slot lock's key, `locks/runner-slot/<pool>/<n>`.
+    pub fn key(&self) -> String {
+        self.fence.key()
+    }
+
+    /// The slot's lock is live and still held under this grant's token: the Planner cuts only on
+    /// a slot it holds, so nothing is cut ahead of capacity.
+    pub fn held(&self, store: &dyn Store) -> state_store::Result<bool> {
+        Ok(store
+            .get(&self.fence.key())?
+            .is_some_and(|i| i.create_rev == self.fence.token && i.lock_expires_at_ms.is_some()))
+    }
+
+    /// The lock this grant holds, for a test that lets it go behind the grant's back.
+    #[cfg(feature = "sim")]
+    pub fn fence(&self) -> &Fence {
+        &self.fence
+    }
+
+    /// A grant over a lock the scenario harness or a test took itself, with no holder record.
+    #[cfg(feature = "sim")]
+    pub fn of_fence(slot: Slot, fence: Fence) -> SlotGrant {
+        SlotGrant {
+            slot,
+            fence,
+            record: Record::default(),
+            evidence: None,
+        }
     }
 
     pub fn renew(&self, p: &Ports) -> Result<(), LeaseError> {
@@ -793,5 +823,29 @@ mod tests {
         assert_eq!(in_use(&p).unwrap(), [(Pool::Proxmox, 1), (Pool::Ec2, 1)]);
         b.clock.advance(p.leases.ttl_ms);
         assert_eq!(in_use(&p).unwrap(), [(Pool::Proxmox, 0), (Pool::Ec2, 0)]);
+    }
+
+    #[test]
+    fn a_grant_is_held_while_its_lock_lives_under_its_token_and_not_after() {
+        let b = Bench::new();
+        let p = b.ports();
+        let g = grant(&p, &[Pool::Proxmox], "a").unwrap();
+        assert_eq!(g.key(), "locks/runner-slot/proxmox/0");
+        assert_eq!(g.held(p.store), Ok(true));
+        let slot = g.slot();
+        let stale = SlotGrant::of_fence(slot, g.fence.clone());
+        g.release(&p).unwrap();
+        assert_eq!(stale.held(p.store), Ok(false), "released");
+        let again = grant(&p, &[Pool::Proxmox], "b").unwrap();
+        assert_ne!(again.token(), stale.token());
+        assert_eq!(
+            stale.held(p.store),
+            Ok(false),
+            "another holder's lock is not this grant"
+        );
+        assert_eq!(again.held(p.store), Ok(true));
+        b.clock.advance(p.leases.ttl_ms);
+        assert_eq!(again.held(p.store), Ok(false), "expired");
+        assert!(again.held(&crate::real::Unserved).is_err());
     }
 }

@@ -1,0 +1,79 @@
+description = "a member whose prerequisite is in live leased round k1 is cut stacked on k1, never beside it on the landing ref; one whose prerequisite is in a round no runner leases waits"
+repos = ["leased", "unleased"]
+
+[run]
+epoch = 1800000000
+passes = 10
+every_secs = 30
+
+[[store]]
+key = "lanes/leased"
+data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
+
+[[store]]
+key = "lanes/unleased"
+data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
+
+[[store]]
+key = "batches/leased/k1"
+data = { batch_id = "k1", repo = "leased", state = "CiRunning", head = "k1-h1", base = "base-0", pass = 1, version = 1, tested_base = "base-0", members = [{ id = "sp-la", tip = "la1" }] }
+
+[[store]]
+key = "batches/unleased/u1"
+data = { batch_id = "u1", repo = "unleased", state = "CiRunning", head = "u1-h1", base = "base-0", pass = 1, version = 1, tested_base = "base-0", members = [{ id = "sp-ua", tip = "ua1" }] }
+
+[[store]]
+key = "lifecycle/sp-la"
+data = { repo = "leased", state = "CERTIFIED", tip = "la1" }
+
+[[store]]
+key = "lifecycle/sp-lb"
+data = { repo = "leased", state = "CERTIFIED", tip = "lb1", blocked_by = ["sp-la"] }
+
+[[store]]
+key = "lifecycle/sp-lc"
+data = { repo = "leased", state = "CERTIFIED", tip = "lc1", stack = { sp-la = "la1" } }
+
+[[store]]
+key = "lifecycle/sp-ua"
+data = { repo = "unleased", state = "CERTIFIED", tip = "ua1" }
+
+[[store]]
+key = "lifecycle/sp-ub"
+data = { repo = "unleased", state = "CERTIFIED", tip = "ub1", blocked_by = ["sp-ua"] }
+
+[[store]]
+key = "lifecycle/sp-uc"
+data = { repo = "unleased", state = "CERTIFIED", tip = "uc1", stack = { sp-ua = "ua1" } }
+
+[[round_lease]]
+repo = "leased"
+batch = "k1"
+
+[[slot]]
+repo = "leased"
+n = 0
+
+[[slot]]
+repo = "unleased"
+n = 1
+
+[[verb]]
+verb = "open"
+repo = "leased"
+ok = { batch = "k2", head = "k2-h1" }
+
+[[expect]]
+name = "the-dependents-ride-above-k1"
+count = "opens:stack-on:k1"
+equals = 1
+
+[[expect]]
+name = "never-beside-k1"
+count = "opens:on-base"
+equals = 0
+
+[[expect]]
+name = "the-unleased-prerequisites-dependents-wait"
+count = "calls:open"
+equals = 1
