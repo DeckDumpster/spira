@@ -1,0 +1,1 @@
+A tool that writes durable state — images, volumes, build targets, worktrees, clones, logs — bounds it: it removes what it superseded, or caps what it keeps, on its own path, every run. Reclaiming by hand is an incident, not a chore. Before a tool that writes state lands, name what it leaves and what removes it.

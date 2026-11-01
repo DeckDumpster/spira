@@ -20,8 +20,14 @@ Placeholder Part until the table of contents is approved.
 - §1.16 law-fix-the-harness-not-the-instance — Repair a harness-managed surface by changing the harness, never by hand-wiring the running instance: if the next refresh, rebuild or timer would undo your change, it is not a fix.
 - §1.17 law-a-required-key-ships-with-the-change-that-needs-it — A change that makes a configuration key required ships the key in the same change: its spira/conf.d file, conf.key-history line and config-delta.toml entry, so activating the release adds it to the live config.
 - §1.18 law-a-capacity-limit-is-fixed-at-its-consumer — Never add a late hard failure that refuses work for want of a resource — disk, memory, time — at the moment the work is about to run.
-- §1.19 law-every-decision-biases-faster-or-safer — Every decision in the system biases toward making development faster or safer, and a choice that makes it neither is the wrong choice.
+- §1.19 law-every-decision-biases-faster-or-safer — [Reserved]
 - §1.20 law-a-landing-stop-is-reverted-first — When landing stops, revert the last change that landed before it, by hand, within 15 minutes, then diagnose.
 - §1.21 law-diagnosis-is-time-boxed — Diagnosis is time-boxed to ten minutes; then act on the strongest hypothesis — eject, revert or roll back, all of which are cheap to undo.
 - §1.22 law-bisect-by-time-first — When rounds fail regardless of their members, the cause is on main: look first at the last change that landed before the first failure, not at the members in the failing round.
 - §1.23 law-the-direct-path-wins — If Ryan would do it in one terminal in N minutes, the Concierge does it in N or less; the mechanism that should have done it gets a bead afterwards, never first.
+- §1.24 law-faster-over-safer — Every decision in the system biases toward faster over safer.
+- §1.25 law-throughput-floor — When the beads landed across all repos over the trailing 24 hours falls below 150, the world is stopped, the root cause is analysed, and a solution is proposed to Ryan before anything else is worked.
+- §1.26 law-batcher-earns-the-round-by-parity — A replacement for the round machinery cuts over with the world stopped, for every registered repo at once, once its 2026-10-31 replay passes in the simulator, its coverage gate passes, and one real round per repo lands on it; no shadow run and no per-repo handover.
+- §1.27 law-tests-are-the-unit-of-measure — Spira measures tests, never suites.
+- §1.28 law-bead-facts-come-from-the-lifecycle — Every fact about work has one owner and is read from it through spira-lc, never copied into the other plane.
+- §1.29 law-a-tool-bounds-the-state-it-leaves — A tool that writes durable state — images, volumes, build targets, worktrees, clones, logs — bounds it: it removes what it superseded, or caps what it keeps, on its own path, every run.
