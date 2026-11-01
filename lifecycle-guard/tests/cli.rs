@@ -148,6 +148,32 @@ fn landstate_call_is_reported_in_rust() {
     assert_eq!(findings[0]["callee"], "land_mark");
 }
 
+/// A name is not an identity: a test helper defined in the file, a sibling reached through
+/// `use super::*`, and a port's trait method all share the ledger's names and none is it.
+#[test]
+fn a_local_function_or_port_method_named_like_the_ledger_is_not_a_landstate_call() {
+    let findings = run("landstate_rust_local", None);
+    assert!(findings.is_empty(), "{findings:#?}");
+}
+
+/// Resolving the callee keeps every real route refused: a bare call imported from the
+/// ledger, a path-qualified call, and a sibling reached through `super::*` of the ledger's
+/// own module.
+#[test]
+fn a_call_that_resolves_to_the_ledger_is_still_a_landstate_call() {
+    let findings = run("landstate_rust_ledger", None);
+    let calls: Vec<(&str, u64, &str)> = findings
+        .iter()
+        .filter(|f| f["class"] == "landstate-call")
+        .map(|f| (f["file"].as_str().unwrap(), f["line"].as_u64().unwrap(), f["callee"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        calls,
+        vec![("check.rs", 4, "landed"), ("check.rs", 7, "landed_sha"), ("landstate/read.rs", 4, "land_state")],
+        "{findings:#?}"
+    );
+}
+
 #[test]
 fn landstate_direct_path_read_is_reported_in_rust() {
     let findings = run("landstate_rust_path", None);
