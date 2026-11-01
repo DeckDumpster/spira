@@ -354,6 +354,12 @@ fn ttl_ms(key: &str, v: &Object) -> Option<u64> {
         .map(|s| s.saturating_mul(1_000))
 }
 
+/// Whether the contract expires `key` holding `v`: a lock, or a key under a TTL'd prefix that
+/// carries `ttl_secs`. An expiry is retention and writes no `events/` key.
+pub fn carries_ttl(key: &str, v: &Object) -> bool {
+    ttl_ms(key, v).is_some()
+}
+
 /// A holder's write to its own lock: a renew, under a new TTL when it names one, or a release.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum HolderWrite {

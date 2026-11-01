@@ -8,6 +8,7 @@
 //! rowid, which SQLite may reuse.
 
 pub mod bench;
+pub mod durability;
 pub mod live;
 
 use std::fs::{File, OpenOptions};
