@@ -1,0 +1,135 @@
+//! The values stored under the control plane's keys. A lifecycle record holds the state
+//! machine's fields plus `repo`; nothing here copies a planning-plane field.
+
+use lifecycle::bead::BeadRow;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use state_store::{Error, Object, Result};
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LifecycleRecord {
+    #[serde(flatten)]
+    pub row: BeadRow,
+    /// Fixed at create: the lane's identity and the routing key for rounds and batches.
+    #[serde(default)]
+    pub repo: Option<String>,
+    /// Epoch seconds of the last write, for display only.
+    pub updated_at: i64,
+}
+
+impl LifecycleRecord {
+    /// A record as `create-bead` writes it: READY, or born SUBMITTED at `submitted_tip`.
+    pub fn born(id: &str, repo: Option<&str>, submitted_tip: Option<&str>, at: i64) -> Self {
+        let mut row = BeadRow::filed(id);
+        row.since = Some(at);
+        if let Some(tip) = submitted_tip {
+            row.state = lifecycle::bead::BeadState::Submitted;
+            row.tip = Some(tip.to_string());
+            row.version = 1;
+        }
+        LifecycleRecord {
+            row,
+            repo: repo.map(str::to_string),
+            updated_at: at,
+        }
+    }
+
+    /// Whether `self` is the record `other` was born as, whenever each was stamped.
+    pub fn same_birth(&self, other: &LifecycleRecord) -> bool {
+        let unstamped = |r: &LifecycleRecord| LifecycleRecord {
+            row: BeadRow {
+                since: None,
+                ..r.row.clone()
+            },
+            updated_at: 0,
+            ..r.clone()
+        };
+        unstamped(self) == unstamped(other)
+    }
+}
+
+/// The dispatcher's reading of one record, under its own key, so publishing it never moves a
+/// lifecycle record's revision.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Readiness {
+    #[serde(default)]
+    pub claimable: bool,
+    #[serde(default)]
+    pub blocked_by: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runes: Vec<String>,
+    /// The producer's own clock, as it stamped the pass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judged_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judged_at_planning_watermark: Option<String>,
+    #[serde(default)]
+    pub judged_at_rev: u64,
+}
+
+/// One applied or refused machine event, as the dolt `event` table held it. A txn's audit is
+/// the array of these it carries as evidence into `events/<rev>`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Audit {
+    pub machine: String,
+    pub lc_key: String,
+    pub event: String,
+    pub expect: String,
+    pub from_state: String,
+    pub to_state: String,
+    pub applied: bool,
+    pub refusal: Option<String>,
+    pub evidence: Value,
+    pub actor: String,
+    pub at: i64,
+}
+
+pub fn encode<T: Serialize>(v: &T) -> Result<Value> {
+    serde_json::to_value(v).map_err(|e| Error::Backend(format!("unencodable record: {e}")))
+}
+
+pub fn decode<T: for<'de> Deserialize<'de>>(key: &str, o: &Object) -> Result<T> {
+    serde_json::from_value(o.data.clone())
+        .map_err(|e| Error::Backend(format!("{key}: undecodable record: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_record_round_trips_and_carries_no_planning_field() {
+        let r = LifecycleRecord::born("sp-a", Some("harness"), None, 100);
+        let v = encode(&r).unwrap();
+        for planning in ["title", "priority", "blocked_by", "labels"] {
+            assert!(v.get(planning).is_none(), "{planning} in {v}");
+        }
+        assert_eq!(v["repo"], "harness");
+        assert_eq!(
+            decode::<LifecycleRecord>("lifecycle/sp-a", &Object::new(v)).unwrap(),
+            r
+        );
+    }
+
+    #[test]
+    fn a_birth_is_the_same_whenever_it_was_stamped_and_differs_by_repo_or_tip() {
+        let a = LifecycleRecord::born("sp-a", Some("harness"), None, 100);
+        assert!(a.same_birth(&LifecycleRecord::born("sp-a", Some("harness"), None, 250)));
+        assert!(!a.same_birth(&LifecycleRecord::born("sp-a", Some("other"), None, 100)));
+        assert!(!a.same_birth(&LifecycleRecord::born(
+            "sp-a",
+            Some("harness"),
+            Some("abc"),
+            100
+        )));
+        let s = LifecycleRecord::born("sp-a", None, Some("abc"), 100);
+        assert_eq!(
+            (s.row.state.as_str(), s.row.version, s.row.tip.as_deref()),
+            ("SUBMITTED", 1, Some("abc"))
+        );
+    }
+}

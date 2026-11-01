@@ -2001,10 +2001,12 @@ version = "1.0.0"
 dependencies = [
  "lifecycle",
  "opentelemetry-proto",
+ "runtime",
  "serde",
  "serde_json",
  "spira-config",
  "spira-otel",
+ "state-store",
  "testkit",
 ]
 
