@@ -66,7 +66,11 @@ fn moves(spec: &str) -> Option<Vec<Move>> {
             ))
         })
         .collect::<Option<_>>()?;
-    (!v.is_empty()).then_some(v)
+    let repeated = v
+        .iter()
+        .enumerate()
+        .any(|(i, (b, _, _))| v[..i].iter().any(|(o, _, _)| o == b));
+    (!v.is_empty() && !repeated).then_some(v)
 }
 
 const ENDED: [BatchState; 4] = [

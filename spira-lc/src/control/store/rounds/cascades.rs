@@ -176,6 +176,15 @@ impl<B: Backend> Store<B> {
         if let Err(early) = self.round_step(&mut c, &key, &rec, ev, at, req)? {
             return Ok((early, vec![]));
         }
+        // Only a member is ejected, and once: an id the round never held has no delivery in it.
+        let mut named: Vec<String> = Vec::new();
+        for e in eject {
+            if rec.members.iter().any(|m| &m.bead_id == e) && !named.contains(e) {
+                named.push(e.clone());
+            }
+        }
+        let eject = named;
+        let eject = eject.as_slice();
         let withdrawn: Withdrawn = self
             .stacked_dependents(&mut c, &rec, eject)?
             .into_iter()
