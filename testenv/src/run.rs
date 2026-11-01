@@ -257,6 +257,7 @@ pub struct Deps<'a> {
     pub runner_exe: PathBuf,
     /// The host's 1-minute load average, for load admission.
     pub load1: &'a (dyn Fn() -> Option<f64> + Sync),
+    /// How load admission waits between probes.
     pub sleep: &'a (dyn Fn(Duration) + Sync),
 }
 
