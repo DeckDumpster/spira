@@ -2,7 +2,7 @@
 //! a snapshot revision, commits a batch atomically and durably if the head is still the one the
 //! caller read, serves the watch log and compacts. The contract computes every revision it stores.
 
-use crate::{Result, Rev};
+use crate::{Result, Rev, EVENTS_PREFIX};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Version {
@@ -64,4 +64,30 @@ pub trait Backend: Send + Sync {
     fn log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>>;
     /// Drops the watch log and superseded versions at or below `rev`.
     fn compact(&self, rev: u64) -> Result<()>;
+    /// `range("")` without the keys under `events/`: what the GC controller and the TTL restart
+    /// read, since the audit history never carries metadata or a TTL and grows without bound.
+    /// The default filters `range`; a backend whose index can skip the prefix overrides it.
+    fn gc_range(
+        &self,
+        after: Option<&str>,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<(String, Version)>> {
+        let mut out = Vec::new();
+        let mut cursor = after.map(str::to_string);
+        while out.len() < limit {
+            let page = self.range("", cursor.as_deref(), limit, at)?;
+            let full = page.len() == limit;
+            cursor = page.last().map(|(k, _)| k.clone());
+            out.extend(
+                page.into_iter()
+                    .filter(|(k, _)| !k.starts_with(EVENTS_PREFIX)),
+            );
+            if !full {
+                break;
+            }
+        }
+        out.truncate(limit);
+        Ok(out)
+    }
 }
