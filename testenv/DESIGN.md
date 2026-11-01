@@ -41,8 +41,8 @@ Four properties are the point; everything else serves them:
 
 ```
 testenv [--mode parallel|serial] [--suites <a.sh,b.sh,...|->] [--profile <p>]
-        [--with-bins] [--artifacts <dir>] [--deadline <secs>] [--report [N]]
-        <branch> [<repo-name-or-path>]
+        [--with-bins] [--artifacts <dir>] [--deadline <secs>]
+        [--tests <name>[,<name>...]] [--report [N]] <branch> [<repo-name-or-path>]
 ```
 
 | argument | meaning |
@@ -57,9 +57,10 @@ testenv [--mode parallel|serial] [--suites <a.sh,b.sh,...|->] [--profile <p>]
 | `--with-bins` | **no build mode of its own** (builds, unless `--artifacts`). Accepted as an alias for `--profile release` when `--profile` is not given, because every caller that passes it today is a round whose binaries ship (round.sh, round-vm.sh, batcher-cut). See §7, decision D1. |
 | `--artifacts DIR` | **do not build**: DIR holds the workspace's executables, prebuilt from this tree (CI's `bin/`). Relative to the current directory. Validated before anything else happens: DIR must be a directory holding an executable for every workspace binary target of the tree under test (read from the worktree's `Cargo.toml` files) and at least `spira-config`, `test-plan` and `testenv`; otherwise `VERDICT FAULT rc=2 reason=artifacts-invalid` naming what is missing — never a build, never a partial set. Exclusive with `--profile` and `--with-bins` (usage error). Only the flag selects this mode: an inherited `SPIRA_ARTIFACTS` is still ignored (§5). See D8. |
 | `--deadline S` | a **hard** wall-clock budget, in whole seconds (> 0), for the **whole trial** (sp-govet, §11): the clock starts when testenv starts. Setup (build, container, install, test databases) must finish within its share of S (`SPIRA_TESTENV_SETUP_SHARE`, default 50 %) or the run is `VERDICT FAULT rc=2 reason=deadline-<phase>`; the suite phase gets what is left of S: after that no suite starts and running suites are killed; both are recorded `deferred`. It also selects the warm path (§11.2). Absent = no deadline, and the run is byte-for-byte what it was before the flag existed. See D7, D9. |
+| `--tests NAMES` | comma list of Rust test names (letters, digits, `_`, `::`); the `unit-tests` tier then runs only the tests whose names contain one of them — cargo test's own substring filter, handed to `spira/unit-tests.sh` in `target/unit-tests.filter`. Without `unit-tests` in the selection: `FAULT rc=2 reason=tests-without-unit-tier`. The filter is hashed into the key (a filtered green never answers for a full run), named on the verdict line (` tests=NAMES`), never resumed, never written as a suite-timing sample, and never recorded as a full-suite pass. Each name must run at least one test (counted from libtest's `test <name> ... ok/FAILED` lines), else `FAULT rc=2 reason=tests-matched-none` naming the ones that ran nothing, never GREEN; a diff that touches no crate is `FAULT rc=2 reason=tests-no-crates`. |
 | `--report [N]` | print each suite's median `wall_secs` over its last N (default 20) suite-timing rows as JSON `[{"suite","median","n"}]` (the shape `tsd-query.sh suite-medians` printed) and exit; no branch or container. |
 
-`--mode=X`, `--suites=X`, `--report=N`, `--profile=P`, `--artifacts=DIR`, `--deadline=S` spellings are accepted. `--` ends
+`--mode=X`, `--suites=X`, `--report=N`, `--profile=P`, `--artifacts=DIR`, `--deadline=S`, `--tests=NAMES` spellings are accepted. `--` ends
 options. An unknown option prints `batch: unknown option: X` and the usage line, exit 2.
 
 #### 2.1.1 Registered repositories other than the harness

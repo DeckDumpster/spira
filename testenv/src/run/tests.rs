@@ -1190,6 +1190,12 @@ fn verdict_lines() {
         Finish::fault(3, "install", 0).verdict_line(),
         "VERDICT FAULT rc=3 ran=0 reason=install"
     );
+    assert_eq!(Finish::green(1).verdict_line_filtered(Some("a,b")), "VERDICT GREEN ran=1 tests=a,b");
+    assert_eq!(
+        Finish { first_red: Some("unit-tests.sh: case 1 x".into()), ..Finish { rc: 1, red: 1, ..Finish::green(1) } }
+            .verdict_line_filtered(Some("x")),
+        "VERDICT RED ran=1 red=1 tests=x first=unit-tests.sh: case 1 x"
+    );
 }
 
 /// A suite that runs `ms` and honours the exec's deadline as `run_bounded` does.
@@ -2551,4 +2557,103 @@ fn without_a_resume_store_every_suite_runs() {
     let again = runtime();
     w.run(&again, &b, &args, "", &w.root);
     assert_eq!(suites_run(&again).len(), 2);
+}
+
+const FIXTURE_TESTS: [&str; 3] = ["tests::one_name", "tests::two_name", "tests::three_name"];
+
+/// A workspace whose one crate gains three tests on branch `units` over base `local/main`,
+/// checked out in place so the tier's files land in `w.repo/target`.
+fn unit_world(tag: &str) -> World {
+    let w = World::new(tag);
+    fs::write(w.repo.join("spira/unit-tests.sh"), "#!/usr/bin/env bash\nset -uo pipefail\n").unwrap();
+    fs::write(w.repo.join("Cargo.toml"), "[workspace]\nmembers = [\"fixture\"]\nresolver = \"2\"\n").unwrap();
+    fs::create_dir_all(w.repo.join("fixture/src")).unwrap();
+    fs::write(w.repo.join("fixture/Cargo.toml"), "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
+    fs::write(w.repo.join("fixture/src/lib.rs"), "").unwrap();
+    // The checkout is moved to `units`, and a remote-less repo's land ref falls back to HEAD;
+    // `local/main` keeps the diff's base at the commit before the tests whatever is checked out.
+    sh(&w.repo, "git add . && git commit -qm crate && git branch local/main && git checkout -qb units");
+    let tests: String = FIXTURE_TESTS.iter().map(|t| format!("    #[test]\n    fn {}() {{}}\n", &t["tests::".len()..])).collect();
+    fs::write(w.repo.join("fixture/src/lib.rs"), format!("#[cfg(test)]\nmod tests {{\n{tests}}}\n")).unwrap();
+    sh(&w.repo, "git commit -qam tests");
+    w
+}
+
+/// Stands in for `cargo test` inside the container: it runs the fixture's tests whose names
+/// contain one of the filters the host left in the tree, and prints libtest's report of them.
+fn libtest_over_fixture(rt: &FakeRuntime, tree: &Path) {
+    let filter = tree.join(crate::unit::FILTER_REL);
+    rt.on(
+        |r| r.argv.get(1).map(String::as_str) == Some("/workspace/spira/unit-tests.sh"),
+        move |_| {
+            let filters: Vec<String> = fs::read_to_string(&filter).unwrap_or_default().lines().map(str::to_string).collect();
+            let ran: Vec<&str> = FIXTURE_TESTS.iter().copied().filter(|t| filters.is_empty() || filters.iter().any(|f| t.contains(f.as_str()))).collect();
+            let mut output = format!("running {} tests\n", ran.len());
+            for t in &ran {
+                output.push_str(&format!("test {t} ... ok\n"));
+            }
+            output.push_str(&format!(
+                "\ntest result: ok. {} passed; 0 failed; 0 ignored; 0 measured; {} filtered out\n",
+                ran.len(),
+                FIXTURE_TESTS.len() - ran.len()
+            ));
+            ExecOutcome { rc: 0, output }
+        },
+    );
+}
+
+#[test]
+fn a_tests_filter_runs_only_the_named_test_and_the_verdict_names_the_filter() {
+    let w = unit_world("unit-filter");
+    let rt = runtime();
+    libtest_over_fixture(&rt, &w.repo);
+    let b = FakeBuilder::new(None);
+    let rc = w.run(&rt, &b, &["--suites", "unit-tests", "--tests", "one_name", "units"], "", &w.repo);
+    assert_eq!(rc, 0, "{:?}", w.lines.lock().unwrap());
+    assert_eq!(w.last(), "VERDICT GREEN ran=1 tests=one_name");
+    assert_eq!(fs::read_to_string(w.repo.join(crate::unit::FILTER_REL)).unwrap(), "one_name\n");
+    assert!(w.has_line(|l| l.ends_with("unit-tests: --tests one_name ran 1 test(s): tests::one_name")));
+    // a filtered pass is its own claim: the unfiltered run of the same tree is not answered by it
+    let rc = w.run(&rt, &b, &["--suites", "unit-tests", "units"], "", &w.repo);
+    assert_eq!(rc, 0);
+    assert_eq!(w.last(), "VERDICT GREEN ran=1");
+    assert!(!w.repo.join(crate::unit::FILTER_REL).exists());
+}
+
+#[test]
+fn a_tests_filter_that_matches_no_test_is_a_fault_not_a_green() {
+    let w = unit_world("unit-filter-none");
+    let rt = runtime();
+    libtest_over_fixture(&rt, &w.repo);
+    let b = FakeBuilder::new(None);
+    let rc = w.run(&rt, &b, &["--suites", "unit-tests", "--tests", "no_such_test", "units"], "", &w.repo);
+    assert_eq!(rc, 2);
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=1 reason=tests-matched-none tests=no_such_test");
+    // every name is its own claim: one that matched does not vouch for one that did not
+    let rc = w.run(&rt, &b, &["--suites", "unit-tests", "--tests", "one_name,no_such_test", "units"], "", &w.repo);
+    assert_eq!(rc, 2);
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=1 reason=tests-matched-none tests=one_name,no_such_test");
+    assert!(w.has_line(|l| l.ends_with("unit-tests: no test matched no_such_test — no verdict")));
+}
+
+#[test]
+fn a_tests_filter_on_a_diff_that_touches_no_crate_is_a_fault() {
+    let w = unit_world("unit-filter-nocrate");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    sh(&w.repo, "git checkout -q local/main && git checkout -qb docs && echo x > notes.md && git add notes.md && git commit -qm docs");
+    let rc = w.run(&rt, &b, &["--suites", "unit-tests", "--tests", "one_name", "docs"], "", &w.repo);
+    assert_eq!(rc, 2);
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=tests-no-crates tests=one_name");
+}
+
+#[test]
+fn a_tests_filter_without_the_unit_tier_is_refused_before_any_work() {
+    let w = World::new("unit-filter-tier");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let rc = w.run(&rt, &b, &["--suites", "test-a.sh", "--tests", "one_name", "topic"], "", &w.root);
+    assert_eq!(rc, 2);
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=tests-without-unit-tier tests=one_name");
+    assert_eq!(b.calls.load(Ordering::SeqCst), 0);
 }

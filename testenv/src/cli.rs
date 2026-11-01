@@ -3,7 +3,7 @@
 
 use crate::record::Mode;
 
-pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--artifacts <dir>] [--deadline <secs>] [--repeat-reason <why>] [--report [N]] <branch> [<repo-name>]";
+pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--artifacts <dir>] [--deadline <secs>] [--repeat-reason <why>] [--tests <name>[,<name>...]] [--report [N]] <branch> [<repo-name>]";
 
 /// Where the explicit suite list comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +27,9 @@ pub struct RunArgs {
     /// `--repeat-reason WHY`: a first check of a tip is not a retry of a cached red; the
     /// argument form of `SPIRA_VERDICT_REPEAT_CONSIDERED`, which it outranks.
     pub repeat_reason: Option<String>,
+    /// `--tests a,b`: the unit-tests tier runs only the Rust tests whose names contain one of
+    /// these, cargo test's own filter; None runs every test of the selected crates.
+    pub tests: Option<Vec<String>>,
     pub branch: String,
     pub repo: Option<String>,
 }
@@ -54,6 +57,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     let mut deadline: Option<u64> = None;
     let mut artifacts: Option<String> = None;
     let mut repeat_reason: Option<String> = None;
+    let mut tests: Option<Vec<String>> = None;
     let mut i = 0;
     let parse_deadline = |v: &str| -> Result<u64, UsageError> {
         v.parse::<u64>()
@@ -64,6 +68,16 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                     "batch: --deadline needs a positive number of seconds, got: {v}"
                 )])
             })
+    };
+    let parse_tests = |v: &str| -> Result<Vec<String>, UsageError> {
+        let names: Vec<String> = v.split(',').map(str::to_string).collect();
+        if names.iter().all(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':')) {
+            Ok(names)
+        } else {
+            Err(UsageError(vec![format!(
+                "batch: --tests needs comma-separated Rust test names (letters, digits, _ and ::), got: {v}"
+            )]))
+        }
     };
     let set_suites = |suites: &mut Option<String>, v: String| -> Result<(), UsageError> {
         if suites.is_some() {
@@ -76,7 +90,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         let a = args[i].as_str();
         match a {
             "--mode" | "--suites" | "--profile" | "--deadline" | "--artifacts"
-            | "--repeat-reason" => {
+            | "--repeat-reason" | "--tests" => {
                 let v = args
                     .get(i + 1)
                     .cloned()
@@ -87,6 +101,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                     "--deadline" => deadline = Some(parse_deadline(&v)?),
                     "--artifacts" => artifacts = Some(v),
                     "--repeat-reason" => repeat_reason = Some(v),
+                    "--tests" => tests = Some(parse_tests(&v)?),
                     _ => profile = Some(v),
                 }
                 i += 2;
@@ -129,6 +144,10 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
             }
             _ if a.starts_with("--artifacts=") => {
                 artifacts = Some(a["--artifacts=".len()..].to_string());
+                i += 1;
+            }
+            _ if a.starts_with("--tests=") => {
+                tests = Some(parse_tests(&a["--tests=".len()..])?);
                 i += 1;
             }
             _ if a.starts_with("--deadline=") => {
@@ -206,6 +225,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         deadline,
         artifacts,
         repeat_reason,
+        tests,
         branch,
         repo,
     }))
@@ -351,6 +371,21 @@ mod tests {
             assert!(p(bad).unwrap_err().0[0].contains("--artifacts"), "{bad:?}");
         }
         assert!(p(&["--artifacts"]).is_err());
+    }
+
+    #[test]
+    fn tests_takes_comma_separated_test_names_and_refuses_anything_else() {
+        assert_eq!(run(&["b"]).tests, None);
+        assert_eq!(run(&["--tests", "one_name", "b"]).tests, Some(vec!["one_name".to_string()]));
+        assert_eq!(
+            run(&["--tests=a::b,c", "b"]).tests,
+            Some(vec!["a::b".to_string(), "c".to_string()])
+        );
+        for bad in ["", "a,,b", "a b", "--x", "a;rm"] {
+            let e = p(&["--tests", bad, "b"]).unwrap_err();
+            assert!(e.0[0].contains("--tests needs comma-separated"), "{bad}");
+        }
+        assert!(p(&["--tests"]).is_err());
     }
 
     #[test]
