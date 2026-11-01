@@ -10,6 +10,7 @@ pub const NAME: &str = "unit-tests";
 pub const SCRIPT: &str = "unit-tests.sh";
 pub const CRATES_REL: &str = "target/unit-tests.crates";
 pub const BINS_REL: &str = "target/unit-tests.bins";
+pub const FILTER_REL: &str = "target/unit-tests.filter";
 
 pub fn resolve(list: &str) -> String {
     list.split(',').map(|n| if n.trim() == NAME { SCRIPT } else { n }).collect::<Vec<_>>().join(",")
@@ -25,6 +26,33 @@ pub fn crates_path(tree: &Path) -> PathBuf {
 
 pub fn bins_path(tree: &Path) -> PathBuf {
     tree.join(BINS_REL)
+}
+
+/// Leaves `--tests`' names for the script, one per line, or removes a filter an earlier run
+/// left in this tree, so an unfiltered run is never quietly filtered.
+pub fn write_filter(tree: &Path, tests: Option<&[String]>) -> Result<(), String> {
+    let path = tree.join(FILTER_REL);
+    match tests {
+        Some(names) => std::fs::create_dir_all(path.parent().unwrap_or(tree))
+            .and_then(|_| std::fs::write(&path, names.iter().map(|n| format!("{n}\n")).collect::<String>())),
+        None => match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        },
+    }
+    .map_err(|e| format!("cannot write {}: {e}", path.display()))
+}
+
+/// The tests libtest reports it ran, from its `test <name> ... ok|FAILED` lines; an ignored
+/// test did not run.
+pub fn tests_ran(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter_map(|l| {
+            let (name, result) = l.strip_prefix("test ")?.split_once(" ... ")?;
+            (result.starts_with("ok") || result.starts_with("FAILED")).then(|| name.to_string())
+        })
+        .collect()
 }
 
 /// Workspace crates whose binaries the selected crates' tests launch, declared as
@@ -114,6 +142,18 @@ mod tests {
         assert_eq!(test_bins(META, &["rt".into(), "plain".into()]).unwrap(), ["lc"]);
         assert!(test_bins(META, &["plain".into()]).unwrap().is_empty());
         assert!(test_bins(META, &["lc".into()]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_tests_libtest_ran_are_its_ok_and_failed_lines_and_never_an_ignored_one() {
+        let out = "running 3 tests\n\
+            test tests::one_name ... ok\n\
+            test tests::two_name ... FAILED\n\
+            test tests::slow_one ... ignored, needs a database\n\
+            test result: FAILED. 1 passed; 1 failed; 1 ignored; 0 measured; 0 filtered out\n\
+            test src/lib.rs - doc (line 3) ... ok\n";
+        assert_eq!(tests_ran(out), ["tests::one_name", "tests::two_name", "src/lib.rs - doc (line 3)"]);
+        assert!(tests_ran("running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out\n").is_empty());
     }
 
     #[test]

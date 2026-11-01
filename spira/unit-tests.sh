@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # unit-tests.sh — the Rust unit tests of the crates a tip's diff affects, in the fixture
 # container. Not a corpus suite: it is run only as `testenv --suites unit-tests <tip> <repo>`,
-# which leaves the crate list in target/unit-tests.crates.
+# which leaves the crate list in target/unit-tests.crates and, under --tests, the test-name
+# filters in target/unit-tests.filter.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(dirname "$HERE")"
@@ -30,4 +31,9 @@ while IFS= read -r c; do [ -n "$c" ] && bins+=(-p "$c"); done < "$BINS"
 if [ "${#bins[@]}" -gt 0 ]; then
   cargo build "${bins[@]}" --bins -j "$jobs" || exit 1
 fi
-cargo test "${words[@]}" -j "$jobs" -- --test-threads="$jobs"
+filters=()
+if [ -f "$ROOT/target/unit-tests.filter" ]; then
+  while IFS= read -r t; do [ -n "$t" ] && filters+=("$t"); done < "$ROOT/target/unit-tests.filter"
+  echo "unit-tests: filtered to tests named ${filters[*]}"
+fi
+cargo test "${words[@]}" -j "$jobs" -- --test-threads="$jobs" "${filters[@]}"

@@ -289,6 +289,7 @@ mod tests {
             producer: Producer::Explicit,
             profile: "debug".into(),
             artifacts_id: None,
+            tests: None,
         }
     }
 

@@ -122,11 +122,18 @@ impl Finish {
     }
 
     pub fn verdict_line(&self) -> String {
+        self.verdict_line_filtered(None)
+    }
+
+    /// The verdict line of a run held to `--tests`, which names the filter so a filtered green
+    /// is never read as a full one.
+    pub fn verdict_line_filtered(&self, tests: Option<&str>) -> String {
         let deferred = self
             .deferred
             .map(|(d, secs)| format!(" deferred={d} (deadline {secs}s)"))
             .unwrap_or_default();
         let skipped = if self.skipped > 0 { format!(" skipped={}", self.skipped) } else { Default::default() };
+        let tests = tests.map(|t| format!(" tests={t}")).unwrap_or_default();
         match self.rc {
             0 => {
                 let mut s = format!("VERDICT GREEN ran={}", self.ran);
@@ -138,20 +145,21 @@ impl Finish {
                 }
                 s.push_str(&deferred);
                 s.push_str(&skipped);
+                s.push_str(&tests);
                 s
             }
             1 => format!(
-                "VERDICT RED ran={} red={}{deferred}{skipped}{}",
+                "VERDICT RED ran={} red={}{deferred}{skipped}{tests}{}",
                 self.ran,
                 self.red,
                 self.first_red.as_deref().map(|c| format!(" first={c}")).unwrap_or_default()
             ),
             RC_EMPTY => format!(
-                "VERDICT EMPTY rc={RC_EMPTY} ran={} skipped={} — all {} selected suites skipped, nothing was tested",
+                "VERDICT EMPTY rc={RC_EMPTY} ran={} skipped={}{tests} — all {} selected suites skipped, nothing was tested",
                 self.ran, self.skipped, self.skipped
             ),
             rc => format!(
-                "VERDICT FAULT rc={rc} ran={} reason={}{}",
+                "VERDICT FAULT rc={rc} ran={} reason={}{}{tests}",
                 self.ran,
                 self.reason.unwrap_or("harness"),
                 self.session.map(|s| format!(" session={s}")).unwrap_or_default()
@@ -283,7 +291,7 @@ pub fn execute(inv: Invocation, deps: &Deps) -> i32 {
         Invocation::Run(args) => {
             let fin = run(&args, deps);
             crate::telemetry::push_finish(&crate::telemetry::sink(), fin.rc, fin.ran, fin.red, fin.skipped, fin.reason);
-            (deps.out)(&fin.verdict_line());
+            (deps.out)(&fin.verdict_line_filtered(args.tests.as_ref().map(|t| t.join(",")).as_deref()));
             fin.rc
         }
     }
@@ -1203,6 +1211,10 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             }
         }
     };
+    if args.tests.is_some() && !crate::unit::selected(&selected) {
+        stderr("batch: --tests filters the unit-tests tier, and it is not selected — add unit-tests to --suites");
+        return Finish::fault(2, "tests-without-unit-tier", 0);
+    }
     if selected.is_empty() {
         deps.log("no suites selected — nothing to do");
         return Finish::nothing();
@@ -1214,6 +1226,10 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
                 stderr(&format!("batch: unit-tests: {e}"));
                 return Finish::fault(2, "unit-crates", 0);
             }
+        }
+        if let Err(e) = crate::unit::write_filter(&wt.path, args.tests.as_deref()) {
+            stderr(&format!("batch: unit-tests: {e}"));
+            return Finish::fault(2, "unit-filter", 0);
         }
     }
     let headers: HashMap<String, SuiteHeaders> = selected
@@ -1274,6 +1290,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         producer,
         profile: key_profile.clone(),
         artifacts_id: prebuilt.as_ref().map(|p| p.id.clone()),
+        tests: args.tests.as_ref().map(|t| t.join(",")),
     };
     let key = key_inputs.key();
     let results = s.results_root.join(&key);
@@ -1385,7 +1402,8 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     }
 
     // ---- resume: suites a previous attempt of this job already passed for this tree ----
-    let resume = s.resume.as_deref().and_then(|spec| {
+    // A filtered run is seconds long, and its pass covers only the tests it named.
+    let resume = s.resume.as_deref().filter(|_| args.tests.is_none()).and_then(|spec| {
         let aws = deps.which("aws").unwrap_or_else(|| PathBuf::from("aws"));
         match crate::resume::backend_from_spec(spec, &aws) {
             Ok(backend) => backend,
@@ -2323,6 +2341,16 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         ));
         return Finish::fault(2, "exec-lost", ran);
     }
+    if let Some(t) = &args.tests {
+        let out = fs::read_to_string(results.join(format!("{}.out", crate::unit::SCRIPT))).unwrap_or_default();
+        let names = crate::unit::tests_ran(&out);
+        deps.log(&format!("unit-tests: --tests {} ran {} test(s): {}", t.join(","), names.len(), names.join(" ")));
+        // law-absence-needs-a-positive-control: a filter that selected nothing proved nothing.
+        if names.is_empty() && records.get(crate::unit::SCRIPT).is_some_and(|r| r.status == Status::Ok) {
+            deps.log("unit-tests: the filter matched no test — no verdict");
+            return Finish::fault(2, "tests-matched-none", ran);
+        }
+    }
     let qreds = outcome.quarantined_reds();
     if !qreds.is_empty() {
         deps.log(&format!(
@@ -2438,7 +2466,9 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         let _ = fs::write(&verdict_path, f.render());
     }
     if deferred.is_empty() {
-        record_full_suite_pass(&s.run, &commit, &selected, &suite_dir, &|m| deps.log(m));
+        if args.tests.is_none() {
+            record_full_suite_pass(&s.run, &commit, &selected, &suite_dir, &|m| deps.log(m));
+        }
         deps.log("all suites passed");
     } else {
         deps.log("every suite that finished before the deadline passed");

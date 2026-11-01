@@ -32,6 +32,11 @@ pub struct KeyInputs {
     /// key line exactly as it was before the flag existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifacts_id: Option<String>,
+    /// `--tests` only: the unit-tests filter, comma-joined. A filtered pass covers only the
+    /// tests it names, so it must never answer for an unfiltered run; None leaves the key line
+    /// exactly as it was before the flag existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tests: Option<String>,
 }
 
 impl KeyInputs {
@@ -58,14 +63,19 @@ impl KeyInputs {
         sha256_hex(line.as_bytes())
     }
 
+    fn tests_suffix(&self) -> String {
+        self.tests.as_deref().map(|t| format!(" tests={t}")).unwrap_or_default()
+    }
+
     pub fn key(&self) -> String {
         let prebuilt = self
             .artifacts_id
             .as_deref()
             .map(|id| format!(" prebuilt={id}"))
             .unwrap_or_default();
+        let tests = self.tests_suffix();
         let line = format!(
-            "{} {} {} {} {} {} {} {}{prebuilt}\n",
+            "{} {} {} {} {} {} {} {}{prebuilt}{tests}\n",
             self.repo_name,
             self.tree,
             self.image_tag,
@@ -260,7 +270,17 @@ mod tests {
             producer: Producer::Explicit,
             profile: "dwarf".into(),
             artifacts_id: None,
+            tests: None,
         }
+    }
+
+    #[test]
+    fn a_test_filter_makes_a_new_key() {
+        let full = inputs();
+        let filtered = KeyInputs { tests: Some("one_name".into()), ..inputs() };
+        assert_ne!(full.key(), filtered.key());
+        let other = KeyInputs { tests: Some("two_name".into()), ..inputs() };
+        assert_ne!(filtered.key(), other.key());
     }
 
     #[test]
