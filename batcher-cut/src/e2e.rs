@@ -16,7 +16,7 @@ use std::time::Instant;
 use batcher::attrib::{Budget, Decision};
 use batcher::core::Member;
 
-use crate::drive::{attribute_round, RoundEnd, RoundOps};
+use batcher::drive::{attribute_round, RoundEnd, RoundOps};
 use crate::io::{Env, Land, Repo};
 
 /// Stands in for `round-vm run <wt> ... --results-dir R --attr-spool S`: runs the corpus

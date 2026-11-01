@@ -1,4 +1,4 @@
-//! The attribution loop (DESIGN.md §4): stream the main run's results into the pure
+//! The attribution loop (batcher-cut DESIGN.md §4): stream the main run's results into the pure
 //! `Attributor`, launch the reruns it hands out into spare slots, and — once every red is
 //! settled — eject the owners, re-run only their suites on the survivors, and say whether
 //! the round lands. Every effect goes through `RoundRunner` (suite runs) or `RoundOps`
@@ -6,8 +6,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use batcher::attrib::{Attributor, Budget, Decision, Job, JobResult, Outcome, Purpose, Shape};
-use batcher::core::{Id, Member};
+use crate::attrib::{Attributor, Budget, Decision, Job, JobResult, Outcome, Purpose, Shape};
+use crate::core::{Id, Member};
 
 /// What one poll of the main run returned: results that became final since the last poll,
 /// and whether it has ended.
@@ -90,6 +90,10 @@ pub trait RoundOps {
         None
     }
 }
+
+/// The round-level pseudo-suite name a --with-bins build failure (exit 4) reports under —
+/// never a real `test-*.sh` file, so it can't collide with one a suite selection would pick.
+pub const WORKSPACE_BUILD: &str = "workspace-build";
 
 /// Ids of the settled-owner reruns start here, clear of the attributor's own.
 const RERUN_ID_BASE: u64 = 1 << 40;
@@ -268,7 +272,7 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
 }
 
 pub struct Mended {
-    pub next: batcher::mender::Next,
+    pub next: crate::mender::Next,
     pub unattributed: Vec<String>,
     /// Every suite the pass's menders handled: what the next pass must prove green.
     pub suites: Vec<String>,
@@ -302,7 +306,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
     for iteration in 0..bound {
         let s = drive(runner, &*ops, kind, &suites, &members, budget)?;
         if s.end == MainEnd::WorkspaceBuild {
-            ops.incident("workspace-build", &[crate::io::WORKSPACE_BUILD.to_string()]);
+            ops.incident("workspace-build", &[WORKSPACE_BUILD.to_string()]);
             return Ok(RoundEnd::Blocked("the round's workspace failed to build".into()));
         }
         let d = s.decision;
@@ -380,11 +384,11 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                 ops.incident("unattributed", &m.unattributed);
             }
             match m.next {
-                batcher::mender::Next::Stop { page } => {
+                crate::mender::Next::Stop { page } => {
                     ops.incident("mender-page", &m.suites);
                     return Ok(RoundEnd::Blocked(page));
                 }
-                batcher::mender::Next::Pass { members: next, left, retry } => {
+                crate::mender::Next::Pass { members: next, left, retry } => {
                     for l in &left {
                         if let Some(member) = members.iter().find(|x| x.id == l.id) {
                             let own = d.owners.get(&l.id).cloned().unwrap_or_else(|| m.suites.clone());
@@ -623,7 +627,7 @@ pub(crate) mod tests {
         /// Base shas the base will move to, one per `base_moved` call; empty means it never moves.
         pub moves: Vec<String>,
         /// The next pass the menders decide, once per red pass; empty means no mender owns it.
-        pub menders: Vec<batcher::mender::Next>,
+        pub menders: Vec<crate::mender::Next>,
     }
 
     impl RoundOps for Ops {
@@ -874,7 +878,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_red_pass_with_menders_takes_its_next_pass_from_their_outcomes_and_ejects_only_the_returned() {
-        use batcher::mender::{Left, Next};
+        use crate::mender::{Left, Next};
         let mut f = Fake::new(|s, tree| match s {
             "test-03.sh" => tree.contains("m1") && tree.contains("m3"),
             _ => false,
@@ -891,7 +895,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_page_from_the_menders_stops_the_round() {
-        use batcher::mender::Next;
+        use crate::mender::Next;
         let mut f = Fake::new(|s, tree| s == "test-01.sh" && tree.contains("m1") && tree.contains("m3"));
         let mut ops = Ops { menders: vec![Next::Stop { page: "box".into() }], ..Ops::default() };
         let end = attribute_round(&mut f, &mut ops, &corpus(10), three(), Budget { slots: 8, maxpar: 2 }).unwrap();
