@@ -5847,9 +5847,11 @@ fn a_round_the_lifecycle_abandoned_is_closed_out_by_the_next_locked_verb() {
         "the ended round's worktree is removed: {:?}",
         t.git.calls.borrow()
     );
-    assert!(fs::read_to_string(marker(&t, "r-gone", "result"))
-        .unwrap()
-        .starts_with("ended: ABANDONED on the lifecycle"));
+    let lines = result_lines(&t, "r-gone");
+    assert!(
+        lines.iter().any(|(_, cause, detail)| cause == "abandoned:swept" && detail.starts_with("ended: ABANDONED on the lifecycle")),
+        "the sweep closes the record out with a typed cause: {lines:?}"
+    );
 }
 
 /// Another holder's live lease on `batch` of the fixture's repo.
