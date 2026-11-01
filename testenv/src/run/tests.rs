@@ -2632,35 +2632,34 @@ fn target_volumes(rt: &FakeRuntime) -> Vec<String> {
 }
 
 #[test]
-fn each_tree_mounts_its_own_unit_target_volume_so_switching_back_finds_it_warm() {
-    let w = unit_world("unit-volume-per-tree");
-    // Tree B: the same crate and tests, different bytes.
+fn each_branch_mounts_its_own_unit_target_volume_across_its_commits_and_a_bare_sha_its_trees() {
+    let w = unit_world("unit-volume-per-branch");
+    // Branch B: the same crate and tests, different bytes.
     sh(&w.repo, "git checkout -qb units-b && echo '// b' >> fixture/src/lib.rs && git commit -qam b && git checkout -q units");
-    let tree = |br: &str| git(&w.repo, &["rev-parse", &format!("{br}^{{tree}}")]).unwrap();
-    let (a, b) = (tree("units"), tree("units-b"));
-    assert_ne!(a, b);
     let rt = runtime();
     libtest_over_fixture(&rt, &w.repo);
     let fb = FakeBuilder::new(None);
-    // A, B, A, each checked out in place; the second A names another test, so the verdict
-    // cache does not answer it and it mounts a target again (three `up`s, asserted below).
-    for (br, test) in [("units", "one_name"), ("units-b", "one_name"), ("units", "two_name")] {
-        sh(&w.repo, &format!("git checkout -q {br}"));
-        let rc = w.run(&rt, &fb, &["--suites", "unit-tests", "--tests", test, br], "", &w.repo);
-        assert_eq!(rc, 0, "{br}: {:?}", w.lines.lock().unwrap());
-    }
-    let own = |t: &str| format!("spira-unit-cargo-target-{t}");
-    assert_eq!(target_volumes(&rt), vec![own(&a), own(&b), own(&a)], "A, B, A mount A's, B's, then A's own volume again");
-    // The script is told the target is its tree's own, so it has nothing to clean.
-    let told: Vec<Option<String>> = rt
-        .execs
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|r| r.argv.get(1).map(String::as_str) == Some("/workspace/spira/unit-tests.sh"))
-        .map(|r| r.env.iter().find(|(k, _)| k == "UNIT_TARGET_VOLUME").map(|(_, v)| v.clone()))
-        .collect();
-    assert_eq!(told, vec![Some(own(&a)), Some(own(&b)), Some(own(&a))]);
+    // Each run is checked out in place and names its own test, so the verdict cache answers
+    // none of them and each mounts a target (four `up`s, asserted below).
+    let run = |rev: &str, test: &str| {
+        let rc = w.run(&rt, &fb, &["--suites", "unit-tests", "--tests", test, rev], "", &w.repo);
+        assert_eq!(rc, 0, "{rev}: {:?}", w.lines.lock().unwrap());
+    };
+    run("units", "one_name");
+    sh(&w.repo, "git checkout -q units-b");
+    run("units-b", "one_name");
+    // A second commit on A: a new tree, the same branch.
+    sh(&w.repo, "git checkout -q units && echo '// a2' >> fixture/src/lib.rs && git commit -qam a2");
+    run("units", "two_name");
+    let a2 = git(&w.repo, &["rev-parse", "units"]).unwrap();
+    run(&a2, "three_name");
+    let tree = git(&w.repo, &["rev-parse", "units^{tree}"]).unwrap();
+    let own = |k: &str| format!("spira-unit-cargo-target-{k}");
+    assert_eq!(
+        target_volumes(&rt),
+        vec![own("units"), own("units-b"), own("units"), own(&tree)],
+        "A's commits share A's volume, B never mounts it, and a bare SHA gets its tree's"
+    );
 }
 
 #[test]

@@ -2,12 +2,11 @@
 #
 # test-unit-tests-isolation.sh — unit-tests.sh never reports a verdict built from another tree.
 #
-# Cargo decides freshness by mtime, so on a target shared between trees at one checkout path, a
-# tree whose files predate the last build of a different tree reuses that tree's artifacts.
-# Two trees that differ in one test name, and in what their library returns, run in sequence at
-# one path: on one shared target (a testenv that names no volume, cases 1-5), and each on its
-# own (UNIT_TARGET_VOLUME, case 6). Each verdict must list only its own tree's test,
-# built against its own library; on its own target a tree tested again rebuilds nothing.
+# Every unit-tests batch mounts one cargo target volume at the same checkout path, and cargo
+# decides freshness by mtime, so a tree whose files predate the last build of a different tree
+# reuses that tree's artifacts. Two trees that differ in one test name, and in what their
+# library returns, run in sequence on one target dir, at one path; each verdict must list only
+# its own tree's test, built against its own library.
 #
 # tier: T2
 # covers: spira/unit-tests.sh
@@ -83,38 +82,5 @@ out="$(run_unit)"; rc=$?
 chmod 600 "$WS/sealed/f"
 wantrc "tree A passes" 0 "$rc"
 want "after recompiling the workspace" "Compiling app" "$out"
-chmod -R u+rwx "$WS" 2>/dev/null
-
-# run_own <volume>: testenv's unit tier since sp-fnb2wa — each tree on its own target volume,
-# named to the script, which then has nothing to clean.
-run_own() {
-    (cd "$WS" && env CARGO_TARGET_DIR="$TMP/$1" UNIT_TARGET_VOLUME="$1" bash spira/unit-tests.sh 2>&1)
-}
-
-# put_app <lib-tag> <test-name>: what a slot's checkout does on a switch — rewrite only the file
-# that differs, here app's test, with a fresh mtime; lc's files keep theirs.
-put_app() {
-    printf '#[cfg(test)]\nmod tests {\n    #[test]\n    fn %s() {\n        assert_eq!(lc::tag(), "%s");\n    }\n}\n' "$2" "$1" > "$WS/app/src/lib.rs"
-}
-
-echo "6. trees A, B, A, each on its own target: the second A rebuilds only what changed, judged on A:"
-put_tree a alpha_only
-backdate
-out="$(run_own vol-a)"; rc=$?
-wantrc "tree A passes" 0 "$rc"
-want "and lists A's test" "test tests::alpha_only ... ok" "$out"
-put_app a beta_only
-out="$(run_own vol-b)"; rc=$?
-wantrc "tree B passes on its own target" 0 "$rc"
-want "and lists B's test" "test tests::beta_only ... ok" "$out"
-nowant "and not A's" "alpha_only" "$out"
-put_app a alpha_only
-out="$(run_own vol-a)"; rc=$?
-wantrc "tree A passes again" 0 "$rc"
-want "and lists A's test" "test tests::alpha_only ... ok" "$out"
-nowant "and not B's" "beta_only" "$out"
-want "rebuilding the crate the switch rewrote" "Compiling app" "$out"
-nowant "and not the crate it left alone" "Compiling lc" "$out"
-[ ! -e "$TMP/vol-a/.unit-tests-built-tree" ] && ok "and never hashing the tree for a clean" || bad "and never hashing the tree for a clean" "$TMP/vol-a/.unit-tests-built-tree exists"
 
 tl_summary

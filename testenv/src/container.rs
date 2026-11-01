@@ -16,19 +16,20 @@ pub const CONTAINER_CHECKOUT: &str = "/workspace";
 pub const CONTAINER_CARGO: &str = "/var/spira/cargo";
 /// Cargo's build output lives on the named volume, never in the host-owned bind mount.
 pub const CONTAINER_CARGO_TARGET: &str = "/var/spira/cargo/target";
-/// The stem of the named volume a unit-tests batch mounts as its cargo target; each tree
+/// The stem of the named volume a unit-tests batch mounts as its cargo target; each branch
 /// mounts its own, [`unit_target_volume`]. The sweep (prune.rs) bounds them all together.
 pub const UNIT_TARGET_VOLUME: &str = "spira-unit-cargo-target";
-/// What a unit-tests batch tells `spira/unit-tests.sh` its target volume is: set, the volume
-/// is this tree's own and holds no other tree's artifacts.
-pub const UNIT_TARGET_VOLUME_ENV: &str = "UNIT_TARGET_VOLUME";
 
-/// The cargo target volume of the tree whose git tree id is `tree` (sp-fnb2wa). Cargo trusts
-/// mtimes, so a target shared between trees served one tree's binaries to another (sp-h6m43s);
-/// one volume per tree never holds another tree's artifacts, and a tree tested again finds its
-/// own build warm.
-pub fn unit_target_volume(tree: &str) -> String {
-    format!("{UNIT_TARGET_VOLUME}-{tree}")
+/// The cargo target volume a unit-tests batch mounts (sp-fnb2wa): the tested branch's own,
+/// so builders alternating branches in the one unit slot never clean each other's builds, and
+/// a branch's dependencies stay warm across its amends; a bare revision gets its tree's own.
+/// Inside a volume, `spira/unit-tests.sh` still cleans the workspace crates when the tree
+/// differs from the last one built there (sp-h6m43s), because cargo trusts mtimes.
+pub fn unit_target_volume(branch: Option<&str>, tree: &str) -> String {
+    match branch {
+        Some(b) => format!("{UNIT_TARGET_VOLUME}-{}", gate::parse::tree_key(b)),
+        None => format!("{UNIT_TARGET_VOLUME}-{tree}"),
+    }
 }
 /// pasta's default forwards a container's loopback to the host's; `-T none` and `--no-map-gw`
 /// close both, so a container never reaches a host service bound to loopback.

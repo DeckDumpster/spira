@@ -864,9 +864,6 @@ impl<'a> Session<'a> {
         env.extend(fixtures.env());
         env.push(kv("TMUX", ""));
         env.push(kv("SPIRA_PATH", ""));
-        if let Some(v) = &self.cargo_target_volume {
-            env.push(kv(crate::container::UNIT_TARGET_VOLUME_ENV, v.clone()));
-        }
         env.push(kv("SPIRA_BD_LOG", self.bd_log(mode, n, suite)));
         match mode {
             Mode::Parallel => {
