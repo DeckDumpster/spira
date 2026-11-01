@@ -1,7 +1,9 @@
 //! The ports' production implementations.
 
+pub mod child;
 pub mod liveness;
 pub mod verbs;
+pub mod vm_runner;
 
 use runtime::ports::{Clock, VirtualClock, WallClock};
 use state_store::{Error, Fence, Item, Request, Selector, Txn, TxnResult};

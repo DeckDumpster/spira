@@ -1545,6 +1545,7 @@ version = "0.1.0"
 dependencies = [
  "batcher",
  "lifecycle",
+ "migration-numbers",
  "round-controller",
  "runtime",
  "serde",
@@ -1553,6 +1554,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "state-store",
+ "testkit",
  "toml",
 ]
 

@@ -77,6 +77,11 @@ pub fn token_json(t: Rev) -> Value {
     json!({ "main": t.main, "sub": t.sub })
 }
 
+/// A token as unit names and verbs carry it: `<main>-<sub>`.
+pub fn token_word(t: Rev) -> String {
+    format!("{}-{}", t.main, t.sub)
+}
+
 pub fn token_of(v: &Value) -> Option<Rev> {
     Some(Rev::new(
         v.get("main")?.as_u64()?,
@@ -186,6 +191,21 @@ pub fn holder_of(p: &Ports, res: &Resource) -> Result<Option<Held>, String> {
 }
 
 impl Lease {
+    /// The lease another process took and handed over by its token: the runner's, from `pass`.
+    pub fn handed(resource: Resource, token: Rev) -> Lease {
+        Lease {
+            fence: Fence {
+                resource: resource.lock.clone(),
+                token,
+            },
+            resource,
+        }
+    }
+
+    pub fn fence(&self) -> &Fence {
+        &self.fence
+    }
+
     pub fn token(&self) -> Rev {
         self.fence.token
     }

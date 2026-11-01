@@ -332,6 +332,27 @@ fn store_err(e: Error) -> LeaseError {
 }
 
 impl SlotGrant {
+    /// The grant `pass` took and handed over by its token, with the holder it recorded; an
+    /// unreadable record is renewed or refused on the lock, not here.
+    pub fn handed(p: &Ports, slot: Slot, token: Rev) -> SlotGrant {
+        let record = p
+            .store
+            .get(&slot.record_key())
+            .ok()
+            .flatten()
+            .and_then(|i| Record::of(&i.value.data))
+            .unwrap_or_default();
+        SlotGrant {
+            slot,
+            fence: Fence {
+                resource: slot.lock(),
+                token,
+            },
+            record,
+            evidence: None,
+        }
+    }
+
     pub fn slot(&self) -> Slot {
         self.slot
     }

@@ -9,8 +9,8 @@ use runtime::ports::{Clock, VirtualClock};
 use serde::Deserialize;
 
 use crate::ports::{
-    Certified, Done, EjectReq, Ejected, Fields, OpenReq, Opened, Pending, Place, RoundVerbs,
-    Status, Store, Superseded, Verb, VerbRefusal,
+    Child, Done, EjectReq, Ejected, Fields, OpenReq, Opened, Place, RoundVerbs, Status, Store,
+    Superseded, Verb, VerbRefusal,
 };
 use crate::resources::{round_key, Round};
 use crate::sim::vm::FakeVm;
@@ -260,7 +260,12 @@ impl RoundVerbs for FakeVerbs {
     }
 
     /// The pass's identity is the batch's head: the merged tree its members and base make.
-    fn certify(&self, repo: &str, batch: &str) -> Result<Box<dyn Pending<Certified>>, VerbRefusal> {
+    fn certify(
+        &self,
+        repo: &str,
+        batch: &str,
+        _lease_token: Option<&str>,
+    ) -> Result<Box<dyn Child>, VerbRefusal> {
         if let Some(Err(r)) = self.next(Verb::Certify, repo, Some(batch)) {
             return Err(r);
         }
@@ -299,6 +304,17 @@ impl RoundVerbs for FakeVerbs {
         if let Some(st) = &self.store {
             let key = round_key(repo, batch);
             put(&**st, &key, Txn::new().delete(&key));
+            let lock = crate::lease::Resource::round(repo, batch);
+            if let Ok(Some(l)) = st.get(&lock.lock_key()) {
+                let fence = state_store::Fence {
+                    resource: lock.lock,
+                    token: l.create_rev,
+                };
+                let _ = st.release(
+                    &fence,
+                    &Request::new(&format!("fake-queue-revoke-{key}"), "queue", "fake"),
+                );
+            }
         }
         Ok(s)
     }
@@ -331,12 +347,7 @@ mod tests {
             note: String::new(),
         };
         let vm = FakeVm::new(
-            vec![VmScript {
-                identity: "h1".into(),
-                verdict: VmVerdict::Green,
-                suites: vec![],
-                duration_secs: 0,
-            }],
+            vec![VmScript::of("h1", VmVerdict::Green, 0)],
             p,
             clock.clone(),
         );
@@ -482,15 +493,15 @@ mod tests {
         .unwrap();
         v.open(&open_req("r")).unwrap();
         assert_eq!(
-            v.certify("r", "b1").unwrap().poll(),
-            Some(Ok(Certified::Green))
+            v.certify("r", "b1", Some("1-0")).unwrap().poll(),
+            Some(Ok(crate::ports::CertifyEnd::default()))
         );
         assert_eq!(
-            v.certify("busy", "b1").err().unwrap().text,
+            v.certify("busy", "b1", None).err().unwrap().text,
             "leased by another holder"
         );
         assert!(
-            v.certify("r", "b7").unwrap().poll().unwrap().is_err(),
+            v.certify("r", "b7", None).unwrap().poll().unwrap().is_err(),
             "an unknown batch runs under its own id, unscripted"
         );
         assert_eq!(

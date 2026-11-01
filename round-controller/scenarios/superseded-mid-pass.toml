@@ -1,0 +1,100 @@
+description = "a red at depth 1 moves its head while depth 2 is mid-pass: depth 2 is superseded, which revokes its lease, and its runner tears its VM down and frees its slot within one renewal interval of the supersede, writing no attempt"
+repos = ["lane"]
+
+[run]
+epoch = 1800000000
+passes = 3
+every_secs = 60
+
+# Renewals every 20 s from the runner's start at 10 s; the supersede is at the pass at 120 s.
+[lease]
+ttl_secs = 60
+pass_wall_max_secs = 30000
+redrive_retries = 2
+ec2_max_lifetime_secs = 60000
+
+[lease.deadline_secs]
+boot = 40
+build = 50
+suites = 90
+subpass = 300
+certify = 30
+
+[[store]]
+key = "lanes/lane"
+data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
+
+[[store]]
+key = "batches/lane/k1"
+data = { batch_id = "k1", repo = "lane", state = "CiRunning", head = "k1-h1", base = "base-0", pass = 1, version = 1, tested_base = "base-0", members = [{ id = "sp-a", tip = "a1" }, { id = "sp-d", tip = "d1" }] }
+
+[[store]]
+key = "batches/lane/k2"
+data = { batch_id = "k2", repo = "lane", state = "CiRunning", parent = "k1", head = "k2-h1", base = "k1-h1", pass = 1, version = 2, tested_base = "k1-h1", members = [{ id = "sp-b", tip = "b1" }] }
+
+[[round_lease]]
+repo = "lane"
+batch = "k1"
+
+# Pass 3: depth 1 is red and ejects sp-a, which moves its head from under depth 2.
+[[store_step]]
+pass = 3
+key = "batches/lane/k1"
+data = { batch_id = "k1", repo = "lane", state = "Attributing", head = "k1-h2", base = "base-0", pass = 2, version = 3, tested_base = "base-0", members = [{ id = "sp-d", tip = "d1" }] }
+
+[[verb]]
+verb = "pass-start"
+ok = {}
+
+[[verb]]
+verb = "supersede"
+ok = { released = "sp-b:b1" }
+
+[[vm]]
+identity = "k2"
+verdict = "green"
+duration_secs = 600
+teardown_secs = 5
+vm = "vm-104"
+
+[[run_pass]]
+repo = "lane"
+batch = "k2"
+start_secs = 10
+
+[[expect]]
+name = "depth-2-superseded-once"
+count = "calls:supersede"
+equals = 1
+
+[[expect]]
+name = "its-runner-lost-the-lease-to-the-supersede"
+count = "run-lost:superseded"
+equals = 1
+
+[[expect]]
+name = "its-vm-was-torn-down"
+count = "vm-torn-down"
+equals = 1
+
+[[expect]]
+name = "never-while-the-vm-was-up"
+count = "slot-releases-with-vm-up"
+equals = 0
+
+# The supersede at 120 s plus one renewal interval of 20 s.
+[[expect]]
+name = "freed-within-one-renewal-interval"
+count = "last-slot-release-secs"
+at_most = 140
+
+[[expect]]
+name = "no-attempt-for-depth-2"
+count = "ledger-attempts"
+equals = 0
+
+[[expect]]
+name = "inverted-freed-before-the-supersede"
+count = "last-slot-release-secs"
+at_most = 119
+inverted = true

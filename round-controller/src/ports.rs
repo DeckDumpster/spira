@@ -211,35 +211,6 @@ impl Status {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Certified {
-    Green,
-    Red { suites: Vec<String> },
-}
-
-impl Certified {
-    /// A red names its suites on `red=`; without one the run certified green. A red naming no
-    /// suite is no verdict at all.
-    pub fn from_fields(f: &Fields) -> Result<Self, VerbRefusal> {
-        let Some(r) = f.get("red") else {
-            return Ok(Certified::Green);
-        };
-        let suites: Vec<String> = r
-            .split(',')
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .collect();
-        if suites.is_empty() {
-            return Err(VerbRefusal {
-                verb: Verb::Certify,
-                code: Some(0),
-                text: "queue round certify answered red= naming no suite".into(),
-            });
-        }
-        Ok(Certified::Red { suites })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EjectReq {
     pub repo: String,
     pub batch: String,
@@ -284,15 +255,56 @@ pub struct Done {
     pub said: String,
 }
 
-/// A long verb running elsewhere: `None` until it has answered.
-pub trait Pending<T> {
-    fn poll(&self) -> Option<Result<T, VerbRefusal>>;
+/// What `certify` answered once it exited: its exit, its `key=value` lines, and the red's
+/// output when it named one on `red-output=`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CertifyEnd {
+    pub exit: i32,
+    pub fields: Fields,
+    pub output: String,
+}
+
+/// round-vm's latest progress mark: the pass it is of, the phase it is in, every phase it has
+/// entered in order, when it last changed, and the VM it named. The file is the run directory's,
+/// so a reader keeps only the marks of its own pass.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Mark {
+    /// The commit round-vm names the pass by: the tree it tests.
+    pub round: String,
+    pub phase: String,
+    pub phases: Vec<String>,
+    pub at_ms: u64,
+    pub vm: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Signal {
+    Term,
+    Kill,
+}
+
+/// A process the runner started, running in a process group of its own, so a signal reaches
+/// round-vm and every process it started.
+pub trait Child {
+    /// Its answer once it has exited; `None` while it runs. A refusal when it never ran to an exit.
+    fn poll(&self) -> Option<Result<CertifyEnd, VerbRefusal>>;
+    fn mark(&self) -> Option<Mark>;
+    /// Sends `sig` to the child's whole process group.
+    fn signal(&self, sig: Signal) -> Result<(), String>;
+    /// The child and every process of its group have exited.
+    fn gone(&self) -> bool;
 }
 
 pub trait RoundVerbs {
     fn open(&self, r: &OpenReq) -> Result<Opened, VerbRefusal>;
     fn status(&self, repo: &str) -> Result<Status, VerbRefusal>;
-    fn certify(&self, repo: &str, batch: &str) -> Result<Box<dyn Pending<Certified>>, VerbRefusal>;
+    /// One pass, running until it answers; `lease_token` lets the lease's holder through.
+    fn certify(
+        &self,
+        repo: &str,
+        batch: &str,
+        lease_token: Option<&str>,
+    ) -> Result<Box<dyn Child>, VerbRefusal>;
     fn eject(&self, r: &EjectReq) -> Result<Ejected, VerbRefusal>;
     fn land(&self, repo: &str, batch: &str) -> Result<Done, VerbRefusal>;
     fn abandon(&self, repo: &str, batch: &str, reason: &str) -> Result<Done, VerbRefusal>;
@@ -437,21 +449,5 @@ mod tests {
             "sp-a:1 sp-b:2"
         );
         assert_eq!(Superseded::from_fields(&fields("")).released, "");
-    }
-
-    #[test]
-    fn a_certify_with_red_suites_is_red_and_without_is_green() {
-        assert_eq!(
-            Certified::from_fields(&fields("red=a,b\n")),
-            Ok(Certified::Red {
-                suites: vec!["a".into(), "b".into()]
-            })
-        );
-        assert_eq!(
-            Certified::from_fields(&fields("verdict line\n")),
-            Ok(Certified::Green)
-        );
-        let e = Certified::from_fields(&fields("red=,\n")).unwrap_err();
-        assert!(e.text.contains("naming no suite"), "{}", e.text);
     }
 }

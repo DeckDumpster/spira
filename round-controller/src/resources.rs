@@ -46,9 +46,9 @@ pub struct Round {
     /// stacked on. A round cut before stacking carries none.
     #[serde(default)]
     pub tested_base: Option<String>,
-    /// The token of the lease its runner was last launched under.
+    /// The token of the lease its runner was last launched under, as the lease writes it.
     #[serde(default)]
-    pub last_lease_token: Option<String>,
+    pub last_lease_token: Option<Rev>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

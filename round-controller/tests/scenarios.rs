@@ -53,6 +53,10 @@ scenario!(
     scenario_dep_rides_stack,
     scenario_pokebot_image_fault,
     scenario_stack_supersede,
+    scenario_lease_lost_kills_vm,
+    scenario_superseded_mid_pass,
+    scenario_resume_from_progress,
+    scenario_halt_mid_pass,
 );
 
 #[test]

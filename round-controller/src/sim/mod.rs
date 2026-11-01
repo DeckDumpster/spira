@@ -5,6 +5,7 @@
 pub mod bench;
 pub mod judge;
 pub mod ledger;
+pub mod run_pass;
 pub mod runner;
 pub mod scenario;
 pub mod slot_user;

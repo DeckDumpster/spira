@@ -11,9 +11,13 @@ use round_controller::outcome::StdoutLog;
 use round_controller::pass::pass;
 use round_controller::ports::Ports;
 use round_controller::probe::{probe, ThreadSleep};
+use round_controller::real::child::SysSpawn;
 use round_controller::real::liveness::{NoLauncher, NoVmRecords, SystemdUnits};
 use round_controller::real::verbs::{Deadlines, RealVerbs};
+use round_controller::real::vm_runner::{Repo, VmEnv, VmRunner};
 use round_controller::real::{self, Unserved};
+use round_controller::resources::RoundView;
+use round_controller::run::{self, RunDir, RunEnv};
 use round_controller::slots::{self, SlotSettings};
 use round_controller::telemetry;
 use runtime::ports::{Proc, SeededRng, SysProc};
@@ -22,6 +26,8 @@ const USAGE: &str = "usage: round-controller <verb>
 
   pass                                      visit every registered repo once and run the controller's steps
   cut --repo <r> --members <id@tip,...>     open one round of exactly these members, refused through the ledger
+  run --repo <r> --batch <b> --lease-token <t> --slot <pool>/<n> --slot-token <s>
+                                            one pass and its Judge under the round lease and the slot pass handed over
   lease probe --secs <n> --out <file>       renew a lease of its own for n seconds and write each renewal's lateness
   version                                   print the version
   -h, --help";
@@ -52,9 +58,28 @@ fn dispatch(args: &[String]) -> i32 {
         .as_slice()
     {
         ["-h"] | ["--help"] => {
-            println!("{USAGE}");
+            println!("{USAGE}\n\n{}", run::EXITS);
             0
         }
+        ["run", rest @ ..] => match run::parse_args(rest) {
+            Err(e) => {
+                eprintln!("round-controller run: {e}\n{USAGE}");
+                2
+            }
+            Ok(a) => match with_ports(|p| run_pass(p, &a)) {
+                Ok(end) => {
+                    println!("run={} code={}", end.word(), end.code());
+                    if let run::RunEnd::Refused { why } | run::RunEnd::Stopped { why } = &end {
+                        eprintln!("round-controller run: {}: {why}", end.word());
+                    }
+                    end.code()
+                }
+                Err(e) => {
+                    eprintln!("round-controller run: {e}");
+                    run::RunEnd::Refused { why: e }.code()
+                }
+            },
+        },
         ["version"] => {
             println!("round-controller {}", env!("CARGO_PKG_VERSION"));
             0
@@ -111,10 +136,63 @@ fn run_probe(secs: &str, out: &str) -> Result<(), String> {
     })
 }
 
+/// The sub-pass VM runs on the round's own tree: its worktree and tested base, from its record.
+fn run_pass(p: &Ports, a: &run::RunArgs) -> Result<run::RunEnd, String> {
+    let cfg = spira_config::process::cfg;
+    let num = |k: &str| -> Result<u64, String> {
+        cfg(k)?.trim().parse().map_err(|e| format!("{k}: {e}"))
+    };
+    let home = spira_config::resolve::locate_home_for_process()?;
+    let run_dir = spira_config::resolve::run_dir_for_process()?;
+    let registry = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home);
+    let tree = p
+        .store
+        .get(&round_controller::resources::round_key(&a.repo, &a.batch))
+        .ok()
+        .flatten()
+        .and_then(|i| {
+            i.value
+                .data
+                .get("worktree")?
+                .as_str()
+                .map(std::path::PathBuf::from)
+        })
+        .unwrap_or_default();
+    let base = RoundView::read(p.store, &a.repo, &a.batch)
+        .ok()
+        .flatten()
+        .and_then(|v| v.round.tested_base.or(v.round.row.base))
+        .unwrap_or_default();
+    let spawn = SysSpawn {
+        proc_: Arc::new(SysProc),
+    };
+    let env = VmEnv {
+        round_vm: spira_config::release_env::tool("round-vm").into(),
+        run: run_dir.clone(),
+        wall_secs: num("SPIRA_BATCHER_WALL_SECS")?,
+        maxpar: u32::try_from(num("SPIRA_BATCH_MAXPAR")?).map_err(|e| e.to_string())?,
+        cpu_quota: std::env::var("ROUND_CPU_QUOTA").ok(),
+        git_name: cfg("SPIRA_GIT_NAME")?,
+        git_email: cfg("SPIRA_GIT_EMAIL")?,
+    };
+    let repo = Repo {
+        name: a.repo.clone(),
+        path: registry.root(&a.repo).unwrap_or_default().into(),
+        base: registry.base(&a.repo).unwrap_or_default(),
+    };
+    let mut subs = VmRunner::new(p, &spawn, &ThreadSleep, env, repo, &tree, &base, &a.batch)?;
+    let switches = RunDir(run_dir);
+    let renv = RunEnv {
+        switches: &switches,
+        sleep: &ThreadSleep,
+        poll_ms: run::POLL_MS,
+        teardown_ms: run::TEARDOWN_MS,
+        kill_grace_ms: run::KILL_GRACE_MS,
+    };
+    Ok(run::run(p, &renv, &mut subs, a))
+}
+
 fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, String> {
-    let certify_wall: u64 = spira_config::process::cfg("SPIRA_ROUND_CERTIFY_WALL_SECS")?
-        .parse()
-        .map_err(|e| format!("SPIRA_ROUND_CERTIFY_WALL_SECS: {e}"))?;
     let leases = LeaseSettings::from_cfg(&spira_config::process::cfg)?;
     let slot_settings = SlotSettings::from_cfg(&spira_config::process::cfg)?;
     let clock = real::clock(spira_config::vtime::override_epoch());
@@ -123,11 +201,14 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
     let proc_: Arc<dyn Proc> = Arc::new(SysProc);
     let verbs = RealVerbs::new(
         proc_.clone(),
+        Arc::new(SysSpawn {
+            proc_: proc_.clone(),
+        }),
         "queue",
         Deadlines {
             verb: VERB_DEADLINE,
-            certify: VERB_DEADLINE + Duration::from_secs(certify_wall),
         },
+        spira_config::resolve::run_dir_for_process().ok(),
     );
     let units = SystemdUnits { proc_: &*proc_ };
     let ports = Ports {
