@@ -17,7 +17,9 @@ pub fn compare_bytes(compares: &[Compare]) -> usize {
     compares
         .iter()
         .map(|c| match c {
-            Compare::ModRev(k, _) | Compare::CreateRev(k, _) => k.len(),
+            Compare::ModRev(k, _)
+            | Compare::CreateRev(k, _)
+            | Compare::LockCheck { key: k, .. } => k.len(),
             Compare::Value(k, v) => k.len() + v.as_ref().map_or(0, |o| o.encode().len()),
         })
         .sum()

@@ -4,12 +4,19 @@
 path = "state-store/src/contract.rs"
 functions = [
     "Contract::open",
+    "Contract::read",
+    "Contract::with_expiry",
     "Contract::list_page",
     "Contract::create",
     "Contract::txn",
     "Contract::delete",
     "Contract::watch",
     "Contract::lock",
+    "Contract::takes_then",
+    "Contract::request_bytes",
+    "Contract::check_lock_ttl",
+    "Contract::expire_dead_locks",
+    "Contract::fences_at",
     "Contract::holder_write",
     "Contract::holds",
     "Contract::engine",
@@ -18,6 +25,13 @@ functions = [
     "Contract::expire",
     "Contract::collect",
     "validate",
+    "Txn::lock_keys",
+    "Txn::lock_acquire",
+    "Txn::lock_check",
+    "Fence::compare",
+    "lock_value",
+    "Op::key",
+    "Compare::key",
     "audited",
     "ttl_ms",
     "normalize",
@@ -25,7 +39,7 @@ functions = [
 
 [[scope]]
 path = "state-store/src/limits.rs"
-functions = ["check", "request_bytes"]
+functions = ["check", "request_bytes", "compare_bytes"]
 
 [[scope]]
 path = "state-store/src/gc.rs"

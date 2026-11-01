@@ -3,14 +3,14 @@
 //! Every scenario runs on a `VirtualClock`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use runtime::ports::VirtualClock;
 use serde_json::json;
 
 use crate::backend::{Backend, LogEntry, Version, Write};
 use crate::contract::{
-    Compare, Config, Contract, Created, Deleted, Ports, Request, Selector, Txn, Watched,
+    Compare, Config, Contract, Created, Deleted, Fence, Ports, Request, Selector, Txn, Watched,
 };
 use crate::gc::Controller;
 use crate::limits::{MAX_REQUEST_BYTES, MAX_TXN_COMPARES, MAX_TXN_OPS};
@@ -590,6 +590,24 @@ pub fn a_lock_ttl_below_the_minimum_is_refused<R: Rig>(rig: &R) {
         })
     );
     assert!(c.get("locks/x").unwrap().is_none());
+    let head = c.head().unwrap();
+    assert_eq!(
+        c.txn(
+            &Txn::new()
+                .lock_acquire("x", MIN_LOCK_TTL_MS - 1)
+                .put("jobs/x", obj(json!(1))),
+            &req("txn")
+        ),
+        Err(Error::LockTtlBelowMinimum {
+            min_ms: MIN_LOCK_TTL_MS,
+            got_ms: MIN_LOCK_TTL_MS - 1
+        })
+    );
+    assert_eq!(
+        c.head().unwrap(),
+        head,
+        "a refused lock_acquire writes nothing"
+    );
     c.lock("x", MIN_LOCK_TTL_MS, &req("2")).unwrap();
 }
 
@@ -1098,6 +1116,187 @@ pub fn caller_writes_to_the_contracts_own_prefixes_are_refused<R: Rig>(rig: &R) 
             Err(Error::ReservedKey { key: key.into() })
         );
     }
+    let mut else_lock = Txn::new().when(Compare::ModRev("a".into(), None));
+    else_lock.else_ops = Txn::new().lock_acquire("x", MIN_LOCK_TTL_MS).ops;
+    assert_eq!(
+        c.txn(&else_lock, &req("2")),
+        Err(Error::ReservedKey {
+            key: "locks/x".into()
+        })
+    );
+}
+
+/// A claim of `beads/x` as one txn: the record unchanged since `at`, the lock taken, the record
+/// written.
+fn claim(at: Rev, v: &str) -> Txn {
+    Txn::new()
+        .when(Compare::ModRev("beads/x".into(), Some(at)))
+        .lock_acquire("bead/x", 5_000)
+        .put("beads/x", obj(json!(v)))
+}
+
+fn mod_rev<B: Backend>(c: &Contract<B>, key: &str) -> Rev {
+    c.get(key).unwrap().expect(key).mod_rev
+}
+
+pub fn a_txn_that_acquires_a_lock_and_writes_a_fenced_key_applies_whole_or_not_at_all<R: Rig>(
+    rig: &R,
+) {
+    let clock = VirtualClock::new(T0);
+    let c = open(Interpose::new(rig.fresh()), &clock);
+    put(&c, "beads/x", obj(json!("open")), "seed1");
+    let stale = mod_rev(&c, "beads/x");
+    put(&c, "beads/x", obj(json!("ready")), "seed2");
+
+    let refused = c.txn(&claim(stale, "a"), &req("stale")).unwrap();
+    assert!(!refused.succeeded);
+    assert!(refused.fences.is_empty());
+    assert_eq!(data(&c, "beads/x"), Some(json!("ready")));
+    assert!(c.get("locks/bead/x").unwrap().is_none());
+    let b = c
+        .lock("bead/x", 5_000, &req("b-lock"))
+        .expect("no TTL wait");
+    c.release(&b, &req("b-release")).unwrap();
+
+    let r = c
+        .txn(&claim(mod_rev(&c, "beads/x"), "a"), &req("claim"))
+        .unwrap();
+    assert!(r.succeeded);
+    let lock = c.get("locks/bead/x").unwrap().expect("lock taken");
+    assert_eq!(mod_rev(&c, "beads/x").main, r.rev);
+    assert_eq!(lock.create_rev.main, r.rev);
+    assert_eq!(
+        r.fences,
+        [Fence {
+            resource: "bead/x".into(),
+            token: lock.create_rev
+        }]
+    );
+    let checked = Txn::new()
+        .lock_check(&r.fences[0])
+        .put("jobs/x", obj(json!(1)));
+    assert!(c.txn(&checked, &req("checked")).unwrap().succeeded);
+
+    clock.advance(5_000);
+    assert!(
+        c.get("locks/bead/x").unwrap().is_some(),
+        "not yet collected"
+    );
+    let reclaim = Txn::new()
+        .when(Compare::ModRev(
+            "beads/x".into(),
+            Some(mod_rev(&c, "beads/x")),
+        ))
+        .delete("absent/x")
+        .put("beads/x", obj(json!("b")))
+        .lock_acquire("bead/x", 5_000);
+    let again = c.txn(&reclaim, &req("reclaim")).unwrap();
+    assert!(again.succeeded, "an expired lock is taken in one call");
+    let token = c.get("locks/bead/x").unwrap().unwrap().create_rev;
+    assert_eq!(
+        (again.fences[0].token, token.sub),
+        (token, 1),
+        "the token is the lock's own sub, after a dropped delete"
+    );
+    assert!(again.fences[0].token > r.fences[0].token);
+    assert_eq!(data(&c, "beads/x"), Some(json!("b")));
+
+    c.release(&again.fences[0], &req("release")).unwrap();
+    let t = claim(mod_rev(&c, "beads/x"), "c");
+    c.backend().lose_next_commit_reply();
+    assert!(c.txn(&t, &req("lost")).is_err());
+    let token = c.get("locks/bead/x").unwrap().unwrap().create_rev;
+    let retry = c.txn(&t, &req("lost")).unwrap();
+    assert_eq!(
+        (retry.rev, retry.succeeded, retry.already_applied),
+        (token.main, true, true)
+    );
+    assert_eq!(
+        retry.fences,
+        [Fence {
+            resource: "bead/x".into(),
+            token
+        }]
+    );
+}
+
+pub fn a_txn_acquiring_a_lock_held_by_another_holder_fails_whole<R: Rig>(rig: &R) {
+    let clock = VirtualClock::new(T0);
+    let c = open(rig.fresh(), &clock);
+    put(&c, "beads/x", obj(json!("open")), "seed");
+    let b = c.lock("bead/x", 5_000, &req("b")).unwrap();
+    let t = Txn::new()
+        .lock_acquire("bead/x", 5_000)
+        .put("beads/x", obj(json!("a")))
+        .or_put("markers/x", obj(json!("refused")));
+    let r = c.txn(&t, &req("a")).unwrap();
+    assert!(!r.succeeded);
+    assert!(r.fences.is_empty());
+    assert_eq!(data(&c, "beads/x"), Some(json!("open")));
+    assert_eq!(data(&c, "markers/x"), Some(json!("refused")));
+    assert_eq!(c.get("locks/bead/x").unwrap().unwrap().create_rev, b.token);
+    assert_eq!(
+        data(&c, &events_key(r.rev)).unwrap()["refused"],
+        json!(true)
+    );
+}
+
+pub fn lock_check_fails_the_txn_after_the_lock_expired_or_was_retaken<R: Rig>(rig: &R) {
+    let clock = VirtualClock::new(T0);
+    let c = open(rig.fresh(), &clock);
+    let a = c.lock("job", 5_000, &req("a")).unwrap();
+    put(&c, "jobs/1", obj(json!("start")), "seed");
+    let guarded = |f: &Fence, v: &str| Txn::new().lock_check(f).put("jobs/1", obj(json!(v)));
+
+    clock.advance(5_000);
+    assert!(c.get("locks/job").unwrap().is_some(), "not yet collected");
+    assert!(!c.txn(&guarded(&a, "expired"), &req("1")).unwrap().succeeded);
+    assert_eq!(data(&c, "jobs/1"), Some(json!("start")));
+
+    let b = c.lock("job", 5_000, &req("b")).unwrap();
+    assert!(!c.txn(&guarded(&a, "retaken"), &req("2")).unwrap().succeeded);
+    assert_eq!(data(&c, "jobs/1"), Some(json!("start")));
+    assert!(c.txn(&guarded(&b, "b"), &req("3")).unwrap().succeeded);
+}
+
+pub fn get_and_list_return_a_locks_expiry_and_renew_moves_it_forward<R: Rig>(rig: &R) {
+    const WALL: u64 = 1_700_000_000_000;
+    let clock = VirtualClock::new(T0);
+    let wall = VirtualClock::new(WALL);
+    let c = Contract::open(
+        rig.fresh(),
+        Ports {
+            mono: Arc::new(clock.clone()),
+            wall: Arc::new(wall.clone()),
+        },
+        Config {
+            min_lock_ttl_ms: MIN_LOCK_TTL_MS,
+        },
+    )
+    .expect("open");
+    let advance = |ms: u64| {
+        clock.advance(ms);
+        wall.advance(ms);
+    };
+    let expiry = |key: &str| {
+        let got = c.get(key).unwrap().expect(key).lock_expires_at_ms;
+        let prefix = &key[..=key.find('/').unwrap()];
+        let (items, _) = c.list(&[prefix], &Selector::Everything).unwrap();
+        let listed = items.iter().find(|i| i.key == key).expect(key);
+        assert_eq!(listed.lock_expires_at_ms, got, "get and list agree");
+        got
+    };
+    let a = c.lock("job", 5_000, &req("1")).unwrap();
+    c.lock("other", 9_000, &req("2")).unwrap();
+    assert_eq!(expiry("locks/job"), Some(WALL + 5_000), "on the wall clock");
+    assert_eq!(expiry("locks/other"), Some(WALL + 9_000));
+    advance(2_000);
+    c.renew(&a, &req("3")).unwrap();
+    assert_eq!(expiry("locks/job"), Some(WALL + 7_000));
+    put(&c, "jobs/1", obj(json!(1)), "4");
+    assert_eq!(expiry("jobs/1"), None);
+    advance(5_000);
+    assert_eq!(expiry("locks/job"), None, "an expired lock has no expiry");
 }
 
 /// Every scenario, in order; a backend's own test file names each one as its own test.
@@ -1153,4 +1352,8 @@ scenarios!(
     request_bytes_at_the_limit_pass_and_one_over_is_refused,
     a_key_twice_in_one_txn_is_refused,
     caller_writes_to_the_contracts_own_prefixes_are_refused,
+    a_txn_that_acquires_a_lock_and_writes_a_fenced_key_applies_whole_or_not_at_all,
+    a_txn_acquiring_a_lock_held_by_another_holder_fails_whole,
+    lock_check_fails_the_txn_after_the_lock_expired_or_was_retaken,
+    get_and_list_return_a_locks_expiry_and_renew_moves_it_forward,
 );

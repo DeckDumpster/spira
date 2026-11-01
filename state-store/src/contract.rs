@@ -69,12 +69,18 @@ pub enum Compare {
     ModRev(String, Option<Rev>),
     CreateRev(String, Option<Rev>),
     Value(String, Option<Object>),
+    /// The lock at `key` is live and held under `token`.
+    LockCheck {
+        key: String,
+        token: Rev,
+    },
 }
 
 impl Compare {
     pub fn key(&self) -> &str {
         match self {
             Compare::ModRev(k, _) | Compare::CreateRev(k, _) | Compare::Value(k, _) => k,
+            Compare::LockCheck { key, .. } => key,
         }
     }
 }
@@ -84,12 +90,18 @@ pub enum Op {
     Put(String, Object),
     /// Marks the key for deletion instead while it has finalizers.
     Delete(String),
+    /// Takes the lock at `key` (`locks/<resource>`) in the txn's own commit; the then-branch
+    /// runs only if the lock is free.
+    LockAcquire {
+        key: String,
+        ttl_ms: u64,
+    },
 }
 
 impl Op {
     pub fn key(&self) -> &str {
         match self {
-            Op::Put(k, _) | Op::Delete(k) => k,
+            Op::Put(k, _) | Op::Delete(k) | Op::LockAcquire { key: k, .. } => k,
         }
     }
 }
@@ -127,7 +139,26 @@ impl Txn {
     }
 
     pub fn fenced(self, f: &Fence) -> Self {
+        self.lock_check(f)
+    }
+
+    pub fn lock_check(self, f: &Fence) -> Self {
         self.when(f.compare())
+    }
+
+    pub fn lock_acquire(mut self, resource: &str, ttl_ms: u64) -> Self {
+        self.ops.push(Op::LockAcquire {
+            key: format!("{LOCKS_PREFIX}{resource}"),
+            ttl_ms,
+        });
+        self
+    }
+
+    fn lock_keys(&self) -> impl Iterator<Item = &str> {
+        self.ops.iter().filter_map(|o| match o {
+            Op::LockAcquire { key, .. } => Some(key.as_str()),
+            _ => None,
+        })
     }
 }
 
@@ -138,6 +169,8 @@ pub struct TxnResult {
     pub succeeded: bool,
     /// A retry of a request already committed: `rev` and `succeeded` are the original's.
     pub already_applied: bool,
+    /// One per `lock_acquire`, in op order; empty unless `succeeded`.
+    pub fences: Vec<Fence>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -212,7 +245,10 @@ impl Fence {
     }
 
     pub fn compare(&self) -> Compare {
-        Compare::CreateRev(self.key(), Some(self.token))
+        Compare::LockCheck {
+            key: self.key(),
+            token: self.token,
+        }
     }
 }
 
@@ -315,9 +351,20 @@ fn ttl_ms(key: &str, v: &Object) -> Option<u64> {
         .map(|s| s.saturating_mul(1_000))
 }
 
-fn validate(ops: &[Op]) -> Result<()> {
+fn lock_value(ttl_ms: u64) -> Object {
+    Object::new(serde_json::json!({ "ttl_ms": ttl_ms }))
+}
+
+/// `may_lock`: the branch may take locks, which only a txn's then-branch may.
+fn validate(ops: &[Op], may_lock: bool) -> Result<()> {
     for o in ops {
-        if is_reserved(o.key()) {
+        let lock = matches!(o, Op::LockAcquire { .. });
+        let refused = if lock {
+            !may_lock || !o.key().starts_with(LOCKS_PREFIX)
+        } else {
+            is_reserved(o.key())
+        };
+        if refused {
             return Err(Error::ReservedKey {
                 key: o.key().into(),
             });
@@ -349,6 +396,7 @@ fn item(key: String, v: Version) -> Result<Item> {
         mod_rev: v.mod_rev,
         create_rev: v.create_rev,
         key,
+        lock_expires_at_ms: None,
     })
 }
 
@@ -430,8 +478,25 @@ impl<B: Backend> Contract<B> {
     fn read(&self, key: &str, at: u64) -> Result<Option<Item>> {
         self.backend
             .get(key, at)?
-            .map(|v| item(key.to_string(), v))
+            .map(|v| item(key.to_string(), v).map(|i| self.with_expiry(i)))
             .transpose()
+    }
+
+    /// Projects a live lock's monotonic deadline onto the wall clock, for display.
+    fn with_expiry(&self, mut i: Item) -> Item {
+        if i.key.starts_with(LOCKS_PREFIX) {
+            let now = self.now_ms();
+            let deadline = self
+                .deadlines
+                .lock()
+                .unwrap_or_else(lock_err)
+                .get(&i.key)
+                .copied();
+            i.lock_expires_at_ms = deadline
+                .filter(|d| *d > now)
+                .map(|d| self.ports.wall.now_ms().saturating_add(d - now));
+        }
+        i
     }
 
     /// Every item under every prefix, from one snapshot at `list_rev`.
@@ -474,7 +539,7 @@ impl<B: Backend> Contract<B> {
                 after = batch.last().map(|(k, _)| k.clone());
             }
             for (k, v) in batch {
-                let i = item(k, v)?;
+                let i = self.with_expiry(item(k, v)?);
                 if selected(sel, &i) {
                     items.push(i);
                 }
@@ -497,7 +562,7 @@ impl<B: Backend> Contract<B> {
         let t = Txn::new()
             .when(Compare::ModRev(key.into(), None))
             .put(key, value.clone());
-        validate(&t.ops)?;
+        validate(&t.ops, false)?;
         let rec = Record {
             audited: audited([key]),
             idempotent: true,
@@ -531,16 +596,23 @@ impl<B: Backend> Contract<B> {
     }
 
     pub fn txn(&self, t: &Txn, req: &Request) -> Result<TxnResult> {
-        validate(&t.ops)?;
-        validate(&t.else_ops)?;
+        validate(&t.ops, true)?;
+        validate(&t.else_ops, false)?;
+        for o in &t.ops {
+            if let Op::LockAcquire { ttl_ms, .. } = o {
+                self.check_lock_ttl(*ttl_ms)?;
+            }
+        }
         let rec = Record {
             audited: audited(t.ops.iter().chain(&t.else_ops).map(Op::key)),
             idempotent: true,
             compare_bytes: limits::compare_bytes(&t.compares),
         };
         limits::check(t, self.bookkeeping(rec))?;
+        let locks: Vec<String> = t.lock_keys().map(String::from).collect();
+        self.expire_dead_locks(&locks, req)?;
         let out = self.engine(req, rec, |head| {
-            let ok = self.holds(&t.compares, head)?;
+            let ok = self.takes_then(t, head)?;
             Ok(Step::<Infallible>::Apply {
                 ok,
                 ops: if ok {
@@ -550,30 +622,29 @@ impl<B: Backend> Contract<B> {
                 },
             })
         })?;
-        Ok(match out {
-            Outcome::Applied { rev, ok } => TxnResult {
-                rev,
-                succeeded: ok,
-                already_applied: false,
-            },
-            Outcome::Already { rev, ok } => TxnResult {
-                rev,
-                succeeded: ok,
-                already_applied: true,
-            },
-            Outcome::Nothing { head } => TxnResult {
-                rev: head,
-                succeeded: false,
-                already_applied: false,
-            },
+        let (rev, succeeded, already_applied) = match out {
+            Outcome::Applied { rev, ok } => (rev, ok, false),
+            Outcome::Already { rev, ok } => (rev, ok, true),
+            Outcome::Nothing { head } => (head, false, false),
             Outcome::Done(never) => match never {},
+        };
+        let fences = if succeeded {
+            self.fences_at(&locks, rev)?
+        } else {
+            Vec::new()
+        };
+        Ok(TxnResult {
+            rev,
+            succeeded,
+            already_applied,
+            fences,
         })
     }
 
     /// Removes the key, or, while it has finalizers, sets `deletionTimestamp` instead.
     pub fn delete(&self, key: &str, expect: Option<Rev>, req: &Request) -> Result<Deleted> {
         let t = Txn::new().delete(key);
-        validate(&t.ops)?;
+        validate(&t.ops, false)?;
         let rec = Record {
             audited: audited([key]),
             idempotent: true,
@@ -681,18 +752,10 @@ impl<B: Backend> Contract<B> {
 
     /// `locks/<resource>`, whose `create_rev` is the fencing token.
     pub fn lock(&self, resource: &str, ttl_ms: u64, req: &Request) -> Result<Fence> {
-        if ttl_ms < self.cfg.min_lock_ttl_ms {
-            return Err(Error::LockTtlBelowMinimum {
-                min_ms: self.cfg.min_lock_ttl_ms,
-                got_ms: ttl_ms,
-            });
-        }
+        self.check_lock_ttl(ttl_ms)?;
         let key = format!("{LOCKS_PREFIX}{resource}");
-        let retry = self.get(&request_key(&req.id))?.is_some();
-        if !retry && self.get(&key)?.is_some() && !self.live(&key) {
-            self.expire(std::slice::from_ref(&key), self.now_ms())?;
-        }
-        let value = Object::new(serde_json::json!({ "ttl_ms": ttl_ms }));
+        self.expire_dead_locks(std::slice::from_ref(&key), req)?;
+        let value = lock_value(ttl_ms);
         let rec = Record {
             audited: true,
             idempotent: true,
@@ -721,6 +784,78 @@ impl<B: Backend> Contract<B> {
             resource: resource.into(),
             token,
         })
+    }
+
+    /// Whether `t` runs its then-branch at `head`: its compares hold and every lock it takes is
+    /// free.
+    fn takes_then(&self, t: &Txn, head: u64) -> Result<bool> {
+        if !self.holds(&t.compares, head)? {
+            return Ok(false);
+        }
+        for k in t.lock_keys() {
+            if self.read(k, head)?.is_some() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn check_lock_ttl(&self, ttl_ms: u64) -> Result<()> {
+        if ttl_ms < self.cfg.min_lock_ttl_ms {
+            return Err(Error::LockTtlBelowMinimum {
+                min_ms: self.cfg.min_lock_ttl_ms,
+                got_ms: ttl_ms,
+            });
+        }
+        Ok(())
+    }
+
+    /// Deletes each lock in `keys` that is present but past its TTL, so the request can take it.
+    /// It already reads as absent to every fence, so this changes no outcome. A retry skips it:
+    /// its outcome is the original's.
+    fn expire_dead_locks(&self, keys: &[String], req: &Request) -> Result<()> {
+        if keys.is_empty() || self.get(&request_key(&req.id))?.is_some() {
+            return Ok(());
+        }
+        let mut dead = Vec::new();
+        for k in keys {
+            if self.get(k)?.is_some() && !self.live(k) {
+                dead.push(k.clone());
+            }
+        }
+        if !dead.is_empty() {
+            self.expire(&dead, self.now_ms())?;
+        }
+        Ok(())
+    }
+
+    /// The fences of the locks the txn at `main` took, from its audit record: each lock's token
+    /// is its `create_rev`, `(main, sub)`.
+    fn fences_at(&self, locks: &[String], main: u64) -> Result<Vec<Fence>> {
+        if locks.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ev = self
+            .get(&events_key(main))?
+            .ok_or_else(|| Error::Backend(format!("{} is missing", events_key(main))))?;
+        let subs = ev.value.data.get("subs").and_then(|s| s.as_array());
+        locks
+            .iter()
+            .map(|k| {
+                let sub = subs
+                    .into_iter()
+                    .flatten()
+                    .find(|s| s.get("key").and_then(|v| v.as_str()) == Some(k))
+                    .and_then(|s| s.get("sub")?.as_u64())
+                    .ok_or_else(|| {
+                        Error::Backend(format!("{} records no sub for {k}", events_key(main)))
+                    })?;
+                Ok(Fence {
+                    resource: k[LOCKS_PREFIX.len()..].to_string(),
+                    token: Rev::new(main, sub as u32),
+                })
+            })
+            .collect()
     }
 
     /// Restarts the lock's TTL; `LockLost` once it has expired or is held under another token.
@@ -788,6 +923,9 @@ impl<B: Backend> Contract<B> {
                     cur.map(|i| i.create_rev) == *want
                 }
                 Compare::Value(_, want) => cur.map(|i| i.value) == *want,
+                Compare::LockCheck { key, token } => {
+                    cur.filter(|_| self.live(key)).map(|i| i.create_rev) == Some(*token)
+                }
             };
             if !ok {
                 return Ok(false);
@@ -892,7 +1030,7 @@ impl<B: Backend> Contract<B> {
             idempotent: true,
             compare_bytes: limits::compare_bytes(&t.compares),
         };
-        let ok = self.holds(&t.compares, head)?;
+        let ok = self.takes_then(t, head)?;
         let staged = self.build(req, rec, ok, if ok { &t.ops } else { &t.else_ops }, head)?;
         Ok(rec.compare_bytes + staged_bytes(&staged))
     }
@@ -919,6 +1057,12 @@ impl<B: Backend> Contract<B> {
                         op: "put",
                     });
                 }
+                Op::LockAcquire { key, ttl_ms } => out.push(Staged {
+                    key: key.clone(),
+                    value: Some(lock_value(*ttl_ms)),
+                    prev,
+                    op: "put",
+                }),
                 Op::Delete(k) => match prev {
                     None => {}
                     Some(p) if !p.value.metadata.finalizers.is_empty() => {
