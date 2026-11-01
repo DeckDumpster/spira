@@ -364,16 +364,10 @@ start)
     }
     # SPIRA_TOML RIDES INTO THE SESSION THE SAME WAY (sp-p35wed): every shell and subagent the
     # Concierge starts resolves config from it, and spira-admit refuses a compile without it.
-    # The value is the one this process already resolved — the unit's, or a suite's
-    # base:override layers — handed on verbatim, never a default (law-a-config-value-has-no-fallback).
-    [ -n "${SPIRA_TOML:-}" ] || {
-        echo "concierge: SPIRA_TOML is not set — start it from concierge.service, whose unit sets it" >&2
-        exit 1
-    }
-    ( IFS=:; for _t in $SPIRA_TOML; do [ -f "$_t" ] || exit 1; done ) || {
-        printf 'concierge: SPIRA_TOML=%s names no file — refusing to start a session that cannot resolve config\n' "$SPIRA_TOML" >&2
-        exit 1
-    }
+    # No check here: conf.sh already refused, and the source line above exited, if it is unset
+    # or any layer names no file — so by now it holds the value this process resolved (the
+    # unit's, or a suite's base:override layers), handed on verbatim and never defaulted
+    # (law-a-config-value-has-no-fallback).
     # THE SESSION HOOK IS ENSURED ON EVERY start, not only the first — this is also what the
     # 10-minute re-ensure timer calls, so "start (and restart)" is the same code path. Runs
     # before the already-running check below so a concierge already up still gets it repaired.

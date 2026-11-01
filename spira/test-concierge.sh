@@ -387,7 +387,7 @@ ST_SOCK="test-concierge-toml-$$"
 ST_TOML="$(tl_layer SPIRA_RUN="$ST/run" SPIRA_WIKI="$ST/wiki" SPIRA_RUNES_DIR="$FX/runes" \
     SPIRA_MEMORIES_CACHE="")"
 st_start() {  # st_start <env-args...> — `start` under the fixture persona and the stand-in unit
-    env "$@" PATH="$ST/bin:$PATH" SPIRA_HOME="$FX" CONCIERGE_RUNE=fx \
+    env -u SPIRA_ADOPT_CONFIGURE_DEFAULT "$@" PATH="$ST/bin:$PATH" SPIRA_HOME="$FX" CONCIERGE_RUNE=fx \
         CONCIERGE_SOCKET="$ST_SOCK" CONCIERGE_SESSION="$ST_SOCK" \
         SPIRA_MEMORIES_CMD="$(fixture_cmd)" bash "$HARNESS/concierge.sh" start 2>&1 </dev/null
 }
@@ -409,7 +409,9 @@ want "beside SPIRA_RELEASE (positive control)"  "--setenv=SPIRA_RELEASE=$SPIRA_R
 
 # NO FALLBACK (law-a-config-value-has-no-fallback): with SPIRA_TOML unset, or naming a layer
 # that is not a file, start refuses and says which key — it launches no session that would
-# hand its shells nothing to resolve config from.
+# hand its shells nothing to resolve config from. The refusal is conf.sh's, and concierge.sh
+# exits on it at the source line. SPIRA_ADOPT_CONFIGURE_DEFAULT is cleared so conf.sh cannot
+# adopt the operator's real spira.toml in place of the unset value.
 rm -f "$ST/systemd-run.argv" "$ST/run/concierge-launch.sh"
 st_unset="$(st_start -u SPIRA_TOML)"; st_unset_rc=$?
 is   "start refuses with SPIRA_TOML unset"        1 "$st_unset_rc"
