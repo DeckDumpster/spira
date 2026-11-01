@@ -35,7 +35,8 @@ const ACTOR: &str = "round-controller";
 const JUDGE_JOB_BASE: u64 = 1 << 41;
 
 /// What certify reported for one finished pass.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PassResult {
     pub exit: i32,
     /// The steps certify reported red, as it named them: `testenv`, `spira-lint`, a suite.
@@ -231,6 +232,9 @@ pub struct Progress {
     /// The members whose eject returned `Ok`, so a re-drive never ejects them twice.
     #[serde(default)]
     pub ejected: Vec<Id>,
+    /// The finished pass being judged, so a re-drive judges it without running it again.
+    #[serde(default)]
+    pub main: Option<PassResult>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

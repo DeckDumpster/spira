@@ -1,0 +1,106 @@
+description = "world.halted appears while a pass runs: the runner finishes the pass in hand and records it in progress, starts no sub-pass, gives its locks back once its VM is gone, and leaves the round non-terminal"
+repos = ["lane"]
+
+[run]
+epoch = 1800000000
+passes = 1
+every_secs = 60
+
+[lease]
+ttl_secs = 60
+pass_wall_max_secs = 30000
+redrive_retries = 2
+ec2_max_lifetime_secs = 60000
+
+[lease.deadline_secs]
+boot = 40
+build = 50
+suites = 90
+subpass = 300
+certify = 30
+
+[[store]]
+key = "lanes/lane"
+data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
+
+[[store]]
+key = "batches/lane/b1"
+data = { batch_id = "b1", repo = "lane", state = "CiRunning", head = "h1", base = "base-0", pass = 1, version = 1, tested_base = "base-0", members = [{ id = "sp-a", tip = "a1" }] }
+
+[[verb]]
+verb = "pass-start"
+ok = {}
+
+[[vm]]
+identity = "b1"
+verdict = "red"
+suites = ["test-a.sh"]
+duration_secs = 120
+
+[[run_pass]]
+repo = "lane"
+batch = "b1"
+start_secs = 10
+halt_secs = 60
+
+[[expect]]
+name = "the-runner-stopped"
+count = "run-ends:stopped"
+equals = 1
+
+[[expect]]
+name = "the-pass-in-hand-ran-to-its-end"
+count = "vm-torn-down"
+equals = 0
+
+[[expect]]
+name = "the-pass-in-hand-is-recorded"
+count = "keys:batches/lane/b1/progress"
+equals = 1
+
+[[expect]]
+name = "no-sub-pass-started"
+count = "run-launches"
+equals = 0
+
+[[expect]]
+name = "no-attempt-before-its-judgement"
+count = "ledger-attempts"
+equals = 0
+
+[[expect]]
+name = "the-slot-went-back"
+count = "slot-releases"
+equals = 1
+
+[[expect]]
+name = "never-while-the-vm-was-up"
+count = "slot-releases-with-vm-up"
+equals = 0
+
+[[expect]]
+name = "no-lease-left-held"
+count = "live-locks:round/"
+equals = 0
+
+[[expect]]
+name = "no-slot-left-held"
+count = "live-locks:runner-slot/"
+equals = 0
+
+[[expect]]
+name = "the-round-is-not-abandoned"
+count = "calls:abandon"
+equals = 0
+
+# The round and the pass in hand.
+[[expect]]
+name = "the-round-stays"
+count = "keys:batches/lane/"
+equals = 2
+
+[[expect]]
+name = "inverted-a-sub-pass-started"
+count = "run-launches"
+equals = 1
+inverted = true

@@ -698,7 +698,7 @@ fn supersede_hands_the_verb_the_rounds_lease_token_and_a_refusal_stops_the_step(
     w.put(
         "batches/lane/x1",
         json!({ "batch_id": "x1", "repo": "lane", "state": "Green", "head": "h", "pass": 1,
-                "version": 1, "tested_base": "gone", "last_lease_token": "41", "members": [] }),
+                "version": 1, "tested_base": "gone", "last_lease_token": { "main": 41, "sub": 0 }, "members": [] }),
     );
     w.round("x2", "Green", "gone", &[]);
     let p = w.ports();

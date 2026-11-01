@@ -27,9 +27,14 @@ pub fn check(p: &Ports, repo: &str) -> Result<Vec<String>, Refusal> {
         {
             continue;
         }
-        let got = p
-            .verbs
-            .supersede(repo, &r.batch, r.round.last_lease_token.as_deref());
+        let got = p.verbs.supersede(
+            repo,
+            &r.batch,
+            r.round
+                .last_lease_token
+                .map(crate::lease::token_word)
+                .as_deref(),
+        );
         if let Err(refusal) = got {
             return Err(Refusal::Verb {
                 batch: Some(r.batch.clone()),

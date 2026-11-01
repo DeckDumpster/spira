@@ -17,6 +17,7 @@ sim = ["dep:toml"]
 [dependencies]
 batcher = { path = "../batcher" }
 lifecycle = { path = "../lifecycle" }
+migration-numbers = { path = "../migration-numbers" }
 runtime = { path = "../runtime" }
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
@@ -28,3 +29,4 @@ toml = { version = "0.8", optional = true }
 
 [dev-dependencies]
 round-controller = { path = ".", features = ["sim"] }
+testkit = { path = "../testkit" }

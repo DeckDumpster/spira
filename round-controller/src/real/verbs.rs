@@ -1,28 +1,31 @@
 //! [`RoundVerbs`] on the real `queue round` verbs, spawned through [`Proc`] with payloads on
 //! stdin. A verb takes the queue lock only for its own transition, so nothing here holds one.
 
-use std::sync::mpsc::{self, Receiver};
-use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use runtime::ports::{Proc, ProcSpec};
 
 use crate::ports::{
-    fields, Certified, Done, EjectReq, Ejected, Fields, OpenReq, Opened, Pending, Place,
-    RoundVerbs, Status, Superseded, Verb, VerbRefusal,
+    fields, Child, Done, EjectReq, Ejected, Fields, OpenReq, Opened, Place, RoundVerbs, Status,
+    Superseded, Verb, VerbRefusal,
 };
+use crate::real::child::{Spawn, SpawnSpec};
 
 pub struct Deadlines {
-    /// Every transition verb.
+    /// Every transition verb. `certify` has none of its own: the runner's phase deadlines and
+    /// pass wall end it.
     pub verb: Duration,
-    /// `certify`, which runs the round VM's whole pass.
-    pub certify: Duration,
 }
 
 pub struct RealVerbs {
     proc_: Arc<dyn Proc>,
+    spawn: Arc<dyn Spawn>,
     prog: String,
     deadlines: Deadlines,
+    /// round-vm's run directory, where its progress file is, when the process can name one.
+    run: Option<PathBuf>,
 }
 
 struct Call {
@@ -49,8 +52,7 @@ impl Call {
     }
 }
 
-/// A verb's answer: its fields on exit 0, else a refusal carrying its stderr whole. `red=` on
-/// stdout is certify's verdict, not a refusal, whatever the exit.
+/// A verb's answer: its fields on exit 0, else a refusal carrying its stderr whole.
 fn answer(
     proc_: &dyn Proc,
     prog: &str,
@@ -71,7 +73,6 @@ fn answer(
     let f = fields(&String::from_utf8_lossy(&out.stdout));
     match out.code {
         Some(0) => Ok(f),
-        Some(_) if c.verb == Verb::Certify && f.contains_key("red") => Ok(f),
         code => Err(VerbRefusal {
             verb: c.verb,
             code,
@@ -81,11 +82,19 @@ fn answer(
 }
 
 impl RealVerbs {
-    pub fn new(proc_: Arc<dyn Proc>, prog: &str, deadlines: Deadlines) -> RealVerbs {
+    pub fn new(
+        proc_: Arc<dyn Proc>,
+        spawn: Arc<dyn Spawn>,
+        prog: &str,
+        deadlines: Deadlines,
+        run: Option<PathBuf>,
+    ) -> RealVerbs {
         RealVerbs {
             proc_,
+            spawn,
             prog: prog.to_string(),
             deadlines,
+            run,
         }
     }
 
@@ -101,34 +110,6 @@ impl RealVerbs {
                 .collect::<Vec<_>>()
                 .join(" "),
         })
-    }
-}
-
-/// A certify running on its own thread; `poll` hands back its answer once it has one.
-struct Spawned {
-    rx: Mutex<Receiver<Result<Certified, VerbRefusal>>>,
-    got: Mutex<Option<Result<Certified, VerbRefusal>>>,
-}
-
-fn lost() -> VerbRefusal {
-    VerbRefusal {
-        verb: Verb::Certify,
-        code: None,
-        text: "the certify thread ended without an answer".into(),
-    }
-}
-
-impl Pending<Certified> for Spawned {
-    fn poll(&self) -> Option<Result<Certified, VerbRefusal>> {
-        let mut got = crate::lock(&self.got);
-        if got.is_none() {
-            *got = match crate::lock(&self.rx).try_recv() {
-                Ok(r) => Some(r),
-                Err(mpsc::TryRecvError::Empty) => None,
-                Err(mpsc::TryRecvError::Disconnected) => Some(Err(lost())),
-            };
-        }
-        got.clone()
     }
 }
 
@@ -155,22 +136,34 @@ impl RoundVerbs for RealVerbs {
             .map(|f| Status::from_fields(&f))
     }
 
-    fn certify(&self, repo: &str, batch: &str) -> Result<Box<dyn Pending<Certified>>, VerbRefusal> {
-        let (tx, rx) = mpsc::channel();
-        let (proc_, prog, deadline) = (
-            self.proc_.clone(),
-            self.prog.clone(),
-            self.deadlines.certify,
-        );
-        let c = Call::new(Verb::Certify, &[batch, repo]);
-        std::thread::spawn(move || {
-            let _ = tx
-                .send(answer(&*proc_, &prog, deadline, c).and_then(|f| Certified::from_fields(&f)));
-        });
-        Ok(Box::new(Spawned {
-            rx: Mutex::new(rx),
-            got: Mutex::new(None),
-        }))
+    /// Spawned in a process group of its own, so the runner's signal reaches round-vm.
+    fn certify(
+        &self,
+        repo: &str,
+        batch: &str,
+        lease_token: Option<&str>,
+    ) -> Result<Box<dyn Child>, VerbRefusal> {
+        let mut c = Call::new(Verb::Certify, &[batch, repo]);
+        if let Some(t) = lease_token {
+            c.args.extend(["--lease-token".to_string(), t.to_string()]);
+        }
+        self.spawn
+            .spawn(&SpawnSpec {
+                verb: Some(Verb::Certify),
+                prog: self.prog.clone(),
+                args: c.args,
+                progress: self.run.clone(),
+                scope: Some(format!(
+                    "round-controller-certify-{batch}-{}",
+                    lease_token.unwrap_or("0-0")
+                )),
+                ..SpawnSpec::default()
+            })
+            .map_err(|text| VerbRefusal {
+                verb: Verb::Certify,
+                code: None,
+                text,
+            })
     }
 
     fn eject(&self, r: &EjectReq) -> Result<Ejected, VerbRefusal> {
@@ -217,6 +210,7 @@ impl RoundVerbs for RealVerbs {
 mod tests {
     use super::*;
     use runtime::ports::ProcOutput;
+    use std::sync::Mutex;
 
     /// Answers every spawn with one scripted output and records what it was asked to run.
     struct FakeProc {
@@ -245,11 +239,12 @@ mod tests {
     fn verbs(p: &Arc<FakeProc>) -> RealVerbs {
         RealVerbs::new(
             p.clone(),
+            Arc::new(Recorded(Mutex::default(), None)),
             "queue",
             Deadlines {
                 verb: Duration::from_secs(120),
-                certify: Duration::from_secs(1020),
             },
+            Some(PathBuf::from("/run/x")),
         )
     }
 
@@ -468,87 +463,61 @@ mod tests {
         assert_eq!((e.verb, e.code), (Verb::Supersede, Some(1)));
     }
 
-    /// Polls until the certify thread answers; the fake proc answers at once.
-    fn settled(h: &dyn Pending<Certified>) -> Result<Certified, VerbRefusal> {
-        for _ in 0..1_000_000 {
-            if let Some(r) = h.poll() {
-                return r;
+    struct Recorded(Mutex<Vec<SpawnSpec>>, Option<String>);
+
+    impl Spawn for Recorded {
+        fn spawn(&self, spec: &SpawnSpec) -> Result<Box<dyn Child>, String> {
+            self.0.lock().unwrap().push(spec.clone());
+            match &self.1 {
+                Some(e) => Err(e.clone()),
+                None => Err("recorded only".into()),
             }
-            std::thread::yield_now();
         }
-        panic!("the certify thread never answered");
     }
 
-    fn certified(
-        p: &Arc<FakeProc>,
-    ) -> (
-        Result<Certified, VerbRefusal>,
-        Option<Result<Certified, VerbRefusal>>,
+    #[test]
+    fn certify_spawns_the_batch_then_the_repo_with_the_lease_token_and_reads_progress_for_its_batch(
     ) {
-        let h = verbs(p).certify("r", "b1").unwrap();
-        (settled(&*h), h.poll())
-    }
-
-    #[test]
-    fn certify_is_a_pollable_handle_that_keeps_its_answer() {
-        let p = fake(Some(0), "", "");
-        let (r, again) = certified(&p);
-        assert_eq!(r, Ok(Certified::Green));
-        assert_eq!(again, Some(Ok(Certified::Green)));
-        let spec = p.seen.lock().unwrap()[0].clone();
-        assert_eq!(
-            (spec.args, spec.deadline),
-            (
-                vec![
-                    "round".to_string(),
-                    "certify".into(),
-                    "b1".into(),
-                    "r".into()
-                ],
-                Duration::from_secs(1020)
-            )
+        let rec = Arc::new(Recorded(Mutex::default(), None));
+        let v = RealVerbs::new(
+            fake(Some(0), "", ""),
+            rec.clone(),
+            "queue",
+            Deadlines {
+                verb: Duration::from_secs(120),
+            },
+            Some(PathBuf::from("/run/x")),
         );
-    }
-
-    #[test]
-    fn a_red_certify_is_a_verdict_whatever_its_exit_and_any_other_failure_a_refusal() {
-        let (r, _) = certified(&fake(
-            Some(1),
-            "queue.sh round certify: round b1 is RED\nred=test-a.sh\n",
-            "RED",
-        ));
+        let _ = v.certify("r", "b1", Some("7-0"));
+        let _ = v.certify("r", "b2", None);
+        let seen = rec.0.lock().unwrap().clone();
+        assert_eq!(seen[0].prog, "queue");
         assert_eq!(
-            r,
-            Ok(Certified::Red {
-                suites: vec!["test-a.sh".into()]
-            })
+            seen[0].args,
+            ["round", "certify", "b1", "r", "--lease-token", "7-0"]
         );
-        let (r, _) = certified(&fake(Some(2), "", "fault"));
-        assert_eq!(r.unwrap_err().code, Some(2));
-        let (r, _) = certified(&fake(None, "red=test-a.sh\n", "killed"));
+        assert_eq!(seen[0].progress, Some(PathBuf::from("/run/x")));
         assert_eq!(
-            r.unwrap_err().code,
-            None,
-            "a killed certify is no verdict, whatever it printed"
+            seen[0].scope.as_deref(),
+            Some("round-controller-certify-b1-7-0"),
+            "its own scope, so a signal reaches round-vm whatever group it is in"
         );
-        let (r, _) = certified(&fake(Some(0), "red=\n", ""));
-        assert!(r.unwrap_err().text.contains("naming no suite"));
-    }
-
-    #[test]
-    fn a_certify_whose_thread_dies_answers_once_that_it_was_lost() {
-        let (tx, rx) = mpsc::channel::<Result<Certified, VerbRefusal>>();
-        let s = Spawned {
-            rx: Mutex::new(rx),
-            got: Mutex::new(None),
-        };
-        assert_eq!(s.poll(), None);
-        drop(tx);
-        assert_eq!(s.poll().unwrap().unwrap_err().text, lost().text);
+        assert_eq!(seen[1].args, ["round", "certify", "b2", "r"]);
+        let refused = RealVerbs::new(
+            fake(Some(0), "", ""),
+            Arc::new(Recorded(Mutex::default(), Some("no such program".into()))),
+            "queue",
+            Deadlines {
+                verb: Duration::from_secs(120),
+            },
+            Some(PathBuf::from("/run/x")),
+        )
+        .certify("r", "b1", None)
+        .err()
+        .unwrap();
         assert_eq!(
-            s.poll().unwrap().unwrap_err().text,
-            lost().text,
-            "the loss is kept, not re-read"
+            (refused.verb, refused.code, refused.text.as_str()),
+            (Verb::Certify, None, "no such program")
         );
     }
 }

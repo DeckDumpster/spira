@@ -1,0 +1,32 @@
+# The round controller's world twin of its lease-lost-kills-vm scenario: the sim-only actor runs
+# `round-controller pass` beside a runner handed a lease and a slot it cannot renew, because the
+# control-plane store has no door yet. The runner treats the refused first renewal as a lost lease:
+# it exits 7, starts no round VM on the world's stub round-vm, writes no attempt, and leaves the
+# world's run state untouched.
+epoch = 1800000000
+horizon = 150000
+real_actors = ["round-controller"]
+
+[[actor]]
+name = "rc-runner"
+command = "round-controller run --repo sim --batch rc-b1 --lease-token 1-0 --slot proxmox/0 --slot-token 2-0"
+first = 20000
+every = 60000
+duration_min = 1000
+duration_max = 2000
+
+[[invariant]]
+name = "rc_pass_exited_nonzero"
+sql = "SELECT seq, exit FROM events WHERE actor = 'round-controller' AND kind = 'complete' AND exit <> 0"
+
+[[invariant]]
+name = "rc_runner_did_not_lose_its_lease"
+sql = "SELECT seq, exit FROM events WHERE actor = 'rc-runner' AND kind = 'complete' AND exit <> 7"
+
+[[invariant]]
+name = "rc_changed_run_state"
+sql = "SELECT seq, 'queue' AS family, key AS what FROM run_queue UNION ALL SELECT seq, 'locks', name FROM run_locks UNION ALL SELECT seq, 'ejected', bead FROM run_ejected UNION ALL SELECT seq, 'verdicts', key FROM run_verdicts UNION ALL SELECT seq, 'gate-log', text FROM run_gate_log UNION ALL SELECT seq, 'landing-log', text FROM run_landing_log"
+
+[[expect]]
+name = "rc_runner_ran_and_lost_its_lease"
+sql = "SELECT 1 FROM events WHERE actor = 'rc-runner' AND kind = 'complete' AND exit = 7"

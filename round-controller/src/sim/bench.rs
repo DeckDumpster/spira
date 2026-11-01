@@ -181,6 +181,8 @@ pub struct Bench {
     pub settings: LeaseSettings,
     pub slot_settings: SlotSettings,
     pub ledger: FakeLedger,
+    /// When each runner slot was given back, on the virtual clock.
+    pub slot_releases: Mutex<Vec<u64>>,
     front: Mutex<Front>,
 }
 
@@ -245,6 +247,7 @@ impl Bench {
             settings,
             slot_settings: bench_slot_settings(),
             ledger: FakeLedger::default(),
+            slot_releases: Mutex::default(),
             front: Mutex::new(front),
         }
     }
@@ -347,7 +350,12 @@ impl Store for Bench {
         if !self.served() {
             return Unserved.release(f, req);
         }
-        self.store.release(f, req)
+        self.store.release(f, req)?;
+        if f.resource.starts_with("runner-slot/") {
+            use runtime::ports::Clock;
+            crate::lock(&self.slot_releases).push(self.clock.now_ms());
+        }
+        Ok(())
     }
 }
 

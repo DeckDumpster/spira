@@ -34,3 +34,9 @@ functions = ["check"]
 [[scope]]
 path = "round-controller/src/stack.rs"
 functions = ["Stack::of", "Stack::place"]
+
+# The runner's decisions: renewal and its loss, the kill path's escalation, the pass and the
+# resume from progress inside `run`.
+[[scope]]
+path = "round-controller/src/run.rs"
+functions = ["run", "main_pass", "kill_child", "Keeper::tick", "Guard::launch", "Guard::wait", "pass_result", "setup_phase"]

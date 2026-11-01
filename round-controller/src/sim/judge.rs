@@ -104,7 +104,7 @@ fn all() -> String {
     "all".into()
 }
 
-fn job_result(w: &str) -> Option<JobResult> {
+pub(crate) fn job_result(w: &str) -> Option<JobResult> {
     match w {
         "green" => Some(JobResult::Green),
         "red" => Some(JobResult::Red),

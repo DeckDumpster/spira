@@ -13,11 +13,12 @@ use crate::ledger::summary_key;
 use crate::liveness::LeaseSettings;
 use crate::outcome::{utc_stamp, Cause, Kind};
 use crate::pass::{pass, pass_with, Step};
-use crate::ports::{Ports, Verb};
+use crate::ports::{Ports, Signal, Verb};
 use crate::resources::PassIdentity;
 use crate::sim::bench::{bench_settings, bench_slot_settings, Bench};
 use crate::sim::judge::{FakeLedger, JudgeCount, JudgeRun, JudgeSpec};
 use crate::sim::ledger::{self as sim_ledger, IdentitySpec, LedgerConfig, LedgerStep};
+use crate::sim::run_pass::{self, Advance, RunOutcome, RunPassSpec};
 use crate::sim::runner::{Runner, RunnerScript};
 use crate::sim::slot_user::{most_at_once, SlotUser, SlotUserScript};
 use crate::sim::verbs::{Call, FakeVerbs, VerbScript};
@@ -173,6 +174,25 @@ pub enum Count {
     Judge(JudgeCount),
     /// `opens:<place>`: `open` calls asking for that place, `on-base` or `stack-on:<k>`.
     Opens(String),
+    /// `run-ends:<word>`: runner runs that ended so (`recorded`, `stopped`, `lease-lost`, …).
+    RunEnds(String),
+    /// `run-lost:<reason>`: runner runs that lost their lease so (`expired`, `deadline`, `superseded`).
+    RunLost(String),
+    /// Sub-passes the runner runs launched; `run-launches:<plain|base|without>` of one purpose.
+    RunLaunches(Option<String>),
+    /// Attempts recorded in the ledger, seeded verdicts aside.
+    LedgerAttempts,
+    /// Passes a signal cut short before they answered.
+    VmTornDown,
+    /// Signals sent to passes, `vm-signals:<term|kill>`.
+    VmSignals(Signal),
+    SlotReleases,
+    /// Slots given back while a pass's VM was still up.
+    SlotReleasesWithVmUp,
+    /// Seconds after the epoch of the last slot given back; `u64::MAX` when none was.
+    LastSlotReleaseSecs,
+    /// `live-locks:<prefix>`: locks under `locks/<prefix>` still held once the last pass ran.
+    LiveLocks(String),
 }
 
 impl Count {
@@ -215,6 +235,35 @@ impl Count {
             ("vms-at-once", Some(w)) => Pool::from_word(w).map(|p| Count::VmsAtOnce(Some(p))),
             ("first-grant-secs", None) => Some(Count::FirstGrantSecs),
             ("opens", Some(w)) if !w.is_empty() => Some(Count::Opens(w.to_string())),
+            ("run-ends", Some(w))
+                if [
+                    "recorded",
+                    "held",
+                    "unfinished",
+                    "preempted",
+                    "stopped",
+                    "lease-lost",
+                    "refused",
+                ]
+                .contains(&w) =>
+            {
+                Some(Count::RunEnds(w.to_string()))
+            }
+            ("run-lost", Some(w)) if ["expired", "deadline", "superseded"].contains(&w) => {
+                Some(Count::RunLost(w.to_string()))
+            }
+            ("run-launches", None) => Some(Count::RunLaunches(None)),
+            ("run-launches", Some(w)) if ["plain", "base", "without"].contains(&w) => {
+                Some(Count::RunLaunches(Some(w.to_string())))
+            }
+            ("ledger-attempts", None) => Some(Count::LedgerAttempts),
+            ("vm-torn-down", None) => Some(Count::VmTornDown),
+            ("vm-signals", Some("term")) => Some(Count::VmSignals(Signal::Term)),
+            ("vm-signals", Some("kill")) => Some(Count::VmSignals(Signal::Kill)),
+            ("slot-releases", None) => Some(Count::SlotReleases),
+            ("slot-releases-with-vm-up", None) => Some(Count::SlotReleasesWithVmUp),
+            ("last-slot-release-secs", None) => Some(Count::LastSlotReleaseSecs),
+            ("live-locks", Some(p)) if !p.is_empty() => Some(Count::LiveLocks(p.to_string())),
             _ => JudgeCount::parse(s).map(Count::Judge),
         }
     }
@@ -405,6 +454,8 @@ struct File {
     round_lease: Vec<RoundLease>,
     #[serde(default)]
     store_step: Vec<StoreStep>,
+    #[serde(default)]
+    run_pass: Vec<RunPassSpec>,
 }
 
 #[derive(Clone, Debug)]
@@ -439,6 +490,7 @@ pub struct Scenario {
     pub held_slots: Vec<HeldSlot>,
     pub round_leases: Vec<RoundLease>,
     pub store_steps: Vec<StoreStep>,
+    pub run_passes: Vec<RunPassSpec>,
 }
 
 pub fn parse(text: &str) -> Result<Scenario, String> {
@@ -448,6 +500,9 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
         .map_err(|e| format!("scenario: {e}"))?;
     if let Some(j) = &f.judge {
         j.check().map_err(|e| format!("scenario: {e}"))?;
+    }
+    for r in &f.run_pass {
+        r.check().map_err(|e| format!("scenario: {e}"))?;
     }
     let judged = f.judge.is_some();
     let expects = f
@@ -534,6 +589,7 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
         held_slots: f.slot,
         round_leases: f.round_lease,
         store_steps: f.store_step,
+        run_passes: f.run_pass,
     })
 }
 
@@ -591,13 +647,13 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
     for l in &sc.launches {
         b.launch.script(l.clone());
     }
-    let mut runners = sc
+    let runners = sc
         .runners
         .iter()
         .map(|r| Runner::new(r.clone(), epoch_ms))
         .collect::<Result<Vec<_>, String>>()
         .map_err(|e| format!("scenario: {e}"))?;
-    let mut users = sc
+    let users = sc
         .slot_users
         .iter()
         .map(|u| SlotUser::new(u.clone(), epoch_ms))
@@ -638,79 +694,71 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
     let b = b;
     let ports = b.ports();
     let gc = state_store::gc::Controller::new(&b.store);
-    let mut next = epoch_ms;
-    let mut broken: Vec<String> = Vec::new();
-    for i in 0..sc.run.passes {
-        if i > 0 {
-            let jitter = ports.next_u64() % (sc.run.jitter_secs * 1000 + 1);
-            next += sc.run.every_secs * 1000 + jitter;
-        }
-        loop {
-            let due = |n: Option<u64>| n.filter(|t| *t <= next);
-            let Some((t, is_user, i)) = runners
-                .iter()
-                .enumerate()
-                .filter_map(|(i, r)| due(r.next_ms()).map(|t| (t, false, i)))
-                .chain(
-                    users
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, u)| due(u.next_ms()).map(|t| (t, true, i))),
-                )
-                .min()
-            else {
-                break;
-            };
-            b.clock.advance_to(t);
-            if is_user {
-                users[i].act(&b, &ports);
-            } else {
-                runners[i].act(&b, &ports);
-            }
-        }
-        b.clock.advance_to(next);
-        gc.tick(next).map_err(|e| format!("store gc: {e}"))?;
-        for s in sc.store_steps.iter().filter(|s| s.pass == i + 1) {
-            let data = serde_json::to_value(&s.data).expect("a TOML value is JSON");
-            let req = Request::new(
-                &format!("store-step-{}-{}", s.pass, s.key),
-                "scenario",
-                "step",
-            );
-            b.store
-                .txn(
-                    &state_store::Txn::new().put(&s.key, Object::new(data)),
-                    &req,
-                )
-                .map_err(|e| format!("store step {} at pass {}: {e}", s.key, s.pass))?;
-        }
-        go(&ports, &sc.repos);
-        for (repo, slot) in held.iter_mut() {
-            let Some(grant) = slot.as_ref() else { continue };
-            let r = cut::cut(&ports, repo, grant);
-            cut::record(&ports, repo, &r);
-            if matches!(r, Ok(Some(_))) {
-                *slot = None;
-            }
-        }
-        broken.extend(sim_ledger::run(
+    let mut revokes: Vec<(u64, String, String)> = sc
+        .run_passes
+        .iter()
+        .filter_map(|r| {
+            r.revoke_lease_secs
+                .map(|t| (epoch_ms + t * 1000, r.repo.clone(), r.batch.clone()))
+        })
+        .collect();
+    revokes.sort();
+    let world = std::cell::RefCell::new(World {
+        sc,
+        b: &b,
+        ports: &ports,
+        gc: &gc,
+        go,
+        runners,
+        users,
+        held,
+        judge: judge.as_ref(),
+        i: 0,
+        next: epoch_ms,
+        revokes,
+        broken: Vec::new(),
+        at,
+        failed: false,
+    });
+    let mut starts: Vec<&RunPassSpec> = sc.run_passes.iter().collect();
+    starts.sort_by_key(|r| r.start_secs);
+    let mut ran: Vec<RunOutcome> = Vec::new();
+    for spec in starts {
+        world
+            .borrow_mut()
+            .advance_to(epoch_ms + spec.start_secs * 1000);
+        let (o, faults) = run_pass::drive(
             &ports,
-            i + 1,
-            &sc.ledger_steps,
-            &sc.identities,
-            sc.ledger.as_ref(),
-            at,
-        ));
-        if let Some(j) = &judge {
-            j.drive(&ports, &b.clock, i + 1);
-        }
+            spec,
+            &world,
+            &b.clock,
+            epoch_ms,
+            profile.duration_factor,
+        )?;
+        world.borrow_mut().broken.extend(
+            faults
+                .into_iter()
+                .map(|f| format!("invariant no-unscripted-fault violated under {at}: {f}")),
+        );
+        ran.push(o);
     }
-
+    let mut w = world.into_inner();
+    w.finish();
+    let World {
+        runners,
+        users,
+        mut broken,
+        ..
+    } = w;
     let now = b.clock.now_ms();
     if let Some(j) = &judge {
         broken.extend(j.broken(now, at));
     }
-    for r in vm.runs().iter().filter(|r| r.ends <= now && !r.collected) {
+    for r in vm
+        .runs()
+        .iter()
+        .filter(|r| r.ends <= now && !r.collected && !r.cut_short())
+    {
         broken.push(format!("invariant every-pass-has-a-verdict violated under {at}: pass {} finished at {} with no recorded verdict", r.identity, utc_stamp(r.ends)));
     }
     let faults: Vec<String> = vm
@@ -798,6 +846,46 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
                 .iter()
                 .filter(|c| c.verb == Verb::Open && c.place.as_deref() == Some(w.as_str()))
                 .count() as u64,
+            Count::RunEnds(w) => ran.iter().filter(|r| r.end.word() == w).count() as u64,
+            Count::RunLost(w) => ran.iter().filter(|r| r.lost() == Some(w.as_str())).count() as u64,
+            Count::RunLaunches(w) => ran
+                .iter()
+                .flat_map(|r| &r.launches)
+                .filter(|l| w.as_deref().is_none_or(|w| **l == w))
+                .count() as u64,
+            Count::LedgerAttempts => b
+                .ledger
+                .attempts()
+                .iter()
+                .filter(|(_, by, _)| by != "seed")
+                .count() as u64,
+            Count::VmTornDown => vm.runs().iter().filter(|r| r.cut_short()).count() as u64,
+            Count::VmSignals(sig) => vm
+                .runs()
+                .iter()
+                .flat_map(|r| r.signals.clone())
+                .filter(|(_, s)| s == sig)
+                .count() as u64,
+            Count::SlotReleases => crate::lock(&b.slot_releases).len() as u64,
+            Count::SlotReleasesWithVmUp => {
+                let runs = vm.runs();
+                crate::lock(&b.slot_releases)
+                    .iter()
+                    .filter(|t| runs.iter().any(|r| r.started <= **t && r.gone_at() > **t))
+                    .count() as u64
+            }
+            Count::LastSlotReleaseSecs => crate::lock(&b.slot_releases)
+                .iter()
+                .max()
+                .map_or(u64::MAX, |t| (t - epoch_ms) / 1000),
+            Count::LiveLocks(prefix) => b
+                .store
+                .list(&[format!("locks/{prefix}").as_str()], &Selector::Everything)
+                .expect("the in-memory store lists")
+                .0
+                .iter()
+                .filter(|i| i.lock_expires_at_ms.is_some_and(|e| e > now))
+                .count() as u64,
         };
         let unmet = format!(
             "expectation {} unmet under {at}: counted {got}, expected {}",
@@ -820,6 +908,149 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
         calls,
         controls,
     })
+}
+
+/// The scenario's world: its passes, scripted actors, store steps and lease revocations, run in
+/// time order up to whatever time it is moved on to.
+struct World<'w> {
+    sc: &'w Scenario,
+    b: &'w Bench,
+    ports: &'w Ports<'w>,
+    gc: &'w state_store::gc::Controller<'w, state_store::MemBackend>,
+    go: &'w Pass<'w>,
+    runners: Vec<Runner>,
+    users: Vec<SlotUser>,
+    held: Vec<(String, Option<SlotGrant>)>,
+    judge: Option<&'w JudgeRun>,
+    /// Passes run so far, and when the next one runs.
+    i: u32,
+    next: u64,
+    revokes: Vec<(u64, String, String)>,
+    broken: Vec<String>,
+    at: &'w str,
+    /// A pass failed: the world stops running passes, and the failure is in `broken`.
+    failed: bool,
+}
+
+impl World<'_> {
+    fn actors_until(&mut self, until: u64) {
+        loop {
+            let due = |n: Option<u64>| n.filter(|t| *t <= until);
+            let Some((t, is_user, i)) = self
+                .runners
+                .iter()
+                .enumerate()
+                .filter_map(|(i, r)| due(r.next_ms()).map(|t| (t, false, i)))
+                .chain(
+                    self.users
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, u)| due(u.next_ms()).map(|t| (t, true, i))),
+                )
+                .min()
+            else {
+                break;
+            };
+            self.b.clock.advance_to(t);
+            if is_user {
+                self.users[i].act(self.b, self.ports);
+            } else {
+                self.runners[i].act(self.b, self.ports);
+            }
+        }
+    }
+
+    /// Lets the round lease go behind its holder's back, as a lapsed lease taken by another does.
+    fn revoke(&mut self, until: u64) {
+        while let Some((t, repo, batch)) = self.revokes.first().cloned().filter(|r| r.0 <= until) {
+            self.revokes.remove(0);
+            self.actors_until(t);
+            self.b.clock.advance_to(t);
+            let res = crate::lease::Resource::round(&repo, &batch);
+            if let Ok(Some(l)) = self.b.store.get(&res.lock_key()) {
+                let f = state_store::Fence {
+                    resource: res.lock,
+                    token: l.create_rev,
+                };
+                let _ = self.b.store.release(
+                    &f,
+                    &Request::new(&format!("revoke-{batch}-{t}"), "scenario", "revoke"),
+                );
+            }
+        }
+    }
+
+    fn pass(&mut self) -> Result<(), String> {
+        let (sc, ports, next, n) = (self.sc, self.ports, self.next, self.i + 1);
+        self.revoke(next);
+        self.actors_until(next);
+        self.b.clock.advance_to(next);
+        self.gc.tick(next).map_err(|e| format!("store gc: {e}"))?;
+        for s in sc.store_steps.iter().filter(|s| s.pass == n) {
+            let data = serde_json::to_value(&s.data).expect("a TOML value is JSON");
+            let req = Request::new(
+                &format!("store-step-{}-{}", s.pass, s.key),
+                "scenario",
+                "step",
+            );
+            self.b
+                .store
+                .txn(
+                    &state_store::Txn::new().put(&s.key, Object::new(data)),
+                    &req,
+                )
+                .map_err(|e| format!("store step {} at pass {}: {e}", s.key, s.pass))?;
+        }
+        (self.go)(ports, &sc.repos);
+        for (repo, slot) in self.held.iter_mut() {
+            let Some(grant) = slot.as_ref() else { continue };
+            let r = cut::cut(ports, repo, grant);
+            cut::record(ports, repo, &r);
+            if matches!(r, Ok(Some(_))) {
+                *slot = None;
+            }
+        }
+        self.broken.extend(sim_ledger::run(
+            ports,
+            n,
+            &sc.ledger_steps,
+            &sc.identities,
+            sc.ledger.as_ref(),
+            self.at,
+        ));
+        if let Some(j) = self.judge {
+            j.drive(ports, &self.b.clock, n);
+        }
+        self.i = n;
+        if self.i < sc.run.passes {
+            let jitter = ports.next_u64() % (sc.run.jitter_secs * 1000 + 1);
+            self.next += sc.run.every_secs * 1000 + jitter;
+        }
+        Ok(())
+    }
+
+    fn passes_until(&mut self, t: u64) {
+        while !self.failed && self.i < self.sc.run.passes && self.next <= t {
+            if let Err(e) = self.pass() {
+                self.broken.push(e);
+                self.failed = true;
+            }
+        }
+    }
+
+    /// Every pass still to run.
+    fn finish(&mut self) {
+        self.passes_until(u64::MAX);
+    }
+}
+
+impl run_pass::Advance for World<'_> {
+    fn advance_to(&mut self, t: u64) {
+        self.passes_until(t);
+        self.revoke(t);
+        self.actors_until(t);
+        self.b.clock.advance_to(t);
+    }
 }
 
 fn redrive_attempts(b: &Bench) -> u64 {
@@ -985,12 +1216,12 @@ mod tests {
     }
 
     fn certifying(p: &Ports, repo: &str) {
-        let _ = p.verbs.certify(repo, "b1");
+        let _ = p.verbs.certify(repo, "b1", None);
     }
 
     fn certified(p: &Ports, repo: &str) {
-        let h = p.verbs.certify(repo, "b1").unwrap();
-        assert_eq!(h.poll(), Some(Ok(crate::ports::Certified::Green)));
+        let h = p.verbs.certify(repo, "b1", None).unwrap();
+        assert_eq!(h.poll(), Some(Ok(crate::ports::CertifyEnd::default())));
     }
 
     fn spawning(p: &Ports, _: &str) {

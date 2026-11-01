@@ -1,0 +1,107 @@
+description = "a runner killed after the plain rerun leaves its pass and the rerun in progress; the re-drive judges the pass from progress without running it or the rerun again, and writes one attempt"
+repos = ["lane"]
+
+[run]
+epoch = 1800000000
+passes = 1
+every_secs = 60
+
+[lease]
+ttl_secs = 60
+pass_wall_max_secs = 30000
+redrive_retries = 2
+ec2_max_lifetime_secs = 60000
+
+[lease.deadline_secs]
+boot = 40
+build = 50
+suites = 90
+subpass = 300
+certify = 30
+
+[[store]]
+key = "lanes/lane"
+data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
+
+[[store]]
+key = "batches/lane/b1"
+data = { batch_id = "b1", repo = "lane", state = "CiRunning", head = "h1", base = "base-0", pass = 1, version = 1, tested_base = "base-0", members = [{ id = "sp-a", tip = "a1" }] }
+
+[[verb]]
+verb = "pass-start"
+ok = {}
+
+[[vm]]
+identity = "b1"
+verdict = "red"
+suites = ["test-a.sh"]
+duration_secs = 60
+
+# The first runner: its rerun is red, and it is killed before the base run.
+[[run_pass]]
+repo = "lane"
+batch = "b1"
+start_secs = 10
+kill_after = 1
+
+[[run_pass.job]]
+removal = []
+results = ["red"]
+secs = 20
+
+# The re-drive: only the two base runs are scripted, so a second rerun would be unscripted.
+[[run_pass]]
+repo = "lane"
+batch = "b1"
+start_secs = 1000
+
+[[run_pass.job]]
+removal = ["sp-a"]
+results = ["red", "red"]
+secs = 20
+
+[[expect]]
+name = "the-killed-runner-is-unfinished"
+count = "run-ends:unfinished"
+equals = 1
+
+[[expect]]
+name = "the-redrive-records"
+count = "run-ends:recorded"
+equals = 1
+
+[[expect]]
+name = "one-attempt"
+count = "ledger-attempts"
+equals = 1
+
+[[expect]]
+name = "the-pass-ran-once"
+count = "vm-runs"
+equals = 1
+
+[[expect]]
+name = "the-pass-started-once"
+count = "calls:pass-start"
+equals = 1
+
+[[expect]]
+name = "the-rerun-ran-once"
+count = "run-launches:plain"
+equals = 1
+
+[[expect]]
+name = "two-base-runs"
+count = "run-launches:base"
+equals = 2
+
+[[expect]]
+name = "progress-cleared-once-judged"
+count = "keys:batches/lane/b1/progress"
+equals = 0
+
+[[expect]]
+name = "inverted-the-pass-ran-again"
+count = "vm-runs"
+equals = 2
+inverted = true

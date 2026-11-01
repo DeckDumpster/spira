@@ -16,6 +16,7 @@ pub mod probe;
 pub mod real;
 pub mod refusal;
 pub mod resources;
+pub mod run;
 #[cfg(feature = "sim")]
 pub mod sim;
 pub mod slots;
