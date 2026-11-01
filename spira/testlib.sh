@@ -105,12 +105,11 @@ _TL_KEEP_GOING=0
 _TL_WATCH_DIR=""
 _TL_LOC=""
 
-# NO CALL JITTER IN SUITES (sp-1cdgq). dwarf sleeps a random 0..SPIRA_CALL_JITTER seconds
-# (default 20) before its session starts, so a batch called together does not start in
-# lockstep. A suite driving the real binary paid that per launch, and one whose deadline was
-# shorter than the jitter flipped about half the time (test-thrash-teardown). A suite that tests
-# the jitter itself sets its own value after sourcing this.
-export SPIRA_CALL_JITTER="${SPIRA_CALL_JITTER:-0}"
+# NO CALL JITTER IN SUITES (sp-1cdgq, sp-qo8b1r). dwarf sleeps a random 0..call_jitter seconds
+# (production: 20) before its session starts, so a batch called together does not start in
+# lockstep. A suite driving the real binary paid that per launch, so the complete fixture
+# (testlib/complete.toml) declares call_jitter = 0. A suite that tests the jitter sets its own
+# value with tl_config SPIRA_CALL_JITTER=<n>; an export is never read (one source of config).
 # THE SUITE'S PATH IS THE LAUNCHER'S (sp-isom7). testenv stages the tree under test as a
 # release and sets every suite's PATH outright from it ($SPIRA_RELEASE/bin, then
 # $SPIRA_RELEASE/spira), so a suite resolves tools by bare name exactly as production does.
