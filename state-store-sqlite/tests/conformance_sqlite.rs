@@ -82,6 +82,10 @@ scenarios!(
     request_bytes_at_the_limit_pass_and_one_over_is_refused,
     a_key_twice_in_one_txn_is_refused,
     caller_writes_to_the_contracts_own_prefixes_are_refused,
+    a_txn_that_acquires_a_lock_and_writes_a_fenced_key_applies_whole_or_not_at_all,
+    a_txn_acquiring_a_lock_held_by_another_holder_fails_whole,
+    lock_check_fails_the_txn_after_the_lock_expired_or_was_retaken,
+    get_and_list_return_a_locks_expiry_and_renew_moves_it_forward,
 );
 
 #[test]
