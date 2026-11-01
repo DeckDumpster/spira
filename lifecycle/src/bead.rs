@@ -324,6 +324,8 @@ pub enum BeadEventKind {
     /// infrastructure failure). Legal only while `ejected_red_tip` is that tip; a REWORK row
     /// goes back to SUBMITTED at it. Break-glass: refused unless `break_glass` is complete.
     Absolve { tip: String, break_glass: BreakGlass },
+    /// Filing has finished: an OPEN record, born before its planning writes, becomes READY.
+    Promote,
 }
 
 /// The provenance a past-the-gate move carries: why the normal path was bypassed, and the
@@ -607,6 +609,15 @@ fn apply_transition(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
             new.version += 1;
             Outcome::applied(new)
         }
+        BeadEventKind::Promote => {
+            if row.state != BeadState::Open {
+                return illegal(row, &ev.kind);
+            }
+            let mut new = row.clone();
+            new.state = BeadState::Ready;
+            new.version += 1;
+            Outcome::applied(new)
+        }
         BeadEventKind::Sifted { tip } => {
             if !matches!(row.state, BeadState::Submitted | BeadState::Certified) {
                 return illegal(row, &ev.kind);
@@ -849,7 +860,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Release | HolderDead | Submit { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote => illegal(row, kind),
         },
 
         BeadState::Open => illegal(row, kind),
@@ -925,7 +936,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             Delivered { merge_sha, proof: _ } => landed_under_holder(row, merge_sha),
             Claim { .. } | GatePass { .. } | GateRed { .. } | GateInfra { .. } | Deliver
             | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Resubmit { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Resubmit { .. } => illegal(row, kind),
         },
 
         BeadState::Submitted => match kind {
@@ -1017,7 +1028,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | Done { .. } | Delivered { .. }
             | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Resubmit { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Resubmit { .. } => illegal(row, kind),
         },
 
         BeadState::Certified => match kind {
@@ -1075,7 +1086,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Done { .. } | GatePass { .. }
             | GateInfra { .. } | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Resubmit { .. } => {
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Resubmit { .. } => {
                 illegal(row, kind)
             }
         },
@@ -1145,7 +1156,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateInfra { .. } | Deliver
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Resubmit { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Resubmit { .. } => illegal(row, kind),
         },
 
         BeadState::Rework => match kind {
@@ -1200,7 +1211,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             Delivered { merge_sha, proof: _ } => landed_under_holder(row, merge_sha),
             Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote => illegal(row, kind),
         },
 
         // Terminal states: every one of the 19 events is illegal here, because there is no
@@ -1213,7 +1224,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. }
             | Requeued { .. } | BaseWithdrawn { .. } | PrereqLanded { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Resubmit { .. } => terminal(row),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Resubmit { .. } => terminal(row),
         },
     }
 }
@@ -1355,6 +1366,7 @@ fn kind_name(kind: &BeadEventKind) -> &'static str {
         BeadEventKind::Restack { .. } => "Restack",
         BeadEventKind::Absolve { .. } => "Absolve",
         BeadEventKind::Resubmit { .. } => "Resubmit",
+        BeadEventKind::Promote => "Promote",
     }
 }
 
@@ -1393,6 +1405,7 @@ fn edge_probes() -> Vec<BeadEventKind> {
         BeadEventKind::Restack { tip: "t1".into(), stack: Stack::from([("sp-base".to_string(), "t0".to_string())]), stack_depth: 1 },
         BeadEventKind::Absolve { tip: "t1".into(), break_glass: BreakGlass::default() },
         BeadEventKind::Resubmit { tip: "t1".into(), break_glass: BreakGlass::default() },
+        BeadEventKind::Promote,
     ]
 }
 
@@ -1496,6 +1509,7 @@ mod tests {
             BeadEventKind::Hold { kind: HoldKind::Poison, cause: HoldCause::AttemptsExhausted, detail: None },
             BeadEventKind::Unhold { kind: HoldKind::Poison, break_glass: BreakGlass::default() },
             BeadEventKind::Renew { lease_until: 2 },
+            BeadEventKind::Promote,
         ]
     }
 
@@ -1541,6 +1555,19 @@ mod tests {
         assert!(!has(BeadState::Ready, "Renew", BeadState::Ready), "a move that stays put is not an edge");
         assert!(edges.iter().all(|e| !e.from.is_terminal()), "terminal states have no exits");
         assert!(edges.iter().all(|e| e.from != e.to));
+        assert!(has(BeadState::Open, "Promote", BeadState::Ready));
+    }
+
+    #[test]
+    fn promote_takes_an_open_record_to_ready_and_no_other_state_anywhere() {
+        let out = apply(&row(BeadState::Open), &ev(BeadState::Open, 0, BeadEventKind::Promote));
+        assert!(out.applied);
+        assert_eq!((out.row.state, out.row.version), (BeadState::Ready, 1));
+        for &state in &ALL_STATES {
+            let out = apply(&row(state), &ev(state, 0, BeadEventKind::Promote));
+            assert!(!out.applied, "{state:?} took a Promote");
+            assert_eq!(out.row.state, state);
+        }
     }
 
     #[test]

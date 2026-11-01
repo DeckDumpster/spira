@@ -28,6 +28,7 @@ fn kind() -> impl Strategy<Value = BeadEventKind> {
         Just(BeadEventKind::Unhold { kind: HoldKind::Poison, break_glass: Default::default() }),
         Just(BeadEventKind::Reply { message_id: "m".into() }),
         Just(BeadEventKind::AskWithdrawn),
+        Just(BeadEventKind::Promote),
         Just(BeadEventKind::Renew { lease_until: 2 }),
         Just(BeadEventKind::Phase { phase: DwarfPhase::Session }),
         Just(BeadEventKind::Disposition { status: DispositionStatus::Thrash, note: "n".into() }),
