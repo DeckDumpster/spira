@@ -55,7 +55,7 @@ fn a_create_makes_the_row_and_still_prints_the_id() {
     let r = bdq("echo sp-new1", "exit 0", CREATE);
     assert_eq!(r.code, 0, "{}", r.stderr);
     assert_eq!(r.stdout.trim(), "sp-new1");
-    assert_eq!(r.lc_calls, "create-bead sp-new1\n");
+    assert_eq!(r.lc_calls, "create-bead sp-new1 --ready\n");
 }
 
 #[test]
@@ -92,7 +92,7 @@ fn a_no_row_type_create_gets_no_row() {
 #[test]
 fn json_create_output_is_read() {
     let r = bdq("echo '{\"id\":\"sp-js\"}'", "exit 0", &["create", "a plain title", "--json"]);
-    assert_eq!(r.lc_calls, "create-bead sp-js\n");
+    assert_eq!(r.lc_calls, "create-bead sp-js --ready\n");
     assert!(r.stdout.contains("sp-js"));
 }
 

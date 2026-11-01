@@ -342,8 +342,8 @@ fn an_open_bead_with_no_row_is_given_one_and_a_refused_repair_stays_a_suspect() 
     assert!(has(&r, "REPAIRED sp-orph open bead had no lifecycle row; created it (priority 0, repo widgets)"), "{r:?}");
     assert!(has(&r, "REPAIRED sp-norepo open bead had no lifecycle row; created it (priority 3, repo none)"), "{r:?}");
     let log = fs::read_to_string(g.p("creates.log")).unwrap();
-    assert!(log.contains("create-bead sp-orph --priority 0 --title fix the thing --repo widgets"), "{log}");
-    assert!(log.contains("create-bead sp-norepo --priority 3 --title Warden sweep landed\n"), "{log}");
+    assert!(log.contains("create-bead sp-orph --priority 0 --title fix the thing --repo widgets --ready\n"), "{log}");
+    assert!(log.contains("create-bead sp-norepo --priority 3 --title Warden sweep landed --ready\n"), "{log}");
     assert!(!log.contains("sp-idea") && !has(&r, "sp-idea"), "a parked idea gets no row: {r:?}");
     assert!(has(&r, "SUSPECT sp-busy ROWLESS"), "an in-progress rowless bead is reported, not created: {r:?}");
 

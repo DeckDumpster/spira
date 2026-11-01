@@ -228,6 +228,11 @@ fn bdq_create(home: &str, args: &[String], incident: Option<&str>, stack_after: 
         }
         rc |= r;
     }
+    if mirror.is_some() && submitted_tip.is_none() {
+        if let Err(e) = spira_config::lifecycle_row::promote(&new_id) {
+            eprintln!("bead: file: {new_id} filed but its row was not promoted from OPEN: {e}; the OPEN sweep promotes it, or: spira-lc promote-filed {new_id}");
+        }
+    }
     rc
 }
 

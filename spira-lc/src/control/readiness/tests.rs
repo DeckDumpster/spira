@@ -291,14 +291,14 @@ fn a_record_from_filing_is_unclaimable_until_promoted_and_ready_born_records_are
     let (code, out) = r.claim("sp-f");
     assert_eq!(code, crate::REFUSED, "{out}");
     assert_eq!(r.state("sp-f"), "OPEN");
-    r.ok(&["promote", "sp-f"]);
+    r.ok(&["promote-filed", "sp-f"]);
     assert_eq!(r.state("sp-f"), "READY");
-    r.ok(&["promote", "sp-f"]);
+    r.ok(&["promote-filed", "sp-f"]);
     assert_eq!(r.state("sp-f"), "READY", "a second promote leaves it");
     assert_eq!(r.claim("sp-f").0, 0);
     r.ok(&["create-bead", "sp-r", "--ready"]);
     assert_eq!(r.state("sp-r"), "READY");
-    assert_eq!(r.call(&["promote", "sp-none"]).0, crate::CANNOT_TELL);
+    assert_eq!(r.call(&["promote-filed", "sp-none"]).0, crate::CANNOT_TELL);
 }
 
 fn sweep(r: &Rig, extra: &[&str]) -> Value {

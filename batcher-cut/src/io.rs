@@ -244,7 +244,7 @@ pub fn lc_probe(env: &Env) -> Result<(), String> {
 /// open-batch file the same way sp-o7nbr.2's `_lc_cut_batch` does.
 pub fn lc_cut_batch(env: &Env, repo: &str, batch_id: &str, head: &str, base: &str, members: &[(String, String)]) -> Option<String> {
     for (id, _) in members {
-        let _ = lcq(env, &["create-bead", id]);
+        let _ = lcq(env, &["create-bead", id, "--ready"]);
     }
     let members_s = members.iter().map(|(id, tip)| format!("{id}:{tip}")).collect::<Vec<_>>().join(",");
     match lcq(env, &["cut", batch_id, "--repo", repo, "--head", head, "--base", base, "--members", &members_s, "--actor", "batcher"]) {
