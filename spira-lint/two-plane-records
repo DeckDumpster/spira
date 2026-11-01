@@ -1,0 +1,12 @@
+# two-plane-records — the control plane's record types, one `<path>::<Type>` per line.
+# Blank lines and `#` comments are ignored.
+#
+# two-plane reads each type's named fields and reports one whose name is planning data. A
+# line naming a file or braced struct the tree does not have is a refusal, never a pass: an
+# unread record is indistinguishable from a clean one. A new control-plane record type is
+# added here in the change that defines it.
+lifecycle/src/bead.rs::BeadRow
+lifecycle/src/batch.rs::BatchRow
+lifecycle/src/delivery.rs::DeliveryRow
+lifecycle/src/ask.rs::AskRow
+lifecycle/src/mending.rs::MendingRow
