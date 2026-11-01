@@ -33,6 +33,7 @@ const USAGE: &str = "usage: round-controller <verb>
                                             one pass and its Judge under the round lease and the slot pass handed over
   launch --repo <r> --batch <b> --lease-token <t> --slot <pool>/<n> --slot-token <s>
                                             start that run as the transient unit round-controller-run-<batch>-<lease-token>
+  lease clear --repo <r> --batch <b>        release a round's lease once its holder is proven dead; refused otherwise
   lease probe --secs <n> --out <file>       renew a lease of its own for n seconds and write each renewal's lateness
   version                                   print the version
   -h, --help";
@@ -151,6 +152,26 @@ fn dispatch(args: &[String]) -> i32 {
                 }
             },
         },
+        ["lease", "clear", "--repo", repo, "--batch", batch] => {
+            match with_ports(|p| round_controller::clear::clear(p, repo, batch)) {
+                Ok(round_controller::clear::Cleared::Unheld) => {
+                    println!("lease=none batch={batch}");
+                    0
+                }
+                Ok(round_controller::clear::Cleared::Released {
+                    holder,
+                    token,
+                    evidence,
+                }) => {
+                    println!("lease=cleared batch={batch} holder={holder} token={token}\nevidence={evidence}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("round-controller lease clear: {e}");
+                    1
+                }
+            }
+        }
         ["lease", "probe", "--secs", secs, "--out", out] => {
             report("lease probe", run_probe(secs, out))
         }

@@ -27,6 +27,14 @@ pub fn unit_name(batch: &str, token: Rev) -> Result<String, String> {
     Ok(format!("round-controller-run-{batch}-{token}"))
 }
 
+/// The holder `release round-recert` records on the leases it takes.
+pub const HAND_HOLDER: &str = "round-recert";
+
+/// The unit `release round-recert` drives `batch` in under lease `token`.
+pub fn hand_unit_name(batch: &str, token: Rev) -> Result<String, String> {
+    unit_name(batch, token).map(|u| u.replacen("round-controller-run-", "round-recert-", 1))
+}
+
 /// A lease's past holder: the runner launched for `batch` under `token`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Holder {
