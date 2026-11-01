@@ -160,7 +160,12 @@ fn lines_of(path: &Path) -> Vec<String> {
 /// Every table's rows (without `seq`) as the world's `run/` holds them now.
 pub fn read(run: &Path, proc_locks: &str) -> Vec<(&'static str, Value)> {
     let mut out: Vec<(&'static str, Value)> = Vec::new();
-    for (key, path) in files(&run.join("verdicts")) {
+    let verdicts = run.join("verdicts");
+    let mut certs = files(&verdicts);
+    for (repo, dir) in dirs(&verdicts.join("trees")) {
+        certs.extend(files(&dir).into_iter().map(|(tree, p)| (format!("trees/{repo}/{tree}"), p)));
+    }
+    for (key, path) in certs {
         out.push(("run_verdicts", verdict_row(&key, &std::fs::read_to_string(path).unwrap_or_default())));
     }
     let mut lock_files: Vec<(String, PathBuf)> = Vec::new();
