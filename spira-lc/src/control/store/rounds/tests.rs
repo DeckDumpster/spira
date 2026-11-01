@@ -881,6 +881,28 @@ fn a_round_that_opened_and_never_began_is_abandoned_and_its_members_requeued() {
     assert_eq!(r.state("sp-a"), BeadState::Certified);
 }
 
+#[test]
+fn requeue_orphans_leaves_a_leased_round_that_never_began_open_and_lists_it_leased() {
+    let r = Rig::new();
+    open_round(&r);
+    r.s.contract()
+        .lock("round/spira/b-1", 600_000, &r.req())
+        .unwrap();
+    let applied =
+        r.s.requeue_orphans("test", true, 1800, AT + 3600, &r.req())
+            .unwrap();
+    assert_eq!(applied.leased, vec!["b-1".to_string()]);
+    assert!(
+        applied.phantom_batches.is_empty()
+            && applied.abandoned.is_empty()
+            && applied.requeued.is_empty()
+            && applied.orphans.is_empty(),
+        "{applied:?}"
+    );
+    assert_eq!(round_state(&r), BatchState::Open);
+    assert_eq!(r.state("sp-a"), BeadState::InDelivery);
+}
+
 /// The gate a claim would compare on `id`, as the store holds it.
 fn stored_gate<B: Backend>(r: &Rig<B>, id: &str) -> spira_config::edges::Gate {
     let item = r.s.contract().get(&keys::gate(id)).unwrap().unwrap();
