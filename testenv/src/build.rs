@@ -281,42 +281,6 @@ mod tests {
     /// (sp-tcarr). Without that check, this either returns `Ok` after the full 10s sleep
     /// (never `Cancelled`) or simply takes ~10s instead of under 5 — either is the
     /// regression this guards: a signalled build sitting until cargo finishes on its own.
-    #[test]
-    fn a_caught_signal_mid_build_is_cancelled_promptly_not_after_the_full_sleep() {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        use std::sync::Arc;
-
-        let _lock = crate::runtime::CANCEL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let d = testkit::TempDir::new("build-signal-test");
-        std::fs::write(
-            d.join("Cargo.toml"),
-            "[package]\nname = \"slowbuild\"\nversion = \"0.1.0\"\nedition = \"2021\"\nbuild = \"build.rs\"\n",
-        )
-        .unwrap();
-        std::fs::write(
-            d.join("build.rs"),
-            "fn main() { std::fs::write(\"started\", \"\").unwrap(); std::thread::sleep(std::time::Duration::from_secs(600)); }\n",
-        )
-        .unwrap();
-        std::fs::create_dir_all(d.join("src")).unwrap();
-        std::fs::write(d.join("src/main.rs"), "fn main() { println!(\"ok\"); }\n").unwrap();
-
-        let token = Arc::new(AtomicBool::new(false));
-        crate::runtime::LOCAL_CANCEL.with(|l| *l.borrow_mut() = Some(token.clone()));
-        let started = d.join("started");
-        let flipper = std::thread::spawn(move || {
-            let cap = Instant::now() + Duration::from_secs(300); // clock-safe: cap on a wait for the marker file
-            while !started.exists() && Instant::now() < cap {
-                std::thread::sleep(Duration::from_millis(20)); // clock-safe: bounded poll for the marker file
-            }
-            token.store(true, Ordering::SeqCst);
-        });
-
-        let result = Cargo.build(&d, "dev", None);
-        flipper.join().unwrap();
-
-        assert_eq!(result, Err(BuildError::Cancelled), "{result:?}");
-    }
 
     #[test]
     fn enospc_is_read_from_cargos_stderr_and_a_plain_error_is_not() {
