@@ -763,3 +763,18 @@ fn a_ttl_d_key_deleted_by_an_audited_write_but_still_restored_missing_is_a_misma
     );
     drop(c);
 }
+
+#[test]
+fn a_cleared_compaction_floor_lets_compaction_reach_the_head() {
+    let dir = TempDir::new("floor-clear");
+    let clock = VirtualClock::new(1_000);
+    let c = suite::open(open(&dir.path().join("live.db")), &clock);
+    for i in 0..3 {
+        put(&c, "k", Object::new(json!(i)), &format!("{i}"));
+    }
+    let b = c.backend();
+    b.set_compaction_floor(1).unwrap();
+    b.clear_compaction_floor().unwrap();
+    b.compact(3).unwrap();
+    assert_eq!(b.compacted().unwrap(), 3);
+}
