@@ -4,17 +4,16 @@
 //! path.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use runtime::ports::Clock;
 use state_store::{Config, Contract, MonotonicClock, Ports};
 use state_store_sqlite::{Options, SqliteBackend};
 
 use super::store::Store;
-use super::verbs;
+use super::{state, verbs};
 use crate::CANNOT_TELL;
-
-/// No verb served here takes a lock; the floor only satisfies the contract's config.
-const LOCK_FLOOR_MS: u64 = 1_000;
 
 /// A failed open is not kept, so the next call tries again.
 static OPENED: Mutex<Option<Arc<Store<SqliteBackend>>>> = Mutex::new(None);
@@ -33,6 +32,26 @@ fn store_path() -> Option<Result<String, String>> {
     Some(confined().map(|()| path.clone()))
 }
 
+/// The shortest lock the contract grants, and so the shortest claim: `SPIRA_LC_LOCK_TTL_MIN_MS`.
+fn lock_floor_ms() -> Result<u64, String> {
+    match spira_config::process::cfg_parse::<u64>("SPIRA_LC_LOCK_TTL_MIN_MS")? {
+        0 => Err("SPIRA_LC_LOCK_TTL_MIN_MS must be at least 1".into()),
+        n => Ok(n),
+    }
+}
+
+/// The wall clock lock expiries are read on, pinned with the rest of the process by `SPIRA_NOW`.
+struct Wall;
+
+impl Clock for Wall {
+    fn now_ms(&self) -> u64 {
+        match spira_config::vtime::override_epoch() {
+            Some(s) => s.saturating_mul(1_000),
+            None => runtime::ports::WallClock.now_ms(),
+        }
+    }
+}
+
 fn open(path: &str) -> Result<Store<SqliteBackend>, String> {
     // Opening creates a missing file, which would answer every read as an empty store.
     if !Path::new(path).is_file() {
@@ -40,19 +59,20 @@ fn open(path: &str) -> Result<Store<SqliteBackend>, String> {
     }
     let backend = SqliteBackend::open(Path::new(path), Options::default())
         .map_err(|e| format!("{path}: {e}"))?;
+    let floor = lock_floor_ms()?;
     let ports = Ports {
         mono: Arc::new(MonotonicClock::new()),
-        wall: Arc::new(runtime::ports::WallClock),
+        wall: Arc::new(Wall),
     };
     let contract = Contract::open(
         backend,
         ports,
         Config {
-            min_lock_ttl_ms: LOCK_FLOOR_MS,
+            min_lock_ttl_ms: floor,
         },
     )
     .map_err(|e| format!("{path}: {e}"))?;
-    Ok(Store::new(contract, LOCK_FLOOR_MS))
+    Ok(Store::new(contract, floor))
 }
 
 fn opened(path: &str) -> Result<Arc<Store<SqliteBackend>>, String> {
@@ -65,11 +85,32 @@ fn opened(path: &str) -> Result<Arc<Store<SqliteBackend>>, String> {
     Ok(s)
 }
 
+/// The store the config declares, opened: `None` while the key is unset, so lc-serve serves
+/// from dolt alone.
+pub fn configured() -> Option<Result<Arc<Store<SqliteBackend>>, String>> {
+    Some(store_path()?.and_then(|p| opened(&p)))
+}
+
+/// A request id no other call in any process mints: each call, a retry included, is its own
+/// request, so a request that lost its race is never answered again as if it had not.
+fn request_id() -> String {
+    static N: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    format!(
+        "lc/{}/{nanos}/{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
 /// The control store's answer to `args`, or `None` when the dolt path answers it: a verb this
 /// store does not serve, or any verb while the key is unset. `watch` has no dolt path.
 pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
     let verb = args.first()?;
-    if !verbs::VERBS.contains(&verb.as_str()) {
+    let lifecycle = state::VERBS.contains(&verb.as_str());
+    if !lifecycle && !verbs::VERBS.contains(&verb.as_str()) {
         return None;
     }
     let path = match store_path() {
@@ -83,6 +124,14 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
         None => return None,
     };
     Some(match opened(&path) {
+        Ok(store) if lifecycle => {
+            let request = request_id();
+            let call = state::Call {
+                now: crate::db::now_epoch(),
+                request: &request,
+            };
+            state::run(&store, args, &call)
+        }
         Ok(store) => verbs::run(&store, args),
         Err(e) => (CANNOT_TELL, format!("cannot tell: the control store: {e}")),
     })

@@ -559,3 +559,4 @@ batcher_orphan_redrive_secs
 round_fault_backoff_secs
 round_fault_retries
 lc_store_path
+lc_lock_ttl_min_ms

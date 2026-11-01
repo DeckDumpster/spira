@@ -186,11 +186,28 @@ impl<B: Backend> Store<B> {
 
     /// Every lifecycle record, from one snapshot, with the revision it was read at.
     pub fn records(&self) -> Result<(Vec<Read<LifecycleRecord>>, u64)> {
+        let (records, _, rev) = self.records_with_readiness()?;
+        Ok((records, rev))
+    }
+
+    /// Every lifecycle record and every readiness, from one snapshot, with its revision.
+    pub fn records_with_readiness(
+        &self,
+    ) -> Result<(
+        Vec<Read<LifecycleRecord>>,
+        std::collections::BTreeMap<String, Readiness>,
+        u64,
+    )> {
         let locks = keys::claim_locks();
         let (items, rev) = self.contract.list(
-            &[keys::LIFECYCLE, locks.as_str()],
+            &[keys::LIFECYCLE, locks.as_str(), keys::READINESS],
             &state_store::Selector::Everything,
         )?;
+        let readiness = items
+            .iter()
+            .filter_map(|i| Some((keys::id_of(keys::READINESS, &i.key)?, i)))
+            .map(|(id, i)| Ok((id.to_string(), decode(&i.key, &i.value)?)))
+            .collect::<Result<_>>()?;
         let held: std::collections::BTreeMap<&str, &Item> = items
             .iter()
             .filter_map(|i| Some((keys::id_of(&locks, &i.key)?, i)))
@@ -208,7 +225,7 @@ impl<B: Backend> Store<B> {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        Ok((records, rev))
+        Ok((records, readiness, rev))
     }
 
     /// The fence of the claim now holding `id`: its lock, while it is live.
@@ -403,9 +420,7 @@ impl<B: Backend> Store<B> {
                 "a claim of {id} carries no at to time its lease from"
             )));
         };
-        let ttl_ms = (lease_until.saturating_sub(at).max(0) as u64)
-            .saturating_mul(1_000)
-            .max(self.claim_floor_ms);
+        let ttl_ms = self.lease_ttl_ms(*lease_until, at);
         let resource = keys::claim_resource(id);
         let apply_req = |evidence| sub_request(req, "apply", evidence);
         if let Some(done) = self.replayed(id, req)? {
@@ -462,6 +477,68 @@ impl<B: Backend> Store<B> {
             // The lock lapsed or went between the txn and this read: retry as on a race.
             None => (Outcome::LostRace { rev: r.rev }, None),
         })
+    }
+
+    /// The claim lock's TTL for a lease running to `lease_until` from `at`, raised to the floor.
+    fn lease_ttl_ms(&self, lease_until: i64, at: i64) -> u64 {
+        (lease_until.saturating_sub(at).max(0) as u64)
+            .saturating_mul(1_000)
+            .max(self.claim_floor_ms)
+    }
+
+    /// The holder's renewal: when the machine would take the Renew, the lock restarts under the
+    /// new lease's TTL, then the event is written fenced on it, so a lapsed or superseded
+    /// holder extends nothing. A refusal is written as the machine's, the lock untouched.
+    pub fn renew_lease(
+        &self,
+        id: &str,
+        fence: &Fence,
+        ev: &BeadEvent,
+        req: &Request,
+    ) -> Result<Outcome> {
+        let (BeadEventKind::Renew { lease_until }, Some(at)) = (&ev.kind, ev.at) else {
+            return Err(Error::Backend(format!(
+                "a renewal of {id} takes a Renew event with an at"
+            )));
+        };
+        if self.replayed(id, req)?.is_none() {
+            let Some((cur, _)) = self.read::<LifecycleRecord>(&keys::lifecycle(id), None)? else {
+                return Err(Error::NotFound {
+                    key: keys::lifecycle(id),
+                });
+            };
+            if bead::apply(&cur.value.row, ev).applied {
+                let ttl_ms = self.lease_ttl_ms(*lease_until, at);
+                match self
+                    .contract
+                    .renew_for(fence, ttl_ms, &sub_request(req, "renew", Value::Null))
+                {
+                    Err(Error::LockLost { .. }) => {
+                        return Ok(Outcome::LockLost {
+                            rev: self.contract.head()?,
+                        })
+                    }
+                    other => other?,
+                }
+            }
+        }
+        self.holder_apply(id, fence, ev, req)
+    }
+
+    /// The machine's refusal of `ev` for a reason only the caller can judge, audited as one.
+    pub fn refuse_event(
+        &self,
+        id: &str,
+        ev: &BeadEvent,
+        refusal: lifecycle::Refusal,
+        req: &Request,
+    ) -> Result<Outcome> {
+        let Some((cur, _)) = self.read::<LifecycleRecord>(&keys::lifecycle(id), None)? else {
+            return Err(Error::NotFound {
+                key: keys::lifecycle(id),
+            });
+        };
+        self.refuse(id, ev, &cur.value, Some(refusal), req)
     }
 
     /// An event from the holder, fenced on its lock.
