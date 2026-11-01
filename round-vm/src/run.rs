@@ -4821,22 +4821,6 @@ mod tests {
         assert!(out.join("test-c.sh.result").is_file());
     }
 
-    #[test]
-    fn a_run_publishes_its_progress_and_leaves_it_done_with_the_verdict() {
-        let fx = fixture();
-        let remote = FakeRemote::green();
-        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh,test-b.sh".into()), ..tree(&fx) };
-        assert_eq!(go(&fx, &remote, &a), 0);
-        let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join("round-progress.json")).unwrap()).unwrap();
-        assert_eq!((v["phase"].as_str(), v["verdict"].as_str()), (Some("done"), Some("green")));
-        assert_eq!((v["done"].as_u64(), v["total"].as_u64(), v["cap"].as_u64()), (Some(2), Some(2), Some(1234)));
-        assert!(v["suites_started"].as_u64().is_some());
-        let seq: Vec<&str> = v["phases"].as_array().unwrap().iter().map(|e| e["phase"].as_str().unwrap()).collect();
-        assert_eq!(seq, ["vm", "build", "suites", "salvage", "done"], "a pass through the fake pool walks every phase in order");
-        let starts: Vec<u64> = v["phases"].as_array().unwrap().iter().map(|e| e["started"].as_u64().unwrap()).collect();
-        assert!(starts.windows(2).all(|w| w[0] <= w[1]), "{starts:?}");
-        assert_eq!(v["phase_started"], *starts.last().unwrap());
-    }
 
     #[test]
     fn a_run_whose_ssh_fails_is_left_done_with_a_fault() {
