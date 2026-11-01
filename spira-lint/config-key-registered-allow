@@ -462,7 +462,6 @@ SPIRA_INCIDENT_TYPE watchtower/src/incident.rs
 SPIRA_INCIDENT_UNIT incident/src/main.rs
 SPIRA_INFERENCE_EVERY sentinel/src/cfg.rs
 SPIRA_INFLOW_WINDOW_MIN cockpit-collect/src/probes/core_detail.rs
-SPIRA_INSTALL_ACTIVE_WAIT install/src/bin/units_install.rs
 SPIRA_INSTALL_AERC_CONSIDERED install/src/bin/install.rs
 SPIRA_INSTALL_BD_INIT_TRIES install/src/bin/install.rs
 SPIRA_INSTALL_CONFLICT_CONSIDERED install/src/bin/install.rs

@@ -206,6 +206,7 @@ hypervisor_mem_mib = 0
 id_prefix = "sp"
 incident_label = "incident"
 incident_priority = "3"
+install_active_wait = 0
 instance = "prod"
 land_gate_reserve = "2700"
 land_maxsec = "5400"
