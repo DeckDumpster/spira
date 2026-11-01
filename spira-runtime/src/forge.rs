@@ -12,6 +12,7 @@ use serde_json::Value;
 
 use crate::watchers::pr_notify::{classify, Final, OpenPr, Run};
 use crate::watchers::repo_events;
+use crate::wiki_git::gh_auth_token;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(5);
 const PAGE_SIZE: usize = 100;
@@ -21,11 +22,15 @@ const PAGE: &str = "per_page=100";
 pub struct Forge {
     pub api: String,
     pub token: String,
+    pub gh_config_dir: String,
+    pub gh: String,
 }
+
+pub const NO_CREDENTIAL: &str = "no forge credential";
 
 impl fmt::Debug for Forge {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Forge").field("api", &self.api).field("token", &(!self.token.is_empty())).finish()
+        f.debug_struct("Forge").field("api", &self.api).field("token", &(!self.token.is_empty())).field("gh_config_dir", &self.gh_config_dir).finish()
     }
 }
 
@@ -68,15 +73,28 @@ fn epoch(stamp: &str) -> Option<u64> {
 }
 
 impl Forge {
+    /// A static token when one is set, else whatever `gh auth token` answers now under the
+    /// configured gh config dir. Read per call, so a rotated login is picked up; never logged.
+    pub fn credential(&self) -> Result<String, String> {
+        if !self.token.is_empty() {
+            return Ok(self.token.clone());
+        }
+        let (code, out) = gh_auth_token(if self.gh.is_empty() { "gh" } else { &self.gh }, &self.gh_config_dir, CALL_TIMEOUT).map_err(|e| format!("{NO_CREDENTIAL}: gh: {e}"))?;
+        let token = String::from_utf8_lossy(&out).trim().to_string();
+        if code == Some(0) && !token.is_empty() {
+            Ok(token)
+        } else {
+            Err(format!("{NO_CREDENTIAL}: SPIRA_BROKER_GH_TOKEN is empty and gh has no login"))
+        }
+    }
+
     fn get(&self, path: &str) -> Option<Value> {
         self.try_get(path).ok()
     }
 
     fn try_get(&self, path: &str) -> Result<Value, String> {
-        let mut req = ureq::AgentBuilder::new().timeout(CALL_TIMEOUT).build().get(&format!("{}{path}", self.api.trim_end_matches('/'))).set("Accept", "application/vnd.github+json").set("User-Agent", "spira-runtime");
-        if !self.token.is_empty() {
-            req = req.set("Authorization", &format!("Bearer {}", self.token));
-        }
+        let token = self.credential()?;
+        let req = ureq::AgentBuilder::new().timeout(CALL_TIMEOUT).build().get(&format!("{}{path}", self.api.trim_end_matches('/'))).set("Accept", "application/vnd.github+json").set("User-Agent", "spira-runtime").set("Authorization", &format!("Bearer {token}"));
         let mut body = String::new();
         req.call().map_err(|e| e.to_string())?.into_reader().take(16 << 20).read_to_string(&mut body).map_err(|e| e.to_string())?;
         serde_json::from_str(&body).map_err(|e| format!("{path}: {e}"))
@@ -174,6 +192,14 @@ mod tests {
         fs::create_dir_all(d.path().join(".git")).unwrap();
         fs::write(d.path().join(".git/config"), "[remote \"fork\"]\n\turl = git@h:o/r.git\n").unwrap();
         assert_eq!(slug(d.path()).as_deref(), Some("o/r"));
+    }
+
+    #[test]
+    fn a_forge_with_no_credential_answers_nothing_and_does_not_connect() {
+        let forge = Forge { api: "http://127.0.0.1:1".into(), gh: "/nonexistent/gh".into(), ..Forge::default() };
+        assert!(forge.credential().unwrap_err().starts_with(NO_CREDENTIAL));
+        assert_eq!(forge.open_prs("a/b"), None);
+        assert!(forge.completed_runs("a/b").unwrap_err().starts_with(NO_CREDENTIAL));
     }
 
     #[test]

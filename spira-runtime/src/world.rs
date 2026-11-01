@@ -240,6 +240,10 @@ impl World {
         let rows = fs::read_to_string(&self.repo_map).map(|t| map_rows(&t)).map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
         let seed = if !carry.seeded { fs::read_to_string(self.run_dir.join("watchd/repo-events.state")).unwrap_or_default().lines().filter(|l| l.starts_with("run|")).map(str::to_string).collect() } else { vec![] };
         let mut repos: Vec<(String, Result<Vec<repo_events::Run>, String>)> = vec![];
+        if let Err(why) = forge.credential() {
+            repos.push(("forge".into(), Err(why)));
+            return serde_json::to_string(&repo_events::Snapshot { seed, repos }).map_err(|e| e.to_string());
+        }
         for r in rows.iter().filter(|r| Path::new(&r.path).join(".git").is_dir()) {
             let Some(slug) = slug(Path::new(&r.path)) else { continue };
             if repos.iter().all(|(s, _)| *s != slug) {

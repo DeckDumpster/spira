@@ -49,6 +49,8 @@ struct Repo {
     down: bool,
 }
 
+type Requests = Arc<Mutex<Vec<String>>>;
+
 type Forges = std::collections::BTreeMap<&'static str, Repo>;
 
 fn run(id: u64, wf: &str, status: &str, concl: Option<&str>, branch: &str, event: &str, title: &str) -> Value {
@@ -75,7 +77,7 @@ fn route(forges: &Forges, path: &str) -> Option<Value> {
     Some(json!({"check_runs": p.checks.iter().map(|(n, s, c)| json!({"name": n, "status": s, "conclusion": if c.is_empty() { Value::Null } else { json!(c) }})).collect::<Vec<_>>()}))
 }
 
-fn serve_forge(forges: Arc<Mutex<Forges>>) -> String {
+fn serve_forge(forges: Arc<Mutex<Forges>>, requests: Requests) -> String {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let api = format!("http://{}", listener.local_addr().unwrap());
     std::thread::spawn(move || {
@@ -84,9 +86,14 @@ fn serve_forge(forges: Arc<Mutex<Forges>>) -> String {
             let mut reader = BufReader::new(&stream);
             reader.read_line(&mut line).unwrap();
             let mut header = String::new();
+            let mut auth = String::new();
             while reader.read_line(&mut header).is_ok_and(|n| n > 2) {
+                if header.to_lowercase().starts_with("authorization:") {
+                    auth = header.split_once(':').unwrap().1.trim().to_string();
+                }
                 header.clear();
             }
+            requests.lock().unwrap().push(auth);
             let path = line.split_whitespace().nth(1).unwrap_or("").to_string();
             let (status, body) = match route(&forges.lock().unwrap(), &path) {
                 Some(v) => ("200 OK", v.to_string()),
@@ -113,10 +120,15 @@ struct Fixture {
     fx: Effects,
     inbox_seen: usize,
     watcher: &'static str,
+    requests: Requests,
 }
 
 impl Fixture {
     fn build(name: &str, repos: &[&'static str], reg: Registration, boot: (&'static str, &'static str, EventKind), watcher: &'static str) -> Fixture {
+        Fixture::build_with(name, repos, reg, boot, watcher, |api, _| Forge { api, token: "t0ken".into(), ..Forge::default() })
+    }
+
+    fn build_with(name: &str, repos: &[&'static str], reg: Registration, boot: (&'static str, &'static str, EventKind), watcher: &'static str, forge: impl FnOnce(String, &Path) -> Forge) -> Fixture {
         let dir = testkit::TempDir::new(&format!("rev-{name}"));
         let root = dir.path().to_path_buf();
         fs::create_dir_all(root.join("run")).unwrap();
@@ -130,10 +142,11 @@ impl Fixture {
         }
         fs::write(root.join("rows"), rows).unwrap();
         let forges: Arc<Mutex<Forges>> = Arc::new(Mutex::new(repos.iter().map(|r| (*r, Repo::default())).collect()));
-        let api = serve_forge(forges.clone());
+        let requests = Requests::default();
+        let api = serve_forge(forges.clone(), requests.clone());
         let fx = Effects {
             world: World { run_dir: root.join("run"), queue_dir: root.join("run/queue"), repo_map: root.join("rows"), home_repo: "home".into(), inbox: root.join("inbox"), lc_socket: root.join("no.sock"), ..World::default() },
-            forge: Forge { api, token: String::new() },
+            forge: forge(api, &root),
             ..Effects::default()
         };
         let clock = VirtualClock::new(1_800_000_000_000);
@@ -141,7 +154,7 @@ impl Fixture {
         let mut engine = Engine::open(journal.clone(), Arc::new(clock.clone()), vec![reg], 0).unwrap();
         let (id, stream, kind) = boot;
         engine.submit(id, stream, kind).unwrap();
-        Fixture { dir, forges, engine, journal, clock, fx, inbox_seen: 0, watcher }
+        Fixture { dir, forges, engine, journal, clock, fx, inbox_seen: 0, watcher, requests }
     }
 
     fn repo_events(repos: &[&'static str]) -> Fixture {
@@ -305,4 +318,87 @@ fn pr_notify_still_says_every_pr_transition_the_script_said() {
         r.gone = vec![(1, "MERGED"), (2, "CLOSED")];
     });
     assert_eq!(f.tick(), ["MERGED #1 pr 1 [widgets]", "CLOSED #2 pr 2 [widgets]"]);
+}
+
+fn gh_stub(dir: &Path, token: &str) -> String {
+    let path = dir.join("gh");
+    testkit::write_exe(&path, &format!("#!/bin/sh\n[ \"$1 $2\" = \"auth token\" ] && [ \"$GH_CONFIG_DIR\" = /conf/dir ] && echo {token}\n"));
+    path.display().to_string()
+}
+
+fn with_credentials(name: &str, token: &str, gh: Option<(&str, &str)>) -> Fixture {
+    let token = token.to_string();
+    Fixture::build_with(name, &["widgets"], RepoEvents { interval_ms: INTERVAL_MS }.registration(), RepoEvents::boot(), "repo-events", move |api, root| {
+        let (gh, gh_config_dir) = gh.map_or(("/nonexistent/gh".into(), String::new()), |(t, d)| (gh_stub(root, t), d.to_string()));
+        Forge { api, token, gh, gh_config_dir }
+    })
+}
+
+#[test]
+fn with_no_credential_source_the_handler_says_so_once_and_calls_the_forge_not_at_all() {
+    let mut f = with_credentials("nocred", "", None);
+    let said = f.tick();
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].starts_with("REPO-EVENTS FAILED: forge: no forge credential"), "{said:?}");
+    assert!(f.tick().is_empty() && f.tick().is_empty(), "a standing failure is said once");
+    assert!(f.requests.lock().unwrap().is_empty(), "no anonymous call");
+}
+
+#[test]
+fn a_static_token_is_sent_as_the_authorization_header() {
+    let mut f = with_credentials("static", "sekrit", None);
+    f.tick();
+    assert_eq!(*f.requests.lock().unwrap(), ["Bearer sekrit"]);
+}
+
+#[test]
+fn without_a_static_token_gh_auth_token_under_the_configured_config_dir_supplies_it() {
+    let mut f = with_credentials("gh", "", Some(("from-gh", "/conf/dir")));
+    f.tick();
+    assert_eq!(*f.requests.lock().unwrap(), ["Bearer from-gh"]);
+}
+
+#[test]
+fn a_gh_that_runs_but_has_no_login_is_no_credential_and_no_call_is_made() {
+    let mut f = Fixture::build_with("gh-nologin", &["widgets"], RepoEvents { interval_ms: INTERVAL_MS }.registration(), RepoEvents::boot(), "repo-events", |api, root| {
+        let gh = root.join("gh");
+        testkit::write_exe(&gh, "#!/bin/sh\nexit 1\n");
+        Forge { api, token: String::new(), gh: gh.display().to_string(), gh_config_dir: String::new() }
+    });
+    let said = f.tick();
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("no forge credential"), "{said:?}");
+    assert!(f.requests.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_token_gh_rotates_between_ticks_is_sent_on_the_next_call() {
+    let mut f = Fixture::build_with("gh-rotate", &["widgets"], RepoEvents { interval_ms: INTERVAL_MS }.registration(), RepoEvents::boot(), "repo-events", |api, root| {
+        let (gh, tok) = (root.join("gh"), root.join("tok"));
+        std::fs::write(&tok, "first\n").unwrap();
+        testkit::write_exe(&gh, &format!("#!/bin/sh\ncat {}\n", tok.display()));
+        Forge { api, token: String::new(), gh: gh.display().to_string(), gh_config_dir: String::new() }
+    });
+    f.tick();
+    let tok = f.dir.path().join("tok");
+    std::fs::write(tok, "second\n").unwrap();
+    f.tick();
+    let sent = f.requests.lock().unwrap().clone();
+    assert_eq!(sent.first().map(String::as_str), Some("Bearer first"));
+    assert_eq!(sent.last().map(String::as_str), Some("Bearer second"));
+}
+
+#[test]
+fn a_repository_whose_forge_failed_until_now_does_not_announce_its_old_runs() {
+    let mut f = Fixture::repo_events(&["widgets", "gadgets"]);
+    f.set("gadgets", |r| r.down = true);
+    f.set("widgets", |r| r.runs = vec![]);
+    assert_eq!(f.tick().len(), 1, "gadgets' failure is said");
+    f.set("gadgets", |r| {
+        r.down = false;
+        r.runs = vec![run(1, "Deploy", "completed", Some("failure"), "main", "push", "months old")];
+    });
+    assert!(f.tick().is_empty(), "the first answer for gadgets adopts its history");
+    f.set("gadgets", |r| r.runs.insert(0, run(2, "Deploy", "completed", Some("failure"), "main", "push", "new")));
+    assert_eq!(f.tick(), ["acme/gadgets Deploy on main FAILURE (run 2) — new"]);
 }
