@@ -117,8 +117,8 @@ pub struct Item {
     pub value: Object,
     pub mod_rev: Rev,
     pub create_rev: Rev,
-    /// A live lock's expiry: advisory wall-clock ms; nothing fences on it. `None` for any other
-    /// key and for an expired lock.
+    /// A live lock's current expiry, at any read revision: advisory wall-clock ms; nothing
+    /// fences on it. `None` for any other key and for an expired lock.
     pub lock_expires_at_ms: Option<u64>,
 }
 

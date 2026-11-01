@@ -612,10 +612,7 @@ impl<B: Backend> Contract<B> {
         let locks: Vec<String> = t.lock_keys().map(String::from).collect();
         self.expire_dead_locks(&locks, req)?;
         let out = self.engine(req, rec, |head| {
-            let mut ok = self.holds(&t.compares, head)?;
-            for k in &locks {
-                ok = ok && self.read(k, head)?.is_none();
-            }
+            let ok = self.takes_then(t, head)?;
             Ok(Step::<Infallible>::Apply {
                 ok,
                 ops: if ok {
@@ -787,6 +784,20 @@ impl<B: Backend> Contract<B> {
             resource: resource.into(),
             token,
         })
+    }
+
+    /// Whether `t` runs its then-branch at `head`: its compares hold and every lock it takes is
+    /// free.
+    fn takes_then(&self, t: &Txn, head: u64) -> Result<bool> {
+        if !self.holds(&t.compares, head)? {
+            return Ok(false);
+        }
+        for k in t.lock_keys() {
+            if self.read(k, head)?.is_some() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     fn check_lock_ttl(&self, ttl_ms: u64) -> Result<()> {
@@ -1019,7 +1030,7 @@ impl<B: Backend> Contract<B> {
             idempotent: true,
             compare_bytes: limits::compare_bytes(&t.compares),
         };
-        let ok = self.holds(&t.compares, head)?;
+        let ok = self.takes_then(t, head)?;
         let staged = self.build(req, rec, ok, if ok { &t.ops } else { &t.else_ops }, head)?;
         Ok(rec.compare_bytes + staged_bytes(&staged))
     }

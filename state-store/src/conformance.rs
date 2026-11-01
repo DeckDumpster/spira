@@ -3,7 +3,7 @@
 //! Every scenario runs on a `VirtualClock`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use runtime::ports::VirtualClock;
 use serde_json::json;
@@ -1182,10 +1182,22 @@ pub fn a_txn_that_acquires_a_lock_and_writes_a_fenced_key_applies_whole_or_not_a
         c.get("locks/bead/x").unwrap().is_some(),
         "not yet collected"
     );
-    let again = c
-        .txn(&claim(mod_rev(&c, "beads/x"), "b"), &req("reclaim"))
-        .unwrap();
+    let reclaim = Txn::new()
+        .when(Compare::ModRev(
+            "beads/x".into(),
+            Some(mod_rev(&c, "beads/x")),
+        ))
+        .delete("absent/x")
+        .put("beads/x", obj(json!("b")))
+        .lock_acquire("bead/x", 5_000);
+    let again = c.txn(&reclaim, &req("reclaim")).unwrap();
     assert!(again.succeeded, "an expired lock is taken in one call");
+    let token = c.get("locks/bead/x").unwrap().unwrap().create_rev;
+    assert_eq!(
+        (again.fences[0].token, token.sub),
+        (token, 1),
+        "the token is the lock's own sub, after a dropped delete"
+    );
     assert!(again.fences[0].token > r.fences[0].token);
     assert_eq!(data(&c, "beads/x"), Some(json!("b")));
 
@@ -1248,29 +1260,42 @@ pub fn lock_check_fails_the_txn_after_the_lock_expired_or_was_retaken<R: Rig>(ri
 }
 
 pub fn get_and_list_return_a_locks_expiry_and_renew_moves_it_forward<R: Rig>(rig: &R) {
+    const WALL: u64 = 1_700_000_000_000;
     let clock = VirtualClock::new(T0);
-    let c = open(rig.fresh(), &clock);
+    let wall = VirtualClock::new(WALL);
+    let c = Contract::open(
+        rig.fresh(),
+        Ports {
+            mono: Arc::new(clock.clone()),
+            wall: Arc::new(wall.clone()),
+        },
+        Config {
+            min_lock_ttl_ms: MIN_LOCK_TTL_MS,
+        },
+    )
+    .expect("open");
+    let advance = |ms: u64| {
+        clock.advance(ms);
+        wall.advance(ms);
+    };
     let expiry = |key: &str| {
         let got = c.get(key).unwrap().expect(key).lock_expires_at_ms;
-        let (items, _) = c.list(&[key], &Selector::Everything).unwrap();
-        assert_eq!(
-            items
-                .iter()
-                .map(|i| (i.key.as_str(), i.lock_expires_at_ms))
-                .collect::<Vec<_>>(),
-            [(key, got)],
-            "get and list agree"
-        );
+        let prefix = &key[..=key.find('/').unwrap()];
+        let (items, _) = c.list(&[prefix], &Selector::Everything).unwrap();
+        let listed = items.iter().find(|i| i.key == key).expect(key);
+        assert_eq!(listed.lock_expires_at_ms, got, "get and list agree");
         got
     };
     let a = c.lock("job", 5_000, &req("1")).unwrap();
-    assert_eq!(expiry("locks/job"), Some(T0 + 5_000));
-    clock.advance(2_000);
-    c.renew(&a, &req("2")).unwrap();
-    assert_eq!(expiry("locks/job"), Some(T0 + 7_000));
-    put(&c, "jobs/1", obj(json!(1)), "3");
+    c.lock("other", 9_000, &req("2")).unwrap();
+    assert_eq!(expiry("locks/job"), Some(WALL + 5_000), "on the wall clock");
+    assert_eq!(expiry("locks/other"), Some(WALL + 9_000));
+    advance(2_000);
+    c.renew(&a, &req("3")).unwrap();
+    assert_eq!(expiry("locks/job"), Some(WALL + 7_000));
+    put(&c, "jobs/1", obj(json!(1)), "4");
     assert_eq!(expiry("jobs/1"), None);
-    clock.advance(5_000);
+    advance(5_000);
     assert_eq!(expiry("locks/job"), None, "an expired lock has no expiry");
 }
 
