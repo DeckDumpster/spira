@@ -1,0 +1,42 @@
+# The round controller's world twin of switch-scoped-stop: a world of two repos, its own (sim) and
+# rcb, with the sim-only actor running `round-controller pass` on its timer. At 10 s a step writes
+# a scoped stop on rcb's rounds lane, the record `world pause --lanes rounds` writes; at 20 s a
+# step runs a pass itself and reads its outcome lines: rcb is published Stopped by that scoped
+# stop, naming its owner, and sim is not: it is visited, or, while the control-plane store has no
+# door, stopped because the andon section cannot be read. With no door nothing is cut on either
+# repo, so the half where the other repo cuts is the controller scenario switch-scoped-stop's
+# until the door lands; every pass exits 0 and leaves the world's run state untouched.
+epoch = 1800000000
+horizon = 150000
+repos = ["rcb:queue.local"]
+real_actors = ["round-controller"]
+
+[[step]]
+at = 10000
+name = "stop-rcb-rounds"
+command = '''mkdir -p "$SPIRA_RUN/scoped-stops" && printf '{"repo":"rcb","lanes":["rounds"],"owner":"sim-twin","reason":"world twin","until":"manual","since":0}\n' > "$SPIRA_RUN/scoped-stops/repo-rcb.json"'''
+
+[[step]]
+at = 20000
+name = "pass-publishes-rcb-stopped"
+command = '''out=$(round-controller pass 2>&1) && printf '%s\n' "$out" | grep -q 'stopped scoped-stop repo=rcb batch=- owner="sim-twin"' && printf '%s\n' "$out" | grep -Eq '(visited steps|stopped andon-unreadable) repo=sim ' '''
+
+[[invariant]]
+name = "rc_pass_exited_nonzero"
+sql = "SELECT seq, exit FROM events WHERE actor = 'round-controller' AND kind = 'complete' AND exit <> 0"
+
+[[invariant]]
+name = "rc_stop_not_written"
+sql = "SELECT seq, exit FROM events WHERE kind = 'step' AND actor = 'stop-rcb-rounds' AND exit <> 0"
+
+[[invariant]]
+name = "rc_changed_run_state"
+sql = "SELECT seq, 'queue' AS family, key AS what FROM run_queue UNION ALL SELECT seq, 'locks', name FROM run_locks UNION ALL SELECT seq, 'ejected', bead FROM run_ejected UNION ALL SELECT seq, 'verdicts', key FROM run_verdicts UNION ALL SELECT seq, 'gate-log', text FROM run_gate_log UNION ALL SELECT seq, 'landing-log', text FROM run_landing_log"
+
+[[expect]]
+name = "rc_stopped_repo_published_stopped"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND actor = 'pass-publishes-rcb-stopped' AND exit = 0"
+
+[[expect]]
+name = "rc_passes_ran_with_the_switches"
+sql = "SELECT 1 FROM events WHERE actor = 'round-controller' AND kind = 'complete' AND exit = 0"
