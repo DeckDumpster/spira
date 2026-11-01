@@ -745,6 +745,93 @@ fn a_retried_claim_is_answered_from_its_request_and_writes_nothing() {
 }
 
 #[test]
+fn a_retried_claim_hands_back_no_fence_once_its_lock_has_lapsed() {
+    let (s, _, clock) = fresh();
+    created(&s, "sp-a");
+    let e = ev(BeadState::Ready, 0, claim("dwarf-1", 102), "dwarf-1", 100);
+    let (first, f1) = s.claim("sp-a", &e, &req("claim-1")).unwrap();
+    assert!(matches!(first, Outcome::Applied { .. }), "{first:?}");
+    assert!(f1.is_some());
+    clock.advance(5_000);
+    let (again, f2) = s.claim("sp-a", &e, &req("claim-1")).unwrap();
+    assert!(matches!(again, Outcome::Applied { .. }), "{again:?}");
+    assert_eq!(f2, None, "a retry handed back a lapsed fence");
+}
+
+#[test]
+fn a_claim_request_that_lost_stays_lost_on_retry_and_a_new_request_claims() {
+    let (s, _, _) = fresh();
+    created(&s, "sp-a");
+    let stray = s
+        .contract()
+        .lock(&keys::claim_resource("sp-a"), 60_000, &req("stray"))
+        .unwrap();
+    let e = ev(BeadState::Ready, 0, claim("dwarf-1", 160), "dwarf-1", 100);
+    let (out, _) = s.claim("sp-a", &e, &req("claim-1")).unwrap();
+    assert!(matches!(out, Outcome::Locked { .. }), "{out:?}");
+    s.contract().release(&stray, &req("stray-off")).unwrap();
+    let (again, f) = s.claim("sp-a", &e, &req("claim-1")).unwrap();
+    assert!(matches!(again, Outcome::LostRace { .. }), "{again:?}");
+    assert!(f.is_none());
+    assert_eq!(
+        s.record("sp-a").unwrap().unwrap().value.row.state,
+        BeadState::Ready,
+        "a spent request claimed on retry"
+    );
+    let (fresh_claim, f) = s.claim("sp-a", &e, &req("claim-2")).unwrap();
+    assert!(
+        matches!(fresh_claim, Outcome::Applied { .. }),
+        "{fresh_claim:?}"
+    );
+    assert!(f.is_some());
+}
+
+#[test]
+fn a_record_read_at_an_old_rev_does_not_borrow_a_later_claims_lease() {
+    let (s, _, clock) = fresh();
+    created(&s, "sp-a");
+    let (first, _) = s
+        .claim(
+            "sp-a",
+            &ev(BeadState::Ready, 0, claim("dwarf-1", 102), "dwarf-1", 100),
+            &req("claim-1"),
+        )
+        .unwrap();
+    let Outcome::Applied { rev: then, .. } = first else {
+        panic!("{first:?}")
+    };
+    s.apply(
+        "sp-a",
+        &ev(
+            BeadState::Working,
+            1,
+            BeadEventKind::HolderDead,
+            "reaper",
+            103,
+        ),
+        &req("dead-1"),
+    )
+    .unwrap();
+    clock.advance(50_000);
+    let v = s.record("sp-a").unwrap().unwrap().value.row.version;
+    s.claim(
+        "sp-a",
+        &ev(BeadState::Ready, v, claim("dwarf-2", 900), "dwarf-2", 150),
+        &req("claim-2"),
+    )
+    .unwrap();
+    assert_eq!(
+        s.record_at("sp-a", then)
+            .unwrap()
+            .unwrap()
+            .value
+            .row
+            .lease_until,
+        Some(102)
+    );
+}
+
+#[test]
 fn a_retried_event_is_answered_from_its_request_and_writes_nothing() {
     let (s, _, _) = fresh();
     created(&s, "sp-a");

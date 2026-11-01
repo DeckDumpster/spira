@@ -162,13 +162,18 @@ impl<B: Backend> Store<B> {
         self.record_at(id, rev)
     }
 
-    /// The record at `rev`, its `lease_until` projected from its claim's lock at that rev.
+    /// The record at `rev`, its `lease_until` projected from its claim's lock at that rev. A
+    /// lock's expiry is only known for the lock now held, so a record read at a rev whose lock
+    /// has since gone or been retaken keeps its claim's own lease.
     pub fn record_at(&self, id: &str, rev: u64) -> Result<Option<Read<LifecycleRecord>>> {
         let Some((mut r, _)) = self.read::<LifecycleRecord>(&keys::lifecycle(id), Some(rev))?
         else {
             return Ok(None);
         };
-        let lock = self.contract.get_at(&keys::claim_lock(id), rev)?;
+        let lock_key = keys::claim_lock(id);
+        let then = self.contract.get_at(&lock_key, rev)?;
+        let now = self.contract.get(&lock_key)?.map(|l| l.create_rev);
+        let lock = then.filter(|l| Some(l.create_rev) == now);
         project_lease(&mut r.value, lock.as_ref());
         Ok(Some(r))
     }
@@ -368,12 +373,19 @@ impl<B: Backend> Store<B> {
         let apply_req = |evidence| sub_request(req, "apply", evidence);
         if let Some(done) = self.replayed(id, req)? {
             // The contract answers the retry from requests/<id>, rebuilding the fence from the
-            // original commit's events key; the txn's body is not run again.
+            // original commit's events key; the txn's body is not run again. A fence whose lock
+            // has since lapsed or gone is not handed back as if it still held.
             let r = self.contract.txn(
                 &Txn::new().lock_acquire(&resource, ttl_ms),
                 &apply_req(Value::Null),
             )?;
-            return Ok((done, r.fences.into_iter().next()));
+            let live = self.holder_fence(id)?;
+            let fence = r
+                .fences
+                .into_iter()
+                .next()
+                .filter(|f| live.as_ref() == Some(f));
+            return Ok((done, fence));
         }
         let key = keys::lifecycle(id);
         let Some((cur, item)) = self.read::<LifecycleRecord>(&key, None)? else {
@@ -405,17 +417,14 @@ impl<B: Backend> Store<B> {
                 fence,
             ));
         }
-        if self.contract.get(&key)?.map(|i| i.mod_rev) != Some(cur.mod_rev) {
+        // A request that already lost is spent: its answer is final whatever has moved since,
+        // and the claimant tries again under a new request id.
+        if r.already_applied || self.contract.get(&key)?.map(|i| i.mod_rev) != Some(cur.mod_rev) {
             return Ok((Outcome::LostRace { rev: r.rev }, None));
         }
-        Ok(match self.contract.get(&keys::claim_lock(id))? {
-            Some(lock) => (
-                Outcome::Locked {
-                    token: lock.create_rev,
-                },
-                None,
-            ),
-            // The lock went between the txn and this read: the claimant retries as on a race.
+        Ok(match self.holder_fence(id)? {
+            Some(live) => (Outcome::Locked { token: live.token }, None),
+            // The lock lapsed or went between the txn and this read: retry as on a race.
             None => (Outcome::LostRace { rev: r.rev }, None),
         })
     }
