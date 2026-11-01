@@ -187,7 +187,7 @@ pub fn inline_stdin_payload(args: Vec<String>) -> Vec<String> {
     inline_payload_from(args, &mut std::io::stdin())
 }
 
-fn inline_payload_from(mut args: Vec<String>, input: &mut dyn std::io::Read) -> Vec<String> {
+pub(crate) fn inline_payload_from(mut args: Vec<String>, input: &mut dyn std::io::Read) -> Vec<String> {
     let verb = (args.first().map(String::as_str), args.get(1).map(String::as_str));
     let reads_stdin = matches!(
         verb,

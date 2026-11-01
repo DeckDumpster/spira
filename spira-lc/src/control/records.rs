@@ -1,6 +1,7 @@
 //! The values stored under the control plane's keys. A lifecycle record holds the state
 //! machine's fields plus `repo`; nothing here copies a planning-plane field.
 
+use lifecycle::batch::BatchRow;
 use lifecycle::bead::BeadRow;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -69,6 +70,24 @@ pub struct Readiness {
     pub judged_at_planning_watermark: Option<String>,
     #[serde(default)]
     pub judged_at_rev: u64,
+}
+
+/// One member of a round, at the tip it was cut at.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Member {
+    pub bead_id: String,
+    pub tip: String,
+}
+
+/// A round under `batches/<repo>/<id>`: the batch machine's row with its members inside it, so
+/// a cut of N members is one txn on its own key and theirs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BatchRecord {
+    #[serde(flatten)]
+    pub row: BatchRow,
+    pub members: Vec<Member>,
+    /// Epoch seconds of the cut, for display only.
+    pub opened_at: i64,
 }
 
 /// One applied or refused machine event, as the dolt `event` table held it. A txn's audit is

@@ -16,6 +16,11 @@ use crate::{flag, CANNOT_TELL, REFUSED};
 /// The verbs this module answers.
 pub const VERBS: &[&str] = &["show", "list", "event", "create-bead"];
 
+/// Whether this module or the round's verbs answer `verb`.
+pub fn is_verb(verb: &str) -> bool {
+    VERBS.contains(&verb) || rounds::VERBS.contains(&verb)
+}
+
 /// What one call carries besides its argv: the clock it is judged at and the request id its
 /// writes commit under. A retry is a new call, so it mints a new id: a request that lost stays
 /// lost.
@@ -34,6 +39,7 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
         Some("list") => list(store, rest, call),
         Some("event") => event(store, rest, call),
         Some("create-bead") => create(store, rest, call),
+        Some(v) if rounds::VERBS.contains(&v) => rounds::run(store, args, call),
         other => (
             CANNOT_TELL,
             format!("{other:?} is not a control-store verb"),
@@ -184,7 +190,23 @@ fn row(rec: &LifecycleRecord, r: Option<&Readiness>, cols: &[&str]) -> Value {
     )
 }
 
-/// `show <id>`: the record and its delivery, or exit 1 with `{}`. No delivery is kept here yet.
+/// `r` with only the prerequisites that still block, by `state_of` each one's record.
+fn blocking(
+    r: Option<Readiness>,
+    state_of: impl Fn(&str) -> state_store::Result<Option<BeadState>>,
+) -> state_store::Result<Option<Readiness>> {
+    let Some(mut r) = r else { return Ok(None) };
+    let mut kept = Vec::new();
+    for b in r.blocked_by.drain(..) {
+        if rounds::still_blocking(state_of(&b)?) {
+            kept.push(b);
+        }
+    }
+    r.blocked_by = kept;
+    Ok(Some(r))
+}
+
+/// `show <id>`: the record and its delivery, or exit 1 with `{}`.
 fn show<B: Backend>(store: &Store<B>, args: &[String]) -> (i32, String) {
     let Some(id) = args.first() else {
         return (CANNOT_TELL, "show: missing <bead-id>".into());
@@ -193,10 +215,13 @@ fn show<B: Backend>(store: &Store<B>, args: &[String]) -> (i32, String) {
         let Some(rec) = store.record(id)? else {
             return Ok(None);
         };
-        let readiness = store.readiness(id)?.map(|r| r.value);
+        let readiness = blocking(store.readiness(id)?.map(|r| r.value), |b| {
+            Ok(store.record(b)?.map(|r| r.value.row.state))
+        })?;
+        let delivery = store.delivery(id)?.map(|d| rounds::delivery_view(&d.value));
         Ok(Some(serde_json::json!({
             "bead": row(&rec.value, readiness.as_ref(), SHOWN),
-            "delivery": Value::Null,
+            "delivery": delivery,
         })))
     };
     match read() {
@@ -217,13 +242,11 @@ fn csv(v: Option<String>) -> Option<Vec<String>> {
 
 /// `list [--live] [--state S,...] [--ids a,...] [--hold K] [--express] [--repo R]`, in id order.
 fn list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
-    for unserved in ["--delivery", "--batches"] {
-        if args.iter().any(|a| a == unserved) {
-            return (
-                CANNOT_TELL,
-                format!("cannot tell: list {unserved} is not served by the control store yet"),
-            );
-        }
+    if args.iter().any(|a| a == "--delivery") {
+        return rounds::list_delivery(store, args);
+    }
+    if args.iter().any(|a| a == "--batches") {
+        return rounds::list_batches(store, args, call);
     }
     let states = csv(flag(args, "--state"));
     let ids = csv(flag(args, "--ids"));
@@ -252,10 +275,19 @@ fn list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, Str
                     && (!LISTED_TERMINAL.contains(&state)
                         || rec.updated_at >= call.now - LIVE_WINDOW_SECS)))
     };
+    let state_of: BTreeMap<&str, BeadState> = records
+        .iter()
+        .map(|r| (r.value.row.bead_id.as_str(), r.value.row.state))
+        .collect();
     let mut rows: BTreeMap<&str, Value> = BTreeMap::new();
     for r in records.iter().filter(|r| kept(&r.value)) {
         let id = r.value.row.bead_id.as_str();
-        rows.insert(id, row(&r.value, readiness.get(id), LISTED));
+        let ready = blocking(readiness.get(id).cloned(), |b| Ok(state_of.get(b).copied()));
+        let ready = match ready {
+            Ok(x) => x,
+            Err(e) => return cannot_tell(e),
+        };
+        rows.insert(id, row(&r.value, ready.as_ref(), LISTED));
     }
     let out = Value::Array(rows.into_values().collect());
     (0, out.to_string())
@@ -316,13 +348,19 @@ fn event<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, St
             "event: --version must be a non-negative integer".into(),
         );
     };
-    if machine != "bead" {
-        return (
-            CANNOT_TELL,
-            format!(
-                "cannot tell: the control store serves only the bead machine yet, not {machine:?}"
-            ),
-        );
+    match machine.as_str() {
+        "bead" => {}
+        "batch" | "delivery" => {
+            return rounds::event(
+                store, machine, key, &expect, version, &actor, &kind_json, call,
+            )
+        }
+        other => {
+            return (
+                CANNOT_TELL,
+                format!("event: unknown machine {other:?} (want bead, delivery or batch)"),
+            )
+        }
     }
     let Some(expect) = BeadState::from_str(&expect) else {
         return (CANNOT_TELL, format!("event: unknown bead state {expect:?}"));
@@ -429,6 +467,8 @@ fn create<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, S
         Err(e) => cannot_tell(e),
     }
 }
+
+mod rounds;
 
 #[cfg(test)]
 mod parity;

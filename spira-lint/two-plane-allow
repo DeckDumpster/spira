@@ -46,3 +46,4 @@ spira-lc/src/ops.rs:priority sp-kti9ip
 spira-lc/src/snapshot.rs:title sp-kti9ip
 spira-lc/src/control/state.rs:title sp-cohysf
 spira-lc/src/control/state.rs:priority sp-cohysf
+spira-lc/src/control/state/rounds.rs:title sp-cohysf

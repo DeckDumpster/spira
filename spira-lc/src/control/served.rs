@@ -110,7 +110,7 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
     if sections::VERBS.contains(&verb.as_str()) {
         return Some(dispatch_sections(args));
     }
-    let lifecycle = state::VERBS.contains(&verb.as_str());
+    let lifecycle = state::is_verb(verb);
     if !lifecycle && !verbs::VERBS.contains(&verb.as_str()) {
         return None;
     }
