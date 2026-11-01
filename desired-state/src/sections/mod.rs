@@ -7,6 +7,7 @@ use serde_json::Value;
 
 pub mod lifecycle;
 pub mod probe;
+pub mod round_controller;
 
 /// The andon cord's kind. Its own design registers it; until then it is refused by name.
 pub const ANDON: &str = "Andon";
@@ -60,7 +61,7 @@ pub fn typed<T: DeserializeOwned>(v: &Value) -> Result<(), SchemaError> {
         .map_err(|e| (e.path().to_string(), e.inner().to_string()))
 }
 
-static KINDS: &[SectionKind] = &[lifecycle::KIND, probe::KIND];
+static KINDS: &[SectionKind] = &[lifecycle::KIND, probe::KIND, round_controller::KIND];
 
 pub fn registry() -> &'static [SectionKind] {
     KINDS
