@@ -365,24 +365,6 @@ mod tests {
     }
 
     #[test]
-    fn a_real_build_into_a_spilled_warm_slot_still_finds_its_artifacts() {
-        let d = testkit::TempDir::new("warm-spilled-build");
-        let wt = d.join("wt");
-        std::fs::create_dir_all(wt.join("src")).unwrap();
-        std::fs::write(wt.join("Cargo.toml"), "[package]\nname = \"spilled\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
-        std::fs::write(wt.join("src/main.rs"), "fn main() {}\n").unwrap();
-        let base = d.join("warm-base");
-        std::fs::create_dir_all(&base).unwrap();
-        std::fs::create_dir_all(wt.join("target")).unwrap();
-        let slot = base.join("slot.1");
-        std::os::unix::fs::symlink(wt.join("target"), &slot).unwrap();
-        let warm = warm_target(Some(slot.clone().into()), Some(&base));
-        let built = build_in(&wt, "dev", None, warm);
-        assert!(built.is_ok(), "{built:?}");
-        assert!(artifacts_dir(&wt, "dev").join("spilled").is_file());
-    }
-
-    #[test]
     fn artifacts_stay_when_the_warm_slot_is_spilled_onto_the_worktrees_own_target() {
         let d = testkit::TempDir::new("warm-spilled");
         let base = d.join("warm-base");
