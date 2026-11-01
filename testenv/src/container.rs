@@ -21,7 +21,7 @@ pub const CONTAINER_CARGO_TARGET: &str = "/var/spira/cargo/target";
 pub const UNIT_TARGET_VOLUME: &str = "spira-unit-cargo-target";
 /// What a unit-tests batch tells `spira/unit-tests.sh` its target volume is: set, the volume
 /// is this tree's own and holds no other tree's artifacts.
-pub const UNIT_TARGET_VOLUME_ENV: &str = "SPIRA_UNIT_TARGET_VOLUME";
+pub const UNIT_TARGET_VOLUME_ENV: &str = "UNIT_TARGET_VOLUME";
 
 /// The cargo target volume of the tree whose git tree id is `tree` (sp-fnb2wa). Cargo trusts
 /// mtimes, so a target shared between trees served one tree's binaries to another (sp-h6m43s);

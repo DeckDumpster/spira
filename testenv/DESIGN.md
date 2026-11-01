@@ -1105,7 +1105,7 @@ default conf.sh carries — conf.sh is no longer sourced:
 an `up` that mounts a cargo target volume first sweeps the unit tier's target volumes
 (`spira-unit-cargo-target` and any `spira-unit-cargo-target-<key>`) to the cap, least recently
 written first. Each unit-tests batch mounts its own tree's volume, `spira-unit-cargo-target-<git
-tree id>`, and names it to `spira/unit-tests.sh` in `SPIRA_UNIT_TARGET_VOLUME` (sp-fnb2wa): a
+tree id>`, and names it to `spira/unit-tests.sh` in `UNIT_TARGET_VOLUME` (sp-fnb2wa): a
 volume never holds another tree's artifacts, so the script cleans nothing and a tree tested
 again is warm; the sweep is what bounds them. Both find what to remove in podman's own listings and remove it by id; neither
 removes anything a container in any state uses, nor anything at all when podman cannot list

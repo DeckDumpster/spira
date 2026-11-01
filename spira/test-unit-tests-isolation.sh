@@ -6,7 +6,7 @@
 # tree whose files predate the last build of a different tree reuses that tree's artifacts.
 # Two trees that differ in one test name, and in what their library returns, run in sequence at
 # one path: on one shared target (a testenv that names no volume, cases 1-5), and each on its
-# own (SPIRA_UNIT_TARGET_VOLUME, case 6). Each verdict must list only its own tree's test,
+# own (UNIT_TARGET_VOLUME, case 6). Each verdict must list only its own tree's test,
 # built against its own library; on its own target a tree tested again rebuilds nothing.
 #
 # tier: T2
@@ -88,7 +88,7 @@ chmod -R u+rwx "$WS" 2>/dev/null
 # run_own <volume>: testenv's unit tier since sp-fnb2wa — each tree on its own target volume,
 # named to the script, which then has nothing to clean.
 run_own() {
-    (cd "$WS" && env CARGO_TARGET_DIR="$TMP/$1" SPIRA_UNIT_TARGET_VOLUME="$1" bash spira/unit-tests.sh 2>&1)
+    (cd "$WS" && env CARGO_TARGET_DIR="$TMP/$1" UNIT_TARGET_VOLUME="$1" bash spira/unit-tests.sh 2>&1)
 }
 
 echo "6. trees A, B, A, each on its own target: the second A is warm and judged on A:"

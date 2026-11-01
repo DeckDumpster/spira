@@ -2658,7 +2658,7 @@ fn each_tree_mounts_its_own_unit_target_volume_so_switching_back_finds_it_warm()
         .unwrap()
         .iter()
         .filter(|r| r.argv.get(1).map(String::as_str) == Some("/workspace/spira/unit-tests.sh"))
-        .map(|r| r.env.iter().find(|(k, _)| k == "SPIRA_UNIT_TARGET_VOLUME").map(|(_, v)| v.clone()))
+        .map(|r| r.env.iter().find(|(k, _)| k == "UNIT_TARGET_VOLUME").map(|(_, v)| v.clone()))
         .collect();
     assert_eq!(told, vec![Some(own(&a)), Some(own(&b)), Some(own(&a))]);
 }

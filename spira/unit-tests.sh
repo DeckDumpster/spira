@@ -13,12 +13,12 @@ while IFS= read -r c; do [ -n "$c" ] && words+=(-p "$c"); done < "$LIST"
 [ "${#words[@]}" -gt 0 ] || { echo "unit-tests: the diff touches no crate — nothing to run"; exit 0; }
 jobs="$(nproc 2>/dev/null || echo 2)"
 cd "$ROOT" || exit 2
-# testenv mounts each tree's own target volume and names it in SPIRA_UNIT_TARGET_VOLUME
+# testenv mounts each tree's own target volume and names it in UNIT_TARGET_VOLUME
 # (sp-fnb2wa), so the target holds no other tree's artifacts and stays warm. A testenv that
 # names none mounts one target for every tree, and cargo trusts mtimes across them: workspace
 # crates last built from different bytes are cleaned there (sp-h6m43s); dependencies stay warm.
 # A tree that cannot be hashed is cleaned every time.
-if [ -z "${SPIRA_UNIT_TARGET_VOLUME:-}" ]; then
+if [ -z "${UNIT_TARGET_VOLUME:-}" ]; then
   tree="$({ find . \( -path ./target -o -path ./.git \) -prune -o -type f -print0 | LC_ALL=C sort -z | xargs -0r sha256sum &&
             find . \( -path ./target -o -path ./.git \) -prune -o -type l -printf '%p -> %l\n' | LC_ALL=C sort; } | sha256sum)" || tree=""
   BUILT="${CARGO_TARGET_DIR:-$ROOT/target}/.unit-tests-built-tree"
