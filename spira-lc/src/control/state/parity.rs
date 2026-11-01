@@ -41,8 +41,9 @@ const DIVERGES: &[(&str, &str)] = &[
     ("create-bead", "title and priority are planning fields; list --ids shows them"),
     ("deliver-push", "sp-delivering is IN_DELIVERY only through the unserved cut"),
     ("returned", "sp-delivering is IN_DELIVERY only through the unserved cut"),
-    ("reply", "an ask hold's reply checks the ask, kept by the unserved create-ask"),
-    ("withdraw-ask", "an ask hold's withdrawal checks the ask, kept by the unserved create-ask"),
+    ("express", "list --express shows sp-ready's title, a planning field"),
+    ("supersede", "the dolt path retires the bead's mends through bd on a terminal move, and with bd absent from the capture its golden carries that failure on stderr; the control store retires no mends yet"),
+    ("content-on-base", "as supersede: the golden's stderr is the dolt path's mend retirement failing on the absent bd"),
 ];
 
 fn goldens() -> PathBuf {
@@ -108,8 +109,10 @@ fn primitive(verb: &str) -> bool {
     VERBS.contains(&verb) || verbs::VERBS.contains(&verb)
 }
 
+/// The verbs under test: this module's and the caller verbs built on them. The feed verbs
+/// answer a caller verb that reads them, and their own goldens are another module's to prove.
 fn served_verb(verb: &str) -> bool {
-    primitive(verb) || (callers::is_verb(verb) && !BEFORE_CALLERS.contains(&verb))
+    VERBS.contains(&verb) || (callers::is_verb(verb) && !BEFORE_CALLERS.contains(&verb))
 }
 
 /// Whether the control store answers this step: a served verb, on the bead machine when it
