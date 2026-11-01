@@ -44,8 +44,8 @@ printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the dwarf binary sou
 # conf.d from THIS --home, not — the way the old bash seam's conf.sh derived it — from
 # wherever lib.sh/conf.sh actually live. A --home with no conf.d resolves the whole generic
 # registry to nothing, so SPIRA_CALL_JITTER=0 (set above with tl_config) never reaches dwarf's
-# Conf: the jitter falls back to its 20s default regardless,
-# reopening sp-1cdgq's own regression through the config seam instead of the bash allowlist.
+# Conf: the jitter falls back to its 20s default regardless, reopening sp-1cdgq's own
+# regression through the config seam instead of the bash allowlist.
 cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 cp -r "$HERE/conf.toml.d" "$SPIRA_HOME/"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
