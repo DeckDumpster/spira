@@ -22,7 +22,7 @@ fn bead(id: &str, state: &str, version: u64) -> Value {
         "persona": null, "lease_until": null, "holds": "[]", "reason": null,
         "version": version.to_string(), "stack": "{}", "stack_depth": "0", "since": "100",
         "title": "a title", "priority": "1", "repo": "harness", "express": "0",
-        "dwarf_phase": null, "aeon_phase": null, "disposition": null, "disposition_note": null,
+        "dwarf_phase": null, "disposition": null, "disposition_note": null,
         "ejected_red_tip": null, "sifted_tip": null, "claimed_from": null,
         "claim_verdict": null, "claim_blocker": null, "claim_runes": null, "claim_at": null,
         "updated_at": "200"

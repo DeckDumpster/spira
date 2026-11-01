@@ -27,7 +27,7 @@ pub struct Allowed {
 pub const ALLOWED: &[Allowed] = &[
     Allowed { verb: "*", field: "title", why: "a planning-plane field: the control plane keeps none" },
     Allowed { verb: "*", field: "priority", why: "a planning-plane field: the control plane keeps none" },
-    Allowed { verb: "*", field: "blocked_by", why: "bead_dep is not imported: the readiness record stands in for the edges once a readiness pass publishes it" },
+    Allowed { verb: "*", field: "blocked_by", why: "the dependency edges are not imported: the readiness record stands in for them once a readiness pass publishes it" },
     Allowed { verb: "*", field: "lease_until", why: "not imported: a claim's lease is its lock, which does not survive the stop" },
     Allowed { verb: "event-seq", field: "seq", why: "the added rev: the new store's head starts at the import revision, max(seq) + 1" },
 ];

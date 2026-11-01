@@ -14,11 +14,11 @@ fn the_dolt_rendering_and_the_typed_rendering_of_one_answer_are_equal() {
 
 #[test]
 fn a_difference_only_in_an_allowed_field_is_counted_and_any_other_is_reported_with_its_path() {
-    let old = json!([{"bead_id": "sp-a", "state": "READY", "title": "t", "lease_until": "9"}]).to_string();
-    let same_but_planning = json!([{"bead_id": "sp-a", "state": "READY", "title": null, "lease_until": null}]).to_string();
+    let old = json!([{"bead_id": "sp-a", "state": "READY", "blocked_by": ["sp-z"], "lease_until": "9"}]).to_string();
+    let same_but_unimported = json!([{"bead_id": "sp-a", "state": "READY", "blocked_by": [], "lease_until": null}]).to_string();
     assert_eq!(judge("list", (0, &old), (0, &old)), Verdict::Same);
-    assert_eq!(judge("list", (0, &old), (0, &same_but_planning)), Verdict::Allowed(vec!["title", "lease_until"]));
-    let moved = json!([{"bead_id": "sp-a", "state": "WORKING", "title": null}]).to_string();
+    assert_eq!(judge("list", (0, &old), (0, &same_but_unimported)), Verdict::Allowed(vec!["blocked_by", "lease_until"]));
+    let moved = json!([{"bead_id": "sp-a", "state": "WORKING", "blocked_by": []}]).to_string();
     assert_eq!(
         judge("list", (0, &old), (0, &moved)),
         Verdict::Differs { at: ".out[0].state".into(), old: json!("READY"), new: json!("WORKING") }

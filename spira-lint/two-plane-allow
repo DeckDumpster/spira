@@ -29,6 +29,12 @@ spira-lc/src/plan.rs:depends_on sp-kti9ip
 spira-lc/src/cutover.rs:title sp-kti9ip
 spira-lc/src/cutover.rs:priority sp-kti9ip
 spira-lc/src/deps.rs:bead_dep sp-kti9ip
+spira-lc/src/import/archive.rs:bead_dep sp-kti9ip
+spira-lc/src/import/archive.rs:depends_on sp-kti9ip
+spira-lc/src/import/map.rs:bead_dep sp-kti9ip
+spira-lc/src/import/tests.rs:bead_dep sp-kti9ip
+spira-lc/src/import/tests.rs:dep_type sp-kti9ip
+spira-lc/src/import/tests.rs:depends_on sp-kti9ip
 spira-lc/src/deps.rs:dep_type sp-kti9ip
 spira-lc/src/deps.rs:depends_on sp-kti9ip
 spira-lc/src/live.rs:bead_dep sp-kti9ip

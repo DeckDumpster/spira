@@ -224,9 +224,12 @@ pub fn fold_batch(seed: &BatchRow, log: Log) -> Result<BatchRow, String> {
     Ok(row)
 }
 
+/// Applied events by machine and key, each in seq order.
+type Logs = BTreeMap<(String, String), Vec<(u64, Audit)>>;
+
 /// Each record's applied events, by machine and key, in seq order.
-fn logs(a: &Archive) -> (BTreeMap<(String, String), Vec<(u64, Audit)>>, Vec<String>) {
-    let mut out: BTreeMap<(String, String), Vec<(u64, Audit)>> = BTreeMap::new();
+fn logs(a: &Archive) -> (Logs, Vec<String>) {
+    let mut out = Logs::new();
     let mut failures = Vec::new();
     for r in a.rows("event") {
         match audit_of(&r.row) {

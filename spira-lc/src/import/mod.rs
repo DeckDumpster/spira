@@ -23,12 +23,14 @@ use crate::{flag, CANNOT_TELL, REFUSED};
 
 const USAGE: &str = "usage: spira-lc admin-import --out <store path> --archive <file> [--from-archive]";
 const READ_PAGE: usize = 1_000;
+const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// The socket lc-serve answers on, when it is running.
+/// The socket lc-serve answers on, when it is running: a connect that is accepted.
 fn serving() -> Result<Option<String>, String> {
+    let accepted = |p: &str| std::os::unix::net::UnixStream::connect(p).and_then(|s| s.set_read_timeout(Some(PROBE_TIMEOUT))).is_ok();
     match crate::client::route()? {
         crate::client::Route::Direct => Ok(None),
-        crate::client::Route::Service(p) => Ok(std::os::unix::net::UnixStream::connect(&p).is_ok().then_some(p)),
+        crate::client::Route::Service(p) => Ok(accepted(&p).then_some(p)),
     }
 }
 
