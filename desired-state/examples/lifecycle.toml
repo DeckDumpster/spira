@@ -1,0 +1,18 @@
+# The Lifecycle section's spec: the floor and the dwell target it is measured against. Not part
+# of the default document, which every install composes and publishes: a section spec reaches
+# the control store, so it is applied when the lifecycle section is armed
+# (`spira compose desired-state/examples/default.toml desired-state/examples/lifecycle.toml`).
+
+[producer]
+producer = "spira-default"
+version = "1"
+time = "2026-10-31T00:00:00Z"
+
+[[resources]]
+apiVersion = "spira/v1"
+kind = "Lifecycle"
+[resources.metadata]
+name = "all"
+[resources.spec]
+goodput_rate_floor = { value = 150, statute = "law-throughput-floor" }
+certified_dwell_p95_secs = { value = 1800, statute = "law-throughput-floor" }

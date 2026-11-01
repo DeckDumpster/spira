@@ -2016,6 +2016,7 @@ dependencies = [
  "state-store",
  "state-store-sqlite",
  "testkit",
+ "tsd",
 ]
 
 [[package]]

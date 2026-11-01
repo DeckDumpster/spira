@@ -138,7 +138,8 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
     })
 }
 
-/// `section`, `intent` and `lock`, which only the control store serves: JSON on every path.
+/// `section`, `intent`, `lock` and `publish-section`, which only the control store serves: JSON
+/// on every path.
 fn dispatch_sections(args: &[String]) -> (i32, String) {
     let path = match store_path() {
         Some(Ok(p)) => p,
@@ -164,7 +165,13 @@ fn dispatch_sections(args: &[String]) -> (i32, String) {
                 request: &request,
                 metrics: &metrics,
             };
-            sections::run(&store, args, &call)
+            if args[0] != sections::lifecycle::VERB {
+                return sections::run(&store, args, &call);
+            }
+            match crate::lifecycle_run_dir() {
+                Ok(run) => sections::lifecycle::run(&store, args, &call, &sections::lifecycle::RunDir(run)),
+                Err(e) => sections::cannot_tell(&format!("the run directory: {e}")),
+            }
         }
         Err(e) => sections::cannot_tell(&format!("the control store: {e}")),
     }

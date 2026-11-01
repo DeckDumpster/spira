@@ -154,6 +154,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-sop-lint.timer", true));
     m.units.push(t("spira-event-continuity.service", false));
     m.units.push(t("spira-event-continuity.timer", true));
+    // No timer yet: the reconciler's arm step ships and enables one.
+    m.units.push(t("spira-lifecycle-section.service", false));
     m.units.push(t("spira-concierge-guard.service", false));
     m.units.push(t("spira-concierge-guard.timer", true));
     m.units.push(t("spira-mend-watch.service", false));
@@ -513,6 +515,16 @@ mod tests {
         }
         let svc = std::fs::read_to_string(root.join("spira-worktree-reaper.service")).unwrap();
         assert!(svc.contains("hel reap-stale"));
+    }
+
+    #[test]
+    fn the_lifecycle_section_publisher_ships_its_service_and_no_timer_until_the_arm_step() {
+        let m = build(&inputs()).unwrap();
+        assert!(m.units.iter().any(|u| u.name == "spira-lifecycle-section.service" && !u.enable));
+        assert!(!m.units.iter().any(|u| u.name == "spira-lifecycle-section.timer"));
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("systemd");
+        let svc = std::fs::read_to_string(root.join("spira-lifecycle-section.service")).unwrap();
+        assert!(svc.lines().any(|l| l.starts_with("ExecStart=") && l.ends_with("/bin/spira-lc publish-section lifecycle")), "{svc}");
     }
 
     #[test]

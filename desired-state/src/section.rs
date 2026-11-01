@@ -112,6 +112,29 @@ pub struct Numeric {
     pub window: String,
 }
 
+/// A windowed field that may hold no number: its value, `"WarmingUp"` while its window still
+/// reaches back before a release of the world from a halt at least that long, or what made
+/// it unobservable. Only a value is ever a term.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Windowed {
+    Value(Numeric),
+    Unobservable(Unobservable),
+    WarmingUp(WarmingUp),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Unobservable {
+    pub unobservable: String,
+    pub window: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WarmingUp {
+    WarmingUp,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Condition {
@@ -296,7 +319,7 @@ pub fn registered(kind: &str) -> Result<&'static SectionKind, Refusal> {
 impl Section {
     /// A numeric status field the kind declares, with its window, or `None`.
     pub fn numeric(&self, kind: &SectionKind, name: &str) -> Option<(f64, Window)> {
-        if kind.shape(name) != Some(FieldShape::Numeric) {
+        if !matches!(kind.shape(name), Some(FieldShape::Numeric | FieldShape::Windowed)) {
             return None;
         }
         let n: Numeric = serde_json::from_value(self.status.fields.get(name)?.clone()).ok()?;
@@ -415,8 +438,24 @@ pub fn admit(s: &Section) -> Result<&'static SectionKind, Refusal> {
     let fields = Value::Object(s.status.fields.clone().into_iter().collect());
     (kind.check_status)(&fields).map_err(|e| Refusal::new(format!("status.{}", e.0), "schema", e.1))?;
     for (name, shape) in kind.fields {
-        if *shape == FieldShape::Numeric && s.status.fields.contains_key(*name) && s.numeric(kind, name).is_none() {
-            return Err(Refusal::new(format!("status.{name}.window"), "window", "is neither level nor a duration"));
+        let Some(v) = s.status.fields.get(*name) else { continue };
+        let numeric = s.numeric(kind, name).is_some();
+        let ok = match shape {
+            FieldShape::Numeric => numeric,
+            FieldShape::Windowed => match serde_json::from_value::<Windowed>(v.clone()) {
+                Ok(Windowed::Value(_)) => numeric,
+                Ok(Windowed::Unobservable(u)) => !u.unobservable.trim().is_empty() && Window::parse(&u.window).is_some(),
+                Ok(Windowed::WarmingUp(_)) => true,
+                Err(_) => false,
+            },
+            FieldShape::List => true,
+        };
+        if !ok {
+            let rule = match shape {
+                FieldShape::Windowed => "is not a { value, window }, a { unobservable, window } with a reason, or \"WarmingUp\"",
+                _ => "is neither level nor a duration",
+            };
+            return Err(Refusal::new(format!("status.{name}.window"), "window", rule));
         }
     }
 

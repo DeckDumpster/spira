@@ -32,3 +32,7 @@ functions = ["check_resource"]
 [[scope]]
 path = "desired-state/src/compose.rs"
 functions = ["section_specs", "publish_specs"]
+
+[[scope]]
+path = "desired-state/src/sections/lifecycle.rs"
+functions = ["check_spec", "check_status"]
