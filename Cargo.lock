@@ -1540,6 +1540,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "round-controller"
+version = "0.1.0"
+dependencies = [
+ "batcher",
+ "lifecycle",
+ "round-controller",
+ "runtime",
+ "serde",
+ "serde_json",
+ "spira-config",
+ "spira-otel",
+ "state-store",
+ "toml",
+]
+
+[[package]]
 name = "round-vm"
 version = "0.1.0"
 dependencies = [

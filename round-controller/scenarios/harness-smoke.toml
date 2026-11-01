@@ -1,0 +1,40 @@
+description = "the harness itself: three passes over two repos with no steps registered visit each repo once a pass, call no verb, start no VM and write nothing"
+repos = ["home", "other"]
+
+[run]
+epoch = 1800000000
+passes = 3
+every_secs = 30
+jitter_secs = 10
+
+[[store]]
+key = "batches/home/b1"
+data = { state = "OPEN", members = "sp-a:1" }
+
+[[expect]]
+name = "every-repo-visited-each-pass"
+count = "outcomes:visited"
+equals = 6
+
+[[expect]]
+name = "no-verb-called"
+count = "calls"
+equals = 0
+
+[[expect]]
+name = "no-vm-started"
+count = "vm-runs"
+equals = 0
+
+[[expect]]
+name = "nothing-written"
+count = "store-writes"
+equals = 0
+
+# The positive control: a pass that opened a round would satisfy this. Its failure, naming
+# itself, is what makes the expectations above believable.
+[[expect]]
+name = "inverted-a-round-was-opened"
+count = "calls:open"
+equals = 1
+inverted = true

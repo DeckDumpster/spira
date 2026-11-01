@@ -1,0 +1,17 @@
+# The round controller's world twin of its harness-smoke scenario: with no steps registered, the
+# sim-only actor runs on its timer, exits 0 every pass, and changes nothing the world can see.
+epoch = 1800000000
+horizon = 150000
+real_actors = ["round-controller"]
+
+[[invariant]]
+name = "rc_pass_exited_nonzero"
+sql = "SELECT seq, exit FROM events WHERE actor = 'round-controller' AND kind = 'complete' AND exit <> 0"
+
+[[invariant]]
+name = "rc_changed_run_state"
+sql = "SELECT 'queue' AS family, key AS what FROM run_queue UNION ALL SELECT 'locks', name FROM run_locks UNION ALL SELECT 'ejected', bead FROM run_ejected UNION ALL SELECT 'verdicts', key FROM run_verdicts UNION ALL SELECT 'gate-log', text FROM run_gate_log UNION ALL SELECT 'landing-log', text FROM run_landing_log"
+
+[[expect]]
+name = "rc_passes_ran"
+sql = "SELECT 1 FROM events WHERE actor = 'round-controller' AND kind = 'complete' AND exit = 0"

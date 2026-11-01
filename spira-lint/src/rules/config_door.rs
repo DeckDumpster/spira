@@ -23,6 +23,7 @@ const EXEMPT_TOML_FROM_STR: &[&str] = &[
     "sim/src/actors.rs",
     "sim/src/fit.rs",
     "spira/sim/src/drive.rs",
+    "round-controller/src/sim/scenario.rs",
 ];
 
 const USE_INSTEAD: &str = "use spira_config::process::spec() (the path) or spira_config::load (the parse)";

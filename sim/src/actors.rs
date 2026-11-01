@@ -14,6 +14,21 @@ pub struct ActorSpec {
     pub duration: String,
     #[serde(default)]
     pub staged: bool,
+    /// Its units live under [`SIM_UNITS`], which nothing installs: an actor only a world
+    /// scenario runs.
+    #[serde(default)]
+    pub sim_only: bool,
+}
+
+/// Where a sim-only actor's timer and service live, relative to the tree.
+pub const SIM_UNITS: &str = "sim/units";
+/// Where every installed actor's units live, relative to the tree.
+pub const SHIPPED_UNITS: &str = "systemd";
+
+impl ActorSpec {
+    pub fn units_in(&self, tree: &Path) -> std::path::PathBuf {
+        tree.join(if self.sim_only { SIM_UNITS } else { SHIPPED_UNITS })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -33,19 +48,21 @@ fn read_unit(dir: &Path, name: &str) -> Result<String, String> {
     std::fs::read_to_string(dir.join(name)).map_err(|e| format!("{}: {e}", dir.join(name).display()))
 }
 
-/// Registers each actor and schedules its Due events from its timer unit over `horizon` ms.
+/// Registers each actor and schedules its Due events from its timer unit, read from the tree's
+/// [`ActorSpec::units_in`], over `horizon` ms.
 pub fn install(
     sim: &mut Sim,
     specs: &[ActorSpec],
-    units_dir: &Path,
+    tree: &Path,
     durations: &Durations,
     epoch_unix_s: u64,
     horizon: u64,
 ) -> Result<(), String> {
     for spec in specs {
-        let timer = read_unit(units_dir, &spec.timer)?;
+        let units_dir = spec.units_in(tree);
+        let timer = read_unit(&units_dir, &spec.timer)?;
         let service = timer_target(&spec.timer, &timer);
-        require_oneshot(&service, &read_unit(units_dir, &service)?)?;
+        require_oneshot(&service, &read_unit(&units_dir, &service)?)?;
         let schedule = parse_timer(&timer).map_err(|e| format!("{}: {e}", spec.timer))?;
         let model = durations
             .series

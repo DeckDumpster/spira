@@ -92,6 +92,7 @@ members = [
     "runtime",
     "state-store",
     "state-store-sqlite",
+    "round-controller",
 ]
 resolver = "2"
 

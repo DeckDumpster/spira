@@ -1,4 +1,4 @@
-use sim::actors::{install, parse_specs};
+use sim::actors::{install, parse_specs, SHIPPED_UNITS, SIM_UNITS};
 use sim::fit::{fit_files, Durations};
 use sim::units::{parse_timer, SECOND};
 use sim::{EventKind, Rng, Sim};
@@ -10,8 +10,10 @@ const SPECS: &str = include_str!("../actors.toml");
 const DURATIONS: &str = include_str!("../durations.toml");
 const SERVICE: &str = "[Service]\nType=oneshot\nExecStart=/bin/true\n";
 
-fn units(dir: &Path, every: &str) {
-    for unit in parse_specs(SPECS).unwrap().iter().map(|a| a.timer.trim_end_matches(".timer").to_string()) {
+fn units(tree: &Path, every: &str) {
+    for spec in parse_specs(SPECS).unwrap() {
+        let (dir, unit) = (spec.units_in(tree), spec.timer.trim_end_matches(".timer").to_string());
+        std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join(format!("{unit}.timer")),
             format!("[Timer]\nOnBootSec=10s\nOnUnitActiveSec={every}\nUnit={unit}.service\n"),
@@ -47,9 +49,21 @@ fn changing_a_timer_unit_changes_the_cadence() {
 
 #[test]
 fn shipped_units_drive_the_shipped_actors() {
-    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
-    let d = dues(&shipped, "landing-pass");
+    let tree = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let d = dues(&tree, "landing-pass");
     assert!(d.len() > 8, "{d:?}");
+    assert!(!dues(&tree, "round-controller").is_empty(), "a sim-only actor runs from its own units");
+}
+
+#[test]
+fn a_sim_only_actors_units_are_never_among_the_installed_ones() {
+    let tree = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let specs = parse_specs(SPECS).unwrap();
+    let rc = specs.iter().find(|a| a.name == "round-controller").expect("the round-controller actor");
+    assert!(rc.sim_only && rc.units_in(&tree).ends_with(SIM_UNITS));
+    assert!(rc.units_in(&tree).join(&rc.timer).is_file());
+    assert!(!tree.join(SHIPPED_UNITS).join(&rc.timer).exists(), "{} would be installed", rc.timer);
+    assert!(specs.iter().filter(|a| a.name != "round-controller").all(|a| !a.sim_only && a.units_in(&tree).ends_with(SHIPPED_UNITS)));
 }
 
 #[test]
@@ -57,7 +71,7 @@ fn a_non_oneshot_service_is_refused() {
     let tmp = TempDir::new("simple");
     let dir = tmp.path().to_path_buf();
     units(&dir, "90s");
-    std::fs::write(dir.join("spira-landing-pass.service"), "[Service]\nType=simple\n").unwrap();
+    std::fs::write(dir.join(SHIPPED_UNITS).join("spira-landing-pass.service"), "[Service]\nType=simple\n").unwrap();
     let mut sim = Sim::new(1);
     let d = Durations::parse(DURATIONS).unwrap();
     let err = install(&mut sim, &parse_specs(SPECS).unwrap(), &dir, &d, 0, SECOND).unwrap_err();

@@ -1,0 +1,4 @@
+# Coverage is attributed per test across this whole crate: every decision branch is covered by
+# a scenario or a unit test, and the bead's own gate reports any branch none of them takes.
+[crate]
+per_test = true
