@@ -83,7 +83,7 @@ impl Git for FakeGit {
         self.read(repo, |r| r.landing.clone())
     }
 
-    fn landed(&self, repo: &str, commit: &str) -> Result<bool, String> {
+    fn under_landing_ref(&self, repo: &str, commit: &str) -> Result<bool, String> {
         self.read(repo, |r| r.history.contains(commit))
     }
 }
@@ -102,15 +102,15 @@ mod tests {
         });
         assert_eq!(g.landing_sha("r").unwrap(), "h1");
         assert_eq!(
-            (g.landed("r", "h0"), g.landed("r", "h2")),
+            (g.under_landing_ref("r", "h0"), g.under_landing_ref("r", "h2")),
             (Ok(true), Ok(false))
         );
         g.advance("r", "h2");
         assert_eq!(
-            (g.landing_sha("r").unwrap(), g.landed("r", "h2")),
+            (g.landing_sha("r").unwrap(), g.under_landing_ref("r", "h2")),
             ("h2".into(), Ok(true))
         );
-        assert!(g.landed("other", "h1").unwrap_err().contains("other"));
+        assert!(g.under_landing_ref("other", "h1").unwrap_err().contains("other"));
         g.break_repo("r", "index.lock exists");
         assert_eq!(g.landing_sha("r").unwrap_err(), "index.lock exists");
     }

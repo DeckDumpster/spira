@@ -58,7 +58,7 @@ impl Git for RealGit {
     }
 
     /// `merge-base --is-ancestor` exits 1 for "not an ancestor"; any other code is a fault.
-    fn landed(&self, repo: &str, commit: &str) -> Result<bool, String> {
+    fn under_landing_ref(&self, repo: &str, commit: &str) -> Result<bool, String> {
         let (root, landref) = self.located(repo)?;
         match self.git(&root, &["merge-base", "--is-ancestor", commit, &landref])? {
             (Some(0), _, _) => Ok(true),
@@ -129,13 +129,13 @@ mod tests {
             out(Some(128), "", "bad object h9"),
             Err("spawn failed".into()),
         ]);
-        assert_eq!(g.landed("lane", "h1"), Ok(true));
-        assert_eq!(g.landed("lane", "h2"), Ok(false));
+        assert_eq!(g.under_landing_ref("lane", "h1"), Ok(true));
+        assert_eq!(g.under_landing_ref("lane", "h2"), Ok(false));
         assert!(g
-            .landed("lane", "h9")
+            .under_landing_ref("lane", "h9")
             .unwrap_err()
             .contains("bad object h9"));
-        assert_eq!(g.landed("lane", "h3").unwrap_err(), "spawn failed");
+        assert_eq!(g.under_landing_ref("lane", "h3").unwrap_err(), "spawn failed");
         assert_eq!(
             p.1.lock().unwrap()[0].args,
             [

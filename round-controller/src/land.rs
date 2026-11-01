@@ -266,7 +266,7 @@ impl Held<'_> {
                 parent_state: q.state.map(|s| s.as_str().to_string()),
             });
         }
-        match p.git.landed(repo, head) {
+        match p.git.under_landing_ref(repo, head) {
             Err(e) => return Err(Refusal::unreadable(&git_key(repo), e)),
             Ok(true) => {
                 let at = p
@@ -314,7 +314,7 @@ impl Held<'_> {
             let why = Blocker::DeployFault {
                 why: r.text.trim().to_string(),
             };
-            return match p.git.landed(repo, head) {
+            return match p.git.under_landing_ref(repo, head) {
                 Err(e) => Err(Refusal::unreadable(&git_key(repo), e)),
                 Ok(true) => {
                     let at = self.ref_after(head);
@@ -365,7 +365,7 @@ impl Held<'_> {
     /// else `head`, so a stale read never moves the lane behind what landed.
     fn ref_after(&self, head: &str) -> String {
         let (git, repo) = (self.p.git, self.repo);
-        match (git.landed(repo, head), git.landing_sha(repo)) {
+        match (git.under_landing_ref(repo, head), git.landing_sha(repo)) {
             (Ok(true), Ok(sha)) => sha,
             _ => head.to_string(),
         }

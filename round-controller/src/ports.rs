@@ -351,7 +351,7 @@ pub trait Git {
     /// The sha `repo`'s landing ref points at.
     fn landing_sha(&self, repo: &str) -> Result<String, String>;
     /// Whether `commit` is in the history of `repo`'s landing ref.
-    fn landed(&self, repo: &str, commit: &str) -> Result<bool, String>;
+    fn under_landing_ref(&self, repo: &str, commit: &str) -> Result<bool, String>;
 }
 
 // The verdict ledger's port: the ledger's own types, and the calls the Judge makes. Each call
