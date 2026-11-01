@@ -13,7 +13,8 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
 /// One `spira/conf.d/<KEY>` file, parsed.
@@ -95,10 +96,24 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// Reads both directories of `home`; a directory that cannot be read is a named refusal.
+    /// The registry of `home`: from its [`INDEX_FILE`] when it has one, else from both
+    /// directories. A stale index is refused by name, never passed over for the directories.
     pub fn load(home: &Path) -> Result<Registry, String> {
-        let mut keys = load(&home.join("conf.d"))?;
-        for (name, mut key) in load(&home.join("conf.toml.d"))? {
+        let index = home.join(INDEX_FILE);
+        match fs::symlink_metadata(&index) {
+            Ok(_) => Registry::from_index(home, &index),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Registry::from_dirs(home),
+            Err(e) => Err(format!("{}: {e}", index.display())),
+        }
+    }
+
+    /// Reads both directories of `home`; a directory that cannot be read is a named refusal.
+    pub fn from_dirs(home: &Path) -> Result<Registry, String> {
+        Registry::from_keys(load(&home.join(SOURCE_DIRS[0]))?, load(&home.join(SOURCE_DIRS[1]))?)
+    }
+
+    fn from_keys(mut keys: BTreeMap<String, RegistryKey>, toml_only: BTreeMap<String, RegistryKey>) -> Result<Registry, String> {
+        for (name, mut key) in toml_only {
             key.toml_only = true;
             if keys.insert(name.clone(), key).is_some() {
                 return Err(format!("{name} is declared in both conf.d and conf.toml.d"));
@@ -111,6 +126,30 @@ impl Registry {
             }
         }
         Ok(Registry { keys })
+    }
+
+    fn from_index(home: &Path, index: &Path) -> Result<Registry, String> {
+        let text = read_counted(index).map_err(|e| format!("{}: {e}", index.display()))?;
+        let parsed = parse_index(&text).map_err(|e| format!("{}: unreadable registry index: {e}", index.display()))?;
+        let now = stamp(home, parsed.sources.iter().map(|(dir, name, _)| (*dir, *name)));
+        if now != parsed.stamp {
+            return Err(format!(
+                "{} is stale: it was derived from sources stamped {}, and {} is now stamped {now} — a release must be rebuilt; in a tree, remove the index to read conf.d itself",
+                index.display(),
+                parsed.stamp,
+                home.display()
+            ));
+        }
+        Registry::from_sources(parsed.sources.into_iter())
+    }
+
+    fn from_sources<'a>(sources: impl Iterator<Item = (&'a str, &'a str, &'a str)>) -> Result<Registry, String> {
+        let mut dirs: [BTreeMap<String, RegistryKey>; 2] = Default::default();
+        for (dir, name, body) in sources {
+            dirs[usize::from(dir == SOURCE_DIRS[1])].insert(name.to_string(), parse_one(name, body)?);
+        }
+        let [keys, toml_only] = dirs;
+        Registry::from_keys(keys, toml_only)
     }
 
     pub fn get(&self, key: &str) -> Option<&RegistryKey> {
@@ -131,6 +170,126 @@ pub fn for_process() -> Result<&'static Registry, String> {
     }
     let loaded = Registry::load(&crate::resolve::locate_home_for_process()?)?;
     Ok(REGISTRY.get_or_init(|| loaded))
+}
+
+/// The registry index a release carries beside `conf.d`: every source file of `conf.d` and
+/// `conf.toml.d` in one file, read with one open instead of one per key.
+pub const INDEX_FILE: &str = "conf.d.index";
+const INDEX_HEADER: &str = "spira-registry-index 1";
+const SOURCE_DIRS: [&str; 2] = ["conf.d", "conf.toml.d"];
+
+static FILES_OPENED: AtomicUsize = AtomicUsize::new(0);
+
+/// Config files this process has opened to read: `spira.toml`'s layers and the registry's sources.
+pub fn files_opened() -> usize {
+    FILES_OPENED.load(Ordering::Relaxed)
+}
+
+pub(crate) fn read_counted(path: &Path) -> std::io::Result<String> {
+    FILES_OPENED.fetch_add(1, Ordering::Relaxed);
+    fs::read_to_string(path)
+}
+
+struct ParsedIndex<'a> {
+    stamp: String,
+    sources: Vec<(&'a str, &'a str, &'a str)>,
+}
+
+fn parse_index(text: &str) -> Result<ParsedIndex<'_>, String> {
+    let (header, rest) = text.split_once('\n').ok_or("no header")?;
+    if header != INDEX_HEADER {
+        return Err(format!("header {header:?} is not {INDEX_HEADER:?}"));
+    }
+    let (stamp_line, mut rest) = rest.split_once('\n').ok_or("no stamp")?;
+    let stamp = stamp_line.strip_prefix("stamp ").ok_or("no stamp")?.to_string();
+    let mut sources = Vec::new();
+    while !rest.is_empty() {
+        let (head, after) = rest.split_once('\n').ok_or("a source record has no header line")?;
+        let (path, len) = head.rsplit_once(' ').ok_or_else(|| format!("source record {head:?} has no length"))?;
+        let len: usize = len.parse().map_err(|_| format!("source record {head:?} has no length"))?;
+        let (dir, name) = path.split_once('/').filter(|(d, _)| SOURCE_DIRS.contains(d)).ok_or_else(|| format!("source {path:?} is not under {}", SOURCE_DIRS.join(" or ")))?;
+        let body = after.get(..len).ok_or_else(|| format!("source {path:?} is cut short"))?;
+        sources.push((dir, name, body));
+        rest = &after[len..];
+    }
+    Ok(ParsedIndex { stamp, sources })
+}
+
+/// What a source's content cannot change without changing: each directory's mtime (a key added,
+/// removed or renamed) and each file's length and mtime, hashed. Taken with `stat`, never by
+/// reading a file; a source that cannot be stated stamps as its error, so it reads as stale.
+fn stamp<'a>(home: &Path, sources: impl Iterator<Item = (&'a str, &'a str)>) -> String {
+    use std::os::unix::fs::MetadataExt;
+    let mut h = Fnv::default();
+    let mut add = |rel: &str| {
+        let line = match fs::metadata(home.join(rel)) {
+            Ok(m) => format!("{rel} {} {}.{}\n", if m.is_dir() { 0 } else { m.len() }, m.mtime(), m.mtime_nsec()),
+            Err(e) => format!("{rel} {e}\n"),
+        };
+        h.write(line.as_bytes());
+    };
+    for d in SOURCE_DIRS {
+        add(d);
+    }
+    for (dir, name) in sources {
+        add(&format!("{dir}/{name}"));
+    }
+    format!("{:016x}", h.0)
+}
+
+/// FNV-1a: a hash whose value is the same in every build, so an index written by one binary is
+/// read by another.
+struct Fnv(u64);
+
+impl Default for Fnv {
+    fn default() -> Fnv {
+        Fnv(0xcbf2_9ce4_8422_2325)
+    }
+}
+
+impl Fnv {
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.0 = (self.0 ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+}
+
+/// Writes `<home>/`[`INDEX_FILE`] from `home`'s two registry directories, then reads it back
+/// and refuses (removing it) unless it loads the registry the directories hold. The sources are
+/// read on both sides of the stamp, so an edit made while indexing is refused, never indexed.
+pub fn write_index(home: &Path) -> Result<PathBuf, String> {
+    let read_all = || -> Result<Vec<(&'static str, String, String)>, String> {
+        let mut all = Vec::new();
+        for dir in SOURCE_DIRS {
+            all.extend(read_sources(&home.join(dir))?.into_iter().map(|(name, text)| (dir, name, text)));
+        }
+        Ok(all)
+    };
+    let sources = read_all()?;
+    let stamp = stamp(home, sources.iter().map(|(d, n, _)| (*d, n.as_str())));
+    if read_all()? != sources {
+        return Err(format!("{}: the registry changed while it was being indexed — run it again", home.display()));
+    }
+    let from_dirs = Registry::from_sources(sources.iter().map(|(d, n, t)| (*d, n.as_str(), t.as_str())))?;
+    let mut out = format!("{INDEX_HEADER}\nstamp {stamp}\n");
+    for (dir, name, text) in &sources {
+        out.push_str(&format!("{dir}/{name} {}\n{text}", text.len()));
+    }
+    let index = home.join(INDEX_FILE);
+    let tmp = home.join(format!(".{INDEX_FILE}.{}", std::process::id()));
+    fs::write(&tmp, &out).and_then(|()| fs::rename(&tmp, &index)).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        format!("{}: {e}", index.display())
+    })?;
+    match Registry::load(home) {
+        Ok(r) if r == from_dirs => Ok(index),
+        other => {
+            let _ = fs::remove_file(&index);
+            let why = other.err().unwrap_or_else(|| "it loads different keys".to_string());
+            Err(format!("{}: the index does not load the registry its directories hold ({why}) — removed", index.display()))
+        }
+    }
 }
 
 /// Parses every file directly inside `dir` the way `conf-gen.sh`'s `parse_one` does: `TYPE=`,
@@ -154,7 +313,11 @@ pub fn for_process() -> Result<&'static Registry, String> {
 /// only a directory `read_dir` cannot open at all — missing, or something else wrong with it —
 /// is refused.
 pub fn load(dir: &Path) -> Result<BTreeMap<String, RegistryKey>, String> {
-    let mut out = BTreeMap::new();
+    read_sources(dir)?.into_iter().map(|(name, text)| parse_one(&name, &text).map(|k| (name, k))).collect()
+}
+
+fn read_sources(dir: &Path) -> Result<Vec<(String, String)>, String> {
+    let mut out = Vec::new();
     let entries = fs::read_dir(dir).map_err(|_| format!("no config registry at {}", dir.display()))?;
     for entry in entries {
         let entry = entry.map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -169,9 +332,10 @@ pub fn load(dir: &Path) -> Result<BTreeMap<String, RegistryKey>, String> {
         if !name.chars().all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()) {
             continue;
         }
-        let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        out.insert(name.clone(), parse_one(&name, &text)?);
+        let text = read_counted(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        out.push((name, text));
     }
+    out.sort();
     Ok(out)
 }
 
@@ -291,6 +455,62 @@ mod tests {
         assert!(reg.keys["SPIRA_HOTFIX_ALERT_HOURS"].toml_only, "positive control: a conf.toml.d key is read");
         assert_eq!(reg.by_field("certify_par").unwrap().name, "SPIRA_CERTIFY_PAR");
         assert_eq!(reg.keys["SPIRA_STACK_MAX_DEPTH"].max, Some(4.0));
+    }
+
+    #[test]
+    fn an_index_loads_the_registry_its_directories_hold() {
+        let dir = testkit::TempDir::new("spira-config-registry-index-same");
+        let home = crate::process::fixture_registry_home(dir.path());
+        let from_dirs = Registry::load(&home).unwrap();
+        let index = write_index(&home).unwrap();
+        let from_index = Registry::from_index(&home, &index).unwrap();
+        assert!(from_index.keys.len() > 400 && from_index.keys.values().any(|k| k.toml_only), "positive control: the whole registry, both directories");
+        assert_eq!(from_index, from_dirs);
+    }
+
+    #[test]
+    fn a_stale_index_is_refused_naming_the_index_and_both_stamps() {
+        let dir = testkit::TempDir::new("spira-config-registry-index-stale");
+        let home = crate::process::fixture_registry_home(dir.path());
+        let index = write_index(&home).unwrap();
+        let recorded = fs::read_to_string(&index).unwrap().lines().nth(1).unwrap().strip_prefix("stamp ").unwrap().to_string();
+        assert!(Registry::load(&home).is_ok(), "positive control: a fresh index loads");
+        let edited = home.join("conf.d/SPIRA_CERTIFY_PAR");
+        let text = fs::read_to_string(&edited).unwrap();
+        fs::write(&edited, text.replace("TYPE=u32", "TYPE=string")).unwrap();
+        let err = Registry::load(&home).unwrap_err();
+        let now = stamp(&home, parse_index(&fs::read_to_string(&index).unwrap()).unwrap().sources.iter().map(|(d, n, _)| (*d, *n)));
+        assert_ne!(now, recorded);
+        assert!(err.starts_with(&format!("{} is stale", index.display())), "{err}");
+        assert!(err.contains(&format!("stamped {recorded}")) && err.contains(&format!("now stamped {now}")), "{err}");
+    }
+
+    #[test]
+    fn an_index_whose_key_file_was_removed_or_added_is_stale() {
+        let dir = testkit::TempDir::new("spira-config-registry-index-add-remove");
+        let home = crate::process::fixture_registry_home(dir.path());
+        write_index(&home).unwrap();
+        let key = home.join("conf.d/SPIRA_CERTIFY_PAR");
+        let text = fs::read_to_string(&key).unwrap();
+        fs::remove_file(&key).unwrap();
+        assert!(Registry::load(&home).unwrap_err().contains("is stale"), "a removed key file");
+        fs::write(&key, text).unwrap();
+        write_index(&home).unwrap();
+        fs::write(home.join("conf.d/SPIRA_ADDED_LATER"), "TYPE=string\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\nSPIRA_CONF_DEFAULT_EOF\n").unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(1);
+        fs::File::open(home.join("conf.d")).unwrap().set_modified(later).unwrap();
+        assert!(Registry::load(&home).unwrap_err().contains("is stale"), "a key file added later");
+    }
+
+    #[test]
+    fn an_index_cut_short_is_refused_by_name() {
+        let dir = testkit::TempDir::new("spira-config-registry-index-short");
+        let home = crate::process::fixture_registry_home(dir.path());
+        let index = write_index(&home).unwrap();
+        let text = fs::read_to_string(&index).unwrap();
+        fs::write(&index, &text[..text.len() - 10]).unwrap();
+        let err = Registry::load(&home).unwrap_err();
+        assert!(err.starts_with(&format!("{}: unreadable registry index", index.display())) && err.contains("cut short"), "{err}");
     }
 
     #[test]

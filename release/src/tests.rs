@@ -451,6 +451,33 @@ fn build_refuses_when_conf_gen_fails_and_leaves_no_release() {
     assert!(fs::symlink_metadata(w.rel(A)).is_err());
 }
 
+fn indexing_build(indexer: &str) -> (World, Result<build::Built, String>) {
+    let w = World::with_git(FakeGit { validator: true, extra: vec![registry_key("SPIRA_SOME_KEY", "u32", Some("1"))], ..Default::default() });
+    let cargo = FakeCargo { bins: vec!["tool", "spira-config"], bodies: vec![("spira-config", indexer.to_string())] };
+    let built = w.build_with(A, &cargo, vec![]);
+    (w, built)
+}
+
+#[test]
+fn build_indexes_the_registry_with_the_staged_spira_config() {
+    let (w, built) = indexing_build("#!/bin/sh\n[ \"$1\" = registry-index ] || exit 2\necho \"by $0\" > \"$2/conf.d.index\"\n");
+    built.unwrap();
+    let index = fs::read_to_string(w.rel(A).join("spira/conf.d.index")).unwrap();
+    assert!(index.contains(".stage-") && index.ends_with("/bin/spira-config\n"), "written by the stage's own binary: {index}");
+    assert!(matches!(Manifest::load(&w.rel(A)).unwrap().entries.get("spira/conf.d.index"), Some(Entry::File(_))));
+}
+
+#[test]
+fn build_refuses_when_the_registry_cannot_be_indexed_and_leaves_no_release() {
+    let (w, built) = indexing_build("#!/bin/sh\necho conf.d is unreadable >&2\nexit 1\n");
+    let e = built.unwrap_err();
+    assert!(e.contains("registry-index failed") && e.contains("conf.d is unreadable"), "{e}");
+    assert!(fs::symlink_metadata(w.rel(A)).is_err());
+    let (w, built) = indexing_build("#!/bin/sh\nexit 0\n");
+    assert!(built.unwrap_err().contains("wrote no"), "an indexer that writes nothing is refused too");
+    assert!(fs::symlink_metadata(w.rel(A)).is_err());
+}
+
 #[test]
 fn build_of_an_existing_release_does_not_rebuild_it() {
     let w = World::new();
@@ -1794,7 +1821,7 @@ fn stage_up_refuses_an_existing_root_and_down_refuses_a_non_stage_directory() {
 /// A `spira-config` standing in for one release's schema: `validate` loads iff every key in
 /// `needs` is in the layers `$SPIRA_TOML` names and none of `refuses` is.
 fn schema(needs: &[&str], refuses: &[&str]) -> String {
-    let mut s = String::from("#!/bin/sh\nPATH=/usr/bin:/bin\n[ \"$1\" = validate ] || exit 2\ncfg=$(cat $(echo \"$SPIRA_TOML\" | tr : ' '))\n");
+    let mut s = String::from("#!/bin/sh\nPATH=/usr/bin:/bin\n[ \"$1\" = registry-index ] && { : > \"$2/conf.d.index\"; exit 0; }\n[ \"$1\" = validate ] || exit 2\ncfg=$(cat $(echo \"$SPIRA_TOML\" | tr : ' '))\n");
     for k in needs {
         s.push_str(&format!("echo \"$cfg\" | grep -q '{k}' || {{ echo \"config has no {k}\" >&2; exit 1; }}\n"));
     }
