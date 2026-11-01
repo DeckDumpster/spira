@@ -22,9 +22,9 @@ use crate::control::verbs;
 const NOW: i64 = 1_767_225_600;
 const FLOOR_MS: u64 = 1_000;
 
-/// Seed steps whose verbs the control store does not serve yet. They are not replayed, so
-/// the state they would have built is absent: sp-blocked's edge, the asks, both batches, the
-/// deliveries, and the fact.
+/// Seed steps whose verbs the control store does not serve yet, beside the batch machine's
+/// events. They are not replayed, so the state they would have built is absent: sp-blocked's
+/// edge, the asks, both batches, the deliveries, and the fact.
 const UNSERVED_SEED: &[&str] = &["dep-add", "create-ask", "cut", "land", "fact"];
 
 /// Cases on served verbs whose goldens this store does not reproduce, and why.
@@ -108,8 +108,16 @@ fn primitive(verb: &str) -> bool {
     VERBS.contains(&verb) || verbs::VERBS.contains(&verb)
 }
 
-fn served(verb: &str) -> bool {
+fn served_verb(verb: &str) -> bool {
     primitive(verb) || (callers::is_verb(verb) && !BEFORE_CALLERS.contains(&verb))
+}
+
+/// Whether the control store answers this step: a served verb, on the bead machine when it
+/// is an event, given no stdin.
+fn served(step: &Step) -> bool {
+    let argv = &step.argv;
+    let machine = argv.get(1).map(String::as_str);
+    !step.stdin && served_verb(&argv[0]) && (argv[0] != "event" || machine == Some("bead"))
 }
 
 struct Rig<'a, B: Backend> {
@@ -177,10 +185,11 @@ fn seeded<B: Backend>(s: &Store<B>) {
     let mut rig = Rig { store: s, n: 0 };
     for (i, step) in steps(&goldens().join("_seed")).iter().enumerate() {
         let verb = step.argv[0].as_str();
-        if UNSERVED_SEED.contains(&verb) {
+        let batch_event = verb == "event" && step.argv.get(1).map(String::as_str) == Some("batch");
+        if UNSERVED_SEED.contains(&verb) || batch_event {
             continue;
         }
-        assert!(served(verb), "seed step {} uses {verb}, neither served nor declared unserved", i + 1);
+        assert!(served(step), "seed step {} {:?} is neither served nor declared unserved", i + 1, step.argv);
         assert_eq!(run(&mut rig, &step.argv), step.want, "seed step {}: {:?}", i + 1, step.argv);
     }
 }
@@ -198,7 +207,7 @@ fn diverging<B: Backend>(open: impl Fn() -> Store<B>) -> BTreeMap<String, String
     for dir in dirs {
         let case = dir.file_name().unwrap().to_string_lossy().into_owned();
         let steps = steps(&dir);
-        if !steps.iter().all(|s| !s.stdin && served(&s.argv[0])) {
+        if !steps.iter().all(served) {
             continue;
         }
         let s = open();

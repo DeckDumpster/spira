@@ -43,6 +43,13 @@ pub enum Outcome {
     Locked { token: Rev },
 }
 
+/// Every lifecycle record, each id's readiness, and the revision they were read at.
+pub type Snapshot = (
+    Vec<Read<LifecycleRecord>>,
+    std::collections::BTreeMap<String, Readiness>,
+    u64,
+);
+
 /// One entry of a dispatcher pass.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Verdict {
@@ -191,13 +198,7 @@ impl<B: Backend> Store<B> {
     }
 
     /// Every lifecycle record and every readiness, from one snapshot, with its revision.
-    pub fn records_with_readiness(
-        &self,
-    ) -> Result<(
-        Vec<Read<LifecycleRecord>>,
-        std::collections::BTreeMap<String, Readiness>,
-        u64,
-    )> {
+    pub fn records_with_readiness(&self) -> Result<Snapshot> {
         let locks = keys::claim_locks();
         let (items, rev) = self.contract.list(
             &[keys::LIFECYCLE, locks.as_str(), keys::READINESS],
