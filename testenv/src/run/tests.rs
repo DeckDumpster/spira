@@ -2657,3 +2657,80 @@ fn a_tests_filter_without_the_unit_tier_is_refused_before_any_work() {
     assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=tests-without-unit-tier tests=one_name");
     assert_eq!(b.calls.load(Ordering::SeqCst), 0);
 }
+
+/// [`unit_world`] with a second crate, `other`, changed by the commit `local/main` sits on, so
+/// the tip's one tree selects `{fixture}` over `local/main` and `{fixture, other}` over
+/// `before-other`, the commit before that change.
+fn two_crate_world(tag: &str) -> World {
+    let w = World::new(tag);
+    fs::write(w.repo.join("spira/unit-tests.sh"), "#!/usr/bin/env bash\nset -uo pipefail\n").unwrap();
+    fs::write(w.repo.join("Cargo.toml"), "[workspace]\nmembers = [\"fixture\", \"other\"]\nresolver = \"2\"\n").unwrap();
+    for c in ["fixture", "other"] {
+        fs::create_dir_all(w.repo.join(format!("{c}/src"))).unwrap();
+        fs::write(w.repo.join(format!("{c}/Cargo.toml")), format!("[package]\nname = \"{c}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n")).unwrap();
+        fs::write(w.repo.join(format!("{c}/src/lib.rs")), "").unwrap();
+    }
+    sh(&w.repo, "git add . && git commit -qm crates && git branch before-other");
+    fs::write(w.repo.join("other/src/lib.rs"), "pub fn other() {}\n").unwrap();
+    sh(&w.repo, "git commit -qam other && git branch local/main && git checkout -qb units");
+    let tests: String = FIXTURE_TESTS.iter().map(|t| format!("    #[test]\n    fn {}() {{}}\n", &t["tests::".len()..])).collect();
+    fs::write(w.repo.join("fixture/src/lib.rs"), format!("#[cfg(test)]\nmod tests {{\n{tests}}}\n")).unwrap();
+    sh(&w.repo, "git commit -qam tests");
+    w
+}
+
+#[test]
+fn a_cached_unit_green_answers_only_for_the_base_and_crate_list_it_ran() {
+    let w = two_crate_world("unit-cache-crates");
+    let rt = runtime();
+    libtest_over_fixture(&rt, &w.repo);
+    let b = FakeBuilder::new(None);
+    let rc = w.run(&rt, &b, &["--suites", "unit-tests", "units"], "", &w.repo);
+    assert_eq!(rc, 0, "{:?}", w.lines.lock().unwrap());
+    assert!(w.has_line(|l| l.ends_with("unit-tests: 1 affected crate(s): fixture")));
+    assert_eq!(w.last(), "VERDICT GREEN ran=1");
+    // the same tree, over a base that selects one more crate: a green over {fixture} says
+    // nothing about other, so the run is fresh
+    sh(&w.repo, "git branch -f local/main before-other");
+    let rc = w.run(&rt, &b, &["--suites", "unit-tests", "units"], "", &w.repo);
+    assert_eq!(rc, 0, "{:?}", w.lines.lock().unwrap());
+    assert!(w.has_line(|l| l.ends_with("unit-tests: 2 affected crate(s): fixture other")));
+    assert_eq!(w.last(), "VERDICT GREEN ran=1");
+    assert_eq!(b.calls.load(Ordering::SeqCst), 2);
+    // and the same tree, base and crates again is the cached claim
+    let rc = w.run(&rt, &b, &["--suites", "unit-tests", "units"], "", &w.repo);
+    assert_eq!(rc, 0);
+    assert!(w.last().starts_with("VERDICT GREEN ran=0 cached="), "{}", w.last());
+}
+
+#[test]
+fn a_unit_run_over_no_crate_caches_no_verdict() {
+    let w = unit_world("unit-cache-nocrate");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    sh(&w.repo, "git checkout -q local/main && git checkout -qb docs && echo x > notes.md && git add notes.md && git commit -qm docs");
+    let rc = w.run(&rt, &b, &["--suites", "unit-tests", "docs"], "", &w.repo);
+    assert_eq!(rc, 0, "{:?}", w.lines.lock().unwrap());
+    assert_eq!(w.last(), "VERDICT GREEN ran=1");
+    let key = w.results_dir().file_name().unwrap().to_string_lossy().to_string();
+    assert!(!w.root.join(format!("run/verdicts/batch-{key}")).exists());
+    let rc = w.run(&rt, &b, &["--suites", "unit-tests", "docs"], "", &w.repo);
+    assert_eq!(rc, 0);
+    assert_eq!(w.last(), "VERDICT GREEN ran=1");
+    assert_eq!(b.calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn a_repeat_reason_flag_runs_the_tree_again_over_a_cached_green() {
+    let w = World::new("repeat-green");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root), 0);
+    assert_eq!(
+        w.run(&rt, &b, &["--repeat-reason", "suspect the cached green", "--suites", "test-a.sh", "topic"], "", &w.root),
+        0
+    );
+    assert_eq!(w.last(), "VERDICT GREEN ran=1");
+    assert_eq!(b.calls.load(Ordering::SeqCst), 2);
+    assert!(w.has_line(|l| l.contains("repeat allowed — reason: suspect the cached green")));
+}

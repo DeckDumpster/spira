@@ -290,6 +290,7 @@ mod tests {
             profile: "debug".into(),
             artifacts_id: None,
             tests: None,
+            unit: None,
         }
     }
 
