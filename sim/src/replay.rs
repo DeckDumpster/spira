@@ -5,6 +5,7 @@
 //! 60 virtual seconds. Nothing a hook does changes the world: what the replay shows is what the
 //! recorded day did, and what a reader of its sections would have seen.
 
+pub mod checks;
 pub mod round_controller;
 
 use std::cell::{Ref, RefCell, RefMut};

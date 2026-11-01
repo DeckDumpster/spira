@@ -13,6 +13,11 @@ name = "sim-fit"
 path = "src/bin/sim-fit.rs"
 test = false
 
+[[bin]]
+name = "sim-replay"
+path = "src/bin/sim-replay.rs"
+test = false
+
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 serde = { version = "1", features = ["derive"] }

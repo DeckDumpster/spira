@@ -861,3 +861,10 @@ tier = "release"
 purpose = "Spira's pilgrim-login binary, from the release's bin/ — signs a headless Claude Code in to an MCP server as the pilgrim, with the login code from the broker and the approval completed in the pinned Playwright image"
 version_min = ""
 version_probe = "readlink -f \"$(command -v pilgrim-login)\""
+
+[[dep]]
+name = "sim-replay"
+tier = "release"
+purpose = "Spira's sim-replay binary, from the release's bin/ — replays the captured fixture days on the simulator and runs the replay checks test-sim-replay.sh reports"
+version_min = ""
+version_probe = "readlink -f \"$(command -v sim-replay)\""
