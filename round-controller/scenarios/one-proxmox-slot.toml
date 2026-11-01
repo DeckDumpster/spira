@@ -1,0 +1,70 @@
+description = "Two repos' runners and a hand driver compete for runner slots with spill off: the one Proxmox slot runs one VM at a time, and the hand driver waits, each refusal naming who holds the slot."
+repos = ["home", "other"]
+
+# Each pass is 30 s; the bench's 60 s TTL renews, and a refused user asks again, every 20 s.
+[run]
+epoch = 1800000000
+passes = 40
+every_secs = 30
+
+# EC2 slots are configured but spill is off, so only the Proxmox slot is offered.
+[slots]
+spill = ""
+ec2 = 2
+
+[[slot_user]]
+name = "round-controller-run-home-b1"
+prefer = ["proxmox", "ec2"]
+start_secs = 0
+hold_secs = 300
+
+[[slot_user]]
+name = "round-controller-run-other-b1"
+start_secs = 5
+hold_secs = 300
+
+# The hand driver asks through grant_for_hand: it waits for home's runner (until 300 s) and then
+# for other's (305-605 s), and is granted at 610 s.
+[[slot_user]]
+name = "round-recert-home-b2"
+hand = true
+start_secs = 10
+hold_secs = 300
+
+[[expect]]
+name = "never-two-vms-at-once"
+count = "vms-at-once"
+equals = 1
+
+[[expect]]
+name = "nothing-on-ec2-with-spill-off"
+count = "vms-at-once:ec2"
+equals = 0
+
+[[expect]]
+name = "every-user-ran-in-turn"
+count = "slot-grants"
+equals = 3
+
+# Asked at 10, 30 … 590 s.
+[[expect]]
+name = "the-hand-driver-waited"
+count = "slot-refusals:hand"
+equals = 30
+
+# other's runner was refused 15 times (5 … 285 s), the hand driver 30.
+[[expect]]
+name = "every-refusal"
+count = "slot-refusals"
+equals = 45
+
+[[expect]]
+name = "every-refusal-names-the-holder"
+count = "refusals-naming-holder"
+equals = 45
+
+[[expect]]
+name = "inverted-two-vms-at-once"
+count = "vms-at-once"
+equals = 2
+inverted = true

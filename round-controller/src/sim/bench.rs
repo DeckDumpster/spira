@@ -17,6 +17,7 @@ use crate::ports::{Ports, Store};
 use crate::real::Unserved;
 use crate::sim::verbs::FakeVerbs;
 use crate::sim::vm::FakeVm;
+use crate::slots::SlotSettings;
 
 /// Unit states by name; a unit never set is one systemd does not know.
 #[derive(Default)]
@@ -37,22 +38,52 @@ impl Units for FakeUnits {
     }
 }
 
-/// VM facts by the holder's unit name; a unit never set had no VM.
-#[derive(Default)]
-pub struct FakeVms(Mutex<BTreeMap<String, VmFact>>);
+/// VM facts by the holder's unit name; a unit never set had no VM, and a fact set `until` a time
+/// reads as no VM from then on.
+pub struct FakeVms {
+    facts: Mutex<BTreeMap<String, (VmFact, Option<u64>)>>,
+    clock: VirtualClock,
+    asked: Mutex<Vec<(String, Option<String>)>>,
+}
 
 impl FakeVms {
+    pub fn new(clock: VirtualClock) -> FakeVms {
+        FakeVms {
+            facts: Mutex::default(),
+            clock,
+            asked: Mutex::default(),
+        }
+    }
+
     pub fn set(&self, unit: &str, f: VmFact) {
-        crate::lock(&self.0).insert(unit.into(), f);
+        self.set_until(unit, f, None);
+    }
+
+    pub fn set_until(&self, unit: &str, f: VmFact, until_ms: Option<u64>) {
+        crate::lock(&self.facts).insert(unit.into(), (f, until_ms));
+    }
+
+    /// Every slot lookup: the unit and the VM id it was asked by.
+    pub fn asked(&self) -> Vec<(String, Option<String>)> {
+        crate::lock(&self.asked).clone()
+    }
+
+    fn fact(&self, unit: &str) -> VmFact {
+        use runtime::ports::Clock;
+        match crate::lock(&self.facts).get(unit) {
+            Some((f, until)) if until.is_none_or(|u| self.clock.now_ms() < u) => f.clone(),
+            _ => VmFact::NoVm,
+        }
     }
 }
 
 impl Vms for FakeVms {
     fn vm_of(&self, old: &Holder) -> VmFact {
-        crate::lock(&self.0)
-            .get(&old.unit())
-            .cloned()
-            .unwrap_or(VmFact::NoVm)
+        self.fact(&old.unit())
+    }
+    fn vm_of_slot(&self, unit: &str, vm: Option<&str>) -> VmFact {
+        crate::lock(&self.asked).push((unit.into(), vm.map(str::to_string)));
+        self.fact(unit)
     }
 }
 
@@ -117,6 +148,14 @@ pub fn bench_settings() -> LeaseSettings {
     }
 }
 
+/// Spill on with three EC2 slots: not the shipped default, so nothing passes by matching it.
+pub fn bench_slot_settings() -> SlotSettings {
+    SlotSettings {
+        ec2_slots: 3,
+        spill: true,
+    }
+}
+
 enum Front {
     Store,
     /// Every txn after the first `skip` first rewrites this key, so a CAS on it never holds.
@@ -138,6 +177,7 @@ pub struct Bench {
     pub vms: FakeVms,
     pub launch: FakeLaunch,
     pub settings: LeaseSettings,
+    pub slot_settings: SlotSettings,
     front: Mutex<Front>,
 }
 
@@ -188,6 +228,7 @@ impl Bench {
         );
         let verbs = FakeVerbs::new(vec![], vm, clock.clone()).expect("an empty script loads");
         Bench {
+            vms: FakeVms::new(clock.clone()),
             clock,
             store,
             rng: Mutex::new(SeededRng::new(seed)),
@@ -195,9 +236,9 @@ impl Bench {
             proc_: NoProc::default(),
             verbs,
             units: FakeUnits::default(),
-            vms: FakeVms::default(),
             launch: FakeLaunch::default(),
             settings,
+            slot_settings: bench_slot_settings(),
             front: Mutex::new(front),
         }
     }
@@ -214,6 +255,7 @@ impl Bench {
             vms: &self.vms,
             launcher: &self.launch,
             leases: &self.settings,
+            slots: &self.slot_settings,
         }
     }
 

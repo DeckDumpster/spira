@@ -1,0 +1,19 @@
+# The round controller's world twin of its one-proxmox-slot scenario: the sim-only actor resolves
+# the slot keys (SPIRA_ROUND_RUNNER_SLOTS_EC2 and SPIRA_ROUND_VM_SPILL) from the world's config on
+# every pass, exits 0, and starts no round VM and takes no run lock of its own: the slot API is
+# inert until the planner and the runner draw from it.
+epoch = 1800000000
+horizon = 150000
+real_actors = ["round-controller"]
+
+[[invariant]]
+name = "rc_pass_exited_nonzero"
+sql = "SELECT seq, exit FROM events WHERE actor = 'round-controller' AND kind = 'complete' AND exit <> 0"
+
+[[invariant]]
+name = "rc_changed_run_state"
+sql = "SELECT seq, 'queue' AS family, key AS what FROM run_queue UNION ALL SELECT seq, 'locks', name FROM run_locks UNION ALL SELECT seq, 'ejected', bead FROM run_ejected UNION ALL SELECT seq, 'verdicts', key FROM run_verdicts UNION ALL SELECT seq, 'gate-log', text FROM run_gate_log UNION ALL SELECT seq, 'landing-log', text FROM run_landing_log"
+
+[[expect]]
+name = "rc_passes_ran_with_the_slot_keys"
+sql = "SELECT 1 FROM events WHERE actor = 'round-controller' AND kind = 'complete' AND exit = 0"

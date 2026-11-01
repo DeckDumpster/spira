@@ -11,6 +11,7 @@ use crate::death::{Units, Vms};
 use crate::liveness::LeaseSettings;
 use crate::orphans::Launch;
 use crate::outcome::Log;
+use crate::slots::SlotSettings;
 
 pub struct Ports<'a> {
     pub clock: &'a dyn Clock,
@@ -23,6 +24,7 @@ pub struct Ports<'a> {
     pub vms: &'a dyn Vms,
     pub launcher: &'a dyn Launch,
     pub leases: &'a LeaseSettings,
+    pub slots: &'a SlotSettings,
 }
 
 impl Ports<'_> {

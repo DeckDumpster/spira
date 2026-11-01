@@ -15,6 +15,7 @@ pub mod real;
 pub mod resources;
 #[cfg(feature = "sim")]
 pub mod sim;
+pub mod slots;
 pub mod telemetry;
 
 /// A mutex's guard, poisoned or not: every lock here guards data a panic cannot leave half-written.

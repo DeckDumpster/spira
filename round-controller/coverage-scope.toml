@@ -11,3 +11,9 @@ functions = ["record_attempt", "mark_proven", "refuses"]
 [[scope]]
 path = "round-controller/src/resources.rs"
 functions = ["PassIdentity::hash"]
+
+# Named for the slot API: every branch of the grant, the budget and the hand driver's grant is
+# reported when no test takes it.
+[[scope]]
+path = "round-controller/src/slots.rs"
+functions = ["grant", "take", "SlotSettings::budget", "budget", "grant_for_hand"]

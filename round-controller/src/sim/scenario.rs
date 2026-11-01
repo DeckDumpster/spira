@@ -14,11 +14,13 @@ use crate::outcome::{utc_stamp, Cause, Kind};
 use crate::pass::{pass, pass_with, Step};
 use crate::ports::{Ports, Verb};
 use crate::resources::PassIdentity;
-use crate::sim::bench::{bench_settings, Bench};
+use crate::sim::bench::{bench_settings, bench_slot_settings, Bench};
 use crate::sim::ledger::{self as sim_ledger, IdentitySpec, LedgerConfig, LedgerStep};
 use crate::sim::runner::{Runner, RunnerScript};
+use crate::sim::slot_user::{most_at_once, SlotUser, SlotUserScript};
 use crate::sim::verbs::{Call, FakeVerbs, VerbScript};
 use crate::sim::vm::{FakeVm, VmScript};
+use crate::slots::{Pool, SlotSettings, EC2_SLOTS_KEY, SPILL_KEY};
 
 pub const PROFILES: &str = include_str!("../../scenarios/profiles.toml");
 /// The profiles every scenario runs under, in this order.
@@ -106,6 +108,18 @@ pub enum Count {
     RedriveAttempts,
     /// Seconds after the epoch of the first line about an orphan; `u64::MAX` when none was found.
     FirstOrphanSecs,
+    /// Slots the scripted slot users were granted, in one pool or all.
+    SlotGrants(Option<Pool>),
+    /// Grants refused to slot users, or to hand drivers only.
+    SlotRefusals {
+        hand: bool,
+    },
+    /// Refusals whose text named the holder of every slot not given back.
+    RefusalsNamingHolder,
+    /// The most slot users' VMs running at once, in one pool or all.
+    VmsAtOnce(Option<Pool>),
+    /// Seconds after the epoch of the first grant; `u64::MAX` when none was made.
+    FirstGrantSecs,
 }
 
 impl Count {
@@ -131,6 +145,14 @@ impl Count {
             ("renewals", None) => Some(Count::Renewals),
             ("redrive-attempts", None) => Some(Count::RedriveAttempts),
             ("first-orphan-secs", None) => Some(Count::FirstOrphanSecs),
+            ("slot-grants", None) => Some(Count::SlotGrants(None)),
+            ("slot-grants", Some(w)) => Pool::from_word(w).map(|p| Count::SlotGrants(Some(p))),
+            ("slot-refusals", None) => Some(Count::SlotRefusals { hand: false }),
+            ("slot-refusals", Some("hand")) => Some(Count::SlotRefusals { hand: true }),
+            ("refusals-naming-holder", None) => Some(Count::RefusalsNamingHolder),
+            ("vms-at-once", None) => Some(Count::VmsAtOnce(None)),
+            ("vms-at-once", Some(w)) => Pool::from_word(w).map(|p| Count::VmsAtOnce(Some(p))),
+            ("first-grant-secs", None) => Some(Count::FirstGrantSecs),
             _ => None,
         }
     }
@@ -215,7 +237,7 @@ pub struct UnitSeed {
 }
 
 /// What round-vm says of a unit's VM: `none`, `running`, `unreadable`, or `ec2-unreadable` with
-/// `launched_at` in epoch seconds.
+/// `launched_at` in epoch seconds; `until`, in epoch seconds, is when the VM is gone.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VmFactSeed {
@@ -223,6 +245,26 @@ pub struct VmFactSeed {
     pub fact: String,
     #[serde(default)]
     pub launched_at: Option<u64>,
+    #[serde(default)]
+    pub until: Option<u64>,
+}
+
+/// The slot keys a scenario runs under: `SPIRA_ROUND_VM_SPILL` and `SPIRA_ROUND_RUNNER_SLOTS_EC2`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlotSpec {
+    pub spill: String,
+    pub ec2: u32,
+}
+
+impl SlotSpec {
+    fn settings(&self) -> Result<SlotSettings, String> {
+        SlotSettings::from_cfg(&|k: &str| match k {
+            EC2_SLOTS_KEY => Ok(self.ec2.to_string()),
+            SPILL_KEY => Ok(self.spill.clone()),
+            _ => Err(format!("{k} is not a slot key")),
+        })
+    }
 }
 
 impl VmFactSeed {
@@ -282,6 +324,10 @@ struct File {
     #[serde(default)]
     launch: Vec<LaunchScript>,
     #[serde(default)]
+    slots: Option<SlotSpec>,
+    #[serde(default)]
+    slot_user: Vec<SlotUserScript>,
+    #[serde(default)]
     expect: Vec<ExpectDef>,
     #[serde(default)]
     ledger: Option<LedgerConfig>,
@@ -310,8 +356,11 @@ pub struct Scenario {
     pub vm: Vec<VmScript>,
     pub runners: Vec<RunnerScript>,
     pub units: Vec<(String, UnitState)>,
-    pub vm_facts: Vec<(String, VmFact)>,
+    /// Each unit's VM fact, and the epoch milliseconds from which its VM is gone.
+    pub vm_facts: Vec<(String, VmFact, Option<u64>)>,
     pub launches: Vec<Result<(), String>>,
+    pub slots: SlotSettings,
+    pub slot_users: Vec<SlotUserScript>,
     pub expects: Vec<Expect>,
     pub ledger: Option<LedgerConfig>,
     pub identities: BTreeMap<String, PassIdentity>,
@@ -365,7 +414,7 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
     let vm_facts = f
         .vm_fact
         .iter()
-        .map(|v| Ok((v.unit.clone(), v.fact()?)))
+        .map(|v| Ok((v.unit.clone(), v.fact()?, v.until.map(|u| u * 1000))))
         .collect::<Result<_, String>>()
         .map_err(|e| format!("scenario: {e}"))?;
     let launches = f
@@ -389,6 +438,10 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
         units,
         vm_facts,
         launches,
+        slots: f
+            .slots
+            .map_or_else(|| Ok(bench_slot_settings()), |s| s.settings())?,
+        slot_users: f.slot_user,
         expects,
         ledger: f.ledger,
         identities,
@@ -425,6 +478,7 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
     let at = &profile.name;
     let epoch_ms = sc.run.epoch * 1000;
     let mut b = Bench::at(sc.leases.clone(), epoch_ms, seed);
+    b.slot_settings = sc.slots.clone();
     for (i, s) in sc.store.iter().enumerate() {
         let data = serde_json::to_value(&s.data).expect("a TOML value is JSON");
         let obj = Object::new(data);
@@ -443,8 +497,8 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
     for (u, s) in &sc.units {
         b.units.set(u, s.clone());
     }
-    for (u, f) in &sc.vm_facts {
-        b.vms.set(u, f.clone());
+    for (u, f, until) in &sc.vm_facts {
+        b.vms.set_until(u, f.clone(), *until);
     }
     for l in &sc.launches {
         b.launch.script(l.clone());
@@ -453,6 +507,12 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
         .runners
         .iter()
         .map(|r| Runner::new(r.clone(), epoch_ms))
+        .collect::<Result<Vec<_>, String>>()
+        .map_err(|e| format!("scenario: {e}"))?;
+    let mut users = sc
+        .slot_users
+        .iter()
+        .map(|u| SlotUser::new(u.clone(), epoch_ms))
         .collect::<Result<Vec<_>, String>>()
         .map_err(|e| format!("scenario: {e}"))?;
     let seeded = b.store.head().expect("the in-memory store has a head");
@@ -469,13 +529,28 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
             let jitter = ports.next_u64() % (sc.run.jitter_secs * 1000 + 1);
             next += sc.run.every_secs * 1000 + jitter;
         }
-        while let Some((r, t)) = runners
-            .iter_mut()
-            .filter_map(|r| r.next_ms().filter(|t| *t <= next).map(|t| (r, t)))
-            .min_by_key(|(_, t)| *t)
-        {
+        loop {
+            let due = |n: Option<u64>| n.filter(|t| *t <= next);
+            let Some((t, is_user, i)) = runners
+                .iter()
+                .enumerate()
+                .filter_map(|(i, r)| due(r.next_ms()).map(|t| (t, false, i)))
+                .chain(
+                    users
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, u)| due(u.next_ms()).map(|t| (t, true, i))),
+                )
+                .min()
+            else {
+                break;
+            };
             b.clock.advance_to(t);
-            r.act(&b, &ports);
+            if is_user {
+                users[i].act(&b, &ports);
+            } else {
+                runners[i].act(&b, &ports);
+            }
         }
         b.clock.advance_to(next);
         gc.tick(next).map_err(|e| format!("store gc: {e}"))?;
@@ -501,6 +576,7 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
         .chain(crate::lock(&b.proc_.0).iter().cloned())
         .chain(b.launch.faults())
         .chain(runners.iter().flat_map(|r| r.faults.clone()))
+        .chain(users.iter().flat_map(|u| u.faults.clone()))
         .collect();
     if !faults.is_empty() {
         broken.push(format!(
@@ -540,6 +616,33 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
             Count::Launches => b.launch.launched().len() as u64,
             Count::Renewals => runners.iter().map(|r| r.renewals).sum(),
             Count::RedriveAttempts => redrive_attempts(&b),
+            Count::SlotGrants(pool) => users
+                .iter()
+                .flat_map(|u| &u.grants)
+                .filter(|(p, _)| pool.is_none_or(|w| *p == w))
+                .count() as u64,
+            Count::SlotRefusals { hand } => users
+                .iter()
+                .flat_map(|u| &u.refusals)
+                .filter(|r| !hand || r.hand)
+                .count() as u64,
+            Count::RefusalsNamingHolder => users
+                .iter()
+                .flat_map(|u| &u.refusals)
+                .filter(|r| r.named_every_holder)
+                .count() as u64,
+            Count::VmsAtOnce(pool) => most_at_once(
+                users
+                    .iter()
+                    .flat_map(|u| &u.spans)
+                    .filter(|s| pool.is_none_or(|w| s.pool == w)),
+            ),
+            Count::FirstGrantSecs => users
+                .iter()
+                .flat_map(|u| &u.grants)
+                .map(|(_, at)| (at - epoch_ms) / 1000)
+                .min()
+                .unwrap_or(u64::MAX),
             Count::FirstOrphanSecs => outcomes
                 .iter()
                 .filter(|o| matches!(o.cause, Cause::Orphan { .. }))
@@ -655,7 +758,15 @@ mod tests {
 
     #[test]
     fn an_expectation_must_count_something_the_harness_counts() {
-        for bad in ["calls:preempt", "outcomes:exploded", "seconds", "vm-runs:x"] {
+        for bad in [
+            "calls:preempt",
+            "outcomes:exploded",
+            "seconds",
+            "vm-runs:x",
+            "slot-grants:gcp",
+            "slot-refusals:robot",
+            "vms-at-once:gcp",
+        ] {
             let e = parse(&format!(
                 "{BASE}[[expect]]\nname = \"n1\"\ncount = \"{bad}\"\nequals = 0\n"
             ))
@@ -1065,5 +1176,116 @@ mod tests {
         let e = go("[[expect]]\nname = \"none\"\ncount = \"first-orphan-secs\"\nat_most = 0\n")
             .unwrap_err();
         assert!(e.contains(&format!("counted {}", u64::MAX)), "{e}");
+    }
+
+    #[test]
+    fn the_slot_section_is_read_through_the_keys_and_its_absence_is_the_benchs() {
+        let sc = parse(&format!("{BASE}[slots]\nspill = \"ec2-always\"\nec2 = 5\n")).unwrap();
+        assert_eq!(
+            sc.slots,
+            SlotSettings {
+                ec2_slots: 5,
+                spill: true
+            }
+        );
+        assert_eq!(parse(BASE).unwrap().slots, bench_slot_settings());
+        assert!(parse(&format!("{BASE}[slots]\nspill = \"\"\nec2 = -1\n")).is_err());
+        assert!(parse(&format!("{BASE}[slots]\nspil = \"\"\nec2 = 1\n"))
+            .unwrap_err()
+            .contains("spil"));
+    }
+
+    const USER: &str = "[[slot_user]]\nname = \"u1\"\nstart_secs = 0\nhold_secs = 25\n";
+
+    #[test]
+    fn slot_users_take_hold_and_release_slots_and_every_slot_count_is_counted() {
+        let expect = |n: &str, c: &str, v: u64| {
+            format!("[[expect]]\nname = \"{n}\"\ncount = \"{c}\"\nequals = {v}\n")
+        };
+        let hand = "[[slot_user]]\nname = \"h1\"\nhand = true\nprefer = [\"ec2\"]\nstart_secs = 5\nhold_secs = 5\nretry_secs = 10\n";
+        let text = [
+            "[slots]\nspill = \"\"\nec2 = 1\n",
+            USER,
+            hand,
+            &expect("g", "slot-grants", 2),
+            &expect("gp", "slot-grants:proxmox", 2),
+            &expect("ge", "slot-grants:ec2", 0),
+            &expect("r", "slot-refusals", 2),
+            &expect("rh", "slot-refusals:hand", 2),
+            &expect("rn", "refusals-naming-holder", 2),
+            &expect("v", "vms-at-once", 1),
+            &expect("vp", "vms-at-once:proxmox", 1),
+            &expect("f", "first-grant-secs", 0),
+        ]
+        .concat();
+        // u1 holds 0-25 s; h1 asks at 5 and 15, is granted at 25 and releases at 30.
+        go(&text).unwrap();
+        let none = go(&expect("f", "first-grant-secs", 0)).unwrap_err();
+        assert!(none.contains(&format!("counted {}", u64::MAX)), "{none}");
+    }
+
+    #[test]
+    fn a_slot_user_naming_no_pool_is_named_and_a_lost_slot_is_an_unscripted_fault() {
+        let e = go(&USER.replace("hold_secs", "prefer = [\"gcp\"]\nhold_secs")).unwrap_err();
+        assert!(e.contains("scenario: slot_user u1: no pool \"gcp\""), "{e}");
+        let sc = parse(&format!("{BASE}{}", USER.replace("= 25", "= 50"))).unwrap();
+        let steal = |p: &Ports, _: &str| {
+            let slot = crate::slots::Slot {
+                pool: crate::slots::Pool::Proxmox,
+                n: 0,
+            };
+            let res = crate::lease::Resource {
+                lock: slot.lock(),
+                record: None,
+            };
+            if let Some(h) = crate::lease::holder_of(p, &res).unwrap() {
+                let f = state_store::Fence {
+                    resource: res.lock.clone(),
+                    token: h.token,
+                };
+                p.store
+                    .release(
+                        &f,
+                        &Request::new(&format!("steal-{}", p.clock.now_ms()), "t", "k"),
+                    )
+                    .unwrap();
+            }
+        };
+        let e = run_steps(
+            &sc,
+            &profile(),
+            1,
+            &[Step {
+                name: "steal",
+                run: steal,
+            }],
+        )
+        .unwrap_err();
+        assert!(
+            e.contains("invariant no-unscripted-fault violated under reference-minimum: slot_user u1 lost its slot"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn a_vm_fact_until_a_time_reads_as_no_vm_from_then_on() {
+        let sc = parse(&format!(
+            "{BASE}[[vm_fact]]\nunit = \"u\"\nfact = \"running\"\nuntil = 1800000010\n"
+        ))
+        .unwrap();
+        assert_eq!(sc.vm_facts[0].2, Some(1_800_000_010_000));
+        let b = Bench::new();
+        let (u, f, until) = sc.vm_facts[0].clone();
+        b.vms.set_until(&u, f, until);
+        b.clock.advance_to(1_800_000_009_999);
+        assert!(matches!(
+            crate::death::Vms::vm_of_slot(&b.vms, "u", None),
+            VmFact::Running { .. }
+        ));
+        b.clock.advance_to(1_800_000_010_000);
+        assert_eq!(
+            crate::death::Vms::vm_of_slot(&b.vms, "u", None),
+            VmFact::NoVm
+        );
     }
 }

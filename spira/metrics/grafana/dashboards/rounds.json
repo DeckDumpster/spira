@@ -574,6 +574,39 @@
           "refId": "C"
         }
       ]
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "runner slots in use by pool",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max by (pool) (max_over_time(spira_round_controller_slots_in_use[$__interval]))",
+          "legendFormat": "{{pool}}",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

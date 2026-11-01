@@ -13,6 +13,7 @@ use round_controller::probe::{probe, ThreadSleep};
 use round_controller::real::liveness::{NoLauncher, NoVmRecords, SystemdUnits};
 use round_controller::real::verbs::{Deadlines, RealVerbs};
 use round_controller::real::{self, Unserved};
+use round_controller::slots::{self, SlotSettings};
 use round_controller::telemetry;
 use runtime::ports::{Proc, SeededRng, SysProc};
 
@@ -64,6 +65,9 @@ fn dispatch(args: &[String]) -> i32 {
                     spira_config::repos::Registry::from_env(std::env::vars().collect(), &home)
                         .all();
                 pass(p, &repos);
+                if let Ok(used) = slots::in_use(p) {
+                    telemetry::push_slots(&telemetry::sink(), &used);
+                }
                 Ok(())
             }),
         ),
@@ -90,6 +94,7 @@ fn with_ports(f: impl FnOnce(&Ports) -> Result<(), String>) -> Result<(), String
         .parse()
         .map_err(|e| format!("SPIRA_ROUND_CERTIFY_WALL_SECS: {e}"))?;
     let leases = LeaseSettings::from_cfg(&spira_config::process::cfg)?;
+    let slot_settings = SlotSettings::from_cfg(&spira_config::process::cfg)?;
     let clock = real::clock(spira_config::vtime::override_epoch());
     // The simulator pins the clock through SPIRA_NOW, and the stream with it.
     let rng = Mutex::new(SeededRng::new(clock.now_ms()));
@@ -114,6 +119,7 @@ fn with_ports(f: impl FnOnce(&Ports) -> Result<(), String>) -> Result<(), String
         vms: &NoVmRecords,
         launcher: &NoLauncher,
         leases: &leases,
+        slots: &slot_settings,
     };
     f(&ports)
 }
