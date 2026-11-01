@@ -16,19 +16,23 @@ pub const SCRATCH_PREFIX: &str = "conformance/";
 pub const LIVE_EXCLUDED: &[&str] = &["watch_returns_too_old_after_compaction"];
 
 /// One backend seen through a key prefix: every key it reads or writes is `scope` + key.
-/// Revisions stay the store's own.
+/// Revisions stay the store's own, and the scope is new at `base`, the head it was made at, so
+/// its watch log starts there: a live store's older revisions may be compacted, and are never
+/// the scope's. `gc_range` keeps the default, which filters the scope's own `events/`.
 #[derive(Clone)]
 pub struct Scoped<B: Backend + Clone> {
     inner: B,
     scope: String,
+    base: u64,
 }
 
 impl<B: Backend + Clone> Scoped<B> {
-    pub fn new(inner: B, scope: &str) -> Self {
-        Scoped {
+    pub fn new(inner: B, scope: &str) -> Result<Self> {
+        Ok(Scoped {
+            base: inner.head()?,
             inner,
             scope: scope.to_string(),
-        }
+        })
     }
 
     fn outer(&self, key: &str) -> String {
@@ -89,16 +93,27 @@ impl<B: Backend + Clone> Backend for Scoped<B> {
         self.inner.commit(expect, &batch)
     }
 
+    /// The scope's entries of the first page of the store's log that has any, so a page of
+    /// other keys never reads as caught up.
     fn log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>> {
-        Ok(self
-            .inner
-            .log(from, max_mains)?
-            .into_iter()
-            .filter_map(|mut e| {
-                e.key = e.key.strip_prefix(&self.scope)?.to_string();
-                Some(e)
-            })
-            .collect())
+        let mut from = from.max(self.base);
+        loop {
+            let page = self.inner.log(from, max_mains)?;
+            let Some(last) = page.last().map(|e| e.rev.main) else {
+                return Ok(Vec::new());
+            };
+            let mine: Vec<LogEntry> = page
+                .into_iter()
+                .filter_map(|mut e| {
+                    e.key = e.key.strip_prefix(&self.scope)?.to_string();
+                    Some(e)
+                })
+                .collect();
+            if !mine.is_empty() {
+                return Ok(mine);
+            }
+            from = last;
+        }
     }
 
     fn compact(&self, _rev: u64) -> Result<()> {
@@ -164,7 +179,7 @@ impl Rig for LiveRig {
     type B = Scoped<SqliteBackend>;
     fn fresh(&self) -> Self::B {
         let n = self.n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Scoped::new(self.backend.clone(), &format!("{}{n}/", self.scope))
+        Scoped::new(self.backend.clone(), &format!("{}{n}/", self.scope)).expect("head")
     }
     fn reopen(&self, b: &Self::B) -> Self::B {
         b.clone()

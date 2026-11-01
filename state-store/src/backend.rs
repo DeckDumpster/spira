@@ -57,7 +57,8 @@ pub trait Backend: Send + Sync {
         limit: usize,
         at: u64,
     ) -> Result<Vec<(String, Version)>>;
-    /// Applies `batch` as main `expect + 1`, or `Stale` if the head is no longer `expect`.
+    /// Applies `batch` as main `expect + 1`, or `Stale` if the head is no longer `expect`. The
+    /// contract never puts a key in a batch twice.
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64>;
     /// Whole txns with `main > from`, at most `max_mains` of them; `TooOld` if `from` is below
     /// the compaction point.

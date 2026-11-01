@@ -134,7 +134,13 @@ impl Drop for Stepped {
     }
 }
 
+/// What a statement the progress handler stopped maps to, so `read` can tell it apart.
+const INTERRUPTED: &str = "sqlite: statement interrupted";
+
 fn db(e: rusqlite::Error) -> Error {
+    if e.sqlite_error_code() == Some(rusqlite::ErrorCode::OperationInterrupted) {
+        return Error::Backend(INTERRUPTED.into());
+    }
     Error::Backend(format!("sqlite: {e}"))
 }
 
@@ -299,7 +305,8 @@ fn range_rows(
 
 impl SqliteBackend {
     /// Opens (creating if absent) the store at `path`. A second opener, in this process or
-    /// another, is refused while this handle or any clone of it lives.
+    /// another, is refused while this handle or any clone of it lives. The lock is advisory:
+    /// it stops another `SqliteBackend`, not a client that opens the file directly.
     pub fn open(path: &Path, opts: Options) -> Result<Self> {
         let lock_path = PathBuf::from(format!("{}.lock", path.display()));
         let lock_file = OpenOptions::new()
@@ -450,7 +457,7 @@ impl SqliteBackend {
         })();
         reader.deadline.store(u64::MAX, Ordering::SeqCst);
         out.map_err(|e| match e {
-            Error::Backend(m) if m.contains("interrupted") => ended(),
+            Error::Backend(m) if m == INTERRUPTED => ended(),
             e => e,
         })
     }
@@ -571,12 +578,29 @@ impl SqliteBackend {
             }
             rc => {
                 w.backup = None;
+                let _ = std::fs::remove_file(dest);
                 Err(Error::Backend(format!(
                     "backup to {}: {}",
                     dest.display(),
                     ffi::code_to_str(rc)
                 )))
             }
+        }
+    }
+
+    /// Abandons the backup in progress, if any, and removes its partial copy.
+    pub fn backup_abort(&self) -> Result<()> {
+        let mut w = lock(&self.0.writer);
+        let Some(b) = w.backup.take() else {
+            return Ok(());
+        };
+        let dest = b.dest_path.clone();
+        drop(b);
+        match std::fs::remove_file(&dest) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                Err(Error::Backend(format!("{}: {e}", dest.display())))
+            }
+            _ => Ok(()),
         }
     }
 
@@ -814,17 +838,21 @@ impl Backend for SqliteBackend {
         if to <= compacted {
             return Ok(());
         }
-        let to_i = main_i64(to)?;
+        // Everything superseded at or below `compacted` is already gone, so only the versions
+        // written in (compacted, to] can supersede a row or be a delete to drop: compaction
+        // visits that window, never the whole table.
+        let (from_i, to_i) = (main_i64(compacted)?, main_i64(to)?);
         exec(
             &tx,
-            "DELETE FROM versions WHERE main <= ?1 AND main <
-             (SELECT max(v.main) FROM versions v WHERE v.key = versions.key AND v.main <= ?1)",
-            [to_i],
+            "DELETE FROM versions WHERE rowid IN (
+                SELECT o.rowid FROM versions n JOIN versions o ON o.key = n.key AND o.main < n.main
+                WHERE n.main > ?1 AND n.main <= ?2)",
+            [from_i, to_i],
         )?;
         exec(
             &tx,
-            "DELETE FROM versions WHERE main <= ?1 AND value IS NULL",
-            [to_i],
+            "DELETE FROM versions WHERE main > ?1 AND main <= ?2 AND value IS NULL",
+            [from_i, to_i],
         )?;
         set_meta(&tx, "compacted", to)?;
         tx.commit().map_err(db)

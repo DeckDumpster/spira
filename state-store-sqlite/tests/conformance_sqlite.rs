@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use runtime::ports::VirtualClock;
 use serde_json::json;
 use state_store::conformance::{self as suite, Rig, SCENARIOS};
-use state_store::{Backend, Contract, Deleted, Error, Object, Request, Rev, Txn, Write};
+use state_store::{Backend, Contract, Error, Object, Request, Rev, Txn, Write};
 use state_store_sqlite::{BackupStep, Options, SqliteBackend};
 use testkit::TempDir;
 
@@ -117,28 +117,39 @@ fn keys_at(b: &SqliteBackend, prefix: &str, at: u64) -> Vec<(String, Vec<u8>)> {
         .collect()
 }
 
+/// Puts at 1 and 2, then the delete at 3 that compaction drops: no row is left at the head, so
+/// a counter derived from the keys or a rowid would read back 1.
 #[test]
 fn after_deleting_the_highest_revision_keys_and_reopening_the_next_main_is_greater() {
     let dir = TempDir::new("sqlite-reopen");
     let path = dir.path().join("s.db");
-    let clock = VirtualClock::new(1_000);
-    let c = contract(open(&path), &clock);
-    put(&c, "n/a", json!(1), "1");
-    put(&c, "n/b", json!(2), "2");
-    c.delete("n/b", None, &req("3")).unwrap();
-    let Deleted::Removed { rev: last } = c.delete("n/a", None, &req("4")).unwrap() else {
-        panic!("not removed")
+    let b = open(&path);
+    b.commit(0, &[put_write("n/a", b"{}", 1, None)]).unwrap();
+    b.commit(1, &[put_write("n/b", b"{}", 2, None)]).unwrap();
+    let del = Write::Delete {
+        key: "n/b".into(),
+        prev: Rev::new(2, 0),
     };
-    drop(c);
+    let last = b.commit(2, &[del]).unwrap();
+    b.compact(last).unwrap();
+    let left: Vec<(String, u64)> = b
+        .range("", None, 10, last)
+        .unwrap()
+        .into_iter()
+        .map(|(k, v)| (k, v.mod_rev.main))
+        .collect();
+    assert_eq!(left, [("n/a".to_string(), 1)], "no row is left at the head");
+    drop(b);
     let b = open(&path);
     assert_eq!(
         b.head().unwrap(),
         last,
         "the counter is read back from its meta row"
     );
+    let clock = VirtualClock::new(1_000);
     let c = contract(b, &clock);
-    let next = put(&c, "n/c", json!(3), "5");
-    assert!(next > last, "{next} <= {last}");
+    let next = put(&c, "n/c", json!(3), "after-reopen");
+    assert_eq!(next, last + 1);
 }
 
 #[test]
@@ -234,6 +245,62 @@ fn a_reader_held_past_max_read_ms_is_ended_and_the_next_checkpoint_truncates_the
         "the WAL was not truncated"
     );
     *slot.lock().unwrap() = None;
+}
+
+/// Reads its first `free` times unchanged, then jumps an hour: the reads after that are the
+/// progress handler's, inside a statement.
+struct JumpAfter {
+    calls: AtomicUsize,
+    free: AtomicUsize,
+}
+
+impl runtime::ports::Clock for JumpAfter {
+    fn now_ms(&self) -> u64 {
+        let n = self.calls.fetch_add(1, Ordering::SeqCst);
+        if n < self.free.load(Ordering::SeqCst) {
+            0
+        } else {
+            3_600_000
+        }
+    }
+}
+
+/// Every row a deleted key, so the statement scans thousands of rows and returns none: only the
+/// progress handler can see the deadline pass.
+#[test]
+fn a_single_long_statement_is_ended_past_max_read_ms_by_the_progress_handler() {
+    let dir = TempDir::new("sqlite-progress");
+    let clock = Arc::new(JumpAfter {
+        calls: AtomicUsize::new(0),
+        free: AtomicUsize::new(usize::MAX),
+    });
+    let opts = Options {
+        max_read_ms: 100,
+        readers: 1,
+        clock: clock.clone(),
+        read_probe: None,
+    };
+    let b = SqliteBackend::open(&dir.path().join("s.db"), opts).unwrap();
+    let keys: Vec<String> = (0..5_000).map(|i| format!("t/{i:05}")).collect();
+    let puts: Vec<Write> = keys.iter().map(|k| put_write(k, b"{}", 1, None)).collect();
+    b.commit(0, &puts).unwrap();
+    let dels: Vec<Write> = keys
+        .iter()
+        .enumerate()
+        .map(|(i, k)| Write::Delete {
+            key: k.clone(),
+            prev: Rev::new(1, i as u32),
+        })
+        .collect();
+    b.commit(1, &dels).unwrap();
+    assert!(b.range("t/", None, 10, 2).unwrap().is_empty());
+
+    clock.calls.store(0, Ordering::SeqCst);
+    clock.free.store(2, Ordering::SeqCst);
+    match b.range("t/", None, 10, 2) {
+        Err(Error::Backend(m)) => assert!(m.contains("max_read_ms"), "{m}"),
+        other => panic!("the long statement was not ended: {other:?}"),
+    }
 }
 
 #[test]
@@ -434,9 +501,21 @@ fn bench_conformance_on_a_populated_file_passes_and_leaves_no_conformance_keys()
             &format!("seed{i}"),
         );
     }
-    let before = c.backend().head().unwrap();
-    let real = keys_at(c.backend(), "lifecycle/", before);
+    let b = c.backend().clone();
+    b.compact(b.head().unwrap()).unwrap();
+    // More txns above the compaction point than one page of the watch log, none of them the
+    // run's: the scoped log has to start at the run, not at the store's oldest revision.
+    let mut prev = None;
+    for _ in 0..1_001 {
+        let head = b.head().unwrap();
+        b.commit(head, &[put_write("churn/k", b"{}", head + 1, prev)])
+            .unwrap();
+        prev = Some(Rev::new(head + 1, 0));
+    }
+    let before = b.head().unwrap();
+    let real = keys_at(&b, "lifecycle/", before);
     drop(c);
+    drop(b);
 
     let out = bench()
         .args(["conformance", "--path", &path.display().to_string()])

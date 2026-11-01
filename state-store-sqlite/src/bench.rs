@@ -2,7 +2,7 @@
 //! load, and the quantiles it reports. A measurement tool, never a corpus assertion.
 
 use std::fs::OpenOptions;
-use std::io::Write as _;
+use std::io::{Seek, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -78,7 +78,12 @@ pub fn parse(args: &[String]) -> std::result::Result<Command, String> {
             .ok_or_else(|| format!("{name} must be a positive number, got {v}"))
     };
     let rate = num("--rate", rate)?;
-    let duration_secs = num("--duration-secs", duration)? as u64;
+    let duration_secs = match duration {
+        None => return Err(format!("--duration-secs is required\n{USAGE}")),
+        Some(v) => v.parse::<u64>().ok().filter(|n| *n >= 1).ok_or_else(|| {
+            format!("--duration-secs must be a whole number of seconds >= 1, got {v}")
+        })?,
+    };
     let load_mb_per_s = match (&load_dir, load_mb) {
         (Some(_), Some(v)) => num("--load-mb-per-s", Some(v))? as u64,
         (Some(_), None) => return Err(format!("--load-dir needs --load-mb-per-s\n{USAGE}")),
@@ -151,6 +156,7 @@ fn io_load(dir: &Path, mb_per_s: u64, stop: Arc<AtomicBool>) -> std::io::Result<
     while !stop.load(Ordering::SeqCst) {
         if written >= LOAD_FILE_MAX {
             f.set_len(0)?;
+            f.seek(SeekFrom::Start(0))?;
             written = 0;
         }
         f.write_all(&chunk)?;
@@ -191,7 +197,13 @@ pub fn run_cas(a: &CasArgs) -> std::result::Result<Quantiles, String> {
 
     let every = Duration::from_secs_f64(1.0 / a.rate);
     let total = (a.rate * a.duration_secs as f64).ceil() as u64;
-    let run = format!("{}", std::process::id());
+    let run = format!(
+        "{}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos()),
+        std::process::id()
+    );
     let mut samples = Vec::with_capacity(total as usize);
     let start = Instant::now();
     let mut failed = None;
@@ -316,6 +328,8 @@ mod tests {
             "1"
         ]))
         .is_err());
+        let half = ["--path", "p", "--rate", "5", "--duration-secs", "0.5"];
+        assert!(parse(&args(&half)).is_err());
         assert!(parse(&args(&["--rate", "5", "--duration-secs", "1"])).is_err());
         assert!(parse(&args(&["p"])).is_err());
     }
