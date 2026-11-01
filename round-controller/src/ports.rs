@@ -20,10 +20,7 @@ pub struct Ports<'a> {
 
 impl Ports<'_> {
     pub fn next_u64(&self) -> u64 {
-        self.rng
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .next_u64()
+        crate::lock(self.rng).next_u64()
     }
 }
 
@@ -188,18 +185,25 @@ pub enum Certified {
 }
 
 impl Certified {
-    /// A red names its suites on `red=`; without one the run certified green.
-    pub fn from_fields(f: &Fields) -> Self {
-        match f.get("red") {
-            Some(r) => Certified::Red {
-                suites: r
-                    .split(',')
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .collect(),
-            },
-            None => Certified::Green,
+    /// A red names its suites on `red=`; without one the run certified green. A red naming no
+    /// suite is no verdict at all.
+    pub fn from_fields(f: &Fields) -> Result<Self, VerbRefusal> {
+        let Some(r) = f.get("red") else {
+            return Ok(Certified::Green);
+        };
+        let suites: Vec<String> = r
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        if suites.is_empty() {
+            return Err(VerbRefusal {
+                verb: Verb::Certify,
+                code: Some(0),
+                text: "queue round certify answered red= naming no suite".into(),
+            });
         }
+        Ok(Certified::Red { suites })
     }
 }
 
@@ -334,13 +338,15 @@ mod tests {
     fn a_certify_with_red_suites_is_red_and_without_is_green() {
         assert_eq!(
             Certified::from_fields(&fields("red=a,b\n")),
-            Certified::Red {
+            Ok(Certified::Red {
                 suites: vec!["a".into(), "b".into()]
-            }
+            })
         );
         assert_eq!(
             Certified::from_fields(&fields("verdict line\n")),
-            Certified::Green
+            Ok(Certified::Green)
         );
+        let e = Certified::from_fields(&fields("red=,\n")).unwrap_err();
+        assert!(e.text.contains("naming no suite"), "{}", e.text);
     }
 }

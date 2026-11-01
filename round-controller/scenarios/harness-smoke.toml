@@ -31,10 +31,10 @@ name = "nothing-written"
 count = "store-writes"
 equals = 0
 
-# The positive control: a pass that opened a round would satisfy this. Its failure, naming
-# itself, is what makes the expectations above believable.
+# The positive control: it holds only if the harness counted nothing, so its failure, naming
+# itself, shows the counter behind the expectations above can count.
 [[expect]]
-name = "inverted-a-round-was-opened"
-count = "calls:open"
-equals = 1
+name = "inverted-no-repo-visited"
+count = "outcomes:visited"
+equals = 0
 inverted = true

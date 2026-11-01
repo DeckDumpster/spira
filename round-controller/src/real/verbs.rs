@@ -71,7 +71,7 @@ fn answer(
     let f = fields(&String::from_utf8_lossy(&out.stdout));
     match out.code {
         Some(0) => Ok(f),
-        _ if c.verb == Verb::Certify && f.contains_key("red") => Ok(f),
+        Some(_) if c.verb == Verb::Certify && f.contains_key("red") => Ok(f),
         code => Err(VerbRefusal {
             verb: c.verb,
             code,
@@ -120,9 +120,9 @@ fn lost() -> VerbRefusal {
 
 impl Pending<Certified> for Spawned {
     fn poll(&self) -> Option<Result<Certified, VerbRefusal>> {
-        let mut got = self.got.lock().unwrap_or_else(|e| e.into_inner());
+        let mut got = crate::lock(&self.got);
         if got.is_none() {
-            *got = match self.rx.lock().unwrap_or_else(|e| e.into_inner()).try_recv() {
+            *got = match crate::lock(&self.rx).try_recv() {
                 Ok(r) => Some(r),
                 Err(mpsc::TryRecvError::Empty) => None,
                 Err(mpsc::TryRecvError::Disconnected) => Some(Err(lost())),
@@ -160,8 +160,8 @@ impl RoundVerbs for RealVerbs {
         );
         let c = Call::new(Verb::Certify, &[batch, repo]);
         std::thread::spawn(move || {
-            let _ =
-                tx.send(answer(&*proc_, &prog, deadline, c).map(|f| Certified::from_fields(&f)));
+            let _ = tx
+                .send(answer(&*proc_, &prog, deadline, c).and_then(|f| Certified::from_fields(&f)));
         });
         Ok(Box::new(Spawned {
             rx: Mutex::new(rx),
@@ -290,6 +290,32 @@ mod tests {
     }
 
     #[test]
+    fn open_and_eject_refuse_a_reply_without_its_head_and_open_passes_a_refusal_on() {
+        let req = OpenReq {
+            repo: "r".into(),
+            members: vec![],
+            name: None,
+        };
+        assert!(verbs(&fake(Some(0), "batch=b1\n", ""))
+            .open(&req)
+            .unwrap_err()
+            .text
+            .contains("head="));
+        assert_eq!(
+            verbs(&fake(Some(3), "", "locked"))
+                .open(&req)
+                .unwrap_err()
+                .code,
+            Some(3)
+        );
+        assert!(verbs(&fake(Some(0), "members=a\n", ""))
+            .eject(&eject_req())
+            .unwrap_err()
+            .text
+            .contains("head="));
+    }
+
+    #[test]
     fn a_zero_eject_is_typed_from_its_fields() {
         let p = fake(
             Some(0),
@@ -383,12 +409,13 @@ mod tests {
 
     /// Polls until the certify thread answers; the fake proc answers at once.
     fn settled(h: &dyn Pending<Certified>) -> Result<Certified, VerbRefusal> {
-        loop {
+        for _ in 0..1_000_000 {
             if let Some(r) = h.poll() {
                 return r;
             }
             std::thread::yield_now();
         }
+        panic!("the certify thread never answered");
     }
 
     fn certified(
@@ -437,6 +464,14 @@ mod tests {
         );
         let (r, _) = certified(&fake(Some(2), "", "fault"));
         assert_eq!(r.unwrap_err().code, Some(2));
+        let (r, _) = certified(&fake(None, "red=test-a.sh\n", "killed"));
+        assert_eq!(
+            r.unwrap_err().code,
+            None,
+            "a killed certify is no verdict, whatever it printed"
+        );
+        let (r, _) = certified(&fake(Some(0), "red=\n", ""));
+        assert!(r.unwrap_err().text.contains("naming no suite"));
     }
 
     #[test]

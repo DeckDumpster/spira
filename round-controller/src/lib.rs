@@ -10,6 +10,11 @@ pub mod real;
 pub mod sim;
 pub mod telemetry;
 
+/// A mutex's guard, poisoned or not: every lock here guards data a panic cannot leave half-written.
+pub fn lock<T: ?Sized>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// `SPIRA_SEED` as the simulator sets it; `None` when unset or not a number.
 pub fn seed_from(raw: Option<&str>) -> Option<u64> {
     raw.and_then(|s| s.trim().parse().ok())
@@ -24,5 +29,18 @@ mod tests {
         assert_eq!(seed_from(Some(" 7 ")), Some(7));
         assert_eq!(seed_from(Some("seven")), None);
         assert_eq!(seed_from(None), None);
+    }
+
+    #[test]
+    fn a_poisoned_lock_still_hands_back_its_data() {
+        let m = std::sync::Arc::new(std::sync::Mutex::new(1));
+        let m2 = m.clone();
+        let _ = std::thread::spawn(move || {
+            let _g = m2.lock().unwrap();
+            panic!("poison it");
+        })
+        .join();
+        assert!(m.is_poisoned());
+        assert_eq!(*lock(&m), 1);
     }
 }

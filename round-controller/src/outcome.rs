@@ -113,7 +113,7 @@ impl Outcome {
             Err(e) => {
                 let text = e.text.clone();
                 (
-                    Kind::Refused(e.verb),
+                    Kind::Refused(verb),
                     e.code
                         .map_or(Cause::NotRun { text: text.clone() }, |code| Cause::Exit {
                             code,
@@ -192,16 +192,13 @@ pub struct MemLog(Mutex<Vec<Outcome>>);
 
 impl MemLog {
     pub fn outcomes(&self) -> Vec<Outcome> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        crate::lock(&self.0).clone()
     }
 }
 
 impl Log for MemLog {
     fn write(&self, o: &Outcome) {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(o.clone());
+        crate::lock(&self.0).push(o.clone());
     }
 }
 

@@ -18,6 +18,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/sim-scenario-lib.sh"
 
 sim_controls_setup
+export SPIRA_SIM_CACHE="${SPIRA_SIM_CACHE:-/tmp/sim-seed-cache}"   # the control and the shard share one seed repo
 { cat "$HERE/sim/scenarios/rc-harness-smoke.toml"; printf '\n[[expect]]\nname = "rc_never_ran"\nsql = "SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM events WHERE actor = '"'"'round-controller'"'"' AND kind = '"'"'complete'"'"')"\n'; } > "$T/inverted.toml"
 grep -q 'rc_never_ran' "$T/inverted.toml" || bail "control fixture was not derived from rc-harness-smoke"
 sim_controls_run inverted "$T/inverted.toml"

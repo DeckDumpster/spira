@@ -67,8 +67,8 @@ impl FakeVm {
 
     pub fn start(self: &Arc<Self>, identity: &str) -> Box<dyn Pending<Certified>> {
         let now = self.clock.now_ms();
-        let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
-        let mut faults = self.faults.lock().unwrap_or_else(|e| e.into_inner());
+        let mut runs = crate::lock(&self.runs);
+        let mut faults = crate::lock(&self.faults);
         let live = runs.iter().filter(|r| r.ends > now).count();
         let (ms, result) = match self.scripts.iter().find(|s| s.identity == identity) {
             None => {
@@ -125,14 +125,11 @@ impl FakeVm {
     }
 
     pub fn runs(&self) -> Vec<VmRun> {
-        self.runs.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        crate::lock(&self.runs).clone()
     }
 
     pub fn faults(&self) -> Vec<String> {
-        self.faults
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        crate::lock(&self.faults).clone()
     }
 }
 
@@ -143,7 +140,7 @@ struct Handle {
 
 impl Pending<Certified> for Handle {
     fn poll(&self) -> Option<Result<Certified, VerbRefusal>> {
-        let mut runs = self.vm.runs.lock().unwrap_or_else(|e| e.into_inner());
+        let mut runs = crate::lock(&self.vm.runs);
         let r = &mut runs[self.i];
         (self.vm.clock.now_ms() >= r.ends).then(|| {
             r.collected = true;

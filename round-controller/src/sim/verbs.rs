@@ -112,15 +112,12 @@ impl FakeVerbs {
     }
 
     pub fn calls(&self) -> Vec<Call> {
-        self.calls.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        crate::lock(&self.calls).clone()
     }
 
     /// Calls nobody scripted an answer for.
     pub fn faults(&self) -> Vec<String> {
-        self.faults
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        crate::lock(&self.faults).clone()
     }
 
     fn next(
@@ -129,7 +126,7 @@ impl FakeVerbs {
         repo: &str,
         batch: Option<&str>,
     ) -> Option<Result<Fields, VerbRefusal>> {
-        let mut answers = self.answers.lock().unwrap_or_else(|e| e.into_inner());
+        let mut answers = crate::lock(&self.answers);
         let found = answers
             .iter()
             .position(|a| a.verb == verb && a.repo.as_deref().is_none_or(|r| r == repo));
@@ -141,10 +138,7 @@ impl FakeVerbs {
             at: self.clock.now_ms(),
             lock_hold_ms: a.as_ref().map_or(0, |a| a.lock_hold_ms),
         };
-        self.calls
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(call);
+        crate::lock(&self.calls).push(call);
         a.map(|a| {
             a.reply.map_err(|r| VerbRefusal {
                 verb,
@@ -161,10 +155,7 @@ impl FakeVerbs {
                 verb.word(),
                 batch.unwrap_or("-")
             );
-            self.faults
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push(what.clone());
+            crate::lock(&self.faults).push(what.clone());
             Err(VerbRefusal {
                 verb,
                 code: None,
@@ -174,10 +165,7 @@ impl FakeVerbs {
     }
 
     fn head(&self, batch: &str, head: &str) {
-        self.heads
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(batch.into(), head.into());
+        crate::lock(&self.heads).insert(batch.into(), head.into());
     }
 
     fn done(&self, verb: Verb, repo: &str, batch: &str) -> Result<Done, VerbRefusal> {
@@ -208,10 +196,7 @@ impl RoundVerbs for FakeVerbs {
         if let Some(Err(r)) = self.next(Verb::Certify, repo, Some(batch)) {
             return Err(r);
         }
-        let identity = self
-            .heads
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+        let identity = crate::lock(&self.heads)
             .get(batch)
             .cloned()
             .unwrap_or_else(|| batch.to_string());
@@ -352,6 +337,28 @@ mod tests {
         assert_eq!((e.verb, e.code), (Verb::Status, None));
         assert_eq!(v.faults(), ["unscripted call: queue round status r -"]);
         assert_eq!(v.calls().len(), 1);
+        assert!(v.open(&open_req("r")).is_err() && v.land("r", "b1").is_err());
+        assert_eq!(v.faults().len(), 3);
+    }
+
+    #[test]
+    fn a_refused_eject_and_one_answering_without_a_head_move_no_head() {
+        let (v, _, _) = fake(concat!(
+            "[[verb]]\nverb = \"eject\"\nrefuse = { code = 1, text = \"no step ci\" }\n",
+            "[[verb]]\nverb = \"eject\"\nok = { members = \"sp-b:1\" }\n",
+        ))
+        .unwrap();
+        let req = EjectReq {
+            repo: "r".into(),
+            batch: "b1".into(),
+            id: "sp-a".into(),
+            reason: "x".into(),
+            suites: vec![],
+            red: true,
+        };
+        assert_eq!(v.eject(&req).unwrap_err().code, Some(1));
+        assert!(v.eject(&req).unwrap_err().text.contains("head="));
+        assert!(crate::lock(&v.heads).is_empty());
     }
 
     #[test]

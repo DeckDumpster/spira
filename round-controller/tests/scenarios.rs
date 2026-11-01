@@ -64,7 +64,7 @@ fn harness_smoke_passes_under_both_profiles_with_its_inverted_expectation_failin
         assert_eq!(
             r.controls,
             [format!(
-                "expectation inverted-a-round-was-opened unmet under {}: counted 0, expected 1",
+                "expectation inverted-no-repo-visited unmet under {}: counted 6, expected 0",
                 r.profile
             )]
         );
@@ -77,11 +77,11 @@ fn the_inverted_expectation_fails_the_scenario_naming_itself_once_it_is_no_longe
     let flipped = text("harness-smoke").replace("inverted = true", "inverted = false");
     let e = run_all(&flipped).unwrap_err();
     assert!(
-        e.contains("expectation inverted-a-round-was-opened unmet under default"),
+        e.contains("expectation inverted-no-repo-visited unmet under default"),
         "{e}"
     );
     assert!(
-        e.contains("expectation inverted-a-round-was-opened unmet under reference-minimum"),
+        e.contains("expectation inverted-no-repo-visited unmet under reference-minimum"),
         "{e}"
     );
 }

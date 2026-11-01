@@ -9,7 +9,7 @@ use serde::Deserialize;
 use state_store::{Config, Contract, MemBackend, Object, Request};
 
 use crate::outcome::{utc_stamp, Kind, MemLog};
-use crate::pass::{pass_with, Step, STEPS};
+use crate::pass::{pass, pass_with, Step};
 use crate::ports::{Ports, Verb};
 use crate::sim::verbs::{Call, FakeVerbs, VerbScript};
 use crate::sim::vm::{FakeVm, VmScript};
@@ -191,10 +191,7 @@ struct NoProc(Mutex<Vec<String>>);
 
 impl Proc for NoProc {
     fn run(&self, spec: &ProcSpec) -> Result<ProcOutput, String> {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(format!("spawned {}", spec.prog));
+        crate::lock(&self.0).push(format!("spawned {}", spec.prog));
         Err(format!("a scenario spawns no process: {}", spec.prog))
     }
 }
@@ -209,15 +206,22 @@ pub struct Report {
 }
 
 pub fn run(sc: &Scenario, profile: &Profile, seed: u64) -> Result<Report, String> {
-    run_steps(sc, profile, seed, STEPS)
+    run_with(sc, profile, seed, &|p, repos| pass(p, repos))
 }
 
+/// [`run`] with `steps` in place of the registered ones: a test of the harness itself.
 pub fn run_steps(
     sc: &Scenario,
     profile: &Profile,
     seed: u64,
     steps: &[Step],
 ) -> Result<Report, String> {
+    run_with(sc, profile, seed, &|p, repos| pass_with(p, repos, steps))
+}
+
+type Pass<'a> = dyn Fn(&Ports, &[String]) + 'a;
+
+fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Report, String> {
     let at = &profile.name;
     let clock = VirtualClock::new(sc.run.epoch * 1000);
     let store = Contract::open(
@@ -227,14 +231,14 @@ pub fn run_steps(
             min_lock_ttl_ms: 1000,
         },
     )
-    .map_err(|e| format!("store: {e}"))?;
+    .expect("a fresh in-memory store opens");
     for (i, s) in sc.store.iter().enumerate() {
-        let data =
-            serde_json::to_value(&s.data).map_err(|e| format!("store seed {}: {e}", s.key))?;
-        let obj = s.ttl_secs.map_or_else(
-            || Object::new(data.clone()),
-            |t| Object::new(data.clone()).with_ttl(t),
-        );
+        let data = serde_json::to_value(&s.data).expect("a TOML value is JSON");
+        let obj = Object::new(data);
+        let obj = match s.ttl_secs {
+            Some(t) => obj.with_ttl(t),
+            None => obj,
+        };
         store
             .create(
                 &s.key,
@@ -243,7 +247,7 @@ pub fn run_steps(
             )
             .map_err(|e| format!("store seed {}: {e}", s.key))?;
     }
-    let seeded = store.head().map_err(|e| format!("store: {e}"))?;
+    let seeded = store.head().expect("the in-memory store has a head");
     let vm = FakeVm::new(sc.vm.clone(), profile.clone(), clock.clone());
     let verbs = FakeVerbs::new(sc.verbs.clone(), vm.clone(), clock.clone())
         .map_err(|e| format!("scenario: {e}"))?;
@@ -265,7 +269,7 @@ pub fn run_steps(
             let jitter = ports.next_u64() % (sc.run.jitter_secs * 1000 + 1);
             clock.advance(sc.run.every_secs * 1000 + jitter);
         }
-        pass_with(&ports, &sc.repos, steps);
+        go(&ports, &sc.repos);
     }
 
     let mut broken: Vec<String> = Vec::new();
@@ -277,14 +281,7 @@ pub fn run_steps(
         .faults()
         .into_iter()
         .chain(verbs.faults())
-        .chain(
-            proc_
-                .0
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .iter()
-                .cloned(),
-        )
+        .chain(crate::lock(&proc_.0).iter().cloned())
         .collect();
     if !faults.is_empty() {
         broken.push(format!(
@@ -294,7 +291,7 @@ pub fn run_steps(
     }
 
     let (outcomes, calls) = (log.outcomes(), verbs.calls());
-    let writes = store.head().map_err(|e| format!("store: {e}"))? - seeded;
+    let writes = store.head().expect("the in-memory store has a head") - seeded;
     let mut controls = Vec::new();
     for e in &sc.expects {
         let got = match &e.count {
@@ -337,7 +334,7 @@ pub fn run_steps(
 pub fn run_all(text: &str, seed: u64) -> Result<Vec<Report>, String> {
     let sc = parse(text)?;
     let (mut ok, mut bad) = (Vec::new(), Vec::new());
-    for p in profiles()? {
+    for p in profiles().expect("the shipped profiles parse") {
         match run(&sc, &p, seed) {
             Ok(r) => ok.push(r),
             Err(e) => bad.push(e),
@@ -477,6 +474,11 @@ mod tests {
         let _ = p.verbs.certify(repo, "b1");
     }
 
+    fn certified(p: &Ports, repo: &str) {
+        let h = p.verbs.certify(repo, "b1").unwrap();
+        assert_eq!(h.poll(), Some(Ok(crate::ports::Certified::Green)));
+    }
+
     fn spawning(p: &Ports, _: &str) {
         let _ = p.proc_.run(&ProcSpec {
             prog: "git".into(),
@@ -556,6 +558,21 @@ mod tests {
             e.contains("unscripted call: queue round open b -"),
             "a scripted answer is used once: {e}"
         );
+    }
+
+    #[test]
+    fn a_pass_whose_verdict_was_read_keeps_the_invariant_and_every_run_is_counted() {
+        let sc = parse(&format!("{BASE}[[vm]]\nidentity = \"b1\"\nverdict = \"green\"\nduration_secs = 0\n[[expect]]\nname = \"runs\"\ncount = \"vm-runs\"\nequals = 4\n")).unwrap();
+        run_steps(
+            &sc,
+            &profile(),
+            1,
+            &[Step {
+                name: "certify",
+                run: certified,
+            }],
+        )
+        .unwrap();
     }
 
     #[test]
