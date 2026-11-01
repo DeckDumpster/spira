@@ -14,7 +14,7 @@ while IFS= read -r c; do [ -n "$c" ] && words+=(-p "$c"); done < "$LIST"
 # Per Ryan 2026-11-01: a build and its tests share the host with other builders, so neither
 # claims every core. nproc inside a container reports the whole host.
 cores="$(nproc 2>/dev/null || echo 2)"
-jobs="${CARGO_BUILD_JOBS:-8}"
+jobs="${CARGO_BUILD_JOBS:-6}"
 [ "$jobs" -le "$cores" ] 2>/dev/null || jobs="$cores"
 threads="${RUST_TEST_THREADS:-4}"
 # Test temp files go to the container's tmpfs /tmp, never the checkout's disk.
