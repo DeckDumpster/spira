@@ -1,5 +1,5 @@
 //! The replay fixtures are typed records, not text: every line of every file in
-//! `sim/fixtures/replay/<slice>/` deserialises into its closed shape, with unknown fields
+//! `sim/fixtures/replay/<slice>/*.ndjson` deserialises into its closed shape, with unknown fields
 //! refused and every id, repo, sha and stamp in its anonymised form. A field of free text added
 //! by a later capture fails here, before a reader starts to depend on it.
 
@@ -359,13 +359,13 @@ fn load_slice(dir: &Path) -> Result<Vec<(&'static str, usize)>, String> {
         out.push((f, p(&read(f)?).map_err(|e| format!("{f}: {e}"))?));
         Ok(())
     };
-    each("round.jsonl", parse::<Round>)?;
-    each("cert_pass.jsonl", parse::<CertPass>)?;
-    each("transition.jsonl", parse::<Transition>)?;
-    each("stop.jsonl", parse::<Stop>)?;
-    each("land.jsonl", parse::<Land>)?;
-    each("alarm_attempt.jsonl", parse::<AlarmAttempt>)?;
-    each("attribution.jsonl", parse::<Attribution>)?;
+    each("round.ndjson", parse::<Round>)?;
+    each("cert_pass.ndjson", parse::<CertPass>)?;
+    each("transition.ndjson", parse::<Transition>)?;
+    each("stop.ndjson", parse::<Stop>)?;
+    each("land.ndjson", parse::<Land>)?;
+    each("alarm_attempt.ndjson", parse::<AlarmAttempt>)?;
+    each("attribution.ndjson", parse::<Attribution>)?;
     Ok(out)
 }
 
@@ -378,7 +378,7 @@ fn every_line_of_every_slice_deserialises_into_its_closed_shape() {
         let lines: usize = counts.iter().map(|(_, n)| n).sum();
         eprintln!("fixture {slice}: {lines} lines in {ms} ms (goal: under 100 ms per slice) {counts:?}");
         for (f, n) in &counts {
-            if *f != "stop.jsonl" {
+            if *f != "stop.ndjson" {
                 assert!(*n > 0, "{slice}/{f} is empty");
             }
         }
@@ -387,7 +387,7 @@ fn every_line_of_every_slice_deserialises_into_its_closed_shape() {
 
 #[test]
 fn a_line_with_an_extra_text_field_is_refused() {
-    let text = std::fs::read_to_string(root().join("1031").join("round.jsonl")).unwrap();
+    let text = std::fs::read_to_string(root().join("1031").join("round.ndjson")).unwrap();
     let first = text.lines().next().unwrap();
     assert!(parse::<Round>(first).is_ok(), "the unplanted line parses: {first}");
     let planted = format!("{},\"note\":\"stacked on the parent, which never landed\"}}", first.trim_end_matches('}'));

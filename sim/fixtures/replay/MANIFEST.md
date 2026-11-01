@@ -2,6 +2,8 @@
 
 Typed records of the loop's own history, for the replay (sim), the goodput test and its 20-day scenario test. Every line is a closed shape (`sim/tests/fixture_schema.rs`), stamped by its producer's own clock in UTC. No certify or gate output, `.result` text, log line, title, body, path or hostname is kept.
 
+Records are newline-delimited JSON, one object per line, in `.ndjson` files: the harness refuses any `*.jsonl` path as beads data (`spira/exclude.sh`).
+
 ## Slices
 
 | Slice | Window (UTC) | Why this window |
@@ -46,16 +48,17 @@ Captured by the operator's capture program (`capture.sh <capture-dir> <worktree>
 | tsd | 2026-11-01T11:23:58Z |
 | logs | 2026-11-01T11:23:58Z |
 | git | 2026-11-01T11:24:01Z |
+| written | 2026-11-01T11:24:02Z |
 
 | File | Source | 1021-1025 lines | 1031 lines |
 |---|---|---|---|
-| `round.jsonl` | lifecycle `batch` rows and applied `batch` events (state changes), members from `MemberAdded`/`Eject`; `cause` from `run/tsd/cert-pass.jsonl` for a pass's end; `verdict` from `run/tsd/batch-round.jsonl`; `parent` from the batch ids `run/rounds.log` names in its stacked-round refusals | 3436 | 1183 |
-| `cert_pass.jsonl` | `run/tsd/cert-pass.jsonl`; `pass_key` is a keyed hash of the batch's (member, tip) set when the lifecycle started that pass | 695 | 252 |
-| `transition.jsonl` | applied lifecycle `batch` and `bead` events, heartbeats (`Renew`, `Phase`) left out | 13170 | 4016 |
-| `stop.jsonl` | typed by hand (see below): this host keeps scoped stops as current-state files and no stop history | 0 | 5 |
-| `land.jsonl` | lifecycle `bead` events entering LANDED, with the land commit from the bead's `delivery` row; `reverts` typed by hand | 471 | 49 |
-| `alarm_attempt.jsonl` | `run/reconciler.log` alarm lines (escalate, no-effect mail, raise-ask) and the batcher's failed land-unverified alarms in `run/rounds.log`, each timed by the abandon of the round it names | 35 | 42 |
-| `attribution.jsonl` | lifecycle `PassRed` followed by an `Eject` in the same batch before the next pass: the ejected member is the owner, the other members are innocent | 30 | 13 |
+| `round.ndjson` | lifecycle `batch` rows and applied `batch` events (state changes), members from `MemberAdded`/`Eject`; `cause` from `run/tsd/cert-pass.jsonl` for a pass's end; `verdict` from `run/tsd/batch-round.jsonl`; `parent` from the batch ids `run/rounds.log` names in its stacked-round refusals | 3436 | 1183 |
+| `cert_pass.ndjson` | `run/tsd/cert-pass.jsonl`; `pass_key` is a keyed hash of the batch's (member, tip) set when the lifecycle started that pass | 695 | 252 |
+| `transition.ndjson` | applied lifecycle `batch` and `bead` events, heartbeats (`Renew`, `Phase`) left out | 13170 | 4016 |
+| `stop.ndjson` | typed by hand (see below): this host keeps scoped stops as current-state files and no stop history | 0 | 5 |
+| `land.ndjson` | lifecycle `bead` events entering LANDED, with the land commit from the bead's `delivery` row; `reverts` typed by hand | 471 | 49 |
+| `alarm_attempt.ndjson` | `run/reconciler.log` alarm lines (escalate, no-effect mail, raise-ask) and the batcher's failed land-unverified alarms in `run/rounds.log`, each timed by the abandon of the round it names | 35 | 42 |
+| `attribution.ndjson` | lifecycle `PassRed` followed by an `Eject` in the same batch before the next pass: the ejected member is the owner, the other members are innocent | 30 | 13 |
 | `landed-20d.tsv` | lifecycle `bead` events entering LANDED; git `: land` commits per throughput-bounds §1; direct and round-merge landings | 20 days | |
 
 What the builder left out, and why:
@@ -77,9 +80,9 @@ What the builder left out, and why:
 
 - `b-1226` (the landing-stop bead): `paused` at its first over-cap pass after it landed (cert-pass, 11:23:43Z), `unpaused` when its revert `b-1261` entered LANDED (15:32:49Z). The revert's `land` record carries `reverts: b-1226`, typed from the revert commit's subject.
 - `b-1264` (the disk-preflight bead): `paused` at the first EC2 pass refused after it landed (17:24:31Z, `infra` with no suites run), `unpaused` at the next pass whose suites started (19:25:00Z).
-- The world halt at 19:44:36Z is the halt file's modification time. No release falls inside the slice. No stop history exists for 10-21..25, so that slice's `stop.jsonl` is empty.
+- The world halt at 19:44:36Z is the halt file's modification time. No release falls inside the slice. No stop history exists for 10-21..25, so that slice's `stop.ndjson` is empty.
 
-**The two ids a join needs.** `cert_pass.batch` is the lifecycle batch id, the same id `round.batch` and `attribution.batch` carry. The TSD `round-attribution` family does not: its `round` field is the batcher's start time in unix seconds, never a batch id, and over the 20 days it holds 0 rows. Reds and their owners are therefore taken from the lifecycle (`attribution.jsonl`), not from `round-attribution`.
+**The two ids a join needs.** `cert_pass.batch` is the lifecycle batch id, the same id `round.batch` and `attribution.batch` carry. The TSD `round-attribution` family does not: its `round` field is the batcher's start time in unix seconds, never a batch id, and over the 20 days it holds 0 rows. Reds and their owners are therefore taken from the lifecycle (`attribution.ndjson`), not from `round-attribution`.
 
 ## The measured tolerance
 
@@ -100,7 +103,7 @@ Each is the output of the command beside it, run from the repository root.
 **10-31: rounds cut per repo**
 
 ```sh
-jq -r 'select(.state_from=="NONE" and .at>="2026-10-31")|.repo' sim/fixtures/replay/1031/round.jsonl | sort | uniq -c
+jq -r 'select(.state_from=="NONE" and .at>="2026-10-31")|.repo' sim/fixtures/replay/1031/round.ndjson | sort | uniq -c
 ```
 
 ```
@@ -112,7 +115,7 @@ jq -r 'select(.state_from=="NONE" and .at>="2026-10-31")|.repo' sim/fixtures/rep
 **10-31: rounds landed per repo**
 
 ```sh
-jq -r 'select(.state_to=="LANDED" and .at>="2026-10-31")|.repo' sim/fixtures/replay/1031/round.jsonl | sort | uniq -c
+jq -r 'select(.state_to=="LANDED" and .at>="2026-10-31")|.repo' sim/fixtures/replay/1031/round.ndjson | sort | uniq -c
 ```
 
 ```
@@ -124,7 +127,7 @@ jq -r 'select(.state_to=="LANDED" and .at>="2026-10-31")|.repo' sim/fixtures/rep
 **10-31: rounds abandoned per repo, by the batch-round verdict joined to each (none = no batch-round row)**
 
 ```sh
-jq -r 'select(.state_to=="ABANDONED" and .at>="2026-10-31")|"\(.repo) \(.verdict // "none")"' sim/fixtures/replay/1031/round.jsonl | sort | uniq -c
+jq -r 'select(.state_to=="ABANDONED" and .at>="2026-10-31")|"\(.repo) \(.verdict // "none")"' sim/fixtures/replay/1031/round.ndjson | sort | uniq -c
 ```
 
 ```
@@ -142,7 +145,7 @@ jq -r 'select(.state_to=="ABANDONED" and .at>="2026-10-31")|"\(.repo) \(.verdict
 **10-31: certification passes per repo by cause**
 
 ```sh
-jq -r '"\(.repo) \(.cause)"' sim/fixtures/replay/1031/cert_pass.jsonl | sort | uniq -c
+jq -r '"\(.repo) \(.cause)"' sim/fixtures/replay/1031/cert_pass.ndjson | sort | uniq -c
 ```
 
 ```
@@ -161,7 +164,7 @@ jq -r '"\(.repo) \(.cause)"' sim/fixtures/replay/1031/cert_pass.jsonl | sort | u
 **10-31: green passes against landings, per repo (green landed)**
 
 ```sh
-for r in repo-a repo-b repo-c; do echo "$r $(jq -r --arg r $r 'select(.repo==$r and .cause=="green")|.at' sim/fixtures/replay/1031/cert_pass.jsonl | wc -l) $(jq -r --arg r $r 'select(.repo==$r and .at>="2026-10-31")|.at' sim/fixtures/replay/1031/land.jsonl | wc -l)"; done
+for r in repo-a repo-b repo-c; do echo "$r $(jq -r --arg r $r 'select(.repo==$r and .cause=="green")|.at' sim/fixtures/replay/1031/cert_pass.ndjson | wc -l) $(jq -r --arg r $r 'select(.repo==$r and .at>="2026-10-31")|.at' sim/fixtures/replay/1031/land.ndjson | wc -l)"; done
 ```
 
 ```
@@ -173,7 +176,7 @@ repo-c 1 1
 **10-31: the most-repeated (member, tip) pass starts, per repo**
 
 ```sh
-jq -r 'select(.state_from=="OPEN" and .state_to=="CI_RUNNING" and .at>="2026-10-31")|.repo as $r|.members[]|"\($r) \(.bead)@\(.tip)"' sim/fixtures/replay/1031/round.jsonl | sort | uniq -c | sort -rn | head -3
+jq -r 'select(.state_from=="OPEN" and .state_to=="CI_RUNNING" and .at>="2026-10-31")|.repo as $r|.members[]|"\($r) \(.bead)@\(.tip)"' sim/fixtures/replay/1031/round.ndjson | sort | uniq -c | sort -rn | head -3
 ```
 
 ```
@@ -185,7 +188,7 @@ jq -r 'select(.state_from=="OPEN" and .state_to=="CI_RUNNING" and .at>="2026-10-
 **10-31: the home repo's longest gap between landings, in minutes**
 
 ```sh
-jq -r 'select(.repo=="repo-a" and .at>="2026-10-31")|.at|fromdate' sim/fixtures/replay/1031/land.jsonl | awk 'NR>1{g=$1-p; if(g>m)m=g} {p=$1} END{printf "%.0f\n", m/60}'
+jq -r 'select(.repo=="repo-a" and .at>="2026-10-31")|.at|fromdate' sim/fixtures/replay/1031/land.ndjson | awk 'NR>1{g=$1-p; if(g>m)m=g} {p=$1} END{printf "%.0f\n", m/60}'
 ```
 
 ```
@@ -195,7 +198,7 @@ jq -r 'select(.repo=="repo-a" and .at>="2026-10-31")|.at|fromdate' sim/fixtures/
 **10-31: rounds stacked on an unlanded parent (distinct children), and the parent**
 
 ```sh
-jq -r 'select(.parent)|"\(.parent) \(.batch)"' sim/fixtures/replay/1031/round.jsonl | sort -u | awk '{n[$1]++} END{for(p in n) print n[p], p}'
+jq -r 'select(.parent)|"\(.parent) \(.batch)"' sim/fixtures/replay/1031/round.ndjson | sort -u | awk '{n[$1]++} END{for(p in n) print n[p], p}'
 ```
 
 ```
@@ -205,7 +208,7 @@ jq -r 'select(.parent)|"\(.parent) \(.batch)"' sim/fixtures/replay/1031/round.js
 **10-31: the landing-stop bead's stop window, in minutes**
 
 ```sh
-jq -r 'select(.bead=="b-1226")|.at|fromdate' sim/fixtures/replay/1031/stop.jsonl | paste -sd' ' | awk '{printf "%.1f\n", ($2-$1)/60}'
+jq -r 'select(.bead=="b-1226")|.at|fromdate' sim/fixtures/replay/1031/stop.ndjson | paste -sd' ' | awk '{printf "%.1f\n", ($2-$1)/60}'
 ```
 
 ```
@@ -215,7 +218,7 @@ jq -r 'select(.bead=="b-1226")|.at|fromdate' sim/fixtures/replay/1031/stop.jsonl
 **10-31: alarm attempts by caller, kind and outcome**
 
 ```sh
-jq -r '"\(.caller) \(.kind) \(.outcome) \(.reason_code)"' sim/fixtures/replay/1031/alarm_attempt.jsonl | sort | uniq -c
+jq -r '"\(.caller) \(.kind) \(.outcome) \(.reason_code)"' sim/fixtures/replay/1031/alarm_attempt.ndjson | sort | uniq -c
 ```
 
 ```
@@ -227,7 +230,7 @@ jq -r '"\(.caller) \(.kind) \(.outcome) \(.reason_code)"' sim/fixtures/replay/10
 **10-21..25: rounds cut and landed in each held-out lane (cut landed)**
 
 ```sh
-for r in repo-d repo-e; do echo "$r $(jq -r --arg r $r 'select(.repo==$r and .state_from=="NONE" and .at>="2026-10-21T07")|.at' sim/fixtures/replay/1021-1025/round.jsonl | wc -l) $(jq -r --arg r $r 'select(.repo==$r and .state_to=="LANDED" and .at>="2026-10-21T07")|.at' sim/fixtures/replay/1021-1025/round.jsonl | wc -l)"; done
+for r in repo-d repo-e; do echo "$r $(jq -r --arg r $r 'select(.repo==$r and .state_from=="NONE" and .at>="2026-10-21T07")|.at' sim/fixtures/replay/1021-1025/round.ndjson | wc -l) $(jq -r --arg r $r 'select(.repo==$r and .state_to=="LANDED" and .at>="2026-10-21T07")|.at' sim/fixtures/replay/1021-1025/round.ndjson | wc -l)"; done
 ```
 
 ```
@@ -238,7 +241,7 @@ repo-e 88 6
 **10-21..25: rounds abandoned in each held-out lane, by verdict**
 
 ```sh
-jq -r 'select((.repo=="repo-d" or .repo=="repo-e") and .state_to=="ABANDONED" and .at>="2026-10-21T07")|"\(.repo) \(.verdict // "none")"' sim/fixtures/replay/1021-1025/round.jsonl | sort | uniq -c
+jq -r 'select((.repo=="repo-d" or .repo=="repo-e") and .state_to=="ABANDONED" and .at>="2026-10-21T07")|"\(.repo) \(.verdict // "none")"' sim/fixtures/replay/1021-1025/round.ndjson | sort | uniq -c
 ```
 
 ```
