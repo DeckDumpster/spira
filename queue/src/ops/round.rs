@@ -284,7 +284,7 @@ fn pass_verdict_event(
 /// The pass a `LateBoundary` refusal names: a boundary for a pass that already has its verdict,
 /// which the machine left untouched, so the event is done rather than refused.
 fn late_pass(refusal: &str) -> Option<u32> {
-    let rest = &refusal[refusal.find("LateBoundary {")?..];
+    let rest = &refusal[refusal.find("refused: Some(LateBoundary {")?..];
     let digits = rest[rest.rfind("pass: ")? + "pass: ".len()..]
         .split(|c: char| !c.is_ascii_digit())
         .next()?;
@@ -314,7 +314,9 @@ where
         }
         Err((_, out)) if late_pass(&out).is_some() => {
             let n = late_pass(&out).unwrap_or_default();
-            w.out(format!("queue.sh {label}: ignored: pass {n} already has its verdict"));
+            w.out(format!(
+                "queue.sh {label}: ignored: pass {n} already has its verdict"
+            ));
             OK
         }
         Err((rc, out)) => {
@@ -2665,6 +2667,7 @@ fn certify_pass(
     let already_green = reds.is_empty() && phase_of(w, batch) == "green";
     // round-vm records a red that ended the pass before its suites (lint, a fence) itself.
     let judged_red = !reds.is_empty()
+        && reds.iter().all(|r| r == LINT_RED || r.starts_with(FENCE_RED_PREFIX))
         && phase_of(w, batch) == "attributing"
         && pass.is_some()
         && w.lc.batch_pass(batch).map(|(n, _)| n) == pass;

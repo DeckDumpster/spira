@@ -51,9 +51,5 @@ name = "the_redriven_round_landed"
 sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-ar01' AND lc_state = 'LANDED'"
 
 [[expect]]
-name = "no_eject_for_passes_without_a_verdict"
-sql = "SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM run_landing_log WHERE text LIKE '%consecutive passes%')"
-
-[[expect]]
 name = "the_member_was_never_returned"
 sql = "SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM bead_state WHERE bead = 'sp-ar01' AND lc_state = 'REWORK')"

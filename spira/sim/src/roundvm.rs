@@ -198,9 +198,9 @@ fn queue_round(bin: &Path, verb: &str, r: &Run, batch: &str, args: &[&str]) -> R
 }
 
 /// A pass that a red step ended before any suite ran and before any tree was tested: only the
-/// steps' results, nothing installed. On a round's batch the verdict is recorded first and the
-/// suites boundary and on-red hooks follow it, in the real round-vm's order; a refused boundary
-/// ends the pass a fault, as it does there.
+/// steps' results, nothing installed. On a round's batch each step is reported failed and the
+/// verdict recorded, then the on-red hooks and suites boundary follow, in the real round-vm's
+/// order; a refused boundary ends the pass a fault, as it does there.
 fn ended_early(world: &Path, r: &Run, env: &dyn Fn(&str) -> Option<String>, steps: &[String], now: u64) -> Result<(i32, String), String> {
     std::fs::create_dir_all(&r.results).map_err(|e| e.to_string())?;
     for s in steps {
@@ -209,6 +209,11 @@ fn ended_early(world: &Path, r: &Run, env: &dyn Fn(&str) -> Option<String>, step
     let mut said = format!("sim round-vm: red before any suite ran: {}\n", steps.join(","));
     if let Some(batch) = r.round_batch.as_deref() {
         let bin = release_bin(world, env)?;
+        for s in steps {
+            if let Err(e) = queue_round(&bin, "failed", r, batch, &["--suite", s]) {
+                said.push_str(&format!("sim round-vm: {e}\n"));
+            }
+        }
         if let Err(e) = queue_round(&bin, "pass-verdict", r, batch, &["--verdict", "red", "--red-suites", &steps.join(",")]) {
             said.push_str(&format!("sim round-vm: {e}\n"));
         }

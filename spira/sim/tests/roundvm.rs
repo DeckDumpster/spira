@@ -148,7 +148,7 @@ fn red_early_on_a_round_records_the_verdict_before_its_boundaries() {
     assert_eq!(code, 1, "{err}");
     assert_eq!(
         std::fs::read_to_string(&log).unwrap(),
-        "queue round pass-verdict b-1 sim --verdict red --red-suites spira-lint\nqueue round suites-started b-1 sim\n"
+        "queue round failed b-1 sim --suite spira-lint\nqueue round pass-verdict b-1 sim --verdict red --red-suites spira-lint\nqueue round suites-started b-1 sim\n"
     );
     assert!(std::fs::read_to_string(&hooks).unwrap().contains("spira-lint"), "the on-red hook fired for the red step");
 }
