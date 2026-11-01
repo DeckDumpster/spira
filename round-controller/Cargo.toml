@@ -1,0 +1,29 @@
+[package]
+name = "round-controller"
+version = "0.1.0"
+edition = "2021"
+description = "round-controller — rounds as resources with one owner and one store: injected ports, typed stamped outcomes, and the scenario harness its every branch is driven through. Inert: nothing installs it."
+
+[lib]
+name = "round_controller"
+
+[[bin]]
+name = "round-controller"
+path = "src/main.rs"
+
+[features]
+sim = ["dep:toml"]
+
+[dependencies]
+batcher = { path = "../batcher" }
+lifecycle = { path = "../lifecycle" }
+runtime = { path = "../runtime" }
+spira-config = { path = "../spira-config" }
+spira-otel = { path = "../spira-otel" }
+state-store = { path = "../state-store" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = { version = "0.8", optional = true }
+
+[dev-dependencies]
+round-controller = { path = ".", features = ["sim"] }

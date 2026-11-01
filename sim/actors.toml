@@ -40,3 +40,12 @@ name = "publish"
 command = "queue publish-settle"
 timer = "spira-publish.timer"
 duration = "land.phase.tools"
+
+# The round controller, run only by world scenarios that select it through real_actors. Its
+# units live under sim/units, which nothing installs: it is never a production shadow run.
+[[actor]]
+name = "round-controller"
+command = "round-controller pass"
+timer = "spira-round-controller.timer"
+duration = "land.phase.tools"
+sim_only = true

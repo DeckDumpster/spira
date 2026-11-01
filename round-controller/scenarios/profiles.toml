@@ -1,0 +1,19 @@
+# The hardware every controller scenario runs under. Each scenario runs once per profile.
+
+[default]
+runner_slots = 2
+vm_vcpus = 16
+vm_mem_mib = 32768
+duration_factor = 1.0
+pass_cap_secs = 900
+
+# The smallest box the controller must be correct on: one runner slot and a 2 vCPU / 4096 MiB
+# round VM. Proving ordering, slots and no lost verdict here is the simulator's job; memory and
+# a real over-cap are not visible to it.
+[reference-minimum]
+runner_slots = 1
+vm_vcpus = 2
+vm_mem_mib = 4096
+duration_factor = 8.0
+pass_cap_secs = 7200
+note = "duration_factor is a goal, not a measurement: 16 vCPU over 2, re-measured by round-controller/tiny-hardware, one real round on a 2 vCPU / 4 GB round VM, whose wall replaces it"

@@ -737,9 +737,9 @@ pub fn drive(
         let specs = load_specs(release, &sc.real_actors)?;
         let durations = sim::fit::Durations::parse(&read(&release.join("sim/durations.toml"))?)?;
         for spec in &specs {
-            let timer = read(&release.join("systemd").join(&spec.timer))?;
+            let timer = read(&spec.units_in(release).join(&spec.timer))?;
             let service = sim::units::timer_target(&spec.timer, &timer);
-            sim::units::require_oneshot(&service, &read(&release.join("systemd").join(&service))?)?;
+            sim::units::require_oneshot(&service, &read(&spec.units_in(release).join(&service))?)?;
             let schedule = sim::units::parse_timer(&timer).map_err(|e| format!("{}: {e}", spec.timer))?;
             let model = durations.series.get(&spec.duration).ok_or_else(|| format!("{}: no fitted series {:?}", spec.name, spec.duration))?.clone();
             let (command, call) = (spec.command.clone(), call.clone());
