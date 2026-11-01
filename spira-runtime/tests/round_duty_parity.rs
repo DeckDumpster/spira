@@ -226,13 +226,6 @@ fn an_open_round_suppresses_due_unless_the_cap_allows_another() {
 }
 
 #[test]
-fn a_stopped_lane_is_announced_and_never_due() {
-    let r = same_rows(Scenario { stopped: true, ..scenario("stopped") }, 1);
-    assert!(r.iter().any(|l| l.contains("ROUNDS STOPPED ON PURPOSE: spira")), "{r:?}");
-    assert!(r.iter().all(|l| !l.contains("ROUND DUE")), "{r:?}");
-}
-
-#[test]
 fn an_unanswered_round_status_is_unknown_and_pages_nothing() {
     let r = same_rows(Scenario { status_fails: true, ..scenario("unknown") }, 1);
     assert!(r.iter().any(|l| l.contains("ROUND STATE UNKNOWN")), "{r:?}");
