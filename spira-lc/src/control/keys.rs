@@ -1,0 +1,89 @@
+//! The control plane's key layout. Later work adds keys only under prefixes of its own.
+
+pub const LIFECYCLE: &str = "lifecycle/";
+pub const READINESS: &str = "readiness/";
+pub const DELIVERIES: &str = "deliveries/";
+pub const ASKS: &str = "asks/";
+pub const MENDINGS: &str = "mendings/";
+pub const BATCHES: &str = "batches/";
+pub const RUNTIME: &str = "runtime/";
+/// The finalizer that keeps a lifecycle record until the planning plane has closed its bead.
+pub const PLANNING_CLOSED: &str = "planning-closed";
+
+pub fn lifecycle(id: &str) -> String {
+    format!("{LIFECYCLE}{id}")
+}
+
+pub fn readiness(id: &str) -> String {
+    format!("{READINESS}{id}")
+}
+
+pub fn delivery(id: &str) -> String {
+    format!("{DELIVERIES}{id}")
+}
+
+pub fn ask(id: &str) -> String {
+    format!("{ASKS}{id}")
+}
+
+pub fn mending(id: &str) -> String {
+    format!("{MENDINGS}{id}")
+}
+
+pub fn batch(repo: &str, id: &str) -> String {
+    format!("{BATCHES}{repo}/{id}")
+}
+
+pub fn batch_progress(repo: &str, id: &str) -> String {
+    format!("{}/progress", batch(repo, id))
+}
+
+/// The lock resource a claim holds; the contract keeps it at `locks/bead/<id>`.
+pub fn claim_resource(id: &str) -> String {
+    format!("bead/{id}")
+}
+
+/// The id a key under `prefix` names, or `None` for a key that is not directly under it.
+pub fn id_of<'a>(prefix: &str, key: &'a str) -> Option<&'a str> {
+    key.strip_prefix(prefix)
+        .filter(|id| !id.is_empty() && !id.contains('/'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_record_kind_has_its_own_prefix_and_a_progress_key_sits_under_its_batch() {
+        assert_eq!(lifecycle("sp-a"), "lifecycle/sp-a");
+        assert_eq!(readiness("sp-a"), "readiness/sp-a");
+        assert_eq!(delivery("sp-a"), "deliveries/sp-a");
+        assert_eq!(ask("sp-q"), "asks/sp-q");
+        assert_eq!(mending("sp-a"), "mendings/sp-a");
+        assert_eq!(batch("harness", "b-1"), "batches/harness/b-1");
+        assert_eq!(
+            batch_progress("harness", "b-1"),
+            "batches/harness/b-1/progress"
+        );
+        assert_eq!(claim_resource("sp-a"), "bead/sp-a");
+        let prefixes = [
+            LIFECYCLE, READINESS, DELIVERIES, ASKS, MENDINGS, BATCHES, RUNTIME,
+        ];
+        for (i, a) in prefixes.iter().enumerate() {
+            for b in &prefixes[i + 1..] {
+                assert!(
+                    !a.starts_with(b) && !b.starts_with(a),
+                    "{a} and {b} overlap"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn id_of_reads_only_a_direct_child() {
+        assert_eq!(id_of(LIFECYCLE, "lifecycle/sp-a"), Some("sp-a"));
+        assert_eq!(id_of(BATCHES, "batches/harness/b-1"), None);
+        assert_eq!(id_of(LIFECYCLE, "readiness/sp-a"), None);
+        assert_eq!(id_of(LIFECYCLE, "lifecycle/"), None);
+    }
+}

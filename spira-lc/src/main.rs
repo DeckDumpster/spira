@@ -20,6 +20,9 @@ mod churn;
 mod claim_verdicts;
 mod classify_cmd;
 mod content;
+// Not yet behind a verb: the dispatch moves onto it with lc-serve.
+#[cfg_attr(not(test), allow(dead_code))]
+mod control;
 mod continuity;
 mod cycle;
 mod content_rows;
@@ -884,7 +887,7 @@ fn run_batch_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &s
 
 /// Externally-tagged serde writes a struct variant as `{"Variant": {...}}` and a unit variant as
 /// the bare string `"Variant"`; either way the tag is the event's name.
-fn kind_name(evidence: &Value) -> String {
+pub(crate) fn kind_name(evidence: &Value) -> String {
     match evidence {
         Value::String(s) => s.clone(),
         Value::Object(m) => m.keys().next().cloned().unwrap_or_else(|| "unknown".to_string()),
