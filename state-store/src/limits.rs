@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::contract::{Compare, Op, Request, Txn};
+use crate::contract::{Compare, Txn};
 use crate::{Error, Limit, Result};
 
 /// etcd's default `--max-txn-ops`, applied to each branch and to the compares.
@@ -12,31 +12,32 @@ pub const MAX_TXN_COMPARES: usize = 128;
 /// etcd's default `--max-request-bytes` (1.5 MiB).
 pub const MAX_REQUEST_BYTES: usize = 1_572_864;
 
-/// The serialized size of a request as the caller sends it: every key and encoded value in the
-/// compares and both branches, plus the request id and its audit record.
-pub fn request_bytes(t: &Txn, req: &Request) -> usize {
-    let cmp: usize = t
-        .compares
+/// The keys and values a txn's compares carry.
+pub fn compare_bytes(compares: &[Compare]) -> usize {
+    compares
         .iter()
         .map(|c| match c {
             Compare::ModRev(k, _) | Compare::CreateRev(k, _) => k.len(),
             Compare::Value(k, v) => k.len() + v.as_ref().map_or(0, |o| o.encode().len()),
         })
-        .sum();
-    let ops = |ops: &[Op]| -> usize {
-        ops.iter()
-            .map(|o| match o {
-                Op::Put(k, v) => k.len() + v.encode().len(),
-                Op::Delete(k) => k.len(),
-            })
-            .sum()
-    };
-    cmp + ops(&t.ops) + ops(&t.else_ops) + req.encoded_len()
+        .sum()
 }
 
-/// Refuses whatever etcd would. `bookkeeping` is the keys the contract adds to a branch (the
+/// Refuses a request of `got` serialized bytes over etcd's limit.
+pub fn check_bytes(got: usize) -> Result<()> {
+    if got > MAX_REQUEST_BYTES {
+        return Err(Error::Limit(Limit::RequestBytes {
+            max: MAX_REQUEST_BYTES,
+            got,
+        }));
+    }
+    Ok(())
+}
+
+/// Refuses the op, compare and duplicate-key breaches; the size is checked on the batch the
+/// contract builds (`check_bytes`), which includes its bookkeeping. `bookkeeping` is the keys the contract adds to a branch (the
 /// request key, and the events key when the txn is audited): they count toward the op limit.
-pub fn check(t: &Txn, req: &Request, bookkeeping: usize) -> Result<()> {
+pub fn check(t: &Txn, bookkeeping: usize) -> Result<()> {
     let ops = t.ops.len().max(t.else_ops.len()) + bookkeeping;
     if ops > MAX_TXN_OPS {
         return Err(Error::Limit(Limit::Ops {
@@ -59,13 +60,6 @@ pub fn check(t: &Txn, req: &Request, bookkeeping: usize) -> Result<()> {
                 }));
             }
         }
-    }
-    let bytes = request_bytes(t, req);
-    if bytes > MAX_REQUEST_BYTES {
-        return Err(Error::Limit(Limit::RequestBytes {
-            max: MAX_REQUEST_BYTES,
-            got: bytes,
-        }));
     }
     Ok(())
 }

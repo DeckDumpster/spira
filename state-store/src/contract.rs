@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -223,6 +224,7 @@ pub struct Contract<B: Backend> {
     deadlines: Mutex<BTreeMap<String, u64>>,
     commits: Mutex<u64>,
     committed: Condvar,
+    waiting: AtomicUsize,
 }
 
 /// What a plan decides at one snapshot head.
@@ -256,6 +258,8 @@ enum Outcome<T> {
 struct Record {
     audited: bool,
     idempotent: bool,
+    /// The keys and values the txn's compares carry, which count toward the request size.
+    compare_bytes: usize,
 }
 
 struct Staged {
@@ -293,9 +297,17 @@ fn audited<'a>(keys: impl IntoIterator<Item = &'a str>) -> bool {
     !any
 }
 
+/// The prefixes whose keys may carry `ttl_secs`.
+fn ttl_allowed(key: &str) -> bool {
+    key.starts_with(REQUESTS_PREFIX) || TTL_PREFIXES.iter().any(|p| key.starts_with(p))
+}
+
 fn ttl_ms(key: &str, v: &Object) -> Option<u64> {
     if key.starts_with(LOCKS_PREFIX) {
         return v.data.get("ttl_ms").and_then(|t| t.as_u64());
+    }
+    if !ttl_allowed(key) {
+        return None;
     }
     v.metadata
         .ttl_secs
@@ -316,9 +328,19 @@ fn validate(ops: &[Op]) -> Result<()> {
             {
                 return Err(Error::TtlRequired { key: k.clone() });
             }
+            if !ttl_allowed(k) && v.metadata.ttl_secs.is_some() {
+                return Err(Error::TtlNotAllowed { key: k.clone() });
+            }
         }
     }
     Ok(())
+}
+
+fn staged_bytes(staged: &[Staged]) -> usize {
+    staged
+        .iter()
+        .map(|s| s.key.len() + s.value.as_ref().map_or(0, |v| v.encode().len()))
+        .sum()
 }
 
 fn item(key: String, v: Version) -> Result<Item> {
@@ -362,6 +384,7 @@ impl<B: Backend> Contract<B> {
             deadlines: Mutex::new(BTreeMap::new()),
             commits: Mutex::new(0),
             committed: Condvar::new(),
+            waiting: AtomicUsize::new(0),
         };
         let head = c.backend.head()?;
         let now = c.now_ms();
@@ -478,10 +501,12 @@ impl<B: Backend> Contract<B> {
         let rec = Record {
             audited: audited([key]),
             idempotent: true,
+            compare_bytes: limits::compare_bytes(&t.compares),
         };
-        limits::check(&t, req, self.bookkeeping(rec))?;
+        limits::check(&t, self.bookkeeping(rec))?;
+        let bytes = value.encode();
         let out = self.engine(req, rec, |head| match self.read(key, head)? {
-            Some(cur) if cur.value == value => Ok(Step::Done(Created {
+            Some(cur) if cur.value.encode() == bytes => Ok(Step::Done(Created {
                 mod_rev: cur.mod_rev,
                 existed: true,
             })),
@@ -511,8 +536,9 @@ impl<B: Backend> Contract<B> {
         let rec = Record {
             audited: audited(t.ops.iter().chain(&t.else_ops).map(Op::key)),
             idempotent: true,
+            compare_bytes: limits::compare_bytes(&t.compares),
         };
-        limits::check(t, req, self.bookkeeping(rec))?;
+        limits::check(t, self.bookkeeping(rec))?;
         let out = self.engine(req, rec, |head| {
             let ok = self.holds(&t.compares, head)?;
             Ok(Step::<Infallible>::Apply {
@@ -551,8 +577,9 @@ impl<B: Backend> Contract<B> {
         let rec = Record {
             audited: audited([key]),
             idempotent: true,
+            compare_bytes: 0,
         };
-        limits::check(&t, req, self.bookkeeping(rec))?;
+        limits::check(&t, self.bookkeeping(rec))?;
         let out = self.engine(req, rec, |head| {
             let cur = self
                 .read(key, head)?
@@ -569,12 +596,13 @@ impl<B: Backend> Contract<B> {
                 }),
             }
         })?;
-        let rev = match out {
-            Outcome::Applied { rev, .. } | Outcome::Already { rev, .. } => rev,
-            Outcome::Nothing { .. } => self.head()?,
+        let (rev, at) = match out {
+            Outcome::Applied { rev, .. } => (rev, rev),
+            Outcome::Already { rev, .. } => (rev, self.head()?),
+            Outcome::Nothing { head } => (head, head),
             Outcome::Done(never) => match never {},
         };
-        Ok(match self.read(key, rev)? {
+        Ok(match self.read(key, at)? {
             Some(_) => Deleted::Pending { rev },
             None => Deleted::Removed { rev },
         })
@@ -587,6 +615,13 @@ impl<B: Backend> Contract<B> {
             return Err(Error::WaitTooLong {
                 max_ms: MAX_WATCH_WAIT_MS,
                 got_ms: wait_ms,
+            });
+        }
+        let head = self.backend.head()?;
+        if from_rev > head {
+            return Err(Error::FutureRev {
+                rev: from_rev,
+                head,
             });
         }
         let deadline = self.now_ms().saturating_add(wait_ms);
@@ -624,12 +659,19 @@ impl<B: Backend> Contract<B> {
             }
             let g = self.commits.lock().unwrap_or_else(lock_err);
             if *g == seen {
+                self.waiting.fetch_add(1, Ordering::SeqCst);
                 let _ = self
                     .committed
                     .wait_timeout(g, WATCH_SLICE)
                     .unwrap_or_else(lock_err);
+                self.waiting.fetch_sub(1, Ordering::SeqCst);
             }
         }
+    }
+
+    /// How many watches are parked waiting for a commit.
+    pub fn waiting_watchers(&self) -> usize {
+        self.waiting.load(Ordering::SeqCst)
     }
 
     /// Wakes every waiting watch to re-read the log and the clock.
@@ -646,13 +688,15 @@ impl<B: Backend> Contract<B> {
             });
         }
         let key = format!("{LOCKS_PREFIX}{resource}");
-        if self.get(&key)?.is_some() && !self.live(&key) {
+        let retry = self.get(&request_key(&req.id))?.is_some();
+        if !retry && self.get(&key)?.is_some() && !self.live(&key) {
             self.expire(std::slice::from_ref(&key), self.now_ms())?;
         }
         let value = Object::new(serde_json::json!({ "ttl_ms": ttl_ms }));
         let rec = Record {
             audited: true,
             idempotent: true,
+            compare_bytes: 0,
         };
         let out = self.engine(req, rec, |head| match self.read(&key, head)? {
             Some(cur) => Err(Error::Locked {
@@ -665,13 +709,13 @@ impl<B: Backend> Contract<B> {
             }),
         })?;
         let token = match out {
-            Outcome::Applied { rev, .. } => Rev::new(rev, 0),
-            _ => self
-                .get(&key)?
-                .map(|i| i.create_rev)
-                .ok_or_else(|| Error::LockLost {
+            Outcome::Applied { rev, .. } | Outcome::Already { rev, .. } => Rev::new(rev, 0),
+            Outcome::Nothing { .. } => {
+                return Err(Error::LockLost {
                     resource: resource.into(),
-                })?,
+                })
+            }
+            Outcome::Done(never) => match never {},
         };
         Ok(Fence {
             resource: resource.into(),
@@ -693,6 +737,7 @@ impl<B: Backend> Contract<B> {
         let rec = Record {
             audited: true,
             idempotent: true,
+            compare_bytes: 0,
         };
         self.engine(req, rec, |head| {
             let cur = self.read(&key, head)?.filter(|c| c.create_rev == f.token);
@@ -787,44 +832,69 @@ impl<B: Backend> Contract<B> {
             if ops.is_empty() && (!rec.idempotent || (!ok && !rec.audited)) {
                 return Ok(Outcome::Nothing { head });
             }
-            let main = head + 1;
-            let mut staged = self.stage(&ops, head)?;
-            let subs: Vec<serde_json::Value> = staged
-                .iter()
-                .enumerate()
-                .map(|(i, s)| serde_json::json!({ "key": s.key, "sub": i, "op": s.op, "prev_mod_rev": s.prev.as_ref().map(|p| p.mod_rev) }))
-                .collect();
-            if rec.idempotent {
-                let v = Object::new(serde_json::json!({ "main": main, "succeeded": ok }))
-                    .with_ttl(REQUEST_TTL_SECS);
-                staged.push(Staged {
-                    key: rkey.clone(),
-                    value: Some(v),
-                    prev: None,
-                    op: "put",
-                });
-            }
-            if rec.audited {
-                let record = serde_json::json!({
-                    "actor": req.actor, "kind": req.kind, "evidence": req.evidence,
-                    "request": req.id, "refused": !ok, "subs": subs,
-                });
-                staged.push(Staged {
-                    key: events_key(main),
-                    value: Some(Object::new(record)),
-                    prev: None,
-                    op: "put",
-                });
-            }
-            if staged.is_empty() {
-                return Ok(Outcome::Nothing { head });
-            }
+            let staged = self.build(req, rec, ok, &ops, head)?;
+            limits::check_bytes(rec.compare_bytes + staged_bytes(&staged))?;
             match self.commit(head, staged) {
                 Ok(rev) => return Ok(Outcome::Applied { rev, ok }),
                 Err(Error::Stale { .. }) => continue,
                 Err(e) => return Err(e),
             }
         }
+    }
+
+    /// The batch for `ops` at `head`: the ops resolved, then `requests/<id>` and `events/<main>`.
+    fn build(
+        &self,
+        req: &Request,
+        rec: Record,
+        ok: bool,
+        ops: &[Op],
+        head: u64,
+    ) -> Result<Vec<Staged>> {
+        let main = head + 1;
+        let mut staged = self.stage(ops, head)?;
+        let subs: Vec<serde_json::Value> = staged
+            .iter()
+            .enumerate()
+            .map(|(i, s)| serde_json::json!({ "key": s.key, "sub": i, "op": s.op, "prev_mod_rev": s.prev.as_ref().map(|p| p.mod_rev) }))
+            .collect();
+        if rec.idempotent {
+            let v = Object::new(serde_json::json!({ "main": main, "succeeded": ok }))
+                .with_ttl(REQUEST_TTL_SECS);
+            staged.push(Staged {
+                key: request_key(&req.id),
+                value: Some(v),
+                prev: None,
+                op: "put",
+            });
+        }
+        if rec.audited {
+            let record = serde_json::json!({
+                "actor": req.actor, "kind": req.kind, "evidence": req.evidence,
+                "request": req.id, "refused": !ok, "subs": subs,
+            });
+            staged.push(Staged {
+                key: events_key(main),
+                value: Some(Object::new(record)),
+                prev: None,
+                op: "put",
+            });
+        }
+        Ok(staged)
+    }
+
+    /// The size `txn(t, req)` would commit at the current head, as etcd would measure the
+    /// request: every compare, and every key and value of the batch, bookkeeping included.
+    pub fn request_bytes(&self, t: &Txn, req: &Request) -> Result<usize> {
+        let head = self.head()?;
+        let rec = Record {
+            audited: audited(t.ops.iter().chain(&t.else_ops).map(Op::key)),
+            idempotent: true,
+            compare_bytes: limits::compare_bytes(&t.compares),
+        };
+        let ok = self.holds(&t.compares, head)?;
+        let staged = self.build(req, rec, ok, if ok { &t.ops } else { &t.else_ops }, head)?;
+        Ok(rec.compare_bytes + staged_bytes(&staged))
     }
 
     /// Resolves ops against `head`: a delete of an absent key is dropped, a delete of a key with
@@ -894,13 +964,14 @@ impl<B: Backend> Contract<B> {
                 },
             })
             .collect();
+        // Held across the backend commit, so no plan reads a deadline the commit is replacing.
+        let mut d = self.deadlines.lock().unwrap_or_else(lock_err);
         let res = self.backend.commit(head, &batch);
         if matches!(res, Err(Error::Stale { .. })) {
             return res;
         }
         let now = self.now_ms();
         {
-            let mut d = self.deadlines.lock().unwrap_or_else(lock_err);
             for s in &staged {
                 match s.value.as_ref().and_then(|v| ttl_ms(&s.key, v)) {
                     Some(ttl) => {
@@ -913,6 +984,7 @@ impl<B: Backend> Contract<B> {
                 }
             }
         }
+        drop(d);
         if res.is_ok() {
             *self.commits.lock().unwrap_or_else(lock_err) += 1;
             self.committed.notify_all();
@@ -946,6 +1018,7 @@ impl<B: Backend> Contract<B> {
             let rec = Record {
                 audited: false,
                 idempotent: false,
+                compare_bytes: 0,
             };
             let mut planned = Vec::new();
             let mut settled = Vec::new();
@@ -967,7 +1040,9 @@ impl<B: Backend> Contract<B> {
             })?;
             let mut d = self.deadlines.lock().unwrap_or_else(lock_err);
             for k in &settled {
-                d.remove(k);
+                if d.get(k).is_some_and(|at| *at <= now) {
+                    d.remove(k);
+                }
             }
             gone.append(&mut planned);
         }
@@ -987,6 +1062,7 @@ impl<B: Backend> Contract<B> {
             let rec = Record {
                 audited: audited(chunk.iter().map(String::as_str)),
                 idempotent: false,
+                compare_bytes: 0,
             };
             let mut planned = Vec::new();
             self.engine(&Request::new("", "gc", kind), rec, |head| {

@@ -148,6 +148,10 @@ pub enum Error {
     TtlRequired {
         key: String,
     },
+    /// `ttl_secs` on a key outside the prefixes whose keys expire.
+    TtlNotAllowed {
+        key: String,
+    },
     /// Caller writes may not touch the contract's own prefixes.
     ReservedKey {
         key: String,

@@ -40,6 +40,7 @@ scenarios!(
     a_finalizer_blocks_delete_until_gc_removes_the_key_once_cleared,
     an_owner_reference_orphan_is_collected,
     a_request_retry_after_an_ambiguous_commit_reports_already_applied,
+    retries_of_lock_create_delete_and_a_refusal_report_the_original_outcome,
     request_keys_expire_at_24h_of_virtual_time,
     a_txn_touching_only_telemetry_writes_no_events_key_and_its_refusal_stores_nothing,
     a_txn_touching_telemetry_and_intents_writes_one_events_key_with_both_sub_events,

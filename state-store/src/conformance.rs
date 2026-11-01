@@ -13,7 +13,7 @@ use crate::contract::{
     Compare, Config, Contract, Created, Deleted, Ports, Request, Selector, Txn, Watched,
 };
 use crate::gc::Controller;
-use crate::limits::{self, MAX_REQUEST_BYTES, MAX_TXN_COMPARES, MAX_TXN_OPS};
+use crate::limits::{MAX_REQUEST_BYTES, MAX_TXN_COMPARES, MAX_TXN_OPS};
 use crate::{events_key, request_key, Error, Limit, Object, Result, Rev};
 
 pub trait Rig {
@@ -236,10 +236,20 @@ pub fn the_next_main_stays_greater_after_deleting_the_newest_keys_and_reopening<
     let Deleted::Removed { rev: last } = c.delete("n/a", None, &req("4")).unwrap() else {
         panic!("not removed")
     };
+    assert!(last > 0);
+    put(&c, "telemetry/n", obj(json!(1)).with_ttl(1), "5");
+    clock.advance(1_000);
+    Controller::new(&c).tick(c.now_ms()).unwrap();
+    let last = c.head().unwrap();
+    let (live, _) = c.list(&[""], &Selector::Everything).unwrap();
+    assert!(
+        live.iter().all(|i| i.mod_rev.main < last),
+        "the newest txn left no key behind"
+    );
     drop(c);
     let c = open(rig.reopen(&b), &clock);
     assert_eq!(c.head().unwrap(), last);
-    let next = put(&c, "n/c", obj(json!(3)), "5");
+    let next = put(&c, "n/c", obj(json!(3)), "6");
     assert!(next > last, "{next} <= {last}");
 }
 
@@ -317,7 +327,14 @@ pub fn watch_resumes_from_a_revision<R: Rig>(rig: &R) {
     let c = open(rig.fresh(), &clock);
     let r1 = put(&c, "w/a", obj(json!(1)), "1");
     let r2 = put(&c, "w/b", obj(json!(2)), "2");
-    put(&c, "x/other", obj(json!(3)), "3");
+    let r3 = put(&c, "x/other", obj(json!(3)), "3");
+    assert_eq!(
+        c.watch("w/", r3 + 1, 0),
+        Err(Error::FutureRev {
+            rev: r3 + 1,
+            head: r3
+        })
+    );
     let Watched::Events { events, through } = c.watch("w/", r1, 0).unwrap() else {
         panic!("no events")
     };
@@ -327,7 +344,7 @@ pub fn watch_resumes_from_a_revision<R: Rig>(rig: &R) {
     );
     assert_eq!(events[0].rev, Rev::new(r2, 0));
     assert_eq!(events[0].value.as_ref().unwrap().data, json!(2));
-    assert!(through >= r2);
+    assert_eq!(through, r3, "a watch resumes past the txns it filtered out");
     let Watched::Events { events, .. } = c.watch("w/", 0, 0).unwrap() else {
         panic!("no events")
     };
@@ -418,6 +435,9 @@ pub fn watch_delivers_a_txns_events_together<R: Rig>(rig: &R) {
     let from = c.head().unwrap();
     let got = std::thread::scope(|s| {
         let h = s.spawn(|| c.watch("g/", from, 2_500));
+        while c.waiting_watchers() == 0 {
+            std::thread::yield_now();
+        }
         let t = Txn::new()
             .put("g/a", obj(json!(1)))
             .put("g/b", obj(json!(2)))
@@ -642,6 +662,49 @@ pub fn a_request_retry_after_an_ambiguous_commit_reports_already_applied<R: Rig>
     assert_eq!(c.head().unwrap(), applied, "the retry wrote nothing");
 }
 
+pub fn retries_of_lock_create_delete_and_a_refusal_report_the_original_outcome<R: Rig>(rig: &R) {
+    let clock = VirtualClock::new(T0);
+    let c = open(Interpose::new(rig.fresh()), &clock);
+    let lost = |f: &dyn Fn() -> bool| {
+        c.backend().lose_next_commit_reply();
+        assert!(f(), "the commit's reply was lost");
+    };
+
+    lost(&|| c.lock("job", 5_000, &req("a-lock")).is_err());
+    let a = c.get("locks/job").unwrap().unwrap().create_rev;
+    clock.advance(5_000);
+    let b = c.lock("job", 5_000, &req("b-lock")).unwrap();
+    let retried = c.lock("job", 5_000, &req("a-lock")).unwrap();
+    assert_eq!(
+        retried.token, a,
+        "a retry returns its own token, never the new holder's"
+    );
+    assert_ne!(retried.token, b.token);
+    let late = c.txn(
+        &Txn::new().fenced(&retried).put("jobs/1", obj(json!("a"))),
+        &req("a-write"),
+    );
+    assert!(!late.unwrap().succeeded);
+
+    lost(&|| c.create("c/1", obj(json!(1)), &req("create")).is_err());
+    let created = c.get("c/1").unwrap().unwrap().mod_rev;
+    let again = c.create("c/1", obj(json!(1)), &req("create")).unwrap();
+    assert_eq!(again.mod_rev, created);
+
+    lost(&|| c.delete("c/1", None, &req("delete")).is_err());
+    let Deleted::Removed { rev } = c.delete("c/1", None, &req("delete")).unwrap() else {
+        panic!("not removed")
+    };
+    assert_eq!(c.head().unwrap(), rev, "the retry wrote nothing");
+
+    let refused = Txn::new()
+        .when(Compare::ModRev("c/1".into(), Some(Rev::new(1, 0))))
+        .put("c/2", obj(json!(2)));
+    lost(&|| c.txn(&refused, &req("refused")).is_err());
+    let r = c.txn(&refused, &req("refused")).unwrap();
+    assert_eq!((r.succeeded, r.already_applied), (false, true));
+}
+
 pub fn request_keys_expire_at_24h_of_virtual_time<R: Rig>(rig: &R) {
     let clock = VirtualClock::new(T0);
     let c = open(rig.fresh(), &clock);
@@ -745,6 +808,15 @@ pub fn a_put_under_telemetry_or_intents_without_ttl_secs_is_refused<R: Rig>(rig:
             Err(Error::TtlRequired { key: key.into() })
         );
     }
+    assert_eq!(
+        c.txn(
+            &Txn::new().put("beads/x", obj(json!(1)).with_ttl(60)),
+            &req("other")
+        ),
+        Err(Error::TtlNotAllowed {
+            key: "beads/x".into()
+        })
+    );
     assert_eq!(c.head().unwrap(), head);
 }
 
@@ -921,6 +993,32 @@ pub fn txn_ops_at_the_limit_pass_and_one_over_is_refused<R: Rig>(rig: &R) {
         }))
     );
     assert_eq!(c.head().unwrap(), head);
+    let telemetry = |n: usize| {
+        (0..n).fold(Txn::new(), |t, i| {
+            t.put(&format!("telemetry/l/{i}"), obj(json!(i)).with_ttl(60))
+        })
+    };
+    assert!(
+        c.txn(&telemetry(MAX_TXN_OPS - 1), &req("tel-at"))
+            .unwrap()
+            .succeeded
+    );
+    assert_eq!(
+        c.txn(&telemetry(MAX_TXN_OPS), &req("tel-over")),
+        Err(Error::Limit(Limit::Ops {
+            max: MAX_TXN_OPS,
+            got: MAX_TXN_OPS + 1
+        }))
+    );
+    let mut else_over = Txn::new().when(Compare::ModRev("l/0".into(), None));
+    else_over.else_ops = puts(MAX_TXN_OPS - bookkeeping + 1).ops;
+    assert_eq!(
+        c.txn(&else_over, &req("else-over")),
+        Err(Error::Limit(Limit::Ops {
+            max: MAX_TXN_OPS,
+            got: MAX_TXN_OPS + 1
+        }))
+    );
 }
 
 pub fn txn_compares_at_the_limit_pass_and_one_over_is_refused<R: Rig>(rig: &R) {
@@ -945,10 +1043,11 @@ pub fn request_bytes_at_the_limit_pass_and_one_over_is_refused<R: Rig>(rig: &R) 
     let clock = VirtualClock::new(T0);
     let c = open(rig.fresh(), &clock);
     let sized = |pad: usize| Txn::new().put("big", obj(json!("a".repeat(pad))));
-    let base = limits::request_bytes(&sized(0), &req("at"));
+    let base = c.request_bytes(&sized(0), &req("at")).unwrap();
     let at = sized(MAX_REQUEST_BYTES - base);
-    assert_eq!(limits::request_bytes(&at, &req("at")), MAX_REQUEST_BYTES);
+    assert_eq!(c.request_bytes(&at, &req("at")).unwrap(), MAX_REQUEST_BYTES);
     assert!(c.txn(&at, &req("at")).unwrap().succeeded);
+    let base = c.request_bytes(&sized(0), &req("ov")).unwrap();
     let over = sized(MAX_REQUEST_BYTES - base + 1);
     assert_eq!(
         c.txn(&over, &req("ov")),
@@ -1030,6 +1129,7 @@ scenarios!(
     a_finalizer_blocks_delete_until_gc_removes_the_key_once_cleared,
     an_owner_reference_orphan_is_collected,
     a_request_retry_after_an_ambiguous_commit_reports_already_applied,
+    retries_of_lock_create_delete_and_a_refusal_report_the_original_outcome,
     request_keys_expire_at_24h_of_virtual_time,
     a_txn_touching_only_telemetry_writes_no_events_key_and_its_refusal_stores_nothing,
     a_txn_touching_telemetry_and_intents_writes_one_events_key_with_both_sub_events,

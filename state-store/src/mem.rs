@@ -184,3 +184,50 @@ impl Backend for MemBackend {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn put(key: &str, main: u64) -> Write {
+        Write::Put {
+            key: key.into(),
+            value: b"v".to_vec(),
+            create_rev: Rev::new(main, 0),
+            prev: None,
+        }
+    }
+
+    #[test]
+    fn the_log_returns_whole_txns_and_stops_at_the_page() {
+        let b = MemBackend::new();
+        b.commit(0, &[put("a", 1), put("b", 1)]).unwrap();
+        b.commit(1, &[put("c", 2)]).unwrap();
+        let page = b.log(0, 1).unwrap();
+        assert_eq!(
+            page.iter().map(|e| e.key.as_str()).collect::<Vec<_>>(),
+            ["a", "b"]
+        );
+        assert_eq!(b.log(1, 1).unwrap().len(), 1);
+        assert!(b.log(0, 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn compaction_drops_a_deleted_key_and_a_second_compaction_below_it_is_a_no_op() {
+        let b = MemBackend::new();
+        b.commit(0, &[put("a", 1)]).unwrap();
+        b.commit(
+            1,
+            &[Write::Delete {
+                key: "a".into(),
+                prev: Rev::new(1, 0),
+            }],
+        )
+        .unwrap();
+        b.compact(2).unwrap();
+        assert!(b.state().keys.is_empty());
+        b.compact(1).unwrap();
+        assert_eq!(b.get("a", 1), Err(Error::TooOld { compacted: 2 }));
+        assert_eq!(b.get("a", 3), Err(Error::FutureRev { rev: 3, head: 2 }));
+    }
+}
