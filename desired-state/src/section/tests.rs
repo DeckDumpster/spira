@@ -35,8 +35,16 @@ fn refused(v: Value) -> Refusal {
     }
 }
 
+/// `v` with the value at `ptr` set; an object's missing last segment is added.
 fn with(mut v: Value, ptr: &str, x: Value) -> Value {
-    *v.pointer_mut(ptr).unwrap_or_else(|| panic!("{ptr}")) = x;
+    let (parent, last) = ptr.rsplit_once('/').unwrap_or_else(|| panic!("{ptr}"));
+    match v.pointer_mut(parent).unwrap_or_else(|| panic!("{ptr}")) {
+        Value::Object(o) => {
+            o.insert(last.to_string(), x);
+        }
+        Value::Array(a) => a[last.parse::<usize>().unwrap_or_else(|_| panic!("{ptr}"))] = x,
+        _ => panic!("{ptr}"),
+    }
     v
 }
 
@@ -52,7 +60,7 @@ fn unknown_fields_kinds_and_api_versions_are_refused_naming_the_field() {
     let mut v = good();
     v["metadata"]["bogus"] = json!(1);
     let r = refused(v);
-    assert_eq!(r.field, "metadata", "{r}");
+    assert_eq!(r.field, "metadata.bogus", "{r}");
     assert!(r.rule.contains("bogus"), "{r}");
 
     let mut v = good();

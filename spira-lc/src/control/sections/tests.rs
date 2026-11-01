@@ -144,8 +144,16 @@ fn spec(name: &str, depth_max: f64) -> Value {
     })
 }
 
+/// `v` with the value at `ptr` set; an object's missing last segment is added.
 fn with(mut v: Value, ptr: &str, x: Value) -> Value {
-    *v.pointer_mut(ptr).unwrap_or_else(|| panic!("{ptr}")) = x;
+    let (parent, last) = ptr.rsplit_once('/').unwrap_or_else(|| panic!("{ptr}"));
+    match v.pointer_mut(parent).unwrap_or_else(|| panic!("{ptr}")) {
+        Value::Object(o) => {
+            o.insert(last.to_string(), x);
+        }
+        Value::Array(a) => a[last.parse::<usize>().unwrap_or_else(|_| panic!("{ptr}"))] = x,
+        _ => panic!("{ptr}"),
+    }
     v
 }
 
@@ -203,7 +211,7 @@ fn only_the_owner_writes_status_and_only_compose_writes_spec() {
     owner_spec["spec"] = json!({ "depth_max": { "value": 9.0, "statute": "law-x" } });
     let rev = r.rev_of("Probe/a");
     assert_eq!(r.refused(&["section", "publish-status", "--actor", "probe", "--expect-rev", &rev], Some(&owner_spec)), "spec");
-    assert_eq!(r.refused(&["section", "publish-status", "--actor", "probe", "--expect-rev", "1"], Some(&status("a", 1, NOW))), "--expect-rev");
+    assert_eq!(r.refused(&["section", "publish-status", "--actor", "probe", "--expect-rev", "999"], Some(&status("a", 1, NOW))), "--expect-rev");
     r.publish(&status("a", 1, NOW));
     let got = r.ok(&["section", "get", "Probe/a"], None);
     assert_eq!(got["section"]["spec"]["depth_max"]["value"], 4.0, "the owner's publish keeps compose's spec");
@@ -280,7 +288,8 @@ fn intent_apply_moves_a_knob_from_to_once_and_acks_in_the_same_txn() {
     assert_eq!(r.knob(knob), json!(7));
 
     assert_eq!(r.refused(&["intent", "apply", &k3, "--knob", "lifecycle/sp-x", "--actor", "probe"], None), "--knob");
-    assert_eq!(r.refused(&["intent", "apply", &k3, "--knob", "knobs/Probe/a/other", "--actor", "probe"], None), "--knob", "only the intent's own target moves");
+    let k4 = put("4", json!(7), json!(8));
+    assert_eq!(r.refused(&["intent", "apply", &k4, "--knob", "knobs/Probe/a/other", "--actor", "probe"], None), "--knob", "only the intent's own target moves");
     assert_eq!(r.knob(knob), json!(7));
 }
 
@@ -466,7 +475,7 @@ fn a_lock_renews_under_its_token_and_refuses_another_holder() {
     let token = r.lock();
     assert_eq!(r.refused(&["lock", "acquire", "reconciler", "--ttl", "600", "--holder", "other"], None), "resource");
     r.ok(&["lock", "renew", "reconciler", "--token", &token, "--ttl", "900"], None);
-    assert_eq!(r.refused(&["lock", "renew", "reconciler", "--token", "1.0"], None), "--token");
+    assert_eq!(r.refused(&["lock", "renew", "reconciler", "--token", "999.0"], None), "--token");
     r.clock.advance(901_000);
     assert_eq!(r.refused(&["lock", "renew", "reconciler", "--token", &token], None), "--token", "an expired lock renews nothing");
     let again = r.lock();

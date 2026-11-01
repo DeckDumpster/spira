@@ -386,6 +386,11 @@ fn publish<B: Backend>(store: &Store<B>, args: &[String], call: &Call, mut s: Se
     if actor != kind.owner {
         return refuse("actor", "ownership", format!("{} status is written only by {:?}, not {actor:?}", kind.name, kind.owner));
     }
+    // The schema judges the body before the store's revision does, so a malformed write is
+    // refused for what is wrong with it, whatever revision it names.
+    if let Err(r) = admit_publish(&s) {
+        return r.into();
+    }
     let key = section_key(kind.name, &s.metadata.name);
     let existing = match read_section(store, &key) {
         Ok(e) => e,
