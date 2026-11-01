@@ -150,7 +150,7 @@ pub fn converge_orphans(w: &World) {
     }
 }
 
-fn batch_abandoned(w: &World, batch_id: &str) -> bool {
+pub(super) fn batch_abandoned(w: &World, batch_id: &str) -> bool {
     matches!(w.lc.batch_state(batch_id), Some((s, _)) if matches!(s.as_str(), "ABANDONED" | "DISCARDED"))
 }
 

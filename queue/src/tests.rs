@@ -182,7 +182,11 @@ impl Git for FGit {
         *self.cut_on.borrow_mut() = sha.into();
         true
     }
-    fn worktree_remove(&self, _: &Path, _: &Path) {}
+    fn worktree_remove(&self, _: &Path, p: &Path) {
+        self.calls
+            .borrow_mut()
+            .push(format!("worktree-remove {}", p.display()));
+    }
     fn merge_no_ff(
         &self,
         wt: &Path,
@@ -4811,6 +4815,44 @@ fn settle_defers_the_cut_while_a_round_pass_runs_and_cuts_after_it() {
             .iter()
             .any(|c| c.starts_with("pr-create")),
         "{:?}",
+        t.forge.calls.borrow()
+    );
+}
+
+#[test]
+fn settle_asks_only_the_open_round_whether_a_pass_holds_the_hypervisor() {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    *t.forge.pr.borrow_mut() = Some("78".into());
+    fs::write(t.qfile("round"), "batch_id=b-landed\nopened=1\n").unwrap();
+    fs::write(t.qfile("round.b-settled"), "batch_id=b-settled\nopened=2\n").unwrap();
+    fs::write(t.qfile("round.b-1"), "batch_id=b-1\nopened=3\n").unwrap();
+    for (b, s) in [
+        ("b-landed", "LANDED"),
+        ("b-settled", "SETTLED"),
+        ("b-1", "CI_RUNNING"),
+    ] {
+        t.lc.batch_states
+            .borrow_mut()
+            .insert(b.into(), (s.into(), "4".into()));
+    }
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(
+        t.out().contains("a round pass holds the hypervisor"),
+        "{}",
+        t.out()
+    );
+    t.lc.batch_states
+        .borrow_mut()
+        .insert("b-1".into(), ("GREEN".into(), "5".into()));
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(
+        t.forge
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("pr-create")),
+        "ended records hold nothing: {:?}",
         t.forge.calls.borrow()
     );
 }

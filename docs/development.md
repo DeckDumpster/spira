@@ -193,7 +193,9 @@ shrink-only allow ledgers live beside them. By theme:
   `queue round status`, `sift status --json`, `testenv status --json`, `watchd status`), never
   from their files, logs or process lists; nothing reads the journal (`dwarf-state-readers`,
   `gate-state-readers`, `pool-state-readers`, `release-state-readers`, `round-record-readers`,
-  `sift-state-readers`, `testenv-result-readers`, `liveness-readers`, `journal-reads`).
+  `sift-state-readers`, `testenv-result-readers`, `liveness-readers`, `journal-reads`); inside
+  the queue, the round records are read only through the lifecycle filter that drops ended
+  rounds (`round-records-live-only`).
 - *Hygiene:* no installation inventory in tracked files (`inventory`, deny list
   `spira/inventory-deny`, which ships empty); no scratch notes at the repository root
   (`scratch-fence`); every external program declared in `spira/deps.toml` (`deps-lint`); one
