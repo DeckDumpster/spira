@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=reconciler
+DOC=Goodput pass timeout and lock TTL, in seconds: a tuning knob (law-tuning-is-not-policy). Below the 60 s timer interval; never under 10x the store's measured CAS maximum, the contract's lock floor.
+SCHEMA=Seconds a goodput pass may run and hold the reconciler lock: below the 60 s timer interval, at least 10x the store's measured CAS maximum.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RECONCILER_PASS_TIMEOUT_SECS:=50}"
+SPIRA_CONF_DEFAULT_EOF

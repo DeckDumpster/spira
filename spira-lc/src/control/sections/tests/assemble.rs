@@ -31,6 +31,7 @@ impl<B: Backend> TwoCall<'_, B> {
         let mut v = self.0.ok(&["section", "list"], None);
         v["intents"] = json!([]);
         v["pass"] = Value::Null;
+        v["knobs"] = json!({});
         Snapshot::parse(&v).unwrap()
     }
 }

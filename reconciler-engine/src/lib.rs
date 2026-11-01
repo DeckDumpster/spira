@@ -10,11 +10,13 @@ pub mod assemble;
 pub mod clock;
 pub mod core;
 pub mod effect;
+pub mod goodput_pass;
 pub mod holds;
 pub mod io;
 pub mod mail;
 pub mod pass_record;
 pub mod paths;
+pub mod select;
 
 pub use alert::{classify_escalation, compose_alert, should_alert, EscalationClass};
 pub use core::{last_remedy, record_remedy, step, HysteresisState, RawStatus, Verdict};

@@ -25,6 +25,11 @@ pub const MAX_ACTION_WINDOW_SECS: u64 = 3600;
 pub const MAX_STEP: u32 = 25;
 /// The reconciler's pass record, read in the same snapshot as every section and intent.
 pub const PASS_KEY: &str = "telemetry/reconciler/pass";
+/// Each pass's record, kept for a day at `<PASSES_PREFIX><n>`.
+pub const PASSES_PREFIX: &str = "telemetry/reconciler/passes/";
+/// A pass that found the lock held writes here, naming the holder, and does nothing else.
+pub const STANDBY_KEY: &str = "telemetry/reconciler/standby";
+pub const PASS_HISTORY_TTL_SECS: u64 = 24 * 3600;
 
 pub fn section_key(kind: &str, name: &str) -> String {
     format!("{SECTIONS_PREFIX}{kind}/{name}")

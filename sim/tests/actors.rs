@@ -59,11 +59,14 @@ fn shipped_units_drive_the_shipped_actors() {
 fn a_sim_only_actors_units_are_never_among_the_installed_ones() {
     let tree = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let specs = parse_specs(SPECS).unwrap();
-    let rc = specs.iter().find(|a| a.name == "round-controller").expect("the round-controller actor");
-    assert!(rc.sim_only && rc.units_in(&tree).ends_with(SIM_UNITS));
-    assert!(rc.units_in(&tree).join(&rc.timer).is_file());
-    assert!(!tree.join(SHIPPED_UNITS).join(&rc.timer).exists(), "{} would be installed", rc.timer);
-    assert!(specs.iter().filter(|a| a.name != "round-controller").all(|a| !a.sim_only && a.units_in(&tree).ends_with(SHIPPED_UNITS)));
+    let sim_only = ["round-controller", "reconciler-goodput"];
+    for name in sim_only {
+        let a = specs.iter().find(|a| a.name == name).unwrap_or_else(|| panic!("the {name} actor"));
+        assert!(a.sim_only && a.units_in(&tree).ends_with(SIM_UNITS), "{name}");
+        assert!(a.units_in(&tree).join(&a.timer).is_file(), "{name}");
+        assert!(!tree.join(SHIPPED_UNITS).join(&a.timer).exists(), "{} would be installed", a.timer);
+    }
+    assert!(specs.iter().filter(|a| !sim_only.contains(&a.name.as_str())).all(|a| !a.sim_only && a.units_in(&tree).ends_with(SHIPPED_UNITS)));
 }
 
 #[test]

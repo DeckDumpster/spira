@@ -31,7 +31,7 @@ reap_idle_secs = 21600
 reap_disk_floor_gib = 50
 store_check_timeout = "30"
 desired_fragments_dir = "/etc/spira/desired.d"
-reconciler_shadow_kinds = ""
+reconciler_shadow_kinds = "RoundController Lifecycle Alarms"
 reconciler_effect_passes = "2"
 census_cluster_gap_s = "300"
 czar_stage_reconciler_stale = "shadow"
@@ -208,6 +208,7 @@ runtime_view_secs = 3
 batcher_orphan_redrive_secs = 600
 lc_store_path = ""
 lc_lock_ttl_min_ms = 1000
+reconciler_pass_timeout_secs = 50
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok

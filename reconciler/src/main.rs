@@ -25,6 +25,7 @@ use reconciler_engine::holds::{self, Outcome as HoldOutcome};
 use spira_desired_state::compose::Composite;
 use spira_desired_state::resource::{parse_resource, CockpitSpec, DiskSpec, FleetSpec, KindSpec, ReleaseSpec, UnitsSpec};
 use spira_desired_state::store::FsStore;
+mod goodput_pass;
 mod hold_sweep;
 use std::collections::HashSet;
 use std::env;
@@ -94,12 +95,16 @@ const LOCK_NB: i32 = 4;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
-    if args.get(1).map(String::as_str) != Some("--pass") {
-        eprintln!("usage: reconciler --pass");
-        return ExitCode::from(2);
-    }
     let sink = spira_otel::metrics::MetricsSink::for_component(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "spira-reconciler");
-    match spira_otel::metrics::instrument_result(&sink, "reconciler", "pass", run_pass) {
+    let result = match args.get(1).map(String::as_str) {
+        Some("--pass") => spira_otel::metrics::instrument_result(&sink, "reconciler", "pass", run_pass),
+        Some(goodput_pass::VERB) => spira_otel::metrics::instrument_result(&sink, "reconciler", goodput_pass::VERB, || goodput_pass::main(&sink)),
+        _ => {
+            eprintln!("usage: reconciler --pass | reconciler {}", goodput_pass::VERB);
+            return ExitCode::from(2);
+        }
+    };
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("reconciler: {}", e);

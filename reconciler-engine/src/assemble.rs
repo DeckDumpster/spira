@@ -1,6 +1,6 @@
 //! The assembler: one `spira-lc section snapshot` in, the current and desired documents out,
 //! both at that snapshot's `list_rev`, with every intent and the previous pass record read at
-//! the same revision. Nothing is carried from an earlier pass but what the store holds, so a
+//! the same revision, and every knob an intent may move with them. Nothing is carried from an earlier pass but what the store holds, so a
 //! fresh process assembles what an uninterrupted one would. A stale section stays in both
 //! documents with its reason (law-a-control-that-cannot-check-must-refuse).
 
@@ -24,6 +24,8 @@ pub struct Snapshot {
     pub sections: Vec<Section>,
     pub intents: Vec<ListedIntent>,
     pub pass: Option<PassRecord>,
+    /// Every key under `knobs/` and its value: a step's `from` is read here, at `list_rev`.
+    pub knobs: BTreeMap<String, Value>,
     /// Keys listed at `list_rev` that do not decode: kept, so a bad record is seen, not lost.
     pub undecodable: Vec<String>,
 }
@@ -73,11 +75,18 @@ impl Snapshot {
                 Err(_) => undecodable.push(key.to_string()),
             }
         }
+        let knobs = v
+            .get("knobs")
+            .and_then(Value::as_object)
+            .ok_or("the snapshot lists no knobs")?
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
         let pass = match v.get("pass").ok_or("the snapshot names no pass record, not even null")? {
             Value::Null => None,
             p => Some(serde_json::from_value(p.clone()).map_err(|e| format!("the pass record does not decode: {e}"))?),
         };
-        Ok(Snapshot { list_rev, sections, intents, pass, undecodable })
+        Ok(Snapshot { list_rev, sections, intents, pass, knobs, undecodable })
     }
 }
 
@@ -157,6 +166,7 @@ pub struct Assembled {
     pub desired: Document<Desired>,
     pub intents: Vec<ListedIntent>,
     pub prev: Option<PassRecord>,
+    pub knobs: BTreeMap<String, Value>,
     pub ages: BTreeMap<String, SectionAge>,
     pub undecodable: Vec<String>,
     /// Unacknowledged intents past their horizon with no section in the snapshot to mark,
@@ -202,6 +212,7 @@ pub fn assemble(snap: &Snapshot, now_ms: u64) -> Assembled {
         desired: Document { list_rev: snap.list_rev, sections: desired },
         intents: snap.intents.clone(),
         prev: snap.pass.clone(),
+        knobs: snap.knobs.clone(),
         ages,
         undecodable: snap.undecodable.clone(),
         unattributed: unacked,

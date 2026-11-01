@@ -1,0 +1,6 @@
+[Unit]
+Description=Spira reconciler goodput pass, in the world sim only until the arm step ships its timer
+
+[Service]
+Type=oneshot
+ExecStart=reconciler goodput-pass

@@ -7,3 +7,12 @@ functions = ["listed", "Snapshot::parse", "Verb::snapshot", "answer", "assemble"
 [[scope]]
 path = "reconciler-engine/src/pass_record.rs"
 functions = ["PassRecord::next_n", "history_key"]
+
+# The action selector and the goodput pass (the selector bead's own gate).
+[[scope]]
+path = "reconciler-engine/src/select.rs"
+functions = ["backoff_secs", "knob_key", "section_of", "kind_of", "value_of", "fresh", "horizon_end", "met", "History::read_back", "Attempts::backoff_until", "Flow::producers", "Flow::consumes", "Flow::neighbourhood", "Flow::neighbour_sections", "open_conditions", "andon_sections", "andon_pulled_on", "step_to", "Selector::eligible", "Selector::claim", "Selector::last_attempt", "Selector::gap", "select"]
+
+[[scope]]
+path = "reconciler-engine/src/goodput_pass.rs"
+functions = ["argv", "with_body", "refusal_code", "explain", "interim_ranking", "goodput", "as_step", "Pass::may_write", "Pass::judge", "Pass::step", "run", "pass_under_lock"]
