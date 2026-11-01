@@ -1,0 +1,11 @@
+event
+bead
+sp-rework
+--expect
+SUBMITTED
+--version
+2
+--actor
+test
+--kind
+{"GateRed":{"tip":"4444444444444444444444444444444444444444","reason":"suites-failed"}}

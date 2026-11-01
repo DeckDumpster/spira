@@ -1,0 +1,25 @@
+{
+  "bead": {
+    "bead_id": "sp-submitted",
+    "state": "SUBMITTED",
+    "tip": "1111111111111111111111111111111111111111",
+    "gate_key": null,
+    "holder": null,
+    "persona": null,
+    "lease_until": null,
+    "holds": "[]",
+    "reason": null,
+    "version": "3",
+    "stack": "{}",
+    "stack_depth": "0",
+    "express": "0",
+    "dwarf_phase": null,
+    "disposition": null,
+    "disposition_note": null,
+    "ejected_red_tip": null,
+    "sifted_tip": null,
+    "updated_at": "1767225600",
+    "blocked_by": []
+  },
+  "delivery": null
+}

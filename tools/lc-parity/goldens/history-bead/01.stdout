@@ -1,0 +1,44 @@
+[
+  {
+    "seq": "4",
+    "machine": "bead",
+    "lc_key": "sp-certified",
+    "event": "Claim",
+    "expect": "READY",
+    "from_state": "READY",
+    "to_state": "WORKING",
+    "applied": "1",
+    "refusal": null,
+    "evidence": "{\"Claim\":{\"holder\":\"dwarf-1\",\"lease_until\":1767229200,\"persona\":null,\"stack\":{},\"stack_depth\":0,\"stack_max_depth\":0}}",
+    "actor": "test",
+    "at": "1767225600"
+  },
+  {
+    "seq": "5",
+    "machine": "bead",
+    "lc_key": "sp-certified",
+    "event": "Submit",
+    "expect": "WORKING",
+    "from_state": "WORKING",
+    "to_state": "SUBMITTED",
+    "applied": "1",
+    "refusal": null,
+    "evidence": "{\"Submit\":{\"tip\":\"2222222222222222222222222222222222222222\"}}",
+    "actor": "test",
+    "at": "1767225600"
+  },
+  {
+    "seq": "6",
+    "machine": "bead",
+    "lc_key": "sp-certified",
+    "event": "GatePass",
+    "expect": "SUBMITTED",
+    "from_state": "SUBMITTED",
+    "to_state": "CERTIFIED",
+    "applied": "1",
+    "refusal": null,
+    "evidence": "{\"GatePass\":{\"gate_key\":\"k1\",\"tip\":\"2222222222222222222222222222222222222222\"}}",
+    "actor": "test",
+    "at": "1767225600"
+  }
+]

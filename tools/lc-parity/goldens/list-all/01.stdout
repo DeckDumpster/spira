@@ -1,0 +1,11 @@
+sp-asked	READY	
+sp-blocked	READY	
+sp-certified	CERTIFIED	
+sp-certified2	CERTIFIED	
+sp-delivering	IN_DELIVERY	
+sp-held	READY	
+sp-landed	LANDED	
+sp-ready	READY	
+sp-rework	REWORK	
+sp-submitted	SUBMITTED	
+sp-working	WORKING	dwarf-1

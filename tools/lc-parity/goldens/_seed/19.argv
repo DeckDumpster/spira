@@ -1,0 +1,11 @@
+event
+bead
+sp-rework
+--expect
+WORKING
+--version
+1
+--actor
+test
+--kind
+{"Submit":{"tip":"4444444444444444444444444444444444444444"}}

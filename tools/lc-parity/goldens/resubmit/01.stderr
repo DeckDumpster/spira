@@ -1,0 +1,1 @@
+spira-lc resubmit: sp-rework is REWORK and the machine has no Submit from it (refused: Some(IllegalTransition { state: "REWORK", event: "Submit { tip: \"6666666666666666666666666666666666666666\" }" })); claim the bead, then send Submit with `spira-lc event` — nothing changed

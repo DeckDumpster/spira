@@ -1,0 +1,33 @@
+{
+  "bead": {
+    "bead_id": "sp-delivering",
+    "state": "LANDED",
+    "tip": "5555555555555555555555555555555555555555",
+    "gate_key": "k1",
+    "holder": null,
+    "persona": null,
+    "lease_until": null,
+    "holds": "[]",
+    "reason": "M2",
+    "version": "5",
+    "stack": "{}",
+    "stack_depth": "0",
+    "express": "0",
+    "dwarf_phase": null,
+    "disposition": null,
+    "disposition_note": null,
+    "ejected_red_tip": null,
+    "sifted_tip": null,
+    "updated_at": "1767225600",
+    "blocked_by": []
+  },
+  "delivery": {
+    "bead_id": "sp-delivering",
+    "mode": "queue",
+    "state": "EXITED",
+    "batch_id": "b-open",
+    "pr": null,
+    "merge_sha": "M2",
+    "version": "2"
+  }
+}
