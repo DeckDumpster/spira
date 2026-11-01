@@ -12,6 +12,17 @@ while IFS= read -r c; do [ -n "$c" ] && words+=(-p "$c"); done < "$LIST"
 [ "${#words[@]}" -gt 0 ] || { echo "unit-tests: the diff touches no crate — nothing to run"; exit 0; }
 jobs="$(nproc 2>/dev/null || echo 2)"
 cd "$ROOT" || exit 2
+# The target is shared by every tree at this path and cargo trusts mtimes across them, so
+# workspace crates last built from different bytes are cleaned; dependencies stay warm. A tree
+# that cannot be hashed is cleaned every time.
+tree="$({ find . \( -path ./target -o -path ./.git \) -prune -o -type f -print0 | LC_ALL=C sort -z | xargs -0r sha256sum &&
+          find . \( -path ./target -o -path ./.git \) -prune -o -type l -printf '%p -> %l\n' | LC_ALL=C sort; } | sha256sum)" || tree=""
+BUILT="${CARGO_TARGET_DIR:-$ROOT/target}/.unit-tests-built-tree"
+if [ -z "$tree" ] || [ "$(cat "$BUILT" 2>/dev/null)" != "$tree" ]; then
+  rm -f "$BUILT" || exit 2
+  cargo clean --workspace -q || { echo "unit-tests: cargo clean --workspace failed" >&2; exit 2; }
+  [ -z "$tree" ] || printf '%s\n' "$tree" > "$BUILT" || exit 2
+fi
 BINS="$ROOT/target/unit-tests.bins"
 [ -f "$BINS" ] || { echo "unit-tests: $BINS missing — run through testenv --suites unit-tests" >&2; exit 2; }
 bins=()
