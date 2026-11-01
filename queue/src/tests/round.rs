@@ -2130,7 +2130,10 @@ fn a_red_pass_the_batch_row_refuses_is_a_fault_not_a_local_red() {
         "{}",
         t.err()
     );
-    assert_eq!(kv_of(&t, "round")["phase"], "fault");
+    assert!(
+        !kv_of(&t, "round").contains_key("phase"),
+        "the round's phase is the lifecycle's alone"
+    );
 }
 
 #[test]
