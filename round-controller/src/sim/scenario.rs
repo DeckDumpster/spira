@@ -15,6 +15,7 @@ use crate::pass::{pass, pass_with, Step};
 use crate::ports::{Ports, Verb};
 use crate::resources::PassIdentity;
 use crate::sim::bench::{bench_settings, bench_slot_settings, Bench};
+use crate::sim::judge::{FakeLedger, JudgeCount, JudgeRun, JudgeSpec};
 use crate::sim::ledger::{self as sim_ledger, IdentitySpec, LedgerConfig, LedgerStep};
 use crate::sim::runner::{Runner, RunnerScript};
 use crate::sim::slot_user::{most_at_once, SlotUser, SlotUserScript};
@@ -120,10 +121,18 @@ pub enum Count {
     VmsAtOnce(Option<Pool>),
     /// Seconds after the epoch of the first grant; `u64::MAX` when none was made.
     FirstGrantSecs,
+    /// What the scenario's `[judge]` recorded and ran.
+    Judge(JudgeCount),
 }
 
 impl Count {
-    fn parse(s: &str, ids: &BTreeMap<String, PassIdentity>) -> Option<Count> {
+    /// A scenario with a `[judge]` table reads the Judge's names first, so its `launches` are
+    /// sub-passes, not runner launches; `attempts:<n>` and `summary:<n>` name a ledger identity
+    /// only when `n` is one, and otherwise fall to the Judge's `attempts:<class>`.
+    fn parse(s: &str, ids: &BTreeMap<String, PassIdentity>, judged: bool) -> Option<Count> {
+        if let Some(c) = JudgeCount::parse(s).filter(|_| judged) {
+            return Some(Count::Judge(c));
+        }
         let (what, of) = s.split_once(':').map_or((s, None), |(w, o)| (w, Some(o)));
         match (what, of) {
             ("calls", None) => Some(Count::Calls(None)),
@@ -137,10 +146,12 @@ impl Count {
             ("vm-runs", None) => Some(Count::VmRuns),
             ("lock-hold-ms", None) => Some(Count::LockHoldMs),
             ("keys", Some(p)) if !p.is_empty() => Some(Count::Keys(p.to_string())),
-            ("attempts", Some(n)) => ids
+            ("attempts", Some(n)) if ids.contains_key(n) => ids
                 .get(n)
                 .map(|id| Count::Keys(format!("{}/attempt/", summary_key(id)))),
-            ("summary", Some(n)) => ids.get(n).map(|id| Count::Summary(summary_key(id))),
+            ("summary", Some(n)) if ids.contains_key(n) => {
+                ids.get(n).map(|id| Count::Summary(summary_key(id)))
+            }
             ("launches", None) => Some(Count::Launches),
             ("renewals", None) => Some(Count::Renewals),
             ("redrive-attempts", None) => Some(Count::RedriveAttempts),
@@ -153,7 +164,7 @@ impl Count {
             ("vms-at-once", None) => Some(Count::VmsAtOnce(None)),
             ("vms-at-once", Some(w)) => Pool::from_word(w).map(|p| Count::VmsAtOnce(Some(p))),
             ("first-grant-secs", None) => Some(Count::FirstGrantSecs),
-            _ => None,
+            _ => JudgeCount::parse(s).map(Count::Judge),
         }
     }
 }
@@ -335,6 +346,7 @@ struct File {
     identity: Vec<IdentitySpec>,
     #[serde(default)]
     ledger_step: Vec<LedgerStep>,
+    judge: Option<JudgeSpec>,
 }
 
 #[derive(Clone, Debug)]
@@ -365,6 +377,7 @@ pub struct Scenario {
     pub ledger: Option<LedgerConfig>,
     pub identities: BTreeMap<String, PassIdentity>,
     pub ledger_steps: Vec<LedgerStep>,
+    pub judge: Option<JudgeSpec>,
 }
 
 pub fn parse(text: &str) -> Result<Scenario, String> {
@@ -372,11 +385,15 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
     let identities = sim_ledger::identities(&f.identity).map_err(|e| format!("scenario: {e}"))?;
     sim_ledger::check(&f.ledger_step, &identities, f.ledger.as_ref())
         .map_err(|e| format!("scenario: {e}"))?;
+    if let Some(j) = &f.judge {
+        j.check().map_err(|e| format!("scenario: {e}"))?;
+    }
+    let judged = f.judge.is_some();
     let expects = f
         .expect
         .into_iter()
         .map(|e| {
-            let count = Count::parse(&e.count, &identities).ok_or_else(|| {
+            let count = Count::parse(&e.count, &identities, judged).ok_or_else(|| {
                 format!(
                     "scenario: expectation {} counts {:?}, which is nothing the harness counts",
                     e.name, e.count
@@ -392,6 +409,12 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
                     ))
                 }
             };
+            if matches!(count, Count::Judge(_)) && !judged {
+                return Err(format!(
+                    "scenario: expectation {} counts {:?}, which only a [judge] table runs",
+                    e.name, e.count
+                ));
+            }
             Ok(Expect {
                 name: e.name,
                 count,
@@ -446,6 +469,7 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
         ledger: f.ledger,
         identities,
         ledger_steps: f.ledger_step,
+        judge: f.judge,
     })
 }
 
@@ -519,6 +543,8 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
     let vm = FakeVm::new(sc.vm.clone(), profile.clone(), b.clock.clone());
     b.verbs = FakeVerbs::new(sc.verbs.clone(), vm.clone(), b.clock.clone())
         .map_err(|e| format!("scenario: {e}"))?;
+    b.ledger = FakeLedger::seeded(sc.judge.as_ref(), profile);
+    let judge = sc.judge.as_ref().map(|j| JudgeRun::new(j, profile));
     let b = b;
     let ports = b.ports();
     let gc = state_store::gc::Controller::new(&b.store);
@@ -563,9 +589,15 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
             sc.ledger.as_ref(),
             at,
         ));
+        if let Some(j) = &judge {
+            j.drive(&ports, &b.clock, i + 1);
+        }
     }
 
     let now = b.clock.now_ms();
+    if let Some(j) = &judge {
+        broken.extend(j.broken(now, at));
+    }
     for r in vm.runs().iter().filter(|r| r.ends <= now && !r.collected) {
         broken.push(format!("invariant every-pass-has-a-verdict violated under {at}: pass {} finished at {} with no recorded verdict", r.identity, utc_stamp(r.ends)));
     }
@@ -649,6 +681,7 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
                 .map(|o| (o.at - epoch_ms) / 1000)
                 .min()
                 .unwrap_or(u64::MAX),
+            Count::Judge(c) => judge.as_ref().map_or(0, |j| j.count(c, &b.ledger)),
         };
         let unmet = format!(
             "expectation {} unmet under {at}: counted {got}, expected {}",

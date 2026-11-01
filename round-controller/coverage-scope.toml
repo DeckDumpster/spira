@@ -17,3 +17,8 @@ functions = ["PassIdentity::hash"]
 [[scope]]
 path = "round-controller/src/slots.rs"
 functions = ["grant", "take", "SlotSettings::budget", "budget", "grant_for_hand"]
+
+# The Judge's decisions: typing a pass, typing a lane fault, judging a red and the eject path.
+[[scope]]
+path = "round-controller/src/judge.rs"
+functions = ["judge", "type_pass", "type_lane_fault", "judge_red", "removal_sets", "finish"]

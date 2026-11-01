@@ -114,6 +114,7 @@ fn with_ports(f: impl FnOnce(&Ports) -> Result<(), String>) -> Result<(), String
         rng: &rng,
         store: &Unserved,
         verbs: &verbs,
+        ledger: &Unserved,
         log: &StdoutLog,
         units: &units,
         vms: &NoVmRecords,
