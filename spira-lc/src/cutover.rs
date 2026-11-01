@@ -188,7 +188,14 @@ pub fn inline_stdin_payload(args: Vec<String>) -> Vec<String> {
 }
 
 fn inline_payload_from(mut args: Vec<String>, input: &mut dyn std::io::Read) -> Vec<String> {
-    if matches!(args.first().map(String::as_str), Some("batch-progress" | "claim-verdicts")) && !args.iter().any(|a| a == "--json") {
+    let verb = (args.first().map(String::as_str), args.get(1).map(String::as_str));
+    let reads_stdin = matches!(
+        verb,
+        (Some("batch-progress" | "claim-verdicts"), _)
+            | (Some("section"), Some("apply-spec" | "publish-status"))
+            | (Some("intent"), Some("put"))
+    );
+    if reads_stdin && !args.iter().any(|a| a == "--json") {
         let mut body = String::new();
         let _ = input.read_to_string(&mut body);
         args.push("--json".into());
@@ -1795,5 +1802,18 @@ mod progress_payload_tests {
     fn other_verbs_are_untouched() {
         let a: Vec<String> = ["show", "b"].map(String::from).to_vec();
         assert_eq!(super::inline_stdin_payload(a.clone()), a);
+    }
+
+    #[test]
+    fn a_section_or_intent_body_travels_as_the_json_flag_and_reads_do_not_read_stdin() {
+        for verb in [&["section", "apply-spec"][..], &["section", "publish-status"], &["intent", "put", "k"]] {
+            let a: Vec<String> = verb.iter().map(|s| s.to_string()).collect();
+            let out = super::inline_payload_from(a, &mut "{}".as_bytes());
+            assert_eq!(super::flag(&out, "--json").as_deref(), Some("{}"), "{verb:?}");
+        }
+        for verb in [&["section", "get", "Probe/a"][..], &["intent", "ack", "k"], &["section", "snapshot"]] {
+            let a: Vec<String> = verb.iter().map(|s| s.to_string()).collect();
+            assert_eq!(super::inline_payload_from(a.clone(), &mut "{}".as_bytes()), a, "{verb:?}");
+        }
     }
 }

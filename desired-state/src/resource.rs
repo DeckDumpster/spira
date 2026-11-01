@@ -211,6 +211,28 @@ pub fn parse_resource(raw: &RawResource) -> Result<Resource, ResourceError> {
     Ok(Resource { name, spec })
 }
 
+/// Validates a resource of any kind the composite may hold: a registered section kind's spec
+/// against that kind's typed Spec, every other kind through [`parse_resource`].
+pub fn check_resource(raw: &RawResource) -> Result<(), ResourceError> {
+    let Some(kind) = crate::sections::lookup(&raw.kind) else {
+        return parse_resource(raw).map(|_| ());
+    };
+    let invalid = |message: String| ResourceError::InvalidSpec {
+        kind: raw.kind.clone(),
+        name: raw.metadata.name.clone(),
+        message,
+    };
+    if raw.api_version != API_VERSION {
+        return Err(ResourceError::UnsupportedApiVersion {
+            kind: raw.kind.clone(),
+            name: raw.metadata.name.clone(),
+            got: raw.api_version.clone(),
+        });
+    }
+    let spec = serde_json::to_value(&raw.spec).map_err(|e| invalid(e.to_string()))?;
+    (kind.check_spec)(&spec).map_err(|(path, m)| invalid(format!("spec.{path}: {m}")))
+}
+
 /// The JSON Schema every kind's spec is published against.
 pub fn json_schema() -> schemars::schema::RootSchema {
     schemars::schema_for!(KindSpec)

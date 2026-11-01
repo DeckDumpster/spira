@@ -12,7 +12,7 @@ use state_store::{Config, Contract, MonotonicClock, Ports};
 use state_store_sqlite::{Options, SqliteBackend};
 
 use super::store::Store;
-use super::{state, verbs};
+use super::{sections, state, verbs};
 use crate::CANNOT_TELL;
 
 /// A failed open is not kept, so the next call tries again.
@@ -107,6 +107,9 @@ fn request_id() -> String {
 /// store does not serve, or any verb while the key is unset. `watch` has no dolt path.
 pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
     let verb = args.first()?;
+    if sections::VERBS.contains(&verb.as_str()) {
+        return Some(dispatch_sections(args));
+    }
     let lifecycle = state::VERBS.contains(&verb.as_str());
     if !lifecycle && !verbs::VERBS.contains(&verb.as_str()) {
         return None;
@@ -133,4 +136,36 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
         Ok(store) => verbs::run(&store, args),
         Err(e) => (CANNOT_TELL, format!("cannot tell: the control store: {e}")),
     })
+}
+
+/// `section`, `intent` and `lock`, which only the control store serves: JSON on every path.
+fn dispatch_sections(args: &[String]) -> (i32, String) {
+    let path = match store_path() {
+        Some(Ok(p)) => p,
+        Some(Err(e)) => return sections::cannot_tell(&e),
+        None => {
+            return sections::cannot_tell(&format!(
+                "{} is served by the control store, and SPIRA_LC_STORE_PATH is unset or unreadable",
+                args[0]
+            ))
+        }
+    };
+    match opened(&path) {
+        Ok(store) => {
+            let request = request_id();
+            let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
+            let metrics = spira_otel::metrics::MetricsSink::new(
+                endpoint.as_deref(),
+                "spira-lc",
+                std::time::Duration::from_millis(250),
+            );
+            let call = sections::Call {
+                now_ms: Wall.now_ms(),
+                request: &request,
+                metrics: &metrics,
+            };
+            sections::run(&store, args, &call)
+        }
+        Err(e) => sections::cannot_tell(&format!("the control store: {e}")),
+    }
 }

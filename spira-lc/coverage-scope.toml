@@ -1,0 +1,27 @@
+# The section, intent and lock verbs on the control store: the bead's own gate reports any
+# branch in them no test takes.
+[[scope]]
+path = "spira-lc/src/control/sections.rs"
+functions = [
+    "run",
+    "apply_spec_doc",
+    "publish",
+    "put",
+    "owned_intent",
+    "intent_ack",
+    "intent_judge",
+    "intent_apply",
+    "knob_key",
+    "section_get",
+    "section_list",
+    "section_snapshot",
+    "sections_of",
+    "lock_acquire",
+    "lock_renew",
+    "lock_release",
+    "lock_error",
+    "resource",
+    "ttl_ms",
+    "parse_token",
+    "holds_lock",
+]
