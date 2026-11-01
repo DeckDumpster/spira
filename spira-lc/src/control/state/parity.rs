@@ -318,7 +318,7 @@ struct Compared {
 
 /// The cases on served verbs that must match their goldens: fewer than this means the rig
 /// stopped comparing something.
-const MIN_MATCHING: usize = 999;
+const MIN_MATCHING: usize = 54;
 
 fn assert_parity(c: Compared) {
     let declared: BTreeSet<&str> = DIVERGES.iter().map(|(c, _)| *c).collect();

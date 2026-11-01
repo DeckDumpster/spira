@@ -44,6 +44,25 @@ pub(crate) fn machine_audit(
     }
 }
 
+/// A delivery (re)queued inside the cut that takes it: an event no machine kind names, so its
+/// name is given rather than read from evidence, which it has none of.
+fn enqueued(id: &str, from: &str, actor: &str, at: i64) -> Audit {
+    Audit {
+        event: "Enqueued".into(),
+        ..machine_audit(
+            "delivery",
+            id,
+            from,
+            from,
+            DeliveryState::Queued.as_str(),
+            None,
+            Value::Null,
+            actor,
+            at,
+        )
+    }
+}
+
 fn evidence_of(kind: &impl Serialize) -> Value {
     serde_json::to_value(kind).unwrap_or(Value::Null)
 }
@@ -575,32 +594,11 @@ impl<B: Backend> Store<B> {
             }
             let queued = match delivery {
                 None => {
-                    c.note(machine_audit(
-                        "delivery",
-                        id,
-                        "NONE",
-                        "NONE",
-                        DeliveryState::Queued.as_str(),
-                        None,
-                        Value::Null,
-                        actor,
-                        at,
-                    ));
+                    c.note(enqueued(id, "NONE", actor, at));
                     DeliveryRow::start_queue(id.as_str())
                 }
                 Some(row) if row.state == DeliveryState::Exited => {
-                    let from = row.state.as_str();
-                    c.step(machine_audit(
-                        "delivery",
-                        id,
-                        from,
-                        from,
-                        DeliveryState::Queued.as_str(),
-                        None,
-                        Value::Null,
-                        actor,
-                        at,
-                    ));
+                    c.step(enqueued(id, row.state.as_str(), actor, at));
                     DeliveryRow {
                         version: row.version + 1,
                         ..DeliveryRow::start_queue(id.as_str())
