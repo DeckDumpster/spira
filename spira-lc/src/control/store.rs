@@ -866,11 +866,13 @@ fn born_submit_audit(id: &str, tip: &str, at: i64, actor: &str) -> Audit {
     }
 }
 
+mod asks;
 mod direct;
 mod rounds;
 
+pub use asks::{AskClose, AskRecord};
 pub use direct::{Edge, RepoSet};
-pub use rounds::{Cut, Ran, Turned};
+pub use rounds::{Cut, Ran, Turned, Withdrawn};
 
 #[cfg(test)]
 mod tests;

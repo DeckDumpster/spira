@@ -23,8 +23,8 @@ const NOW: i64 = 1_767_225_600;
 const FLOOR_MS: u64 = 1_000;
 
 /// Seed steps whose verbs the control store does not serve yet. They are not replayed, so the
-/// state they would have built is absent: the ask and the fact.
-const UNSERVED_SEED: &[&str] = &["create-ask", "fact"];
+/// state they would have built is absent: the fact.
+const UNSERVED_SEED: &[&str] = &["fact"];
 
 /// Cases on served verbs whose goldens this store does not reproduce, and why.
 const DIVERGES: &[(&str, &str)] = &[
@@ -39,6 +39,7 @@ const DIVERGES: &[(&str, &str)] = &[
     ("express", "list --express shows sp-ready's title, a planning field"),
     ("supersede", "the dolt path retires the bead's mends through bd on a terminal move, and with bd absent from the capture its golden carries that failure on stderr; the control store retires no mends yet"),
     ("content-on-base", "as supersede: the golden's stderr is the dolt path's mend retirement failing on the absent bd"),
+    ("close-ask", "the dolt path closes the ask's bead through bd, absent from the capture, so its golden is that failure; on the control plane the bead's status is the planning plane's, written from the ask's state"),
 ];
 
 fn goldens() -> PathBuf {
@@ -318,7 +319,7 @@ struct Compared {
 
 /// The cases on served verbs that must match their goldens: fewer than this means the rig
 /// stopped comparing something.
-const MIN_MATCHING: usize = 54;
+const MIN_MATCHING: usize = 63;
 
 fn assert_parity(c: Compared) {
     let declared: BTreeSet<&str> = DIVERGES.iter().map(|(c, _)| *c).collect();

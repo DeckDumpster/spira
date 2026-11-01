@@ -90,6 +90,13 @@ pub struct BatchRecord {
     pub opened_at: i64,
 }
 
+/// Under `batch-ids/<id>`: the repo a round was cut in, so a round is found by id alone and a
+/// cut compares its id absent in every repo with one key.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BatchIndex {
+    pub repo: String,
+}
+
 /// One applied or refused machine event, as the dolt `event` table held it. A txn's audit is
 /// the array of these it carries as evidence into `events/<rev>`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

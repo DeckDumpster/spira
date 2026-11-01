@@ -1,10 +1,13 @@
 use std::cell::Cell;
+use std::sync::Arc;
 
 use lifecycle::batch::{BatchEvent, BatchEventKind, BatchState};
 use lifecycle::bead::BeadState;
 use lifecycle::delivery::DeliveryState;
 use runtime::ports::VirtualClock;
-use state_store::{Config, Contract, MemBackend, Ports, Request};
+use state_store::{Backend, Config, Contract, MemBackend, Ports, Request};
+use state_store_sqlite::{Options, SqliteBackend};
+use testkit::TempDir;
 
 use super::{Cut, Planned, Ran, Store};
 use crate::control::keys;
@@ -15,16 +18,40 @@ const AT: i64 = 1_767_225_600;
 const T1: &str = "1111111111111111111111111111111111111111";
 const T2: &str = "2222222222222222222222222222222222222222";
 
-struct Rig {
-    s: Store<MemBackend>,
+struct Rig<B: Backend = MemBackend> {
+    s: Store<B>,
     n: Cell<u64>,
+}
+
+fn clock() -> VirtualClock {
+    VirtualClock::new(AT as u64 * 1_000)
 }
 
 impl Rig {
     fn new() -> Self {
+        Rig::on(MemBackend::new(), &clock())
+    }
+}
+
+impl Rig<SqliteBackend> {
+    fn sqlite(dir: &TempDir) -> Self {
+        let clock = clock();
+        let opts = Options {
+            clock: Arc::new(clock.clone()),
+            ..Options::default()
+        };
+        Rig::on(
+            SqliteBackend::open(&dir.path().join("control.db"), opts).unwrap(),
+            &clock,
+        )
+    }
+}
+
+impl<B: Backend> Rig<B> {
+    fn on(b: B, clock: &VirtualClock) -> Self {
         let c = Contract::open(
-            MemBackend::new(),
-            Ports::virtual_clock(&VirtualClock::new(AT as u64 * 1_000)),
+            b,
+            Ports::virtual_clock(clock),
             Config {
                 min_lock_ttl_ms: 1_000,
             },
@@ -60,8 +87,24 @@ impl Rig {
     }
 
     fn certified(&self, id: &str, tip: &str) {
+        self.certified_with(
+            id,
+            tip,
+            r#"{"Claim":{"holder":"dwarf-1","lease_until":1767229200}}"#,
+        );
+    }
+
+    /// CERTIFIED at `tip`, stacked on `on`'s current tip.
+    fn certified_on(&self, id: &str, tip: &str, on: (&str, &str)) {
+        let claim = format!(
+            r#"{{"Claim":{{"holder":"dwarf-1","lease_until":1767229200,"stack":{{"{}":"{}"}},"stack_depth":1,"stack_max_depth":3}}}}"#,
+            on.0, on.1
+        );
+        self.certified_with(id, tip, &claim);
+    }
+
+    fn certified_with(&self, id: &str, tip: &str, claim: &str) {
         self.ok(&["create-bead", id, "--repo", "spira"]);
-        let claim = r#"{"Claim":{"holder":"dwarf-1","lease_until":1767229200}}"#;
         let submit = format!(r#"{{"Submit":{{"tip":"{tip}"}}}}"#);
         let pass = format!(r#"{{"GatePass":{{"tip":"{tip}","gate_key":"k1"}}}}"#);
         let event = |expect: &str, v: &str, kind: &str| {
@@ -281,7 +324,7 @@ fn a_cut_whose_member_moved_after_the_plan_writes_nothing_and_audits_every_step_
     assert_eq!((rc, out.as_str()), (1, "{}"));
 }
 
-fn batch_event(r: &Rig, expect: BatchState, version: u64, kind: BatchEventKind) {
+fn batch_event<B: Backend>(r: &Rig<B>, expect: BatchState, version: u64, kind: BatchEventKind) {
     let ev = BatchEvent {
         expect,
         version,
@@ -295,7 +338,7 @@ fn batch_event(r: &Rig, expect: BatchState, version: u64, kind: BatchEventKind) 
     );
 }
 
-fn green_round(r: &Rig) {
+fn green_round<B: Backend>(r: &Rig<B>) {
     r.certified("sp-a", T1);
     r.certified("sp-b", T2);
     let members = two();
@@ -438,4 +481,386 @@ fn a_cut_refuses_a_member_not_at_its_tip_or_still_in_another_round_before_writin
         (3, "refused: sp-a is IN_DELIVERY not SUBMITTED or CERTIFIED")
     );
     assert_eq!(r.s.contract().head().unwrap(), head, "nothing written");
+}
+
+const T3: &str = "3333333333333333333333333333333333333333";
+const CAP: usize = state_store::limits::MAX_CUT_MEMBERS;
+
+fn ids(n: usize) -> Vec<(String, String)> {
+    (0..n)
+        .map(|i| (format!("sp-m{i:02}"), T1.to_string()))
+        .collect()
+}
+
+fn a_cut_at_the_member_cap_commits_and_one_more_is_refused_before_any_write<B: Backend>(
+    r: &Rig<B>,
+) {
+    let over = ids(CAP + 1);
+    for (id, tip) in &over {
+        r.certified(id, tip);
+    }
+    let head = r.s.contract().head().unwrap();
+    let p = r.s.plan_cut(&r.cut_spec(&over)).unwrap();
+    assert!(
+        matches!(&p, Planned::Ran(Ran::Turned(super::Turned::Refused(m))) if m.contains(&format!("at most {CAP} members"))),
+        "{:?}",
+        match p {
+            Planned::Ran(r) => format!("{r:?}"),
+            Planned::Cascade(_) => "planned".into(),
+        }
+    );
+    assert_eq!(r.s.contract().head().unwrap(), head, "nothing written");
+    // The cap is the contract's limit, not a guess under it: the same cut planned past the
+    // guard is refused by the contract, and writes nothing either.
+    let p = r.s.plan_cut_uncapped(&r.cut_spec(&over)).unwrap();
+    assert!(matches!(
+        r.s.run_planned(p, &r.req(), "cut"),
+        Err(state_store::Error::Limit(state_store::Limit::Ops { .. }))
+    ));
+    assert_eq!(r.s.contract().head().unwrap(), head, "nothing written");
+    let at = &over[..CAP];
+    let p = r.s.plan_cut(&r.cut_spec(at)).unwrap();
+    let Ran::Done { applied, .. } = r.s.run_planned(p, &r.req(), "cut").unwrap() else {
+        panic!("the cut at the cap did not run");
+    };
+    assert_eq!(applied, vec![true; 3 * CAP]);
+    let (_, round) = r.s.batch("b-1").unwrap().unwrap();
+    assert_eq!(round.value.members.len(), CAP);
+}
+
+#[test]
+fn a_cut_at_the_member_cap_commits_on_the_reference_backend() {
+    a_cut_at_the_member_cap_commits_and_one_more_is_refused_before_any_write(&Rig::new());
+}
+
+#[test]
+fn a_cut_at_the_member_cap_commits_on_sqlite() {
+    let dir = TempDir::new("spira-lc-cap");
+    a_cut_at_the_member_cap_commits_and_one_more_is_refused_before_any_write(&Rig::sqlite(&dir));
+}
+
+#[test]
+fn a_round_id_is_taken_in_every_repo_once_any_repo_cuts_it() {
+    let r = Rig::new();
+    r.certified("sp-a", T1);
+    r.certified("sp-b", T2);
+    let mine = vec![("sp-a".to_string(), T1.to_string())];
+    let planned = r.s.plan_cut(&r.cut_spec(&mine)).unwrap();
+    let theirs = vec![("sp-b".to_string(), T2.to_string())];
+    let other = Cut {
+        repo: "other",
+        ..r.cut_spec(&theirs)
+    };
+    let p = r.s.plan_cut(&other).unwrap();
+    r.s.run_planned(p, &r.req(), "cut").unwrap();
+    let Ran::Done { applied, .. } = r.s.run_planned(planned, &r.req(), "cut").unwrap() else {
+        panic!("the cut did not run");
+    };
+    assert_eq!(applied, vec![false; 3], "the index compared absent loses");
+    let (key, _) = r.s.batch("b-1").unwrap().unwrap();
+    assert_eq!(key, keys::batch("other", "b-1"));
+    assert!(r
+        .s
+        .contract()
+        .get(&keys::batch("spira", "b-1"))
+        .unwrap()
+        .is_none());
+}
+
+/// A round of sp-a and sp-b, sp-b stacked on sp-a, red and awaiting attribution.
+fn attributing(r: &Rig) {
+    r.certified("sp-a", T1);
+    r.certified_on("sp-b", T2, ("sp-a", T1));
+    let members = two();
+    let p = r.s.plan_cut(&r.cut_spec(&members)).unwrap();
+    r.s.run_planned(p, &r.req(), "cut").unwrap();
+    batch_event(
+        r,
+        BatchState::Open,
+        2,
+        BatchEventKind::CiStarted { run: "r1".into() },
+    );
+    batch_event(r, BatchState::CiRunning, 3, BatchEventKind::Red);
+}
+
+fn batch_ev(expect: BatchState, version: u64, kind: BatchEventKind) -> BatchEvent {
+    BatchEvent {
+        expect,
+        version,
+        kind,
+        actor: "test".into(),
+    }
+}
+
+fn round_state(r: &Rig) -> BatchState {
+    r.s.batch("b-1").unwrap().unwrap().1.value.row.state
+}
+
+#[test]
+fn a_settle_returns_the_red_member_and_carries_out_the_member_stacked_on_it() {
+    let r = Rig::new();
+    attributing(&r);
+    let (rc, out) = r.lc(&[
+        "settle",
+        "b-1",
+        "--expect",
+        "ATTRIBUTING",
+        "--version",
+        "4",
+        "--actor",
+        "test",
+        "--eject",
+        "sp-a",
+    ]);
+    assert_eq!(rc, 0, "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["base_withdrawn"], 1);
+    assert_eq!(v["stacked_on"]["sp-b"], "sp-a");
+    assert_eq!(round_state(&r), BatchState::Settled);
+    for id in ["sp-a", "sp-b"] {
+        assert_eq!(r.state(id), BeadState::Rework);
+    }
+    let reasons: Vec<Option<String>> = ["sp-a", "sp-b"]
+        .iter()
+        .map(|id| r.s.record(id).unwrap().unwrap().value.row.reason)
+        .collect();
+    assert_eq!(
+        reasons,
+        [
+            Some("batch-ejected-red".into()),
+            Some("base-withdrawn".into())
+        ]
+    );
+    let returned = r.s.history("sp-b", Some("bead")).unwrap();
+    let last = &returned.last().unwrap().audit;
+    assert_eq!(
+        (last.event.as_str(), &last.evidence["stacked_on"]),
+        ("Returned", &serde_json::json!("sp-a"))
+    );
+}
+
+#[test]
+fn a_settle_whose_member_moved_after_the_plan_writes_nothing() {
+    let r = Rig::new();
+    attributing(&r);
+    let req = r.req();
+    let ev = batch_ev(BatchState::Attributing, 4, BatchEventKind::Settle);
+    let (p, _) =
+        r.s.plan_settle("b-1", &ev, &["sp-a".into()], &[], AT, &req)
+            .unwrap();
+    r.ok(&["set-repo", "sp-b", "other"]);
+    let Ran::Done { applied, .. } = r.s.run_planned(p, &req, "settle").unwrap() else {
+        panic!("the settle did not run");
+    };
+    assert!(!applied.is_empty() && applied.iter().all(|a| !a));
+    assert_eq!(round_state(&r), BatchState::Attributing);
+    for id in ["sp-a", "sp-b"] {
+        assert_eq!(r.state(id), BeadState::InDelivery);
+        assert_eq!(
+            r.s.delivery(id).unwrap().unwrap().value.state,
+            DeliveryState::Batched
+        );
+    }
+}
+
+#[test]
+fn an_abandon_whose_member_moved_after_the_plan_writes_nothing() {
+    let r = Rig::new();
+    green_round(&r);
+    let req = r.req();
+    let ev = batch_ev(
+        BatchState::Green,
+        4,
+        BatchEventKind::Abandon {
+            reason: "stopped".into(),
+        },
+    );
+    let p = r.s.plan_abandon("b-1", &ev, AT, &req).unwrap();
+    r.ok(&["set-repo", "sp-b", "other"]);
+    let Ran::Done { applied, .. } = r.s.run_planned(p, &req, "abandon").unwrap() else {
+        panic!("the abandon did not run");
+    };
+    assert_eq!(applied, vec![false; 5], "Abandon, and two exits per member");
+    assert_eq!(round_state(&r), BatchState::Green);
+    let p = r.s.plan_abandon("b-1", &ev, AT, &req).unwrap();
+    let Ran::Done { applied, .. } = r.s.run_planned(p, &r.req(), "abandon").unwrap() else {
+        panic!("the abandon did not run");
+    };
+    assert_eq!(applied, vec![true; 5]);
+    assert_eq!(round_state(&r), BatchState::Abandoned);
+    for id in ["sp-a", "sp-b"] {
+        assert_eq!(r.state(id), BeadState::Certified);
+    }
+}
+
+#[test]
+fn an_eject_requeues_the_member_and_withdraws_its_dependent_in_one_txn_or_not_at_all() {
+    let r = Rig::new();
+    attributing(&r);
+    let ev = batch_ev(
+        BatchState::Attributing,
+        4,
+        BatchEventKind::Eject {
+            bead_id: "sp-a".into(),
+            reason: "red".into(),
+        },
+    );
+    let req = r.req();
+    let (p, withdrawn) = r.s.plan_eject("b-1", "sp-a", &ev, AT, &req).unwrap();
+    assert_eq!(withdrawn, [("sp-b".to_string(), "sp-a".to_string())]);
+    r.ok(&["set-repo", "sp-b", "other"]);
+    let Ran::Done { applied, .. } = r.s.run_planned(p, &req, "eject").unwrap() else {
+        panic!("the eject did not run");
+    };
+    assert!(applied.iter().all(|a| !a));
+    assert_eq!(r.state("sp-a"), BeadState::InDelivery);
+    let (p, _) = r.s.plan_eject("b-1", "sp-a", &ev, AT, &req).unwrap();
+    let Ran::Done { applied, .. } = r.s.run_planned(p, &r.req(), "eject").unwrap() else {
+        panic!("the eject did not run");
+    };
+    assert_eq!(applied, vec![true; 5]);
+    assert_eq!(
+        (r.state("sp-a"), r.state("sp-b")),
+        (BeadState::Certified, BeadState::Rework)
+    );
+    let (_, round) = r.s.batch("b-1").unwrap().unwrap();
+    assert_eq!(
+        round.value.members.len(),
+        2,
+        "an ejected member keeps its place"
+    );
+}
+
+fn open_round(r: &Rig) {
+    r.certified("sp-a", T1);
+    let one = vec![("sp-a".to_string(), T1.to_string())];
+    let p = r.s.plan_cut(&r.cut_spec(&one)).unwrap();
+    r.s.run_planned(p, &r.req(), "cut").unwrap();
+}
+
+#[test]
+fn a_stack_whose_member_moved_after_the_plan_writes_nothing_and_none_past_the_cap_is_taken() {
+    let r = Rig::new();
+    open_round(&r);
+    r.certified("sp-c", T3);
+    let more = vec![("sp-c".to_string(), T3.to_string())];
+    let p = r.s.plan_stack("b-1", &more, "test", AT).unwrap();
+    r.ok(&["set-repo", "sp-c", "other"]);
+    let Ran::Done { applied, .. } = r.s.run_planned(p, &r.req(), "stack").unwrap() else {
+        panic!("the stack did not run");
+    };
+    assert_eq!(applied, vec![false; 3]);
+    assert_eq!(r.s.batch("b-1").unwrap().unwrap().1.value.members.len(), 1);
+    assert_eq!(r.state("sp-c"), BeadState::Certified);
+    let full = ids(CAP);
+    let p = r.s.plan_stack("b-1", &full, "test", AT).unwrap();
+    assert!(
+        matches!(p, Planned::Ran(Ran::Turned(super::Turned::Refused(ref m))) if m.contains(&format!("would hold {}", CAP + 1)))
+    );
+    let p = r.s.plan_stack("b-1", &more, "test", AT).unwrap();
+    let Ran::Done { applied, .. } = r.s.run_planned(p, &r.req(), "stack").unwrap() else {
+        panic!("the stack did not run");
+    };
+    assert_eq!(applied, vec![true; 3]);
+    assert_eq!(r.s.batch("b-1").unwrap().unwrap().1.value.members.len(), 2);
+}
+
+#[test]
+fn a_promotion_whose_member_moved_after_the_plan_leaves_the_round_staged() {
+    let r = Rig::new();
+    open_round(&r);
+    r.certified("sp-c", T3);
+    r.ok(&[
+        "stage",
+        "b-2",
+        "--repo",
+        "spira",
+        "--head",
+        "H",
+        "--base",
+        "B",
+        "--members",
+        &format!("sp-c:{T3}"),
+        "--actor",
+        "test",
+        "--parent",
+        "b-1",
+    ]);
+    assert_eq!(
+        r.state("sp-c"),
+        BeadState::Certified,
+        "staging delivers nothing"
+    );
+    let req = r.req();
+    let p =
+        r.s.plan_promote("b-2", "H2", "B2", "test", AT, &req)
+            .unwrap();
+    r.ok(&["set-repo", "sp-c", "other"]);
+    let Ran::Done { applied, .. } = r.s.run_planned(p, &req, "promote").unwrap() else {
+        panic!("the promotion did not run");
+    };
+    assert_eq!(applied, vec![false; 4]);
+    let (_, staged) = r.s.batch("b-2").unwrap().unwrap();
+    assert_eq!(staged.value.row.state, BatchState::Staged);
+    assert_eq!(r.state("sp-c"), BeadState::Certified);
+    let (rc, out) = r.lc(&[
+        "promote", "b-2", "--head", "H2", "--base", "B2", "--actor", "test",
+    ]);
+    assert_eq!(rc, 0, "{out}");
+    assert_eq!(r.state("sp-c"), BeadState::InDelivery);
+    let (rc, out) = r.lc(&[
+        "stage",
+        "b-2",
+        "--repo",
+        "other",
+        "--head",
+        "H",
+        "--base",
+        "B",
+        "--members",
+        &format!("sp-a:{T1}"),
+        "--actor",
+        "test",
+        "--parent",
+        "b-1",
+    ]);
+    assert_eq!(
+        (rc, out.as_str()),
+        (2, "stage: a batch row for b-2 already exists")
+    );
+}
+
+#[test]
+fn a_round_that_opened_and_never_began_is_abandoned_and_its_members_requeued() {
+    let r = Rig::new();
+    open_round(&r);
+    let req = r.req();
+    let early =
+        r.s.requeue_orphans("test", true, 1800, AT + 60, &req)
+            .unwrap();
+    assert!(early.phantom_batches.is_empty() && early.orphans.is_empty());
+    let late =
+        r.s.requeue_orphans("test", false, 1800, AT + 3600, &req)
+            .unwrap();
+    assert_eq!(
+        (late.phantom_batches.as_slice(), late.orphans.as_slice()),
+        (
+            ["b-1".to_string()].as_slice(),
+            ["sp-a".to_string()].as_slice()
+        )
+    );
+    assert_eq!(
+        round_state(&r),
+        BatchState::Open,
+        "a dry run writes nothing"
+    );
+    let applied =
+        r.s.requeue_orphans("test", true, 1800, AT + 3600, &r.req())
+            .unwrap();
+    assert_eq!(
+        (applied.abandoned, applied.requeued, applied.failed),
+        (vec!["b-1".to_string()], vec!["sp-a".to_string()], vec![])
+    );
+    assert_eq!(round_state(&r), BatchState::Abandoned);
+    assert_eq!(r.state("sp-a"), BeadState::Certified);
 }

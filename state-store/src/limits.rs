@@ -12,6 +12,37 @@ pub const MAX_TXN_COMPARES: usize = 128;
 /// etcd's default `--max-request-bytes` (1.5 MiB).
 pub const MAX_REQUEST_BYTES: usize = 1_572_864;
 
+/// Ops on the larger branch of a round's cut of `members`: each member's lifecycle and delivery
+/// put and its history entry; the round, its id index and its history entry; then the events
+/// and request keys the contract adds.
+pub const fn cut_ops(members: usize) -> usize {
+    3 * members + 5
+}
+
+/// Compares a cut makes: each member's record and delivery, the round's key and its id index
+/// absent, and each blocker gate it re-checks.
+pub const fn cut_compares(members: usize, gates: usize) -> usize {
+    2 * members + 2 + gates
+}
+
+/// Whether a cut of `members` comparing `gates` blocker gates fits both limits.
+pub const fn cut_fits(members: usize, gates: usize) -> bool {
+    cut_ops(members) <= MAX_TXN_OPS && cut_compares(members, gates) <= MAX_TXN_COMPARES
+}
+
+/// The most members one round may hold: every cascade on a round (cut, promote, settle,
+/// abandon) writes at most a cut's ops, so a round no larger than this is always writable.
+pub const MAX_CUT_MEMBERS: usize = {
+    let mut n = 0;
+    while cut_fits(n + 1, 0) {
+        n += 1;
+    }
+    n
+};
+
+/// The blocker gates a cut at the member cap may still compare.
+pub const MAX_CUT_GATES: usize = MAX_TXN_COMPARES - cut_compares(MAX_CUT_MEMBERS, 0);
+
 /// The keys and values a txn's compares carry.
 pub fn compare_bytes(compares: &[Compare]) -> usize {
     compares
@@ -64,4 +95,18 @@ pub fn check(t: &Txn, bookkeeping: usize) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_member_cap_is_the_largest_cut_within_the_op_limit_and_leaves_room_for_gates() {
+        assert!(cut_fits(MAX_CUT_MEMBERS, MAX_CUT_GATES));
+        assert!(!cut_fits(MAX_CUT_MEMBERS + 1, 0));
+        assert!(!cut_fits(MAX_CUT_MEMBERS, MAX_CUT_GATES + 1));
+        assert_eq!(cut_ops(MAX_CUT_MEMBERS), MAX_TXN_OPS);
+        assert_eq!(MAX_CUT_MEMBERS, 41);
+    }
 }

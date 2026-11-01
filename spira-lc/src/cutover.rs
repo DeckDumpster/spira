@@ -1376,7 +1376,7 @@ fn stacked_dependents_in_batch(conn: &Conn, batch_row: &batch::BatchRow, roots: 
 /// `(dependent, prerequisite)` for every pair of members where the dependent's branch holds a
 /// commit in the prerequisite's own range above the batch's base. A repository, base or tip
 /// git cannot resolve yields no edge: the declared `stack` still applies.
-fn branch_containment(batch_row: &batch::BatchRow, members: &[(String, String)]) -> std::collections::BTreeSet<(String, String)> {
+pub(crate) fn branch_containment(batch_row: &batch::BatchRow, members: &[(String, String)]) -> std::collections::BTreeSet<(String, String)> {
     let empty = std::collections::BTreeSet::new();
     let Some(base) = batch_row.base.as_deref() else { return empty };
     let Ok(cfg) = crate::repo_config::from_process() else { return empty };
@@ -1401,7 +1401,7 @@ fn containment_in_repo(repo: &std::path::Path, base: &str, members: &[(String, S
 }
 
 /// The pure frontier walk, split out so the closure is unit-testable without a live `dolt`.
-fn stacked_dependents_from(
+pub(crate) fn stacked_dependents_from(
     member_stacks: &[(String, bead::BeadRow)],
     tips: &std::collections::BTreeMap<String, String>,
     contained: &std::collections::BTreeSet<(String, String)>,

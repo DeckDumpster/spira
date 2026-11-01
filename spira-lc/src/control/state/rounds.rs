@@ -47,7 +47,7 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
 }
 
 /// A machine step's or cascade's answer: the summary when it ran, the refusal when it did not.
-fn answered(
+pub(super) fn answered(
     ran: state_store::Result<Ran>,
     summary: impl FnOnce(&[bool]) -> Value,
 ) -> (i32, String) {
@@ -66,7 +66,7 @@ fn answered(
     }
 }
 
-fn turned(t: Turned) -> (i32, String) {
+pub(super) fn turned(t: Turned) -> (i32, String) {
     match t {
         Turned::Refused(why) => (REFUSED, why),
         Turned::CannotTell(why) => (CANNOT_TELL, why),
@@ -74,7 +74,7 @@ fn turned(t: Turned) -> (i32, String) {
 }
 
 /// `id:tip,id:tip`; empty is no member.
-fn members(s: &str) -> Option<Vec<(String, String)>> {
+pub(super) fn members(s: &str) -> Option<Vec<(String, String)>> {
     if s.is_empty() {
         return Some(Vec::new());
     }
@@ -138,7 +138,10 @@ fn cut<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, Stri
 }
 
 /// `--expect S --version V --actor A`, as every batch verb takes them.
-fn batch_ask(verb: &str, args: &[String]) -> Result<(BatchState, u64, String), (i32, String)> {
+pub(super) fn batch_ask(
+    verb: &str,
+    args: &[String],
+) -> Result<(BatchState, u64, String), (i32, String)> {
     let (Some(expect), Some(version), Some(actor)) = (
         flag(args, "--expect"),
         flag(args, "--version"),
