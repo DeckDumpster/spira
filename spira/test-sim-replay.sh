@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tier: T2
+# tier: T3
 # requires: testenv
 # covers: sim/src/replay.rs sim/src/replay/** sim/src/bin/sim-replay.rs sim/tests/replay.rs sim/fixtures/replay/** desired-state/src/sections/** spira-lc/src/sections.rs spira-lc/src/sections/** spira-lc/src/keys.rs
 # lane: sim
