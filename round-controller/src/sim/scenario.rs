@@ -8,9 +8,12 @@ use runtime::ports::{Proc, ProcOutput, ProcSpec, SeededRng, VirtualClock};
 use serde::Deserialize;
 use state_store::{Config, Contract, MemBackend, Object, Request};
 
+use crate::ledger::summary_key;
 use crate::outcome::{utc_stamp, Kind, MemLog};
 use crate::pass::{pass, pass_with, Step};
 use crate::ports::{Ports, Verb};
+use crate::resources::PassIdentity;
+use crate::sim::ledger::{self as sim_ledger, IdentitySpec, LedgerConfig, LedgerStep};
 use crate::sim::verbs::{Call, FakeVerbs, VerbScript};
 use crate::sim::vm::{FakeVm, VmScript};
 
@@ -87,10 +90,15 @@ pub enum Count {
     VmRuns,
     /// The longest queue lock hold any verb reported.
     LockHoldMs,
+    /// Keys under this prefix once the last pass has run; `attempts:<identity>` counts the
+    /// keys under that identity's attempts.
+    Keys(String),
+    /// `summary:<identity>`: the attempts its summary counts, 0 with none.
+    Summary(String),
 }
 
 impl Count {
-    fn parse(s: &str) -> Option<Count> {
+    fn parse(s: &str, ids: &BTreeMap<String, PassIdentity>) -> Option<Count> {
         let (what, of) = s.split_once(':').map_or((s, None), |(w, o)| (w, Some(o)));
         match (what, of) {
             ("calls", None) => Some(Count::Calls(None)),
@@ -103,6 +111,11 @@ impl Count {
             ("store-writes", None) => Some(Count::StoreWrites),
             ("vm-runs", None) => Some(Count::VmRuns),
             ("lock-hold-ms", None) => Some(Count::LockHoldMs),
+            ("keys", Some(p)) if !p.is_empty() => Some(Count::Keys(p.to_string())),
+            ("attempts", Some(n)) => ids
+                .get(n)
+                .map(|id| Count::Keys(format!("{}/attempt/", summary_key(id)))),
+            ("summary", Some(n)) => ids.get(n).map(|id| Count::Summary(summary_key(id))),
             _ => None,
         }
     }
@@ -133,6 +146,12 @@ struct File {
     vm: Vec<VmScript>,
     #[serde(default)]
     expect: Vec<ExpectDef>,
+    #[serde(default)]
+    ledger: Option<LedgerConfig>,
+    #[serde(default)]
+    identity: Vec<IdentitySpec>,
+    #[serde(default)]
+    ledger_step: Vec<LedgerStep>,
 }
 
 #[derive(Clone, Debug)]
@@ -152,15 +171,21 @@ pub struct Scenario {
     pub verbs: Vec<VerbScript>,
     pub vm: Vec<VmScript>,
     pub expects: Vec<Expect>,
+    pub ledger: Option<LedgerConfig>,
+    pub identities: BTreeMap<String, PassIdentity>,
+    pub ledger_steps: Vec<LedgerStep>,
 }
 
 pub fn parse(text: &str) -> Result<Scenario, String> {
     let f: File = toml::from_str(text).map_err(|e| format!("scenario: {e}"))?;
+    let identities = sim_ledger::identities(&f.identity).map_err(|e| format!("scenario: {e}"))?;
+    sim_ledger::check(&f.ledger_step, &identities, f.ledger.as_ref())
+        .map_err(|e| format!("scenario: {e}"))?;
     let expects = f
         .expect
         .into_iter()
         .map(|e| {
-            let count = Count::parse(&e.count).ok_or_else(|| {
+            let count = Count::parse(&e.count, &identities).ok_or_else(|| {
                 format!(
                     "scenario: expectation {} counts {:?}, which is nothing the harness counts",
                     e.name, e.count
@@ -182,6 +207,9 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
         verbs: f.verb,
         vm: f.vm,
         expects,
+        ledger: f.ledger,
+        identities,
+        ledger_steps: f.ledger_step,
     })
 }
 
@@ -264,15 +292,23 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
         verbs: &verbs,
         log: &log,
     };
+    let mut broken: Vec<String> = Vec::new();
     for i in 0..sc.run.passes {
         if i > 0 {
             let jitter = ports.next_u64() % (sc.run.jitter_secs * 1000 + 1);
             clock.advance(sc.run.every_secs * 1000 + jitter);
         }
         go(&ports, &sc.repos);
+        broken.extend(sim_ledger::run(
+            &ports,
+            i + 1,
+            &sc.ledger_steps,
+            &sc.identities,
+            sc.ledger.as_ref(),
+            at,
+        ));
     }
 
-    let mut broken: Vec<String> = Vec::new();
     let now = runtime::ports::Clock::now_ms(&clock);
     for r in vm.runs().iter().filter(|r| r.ends <= now && !r.collected) {
         broken.push(format!("invariant every-pass-has-a-verdict violated under {at}: pass {} finished at {} with no recorded verdict", r.identity, utc_stamp(r.ends)));
@@ -306,6 +342,16 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
             Count::StoreWrites => writes,
             Count::VmRuns => vm.runs().len() as u64,
             Count::LockHoldMs => calls.iter().map(|c| c.lock_hold_ms).max().unwrap_or(0),
+            Count::Keys(prefix) => store
+                .list(&[prefix.as_str()], &state_store::Selector::Everything)
+                .expect("the in-memory store lists")
+                .0
+                .len() as u64,
+            Count::Summary(key) => store
+                .get(key)
+                .expect("the in-memory store reads")
+                .and_then(|i| i.value.data.get("attempts").and_then(|a| a.as_u64()))
+                .unwrap_or(0),
         };
         let unmet = format!(
             "expectation {} unmet under {at}: counted {got}, expected {}",

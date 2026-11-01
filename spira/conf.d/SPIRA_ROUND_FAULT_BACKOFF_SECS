@@ -1,0 +1,8 @@
+TYPE=u64
+GROUP=round
+DOC=Seconds the round controller backs a pass identity off after a transient fault (VM lost, over-cap, fences cap), doubled per attempt; a knob, not policy, tuned from the measured fault rate
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Seconds the round controller backs a pass identity off after a transient fault (VM lost,
+    # over-cap, fences cap), doubled per attempt; a knob, not policy, tuned from the measured fault rate.
+    : "${SPIRA_ROUND_FAULT_BACKOFF_SECS:=300}"
+SPIRA_CONF_DEFAULT_EOF

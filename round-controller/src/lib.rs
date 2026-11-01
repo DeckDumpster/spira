@@ -2,10 +2,12 @@
 //! through [`ports::Ports`], so [`pass::pass`] runs the same code against the real queue and
 //! against the scenario harness in [`sim`]. Inert: nothing installs it (DESIGN.md).
 
+pub mod ledger;
 pub mod outcome;
 pub mod pass;
 pub mod ports;
 pub mod real;
+pub mod resources;
 #[cfg(feature = "sim")]
 pub mod sim;
 pub mod telemetry;

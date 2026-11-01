@@ -132,7 +132,9 @@ fn need(verb: Verb, f: &Fields, key: &str) -> Result<String, VerbRefusal> {
         })
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct Member {
     pub id: String,
     pub tip: String,
