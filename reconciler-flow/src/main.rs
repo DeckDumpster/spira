@@ -68,8 +68,7 @@ struct Config {
     tsd_bin: String,
     export_bin: String,
     duckdb_bin: String,
-    bd_bin: String,
-    spira_db: String,
+    bdq_bin: String,
     scope_label: String,
     desired_dir: PathBuf,
     mail_bin: String,
@@ -91,11 +90,12 @@ struct Seams {
     export: String,
     mail: String,
     date: String,
+    bdq: String,
 }
 
 impl Seams {
     fn production() -> Seams {
-        Seams { tsd: "tsd-write".into(), duckdb: "duckdb".into(), export: "tsd-lifecycle-export".into(), mail: "mail".into(), date: "date".into() }
+        Seams { tsd: "tsd-write".into(), duckdb: "duckdb".into(), export: "tsd-lifecycle-export".into(), mail: "mail".into(), date: "date".into(), bdq: spira_config::release_env::tool("bdq") }
     }
 }
 
@@ -112,8 +112,7 @@ impl Config {
             tsd_bin: seams.tsd,
             duckdb_bin: seams.duckdb,
             export_bin: seams.export,
-            bd_bin: cfg("SPIRA_BD")?,
-            spira_db: cfg("SPIRA_DB")?,
+            bdq_bin: seams.bdq,
             scope_label: cfg("SPIRA_SCOPE_LABEL")?,
             desired_dir: PathBuf::from(cfg("SPIRA_DESIRED_DIR")?),
             mail_bin: seams.mail,
@@ -263,7 +262,7 @@ fn run_pass() -> Result<(), String> {
 
     // ── backlog trend ────────────────────────────────────────────────────────────────────
     let baseline = backlog_baseline(&cfg.duckdb_bin, &cfg.spira_run, cfg.baseline_hours);
-    let current = backlog_count(&cfg.bd_bin, &cfg.spira_db, &cfg.scope_label);
+    let current = backlog_count(&cfg.bdq_bin, &cfg.scope_label);
     let backlog_raw = match (&current, &baseline) {
         (Ok(cur), Ok(base)) => backlog_trend_raw(&BacklogObserved { current: *cur, baseline: *base }),
         (Err(e), _) => unobservable(e.clone()),

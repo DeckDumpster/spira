@@ -130,7 +130,7 @@ pub fn create_store() -> (i32, String) {
 
 /// A request id no other call in any process mints: each call, a retry included, is its own
 /// request, so a request that lost its race is never answered again as if it had not.
-fn request_id() -> String {
+pub(crate) fn request_id() -> String {
     static N: AtomicU64 = AtomicU64::new(0);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

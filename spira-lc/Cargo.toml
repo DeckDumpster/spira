@@ -21,6 +21,10 @@ tsd = { path = "../tsd" }
 name = "spira-lc"
 path = "src/main.rs"
 
+[package.metadata.spira]
+# plan_conformance files through the real bead and bdq.
+test-bins = ["bead", "spira-config"]
+
 [profile.release]
 opt-level = "z"
 lto = true

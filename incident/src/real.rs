@@ -1,6 +1,6 @@
-//! The ports against the host: `bd` on PATH (or `$SPIRA_BD`), `mail` on PATH, and the
-//! wall clock. Mirrors lib.sh's `bdq`: `timeout $BD_TIMEOUT bd -C "$db" "$@"`, retried once
-//! on a dead pooled connection ("invalid connection").
+//! The ports against the host: the store through `bdq`, `mail` on PATH, and the wall clock.
+//! Each call is `timeout $BD_TIMEOUT bdq "$@"`, retried on a dead pooled connection
+//! ("invalid connection").
 
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -9,31 +9,30 @@ use crate::decide::{status_of_lc, BeadRow, BeadStatus, Scope};
 use crate::ports::{Bd, Clock, Mailer};
 
 pub struct RealBd {
-    pub bd_bin: String,
+    pub bdq: String,
     pub timeout_secs: u64,
     pub retries: u32,
 }
 
 impl RealBd {
-    /// `SPIRA_BD` is a registered key (spira/conf.d) — the one source of config (per Ryan
-    /// 2026-10-05), through `spira_config::process::cfg`, never a literal default.
     /// `BD_TIMEOUT`/`SPIRA_BDQ_CONN_RETRIES` carry no `spira/conf.d/<KEY>` entry, so they
-    /// stay ad hoc environment reads, unchanged.
-    pub fn from_env() -> Result<RealBd, String> {
-        Ok(RealBd {
-            bd_bin: spira_config::process::cfg("SPIRA_BD")?,
+    /// stay ad hoc environment reads.
+    pub fn from_env() -> RealBd {
+        RealBd {
+            bdq: spira_config::release_env::tool("bdq"),
             timeout_secs: std::env::var("BD_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(180),
             retries: std::env::var("SPIRA_BDQ_CONN_RETRIES").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
-        })
+        }
     }
 
-    pub(crate) fn run(&self, db: &str, args: &[&str]) -> Result<(i32, String, String), String> {
+    /// `bdq` addresses the configured database itself, so `_db` is not passed on.
+    pub(crate) fn run(&self, _db: &str, args: &[&str]) -> Result<(i32, String, String), String> {
         let mut attempt = 0u32;
         loop {
             attempt += 1;
             let mut cmd = Command::new("timeout");
-            cmd.arg(self.timeout_secs.to_string()).arg(&self.bd_bin).arg("-C").arg(db).args(args);
-            let out = cmd.output().map_err(|e| format!("{}: {e}", self.bd_bin))?;
+            cmd.arg(self.timeout_secs.to_string()).arg(&self.bdq).args(args);
+            let out = cmd.output().map_err(|e| format!("{}: {e}", self.bdq))?;
             let rc = out.status.code().unwrap_or(-1);
             let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
             let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
@@ -54,21 +53,19 @@ impl RealBd {
         ))
     }
 
-    fn run_stdin(&self, db: &str, args: &[&str], stdin_body: &str) -> Result<(i32, String, String), String> {
+    fn run_stdin(&self, args: &[&str], stdin_body: &str) -> Result<(i32, String, String), String> {
         let mut cmd = Command::new("timeout");
         cmd.arg(self.timeout_secs.to_string())
-            .arg(&self.bd_bin)
-            .arg("-C")
-            .arg(db)
+            .arg(&self.bdq)
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", self.bd_bin))?;
+        let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", self.bdq))?;
         if let Some(mut si) = child.stdin.take() {
             let _ = si.write_all(stdin_body.as_bytes());
         }
-        let out = child.wait_with_output().map_err(|e| format!("{}: {e}", self.bd_bin))?;
+        let out = child.wait_with_output().map_err(|e| format!("{}: {e}", self.bdq))?;
         let rc = out.status.code().unwrap_or(-1);
         Ok((rc, String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned()))
     }
@@ -178,7 +175,7 @@ impl Bd for RealBd {
 
     fn create(
         &self,
-        db: &str,
+        _db: &str,
         title: &str,
         kind: &str,
         priority: &str,
@@ -193,9 +190,7 @@ impl Bd for RealBd {
         ];
         let mut cmd = Command::new("timeout");
         cmd.arg(self.timeout_secs.to_string())
-            .arg(&self.bd_bin)
-            .arg("-C")
-            .arg(db)
+            .arg(&self.bdq)
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -203,20 +198,17 @@ impl Bd for RealBd {
         if let Some(a) = actor {
             cmd.env("BEADS_ACTOR", a);
         }
-        let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", self.bd_bin))?;
+        let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", self.bdq))?;
         if let Some(mut si) = child.stdin.take() {
             let _ = si.write_all(body.as_bytes());
         }
-        let out = child.wait_with_output().map_err(|e| format!("{}: {e}", self.bd_bin))?;
+        let out = child.wait_with_output().map_err(|e| format!("{}: {e}", self.bdq))?;
         if !out.status.success() {
             return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
         }
         let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if id.is_empty() {
-            return Err("bd create printed no id".into());
-        }
-        if let Err(e) = spira_config::lifecycle_row::after_create("incident", &id) {
-            eprintln!("incident: LIFECYCLE: row not written after create: {e}; the new bead is rowless and cannot be claimed");
+            return Err("bdq create printed no id".into());
         }
         Ok(id)
     }
@@ -241,8 +233,8 @@ impl Bd for RealBd {
         }
         serde_json::from_str::<Vec<String>>(json_only(&out)).unwrap_or_default()
     }
-    fn note(&self, db: &str, id: &str, text: &str) -> bool {
-        self.run_stdin(db, &["note", id, "--stdin"], text).map(|(rc, ..)| rc == 0).unwrap_or(false)
+    fn note(&self, _db: &str, id: &str, text: &str) -> bool {
+        self.run_stdin(&["note", id, "--stdin"], text).map(|(rc, ..)| rc == 0).unwrap_or(false)
     }
     fn set_state(&self, db: &str, id: &str, kv: &str) -> bool {
         self.run(db, &["set-state", id, kv]).map(|(rc, ..)| rc == 0).unwrap_or(false)

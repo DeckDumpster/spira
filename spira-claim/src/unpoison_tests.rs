@@ -450,7 +450,7 @@ fn ids_and_slugs() {
 }
 
 // ---------------------------------------------------------------------------------------
-// the live world's seams: argv and stdin of the bd / spira-lc calls
+// the live world's seams: argv and stdin of the bdq / spira-lc calls
 
 fn script(dir: &std::path::Path, name: &str, body: &str) -> String {
     let p = dir.join(name);
@@ -461,10 +461,10 @@ fn script(dir: &std::path::Path, name: &str, body: &str) -> String {
 fn live(tag: &str, bd_body: &str, lc_body: &str) -> (Live, testkit::TempDir) {
     let dir = testkit::TempDir::new(&format!("spira-claim-unpoison-{tag}"));
     std::fs::create_dir_all(dir.join("run/poison-asked")).unwrap();
-    let bd = script(&dir, "bd", &bd_body.replace("@LOG@", &dir.join("bd.log").to_string_lossy()));
+    let bdq = script(&dir, "bdq", &bd_body.replace("@LOG@", &dir.join("bd.log").to_string_lossy()));
     let lc = script(&dir, "spira-lc", &lc_body.replace("@LOG@", &dir.join("lc.log").to_string_lossy()));
     let l = Live {
-        store: Store { bd, db: Some("/fake/db".into()), lc, timeout: Duration::from_secs(10) },
+        store: Store { bdq, lc, timeout: Duration::from_secs(10) },
         run_dir: dir.join("run"),
         asked_dir: dir.join("run/poison-asked"),
         ask_label: "needs-ryan".into(), // literal-ok: fixture/fallback
@@ -482,7 +482,7 @@ fn live_bd_writes_pass_text_on_stdin() {
     w.note("sp-a", &format!("Poison cleared: {cause}")).unwrap();
     w.close("sp-ask1", &format!("Resolved: {cause}")).unwrap();
     let log = std::fs::read_to_string(dir.join("bd.log")).unwrap();
-    assert!(log.contains("ARGV [-C] [/fake/db] [note] [sp-a] [--stdin]\nSTDIN Poison cleared: it's \"the harness\""), "{log}");
+    assert!(log.contains("ARGV [note] [sp-a] [--stdin]\nSTDIN Poison cleared: it's \"the harness\""), "{log}");
     // The ask's close goes through the lifecycle machine (sp-3fue0j), never bd.
     let lc_log = std::fs::read_to_string(dir.join("lc.log")).unwrap();
     assert!(lc_log.contains("ARGV [close] [sp-ask1] [--reason-file] [-] [--actor] [spira-claim]\nSTDIN Resolved: it's"), "{lc_log}");
@@ -509,14 +509,14 @@ fn live_event_is_a_bounded_lifecycle_fact_never_a_bd_write() {
 fn live_bead_and_asks() {
     let (mut w, _dir) = live(
         "show",
-        r#"case "$3" in
-  show) if [ "$4" = sp-a ]; then echo '[{"id":"sp-a","status":"open","labels":["spira-poison"]}]';
-        elif [ "$4" = sp-down ]; then echo 'dolt: connection refused' >&2; exit 1;
-        else echo '{"error":"no issues found matching the provided IDs"}'; echo "Error fetching $4: no issue found matching \"$4\"" >&2; exit 1; fi ;;
-  # literal-ok: fixture
-  list) [ "$7" = needs-ryan ] || exit 9; echo '[{"id":"sp-ask1","title":"t"}]' ;;
+        r#"case "$1" in
+  list) [ "$*" = "list --label needs-ryan --status open --limit 0 --json" ] || exit 9; echo '[{"id":"sp-ask1","title":"t"}]' ;; # literal-ok: fixture
+  show) if [ "$2" = sp-a ]; then echo '[{"id":"sp-a","status":"open","labels":["spira-poison"]}]';
+        elif [ "$2" = sp-down ]; then echo 'dolt: connection refused' >&2; exit 1;
+        else echo '{"error":"no issues found matching the provided IDs"}'; echo "Error fetching $2: no issue found matching \"$2\"" >&2; exit 1; fi ;;
 esac"#,
-        "exit 0",
+        // literal-ok: fixture
+        "exit 9",
     );
     assert_eq!(w.bead("sp-a").unwrap().unwrap().labels, vec!["spira-poison"]);
     assert_eq!(w.bead("sp-gone").unwrap(), None);

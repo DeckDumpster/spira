@@ -9,8 +9,7 @@ use std::process::Stdio;
 pub struct Real {
     pub home: PathBuf,
     pub run: PathBuf,
-    pub db: String,
-    pub bd: String,
+    pub bdq: String,
     pub repo_map: Option<PathBuf>,
     pub lane_labels: LaneLabels,
     registry: OnceCell<spira_config::repos::Registry>,
@@ -18,8 +17,8 @@ pub struct Real {
 }
 
 impl Real {
-    pub fn new(home: PathBuf, run: PathBuf, db: String, bd: String, repo_map: Option<PathBuf>, lane_labels: LaneLabels) -> Real {
-        Real { home, run, db, bd, repo_map, lane_labels, registry: OnceCell::new(), strand_cfg: OnceCell::new() }
+    pub fn new(home: PathBuf, run: PathBuf, bdq: String, repo_map: Option<PathBuf>, lane_labels: LaneLabels) -> Real {
+        Real { home, run, bdq, repo_map, lane_labels, registry: OnceCell::new(), strand_cfg: OnceCell::new() }
     }
 
     /// `strand::config::Config`, resolved once per process the same way `strand`'s own
@@ -87,14 +86,12 @@ impl World for Real {
         // bd says which beads carry the labels; whether each is still open is the lifecycle
         // machine's answer (sp-mve9i), never bd's status.
         let started = std::time::Instant::now();
-        let out = spira_config::bounded::bounded(&self.bd)
-            .arg("-C")
-            .arg(&self.db)
+        let out = spira_config::bounded::bounded(&self.bdq)
             .args(["list", "--all", "--label", labels, "--json"])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output()
-            .map_err(|e| format!("cannot run bd list: {e}"))?;
+            .map_err(|e| format!("cannot run bdq list: {e}"))?;
         if !out.status.success() {
             return Err(format!("bd list exited {} after {}s", out.status, started.elapsed().as_secs()));
         }
@@ -151,9 +148,7 @@ impl World for Real {
     }
 
     fn create_bead(&self, title: &str, labels: &str, description: &str) -> Result<(), String> {
-        let mut child = spira_config::bounded::bounded(&self.bd)
-            .arg("-C")
-            .arg(&self.db)
+        let out = spira_config::bounded::bounded(&self.bdq)
             .arg("create")
             .arg(title)
             .arg("--type")
@@ -162,33 +157,22 @@ impl World for Real {
             .arg(labels)
             .arg("--priority")
             .arg("3")
-            .arg("--description")
-            .arg(description)
-            .arg("--silent")
-            .stdin(Stdio::null())
+            .args(["--body-file", "-", "--silent"])
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| format!("cannot spawn bd create: {e}"))?;
-        let stderr = child.stderr.take();
-        let mut created = String::new();
-        if let Some(mut o) = child.stdout.take() {
-            use std::io::Read;
-            let _ = o.read_to_string(&mut created);
-        }
-        let status = child.wait().map_err(|e| format!("bd create: {e}"))?;
-        if status.success() {
-            if let Err(e) = spira_config::lifecycle_row::after_create("mimir-trigger", &created) {
-            eprintln!("mimir-trigger: LIFECYCLE: row not written after create: {e}; the new bead is rowless and cannot be claimed");
-        }
+            .and_then(|mut c| {
+                use std::io::Write;
+                // The description quotes closed beads' own words: evidence, so it goes as a body.
+                c.stdin.take().expect("piped stdin").write_all(description.as_bytes())?;
+                c.wait_with_output()
+            })
+            .map_err(|e| format!("cannot run bdq create: {e}"))?;
+        if out.status.success() {
             Ok(())
         } else {
-            let mut msg = String::new();
-            if let Some(mut s) = stderr {
-                use std::io::Read;
-                let _ = s.read_to_string(&mut msg);
-            }
-            Err(format!("bd create exited {status}: {msg}"))
+            Err(format!("bdq create exited {}: {}", out.status, String::from_utf8_lossy(&out.stderr)))
         }
     }
 }

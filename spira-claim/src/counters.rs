@@ -116,7 +116,7 @@ pub fn bead_metadata(store: &Store, id: &str, key: &str) -> String {
     if id.is_empty() || key.is_empty() {
         return String::new();
     }
-    let Ok(text) = store::run(store.bd_cmd(&["show", id, "--long", "--json"]), store.timeout) else {
+    let Ok(text) = store::run(store.bdq_cmd(&["show", id, "--long", "--json"]), store.timeout) else {
         return String::new();
     };
     parse_metadata(&text).get(key).and_then(Value::as_str).map(str::to_string).unwrap_or_default()
@@ -159,7 +159,7 @@ pub fn thrash_streak_bump(store: &Store, id: &str, tip: &str, note: &str) -> u32
     let streak_arg = format!("thrash_streak={streak}");
     let last_arg = format!("thrash_last={note}");
     let args = ["update", id, "--set-metadata", &tip_arg, "--set-metadata", &streak_arg, "--set-metadata", &last_arg];
-    let _ = store::run_full(store.bd_cmd(&args), store.timeout, None);
+    let _ = store::run_full(store.bdq_cmd(&args), store.timeout, None);
     streak
 }
 
@@ -185,10 +185,9 @@ pub fn counter_label(labels: &[String], prefix: &str, n: &str) -> Option<String>
     labels.iter().find(|l| l.as_str() == exact || l.starts_with(&with_suffix)).cloned()
 }
 
-/// `bd show <id> --json`'s labels, for [`counter_label`] — reuses `unpoison::parse_bead`
-/// so the "bd sometimes prints a warning first" handling is not duplicated a third time.
+/// The bead's plan-row labels, for [`counter_label`].
 pub fn bead_labels(store: &Store, id: &str) -> Result<Vec<String>, String> {
-    let text = store::run(store.bd_cmd(&["show", id, "--json"]), store.timeout)?;
+    let text = store.plan(&["items", "--ids", id])?;
     Ok(crate::unpoison::parse_bead(&text)?.map(|b| b.labels).unwrap_or_default())
 }
 

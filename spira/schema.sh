@@ -175,7 +175,7 @@ _SCHEMA_CANNOT=""
 _probe() {
     local label="$1" err rc line; shift
     err="$(mktemp)"
-    _PROBE_OUT="$(timeout "$SCHEMA_PROBE_DEADLINE" bd -C "$SPIRA_DB" "$@" 2>"$err")"; rc=$?
+    _PROBE_OUT="$(timeout "$SCHEMA_PROBE_DEADLINE" bd -C "$SPIRA_DB" "$@" 2>"$err")"; rc=$? # STORE_DOOR_CONSIDERED="probes the store's own schema and config (information_schema, config get); no bead is read or written"
     line="$(grep -m1 '[^[:space:]]' "$err")"; rm -f "$err"
     [ "$rc" = 0 ] && return 0
     if [ "$rc" = 124 ]; then _cannot "$label timed out after ${SCHEMA_PROBE_DEADLINE}s"

@@ -209,6 +209,15 @@ pub(crate) fn inline_payload_from(mut args: Vec<String>, input: &mut dyn std::io
             args[i] = body;
         }
     }
+    let ids_on_stdin = args.first().is_some_and(|v| v == "plan") && args.windows(2).any(|w| w[0] == "--ids" && w[1] == "-");
+    if ids_on_stdin {
+        let mut body = String::new();
+        let _ = input.read_to_string(&mut body);
+        let ids = body.split(|c: char| c == ',' || c.is_whitespace()).filter(|x| !x.is_empty()).collect::<Vec<_>>().join(",");
+        if let Some(i) = args.windows(2).position(|w| w[0] == "--ids" && w[1] == "-") {
+            args[i + 1] = ids;
+        }
+    }
     args
 }
 

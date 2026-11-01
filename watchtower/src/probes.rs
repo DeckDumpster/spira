@@ -396,8 +396,7 @@ pub fn release_store(cfg: &Cfg) -> Reading {
 pub const ROWLESS_REFERENCE: &str = "incident:lifecycle-rowless-beads";
 
 pub struct RowlessCfg {
-    pub bd: String,
-    pub db: String,
+    pub bdq: String,
     pub lc_bin: String,
     pub cap: usize,
     pub sustain_secs: i64,
@@ -448,12 +447,12 @@ fn ids_of(stdout: &[u8], key: &str) -> Option<Vec<String>> {
 pub fn rowless_beads(cfg: &RowlessCfg, now: i64) -> Reading {
     let prior = load_rowless_state(&cfg.state);
     let plan = rowless_plan(prior.as_ref(), now, cfg.full_secs);
-    let mut args: Vec<String> = ["-C", &cfg.db, "list", "--status", "open,in_progress,blocked,deferred", "--exclude-type", &spira_config::nonwork::no_row_types_arg(), "--json", "--limit", "0", "--brief"]
+    let mut args: Vec<String> = ["list", "--status", "open,in_progress,blocked,deferred", "--exclude-type", &spira_config::nonwork::no_row_types_arg(), "--json", "--limit", "0", "--brief"]
         .iter().map(|s| s.to_string()).collect();
     if let Some(since) = plan.created_after {
         args.extend(["--created-after".to_string(), crate::log::fmt_iso(since)]);
     }
-    let open = crate::deadline::output("rowless open beads", Command::new(&cfg.bd).args(&args))
+    let open = crate::deadline::output("rowless open beads", Command::new(&cfg.bdq).args(&args))
         .ok()
         .filter(|o| o.status.success())
         .and_then(|o| ids_of(&o.stdout, "id"));
@@ -674,7 +673,7 @@ mod tests {
             "case \"$*\" in *\"--exclude-type\"*decision*) echo '[{\"id\":\"sp-task\"}]';; *) echo '[{\"id\":\"sp-ask\"},{\"id\":\"sp-task\"}]';; esac",
         );
         let lc = write("lc", "echo '[]'");
-        let cfg = RowlessCfg { bd, db: "x".into(), lc_bin: lc, cap: 20, sustain_secs: 0, state: t.path().join("rowless.state"), full_secs: 3600 };
+        let cfg = RowlessCfg { bdq: bd, lc_bin: lc, cap: 20, sustain_secs: 0, state: t.path().join("rowless.state"), full_secs: 3600 };
         match rowless_beads(&cfg, 1_000_000) {
             Reading::Standing(v) => {
                 assert_eq!(v.len(), 1);
@@ -694,7 +693,7 @@ mod tests {
         };
         let bd = write("bd", "echo '[{\"id\":\"sp-a\"},{\"id\":\"sp-b\"}]'");
         let lc = write("lc", "echo '[{\"bead_id\":\"sp-a\"}]'");
-        let mut cfg = RowlessCfg { bd: bd.clone(), db: "x".into(), lc_bin: lc.clone(), cap: 20, sustain_secs: 0, state: t.path().join("rowless.state"), full_secs: 3600 };
+        let mut cfg = RowlessCfg { bdq: bd.clone(), lc_bin: lc.clone(), cap: 20, sustain_secs: 0, state: t.path().join("rowless.state"), full_secs: 3600 };
         let now = 1_000_000;
         match rowless_beads(&cfg, now) {
             Reading::Standing(v) => {
@@ -704,20 +703,20 @@ mod tests {
             Reading::Unknown => panic!("both stores answered"),
         }
         let argv = t.path().join("argv");
-        cfg.bd = write("bd-rec", &format!("echo \"$@\" > {}; echo '[]'", argv.display()));
+        cfg.bdq = write("bd-rec", &format!("echo \"$@\" > {}; echo '[]'", argv.display()));
         let _ = rowless_beads(&cfg, now + 60);
         let seen = std::fs::read_to_string(&argv).unwrap();
         assert!(seen.contains(&format!("--exclude-type {}", spira_config::nonwork::no_row_types_arg())), "rowless-by-design types are out of scope: {seen}");
         assert!(seen.contains("--created-after"), "between full sweeps only new beads are listed: {seen}");
-        cfg.bd = write("bd-new", "echo '[{\"id\":\"sp-c\"}]'");
+        cfg.bdq = write("bd-new", "echo '[{\"id\":\"sp-c\"}]'");
         match rowless_beads(&cfg, now + 120) {
             Reading::Standing(v) => assert!(v[0].body.contains("sp-b") && v[0].body.contains("sp-c"), "{}", v[0].body),
             Reading::Unknown => panic!("both stores answered"),
         }
-        cfg.bd = write("bd-rec2", &format!("echo \"$@\" > {}; echo '[]'", argv.display()));
+        cfg.bdq = write("bd-rec2", &format!("echo \"$@\" > {}; echo '[]'", argv.display()));
         let _ = rowless_beads(&cfg, now + 3600);
         assert!(!std::fs::read_to_string(&argv).unwrap().contains("--created-after"), "an hour on, the sweep is full");
-        cfg.bd = write("bd-b", "echo '[{\"id\":\"sp-b\"}]'");
+        cfg.bdq = write("bd-b", "echo '[{\"id\":\"sp-b\"}]'");
         cfg.lc_bin = write("lc-down", "exit 1");
         assert!(matches!(rowless_beads(&cfg, now + 3660), Reading::Unknown), "an unanswering store neither files nor clears");
     }

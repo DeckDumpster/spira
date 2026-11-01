@@ -42,7 +42,7 @@ falls through to bd's own auto-discovery), `SPIRA_RUN`, `SPIRA_SPOOL`, `SPIRA_IN
 `SPIRA_INCIDENT_REPO`, `SPIRA_INCIDENT_TYPE` (bug), `SPIRA_INCIDENT_PRIORITY`,
 `SPIRA_INCIDENT_ACTOR`/`BEADS_ACTOR`, `SPIRA_INCIDENT_DELIVERS`, `SPIRA_SOP_LEDGER`,
 `SPIRA_INCIDENT_REF`, `SPIRA_ASK_LABEL` (needs-ryan), `SPIRA_HOME_REPO`, `SPIRA_REPO_MAP`,
-`SPIRA_BD`, `BD_TIMEOUT`, `SPIRA_BDQ_CONN_RETRIES`.
+`BD_TIMEOUT`, `SPIRA_BDQ_CONN_RETRIES`; the store is reached through `bdq`.
 
 Stdout contract unchanged: `systemd`/`file`/`drain` print the filed/bumped bead id on the
 last non-empty line (callers already grep for this — batcher-cut, sentinel, landing-pass);

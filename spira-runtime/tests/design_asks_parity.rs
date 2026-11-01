@@ -1,5 +1,5 @@
 //! For one fixture world, design-asks.sh and the design-asks handler leave the same rows in the
-//! Concierge inbox. The script is the oracle: it runs unmodified against a stubbed `bd` and
+//! Concierge inbox. The script is the oracle: it runs unmodified against a stubbed
 //! `spira-lc`; the handler runs on a virtual clock against a fake spira-lc socket serving the same
 //! files. The one thing the handler cannot do is the script's `git log` fallback for a page's
 //! writer: no door to git exists, so a page naming no writer is told as written by unknown.
@@ -39,15 +39,13 @@ impl Fixture {
         fs::write(f.p("asks.json"), "[]").unwrap();
         fs::write(f.p("held.txt"), "").unwrap();
         let root = f.dir.path().display();
-        testkit::write_exe(f.p("bin/bd"), &format!("#!/usr/bin/env bash\n[ -e {root}/bdfail ] && exit 1\ncat {root}/asks.json\n"));
-        testkit::write_exe(f.p("bin/spira-lc"), &format!("#!/usr/bin/env bash\ncase \"$1\" in\n  list-held) cat {root}/held.txt ;;\nesac\nexit 0\n"));
+        testkit::write_exe(f.p("bin/spira-lc"), &format!("#!/usr/bin/env bash\ncase \"$1\" in\n  plan) [ -e {root}/bdfail ] && exit 1; printf '{{\"watermark\":0,\"items\":%s}}' \"$(cat {root}/asks.json)\" ;;\n  list-held) cat {root}/held.txt ;;\nesac\nexit 0\n"));
         fs::write(
             f.p("layer.toml"),
             format!(
-                "[spira]\nrun = \"{}\"\nask_label = \"{LABEL}\"\nmail = \"{}\"\nbd = \"{}\"\nconcierge_inbox = \"{}\"\nwiki = \"{}\"\ndesign_asks_repeat = {REPEAT}\n",
+                "[spira]\nrun = \"{}\"\nask_label = \"{LABEL}\"\nmail = \"{}\"\nconcierge_inbox = \"{}\"\nwiki = \"{}\"\ndesign_asks_repeat = {REPEAT}\n",
                 f.p("run").display(),
                 f.p("mail").display(),
-                f.p("bin/bd").display(),
                 f.p("old-inbox").display(),
                 f.p("brain").display()
             ),
@@ -74,13 +72,17 @@ impl Fixture {
                 BufReader::new(&stream).read_line(&mut line).unwrap();
                 let argv: Vec<String> = serde_json::from_str(&line).unwrap();
                 let once = root.join("bdfail-once");
-                let down = (root.join("bdfail").exists() || fs::remove_file(&once).is_ok()) && argv[0] == "content-rows";
-                let file = match (argv[0].as_str(), argv.get(2).map(String::as_str)) {
-                    ("content-rows", Some(l)) if argv[1] == "--label" && l == LABEL && argv[3..5] == ["--status", "open"] => "asks.json",
+                let down = (root.join("bdfail").exists() || fs::remove_file(&once).is_ok()) && argv[0] == "plan";
+                let file = match (argv[0].as_str(), argv.get(3).map(String::as_str)) {
+                    ("plan", Some(l)) if argv[1] == "items" && argv[2] == "--label" && l == LABEL && argv[4..6] == ["--status", "open"] => "asks.json",
                     ("list", _) if argv[1..] == ["--live", "--hold", "ask"] => "held.txt",
                     _ => "",
                 };
                 let mut body = if down { "boom".into() } else { fs::read_to_string(root.join(file)).unwrap_or_default() };
+                if argv[0] == "plan" && !down {
+                    let (notice, list) = body.split_at(body.find('[').unwrap_or(body.len()));
+                    body = format!("{notice}{{\"watermark\":0,\"items\":{}}}", Some(list.trim()).filter(|b| !b.is_empty()).unwrap_or("[]"));
+                }
                 if argv[0] == "list" && !down {
                     let rows: Vec<_> = body.lines().map(|id| serde_json::json!({"bead_id": id})).collect();
                     body = serde_json::to_string(&rows).unwrap();
@@ -232,7 +234,7 @@ fn a_failed_store_call_names_the_command_and_what_the_store_said() {
     fs::write(g.p("bdfail"), "").unwrap();
     let r = new_rows(&g, 1);
     assert_eq!(r.len(), 1, "{r:?}");
-    assert!(r[0].contains("spira-lc content-rows --label ask-parity"), "{r:?}");
+    assert!(r[0].contains("spira-lc plan items --label ask-parity"), "{r:?}");
     assert!(r[0].contains("boom"), "{r:?}");
 }
 

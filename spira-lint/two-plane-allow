@@ -23,9 +23,9 @@ lifecycle/src/batch.rs:BatchRow.parent kept a round's parent round, not a bead's
 lifecycle/src/bead.rs:BeadRow sp-kqsj13
 spira-lc/src/migrate.rs:bead_dep sp-kqsj13
 spira-lc/src/ask.rs:title sp-kti9ip
-spira-lc/src/content_rows.rs:bead_dep sp-kti9ip
-spira-lc/src/content_rows.rs:dep_type sp-kti9ip
-spira-lc/src/content_rows.rs:depends_on sp-kti9ip
+spira-lc/src/plan.rs:bead_dep sp-kti9ip
+spira-lc/src/plan.rs:dep_type sp-kti9ip
+spira-lc/src/plan.rs:depends_on sp-kti9ip
 spira-lc/src/cutover.rs:title sp-kti9ip
 spira-lc/src/cutover.rs:priority sp-kti9ip
 spira-lc/src/deps.rs:bead_dep sp-kti9ip
@@ -44,6 +44,3 @@ spira-lc/src/main.rs:priority sp-kti9ip
 spira-lc/src/ops.rs:title sp-kti9ip
 spira-lc/src/ops.rs:priority sp-kti9ip
 spira-lc/src/snapshot.rs:title sp-kti9ip
-spira-lc/src/control/state.rs:title sp-cohysf
-spira-lc/src/control/state.rs:priority sp-cohysf
-spira-lc/src/control/state/rounds.rs:title sp-cohysf

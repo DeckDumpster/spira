@@ -1,7 +1,7 @@
 //! The ask listing the design-asks handler makes is answered by a real `spira-lc serve` socket
 //! over a private Dolt store built the way install builds it: a verb the socket does not serve
 //! is answered with its usage, which is what a fake socket never says.
-// covers: spira-runtime/src/world.rs spira-lc/src/content_rows.rs spira-lc/src/main.rs
+// covers: spira-runtime/src/world.rs spira-lc/src/plan.rs spira-lc/src/main.rs
 use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};

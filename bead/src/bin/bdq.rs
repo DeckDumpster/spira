@@ -247,7 +247,56 @@ fn run_bd_once(timeout_s: &str, bd_bin: &str, db: &str, args: &[String], capture
     (rc, String::from_utf8_lossy(&buf).into_owned(), out_buf)
 }
 
+/// A create's body given as `--body-file`, read so the fences judge it as they judge
+/// `--description`; a body on stdin is spooled to a file bd then reads, since the fences have
+/// consumed it. The spool is removed when bdq exits.
+struct Body {
+    args: Vec<String>,
+    text: Option<String>,
+    spool: Option<PathBuf>,
+}
+
+impl Drop for Body {
+    fn drop(&mut self) {
+        if let Some(p) = &self.spool {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+}
+
+fn create_body(args: &[String]) -> Result<Body, String> {
+    let mut b = Body { args: args.to_vec(), text: None, spool: None };
+    let Some(i) = args.iter().position(|a| a == "--body-file").filter(|_| is_create(args)) else { return Ok(b) };
+    let Some(src) = args.get(i + 1) else { return Ok(b) };
+    if src == "-" {
+        let mut text = String::new();
+        std::io::stdin().read_to_string(&mut text).map_err(|e| format!("reading the body from stdin: {e}"))?;
+        let spool = std::env::temp_dir().join(format!("bdq-body-{}", std::process::id()));
+        std::fs::write(&spool, &text).map_err(|e| format!("spooling the body to {}: {e}", spool.display()))?;
+        b.args[i + 1] = spool.display().to_string();
+        b.spool = Some(spool);
+        b.text = Some(text);
+    } else {
+        b.text = std::fs::read_to_string(src).ok();
+    }
+    Ok(b)
+}
+
 fn cmd_bdq(args: &[String]) -> i32 {
+    let body = match create_body(args) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("bdq: {e}");
+            return 1;
+        }
+    };
+    let args = &body.args[..];
+    // The ask fence reads a body file's text as the description it is. The destructive fence
+    // judges only `--description`: a body file carries quoted evidence, not instructions.
+    let judged: Vec<String> = match &body.text {
+        Some(t) if !args.iter().any(|a| a == "--description" || a.starts_with("--description=")) => args.iter().cloned().chain(["--description".to_string(), t.clone()]).collect(),
+        _ => args.to_vec(),
+    };
     // The three create-time fences — short-circuit on the first refusal, exactly like the
     // bash `_bdq_check_x "$@" || return 1` chain (a later check never runs once an earlier
     // one refuses).
@@ -268,7 +317,7 @@ fn cmd_bdq(args: &[String]) -> i32 {
             eprint!("{msg}");
             return 1;
         }
-        if let Some(msg) = bead::bdq::check_ask_shape(args, &ask_label) {
+        if let Some(msg) = bead::bdq::check_ask_shape(&judged, &ask_label) {
             eprint!("{msg}");
             return 1;
         }
@@ -447,6 +496,9 @@ fn cmd_bdq(args: &[String]) -> i32 {
     }
     if rc == 0 {
         let _ = spira_config::lifecycle_row::after_close("bdq", args);
+        if spira_config::planning::is_planning_write(args) {
+            spira_config::planning::stamp_after("bdq");
+        }
     }
     if let Some(run) = spira_config::process::cfg("SPIRA_RUN").ok().filter(|v| !v.is_empty()) {
         let dir = format!("{run}/bdq");
@@ -519,8 +571,10 @@ fn acknowledge_forced_edit(timeout_s: &str, bd_bin: &str, db: &str, id: &str, cl
         .unwrap_or_else(|| "unknown".to_string());
     if let Some(hash) = claimdesc::desc_hash(&util_json_only(&bd_capture(timeout_s, bd_bin, db, &["show", id, "--json"]))) {
         bd_capture(timeout_s, bd_bin, db, &["update", id, "--set-metadata", &format!("{}={hash}", claimdesc::HASH_KEY)]);
+        spira_config::planning::stamp_after("bdq");
     }
     bd_capture(timeout_s, bd_bin, db, &["note", id, &claimdesc::override_note(&actor, claim, reason)]);
+    spira_config::planning::stamp_after("bdq");
     // Best-effort notification: by this point `cfg` has already resolved successfully at
     // least once in this process (SPIRA_DB/SPIRA_BD above), so these two cannot newly
     // fail; `unwrap_or_default` only ever matters if SPIRA_RUN/SPIRA_MAIL themselves

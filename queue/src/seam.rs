@@ -66,7 +66,6 @@ __kv pollsec "${SPIRA_QUEUE_TRANSITION_POLLSEC:-5}"
 __kv maxsec "${SPIRA_QUEUE_TRANSITION_MAXSEC:-1800}"
 __kv preflight "${SPIRA_PREFLIGHT_WALL_SECS:-240}"
 __kv db "${SPIRA_DB:-}"
-__kv bd "${SPIRA_BD:-bd}"
 __K="$(printf '%s' "$__n" | tr 'a-z-' 'A-Z_')"
 case "$__K" in *[!A-Z0-9_]*) __K="" ;; esac
 __v="SPIRA_QUEUE_CI_MAXSEC_$__K"; __kv ci_maxsec "${!__v:-${SPIRA_QUEUE_CI_MAXSEC:-3600}}"

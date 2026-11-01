@@ -194,14 +194,16 @@ impl<B: Backend> Machine for Rig<'_, B> {
         }
         let args = args.as_slice();
         match args.first().map(String::as_str) {
-            Some(v) if is_verb(v) => super::run(
-                self.store,
-                args,
-                &Call {
-                    now: NOW,
-                    request: &request,
-                },
-            ),
+            // dispatch joins a listing's planning fields from bd; the capture's bd knew none.
+            Some(v) if is_verb(v) => {
+                let call = Call { now: NOW, request: &request };
+                let answer = super::run(self.store, args, &call);
+                if crate::plan::joins_planning(args) {
+                    crate::plan::join_planning(answer, &|_| Ok(Vec::new()))
+                } else {
+                    answer
+                }
+            }
             Some(v) if verbs::VERBS.contains(&v) => verbs::run(self.store, args),
             other => panic!("a caller verb reached {other:?}, which is not served"),
         }

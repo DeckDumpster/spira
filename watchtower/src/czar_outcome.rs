@@ -120,10 +120,10 @@ impl Default for Cfg {
     }
 }
 
-/// `bd -C $db list --label <label> --all --json --limit 0 --brief` — a read failure (bad
-/// db, `bd` missing) yields an empty list, matching the bash's `|| _co_raw=""` -> `'[]'`.
-pub fn query_beads(bd_bin: &str, db: &str, label: &str) -> Vec<TriggerBead> {
-    let beads = query_bd(bd_bin, db, label);
+/// `bdq list --label <label> --all --json --limit 0 --brief` — a read failure (bad db, `bdq`
+/// missing) yields an empty list, matching the bash's `|| _co_raw=""` -> `'[]'`.
+pub fn query_beads(bdq: &str, label: &str) -> Vec<TriggerBead> {
+    let beads = query_bd(bdq, label);
     match lc_state::list() {
         Ok(rows) => join_states(beads, &lc_state::index(rows)),
         Err(e) => {
@@ -142,9 +142,9 @@ pub fn join_states(mut beads: Vec<TriggerBead>, lc: &HashMap<String, lc_state::R
     beads
 }
 
-fn query_bd(bd_bin: &str, db: &str, label: &str) -> Vec<TriggerBead> {
-    let out = spira_config::bounded::bounded(bd_bin)
-        .args(["-C", db, "list", "--label", label, "--all", "--json", "--limit", "0", "--brief"])
+fn query_bd(bdq: &str, label: &str) -> Vec<TriggerBead> {
+    let out = spira_config::bounded::bounded(bdq)
+        .args(["list", "--label", label, "--all", "--json", "--limit", "0", "--brief"])
         .output();
     let out = match out {
         Ok(o) if o.status.success() => o.stdout,
@@ -162,7 +162,7 @@ pub fn run(now: i64, bd_bin: &str, db: &str, home_repo: &str, incident_sh: &str,
         ));
         return;
     }
-    let beads = query_beads(bd_bin, db, &cfg.label);
+    let beads = query_beads(bd_bin, &cfg.label);
     for finding in classify(now, cfg.outcome_mins, cfg.unclaimed_mins, &beads) {
         match finding {
             Outcome::Unclaimed { id, external_ref } => {
@@ -373,7 +373,7 @@ mod tests {
 
     #[test]
     fn query_beads_returns_empty_on_a_failing_bd() {
-        let out = query_beads("/does/not/exist/bd", "/tmp/nope", "czar-trigger");
+        let out = query_beads("/does/not/exist/bdq", "czar-trigger");
         assert!(out.is_empty());
     }
 }

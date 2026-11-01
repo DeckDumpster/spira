@@ -25,7 +25,7 @@ mod content;
 mod control;
 mod continuity;
 mod cycle;
-mod content_rows;
+mod plan;
 mod client;
 mod close_on_land;
 mod cutover;
@@ -259,7 +259,7 @@ pub(crate) fn lifecycle_run_dir() -> Result<std::path::PathBuf, String> {
 pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
     slow::set_verb(args.first().map(|s| s.as_str()).unwrap_or("-"));
     if let Some(answer) = control::served::dispatch(args) {
-        return answer;
+        return if plan::joins_planning(args) { plan::with_planning_fields(answer, conn) } else { answer };
     }
     match args.first().map(|s| s.as_str()) {
         Some("show") => cmd_show(&args[1..], conn),
@@ -277,8 +277,8 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("journal") => journal::dispatch(&args[1..], conn),
         Some("fact") => facts::cmd_fact(&args[1..], conn),
         Some("facts") => facts::cmd_facts(&args[1..], conn),
-        Some("content-rows") => content_rows::cmd_content_rows(&args[1..], conn),
-        Some("pane-facets") => content_rows::cmd_pane_facets(&args[1..], conn),
+        Some("plan") => plan::cmd_plan(&args[1..], conn),
+        Some("pane-facets") => plan::cmd_pane_facets(&args[1..], conn),
         Some("facts-query") => facts::cmd_facts_query(&args[1..], conn),
         // The dwarf semantic layer (design §3.5): a `work` client binds one bead id and
         // forwards here over this same socket — see work.rs's module doc.

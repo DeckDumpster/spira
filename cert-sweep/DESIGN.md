@@ -54,7 +54,7 @@ A `NEW RED` or `RED` is attributed before it is filed, on the pass's own runner,
    commits between it and the tip. The bead names the round the culprit first appears in, the
    member bead from its `merge <bead>` subject, and the first `FAIL` line of the red output. A
    red at the last-green commit too, or a bisect that cannot finish, files with the window only.
-3. Before any filing, `$SPIRA_BD -C $SPIRA_DB list` is read for an open bead naming the suite
+3. Before any filing, `bdq list` is read for an open bead naming the suite
    with a flip title (flip) or a regress/basefail/red title (red); one found is reported, not
    duplicated. A lookup that cannot run holds the suite for the next pass.
 

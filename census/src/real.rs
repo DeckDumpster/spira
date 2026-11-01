@@ -1,5 +1,5 @@
 //! The production [`crate::ports::World`]: the `conf.sh`+`lib.sh` seam for the SQL runners
-//! and the fold map (never re-derived — DESIGN.md §2), direct `bd`/`git`/`date` calls, and
+//! and the fold map (never re-derived — DESIGN.md §2), `bdq`/`git`/`date` calls, and
 //! the in-process classification pipeline.
 
 use crate::pipeline;
@@ -12,11 +12,12 @@ const MAX_RECORDED_IDS: usize = 4000;
 
 pub struct Real {
     pub home: PathBuf,   // spira/ — where conf.sh and lib.sh live
+    pub bdq: String,
 }
 
 impl Real {
     pub fn new(home: PathBuf) -> Real {
-        Real { home }
+        Real { home, bdq: spira_config::release_env::tool("bdq") }
     }
 
     /// Source conf.sh + lib.sh, then run `body` with `args` as `$1`, `$2`, ... Captures
@@ -52,14 +53,12 @@ impl Real {
         std::env::var("SPIRA_LC_BIN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "spira-lc".into())
     }
 
-    /// `<bd> -C <db> sql <query>` — stdout/stderr returned separately (never combined the
+    /// `bdq sql <query>` — stdout/stderr returned separately (never combined the
     /// way `seam`'s bash-pipe callers were), so a retrying caller can report the LAST
     /// attempt's stderr alone, exactly as `census_events_run_sql`'s own `2>"$_errtmp"`
     /// (truncated fresh each attempt) did.
     fn run_bd_sql(&self, query: &str) -> (bool, String, String) {
-        let db = self.env("SPIRA_DB").unwrap_or_default();
-        let bd = self.env("SPIRA_BD").unwrap_or_else(|| spira_config::release_env::tool("bd"));
-        let out = spira_config::bounded::bounded(bd).arg("-C").arg(db).arg("sql").arg(query).stdin(Stdio::null()).output();
+        let out = spira_config::bounded::bounded(&self.bdq).arg("sql").arg(query).stdin(Stdio::null()).output();
         match out {
             Ok(o) => (
                 o.status.success(),
@@ -145,7 +144,7 @@ impl Real {
 // serves — $SPIRA_TOML only, never the raw environment, never a fallback (per Ryan
 // 2026-10-05). Every other key `env` is called with (SPIRA_NOW, CENSUS_RETRY_DELAY_S) is
 // not a registered key and stays a plain environment read.
-const RESOLVED_KEYS: &[&str] = &["SPIRA_DB", "SPIRA_BD", "SPIRA_RUN", "SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S"];
+const RESOLVED_KEYS: &[&str] = &["SPIRA_RUN", "SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S"];
 
 impl World for Real {
     fn env(&self, k: &str) -> Option<String> {
@@ -263,11 +262,7 @@ impl World for Real {
     }
 
     fn bd_list_all_json(&self, label_pattern: &str) -> String {
-        let db = self.env("SPIRA_DB").unwrap_or_default();
-        let bd = self.env("SPIRA_BD").unwrap_or_else(|| spira_config::release_env::tool("bd"));
-        spira_config::bounded::bounded(bd)
-            .arg("-C")
-            .arg(db)
+        spira_config::bounded::bounded(&self.bdq)
             .args(["list", "--all", "--label-pattern", label_pattern, "--limit", "0", "--json"])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
@@ -318,11 +313,7 @@ impl World for Real {
             .unwrap_or(0)
     }
     fn bd_sql_utc_now_row(&self) -> Result<String, String> {
-        let db = self.env("SPIRA_DB").unwrap_or_default();
-        let bd = self.env("SPIRA_BD").unwrap_or_else(|| spira_config::release_env::tool("bd"));
-        let out = spira_config::bounded::bounded(bd)
-            .arg("-C")
-            .arg(db)
+        let out = spira_config::bounded::bounded(&self.bdq)
             .args(["sql", "SELECT DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%d %H:%i:%s') AS utc_fn"])
             .stdin(Stdio::null())
             .output();

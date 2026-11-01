@@ -28,9 +28,8 @@ pub struct Settings {
     pub lc_bin: Option<PathBuf>,
     pub submitted_label: String,
     pub home_repo: String,
-    /// `$SPIRA_DB` and `${SPIRA_BD:-bd}` for bd reads.
+    /// `$SPIRA_DB`.
     pub db: String,
-    pub bd: String,
     pub transition_pollsec: u64,
     pub transition_maxsec: u64,
     pub preflight_wall_secs: u64,

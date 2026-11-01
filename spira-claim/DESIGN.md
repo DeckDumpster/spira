@@ -74,16 +74,16 @@ Diagnostics go to stderr, one line, prefixed `spira-claim:`.
 - **Ready set** — bd `ready`/`list --json` rows, from `--ready FILE` or stdin. Never argv
   (law-payloads-go-on-stdin; sp-o4trx's E2BIG outage at 142 beads).
 - **Epic lookup** — `{"prio":{epic:prio}, "started":[epic,...]}`, from `--epics FILE` or
-  fetched (one `bd list --id` per ≤100 distinct epics, one `bd children` per distinct epic,
+  fetched (one `plan items --ids` per ≤100 distinct epics, one `plan children` per distinct epic,
   and the lifecycle rows a child's progress is read from — machine-mode `select`'s snapshot,
   else one `spira-lc list`; see "Epic started" below).
 - **Lifecycle snapshot** (machine mode only) — `spira-lc list` rows, from `--lifecycle FILE`
   or fetched by running `spira-lc list`.
 - **Blocker records** (machine mode only) — bd rows for every `blocks` target, from
-  `--blocker-records FILE` or fetched with chunked `bd list --id ... --status all`.
+  `--blocker-records FILE` or fetched with chunked `spira-lc plan items --ids ...`.
 
-bd binary: `$SPIRA_BD` else `bd` (the same seam bash uses). Database: `--db` else
-`$SPIRA_DB` (exported by conf.sh from the resolved config) else spira-config `spira.db`.
+bd is reached only through `bdq`, which reads `spira.db` itself; `--db` is accepted and
+ignored. Bead content (rows, children) is `spira-lc plan`.
 `stack_max_depth` and `submitted_label` come from spira-config (`spira.stack_max_depth`,
 default 4, clamped to the schema's ceiling of 4; `spira.submitted_label`, default
 `spira-submitted`); flags override for tests. Thresholds are flags (`--poison-at`,
@@ -545,8 +545,7 @@ reads the `OK` line, §8.6).
 hold still present; the lifecycle row unreadable; attempts ≥ P; the events unreadable; a
 `poison` token; the ask-history file still present.
 
-**Where things are.** bd: `$SPIRA_BD` else `bd`; db: `--db`, `$SPIRA_DB`, spira-config
-`spira.db` (§2). spira-lc: by name, on the launcher's PATH (sp-gypjk). `SPIRA_RUN`: `$SPIRA_RUN`, else
+**Where things are.** bd: `bdq`, which reads spira-config `spira.db` (§2). spira-lc: by name, on the launcher's PATH (sp-gypjk). `SPIRA_RUN`: `$SPIRA_RUN`, else
 spira-config `spira.run`; neither → exit 2. Ask history: `$SPIRA_POISON_ASKED` else
 `$SPIRA_RUN/poison-asked` (lib.sh's resolution). Ask label: `$SPIRA_ASK_LABEL`, else
 spira-config `spira.ask_label`, else `needs-operator` (conf.sh:1027)..

@@ -190,7 +190,6 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
         home: home.clone(),
         run: run.clone(),
         queue_dir: PathBuf::from(cfg("SPIRA_QUEUE_DIR")?),
-        bd: cfg("SPIRA_BD")?,
         forge: PathBuf::from(cfg("SPIRA_FORGE")?),
         // Every harness tool by name, on the launcher's PATH (sp-gypjk).
         tsd_bin: Some(PathBuf::from(spira_config::release_env::tool("tsd-write"))),
@@ -1733,7 +1732,7 @@ mod tests {
         let dir = testkit::TempDir::new("batcher-cut-env-for");
         let toml = spira_config::process::fixture_toml(
             &dir,
-            &[("SPIRA_BD", "bd-fixture"), ("SPIRA_FORGE", "forge-fixture"), ("SPIRA_BATCHER_WALL_SECS", "3600"), ("SPIRA_BATCHER_ORPHAN_REDRIVE_SECS", "737")],
+            &[("SPIRA_FORGE", "forge-fixture"), ("SPIRA_BATCHER_WALL_SECS", "3600"), ("SPIRA_BATCHER_ORPHAN_REDRIVE_SECS", "737")],
         );
         // The real, checked-in spira/conf.d (this crate's own repo layout: `batcher-cut/`
         // sits beside `spira/`) — `cfg`'s resolution needs a real registry to validate every
@@ -1748,7 +1747,6 @@ mod tests {
         let env_ = env_.expect("env_for resolves through the one door given a complete spira.toml");
         let _ = std::fs::remove_dir_all(&dir);
 
-        assert_eq!(env_.bd, "bd-fixture", "a registered key's declared value must reach Env, not a Rust-level default");
         assert_eq!(env_.forge, PathBuf::from("forge-fixture"));
         assert_eq!(env_.wall_secs, 3600);
         assert_eq!(env_.orphan_redrive_after, 737, "the orphan wait comes from the configured key, not a literal");

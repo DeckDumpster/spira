@@ -549,7 +549,7 @@ pub fn table_grants(grants: &str) -> Vec<(String, String, String)> {
 /// A table a pending migration has yet to create is skipped until it has run, and a grantee the
 /// server does not have (a world that never created the service users) has nothing to grant to.
 fn apply_grants(admin: &dyn Sql, grants: &str) -> Result<(), String> {
-    apply_content_grants(admin, crate::content_rows::content_db().ok())?;
+    apply_content_grants(admin, crate::plan::content_db().ok())?;
     for (table, user, stmt) in table_grants(grants) {
         let probe = format!("SELECT table_name FROM information_schema.tables WHERE table_schema = 'spira_lifecycle' AND table_name = {}", quote(&table));
         if admin.rows(&probe).map_err(|e| format!("cannot tell whether {table} exists: {e}"))?.is_empty() {
@@ -564,7 +564,7 @@ fn apply_grants(admin: &dyn Sql, grants: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The bead-content tables the service user reads (`content-rows`, sift, reconcile-content).
+/// The bead-content tables the service user reads (`plan items`, sift, reconcile-content).
 pub const CONTENT_TABLES: [&str; 3] = ["issues", "labels", "dependencies"];
 
 /// `GRANT SELECT` on each content table of `cdb` (a quoted identifier) to the service user,
@@ -1114,7 +1114,7 @@ mod tests {
         st.tables.insert("mending".into());
         st.tables.insert("mend".into());
         st.columns.insert(("mending".into(), "awaiting_ask".into()));
-        for t in ["runtime_event", "runtime_applied", "runtime_cursor", "runtime_schedule", "runtime_poison"] {
+        for t in ["runtime_event", "runtime_applied", "runtime_cursor", "runtime_schedule", "runtime_poison", "planning_watermark"] {
             st.tables.insert(t.into());
         }
         st.widths.insert("lc_key".into(), 256);

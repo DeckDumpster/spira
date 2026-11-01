@@ -1,6 +1,6 @@
 //! For one fixture world, supersede-duty.sh and the supersede-duty handler leave the same rows in
 //! the Concierge inbox and make the same writes. The script is the oracle: it runs unmodified
-//! against stubbed `spira-lc`, `bdq` and `bd`; the handler runs on a virtual clock against a fake
+//! against stubbed `spira-lc` and `bdq`; the handler runs on a virtual clock against a fake
 //! spira-lc socket serving the same state, `bd-supersede` and `bd-note` doors included.
 
 use std::fs;
@@ -88,20 +88,15 @@ impl Fixture {
         testkit::write_exe(
             f.p("bin/spira-lc"),
             &format!(
-                "#!/usr/bin/env bash\ncase \"$1\" in\n  list) cat {root}/held.txt | while read -r id; do echo \"{{\\\"bead_id\\\":\\\"$id\\\",\\\"version\\\":\\\"v1\\\"}}\"; done | paste -sd, | sed 's/^/[/; s/$/]/' ;;\n  history) cat {root}/history/$2 ;;\n  state) [ -s {root}/state/$2 ] && cat {root}/state/$2 ;;\n  unhold|supersede) [ -e {root}/fail-$1 ] && exit 1; echo \"$*\" >> {root}/calls; grep -vx \"$2\" {root}/held.txt > {root}/held.tmp; mv {root}/held.tmp {root}/held.txt; [ $1 = supersede ] && echo SUPERSEDED > {root}/state/$2; exit 0 ;;\n  *) exit 1 ;;\nesac\n"
+                "#!/usr/bin/env bash\ncase \"$1\" in\n  list) cat {root}/held.txt | while read -r id; do echo \"{{\\\"bead_id\\\":\\\"$id\\\",\\\"version\\\":\\\"v1\\\"}}\"; done | paste -sd, | sed 's/^/[/; s/$/]/' ;;\n  history) cat {root}/history/$2 ;;\n  state) [ -s {root}/state/$2 ] && cat {root}/state/$2 ;;\n  unhold|supersede) [ -e {root}/fail-$1 ] && exit 1; echo \"$*\" >> {root}/calls; grep -vx \"$2\" {root}/held.txt > {root}/held.tmp; mv {root}/held.tmp {root}/held.txt; [ $1 = supersede ] && echo SUPERSEDED > {root}/state/$2; exit 0 ;;\n  bd-supersede) echo \"supersede $2 --with $3\" >> {root}/bd-calls; [ -e {root}/fail-bd-supersede ] && exit 1; exit 0 ;;\n  *) exit 1 ;;\nesac\n"
             ),
         );
         testkit::write_exe(f.p("bin/bdq"), &format!("#!/usr/bin/env bash\n[ -e {root}/fail-bd-note ] && exit 1\n[ \"$1\" = note ] && echo \"note $2 $3\" >> {root}/calls\nexit 0\n"));
-        testkit::write_exe(
-            f.p("bin/bd"),
-            &format!("#!/usr/bin/env bash\necho \"bd $*\" >> {root}/bd-calls\n[ -e {root}/fail-bd-supersede ] && exit 1\nexit 0\n"),
-        );
         fs::write(
             f.p("layer.toml"),
             format!(
-                "[spira]\nrun = \"{}\"\nbd = \"{}\"\nconcierge_inbox = \"{}\"\n",
+                "[spira]\nrun = \"{}\"\nconcierge_inbox = \"{}\"\n",
                 f.p("run").display(),
-                f.p("bin/bd").display(),
                 f.p("old-inbox").display()
             ),
         )
@@ -201,12 +196,6 @@ fn debug_dir() -> PathBuf {
 
 fn bd_calls(f: &Fixture) -> Vec<String> {
     lines(&f.p("bd-calls"))
-        .iter()
-        .map(|l| {
-            l.split_once(" supersede ")
-                .map_or(l.clone(), |(_, rest)| format!("supersede {rest}"))
-        })
-        .collect()
 }
 
 fn lines(path: &Path) -> Vec<String> {

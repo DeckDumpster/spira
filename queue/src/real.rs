@@ -345,15 +345,12 @@ impl Git for RealGit {
 // ------------------------------------------------------------------------------------- bd
 
 pub struct RealBd {
-    pub bd: String,
-    pub db: String,
+    /// The sanctioned bd wrapper; it reads the store from the config itself.
+    pub bdq: String,
 }
 
 impl Bd for RealBd {
     fn show(&self, ids: &[String]) -> Result<Vec<BeadRow>, String> {
-        if self.db.is_empty() {
-            return Err("SPIRA_DB is empty".into());
-        }
         let timeout = std::env::var("BD_TIMEOUT")
             .ok()
             .filter(|s| !s.is_empty())
@@ -362,9 +359,7 @@ impl Bd for RealBd {
         for chunk in ids.chunks(100) {
             let o = Command::new("timeout")
                 .arg(&timeout)
-                .arg(&self.bd)
-                .arg("-C")
-                .arg(&self.db)
+                .arg(&self.bdq)
                 .arg("show")
                 .args(chunk)
                 .arg("--json")
@@ -559,7 +554,6 @@ impl Lib for RealLib {
             submitted_label: g("submitted_label"),
             home_repo: reg.home_repo().to_string(),
             db: g("db"),
-            bd: g("bd"),
             transition_pollsec: n("pollsec", 5),
             transition_maxsec: n("maxsec", 1800),
             preflight_wall_secs: n("preflight", 240),

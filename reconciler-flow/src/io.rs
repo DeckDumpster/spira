@@ -47,9 +47,9 @@ fn f64_field(row: &Value, key: &str) -> f64 {
 /// terminal (sp-mve9i: a bead's state is spira-lc's, never bd's `status`). Scoped by
 /// `scope_label` when the harness serves more than one repository, same convention
 /// czar-pass uses for its own detectors; bd supplies only which beads the scope holds.
-pub fn backlog_count(bd_bin: &str, spira_db: &str, scope_label: &str) -> Result<u64, String> {
-    let mut cmd = spira_config::bounded::bounded(bd_bin);
-    cmd.arg("-C").arg(spira_db).args([
+pub fn backlog_count(bdq: &str, scope_label: &str) -> Result<u64, String> {
+    let mut cmd = spira_config::bounded::bounded(bdq);
+    cmd.args([
         "list", "--all",
         "--exclude-type", "epic,event", "--brief", "--json", "--limit", "0",
     ]);
@@ -59,17 +59,17 @@ pub fn backlog_count(bd_bin: &str, spira_db: &str, scope_label: &str) -> Result<
     let out = cmd
         .stdin(Stdio::null())
         .output()
-        .map_err(|e| format!("{bd_bin}: {e}"))?;
+        .map_err(|e| format!("{bdq}: {e}"))?;
     if !out.status.success() {
         return Err(format!(
-            "{bd_bin} list: exit {}: {}",
+            "{bdq} list: exit {}: {}",
             out.status.code().unwrap_or(-1),
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
     let text = String::from_utf8_lossy(&out.stdout);
     let rows: Vec<Value> = serde_json::from_str(text.trim())
-        .map_err(|e| format!("{bd_bin} list: unparsable json: {e}"))?;
+        .map_err(|e| format!("{bdq} list: unparsable json: {e}"))?;
     let ids: Vec<String> = rows.iter().filter_map(|r| r.get("id").and_then(Value::as_str).map(str::to_string)).collect();
     let lc = spira_config::lc_state::list().map_err(|e| format!("lifecycle state unreadable: {e}"))?;
     Ok(backlog_of(&ids, &spira_config::lc_state::index(lc)))

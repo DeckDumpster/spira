@@ -18,7 +18,6 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
 
 SC="${SPIRA_SYSTEMCTL:-systemctl}"
-BD="${SPIRA_BD:-bd}"
 BEAD="${SPIRA_FIRSTRUN_BEAD_SH:-$HERE/bead.sh}"
 TIMEOUT="${SPIRA_FIRSTRUN_TIMEOUT:-300}"
 TEMPLATES="${SPIRA_FIRSTRUN_TEMPLATES:-systemd}"
@@ -69,7 +68,7 @@ for stem in $stems; do
     fi
     failed=$((failed+1))
     printf 'first-run: FAIL %s (exit %s)\n' "$unit" "$crc"
-    if [ -n "$bead" ] && timeout 5 "$BD" -C "$SPIRA_DB" comments "$bead" 2>/dev/null \
+    if [ -n "$bead" ] && BD_TIMEOUT=5 bdq comments "$bead" 2>/dev/null \
             | grep -qF "$marker $unit"; then
         printf 'first-run: %s already filed for %s\n' "$unit" "$release"; continue
     fi
@@ -83,15 +82,15 @@ for stem in $stems; do
     extra=()
     if [ -n "$bead" ]; then
         extra=(--parent "$bead")
-        repo="$(timeout 5 "$BD" -C "$SPIRA_DB" show "$bead" --json 2>/dev/null | python3 -c 'import json,sys
-d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d
+        repo="$(timeout 5 spira-lc plan items --ids "$bead" 2>/dev/null | python3 -c 'import json,sys
+d=(json.load(sys.stdin).get("items") or [{}])[0]
 print(next((l[5:] for l in d.get("labels") or [] if l.startswith("repo:")), ""))' 2>/dev/null)"
         [ -z "$repo" ] || extra+=(--repo "$repo")
     fi
     "$BEAD" file "unit $unit failed its first run after $release" \
         --for builder --priority 1 "${extra[@]}" --body-file "$bodyf" >/dev/null || rc=1
     rm -f "$bodyf"
-    [ -z "$bead" ] || timeout 5 "$BD" -C "$SPIRA_DB" comments add "$bead" \
+    [ -z "$bead" ] || BD_TIMEOUT=5 bdq comments add "$bead" \
         "$marker $unit FAIL (exit $crc); follow-up filed." >/dev/null 2>&1 || true
 done
 printf 'first-run: %s unit(s) run, %s failed\n' "$ran" "$failed"

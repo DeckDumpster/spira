@@ -752,9 +752,12 @@ print(json.dumps({"unmapped": unmapped, "absent": absent}))
 ' "$4"
     exit $?
 fi
-if [ "$1" = content-rows ]; then
+if [ "$1 ${2:-}" = "plan items" ]; then
     bd="${SPIRA_BD:-$(spira-config get spira.bd 2>/dev/null)}"; db="${SPIRA_DB:-$(spira-config get spira.db 2>/dev/null)}"
-    exec "${bd:-bd}" ${db:+-C "$db"} list --id "$3" --status all --limit 0 --json
+    ids=; while [ $# -gt 0 ]; do [ "$1" = --ids ] && ids="${2:-}"; shift; done
+    out="$("${bd:-bd}" ${db:+-C "$db"} list --id "$ids" --status all --limit 0 --json)" || exit $?
+    printf '{"watermark":0,"items":%s}\n' "${out:-[]}"
+    exit 0
 fi
 if [ "$1" = content ]; then
     shift; bd="${SPIRA_BD:-$(spira-config get spira.bd 2>/dev/null)}"; db="${SPIRA_DB:-$(spira-config get spira.db 2>/dev/null)}"
@@ -919,7 +922,7 @@ try: print(json.load(sys.stdin)["bead"]["state"])
 except Exception: print("")' 2>/dev/null
 }
 
-# lc_content_shim <dir> — a spira-lc ahead of the real one on PATH that answers `content-rows`
+# lc_content_shim <dir> — a spira-lc ahead of the real one on PATH that answers `plan items`
 # from the suite's bd fixture (a lifecycle fixture server holds no content store) and hands every
 # other verb to the next spira-lc on PATH.
 lc_content_shim() {
@@ -927,22 +930,22 @@ lc_content_shim() {
     mkdir -p "$dir"
     cat > "$dir/spira-lc" <<'STUB'
 #!/usr/bin/env bash
-if [ "${1:-}" = content-rows ]; then
+if [ "${1:-} ${2:-}" = "plan items" ]; then
     bd="${SPIRA_BD:-$(spira-config get spira.bd 2>/dev/null)}"; db="${SPIRA_DB:-$(spira-config get spira.db 2>/dev/null)}"
-    shift; ids=; ext=
+    shift 2; ids=; ext=
     while [ $# -gt 0 ]; do
         case "$1" in --ids) ids="${2:-}"; shift 2 ;; --external-contains) ext="${2:-}"; shift 2 ;; *) shift ;; esac
     done
     if [ -n "$ext" ]; then
         BD_IGNORE_SCHEMA_SKEW=1 "${bd:-bd}" ${db:+-C "$db"} list --all --limit 0 --json | EXT="$ext" python3 -c '
 import json, os, sys
-print(json.dumps([r for r in json.loads(sys.stdin.read() or "[]") if os.environ["EXT"] in (r.get("external_ref") or "")]))'
+print(json.dumps({"watermark": 0, "items": [r for r in json.loads(sys.stdin.read() or "[]") if os.environ["EXT"] in (r.get("external_ref") or "")]}))'
         exit $?
     fi
-    # content-rows answers `[]` for no match, as the real reader does; a bd that prints nothing
+    # No match is an empty item list, as the real reader answers; a bd that prints nothing
     # for an empty result would otherwise hand the caller unparseable empty output.
     out="$(BD_IGNORE_SCHEMA_SKEW=1 "${bd:-bd}" ${db:+-C "$db"} list --id "$ids" --status all --limit 0 --json)" || exit $?
-    printf '%s\n' "${out:-[]}"
+    printf '{"watermark":0,"items":%s}\n' "${out:-[]}"
     exit 0
 fi
 for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done
@@ -980,7 +983,12 @@ lc_dwarf_mirror() {
     { printf '#!/usr/bin/env bash\n%s\n' "$_LC_FACTS_BODY"; cat <<'STUB'
 case "${1:-}" in
     show|state|list|event|create-bead|unclaim) ;;
-    content-rows) BD_IGNORE_SCHEMA_SKEW=1 exec "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --id "$3" --status all --limit 0 --json ;;
+    plan) if [ "${2:-}" = items ]; then
+            ids=; while [ $# -gt 0 ]; do [ "$1" = --ids ] && ids="${2:-}"; shift; done
+            out="$(BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --id "$ids" --status all --limit 0 --json)" || exit $?
+            printf '{"watermark":0,"items":%s}\n' "${out:-[]}"; exit 0
+        fi
+        for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done; exit 2 ;;
     phase) exit 0 ;;
     disposition) mkdir -p "${SPIRA_RUN:?}/lc-disposition"; printf '%s\t%s\n' "${3:-}" "${4:-}" > "$SPIRA_RUN/lc-disposition/${2:?}"; exit 0 ;;
     express) mkdir -p "${SPIRA_RUN:?}/lc-express"; : > "$SPIRA_RUN/lc-express/${2:?}"; exit 0 ;;

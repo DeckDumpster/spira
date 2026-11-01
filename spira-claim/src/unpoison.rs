@@ -433,7 +433,7 @@ pub struct Live {
 
 impl Live {
     fn bd(&self, args: &[&str], input: Option<&[u8]>) -> Result<store::Ran, String> {
-        store::run_full(self.store.bd_cmd(args), self.store.timeout, input)
+        store::run_full(self.store.bdq_cmd(args), self.store.timeout, input)
     }
 
     fn bd_ok(&self, args: &[&str], input: Option<&[u8]>) -> Result<String, String> {
@@ -538,7 +538,7 @@ impl World for Live {
         let label = self.ask_label.clone();
         // An ask is a non-work bead: its bd status is its state (spira_config::nonwork, sp-mve9i).
         let [flag, open] = spira_config::nonwork::status_args(spira_config::nonwork::Kind::Ask, spira_config::nonwork::Which::Open);
-        let out = self.bd_ok(&["list", &flag, &open, "--label", &label, "--limit", "0", "--json"], None)?;
+        let out = self.store.bdq(&["list", "--label", &label, &flag, &open, "--limit", "0", "--json"])?;
         parse_asks(&out)
     }
 

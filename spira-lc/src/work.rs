@@ -1378,7 +1378,7 @@ fn list_with_content(conn: &Conn, states: &[String], all: bool, bd_args: &[Strin
     let mut content: Vec<serde_json::Value> = Vec::new();
     for chunk in ids.chunks(LIST_ID_CHUNK) {
         if bd_args.is_empty() && !full {
-            match crate::content_rows::fetch(conn, chunk) {
+            match crate::plan::fetch(conn, chunk) {
                 Ok(rows) => content.extend(rows),
                 Err(e) => return (CANNOT_TELL, e),
             }

@@ -150,7 +150,7 @@ run_intake() {
     tl_config SPIRA_DB=fixture SPIRA_BD="$T/bin_bd" SPIRA_REPO_MAP="$REPOMAP" \
         SPIRA_GH_INTAKE_REPO="acme/widgets" SPIRA_GH_INTAKE_BEAD_REPO="widgets" \
         SPIRA_GH_INTAKE_PRIORITY="2" SPIRA_SCOPE_LABEL="spira" SPIRA_PLAN_LABEL="plan"
-    env -i PATH="$T:/usr/bin:/bin" HOME="$HOME" \
+    env -i PATH="$T:$(dirname "$BIN"):/usr/bin:/bin" HOME="$HOME" \
         SPIRA_TOML="$SPIRA_TOML" \
         BDLOG="$BDLOG" CREATED="$CREATED" MAILLOG="$MAILLOG" \
         SPIRA_MAIL_BIN="$T/bin_mail.sh" \
@@ -163,6 +163,7 @@ run_intake() {
 echo
 echo "1. wiring: a real run talks to the stub server, execs bd and mail.sh, creates real beads"
 out="$(run_intake)"; rc=$?
+[ "$rc" = 0 ] || printf '%s\n' "$out" | head -40 | sed 's/^/# /'
 is "exits 0" "0" "$rc"
 want "logs the resolved repo checkout" "$REPOCHECKOUT" "$out"
 if grep -q 'list --all' "$BDLOG"; then ok "bd list --all was invoked"; else bad "bd list --all was invoked" "not in $BDLOG"; fi
@@ -198,7 +199,7 @@ echo
 echo "4. an unresolvable bead repo is refused, not silently skipped"
 tl_config SPIRA_DB=fixture SPIRA_BD="$T/bin_bd" SPIRA_REPO_MAP="$REPOMAP" \
     SPIRA_GH_INTAKE_REPO="acme/widgets" SPIRA_GH_INTAKE_BEAD_REPO="no-such-repo"
-out="$(env -i PATH="$T:/usr/bin:/bin" HOME="$HOME" \
+out="$(env -i PATH="$T:$(dirname "$BIN"):/usr/bin:/bin" HOME="$HOME" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_MAIL_BIN="$T/bin_mail.sh" \
     SPIRA_HOME="$T/spira-home" \

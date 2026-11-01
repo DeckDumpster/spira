@@ -1,4 +1,4 @@
-//! The production [`crate::ports::World`]: `bd`, `gh`, `git`, `bead.sh`, `tsd-ingest.sh`,
+//! The production [`crate::ports::World`]: `bdq`, `gh`, `git`, `bead.sh`, `tsd-ingest.sh`,
 //! and the `lib.sh` repository-map seam (the same one-shot context call `gate`/`gate-run`
 //! use).
 
@@ -10,11 +10,8 @@ use std::process::{Command, Stdio};
 
 pub struct Real {
     pub home: PathBuf,
-    pub db: Option<String>,
-    /// `SPIRA_BD`, resolved once at the process's top level (`spira_config::process::cfg`)
-    /// and handed down — no literal `"bd"` fallback here; an unset/empty value is
-    /// the config file's own answer (see `spira/conf.d/SPIRA_BD`), not this crate's to invent.
-    bd: String,
+    /// The store door; it addresses the configured database itself.
+    bdq: String,
     /// `SPIRA_FLAKY_GH_REPO`, resolved the same way — empty means "no scan" per
     /// `spira/conf.d/SPIRA_FLAKY_GH_REPO`.
     flaky_repo: Option<String>,
@@ -22,8 +19,8 @@ pub struct Real {
 }
 
 impl Real {
-    pub fn new(home: PathBuf, db: Option<String>, bd: String, flaky_repo: Option<String>) -> Real {
-        Real { home, db, bd, flaky_repo, registry: OnceCell::new() }
+    pub fn new(home: PathBuf, bdq: String, flaky_repo: Option<String>) -> Real {
+        Real { home, bdq, flaky_repo, registry: OnceCell::new() }
     }
 
     /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave
@@ -38,10 +35,7 @@ impl Real {
     }
 
     fn bd(&self) -> Command {
-        let mut c = Command::new(&self.bd);
-        if let Some(db) = &self.db {
-            c.arg("-C").arg(db);
-        }
+        let mut c = Command::new(&self.bdq);
         c.stdin(Stdio::null());
         c
     }

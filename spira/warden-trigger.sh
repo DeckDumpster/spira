@@ -12,9 +12,6 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
     exit 1
 }
 
-BD="${SPIRA_BD:-bd}"
-DB="${SPIRA_DB:-.}"
-
 log() { printf '%s warden-trigger: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 
 LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_WARDEN_LABEL}"
@@ -56,7 +53,7 @@ LC="${SPIRA_LC_BIN:-spira-lc}"
 # A failed create may still have committed (indeterminate after connection loss), so each
 # retry first re-counts: a sweep that appeared is not filed twice.
 file_sweep() {
-    timeout "$CALL_TIMEOUT" "$BD" -C "$DB" create \
+    BD_TIMEOUT="$CALL_TIMEOUT" bdq create \
         "Warden sweep — landed work in force, anomalies attributed" \
         --type task \
         --silent \

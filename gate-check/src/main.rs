@@ -40,20 +40,6 @@ fn real_main() -> i32 {
     // ONE SOURCE: the config file via spira_config::process::cfg — no env fallback, no literal
     // default (per Ryan 2026-10-05: one source of config). A key the config file cannot resolve
     // is a refusal naming it, not a guessed value.
-    let db = match spira_config::process::cfg("SPIRA_DB") {
-        Ok(v) => Some(v).filter(|v| !v.is_empty()),
-        Err(e) => {
-            eprintln!("gate-check: {e}");
-            return 1;
-        }
-    };
-    let bd = match spira_config::process::cfg("SPIRA_BD") {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("gate-check: {e}");
-            return 1;
-        }
-    };
     let flaky_repo = match spira_config::process::cfg("SPIRA_FLAKY_GH_REPO") {
         Ok(v) => Some(v).filter(|v| !v.is_empty()),
         Err(e) => {
@@ -61,7 +47,7 @@ fn real_main() -> i32 {
             return 1;
         }
     };
-    let world = Real::new(home.clone(), db, bd, flaky_repo);
+    let world = Real::new(home.clone(), spira_config::release_env::tool("bdq"), flaky_repo);
     run(&world, &home);
     0
 }

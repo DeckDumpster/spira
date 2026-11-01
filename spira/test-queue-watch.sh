@@ -104,21 +104,6 @@ case "$sub" in
 esac
 EOF
 
-# Fake bd: answers `show --json <ids>` from beads.json, then advances the scenario one step.
-cat > "$FX/bd" <<'EOF'
-#!/usr/bin/env bash
-[ "$1" = show ] || exit 2
-shift; [ "$1" = --json ] && shift
-python3 - "$FX/beads.json" "$@" <<'PY'
-import json, sys
-want = set(sys.argv[2:])
-print(json.dumps([b for b in json.load(open(sys.argv[1])) if b["id"] in want]))
-PY
-n=$(( $(cat "$FX/calls" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FX/calls"
-[ -f "$FX/step-$n.sh" ] && bash "$FX/step-$n.sh"
-exit 0
-EOF
-
 # Fake spira-lc: answers `list --express` (sp-d) and `list --state CERTIFIED` from certified.json — the CERTIFIED pool
 # now lives in spira_lifecycle, read through spira-lc, never a landstate directory scan.
 # lc-broken is a POSITIVE CONTROL toggle: with it present, spira-lc refuses to tell, and
@@ -127,10 +112,21 @@ cat > "$FX/spira-lc" <<'EOF'
 #!/usr/bin/env bash
 [ -f "$FX/lc-broken" ] && { echo "cannot tell: db unreachable" >&2; exit 2; }
 [ "$1" = list ] && [ "$2" = --express ] && { echo '[{"bead_id":"sp-d","express":"1"}]'; exit 0; }
+# `plan items --ids a,b`: the beads from beads.json, then the scenario advances one step.
+if [ "$1 $2 $3" = "plan items --ids" ]; then
+    python3 - "$FX/beads.json" "$4" <<'PY'
+import json, sys
+want = set(sys.argv[2].split(","))
+print(json.dumps({"watermark": 0, "items": [b for b in json.load(open(sys.argv[1])) if b["id"] in want]}))
+PY
+    n=$(( $(cat "$FX/calls" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FX/calls"
+    [ -f "$FX/step-$n.sh" ] && bash "$FX/step-$n.sh"
+    exit 0
+fi
 [ "$1" = list ] && [ "$2" = --state ] && [ "$3" = CERTIFIED ] || { echo "unexpected args: $*" >&2; exit 2; }
 cat "$FX/certified.json" 2>/dev/null || echo '[]'
 EOF
-chmod +x "$FX/forge.sh" "$FX/bd" "$FX/spira-lc"
+chmod +x "$FX/forge.sh" "$FX/spira-lc"
 
 # Poll 1 sees: batch 50 (sp-a, sp-b), sp-o certified in another repo.
 printf 'pr=50\nhead=h1\nmembers=sp-a:%s sp-b:bbbb\n' "$TIP_A" > "$Q/open"
@@ -159,17 +155,11 @@ rm -f "$Q/open"
 printf '[{"bead_id":"sp-o"},{"bead_id":"sp-d"},{"bead_id":"sp-c"}]' > "$FX/certified.json"
 EOF
 
-# SPIRA_DB undeclared resolves to the complete fixture's own /fixture/userhome/spira/db
-# (nonexistent): queue-watch falls back to cfg("SPIRA_DB") for --db when the flag is not
-# passed, and read_beads() does `cmd.current_dir(db)` before exec'ing SPIRA_BD — a
-# nonexistent cwd fails Command::spawn() with the SAME "No such file or directory (os
-# error 2)" text a missing binary would, which is why "bd show" looked like it couldn't
-# find $FX/bd even though that file exists and is executable.
 # SPIRA_QUEUE_DIR undeclared resolves to the complete fixture's own
 # /fixture/userhome/spira/run/queue (nonexistent, and non-empty so the "" -> run.join("queue")
 # fallback in queue-watch/src/main.rs never fires) — every "$Q/open" this suite writes under
 # "$RUN/queue/<repo>" went unread, reading as "no batch open" rather than a real refusal.
-tl_config SPIRA_BD="$FX/bd" SPIRA_FORGE="$FX/forge.sh" SPIRA_DB="" SPIRA_QUEUE_DIR="$RUN/queue"
+tl_config SPIRA_FORGE="$FX/forge.sh" SPIRA_DB="" SPIRA_QUEUE_DIR="$RUN/queue"
 export FX SPIRA_LC_BIN="$FX/spira-lc"
 out="$("$BIN" watch --ticks 5 --interval 1 --run "$RUN" --home "$FX" --config "$FX/spira.toml" 2>&1)"
 printf '%s\n' "$out" | sed 's/^/    | /'
@@ -289,7 +279,7 @@ export SPIRA_INCIDENT_SH="$FX/incident.sh"
 # always wins.
 # SPIRA_QUEUE_DIR persists from the earlier section's "$RUN/queue" (tl_config persists for
 # the rest of the suite, pattern 10) — this section's own run dir is "$SRUN", not "$RUN".
-tl_config SPIRA_BD="$FX/bd" SPIRA_FORGE="$FX/stall-forge.sh" SPIRA_CI_QUEUED_MAX_SECS=1 \
+tl_config SPIRA_FORGE="$FX/stall-forge.sh" SPIRA_CI_QUEUED_MAX_SECS=1 \
     SPIRA_QUEUE_DIR="$SRUN/queue"
 sout="$(QUEUE_WATCH_HEAD_STALL_SECS=100000000 \
     "$BIN" watch --ticks 2 --interval 1 --run "$SRUN" --home "$FX" --config "$FX/stall.toml" 2>&1)"

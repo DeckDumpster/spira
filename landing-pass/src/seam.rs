@@ -98,8 +98,6 @@ printf '\036'
 __kv home "${SPIRA_HOME:-$HERE}"
 __kv run "${SPIRA_RUN:-}"
 __kv repo "${SPIRA_REPO:-}"
-__kv db "${SPIRA_DB:-}"
-__kv bd "${SPIRA_BD:-bd}"
 __kv bd_timeout "${BD_TIMEOUT:-180}"
 __kv id_prefix "${SPIRA_ID_PREFIX:-sp}"
 __kv land_maxsec "${SPIRA_LAND_MAXSEC:-3600}"

@@ -58,11 +58,11 @@ pub trait World {
     // ---- store ----
     fn dir_exists(&self, p: &Path) -> bool;
     fn file_exists(&self, p: &Path) -> bool;
-    /// `timeout 60 bd -C <db> list --limit 1 --json` -> Ok(json) or Err(combined output).
-    fn bd_list(&self, db: &Path, timeout_secs: u64) -> Result<String, String>;
-    /// Lines naming `beads.role` that `bd -C <db> list` writes when run from `cwd` — `None` if
-    /// bd could not be run. bd reads the role from the cwd's git config, not from `-C`.
-    fn bd_role_warnings(&self, db: &Path, cwd: &Path) -> Option<usize>;
+    /// `timeout 60 bdq list --limit 1 --json` -> Ok(json) or Err(combined output).
+    fn bd_list(&self, timeout_secs: u64) -> Result<String, String>;
+    /// Lines naming `beads.role` that `bdq list` writes when run from `cwd` — `None` if it
+    /// could not be run. bd reads the role from the cwd's git config, not from `-C`.
+    fn bd_role_warnings(&self, cwd: &Path) -> Option<usize>;
     fn read_store_meta(&self, metadata_json: &Path) -> Option<StoreMeta>;
     fn systemd_user_is_active(&self, unit: &str) -> bool;
     fn tcp_connect(&self, host: &str, port: u16) -> bool;
@@ -75,8 +75,8 @@ pub trait World {
     fn dolt_root_passwordless(&self, host: &str, port: u16) -> Option<bool>;
 
     // ---- events probe ----
-    /// The first bead id `bd -C <db> list --limit 1 --json` returns, or None.
-    fn bd_first_id(&self, db: &Path) -> Option<String>;
+    /// The first bead id `bdq list --limit 1 --json` returns, or None.
+    fn bd_first_id(&self) -> Option<String>;
     /// `_bump_write_event_try <id> <event-type> <actor>` (lib.sh seam) -> whether it wrote.
     fn bump_write_event_try(&self, id: &str, etype: &str, actor: &str) -> bool;
     /// `_counter_events_query <id> <event-type>` (lib.sh seam) -> a decimal count, or "?" on

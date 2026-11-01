@@ -32,7 +32,7 @@ spira_require bd || exit 1
 # Every key in force, one per line. Asked once: `bd recall` per statute is a round trip each,
 # and this runs over twenty of them.
 in_force() {
-    timeout 5 bd -C "$SPIRA_DB" memories --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
+    BD_TIMEOUT=5 bdq memories --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import json, sys
 try: d = json.load(sys.stdin)
 except Exception: sys.exit(0)
@@ -86,7 +86,7 @@ for f in "$DIR"/law-*.txt; do
     # batch-job: a one-time seed of every statute into a freshly initialised store; the first
     # writes into a new database ran past 5 s under load and failed the install (R1 acceptance,
     # 2026-10-07), so each write gets a bounded 30 s.
-    if _bd_err="$(timeout 30 bd -C "$SPIRA_DB" remember --key "$key" "$(cat "$f")" 2>&1 >/dev/null)"; then
+    if _bd_err="$(BD_TIMEOUT=30 bdq remember --key "$key" "$(cat "$f")" 2>&1 >/dev/null)"; then
         printf '  wrote %s\n' "$key"; wrote=$((wrote+1))
     else
         printf '  FAILED %s\n' "$key" >&2

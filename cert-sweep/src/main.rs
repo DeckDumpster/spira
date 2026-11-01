@@ -397,21 +397,17 @@ impl Rt<'_> {
     }
 
     fn open_beads(&self) -> Result<Vec<(String, String)>, String> {
-        // SPIRA_DB/SPIRA_BD are registered keys (spira/conf.d) — the one source of config
-        // (per Ryan 2026-10-05), through `spira_config::process::cfg`, never a literal
-        // default standing in for an unresolved value.
-        let db = spira_config::process::cfg("SPIRA_DB")?;
-        let bd = spira_config::process::cfg("SPIRA_BD")?;
-        let out = spira_config::bounded::bounded(&bd)
-            .args(["-C", &db, "list", "--all", "--limit", "0", "--brief", "--json"])
+        let bdq = spira_config::release_env::tool("bdq");
+        let out = spira_config::bounded::bounded(&bdq)
+            .args(["list", "--all", "--limit", "0", "--brief", "--json"])
             .stdin(Stdio::null())
             .output()
-            .map_err(|e| format!("{bd}: {e}"))?;
+            .map_err(|e| format!("{bdq}: {e}"))?;
         if !out.status.success() {
-            return Err(format!("{bd} list: {}", String::from_utf8_lossy(&out.stderr).trim()));
+            return Err(format!("{bdq} list: {}", String::from_utf8_lossy(&out.stderr).trim()));
         }
-        let v: Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("{bd} list: {e}"))?;
-        let rows = v.as_array().ok_or_else(|| format!("{bd} list: not a JSON array"))?;
+        let v: Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("{bdq} list: {e}"))?;
+        let rows = v.as_array().ok_or_else(|| format!("{bdq} list: not a JSON array"))?;
         let all = rows
             .iter()
             .filter_map(|r| Some((r.get("id")?.as_str()?.to_string(), r.get("title")?.as_str()?.to_string())))

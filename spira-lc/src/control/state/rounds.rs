@@ -490,8 +490,8 @@ fn delete_row<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i3
 const BATCHES_SHOWN: usize = 8;
 
 /// `list --batches [--batch ID | --window SECS]`: the rounds with their members, ejections,
-/// passes and last event, as the ops pane reads them. Members carry no title: that is the
-/// planning plane's.
+/// passes and last event, as the ops pane reads them. A member's title is the planning plane's,
+/// joined by the planning reader (`plan::with_planning_fields`).
 pub(super) fn list_batches<B: Backend>(
     store: &Store<B>,
     args: &[String],
@@ -533,7 +533,7 @@ pub(super) fn list_batches<B: Backend>(
                 .members
                 .iter()
                 .map(|m| {
-                    json!({ "batch_id": id, "bead_id": m.bead_id, "outcome": null, "tip": m.tip, "title": null })
+                    json!({ "batch_id": id, "bead_id": m.bead_id, "outcome": null, "tip": m.tip })
                 })
                 .collect();
             members.sort_by(|a, b| a["bead_id"].as_str().cmp(&b["bead_id"].as_str()));

@@ -31,13 +31,10 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     };
     let lib = RealLib { home: home.clone() };
-    // bd, spira-lc and the forge are configured by conf.sh; resolve once for them.
+    // spira-lc and the forge are configured by conf.sh; resolve once for them.
     let (bd, lc) = match queue::ports::Lib::context(&lib, None) {
         Ok((s, _)) => (
-            RealBd {
-                bd: s.bd.clone(),
-                db: s.db.clone(),
-            },
+            RealBd { bdq: spira_config::release_env::tool("bdq") },
             RealLc {
                 bin: s.lc_bin.clone(),
             },

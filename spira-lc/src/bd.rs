@@ -33,6 +33,14 @@ pub fn run(args: &[&str]) -> Result<String, String> {
     let started = std::time::Instant::now();
     let res = run_read(args);
     record_call(args, started, res.is_ok());
+    stamped(args, res)
+}
+
+/// Every planning write this process makes moves the planning watermark once it has landed.
+fn stamped<S: AsRef<str>>(args: &[S], res: Result<String, String>) -> Result<String, String> {
+    if res.is_ok() && spira_config::planning::is_planning_write(args) {
+        crate::plan::stamp_after_write();
+    }
     res
 }
 
@@ -55,6 +63,11 @@ const WRITE_SECS: u64 = 60;
 
 // A write runs the schema gate and a Dolt commit; the 5 s read cap kills it mid-commit though it lands.
 fn run_write(args: &[&str]) -> Result<String, String> {
+    stamped(args, write_unstamped(args))
+}
+
+/// A write that is not a planning write: the watermark's own copy in bd's kv.
+pub fn write_unstamped(args: &[&str]) -> Result<String, String> {
     let started = std::time::Instant::now();
     let res = run_write_unrecorded(args);
     record_call(args, started, res.is_ok());
@@ -294,7 +307,7 @@ pub fn run_stdin(args: &[String], stdin: Option<&str>) -> Result<String, String>
     let res = run_stdin_unrecorded(args, stdin);
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     record_call(&words, started, res.is_ok());
-    res
+    stamped(args, res)
 }
 
 fn run_stdin_unrecorded(args: &[String], stdin: Option<&str>) -> Result<String, String> {

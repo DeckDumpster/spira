@@ -128,6 +128,16 @@ pub fn classify(c: &Changed, members: &[Member]) -> Class {
 /// Crates whose tests read `../systemd`.
 pub const UNIT_READERS: &[&str] = &["release", "spira-world", "cert-sweep"];
 
+/// The files that pin the bd version the harness runs, and the crates whose tests run against
+/// that bd: a bd upgrade runs the planning conformance gate.
+pub const BD_PIN: &[&str] = &["spira/conf.d/SPIRA_BD_TAG", "spira/bd-pin.sh", "spira/build-bd.sh"];
+pub const BD_READERS: &[&str] = &["spira-lc"];
+
+fn bd_readers<'a>(path: &str, members: &'a [Member]) -> impl Iterator<Item = String> + 'a {
+    let pinned = BD_PIN.contains(&path);
+    BD_READERS.iter().filter(move |r| pinned && members.iter().any(|m| m.name == **r)).map(|r| r.to_string())
+}
+
 /// `seed` plus every member that depends directly on one of them; sorted.
 pub fn with_dependents(seed: &BTreeSet<String>, members: &[Member]) -> Vec<String> {
     let mut rdeps: HashMap<&str, Vec<&str>> = HashMap::new();
@@ -170,6 +180,7 @@ pub fn select_crates(diff_raw: &[u8], metadata_json: &str, transitive: bool) -> 
     let mut touched = BTreeSet::new();
     let mut workspace = false;
     for c in parse_diff_raw(diff_raw) {
+        touched.extend(bd_readers(&c.path, &members));
         match classify(&c, &members) {
             Class::Crate(n) => {
                 touched.insert(n);
@@ -235,6 +246,7 @@ pub fn compose(
     let mut touched = BTreeSet::new();
     let mut workspace = false;
     for c in changed {
+        touched.extend(bd_readers(&c.path, members));
         match classify(c, members) {
             Class::Script => return suites("script"),
             Class::Crate(n) => {
@@ -744,6 +756,16 @@ mod tests {
         assert_eq!(select_crates(&diff, CHAIN, false).unwrap(), ["a", "b"]);
         assert!(select_crates(&raw(&["docs/x.md"]), CHAIN, true).unwrap().is_empty());
         assert_eq!(select_crates(&raw(&["Cargo.lock"]), CHAIN, true).unwrap().len(), 4);
+    }
+
+    #[test]
+    fn a_change_to_the_bd_pin_selects_the_crates_that_test_against_the_pinned_bd() {
+        let with_lc = CHAIN.replace("\"name\":\"d\"", "\"name\":\"spira-lc\"").replace("p#d ", "p#spira-lc ");
+        for pin in BD_PIN {
+            assert_eq!(select_crates(&raw(&[pin]), &with_lc, true).unwrap(), ["spira-lc"], "{pin}");
+        }
+        assert!(select_crates(&raw(&["spira/other.sh"]), &with_lc, true).unwrap().is_empty());
+        assert!(select_crates(&raw(&["spira/bd-pin.sh"]), CHAIN, true).unwrap().is_empty(), "a tree without the reader selects nothing");
     }
 
     #[test]

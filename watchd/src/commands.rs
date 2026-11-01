@@ -383,8 +383,8 @@ pub fn cmd_restart(rows: &[Row], ops: &dyn Ops, ctx: &Context, only: Option<&str
 
 pub fn cmd_health_ids(ctx: &Context, file: &str) -> i32 {
     let mut prefix = String::new();
-    if !ctx.bd.is_empty() && !ctx.db.is_empty() {
-        if let Ok(out) = spira_config::bounded::bounded(&ctx.bd).args(["-C", &ctx.db, "config", "get", "issue_prefix"]).output() {
+    if !ctx.bdq.is_empty() {
+        if let Ok(out) = spira_config::bounded::bounded(&ctx.bdq).args(["config", "get", "issue_prefix"]).output() {
             if out.status.success() {
                 prefix = String::from_utf8_lossy(&out.stdout).trim().to_string();
             }
@@ -394,7 +394,7 @@ pub fn cmd_health_ids(ctx: &Context, file: &str) -> i32 {
         prefix = ctx.id_prefix.clone();
     }
     if prefix.is_empty() || !prefix.chars().all(|c| c.is_ascii_alphanumeric()) {
-        eprintln!("watchd: database prefix is '{prefix}' — set SPIRA_BD and SPIRA_DB, or SPIRA_ID_PREFIX in {}", ctx.conf_file);
+        eprintln!("watchd: database prefix is '{prefix}' — set SPIRA_DB, or SPIRA_ID_PREFIX in {}", ctx.conf_file);
         return 2;
     }
     let path = std::path::Path::new(file);
@@ -503,8 +503,7 @@ mod tests {
             health_timeout: "10".into(),
             notify_age: "1800".into(),
             id_prefix: String::new(),
-            bd: String::new(),
-            db: String::new(),
+            bdq: String::new(),
             placeholders: Default::default(),
             systemctl: "systemctl".into(),
             instance: "prod".into(),
@@ -681,16 +680,15 @@ mod tests {
         const DB_PREFIX: &str = "sptest";
         const CONF_PREFIX: &str = "notthedb";
 
-        fn stub_bd(dir: &std::path::Path, prints: &str) -> String {
-            let p = dir.join("bd-stub");
-            testkit::write_exe(&p, &format!("#!/usr/bin/env bash\nprintf '%s\\n' \"{prints}\"\n"));
+        fn stub_bdq(dir: &std::path::Path, prints: &str) -> String {
+            let p = dir.join("bdq-stub");
+            testkit::write_exe(&p, &format!("#!/usr/bin/env bash\n[ \"$*\" = \"config get issue_prefix\" ] || exit 2\nprintf '%s\\n' \"{prints}\"\n"));
             p.to_str().unwrap().to_string()
         }
 
-        fn ctx_for(bd: &str, db: &str, id_prefix: &str) -> Context {
+        fn ctx_for(bdq: &str, id_prefix: &str) -> Context {
             let mut c = ctx("/tmp/unused");
-            bd.clone_into(&mut c.bd);
-            db.clone_into(&mut c.db);
+            bdq.clone_into(&mut c.bdq);
             id_prefix.clone_into(&mut c.id_prefix);
             c
         }
@@ -698,28 +696,28 @@ mod tests {
         #[test]
         fn a_state_file_with_no_database_prefix_ids_fails_naming_the_prefix() {
             let d = TempDir::new("watchd-health-ids");
-            let bd = stub_bd(&d, DB_PREFIX);
+            let bdq = stub_bdq(&d, DB_PREFIX);
             let state = d.join("state-none.json");
             std::fs::write(&state, r#"{"seen":["other-abc1","other-xyz2"]}"#).unwrap();
-            let c = ctx_for(&bd, "/tmp/db", CONF_PREFIX);
+            let c = ctx_for(&bdq, CONF_PREFIX);
             assert_eq!(cmd_health_ids(&c, state.to_str().unwrap()), 1);
         }
 
         #[test]
         fn config_drift_the_database_prefix_wins_over_a_differing_spira_id_prefix() {
             let d = TempDir::new("watchd-health-ids");
-            let bd = stub_bd(&d, DB_PREFIX);
+            let bdq = stub_bdq(&d, DB_PREFIX);
             let state = d.join("state-good.json");
             std::fs::write(&state, format!(r#"{{"seen":["{DB_PREFIX}-abc1","{DB_PREFIX}-xyz2"]}}"#)).unwrap();
-            let c = ctx_for(&bd, "/tmp/db", CONF_PREFIX);
+            let c = ctx_for(&bdq, CONF_PREFIX);
             assert_eq!(cmd_health_ids(&c, state.to_str().unwrap()), 0);
         }
 
         #[test]
         fn a_missing_state_file_is_degraded_not_refused() {
             let d = TempDir::new("watchd-health-ids");
-            let bd = stub_bd(&d, DB_PREFIX);
-            let c = ctx_for(&bd, "/tmp/db", CONF_PREFIX);
+            let bdq = stub_bdq(&d, DB_PREFIX);
+            let c = ctx_for(&bdq, CONF_PREFIX);
             assert_eq!(cmd_health_ids(&c, d.join("no-such-file.json").to_str().unwrap()), 1);
         }
 
@@ -728,7 +726,7 @@ mod tests {
             let d = TempDir::new("watchd-health-ids");
             let state = d.join("state-good.json");
             std::fs::write(&state, format!(r#"{{"seen":["{DB_PREFIX}-abc1"]}}"#)).unwrap();
-            let c = ctx_for("", "", DB_PREFIX);
+            let c = ctx_for("", DB_PREFIX);
             assert_eq!(cmd_health_ids(&c, state.to_str().unwrap()), 0);
         }
 
@@ -737,7 +735,7 @@ mod tests {
             let d = TempDir::new("watchd-health-ids");
             let state = d.join("state-good.json");
             std::fs::write(&state, format!(r#"{{"seen":["{DB_PREFIX}-abc1"]}}"#)).unwrap();
-            let c = ctx_for("", "", CONF_PREFIX);
+            let c = ctx_for("", CONF_PREFIX);
             assert_eq!(cmd_health_ids(&c, state.to_str().unwrap()), 1);
         }
 
@@ -747,7 +745,7 @@ mod tests {
             let state = d.join("state-good.json");
             std::fs::write(&state, format!(r#"{{"seen":["{DB_PREFIX}-abc1"]}}"#)).unwrap();
             for bad in ["", "bad prefix", "sp-test"] {
-                let c = ctx_for("", "", bad);
+                let c = ctx_for("", bad);
                 assert_eq!(cmd_health_ids(&c, state.to_str().unwrap()), 2, "prefix {bad:?}");
             }
         }

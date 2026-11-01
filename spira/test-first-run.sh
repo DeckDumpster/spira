@@ -28,17 +28,22 @@ cat > "$TMP/bd" <<'STUB'
 #!/usr/bin/env bash
 shift 2
 case "$1" in
-    show) echo '[{"id":"sp-ship1","labels":["repo:zzrepo"]}]' ;;
     comments)
         if [ "${2:-}" = add ]; then printf '%s\n' "$4" >> "$FIX/comments"; else cat "$FIX/comments" 2>/dev/null; fi ;;
 esac
+STUB
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/spira-lc" <<'STUB'
+#!/usr/bin/env bash
+[ "$1 $2 $3 $4" = "plan items --ids sp-ship1" ] && echo '{"watermark":0,"items":[{"id":"sp-ship1","labels":["repo:zzrepo"]}]}'
 STUB
 cat > "$TMP/bead.sh" <<'STUB'
 #!/usr/bin/env bash
 echo "FILE $*" >> "$FIX/filed"
 for a in "$@"; do [ -f "$a" ] && cat "$a" >> "$FIX/filed"; done
 STUB
-chmod +x "$TMP"/systemctl "$TMP"/bd "$TMP"/bead.sh
+chmod +x "$TMP"/systemctl "$TMP"/bd "$TMP"/bead.sh "$TMP"/bin/spira-lc
+export PATH="$TMP/bin:$PATH"
 export SPIRA_SYSTEMCTL="$TMP/systemctl" SPIRA_BD="$TMP/bd" SPIRA_FIRSTRUN_BEAD_SH="$TMP/bead.sh"
 tl_config SPIRA_BD="$SPIRA_BD"
 

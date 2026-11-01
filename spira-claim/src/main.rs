@@ -86,7 +86,7 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim deliberate-causes                                      (lib.sh _census_deliberate_reopen_causes; wave 4.19)
        spira-claim deliberate-exempt <cause>                              (lib.sh _census_reopen_admission_exempt; wave 4.19)
   thresholds: --poison-at N (3) --requeue-at N (5) --reclaim-at N (5)
-  common:     --db PATH  --timeout-s N (15)
+  common:     --timeout-s N (15)  (--db PATH is accepted and ignored: bdq reads spira.db)
   exit: 0 answered, 1 usage, 2 cannot tell (stdout empty); unpoison also 3 = a bead failed;
         stack also 3 = not claimable (its own JSON still names the reason);
         deadlocked also 3 = a candidate was refused or a lift did not verify;
@@ -172,9 +172,9 @@ fn read_source(path: &str, stdin: &mut dyn Read) -> Result<String, String> {
     }
 }
 
-fn store(a: &Args, cfg: &Config) -> Result<Store, String> {
+fn store(a: &Args) -> Result<Store, String> {
     let t = a.num("--timeout-s", 15)?;
-    Ok(Store::new(a.get("--db").map(str::to_string), t as u64, cfg))
+    Ok(Store::new(t as u64))
 }
 
 fn load_events(a: &Args, env: &mut Env, ids: &[String]) -> Result<Vec<EventRow>, Outcome> {
@@ -184,7 +184,7 @@ fn load_events(a: &Args, env: &mut Env, ids: &[String]) -> Result<Vec<EventRow>,
             events::parse_rows(&text).map_err(Outcome::cannot_tell)
         }
         None => {
-            let s = store(a, &env.config).map_err(Outcome::usage)?;
+            let s = store(a).map_err(Outcome::usage)?;
             s.events(ids).map_err(Outcome::cannot_tell)
         }
     }
@@ -246,13 +246,13 @@ pub fn dispatch(raw: &[String], stdin: &mut dyn Read) -> Outcome {
         "unpoison" => cmd_unpoison(&a, &env),
         "audit" => cmd_audit(&a, &mut env),
         "deadlocked" => cmd_deadlocked(&a, &mut env),
-        "write-event" => cmd_write_event(&a, &env),
-        "count-events" => cmd_count_events(&a, &env),
-        "rejections" => cmd_rejections(&a, &env),
+        "write-event" => cmd_write_event(&a),
+        "count-events" => cmd_count_events(&a),
+        "rejections" => cmd_rejections(&a),
         "lapse-record" => cmd_lapse_record(&a, &env),
-        "bead-metadata" => cmd_bead_metadata(&a, &env),
-        "thrash-streak-bump" => cmd_thrash_streak_bump(&a, &env),
-        "counter-label" => cmd_counter_label(&a, &env),
+        "bead-metadata" => cmd_bead_metadata(&a),
+        "thrash-streak-bump" => cmd_thrash_streak_bump(&a),
+        "counter-label" => cmd_counter_label(&a),
         "ask-clear" => cmd_ask_clear(&a, &env),
         "reopen" => cmd_reopen(&a, &env),
         "release" => cmd_release(&a, &env),
@@ -400,17 +400,18 @@ fn read_ready(a: &Args, env: &mut Env) -> Result<Vec<ReadyRow>, Outcome> {
     rank::parse_ready(&text).map_err(Outcome::cannot_tell)
 }
 
-fn fetch_lookup(a: &Args, env: &Env, rows: &[ReadyRow], known: Option<&HashMap<String, LifecycleRow>>) -> Result<EpicLookup, Outcome> {
+fn fetch_lookup(a: &Args, rows: &[ReadyRow], known: Option<&HashMap<String, LifecycleRow>>) -> Result<EpicLookup, Outcome> {
     let parents = rank::parents(rows);
     if parents.is_empty() {
         return Ok(EpicLookup::default());
     }
-    let s = store(a, &env.config).map_err(Outcome::usage)?;
-    let epics = s.list_by_ids(&parents).map_err(Outcome::cannot_tell)?;
+    let s = store(a).map_err(Outcome::usage)?;
+    let machine = |e: String| Outcome::cannot_tell(format!("epic lookup: {e} (the machine must answer)"));
+    let epics = s.items_by_ids(&parents).map_err(machine)?;
     let prio = epics.iter().map(|e| (e.id.clone(), e.priority.unwrap_or(99))).collect();
     let mut kids_of = Vec::new();
     for p in &parents {
-        kids_of.push((p.clone(), s.children(p).map_err(Outcome::cannot_tell)?));
+        kids_of.push((p.clone(), s.children(p).map_err(machine)?));
     }
     // A child's progress is its lifecycle row (never bd's status); a machine that cannot
     // answer is cannot-tell, and only the children's own rows are asked for.
@@ -429,7 +430,7 @@ fn cmd_epics(a: &Args, env: &mut Env) -> Outcome {
         Ok(r) => r,
         Err(o) => return o,
     };
-    match fetch_lookup(a, env, &rows, None) {
+    match fetch_lookup(a, &rows, None) {
         Ok(l) => Outcome::ok(format!("{}\n", serde_json::to_string(&l).unwrap())),
         Err(o) => o,
     }
@@ -467,7 +468,7 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
     };
     let mut machine_lc: Option<HashMap<String, LifecycleRow>> = None;
     if machine {
-        let st = match store(a, &env.config) {
+        let st = match store(a) {
             Ok(s) => s,
             Err(e) => return Outcome::usage(e),
         };
@@ -495,7 +496,7 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
         let recs = match a.get("--blocker-records") {
             Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_ready(&t)),
             None if wanted.is_empty() => Ok(Vec::new()),
-            None => st.list_by_ids(&wanted),
+            None => st.items_by_ids(&wanted),
         };
         let bd = match recs {
             Ok(r) => rank::index_rows(r),
@@ -519,7 +520,7 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
             Ok(l) => l,
             Err(e) => return Outcome::cannot_tell(format!("{rune}: epic lookup: {e}")),
         },
-        None => match fetch_lookup(a, env, &rows, machine_lc.as_ref()) {
+        None => match fetch_lookup(a, &rows, machine_lc.as_ref()) {
             Ok(l) => l,
             Err(o) => return o,
         },
@@ -572,11 +573,11 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
         Ok(n) => n.min(rank::STACK_CEILING),
         Err(e) => return Outcome::usage(e),
     };
-    let st = match store(a, &env.config) {
+    let st = match store(a) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
     };
-    let cand = match st.list_by_ids(std::slice::from_ref(&bead)) {
+    let cand = match st.items_by_ids(std::slice::from_ref(&bead)) {
         Ok(rows) => match rows.into_iter().find(|r| r.id == bead) {
             Some(r) => r,
             None => return Outcome::cannot_tell(format!("{bead}: bd has no record")),
@@ -601,7 +602,7 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
     let recs = match a.get("--blocker-records") {
         Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_ready(&t)),
         None if wanted.is_empty() => Ok(Vec::new()),
-        None => st.list_by_ids(&wanted),
+        None => st.items_by_ids(&wanted),
     };
     rank::mark_stack_conflicts(&mut lc, std::path::Path::new(&env.config.run));
     let bd = match recs {
@@ -782,7 +783,7 @@ fn cmd_urgent(a: &Args, env: &mut Env) -> Outcome {
         return Outcome::usage(e);
     }
     let fail = |e: String| Outcome { code: 1, out: String::new(), err: format!("spira-claim: urgent: {}", first_line(&e)) };
-    let st = match store(a, &env.config) {
+    let st = match store(a) {
         Ok(s) => s,
         Err(e) => return fail(e),
     };
@@ -835,12 +836,12 @@ fn cmd_claim_retry(bd_args: &[String], cfg: &Config) -> Outcome {
     }
     let tries = cfg.claim_retries.max(1);
     let delay = std::time::Duration::from_secs(cfg.claim_retry_delay_s as u64);
-    let st = Store::new(None, 60, cfg);
+    let st = Store::new(60);
     let mut args: Vec<&str> = bd_args.iter().map(String::as_str).collect();
     args.push("--json");
     let mut last = String::new();
     for attempt in 1..=tries {
-        match st.bd(&args) {
+        match st.bdq(&args) {
             Ok(out) => return Outcome::ok(bead::bdq::json_only(&out).to_string()),
             Err(e) => {
                 last = e;
@@ -918,7 +919,7 @@ fn ready_cache_lookup(text: &str, me: &str) -> u64 {
 /// blockers), never for status or assignee — the same rule `select --blockers machine`
 /// applies. `Err` when the machine cannot answer: a count must refuse, not read 0.
 fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String> {
-    let st = store(a, &env.config)?;
+    let st = store(a)?;
     machine_judged(a, env, &st).map(|(rows, _)| rows)
 }
 
@@ -933,14 +934,14 @@ fn machine_judged(a: &Args, env: &Env, st: &Store) -> Result<(Vec<rank::ReadyRow
 /// `ready_ttl_s` shared by every process, so a tick of watchers does not each recompute the
 /// whole set. Claiming never reads this.
 fn machine_claimable_shared(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String> {
-    let st = store(a, &env.config)?;
+    let st = store(a)?;
     let rows = ready_cache::read_or(&env.config, &ready_cache_key(a, env), || claimable_base(a, env, &st))?;
     let express = if a.has("--express") { Some(st.express_ids()?) } else { None };
     Ok(rows.into_iter().filter(|r| express.as_ref().is_none_or(|e| e.contains(&r.id))).collect())
 }
 
 fn ready_cache_key(a: &Args, env: &Env) -> String {
-    [env.config.bd.as_str(), a.get("--db").or(env.config.db.as_deref()).unwrap_or(""), &scope_label(a, env), &no_loop_label(a, env)].join("\x1f")
+    [env.config.db.as_deref().unwrap_or(""), &scope_label(a, env), &no_loop_label(a, env)].join("\x1f")
 }
 
 fn claimable_base(a: &Args, env: &Env, st: &Store) -> Result<Vec<rank::ReadyRow>, String> {
@@ -960,7 +961,7 @@ fn judge_rows(a: &Args, env: &Env, st: &Store) -> Result<(Vec<rank::ReadyRow>, V
         .filter(|r| !want.contains(r.bead_id.as_str()))
         .map(|r| entry(&r.bead_id, if r.holds.iter().any(|h| *h != lifecycle::bead::HoldKind::Wait) { Kind::Held } else { Kind::Snoozed }, None))
         .collect();
-    let mut rows = if ids.is_empty() { Vec::new() } else { st.content_by_ids(&ids)? };
+    let mut rows = if ids.is_empty() { Vec::new() } else { st.items_by_ids(&ids)? };
     let mut bd = rank::index_rows(rows.clone());
     let (scope, no_loop) = (scope_label(a, env), no_loop_label(a, env));
     rows.retain(|r| want.contains(r.id.as_str()));
@@ -978,7 +979,7 @@ fn judge_rows(a: &Args, env: &Env, st: &Store) -> Result<(Vec<rank::ReadyRow>, V
         .cloned()
         .collect();
     if !missing.is_empty() {
-        bd.extend(rank::index_rows(st.content_by_ids(&missing)?));
+        bd.extend(rank::index_rows(st.items_by_ids(&missing)?));
     }
     rank::mark_stack_conflicts(&mut lc, std::path::Path::new(&env.config.run));
     let stack_max = env.config.stack_max_depth.min(rank::STACK_CEILING);
@@ -1164,7 +1165,7 @@ fn cmd_bulk_ready_by_rune(a: &Args, env: &mut Env) -> Outcome {
     if parts.is_empty() {
         return Outcome { code: 0, out: String::new(), err: warnings.join("\n") };
     }
-    let st = match store(a, &env.config) {
+    let st = match store(a) {
         Ok(st) => st,
         Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-rune: {}", first_line(&e))),
     };
@@ -1239,12 +1240,12 @@ fn cmd_unpoison(a: &Args, env: &Env) -> Outcome {
         Ok(o) => o,
         Err(e) => return Outcome::usage(e),
     };
-    let st = match store(a, &env.config) {
+    let st = match store(a) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
     };
-    if st.db.is_none() {
-        return Outcome::cannot_tell("no bead store: --db, $SPIRA_DB and spira.db are all unset — nothing was written");
+    if env.config.db.is_none() {
+        return Outcome::cannot_tell("no bead store: spira.db is unset — nothing was written");
     }
     // SPIRA_RUN and SPIRA_ASK_LABEL are both registered keys — `env.config` already
     // refused at construction if either could not resolve (per Ryan 2026-10-05, one
@@ -1300,7 +1301,7 @@ fn cmd_audit(a: &Args, env: &mut Env) -> Outcome {
     let lc = {
         let lc_rows = match a.get("--lifecycle") {
             Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_lifecycle(&t)),
-            None => match store(a, &env.config) {
+            None => match store(a) {
                 Ok(s) => s.lifecycle_of(&ids),
                 Err(e) => return Outcome::usage(e),
             },
@@ -1332,12 +1333,12 @@ fn cmd_deadlocked(a: &Args, env: &mut Env) -> Outcome {
         Err(e) => return Outcome::cannot_tell(e),
     };
     let actor = a.get("--actor").unwrap_or("groomer").to_string();
-    let st = match store(a, &env.config) {
+    let st = match store(a) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
     };
-    if st.db.is_none() {
-        return Outcome::cannot_tell("no bead store: --db, $SPIRA_DB and spira.db are all unset — nothing was written");
+    if env.config.db.is_none() {
+        return Outcome::cannot_tell("no bead store: spira.db is unset — nothing was written");
     }
     // Only `mark_poison_lifted` (sp-wiyr2) touches run_dir; every other World method this
     // verb calls is store-only, but that one write is load-bearing (DESIGN.md §9). SPIRA_RUN
@@ -1366,7 +1367,7 @@ fn resolved_run_dir(env: &Env) -> std::path::PathBuf {
     std::path::PathBuf::from(&env.config.run)
 }
 
-fn cmd_write_event(a: &Args, env: &Env) -> Outcome {
+fn cmd_write_event(a: &Args) -> Outcome {
     if let Err(e) = a.check_known(&[]) {
         return Outcome::usage(e);
     }
@@ -1380,7 +1381,7 @@ fn cmd_write_event(a: &Args, env: &Env) -> Outcome {
     if id.is_empty() || etype.is_empty() {
         return Outcome::ok(String::new());
     }
-    let st = match store(a, &env.config) {
+    let st = match store(a) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
     };
@@ -1391,7 +1392,7 @@ fn cmd_write_event(a: &Args, env: &Env) -> Outcome {
     }
 }
 
-fn cmd_count_events(a: &Args, env: &Env) -> Outcome {
+fn cmd_count_events(a: &Args) -> Outcome {
     if let Err(e) = a.check_known(&[]) {
         return Outcome::usage(e);
     }
@@ -1399,7 +1400,7 @@ fn cmd_count_events(a: &Args, env: &Env) -> Outcome {
         [id, etype] if !id.is_empty() && !etype.is_empty() => (id.clone(), etype.clone()),
         _ => return Outcome::usage("count-events: expected <bead> <event-type>"),
     };
-    let st = match store(a, &env.config) {
+    let st = match store(a) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
     };
@@ -1409,7 +1410,7 @@ fn cmd_count_events(a: &Args, env: &Env) -> Outcome {
     }
 }
 
-fn cmd_rejections(a: &Args, env: &Env) -> Outcome {
+fn cmd_rejections(a: &Args) -> Outcome {
     if let Err(e) = a.check_known(&[]) {
         return Outcome::usage(e);
     }
@@ -1417,7 +1418,7 @@ fn cmd_rejections(a: &Args, env: &Env) -> Outcome {
         Ok(b) => b,
         Err(o) => return o,
     };
-    let st = match store(a, &env.config) {
+    let st = match store(a) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
     };
@@ -1439,7 +1440,7 @@ fn cmd_lapse_record(a: &Args, env: &Env) -> Outcome {
     Outcome::ok(String::new())
 }
 
-fn cmd_bead_metadata(a: &Args, env: &Env) -> Outcome {
+fn cmd_bead_metadata(a: &Args) -> Outcome {
     if let Err(e) = a.check_known(&[]) {
         return Outcome::usage(e);
     }
@@ -1450,14 +1451,14 @@ fn cmd_bead_metadata(a: &Args, env: &Env) -> Outcome {
     if id.is_empty() || key.is_empty() {
         return Outcome::ok(String::new());
     }
-    let st = match store(a, &env.config) {
+    let st = match store(a) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
     };
     Outcome::ok(format!("{}\n", counters::bead_metadata(&st, &id, &key)))
 }
 
-fn cmd_thrash_streak_bump(a: &Args, env: &Env) -> Outcome {
+fn cmd_thrash_streak_bump(a: &Args) -> Outcome {
     if let Err(e) = a.check_known(&[]) {
         return Outcome::usage(e);
     }
@@ -1470,14 +1471,14 @@ fn cmd_thrash_streak_bump(a: &Args, env: &Env) -> Outcome {
     if id.is_empty() {
         return Outcome::ok("0".to_string());
     }
-    let st = match store(a, &env.config) {
+    let st = match store(a) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
     };
     Outcome::ok(format!("{}", counters::thrash_streak_bump(&st, &id, &tip, &note)))
 }
 
-fn cmd_counter_label(a: &Args, env: &Env) -> Outcome {
+fn cmd_counter_label(a: &Args) -> Outcome {
     if let Err(e) = a.check_known(&[]) {
         return Outcome::usage(e);
     }
@@ -1485,7 +1486,7 @@ fn cmd_counter_label(a: &Args, env: &Env) -> Outcome {
         [id, prefix, n] => (id.clone(), prefix.clone(), n.clone()),
         _ => return Outcome::usage("counter-label: expected <bead> <prefix> <n>"),
     };
-    let st = match store(a, &env.config) {
+    let st = match store(a) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
     };
@@ -1560,7 +1561,7 @@ fn cmd_reopen(a: &Args, env: &Env) -> Outcome {
     // caller in the tree passes a deliberately empty one, so treating "" as "omitted" here
     // matches every observed call and is the safer reading either way).
     let cause = if cause.is_empty() { "unrecorded".to_string() } else { cause };
-    let st = match store(a, &env.config) {
+    let st = match store(a) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
     };
@@ -1591,7 +1592,7 @@ fn cmd_release(a: &Args, env: &Env) -> Outcome {
         [id] if !id.is_empty() => id.clone(),
         _ => return Outcome::usage("release: expected <bead>"),
     };
-    let st = match store(a, &env.config) {
+    let st = match store(a) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
     };

@@ -30,18 +30,14 @@ fn env_nonempty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|v| !v.is_empty())
 }
 
-/// SPIRA_DB/SPIRA_BD (registered config, read through `spira_config::process::cfg` — per
-/// Ryan 2026-10-05, the one source of config) plus SPIRA_HOME/SPIRA_RUN, neither of which
-/// is a registered key: SPIRA_HOME names where to find `$SPIRA_TOML` in the first place, and
-/// SPIRA_RUN's resolution (`resolve_run_dir`) also judges the result against the instance's
-/// containment, not a plain key lookup `cfg` could replace outright.
-fn closeout_env() -> Result<(String, String, String, PathBuf), String> {
+/// SPIRA_HOME/SPIRA_RUN, neither a registered key: SPIRA_HOME names where to find
+/// `$SPIRA_TOML` in the first place, and SPIRA_RUN's resolution (`resolve_run_dir`) also
+/// judges the result against the instance's containment.
+fn closeout_env() -> Result<(String, PathBuf), String> {
     let home = spira_config::resolve::locate_home_for_process()?;
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    let db = spira_config::process::cfg("SPIRA_DB")?;
-    let bd_bin = spira_config::process::cfg("SPIRA_BD")?;
     let run = spira_config::resolve::resolve_run_dir(&env, &home)?;
-    Ok((db, bd_bin, home.to_string_lossy().into_owned(), run))
+    Ok((home.to_string_lossy().into_owned(), run))
 }
 
 fn closeout_ctx(run: PathBuf) -> Result<Ctx, String> {
@@ -57,7 +53,7 @@ fn closeout_cmd(args: &[String]) -> ExitCode {
         eprintln!("usage: gh-intake closeout <bead-id> <sha> <repo-path>");
         return ExitCode::from(2);
     }
-    let (db, bd_bin, home, run) = match closeout_env() {
+    let (home, run) = match closeout_env() {
         Ok(v) => v,
         Err(e) => {
             eprintln!("gh-intake: {e}");
@@ -71,7 +67,7 @@ fn closeout_cmd(args: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let (bd, gh, git, repo, mail) = ports(db, bd_bin, home);
+    let (bd, gh, git, repo, mail) = ports(home);
     let lc = RealLifecycle::default();
     let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
     let log = closeout::gh_issue_closeout(&d, &ctx, &args[0], &args[1], Path::new(&args[2]));
@@ -86,7 +82,7 @@ fn unlanded_scan_cmd(args: &[String]) -> ExitCode {
         eprintln!("usage: gh-intake unlanded-scan");
         return ExitCode::from(2);
     }
-    let (db, bd_bin, home, run) = match closeout_env() {
+    let (home, run) = match closeout_env() {
         Ok(v) => v,
         Err(e) => {
             eprintln!("gh-intake: {e}");
@@ -100,7 +96,7 @@ fn unlanded_scan_cmd(args: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let (bd, gh, git, repo, mail) = ports(db, bd_bin, home);
+    let (bd, gh, git, repo, mail) = ports(home);
     let lc = RealLifecycle::default();
     let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
@@ -126,7 +122,7 @@ fn backfill_cmd(args: &[String]) -> ExitCode {
             }
         }
     }
-    let (db, bd_bin, home, run) = match closeout_env() {
+    let (home, run) = match closeout_env() {
         Ok(v) => v,
         Err(e) => {
             eprintln!("gh-intake: {e}");
@@ -140,7 +136,7 @@ fn backfill_cmd(args: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let (bd, gh, git, repo, mail) = ports(db, bd_bin, home);
+    let (bd, gh, git, repo, mail) = ports(home);
     let lc = RealLifecycle::default();
     let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
     let (log, _found, _closed, _skipped, _dry) = closeout::backfill(&d, &ctx, dry_run);
@@ -156,7 +152,7 @@ fn backfill_cmd(args: &[String]) -> ExitCode {
 /// `watch` is the watcher row: one line per newly broken trail. `health` exits 0 when the read works.
 fn provenance_cmd(args: &[String]) -> ExitCode {
     let mode = args.first().map(String::as_str);
-    let (db, bd_bin, home, run) = match closeout_env() {
+    let (home, run) = match closeout_env() {
         Ok(v) => v,
         Err(e) => {
             eprintln!("gh-intake: {e}");
@@ -164,7 +160,7 @@ fn provenance_cmd(args: &[String]) -> ExitCode {
         }
     };
     let seen = std::path::Path::new(&run).join("gh-provenance.seen");
-    let (bd, gh, git, repo, mail) = ports(db, bd_bin, home);
+    let (bd, gh, git, repo, mail) = ports(home);
     let lc = RealLifecycle::default();
     let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
     match mode {
@@ -232,10 +228,10 @@ fn provenance_cmd(args: &[String]) -> ExitCode {
 }
 
 #[allow(clippy::type_complexity)]
-fn ports(db: String, bd_bin: String, home: String) -> (RealBd, RealGh, RealGit, RealRepo, RealMail) {
+fn ports(home: String) -> (RealBd, RealGh, RealGit, RealRepo, RealMail) {
     let mail_bin = env_nonempty("SPIRA_MAIL_BIN").unwrap_or_else(|| spira_config::release_env::tool("mail"));
     (
-        RealBd { bd_bin, db },
+        RealBd { bdq: spira_config::release_env::tool("bdq") },
         RealGh { bdq_bin: "bdq".to_string() },
         RealGit,
         RealRepo { spira_home: home },
@@ -280,10 +276,7 @@ fn dispatch() -> ExitCode {
         }
     }
 
-    let (db, spira_home) = match spira_config::resolve::locate_home_for_process().and_then(|home| {
-        let db = spira_config::process::cfg("SPIRA_DB")?;
-        Ok((db, home.to_string_lossy().into_owned()))
-    }) {
+    let spira_home = match spira_config::resolve::locate_home_for_process().map(|home| home.to_string_lossy().into_owned()) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("gh-intake: {e}");
@@ -301,7 +294,6 @@ fn dispatch() -> ExitCode {
             }
         };
     }
-    let bd_bin = cfg_or_refuse!("SPIRA_BD");
     // SPIRA_MAIL_BIN is not a registered config key (no spira/conf.d entry).
     let mail_bin = std::env::var("SPIRA_MAIL_BIN").unwrap_or_else(|_| "mail".to_string());
 
@@ -329,7 +321,7 @@ fn dispatch() -> ExitCode {
     };
 
     let http = RealHttp::from_broker();
-    let bd = RealBd { bd_bin, db: db.clone() };
+    let bd = RealBd { bdq: spira_config::release_env::tool("bdq") };
     let repo_port = RealRepo { spira_home };
     let mail = RealMail { mail_bin };
 

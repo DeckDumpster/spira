@@ -276,7 +276,7 @@ certified_rows() {
 printf '%s\n' "$*" >> "$log"
 case "${1:-}" in
     create-bead) exit 0 ;;
-    content-rows) exec "${SH_CONTENT_SHIM:?}/spira-lc" "$@" ;;
+    plan) [ "${2:-}" = items ] && exec "${SH_CONTENT_SHIM:?}/spira-lc" "$@"; exit 0 ;;
     cut)
         members=""; while [ $# -gt 0 ]; do [ "$1" = --members ] && members="$2"; shift; done
         for m in $(printf '%s' "$members" | tr ',' ' '); do printf '%s\n' "${m%%:*}" >> "${SPIRA_RUN:?}/lc-taken"; done

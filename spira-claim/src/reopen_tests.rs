@@ -191,10 +191,10 @@ fn live(tag: &str, bd_body: &str) -> (Live, testkit::TempDir) {
 fn live_lc(tag: &str, bd_body: &str, lc_exit: i32) -> (Live, testkit::TempDir) {
     let dir = testkit::TempDir::new(&format!("spira-claim-reopen-{tag}"));
     std::fs::create_dir_all(dir.join("run")).unwrap();
-    let bd = script(&dir, "bd", &bd_body.replace("@LOG@", &dir.join("bd.log").to_string_lossy()));
+    let bdq = script(&dir, "bdq", &bd_body.replace("@LOG@", &dir.join("bd.log").to_string_lossy()));
     let lc = script(&dir, "lc", &format!("{}\nexit {lc_exit}", RECORD.replace("@LOG@", &dir.join("lc.log").to_string_lossy())));
     let l = Live {
-        store: Store { bd, db: Some("/fake/db".into()), lc, timeout: Duration::from_secs(10) },
+        store: Store { bdq, lc, timeout: Duration::from_secs(10) },
         run_dir: dir.join("run"),
         asked_dir: std::path::PathBuf::new(),
         ask_label: String::new(),
@@ -236,7 +236,7 @@ fn live_reopen_writes_sidecar_reopens_strips_label_releases_notes() {
     for gone in ["[reopen]", "[assign]", "[label]", "[--status]", "INSERT INTO events"] {
         assert!(!bd_log.contains(gone), "bd was handed {gone}: {bd_log}");
     }
-    assert_eq!(bd_argv[0], "ARGV [-C] [/fake/db] [note] [sp-a] [--stdin]");
+    assert_eq!(bd_argv[0], "ARGV [note] [sp-a] [--stdin]");
     assert!(bd_log.contains("STDIN a human-readable note"), "{bd_log}");
 }
 
