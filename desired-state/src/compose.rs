@@ -10,7 +10,7 @@ use std::fmt;
 use sha2::{Digest, Sha256};
 
 use crate::producer::Fragment;
-use crate::resource::{parse_resource, RawResource, ResourceError};
+use crate::resource::{check_resource, RawResource, ResourceError};
 
 #[derive(Debug, Clone)]
 pub struct ComposedResource {
@@ -101,8 +101,8 @@ pub fn compose(fragments: &[Fragment]) -> Result<Composite, Vec<ComposeError>> {
                 .entry(key.clone())
                 .or_default()
                 .push(fragment.producer.producer.clone());
-            match parse_resource(raw) {
-                Ok(_) => {
+            match check_resource(raw) {
+                Ok(()) => {
                     resources.insert(
                         key,
                         ComposedResource {
@@ -131,6 +131,29 @@ pub fn compose(fragments: &[Fragment]) -> Result<Composite, Vec<ComposeError>> {
         return Err(errors);
     }
     Ok(Composite { resources })
+}
+
+/// Each section kind's spec in the composite, as the body `spira-lc section apply-spec`
+/// takes. A composite with no section kind has none, and publishing it writes nothing.
+pub fn section_specs(composite: &Composite) -> Vec<serde_json::Value> {
+    composite
+        .resources
+        .values()
+        .filter(|r| crate::sections::lookup(&r.raw.kind).is_some())
+        .filter_map(|r| serde_json::to_value(&r.raw).ok())
+        .collect()
+}
+
+/// Hands each section spec to `apply`, stopping at the first that fails.
+pub fn publish_specs(
+    composite: &Composite,
+    apply: &mut dyn FnMut(&serde_json::Value) -> Result<(), String>,
+) -> Result<usize, String> {
+    let specs = section_specs(composite);
+    for s in &specs {
+        apply(s)?;
+    }
+    Ok(specs.len())
 }
 
 #[cfg(test)]
@@ -204,5 +227,44 @@ mod tests {
         let a = compose(&[fragment("operator", vec![fleet("fleet", 8)])]).unwrap();
         let b = compose(&[fragment("operator", vec![fleet("fleet", 9)])]).unwrap();
         assert_ne!(a.content_hash(), b.content_hash());
+    }
+
+    fn probe(spec: &str) -> RawResource {
+        RawResource {
+            api_version: crate::resource::API_VERSION.to_string(),
+            kind: crate::sections::probe::NAME.to_string(),
+            metadata: Metadata { name: "p".to_string() },
+            spec: toml::from_str(spec).unwrap(),
+        }
+    }
+
+    #[test]
+    fn a_section_kinds_spec_composes_and_is_published_and_no_other_kind_is() {
+        let ok = probe(r#"depth_max = { value = 4.0, statute = "law-x" }"#);
+        let composite = compose(&[fragment("operator", vec![ok, fleet("fleet", 8)])]).unwrap();
+        let mut sent = Vec::new();
+        let n = publish_specs(&composite, &mut |v| {
+            sent.push(v.clone());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(sent[0]["kind"], "Probe");
+        assert_eq!(sent[0]["spec"]["depth_max"]["value"], 4.0);
+
+        let plain = compose(&[fragment("operator", vec![fleet("fleet", 8)])]).unwrap();
+        let n = publish_specs(&plain, &mut |_| Err("called".into())).unwrap();
+        assert_eq!(n, 0, "a composite with no section kind publishes nothing");
+    }
+
+    #[test]
+    fn a_section_spec_outside_its_kinds_type_is_refused_whole() {
+        let bad = probe(r#"depth_max = { value = 4.0, statute = "law-x", extra = 1 }"#);
+        let errors = compose(&[fragment("operator", vec![bad])]).expect_err("refused");
+        assert!(matches!(errors[0], ComposeError::InvalidSpec { .. }), "{errors:?}");
+        let mut v1 = probe("");
+        v1.api_version = "spira/v0".into();
+        let errors = compose(&[fragment("operator", vec![v1])]).expect_err("refused");
+        assert!(matches!(errors[0], ComposeError::UnsupportedApiVersion { .. }), "{errors:?}");
     }
 }

@@ -1,0 +1,34 @@
+# The section schema's decisions: the bead's own gate reports any branch in them no test takes.
+[[scope]]
+path = "desired-state/src/section.rs"
+functions = [
+    "admit",
+    "admit_publish",
+    "registered",
+    "parse_section",
+    "parse_step",
+    "parse_duration",
+    "parse_rfc3339",
+    "freshness",
+    "caught_up",
+    "flow_name",
+    "duration_field",
+    "Window::parse",
+    "Section::numeric",
+]
+
+[[scope]]
+path = "desired-state/src/distance.rs"
+functions = ["lex", "parse", "Parser::expr", "Parser::term", "Parser::factor", "Expr::eval"]
+
+[[scope]]
+path = "desired-state/src/intent.rs"
+functions = ["admit_put", "parse_key", "parse_intent"]
+
+[[scope]]
+path = "desired-state/src/resource.rs"
+functions = ["check_resource"]
+
+[[scope]]
+path = "desired-state/src/compose.rs"
+functions = ["section_specs", "publish_specs"]

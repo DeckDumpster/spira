@@ -8,6 +8,8 @@ pub const MENDINGS: &str = "mendings/";
 pub const BATCHES: &str = "batches/";
 pub const RUNTIME: &str = "runtime/";
 pub const HISTORY: &str = "history/";
+/// Knobs a section owner moves by applying an intent from one value to another.
+pub const KNOBS: &str = "knobs/";
 /// The finalizer that keeps a lifecycle record until the planning plane has closed its bead.
 pub const PLANNING_CLOSED: &str = "planning-closed";
 
@@ -99,7 +101,7 @@ mod tests {
         assert!(!history_entry("sp-ab", 7, "r").starts_with(&history("sp-a")));
         assert_eq!(id_of(&claim_locks(), &claim_lock("sp-a")), Some("sp-a"));
         let prefixes = [
-            LIFECYCLE, READINESS, DELIVERIES, ASKS, MENDINGS, BATCHES, RUNTIME, HISTORY,
+            LIFECYCLE, READINESS, DELIVERIES, ASKS, MENDINGS, BATCHES, RUNTIME, HISTORY, KNOBS,
         ];
         for (i, a) in prefixes.iter().enumerate() {
             for b in &prefixes[i + 1..] {

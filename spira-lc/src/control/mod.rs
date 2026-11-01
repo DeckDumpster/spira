@@ -3,6 +3,7 @@
 pub mod feed;
 pub mod keys;
 pub mod records;
+pub mod sections;
 pub mod served;
 pub mod state;
 pub mod store;

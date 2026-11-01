@@ -16,7 +16,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use spira_desired_state::compose::compose;
+use spira_desired_state::compose::{compose, publish_specs};
 use spira_desired_state::producer::{parse_fragment, Fragment};
 use spira_desired_state::resource::json_schema;
 use spira_desired_state::store::{now_rfc3339, FsStore, MaterializeOutcome};
@@ -80,20 +80,67 @@ fn run_compose(paths: &[String]) -> ExitCode {
         }
     };
     let store = FsStore::new(dir);
-    match store.write_version(&composite, &contributors, &now_rfc3339()) {
-        Ok(MaterializeOutcome::NewVersion { version }) => {
-            println!("materialised version {version}");
-            ExitCode::SUCCESS
+    let materialised = match store.write_version(&composite, &contributors, &now_rfc3339()) {
+        Ok(MaterializeOutcome::NewVersion { version }) => format!("materialised version {version}"),
+        Ok(MaterializeOutcome::Unchanged { version }) => format!("unchanged at version {version}"),
+        Err(e) => {
+            eprintln!("spira: {e}");
+            return ExitCode::FAILURE;
         }
-        Ok(MaterializeOutcome::Unchanged { version }) => {
-            println!("unchanged at version {version}");
+    };
+    println!("{materialised}");
+    match publish_specs(&composite, &mut apply_spec) {
+        Ok(0) => ExitCode::SUCCESS,
+        Ok(n) => {
+            println!("published {n} section spec(s)");
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("spira: {e}");
+            eprintln!("spira: publishing section specs: {e}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// One spec through `spira-lc section apply-spec`, its body on stdin, bounded by the lifecycle
+/// call deadline.
+fn apply_spec(body: &serde_json::Value) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let deadline = spira_config::lc_call::LC_TIMEOUT;
+    let mut cmd = Command::new(spira_config::lc_call::lc_bin());
+    cmd.args(["section", "apply-spec", "--actor", "compose"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| format!("running spira-lc: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(body.to_string().as_bytes())
+            .map_err(|e| format!("spira-lc stdin: {e}"))?;
+    }
+    let started = std::time::Instant::now();
+    let status = loop {
+        match child.try_wait().map_err(|e| e.to_string())? {
+            Some(st) => break st,
+            None if started.elapsed() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("spira-lc section apply-spec passed its {}s deadline", deadline.as_secs()));
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(10)),
+        }
+    };
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    if status.success() {
+        return Ok(());
+    }
+    Err(format!(
+        "spira-lc section apply-spec exited {}: {}{}",
+        status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).trim(),
+        String::from_utf8_lossy(&out.stderr).trim()
+    ))
 }
 
 fn cmd_apply(document: Option<&String>) -> ExitCode {

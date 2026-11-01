@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::compose::{ComposedResource, Composite};
 use crate::producer::Provenance;
-use crate::resource::{parse_resource, Metadata, RawResource};
+use crate::resource::{check_resource, Metadata, RawResource};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredResource {
@@ -118,7 +118,7 @@ impl FsStore {
                 metadata: r.metadata,
                 spec: r.spec,
             };
-            parse_resource(&raw).map_err(|e| format!("{}: {e}", found.path.display()))?;
+            check_resource(&raw).map_err(|e| format!("{}: {e}", found.path.display()))?;
             let key = (raw.kind.clone(), raw.metadata.name.clone());
             resources.insert(key, ComposedResource { raw, producer: r.producer });
         }
@@ -206,7 +206,7 @@ pub fn now_rfc3339() -> String {
 }
 
 /// UTC, second precision. civil_from_days (Howard Hinnant, <http://howardhinnant.github.io/date_algorithms.html>).
-fn format_rfc3339(epoch_secs: u64) -> String {
+pub fn format_rfc3339(epoch_secs: u64) -> String {
     let days = (epoch_secs / 86400) as i64;
     let secs_of_day = epoch_secs % 86400;
 

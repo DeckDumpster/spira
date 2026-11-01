@@ -6,7 +6,11 @@
 //! observed reality — is a separate bead's concern; nothing here writes status.
 
 pub mod compose;
+pub mod distance;
+pub mod intent;
 pub mod producer;
 pub mod resource;
+pub mod section;
+pub mod sections;
 pub mod store;
 pub mod telemetry;
