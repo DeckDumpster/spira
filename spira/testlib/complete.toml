@@ -253,6 +253,7 @@ testenv_suite_cap = 777
 testenv_gate_cap = 222
 testenv_load_max_pct = 55
 testenv_load_wait = 33
+testenv_slot_wait = 44
 test_case_deadline = 45
 tsd_keep_days = 30
 tsd_keep_days_by_family = ""

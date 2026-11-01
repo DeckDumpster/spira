@@ -257,7 +257,7 @@ pub struct Deps<'a> {
     pub runner_exe: PathBuf,
     /// The host's 1-minute load average, for load admission.
     pub load1: &'a (dyn Fn() -> Option<f64> + Sync),
-    /// How load admission waits between probes.
+    /// How load and slot admission wait between probes.
     pub sleep: &'a (dyn Fn(Duration) + Sync),
 }
 
@@ -862,7 +862,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             load::Admit::Immediate => {}
         }
     }
-    let armed = cap::arm(cap);
+    let armed = cap::arm(cap, deps.settings.slot_wait);
     let mut fin = run_recorded(args, deps, &results);
     if let Some((what, secs)) = armed.finish() {
         deps.log(&cap::over_cap_line(&what, secs, cap.source));
@@ -908,6 +908,8 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     // (DESIGN-admission.md D11): the gate never queues, agent builds queue behind it. Waiting
     // never fails; it is said on stderr.
     let admit = |pool: admission::Pool, weight: u64| -> admission::Guard {
+        // The wait for a slot is queueing, not this run's work: the cap stands still (sp-u56az1).
+        let _held = cap::hold();
         let inherit = (deps.env)(admission::INHERIT_ENV);
         let who = [admission::WHO_ENV, "SPIRA_WORK_BEAD_ID", "BEAD_ID"]
             .iter()
@@ -932,7 +934,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         let seams = admission::Seams {
             size_of: &size_of,
             procs: &admission::RealProcs,
-            sleep: &|d: Duration| std::thread::sleep(d),
+            sleep: deps.sleep,
         };
         admission::acquire(&q, &seams, &mut |l: &str| deps.log(l))
     };

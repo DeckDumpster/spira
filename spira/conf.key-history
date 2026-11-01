@@ -471,6 +471,7 @@ testenv_gate_cap
 testenv_suite_cap
 testenv_load_max_pct
 testenv_load_wait
+testenv_slot_wait
 metrics_endpoint
 metrics_data
 metrics_grafana_addr

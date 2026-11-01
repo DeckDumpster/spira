@@ -122,6 +122,8 @@ struct World {
     loads: Mutex<Vec<f64>>,
     /// Whether the cap was armed at each admission sleep.
     sleeps: Mutex<Vec<bool>>,
+    /// A slot lease the next admission sleep frees: a slot that comes free after a wait.
+    slot_blocker: Mutex<Option<PathBuf>>,
 }
 
 /// `Settings` from a fake env map, exactly as the old Source-based `Settings::load` built it
@@ -157,6 +159,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         gate_cap: num!("SPIRA_TESTENV_GATE_CAP").unwrap_or(300),
         load_max_pct: num!("SPIRA_TESTENV_LOAD_MAX_PCT").unwrap_or(0),
         load_wait: num!("SPIRA_TESTENV_LOAD_WAIT").unwrap_or(0),
+        slot_wait: num!("SPIRA_TESTENV_SLOT_WAIT").unwrap_or(600),
         maxpar_requested,
         maxpar_refusal,
         maxpar_ceiling: num!("SPIRA_BATCH_MAXPAR_CEILING"),
@@ -270,6 +273,7 @@ impl World {
             config: None,
             loads: Mutex::new(vec![]),
             sleeps: Mutex::new(vec![]),
+            slot_blocker: Mutex::new(None),
         }
     }
 
@@ -290,7 +294,15 @@ impl World {
             let mut q = self.loads.lock().unwrap();
             Some(if q.is_empty() { 0.0 } else { q.remove(0) })
         };
-        let sleep = |_: Duration| self.sleeps.lock().unwrap().push(crate::cap::armed_here());
+        let sleep = |_: Duration| {
+            let mut sleeps = self.sleeps.lock().unwrap();
+            assert!(sleeps.len() < 1000, "an admission wait never ended: no slot_blocker frees the busy slot");
+            sleeps.push(crate::cap::armed_here());
+            drop(sleeps);
+            if let Some(slot) = self.slot_blocker.lock().unwrap().take() {
+                fs::remove_file(slot).unwrap();
+            }
+        };
         let deps = Deps {
             rt,
             builder: b,
@@ -1923,17 +1935,10 @@ fn a_full_test_pool_is_waited_for_visibly_and_never_failed() {
     fs::create_dir_all(&dir).unwrap();
     let slot = dir.join("slot.1");
     fs::write(&slot, format!("pid=1 start={start} who=blocker since={} waited=0 last=0\n", spira_config::admission::now_epoch())).unwrap();
-    let freer = {
-        let slot = slot.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(1500));
-            fs::remove_file(slot).unwrap();
-        })
-    };
+    *w.slot_blocker.lock().unwrap() = Some(slot);
     let rt = runtime();
     let b = FakeBuilder::new(None);
     assert_eq!(w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.repo.join("spira")), 0);
-    freer.join().unwrap();
     assert!(w.has_line(|l| l.contains("batch: waiting for a test slot: 1 of 1 held by blocker (pid 1, ")), "{:?}", w.lines.lock().unwrap());
     assert!(w.has_line(|l| l.contains("batch: admitted to test slot 1 after ")));
     assert!(w.last().starts_with("VERDICT GREEN"), "{}", w.last());
@@ -1971,18 +1976,13 @@ fn a_gate_trial_with_every_pool_full_still_gets_its_verdict() {
     assert!(!w.root.join("run/compile-admission/slot.2").exists(), "released after the build");
     assert!(!w.root.join("run/test-admission/slot.2").exists(), "the test phase took no slot under the gate");
     // POSITIVE CONTROL: without the gate's token the same trial queues (and would wait for
-    // the holder; here it is freed after a moment so the test ends).
+    // the holder; here the first wait frees it so the test ends).
     w.env.remove("SPIRA_ADMISSION");
-    let slot = w.root.join("run/compile-admission/slot.1");
-    let freer = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(1200));
-        let _ = fs::remove_file(slot);
-    });
+    *w.slot_blocker.lock().unwrap() = Some(w.root.join("run/compile-admission/slot.1"));
     sh(&w.repo, "git checkout -q topic && echo y > g && git add g && git commit -qm again && git checkout -q main");
     let test_slot = w.root.join("run/test-admission/slot.1");
     let _ = fs::remove_file(test_slot);
     assert_eq!(w.run(&rt, &b, &["--deadline", "300", "--suites", "test-a.sh", "topic"], "", &w.root), 0);
-    freer.join().unwrap();
     assert!(w.has_line(|l| l.contains("waiting for a compile slot: 4 of 1 held by agent-build")), "{:?}", w.lines.lock().unwrap());
 }
 
@@ -2217,17 +2217,10 @@ fn a_forge_repo_run_waits_for_a_test_slot_so_local_rounds_never_exceed_the_pool(
     fs::create_dir_all(&dir).unwrap();
     let slot = dir.join("slot.1");
     fs::write(&slot, format!("pid=1 start={start} who=blocker since={} waited=0 last=0\n", spira_config::admission::now_epoch())).unwrap();
-    let freer = {
-        let slot = slot.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(1500));
-            fs::remove_file(slot).unwrap();
-        })
-    };
+    *w.slot_blocker.lock().unwrap() = Some(slot);
     let rt = runtime();
     let b = FakeBuilder::new(None);
     let rc = w.run(&rt, &b, &["--suites", "unit", "topic"], "", &w.root);
-    freer.join().unwrap();
     assert_eq!(rc, 0, "{:?}", w.lines.lock().unwrap());
     assert!(w.has_line(|l| l.contains("batch: waiting for a test slot: 1 of 1 held by blocker")), "{:?}", w.lines.lock().unwrap());
     assert!(w.has_line(|l| l.contains("batch: admitted to test slot 1 after ")));
@@ -2444,6 +2437,27 @@ fn the_cap_is_armed_only_after_load_admission() {
     let sleeps = w.sleeps.lock().unwrap().clone();
     assert!(!sleeps.is_empty() && sleeps.iter().all(|armed| !armed), "cap armed during the load wait: {sleeps:?}");
     assert!(w.has_line(|l| l.contains("load-wait: admitted after")), "{:?}", w.lines.lock().unwrap());
+    assert_eq!(w.last(), "VERDICT GREEN ran=1");
+}
+
+/// Every pool (unit, test, compile) waits through the same `admit` closure; the foreign repo's
+/// test slot is the shortest path to it.
+#[test]
+fn the_cap_does_not_count_the_wait_for_a_test_slot() {
+    let mut w = foreign_world("foreign-slot-wait", Some(FOREIGN_DECL));
+    w.env.insert("SPIRA_TEST_PAR".into(), "1".into());
+    let start = spira_config::admission::Procs::start_of(&spira_config::admission::RealProcs, 1).expect("pid 1");
+    let dir = w.root.join("run/test-admission");
+    fs::create_dir_all(&dir).unwrap();
+    let slot = dir.join("slot.1");
+    fs::write(&slot, format!("pid=1 start={start} who=blocker since={} waited=0 last=0\n", spira_config::admission::now_epoch())).unwrap();
+    *w.slot_blocker.lock().unwrap() = Some(slot);
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(w.run(&rt, &b, &["topic"], "", &w.root), 0, "{:?}", w.lines.lock().unwrap());
+    let sleeps = w.sleeps.lock().unwrap().clone();
+    assert!(!sleeps.is_empty() && sleeps.iter().all(|armed| !armed), "cap counted during the slot wait: {sleeps:?}");
+    assert!(w.has_line(|l| l.contains("batch: admitted to test slot 1 after ")), "{:?}", w.lines.lock().unwrap());
     assert_eq!(w.last(), "VERDICT GREEN ran=1");
 }
 

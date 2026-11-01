@@ -56,6 +56,7 @@ testenv_suite_cap = 900
 testenv_gate_cap = 300
 testenv_load_max_pct = 75
 testenv_load_wait = 240
+testenv_slot_wait = 600
 mender_label = "mender-failure"
 pilgrim_label = "pilgrimage"
 skuld_label = "draft"

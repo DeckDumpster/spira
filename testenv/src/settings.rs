@@ -47,6 +47,8 @@ pub struct Settings {
     /// Per-core load ceiling, percent, before a capped run starts; 0 disables.
     pub load_max_pct: u64,
     pub load_wait: u64,
+    /// The most admission-slot waiting the cap excuses.
+    pub slot_wait: u64,
     pub maxpar_requested: Option<i64>,
     /// Set when SPIRA_BATCH_MAXPAR (declared in spira.toml) was given but is not usable:
     /// zero, negative, or not a whole number. Absent is never folded in here — only a given,
@@ -166,6 +168,7 @@ impl Settings {
             gate_cap: cfg_parse("SPIRA_TESTENV_GATE_CAP")?,
             load_max_pct: cfg_parse("SPIRA_TESTENV_LOAD_MAX_PCT")?,
             load_wait: cfg_parse("SPIRA_TESTENV_LOAD_WAIT")?,
+            slot_wait: cfg_parse("SPIRA_TESTENV_SLOT_WAIT")?,
             maxpar_requested,
             maxpar_refusal,
             maxpar_ceiling: optional_num("SPIRA_BATCH_MAXPAR_CEILING", &cfg("SPIRA_BATCH_MAXPAR_CEILING")?)?,
