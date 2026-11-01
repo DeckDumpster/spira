@@ -14,11 +14,19 @@ pub const RUNTIME: &str = "runtime/";
 pub const HISTORY: &str = "history/";
 /// Knobs a section owner moves by applying an intent from one value to another.
 pub const KNOBS: &str = "knobs/";
+/// Each record's blocker-facing projection, under a prefix of its own so a `lifecycle/` list or
+/// watch sees records and nothing else.
+pub const GATES: &str = "gates/";
 /// The finalizer that keeps a lifecycle record until the planning plane has closed its bead.
 pub const PLANNING_CLOSED: &str = "planning-closed";
 
 pub fn lifecycle(id: &str) -> String {
     format!("{LIFECYCLE}{id}")
+}
+
+/// The record's blocker-facing projection, written in the txn of any transition that moves it.
+pub fn gate(id: &str) -> String {
+    format!("{GATES}{id}")
 }
 
 pub fn readiness(id: &str) -> String {
@@ -101,6 +109,7 @@ mod tests {
     fn each_record_kind_has_its_own_prefix_and_a_progress_key_sits_under_its_batch() {
         assert_eq!(lifecycle("sp-a"), "lifecycle/sp-a");
         assert_eq!(readiness("sp-a"), "readiness/sp-a");
+        assert_eq!(gate("sp-a"), "gates/sp-a");
         assert_eq!(delivery("sp-a"), "deliveries/sp-a");
         assert_eq!(ask("sp-q"), "asks/sp-q");
         assert_eq!(mending("sp-a"), "mendings/sp-a");
@@ -123,7 +132,7 @@ mod tests {
         assert_eq!(id_of(&claim_locks(), &claim_lock("sp-a")), Some("sp-a"));
         let prefixes = [
             LIFECYCLE, READINESS, DELIVERIES, ASKS, MENDINGS, MENDS, BATCHES, BATCH_IDS, RUNTIME,
-            HISTORY, KNOBS,
+            HISTORY, KNOBS, GATES,
         ];
         for (i, a) in prefixes.iter().enumerate() {
             for b in &prefixes[i + 1..] {

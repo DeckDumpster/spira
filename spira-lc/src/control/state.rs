@@ -14,7 +14,7 @@ use super::store::{Outcome, Store};
 use crate::{flag, CANNOT_TELL, REFUSED};
 
 /// The verbs this module answers.
-pub const VERBS: &[&str] = &["show", "list", "event", "create-bead"];
+pub const VERBS: &[&str] = &["show", "list", "event", "create-bead", "promote"];
 
 /// Whether this module or the round's verbs answer `verb`.
 pub fn is_verb(verb: &str) -> bool {
@@ -47,6 +47,7 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
         Some(v) if cascades::VERBS.contains(&v) => cascades::run(store, args, call),
         Some(v) if asks::VERBS.contains(&v) => asks::run(store, args, call),
         Some(v) if mending::VERBS.contains(&v) => mending::run(store, args, call),
+        Some("promote") => promote(store, rest, call),
         other => (
             CANNOT_TELL,
             format!("{other:?} is not a control-store verb"),
@@ -317,6 +318,10 @@ fn answer(outcome: state_store::Result<Outcome>) -> (i32, String) {
             REFUSED,
             "refused: the holder's claim lock has lapsed or been retaken".into(),
         ),
+        Ok(Outcome::BlockerMoved { blocker, .. }) => (
+            REFUSED,
+            format!("refused: blocker {blocker} moved since the claim was judged"),
+        ),
         Ok(Outcome::Locked { token }) => (
             REFUSED,
             format!(
@@ -395,13 +400,6 @@ fn event<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, St
     };
     let req = Request::new(call.request, &actor, "lc.event");
     answer(match &ev.kind {
-        BeadEventKind::Claim { stack, .. } if !stack.is_empty() => {
-            match stale_stack(store, stack) {
-                Ok(Some(refusal)) => store.refuse_event(key, &ev, refusal, &req),
-                Ok(None) => store.claim(key, &ev, &req).map(|(o, _)| o),
-                Err(e) => Err(e),
-            }
-        }
         BeadEventKind::Claim { .. } => store.claim(key, &ev, &req).map(|(o, _)| o),
         BeadEventKind::Renew { .. } => match store.holder_fence(key) {
             Ok(Some(fence)) => store.renew_lease(key, &fence, &ev, &req),
@@ -434,24 +432,11 @@ fn unfenced_renew<B: Backend>(
     }
 }
 
-/// A claim's stack names prerequisite tips; one that is no longer its prerequisite's current
-/// certified tip refuses the claim, as on the dolt path.
-fn stale_stack<B: Backend>(
-    store: &Store<B>,
-    stack: &bead::Stack,
-) -> state_store::Result<Option<lifecycle::Refusal>> {
-    let mut prereqs = Vec::new();
-    for id in stack.keys() {
-        if let Some(r) = store.record(id)? {
-            prereqs.push(r.value.row);
-        }
-    }
-    Ok(bead::claim_refusal_for_stale_stack(stack, &prereqs))
-}
-
-/// `create-bead <id> [--title T] [--priority 0..4] [--repo R] [--submitted-tip SHA]`. A record
-/// that already exists is left as it is, as the dolt path's insert-or-ignore leaves it; title and
-/// priority are planning-plane fields, checked and not kept.
+/// `create-bead <id> [--title T] [--priority 0..4] [--repo R] [--submitted-tip SHA] [--ready]`.
+/// The record is born OPEN, unclaimable until `promote` says filing has finished; `--ready` is
+/// for a creator whose bead was filed whole before, and a submitted tip is born SUBMITTED. A
+/// record that already exists is left as it is, as the dolt path's insert-or-ignore leaves it;
+/// title and priority are planning-plane fields, checked and not kept.
 fn create<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
     let Some(id) = args.first() else {
         return (CANNOT_TELL, "create-bead: missing <bead-id>".into());
@@ -469,7 +454,13 @@ fn create<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, S
     }
     let req = Request::new(call.request, "bead.sh", "lc.create-bead");
     let (repo, tip) = (flag(args, "--repo"), flag(args, "--submitted-tip"));
-    match store.create(id, repo.as_deref(), tip.as_deref(), call.now, &req) {
+    let ready = args.iter().any(|a| a == "--ready");
+    let made = if ready || tip.is_some() {
+        store.create(id, repo.as_deref(), tip.as_deref(), call.now, &req)
+    } else {
+        store.create_open(id, repo.as_deref(), call.now, &req)
+    };
+    match made {
         Ok(_) | Err(Error::Conflict { .. }) => (0, String::new()),
         Err(e) => cannot_tell(e),
     }
@@ -479,6 +470,21 @@ mod asks;
 mod cascades;
 mod mending;
 mod rounds;
+
+/// `promote <id> [--actor A]`: filing has finished, so the OPEN record becomes READY. A record
+/// already past OPEN is left as it is.
+fn promote<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
+    let Some(id) = args.first() else {
+        return (CANNOT_TELL, "promote: missing <bead-id>".into());
+    };
+    let actor = flag(args, "--actor").unwrap_or_else(|| "bead.sh".into());
+    let req = Request::new(call.request, &actor, "lc.promote");
+    match store.record(id) {
+        Ok(Some(_)) => answer(store.promote(id, &actor, call.now, &req)),
+        Ok(None) => (CANNOT_TELL, format!("promote: no bead row for {id}")),
+        Err(e) => cannot_tell(e),
+    }
+}
 
 #[cfg(test)]
 mod parity;

@@ -2,6 +2,7 @@
 
 pub mod feed;
 pub mod keys;
+pub mod readiness;
 pub mod records;
 pub mod sections;
 pub mod served;

@@ -186,6 +186,12 @@ impl<B: Backend> Machine for Rig<'_, B> {
     fn call(&mut self, args: &[String]) -> (i32, String) {
         self.n += 1;
         let request = format!("parity/{}", self.n);
+        // The dolt path births every record READY, as `--ready` does here.
+        let mut args = args.to_vec();
+        if args.first().map(String::as_str) == Some("create-bead") {
+            args.push("--ready".into());
+        }
+        let args = args.as_slice();
         match args.first().map(String::as_str) {
             Some(v) if is_verb(v) => super::run(
                 self.store,
@@ -383,7 +389,9 @@ fn the_parity_rig_reports_a_case_whose_answer_differs() {
             now: NOW,
             request: "planted",
         };
-        let argv: Vec<String> = ["create-bead", "sp-planted"].map(String::from).into();
+        let argv: Vec<String> = ["create-bead", "sp-planted", "--ready"]
+            .map(String::from)
+            .into();
         assert_eq!(super::run(&s, &argv, &call).0, 0);
         s
     });
