@@ -90,12 +90,33 @@ fn the_batchers_own_flags_are_accepted_and_suites_narrows_the_results() {
     }
     a.extend(["--results-dir".to_string(), w.results.display().to_string()]);
     let (code, err) = roundvm::run(&w.world, &a, &none, 946684800);
+    assert_eq!(code, FAULT, "a judged round whose fences cannot be listed is not run: {err}");
+    fence_lister(&w, "lifecycle-guard\tx\nboundary\ty\n");
+    let (code, err) = roundvm::run(&w.world, &a, &none, 946684800);
     assert_eq!(code, 0, "{err}");
     let names: Vec<String> = read_back(&w).into_iter().map(|(n, _)| n).collect();
-    assert_eq!(names, ["test-a.sh", "test-c.sh"]);
+    assert_eq!(names, ["fence-boundary", "fence-lifecycle-guard", "test-a.sh", "test-c.sh"]);
     let (code, err) = roundvm::run(&w.world, &["run".into(), w.tree.display().to_string(), "--frobnicate".into(), "1".into()], &none, 0);
     assert_eq!(code, FAULT);
     assert!(err.contains("does not take --frobnicate"), "{err}");
+}
+
+/// A `gate` in the world's release whose `fences --tree <dir>` prints `list`.
+fn fence_lister(w: &W, list: &str) {
+    let rel = std::fs::canonicalize(w.world.join("release/bin")).unwrap();
+    testkit::write_exe(rel.join("gate"), &format!("#!/bin/sh\n[ \"$1 $2\" = 'fences --tree' ] || exit 9\nprintf '{}'\n", list.replace('\t', "\\t").replace('\n', "\\n")));
+}
+
+#[test]
+fn a_red_fence_ends_the_pass_before_any_suite() {
+    let w = world();
+    fence_lister(&w, "one\tx\ntwo\ty\n");
+    std::fs::write(w.world.join(VERDICT_FILE), "red fence-two\n").unwrap();
+    let mut a = args(&w);
+    a.extend(["--base".into(), "local/main".into()]);
+    let (code, err) = roundvm::run(&w.world, &a, &none, 946684800);
+    assert_eq!(code, 1, "{err}");
+    assert_eq!(read_back(&w), [("fence-one".to_string(), "ok".to_string()), ("fence-two".to_string(), "red".to_string())]);
 }
 
 #[test]

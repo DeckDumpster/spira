@@ -714,6 +714,38 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "fence duration p90 by fence",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 72,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "quantile_over_time(0.9, spira_cert_pass_fence_seconds{repo=~\"$repo\",place=~\"$place\"}[$__interval])",
+          "legendFormat": "p90 {{fence}}",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

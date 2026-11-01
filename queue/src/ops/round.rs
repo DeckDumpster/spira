@@ -141,7 +141,9 @@ pub fn run(w: &World, r: &Round) -> i32 {
             repo,
             reason,
             lease_token,
-        } => abandon(w, batch, repo.as_deref(), reason, lease_token.as_deref()),
+            cause,
+        } => abandon(w, batch, repo.as_deref(), reason, lease_token.as_deref(), cause),
+        Round::SweepLocks { repo, all } => sweep_locks(w, repo.as_deref(), *all),
         Round::Preempt {
             batch,
             repo,
@@ -989,7 +991,54 @@ pub(super) fn mark_running(c: &Ctx, batch: &str) {
     let _ = fs::write(dir.join(format!("{batch}.running")), "");
 }
 
-pub(super) fn finish(c: &Ctx, batch: &str, line: &str) {
+/// Why a round ended: the cause of its `.result` line. The kinds are a closed set; a word a
+/// kind carries is reduced to one token, so the line's second field always parses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum End<'a> {
+    Landed,
+    DeployFault,
+    Red(&'a str),
+    Fault(&'a str),
+    Held(&'a str),
+    Abandoned(&'a str),
+}
+
+/// The cause kinds, each as it opens the cause field.
+pub const END_KINDS: [&str; 6] = ["landed", "deploy-fault", "red:", "fault:", "held:", "abandoned:"];
+
+/// A word reduced to one lower-case token of `[a-z0-9._-]`; empty becomes `unspecified`.
+pub fn cause_word(w: &str) -> String {
+    let t: String = w
+        .trim()
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '-' })
+        .take(40)
+        .collect();
+    let t = t.trim_matches('-').to_string();
+    if t.is_empty() {
+        "unspecified".into()
+    } else {
+        t
+    }
+}
+
+impl End<'_> {
+    pub fn cause(&self) -> String {
+        let with = |kind: &str, w: &str| format!("{kind}:{}", cause_word(w));
+        match self {
+            End::Landed => "landed".into(),
+            End::DeployFault => "deploy-fault".into(),
+            End::Red(step) => with("red", step),
+            End::Fault(why) => with("fault", why),
+            End::Held(by) => with("held", by),
+            End::Abandoned(why) => with("abandoned", why),
+        }
+    }
+}
+
+/// Appends `<UTC ISO-8601> <cause> <detail>` to `rounds/<batch>.result`, the stamp from the world's clock.
+pub(super) fn finish(w: &World, c: &Ctx, batch: &str, end: End, detail: &str) {
     use std::io::Write;
     let dir = rounds_dir(c);
     let _ = fs::create_dir_all(&dir);
@@ -998,9 +1047,50 @@ pub(super) fn finish(c: &Ctx, batch: &str, line: &str) {
         .append(true)
         .open(dir.join(format!("{batch}.result")))
     {
-        let _ = writeln!(f, "{line}");
+        let _ = writeln!(f, "{} {} {}", tsd::iso_utc(w.clock.now()), end.cause(), one_line(detail));
     }
     let _ = fs::remove_file(dir.join(format!("{batch}.running")));
+}
+
+/// `round sweep-locks`: removes the certify lock of every batch spira-lc reports terminal.
+fn sweep_locks(w: &World, repo: Option<&str>, all: bool) -> i32 {
+    let label = "round sweep-locks";
+    let names = if all {
+        match w.lib.repos() {
+            Ok(n) => n,
+            Err(e) => {
+                w.err(format!("queue.sh {label}: cannot list the registered repositories: {e}"));
+                return FAIL;
+            }
+        }
+    } else {
+        vec![repo.map(str::to_string).unwrap_or_default()]
+    };
+    if require_lc(w, label).is_err() {
+        return FAIL;
+    }
+    let mut rc = OK;
+    for name in names {
+        let repo = Some(name.as_str()).filter(|n| !n.is_empty());
+        if all && resolve(w, label, repo).is_ok_and(|c| c.r.mode != LandMode::QueueLocal) {
+            continue;
+        }
+        let Ok((c, _)) = local_ctx(w, label, repo) else {
+            rc = FAIL;
+            continue;
+        };
+        let (mut removed, mut kept) = (0, 0);
+        for batch in crate::lock::certify_lock_batches(&c.s.queue_dir, &c.r.name) {
+            let ended = w.lc.batch_state(&batch).is_some_and(|(s, _)| super::reconcile::terminal(&s));
+            if ended && crate::lock::remove_certify_lock(&c.s.queue_dir, &c.r.name, &batch) {
+                removed += 1;
+            } else {
+                kept += 1;
+            }
+        }
+        w.out(format!("queue.sh {label}: {}: removed {removed} certify lock(s) of ended rounds, kept {kept}", c.r.name));
+    }
+    rc
 }
 
 pub(super) fn csv(ms: &[Member]) -> String {
@@ -3124,16 +3214,15 @@ fn eject(
     retire_menders(w, &c, batch, &format!("{id} ejected"));
     if survivors.is_empty() {
         let emptied = bounded_text(&format!("round emptied: {id} ejected — {reason}"));
-        if let Err((rc, out)) = lc_abandon(w, batch, LC_ACTOR, &emptied) {
-            w.err(format!("queue.sh {label}: spira-lc abandon-batch refused for the emptied round {batch} (rc={rc}): {out}"));
+        match lc_abandon(w, batch, LC_ACTOR, &emptied) {
+            Ok(()) => {
+                crate::lock::remove_certify_lock(&c.s.queue_dir, &c.r.name, batch);
+            }
+            Err((rc, out)) => w.err(format!("queue.sh {label}: spira-lc abandon-batch refused for the emptied round {batch} (rc={rc}): {out}")),
         }
         drop_record(w, &c, batch);
         w.git.worktree_remove(&path, &wt);
-        finish(
-            &c,
-            batch,
-            &format!("emptied: {id} ejected, no member remains"),
-        );
+        finish(w, &c, batch, End::Abandoned("emptied"), &format!("{id} ejected, no member remains"));
         stage::discard_behind(w, &c, &path, batch, &format!("round {batch} was emptied"));
         w.out(format!(
             "queue.sh {label}: ejected {id}; the round {batch} has no member left and is closed"
@@ -3672,11 +3761,9 @@ fn land_round(
     retire_menders(w, &c, batch, "round landed");
     drop_record(w, &c, batch);
     w.git.worktree_remove(&path, &wt);
-    finish(
-        &c,
-        batch,
-        &format!("landed {head} members={}", csv(&members)),
-    );
+    if recorded {
+        crate::lock::remove_certify_lock(&c.s.queue_dir, &c.r.name, batch);
+    }
     landing_log(
         &c.s.run,
         &format!(
@@ -3691,15 +3778,23 @@ fn land_round(
         members.len()
     ));
     // Activation is the last step: the new release may retire keys the steps above still need.
-    let rc = match pending.map(|p| p.activate(w)) {
-        Some(super::deploy::Outcome::Fault(_)) => super::DEPLOY_FAULT,
-        _ => rc,
+    let (rc, end) = match pending.map(|p| p.activate(w)) {
+        Some(super::deploy::Outcome::Fault(_)) => (super::DEPLOY_FAULT, End::DeployFault),
+        _ => (rc, End::Landed),
     };
+    finish(w, &c, batch, end, &format!("{head} members={}", csv(&members)));
     if !recorded {
         w.err(format!("queue.sh {label}: round {batch} has NO batch landing record; the release is live — exiting non-zero"));
         return Ok(if rc == OK { FAIL } else { rc });
     }
     Ok(rc)
+}
+
+/// The parent a stacked round waited on has ended: its certify lock goes once spira-lc says so.
+fn settled_parent(w: &World, c: &Ctx, parent: &str) {
+    if w.lc.batch_state(parent).is_some_and(|(s, _)| super::reconcile::terminal(&s)) {
+        crate::lock::remove_certify_lock(&c.s.queue_dir, &c.r.name, parent);
+    }
 }
 
 /// A round stacked on an open round lands only after that round has: it holds while the parent is
@@ -3726,10 +3821,12 @@ fn settle_parent(
             phead
         }
         None if w.git.is_ancestor(path, &stacked_on, base_now) => {
+            settled_parent(w, c, &parent);
             kv.remove("parent");
             return None;
         }
         None => {
+            settled_parent(w, c, &parent);
             kv.remove("parent");
             base_now.to_string()
         }
@@ -3857,7 +3954,7 @@ fn requeue_stranded(w: &World, label: &str, id: &str, tip: &str) -> Option<Strin
     None
 }
 
-fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text, token: Option<&str>) -> i32 {
+fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text, token: Option<&str>, cause: &str) -> i32 {
     let label = "round abandon";
     let reason = read_text(w, reason).unwrap_or_default();
     if reason.trim().is_empty() {
@@ -3895,7 +3992,10 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text, token: Opt
     let members = kv.members();
     let why = bounded_text(&reason);
     match lc_abandon(w, batch, LC_ACTOR, &why) {
-        Ok(()) => w.out(format!("queue.sh {label}: {batch} abandoned on spira-lc")),
+        Ok(()) => {
+            w.out(format!("queue.sh {label}: {batch} abandoned on spira-lc"));
+            crate::lock::remove_certify_lock(&c.s.queue_dir, &c.r.name, batch);
+        }
         Err((1, out)) if out.is_empty() => w.err(format!(
             "queue.sh {label}: spira-lc has no batch row for {batch}"
         )),
@@ -3917,7 +4017,7 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text, token: Opt
     retire_menders(w, &c, batch, "round abandoned");
     drop_record(w, &c, batch);
     w.git.worktree_remove(&path, &worktree_of(&kv));
-    finish(&c, batch, &format!("abandoned: {}", one_line(&reason)));
+    finish(w, &c, batch, End::Abandoned(cause), &reason);
     stage::discard_behind(
         w,
         &c,

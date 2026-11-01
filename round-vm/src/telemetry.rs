@@ -85,6 +85,7 @@ mod tests {
                 suites_s: 4,
                 cause,
                 detail: String::new(),
+                fences: Vec::new(),
             };
             push_pass_to(Some(&addr), &rec);
             let body = h.join().unwrap();

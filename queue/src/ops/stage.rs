@@ -467,7 +467,8 @@ pub(super) fn discard_staged(
     w.git
         .worktree_remove(path, &PathBuf::from(kv.get("worktree").unwrap_or("")));
     w.git.branch_delete_sanctioned(path, &branch_of(&batch));
-    finish(c, &batch, &format!("discarded: {}", one_line(reason)));
+    crate::lock::remove_certify_lock(&c.s.queue_dir, &c.r.name, &batch);
+    finish(w, c, &batch, super::round::End::Abandoned("discarded"), reason);
     landing_log(
         &c.s.run,
         &format!(

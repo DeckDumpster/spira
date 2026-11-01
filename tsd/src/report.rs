@@ -300,6 +300,7 @@ mod tests {
             suites_s: suites,
             cause,
             detail: String::new(),
+            fences: Vec::new(),
         }
     }
 

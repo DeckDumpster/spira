@@ -1258,53 +1258,6 @@ pub fn suites_in(path: &Path, branch: &str) -> Vec<String> {
     suites
 }
 
-/// Same convention as `batcher::drive::WORKSPACE_BUILD`, for a fence red (run_fences).
-pub const GATE_FENCES: &str = "gate-fences";
-
-/// Runs the repo's own gate command against `branch`, fences only (`SPIRA_GATE_SUITES=off`
-/// — the same switch landing.sh's queue-mode certification already uses). Reuses gate.sh
-/// itself rather than naming individual fence scripts here, so a fence added to the gate
-/// is covered with nothing to keep in sync. On a non-zero exit, writes the combined output to
-/// a file under `env.run` and returns its path as the error, for the incident this files.
-pub fn run_fences(env: &Env, repo: &Repo, branch: &str) -> Result<(), FencesEnd> {
-    // batch-job: runs a gate, build or forge script that takes as long as its work
-    let out = Command::new("bash")
-        .arg(env.home.join("gate.sh"))
-        .arg(branch)
-        .arg(&repo.name)
-        .env("SPIRA_GATE_SUITES", "off")
-        .output()
-        .map_err(|e| FencesEnd::Refused(format!("gate.sh (fences): {e}")))?;
-    if out.status.success() {
-        return Ok(());
-    }
-    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
-    text.push_str(&String::from_utf8_lossy(&out.stderr));
-    let dir = env.run.join("batch-results");
-    let _ = fs::create_dir_all(&dir);
-    let path = dir.join(format!("{}-{}-fences.log", repo.name, now()));
-    let _ = fs::write(&path, &text);
-    let at = path.display().to_string();
-    if fences_judged_nothing(&text) {
-        Err(FencesEnd::Refused(at))
-    } else {
-        Err(FencesEnd::Red(at))
-    }
-}
-
-/// A gate killed at its wall cap judged nothing, however loaded the host made it; only a
-/// gate that reached a verdict files a red.
-pub fn fences_judged_nothing(text: &str) -> bool {
-    text.contains("VERDICT=NO_VERDICT") || text.contains("VERDICT=FAIL reason=over-cap")
-}
-
-/// `Refused`: the gate judged nothing (NO_VERDICT, e.g. an unresolvable ref) — never a red.
-#[derive(Debug, PartialEq, Eq)]
-pub enum FencesEnd {
-    Red(String),
-    Refused(String),
-}
-
 /// The runner writes `<results>/<batch-key>/<suite>.<ext>` (testenv DESIGN.md §9 F1); older
 /// callers expected `<results>/<suite>.<ext>`. Look at the top level first, then in the
 /// newest batch-key subdirectory that holds the file. `None` when neither exists — the caller
@@ -1838,7 +1791,7 @@ pub fn round_open(env: &Env, repo: &Repo, wt: &Path, members: &[Member]) -> Resu
         .collect();
     let wanted: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
     if opened != wanted {
-        round_abandon(env, repo, &batch, "the round opened with members other than the ones the batcher named");
+        round_abandon(env, repo, &batch, "the round opened with members other than the ones the batcher named", "members-differ");
         return Err(format!("queue round open admitted [{}], the batcher named [{}] — round {batch} abandoned", opened.join(" "), wanted.join(" ")));
     }
     Ok(batch)
@@ -2066,8 +2019,9 @@ pub fn read_local_verdict(env: &Env, repo: &str) -> Option<(String, u64)> {
     Some((kv.get("verdict")?.clone(), kv.get("at")?.parse().ok()?))
 }
 
-pub fn round_abandon(env: &Env, repo: &Repo, batch: &str, why: &str) {
-    match round_verb(env, &["abandon", batch, &repo.name, "--reason-file", "-"], why) {
+/// `cause` is the one word the round's `.result` line carries as `abandoned:<cause>`.
+pub fn round_abandon(env: &Env, repo: &Repo, batch: &str, why: &str, cause: &str) {
+    match round_verb(env, &["abandon", batch, &repo.name, "--reason-file", "-", "--cause", cause], why) {
         Ok(r) if r.code == Some(0) => {}
         Ok(r) => println!("batcher {}: could not abandon round {batch}: {}", repo.name, verb_failed("queue round abandon", &r)),
         Err(e) => println!("batcher {}: could not abandon round {batch}: {e}", repo.name),
@@ -3959,19 +3913,6 @@ mod hypervisor_tests {
     fn an_unknown_size_never_fits() {
         assert!(!hv(0, 65536).fits_a_staged_round());
         assert!(!hv(1 << 30, 0).fits_a_staged_round());
-    }
-}
-
-#[cfg(test)]
-mod fences_verdict_tests {
-    use super::fences_judged_nothing;
-
-    #[test]
-    fn an_over_cap_fences_log_judged_nothing_and_a_real_fail_did_not() {
-        let capped = "gate: VERDICT=PASS reason=syntax-only branch=b repo=r suite=-\ngate: VERDICT=FAIL reason=over-cap branch=b repo=r suite=- (killed at the 300s hard cap)\n";
-        assert!(fences_judged_nothing(capped));
-        assert!(fences_judged_nothing("gate: VERDICT=NO_VERDICT reason=died"));
-        assert!(!fences_judged_nothing("gate: VERDICT=FAIL reason=fence branch=b repo=r suite=gate-fences"));
     }
 }
 

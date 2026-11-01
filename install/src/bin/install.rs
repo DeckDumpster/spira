@@ -1284,6 +1284,21 @@ fn run_main() -> ExitCode {
         }
     }
 
+    // Certify locks of rounds that ended while nothing removed them: swept once per registered
+    // repo. Never fatal: a lock left behind costs a file, not a round.
+    if opts.dry {
+        would("run: queue round sweep-locks --all");
+    } else if nonempty_env("SPIRA_INSTALL_LC_STORE_CONSIDERED").is_some() {
+        skip("certify-lock sweep: no lifecycle store to say which rounds ended");
+    } else {
+        let queue = spira_config::release_env::tool("queue");
+        let (rc, out) = tool_output(&queue, &["round", "sweep-locks", "--all"], &[]);
+        print!("{out}");
+        if rc != 0 {
+            info(&format!("certify-lock sweep exited {rc}; the locks stay until the next install"));
+        }
+    }
+
     // Linger.
     let linger_user = nonempty_env("USER").unwrap_or_else(whoami);
     let cur_linger = spira_config::bounded::bounded("loginctl").args(["show-user", &linger_user, "-p", "Linger"]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();

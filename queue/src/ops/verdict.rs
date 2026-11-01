@@ -1192,6 +1192,7 @@ fn record_pass(w: &World, c: &Ctx, b: &Batch, status: &str, out: &str) {
         suites_s: started.map_or(0, |s| now.saturating_sub(s)),
         cause,
         detail: format!("PR {}", b.pr),
+        fences: Vec::new(),
     };
     let written = rec.write(&c.s.run, &tsd::default_host(), &tsd::iso_utc(now));
     let marked = written.and_then(|()| {

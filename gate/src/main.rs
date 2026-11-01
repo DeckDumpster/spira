@@ -1,5 +1,6 @@
 //! `gate [--home <spira-dir>] [--release-bins] <branch> [repo-name]` — see DESIGN.md.
 //! `gate [--home <spira-dir>] --definition [repo-name]` — the landing ref's gate command.
+//! `gate fences --tree <dir> [--bin-dir <dir>]` — the fences a round runs on its tree.
 
 use gate::engine::{Args, Trial};
 use gate::real::{install_signal_handlers, Real};
@@ -40,6 +41,10 @@ fn main() {
     if argv.first().map(String::as_str) == Some("wait") {
         let rc = gate::wait::main(&argv[1..]);
         std::process::exit(rc);
+    }
+    // `gate fences --tree <dir>`: the fences a round runs on its merged tree (fences.rs).
+    if argv.first().map(String::as_str) == Some("fences") {
+        std::process::exit(gate::fences::main(&argv[1..]));
     }
     if matches!(argv.first().map(String::as_str), Some("status" | "cancel")) {
         let run = match spira_config::process::cfg("SPIRA_RUN") {

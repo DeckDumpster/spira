@@ -96,6 +96,8 @@ pub struct PassRecord {
     pub suites_s: u64,
     pub cause: Cause,
     pub detail: String,
+    /// Seconds each fence of the round took on the VM (`fence-<name>.result`), by name.
+    pub fences: Vec<(String, u64)>,
 }
 
 impl PassRecord {
@@ -125,6 +127,7 @@ impl PassRecord {
             f("verdict", self.cause.verdict().into()),
             f("cause", self.cause.as_str().into()),
             f("detail", self.detail.clone().into()),
+            f("fence_s", Value::Object(self.fences.iter().map(|(n, v)| (n.clone(), Value::from(*v))).collect())),
         ]
     }
 
@@ -145,6 +148,7 @@ impl PassRecord {
             suites_s: n("suites_s")?,
             cause: Cause::parse(&s("cause")?)?,
             detail: s("detail").unwrap_or_default(),
+            fences: row.get("fence_s").and_then(Value::as_object).map(|o| o.iter().filter_map(|(k, v)| v.as_u64().map(|n| (k.clone(), n))).collect()).unwrap_or_default(),
         };
         rec.validate()?;
         Ok(rec)
@@ -175,6 +179,15 @@ impl PassRecord {
             ],
             &labels,
         );
+        self.push_fence_metrics(sink);
+    }
+
+    /// One push per fence: its seconds, labelled with the fence.
+    pub fn push_fence_metrics(&self, sink: &spira_otel::metrics::MetricsSink) {
+        use spira_otel::metrics::Point;
+        for (fence, s) in &self.fences {
+            sink.push(&[Point::Seconds { name: "spira_cert_pass_fence_seconds", value: *s as f64 }], &[("repo", self.repo.as_str()), ("place", self.place.as_str()), ("fence", fence.as_str())]);
+        }
     }
 }
 
@@ -255,6 +268,7 @@ mod tests {
             suites_s: 500,
             cause,
             detail: String::new(),
+            fences: vec![("boundary".into(), 4), ("lifecycle-guard".into(), 9)],
         }
     }
 
@@ -284,6 +298,17 @@ mod tests {
         let row: Value = serde_json::from_str(text.trim()).unwrap();
         assert_eq!(row["verdict"], "incomplete");
         assert_eq!(PassRecord::from_row(&row), Ok(r));
+    }
+
+    #[test]
+    fn each_fence_pushes_its_seconds_labelled_with_the_fence() {
+        let (addr, h) = spira_otel::metrics::run::fixture_sink();
+        let r = PassRecord { fences: vec![("boundary".into(), 4)], ..rec("b1", "1", Cause::Green) };
+        r.push_fence_metrics(&spira_otel::metrics::MetricsSink::new(Some(&addr), "t", spira_otel::metrics::run::DEADLINE));
+        let body = h.join().unwrap();
+        for want in ["spira_cert_pass_fence_seconds", "boundary", "fence"] {
+            assert!(body.contains(want), "{want} missing from the push");
+        }
     }
 
     #[test]

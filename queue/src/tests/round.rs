@@ -52,6 +52,24 @@ fn batch_of(t: &T) -> String {
         .to_string()
 }
 
+fn certify_lock(t: &T, batch: &str) -> PathBuf {
+    t.s().queue_dir.join("spira").join(format!("certify-{batch}.lock"))
+}
+
+/// Every `.result` line opens `<UTC ISO-8601> <cause>`, the cause from the closed set.
+fn result_lines(t: &T, batch: &str) -> Vec<(String, String, String)> {
+    let text = fs::read_to_string(marker(t, batch, "result")).unwrap();
+    text.lines()
+        .map(|l| {
+            let mut f = l.splitn(3, ' ');
+            let (at, cause, detail) = (f.next().unwrap_or(""), f.next().unwrap_or(""), f.next().unwrap_or(""));
+            assert!(at.len() == 20 && at.ends_with('Z') && at.as_bytes()[10] == b'T', "no UTC stamp: {l:?}");
+            assert!(crate::ops::round::END_KINDS.iter().any(|k| if k.ends_with(':') { cause.starts_with(k) && cause.len() > k.len() } else { cause == *k }), "cause {cause:?} is not in the set: {l:?}");
+            (at.to_string(), cause.to_string(), detail.to_string())
+        })
+        .collect()
+}
+
 fn certified_tree_exists(t: &T) -> bool {
     gate::cert::path(&t.s().run.join("verdicts"), "spira", T_ROUND).is_some_and(|p| p.exists())
 }
@@ -124,7 +142,9 @@ fn open_certify_land_is_one_round_the_whole_way() {
     );
     assert_eq!(round_phase(&t), "GREEN");
 
+    assert!(certify_lock(&t, &batch).exists(), "certify left its lock");
     assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
+    assert!(!certify_lock(&t, &batch).exists(), "a landed round leaves no certify lock");
     assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"));
     assert!(
         t.lc.has("event bead sp-a CERTIFIED 3 \"Deliver\"")
@@ -135,10 +155,9 @@ fn open_certify_land_is_one_round_the_whole_way() {
         "spira-lc lands the batch"
     );
     assert!(!t.qfile("round").exists() && !marker(&t, &batch, "running").exists());
-    let result = fs::read_to_string(marker(&t, &batch, "result")).unwrap();
-    assert!(
-        result.starts_with("landed merged-tb members=sp-a:ta,sp-b:tb"),
-        "{result}"
+    assert_eq!(
+        result_lines(&t, &batch),
+        [("1970-01-01T00:16:40Z".to_string(), "landed".to_string(), "merged-tb members=sp-a:ta,sp-b:tb".to_string())]
     );
 }
 
@@ -600,6 +619,7 @@ fn abandon_returns_the_members_and_closes_the_round() {
         t.err()
     );
     assert_eq!(batch_of(&t), "hand-1");
+    drop(crate::lock::try_certify_lock(&t.s().queue_dir, "spira", "hand-1"));
     assert_eq!(
         t.run(&["round", "abandon", "hand-1"]),
         2,
@@ -613,9 +633,9 @@ fn abandon_returns_the_members_and_closes_the_round() {
     );
     assert!(t.lc.has("abandon-batch hand-1 OPEN 1 base moved"));
     assert!(!t.qfile("round").exists() && !marker(&t, "hand-1", "running").exists());
-    assert!(fs::read_to_string(marker(&t, "hand-1", "result"))
-        .unwrap()
-        .starts_with("abandoned: base moved"));
+    assert!(!certify_lock(&t, "hand-1").exists(), "an abandoned round leaves no certify lock");
+    assert_eq!(result_lines(&t, "hand-1")[0].1, "abandoned:hand");
+    assert_eq!(result_lines(&t, "hand-1")[0].2, "base moved");
     assert!(!t.lc.has("land "), "an abandoned round lands nothing");
     assert_eq!(t.landed_ref().as_deref(), Some("b0"));
 }
@@ -776,9 +796,36 @@ fn abandon_of_a_batch_the_lifecycle_already_abandoned_drops_the_record() {
         t.err()
     );
     assert!(!t.qfile("round").exists() && !marker(&t, "hand-1", "running").exists());
-    assert!(fs::read_to_string(marker(&t, "hand-1", "result"))
-        .unwrap()
-        .starts_with("abandoned: retry"));
+    assert_eq!(result_lines(&t, "hand-1")[0].1, "abandoned:hand");
+}
+
+#[test]
+fn abandon_carries_the_callers_cause_word_into_the_result_line() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta", "--name", "hand-2"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "abandon", "hand-2", "--reason", "it was blocked", "--cause", "Blocked Before Land"]), 0, "{}", t.err());
+    let lines = result_lines(&t, "hand-2");
+    assert_eq!((lines[0].1.as_str(), lines[0].2.as_str()), ("abandoned:blocked-before-land", "it was blocked"));
+    assert_eq!(t.run(&["round", "land", "hand-2", "--cause", "x"]), 2, "only abandon takes a cause");
+}
+
+#[test]
+fn sweep_locks_removes_only_the_locks_of_batches_spira_lc_reports_terminal() {
+    let t = round_world();
+    for (b, state) in [("r-landed", Some("LANDED")), ("r-settled", Some("SETTLED")), ("r-gone", Some("ABANDONED")), ("r-open", Some("CI_RUNNING")), ("r-staged", Some("DISCARDED"))] {
+        drop(crate::lock::try_certify_lock(&t.s().queue_dir, "spira", b));
+        if let Some(s) = state {
+            t.lc.batch_states.borrow_mut().insert(b.into(), (s.into(), "3".into()));
+        }
+    }
+    assert_eq!(t.run(&["round", "sweep-locks"]), 2, "a repo or --all is required");
+    assert_eq!(t.run(&["round", "sweep-locks", "--repo", "spira", "--all"]), 2);
+    assert_eq!(t.run(&["round", "sweep-locks", "--repo", "spira"]), 0, "{}", t.err());
+    assert_eq!(crate::lock::certify_lock_batches(&t.s().queue_dir, "spira"), ["r-open"]);
+    assert!(t.out().contains("spira: removed 4 certify lock(s) of ended rounds, kept 1"), "{}", t.out());
+    drop(crate::lock::try_certify_lock(&t.s().queue_dir, "spira", "r-landed"));
+    assert_eq!(t.run(&["round", "sweep-locks", "--all"]), 0, "{}", t.err());
+    assert_eq!(crate::lock::certify_lock_batches(&t.s().queue_dir, "spira"), ["r-open"]);
 }
 
 #[test]
@@ -4195,6 +4242,9 @@ fn a_stacked_round_whose_parent_was_abandoned_is_rebuilt_without_it_and_certifie
         "{}",
         t.err()
     );
+    // A lock left behind by a path that ended the parent elsewhere: the child's settle removes it.
+    drop(crate::lock::try_certify_lock(&t.s().queue_dir, "spira", "r-1"));
+    t.lc.batch_states.borrow_mut().insert("r-1".into(), ("ABANDONED".into(), "9".into()));
     tree_of(&t, "merged-tb");
     let runs = vm_runs(&t);
     assert_eq!(t.run(&["round", "land", "r-2"]), 1);
@@ -4215,6 +4265,7 @@ fn a_stacked_round_whose_parent_was_abandoned_is_rebuilt_without_it_and_certifie
     );
     assert!(!rec.contains_key("parent"));
     assert_eq!(round_phase(&t), "REBUILDING");
+    assert!(!certify_lock(&t, "r-1").exists(), "the settled parent leaves no certify lock");
     t.git.ancestor("tb", "merged-tb");
     assert_eq!(t.run(&["round", "certify", "r-2"]), 0, "{}", t.err());
     assert_eq!(vm_runs(&t), runs + 1);
