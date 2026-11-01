@@ -565,6 +565,7 @@ mod tests {
                 units: &self.units,
                 vms: &self.vms,
                 launcher: &self.launch,
+                git: &crate::sim::git::NO_GIT,
                 leases: &self.leases,
                 slots: &self.slots,
             }

@@ -14,6 +14,7 @@ use crate::liveness::LeaseSettings;
 use crate::outcome::MemLog;
 use crate::ports::{Launch, Launched, Ports, Store};
 use crate::real::Unserved;
+use crate::sim::git::FakeGit;
 use crate::sim::judge::FakeLedger;
 use crate::sim::verbs::FakeVerbs;
 use crate::sim::vm::FakeVm;
@@ -225,6 +226,8 @@ pub struct Bench {
     pub settings: LeaseSettings,
     pub slot_settings: SlotSettings,
     pub ledger: FakeLedger,
+    /// Shared with the fake queue, whose `land` moves the ref.
+    pub git: Arc<FakeGit>,
     /// When each runner slot was given back, on the virtual clock.
     pub slot_releases: Mutex<Vec<u64>>,
     front: Mutex<Front>,
@@ -291,6 +294,7 @@ impl Bench {
             settings,
             slot_settings: bench_slot_settings(),
             ledger: FakeLedger::default(),
+            git: Arc::default(),
             slot_releases: Mutex::default(),
             front: Mutex::new(front),
         }
@@ -308,6 +312,7 @@ impl Bench {
             units: &self.units,
             vms: &self.vms,
             launcher: &self.launch,
+            git: &*self.git,
             leases: &self.settings,
             slots: &self.slot_settings,
         }

@@ -38,6 +38,10 @@ pub enum Kind {
     StoreRefused,
     /// A step withheld its act for a typed cause, which [`Cause::Refusal`] keys.
     Declined,
+    /// The landing ref already held the round's head, so it was recorded LANDED from git.
+    FastForward,
+    /// A GREEN round the Lander did not land, kept with its typed blocker.
+    Held,
 }
 
 impl Kind {
@@ -55,6 +59,8 @@ impl Kind {
             Kind::RedriveExhausted,
             Kind::StoreRefused,
             Kind::Declined,
+            Kind::FastForward,
+            Kind::Held,
         ]
         .into_iter()
         .chain(acts)
@@ -84,6 +90,8 @@ impl Kind {
             },
             Kind::Refused(_) => "refused",
             Kind::Declined => "declined",
+            Kind::FastForward => "fast-forward",
+            Kind::Held => "held",
         }
     }
 }
@@ -116,6 +124,10 @@ pub enum Cause {
         word: &'static str,
         key: String,
     },
+    /// A landing: how long the round waited GREEN for it.
+    Dwell {
+        ms: u64,
+    },
 }
 
 impl Cause {
@@ -128,6 +140,7 @@ impl Cause {
             Cause::Orphan { .. } => "orphan",
             Cause::Store { .. } => "store",
             Cause::Refusal { word, .. } => word,
+            Cause::Dwell { .. } => "dwell",
         }
     }
 }
@@ -198,6 +211,39 @@ impl Outcome {
         }
     }
 
+    /// A landing `land` returned `Ok` for, with how long the round waited GREEN.
+    pub fn landing(at: u64, repo: &str, batch: &str, dwell_ms: u64) -> Outcome {
+        Outcome {
+            cause: Cause::Dwell { ms: dwell_ms },
+            ..Outcome::of::<()>(at, repo, Some(batch), Verb::Land, &Ok(()))
+        }
+    }
+
+    /// A round recorded LANDED because the landing ref already held its head.
+    pub fn fast_forward(at: u64, repo: &str, batch: &str, dwell_ms: u64) -> Outcome {
+        Outcome {
+            at,
+            repo: repo.into(),
+            batch: Some(batch.into()),
+            kind: Kind::FastForward,
+            cause: Cause::Dwell { ms: dwell_ms },
+        }
+    }
+
+    /// A GREEN round held with the blocker `word`, kept at `key`.
+    pub fn held(at: u64, repo: &str, batch: &str, word: &'static str, key: &str) -> Outcome {
+        Outcome {
+            at,
+            repo: repo.into(),
+            batch: Some(batch.into()),
+            kind: Kind::Held,
+            cause: Cause::Refusal {
+                word,
+                key: key.into(),
+            },
+        }
+    }
+
     pub fn line(&self) -> String {
         let mut s = format!(
             "{} {} {} repo={} batch={}",
@@ -217,6 +263,7 @@ impl Outcome {
                 s += &format!(" expired={}-{} text={text:?}", expired.main, expired.sub)
             }
             Cause::Refusal { key, .. } => s += &format!(" key={key}"),
+            Cause::Dwell { ms } => s += &format!(" dwell_ms={ms}"),
             Cause::Steps | Cause::Ok => {}
         }
         s
@@ -371,7 +418,7 @@ mod tests {
     #[test]
     fn every_kind_has_its_own_word() {
         let words: std::collections::BTreeSet<&str> = Kind::words().into_iter().collect();
-        assert_eq!(words.len(), Verb::ALL.len() + 10);
+        assert_eq!(words.len(), Verb::ALL.len() + 12);
         assert!(
             words.contains("visited")
                 && words.contains("refused")
@@ -427,6 +474,22 @@ mod tests {
         assert_eq!(
             Outcome::store_refused(0, "r", "down").line(),
             format!("{at} store-refused store repo=r batch=- text=\"down\"")
+        );
+    }
+
+    #[test]
+    fn a_landing_names_its_dwell_and_a_hold_its_blocker_and_status_key() {
+        assert_eq!(
+            Outcome::landing(0, "r", "k1", 90_000).line(),
+            "1970-01-01T00:00:00Z landed dwell repo=r batch=k1 dwell_ms=90000"
+        );
+        assert_eq!(
+            Outcome::fast_forward(0, "r", "k1", 0).line(),
+            "1970-01-01T00:00:00Z fast-forward dwell repo=r batch=k1 dwell_ms=0"
+        );
+        assert_eq!(
+            Outcome::held(0, "r", "k2", "stacked-on-unlanded", "batches/r/k2/status").line(),
+            "1970-01-01T00:00:00Z held stacked-on-unlanded repo=r batch=k2 key=batches/r/k2/status"
         );
     }
 

@@ -16,6 +16,7 @@ use crate::pass::{pass, pass_with, Step};
 use crate::ports::{Ports, Signal, Verb};
 use crate::resources::PassIdentity;
 use crate::sim::bench::{bench_settings, bench_slot_settings, Bench};
+use crate::sim::git::GitSeed;
 use crate::sim::judge::{FakeLedger, JudgeCount, JudgeRun, JudgeSpec};
 use crate::sim::ledger::{self as sim_ledger, IdentitySpec, LedgerConfig, LedgerStep};
 use crate::sim::run_pass::{self, Advance, RunOutcome, RunPassSpec};
@@ -119,6 +120,16 @@ pub struct RoundLease {
     pub ttl_secs: u64,
 }
 
+/// `[[lease_release]]`: the round lease let go `secs` after the epoch, as its runner does when
+/// it finishes.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LeaseRelease {
+    pub repo: String,
+    pub batch: String,
+    pub secs: u64,
+}
+
 /// `[[store_step]]`: `key` set to `data` just before pass `pass` (1-based) runs: what another
 /// actor did in between, such as an eject moving a round's head or a new image digest.
 #[derive(Clone, Debug, Deserialize)]
@@ -140,7 +151,10 @@ fn a_day() -> u64 {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Count {
     Calls(Option<Verb>),
-    Outcomes(Option<&'static str>),
+    /// Outcomes of one kind, or of every kind; `outcomes:<kind>:<batch>` of one round.
+    Outcomes(Option<&'static str>, Option<String>),
+    /// `blockers:<word>`: rounds the Lander held with this blocker.
+    Blockers(String),
     StoreWrites,
     VmRuns,
     /// The longest queue lock hold any verb reported.
@@ -195,6 +209,8 @@ pub enum Count {
     LastSlotReleaseSecs,
     /// `live-locks:<prefix>`: locks under `locks/<prefix>` still held once the last pass ran.
     LiveLocks(String),
+    /// `rounds:<STATE>`: round records in that lifecycle state once the last pass has run.
+    Rounds(String),
 }
 
 impl Count {
@@ -209,11 +225,19 @@ impl Count {
         match (what, of) {
             ("calls", None) => Some(Count::Calls(None)),
             ("calls", Some(v)) => Verb::from_word(v).map(|v| Count::Calls(Some(v))),
-            ("outcomes", None) => Some(Count::Outcomes(None)),
-            ("outcomes", Some(k)) => Kind::words()
-                .into_iter()
-                .find(|w| *w == k)
-                .map(|w| Count::Outcomes(Some(w))),
+            ("outcomes", None) => Some(Count::Outcomes(None, None)),
+            ("outcomes", Some(k)) => {
+                let (k, batch) = k
+                    .split_once(':')
+                    .map_or((k, None), |(k, b)| (k, Some(b.to_string())));
+                Kind::words()
+                    .into_iter()
+                    .find(|w| *w == k)
+                    .map(|w| Count::Outcomes(Some(w), batch.filter(|b| !b.is_empty())))
+            }
+            ("blockers", Some(w)) if crate::land::Blocker::WORDS.contains(&w) => {
+                Some(Count::Blockers(w.to_string()))
+            }
             ("store-writes", None) => Some(Count::StoreWrites),
             ("vm-runs", None) => Some(Count::VmRuns),
             ("lock-hold-ms", None) => Some(Count::LockHoldMs),
@@ -269,6 +293,9 @@ impl Count {
             ("slot-releases-with-vm-up", None) => Some(Count::SlotReleasesWithVmUp),
             ("last-slot-release-secs", None) => Some(Count::LastSlotReleaseSecs),
             ("live-locks", Some(p)) if !p.is_empty() => Some(Count::LiveLocks(p.to_string())),
+            ("rounds", Some(w)) if lifecycle::batch::BatchState::from_str(w).is_some() => {
+                Some(Count::Rounds(w.to_string()))
+            }
             _ => JudgeCount::parse(s).map(Count::Judge),
         }
     }
@@ -464,6 +491,10 @@ struct File {
     store_step: Vec<StoreStep>,
     #[serde(default)]
     run_pass: Vec<RunPassSpec>,
+    #[serde(default)]
+    git: Vec<GitSeed>,
+    #[serde(default)]
+    lease_release: Vec<LeaseRelease>,
 }
 
 #[derive(Clone, Debug)]
@@ -500,6 +531,8 @@ pub struct Scenario {
     pub round_leases: Vec<RoundLease>,
     pub store_steps: Vec<StoreStep>,
     pub run_passes: Vec<RunPassSpec>,
+    pub git: Vec<GitSeed>,
+    pub lease_releases: Vec<LeaseRelease>,
 }
 
 pub fn parse(text: &str) -> Result<Scenario, String> {
@@ -599,6 +632,8 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
         round_leases: f.round_lease,
         store_steps: f.store_step,
         run_passes: f.run_pass,
+        git: f.git,
+        lease_releases: f.lease_release,
     })
 }
 
@@ -656,6 +691,9 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
     for l in &sc.launches {
         b.launch.script(l.clone());
     }
+    for g in &sc.git {
+        b.git.seed(g);
+    }
     let runners = sc
         .runners
         .iter()
@@ -697,7 +735,8 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
     let vm = FakeVm::new(sc.vm.clone(), profile.clone(), b.clock.clone());
     b.verbs = FakeVerbs::new(sc.verbs.clone(), vm.clone(), b.clock.clone())
         .map_err(|e| format!("scenario: {e}"))?
-        .with_store(b.store.clone());
+        .with_store(b.store.clone())
+        .with_git(b.git.clone());
     b.ledger = FakeLedger::seeded(sc.judge.as_ref(), profile);
     let judge = sc.judge.as_ref().map(|j| JudgeRun::new(j, profile));
     let b = b;
@@ -710,6 +749,11 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
             r.revoke_lease_secs
                 .map(|t| (epoch_ms + t * 1000, r.repo.clone(), r.batch.clone()))
         })
+        .chain(
+            sc.lease_releases
+                .iter()
+                .map(|r| (epoch_ms + r.secs * 1000, r.repo.clone(), r.batch.clone())),
+        )
         .collect();
     revokes.sort();
     let world = std::cell::RefCell::new(World {
@@ -795,9 +839,14 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
                 .iter()
                 .filter(|c| v.is_none_or(|v| c.verb == v))
                 .count() as u64,
-            Count::Outcomes(k) => outcomes
+            Count::Outcomes(k, batch) => outcomes
                 .iter()
                 .filter(|o| k.is_none_or(|k| o.kind.word() == k))
+                .filter(|o| batch.is_none() || o.batch == *batch)
+                .count() as u64,
+            Count::Blockers(w) => outcomes
+                .iter()
+                .filter(|o| o.kind == Kind::Held && o.cause.word() == w)
                 .count() as u64,
             Count::StoreWrites => writes,
             Count::VmRuns => vm.runs().len() as u64,
@@ -888,6 +937,7 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
                 .iter()
                 .max()
                 .map_or(u64::MAX, |t| (t - epoch_ms) / 1000),
+            Count::Rounds(word) => rounds_in(&b, word),
             Count::LiveLocks(prefix) => b
                 .store
                 .list(&[format!("locks/{prefix}").as_str()], &Selector::Everything)
@@ -1063,6 +1113,24 @@ impl run_pass::Advance for World<'_> {
     }
 }
 
+fn rounds_in(b: &Bench, word: &str) -> u64 {
+    let (items, _) = b
+        .store
+        .list(&["batches/"], &Selector::Everything)
+        .expect("the in-memory store lists");
+    items
+        .iter()
+        .filter(|i| i.key.matches('/').count() == 2)
+        .filter_map(|i| {
+            serde_json::from_value::<lifecycle::batch::BatchState>(
+                i.value.data.get("state")?.clone(),
+            )
+            .ok()
+        })
+        .filter(|s| s.as_str() == word)
+        .count() as u64
+}
+
 fn redrive_attempts(b: &Bench) -> u64 {
     let (items, _) = b
         .store
@@ -1178,6 +1246,9 @@ mod tests {
             expect("co", "calls:open", 0),
             expect("o", "outcomes", 4),
             expect("ov", "outcomes:visited", 4),
+            expect("ob", "outcomes:visited:b1", 0),
+            expect("oe", "outcomes:visited:", 4),
+            expect("bl", "blockers:refused", 0),
             expect("w", "store-writes", 0),
             expect("v", "vm-runs", 0),
             expect("l", "lock-hold-ms", 0),

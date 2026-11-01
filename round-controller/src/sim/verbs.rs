@@ -13,6 +13,7 @@ use crate::ports::{
     Superseded, Verb, VerbRefusal,
 };
 use crate::resources::{round_key, Round};
+use crate::sim::git::FakeGit;
 use crate::sim::vm::FakeVm;
 use lifecycle::batch::BatchRow;
 use state_store::{Object, Request, Txn};
@@ -31,6 +32,9 @@ pub struct VerbScript {
     pub verb: String,
     #[serde(default)]
     pub repo: Option<String>,
+    /// Answers only a call about this batch.
+    #[serde(default)]
+    pub batch: Option<String>,
     #[serde(default)]
     pub ok: Option<Fields>,
     #[serde(default)]
@@ -43,6 +47,7 @@ pub struct VerbScript {
 struct Answer {
     verb: Verb,
     repo: Option<String>,
+    batch: Option<String>,
     reply: Result<Fields, Refuse>,
     lock_hold_ms: u64,
 }
@@ -70,6 +75,7 @@ impl VerbScript {
         Ok(Answer {
             verb,
             repo: self.repo,
+            batch: self.batch,
             reply,
             lock_hold_ms: self.lock_hold_ms,
         })
@@ -97,6 +103,8 @@ pub struct FakeVerbs {
     /// The queue's own writes: with a store, `open` writes the round it cut and `supersede`
     /// takes it out of the live set.
     store: Option<Arc<dyn Store>>,
+    /// The repos' landing refs, which a `land` that answers ok moves to the round's head.
+    git: Option<Arc<FakeGit>>,
 }
 
 impl FakeVerbs {
@@ -117,12 +125,19 @@ impl FakeVerbs {
             vm,
             clock,
             store: None,
+            git: None,
         })
     }
 
     /// Lets the fake queue write the rounds it opens and supersedes into `store`.
     pub fn with_store(mut self, store: Arc<dyn Store>) -> FakeVerbs {
         self.store = Some(store);
+        self
+    }
+
+    /// Lets the fake queue's `land` move `git`'s landing ref to the round's head.
+    pub fn with_git(mut self, git: Arc<FakeGit>) -> FakeVerbs {
+        self.git = Some(git);
         self
     }
 
@@ -177,9 +192,11 @@ impl FakeVerbs {
         batch: Option<&str>,
     ) -> Option<Result<Fields, VerbRefusal>> {
         let mut answers = crate::lock(&self.answers);
-        let found = answers
-            .iter()
-            .position(|a| a.verb == verb && a.repo.as_deref().is_none_or(|r| r == repo));
+        let found = answers.iter().position(|a| {
+            a.verb == verb
+                && a.repo.as_deref().is_none_or(|r| r == repo)
+                && a.batch.as_deref().is_none_or(|b| Some(b) == batch)
+        });
         let a = found.map(|i| answers.remove(i));
         let call = Call {
             verb,
@@ -282,8 +299,21 @@ impl RoundVerbs for FakeVerbs {
         Ok(e)
     }
 
-    fn land(&self, repo: &str, batch: &str) -> Result<Done, VerbRefusal> {
-        self.done(Verb::Land, repo, batch)
+    fn land(
+        &self,
+        repo: &str,
+        batch: &str,
+        _lease_token: Option<&str>,
+    ) -> Result<Done, VerbRefusal> {
+        let d = self.done(Verb::Land, repo, batch)?;
+        let head = self.store.as_ref().and_then(|st| {
+            let i = st.get(&round_key(repo, batch)).ok()??;
+            i.value.data.get("head")?.as_str().map(str::to_string)
+        });
+        if let (Some(git), Some(head)) = (&self.git, head) {
+            git.advance(repo, &head);
+        }
+        Ok(d)
     }
 
     fn abandon(&self, repo: &str, batch: &str, _reason: &str) -> Result<Done, VerbRefusal> {
@@ -394,7 +424,7 @@ mod tests {
         .unwrap();
         assert_eq!(v.open(&open_req("r")).unwrap().batch, "b1");
         assert_eq!(
-            v.land("r", "b1").unwrap_err(),
+            v.land("r", "b1", None).unwrap_err(),
             VerbRefusal {
                 verb: Verb::Land,
                 code: Some(1),
@@ -432,7 +462,7 @@ mod tests {
         assert_eq!((e.verb, e.code), (Verb::Status, None));
         assert_eq!(v.faults(), ["unscripted call: queue round status r -"]);
         assert_eq!(v.calls().len(), 1);
-        assert!(v.open(&open_req("r")).is_err() && v.land("r", "b1").is_err());
+        assert!(v.open(&open_req("r")).is_err() && v.land("r", "b1", None).is_err());
         assert_eq!(v.faults().len(), 3);
     }
 
@@ -554,5 +584,55 @@ mod tests {
         assert!(read("k2").is_none());
         assert!(v.supersede("r", "k1", None).is_err(), "unscripted");
         assert!(read("k1").is_some(), "a refused supersede changes nothing");
+    }
+
+    #[test]
+    fn a_script_naming_a_batch_answers_only_that_batch_and_an_ok_land_moves_the_ref_to_its_head() {
+        use crate::sim::git::GitSeed;
+        use state_store::{Config, Contract, MemBackend};
+        let clock = VirtualClock::new(0);
+        let store = Arc::new(
+            Contract::open(
+                MemBackend::new(),
+                state_store::Ports::virtual_clock(&clock),
+                Config {
+                    min_lock_ttl_ms: 1000,
+                },
+            )
+            .unwrap(),
+        );
+        let git = Arc::new(FakeGit::default());
+        git.seed(&GitSeed {
+            repo: "r".into(),
+            landing: "base-0".into(),
+            history: vec![],
+        });
+        let (v, _, _) = fake(concat!(
+            "[[verb]]\nverb = \"land\"\nbatch = \"c1\"\nrefuse = { code = 1, text = \"stacked on k1\" }\n",
+            "[[verb]]\nverb = \"land\"\nbatch = \"k1\"\nok = {}\n",
+        ))
+        .unwrap();
+        let v = v.with_store(store.clone()).with_git(git.clone());
+        put(
+            &*store,
+            "batches/r/k1",
+            Txn::new().put(
+                "batches/r/k1",
+                Object::new(serde_json::json!({ "head": "k1-h" })),
+            ),
+        );
+        assert_eq!(v.land("r", "k1", Some("3-0")).unwrap().said, "");
+        use crate::ports::Git;
+        assert_eq!(git.landing_sha("r").unwrap(), "k1-h");
+        assert_eq!(v.land("r", "c1", None).unwrap_err().text, "stacked on k1");
+        assert_eq!(
+            git.landing_sha("r").unwrap(),
+            "k1-h",
+            "a refused land moves nothing"
+        );
+        assert!(
+            v.land("r", "k1", None).is_err(),
+            "each answer is taken once"
+        );
     }
 }

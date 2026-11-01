@@ -23,6 +23,7 @@ pub struct Ports<'a> {
     pub units: &'a dyn Units,
     pub vms: &'a dyn Vms,
     pub launcher: &'a dyn Launch,
+    pub git: &'a dyn Git,
     pub leases: &'a LeaseSettings,
     pub slots: &'a SlotSettings,
 }
@@ -329,7 +330,9 @@ pub trait RoundVerbs {
         lease_token: Option<&str>,
     ) -> Result<Box<dyn Child>, VerbRefusal>;
     fn eject(&self, r: &EjectReq) -> Result<Ejected, VerbRefusal>;
-    fn land(&self, repo: &str, batch: &str) -> Result<Done, VerbRefusal>;
+    /// Lands a GREEN round; `lease_token` lets the lease's holder through.
+    fn land(&self, repo: &str, batch: &str, lease_token: Option<&str>)
+        -> Result<Done, VerbRefusal>;
     fn abandon(&self, repo: &str, batch: &str, reason: &str) -> Result<Done, VerbRefusal>;
     fn pass_start(&self, repo: &str, batch: &str) -> Result<Done, VerbRefusal>;
     /// Moves a round whose tested base can no longer land to SUPERSEDED, keeping its verdicts,
@@ -341,6 +344,14 @@ pub trait RoundVerbs {
         batch: &str,
         lease_token: Option<&str>,
     ) -> Result<Superseded, VerbRefusal>;
+}
+
+/// The repository's landing ref as git has it, which is what a landing moved.
+pub trait Git {
+    /// The sha `repo`'s landing ref points at.
+    fn landing_sha(&self, repo: &str) -> Result<String, String>;
+    /// Whether `commit` is in the history of `repo`'s landing ref.
+    fn under_landing_ref(&self, repo: &str, commit: &str) -> Result<bool, String>;
 }
 
 // The verdict ledger's port: the ledger's own types, and the calls the Judge makes. Each call

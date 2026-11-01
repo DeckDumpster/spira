@@ -1,6 +1,7 @@
 //! The ports' production implementations.
 
 pub mod child;
+pub mod git;
 pub mod launch;
 pub mod liveness;
 pub mod verbs;
