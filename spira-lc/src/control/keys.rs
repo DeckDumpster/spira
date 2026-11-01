@@ -43,6 +43,16 @@ pub fn claim_resource(id: &str) -> String {
     format!("bead/{id}")
 }
 
+/// Where the contract keeps every claim's lock, so a listing reads them beside the records.
+pub fn claim_locks() -> String {
+    format!("{}bead/", state_store::LOCKS_PREFIX)
+}
+
+/// The key of a claim's lock; its `create_rev` is the holder's fencing token.
+pub fn claim_lock(id: &str) -> String {
+    format!("{}{id}", claim_locks())
+}
+
 /// The id a key under `prefix` names, or `None` for a key that is not directly under it.
 pub fn id_of<'a>(prefix: &str, key: &'a str) -> Option<&'a str> {
     key.strip_prefix(prefix)
@@ -66,6 +76,8 @@ mod tests {
             "batches/harness/b-1/progress"
         );
         assert_eq!(claim_resource("sp-a"), "bead/sp-a");
+        assert_eq!(claim_lock("sp-a"), "locks/bead/sp-a");
+        assert_eq!(id_of(&claim_locks(), &claim_lock("sp-a")), Some("sp-a"));
         let prefixes = [
             LIFECYCLE, READINESS, DELIVERIES, ASKS, MENDINGS, BATCHES, RUNTIME,
         ];

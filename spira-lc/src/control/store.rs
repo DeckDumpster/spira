@@ -1,7 +1,9 @@
 //! Lifecycle records on the state-store contract. Each applied transition is one txn that
 //! compares the record's `mod_rev`; its audit rides into `events/<rev>` as the request's
-//! evidence, refusals included. A claim is the `locks/bead/<id>` lock, whose fencing token the
-//! record carries, and every write by the holder is fenced on it.
+//! evidence, refusals included. A claim is the `locks/bead/<id>` lock, taken in the same txn
+//! that writes the record: the holder named on the record is the one whose claim created the
+//! lock, its fencing token is the lock's `create_rev`, and every write by the holder is fenced
+//! on it. The record keeps no lease of its own; reads project `lease_until` from the lock.
 
 use lifecycle::bead::{self, BeadEvent, BeadEventKind, BeadState};
 use serde_json::Value;
@@ -32,17 +34,11 @@ pub enum Outcome {
         refusal: lifecycle::Refusal,
     },
     /// The record moved between the read and the write.
-    LostRace {
-        rev: u64,
-    },
+    LostRace { rev: u64 },
     /// The holder's lock expired or is held under another token.
-    LockLost {
-        rev: u64,
-    },
+    LockLost { rev: u64 },
     /// Another claim's lock is still live.
-    Locked {
-        token: Rev,
-    },
+    Locked { token: Rev },
 }
 
 /// One entry of a dispatcher pass.
@@ -113,6 +109,19 @@ fn object_like(prev: &Item, data: Value) -> Object {
     }
 }
 
+/// A WORKING record's `lease_until` is its claim lock's expiry while the lock is live, in epoch
+/// seconds rounded up, so a reader never sees a live lease as lapsed. With no live lock it stays
+/// the lease the Claim event asked for: the lock's TTL is that lease raised to the floor, so the
+/// value is already past and reads as lapsed, as a reaper needs it to.
+fn project_lease(rec: &mut LifecycleRecord, lock: Option<&Item>) {
+    if rec.row.state != BeadState::Working {
+        return;
+    }
+    if let Some(ms) = lock.and_then(|l| l.lock_expires_at_ms) {
+        rec.row.lease_until = Some(ms.div_ceil(1_000) as i64);
+    }
+}
+
 impl<B: Backend> Store<B> {
     pub fn new(contract: Contract<B>, claim_floor_ms: u64) -> Self {
         Store {
@@ -149,30 +158,58 @@ impl<B: Backend> Store<B> {
     }
 
     pub fn record(&self, id: &str) -> Result<Option<Read<LifecycleRecord>>> {
-        Ok(self.read(&keys::lifecycle(id), None)?.map(|(r, _)| r))
+        let rev = self.contract.head()?;
+        self.record_at(id, rev)
     }
 
+    /// The record at `rev`, its `lease_until` projected from its claim's lock at that rev.
     pub fn record_at(&self, id: &str, rev: u64) -> Result<Option<Read<LifecycleRecord>>> {
-        Ok(self.read(&keys::lifecycle(id), Some(rev))?.map(|(r, _)| r))
+        let Some((mut r, _)) = self.read::<LifecycleRecord>(&keys::lifecycle(id), Some(rev))?
+        else {
+            return Ok(None);
+        };
+        let lock = self.contract.get_at(&keys::claim_lock(id), rev)?;
+        project_lease(&mut r.value, lock.as_ref());
+        Ok(Some(r))
     }
 
     /// Every lifecycle record, from one snapshot, with the revision it was read at.
     pub fn records(&self) -> Result<(Vec<Read<LifecycleRecord>>, u64)> {
-        let (items, rev) = self
-            .contract
-            .list(&[keys::LIFECYCLE], &state_store::Selector::Everything)?;
+        let locks = keys::claim_locks();
+        let (items, rev) = self.contract.list(
+            &[keys::LIFECYCLE, locks.as_str()],
+            &state_store::Selector::Everything,
+        )?;
+        let held: std::collections::BTreeMap<&str, &Item> = items
+            .iter()
+            .filter_map(|i| Some((keys::id_of(&locks, &i.key)?, i)))
+            .collect();
         let records = items
             .iter()
-            .filter(|i| keys::id_of(keys::LIFECYCLE, &i.key).is_some())
-            .map(|i| {
+            .filter_map(|i| Some((keys::id_of(keys::LIFECYCLE, &i.key)?, i)))
+            .map(|(id, i)| {
+                let mut value = decode(&i.key, &i.value)?;
+                project_lease(&mut value, held.get(id).copied());
                 Ok(Read {
-                    value: decode(&i.key, &i.value)?,
+                    value,
                     mod_rev: i.mod_rev,
                     create_rev: i.create_rev,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
         Ok((records, rev))
+    }
+
+    /// The fence of the claim now holding `id`: its lock, while it is live.
+    pub fn holder_fence(&self, id: &str) -> Result<Option<Fence>> {
+        Ok(self
+            .contract
+            .get(&keys::claim_lock(id))?
+            .filter(|l| l.lock_expires_at_ms.is_some())
+            .map(|l| Fence {
+                resource: keys::claim_resource(id),
+                token: l.create_rev,
+            }))
     }
 
     pub fn readiness(&self, id: &str) -> Result<Option<Read<Readiness>>> {
@@ -303,9 +340,10 @@ impl<B: Backend> Store<B> {
         }))
     }
 
-    /// A claim takes the lock and then writes the record, fenced on the lock, with its token: two
-    /// commits, because the contract takes a lock only in a call of its own. A refused or lost
-    /// claim gives the lock back; a crash between the two leaves a lock that expires on its TTL.
+    /// A claim is one txn: it compares the record's `mod_rev`, takes `locks/bead/<id>`, and
+    /// writes the record. The holder's fencing token is that lock's `create_rev`, returned as
+    /// the txn's first fence. A lost compare or a live lock writes nothing, so no lock is left
+    /// behind to give back.
     pub fn claim(
         &self,
         id: &str,
@@ -326,17 +364,20 @@ impl<B: Backend> Store<B> {
         let ttl_ms = (lease_until.saturating_sub(at).max(0) as u64)
             .saturating_mul(1_000)
             .max(self.claim_floor_ms);
-        let lock_req = sub_request(req, "lock", Value::Null);
+        let resource = keys::claim_resource(id);
+        let apply_req = |evidence| sub_request(req, "apply", evidence);
         if let Some(done) = self.replayed(id, req)? {
-            let fence = self
-                .contract
-                .lock(&keys::claim_resource(id), ttl_ms, &lock_req)?;
-            return Ok((done, Some(fence)));
+            // The contract answers the retry from requests/<id>, rebuilding the fence from the
+            // original commit's events key; the txn's body is not run again.
+            let r = self.contract.txn(
+                &Txn::new().lock_acquire(&resource, ttl_ms),
+                &apply_req(Value::Null),
+            )?;
+            return Ok((done, r.fences.into_iter().next()));
         }
-        let Some((cur, item)) = self.read::<LifecycleRecord>(&keys::lifecycle(id), None)? else {
-            return Err(Error::NotFound {
-                key: keys::lifecycle(id),
-            });
+        let key = keys::lifecycle(id);
+        let Some((cur, item)) = self.read::<LifecycleRecord>(&key, None)? else {
+            return Err(Error::NotFound { key });
         };
         let out = bead::apply(&cur.value.row, ev);
         if !out.applied {
@@ -344,29 +385,39 @@ impl<B: Backend> Store<B> {
                 .refuse(id, ev, &cur.value, out.refusal, req)
                 .map(|o| (o, None));
         }
-        let fence = match self
+        let next = self.next_record(ev, &cur, out.row);
+        let (applied, lost) = self.audits(id, ev, &cur.value, &next);
+        let t = Txn::new()
+            .when(Compare::ModRev(key.clone(), Some(cur.mod_rev)))
+            .lock_acquire(&resource, ttl_ms)
+            .put(&key, object_like(&item, encode(&next)?));
+        let r = self
             .contract
-            .lock(&keys::claim_resource(id), ttl_ms, &lock_req)
-        {
-            Ok(f) => f,
-            Err(Error::Locked { token, .. }) => return Ok((Outcome::Locked { token }, None)),
-            Err(e) => return Err(e),
-        };
-        let outcome = self.write(
-            id,
-            ev,
-            &cur,
-            &item,
-            out.row,
-            Some(&fence),
-            Some(fence.token),
-            req,
-        )?;
-        if !matches!(outcome, Outcome::Applied { .. }) {
-            self.give_back(&fence, req);
-            return Ok((outcome, None));
+            .txn(&t, &apply_req(evidence(&applied, &[lost])))?;
+        if r.succeeded {
+            let fence = r.fences.into_iter().next();
+            let record = self.record_at(id, r.rev)?.map_or(next, |r| r.value);
+            return Ok((
+                Outcome::Applied {
+                    rev: r.rev,
+                    record: Box::new(record),
+                },
+                fence,
+            ));
         }
-        Ok((outcome, Some(fence)))
+        if self.contract.get(&key)?.map(|i| i.mod_rev) != Some(cur.mod_rev) {
+            return Ok((Outcome::LostRace { rev: r.rev }, None));
+        }
+        Ok(match self.contract.get(&keys::claim_lock(id))? {
+            Some(lock) => (
+                Outcome::Locked {
+                    token: lock.create_rev,
+                },
+                None,
+            ),
+            // The lock went between the txn and this read: the claimant retries as on a race.
+            None => (Outcome::LostRace { rev: r.rev }, None),
+        })
     }
 
     /// An event from the holder, fenced on its lock.
@@ -386,13 +437,6 @@ impl<B: Backend> Store<B> {
             .renew(fence, &sub_request(req, "renew", Value::Null))
     }
 
-    fn give_back(&self, fence: &Fence, req: &Request) {
-        // A lock already gone needs no release, and one left behind expires on its TTL.
-        let _ = self
-            .contract
-            .release(fence, &sub_request(req, "release", Value::Null));
-    }
-
     fn transition(
         &self,
         id: &str,
@@ -408,8 +452,14 @@ impl<B: Backend> Store<B> {
                 key: keys::lifecycle(id),
             });
         };
+        // The claim's lock as this read saw it, so a release below never takes a later claim's.
+        let held = self.contract.get(&keys::claim_lock(id))?.map(|l| Fence {
+            resource: keys::claim_resource(id),
+            token: l.create_rev,
+        });
         if let Some(f) = fence {
-            if cur.value.claim_token != Some(f.token) {
+            let live = self.holder_fence(id)?;
+            if live.as_ref() != Some(f) {
                 return Ok(Outcome::LockLost {
                     rev: self.contract.head()?,
                 });
@@ -420,19 +470,45 @@ impl<B: Backend> Store<B> {
             return self.refuse(id, ev, &cur.value, out.refusal, req);
         }
         let leaves = out.row.state != BeadState::Working;
-        let token = if leaves { None } else { cur.value.claim_token };
-        let outcome = self.write(id, ev, &cur, &item, out.row, fence, token, req)?;
-        // Whoever moved the record out of WORKING, the claim's lock goes with it.
-        if let (Outcome::Applied { .. }, true, Some(token)) =
-            (&outcome, leaves, cur.value.claim_token)
-        {
-            let held = Fence {
-                resource: keys::claim_resource(id),
-                token,
-            };
-            self.give_back(&held, req);
+        let outcome = self.write(id, ev, &cur, &item, out.row, fence, req)?;
+        // Whoever moved the record out of WORKING, the claim's lock goes with it. A lock
+        // already gone needs no release, and one left behind expires on its TTL.
+        if let (Outcome::Applied { .. }, true, Some(held)) = (&outcome, leaves, held) {
+            let _ = self
+                .contract
+                .release(&held, &sub_request(req, "release", Value::Null));
         }
         Ok(outcome)
+    }
+
+    fn next_record(
+        &self,
+        ev: &BeadEvent,
+        cur: &Read<LifecycleRecord>,
+        row: lifecycle::bead::BeadRow,
+    ) -> LifecycleRecord {
+        LifecycleRecord {
+            row,
+            updated_at: ev.at.unwrap_or(cur.value.updated_at),
+            ..cur.value.clone()
+        }
+    }
+
+    /// The audit of each branch: the transition applied, or its compare lost as a stale read.
+    fn audits(
+        &self,
+        id: &str,
+        ev: &BeadEvent,
+        cur: &LifecycleRecord,
+        next: &LifecycleRecord,
+    ) -> ([Audit; 1], Audit) {
+        let from = cur.row.state;
+        let applied = [audit(id, ev, from, next.row.state, None)];
+        let mut lost = audit(id, ev, from, from, None);
+        lost.applied = false;
+        lost.expect = ev.expect.as_str().into();
+        lost.refusal = Some("StaleVersion".into());
+        (applied, lost)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -444,35 +520,25 @@ impl<B: Backend> Store<B> {
         item: &Item,
         row: lifecycle::bead::BeadRow,
         fence: Option<&Fence>,
-        token: Option<Rev>,
         req: &Request,
     ) -> Result<Outcome> {
         let key = keys::lifecycle(id);
-        let next = LifecycleRecord {
-            row,
-            updated_at: ev.at.unwrap_or(cur.value.updated_at),
-            claim_token: token,
-            ..cur.value.clone()
-        };
-        let from = cur.value.row.state;
-        let applied = [audit(id, ev, from, next.row.state, None)];
-        let mut lost = audit(id, ev, from, from, None);
-        lost.applied = false;
-        lost.expect = ev.expect.as_str().into();
-        lost.refusal = Some("StaleVersion".into());
+        let next = self.next_record(ev, cur, row);
+        let (applied, lost) = self.audits(id, ev, &cur.value, &next);
         let mut t = Txn::new()
             .when(Compare::ModRev(key.clone(), Some(cur.mod_rev)))
             .put(&key, object_like(item, encode(&next)?));
         if let Some(f) = fence {
-            t = t.fenced(f);
+            t = t.lock_check(f);
         }
         let r = self
             .contract
             .txn(&t, &sub_request(req, "apply", evidence(&applied, &[lost])))?;
         if r.succeeded {
+            let record = self.record_at(id, r.rev)?.map_or(next, |r| r.value);
             return Ok(Outcome::Applied {
                 rev: r.rev,
-                record: Box::new(next),
+                record: Box::new(record),
             });
         }
         let moved = self.contract.get(&key)?.map(|i| i.mod_rev) != Some(cur.mod_rev);

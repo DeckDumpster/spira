@@ -5,7 +5,7 @@ use state_store::{Config, Contract, Deleted, Error, MemBackend, Ports, Request, 
 
 use super::{Outcome, Store, Verdict};
 use crate::control::keys;
-use crate::control::records::Audit;
+use crate::control::records::{encode, Audit};
 
 const FLOOR_MS: u64 = 1_000;
 const TIP: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -241,7 +241,6 @@ fn a_write_from_a_stale_read_loses_the_race_and_the_loss_is_audited() {
             &item,
             row,
             None,
-            None,
             &req("x-2"),
         )
         .unwrap();
@@ -465,28 +464,37 @@ fn a_holders_write_after_its_lock_expired_is_refused_even_before_anyone_retakes_
 }
 
 #[test]
-fn a_live_claim_lock_refuses_a_second_claim_and_a_submit_gives_it_back() {
+fn a_claim_is_one_txn_and_the_holders_token_is_its_locks_create_rev() {
     let (s, _, _) = fresh();
     created(&s, "sp-a");
-    let (_, f) = s
+    let head = s.contract().head().unwrap();
+    let (out, f) = s
         .claim(
             "sp-a",
             &ev(BeadState::Ready, 0, claim("dwarf-1", 160), "dwarf-1", 100),
             &req("claim-1"),
         )
         .unwrap();
+    let Outcome::Applied { rev, record } = out else {
+        panic!("{out:?}")
+    };
     let f = f.unwrap();
-    let rec = s.record("sp-a").unwrap().unwrap().value;
+    assert_eq!(rev, head + 1, "a claim took more than one commit");
+    let lock = s
+        .contract()
+        .get(&keys::claim_lock("sp-a"))
+        .unwrap()
+        .unwrap();
+    let stored = s.record("sp-a").unwrap().unwrap();
     assert_eq!(
-        (rec.row.holder.as_deref(), rec.claim_token),
-        (Some("dwarf-1"), Some(f.token))
+        (f.token, f.token.main, stored.mod_rev.main),
+        (lock.create_rev, rev, rev),
+        "the record and its lock were not written by one txn"
     );
-    let lock = format!(
-        "{}{}",
-        state_store::LOCKS_PREFIX,
-        keys::claim_resource("sp-a")
-    );
-    assert!(s.contract().get(&lock).unwrap().is_some());
+    assert_eq!(record.row.holder.as_deref(), Some("dwarf-1"));
+    assert_eq!(s.holder_fence("sp-a").unwrap(), Some(f.clone()));
+    let v = encode(&stored.value).unwrap();
+    assert!(v.get("claim_token").is_none(), "a second lease in {v}");
     let out = s
         .holder_apply(
             "sp-a",
@@ -505,12 +513,81 @@ fn a_live_claim_lock_refuses_a_second_claim_and_a_submit_gives_it_back() {
         panic!("{out:?}")
     };
     assert_eq!(
-        (record.row.state, record.claim_token),
+        (record.row.state, record.row.holder),
         (BeadState::Submitted, None)
     );
     assert!(
-        s.contract().get(&lock).unwrap().is_none(),
+        s.contract()
+            .get(&keys::claim_lock("sp-a"))
+            .unwrap()
+            .is_none(),
         "submit kept the claim lock"
+    );
+    assert_eq!(s.holder_fence("sp-a").unwrap(), None);
+}
+
+#[test]
+fn a_claim_while_another_claims_lock_is_live_writes_nothing_and_answers_locked() {
+    let (s, _, _) = fresh();
+    created(&s, "sp-a");
+    let other = s
+        .contract()
+        .lock(&keys::claim_resource("sp-a"), 60_000, &req("stray"))
+        .unwrap();
+    let before = s.record("sp-a").unwrap().unwrap();
+    let (out, f) = s
+        .claim(
+            "sp-a",
+            &ev(BeadState::Ready, 0, claim("dwarf-1", 160), "dwarf-1", 100),
+            &req("claim-1"),
+        )
+        .unwrap();
+    assert_eq!(out, Outcome::Locked { token: other.token });
+    assert!(f.is_none());
+    let after = s.record("sp-a").unwrap().unwrap();
+    assert_eq!(
+        (after.mod_rev, after.value.row.state),
+        (before.mod_rev, BeadState::Ready)
+    );
+}
+
+#[test]
+fn a_working_records_lease_until_is_its_locks_expiry_and_follows_a_renew() {
+    let (s, _, clock) = fresh();
+    created(&s, "sp-a");
+    let (_, f) = s
+        .claim(
+            "sp-a",
+            &ev(BeadState::Ready, 0, claim("dwarf-1", 102), "dwarf-1", 100),
+            &req("claim-1"),
+        )
+        .unwrap();
+    let f = f.unwrap();
+    let lease = |s: &Store<MemBackend>| s.record("sp-a").unwrap().unwrap().value.row.lease_until;
+    let expiry = |s: &Store<MemBackend>| {
+        s.contract()
+            .get(&keys::claim_lock("sp-a"))
+            .unwrap()
+            .unwrap()
+            .lock_expires_at_ms
+            .unwrap()
+    };
+    assert_eq!(lease(&s), Some(expiry(&s).div_ceil(1_000) as i64));
+    let first = lease(&s);
+    clock.advance(1_500);
+    s.renew(&f, &req("renew-1")).unwrap();
+    assert!(
+        lease(&s) > first,
+        "a renew did not move the lease a read shows"
+    );
+    assert_eq!(lease(&s), Some(expiry(&s).div_ceil(1_000) as i64));
+    let (listed, _) = s.records().unwrap();
+    assert_eq!(listed[0].value.row.lease_until, lease(&s));
+    clock.advance(10_000);
+    assert_eq!(
+        lease(&s),
+        Some(102),
+        "with its lock lapsed, a record reads its claim's own lease"
     );
 }
 

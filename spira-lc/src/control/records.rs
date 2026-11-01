@@ -4,7 +4,7 @@
 use lifecycle::bead::BeadRow;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use state_store::{Error, Object, Result, Rev};
+use state_store::{Error, Object, Result};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LifecycleRecord {
@@ -15,9 +15,6 @@ pub struct LifecycleRecord {
     pub repo: Option<String>,
     /// Epoch seconds of the last write, for display only.
     pub updated_at: i64,
-    /// The fencing token of the `locks/bead/<id>` lock the current claim holds.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub claim_token: Option<Rev>,
 }
 
 impl LifecycleRecord {
@@ -34,7 +31,6 @@ impl LifecycleRecord {
             row,
             repo: repo.map(str::to_string),
             updated_at: at,
-            claim_token: None,
         }
     }
 
@@ -107,8 +103,7 @@ mod tests {
 
     #[test]
     fn a_record_round_trips_and_carries_no_planning_field() {
-        let mut r = LifecycleRecord::born("sp-a", Some("harness"), None, 100);
-        r.claim_token = Some(Rev::new(7, 0));
+        let r = LifecycleRecord::born("sp-a", Some("harness"), None, 100);
         let v = encode(&r).unwrap();
         for planning in ["title", "priority", "blocked_by", "labels"] {
             assert!(v.get(planning).is_none(), "{planning} in {v}");
