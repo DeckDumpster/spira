@@ -19,11 +19,12 @@ impl Clock for Wall {
     }
 }
 
-const TIMER_PREFIX: &str = "PERFWATCH_MS=";
+const TIMER_PREFIX: &str = "PERFWATCH_US=";
 
 // The probe runs in its own transient scope, outside this unit's CPU quota, and times itself
 // there: wall time across the throttled parent would read the throttle, not the store.
-const SCOPED: &str = "t0=$(date +%s%N); \"$@\"; rc=$?; t1=$(date +%s%N); echo \"PERFWATCH_MS=$(( (t1-t0)/1000000 ))\" >&2; exit $rc";
+// bash's own clock, so no process start of a clock is charged to the probe.
+const SCOPED: &str = "t0=$EPOCHREALTIME; \"$@\"; rc=$?; t1=$EPOCHREALTIME; echo \"PERFWATCH_US=$(( ${t1//[.,]/} - ${t0//[.,]/} ))\" >&2; exit $rc";
 
 struct Spawn {
     scoped: bool,
@@ -39,7 +40,7 @@ impl Spawn {
 }
 
 impl Runner for Spawn {
-    fn measured_ms(&self) -> Option<u64> {
+    fn measured_us(&self) -> Option<u64> {
         self.measured
     }
 
@@ -52,7 +53,7 @@ impl Runner for Spawn {
         self.phases = None;
         let mut cmd = if self.scoped {
             let mut c = Command::new("systemd-run");
-            c.args(["--user", "--scope", "--quiet", "--collect", "--", "sh", "-c", SCOPED, "perf-probe"]).args(argv);
+            c.args(["--user", "--scope", "--quiet", "--collect", "--", "bash", "-c", SCOPED, "perf-probe"]).args(argv);
             c
         } else {
             let mut c = Command::new(&argv[0]);
@@ -148,6 +149,7 @@ fn run() -> Result<(), String> {
             perf_watch::append_inbox(&f, l);
         }
     }
+    perf_watch::push_timings(&spira_config::process::metrics_sink("perf-watch"), &out.timings);
     if let Some(r) = record {
         let body: String = out.timings.iter().map(|t| format!("{}\t{}\n", t.name, t.millis)).collect();
         let _ = std::fs::write(r, body);

@@ -218,7 +218,7 @@ fn load_layered(spec: &str) -> Result<(SpiraToml, Vec<String>), String> {
     let mut any = false;
     for p in spec.split(':').filter(|p| !p.is_empty()) {
         any = true;
-        let text = std::fs::read_to_string(p).map_err(|e| format!("{p}: {e}"))?;
+        let text = registry::read_counted(Path::new(p)).map_err(|e| format!("{p}: {e}"))?;
         let toml::Value::Table(layer) = text.parse::<toml::Value>().map_err(|e| format!("{p}: {e}"))? else {
             return Err(format!("{p}: not a TOML table"));
         };

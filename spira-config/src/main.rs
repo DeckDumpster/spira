@@ -242,6 +242,21 @@ fn cmd_path_tail() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `registry-index <home>` — writes the registry index `release build` ships beside `conf.d`, so
+/// each process reads its registry with one open. Prints the index's path.
+fn cmd_registry_index(home: &str) -> ExitCode {
+    match spira_config::registry::write_index(Path::new(home)) {
+        Ok(p) => {
+            println!("{}", p.display());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("spira-config registry-index: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// `link-model-bin <release>` — [`spira_config::release_env::link_model_bin`], the function
 /// `release build` calls, for a release layout staged anywhere else (sp-jq4wq): testenv's
 /// stage script and the suite library run the tree under test's OWN spira-config, so the
@@ -1602,6 +1617,13 @@ fn dispatch(args: &[String]) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Some("registry-index") => match args.get(1) {
+            Some(home) => cmd_registry_index(home),
+            None => {
+                eprintln!("usage: spira-config registry-index <home>");
+                ExitCode::FAILURE
+            }
+        },
         Some("init") => cmd_init(&args[1..]),
         Some("schema") => cmd_schema(),
         Some("path-tail") => cmd_path_tail(),
@@ -1638,6 +1660,7 @@ fn dispatch(args: &[String]) -> ExitCode {
                  \x20 unset <dotted.path> <file>\n\
                  \x20 writeback <candidate>\n\
                  \x20 link-model-bin <release>\n\
+                 \x20 registry-index <home>\n\
                  \x20 schema\n\
                  \x20 path-tail\n\
                  \x20 rune <names|get|roster|task|lane|partitions|for-labels|model> ...\n\

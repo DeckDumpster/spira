@@ -66,6 +66,10 @@ docs/test-plan/COVERAGE.md
 spira/conf.d.keys.generated.sh
 spira/conf.d.defaults.generated.sh
 
+# The registry index `release build` writes into a release (spira-config registry-index); a
+# tree without one reads conf.d itself.
+spira/conf.d.index
+
 # Editor and OS litter.
 *.swp
 *.swo

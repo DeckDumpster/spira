@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T1
-# covers: spira/metrics/grafana/** pilgrimage/src/** tsd/src/pass.rs spira-otel/src/** heimdall/src/main.rs inbox-triage/src/main.rs store-persist/src/main.rs queue/src/telemetry.rs landing-pass/src/telemetry.rs rebase-stale/src/telemetry.rs round-vm/src/telemetry.rs sccache-dav/src/telemetry.rs release/src/telemetry.rs round-controller/src/telemetry.rs habits/src/lib.rs exec-census/src/** spira-lc/src/cycle.rs state-store-sqlite/src/bin/**
+# covers: spira/metrics/grafana/** pilgrimage/src/** tsd/src/pass.rs spira-otel/src/** heimdall/src/main.rs inbox-triage/src/main.rs store-persist/src/main.rs queue/src/telemetry.rs landing-pass/src/telemetry.rs rebase-stale/src/telemetry.rs round-vm/src/telemetry.rs sccache-dav/src/telemetry.rs release/src/telemetry.rs round-controller/src/telemetry.rs habits/src/lib.rs exec-census/src/** spira-lc/src/cycle.rs state-store-sqlite/src/bin/** perf-watch/src/lib.rs
 #
 # The provisioned Grafana dashboards parse, read their data source from a variable, carry no
 # annotations or text panels, and every cert-pass series they query is one the producer pushes.
@@ -69,6 +69,10 @@ ss_queried="$(grep -o 'spira_state_store_bench_[a-z0-9_]*' "$DASH/bead-store.jso
 is "bead-store.json queries only state-store-bench series the bench pushes" "" "$(comm -13 <(printf '%s\n' "$ss_pushed") <(printf '%s\n' "$ss_queried"))"
 want "positive control: the bench's p99.9 series was found" "spira_state_store_bench_cas_p999_seconds" "$ss_pushed"
 want "bead-store.json graphs the bench's p99.9" "spira_state_store_bench_cas_p999_seconds" "$ss_queried"
+pw_pushed="$(grep -oh 'PROBE_SECONDS: &str = "spira_perf_watch_[a-z_]*"' "$ROOT/perf-watch/src/lib.rs" | grep -o 'spira_perf_watch_[a-z_]*')"
+pw_queried="$(grep -o 'spira_perf_watch_[a-z_]*' "$DASH/bead-store.json" | sort -u)"
+want "positive control: perf-watch's probe series was found" "spira_perf_watch_probe_seconds" "$pw_pushed"
+is "bead-store.json queries only the series perf-watch pushes" "$pw_pushed" "$pw_queried"
 
 ql="$(grep -o 'spira_[a-z_]*' "$DASH/queue-landing.json" | sed -E 's/_bucket$//' | sort -u)"
 undeclared=""

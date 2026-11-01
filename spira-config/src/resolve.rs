@@ -1276,6 +1276,25 @@ mod tests {
     }
 
     #[test]
+    fn every_key_resolves_the_same_from_the_registry_index_as_from_its_directories() {
+        let ws = testkit::TempDir::new("spira-config-resolve-index");
+        let (_, repo) = fixture_home_repo(&ws);
+        let home = crate::process::fixture_registry_home(&repo);
+        let from_dirs = registry::Registry::load(&home).unwrap();
+        let index = registry::write_index(&home).unwrap();
+        let from_index = registry::Registry::load(&home).unwrap();
+        assert!(index.is_file(), "positive control: the second load had an index to read");
+        let e = env(&[("HOME", "/h")]);
+        let doc = crate::fixture_doc(&BTreeMap::new());
+        let with = |reg: &registry::Registry| {
+            resolve_checked(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&doc), conf_d: &home.join("conf.d") }, &reg.keys).unwrap()
+        };
+        let (dirs, indexed) = (with(&from_dirs), with(&from_index));
+        assert!(from_dirs.keys.keys().all(|k| dirs.values.contains_key(k)), "every registered key resolves");
+        assert_eq!(indexed, dirs);
+    }
+
+    #[test]
     fn resolve_for_process_matches_resolve_given_the_same_inputs() {
         // Both read the one file the passed env's SPIRA_TOML names — never the process's own.
         let ws = testkit::TempDir::new("spira-config-resolve-for-process");

@@ -229,6 +229,38 @@
           "refId": "D"
         }
       ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "hot reads through the CLI, end to end (perf-watch): p50 over the last hour, by probe",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "quantile_over_time(0.5, spira_perf_watch_probe_seconds[1h])",
+          "legendFormat": "{{probe}}",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

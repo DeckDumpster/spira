@@ -133,7 +133,7 @@ impl Rule for ConfKeyRegistry {
         if keys.len() < 200 {
             return Err(refuse(&format!("SPIRA_CONF_KEYS parsed to {} keys, expected over 200 — reading the wrong thing", keys.len())));
         }
-        let reg = Registry::load(&tree.root.join("spira")).map_err(|e| refuse(&e))?;
+        let reg = Registry::from_dirs(&tree.root.join("spira")).map_err(|e| refuse(&e))?;
         Ok(round_trip(&keys, &reg)
             .into_iter()
             .map(|message| Finding { rule: NAME, path: CONF_SH.into(), line: None, message })
@@ -157,7 +157,7 @@ mod tests {
     use super::*;
 
     fn real() -> Registry {
-        Registry::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira")).unwrap()
+        Registry::from_dirs(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira")).unwrap()
     }
 
     fn keys(ks: &[&str]) -> Vec<String> {

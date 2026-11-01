@@ -217,6 +217,8 @@ pub fn build(cfg: &Config, git: &dyn Git, cargo: &dyn Cargo, o: &BuildOpts) -> R
     // name from inside a dwarf's session.
     spira_config::release_env::link_model_bin(&stage).map_err(|e| format!("{sha}: {e}"))?;
 
+    write_registry_index(&stage).map_err(|e| format!("{sha}: {e}"))?;
+
     let clashes = clashes(&stage, &o.system_dirs);
     if !clashes.is_empty() {
         return Err(format!("{sha} would shadow system commands: {}", clashes.join("; ")));
@@ -246,6 +248,27 @@ pub fn regenerate_config(stage: &Path) -> Result<(), String> {
             out.status,
             String::from_utf8_lossy(&out.stderr).trim()
         ));
+    }
+    Ok(())
+}
+
+/// Writes the staged release's registry index with the staged release's own `spira-config`, the
+/// binary that will read it, so the index is in the format its reader expects. A tree with no
+/// `spira/conf.d` (any repo but the harness) has no registry to index.
+pub fn write_registry_index(stage: &Path) -> Result<(), String> {
+    let home = stage.join("spira");
+    if !home.join("conf.d").is_dir() {
+        return Ok(());
+    }
+    let bin = stage.join("bin/spira-config");
+    // batch-job: reads and writes the staged registry once, as long as its files take
+    let out = Command::new(&bin).envs(spira_config::release_env::child_path_env_for_process()).arg("registry-index").arg(&home).output().map_err(|e| format!("cannot run {}: {e}", bin.display()))?;
+    if !out.status.success() {
+        return Err(format!("spira-config registry-index failed against the staged tree ({}): {}", out.status, String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    let index = home.join(spira_config::registry::INDEX_FILE);
+    if !index.is_file() {
+        return Err(format!("spira-config registry-index exited 0 but wrote no {}", index.display()));
     }
     Ok(())
 }

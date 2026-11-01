@@ -117,6 +117,20 @@ pub fn fixture_release(dir: &std::path::Path, with_conf_d: bool) -> std::path::P
     release
 }
 
+/// A harness home for a test that writes into it: `<dir>/home` holding copies of this tree's
+/// `conf.d` and `conf.toml.d`. Point `SPIRA_HOME` at the returned path.
+pub fn fixture_registry_home(dir: &std::path::Path) -> std::path::PathBuf {
+    let tree = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+    let home = dir.join("home");
+    for d in ["conf.d", "conf.toml.d"] {
+        std::fs::create_dir_all(home.join(d)).expect("the fixture home is created");
+        for e in std::fs::read_dir(tree.join(d)).expect("the registry is readable").flatten() {
+            std::fs::copy(e.path(), home.join(d).join(e.file_name())).expect("a registry file is copied");
+        }
+    }
+    home
+}
+
 /// A complete `spira.toml` for TESTS in any crate: every key declared (`spira/testlib/complete.toml`), with `declare`'s `SPIRA_<KEY>` pairs written as
 /// `spira.<key>`. Written to `<dir>/spira.toml`; point `SPIRA_TOML` at the returned path.
 pub fn fixture_toml(dir: &std::path::Path, declare: &[(&str, &str)]) -> std::path::PathBuf {

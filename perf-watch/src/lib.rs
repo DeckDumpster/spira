@@ -2,6 +2,7 @@
 //! line for every probe past the limit. The clock and the runner are traits so a test drives
 //! both and never waits on a real one.
 
+use spira_otel::metrics::{MetricsSink, Point};
 use std::collections::BTreeMap;
 
 pub mod happy;
@@ -18,8 +19,8 @@ pub trait Clock {
 
 pub trait Runner {
     fn run(&mut self, argv: &[String]) -> Result<String, String>;
-    /// Time the last run measured itself where the caller's own throttle cannot reach.
-    fn measured_ms(&self) -> Option<u64> {
+    /// Microseconds the last run measured itself where the caller's own throttle cannot reach.
+    fn measured_us(&self) -> Option<u64> {
         None
     }
     /// Where the last run says its own time went, as `name=ms,...`.
@@ -80,6 +81,7 @@ pub fn top_callers(prev: &BTreeMap<String, u64>, prev_at: u64, cur: &BTreeMap<St
 pub struct Timing {
     pub name: String,
     pub millis: u64,
+    pub micros: u64,
     pub error: Option<String>,
     pub phases: Option<String>,
 }
@@ -90,10 +92,20 @@ pub fn time_probes(probes: &[Probe], clock: &dyn Clock, runner: &mut dyn Runner)
         .map(|p| {
             let t0 = clock.now_ms();
             let r = runner.run(&p.argv);
-            let millis = runner.measured_ms().unwrap_or_else(|| clock.now_ms().saturating_sub(t0));
-            Timing { name: p.name.clone(), millis, error: r.err(), phases: runner.phases() }
+            let micros = runner.measured_us().unwrap_or_else(|| clock.now_ms().saturating_sub(t0) * 1000);
+            Timing { name: p.name.clone(), millis: micros / 1000, micros, error: r.err(), phases: runner.phases() }
         })
         .collect()
+}
+
+/// The series each probe's end-to-end time is pushed as, labelled `probe`.
+pub const PROBE_SECONDS: &str = "spira_perf_watch_probe_seconds";
+
+/// One duration sample per probe that answered; a probe that could not run is an alarm, never a time.
+pub fn push_timings(sink: &MetricsSink, timings: &[Timing]) {
+    for t in timings.iter().filter(|t| t.error.is_none()) {
+        sink.push(&[Point::Seconds { name: PROBE_SECONDS, value: t.micros as f64 / 1e6 }], &[("probe", &t.name)]);
+    }
 }
 
 pub fn alarms(timings: &[Timing], limit_ms: u64, callers: &[String]) -> Vec<String> {
@@ -382,8 +394,8 @@ mod tests {
             self.clock.now.set(self.clock.now.get() + 610);
             Ok(String::new())
         }
-        fn measured_ms(&self) -> Option<u64> {
-            Some(self.inside)
+        fn measured_us(&self) -> Option<u64> {
+            Some(self.inside * 1000)
         }
     }
 
@@ -419,6 +431,25 @@ mod tests {
         let rows = slow_samples(77, &t, 500, &["watcher/list=3.0/min".to_string()]);
         assert_eq!(rows, vec!["77\tlist\t2100\treply=40,push=2000\trest=60\twatcher/list=3.0/min\n".to_string()]);
         assert!(slow_samples(77, &t, 2100, &[]).is_empty(), "at the limit is not slow");
+    }
+
+    #[test]
+    fn each_probe_that_answered_is_pushed_as_its_own_time_in_seconds() {
+        let probes = parse_probes("lc-show\tshow sp-1\nmissing\tgone\n").unwrap();
+        let clock = Stub { now: Cell::new(0), epoch: Cell::new(0) };
+        struct Micro;
+        impl Runner for Micro {
+            fn run(&mut self, argv: &[String]) -> Result<String, String> {
+                if argv[0] == "gone" { Err("not found".into()) } else { Ok(String::new()) }
+            }
+            fn measured_us(&self) -> Option<u64> {
+                Some(1_750)
+            }
+        }
+        let t = time_probes(&probes, &clock, &mut Micro);
+        let ((), seen) = spira_otel::metrics::fixture::capture(|sink| push_timings(sink, &t));
+        assert_eq!(seen.len(), 1, "the probe that could not run is not a time: {seen:?}");
+        assert_eq!((seen[0].name.as_str(), seen[0].value, seen[0].label("probe")), (PROBE_SECONDS, 0.00175, Some("lc-show")));
     }
 
     #[test]
