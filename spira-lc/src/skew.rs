@@ -151,7 +151,7 @@ mod tests {
         assert_eq!(judge(Some(10), Some(7), 3), Ok(()));
         let e = judge(Some(10), Some(6), 3).unwrap_err();
         assert!(e.starts_with("refused: the planes' planning watermarks differ by 4, past SPIRA_PLANE_SKEW_MAX 3 (control plane 10, bd 6)"), "{e}");
-        assert!(e.contains("the exit is the restore procedure: after a restore: (1) restore bd"), "{e}");
+        assert!(e.contains("the exit is the restore procedure: after a restore: (0) move SPIRA_RUN/lc-ship aside"), "{e}");
         let one = judge(Some(10), None, 100).unwrap_err();
         assert!(one.contains("only one plane carries a planning watermark (control plane 10, bd unstamped)"), "{one}");
     }

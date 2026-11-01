@@ -1362,7 +1362,7 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
     let mut scope: Option<BTreeSet<String>> = None;
     if let Some(since) = &since {
         if since.parse::<u64>().is_err() {
-            return usage("reconcile-content [--apply] [--since-seq N] [<bead-id>...] (--since-seq wants a number)");
+            return usage("reconcile-content [--apply | --dry-run] [--since-seq N] [<bead-id>...] (--since-seq wants a number)");
         }
         let (rc, out) = m.call(&["event-seq".into(), "--since".into(), since.clone()]);
         let tail = if rc == 0 { serde_json::from_str::<Value>(out.trim()).ok() } else { None };

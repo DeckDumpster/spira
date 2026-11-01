@@ -1337,7 +1337,7 @@ fn drop_orphans_cannot_tell_when_bd_is_down_or_knows_nothing() {
 
 // ---- the skew guard ------------------------------------------------------------------------
 
-const SKEWED: &str = "refused: the planes' planning watermarks differ by 50, past SPIRA_PLANE_SKEW_MAX 25 (control plane 90, bd 40); the exit is the restore procedure: after a restore: (1) restore bd";
+const SKEWED: &str = "refused: the planes' planning watermarks differ by 50, past SPIRA_PLANE_SKEW_MAX 25 (control plane 90, bd 40); the exit is the restore procedure: after a restore: (0)";
 
 #[test]
 fn with_the_planes_skewed_reconcile_content_and_drop_orphans_refuse_to_act_and_name_the_exit() {

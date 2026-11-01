@@ -6,8 +6,9 @@
 //! audited, so each is excluded by name and counted:
 //!
 //! - every key under `telemetry/`, which the contract keeps out of the history;
-//! - a TTL'd key the fold holds and the restored copy lacks: the GC controller's expiry
-//!   writes no `events/` key. A TTL'd key on both sides must still be byte-identical.
+//! - a TTL'd key the fold holds and the restored copy lacks, deleted in a txn with no
+//!   `events/` record: the GC controller's expiry. A TTL'd key on both sides must still be
+//!   byte-identical.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -160,6 +161,7 @@ pub fn fold_compare(
     };
     let excluded = |k: &str| ex.telemetry && k.starts_with(TELEMETRY_PREFIX);
     let mut fold: BTreeMap<String, Held> = BTreeMap::new();
+    let mut expired: BTreeSet<String> = BTreeSet::new();
     for (k, v) in all_keys(base, s)? {
         if bookkeeping(&k) {
             continue;
@@ -185,6 +187,12 @@ pub fn fold_compare(
                 .get(&events_key(main), r)
                 .map_err(|e| e.to_string())?
             else {
+                expired.extend(
+                    writes
+                        .iter()
+                        .filter(|e| e.value.is_none())
+                        .map(|e| e.key.clone()),
+                );
                 continue;
             };
             let subs = match recorded(&ev) {
@@ -241,7 +249,7 @@ pub fn fold_compare(
             (Some(_), Some(_)) => rep.mismatches.push(Mismatch::Value { key: k.clone() }),
             (Some(f), None) => {
                 let ttl = Object::decode(&f.2).is_ok_and(|o| carries_ttl(k, &o));
-                if ex.ttl_swept && ttl {
+                if ex.ttl_swept && ttl && expired.contains(k) {
                     rep.ttl_swept.insert(k.clone());
                 } else {
                     rep.mismatches.push(Mismatch::Missing { key: k.clone() });
@@ -255,7 +263,7 @@ pub fn fold_compare(
 
 /// The skew guard's way out, printed by every drill: after a restore the control plane can be
 /// seconds old and the planning plane hours old, and the repair sweeps refuse until both agree.
-pub const SKEW_PROCEDURE: &str = "after a restore: (1) restore bd from lc-backup's tar at its stamped planning watermark; (2) reconcile: re-file in bd the planning writes the tar is missing, which lie between the two planes' watermarks; (3) lift the guard: stamp both planes to one planning watermark, or raise SPIRA_PLANE_SKEW_MAX past the measured skew for one pass of reconcile-content, drop-orphans and the rowless repair, then put it back";
+pub const SKEW_PROCEDURE: &str = "after a restore: (0) move SPIRA_RUN/lc-ship aside and ship the restored store under a new SPIRA_LC_BACKUP_URL prefix, since its revisions repeat ones already shipped; (1) restore bd from lc-backup's tar at its stamped planning watermark; (2) reconcile: re-file in bd the planning writes the tar is missing, which lie between the two planes' watermarks; (3) lift the guard: stamp both planes to one planning watermark, or raise SPIRA_PLANE_SKEW_MAX past the measured skew for one pass of reconcile-content, drop-orphans and the rowless repair, then put it back";
 
 /// The newest local snapshot in `ship_dir/sent/`, as `(rev, path)`.
 pub fn newest_snapshot(ship_dir: &Path) -> Result<(u64, std::path::PathBuf), String> {
@@ -274,7 +282,17 @@ pub fn drill(
     scratch: &Path,
     ex: Exclusions,
 ) -> Result<(Restored, Report), String> {
-    let (_, snapshot) = newest_snapshot(ship_dir)?;
+    let (rev, snapshot) = newest_snapshot(ship_dir)?;
+    let name = revlog::snapshot_name(rev);
+    let staged = fs::read_to_string(super::ship::sum_path(ship_dir, &name))
+        .map_err(|e| format!("snapshot {name} has no staged sha256: {e}"))?;
+    let now = super::ship::sha256_file(&snapshot)?;
+    if staged.trim() != now {
+        return Err(format!(
+            "snapshot {name} changed since it was staged: sha256 {now}, staged {}",
+            staged.trim()
+        ));
+    }
     fs::create_dir_all(scratch).map_err(|e| format!("{}: {e}", scratch.display()))?;
     let (out, base_path) = (scratch.join("control.db"), scratch.join("base.db"));
     let restored = restore::restore(&snapshot, &ship_dir.join("sent").join(REVLOG), &out)?;

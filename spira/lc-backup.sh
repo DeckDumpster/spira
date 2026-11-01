@@ -30,15 +30,11 @@
 # No destination, an unreadable stamp or an age beyond the limit is red, never a skip — a
 # store that was never backed up must look different from one that is.
 #
-# The control store (SPIRA_LC_STORE_PATH) is not tarred here: lc-serve, its only opener, ships
-# every run of revisions to SPIRA_LC_BACKUP_URL/revlog/ within seconds and a stepped snapshot to
-# snapshot/ hourly, keeping the local copy of each uploaded object under SPIRA_RUN/lc-ship/sent/.
-# The drill restores that copy with `spira-lc admin-drill`. RETENTION is the bucket's lifecycle
-# rule, never this key: it must keep every revlog/ object newer than the oldest snapshot/ it
-# keeps, so any expiration rule must expire revision runs no sooner than snapshots.
+# The control store is not tarred here: lc-serve ships it to revlog/ and snapshot/ under the same
+# URL, and the drill restores its local copies with `spira-lc admin-drill`. Retention is the
+# bucket's lifecycle rule, which must expire revision runs no sooner than snapshots.
 #
-# The stamp also carries the planning watermark at the moment bd was tarred, so a restore of
-# that tar knows where the planning plane stood (`-` when nothing is stamped).
+# The stamp's third field is bd's planning watermark when it was tarred (`-` when unstamped).
 
 # covers: spira/lc-backup.sh spira/watchers spira/conf.d/SPIRA_LC_BACKUP_* systemd/lc-backup.service systemd/lc-backup.timer systemd/lc-backup-drill.*
 set -uo pipefail
@@ -102,11 +98,11 @@ _lcb_upload() {
         "$host/$key" >/dev/null
 }
 
-# The planning watermark's sequence, or `-` while nothing is stamped or it cannot be read.
+# bd's own planning watermark, or `-` while nothing is stamped or it cannot be read.
 _lcb_plan_watermark() {
     local out
-    out="$(timeout 5 spira-lc planning-watermark 2>/dev/null)" || out=""
-    out="$(sed -n 's/.*"seq": *\([0-9][0-9]*\).*/\1/p' <<<"$out")"
+    out="$(timeout 5 spira-lc plane-watermarks 2>/dev/null)" || out=""
+    out="$(sed -n 's/.*"bd": *\([0-9][0-9]*\).*/\1/p' <<<"$out")"
     printf '%s' "${out:--}"
 }
 
@@ -120,8 +116,9 @@ _lcb_run_db() {
 }
 
 _lcb_run_db_locked() {
-    local db="$1" out head work stage tarball prefix stamp key ext
+    local db="$1" out head work stage tarball prefix stamp key ext wm
     _lcb_require_db "$db" || return 1
+    wm="$(_lcb_plan_watermark)"
     out="$(_lcb_sql "$db" -q "CALL DOLT_COMMIT('-Am', 'lc-backup $(date -u +%Y-%m-%dT%H:%M:%SZ)')" 2>&1)" \
         || case "$out" in *"nothing to commit"*) ;; *) echo "lc-backup: commit failed: $out" >&2; return 1 ;; esac
     work="$SPIRA_RUN/lc-backup/$db"; stage="$work/stage"
@@ -142,7 +139,7 @@ _lcb_run_db_locked() {
     stamp="$(date -u +%Y%m%dT%H%M%SZ)"
     key="$prefix$db/$stamp.tar.$ext"
     _lcb_upload "$tarball" "$key" || { echo "lc-backup: upload of $key failed" >&2; return 1; }
-    printf '%s %s %s\n' "$(date +%s)" "$head" "$(_lcb_plan_watermark)" > "$(_lcb_stamp "$db").tmp" && mv "$(_lcb_stamp "$db").tmp" "$(_lcb_stamp "$db")"
+    printf '%s %s %s\n' "$(date +%s)" "$head" "$wm" > "$(_lcb_stamp "$db").tmp" && mv "$(_lcb_stamp "$db").tmp" "$(_lcb_stamp "$db")"
     echo "lc-backup: uploaded $db at $head as $key to $SPIRA_LC_BACKUP_URL"
 }
 

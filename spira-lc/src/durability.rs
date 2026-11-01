@@ -77,7 +77,10 @@ pub fn tick(s: &mut Shipping, was_red: bool, metrics: &MetricsSink, clock: &dyn 
         }
         Err(e) => {
             eprintln!("spira-lc serve: ship: {e}");
-            return was_red;
+            s.shipper.lag_ms().unwrap_or_else(|e| {
+                eprintln!("spira-lc serve: ship: {e}");
+                None
+            })
         }
     };
     let age = oldest.unwrap_or(0) as f64 / 1_000.0;
@@ -202,7 +205,7 @@ mod tests {
         let (rc, out) = admin_drill(&s(&["--scratch", &scratch]), || Ok(run));
         assert_eq!(rc, 0, "{out}");
         assert!(out.starts_with("drill ok: snapshot at 0, restored through 6, 6 keys compared"), "{out}");
-        assert!(out.contains("skew guard: after a restore: (1) restore bd"), "{out}");
+        assert!(out.contains("skew guard: after a restore: (0) move SPIRA_RUN/lc-ship aside"), "{out}");
         drop(sh);
         let (rc, out) = admin_drill(&s(&["--scratch", &scratch]), || Err("no run dir".into()));
         assert_eq!(rc, CANNOT_TELL, "{out}");
@@ -235,6 +238,6 @@ mod tests {
         assert!(red);
         let log = std::fs::read_to_string(dir.path().join(ALARM_LOG)).unwrap();
         assert_eq!(log.lines().count(), 1, "{log}");
-        assert!(log.contains("lc-ship: RED: the oldest unshipped control-store object has waited 11s, past 10s"), "{log}");
+        assert!(log.contains("lc-ship: RED: the oldest unshipped control-store revision has waited 11s, past 10s"), "{log}");
     }
 }

@@ -666,3 +666,100 @@ fn local_copies_keep_two_snapshots_and_the_runs_after_the_older_and_still_drill(
         drill::drill(s.dir(), &dir.path().join("scratch"), Exclusions::CONTRACT).unwrap();
     assert!(rep.passed(), "{}", drill::render(&rep));
 }
+
+#[test]
+fn a_snapshot_that_changed_after_it_was_staged_is_refused_by_the_drill() {
+    let dir = TempDir::new("drill-snapshot-sum");
+    let clock = VirtualClock::new(1_000);
+    let (_c, s) = shipped_store(dir.path(), &clock);
+    let (rev, snap) = drill::newest_snapshot(s.dir()).unwrap();
+    let mut bytes = std::fs::read(&snap).unwrap();
+    let at = bytes.len() / 2;
+    bytes[at] ^= 1;
+    std::fs::write(&snap, bytes).unwrap();
+    let err = drill::drill(s.dir(), &dir.path().join("scratch"), Exclusions::CONTRACT).unwrap_err();
+    assert!(
+        err.starts_with(&format!(
+            "snapshot {} changed since it was staged",
+            revlog::snapshot_name(rev)
+        )),
+        "{err}"
+    );
+}
+
+#[test]
+fn an_idle_store_takes_no_second_snapshot_at_the_same_revision_and_another_history_is_refused() {
+    let dir = TempDir::new("ship-idle");
+    let clock = VirtualClock::new(1_000);
+    let c = suite::open(open(&dir.path().join("live.db")), &clock);
+    put(&c, "k", Object::new(json!(1)), "1");
+    let mut s = Shipper::open(
+        c.backend().clone(),
+        ship_cfg(dir.path(), 0),
+        file_put(&dir.path().join("off")),
+        Arc::new(clock.clone()),
+    )
+    .unwrap();
+    assert!(s.tick().unwrap().snapshot.is_some());
+    clock.advance(1_000);
+    let idle = s.tick().unwrap();
+    assert_eq!((idle.snapshot, idle.uploaded.len()), (None, 0), "{idle:?}");
+    assert_eq!(
+        std::fs::read_dir(dir.path().join("off").join(SNAPSHOT))
+            .unwrap()
+            .count(),
+        1
+    );
+    put(&c, "k", Object::new(json!(2)), "2");
+    assert!(s.tick().unwrap().snapshot.is_some());
+
+    let other = open(&dir.path().join("restored.db"));
+    let err = Shipper::open(
+        other,
+        ship_cfg(dir.path(), 0),
+        file_put(&dir.path().join("off")),
+        Arc::new(clock.clone()),
+    )
+    .err()
+    .unwrap();
+    assert!(
+        err.contains("the store's head 0 is behind revision 2") && err.contains("move it aside"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_ttl_d_key_deleted_by_an_audited_write_but_still_restored_missing_is_a_mismatch_not_ttl_swept()
+{
+    let dir = TempDir::new("drill-ttl-narrow");
+    let clock = VirtualClock::new(1_000);
+    let (c, s) = shipped_store(dir.path(), &clock);
+    let (out, base, runs) = restored_copy(dir.path(), &s);
+    let b = open(&out);
+    let head = b.head().unwrap();
+    let prev = b.get("intents/claim/sp-1", head).unwrap().unwrap().mod_rev;
+    b.commit(
+        head,
+        &[Write::Delete {
+            key: "intents/claim/sp-1".into(),
+            prev,
+        }],
+    )
+    .unwrap();
+    drop(b);
+    let restored = open(&out);
+    let rep = drill::fold_compare(&open(&base), &runs, &restored, Exclusions::CONTRACT).unwrap();
+    assert!(
+        rep.mismatches.contains(&Mismatch::Missing {
+            key: "intents/claim/sp-1".into()
+        }),
+        "{}",
+        drill::render(&rep)
+    );
+    assert!(
+        rep.ttl_swept.contains("intents/claim/sp-2"),
+        "{}",
+        drill::render(&rep)
+    );
+    drop(c);
+}

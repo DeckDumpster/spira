@@ -85,6 +85,11 @@ pub fn run(args: &[String]) -> i32 {
             match shipper {
                 Ok(None) => {
                     eprintln!("spira-lc serve: SPIRA_LC_BACKUP_URL is empty: the control store is not shipped off-box");
+                    // A floor left by an earlier shipper would pin compaction for good.
+                    if let Err(e) = store.contract().backend().clear_compaction_floor() {
+                        eprintln!("spira-lc serve: the control store's compaction floor: {e}");
+                        return 2;
+                    }
                     None
                 }
                 Ok(Some(s)) => Some(s),

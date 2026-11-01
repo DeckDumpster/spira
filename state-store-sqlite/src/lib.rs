@@ -610,6 +610,16 @@ impl SqliteBackend {
         set_meta(&lock(&self.0.writer).conn, "floor", rev)
     }
 
+    /// Lifts the floor: compaction may drop any revision again.
+    pub fn clear_compaction_floor(&self) -> Result<()> {
+        exec(
+            &lock(&self.0.writer).conn,
+            "DELETE FROM meta WHERE name = 'floor'",
+            [],
+        )
+        .map(drop)
+    }
+
     pub fn compacted(&self) -> Result<u64> {
         Ok(meta(&lock(&self.0.writer).conn, "compacted")?.unwrap_or(0))
     }
