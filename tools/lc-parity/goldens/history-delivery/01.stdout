@@ -1,0 +1,30 @@
+[
+  {
+    "seq": "18",
+    "machine": "delivery",
+    "lc_key": "sp-delivering",
+    "event": "Enqueued",
+    "expect": "NONE",
+    "from_state": "NONE",
+    "to_state": "QUEUED",
+    "applied": "1",
+    "refusal": null,
+    "evidence": "null",
+    "actor": "test",
+    "at": "1767225600"
+  },
+  {
+    "seq": "21",
+    "machine": "delivery",
+    "lc_key": "sp-delivering",
+    "event": "Cut",
+    "expect": "QUEUED",
+    "from_state": "QUEUED",
+    "to_state": "BATCHED",
+    "applied": "1",
+    "refusal": null,
+    "evidence": "{\"Cut\":{\"batch_id\":\"b-open\"}}",
+    "actor": "test",
+    "at": "1767225600"
+  }
+]

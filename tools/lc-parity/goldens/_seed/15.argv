@@ -1,0 +1,11 @@
+event
+bead
+sp-certified2
+--expect
+WORKING
+--version
+1
+--actor
+test
+--kind
+{"Submit":{"tip":"3333333333333333333333333333333333333333"}}

@@ -1,0 +1,11 @@
+event
+bead
+sp-landed
+--expect
+READY
+--version
+0
+--actor
+test
+--kind
+{"Claim":{"holder":"dwarf-1","lease_until":1767229200}}

@@ -1,0 +1,10 @@
+abandon-batch
+b-open
+--expect
+OPEN
+--version
+1
+--actor
+test
+--reason
+stopped

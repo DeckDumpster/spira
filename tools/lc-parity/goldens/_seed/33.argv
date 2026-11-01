@@ -1,0 +1,11 @@
+event
+bead
+sp-landed
+--expect
+WORKING
+--version
+1
+--actor
+test
+--kind
+{"Submit":{"tip":"6666666666666666666666666666666666666666"}}

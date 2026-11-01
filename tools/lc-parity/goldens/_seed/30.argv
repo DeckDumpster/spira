@@ -1,0 +1,12 @@
+cut
+b-open
+--repo
+spira
+--head
+H1
+--base
+B1
+--members
+sp-delivering:5555555555555555555555555555555555555555
+--actor
+test

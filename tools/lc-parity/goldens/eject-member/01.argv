@@ -1,0 +1,12 @@
+eject-member
+b-open
+--bead-id
+sp-delivering
+--expect
+OPEN
+--version
+1
+--actor
+test
+--reason
+red
