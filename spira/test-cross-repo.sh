@@ -213,6 +213,10 @@ dwarf_out="$(cat "$TMP/dwarf.out" 2>/dev/null)"
 want "log says works repo:second" "repo:second" "$dwarf_out"
 want "log shows the second repo path" "$SECOND_REPO" "$dwarf_out"
 nowant "log does not say it used the home repo" "works repo:home" "$dwarf_out"
+# NO CALL JITTER IN SUITES (sp-qo8b1r): the complete fixture declares call_jitter = 0, so a
+# suite-launched dwarf starts its session at once. dwarf logs "call jitter <N>s" to stdout
+# whenever it sleeps one, so the line's absence is the proof the fixture value reached it.
+nowant "the suite's dwarf slept no call jitter" "call jitter" "$dwarf_out"
 
 echo
 tl_summary
