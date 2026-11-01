@@ -68,7 +68,11 @@ pub fn orphans(p: &Ports, repo: &str) -> Result<Vec<Orphan>, String> {
         };
         let d = &i.value.data;
         // A state no reader can name is not re-driven: that might re-drive a terminal round.
-        if d.get("state").and_then(|s| s.as_str()).and_then(runner_drives) != Some(true) {
+        if d.get("state")
+            .and_then(|s| s.as_str())
+            .and_then(runner_drives)
+            != Some(true)
+        {
             continue;
         }
         let Some(expired) = d.get(lease::LAST_TOKEN_FIELD).and_then(lease::token_of) else {

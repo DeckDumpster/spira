@@ -192,13 +192,11 @@ impl FakeVerbs {
         batch: Option<&str>,
     ) -> Option<Result<Fields, VerbRefusal>> {
         let mut answers = crate::lock(&self.answers);
-        let found = answers
-            .iter()
-            .position(|a| {
-                a.verb == verb
-                    && a.repo.as_deref().is_none_or(|r| r == repo)
-                    && a.batch.as_deref().is_none_or(|b| Some(b) == batch)
-            });
+        let found = answers.iter().position(|a| {
+            a.verb == verb
+                && a.repo.as_deref().is_none_or(|r| r == repo)
+                && a.batch.as_deref().is_none_or(|b| Some(b) == batch)
+        });
         let a = found.map(|i| answers.remove(i));
         let call = Call {
             verb,
@@ -618,13 +616,23 @@ mod tests {
         put(
             &*store,
             "batches/r/k1",
-            Txn::new().put("batches/r/k1", Object::new(serde_json::json!({ "head": "k1-h" }))),
+            Txn::new().put(
+                "batches/r/k1",
+                Object::new(serde_json::json!({ "head": "k1-h" })),
+            ),
         );
         assert_eq!(v.land("r", "k1", Some("3-0")).unwrap().said, "");
         use crate::ports::Git;
         assert_eq!(git.landing_sha("r").unwrap(), "k1-h");
         assert_eq!(v.land("r", "c1", None).unwrap_err().text, "stacked on k1");
-        assert_eq!(git.landing_sha("r").unwrap(), "k1-h", "a refused land moves nothing");
-        assert!(v.land("r", "k1", None).is_err(), "each answer is taken once");
+        assert_eq!(
+            git.landing_sha("r").unwrap(),
+            "k1-h",
+            "a refused land moves nothing"
+        );
+        assert!(
+            v.land("r", "k1", None).is_err(),
+            "each answer is taken once"
+        );
     }
 }

@@ -4,11 +4,11 @@ use state_store::{Object, Txn};
 use super::*;
 use crate::outcome::Kind;
 use crate::ports::Fields;
-use runtime::ports::Clock;
 use crate::sim::bench::Bench;
 use crate::sim::git::GitSeed;
 use crate::sim::verbs::{Refuse, VerbScript};
 use crate::sim::{FakeVerbs, FakeVm};
+use runtime::ports::Clock;
 
 fn ok(verb: &str, batch: &str) -> VerbScript {
     VerbScript {
@@ -85,7 +85,10 @@ fn state(b: &Bench, id: &str) -> BatchState {
 }
 
 fn landing_ref(b: &Bench) -> String {
-    stack::lane(&b.ports(), "lane").unwrap().unwrap().landing_ref
+    stack::lane(&b.ports(), "lane")
+        .unwrap()
+        .unwrap()
+        .landing_ref
 }
 
 fn status(b: &Bench, id: &str) -> Option<Status> {
@@ -110,7 +113,11 @@ fn a_green_round_on_the_ref_lands_in_one_txn_that_moves_the_lanes_landing_ref() 
     assert_eq!(landing_ref(&b), "k1-h");
     let rec = b.store.get("batches/lane/k1").unwrap().unwrap().value.data;
     assert_eq!(
-        (rec["reason"].as_str(), rec["worktree"].as_str(), rec["version"].as_u64()),
+        (
+            rec["reason"].as_str(),
+            rec["worktree"].as_str(),
+            rec["version"].as_u64()
+        ),
         (Some("k1-h"), Some("/wt"), Some(4)),
         "the landing is FastForward on the lifecycle row, and the record keeps its own fields"
     );
@@ -137,7 +144,12 @@ fn a_head_already_on_the_ref_is_recorded_from_git_and_no_land_is_called() {
     let got = land(&b.ports(), "lane").unwrap();
     assert_eq!(
         got,
-        [("k1".into(), Landing::FastForward { at: "base-0".into() })]
+        [(
+            "k1".into(),
+            Landing::FastForward {
+                at: "base-0".into()
+            }
+        )]
     );
     assert_eq!(lands(&b), 0);
     assert_eq!(state(&b, "k1"), BatchState::Landed);
@@ -148,7 +160,12 @@ fn a_head_already_on_the_ref_is_recorded_from_git_and_no_land_is_called() {
 #[test]
 fn a_round_that_is_not_green_is_never_landed_and_a_repo_with_no_lane_is_left_alone() {
     let b = bench(vec![]);
-    for (id, s) in [("o", "Open"), ("c", "CiRunning"), ("a", "Attributing"), ("l", "Landing")] {
+    for (id, s) in [
+        ("o", "Open"),
+        ("c", "CiRunning"),
+        ("a", "Attributing"),
+        ("l", "Landing"),
+    ] {
         round(&b, id, s, &format!("{id}-h"), "base-0", None);
     }
     assert_eq!(land(&b.ports(), "lane").unwrap(), []);
@@ -177,8 +194,15 @@ fn a_round_stacked_on_a_live_round_is_held_from_the_store_without_a_call_until_i
     );
     assert_eq!(state(&b, "k2"), BatchState::Green, "held, never abandoned");
 
-    assert_eq!(land(&b.ports(), "lane").unwrap(), [("k2".into(), Landing::Unchanged)]);
-    assert_eq!(b.log.outcomes().len(), 1, "an unchanged hold is not told again");
+    assert_eq!(
+        land(&b.ports(), "lane").unwrap(),
+        [("k2".into(), Landing::Unchanged)]
+    );
+    assert_eq!(
+        b.log.outcomes().len(),
+        1,
+        "an unchanged hold is not told again"
+    );
 
     let mut k1 = b.store.get("batches/lane/k1").unwrap().unwrap().value.data;
     k1["state"] = json!("Landed");
@@ -213,7 +237,11 @@ fn a_parent_and_its_child_land_in_one_pass_lowest_first() {
 
 #[test]
 fn a_refusal_is_classified_by_its_first_word_and_a_held_round_is_retried_only_on_a_changed_input() {
-    let b = bench(vec![refuse("k1", Some(1), "refused: the gate is red at k1-h\n")]);
+    let b = bench(vec![refuse(
+        "k1",
+        Some(1),
+        "refused: the gate is red at k1-h\n",
+    )]);
     round(&b, "k1", "Green", "k1-h", "base-0", None);
     let refused = Blocker::Refused {
         text: "refused: the gate is red at k1-h".into(),
@@ -223,9 +251,16 @@ fn a_refusal_is_classified_by_its_first_word_and_a_held_round_is_retried_only_on
         [("k1".into(), Landing::Held(refused.clone()))]
     );
     for _ in 0..3 {
-        assert_eq!(land(&b.ports(), "lane").unwrap(), [("k1".into(), Landing::Unchanged)]);
+        assert_eq!(
+            land(&b.ports(), "lane").unwrap(),
+            [("k1".into(), Landing::Unchanged)]
+        );
     }
-    assert_eq!(lands(&b), 1, "no second call while nothing it was refused on changed");
+    assert_eq!(
+        lands(&b),
+        1,
+        "no second call while nothing it was refused on changed"
+    );
     assert_eq!(state(&b, "k1"), BatchState::Green);
 
     put(
@@ -264,7 +299,11 @@ fn a_changed_input_retries_a_held_round_and_its_first_green_sighting_is_kept() {
     );
     let s = status(&b, "k1").unwrap();
     assert_eq!(
-        (s.green_seen_ms, s.inputs.parent.as_deref(), s.inputs.parent_state),
+        (
+            s.green_seen_ms,
+            s.inputs.parent.as_deref(),
+            s.inputs.parent_state
+        ),
         (seen, Some("gone"), None)
     );
     assert_eq!(lands(&b), 2);
@@ -273,7 +312,11 @@ fn a_changed_input_retries_a_held_round_and_its_first_green_sighting_is_kept() {
 #[test]
 fn a_stacked_refusal_holds_naming_the_parent_and_an_unknown_word_holds_as_refused() {
     let b = bench(vec![
-        refuse("k1", Some(1), "stacked on round k0, which has not landed"),
+        refuse(
+            "k1",
+            Some(1),
+            "stacked: round k1 is on round k0, which has not landed",
+        ),
         refuse("k2", Some(1), "the queue lock is busy"),
     ]);
     round(&b, "k1", "Green", "k1-h", "base-0", Some("k0"));
@@ -305,7 +348,11 @@ fn a_stacked_refusal_holds_naming_the_parent_and_an_unknown_word_holds_as_refuse
 #[test]
 fn base_moved_supersedes_the_round_through_the_verb_and_never_abandons_it() {
     let b = bench(vec![
-        refuse("k1", Some(1), "base-moved: local/main is at base-1, not base-0"),
+        refuse(
+            "k1",
+            Some(1),
+            "base-moved: local/main is at base-1, not base-0",
+        ),
         ok("supersede", "k1"),
     ]);
     round(&b, "k1", "Green", "k1-h", "base-0", None);
@@ -328,7 +375,11 @@ fn base_moved_supersedes_the_round_through_the_verb_and_never_abandons_it() {
 
 #[test]
 fn a_deploy_fault_is_distinct_from_a_land_failure_landed_when_the_ref_moved_held_when_it_did_not() {
-    let b = bench(vec![refuse("k1", Some(DEPLOY_FAULT_EXIT), "activate failed\n")]);
+    let b = bench(vec![refuse(
+        "k1",
+        Some(DEPLOY_FAULT_EXIT),
+        "activate failed\n",
+    )]);
     round(&b, "k1", "Green", "k1-h", "base-0", None);
     let fault = Blocker::DeployFault {
         why: "activate failed".into(),
@@ -340,7 +391,11 @@ fn a_deploy_fault_is_distinct_from_a_land_failure_landed_when_the_ref_moved_held
     );
     assert_eq!(state(&b, "k1"), BatchState::Green);
 
-    let b = bench(vec![refuse("k2", Some(DEPLOY_FAULT_EXIT), "activate failed")]);
+    let b = bench(vec![refuse(
+        "k2",
+        Some(DEPLOY_FAULT_EXIT),
+        "activate failed",
+    )]);
     round(&b, "k2", "Green", "k2-h", "base-0", None);
     let p = b.ports();
     // The queue pushed before its activation faulted.
@@ -372,7 +427,12 @@ fn a_deploy_fault_is_distinct_from_a_land_failure_landed_when_the_ref_moved_held
             self.0.git.advance(repo, "k2-h");
             self.0.verbs.land(repo, batch, t)
         }
-        fn abandon(&self, repo: &str, batch: &str, why: &str) -> Result<crate::ports::Done, VerbRefusal> {
+        fn abandon(
+            &self,
+            repo: &str,
+            batch: &str,
+            why: &str,
+        ) -> Result<crate::ports::Done, VerbRefusal> {
             self.0.verbs.abandon(repo, batch, why)
         }
         fn pass_start(&self, repo: &str, batch: &str) -> Result<crate::ports::Done, VerbRefusal> {
@@ -426,7 +486,10 @@ fn a_round_leased_by_another_holder_is_left_to_them_and_an_unreadable_git_lands_
     let b = bench(vec![]);
     round(&b, "k1", "Green", "k1-h", "base-0", None);
     let theirs = acquire(&b.ports(), &Resource::round("lane", "k1"), "runner").unwrap();
-    assert_eq!(land(&b.ports(), "lane").unwrap(), [("k1".into(), Landing::Leased)]);
+    assert_eq!(
+        land(&b.ports(), "lane").unwrap(),
+        [("k1".into(), Landing::Leased)]
+    );
     theirs.release(&b.ports()).unwrap();
 
     b.git.break_repo("lane", "index.lock exists");
@@ -475,12 +538,18 @@ fn a_landed_value_is_the_fast_forward_of_a_green_row_and_a_landed_one_stays_land
     let mut v = json!({ "batch_id": "k1", "repo": "lane", "state": "Green", "head": "h", "pass": 1,
                         "version": 2, "extra": 1 });
     landed_value(&mut v, "h").unwrap();
-    assert_eq!((v["state"].as_str(), v["extra"].as_u64()), (Some("Landed"), Some(1)));
+    assert_eq!(
+        (v["state"].as_str(), v["extra"].as_u64()),
+        (Some("Landed"), Some(1))
+    );
     let again = v.clone();
     landed_value(&mut v, "h").unwrap();
     assert_eq!(v, again);
-    let mut open = json!({ "batch_id": "k1", "repo": "lane", "state": "Open", "pass": 1, "version": 2 });
-    assert!(landed_value(&mut open, "h").unwrap_err().contains("FastForward refused"));
+    let mut open =
+        json!({ "batch_id": "k1", "repo": "lane", "state": "Open", "pass": 1, "version": 2 });
+    assert!(landed_value(&mut open, "h")
+        .unwrap_err()
+        .contains("FastForward refused"));
     assert!(landed_value(&mut json!(3), "h").is_err());
 }
 

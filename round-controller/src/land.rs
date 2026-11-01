@@ -84,9 +84,13 @@ pub fn git_key(repo: &str) -> String {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Landing {
     /// `land` returned `Ok` and the landing ref is now `at`.
-    Landed { at: String },
+    Landed {
+        at: String,
+    },
     /// The landing ref already held the head; nothing was pushed.
-    FastForward { at: String },
+    FastForward {
+        at: String,
+    },
     Held(Blocker),
     /// Held, and no input to its refusal has changed: nothing called, nothing written.
     Unchanged,
@@ -179,11 +183,17 @@ fn read_status(p: &Ports, key: &str) -> Result<Option<Status>, Refusal> {
 /// on has changed.
 fn one(p: &Ports, repo: &str, batch: &str, parent: Option<&str>) -> Result<Landing, Refusal> {
     let key = round_key(repo, batch);
-    let Some(view) = RoundView::read(p.store, repo, batch).map_err(|e| Refusal::unreadable(&key, e))?
+    let Some(view) =
+        RoundView::read(p.store, repo, batch).map_err(|e| Refusal::unreadable(&key, e))?
     else {
         return Ok(Landing::NotGreen);
     };
-    let Some(head) = view.round.row.head.clone().filter(|_| view.round.row.state == BatchState::Green)
+    let Some(head) = view
+        .round
+        .row
+        .head
+        .clone()
+        .filter(|_| view.round.row.state == BatchState::Green)
     else {
         return Ok(Landing::NotGreen);
     };
@@ -277,7 +287,7 @@ impl Held<'_> {
         let token = lease::token_word(self.lease.token());
         match p.verbs.land(repo, self.batch, Some(&token)) {
             Ok(_) => {
-                let at = p.git.landing_sha(repo).unwrap_or_else(|_| head.to_string());
+                let at = self.ref_after(head);
                 self.record_landed(head, &at, None)?;
                 p.log.write(&Outcome::landing(
                     p.clock.now_ms(),
@@ -305,16 +315,18 @@ impl Held<'_> {
                 why: r.text.trim().to_string(),
             };
             return match p.git.landed(repo, head) {
+                Err(e) => Err(Refusal::unreadable(&git_key(repo), e)),
                 Ok(true) => {
-                    let at = p.git.landing_sha(repo).unwrap_or_else(|_| head.to_string());
+                    let at = self.ref_after(head);
                     self.record_landed(head, &at, Some(&why))?;
                     self.log_held(&why);
                     Ok(Landing::Landed { at })
                 }
-                _ => self.hold(why),
+                Ok(false) => self.hold(why),
             };
         }
-        match r.text.split_whitespace().next().unwrap_or("") {
+        let word = r.text.split_whitespace().next().unwrap_or("");
+        match word.trim_end_matches(':') {
             "stacked" => {
                 let parent = parent_of(p, repo, self.inputs.parent.as_deref())?;
                 let parent_leased = match &parent {
@@ -336,14 +348,26 @@ impl Held<'_> {
                     Verb::Supersede,
                     &s,
                 ));
-                s.map(|_| Landing::Superseded).map_err(|refusal| Refusal::Verb {
-                    batch: Some(batch.into()),
-                    refusal,
-                })
+                s.map(|_| Landing::Superseded)
+                    .map_err(|refusal| Refusal::Verb {
+                        batch: Some(batch.into()),
+                        refusal,
+                    })
             }
+            // `refused`, and any word the Lander does not know, holds the round as it is.
             _ => self.hold(Blocker::Refused {
                 text: r.text.trim().to_string(),
             }),
+        }
+    }
+
+    /// The landing ref after a landing of `head`: git's, when git already shows `head` under it,
+    /// else `head`, so a stale read never moves the lane behind what landed.
+    fn ref_after(&self, head: &str) -> String {
+        let (git, repo) = (self.p.git, self.repo);
+        match (git.landed(repo, head), git.landing_sha(repo)) {
+            (Ok(true), Ok(sha)) => sha,
+            _ => head.to_string(),
         }
     }
 
@@ -401,7 +425,11 @@ impl Held<'_> {
     fn record_landed(&self, head: &str, at: &str, kept: Option<&Blocker>) -> Result<(), Refusal> {
         const TRIES: usize = 3;
         let (p, repo, batch) = (self.p, self.repo, self.batch);
-        let (rkey, lkey, skey) = (round_key(repo, batch), lane_key(repo), status_key(repo, batch));
+        let (rkey, lkey, skey) = (
+            round_key(repo, batch),
+            lane_key(repo),
+            status_key(repo, batch),
+        );
         for _ in 0..TRIES {
             let round = p
                 .store
@@ -440,6 +468,15 @@ impl Held<'_> {
                 .map_err(|e| Refusal::unreadable(&rkey, e))?;
             if r.succeeded {
                 return Ok(());
+            }
+            let ours = holder_of(p, self.lease.resource())
+                .map_err(|e| Refusal::unreadable(&rkey, e))?
+                .is_some_and(|h| h.token == self.lease.token());
+            if !ours {
+                return Err(Refusal::unreadable(
+                    &rkey,
+                    "the Lander's lease lapsed before the landing was recorded",
+                ));
             }
         }
         Err(Refusal::unreadable(

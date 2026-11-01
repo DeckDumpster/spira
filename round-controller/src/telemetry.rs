@@ -115,7 +115,10 @@ mod tests {
     fn a_landing_pushes_its_dwell_by_repo_and_every_outcome_reaches_the_inner_log() {
         let mem = crate::outcome::MemLog::default();
         let ((), got) = fixture::capture(|s| {
-            let log = DwellLog { sink: s, inner: &mem };
+            let log = DwellLog {
+                sink: s,
+                inner: &mem,
+            };
             log.write(&Outcome::landing(0, "lane", "k1", 90_000));
             log.write(&Outcome::visited(0, "lane"));
         });

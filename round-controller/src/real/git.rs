@@ -9,7 +9,7 @@ use runtime::ports::{Proc, ProcSpec};
 use crate::ports::Git;
 
 /// A read of a local ref takes milliseconds; this bounds a wedged filesystem.
-const GIT_DEADLINE: Duration = Duration::from_secs(30);
+const GIT_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Where `repo` lives and its landing ref's name, as the registry resolves them.
 pub type Locate = dyn Fn(&str) -> Option<(String, String)> + Send + Sync;
@@ -131,7 +131,10 @@ mod tests {
         ]);
         assert_eq!(g.landed("lane", "h1"), Ok(true));
         assert_eq!(g.landed("lane", "h2"), Ok(false));
-        assert!(g.landed("lane", "h9").unwrap_err().contains("bad object h9"));
+        assert!(g
+            .landed("lane", "h9")
+            .unwrap_err()
+            .contains("bad object h9"));
         assert_eq!(g.landed("lane", "h3").unwrap_err(), "spawn failed");
         assert_eq!(
             p.1.lock().unwrap()[0].args,

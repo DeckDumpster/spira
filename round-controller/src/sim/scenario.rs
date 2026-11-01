@@ -1122,8 +1122,10 @@ fn rounds_in(b: &Bench, word: &str) -> u64 {
         .iter()
         .filter(|i| i.key.matches('/').count() == 2)
         .filter_map(|i| {
-            serde_json::from_value::<lifecycle::batch::BatchState>(i.value.data.get("state")?.clone())
-                .ok()
+            serde_json::from_value::<lifecycle::batch::BatchState>(
+                i.value.data.get("state")?.clone(),
+            )
+            .ok()
         })
         .filter(|s| s.as_str() == word)
         .count() as u64

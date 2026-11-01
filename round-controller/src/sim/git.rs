@@ -101,9 +101,15 @@ mod tests {
             history: vec!["h0".into()],
         });
         assert_eq!(g.landing_sha("r").unwrap(), "h1");
-        assert_eq!((g.landed("r", "h0"), g.landed("r", "h2")), (Ok(true), Ok(false)));
+        assert_eq!(
+            (g.landed("r", "h0"), g.landed("r", "h2")),
+            (Ok(true), Ok(false))
+        );
         g.advance("r", "h2");
-        assert_eq!((g.landing_sha("r").unwrap(), g.landed("r", "h2")), ("h2".into(), Ok(true)));
+        assert_eq!(
+            (g.landing_sha("r").unwrap(), g.landed("r", "h2")),
+            ("h2".into(), Ok(true))
+        );
         assert!(g.landed("other", "h1").unwrap_err().contains("other"));
         g.break_repo("r", "index.lock exists");
         assert_eq!(g.landing_sha("r").unwrap_err(), "index.lock exists");

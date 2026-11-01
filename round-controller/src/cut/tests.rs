@@ -690,7 +690,7 @@ fn supersede_hands_the_verb_the_rounds_lease_token_and_a_refusal_stops_the_step(
         VerbScript {
             verb: "supersede".into(),
             repo: None,
-        batch: None,
+            batch: None,
             ok: None,
             refuse: Some(Refuse {
                 code: Some(1),
