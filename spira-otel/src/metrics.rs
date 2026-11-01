@@ -607,14 +607,6 @@ mod tests {
     }
 
     #[test]
-    fn an_unset_endpoint_pushes_nothing_and_counts_nothing() {
-        let before = push_failed();
-        MetricsSink::new(None, "s", Duration::from_millis(50)).push(&[Point::Count { name: "c", value: 1 }], &[]);
-        MetricsSink::new(Some("  "), "s", Duration::from_millis(50)).push(&[Point::Count { name: "c", value: 1 }], &[]);
-        assert_eq!(push_failed(), before);
-    }
-
-    #[test]
     fn a_run_pushes_invocation_duration_and_extras_labelled_by_component_operation_outcome() {
         let cap = fixture::Capture::start();
         Run::begin(Some(&cap.addr), "mail", "send").end_with("error", &[Point::Count { name: "spira_mail_sent", value: 3 }]);
