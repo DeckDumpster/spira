@@ -7,6 +7,9 @@ use std::sync::Mutex;
 use runtime::ports::{Clock, Proc, Rng};
 use state_store::{Backend, Contract, Fence, Item, Request, Selector, Txn, TxnResult};
 
+use crate::death::{Units, Vms};
+use crate::liveness::LeaseSettings;
+use crate::orphans::Launch;
 use crate::outcome::Log;
 
 pub struct Ports<'a> {
@@ -16,6 +19,10 @@ pub struct Ports<'a> {
     pub store: &'a dyn Store,
     pub verbs: &'a dyn RoundVerbs,
     pub log: &'a dyn Log,
+    pub units: &'a dyn Units,
+    pub vms: &'a dyn Vms,
+    pub launcher: &'a dyn Launch,
+    pub leases: &'a LeaseSettings,
 }
 
 impl Ports<'_> {

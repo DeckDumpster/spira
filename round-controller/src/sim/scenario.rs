@@ -2,18 +2,21 @@
 //! the invariants every scenario is held to, and its counted expectations.
 
 use std::collections::BTreeMap;
-use std::sync::Mutex;
 
-use runtime::ports::{Proc, ProcOutput, ProcSpec, SeededRng, VirtualClock};
+use runtime::ports::Clock;
 use serde::Deserialize;
-use state_store::{Config, Contract, MemBackend, Object, Request};
+use state_store::{Object, Request, Selector};
 
+use crate::death::{UnitState, VmFact};
 use crate::ledger::summary_key;
-use crate::outcome::{utc_stamp, Kind, MemLog};
+use crate::liveness::LeaseSettings;
+use crate::outcome::{utc_stamp, Cause, Kind};
 use crate::pass::{pass, pass_with, Step};
 use crate::ports::{Ports, Verb};
 use crate::resources::PassIdentity;
+use crate::sim::bench::{bench_settings, Bench};
 use crate::sim::ledger::{self as sim_ledger, IdentitySpec, LedgerConfig, LedgerStep};
+use crate::sim::runner::{Runner, RunnerScript};
 use crate::sim::verbs::{Call, FakeVerbs, VerbScript};
 use crate::sim::vm::{FakeVm, VmScript};
 
@@ -95,6 +98,14 @@ pub enum Count {
     Keys(String),
     /// `summary:<identity>`: the attempts its summary counts, 0 with none.
     Summary(String),
+    /// Runner launches tried, started or not.
+    Launches,
+    /// Lease renewals the scripted runners made.
+    Renewals,
+    /// Attempts recorded under every `batches/<repo>/<id>/redrive`.
+    RedriveAttempts,
+    /// Seconds after the epoch of the first line about an orphan; `u64::MAX` when none was found.
+    FirstOrphanSecs,
 }
 
 impl Count {
@@ -116,6 +127,10 @@ impl Count {
                 .get(n)
                 .map(|id| Count::Keys(format!("{}/attempt/", summary_key(id)))),
             ("summary", Some(n)) => ids.get(n).map(|id| Count::Summary(summary_key(id))),
+            ("launches", None) => Some(Count::Launches),
+            ("renewals", None) => Some(Count::Renewals),
+            ("redrive-attempts", None) => Some(Count::RedriveAttempts),
+            ("first-orphan-secs", None) => Some(Count::FirstOrphanSecs),
             _ => None,
         }
     }
@@ -126,10 +141,122 @@ impl Count {
 pub struct ExpectDef {
     pub name: String,
     pub count: String,
-    pub equals: u64,
+    #[serde(default)]
+    pub equals: Option<u64>,
+    #[serde(default)]
+    pub at_most: Option<u64>,
     /// A positive control: this expectation must fail, naming itself.
     #[serde(default)]
     pub inverted: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Bound {
+    Equals(u64),
+    AtMost(u64),
+}
+
+impl Bound {
+    fn holds(self, got: u64) -> bool {
+        match self {
+            Bound::Equals(n) => got == n,
+            Bound::AtMost(n) => got <= n,
+        }
+    }
+
+    fn said(self) -> String {
+        match self {
+            Bound::Equals(n) => format!("{n}"),
+            Bound::AtMost(n) => format!("at most {n}"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeadlineSecs {
+    pub boot: u64,
+    pub build: u64,
+    pub suites: u64,
+    pub subpass: u64,
+    pub certify: u64,
+}
+
+/// The lease keys a scenario runs under, in seconds.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LeaseSpec {
+    pub ttl_secs: u64,
+    pub deadline_secs: DeadlineSecs,
+    pub pass_wall_max_secs: u64,
+    pub redrive_retries: u32,
+    pub ec2_max_lifetime_secs: u64,
+}
+
+impl LeaseSpec {
+    fn settings(&self) -> LeaseSettings {
+        let d = &self.deadline_secs;
+        LeaseSettings {
+            ttl_ms: self.ttl_secs * 1000,
+            deadlines_ms: [d.boot, d.build, d.suites, d.subpass, d.certify].map(|s| s * 1000),
+            pass_wall_max_ms: self.pass_wall_max_secs * 1000,
+            redrive_retries: self.redrive_retries,
+            ec2_max_lifetime_ms: self.ec2_max_lifetime_secs * 1000,
+        }
+    }
+}
+
+/// A unit's `is-active` state, or `unreadable`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnitSeed {
+    pub name: String,
+    pub state: String,
+}
+
+/// What round-vm says of a unit's VM: `none`, `running`, `unreadable`, or `ec2-unreadable` with
+/// `launched_at` in epoch seconds.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VmFactSeed {
+    pub unit: String,
+    pub fact: String,
+    #[serde(default)]
+    pub launched_at: Option<u64>,
+}
+
+impl VmFactSeed {
+    fn fact(&self) -> Result<VmFact, String> {
+        Ok(match (self.fact.as_str(), self.launched_at) {
+            ("none", None) => VmFact::NoVm,
+            ("running", None) => VmFact::Running {
+                vm: format!("vm-{}", self.unit),
+            },
+            ("unreadable", None) => VmFact::Unreadable {
+                why: "scripted".into(),
+            },
+            ("ec2-unreadable", Some(at)) => VmFact::Ec2Unreadable {
+                instance: format!("i-{}", self.unit),
+                launched_at_ms: at * 1000,
+            },
+            _ => {
+                return Err(format!(
+                    "vm_fact {}: {:?} takes launched_at only as ec2-unreadable, which needs it",
+                    self.unit, self.fact
+                ))
+            }
+        })
+    }
+}
+
+/// One launch's answer, in order: `ok = true`, or `refuse = "<why>"`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaunchScript {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub refuse: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -139,11 +266,21 @@ struct File {
     repos: Vec<String>,
     run: RunSpec,
     #[serde(default)]
+    lease: Option<LeaseSpec>,
+    #[serde(default)]
     store: Vec<StoreSeed>,
     #[serde(default)]
     verb: Vec<VerbScript>,
     #[serde(default)]
     vm: Vec<VmScript>,
+    #[serde(default)]
+    runner: Vec<RunnerScript>,
+    #[serde(default)]
+    unit: Vec<UnitSeed>,
+    #[serde(default)]
+    vm_fact: Vec<VmFactSeed>,
+    #[serde(default)]
+    launch: Vec<LaunchScript>,
     #[serde(default)]
     expect: Vec<ExpectDef>,
     #[serde(default)]
@@ -158,7 +295,7 @@ struct File {
 pub struct Expect {
     pub name: String,
     pub count: Count,
-    pub equals: u64,
+    pub bound: Bound,
     pub inverted: bool,
 }
 
@@ -167,9 +304,14 @@ pub struct Scenario {
     pub description: String,
     pub repos: Vec<String>,
     pub run: RunSpec,
+    pub leases: LeaseSettings,
     pub store: Vec<StoreSeed>,
     pub verbs: Vec<VerbScript>,
     pub vm: Vec<VmScript>,
+    pub runners: Vec<RunnerScript>,
+    pub units: Vec<(String, UnitState)>,
+    pub vm_facts: Vec<(String, VmFact)>,
+    pub launches: Vec<Result<(), String>>,
     pub expects: Vec<Expect>,
     pub ledger: Option<LedgerConfig>,
     pub identities: BTreeMap<String, PassIdentity>,
@@ -191,37 +333,67 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
                     e.name, e.count
                 )
             })?;
+            let bound = match (e.equals, e.at_most) {
+                (Some(n), None) => Bound::Equals(n),
+                (None, Some(n)) => Bound::AtMost(n),
+                _ => {
+                    return Err(format!(
+                        "scenario: expectation {} needs exactly one of equals and at_most",
+                        e.name
+                    ))
+                }
+            };
             Ok(Expect {
                 name: e.name,
                 count,
-                equals: e.equals,
+                bound,
                 inverted: e.inverted,
             })
+        })
+        .collect::<Result<_, String>>()?;
+    let units = f
+        .unit
+        .into_iter()
+        .map(|u| {
+            let s = match u.state.as_str() {
+                "unreadable" => UnitState::Unreadable("scripted".into()),
+                s => UnitState::from_is_active(s),
+            };
+            (u.name, s)
+        })
+        .collect();
+    let vm_facts = f
+        .vm_fact
+        .iter()
+        .map(|v| Ok((v.unit.clone(), v.fact()?)))
+        .collect::<Result<_, String>>()
+        .map_err(|e| format!("scenario: {e}"))?;
+    let launches = f
+        .launch
+        .into_iter()
+        .map(|l| match (l.ok, l.refuse) {
+            (true, None) => Ok(Ok(())),
+            (false, Some(r)) => Ok(Err(r)),
+            _ => Err("scenario: a launch is exactly one of ok = true and refuse".to_string()),
         })
         .collect::<Result<_, String>>()?;
     Ok(Scenario {
         description: f.description,
         repos: f.repos,
         run: f.run,
+        leases: f.lease.map_or_else(bench_settings, |l| l.settings()),
         store: f.store,
         verbs: f.verb,
         vm: f.vm,
+        runners: f.runner,
+        units,
+        vm_facts,
+        launches,
         expects,
         ledger: f.ledger,
         identities,
         ledger_steps: f.ledger_step,
     })
-}
-
-/// A scenario spawns no process: every effect has a port of its own.
-#[derive(Default)]
-struct NoProc(Mutex<Vec<String>>);
-
-impl Proc for NoProc {
-    fn run(&self, spec: &ProcSpec) -> Result<ProcOutput, String> {
-        crate::lock(&self.0).push(format!("spawned {}", spec.prog));
-        Err(format!("a scenario spawns no process: {}", spec.prog))
-    }
 }
 
 #[derive(Debug)]
@@ -251,15 +423,8 @@ type Pass<'a> = dyn Fn(&Ports, &[String]) + 'a;
 
 fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Report, String> {
     let at = &profile.name;
-    let clock = VirtualClock::new(sc.run.epoch * 1000);
-    let store = Contract::open(
-        MemBackend::new(),
-        state_store::Ports::virtual_clock(&clock),
-        Config {
-            min_lock_ttl_ms: 1000,
-        },
-    )
-    .expect("a fresh in-memory store opens");
+    let epoch_ms = sc.run.epoch * 1000;
+    let mut b = Bench::at(sc.leases.clone(), epoch_ms, seed);
     for (i, s) in sc.store.iter().enumerate() {
         let data = serde_json::to_value(&s.data).expect("a TOML value is JSON");
         let obj = Object::new(data);
@@ -267,7 +432,7 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
             Some(t) => obj.with_ttl(t),
             None => obj,
         };
-        store
+        b.store
             .create(
                 &s.key,
                 obj,
@@ -275,29 +440,45 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
             )
             .map_err(|e| format!("store seed {}: {e}", s.key))?;
     }
-    let seeded = store.head().expect("the in-memory store has a head");
-    let vm = FakeVm::new(sc.vm.clone(), profile.clone(), clock.clone());
-    let verbs = FakeVerbs::new(sc.verbs.clone(), vm.clone(), clock.clone())
+    for (u, s) in &sc.units {
+        b.units.set(u, s.clone());
+    }
+    for (u, f) in &sc.vm_facts {
+        b.vms.set(u, f.clone());
+    }
+    for l in &sc.launches {
+        b.launch.script(l.clone());
+    }
+    let mut runners = sc
+        .runners
+        .iter()
+        .map(|r| Runner::new(r.clone(), epoch_ms))
+        .collect::<Result<Vec<_>, String>>()
         .map_err(|e| format!("scenario: {e}"))?;
-    let (rng, log, proc_) = (
-        Mutex::new(SeededRng::new(seed)),
-        MemLog::default(),
-        NoProc::default(),
-    );
-    let ports = Ports {
-        clock: &clock,
-        proc_: &proc_,
-        rng: &rng,
-        store: &store,
-        verbs: &verbs,
-        log: &log,
-    };
+    let seeded = b.store.head().expect("the in-memory store has a head");
+    let vm = FakeVm::new(sc.vm.clone(), profile.clone(), b.clock.clone());
+    b.verbs = FakeVerbs::new(sc.verbs.clone(), vm.clone(), b.clock.clone())
+        .map_err(|e| format!("scenario: {e}"))?;
+    let b = b;
+    let ports = b.ports();
+    let gc = state_store::gc::Controller::new(&b.store);
+    let mut next = epoch_ms;
     let mut broken: Vec<String> = Vec::new();
     for i in 0..sc.run.passes {
         if i > 0 {
             let jitter = ports.next_u64() % (sc.run.jitter_secs * 1000 + 1);
-            clock.advance(sc.run.every_secs * 1000 + jitter);
+            next += sc.run.every_secs * 1000 + jitter;
         }
+        while let Some((r, t)) = runners
+            .iter_mut()
+            .filter_map(|r| r.next_ms().filter(|t| *t <= next).map(|t| (r, t)))
+            .min_by_key(|(_, t)| *t)
+        {
+            b.clock.advance_to(t);
+            r.act(&b, &ports);
+        }
+        b.clock.advance_to(next);
+        gc.tick(next).map_err(|e| format!("store gc: {e}"))?;
         go(&ports, &sc.repos);
         broken.extend(sim_ledger::run(
             &ports,
@@ -309,15 +490,17 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
         ));
     }
 
-    let now = runtime::ports::Clock::now_ms(&clock);
+    let now = b.clock.now_ms();
     for r in vm.runs().iter().filter(|r| r.ends <= now && !r.collected) {
         broken.push(format!("invariant every-pass-has-a-verdict violated under {at}: pass {} finished at {} with no recorded verdict", r.identity, utc_stamp(r.ends)));
     }
     let faults: Vec<String> = vm
         .faults()
         .into_iter()
-        .chain(verbs.faults())
-        .chain(crate::lock(&proc_.0).iter().cloned())
+        .chain(b.verbs.faults())
+        .chain(crate::lock(&b.proc_.0).iter().cloned())
+        .chain(b.launch.faults())
+        .chain(runners.iter().flat_map(|r| r.faults.clone()))
         .collect();
     if !faults.is_empty() {
         broken.push(format!(
@@ -326,8 +509,8 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
         ));
     }
 
-    let (outcomes, calls) = (log.outcomes(), verbs.calls());
-    let writes = store.head().expect("the in-memory store has a head") - seeded;
+    let (outcomes, calls) = (b.log.outcomes(), b.verbs.calls());
+    let writes = b.store.head().expect("the in-memory store has a head") - seeded;
     let mut controls = Vec::new();
     for e in &sc.expects {
         let got = match &e.count {
@@ -342,22 +525,34 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
             Count::StoreWrites => writes,
             Count::VmRuns => vm.runs().len() as u64,
             Count::LockHoldMs => calls.iter().map(|c| c.lock_hold_ms).max().unwrap_or(0),
-            Count::Keys(prefix) => store
-                .list(&[prefix.as_str()], &state_store::Selector::Everything)
+            Count::Keys(prefix) => b
+                .store
+                .list(&[prefix.as_str()], &Selector::Everything)
                 .expect("the in-memory store lists")
                 .0
                 .len() as u64,
-            Count::Summary(key) => store
+            Count::Summary(key) => b
+                .store
                 .get(key)
                 .expect("the in-memory store reads")
                 .and_then(|i| i.value.data.get("attempts").and_then(|a| a.as_u64()))
                 .unwrap_or(0),
+            Count::Launches => b.launch.launched().len() as u64,
+            Count::Renewals => runners.iter().map(|r| r.renewals).sum(),
+            Count::RedriveAttempts => redrive_attempts(&b),
+            Count::FirstOrphanSecs => outcomes
+                .iter()
+                .filter(|o| matches!(o.cause, Cause::Orphan { .. }))
+                .map(|o| (o.at - epoch_ms) / 1000)
+                .min()
+                .unwrap_or(u64::MAX),
         };
         let unmet = format!(
             "expectation {} unmet under {at}: counted {got}, expected {}",
-            e.name, e.equals
+            e.name,
+            e.bound.said()
         );
-        match (got == e.equals, e.inverted) {
+        match (e.bound.holds(got), e.inverted) {
             (true, false) => {}
             (false, false) => broken.push(unmet),
             (false, true) => controls.push(unmet),
@@ -373,6 +568,18 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
         calls,
         controls,
     })
+}
+
+fn redrive_attempts(b: &Bench) -> u64 {
+    let (items, _) = b
+        .store
+        .list(&["batches/"], &Selector::Everything)
+        .expect("the in-memory store lists");
+    items
+        .iter()
+        .filter(|i| i.key.ends_with("/redrive"))
+        .filter_map(|i| i.value.data.get("attempts")?.as_array().map(Vec::len))
+        .sum::<usize>() as u64
 }
 
 /// The scenario under every profile on one seed; every profile's
@@ -526,7 +733,7 @@ mod tests {
     }
 
     fn spawning(p: &Ports, _: &str) {
-        let _ = p.proc_.run(&ProcSpec {
+        let _ = p.proc_.run(&runtime::ports::ProcSpec {
             prog: "git".into(),
             args: vec![],
             stdin: vec![],
@@ -698,5 +905,165 @@ mod tests {
             (harness_seed(Some("9")), harness_seed(None)),
             (9, DEFAULT_SEED)
         );
+    }
+
+    const LEASE: &str = "[lease]\nttl_secs = 30\npass_wall_max_secs = 100\nredrive_retries = 1\nec2_max_lifetime_secs = 50\n[lease.deadline_secs]\nboot = 1\nbuild = 2\nsuites = 3\nsubpass = 4\ncertify = 5\n";
+
+    #[test]
+    fn the_lease_section_is_read_in_milliseconds_and_its_absence_is_the_benchs() {
+        let sc = parse(&format!("{BASE}{LEASE}")).unwrap();
+        assert_eq!(
+            sc.leases,
+            LeaseSettings {
+                ttl_ms: 30_000,
+                deadlines_ms: [1_000, 2_000, 3_000, 4_000, 5_000],
+                pass_wall_max_ms: 100_000,
+                redrive_retries: 1,
+                ec2_max_lifetime_ms: 50_000
+            }
+        );
+        assert_eq!(parse(BASE).unwrap().leases, bench_settings());
+        assert!(parse(&format!("{BASE}{}", LEASE.replace("boot", "bot")))
+            .unwrap_err()
+            .contains("bot"));
+    }
+
+    #[test]
+    fn an_expectation_takes_exactly_one_bound_and_at_most_is_named_when_unmet() {
+        for both in ["equals = 1\nat_most = 2\n", ""] {
+            let e = parse(&format!(
+                "{BASE}[[expect]]\nname = \"n\"\ncount = \"calls\"\n{both}"
+            ))
+            .unwrap_err();
+            assert!(
+                e.contains("expectation n needs exactly one of equals and at_most"),
+                "{e}"
+            );
+        }
+        let e = go("[[expect]]\nname = \"few\"\ncount = \"outcomes\"\nat_most = 3\n").unwrap_err();
+        assert!(
+            e.contains(
+                "expectation few unmet under reference-minimum: counted 4, expected at most 3"
+            ),
+            "{e}"
+        );
+        go("[[expect]]\nname = \"few\"\ncount = \"outcomes\"\nat_most = 4\n").unwrap();
+    }
+
+    #[test]
+    fn units_vm_facts_and_launches_are_scripted_and_a_malformed_one_is_named() {
+        let sc = parse(&format!(
+            "{BASE}[[unit]]\nname = \"u1\"\nstate = \"active\"\n[[unit]]\nname = \"u2\"\nstate = \"unreadable\"\n\
+             [[vm_fact]]\nunit = \"u1\"\nfact = \"none\"\n[[vm_fact]]\nunit = \"u2\"\nfact = \"running\"\n\
+             [[vm_fact]]\nunit = \"u3\"\nfact = \"unreadable\"\n[[vm_fact]]\nunit = \"u4\"\nfact = \"ec2-unreadable\"\nlaunched_at = 9\n\
+             [[launch]]\nok = true\n[[launch]]\nrefuse = \"no\"\n"
+        ))
+        .unwrap();
+        assert_eq!(
+            sc.units,
+            [
+                ("u1".to_string(), UnitState::Running("active".into())),
+                ("u2".to_string(), UnitState::Unreadable("scripted".into()))
+            ]
+        );
+        assert_eq!(sc.vm_facts[0].1, VmFact::NoVm);
+        assert!(matches!(sc.vm_facts[1].1, VmFact::Running { .. }));
+        assert!(matches!(sc.vm_facts[2].1, VmFact::Unreadable { .. }));
+        assert_eq!(
+            sc.vm_facts[3].1,
+            VmFact::Ec2Unreadable {
+                instance: "i-u4".into(),
+                launched_at_ms: 9_000
+            }
+        );
+        assert_eq!(sc.launches, [Ok(()), Err("no".to_string())]);
+        for bad in [
+            "fact = \"ec2-unreadable\"\n",
+            "fact = \"none\"\nlaunched_at = 1\n",
+            "fact = \"gone\"\n",
+        ] {
+            let e = parse(&format!("{BASE}[[vm_fact]]\nunit = \"u\"\n{bad}")).unwrap_err();
+            assert!(e.contains("vm_fact u:"), "{e}");
+        }
+        for bad in ["ok = true\nrefuse = \"x\"\n", "ok = false\n"] {
+            let e = parse(&format!("{BASE}[[launch]]\n{bad}")).unwrap_err();
+            assert!(e.contains("a launch is exactly one of"), "{e}");
+        }
+    }
+
+    const RUNNER: &str = "[[runner]]\nrepo = \"a\"\nbatch = \"b1\"\nphase = \"suites\"\nstart_secs = 0\nmarks_every_secs = 10\n";
+
+    #[test]
+    fn a_runner_with_no_phase_no_marks_or_no_batch_to_lease_is_named() {
+        let e = go(&RUNNER.replace("suites", "lint")).unwrap_err();
+        assert!(e.contains("runner b1: no phase \"lint\""), "{e}");
+        let e = go(&RUNNER.replace("= 10", "= 0")).unwrap_err();
+        assert!(e.contains("marks_every_secs must be above 0"), "{e}");
+        let e = go(RUNNER).unwrap_err();
+        assert!(
+            e.contains("invariant no-unscripted-fault violated under reference-minimum: runner b1 could not take its lease"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn a_runner_renews_through_the_library_and_a_lease_taken_from_it_tears_it_down() {
+        let seed = "[[store]]\nkey = \"batches/a/b1\"\ndata = { state = \"CI_RUNNING\" }\n";
+        let renewals =
+            |n: u64| format!("[[expect]]\nname = \"r\"\ncount = \"renewals\"\nequals = {n}\n");
+        // Two passes 30 s apart; the bench's TTL of 60 s renews every 20 s: at 20 s only.
+        go(&format!("{seed}{RUNNER}{}", renewals(1))).unwrap();
+        let sc = parse(&format!("{BASE}{seed}{RUNNER}{}", renewals(0))).unwrap();
+        // Once per pass: BASE has two repos, and a second steal in one pass would resend the
+        // first one's release request id, which the store answers from its cache.
+        let steal = |p: &Ports, repo: &str| {
+            let res = crate::lease::Resource::round("a", "b1");
+            if repo != "a" {
+                return;
+            }
+            if let Some(h) = crate::lease::holder_of(p, &res).unwrap() {
+                let f = state_store::Fence {
+                    resource: res.lock.clone(),
+                    token: h.token,
+                };
+                p.store
+                    .release(
+                        &f,
+                        &Request::new(&format!("steal-{}", p.clock.now_ms()), "t", "k"),
+                    )
+                    .unwrap();
+                crate::lease::acquire(p, &res, "thief").unwrap();
+            }
+        };
+        run_steps(
+            &sc,
+            &profile(),
+            1,
+            &[Step {
+                name: "steal",
+                run: steal,
+            }],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn the_orphan_counts_read_the_outcomes_and_the_redrive_records() {
+        let seed = "[[store]]\nkey = \"batches/a/b1\"\ndata = { state = \"CI_RUNNING\", last_lease_token = { main = 1, sub = 0 } }\n";
+        let r = go(&format!(
+            "{seed}[[launch]]\nok = true\n\
+             [[expect]]\nname = \"first\"\ncount = \"first-orphan-secs\"\nequals = 0\n\
+             [[expect]]\nname = \"att\"\ncount = \"redrive-attempts\"\nequals = 1\n\
+             [[expect]]\nname = \"l\"\ncount = \"launches\"\nequals = 1\n"
+        ))
+        .unwrap();
+        assert!(
+            r.lines[0].contains("redriven orphan repo=a batch=b1 expired=1-0"),
+            "{:?}",
+            r.lines
+        );
+        let e = go("[[expect]]\nname = \"none\"\ncount = \"first-orphan-secs\"\nat_most = 0\n")
+            .unwrap_err();
+        assert!(e.contains(&format!("counted {}", u64::MAX)), "{e}");
     }
 }

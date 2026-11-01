@@ -1,0 +1,61 @@
+description = "an over-long pass: progress marks keep coming past the pass's maximum wall (400 s), so renewal stops there and the round is re-driven by wall + TTL = 460 s"
+repos = ["home"]
+
+[run]
+epoch = 1800000000
+passes = 50
+every_secs = 10
+
+[lease]
+ttl_secs = 60
+pass_wall_max_secs = 400
+redrive_retries = 2
+ec2_max_lifetime_secs = 1200
+
+[lease.deadline_secs]
+boot = 40
+build = 50
+suites = 90
+subpass = 70
+certify = 30
+
+[[store]]
+key = "batches/home/b1"
+data = { state = "ATTRIBUTING", members = "sp-a:1 sp-b:1" }
+
+[[runner]]
+repo = "home"
+batch = "b1"
+phase = "subpass"
+start_secs = 0
+marks_every_secs = 10
+
+[[launch]]
+ok = true
+
+# Renewals every 20 s from 20 s to 380 s; at 400 s the wall shuts the gate.
+[[expect]]
+name = "renewed-until-the-wall"
+count = "renewals"
+equals = 19
+
+[[expect]]
+name = "orphaned-by-wall-plus-ttl"
+count = "first-orphan-secs"
+at_most = 460
+
+[[expect]]
+name = "redriven-once"
+count = "outcomes:redriven"
+equals = 1
+
+[[expect]]
+name = "one-launch"
+count = "launches"
+equals = 1
+
+[[expect]]
+name = "inverted-orphaned-before-the-last-renewal-lapsed"
+count = "first-orphan-secs"
+at_most = 439
+inverted = true

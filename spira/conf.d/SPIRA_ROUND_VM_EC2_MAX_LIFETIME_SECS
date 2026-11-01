@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=round
+DOC=Seconds after launch an EC2 spill VM shuts itself down, so one past it is proven dead even when its state cannot be read. A knob that must exceed SPIRA_ROUND_PASS_WALL_MAX_SECS plus teardown; at the pass wall plus an hour, re-taken with it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Seconds after launch an EC2 spill VM shuts itself down; past it, it is proven dead.
+    : "${SPIRA_ROUND_VM_EC2_MAX_LIFETIME_SECS:=10800}"
+SPIRA_CONF_DEFAULT_EOF

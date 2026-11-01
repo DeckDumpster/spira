@@ -1,0 +1,62 @@
+description = "an orphan whose launches fail: each is recorded, the next waits a doubling back-off from one TTL (60 s, then 120 s), and after the retries the round is RedriveExhausted and nothing more launches"
+repos = ["home"]
+
+[run]
+epoch = 1800000000
+passes = 10
+every_secs = 30
+
+[lease]
+ttl_secs = 60
+pass_wall_max_secs = 400
+redrive_retries = 2
+ec2_max_lifetime_secs = 1200
+
+[lease.deadline_secs]
+boot = 40
+build = 50
+suites = 90
+subpass = 70
+certify = 30
+
+[[store]]
+key = "batches/home/b1"
+data = { state = "CI_RUNNING", members = "sp-a:1", last_lease_token = { main = 7, sub = 0 } }
+
+[[launch]]
+refuse = "systemd-run: exit 1"
+
+[[launch]]
+refuse = "systemd-run: exit 1"
+
+# Fails at 0 s and 60 s; waits at 30, 90, 120 and 150 s; exhausted at 180, 210, 240 and 270 s.
+[[expect]]
+name = "each-failure-recorded"
+count = "redrive-attempts"
+equals = 2
+
+[[expect]]
+name = "launched-only-out-of-back-off"
+count = "launches"
+equals = 2
+
+[[expect]]
+name = "failed-twice"
+count = "outcomes:redrive-failed"
+equals = 2
+
+[[expect]]
+name = "waited-out-each-back-off"
+count = "outcomes:redrive-waiting"
+equals = 4
+
+[[expect]]
+name = "exhausted-after-the-retries"
+count = "outcomes:redrive-exhausted"
+equals = 4
+
+[[expect]]
+name = "inverted-never-exhausted"
+count = "outcomes:redrive-exhausted"
+equals = 0
+inverted = true

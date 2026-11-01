@@ -1,5 +1,6 @@
 //! The ports' production implementations.
 
+pub mod liveness;
 pub mod verbs;
 
 use runtime::ports::{Clock, VirtualClock, WallClock};

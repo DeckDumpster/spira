@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=round
+DOC=Seconds a Judge sub-pass (rerun, base run, removal set) may go without a progress mark before its runner stops renewing its lease. A knob, the suites deadline's value; re-taken from the longest gap between sub-pass marks once rounds run on the controller.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Seconds a sub-pass may go without a progress mark before the runner stops renewing.
+    : "${SPIRA_ROUND_PHASE_DEADLINE_SECS_SUBPASS:=900}"
+SPIRA_CONF_DEFAULT_EOF

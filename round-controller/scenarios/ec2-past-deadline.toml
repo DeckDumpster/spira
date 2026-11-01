@@ -1,0 +1,72 @@
+description = "two orphans whose EC2 instance states cannot be read: the one launched longer ago than its maximum lifetime is proven dead and re-driven; the one inside it is held"
+repos = ["home"]
+
+[run]
+epoch = 1800000000
+passes = 1
+every_secs = 30
+
+[lease]
+ttl_secs = 60
+pass_wall_max_secs = 400
+redrive_retries = 2
+ec2_max_lifetime_secs = 1200
+
+[lease.deadline_secs]
+boot = 40
+build = 50
+suites = 90
+subpass = 70
+certify = 30
+
+[[store]]
+key = "batches/home/b1"
+data = { state = "CI_RUNNING", members = "sp-a:1", last_lease_token = { main = 7, sub = 0 } }
+
+[[store]]
+key = "batches/home/b2"
+data = { state = "CI_RUNNING", members = "sp-b:1", last_lease_token = { main = 8, sub = 0 } }
+
+[[unit]]
+name = "round-controller-run-b1-7-0"
+state = "inactive"
+
+[[unit]]
+name = "round-controller-run-b2-8-0"
+state = "inactive"
+
+# Launched 1300 s before the epoch, past its 1200 s lifetime.
+[[vm_fact]]
+unit = "round-controller-run-b1-7-0"
+fact = "ec2-unreadable"
+launched_at = 1799998700
+
+# Launched 600 s before the epoch, inside it.
+[[vm_fact]]
+unit = "round-controller-run-b2-8-0"
+fact = "ec2-unreadable"
+launched_at = 1799999400
+
+[[launch]]
+ok = true
+
+[[expect]]
+name = "past-its-deadline-is-proof"
+count = "outcomes:redriven"
+equals = 1
+
+[[expect]]
+name = "inside-its-lifetime-holds"
+count = "outcomes:prior-runner-alive"
+equals = 1
+
+[[expect]]
+name = "one-launch"
+count = "launches"
+equals = 1
+
+[[expect]]
+name = "inverted-both-held"
+count = "outcomes:prior-runner-alive"
+equals = 2
+inverted = true

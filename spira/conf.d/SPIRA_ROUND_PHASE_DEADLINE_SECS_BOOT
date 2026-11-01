@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=round
+DOC=Seconds the round VM's boot phase may go without a progress mark before its runner stops renewing its lease. A knob, taken from round-vm's own vm-phase stall budget (300); re-taken when that budget changes.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Seconds the boot phase may go without a progress mark before the runner stops renewing.
+    : "${SPIRA_ROUND_PHASE_DEADLINE_SECS_BOOT:=300}"
+SPIRA_CONF_DEFAULT_EOF

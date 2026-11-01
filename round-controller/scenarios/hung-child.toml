@@ -1,0 +1,68 @@
+description = "a hung child: the runner's progress marks stop at t = 100 s, so it stops renewing once the suites deadline passes, and the lease is lost and the round re-driven by t + deadline + TTL = 250 s"
+repos = ["home"]
+
+[run]
+epoch = 1800000000
+passes = 30
+every_secs = 10
+
+[lease]
+ttl_secs = 60
+pass_wall_max_secs = 400
+redrive_retries = 2
+ec2_max_lifetime_secs = 1200
+
+[lease.deadline_secs]
+boot = 40
+build = 50
+suites = 90
+subpass = 70
+certify = 30
+
+[[store]]
+key = "batches/home/b1"
+data = { state = "CI_RUNNING", members = "sp-a:1" }
+
+[[runner]]
+repo = "home"
+batch = "b1"
+phase = "suites"
+start_secs = 0
+marks_every_secs = 10
+marks_stop_secs = 100
+
+[[launch]]
+ok = true
+
+# Renewals every 20 s from 20 s while the last mark (100 s) is under 90 s old: 20 … 180.
+[[expect]]
+name = "renewed-until-the-deadline"
+count = "renewals"
+equals = 9
+
+[[expect]]
+name = "orphaned-by-t-plus-deadline-plus-ttl"
+count = "first-orphan-secs"
+at_most = 250
+
+[[expect]]
+name = "redriven-once"
+count = "outcomes:redriven"
+equals = 1
+
+[[expect]]
+name = "one-launch"
+count = "launches"
+equals = 1
+
+[[expect]]
+name = "the-attempt-is-recorded"
+count = "redrive-attempts"
+equals = 1
+
+# The last renewal (180 s) holds the lease to 240 s: an orphan before then is a false one.
+[[expect]]
+name = "inverted-orphaned-before-the-last-renewal-lapsed"
+count = "first-orphan-secs"
+at_most = 239
+inverted = true

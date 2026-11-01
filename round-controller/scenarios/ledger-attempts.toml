@@ -12,6 +12,40 @@ jitter_secs = 0
 fault_backoff_secs = 70
 fault_retries = 2
 
+# The verdicts' owners: the harness collects garbage each pass, and a verdict whose members and
+# rounds have no record is an orphan.
+[[store]]
+key = "lifecycle/sp-a"
+data = { repo = "lane" }
+
+[[store]]
+key = "lifecycle/sp-b"
+data = { repo = "lane" }
+
+[[store]]
+key = "lifecycle/sp-c"
+data = { repo = "lane" }
+
+[[store]]
+key = "lifecycle/sp-x"
+data = { repo = "lane" }
+
+[[store]]
+key = "lifecycle/sp-y"
+data = { repo = "lane" }
+
+[[store]]
+key = "batches/lane/b1"
+data = { repo = "lane" }
+
+[[store]]
+key = "batches/lane/b2"
+data = { repo = "lane" }
+
+[[store]]
+key = "batches/lane/b3"
+data = { repo = "lane" }
+
 [[identity]]
 name = "xy"
 repo = "lane"
