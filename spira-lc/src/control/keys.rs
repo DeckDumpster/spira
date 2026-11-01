@@ -7,6 +7,7 @@ pub const ASKS: &str = "asks/";
 pub const MENDINGS: &str = "mendings/";
 pub const BATCHES: &str = "batches/";
 pub const RUNTIME: &str = "runtime/";
+pub const HISTORY: &str = "history/";
 /// The finalizer that keeps a lifecycle record until the planning plane has closed its bead.
 pub const PLANNING_CLOSED: &str = "planning-closed";
 
@@ -53,6 +54,18 @@ pub fn claim_lock(id: &str) -> String {
     format!("{}{id}", claim_locks())
 }
 
+/// Every history entry of `id`: one per txn whose audit names it.
+pub fn history(id: &str) -> String {
+    format!("{HISTORY}{id}/")
+}
+
+/// One txn's entry in `id`'s history; its `mod_rev` is the txn's revision. A request id
+/// commits once while its request key lives, and the head the txn was planned at has moved
+/// past that commit by the time the id could be reused, so no entry is ever overwritten.
+pub fn history_entry(id: &str, planned_at: u64, request: &str) -> String {
+    format!("{}{planned_at:020}/{request}", history(id))
+}
+
 /// The id a key under `prefix` names, or `None` for a key that is not directly under it.
 pub fn id_of<'a>(prefix: &str, key: &'a str) -> Option<&'a str> {
     key.strip_prefix(prefix)
@@ -77,9 +90,15 @@ mod tests {
         );
         assert_eq!(claim_resource("sp-a"), "bead/sp-a");
         assert_eq!(claim_lock("sp-a"), "locks/bead/sp-a");
+        assert_eq!(history("sp-a"), "history/sp-a/");
+        assert_eq!(
+            history_entry("sp-a", 7, "r/apply"),
+            "history/sp-a/00000000000000000007/r/apply"
+        );
+        assert!(!history_entry("sp-ab", 7, "r").starts_with(&history("sp-a")));
         assert_eq!(id_of(&claim_locks(), &claim_lock("sp-a")), Some("sp-a"));
         let prefixes = [
-            LIFECYCLE, READINESS, DELIVERIES, ASKS, MENDINGS, BATCHES, RUNTIME,
+            LIFECYCLE, READINESS, DELIVERIES, ASKS, MENDINGS, BATCHES, RUNTIME, HISTORY,
         ];
         for (i, a) in prefixes.iter().enumerate() {
             for b in &prefixes[i + 1..] {

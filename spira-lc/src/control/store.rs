@@ -4,6 +4,8 @@
 //! that writes the record: the holder named on the record is the one whose claim created the
 //! lock, its fencing token is the lock's `create_rev`, and every write by the holder is fenced
 //! on it. The record keeps no lease of its own; reads project `lease_until` from the lock.
+//! Every txn that carries an audit also writes, on the same branch, a `history/<id>/` entry
+//! for each id its audit names, so a bead's history is read without scanning `events/`.
 
 use lifecycle::bead::{self, BeadEvent, BeadEventKind, BeadState};
 use serde_json::Value;
@@ -107,6 +109,10 @@ fn object_like(prev: &Item, data: Value) -> Object {
         metadata: prev.value.metadata.clone(),
         data,
     }
+}
+
+fn audited_ids(audits: &[Audit]) -> std::collections::BTreeSet<&str> {
+    audits.iter().map(|a| a.lc_key.as_str()).collect()
 }
 
 /// A WORKING record's `lease_until` is its claim lock's expiry while the lock is live, in epoch
@@ -241,15 +247,48 @@ impl<B: Backend> Store<B> {
             audits.push(born_submit_audit(id, tip, at, &req.actor));
         }
         let value = Object::new(encode(&born)?).with_finalizers(&[keys::PLANNING_CLOSED]);
-        let sub = sub_request(req, "create", evidence(&audits, &[]));
-        match self.contract.create(&key, value, &sub) {
-            Ok(c) => Ok(c.existed),
-            // Another create won between the read and the write, stamped at another second.
-            Err(Error::Conflict { .. }) => self
-                .compare_birth(&key, &born, submitted_tip, req)?
-                .ok_or_else(|| Error::Backend(format!("{key} vanished during its create"))),
-            Err(e) => Err(e),
+        // A birth with no audit has no history entry, and `create` writes nothing on a lost race.
+        let won = if audits.is_empty() {
+            let sub = sub_request(req, "create", evidence(&[], &[]));
+            match self.contract.create(&key, value, &sub) {
+                Ok(c) => return Ok(c.existed),
+                Err(Error::Conflict { .. }) => false,
+                Err(e) => return Err(e),
+            }
+        } else {
+            let t = Txn::new()
+                .when(Compare::ModRev(key.clone(), None))
+                .put(&key, value);
+            self.audited_txn(t, &audits, &[], req, "create")?.succeeded
+        };
+        if won {
+            return Ok(false);
         }
+        // Another create won between the read and the write, stamped at another second.
+        self.compare_birth(&key, &born, submitted_tip, req)?
+            .ok_or_else(|| Error::Backend(format!("{key} vanished during its create")))
+    }
+
+    /// Commits `t` with each branch's audit as its evidence and, on that branch, a history
+    /// entry for every id the audit names.
+    fn audited_txn(
+        &self,
+        mut t: Txn,
+        then: &[Audit],
+        els: &[Audit],
+        req: &Request,
+        part: &str,
+    ) -> Result<state_store::TxnResult> {
+        let sub = sub_request(req, part, evidence(then, els));
+        let planned_at = self.contract.head()?;
+        let entry = |id: &str| keys::history_entry(id, planned_at, &sub.id);
+        for id in audited_ids(then) {
+            t = t.put(&entry(id), Object::new(serde_json::json!({})));
+        }
+        for id in audited_ids(els) {
+            t = t.or_put(&entry(id), Object::new(serde_json::json!({})));
+        }
+        self.contract.txn(&t, &sub)
     }
 
     /// `None` when there is no record; otherwise the answer `create` gives against it.
@@ -304,9 +343,7 @@ impl<B: Backend> Store<B> {
         let t = Txn::new()
             .when(Compare::ModRev(key.into(), Some(cur.mod_rev)))
             .put(key, object_like(item, encode(&born)?));
-        let r = self
-            .contract
-            .txn(&t, &sub_request(req, "promote", evidence(&audits, &[])))?;
+        let r = self.audited_txn(t, &audits, &[], req, "promote")?;
         if r.succeeded {
             Ok(())
         } else {
@@ -403,9 +440,7 @@ impl<B: Backend> Store<B> {
             .when(Compare::ModRev(key.clone(), Some(cur.mod_rev)))
             .lock_acquire(&resource, ttl_ms)
             .put(&key, object_like(&item, encode(&next)?));
-        let r = self
-            .contract
-            .txn(&t, &apply_req(evidence(&applied, &[lost])))?;
+        let r = self.audited_txn(t, &applied, &[lost], req, "apply")?;
         if r.succeeded {
             let fence = r.fences.into_iter().next();
             let record = self.record_at(id, r.rev)?.map_or(next, |r| r.value);
@@ -521,7 +556,7 @@ impl<B: Backend> Store<B> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn write(
+    pub(super) fn write(
         &self,
         id: &str,
         ev: &BeadEvent,
@@ -540,9 +575,7 @@ impl<B: Backend> Store<B> {
         if let Some(f) = fence {
             t = t.lock_check(f);
         }
-        let r = self
-            .contract
-            .txn(&t, &sub_request(req, "apply", evidence(&applied, &[lost])))?;
+        let r = self.audited_txn(t, &applied, &[lost], req, "apply")?;
         if r.succeeded {
             let record = self.record_at(id, r.rev)?.map_or(next, |r| r.value);
             return Ok(Outcome::Applied {
@@ -571,10 +604,7 @@ impl<B: Backend> Store<B> {
             event: format!("{:?}", ev.kind),
         });
         let audits = [audit(id, ev, cur.row.state, cur.row.state, Some(&refusal))];
-        let r = self.contract.txn(
-            &Txn::new(),
-            &sub_request(req, "refuse", evidence(&audits, &[])),
-        )?;
+        let r = self.audited_txn(Txn::new(), &audits, &[], req, "refuse")?;
         Ok(Outcome::Refused {
             rev: r.rev,
             refusal,
