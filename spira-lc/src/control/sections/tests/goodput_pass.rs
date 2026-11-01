@@ -203,7 +203,8 @@ fn an_acked_intent_past_its_horizon_is_judged_on_the_field_it_moves() {
 fn a_failed_step_backs_off_doubling_to_a_day_and_its_only_candidate_is_exhausted() {
     assert_eq!(backoff_secs(600, 1), 1200);
     assert_eq!(backoff_secs(600, 2), 2400);
-    assert_eq!(backoff_secs(600, 7), 24 * 3600, "the cap");
+    assert_eq!(backoff_secs(600, 7), 76_800, "under the cap: 600 × 2^7");
+    assert_eq!(backoff_secs(600, 8), 24 * 3600, "the cap: 600 × 2^8 would be 153 600");
     assert_eq!(backoff_secs(600, 200), 24 * 3600, "no overflow past the cap");
 
     let r = rig();
