@@ -1,0 +1,46 @@
+# two-plane-allow — control-plane code that holds planning data today, or calls a lifecycle
+# record a bead. One `<path>:<what> <removed-by>` per line; blank lines and `#` comments are
+# ignored. `<what>` is the finding's name: `table`, `table.column`, `Type.field`, `Type`, a
+# key prefix such as `"bead/"`, or the planning word a SQL literal carries.
+#
+# SHRINK-ONLY. `<removed-by>` is the work item whose landing deletes the code, and the line
+# leaves this list in that change. A line that no longer matches a finding is itself a
+# finding, so the list stays exact. `kept <why>` marks a name that only collides with a
+# planning word.
+#
+# Seeded at authorship (sp-k2cghb) from the tree. spira-lc's dolt reads and the copied columns
+# go with spira-lc on the state-store contract (sp-s6o3wx); the dolt lifecycle schema, its
+# migrations, admin-migrate and the BeadRow rename go with retiring the dolt control path
+# (sp-kqsj13).
+lifecycle/migrations/0007-ops-read-model.sql:bead.title sp-kqsj13
+lifecycle/migrations/0007-ops-read-model.sql:bead.priority sp-kqsj13
+lifecycle/migrations/0011-bead-dep.sql:bead_dep sp-kqsj13
+lifecycle/schema.sql:bead.title sp-kqsj13
+lifecycle/schema.sql:bead.priority sp-kqsj13
+lifecycle/schema.sql:batch.parent sp-kqsj13
+lifecycle/schema.sql:bead_dep sp-kqsj13
+lifecycle/src/batch.rs:BatchRow.parent kept a round's parent round, not a bead's parent edge
+lifecycle/src/bead.rs:BeadRow sp-kqsj13
+spira-lc/src/migrate.rs:bead_dep sp-kqsj13
+spira-lc/src/ask.rs:title sp-s6o3wx
+spira-lc/src/content_rows.rs:bead_dep sp-s6o3wx
+spira-lc/src/content_rows.rs:dep_type sp-s6o3wx
+spira-lc/src/content_rows.rs:depends_on sp-s6o3wx
+spira-lc/src/cutover.rs:title sp-s6o3wx
+spira-lc/src/cutover.rs:priority sp-s6o3wx
+spira-lc/src/deps.rs:bead_dep sp-s6o3wx
+spira-lc/src/deps.rs:dep_type sp-s6o3wx
+spira-lc/src/deps.rs:depends_on sp-s6o3wx
+spira-lc/src/live.rs:bead_dep sp-s6o3wx
+spira-lc/src/live.rs:dep_type sp-s6o3wx
+spira-lc/src/live.rs:depends_on sp-s6o3wx
+spira-lc/src/live.rs:title sp-s6o3wx
+spira-lc/src/live.rs:priority sp-s6o3wx
+spira-lc/src/main.rs:bead_dep sp-s6o3wx
+spira-lc/src/main.rs:dep_type sp-s6o3wx
+spira-lc/src/main.rs:depends_on sp-s6o3wx
+spira-lc/src/main.rs:title sp-s6o3wx
+spira-lc/src/main.rs:priority sp-s6o3wx
+spira-lc/src/ops.rs:title sp-s6o3wx
+spira-lc/src/ops.rs:priority sp-s6o3wx
+spira-lc/src/snapshot.rs:title sp-s6o3wx

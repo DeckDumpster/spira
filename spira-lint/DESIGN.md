@@ -1550,3 +1550,56 @@ shrink-only. `STORE_DOOR_CONSIDERED="<why>"` on the line passes it and logs `sto
 considered <path>:<line>: <why>` to stderr.
 
 **Refuses** (exit 3): no `.rs`/`.sh` file in scope.
+
+## Rule `two-plane`
+
+**Intent.** bd is the planning plane: a bead's title, body, labels, priority, type, comments,
+and its dependency and parent edges. The state store is the control plane: each work bead's
+lifecycle record (state, tip, holder, holds, repo), rounds, locks and asks' state. The planes
+are joined only by bead id, and neither stores the other's fields. A copied field is a second
+answer that drifts from the first, so the rule refuses a control-plane table, column, record
+field or SQL literal that names planning data, and control-plane code that calls a lifecycle
+record a bead.
+
+**Planning set.** `title`, `body`, `description`, `labels`, `priority`, `issue_type`,
+`comments`, `depends_on`, `dep_type`, `parent`, plus any edge table named `*_dep` or `*_edge`.
+It is defined once, in `two_plane.rs`.
+
+**Checks.**
+1. **SQL** in `lifecycle/schema.sql` and `lifecycle/migrations/*.sql`, `--` comments
+   excluded: a table named in the set, by `CREATE TABLE` or `ALTER TABLE … RENAME TO` (its
+   columns are not reported again), and a column named in the set, by `CREATE TABLE` or by any
+   `ADD [COLUMN]`, `CHANGE` or `RENAME COLUMN … TO` clause of an `ALTER TABLE`. Views are not
+   checked: a view only re-exposes a table's columns.
+2. **SQL in control-plane Rust** (`lifecycle/**.rs`, `spira-lc/src/`, every `state-store*/`
+   crate), string literals only: an edge-table name anywhere, and a planning word in a literal
+   group that also addresses the lifecycle record (`bead_id`, or `FROM`/`JOIN`/`INTO`/`UPDATE
+   bead`), or on a line whose literals do. A group is one literal, however many lines it spans,
+   joined to the next when only whitespace, commas and brackets separate them (a column array).
+   A planning read of bd's own tables (`issues`, `labels`, `dependencies`) names neither, so it
+   passes.
+3. **Record types.** `spira-lint/two-plane-records` lists the control plane's record types, one
+   `<path>::<Type>` per line. A named field of a registered braced struct whose name is in the
+   set is a finding. A registered file or struct the tree does not have, a malformed line, or an
+   empty registry is a refusal (law-absence-needs-a-positive-control).
+4. **Vocabulary**, in the same Rust scope, comments excluded: a string literal beginning
+   `bead/` or `beads/` (a key or lock resource), and a defined `struct`/`enum`/`union`/`trait`/
+   `type` named `Bead*Row` or `Bead*Record`. The message is "a lifecycle record is not a bead:
+   name it lifecycle/<id> / LifecycleRecord".
+
+**Allow list.** `spira-lint/two-plane-allow`, shrink-only: `<path>:<what> <removed-by>`, where
+`<what>` is the finding's name (`table`, `table.column`, `Type.field`, `Type`, `"bead/"`, or
+the planning word of a SQL literal) and `<removed-by>` is the work item (`sp-…`) whose landing
+deletes it. `kept <why>` marks a name that only collides with a planning word. An entry
+covers every finding with that path and name. A line that matches no finding is itself a
+finding, so deleting the code forces the line out in the same change.
+
+**Enforcing.** There is no report mode. **Refuses** (exit 3): nothing in scope, a malformed
+allow or registry line, or a registered type that cannot be read.
+
+**Limits, accepted.** Names are matched, not meanings. A statement assembled from literals
+apart in the code (a `format!` argument, a `const` spliced in) is judged group by group, so a
+column list that never names `bead_id` passes. A struct field renamed with `#[serde(rename =
+…)]` is judged by its Rust name. An allow entry is per file and name, so while a file is on
+the list a new copy of the same name in it passes; the list shrinks file by file as the work
+items land.
