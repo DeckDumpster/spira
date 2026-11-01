@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tier: T2
 # requires: testenv
-# covers: round-controller/** sim/actors.toml sim/units/** sim/src/actors.rs spira/sim/src/drive.rs spira/sim/src/launch.rs spira/sim/src/main.rs spira/sim/src/runstate.rs spira/sim/src/world.rs spira/sim/scenarios/rc-launch.toml spira/sim-scenario-lib.sh
+# covers: round-controller/** sim/actors.toml sim/units/** sim/src/actors.rs spira/sim/src/drive.rs spira/sim/src/launch.rs spira/sim/src/main.rs spira/sim/src/roundvm.rs spira/sim/src/runstate.rs spira/sim/src/world.rs spira/sim/scenarios/rc-launch.toml spira/sim-scenario-lib.sh
 # lane: sim
 # pids: 400
 #

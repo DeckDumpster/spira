@@ -19,6 +19,7 @@ fn a_systemd_run_argv_is_its_unit_its_setenv_pairs_and_the_command_after_the_opt
     assert!(parse(&argv(&["--user", "--unit=u"])).unwrap_err().contains("no command"));
     assert!(parse(&argv(&["--user", "prog"])).unwrap_err().contains("no --unit="));
     assert!(parse(&argv(&["--user", "is-active"])).unwrap_err().contains("one unit"));
+    assert!(matches!(parse(&argv(&["--user", "--unit=u", "prog", "is-active"])).unwrap(), Call::Run { .. }), "is-active inside the command is the command's");
 }
 
 #[test]

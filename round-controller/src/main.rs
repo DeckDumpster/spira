@@ -88,6 +88,7 @@ fn dispatch(args: &[String]) -> i32 {
                 eprintln!("round-controller launch: {e}\n{USAGE}");
                 2
             }
+            // A hand launch records no unit under the slot; the runner records its own first.
             Ok(a) => match with_ports(|p| {
                 let slot = SlotGrant::handed(p, a.slot, a.slot_token);
                 Ok(p.launcher.start(p, &a.repo, &a.batch, a.lease, &slot))

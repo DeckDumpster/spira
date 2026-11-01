@@ -23,8 +23,9 @@ pub enum Call {
 /// A `systemd-run` argv (`--unit=`, `--setenv=K=V` and any other `--` option, then the command)
 /// or a `systemctl --user is-active <unit>` argv.
 pub fn parse(argv: &[String]) -> Result<Call, String> {
-    if let Some(at) = argv.iter().position(|a| a == "is-active") {
-        return match &argv[at + 1..] {
+    let options = argv.iter().position(|a| !a.starts_with("--")).unwrap_or(argv.len());
+    if argv.get(options).is_some_and(|a| a == "is-active") {
+        return match &argv[options + 1..] {
             [unit] => Ok(Call::IsActive(unit.clone())),
             _ => Err(format!("sim-launch: is-active takes one unit: {argv:?}")),
         };
