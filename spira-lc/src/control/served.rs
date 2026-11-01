@@ -1,5 +1,7 @@
-//! The control store at `SPIRA_LC_STORE_PATH`, opened once per process on first use. Unset,
-//! no verb reaches it and every verb keeps its dolt path.
+//! The control store at `SPIRA_LC_STORE_PATH`, opened once per process on first use and held
+//! for the process's life: its opener is exclusive, so in practice lc-serve holds it and any
+//! other opener answers "cannot tell". Unset, no verb reaches it and every verb keeps its dolt
+//! path.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -32,6 +34,10 @@ fn store_path() -> Option<Result<String, String>> {
 }
 
 fn open(path: &str) -> Result<Store<SqliteBackend>, String> {
+    // Opening creates a missing file, which would answer every read as an empty store.
+    if !Path::new(path).is_file() {
+        return Err(format!("no control store at {path}"));
+    }
     let backend = SqliteBackend::open(Path::new(path), Options::default())
         .map_err(|e| format!("{path}: {e}"))?;
     let ports = Ports {
@@ -71,7 +77,7 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
         Some(Err(e)) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
         None if verb == "watch" => return Some((
             CANNOT_TELL,
-            "cannot tell: watch is served by the control store, and SPIRA_LC_STORE_PATH is unset"
+            "cannot tell: watch is served by the control store, and SPIRA_LC_STORE_PATH is unset or unreadable"
                 .into(),
         )),
         None => return None,

@@ -247,11 +247,21 @@ impl<B: Backend> Store<B> {
             audits.push(born_submit_audit(id, tip, at, &req.actor));
         }
         let value = Object::new(encode(&born)?).with_finalizers(&[keys::PLANNING_CLOSED]);
-        let t = Txn::new()
-            .when(Compare::ModRev(key.clone(), None))
-            .put(&key, value);
-        let r = self.audited_txn(t, &audits, &[], req, "create")?;
-        if r.succeeded {
+        // A birth with no audit has no history entry, and `create` writes nothing on a lost race.
+        let won = if audits.is_empty() {
+            let sub = sub_request(req, "create", evidence(&[], &[]));
+            match self.contract.create(&key, value, &sub) {
+                Ok(c) => return Ok(c.existed),
+                Err(Error::Conflict { .. }) => false,
+                Err(e) => return Err(e),
+            }
+        } else {
+            let t = Txn::new()
+                .when(Compare::ModRev(key.clone(), None))
+                .put(&key, value);
+            self.audited_txn(t, &audits, &[], req, "create")?.succeeded
+        };
+        if won {
             return Ok(false);
         }
         // Another create won between the read and the write, stamped at another second.

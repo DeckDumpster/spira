@@ -233,11 +233,38 @@ fn history_lists_a_beads_changes_in_order_with_its_refusals_and_lost_races<B: Ba
         .collect();
     assert_eq!(got, want);
     assert_eq!(call(s, &["history", "sp-a", "--machine", "bead"]), h);
+    let batch: Vec<String> = ["history", "sp-a", "--machine", "batch"]
+        .iter()
+        .map(|a| a.to_string())
+        .collect();
     assert_eq!(
-        call(s, &["history", "sp-a", "--machine", "batch"]),
-        Value::Array(vec![])
+        verbs::run(s, &batch).0,
+        crate::CANNOT_TELL,
+        "a machine the store does not keep answered as if it had no history"
     );
     assert_eq!(call(s, &["history", "sp-none"]), Value::Array(vec![]));
+
+    s.create(
+        "sp-t",
+        None,
+        Some("0123456789abcdef0123456789abcdef01234567"),
+        100,
+        &req("create-sp-t"),
+    )
+    .unwrap();
+    let born = call(s, &["history", "sp-t"]);
+    let born: Vec<(&str, &str)> = born
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["event"].as_str().unwrap(),
+                r["to_state"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(born, [("Submit", "SUBMITTED")], "a born-submitted record");
 }
 
 fn history_outlives_compaction<B: Backend>(s: &Store<B>) {

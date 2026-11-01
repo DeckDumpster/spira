@@ -1,6 +1,6 @@
 TYPE=string
 GROUP=lc
-DOC=Path of the control-plane state store (SQLite) that spira-lc serves watch, history and event-seq from; empty keeps every verb on the dolt lifecycle store.
+DOC=Path of an existing control-plane state store (SQLite) that spira-lc serves watch, history and event-seq from; empty keeps every verb on the dolt lifecycle store. Set it only with the cutover: until the writes move onto the store, its reads do not reflect dolt.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     : "${SPIRA_LC_STORE_PATH:=}"
 SPIRA_CONF_DEFAULT_EOF

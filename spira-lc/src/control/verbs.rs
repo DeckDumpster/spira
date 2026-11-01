@@ -98,6 +98,11 @@ fn watch<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String
 fn history<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String> {
     let id = args.first().ok_or("history: missing <key>")?;
     let machine = flag(args, "--machine");
+    if machine.as_deref().is_some_and(|m| m != "bead") {
+        return Err(format!(
+            "history: the control store keeps only the bead machine yet, not {machine:?}"
+        ));
+    }
     let changes = store
         .history(id, machine.as_deref())
         .map_err(|e| format!("history: {e}"))?;
