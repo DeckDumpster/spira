@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use spira_sim::runstate::{flocked_inodes, gate_log_row, kv, landing_log_row, normalise, read, table, verdict_row, TABLES};
+use spira_sim::runstate::{flocked_inodes, gate_log_row, kv, landing_log_row, normalise, read, table, unit_row, verdict_row, TABLES};
 use spira_sim::trace::{violations, Snapshot, Trace};
 use std::path::Path;
 
@@ -56,6 +56,7 @@ fn the_run_directory_reads_as_one_row_set_per_family() {
     put(&w, "worktree/.gate.repo.lock", "4 5\n");
     put(&w, "gate.log", "2026-10-25T03:31:26Z sim spira/sp-a rc=0\n2026-10-25T03:32:00Z sim spira/sp-b rc=1\n");
     put(&w, "landing.log", "QUEUE ROUND-LAND 1 repo=sim batch=b members=sp-a:t\n");
+    put(&w, "sim-units/round-controller-run-b1-3-0", "inactive\nexit=7\n");
     let all = read(&w, "");
     assert_eq!(rows(&all, "run_verdicts").len(), 1);
     let q: Vec<(String, String)> = rows(&all, "run_queue").iter().map(|r| (r["file"].as_str().unwrap().into(), r["key"].as_str().unwrap_or("-").into())).collect();
@@ -67,6 +68,9 @@ fn the_run_directory_reads_as_one_row_set_per_family() {
     assert!(rows(&all, "run_locks").iter().all(|r| r["held"] == false));
     assert_eq!(rows(&all, "run_gate_log").iter().map(|r| r["rc"].as_i64().unwrap()).collect::<Vec<_>>(), vec![0, 1]);
     assert_eq!(rows(&all, "run_landing_log")[0]["event"], "ROUND-LAND");
+    let u = rows(&all, "run_units");
+    assert_eq!((u.len(), u[0]["name"].as_str(), u[0]["state"].as_str(), u[0]["exit"].as_str()), (1, Some("round-controller-run-b1-3-0"), Some("inactive"), Some("7")));
+    assert!(unit_row("u", "active\n")["exit"].is_null());
 }
 
 #[test]

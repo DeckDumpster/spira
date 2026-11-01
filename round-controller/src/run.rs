@@ -743,7 +743,10 @@ pub fn run<R: SubPasses>(p: &Ports, env: &RunEnv, subs: &mut R, a: &RunArgs) -> 
             return RunEnd::Stopped { why };
         }
     }
-    let unit = unit_name(&a.batch, a.lease);
+    let unit = match unit_name(&a.batch, a.lease) {
+        Ok(u) => u,
+        Err(why) => return refuse(slot, lease, why),
+    };
     if let Err(e) = slot.record_holder(p, &unit, None) {
         return lost_before(p, slot, lease, &e);
     }

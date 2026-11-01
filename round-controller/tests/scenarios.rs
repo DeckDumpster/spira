@@ -39,6 +39,7 @@ scenario!(
     scenario_over_long_pass,
     scenario_prior_runner_alive,
     scenario_launch_fails,
+    scenario_launch_collision,
     scenario_ec2_past_deadline,
     scenario_ledger_attempts,
     scenario_one_proxmox_slot,

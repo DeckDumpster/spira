@@ -1,17 +1,19 @@
 //! Orphans and their re-drive. An orphan is a non-terminal round with a `last_lease_token` and
 //! no live lease; a round never leased is waiting for a slot, not an orphan. A re-drive proves
-//! the old runner dead first, then takes a new lease and launches; every attempt is recorded in
-//! `batches/<repo>/<id>/redrive`, and a failed launch is retried after a doubling back-off,
-//! never skipped, until `SPIRA_ROUND_REDRIVE_RETRIES` failures exhaust it.
+//! the old runner dead first, then takes a runner slot and a new lease and launches under both;
+//! every attempt is recorded in `batches/<repo>/<id>/redrive`, and a failed launch gives both
+//! back and is retried after a doubling back-off, never skipped, until
+//! `SPIRA_ROUND_REDRIVE_RETRIES` failures exhaust it.
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use state_store::{Compare, Object, Request, Rev, Selector, Txn};
 
-use crate::death::{prove_dead, Holder, Proof};
+use crate::death::{prove_dead, unit_name, Holder, Proof};
 use crate::lease::{self, acquire, holder_of, Held, LeaseError, Resource};
 use crate::outcome::Outcome;
-use crate::ports::Ports;
+use crate::ports::{Launch, Launched, Ports};
+use crate::slots::{self, SlotGrant};
 
 /// The states no reader re-drives. SUPERSEDED is the controller's own terminal state.
 pub fn terminal(state: &str) -> Option<bool> {
@@ -62,22 +64,13 @@ pub fn orphans(p: &Ports, repo: &str) -> Result<Vec<Orphan>, String> {
     Ok(out)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Launched {
-    pub unit: String,
-}
-
-/// Starts the runner of `batch` under the lease `token`.
-pub trait Launch {
-    fn launch(&self, repo: &str, batch: &str, token: Rev) -> Result<Launched, String>;
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Attempt {
     pub expired_token: Rev,
     /// The lease this attempt took and launched under.
     pub lease_token: Rev,
-    /// `ok`, or the launch's refusal.
+    /// `ok`, `running` when the unit was already up under this lease's name, or the launch's
+    /// refusal.
     pub launch_result: String,
     pub at_ms: u64,
     /// When a failed launch may be tried again; `None` after a launch that started.
@@ -117,6 +110,10 @@ pub enum Redrive {
         unit: String,
     },
     PriorRunnerAlive {
+        why: String,
+    },
+    /// No runner slot is free: nothing is leased, launched or recorded.
+    NoSlot {
         why: String,
     },
     Waiting {
@@ -206,40 +203,67 @@ pub fn redrive(p: &Ports, o: &Orphan, launch: &dyn Launch) -> Redrive {
     if let Proof::Unknown { why } = prove_dead(p, &old) {
         return Redrive::PriorRunnerAlive { why };
     }
+    let mut slot = match slots::grant(p, &slots::HAND_PREFERENCE, HOLDER) {
+        Ok(s) => s,
+        Err(no) => {
+            return Redrive::NoSlot {
+                why: no.to_string(),
+            }
+        }
+    };
     let l = match acquire(p, &Resource::round(&o.repo, &o.batch), HOLDER) {
         Ok(l) => l,
-        Err(LeaseError::Held(h)) => return Redrive::Leased(h),
-        Err(LeaseError::Terminal) => return Redrive::Terminal,
-        Err(e) => return Redrive::Store(format!("{e:?}")),
+        Err(e) => {
+            let _ = slot.release(p);
+            return match e {
+                LeaseError::Held(h) => Redrive::Leased(h),
+                LeaseError::Terminal => Redrive::Terminal,
+                e => Redrive::Store(format!("{e:?}")),
+            };
+        }
     };
     let mut a = Attempt {
         expired_token: o.expired,
         lease_token: l.token(),
-        launch_result: "ok".into(),
+        launch_result: String::new(),
         at_ms: now,
         next_attempt_at_ms: None,
     };
-    match launch.launch(&o.repo, &o.batch, l.token()) {
-        Ok(Launched { unit }) => {
-            // A lost record undercounts the next episode; it never skips a launch.
-            let _ = append(p, &key, &a);
-            Redrive::Launched { unit }
-        }
-        Err(why) => {
+    let launched = match record_unit(p, &mut slot, &o.batch, l.token()) {
+        Ok(()) => launch.start(p, &o.repo, &o.batch, l.token(), &slot),
+        Err(text) => Launched::Failed { text },
+    };
+    let (unit, result) = match launched {
+        Launched::Started { unit } => (unit, "ok"),
+        Launched::Running { unit } => (unit, "running"),
+        Launched::Failed { text: why } => {
             let next = now.saturating_add(backoff_ms(p, failures + 1));
             a.launch_result = why.clone();
             a.next_attempt_at_ms = Some(next);
             let recorded = append(p, &key, &a);
             let _ = l.release(p);
-            match recorded {
+            let _ = slot.release(p);
+            return match recorded {
                 Ok(()) => Redrive::Failed {
                     why,
                     next_attempt_at_ms: next,
                 },
                 Err(e) => Redrive::Store(format!("launch failed ({why}) and {e}")),
-            }
+            };
         }
-    }
+    };
+    a.launch_result = result.into();
+    // A lost record undercounts the next episode; it never skips a launch.
+    let _ = append(p, &key, &a);
+    Redrive::Launched { unit }
+}
+
+/// Records the runner's unit under its slot before launching it, so a slot whose holder lapses
+/// is granted again only once that unit is shown stopped.
+fn record_unit(p: &Ports, slot: &mut SlotGrant, batch: &str, token: Rev) -> Result<(), String> {
+    let unit = unit_name(batch, token)?;
+    slot.record_holder(p, &unit, None)
+        .map_err(|e| format!("slot {} did not record {unit}: {e:?}", slot.slot()))
 }
 
 /// `pass`'s orphans step: every orphan of `repo` re-driven, or held, each with one line.
@@ -316,7 +340,7 @@ mod tests {
         let t = Rev::new(3, 0);
         batch(&b, "b1", "CI_RUNNING", Some(t));
         b.units
-            .set(&unit_name("b1", t), UnitState::Stopped("inactive".into()));
+            .set(&unit_name("b1", t).unwrap(), UnitState::Stopped("inactive".into()));
         b.launch.script(Ok(()));
         let p = b.ports();
         let r = redrive(&p, &orphan(t), &b.launch);
@@ -324,7 +348,7 @@ mod tests {
         assert_eq!(
             r,
             Redrive::Launched {
-                unit: unit_name("b1", held.token)
+                unit: unit_name("b1", held.token).unwrap()
             }
         );
         assert_eq!(held.holder.as_deref(), Some(HOLDER));
@@ -343,6 +367,60 @@ mod tests {
             orphans(&p, "r").unwrap().is_empty(),
             "the re-driven round is leased"
         );
+        let tried = b.launch.tried();
+        assert_eq!(tried.len(), 1);
+        let slot = crate::slots::Slot {
+            pool: crate::slots::Pool::Proxmox,
+            n: 0,
+        };
+        assert_eq!(tried[0].slot, slot.to_string());
+        let lock = p.store.get(&format!("locks/{}", slot.lock())).unwrap().unwrap();
+        assert_eq!(
+            (lock.create_rev, lock.lock_expires_at_ms.is_some()),
+            (tried[0].slot_token, true),
+            "the runner is handed the live slot it was launched on"
+        );
+        let rec = p.store.get(&slot.record_key()).unwrap().unwrap().value.data;
+        assert_eq!(
+            (rec["unit"].as_str(), rec["released"].as_bool()),
+            (Some(tried[0].unit.as_str()), Some(false)),
+            "the unit is recorded under the slot before it is launched"
+        );
+    }
+
+    #[test]
+    fn with_no_slot_free_a_proven_orphan_is_neither_leased_nor_launched() {
+        let b = Bench::new();
+        let t = Rev::new(3, 0);
+        batch(&b, "b1", "CI_RUNNING", Some(t));
+        let p = b.ports();
+        let mut held = Vec::new();
+        while let Ok(g) = crate::slots::grant(&p, &crate::slots::HAND_PREFERENCE, "other") {
+            held.push(g);
+        }
+        assert_eq!(held.len(), 4, "proxmox 1 and ec2 3 under the bench");
+        match redrive(&p, &orphan(t), &b.launch) {
+            Redrive::NoSlot { why } => assert!(why.contains("no runner slot free"), "{why}"),
+            r => panic!("{r:?}"),
+        }
+        assert!(b.launch.launched().is_empty());
+        assert_eq!(holder_of(&p, &Resource::round("r", "b1")).unwrap(), None);
+        assert_eq!(p.store.get(&record_key("r", "b1")).unwrap(), None);
+    }
+
+    #[test]
+    fn a_failed_launch_gives_its_slot_back() {
+        let b = Bench::new();
+        let t = Rev::new(3, 0);
+        batch(&b, "b1", "CI_RUNNING", Some(t));
+        b.launch.script(Err("systemd-run: exit 1".into()));
+        let p = b.ports();
+        assert!(matches!(
+            redrive(&p, &orphan(t), &b.launch),
+            Redrive::Failed { .. }
+        ));
+        assert_eq!(*crate::lock(&b.slot_releases), [p.clock.now_ms()]);
+        assert!(crate::slots::grant(&p, &[crate::slots::Pool::Proxmox], "next").is_ok());
     }
 
     #[test]
@@ -351,7 +429,7 @@ mod tests {
         let t = Rev::new(3, 0);
         batch(&b, "b1", "CI_RUNNING", Some(t));
         b.units
-            .set(&unit_name("b1", t), UnitState::Running("active".into()));
+            .set(&unit_name("b1", t).unwrap(), UnitState::Running("active".into()));
         let p = b.ports();
         assert_eq!(
             redrive(&p, &orphan(t), &b.launch),
@@ -489,8 +567,8 @@ mod tests {
         let t = Rev::new(3, 0);
         batch(&b, "b1", "CI_RUNNING", Some(t));
         b.units
-            .set(&unit_name("b1", t), UnitState::Stopped("inactive".into()));
-        b.vms.set(&unit_name("b1", t), VmFact::NoVm);
+            .set(&unit_name("b1", t).unwrap(), UnitState::Stopped("inactive".into()));
+        b.vms.set(&unit_name("b1", t).unwrap(), VmFact::NoVm);
         b.launch.script(Ok(()));
         step(&b.ports(), "r");
         let down = Bench::unserved();

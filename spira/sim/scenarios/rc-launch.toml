@@ -1,0 +1,40 @@
+# The round controller's world twin of launch-collision: the sim-only actor runs `round-controller
+# pass` beside a hand `round-controller launch` of a round leased under token 1-0 on slot
+# proxmox/0. The launcher calls the world's SPIRA_LAUNCH, the sim's systemd stub, which records the
+# unit and runs the runner inline: the unit is named with the lease token, and the runner, whose
+# first renewal the doorless store refuses, exits 7 inside it.
+epoch = 1800000000
+horizon = 150000
+real_actors = ["round-controller"]
+
+[[actor]]
+name = "rc-launch"
+command = "round-controller launch --repo sim --batch rc-b1 --lease-token 1-0 --slot proxmox/0 --slot-token 2-0"
+first = 20000
+every = 60000
+duration_min = 1000
+duration_max = 2000
+
+[[invariant]]
+name = "rc_pass_exited_nonzero"
+sql = "SELECT seq, exit FROM events WHERE actor = 'round-controller' AND kind = 'complete' AND exit <> 0"
+
+[[invariant]]
+name = "rc_launch_failed"
+sql = "SELECT seq, exit FROM events WHERE actor = 'rc-launch' AND kind = 'complete' AND exit <> 0"
+
+[[invariant]]
+name = "rc_unit_not_named_by_its_token"
+sql = "SELECT seq, name FROM run_units WHERE name <> 'round-controller-run-rc-b1-1-0'"
+
+[[invariant]]
+name = "rc_changed_run_state"
+sql = "SELECT seq, 'queue' AS family, key AS what FROM run_queue UNION ALL SELECT seq, 'locks', name FROM run_locks UNION ALL SELECT seq, 'ejected', bead FROM run_ejected UNION ALL SELECT seq, 'verdicts', key FROM run_verdicts UNION ALL SELECT seq, 'gate-log', text FROM run_gate_log UNION ALL SELECT seq, 'landing-log', text FROM run_landing_log"
+
+[[expect]]
+name = "rc_stub_saw_the_token_named_unit"
+sql = "SELECT 1 FROM run_units WHERE name = 'round-controller-run-rc-b1-1-0'"
+
+[[expect]]
+name = "rc_runner_ran_inside_the_unit"
+sql = "SELECT 1 FROM run_units WHERE name = 'round-controller-run-rc-b1-1-0' AND state = 'inactive' AND exit = '7'"

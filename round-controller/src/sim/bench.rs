@@ -11,31 +11,45 @@ use state_store::{
 
 use crate::death::{Holder, UnitState, Units, VmFact, Vms};
 use crate::liveness::LeaseSettings;
-use crate::orphans::{Launch, Launched};
 use crate::outcome::MemLog;
-use crate::ports::{Ports, Store};
+use crate::ports::{Launch, Launched, Ports, Store};
 use crate::real::Unserved;
 use crate::sim::judge::FakeLedger;
 use crate::sim::verbs::FakeVerbs;
 use crate::sim::vm::FakeVm;
-use crate::slots::SlotSettings;
+use crate::slots::{SlotGrant, SlotSettings};
 
-/// Unit states by name; a unit never set is one systemd does not know.
-#[derive(Default)]
-pub struct FakeUnits(Mutex<BTreeMap<String, UnitState>>);
+/// Unit states by name; a unit never set is one systemd does not know, and a state set `until` a
+/// time reads as unknown from then on.
+pub struct FakeUnits {
+    states: Mutex<BTreeMap<String, (UnitState, Option<u64>)>>,
+    clock: VirtualClock,
+}
 
 impl FakeUnits {
+    pub fn new(clock: VirtualClock) -> FakeUnits {
+        FakeUnits {
+            states: Mutex::default(),
+            clock,
+        }
+    }
+
     pub fn set(&self, unit: &str, s: UnitState) {
-        crate::lock(&self.0).insert(unit.into(), s);
+        self.set_until(unit, s, None);
+    }
+
+    pub fn set_until(&self, unit: &str, s: UnitState, until_ms: Option<u64>) {
+        crate::lock(&self.states).insert(unit.into(), (s, until_ms));
     }
 }
 
 impl Units for FakeUnits {
     fn state(&self, unit: &str) -> UnitState {
-        crate::lock(&self.0)
-            .get(unit)
-            .cloned()
-            .unwrap_or_else(|| UnitState::Stopped("unknown".into()))
+        use runtime::ports::Clock;
+        match crate::lock(&self.states).get(unit) {
+            Some((s, until)) if until.is_none_or(|u| self.clock.now_ms() < u) => s.clone(),
+            _ => UnitState::Stopped("unknown".into()),
+        }
     }
 }
 
@@ -80,7 +94,10 @@ impl FakeVms {
 
 impl Vms for FakeVms {
     fn vm_of(&self, old: &Holder) -> VmFact {
-        self.fact(&old.unit())
+        match old.unit() {
+            Ok(u) => self.fact(&u),
+            Err(why) => VmFact::Unreadable { why },
+        }
     }
     fn vm_of_slot(&self, unit: &str, vm: Option<&str>) -> VmFact {
         crate::lock(&self.asked).push((unit.into(), vm.map(str::to_string)));
@@ -88,11 +105,20 @@ impl Vms for FakeVms {
     }
 }
 
-/// Launches answered in script order. An unscripted launch is refused and kept as a fault.
+/// One launch tried: its unit, and the slot and slot token it was handed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tried {
+    pub unit: String,
+    pub slot: String,
+    pub slot_token: Rev,
+}
+
+/// Launches answered in script order: `Ok` starts, `Err` fails with its text. An unscripted
+/// launch fails and is kept as a fault.
 #[derive(Default)]
 pub struct FakeLaunch {
     script: Mutex<VecDeque<Result<(), String>>>,
-    launched: Mutex<Vec<String>>,
+    tried: Mutex<Vec<Tried>>,
     faults: Mutex<Vec<String>>,
 }
 
@@ -103,7 +129,11 @@ impl FakeLaunch {
 
     /// The unit of every launch tried, started or not.
     pub fn launched(&self) -> Vec<String> {
-        crate::lock(&self.launched).clone()
+        self.tried().into_iter().map(|t| t.unit).collect()
+    }
+
+    pub fn tried(&self) -> Vec<Tried> {
+        crate::lock(&self.tried).clone()
     }
 
     pub fn faults(&self) -> Vec<String> {
@@ -112,16 +142,30 @@ impl FakeLaunch {
 }
 
 impl Launch for FakeLaunch {
-    fn launch(&self, repo: &str, batch: &str, token: Rev) -> Result<Launched, String> {
-        let unit = crate::death::unit_name(batch, token);
-        crate::lock(&self.launched).push(unit.clone());
+    fn start(
+        &self,
+        _: &Ports,
+        repo: &str,
+        batch: &str,
+        lease_token: Rev,
+        slot: &SlotGrant,
+    ) -> Launched {
+        let unit = match crate::death::unit_name(batch, lease_token) {
+            Ok(u) => u,
+            Err(text) => return Launched::Failed { text },
+        };
+        crate::lock(&self.tried).push(Tried {
+            unit: unit.clone(),
+            slot: slot.slot().to_string(),
+            slot_token: slot.token(),
+        });
         match crate::lock(&self.script).pop_front() {
-            Some(Ok(())) => Ok(Launched { unit }),
-            Some(Err(e)) => Err(e),
+            Some(Ok(())) => Launched::Started { unit },
+            Some(Err(text)) => Launched::Failed { text },
             None => {
-                let f = format!("unscripted launch of {unit} for {repo}");
-                crate::lock(&self.faults).push(f.clone());
-                Err(f)
+                let text = format!("unscripted launch of {unit} for {repo}");
+                crate::lock(&self.faults).push(text.clone());
+                Launched::Failed { text }
             }
         }
     }
@@ -235,6 +279,7 @@ impl Bench {
         );
         let verbs = FakeVerbs::new(vec![], vm, clock.clone()).expect("an empty script loads");
         Bench {
+            units: FakeUnits::new(clock.clone()),
             vms: FakeVms::new(clock.clone()),
             clock,
             store,
@@ -242,7 +287,6 @@ impl Bench {
             log: MemLog::default(),
             proc_: NoProc::default(),
             verbs,
-            units: FakeUnits::default(),
             launch: FakeLaunch::default(),
             settings,
             slot_settings: bench_slot_settings(),
@@ -362,19 +406,53 @@ impl Store for Bench {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orphans::Launch;
 
     #[test]
     fn an_unscripted_launch_is_refused_and_kept_as_a_fault() {
+        let b = Bench::default();
+        let p = b.ports();
+        let slot = SlotGrant::handed(
+            &p,
+            crate::slots::Slot {
+                pool: crate::slots::Pool::Proxmox,
+                n: 0,
+            },
+            Rev::new(5, 0),
+        );
         let l = FakeLaunch::default();
         l.script(Ok(()));
-        assert!(l.launch("r", "b", Rev::new(1, 0)).is_ok());
-        assert!(l.launch("r", "b", Rev::new(2, 0)).is_err());
+        l.script(Err("systemd-run: exit 1".into()));
+        assert!(matches!(
+            l.start(&p, "r", "b", Rev::new(1, 0), &slot),
+            Launched::Started { .. }
+        ));
+        assert_eq!(
+            l.start(&p, "r", "b", Rev::new(2, 0), &slot),
+            Launched::Failed {
+                text: "systemd-run: exit 1".into()
+            }
+        );
+        assert!(matches!(
+            l.start(&p, "r", "b", Rev::new(3, 0), &slot),
+            Launched::Failed { .. }
+        ));
+        assert!(matches!(
+            l.start(&p, "r", "-b", Rev::new(4, 0), &slot),
+            Launched::Failed { .. }
+        ));
         assert_eq!(
             l.faults(),
-            ["unscripted launch of round-controller-run-b-2-0 for r"]
+            ["unscripted launch of round-controller-run-b-3-0 for r"]
         );
-        assert_eq!(l.launched().len(), 2);
+        assert_eq!(l.launched().len(), 3);
+        assert_eq!(
+            l.tried()[0],
+            Tried {
+                unit: "round-controller-run-b-1-0".into(),
+                slot: "proxmox/0".into(),
+                slot_token: Rev::new(5, 0)
+            }
+        );
         assert!(Bench::default()
             .ports()
             .proc_
@@ -385,6 +463,20 @@ mod tests {
                 deadline: std::time::Duration::from_secs(1),
             })
             .is_err());
+    }
+
+    #[test]
+    fn a_unit_set_until_a_time_is_unknown_from_then_on() {
+        let b = Bench::new();
+        let now = runtime::ports::Clock::now_ms(&b.clock);
+        b.units.set_until(
+            "u",
+            UnitState::Running("activating".into()),
+            Some(now + 10),
+        );
+        assert_eq!(b.units.state("u"), UnitState::Running("activating".into()));
+        b.clock.advance(10);
+        assert_eq!(b.units.state("u"), UnitState::Stopped("unknown".into()));
     }
 
     #[test]

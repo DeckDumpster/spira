@@ -541,11 +541,11 @@ mod tests {
             .unwrap();
             World {
                 vms: FakeVms::new(clock.clone()),
+                units: FakeUnits::new(clock.clone()),
                 clock,
                 store,
                 rng: Mutex::new(SeededRng::new(1)),
                 log: MemLog::default(),
-                units: FakeUnits::default(),
                 launch: FakeLaunch::default(),
                 leases: bench_settings(),
                 slots: bench_slot_settings(),

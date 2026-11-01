@@ -5,13 +5,12 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use runtime::ports::{Clock, Proc, Rng};
-use state_store::{Backend, Contract, Fence, Item, Request, Selector, Txn, TxnResult};
+use state_store::{Backend, Contract, Fence, Item, Request, Rev, Selector, Txn, TxnResult};
 
 use crate::death::{Units, Vms};
 use crate::liveness::LeaseSettings;
-use crate::orphans::Launch;
 use crate::outcome::Log;
-use crate::slots::SlotSettings;
+use crate::slots::{SlotGrant, SlotSettings};
 
 pub struct Ports<'a> {
     pub clock: &'a dyn Clock,
@@ -32,6 +31,30 @@ impl Ports<'_> {
     pub fn next_u64(&self) -> u64 {
         crate::lock(self.rng).next_u64()
     }
+}
+
+/// What starting a runner came to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Launched {
+    Started { unit: String },
+    /// The unit was already running under this name, so it is this launch's runner: the name
+    /// carries the lease token, and a token is never taken twice.
+    Running { unit: String },
+    /// Nothing runs under the name; `text` is the launcher's own answer, whole.
+    Failed { text: String },
+}
+
+/// Starts the runner of `batch` under the round lease `lease_token` and the slot `slot` holds, as
+/// the transient unit `death::unit_name` names. The caller records what it came to.
+pub trait Launch {
+    fn start(
+        &self,
+        p: &Ports,
+        repo: &str,
+        batch: &str,
+        lease_token: Rev,
+        slot: &SlotGrant,
+    ) -> Launched;
 }
 
 /// The state store's client surface: the contract's verbs the controller calls.

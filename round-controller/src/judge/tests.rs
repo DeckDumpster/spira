@@ -376,7 +376,7 @@ fn world() -> World {
         verbs: crate::sim::FakeVerbs::new(vec![], vm, clock.clone()).unwrap(),
         rng: std::sync::Mutex::new(runtime::ports::SeededRng::new(1)),
         log: crate::outcome::MemLog::default(),
-        units: crate::sim::bench::FakeUnits::default(),
+        units: crate::sim::bench::FakeUnits::new(clock.clone()),
         vms: crate::sim::bench::FakeVms::new(clock.clone()),
         launch: crate::sim::bench::FakeLaunch::default(),
         leases: crate::sim::bench::bench_settings(),

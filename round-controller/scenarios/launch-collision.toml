@@ -1,0 +1,71 @@
+description = "an orphan re-driven while its old runner's unit, named with the old token, is still activating: proof of death holds it each pass, and once the old unit is gone it is launched once, under a unit named with its new token, on the slot it was granted; nothing is ever started under the old name"
+repos = ["home"]
+
+[run]
+epoch = 1800000000
+passes = 5
+every_secs = 30
+
+[lease]
+ttl_secs = 60
+pass_wall_max_secs = 400
+redrive_retries = 2
+ec2_max_lifetime_secs = 1200
+
+[lease.deadline_secs]
+boot = 40
+build = 50
+suites = 90
+subpass = 70
+certify = 30
+
+[[store]]
+key = "batches/home/b1"
+data = { state = "CI_RUNNING", members = "sp-a:1", last_lease_token = { main = 7, sub = 0 } }
+
+# The old runner's unit is still coming up until 75 s after the epoch; from then systemd no
+# longer knows it.
+[[unit]]
+name = "round-controller-run-b1-7-0"
+state = "activating"
+until = 1800000075
+
+[[launch]]
+ok = true
+
+# Held at 0, 30 and 60 s; launched at 90 s; leased, so no orphan, at 120 s.
+[[expect]]
+name = "held-while-the-old-unit-activates"
+count = "outcomes:prior-runner-alive"
+equals = 3
+
+[[expect]]
+name = "launched-once-it-is-gone"
+count = "outcomes:redriven"
+equals = 1
+
+[[expect]]
+name = "one-launch"
+count = "launches"
+equals = 1
+
+[[expect]]
+name = "never-under-the-old-name"
+count = "launches:round-controller-run-b1-7-0"
+equals = 0
+
+[[expect]]
+name = "launched-on-a-held-slot"
+count = "live-locks:runner-slot/"
+equals = 1
+
+[[expect]]
+name = "launched-under-a-held-lease"
+count = "live-locks:round/home/b1"
+equals = 1
+
+[[expect]]
+name = "inverted-never-launched"
+count = "launches"
+equals = 0
+inverted = true
