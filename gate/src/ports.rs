@@ -196,6 +196,11 @@ pub trait World {
     fn now_ms(&self) -> u64 {
         self.now() * 1000
     }
+    /// The clock a recorded `at=` is written and aged on, so a reader on the world's clock
+    /// agrees with it; waits and deadlines stay on `now`.
+    fn stamp(&self) -> u64 {
+        self.now()
+    }
     fn utc(&self) -> String;
     fn sleep_ms(&self, ms: u64);
     fn pid(&self) -> u32;

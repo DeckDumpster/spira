@@ -960,6 +960,9 @@ impl World for Real {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0)
     }
+    fn stamp(&self) -> u64 {
+        spira_config::vtime::now_epoch()
+    }
     fn utc(&self) -> String {
         utc_of(self.now())
     }
@@ -1153,6 +1156,15 @@ pub fn utc_of(t: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_recorded_stamp_is_on_the_virtual_clock_and_a_wait_is_not() {
+        use crate::ports::World;
+        let r = super::Real::new(std::path::PathBuf::from("/nonexistent"));
+        let (stamp, now) = spira_config::vtime::with_now_for_test(1_900_000_000, || (r.stamp(), r.now()));
+        assert_eq!(stamp, 1_900_000_000);
+        assert_ne!(now, 1_900_000_000, "now times waits and deadlines; a frozen virtual clock would hang them");
+    }
 
     fn union_repo(tag: &str) -> testkit::TempDir {
         let d = testkit::TempDir::new(tag);
