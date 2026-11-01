@@ -1189,7 +1189,7 @@ pub fn a_txn_that_acquires_a_lock_and_writes_a_fenced_key_applies_whole_or_not_a
     assert!(again.fences[0].token > r.fences[0].token);
     assert_eq!(data(&c, "beads/x"), Some(json!("b")));
 
-    clock.advance(5_000);
+    c.release(&again.fences[0], &req("release")).unwrap();
     let t = claim(mod_rev(&c, "beads/x"), "c");
     c.backend().lose_next_commit_reply();
     assert!(c.txn(&t, &req("lost")).is_err());
