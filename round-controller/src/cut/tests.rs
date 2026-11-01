@@ -242,6 +242,26 @@ fn a_cut_stacks_on_the_top_live_round_and_cuts_nothing_once_the_stack_is_at_its_
 }
 
 #[test]
+fn the_concurrency_knob_sets_the_depth_over_the_lane_and_a_hold_keeps_its_member_out_at_its_tip() {
+    let w = World::new(vec![open_ok("r1")]);
+    w.round("k1", "CiRunning", "base-0", &[]);
+    w.round("k2", "CiRunning", "k1-head", &[]);
+    w.member("sp-a", json!({}));
+    w.member("sp-b", json!({}));
+    assert_eq!(w.cut(), Ok(None), "k1 and k2 fill the lane's default depth 2");
+    w.put(&crate::knobs::concurrency_key("lane"), json!(3));
+    w.put(
+        &crate::knobs::hold_key("lane", &mem("sp-a")),
+        json!({ "lifted_by": "reconciler" }),
+    );
+    w.cut().unwrap().unwrap();
+    assert_eq!(w.verbs.calls()[0].place.as_deref(), Some("stack-on:k2"), "the knob's depth 3 admits a third");
+    assert_eq!(w.opened_members(), ["sp-b"], "sp-a is held at its tip");
+    w.put(&crate::knobs::concurrency_key("lane"), json!("deep"));
+    assert_eq!(w.cut().unwrap_err().word(), "unreadable", "a knob that is no depth is not read as the default");
+}
+
+#[test]
 fn a_terminal_round_is_not_live_and_holds_no_member() {
     let w = World::new(vec![open_ok("r1")]);
     w.round("k0", "Landed", "base-0", &["sp-a"]);
