@@ -42,7 +42,7 @@
 2 testenv/src/busy.rs
 5 testenv/src/fixture.rs
 1 testenv/src/foreign.rs
-11 testenv/src/run/tests.rs
+8 testenv/src/run/tests.rs
 2 testenv/src/runtime.rs
 6 testenv/src/testdb/tests.rs
 1 testenv/src/worktree.rs

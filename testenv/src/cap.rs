@@ -4,7 +4,9 @@
 //! deadline; any other run carries the suite cap. At the cap the run cancels itself (killing its containers through the same path a
 //! signal takes) and finishes `FAULT reason=over-cap`, naming what was running. `testenv-cap`
 //! scans live runs and kills any that outlive their cap plus [`GRACE`], plus the load-wait
-//! bound for a suite-tier run, whose cap starts only once load admission lets it in.
+//! bound for a suite-tier run, whose cap starts only once load admission lets it in, plus the
+//! slot-wait bound: the cap's clock stands still while the run waits for an admission slot
+//! ([`hold`]), up to that bound.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -28,13 +30,17 @@ static RUNNING: Mutex<Vec<String>> = Mutex::new(Vec::new());
 #[cfg(test)]
 thread_local! {
     pub static OBSERVE_CAP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static ARMED_HERE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Whether a watchdog armed on this thread is still running.
+thread_local! {
+    /// The clock of the cap armed on this thread, for [`hold`] to stop.
+    static CURRENT: std::cell::RefCell<Option<Arc<Mutex<Clock>>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Whether a cap armed on this thread is counting time now.
 #[cfg(test)]
 pub fn armed_here() -> bool {
-    ARMED_HERE.with(|a| a.get())
+    CURRENT.with(|c| c.borrow().as_ref().is_some_and(|k| k.lock().unwrap().counting()))
 }
 
 /// Ignores the per-thread opt-in: for a fake that stands in for a process outside the run.
@@ -117,14 +123,63 @@ pub fn over_cap_line(what: &str, secs: u64, source: &str) -> String {
 
 type Trip = Arc<Mutex<Option<(String, u64)>>>;
 
+/// Wall time since arming, less the slot waits it excuses, which total at most `allowance`.
+struct Clock {
+    start: Instant,
+    held_since: Option<Instant>,
+    excused: Duration,
+    allowance: Duration,
+}
+
+impl Clock {
+    fn excused(&self) -> Duration {
+        (self.excused + self.held_since.map_or(Duration::ZERO, |t| t.elapsed())).min(self.allowance)
+    }
+
+    fn counted(&self) -> Duration {
+        self.start.elapsed().saturating_sub(self.excused())
+    }
+
+    #[cfg(test)]
+    fn counting(&self) -> bool {
+        self.held_since.is_none() || self.excused() >= self.allowance
+    }
+}
+
+/// While this lives the cap armed on this thread does not count, until its slot-wait
+/// allowance is spent.
+pub struct Held(Option<Arc<Mutex<Clock>>>);
+
+/// Stops the clock of the cap armed on this thread while the run waits for an admission slot.
+pub fn hold() -> Held {
+    let clock = CURRENT.with(|c| c.borrow().clone()).filter(|k| {
+        let mut k = k.lock().unwrap();
+        k.held_since.is_none() && {
+            k.held_since = Some(Instant::now());
+            true
+        }
+    });
+    Held(clock)
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        if let Some(k) = &self.0 {
+            let mut k = k.lock().unwrap();
+            if let Some(t) = k.held_since.take() {
+                k.excused += t.elapsed();
+            }
+        }
+    }
+}
+
 pub struct Armed(Arc<AtomicBool>, Trip);
 
 impl Armed {
     /// Stops the watchdog; what was running when the cap fired, if it did.
     pub fn finish(self) -> Option<(String, u64)> {
         self.0.store(true, Ordering::SeqCst);
-        #[cfg(test)]
-        ARMED_HERE.with(|a| a.set(false));
+        CURRENT.with(|c| c.borrow_mut().take());
         let trip = self.1.lock().unwrap().take();
         if trip.is_some() {
             TRIPPED.store(false, Ordering::SeqCst);
@@ -133,19 +188,24 @@ impl Armed {
     }
 }
 
-pub fn arm(cap: Cap) -> Armed {
+/// Arms the cap on this thread; [`hold`] excuses at most `slot_wait` seconds of it.
+pub fn arm(cap: Cap, slot_wait: u64) -> Armed {
     let limit = Duration::from_secs(cap.secs);
     let source = cap.source;
     let done = Arc::new(AtomicBool::new(false));
     let seen = done.clone();
     let trip: Trip = Arc::new(Mutex::new(None));
     let slot = trip.clone();
-    let start = Instant::now();
-    #[cfg(test)]
-    ARMED_HERE.with(|a| a.set(true));
+    let clock = Arc::new(Mutex::new(Clock {
+        start: Instant::now(),
+        held_since: None,
+        excused: Duration::ZERO,
+        allowance: Duration::from_secs(slot_wait),
+    }));
+    CURRENT.with(|c| *c.borrow_mut() = Some(clock.clone()));
     std::thread::spawn(move || {
-        let wait = |until: Duration| {
-            while start.elapsed() < until {
+        let wait = |more: &dyn Fn() -> bool| {
+            while more() {
                 if seen.load(Ordering::SeqCst) {
                     return false;
                 }
@@ -153,13 +213,15 @@ pub fn arm(cap: Cap) -> Armed {
             }
             !seen.load(Ordering::SeqCst)
         };
-        if !wait(limit) {
+        if !wait(&|| clock.lock().unwrap().counted() < limit) {
             return;
         }
         let what = describe();
         *slot.lock().unwrap() = Some((what.clone(), limit.as_secs()));
         TRIPPED.store(true, Ordering::SeqCst);
-        if wait(limit + UNWIND) {
+        // The unwind is timed on the wall clock: a hold taken after the trip must not delay it.
+        let tripped = Instant::now();
+        if wait(&|| tripped.elapsed() < UNWIND) {
             kill_descendants(std::process::id());
             crate::telemetry::push_over_cap(&crate::telemetry::sink(), "self");
             println!("{}", over_cap_line(&what, limit.as_secs(), source));
@@ -222,15 +284,24 @@ pub struct Breach {
 }
 
 /// A suite-tier run may first wait up to `load_wait` on host load before its cap starts; a
-/// gate-tier run never waits on load.
-pub fn breaches(procs: &[Proc], suite_cap: u64, gate_cap: u64, load_wait: u64, grace: u64, exe: Option<&str>) -> Vec<Breach> {
+/// gate-tier run never waits on load. Any run's cap stands still for up to `slot_wait` while
+/// it waits for admission slots.
+pub fn breaches(
+    procs: &[Proc],
+    suite_cap: u64,
+    gate_cap: u64,
+    load_wait: u64,
+    slot_wait: u64,
+    grace: u64,
+    exe: Option<&str>,
+) -> Vec<Breach> {
     procs
         .iter()
         .filter(|p| is_run(&p.argv) && exe.is_none_or(|e| p.argv[0] == e))
         .filter_map(|p| {
             let gate = has_deadline(&p.argv);
             let cap = limit(suite_cap, gate_cap, gate.then(|| deadline_of(&p.argv).unwrap_or(0))).secs;
-            let waited = if gate { 0 } else { load_wait };
+            let waited = if gate { 0 } else { load_wait } + slot_wait;
             (p.age_secs > cap + waited + grace).then(|| Breach { proc: p.clone(), tier: if gate { "gate" } else { "suite" }, cap })
         })
         .collect()
@@ -294,9 +365,9 @@ mod tests {
         assert_eq!(deadline_of(&["testenv".into(), "--deadline=600".into()]), Some(600));
         assert_eq!(deadline_of(&["testenv".into(), "--deadline".into(), "600".into(), "b".into()]), Some(600));
         let long = p(1, 640, &["testenv", "--deadline", "600", "b"]);
-        assert!(breaches(std::slice::from_ref(&long), 900, 300, 0, GRACE, None).is_empty());
+        assert!(breaches(std::slice::from_ref(&long), 900, 300, 0, 0, GRACE, None).is_empty());
         let over = p(2, 600 + SETTLE + GRACE + 1, &["testenv", "--deadline", "600", "b"]);
-        assert_eq!(breaches(&[over], 900, 300, 0, GRACE, None)[0].cap, 630);
+        assert_eq!(breaches(&[over], 900, 300, 0, 0, GRACE, None)[0].cap, 630);
     }
 
     #[test]
@@ -310,19 +381,55 @@ mod tests {
             p(6, 99_999, &["sleep", "9999"]),
             p(7, 99_999, &["/bin/testenv-cap", "watch"]),
         ];
-        let got: Vec<(u32, &str)> = breaches(&procs, 900, 300, 0, GRACE, None).iter().map(|b| (b.proc.pid, b.tier)).collect();
+        let got: Vec<(u32, &str)> = breaches(&procs, 900, 300, 0, 0, GRACE, None).iter().map(|b| (b.proc.pid, b.tier)).collect();
         assert_eq!(got, vec![(2, "suite"), (4, "gate")]);
     }
 
     #[test]
     fn a_suite_run_is_allowed_its_load_wait_on_top_of_cap_and_grace() {
         let waited = p(1, 600 + 240 + GRACE, &["testenv", "b"]);
-        assert!(breaches(&[waited], 600, 300, 240, GRACE, None).is_empty());
+        assert!(breaches(&[waited], 600, 300, 240, 0, GRACE, None).is_empty());
         let over = p(2, 600 + 240 + GRACE + 1, &["testenv", "b"]);
-        assert_eq!(breaches(&[over], 600, 300, 240, GRACE, None)[0].cap, 600);
+        assert_eq!(breaches(&[over], 600, 300, 240, 0, GRACE, None)[0].cap, 600);
         let gate = [p(3, 300 + SETTLE + GRACE + 1, &["testenv", "--deadline", "120", "b"])];
-        assert_eq!(breaches(&gate, 600, 300, 240, GRACE, None), breaches(&gate, 600, 300, 0, GRACE, None));
-        assert_eq!(breaches(&gate, 600, 300, 240, GRACE, None).len(), 1);
+        assert_eq!(breaches(&gate, 600, 300, 240, 0, GRACE, None), breaches(&gate, 600, 300, 0, 0, GRACE, None));
+        assert_eq!(breaches(&gate, 600, 300, 240, 0, GRACE, None).len(), 1);
+    }
+
+    #[test]
+    fn any_run_is_allowed_its_slot_wait_on_top_of_cap_load_wait_and_grace() {
+        let waited = p(1, 600 + 240 + 300 + GRACE, &["testenv", "b"]);
+        assert!(breaches(&[waited], 600, 300, 240, 300, GRACE, None).is_empty());
+        let over = p(2, 600 + 240 + 300 + GRACE + 1, &["testenv", "b"]);
+        assert_eq!(breaches(&[over], 600, 300, 240, 300, GRACE, None)[0].cap, 600);
+        let gate = p(3, 300 + SETTLE + 300 + GRACE, &["testenv", "--deadline", "120", "b"]);
+        assert!(breaches(std::slice::from_ref(&gate), 600, 300, 240, 300, GRACE, None).is_empty());
+        let gate_over = p(4, 300 + SETTLE + 300 + GRACE + 1, &["testenv", "--deadline", "120", "b"]);
+        assert_eq!(breaches(&[gate_over], 600, 300, 240, 300, GRACE, None).len(), 1);
+    }
+
+    #[test]
+    fn a_hold_stops_the_clock_only_up_to_its_allowance() {
+        let held = |allowance: u64| {
+            let armed = arm(Cap { secs: 9_999, source: "test" }, allowance);
+            assert!(armed_here());
+            let h = hold();
+            let during = armed_here();
+            drop(h);
+            let after = armed_here();
+            armed.finish();
+            (during, after, armed_here())
+        };
+        assert_eq!(held(60), (false, true, false));
+        assert_eq!(held(0), (true, true, false), "a zero allowance excuses nothing");
+        let ago = |s| Instant::now() - Duration::from_secs(s);
+        let k = Clock {
+            start: ago(100),
+            held_since: Some(ago(70)),
+            excused: Duration::from_secs(20),
+            allowance: Duration::from_secs(60),
+        };
+        assert_eq!(k.counted().as_secs(), 40, "excused waits stop at the allowance");
     }
 
     #[test]

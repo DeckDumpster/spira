@@ -147,6 +147,7 @@ fn testenv_limits_in(env: &BTreeMap<String, String>, home: &Path) -> Result<Stri
         ("testenv_gate_cap", "SPIRA_TESTENV_GATE_CAP"),
         ("testenv_load_max_pct", "SPIRA_TESTENV_LOAD_MAX_PCT"),
         ("testenv_load_wait", "SPIRA_TESTENV_LOAD_WAIT"),
+        ("testenv_slot_wait", "SPIRA_TESTENV_SLOT_WAIT"),
     ] {
         let raw = spira_config::resolve::resolve_key(env, home, name).map_err(|e| format!("round-vm: {e}"))?;
         let v: u64 = raw.trim().parse().map_err(|e| format!("round-vm: {name} = {raw:?} does not parse: {e}"))?;

@@ -1,16 +1,21 @@
 //! testenv-cap against real processes: a stand-in for a testenv run is killed past
-//! cap + load wait + grace and logged once; one under that is left alone.
+//! cap + load wait + slot wait + grace and logged once; one under that is left alone.
 
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 
 fn config(dir: &Path, suite: &str, gate: &str, load_wait: &str) -> std::path::PathBuf {
+    config_with_slot_wait(dir, suite, gate, load_wait, "0")
+}
+
+fn config_with_slot_wait(dir: &Path, suite: &str, gate: &str, load_wait: &str, slot_wait: &str) -> std::path::PathBuf {
     spira_config::process::fixture_toml(
         dir,
         &[
             ("SPIRA_TESTENV_SUITE_CAP", suite),
             ("SPIRA_TESTENV_GATE_CAP", gate),
             ("SPIRA_TESTENV_LOAD_WAIT", load_wait),
+            ("SPIRA_TESTENV_SLOT_WAIT", slot_wait),
             ("SPIRA_CONCIERGE_INBOX", &dir.join("inbox").display().to_string()),
         ],
     )
@@ -58,6 +63,10 @@ fn a_run_past_cap_plus_grace_is_killed_and_reported_once_and_one_under_it_is_not
     let within_load_wait = scan(t.path(), &config(t.path(), "1", "0", "60"), "0");
     assert_eq!(within_load_wait, "", "a suite run is allowed its load wait past the cap");
     assert!(run.try_wait().unwrap().is_none());
+
+    let within_slot_wait = scan(t.path(), &config_with_slot_wait(t.path(), "1", "0", "0", "60"), "0");
+    assert_eq!(within_slot_wait, "", "a run is allowed its slot wait past the cap");
+    assert!(run.try_wait().unwrap().is_none() && gate.try_wait().unwrap().is_none());
 
     let over = scan(t.path(), &config(t.path(), "1", "0", "0"), "0");
     assert_eq!(over.lines().count(), 1, "only the suite run is over: {over}");

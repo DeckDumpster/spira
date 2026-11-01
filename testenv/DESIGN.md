@@ -1175,13 +1175,16 @@ Every run carries a cap from config, with no Rust-side default: `SPIRA_TESTENV_S
 run without `--deadline`, `SPIRA_TESTENV_GATE_CAP` (+30 s settle, so the run's own deadline cuts
 first) for one with it. A run without `--deadline` first waits on host load (at most
 `SPIRA_TESTENV_LOAD_WAIT`), and its cap starts only once that admission lets it in: the queue is
-a bounded wait of its own, not this run's suites. At the cap the run cancels through the signal
-path, killing its containers, and finishes `VERDICT FAULT rc=2 reason=over-cap`, logging
+a bounded wait of its own, not this run's suites. Likewise the cap's clock stands still while the
+run waits for an admission slot (unit, test or compile), for at most `SPIRA_TESTENV_SLOT_WAIT` in
+all; waiting past that counts. At the cap the run cancels through the signal path, killing its
+containers, and finishes `VERDICT FAULT rc=2 reason=over-cap`, logging
 `over-cap: <tier/suite or phase> was still running at the <N>s cap`; the verdict is recorded in
 `run.events`. If it has not unwound 30 s later it kills its descendants and exits itself.
 `testenv-cap` (a `watchd` daemon row) scans live runs and kills any past cap + 60 s (a suite-tier
-run also gets its load-wait bound on top) by pid, after re-reading the cmdline and start time,
-and appends one line to the concierge inbox with the tier and wall.
+run also gets its load-wait bound on top, and every run its slot-wait bound) by pid, after
+re-reading the cmdline and start time, and appends one line to the concierge inbox with the tier
+and wall.
 
 ## UI specs (`testenv ui`)
 
