@@ -15,7 +15,8 @@ use serde::Deserialize;
 use crate::lease::{acquire, Resource};
 use crate::ports::{Child, Ports};
 use crate::probe::Sleep;
-use crate::run::{self, RunArgs, RunEnd, RunEnv, SubPasses, Switches};
+use crate::run::{self, RunArgs, RunEnd, RunEnv, SubPasses};
+use crate::switches::Stops;
 use crate::sim::judge::{job_result, JobSpec};
 use crate::slots::{grant, Pool};
 
@@ -97,21 +98,19 @@ impl RunOutcome {
     }
 }
 
-/// The world's off switches: `world.halted` from its scripted time on.
-pub struct FakeSwitches {
+/// The runner's off switches: `world.halted` from its scripted time on, over the world's own.
+pub struct FakeSwitches<'w> {
     pub halt_at_ms: Option<u64>,
     pub clock: VirtualClock,
+    pub world: &'w dyn Stops,
 }
 
-impl Switches for FakeSwitches {
+impl Stops for FakeSwitches<'_> {
     fn halted(&self) -> bool {
-        self.set("").is_some()
+        self.halt_at_ms.is_some_and(|t| self.clock.now_ms() >= t) || self.world.halted()
     }
-
-    fn set(&self, _: &str) -> Option<String> {
-        self.halt_at_ms
-            .filter(|t| self.clock.now_ms() >= *t)
-            .map(|_| "world.halted is present: the world is stopped".to_string())
+    fn scoped(&self, repo: &str, lane: &str) -> Option<spira_config::scoped_stop::RepoStop> {
+        self.world.scoped(repo, lane)
     }
 }
 
@@ -267,9 +266,13 @@ pub fn drive<W: Advance>(
     let switches = FakeSwitches {
         halt_at_ms: spec.halt_secs.map(|s| epoch_ms + s * 1000),
         clock: clock.clone(),
+        world: p.stops,
+    };
+    let p = &Ports {
+        stops: &switches,
+        ..*p
     };
     let env = RunEnv {
-        switches: &switches,
         sleep: &sleep,
         poll_ms: spec.poll_secs * 1000,
         teardown_ms: spec.teardown_secs * 1000,

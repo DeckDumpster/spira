@@ -46,6 +46,12 @@ pub enum Kind {
     Published,
     /// An intent on the repo's section was acknowledged, with its result as the cause.
     Acked,
+    /// An off switch is set for the repo: nothing mutating ran, and [`Cause::Stop`] says why.
+    Stopped,
+    /// The schedule step launched a round's runner on the slot and lease it took for it.
+    Launched,
+    /// The schedule step's launch failed: its lease and slot were given back and the attempt recorded.
+    LaunchFailed,
 }
 
 impl Kind {
@@ -67,6 +73,9 @@ impl Kind {
             Kind::Held,
             Kind::Published,
             Kind::Acked,
+            Kind::Stopped,
+            Kind::Launched,
+            Kind::LaunchFailed,
         ]
         .into_iter()
         .chain(acts)
@@ -100,6 +109,9 @@ impl Kind {
             Kind::Held => "held",
             Kind::Published => "published",
             Kind::Acked => "acked",
+            Kind::Stopped => "stopped",
+            Kind::Launched => "launched",
+            Kind::LaunchFailed => "launch-failed",
         }
     }
 }
@@ -151,6 +163,18 @@ pub enum Cause {
         key: String,
         rule: String,
     },
+    /// An off switch: its word, who set it, why, and what lifts it.
+    Stop {
+        word: &'static str,
+        owner: String,
+        reason: String,
+        until: String,
+    },
+    /// A runner launch: its unit, and the launcher's text when it failed.
+    Launch {
+        unit: String,
+        text: Option<String>,
+    },
 }
 
 impl Cause {
@@ -167,6 +191,9 @@ impl Cause {
             Cause::Section { .. } => "section",
             Cause::Ack { result, .. } => result,
             Cause::Admission { .. } => "admission-refused",
+            Cause::Stop { word, .. } => word,
+            Cause::Launch { text: None, .. } => "ok",
+            Cause::Launch { text: Some(_), .. } => "launch-refused",
         }
     }
 }
@@ -270,6 +297,46 @@ impl Outcome {
         }
     }
 
+    /// A repo an off switch stops: the pass's one outcome for it.
+    pub fn stopped(at: u64, repo: &str, s: &crate::switches::Stop) -> Outcome {
+        Outcome {
+            at,
+            repo: repo.into(),
+            batch: None,
+            kind: Kind::Stopped,
+            cause: Cause::Stop {
+                word: s.word(),
+                owner: s.owner(),
+                reason: s.reason(),
+                until: s.until(),
+            },
+        }
+    }
+
+    /// A runner the schedule step launched as `unit`, or whose launch failed with `failed`.
+    pub fn launch(
+        at: u64,
+        repo: &str,
+        batch: &str,
+        unit: &str,
+        failed: Option<&str>,
+    ) -> Outcome {
+        Outcome {
+            at,
+            repo: repo.into(),
+            batch: Some(batch.into()),
+            kind: if failed.is_some() {
+                Kind::LaunchFailed
+            } else {
+                Kind::Launched
+            },
+            cause: Cause::Launch {
+                unit: unit.into(),
+                text: failed.map(str::to_string),
+            },
+        }
+    }
+
     pub fn line(&self) -> String {
         let mut s = format!(
             "{} {} {} repo={} batch={}",
@@ -297,6 +364,18 @@ impl Outcome {
                 s += &format!(" green_unlanded_minutes={green_unlanded_minutes} repeat_identity_passes_24h={repeat_identity_passes_24h}")
             }
             Cause::Admission { key, rule } => s += &format!(" key={key} rule={rule:?}"),
+            Cause::Stop {
+                owner,
+                reason,
+                until,
+                ..
+            } => s += &format!(" owner={owner:?} reason={reason:?} until={until:?}"),
+            Cause::Launch { unit, text } => {
+                s += &format!(" unit={unit}");
+                if let Some(t) = text {
+                    s += &format!(" text={t:?}");
+                }
+            }
             Cause::Steps | Cause::Ok => {}
         }
         s
@@ -491,7 +570,7 @@ mod tests {
     #[test]
     fn every_kind_has_its_own_word() {
         let words: std::collections::BTreeSet<&str> = Kind::words().into_iter().collect();
-        assert_eq!(words.len(), Verb::ALL.len() + 14);
+        assert_eq!(words.len(), Verb::ALL.len() + 17);
         assert!(
             words.contains("visited")
                 && words.contains("refused")
@@ -563,6 +642,27 @@ mod tests {
         assert_eq!(
             Outcome::held(0, "r", "k2", "stacked-on-unlanded", "batches/r/k2/status").line(),
             "1970-01-01T00:00:00Z held stacked-on-unlanded repo=r batch=k2 key=batches/r/k2/status"
+        );
+    }
+
+    #[test]
+    fn a_stop_names_its_switch_owner_reason_and_lift_and_a_launch_its_unit() {
+        let s = crate::switches::Stop::Stopped {
+            owner: "ops".into(),
+            reason: "drill".into(),
+            until: "manual".into(),
+        };
+        assert_eq!(
+            Outcome::stopped(0, "r", &s).line(),
+            "1970-01-01T00:00:00Z stopped scoped-stop repo=r batch=- owner=\"ops\" reason=\"drill\" until=\"manual\""
+        );
+        assert_eq!(
+            Outcome::launch(0, "r", "b1", "u1", None).line(),
+            "1970-01-01T00:00:00Z launched ok repo=r batch=b1 unit=u1"
+        );
+        assert_eq!(
+            Outcome::launch(0, "r", "b1", "u1", Some("exit 1")).line(),
+            "1970-01-01T00:00:00Z launch-failed launch-refused repo=r batch=b1 unit=u1 text=\"exit 1\""
         );
     }
 

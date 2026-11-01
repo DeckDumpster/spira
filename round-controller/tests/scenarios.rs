@@ -66,6 +66,12 @@ scenario!(
     scenario_intent_apply_once,
     scenario_publish_on_change,
     scenario_no_intents_unchanged,
+    scenario_switch_halted,
+    scenario_switch_scoped_stop,
+    scenario_switch_andon_pulled,
+    scenario_switch_andon_absent,
+    scenario_two_repos_overlap,
+    scenario_launch_fail_releases,
 );
 
 #[test]

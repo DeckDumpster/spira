@@ -147,8 +147,13 @@ fn ack_word(v: &Value) -> &'static str {
 /// Every unacknowledged intent on the repo's section, acked; each ack's key and result. The
 /// first that could not be acked is answered once every other has had its turn.
 pub fn apply(p: &Ports, repo: &str) -> Result<Vec<(String, &'static str)>, Refusal> {
-    if p.switches.set(repo).is_some() {
-        return Ok(Vec::new());
+    match crate::switches::check(p, repo) {
+        // A store that cannot list the andon sections cannot take an ack either: tell it.
+        Some(crate::switches::Stop::AndonUnreadable { key, why }) => {
+            return Err(Refusal::Unreadable { key, text: why })
+        }
+        Some(_) => return Ok(Vec::new()),
+        None => {}
     }
     let mut first = init_concurrency(p, repo).err();
     let prefix = intent_key(NAME, repo, "");

@@ -190,7 +190,7 @@ fn a_stopped_repo_takes_no_step_and_its_intents_wait() {
     let b = Bench::new();
     lane(&b);
     let key = put(&b, "1", intent("1", CONCURRENCY, CONC, json!(2), json!(3)));
-    b.switches.stop("lane", "stopped by ops: drill");
+    b.stops.stop("lane", "ops", "drill", "manual");
     assert!(apply(&b.ports(), "lane").unwrap().is_empty());
     assert_eq!(ack(&b, &key), Value::Null);
     assert_eq!(knob(&b, CONC), None, "not even the knob is set");

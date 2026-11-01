@@ -405,7 +405,7 @@ fn ports<'a>(
         leases: &w.leases,
         slots: &w.slots,
         lc: &crate::real::Unserved,
-        switches: &crate::sim::NoSwitches,
+        stops: &crate::switches::NoStops,
     }
 }
 

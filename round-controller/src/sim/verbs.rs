@@ -176,6 +176,25 @@ impl FakeVerbs {
         put(&**st, &key, Txn::new().put(&key, Object::new(data)));
     }
 
+    /// A landing delivers its members: each one's lifecycle record, where it has one, is LANDED,
+    /// so the cut no longer pools it.
+    fn delivered(&self, st: &dyn Store, round: &serde_json::Value) {
+        let ids = round
+            .get("members")
+            .and_then(|m| m.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|m| m.get("id")?.as_str());
+        for id in ids {
+            let key = format!("lifecycle/{id}");
+            let Some(mut rec) = st.get(&key).ok().flatten().map(|i| i.value.data) else {
+                continue;
+            };
+            rec["state"] = serde_json::json!("LANDED");
+            put(st, &key, Txn::new().put(&key, Object::new(rec)));
+        }
+    }
+
     pub fn calls(&self) -> Vec<Call> {
         crate::lock(&self.calls).clone()
     }
@@ -306,12 +325,18 @@ impl RoundVerbs for FakeVerbs {
         _lease_token: Option<&str>,
     ) -> Result<Done, VerbRefusal> {
         let d = self.done(Verb::Land, repo, batch)?;
-        let head = self.store.as_ref().and_then(|st| {
-            let i = st.get(&round_key(repo, batch)).ok()??;
-            i.value.data.get("head")?.as_str().map(str::to_string)
-        });
+        let round = self
+            .store
+            .as_ref()
+            .and_then(|st| st.get(&round_key(repo, batch)).ok()?);
+        let head = round
+            .as_ref()
+            .and_then(|i| i.value.data.get("head")?.as_str().map(str::to_string));
         if let (Some(git), Some(head)) = (&self.git, head) {
             git.advance(repo, &head);
+        }
+        if let (Some(st), Some(round)) = (&self.store, round) {
+            self.delivered(&**st, &round.value.data);
         }
         Ok(d)
     }

@@ -25,7 +25,7 @@ functions = ["judge", "type_pass", "type_lane_fault", "judge_red", "removal_sets
 # The Planner's decisions: the cut, its explicit verb, and supersede on a broken base.
 [[scope]]
 path = "round-controller/src/cut.rs"
-functions = ["cut", "explicit", "select"]
+functions = ["cut", "plan", "explicit", "select"]
 
 [[scope]]
 path = "round-controller/src/supersede.rs"
@@ -79,3 +79,17 @@ functions = ["clear"]
 [[scope]]
 path = "release/src/round_recert.rs"
 functions = ["Hold::take", "Keeper::tick", "drive", "start"]
+
+# The pass: the off switches in their order, the fixed steps, and the schedule step's hand-off of
+# a slot and a lease to a launched runner, with the failure path that gives both back.
+[[scope]]
+path = "round-controller/src/switches.rs"
+functions = ["check", "andon"]
+
+[[scope]]
+path = "round-controller/src/pass.rs"
+functions = ["pass_with"]
+
+[[scope]]
+path = "round-controller/src/schedule.rs"
+functions = ["schedule", "start"]

@@ -1,0 +1,81 @@
+description = "no andon section exists, so no cord is pulled: the pass re-drives the orphan, lands the GREEN round, and cuts and launches a round for the ready member"
+repos = ["home"]
+
+[run]
+epoch = 1800000000
+passes = 1
+every_secs = 30
+
+[[store]]
+key = "lanes/home"
+data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
+
+[[git]]
+repo = "home"
+landing = "base-0"
+
+# An orphan: its runner lapsed, so the orphans step would re-drive it.
+[[store]]
+key = "batches/home/o1"
+data = { batch_id = "o1", repo = "home", state = "CiRunning", head = "o1-h", base = "base-0", pass = 1, version = 2, tested_base = "base-0", members = [{ id = "sp-o", tip = "o1" }], last_lease_token = { main = 7, sub = 0 } }
+
+# A GREEN round the Lander would land.
+[[store]]
+key = "batches/home/g1"
+data = { batch_id = "g1", repo = "home", state = "Green", head = "g1-h", base = "base-0", pass = 1, version = 3, tested_base = "base-0", members = [{ id = "sp-g", tip = "g1" }] }
+
+# A member ready to cut.
+[[store]]
+key = "lifecycle/sp-n"
+data = { repo = "home", state = "SUBMITTED", tip = "n1" }
+
+[[launch]]
+ok = true
+
+[[launch]]
+ok = true
+
+[[verb]]
+verb = "land"
+batch = "g1"
+ok = {}
+
+[[verb]]
+verb = "open"
+ok = { batch = "n-r1", head = "n-h1" }
+
+[[expect]]
+name = "not-stopped"
+count = "outcomes:stopped"
+equals = 0
+
+[[expect]]
+name = "the-repo-was-visited"
+count = "outcomes:visited"
+equals = 1
+
+[[expect]]
+name = "the-orphan-is-re-driven"
+count = "outcomes:redriven:o1"
+equals = 1
+
+[[expect]]
+name = "the-green-round-lands"
+count = "outcomes:landed:g1"
+equals = 1
+
+[[expect]]
+name = "the-ready-member-is-cut"
+count = "calls:open"
+equals = 1
+
+[[expect]]
+name = "and-its-runner-launched"
+count = "outcomes:launched:n-r1"
+equals = 1
+
+[[expect]]
+name = "inverted-stopped"
+count = "outcomes:stopped"
+equals = 1
+inverted = true

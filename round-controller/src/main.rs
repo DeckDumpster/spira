@@ -22,7 +22,8 @@ use round_controller::real::verbs::{Deadlines, RealVerbs};
 use round_controller::real::vm_runner::{Repo, VmEnv, VmRunner};
 use round_controller::real;
 use round_controller::resources::RoundView;
-use round_controller::run::{self, RunDir, RunEnv};
+use round_controller::run::{self, RunEnv};
+use round_controller::switches::RunDir;
 use round_controller::slots::{self, SlotGrant, SlotSettings};
 use round_controller::telemetry;
 use runtime::ports::{Proc, SeededRng, SysProc};
@@ -224,7 +225,7 @@ fn run_pass(p: &Ports, a: &run::RunArgs) -> Result<run::RunEnd, String> {
     };
     let env = VmEnv {
         round_vm: spira_config::release_env::tool("round-vm").into(),
-        run: run_dir.clone(),
+        run: run_dir,
         wall_secs: num("SPIRA_BATCHER_WALL_SECS")?,
         maxpar: u32::try_from(num("SPIRA_BATCH_MAXPAR")?).map_err(|e| e.to_string())?,
         cpu_quota: std::env::var("ROUND_CPU_QUOTA").ok(),
@@ -237,9 +238,7 @@ fn run_pass(p: &Ports, a: &run::RunArgs) -> Result<run::RunEnd, String> {
         base: registry.base(&a.repo).unwrap_or_default(),
     };
     let mut subs = VmRunner::new(p, &spawn, &ThreadSleep, env, repo, &tree, &base, &a.batch)?;
-    let switches = RunDir(run_dir);
     let renv = RunEnv {
-        switches: &switches,
         sleep: &ThreadSleep,
         poll_ms: run::POLL_MS,
         teardown_ms: run::TEARDOWN_MS,
@@ -250,6 +249,11 @@ fn run_pass(p: &Ports, a: &run::RunArgs) -> Result<run::RunEnd, String> {
 
 fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, String> {
     let leases = LeaseSettings::from_cfg(&spira_config::process::cfg)?;
+    // The off switches live in the run directory: a pass that cannot find it cannot obey them.
+    let stops = RunDir(
+        spira_config::resolve::run_dir_for_process()
+            .map_err(|e| format!("the run directory, where the off switches live: {e}"))?,
+    );
     let slot_settings = SlotSettings::from_cfg(&spira_config::process::cfg)?;
     let clock = real::clock(spira_config::vtime::override_epoch());
     // The simulator pins the clock through SPIRA_NOW, and the stream with it.
@@ -293,7 +297,6 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
         proc_: proc_.clone(),
         program: spira_config::release_env::tool("spira-lc"),
     };
-    let switches = RunDir(spira_config::resolve::run_dir_for_process()?);
     let store = LcStore {
         proc_: proc_.clone(),
         program: spira_config::release_env::tool("spira-lc"),
@@ -321,7 +324,7 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
         leases: &leases,
         slots: &slot_settings,
         lc: &lc,
-        switches: &switches,
+        stops: &stops,
     };
     f(&ports)
 }

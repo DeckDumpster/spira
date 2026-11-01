@@ -317,15 +317,14 @@ fn the_world_s_halt_and_a_scoped_stop_are_each_their_own_condition() {
         (reason(&built(&b), HALTED), reason(&built(&b), STOPPED)),
         (None, None)
     );
-    b.switches
-        .stop("lane", "lane's rounds lane is stopped by ops: drill");
+    b.stops.stop("lane", "ops", "drill", "manual");
     let s = built(&b);
     assert_eq!(
         reason(&s, STOPPED).as_deref(),
         Some("lane's rounds lane is stopped by ops: drill")
     );
     assert_eq!(reason(&s, HALTED), None);
-    b.switches.halt();
+    b.stops.halt();
     let s = built(&b);
     assert!(reason(&s, HALTED).unwrap().contains("world.halted"));
     assert_eq!(reason(&s, STOPPED), None);

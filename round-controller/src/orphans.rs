@@ -172,7 +172,7 @@ fn read(p: &Ports, key: &str) -> Result<(Record, Option<Rev>), String> {
 
 /// Appends `a` by a CAS on the record, re-read on conflict. Unfenced: `pass` writes it, and a
 /// failed launch must be counted even if the lease it took has lapsed.
-fn append(p: &Ports, key: &str, a: &Attempt) -> Result<(), String> {
+pub(crate) fn append(p: &Ports, key: &str, a: &Attempt) -> Result<(), String> {
     const TRIES: usize = 3;
     for _ in 0..TRIES {
         let (mut rec, rev) = read(p, key)?;
@@ -195,7 +195,7 @@ fn append(p: &Ports, key: &str, a: &Attempt) -> Result<(), String> {
 }
 
 /// A failed launch waits the lease TTL, doubled for each failure before it.
-fn backoff_ms(p: &Ports, failures: u32) -> u64 {
+pub(crate) fn backoff_ms(p: &Ports, failures: u32) -> u64 {
     p.leases.ttl_ms.saturating_mul(
         1u64.checked_shl(failures.saturating_sub(1))
             .unwrap_or(u64::MAX),
@@ -286,20 +286,42 @@ pub fn redrive(p: &Ports, o: &Orphan, launch: &dyn Launch) -> Redrive {
 
 /// Records the runner's unit under its slot before launching it, so a slot whose holder lapses
 /// is granted again only once that unit is shown stopped.
-fn record_unit(p: &Ports, slot: &mut SlotGrant, batch: &str, token: Rev) -> Result<(), String> {
+pub(crate) fn record_unit(p: &Ports, slot: &mut SlotGrant, batch: &str, token: Rev) -> Result<(), String> {
     let unit = unit_name(batch, token)?;
     slot.record_holder(p, &unit, None)
         .map_err(|e| format!("slot {} did not record {unit}: {e:?}", slot.slot()))
 }
 
-/// `pass`'s orphans step: every orphan of `repo` re-driven, or held, each with one line.
+/// The live rounds of `repo` whose tested base can no longer land: the supersede step that runs
+/// next takes them, so re-driving one would run a VM on a round about to be SUPERSEDED. A lane
+/// or a round that cannot be read leaves every orphan to be re-driven, as before stacking.
+fn superseding(p: &Ports, repo: &str) -> std::collections::BTreeSet<String> {
+    let (Ok(Some(lane)), Ok(rounds)) = (crate::stack::lane(p, repo), crate::stack::live(p, repo))
+    else {
+        return Default::default();
+    };
+    let stack = crate::stack::Stack::of(&lane, &rounds);
+    rounds
+        .into_iter()
+        .filter(|r| {
+            r.round.tested_base.is_some()
+                && !stack.grounded(&r.batch)
+                && crate::stack::supersedable(r.round.row.state)
+        })
+        .map(|r| r.batch)
+        .collect()
+}
+
+/// `pass`'s orphans step: every orphan of `repo` re-driven, or held, each with one line; one
+/// the supersede step is about to take is left to it.
 pub fn step(p: &Ports, repo: &str) {
     match orphans(p, repo) {
         Err(e) => p
             .log
             .write(&Outcome::store_refused(p.clock.now_ms(), repo, &e)),
         Ok(found) => {
-            for o in found {
+            let doomed = superseding(p, repo);
+            for o in found.into_iter().filter(|o| !doomed.contains(&o.batch)) {
                 let r = redrive(p, &o, p.launcher);
                 if let Some(line) = Outcome::redrive(p.clock.now_ms(), &o, &r) {
                     p.log.write(&line);
@@ -615,6 +637,33 @@ mod tests {
             .map(|o| o.kind)
             .collect();
         assert_eq!(kinds, [Kind::Redriven, Kind::StoreRefused]);
+    }
+
+    #[test]
+    fn an_orphan_on_a_base_that_can_no_longer_land_is_left_to_supersede() {
+        let b = Bench::new();
+        b.seed(
+            "lanes/r",
+            json!({ "landing_ref": "base-1", "image_digest": "i", "harness_version": "h" }),
+        );
+        let round = |id: &str, tested: &str| {
+            json!({ "batch_id": id, "repo": "r", "state": "CiRunning", "head": format!("{id}-h"),
+                    "base": tested, "pass": 1, "version": 1, "tested_base": tested,
+                    "members": [{ "id": format!("sp-{id}"), "tip": "t" }],
+                    lease::LAST_TOKEN_FIELD: lease::token_json(Rev::new(3, 0)) })
+        };
+        b.seed("batches/r/stale", round("stale", "base-0"));
+        b.seed("batches/r/live", round("live", "base-1"));
+        b.launch.script(Ok(()));
+        step(&b.ports(), "r");
+        let lines: Vec<(Option<String>, Kind)> = b
+            .log
+            .outcomes()
+            .into_iter()
+            .map(|o| (o.batch, o.kind))
+            .collect();
+        assert_eq!(lines, [(Some("live".into()), Kind::Redriven)]);
+        assert_eq!(b.launch.tried().len(), 1);
     }
 
     #[test]

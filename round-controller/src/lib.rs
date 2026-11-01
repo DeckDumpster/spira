@@ -21,12 +21,14 @@ pub mod real;
 pub mod refusal;
 pub mod resources;
 pub mod run;
+pub mod schedule;
 pub mod section;
 #[cfg(feature = "sim")]
 pub mod sim;
 pub mod slots;
 pub mod stack;
 pub mod supersede;
+pub mod switches;
 pub mod telemetry;
 
 /// A mutex's guard, poisoned or not: every lock here guards data a panic cannot leave half-written.

@@ -109,10 +109,11 @@ fn seed_value(
     }
 }
 
-/// `[[slot]]`: a runner slot the harness holds for `repo`, standing in for the schedule step
-/// (round-controller/pass) until it lands. Each pass, after the steps, the harness cuts on every
-/// slot no round has taken yet; a cut that opens a round takes its slot. `released` hands the cut
-/// a grant whose lock was let go before the first pass.
+/// `[[slot]]`: a runner slot the harness holds for `repo` and hands the cut itself, for a
+/// scenario about the cut. Each pass, after the steps, the harness cuts on every slot no round
+/// has taken yet; a cut that opens a round takes its slot. `released` hands the cut a grant whose
+/// lock was let go before the first pass. A scenario with one runs its passes without the
+/// schedule step, which would cut on slots of its own.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HeldSlot {
@@ -163,6 +164,26 @@ pub struct StoreStep {
     pub ttl_secs: Option<u64>,
 }
 
+/// `[off]`: the run directory's off switches for the whole scenario: `halted` is
+/// `run/world.halted`, and each `[[off.stop]]` a scoped stop on that repo's rounds lane.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OffSpec {
+    #[serde(default)]
+    pub halted: bool,
+    #[serde(default)]
+    pub stop: Vec<StopSeed>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StopSeed {
+    pub repo: String,
+    pub owner: String,
+    pub reason: String,
+    pub until: String,
+}
+
 fn proxmox() -> String {
     "proxmox".into()
 }
@@ -178,6 +199,8 @@ pub enum Count {
     Outcomes(Option<&'static str>, Option<String>),
     /// `blockers:<word>`: rounds the Lander held with this blocker.
     Blockers(String),
+    /// `stops:<word>`: repos a pass found stopped by this off switch.
+    Stops(String),
     StoreWrites,
     VmRuns,
     /// The longest queue lock hold any verb reported.
@@ -236,6 +259,16 @@ pub enum Count {
     Rounds(String),
     /// What the section and its intents came to (`section-*`, `acks:<result>`).
     Section(SectionCount),
+    /// `members:<STATE>`: lifecycle records in that state once the last pass has run.
+    Members(String),
+    /// `calls-of:<repo>`: verb calls about one repo.
+    CallsOf(String),
+    /// `writes-under:<prefix>`: keys under the prefix written since the scenario was seeded.
+    WritesUnder(String),
+    /// The most launched runners alive at once, of one repo (`runners-at-once:<repo>`) or of all.
+    RunnersAtOnce(Option<String>),
+    /// The most repos with a launched runner alive at once.
+    ReposAtOnce,
 }
 
 impl Count {
@@ -262,6 +295,9 @@ impl Count {
             }
             ("blockers", Some(w)) if crate::land::Blocker::WORDS.contains(&w) => {
                 Some(Count::Blockers(w.to_string()))
+            }
+            ("stops", Some(w)) if crate::switches::Stop::WORDS.contains(&w) => {
+                Some(Count::Stops(w.to_string()))
             }
             ("store-writes", None) => Some(Count::StoreWrites),
             ("vm-runs", None) => Some(Count::VmRuns),
@@ -321,6 +357,14 @@ impl Count {
             ("rounds", Some(w)) if lifecycle::batch::BatchState::from_str(w).is_some() => {
                 Some(Count::Rounds(w.to_string()))
             }
+            ("calls-of", Some(r)) if !r.is_empty() => Some(Count::CallsOf(r.to_string())),
+            ("members", Some(w)) if !w.is_empty() => Some(Count::Members(w.to_string())),
+            ("writes-under", Some(p)) if !p.is_empty() => Some(Count::WritesUnder(p.to_string())),
+            ("runners-at-once", None) => Some(Count::RunnersAtOnce(None)),
+            ("runners-at-once", Some(r)) if !r.is_empty() => {
+                Some(Count::RunnersAtOnce(Some(r.to_string())))
+            }
+            ("repos-at-once", None) => Some(Count::ReposAtOnce),
             _ => SectionCount::parse(what, of)
                 .map(Count::Section)
                 .or_else(|| JudgeCount::parse(s).map(Count::Judge)),
@@ -340,6 +384,9 @@ pub struct ExpectDef {
     /// A positive control: this expectation must fail, naming itself.
     #[serde(default)]
     pub inverted: bool,
+    /// Held only under this profile; under every profile when absent.
+    #[serde(default)]
+    pub profile: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -422,21 +469,39 @@ pub struct VmFactSeed {
     pub until: Option<u64>,
 }
 
-/// The slot keys a scenario runs under: `SPIRA_ROUND_VM_SPILL` and `SPIRA_ROUND_RUNNER_SLOTS_EC2`.
+/// The slot keys a scenario runs under: `SPIRA_ROUND_VM_SPILL` and `SPIRA_ROUND_RUNNER_SLOTS_EC2`,
+/// or `per_profile = true`: as many slots as the profile's `runner_slots`, the Proxmox one first
+/// and the rest on EC2 spill.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SlotSpec {
-    pub spill: String,
-    pub ec2: u32,
+    #[serde(default)]
+    pub spill: Option<String>,
+    #[serde(default)]
+    pub ec2: Option<u32>,
+    #[serde(default)]
+    pub per_profile: bool,
 }
 
 impl SlotSpec {
     fn settings(&self) -> Result<SlotSettings, String> {
+        let (Some(spill), Some(ec2)) = (&self.spill, self.ec2) else {
+            return Err("[slots] needs both spill and ec2, or per_profile alone".into());
+        };
         SlotSettings::from_cfg(&|k: &str| match k {
-            EC2_SLOTS_KEY => Ok(self.ec2.to_string()),
-            SPILL_KEY => Ok(self.spill.clone()),
+            EC2_SLOTS_KEY => Ok(ec2.to_string()),
+            SPILL_KEY => Ok(spill.clone()),
             _ => Err(format!("{k} is not a slot key")),
         })
+    }
+}
+
+/// The slots a profile's `runner_slots` makes: the one Proxmox slot, then EC2 spill.
+fn profile_slots(p: &Profile) -> SlotSettings {
+    let ec2_slots = u32::try_from(p.runner_slots.saturating_sub(1)).unwrap_or(u32::MAX);
+    SlotSettings {
+        ec2_slots,
+        spill: ec2_slots > 0,
     }
 }
 
@@ -464,7 +529,9 @@ impl VmFactSeed {
     }
 }
 
-/// One launch's answer, in order: `ok = true`, or `refuse = "<why>"`.
+/// One launch's answer, in order: `ok = true`, or `refuse = "<why>"`. A start with
+/// `finish_secs` is a runner that holds its lease and slot that long, then records its round
+/// GREEN and gives both back; the scenario's lease TTL must outlast it, since it does not renew.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaunchScript {
@@ -472,6 +539,8 @@ pub struct LaunchScript {
     pub ok: bool,
     #[serde(default)]
     pub refuse: Option<String>,
+    #[serde(default)]
+    pub finish_secs: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -526,6 +595,8 @@ struct File {
     /// without them, its expectations aside, and the two runs' verb calls and lines compared.
     #[serde(default)]
     same_without: Vec<String>,
+    #[serde(default)]
+    off: Option<OffSpec>,
 }
 
 #[derive(Clone, Debug)]
@@ -534,6 +605,7 @@ pub struct Expect {
     pub count: Count,
     pub bound: Bound,
     pub inverted: bool,
+    pub profile: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -550,8 +622,11 @@ pub struct Scenario {
     pub units: Vec<(String, UnitState, Option<u64>)>,
     /// Each unit's VM fact, and the epoch milliseconds from which its VM is gone.
     pub vm_facts: Vec<(String, VmFact, Option<u64>)>,
-    pub launches: Vec<Result<(), String>>,
+    /// Each launch's answer, and how long a started runner runs before it finishes green.
+    pub launches: Vec<crate::sim::bench::LaunchAnswer>,
     pub slots: SlotSettings,
+    /// The slots come from the profile's `runner_slots`, in place of `slots`.
+    pub slots_per_profile: bool,
     pub slot_users: Vec<SlotUserScript>,
     pub expects: Vec<Expect>,
     pub ledger: Option<LedgerConfig>,
@@ -565,6 +640,7 @@ pub struct Scenario {
     pub git: Vec<GitSeed>,
     pub lease_releases: Vec<LeaseRelease>,
     pub same_without: Vec<String>,
+    pub off: OffSpec,
 }
 
 pub fn parse(text: &str) -> Result<Scenario, String> {
@@ -618,11 +694,18 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
                     e.name, e.count
                 ));
             }
+            if let Some(p) = e.profile.as_deref().filter(|p| !PROFILE_NAMES.contains(p)) {
+                return Err(format!(
+                    "scenario: expectation {} names profile {p:?}, which is none of {PROFILE_NAMES:?}",
+                    e.name
+                ));
+            }
             Ok(Expect {
                 name: e.name,
                 count,
                 bound,
                 inverted: e.inverted,
+                profile: e.profile,
             })
         })
         .collect::<Result<_, String>>()?;
@@ -646,9 +729,12 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
     let launches = f
         .launch
         .into_iter()
-        .map(|l| match (l.ok, l.refuse) {
-            (true, None) => Ok(Ok(())),
-            (false, Some(r)) => Ok(Err(r)),
+        .map(|l| match (l.ok, l.refuse, l.finish_secs) {
+            (true, None, f) => Ok((Ok(()), f.map(|s| s * 1000))),
+            (false, Some(r), None) => Ok((Err(r), None)),
+            (false, Some(_), Some(_)) => {
+                Err("scenario: a refused launch starts no runner to finish".to_string())
+            }
             _ => Err("scenario: a launch is exactly one of ok = true and refuse".to_string()),
         })
         .collect::<Result<_, String>>()?;
@@ -664,9 +750,18 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
         units,
         vm_facts,
         launches,
-        slots: f
-            .slots
-            .map_or_else(|| Ok(bench_slot_settings()), |s| s.settings())?,
+        slots_per_profile: match &f.slots {
+            Some(s) if s.per_profile && (s.spill.is_some() || s.ec2.is_some()) => {
+                return Err("scenario: [slots] per_profile takes neither spill nor ec2".into())
+            }
+            Some(s) => s.per_profile,
+            None => false,
+        },
+        slots: match f.slots {
+            None => bench_slot_settings(),
+            Some(s) if s.per_profile => bench_slot_settings(),
+            Some(s) => s.settings().map_err(|e| format!("scenario: {e}"))?,
+        },
         slot_users: f.slot_user,
         expects,
         ledger: f.ledger,
@@ -680,6 +775,7 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
         git: f.git,
         lease_releases: f.lease_release,
         same_without: f.same_without,
+        off: f.off.unwrap_or_default(),
     })
 }
 
@@ -696,7 +792,20 @@ pub struct Report {
 }
 
 pub fn run(sc: &Scenario, profile: &Profile, seed: u64) -> Result<Report, String> {
-    run_with(sc, profile, seed, &|p, repos| pass(p, repos))
+    if sc.held_slots.is_empty() {
+        return run_with(sc, profile, seed, &|p, repos| pass(p, repos));
+    }
+    let steps = crate::pass::steps_without(&without(sc, &[]));
+    run_with(sc, profile, seed, &|p, repos| pass_with(p, repos, &steps))
+}
+
+/// The steps a scenario leaves out besides `more`: with a `[[slot]]`, the schedule step.
+fn without(sc: &Scenario, more: &[String]) -> Vec<String> {
+    let mut w = more.to_vec();
+    if !sc.held_slots.is_empty() {
+        w.push(crate::schedule::STEP.into());
+    }
+    w
 }
 
 /// [`run`] with `steps` in place of the registered ones: a test of the harness itself.
@@ -715,7 +824,11 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
     let at = &profile.name;
     let epoch_ms = sc.run.epoch * 1000;
     let mut b = Bench::at(sc.leases.clone(), epoch_ms, seed);
-    b.slot_settings = sc.slots.clone();
+    b.slot_settings = if sc.slots_per_profile {
+        profile_slots(profile)
+    } else {
+        sc.slots.clone()
+    };
     for (i, s) in sc.store.iter().enumerate() {
         let data = seed_value(&s.key, &s.data, &s.json).map_err(|e| format!("store seed {e}"))?;
         let obj = Object::new(data);
@@ -737,8 +850,17 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
     for (u, f, until) in &sc.vm_facts {
         b.vms.set_until(u, f.clone(), *until);
     }
-    for l in &sc.launches {
-        b.launch.script(l.clone());
+    for (l, runs) in &sc.launches {
+        match runs {
+            Some(ms) => b.launch.script_running(*ms),
+            None => b.launch.script(l.clone()),
+        }
+    }
+    if sc.off.halted {
+        b.stops.halt();
+    }
+    for s in &sc.off.stop {
+        b.stops.stop(&s.repo, &s.owner, &s.reason, &s.until);
     }
     for g in &sc.git {
         b.git.seed(g);
@@ -883,7 +1005,11 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
     // The section door's writes are counted by the section's own counts, not as the controller's.
     let writes = b.store.head().expect("the in-memory store has a head") - seeded - b.lc_writes();
     let mut controls = Vec::new();
-    for e in &sc.expects {
+    for e in sc
+        .expects
+        .iter()
+        .filter(|e| e.profile.as_ref().is_none_or(|p| p == at))
+    {
         let got = match &e.count {
             Count::Calls(v) => calls
                 .iter()
@@ -897,6 +1023,10 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
             Count::Blockers(w) => outcomes
                 .iter()
                 .filter(|o| o.kind == Kind::Held && o.cause.word() == w)
+                .count() as u64,
+            Count::Stops(w) => outcomes
+                .iter()
+                .filter(|o| o.kind == Kind::Stopped && o.cause.word() == w)
                 .count() as u64,
             Count::StoreWrites => writes,
             Count::VmRuns => vm.runs().len() as u64,
@@ -989,6 +1119,25 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
                 .map_or(u64::MAX, |t| (t - epoch_ms) / 1000),
             Count::Rounds(word) => rounds_in(&b, word),
             Count::Section(c) => c.count(&b, &outcomes),
+            Count::CallsOf(repo) => calls.iter().filter(|c| c.repo == *repo).count() as u64,
+            Count::Members(word) => b
+                .store
+                .list(&["lifecycle/"], &Selector::Everything)
+                .expect("the in-memory store lists")
+                .0
+                .iter()
+                .filter(|i| i.value.data.get("state").and_then(|v| v.as_str()) == Some(word))
+                .count() as u64,
+            Count::WritesUnder(prefix) => b
+                .store
+                .list(&[prefix.as_str()], &Selector::Everything)
+                .expect("the in-memory store lists")
+                .0
+                .iter()
+                .filter(|i| i.mod_rev.main > seeded)
+                .count() as u64,
+            Count::RunnersAtOnce(repo) => runners_at_once(&b.launch.running(), repo.as_deref()),
+            Count::ReposAtOnce => repos_at_once(&b.launch.running()),
             Count::LiveLocks(prefix) => b
                 .store
                 .list(&[format!("locks/{prefix}").as_str()], &Selector::Everything)
@@ -1053,7 +1202,7 @@ fn same_without(sc: &Scenario, profile: &Profile, seed: u64, with: &Report) -> R
         expects: Vec::new(),
         ..sc.clone()
     };
-    let steps = crate::pass::steps_without(&sc.same_without);
+    let steps = crate::pass::steps_without(&without(sc, &sc.same_without));
     let without = run_steps(&bare, profile, seed, &steps)?;
     match first_difference(&with.decisions, &without.decisions) {
         None => Ok(()),
@@ -1089,28 +1238,35 @@ struct World<'w> {
 
 impl World<'_> {
     fn actors_until(&mut self, until: u64) {
+        #[derive(PartialEq, Eq, PartialOrd, Ord)]
+        enum Actor {
+            Runner(usize),
+            User(usize),
+            Launched,
+        }
         loop {
             let due = |n: Option<u64>| n.filter(|t| *t <= until);
-            let Some((t, is_user, i)) = self
+            let Some((t, actor)) = self
                 .runners
                 .iter()
                 .enumerate()
-                .filter_map(|(i, r)| due(r.next_ms()).map(|t| (t, false, i)))
+                .filter_map(|(i, r)| due(r.next_ms()).map(|t| (t, Actor::Runner(i))))
                 .chain(
                     self.users
                         .iter()
                         .enumerate()
-                        .filter_map(|(i, u)| due(u.next_ms()).map(|t| (t, true, i))),
+                        .filter_map(|(i, u)| due(u.next_ms()).map(|t| (t, Actor::User(i)))),
                 )
+                .chain(due(self.b.launch.next_end_ms()).map(|t| (t, Actor::Launched)))
                 .min()
             else {
                 break;
             };
             self.b.clock.advance_to(t);
-            if is_user {
-                self.users[i].act(self.b, self.ports);
-            } else {
-                self.runners[i].act(self.b, self.ports);
+            match actor {
+                Actor::User(i) => self.users[i].act(self.b, self.ports),
+                Actor::Runner(i) => self.runners[i].act(self.b, self.ports),
+                Actor::Launched => self.b.launch.end_next(self.ports),
             }
         }
     }
@@ -1210,6 +1366,36 @@ impl run_pass::Advance for World<'_> {
         self.actors_until(t);
         self.b.clock.advance_to(t);
     }
+}
+
+/// The most runners alive at once over their `[from, ends)` spans, of one repo or of all.
+fn runners_at_once(runs: &[crate::sim::bench::Running], repo: Option<&str>) -> u64 {
+    let mine: Vec<_> = runs
+        .iter()
+        .filter(|r| repo.is_none_or(|w| r.repo == w))
+        .collect();
+    mine.iter()
+        .map(|r| {
+            mine.iter()
+                .filter(|o| o.from_ms <= r.from_ms && r.from_ms < o.ends_ms)
+                .count() as u64
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// The most repos with a runner alive at once.
+fn repos_at_once(runs: &[crate::sim::bench::Running]) -> u64 {
+    runs.iter()
+        .map(|r| {
+            runs.iter()
+                .filter(|o| o.from_ms <= r.from_ms && r.from_ms < o.ends_ms)
+                .map(|o| o.repo.as_str())
+                .collect::<std::collections::BTreeSet<_>>()
+                .len() as u64
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 fn rounds_in(b: &Bench, word: &str) -> u64 {
@@ -1395,6 +1581,73 @@ mod tests {
             "{:?}",
             r.lines
         );
+    }
+
+    #[test]
+    fn an_expectation_holds_only_under_its_profile_and_an_unknown_profile_is_named() {
+        let e = |p: &str, v: u64| {
+            format!("[[expect]]\nname = \"{p}\"\ncount = \"outcomes\"\nequals = {v}\nprofile = \"{p}\"\n")
+        };
+        go(&format!("{}{}", e("default", 99), e("reference-minimum", 4))).unwrap();
+        let err = go(&e("reference-minimum", 99)).unwrap_err();
+        assert!(err.contains("expectation reference-minimum unmet"), "{err}");
+        let err = parse(&format!("{BASE}{}", e("tiny", 0))).unwrap_err();
+        assert!(err.contains("names profile \"tiny\""), "{err}");
+    }
+
+    #[test]
+    fn the_off_switches_stop_their_repos_and_the_new_counts_are_counted() {
+        let expect = |n: &str, c: &str, v: u64| {
+            format!("[[expect]]\nname = \"{n}\"\ncount = \"{c}\"\nequals = {v}\n")
+        };
+        let text = [
+            "[off]\nstop = [{ repo = \"a\", owner = \"o\", reason = \"r\", until = \"u\" }]\n".to_string(),
+            "[[store]]\nkey = \"lifecycle/sp-x\"\ndata = { state = \"LANDED\" }\n".into(),
+            expect("s", "outcomes:stopped", 2),
+            expect("ss", "stops:scoped-stop", 2),
+            expect("sh", "stops:halted", 0),
+            expect("v", "outcomes:visited", 2),
+            expect("c", "calls-of:a", 0),
+            expect("w", "writes-under:batches/", 0),
+            expect("m", "members:LANDED", 1),
+            expect("r", "runners-at-once", 0),
+            expect("ra", "runners-at-once:a", 0),
+            expect("rp", "repos-at-once", 0),
+        ]
+        .concat();
+        go(&text).unwrap();
+        let halted = go("[off]\nhalted = true\n[[expect]]\nname = \"h\"\ncount = \"outcomes:stopped\"\nequals = 4\n");
+        halted.unwrap();
+        assert!(parse(&format!("{BASE}[off]\nhalt = true\n"))
+            .unwrap_err()
+            .contains("halt"));
+    }
+
+    #[test]
+    fn a_launched_runner_holds_its_lease_and_slot_until_it_finishes_green() {
+        let b = Bench::new();
+        b.seed("batches/a/k1", serde_json::json!({ "state": "Open" }));
+        b.launch.script_running(30_000);
+        let p = b.ports();
+        let lease = crate::lease::acquire(&p, &crate::lease::Resource::round("a", "k1"), "t").unwrap();
+        let slot = crate::slots::grant(&p, &[Pool::Proxmox], "t").unwrap();
+        let _ = crate::ports::Launch::start(&b.launch, &p, "a", "k1", lease.token(), &slot);
+        let started = b.clock.now_ms();
+        assert_eq!(b.launch.next_end_ms(), Some(started + 30_000));
+        b.launch.end_next(&p);
+        assert_eq!(b.launch.next_end_ms(), None);
+        b.launch.end_next(&p);
+        let round = p.store.get("batches/a/k1").unwrap().unwrap().value.data;
+        assert_eq!(round["state"], "Green");
+        assert_eq!(
+            crate::lease::holder_of(&p, &crate::lease::Resource::round("a", "k1")).unwrap(),
+            None
+        );
+        assert_eq!(crate::lock(&b.slot_releases).len(), 1);
+        let runs = b.launch.running();
+        assert_eq!(runners_at_once(&runs, Some("a")), 1);
+        assert_eq!(runners_at_once(&runs, Some("b")), 0);
+        assert_eq!(repos_at_once(&runs), 1);
     }
 
     #[test]
@@ -1717,7 +1970,11 @@ mod tests {
                 launched_at_ms: 9_000
             }
         );
-        assert_eq!(sc.launches, [Ok(()), Err("no".to_string())]);
+        assert_eq!(sc.launches, [(Ok(()), None), (Err("no".to_string()), None)]);
+        let sc = parse(&format!("{BASE}[[launch]]\nok = true\nfinish_secs = 30\n")).unwrap();
+        assert_eq!(sc.launches, [(Ok(()), Some(30_000))]);
+        let e = parse(&format!("{BASE}[[launch]]\nrefuse = \"x\"\nfinish_secs = 30\n")).unwrap_err();
+        assert!(e.contains("a refused launch starts no runner"), "{e}");
         for bad in [
             "fact = \"ec2-unreadable\"\n",
             "fact = \"none\"\nlaunched_at = 1\n",
@@ -1823,6 +2080,25 @@ mod tests {
         assert!(parse(&format!("{BASE}[slots]\nspil = \"\"\nec2 = 1\n"))
             .unwrap_err()
             .contains("spil"));
+        let sc = parse(&format!("{BASE}[slots]\nper_profile = true\n")).unwrap();
+        assert!(sc.slots_per_profile);
+        let p = profiles().unwrap();
+        assert_eq!(
+            (profile_slots(&p[0]), profile_slots(&p[1])),
+            (
+                SlotSettings {
+                    ec2_slots: 1,
+                    spill: true
+                },
+                SlotSettings {
+                    ec2_slots: 0,
+                    spill: false
+                }
+            )
+        );
+        for bad in ["per_profile = true\nec2 = 1\n", "ec2 = 1\n"] {
+            assert!(parse(&format!("{BASE}[slots]\n{bad}")).is_err(), "{bad}");
+        }
     }
 
     const USER: &str = "[[slot_user]]\nname = \"u1\"\nstart_secs = 0\nhold_secs = 25\n";

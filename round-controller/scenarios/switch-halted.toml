@@ -1,0 +1,84 @@
+description = "run/world.halted is present: every pass re-drives, supersedes, lands, cuts and launches nothing and writes nothing, and publishes each repo Halted, owned by the world and lifted by world start"
+repos = ["home"]
+
+[run]
+epoch = 1800000000
+passes = 3
+every_secs = 30
+
+[off]
+halted = true
+
+[[store]]
+key = "lanes/home"
+data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
+
+[[git]]
+repo = "home"
+landing = "base-0"
+
+# An orphan: its runner lapsed, so the orphans step would re-drive it.
+[[store]]
+key = "batches/home/o1"
+data = { batch_id = "o1", repo = "home", state = "CiRunning", head = "o1-h", base = "base-0", pass = 1, version = 2, tested_base = "base-0", members = [{ id = "sp-o", tip = "o1" }], last_lease_token = { main = 7, sub = 0 } }
+
+# A GREEN round the Lander would land.
+[[store]]
+key = "batches/home/g1"
+data = { batch_id = "g1", repo = "home", state = "Green", head = "g1-h", base = "base-0", pass = 1, version = 3, tested_base = "base-0", members = [{ id = "sp-g", tip = "g1" }] }
+
+# A member ready to cut.
+[[store]]
+key = "lifecycle/sp-n"
+data = { repo = "home", state = "SUBMITTED", tip = "n1" }
+
+[[launch]]
+ok = true
+
+[[launch]]
+ok = true
+
+[[verb]]
+verb = "land"
+batch = "g1"
+ok = {}
+
+[[verb]]
+verb = "open"
+ok = { batch = "n-r1", head = "n-h1" }
+
+[[expect]]
+name = "no-verb-called"
+count = "calls"
+equals = 0
+
+[[expect]]
+name = "nothing-written"
+count = "store-writes"
+equals = 0
+
+[[expect]]
+name = "nothing-launched"
+count = "launches"
+equals = 0
+
+[[expect]]
+name = "no-step-ran"
+count = "outcomes:visited"
+equals = 0
+
+[[expect]]
+name = "halted-published-every-pass"
+count = "outcomes:stopped"
+equals = 3
+
+[[expect]]
+name = "stopped-by-that-switch"
+count = "stops:halted"
+equals = 3
+
+[[expect]]
+name = "inverted-never-published"
+count = "outcomes:stopped"
+equals = 0
+inverted = true

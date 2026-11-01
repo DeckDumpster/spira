@@ -50,6 +50,17 @@ pub enum Refusal {
         key: String,
         text: String,
     },
+    /// No runner slot was free for the round the schedule step would cut; `text` names every
+    /// slot's holder and the key that opens each closed pool.
+    NoSlot {
+        key: String,
+        text: String,
+    },
+    /// The round was cut but its lease could not be taken, so no runner was launched for it.
+    LeaseNotTaken {
+        key: String,
+        text: String,
+    },
     /// A queue verb refused.
     Verb {
         batch: Option<String>,
@@ -75,6 +86,8 @@ impl Refusal {
             Refusal::StackFull { .. } => "stack-full",
             Refusal::BadMembers { .. } => "bad-members",
             Refusal::Unreadable { .. } => "unreadable",
+            Refusal::NoSlot { .. } => "no-slot",
+            Refusal::LeaseNotTaken { .. } => "lease-not-taken",
             Refusal::Verb { .. } => "verb-refused",
             Refusal::Admission { .. } => "admission-refused",
         }
@@ -91,7 +104,9 @@ impl Refusal {
             | Refusal::CutOfJudgedRed { key }
             | Refusal::StackFull { key }
             | Refusal::BadMembers { key }
-            | Refusal::Unreadable { key, .. } => key.clone(),
+            | Refusal::Unreadable { key, .. }
+            | Refusal::NoSlot { key, .. }
+            | Refusal::LeaseNotTaken { key, .. } => key.clone(),
             Refusal::Admission { key, field, .. } => format!("{key}#{field}"),
             Refusal::Verb { batch, refusal } => format!(
                 "verb/{}/{}/{}",
@@ -116,6 +131,8 @@ impl std::fmt::Display for Refusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Refusal::Unreadable { key, text } => write!(f, "unreadable {key}: {text}"),
+            Refusal::NoSlot { text, .. } => write!(f, "{text}"),
+            Refusal::LeaseNotTaken { key, text } => write!(f, "lease-not-taken {key}: {text}"),
             Refusal::Verb { refusal, .. } => write!(
                 f,
                 "queue round {} refused: {}",

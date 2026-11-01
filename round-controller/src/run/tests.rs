@@ -18,14 +18,6 @@ impl Sleep for Advance {
     }
 }
 
-struct NoSwitch;
-
-impl Switches for NoSwitch {
-    fn set(&self, _: &str) -> Option<String> {
-        None
-    }
-}
-
 /// A child that tears down `teardown_ms` after TERM, or never when it ignores TERM; KILL ends
 /// it at once unless it is `unkillable`.
 struct Stubborn {
@@ -74,9 +66,8 @@ impl Child for Stubborn {
     }
 }
 
-fn env<'a>(sleep: &'a Advance, switches: &'a dyn Switches) -> RunEnv<'a> {
+fn env(sleep: &Advance) -> RunEnv<'_> {
     RunEnv {
-        switches,
         sleep,
         poll_ms: 1_000,
         teardown_ms: 30_000,
@@ -92,7 +83,7 @@ fn kill_child_terminates_the_group_and_waits_out_its_teardown() {
     let c = Stubborn::new(&b.clock, Some(12_000), false);
     let start = b.clock.now_ms();
     assert_eq!(
-        kill_child(&p, &env(&sleep, &NoSwitch), &c, &mut || {}),
+        kill_child(&p, &env(&sleep), &c, &mut || {}),
         Killed::Term
     );
     assert_eq!(*crate::lock(&c.signals), [(start, Signal::Term)]);
@@ -111,7 +102,7 @@ fn kill_child_escalates_to_kill_past_the_teardown_deadline() {
     let c = Stubborn::new(&b.clock, None, false);
     let start = b.clock.now_ms();
     assert_eq!(
-        kill_child(&p, &env(&sleep, &NoSwitch), &c, &mut || {}),
+        kill_child(&p, &env(&sleep), &c, &mut || {}),
         Killed::Kill
     );
     assert_eq!(
@@ -128,7 +119,7 @@ fn a_child_kill_cannot_end_lingers_and_one_already_gone_is_not_signalled() {
     let c = Stubborn::new(&b.clock, None, true);
     let start = b.clock.now_ms();
     assert_eq!(
-        kill_child(&p, &env(&sleep, &NoSwitch), &c, &mut || {}),
+        kill_child(&p, &env(&sleep), &c, &mut || {}),
         Killed::Lingering
     );
     assert_eq!(
@@ -139,7 +130,7 @@ fn a_child_kill_cannot_end_lingers_and_one_already_gone_is_not_signalled() {
     let gone = Stubborn::new(&b.clock, Some(0), false);
     *crate::lock(&gone.gone_at) = Some(0);
     assert_eq!(
-        kill_child(&p, &env(&sleep, &NoSwitch), &gone, &mut || {}),
+        kill_child(&p, &env(&sleep), &gone, &mut || {}),
         Killed::Term
     );
     assert!(crate::lock(&gone.signals).is_empty());
@@ -345,47 +336,6 @@ fn round_vm_phases_run_under_their_deadlines() {
     assert_eq!(phase_of("done"), Phase::Certify);
 }
 
-#[test]
-fn the_run_dir_s_switches_are_the_halt_stamp_then_a_scoped_stop_on_rounds() {
-    let d = testkit::TempDir::new("rc-run-switches");
-    let s = RunDir(d.path().to_path_buf());
-    assert_eq!(s.set("home"), None);
-    spira_config::scoped_stop::pause_repo(
-        d.path(),
-        "home",
-        &["claims".into()],
-        "ops",
-        "drill",
-        "manual",
-        1,
-    )
-    .unwrap();
-    assert_eq!(
-        s.set("home"),
-        None,
-        "a stop on another lane is not this one"
-    );
-    spira_config::scoped_stop::pause_repo(
-        d.path(),
-        "home",
-        &[ROUNDS_LANE.into()],
-        "ops",
-        "drill",
-        "manual",
-        1,
-    )
-    .unwrap();
-    assert_eq!(
-        s.set("home").unwrap(),
-        "home's rounds lane is stopped by ops: drill"
-    );
-    assert_eq!(s.set("other"), None);
-    assert!(!s.halted(), "a scoped stop is not the world's halt");
-    std::fs::write(d.path().join(HALTED_FILE), "").unwrap();
-    assert!(s.set("other").unwrap().contains("world.halted"));
-    assert!(s.halted());
-}
-
 fn seeded(b: &Bench) {
     b.seed(
         "lanes/r",
@@ -473,7 +423,7 @@ fn a_lease_on_a_round_that_is_gone_is_lost_to_it_and_a_round_with_no_lane_is_ref
         batch: "b9".into(),
         ..a.clone()
     };
-    let e = run(&p, &env(&sleep, &NoSwitch), &mut subs, &missing);
+    let e = run(&p, &env(&sleep), &mut subs, &missing);
     assert_eq!(
         e,
         RunEnd::LeaseLost {
@@ -497,7 +447,7 @@ fn a_lease_on_a_round_that_is_gone_is_lost_to_it_and_a_round_with_no_lane_is_ref
     let a2 = handed(&b2);
     let e = run(
         &b2.ports(),
-        &env(&Advance(b2.clock.clone()), &NoSwitch),
+        &env(&Advance(b2.clock.clone())),
         &mut Idle,
         &a2,
     );
@@ -515,17 +465,12 @@ fn an_off_switch_set_before_the_pass_starts_nothing_and_gives_both_locks_back() 
     seeded(&b);
     let a = handed(&b);
     let p = b.ports();
-    struct Halted;
-    impl Switches for Halted {
-        fn set(&self, _: &str) -> Option<String> {
-            Some("world.halted is present".into())
-        }
-    }
-    let e = run(&p, &env(&Advance(b.clock.clone()), &Halted), &mut Idle, &a);
+    b.stops.halt();
+    let e = run(&p, &env(&Advance(b.clock.clone())), &mut Idle, &a);
     assert_eq!(
         e,
         RunEnd::Stopped {
-            why: "world.halted is present".into()
+            why: "world.halted is present: the world is stopped".into()
         }
     );
     assert!(b.verbs.calls().is_empty(), "no pass-start, no certify");
@@ -540,13 +485,44 @@ fn an_off_switch_set_before_the_pass_starts_nothing_and_gives_both_locks_back() 
 }
 
 #[test]
+fn a_scoped_stop_or_a_pulled_andon_cord_stops_the_runner_as_it_stops_the_pass() {
+    let b = Bench::new();
+    seeded(&b);
+    let a = handed(&b);
+    b.seed_ttl(
+        "telemetry/sections/Andon/cord",
+        json!({ "status": { "conditions": [{ "type": "Stop", "status": "True", "reason": "RoundController/r" }] } }),
+        604_800,
+    );
+    let e = run(&b.ports(), &env(&Advance(b.clock.clone())), &mut Idle, &a);
+    assert_eq!(
+        e,
+        RunEnd::Stopped {
+            why: "the andon cord Andon/cord is pulled on r: Stop".into()
+        }
+    );
+    let b = Bench::new();
+    seeded(&b);
+    let a = handed(&b);
+    b.stops.stop("r", "ops", "drill", "manual");
+    let e = run(&b.ports(), &env(&Advance(b.clock.clone())), &mut Idle, &a);
+    assert_eq!(
+        e,
+        RunEnd::Stopped {
+            why: "r's rounds lane is stopped by ops: drill".into()
+        }
+    );
+    assert!(b.verbs.calls().is_empty(), "no pass-start, no certify");
+}
+
+#[test]
 fn a_refused_pass_start_runs_no_pass() {
     let b = Bench::new();
     seeded(&b);
     let a = handed(&b);
     let e = run(
         &b.ports(),
-        &env(&Advance(b.clock.clone()), &NoSwitch),
+        &env(&Advance(b.clock.clone())),
         &mut Idle,
         &a,
     );
@@ -573,7 +549,7 @@ fn a_runner_whose_first_renewal_fails_starts_nothing_and_writes_nothing() {
     };
     let e = run(
         &p,
-        &env(&Advance(b.clock.clone()), &NoSwitch),
+        &env(&Advance(b.clock.clone())),
         &mut Idle,
         &a,
     );
@@ -692,7 +668,7 @@ fn a_sub_pass_that_stalls_past_its_deadline_kills_its_vm_records_nothing_and_fre
     let start = b.clock.now_ms();
     let e = run(
         &p,
-        &env(&Advance(b.clock.clone()), &NoSwitch),
+        &env(&Advance(b.clock.clone())),
         &mut subs,
         &a,
     );
@@ -752,7 +728,7 @@ fn a_round_superseded_under_a_live_lease_is_seen_at_the_next_renewal_and_its_vm_
     let start = b.clock.now_ms();
     let e = run(
         &p,
-        &env(&Advance(b.clock.clone()), &NoSwitch),
+        &env(&Advance(b.clock.clone())),
         &mut subs,
         &a,
     );
@@ -781,7 +757,7 @@ fn the_slot_is_kept_while_a_child_tears_down() {
     let sleep = Advance(b.clock.clone());
     let c = Stubborn::new(&b.clock, Some(12_000), false);
     let mut kept = 0;
-    kill_child(&p, &env(&sleep, &NoSwitch), &c, &mut || kept += 1);
+    kill_child(&p, &env(&sleep), &c, &mut || kept += 1);
     assert_eq!(kept, 12, "every poll of the teardown keeps the slot");
 }
 
