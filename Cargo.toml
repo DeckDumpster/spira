@@ -91,6 +91,7 @@ members = [
     "unit-run",
     "runtime",
     "state-store",
+    "state-store-sqlite",
 ]
 resolver = "2"
 

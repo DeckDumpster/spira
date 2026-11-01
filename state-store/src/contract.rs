@@ -391,7 +391,7 @@ impl<B: Backend> Contract<B> {
         let mut after: Option<String> = None;
         let mut deadlines = BTreeMap::new();
         loop {
-            let page = c.backend.range("", after.as_deref(), PAGE, head)?;
+            let page = c.backend.gc_range(after.as_deref(), PAGE, head)?;
             for (k, v) in &page {
                 let obj = Object::decode(&v.value)?;
                 if let Some(ttl) = ttl_ms(k, &obj) {
@@ -1082,6 +1082,24 @@ impl<B: Backend> Contract<B> {
             done.append(&mut planned);
         }
         Ok(done)
+    }
+
+    /// Every key but the audit history, from one snapshot at the returned head.
+    pub(crate) fn gc_items(&self) -> Result<(Vec<Item>, u64)> {
+        let head = self.head()?;
+        let mut items = Vec::new();
+        let mut after: Option<String> = None;
+        loop {
+            let page = self.backend.gc_range(after.as_deref(), PAGE, head)?;
+            let full = page.len() == PAGE;
+            after = page.last().map(|(k, _)| k.clone());
+            for (k, v) in page {
+                items.push(item(k, v)?);
+            }
+            if !full {
+                return Ok((items, head));
+            }
+        }
     }
 
     /// Whether `key` exists at `head`.

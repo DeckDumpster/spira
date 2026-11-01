@@ -1,0 +1,24 @@
+[package]
+name = "state-store-sqlite"
+version = "0.1.0"
+edition = "2021"
+description = "state-store-sqlite — the state-store contract's Backend on SQLite (WAL, synchronous=FULL, one exclusive opener), with bulk load, a stepped online backup, a floored compaction, and state-store-bench: CAS-write latency under load and the conformance suite against a live file."
+
+[lib]
+name = "state_store_sqlite"
+
+[[bin]]
+name = "state-store-bench"
+path = "src/bin/state-store-bench.rs"
+test = false
+
+[dependencies]
+state-store = { path = "../state-store" }
+runtime = { path = "../runtime" }
+rusqlite = { version = "0.37", features = ["bundled", "backup", "hooks"] }
+serde_json = "1"
+spira-config = { path = "../spira-config" }
+spira-otel = { path = "../spira-otel" }
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

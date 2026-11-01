@@ -170,6 +170,65 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "state-store bench: CAS write latency (p50, p99, p99.9, max)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max_over_time(spira_state_store_bench_cas_p50_seconds[$__interval])",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max_over_time(spira_state_store_bench_cas_p99_seconds[$__interval])",
+          "legendFormat": "p99",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max_over_time(spira_state_store_bench_cas_p999_seconds[$__interval])",
+          "legendFormat": "p99.9",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max_over_time(spira_state_store_bench_cas_max_seconds[$__interval])",
+          "legendFormat": "max",
+          "refId": "D"
+        }
+      ]
     }
   ]
 }

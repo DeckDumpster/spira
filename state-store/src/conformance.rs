@@ -119,6 +119,14 @@ impl<B: Backend> Backend for Interpose<B> {
     fn compact(&self, rev: u64) -> Result<()> {
         self.inner.compact(rev)
     }
+    fn gc_range(
+        &self,
+        after: Option<&str>,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<(String, Version)>> {
+        self.inner.gc_range(after, limit, at)
+    }
 }
 
 /// Every key the txn at `main` wrote.
