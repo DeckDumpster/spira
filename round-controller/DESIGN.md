@@ -113,7 +113,7 @@ counts.
   runs differ on.
 - `[[store]]` — `key`, one of `data` and `json` (for a value TOML cannot spell, such as
   `null`), optional `ttl_secs`: seeded through the contract on the in-memory backend before
-  the first pass. `[[store_step]]` takes the same value.
+  the first pass. `[[store_step]]` takes the same value and `ttl_secs`; keys under `intents/` and `telemetry/` need one.
 - `[[verb]]` — `verb`, optional `repo` and `batch`, one of `ok = { key = "value" }` or
   `refuse = { code, text }`, and the `lock_hold_ms` the verb reports. Answers are taken in
   order. `certify` is answered by the fake round VM unless a refusal is scripted.

@@ -393,6 +393,14 @@ impl Bench {
             .unwrap_or_else(|e| panic!("seed {key}: {e}"));
     }
 
+    /// A seed under a prefix whose keys carry a TTL (`intents/`, `telemetry/`).
+    pub fn seed_ttl(&self, key: &str, data: serde_json::Value, ttl_secs: u64) {
+        let req = Request::new(&format!("seed-{key}"), "bench", "seed");
+        self.store
+            .create(key, Object::new(data).with_ttl(ttl_secs), &req)
+            .unwrap_or_else(|e| panic!("seed {key}: {e}"));
+    }
+
     pub fn racing_writes(&self, key: &str) {
         self.racing_writes_after(key, 0);
     }

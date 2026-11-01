@@ -22,26 +22,31 @@ n = 0
 [[store_step]]
 pass = 1
 key = "intents/RoundController/lane/i1"
+ttl_secs = 172800
 data = { id = "i1", action = "concurrency", target = "knobs/RoundController/lane/concurrency", from = 2, to = 3, moves = "waiting_with_no_slot", baseline = 1.0, expected_effect = -1.0, horizon = "1h", addresses = ["SlotsSaturated"], taken_at = "2027-01-15T08:00:00Z", by = { pass = "p-1", lock_token = "5.0" } }
 
 [[store_step]]
 pass = 2
 key = "intents/RoundController/lane/i2"
+ttl_secs = 172800
 data = { id = "i2", action = "concurrency", target = "knobs/RoundController/lane/concurrency", from = 2, to = 3, moves = "waiting_with_no_slot", baseline = 1.0, expected_effect = -1.0, horizon = "1h", addresses = ["SlotsSaturated"], taken_at = "2027-01-15T08:00:30Z", by = { pass = "p-2", lock_token = "5.0" } }
 
 [[store_step]]
 pass = 3
 key = "intents/RoundController/lane/i3"
+ttl_secs = 172800
 data = { id = "i3", action = "concurrency", target = "knobs/RoundController/lane/concurrency", from = 1, to = 2, moves = "waiting_with_no_slot", baseline = 1.0, expected_effect = 1.0, horizon = "1h", addresses = ["SlotsSaturated"], taken_at = "2027-01-15T08:01:00Z", by = { pass = "p-3", lock_token = "5.0" } }
 
 [[store_step]]
 pass = 3
 key = "intents/RoundController/lane/i4"
+ttl_secs = 172800
 data = { id = "i4", action = "concurrency", target = "knobs/RoundController/lane/concurrency", from = 3, to = 5, moves = "waiting_with_no_slot", baseline = 1.0, expected_effect = -1.0, horizon = "1h", addresses = ["SlotsSaturated"], taken_at = "2027-01-15T08:01:00Z", by = { pass = "p-3", lock_token = "5.0" } }
 
 [[store_step]]
 pass = 3
 key = "intents/RoundController/lane/i5"
+ttl_secs = 172800
 data = { id = "i5", action = "concurrency", target = "knobs/RoundController/lane/concurrency", from = 3, to = 4, moves = "waiting_with_no_slot", baseline = 1.0, expected_effect = -1.0, horizon = "1h", addresses = ["SlotsSaturated"], taken_at = "2027-01-15T08:01:00Z", by = { pass = "p-3", lock_token = "5.0" } }
 
 # The pool fills, and the hold on sp-a at a1 lands in the same pass, before the cut.
@@ -58,6 +63,7 @@ data = { repo = "lane", state = "CERTIFIED", tip = "b1" }
 [[store_step]]
 pass = 4
 key = "intents/RoundController/lane/i6"
+ttl_secs = 172800
 json = '{ "id": "i6", "action": "hold-member", "target": "knobs/RoundController/lane/hold/sp-a/a1", "from": null, "to": { "lifted_by": "reconciler" }, "moves": "repeat_identity_open", "baseline": 1.0, "expected_effect": -1.0, "horizon": "10m", "addresses": ["RepeatIdentity"], "taken_at": "2027-01-15T08:01:30Z", "by": { "pass": "p-4", "lock_token": "5.0" } }'
 
 [[verb]]

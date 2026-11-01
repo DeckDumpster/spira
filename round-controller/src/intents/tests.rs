@@ -28,7 +28,7 @@ fn intent(id: &str, action: &str, target: &str, from: Value, to: Value) -> Value
 
 fn put(b: &Bench, id: &str, v: Value) -> String {
     let key = intent_key(NAME, "lane", id);
-    b.seed(&key, v);
+    b.seed_ttl(&key, v, spira_desired_state::intent::INTENT_TTL_SECS);
     key
 }
 
@@ -222,9 +222,10 @@ fn an_intent_that_does_not_decode_or_cannot_be_acked_is_the_step_s_refusal_and_t
     lane(&b);
     put(&b, "0", json!({ "id": "0" }));
     let good = put(&b, "1", intent("1", CONCURRENCY, CONC, json!(2), json!(3)));
-    b.seed(
+    b.seed_ttl(
         &format!("{}/x", intent_key(NAME, "lane", "1")),
         json!("not an intent"),
+        60,
     );
     let e = apply(&b.ports(), "lane").unwrap_err();
     assert_eq!(e.word(), "unreadable");

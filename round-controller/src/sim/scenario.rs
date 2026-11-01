@@ -159,6 +159,8 @@ pub struct StoreStep {
     pub data: Option<toml::Value>,
     #[serde(default)]
     pub json: Option<String>,
+    #[serde(default)]
+    pub ttl_secs: Option<u64>,
 }
 
 fn proxmox() -> String {
@@ -1150,7 +1152,10 @@ impl World<'_> {
             self.b
                 .store
                 .txn(
-                    &state_store::Txn::new().put(&s.key, Object::new(data)),
+                    &state_store::Txn::new().put(&s.key, match s.ttl_secs {
+                        Some(t) => Object::new(data).with_ttl(t),
+                        None => Object::new(data),
+                    }),
                     &req,
                 )
                 .map_err(|e| format!("store step {} at pass {}: {e}", s.key, s.pass))?;
@@ -1352,7 +1357,7 @@ mod tests {
 
     #[test]
     fn a_seed_is_exactly_one_of_data_and_json_and_json_may_spell_null() {
-        let r = go("[[store]]\nkey = \"telemetry/x\"\njson = '{ \"from\": null }'\n[[expect]]\nname = \"k\"\ncount = \"keys:telemetry/x\"\nequals = 1\n");
+        let r = go("[[store]]\nkey = \"lifecycle/x\"\njson = '{ \"from\": null }'\n[[expect]]\nname = \"k\"\ncount = \"keys:lifecycle/x\"\nequals = 1\n");
         assert!(r.is_ok(), "{r:?}");
         for bad in [
             "[[store]]\nkey = \"k\"\n",
