@@ -24,7 +24,6 @@ testdb_up thrash-teardown || { bail "could not build fixture database"; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 # The call jitter is a random sleep before the session starts; CASE 3 signals the group
 # once the shim is hung, so the race is removed by pinning it to 0, not waited out.
-export SPIRA_CALL_JITTER=0
 tl_config SPIRA_CALL_JITTER=0
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
@@ -44,9 +43,9 @@ printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the dwarf binary sou
 # spira_config::resolve() registry pass (dwarf::conf::merge_resolved_config), which derives
 # conf.d from THIS --home, not — the way the old bash seam's conf.sh derived it — from
 # wherever lib.sh/conf.sh actually live. A --home with no conf.d resolves the whole generic
-# registry to nothing, so SPIRA_CALL_JITTER=0 (exported above) never reaches dwarf's Conf
-# despite being set in the environment: the jitter falls back to its 20s default regardless,
-# reopening sp-1cdgq's own regression through the config seam instead of the bash allowlist.
+# registry to nothing, so SPIRA_CALL_JITTER=0 (set above with tl_config) never reaches dwarf's
+# Conf: the jitter falls back to its 20s default regardless, reopening sp-1cdgq's own
+# regression through the config seam instead of the bash allowlist.
 cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 cp -r "$HERE/conf.toml.d" "$SPIRA_HOME/"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
