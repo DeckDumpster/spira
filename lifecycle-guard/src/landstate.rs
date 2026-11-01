@@ -1,9 +1,8 @@
-//! The Rust half of this bead's landstate barrier: a call to `land_mark`/`landed`/`landed_sha`
-//! (however module-qualified) or an `fs` read of a path naming the landstate ledger, anywhere
-//! in the tree. Shell gets the same two checks in
-//! `shell.rs`, over its own tree-sitter parse; Rust has no grammar in this crate, so this is a
-//! line-oriented textual pass, the same shape already used here for credential/retired-label
-//! tokens.
+//! The Rust half of this bead's landstate barrier: a call that resolves to the ledger's
+//! `land_mark`/`land_state`/`landed`/`landed_sha`, or an `fs` read of a path naming the
+//! landstate ledger, anywhere in the tree. Shell gets the same two checks in `shell.rs`, over
+//! its own tree-sitter parse; Rust has no grammar in this crate, so this is a line-oriented
+//! textual pass that resolves each call site before reporting it ([`resolves_locally`]).
 
 use crate::finding::{Class, Finding};
 use std::path::{Path, PathBuf};
@@ -26,13 +25,14 @@ pub fn scan_rust(files: &[PathBuf], root: &Path) -> Vec<Finding> {
             continue;
         };
         let code = mask_rust(&text);
+        let module = Module::new(path, &code);
         for (idx, (line, code_line)) in text.lines().zip(code.lines()).enumerate() {
             let line_no = idx + 1;
             if code_line.trim().is_empty() {
                 continue;
             }
             for name in LANDSTATE_CALL_NAMES {
-                if is_call(code_line, name) {
+                if call_sites(code_line, name).into_iter().any(|at| !resolves_locally(&code_line[..at], name, &module)) {
                     findings.push(Finding {
                         class: Class::LandstateCall,
                         file: rel_path.clone(),
@@ -62,30 +62,185 @@ pub fn scan_rust(files: &[PathBuf], root: &Path) -> Vec<Finding> {
     findings
 }
 
-/// True when `word` appears in `line` as a call: a whole identifier immediately followed
-/// (module path prefixes like `io::` count as a boundary already) by `(`, and not the `fn`
-/// keyword that introduces its own definition.
+/// Where `word` appears in `line` as a call: a whole identifier immediately followed by `(`
+/// (module path prefixes like `io::` count as a boundary already), and not the `fn` keyword
+/// that introduces its own definition. Each is the byte offset the identifier starts at.
+fn call_sites(line: &str, word: &str) -> Vec<usize> {
+    word_sites(line, word)
+        .into_iter()
+        .filter(|&start| {
+            line[start + word.len()..].trim_start().starts_with('(') && !ends_with_word(&line[..start], "fn")
+        })
+        .collect()
+}
+
+#[cfg(test)]
 fn is_call(line: &str, word: &str) -> bool {
-    let bytes = line.as_bytes();
-    let wlen = word.len();
+    !call_sites(line, word).is_empty()
+}
+
+/// Every offset where `word` stands in `text` as a whole identifier.
+fn word_sites(text: &str, word: &str) -> Vec<usize> {
+    let bytes = text.as_bytes();
+    let mut sites = Vec::new();
     let mut i = 0;
-    while let Some(found) = line[i..].find(word) {
+    while let Some(found) = text[i..].find(word) {
         let start = i + found;
-        let end = start + wlen;
+        let end = start + word.len();
         let before_ok = start == 0 || !is_word_byte(bytes[start - 1]);
         let after_ok = end >= bytes.len() || !is_word_byte(bytes[end]);
-        if before_ok && after_ok && line[end..].trim_start().starts_with('(') {
-            let before = line[..start].trim_end();
-            if !before.ends_with("fn") {
-                return true;
-            }
+        if before_ok && after_ok {
+            sites.push(start);
         }
         i = start + 1;
-        if i >= line.len() {
-            break;
+    }
+    sites
+}
+
+/// True when `text`, trailing whitespace aside, ends in the whole identifier `word`.
+fn ends_with_word(text: &str, word: &str) -> bool {
+    let t = text.trim_end();
+    t.ends_with(word) && t[..t.len() - word.len()].bytes().next_back().is_none_or(|b| !is_word_byte(b))
+}
+
+/// What a call site can be resolved against: this module's free functions, the `use`
+/// statements that import from a `landstate` path, and the parent module `use super::…` reaches.
+struct Module {
+    ledger: bool,
+    code: String,
+    ledger_uses: Vec<String>,
+    glob_super: bool,
+    super_names: String,
+    parent: Option<(bool, String)>,
+}
+
+impl Module {
+    fn new(path: &Path, code: &str) -> Module {
+        let uses = use_statements(code);
+        let super_uses: Vec<&str> = uses.iter().filter_map(|u| u.strip_prefix("super::")).collect();
+        let parent = if super_uses.is_empty() {
+            None
+        } else {
+            parent_module(path).and_then(|p| {
+                let text = std::fs::read_to_string(&p).ok()?;
+                Some((is_ledger_module(&p), mask_rust(&text)))
+            })
+        };
+        Module {
+            ledger: is_ledger_module(path),
+            code: code.to_string(),
+            glob_super: super_uses.iter().any(|u| u.starts_with('*') || u.starts_with("{*") || u.contains(",*")),
+            super_names: super_uses.join("\n"),
+            ledger_uses: uses.iter().filter(|u| !word_sites(u, "landstate").is_empty()).cloned().collect(),
+            parent,
         }
     }
-    false
+
+    /// True when `ident` may be the ledger's: a `landstate` import names it or globs.
+    fn imported_from_ledger(&self, ident: &str) -> bool {
+        self.ledger_uses.iter().any(|u| u.contains('*') || !word_sites(u, ident).is_empty())
+    }
+
+    fn defines(&self, name: &str) -> bool {
+        !self.ledger && !self.imported_from_ledger(name) && defines_free_fn(&self.code, name)
+    }
+
+    fn super_defines(&self, name: &str) -> bool {
+        !self.imported_from_ledger(name) && matches!(&self.parent, Some((false, code)) if defines_free_fn(code, name))
+    }
+
+    fn imports_from_super(&self, name: &str) -> bool {
+        self.glob_super || !word_sites(&self.super_names, name).is_empty()
+    }
+}
+
+/// Whether the call to `name`, `before` being the line's text ahead of it, resolves to
+/// something other than the ledger. A port is no way around the rule: its adapter reaches the
+/// ledger by an import, a qualified path or an `fs` read, and is reported there.
+fn resolves_locally(before: &str, name: &str, m: &Module) -> bool {
+    let before = before.trim_end();
+    if before.ends_with('.') {
+        return true;
+    }
+    let Some(path) = before.strip_suffix("::") else {
+        return m.defines(name) || (m.imports_from_super(name) && m.super_defines(name));
+    };
+    let path = path.trim_end();
+    if path.ends_with('>') {
+        return !m.ledger;
+    }
+    let qualifier_start = path
+        .char_indices()
+        .rev()
+        .find(|&(_, c)| !(c.is_alphanumeric() || c == '_'))
+        .map_or(0, |(i, c)| i + c.len_utf8());
+    let qualifier = &path[qualifier_start..];
+    if path[..qualifier_start].trim_end().ends_with("::") {
+        return false;
+    }
+    match qualifier {
+        "Self" => !m.ledger,
+        "self" => m.defines(name),
+        "super" => m.super_defines(name),
+        q => q.starts_with(|c: char| c.is_uppercase()) && !m.imported_from_ledger(q) && !m.ledger && defines_fn(&m.code, name),
+    }
+}
+
+/// Every `use` statement in masked `code`, visibility stripped, whitespace removed, up to its `;`.
+fn use_statements(code: &str) -> Vec<String> {
+    word_sites(code, "use")
+        .into_iter()
+        .filter(|&at| {
+            let before = code[..at].trim_end();
+            before.is_empty() || before.ends_with([';', '{', '}', ']', ')']) || ends_with_word(before, "pub")
+        })
+        .filter_map(|at| {
+            let rest = &code[at + 3..];
+            let end = rest.find(';')?;
+            Some(rest[..end].chars().filter(|c| !c.is_whitespace()).collect())
+        })
+        .collect()
+}
+
+/// True when masked `code` defines `fn name` at all, a method included.
+fn defines_fn(code: &str, name: &str) -> bool {
+    word_sites(code, name).into_iter().any(|at| ends_with_word(&code[..at], "fn"))
+}
+
+/// True when masked `code` defines `fn name` taking no `self`: a free or associated function a
+/// bare call can name. A method of the same name does not shadow an import of the ledger's.
+fn defines_free_fn(code: &str, name: &str) -> bool {
+    word_sites(code, name).into_iter().any(|at| {
+        if !ends_with_word(&code[..at], "fn") {
+            return false;
+        }
+        let rest = &code[at + name.len()..];
+        let Some(open) = rest.find('(') else {
+            return false;
+        };
+        let first: String = rest[open + 1..].chars().take_while(|&c| c != ',' && c != ')' && c != ':').collect();
+        let first: String = first.chars().filter(|c| !c.is_whitespace()).collect();
+        !matches!(first.as_str(), "self" | "&self" | "&mutself" | "mutself") && !first.starts_with("&'")
+    })
+}
+
+/// A module is the ledger's own when its file or a directory it sits in is named `landstate`.
+fn is_ledger_module(path: &Path) -> bool {
+    let stem = path.file_stem().and_then(|s| s.to_str()) == Some("landstate");
+    stem || path.parent().is_some_and(|d| d.components().any(|c| c.as_os_str() == "landstate"))
+}
+
+/// The file that declares the module `path` is: for `a/b.rs` or `a/b/mod.rs`, the first of
+/// `a/mod.rs`, `a/lib.rs`, `a/main.rs`, `a.rs` that exists. A crate root has none.
+fn parent_module(path: &Path) -> Option<PathBuf> {
+    let stem = path.file_stem()?.to_str()?;
+    let dir = match stem {
+        "lib" | "main" => return None,
+        "mod" => path.parent()?.parent()?,
+        _ => path.parent()?,
+    };
+    let candidates = [dir.join("mod.rs"), dir.join("lib.rs"), dir.join("main.rs"), dir.with_extension("rs")];
+    candidates.into_iter().find(|c| c.is_file() && c != path)
 }
 
 fn is_word_byte(b: u8) -> bool {
