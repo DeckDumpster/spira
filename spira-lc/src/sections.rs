@@ -88,6 +88,7 @@ pub fn run<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -> (i3
         ("intent", Some("ack")) => written(intent_ack(store, rest, call)),
         ("intent", Some("judge")) => written(intent_judge(store, rest, call)),
         ("intent", Some("apply")) => written(intent_apply(store, rest, call)),
+        ("intent", Some("knob-init")) => written(knob_init(store, rest, call)),
         ("lock", Some("acquire")) => written(lock_acquire(store, rest, call)),
         ("lock", Some("renew")) => written(lock_renew(store, rest, call)),
         ("lock", Some("release")) => written(lock_release(store, rest, call)),
@@ -95,7 +96,7 @@ pub fn run<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -> (i3
         ("pass", Some("standby")) => written(pass_standby(store, rest, call)),
         _ => (
             Answer::CannotTell(format!(
-                "cannot tell: {verb:?} is not a verb: section get|list|snapshot|apply-spec|publish-status, intent get|put|ack|judge|apply, lock acquire|renew|release, pass record|standby"
+                "cannot tell: {verb:?} is not a verb: section get|list|snapshot|apply-spec|publish-status, intent get|put|ack|judge|apply|knob-init, lock acquire|renew|release, pass record|standby"
             )),
             None,
         ),
@@ -690,14 +691,17 @@ fn intent_apply<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -
             ));
         }
         let cur = store.get(&knob).map_err(cannot)?;
-        let value = cur.as_ref().map(|c| c.value.data.clone());
-        let result = match &value {
-            Some(v) if *v == i.from => AckResult::Applied,
-            Some(v) if *v == i.to => AckResult::AlreadyApplied,
-            other => AckResult::Refused {
+        // An absent knob is null, so a step from null creates it: a hold that did not exist.
+        let value = cur.as_ref().map_or(Value::Null, |c| c.value.data.clone());
+        let result = if value == i.from {
+            AckResult::Applied
+        } else if value == i.to {
+            AckResult::AlreadyApplied
+        } else {
+            AckResult::Refused {
                 reason: "stale".into(),
-                stale: Some(other.clone().unwrap_or(Value::Null)),
-            },
+                stale: Some(value),
+            }
         };
         let head = store.head().map_err(cannot)?;
         let moved = result == AckResult::Applied;
@@ -710,11 +714,12 @@ fn intent_apply<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -
             .when(Compare::ModRev(key.clone(), Some(item.mod_rev)))
             .when(Compare::ModRev(knob.clone(), cur.as_ref().map(|c| c.mod_rev)))
             .put(&key, intent_object(&item, &i));
-        if let (true, Some(c)) = (moved, &cur) {
+        if moved {
+            let metadata = cur.as_ref().map(|c| c.value.metadata.clone()).unwrap_or_default();
             t = t.put(
                 &knob,
                 Object {
-                    metadata: c.value.metadata.clone(),
+                    metadata,
                     data: i.to.clone(),
                 },
             );
@@ -723,6 +728,44 @@ fn intent_apply<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -
         match store.txn(&t, &req).map_err(cannot)? {
             r if r.succeeded => Ok(Answer::Ok(json!({ "key": key, "ack": i.ack, "knob": knob, "rev": r.rev }))),
             _ => Err(refuse("ack", "once", format!("{key} or {knob} moved before the apply: re-read and re-run"))),
+        }
+    })();
+    (answer.unwrap_or_else(|a| a), kind)
+}
+
+/// `intent knob-init <knob> --actor <owner> --json <value>`: the owner sets its own knob's first
+/// value, so the selector has a `from` to step. A knob that exists is answered as it stands.
+fn knob_init<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -> (Answer, String) {
+    let knob = match positional(args, "<knob key>") {
+        Ok(k) => k,
+        Err(a) => return (a, "unknown".into()),
+    };
+    let section = knob
+        .strip_prefix(keys::KNOBS)
+        .and_then(|rest| rest.split_once('/'))
+        .and_then(|(kind, rest)| Some((kind, rest.split_once('/')?)))
+        .filter(|(kind, (name, leaf))| [*kind, *name, *leaf].iter().all(|p| !p.is_empty()));
+    let kind = section.map_or("unknown", |(k, _)| k).to_string();
+    let answer = (|| {
+        let Some((kind, _)) = section else {
+            return Err(refuse("knob", "knob", format!("{knob:?} is not knobs/<Kind>/<name>/<knob>")));
+        };
+        let kind = registered(kind)?;
+        let actor = required(args, "--actor")?;
+        if actor != kind.owner {
+            return Err(refuse("actor", "ownership", format!("only {:?} sets a {} knob, not {actor:?}", kind.owner, kind.name)));
+        }
+        let value = body(args)?;
+        if let Some(cur) = store.get(&knob).map_err(cannot)? {
+            return Ok(Answer::Ok(json!({ "knob": knob, "initialized": false, "value": cur.value.data })));
+        }
+        let t = Txn::new()
+            .when(Compare::ModRev(knob.clone(), None))
+            .put(&knob, Object::new(value.clone()));
+        let req = Request::new(call.request, &actor, "lc.intent.knob-init");
+        match store.txn(&t, &req).map_err(cannot)? {
+            r if r.succeeded => Ok(Answer::Ok(json!({ "knob": knob, "initialized": true, "value": value, "rev": r.rev }))),
+            _ => Err(refuse("knob", "exists", format!("{knob} was set before the init: re-read it"))),
         }
     })();
     (answer.unwrap_or_else(|a| a), kind)
