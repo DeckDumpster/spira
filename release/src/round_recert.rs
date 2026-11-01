@@ -698,6 +698,8 @@ mod tests {
         ticks: u32,
         step_ms: u64,
         stalled: bool,
+        /// Another writer takes the lease from it after certify's first renewal.
+        revoked: bool,
         landed: std::cell::Cell<bool>,
         /// Whether the round's lease was live under the token land was handed.
         held_at_land: std::cell::Cell<Option<bool>>,
@@ -705,7 +707,7 @@ mod tests {
 
     impl<'b> Driven<'b> {
         fn new(bench: &'b Bench) -> Driven<'b> {
-            Driven { bench, calls: RefCell::default(), ticks: 5, step_ms: 20_000, stalled: false, landed: Default::default(), held_at_land: Default::default() }
+            Driven { bench, calls: RefCell::default(), ticks: 5, step_ms: 20_000, stalled: false, revoked: false, landed: Default::default(), held_at_land: Default::default() }
         }
         fn verbs(&self) -> Vec<Vec<String>> {
             self.calls.borrow().iter().filter(|a| a.first().map(String::as_str) == Some("round")).cloned().collect()
@@ -730,9 +732,16 @@ mod tests {
                 self.landed.set(true);
                 return Out { code: Some(0), text: "landed\n".into() };
             }
-            for _ in 0..self.ticks {
+            for n in 0..self.ticks {
                 self.bench.clock.advance(self.step_ms);
                 tick();
+                if self.revoked && n == 0 {
+                    let p = self.bench.ports();
+                    let res = Resource::round("spira", "r-1");
+                    let h = holder_of(&p, &res).unwrap().expect("held");
+                    Lease::handed(res.clone(), h.token).release(&p).unwrap();
+                    acquire(&p, &res, "round-controller").unwrap();
+                }
             }
             Out { code: Some(0), text: "green\n".into() }
         }
@@ -821,6 +830,21 @@ mod tests {
         other.release(&p).unwrap();
         let mine = acquire(&p, &Resource::round("spira", "r-1"), HAND_HOLDER).unwrap();
         assert_eq!(start(&Driven::new(&b), &l, "r-1", "spira", Some(&p)), Ok(Started::Running(unit_for("r-1", Some(mine.token())))));
+        mine.release(&p).unwrap();
+        b.seed("batches/spira/r-2", serde_json::json!({ "state": "LANDED" }));
+        assert_eq!(Hold::take(&p, "spira", "r-2").err(), Some(NotTaken::Refused("round r-2 has ended".into())));
+    }
+
+    #[test]
+    fn a_hand_drive_whose_lease_another_holder_takes_does_not_land_and_leaves_that_lease_alone() {
+        let b = bench();
+        let mut sys = Driven::new(&b);
+        sys.revoked = true;
+        let hold = launched_hold(&b, &sys);
+        assert_eq!(drive(&sys, "r-1", "spira", Some((&b.ports(), hold))), 1);
+        assert!(!sys.verbs().iter().any(|a| a[1] == "land"), "{:?}", sys.verbs());
+        let held = holder_of(&b.ports(), &Resource::round("spira", "r-1")).unwrap().expect("the new holder keeps its lease");
+        assert_eq!(held.holder.as_deref(), Some("round-controller"));
     }
 
     #[test]
