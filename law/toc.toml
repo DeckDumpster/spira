@@ -21,4 +21,10 @@ slugs = [
   "law-calls-have-deadlines",
   "law-fix-the-harness-not-the-instance",
   "law-a-required-key-ships-with-the-change-that-needs-it",
+  "law-a-capacity-limit-is-fixed-at-its-consumer",
+  "law-every-decision-biases-faster-or-safer",
+  "law-a-landing-stop-is-reverted-first",
+  "law-diagnosis-is-time-boxed",
+  "law-bisect-by-time-first",
+  "law-the-direct-path-wins",
 ]

@@ -1,0 +1,1 @@
+Diagnosis is time-boxed to ten minutes; then act on the strongest hypothesis — eject, revert or roll back, all of which are cheap to undo. A wrong cheap action costs minutes; a correct slow one costs hours. Record the hypothesis and its evidence on the action.
