@@ -519,6 +519,9 @@ struct FScripts {
     /// What `rebase-stale <id>` answers, by bead (absent = exit 0, nothing printed).
     rebase: RefCell<BTreeMap<String, RunOut>>,
     survives_term: Cell<bool>,
+    /// `round-vm` records the pass's verdict on the batch itself while it runs: the shared view
+    /// it moves, and where to.
+    round_vm_records: RefCell<Option<(SharedView, BatchView)>>,
 }
 
 impl Scripts for FScripts {
@@ -686,6 +689,9 @@ impl Scripts for FScripts {
         }
         if !self.round_vm_meta.borrow().is_empty() {
             fs::write(results.join("runner.meta"), &*self.round_vm_meta.borrow()).unwrap();
+        }
+        if let Some((view, to)) = self.round_vm_records.borrow().as_ref() {
+            *view.borrow_mut() = Some(to.clone());
         }
         let mut queued = self.round_vm_queue.borrow_mut();
         if queued.is_empty() {
@@ -932,6 +938,11 @@ impl Forge for FForge {
     }
 }
 
+/// A batch row as `show-batch` answers it: (state, version, pass, phase).
+type BatchView = (String, u64, u32, String);
+/// One batch row's view, shared between the fake lifecycle and a fake that writes to it.
+type SharedView = std::rc::Rc<RefCell<Option<BatchView>>>;
+
 struct FLc {
     churn: RefCell<Option<String>>,
     available: Cell<bool>,
@@ -969,7 +980,10 @@ struct FLc {
     /// `show <bead>` cannot answer (the bulk `list` still does).
     row_fails: Cell<bool>,
     /// When set, the batch answers (state, version, pass, phase) and follows the pass events it is sent.
-    batch_view: RefCell<Option<(String, u64, u32, String)>>,
+    batch_view: SharedView,
+    /// A SuitesStarted or Failed for a pass the batch has left (or judged) is refused as the
+    /// machine refuses a late boundary.
+    late_boundaries: Cell<bool>,
     /// The latest mended tip per bead.
     mend_tips: RefCell<BTreeMap<String, String>>,
     /// The next `mending mend` is refused with this text.
@@ -1002,7 +1016,8 @@ impl Default for FLc {
             event_races: RefCell::default(),
             stale_batch_events: Cell::new(0),
             row_fails: Cell::new(false),
-            batch_view: RefCell::default(),
+            batch_view: Default::default(),
+            late_boundaries: Cell::new(false),
             mend_tips: RefCell::default(),
             mend_refused: RefCell::default(),
             calls: RefCell::default(),
@@ -1179,6 +1194,18 @@ impl Lc for FLc {
             .is_some_and(|k| kind.contains(k))
         {
             return Err((1, "refused: IllegalTransition".into()));
+        }
+        if let (true, Some((state, _, pass, _))) = (self.late_boundaries.get(), &*self.batch_view.borrow()) {
+            let boundary = ["{\"SuitesStarted\"", "{\"Failed\""].iter().any(|b| kind.starts_with(b));
+            let n: u32 = kind
+                .split("\"n\":")
+                .nth(1)
+                .and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next())
+                .and_then(|d| d.parse().ok())
+                .unwrap_or(0);
+            if boundary && (n < *pass || (n == *pass && state != "CI_RUNNING")) {
+                return Err((3, format!("refused: Some(LateBoundary {{ state: \"{state} (pass {pass})\", event: \"{kind}\", pass: {n} }})")));
+            }
         }
         if let Some(view) = self.batch_view.borrow_mut().as_mut() {
             let n: u32 = kind
