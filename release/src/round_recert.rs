@@ -263,6 +263,7 @@ fn real() -> Result<(Real, PathBuf, String), String> {
             env.push((k.to_string(), v));
         }
     }
+    env.extend(spira_config::vtime::passthrough().into_iter().map(|(k, v)| (k.to_string(), v)));
     Ok((Real { env, path }, exe, toml))
 }
 

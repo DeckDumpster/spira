@@ -8,6 +8,7 @@ use std::process::{Command, Output};
 const QUEUE: &str = r#"#!/bin/sh
 S=@S@
 echo "queue $*" >> $S/calls
+echo "${SPIRA_NOW:-unset}" >> $S/now
 [ "$1" = round ] || exit 64
 case "$2" in
 status)
@@ -63,9 +64,23 @@ fn fixture(name: &str, phase: Option<&str>) -> Fixture {
 }
 
 fn recert(f: &Fixture, args: &[&str]) -> Output {
+    recert_with(f, args, &[])
+}
+
+fn recert_with(f: &Fixture, args: &[&str], env: &[(&str, &str)]) -> Output {
     let home = f.root.join("home");
     fs::create_dir_all(&home).unwrap();
-    testkit::retry_busy(|| Command::new(f.release.join("bin/round-recert")).env_clear().env("HOME", &home).env("SPIRA_RELEASE", &f.release).env("SPIRA_TOML", &f.toml).args(args).output()).unwrap()
+    testkit::retry_busy(|| {
+        Command::new(f.release.join("bin/round-recert"))
+            .env_clear()
+            .env("HOME", &home)
+            .env("SPIRA_RELEASE", &f.release)
+            .env("SPIRA_TOML", &f.toml)
+            .envs(env.iter().copied())
+            .args(args)
+            .output()
+    })
+    .unwrap()
 }
 
 fn text(o: &Output) -> String {
@@ -124,6 +139,15 @@ fn a_driven_round_that_certifies_green_lands_through_queue_round_land() {
     let verbs: Vec<String> = lines(&f, "calls").into_iter().filter(|l| !l.contains(" status ")).collect();
     assert_eq!(verbs, ["queue round certify r-1 spira", "queue round land r-1 spira"]);
     assert!(!f.state.join("open").exists());
+}
+
+#[test]
+fn a_driven_round_runs_queue_on_the_virtual_clock_it_was_run_on() {
+    let f = fixture("vtime", Some("certifying"));
+    let o = recert_with(&f, &["--drive", "--batch", "r-1", "--repo", "spira"], &[("SPIRA_NOW", "1900000000")]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    let now = lines(&f, "now");
+    assert!(!now.is_empty() && now.iter().all(|n| n == "1900000000"), "queue saw SPIRA_NOW {now:?}");
 }
 
 #[test]
