@@ -15,6 +15,7 @@ serde_path_to_error = "0.1"
 schemars = "0.8"
 libc = "0.2"
 tsd = { path = "../tsd" }
+lifecycle = { path = "../lifecycle" }
 
 [[bin]]
 name = "spira-config"

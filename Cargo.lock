@@ -1961,6 +1961,7 @@ name = "spira-config"
 version = "1.0.0"
 dependencies = [
  "libc",
+ "lifecycle",
  "schemars",
  "serde",
  "serde_json",
