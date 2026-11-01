@@ -836,11 +836,11 @@ pub fn a_put_under_telemetry_or_intents_without_ttl_secs_is_refused<R: Rig>(rig:
     }
     assert_eq!(
         c.txn(
-            &Txn::new().put("beads/x", obj(json!(1)).with_ttl(60)),
+            &Txn::new().put("lifecycle/x", obj(json!(1)).with_ttl(60)),
             &req("other")
         ),
         Err(Error::TtlNotAllowed {
-            key: "beads/x".into()
+            key: "lifecycle/x".into()
         })
     );
     assert_eq!(c.head().unwrap(), head);
@@ -1126,13 +1126,13 @@ pub fn caller_writes_to_the_contracts_own_prefixes_are_refused<R: Rig>(rig: &R) 
     );
 }
 
-/// A claim of `beads/x` as one txn: the record unchanged since `at`, the lock taken, the record
+/// A claim of `lifecycle/x` as one txn: the record unchanged since `at`, the lock taken, the record
 /// written.
 fn claim(at: Rev, v: &str) -> Txn {
     Txn::new()
-        .when(Compare::ModRev("beads/x".into(), Some(at)))
-        .lock_acquire("bead/x", 5_000)
-        .put("beads/x", obj(json!(v)))
+        .when(Compare::ModRev("lifecycle/x".into(), Some(at)))
+        .lock_acquire("lifecycle/x", 5_000)
+        .put("lifecycle/x", obj(json!(v)))
 }
 
 fn mod_rev<B: Backend>(c: &Contract<B>, key: &str) -> Rev {
@@ -1144,31 +1144,31 @@ pub fn a_txn_that_acquires_a_lock_and_writes_a_fenced_key_applies_whole_or_not_a
 ) {
     let clock = VirtualClock::new(T0);
     let c = open(Interpose::new(rig.fresh()), &clock);
-    put(&c, "beads/x", obj(json!("open")), "seed1");
-    let stale = mod_rev(&c, "beads/x");
-    put(&c, "beads/x", obj(json!("ready")), "seed2");
+    put(&c, "lifecycle/x", obj(json!("open")), "seed1");
+    let stale = mod_rev(&c, "lifecycle/x");
+    put(&c, "lifecycle/x", obj(json!("ready")), "seed2");
 
     let refused = c.txn(&claim(stale, "a"), &req("stale")).unwrap();
     assert!(!refused.succeeded);
     assert!(refused.fences.is_empty());
-    assert_eq!(data(&c, "beads/x"), Some(json!("ready")));
-    assert!(c.get("locks/bead/x").unwrap().is_none());
+    assert_eq!(data(&c, "lifecycle/x"), Some(json!("ready")));
+    assert!(c.get("locks/lifecycle/x").unwrap().is_none());
     let b = c
-        .lock("bead/x", 5_000, &req("b-lock"))
+        .lock("lifecycle/x", 5_000, &req("b-lock"))
         .expect("no TTL wait");
     c.release(&b, &req("b-release")).unwrap();
 
     let r = c
-        .txn(&claim(mod_rev(&c, "beads/x"), "a"), &req("claim"))
+        .txn(&claim(mod_rev(&c, "lifecycle/x"), "a"), &req("claim"))
         .unwrap();
     assert!(r.succeeded);
-    let lock = c.get("locks/bead/x").unwrap().expect("lock taken");
-    assert_eq!(mod_rev(&c, "beads/x").main, r.rev);
+    let lock = c.get("locks/lifecycle/x").unwrap().expect("lock taken");
+    assert_eq!(mod_rev(&c, "lifecycle/x").main, r.rev);
     assert_eq!(lock.create_rev.main, r.rev);
     assert_eq!(
         r.fences,
         [Fence {
-            resource: "bead/x".into(),
+            resource: "lifecycle/x".into(),
             token: lock.create_rev
         }]
     );
@@ -1179,33 +1179,33 @@ pub fn a_txn_that_acquires_a_lock_and_writes_a_fenced_key_applies_whole_or_not_a
 
     clock.advance(5_000);
     assert!(
-        c.get("locks/bead/x").unwrap().is_some(),
+        c.get("locks/lifecycle/x").unwrap().is_some(),
         "not yet collected"
     );
     let reclaim = Txn::new()
         .when(Compare::ModRev(
-            "beads/x".into(),
-            Some(mod_rev(&c, "beads/x")),
+            "lifecycle/x".into(),
+            Some(mod_rev(&c, "lifecycle/x")),
         ))
         .delete("absent/x")
-        .put("beads/x", obj(json!("b")))
-        .lock_acquire("bead/x", 5_000);
+        .put("lifecycle/x", obj(json!("b")))
+        .lock_acquire("lifecycle/x", 5_000);
     let again = c.txn(&reclaim, &req("reclaim")).unwrap();
     assert!(again.succeeded, "an expired lock is taken in one call");
-    let token = c.get("locks/bead/x").unwrap().unwrap().create_rev;
+    let token = c.get("locks/lifecycle/x").unwrap().unwrap().create_rev;
     assert_eq!(
         (again.fences[0].token, token.sub),
         (token, 1),
         "the token is the lock's own sub, after a dropped delete"
     );
     assert!(again.fences[0].token > r.fences[0].token);
-    assert_eq!(data(&c, "beads/x"), Some(json!("b")));
+    assert_eq!(data(&c, "lifecycle/x"), Some(json!("b")));
 
     c.release(&again.fences[0], &req("release")).unwrap();
-    let t = claim(mod_rev(&c, "beads/x"), "c");
+    let t = claim(mod_rev(&c, "lifecycle/x"), "c");
     c.backend().lose_next_commit_reply();
     assert!(c.txn(&t, &req("lost")).is_err());
-    let token = c.get("locks/bead/x").unwrap().unwrap().create_rev;
+    let token = c.get("locks/lifecycle/x").unwrap().unwrap().create_rev;
     let retry = c.txn(&t, &req("lost")).unwrap();
     assert_eq!(
         (retry.rev, retry.succeeded, retry.already_applied),
@@ -1214,7 +1214,7 @@ pub fn a_txn_that_acquires_a_lock_and_writes_a_fenced_key_applies_whole_or_not_a
     assert_eq!(
         retry.fences,
         [Fence {
-            resource: "bead/x".into(),
+            resource: "lifecycle/x".into(),
             token
         }]
     );
@@ -1223,18 +1223,18 @@ pub fn a_txn_that_acquires_a_lock_and_writes_a_fenced_key_applies_whole_or_not_a
 pub fn a_txn_acquiring_a_lock_held_by_another_holder_fails_whole<R: Rig>(rig: &R) {
     let clock = VirtualClock::new(T0);
     let c = open(rig.fresh(), &clock);
-    put(&c, "beads/x", obj(json!("open")), "seed");
-    let b = c.lock("bead/x", 5_000, &req("b")).unwrap();
+    put(&c, "lifecycle/x", obj(json!("open")), "seed");
+    let b = c.lock("lifecycle/x", 5_000, &req("b")).unwrap();
     let t = Txn::new()
-        .lock_acquire("bead/x", 5_000)
-        .put("beads/x", obj(json!("a")))
+        .lock_acquire("lifecycle/x", 5_000)
+        .put("lifecycle/x", obj(json!("a")))
         .or_put("markers/x", obj(json!("refused")));
     let r = c.txn(&t, &req("a")).unwrap();
     assert!(!r.succeeded);
     assert!(r.fences.is_empty());
-    assert_eq!(data(&c, "beads/x"), Some(json!("open")));
+    assert_eq!(data(&c, "lifecycle/x"), Some(json!("open")));
     assert_eq!(data(&c, "markers/x"), Some(json!("refused")));
-    assert_eq!(c.get("locks/bead/x").unwrap().unwrap().create_rev, b.token);
+    assert_eq!(c.get("locks/lifecycle/x").unwrap().unwrap().create_rev, b.token);
     assert_eq!(
         data(&c, &events_key(r.rev)).unwrap()["refused"],
         json!(true)
