@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=round
+DOC=Seconds a whole pass, sub-passes included, may run before its runner stops renewing its lease however fresh its marks. A knob, at the reference-minimum profile's pass cap (7200); re-taken from the longest measured pass wall once rounds run on the controller.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Seconds a whole pass may run before its runner stops renewing, however fresh its marks.
+    : "${SPIRA_ROUND_PASS_WALL_MAX_SECS:=7200}"
+SPIRA_CONF_DEFAULT_EOF

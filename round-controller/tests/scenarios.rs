@@ -32,7 +32,16 @@ macro_rules! scenario {
     };
 }
 
-scenario!(scenario_harness_smoke, scenario_ledger_attempts);
+scenario!(
+    scenario_harness_smoke,
+    scenario_hung_child,
+    scenario_hung_runner,
+    scenario_over_long_pass,
+    scenario_prior_runner_alive,
+    scenario_launch_fails,
+    scenario_ec2_past_deadline,
+    scenario_ledger_attempts,
+);
 
 #[test]
 fn every_scenario_file_is_its_own_test() {

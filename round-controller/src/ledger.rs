@@ -456,11 +456,18 @@ mod tests {
     use state_store::{Config, Contract, MemBackend, Selector};
     use std::sync::Mutex;
 
+    use crate::liveness::LeaseSettings;
+    use crate::sim::bench::{bench_settings, FakeLaunch, FakeUnits, FakeVms};
+
     struct World {
         clock: VirtualClock,
         store: Contract<MemBackend>,
         rng: Mutex<SeededRng>,
         log: MemLog,
+        units: FakeUnits,
+        vms: FakeVms,
+        launch: FakeLaunch,
+        leases: LeaseSettings,
     }
 
     impl World {
@@ -479,6 +486,10 @@ mod tests {
                 store,
                 rng: Mutex::new(SeededRng::new(1)),
                 log: MemLog::default(),
+                units: FakeUnits::default(),
+                vms: FakeVms::default(),
+                launch: FakeLaunch::default(),
+                leases: bench_settings(),
             }
         }
 
@@ -490,6 +501,10 @@ mod tests {
                 store: &self.store,
                 verbs,
                 log: &self.log,
+                units: &self.units,
+                vms: &self.vms,
+                launcher: &self.launch,
+                leases: &self.leases,
             }
         }
 

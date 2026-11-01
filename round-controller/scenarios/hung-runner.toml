@@ -1,0 +1,64 @@
+description = "a hung runner: its child keeps marking progress but the runner stops renewing at t = 100 s; the lease is lost by t + deadline + TTL, and with its unit still active the orphan is held, never launched"
+repos = ["home"]
+
+[run]
+epoch = 1800000000
+passes = 30
+every_secs = 10
+
+[lease]
+ttl_secs = 60
+pass_wall_max_secs = 400
+redrive_retries = 2
+ec2_max_lifetime_secs = 1200
+
+[lease.deadline_secs]
+boot = 40
+build = 50
+suites = 90
+subpass = 70
+certify = 30
+
+[[store]]
+key = "batches/home/b1"
+data = { state = "CI_RUNNING", members = "sp-a:1" }
+
+[[runner]]
+repo = "home"
+batch = "b1"
+phase = "suites"
+start_secs = 0
+marks_every_secs = 10
+hangs_secs = 100
+
+# Renewals at 20, 40, 60 and 80 s; the lease lapses at 140 s and every pass from then on holds.
+[[expect]]
+name = "renewed-until-it-hung"
+count = "renewals"
+equals = 4
+
+[[expect]]
+name = "orphaned-by-t-plus-deadline-plus-ttl"
+count = "first-orphan-secs"
+at_most = 250
+
+[[expect]]
+name = "held-every-pass-from-the-lapse"
+count = "outcomes:prior-runner-alive"
+equals = 16
+
+[[expect]]
+name = "never-launched"
+count = "launches"
+equals = 0
+
+[[expect]]
+name = "no-attempt-recorded"
+count = "redrive-attempts"
+equals = 0
+
+[[expect]]
+name = "inverted-orphaned-before-the-last-renewal-lapsed"
+count = "first-orphan-secs"
+at_most = 139
+inverted = true

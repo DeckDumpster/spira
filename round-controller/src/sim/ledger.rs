@@ -285,7 +285,7 @@ fn answer(p: &Ports, s: &LedgerStep, id: &PassIdentity, policy: Option<&FaultPol
 mod tests {
     use crate::sim::scenario::{parse, profiles, run};
 
-    const BASE: &str = "description = \"t\"\nrepos = [\"a\"]\n[run]\nepoch = 1800000000\npasses = 2\nevery_secs = 30\n[ledger]\nfault_backoff_secs = 10\nfault_retries = 1\n[[identity]]\nname = \"x\"\nrepo = \"a\"\nmembers = [\"sp-x:1\"]\n";
+    const BASE: &str = "description = \"t\"\nrepos = [\"a\"]\n[run]\nepoch = 1800000000\npasses = 2\nevery_secs = 30\n[ledger]\nfault_backoff_secs = 10\nfault_retries = 1\n[[identity]]\nname = \"x\"\nrepo = \"a\"\nmembers = [\"sp-x:1\"]\n[[store]]\nkey = \"lifecycle/sp-x\"\ndata = { repo = \"a\" }\n[[store]]\nkey = \"batches/a/b1\"\ndata = { repo = \"a\" }\n[[store]]\nkey = \"batches/a/b2\"\ndata = { repo = \"a\" }\n";
 
     fn step(pass: u32, body: &str) -> String {
         format!("[[ledger_step]]\npass = {pass}\nidentity = \"x\"\n{body}\n")

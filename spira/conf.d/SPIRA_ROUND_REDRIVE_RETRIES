@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=round
+DOC=Failed launches an orphan's re-drive makes, each after a doubling back-off from one lease TTL, before the round is RedriveExhausted. A knob; re-taken when launch failures are seen to clear on a later attempt.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Failed launches an orphan's re-drive makes before the round is RedriveExhausted.
+    : "${SPIRA_ROUND_REDRIVE_RETRIES:=3}"
+SPIRA_CONF_DEFAULT_EOF

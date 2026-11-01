@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=round
+DOC=Seconds a round's driver lease lives unrenewed (renewed every third of it). A knob, at 300 until round-controller/lease-ttl measures it: it must cover the renewal interval plus the worst renewal lateness `round-controller lease probe` records at IO full avg60 of 77% or worse, and be at least 10x the store's measured maximum CAS latency. Re-measured when the host's IO pressure or the store's backend changes.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Seconds a round's driver lease lives unrenewed; 300 until round-controller/lease-ttl measures it.
+    : "${SPIRA_ROUND_LEASE_TTL_SECS:=300}"
+SPIRA_CONF_DEFAULT_EOF

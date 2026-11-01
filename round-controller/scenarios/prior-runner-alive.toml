@@ -1,0 +1,53 @@
+description = "an orphan whose old runner's unit, named with the old token, is still active: every pass holds it as PriorRunnerAlive, launches nothing and writes nothing; a round never leased is waiting, not an orphan"
+repos = ["home"]
+
+[run]
+epoch = 1800000000
+passes = 3
+every_secs = 30
+
+[lease]
+ttl_secs = 60
+pass_wall_max_secs = 400
+redrive_retries = 2
+ec2_max_lifetime_secs = 1200
+
+[lease.deadline_secs]
+boot = 40
+build = 50
+suites = 90
+subpass = 70
+certify = 30
+
+[[store]]
+key = "batches/home/b1"
+data = { state = "CI_RUNNING", members = "sp-a:1", last_lease_token = { main = 7, sub = 0 } }
+
+[[store]]
+key = "batches/home/b2"
+data = { state = "OPEN", members = "sp-b:1" }
+
+[[unit]]
+name = "round-controller-run-b1-7-0"
+state = "active"
+
+[[expect]]
+name = "held-each-pass"
+count = "outcomes:prior-runner-alive"
+equals = 3
+
+[[expect]]
+name = "never-launched"
+count = "launches"
+equals = 0
+
+[[expect]]
+name = "nothing-written"
+count = "store-writes"
+equals = 0
+
+[[expect]]
+name = "inverted-never-held"
+count = "outcomes:prior-runner-alive"
+equals = 0
+inverted = true

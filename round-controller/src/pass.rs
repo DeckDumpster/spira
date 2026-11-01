@@ -1,5 +1,5 @@
-//! `pass`: one visit to every registered repo, running each [`Step`] in order. The list starts
-//! empty; each later piece of the controller lands as a step.
+//! `pass`: one visit to every registered repo, running each [`Step`] in order. Each piece of the
+//! controller lands as a step.
 
 use crate::outcome::Outcome;
 use crate::ports::Ports;
@@ -9,7 +9,10 @@ pub struct Step {
     pub run: fn(&Ports, &str),
 }
 
-pub const STEPS: &[Step] = &[];
+pub const STEPS: &[Step] = &[Step {
+    name: "orphans",
+    run: crate::orphans::step,
+}];
 
 pub fn pass(p: &Ports, repos: &[String]) {
     pass_with(p, repos, STEPS)

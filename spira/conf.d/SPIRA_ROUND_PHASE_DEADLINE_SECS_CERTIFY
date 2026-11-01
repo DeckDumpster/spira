@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=round
+DOC=Seconds the certify phase (typing and recording the verdict) may go without a progress mark before its runner stops renewing its lease. A knob, at round-vm's vm-phase budget (300); re-taken from measured certify phases once rounds run on the controller.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Seconds the certify phase may go without a progress mark before the runner stops renewing.
+    : "${SPIRA_ROUND_PHASE_DEADLINE_SECS_CERTIFY:=300}"
+SPIRA_CONF_DEFAULT_EOF

@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=round
+DOC=Seconds the suites phase may go without a finished suite before its runner stops renewing its lease. A knob, at the 600 s suite cap plus 300 s of margin; re-taken from the longest gap between finished suites once rounds run on the controller.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Seconds the suites phase may go without a finished suite before the runner stops renewing.
+    : "${SPIRA_ROUND_PHASE_DEADLINE_SECS_SUITES:=900}"
+SPIRA_CONF_DEFAULT_EOF

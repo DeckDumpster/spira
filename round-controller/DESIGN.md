@@ -115,8 +115,22 @@ counts.
   order. `certify` is answered by the fake round VM unless a refusal is scripted.
 - `[[vm]]` — `identity` (the batch's head), `verdict` (`green`, `red`, `fault`), `suites`,
   and `duration_secs`, scaled by the profile's `duration_factor`.
+- `[lease]` — `ttl_secs`, `pass_wall_max_secs`, `redrive_retries`, `ec2_max_lifetime_secs` and
+  `[lease.deadline_secs]` (`boot`, `build`, `suites`, `subpass`, `certify`): the lease keys the
+  scenario runs under. Absent, the bench's own values, which are not the shipped defaults.
+- `[[runner]]` — `repo`, `batch`, `phase`, `start_secs`, `marks_every_secs`, optional
+  `marks_stop_secs` (a hung child) and `hangs_secs` (a hung runner): a runner that takes the
+  round's lease and renews it through the library every TTL/3, gated on its marks. When the gate
+  shuts or a renewal is refused it tears down; a hung one stays alive.
+- `[[unit]]` — `name`, `state` (an `is-active` word, or `unreadable`); a unit never named is one
+  systemd does not know. `[[vm_fact]]` — `unit`, `fact` (`none`, `running`, `unreadable`,
+  `ec2-unreadable` with `launched_at` in epoch seconds). `[[launch]]` — `ok = true` or
+  `refuse = "<why>"`, answered in order; an unscripted launch is a fault.
 - `[[expect]]` — `name`, `count` (`calls`, `calls:<verb>`, `outcomes`, `outcomes:<kind>`,
-  `store-writes`, `vm-runs`, `lock-hold-ms`), `equals`, optional `inverted`.
+  `store-writes`, `vm-runs`, `lock-hold-ms`, `launches`, `renewals`, `redrive-attempts`,
+  `first-orphan-secs`), exactly one of `equals` and `at_most`, optional `inverted`.
+
+The store's GC ticks before every pass, so a lapsed lock is gone by the pass that follows it.
 
 Every scenario is held to two invariants under every profile: every finished pass has a
 recorded verdict, and nothing happened that no script asked for — an unscripted verb call,

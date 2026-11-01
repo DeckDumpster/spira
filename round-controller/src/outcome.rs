@@ -4,6 +4,9 @@
 
 use std::sync::Mutex;
 
+use state_store::Rev;
+
+use crate::orphans::{Orphan, Redrive};
 use crate::ports::{Verb, VerbRefusal};
 
 /// Proof that a verb's call returned `Ok`; its field is private so nothing else can make one.
@@ -22,22 +25,46 @@ pub enum Kind {
     Visited,
     Did(Act),
     Refused(Verb),
+    /// An orphan's runner was launched under a new lease.
+    Redriven,
+    RedriveFailed,
+    /// An orphan whose last launch failed, inside its back-off.
+    RedriveWaiting,
+    /// An orphan whose old runner is not proven dead: held.
+    PriorRunnerAlive,
+    RedriveExhausted,
+    StoreRefused,
 }
 
 impl Kind {
     /// Every kind's word, each once.
     pub fn words() -> Vec<&'static str> {
         let acts = Verb::ALL.iter().map(|v| Kind::Did(Act(*v)));
-        [Kind::Visited, Kind::Refused(Verb::Open)]
-            .into_iter()
-            .chain(acts)
-            .map(|k| k.word())
-            .collect()
+        [
+            Kind::Visited,
+            Kind::Refused(Verb::Open),
+            Kind::Redriven,
+            Kind::RedriveFailed,
+            Kind::RedriveWaiting,
+            Kind::PriorRunnerAlive,
+            Kind::RedriveExhausted,
+            Kind::StoreRefused,
+        ]
+        .into_iter()
+        .chain(acts)
+        .map(|k| k.word())
+        .collect()
     }
 
     pub fn word(&self) -> &'static str {
         match self {
             Kind::Visited => "visited",
+            Kind::Redriven => "redriven",
+            Kind::RedriveFailed => "redrive-failed",
+            Kind::RedriveWaiting => "redrive-waiting",
+            Kind::PriorRunnerAlive => "prior-runner-alive",
+            Kind::RedriveExhausted => "redrive-exhausted",
+            Kind::StoreRefused => "store-refused",
             Kind::Did(a) => match a.0 {
                 Verb::Open => "opened",
                 Verb::Status => "read-status",
@@ -66,6 +93,14 @@ pub enum Cause {
     NotRun {
         text: String,
     },
+    /// An orphan whose lease `expired` lapsed; `text` is what its re-drive found.
+    Orphan {
+        expired: Rev,
+        text: String,
+    },
+    Store {
+        text: String,
+    },
 }
 
 impl Cause {
@@ -75,6 +110,8 @@ impl Cause {
             Cause::Ok => "ok",
             Cause::Exit { .. } => "exit",
             Cause::NotRun { .. } => "not-run",
+            Cause::Orphan { .. } => "orphan",
+            Cause::Store { .. } => "store",
         }
     }
 }
@@ -145,10 +182,59 @@ impl Outcome {
         }
         match &self.cause {
             Cause::Exit { code, text } => s += &format!(" code={code} text={text:?}"),
-            Cause::NotRun { text } => s += &format!(" text={text:?}"),
+            Cause::NotRun { text } | Cause::Store { text } => s += &format!(" text={text:?}"),
+            Cause::Orphan { expired, text } => {
+                s += &format!(" expired={}-{} text={text:?}", expired.main, expired.sub)
+            }
             Cause::Steps | Cause::Ok => {}
         }
         s
+    }
+
+    pub fn store_refused(at: u64, repo: &str, text: &str) -> Outcome {
+        Outcome {
+            at,
+            repo: repo.into(),
+            batch: None,
+            kind: Kind::StoreRefused,
+            cause: Cause::Store { text: text.into() },
+        }
+    }
+
+    /// The line of one orphan's re-drive; `None` when another holder took its lease or the round
+    /// turned terminal meanwhile, since then it is no longer an orphan.
+    pub fn redrive(at: u64, o: &Orphan, r: &Redrive) -> Option<Outcome> {
+        let (kind, text) = match r {
+            Redrive::Launched { unit } => (Kind::Redriven, format!("launched {unit}")),
+            Redrive::Failed {
+                why,
+                next_attempt_at_ms,
+            } => (
+                Kind::RedriveFailed,
+                format!("{why}; next attempt {}", utc_stamp(*next_attempt_at_ms)),
+            ),
+            Redrive::Waiting { until_ms } => (
+                Kind::RedriveWaiting,
+                format!("backing off until {}", utc_stamp(*until_ms)),
+            ),
+            Redrive::PriorRunnerAlive { why } => (Kind::PriorRunnerAlive, why.clone()),
+            Redrive::Exhausted { failures } => (
+                Kind::RedriveExhausted,
+                format!("{failures} failed launches"),
+            ),
+            Redrive::Store(e) => (Kind::StoreRefused, e.clone()),
+            Redrive::Leased(_) | Redrive::Terminal => return None,
+        };
+        Some(Outcome {
+            at,
+            repo: o.repo.clone(),
+            batch: Some(o.batch.clone()),
+            kind,
+            cause: Cause::Orphan {
+                expired: o.expired,
+                text,
+            },
+        })
     }
 }
 
@@ -244,13 +330,60 @@ mod tests {
     #[test]
     fn every_kind_has_its_own_word() {
         let words: std::collections::BTreeSet<&str> = Kind::words().into_iter().collect();
-        assert_eq!(words.len(), Verb::ALL.len() + 2);
+        assert_eq!(words.len(), Verb::ALL.len() + 8);
         assert!(
             words.contains("visited")
                 && words.contains("refused")
                 && words.contains("pass-started")
         );
         assert_eq!(Act(Verb::Land).verb(), Verb::Land);
+    }
+
+    #[test]
+    fn each_redrive_is_one_line_naming_the_expired_token_and_a_race_is_none() {
+        let o = Orphan {
+            repo: "r".into(),
+            batch: "b1".into(),
+            expired: Rev::new(7, 0),
+        };
+        let line = |r: Redrive| Outcome::redrive(0, &o, &r).map(|o| o.line());
+        let at = "1970-01-01T00:00:00Z";
+        assert_eq!(
+            line(Redrive::Launched { unit: "u".into() }).unwrap(),
+            format!("{at} redriven orphan repo=r batch=b1 expired=7-0 text=\"launched u\"")
+        );
+        assert_eq!(
+            line(Redrive::Failed {
+                why: "x".into(),
+                next_attempt_at_ms: 60_000
+            })
+            .unwrap(),
+            format!("{at} redrive-failed orphan repo=r batch=b1 expired=7-0 text=\"x; next attempt 1970-01-01T00:01:00Z\"")
+        );
+        assert!(line(Redrive::Waiting { until_ms: 0 })
+            .unwrap()
+            .contains("redrive-waiting orphan"));
+        assert!(line(Redrive::PriorRunnerAlive { why: "w".into() })
+            .unwrap()
+            .contains("prior-runner-alive orphan"));
+        assert!(line(Redrive::Exhausted { failures: 3 })
+            .unwrap()
+            .contains("text=\"3 failed launches\""));
+        assert!(line(Redrive::Store("s".into()))
+            .unwrap()
+            .contains("store-refused orphan"));
+        assert_eq!(
+            line(Redrive::Leased(crate::lease::Held {
+                holder: None,
+                token: Rev::new(8, 0),
+                ttl_left_ms: 0
+            })),
+            None
+        );
+        assert_eq!(
+            Outcome::store_refused(0, "r", "down").line(),
+            format!("{at} store-refused store repo=r batch=- text=\"down\"")
+        );
     }
 
     #[test]
