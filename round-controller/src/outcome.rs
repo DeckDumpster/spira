@@ -491,7 +491,7 @@ mod tests {
     #[test]
     fn every_kind_has_its_own_word() {
         let words: std::collections::BTreeSet<&str> = Kind::words().into_iter().collect();
-        assert_eq!(words.len(), Verb::ALL.len() + 12);
+        assert_eq!(words.len(), Verb::ALL.len() + 14);
         assert!(
             words.contains("visited")
                 && words.contains("refused")
