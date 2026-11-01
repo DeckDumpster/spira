@@ -4,5 +4,6 @@ pub mod feed;
 pub mod keys;
 pub mod records;
 pub mod served;
+pub mod state;
 pub mod store;
 pub mod verbs;

@@ -63,6 +63,17 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
 
+    // With SPIRA_LC_STORE_PATH set the control store is opened here, once, so a store that
+    // cannot be opened stops the service instead of failing every request it would serve.
+    let control = match crate::control::served::configured() {
+        None => None,
+        Some(Ok(store)) => Some(store),
+        Some(Err(e)) => {
+            eprintln!("spira-lc serve: the control store: {e}");
+            return 2;
+        }
+    };
+
     let conn = match Conn::from_env() {
         Ok(mut c) => {
             c.enable_live();
@@ -117,6 +128,12 @@ pub fn run(args: &[String]) -> i32 {
             (Ok(_), Ok(_)) => {}
             (Err(e), _) | (_, Err(e)) => eprintln!("spira-lc serve: snapshot not written: {e}"),
         }
+        if let Some(store) = control {
+            scope.spawn(move || loop {
+                std::thread::sleep(SWEEP_EVERY);
+                gc_tick(&store);
+            });
+        }
         let sweeper = Arc::clone(&conn);
         scope.spawn(move || loop {
             std::thread::sleep(SWEEP_EVERY);
@@ -145,6 +162,14 @@ pub fn run(args: &[String]) -> i32 {
 
 /// Between attempts to fetch the older rows: each is a read of the whole table.
 const COLD_RETRY: Duration = Duration::from_secs(30);
+
+/// One pass of the control store's GC controller: finalized keys, orphans and lapsed TTLs.
+fn gc_tick<B: state_store::Backend>(store: &crate::control::store::Store<B>) {
+    let contract = store.contract();
+    if let Err(e) = state_store::gc::Controller::new(contract).tick(contract.now_ms()) {
+        eprintln!("spira-lc serve: control-store gc: {e}");
+    }
+}
 
 fn cold_tick(conn: &Conn) {
     if conn.live.as_ref().is_some_and(|l| l.cold_due(COLD_RETRY)) {

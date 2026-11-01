@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=lc
+DOC=Shortest lock, in ms, the control store grants, and so the shortest claim lease; a lock asked for under it is refused, a claim's is raised to it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_LOCK_TTL_MIN_MS:=1000}"
+SPIRA_CONF_DEFAULT_EOF

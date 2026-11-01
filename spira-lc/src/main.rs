@@ -20,7 +20,7 @@ mod churn;
 mod claim_verdicts;
 mod classify_cmd;
 mod content;
-// Only the feed verbs reach it yet; the rest moves onto it with the bead-state verbs.
+// Reached only with SPIRA_LC_STORE_PATH set; parts of it are used only by later verbs yet.
 #[cfg_attr(not(test), allow(dead_code))]
 mod control;
 mod continuity;

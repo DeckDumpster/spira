@@ -1299,6 +1299,57 @@ pub fn get_and_list_return_a_locks_expiry_and_renew_moves_it_forward<R: Rig>(rig
     assert_eq!(expiry("locks/job"), None, "an expired lock has no expiry");
 }
 
+pub fn a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry<R: Rig>(rig: &R) {
+    const WALL: u64 = 1_700_000_000_000;
+    let clock = VirtualClock::new(T0);
+    let wall = VirtualClock::new(WALL);
+    let c = Contract::open(
+        rig.fresh(),
+        Ports {
+            mono: Arc::new(clock.clone()),
+            wall: Arc::new(wall.clone()),
+        },
+        Config {
+            min_lock_ttl_ms: MIN_LOCK_TTL_MS,
+        },
+    )
+    .expect("open");
+    let a = c.lock("job", 5_000, &req("1")).unwrap();
+    clock.advance(1_000);
+    wall.advance(1_000);
+    c.renew_for(&a, 20_000, &req("2")).unwrap();
+    let held = c.get("locks/job").unwrap().expect("held");
+    assert_eq!(held.create_rev, a.token, "the token survives the renew");
+    assert_eq!(held.lock_expires_at_ms, Some(WALL + 21_000));
+    assert_eq!(
+        c.renew_for(&a, MIN_LOCK_TTL_MS - 1, &req("3")),
+        Err(Error::LockTtlBelowMinimum {
+            min_ms: MIN_LOCK_TTL_MS,
+            got_ms: MIN_LOCK_TTL_MS - 1
+        })
+    );
+    clock.advance(19_999);
+    assert!(matches!(
+        c.lock("job", 5_000, &req("4")),
+        Err(Error::Locked { .. })
+    ));
+    c.renew(&a, &req("5")).unwrap();
+    clock.advance(19_999);
+    assert!(
+        matches!(c.lock("job", 5_000, &req("6")), Err(Error::Locked { .. })),
+        "a plain renew keeps the new TTL"
+    );
+    clock.advance(1);
+    let b = c.lock("job", 5_000, &req("7")).unwrap();
+    assert_eq!(
+        c.renew_for(&a, 20_000, &req("8")),
+        Err(Error::LockLost {
+            resource: "job".into()
+        })
+    );
+    assert!(b.token > a.token);
+}
+
 /// Every scenario, in order; a backend's own test file names each one as its own test.
 pub fn run_all<R: Rig>(rig: &R) {
     for s in scenarios::<R>() {
@@ -1356,4 +1407,5 @@ scenarios!(
     a_txn_acquiring_a_lock_held_by_another_holder_fails_whole,
     lock_check_fails_the_txn_after_the_lock_expired_or_was_retaken,
     get_and_list_return_a_locks_expiry_and_renew_moves_it_forward,
+    a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry,
 );

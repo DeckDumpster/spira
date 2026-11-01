@@ -351,6 +351,13 @@ fn ttl_ms(key: &str, v: &Object) -> Option<u64> {
         .map(|s| s.saturating_mul(1_000))
 }
 
+/// A holder's write to its own lock: a renew, under a new TTL when it names one, or a release.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HolderWrite {
+    Renew(Option<u64>),
+    Release,
+}
+
 fn lock_value(ttl_ms: u64) -> Object {
     Object::new(serde_json::json!({ "ttl_ms": ttl_ms }))
 }
@@ -860,14 +867,21 @@ impl<B: Backend> Contract<B> {
 
     /// Restarts the lock's TTL; `LockLost` once it has expired or is held under another token.
     pub fn renew(&self, f: &Fence, req: &Request) -> Result<()> {
-        self.holder_write(f, req, true)
+        self.holder_write(f, req, HolderWrite::Renew(None))
+    }
+
+    /// Restarts the lock under a new TTL, keeping its token; refused as `lock` refuses a TTL
+    /// below the minimum.
+    pub fn renew_for(&self, f: &Fence, ttl_ms: u64, req: &Request) -> Result<()> {
+        self.check_lock_ttl(ttl_ms)?;
+        self.holder_write(f, req, HolderWrite::Renew(Some(ttl_ms)))
     }
 
     pub fn release(&self, f: &Fence, req: &Request) -> Result<()> {
-        self.holder_write(f, req, false)
+        self.holder_write(f, req, HolderWrite::Release)
     }
 
-    fn holder_write(&self, f: &Fence, req: &Request, renew: bool) -> Result<()> {
+    fn holder_write(&self, f: &Fence, req: &Request, write: HolderWrite) -> Result<()> {
         let key = f.key();
         let rec = Record {
             audited: true,
@@ -876,15 +890,15 @@ impl<B: Backend> Contract<B> {
         };
         self.engine(req, rec, |head| {
             let cur = self.read(&key, head)?.filter(|c| c.create_rev == f.token);
-            let Some(cur) = cur.filter(|_| !renew || self.live(&key)) else {
+            let Some(cur) = cur.filter(|_| write == HolderWrite::Release || self.live(&key)) else {
                 return Err(Error::LockLost {
                     resource: f.resource.clone(),
                 });
             };
-            let op = if renew {
-                Op::Put(key.clone(), cur.value)
-            } else {
-                Op::Delete(key.clone())
+            let op = match write {
+                HolderWrite::Renew(Some(ttl)) => Op::Put(key.clone(), lock_value(ttl)),
+                HolderWrite::Renew(None) => Op::Put(key.clone(), cur.value),
+                HolderWrite::Release => Op::Delete(key.clone()),
             };
             Ok(Step::<Infallible>::Apply {
                 ok: true,

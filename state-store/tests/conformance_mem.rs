@@ -60,6 +60,7 @@ scenarios!(
     a_txn_acquiring_a_lock_held_by_another_holder_fails_whole,
     lock_check_fails_the_txn_after_the_lock_expired_or_was_retaken,
     get_and_list_return_a_locks_expiry_and_renew_moves_it_forward,
+    a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry,
 );
 
 #[test]
