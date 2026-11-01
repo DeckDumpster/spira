@@ -216,6 +216,32 @@ pub fn resolve_run_dir(env: &BTreeMap<String, String>, home: &Path) -> Result<Pa
     Ok(PathBuf::from(run))
 }
 
+/// `spira.run` from the file `SPIRA_TOML` names in `env`, read alone: the registry is not
+/// resolved key by key (loading the file still validates the values it declares), so a
+/// caller that needs only the run directory still gets it when the registry (a tree whose
+/// `conf.d` adds a key) declares keys that file does not have yet. Judged
+/// against the instance's confinement, as [`resolve_run_dir`] judges it.
+pub fn declared_run_dir(env: &BTreeMap<String, String>) -> Result<PathBuf, String> {
+    let spec = env
+        .get("SPIRA_TOML")
+        .filter(|p| !p.is_empty())
+        .ok_or_else(|| "SPIRA_TOML is not set — it names the one source of config (a file, or base:override); refusing".to_string())?;
+    let doc = crate::load(Path::new(spec)).map_err(|e| format!("cannot resolve spira.run: {e}"))?;
+    let map = toml_key_map(&doc);
+    let declared = |key: &str| map.get(key).cloned().ok_or_else(|| undeclared(key));
+    let run = declared("SPIRA_RUN")?;
+    if run.is_empty() {
+        return Err("spira.run is empty in spira.toml — refusing to guess a run directory".to_string());
+    }
+    crate::containment::check_path(&declared("SPIRA_INSTANCE")?, &declared("SPIRA_WORKSPACES")?, "SPIRA_RUN", &run)?;
+    Ok(PathBuf::from(run))
+}
+
+/// [`declared_run_dir`] for this process.
+pub fn declared_run_dir_for_process() -> Result<PathBuf, String> {
+    declared_run_dir(&std::env::vars().collect())
+}
+
 /// The ask label, resolved in-process: a non-empty `SPIRA_ASK_LABEL` in `env` overrides,
 /// otherwise `spira.toml` / the registry default. Never a literal fallback — a systemd unit
 /// does not export it, and a guessed label hides asks from the operator's queue.
