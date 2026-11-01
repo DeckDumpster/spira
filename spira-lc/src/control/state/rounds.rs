@@ -384,10 +384,15 @@ fn claim_verdicts<B: Backend>(store: &Store<B>, args: &[String], call: &Call) ->
     if payload.entries.is_empty() {
         return (0, String::new());
     }
+    // An id named twice keeps its last entry, as the dolt path's last update wins; a txn may
+    // not write one key twice.
+    let last = |i: usize, id: &str| !payload.entries[i + 1..].iter().any(|e| e.id == id);
     let verdicts: Vec<Verdict> = payload
         .entries
         .iter()
-        .map(|e| Verdict {
+        .enumerate()
+        .filter(|(i, e)| last(*i, &e.id))
+        .map(|(_, e)| Verdict {
             id: e.id.clone(),
             verdict: e.verdict.clone(),
             blocker: e.blocker.clone(),

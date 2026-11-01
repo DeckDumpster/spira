@@ -122,6 +122,71 @@ fn two() -> Vec<(String, String)> {
 }
 
 #[test]
+fn a_cut_of_an_id_another_cut_took_after_the_plan_loses_and_leaves_that_round_whole() {
+    let r = Rig::new();
+    r.certified("sp-a", T1);
+    r.certified("sp-b", T2);
+    let mine = vec![("sp-a".to_string(), T1.to_string())];
+    let planned = r.s.plan_cut(&r.cut_spec(&mine)).unwrap();
+    r.ok(&[
+        "cut",
+        "b-1",
+        "--repo",
+        "spira",
+        "--head",
+        "H",
+        "--base",
+        "B",
+        "--members",
+        &format!("sp-b:{T2}"),
+        "--actor",
+        "other",
+    ]);
+    let Ran::Done { applied, .. } = r.s.run_planned(planned, &r.req(), "cut").unwrap() else {
+        panic!("the cut did not run");
+    };
+    assert_eq!(applied, vec![false; 3]);
+    let (_, round) = r.s.batch("b-1").unwrap().unwrap();
+    assert_eq!(round.value.members.len(), 1);
+    assert_eq!(round.value.members[0].bead_id, "sp-b");
+    assert_eq!(r.state("sp-a"), BeadState::Certified);
+    assert!(r.s.delivery("sp-a").unwrap().is_none());
+}
+
+#[test]
+fn a_delivery_written_after_the_plan_makes_the_cut_lose() {
+    let r = Rig::new();
+    r.certified("sp-a", T1);
+    let mine = vec![("sp-a".to_string(), T1.to_string())];
+    let planned = r.s.plan_cut(&r.cut_spec(&mine)).unwrap();
+    // Another writer gives sp-a a delivery the plan never saw.
+    let born = lifecycle::delivery::DeliveryRow::start_push("sp-a");
+    let t = state_store::Txn::new().put(
+        &keys::delivery("sp-a"),
+        state_store::Object::new(serde_json::to_value(&born).unwrap()),
+    );
+    assert!(r.s.contract().txn(&t, &r.req()).unwrap().succeeded);
+    let Ran::Done { applied, .. } = r.s.run_planned(planned, &r.req(), "cut").unwrap() else {
+        panic!("the cut did not run");
+    };
+    assert_eq!(applied, vec![false; 3]);
+    assert_eq!(
+        r.s.delivery("sp-a").unwrap().unwrap().value.state,
+        DeliveryState::Pushing
+    );
+}
+
+#[test]
+fn a_verdict_pass_naming_an_id_twice_keeps_its_last_entry() {
+    let r = Rig::new();
+    r.certified("sp-a", T1);
+    let body = r#"{"computed_at":"2026-01-01T00:00:00Z","entries":[{"id":"sp-a","verdict":"blocked"},{"id":"sp-a","verdict":"claimable"}]}"#;
+    r.ok(&["claim-verdicts", "--json", body]);
+    let v = r.s.readiness("sp-a").unwrap().unwrap().value;
+    assert_eq!(v.verdict.as_deref(), Some("claimable"));
+}
+
+#[test]
 fn a_cut_is_one_txn_writing_the_round_with_its_members_and_each_members_delivery() {
     let r = Rig::new();
     r.certified("sp-a", T1);

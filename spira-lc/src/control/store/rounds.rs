@@ -469,6 +469,7 @@ impl<B: Backend> Store<B> {
     /// delivery still BATCHED elsewhere, or past cutting, refuses the whole verb.
     fn admitted(
         &self,
+        c: &mut Cascade,
         members: &[(String, String)],
         allow_submitted: bool,
     ) -> Result<std::result::Result<Vec<Option<DeliveryRow>>, Planned>> {
@@ -479,10 +480,10 @@ impl<B: Backend> Store<B> {
                     "{id} is named twice in --members"
                 ))));
             }
-            let Some(rec) = self.read::<LifecycleRecord>(&keys::lifecycle(id), None)? else {
+            let Some(rec) = c.get::<B, LifecycleRecord>(self, &keys::lifecycle(id))? else {
                 return Ok(Err(refused(format!("refused: no bead row for {id}"))));
             };
-            let row = rec.0.value.row;
+            let row = rec.row;
             let ok = row.state == BeadState::Certified
                 || (allow_submitted && row.state == BeadState::Submitted);
             if !ok {
@@ -501,7 +502,7 @@ impl<B: Backend> Store<B> {
                     "refused: {id}'s certified tip does not match {tip}"
                 ))));
             }
-            deliveries.push(self.delivery(id)?.map(|d| d.value));
+            deliveries.push(c.get::<B, DeliveryRow>(self, &keys::delivery(id))?);
         }
         for ((id, _), d) in members.iter().zip(&deliveries) {
             match d.as_ref().map(|d| d.state) {
@@ -631,13 +632,23 @@ impl<B: Backend> Store<B> {
                 cut.batch_id
             )));
         }
-        let deliveries = match self.admitted(cut.members, true)? {
+        // The round's own key is read first, so the txn compares it absent: a same-id cut that
+        // commits after this read makes this one lose rather than overwrite it.
+        let mut c = Cascade::new();
+        let key = keys::batch(cut.repo, cut.batch_id);
+        if c.get::<B, BatchRecord>(self, &key)?.is_some() {
+            return Ok(cannot_tell(format!(
+                "cut: a batch row for {} already exists",
+                cut.batch_id
+            )));
+        }
+        // Admission reads every member through the cascade, so what it judged is what is compared.
+        let deliveries = match self.admitted(&mut c, cut.members, true)? {
             Ok(d) => d,
             Err(early) => return Ok(early),
         };
         let mut round = BatchRow::cut(cut.batch_id, cut.repo, cut.head, cut.base);
         round.parent = cut.parent.map(str::to_string);
-        let mut c = Cascade::new();
         if let Err(early) = self.plan_members(
             &mut c,
             &mut round,
@@ -661,7 +672,7 @@ impl<B: Backend> Store<B> {
                 .collect(),
             opened_at: cut.at,
         };
-        c.put(self, &keys::batch(cut.repo, cut.batch_id), &rec, &[])?;
+        c.put(self, &key, &rec, &[])?;
         Ok(Planned::Cascade(c))
     }
 
