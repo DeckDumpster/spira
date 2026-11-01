@@ -1,0 +1,9 @@
+TYPE=u64
+GROUP=disk
+DOC=Most dangling (untagged) images podman's whole store may hold, from any project, before the reconciler reports a gap
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # testenv removes the images its builds leave behind; this is the positive control that it
+    # did. Past this many dangling images in podman's store the reconciler reports a gap and
+    # escalates, rather than leave the store to grow until the disk under it is full.
+    : "${SPIRA_UNTAGGED_IMAGES_MAX:=40}"
+SPIRA_CONF_DEFAULT_EOF

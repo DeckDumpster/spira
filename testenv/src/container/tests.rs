@@ -251,6 +251,7 @@ fn conf(root: &str) -> Conf {
         heartbeat: 60,
         basic_wait_ticks: 20,
         basic_retry_sleep: 2,
+        target_cap: 0,
     }
 }
 
@@ -578,6 +579,63 @@ fn publish_without_a_registry_or_after_a_failed_push_fails() {
     };
     assert_eq!(Driver { host: &f, conf: &c }.cmd_publish(), 1);
     assert!(f.errs().contains("push failed"));
+}
+
+// ---- cleanup after a new image -----------------------------------------------------------
+
+/// The store's records after a new `current` exists: it, one older testenv image, `stale`,
+/// a still older one no container uses and also tagged under a registry's ref, and two
+/// dangling images, one from before 1000 and one after.
+fn store_with_superseded(f: &Fake, current: &str, stale: &str) {
+    let cur = current.to_string();
+    let listing = format!(
+        r#"[{{"Id":"c0","Names":["{cur}"],"Size":1,"Created":3000}},{{"Id":"p0","Names":["localhost/spira-testenv:prev"],"Size":1,"Created":20}},{{"Id":"{stale}","Names":["localhost/spira-testenv:old","ghcr.io/org/spira-testenv:old"],"Size":1,"Created":10}}]"#
+    );
+    f.when(&["images", "--format", "json", "--filter", "reference=localhost/spira-testenv"], 0, &listing);
+    f.when(&["ps", "-a", "--format", "json"], 0, "[]");
+    f.when(
+        &["images", "--format", "json", "--filter", "dangling=true"],
+        0,
+        r#"[{"Id":"before","Size":1,"Created":500},{"Id":"during","Size":1,"Created":2000}]"#,
+    );
+}
+
+#[test]
+fn a_green_build_or_a_pull_removes_the_images_it_supersedes_and_a_red_build_removes_nothing() {
+    let f = Fake::new();
+    harness(&f, "/h");
+    f.when(&["image", "exists"], 1, "");
+    f.with_spira_config_sibling("/build/target/release/testenv");
+    f.clock.set(1000);
+    let c = conf("/h");
+    let img = format!("localhost/spira-testenv:{}", tag_of(&f, &c).unwrap());
+    store_with_superseded(&f, &img, "old0");
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0);
+    let calls = f.calls.borrow().clone();
+    let at = |argv: &[&str]| calls.iter().position(|c| c == argv);
+    assert!(at(&["untag", "old0"]) < at(&["rmi", "old0"]) && at(&["untag", "old0"]).is_some(), "the build's superseded image goes, its names first: {calls:?}");
+    assert!(!f.called(&["rmi", "p0"]) && !f.called(&["rmi", "c0"]), "the new image and its predecessor stay");
+    assert!(f.called(&["rmi", "during"]), "the build's own dangling image goes");
+    assert!(!f.called(&["rmi", "before"]), "a dangling image from before the build is not the build's");
+
+    let f = Fake::new();
+    harness(&f, "/h");
+    f.when(&["image", "exists"], 1, "");
+    f.with_spira_config_sibling("/build/target/release/testenv");
+    f.build_rc.set(1);
+    store_with_superseded(&f, &img, "old0");
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 1);
+    assert!(f.calls_with("rmi").is_empty(), "a red build removes nothing");
+
+    let f = Fake::new();
+    harness(&f, "/h");
+    f.when(&["image", "exists"], 1, "");
+    let c = Conf { registry: "ghcr.io/org".into(), ..conf("/h") };
+    store_with_superseded(&f, &img, "old1");
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0);
+    assert!(f.calls_with("build").is_empty());
+    assert!(f.called(&["rmi", "old1"]), "a pulled image supersedes as a built one does");
+    assert!(!f.called(&["rmi", "during"]), "a pull leaves no dangling images of its own");
 }
 
 // ---- cold build heartbeat (was test-testenv-image-heartbeat.sh) --------------------------

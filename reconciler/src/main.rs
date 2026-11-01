@@ -201,6 +201,7 @@ struct Config {
     lanes_max_live: String,
     max_dwarves: String,
     disk_floor_pct: u32,
+    untagged_images_max: u64,
     grace_secs: u64,
     activation_grace_secs: u64,
     fence_deadline_secs: u64,
@@ -261,6 +262,7 @@ impl Config {
             lanes_max_live: cfg("SPIRA_LANES_MAX_LIVE")?,
             max_dwarves: cfg("SPIRA_MAX_DWARVES")?,
             disk_floor_pct: cfg_parse::<u32>("SPIRA_DISK_FLOOR_PCT")?,
+            untagged_images_max: cfg_parse::<u64>("SPIRA_UNTAGGED_IMAGES_MAX")?,
             grace_secs: cfg_parse::<u64>("SPIRA_RECONCILER_GRACE_SECS")?,
             activation_grace_secs: cfg_parse::<u64>("SPIRA_MAIN_HEALTH_ACTIVATION_GRACE_SECS")?,
             fence_deadline_secs: cfg_parse::<u64>("SPIRA_MAIN_HEALTH_FENCE_DEADLINE_SECS")?,
@@ -1031,6 +1033,36 @@ fn observe_disk(cfg: &Config) -> Vec<Check> {
         checks.push(Check { key: format!("disk:{}", path), raw, remedy });
     }
     checks
+}
+
+/// The positive control on testenv's own image cleanup: a store holding more dangling
+/// images than the configured bound is a gap, escalated, because the disk under it fills
+/// silently otherwise. No podman storage root (podman absent) is no check, as for the disk.
+fn observe_untagged_images(cfg: &Config) -> Vec<Check> {
+    let podman = &cfg.seams.podman;
+    if run_cmd(podman, &["info", "--format", "{{.Store.GraphRoot}}"]).trim().is_empty() {
+        return Vec::new();
+    }
+    let out = spira_config::bounded::bounded(podman)
+        .args(["images", "--quiet", "--filter", "dangling=true"])
+        .stderr(Stdio::null())
+        .output();
+    let raw = match out {
+        Ok(o) if o.status.success() => {
+            let n = String::from_utf8_lossy(&o.stdout).lines().filter(|l| !l.trim().is_empty()).count() as u64;
+            if n <= cfg.untagged_images_max {
+                RawStatus::Satisfied
+            } else {
+                RawStatus::Gap {
+                    desired: format!("<= {} untagged images", cfg.untagged_images_max),
+                    observed: format!("{n} untagged images"),
+                    since_hint: None,
+                }
+            }
+        }
+        _ => RawStatus::Unobservable { reason: "podman could not list its dangling images".into() },
+    };
+    vec![Check { key: "images:untagged".into(), raw, remedy: Remedy::Escalate }]
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1855,6 +1887,7 @@ fn run_pass() -> Result<(), String> {
         ("cockpit", Box::new(|| vec![observe_cockpit(&cfg)])),
         ("release", Box::new(|| vec![observe_release(&cfg)])),
         ("disk", Box::new(|| observe_disk(&cfg))),
+        ("untagged-images", Box::new(|| observe_untagged_images(&cfg))),
         ("queue-mergeable", Box::new(|| observe_queue_mergeable(&cfg))),
         ("queue-lock-age", Box::new(|| observe_queue_lock_age(&cfg))),
         ("queue-stranded-runs", Box::new(|| observe_queue_stranded_runs(&cfg))),
@@ -1901,7 +1934,7 @@ fn run_pass() -> Result<(), String> {
     }
     let mut checks = Vec::new();
     for name in [
-        "units", "fleet", "cockpit", "release", "disk", "queue-mergeable", "queue-lock-age",
+        "units", "fleet", "cockpit", "release", "disk", "untagged-images", "queue-mergeable", "queue-lock-age",
         "queue-stranded-runs", "lc-orphans", "batch-landed", "junk-row", "epic-edges", "main-health",
     ] {
         checks.extend(by_name.remove(name).unwrap_or_default());
@@ -2980,6 +3013,7 @@ mod tests {
             lanes_max_live: String::new(),
             max_dwarves: String::new(),
             disk_floor_pct: 15,
+            untagged_images_max: 40,
             grace_secs: 300,
             activation_grace_secs: 1800,
             fence_deadline_secs: 120,
@@ -2998,6 +3032,39 @@ mod tests {
     fn parse_df_free_pct_reads_the_last_rows_total_and_available() {
         let out = "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 1000 800 200 80% /\n";
         assert_eq!(parse_df_free_pct(out), Some(20));
+    }
+
+    fn untagged_with(name: &str, images_script: &str, max: u64) -> (testkit::TempDir, Vec<Check>) {
+        let dir = scratch_dir(name);
+        let podman = dir.path().join("podman");
+        testkit::write_exe(
+            &podman,
+            &format!("#!/usr/bin/env bash\n[ \"$1\" = info ] && {{ echo /store; exit 0; }}\n[ \"$*\" = 'images --quiet --filter dangling=true' ] || exit 9\n{images_script}\n"),
+        );
+        let cfg = Config {
+            seams: Seams { podman: podman.to_string_lossy().into_owned(), ..Seams::production() },
+            untagged_images_max: max,
+            ..test_config()
+        };
+        let checks = observe_untagged_images(&cfg);
+        (dir, checks)
+    }
+
+    #[test]
+    fn more_dangling_images_than_the_bound_is_a_gap_and_at_the_bound_is_not() {
+        let (_d, over) = untagged_with("untagged-over", "for i in $(seq 1 6); do echo img$i; done", 5);
+        assert_eq!(over.len(), 1);
+        assert_eq!(over[0].key, "images:untagged");
+        assert!(matches!(&over[0].raw, RawStatus::Gap { observed, desired, .. } if observed == "6 untagged images" && desired == "<= 5 untagged images"));
+        assert!(matches!(over[0].remedy, Remedy::Escalate));
+        let (_d, at) = untagged_with("untagged-at", "for i in $(seq 1 5); do echo img$i; done", 5);
+        assert!(matches!(at[0].raw, RawStatus::Satisfied));
+    }
+
+    #[test]
+    fn a_store_that_cannot_list_its_images_is_unobservable_never_satisfied() {
+        let (_d, checks) = untagged_with("untagged-fails", "exit 1", 5);
+        assert!(matches!(checks[0].raw, RawStatus::Unobservable { .. }));
     }
 
     #[test]

@@ -473,6 +473,8 @@ testenv_suite_cap
 testenv_load_max_pct
 testenv_load_wait
 testenv_slot_wait
+testenv_target_cap_mib
+untagged_images_max
 metrics_endpoint
 metrics_data
 metrics_grafana_addr

@@ -1059,6 +1059,7 @@ testenv container probe   [--name N]
 testenv container tag                 # the build-closure hash, stdout
 testenv container image               # acquire the image; its local ref, stdout
 testenv container publish             # push it to SPIRA_TESTENV_REGISTRY; the remote ref, stdout
+testenv container prune   [--current REF]  # the cleanup below, by hand
 ```
 
 Defaults, flags, stdout/stderr and exit statuses are the script's (`N` = `spira-testenv`,
@@ -1083,6 +1084,21 @@ default conf.sh carries — conf.sh is no longer sourced:
 | `SPIRA_TESTENV_MAX_CONCURRENT` / `_QUEUE_TIMEOUT` / `_QUEUE_POLL` | `spira.testenv_*` | 8 / 900 / 5 |
 | `SPIRA_TESTENV_BUILD_HEARTBEAT` | — | 60 |
 | `SPIRA_TESTENV_BASIC_WAIT_TICKS` / `_BASIC_RETRY_SLEEP` | — | 20 / 2 |
+| `SPIRA_TESTENV_TARGET_CAP_MIB` | `spira.testenv_target_cap_mib` | 65536 (0 = no cap) |
+
+**Cleanup** (`prune.rs`). Once `image` has a new image, built or pulled, it removes every
+`localhost/spira-testenv` image but that one and the newest other, then every dangling image;
+an `up` that mounts a cargo target volume first sweeps the unit tier's target volumes
+(`spira-unit-cargo-target` and any `spira-unit-cargo-target-<key>`) to the cap, least recently
+written first. Both find what to remove in podman's own listings and remove it by id; neither
+removes anything a container in any state uses, nor anything at all when podman cannot list
+its containers; each removal is logged with its size. A build removes only the dangling
+images created since it started, never another build's in flight; `prune` by hand removes every
+dangling image. Two images are kept, so a third build closure built while an `up` of the oldest
+queues for a slot can remove that image before the `run`; the `up` then fails and the next
+attempt pulls or builds it again. The reconciler's `images:untagged`
+invariant (`SPIRA_UNTAGGED_IMAGES_MAX`, default 40 dangling images) is the positive control
+that this cleanup ran.
 
 ### 12.3 Decisions
 

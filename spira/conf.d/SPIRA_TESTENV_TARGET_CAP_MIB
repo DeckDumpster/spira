@@ -1,0 +1,9 @@
+TYPE=u64
+GROUP=testenv
+DOC=MiB the unit tier's cargo target volumes may hold between them before testenv sweeps them; 0 disables
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Every tree's unit tests write into the unit target volume and nothing else ever removes
+    # what they wrote. Above this many MiB, `testenv container up` removes the least recently
+    # used target volume no container uses, before the next unit run mounts one. 0 disables.
+    : "${SPIRA_TESTENV_TARGET_CAP_MIB:=65536}"
+SPIRA_CONF_DEFAULT_EOF
