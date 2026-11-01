@@ -4,6 +4,7 @@
 
 pub mod attrib;
 pub mod core;
+pub mod drive;
 
 pub mod mender;
 pub mod pathattr;

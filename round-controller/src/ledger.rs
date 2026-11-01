@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use state_store::{Compare, Item, Object, Request, Txn};
 
-use crate::ports::{Member, Ports};
+use crate::ports::{Ledger, Member, Ports};
 use crate::resources::{round_key, Attempt, Backoff, Cause, Class, PassIdentity, Summary};
 
 const ACTOR: &str = "round-controller";
@@ -446,6 +446,61 @@ fn absolved(p: &Ports, m: &Member) -> Result<bool, LedgerError> {
     }))
 }
 
+/// The Judge's [`Ledger`] port over this module's free functions, through `p.store`.
+pub struct StoreLedger {
+    pub policy: FaultPolicy,
+}
+
+impl Ledger for StoreLedger {
+    fn held(&self, p: &Ports, id: &PassIdentity) -> Result<Option<Class>, String> {
+        let Some(i) = p.store.get(&summary_key(id)).map_err(|e| e.to_string())? else {
+            return Ok(None);
+        };
+        Ok(Some(
+            decode::<Summary>(&i).map_err(|e| e.to_string())?.class,
+        ))
+    }
+    fn record_attempt(
+        &self,
+        p: &Ports,
+        id: &PassIdentity,
+        batch: &str,
+        a: &Attempt,
+    ) -> Result<u32, String> {
+        record_attempt(p, id, batch, a, &self.policy)
+            .map(|r| r.n)
+            .map_err(|e| e.to_string())
+    }
+    fn mark_proven(
+        &self,
+        p: &Ports,
+        id: &PassIdentity,
+        proven: &[Member],
+        at: u64,
+    ) -> Result<(), String> {
+        mark_proven(p, id, proven, at).map_err(|e| e.to_string())
+    }
+    fn record_lane_fault(
+        &self,
+        p: &Ports,
+        repo: &str,
+        base: &str,
+        image_digest: &str,
+        f: &LaneFault,
+    ) -> Result<(), String> {
+        record_lane_fault(p, repo, base, image_digest, f)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    /// A summary keeps no identity, so the ledger cannot list the digests a base was green on;
+    /// refused, naming why, rather than answered empty (which would type every image fault Base).
+    fn green_digests(&self, _: &Ports, repo: &str, base: &str) -> Result<Vec<String>, String> {
+        Err(format!(
+            "the verdict ledger keeps no green digests by base: cannot list {repo} {base}"
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -470,6 +525,7 @@ mod tests {
         launch: FakeLaunch,
         leases: LeaseSettings,
         slots: SlotSettings,
+        ledger: StoreLedger,
     }
 
     impl World {
@@ -493,6 +549,7 @@ mod tests {
                 launch: FakeLaunch::default(),
                 leases: bench_settings(),
                 slots: bench_slot_settings(),
+                ledger: StoreLedger { policy: POLICY },
             }
         }
 
@@ -503,6 +560,7 @@ mod tests {
                 rng: &self.rng,
                 store: &self.store,
                 verbs,
+                ledger: &self.ledger,
                 log: &self.log,
                 units: &self.units,
                 vms: &self.vms,
@@ -599,6 +657,37 @@ mod tests {
         let t = attempt_txn(&id, "b1", 1, &attempt(Class::Green, 0), &s, None);
         assert_eq!((t.ops.len(), t.compares.len(), t.else_ops.len()), (2, 2, 0));
         assert_eq!(state_store::limits::check(&t, TXN_BOOKKEEPING), Ok(()));
+    }
+
+    #[test]
+    fn the_judges_port_reads_and_writes_the_same_keys_as_the_free_functions() {
+        let w = World::new();
+        let v = verbs();
+        let p = w.ports(&v);
+        let l = &w.ledger;
+        let id = ident(&[("sp-a", "1")]);
+        assert_eq!(l.held(&p, &id), Ok(None));
+        let now = w.clock.now_ms();
+        assert_eq!(l.record_attempt(&p, &id, "b1", &red("t", now)), Ok(1));
+        assert_eq!(l.held(&p, &id), Ok(Some(Class::Red { step: "t".into() })));
+        l.mark_proven(&p, &id, &[m("sp-a", "1")], now).unwrap();
+        assert_eq!(
+            w.keys("verdicts/lane/by-member/"),
+            ["verdicts/lane/by-member/sp-a/1"]
+        );
+        let f = LaneFault {
+            cause: Cause::Vm,
+            evidence: String::new(),
+            since: now,
+        };
+        assert!(l
+            .record_lane_fault(&p, "lane", "b0", "sha256:i1", &f)
+            .unwrap_err()
+            .contains("NotALaneCause"));
+        assert!(l
+            .green_digests(&p, "lane", "b0")
+            .unwrap_err()
+            .contains("no green digests"));
     }
 
     #[test]

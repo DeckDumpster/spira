@@ -14,7 +14,7 @@ use std::process::{Child, Command, Stdio};
 use batcher::attrib::{Job, JobResult};
 use batcher::core::{Id, Member, MergeResult};
 
-use crate::drive::{MainEnd, MainKind, MainPoll, RoundRunner};
+use batcher::drive::{MainEnd, MainKind, MainPoll, RoundRunner};
 use crate::io::{self, Env, Repo};
 use crate::order;
 

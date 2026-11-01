@@ -30,7 +30,7 @@
 //! double-red's own failing assertions and applies it, by judgement rather than blind
 //! reproduction.
 
-mod drive;
+use batcher::drive;
 #[allow(dead_code)]
 mod endpass;
 mod flip;

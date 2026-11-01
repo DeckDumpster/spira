@@ -19,6 +19,7 @@ pub struct Ports<'a> {
     pub rng: &'a Mutex<dyn Rng>,
     pub store: &'a dyn Store,
     pub verbs: &'a dyn RoundVerbs,
+    pub ledger: &'a dyn Ledger,
     pub log: &'a dyn Log,
     pub units: &'a dyn Units,
     pub vms: &'a dyn Vms,
@@ -262,6 +263,45 @@ pub trait RoundVerbs {
     fn land(&self, repo: &str, batch: &str) -> Result<Done, VerbRefusal>;
     fn abandon(&self, repo: &str, batch: &str, reason: &str) -> Result<Done, VerbRefusal>;
     fn pass_start(&self, repo: &str, batch: &str) -> Result<Done, VerbRefusal>;
+}
+
+// The verdict ledger's port: the ledger's own types, and the calls the Judge makes. Each call
+// takes the ports it runs against, so the real ledger is a thin adapter over the ledger
+// module's free functions, which read and write through `p.store`.
+pub use crate::ledger::LaneFault;
+pub use crate::resources::*;
+
+/// The verdict ledger: attempts per identity, the members proven red, and the lane faults.
+pub trait Ledger {
+    /// The class of the identity's latest attempt; `None` when it holds no verdict.
+    fn held(&self, p: &Ports, id: &PassIdentity) -> Result<Option<Class>, String>;
+    /// Adds the identity's next attempt, recorded by round `batch`, and answers its number.
+    fn record_attempt(
+        &self,
+        p: &Ports,
+        id: &PassIdentity,
+        batch: &str,
+        a: &Attempt,
+    ) -> Result<u32, String>;
+    /// Marks each of `proven` red by `id`. Called only once the member's eject returned `Ok`, so
+    /// a refused eject leaves no by-member key behind.
+    fn mark_proven(
+        &self,
+        p: &Ports,
+        id: &PassIdentity,
+        proven: &[Member],
+        at: u64,
+    ) -> Result<(), String>;
+    fn record_lane_fault(
+        &self,
+        p: &Ports,
+        repo: &str,
+        base: &str,
+        image_digest: &str,
+        f: &LaneFault,
+    ) -> Result<(), String>;
+    /// The image digests some pass on `base` was green on.
+    fn green_digests(&self, p: &Ports, repo: &str, base: &str) -> Result<Vec<String>, String>;
 }
 
 #[cfg(test)]

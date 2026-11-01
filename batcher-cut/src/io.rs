@@ -1258,11 +1258,7 @@ pub fn suites_in(path: &Path, branch: &str) -> Vec<String> {
     suites
 }
 
-/// The round-level pseudo-suite name a --with-bins build failure (exit 4) reports under —
-/// never a real `test-*.sh` file, so it can't collide with one all_suites() would select.
-pub const WORKSPACE_BUILD: &str = "workspace-build";
-
-/// Same convention as WORKSPACE_BUILD, for a fence red (run_fences).
+/// Same convention as `batcher::drive::WORKSPACE_BUILD`, for a fence red (run_fences).
 pub const GATE_FENCES: &str = "gate-fences";
 
 /// Runs the repo's own gate command against `branch`, fences only (`SPIRA_GATE_SUITES=off`

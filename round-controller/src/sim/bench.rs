@@ -15,6 +15,7 @@ use crate::orphans::{Launch, Launched};
 use crate::outcome::MemLog;
 use crate::ports::{Ports, Store};
 use crate::real::Unserved;
+use crate::sim::judge::FakeLedger;
 use crate::sim::verbs::FakeVerbs;
 use crate::sim::vm::FakeVm;
 use crate::slots::SlotSettings;
@@ -178,6 +179,7 @@ pub struct Bench {
     pub launch: FakeLaunch,
     pub settings: LeaseSettings,
     pub slot_settings: SlotSettings,
+    pub ledger: FakeLedger,
     front: Mutex<Front>,
 }
 
@@ -239,6 +241,7 @@ impl Bench {
             launch: FakeLaunch::default(),
             settings,
             slot_settings: bench_slot_settings(),
+            ledger: FakeLedger::default(),
             front: Mutex::new(front),
         }
     }
@@ -250,6 +253,7 @@ impl Bench {
             rng: &self.rng,
             store: self,
             verbs: &self.verbs,
+            ledger: &self.ledger,
             log: &self.log,
             units: &self.units,
             vms: &self.vms,

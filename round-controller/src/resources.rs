@@ -91,7 +91,7 @@ impl std::fmt::Display for ResourceError {
 
 /// What a pass tests: an identity that holds a verdict is never run again unless one of these
 /// changes (law-a-retry-must-change-an-input).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct PassIdentity {
     pub repo: String,
     /// Sorted by id, each id once.
@@ -171,6 +171,17 @@ impl Cause {
     pub fn is_lane(&self) -> bool {
         matches!(self, Cause::Image { .. } | Cause::Base | Cause::Install)
     }
+
+    pub fn word(&self) -> &'static str {
+        match self {
+            Cause::Image { .. } => "image",
+            Cause::Base => "base",
+            Cause::Install => "install",
+            Cause::Vm => "vm",
+            Cause::OverCap => "over-cap",
+            Cause::FencesCap => "fences-cap",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -191,6 +202,15 @@ impl Class {
     /// Red and fault verdicts are kept while their members live; green and flaky with the round.
     pub fn retained_by_members(&self) -> bool {
         matches!(self, Class::Red { .. } | Class::Fault { .. })
+    }
+
+    pub fn word(&self) -> &'static str {
+        match self {
+            Class::Green => "green",
+            Class::Red { .. } => "red",
+            Class::Fault { .. } => "fault",
+            Class::Flaky => "flaky",
+        }
     }
 }
 

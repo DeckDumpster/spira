@@ -1,0 +1,90 @@
+description = "a CI-entry repo whose image lacks a package: one member at one tip, certify red on testenv with the ensurepip line, the plain rerun and both base runs red, image setup named. One Image lane fault naming the digest, no eject, no planner repeat"
+repos = ["pokebot"]
+
+[run]
+epoch = 1793404800
+passes = 1
+every_secs = 60
+
+[judge]
+repo = "pokebot"
+batch = "pokebot-r1"
+base = "base-1031"
+image_digest = "sha256-img-1031"
+
+[[judge.member]]
+id = "sp-rqoiyw"
+tip = "05136b7c"
+changed = ["pokebot/battle.py"]
+
+[judge.result]
+exit = 1
+red = ["testenv"]
+phase = "image-setup"
+output = "ensurepip is not available. On Debian/Ubuntu systems, you need to install the python3-venv package: apt install python3.14-venv"
+
+[[judge.job]]
+removal = []
+results = ["red"]
+secs = 30
+
+# A single-member round's removal set is its base run: the member's only removal is the base.
+[[judge.job]]
+removal = ["sp-rqoiyw"]
+results = ["red", "red"]
+secs = 30
+
+[[judge.drive]]
+pass = 1
+
+[[expect]]
+name = "one-image-lane-fault"
+count = "lane-faults:image"
+equals = 1
+
+[[expect]]
+name = "one-lane-fault-in-all"
+count = "lane-faults"
+equals = 1
+
+[[expect]]
+name = "the-fault-names-the-digest"
+count = "lane-faults-naming:sha256-img-1031"
+equals = 1
+
+[[expect]]
+name = "one-attempt-a-fault"
+count = "attempts:fault"
+equals = 1
+
+[[expect]]
+name = "one-attempt-in-all"
+count = "attempts"
+equals = 1
+
+[[expect]]
+name = "no-planner-repeat"
+count = "planner-repeats"
+equals = 0
+
+[[expect]]
+name = "no-eject-called"
+count = "calls:eject"
+equals = 0
+
+[[expect]]
+name = "nobody-proven-red"
+count = "proven"
+equals = 0
+
+[[expect]]
+name = "rerun-and-two-base-runs"
+count = "launches"
+equals = 3
+
+# Positive control: the typing tells an Image fault from a Base one.
+[[expect]]
+name = "inverted-a-base-fault"
+count = "lane-faults:base"
+equals = 1
+inverted = true

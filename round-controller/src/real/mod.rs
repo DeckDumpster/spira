@@ -6,7 +6,7 @@ pub mod verbs;
 use runtime::ports::{Clock, VirtualClock, WallClock};
 use state_store::{Error, Fence, Item, Request, Selector, Txn, TxnResult};
 
-use crate::ports::Store;
+use crate::ports::{Attempt, Class, LaneFault, Ledger, Member, PassIdentity, Ports, Store};
 
 /// The wall clock, or `SPIRA_NOW` (epoch seconds) when the simulator sets it.
 pub fn clock(spira_now: Option<u64>) -> Box<dyn Clock> {
@@ -45,6 +45,42 @@ impl Store for Unserved {
     }
 }
 
+/// The ledger rides the same unserved door.
+fn unledgered<T>() -> Result<T, String> {
+    Err("the verdict ledger has no spira-lc door yet: round-controller records no verdict".into())
+}
+
+impl Ledger for Unserved {
+    fn held(&self, _: &Ports, _: &PassIdentity) -> Result<Option<Class>, String> {
+        unledgered()
+    }
+    fn record_attempt(
+        &self,
+        _: &Ports,
+        _: &PassIdentity,
+        _: &str,
+        _: &Attempt,
+    ) -> Result<u32, String> {
+        unledgered()
+    }
+    fn mark_proven(&self, _: &Ports, _: &PassIdentity, _: &[Member], _: u64) -> Result<(), String> {
+        unledgered()
+    }
+    fn record_lane_fault(
+        &self,
+        _: &Ports,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &LaneFault,
+    ) -> Result<(), String> {
+        unledgered()
+    }
+    fn green_digests(&self, _: &Ports, _: &str, _: &str) -> Result<Vec<String>, String> {
+        unledgered()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,6 +109,45 @@ mod tests {
         assert!(
             errs.iter()
                 .all(|e| e.to_string().contains("no spira-lc door")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn the_unserved_ledger_refuses_every_call_naming_why() {
+        let id = PassIdentity {
+            repo: "r".into(),
+            members: vec![],
+            base: "b".into(),
+            image_digest: "d".into(),
+            harness_version: "h".into(),
+            selection: "s".into(),
+        };
+        let a = Attempt {
+            class: Class::Green,
+            initiated_by: crate::ports::InitiatedBy::Planner,
+            sub_passes: vec![],
+            evidence: String::new(),
+            at: 0,
+        };
+        let f = LaneFault {
+            cause: crate::ports::Cause::Base,
+            evidence: String::new(),
+            since: 0,
+        };
+        let b = crate::sim::bench::Bench::unserved();
+        let p = b.ports();
+        let errs = [
+            Unserved.held(&p, &id).unwrap_err(),
+            Unserved.record_attempt(&p, &id, "b1", &a).unwrap_err(),
+            Unserved.mark_proven(&p, &id, &[], 0).unwrap_err(),
+            Unserved
+                .record_lane_fault(&p, "r", "b", "d", &f)
+                .unwrap_err(),
+            Unserved.green_digests(&p, "r", "b").unwrap_err(),
+        ];
+        assert!(
+            errs.iter().all(|e| e.contains("no spira-lc door")),
             "{errs:?}"
         );
     }

@@ -3,6 +3,7 @@
 //! `scenarios/profiles.toml`.
 
 pub mod bench;
+pub mod judge;
 pub mod ledger;
 pub mod runner;
 pub mod scenario;

@@ -44,6 +44,11 @@ scenario!(
     scenario_one_proxmox_slot,
     scenario_slot_reuse_needs_death,
     scenario_ec2_spill,
+    scenario_pokebot_1031,
+    scenario_flaky_rerun,
+    scenario_base_runs_disagree,
+    scenario_eject_refused_holds,
+    scenario_judge_resumes,
 );
 
 #[test]

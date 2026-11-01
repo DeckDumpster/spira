@@ -3,6 +3,7 @@
 //! against the scenario harness in [`sim`]. Inert: nothing installs it (DESIGN.md).
 
 pub mod death;
+pub mod judge;
 pub mod lease;
 pub mod ledger;
 pub mod liveness;
