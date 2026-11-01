@@ -7,7 +7,7 @@ const MIN: u64 = 60;
 /// 2026-10-31T07:00:00Z: midnight Pacific, the start of the 10-31 day.
 const DAY0: u64 = 1_793_430_000;
 
-fn landed(bead: &str, repo: &str, at: u64) -> LoopEvent {
+fn landing(bead: &str, repo: &str, at: u64) -> LoopEvent {
     LoopEvent::Landed { bead: bead.into(), repo: repo.into(), at, reverts: None, subject: String::new() }
 }
 
@@ -33,7 +33,7 @@ fn eject(bead: &str, batch: &str, at: u64, repeat_n: u32) -> LoopEvent {
 
 /// `n` landings in `repo`, one every `every` seconds ending just before `end`.
 fn spread(n: usize, repo: &str, end: u64, every: u64) -> Vec<LoopEvent> {
-    (0..n).map(|i| landed(&format!("{repo}-{i}"), repo, end - 1 - i as u64 * every)).collect()
+    (0..n).map(|i| landing(&format!("{repo}-{i}"), repo, end - 1 - i as u64 * every)).collect()
 }
 
 fn day(events: &[LoopEvent], now: u64) -> Goodput {
@@ -51,7 +51,7 @@ fn value(m: &Measure) -> f64 {
 fn a_landing_stop_naming_a_bead_charges_its_whole_stop_window_until_its_revert_lands() {
     let end = DAY0 + DAY_SECS;
     let mut events = spread(80, "harness", end, 17 * MIN);
-    events.push(landed("w2fute", "harness", DAY0 + 4 * H));
+    events.push(landing("w2fute", "harness", DAY0 + 4 * H));
     let stopped = DAY0 + 4 * H + 43 * MIN;
     let reverted = DAY0 + 15 * H + 30 * MIN;
     let clean = value(&day(&events, end).ratio);
@@ -87,7 +87,7 @@ fn one_innocent_eject_alone_moves_the_ratio_by_less_than_a_hundredth() {
 fn a_bead_landed_and_reverted_with_no_stop_counts_once_at_zero_cost() {
     let end = DAY0 + DAY_SECS;
     let mut events = spread(9, "harness", end, H);
-    events.push(landed("bad", "harness", DAY0 + H));
+    events.push(landing("bad", "harness", DAY0 + H));
     events.push(revert("undo", "bad", "harness", DAY0 + 2 * H));
     let g = day(&events, end);
     assert_eq!(g.harmful.len(), 1);
@@ -129,7 +129,7 @@ fn a_second_eject_charges_its_round_and_a_first_does_not() {
 fn over_cap_passes_between_a_landing_and_its_revert_are_charged_and_unreverted_ones_to_no_one() {
     let end = DAY0 + DAY_SECS;
     let mut events = spread(10, "harness", end, H);
-    events.push(landed("slow", "harness", DAY0 + 2 * H));
+    events.push(landing("slow", "harness", DAY0 + 2 * H));
     let pass = |at, wall_secs| LoopEvent::OverCapPass { repo: "harness".into(), at, wall_secs };
     events.push(pass(DAY0 + 3 * H, 20 * MIN));
     events.push(pass(DAY0 + 2 * H + 5 * MIN, 20 * MIN));
@@ -149,7 +149,7 @@ fn over_cap_passes_between_a_landing_and_its_revert_are_charged_and_unreverted_o
 #[test]
 fn a_cost_is_clipped_to_the_window_and_the_ratio_to_zero() {
     let end = DAY0 + DAY_SECS;
-    let mut events = vec![landed("w", "harness", DAY0 + H)];
+    let mut events = vec![landing("w", "harness", DAY0 + H)];
     events.push(stop(StopKind::Pause, Some("w"), DAY0 - 3 * DAY_SECS));
     let g = day(&events, end);
     assert_eq!(g.harmful[0].cost_secs, DAY_SECS, "an unreverted stop runs to now, inside the window only");
@@ -172,12 +172,12 @@ fn a_halt_in_the_window_is_skipped_so_the_rate_is_the_rate_of_running_time() {
     let mut halted: Vec<LoopEvent> = (0..96u64)
         .map(|i| {
             let t = DAY0 + 1 + i * 15 * MIN;
-            landed(&format!("b{i}"), "harness", if t > halt.0 { t + 6 * H } else { t })
+            landing(&format!("b{i}"), "harness", if t > halt.0 { t + 6 * H } else { t })
         })
         .collect();
     halted.push(world(StopKind::Halt, halt.0));
     halted.push(world(StopKind::Release, halt.1));
-    let straight: Vec<LoopEvent> = (0..96u64).map(|i| landed(&format!("b{i}"), "harness", DAY0 + 6 * H + 1 + i * 15 * MIN)).collect();
+    let straight: Vec<LoopEvent> = (0..96u64).map(|i| landing(&format!("b{i}"), "harness", DAY0 + 6 * H + 1 + i * 15 * MIN)).collect();
 
     let a = day(&halted, end);
     let b = day(&straight, end);
@@ -190,7 +190,7 @@ fn a_halt_in_the_window_is_skipped_so_the_rate_is_the_rate_of_running_time() {
 #[test]
 fn after_a_release_from_a_halt_as_long_as_the_window_every_field_warms_up_for_one_window() {
     let released = DAY0 + 30 * H;
-    let events = vec![landed("a", "harness", DAY0 - H), world(StopKind::Halt, DAY0), world(StopKind::Release, released)];
+    let events = vec![landing("a", "harness", DAY0 - H), world(StopKind::Halt, DAY0), world(StopKind::Release, released)];
     let g = day(&events, released + 2 * H);
     assert_eq!((g.landed, g.ratio, g.rate), (Measure::WarmingUp, Measure::WarmingUp, Measure::WarmingUp));
     assert_eq!(g.warming_until, Some(released + DAY_SECS));
@@ -206,7 +206,7 @@ fn after_a_release_from_a_halt_as_long_as_the_window_every_field_warms_up_for_on
 
 #[test]
 fn a_halt_still_open_reaches_the_window_back_past_it() {
-    let events = vec![landed("a", "harness", DAY0 + H), world(StopKind::Halt, DAY0 + 2 * H)];
+    let events = vec![landing("a", "harness", DAY0 + H), world(StopKind::Halt, DAY0 + 2 * H)];
     let now = DAY0 + 40 * H;
     let w = Window::new(&events, now, DAY_SECS);
     assert_eq!(w.start, DAY0 + 2 * H - DAY_SECS);
@@ -270,7 +270,7 @@ fn the_dwell_p95_reads_stays_that_ended_in_the_window() {
 fn a_stop_after_its_beads_revert_landed_runs_to_now() {
     let end = DAY0 + DAY_SECS;
     let mut events = spread(4, "harness", end, H);
-    events.push(landed("w", "harness", DAY0 + H));
+    events.push(landing("w", "harness", DAY0 + H));
     events.push(revert("undo", "w", "harness", DAY0 + 2 * H));
     events.push(stop(StopKind::Pause, Some("w"), DAY0 + 20 * H));
     let g = day(&events, end);
