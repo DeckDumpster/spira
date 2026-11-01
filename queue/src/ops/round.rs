@@ -866,8 +866,10 @@ fn sweep(w: &World, c: &Ctx, spare: Option<&str>) {
         }
         let state = w.lc.batch_state(batch).map(|(s, _)| s).unwrap_or_default();
         finish(
+            w,
             c,
             batch,
+            End::Abandoned("swept"),
             &format!("ended: {state} on the lifecycle; record swept"),
         );
     });
