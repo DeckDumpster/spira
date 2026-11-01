@@ -546,7 +546,8 @@ fn lock_show_names_a_round_leases_token_ttl_and_the_holder_its_record_names() {
         (v["token"].as_str(), v["holder"].as_str(), v["ttl_left_secs"].as_u64()),
         (Some(token.as_str()), Some("round-recert"), Some(240))
     );
-    r.put_knob("batches/spira/b-1", json!({ "state": "OPEN", "lease_holder": "old", "last_lease_token": { "main": 1, "sub": 0 } }));
+    let other = json!({ "main": main.parse::<u64>().unwrap() + 1000, "sub": 0 });
+    r.put_knob("batches/spira/b-1", json!({ "state": "OPEN", "lease_holder": "old", "last_lease_token": other }));
     assert_eq!(r.ok(&["lock", "show", lock], None)["holder"], Value::Null, "a record naming another token names no holder");
     r.clock.advance(241_000);
     assert_eq!(r.call(&["lock", "show", lock], None).0, 1, "a lapsed lease holds nothing");
