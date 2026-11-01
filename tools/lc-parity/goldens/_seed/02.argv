@@ -1,0 +1,8 @@
+create-bead
+sp-blocked
+--title
+waits on sp-working
+--priority
+1
+--repo
+spira

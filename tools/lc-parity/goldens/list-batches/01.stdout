@@ -1,0 +1,62 @@
+[
+  {
+    "batch_id": "b-open",
+    "repo": "spira",
+    "state": "OPEN",
+    "parent": null,
+    "pr": null,
+    "reason": null,
+    "pass": "0",
+    "phase": null,
+    "progress": null,
+    "opened_at": "1767225600",
+    "version": "1",
+    "head": "H1",
+    "base": "B1",
+    "run": null,
+    "members": [
+      {
+        "batch_id": "b-open",
+        "bead_id": "sp-delivering",
+        "outcome": null,
+        "tip": "5555555555555555555555555555555555555555",
+        "title": null
+      }
+    ],
+    "ejected": [],
+    "phase_since": null,
+    "last_pass": null,
+    "passes": [],
+    "last_at": "1767225600"
+  },
+  {
+    "batch_id": "b-landed",
+    "repo": "spira",
+    "state": "LANDED",
+    "parent": null,
+    "pr": null,
+    "reason": "M1",
+    "pass": "1",
+    "phase": null,
+    "progress": null,
+    "opened_at": "1767225600",
+    "version": "4",
+    "head": "H2",
+    "base": "B2",
+    "run": "r1",
+    "members": [
+      {
+        "batch_id": "b-landed",
+        "bead_id": "sp-landed",
+        "outcome": null,
+        "tip": "6666666666666666666666666666666666666666",
+        "title": null
+      }
+    ],
+    "ejected": [],
+    "phase_since": null,
+    "last_pass": null,
+    "passes": [],
+    "last_at": "1767225600"
+  }
+]

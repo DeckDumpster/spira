@@ -1,0 +1,12 @@
+cut
+b-new
+--repo
+spira
+--head
+H3
+--base
+B3
+--members
+sp-certified:2222222222222222222222222222222222222222,sp-submitted:1111111111111111111111111111111111111111
+--actor
+test

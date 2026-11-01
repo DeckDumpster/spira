@@ -1,0 +1,1 @@
+spira-lc: mends of sp-certified not listed: running bd ["list", "--title-contains", "mend sp-certified: does not merge onto", "--limit", "0", "--json"]: No such file or directory (os error 2)

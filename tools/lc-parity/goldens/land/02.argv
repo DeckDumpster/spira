@@ -1,0 +1,11 @@
+event
+batch
+b-open
+--expect
+CI_RUNNING
+--version
+2
+--actor
+test
+--kind
+"Green"

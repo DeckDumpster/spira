@@ -1,0 +1,12 @@
+cut
+b-new
+--repo
+spira
+--head
+H3
+--base
+B3
+--members
+sp-rework:4444444444444444444444444444444444444444
+--actor
+test

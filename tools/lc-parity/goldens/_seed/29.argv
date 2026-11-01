@@ -1,0 +1,11 @@
+event
+bead
+sp-delivering
+--expect
+SUBMITTED
+--version
+2
+--actor
+test
+--kind
+{"GatePass":{"tip":"5555555555555555555555555555555555555555","gate_key":"k1"}}

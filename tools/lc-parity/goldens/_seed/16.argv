@@ -1,0 +1,11 @@
+event
+bead
+sp-certified2
+--expect
+SUBMITTED
+--version
+2
+--actor
+test
+--kind
+{"GatePass":{"tip":"3333333333333333333333333333333333333333","gate_key":"k1"}}

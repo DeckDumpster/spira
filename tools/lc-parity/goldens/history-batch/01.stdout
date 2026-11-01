@@ -1,0 +1,58 @@
+[
+  {
+    "seq": "26",
+    "machine": "batch",
+    "lc_key": "b-landed",
+    "event": "MemberAdded",
+    "expect": "OPEN",
+    "from_state": "OPEN",
+    "to_state": "OPEN",
+    "applied": "1",
+    "refusal": null,
+    "evidence": "{\"MemberAdded\":{\"bead_id\":\"sp-landed\",\"tip\":\"6666666666666666666666666666666666666666\"}}",
+    "actor": "test",
+    "at": "1767225600"
+  },
+  {
+    "seq": "29",
+    "machine": "batch",
+    "lc_key": "b-landed",
+    "event": "CiStarted",
+    "expect": "OPEN",
+    "from_state": "OPEN",
+    "to_state": "CI_RUNNING",
+    "applied": "1",
+    "refusal": null,
+    "evidence": "{\"CiStarted\":{\"run\":\"r1\"}}",
+    "actor": "test",
+    "at": "1767225600"
+  },
+  {
+    "seq": "30",
+    "machine": "batch",
+    "lc_key": "b-landed",
+    "event": "Green",
+    "expect": "CI_RUNNING",
+    "from_state": "CI_RUNNING",
+    "to_state": "GREEN",
+    "applied": "1",
+    "refusal": null,
+    "evidence": "\"Green\"",
+    "actor": "test",
+    "at": "1767225600"
+  },
+  {
+    "seq": "31",
+    "machine": "batch",
+    "lc_key": "b-landed",
+    "event": "FastForward",
+    "expect": "GREEN",
+    "from_state": "GREEN",
+    "to_state": "LANDED",
+    "applied": "1",
+    "refusal": null,
+    "evidence": "{\"FastForward\":{\"sha\":\"M1\"}}",
+    "actor": "test",
+    "at": "1767225600"
+  }
+]

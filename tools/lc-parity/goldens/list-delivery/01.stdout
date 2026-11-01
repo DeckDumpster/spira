@@ -1,0 +1,22 @@
+[
+  {
+    "bead_id": "sp-delivering",
+    "mode": "queue",
+    "state": "BATCHED",
+    "batch_id": "b-open",
+    "pr": null,
+    "merge_sha": null,
+    "version": "1",
+    "entered_at": "1767225600"
+  },
+  {
+    "bead_id": "sp-landed",
+    "mode": "queue",
+    "state": "EXITED",
+    "batch_id": "b-landed",
+    "pr": null,
+    "merge_sha": "M1",
+    "version": "2",
+    "entered_at": "1767225600"
+  }
+]

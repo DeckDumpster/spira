@@ -1,0 +1,11 @@
+event
+batch
+b-open
+--expect
+OPEN
+--version
+1
+--actor
+test
+--kind
+{"CiStarted":{"run":"r2"}}

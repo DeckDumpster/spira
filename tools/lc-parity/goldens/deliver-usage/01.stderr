@@ -1,0 +1,1 @@
+usage: spira-lc deliver pr-merged <repo> <bead-id> <branch> <merge-sha> | pr-closed <bead-id> [reason] | push-delivered <bead-id> <sha> | push-requeued <bead-id> <tip> | push-returned <bead-id> [reason]

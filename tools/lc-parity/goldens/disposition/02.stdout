@@ -1,0 +1,25 @@
+{
+  "bead": {
+    "bead_id": "sp-working",
+    "state": "WORKING",
+    "tip": null,
+    "gate_key": null,
+    "holder": "dwarf-1",
+    "persona": null,
+    "lease_until": "1767229200",
+    "holds": "[]",
+    "reason": null,
+    "version": "2",
+    "stack": "{}",
+    "stack_depth": "0",
+    "express": "0",
+    "dwarf_phase": "claimed",
+    "disposition": "lapsed",
+    "disposition_note": "a note",
+    "ejected_red_tip": null,
+    "sifted_tip": null,
+    "updated_at": "1767225600",
+    "blocked_by": []
+  },
+  "delivery": null
+}
