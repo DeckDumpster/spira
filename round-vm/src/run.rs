@@ -594,7 +594,9 @@ if [ -n "$lint" ]; then
     echo "round-vm: LINT: ${lint_secs}s of the 900s cap (rc=$lint_rc)" >&2
 fi
 # THE TREE'S FENCES, on the merged tree: the host's `gate fences` list (name<TAB>command per line),
-# each run in the tree root against the mirrored landing ref. Each one's seconds go to the
+# each run in the tree root against the mirrored landing ref, one after another and all before the
+# unit tier starts, and without the round's sccache: a fence that compiles (build-fence) must not
+# load the server the unit tests' own cargo builds connect to. Each one's seconds go to the
 # fence-times file; a red one is recorded as fence-<name>.result and makes the round red. A
 # green one writes no .result: the top directory of the results holds .result files only when
 # the pass ended before the suites.
@@ -603,7 +605,7 @@ fence_res="$HOME/round-work/.runtime/spira/batch-results"
 fence_run() {
     local name="$1" cmd="$2" t0 frc
     t0=$(date +%s)
-    ( cd "$HOME/round-work" && SPIRA_GATE_BASE=origin/base SPIRA_GATE_BRANCH=HEAD bash -c "$cmd" ) < /dev/null > ~/round-fence-"$name".out 2>&1
+    ( cd "$HOME/round-work" && env -u RUSTC_WRAPPER SPIRA_GATE_BASE=origin/base SPIRA_GATE_BRANCH=HEAD bash -c "$cmd" ) < /dev/null > ~/round-fence-"$name".out 2>&1
     frc=$?
     mkdir -p "$fence_res"
     echo "$name $(( $(date +%s) - t0 )) $frc" >> "$fence_res/fence-times"
@@ -3242,7 +3244,7 @@ mod tests {
              git update-ref refs/remotes/origin/base HEAD; \
              echo 1 > ok.rs; git add ok.rs; git commit -qm 'spira: round r-1: merge sp-clean (aaa)'; \
              echo 2 > bad.rs; git add bad.rs; git commit -qm 'spira: round r-1: merge sp-dirty (bbb)'; \
-             set +e; ( lint=1; fences={}; {lint}\necho UNITS-AND-SUITES-REACHED ); echo rc=$?",
+             set +e; ( export RUSTC_WRAPPER=/round/sccache; lint=1; fences={}; {lint}\necho UNITS-AND-SUITES-REACHED ); echo rc=$?",
             shell_quote(fences)
         );
         sh(home, &script)
@@ -3255,18 +3257,27 @@ mod tests {
     #[test]
     fn a_shipped_list_of_three_fences_runs_all_three_against_the_landing_ref() {
         let d = TempDir::new();
-        let fences = "one\techo \"one base=$SPIRA_GATE_BASE\" > one.ran\ntwo\techo two > two.ran; if read -r x; then echo \"$x\" > stole; fi\nthree\techo three > three.ran\n";
+        let fences = "one\techo \"one base=$SPIRA_GATE_BASE wrapper=${RUSTC_WRAPPER:-}\" > one.ran\ntwo\techo two > two.ran; if read -r x; then echo \"$x\" > stole; fi\nthree\techo three > three.ran\n";
         let o = listed_fixture(&d, None, fences);
         let out = String::from_utf8_lossy(&o.stdout);
         assert!(out.contains("rc=0") && out.contains("UNITS-AND-SUITES-REACHED"), "{out}{}", String::from_utf8_lossy(&o.stderr));
         let w = d.path().join("round-work");
-        assert_eq!(fs::read_to_string(w.join("one.ran")).unwrap(), "one base=origin/base\n");
+        assert_eq!(fs::read_to_string(w.join("one.ran")).unwrap(), "one base=origin/base wrapper=\n");
         assert!(w.join("two.ran").is_file() && w.join("three.ran").is_file());
         let times = fs::read_to_string(results_of(&d).join("fence-times")).unwrap();
         let names: Vec<&str> = times.lines().map(|l| l.split(' ').next().unwrap()).collect();
         assert_eq!(names, ["one", "two", "three"], "{times}");
         assert!(times.lines().all(|l| l.ends_with(" 0")), "{times}");
         assert!(!w.join("stole").exists() && !fs::read_dir(results_of(&d)).unwrap().flatten().any(|e| e.path().extension().is_some_and(|x| x == "result")), "a green fence leaves no .result at the top of the results, where the host would take it for the suites' leaf");
+    }
+
+    #[test]
+    fn the_fences_finish_before_the_unit_tier_starts() {
+        let fences = REMOTE_SCRIPT.find("fence_run \"$fname\" \"$fcmd\"").expect("the fence loop");
+        let early = REMOTE_SCRIPT.find("LINT/FENCE RED before the suites").unwrap();
+        let units = REMOTE_SCRIPT.find("unit_cargo --no-fail-fast > ~/round-unit-tests.log 2>&1 &").expect("the unit tier's launch");
+        assert!(fences < early && early < units, "the fences run in the foreground and the unit tier starts only after them");
+        assert!(!REMOTE_SCRIPT[fences..fences + 80].contains('&'), "the fence loop is not backgrounded");
     }
 
     #[test]
