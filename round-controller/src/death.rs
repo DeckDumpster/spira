@@ -71,6 +71,8 @@ pub enum VmFact {
 
 pub trait Vms {
     fn vm_of(&self, old: &Holder) -> VmFact;
+    /// The VM of the runner a slot record names: by its recorded VM id when there is one.
+    fn vm_of_slot(&self, unit: &str, vm: Option<&str>) -> VmFact;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,8 +87,12 @@ pub enum Proof {
 }
 
 pub fn prove_dead(p: &Ports, old: &Holder) -> Proof {
-    let unit = old.unit();
-    let unit_said = match p.units.state(&unit) {
+    prove_runner_dead(p, &old.unit(), || p.vms.vm_of(old))
+}
+
+/// [`prove_dead`] for any runner unit; `vm` is asked only once the unit is shown stopped.
+pub fn prove_runner_dead(p: &Ports, unit: &str, vm: impl FnOnce() -> VmFact) -> Proof {
+    let unit_said = match p.units.state(unit) {
         UnitState::Stopped(s) => s,
         UnitState::Running(s) => {
             return Proof::Unknown {
@@ -99,7 +105,7 @@ pub fn prove_dead(p: &Ports, old: &Holder) -> Proof {
             }
         }
     };
-    let vm_said = match p.vms.vm_of(old) {
+    let vm_said = match vm() {
         VmFact::NoVm => "no VM".to_string(),
         VmFact::Running { vm } => {
             return Proof::Unknown {

@@ -40,6 +40,11 @@ impl Vms for NoVmRecords {
             why: "no runner-slot record names a VM yet".into(),
         }
     }
+    fn vm_of_slot(&self, _: &str, _: Option<&str>) -> VmFact {
+        VmFact::Unreadable {
+            why: "round-vm is not asked about a slot's VM yet".into(),
+        }
+    }
 }
 
 pub struct NoLauncher;
@@ -100,6 +105,10 @@ mod tests {
             token: Rev::new(1, 0),
         };
         assert!(matches!(NoVmRecords.vm_of(&h), VmFact::Unreadable { .. }));
+        assert!(matches!(
+            NoVmRecords.vm_of_slot("u", Some("vm-7")),
+            VmFact::Unreadable { .. }
+        ));
         assert!(NoLauncher.launch("r", "b", Rev::new(1, 0)).is_err());
     }
 }

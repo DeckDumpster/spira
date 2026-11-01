@@ -1,0 +1,54 @@
+description = "A Proxmox slot whose last holder lapsed without releasing it: while the Vms fake still lists its old VM it is not granted; once the VM is gone it is."
+repos = ["home"]
+
+[run]
+epoch = 1800000000
+passes = 30
+every_secs = 30
+
+[slots]
+spill = ""
+ec2 = 0
+
+# No lock: the old holder's lease lapsed. Its unit is unknown to systemd, so stopped.
+[[store]]
+key = "slots/proxmox/0"
+data = { holder = "round-controller-run", unit = "round-controller-run-b0-5-0", vm = "vm-7", released = false }
+
+# round-vm lists the old VM until 600 s after the epoch.
+[[vm_fact]]
+unit = "round-controller-run-b0-5-0"
+fact = "running"
+until = 1800000600
+
+[[slot_user]]
+name = "round-controller-run-home-b1"
+start_secs = 0
+hold_secs = 120
+
+[[expect]]
+name = "granted-once-the-old-vm-is-gone"
+count = "first-grant-secs"
+equals = 600
+
+[[expect]]
+name = "granted-once"
+count = "slot-grants"
+equals = 1
+
+# Asked at 0, 20 … 580 s.
+[[expect]]
+name = "held-while-the-old-vm-is-listed"
+count = "slot-refusals"
+equals = 30
+
+[[expect]]
+name = "every-refusal-names-the-old-holder"
+count = "refusals-naming-holder"
+equals = 30
+
+[[expect]]
+name = "inverted-granted-while-the-old-vm-is-listed"
+count = "first-grant-secs"
+at_most = 599
+inverted = true

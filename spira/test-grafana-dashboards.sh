@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T1
-# covers: spira/metrics/grafana/** pilgrimage/src/** tsd/src/pass.rs spira-otel/src/** heimdall/src/main.rs inbox-triage/src/main.rs store-persist/src/main.rs queue/src/telemetry.rs landing-pass/src/telemetry.rs rebase-stale/src/telemetry.rs round-vm/src/telemetry.rs sccache-dav/src/telemetry.rs release/src/telemetry.rs habits/src/lib.rs exec-census/src/** spira-lc/src/cycle.rs state-store-sqlite/src/bin/**
+# covers: spira/metrics/grafana/** pilgrimage/src/** tsd/src/pass.rs spira-otel/src/** heimdall/src/main.rs inbox-triage/src/main.rs store-persist/src/main.rs queue/src/telemetry.rs landing-pass/src/telemetry.rs rebase-stale/src/telemetry.rs round-vm/src/telemetry.rs sccache-dav/src/telemetry.rs release/src/telemetry.rs round-controller/src/telemetry.rs habits/src/lib.rs exec-census/src/** spira-lc/src/cycle.rs state-store-sqlite/src/bin/**
 #
 # The provisioned Grafana dashboards parse, read their data source from a variable, carry no
 # annotations or text panels, and every cert-pass series they query is one the producer pushes.
@@ -41,6 +41,12 @@ queried="$(grep -o 'spira_cert_pass_[a-z_]*' "$DASH/rounds.json" | sed -E 's/_bu
 missing="$(comm -13 <(printf '%s\n' "$pushed") <(printf '%s\n' "$queried"))"
 is "rounds.json queries only series cert-pass pushes" "" "$missing"
 [ -n "$pushed" ] && ok "positive control: the producer's series were found" || bad "no pushed series found"
+
+rc_pushed="$(grep -oh '"spira_round_controller_[a-z_]*"' "$ROOT/round-controller/src/telemetry.rs" | tr -d '"' | sort -u)"
+rc_queried="$(grep -o 'spira_round_controller_[a-z_]*' "$DASH/rounds.json" | sort -u)"
+is "rounds.json queries only series the round controller pushes" "" "$(comm -13 <(printf '%s\n' "$rc_pushed") <(printf '%s\n' "$rc_queried"))"
+want "positive control: the round controller's slots gauge was found" "spira_round_controller_slots_in_use" "$rc_pushed"
+want "rounds.json graphs runner slots in use per pool" "spira_round_controller_slots_in_use" "$rc_queried"
 
 pushed_otel="$(grep -ho '"spira_[a-z_]*"' "$ROOT/spira-otel/src/metrics.rs" "$ROOT/heimdall/src/main.rs" "$ROOT/inbox-triage/src/main.rs" "$ROOT/store-persist/src/main.rs" "$ROOT"/round-vm/src/telemetry.rs "$ROOT"/sccache-dav/src/telemetry.rs "$ROOT"/release/src/telemetry.rs | tr -d '"' | sort -u)"
 queried_c="$(grep -o 'spira_[a-z_]*' "$DASH/components.json" | sort -u)"

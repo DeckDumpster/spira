@@ -124,11 +124,22 @@ counts.
   shuts or a renewal is refused it tears down; a hung one stays alive.
 - `[[unit]]` — `name`, `state` (an `is-active` word, or `unreadable`); a unit never named is one
   systemd does not know. `[[vm_fact]]` — `unit`, `fact` (`none`, `running`, `unreadable`,
-  `ec2-unreadable` with `launched_at` in epoch seconds). `[[launch]]` — `ok = true` or
+  `ec2-unreadable` with `launched_at` in epoch seconds), optional `until` (epoch seconds) from
+  which the VM is gone. `[[launch]]` — `ok = true` or
   `refuse = "<why>"`, answered in order; an unscripted launch is a fault.
+- `[slots]` — `spill` (`SPIRA_ROUND_VM_SPILL`'s word) and `ec2` (`SPIRA_ROUND_RUNNER_SLOTS_EC2`).
+  Absent, the bench's: spill on with three EC2 slots.
+- `[[slot_user]]` — `name` (its holder and unit), `start_secs`, `hold_secs`, optional `prefer`
+  (pool words, default `proxmox` then `ec2`), `hand` (asks through `grant_for_hand`) and
+  `retry_secs` (default the renewal interval): a round's runner or a hand driver that takes a
+  runner slot through `slots::grant`, records its unit and VM, renews every TTL/3, and tears its
+  VM down before it releases. A slot it loses while holding is an unscripted fault.
 - `[[expect]]` — `name`, `count` (`calls`, `calls:<verb>`, `outcomes`, `outcomes:<kind>`,
   `store-writes`, `vm-runs`, `lock-hold-ms`, `launches`, `renewals`, `redrive-attempts`,
-  `first-orphan-secs`), exactly one of `equals` and `at_most`, optional `inverted`.
+  `first-orphan-secs`, `slot-grants[:<pool>]`, `slot-refusals[:hand]`,
+  `refusals-naming-holder` (refusals naming the holder of every slot not given back),
+  `vms-at-once[:<pool>]`, `first-grant-secs`), exactly one of `equals` and `at_most`, optional
+  `inverted`.
 
 The store's GC ticks before every pass, so a lapsed lock is gone by the pass that follows it.
 
@@ -138,3 +149,16 @@ pass or spawn, a pass started with no free runner slot, or a pass over its cap.
 
 `scenarios/profiles.toml` holds `default` and `reference-minimum`; every scenario runs under
 both.
+
+## Slots
+
+`slots::grant` takes the first free slot in the caller's pools, in order: `proxmox`, always one
+slot (the host's one VM round at a time), and `ec2`, `SPIRA_ROUND_RUNNER_SLOTS_EC2` slots, offered
+only while `SPIRA_ROUND_VM_SPILL` is a word under which round-vm places a pass on EC2. A slot is
+the lock `locks/runner-slot/<pool>/<n>`, taken in one txn with its record `slots/<pool>/<n>`
+(CAS on the record's `mod_rev`). A holder records its unit before launching it and its VM once
+round-vm names one, and marks the record released only once its VM is gone. A slot whose last
+holder lapsed unreleased is granted again only on `death::prove_runner_dead` of the recorded
+unit and VM; one that recorded no unit launched none. `grant_for_hand` is the same grant, so a
+hand round and a controller round share the one Proxmox slot. A refusal names every slot's
+holder, its unit and TTL left, each pool offering none and the key that opens it.

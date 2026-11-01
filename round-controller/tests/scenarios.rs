@@ -41,6 +41,9 @@ scenario!(
     scenario_launch_fails,
     scenario_ec2_past_deadline,
     scenario_ledger_attempts,
+    scenario_one_proxmox_slot,
+    scenario_slot_reuse_needs_death,
+    scenario_ec2_spill,
 );
 
 #[test]
@@ -92,6 +95,31 @@ fn the_inverted_expectation_fails_the_scenario_naming_itself_once_it_is_no_longe
     assert!(
         e.contains("expectation inverted-no-repo-visited unmet under reference-minimum"),
         "{e}"
+    );
+}
+
+#[test]
+fn with_spill_off_the_ec2_spill_rounds_run_one_at_a_time() {
+    let off = text("ec2-spill").replace("spill = \"ec2\"", "spill = \"\"");
+    let e = run_all(&off).unwrap_err();
+    for profile in ["default", "reference-minimum"] {
+        for unmet in [
+            "three-at-once unmet under {p}: counted 1, expected 3",
+            "two-on-ec2 unmet under {p}: counted 0, expected 2",
+        ] {
+            let unmet = unmet.replace("{p}", profile);
+            assert!(e.contains(&format!("expectation {unmet}")), "{e}");
+        }
+        assert!(
+            e.contains(&format!(
+                "inverted expectation inverted-one-at-a-time held under {profile}: counted 1"
+            )),
+            "{e}"
+        );
+    }
+    assert!(
+        !e.contains("every-round-ran"),
+        "one at a time, every round still ran: {e}"
     );
 }
 

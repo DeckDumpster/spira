@@ -457,7 +457,8 @@ mod tests {
     use std::sync::Mutex;
 
     use crate::liveness::LeaseSettings;
-    use crate::sim::bench::{bench_settings, FakeLaunch, FakeUnits, FakeVms};
+    use crate::sim::bench::{bench_settings, bench_slot_settings, FakeLaunch, FakeUnits, FakeVms};
+    use crate::slots::SlotSettings;
 
     struct World {
         clock: VirtualClock,
@@ -468,6 +469,7 @@ mod tests {
         vms: FakeVms,
         launch: FakeLaunch,
         leases: LeaseSettings,
+        slots: SlotSettings,
     }
 
     impl World {
@@ -482,14 +484,15 @@ mod tests {
             )
             .unwrap();
             World {
+                vms: FakeVms::new(clock.clone()),
                 clock,
                 store,
                 rng: Mutex::new(SeededRng::new(1)),
                 log: MemLog::default(),
                 units: FakeUnits::default(),
-                vms: FakeVms::default(),
                 launch: FakeLaunch::default(),
                 leases: bench_settings(),
+                slots: bench_slot_settings(),
             }
         }
 
@@ -505,6 +508,7 @@ mod tests {
                 vms: &self.vms,
                 launcher: &self.launch,
                 leases: &self.leases,
+                slots: &self.slots,
             }
         }
 

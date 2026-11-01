@@ -6,6 +6,7 @@ pub mod bench;
 pub mod ledger;
 pub mod runner;
 pub mod scenario;
+pub mod slot_user;
 pub mod verbs;
 pub mod vm;
 

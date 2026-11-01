@@ -1,0 +1,63 @@
+description = "Three rounds' runners with spill allowed and two EC2 slots run side by side as one Proxmox and two EC2; with spill off they run one at a time."
+repos = ["home", "other", "third"]
+
+[run]
+epoch = 1800000000
+passes = 80
+every_secs = 30
+
+# tests/scenarios.rs runs this file again with spill off.
+[slots]
+spill = "ec2"
+ec2 = 2
+
+[[slot_user]]
+name = "round-controller-run-home-b1"
+start_secs = 0
+hold_secs = 600
+
+[[slot_user]]
+name = "round-controller-run-other-b1"
+start_secs = 1
+hold_secs = 600
+
+[[slot_user]]
+name = "round-controller-run-third-b1"
+start_secs = 2
+hold_secs = 600
+
+[[expect]]
+name = "three-at-once"
+count = "vms-at-once"
+equals = 3
+
+[[expect]]
+name = "one-on-proxmox"
+count = "vms-at-once:proxmox"
+equals = 1
+
+[[expect]]
+name = "two-on-ec2"
+count = "vms-at-once:ec2"
+equals = 2
+
+[[expect]]
+name = "every-round-ran"
+count = "slot-grants"
+equals = 3
+
+[[expect]]
+name = "two-granted-on-ec2"
+count = "slot-grants:ec2"
+equals = 2
+
+[[expect]]
+name = "none-waited"
+count = "slot-refusals"
+equals = 0
+
+[[expect]]
+name = "inverted-one-at-a-time"
+count = "vms-at-once"
+equals = 1
+inverted = true

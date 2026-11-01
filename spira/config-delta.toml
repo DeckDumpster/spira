@@ -60,6 +60,7 @@ round_phase_deadline_secs_certify = 300
 round_pass_wall_max_secs = 7200
 round_redrive_retries = 3
 round_vm_ec2_max_lifetime_secs = 10800
+round_runner_slots_ec2 = 2
 install_active_wait = 45
 ci_runner_mem_mib = 16384
 mender_max = 8

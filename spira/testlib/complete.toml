@@ -362,6 +362,7 @@ round_phase_deadline_secs_certify = 300
 round_pass_wall_max_secs = 7200
 round_redrive_retries = 3
 round_vm_ec2_max_lifetime_secs = 10800
+round_runner_slots_ec2 = 2
 round_ami_wait_secs = 2400
 round_min = 8
 round_max_open = 1

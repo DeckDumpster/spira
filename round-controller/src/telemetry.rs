@@ -1,10 +1,14 @@
 //! Fire-and-forget OTLP metrics for `round-controller`: one run and its seconds per invocation,
 //! by verb and outcome (law-every-component-sends-otlp).
 
-use spira_otel::metrics::{self, MetricsSink};
+use spira_otel::metrics::{self, MetricsSink, Point};
+
+use crate::slots::Pool;
 
 pub const COMPONENT: &str = "round-controller";
 pub const OPERATIONS: &[&str] = &["version", "pass"];
+/// Runner slots held under a live lock, labelled by `pool`.
+pub const SLOTS_IN_USE: &str = "spira_round_controller_slots_in_use";
 
 pub fn sink() -> MetricsSink {
     metrics::sink_for(
@@ -21,6 +25,19 @@ pub fn operation(first_arg: Option<&str>) -> &'static str {
 
 pub fn run(sink: &MetricsSink, first_arg: Option<&str>, f: impl FnOnce() -> i32) -> i32 {
     metrics::timed(sink, COMPONENT, operation(first_arg), f)
+}
+
+/// One gauge sample per pool.
+pub fn push_slots(sink: &MetricsSink, used: &[(Pool, u32)]) {
+    for (pool, n) in used {
+        sink.push(
+            &[Point::Gauge {
+                name: SLOTS_IN_USE,
+                value: f64::from(*n),
+            }],
+            &[("pool", pool.word())],
+        );
+    }
 }
 
 #[cfg(test)]
@@ -47,6 +64,26 @@ mod tests {
         assert!(
             got.iter().any(|c| c.name == metrics::RUN_DURATION),
             "run seconds pushed"
+        );
+    }
+
+    #[test]
+    fn slots_in_use_are_one_gauge_per_pool_labelled_by_pool() {
+        let ((), got) = fixture::capture(|s| push_slots(s, &[(Pool::Proxmox, 1), (Pool::Ec2, 2)]));
+        let mut by_pool: Vec<(String, String)> = got
+            .iter()
+            .filter(|c| c.name == SLOTS_IN_USE)
+            .map(|c| {
+                (
+                    c.label("pool").unwrap_or("").to_string(),
+                    c.value.to_string(),
+                )
+            })
+            .collect();
+        by_pool.sort();
+        assert_eq!(
+            by_pool,
+            [("ec2".into(), "2".into()), ("proxmox".into(), "1".into())]
         );
     }
 

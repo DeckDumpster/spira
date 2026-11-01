@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=round
+DOC=Runner slots in the round controller's ec2 pool: how many round passes may run side by side on EC2 spill, offered only while SPIRA_ROUND_VM_SPILL allows spill. A ceiling measured from the account's EC2 on-demand vCPU quota: the quota left after the CI runners' share, divided by the vCPUs of the largest round instance type (SPIRA_ROUND_VM_EC2_INSTANCE_TYPE, SPIRA_ROUND_VM_EC2_INSTANCE_TYPES), rounded down. The default 2 is a 64-vCPU on-demand quota over the default 32-vCPU round instance with nothing left for CI runners, so it is an upper bound until measured; re-measured whenever the quota, the round instance types or the CI runners' share changes.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Runner slots in the round controller's ec2 pool: the EC2 vCPU quota over a round instance's vCPUs.
+    : "${SPIRA_ROUND_RUNNER_SLOTS_EC2:=2}"
+SPIRA_CONF_DEFAULT_EOF
