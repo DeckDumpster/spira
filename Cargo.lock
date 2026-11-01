@@ -2025,6 +2025,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "state-store"
+version = "0.1.0"
+dependencies = [
+ "runtime",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "store-persist"
 version = "0.1.0"
 dependencies = [

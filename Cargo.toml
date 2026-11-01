@@ -90,6 +90,7 @@ members = [
     "store-persist",
     "unit-run",
     "runtime",
+    "state-store",
 ]
 resolver = "2"
 
