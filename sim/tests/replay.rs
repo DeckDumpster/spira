@@ -70,15 +70,21 @@ fn stamp(s: &str) -> u64 {
     parse_rfc3339(s).unwrap()
 }
 
-fn rounds(slice: Slice) -> Vec<replay::Round> {
-    replay::load(&replay::fixtures_root().join(slice.dir()))
-        .unwrap()
-        .into_iter()
-        .filter_map(|(_, r)| match r {
-            Record::Round(r) => Some(r),
-            _ => None,
-        })
-        .collect()
+/// The slice's round lines in replay order, loaded once per test binary.
+fn rounds(slice: Slice) -> &'static [replay::Round] {
+    static OCT31: OnceLock<Vec<replay::Round>> = OnceLock::new();
+    static HELD_OUT: OnceLock<Vec<replay::Round>> = OnceLock::new();
+    let cell = if slice == Slice::Oct31 { &OCT31 } else { &HELD_OUT };
+    cell.get_or_init(|| {
+        replay::load(&replay::fixtures_root().join(slice.dir()))
+            .unwrap()
+            .into_iter()
+            .filter_map(|(_, r)| match r {
+                Record::Round(r) => Some(r),
+                _ => None,
+            })
+            .collect()
+    })
 }
 
 fn line_count(slice: Slice) -> usize {
@@ -193,6 +199,12 @@ fn baseline() -> &'static Run {
     RUN.get_or_init(|| run_oct31(false))
 }
 
+/// The same slice and seed with intents written and scripted acks.
+fn with_intents() -> &'static Run {
+    static RUN: OnceLock<Run> = OnceLock::new();
+    RUN.get_or_init(|| run_oct31(true))
+}
+
 fn of<'a>(run: &'a Run, repo: &str) -> Vec<&'a Reading> {
     run.readings.iter().filter(|r| r.repo == repo).collect()
 }
@@ -266,7 +278,7 @@ fn the_publisher_sees_the_repeat_red_member_re_cut_at_one_tip() {
 fn the_held_out_lanes_sections_show_their_recorded_rounds_against_landings() {
     let t0 = std::time::Instant::now(); // clock-safe: reported, never asserted
     let mut r = Replay::new(SEED, Slice::HeldOut).unwrap();
-    round_controller::register(&mut r);
+    round_controller::register_publisher(&mut r, round_controller::Publisher::only(&HELD_OUT_LANES));
     let seen = reader(&mut r, &HELD_OUT_LANES);
     r.run();
     eprintln!("replay 1021-1025: {} ms (goal: 100 ms)", t0.elapsed().as_millis()); // clock-safe
@@ -297,8 +309,7 @@ fn the_held_out_lanes_sections_show_their_recorded_rounds_against_landings() {
 
 #[test]
 fn an_applied_ack_changes_nothing_in_the_replayed_world_and_no_record_is_dropped() {
-    let with = run_oct31(true);
-    let without = baseline();
+    let (with, without) = (with_intents(), baseline());
     assert_eq!(with.fingerprints, without.fingerprints, "every world value is the run with no intents'");
     assert_eq!(with.applied, line_count(Slice::Oct31));
     assert_eq!(with.applied, with.lines);
@@ -320,9 +331,12 @@ fn an_applied_ack_changes_nothing_in_the_replayed_world_and_no_record_is_dropped
 
 #[test]
 fn two_runs_with_one_seed_trace_the_same() {
-    let again = run_oct31(false);
-    assert_eq!(again.trace, baseline().trace);
-    assert_eq!(again.readings, baseline().readings);
+    // Owners and passes schedule nothing and change no world value, so the run with intents is
+    // a second run of the same schedule under the same seed.
+    let (a, b) = (baseline(), with_intents());
+    assert!(a.trace.len() > 4 * 24 * 60, "the trace holds every hook and record step: {}", a.trace.len());
+    assert_eq!(a.trace, b.trace);
+    assert_eq!(a.readings, b.readings);
 }
 
 #[test]
@@ -365,9 +379,9 @@ fn a_slice_line_that_is_not_its_record_is_refused_naming_file_and_line() {
     let err = Replay::from_dir(SEED, dir.path(), window).err().unwrap();
     assert_eq!(err, r#"land.ndjson:1: "2026-10-31 00:43" is not a UTC stamp"#);
 
-    std::fs::remove_file(dir.path().join("stop.ndjson")).unwrap();
+    std::fs::remove_file(dir.path().join("round.ndjson")).unwrap();
     let err = Replay::from_dir(SEED, dir.path(), window).err().unwrap();
-    assert!(err.contains("stop.ndjson"), "a missing file is named: {err}");
+    assert!(err.contains("round.ndjson"), "a missing file is named: {err}");
 
     let err = Replay::from_dir(SEED, dir.path(), (window.1, window.0)).err().unwrap();
     assert!(err.contains("is empty"), "{err}");

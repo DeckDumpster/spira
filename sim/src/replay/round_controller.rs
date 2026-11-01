@@ -125,15 +125,24 @@ struct Published {
 #[derive(Default)]
 pub struct Publisher {
     last: BTreeMap<String, Published>,
+    /// The repos it publishes; empty is every repo.
+    only: Vec<String>,
     pub writes: usize,
 }
 
 impl Publisher {
+    pub fn only(repos: &[&str]) -> Publisher {
+        Publisher {
+            only: repos.iter().map(|r| r.to_string()).collect(),
+            ..Publisher::default()
+        }
+    }
+
     /// Every repo the world has seen a round of: its section, if its status changed or its
     /// keepalive is due.
     pub fn publish(&mut self, w: &ReplayWorld, store: &mut Store, now_ms: u64) {
         let now_s = now_ms / 1000;
-        for repo in w.lanes.keys() {
+        for repo in w.lanes.keys().filter(|r| self.only.is_empty() || self.only.contains(r)) {
             let st = status(w, repo, now_s);
             let prev = self.last.get(repo);
             let due = prev.is_none_or(|p| p.status != st || now_ms >= p.at_ms + KEEPALIVE_MS);
@@ -210,6 +219,9 @@ fn section(repo: &str, st: &RepoStatus, since: &BTreeMap<&'static str, (Conditio
 
 /// Registers the publisher on `replay` at [`PERIOD_MS`].
 pub fn register(replay: &mut Replay) {
-    let mut p = Publisher::default();
+    register_publisher(replay, Publisher::default());
+}
+
+pub fn register_publisher(replay: &mut Replay, mut p: Publisher) {
     replay.register_publisher(PUBLISHER, PERIOD_MS, move |w, store, now| p.publish(w, store, now));
 }
