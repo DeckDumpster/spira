@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 pub const WORLD_ENV: &str = "SIM_WORLD";
 /// A prebuilt release dir with `bin/`, used when the world has no `release` link.
 pub const RELEASE_ENV: &str = "SPIRA_SIM_RELEASE";
-/// The scripting file, one line: `green`, `red <suite>...`, or `fault [why]`.
+/// The scripting file, one line: `green`, `red <suite>...`, `red-early <step>...` or `fault [why]`.
 pub const VERDICT_FILE: &str = "gate-verdict";
 const PRODUCER: &str = "sim-round-vm";
 
@@ -21,6 +21,10 @@ pub const FAULT: i32 = 2;
 pub enum Verdict {
     Green,
     Red(Vec<String>),
+    /// Red steps (lint, a fence) that ended the pass before any suite ran and before any tree
+    /// was tested. For a round's batch the real round-vm records this verdict itself, then
+    /// flushes its suites boundary and on-red hooks after it; the stub does the same.
+    RedEarly(Vec<String>),
     Fault(String),
 }
 
@@ -29,14 +33,15 @@ pub fn parse_verdict(text: &str) -> Result<Verdict, String> {
     let mut words = line.split_whitespace();
     match (words.next(), words.collect::<Vec<_>>()) {
         (Some("green"), rest) if rest.is_empty() => Ok(Verdict::Green),
-        (Some("red"), suites) if !suites.is_empty() => {
+        (Some(word @ ("red" | "red-early")), suites) if !suites.is_empty() => {
             if let Some(bad) = suites.iter().find(|s| !is_suite_name(s)) {
                 return Err(format!("{bad:?} is not a suite name"));
             }
-            Ok(Verdict::Red(suites.iter().map(|s| s.to_string()).collect()))
+            let named = suites.iter().map(|s| s.to_string()).collect();
+            Ok(if word == "red" { Verdict::Red(named) } else { Verdict::RedEarly(named) })
         }
         (Some("fault"), why) => Ok(Verdict::Fault(if why.is_empty() { "scripted infra fault".into() } else { why.join(" ") })),
-        _ => Err(format!("{line:?} is not `green`, `red <suite>...` or `fault [why]`")),
+        _ => Err(format!("{line:?} is not `green`, `red <suite>...`, `red-early <step>...` or `fault [why]`")),
     }
 }
 
@@ -48,6 +53,7 @@ pub fn write_verdict(world: &Path, v: &Verdict) -> Result<(), String> {
     let line = match v {
         Verdict::Green => "green".to_string(),
         Verdict::Red(s) => format!("red {}", s.join(" ")),
+        Verdict::RedEarly(s) => format!("red-early {}", s.join(" ")),
         Verdict::Fault(why) => format!("fault {why}"),
     };
     std::fs::write(world.join(VERDICT_FILE), line + "\n").map_err(|e| e.to_string())
@@ -60,17 +66,20 @@ pub struct Run {
     pub suites: Option<Vec<String>>,
     /// `--on-red`: words of a command run, in suite order, with each red suite's name appended.
     pub on_red: Option<Vec<String>>,
+    /// `--round-batch` and `--round-repo`: the round whose batch row the pass is recorded on.
+    pub round_batch: Option<String>,
+    pub round_repo: Option<String>,
 }
 
 /// Flags the batcher passes that say how a real VM runs, and mean nothing to a stub.
-const IGNORED_FLAGS: &[&str] = &["--maxpar", "--toolchain", "--attr-spool", "--base", "--round-batch", "--round-repo"];
+const IGNORED_FLAGS: &[&str] = &["--maxpar", "--toolchain", "--attr-spool", "--base"];
 
 pub fn parse_args(args: &[String]) -> Result<Run, String> {
     let Some((verb, rest)) = args.split_first() else { return Err("usage: round-vm run <tree> --results-dir <dir>".into()) };
     if verb != "run" {
         return Err(format!("the sim round-vm answers only `run`, not {verb:?}"));
     }
-    let (mut tree, mut results, mut suites, mut on_red) = (None, None, None, None);
+    let (mut tree, mut results, mut suites, mut on_red, mut round_batch, mut round_repo) = (None, None, None, None, None, None);
     let words = |v: &str| Some(v.split_whitespace().map(str::to_string).collect::<Vec<_>>()).filter(|w| !w.is_empty());
     let csv = |v: &str| v.split(',').filter(|s| !s.is_empty()).map(str::to_string).collect::<Vec<_>>();
     let mut it = rest.iter();
@@ -87,6 +96,14 @@ pub fn parse_args(args: &[String]) -> Result<Run, String> {
             on_red = words(v);
         } else if a == "--on-red" {
             on_red = words(it.next().ok_or("--on-red needs a value")?);
+        } else if let Some(v) = a.strip_prefix("--round-batch=") {
+            round_batch = Some(v.to_string());
+        } else if a == "--round-batch" {
+            round_batch = Some(it.next().ok_or("--round-batch needs a value")?.clone());
+        } else if let Some(v) = a.strip_prefix("--round-repo=") {
+            round_repo = Some(v.to_string());
+        } else if a == "--round-repo" {
+            round_repo = Some(it.next().ok_or("--round-repo needs a value")?.clone());
         } else if IGNORED_FLAGS.iter().any(|f| a == f) {
             it.next().ok_or_else(|| format!("{a} needs a value"))?;
         } else if IGNORED_FLAGS.iter().any(|f| a.strip_prefix(f).is_some_and(|r| r.starts_with('='))) {
@@ -96,7 +113,7 @@ pub fn parse_args(args: &[String]) -> Result<Run, String> {
             return Err("round-vm run takes one tree".into());
         }
     }
-    Ok(Run { tree: tree.ok_or("round-vm run needs a tree")?, results: results.ok_or("the sim round-vm needs --results-dir")?, suites, on_red })
+    Ok(Run { tree: tree.ok_or("round-vm run needs a tree")?, results: results.ok_or("the sim round-vm needs --results-dir")?, suites, on_red, round_batch, round_repo })
 }
 
 /// The corpus as testenv defines it: every `test-*.sh` regular file in `<tree>/spira`.
@@ -164,6 +181,50 @@ pub fn run(world: &Path, args: &[String], env: &dyn Fn(&str) -> Option<String>, 
     }
 }
 
+/// One `queue round <verb> <batch> [<repo>] <args>` from the world's release; its stderr on refusal.
+fn queue_round(bin: &Path, verb: &str, r: &Run, batch: &str, args: &[&str]) -> Result<(), String> {
+    // batch-job: one lifecycle write of the world's own queue, as long as that takes
+    let out = std::process::Command::new(bin.join("queue"))
+        .args(["round", verb, batch])
+        .args(&r.round_repo)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("queue round {verb}: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(format!("queue round {verb} refused for {batch} (rc={}): {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
+}
+
+/// A pass that a red step ended before any suite ran and before any tree was tested: only the
+/// steps' results, nothing installed. On a round's batch the verdict is recorded first and the
+/// suites boundary and on-red hooks follow it, in the real round-vm's order; a refused boundary
+/// ends the pass a fault, as it does there.
+fn ended_early(world: &Path, r: &Run, env: &dyn Fn(&str) -> Option<String>, steps: &[String], now: u64) -> Result<(i32, String), String> {
+    std::fs::create_dir_all(&r.results).map_err(|e| e.to_string())?;
+    for s in steps {
+        write_result(&r.results, s, &format!("red {now} 0 fp serial {PRODUCER} 1"))?;
+    }
+    let mut said = format!("sim round-vm: red before any suite ran: {}\n", steps.join(","));
+    if let Some(batch) = r.round_batch.as_deref() {
+        let bin = release_bin(world, env)?;
+        if let Err(e) = queue_round(&bin, "pass-verdict", r, batch, &["--verdict", "red", "--red-suites", &steps.join(",")]) {
+            said.push_str(&format!("sim round-vm: {e}\n"));
+        }
+        for s in steps.iter().filter(|_| r.on_red.is_some()) {
+            let argv = r.on_red.as_deref().unwrap_or_default();
+            // batch-job: the hook is the caller's own command, as long as that takes
+            let _ = std::process::Command::new(&argv[0]).args(&argv[1..]).arg(s).status();
+        }
+        if let Err(e) = queue_round(&bin, "suites-started", r, batch, &[]) {
+            said.push_str(&format!("sim round-vm: {e}\nsim round-vm: the pass could not be recorded on its batch; it is not judged\n"));
+            return Ok((FAULT, said));
+        }
+    }
+    Ok((1, said))
+}
+
 fn run_inner(world: &Path, args: &[String], env: &dyn Fn(&str) -> Option<String>, now: u64) -> Result<(i32, String), String> {
     if !world.join(crate::world::MARKER).is_file() {
         return Err(format!("{} is not a sim world", world.display()));
@@ -176,6 +237,7 @@ fn run_inner(world: &Path, args: &[String], env: &dyn Fn(&str) -> Option<String>
         Verdict::Fault(why) => return Ok((FAULT, format!("sim round-vm: {why}\n"))),
         Verdict::Green => Vec::new(),
         Verdict::Red(s) => s,
+        Verdict::RedEarly(steps) => return ended_early(world, &r, env, &steps, now),
     };
     let mut suites = r.suites.clone().unwrap_or_else(|| corpus(&r.tree));
     suites.extend(reds.iter().cloned());
