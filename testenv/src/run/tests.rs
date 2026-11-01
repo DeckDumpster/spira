@@ -2620,6 +2620,49 @@ fn a_tests_filter_runs_only_the_named_test_and_the_verdict_names_the_filter() {
     assert!(!w.repo.join(crate::unit::FILTER_REL).exists());
 }
 
+/// The `--cargo-target-volume` each `up` of the fake runtime mounted, in call order.
+fn target_volumes(rt: &FakeRuntime) -> Vec<String> {
+    rt.testenv_calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|a| a.first().map(String::as_str) == Some("up"))
+        .filter_map(|a| a.iter().position(|x| x == "--cargo-target-volume").map(|i| a[i + 1].clone()))
+        .collect()
+}
+
+#[test]
+fn each_tree_mounts_its_own_unit_target_volume_so_switching_back_finds_it_warm() {
+    let w = unit_world("unit-volume-per-tree");
+    // Tree B: the same crate and tests, different bytes.
+    sh(&w.repo, "git checkout -qb units-b && echo '// b' >> fixture/src/lib.rs && git commit -qam b && git checkout -q units");
+    let tree = |br: &str| git(&w.repo, &["rev-parse", &format!("{br}^{{tree}}")]).unwrap();
+    let (a, b) = (tree("units"), tree("units-b"));
+    assert_ne!(a, b);
+    let rt = runtime();
+    libtest_over_fixture(&rt, &w.repo);
+    let fb = FakeBuilder::new(None);
+    // A, B, A, each checked out in place; the second A names another test, so the verdict
+    // cache does not answer it and it mounts a target again.
+    for (br, test) in [("units", "one_name"), ("units-b", "one_name"), ("units", "two_name")] {
+        sh(&w.repo, &format!("git checkout -q {br}"));
+        let rc = w.run(&rt, &fb, &["--suites", "unit-tests", "--tests", test, br], "", &w.repo);
+        assert_eq!(rc, 0, "{br}: {:?}", w.lines.lock().unwrap());
+    }
+    let own = |t: &str| format!("spira-unit-cargo-target-{t}");
+    assert_eq!(target_volumes(&rt), vec![own(&a), own(&b), own(&a)], "A, B, A mount A's, B's, then A's own volume again");
+    // The script is told the target is its tree's own, so it has nothing to clean.
+    let told: Vec<Option<String>> = rt
+        .execs
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|r| r.argv.get(1).map(String::as_str) == Some("/workspace/spira/unit-tests.sh"))
+        .map(|r| r.env.iter().find(|(k, _)| k == "SPIRA_UNIT_TARGET_VOLUME").map(|(_, v)| v.clone()))
+        .collect();
+    assert_eq!(told, vec![Some(own(&a)), Some(own(&b)), Some(own(&a))]);
+}
+
 #[test]
 fn a_tests_filter_that_matches_no_test_is_a_fault_not_a_green() {
     let w = unit_world("unit-filter-none");
