@@ -789,10 +789,17 @@ pub fn rework(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text) 
     let Ok(_g) = take_lock(w, "rework", &c, "") else {
         return FAIL;
     };
-    for record in ["open", super::round::RECORD, super::stage::STAGED] {
-        let Ok(Some(kv)) = records::read_kv(&c.queue_file(record)) else {
-            continue;
-        };
+    let rounds = match super::round::live_records(w, &c) {
+        Ok(r) => r,
+        Err(e) => {
+            w.err(format!("queue.sh rework: cannot tell which rounds are open for {}: {e} — refused", c.r.name));
+            return FAIL;
+        }
+    };
+    let files = ["open", super::stage::STAGED]
+        .into_iter()
+        .filter_map(|f| Some((f, records::read_kv(&c.queue_file(f)).ok()??)));
+    for (record, kv) in files.chain(rounds.into_iter().map(|kv| ("round", kv))) {
         if kv.members().iter().any(|m| m.id == id) {
             let batch = kv.get_first("batch_id").unwrap_or("");
             w.err(format!("queue.sh rework: {id} is a member of the open {record} {batch} for {} — refused; eject it with `queue eject` or `queue round eject`", c.r.name));

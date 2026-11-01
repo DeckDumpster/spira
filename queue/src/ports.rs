@@ -6,7 +6,11 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use crate::batches::{self, BatchRecord, Door};
 use crate::model::{BeadRow, LandMode, LcBeadRow, RangeCommit};
+use crate::records::Kv;
+
+const NO_STORE: &str = "the batch machine is not on the control store";
 
 /// Settings as conf.sh resolves them (seam R1).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -481,6 +485,26 @@ pub enum AmiLookup {
 /// spira-lc (the lifecycle machine's CLI).
 pub trait Lc {
     fn available(&self) -> bool;
+    /// The control store's rounds, reached through spira-lc's `rc` door; `None` while the batch
+    /// machine is not on the store, when the queue's round files are the record.
+    fn rounds_door(&self) -> Option<&dyn Door> {
+        None
+    }
+    /// The rounds of `repo` the machine has not ended, oldest first (by creation revision).
+    fn open_batches(&self, repo: &str) -> Result<Vec<BatchRecord>, String> {
+        batches::open_batches(self.rounds_door().ok_or(NO_STORE)?, repo)
+    }
+    /// Every round of `repo`, ended or not, oldest first.
+    fn batches(&self, repo: &str) -> Result<Vec<BatchRecord>, String> {
+        batches::batches(self.rounds_door().ok_or(NO_STORE)?, repo)
+    }
+    fn batch(&self, repo: &str, id: &str) -> Result<Option<BatchRecord>, String> {
+        batches::batch(self.rounds_door().ok_or(NO_STORE)?, repo, id)
+    }
+    /// The queue's own fields of round `kv` written into its record.
+    fn save_batch(&self, repo: &str, kv: &Kv) -> Result<(), String> {
+        batches::save(self.rounds_door().ok_or(NO_STORE)?, repo, kv)
+    }
     /// `show-batch` → (state, version); None when the batch row does not exist.
     fn batch_state(&self, batch_id: &str) -> Option<(String, String)>;
     /// `show-batch` → (pass, phase); phase is empty outside a CI_RUNNING pass.

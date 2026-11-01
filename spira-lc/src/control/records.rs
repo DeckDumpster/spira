@@ -114,6 +114,10 @@ pub struct BatchRecord {
     pub members: Vec<Member>,
     /// Epoch seconds of the cut, for display only.
     pub opened_at: i64,
+    /// The queue's own fields of the round (its assembled head, worktree, reds): written only by
+    /// `queue`, and carried unchanged through every machine step.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub round: BTreeMap<String, String>,
 }
 
 /// Under `batch-ids/<id>`: the repo a round was cut in, so a round is found by id alone and a

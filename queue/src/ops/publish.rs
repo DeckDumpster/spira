@@ -713,9 +713,11 @@ fn round_pass_holds_hypervisor(w: &World, c: &Ctx) -> bool {
         Some(Place::Local) => return true,
         None => {}
     }
-    crate::ops::round::live_records(w, c, crate::ops::round::keep)
-        .iter()
-        .filter_map(|(_, kv)| kv.get("batch_id"))
+    let Ok(open) = crate::ops::round::live_records(w, c) else {
+        return true;
+    };
+    open.iter()
+        .filter_map(|kv| kv.get("batch_id"))
         .any(|batch| {
             w.lc.batch_state(batch)
                 .is_none_or(|(s, _)| s == "CI_RUNNING")

@@ -8,9 +8,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::round::{
-    assemble, certify, csv, finish, handle_of, keep, live_records, local_ctx, lock, mark_running,
-    phase_of, record_of, rounds_dir, save_record, set, set_phase, suite_statuses, tail,
-    phase_reds, unjudgeable, BLOCKING, BUILD_RED, LC_ACTOR, UNIT_RED,
+    assemble, certify, csv, finish, handle_of, live_records, local_ctx, lock, mark_running,
+    phase_of, phase_reds, record_of, rounds_dir, save_record, set, suite_statuses, tail,
+    unjudgeable, BLOCKING, BUILD_RED, LC_ACTOR, UNIT_RED,
 };
 use super::{
     actor, idents, landing_log, lc_cas, read_text, require_lc, Ctx, World, FAIL, OK, USAGE,
@@ -21,6 +21,12 @@ use crate::model::{parse_members, render_members, Member};
 use crate::records::{self, one_line, write_atomic, Kv};
 
 pub const STAGED: &str = "round-staged";
+
+/// The staged round's own testing phase, which the lifecycle does not model (it holds STAGED).
+fn set_staged_phase(w: &World, kv: &mut Kv, phase: &str) {
+    set(kv, "phase", phase);
+    set(kv, "phase_at", &w.clock.now().to_string());
+}
 
 fn staged_record(c: &Ctx) -> Option<Kv> {
     records::read_kv(&c.queue_file(STAGED)).ok().flatten()
@@ -129,7 +135,14 @@ pub fn stage(
     let Ok(_g) = lock(w, label, &c) else {
         return FAIL;
     };
-    let Some((_, running)) = live_records(w, &c, keep).into_iter().next() else {
+    let open = match live_records(w, &c) {
+        Ok(open) => open,
+        Err(e) => {
+            w.err(format!("queue.sh {label}: cannot tell which rounds are open for {repo_name}: {e} — refused"));
+            return FAIL;
+        }
+    };
+    let Some(running) = open.into_iter().next() else {
         w.err(format!("queue.sh {label}: no round is open for {repo_name} — there is nothing to stage behind; use round open"));
         return FAIL;
     };
@@ -259,7 +272,7 @@ pub fn stage(
     kv.push("worktree", &wt.display().to_string());
     kv.push("actor", &actor(w));
     kv.push("opened", &now);
-    set_phase(w, &mut kv, "staged");
+    set_staged_phase(w, &mut kv, "staged");
     if let Err(e) = write_atomic(&c.queue_file(STAGED), &kv.render()) {
         w.err(format!(
             "queue.sh {label}: cannot write the staged record: {e}"
@@ -298,13 +311,17 @@ pub fn stage_test(w: &World, repo: Option<&str>) -> i32 {
             return FAIL;
         };
         let parent = kv.get("parent").unwrap_or("").to_string();
-        match record_of(w, &c, &parent).map(|(_, run)| run) {
-            Some(_) if phase_of(w, &parent) == "green" => {}
-            Some(_) => {
+        match record_of(w, &c, &parent) {
+            Err(e) => {
+                w.err(format!("queue.sh {label}: cannot tell whether {parent} is still open: {e} — refused"));
+                return FAIL;
+            }
+            Ok(Some(_)) if phase_of(w, &parent) == "green" => {}
+            Ok(Some(_)) => {
                 w.err(format!("queue.sh {label}: {parent} is {}, not green — the staged round is tested once it is", phase_of(w, &parent)));
                 return FAIL;
             }
-            None => {
+            Ok(None) => {
                 w.err(format!("queue.sh {label}: {parent} is no longer the open round — promote or discard the staged round"));
                 return FAIL;
             }
@@ -315,7 +332,7 @@ pub fn stage_test(w: &World, repo: Option<&str>) -> i32 {
             w.err(format!("queue.sh {label}: the staged worktree {} is not at the staged head {head} — refused", wt.display()));
             return FAIL;
         }
-        set_phase(w, &mut kv, "testing");
+        set_staged_phase(w, &mut kv, "testing");
         kv.remove("red");
         kv.remove("tested_tree");
         if let Err(e) = write_atomic(&c.queue_file(STAGED), &kv.render()) {
@@ -394,7 +411,7 @@ pub fn stage_test(w: &World, repo: Option<&str>) -> i32 {
         return FAIL;
     }
     if let Some(why) = fault {
-        set_phase(w, &mut kv, "fault");
+        set_staged_phase(w, &mut kv, "fault");
         let _ = write_atomic(&c.queue_file(STAGED), &kv.render());
         w.err(format!(
             "queue.sh {label}: {why}; the staged round is not judged\n{}",
@@ -404,7 +421,7 @@ pub fn stage_test(w: &World, repo: Option<&str>) -> i32 {
     }
     if !reds.is_empty() {
         set(&mut kv, "red", &reds.join(","));
-        set_phase(w, &mut kv, "red");
+        set_staged_phase(w, &mut kv, "red");
         let _ = write_atomic(&c.queue_file(STAGED), &kv.render());
         w.out(format!(
             "queue.sh {label}: staged round {batch} is RED at {head}: {}",
@@ -420,7 +437,7 @@ pub fn stage_test(w: &World, repo: Option<&str>) -> i32 {
         return FAIL;
     };
     set(&mut kv, "tested_tree", &tree);
-    set_phase(w, &mut kv, "green");
+    set_staged_phase(w, &mut kv, "green");
     if let Err(e) = write_atomic(&c.queue_file(STAGED), &kv.render()) {
         w.err(format!(
             "queue.sh {label}: cannot write the staged record: {e}"
@@ -566,7 +583,14 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
         };
         let batch = kv.get("batch_id").unwrap_or("").to_string();
         let parent = kv.get("parent").unwrap_or("").to_string();
-        if let Some((_, running)) = record_of(w, &c, &parent) {
+        let running = match record_of(w, &c, &parent) {
+            Ok(r) => r,
+            Err(e) => {
+                w.err(format!("queue.sh {label}: cannot tell whether {parent} is still open: {e} — refused"));
+                return FAIL;
+            }
+        };
+        if let Some(running) = running {
             w.err(format!(
                 "queue.sh {label}: round {} is still open for {repo_name} (phase {}) — {batch} follows {parent} and is promoted once it has landed",
                 running.get("batch_id").unwrap_or("?"),

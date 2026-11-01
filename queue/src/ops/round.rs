@@ -8,6 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::batch::lc_return;
+use super::round_files;
 use super::land::land_local_deferring;
 use super::stage;
 use super::{
@@ -37,7 +38,6 @@ pub const VM_LOST: i32 = 75;
 
 const PREEMPT_POLLS: u32 = 120;
 
-pub(super) const RECORD: &str = "round";
 pub(super) const BUILD_RED: &str = "workspace-build";
 pub(super) const LINT_RED: &str = "spira-lint";
 const FENCE_RED_PREFIX: &str = "fence-";
@@ -120,7 +120,7 @@ impl LeaseCheck<'_> {
 }
 /// The one red a repository that judges itself reports: its testenv run as a whole.
 pub(super) const REPO_TESTENV_RED: &str = "testenv";
-pub(super) const LC_ACTOR: &str = "queue.sh";
+pub(crate) const LC_ACTOR: &str = "queue.sh";
 const PASSING: [&str; 2] = ["ok", "skip"];
 pub const BLOCKING: [&str; 5] = ["red", "timeout", "unreached", "deferred", "fault"];
 
@@ -830,152 +830,96 @@ pub(super) fn raise_forge_reds(w: &World, c: &Ctx, kv: &Kv, suites_csv: &str) {
     }
 }
 
-const EXTRA_PREFIX: &str = "round.";
-
-/// Every open round of the repo, oldest first. The oldest sits in `round`, which the tools
-/// outside the queue read; any other is `round.<batch>`.
-fn open_records(c: &Ctx) -> Vec<(PathBuf, Kv)> {
-    let mut extras: Vec<(u64, PathBuf, Kv)> = fs::read_dir(c.queue_file(""))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|e| {
-            e.file_name()
-                .to_str()
-                .is_some_and(|n| n.starts_with(EXTRA_PREFIX))
-        })
-        .filter_map(|e| {
-            records::read_kv(&e.path()).ok().flatten().map(|kv| {
-                (
-                    kv.get("opened").and_then(|v| v.parse().ok()).unwrap_or(0),
-                    e.path(),
-                    kv,
-                )
-            })
-        })
-        .collect();
-    extras.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
-    let primary = c.queue_file(RECORD);
-    records::read_kv(&primary)
-        .ok()
-        .flatten()
-        .map(|kv| (primary, kv))
-        .into_iter()
-        .chain(extras.into_iter().map(|(_, p, kv)| (p, kv)))
-        .collect()
-}
-
-/// A round whose batch row is terminal has ended; its record answers no reader. A row that
-/// cannot be read is not an ended round.
-fn lifecycle_dead(w: &World, kv: &Kv) -> bool {
-    w.lc.batch_state(kv.get("batch_id").unwrap_or(""))
-        .is_some_and(|(s, _)| {
-            lifecycle::batch::BatchState::from_str(&s)
-                .is_some_and(lifecycle::batch::BatchState::is_terminal)
-        })
-}
-
-/// The rounds the lifecycle still holds, oldest first: every reader of the round records asks
-/// this, never [`open_records`]. `ended` is handed each record whose round has ended.
-pub(crate) fn live_records(
-    w: &World,
-    c: &Ctx,
-    mut ended: impl FnMut(&Path, &Kv),
-) -> Vec<(PathBuf, Kv)> {
-    open_records(c)
-        .into_iter()
-        .filter(|(p, kv)| {
-            let dead = lifecycle_dead(w, kv);
-            if dead {
-                ended(p, kv);
-            }
-            !dead
-        })
-        .collect()
-}
-
-/// For a reader that leaves the records as they are.
-pub(crate) fn keep(_: &Path, _: &Kv) {}
-
-/// Closes out the rounds that ended without a verb closing them (record, worktree, running
-/// marker), but `spare`'s, and hands `round` to the oldest live one. The caller holds the
-/// queue lock.
-fn sweep(w: &World, c: &Ctx, spare: Option<&str>) {
-    let live = live_records(w, c, |p, kv| {
-        let batch = kv.get("batch_id").unwrap_or("");
-        if Some(batch) == spare {
-            return;
-        }
-        let _ = fs::remove_file(p);
-        let wt = worktree_of(kv);
-        if let (Some(repo), false) = (&c.r.path, wt.as_os_str().is_empty()) {
-            w.git.worktree_remove(repo, &wt);
-        }
-        let state = w.lc.batch_state(batch).map(|(s, _)| s).unwrap_or_default();
-        finish(
-            w,
-            c,
-            batch,
-            End::Abandoned("swept"),
-            &format!("ended: {state} on the lifecycle; record swept"),
-        );
-    });
-    promote(c, &live);
-}
-
-fn promote(c: &Ctx, live: &[(PathBuf, Kv)]) {
-    if !c.queue_file(RECORD).exists() {
-        if let Some((p, _)) = live.first() {
-            let _ = fs::rename(p, c.queue_file(RECORD));
-        }
+/// The open rounds of the repo, oldest first: the control store's when the batch machine is on
+/// it, the round files' until then. Err: the store could not say.
+pub(crate) fn live_records(w: &World, c: &Ctx) -> Result<Vec<Kv>, String> {
+    if w.lc.rounds_door().is_none() {
+        return Ok(round_files::live_records(w, c, round_files::keep)
+            .into_iter()
+            .map(|(_, kv)| kv)
+            .collect());
     }
+    Ok(w.lc
+        .open_batches(&c.r.name)?
+        .into_iter()
+        .map(|b| b.kv)
+        .collect())
 }
 
-pub(super) fn record_of(w: &World, c: &Ctx, batch: &str) -> Option<(PathBuf, Kv)> {
-    live_records(w, c, keep)
-        .into_iter()
-        .find(|(_, kv)| kv.get("batch_id") == Some(batch))
+/// Round `batch`'s record while it is open; `Ok(None)` once it has ended or never was.
+pub(super) fn record_of(w: &World, c: &Ctx, batch: &str) -> Result<Option<Kv>, String> {
+    if w.lc.rounds_door().is_none() {
+        return Ok(round_files::record_of(w, c, batch).map(|(_, kv)| kv));
+    }
+    Ok(w.lc
+        .batch(&c.r.name, batch)?
+        .filter(|b| !b.is_terminal())
+        .map(|b| b.kv))
+}
+
+/// The record of a round the lifecycle has already abandoned, for the verb that finishes
+/// closing it.
+fn abandoned_record(w: &World, c: &Ctx, batch: &str) -> Option<Kv> {
+    if !batch_abandoned(w, batch) {
+        return None;
+    }
+    if w.lc.rounds_door().is_none() {
+        return round_files::ended_record(w, c, batch);
+    }
+    w.lc.batch(&c.r.name, batch).ok().flatten().map(|b| b.kv)
 }
 
 pub(super) fn save_record(w: &World, c: &Ctx, kv: &Kv) -> Result<(), String> {
-    let batch = kv.get("batch_id").unwrap_or("");
-    let path = match record_of(w, c, batch) {
-        Some((p, _)) => p,
-        None if c.queue_file(RECORD).exists() => c.queue_file(&format!("{EXTRA_PREFIX}{batch}")),
-        None => c.queue_file(RECORD),
-    };
-    write_atomic(&path, &kv.render())
+    if w.lc.rounds_door().is_none() {
+        return round_files::save_record(w, c, kv);
+    }
+    w.lc.save_batch(&c.r.name, kv)
 }
 
-/// Removes the round's record, live or ended, with every other ended one; the oldest live
-/// round left takes over `round`. The caller holds the queue lock.
+/// Round `batch` answers no reader from here on. On the store the machine's terminal state
+/// already says so; the round files are removed. The caller holds the queue lock.
 pub(super) fn drop_record(w: &World, c: &Ctx, batch: &str) {
-    let live: Vec<(PathBuf, Kv)> = live_records(w, c, |p, _| {
-        let _ = fs::remove_file(p);
-    })
-    .into_iter()
-    .filter(|(p, kv)| {
-        let ours = kv.get("batch_id") == Some(batch);
-        if ours {
-            let _ = fs::remove_file(p);
+    if w.lc.rounds_door().is_none() {
+        round_files::drop_record(w, c, batch);
+    }
+}
+
+/// Closes out the rounds that ended without a verb closing them (worktree, running marker), but
+/// `spare`'s. The caller holds the queue lock.
+fn sweep(w: &World, c: &Ctx, spare: Option<&str>) {
+    if w.lc.rounds_door().is_none() {
+        return round_files::sweep(w, c, spare);
+    }
+    let Ok(all) = w.lc.batches(&c.r.name) else {
+        return;
+    };
+    for b in all.iter().filter(|b| b.is_terminal() && Some(b.id.as_str()) != spare) {
+        let wt = worktree_of(&b.kv);
+        let has_tree = !wt.as_os_str().is_empty() && wt.exists();
+        if !has_tree && !running_marker(c, &b.id).exists() {
+            continue;
         }
-        !ours
-    })
-    .collect();
-    promote(c, &live);
+        if let (Some(repo), true) = (&c.r.path, has_tree) {
+            w.git.worktree_remove(repo, &wt);
+        }
+        finish(w, c, &b.id, End::Abandoned("swept"), &format!("ended: {} on the lifecycle; record swept", b.state));
+    }
 }
 
 pub(super) fn load(w: &World, label: &str, c: &Ctx, batch: &str) -> Result<Kv, i32> {
-    let live = live_records(w, c, keep);
-    if let Some((_, kv)) = live
-        .iter()
-        .find(|(_, kv)| kv.get("batch_id") == Some(batch))
-    {
+    let live = live_records(w, c).map_err(|e| {
+        w.err(format!(
+            "queue.sh {label}: cannot tell which rounds are open for {}: {e}",
+            c.r.name
+        ));
+        FAIL
+    })?;
+    if let Some(kv) = live.iter().find(|kv| kv.get("batch_id") == Some(batch)) {
         return Ok(kv.clone());
     }
     let open: Vec<String> = live
         .iter()
-        .map(|(_, kv)| kv.get("batch_id").unwrap_or("?").to_string())
+        .map(|kv| kv.get("batch_id").unwrap_or("?").to_string())
         .collect();
     match open.as_slice() {
         [] => w.err(format!("queue.sh {label}: no open round for {}", c.r.name)),
@@ -1006,10 +950,6 @@ pub(super) fn set(kv: &mut Kv, k: &str, v: &str) {
     kv.push(k, v);
 }
 
-pub(super) fn set_phase(w: &World, kv: &mut Kv, phase: &str) {
-    set(kv, "phase", phase);
-    set(kv, "phase_at", &w.clock.now().to_string());
-}
 
 pub(super) fn phase_of(w: &World, batch: &str) -> String {
     match w.lc.batch_state(batch) {
@@ -1034,10 +974,13 @@ fn preempt_marker(c: &Ctx, batch: &str) -> PathBuf {
     rounds_dir(c).join(format!("{batch}.preempt"))
 }
 
+fn running_marker(c: &Ctx, batch: &str) -> PathBuf {
+    rounds_dir(c).join(format!("{batch}.running"))
+}
+
 pub(super) fn mark_running(c: &Ctx, batch: &str) {
-    let dir = rounds_dir(c);
-    let _ = fs::create_dir_all(&dir);
-    let _ = fs::write(dir.join(format!("{batch}.running")), "");
+    let _ = fs::create_dir_all(rounds_dir(c));
+    let _ = fs::write(running_marker(c, batch), "");
 }
 
 /// Why a round ended: the cause of its `.result` line. The kinds are a closed set; a word a
@@ -1098,7 +1041,7 @@ pub(super) fn finish(w: &World, c: &Ctx, batch: &str, end: End, detail: &str) {
     {
         let _ = writeln!(f, "{} {} {}", tsd::iso_utc(w.clock.now()), end.cause(), one_line(detail));
     }
-    let _ = fs::remove_file(dir.join(format!("{batch}.running")));
+    let _ = fs::remove_file(running_marker(c, batch));
 }
 
 /// `round sweep-locks`: removes the certify lock of every batch spira-lc reports terminal.
@@ -1146,7 +1089,7 @@ pub(super) fn csv(ms: &[Member]) -> String {
     ms.iter().map(Member::render).collect::<Vec<_>>().join(",")
 }
 
-fn worktree_of(kv: &Kv) -> PathBuf {
+pub(super) fn worktree_of(kv: &Kv) -> PathBuf {
     PathBuf::from(kv.get("worktree").unwrap_or(""))
 }
 
@@ -1344,12 +1287,18 @@ fn open(
     let Ok(_g) = lock(w, label, &c) else {
         return FAIL;
     };
-    let open_now = live_records(w, &c, keep);
+    let open_now = match live_records(w, &c) {
+        Ok(open) => open,
+        Err(e) => {
+            w.err(format!("queue.sh {label}: cannot tell which rounds are open for {repo_name}: {e} — refused, nothing cut"));
+            return FAIL;
+        }
+    };
     let limit = c.s.rounds_max.max(1);
     if open_now.len() >= limit {
         let held: Vec<String> = open_now
             .iter()
-            .map(|(_, kv)| {
+            .map(|kv| {
                 format!(
                     "{} (phase {})",
                     kv.get("batch_id").unwrap_or("?"),
@@ -1365,9 +1314,9 @@ fn open(
         return FAIL;
     }
     for m in &wanted {
-        if let Some((_, kv)) = open_now
+        if let Some(kv) = open_now
             .iter()
-            .find(|(_, kv)| kv.members().iter().any(|h| h.id == m.id))
+            .find(|kv| kv.members().iter().any(|h| h.id == m.id))
         {
             w.err(format!("queue.sh {label}: {} is already a member of open round {} — rounds hold disjoint members; refused", m.id, kv.get("batch_id").unwrap_or("?")));
             return FAIL;
@@ -1385,7 +1334,7 @@ fn open(
     };
     let parent = open_now
         .iter()
-        .filter_map(|(_, kv)| {
+        .filter_map(|kv| {
             Some((
                 kv.get("batch_id")?.to_string(),
                 kv.get("head")?.to_string(),
@@ -1416,7 +1365,7 @@ fn open(
         let parent = orphan.get("parent").unwrap_or("?").to_string();
         if open_now
             .iter()
-            .all(|(_, kv)| kv.get("batch_id") != Some(parent.as_str()))
+            .all(|kv| kv.get("batch_id") != Some(parent.as_str()))
         {
             stage::discard_behind(
                 w,
@@ -1470,12 +1419,12 @@ fn open(
 
     let open_recipe = open_now
         .iter()
-        .find(|(_, kv)| {
+        .find(|kv| {
             kv.members()
                 .iter()
                 .any(|h| changes_recipe(w, &path, &landed_sha, &h.tip))
         })
-        .map(|(_, kv)| kv.get("batch_id").unwrap_or("?").to_string());
+        .map(|kv| kv.get("batch_id").unwrap_or("?").to_string());
     let (mut recipe, ordinary): (Vec<Member>, Vec<Member>) = admitted
         .into_iter()
         .partition(|m| changes_recipe(w, &path, &landed_sha, &m.tip));
@@ -1770,8 +1719,14 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
     let Ok(c) = resolve(w, label, repo) else {
         return FAIL;
     };
-    let open = live_records(w, &c, keep);
-    let Some((_, kv)) = open.first() else {
+    let open = match live_records(w, &c) {
+        Ok(open) => open,
+        Err(e) => {
+            w.err(format!("queue.sh {label}: cannot tell which rounds are open for {}: {e}", c.r.name));
+            return FAIL;
+        }
+    };
+    let Some(kv) = open.first() else {
         w.out(format!("round=none\nrepo={}", c.r.name));
         return OK;
     };
@@ -1782,7 +1737,7 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
     };
     let batches: Vec<&str> = open
         .iter()
-        .map(|(_, kv)| kv.get("batch_id").unwrap_or(""))
+        .map(|kv| kv.get("batch_id").unwrap_or(""))
         .collect();
     w.out(format!(
         "rounds={}\nopen_batches={}",
@@ -1801,7 +1756,7 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
         w.out(format!("red={red}"));
     }
     w.out(format!("wall_secs={}", since(kv, "opened")));
-    for (i, (_, kv)) in open.iter().enumerate().skip(1) {
+    for (i, kv) in open.iter().enumerate().skip(1) {
         let n = i + 1;
         w.out(format!(
             "round{n}=open\nround{n}_phase={}",
@@ -2408,7 +2363,7 @@ fn faulted_run(c: &Ctx, id: &str) -> usize {
 }
 
 fn pass_members(w: &World, c: &Ctx, batch: &str) -> Vec<String> {
-    record_of(w, c, batch).map(|(_, kv)| kv.members().into_iter().map(|m| m.id).collect()).unwrap_or_default()
+    record_of(w, c, batch).ok().flatten().map(|kv| kv.members().into_iter().map(|m| m.id).collect()).unwrap_or_default()
 }
 
 fn lost_vm_pass(w: &World, label: &str, batch: &str, err: &str) -> i32 {
@@ -2925,8 +2880,6 @@ fn certify_pass(
         .and_then(|()| pass_verdict_event(w, batch, &Verdict::Red(&reds, timings), false));
         if let Err((rc, e)) = recorded {
             w.err(format!("queue.sh {label}: REFUSED — the red pass of round {batch} was not recorded on spira-lc (rc={rc}): {e}"));
-            set_phase(w, &mut kv, "fault");
-            let _ = save(w, label, c, &kv);
             return FAULT;
         }
         note_pass_end(c, &pass_members(w, c, batch), PassEnd::Judged);
@@ -3612,15 +3565,19 @@ fn preempt(
     ));
 
     for id in &ids {
-        match record_of(w, &c, batch).map(|(_, kv)| kv) {
-            Some(kv) if kv.members().iter().any(|m| &m.id == id) => {}
-            Some(_) => {
+        match record_of(w, &c, batch) {
+            Err(e) => {
+                w.err(format!("queue.sh {label}: cannot tell whether round {batch} is still open: {e} — the next pass was not started"));
+                return FAIL;
+            }
+            Ok(Some(kv)) if kv.members().iter().any(|m| &m.id == id) => {}
+            Ok(Some(_)) => {
                 w.out(format!(
                     "queue.sh {label}: {id} already left round {batch} with an earlier eject"
                 ));
                 continue;
             }
-            None => break,
+            Ok(None) => break,
         }
         let rc = eject(
             w,
@@ -3643,11 +3600,18 @@ fn preempt(
         }
     }
 
-    let Some((_, kv)) = record_of(w, &c, batch) else {
-        w.out(format!(
-            "queue.sh {label}: round {batch} has no member left; no pass to start"
-        ));
-        return OK;
+    let kv = match record_of(w, &c, batch) {
+        Err(e) => {
+            w.err(format!("queue.sh {label}: cannot tell whether round {batch} is still open: {e} — the next pass was not started"));
+            return FAIL;
+        }
+        Ok(None) => {
+            w.out(format!(
+                "queue.sh {label}: round {batch} has no member left; no pass to start"
+            ));
+            return OK;
+        }
+        Ok(Some(kv)) => kv,
     };
     let new_head = kv.get("head").unwrap_or("").to_string();
     let base = kv.get("base").unwrap_or("").to_string();
@@ -3928,7 +3892,11 @@ fn settle_parent(
     let parent = kv.get("parent").filter(|p| !p.is_empty())?.to_string();
     let stacked_on = kv.get("base").unwrap_or("").to_string();
     let onto = match record_of(w, c, &parent) {
-        Some((_, pkv)) => {
+        Err(e) => {
+            w.err(format!("queue.sh {label}: cannot tell whether round {parent}, which {batch} is stacked on, is still open: {e} — nothing changed"));
+            return Some((LandRefusal::Refused, FAIL));
+        }
+        Ok(Some(pkv)) => {
             let phead = pkv.get("head").unwrap_or("").to_string();
             if phead == stacked_on {
                 w.err(format!("queue.sh {label}: round {batch} is stacked on round {parent}, which has not landed — land {parent} first; nothing changed"));
@@ -3936,13 +3904,11 @@ fn settle_parent(
             }
             phead
         }
-        None if w.git.is_ancestor(path, &stacked_on, base_now) => {
-            settled_parent(w, c, &parent);
+        Ok(None) if w.git.is_ancestor(path, &stacked_on, base_now) => {
             kv.remove("parent");
             return None;
         }
-        None => {
-            settled_parent(w, c, &parent);
+        Ok(None) => {
             kv.remove("parent");
             base_now.to_string()
         }
@@ -4089,13 +4055,7 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text, token: Opt
     let Ok(_g) = lock_sparing(w, label, &c, Some(batch)) else {
         return FAIL;
     };
-    let mut abandoned = None;
-    let _ = live_records(w, &c, |_, kv| {
-        if kv.get("batch_id") == Some(batch) && batch_abandoned(w, batch) {
-            abandoned = Some(kv.clone());
-        }
-    });
-    let kv = match abandoned {
+    let kv = match abandoned_record(w, &c, batch) {
         Some(kv) => kv,
         None => match load(w, label, &c, batch) {
             Ok(kv) => kv,

@@ -12,6 +12,7 @@ pub mod publish;
 pub mod rebase;
 pub mod reconcile;
 pub mod round;
+mod round_files;
 pub mod simple;
 pub mod stage;
 pub mod transition;

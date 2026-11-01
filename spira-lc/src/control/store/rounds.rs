@@ -728,6 +728,7 @@ impl<B: Backend> Store<B> {
                 })
                 .collect(),
             opened_at: cut.at,
+            round: Default::default(),
         };
         self.put_round(&mut c, &key, &rec)?;
         Ok(Planned::Cascade(c))
