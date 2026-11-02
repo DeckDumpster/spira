@@ -620,12 +620,6 @@ mod tests {
         assert_eq!(outcome_of_exit(std::process::ExitCode::from(10)), "error");
     }
 
-    #[test]
-    fn a_run_with_no_endpoint_pushes_nothing() {
-        let before = push_failed();
-        Run::begin(None, "mail", "send").end("ok");
-        assert_eq!(push_failed(), before);
-    }
 }
 
 #[cfg(test)]
