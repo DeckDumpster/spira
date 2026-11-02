@@ -4340,6 +4340,7 @@ fn a_round_is_addressed_by_its_batch_id_and_the_oldest_record_follows_the_landed
         "{}",
         t.err()
     );
+    assert_eq!(t.run(&["round", "certify", "r-1"]), 0, "{}", t.err());
     assert_eq!(
         t.run(&["round", "open", "--members", "sp-b", "--name", "r-2"]),
         0,
@@ -4359,12 +4360,8 @@ fn a_round_is_addressed_by_its_batch_id_and_the_oldest_record_follows_the_landed
         "{}",
         t.err()
     );
-    assert_eq!(
-        t.run(&["round", "abandon", "r-1", "--reason", "x"]),
-        0,
-        "{}",
-        t.err()
-    );
+    t.git.ancestor("ta", "merged-ta");
+    assert_eq!(t.run(&["round", "land", "r-1"]), 0, "{}", t.err());
     assert_eq!(
         kv_of(&t, "round")["batch_id"],
         "r-3",
@@ -4472,17 +4469,90 @@ fn open_does_not_count_a_round_the_lifecycle_abandoned_while_status_hides_it() {
     );
 }
 
+fn stacked_pair(t: &T) {
+    open_and_certify(t, "sp-a", "r-1");
+    open_and_certify(t, "sp-b", "r-2");
+    assert_eq!(kv_of(t, "round.r-2")["parent"], "r-1", "r-2 is stacked on r-1");
+}
+
+fn voided(t: &T, child: &str) {
+    assert!(
+        t.lc.has(&format!("abandon-batch {child} ")),
+        "{:?}",
+        t.lc.calls.borrow()
+    );
+    assert!(!t.qfile(&format!("round.{child}")).exists() && !t.qfile("round").exists(), "no round record survives");
+    assert!(t.out().contains(&format!("voiding round {child}: it is stacked on round r-1")), "{}", t.out());
+}
+
+#[test]
+fn open_refuses_to_stack_on_an_open_round_that_went_red() {
+    let t = concurrent_world();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "red 1 2 fp p e 1".into())];
+    open_and_certify(&t, "sp-a", "r-1");
+    assert_eq!(t.run(&["round", "certify", "r-1"]), 1);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-b", "--name", "r-2"]), 1);
+    assert!(
+        t.err().contains("open round r-1 is red (test-a.sh)") && t.err().contains("refused"),
+        "{}",
+        t.err()
+    );
+    assert!(!t.qfile("round.r-2").exists());
+    assert!(!t.lc.has("cut r-2"), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
+fn open_refuses_to_stack_on_a_live_round_whose_own_parent_went_red() {
+    let mut t = concurrent_world();
+    t.lib.s.rounds_max = 3;
+    stacked_pair(&t);
+    let mut kv = crate::records::Kv::default();
+    for (k, v) in kv_of(&t, "round") {
+        kv.push(&k, &v);
+    }
+    kv.push("red", "test-a.sh");
+    crate::records::write_atomic(&t.qfile("round"), &kv.render()).unwrap();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-c", "--name", "r-3"]), 1);
+    assert!(t.err().contains("open round r-1, under the newest open round r-2, is red"), "{}", t.err());
+    assert!(!t.lc.has("cut r-3"), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
+fn open_prints_the_base_it_stacked_on_and_its_chain() {
+    let t = concurrent_world();
+    stacked_pair(&t);
+    let out = t.out();
+    assert!(
+        out.contains("base_of=local/main")
+            && out.contains("base=merged-ta")
+            && out.contains("base_of=round r-1")
+            && out.contains("base_chain=merged-ta"),
+        "{out}"
+    );
+}
+
+#[test]
+fn abandoning_a_round_voids_the_round_stacked_on_it() {
+    let t = concurrent_world();
+    stacked_pair(&t);
+    assert_eq!(t.run(&["round", "abandon", "r-1", "--reason", "red"]), 0, "{}", t.err());
+    voided(&t, "r-2");
+}
+
+#[test]
+fn ejecting_a_rounds_last_member_voids_the_round_stacked_on_it() {
+    let t = concurrent_world();
+    stacked_pair(&t);
+    assert_eq!(t.run(&["round", "eject", "r-1", "sp-a", "--reason", "red"]), 0, "{}", t.err());
+    voided(&t, "r-2");
+}
+
 #[test]
 fn a_stacked_round_whose_parent_was_abandoned_is_rebuilt_without_it_and_certified_again() {
     let t = concurrent_world();
     two_green_stacked_rounds(&t);
-    assert_eq!(
-        t.run(&["round", "abandon", "r-1", "--reason", "red"]),
-        0,
-        "{}",
-        t.err()
-    );
-    // A lock left behind by a path that ended the parent elsewhere: the child's settle removes it.
+    // The parent ended outside the queue's verbs, which would have voided the child; its record
+    // and lock are left behind, and the child's settle removes them.
     drop(crate::lock::try_certify_lock(&t.s().queue_dir, "spira", "r-1"));
     t.lc.batch_states.borrow_mut().insert("r-1".into(), ("ABANDONED".into(), "9".into()));
     tree_of(&t, "merged-tb");
@@ -6259,8 +6329,8 @@ fn each_land_refusal_starts_with_the_word_the_lander_acts_on() {
     let lander = |token| land_as_the_lander(&t, "r-2", Some(token));
     assert_eq!(lander("5-0"), (1, "stacked".into()), "{}", t.err());
     assert_eq!(lander("6-0"), (1, "refused".into()), "another holder's lease");
-    let abandon = ["round", "abandon", "r-1", "--reason", "red", "--lease-token", "5-0"];
-    assert_eq!(t.run(&abandon), 0, "{}", t.err());
+    // The parent ends outside the queue's verbs, which would have voided the child with it.
+    t.lc.batch_states.borrow_mut().insert("r-1".into(), ("ABANDONED".into(), "9".into()));
     tree_of(&t, "merged-tb");
     assert_eq!(
         lander("5-0"),

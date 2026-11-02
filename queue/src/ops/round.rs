@@ -1394,6 +1394,21 @@ fn open(
         })
         .max_by_key(|(_, _, at)| *at)
         .filter(|(_, head, _)| !head.is_empty());
+    let mut below = parent.as_ref().map(|(p, _, _)| p.clone());
+    let mut seen: Vec<String> = Vec::new();
+    while let Some(p) = below.take().filter(|p| !seen.contains(p)) {
+        let Some((_, kv)) = open_now.iter().find(|(_, kv)| kv.get("batch_id") == Some(p.as_str())) else {
+            break;
+        };
+        if let Some(why) = unstackable(w, kv) {
+            let newest = parent.as_ref().map_or("", |(n, _, _)| n.as_str());
+            let via = if p == newest { String::new() } else { format!(", under the newest open round {newest},") };
+            w.err(format!("queue.sh {label}: open round {p}{via} is {why} — a round is cut only on {base} or on a live round still certifying; refused, nothing changed"));
+            return FAIL;
+        }
+        below = kv.get("parent").filter(|q| !q.is_empty()).map(str::to_string);
+        seen.push(p);
+    }
     let base_sha = parent
         .as_ref()
         .map_or_else(|| landed_sha.clone(), |(_, head, _)| head.clone());
@@ -1709,7 +1724,45 @@ fn open(
     w.out(format!("batch={batch}"));
     w.out(format!("head={head}"));
     w.out(format!("members={}", render_members(&merged)));
+    w.out(format!("base={base_sha}"));
+    w.out(format!(
+        "base_of={}",
+        parent.as_ref().map_or_else(|| base.clone(), |(p, _, _)| format!("round {p}"))
+    ));
+    w.out(format!("base_chain={}", first_parent_chain(w, &path, &base_sha, &landed_sha)));
     OK
+}
+
+/// Why a round cannot be stacked on, or `None` when it is live and still certifying: a red one
+/// is about to lose members, so a tree cut on its head holds code that will not land.
+fn unstackable(w: &World, kv: &Kv) -> Option<String> {
+    if let Some(red) = kv.get("red").filter(|r| !r.is_empty()) {
+        return Some(format!("red ({red})"));
+    }
+    match w.lc.batch_state(kv.get("batch_id").unwrap_or("")) {
+        Some((s, _)) if matches!(s.as_str(), "OPEN" | "CI_RUNNING" | "REBUILDING" | "GREEN" | "LANDING" | "DEPLOYING") => None,
+        Some((s, _)) => Some(s),
+        None => Some("of a state spira-lc could not say".into()),
+    }
+}
+
+/// `base` and its first parents, newest first, down to the first commit `landed` already holds.
+fn first_parent_chain(w: &World, path: &Path, base: &str, landed: &str) -> String {
+    let range: BTreeMap<String, String> = match w.git.log_range(path, &format!("{landed}..{base}")) {
+        Ok(v) => v
+            .into_iter()
+            .map(|c| (c.sha, c.parents.into_iter().next().unwrap_or_default()))
+            .collect(),
+        Err(e) => return format!("{base} (cannot read the chain: {})", one_line(&e)),
+    };
+    let mut chain = vec![base.to_string()];
+    while let Some(next) = range.get(chain.last().map_or("", String::as_str)) {
+        if next.is_empty() || chain.len() > range.len() {
+            break;
+        }
+        chain.push(next.clone());
+    }
+    chain.join(" ")
 }
 
 fn status(w: &World, repo: Option<&str>) -> i32 {
@@ -3289,11 +3342,12 @@ fn eject(
         w.out(format!(
             "queue.sh {label}: ejected {id}; the round {batch} has no member left and is closed"
         ));
+        let voided = void_stacked(w, label, &c, &path, batch);
         if !unreturned.is_empty() {
             w.err(format!("queue.sh {label}: {} left round {batch} but did not return to REWORK: {} — see above", id, unreturned.join(" ")));
             return FAIL;
         }
-        return OK;
+        return voided.map_or_else(|rc| rc, |()| OK);
     }
 
     let rebuilt = serde_json::json!({"PassRebuilt": {"head": new_head}}).to_string();
@@ -4051,8 +4105,36 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text, token: Opt
             }
         },
     };
+    close_abandoned(w, label, &c, &path, &kv, &reason, cause)
+}
+
+/// Every live round cut on `parent`'s head is abandoned with it: its tree holds the parent's
+/// members, so a verdict on it judges code that will not land. Each is named. A child's lease
+/// does not shield it: a pass its holder runs on that tree is void whoever holds it. The caller
+/// holds the queue lock; `Err` when any could not be voided.
+fn void_stacked(w: &World, label: &str, c: &Ctx, path: &Path, parent: &str) -> Result<(), i32> {
+    let children: Vec<Kv> = live_records(w, c, keep)
+        .into_iter()
+        .map(|(_, kv)| kv)
+        .filter(|kv| kv.get("parent") == Some(parent))
+        .collect();
+    let mut rc = Ok(());
+    for kv in children {
+        let child = kv.get("batch_id").unwrap_or("?").to_string();
+        w.out(format!("queue.sh {label}: voiding round {child}: it is stacked on round {parent}, which closed without landing"));
+        let reason = format!("voided: stacked on round {parent}, which closed without landing");
+        if close_abandoned(w, label, c, path, &kv, &reason, "voided") != OK {
+            w.err(format!("queue.sh {label}: round {child} is stacked on the closed round {parent} and could not be voided — abandon it by hand"));
+            rc = Err(FAIL);
+        }
+    }
+    rc
+}
+
+fn close_abandoned(w: &World, label: &str, c: &Ctx, path: &Path, kv: &Kv, reason: &str, cause: &str) -> i32 {
+    let batch = kv.get("batch_id").unwrap_or("");
     let members = kv.members();
-    let why = bounded_text(&reason);
+    let why = bounded_text(reason);
     match lc_abandon(w, batch, LC_ACTOR, &why) {
         Ok(()) => {
             w.out(format!("queue.sh {label}: {batch} abandoned on spira-lc"));
@@ -4076,16 +4158,16 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text, token: Opt
         }
         w.out(format!("queue.sh {label}: {}: {state}", m.id));
     }
-    retire_menders(w, &c, batch, "round abandoned");
-    drop_record(w, &c, batch);
-    w.git.worktree_remove(&path, &worktree_of(&kv));
-    finish(w, &c, batch, End::Abandoned(cause), &reason);
+    retire_menders(w, c, batch, "round abandoned");
+    drop_record(w, c, batch);
+    w.git.worktree_remove(path, &worktree_of(kv));
+    finish(w, c, batch, End::Abandoned(cause), reason);
     stage::discard_behind(
         w,
-        &c,
-        &path,
+        c,
+        path,
         batch,
-        &format!("round {batch} was abandoned: {}", one_line(&reason)),
+        &format!("round {batch} was abandoned: {}", one_line(reason)),
     );
     landing_log(
         &c.s.run,
@@ -4093,12 +4175,15 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text, token: Opt
             "QUEUE ROUND-ABANDON {} repo={} batch={batch} reason={}",
             w.clock.now(),
             c.r.name,
-            one_line(&reason)
+            one_line(reason)
         ),
     );
     w.out(format!(
         "queue.sh {label}: round {batch} abandoned for {}",
         c.r.name
     ));
-    OK
+    match void_stacked(w, label, c, path, batch) {
+        Ok(()) => OK,
+        Err(rc) => rc,
+    }
 }
