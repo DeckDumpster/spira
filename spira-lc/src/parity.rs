@@ -44,18 +44,18 @@ fn argv(a: &[&str]) -> Vec<String> {
     a.iter().map(|s| s.to_string()).collect()
 }
 
-/// A JSON scalar as the dolt path renders it, and a JSON-text string as the value it holds, so
-/// the two stores' renderings of one answer are equal.
+/// A JSON scalar as the dolt path renders it, a JSON-text string as the value it holds, and a null
+/// field as an absent one, so the two stores' renderings of one answer are equal.
 pub fn normalize(v: &Value) -> Value {
     match v {
         Value::Bool(b) => Value::String(if *b { "1" } else { "0" }.into()),
         Value::Number(n) => Value::String(n.to_string()),
         Value::String(s) => match serde_json::from_str::<Value>(s) {
-            Ok(inner @ (Value::Object(_) | Value::Array(_) | Value::Null)) => normalize(&inner),
+            Ok(inner @ (Value::Object(_) | Value::Array(_) | Value::Null | Value::String(_))) => normalize(&inner),
             _ => v.clone(),
         },
         Value::Array(a) => Value::Array(a.iter().map(normalize).collect()),
-        Value::Object(o) => Value::Object(o.iter().map(|(k, v)| (k.clone(), normalize(v))).collect()),
+        Value::Object(o) => Value::Object(o.iter().map(|(k, v)| (k.clone(), normalize(v))).filter(|(_, v)| !v.is_null()).collect()),
         Value::Null => Value::Null,
     }
 }

@@ -10,6 +10,8 @@ fn the_dolt_rendering_and_the_typed_rendering_of_one_answer_are_equal() {
     let typed = json!([{"seq": 3, "applied": true, "at": 100, "evidence": {"Claim": {"holder": "d1"}}, "refusal": null}]);
     assert_eq!(normalize(&dolt), normalize(&typed));
     assert_ne!(normalize(&json!({"applied": "0"})), normalize(&json!({"applied": true})));
+    assert_eq!(normalize(&json!({"evidence": "\"Deliver\"", "sifted_tip": null})), normalize(&json!({"evidence": "Deliver"})));
+    assert_ne!(normalize(&json!({"tip": "a"})), normalize(&json!({"tip": null})));
 }
 
 #[test]
