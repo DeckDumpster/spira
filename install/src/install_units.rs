@@ -844,7 +844,7 @@ mod tests {
     fn the_reconciler_has_no_timer_in_the_manifest() {
         let m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
         assert!(!m.units.iter().any(|u| u.name.starts_with("spira-reconciler.")), "the runtime hosts the pass; its timer and service are retired");
-        assert!(m.units.iter().any(|u| u.name == "spira-reconciler-flow.timer"), "positive control: the flow pass is still a timer");
+        assert!(m.units.iter().any(|u| u.name == "spira-czar-pass.timer"), "positive control: the manifest still ships timers");
         assert!(!m.enable("prod").iter().any(|u| u == "spira-reconciler-prod.timer"));
     }
 
