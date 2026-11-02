@@ -1,4 +1,4 @@
-// covers: systemd/*.service systemd/*.timer install/src/values.rs
+// covers: systemd/*.service systemd/*.timer install/src/values.rs round-controller/Cargo.toml round-controller/src/main.rs
 use install::values::{render_file, HostValues};
 use std::path::{Path, PathBuf};
 
@@ -123,6 +123,26 @@ fn cert_sweep_passes_the_git_checkout_not_the_release_dir() {
         let t = raw(&format!("spira-cert-sweep-{u}.service"));
         assert!(t.lines().any(|l| l.starts_with("ExecStart=") && l.contains("cert-sweep pass") && l.contains("--repo @SPIRA_REPO@")), "cert-sweep-{u}");
     }
+}
+
+/// The program and first argument of a unit's ExecStart, the program by its basename.
+fn exec_verb(unit: &str) -> Option<(String, String)> {
+    let line = unit.lines().find_map(|l| l.strip_prefix("ExecStart="))?;
+    let mut words = line.split_whitespace();
+    let program = words.next()?.rsplit('/').next()?.to_string();
+    Some((program, words.next().unwrap_or("").to_string()))
+}
+
+#[test]
+fn the_sift_unit_execs_the_round_controllers_sifts_verb_which_the_workspace_builds() {
+    let pair = |a: &str, b: &str| Some((a.to_string(), b.to_string()));
+    assert_eq!(exec_verb("[Service]\nExecStart=@SPIRA_PROD_ROOT@/bin/batcher sifts\n"), pair("batcher", "sifts"), "positive control");
+    assert_eq!(exec_verb(&raw("spira-sift.service")), pair("round-controller", "sifts"));
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../round-controller");
+    let manifest = std::fs::read_to_string(crate_dir.join("Cargo.toml")).unwrap();
+    assert!(manifest.contains("[[bin]]\nname = \"round-controller\""), "the workspace builds no round-controller binary");
+    let main = std::fs::read_to_string(crate_dir.join("src/main.rs")).unwrap();
+    assert!(main.contains("[\"sifts\"] =>"), "round-controller dispatches no sifts verb");
 }
 
 #[test]

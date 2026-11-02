@@ -2,10 +2,11 @@
 
 A round is a resource with one owner and one store. This crate replaces the batcher, piece by
 piece: each later piece of the controller lands as a step of `pass`, behind its own scenario.
-Until the cutover it is **inert** — no unit, no timer, no install-manifest entry, no change to a
-shared verb's behaviour. The world sim's sim-only `round-controller` actor
-(`sim/actors.toml`, units under `sim/units/`, which nothing installs) is the only thing that
-runs it.
+Until the cutover only its `sifts` verb is installed: `spira-sift.service` runs it, and it
+screens the proto-round exactly as `batcher sifts` did. Every other verb is **inert** — no
+unit, no timer, no install-manifest entry, no change to a shared verb's behaviour. The world
+sim's sim-only `round-controller` actor (`sim/actors.toml`, units under `sim/units/`, which
+nothing installs) is the only thing that runs them.
 
 The Intent, Non-goals and Test strategy below are the approved design's, verbatim but for its dated attributions.
 

@@ -7,7 +7,7 @@ use crate::outcome::{Cause, Log, Outcome};
 use crate::slots::Pool;
 
 pub const COMPONENT: &str = "round-controller";
-pub const OPERATIONS: &[&str] = &["version", "pass"];
+pub const OPERATIONS: &[&str] = &["version", "pass", "sifts"];
 /// Runner slots held under a live lock, labelled by `pool`.
 pub const SLOTS_IN_USE: &str = "spira_round_controller_slots_in_use";
 /// Seconds a round waited GREEN before it landed, labelled by `repo`.

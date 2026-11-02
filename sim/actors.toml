@@ -25,7 +25,7 @@ duration = "land.land-local"
 
 [[actor]]
 name = "sift"
-command = "batcher sifts"
+command = "round-controller sifts"
 timer = "spira-sift.timer"
 duration = "land.phase.fences"
 

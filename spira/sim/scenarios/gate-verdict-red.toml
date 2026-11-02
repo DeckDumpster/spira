@@ -59,7 +59,7 @@ command = 'spira-config set spira.batcher_enable 1 "$SPIRA_TOML"'
 
 [[step]]
 at = 56000
-command = "batcher sifts"
+command = "round-controller sifts"
 
 [[step]]
 at = 60000
