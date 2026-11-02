@@ -16,7 +16,7 @@ use state_store::{
 use crate::{Options, SqliteBackend};
 
 pub const USAGE: &str = "usage: state-store-bench --path <db> --rate <txn/s> --duration-secs <n> \
-[--load-dir <dir> --load-mb-per-s <n>] [--mix reconciler|audited] [--json]\n       state-store-bench conformance --path <db>";
+[--load-dir <dir> --load-mb-per-s <n>] [--mix reconciler|audited] [--limit-ms <ms> [--min-secs <n>]] [--json]\n       state-store-bench conformance --path <db>";
 
 /// Keys the CAS load cycles through, so the store holds a working set rather than one row.
 const KEYS: u64 = 1_000;
@@ -86,6 +86,12 @@ pub struct CasArgs {
     pub load_mb_per_s: u64,
     pub mix: Mix,
     pub json: bool,
+    /// `--limit-ms`: the p99.9 the gate holds the store to. Given, the run stops as soon as
+    /// the verdict is settled (see [`decide`]); `--duration-secs` is then the most it runs.
+    pub limit_ms: Option<f64>,
+    /// `--min-secs`: the least a settled run lasts, so slow periodic writers on the disk (the
+    /// journal commit, a persist pass) are inside the window. Default 300.
+    pub min_secs: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -106,6 +112,8 @@ pub fn parse(args: &[String]) -> std::result::Result<Command, String> {
     let mut load_mb = None;
     let mut mix = Mix::Reconciler;
     let mut json = false;
+    let mut limit = None;
+    let mut min_secs = None;
     let mut it = rest.iter();
     while let Some(a) = it.next() {
         let mut val = |name: &str| {
@@ -121,6 +129,8 @@ pub fn parse(args: &[String]) -> std::result::Result<Command, String> {
             "--load-mb-per-s" if !conformance => load_mb = Some(val("--load-mb-per-s")?),
             "--mix" if !conformance => mix = Mix::parse(&val("--mix")?)?,
             "--json" if !conformance => json = true,
+            "--limit-ms" if !conformance => limit = Some(val("--limit-ms")?),
+            "--min-secs" if !conformance => min_secs = Some(val("--min-secs")?),
             other => return Err(format!("unknown argument {other}\n{USAGE}")),
         }
     }
@@ -148,6 +158,15 @@ pub fn parse(args: &[String]) -> std::result::Result<Command, String> {
         (None, Some(_)) => return Err(format!("--load-mb-per-s needs --load-dir\n{USAGE}")),
         (None, None) => 0,
     };
+    let limit_ms = match limit {
+        None => None,
+        Some(v) => Some(num("--limit-ms", Some(v))?),
+    };
+    let min_secs = match min_secs {
+        None => 300,
+        Some(_) if limit_ms.is_none() => return Err(format!("--min-secs needs --limit-ms\n{USAGE}")),
+        Some(v) => v.parse::<u64>().map_err(|_| format!("--min-secs must be a whole number of seconds, got {v}"))?,
+    };
     Ok(Command::Cas(CasArgs {
         path,
         rate,
@@ -156,6 +175,8 @@ pub fn parse(args: &[String]) -> std::result::Result<Command, String> {
         load_mb_per_s,
         mix,
         json,
+        limit_ms,
+        min_secs,
     }))
 }
 
@@ -166,6 +187,62 @@ pub struct Quantiles {
     pub p99_ms: f64,
     pub p999_ms: f64,
     pub max_ms: f64,
+    /// Samples slower than `--limit-ms` (0 without one).
+    pub exceed: u64,
+    pub ended: Ended,
+}
+
+/// How a run ended: the whole `--duration-secs`, or early once [`decide`] settled it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ended {
+    Full,
+    EarlyPass,
+    EarlyFail,
+}
+
+impl Ended {
+    pub fn name(self) -> &'static str {
+        match self {
+            Ended::Full => "full",
+            Ended::EarlyPass => "early-pass",
+            Ended::EarlyFail => "early-fail",
+        }
+    }
+}
+
+/// The share of samples a p99.9 at the limit lets exceed it.
+const TAIL: f64 = 0.001;
+/// How unlikely a settled verdict must be under "p99.9 is exactly at the limit".
+const ALPHA: f64 = 0.01;
+
+/// P(X <= k) for X ~ Poisson(lambda), summed in log space.
+fn poisson_cdf(k: u64, lambda: f64) -> f64 {
+    let (mut term, mut sum) = ((-lambda).exp(), 0.0);
+    for i in 0..=k {
+        if i > 0 {
+            term *= lambda / i as f64;
+        }
+        sum += term;
+    }
+    sum.min(1.0)
+}
+
+/// Whether `exceed` slow samples out of `n` already settle "p99.9 is under the limit"
+/// (EarlyPass) or "over it" (EarlyFail): a sequential test against a p99.9 exactly at the
+/// limit, where the count of slow samples is Poisson(n x 0.001). Too few to be chance is a
+/// pass, too many a fail; in between, keep sampling. None: not settled.
+pub fn decide(n: u64, exceed: u64) -> Option<Ended> {
+    let lambda = n as f64 * TAIL;
+    if lambda < 1.0 {
+        return None;
+    }
+    if exceed > 0 && 1.0 - poisson_cdf(exceed - 1, lambda) < ALPHA {
+        return Some(Ended::EarlyFail);
+    }
+    if poisson_cdf(exceed, lambda) < ALPHA {
+        return Some(Ended::EarlyPass);
+    }
+    None
 }
 
 /// Nearest-rank quantiles of `ms`; all zero for no samples.
@@ -184,6 +261,8 @@ pub fn quantiles(ms: &mut [f64]) -> Quantiles {
         p99_ms: rank(0.99),
         p999_ms: rank(0.999),
         max_ms: ms.last().copied().unwrap_or(0.0),
+        exceed: 0,
+        ended: Ended::Full,
     }
 }
 
@@ -194,6 +273,9 @@ pub fn report(q: &Quantiles, a: &CasArgs) -> serde_json::Value {
         "p99_ms": q.p99_ms,
         "p999_ms": q.p999_ms,
         "max_ms": q.max_ms,
+        "exceed": q.exceed,
+        "limit_ms": a.limit_ms,
+        "ended": q.ended.name(),
         "rate": a.rate,
         "duration_secs": a.duration_secs,
         "load_mb_per_s": a.load_mb_per_s,
@@ -267,15 +349,43 @@ pub fn run_cas(a: &CasArgs) -> std::result::Result<Quantiles, String> {
     let mut samples = Vec::with_capacity(total as usize);
     let start = Instant::now();
     let mut failed = None;
+    let (mut exceed, mut ended) = (0u64, Ended::Full);
+    let mut next_report = Duration::from_secs(60);
     for i in 0..total {
         let due = start + every.mul_f64(i as f64);
         if let Some(wait) = due.checked_duration_since(Instant::now()) {
             std::thread::sleep(wait);
         }
         match commit(&c, a.mix, i, &run) {
-            Ok(()) => samples.push(due.elapsed().as_secs_f64() * 1_000.0),
+            Ok(()) => {
+                let ms = due.elapsed().as_secs_f64() * 1_000.0;
+                if a.limit_ms.is_some_and(|l| ms > l) {
+                    exceed += 1;
+                }
+                samples.push(ms);
+            }
             Err(e) => {
                 failed = Some(e);
+                break;
+            }
+        }
+        let elapsed = start.elapsed();
+        if elapsed >= next_report {
+            next_report += Duration::from_secs(60);
+            let q = quantiles(&mut samples.clone());
+            eprintln!(
+                "state-store-bench: {}s samples={} p50={:.3}ms p99={:.3}ms p99.9={:.3}ms max={:.3}ms exceed={exceed}",
+                elapsed.as_secs(),
+                q.samples,
+                q.p50_ms,
+                q.p99_ms,
+                q.p999_ms,
+                q.max_ms
+            );
+        }
+        if a.limit_ms.is_some() && elapsed.as_secs() >= a.min_secs {
+            if let Some(e) = decide(samples.len() as u64, exceed) {
+                ended = e;
                 break;
             }
         }
@@ -290,7 +400,12 @@ pub fn run_cas(a: &CasArgs) -> std::result::Result<Quantiles, String> {
     }
     match failed {
         Some(e) => Err(e),
-        None => Ok(quantiles(&mut samples)),
+        None => {
+            let mut q = quantiles(&mut samples);
+            q.exceed = exceed;
+            q.ended = ended;
+            Ok(q)
+        }
     }
 }
 
@@ -352,6 +467,37 @@ mod tests {
     }
 
     #[test]
+    fn a_tail_far_over_the_limit_fails_early_and_one_far_under_passes_early() {
+        // 15,000 samples: a p99.9 exactly at the limit lets ~15 exceed it.
+        assert_eq!(decide(15_000, 40), Some(Ended::EarlyFail));
+        assert_eq!(decide(15_000, 2), Some(Ended::EarlyPass));
+        assert_eq!(decide(15_000, 15), None, "a count consistent with the limit keeps sampling");
+    }
+
+    #[test]
+    fn too_few_samples_settle_nothing_however_slow() {
+        assert_eq!(decide(500, 500), None);
+        assert_eq!(decide(0, 0), None);
+    }
+
+    #[test]
+    fn the_settled_thresholds_match_a_poisson_tail_at_one_in_a_thousand() {
+        // lambda = 15: P(X <= 6) ~ 0.0076 (pass), P(X <= 7) ~ 0.018 (not yet);
+        // P(X >= 26) ~ 0.0062 (fail), P(X >= 25) ~ 0.0112 (not yet).
+        assert_eq!(decide(15_000, 6), Some(Ended::EarlyPass));
+        assert_eq!(decide(15_000, 7), None);
+        assert_eq!(decide(15_000, 26), Some(Ended::EarlyFail));
+        assert_eq!(decide(15_000, 25), None);
+    }
+
+    #[test]
+    fn a_limit_is_parsed_with_its_minimum_window_and_a_window_alone_is_refused() {
+        let got = parse(&args(&["--path", "p", "--rate", "50", "--duration-secs", "1800", "--limit-ms", "20", "--min-secs", "120"])).unwrap();
+        assert!(matches!(got, Command::Cas(CasArgs { limit_ms: Some(l), min_secs: 120, .. }) if l == 20.0));
+        assert!(parse(&args(&["--path", "p", "--rate", "50", "--duration-secs", "9", "--min-secs", "5"])).is_err());
+    }
+
+    #[test]
     fn the_cas_mode_takes_named_arguments_and_the_load_needs_both_halves() {
         let got = parse(&args(&[
             "--path",
@@ -373,6 +519,8 @@ mod tests {
                 load_mb_per_s: 0,
                 mix: Mix::Reconciler,
                 json: true,
+                limit_ms: None,
+                min_secs: 300,
             })
         );
         let load = parse(&args(&[
