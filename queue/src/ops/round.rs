@@ -1350,7 +1350,7 @@ fn open(
     let mut below = parent.as_ref().map(|(p, _, _)| p.clone());
     let mut seen: Vec<String> = Vec::new();
     while let Some(p) = below.take().filter(|p| !seen.contains(p)) {
-        let Some((_, kv)) = open_now.iter().find(|(_, kv)| kv.get("batch_id") == Some(p.as_str())) else {
+        let Some(kv) = open_now.iter().find(|kv| kv.get("batch_id") == Some(p.as_str())) else {
             break;
         };
         if let Some(why) = unstackable(w, kv) {
@@ -3909,10 +3909,12 @@ fn settle_parent(
             phead
         }
         Ok(None) if w.git.is_ancestor(path, &stacked_on, base_now) => {
+            settled_parent(w, c, &parent);
             kv.remove("parent");
             return None;
         }
         Ok(None) => {
+            settled_parent(w, c, &parent);
             kv.remove("parent");
             base_now.to_string()
         }
@@ -4077,11 +4079,13 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text, token: Opt
 /// does not shield it: a pass its holder runs on that tree is void whoever holds it. The caller
 /// holds the queue lock; `Err` when any could not be voided.
 fn void_stacked(w: &World, label: &str, c: &Ctx, path: &Path, parent: &str) -> Result<(), i32> {
-    let children: Vec<Kv> = live_records(w, c, keep)
-        .into_iter()
-        .map(|(_, kv)| kv)
-        .filter(|kv| kv.get("parent") == Some(parent))
-        .collect();
+    let children: Vec<Kv> = match live_records(w, c) {
+        Ok(open) => open.into_iter().filter(|kv| kv.get("parent") == Some(parent)).collect(),
+        Err(e) => {
+            w.err(format!("queue.sh {label}: cannot tell which rounds are stacked on the closed round {parent}: {e} — void them by hand"));
+            return Err(FAIL);
+        }
+    };
     let mut rc = Ok(());
     for kv in children {
         let child = kv.get("batch_id").unwrap_or("?").to_string();
