@@ -307,17 +307,16 @@ impl World {
                 ("SPIRA_CONCIERGE_INBOX", &inbox),
             ],
         );
-        let mut repos = Vec::new();
-        for (n, p, l) in self.rows() {
-            repos.push((format!("repo.{n}.mode"), l.to_string()));
-            repos.push((format!("repo.{n}.path"), p));
-            repos.push((format!("repo.{n}.base"), "local/main".to_string()));
+        let repo = self.repo.display().to_string();
+        spira_config::set_paths_in_file(&toml, &[("repo.spira.path", repo.as_str())]).unwrap();
+        let mut text = fs::read_to_string(&toml).unwrap();
+        for (n, p, l) in self.rows().into_iter().filter(|(n, ..)| *n != "spira") {
+            text.push_str(&format!(
+                "\n[repo.{n}]\npath = \"{p}\"\nmode = \"{l}\"\nbase = \"local/main\"\n"
+            ));
         }
-        let pairs: Vec<(&str, &str)> = repos
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
-        spira_config::set_paths_in_file(&toml, &pairs).unwrap();
+        spira_config::validate(&text).unwrap();
+        fs::write(&toml, text).unwrap();
         vec![
             ("SPIRA_TOML".into(), s(toml)),
             ("SPIRA_HOME".into(), s(self.home.clone())),
