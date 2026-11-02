@@ -296,6 +296,52 @@ fn intent_apply_moves_a_knob_from_to_once_and_acks_in_the_same_txn() {
 }
 
 #[test]
+fn an_absent_knob_is_null_so_a_step_from_null_creates_it_once() {
+    let r = rig();
+    let token = r.lock();
+    let knob = "knobs/Probe/a/concurrency";
+    let put = |id: &str, from: Value, to: Value| {
+        let key = format!("intents/Probe/a/{id}");
+        r.ok(&["intent", "put", &key, "--token", &token, "--actor", "reconciler"], Some(&intent(id, &token, from, to)));
+        key
+    };
+    let apply = |key: &str| r.ok(&["intent", "apply", key, "--knob", knob, "--actor", "probe"], None);
+
+    let stale = put("1", json!(2), json!(3));
+    assert_eq!(apply(&stale)["ack"]["result"], json!({ "refused": { "reason": "stale", "stale": null } }));
+    assert!(r.store.get(knob).unwrap().is_none(), "a refused step creates nothing");
+
+    let held = json!({ "lifted_by": "reconciler" });
+    let create = put("2", Value::Null, held.clone());
+    assert_eq!(apply(&create)["ack"]["result"], "applied");
+    assert_eq!(r.knob(knob), held);
+    let again = put("3", Value::Null, held.clone());
+    assert_eq!(apply(&again)["ack"]["result"], "already-applied");
+}
+
+#[test]
+fn knob_init_sets_an_owners_knob_once_and_answers_an_existing_one_as_it_stands() {
+    let r = rig();
+    let knob = "knobs/Probe/a/concurrency";
+    let init = |v: Value| r.ok(&["intent", "knob-init", knob, "--actor", "probe", "--json", &v.to_string()], None);
+    let first = init(json!(2));
+    assert_eq!((first["initialized"].clone(), first["value"].clone()), (json!(true), json!(2)));
+    let rev = r.store.get(knob).unwrap().unwrap().mod_rev;
+    let second = init(json!(5));
+    assert_eq!((second["initialized"].clone(), second["value"].clone()), (json!(false), json!(2)));
+    assert_eq!(r.store.get(knob).unwrap().unwrap().mod_rev, rev, "an existing knob is not written");
+
+    let body = json!(1).to_string();
+    let refused = |args: &[&str]| r.refused(args, None);
+    assert_eq!(refused(&["intent", "knob-init", knob, "--actor", "reconciler", "--json", &body]), "actor");
+    assert_eq!(refused(&["intent", "knob-init", "knobs/Probe/a", "--actor", "probe", "--json", &body]), "knob");
+    assert_eq!(refused(&["intent", "knob-init", "lifecycle/sp-a/x", "--actor", "probe", "--json", &body]), "knob");
+    assert_eq!(refused(&["intent", "knob-init", "knobs/Warp/a/x", "--actor", "probe", "--json", &body]), "kind");
+    assert_eq!(refused(&["intent", "knob-init", "knobs/Probe/b/x", "--actor", "probe", "--json", "{"]), "body");
+    assert!(r.store.get("knobs/Probe/b/x").unwrap().is_none());
+}
+
+#[test]
 fn freshness_is_age_against_max_age_and_generation_lag_reads_apart() {
     let r = rig();
     r.publish(&status("a", 0, NOW));

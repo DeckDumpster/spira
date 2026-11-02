@@ -1,0 +1,108 @@
+description = "with no intents present, pass decides exactly what it decides without the intents and section steps: the stuck parent is re-driven, the stack lands lowest first, the next round is cut on the new landing ref, and every verb call and line but the section's own is the same in both runs"
+repos = ["lane"]
+same_without = ["intents", "section"]
+
+[run]
+epoch = 1800000000
+passes = 26
+every_secs = 610
+
+[lease]
+ttl_secs = 20000
+pass_wall_max_secs = 20000
+redrive_retries = 3
+ec2_max_lifetime_secs = 3600
+
+[lease.deadline_secs]
+boot = 600
+build = 600
+suites = 600
+subpass = 600
+certify = 600
+
+[[store]]
+key = "lanes/lane"
+data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
+
+[[git]]
+repo = "lane"
+landing = "base-0"
+
+[[store]]
+key = "batches/lane/p1"
+data = { batch_id = "p1", repo = "lane", state = "Attributing", head = "p1-h1", base = "base-0", pass = 1, version = 4, tested_base = "base-0", members = [{ id = "sp-a", tip = "a1" }], last_lease_token = { main = 7, sub = 0 } }
+
+[[store]]
+key = "batches/lane/c1"
+data = { batch_id = "c1", repo = "lane", state = "Green", parent = "p1", head = "c1-h1", base = "p1-h1", pass = 1, version = 3, tested_base = "p1-h1", members = [{ id = "sp-b", tip = "b1" }], last_lease_token = { main = 8, sub = 0 } }
+
+[[store]]
+key = "lifecycle/sp-d"
+data = { repo = "lane", state = "CERTIFIED", tip = "d1" }
+
+[[slot]]
+repo = "lane"
+n = 0
+
+[[unit]]
+name = "round-controller-run-p1-7-0"
+state = "inactive"
+
+[[launch]]
+ok = true
+
+[[lease_release]]
+repo = "lane"
+batch = "p1"
+secs = 14020
+
+[[store_step]]
+pass = 24
+key = "batches/lane/p1"
+data = { batch_id = "p1", repo = "lane", state = "Green", head = "p1-h1", base = "base-0", pass = 2, version = 7, tested_base = "base-0", members = [{ id = "sp-a", tip = "a1" }] }
+
+[[verb]]
+verb = "land"
+batch = "p1"
+ok = {}
+
+[[verb]]
+verb = "land"
+batch = "c1"
+ok = {}
+
+[[verb]]
+verb = "open"
+repo = "lane"
+ok = { batch = "lane-r1", head = "lane-h1" }
+
+[[expect]]
+name = "the-parent-is-re-driven-once"
+count = "outcomes:redriven:p1"
+equals = 1
+
+[[expect]]
+name = "both-land"
+count = "outcomes:landed"
+equals = 2
+
+[[expect]]
+name = "the-next-round-is-cut-once-the-stack-lands"
+count = "calls:open"
+equals = 1
+
+[[expect]]
+name = "no-intent-is-acked"
+count = "outcomes:acked"
+equals = 0
+
+[[expect]]
+name = "the-section-is-published"
+count = "section-writes"
+at_most = 26
+
+[[expect]]
+name = "inverted-no-section"
+count = "section-writes"
+equals = 0
+inverted = true

@@ -55,6 +55,12 @@ pub enum Refusal {
         batch: Option<String>,
         refusal: VerbRefusal,
     },
+    /// spira-lc refused a section or intent write: the field it names and the rule it broke.
+    Admission {
+        key: String,
+        field: String,
+        rule: String,
+    },
 }
 
 impl Refusal {
@@ -70,6 +76,7 @@ impl Refusal {
             Refusal::BadMembers { .. } => "bad-members",
             Refusal::Unreadable { .. } => "unreadable",
             Refusal::Verb { .. } => "verb-refused",
+            Refusal::Admission { .. } => "admission-refused",
         }
     }
 
@@ -85,6 +92,7 @@ impl Refusal {
             | Refusal::StackFull { key }
             | Refusal::BadMembers { key }
             | Refusal::Unreadable { key, .. } => key.clone(),
+            Refusal::Admission { key, field, .. } => format!("{key}#{field}"),
             Refusal::Verb { batch, refusal } => format!(
                 "verb/{}/{}/{}",
                 refusal.verb.word(),
@@ -114,6 +122,9 @@ impl std::fmt::Display for Refusal {
                 refusal.verb.word(),
                 refusal.text
             ),
+            Refusal::Admission { key, field, rule } => {
+                write!(f, "spira-lc refused {key}: {field}: {rule}")
+            }
             r => write!(f, "{} {}", r.word(), r.key()),
         }
     }
@@ -175,6 +186,7 @@ pub fn note(p: &Ports, repo: &str, step: &str, r: Option<&Refusal>) {
             refusal.verb,
             &Err(refusal.clone()),
         ),
+        Refusal::Admission { rule, .. } => Outcome::refused_write(at, repo, &r.key(), rule),
         r => Outcome::declined(at, repo, r.word(), &r.key()),
     });
 }

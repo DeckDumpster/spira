@@ -1,0 +1,113 @@
+description = "the reconciler's steps on the section are applied once and acked in the same txn: concurrency 2→3 is applied, the same step re-presented acks already-applied, a stale from acks refused{stale: 3}, steps outside ±1 or past the slot budget are refused with their bound, and a hold-member keeps that member at that tip out of the next cut"
+repos = ["lane"]
+
+[run]
+epoch = 1800000000
+passes = 6
+every_secs = 30
+
+# Three runner slots: the one Proxmox slot and two on EC2.
+[slots]
+spill = "ec2"
+ec2 = 2
+
+[[store]]
+key = "lanes/lane"
+data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
+
+[[slot]]
+repo = "lane"
+n = 0
+
+[[store_step]]
+pass = 1
+key = "intents/RoundController/lane/i1"
+ttl_secs = 172800
+data = { id = "i1", action = "concurrency", target = "knobs/RoundController/lane/concurrency", from = 2, to = 3, moves = "waiting_with_no_slot", baseline = 1.0, expected_effect = -1.0, horizon = "1h", addresses = ["SlotsSaturated"], taken_at = "2027-01-15T08:00:00Z", by = { pass = "p-1", lock_token = "5.0" } }
+
+[[store_step]]
+pass = 2
+key = "intents/RoundController/lane/i2"
+ttl_secs = 172800
+data = { id = "i2", action = "concurrency", target = "knobs/RoundController/lane/concurrency", from = 2, to = 3, moves = "waiting_with_no_slot", baseline = 1.0, expected_effect = -1.0, horizon = "1h", addresses = ["SlotsSaturated"], taken_at = "2027-01-15T08:00:30Z", by = { pass = "p-2", lock_token = "5.0" } }
+
+[[store_step]]
+pass = 3
+key = "intents/RoundController/lane/i3"
+ttl_secs = 172800
+data = { id = "i3", action = "concurrency", target = "knobs/RoundController/lane/concurrency", from = 1, to = 2, moves = "waiting_with_no_slot", baseline = 1.0, expected_effect = 1.0, horizon = "1h", addresses = ["SlotsSaturated"], taken_at = "2027-01-15T08:01:00Z", by = { pass = "p-3", lock_token = "5.0" } }
+
+[[store_step]]
+pass = 3
+key = "intents/RoundController/lane/i4"
+ttl_secs = 172800
+data = { id = "i4", action = "concurrency", target = "knobs/RoundController/lane/concurrency", from = 3, to = 5, moves = "waiting_with_no_slot", baseline = 1.0, expected_effect = -1.0, horizon = "1h", addresses = ["SlotsSaturated"], taken_at = "2027-01-15T08:01:00Z", by = { pass = "p-3", lock_token = "5.0" } }
+
+[[store_step]]
+pass = 3
+key = "intents/RoundController/lane/i5"
+ttl_secs = 172800
+data = { id = "i5", action = "concurrency", target = "knobs/RoundController/lane/concurrency", from = 3, to = 4, moves = "waiting_with_no_slot", baseline = 1.0, expected_effect = -1.0, horizon = "1h", addresses = ["SlotsSaturated"], taken_at = "2027-01-15T08:01:00Z", by = { pass = "p-3", lock_token = "5.0" } }
+
+# The pool fills, and the hold on sp-a at a1 lands in the same pass, before the cut.
+[[store_step]]
+pass = 4
+key = "lifecycle/sp-a"
+data = { repo = "lane", state = "CERTIFIED", tip = "a1" }
+
+[[store_step]]
+pass = 4
+key = "lifecycle/sp-b"
+data = { repo = "lane", state = "CERTIFIED", tip = "b1" }
+
+[[store_step]]
+pass = 4
+key = "intents/RoundController/lane/i6"
+ttl_secs = 172800
+json = '{ "id": "i6", "action": "hold-member", "target": "knobs/RoundController/lane/hold/sp-a/a1", "from": null, "to": { "lifted_by": "reconciler" }, "moves": "repeat_identity_open", "baseline": 1.0, "expected_effect": -1.0, "horizon": "10m", "addresses": ["RepeatIdentity"], "taken_at": "2027-01-15T08:01:30Z", "by": { "pass": "p-4", "lock_token": "5.0" } }'
+
+[[verb]]
+verb = "open"
+repo = "lane"
+ok = { batch = "lane-r1", head = "lane-h1" }
+
+[[expect]]
+name = "concurrency-and-the-hold-applied-once-each"
+count = "acks:applied"
+equals = 2
+
+[[expect]]
+name = "the-re-presented-step-acks-already-applied"
+count = "acks:already-applied"
+equals = 1
+
+[[expect]]
+name = "the-stale-step-and-both-unbounded-steps-refused"
+count = "acks:refused"
+equals = 3
+
+[[expect]]
+name = "the-stale-step-names-the-knob-at-3"
+count = "acks-stale:3"
+equals = 1
+
+[[expect]]
+name = "one-round-cut"
+count = "calls:open"
+equals = 1
+
+[[expect]]
+name = "the-held-member-is-out-of-the-cut"
+count = "opened-with:sp-a"
+equals = 0
+
+[[expect]]
+name = "the-unheld-member-is-cut"
+count = "opened-with:sp-b"
+equals = 1
+
+[[expect]]
+name = "inverted-the-held-member-was-cut"
+count = "opened-with:sp-a"
+equals = 1
+inverted = true

@@ -1,11 +1,13 @@
 //! `RoundController`: one repo's rounds, written by the round controller. The reconciler's
 //! design owns this schema; the controller owns the publisher, its actions and its applier.
 
+use std::collections::BTreeMap;
+
 use serde::Deserialize;
 use serde_json::Value;
 
 use super::{typed, ConditionDecl, FieldShape, SchemaError, SectionKind};
-use crate::section::{Numeric, Target};
+use crate::section::{Numeric, Target, Windowed};
 
 pub const NAME: &str = "RoundController";
 pub const OWNER: &str = "round-controller";
@@ -14,6 +16,8 @@ pub const STACKED_ON_UNDRIVEN_PARENT: &str = "StackedOnUndrivenParent";
 pub const REPEAT_IDENTITY: &str = "RepeatIdentity";
 pub const SLOTS_SATURATED: &str = "SlotsSaturated";
 pub const LANE_BLOCKED: &str = "LaneBlocked";
+pub const HALTED: &str = "Halted";
+pub const STOPPED: &str = "Stopped";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -21,6 +25,10 @@ pub const LANE_BLOCKED: &str = "LaneBlocked";
 pub struct Spec {
     pub green_lands_within: Option<Target<String>>,
     pub repeat_identity_open: Option<Target<f64>>,
+    pub waiting_with_no_slot: Option<Target<f64>>,
+    pub lanes_blocked: Option<Target<f64>>,
+    /// The stack depth the repo is run at.
+    pub concurrency: Option<Target<f64>>,
 }
 
 #[derive(Deserialize)]
@@ -33,6 +41,16 @@ pub struct Status {
     pub waiting_with_no_slot: Option<Numeric>,
     pub rounds_since_landing: Option<Numeric>,
     pub lanes_blocked: Option<Numeric>,
+    /// Non-terminal rounds by lifecycle state.
+    pub rounds: Option<BTreeMap<String, u64>>,
+    pub leased: Option<Vec<Value>>,
+    pub orphans: Option<Vec<Value>>,
+    pub orphans_not_redriven: Option<Numeric>,
+    pub lane_faults: Option<Vec<Value>>,
+    pub slots: Option<Vec<Value>>,
+    pub stack_depth: Option<Numeric>,
+    pub repeat_identity_passes_24h: Option<Windowed>,
+    pub judge_passes_24h: Option<Windowed>,
 }
 
 fn check_spec(v: &Value) -> Result<(), SchemaError> {
@@ -63,6 +81,14 @@ pub const KIND: SectionKind = SectionKind {
             type_: LANE_BLOCKED,
             page_on_raise: true,
         },
+        ConditionDecl {
+            type_: HALTED,
+            page_on_raise: false,
+        },
+        ConditionDecl {
+            type_: STOPPED,
+            page_on_raise: false,
+        },
     ],
     fields: &[
         ("green_unlanded", FieldShape::List),
@@ -71,6 +97,15 @@ pub const KIND: SectionKind = SectionKind {
         ("waiting_with_no_slot", FieldShape::Numeric),
         ("rounds_since_landing", FieldShape::Numeric),
         ("lanes_blocked", FieldShape::Numeric),
+        ("rounds", FieldShape::List),
+        ("leased", FieldShape::List),
+        ("orphans", FieldShape::List),
+        ("orphans_not_redriven", FieldShape::Numeric),
+        ("lane_faults", FieldShape::List),
+        ("slots", FieldShape::List),
+        ("stack_depth", FieldShape::Numeric),
+        ("repeat_identity_passes_24h", FieldShape::Windowed),
+        ("judge_passes_24h", FieldShape::Windowed),
     ],
     check_spec,
     check_status,
@@ -127,9 +162,9 @@ mod tests {
 
     #[test]
     fn a_field_the_kind_does_not_declare_is_refused_by_name() {
-        let v = section(json!({ "observedGeneration": 0, "stack_depth": { "value": 2.0, "window": "level" } }));
+        let v = section(json!({ "observedGeneration": 0, "wedgedness": { "value": 2.0, "window": "level" } }));
         let r = admit_publish(&parse_section(&v).unwrap()).unwrap_err();
         assert!(r.field.starts_with("status"), "{r:?}");
-        assert!(r.rule.contains("stack_depth"), "{r:?}");
+        assert!(r.rule.contains("wedgedness"), "{r:?}");
     }
 }

@@ -12,6 +12,10 @@ pub const OPERATIONS: &[&str] = &["version", "pass"];
 pub const SLOTS_IN_USE: &str = "spira_round_controller_slots_in_use";
 /// Seconds a round waited GREEN before it landed, labelled by `repo`.
 pub const GREEN_TO_LANDED: &str = "spira_round_controller_green_to_landed_seconds";
+/// The oldest GREEN round's wait in minutes, as the repo's section last published it.
+pub const GREEN_UNLANDED_MINUTES: &str = "spira_round_controller_green_unlanded_minutes";
+/// Planner passes over the trailing 24 h on an identity that already held a verdict.
+pub const REPEAT_IDENTITY_PASSES: &str = "spira_round_controller_repeat_identity_passes_24h";
 
 pub fn sink() -> MetricsSink {
     metrics::sink_for(
@@ -52,14 +56,31 @@ pub struct DwellLog<'a> {
 impl Log for DwellLog<'_> {
     fn write(&self, o: &Outcome) {
         self.inner.write(o);
-        if let Cause::Dwell { ms } = o.cause {
-            self.sink.push(
+        match o.cause {
+            Cause::Dwell { ms } => self.sink.push(
                 &[Point::Seconds {
                     name: GREEN_TO_LANDED,
                     value: ms as f64 / 1000.0,
                 }],
                 &[("repo", o.repo.as_str())],
-            );
+            ),
+            Cause::Section {
+                green_unlanded_minutes,
+                repeat_identity_passes_24h,
+            } => self.sink.push(
+                &[
+                    Point::Gauge {
+                        name: GREEN_UNLANDED_MINUTES,
+                        value: green_unlanded_minutes as f64,
+                    },
+                    Point::Gauge {
+                        name: REPEAT_IDENTITY_PASSES,
+                        value: repeat_identity_passes_24h as f64,
+                    },
+                ],
+                &[("repo", o.repo.as_str())],
+            ),
+            _ => {}
         }
     }
 }
@@ -129,6 +150,28 @@ mod tests {
             (dwell[0].label("repo"), dwell[0].value.to_string()),
             (Some("lane"), "90".to_string())
         );
+    }
+
+    #[test]
+    fn a_published_section_pushes_its_green_wait_and_repeat_passes_by_repo() {
+        let mem = crate::outcome::MemLog::default();
+        let ((), got) = fixture::capture(|s| {
+            let log = DwellLog {
+                sink: s,
+                inner: &mem,
+            };
+            log.write(&Outcome::published(0, "lane", 12, 3));
+            log.write(&Outcome::acked(0, "lane", "intents/RoundController/lane/1", "applied"));
+        });
+        assert_eq!(mem.outcomes().len(), 2);
+        let of = |name: &str| -> Vec<(Option<&str>, String)> {
+            got.iter()
+                .filter(|c| c.name == name)
+                .map(|c| (c.label("repo"), c.value.to_string()))
+                .collect()
+        };
+        assert_eq!(of(GREEN_UNLANDED_MINUTES), [(Some("lane"), "12".to_string())]);
+        assert_eq!(of(REPEAT_IDENTITY_PASSES), [(Some("lane"), "3".to_string())]);
     }
 
     #[test]

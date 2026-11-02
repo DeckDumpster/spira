@@ -12,7 +12,7 @@ name = "round-controller"
 path = "src/main.rs"
 
 [features]
-sim = ["dep:toml"]
+sim = ["dep:toml", "dep:spira-lc"]
 
 [dependencies]
 batcher = { path = "../batcher" }
@@ -20,6 +20,8 @@ lifecycle = { path = "../lifecycle" }
 migration-numbers = { path = "../migration-numbers" }
 runtime = { path = "../runtime" }
 spira-config = { path = "../spira-config" }
+spira-desired-state = { path = "../desired-state" }
+spira-lc = { path = "../spira-lc", optional = true }
 spira-otel = { path = "../spira-otel" }
 state-store = { path = "../state-store" }
 serde = { version = "1", features = ["derive"] }

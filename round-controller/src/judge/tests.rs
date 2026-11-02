@@ -404,6 +404,8 @@ fn ports<'a>(
         git: &crate::sim::git::NO_GIT,
         leases: &w.leases,
         slots: &w.slots,
+        lc: &crate::real::Unserved,
+        switches: &crate::sim::NoSwitches,
     }
 }
 

@@ -21,6 +21,7 @@ use crate::sim::judge::{FakeLedger, JudgeCount, JudgeRun, JudgeSpec};
 use crate::sim::ledger::{self as sim_ledger, IdentitySpec, LedgerConfig, LedgerStep};
 use crate::sim::run_pass::{self, Advance, RunOutcome, RunPassSpec};
 use crate::sim::runner::{Runner, RunnerScript};
+use crate::sim::sections::SectionCount;
 use crate::sim::slot_user::{most_at_once, SlotUser, SlotUserScript};
 use crate::sim::verbs::{Call, FakeVerbs, VerbScript};
 use crate::sim::vm::{FakeVm, VmScript};
@@ -86,9 +87,26 @@ pub struct RunSpec {
 #[serde(deny_unknown_fields)]
 pub struct StoreSeed {
     pub key: String,
-    pub data: toml::Value,
+    #[serde(default)]
+    pub data: Option<toml::Value>,
+    /// The value as JSON, for one TOML cannot spell (a `null`).
+    #[serde(default)]
+    pub json: Option<String>,
     #[serde(default)]
     pub ttl_secs: Option<u64>,
+}
+
+/// A seed's value: exactly one of `data` and `json`.
+fn seed_value(
+    key: &str,
+    data: &Option<toml::Value>,
+    json: &Option<String>,
+) -> Result<serde_json::Value, String> {
+    match (data, json) {
+        (Some(d), None) => Ok(serde_json::to_value(d).expect("a TOML value is JSON")),
+        (None, Some(j)) => serde_json::from_str(j).map_err(|e| format!("{key}: json: {e}")),
+        _ => Err(format!("{key}: a seed is exactly one of data and json")),
+    }
 }
 
 /// `[[slot]]`: a runner slot the harness holds for `repo`, standing in for the schedule step
@@ -137,7 +155,12 @@ pub struct LeaseRelease {
 pub struct StoreStep {
     pub pass: u32,
     pub key: String,
-    pub data: toml::Value,
+    #[serde(default)]
+    pub data: Option<toml::Value>,
+    #[serde(default)]
+    pub json: Option<String>,
+    #[serde(default)]
+    pub ttl_secs: Option<u64>,
 }
 
 fn proxmox() -> String {
@@ -211,6 +234,8 @@ pub enum Count {
     LiveLocks(String),
     /// `rounds:<STATE>`: round records in that lifecycle state once the last pass has run.
     Rounds(String),
+    /// What the section and its intents came to (`section-*`, `acks:<result>`).
+    Section(SectionCount),
 }
 
 impl Count {
@@ -296,7 +321,9 @@ impl Count {
             ("rounds", Some(w)) if lifecycle::batch::BatchState::from_str(w).is_some() => {
                 Some(Count::Rounds(w.to_string()))
             }
-            _ => JudgeCount::parse(s).map(Count::Judge),
+            _ => SectionCount::parse(what, of)
+                .map(Count::Section)
+                .or_else(|| JudgeCount::parse(s).map(Count::Judge)),
         }
     }
 }
@@ -495,6 +522,10 @@ struct File {
     git: Vec<GitSeed>,
     #[serde(default)]
     lease_release: Vec<LeaseRelease>,
+    /// Steps whose removal must leave every decision as it was: the scenario is run again
+    /// without them, its expectations aside, and the two runs' verb calls and lines compared.
+    #[serde(default)]
+    same_without: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -533,6 +564,7 @@ pub struct Scenario {
     pub run_passes: Vec<RunPassSpec>,
     pub git: Vec<GitSeed>,
     pub lease_releases: Vec<LeaseRelease>,
+    pub same_without: Vec<String>,
 }
 
 pub fn parse(text: &str) -> Result<Scenario, String> {
@@ -542,6 +574,19 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
         .map_err(|e| format!("scenario: {e}"))?;
     if let Some(j) = &f.judge {
         j.check().map_err(|e| format!("scenario: {e}"))?;
+    }
+    for s in &f.store {
+        seed_value(&s.key, &s.data, &s.json).map_err(|e| format!("scenario: store {e}"))?;
+    }
+    for s in &f.store_step {
+        seed_value(&s.key, &s.data, &s.json).map_err(|e| format!("scenario: store_step {e}"))?;
+    }
+    if let Some(w) = f
+        .same_without
+        .iter()
+        .find(|w| !crate::pass::STEPS.iter().any(|s| s.name == w.as_str()))
+    {
+        return Err(format!("scenario: same_without names {w:?}, which is no step of pass"));
     }
     for r in &f.run_pass {
         r.check().map_err(|e| format!("scenario: {e}"))?;
@@ -634,6 +679,7 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
         run_passes: f.run_pass,
         git: f.git,
         lease_releases: f.lease_release,
+        same_without: f.same_without,
     })
 }
 
@@ -644,6 +690,9 @@ pub struct Report {
     pub calls: Vec<Call>,
     /// What each inverted expectation said when it failed, as it must.
     pub controls: Vec<String>,
+    /// Every verb call and every line but the section's and its acks': what the controller
+    /// decided.
+    pub decisions: Vec<String>,
 }
 
 pub fn run(sc: &Scenario, profile: &Profile, seed: u64) -> Result<Report, String> {
@@ -668,7 +717,7 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
     let mut b = Bench::at(sc.leases.clone(), epoch_ms, seed);
     b.slot_settings = sc.slots.clone();
     for (i, s) in sc.store.iter().enumerate() {
-        let data = serde_json::to_value(&s.data).expect("a TOML value is JSON");
+        let data = seed_value(&s.key, &s.data, &s.json).map_err(|e| format!("store seed {e}"))?;
         let obj = Object::new(data);
         let obj = match s.ttl_secs {
             Some(t) => obj.with_ttl(t),
@@ -831,7 +880,8 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
     }
 
     let (outcomes, calls) = (b.log.outcomes(), b.verbs.calls());
-    let writes = b.store.head().expect("the in-memory store has a head") - seeded;
+    // The section door's writes are counted by the section's own counts, not as the controller's.
+    let writes = b.store.head().expect("the in-memory store has a head") - seeded - b.lc_writes();
     let mut controls = Vec::new();
     for e in &sc.expects {
         let got = match &e.count {
@@ -938,6 +988,7 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
                 .max()
                 .map_or(u64::MAX, |t| (t - epoch_ms) / 1000),
             Count::Rounds(word) => rounds_in(&b, word),
+            Count::Section(c) => c.count(&b, &outcomes),
             Count::LiveLocks(prefix) => b
                 .store
                 .list(&[format!("locks/{prefix}").as_str()], &Selector::Everything)
@@ -962,12 +1013,56 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
     if !broken.is_empty() {
         return Err(broken.join("\n"));
     }
+    let decisions = calls
+        .iter()
+        .map(|c| format!("{c:?}"))
+        .chain(
+            outcomes
+                .iter()
+                .filter(|o| !matches!(o.kind, Kind::Published | Kind::Acked))
+                .filter(|o| !matches!(o.cause, Cause::Admission { .. }))
+                .map(|o| o.line()),
+        )
+        .collect();
     Ok(Report {
         profile: at.clone(),
         lines: outcomes.iter().map(|o| o.line()).collect(),
         calls,
         controls,
+        decisions,
     })
+}
+
+/// The first decision two runs differ on, or `None` when they made the same ones.
+pub fn first_difference(a: &[String], b: &[String]) -> Option<String> {
+    let at = (0..a.len().max(b.len())).find(|i| a.get(*i) != b.get(*i))?;
+    Some(format!(
+        "decision {at}: {:?} with the steps, {:?} without",
+        a.get(at),
+        b.get(at)
+    ))
+}
+
+/// The scenario under `profile` with and without its `same_without` steps: an error names the
+/// first decision they differ on.
+fn same_without(sc: &Scenario, profile: &Profile, seed: u64, with: &Report) -> Result<(), String> {
+    if sc.same_without.is_empty() {
+        return Ok(());
+    }
+    let bare = Scenario {
+        expects: Vec::new(),
+        ..sc.clone()
+    };
+    let steps = crate::pass::steps_without(&sc.same_without);
+    let without = run_steps(&bare, profile, seed, &steps)?;
+    match first_difference(&with.decisions, &without.decisions) {
+        None => Ok(()),
+        Some(d) => Err(format!(
+            "invariant same-decisions-without violated under {}: without {}, {d}",
+            profile.name,
+            sc.same_without.join(" and ")
+        )),
+    }
 }
 
 /// The scenario's world: its passes, scripted actors, store steps and lease revocations, run in
@@ -1047,7 +1142,8 @@ impl World<'_> {
         self.b.clock.advance_to(next);
         self.gc.tick(next).map_err(|e| format!("store gc: {e}"))?;
         for s in sc.store_steps.iter().filter(|s| s.pass == n) {
-            let data = serde_json::to_value(&s.data).expect("a TOML value is JSON");
+            let data = seed_value(&s.key, &s.data, &s.json)
+                .map_err(|e| format!("store step at pass {}: {e}", s.pass))?;
             let req = Request::new(
                 &format!("store-step-{}-{}", s.pass, s.key),
                 "scenario",
@@ -1056,7 +1152,10 @@ impl World<'_> {
             self.b
                 .store
                 .txn(
-                    &state_store::Txn::new().put(&s.key, Object::new(data)),
+                    &state_store::Txn::new().put(&s.key, match s.ttl_secs {
+                        Some(t) => Object::new(data).with_ttl(t),
+                        None => Object::new(data),
+                    }),
                     &req,
                 )
                 .map_err(|e| format!("store step {} at pass {}: {e}", s.key, s.pass))?;
@@ -1149,7 +1248,7 @@ pub fn run_all(text: &str, seed: u64) -> Result<Vec<Report>, String> {
     let sc = parse(text)?;
     let (mut ok, mut bad) = (Vec::new(), Vec::new());
     for p in profiles().expect("the shipped profiles parse") {
-        match run(&sc, &p, seed) {
+        match run(&sc, &p, seed).and_then(|r| same_without(&sc, &p, seed, &r).map(|()| r)) {
             Ok(r) => ok.push(r),
             Err(e) => bad.push(e),
         }
@@ -1224,6 +1323,11 @@ mod tests {
             "slot-grants:gcp",
             "slot-refusals:robot",
             "vms-at-once:gcp",
+            "section-raised:Wedged",
+            "section-distance:negative",
+            "acks:maybe",
+            "acks-stale:{",
+            "opened-with:",
         ] {
             let e = parse(&format!(
                 "{BASE}[[expect]]\nname = \"n1\"\ncount = \"{bad}\"\nequals = 0\n"
@@ -1233,6 +1337,36 @@ mod tests {
                 e.contains("expectation n1 counts") && e.contains(bad),
                 "{e}"
             );
+        }
+    }
+
+    const LANDING: &str = "description = \"t\"\nrepos = [\"lane\"]\n[run]\nepoch = 1800000000\npasses = 2\nevery_secs = 30\n[[store]]\nkey = \"lanes/lane\"\ndata = { landing_ref = \"base-0\", image_digest = \"d\", harness_version = \"h\" }\n[[git]]\nrepo = \"lane\"\nlanding = \"base-0\"\n[[store]]\nkey = \"batches/lane/k1\"\ndata = { batch_id = \"k1\", repo = \"lane\", state = \"Green\", head = \"k1-h\", base = \"base-0\", pass = 1, version = 1, tested_base = \"base-0\", members = [{ id = \"sp-a\", tip = \"a1\" }] }\n[[verb]]\nverb = \"land\"\nbatch = \"k1\"\nok = {}\n";
+
+    #[test]
+    fn a_step_whose_removal_changes_a_decision_breaks_same_without_naming_the_first() {
+        assert_eq!(run_all(&format!("same_without = [\"section\"]\n{LANDING}"), 1).unwrap().len(), 2);
+        let e = run_all(&format!("same_without = [\"land\"]\n{LANDING}"), 1).unwrap_err();
+        assert!(
+            e.contains("invariant same-decisions-without violated under default: without land, decision 0: Some(\"Call { verb: Land"),
+            "{e}"
+        );
+        assert!(e.contains("under reference-minimum"), "{e}");
+        let e = parse(&format!("same_without = [\"cut\"]\n{LANDING}")).unwrap_err();
+        assert!(e.contains("same_without names \"cut\", which is no step of pass"), "{e}");
+    }
+
+    #[test]
+    fn a_seed_is_exactly_one_of_data_and_json_and_json_may_spell_null() {
+        let r = go("[[store]]\nkey = \"lifecycle/x\"\njson = '{ \"from\": null }'\n[[expect]]\nname = \"k\"\ncount = \"keys:lifecycle/x\"\nequals = 1\n");
+        assert!(r.is_ok(), "{r:?}");
+        for bad in [
+            "[[store]]\nkey = \"k\"\n",
+            "[[store]]\nkey = \"k\"\ndata = 1\njson = '1'\n",
+            "[[store]]\nkey = \"k\"\njson = '{'\n",
+            "[[store_step]]\npass = 1\nkey = \"k\"\n",
+        ] {
+            let e = parse(&format!("{BASE}{bad}")).unwrap_err();
+            assert!(e.contains("k: "), "{bad}: {e}");
         }
     }
 

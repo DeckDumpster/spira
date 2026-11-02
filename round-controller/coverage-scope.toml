@@ -55,3 +55,13 @@ functions = ["unit_name"]
 [[scope]]
 path = "round-controller/src/land.rs"
 functions = ["land", "one", "Held::decide", "Held::refused", "Held::hold", "Held::record_landed", "landed_value"]
+
+# The section: what is built from the store, when it is written, and the condition each level
+# raises; and every arm of the intent applier.
+[[scope]]
+path = "round-controller/src/section.rs"
+functions = ["build", "green", "repeats", "lane_faults", "publish", "published", "write", "section"]
+
+[[scope]]
+path = "round-controller/src/intents.rs"
+functions = ["apply", "decide", "concurrency", "hold", "init_concurrency", "answered", "ack_word"]

@@ -62,6 +62,10 @@ scenario!(
     scenario_remarkable_stack_eject,
     scenario_land_refused_stays_green,
     scenario_landed_from_git,
+    scenario_section_stale_parent,
+    scenario_intent_apply_once,
+    scenario_publish_on_change,
+    scenario_no_intents_unchanged,
 );
 
 #[test]

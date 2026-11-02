@@ -10,6 +10,7 @@ use state_store::{Backend, Contract, Fence, Item, Request, Rev, Selector, Txn, T
 use crate::death::{Units, Vms};
 use crate::liveness::LeaseSettings;
 use crate::outcome::Log;
+use crate::run::Switches;
 use crate::slots::{SlotGrant, SlotSettings};
 
 pub struct Ports<'a> {
@@ -26,7 +27,19 @@ pub struct Ports<'a> {
     pub git: &'a dyn Git,
     pub leases: &'a LeaseSettings,
     pub slots: &'a SlotSettings,
+    pub lc: &'a dyn Lc,
+    pub switches: &'a dyn Switches,
 }
+
+/// One `spira-lc` control-store verb (`section`, `intent`): its exit code and its JSON answer.
+/// The section and every ack go through it, so admission judges each write.
+pub trait Lc {
+    fn call(&self, args: &[String]) -> (i32, serde_json::Value);
+}
+
+/// The exit a refused write answers on, with `{"refused": {"field", "rule", "code"}}`; 1 is
+/// not-found and 2 is cannot-tell.
+pub const LC_REFUSED: i32 = 3;
 
 impl Ports<'_> {
     pub fn next_u64(&self) -> u64 {

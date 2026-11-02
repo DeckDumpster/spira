@@ -171,7 +171,7 @@ fn leased(p: &Ports, repo: &str, batch: &str) -> Result<bool, Refusal> {
         .map_err(|e| Refusal::unreadable(&res.lock_key(), e))
 }
 
-fn read_status(p: &Ports, key: &str) -> Result<Option<Status>, Refusal> {
+pub(crate) fn read_status(p: &Ports, key: &str) -> Result<Option<Status>, Refusal> {
     p.store
         .get(key)
         .map_err(|e| Refusal::unreadable(key, e))?

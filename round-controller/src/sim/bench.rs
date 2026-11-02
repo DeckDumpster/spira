@@ -12,8 +12,9 @@ use state_store::{
 use crate::death::{Holder, UnitState, Units, VmFact, Vms};
 use crate::liveness::LeaseSettings;
 use crate::outcome::MemLog;
-use crate::ports::{Launch, Launched, Ports, Store};
+use crate::ports::{Launch, Launched, Lc, Ports, Store};
 use crate::real::Unserved;
+use crate::run::Switches;
 use crate::sim::git::FakeGit;
 use crate::sim::judge::FakeLedger;
 use crate::sim::verbs::FakeVerbs;
@@ -172,6 +173,55 @@ impl Launch for FakeLaunch {
     }
 }
 
+/// The off switches a bench is under: none until a test sets the world's halt or a repo's stop.
+#[derive(Default)]
+pub struct BenchSwitches {
+    halted: Mutex<bool>,
+    stopped: Mutex<BTreeMap<String, String>>,
+}
+
+impl BenchSwitches {
+    pub fn halt(&self) {
+        *crate::lock(&self.halted) = true;
+    }
+
+    pub fn stop(&self, repo: &str, why: &str) {
+        crate::lock(&self.stopped).insert(repo.into(), why.into());
+    }
+}
+
+impl Switches for BenchSwitches {
+    fn halted(&self) -> bool {
+        *crate::lock(&self.halted)
+    }
+
+    fn set(&self, repo: &str) -> Option<String> {
+        if self.halted() {
+            return Some("world.halted is present: the world is stopped".into());
+        }
+        crate::lock(&self.stopped).get(repo).cloned()
+    }
+}
+
+/// One `spira-lc` call the bench answered in process: its argv, its answer, and the revisions
+/// its txns took.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LcCall {
+    pub args: Vec<String>,
+    pub code: i32,
+    pub answer: serde_json::Value,
+    pub writes: u64,
+}
+
+impl LcCall {
+    /// The section a committed `section publish-status` wrote.
+    pub fn published(&self) -> Option<serde_json::Value> {
+        let at = self.args.iter().position(|a| a == "--json")?;
+        let ok = self.code == 0 && self.args.get(..2) == Some(&["section".to_string(), "publish-status".to_string()][..]);
+        ok.then(|| serde_json::from_str(self.args.get(at + 1)?).ok()).flatten()
+    }
+}
+
 /// A test spawns no process: every effect has a port of its own.
 #[derive(Default)]
 pub struct NoProc(pub Mutex<Vec<String>>);
@@ -230,6 +280,9 @@ pub struct Bench {
     pub git: Arc<FakeGit>,
     /// When each runner slot was given back, on the virtual clock.
     pub slot_releases: Mutex<Vec<u64>>,
+    pub switches: BenchSwitches,
+    /// Every section and intent verb, in order, answered by spira-lc's own dispatch.
+    pub lc_calls: Mutex<Vec<LcCall>>,
     front: Mutex<Front>,
 }
 
@@ -296,8 +349,21 @@ impl Bench {
             ledger: FakeLedger::default(),
             git: Arc::default(),
             slot_releases: Mutex::default(),
+            switches: BenchSwitches::default(),
+            lc_calls: Mutex::default(),
             front: Mutex::new(front),
         }
+    }
+
+    /// The revisions every committed spira-lc call took: the section door's writes, not the
+    /// controller's own.
+    pub fn lc_writes(&self) -> u64 {
+        crate::lock(&self.lc_calls).iter().map(|c| c.writes).sum()
+    }
+
+    /// Every section `section publish-status` committed, in order.
+    pub fn published(&self) -> Vec<serde_json::Value> {
+        crate::lock(&self.lc_calls).iter().filter_map(LcCall::published).collect()
     }
 
     pub fn ports(&self) -> Ports<'_> {
@@ -315,6 +381,8 @@ impl Bench {
             git: &*self.git,
             leases: &self.settings,
             slots: &self.slot_settings,
+            lc: self,
+            switches: &self.switches,
         }
     }
 
@@ -322,6 +390,14 @@ impl Bench {
         let req = Request::new(&format!("seed-{key}"), "bench", "seed");
         self.store
             .create(key, Object::new(data), &req)
+            .unwrap_or_else(|e| panic!("seed {key}: {e}"));
+    }
+
+    /// A seed under a prefix whose keys carry a TTL (`intents/`, `telemetry/`).
+    pub fn seed_ttl(&self, key: &str, data: serde_json::Value, ttl_secs: u64) {
+        let req = Request::new(&format!("seed-{key}"), "bench", "seed");
+        self.store
+            .create(key, Object::new(data).with_ttl(ttl_secs), &req)
             .unwrap_or_else(|e| panic!("seed {key}: {e}"));
     }
 
@@ -360,6 +436,36 @@ impl Bench {
 impl Default for Bench {
     fn default() -> Self {
         Bench::new()
+    }
+}
+
+/// spira-lc's own section and intent dispatch on the bench's store, so admission judges every
+/// write exactly as the served verbs do.
+impl Lc for Bench {
+    fn call(&self, args: &[String]) -> (i32, serde_json::Value) {
+        if !self.served() {
+            return Unserved.call(args);
+        }
+        use runtime::ports::Clock;
+        let head = || self.store.head().expect("the in-memory store has a head");
+        let before = head();
+        let mut calls = crate::lock(&self.lc_calls);
+        let request = format!("lc-{}", calls.len());
+        let sink = spira_otel::metrics::sink_for(None, "round-controller-bench");
+        let call = spira_lc::sections::Call {
+            now_ms: self.clock.now_ms(),
+            request: &request,
+            metrics: &sink,
+        };
+        let (code, text) = spira_lc::sections::run(self.store.as_ref(), args, &call);
+        let answer = serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({ "cannot_tell": text }));
+        calls.push(LcCall {
+            args: args.to_vec(),
+            code,
+            answer: answer.clone(),
+            writes: head() - before,
+        });
+        (code, answer)
     }
 }
 

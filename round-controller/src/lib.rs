@@ -4,7 +4,9 @@
 
 pub mod cut;
 pub mod death;
+pub mod intents;
 pub mod judge;
+pub mod knobs;
 pub mod land;
 pub mod lease;
 pub mod ledger;
@@ -18,6 +20,7 @@ pub mod real;
 pub mod refusal;
 pub mod resources;
 pub mod run;
+pub mod section;
 #[cfg(feature = "sim")]
 pub mod sim;
 pub mod slots;

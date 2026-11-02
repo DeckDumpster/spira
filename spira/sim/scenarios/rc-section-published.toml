@@ -1,0 +1,19 @@
+# The round controller's world twin of section-stale-parent: the sim-only actor runs `round-controller
+# pass` with the intents and section steps registered last. The control-plane store has no door
+# yet, so neither step reads a lane, a round or an intent: no section is built, nothing is
+# published or acked, every pass exits 0 and the world's run state is untouched.
+epoch = 1800000000
+horizon = 150000
+real_actors = ["round-controller"]
+
+[[invariant]]
+name = "rc_pass_exited_nonzero"
+sql = "SELECT seq, exit FROM events WHERE actor = 'round-controller' AND kind = 'complete' AND exit <> 0"
+
+[[invariant]]
+name = "rc_changed_run_state"
+sql = "SELECT seq, 'queue' AS family, key AS what FROM run_queue UNION ALL SELECT seq, 'locks', name FROM run_locks UNION ALL SELECT seq, 'ejected', bead FROM run_ejected UNION ALL SELECT seq, 'verdicts', key FROM run_verdicts UNION ALL SELECT seq, 'gate-log', text FROM run_gate_log UNION ALL SELECT seq, 'landing-log', text FROM run_landing_log"
+
+[[expect]]
+name = "rc_passes_ran_with_the_section_steps"
+sql = "SELECT 1 FROM events WHERE actor = 'round-controller' AND kind = 'complete' AND exit = 0"
