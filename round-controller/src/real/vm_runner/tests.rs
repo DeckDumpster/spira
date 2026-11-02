@@ -330,3 +330,82 @@ fn a_removal_set_tree_merges_every_member_left_and_a_vm_gone_answers_its_pending
     vm.signal(Signal::Term).unwrap();
     assert_eq!(r.poll_jobs(), [(9, JobResult::Fault)]);
 }
+
+/// sp-utf1s0: the Judge runs a sub-pass over every red step as one comma-joined suite, and a
+/// runner that looked for one `<suite>.result` file read every such sub-pass as a fault.
+#[test]
+fn a_sub_pass_over_two_steps_reads_each_step_s_result_red_naming_the_red_step_or_green() {
+    let d = testkit::TempDir::new("rc-vm-runner-steps");
+    let b = Bench::new();
+    let git = Git::default();
+    let base = b.ports();
+    let p = Ports {
+        proc_: &git,
+        ..base
+    };
+    let vm: &'static Vm = Box::leak(Box::default());
+    let spawn = OneVm(vm, Mutex::default());
+    let repo = Repo {
+        name: "r".into(),
+        path: d.path().join("repo"),
+        base: "main".into(),
+    };
+    let mut r = VmRunner::new(
+        &p,
+        &spawn,
+        &NoSleep,
+        env(d.path()),
+        repo,
+        &d.path().join("wt"),
+        "base1",
+        "b1",
+    )
+    .unwrap();
+    let two = |id: u64| Job {
+        suite: "test-a.sh,test-b.sh".into(),
+        ..job(id, &[])
+    };
+    r.launch(&two(7)).unwrap();
+    r.launch(&two(8)).unwrap();
+    let args = crate::lock(&spawn.1)[0].args.join(" ");
+    assert!(args.contains("--suites test-a.sh,test-b.sh"), "{args}");
+    let req = fs::read_to_string(r.spool.join("req/v0j7.req")).unwrap();
+    assert!(req.contains("\nsuites=test-a.sh,test-b.sh\n"), "{req}");
+    let res = r.spool.join("res");
+    for (job, a, b, rc) in [("v0j7", "ok", "red 1", 1), ("v0j8", "ok", "ok", 0)] {
+        fs::create_dir_all(res.join(job)).unwrap();
+        fs::write(res.join(job).join("test-a.sh.result"), format!("{a}\n")).unwrap();
+        fs::write(res.join(job).join("test-b.sh.result"), format!("{b}\n")).unwrap();
+        fs::write(res.join(format!("{job}.done")), format!("rc={rc}\n")).unwrap();
+    }
+    assert_eq!(r.poll_jobs(), [(7, JobResult::Red), (8, JobResult::Green)]);
+    assert_eq!(r.red_steps(7), ["test-b.sh"], "the red names its red step");
+    assert!(r.red_steps(8).is_empty());
+}
+
+#[test]
+fn a_job_is_a_fault_when_a_step_left_no_verdict_or_the_exit_disagrees_with_its_steps() {
+    let d = testkit::TempDir::new("rc-vm-job-verdict");
+    fs::write(d.path().join("a.sh.result"), "ok\n").unwrap();
+    fs::write(d.path().join("b.sh.result"), "red\n").unwrap();
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        job_verdict(1, d.path(), &s(&["a.sh", "b.sh"])),
+        (JobResult::Red, s(&["b.sh"]))
+    );
+    assert_eq!(
+        job_verdict(1, d.path(), &s(&["a.sh", "c.sh"])).0,
+        JobResult::Fault,
+        "a step with no result is no verdict"
+    );
+    assert_eq!(
+        job_verdict(0, d.path(), &s(&["a.sh", "b.sh"])).0,
+        JobResult::Fault
+    );
+    assert_eq!(job_verdict(1, d.path(), &s(&["a.sh"])).0, JobResult::Fault);
+    assert_eq!(job_verdict(2, d.path(), &s(&["a.sh"])).0, JobResult::Fault);
+    assert_eq!(
+        job_verdict(0, d.path(), &s(&["a.sh"])),
+        (JobResult::Green, vec![])
+    );
+}

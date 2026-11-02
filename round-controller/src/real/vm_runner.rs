@@ -194,6 +194,36 @@ pub fn result_status(results_dir: &Path, suite: &str) -> Option<bool> {
     }
 }
 
+/// The steps a job's suite names: the Judge runs a sub-pass over every red step at once, as
+/// one comma-separated list, the way `testenv --suites` takes one.
+fn steps_of(suite: &str) -> Vec<String> {
+    suite
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// A finished job's verdict, read one result file per step, and the steps it found red. Red
+/// when round-vm exited 1 and some step is red; green when it exited 0 and every step is
+/// green; a fault when a step left no verdict or the exit disagrees with the steps.
+pub fn job_verdict(rc: i32, res: &Path, steps: &[String]) -> (JobResult, Vec<String>) {
+    let mut red = vec![];
+    for s in steps {
+        match result_status(res, s) {
+            Some(true) => {}
+            Some(false) => red.push(s.clone()),
+            None => return (JobResult::Fault, vec![]),
+        }
+    }
+    match rc {
+        0 if red.is_empty() && !steps.is_empty() => (JobResult::Green, red),
+        1 if !red.is_empty() => (JobResult::Red, red),
+        _ => (JobResult::Fault, vec![]),
+    }
+}
+
 /// Removes the results of `suites`, which are about to run again, so the old verdict is not
 /// read as the new one.
 fn clear_results(results: &Path, suites: &[String]) {
@@ -281,7 +311,10 @@ pub struct VmRunner<'a, 'p> {
     members: Vec<Member>,
     changed: BTreeMap<Id, Vec<String>>,
     main: Main,
-    jobs: BTreeMap<u64, (String, String)>,
+    /// Each pending job's request name and the steps it runs.
+    jobs: BTreeMap<u64, (String, Vec<String>)>,
+    /// The steps each job answered red found red, until the Judge asks.
+    red: BTreeMap<u64, Vec<String>>,
     verify_n: u32,
     corpus_runs: u32,
     poll_ms: u64,
@@ -330,6 +363,7 @@ impl<'a, 'p> VmRunner<'a, 'p> {
             changed: BTreeMap::new(),
             main: Main::None,
             jobs: BTreeMap::new(),
+            red: BTreeMap::new(),
             verify_n: 0,
             corpus_runs: 0,
             poll_ms: 2_000,
@@ -661,6 +695,7 @@ impl RoundRunner for VmRunner<'_, '_> {
         self.child_rc = None;
         self.main = Main::None;
         self.jobs.clear();
+        self.red.clear();
         let _ = fs::remove_dir_all(&self.spool);
         for d in ["req", "res"] {
             fs::create_dir_all(self.spool.join(d))
@@ -744,8 +779,9 @@ impl RoundRunner for VmRunner<'_, '_> {
     }
 
     fn launch(&mut self, job: &Job) -> Result<(), String> {
+        let steps = steps_of(&job.suite);
         if self.child.is_none() {
-            self.start_vm(std::slice::from_ref(&job.suite))?;
+            self.start_vm(&steps)?;
         }
         let branch = self.tree_for(job)?;
         let build = if job.removal.is_empty() {
@@ -754,8 +790,8 @@ impl RoundRunner for VmRunner<'_, '_> {
             build_for(&job.removal, &self.changed)
         };
         let name = self.job_name(job);
-        self.request(&name, &branch, std::slice::from_ref(&job.suite), build)?;
-        self.jobs.insert(job.id, (name, job.suite.clone()));
+        self.request(&name, &branch, &steps, build)?;
+        self.jobs.insert(job.id, (name, steps));
         Ok(())
     }
 
@@ -763,23 +799,25 @@ impl RoundRunner for VmRunner<'_, '_> {
         let exited = self.child_exited().is_some();
         let res_root = self.spool.join("res");
         let mut out = vec![];
-        for (id, (name, suite)) in &self.jobs {
-            let r = match read_rc(&res_root.join(format!("{name}.done"))) {
-                Some(rc @ (0 | 1)) => match result_status(&res_root.join(name), suite) {
-                    Some(true) if rc == 0 => JobResult::Green,
-                    Some(false) if rc == 1 => JobResult::Red,
-                    _ => JobResult::Fault,
-                },
-                Some(_) => JobResult::Fault,
-                None if exited => JobResult::Fault,
+        for (id, (name, steps)) in &self.jobs {
+            let (r, red) = match read_rc(&res_root.join(format!("{name}.done"))) {
+                Some(rc) => job_verdict(rc, &res_root.join(name), steps),
+                None if exited => (JobResult::Fault, vec![]),
                 None => continue,
             };
+            if !red.is_empty() {
+                self.red.insert(*id, red);
+            }
             out.push((*id, r));
         }
         for (id, _) in &out {
             self.jobs.remove(id);
         }
         out
+    }
+
+    fn red_steps(&mut self, id: u64) -> Vec<String> {
+        self.red.remove(&id).unwrap_or_default()
     }
 
     fn now(&self) -> u64 {

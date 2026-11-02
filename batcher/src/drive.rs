@@ -47,6 +47,11 @@ pub trait RoundRunner {
     /// Build the job's tree (round tree minus `job.removal`) and submit suite `job.suite` on it.
     fn launch(&mut self, job: &Job) -> Result<(), String>;
     fn poll_jobs(&mut self) -> Vec<(u64, JobResult)>;
+    /// The steps of `job.suite` (a comma-separated list) that job `id` found red, once
+    /// `poll_jobs` answered it red; empty when the runner cannot say which.
+    fn red_steps(&mut self, _id: u64) -> Vec<String> {
+        vec![]
+    }
     /// Seconds.
     fn now(&self) -> u64;
     fn wait(&mut self);
