@@ -42,6 +42,28 @@ pub(super) const BUILD_RED: &str = "workspace-build";
 pub(super) const LINT_RED: &str = "spira-lint";
 const FENCE_RED_PREFIX: &str = "fence-";
 pub(super) const UNIT_RED: &str = "unit-tests";
+
+/// The round VM's record of a unit tier that went red before any suite ran (`unit.json`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct UnitFirstRed {
+    pub failed: Vec<String>,
+    pub cause: String,
+    pub secs: u64,
+}
+
+/// `results/unit.json` when it records a red unit tier; None when absent, unreadable or green.
+pub(super) fn unit_first_red(results: &std::path::Path) -> Option<UnitFirstRed> {
+    let v: serde_json::Value = serde_json::from_str(&fs::read_to_string(results.join("unit.json")).ok()?).ok()?;
+    if v["stage"] != "unit-tests" || v["verdict"] != "red" {
+        return None;
+    }
+    Some(UnitFirstRed {
+        failed: v["failed"].as_array().map(|a| a.iter().filter_map(|n| n.as_str().map(String::from)).collect()).unwrap_or_default(),
+        cause: v["cause"].as_str().unwrap_or("").to_string(),
+        secs: v["secs"].as_u64().unwrap_or(0),
+    })
+}
+
 /// Steps a round runs over its whole tree that are not testenv suites; only a green round proves them.
 pub const ROUND_STEPS: [&str; 3] = [BUILD_RED, LINT_RED, UNIT_RED];
 /// The round steps `testenv --suites <step>` cannot run for a tip.
@@ -2711,7 +2733,18 @@ fn certify_pass(
         if out.rc == VM_LOST {
             return lost_vm_pass(w, label, batch, &out.err);
         }
+        // UNIT FIRST (sp-cddf76): a unit red ends the pass before any suite, and says so in a
+        // record, so a pass with no suite results is judged red, not a machinery fault.
+        let unit_first = unit_first_red(&results);
+        if let Some(u) = &unit_first {
+            reds.push(UNIT_RED.into());
+            if !u.failed.is_empty() {
+                w.out(format!("unit-tests-failed={}", u.failed.join(",")));
+            }
+            w.out(format!("unit-tests-cause={} (before the suites, after {}s)", u.cause, u.secs));
+        }
         let fault = match out.rc {
+            _ if unit_first.is_some() => None,
             0 | 1 if found.is_empty() => Some("round-vm ran and left no verdicts — a fault of the round machinery, not of the candidates".to_string()),
             0 | 1 => unjudgeable(&wt, &found),
             124 | 137 if !out.err.contains("OVER-CAP") && wall_complete(&wt, &found, &out.err) => None,

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use super::round::{
     assemble, certify, csv, finish, handle_of, keep, live_records, local_ctx, lock, mark_running,
     phase_of, record_of, rounds_dir, save_record, set, set_phase, suite_statuses, tail,
-    unjudgeable, BLOCKING, BUILD_RED, LC_ACTOR,
+    unit_first_red, unjudgeable, BLOCKING, BUILD_RED, LC_ACTOR, UNIT_RED,
 };
 use super::{
     actor, idents, landing_log, lc_cas, read_text, require_lc, Ctx, World, FAIL, OK, USAGE,
@@ -350,7 +350,13 @@ pub fn stage_test(w: &World, repo: Option<&str>) -> i32 {
     let mut found = Vec::new();
     suite_statuses(&results, &mut found, 0);
     let mut reds: Vec<String> = Vec::new();
+    // A unit red ends the pass before any suite and leaves its verdict as a record (sp-cddf76).
+    let unit_first = unit_first_red(&results).is_some();
+    if unit_first {
+        reds.push(UNIT_RED.into());
+    }
     let fault = match out.rc {
+        _ if unit_first => None,
         0 | 1 if found.is_empty() => Some("round-vm ran and left no verdicts — a fault of the round machinery, not of the candidates".to_string()),
         0 | 1 => unjudgeable(&wt, &found),
         4 => {

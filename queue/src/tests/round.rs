@@ -1527,6 +1527,33 @@ fn a_second_over_cap_on_the_same_head_is_a_capacity_fault_and_ejects_nobody() {
 }
 
 #[test]
+fn a_pass_the_unit_tier_ended_before_any_suite_is_judged_red_on_unit_tests_not_faulted() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.scripts.round_vm.borrow_mut() = RunOut {
+        rc: 1,
+        out: String::new(),
+        err: "round-vm: UNIT-TESTS RED before the suites: no suite was run\n".into(),
+    };
+    *t.scripts.round_vm_results.borrow_mut() = vec![];
+    *t.scripts.round_vm_files.borrow_mut() = vec![
+        (
+            "unit.json".to_string(),
+            "{\"stage\":\"unit-tests\",\"verdict\":\"red\",\"ran_before_suites\":true,\"cause\":\"exit status 101\",\"secs\":42,\"last_binary\":\"alpha\",\"failed\":[\"a::broken\",\"b::also\"]}\n".to_string(),
+        ),
+        ("unit-tests.out".to_string(), "UNIT-TESTS-CAUSE: exit status 101 after 42s\n".to_string()),
+    ];
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}{}", t.out(), t.err());
+    assert!(t.out().contains("unit-tests-failed=a::broken,b::also"), "{}", t.out());
+    assert!(t.out().contains("unit-tests-cause=exit status 101 (before the suites, after 42s)"), "{}", t.out());
+    assert!(!t.err().contains("left no verdicts") && !t.err().contains("not judged"), "{}", t.err());
+    let events = events_of(&t, &batch);
+    assert!(events.iter().any(|e| e.starts_with("{\"PassRed\"") && e.contains("\"red_suites\":[\"unit-tests\"]")), "{events:?}");
+    assert!(!events.iter().any(|e| e.contains("PassIncomplete")), "{events:?}");
+}
+
+#[test]
 fn certify_faults_on_an_unreadable_or_missing_suite_verdict() {
     let t = round_world();
     assert_eq!(
@@ -2939,6 +2966,21 @@ fn promotion_onto_a_moved_base_gets_a_fresh_pass() {
         !gate::cert::path(&t.s().run.join("verdicts"), "spira", T_MOVED)
             .is_some_and(|p| p.exists())
     );
+}
+
+#[test]
+fn a_staged_pass_the_unit_tier_ended_before_any_suite_is_red_on_unit_tests() {
+    let (t, _n, _s) = staged_behind_green();
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: String::new() };
+    *t.scripts.round_vm_results.borrow_mut() = vec![];
+    *t.scripts.round_vm_files.borrow_mut() = vec![(
+        "unit.json".to_string(),
+        "{\"stage\":\"unit-tests\",\"verdict\":\"red\",\"ran_before_suites\":true,\"cause\":\"exit status 101\",\"secs\":3,\"last_binary\":\"\",\"failed\":[\"a::broken\"]}\n".to_string(),
+    )];
+    assert_eq!(t.run(&["round", "stage-test"]), 1, "{}{}", t.out(), t.err());
+    assert_eq!(kv_of(&t, "round-staged")["phase"], "red");
+    assert!(t.out().contains("red=unit-tests"), "{}", t.out());
+    assert!(!t.err().contains("left no verdicts"), "{}", t.err());
 }
 
 #[test]
