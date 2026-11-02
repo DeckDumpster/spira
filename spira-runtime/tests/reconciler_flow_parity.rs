@@ -1,6 +1,6 @@
 //! For one world, `reconciler-flow --pass` and the reconciler-flow handler mail the Concierge the
 //! same gaps and reach the same state. The binary is the oracle: it runs unmodified against stubbed
-//! `bd`, `spira-lc`, `date`, `mail` and exporter, a real `duckdb` and `tsd-write`, and a fake metrics
+//! `bdq`, `spira-lc`, `date`, `mail` and exporter, a real `duckdb` and `tsd-write`, and a fake metrics
 //! store; the handler runs on a virtual clock against a fake spira-lc socket serving the same rows.
 
 use std::fs;

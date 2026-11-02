@@ -285,7 +285,6 @@ pub fn mail_env(root: &Path) -> mail::env::Env {
         id_prefix: "sp".into(),
         ask_label: "ask".into(),
         db: String::new(),
-        bd_bin: String::new(),
         bd_conn_retries: 1,
         operator_actor: "operator".into(),
         run_dir: root.join("run"),

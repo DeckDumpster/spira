@@ -79,7 +79,7 @@ impl Effects {
         let env = self.concierge_mail.as_deref().ok_or("no concierge mail environment configured")?;
         let note: watchers::reconciler_flow::Mail = serde_json::from_str(input).map_err(|e| e.to_string())?;
         let args = mail::cmds::SendArgs { mailbox: "concierge", from: Some(reconciler_engine::mail::FROM), subject: &note.subject, kind: "note", default: "", class: "", bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" };
-        let bd = mail::bead::BdCli { bin: String::new(), db: String::new(), conn_retries: 1 };
+        let bd = mail::bead::BdCli { bdq: String::new(), conn_retries: 1 };
         mail::cmds::send(&bd, env, &args, format!("## Note\n{}\n", note.body)).map(|o| o.delivered_path.display().to_string()).inspect_err(|_| eprintln!("reconciler-flow: concierge alert failed for: {}", note.subject))
     }
 
