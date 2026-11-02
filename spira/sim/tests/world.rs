@@ -2,6 +2,7 @@ use spira_sim::world::{
     up_repos, up_resolving, check_socket_path, control_store, db_root, down, is_world_serve, lc_pid_file, lc_socket, prebuilt_release, release_source, serve_argv, up, ProcessSteps,
     ReleaseSource, RepoSpec, Steps, PRODUCTION_LOCATORS, RELEASE_ENV, TESTENV_ENV,
 };
+use spira_sim::world::{ensure_seed_in, SEED_KEEP};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -431,6 +432,8 @@ fn a_worlds_repo_is_the_seed_copied_with_its_own_gate_steps_and_a_sparse_checkou
     let t = testkit::TempDir::new("simw");
     let (a, b) = (t.join("a"), t.join("b"));
     let fake = Fake::default();
+    // Held from before the worlds copy it to the inode checks, so another test's prune cannot swap it.
+    let held = spira_sim::world::ensure_seed(repo.path(), "HEAD").unwrap();
     up(repo.path(), &a, "HEAD", &clean, &fake).unwrap();
     up(repo.path(), &b, "HEAD", &clean, &fake).unwrap();
     for w in [&a, &b] {
@@ -452,7 +455,7 @@ fn a_worlds_repo_is_the_seed_copied_with_its_own_gate_steps_and_a_sparse_checkou
     // Packs are shared with the seed, everything a world writes to is its own.
     {
         use std::os::unix::fs::MetadataExt;
-        let seed = spira_sim::world::ensure_seed(repo.path(), "HEAD").unwrap();
+        let seed = &held.path;
         let pack = |root: &Path| std::fs::read_dir(root.join("objects/pack")).unwrap().flatten().map(|e| e.path()).find(|p| p.extension().is_some_and(|x| x == "pack")).unwrap();
         assert_eq!(std::fs::metadata(pack(&seed.join("origin.git"))).unwrap().ino(), std::fs::metadata(pack(&a.join("origin.git"))).unwrap().ino());
         assert_ne!(std::fs::metadata(seed.join("work/.git/index")).unwrap().ino(), std::fs::metadata(a.join("work/.git/index")).unwrap().ino());
@@ -471,16 +474,105 @@ fn a_worlds_repo_is_the_seed_copied_with_its_own_gate_steps_and_a_sparse_checkou
 #[test]
 fn the_seed_is_built_once_per_tree() {
     let repo = tree_repo(&["a", "spira/b"]);
-    let first = spira_sim::world::ensure_seed(repo.path(), "HEAD").unwrap();
+    let cache = testkit::TempDir::new("simcache");
+    let first = ensure_seed_in(cache.path(), repo.path(), "HEAD").unwrap().path;
     let built = std::fs::metadata(first.join(".complete")).unwrap().modified().unwrap();
     std::thread::sleep(std::time::Duration::from_millis(20));
-    let again = spira_sim::world::ensure_seed(repo.path(), "HEAD").unwrap();
+    let again = ensure_seed_in(cache.path(), repo.path(), "HEAD").unwrap().path;
     assert_eq!(first, again);
     assert_eq!(std::fs::metadata(again.join(".complete")).unwrap().modified().unwrap(), built, "a seed that exists is not rebuilt");
     let packs = std::fs::read_dir(first.join("work/.git/objects/pack")).unwrap().count();
     assert!(packs >= 2 && !first.join("work/.git/objects").read_dir().unwrap().flatten().any(|e| e.file_name().len() == 2 && e.path().is_dir() && e.path().read_dir().unwrap().count() > 0), "the seed's objects are packed, not thousands of loose files");
     let other = tree_repo(&["a", "spira/c"]);
-    assert_ne!(spira_sim::world::ensure_seed(other.path(), "HEAD").unwrap(), first, "a different tree is a different seed");
+    assert_ne!(ensure_seed_in(cache.path(), other.path(), "HEAD").unwrap().path, first, "a different tree is a different seed");
+}
+
+fn seeds_in(cache: &Path) -> Vec<PathBuf> {
+    let mut s: Vec<PathBuf> = std::fs::read_dir(cache).unwrap().flatten().map(|e| e.path()).filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("seed-")).collect();
+    s.sort();
+    s
+}
+
+#[test]
+fn a_file_written_mid_run_in_an_untracked_or_ignored_path_leaves_the_seed_key_and_the_cache_hit() {
+    let src = tree_repo(&[".gitignore", "spira/run.sh", "crate/src/lib.rs"]);
+    std::fs::write(src.join(".gitignore"), "out-ignored/\n").unwrap();
+    git_out(src.path(), &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "ignore"]);
+    let (t, cache) = (testkit::TempDir::new("simfx"), testkit::TempDir::new("simcache"));
+    spira_sim::world::fixture_repo(src.path(), &t.join("before")).unwrap();
+    let seed = ensure_seed_in(cache.path(), &t.join("before"), "HEAD").unwrap().path;
+    let built = std::fs::metadata(seed.join(".complete")).unwrap().modified().unwrap();
+
+    // A writer in the checkout for the whole of the second fixture: an untracked file beside a crate
+    // and an ignored one, each rewritten and replaced as fast as it can go.
+    std::fs::create_dir_all(src.join("out-ignored")).unwrap();
+    std::fs::write(src.join("crate/stray-untracked"), "there before the fixture").unwrap();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let writer = {
+        let (stop, root) = (stop.clone(), src.path().to_path_buf());
+        std::thread::spawn(move || {
+            let mut n = 0u64;
+            while !stop.load(Ordering::Relaxed) {
+                n += 1;
+                let _ = std::fs::write(root.join("crate/stray-untracked"), n.to_string());
+                let _ = std::fs::write(root.join(format!("crate/stray-{}", n % 7)), n.to_string());
+                let _ = std::fs::remove_file(root.join(format!("crate/stray-{}", (n + 3) % 7)));
+                let _ = std::fs::write(root.join("out-ignored/log"), n.to_string());
+            }
+            n
+        })
+    };
+    let fixed = spira_sim::world::fixture_repo(src.path(), &t.join("during"));
+    stop.store(true, Ordering::Relaxed);
+    assert!(writer.join().unwrap() > 0, "the writer ran");
+    fixed.unwrap();
+
+    let tree = |r: &Path| git_out(r, &["rev-parse", "HEAD^{tree}"]);
+    assert_eq!(tree(&t.join("during")), tree(&t.join("before")), "the fixture's tree is the tracked content alone");
+    let listed = git_out(&t.join("during"), &["ls-files"]);
+    assert!(listed.contains("crate/src/lib.rs") && !listed.contains("stray") && !listed.contains("out-ignored"), "{listed}");
+    let again = ensure_seed_in(cache.path(), &t.join("during"), "HEAD").unwrap().path;
+    assert_eq!(again, seed, "the same key");
+    assert_eq!(std::fs::metadata(again.join(".complete")).unwrap().modified().unwrap(), built, "a cache hit: the seed is not rebuilt");
+    assert_eq!(seeds_in(cache.path()), [seed]);
+
+    // A tracked file is taken as the working tree holds it, so an edit not yet committed is in the fixture.
+    std::fs::write(src.join("spira/run.sh"), "edited").unwrap();
+    spira_sim::world::fixture_repo(src.path(), &t.join("edited")).unwrap();
+    assert_eq!(std::fs::read_to_string(t.join("edited/spira/run.sh")).unwrap(), "edited");
+}
+
+#[test]
+fn the_seed_cache_never_holds_more_than_its_bound() {
+    let cache = testkit::TempDir::new("simcache");
+    let mut last = PathBuf::new();
+    for i in 0..SEED_KEEP + 3 {
+        let repo = tree_repo(&[&format!("f{i}")]);
+        last = ensure_seed_in(cache.path(), repo.path(), "HEAD").unwrap().path;
+        let held = seeds_in(cache.path());
+        assert!(held.len() <= SEED_KEEP, "after {} trees the cache holds {}: {held:?}", i + 1, held.len());
+        assert!(held.contains(&last), "the seed just used is kept");
+    }
+    assert_eq!(seeds_in(cache.path()).len(), SEED_KEEP);
+    assert!(last.join(".complete").is_file());
+}
+
+#[test]
+fn a_seed_a_world_holds_is_never_pruned() {
+    let cache = testkit::TempDir::new("simcache");
+    let first = tree_repo(&["held"]);
+    let held = ensure_seed_in(cache.path(), first.path(), "HEAD").unwrap();
+    for i in 0..SEED_KEEP + 2 {
+        let repo = tree_repo(&[&format!("g{i}")]);
+        drop(ensure_seed_in(cache.path(), repo.path(), "HEAD").unwrap());
+        assert!(held.path.join(".complete").is_file(), "the held seed survives {} newer trees", i + 1);
+        assert!(seeds_in(cache.path()).len() <= SEED_KEEP + 1, "only the held seed stands over the bound");
+    }
+    let path = held.path.clone();
+    drop(held);
+    drop(ensure_seed_in(cache.path(), tree_repo(&["after"]).path(), "HEAD").unwrap());
+    assert!(!path.exists(), "released, the least recently used seed is the one pruned");
+    assert_eq!(seeds_in(cache.path()).len(), SEED_KEEP);
 }
 
 #[test]

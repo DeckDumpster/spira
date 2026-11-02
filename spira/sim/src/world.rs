@@ -623,7 +623,9 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     let config = dir.join("config");
     std::fs::create_dir_all(&run_dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&config).map_err(|e| e.to_string())?;
-    let seed = ensure_seed(repo, tree)?;
+    // Held until the copy below is done, so no other world's prune removes it mid-copy.
+    let held = ensure_seed(repo, tree)?;
+    let seed = held.path.clone();
     let write_files = |fixture: &str| -> Result<(), String> {
         let runner = config.join("suite-runner");
         std::fs::write(&runner, SUITE_RUNNER).map_err(|e| e.to_string())?;
@@ -729,8 +731,9 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     served
 }
 
-const SEED_KEEP: usize = 4;
-const SEED_IDLE: Duration = Duration::from_secs(3600);
+/// The most seeds a cache keeps. A seed is keyed on the tracked tree, so a run of one tree needs
+/// one; the bound holds however many trees a cache meets, and a seed a world holds is never taken.
+pub const SEED_KEEP: usize = 2;
 
 /// Where seed repos are kept between worlds: `SPIRA_SIM_CACHE`, else a directory of the
 /// temp dir, so every world of a run (and of a suite's TMPDIR) shares one.
@@ -745,7 +748,6 @@ fn seed_cache_dir() -> PathBuf {
 /// commit, since that names the world's runner.
 fn place_seed(seed: &Path, origin: &Path, work: &Path, runner: &Path) -> Result<(), String> {
     let p = |x: &Path| x.to_string_lossy().to_string();
-    let _ = std::fs::File::open(seed).and_then(|d| d.set_modified(std::time::SystemTime::now()));
     copy_repo(&seed.join("origin.git"), origin).map_err(|e| format!("{}: {e}", origin.display()))?;
     copy_repo(&seed.join("work"), work).map_err(|e| format!("{}: {e}", work.display()))?;
     git(work, &["remote", "set-url", "origin", &p(origin)])?;
@@ -782,16 +784,83 @@ fn place_extra(world: &Path, spec: &RepoSpec, runner: &Path) -> Result<(), Strin
 /// The landing repository's seed: the tree under test committed once with an origin it is
 /// pushed to, built the first time a tree is seen. `sim world seed` builds it if no world has yet, so the worlds that
 /// follow (side by side, or in a timed run) only copy it.
-pub fn ensure_seed(repo: &Path, tree: &str) -> Result<PathBuf, String> {
+pub fn ensure_seed(repo: &Path, tree: &str) -> Result<HeldSeed, String> {
+    ensure_seed_in(&seed_cache_dir(), repo, tree)
+}
+
+/// A seed in use: while it is held, no prune removes it. The hold is a shared lock on the
+/// seed's `.complete`, which a prune must take exclusively before it removes the seed.
+pub struct HeldSeed {
+    pub path: PathBuf,
+    _lock: std::fs::File,
+}
+
+/// `ensure_seed` with the cache named: the seed of `tree`, built if the cache lacks it, held,
+/// marked most recently used, and the cache then cut to `SEED_KEEP`.
+pub fn ensure_seed_in(cache: &Path, repo: &Path, tree: &str) -> Result<HeldSeed, String> {
     let repo = PathBuf::from(git(repo, &["rev-parse", "--show-toplevel"])?.trim());
     let hash = git(&repo, &["rev-parse", &format!("{tree}^{{tree}}")])?.trim().to_string();
-    let cache = seed_cache_dir();
-    std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(cache).map_err(|e| e.to_string())?;
     let seed = cache.join(format!("seed-{hash}"));
-    if !seed.join(".complete").is_file() {
-        build_seed(&repo, tree, &cache, &seed)?;
+    // A prune can take the seed between the check and the hold; the hold sees that, and builds again.
+    for _ in 0..3 {
+        if !seed.join(".complete").is_file() {
+            build_seed(&repo, tree, cache, &seed)?;
+        }
+        if let Some(held) = hold_seed(&seed)? {
+            let _ = std::fs::File::open(&seed).and_then(|d| d.set_modified(std::time::SystemTime::now()));
+            prune_seeds(cache, SEED_KEEP);
+            return Ok(held);
+        }
     }
-    Ok(seed)
+    Err(format!("{}: removed each time it was built", seed.display()))
+}
+
+fn hold_seed(seed: &Path) -> Result<Option<HeldSeed>, String> {
+    let lock = match std::fs::File::open(seed.join(".complete")) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{}: {e}", seed.display())),
+    };
+    lock.lock_shared().map_err(|e| format!("{}: {e}", seed.display()))?;
+    // A prune that held the seed while this waited has removed it by now.
+    if !seed.join(".complete").is_file() {
+        return Ok(None);
+    }
+    Ok(Some(HeldSeed { path: seed.to_path_buf(), _lock: lock }))
+}
+
+/// The tree at `root` as one commit of a new repository at `dst`: the files git tracks there,
+/// as the working tree holds them. An untracked or ignored file is left out, so a writer
+/// elsewhere in a shared checkout (build output, results, a test's scratch) changes neither the
+/// commit nor the seed keyed on its tree, and is never read while it is being written. A
+/// checkout whose git directory cannot be read (a linked worktree mounted alone) is taken
+/// whole, less what its `.gitignore` excludes.
+pub fn fixture_repo(root: &Path, dst: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| format!("{}: {e}", dst.display()))?;
+    git(dst, &["init", "-q", "--initial-branch=main"])?;
+    let git_dir = dst.join(".git");
+    let from_root = |args: &[&str]| {
+        let mut cmd = Command::new("git");
+        cmd.arg("--literal-pathspecs").arg("--git-dir").arg(&git_dir).arg("--work-tree").arg(root).args(args);
+        run(&mut cmd, CALL_DEADLINE)
+    };
+    match git(root, &["ls-files", "-z", "--cached"]) {
+        Ok(tracked) => {
+            // A tracked file deleted from the working tree is not in it, so it is not in the commit.
+            let present: Vec<&str> = tracked.split('\0').filter(|p| !p.is_empty() && root.join(p).symlink_metadata().is_ok()).collect();
+            let list = git_dir.join("fixture-paths");
+            std::fs::write(&list, present.join("\0")).map_err(|e| e.to_string())?;
+            from_root(&["add", "-f", "--pathspec-file-nul", &format!("--pathspec-from-file={}", list.display())])?;
+            let _ = std::fs::remove_file(&list);
+        }
+        Err(_) => {
+            from_root(&["add", "-A"])?;
+        }
+    }
+    git(dst, &["commit", "-q", "-m", "seed"])?;
+    git(dst, &["reset", "-q", "--hard"])?;
+    Ok(())
 }
 
 /// What a world's checkouts hold: the root files and the directories a world path reads from a
@@ -855,23 +924,39 @@ fn build_seed(repo: &Path, tree: &str, cache: &Path, seed: &Path) -> Result<(), 
             return Err(format!("{}: could not be created", seed.display()));
         }
     }
-    prune_seeds(cache, seed);
     Ok(())
 }
 
-fn prune_seeds(cache: &Path, keep: &Path) {
+/// Cuts the cache to `keep` seeds, least recently used first. A seed a world holds is skipped,
+/// so the cache can stand over its bound only while more than `keep` seeds are in use at once.
+fn prune_seeds(cache: &Path, keep: usize) {
     let mut seeds: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(cache)
         .into_iter()
         .flatten()
         .flatten()
-        .filter(|e| e.file_name().to_string_lossy().starts_with("seed-") && !e.file_name().to_string_lossy().contains(".build-"))
+        .filter(|e| e.file_name().to_string_lossy().starts_with("seed-") && !e.file_name().to_string_lossy().contains('.'))
+        .filter(|e| e.path().join(".complete").is_file())
         .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
         .collect();
     seeds.sort();
-    let excess = seeds.len().saturating_sub(SEED_KEEP);
-    let idle = std::time::SystemTime::now() - SEED_IDLE;
-    for (_, path) in seeds.into_iter().take(excess).filter(|(used, p)| p != keep && *used < idle) {
-        let _ = std::fs::remove_dir_all(path);
+    let mut over = seeds.len().saturating_sub(keep);
+    static EVICTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    for (_, path) in seeds {
+        if over == 0 {
+            break;
+        }
+        let Ok(lock) = std::fs::File::open(path.join(".complete")) else { continue };
+        if lock.try_lock().is_err() {
+            continue;
+        }
+        // Renamed first, so a world looking the seed up from here on builds a fresh one.
+        let n = EVICTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let gone = cache.join(format!("{name}.evict-{}-{n}", std::process::id()));
+        if std::fs::rename(&path, &gone).is_ok() {
+            let _ = std::fs::remove_dir_all(&gone);
+            over -= 1;
+        }
     }
 }
 
