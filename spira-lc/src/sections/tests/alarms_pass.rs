@@ -163,7 +163,8 @@ fn record(n: u64, at_ms: u64) -> PassRecord {
 }
 
 fn put_record<B: Backend>(r: &Rig<B>, rec: &PassRecord) {
-    r.put_knob(PASS_KEY, serde_json::to_value(rec).unwrap());
+    let t = Txn::new().put(PASS_KEY, Object::new(serde_json::to_value(rec).unwrap()).with_ttl(24 * 3600));
+    assert!(r.store.txn(&t, &Request::new(&format!("pass/{}", r.head()), "test", "t")).unwrap().succeeded);
 }
 
 fn nolever(n: u64, at_ms: u64, conditions: &[&str], refused_code: &str) -> PassRecord {

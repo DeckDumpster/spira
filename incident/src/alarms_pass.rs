@@ -633,7 +633,10 @@ pub fn run(p: &Ports, cfg: &Config) -> Result<Report, String> {
     }
     let now = now_secs(p);
     let seen = seen(&snap);
-    let pass: Option<PassRecord> = snap.get("pass").filter(|v| !v.is_null()).and_then(|v| serde_json::from_value(v.clone()).ok());
+    let pass: Option<PassRecord> = match snap.get("pass").filter(|v| !v.is_null()) {
+        None => None,
+        Some(v) => Some(serde_json::from_value(v.clone()).map_err(|e| format!("the pass record does not decode: {e}"))?),
+    };
     let mut report = Report::default();
     retry(p, cfg, &snap, &mut report);
     let dm = deadman(p.switch, pass.as_ref(), now, cfg.deadman_secs);

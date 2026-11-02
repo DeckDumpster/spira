@@ -65,6 +65,22 @@ impl Candidate {
         hash(&[&self.steps.join("\n")])
     }
 
+    /// The row key for one of its conditions: the source keeps a raise's rows and each pass-record
+    /// source's window apart, so one never resets or notes over another.
+    fn key(&self, condition: &str) -> String {
+        let source = match self.source {
+            Source::NoLever => "nolever",
+            Source::Exhausted => "exhausted",
+            Source::Raised { .. } => "raised",
+            Source::DeadMan => "deadman",
+        };
+        format!("{source}:{condition}")
+    }
+
+    fn owns(&self, r: &Row) -> bool {
+        r.section == self.section && self.conditions.iter().any(|c| self.key(c) == r.condition)
+    }
+
     /// The reference an attempt to send this page is recorded under.
     pub fn reference(&self) -> String {
         format!("page:{}:{}", self.section, self.conditions.join(","))
@@ -158,11 +174,11 @@ pub enum Verdict {
 pub fn decide(rows: &[Row], c: &Candidate, now: i64) -> Verdict {
     let identity = c.identity();
     if matches!(c.source, Source::Raised { .. }) {
-        let seen = rows.iter().any(|r| r.section == c.section && r.identity == identity);
+        let seen = rows.iter().any(|r| c.owns(r) && r.identity == identity);
         return if seen { Verdict::Quiet } else { Verdict::Send };
     }
-    let live: Vec<&Row> = rows.iter().filter(|r| r.section == c.section && c.conditions.contains(&r.condition) && now - r.sent < REMINDER_S).collect();
-    if c.conditions.iter().any(|cond| !live.iter().any(|r| &r.condition == cond)) {
+    let live: Vec<&Row> = rows.iter().filter(|r| c.owns(r) && now - r.sent < REMINDER_S).collect();
+    if c.conditions.iter().any(|cond| !live.iter().any(|r| r.condition == c.key(cond))) {
         return Verdict::Send;
     }
     let evidence = c.evidence();
@@ -178,11 +194,11 @@ pub fn sent(rows: &[Row], c: &Candidate, ask: &str, now: i64) -> Vec<Row> {
     let mut out: Vec<Row> = rows
         .iter()
         .filter(|r| now - r.sent < KEEP_S)
-        .filter(|r| raised || !(r.section == c.section && c.conditions.contains(&r.condition)))
+        .filter(|r| raised || !c.owns(r))
         .cloned()
         .collect();
     for cond in &c.conditions {
-        out.push(Row { section: c.section.clone(), condition: cond.clone(), identity: c.identity(), evidence: c.evidence(), ask: ask.into(), sent: now });
+        out.push(Row { section: c.section.clone(), condition: c.key(cond), identity: c.identity(), evidence: c.evidence(), ask: ask.into(), sent: now });
     }
     out
 }
@@ -193,7 +209,7 @@ pub fn noted(rows: &[Row], c: &Candidate, now: i64) -> Vec<Row> {
     rows.iter()
         .map(|r| {
             let mut r = r.clone();
-            if r.section == c.section && c.conditions.contains(&r.condition) && now - r.sent < REMINDER_S {
+            if c.owns(&r) && now - r.sent < REMINDER_S {
                 r.identity = c.identity();
                 r.evidence = c.evidence();
             }
@@ -261,6 +277,25 @@ mod tests {
         let rows = sent(&rows, &raise("t2"), "", 1120);
         assert_eq!(rows.len(), 2, "a raise keeps the earlier raise's row");
         assert!(sent(&rows, &raise("t3"), "", 1000 + KEEP_S).len() == 2, "rows past KEEP_S are dropped");
+    }
+
+    #[test]
+    fn a_raise_and_a_pass_record_entry_on_one_section_keep_their_own_rows() {
+        let raise = Candidate::new("RoundController/repo-b", Source::Raised { since: "t1".into() }, vec!["A".into()], Decision { question: "r".into(), default: "d".into() });
+        let lever = nolever(&["A"], &["s1"]);
+        let mut exhausted = nolever(&["A"], &["s1"]);
+        exhausted.source = Source::Exhausted;
+        exhausted.decision.question = "e".into();
+        let mut rows = Vec::new();
+        for c in [&lever, &raise, &exhausted] {
+            assert_eq!(decide(&rows, c, 1000), Verdict::Send);
+            rows = sent(&rows, c, "sp-ask", 1000);
+        }
+        for t in [1060, 1120, 1180] {
+            for c in [&lever, &raise, &exhausted] {
+                assert_eq!(decide(&rows, c, t), Verdict::Quiet, "{:?} at {t}", c.source);
+            }
+        }
     }
 
     #[test]

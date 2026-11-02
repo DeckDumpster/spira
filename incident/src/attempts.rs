@@ -23,7 +23,7 @@ pub fn of_file(outcome: &FileOutcome) -> Option<Outcome> {
     })
 }
 
-/// Each alarm whose latest attempt in the lookback failed, oldest first.
+/// Each alarm whose latest attempt in the lookback failed, the longest untried first.
 pub fn undelivered(attempts: &[Attempt], now: u64) -> Vec<&Attempt> {
     let mut latest: BTreeMap<&str, &Attempt> = BTreeMap::new();
     for a in attempts.iter().filter(|a| now.saturating_sub(a.at) <= LOOKBACK_S) {
@@ -86,6 +86,10 @@ mod tests {
         ];
         let open: Vec<&str> = undelivered(&rows, now).iter().map(|a| a.reference.as_str()).collect();
         assert_eq!(open, ["b", "c"], "oldest first; a delivered and old past the lookback");
+        let mut retried = rows.clone();
+        retried.push(at(now - 10, "b", failed()));
+        let open: Vec<&str> = undelivered(&retried, now).iter().map(|a| a.reference.as_str()).collect();
+        assert_eq!(open, ["c", "b"], "a failed retry goes to the back, so one stuck alarm never blocks the rest");
         let c = counts(&rows, now, "page");
         assert_eq!(c, Counts { attempts: 4, delivered: 1, failed: 3, pages: 1 });
     }
