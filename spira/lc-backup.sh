@@ -2,39 +2,42 @@
 #
 # lc-backup.sh — off-box backup of every database the harness owns, its age alarm and its restore drill.
 #
-#   lc-backup.sh run                 per database: snapshot locally, tar it, upload ONE object, stamp it
+#   lc-backup.sh run                 per database: sync the local backup dir, upload its new table files and a new manifest, stamp it
 #   lc-backup.sh age [--now EPOCH]   exit 0 when every database's newest good backup is younger than SPIRA_LC_BACKUP_MAX_AGE
-#   lc-backup.sh drill [--db NAME] [TARBALL]   per database: restore a snapshot into a scratch dir under SPIRA_RUN; row counts must equal live; exit 0 with a recorded DEFERRED verdict when the store stays busy past the cap. With SPIRA_LC_STORE_PATH set, the control store (--db control) first: spira-lc admin-drill
+#   lc-backup.sh drill [--db NAME]   per database: restore the newest uploaded manifest's file set into a scratch dir; row counts must equal live; exit 0 with a recorded DEFERRED verdict when the store stays busy past the cap. With SPIRA_LC_STORE_PATH set, the control store (--db control) first: spira-lc admin-drill
 #   lc-backup.sh watch [--interval S] [--ticks N]   watchd daemon: mails the crossing into and out of stale
 #   lc-backup.sh health              exit non-zero when the watch loop has stopped polling
 #   lc-backup.sh explain             after a failed run: put the log's last error line on stderr and in the journal
 #   lc-backup.sh explain-drill       after a failed drill: journal each database's drill.verdict and mail it to the operator
 #
 # SPIRA_LC_BACKUP_URL is s3://bucket/prefix/ (credentials and region from the environment, which
-# the service loads from the operator's env file) or file://dir. The key is write-only: the
-# upload is one s3:PutObject, and nothing here lists, reads or deletes the bucket — so the age
-# check reads the local stamp, and the periodic drill restores the local copy of the exact
-# tarball that was uploaded. Restoring from the bucket is the operator's, under their own identity.
+# the service loads from the operator's env file) or file://dir. The key is write-only: every
+# upload is an s3:PutObject through `spira-lc admin-dolt-ship`, and nothing here lists, reads or
+# deletes the bucket. Table files are content-addressed, so each goes up once, under
+# <db>/files/<name>; each run's manifest goes under a new key, <db>/manifests/<stamp>-<head>.
+# Restoring from the bucket is the operator's, under their own identity (docs/operating.md).
 #
-# The snapshot goes through the running server (`dolt sql` in the database directory), so it is
-# one consistent commit however busy the store is. Only committed history snapshots, so the
-# working set is committed first.
+# The sync goes through the running server (`dolt sql` in the database directory), so it is one
+# consistent commit however busy the store is. Only committed history syncs, so the working set
+# is committed first.
 #
 # SPIRA_LC_BACKUP_DB is a space-separated list of databases. Each has its own stamp
-# (lc-backup.<db>.ok) and local tarball, so one database's fresh backup cannot mask another's.
+# (lc-backup.<db>.ok), backup dir and ledger, so one database's fresh backup cannot mask another's.
 #
-# A stamp is written only after the upload exits clean, and carries the commit it holds. The
-# drill restores that tarball and compares every table's count AS OF the stamped commit, live and restored alike, so
-# writes landing meanwhile cannot move either side.
+# A stamp is written only after the manifest's upload exits clean, and carries the commit it
+# holds. The drill restores the newest uploaded manifest's file set and compares every table's
+# count AS OF the stamped commit, live and restored alike, so writes landing meanwhile cannot
+# move either side.
 #
 # No destination, an unreadable stamp or an age beyond the limit is red, never a skip — a
 # store that was never backed up must look different from one that is.
 #
-# The control store is not tarred here: lc-serve ships it to revlog/ and snapshot/ under the same
+# The control store is not shipped here: lc-serve ships it to revlog/ and snapshot/ under the same
 # URL, and the drill restores its local copies with `spira-lc admin-drill`. Retention is the
-# bucket's lifecycle rule, which must expire revision runs no sooner than snapshots.
+# bucket's lifecycle rule, which must expire revision runs no sooner than snapshots and must
+# never expire <db>/files/: a file is uploaded once and every later manifest may name it.
 #
-# The stamp's third field is bd's planning watermark when it was tarred (`-` when unstamped).
+# The stamp's third field is bd's planning watermark when it was synced (`-` when unstamped).
 
 # covers: spira/lc-backup.sh spira/watchers spira/conf.d/SPIRA_LC_BACKUP_* systemd/lc-backup.service systemd/lc-backup.timer systemd/lc-backup-drill.*
 set -uo pipefail
@@ -51,6 +54,7 @@ _lcb_stamp() { printf '%s/lc-backup.%s.ok' "$SPIRA_RUN" "$1"; }
 _lcb_refuse_unconfigured() {
     [ -n "$SPIRA_LC_BACKUP_URL" ] || { echo "lc-backup: SPIRA_LC_BACKUP_URL is empty — the stores have no backup destination" >&2; return 1; }
     [ -n "$(_lcb_dbs)" ] || { echo "lc-backup: SPIRA_LC_BACKUP_DB names no database" >&2; return 1; }
+    [ -n "$SPIRA_LC_BACKUP_SYNC_DIR" ] || { echo "lc-backup: SPIRA_LC_BACKUP_SYNC_DIR is empty — no disk is named for the local backup dirs" >&2; return 1; }
 }
 
 _lcb_require_db() {
@@ -72,31 +76,8 @@ _lcb_refuse_same_disk() {
     fi
 }
 
-# batch-job: snapshot and restore of the whole store run for as long as the store is large
+# batch-job: a sync and a restore run for as long as what changed, or the store, is large
 _lcb_sql() { local db="$1"; shift; ( cd "$(_lcb_db_dir "$db")" && dolt sql "$@" ); }
-
-_lcb_upload() {
-    local file="$1" key="$2" url="$SPIRA_LC_BACKUP_URL" bucket rest region host sum
-    case "$url" in
-        file://*) mkdir -p "${url#file://}/$(dirname "$key")" && cp "$file" "${url#file://}/$key"; return ;;
-        s3://*) ;;
-        *) echo "lc-backup: unsupported destination scheme in $url" >&2; return 1 ;;
-    esac
-    rest="${url#s3://}"; bucket="${rest%%/*}"
-    [ -n "${AWS_ACCESS_KEY_ID:-}" ] && [ -n "${AWS_SECRET_ACCESS_KEY:-}" ] \
-        || { echo "lc-backup: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are not in the environment" >&2; return 1; }
-    region="${AWS_DEFAULT_REGION:-${AWS_REGION:-}}"
-    [ -n "$region" ] || { echo "lc-backup: AWS_DEFAULT_REGION is not in the environment" >&2; return 1; }
-    sum="$(sha256sum "$file" | cut -d' ' -f1)"
-    if [ -n "${AWS_ENDPOINT_URL_S3:-}" ]; then host="${AWS_ENDPOINT_URL_S3%/}/$bucket"
-    else host="https://$bucket.s3.$region.amazonaws.com"; fi
-    # batch-job: the snapshot upload is bounded by size, not by a round trip
-    curl -sS --fail-with-body --max-time 1500 -X PUT -T "$file" \
-        --aws-sigv4 "aws:amz:$region:s3" --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
-        ${AWS_SESSION_TOKEN:+-H "x-amz-security-token: $AWS_SESSION_TOKEN"} \
-        -H "x-amz-content-sha256: $sum" -H "x-amz-server-side-encryption: AES256" \
-        "$host/$key" >/dev/null
-}
 
 # bd's own planning watermark, or `-` while nothing is stamped or it cannot be read.
 _lcb_plan_watermark() {
@@ -107,6 +88,9 @@ _lcb_plan_watermark() {
 }
 
 _lcb_lock() { mkdir -p "$SPIRA_RUN/lc-backup/$1" && printf '%s/lc-backup/%s/.lock' "$SPIRA_RUN" "$1"; }
+_lcb_work() { printf '%s/lc-backup/%s' "$SPIRA_RUN" "$1"; }
+# The local backup dir dolt syncs into; it persists between runs so each sync writes only new table files.
+_lcb_sync_dir() { printf '%s/%s' "$SPIRA_LC_BACKUP_SYNC_DIR" "$1"; }
 
 _lcb_run_db() {
     local db="$1" lock
@@ -115,59 +99,27 @@ _lcb_run_db() {
       _lcb_run_db_locked "$db" ) 9>"$lock"
 }
 
-# _lcb_compact db work stage head — replace the raw snapshot in $stage with a garbage-collected one.
-# A backup sync copies the whole chunk store, unreachable chunks included: the bd snapshot reached
-# 6.8 GB against the 5 GiB single-PUT limit, and 2.5 GB of it survives a gc. The live store is
-# never collected here (it sits on a tmpfs without the headroom); a restored copy beside the stage is.
-_lcb_compact() {
-    local db="$1" work="$2" stage="$3" head="$4" c="$2/compact" got
-    rm -rf "$c" && mkdir -p "$c" || return 1
-    # batch-job: restore, collect and re-sync of the whole snapshot run for as long as the store is large
-    ( cd "$c" && dolt backup restore "file://$stage" "$db" ) >"$c/restore.log" 2>&1 \
-        || { echo "lc-backup: compact: restore of the $db snapshot failed: $(tail -n2 "$c/restore.log")" >&2; return 1; }
-    rm -rf "$stage"
-    # batch-job: collecting the whole restored snapshot
-    ( cd "$c/$db" && dolt gc ) >"$c/gc.log" 2>&1 \
-        || { echo "lc-backup: compact: dolt gc of $db failed: $(tail -n2 "$c/gc.log")" >&2; return 1; }
-    # batch-job: a read of the restored scratch copy
-    got="$( cd "$c/$db" && dolt sql -r csv -q "SELECT commit_hash FROM dolt_log LIMIT 1" 2>/dev/null | tail -n +2 )"
-    [ "$got" = "$head" ] || { echo "lc-backup: compact: $db head moved from $head to ${got:-?} under gc" >&2; return 1; }
-    # batch-job: re-syncing the whole collected snapshot
-    mkdir -p "$stage" && ( cd "$c/$db" && dolt backup add compact "file://$stage" && dolt backup sync compact ) >"$c/sync.log" 2>&1 \
-        || { echo "lc-backup: compact: re-sync of $db failed: $(tail -n2 "$c/sync.log")" >&2; return 1; }
-    rm -rf "$c"
-}
-
 _lcb_run_db_locked() {
-    local db="$1" out head work stage tarball prefix stamp key ext wm
+    local db="$1" out head sync stamp wm
     _lcb_require_db "$db" || return 1
     wm="$(_lcb_plan_watermark)"
     out="$(_lcb_sql "$db" -q "CALL DOLT_COMMIT('-Am', 'lc-backup $(date -u +%Y-%m-%dT%H:%M:%SZ)')" 2>&1)" \
         || case "$out" in *"nothing to commit"*) ;; *) echo "lc-backup: commit failed: $out" >&2; return 1 ;; esac
-    work="$SPIRA_RUN/lc-backup/$db"; stage="$work/stage"
-    if command -v zstd >/dev/null 2>&1; then ext=zst; else ext=gz; fi
-    tarball="$work/latest.tar.$ext"
-    rm -rf "$stage" && mkdir -p "$stage" || return 1
-    out="$(_lcb_sql "$db" -r csv -q "SELECT commit_hash FROM dolt_log LIMIT 1; CALL DOLT_BACKUP('sync-url', 'file://$stage')" 2>&1)" \
-        || { echo "lc-backup: local snapshot of $db failed: $out" >&2; return 1; }
+    sync="$(_lcb_sync_dir "$db")"
+    mkdir -p "$sync" || return 1
+    out="$(_lcb_sql "$db" -r csv -q "SELECT commit_hash FROM dolt_log LIMIT 1; CALL DOLT_BACKUP('sync-url', 'file://$sync')" 2>&1)" \
+        || { echo "lc-backup: local sync of $db failed: $out" >&2; return 1; }
     head="$(printf '%s\n' "$out" | sed -n '2p')"
     case "$head" in *[!0-9a-v]*|"") head="" ;; esac
-    [ -n "$head" ] || { echo "lc-backup: snapshot taken but cannot read $db's head commit" >&2; return 1; }
-    _lcb_compact "$db" "$work" "$stage" "$head" || { rm -rf "$stage" "$work/compact"; return 1; }
-    # latest.tar.* is the drill's copy of the newest UPLOADED snapshot, so a pack replaces it only
-    # once its upload exits clean; until then it is pending and a failed upload discards it.
-    tar -C "$stage" -caf "$tarball.pending" --format=posix . 2>/dev/null \
-        || { rm -f "$tarball.pending"; rm -rf "$stage"; echo "lc-backup: cannot pack the snapshot" >&2; return 1; }
-    rm -rf "$stage"
-    prefix=""
-    case "$SPIRA_LC_BACKUP_URL" in s3://*/*) prefix="${SPIRA_LC_BACKUP_URL#s3://*/}"; prefix="${prefix%/}"; [ -z "$prefix" ] || prefix="$prefix/" ;; esac
-    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-    key="$prefix$db/$stamp.tar.$ext"
-    _lcb_upload "$tarball.pending" "$key" || { rm -f "$tarball.pending"; echo "lc-backup: upload of $key failed" >&2; return 1; }
-    mv "$tarball.pending" "$tarball" || return 1
-    find "$work" -maxdepth 1 -name 'latest.tar.*' ! -name "latest.tar.$ext" -delete
-    printf '%s %s %s\n' "$(date +%s)" "$head" "$wm" > "$(_lcb_stamp "$db").tmp" && mv "$(_lcb_stamp "$db").tmp" "$(_lcb_stamp "$db")"
-    echo "lc-backup: uploaded $db at $head as $key to $SPIRA_LC_BACKUP_URL"
+    [ -n "$head" ] || { echo "lc-backup: synced but cannot read $db's head commit" >&2; return 1; }
+    stamp="$(date -u +%Y%m%dT%H%M%S%3NZ)"
+    # batch-job: uploads bounded by what changed since the last run
+    out="$(spira-lc admin-dolt-ship --url "$SPIRA_LC_BACKUP_URL" --db "$db" --sync "$sync" \
+        --state "$(_lcb_work "$db")" --stamp "$stamp" --head "$head" 2>&1)" \
+        || { echo "lc-backup: upload of $db failed: $out" >&2; return 1; }
+    { printf '%s %s %s\n' "$(date +%s)" "$head" "$wm" > "$(_lcb_stamp "$db").tmp" && mv "$(_lcb_stamp "$db").tmp" "$(_lcb_stamp "$db")"; } \
+        || { echo "lc-backup: $db uploaded as ${out#admin-dolt-ship: } but its stamp cannot be written" >&2; return 1; }
+    echo "lc-backup: uploaded $db at $head to $SPIRA_LC_BACKUP_URL: ${out#admin-dolt-ship: }"
 }
 
 cmd_run() {
@@ -246,14 +198,10 @@ cmd_age() {
 }
 
 _lcb_drill_db() {
-    local db="$1" tarball="$2" lock
-    if [ -z "$tarball" ]; then
-        lock="$(_lcb_lock "$db")" || return 1
-        ( flock -n 9 || { echo "lc-backup: drill: $db: a run holds the lock, deferred"; exit 0; }
-          _lcb_drill_db_locked "$db" "" ) 9>"$lock"
-    else
-        _lcb_drill_db_locked "$db" "$tarball"
-    fi
+    local db="$1" lock
+    lock="$(_lcb_lock "$db")" || return 1
+    ( flock -n 9 || { echo "lc-backup: drill: $db: a run holds the lock, deferred"; exit 0; }
+      _lcb_drill_db_locked "$db" ) 9>"$lock"
 }
 
 _lcb_verdict() { printf '%s/lc-backup/%s/drill.verdict' "$SPIRA_RUN" "$1"; }
@@ -265,26 +213,29 @@ _lcb_drill_fail() {
     return 1
 }
 
+# The restore source is laid down as an off-box restore would be: a fresh dir holding the newest
+# uploaded manifest and only the files it names, never the backup dir itself.
 _lcb_drill_db_locked() {
-    local db="$1" tarball="$2" stamp verdict
+    local db="$1" stamp verdict t head scratch rc=0 tables tbl live restored live_head set set_head bytes need have
     stamp="$(_lcb_stamp "$db")"
     _lcb_require_db "$db" || return 1
     verdict="$(_lcb_verdict "$db")"
     mkdir -p "$(dirname "$verdict")" && : > "$verdict" || return 1
-    [ -n "$tarball" ] || tarball="$(ls "$SPIRA_RUN/lc-backup/$db"/latest.tar.zst "$SPIRA_RUN/lc-backup/$db"/latest.tar.gz 2>/dev/null | head -1)"
-    local t head scratch rc=0 tables tbl live restored live_head err
-    [ -r "$tarball" ] || { _lcb_drill_fail "$db" "$db: no snapshot at $tarball"; return 1; }
     [ -r "$stamp" ] || { _lcb_drill_fail "$db" "$db: no stamp — nothing has been backed up"; return 1; }
+    [ -n "$SPIRA_LC_BACKUP_SYNC_DIR" ] || { _lcb_drill_fail "$db" "SPIRA_LC_BACKUP_SYNC_DIR is empty — no local backup dir to restore from"; return 1; }
     read -r t head _ < "$stamp"
-    local need=$(( $(stat -c %s "$tarball") * 4 / 1024 )) have
     mkdir -p "$SPIRA_LC_BACKUP_DRILL_DIR" && scratch="$(mktemp -d "$SPIRA_LC_BACKUP_DRILL_DIR/$db.XXXXXX")" \
         || { _lcb_drill_fail "$db" "$db: cannot make a scratch dir under $SPIRA_LC_BACKUP_DRILL_DIR"; return 1; }
+    set="$(spira-lc admin-dolt-assemble --state "$(_lcb_work "$db")" --files "$(_lcb_sync_dir "$db")" --out "$scratch/snap" 2>&1)" \
+        || { _lcb_drill_fail "$db" "$db: cannot lay down the newest manifest's file set: $set"; rm -rf "$scratch"; return 1; }
+    read -r set_head _ bytes <<<"$set"
+    [ "$set_head" = "$head" ] \
+        || { _lcb_drill_fail "$db" "the newest uploaded manifest is at ${set_head:-?}, not the stamped head $head"; rm -rf "$scratch"; return 1; }
+    need=$(( ${bytes:-0} * 5 / 4 / 1024 ))
     have="$(df -Pk "$scratch" | awk 'NR==2{print $4}')"
     [ "${have:-0}" -ge "$need" ] \
         || { _lcb_drill_fail "$db" "$SPIRA_LC_BACKUP_DRILL_DIR has ${have:-0}KiB free, the restore needs ~${need}KiB"; rm -rf "$scratch"; return 1; }
-    err="$(mkdir "$scratch/snap" && tar -C "$scratch/snap" -xaf "$tarball" 2>&1)" \
-        || { _lcb_drill_fail "$db" "unpack: cannot unpack $tarball: $err"; rm -rf "$scratch"; return 1; }
-    # batch-job: restoring a snapshot into the scratch dir
+    # batch-job: restoring the manifest's file set into the scratch dir
     ( cd "$scratch" && dolt backup restore "file://$scratch/snap" "$db" ) >"$scratch/restore.log" 2>&1 \
         || { _lcb_drill_fail "$db" "restore failed: $(cat "$scratch/restore.log")"; rm -rf "$scratch"; return 1; }
     # batch-job: reads of the restored scratch copy
@@ -358,20 +309,19 @@ _lcb_drill_control() {
 }
 
 cmd_drill() {
-    local only="" tarball="" db rc=0
+    local only="" db rc=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --db) only="${2:?--db needs a value}"; shift 2 ;;
-            *) tarball="$1"; shift ;;
+            *) echo "lc-backup.sh: drill: unknown argument '$1'" >&2; return 2 ;;
         esac
     done
-    [ -z "$tarball" ] || [ -n "$only" ] || only="$(_lcb_dbs | head -1)"
     if [ -n "$SPIRA_LC_STORE_PATH" ] && { [ -z "$only" ] || [ "$only" = control ]; }; then
         _lcb_drill_control || rc=1
         [ "$only" = control ] && return "$rc"
     fi
     _lcb_drill_wait_quiet || return "$rc"
-    for db in ${only:-$(_lcb_dbs)}; do _lcb_drill_db "$db" "$tarball" || rc=1; done
+    for db in ${only:-$(_lcb_dbs)}; do _lcb_drill_db "$db" || rc=1; done
     return "$rc"
 }
 
@@ -442,7 +392,7 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
         health) cmd_health; exit $? ;;
         explain) cmd_explain; exit $? ;;
         explain-drill) cmd_explain_drill; exit $? ;;
-        *) echo "usage: lc-backup.sh run | age [--now EPOCH] | drill [--db NAME] [TARBALL] | watch [--interval S] [--ticks N] | health | explain | explain-drill" >&2
+        *) echo "usage: lc-backup.sh run | age [--now EPOCH] | drill [--db NAME] | watch [--interval S] [--ticks N] | health | explain | explain-drill" >&2
            exit 2 ;;
     esac
 fi

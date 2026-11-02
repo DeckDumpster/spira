@@ -1,8 +1,10 @@
 [Unit]
-Description=Back up the lifecycle store every six hours
+Description=Back up the lifecycle stores every hour
 
 [Timer]
-OnCalendar=*-*-* 02,08,14,20:35:00
+# Hourly since the upload became incremental (was 02,08,14,20:35, six-hourly, when every run
+# re-uploaded the whole store).
+OnCalendar=*-*-* *:35:00
 Persistent=true
 AccuracySec=5min
 RandomizedDelaySec=300

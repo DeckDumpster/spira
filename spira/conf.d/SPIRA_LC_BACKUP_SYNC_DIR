@@ -1,0 +1,6 @@
+TYPE=string
+GROUP=lc
+DOC=WHERE EACH DATABASE'S LOCAL DOLT BACKUP LIVES, one subdirectory per database, synced in place every run so a run writes and uploads only new table files. It holds a full copy of each store, so put it on a disk with the room and off the live store's. Empty refuses a run rather than guessing a disk.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_BACKUP_SYNC_DIR:=}"
+SPIRA_CONF_DEFAULT_EOF
