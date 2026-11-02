@@ -1967,17 +1967,36 @@ fn cmd_dep_convert(home: &str, args: &[String]) -> i32 {
         eprintln!("bead: dep convert: refusing — {epic} is not an epic");
         return 1;
     }
-    let rc = bdq_status(home, &s(&["dep", "remove", &id, &epic]));
+    let rc = bdq_status_stdin(home, &s(&["batch"]), &bead::dep_convert_batch(&id, &epic));
     if rc != 0 {
-        return rc;
-    }
-    let rc = bdq_status(home, &s(&["dep", "add", &id, &epic, "--type", "parent-child"]));
-    if rc != 0 {
-        bdq_status(home, &s(&["dep", "add", &id, &epic, "--type", "blocks"]));
+        eprintln!("bead: dep convert: the batch was refused (exit {rc}); the edge is unchanged");
         return rc;
     }
     println!("converted edge: {id} -> {epic} blocks => parent-child");
     0
+}
+
+/// [`bdq_status`] with `input` on bd's stdin.
+fn bdq_status_stdin(home: &str, args: &[String], input: &str) -> i32 {
+    use std::io::Write;
+    // batch-job: one bd batch, bounded by bdq's own deadline
+    let child = Command::new("bash")
+        .arg("-c")
+        .arg(BDQ_SCRIPT)
+        .arg("bdq")
+        .arg(home)
+        .args(args)
+        .envs(spira_config::release_env::child_path_env_for_process())
+        .stdin(Stdio::piped())
+        .spawn();
+    let Ok(mut child) = child else { return 127 };
+    if let Some(mut w) = child.stdin.take() {
+        if w.write_all(input.as_bytes()).is_err() {
+            let _ = child.kill();
+            return 1;
+        }
+    }
+    child.wait().map(|s| s.code().unwrap_or(1)).unwrap_or(127)
 }
 
 // =========================================================================================

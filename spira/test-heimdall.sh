@@ -1,159 +1,238 @@
 #!/usr/bin/env bash
 #
-# test-heimdall.sh — the raise/clear/re-raise lifecycle against a real bd, the operator's own close, and the file channel of last resort.
+# test-heimdall.sh — the watchdog's reconciler: raised, cleared and re-raised as control-plane
+# conditions, against a real spira-lc on a throwaway control store.
 #
 #   ./test-heimdall.sh
 #
-# The classifier half (`heimdall classify`, the pure function that turns observations into
-# firing keys) is test-heimdall-classify.sh, which needs nothing but the heimdall binary and runs
-# everywhere. This suite drives a real `bd` against a throwaway Dolt database, because a
-# stub for bd has twice made correct callers look broken (law-prefer-the-real-dependency).
-# With no server, this suite exits 77 — the automake skip convention, which gate-brain.sh
-# names in the gate's output — but ONLY if everything that did run passed. A skip must
-# never be able to swallow a failure.
-#
-# mklog (a synthetic sentinel log in lib.sh's log() format) is needed here too, for the
-# wedge()/heal() fixtures below — it is duplicated from test-heimdall-classify.sh rather than
-# shared, since testlib.sh suites are sourced standalone with no shared-helper convention.
-#
-# heimdall.sh is retired into the `heimdall` binary (sp-zpaq0, rewrite wave 5); this suite now
-# drives that binary (`command heimdall --home "$SH"`) instead of `bash "$SH/heimdall.sh"`,
-# exactly test-dwarf-sweep.sh's own `command dwarf --home ...` pattern for the same reason
-# (the wrapper function below is itself named `heimdall`, shadowing the bare binary name).
-# Three files share this setup: each heimdall pass costs about a second of real bd round trips,
-# so the sections run as test-heimdall.sh, test-heimdall-probe.sh and test-heimdall-restart.sh,
-# each on a fixture of its own.
+# The classifier half (`heimdall classify`) is test-heimdall-classify.sh. This suite drives the
+# real `spira-lc condition` verbs on a fresh SQLite control store, because a stub for the store
+# has made correct callers look broken before (law-prefer-the-real-dependency). Only the fault
+# cases put a shim in front of it, to fail the writes or time out on demand.
 # tier: T2
-# covers: heimdall/src/* spira/testlib/heimdall-fixture.sh spira/conf.sh UC-ops-detection-remediation-19
+# covers: heimdall/src/* spira/testlib/heimdall-fixture.sh spira-lc/src/control/state/conditions.rs spira-lc/src/control/state/conditions/* spira/conf.sh UC-ops-detection-remediation-19
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
 command -v heimdall >/dev/null 2>&1 \
     || { echo "test-heimdall: heimdall is not on PATH" >&2; exit 1; }
-
+REAL_LC="$(command -v spira-lc)" \
+    || { echo "test-heimdall: spira-lc is not on PATH" >&2; exit 1; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 echo "test-heimdall.sh"
 
-. "$HERE/testdb.sh"
-if ! testdb_available; then
-    printf 'SKIP test-heimdall: no bd engine available — the reconcile cases need a real bd.\n' \
-        >&2
-    printf '  embedded: install bd-embedded  server: testenv testdb\n' \
-        >&2
-    skip "no bd engine available"
-fi
-testdb_up heimdall || { echo "test-heimdall: could not build a fixture database"; exit 1; }
-
 . "$HERE/testlib/heimdall-fixture.sh"
 
-echo "heimdall.sh — one bead per cause, raised, cleared and re-raised:"
+echo "heimdall — one condition per cause, raised, cleared and re-raised:"
 
 wedge
 heimdall >/dev/null
-[ "$(alert_status sentinel-stalled)" = "-" ] \
-    && ok "one sighting does not fire — a condition must be confirmed" \
-    || bad "confirm" "an alert was raised on the first sighting"
+is "one sighting does not fire — a condition must be confirmed" "-" "$(cond_status sentinel-stalled)"
 [ -r "$RUN/heimdall.status" ] && ok "the heartbeat is written even when nothing fires" \
     || bad "heartbeat" "no $RUN/heimdall.status after a quiet run"
 
 heimdall >/dev/null
-st="$(alert_status sentinel-stalled)"
-case "$st" in *" open") ok "a confirmed condition raises an open alert bead" ;;
-    *) bad "raise" "expected an open bead, got [$st]" ;; esac
-ID="${st%% *}"
-# THE WRITER'S HALF OF A CONTRACT WITH THE ATTENTION PANE. The ALERTS tab selects on
-# `alert` AND `overseer` and reads the count out of `flaps:<n>`; those three strings are
-# the whole interface between this program and a Rust binary in another directory, and
-# nothing about either half's code would announce a drift. `needs-ryan` must be absent, or
-# the bead lands in DECISIONS — the one list whose value is that nothing leaves it unless
-# the operator moved it.
-kind="$(timeout 5 bd -C "$SPIRA_DB" show "$ID" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
+is "a confirmed condition raises it True at conditions/heimdall/<key>" "True 1" "$(cond_status sentinel-stalled)"
+# THE WRITER'S HALF OF A CONTRACT WITH THE ATTENTION PANE: type Alert, and the message's first
+# line is the title the pane shows.
+is "the condition is an Alert whose message leads with the title" "Alert True" \
+   "$(cond_field sentinel-stalled type status)"
+[ -n "$("$REAL_LC" condition list --owner heimdall | python3 -c '
 import sys, json
-d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
-print("%s|%s" % (d.get("issue_type"), ",".join(sorted(d.get("labels") or []))))' 2>/dev/null)"
-is "an event labelled alert/overseer/flaps, and NOT needs-ryan" \
-   "event|alert,alert:sentinel-stalled,flaps:1,overseer" "$kind"
+c = [c for c in json.load(sys.stdin)["conditions"] if c["key"] == "sentinel-stalled"][0]
+print(c["message"].split("\n")[0])')" ] && ok "the message's first line is a title" || bad "title" "empty title line"
 
 heimdall >/dev/null
-[ "$(n_alert_beads)" = 1 ] && ok "a condition that keeps holding does not open a second bead" \
-    || bad "duplicates" "$(n_alert_beads) alert beads after three runs of one condition"
+is "a condition that keeps holding is still one firing" "True 1" "$(cond_status sentinel-stalled)"
 
 heal; heimdall >/dev/null
-[ "$(alert_status sentinel-stalled)" = "$ID open" ] \
-    && ok "one clear sighting does not retract it" \
-    || bad "clear hysteresis" "the alert was retracted on the first quiet run"
+is "one clear sighting does not retract it" "True 1" "$(cond_status sentinel-stalled)"
 heimdall >/dev/null
-[ "$(alert_status sentinel-stalled)" = "$ID closed" ] \
-    && ok "Heimdall closes its own alert when the condition passes" \
-    || bad "clear" "expected [$ID closed] got [$(alert_status sentinel-stalled)]"
+is "Heimdall clears its own alert when the condition passes" "False 1" "$(cond_status sentinel-stalled)"
 
 wedge; heimdall >/dev/null; heimdall >/dev/null
-[ "$(alert_status sentinel-stalled)" = "$ID open" ] \
-    && ok "the condition returning reopens the SAME bead" \
-    || bad "reopen" "expected [$ID open] got [$(alert_status sentinel-stalled)]"
-[ "$(n_alert_beads)" = 1 ] && ok "a flap does not accumulate beads" \
-    || bad "flap" "$(n_alert_beads) beads after one flap — a pane becomes wallpaper this way"
-flaps="$(awk -F'\t' '$1=="sentinel-stalled"{print $7}' "$RUN/heimdall.state")"
-[ "$flaps" = 2 ] && ok "the flap count reached 2" || bad "flaps" "expected 2 got [$flaps]"
-# ONE CURRENT VALUE, NOT AN ACCUMULATION. `--add-label` alone would leave `flaps:1` beside
-# `flaps:2`, and the pane reads the first it finds — so the count would freeze at 1 while
-# the state file went on counting, and the number the operator sees is the one that matters.
-lab="$(timeout 5 bd -C "$SPIRA_DB" show "$ID" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
-import sys, json
-d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
-print(",".join(sorted(l for l in (d.get("labels") or []) if l.startswith("flaps:"))))' 2>/dev/null)"
-is "the pane's flaps: label is the count, and there is only one" "flaps:2" "$lab"
+is "the condition returning re-raises the SAME condition, one more flap" "True 2" "$(cond_status sentinel-stalled)"
+is "a flap does not accumulate conditions" 1 "$(n_alerts)"
 
-# `acked` says the operator has SEEN this occurrence. Carrying it into the next one hides
-# exactly what the flap count exists to surface, so a returning condition clears it — while
-# `silent-until:` is the pane's own affordance and Heimdall must never touch it, or a silence
-# the operator asked for would evaporate on the next pass.
-timeout 5 bd -C "$SPIRA_DB" update "$ID" --add-label acked >/dev/null 2>&1
-timeout 5 bd -C "$SPIRA_DB" update "$ID" --add-label "silent-until:2099-01-01T00:00:00Z" >/dev/null 2>&1
+# `acked` says the operator has SEEN this occurrence, so a returning condition is unseen again;
+# `silent_until` is the pane's own and survives.
+"$REAL_LC" condition ack sentinel-stalled --owner heimdall >/dev/null 2>&1
+"$REAL_LC" condition silence sentinel-stalled --until 4070908800 --owner heimdall >/dev/null 2>&1
 heal; heimdall >/dev/null; heimdall >/dev/null       # clears
 wedge; heimdall >/dev/null; heimdall >/dev/null      # and returns
-lab="$(timeout 5 bd -C "$SPIRA_DB" show "$ID" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
-import sys, json
-d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
-ls = d.get("labels") or []
-print("%s %s" % ("acked" in ls, any(l.startswith("silent-until:") for l in ls)))' 2>/dev/null)"
-is "a returning condition clears acked and leaves silent-until alone (acked cleared, silence kept)" \
-   "False True" "$lab"
+is "a returning condition is unseen again and keeps its silence" "False 4070908800" \
+   "$(cond_field sentinel-stalled acked silent_until)"
 
 echo
-echo "heimdall.sh — the operator's own close, and the channel of last resort:"
+echo "heimdall — the operator's own clear, and the channel of last resort:"
 
-# Closing it by hand is an acknowledgement. Re-raising it would be a machine arguing with
-# the person it is reporting to. The operator's close is fixture state, declared as data
-# (sp-voip5): what is under test is Heimdall's answer to a closed row, not bd's close verb.
-testdb_restate "$ID" closed
+# Clearing it by hand is an acknowledgement; re-raising it would argue with the operator.
+"$REAL_LC" condition clear sentinel-stalled --reason Acknowledged --owner heimdall >/dev/null 2>&1
 sed -i 's/\t[0-9]*$/\t0/' "$RUN/heimdall.state"      # force the hourly refresh window open
 heimdall >/dev/null; heimdall >/dev/null
-[ "$(alert_status sentinel-stalled)" = "$ID closed" ] \
-    && ok "an alert closed by hand is not reopened while it still fires" \
-    || bad "acknowledge" "Heimdall reopened a bead the operator had closed"
+is "an alert cleared by hand is not re-raised while it still fires" "False" "$(cond_field sentinel-stalled status)"
 
-HEIMDALL_DB=/nonexistent-spira-db heimdall >/dev/null
-[ -r "$RUN/heimdall.alerts.json" ] && ok "an unreachable database falls back to the file channel" \
-    || bad "fallback" "no fallback file was written with the database down"
+HEIMDALL_STORE=/nonexistent-control-store heimdall >/dev/null
+[ -r "$RUN/heimdall.alerts.json" ] && ok "an unreachable store falls back to the file channel" \
+    || bad "fallback" "no fallback file was written with the store down"
 fb="$(python3 -c '
 import json, sys
 d = json.load(open(sys.argv[1]))
 print("%s %s" % (d["db_reachable"], ",".join(sorted(a["key"] for a in d["alerts"]))))' \
     "$RUN/heimdall.alerts.json" 2>/dev/null)"
-case "$fb" in "False "*db-unreachable*) ok "the fallback carries the alerts and says the database is down" ;;
+case "$fb" in "False "*db-unreachable*) ok "the fallback carries the alerts and says the store is down" ;;
     *) bad "fallback content" "got [$fb]" ;; esac
 grep -q 'SP_HEIMDALL_DB_READ=down' "$RUN/heimdall.status" \
-    && ok "the heartbeat is written even when the database is down" \
+    && ok "the heartbeat is written even when the store is down" \
     || bad "heartbeat under failure" "SP_HEIMDALL_DB_READ is not down in $RUN/heimdall.status"
 
 heimdall >/dev/null
 [ -e "$RUN/heimdall.alerts.json" ] \
-    && bad "fallback removal" "the fallback file survived the database coming back — two sources of truth" \
-    || ok "the fallback file is removed once beads answers again"
+    && bad "fallback removal" "the fallback file survived the store coming back — two sources of truth" \
+    || ok "the fallback file is removed once the store answers again"
 
-testdb_drop >/dev/null 2>&1
+echo
+echo "heimdall — the write probe detects a store that reads but will not write:"
+
+heal; rm -f "$RUN/heimdall.state"
+heimdall >/dev/null
+grep -q 'SP_HEIMDALL_DB_WRITE=ok' "$RUN/heimdall.status" \
+    && ok "write probe: a healthy store shows write ok" \
+    || bad "write probe baseline" "SP_HEIMDALL_DB_WRITE is not ok before the fault"
+is "write probe: the probe is a condition that never fires" "WriteProbe False 0" \
+   "$(cond_field heimdall-write-probe type status flaps)"
+is "write probe: the probe is not listed among the alerts" 1 "$(n_alerts)"
+
+printf write-fail > "$TMP/lc-mode"
+heimdall >/dev/null
+grep -q 'SP_HEIMDALL_DB_READ=ok' "$RUN/heimdall.status" \
+    && ok "write probe: reads still ok during a write-only failure" \
+    || bad "write probe read during fault" "SP_HEIMDALL_DB_READ is not ok with writes broken"
+grep -q 'SP_HEIMDALL_DB_WRITE=down' "$RUN/heimdall.status" \
+    && ok "write probe: SP_HEIMDALL_DB_WRITE=down when writes fail" \
+    || bad "write probe fault" "SP_HEIMDALL_DB_WRITE is not down with writes broken"
+fb_write="$(python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+print(d.get("db_reachable"), d.get("db_write_ok"))' "$RUN/heimdall.alerts.json" 2>/dev/null)"
+is "write probe: the fallback says reachable, not writable" "True False" "$fb_write"
+
+printf ok > "$TMP/lc-mode"
+heimdall >/dev/null
+grep -q 'SP_HEIMDALL_DB_WRITE=ok' "$RUN/heimdall.status" \
+    && ok "write probe: write ok restored after the fault clears" \
+    || bad "write probe restore" "SP_HEIMDALL_DB_WRITE is not ok after the fault cleared"
+[ ! -e "$RUN/heimdall.alerts.json" ] \
+    && ok "write probe: the fallback file is removed once writes succeed again" \
+    || bad "write probe fallback removal" "fallback file survived the store recovering"
+
+echo
+echo "heimdall — a timed-out store is saturated, not down:"
+
+heal; rm -f "$RUN/heimdall.state"
+printf timeout > "$TMP/lc-mode"
+heimdall >/dev/null
+grep -q 'SP_HEIMDALL_DB_READ=saturated' "$RUN/heimdall.status" \
+    && ok "saturation: a timeout on the read probe reports DB_READ=saturated" \
+    || bad "saturation read" "expected SP_HEIMDALL_DB_READ=saturated, got $(grep SP_HEIMDALL_DB_READ "$RUN/heimdall.status" 2>/dev/null || echo none)"
+grep -q 'SP_HEIMDALL_DB_SATURATED=1' "$RUN/heimdall.status" \
+    && ok "saturation: SP_HEIMDALL_DB_SATURATED=1 when timed out" \
+    || bad "saturation flag" "SP_HEIMDALL_DB_SATURATED not 1"
+[ -r "$RUN/heimdall.alerts.json" ] \
+    && ok "saturation: the fallback file is written on a timeout" \
+    || bad "saturation fallback" "no fallback file on timeout"
+printf ok > "$TMP/lc-mode"
+
+echo
+echo "heimdall — restart loop detection via stub systemctl:"
+
+# Build a stub systemctl that serves list-units and show responses so heimdall.sh sees
+# a unit with a rising NRestarts count. RESTARTS_THRESHOLD is set to 3 so a count
+# of 5 (above) and 2 (below) cleanly straddle the threshold.
+RESTART_SC="$TMP/restart-sc"
+{
+    printf '#!/usr/bin/env bash\n'
+    # Return a fixed count stored in a file so the test can change it between runs.
+    printf 'COUNT_FILE=%q\n' "$TMP/restart-count"
+    printf 'case "${*}" in\n'
+    # list-units: return one spira service
+    printf '  *"list-units"*)\n'
+    printf '    printf "spira-cockpit-prod.service loaded active running\\n"\n'
+    printf '    exit 0 ;;\n'
+    # show --property=Id,NRestarts: return Id and current count
+    printf '  *"show"*)\n'
+    printf '    cnt=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)\n'
+    printf '    printf "Id=spira-cockpit-prod.service\\nNRestarts=%%s\\n\\n" "$cnt"\n'
+    printf '    exit 0 ;;\n'
+    # is-active (for sentinel timer): not active
+    printf '  *) exit 0 ;;\n'
+    printf 'esac\n'
+} > "$RESTART_SC"
+chmod +x "$RESTART_SC"
+
+heimdall_restart() {
+    tl_config SPIRA_RUN="$RUN" SPIRA_EXPORTER="" SPIRA_WIKI="" \
+        SPIRA_HEIMDALL_RESTARTS=3 SPIRA_HEIMDALL_RESTART_WINDOW=3600 \
+        SPIRA_LC_STORE_PATH="$STORE"
+    SPIRA_HOME="$SH" \
+    SPIRA_REPO="$TMP/repo" \
+    SPIRA_SYSTEMCTL="$RESTART_SC" \
+    SPIRA_HEIMDALL_SENTINEL_LOG="$RUN/sentinel.log" \
+        command heimdall --home "$SH" "$@" 2>&1
+}
+restart_alert_status() { cond_status "restart-loop:spira-cockpit-prod.service"; }
+
+heal  # healthy sentinel log so sentinel-stalled does not interfere
+rm -f "$RUN/heimdall.state"
+
+# Count below threshold: no alert.
+printf '2\n' > "$TMP/restart-count"
+heimdall_restart >/dev/null
+[ "$(restart_alert_status)" = "-" ] \
+    && ok "restart: count below threshold fires nothing" \
+    || bad "restart below threshold" "alert raised when count was below threshold"
+
+# Count above threshold but only one sighting: CONFIRM requires two.
+printf '10\n' > "$TMP/restart-count"
+heimdall_restart >/dev/null
+[ "$(restart_alert_status)" = "-" ] \
+    && ok "restart: one sighting does not fire — a condition must be confirmed" \
+    || bad "restart confirm" "alert raised on first sighting above threshold"
+
+# Second sighting: alert raised.
+heimdall_restart >/dev/null
+_rst="$(restart_alert_status)"
+is "restart: a confirmed condition raises it True" "True 1" "$_rst"
+
+# Third pass on the same standing loop: still one firing, no second flap.
+heimdall_restart >/dev/null
+is "restart: a second pass on the same standing loop is no new firing" "True 1" "$(restart_alert_status)"
+
+# Count goes DOWN (daemon-reload): no new alert; baseline resets.
+printf '0\n' > "$TMP/restart-count"
+heimdall_restart >/dev/null; heimdall_restart >/dev/null
+is "restart: the alert clears after the restart count went down" "False 1" "$(restart_alert_status)"
+
+# Count rises again above threshold: alert reopened.
+printf '8\n' > "$TMP/restart-count"
+heimdall_restart >/dev/null; heimdall_restart >/dev/null
+is "restart: the count rising again re-raises the same condition" "True 2" "$(restart_alert_status)"
+
+unset _rst
+
+echo
+echo "heimdall — a deliberately halted loop does not raise sentinel-stalled:"
+
+heal; rm -f "$RUN/heimdall.state"
+printf '2026-01-01T00:00:00Z\nwhy: test halt\n' > "$RUN/world.halted"
+wedge
+heimdall >/dev/null; heimdall >/dev/null
+is "a halted loop does not raise sentinel-stalled" "False" "$(cond_field sentinel-stalled status)"
+rm -f "$RUN/world.halted"
+heimdall >/dev/null; heimdall >/dev/null
+is "lifting the halt stamp restores normal alerting" "True" "$(cond_field sentinel-stalled status)"
+
 tl_summary

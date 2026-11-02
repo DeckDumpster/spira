@@ -483,29 +483,6 @@ fn ensure_new_units(cfg: &Config, sha: &str) -> Result<(), String> {
     Err(format!("{sha}: unit-ensure could not install its new units ({})", out.status))
 }
 
-/// Moves epic rows the lifecycle still holds READY to OPEN, through the release's own `spira-lc`.
-/// Best effort: the verb is idempotent and bounded, and a failure here is not a reason to undo an
-/// activation that came up.
-fn reconcile_epics(cfg: &Config, sha: &str) {
-    let Ok(rel) = verify::release_dir(cfg, sha) else { return };
-    let bin = rel.join("bin/spira-lc");
-    if !fsutil::is_executable(&bin) {
-        return;
-    }
-    let Ok(env) = verify::pre_activate_env(cfg, &rel) else { return };
-    // batch-job: a one-off migration over the READY roster, bounded by timeout 120
-    let mut cmd = Command::new("timeout");
-    cmd.arg("120").arg(&bin).args(["reconcile-epics", "--apply"]).env("SPIRA_HOME", rel.join("spira")).env_remove("SPIRA_REPO");
-    for (k, v) in env {
-        cmd.env(k, v);
-    }
-    match cmd.output() {
-        Ok(o) if o.status.success() => {}
-        Ok(o) => eprintln!("release: reconcile-epics did not finish ({}): {}", o.status, String::from_utf8_lossy(&o.stderr).trim()),
-        Err(e) => eprintln!("release: cannot run {}: {e}", bin.display()),
-    }
-}
-
 /// The unit whose `RefuseManualStop=yes` denies a restart job; `systemctl kill` plus its
 /// `Restart=always` is the sanctioned way to cycle it.
 const KILL_RESTARTED: &str = "dolt-beads.service";
@@ -617,7 +594,6 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
     if let Some(e) = late {
         return Err(e);
     }
-    reconcile_epics(ctx.cfg, sha);
     Ok(out)
 }
 

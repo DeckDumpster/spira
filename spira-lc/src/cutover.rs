@@ -101,6 +101,22 @@ fn submitted_create_script(id: &str, at: i64, title_sql: &str, priority_sql: &st
 /// `bead.title` is VARCHAR(512).
 const MIRROR_TITLE_CHARS: usize = 512;
 
+/// The planning reader `create-bead` asks for a bead's type: `plan items` rows of the ids given.
+pub type PlanReader<'a> = dyn FnMut(&[&str]) -> Result<Vec<serde_json::Value>, String> + 'a;
+
+/// `create-bead`'s refusal of a bead whose type has no lifecycle record (an epic, a decision,
+/// …), named; `None` lets the create go ahead. The type is the planning plane's, read through
+/// `read`; a bead the planning plane cannot answer for is created, so a filing is never stranded
+/// rowless by a planning read that failed.
+pub fn refuse_no_record_type(args: &[String], read: &mut PlanReader) -> Option<(i32, String)> {
+    let id = args.first().filter(|i| is_row_key(i))?;
+    let items = read(&[id.as_str()]).ok()?;
+    let kind = items.iter().find(|i| i.get("id").and_then(serde_json::Value::as_str) == Some(id.as_str()))?.get("issue_type")?.as_str()?;
+    (!spira_config::nonwork::is_work_type(Some(kind))).then(|| {
+        (REFUSED, format!("create-bead: {id} is a {kind}, a type with no lifecycle record (its state is the planning plane's) — nothing created"))
+    })
+}
+
 /// `create-bead <bead-id> [--title T] [--priority 0..4] [--repo NAME] [--submitted-tip SHA]`. With a tip the
 /// row is born SUBMITTED at it (an untouched READY row is promoted), so no claimable READY window exists.
 pub fn cmd_create_bead(args: &[String], conn: &Conn) -> (i32, String) {

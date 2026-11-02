@@ -8,7 +8,7 @@
 //! | DECISIONS | open work on the operator | beads, the escalation label + `overseer` | close it; the reason IS the verdict |
 //! | FYI | something already true | beads, `insight`+`overseer` | dismiss it — read and move on |
 //! | NOTIFICATIONS | something already happened | beads, `issue_type: event` | mark it read |
-//! | ALERTS | a condition that is true NOW | beads, `event`+`alert`+`overseer` | acknowledge it, or silence it for an hour |
+//! | ALERTS | a condition that is true NOW | the watchdog's control-plane conditions, type `Alert` | acknowledge it, or silence it for an hour |
 //!
 //! An INSIGHT is closed by construction: there is nothing to do, only something to know. It
 //! exists because an answer that scrolls off screen is lost. A NOTIFICATION is an OUTCOME —
@@ -47,13 +47,8 @@
 //! decision, a default, and what is blocked. Reusing the word for a machine-generated
 //! condition would blur the one term that policy rests on.
 //!
-//! AND AN ALERT DOES NOT CARRY THE ESCALATION LABEL, which is why the DECISIONS filter has to
-//! exclude it explicitly rather than merely not matching it: an alert bead carries `overseer`,
-//! and DECISIONS admits the escalation label OR `overseer`, so without that exclusion every
-//! firing alert would appear in the one list this whole design exists to keep self-clearing
-//! items out of. The label is withheld deliberately — the escalation label is excluded from
-//! every rune predicate and from the guard that forbids closing through a resolve, so
-//! carrying it would stop the writer clearing its own alert when the condition passes.
+//! AND AN ALERT IS NOT A BEAD: it is a condition in the control plane, so it cannot reach the
+//! DECISIONS list at all, and the escalation label never comes into it.
 //!
 //! AND A DISMISSED INSIGHT LEAVES THE PANE, but stays reachable: `d` adds `archived`, `h`
 //! shows the archived ones and `d` there takes the label back off. An acknowledged item that
@@ -148,12 +143,9 @@ impl View {
     }
 }
 
-/// The labels an alert bead carries, and what each one means.
-///
-/// The contract is sp-heimdall's: `issue_type: event`, plus `alert` and `overseer`. Open means
-/// FIRING; closed means the condition cleared and the writer retracted its own statement.
-/// Everything else the tab needs is a label, because a label is what a writer can set and
-/// unset in one `bd update` without rewriting a description it did not compose.
+/// The labels an alert item carries, and what each one means. An alert is the watchdog's
+/// control-plane condition (`conditions/heimdall/<key>`); the store reads its `acked`,
+/// `flaps` and `silent_until` fields into these labels, so the rest of the tab reads one shape.
 pub mod alert {
     /// Present on every alert bead. The DECISIONS view excludes on this too — see the module
     /// header for why not matching is not enough.
@@ -168,8 +160,8 @@ pub mod alert {
     /// process to lift it is a silence that outlives the process.
     pub const SILENT: &str = "silent-until:";
     /// `flaps:<n>` — how many times this one condition has fired. A condition that clears and
-    /// returns reopens THIS bead and bumps the count; ten beads for one cause is how a pane
-    /// becomes wallpaper (law-alerts-must-be-actionable).
+    /// returns re-raises THIS condition and bumps the count; ten rows for one cause is how a
+    /// pane becomes wallpaper (law-alerts-must-be-actionable).
     pub const FLAPS: &str = "flaps:";
     /// How long `s` silences for. One hour: long enough to be working on it, short enough
     /// that forgetting costs one hour of blindness rather than a day of it.
@@ -189,7 +181,7 @@ pub fn flaps(it: &Item) -> u32 {
         .unwrap_or(1)
 }
 
-/// The whole `silent-until:...` label, which is what `bd update --remove-label` needs.
+/// The whole `silent-until:...` label.
 pub fn silence_label(it: &Item) -> Option<&String> {
     it.labels.iter().find(|l| l.starts_with(alert::SILENT))
 }
@@ -528,46 +520,38 @@ pub fn act(
             cfg,
         ),
 
-        // SILENCING WRITES A DEADLINE, NOT A FLAG. `silent-until:<ISO>` expires by being read,
-        // so nothing has to run to lift it. Re-silencing replaces the old label rather than
-        // adding a second one — two deadlines on one bead is a question with two answers, and
-        // `silence_label` would return whichever `bd` happened to list first.
+        // SILENCING WRITES A DEADLINE, NOT A FLAG: `silent_until` expires by being read, so
+        // nothing has to run to lift it, and re-silencing replaces the old deadline.
         (View::Alerts, Act::Silence) => {
-            if let Some(old) = silence_label(item) {
-                run("spira-lc", &["content", "update", &item.id, "--remove-label", old], cfg)?;
-            }
-            let until = format!(
-                "{}{}",
-                alert::SILENT,
-                crate::render::iso(now + alert::SILENCE_SECS)
-            );
-            run("spira-lc", &["content", "update", &item.id, "--add-label", &until], cfg)
+            let until = (now + alert::SILENCE_SECS).to_string();
+            condition(&["silence", &item.id, "--until", &until], cfg)
         }
 
         // `d` IN THE HISTORY LIFTS A SILENCE — and a CLEARED alert has none to lift. Saying so
-        // out loud rather than running a no-op `bd` that exits 0: the history holds both kinds
-        // side by side, and a key that appears to work on the wrong one teaches the operator that the
-        // footer is decoration. Same defect `verb` exists to prevent, one layer along.
+        // out loud rather than running a no-op: a key that appears to work on the wrong one
+        // teaches the operator that the footer is decoration.
         (View::Alerts, Act::Primary) if dismissed => match silence_label(item) {
-            Some(old) => run("spira-lc", &["content", "update", &item.id, "--remove-label", old], cfg),
+            Some(_) => condition(&["silence", &item.id, "--lift"], cfg),
             None => Err("this one has cleared — a record, with no silence to lift".into()),
         },
 
-        // ACKNOWLEDGING SAYS "SEEN" AND NOTHING ELSE. It must never close the bead: closing is
-        // the writer's retraction of its own statement, and a hand-closed alert whose condition
-        // is still true is reopened on the next pass — so the pane would have taught the operator that
-        // acting on an alert does nothing. See `act_hides`: the row STAYS.
+        // ACKNOWLEDGING SAYS "SEEN" AND NOTHING ELSE. It never clears the condition: clearing
+        // is the writer's retraction of its own statement. See `act_hides`: the row STAYS.
         (View::Alerts, Act::Primary) => {
             if acked(item) {
                 return Err("already acknowledged".into());
             }
-            run(
-                "spira-lc",
-                &["content", "update", &item.id, "--add-label", alert::ACKED],
-                cfg,
-            )
+            condition(&["ack", &item.id], cfg)
         }
     }
+}
+
+/// `spira-lc condition <args> --owner <the watchdog>`: an alert is a control-plane condition.
+fn condition(args: &[&str], cfg: &Cfg) -> Result<(), String> {
+    let mut argv = vec!["condition"];
+    argv.extend_from_slice(args);
+    argv.extend(["--owner", crate::store::ALERT_OWNER]);
+    run("spira-lc", &argv, cfg)
 }
 
 /// Close a decision as a premise rejection — not a verdict.

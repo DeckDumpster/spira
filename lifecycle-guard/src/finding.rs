@@ -19,6 +19,7 @@ pub enum Class {
     HoldLabel,
     BdReopenRust,
     BdReadRust,
+    BdStatusWrite,
 }
 
 impl Class {
@@ -39,6 +40,7 @@ impl Class {
             Class::HoldLabel => "hold-label",
             Class::BdReopenRust => "bd-reopen-rust",
             Class::BdReadRust => "bd-read-rust",
+            Class::BdStatusWrite => "bd-status-write",
         }
     }
 }

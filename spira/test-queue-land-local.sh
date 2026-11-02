@@ -2,14 +2,15 @@
 #
 # test-queue-land-local.sh — sp-ae08w: queue.sh land-local, the queue.local ending. A local
 # round's own GREEN verdict fast-forwards the repo's local landing ref straight to the round
-# head — no PR — archives that head, marks every member LANDED and closes its bead citing the
-# landed commit. A head that does not descend from the ref's current tip is refused and
-# nothing is written. One writer: the per-repo queue lock, skippable only via
+# head — no PR — archives that head and marks every member LANDED. bd's status is not the
+# landing's to write: reconcile-content, its one writer, closes the bead from the LANDED record,
+# citing the landed commit. A head that does not descend from the ref's current tip is refused
+# and nothing is written. One writer: the per-repo queue lock, skippable only via
 # SPIRA_QUEUE_LOCK_HELD=1 for a caller that already holds it (sp-91hb5's shape, so the
 # batcher cannot deadlock on itself).
 #
 # tier: T1
-# covers: queue/src/* gate/src/cert.rs spira/lib.sh spira/conf.sh testenv/src/suites/*
+# covers: queue/src/* gate/src/cert.rs spira/lib.sh spira/conf.sh testenv/src/suites/* spira-lc/src/reconcile_content.rs spira/testlib/lc-fixture.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -23,8 +24,11 @@ tl_config SPIRA_TEST_CASE_DEADLINE=180   # slow cases: real git/dolt on a loaded
 testdb_require test-queue-land-local
 TMP="$(mktemp -d)"
 trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# testdb-mode: server — reconcile-content reads the beads over the lifecycle connection, so the
+# lifecycle database lives on the bead store's own server.
+export SPIRA_TESTDB_MODE=server
 testdb_up qlandlocal || { echo "test-queue-land-local: could not build a fixture database"; exit 1; }
-lcfix_up || { echo "test-queue-land-local: could not build a lifecycle fixture"; exit 1; }
+lcfix_up_on_testdb || { echo "test-queue-land-local: could not build a lifecycle fixture"; exit 1; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 echo "test-queue-land-local.sh"
@@ -99,6 +103,8 @@ run_lockheld() {
         SPIRA_HOME="$SH" queue "$@" 2>&1
 }
 localmain() { git -C "$REPO" rev-parse local/main; }
+# The reconcile-content pass the timer runs: bd's status follows the lifecycle record.
+reconcile() { spira-lc reconcile-content --apply "$@" 2>&1; }
 roundseq()  { cat "$QDIR/fixq/round-seq" 2>/dev/null; }
 
 # ============================================================================
@@ -129,6 +135,9 @@ want "1: the override is loud" "UNGATED LANDING of $HEAD1" "$out"
 [ "$rc" -eq 0 ] && ok "1: exit 0 on a real fast-forward" || bad "1: exit 0 on a real fast-forward" "got rc=$rc out=$out"
 is "1: local/main equals the round head" "$HEAD1" "$(localmain)"
 is "1: the member's lifecycle row is LANDED" "LANDED" "$(lcfix_state sp-lloc1)"
+is "1: the landing writes no bd status — reconcile-content does" open "$(field sp-lloc1 status)"
+rec="$(reconcile sp-lloc1)"; is "1: reconcile-content exits 0" 0 "$?"
+want "1: reconcile-content closes the bead from its LANDED record" "closed sp-lloc1 (lifecycle LANDED)" "$rec"
 is "1: the bead is closed"                closed "$(field sp-lloc1 status)"
 want "1: close reason declares landed"    "OUTCOME: landed" "$(field sp-lloc1 close_reason)"
 want "1: close reason cites the round head" "$HEAD1"           "$(field sp-lloc1 close_reason)"
@@ -163,7 +172,8 @@ nowant "2: never claims success"          "fast-forwarded to"     "$out"
 is "2: local/main is unchanged"           "$PRE_MAIN" "$(localmain)"
 is "2: round-seq is unchanged"            "$PRE_SEQ"  "$(roundseq)"
 is "2: the refused member's lifecycle row is still CERTIFIED" "CERTIFIED" "$(lcfix_state sp-lloc2)"
-is "2: the bead is left open"             open "$(field sp-lloc2 status)"
+rec="$(reconcile sp-lloc2)"; is "2: reconcile-content exits 0" 0 "$?"
+is "2: the bead is left open, even after reconcile-content" open "$(field sp-lloc2 status)"
 
 # ============================================================================
 echo
@@ -214,6 +224,8 @@ out="$(run_lockheld land-local fixq --head "$HEAD4" --members "sp-lloc4:$HEAD4" 
     || bad "5: SPIRA_QUEUE_LOCK_HELD=1 proceeds despite the outside lock" "got rc=$rc out=$out"
 is "5: local/main advances to the round head" "$HEAD4" "$(localmain)"
 is "5: the member's lifecycle row is LANDED" "LANDED" "$(lcfix_state sp-lloc4)"
+rec="$(reconcile sp-lloc4)"; is "5: reconcile-content exits 0" 0 "$?"
+want "5: reconcile-content closes the bead from its LANDED record" "closed sp-lloc4 (lifecycle LANDED)" "$rec"
 is "5: the bead is closed"                    closed "$(field sp-lloc4 status)"
 is "5: round-seq advances to 2"               "2" "$(roundseq)"
 is "5: round head 4 is archived"              "$HEAD4" "$(git -C "$REPO" rev-parse -q --verify refs/archive/rounds/2 2>/dev/null)"
@@ -268,6 +280,8 @@ out="$(run land-local fixq --head "${TIP6:-none}" --members "sp-ssland1:${TIP6:-
 [ "$rc" -eq 0 ] && ok "6: the round lands the quarantine edit" || bad "6: the round lands the quarantine edit" "rc=$rc out=$out"
 is "6: local/main is the edit" "$TIP6" "$(localmain)"
 is "6: the change bead's lifecycle row is LANDED" "LANDED" "$(lcfix_state sp-ssland1)"
+rec="$(reconcile sp-ssland1)"; is "6: reconcile-content exits 0" 0 "$?"
+want "6: reconcile-content closes the change bead from its LANDED record" "closed sp-ssland1 (lifecycle LANDED)" "$rec"
 is "6: the change bead is closed" closed "$(field sp-ssland1 status)"
 want "6: the landed lifecycle file quarantines the suite against the defect bead" \
     "test-q.sh | quarantined" "$(git -C "$REPO" show local/main:spira/suite-state 2>/dev/null)"

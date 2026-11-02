@@ -962,7 +962,7 @@ fn rune_ready_cli_a_bare_reference_that_resolves_empty_refuses_rc3_never_widens(
     // The references under test resolve EMPTY — not undeclared: declared empty, which
     // `rune_label_overlay`'s own `resolve_for_process` accepts (per Ryan 2026-10-05, a
     // key's declared "" is itself an answer), so this config file still resolves overall
-    // (`store::load_config` needs ask_label/scope_label too) and the refusal comes from
+    // (`store::load_config` needs scope_label too) and the refusal comes from
     // `rune_predicate`'s bare-reference check alone.
     let o = run_cfg(
         &["rune-ready", "ops"],

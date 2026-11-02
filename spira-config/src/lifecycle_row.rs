@@ -292,7 +292,8 @@ pub fn close_with(bin: &str, id: &str, reason: &str, actor: &str, superseded_by:
 }
 
 /// The landing path's close (`spira-lc close --landing`): the delivery records LANDED on the
-/// row itself, so this closes the store only, and spira-lc refuses it for a row not in delivery.
+/// row itself, so this writes no event; bd closes once the row reads LANDED, and spira-lc
+/// refuses it for a row not in delivery.
 pub fn close_landed(id: &str, reason: &str, actor: &str) -> Result<(), String> {
     close_args(&lc_bin(), id, reason, actor, vec!["--landing"])
 }

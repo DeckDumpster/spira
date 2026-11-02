@@ -30,26 +30,23 @@ on EVERY run including a failing one, and the ops pane renders its age and marks
 rather than omitting it — a silent escalator and a healthy system must not look identical
 (`law-absence-needs-a-positive-control`).
 
-**Where the alert goes, and in which order.** Beads is the record: one bead per CAUSE,
-type `event`, labelled `alert`, `overseer` and `alert:<key>`. The fallback file
-(`fallback.rs`) is written if and only if the beads path failed — its EXISTENCE is itself
-the statement "the database could not be reached" — and removed the moment beads answers
-again, so there is never a second source of truth standing beside a working first one.
+**Where the alert goes, and in which order.** The control plane is the record: one
+condition per CAUSE at `conditions/heimdall/<key>` (`spira-lc condition set|clear|list`), type
+`Alert`, never a bd item. The fallback file (`fallback.rs`) is written if and only if the
+store could not be read or written — its EXISTENCE is itself the statement "the store could not
+be reached" — and removed the moment the store answers again, so there is never a second
+source of truth standing beside a working first one.
 
-**Not `needs-ryan`.** That label means a decision only the operator can make and is
-excluded from every rune's predicate; an alert is a CONDITION, not a decision.
-
-**The labels are a contract with the attention panel** (`cockpit/panel/src/store.rs`),
-not decoration: `alert` AND `overseer`, `flaps:<n>`, and two labels this program must
-respect rather than write — `acked` (the operator has seen it; Heimdall removes it only when
-the condition RETURNS) and `silent-until:` (the panel's own affordance; Heimdall never
-touches it).
+**The condition is a contract with the attention panel** (`cockpit/panel/src/store.rs`): the
+message's first line is the title, the store counts `flaps`, and `acked` and `silent_until`
+are the panel's to write. The store forgets `acked` when the condition RETURNS; Heimdall never
+touches `silent_until`.
 
 **Noise is the failure mode.** Three defences, in this order of how much they matter: (1)
 thresholds measured from the real pass log (`judge.rs`, a port of the former
 classifier script — see §2.4); (2) a condition must hold for `SPIRA_HEIMDALL_CONFIRM` consecutive passes before it
-fires and clear for `SPIRA_HEIMDALL_CLEAR` before it is retracted; (3) one bead per cause
-forever, reopened and flap-counted.
+fires and clear for `SPIRA_HEIMDALL_CLEAR` before it is retracted; (3) one condition per
+cause forever, re-raised and flap-counted.
 
 ## 2. Contract
 
@@ -81,12 +78,11 @@ unchanged in shape. Each arrow-side is a module:
 | `classify.rs` | the JSON built for the classifier, and the `heimdall classify` stdin entry | **yes** |
 | `judge.rs` | the classifier: observations in, firing records out | **yes** |
 | `reconcile.rs` | the confirm/clear/refresh loop | **yes** — the whole debounce state machine, no IO |
-| `alerts.rs` | `body_of`, `alert_write`, `alert_clear`, the write probe | no — bd calls, but against a `BdOps` port so it is unit-tested with a fake |
-| `bdops.rs` | `bdq` calls threaded through the reconcile loop | no — the seam |
+| `alerts.rs` | `body_of`, `alert_write`, `alert_clear`, the write probe | no — store calls, but against a `Conditions` port so it is unit-tested with a fake |
+| `conditions.rs` | `spira-lc condition` calls threaded through the reconcile loop | no — the port |
 | `fallback.rs` | the fallback-file write/remove | no — but its JSON shape is a pure function, tested |
 | `heartbeat.rs` | the heartbeat write | no — same split |
 | `state.rs` | the TSV state file | **yes** (parse/render) |
-| `seam.rs` | (new) | no — the lib.sh subprocess seam |
 
 ### 2.4 The classifier: `judge.rs`
 
@@ -95,27 +91,11 @@ clock, file, command or network. `heimdall classify` reads one observation on st
 one sorted-key JSON alert per line, which is how `test-heimdall-classify.sh` replays it
 against real sentinel log. `classify::run` calls it in-process.
 
-### 2.5 The lib.sh seam (`seam.rs`)
+### 2.5 The store port (`conditions.rs`)
 
-Three functions, each `bash -c <FIXED>` with every datum NUL-framed on stdin — the same
-design as `dwarf/src/seam.rs`, independently instantiated (no cross-crate dependency; see
-§6 Decisions):
-
-- `_heimdall_bdq` — `bdq "$@"`. Kept as a seam call rather than reimplemented because `bdq`
-  carries real guards (repo-label refusal, destructive-vocabulary refusal, the schema-
-  delete refusal, the connection retry, `SPIRA_BDJSON_FIXTURE`) that this program's own
-  creates and updates must still honour, and duplicating them in Rust is a second copy to
-  drift from lib.sh's.
-- `_heimdall_bead_reopen` — `bead_reopen "$@"`. Carries landstate-withdrawal and
-  submitted-label interaction that a bare `bd reopen` does not have.
-- `_heimdall_snapshot` — `env -0`, conf.sh's resolution dumped whole (SPIRA_RUN, SPIRA_DB,
-  SPIRA_REPO, SPIRA_EXPORTER, SPIRA_INSTANCE, ...). heimdall.sh got these by sourcing lib.sh
-  itself once at the top of its own process; this binary cannot source bash, so it asks
-  for the same resolution through one seam call at startup.
-
-`BD_TIMEOUT` is set explicitly in the seam subprocess's own environment (`main.rs`) rather
-than relied upon being "in scope": a `bash -c` seam call is a fresh process, not a
-subshell of this one, so a bash variable set here would not reach it.
+`spira-lc condition list|set|clear --owner heimdall`, under `timeout` (`SPIRA_HEIMDALL_BD_TIMEOUT`,
+10 s): a store that has not answered in ten seconds is unreachable as far as a watchdog is
+concerned, and a timeout is reported as saturation, not down.
 
 ### 2.6 Files read and written
 
@@ -129,12 +109,11 @@ subshell of this one, so a bash variable set here would not reach it.
 | `$SPIRA_REPO/raw/spira-beads/spira.jsonl` (or `SPIRA_HEIMDALL_MIRROR`) | r (mtime only) | the beads mirror staleness check |
 | `$SPIRA_RUN/world.halted`, `world.draining` | r | the halt/drain gate readings |
 
-### 2.7 Bead-store rows
+### 2.7 Control-plane conditions
 
-`list --all --limit 0 --label alert --json` (the read probe), `list --all --limit 0
---label heimdall:probe --json` (probe re-derive), `create --type event -p 1|-p 0`, `update`,
-`close --reason`, `label add|remove`, `reopen` (through `bead_reopen`) — every one through
-`bdq`/`bead_reopen`'s seam, never a bare `bd`.
+`condition list` (the read probe), `condition set <key> --type Alert --status True` (raise and
+re-raise), `condition clear <key>`, and `condition set heimdall-write-probe --type WriteProbe
+--status False` on every pass (the write probe: one key, never firing, nothing to duplicate).
 
 ## 3. Decisions
 
@@ -143,24 +122,13 @@ subshell of this one, so a bash variable set here would not reach it.
    sentinel would be the watchdog housed inside what it watches) — new crate, per the
    wave brief's own rule ("moves into the crate that already owns the area, or a new
    crate only if none fits").
-2. **The lib.sh seam is duplicated, not shared with `dwarf`'s.** Both are `bash -c <FIXED
-   NUL-framed script>`, and the shapes rhyme on purpose, but heimdall has no rune, no
-   `RUNE_REQUIRE_LABEL` folding, and a three-function allowlist instead of dwarf's
-   thirty-odd — sharing would mean heimdall depending on dwarf's crate for an unrelated
-   concern, against this workspace's own convention of small independent crates (each
-   port carries its own `util.rs`; `sentinel/src/host.rs` and `dwarf/src/util.rs` are not
-   shared either).
-3. **`maintain_probe`'s "create after a failed update is a recovery" property
-   (`_probe_had` in the bash) is ported as it actually behaves, not as its comment
-   describes.** Traced through: bash's own guard (`if [ -z "$PROBE_ID" ]`) means CREATE is
-   only ever reached on a pass where the cached id was already empty at the top — which is
-   exactly when `_probe_had` is too, so `[ -n "$_probe_had" ]` inside the create branch is
-   always false. A create always reports `db_write_ok=1` on success; see `alerts.rs`'s own
-   doc comment on `maintain_probe`. Named here rather than silently dropped
-   (law-rust-rewrites-start-from-intent: name each dropped/changed behaviour).
+2. **Alerts are control-plane conditions, not bd items.** An alert's state is a fact the
+   control plane owns; keeping it in bd made alerts most of bd's rows. The lib.sh seam that
+   carried `bdq` and `bead_reopen` went with the bd writes.
+3. **The write probe is one condition written False on every pass**, so there is no probe
+   bead to re-derive, adopt or duplicate.
 4. **`spira_unit`, `log`, `die`, `json_only` are reimplemented directly in Rust, not
-   reached through the seam.** Unlike `bdq`/`bead_reopen`, they carry no graph semantics
-   to drift from — `spira_unit` is twelve lines of systemctl calls (`gather::spira_unit`),
+   shelled out.** They carry no graph semantics to drift from — `spira_unit` is twelve lines of systemctl calls (`gather::spira_unit`),
    `log`/`die` are one `printf` (`util::log_line`), `json_only` is a `sed` one-liner
    (`util::json_only`, unit-tested against the exact warning-banner case bd produces).
 5. **`iso()` (heimdall.sh's timestamp formatter, `SPIRA_TZ`-aware) still shells to `date`**
@@ -190,10 +158,9 @@ confirmed raise, a flap does not duplicate, one clear sighting does not retract,
 confirmed clear, the refresh interval and its hand-closed-bead skip, db-unreachable holds
 counters but never triggers), `restart.rs` (the baseline arithmetic: first-run floor, a
 count going down resets, a window expiring slides, a standing burst does not re-alert),
-`alerts.rs` (create, reopen-on-recur, flap-label replacement not addition, `acked`
-clearing, the whole write-probe dance against a `BdOps` fake: failed re-derive does not
-create, extras closed on adoption), `gather.rs` (log-tail truncation, mirror
+`alerts.rs` (a raise then a clear moves the condition True then False and writes no bd item,
+a clear with nothing firing writes nothing, the probe never fires and a timeout is saturation,
+against a `Conditions` fake), `gather.rs` (log-tail truncation, mirror
 configured/missing/present, world halt/drain parsing, `spira_unit`'s fallback chain),
-`fallback.rs`/`heartbeat.rs` (JSON/env-file shape, atomic write leaves no `.tmp`), `seam.rs`
-(the allowlist refuses, the snapshot parses conf.sh's resolution), `main.rs`
+`fallback.rs`/`heartbeat.rs` (JSON/env-file shape, atomic write leaves no `.tmp`), `main.rs`
 (`resolve_home`'s three-way fallback).

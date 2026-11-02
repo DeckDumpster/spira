@@ -181,6 +181,12 @@ impl Machine for Fake {
                 self.batches.get_mut(&bead).unwrap().retain(|(b, _)| *b != args[1]);
                 (0, String::new())
             }
+            "list-asks" => (0, "[]".into()),
+            "show-ask" if self.ask_rows.contains(&args[1]) => {
+                let closed = self.ask_closes.iter().any(|c| c[1] == args[1]);
+                (0, json!({"ask_id": args[1], "state": if closed { "WITHDRAWN" } else { "OPEN" }, "quote": "q"}).to_string())
+            }
+            "show-ask" => (1, "{}".into()),
             "close-ask" => {
                 self.ask_closes.push(args.to_vec());
                 if self.ask_rows.contains(&args[1]) { (0, String::new()) } else { (1, format!("close-ask: {} is no ask", args[1])) }
@@ -902,20 +908,12 @@ struct FakeBd {
     external: std::collections::BTreeSet<String>,
     /// bead id -> the beads that `blocks`-depend on it (open unless in `closed`).
     dependents: BTreeMap<String, Vec<String>>,
-    /// epic id -> its `parent-child` children.
-    kids: BTreeMap<String, Vec<String>>,
     down: bool,
 }
 
 impl Bd for FakeBd {
     fn planning_watermark(&mut self) -> Result<Option<u64>, String> {
         Ok(None)
-    }
-    fn children(&mut self, id: &str) -> Result<Vec<String>, String> {
-        if self.down {
-            return Err("bd down".into());
-        }
-        Ok(self.kids.get(id).cloned().unwrap_or_default())
     }
     fn blocking_dependents(&mut self, id: &str) -> Result<Vec<String>, String> {
         if self.down {
@@ -1005,45 +1003,39 @@ fn unclaim_needs_an_actor() {
 }
 
 #[test]
-fn close_epic_closes_only_an_epic() {
-    let mut f = Fake::default();
-    let mut bd = FakeBd::default();
-    bd.rows.insert("sp-e".into(), ("epic".into(), None));
-    bd.rows.insert("sp-w".into(), ("task".into(), None));
-    assert_eq!(close_epic(&v(&["sp-e", "Pilgrimage complete"]), &mut f, &mut bd).code, APPLIED);
-    assert_eq!(bd.closed, vec![("sp-e".to_string(), "Pilgrimage complete".to_string())]);
-    let a = close_epic(&v(&["sp-w", "x"]), &mut f, &mut bd);
+fn close_epic_closes_only_an_epic_and_writes_it_no_record() {
+    let w = super::world::World::new();
+    w.file("sp-e", "epic", None, &[]);
+    w.file("sp-w", "task", None, &[]);
+    let (mut m, mut b) = (&w, &w);
+    assert_eq!(close_epic(&v(&["sp-e", "Pilgrimage complete"]), &mut m, &mut b).code, APPLIED);
+    assert_eq!(*w.writes.borrow(), ["close sp-e"]);
+    assert_eq!(w.lc(&["show", "sp-e"]).0, NO_ROW, "an epic has no lifecycle record");
+    let a = close_epic(&v(&["sp-w", "x"]), &mut m, &mut b);
     assert_eq!(a.code, REFUSED, "a work bead is never closed through bd");
     assert!(a.stderr.contains("not an epic"));
-    assert_eq!(bd.closed.len(), 1);
-    bd.down = true;
-    assert_eq!(close_epic(&v(&["sp-e", "x"]), &mut f, &mut bd).code, CANNOT_TELL);
-    assert_eq!(close_epic(&v(&["sp-e"]), &mut f, &mut bd).code, CANNOT_TELL, "no reason: usage");
-}
-
-fn epic_with_children(f: &mut Fake, bd: &mut FakeBd, kids: &[(&str, BeadState)]) {
-    f.bead("sp-e", BeadState::Open);
-    bd.rows.insert("sp-e".into(), ("epic".into(), None));
-    for (k, st) in kids {
-        f.bead(k, *st);
-    }
-    bd.kids.insert("sp-e".into(), kids.iter().map(|(k, _)| k.to_string()).collect());
+    assert_eq!(close_epic(&v(&["sp-gone", "x"]), &mut m, &mut b).code, CANNOT_TELL, "an unreadable type: cannot tell");
+    assert_eq!(close_epic(&v(&["sp-e"]), &mut m, &mut b).code, CANNOT_TELL, "no reason: usage");
+    assert_eq!(w.writes.borrow().len(), 1);
 }
 
 #[test]
-fn close_epic_moves_the_lifecycle_row_to_done_and_refuses_a_live_child() {
-    let (mut f, mut bd) = (Fake::default(), FakeBd::default());
-    epic_with_children(&mut f, &mut bd, &[("sp-a", BeadState::Landed), ("sp-b", BeadState::Working)]);
-    let a = close_epic(&v(&["sp-e", "x"]), &mut f, &mut bd);
+fn close_epic_refuses_while_a_child_is_live_and_closes_once_every_child_is_terminal() {
+    let w = super::world::World::new();
+    w.file("sp-e", "epic", None, &[]);
+    w.file("sp-a", "task", Some("sp-e"), &[]);
+    w.file("sp-b", "task", Some("sp-e"), &[]);
+    w.ok(&["create-bead", "sp-a", "--ready"]);
+    w.ok(&["create-bead", "sp-b", "--ready"]);
+    let (mut m, mut b) = (&w, &w);
+    w.drop("sp-a");
+    let a = close_epic(&v(&["sp-e", "x"]), &mut m, &mut b);
     assert_eq!(a.code, REFUSED, "{}", a.stderr);
-    assert!(a.stderr.contains("sp-b"), "{}", a.stderr);
-    assert_eq!((f.state("sp-e"), bd.closed.len()), ("OPEN", 0), "a refusal changes nothing");
-
-    f.bead("sp-b", BeadState::Dropped);
-    assert_eq!(close_epic(&v(&["sp-e", "x"]), &mut f, &mut bd).code, APPLIED);
-    assert_eq!(f.state("sp-e"), "DONE", "the row every reader sees moves with the store");
-    assert_eq!(bd.closed.len(), 1);
-    assert_eq!(close_epic(&v(&["sp-e", "x"]), &mut f, &mut bd).code, APPLIED, "a row already terminal gets no second event");
+    assert!(a.stderr.contains("sp-b") && !a.stderr.contains("sp-a"), "{}", a.stderr);
+    assert!(w.writes.borrow().is_empty(), "a refusal changes nothing");
+    w.drop("sp-b");
+    assert_eq!(close_epic(&v(&["sp-e", "x"]), &mut m, &mut b).code, APPLIED);
+    assert_eq!(*w.writes.borrow(), ["close sp-e"]);
 }
 
 // ---- renew (sp-2jf0a): the working dwarf's lease renewal --------------------------------
@@ -1151,57 +1143,34 @@ fn reconcile_closed_reports_an_ask_hold_as_refused() {
     assert_eq!(f.state("sp-h"), "READY");
 }
 
-// ---- reconcile-epics --------------------------------------------------------------------
+// ---- reconcile-content: epics -----------------------------------------------------------
 
 #[test]
-fn reconcile_epics_moves_only_ready_epic_rows_to_open() {
-    let mut f = Fake::default();
-    f.bead("sp-e", BeadState::Ready);
-    f.bead("sp-t", BeadState::Ready);
-    let mut b = FakeBd::default();
-    b.rows.insert("sp-e".into(), ("epic".into(), None));
-    b.rows.insert("sp-t".into(), ("task".into(), None));
+fn reconcile_content_closes_an_epic_once_every_child_is_terminal_and_never_one_with_none() {
+    let w = super::world::World::new();
+    w.file("sp-e", "epic", None, &[]);
+    w.file("sp-empty", "epic", None, &[]);
+    w.file("sp-a", "task", Some("sp-e"), &[]);
+    w.file("sp-b", "task", Some("sp-e"), &[]);
+    w.file("sp-c", "task", Some("sp-e"), &[]);
+    w.ok(&["create-bead", "sp-a", "--ready"]);
+    w.ok(&["create-bead", "sp-b", "--ready"]);
+    w.drop("sp-a");
+    w.plan.borrow_mut().get_mut("sp-c").unwrap().status = "closed".into();
+    let (mut m, mut b) = (&w, &w);
+    let held = reconcile_content(&v(&["--apply"]), &mut m, &mut b);
+    assert_eq!(held.code, APPLIED, "{held:?}");
+    assert_eq!(w.status("sp-e"), "open", "sp-b is live: {}", held.stdout);
 
-    let dry = reconcile_epics(&[], &mut f, &mut b);
-    assert_eq!(dry.code, APPLIED, "{}", dry.stderr);
-    assert!(dry.stdout.contains("would move sp-e READY -> OPEN"), "{}", dry.stdout);
-    assert!(f.events.is_empty(), "a dry run writes nothing");
-
-    let ans = reconcile_epics(&v(&["--apply"]), &mut f, &mut b);
-    assert_eq!(ans.code, APPLIED, "{}", ans.stdout);
-    assert_eq!((f.state("sp-e"), f.state("sp-t")), ("OPEN", "READY"));
-    assert_eq!(reconcile_epics(&v(&["--apply"]), &mut f, &mut b).stdout, "reconcile-epics: 0 moved");
-
-    b.down = true;
-    f.bead("sp-e2", BeadState::Ready);
-    assert_eq!(reconcile_epics(&v(&["--apply"]), &mut f, &mut b).code, CANNOT_TELL);
-    assert_eq!(reconcile_epics(&v(&["--bogus"]), &mut f, &mut b).code, 2);
-}
-
-#[test]
-fn reconcile_epics_closes_an_open_epic_once_its_last_child_is_terminal() {
-    let (mut f, mut bd) = (Fake::default(), FakeBd::default());
-    epic_with_children(&mut f, &mut bd, &[("sp-a", BeadState::Landed), ("sp-b", BeadState::Submitted)]);
-    let held = reconcile_epics(&v(&["--apply"]), &mut f, &mut bd);
-    assert_eq!((held.code, f.state("sp-e")), (APPLIED, "OPEN"), "{}", held.stdout);
-
-    f.bead("sp-b", BeadState::Dropped);
-    let dry = reconcile_epics(&[], &mut f, &mut bd);
-    assert!(dry.stdout.contains("would move sp-e OPEN -> DONE (epic-complete: 1 DROPPED, 1 LANDED)"), "{}", dry.stdout);
-    assert_eq!(f.state("sp-e"), "OPEN", "a dry run writes nothing");
-
-    let ans = reconcile_epics(&v(&["--apply"]), &mut f, &mut bd);
-    assert_eq!((ans.code, f.state("sp-e")), (APPLIED, "DONE"), "{}", ans.stdout);
-    assert_eq!(f.beads["sp-e"].reason.as_deref(), Some("epic-complete: 1 DROPPED, 1 LANDED"));
-    assert_eq!(reconcile_epics(&v(&["--apply"]), &mut f, &mut bd).stdout, "reconcile-epics: 0 moved");
-}
-
-#[test]
-fn reconcile_epics_leaves_an_open_epic_with_no_children_alone() {
-    let (mut f, mut bd) = (Fake::default(), FakeBd::default());
-    epic_with_children(&mut f, &mut bd, &[]);
-    assert_eq!(reconcile_epics(&v(&["--apply"]), &mut f, &mut bd).stdout, "reconcile-epics: 0 moved");
-    assert_eq!(f.state("sp-e"), "OPEN");
+    w.drop("sp-b");
+    let dry = reconcile_content(&[], &mut m, &mut b);
+    assert!(dry.stdout.contains("would close sp-e (epic-complete: 1 CLOSED, 2 DROPPED)"), "{}", dry.stdout);
+    assert_eq!(w.status("sp-e"), "open", "a dry run writes nothing");
+    let done = reconcile_content(&v(&["--apply"]), &mut m, &mut b);
+    assert_eq!((done.code, w.status("sp-e"), w.status("sp-empty")), (APPLIED, "closed".to_string(), "open".to_string()), "{}", done.stdout);
+    assert_eq!(w.lc(&["show", "sp-e"]).0, NO_ROW, "closing an epic writes it no record");
+    let again = reconcile_content(&v(&["--apply"]), &mut m, &mut b);
+    assert!(again.stdout.ends_with("reconcile-content: 0 closed"), "{}", again.stdout);
 }
 
 // ---- reconcile-content ------------------------------------------------------------------
@@ -1456,6 +1425,7 @@ fn closing_an_ask_with_no_bead_row_closes_its_ask_row_withdrawn_and_a_bead_with_
     let mut bd = FakeBd::default();
     assert_eq!(close(&v(&["sp-ask", "--reason", "moot", "--actor", "claude"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
     assert_eq!(f.ask_closes, vec![v(&["close-ask", "sp-ask", "--exit", "withdrawn", "--quote", "moot", "--actor", "claude"])]);
+    assert_eq!(bd.closed, vec![("sp-ask".to_string(), "ask withdrawn: q".to_string())], "the decision bead follows its closed ask");
     assert_eq!(close(&v(&["sp-w", "--reason", "landed at abc"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
     assert_eq!(f.ask_closes.len(), 1, "a bead with a row is no ask");
 }
@@ -1516,12 +1486,12 @@ fn a_landing_close_leaves_the_row_to_the_delivery_and_is_refused_outside_it() {
     }
     assert!(f.events.is_empty(), "the landing records LANDED itself");
     assert_eq!((f.state("sp-c"), f.state("sp-s")), ("CERTIFIED", "SUBMITTED"));
-    assert_eq!(bd.closed.len(), 3);
+    assert_eq!(bd.closed.iter().map(|(i, _)| i.as_str()).collect::<Vec<_>>(), ["sp-l"], "bd follows the record: only the LANDED one is over");
     f.bead("sp-r", BeadState::Ready);
     let a = close(&v(&["sp-r", "--reason", "x", "--landing"]), &mut f, &mut bd, &mut no_file);
     assert_eq!(a.code, REFUSED, "{}", a.stderr);
     assert_eq!(f.state("sp-r"), "READY");
-    assert_eq!(bd.closed.len(), 3, "nothing closed");
+    assert_eq!(bd.closed.len(), 1, "nothing closed");
     assert_eq!(close(&v(&["sp-r", "--reason", "x", "--landing", "--superseded-by", "sp-z"]), &mut f, &mut bd, &mut no_file).code, CANNOT_TELL);
 }
 

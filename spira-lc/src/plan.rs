@@ -125,7 +125,7 @@ pub fn cmd_plan(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
-const USAGE: &str = "usage: plan items (--ids a,b|- | --label L [--status a,b] | --external-contains S) [--full] [--open] | plan edges --ids a,b|- [--dependents] | plan children --ids a,b|- [--full] [--open] | plan watermark | plan stamp | plan schema";
+const USAGE: &str = "usage: plan items (--ids a,b|- | --label L [--status a,b] | --external-contains S | --type T) [--full] [--open] | plan edges --ids a,b|- [--dependents] | plan children --ids a,b|- [--full] [--open] | plan watermark | plan stamp | plan schema";
 
 fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).map(String::as_str)
@@ -139,11 +139,12 @@ fn ids_of(args: &[String]) -> Result<Vec<&str>, String> {
 fn items(args: &[String], conn: &Conn) -> Result<Vec<Value>, String> {
     let full = args.iter().any(|a| a == "--full");
     let open = args.iter().any(|a| a == "--open");
-    match (flag(args, "--ids"), flag(args, "--external-contains"), flag(args, "--label")) {
-        (Some(_), None, None) => fetch_with(conn, &ids_of(args)?, full, open),
-        (None, Some(needle), None) => by_external_ref(conn, needle, full, open),
-        (None, None, Some(label)) => by_label(conn, label, flag(args, "--status"), full),
-        _ => Err("plan items: exactly one of --ids <a,b,…>, --external-contains <text> or --label <label> [--status a,b] is required".into()),
+    match (flag(args, "--ids"), flag(args, "--external-contains"), flag(args, "--label"), flag(args, "--type")) {
+        (Some(_), None, None, None) => fetch_with(conn, &ids_of(args)?, full, open),
+        (None, Some(needle), None, None) => by_external_ref(conn, needle, full, open),
+        (None, None, Some(label), None) => by_label(conn, label, flag(args, "--status"), full),
+        (None, None, None, Some(kind)) => by_type(conn, kind, full, open),
+        _ => Err("plan items: exactly one of --ids <a,b,…>, --external-contains <text>, --label <label> [--status a,b] or --type <type> is required".into()),
     }
 }
 
@@ -278,6 +279,30 @@ fn join_rows(rows: &mut [Value], lookup: &TitleLookup) {
         }
     }
     merge_planning(rows, &planned);
+}
+
+/// A `list-asks` answer with each ask's title read from its decision bead, where it lives. A bd
+/// that cannot be read leaves the titles as they were.
+pub fn with_ask_titles(answer: (i32, String), conn: &Conn) -> (i32, String) {
+    let (0, text) = &answer else { return answer };
+    let Ok(Value::Array(mut rows)) = serde_json::from_str::<Value>(text) else { return answer };
+    let ids: Vec<&str> = rows.iter().filter_map(|r| s(r, "ask_id")).collect();
+    let mut planned: BTreeMap<String, Titled> = BTreeMap::new();
+    for chunk in ids.chunks(500) {
+        match titles(conn, chunk) {
+            Ok(t) => planned.extend(t),
+            Err(e) => {
+                eprintln!("spira-lc list-asks: titles unread from bd: {e}");
+                return answer;
+            }
+        }
+    }
+    for row in rows.iter_mut() {
+        if let Some((title, _)) = s(row, "ask_id").and_then(|id| planned.get(id)).cloned() {
+            row["title"] = title;
+        }
+    }
+    (0, serde_json::to_string_pretty(&Value::Array(rows)).unwrap_or_default())
 }
 
 /// A bead's title and priority, as a listing shows them.
@@ -512,6 +537,18 @@ fn by_label(conn: &Conn, label: &str, statuses: Option<&str>, full: bool) -> Res
     let found = conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"))?;
     let ids: Vec<&str> = found.iter().filter_map(|r| s(r, "id")).collect();
     fetch_with(conn, &ids, full, false)
+}
+
+/// The beads of bd issue type `kind`.
+fn by_type(conn: &Conn, kind: &str, full: bool, open: bool) -> Result<Vec<Value>, String> {
+    let cdb = content_db()?;
+    if kind.is_empty() {
+        return Err("plan items: --type needs a non-empty type".into());
+    }
+    let live = if open { " AND status <> 'closed'" } else { "" };
+    let found = conn.query(&format!("SELECT id FROM {cdb}.issues WHERE issue_type = '{}'{live} ORDER BY id", rows::escape(kind))).map_err(|e| format!("cannot tell: {e:?}"))?;
+    let ids: Vec<&str> = found.iter().filter_map(|r| s(r, "id")).collect();
+    fetch_with(conn, &ids, full, open)
 }
 
 fn fetch_with(conn: &Conn, ids: &[&str], full: bool, open: bool) -> Result<Vec<Value>, String> {

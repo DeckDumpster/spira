@@ -186,8 +186,12 @@ fn dispatch_watermark(args: &[String]) -> Option<(i32, String)> {
     }
 }
 
+/// The verbs with no dolt path: the control store answers them whenever its path is set, so they
+/// never wait for the `SPIRA_LC_LIFECYCLE_ON_STORE` cutover.
+const STORE_ONLY: &[&str] = &["watch", "condition"];
+
 /// The control store's answer to `args`, or `None` when the dolt path answers it: a verb this
-/// store does not serve, or any verb while the key is unset. `watch` has no dolt path.
+/// store does not serve, or any verb with a dolt path while the key is unset.
 pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
     let verb = args.first()?;
     if let Some(answer) = dispatch_watermark(args) {
@@ -203,14 +207,13 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
     let path = match store_path() {
         Some(Ok(p)) => p,
         Some(Err(e)) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
-        None if verb == "watch" => return Some((
+        None if STORE_ONLY.contains(&verb.as_str()) => return Some((
             CANNOT_TELL,
-            "cannot tell: watch is served by the control store, and SPIRA_LC_STORE_PATH is unset or unreadable"
-                .into(),
+            format!("cannot tell: {verb} is served by the control store, and SPIRA_LC_STORE_PATH is unset or unreadable"),
         )),
         None => return None,
     };
-    if verb != "watch" {
+    if !STORE_ONLY.contains(&verb.as_str()) {
         match lifecycle_on_store() {
             Ok(true) => {}
             Ok(false) => return None,

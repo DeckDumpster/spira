@@ -37,8 +37,6 @@ pub struct Config {
     pub submitted_label: String,
     /// `spira.run` — the runtime directory (`unpoison`: ask history, audit log).
     pub run: String,
-    /// `spira.ask_label` — the operator-ask label (`unpoison`: the ask it closes).
-    pub ask_label: String,
     /// `spira.scope_label`.
     pub scope_label: String,
     /// `spira.no_loop_label` (conf.d/SPIRA_NO_LOOP_LABEL).
@@ -74,7 +72,6 @@ pub fn load_config() -> Result<Config, String> {
         stack_max_depth: spira_config::process::cfg_parse("SPIRA_STACK_MAX_DEPTH")?,
         submitted_label: spira_config::process::cfg("SPIRA_SUBMITTED_LABEL")?,
         run: spira_config::process::cfg("SPIRA_RUN")?,
-        ask_label: spira_config::process::cfg("SPIRA_ASK_LABEL")?,
         scope_label: spira_config::process::cfg("SPIRA_SCOPE_LABEL")?,
         no_loop_label: spira_config::process::cfg("SPIRA_NO_LOOP_LABEL")?,
         queue_wait_label: spira_config::process::cfg("SPIRA_QUEUE_WAIT_LABEL")?,
@@ -146,6 +143,11 @@ impl Store {
             Some(items @ serde_json::Value::Array(_)) => Ok(items.to_string()),
             _ => Err(format!("{what}: no items array")),
         }
+    }
+
+    /// `spira-lc list-asks`: the open asks, from their control-plane records.
+    pub fn open_asks(&self) -> Result<String, String> {
+        run(self.lc_cmd(&["list-asks".to_string()]), self.timeout).map_err(|e| format!("spira-lc list-asks: {e}"))
     }
 
     /// The plan rows of `ids`, every status, chunked.

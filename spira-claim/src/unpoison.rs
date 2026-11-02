@@ -403,21 +403,11 @@ pub fn parse_lc_show(text: &str) -> Result<LcRow, String> {
     Ok(LcRow { state, version, holds, holder: s_field(b, "holder").filter(|h| !h.is_empty()) })
 }
 
-pub fn parse_asks(text: &str) -> Result<Vec<AskRow>, String> {
-    let t = json_only(text).trim();
-    if t.is_empty() {
-        return Err("bd list: empty output".into());
-    }
-    let v: Value = serde_json::from_str(t).map_err(|e| format!("bd list: not JSON: {e}"))?;
-    let arr = match v {
-        Value::Array(a) => a,
-        Value::Null => Vec::new(),
-        other => vec![other],
-    };
-    Ok(arr
-        .iter()
-        .filter_map(|b| Some(AskRow { id: s_field(b, "id")?, title: s_field(b, "title").unwrap_or_default() }))
-        .collect())
+/// `spira-lc list-asks`'s rows as asks: `ask_id` and the title joined from the decision bead.
+pub fn parse_open_asks(text: &str) -> Result<Vec<AskRow>, String> {
+    let v: Value = serde_json::from_str(json_only(text).trim()).map_err(|e| format!("spira-lc list-asks: not JSON: {e}"))?;
+    let Value::Array(rows) = v else { return Err("spira-lc list-asks: not a list".into()) };
+    Ok(rows.iter().filter_map(|a| Some(AskRow { id: s_field(a, "ask_id")?, title: s_field(a, "title").unwrap_or_default() })).collect())
 }
 
 // ---------------------------------------------------------------------------------------
@@ -427,7 +417,6 @@ pub struct Live {
     pub store: Store,
     pub run_dir: PathBuf,
     pub asked_dir: PathBuf,
-    pub ask_label: String,
     pub beads_actor: String,
 }
 
@@ -535,11 +524,8 @@ impl World for Live {
     }
 
     fn open_asks(&mut self) -> Result<Vec<AskRow>, String> {
-        let label = self.ask_label.clone();
-        // An ask is a non-work bead: its bd status is its state (spira_config::nonwork, sp-mve9i).
-        let [flag, open] = spira_config::nonwork::status_args(spira_config::nonwork::Kind::Ask, spira_config::nonwork::Which::Open);
-        let out = self.store.bdq(&["list", "--label", &label, &flag, &open, "--limit", "0", "--json"])?;
-        parse_asks(&out)
+        // An ask's state is its control-plane record, never its decision bead's bd status.
+        parse_open_asks(&self.store.open_asks()?)
     }
 
     fn close(&mut self, id: &str, reason: &str) -> Result<(), String> {

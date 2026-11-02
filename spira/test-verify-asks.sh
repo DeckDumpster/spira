@@ -24,7 +24,7 @@
 # reason) — so this suite pins the CURRENT behaviour without endorsing it as correct.
 #
 # tier: T1
-# covers: cockpit/verify-asks.sh cockpit/db.sh spira/conf.sh UC-operator-channel-26
+# covers: cockpit/verify-asks.sh cockpit/db.sh spira/conf.sh spira/testlib.sh spira-lc/src/callers.rs UC-operator-channel-26
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 COCKPIT="$(cd "$HERE/../cockpit" && pwd -P)"
@@ -243,9 +243,14 @@ bd_show_status() {
 
 printf '{"id":"sp-vreal1","title":"t sp-vreal1","description":"subscribe the feed\\n\\nVERIFY: exit 0","status":"open","issue_type":"decision","labels":["%s","overseer","ask-question"]}\n' \
     "$ASK" | testdb_seed
+ask_state() { spira-lc show-ask "$1" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("state","?"))' 2>/dev/null; }
 is "SEEN RED: bead is open before sweep" "open" "$(bd_show_status sp-vreal1)"
+# The ask's record, opened as mail opens it beside the decision bead.
+spira-lc create-ask sp-vreal1 >/dev/null 2>&1
+is "SEEN OPEN: its ask is open in the control plane before the sweep" "OPEN" "$(ask_state sp-vreal1)"
 out="$(verify --apply 2>&1)"
 want "SATISFIED is reported against a real bd"   "SATISFIED" "$out"
+is   "the ask is closed in the control plane" "WITHDRAWN" "$(ask_state sp-vreal1)"
 is   "bead is closed after the real sweep" "closed" "$(bd_show_status sp-vreal1)"
 
 tl_summary

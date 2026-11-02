@@ -197,7 +197,6 @@ fn live_lc(tag: &str, bd_body: &str, lc_exit: i32) -> (Live, testkit::TempDir) {
         store: Store { bdq, lc, timeout: Duration::from_secs(10) },
         run_dir: dir.join("run"),
         asked_dir: std::path::PathBuf::new(),
-        ask_label: String::new(),
         beads_actor: "harness".into(),
     };
     (l, dir)

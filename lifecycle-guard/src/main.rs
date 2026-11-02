@@ -2,6 +2,7 @@ mod bd_close;
 mod bd_reopen;
 mod bd_read;
 mod bd_status;
+mod bd_status_write;
 mod hold_label;
 mod brief;
 mod finding;
@@ -175,6 +176,7 @@ fn run_one(root: &Path, rules: &Rules, gate: bool) -> Result<(usize, Vec<Finding
     findings.extend(hold_label::scan(&every, root));
     findings.extend(bd_reopen::scan_rust(&rust_files, root));
     findings.extend(bd_read::scan_rust(&rust_files, root));
+    findings.extend(bd_status_write::scan_rust(&rust_files, root));
     Ok((scanned, findings))
 }
 

@@ -1001,3 +1001,19 @@ mod tests {
         assert!(stack_after_refusal("sp-a", Some(&row("task", "open", "repo:other")), false, "r").is_some());
     }
 }
+
+/// The edge swap as one `bd batch`: both lines commit together or neither does, so no reader
+/// ever sees the child with no edge to its epic.
+pub fn dep_convert_batch(id: &str, epic: &str) -> String {
+    format!("dep remove {id} {epic}\ndep add {id} {epic} parent-child\n")
+}
+
+#[cfg(test)]
+mod convert_tests {
+    use super::dep_convert_batch;
+
+    #[test]
+    fn dep_convert_is_one_batch_that_removes_the_blocks_edge_and_adds_the_parent_edge() {
+        assert_eq!(dep_convert_batch("sp-c", "sp-e"), "dep remove sp-c sp-e\ndep add sp-c sp-e parent-child\n");
+    }
+}

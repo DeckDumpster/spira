@@ -178,60 +178,68 @@
    "description": "",
    "comment_count": 0,
    "created_at": "2026-01-05T09:00:00Z"
+  }
+ ],
+ "conditions": [
+  {
+   "key": "ex-0101",
+   "owner": "heimdall",
+   "type": "Alert",
+   "status": "True",
+   "reason": "Firing",
+   "message": "The sentinel has not completed a pass in 41 minutes\n\n**What is true:** the last completed sentinel pass finished at 2026-01-09T15:39:12Z. The ordinary pass is ~20s and the threshold is 15m.\n\n**Evidence**\n```\nlast pass   2026-01-09T15:39:12Z  (41m ago)\nthreshold   15m\npasses/hr   3  (expected ~180)\n```",
+   "first_seen": 1767974040,
+   "flaps": 1,
+   "last_transition_rev": 1,
+   "acked": false
   },
   {
-   "id": "ex-0101",
-   "title": "The sentinel has not completed a pass in 41 minutes",
-   "description": "**What is true:** the last completed sentinel pass finished at 2026-01-09T15:39:12Z. The ordinary pass is ~20s and the threshold is 15m.\n\n**Evidence**\n```\nlast pass   2026-01-09T15:39:12Z  (41m ago)\nthreshold   15m\npasses/hr   3  (expected ~180)\n```",
-   "issue_type": "event",
-   "status": "open",
-   "created_at": "2026-01-09T15:54:00Z",
-   "labels": [
-    "alert",
-    "overseer"
-   ],
-   "comment_count": 0
+   "key": "ex-0102",
+   "owner": "heimdall",
+   "type": "Alert",
+   "status": "True",
+   "reason": "Firing",
+   "message": "Ready work and free capacity, but nothing called for 6 passes\n\n**What is true:** the ready queue reports 4 beads, 3 of 4 worker slots are free, and nothing has been called across the last 6 passes.\n\n**Evidence**\n```\nready       4\ncapacity    3/4 free\ncalled    0 across 6 passes\n```",
+   "first_seen": 1767957600,
+   "flaps": 1,
+   "last_transition_rev": 1,
+   "acked": true
   },
   {
-   "id": "ex-0102",
-   "title": "Ready work and free capacity, but nothing called for 6 passes",
-   "description": "**What is true:** the ready queue reports 4 beads, 3 of 4 worker slots are free, and nothing has been called across the last 6 passes.\n\n**Evidence**\n```\nready       4\ncapacity    3/4 free\ncalled    0 across 6 passes\n```",
-   "issue_type": "event",
-   "status": "open",
-   "created_at": "2026-01-09T11:20:00Z",
-   "labels": [
-    "acked",
-    "alert",
-    "overseer"
-   ],
-   "comment_count": 0
+   "key": "ex-0103",
+   "owner": "heimdall",
+   "type": "Alert",
+   "status": "True",
+   "reason": "Firing",
+   "message": "A worker holds ex-0900 with no live process, 22m past lease expiry\n\n**What is true:** the lease on ex-0900 expired at 2026-01-09T15:58:00Z and no process holds it. The reaper has not reclaimed it.\n\n**Evidence**\n```\nbead    ex-0900\nlease   expired 22m ago\npid     none\n```",
+   "first_seen": 1767909900,
+   "flaps": 4,
+   "last_transition_rev": 1,
+   "acked": false
   },
   {
-   "id": "ex-0103",
-   "title": "A worker holds ex-0900 with no live process, 22m past lease expiry",
-   "description": "**What is true:** the lease on ex-0900 expired at 2026-01-09T15:58:00Z and no process holds it. The reaper has not reclaimed it.\n\n**Evidence**\n```\nbead    ex-0900\nlease   expired 22m ago\npid     none\n```",
-   "issue_type": "event",
-   "status": "open",
-   "created_at": "2026-01-08T22:05:00Z",
-   "labels": [
-    "alert",
-    "flaps:4",
-    "overseer"
-   ],
-   "comment_count": 0
+   "key": "ex-0104",
+   "owner": "heimdall",
+   "type": "Alert",
+   "status": "False",
+   "reason": "Cleared",
+   "message": "The exporter has not written in over a day\n\n**What is true:** the export was last written 2026-01-08T05:12:00Z.\n\n**Evidence**\n```\nlast write  2026-01-08T05:12:00Z\nthreshold   24h\n```",
+   "first_seen": 1767938400,
+   "flaps": 1,
+   "last_transition_rev": 1,
+   "acked": false
   },
   {
-   "id": "ex-0104",
-   "title": "The exporter has not written in over a day",
-   "description": "**What is true:** the export was last written 2026-01-08T05:12:00Z.\n\n**Evidence**\n```\nlast write  2026-01-08T05:12:00Z\nthreshold   24h\n```",
-   "issue_type": "event",
-   "status": "closed",
-   "created_at": "2026-01-09T06:00:00Z",
-   "labels": [
-    "alert",
-    "overseer"
-   ],
-   "comment_count": 0
+   "key": "heimdall-write-probe",
+   "owner": "heimdall",
+   "type": "WriteProbe",
+   "status": "False",
+   "reason": "Probe",
+   "message": "0",
+   "first_seen": 0,
+   "flaps": 0,
+   "last_transition_rev": 1,
+   "acked": false
   }
  ],
  "threads": {

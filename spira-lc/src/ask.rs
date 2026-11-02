@@ -1,14 +1,13 @@
 //! The ask machine's verbs (lifecycle::ask). An ask is never a row on the bead machine, so
 //! `list`, the claim pass and the ops views cannot return one by construction; the ask's
-//! content stays a decision bead in the store, its state is the `ask` row. Closing an ask
-//! lifts the `ask` hold on the work bead it names in the same verb.
+//! question stays a decision bead in the planning plane, its state is the `ask` row alone.
+//! Closing an ask lifts the `ask` hold on the work bead it names in the same verb; the
+//! decision bead's bd status follows in reconcile-content.
 
 use lifecycle::ask::{self, AskEvent, AskEventKind, AskRow, AskState};
 use lifecycle::bead::BeadEventKind;
-use lifecycle::reason::DropReason;
 use serde_json::Value;
 
-use crate::callers::{Bd, Machine};
 use crate::cutover::{flag, is_row_key, q};
 use crate::db::{self, Conn, EventRecord};
 use crate::rows;
@@ -81,10 +80,6 @@ pub fn cmd_list_asks(args: &[String], conn: &Conn) -> (i32, String) {
 /// answer through a `Reply` carrying the ask id, any other exit through `AskWithdrawn`; a
 /// work bead with no such hold is nothing to lift.
 pub fn cmd_close_ask(args: &[String], conn: &Conn) -> (i32, String) {
-    close_ask(args, conn, &mut crate::bd::LiveBd)
-}
-
-fn close_ask(args: &[String], conn: &Conn, bd: &mut dyn Bd) -> (i32, String) {
     let Some(id) = args.first() else {
         return (CANNOT_TELL, "close-ask: missing <ask-id>".into());
     };
@@ -115,11 +110,6 @@ fn close_ask(args: &[String], conn: &Conn, bd: &mut dyn Bd) -> (i32, String) {
         if let Err(e) = conn.insert_refusal_event(&rec) {
             return cannot(e);
         }
-        if row.state.is_terminal() {
-            if let Err(e) = bd.close(id, &bead_reason(&row.state, &row.quote)) {
-                return (CANNOT_TELL, format!("close-ask: {id} is already closed but its bead is not: {}", e.trim()));
-            }
-        }
         return (REFUSED, format!("refused: {:?}", outcome.refusal));
     }
     match conn.cas_update_and_log("ask", "ask_id", id, row.version, &rows::ask_set_clause(&outcome.row), &rec, outcome.row.state.as_str()) {
@@ -127,15 +117,7 @@ fn close_ask(args: &[String], conn: &Conn, bd: &mut dyn Bd) -> (i32, String) {
         Ok(false) => return (REFUSED, "refused: lost the race to another writer".into()),
         Err(e) => return cannot(e),
     }
-    let lifted = lift_work_hold(args, conn, id, &row, &outcome.row, &actor);
-    match bd.close(id, &bead_reason(&outcome.row.state, &outcome.row.quote)) {
-        Ok(()) => lifted,
-        Err(e) => (CANNOT_TELL, format!("close-ask: {id} is closed but its bead is not: {}", e.trim())),
-    }
-}
-
-fn bead_reason(state: &AskState, quote: &Option<String>) -> String {
-    format!("ask {}: {}", state.as_str().to_lowercase(), quote.as_deref().unwrap_or(""))
+    lift_work_hold(args, conn, id, &row, &outcome.row, &actor)
 }
 
 fn lift_work_hold(args: &[String], conn: &Conn, id: &str, row: &AskRow, closed: &AskRow, actor: &str) -> (i32, String) {
@@ -145,154 +127,5 @@ fn lift_work_hold(args: &[String], conn: &Conn, id: &str, row: &AskRow, closed: 
         (0, _) | (REFUSED, _) => (0, String::new()),
         (rc, out) if rc == CANNOT_TELL && out.contains("no bead row") => (0, String::new()),
         (rc, out) => (rc, format!("close-ask: {id} is closed but the ask hold on {work} was not lifted: {out}")),
-    }
-}
-
-/// `reconcile-asks [--apply]`: every closed ask whose bead the content store still holds open
-/// has that bead closed; nothing else is touched.
-pub fn cmd_reconcile_asks(args: &[String], conn: &Conn, bd: &mut dyn Bd) -> (i32, String) {
-    let apply = args.iter().any(|a| a == "--apply");
-    let rows = match conn.query("SELECT ask_id, state, quote FROM ask WHERE state <> 'OPEN' ORDER BY ask_id") {
-        Ok(r) => r,
-        Err(e) => return cannot(e),
-    };
-    let ids: Vec<String> = rows.iter().filter_map(|r| r.get("ask_id").and_then(Value::as_str).map(str::to_string)).collect();
-    let open = match bd.open_among(&ids) {
-        Ok(o) => o,
-        Err(e) => return (CANNOT_TELL, format!("reconcile-asks: the content store is unreadable: {}", e.trim())),
-    };
-    let (mut lines, mut code) = (Vec::new(), 0);
-    for r in rows.iter().filter(|r| r.get("ask_id").and_then(Value::as_str).is_some_and(|i| open.iter().any(|o| o == i))) {
-        let text = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-        let id = text("ask_id");
-        if !apply {
-            lines.push(format!("would close {id}"));
-            continue;
-        }
-        let state = AskState::from_str(&text("state")).unwrap_or(AskState::Answered);
-        match bd.close(&id, &bead_reason(&state, &Some(text("quote")))) {
-            Ok(()) => lines.push(format!("closed {id}")),
-            Err(e) => {
-                lines.push(format!("FAILED {id}: {}", e.trim()));
-                code = CANNOT_TELL;
-            }
-        }
-    }
-    lines.push(format!("reconcile-asks: {} closed asks with an open bead{}", lines.len(), if apply { "" } else { " (dry run; --apply to write)" }));
-    (code, lines.join("\n"))
-}
-
-/// The open ask beads in the store: `(ask id, work beads its labels name)`.
-pub trait AskSource {
-    fn open_asks(&mut self, ask_label: &str) -> Result<Vec<(String, Vec<String>)>, String>;
-}
-
-/// `migrate-asks --ask-label L [--apply]`: every open ask bead gets an `ask` row (OPEN, with
-/// its work bead) and its bead-machine row, if any, is retired with a recorded `Drop`.
-pub fn migrate_asks(args: &[String], m: &mut dyn Machine, src: &mut dyn AskSource) -> crate::callers::Answer {
-    use crate::callers::Answer;
-    let apply = args.iter().any(|a| a == "--apply");
-    let Some(label) = flag(args, "--ask-label").filter(|l| !l.is_empty()) else {
-        return Answer { code: CANNOT_TELL, stderr: "usage: spira-lc migrate-asks --ask-label L [--apply]\n".into(), ..Default::default() };
-    };
-    let asks = match src.open_asks(&label) {
-        Ok(a) => a,
-        Err(e) => return Answer { code: CANNOT_TELL, stderr: format!("spira-lc migrate-asks: the store is unreadable: {}\n", e.trim()), ..Default::default() },
-    };
-    let (mut lines, mut code) = (Vec::new(), 0);
-    for (id, works) in &asks {
-        if !apply {
-            lines.push(format!("would move {id} onto the ask machine"));
-            continue;
-        }
-        let mut create = vec!["create-ask".to_string(), id.clone()];
-        if let Some(w) = works.first() {
-            create.extend(["--work-bead".into(), w.clone()]);
-        }
-        let (rc, out) = m.call(&create);
-        if rc != 0 {
-            lines.push(format!("FAILED {id}: create-ask exit {rc}: {}", out.trim()));
-            code = CANNOT_TELL;
-            continue;
-        }
-        let (rc, out) = m.call(&["show".into(), id.clone()]);
-        if rc == 0 {
-            let v: Value = serde_json::from_str(out.trim()).unwrap_or(Value::Null);
-            let b = v.get("bead").cloned().unwrap_or(Value::Null);
-            let field = |k: &str| match b.get(k) {
-                Some(Value::String(s)) => s.clone(),
-                Some(x) if !x.is_null() => x.to_string(),
-                _ => String::new(),
-            };
-            let kind = serde_json::to_string(&BeadEventKind::Drop { reason: DropReason::Unwanted }).unwrap_or_default();
-            let (rc, out) = m.call(&[
-                "event".into(), "bead".into(), id.clone(), "--expect".into(), field("state"), "--version".into(), field("version"),
-                "--actor".into(), "migrate-asks".into(), "--kind".into(), kind,
-            ]);
-            if rc != 0 {
-                lines.push(format!("FAILED {id}: its bead row was not retired (exit {rc}): {}", out.trim()));
-                code = REFUSED;
-                continue;
-            }
-        }
-        lines.push(format!("moved {id} onto the ask machine"));
-    }
-    lines.push(format!("migrate-asks: {} open asks{}", asks.len(), if apply { "" } else { " (dry run; --apply to write)" }));
-    Answer { code, stdout: lines.join("\n"), ..Default::default() }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct Src(Vec<(String, Vec<String>)>);
-    impl AskSource for Src {
-        fn open_asks(&mut self, label: &str) -> Result<Vec<(String, Vec<String>)>, String> {
-            assert_eq!(label, "ask-label");
-            Ok(self.0.clone())
-        }
-    }
-
-    /// `sp-rowed` has a bead row (READY, v4) from the days an ask was created as a bead.
-    #[derive(Default)]
-    struct M {
-        calls: Vec<Vec<String>>,
-    }
-    impl Machine for M {
-        fn call(&mut self, args: &[String]) -> (i32, String) {
-            self.calls.push(args.to_vec());
-            match args[0].as_str() {
-                "show" if args[1] == "sp-rowed" => (0, r#"{"bead":{"state":"READY","version":"4"}}"#.into()),
-                "show" => (1, "{}".into()),
-                _ => (0, String::new()),
-            }
-        }
-    }
-
-    fn v(xs: &[&str]) -> Vec<String> {
-        xs.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn migration_moves_each_open_ask_onto_the_ask_machine_and_retires_only_existing_bead_rows() {
-        let mut src = Src(vec![("sp-rowed".into(), vec!["sp-w".into()]), ("sp-rowless".into(), vec![])]);
-        let mut m = M::default();
-        let a = migrate_asks(&v(&["--ask-label", "ask-label", "--apply"]), &mut m, &mut src);
-        assert_eq!(a.code, 0, "{}", a.stdout);
-        assert_eq!(m.calls[0], v(&["create-ask", "sp-rowed", "--work-bead", "sp-w"]));
-        let drop = &m.calls[2];
-        assert_eq!(&drop[..9], &v(&["event", "bead", "sp-rowed", "--expect", "READY", "--version", "4", "--actor", "migrate-asks"])[..]);
-        assert!(drop[10].contains("Drop"), "{drop:?}");
-        assert_eq!(m.calls[3], v(&["create-ask", "sp-rowless"]));
-        assert_eq!(m.calls.iter().filter(|c| c[0] == "event").count(), 1, "a rowless ask has no row to retire");
-    }
-
-    #[test]
-    fn a_dry_run_writes_nothing_and_a_missing_label_is_refused() {
-        let mut m = M::default();
-        let a = migrate_asks(&v(&["--ask-label", "ask-label"]), &mut m, &mut Src(vec![("sp-rowed".into(), vec![])]));
-        assert!(m.calls.is_empty());
-        assert!(a.stdout.contains("would move sp-rowed"), "{}", a.stdout);
-        assert_eq!(migrate_asks(&v(&["--apply"]), &mut m, &mut Src(vec![])).code, CANNOT_TELL);
     }
 }

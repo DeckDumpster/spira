@@ -453,6 +453,17 @@ fn gate_mode_refuses_a_rust_bd_status_read() {
     assert!(err.contains("REFUSED"), "{err}");
 }
 
+/// A verb that writes bd's status itself, beside reconcile-content, is refused at the gate;
+/// reconcile-content's own write is not.
+#[test]
+fn gate_mode_refuses_a_bd_status_write_outside_reconcile_content() {
+    let (code, out, err) = gate(&fixture("gate_bd_status_write"));
+    assert_eq!(code, Some(1), "stdout:\n{out}\nstderr:\n{err}");
+    assert!(out.lines().any(|l| l.starts_with("spira-lc/src/callers.rs:3: [bd-status-write]")), "{out}");
+    assert!(!out.lines().any(|l| l.starts_with("spira-lc/src/reconcile_content.rs")), "{out}");
+    assert!(err.contains("REFUSED"), "{err}");
+}
+
 #[test]
 fn the_shipped_runes_names_bd_nowhere() {
     let runes = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");

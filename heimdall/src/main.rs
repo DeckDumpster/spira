@@ -6,13 +6,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use heimdall::alerts::{self, ProbeOutcome};
-use heimdall::bdops::{BdOps, SeamBdOps};
+use heimdall::conditions::{Conditions, LcConditions};
 use heimdall::classify::{self, Mirror as ObsMirror, Observation, RestartAlert as ObsRestartAlert, Thresholds};
 use heimdall::fallback;
 use heimdall::gather::{self, RealSystemctl, Systemctl};
 use heimdall::heartbeat::{self, Heartbeat};
 use heimdall::reconcile::{self, Trigger};
-use heimdall::seam::BashSeam;
 use heimdall::state::State;
 use heimdall::util::{self, Sink, StdSink};
 
@@ -91,24 +90,15 @@ fn pass() -> i32 {
         return 1;
     };
 
-    // THE DATABASE GETS TEN SECONDS, NOT bdq's usual 180 (heimdall.sh's own reasoning,
-    // kept): a bd that has not answered in ten seconds IS "unreachable" as far as a
-    // watchdog is concerned. bdq reads BD_TIMEOUT from the seam subprocess's OWN
-    // environment (it is a fresh process, not a subshell of this one), so the override
-    // is set here rather than relying on it merely being in scope.
-    let bd_timeout = env_n(&original, "SPIRA_HEIMDALL_BD_TIMEOUT", 10).max(1);
-    let mut seam_env = original.clone();
-    seam_env.insert("BD_TIMEOUT".to_string(), bd_timeout.to_string());
-    // law-a-binary-resolves-the-config-it-reads (sp-kgzql): `home` is always
-    // `<release>/spira` (resolve_home's own contract — an explicit --home/SPIRA_HOME or
-    // SPIRA_RELEASE/spira), so its parent is this binary's own release root. Prepend its
-    // bin/+spira/ onto the seam child's PATH rather than trusting `original`'s alone —
-    // SPIRA_RELEASE/SPIRA_HOME being set is no guarantee PATH was updated to match.
-    for (k, v) in spira_config::release_env::child_path_env(home.parent(), seam_env.get("PATH").map(String::as_str)) {
-        seam_env.insert(k, v);
+    // THE STORE GETS TEN SECONDS: a store that has not answered in ten seconds IS
+    // "unreachable" as far as a watchdog is concerned.
+    let store_timeout = env_n(&original, "SPIRA_HEIMDALL_BD_TIMEOUT", 10).max(1);
+    let mut lc_env = original.clone();
+    // law-a-binary-resolves-the-config-it-reads: `home` is `<release>/spira`, so its parent is
+    // this binary's own release root, whose bin/ goes on the child's PATH.
+    for (k, v) in spira_config::release_env::child_path_env(home.parent(), lc_env.get("PATH").map(String::as_str)) {
+        lc_env.insert(k, v);
     }
-
-    let seam = BashSeam { lib: home.join("lib.sh"), env: &seam_env };
 
     // `SPIRA_REPO` (the home repo path), derived in-process the same way `cfg()` itself
     // derives it internally — not a config-key read, so it stays this direct call.
@@ -209,23 +199,22 @@ fn pass() -> i32 {
         }
     }
 
-    // THE ALERT QUERY IS ALSO THE READ PROBE (heimdall.sh's own reasoning, kept): asking a
-    // second, separate "is the database readable" question would be a second thing to get
-    // out of step with the first.
-    let ops = SeamBdOps { seam: &seam };
+    // THE ALERT QUERY IS ALSO THE READ PROBE: asking a second, separate "is the store
+    // readable" question would be a second thing to get out of step with the first.
+    let ops = LcConditions { bin: spira_config::release_env::tool("spira-lc"), env: &lc_env, timeout: Duration::from_secs(store_timeout as u64) };
     let mut db_saturated = false;
-    let (db_reachable, db_error, alert_rows) = match ops.list_by_label("alert") {
+    let (db_reachable, db_error, alert_rows) = match ops.list() {
         Ok(rows) => (true, String::new(), rows),
         Err(f) => {
-            if f == heimdall::bdops::Failure::Saturated {
+            if f == heimdall::conditions::Failure::Saturated {
                 db_saturated = true;
             }
-            (false, "bd list --label alert did not answer".to_string(), Vec::new())
+            (false, "spira-lc condition list did not answer".to_string(), Vec::new())
         }
     };
 
     // THE WRITE PROBE, unconditional on every pass (§ alerts.rs's own doc).
-    let probe = if db_reachable { alerts::maintain_probe(&ops, &state.probe_id) } else { ProbeOutcome { id: None, write_ok: None, saturated: false } };
+    let probe = if db_reachable { alerts::maintain_probe(&ops) } else { ProbeOutcome { id: None, write_ok: None, saturated: false } };
     state.probe_id = probe.id.clone().unwrap_or_default();
     if probe.saturated {
         db_saturated = true;
@@ -294,7 +283,7 @@ fn pass() -> i32 {
             Trigger::ConfirmRaise => {
                 let title = titles.get(key).cloned().unwrap_or_else(|| key.clone());
                 let body = alerts::body_of(key, step.counters.first, step.counters.flaps, &evidence_of(key), &tz);
-                match alerts::alert_write(&ops, key, &title, &body, step.counters.flaps, existing) {
+                match alerts::alert_write(&ops, key, &title, &body) {
                     Ok(id) => {
                         sink.out(&util::log_line(now, &format!("HEIMDALL raised {key} as {id}")));
                         let mut k = step.on_success(now);
@@ -303,7 +292,7 @@ fn pass() -> i32 {
                         acted += 1;
                     }
                     Err(_) => {
-                        sink.err(&util::log_line(now, &format!("HEIMDALL could not create the alert bead for {key}")));
+                        sink.err(&util::log_line(now, &format!("HEIMDALL could not raise the alert condition for {key}")));
                         state.keys.insert(key.clone(), step.on_failure());
                         beads_ok = false;
                     }
@@ -312,7 +301,7 @@ fn pass() -> i32 {
             Trigger::ConfirmClear => match alerts::alert_clear(&ops, existing, step.counters.first, step.counters.flaps, clear_n, &tz) {
                 Ok(()) => {
                     if let Some(row) = existing {
-                        sink.out(&util::log_line(now, &format!("HEIMDALL cleared {key} ({})", row.id)));
+                        sink.out(&util::log_line(now, &format!("HEIMDALL cleared {key} ({})", row.key)));
                     }
                     state.keys.insert(key.clone(), step.on_success(now));
                     acted += 1;
@@ -323,13 +312,13 @@ fn pass() -> i32 {
                 }
             },
             Trigger::Refresh => {
-                let closed_by_hand = existing.map(|r| r.closed()).unwrap_or(false);
+                let closed_by_hand = existing.is_some_and(|r| !r.firing());
                 if closed_by_hand {
                     state.keys.insert(key.clone(), step.on_refresh_skip_closed(now));
                 } else {
                     let title = titles.get(key).cloned().unwrap_or_else(|| key.clone());
                     let body = alerts::body_of(key, step.counters.first, step.counters.flaps, &evidence_of(key), &tz);
-                    match alerts::alert_write(&ops, key, &title, &body, step.counters.flaps, existing) {
+                    match alerts::alert_write(&ops, key, &title, &body) {
                         Ok(id) => {
                             sink.out(&util::log_line(now, &format!("HEIMDALL re-raised {key} on {id}")));
                             let mut k = step.on_success(now);

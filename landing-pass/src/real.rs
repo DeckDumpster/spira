@@ -663,18 +663,19 @@ impl RealBeads {
         Err(format!("bd show failed: {}", last.lines().next().unwrap_or("")))
     }
 
-    /// The open asks carrying `label`: bdsim's `list` under a fixture, else `spira-lc plan items`.
+    /// The open asks: their control-plane records (`spira-lc list-asks`), each titled from its
+    /// decision bead; under a fixture, bdsim's open beads carrying `label`.
     fn open_asks(&self, label: &str) -> Result<Vec<serde_json::Value>, String> {
-        let [flag, open] = spira_config::nonwork::status_args(spira_config::nonwork::Kind::Ask, spira_config::nonwork::Which::Open);
         let mut c = match &self.fixture {
             Some(fx) => {
+                let [flag, open] = spira_config::nonwork::status_args(spira_config::nonwork::Kind::Ask, spira_config::nonwork::Which::Open);
                 let mut c = command("bdsim");
                 c.arg(fx).args(["list", &flag, &open, "--label", label, "--limit", "0", "--json"]);
                 c
             }
             None => {
                 let mut c = command("timeout");
-                c.arg(self.timeout.to_string()).arg(self.lc()?).args(["plan", "items", "--label", label, &flag, &open]);
+                c.arg(self.timeout.to_string()).arg(self.lc()?).arg("list-asks");
                 c
             }
         };
@@ -728,7 +729,6 @@ impl Beads for RealBeads {
         if subject.is_empty() {
             return false;
         }
-        // An ask is not a work bead: its bd status is its only state (nonwork::Kind::Ask).
         let Ok(items) = self.open_asks(label) else { return false };
         items.iter().any(|i| i.get("title").and_then(|t| t.as_str()).is_some_and(|t| t.contains(subject)))
     }
@@ -1320,13 +1320,13 @@ mod lifecycle_join_tests {
         }
     }
 
-    /// A spira-lc stand-in: `show`/`list` answer every bead WORKING; `plan items` for the
-    /// open asks labelled `needs-x` holds one.
+    /// A spira-lc stand-in: `show`/`list` answer every bead WORKING; `list-asks` holds one
+    /// open ask.
     fn stub_lc(dir: &Path) -> PathBuf {
         let p = dir.join("spira-lc");
         testkit::write_exe(
             &p,
-            "#!/bin/bash\ncase \"$1\" in show) echo '{\"bead\":{\"bead_id\":\"'$2'\",\"state\":\"WORKING\"}}' ;; list) echo '[{\"bead_id\":\"sp-w\",\"state\":\"WORKING\"},{\"bead_id\":\"sp-x\",\"state\":\"SUBMITTED\",\"express\":\"1\"}]' ;; plan) [ \"$*\" = 'plan items --label needs-x --status open' ] && echo '{\"watermark\":0,\"items\":[{\"id\":\"sp-q\",\"title\":\"Land sp-w?\"}]}' ;; esac\n",
+            "#!/bin/bash\ncase \"$1\" in show) echo '{\"bead\":{\"bead_id\":\"'$2'\",\"state\":\"WORKING\"}}' ;; list) echo '[{\"bead_id\":\"sp-w\",\"state\":\"WORKING\"},{\"bead_id\":\"sp-x\",\"state\":\"SUBMITTED\",\"express\":\"1\"}]' ;; list-asks) [ \"$*\" = 'list-asks' ] && echo '[{\"ask_id\":\"sp-q\",\"state\":\"OPEN\",\"title\":\"Land sp-w?\"}]' ;; esac\n",
         );
         p
     }
@@ -1351,12 +1351,12 @@ mod lifecycle_join_tests {
     }
 
     #[test]
-    fn an_open_ask_is_read_from_the_plan() {
+    fn an_open_ask_is_read_from_its_control_plane_record() {
         let d = testkit::TempDir::new("landing-pass-ask-open");
         let b = beads(&d);
         assert!(b.ask_open("needs-x", "sp-w"));
         assert!(!b.ask_open("needs-x", "sp-z"));
-        assert!(!b.ask_open("needs-y", "sp-w"));
+        assert!(!b.ask_open("needs-x", ""), "an empty subject matches nothing");
     }
 
     /// A machine that cannot answer is an Err, never a row read as handed on.

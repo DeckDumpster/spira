@@ -200,9 +200,6 @@ mod tests {
         fn blocking_dependents(&mut self, _: &str) -> Result<Vec<String>, String> {
             unreachable!()
         }
-        fn children(&mut self, _: &str) -> Result<Vec<String>, String> {
-            unreachable!()
-        }
     }
 
     #[test]
