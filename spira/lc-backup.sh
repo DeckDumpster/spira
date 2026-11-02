@@ -154,15 +154,18 @@ _lcb_run_db_locked() {
     case "$head" in *[!0-9a-v]*|"") head="" ;; esac
     [ -n "$head" ] || { echo "lc-backup: snapshot taken but cannot read $db's head commit" >&2; return 1; }
     _lcb_compact "$db" "$work" "$stage" "$head" || { rm -rf "$stage" "$work/compact"; return 1; }
-    tar -C "$stage" -caf "$tarball.tmp" --format=posix . 2>/dev/null && mv "$tarball.tmp" "$tarball" \
-        || { rm -f "$tarball.tmp"; echo "lc-backup: cannot pack the snapshot" >&2; return 1; }
-    find "$work" -maxdepth 1 -name 'latest.tar.*' ! -name "latest.tar.$ext" -delete
+    # latest.tar.* is the drill's copy of the newest UPLOADED snapshot, so a pack replaces it only
+    # once its upload exits clean; until then it is pending and a failed upload discards it.
+    tar -C "$stage" -caf "$tarball.pending" --format=posix . 2>/dev/null \
+        || { rm -f "$tarball.pending"; rm -rf "$stage"; echo "lc-backup: cannot pack the snapshot" >&2; return 1; }
     rm -rf "$stage"
     prefix=""
     case "$SPIRA_LC_BACKUP_URL" in s3://*/*) prefix="${SPIRA_LC_BACKUP_URL#s3://*/}"; prefix="${prefix%/}"; [ -z "$prefix" ] || prefix="$prefix/" ;; esac
     stamp="$(date -u +%Y%m%dT%H%M%SZ)"
     key="$prefix$db/$stamp.tar.$ext"
-    _lcb_upload "$tarball" "$key" || { echo "lc-backup: upload of $key failed" >&2; return 1; }
+    _lcb_upload "$tarball.pending" "$key" || { rm -f "$tarball.pending"; echo "lc-backup: upload of $key failed" >&2; return 1; }
+    mv "$tarball.pending" "$tarball" || return 1
+    find "$work" -maxdepth 1 -name 'latest.tar.*' ! -name "latest.tar.$ext" -delete
     printf '%s %s %s\n' "$(date +%s)" "$head" "$wm" > "$(_lcb_stamp "$db").tmp" && mv "$(_lcb_stamp "$db").tmp" "$(_lcb_stamp "$db")"
     echo "lc-backup: uploaded $db at $head as $key to $SPIRA_LC_BACKUP_URL"
 }
