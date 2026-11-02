@@ -89,6 +89,7 @@ pub const CONTAINER_TESTDB_ROOT: &str = "/tmp/spira-testdb";
 pub const CONTAINER_TESTDB_CACHE: &str = "/var/cache/spira-testdb-templates";
 /// The longest a built template's copy out to the host cache may take; past it the batch
 /// goes on and the next batch builds again.
+// batch-job: a podman cp of a template out of a batch container, a step of the batch's setup
 const TEMPLATE_STORE_TIMEOUT: Duration = Duration::from_secs(60);
 /// The variable that hands the template step [`CONTAINER_TESTDB_CACHE`] (`testdb template
 /// --cache` in the environment).
@@ -895,8 +896,8 @@ impl<'a> Session<'a> {
 
     /// The store is only ever a speed-up, so its copy is bounded on its own even when the
     /// batch has no setup cutoff: a podman call can take minutes under load (DESIGN.md D12).
-    fn store_deadline(&self) -> Instant {
-        let cap = Instant::now() + TEMPLATE_STORE_TIMEOUT;
+    fn store_deadline(&self, now: Instant) -> Instant {
+        let cap = now + TEMPLATE_STORE_TIMEOUT;
         self.setup_deadline.map_or(cap, |d| d.min(cap))
     }
 
@@ -916,7 +917,7 @@ impl<'a> Session<'a> {
                 cache,
                 &r.key,
                 crate::testdb::TEMPLATE_CACHE_KEYS,
-                |dst| self.rt.copy_out(&self.name, &r.path, dst, Some(self.store_deadline())),
+                |dst| self.rt.copy_out(&self.name, &r.path, dst, Some(self.store_deadline(Instant::now()))),
             ) {
                 Ok(gone) if gone.is_empty() => {
                     format!("testdb template {} built and stored in the host cache {}", r.key, cache.display())
@@ -1890,12 +1891,12 @@ mod tests {
         let rt = FakeRuntime::new();
         let mut s = session(&rt);
         s.setup_deadline = None;
-        let before = Instant::now();
-        let d = s.store_deadline();
-        assert!(d > before && d <= Instant::now() + TEMPLATE_STORE_TIMEOUT);
-        let soon = Instant::now() + Duration::from_secs(5);
-        s.setup_deadline = Some(soon);
-        assert_eq!(s.store_deadline(), soon, "an earlier setup cutoff still wins");
+        let t0 = s.store_deadline(Instant::now()) - TEMPLATE_STORE_TIMEOUT;
+        assert_eq!(s.store_deadline(t0), t0 + TEMPLATE_STORE_TIMEOUT, "no cutoff: the cap");
+        s.setup_deadline = Some(t0 + Duration::from_secs(5));
+        assert_eq!(s.store_deadline(t0), t0 + Duration::from_secs(5), "an earlier cutoff wins");
+        s.setup_deadline = Some(t0 + Duration::from_secs(600));
+        assert_eq!(s.store_deadline(t0), t0 + TEMPLATE_STORE_TIMEOUT, "a later cutoff: the cap");
     }
 
     #[test]
