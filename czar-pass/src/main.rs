@@ -569,12 +569,23 @@ fn forge_shown(forge: &str, args: &[&str]) {
 // Main pass
 // ──────────────────────────────────────────────────────────────────────────────
 
+const CZAR_LANE: &str = "czar";
+
+/// The line a pass logs when it skips because the czar lane is stopped on every repo.
+fn czar_lane_stopped(stop: Option<spira_config::scoped_stop::RepoStop>) -> Option<String> {
+    stop.map(|s| spira_config::scoped_stop::skip_line("czar pass", CZAR_LANE, &s))
+}
+
 fn run_pass() -> Result<(), String> {
     let cfg = Config::from_process(Seams::production());
 
     // World halted
     if cfg.spira_run.join("world.halted").exists() {
         log_print("czar pass: skipped — world is halted");
+        return Ok(());
+    }
+    if let Some(why) = czar_lane_stopped(spira_config::scoped_stop::stop_everywhere_registered(&cfg.spira_run, CZAR_LANE)) {
+        log_print(&why);
         return Ok(());
     }
 
@@ -1723,5 +1734,21 @@ mod fork_fence {
     fn czar_pass_starts_no_spira_child_that_is_not_a_named_fork_edge() {
         let got = forge::fork_scan::scan(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
         assert!(got.is_empty(), "unmarked children:\n{}", got.join("\n"));
+    }
+}
+
+#[cfg(test)]
+mod lane_tests {
+    use super::*;
+
+    #[test]
+    fn a_czar_lane_stopped_on_every_repo_skips_the_pass() {
+        let d = testkit::TempDir::new("czar-pass-lane");
+        let repos = ["spira".to_string(), "cubby".to_string()];
+        spira_config::scoped_stop::pause_repo(d.path(), "spira", &["czar".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
+        assert_eq!(czar_lane_stopped(spira_config::scoped_stop::stop_everywhere(d.path(), &repos, CZAR_LANE)), None, "cubby still runs");
+        spira_config::scoped_stop::pause_repo(d.path(), "cubby", &["czar".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
+        let why = czar_lane_stopped(spira_config::scoped_stop::stop_everywhere(d.path(), &repos, CZAR_LANE)).expect("stopped everywhere");
+        assert!(why.starts_with("czar pass: skipped") && why.contains("world stop"), "{why}");
     }
 }

@@ -767,6 +767,23 @@ fn world_gate_cmd_halts_and_a_drain_holds_however_old() {
     }
 }
 
+#[test]
+fn world_gate_refuses_while_the_claims_lane_is_stopped_on_every_repo() {
+    let mode = || Mode::WorldGate { rune: "builder".into(), prefix: "CHECK7".into() };
+    let repos: &[&str] = &["spira\t/src/spira\torigin/main main\t0", "other\t\t\t1"];
+    let stop = |w: &World, repo: &str| spira_config::scoped_stop::pause_repo(&w.run, repo, &["claims".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
+
+    let (w, r, sink, clock) = setup("wg-claims-one");
+    stop(&w, "spira");
+    assert_eq!(run_mode(&w, &r, &sink, &clock, mode(), &[], Some(repos)), 0, "another repo still claims: {}", sink.text());
+
+    let (w, r, sink, clock) = setup("wg-claims-all");
+    stop(&w, "spira");
+    stop(&w, "other");
+    assert_eq!(run_mode(&w, &r, &sink, &clock, mode(), &[], Some(repos)), 1);
+    assert!(sink.has("CHECK7 builder: skipped — the claims lane of spira is stopped on purpose by cutover-mode"), "{}", sink.text());
+}
+
 // ---------------------------------------------------------------------------------------
 // call_rune's refusal ladder (the rows test-call-rune.sh used to prove in a shell).
 // The roster is `builder`, `ops`; each rule binds to a declaration (RUNE_ELASTIC,

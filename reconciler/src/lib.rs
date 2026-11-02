@@ -2358,11 +2358,27 @@ pub fn world_halted(cfg: &Config) -> bool {
     cfg.spira_run.join("world.halted").exists()
 }
 
+const REMEDIES_LANE: &str = "remedies";
+
+/// The line a pass logs when it skips because the remedies lane is stopped on every repo.
+fn remedies_lane_stopped(stop: Option<spira_config::scoped_stop::RepoStop>) -> Option<String> {
+    stop.map(|s| spira_config::scoped_stop::skip_line("reconciler", REMEDIES_LANE, &s))
+}
+
+/// Why a pass must take no step: the world is halted, or the remedies lane is stopped on every
+/// registered repo (cutover mode holds it while the halt stamp is lifted).
+fn held(cfg: &Config) -> Option<String> {
+    if world_halted(cfg) {
+        return Some("reconciler: skipped — world is halted".to_string());
+    }
+    remedies_lane_stopped(spira_config::scoped_stop::stop_everywhere_registered(&cfg.spira_run, REMEDIES_LANE))
+}
+
 /// One pass's reads: the groups, the suspensions due for a reminder, and the hold sweep (which
 /// acts as it reads). Stamps the pass. `reminded` is the set of reminders already sent.
 pub fn observe(cfg: &Config, reminded: &std::collections::BTreeSet<String>) -> Observation {
-    if world_halted(cfg) {
-        log_print(cfg, "reconciler: skipped — world is halted");
+    if let Some(why) = held(cfg) {
+        log_print(cfg, &why);
         stamp_pass(cfg);
         return Observation { now_secs: cfg.now_secs, halted: true, ..Observation::default() };
     }
@@ -2381,8 +2397,8 @@ pub fn checks_of(groups: Vec<Group>) -> Vec<Check> {
 pub fn run_pass() -> Result<(), String> {
     let cfg = Config::from_process(Seams::production()?)?.with_desired_state();
 
-    if world_halted(&cfg) {
-        log_print(&cfg, "reconciler: skipped — world is halted");
+    if let Some(why) = held(&cfg) {
+        log_print(&cfg, &why);
         stamp_pass(&cfg);
         return Ok(());
     }
@@ -2653,5 +2669,21 @@ mod tests {
         let r = Remedy::Sequence(vec![("a".into(), vec!["1".into()]), ("b".into(), vec![])]);
         assert_eq!(r.describe(), "a 1 ; b ");
         assert_eq!(r.steps().len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod lane_tests {
+    use super::*;
+
+    #[test]
+    fn a_remedies_lane_stopped_on_every_repo_skips_the_pass() {
+        let d = testkit::TempDir::new("reconciler-lane");
+        let repos = ["spira".to_string(), "cubby".to_string()];
+        spira_config::scoped_stop::pause_repo(d.path(), "spira", &["remedies".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
+        assert_eq!(remedies_lane_stopped(spira_config::scoped_stop::stop_everywhere(d.path(), &repos, REMEDIES_LANE)), None, "cubby still runs");
+        spira_config::scoped_stop::pause_repo(d.path(), "cubby", &["remedies".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
+        let why = remedies_lane_stopped(spira_config::scoped_stop::stop_everywhere(d.path(), &repos, REMEDIES_LANE)).expect("stopped everywhere");
+        assert!(why.starts_with("reconciler: skipped") && why.contains("world stop"), "{why}");
     }
 }

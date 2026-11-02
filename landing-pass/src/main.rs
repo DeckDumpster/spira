@@ -116,6 +116,7 @@ fn pr() -> i32 {
             return 1;
         }
     };
+    let repos = landing_pass::stops::landable(&s.run, repos, &out);
     if !s.repo_map_ok {
         // An unconfigured or unreadable map is a fault, not an empty work queue: exiting 0
         // here is what let this run 1704 times without enumerating a single repository
@@ -193,6 +194,7 @@ fn land() -> i32 {
             return 1;
         }
     };
+    let repos = landing_pass::stops::landable(&s.run, repos, &boot);
     signals::install(s.run.clone());
     let start = util::unix_now();
     let pid = std::process::id();

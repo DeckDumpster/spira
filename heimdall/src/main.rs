@@ -173,6 +173,13 @@ fn pass() -> i32 {
         restart_window,
     };
 
+    if !report {
+        if let Some(why) = gather::lane_skip(spira_config::scoped_stop::stop_everywhere_registered(&run_dir, gather::LANE)) {
+            sink.out(&util::log_line(now, &why));
+            return 0;
+        }
+    }
+
     // ---- state -----------------------------------------------------------------------
     let state_text = std::fs::read_to_string(&state_path).unwrap_or_default();
     let mut state = State::parse(&state_text);

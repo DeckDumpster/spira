@@ -33,6 +33,7 @@ tsd = { path = "../tsd" }
 hel = { path = "../hel" }
 serde_json = "1"
 runtime = { path = "../runtime" }
+serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

@@ -2222,6 +2222,7 @@ dependencies = [
  "libc",
  "mail",
  "runtime",
+ "serde",
  "serde_json",
  "spira-config",
  "spira-ctrl",
