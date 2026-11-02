@@ -3025,3 +3025,43 @@ fn a_unit_run_whose_diff_touches_rust_but_selects_no_crate_is_a_fault_naming_the
     assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=unit-no-crates");
     assert!(w.has_line(|l| l.ends_with("unit-tests: the diff against local/main selects no crate but touches Rust sources: tools/gen.rs — no verdict")), "{:?}", w.lines.lock().unwrap());
 }
+
+/// sp-5zz517: main moves on after `topic` was cut; the run tests topic's delta on the new main.
+fn stale_topic(tag: &str, topic_file: &str, main_file: &str) -> World {
+    let w = foreign_world(tag, Some(FOREIGN_DECL));
+    sh(&w.repo, &format!("echo topic > {topic_file} && git add -A && git commit -qm topic"));
+    sh(&w.repo, &format!("git checkout -q main && echo main > {main_file} && git add -A && git commit -qm moved && git checkout -q topic \
+         && git update-ref refs/remotes/origin/main main && git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main"));
+    w
+}
+
+#[test]
+fn a_branch_behind_the_landing_ref_is_tested_merged_onto_it() {
+    let w = stale_topic("merged-onto", "t.txt", "m.txt");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let rc = w.run(&rt, &b, &["--suites", "unit", "topic"], "", &w.root);
+    assert_eq!(rc, 0, "{:?}", w.lines.lock().unwrap());
+    let lines = w.lines.lock().unwrap();
+    assert!(lines.iter().any(|l| l.contains("testing topic merged onto")), "{lines:?}");
+}
+
+#[test]
+fn a_branch_that_conflicts_with_the_landing_ref_faults_and_tests_nothing() {
+    let w = stale_topic("merge-conflict", "same.txt", "same.txt");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(w.run(&rt, &b, &["--suites", "unit", "topic"], "", &w.root), 2);
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=merge-conflict");
+    assert!(rt.once_calls.lock().unwrap().is_empty());
+}
+
+#[test]
+fn bare_tip_tests_the_branch_tip_alone() {
+    let w = stale_topic("bare-tip", "t.txt", "m.txt");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let rc = w.run(&rt, &b, &["--bare-tip", "--suites", "unit", "topic"], "", &w.root);
+    assert_eq!(rc, 0, "{:?}", w.lines.lock().unwrap());
+    assert!(!w.lines.lock().unwrap().iter().any(|l| l.contains("merged onto")));
+}
