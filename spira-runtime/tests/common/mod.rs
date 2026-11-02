@@ -16,7 +16,7 @@ pub fn settings(url: &str, run: &std::path::Path) -> Settings {
             "SPIRA_HOME_REPO" => "spira".into(),
             "SPIRA_RUNTIME_RECONCILER_FLOW_SECS" | "SPIRA_FLOW_GRACE_SECS" | "SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS" | "SPIRA_FLOW_SENTINEL_PERIOD_SECS" => "5".into(),
             "SPIRA_FLOW_WINDOW_HOURS" | "SPIRA_FLOW_BASELINE_HOURS" | "SPIRA_FLOW_REWORK_WINDOW_HOURS" => "0.5".into(),
-            "SPIRA_SCOPE_LABEL" | "SPIRA_DESIRED_DIR" => "/unused".into(),
+            "SPIRA_SCOPE_LABEL" => "/unused".into(),
             "SPIRA_VIEW" => "/unused".into(),
             "SPIRA_VIEW_SESSION" => "pit".into(),
             "SPIRA_RUNTIME_RECONCILER_SECS" => "60".into(),
