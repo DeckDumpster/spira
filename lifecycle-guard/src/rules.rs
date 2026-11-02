@@ -75,6 +75,8 @@ pub const GATE_CLASSES: &[Class] = &[
     // sp-swh8b8: a bd reopen (or claim-clearing assign) from Rust, joined in the commit that
     // routed every caller through `spira-lc reopen`.
     Class::BdReopenRust,
+    // bd's status for a bead the control plane owns is written by reconcile-content alone.
+    Class::BdStatusWrite,
 ];
 
 /// Cutover-specific and therefore empty until the cutover round actually retires a label or

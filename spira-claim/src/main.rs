@@ -1247,17 +1247,14 @@ fn cmd_unpoison(a: &Args, env: &Env) -> Outcome {
     if env.config.db.is_none() {
         return Outcome::cannot_tell("no bead store: spira.db is unset — nothing was written");
     }
-    // SPIRA_RUN and SPIRA_ASK_LABEL are both registered keys — `env.config` already
-    // refused at construction if either could not resolve (per Ryan 2026-10-05, one
-    // source of config), so neither is re-read from the environment or re-derived here.
+    // SPIRA_RUN is a registered key: `env.config` already refused at construction if it could
+    // not resolve, so it is not re-read from the environment here.
     let run_dir = std::path::PathBuf::from(&env.config.run);
     let asked_dir = env_nonempty("SPIRA_POISON_ASKED").map(Into::into).unwrap_or_else(|| run_dir.join("poison-asked"));
-    let ask_label = env.config.ask_label.clone();
     let mut live = unpoison::Live {
         store: st,
         run_dir,
         asked_dir,
-        ask_label,
         beads_actor: env_nonempty("BEADS_ACTOR").unwrap_or_else(|| "harness".into()),
     };
     let (code, out) = unpoison::run(&o, &mut live);
@@ -1348,7 +1345,6 @@ fn cmd_deadlocked(a: &Args, env: &mut Env) -> Outcome {
         store: st,
         run_dir: std::path::PathBuf::from(&env.config.run),
         asked_dir: std::path::PathBuf::new(),
-        ask_label: String::new(),
         beads_actor: actor.clone(),
     };
     let o = deadlock::Opts { apply: a.has("--apply"), actor };
@@ -1572,7 +1568,6 @@ fn cmd_reopen(a: &Args, env: &Env) -> Outcome {
         store: st,
         run_dir,
         asked_dir: std::path::PathBuf::new(),
-        ask_label: String::new(),
         beads_actor: actor,
     };
     let o = reopen::Opts { id: id.clone(), cause, note, suites };

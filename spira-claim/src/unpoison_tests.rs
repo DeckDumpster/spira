@@ -437,9 +437,9 @@ fn parse_store_outputs() {
     assert!(!r.poisoned() && r.holder.is_none());
     assert!(parse_lc_show(r#"{"bead":{"state":"READY","holds":"[]"}}"#).is_err(), "no version: cannot tell");
 
-    let a = parse_asks("[{\"id\":\"sp-1\",\"title\":\"t\"},{\"id\":\"sp-2\"}]").unwrap();
-    assert_eq!(a.len(), 2);
-    assert!(parse_asks("").is_err());
+    let a = parse_open_asks("[{\"ask_id\":\"sp-1\",\"title\":\"t\"},{\"ask_id\":\"sp-2\",\"title\":null}]").unwrap();
+    assert_eq!(a, vec![AskRow { id: "sp-1".into(), title: "t".into() }, AskRow { id: "sp-2".into(), title: String::new() }]);
+    assert!(parse_open_asks("").is_err());
 }
 
 #[test]
@@ -467,7 +467,6 @@ fn live(tag: &str, bd_body: &str, lc_body: &str) -> (Live, testkit::TempDir) {
         store: Store { bdq, lc, timeout: Duration::from_secs(10) },
         run_dir: dir.join("run"),
         asked_dir: dir.join("run/poison-asked"),
-        ask_label: "needs-ryan".into(), // literal-ok: fixture/fallback
         beads_actor: "harness".into(),
     };
     (l, dir)
@@ -516,7 +515,7 @@ fn live_bead_and_asks() {
         else echo '{"error":"no issues found matching the provided IDs"}'; echo "Error fetching $2: no issue found matching \"$2\"" >&2; exit 1; fi ;;
 esac"#,
         // literal-ok: fixture
-        "exit 9",
+        r#"[ "$*" = "list-asks" ] || exit 9; echo '[{"ask_id":"sp-ask1","state":"OPEN","title":"t"}]'"#,
     );
     assert_eq!(w.bead("sp-a").unwrap().unwrap().labels, vec!["spira-poison"]);
     assert_eq!(w.bead("sp-gone").unwrap(), None);

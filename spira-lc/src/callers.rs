@@ -12,7 +12,7 @@
 //!
 //! There is no off mode (sp-v62vn): every verb reaches the machine.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use lifecycle::bead::{DwarfPhase, BeadEventKind, BeadState, BreakGlass, DispositionStatus, HoldKind};
 use lifecycle::delivery::DeliveryEventKind;
@@ -44,10 +44,10 @@ pub struct Answer {
 }
 
 impl Answer {
-    fn code(code: i32) -> Self {
+    pub(crate) fn code(code: i32) -> Self {
         Answer { code, ..Default::default() }
     }
-    fn out(code: i32, stdout: String) -> Self {
+    pub(crate) fn out(code: i32, stdout: String) -> Self {
         Answer { code, stdout, ..Default::default() }
     }
     fn cert(code: i32, verb: &str, detail: String) -> Self {
@@ -350,7 +350,7 @@ fn hold_event_exists(m: &mut dyn Machine, id: &str, seq: &str) -> bool {
     v.as_array().is_some_and(|rows| rows.iter().any(|r| s(r, "seq") == seq && s(r, "event") == "Hold"))
 }
 
-fn usage(what: &str) -> Answer {
+pub(crate) fn usage(what: &str) -> Answer {
     Answer { code: CANNOT_TELL, stderr: format!("usage: spira-lc {what}\n"), ..Default::default() }
 }
 
@@ -367,7 +367,7 @@ fn unknown_kind(kind: &str) -> Answer {
 
 /// A string field of a `dolt -r json` row: strings as they are, numbers as their text,
 /// null or absent as empty.
-fn s(row: &Value, k: &str) -> String {
+pub(crate) fn s(row: &Value, k: &str) -> String {
     match row.get(k) {
         Some(Value::String(x)) => x.clone(),
         Some(Value::Null) | None => String::new(),
@@ -375,7 +375,7 @@ fn s(row: &Value, k: &str) -> String {
     }
 }
 
-fn bead_field(v: &Value, k: &str) -> String {
+pub(crate) fn bead_field(v: &Value, k: &str) -> String {
     v.get("bead").map(|b| s(b, k)).unwrap_or_default()
 }
 
@@ -391,7 +391,7 @@ fn holds_of(v: Option<&Value>) -> Vec<String> {
 }
 
 /// `spira-lc show <id>` parsed. Err(rc): 1 no row, 2 cannot tell (or an unparseable answer).
-fn show(m: &mut dyn Machine, id: &str) -> Result<Value, i32> {
+pub(crate) fn show(m: &mut dyn Machine, id: &str) -> Result<Value, i32> {
     let (rc, out) = m.call(&["show".into(), id.into()]);
     if rc != 0 {
         return Err(rc);
@@ -976,58 +976,8 @@ pub trait Bd {
     fn external(&mut self, id: &str) -> Result<bool, String>;
     /// The open beads that `blocks`-depend on `id`.
     fn blocking_dependents(&mut self, id: &str) -> Result<Vec<String>, String>;
-    /// The beads whose `parent-child` edge names `id` as their parent.
-    fn children(&mut self, id: &str) -> Result<Vec<String>, String>;
     /// bd's own copy of the planning watermark (`skew::BD_KV_KEY`); `None` while unstamped.
     fn planning_watermark(&mut self) -> Result<Option<u64>, String>;
-}
-
-/// An epic's children by lifecycle state; `pending` names those not yet terminal. A child with
-/// no lifecycle row counts as `CLOSED` when bd holds it closed.
-struct Tally {
-    counts: BTreeMap<String, usize>,
-    pending: Vec<String>,
-}
-
-impl Tally {
-    fn summary(&self) -> String {
-        self.counts.iter().map(|(k, n)| format!("{n} {k}")).collect::<Vec<_>>().join(", ")
-    }
-}
-
-fn tally_children(m: &mut dyn Machine, bd: &mut dyn Bd, id: &str) -> Result<Tally, String> {
-    let kids = bd.children(id)?;
-    let mut t = Tally { counts: BTreeMap::new(), pending: Vec::new() };
-    if kids.is_empty() {
-        return Ok(t);
-    }
-    let (rc, out) = m.call(&["list".into(), "--ids".into(), kids.join(",")]);
-    if rc != 0 {
-        return Err(format!("lifecycle list failed: {}", out.trim()));
-    }
-    let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(out.trim()) else {
-        return Err("lifecycle list is not a JSON array".into());
-    };
-    let states: BTreeMap<String, String> = rows.iter().map(|r| (s(r, "bead_id"), s(r, "state"))).collect();
-    let mut rowless = Vec::new();
-    for k in &kids {
-        match states.get(k) {
-            Some(st) if BeadState::from_str(st).is_some_and(|b| b.is_terminal()) => *t.counts.entry(st.clone()).or_default() += 1,
-            Some(_) => t.pending.push(k.clone()),
-            None => rowless.push(k.clone()),
-        }
-    }
-    if !rowless.is_empty() {
-        let closed: Vec<String> = bd.closed(&rowless)?.into_iter().map(|(i, _)| i).collect();
-        for k in rowless {
-            if closed.contains(&k) {
-                *t.counts.entry("CLOSED".into()).or_default() += 1;
-            } else {
-                t.pending.push(k);
-            }
-        }
-    }
-    Ok(t)
 }
 
 /// Why `kind` may not end the external bead `id`, as an answer; `None` when it may go ahead or
@@ -1150,7 +1100,7 @@ pub fn drop_row(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer
 /// `reopen <id> [cause] [actor]` — the one door for handing a bead back (sp-swh8b8), the mirror of
 /// [`close`]: the row records the transition its state implies FIRST (see the caller verb's
 /// table), and only then is the store reopened, so bd never says open while the row says done.
-/// A bead with no row (an alert, an ask — rowless, bd is its only state) is reopened in the
+/// A bead with no row and no other owner (an insight, an idea: bd is its only state) is reopened in the
 /// store alone. Terminal, refused or unreadable: nothing is written to the store.
 pub fn reopen_cmd(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
     let Some(id) = args.first().filter(|s| !s.is_empty()) else {
@@ -1158,17 +1108,19 @@ pub fn reopen_cmd(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answ
     };
     let cause = args.get(1).cloned().unwrap_or_default();
     let actor = actor_or(args.get(2), "reopen");
-    match show(m, id) {
-        Err(NO_ROW) => {}
+    let rowless = match show(m, id) {
+        Err(NO_ROW) => true,
         Err(rc) => return Answer { code: rc, stderr: format!("spira-lc reopen: {id}: the lifecycle row is unreadable — nothing reopened\n"), ..Default::default() },
         Ok(_) => {
             let a = reopen(m, id, &cause, &actor);
             if a.code != APPLIED {
                 return a;
             }
+            false
         }
-    }
-    match bd.reopen(id) {
+    };
+    let settled = if rowless { crate::reconcile_content::reopen_unowned(bd, id) } else { crate::reconcile_content::settle_reopen(m, bd, id).map(|_| ()) };
+    match settled {
         Ok(()) => Answer::code(APPLIED),
         Err(e) => Answer {
             code: CANNOT_TELL,
@@ -1259,179 +1211,13 @@ pub fn reconcile_closed(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -
     Answer::out(code, lines.join("\n"))
 }
 
-/// `reconcile-epics [--apply] [<id>...]` — move every non-terminal epic's row off READY to
-/// OPEN (the epic rule), and every OPEN epic whose children are all terminal to DONE
-/// (`epic-complete`, the counts by state in the reason). Dry run unless `--apply`. Only
-/// READY/OPEN rows are asked of bd: one `issue_type` read per row, never a full roster.
-///
-/// Exit: 0 done (or listed) · 2 cannot tell · 3 an event was refused.
+/// `reconcile-epics [--apply] [<id>...]` — reconcile-content under its older name. An epic has
+/// no lifecycle record, so there is no epic row to move; its bd close is reconcile-content's.
 pub fn reconcile_epics(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
-    let apply = args.iter().any(|a| a == "--apply");
-    if let Some(bad) = args.iter().find(|a| a.starts_with('-') && *a != "--apply") {
-        return usage(&format!("reconcile-epics [--apply] [<bead-id>...] (unknown flag {bad})"));
-    }
-    let only: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
-    let (rc, out) = m.call(&["list".into(), "--state".into(), "READY,OPEN".into()]);
-    if rc != 0 {
-        return Answer { code: rc.max(CANNOT_TELL), stderr: format!("spira-lc reconcile-epics: lifecycle list failed: {}\n", out.trim()), ..Default::default() };
-    }
-    let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(out.trim()) else {
-        return Answer { code: CANNOT_TELL, stderr: "spira-lc reconcile-epics: lifecycle list is not a JSON array\n".into(), ..Default::default() };
-    };
-    let (mut lines, mut code, mut done) = (Vec::new(), APPLIED, 0usize);
-    for r in rows.iter().filter(|r| matches!(s(r, "state").as_str(), "READY" | "OPEN") && (only.is_empty() || only.iter().any(|i| **i == s(r, "bead_id")))) {
-        let (id, from) = (s(r, "bead_id"), s(r, "state"));
-        match bd.issue_type(&id) {
-            Ok(t) if t == "epic" => {}
-            Ok(_) => continue,
-            Err(e) => return Answer { code: CANNOT_TELL, stderr: format!("spira-lc reconcile-epics: bd unreadable for {id}: {}\n", e.trim()), ..Default::default() },
-        }
-        let (to, rule) = if from == "READY" {
-            ("OPEN", "epic-container".to_string())
-        } else {
-            let t = match tally_children(m, bd, &id) {
-                Ok(t) => t,
-                Err(e) => return Answer { code: CANNOT_TELL, stderr: format!("spira-lc reconcile-epics: children of {id} unreadable: {}\n", e.trim()), ..Default::default() },
-            };
-            if t.counts.is_empty() || !t.pending.is_empty() {
-                continue;
-            }
-            ("DONE", format!("epic-complete: {}", t.summary()))
-        };
-        if !apply {
-            lines.push(format!("would move {id} {from} -> {to} ({rule})"));
-            done += 1;
-            continue;
-        }
-        let state = if to == "DONE" { BeadState::Done } else { BeadState::Open };
-        let kind = BeadEventKind::Reclassify { state, rule: rule.clone() };
-        let (version, kind_json) = (s(r, "version"), serde_json::to_string(&kind).unwrap_or_default());
-        match event(m, "bead", &id, &from, &version, "classifier", &kind_json).0 {
-            APPLIED => {
-                lines.push(format!("moved {id} {from} -> {to} ({rule})"));
-                done += 1;
-            }
-            rc => {
-                lines.push(format!("refused {id}: event exit {rc}"));
-                code = REFUSED;
-            }
-        }
-    }
-    lines.push(format!("reconcile-epics: {done} {}", if apply { "moved" } else { "would move (dry run; --apply to write)" }));
-    Answer::out(code, lines.join("\n"))
+    reconcile_content(args, m, bd)
 }
 
-/// `reconcile-content [--apply | --dry-run] [<id>...]` — close in the store every bead whose lifecycle row
-/// is terminal (LANDED, DONE, DROPPED, SUPERSEDED) and which bd still holds open, with a close
-/// reason citing the transition. The row is never written: it already says the bead is over,
-/// and the store is made to agree. Dry run unless `--apply`, which the skew guard must clear. Without ids, a bd that reports
-/// none of the terminal rows open is the normal steady state; a bd that cannot answer is not.
-///
-/// `--since-seq N` reads only the beads with a bead-machine event after seq N, plus any ids
-/// named, and prints `through-seq: M` (the newest seq) before the summary: a pass over an
-/// unchanged store reads no content rows at all.
-///
-/// Exit: 0 done (or listed) · 2 cannot tell · 3 a store close failed.
-pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
-    let apply = args.iter().any(|a| a == "--apply");
-    if apply && args.iter().any(|a| a == "--dry-run") {
-        return usage("reconcile-content [--apply | --dry-run] [--since-seq N] [<bead-id>...] (--apply and --dry-run together)");
-    }
-    let since = args.iter().position(|a| a == "--since-seq").map(|i| args.get(i + 1).cloned().unwrap_or_default());
-    let mut only: Vec<&String> = Vec::new();
-    let mut rest = args.iter();
-    while let Some(a) = rest.next() {
-        match a.as_str() {
-            "--apply" | "--dry-run" => {}
-            "--since-seq" => {
-                rest.next();
-            }
-            f if f.starts_with('-') => return usage(&format!("reconcile-content [--apply | --dry-run] [--since-seq N] [<bead-id>...] (unknown flag {f})")),
-            _ => only.push(a),
-        }
-    }
-    let cannot = |why: String| Answer { code: CANNOT_TELL, stderr: format!("spira-lc reconcile-content: {why}\n"), ..Default::default() };
-    let (rc, out) = m.call(&["list".into()]);
-    if rc != 0 {
-        return cannot(format!("lifecycle list failed: {}", out.trim()));
-    }
-    let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(out.trim()) else {
-        return cannot("lifecycle list is not a JSON array".into());
-    };
-    let mut through = None;
-    let mut scope: Option<BTreeSet<String>> = None;
-    if let Some(since) = &since {
-        if since.parse::<u64>().is_err() {
-            return usage("reconcile-content [--apply | --dry-run] [--since-seq N] [<bead-id>...] (--since-seq wants a number)");
-        }
-        let (rc, out) = m.call(&["event-seq".into(), "--since".into(), since.clone()]);
-        let tail = if rc == 0 { serde_json::from_str::<Value>(out.trim()).ok() } else { None };
-        let Some(tail) = tail else {
-            return cannot(format!("event-seq unreadable: {}", out.trim()));
-        };
-        through = tail["seq"].as_u64();
-        let mut keys: BTreeSet<String> = tail["keys"].as_array().into_iter().flatten().filter_map(|k| k.as_str().map(str::to_string)).collect();
-        keys.extend(only.iter().map(|i| i.to_string()));
-        scope = Some(keys);
-    }
-    let reasons: BTreeMap<String, String> = rows.iter().map(|r| (s(r, "bead_id"), s(r, "reason"))).collect();
-    let terminal: BTreeMap<String, String> = rows
-        .iter()
-        .filter(|r| {
-            let id = s(r, "bead_id");
-            matches!(s(r, "state").as_str(), "LANDED" | "DONE" | "DROPPED" | "SUPERSEDED")
-                && match &scope {
-                    Some(keys) => keys.contains(&id),
-                    None => only.is_empty() || only.iter().any(|i| **i == id),
-                }
-        })
-        .map(|r| (s(r, "bead_id"), s(r, "state")))
-        .collect();
-    let ids: Vec<String> = terminal.keys().cloned().collect();
-    let mut open = Vec::new();
-    for chunk in ids.chunks(RECONCILE_CHUNK) {
-        let (rc, out) = m.call(&["plan".into(), "items".into(), "--open".into(), "--ids".into(), chunk.join(",")]);
-        if rc != 0 {
-            return cannot(format!("content store unreadable: {}", out.trim()));
-        }
-        let Some(Value::Array(found)) = serde_json::from_str::<Value>(out.trim()).ok().and_then(|mut v| v.get_mut("items").map(Value::take)) else {
-            return cannot("plan items answered no item list".into());
-        };
-        open.extend(found.iter().map(|r| s(r, "id")).filter(|i| !i.is_empty()));
-    }
-    if apply {
-        if let Err((code, why)) = crate::skew::guard(m) {
-            return Answer { code, stderr: format!("spira-lc reconcile-content: {why}\n"), ..Default::default() };
-        }
-    }
-    let (mut lines, mut code, mut done) = (Vec::new(), APPLIED, 0usize);
-    for id in open {
-        let state = &terminal[&id];
-        if !apply {
-            lines.push(format!("would close {id} (lifecycle {state})"));
-            done += 1;
-            continue;
-        }
-        let why = reasons.get(&id).map(|r| r.trim()).filter(|r| !r.is_empty()).map(|r| format!(" Row reason: {r}\n")).unwrap_or_default();
-        let outcome = if state == "DONE" { "done-without-landing (no commit landed; the row says delivered by hand)" } else { &state.to_lowercase() };
-        let reason = format!("OUTCOME: {outcome}\nClosed by reconcile-content: the lifecycle row is {state}, so the content bead ends with it.\n{why}");
-        match bd.close(&id, &reason) {
-            Ok(()) => {
-                lines.push(format!("closed {id} (lifecycle {state})"));
-                done += 1;
-            }
-            Err(e) => {
-                lines.push(format!("failed {id}: {}", e.trim()));
-                code = REFUSED;
-            }
-        }
-    }
-    if let Some(seq) = through {
-        lines.push(format!("through-seq: {seq}"));
-    }
-    lines.push(format!("reconcile-content: {done} {}", if apply { "closed" } else { "would close (dry run; --apply to write)" }));
-    Answer::out(code, lines.join("\n"))
-}
+pub use crate::reconcile_content::reconcile_content;
 
 /// `drop-orphans [--apply | --dry-run] [<id>...]` — move the READY lifecycle row of every key bd has no
 /// bead for to DROPPED. Dry run unless `--apply`, which the skew guard must clear. A row is never deleted (spira_lc holds no
@@ -1534,59 +1320,24 @@ pub fn unclaim(args: &[String], m: &mut dyn Machine) -> Answer {
     }
 }
 
-/// `close-epic <id> <reason>` — close an EPIC bead: the lifecycle row first (DONE, rule
-/// `epic-complete`, through the machine), then the store. Refuses anything that is not an
-/// epic, and an epic with a child that is not terminal — a work bead's end is the machine's
-/// `done`/delivery, never a bd close. An epic with no row is closed in the store alone.
+/// `close-epic <id> <reason>` — close an EPIC bead in bd once every child is terminal. An epic
+/// has no lifecycle record, so nothing is written to the control plane. Refuses anything that is
+/// not an epic, and an epic with a child that is not terminal.
 ///
 /// Exit: 0 closed · 2 cannot tell (bd or the machine unreadable, or the close failed) · 3 refused
-/// (not an epic, a child still open, or the event lost its CAS).
+/// (not an epic, or a child still open).
 pub fn close_epic(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
     let (Some(id), Some(reason)) = (args.first().filter(|s| !s.is_empty()), args.get(1)) else {
         return usage("close-epic <bead-id> <reason>");
     };
-    let cannot = |why: String| Answer { code: CANNOT_TELL, stderr: format!("spira-lc close-epic: {why}\n"), ..Default::default() };
     match bd.issue_type(id) {
-        Err(e) => return cannot(format!("cannot read {id}: {}", e.trim())),
-        Ok(t) if t != "epic" => {
-            return Answer {
-                code: REFUSED,
-                stderr: format!("spira-lc close-epic: {id} is a {t}, not an epic — a work bead ends through the lifecycle machine, never a bd close\n"),
-                ..Default::default()
-            }
-        }
-        Ok(_) => {}
-    }
-    let t = match tally_children(m, bd, id) {
-        Ok(t) => t,
-        Err(e) => return cannot(format!("children of {id} unreadable: {}", e.trim())),
-    };
-    if !t.pending.is_empty() {
-        return Answer {
+        Err(e) => Answer { code: CANNOT_TELL, stderr: format!("spira-lc close-epic: cannot read {id}: {}\n", e.trim()), ..Default::default() },
+        Ok(t) if t != "epic" => Answer {
             code: REFUSED,
-            stderr: format!("spira-lc close-epic: {id} has children not yet terminal: {}\n", t.pending.join(", ")),
+            stderr: format!("spira-lc close-epic: {id} is a {t}, not an epic — a work bead ends through the lifecycle machine, never a bd close\n"),
             ..Default::default()
-        };
-    }
-    match show(m, id) {
-        Err(NO_ROW) => {}
-        Err(rc) => return Answer::code(rc),
-        Ok(v) => {
-            let (state, version) = (bead_field(&v, "state"), bead_field(&v, "version"));
-            if !BeadState::from_str(&state).is_some_and(|b| b.is_terminal()) {
-                let why = if t.counts.is_empty() { "epic-complete".to_string() } else { format!("epic-complete: {}", t.summary()) };
-                let kind = BeadEventKind::Reclassify { state: BeadState::Done, rule: why };
-                match event(m, "bead", id, &state, &version, "classifier", &serde_json::to_string(&kind).unwrap_or_default()).0 {
-                    APPLIED => {}
-                    REFUSED => return Answer { code: REFUSED, stderr: format!("spira-lc close-epic: {id}: the row move lost a race or was refused — nothing closed\n"), ..Default::default() },
-                    rc => return Answer::code(rc),
-                }
-            }
-        }
-    }
-    match bd.close(id, reason) {
-        Ok(()) => Answer::code(APPLIED),
-        Err(e) => cannot(format!("bd close {id} failed: {}", e.trim())),
+        },
+        Ok(_) => crate::reconcile_content::settle_epic(m, bd, id, reason),
     }
 }
 
@@ -1724,19 +1475,24 @@ pub fn close(
             }
         }
     }
-    match bd.close(&id, &reason) {
-        Ok(()) => {
-            if rowless {
-                let a = close_ask_row(&id, &reason, &actor, m);
-                if a.code != APPLIED {
-                    return a;
-                }
-            }
-            withdraw_named_asks(&id, &asked_about, &actor, m)
+    let settled = if rowless {
+        let a = close_ask_row(&id, &reason, &actor, m);
+        if a.code != APPLIED {
+            return a;
         }
+        match crate::reconcile_content::settle_ask(m, bd, &id) {
+            Ok(true) => Ok(()),
+            Ok(false) => crate::reconcile_content::close_unowned(bd, &id, &reason),
+            Err(e) => Err(e),
+        }
+    } else {
+        crate::reconcile_content::settle_close(m, bd, &id, &reason).map(|_| ())
+    };
+    match settled {
+        Ok(()) => withdraw_named_asks(&id, &asked_about, &actor, m),
         Err(e) => Answer {
             code: CANNOT_TELL,
-            stderr: format!("spira-lc close: {id}: the lifecycle row is terminal but the store close failed: {}\n", e.trim()),
+            stderr: format!("spira-lc close: {id}: the control plane records the end but the store close failed: {}\n", e.trim()),
             ..Default::default()
         },
     }
@@ -1772,3 +1528,8 @@ fn withdraw_named_asks(ask: &str, work_beads: &[String], actor: &str, m: &mut dy
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) mod world;
+#[cfg(test)]
+mod ownership_tests;

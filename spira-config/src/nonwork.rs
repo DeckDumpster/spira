@@ -1,9 +1,10 @@
-//! bd status for a bead that is not a work bead (sp-mve9i). Design §3.4 makes bd `status`
-//! inert for *work* beads — a task, bug or feature a dwarf claims, whose state is the
-//! lifecycle machine's (`lc_state`). An ask, an alert, an insight, an
-//! intake mirror of a GitHub issue or an epic is never claimed or delivered: the machine
-//! models none of its life, so bd's `status` is the only state it has, and opening or
-//! closing it in bd is the whole of its lifecycle.
+//! bd status for a bead that is not a work bead. bd `status` is inert for *work* beads — a
+//! task, bug or feature a dwarf claims, whose state is the lifecycle machine's (`lc_state`) and
+//! whose bd status reconcile-content writes from it. An insight, an idea, an intake mirror of a
+//! GitHub issue or an epic is never claimed or delivered: the machine models none of its life,
+//! so bd's `status` is the state it has. An ask is the exception among these: its state is the
+//! control plane's ask record (`spira-lc list-asks`), and its decision bead's bd status is
+//! written from that record by reconcile-content, never read back as the ask's state.
 //!
 //! Every Rust read of bd status for one of those goes through here and names the kind it
 //! reads. That is the scope lifecycle-guard's `bd-status-read` rule leaves to bd (this file
@@ -17,7 +18,9 @@ use serde_json::Value;
 /// The non-work beads whose state bd alone holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// An escalation to Ryan (`ask` label): open until answered.
+    /// An escalation to the operator (`ask` label). Whether it is open is its ask record's, in
+    /// the control plane; bd's status of its decision bead follows that record, so a read here
+    /// is of the planning copy and may trail an answer by one reconcile-content pass.
     Ask,
     /// An heimdall/watchtower alert: open while the condition fires.
     Alert,

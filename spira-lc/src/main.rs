@@ -46,6 +46,7 @@ mod migrate;
 mod ops;
 mod passes;
 mod pause_sweep;
+mod reconcile_content;
 mod wire;
 mod repo_config;
 mod rows;
@@ -101,7 +102,7 @@ fn main() {
                 }
                 spira_config::lc_state::parse_show(&out).ok().flatten().map(|r| r.state)
             };
-            std::process::exit(close_on_land::run(&args[1..], &mut state, &mut record))
+            std::process::exit(close_on_land::run(&args[1..], &mut state, &mut record, &mut close_on_land::show_row))
         }
         // An epic's close is bd's: an epic is a grouping, never a lifecycle bead.
         Some("unclaim") => {
@@ -111,7 +112,21 @@ fn main() {
         Some("reconcile-closed") => {
             std::process::exit(emit(&[], callers::reconcile_closed(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd)))
         }
-        Some("migrate-asks") => std::process::exit(emit(&[], ask::migrate_asks(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd))),
+        // The ask's state is written first; its decision bead then follows through reconcile-content.
+        Some("close-ask") => {
+            let mut lc = Live { conn: None };
+            let (code, out) = callers::Machine::call(&mut lc, &args);
+            spira_config::lc_call::print_answer(code, &out);
+            if code == 0 {
+                if let Some(id) = args.get(1) {
+                    if let Err(e) = reconcile_content::settle_ask(&mut lc, &mut bd::LiveBd, id) {
+                        eprintln!("spira-lc close-ask: {id} is closed; its decision bead waits for reconcile-content: {}", e.trim());
+                    }
+                }
+            }
+            std::process::exit(code)
+        }
+        Some("reconcile-asks") => std::process::exit(emit(&[], reconcile_content::reconcile_asks(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd))),
         Some("reconcile-epics") => {
             std::process::exit(emit(&[], callers::reconcile_epics(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd)))
         }
@@ -271,8 +286,17 @@ pub(crate) fn lifecycle_run_dir() -> Result<std::path::PathBuf, String> {
 /// direct dispatch to this same function per request).
 pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
     slow::set_verb(args.first().map(|s| s.as_str()).unwrap_or("-"));
+    if args.first().map(String::as_str) == Some("create-bead") {
+        if let Some(refused) = cutover::refuse_no_record_type(&args[1..], &mut |ids| plan::fetch(conn, ids)) {
+            return refused;
+        }
+    }
     if let Some(answer) = control::served::dispatch(args) {
-        return if plan::joins_planning(args) { plan::with_planning_fields(answer, conn) } else { answer };
+        return match args.first().map(String::as_str) {
+            Some("list") if plan::joins_planning(args) => plan::with_planning_fields(answer, conn),
+            Some("list-asks") => plan::with_ask_titles(answer, conn),
+            _ => answer,
+        };
     }
     match args.first().map(|s| s.as_str()) {
         Some("show") => cmd_show(&args[1..], conn),
@@ -308,9 +332,8 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         // The ask machine (ask.rs): an escalation is its own lifecycle, never a bead row.
         Some("create-ask") => ask::cmd_create_ask(&args[1..], conn),
         Some("show-ask") => ask::cmd_show_ask(&args[1..], conn),
-        Some("list-asks") => ask::cmd_list_asks(&args[1..], conn),
+        Some("list-asks") => plan::with_ask_titles(ask::cmd_list_asks(&args[1..], conn), conn),
         Some("close-ask") => ask::cmd_close_ask(&args[1..], conn),
-        Some("reconcile-asks") => ask::cmd_reconcile_asks(&args[1..], conn, &mut bd::LiveBd),
         Some("cut") => cutover::cmd_cut(&args[1..], conn),
         // batcher-cut's own pipelining onto an already-OPEN batch (sp-o7nbr.4): the same
         // MemberAdded/Deliver/Cut cascade `cut` performs, minus the batch row's own INSERT.
@@ -358,7 +381,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("classify") => classify_cmd::run(&args[1..], conn),
         _ => (
             CANNOT_TELL,
-            format!("usage: spira-lc show <bead-id> | show-batch <batch-id> | batch-progress <batch-id> (JSON on stdin) | claim-verdicts (JSON on stdin) | list [--delivery] [--live] [--state S[,S...]] [--repo NAME] [--ids a,b] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | journal <append|read|applied|mark-applied|cursor|set-cursor|schedule|due|mark-fired|poison|poisoned> ... | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--title T] [--priority N] [--repo NAME] [--ready] | promote-filed <id> | pane-facets inflow --window-secs N | pane-facets repo-labels --valid a,b | backfill-repos [id...] | set-repo <id> <repo>|--clear [--only-if R] | create-ask <id> [--work-bead W] | show-ask <id> | list-asks [--state S] | close-ask <id> --exit answered|default|withdrawn --quote Q --actor A [--channel C] | migrate-asks --ask-label L [--apply] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-refusals <window-secs> | live-check | ops-gantt [--print-sql] | ops-bead <bead-id> | ops-graph | ops-snapshot | backfill-titles | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | backfill-deps [--force] | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | stage <batch-id> --repo R --head H --base B --members id:tip,... --actor A --parent P | promote <batch-id> --head H --base B --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | batches-of <bead-id> | drop-bead <bead-id> --reason R [--actor A] | drop-row <bead-id> | event-continuity [--acknowledge --through SEQ --reason R] | mend-watch [--seen FILE] | pause-sweep | mending pickup|event|sweep|list ... | requeue-orphans --actor A [--apply] [--stale-secs N] | reconcile-landed <bead-id> --sha SHA --ref REF (--repo-path P | --repo NAME) --actor A | reconcile-epics [--apply] [id...] | reconcile-content [--apply | --dry-run] [--since-seq N] [id...] | admin-restore --snapshot F --revlog D --out P | admin-drill --scratch D [--ship-dir D] | planning-watermark | skew-check | event-seq [--since N] | watch <prefix> --from-rev N [--wait-ms M] | admin-create-store (an empty control store at SPIRA_LC_STORE_PATH) | {} | classify (--repo NAME... | --every-bead) [--home DIR] [--bd-db PATH] [--bd-bin BIN] [--queue-dir DIR] [--base REF] [--dry-run] | work <bead-id> <verb> ... | stats | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | bd-supersede <bead-id> <successor-id> | bd-note <bead-id> <text> | drop-orphans [--apply | --dry-run] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|retip|absolve|renew", spira_lc::rc::USAGE),
+            format!("usage: spira-lc show <bead-id> | show-batch <batch-id> | batch-progress <batch-id> (JSON on stdin) | claim-verdicts (JSON on stdin) | list [--delivery] [--live] [--state S[,S...]] [--repo NAME] [--ids a,b] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | journal <append|read|applied|mark-applied|cursor|set-cursor|schedule|due|mark-fired|poison|poisoned> ... | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--title T] [--priority N] [--repo NAME] [--ready] | promote-filed <id> | pane-facets inflow --window-secs N | pane-facets repo-labels --valid a,b | backfill-repos [id...] | set-repo <id> <repo>|--clear [--only-if R] | create-ask <id> [--work-bead W] | show-ask <id> | list-asks [--state S] | close-ask <id> --exit answered|default|withdrawn --quote Q --actor A [--channel C] | reconcile-asks [--apply] [id...] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-refusals <window-secs> | live-check | ops-gantt [--print-sql] | ops-bead <bead-id> | ops-graph | ops-snapshot | backfill-titles | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | backfill-deps [--force] | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | stage <batch-id> --repo R --head H --base B --members id:tip,... --actor A --parent P | promote <batch-id> --head H --base B --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | batches-of <bead-id> | drop-bead <bead-id> --reason R [--actor A] | drop-row <bead-id> | event-continuity [--acknowledge --through SEQ --reason R] | mend-watch [--seen FILE] | pause-sweep | mending pickup|event|sweep|list ... | requeue-orphans --actor A [--apply] [--stale-secs N] | reconcile-landed <bead-id> --sha SHA --ref REF (--repo-path P | --repo NAME) --actor A | reconcile-epics [--apply] [id...] | reconcile-content [--apply | --dry-run] [--since-seq N] [id...] | admin-restore --snapshot F --revlog D --out P | admin-drill --scratch D [--ship-dir D] | planning-watermark | skew-check | event-seq [--since N] | watch <prefix> --from-rev N [--wait-ms M] | admin-create-store (an empty control store at SPIRA_LC_STORE_PATH) | {} | classify (--repo NAME... | --every-bead) [--home DIR] [--bd-db PATH] [--bd-bin BIN] [--queue-dir DIR] [--base REF] [--dry-run] | work <bead-id> <verb> ... | stats | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | bd-supersede <bead-id> <successor-id> | bd-note <bead-id> <text> | drop-orphans [--apply | --dry-run] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|retip|absolve|renew", spira_lc::rc::USAGE),
         ),
     }
 }

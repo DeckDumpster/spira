@@ -1,7 +1,7 @@
 [Unit]
 After=lc-serve.service
 Wants=lc-serve.service
-Description=Spira reconcile-content — close the content bead of every terminal lifecycle row
+Description=Spira reconcile-content — make bd's status follow the control plane (terminal records, closed asks, complete epics)
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
@@ -11,7 +11,6 @@ Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr
 Type=oneshot
 ExecStartPre=@SPIRA_PROD_ROOT@/bin/world guard
 ExecStart=@SPIRA_PROD_ROOT@/bin/spira-lc reconcile-content --apply
-ExecStart=@SPIRA_PROD_ROOT@/bin/spira-lc reconcile-epics --apply
 TimeoutStartSec=300
 StandardOutput=append:@SPIRA_RUN@/reconcile-content.log
 StandardError=journal
