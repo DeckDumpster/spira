@@ -9,18 +9,72 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use state_store::{Compare, Config, Contract, MonotonicClock, Object, Ports, Request, Txn};
+use state_store::{
+    Backend, Compare, Config, Contract, MonotonicClock, Object, Ports, Request, Txn,
+};
 
 use crate::{Options, SqliteBackend};
 
 pub const USAGE: &str = "usage: state-store-bench --path <db> --rate <txn/s> --duration-secs <n> \
-[--load-dir <dir> --load-mb-per-s <n>] [--json]\n       state-store-bench conformance --path <db>";
+[--load-dir <dir> --load-mb-per-s <n>] [--mix reconciler|audited] [--json]\n       state-store-bench conformance --path <db>";
 
 /// Keys the CAS load cycles through, so the store holds a working set rather than one row.
 const KEYS: u64 = 1_000;
 const LOAD_CHUNK: usize = 1 << 20;
 /// The load generator rewrites one file of at most this size.
 const LOAD_FILE_MAX: u64 = 256 << 20;
+/// Section keys the reconciler mix cycles through: one per publishing component.
+const SECTIONS: u64 = 16;
+/// Padding on a section write, so it carries a section document's bytes, not a counter's.
+const SECTION_BYTES: usize = 4 << 10;
+/// The TTLs the real writers put on a section and on a pass record.
+const SECTION_TTL_SECS: u64 = 7 * 24 * 3600;
+const PASS_TTL_SECS: u64 = 24 * 3600;
+
+/// What each commit of the run writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mix {
+    /// Every commit is an audited CAS, the store's load before the reconciler.
+    Audited,
+    /// The goodput reconciler's daily traffic in proportion: of every twelve commits, five
+    /// audited CAS writes (today's load), six section publishes and one pass record. Those
+    /// seven touch only `telemetry/`, so they write no `events/` key, carry a TTL, and a
+    /// section is several KiB rather than a counter.
+    Reconciler,
+}
+
+/// One commit's kind under a [`Mix`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Commit {
+    Audited,
+    Section,
+    Pass,
+}
+
+impl Mix {
+    fn parse(v: &str) -> std::result::Result<Mix, String> {
+        match v {
+            "reconciler" => Ok(Mix::Reconciler),
+            "audited" => Ok(Mix::Audited),
+            _ => Err(format!("--mix is reconciler or audited, got {v}")),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Mix::Audited => "audited",
+            Mix::Reconciler => "reconciler",
+        }
+    }
+
+    pub fn commit(self, i: u64) -> Commit {
+        match (self, i % 12) {
+            (Mix::Audited, _) | (Mix::Reconciler, 0..=4) => Commit::Audited,
+            (Mix::Reconciler, 11) => Commit::Pass,
+            (Mix::Reconciler, _) => Commit::Section,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CasArgs {
@@ -29,6 +83,7 @@ pub struct CasArgs {
     pub duration_secs: u64,
     pub load_dir: Option<PathBuf>,
     pub load_mb_per_s: u64,
+    pub mix: Mix,
     pub json: bool,
 }
 
@@ -48,6 +103,7 @@ pub fn parse(args: &[String]) -> std::result::Result<Command, String> {
     let mut duration = None;
     let mut load_dir = None;
     let mut load_mb = None;
+    let mut mix = Mix::Reconciler;
     let mut json = false;
     let mut it = rest.iter();
     while let Some(a) = it.next() {
@@ -62,6 +118,7 @@ pub fn parse(args: &[String]) -> std::result::Result<Command, String> {
             "--duration-secs" if !conformance => duration = Some(val("--duration-secs")?),
             "--load-dir" if !conformance => load_dir = Some(PathBuf::from(val("--load-dir")?)),
             "--load-mb-per-s" if !conformance => load_mb = Some(val("--load-mb-per-s")?),
+            "--mix" if !conformance => mix = Mix::parse(&val("--mix")?)?,
             "--json" if !conformance => json = true,
             other => return Err(format!("unknown argument {other}\n{USAGE}")),
         }
@@ -96,6 +153,7 @@ pub fn parse(args: &[String]) -> std::result::Result<Command, String> {
         duration_secs,
         load_dir,
         load_mb_per_s,
+        mix,
         json,
     }))
 }
@@ -138,6 +196,7 @@ pub fn report(q: &Quantiles, a: &CasArgs) -> serde_json::Value {
         "rate": a.rate,
         "duration_secs": a.duration_secs,
         "load_mb_per_s": a.load_mb_per_s,
+        "mix": a.mix.name(),
     })
 }
 
@@ -171,7 +230,7 @@ fn io_load(dir: &Path, mb_per_s: u64, stop: Arc<AtomicBool>) -> std::io::Result<
     std::fs::remove_file(&path)
 }
 
-/// One CAS txn per tick at `rate`, each with its `events/` key, for `duration_secs`. A sample
+/// One CAS txn per tick at `rate`, of the kinds `a.mix` names, for `duration_secs`. A sample
 /// is measured from the txn's scheduled start, so a stall delays the samples behind it too.
 pub fn run_cas(a: &CasArgs) -> std::result::Result<Quantiles, String> {
     let backend = SqliteBackend::open(&a.path, Options::default()).map_err(|e| e.to_string())?;
@@ -212,33 +271,10 @@ pub fn run_cas(a: &CasArgs) -> std::result::Result<Quantiles, String> {
         if let Some(wait) = due.checked_duration_since(Instant::now()) {
             std::thread::sleep(wait);
         }
-        let key = format!("bench/{}", i % KEYS);
-        let seen = match c.get(&key) {
-            Ok(v) => v.map(|v| v.mod_rev),
+        match commit(&c, a.mix, i, &run) {
+            Ok(()) => samples.push(due.elapsed().as_secs_f64() * 1_000.0),
             Err(e) => {
-                failed = Some(e.to_string());
-                break;
-            }
-        };
-        let t = Txn::new()
-            .when(Compare::ModRev(key.clone(), seen))
-            .put(&key, Object::new(json!({ "i": i })));
-        let r = c.txn(
-            &t,
-            &Request::new(
-                &format!("bench-{run}-{i}"),
-                "state-store-bench",
-                "bench.cas",
-            ),
-        );
-        match r {
-            Ok(r) if r.succeeded => samples.push(due.elapsed().as_secs_f64() * 1_000.0),
-            Ok(r) => {
-                failed = Some(format!("CAS on {key} lost: {r:?}"));
-                break;
-            }
-            Err(e) => {
-                failed = Some(e.to_string());
+                failed = Some(e);
                 break;
             }
         }
@@ -254,6 +290,55 @@ pub fn run_cas(a: &CasArgs) -> std::result::Result<Quantiles, String> {
     match failed {
         Some(e) => Err(e),
         None => Ok(quantiles(&mut samples)),
+    }
+}
+
+/// Commit `i` of a run under `mix`: a CAS on the key it rewrites, compared on the revision
+/// read just before, as every real writer does. A lost CAS is an error: the bench is the only
+/// writer, so one means the store did not keep what it acknowledged.
+pub fn commit<B: Backend>(
+    c: &Contract<B>,
+    mix: Mix,
+    i: u64,
+    run: &str,
+) -> std::result::Result<(), String> {
+    let kind = mix.commit(i);
+    let (key, value) = match kind {
+        Commit::Audited => (
+            format!("bench/{}", i % KEYS),
+            Object::new(json!({ "i": i })),
+        ),
+        Commit::Section => (
+            format!("telemetry/bench/sections/{}", i % SECTIONS),
+            Object::new(json!({ "i": i, "status": "s".repeat(SECTION_BYTES) }))
+                .with_ttl(SECTION_TTL_SECS),
+        ),
+        Commit::Pass => (
+            "telemetry/bench/pass".to_string(),
+            Object::new(json!({ "n": i / 12 })).with_ttl(PASS_TTL_SECS),
+        ),
+    };
+    let seen = c.get(&key).map_err(|e| e.to_string())?.map(|v| v.mod_rev);
+    let mut t = Txn::new()
+        .when(Compare::ModRev(key.clone(), seen))
+        .put(&key, value.clone());
+    if kind == Commit::Pass {
+        t = t.put(&format!("telemetry/bench/passes/{}", i / 12), value);
+    }
+    let r = c
+        .txn(
+            &t,
+            &Request::new(
+                &format!("bench-{run}-{i}"),
+                "state-store-bench",
+                "bench.cas",
+            ),
+        )
+        .map_err(|e| e.to_string())?;
+    if r.succeeded {
+        Ok(())
+    } else {
+        Err(format!("CAS on {key} lost: {r:?}"))
     }
 }
 
@@ -285,6 +370,7 @@ mod tests {
                 duration_secs: 2,
                 load_dir: None,
                 load_mb_per_s: 0,
+                mix: Mix::Reconciler,
                 json: true,
             })
         );
@@ -332,6 +418,87 @@ mod tests {
         assert!(parse(&args(&half)).is_err());
         assert!(parse(&args(&["--rate", "5", "--duration-secs", "1"])).is_err());
         assert!(parse(&args(&["p"])).is_err());
+    }
+
+    #[test]
+    fn the_mix_defaults_to_the_reconcilers_and_refuses_an_unknown_name() {
+        let with = |mix: &str| {
+            parse(&args(&[
+                "--path",
+                "p",
+                "--rate",
+                "5",
+                "--duration-secs",
+                "1",
+                "--mix",
+                mix,
+            ]))
+        };
+        assert!(matches!(
+            with("audited"),
+            Ok(Command::Cas(CasArgs {
+                mix: Mix::Audited,
+                ..
+            }))
+        ));
+        assert!(matches!(
+            with("reconciler"),
+            Ok(Command::Cas(CasArgs {
+                mix: Mix::Reconciler,
+                ..
+            }))
+        ));
+        assert!(with("telemetry").is_err());
+        assert!(parse(&args(&["conformance", "--path", "p", "--mix", "audited"])).is_err());
+    }
+
+    #[test]
+    fn the_reconciler_mix_writes_the_designs_daily_proportions() {
+        let count = |mix: Mix, kind: Commit| (0..120).filter(|i| mix.commit(*i) == kind).count();
+        assert_eq!(
+            [Commit::Audited, Commit::Section, Commit::Pass].map(|k| count(Mix::Reconciler, k)),
+            [50, 60, 10]
+        );
+        assert_eq!(count(Mix::Audited, Commit::Audited), 120);
+    }
+
+    #[test]
+    fn a_reconciler_mix_run_audits_only_its_audited_writes() {
+        let clock = runtime::ports::VirtualClock::new(1_000);
+        let c = Contract::open(
+            state_store::MemBackend::new(),
+            Ports::virtual_clock(&clock),
+            Config {
+                min_lock_ttl_ms: 1_000,
+            },
+        )
+        .unwrap();
+        for i in 0..24 {
+            commit(&c, Mix::Reconciler, i, "t").unwrap();
+        }
+        let keys = |prefix: &str| {
+            c.list(&[prefix], &state_store::Selector::Everything)
+                .unwrap()
+                .0
+        };
+        assert_eq!(
+            keys("events/").len(),
+            10,
+            "only the audited ten write events/"
+        );
+        let telemetry = keys("telemetry/");
+        // Sections 5..=10, then 1..=6: the second cycle's CAS rewrites 5 and 6 at their revision.
+        assert_eq!(
+            telemetry.len(),
+            10 + 1 + 2,
+            "ten sections, the pass, two histories"
+        );
+        assert!(telemetry
+            .iter()
+            .all(|k| k.value.metadata.ttl_secs.is_some()));
+        let section = c.get("telemetry/bench/sections/5").unwrap().unwrap();
+        assert!(section.value.encode().len() > SECTION_BYTES);
+        assert_eq!(keys("bench/").len(), 10);
     }
 
     #[test]
