@@ -115,8 +115,8 @@ functions = ["Fixture::from_dir", "Fixture::span", "Fixture::tally", "Fixture::c
 # base probe's run under its hand slot, and the facts read from the registry, git and spira-lc.
 [[scope]]
 path = "round-controller/src/cutover_check.rs"
-functions = ["parse", "readiness", "ci", "base", "submitted", "rounds", "queue_files", "landed_sha", "since_rev", "render_since", "landed_since", "land_started_after", "land_started_in", "probe_target", "probe_base", "run_job"]
+functions = ["parse", "readiness", "ci", "base", "submitted", "rounds", "queue_files", "landed_sha", "since_rev", "render_since", "landed_since", "landed_at", "fast_forward_in", "current_lane", "probe_suites", "probe_base", "run_corpus"]
 
 [[scope]]
 path = "round-controller/src/real/facts.rs"
-functions = ["round_repos", "RealFacts::at_landing", "RealFacts::queue_files", "RealFacts::submitted"]
+functions = ["round_repos", "RealFacts::landing", "RealFacts::at_landing", "RealFacts::names_at_landing", "RealFacts::queue_files", "RealFacts::submitted"]

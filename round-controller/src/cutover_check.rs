@@ -3,7 +3,9 @@
 //! round since the store stood at `rev`; and `--probe-base <repo>`, the base run that answers
 //! readiness's base check. A check that cannot be read is red, naming why: never green by default.
 
-use batcher::attrib::{Job, JobResult, Purpose};
+use std::collections::BTreeMap;
+
+use batcher::drive::{MainEnd, MainKind};
 use lifecycle::batch::{BatchRow, BatchState};
 use serde::Deserialize;
 use state_store::{events_key, Selector};
@@ -27,7 +29,6 @@ pub const QUEUE_FILES: [&str; 2] = ["open", "prepared"];
 
 /// The base probe's slot holder and the label its attempt is recorded under.
 pub const PROBE_HOLDER: &str = "round-controller-probe";
-const PROBE_JOB: u64 = 1;
 
 /// What cutover-check reads beside the store: the registry, the trees at the landing refs, the
 /// queue's round files and the lifecycle's beads.
@@ -36,6 +37,8 @@ pub trait Facts {
     fn round_repos(&self) -> Result<Vec<String>, String>;
     /// `path`'s text at `repo`'s landing ref; `None` when the tree has no such file.
     fn at_landing(&self, repo: &str, path: &str) -> Result<Option<String>, String>;
+    /// The entry names directly under `dir` at `repo`'s landing ref.
+    fn names_at_landing(&self, repo: &str, dir: &str) -> Result<Vec<String>, String>;
     /// Every `open` or `prepared` file under the queue directory, as `<repo>/<file>`.
     fn queue_files(&self) -> Result<Vec<String>, String>;
     /// How many of `repo`'s beads are SUBMITTED.
@@ -250,7 +253,7 @@ fn landed_sha(row: &BatchRow) -> Option<String> {
 }
 
 /// Every round directly under `batches/<repo>/`, by batch id.
-fn rounds_of(p: &Ports, repo: &str) -> Result<Vec<(String, crate::resources::Round)>, String> {
+fn rounds_of(p: &Ports, repo: &str) -> Result<Vec<(String, crate::resources::Round, u64)>, String> {
     let prefix = round_key(repo, "");
     let (items, _) = p
         .store
@@ -262,7 +265,7 @@ fn rounds_of(p: &Ports, repo: &str) -> Result<Vec<(String, crate::resources::Rou
             let batch = i.key.strip_prefix(&prefix).filter(|b| !b.contains('/'))?.to_string();
             Some(
                 serde_json::from_value(i.value.data)
-                    .map(|r| (batch, r))
+                    .map(|r| (batch, r, i.mod_rev.main))
                     .map_err(|e| format!("{}: {e}", i.key)),
             )
         })
@@ -271,15 +274,9 @@ fn rounds_of(p: &Ports, repo: &str) -> Result<Vec<(String, crate::resources::Rou
 
 fn base(p: &Ports, repo: &str) -> Check {
     const NAME: &str = "base";
-    let lane = match lane(p, repo) {
-        Err(r) => return red(NAME, r.to_string()),
-        Ok(None) => {
-            return red(
-                NAME,
-                format!("no lane record at lanes/{repo}: the current image digest is unknown"),
-            )
-        }
-        Ok(Some(l)) => l,
+    let lane = match current_lane(p, repo) {
+        Err(e) => return red(NAME, e),
+        Ok(l) => l,
     };
     let at = format!("{} on image {}", lane.landing_ref, lane.image_digest);
     match summary(p, &base_identity(repo, &lane)) {
@@ -287,19 +284,19 @@ fn base(p: &Ports, repo: &str) -> Check {
         Ok(Some(s)) if s.class == Class::Green => {
             return green(NAME, format!("a base probe was green at {at}"))
         }
-        Ok(Some(s)) => {
+        Ok(Some(s)) if matches!(s.class, Class::Red { .. } | Class::Flaky) => {
             return red(
                 NAME,
                 format!("the latest base probe at {at} was {}", s.class.word()),
             )
         }
-        Ok(None) => {}
+        Ok(_) => {}
     }
     let rounds = match rounds_of(p, repo) {
         Ok(r) => r,
         Err(e) => return red(NAME, format!("cannot read the landed rounds: {e}")),
     };
-    for (batch, r) in rounds {
+    for (batch, r, _) in rounds {
         if landed_sha(&r.row).as_deref() != Some(lane.landing_ref.as_str()) {
             continue;
         }
@@ -307,7 +304,11 @@ fn base(p: &Ports, repo: &str) -> Check {
         members.sort();
         let id = PassIdentity {
             members,
-            base: r.tested_base.clone().or(r.row.base.clone()).unwrap_or_default(),
+            base: r
+                .tested_base
+                .clone()
+                .or(r.row.base.clone())
+                .unwrap_or_default(),
             ..base_identity(repo, &lane)
         };
         match summary(p, &id) {
@@ -320,7 +321,7 @@ fn base(p: &Ports, repo: &str) -> Check {
     }
     red(
         NAME,
-        format!("no green verdict at {at}: no base probe and no landed round green there (round-controller cutover-check --probe-base {repo})"),
+        format!("no green verdict at {at}: no green base probe and no landed round green there (round-controller cutover-check --probe-base {repo})"),
     )
 }
 
@@ -396,8 +397,7 @@ pub struct Landed {
     pub rev: u64,
 }
 
-/// Each round repo with the first round whose LandStarted the store wrote after `rev` and that
-/// went on to land; `Err` when that cannot be read.
+/// Each round repo with the first round that landed after `rev`; `Err` when that cannot be read.
 pub type SinceRev = Vec<(String, Result<Option<Landed>, String>)>;
 
 pub fn since_rev(p: &Ports, f: &dyn Facts, rev: u64) -> Result<SinceRev, String> {
@@ -432,29 +432,29 @@ pub fn render_since(rows: &SinceRev) -> (String, String, i32) {
 
 fn landed_since(p: &Ports, repo: &str, rev: u64) -> Result<Option<Landed>, String> {
     let mut first: Option<Landed> = None;
-    for (batch, r) in rounds_of(p, repo)? {
+    for (batch, r, mod_rev) in rounds_of(p, repo)? {
         let Some(sha) = landed_sha(&r.row) else {
             continue;
         };
-        let Some(at) = land_started_after(p, &batch, rev)? else {
-            continue;
-        };
-        if first.as_ref().is_none_or(|f| at < f.rev) {
+        let at = landed_at(p, &batch, mod_rev)?;
+        if at > rev && first.as_ref().is_none_or(|f| at < f.rev) {
             first = Some(Landed { batch, sha, rev: at });
         }
     }
     Ok(first)
 }
 
-/// The revision of `batch`'s first applied LandStarted after `rev`, from its history entries and
-/// the audit each one's txn carries in `events/<rev>`.
-fn land_started_after(p: &Ports, batch: &str, rev: u64) -> Result<Option<u64>, String> {
+/// The revision a landed round's ref moved at: its applied FastForward, from its history entries
+/// and the audit each one's txn carries in `events/<rev>`. The controller records a landing it
+/// finds already under the ref in one write with no audit, so with none the record's own
+/// revision is the landing's.
+fn landed_at(p: &Ports, batch: &str, mod_rev: u64) -> Result<u64, String> {
     let prefix = format!("history/{batch}/");
     let (items, _) = p
         .store
         .list(&[prefix.as_str()], &Selector::Everything)
         .map_err(|e| format!("{prefix}: {e}"))?;
-    let mut revs: Vec<u64> = items.iter().map(|i| i.mod_rev.main).filter(|m| *m > rev).collect();
+    let mut revs: Vec<u64> = items.iter().map(|i| i.mod_rev.main).collect();
     revs.sort_unstable();
     revs.dedup();
     for main in revs {
@@ -462,14 +462,14 @@ fn land_started_after(p: &Ports, batch: &str, rev: u64) -> Result<Option<u64>, S
         let Some(ev) = p.store.get(&key).map_err(|e| format!("{key}: {e}"))? else {
             continue;
         };
-        if land_started_in(&ev.value.data, batch) {
-            return Ok(Some(main));
+        if fast_forward_in(&ev.value.data, batch) {
+            return Ok(main);
         }
     }
-    Ok(None)
+    Ok(mod_rev)
 }
 
-fn land_started_in(event: &serde_json::Value, batch: &str) -> bool {
+fn fast_forward_in(event: &serde_json::Value, batch: &str) -> bool {
     if event.get("refused").and_then(|v| v.as_bool()) != Some(false) {
         return false;
     }
@@ -482,7 +482,7 @@ fn land_started_in(event: &serde_json::Value, batch: &str) -> bool {
             let s = |k: &str| a.get(k).and_then(|v| v.as_str());
             s("machine") == Some("batch")
                 && s("lc_key") == Some(batch)
-                && s("event") == Some("LandStarted")
+                && s("event") == Some("FastForward")
                 && a.get("applied").and_then(|v| v.as_bool()) == Some(true)
         })
 }
@@ -519,40 +519,98 @@ impl Probed {
     }
 }
 
-/// The landing ref the probe will run on: the lane's, only while git's landing ref agrees.
-pub fn probe_target(p: &Ports, repo: &str) -> Result<Lane, String> {
-    let l = lane(p, repo)
-        .map_err(|r| r.to_string())?
-        .ok_or_else(|| format!("no lane record at lanes/{repo}: the current image digest is unknown"))?;
-    let at = p.git.landing_sha(repo)?;
+/// The lane, only while it names the commit git's landing ref is at: a lane the ref moved past
+/// describes a base nobody is landing on.
+fn current_lane(p: &Ports, repo: &str) -> Result<Lane, String> {
+    let l = lane(p, repo).map_err(|r| r.to_string())?.ok_or_else(|| {
+        format!("no lane record at lanes/{repo}: the current image digest is unknown")
+    })?;
+    let at = p
+        .git
+        .landing_sha(repo)
+        .map_err(|e| format!("cannot read {repo}'s landing ref: {e}"))?;
     if at != l.landing_ref {
         return Err(format!(
-            "lanes/{repo} names {} but {repo}'s landing ref is at {at}: the probe would not test the base readiness reads",
+            "lanes/{repo} names {} but {repo}'s landing ref is at {at}: the lane is stale",
             l.landing_ref
         ));
     }
     Ok(l)
 }
 
-/// The Judge's base-run job on the landing ref, under a hand slot renewed while it runs, recorded
-/// as an attempt under the base identity. `unit` is what the slot names as its holder, recorded
-/// before the VM starts, so a lapsed slot is granted again only on proof that it is dead.
+pub fn probe_target(p: &Ports, repo: &str) -> Result<Lane, String> {
+    current_lane(p, repo)
+}
+
+/// The harness's own image: a tree carrying it is judged by `spira/test-*.sh`, not its declaration.
+const HARNESS_IMAGE: &str = "spira/testenv/Containerfile";
+
+#[derive(Deserialize)]
+struct Tiers {
+    #[serde(default)]
+    tier: BTreeMap<String, serde::de::IgnoredAny>,
+}
+
+/// The suites a selection names at the landing ref: its own list, or for `all` the tree's whole
+/// corpus, as testenv would accept it: a repository's declared tiers, else the harness's suites.
+pub fn probe_suites(f: &dyn Facts, repo: &str, selection: &str) -> Result<Vec<String>, String> {
+    if selection != "all" {
+        let named: Vec<String> = selection
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect();
+        return if named.is_empty() {
+            Err(format!("the lane's selection {selection:?} names no suite"))
+        } else {
+            Ok(named)
+        };
+    }
+    let decl = f.at_landing(repo, DECL)?;
+    let own = decl.is_some() && f.at_landing(repo, HARNESS_IMAGE)?.is_none();
+    let suites: Vec<String> = match decl {
+        Some(text) if own => spira_config::parse_foreign::<Tiers>(&text)
+            .map_err(|e| format!("{DECL} at the landing ref does not parse: {e}"))?
+            .tier
+            .into_keys()
+            .collect(),
+        _ => f
+            .names_at_landing(repo, "spira")?
+            .into_iter()
+            .filter(|n| n.starts_with("test-") && n.ends_with(".sh"))
+            .collect(),
+    };
+    if suites.is_empty() {
+        return Err(format!("{repo}'s landing ref declares no suite to probe"));
+    }
+    Ok(suites)
+}
+
+/// The base run on the landing ref: the round VM runs `suites` on that tree, under a hand slot
+/// renewed while it runs, and the verdict is recorded as an attempt under the base identity.
+/// `unit` is what the slot names as its holder, recorded before the VM starts, so a lapsed slot
+/// is granted again only on proof that it is dead.
 pub fn probe_base<S: SubPasses>(
     p: &Ports,
     env: &RunEnv,
     subs: &mut S,
-    repo: &str,
-    lane: &Lane,
+    lane: (&str, &Lane),
+    suites: &[String],
     unit: &str,
 ) -> Result<Probed, String> {
+    let (repo, lane) = lane;
     let id = base_identity(repo, lane);
     let mut slot = grant_for_hand(p, PROBE_HOLDER).map_err(|e| e.to_string())?;
     if let Err(e) = slot.record_holder(p, unit, None) {
-        let why = format!("cannot record {unit} as the holder of slot {}: {e:?}", slot.slot());
+        let why = format!(
+            "cannot record {unit} as the holder of slot {}: {e:?}",
+            slot.slot()
+        );
         let _ = slot.release(p);
         return Err(why);
     }
-    let ran = run_job(p, subs, &lane.selection, &slot);
+    let ran = run_corpus(p, subs, suites, &slot);
     let gone = match subs.vm() {
         None => true,
         Some(_) => {
@@ -570,19 +628,12 @@ pub fn probe_base<S: SubPasses>(
     if gone {
         let _ = slot.release(p);
     }
-    let r = ran?;
-    let class = match r {
-        JobResult::Green => Class::Green,
-        JobResult::Red => Class::Red {
-            step: lane.selection.clone(),
-        },
-        JobResult::Fault => Class::Fault { cause: Cause::Vm },
-    };
-    let sub_passes = match r {
-        JobResult::Fault => vec![],
-        _ => vec![SubPass {
+    let (class, said) = ran?;
+    let sub_passes = match &class {
+        Class::Fault { .. } => vec![],
+        c => vec![SubPass {
             kind: SubPassKind::Base,
-            green: r == JobResult::Green,
+            green: *c == Class::Green,
         }],
     };
     let a = Attempt {
@@ -590,11 +641,8 @@ pub fn probe_base<S: SubPasses>(
         initiated_by: InitiatedBy::Judge,
         sub_passes,
         evidence: format!(
-            "base probe of {repo} at {} on image {}, selection {}: {}",
-            lane.landing_ref,
-            lane.image_digest,
-            lane.selection,
-            crate::judge::result_word(r)
+            "base probe of {repo} at {} on image {}, selection {}: {said}",
+            lane.landing_ref, lane.image_digest, lane.selection
         ),
         at: p.clock.now_ms(),
     };
@@ -619,24 +667,28 @@ fn keeper<'a>(p: &'a Ports<'a>, slot: &'a SlotGrant) -> impl FnMut() + 'a {
     }
 }
 
-fn run_job<S: SubPasses>(
+/// The corpus on the base tree: green only when every suite reported green; a red names its
+/// suites; a suite that never reported, or a harness fault, is no verdict.
+fn run_corpus<S: SubPasses>(
     p: &Ports,
     subs: &mut S,
-    selection: &str,
+    suites: &[String],
     slot: &SlotGrant,
-) -> Result<JobResult, String> {
-    let job = Job {
-        id: PROBE_JOB,
-        suite: selection.into(),
-        removal: vec![],
-        purpose: Purpose::Base,
-    };
+) -> Result<(Class, String), String> {
     subs.set_members(&[]);
-    subs.launch(&job).map_err(|e| format!("the base run did not launch: {e}"))?;
+    subs.start_main(MainKind::Corpus, suites)
+        .map_err(|e| format!("the base run did not start: {e}"))?;
+    let mut seen: BTreeMap<String, bool> = BTreeMap::new();
     let mut next = p.clock.now_ms();
-    loop {
-        if let Some((_, r)) = subs.poll_jobs().into_iter().find(|(i, _)| *i == PROBE_JOB) {
-            return Ok(r);
+    let end = loop {
+        match subs.poll_main() {
+            Err(e) => return Ok((Class::Fault { cause: Cause::Vm }, e)),
+            Ok(poll) => {
+                seen.extend(poll.results);
+                if let Some(end) = poll.done {
+                    break end;
+                }
+            }
         }
         let now = p.clock.now_ms();
         if now >= next {
@@ -646,7 +698,40 @@ fn run_job<S: SubPasses>(
             }
         }
         subs.wait();
+    };
+    if end == MainEnd::WorkspaceBuild {
+        return Ok((
+            Class::Red {
+                step: "workspace-build".into(),
+            },
+            "the base tree did not build".into(),
+        ));
     }
+    let red: Vec<&str> = suites
+        .iter()
+        .filter(|s| seen.get(*s) == Some(&false))
+        .map(String::as_str)
+        .collect();
+    let missing: Vec<&str> = suites
+        .iter()
+        .filter(|s| !seen.contains_key(*s))
+        .map(String::as_str)
+        .collect();
+    Ok(if !red.is_empty() {
+        (
+            Class::Red {
+                step: red.join(","),
+            },
+            format!("red: {}", red.join(" ")),
+        )
+    } else if !missing.is_empty() {
+        (
+            Class::Fault { cause: Cause::Vm },
+            format!("no verdict for {}", missing.join(" ")),
+        )
+    } else {
+        (Class::Green, format!("{} suites green", suites.len()))
+    })
 }
 
 #[cfg(test)]

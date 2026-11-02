@@ -265,7 +265,7 @@ fn cutover(p: &Ports, mode: &cutover_check::Mode) -> Result<i32, String> {
             Ok(code)
         }
         cutover_check::Mode::ProbeBase(repo) => {
-            let probed = probe_base(p, &registry, repo)?;
+            let probed = probe_base(p, &registry, &facts, repo)?;
             print!("{}", probed.render());
             Ok(probed.code())
         }
@@ -276,10 +276,13 @@ fn cutover(p: &Ports, mode: &cutover_check::Mode) -> Result<i32, String> {
 fn probe_base(
     p: &Ports,
     registry: &spira_config::repos::Registry,
+    facts: &RealFacts,
     repo: &str,
 ) -> Result<cutover_check::Probed, String> {
-    const ROUND: &str = "base-probe";
     let lane = cutover_check::probe_target(p, repo)?;
+    let suites = cutover_check::probe_suites(facts, repo, &lane.selection)?;
+    // Its own name, so a second probe never shares a tree, a spool or a scope with one whose VM lives.
+    let round = format!("base-probe-{:016x}", p.next_u64());
     let cfg = spira_config::process::cfg;
     let num = |k: &str| -> Result<u64, String> {
         cfg(k)?.trim().parse().map_err(|e| format!("{k}: {e}"))
@@ -288,7 +291,7 @@ fn probe_base(
     let root = registry
         .root(repo)
         .ok_or_else(|| format!("{repo} has no checkout in the registry"))?;
-    let wt = run_dir.join("worktree").join(format!(".round-controller-{ROUND}-{repo}"));
+    let wt = run_dir.join("worktree").join(format!(".round-controller-{round}-{repo}"));
     let git = |args: &[&str]| -> Result<(), String> {
         let mut all = vec!["-C".to_string(), root.clone()];
         all.extend(args.iter().map(|a| a.to_string()));
@@ -310,7 +313,6 @@ fn probe_base(
         }
     };
     let at = wt.display().to_string();
-    let _ = git(&["worktree", "remove", "-f", &at]);
     let _ = git(&["worktree", "prune"]);
     git(&["worktree", "add", "-q", "--detach", &at, &lane.landing_ref])?;
     let spawn = SysSpawn {
@@ -330,17 +332,19 @@ fn probe_base(
         path: root.clone().into(),
         base: registry.base(repo).unwrap_or_default(),
     };
-    let mut subs = VmRunner::new(p, &spawn, &ThreadSleep, env, vm_repo, &wt, &lane.landing_ref, ROUND)?;
+    let mut subs = VmRunner::new(p, &spawn, &ThreadSleep, env, vm_repo, &wt, &lane.landing_ref, &round)?;
     let renv = RunEnv {
         sleep: &ThreadSleep,
         poll_ms: run::POLL_MS,
         teardown_ms: run::TEARDOWN_MS,
         kill_grace_ms: run::KILL_GRACE_MS,
     };
-    let unit = format!("round-controller-subpass-{repo}-{ROUND}.scope");
-    let probed = cutover_check::probe_base(p, &renv, &mut subs, repo, &lane, &unit);
+    let unit = format!("round-controller-subpass-{repo}-{round}.scope");
+    let probed = cutover_check::probe_base(p, &renv, &mut subs, (repo, &lane), &suites, &unit);
     drop(subs);
-    let _ = git(&["worktree", "remove", "-f", &at]);
+    if !matches!(&probed, Ok(pr) if pr.slot_kept) {
+        let _ = git(&["worktree", "remove", "-f", &at]);
+    }
     probed
 }
 

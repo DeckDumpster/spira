@@ -55,21 +55,28 @@ impl RealFacts {
     }
 }
 
+impl RealFacts {
+    /// `repo`'s checkout and the commit its landing ref is at.
+    fn landing(&self, repo: &str) -> Result<(String, String), String> {
+        let (root, landref) = (self.locate)(repo)
+            .ok_or_else(|| format!("{repo}: no checkout or landing ref resolves"))?;
+        let spec = format!("{landref}^{{commit}}");
+        match self.git(&root, &["rev-parse", "--verify", "--quiet", &spec])? {
+            (Some(0), out, _) if !out.trim().is_empty() => Ok((root, out.trim().to_string())),
+            (code, _, err) => Err(format!(
+                "git rev-parse {landref} in {root} exited {code:?}: {err}"
+            )),
+        }
+    }
+}
+
 impl Facts for RealFacts {
     fn round_repos(&self) -> Result<Vec<String>, String> {
         self.repos.clone()
     }
 
     fn at_landing(&self, repo: &str, path: &str) -> Result<Option<String>, String> {
-        let (root, landref) = (self.locate)(repo)
-            .ok_or_else(|| format!("{repo}: no checkout or landing ref resolves"))?;
-        let spec = format!("{landref}^{{commit}}");
-        let sha = match self.git(&root, &["rev-parse", "--verify", "--quiet", &spec])? {
-            (Some(0), out, _) if !out.trim().is_empty() => out.trim().to_string(),
-            (code, _, err) => {
-                return Err(format!("git rev-parse {landref} in {root} exited {code:?}: {err}"))
-            }
-        };
+        let (root, sha) = self.landing(repo)?;
         match self.git(&root, &["ls-tree", "--name-only", &sha, "--", path])? {
             (Some(0), out, _) if out.trim().is_empty() => return Ok(None),
             (Some(0), _, _) => {}
@@ -85,6 +92,15 @@ impl Facts for RealFacts {
         }
     }
 
+    fn names_at_landing(&self, repo: &str, dir: &str) -> Result<Vec<String>, String> {
+        let (root, sha) = self.landing(repo)?;
+        let tree = format!("{sha}:{dir}");
+        match self.git(&root, &["ls-tree", "--name-only", &tree])? {
+            (Some(0), out, _) => Ok(out.lines().filter(|l| !l.is_empty()).map(String::from).collect()),
+            (code, _, err) => Err(format!("git ls-tree {tree} in {root} exited {code:?}: {err}")),
+        }
+    }
+
     fn queue_files(&self) -> Result<Vec<String>, String> {
         let dir = &self.queue_dir;
         let rd = match std::fs::read_dir(dir) {
@@ -93,10 +109,12 @@ impl Facts for RealFacts {
             Err(e) => return Err(format!("{}: {e}", dir.display())),
         };
         let mut out = Vec::new();
-        for e in rd.flatten() {
+        for e in rd {
+            let e = e.map_err(|e| format!("{}: {e}", dir.display()))?;
             let repo = e.file_name().to_string_lossy().into_owned();
             for f in QUEUE_FILES {
-                if e.path().join(f).exists() {
+                let path = e.path().join(f);
+                if path.try_exists().map_err(|err| format!("{}: {err}", path.display()))? {
                     out.push(format!("{repo}/{f}"));
                 }
             }
@@ -235,6 +253,18 @@ mod tests {
             &d,
         );
         assert!(f.at_landing("alpha", "x").unwrap_err().contains("bad object"));
+    }
+
+    #[test]
+    fn the_names_under_a_directory_of_the_landing_ref_are_listed() {
+        let d = testkit::TempDir::new("rc-facts");
+        let f = facts(&[("rev-parse", out(0, "abc\n", "")), ("ls-tree", out(0, "test-a.sh\nlib.sh\n", ""))], &d);
+        assert_eq!(f.names_at_landing("alpha", "spira"), Ok(vec!["test-a.sh".into(), "lib.sh".into()]));
+        let spec = crate::lock(&f.script.seen).last().cloned().unwrap();
+        assert_eq!(spec.args.join(" "), "-C /r/alpha ls-tree --name-only abc:spira");
+        let f = facts(&[("rev-parse", out(0, "abc\n", "")), ("ls-tree", out(128, "", "not a tree"))], &d);
+        assert!(f.names_at_landing("alpha", "spira").unwrap_err().contains("not a tree"));
+        assert!(f.names_at_landing("ghost", "spira").unwrap_err().contains("no checkout"));
     }
 
     #[test]

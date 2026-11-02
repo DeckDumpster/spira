@@ -6,6 +6,8 @@
 epoch = 1800000000
 horizon = 300000
 repos = ["other:queue.local"]
+# The call claims the bead and plays its script; nothing lands or certifies it.
+real_actors = ["sentinel-call"]
 
 [[step]]
 at = 0

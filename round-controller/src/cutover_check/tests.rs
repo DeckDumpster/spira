@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use batcher::attrib::{Job, JobResult};
 use batcher::core::Member as RoundMember;
-use batcher::drive::{MainKind, MainPoll, RoundRunner};
+use batcher::attrib::Job;
+use batcher::drive::{MainEnd, MainKind, MainPoll, RoundRunner};
 use lifecycle::batch::{BatchRow, BatchState};
 use runtime::ports::{Clock, VirtualClock};
 use serde_json::json;
@@ -27,6 +27,7 @@ struct FakeFacts {
     repos: Option<Result<Vec<String>, String>>,
     trees: BTreeMap<(String, String), String>,
     unreadable_tree: Option<String>,
+    names: BTreeMap<(String, String), Vec<String>>,
     queue: Vec<String>,
     submitted: BTreeMap<String, usize>,
 }
@@ -59,6 +60,12 @@ impl Facts for FakeFacts {
         }
         Ok(self.trees.get(&(repo.to_string(), path.to_string())).cloned())
     }
+    fn names_at_landing(&self, repo: &str, dir: &str) -> Result<Vec<String>, String> {
+        self.names
+            .get(&(repo.to_string(), dir.to_string()))
+            .cloned()
+            .ok_or_else(|| format!("git ls-tree exited Some(128): no {dir} in {repo}"))
+    }
     fn queue_files(&self) -> Result<Vec<String>, String> {
         Ok(self.queue.clone())
     }
@@ -70,11 +77,13 @@ impl Facts for FakeFacts {
     }
 }
 
+/// The lane, and git's landing ref at the commit it names.
 fn seed_lane(b: &Bench, repo: &str, landing: &str, digest: &str) {
     b.seed(
         &format!("lanes/{repo}"),
         json!({ "landing_ref": landing, "image_digest": digest, "harness_version": "h1" }),
     );
+    b.git.advance(repo, landing);
 }
 
 fn lane_of(b: &Bench, repo: &str) -> Lane {
@@ -236,9 +245,10 @@ fn seed_lane_replace(b: &Bench, repo: &str, landing: &str, digest: &str) {
                 &key,
                 Object::new(json!({ "landing_ref": landing, "image_digest": digest, "harness_version": "h1" })),
             ),
-            &Request::new(&format!("lane-{digest}"), "t", "t"),
+            &Request::new(&format!("lane-{landing}-{digest}"), "t", "t"),
         )
         .unwrap();
+    b.git.advance(repo, landing);
 }
 
 #[test]
@@ -323,6 +333,32 @@ fn an_undecodable_round_or_summary_is_red_naming_its_key() {
     assert!(why(&r, "alpha", "base").why.contains("verdicts/alpha/"));
 }
 
+#[test]
+fn a_lane_the_landing_ref_moved_past_or_a_ref_git_cannot_read_is_red() {
+    let b = Bench::new();
+    ready(&b);
+    b.git.advance("alpha", "a2");
+    b.git.break_repo("beta", "git rev-parse exited Some(128)");
+    let r = readiness(&b.ports(), &FakeFacts::two());
+    let c = why(&r, "alpha", "base");
+    assert!(!c.green && c.why.contains("names a1") && c.why.contains("at a2"), "{c:?}");
+    let c = why(&r, "beta", "base");
+    assert!(!c.green && c.why.contains("cannot read beta's landing ref"), "{c:?}");
+}
+
+#[test]
+fn a_faulted_base_probe_leaves_the_landed_round_to_answer() {
+    let b = Bench::new();
+    ready(&b);
+    record(
+        &b,
+        &base_identity("beta", &lane_of(&b, "beta")),
+        Class::Fault { cause: Cause::Vm },
+    );
+    let r = readiness(&b.ports(), &FakeFacts::two());
+    assert!(why(&r, "beta", "base").why.contains("round k1 landed"), "{}", r.render());
+}
+
 /// A batch transition as spira-lc commits one: the record, a history entry under the batch, and
 /// the audit as the request's evidence, which the contract keeps at `events/<rev>`.
 fn transition(b: &Bench, repo: &str, batch: &str, state: BatchState, head: &str, event: &str, applied: bool) -> u64 {
@@ -342,11 +378,23 @@ fn transition(b: &Bench, repo: &str, batch: &str, state: BatchState, head: &str,
     b.store.head().unwrap()
 }
 
+/// A landing through spira-lc: the ref moves at the FastForward, and the release follows.
 fn landed(b: &Bench, repo: &str, batch: &str, head: &str) -> u64 {
-    let at = transition(b, repo, batch, BatchState::Landing, head, "LandStarted", true);
-    transition(b, repo, batch, BatchState::Deploying, head, "FastForward", true);
+    let at = transition(b, repo, batch, BatchState::Deploying, head, "FastForward", true);
     transition(b, repo, batch, BatchState::Landed, head, "Deployed", true);
     at
+}
+
+/// The controller's record of a landing it found already under the ref: one write, no audit.
+fn recorded_landed(b: &Bench, repo: &str, batch: &str, head: &str) -> u64 {
+    let t = Txn::new().put(
+        &round_key(repo, batch),
+        Object::new(round(repo, batch, BatchState::Landed, head, "base", vec![])),
+    );
+    b.store
+        .txn(&t, &Request::new(&format!("rc-{batch}"), "round-controller", "land"))
+        .unwrap();
+    b.store.head().unwrap()
 }
 
 #[test]
@@ -355,8 +403,7 @@ fn since_rev_with_one_repo_landed_and_another_not_exits_1_printing_none() {
     landed(&b, "beta", "k0", "old");
     let rev = b.store.head().unwrap();
     let at = landed(&b, "alpha", "k1", "a2");
-    transition(&b, "beta", "k3", BatchState::Landing, "b3", "LandStarted", true);
-    transition(&b, "beta", "k3", BatchState::Green, "b3", "LandAborted", true);
+    transition(&b, "beta", "k3", BatchState::Green, "b3", "PassGreen", true);
     let rows = since_rev(&b.ports(), &FakeFacts::two(), rev).unwrap();
     assert_eq!(
         rows[0].1,
@@ -376,19 +423,33 @@ fn since_rev_with_both_landed_exits_0_naming_each_repos_first_round() {
     let rev = b.store.head().unwrap();
     landed(&b, "alpha", "k2", "a3");
     landed(&b, "alpha", "k1", "a2");
-    landed(&b, "beta", "k4", "b4");
+    recorded_landed(&b, "beta", "k4", "b4");
     let (out, err, code) = render_since(&since_rev(&b.ports(), &FakeFacts::two(), rev).unwrap());
     assert_eq!((out.as_str(), err.as_str(), code), ("alpha k2 a3\nbeta k4 b4\n", "", 0));
 }
 
 #[test]
-fn a_refused_or_unapplied_land_start_is_not_a_landing() {
+fn a_landing_before_the_revision_counts_even_when_its_release_is_recorded_after() {
     let b = Bench::new();
+    transition(&b, "alpha", "k1", BatchState::Deploying, "a2", "FastForward", true);
+    recorded_landed(&b, "beta", "k2", "b2");
     let rev = b.store.head().unwrap();
-    transition(&b, "alpha", "k1", BatchState::Green, "a2", "LandStarted", false);
-    transition(&b, "alpha", "k1", BatchState::Landed, "a2", "FastForward", true);
+    transition(&b, "alpha", "k1", BatchState::Landed, "a2", "Deployed", true);
     let (out, _, code) = render_since(&since_rev(&b.ports(), &FakeFacts::two(), rev).unwrap());
     assert_eq!((out.as_str(), code), ("alpha none\nbeta none\n", 1));
+}
+
+#[test]
+fn a_refused_or_unapplied_fast_forward_is_not_the_landing() {
+    let b = Bench::new();
+    transition(&b, "alpha", "k1", BatchState::Green, "a2", "FastForward", false);
+    let rev = b.store.head().unwrap();
+    transition(&b, "alpha", "k1", BatchState::Green, "a2", "LandAborted", true);
+    let (out, _, code) = render_since(&since_rev(&b.ports(), &FakeFacts::two(), rev).unwrap());
+    assert_eq!((out.as_str(), code), ("alpha none\nbeta none\n", 1), "a GREEN round has not landed");
+    let at = landed(&b, "alpha", "k1", "a2");
+    let rows = since_rev(&b.ports(), &FakeFacts::two(), rev).unwrap();
+    assert_eq!(rows[0].1.as_ref().unwrap().as_ref().map(|l| l.rev), Some(at));
 }
 
 #[test]
@@ -421,12 +482,27 @@ fn the_modes_are_named_and_mutually_exclusive() {
     }
 }
 
-/// A round VM that serves the one job, answering after `secs` of waits, and is gone once closed
-/// unless it lingers.
+#[test]
+fn the_probe_runs_the_selection_or_for_all_the_landing_trees_whole_corpus() {
+    let mut f = FakeFacts::two();
+    assert_eq!(probe_suites(&f, "alpha", "test-a.sh, test-b.sh"), Ok(vec!["test-a.sh".into(), "test-b.sh".into()]));
+    assert!(probe_suites(&f, "alpha", " , ").unwrap_err().contains("names no suite"));
+    f.tree("alpha", DECL, "ci_entry = \"bash ci.sh\"\n[tier.unit]\ncmd = \"x\"\n[tier.e2e]\ncmd = \"y\"\n");
+    assert_eq!(probe_suites(&f, "alpha", "all"), Ok(vec!["e2e".into(), "unit".into()]));
+    f.tree("alpha", HARNESS_IMAGE, "FROM x\n");
+    f.names.insert(("alpha".into(), "spira".into()), vec!["test-a.sh".into(), "lib.sh".into(), "test-b.sh".into()]);
+    assert_eq!(probe_suites(&f, "alpha", "all"), Ok(vec!["test-a.sh".into(), "test-b.sh".into()]));
+    assert_eq!(probe_suites(&f, "beta", "all").unwrap_err(), "git ls-tree exited Some(128): no spira in beta");
+    f.names.insert(("beta".into(), "spira".into()), vec!["lib.sh".into()]);
+    assert!(probe_suites(&f, "beta", "all").unwrap_err().contains("declares no suite"));
+    f.tree("beta", DECL, "tier = 3\n");
+    assert!(probe_suites(&f, "beta", "all").unwrap_err().contains("does not parse"));
+}
+
+/// A round VM that serves the base run, and is gone once closed unless it lingers.
 struct Vm {
     gone: Mutex<bool>,
     lingers: bool,
-    clock: VirtualClock,
 }
 
 impl Child for Vm {
@@ -440,7 +516,6 @@ impl Child for Vm {
         if sig == Signal::Kill && !self.lingers {
             *crate::lock(&self.gone) = true;
         }
-        let _ = self.clock.now_ms();
         Ok(())
     }
     fn gone(&self) -> bool {
@@ -448,16 +523,24 @@ impl Child for Vm {
     }
 }
 
+/// How the scripted corpus ends.
+#[derive(Clone)]
+enum Ends {
+    /// Each suite's result, then the end.
+    Ran(Vec<(&'static str, bool)>, MainEnd),
+    Faults(&'static str),
+    NoStart,
+}
+
 struct Subs<'a> {
     vm: &'a Vm,
     up: bool,
-    answer: Option<JobResult>,
+    ends: Ends,
     after_ms: u64,
     clock: VirtualClock,
-    jobs: Vec<Job>,
+    started: Option<(u64, Vec<String>)>,
     members: Option<Vec<RoundMember>>,
-    started: u64,
-    /// Every slot holder seen while the job ran, as the store records it.
+    /// The slot record as the store holds it at each poll.
     during: Option<&'a Bench>,
     seen: Vec<serde_json::Value>,
     /// How far each wait moves the clock: past the slot's TTL, the runner stalled.
@@ -465,16 +548,15 @@ struct Subs<'a> {
 }
 
 impl<'a> Subs<'a> {
-    fn new(b: &Bench, vm: &'a Vm, answer: Option<JobResult>, after_ms: u64) -> Subs<'a> {
+    fn new(b: &Bench, vm: &'a Vm, ends: Ends, after_ms: u64) -> Subs<'a> {
         Subs {
             vm,
             up: false,
-            answer,
+            ends,
             after_ms,
             clock: b.clock.clone(),
-            jobs: vec![],
+            started: None,
             members: None,
-            started: 0,
             during: None,
             seen: vec![],
             step_ms: 1_000,
@@ -487,34 +569,42 @@ impl RoundRunner for Subs<'_> {
         self.members = Some(members.to_vec());
     }
     fn set_base(&mut self, _: &str) {}
-    fn start_main(&mut self, _: MainKind, _: &[String]) -> Result<(), String> {
-        Err("the probe runs no corpus".into())
-    }
-    fn poll_main(&mut self) -> Result<MainPoll, String> {
-        Ok(MainPoll::default())
-    }
-    fn stop_main(&mut self) -> Result<(), String> {
-        Ok(())
-    }
-    fn launch(&mut self, job: &Job) -> Result<(), String> {
-        if self.answer.is_none() {
+    fn start_main(&mut self, kind: MainKind, suites: &[String]) -> Result<(), String> {
+        assert_eq!(kind, MainKind::Corpus);
+        if matches!(self.ends, Ends::NoStart) {
             return Err("round-vm did not come up".into());
         }
         self.up = true;
-        self.started = self.clock.now_ms();
-        self.jobs.push(job.clone());
+        self.started = Some((self.clock.now_ms(), suites.to_vec()));
         Ok(())
     }
-    fn poll_jobs(&mut self) -> Vec<(u64, JobResult)> {
+    fn poll_main(&mut self) -> Result<MainPoll, String> {
         if let Some(b) = self.during {
             if let Ok(Some(i)) = b.store.get("slots/proxmox/0") {
                 self.seen.push(i.value.data);
             }
         }
-        match (self.answer, self.jobs.first()) {
-            (Some(r), Some(j)) if self.clock.now_ms() >= self.started + self.after_ms => vec![(j.id, r)],
-            _ => vec![],
+        let (at, _) = self.started.clone().expect("polled only once started");
+        if self.clock.now_ms() < at + self.after_ms {
+            return Ok(MainPoll::default());
         }
+        match &self.ends {
+            Ends::Ran(results, end) => Ok(MainPoll {
+                results: results.iter().map(|(s, g)| (s.to_string(), *g)).collect(),
+                done: Some(*end),
+            }),
+            Ends::Faults(why) => Err(why.to_string()),
+            Ends::NoStart => unreachable!(),
+        }
+    }
+    fn stop_main(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    fn launch(&mut self, _: &Job) -> Result<(), String> {
+        Err("the probe runs no sub-pass".into())
+    }
+    fn poll_jobs(&mut self) -> Vec<(u64, batcher::attrib::JobResult)> {
+        vec![]
     }
     fn now(&self) -> u64 {
         self.clock.now_ms() / 1000
@@ -543,19 +633,30 @@ impl Sleep for Advance {
     }
 }
 
-fn vm(b: &Bench, lingers: bool) -> Vm {
+fn vm(lingers: bool) -> Vm {
     Vm {
         gone: Mutex::new(false),
         lingers,
-        clock: b.clock.clone(),
     }
 }
 
-fn probe(b: &Bench, subs: &mut Subs) -> Result<Probed, String> {
+const SUITES: [&str; 2] = ["test-a.sh", "test-b.sh"];
+
+fn suites() -> Vec<String> {
+    SUITES.map(String::from).to_vec()
+}
+
+fn green_run() -> Ends {
+    Ends::Ran(vec![("test-a.sh", true), ("test-b.sh", true)], MainEnd::Ran)
+}
+
+fn probe_with(b: &Bench, slots: Option<&crate::slots::SlotSettings>, subs: &mut Subs) -> Result<Probed, String> {
     let ledger = StoreLedger { policy: POLICY };
+    let base = b.ports();
     let p = Ports {
         ledger: &ledger,
-        ..b.ports()
+        slots: slots.unwrap_or(base.slots),
+        ..base
     };
     let sleep = Advance(b.clock.clone());
     let env = RunEnv {
@@ -565,15 +666,11 @@ fn probe(b: &Bench, subs: &mut Subs) -> Result<Probed, String> {
         kill_grace_ms: 5_000,
     };
     let lane = probe_target(&p, "alpha")?;
-    probe_base(&p, &env, subs, "alpha", &lane, "probe.scope")
+    probe_base(&p, &env, subs, ("alpha", &lane), &suites(), "probe.scope")
 }
 
-fn seed_git(b: &Bench, landing: &str) {
-    b.git.seed(&crate::sim::git::GitSeed {
-        repo: "alpha".into(),
-        landing: landing.into(),
-        history: vec![],
-    });
+fn probe(b: &Bench, subs: &mut Subs) -> Result<Probed, String> {
+    probe_with(b, None, subs)
 }
 
 #[test]
@@ -581,20 +678,18 @@ fn a_green_base_probe_is_recorded_under_the_base_identity_and_readiness_reads_it
     let b = Bench::new();
     ready(&b);
     seed_lane_replace(&b, "alpha", "a9", "sha256:img2");
-    seed_git(&b, "a9");
     assert!(!why(&readiness(&b.ports(), &FakeFacts::two()), "alpha", "base").green);
-    let v = vm(&b, false);
-    let mut subs = Subs::new(&b, &v, Some(JobResult::Green), 120_000);
+    let v = vm(false);
+    let mut subs = Subs::new(&b, &v, green_run(), 120_000);
     subs.during = Some(&b);
     let probed = probe(&b, &mut subs).unwrap();
     assert_eq!((probed.class.clone(), probed.attempt, probed.slot_kept, probed.code()), (Class::Green, 1, false, 0));
     assert_eq!(probed.identity, base_identity("alpha", &lane_of(&b, "alpha")));
     assert_eq!(subs.members, Some(vec![]), "the base tree carries no member");
-    let job = &subs.jobs[0];
-    assert_eq!((job.removal.is_empty(), job.suite.as_str(), &job.purpose), (true, "all", &Purpose::Base));
+    assert_eq!(subs.started.as_ref().map(|(_, s)| s.clone()), Some(suites()));
     assert!(
-        subs.seen.iter().all(|s| s["unit"] == "probe.scope" && s["holder"] == PROBE_HOLDER),
-        "the slot names its holder's unit before the VM is up: {:?}",
+        !subs.seen.is_empty() && subs.seen.iter().all(|s| s["unit"] == "probe.scope" && s["holder"] == PROBE_HOLDER),
+        "the slot names its holder's unit while the VM is up: {:?}",
         subs.seen
     );
     let slot = b.store.get("slots/proxmox/0").unwrap().unwrap();
@@ -609,20 +704,38 @@ fn a_green_base_probe_is_recorded_under_the_base_identity_and_readiness_reads_it
 }
 
 #[test]
-fn a_red_or_faulted_base_probe_is_recorded_and_exits_1() {
-    for (answer, class) in [
-        (JobResult::Red, Class::Red { step: "all".into() }),
-        (JobResult::Fault, Class::Fault { cause: Cause::Vm }),
+fn a_red_unfinished_or_faulted_base_probe_is_recorded_and_exits_1() {
+    for (ends, class, readiness_says) in [
+        (
+            Ends::Ran(vec![("test-a.sh", true), ("test-b.sh", false)], MainEnd::Ran),
+            Class::Red { step: "test-b.sh".into() },
+            "was red",
+        ),
+        (
+            Ends::Ran(vec![], MainEnd::WorkspaceBuild),
+            Class::Red { step: "workspace-build".into() },
+            "was red",
+        ),
+        (
+            Ends::Ran(vec![("test-a.sh", true)], MainEnd::Ran),
+            Class::Fault { cause: Cause::Vm },
+            "no green base probe",
+        ),
+        (
+            Ends::Faults("round-vm: harness fault"),
+            Class::Fault { cause: Cause::Vm },
+            "no green base probe",
+        ),
     ] {
         let b = Bench::new();
         seed_lane(&b, "alpha", "a1", "sha256:img2");
-        seed_git(&b, "a1");
-        let v = vm(&b, false);
-        let mut subs = Subs::new(&b, &v, Some(answer), 0);
+        let v = vm(false);
+        let mut subs = Subs::new(&b, &v, ends, 0);
         let probed = probe(&b, &mut subs).unwrap();
         assert_eq!((probed.class.clone(), probed.code()), (class.clone(), 1));
         let r = readiness(&b.ports(), &FakeFacts::two());
-        assert!(why(&r, "alpha", "base").why.contains(&format!("was {}", class.word())));
+        let c = why(&r, "alpha", "base");
+        assert!(!c.green && c.why.contains(readiness_says), "{c:?}");
     }
 }
 
@@ -630,9 +743,8 @@ fn a_red_or_faulted_base_probe_is_recorded_and_exits_1() {
 fn a_probe_whose_vm_outlives_its_teardown_keeps_the_slot_to_lapse() {
     let b = Bench::new();
     seed_lane(&b, "alpha", "a1", "sha256:img2");
-    seed_git(&b, "a1");
-    let v = vm(&b, true);
-    let mut subs = Subs::new(&b, &v, Some(JobResult::Green), 0);
+    let v = vm(true);
+    let mut subs = Subs::new(&b, &v, green_run(), 0);
     let probed = probe(&b, &mut subs).unwrap();
     assert!(probed.slot_kept && probed.render().contains("slot=kept"));
     let slot = b.store.get("slots/proxmox/0").unwrap().unwrap();
@@ -640,39 +752,27 @@ fn a_probe_whose_vm_outlives_its_teardown_keeps_the_slot_to_lapse() {
 }
 
 #[test]
-fn a_probe_refuses_a_held_slot_a_stale_lane_or_no_lane_and_gives_back_a_failed_launch() {
+fn a_probe_refuses_a_held_slot_a_stale_lane_or_no_lane_and_gives_back_a_failed_start() {
     let b = Bench::new();
-    let v = vm(&b, false);
-    let mut subs = Subs::new(&b, &v, Some(JobResult::Green), 0);
+    let v = vm(false);
+    let mut subs = Subs::new(&b, &v, green_run(), 0);
     assert!(probe(&b, &mut subs).unwrap_err().contains("no lane record at lanes/alpha"));
     seed_lane(&b, "alpha", "a1", "sha256:img2");
-    seed_git(&b, "a2");
+    b.git.advance("alpha", "a2");
     let e = probe(&b, &mut subs).unwrap_err();
     assert!(e.contains("names a1") && e.contains("at a2"), "{e}");
-    seed_git(&b, "a1");
-    let mut down = Subs::new(&b, &v, None, 0);
-    assert!(probe(&b, &mut down).unwrap_err().contains("did not launch"));
-    assert!(b.store.get("locks/runner-slot/proxmox/0").unwrap().is_none(), "a failed launch gives the slot back");
+    b.git.advance("alpha", "a1");
+    let mut down = Subs::new(&b, &v, Ends::NoStart, 0);
+    assert!(probe(&b, &mut down).unwrap_err().contains("did not start"));
+    assert!(b.store.get("locks/runner-slot/proxmox/0").unwrap().is_none(), "a failed start gives the slot back");
     let held = grant_for_hand(&b.ports(), "round-recert").unwrap();
-    let b_slots = crate::slots::SlotSettings {
+    let one_slot = crate::slots::SlotSettings {
         ec2_slots: 0,
         spill: false,
     };
-    let p = Ports {
-        slots: &b_slots,
-        ..b.ports()
-    };
-    let lane = probe_target(&p, "alpha").unwrap();
-    let sleep = Advance(b.clock.clone());
-    let env = RunEnv {
-        sleep: &sleep,
-        poll_ms: 1_000,
-        teardown_ms: 30_000,
-        kill_grace_ms: 5_000,
-    };
-    let e = probe_base(&p, &env, &mut subs, "alpha", &lane, "probe.scope").unwrap_err();
+    let e = probe_with(&b, Some(&one_slot), &mut subs).unwrap_err();
     assert!(e.contains("round-recert"), "a refusal names the holder: {e}");
-    assert!(subs.jobs.is_empty(), "nothing ran without a slot");
+    assert!(subs.started.is_none(), "nothing ran without a slot");
     held.release(&b.ports()).unwrap();
 }
 
@@ -680,9 +780,8 @@ fn a_probe_refuses_a_held_slot_a_stale_lane_or_no_lane_and_gives_back_a_failed_l
 fn a_probe_that_loses_its_slot_mid_run_records_nothing() {
     let b = Bench::new();
     seed_lane(&b, "alpha", "a1", "sha256:img2");
-    seed_git(&b, "a1");
-    let v = vm(&b, false);
-    let mut subs = Subs::new(&b, &v, Some(JobResult::Green), 10 * 60_000);
+    let v = vm(false);
+    let mut subs = Subs::new(&b, &v, green_run(), 10 * 60_000);
     subs.step_ms = 90_000;
     let e = probe(&b, &mut subs).unwrap_err();
     assert!(e.contains("lost the runner slot"), "{e}");
