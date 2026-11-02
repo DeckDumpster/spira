@@ -8,7 +8,7 @@
 # come out the other way, judged by `spira-claim decide` — the function CHECK 4 itself calls.
 #
 # tier: T2
-# covers: spira-claim/* spira-lc/* lifecycle/* UC-dwarf-execution-21
+# covers: spira-claim/* spira-lc/* lifecycle/* spira/testlib/lc-fixture.sh UC-dwarf-execution-21
 # timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -32,60 +32,21 @@ testdb_up unpoison || skip "server testdb not available"
 export PATH="$PATH:$(dirname "$DOLT_BIN")"
 export SPIRA_POISON_ASKED="$TMP/poison-asked"; mkdir -p "$SPIRA_POISON_ASKED"
 
-# A REAL spira-lc against a throwaway Dolt server (sp-rlyl0), so the poison hold this bead
-# makes spira-claim unpoison release is proven against the actual machine, not assumed from lc.sh's
-# own exit code. Same shape as test-lc-hold.sh.
-unset SPIRA_LC_SOCKET
-
-REPO="$(cd "$HERE/.." && pwd)"
-LCPORT=$((3309 + 900 + (RANDOM % 300)))
-LC_SERVER_PID=""
-trap 'testdb_drop; [ -n "$LC_SERVER_PID" ] && kill "$LC_SERVER_PID" >/dev/null 2>&1; rm -rf "$TMP"' EXIT INT TERM
-
-mkdir -p "$TMP/lc-data"
-cat > "$TMP/lc-server.yaml" <<YAML
-log_level: warning
-listener:
-  port: $LCPORT
-  max_connections: 20
-  read_timeout_millis: 30000
-  write_timeout_millis: 30000
-data_dir: "$TMP/lc-data"
-behavior:
-  dolt_transaction_commit: false
-  event_scheduler: "OFF"
-YAML
-"$DOLT_BIN" sql-server --config "$TMP/lc-server.yaml" > "$TMP/lc-server.log" 2>&1 & # batch-job: fixture dolt call against the suite's private store
-LC_SERVER_PID=$!
-lc_up=0
-for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then # batch-job: fixture dolt call against the suite's private store
-        lc_up=1; break
-    fi
-    sleep 0.2
-done
-[ "$lc_up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/lc-server.log")"
-lc_root_sql() { "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls "$@"; } # batch-job: fixture dolt call against the suite's private store
+# A REAL spira-lc against a throwaway lifecycle database (sp-rlyl0), so the poison hold this
+# bead makes spira-claim unpoison release is proven against the actual machine, not assumed from
+# lc.sh's own exit code. It lives on the bead store's own server, as in production: the ask
+# listing reads its titles from the beads over the lifecycle connection, and unpoison finds the
+# poisoning's ask by that title.
+. "$HERE/testlib/lc-fixture.sh"
+trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 
 SPIRA_RUN="$TMP/run"; tl_config SPIRA_RUN="$SPIRA_RUN"; mkdir -p "$SPIRA_RUN"
-# SPIRA_LC_PASSWORD_FILE/SPIRA_LC_SOCKET are registered keys; undeclared, they resolve to
-# the complete fixture's own dummy paths ("reading .../spira-lc.credential: No such file"),
-# not "unset" — this suite connects with direct TCP params below, so both must be declared
-# empty to mean exactly that, not left to the fixture's own (unreachable) defaults.
-tl_config SPIRA_LC_PASSWORD_FILE="" SPIRA_LC_SOCKET=""
-# The machine is seeded and asserted on below (spira-claim/DESIGN.md §8.7).
-export SPIRA_LC_HOST=127.0.0.1
-export SPIRA_LC_PORT="$LCPORT"
-export SPIRA_LC_DB=spira_lifecycle
-export SPIRA_LC_DATA_DIR="$TMP/lc-data"
-export SPIRA_LC_USER=root
-export SPIRA_LC_PASSWORD=""
-spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1
+lcfix_up_on_testdb
 wantrc "spira-lc schema applies cleanly" 0 $?
 
 lc_seed_working_poisoned() {   # lc_seed_working_poisoned <bead-id> [holder]
     local holder="NULL"; [ -n "${2:-}" ] && holder="'$2'"
-    lc_root_sql --use-db spira_lifecycle sql -q \
+    lcfix_sql -q \
         "INSERT INTO bead (bead_id, state, holder, holds, version, updated_at) VALUES ('$1','WORKING',$holder,'[\"poison\"]',0,0)" >/dev/null 2>&1
 }
 
@@ -95,6 +56,7 @@ seedt() {   # seedt <id> <event_type> <new_value> <created_at>
 }
 labels_of() { bdjson show "$1" | python3 -c 'import sys,json
 d=json.load(sys.stdin); b=(d if isinstance(d,list) else [d])[0]; print(",".join(b.get("labels") or []))'; }
+ask_state() { spira-lc show-ask "$1" 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin).get("state",""))' 2>/dev/null; }
 status_of() { bdjson show "$1" | python3 -c 'import sys,json
 d=json.load(sys.stdin); b=(d if isinstance(d,list) else [d])[0]; print(b.get("status",""))'; }
 # reclaims_of (lib.sh) was retired at sp-8itaf — zero live callers. _counter_events_query,
@@ -106,54 +68,58 @@ UNPOISON=spira-claim
 
 testdb_reset
 testdb_seed <<JSONL
-{"id":"pz1","title":"poisoned by three failed claims","status":"open","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-01T00:00:00Z"}
-{"id":"pz2","title":"control: label-only clear","status":"open","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-01T00:00:00Z"}
-{"id":"pz3","title":"held by a live dwarf","status":"in_progress","assignee":"dwarf-test","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-01T00:00:00Z"}
-{"id":"pz4","title":"healthy","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-01T00:00:00Z"}
-{"id":"pzask","title":"Spira bead pz1 — 3 in_progress transition(s) without landing (3 attempts) — change the approach or drop it?","status":"open","issue_type":"decision","labels":["$SPIRA_ASK_LABEL","overseer"],"updated_at":"2026-09-01T00:00:00Z"}
+{"id":"sp-pz1","title":"poisoned by three failed claims","status":"open","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-01T00:00:00Z"}
+{"id":"sp-pz2","title":"control: label-only clear","status":"open","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-01T00:00:00Z"}
+{"id":"sp-pz3","title":"held by a live dwarf","status":"in_progress","assignee":"dwarf-test","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-01T00:00:00Z"}
+{"id":"sp-pz4","title":"healthy","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-01T00:00:00Z"}
+{"id":"sp-pzask","title":"Spira bead sp-pz1 — 3 in_progress transition(s) without landing (3 attempts) — change the approach or drop it?","status":"open","issue_type":"decision","labels":["$SPIRA_ASK_LABEL","overseer"],"updated_at":"2026-09-01T00:00:00Z"}
 JSONL
-for id in pz1 pz2 pz3; do
+for id in sp-pz1 sp-pz2 sp-pz3; do
     for t in '2026-09-01 01:00:00' '2026-09-01 02:00:00' '2026-09-01 03:00:00'; do seedt "$id" claimed '' "$t"; done
 done
-lc_seed_working_poisoned pz1
-# pz3 is held: the claim is the row's WORKING holder, never bd's in_progress (sp-mve9i).
-lc_seed_working_poisoned pz3 dwarf-test
+# CHECK 4's ask is its control-plane record, opened as mail opens it beside the decision bead.
+spira-lc create-ask sp-pzask --work-bead sp-pz1 >/dev/null 2>&1
+is "SEEN OPEN: the poisoning's ask is open in the control plane" "OPEN" "$(ask_state sp-pzask)"
+lc_seed_working_poisoned sp-pz1
+# sp-pz3 is held: the claim is the row's WORKING holder, never bd's in_progress (sp-mve9i).
+lc_seed_working_poisoned sp-pz3 dwarf-test
 
 echo
 echo "CONTROL — removing only the label leaves CHECK 4 about to re-poison:"
-bdq label remove pz2 spira-poison >/dev/null 2>&1
-want "label-only clear: check4 still decides poison" "poison" "$(decide pz2)"
+bdq label remove sp-pz2 spira-poison >/dev/null 2>&1
+want "label-only clear: check4 still decides poison" "poison" "$(decide sp-pz2)"
 
 echo
 echo "spira-claim unpoison clears so it sticks:"
-out="$("$UNPOISON" unpoison --bead pz1 --cause "every session ended its turn 'waiting for' a background batch" 2>&1)"; rc=$?
+out="$("$UNPOISON" unpoison --bead sp-pz1 --cause "every session ended its turn 'waiting for' a background batch" 2>&1)"; rc=$?
 is   "exit 0" "0" "$rc"
-want "reports OK" "OK   pz1" "$out"
+want "reports OK" "OK   sp-pz1" "$out"
 # THE LABEL IS VESTIGIAL, NOT CHECK 4's TO MANAGE (sp-i2m7y): CHECK 4 no longer writes or
 # clears spira-poison at all once its poison hold lives entirely in spira-lc, so nothing
 # would ever take a stale label off if unpoison left it — it removes it itself,
 # best-effort, alongside the hold that actually matters.
-nowant "the vestigial label is removed too" "spira-poison" "$(labels_of pz1)"
-is   "attempt count floored to 0" "0" "$(attempts_of pz1)"
-nowant "check4 no longer decides poison" "poison" "$(decide pz1)"
-nowant "the lifecycle poison hold is released, against a real spira-lc" "poison" "$(spira-lc holds pz1)"
+nowant "the vestigial label is removed too" "spira-poison" "$(labels_of sp-pz1)"
+is   "attempt count floored to 0" "0" "$(attempts_of sp-pz1)"
+nowant "check4 no longer decides poison" "poison" "$(decide sp-pz1)"
+nowant "the lifecycle poison hold is released, against a real spira-lc" "poison" "$(spira-lc holds sp-pz1)"
 is   "...and the lifecycle row's WORKING state is undisturbed by releasing the hold" \
-     "WORKING" "$(spira-lc state pz1)"
-is   "the poisoning's operator ask is resolved" "closed" "$(status_of pzask)"
-want "the cause is recorded on the bead" "every session ended its turn" "$(bdjson show pz1 | python3 -c 'import sys,json
+     "WORKING" "$(spira-lc state sp-pz1)"
+is   "the poisoning's operator ask is resolved in the control plane" "WITHDRAWN" "$(ask_state sp-pzask)"
+is   "...and its decision bead follows the ask record in bd" "closed" "$(status_of sp-pzask)"
+want "the cause is recorded on the bead" "every session ended its turn" "$(bdjson show sp-pz1 | python3 -c 'import sys,json
 d=json.load(sys.stdin); b=(d if isinstance(d,list) else [d])[0]; print(b.get("notes") or "")')"
 
 echo
 echo "refusals:"
-out="$("$UNPOISON" unpoison --bead pz1 2>&1)"; is "no --cause is a usage error" "1" "$?"
-out="$("$UNPOISON" unpoison --bead pz3 --cause x 2>&1)"; rc=$?
+out="$("$UNPOISON" unpoison --bead sp-pz1 2>&1)"; is "no --cause is a usage error" "1" "$?"
+out="$("$UNPOISON" unpoison --bead sp-pz3 --cause x 2>&1)"; rc=$?
 is   "a bead a live dwarf holds is refused" "3" "$rc"
 want "and says who holds it" "held by dwarf-test" "$out"
-want "and leaves its poison" "spira-poison" "$(labels_of pz3)"
-want "and leaves its lifecycle poison hold too, against a real spira-lc" "poison" "$(spira-lc holds pz3)"
-out="$("$UNPOISON" unpoison --bead pz4 --cause x 2>&1)"; rc=$?
+want "and leaves its poison" "spira-poison" "$(labels_of sp-pz3)"
+want "and leaves its lifecycle poison hold too, against a real spira-lc" "poison" "$(spira-lc holds sp-pz3)"
+out="$("$UNPOISON" unpoison --bead sp-pz4 --cause x 2>&1)"; rc=$?
 is   "a healthy bead is skipped, not an error" "0" "$rc"
-want "and says so" "SKIP pz4" "$out"
-out="$("$UNPOISON" unpoison pz1 --cause x 2>&1)"; is "a positional bead id is refused" "1" "$?"
+want "and says so" "SKIP sp-pz4" "$out"
+out="$("$UNPOISON" unpoison sp-pz1 --cause x 2>&1)"; is "a positional bead id is refused" "1" "$?"
 
 tl_summary

@@ -1124,7 +1124,9 @@ STUB
 # $SPIRA_LC_SOCKET) must answer — close-on-land reads the bead's state there (sp-mve9i). It
 # answers `show <id>` and `list` from the suite's bd store in lifecycle terms: closed (the
 # builder's close is its submit) or open + $SPIRA_SUBMITTED_LABEL → SUBMITTED, in_progress →
-# WORKING, anything else → READY; every other verb "cannot tell" (2). Exports
+# WORKING, anything else → READY. A bead of a no-record type has no record, as in the real
+# machine; an ask has one once `create-ask` opened it, which `show-ask` and `close-ask` answer
+# from. Every other verb is "cannot tell" (2). Exports
 # SPIRA_LC_SOCKET; the server exits on its own when the suite's shell does.
 lc_socket_mirror() {
     local dir="${1:?lc_socket_mirror needs a directory}"
@@ -1153,6 +1155,11 @@ holds = {}
 # State moves the events record (sp-swh8b8): a reopen is a lifecycle transition, which a row
 # derived from bd's status alone could never show.
 moved = {}
+# A bead of a no-record type has no lifecycle record (spira-config's NO_ROW_TYPES). An ask's
+# record exists once create-ask opened it, as mail does beside its decision bead.
+NO_ROW = {"epic", "decision", "event", "molecule", "gate", "proposal"}
+EXITS = {"answered": "ANSWERED", "default": "DEFAULT_TAKEN", "withdrawn": "WITHDRAWN"}
+asks = {}
 def bd(args, strict=False):
     env = dict(os.environ, BD_IGNORE_SCHEMA_SKEW="1")
     o = subprocess.run([os.environ.get("SPIRA_BD") or "bd", "-C", os.environ.get("SPIRA_DB") or ".", *args, "--json"],
@@ -1173,12 +1180,29 @@ def row(b):
     state = moved.get(b["id"]) or ("SUBMITTED" if st == "closed" or sub in labels else {"in_progress": "WORKING"}.get(st, "READY"))
     return {"bead_id": b["id"], "state": state, "holds": json.dumps(sorted(holds.get(b["id"], set()))), "version": "1",
             "holder": (b.get("assignee") or None) if state == "WORKING" else None}
+def shown(bid):
+    return [b for b in bd(["show", bid]) if isinstance(b, dict) and b.get("id") == bid]
+def flag(args, name):
+    return args[args.index(name) + 1] if name in args[:-1] else ""
 def answer(args):
     if args[:1] == ["show"] and len(args) > 1:
-        hit = [b for b in bd(["show", args[1]]) if isinstance(b, dict) and b.get("id") == args[1]]
+        hit = [b for b in shown(args[1]) if b.get("issue_type") not in NO_ROW]
         return (0, json.dumps({"bead": row(hit[0]), "delivery": None})) if hit else (1, "{}")
     if args[:1] == ["list"]:
-        return 0, json.dumps([row(b) for b in bd(["list", "--all", "--limit", "0"], strict=True) if isinstance(b, dict) and b.get("id")])
+        return 0, json.dumps([row(b) for b in bd(["list", "--all", "--limit", "0"], strict=True) if isinstance(b, dict) and b.get("id") and b.get("issue_type") not in NO_ROW])
+    if args[:1] == ["create-ask"] and len(args) > 1:
+        asks.setdefault(args[1], {"ask_id": args[1], "state": "OPEN", "work_bead": flag(args, "--work-bead") or None, "quote": None})
+        return 0, ""
+    if args[:1] in (["show-ask"], ["close-ask"]) and len(args) > 1:
+        ask = asks.get(args[1])
+        if ask is None:
+            return 1, "{}"
+        if args[0] == "show-ask":
+            return 0, json.dumps(ask)
+        if ask["state"] != "OPEN":
+            return 3, "refused: the ask is closed"
+        ask.update(state=EXITS.get(flag(args, "--exit"), "WITHDRAWN"), quote=flag(args, "--quote"))
+        return 0, ""
     if args[:2] == ["event", "bead"] and len(args) > 2 and "--kind" in args:
         kind = json.loads(args[args.index("--kind") + 1])
         bid = args[2]

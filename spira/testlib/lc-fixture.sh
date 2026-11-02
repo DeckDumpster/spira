@@ -9,6 +9,11 @@
 #   env -i ... $(lcfix_env) queue ...   # carry the connection through an `env -i`
 #   lcfix_state sp-a              # -> CERTIFIED
 #
+# lcfix_up_on_testdb instead puts the database on a server-mode testdb's own server, for a
+# suite whose subject reads the beads through spira-lc (plan items, ask titles,
+# reconcile-content): spira-lc reads the planning store over the lifecycle connection, so it
+# sees the beads only when both live on one server, as they do in production.
+#
 # lcfix_down is idempotent; call it from the suite's EXIT trap.
 LCFIX_PID=""
 LCFIX_DIR=""
@@ -53,6 +58,35 @@ YAML
     [ "$up" = 1 ] || { echo "lc-fixture: dolt sql-server never came up: $(cat "$LCFIX_DIR/server.log")" >&2; return 1; }
     local ddl="${LCFIX_SCHEMA:-$HERE/../lifecycle/schema.sql}"
     spira-lc admin-apply-ddl "$ddl" > "$LCFIX_DIR/schema.log" 2>&1 \
+        || { echo "lc-fixture: schema failed: $(cat "$LCFIX_DIR/schema.log")" >&2; return 1; }
+}
+
+lcfix_up_on_testdb() {
+    LCFIX_DOLT="$(command -v dolt 2>/dev/null)" || { echo "lc-fixture: dolt not on PATH" >&2; return 1; }
+    command -v spira-lc >/dev/null 2>&1 || { echo "lc-fixture: spira-lc not on PATH" >&2; return 1; }
+    [ "${TESTDB_MODE:-}" = server ] || { echo "lc-fixture: lcfix_up_on_testdb needs a server-mode testdb (SPIRA_TESTDB_MODE=server)" >&2; return 1; }
+    LCFIX_DIR="$(mktemp -d)"
+    unset SPIRA_LC_SOCKET
+    : > "$LCFIX_DIR/credential"
+    tl_config SPIRA_LC_PASSWORD_FILE="$LCFIX_DIR/credential" SPIRA_LC_SOCKET="" \
+        || { echo "lc-fixture: cannot declare the lifecycle connection" >&2; return 1; }
+    export SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_DB=spira_lifecycle \
+        SPIRA_LC_DATA_DIR="$LCFIX_DIR" SPIRA_LC_USER=root SPIRA_LC_PASSWORD=""
+    _lcfix_schema_on_testdb || return 1
+    [ -n "${_LCFIX_ON_TESTDB:-}" ] && return 0
+    _LCFIX_ON_TESTDB=1
+    # A testdb_reset restarts that server on a fresh copy of the bead template, which holds no
+    # lifecycle database: the schema follows every reset, so each section starts on empty stores.
+    eval "$(declare -f testdb_reset | sed '1s/testdb_reset/_lcfix_testdb_reset_store/')"
+    testdb_reset() { _lcfix_testdb_reset_store "$@" && _lcfix_schema_on_testdb; }
+}
+
+_lcfix_schema_on_testdb() {
+    local port
+    port="$(cat "$SPIRA_DB/.beads/dolt-server.port" 2>/dev/null)" \
+        || { echo "lc-fixture: the testdb names no server port" >&2; return 1; }
+    export SPIRA_LC_PORT="$port"
+    spira-lc admin-apply-ddl "${LCFIX_SCHEMA:-$HERE/../lifecycle/schema.sql}" > "$LCFIX_DIR/schema.log" 2>&1 \
         || { echo "lc-fixture: schema failed: $(cat "$LCFIX_DIR/schema.log")" >&2; return 1; }
 }
 
