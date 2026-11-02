@@ -120,6 +120,7 @@ fn production() -> Settings {
             "SPIRA_SCOPED_STOP_REVIEW_SECS" => "86400".into(),
             "SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS" => "900".into(),
             "SPIRA_RUNTIME_REPO_EVENTS_SECS" => "45".into(),
+            "SPIRA_RUNTIME_OVERRIDES_SECS" => "60".into(),
             "SPIRA_RUNTIME_VIEW_SECS" => "3".into(),
             "SPIRA_VIEW" => "/unused".into(),
             "SPIRA_VIEW_SESSION" => "cockpit".into(),

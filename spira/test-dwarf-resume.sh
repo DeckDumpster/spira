@@ -20,6 +20,8 @@
 # brief rendering at all) and T3 (the real `dwarf` binary, prompt checked end to end) are
 # unaffected and stay.
 #
+# SPLIT FOR THE 30 s CAP: each real dwarf launch costs about 9 s, so the slain-commit pair stays here
+# and the stale-base case is test-dwarf-resume-base.sh.
 # defect: sp-2e4v
 # tier: T2
 # covers: dwarf/src/* landing-pass/src/* spira/lib.sh UC-dwarf-execution-07
@@ -147,30 +149,5 @@ git -C "$REPO" checkout -q main
 run_dwarf
 nowant "wiring: regular commit gets no SLAIN_BRIEF" "A previous attempt was slain" "$(cat "$TMP/prompt")"
 
-echo
-echo "T3: stale local base — the branch is cut from fresh origin/main, not stale local main"
-# ===========================================================================================
-# The sentinel lands from a dedicated worktree and never fast-forwards the shared checkout,
-# so origin/main advances without updating local main. dwarf.sh must fetch from the remote
-# before cutting the branch, so the new branch starts at the FRESH origin/main.
-#
-# The discriminator: git merge-base(branch, origin/main).
-#   If cut from fresh origin/main (B):  merge-base = B  (origin/main is an ancestor)
-#   If cut from stale local main (A):   merge-base = A  (diverged before origin/main)
-# defect: sp-stale-base
-testdb_reset; seed sp-ar-stalebase
-SECOND="$TMP/second"; timeout 5 git clone -q "$ORIGIN" "$SECOND" 2>/dev/null
-git -C "$SECOND" config user.email t@t; git -C "$SECOND" config user.name t
-printf 'sentinel-landed\n' >> "$SECOND/g"; git -C "$SECOND" add g
-git -C "$SECOND" commit -qm "sentinel: landed something — origin/main advances"
-timeout 5 git -C "$SECOND" push -q origin main 2>/dev/null
-local_main_sha="$(git -C "$REPO" rev-parse main)"  # stale — does not include the push above
-run_dwarf
-fresh_origin="$(git -C "$REPO" rev-parse origin/main)"   # updated by the fetch inside dwarf.sh
-branch_base="$(git -C "$REPO" merge-base "spira/sp-ar-stalebase" origin/main 2>/dev/null)"
-nowant "setup: local main must differ from origin/main for this test to mean anything" \
-    "$fresh_origin" "$local_main_sha"
-is "stale-local-base: branch is cut from fresh origin/main, not stale local main" \
-    "$fresh_origin" "$branch_base"
 
 tl_summary

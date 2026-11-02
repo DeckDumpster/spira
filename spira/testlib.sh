@@ -1228,7 +1228,8 @@ _tl_init
 _tl_arm
 
 # tl_stub_ask_store <dir> — a bd and a spira-lc stand-in for suites whose `mail send` asks must
-# open a tracking bead: `list` finds no duplicate, `create` mints a fresh id, `create-ask` succeeds.
+# open a tracking bead: `list` finds no duplicate, `create` mints a fresh id, `create-ask` succeeds,
+# and `memories` is a readable, empty SOP shelf (an unreadable one makes `sop match` retry for 15 s).
 tl_stub_ask_store() {
     local d="${1:?tl_stub_ask_store needs a directory}"
     mkdir -p "$d"
@@ -1236,6 +1237,7 @@ tl_stub_ask_store() {
 #!/usr/bin/env bash
 case " \$* " in
     *" list "*) printf '[]\n' ;;
+    *" memories "*) printf '{"schema_version": 1}\n' ;;
     *" create "*) cat >/dev/null; n=\$(( \$(cat "$d/n" 2>/dev/null || echo 0) + 1 )); echo \$n > "$d/n"; echo "sp-stub\$n" ;;
 esac
 exit 0

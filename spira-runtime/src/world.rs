@@ -375,6 +375,13 @@ impl World {
         serde_json::to_string(&design_asks::Snapshot { failure: None, asks, pages }).map_err(|e| e.to_string())
     }
 
+    /// One `overrides.sh apply` pass; a failed override fails the pass, and its stdout and stderr say which.
+    pub fn overrides_apply(&self) -> Result<String, String> {
+        let out = spira_config::bounded::bounded("overrides.sh").arg("apply").stdin(std::process::Stdio::null()).output().map_err(|e| format!("overrides.sh: {e}"))?;
+        let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        if out.status.success() { Ok(said.trim().to_string()) } else { Err(said.trim().to_string()) }
+    }
+
     /// The wiki checkout's changed paths and their mtimes. A path that no longer exists has none
     /// and is left out; an unset wiki observes nothing.
     pub fn brain_dirty_snapshot(&self) -> Result<String, String> {

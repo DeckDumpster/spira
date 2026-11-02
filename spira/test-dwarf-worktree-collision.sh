@@ -30,6 +30,8 @@
 # assertion is about `git worktree add`'s actual refusal and dwarf.sh's actual response to it
 # (law-prefer-the-real-dependency) — a stub of either would test the stub.
 #
+# SPLIT FOR THE 30 s CAP (each real dwarf launch costs about 9 s): case 1 is here, case 2 is
+# test-dwarf-worktree-aside.sh.
 # defect: sp-om71s
 # tier: T2
 # covers: dwarf/src/* spira/lib.sh UC-dwarf-execution-01
@@ -160,42 +162,4 @@ is "case 1: bead B's recorded branch was corrected to its own" "spira/sp-cw-b" "
     || bad "case 1: bead A's worktree is untouched by B's correction" "gone"
 
 # ======================================================================================
-echo
-echo "CASE 2 (the legitimate case): this bead's OWN branch, checked out at a path that is"
-echo "                              not its canonical worktree — moved aside, fresh tree cut:"
-# ======================================================================================
-testdb_reset
-rm -rf "$SPIRA_RUN/worktree"
-
-# A previous naming convention (or a hand-made tree) held this bead's own branch outside
-# $SPIRA_RUN/worktree entirely — nothing under that root names this path, so it cannot be
-# mistaken for a live sibling's canonical directory.
-OLDPATH="$TMP/handmade/sp-cw-c-legacy"
-mkdir -p "$(dirname "$OLDPATH")"
-git -C "$REPO" worktree add -q -b spira/sp-cw-c "$OLDPATH" origin/main
-printf 'old-attempt\n' > "$OLDPATH/g"
-git -C "$OLDPATH" add g
-git -c user.email=t@t -c user.name=t -C "$OLDPATH" commit -qm "sp-cw-c — from a previous path"
-
-seed sp-cw-c
-run_dwarf
-out3="$(cat "$TMP/out" 2>/dev/null)"
-
-[ -e "$SPIRA_RUN/worktree/sp-cw-c/.git" ] \
-    && ok "case 2: a fresh worktree was cut at the canonical path" \
-    || bad "case 2: a fresh worktree was cut at the canonical path" "missing; out=$out3"
-[ -d "$OLDPATH.prior" ] \
-    && ok "case 2: the previous-path tree was moved aside, not deleted" \
-    || bad "case 2: the previous-path tree was moved aside, not deleted" "no $OLDPATH.prior; out=$out3"
-[ -e "$OLDPATH" ] \
-    && bad "case 2: nothing remains registered at the old path" "still present" \
-    || ok "case 2: nothing remains registered at the old path"
-# The prior commit survives at the new (moved-aside) location — nothing deleted.
-want "case 2: the prior attempt's commit survived the move" \
-    "from a previous path" \
-    "$(git -C "$OLDPATH.prior" log --format='%s' -5 2>/dev/null)"
-want "case 2: bead C's own call still reached the model and closed the bead" \
-    "sp-cw-c" \
-    "$(cat "$TMP/prompt" 2>/dev/null)"
-
 tl_summary

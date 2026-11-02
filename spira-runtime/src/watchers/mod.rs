@@ -7,6 +7,7 @@ pub mod design_asks;
 pub mod brain_dirty;
 pub mod bead_sweep;
 pub mod inbox_keeper;
+pub mod overrides;
 pub mod pr_notify;
 pub mod publish_backlog;
 pub mod repo_events;
