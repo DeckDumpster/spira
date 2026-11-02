@@ -406,6 +406,7 @@ fn ports<'a>(
         slots: &w.slots,
         lc: &crate::real::Unserved,
         stops: &crate::switches::NoStops,
+        installed: &crate::lane::NoRounds,
     }
 }
 

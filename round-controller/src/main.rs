@@ -15,6 +15,7 @@ use round_controller::probe::{probe, ThreadSleep};
 use round_controller::real;
 use round_controller::real::child::SysSpawn;
 use round_controller::real::git::RealGit;
+use round_controller::real::installed::InstalledRelease;
 use round_controller::real::launch::{Programs, Systemd, SystemdUnits};
 use round_controller::real::lc::SpiraLc;
 use round_controller::real::liveness::NoVmRecords;
@@ -299,6 +300,16 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
     let registry = spira_config::resolve::locate_home_for_process()
         .ok()
         .map(|home| spira_config::repos::Registry::from_env(std::env::vars().collect(), &home));
+    let queued = registry.clone();
+    let installed = InstalledRelease::new(
+        proc_.clone(),
+        spira_config::release_env::tool("round-vm"),
+        std::env::var(spira_config::RELEASE_ENV)
+            .ok()
+            .filter(|r| !r.is_empty())
+            .map(Into::into),
+        Box::new(move |repo| queued.as_ref().is_some_and(|reg| reg.land_queued(repo))),
+    );
     let git = RealGit::new(
         proc_.clone(),
         Box::new(move |repo| {
@@ -338,6 +349,7 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
         slots: &slot_settings,
         lc: &lc,
         stops: &stops,
+        installed: &installed,
     };
     f(&ports)
 }

@@ -110,6 +110,7 @@ impl World {
             slots: &self.slots,
             lc: &crate::real::Unserved,
             stops: &crate::switches::NoStops,
+            installed: &crate::lane::NoRounds,
         }
     }
 

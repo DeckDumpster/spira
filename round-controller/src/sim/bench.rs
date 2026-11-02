@@ -10,6 +10,7 @@ use state_store::{
 };
 
 use crate::death::{Holder, UnitState, Units, VmFact, Vms};
+use crate::lane::{Installed, LaneInputs};
 use crate::liveness::LeaseSettings;
 use crate::outcome::MemLog;
 use crate::ports::{Launch, Launched, Lc, Ports, Store};
@@ -295,6 +296,32 @@ impl Stops for FakeStops {
     }
 }
 
+/// The installed round image and harness. Unset, no repo lands by rounds, so a pass leaves every
+/// seeded lane as it stands.
+#[derive(Default)]
+pub struct FakeInstalled(Mutex<Option<Result<LaneInputs, String>>>);
+
+impl FakeInstalled {
+    /// Every repo rides rounds on this image and harness.
+    pub fn set(&self, image_digest: &str, harness_version: &str) {
+        *crate::lock(&self.0) = Some(Ok(LaneInputs {
+            image_digest: image_digest.into(),
+            harness_version: harness_version.into(),
+        }));
+    }
+
+    /// Every read is refused with `why`.
+    pub fn refuse(&self, why: &str) {
+        *crate::lock(&self.0) = Some(Err(why.into()));
+    }
+}
+
+impl Installed for FakeInstalled {
+    fn lane_inputs(&self, _: &str) -> Result<Option<LaneInputs>, String> {
+        crate::lock(&self.0).clone().transpose()
+    }
+}
+
 /// One `spira-lc` call the bench answered in process: its argv, its answer, and the revisions
 /// its txns took.
 #[derive(Clone, Debug, PartialEq)]
@@ -373,6 +400,7 @@ pub struct Bench {
     /// When each runner slot was given back, on the virtual clock.
     pub slot_releases: Mutex<Vec<u64>>,
     pub stops: FakeStops,
+    pub installed: FakeInstalled,
     /// Every section and intent verb, in order, answered by spira-lc's own dispatch.
     pub lc_calls: Mutex<Vec<LcCall>>,
     front: Mutex<Front>,
@@ -442,6 +470,7 @@ impl Bench {
             git: Arc::default(),
             slot_releases: Mutex::default(),
             stops: FakeStops::default(),
+            installed: FakeInstalled::default(),
             lc_calls: Mutex::default(),
             front: Mutex::new(front),
         }
@@ -475,6 +504,7 @@ impl Bench {
             slots: &self.slot_settings,
             lc: self,
             stops: &self.stops,
+            installed: &self.installed,
         }
     }
 

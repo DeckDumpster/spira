@@ -780,6 +780,7 @@ pub fn run<R: SubPasses>(p: &Ports, env: &RunEnv, subs: &mut R, a: &RunArgs) -> 
         slots: p.slots,
         lc: p.lc,
         stops: p.stops,
+        installed: p.installed,
     };
     let mut guard = Guard {
         last_progress: p.clock.now_ms(),
