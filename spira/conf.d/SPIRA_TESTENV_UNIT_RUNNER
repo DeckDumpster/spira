@@ -1,0 +1,13 @@
+TYPE=string
+GROUP=testenv
+DOC=WHAT A FILTERED UNIT RUN RUNS IN: container (the fixture container, as always) or sandbox (bubblewrap on the host, sp-yx0yu9). testenv --runner outranks it for one run.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHAT A FILTERED UNIT RUN RUNS IN (`testenv --suites unit-tests --tests ...`):
+    # `container` runs spira/unit-tests.sh in the fixture container, as testenv always has;
+    # `sandbox` runs it under bubblewrap on the host (sp-yx0yu9): the root read-only, a fresh
+    # HOME and /tmp, no network, no SPIRA_ environment, and each branch's cargo target kept
+    # under SPIRA_TESTENV_SANDBOX_TARGET_ROOT, so nothing is compiled twice and no image,
+    # volume or test database is set up. `container` is the retreat path and stays the
+    # default until the sandbox is proven by an A/B; `testenv --runner` picks one run.
+    : "${SPIRA_TESTENV_UNIT_RUNNER:=container}"
+SPIRA_CONF_DEFAULT_EOF

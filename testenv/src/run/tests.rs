@@ -189,6 +189,8 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
             .unwrap_or_else(|| "local-1000".into()),
         scratch_slots: num!("SPIRA_TESTENV_SCRATCH_SLOTS").unwrap_or(4),
         scratch_min_free_mib: num!("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB").unwrap_or(4096),
+        unit_runner: crate::sandbox::Runner::Container,
+        sandbox_target_root: String::new(),
         scratch_min_mem_mib: num!("SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB").unwrap_or(8192),
         warm_slots: num!("SPIRA_TESTENV_WARM_SLOTS").unwrap_or(3),
         setup_share: num!("SPIRA_TESTENV_SETUP_SHARE").unwrap_or(50u64).clamp(10, 90),

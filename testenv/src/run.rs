@@ -1509,6 +1509,14 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     } else {
         None
     };
+    // ---- the sandbox runner (sp-yx0yu9): a filtered unit run under bwrap, no container ---
+    if args.tests.is_some() && active.len() == 1 && crate::unit::selected(&active) && args.runner.unwrap_or(s.unit_runner) == crate::sandbox::Runner::Sandbox {
+        let branch = git(&repo.path, &["rev-parse", "--symbolic-full-name", br])
+            .ok()
+            .and_then(|r| r.strip_prefix("refs/heads/").map(str::to_string));
+        let volume = crate::container::unit_target_volume(branch.as_deref(), &tree);
+        return run_sandboxed(args, deps, &s, &wt.path, &volume, &results);
+    }
     // ---- build in place (or stage the prebuilt set: D8) -----------------------------
     let (pdir, artifacts) = match &prebuilt {
         Some(_) => (
@@ -2697,9 +2705,89 @@ fn sweep_scratch(deps: &Deps) {
 /// container mounts it for its unprivileged user: conf.sh refuses a stale file and cannot
 /// rewrite one there. Runs on the prebuilt-artifacts path too, which skips [`build`].
 // batch-job: a local registry regeneration, bounded by the host rather than a remote
+/// A filtered unit run in the sandbox (sp-yx0yu9): `spira/unit-tests.sh` under bwrap in this
+/// run's worktree, its cargo target kept per branch under `testenv.sandbox_target_root`. The
+/// same `.out`/`.result` files and verdict as the container path; no image, volume or test DB.
+fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume: &str, results: &Path) -> Finish {
+    let script = crate::unit::SCRIPT;
+    let root = s.sandbox_target_root.trim();
+    if root.is_empty() {
+        deps.log("unit-tests: runner=sandbox needs SPIRA_TESTENV_SANDBOX_TARGET_ROOT (where each branch's cargo target lives) — set it, or run with --runner container");
+        return Finish::fault(2, "sandbox-target-root", 0);
+    }
+    if let Err(e) = crate::sandbox::usable("bwrap") {
+        deps.log(&format!("unit-tests: runner=sandbox: {e} — run with --runner container, or set SPIRA_TESTENV_UNIT_RUNNER=container"));
+        return Finish::fault(2, "sandbox-unusable", 0);
+    }
+    let Some(home) = (deps.env)("HOME").filter(|h| !h.is_empty()) else {
+        deps.log("unit-tests: runner=sandbox: HOME is not set — the sandbox replaces it and binds the toolchain back under it");
+        return Finish::fault(2, "sandbox-home", 0);
+    };
+    let target = crate::sandbox::target_dir(Path::new(root), volume);
+    let threads = (deps.env)("RUST_TEST_THREADS").and_then(|v| v.trim().parse().ok()).unwrap_or(4);
+    let profile = crate::sandbox::Profile::for_run(tree, &target, Path::new(&home), threads);
+    let out = results.join(format!("{script}.out"));
+    deps.log(&format!("unit-tests: runner=sandbox tree={} target={}", tree.display(), target.display()));
+    let ran = match crate::sandbox::run("bwrap", &profile, &tree.join("spira").join(script), &out, args.deadline.map(Duration::from_secs)) {
+        Ok(r) => r,
+        Err(e) => {
+            deps.log(&format!("unit-tests: runner=sandbox could not start: {e}"));
+            return Finish::fault(2, "sandbox-start", 0);
+        }
+    };
+    let text = fs::read_to_string(&out).unwrap_or_default();
+    let compiled = text.lines().filter(|l| l.trim_start().starts_with("Compiling ")).count();
+    deps.log(&format!(
+        "sandbox-metrics runner=sandbox secs={} compiled={compiled} rc={} timed_out={}",
+        ran.secs,
+        ran.rc.map(|c| c.to_string()).unwrap_or_else(|| "-".into()),
+        ran.timed_out
+    ));
+    let status = match (ran.timed_out, ran.rc) {
+        (true, _) => Status::Timeout,
+        (false, Some(0)) => Status::Ok,
+        _ => Status::Red,
+    };
+    let rec = ResultRecord {
+        status,
+        epoch: now_epoch(),
+        secs: ran.secs,
+        fingerprint: "-".into(),
+        mode: Some(args.mode),
+        producer: Some(Producer::Explicit),
+        rc: ran.rc,
+    };
+    if let Err(e) = fs::write(results.join(format!("{script}.result")), format!("{rec}\n")) {
+        deps.log(&format!("unit-tests: cannot write the result record: {e}"));
+        return Finish::fault(2, "results-dir", 0);
+    }
+    (deps.out)(&suite_line(script, &rec));
+    if let Some(t) = &args.tests {
+        let names = crate::unit::tests_ran(&text);
+        deps.log(&format!("unit-tests: --tests {} ran {} test(s): {}", t.join(","), names.len(), names.join(" ")));
+        let unmatched: Vec<&str> = t.iter().map(String::as_str).filter(|f| !names.iter().any(|n| n.contains(f))).collect();
+        if !unmatched.is_empty() && status == Status::Ok {
+            deps.log(&format!("unit-tests: no test matched {} — no verdict", unmatched.join(",")));
+            return Finish::fault(2, "tests-matched-none", 1);
+        }
+    }
+    match status {
+        Status::Ok => Finish::green(1),
+        Status::Timeout => Finish::fault(2, "deadline-suites", 0),
+        _ => Finish {
+            rc: 1,
+            ran: 1,
+            red: 1,
+            first_red: Some(format!("{script}: exit {}", ran.rc.map(|c| c.to_string()).unwrap_or_else(|| "signal".into())).into()),
+            ..Finish::green(1)
+        },
+    }
+}
+
 fn warm_conf_gen(wt: &Path) -> Option<Finish> {
     let conf_gen = wt.join("spira/conf-gen.sh");
     if conf_gen.exists() {
+        // batch-job: the tree's own conf-gen, part of a testenv trial bounded by its deadline
         match std::process::Command::new("bash").envs(spira_config::release_env::child_path_env_for_process())
             .arg(&conf_gen)
             .current_dir(wt)

@@ -3,7 +3,7 @@
 
 use crate::record::Mode;
 
-pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--artifacts <dir>] [--deadline <secs>] [--repeat-reason <why>] [--tests <name>[,<name>...]] [--report [N]] <branch> [<repo-name>]";
+pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--artifacts <dir>] [--deadline <secs>] [--repeat-reason <why>] [--tests <name>[,<name>...]] [--runner container|sandbox] [--report [N]] <branch> [<repo-name>]";
 
 /// Where the explicit suite list comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +30,9 @@ pub struct RunArgs {
     /// `--tests a,b`: the unit-tests tier runs only the Rust tests whose names contain one of
     /// these, cargo test's own filter; None runs every test of the selected crates.
     pub tests: Option<Vec<String>>,
+    /// `--runner container|sandbox`: this run's unit runner, outranking
+    /// `SPIRA_TESTENV_UNIT_RUNNER` (sp-yx0yu9).
+    pub runner: Option<crate::sandbox::Runner>,
     pub branch: String,
     pub repo: Option<String>,
 }
@@ -58,6 +61,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     let mut artifacts: Option<String> = None;
     let mut repeat_reason: Option<String> = None;
     let mut tests: Option<Vec<String>> = None;
+    let mut runner: Option<crate::sandbox::Runner> = None;
     let mut i = 0;
     let parse_deadline = |v: &str| -> Result<u64, UsageError> {
         v.parse::<u64>()
@@ -90,7 +94,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         let a = args[i].as_str();
         match a {
             "--mode" | "--suites" | "--profile" | "--deadline" | "--artifacts"
-            | "--repeat-reason" | "--tests" => {
+            | "--repeat-reason" | "--tests" | "--runner" => {
                 let v = args
                     .get(i + 1)
                     .cloned()
@@ -102,6 +106,9 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                     "--artifacts" => artifacts = Some(v),
                     "--repeat-reason" => repeat_reason = Some(v),
                     "--tests" => tests = Some(parse_tests(&v)?),
+                    "--runner" => {
+                        runner = Some(crate::sandbox::Runner::parse(&v).map_err(|e| UsageError(vec![format!("batch: --runner: {e}")]))?)
+                    }
                     _ => profile = Some(v),
                 }
                 i += 2;
@@ -226,6 +233,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         artifacts,
         repeat_reason,
         tests,
+        runner,
         branch,
         repo,
     }))

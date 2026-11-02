@@ -210,6 +210,8 @@ lc_store_path = ""
 lc_lock_ttl_min_ms = 1000
 lc_lifecycle_on_store = 0
 reconciler_pass_timeout_secs = 50
+testenv_unit_runner = "container"
+testenv_sandbox_target_root = ""
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok
