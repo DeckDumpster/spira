@@ -1119,6 +1119,13 @@ pub fn reopen_cmd(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answ
             false
         }
     };
+    if rowless && m.call(&["show-ask".into(), id.clone()]).0 == APPLIED {
+        return Answer {
+            code: REFUSED,
+            stderr: format!("spira-lc reopen: {id} is an ask: its state is its ask record, and a closed ask is not reopened — nothing reopened\n"),
+            ..Default::default()
+        };
+    }
     let settled = if rowless { crate::reconcile_content::reopen_unowned(bd, id) } else { crate::reconcile_content::settle_reopen(m, bd, id).map(|_| ()) };
     match settled {
         Ok(()) => Answer::code(APPLIED),

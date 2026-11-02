@@ -182,6 +182,11 @@ impl Machine for Fake {
                 (0, String::new())
             }
             "list-asks" => (0, "[]".into()),
+            "show-ask" if self.ask_rows.contains(&args[1]) => {
+                let closed = self.ask_closes.iter().any(|c| c[1] == args[1]);
+                (0, json!({"ask_id": args[1], "state": if closed { "WITHDRAWN" } else { "OPEN" }, "quote": "q"}).to_string())
+            }
+            "show-ask" => (1, "{}".into()),
             "close-ask" => {
                 self.ask_closes.push(args.to_vec());
                 if self.ask_rows.contains(&args[1]) { (0, String::new()) } else { (1, format!("close-ask: {} is no ask", args[1])) }
@@ -1420,6 +1425,7 @@ fn closing_an_ask_with_no_bead_row_closes_its_ask_row_withdrawn_and_a_bead_with_
     let mut bd = FakeBd::default();
     assert_eq!(close(&v(&["sp-ask", "--reason", "moot", "--actor", "claude"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
     assert_eq!(f.ask_closes, vec![v(&["close-ask", "sp-ask", "--exit", "withdrawn", "--quote", "moot", "--actor", "claude"])]);
+    assert_eq!(bd.closed, vec![("sp-ask".to_string(), "ask withdrawn: q".to_string())], "the decision bead follows its closed ask");
     assert_eq!(close(&v(&["sp-w", "--reason", "landed at abc"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
     assert_eq!(f.ask_closes.len(), 1, "a bead with a row is no ask");
 }

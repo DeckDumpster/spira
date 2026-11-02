@@ -77,12 +77,13 @@ impl Mends for Live<'_> {
             .filter(|id| !ended.contains(id))
             .collect())
     }
-    fn retire(&mut self, mend: &str, reason: &str) -> Result<(), String> {
+    fn retire(&mut self, mend: &str, _reason: &str) -> Result<(), String> {
         let (rc, msg) = crate::apply_bead_event(self.0, mend, "mend-retire", BeadEventKind::Drop { reason: DropReason::Unwanted });
         if rc != 0 {
             return Err(format!("lifecycle drop exited {rc}: {msg}"));
         }
-        crate::callers::Bd::close(&mut bd::LiveBd, mend, reason)
+        // bd's status follows the DROPPED record in reconcile-content.
+        Ok(())
     }
 }
 

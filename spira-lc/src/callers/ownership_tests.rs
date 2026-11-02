@@ -86,3 +86,46 @@ fn an_ask_closed_in_the_control_plane_is_not_open_and_reconcile_content_closes_i
     let a = reconcile_content(&v(&["--apply"]), &mut m, &mut b);
     assert_eq!((a.code, w.writes.borrow().len()), (APPLIED, 1), "a second pass writes nothing: {}", a.stdout);
 }
+
+#[test]
+fn a_closed_ask_is_not_reopened_in_bd_behind_its_record() {
+    let w = World::new();
+    w.file("sp-q", "decision", None, &["ask"]);
+    w.ok(&["create-ask", "sp-q"]);
+    w.ok(&["close-ask", "sp-q", "--exit", "withdrawn", "--quote", "moot", "--actor", "operator"]);
+    let (mut m, mut b) = (&w, &w);
+    let a = reopen_cmd(&v(&["sp-q", "second thoughts"]), &mut m, &mut b);
+    assert_eq!(a.code, REFUSED, "{a:?}");
+    assert!(a.stderr.contains("ask record"), "{}", a.stderr);
+    assert!(w.writes.borrow().is_empty());
+}
+
+#[test]
+fn a_scoped_pass_closes_the_epic_above_a_child_that_just_ended() {
+    let w = World::new();
+    w.file("sp-e", "epic", None, &[]);
+    w.file("sp-c", "task", Some("sp-e"), &[]);
+    w.ok(&["create-bead", "sp-c", "--ready"]);
+    let (_, seq) = w.lc(&["event-seq"]);
+    let since = serde_json::from_str::<Value>(&seq).unwrap()["seq"].as_u64().unwrap().to_string();
+    w.drop("sp-c");
+    let (mut m, mut b) = (&w, &w);
+    let a = reconcile_content(&v(&["--apply", "--since-seq", &since]), &mut m, &mut b);
+    assert_eq!(a.code, APPLIED, "{a:?}");
+    assert_eq!((w.status("sp-c"), w.status("sp-e")), ("closed".to_string(), "closed".to_string()), "{}", a.stdout);
+}
+
+#[test]
+fn a_decision_bead_with_a_record_left_from_before_follows_its_ask_not_the_record() {
+    let w = World::new();
+    w.file("sp-q", "decision", None, &["ask"]);
+    let req = "legacy".to_string();
+    let call = crate::control::state::Call { now: super::world::AT, request: &req };
+    assert_eq!(crate::control::state::run(&w.store, &v(&["create-bead", "sp-q", "--ready"]), &call).0, 0);
+    w.drop("sp-q");
+    w.ok(&["create-ask", "sp-q"]);
+    let (mut m, mut b) = (&w, &w);
+    let a = reconcile_content(&v(&["--apply"]), &mut m, &mut b);
+    assert_eq!(a.code, APPLIED, "{a:?}");
+    assert_eq!(w.status("sp-q"), "open", "the ask is open: {}", a.stdout);
+}

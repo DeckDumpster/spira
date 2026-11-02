@@ -60,6 +60,22 @@ fn records(m: &mut dyn Machine) -> Result<BTreeMap<String, (String, String)>, St
     Ok(rows.iter().map(|r| (s(r, "bead_id"), (s(r, "state"), s(r, "reason")))).collect())
 }
 
+/// The lifecycle records of `ids` alone, by bead id.
+fn records_of(m: &mut dyn Machine, ids: &[String]) -> Result<BTreeMap<String, (String, String)>, String> {
+    let mut out = BTreeMap::new();
+    for chunk in ids.chunks(CHUNK) {
+        let (rc, text) = m.call(&["list".into(), "--ids".into(), chunk.join(",")]);
+        if rc != 0 {
+            return Err(format!("lifecycle list failed: {}", text.trim()));
+        }
+        let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(text.trim()) else {
+            return Err("lifecycle list is not a JSON array".into());
+        };
+        out.extend(rows.iter().map(|r| (s(r, "bead_id"), (s(r, "state"), s(r, "reason")))));
+    }
+    Ok(out)
+}
+
 fn work_reason(state: &str, row_reason: &str) -> String {
     let why = Some(row_reason.trim()).filter(|r| !r.is_empty()).map(|r| format!(" Row reason: {r}\n")).unwrap_or_default();
     let outcome = if state == "DONE" { "done-without-landing (no commit landed; the row says delivered by hand)" } else { &state.to_lowercase() };
@@ -129,17 +145,23 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
     let terminal_ids: Vec<String> = recs.iter().filter(|(id, (st, _))| terminal(st) && in_scope(id)).map(|(id, _)| id.clone()).collect();
     match items_of(m, &terminal_ids, &["--open"]) {
         Ok(open) => {
-            for id in open.iter().map(|r| s(r, "id")).filter(|i| !i.is_empty()) {
+            // A no-record type with a record left from before (an epic, an ask's decision bead)
+            // follows its own owner below, never that record.
+            let work = open.iter().filter(|r| spira_config::nonwork::is_work_type(r.get("issue_type").and_then(Value::as_str)));
+            for id in work.map(|r| s(r, "id")).filter(|i| !i.is_empty()) {
                 let (state, reason) = &recs[&id];
                 closes.push(Close { why: format!("lifecycle {state}"), reason: work_reason(state, reason), id });
             }
         }
         Err(e) => return cannot(format!("content store unreadable: {e}")),
     }
+    // An unreadable ask or epic half is reported after the work beads' closes are written, so
+    // it never holds them back.
+    let mut unread = Vec::new();
     if scope.is_none() {
         match closed_asks(m, &only) {
             Ok(c) => closes.extend(c),
-            Err(e) => return cannot(e),
+            Err(e) => unread.push(e),
         }
     }
     let epics = match &scope {
@@ -149,7 +171,7 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
     };
     match epics.and_then(|e| complete_epics(m, &recs, &e)) {
         Ok(c) => closes.extend(c),
-        Err(e) => return cannot(e),
+        Err(e) => unread.push(e),
     }
     if apply {
         if let Err((code, why)) = crate::skew::guard(m) {
@@ -178,7 +200,12 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
         lines.push(format!("through-seq: {seq}"));
     }
     lines.push(format!("reconcile-content: {done} {}", if apply { "closed" } else { "would close (dry run; --apply to write)" }));
-    Answer::out(code, lines.join("\n"))
+    let mut a = Answer::out(code, lines.join("\n"));
+    if !unread.is_empty() {
+        a.code = CANNOT_TELL;
+        a.stderr = unread.iter().map(|e| format!("spira-lc reconcile-content: {e}\n")).collect();
+    }
+    a
 }
 
 /// Every ask the control plane holds closed whose decision bead bd still holds open (among
@@ -284,20 +311,24 @@ pub fn settle_ask(m: &mut dyn Machine, bd: &mut dyn Bd, id: &str) -> Result<bool
         1 => return Ok(false),
         _ => return Err(format!("show-ask failed: {}", out.trim())),
     }
-    for c in closed_asks(m, &[id.to_string()])? {
-        bd.close(&c.id, &c.reason)?;
+    let ask: Value = serde_json::from_str(out.trim()).map_err(|e| format!("show-ask: not JSON: {e}"))?;
+    let state = s(&ask, "state");
+    if state == "OPEN" {
+        return Ok(true);
     }
+    bd.close(id, &ask_reason(&state, &s(&ask, "quote")))?;
     Ok(true)
 }
 
 /// Close epic `id` in bd with `reason` when every child is terminal; refused otherwise.
 pub fn settle_epic(m: &mut dyn Machine, bd: &mut dyn Bd, id: &str, reason: &str) -> Answer {
-    let recs = match records(m) {
-        Ok(r) => r,
-        Err(e) => return cannot(e),
-    };
     let kids = match plan(m, &["children", "--ids", id]) {
         Ok(k) => k,
+        Err(e) => return cannot(e),
+    };
+    let ids: Vec<String> = kids.iter().map(|k| s(k, "id")).collect();
+    let recs = match records_of(m, &ids) {
+        Ok(r) => r,
         Err(e) => return cannot(e),
     };
     let pending: Vec<String> = kids

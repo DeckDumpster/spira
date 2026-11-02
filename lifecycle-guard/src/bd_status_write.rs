@@ -1,7 +1,7 @@
 //! bd's status for a bead the control plane owns has one writer: reconcile-content
 //! (`spira-lc/src/reconcile_content.rs`), which writes it from the lifecycle record or the ask.
 //! The `bd-status-read` rule's mirror: inside spira-lc, a call of the `Bd` port's status writers
-//! (`bd.close(…)`, `bd.reopen(…)`) anywhere else is a finding, so a verb that ends or hands back
+//! (`bd.close(…)`, `bd.reopen(…)`, `Bd::close(…)`) anywhere else is a finding, so a verb that ends or hands back
 //! a bead writes the control plane and leaves bd to reconcile-content. `spira-lc/src/bd.rs` is
 //! the port's implementation; other crates reach bd's status only through spira-lc's verbs
 //! (`bd-close-rust`, `bd-reopen-rust`).
@@ -18,7 +18,7 @@ pub const WRITER: &str = "spira-lc/src/reconcile_content.rs";
 
 fn status_write() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"\b(?:bd|LiveBd)\s*\.\s*(close|reopen)\s*\(").unwrap())
+    R.get_or_init(|| Regex::new(r"(?:\b(?:bd|LiveBd)\s*\.|\bBd\s*::)\s*(close|reopen)\s*\(").unwrap())
 }
 
 pub(crate) fn in_scope(rel: &str) -> bool {
@@ -77,8 +77,8 @@ mod tests {
 
     #[test]
     fn a_port_status_write_outside_reconcile_content_is_found_and_its_writer_and_tests_are_not() {
-        let src = "fn a() { bd.close(&id, &reason) }\nfn b() { let _ = bd . reopen(id); }\nfn c() { bd.closed(&ids) }\nfn d() { // bd.close(x)\n}\n#[cfg(test)]\nmod tests {\n    fn t() { bd.close(\"sp-1\", \"r\"); }\n}\n";
-        assert_eq!(found("spira-lc/src/callers.rs", src), vec![1, 2]);
+        let src = "fn a() { bd.close(&id, &reason) }\nfn b() { let _ = bd . reopen(id); }\nfn e() { crate::callers::Bd::close(&mut bd::LiveBd, id, r) }\nfn c() { bd.closed(&ids) }\nfn d() { // bd.close(x)\n}\n#[cfg(test)]\nmod tests {\n    fn t() { bd.close(\"sp-1\", \"r\"); }\n}\n";
+        assert_eq!(found("spira-lc/src/callers.rs", src), vec![1, 2, 3]);
         assert!(found(WRITER, src).is_empty());
         assert!(found("spira-lc/src/bd.rs", src).is_empty());
         assert!(found("spira-lc/src/callers/tests.rs", src).is_empty());
