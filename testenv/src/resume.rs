@@ -291,6 +291,7 @@ mod tests {
             artifacts_id: None,
             tests: None,
             unit: None,
+            runner: None,
         }
     }
 
