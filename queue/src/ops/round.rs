@@ -839,6 +839,10 @@ pub(crate) fn live_records(w: &World, c: &Ctx) -> Result<Vec<Kv>, String> {
             .map(|(_, kv)| kv)
             .collect());
     }
+    // A queue.forge repo's batches are batch PRs, not rounds.
+    if c.r.mode != LandMode::QueueLocal {
+        return Ok(Vec::new());
+    }
     Ok(w.lc
         .open_batches(&c.r.name)?
         .into_iter()

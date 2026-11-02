@@ -29,15 +29,17 @@ const NAME: &str = "round-record-readers";
 /// step that removes them after; the reader's tests plant the files it reads.
 const OWNERS: [&str; 2] = ["queue/src/ops/round_files.rs", "install/src/round_records.rs"];
 const OWNER_TESTS: [&str; 2] = ["queue/src/tests.rs", "queue/src/tests/"];
+/// Fixtures that plant round files as decoys, to prove their service never reads them.
+const DECOYS: [&str; 1] = ["spira-runtime/tests/soak.rs"];
 
 fn owns(path: &str) -> bool {
-    OWNERS.contains(&path) || OWNER_TESTS.iter().any(|t| path.starts_with(t))
+    OWNERS.contains(&path) || DECOYS.contains(&path) || OWNER_TESTS.iter().any(|t| path.starts_with(t))
 }
 
 fn re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r#"queue/[^/\s"']+/round(\.[^/\s"']*)?(["'\s)]|$)|queue_file\(\s*(&format!\(\s*)?"round(\.[^"]*)?"|"round\.\{"#)
+        Regex::new(r#"queue/[^/\s"']+/round(\.[^/\s"']*)?(["'\s)]|$)|queue_file\(\s*(&format!\(\s*)?"round(\.[^"]*)?"|"round\.\{|join\(\s*"round"\s*\)"#)
             .expect("static regex")
     })
 }
@@ -203,10 +205,10 @@ mod tests {
         let t = TempDir::new("rrr-queue");
         t.write(
             "queue/src/ops/round.rs",
-            "const RECORD: &str = \"round\";\nconst EXTRA: &str = \"round.\";\nlet p = c.queue_file(&format!(\"round.{batch}\"));\nlet q = c.queue_file(\"round.b1\");\nlet r = dir.join(\"queue/spira/round.b1\");\n",
+            "const RECORD: &str = \"round\";\nconst EXTRA: &str = \"round.\";\nlet p = c.queue_file(&format!(\"round.{batch}\"));\nlet q = c.queue_file(\"round.b1\");\nlet r = dir.join(\"queue/spira/round.b1\");\nlet s = repo_dir.join(\"round\");\n",
         );
         let found = run(&t, &["queue/src/ops/round.rs"]).unwrap();
-        assert_eq!(found.len(), 5, "{found:?}");
+        assert_eq!(found.len(), 6, "{found:?}");
     }
 
     #[test]

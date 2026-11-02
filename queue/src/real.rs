@@ -1510,12 +1510,19 @@ impl RealLc {
 
 /// Whether spira-lc serves the batch machine from the control store: the store is configured and
 /// the lifecycle verbs are switched onto it. Read once per process, as spira-lc reads it.
-fn rounds_on_store() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        let path = crate::conf::value("SPIRA_LC_STORE_PATH").unwrap_or_default();
-        let on = crate::conf::value("SPIRA_LC_LIFECYCLE_ON_STORE").unwrap_or_default();
-        !path.trim().is_empty() && matches!(on.trim(), "1" | "true")
+/// Parsed as spira-lc parses it, so the two never disagree on one value. Err: the config does
+/// not resolve, which no reader may take for "the files are the record".
+fn rounds_on_store() -> &'static Result<bool, String> {
+    static ON: std::sync::OnceLock<Result<bool, String>> = std::sync::OnceLock::new();
+    ON.get_or_init(|| {
+        let path = crate::conf::value("SPIRA_LC_STORE_PATH")?;
+        if path.trim().is_empty() {
+            return Ok(false);
+        }
+        let on = crate::conf::value("SPIRA_LC_LIFECYCLE_ON_STORE")?;
+        on.trim()
+            .parse::<bool>()
+            .map_err(|e| format!("SPIRA_LC_LIFECYCLE_ON_STORE = {on:?} does not parse: {e}"))
     })
 }
 
@@ -1564,7 +1571,14 @@ impl Lc for RealLc {
         self.bin.is_some()
     }
     fn rounds_door(&self) -> Option<&dyn crate::batches::Door> {
-        rounds_on_store().then_some(self as &dyn crate::batches::Door)
+        static UNRESOLVED: std::sync::OnceLock<crate::batches::Unresolved> = std::sync::OnceLock::new();
+        match rounds_on_store() {
+            Ok(true) => Some(self),
+            Ok(false) => None,
+            Err(e) => Some(UNRESOLVED.get_or_init(|| {
+                crate::batches::Unresolved(format!("cannot tell where the rounds are: {e}"))
+            })),
+        }
     }
     fn batch_state(&self, batch_id: &str) -> Option<(String, String)> {
         let out = self.stdout(&["show-batch", batch_id]).ok()?;

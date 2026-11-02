@@ -236,3 +236,12 @@ fn with_the_store_publish_asks_only_the_open_round_whether_a_pass_holds_the_hype
         t.forge.calls.borrow()
     );
 }
+
+#[test]
+fn with_the_store_a_queue_forge_repos_batch_is_not_a_round() {
+    let t = T::new(LandMode::Queue);
+    let d = t.lc.store.get_or_init(MemDoor::default);
+    d.put_round("spira", "spira-pr-batch", "CI_RUNNING", &[("sp-a", "ta")], 1);
+    let status = status(&t);
+    assert!(status.starts_with("round=none\nrepo=spira\n"), "{status}");
+}

@@ -119,7 +119,13 @@ pub fn batches(d: &dyn Door, repo: &str) -> Result<Vec<BatchRecord>, String> {
         .filter(|i| round_id(repo, &i.key).is_some())
         .collect();
     items.sort_by_key(|i| i.create_rev);
-    items.iter().map(decode).collect()
+    let mut out: Vec<BatchRecord> = items.iter().map(decode).collect::<Result<_, _>>()?;
+    // Rounds imported in one txn share a creation revision; their cut time orders them.
+    out.sort_by_key(|b| {
+        let opened: i64 = b.kv.get("opened").and_then(|o| o.parse().ok()).unwrap_or(0);
+        (b.item.create_rev.main, opened, b.id.clone())
+    });
+    Ok(out)
 }
 
 /// The rounds of `repo` the batch machine has not ended, in the order they were created.
@@ -128,6 +134,22 @@ pub fn open_batches(d: &dyn Door, repo: &str) -> Result<Vec<BatchRecord>, String
         .into_iter()
         .filter(|b| !b.is_terminal())
         .collect())
+}
+
+/// A door whose every call fails with why the store's routing could not be resolved, so an
+/// unresolvable config is "cannot tell", never "no round open".
+pub struct Unresolved(pub String);
+
+impl Door for Unresolved {
+    fn get(&self, _: &str) -> Result<Option<Item>, String> {
+        Err(self.0.clone())
+    }
+    fn list(&self, _: &str) -> Result<Vec<Item>, String> {
+        Err(self.0.clone())
+    }
+    fn txn(&self, _: &Txn, _: &str) -> Result<TxnResult, String> {
+        Err(self.0.clone())
+    }
 }
 
 pub fn batch(d: &dyn Door, repo: &str, id: &str) -> Result<Option<BatchRecord>, String> {
@@ -290,6 +312,8 @@ mod tests {
         }
         let open: Vec<String> = open_batches(&d, "spira").unwrap().into_iter().map(|b| b.id).collect();
         assert_eq!(open, ["spira-3", "spira-2"]);
+        let none = Unresolved("cannot tell: SPIRA_LC_LIFECYCLE_ON_STORE does not resolve".into());
+        assert!(open_batches(&none, "spira").unwrap_err().contains("does not resolve"));
         assert_eq!(batches(&d, "spira").unwrap().len(), 6);
     }
 
