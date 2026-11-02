@@ -1,6 +1,6 @@
 //! The processes the runtime launches, each under a deadline: git on the wiki checkout (not store
-//! state, so spira-lc has no verb over it) and tmux on a view flip. Effects run on the offload
-//! pool, never on the event loop.
+//! state, so spira-lc has no verb over it), tmux on a view flip and `overrides.sh apply` on the
+//! overrides tick. Effects run on the offload pool, never on the event loop.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -36,6 +36,14 @@ pub fn gh_auth_token(gh: &str, config_dir: &str, deadline: Duration) -> Result<(
         cmd.env("GH_CONFIG_DIR", config_dir);
     }
     bounded(cmd, deadline)
+}
+
+/// One `overrides.sh apply` pass under `timeout`; a failed override fails the pass, and its
+/// stdout and stderr together say which.
+pub fn overrides_apply() -> Result<String, String> {
+    let out = spira_config::bounded::bounded("overrides.sh").arg("apply").stdin(Stdio::null()).output().map_err(|e| format!("overrides.sh: {e}"))?;
+    let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    if out.status.success() { Ok(said.trim().to_string()) } else { Err(said.trim().to_string()) }
 }
 
 fn bounded(mut cmd: Command, deadline: Duration) -> Result<(Option<i32>, Vec<u8>), String> {

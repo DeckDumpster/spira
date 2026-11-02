@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between spira-runtime passes that hold declared operator overrides in place and retire those whose bead has landed.
+SCHEMA=Seconds between spira-runtime override passes (unit: seconds; integer; default 60). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_OVERRIDES_SECS:=60}"
+SPIRA_CONF_DEFAULT_EOF

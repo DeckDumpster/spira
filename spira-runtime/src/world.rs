@@ -18,7 +18,7 @@ use crate::watchers::asks;
 use crate::watchers::design_asks::{self, Page};
 use crate::hunk;
 use crate::watchers::view;
-use crate::wiki_git::{git, tmux};
+use crate::wiki_git::{git, overrides_apply, tmux};
 use crate::watchers::brain_dirty;
 use crate::watchers::supersede_duty::{self, Act, Held, Reading, Verb};
 use crate::watchers::bead_sweep::{self, Bead, Repair, Repaired, Reservation, Row, Stop};
@@ -373,6 +373,11 @@ impl World {
             }
         }
         serde_json::to_string(&design_asks::Snapshot { failure: None, asks, pages }).map_err(|e| e.to_string())
+    }
+
+    /// One `overrides.sh apply` pass; a failed override fails the pass, and its stdout and stderr say which.
+    pub fn overrides_apply(&self) -> Result<String, String> {
+        overrides_apply()
     }
 
     /// The wiki checkout's changed paths and their mtimes. A path that no longer exists has none

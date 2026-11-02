@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tsd::store::Pusher;
 
@@ -51,32 +51,30 @@ pub fn save_alerted(path: &Path, state: &AlertedSinceMap) -> std::io::Result<()>
     fs::write(path, json)
 }
 
-#[derive(Serialize)]
-struct StatusRecord<'a> {
-    key: &'a str,
-    status: &'static str,
-    desired: Option<&'a str>,
-    observed: Option<&'a str>,
-    reason: Option<&'a str>,
-    since: Option<u64>,
-    is_gap: bool,
-    just_closed: bool,
-    remedy_failed: bool,
+/// One `reconciler-status` row, owned so a decision made in one place can be pushed from another.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StatusRecord {
+    pub key: String,
+    pub status: String,
+    pub desired: Option<String>,
+    pub observed: Option<String>,
+    pub reason: Option<String>,
+    pub since: Option<u64>,
+    pub is_gap: bool,
+    pub just_closed: bool,
+    pub remedy_failed: bool,
 }
 
-/// Pushes one row per invariant per pass to the `reconciler-status` family — every resource's
-/// status is recorded every pass, not only when it changes, so a gap in the series itself is
-/// visible. A push that fails is dropped: the pass does not wait on its own record.
-pub fn append_status(store: &Pusher, now_iso: &str, key: &str, verdict: &Verdict) {
+pub fn status_record(key: &str, verdict: &Verdict) -> StatusRecord {
     let (status, desired, observed, reason) = match &verdict.status {
         RawStatus::Satisfied => ("satisfied", None, None, None),
-        RawStatus::Gap { desired, observed, .. } => ("gap", Some(desired.as_str()), Some(observed.as_str()), None),
-        RawStatus::Unobservable { reason } => ("unobservable", None, None, Some(reason.as_str())),
-        RawStatus::Deliberate { reason } => ("deliberate", None, None, Some(reason.as_str())),
+        RawStatus::Gap { desired, observed, .. } => ("gap", Some(desired.clone()), Some(observed.clone()), None),
+        RawStatus::Unobservable { reason } => ("unobservable", None, None, Some(reason.clone())),
+        RawStatus::Deliberate { reason } => ("deliberate", None, None, Some(reason.clone())),
     };
-    let record = StatusRecord {
-        key,
-        status,
+    StatusRecord {
+        key: key.to_string(),
+        status: status.to_string(),
         desired,
         observed,
         reason,
@@ -84,8 +82,18 @@ pub fn append_status(store: &Pusher, now_iso: &str, key: &str, verdict: &Verdict
         is_gap: verdict.is_gap,
         just_closed: verdict.just_closed,
         remedy_failed: verdict.remedy_failed,
-    };
-    push(store, STATUS_FAMILY, now_iso, &record);
+    }
+}
+
+/// Pushes one row per invariant per pass to the `reconciler-status` family — every resource's
+/// status is recorded every pass, not only when it changes, so a gap in the series itself is
+/// visible. A push that fails is dropped: the pass does not wait on its own record.
+pub fn append_status(store: &Pusher, now_iso: &str, key: &str, verdict: &Verdict) {
+    push_status(store, now_iso, &status_record(key, verdict));
+}
+
+pub fn push_status(store: &Pusher, now_iso: &str, record: &StatusRecord) {
+    push(store, STATUS_FAMILY, now_iso, record);
 }
 
 pub const STATUS_FAMILY: &str = "reconciler-status";

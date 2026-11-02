@@ -17,7 +17,6 @@ broker/src/repo_map.rs
 czar-pass/src/main.rs
 queue-watch/src/io.rs
 queue-watch/src/main.rs
-reconciler/src/main.rs
 spira/acceptance-ci.sh
 spira/acceptance-local.sh
 spira/dwarves.sh
@@ -56,8 +55,6 @@ spira/test-dwarf-resume.sh
 spira/test-dwarf-sweep.sh
 spira/test-dwarf-wiki-dirty.sh
 spira/test-dwarf-worktree-collision.sh
-# literal-ok: a file path, not the world-stop literal itself
-spira/test-heimdall.sh
 spira/test-batcher-cut.sh
 spira/test-bead-file.sh
 spira/test-broker.sh

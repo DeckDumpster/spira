@@ -21,7 +21,7 @@
 #   apply()  { ... }      $1 = repo path; make the edit
 #   on_landed() { ... }   optional, $1 = repo path; runs once when BEAD lands
 #
-# RETIREMENT. Once HEAD carries a commit titled `spira: land <BEAD>`, the override is done:
+# RETIREMENT. Once the repo's landing ref carries a commit titled `spira: land <BEAD>`, the override is done:
 # on_landed runs (if declared), then the spec moves to retired/ so it is never applied again
 # but stays on disk for history. A spec whose on_landed() fails is left in place and reported
 # — the failure that motivated this file was exactly a failure nobody saw
@@ -34,20 +34,31 @@
 # fixes that: every spec runs with the same PATH and the same bd every other harness script
 # uses.
 set -uo pipefail
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/lib.sh"
+_OV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$_OV_DIR/lib.sh"
 
 _ov_state_dir() { printf '%s/.state' "$SPIRA_OVERRIDES"; }
 
-# _ov_landed <repo> <bead> — has HEAD's history got a commit titled "spira: land <bead>",
-# optionally followed by " — <title>" (land_subject(), lib.sh)?
+# _ov_landed <repo> <bead> — is a commit titled "spira: land <bead>", optionally followed by
+# " — <title>" (land_subject(), lib.sh), an ancestor of the repo's landing ref? Never the
+# checkout's HEAD: landings advance the ref without moving the checkout.
 _ov_landed() {
-    local repo="$1" bead="$2" _subj
-    while IFS= read -r _subj; do
-        case "$_subj" in
-            "spira: land $bead" | "spira: land $bead "*) return 0 ;;
+    local repo="$1" bead="$2" ref sha subj
+    ref="$(spira_landref "$repo")" || return 1
+    while IFS=$'\t' read -r sha subj; do
+        case "$subj" in
+            "spira: land $bead" | "spira: land $bead "*)
+                git -C "$repo" merge-base --is-ancestor "$sha" "$ref" 2>/dev/null && return 0 ;;
         esac
-    done < <(git -C "$repo" log --format='%s' -F --grep="spira: land $bead" 2>/dev/null)
+    done < <(git -C "$repo" log "$ref" --format='%H%x09%s' -F --grep="spira: land $bead" 2>/dev/null)
     return 1
+}
+
+# _ov_known <bead> — 0 when the store knows the bead, or cannot be asked (an unreachable store
+# must not stop a load-shedding override from being held); 1 only on a reachable store's "no".
+_ov_known() {
+    spira_db_reachable || return 0
+    [ -n "$(spira_bead_status "$1")" ]
 }
 
 # _ov_load <spec> — source one spec with a clean slate. Resets BEAD and the three functions
@@ -95,10 +106,22 @@ apply_all() {
                 failed=$((failed+1))
                 continue
             fi
-            mkdir -p "$dir/retired" 2>/dev/null || true
-            mv -f "$spec" "$dir/retired/$name.override"
+            if ! { mkdir -p "$dir/retired" && mv -f "$spec" "$dir/retired/$name.override"; }; then
+                echo "overrides: $name: could not move the spec to retired/ — on_landed will run again" >&2
+                printf 'retire-failed\n' > "$state_dir/$name.failed"
+                failed=$((failed+1))
+                continue
+            fi
             rm -f "$state_dir/$name.failed"
             echo "overrides: $name: retired — $BEAD landed"
+            "$_OV_DIR/inbox-append.sh" "[overrides] $name retired: $BEAD landed; on_landed ran" >/dev/null 2>&1 || true
+            continue
+        fi
+
+        if ! _ov_known "$BEAD"; then
+            echo "overrides: $name: bead $BEAD is not in the store" >&2
+            printf 'unknown-bead\n' > "$state_dir/$name.failed"
+            failed=$((failed+1))
             continue
         fi
 

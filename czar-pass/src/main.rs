@@ -101,7 +101,7 @@ struct Config {
     store: std::sync::Arc<tsd::store::Pusher>,
     reconciler_stamp: PathBuf,
     reconciler_grace_secs: u64,
-    reconciler_timer: String,
+    reconciler_unit: String,
     round_min_n: u32,
     round_stall_secs: u64,
     spira_db: String,
@@ -185,7 +185,7 @@ impl Config {
             store: std::sync::Arc::new(tsd::store::Pusher::new(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().filter(|e| !e.trim().is_empty()))),
             reconciler_stamp: paths::pass_stamp(&spira_run),
             reconciler_grace_secs: must_cfg_parse("SPIRA_RECONCILER_GRACE_SECS"),
-            reconciler_timer: format!("spira-reconciler-{}.timer", must_cfg("SPIRA_INSTANCE")),
+            reconciler_unit: format!("spira-runtime-{}.service", must_cfg("SPIRA_INSTANCE")),
             // Batcher's own adaptive_n floor (batcher/src/core.rs: raw.clamp(4.0, 30.0)) — a
             // pool below this can never be a PoolFull trigger, whatever the adaptive ceiling
             // turns out to be, so it is the one threshold this detector can check without
@@ -1313,10 +1313,10 @@ fn detect_reconciler_stale(cfg: &Config, state: &mut StateMap) -> (Verdict, &'st
         return (verdict, "none", "det");
     }
     let body = format!(
-        "The reconciler has not completed a pass within {}s.\n\nTimer: {}\nCheck: the timer is enabled and active, \
+        "The reconciler has not completed a pass within {}s.\n\nHost: {}\nCheck: the runtime is enabled and active, \
          and {} is being written.\n",
         cfg.reconciler_grace_secs,
-        timer_state(&cfg.seams.systemctl, &cfg.reconciler_timer),
+        timer_state(&cfg.seams.systemctl, &cfg.reconciler_unit),
         cfg.reconciler_stamp.display()
     );
     infer(cfg, "reconciler-stale", "reconciler-stale", "RECONCILER: no pass completed — reconciler is not running", &body);
@@ -1677,7 +1677,7 @@ mod tests {
             store: std::sync::Arc::new(tsd::store::Pusher::new(None)),
             reconciler_stamp: dir.join("reconciler-pass.stamp"),
             reconciler_grace_secs: 300,
-            reconciler_timer: "spira-reconciler-prod.timer".to_string(),
+            reconciler_unit: "spira-runtime-prod.service".to_string(),
             round_min_n: 4,
             round_stall_secs: 900,
             spira_db: String::new(),

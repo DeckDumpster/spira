@@ -4,10 +4,10 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 
+use crate::Mail;
 use reconciler_engine::holds::{Action, AskMail, Env, Exit, Hold, Kind};
 use serde_json::Value;
 
@@ -15,9 +15,9 @@ use serde_json::Value;
 const ASK_MAILBOXES: [&str; 2] = ["operator", "concierge"];
 const HISTORY_TAIL: usize = 8;
 
-pub struct Live {
-    pub lc_bin: String,
-    pub mail_sh: String,
+pub struct Live<'a> {
+    pub lc: &'a dyn Fn(&[&str]) -> Result<String, String>,
+    pub send: &'a dyn Fn(&Mail) -> Result<(), String>,
     pub mail_root: PathBuf,
     pub actor: String,
     pub now: u64,
@@ -188,18 +188,6 @@ fn question_headers(path: &Path) -> Option<(String, String)> {
     Some((bead.filter(|b| !b.is_empty())?, kind))
 }
 
-fn lc(bin: &str, args: &[&str]) -> Result<String, String> {
-    let out = spira_config::bounded::bounded(bin)
-        .args(args)
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| format!("{bin}: {e}"))?;
-    if !out.status.success() {
-        return Err(format!("{bin} {}: exit {}: {}", args.join(" "), out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-}
-
 fn lift_wait_result(unhold: Result<String, String>, until: impl std::fmt::Display) -> Result<(), String> {
     match unhold {
         Ok(_) => Ok(()),
@@ -227,41 +215,18 @@ fn history_tail(history_json: &str) -> String {
     out
 }
 
-impl Live {
+impl Live<'_> {
+    fn lc(&self, args: &[&str]) -> Result<String, String> {
+        (self.lc)(args)
+    }
+
     fn send(&self, mailbox: &str, subject: &str, body: &str) -> Result<(), String> {
-        let mut child = spira_config::bounded::bounded(&self.mail_sh)
-            .args(["send", mailbox, "--from", "Reconciler <reconciler@spira>", "--subject", subject, "--kind", "note"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("{}: {e}", self.mail_sh))?;
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(body.as_bytes());
-        }
-        let out = child.wait_with_output().map_err(|e| format!("{}: {e}", self.mail_sh))?;
-        if !out.status.success() {
-            return Err(format!("{} send {mailbox}: exit {}: {}", self.mail_sh, out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()));
-        }
-        Ok(())
+        (self.send)(&Mail { mailbox: mailbox.into(), subject: subject.into(), kind: "note".into(), default: None, class: None, bead: None, body: body.into() })
     }
 
     fn send_question(&self, bead: &str, subject: &str, body: &str) -> Result<(), String> {
-        let mut child = spira_config::bounded::bounded(&self.mail_sh)
-            .args(["send", "concierge", "--from", "Reconciler <reconciler@spira>", "--subject", subject, "--kind", "question", "--default", "drop or split the bead; it cannot progress with unchanged inputs", "--bead", bead])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("{}: {e}", self.mail_sh))?;
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(body.as_bytes());
-        }
-        let out = child.wait_with_output().map_err(|e| format!("{}: {e}", self.mail_sh))?;
-        if !out.status.success() {
-            return Err(format!("{} send concierge: exit {}: {}", self.mail_sh, out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()));
-        }
-        Ok(())
+        let default = "drop or split the bead; it cannot progress with unchanged inputs";
+        (self.send)(&Mail { mailbox: "concierge".into(), subject: subject.into(), kind: "question".into(), default: Some(default.into()), class: None, bead: Some(bead.into()), body: body.into() })
     }
 
     fn mailbox_exists(&self, mailbox: &str) -> bool {
@@ -269,13 +234,13 @@ impl Live {
     }
 }
 
-impl Env for Live {
+impl Env for Live<'_> {
     fn holds(&mut self) -> Result<Vec<Hold>, String> {
         let mut out = Vec::new();
         for kind in Kind::ALL {
-            let ids = bead_ids(&lc(&self.lc_bin, &["list", "--hold", kind.as_str(), "--live", "--snapshot"])?)?;
+            let ids = bead_ids(&self.lc(&["list", "--hold", kind.as_str(), "--live", "--snapshot"])?)?;
             for id in ids {
-                let history = lc(&self.lc_bin, &["history", &id, "--machine", "bead"])?;
+                let history = self.lc(&["history", &id, "--machine", "bead"])?;
                 if ends_terminal(&history)? {
                     continue;
                 }
@@ -297,7 +262,7 @@ impl Env for Live {
     }
 
     fn exits(&mut self, bead: &str) -> Result<Vec<Exit>, String> {
-        exits_from_history(&lc(&self.lc_bin, &["history", bead, "--machine", "bead"])?)
+        exits_from_history(&self.lc(&["history", bead, "--machine", "bead"])?)
     }
 
     fn act(&mut self, hold: &Hold, action: &Action) -> Result<(), String> {
@@ -314,7 +279,7 @@ impl Env for Live {
                 let last = exits.last().map(|x| x.note.as_str()).unwrap_or("");
                 let n = exits.len();
                 let question = format!("{n} claims ended without progress inside {}m; last: {last}", window_secs / 60);
-                lc(&self.lc_bin, &["hold", bead, "ask", &question, &self.actor])?;
+                self.lc(&["hold", bead, "ask", &question, &self.actor])?;
                 self.send_question(
                     bead,
                     &format!("NO-PROGRESS BREAKER: {bead} had {n} claims end without progress inside {}m", window_secs / 60),
@@ -323,7 +288,7 @@ impl Env for Live {
                     ),
                 )
             }
-            Action::LiftWait { until } => lift_wait_result(lc(&self.lc_bin, &["unhold", bead, "wait", &self.actor]), *until),
+            Action::LiftWait { until } => lift_wait_result(self.lc(&["unhold", bead, "wait", &self.actor]), *until),
             Action::RaiseAsk => self.send(
                 "concierge",
                 &format!("HOLD SWEEP: {bead} is held on an ask that was never delivered"),
@@ -338,8 +303,8 @@ impl Env for Live {
                 &format!("bead     {bead}\nquestion {reason}\n\nThe question was delivered {}h ago and the bead is still held on it. This is the one reminder; the sweep does not lift an ask.\n", now.saturating_sub(*delivered_at) / 3600),
             ),
             Action::DiagnosePoison => {
-                let history = lc(&self.lc_bin, &["history", bead, "--machine", "bead"]).map(|h| history_tail(&h)).unwrap_or_else(|e| format!("(history unreadable: {e})\n"));
-                let show = lc(&self.lc_bin, &["show", bead]).unwrap_or_else(|e| format!("(show unreadable: {e})"));
+                let history = self.lc(&["history", bead, "--machine", "bead"]).map(|h| history_tail(&h)).unwrap_or_else(|e| format!("(history unreadable: {e})\n"));
+                let show = self.lc(&["show", bead]).unwrap_or_else(|e| format!("(show unreadable: {e})"));
                 self.send(
                     "concierge",
                     &format!("HOLD SWEEP: {bead} poisoned for {} with no new tip — diagnose", age_h(hold.since, now)),
@@ -548,7 +513,13 @@ mod tests {
         let log = dir.join("calls");
         let bin = dir.join("fake-lc");
         testkit::write_exe(&bin, &format!("#!/bin/sh\necho \"$@\" >> {}\necho '[]'\n", log.display()));
-        let mut live = Live { lc_bin: bin.display().to_string(), mail_sh: String::new(), mail_root: dir.to_path_buf(), actor: "reconciler".into(), now: 0 };
+        let bin = bin.display().to_string();
+        let lc = |args: &[&str]| -> Result<String, String> {
+            let out = std::process::Command::new(&bin).args(args).output().map_err(|e| e.to_string())?;
+            Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+        };
+        let send = |_: &Mail| -> Result<(), String> { Ok(()) };
+        let mut live = Live { lc: &lc, send: &send, mail_root: dir.to_path_buf(), actor: "reconciler".into(), now: 0 };
         assert!(live.holds().unwrap().is_empty());
         let calls = fs::read_to_string(&log).unwrap();
         assert_eq!(calls.lines().count(), Kind::ALL.len());

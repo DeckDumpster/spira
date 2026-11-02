@@ -204,6 +204,7 @@ bead_sweep_wait_min = 120
 bead_sweep_batch_min = 180
 runtime_publish_backlog_secs = 900
 runtime_repo_events_secs = 45
+runtime_overrides_secs = 60
 runtime_view_secs = 3
 batcher_orphan_redrive_secs = 600
 lc_store_path = ""
@@ -219,6 +220,7 @@ lc_ship_secs = 2
 lc_ship_max_age_secs = 60
 lc_ship_snapshot_secs = 3600
 plane_skew_max = 25
+runtime_reconciler_secs = 60
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok

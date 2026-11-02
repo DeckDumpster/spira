@@ -54,7 +54,7 @@
 #  31. Disk: a materialised Composite's DiskSpec.floor_pct replaces the bash/env default
 #      (SPIRA_DISK_FLOOR_PCT), so the same reading can gap under one and satisfy the other.
 #
-# Unit tests in reconciler/src/main.rs cover what config cannot express here: no Fleet ceiling
+# Unit tests in reconciler/src/lib.rs cover what config cannot express here: no Fleet ceiling
 # at all (SPIRA_MAX_LIVE_DWARVES is a u32 that always resolves) is unobservable, never satisfied,
 # and is ONE escalation however many partitions report.
 #
@@ -69,9 +69,8 @@
 # on a healthy fixture before 4-9 and 11-17 add the trigger and assert it does.
 #
 # tier: T2
-# covers: reconciler/src/main.rs reconciler-engine/src/**.rs desired-state/src/store.rs tsd/src/* spira-otel/src/*
+# covers: reconciler/src/*.rs reconciler-engine/src/**.rs desired-state/src/store.rs tsd/src/* spira-otel/src/*
 #         desired-state/src/resource.rs spira/conf.sh cockpit/ops/src/layout.rs
-#         systemd/spira-reconciler.service systemd/spira-reconciler.timer
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between spira-runtime reconciler passes over the structural invariants.
+SCHEMA=Seconds between spira-runtime reconciler passes over the structural invariants (unit: seconds; integer; default 60). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_RECONCILER_SECS:=60}"
+SPIRA_CONF_DEFAULT_EOF
