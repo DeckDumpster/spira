@@ -1,7 +1,7 @@
 # The round controller's world twin of section-stale-parent: the sim-only actor runs `round-controller
-# pass` with the intents and section steps registered last. The control-plane store has no door
-# yet, so neither step reads a lane, a round or an intent: no section is built, nothing is
-# published or acked, every pass exits 0 and the world's run state is untouched.
+# pass` with the intents and section steps registered last. The world's control store holds no
+# lane, no round and no intent, so no section is built, nothing is published or acked, every pass
+# exits 0 and the world's run state is untouched.
 epoch = 1800000000
 horizon = 150000
 real_actors = ["round-controller"]

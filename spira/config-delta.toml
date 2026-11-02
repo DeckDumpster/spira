@@ -208,6 +208,7 @@ runtime_view_secs = 3
 batcher_orphan_redrive_secs = 600
 lc_store_path = ""
 lc_lock_ttl_min_ms = 1000
+lc_lifecycle_on_store = 0
 reconciler_pass_timeout_secs = 50
 
 [renamed]

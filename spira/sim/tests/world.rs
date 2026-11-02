@@ -1,5 +1,5 @@
 use spira_sim::world::{
-    up_repos, up_resolving, check_socket_path, db_root, down, is_world_serve, lc_pid_file, lc_socket, prebuilt_release, release_source, serve_argv, up, ProcessSteps,
+    up_repos, up_resolving, check_socket_path, control_store, db_root, down, is_world_serve, lc_pid_file, lc_socket, prebuilt_release, release_source, serve_argv, up, ProcessSteps,
     ReleaseSource, RepoSpec, Steps, PRODUCTION_LOCATORS, RELEASE_ENV, TESTENV_ENV,
 };
 use std::path::{Path, PathBuf};
@@ -47,6 +47,14 @@ impl Steps for Fake {
         use std::io::Write;
         let mut f = std::fs::OpenOptions::new().create(true).append(true).open(file).map_err(|e| e.to_string())?;
         writeln!(f, "{key}={value}").map_err(|e| e.to_string())
+    }
+    fn control_store(&self, _: &Path, world: &Path) -> Result<(), String> {
+        // The store is made from the world's complete config, before the serve that opens it.
+        let cfg = std::fs::read_to_string(world.join("config/sim.toml")).unwrap();
+        assert!(cfg.contains(&format!("spira.lc_store_path={}", control_store(world).display())), "{cfg}");
+        std::fs::write(control_store(world), "").unwrap();
+        self.calls.lock().unwrap().push("control_store".into());
+        Ok(())
     }
     fn lc_serve(&self, world: &Path, fixture: &str) -> Result<(), String> {
         assert!(Path::new(fixture).is_dir());
@@ -121,9 +129,24 @@ fn up_starts_the_worlds_serve_and_down_stops_it_by_the_recorded_pid_first() {
     let env = std::fs::read_to_string(dir.join("config/sim.env")).unwrap();
     assert!(env.contains(&format!("SPIRA_LC_SOCKET={}\n", sock.display())), "{env}");
     assert!(env.contains(&format!("SPIRA_RELEASE={}\n", dir.join("release").display())), "{env}");
-    assert_eq!(*fake.calls.lock().unwrap(), vec!["lc_serve"]);
+    assert_eq!(*fake.calls.lock().unwrap(), vec!["control_store", "lc_serve"]);
     down(&dir, &fake).unwrap();
-    assert_eq!(*fake.calls.lock().unwrap(), vec!["lc_serve", "lc_stop 424242", "db_down"]);
+    assert_eq!(*fake.calls.lock().unwrap(), vec!["control_store", "lc_serve", "lc_stop 424242", "db_down"]);
+}
+
+#[test]
+fn every_world_gets_a_control_store_its_config_names_with_the_bead_state_verbs_left_on_dolt() {
+    let t = testkit::TempDir::new("simw");
+    let dir = t.join("world");
+    let fake = Fake::default();
+    up(fixture_repo().path(), &dir, "HEAD", &clean, &fake).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    let cfg = std::fs::read_to_string(dir.join("config/sim.toml")).unwrap();
+    assert!(cfg.contains(&format!("spira.lc_store_path={}\n", control_store(&dir).display())), "{cfg}");
+    assert!(cfg.contains("spira.lc_lifecycle_on_store=0\n"), "{cfg}");
+    assert!(control_store(&dir).starts_with(&dir), "the store is the world's own");
+    down(&dir, &fake).unwrap();
+    assert!(!dir.exists());
 }
 
 #[test]
@@ -134,7 +157,7 @@ fn a_serve_that_never_answers_fails_up_and_is_stopped() {
     let e = up(fixture_repo().path(), &dir, "HEAD", &clean, &fake).unwrap_err();
     assert!(e.contains("did not answer"), "{e}");
     assert!(!dir.exists());
-    assert_eq!(*fake.calls.lock().unwrap(), vec!["lc_serve", "lc_stop 424242", "db_down"]);
+    assert_eq!(*fake.calls.lock().unwrap(), vec!["control_store", "lc_serve", "lc_stop 424242", "db_down"]);
 }
 
 #[test]
@@ -234,6 +257,9 @@ fn a_failed_up_cleans_up_after_itself() {
             Ok(())
         }
         fn config_set(&self, _: &Path, _: &Path, _: &str, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn control_store(&self, _: &Path, _: &Path) -> Result<(), String> {
             Ok(())
         }
         fn lc_serve(&self, _: &Path, _: &str) -> Result<(), String> {
@@ -502,6 +528,9 @@ fn a_store_that_fails_up_does_not_leave_the_caller_waiting() {
             Ok(())
         }
         fn config_set(&self, _: &Path, _: &Path, _: &str, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn control_store(&self, _: &Path, _: &Path) -> Result<(), String> {
             Ok(())
         }
         fn lc_serve(&self, _: &Path, _: &str) -> Result<(), String> {

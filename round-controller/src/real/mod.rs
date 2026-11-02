@@ -5,6 +5,7 @@ pub mod git;
 pub mod launch;
 pub mod lc;
 pub mod liveness;
+pub mod store;
 pub mod verbs;
 pub mod vm_runner;
 
@@ -21,8 +22,8 @@ pub fn clock(spira_now: Option<u64>) -> Box<dyn Clock> {
     }
 }
 
-/// The store until spira-lc serves the control plane: every call is refused, naming why, so
-/// nothing can mistake an unwired store for an empty one (law-only-spira-lc-talks-to-the-stores).
+/// A test double for a store with no door: every call is refused, naming why, so nothing can
+/// mistake an unwired store for an empty one. The binary's store is [`store::LcStore`].
 pub struct Unserved;
 
 fn unserved<T>() -> state_store::Result<T> {

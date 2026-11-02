@@ -1,7 +1,8 @@
 //! The control store at `SPIRA_LC_STORE_PATH`, opened once per process on first use and held
 //! for the process's life: its opener is exclusive, so in practice lc-serve holds it and any
 //! other opener answers "cannot tell". Unset, no verb reaches it and every verb keeps its dolt
-//! path.
+//! path. Set, the verbs only it serves reach it; the bead-state verbs move to it only once
+//! `SPIRA_LC_LIFECYCLE_ON_STORE` is also on, so a store can serve rounds before the cutover.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -13,7 +14,7 @@ use state_store_sqlite::{Options, SqliteBackend};
 
 use super::store::Store;
 use super::{readiness, sections, state, verbs};
-use crate::CANNOT_TELL;
+use crate::{CANNOT_TELL, REFUSED};
 
 /// A failed open is not kept, so the next call tries again.
 static OPENED: Mutex<Option<Arc<Store<SqliteBackend>>>> = Mutex::new(None);
@@ -24,12 +25,18 @@ fn store_path() -> Option<Result<String, String>> {
     let path = spira_config::process::cfg("SPIRA_LC_STORE_PATH")
         .ok()
         .filter(|p| !p.is_empty())?;
-    let confined = || -> Result<(), String> {
-        let instance = spira_config::process::cfg("SPIRA_INSTANCE")?;
-        let workspaces = spira_config::process::cfg("SPIRA_WORKSPACES")?;
-        spira_config::containment::check_path(&instance, &workspaces, "SPIRA_LC_STORE_PATH", &path)
-    };
-    Some(confined().map(|()| path.clone()))
+    Some(confined(&path).map(|()| path))
+}
+
+fn confined(path: &str) -> Result<(), String> {
+    let instance = spira_config::process::cfg("SPIRA_INSTANCE")?;
+    let workspaces = spira_config::process::cfg("SPIRA_WORKSPACES")?;
+    spira_config::containment::check_path(&instance, &workspaces, "SPIRA_LC_STORE_PATH", path)
+}
+
+/// Whether the bead-state verbs, `history` and `event-seq` answer from the control store.
+fn lifecycle_on_store() -> Result<bool, String> {
+    Ok(spira_config::process::cfg_parse::<u8>("SPIRA_LC_LIFECYCLE_ON_STORE")? != 0)
 }
 
 /// The shortest lock the contract grants, and so the shortest claim: `SPIRA_LC_LOCK_TTL_MIN_MS`.
@@ -89,6 +96,38 @@ pub fn configured() -> Option<Result<Arc<Store<SqliteBackend>>, String>> {
     Some(store_path()?.and_then(|p| opened(&p)))
 }
 
+/// `admin-create-store`: a new, empty control store at `SPIRA_LC_STORE_PATH`, which no verb
+/// creates on open (an absent store opened empty would answer every read as nothing there).
+/// Refused on an empty key, a path outside the instance's workspaces, or a file already there.
+pub fn create_store() -> (i32, String) {
+    let refuse = |why: String| (REFUSED, format!("admin-create-store: {why}"));
+    let path = match spira_config::process::cfg("SPIRA_LC_STORE_PATH") {
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: admin-create-store: {e}")),
+        Ok(p) if p.is_empty() => return refuse("SPIRA_LC_STORE_PATH is empty: there is no store to create".into()),
+        Ok(p) => p,
+    };
+    if let Err(e) = confined(&path) {
+        return refuse(e);
+    }
+    let floor = match lock_floor_ms() {
+        Ok(f) => f,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: admin-create-store: {e}")),
+    };
+    // create_new claims the path atomically, so two creators cannot both believe they made it.
+    match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return refuse(format!("{path} already exists")),
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: admin-create-store: {path}: {e}")),
+        Ok(_) => {}
+    }
+    match open(&path) {
+        Ok(_) => (0, format!("admin-create-store: created {path} (locks of at least {floor} ms)")),
+        Err(e) => {
+            let _ = std::fs::remove_file(&path);
+            (CANNOT_TELL, format!("cannot tell: admin-create-store: {e}"))
+        }
+    }
+}
+
 /// A request id no other call in any process mints: each call, a retry included, is its own
 /// request, so a request that lost its race is never answered again as if it had not.
 fn request_id() -> String {
@@ -107,7 +146,7 @@ fn request_id() -> String {
 /// store does not serve, or any verb while the key is unset. `watch` has no dolt path.
 pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
     let verb = args.first()?;
-    if sections::VERBS.contains(&verb.as_str()) || verb == sections::lifecycle::VERB {
+    if sections::VERBS.contains(&verb.as_str()) || verb == sections::lifecycle::VERB || verb == spira_lc::rc::VERB {
         return Some(dispatch_sections(args));
     }
     let lifecycle = state::is_verb(verb) || readiness::VERBS.contains(&verb.as_str());
@@ -124,6 +163,13 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
         )),
         None => return None,
     };
+    if verb != "watch" {
+        match lifecycle_on_store() {
+            Ok(true) => {}
+            Ok(false) => return None,
+            Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
+        }
+    }
     Some(match opened(&path) {
         Ok(store) if lifecycle => {
             let request = request_id();
@@ -142,8 +188,8 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
     })
 }
 
-/// `section`, `intent`, `lock` and `publish-section`, which only the control store serves: JSON
-/// on every path.
+/// `section`, `intent`, `lock`, `pass`, `publish-section` and `rc`, which only the control store
+/// serves: JSON on every path.
 fn dispatch_sections(args: &[String]) -> (i32, String) {
     let path = match store_path() {
         Some(Ok(p)) => p,
@@ -165,6 +211,7 @@ fn dispatch_sections(args: &[String]) -> (i32, String) {
         }
     };
     match opened(&path) {
+        Ok(store) if args[0] == spira_lc::rc::VERB => spira_lc::rc::run(store.contract(), args),
         Ok(store) => {
             let request = request_id();
             let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
@@ -196,7 +243,7 @@ mod tests {
 
     #[test]
     fn the_new_verbs_take_no_name_an_existing_verb_answers() {
-        for v in sections::VERBS.iter().chain([&sections::lifecycle::VERB]) {
+        for v in sections::VERBS.iter().chain([&sections::lifecycle::VERB, &spira_lc::rc::VERB]) {
             assert!(!state::VERBS.contains(v), "{v}");
             assert!(!verbs::VERBS.contains(v), "{v}");
             assert!(!crate::callers::is_verb(v), "{v}");

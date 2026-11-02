@@ -206,6 +206,10 @@ pub trait Steps {
     fn config_set_all(&self, release: &Path, file: &Path, pairs: &[(String, String)]) -> Result<(), String> {
         pairs.iter().try_for_each(|(k, v)| self.config_set(release, file, k, v))
     }
+    /// Create the world's empty control store at [`control_store`] with `spira-lc
+    /// admin-create-store`, reading the world's config; the serve opens it, and opens no store
+    /// that is not there.
+    fn control_store(&self, release: &Path, world: &Path) -> Result<(), String>;
     /// Start the world's `spira-lc serve` on [`lc_socket`], write its PID to [`lc_pid_file`]
     /// as soon as it exists, and return once it answers a request.
     fn lc_serve(&self, world: &Path, fixture: &str) -> Result<(), String>;
@@ -217,6 +221,11 @@ pub trait Steps {
 /// The world's lifecycle socket.
 pub fn lc_socket(world: &Path) -> PathBuf {
     world.join(LC_SOCKET)
+}
+
+/// The world's control-plane store.
+pub fn control_store(world: &Path) -> PathBuf {
+    world.join("control.db")
 }
 
 /// Where world up records the PID of the world's `spira-lc serve`.
@@ -451,6 +460,19 @@ impl Steps for ProcessSteps {
 
     fn db_down(&self, fixture: &str) -> Result<(), String> {
         run(Command::new(spira_config::release_env::tool("testenv")).args(["testdb", "down", "--fixture", fixture]), CALL_DEADLINE).map(|_| ())
+    }
+
+    fn control_store(&self, release: &Path, world: &Path) -> Result<(), String> {
+        run(
+            Command::new(release.join("bin/spira-lc"))
+                .arg("admin-create-store")
+                .env_clear()
+                .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+                .env("SPIRA_TOML", world.join("config/sim.toml"))
+                .env("SPIRA_RELEASE", release),
+            CALL_DEADLINE,
+        )
+        .map(|_| ())
     }
 
     fn lc_serve(&self, world: &Path, fixture: &str) -> Result<(), String> {
@@ -699,6 +721,9 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
         Ok(fixture)
     })?;
     let t = Instant::now();
+    steps.control_store(&release, dir)?;
+    mark(dir, "up.control-store", t);
+    let t = Instant::now();
     let served = steps.lc_serve(dir, &fixture);
     mark(dir, "up.lc-serve", t);
     served
@@ -930,7 +955,8 @@ pub fn home_settings(world: &Path, fixture: &str, bd: &Path) -> Vec<(String, Str
 
 /// The world's own lifecycle locators (sp-hq1v76), written over the complete base so none of
 /// them is the base's value: its socket, the empty credential world up
-/// wrote, and its run dir. `SPIRA_LC_HOST`/`PORT`/`USER` in `sim.env` name the world's own
+/// wrote, its run dir and its control store. The bead-state verbs stay on the world's Dolt
+/// fixture: `lc_lifecycle_on_store` is the cutover switch, and it is off. `SPIRA_LC_HOST`/`PORT`/`USER` in `sim.env` name the world's own
 /// Dolt fixture for a reader that declares direct mode (`spira.lc_socket = ""`); a declared
 /// socket never falls back to it (sp-yvyvzd).
 pub fn lc_settings(world: &Path) -> Vec<(String, String)> {
@@ -938,6 +964,8 @@ pub fn lc_settings(world: &Path) -> Vec<(String, String)> {
         ("spira.lc_socket".to_string(), lc_socket(world).display().to_string()),
         ("spira.lc_password_file".to_string(), world.join("config/lc-credential").display().to_string()),
         ("spira.run".to_string(), world.join("run").display().to_string()),
+        ("spira.lc_store_path".to_string(), control_store(world).display().to_string()),
+        ("spira.lc_lifecycle_on_store".to_string(), "0".to_string()),
     ]
 }
 

@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=lc
+DOC=1 serves the bead-state verbs (show, list, bead events, create-bead, readiness), history and event-seq from the control store at SPIRA_LC_STORE_PATH instead of the dolt lifecycle store; 0 leaves them on dolt. Needs the path set; it is the cutover switch, so leave it off until the batch and delivery machines and the asks have moved.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_LIFECYCLE_ON_STORE:=0}"
+SPIRA_CONF_DEFAULT_EOF

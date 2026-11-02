@@ -201,6 +201,14 @@ pub(crate) fn inline_payload_from(mut args: Vec<String>, input: &mut dyn std::io
         args.push("--json".into());
         args.push(body);
     }
+    // `rc <verb> --json -`: the body is stdin, carried inline so the service reads it too.
+    if args.first().map(String::as_str) == Some(spira_lc::rc::VERB) {
+        if let Some(i) = args.iter().position(|a| a == "--json").map(|i| i + 1).filter(|&i| args.get(i).is_some_and(|b| b == "-")) {
+            let mut body = String::new();
+            let _ = input.read_to_string(&mut body);
+            args[i] = body;
+        }
+    }
     args
 }
 
@@ -1817,5 +1825,14 @@ mod progress_payload_tests {
             let a: Vec<String> = verb.iter().map(|s| s.to_string()).collect();
             assert_eq!(super::inline_payload_from(a.clone(), &mut "{}".as_bytes()), a, "{verb:?}");
         }
+    }
+
+    #[test]
+    fn an_rc_body_on_stdin_replaces_the_dash_and_an_inline_body_is_kept() {
+        let a: Vec<String> = ["rc", "get", "--json", "-"].map(String::from).to_vec();
+        let out = super::inline_payload_from(a, &mut "{\"key\":\"k\"}".as_bytes());
+        assert_eq!(out, ["rc", "get", "--json", "{\"key\":\"k\"}"].map(String::from).to_vec());
+        let a: Vec<String> = ["rc", "get", "--json", "{}"].map(String::from).to_vec();
+        assert_eq!(super::inline_payload_from(a.clone(), &mut "ignored".as_bytes()), a);
     }
 }
