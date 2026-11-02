@@ -380,11 +380,11 @@ fn a_second_batch_with_the_same_tools_key_copies_the_cached_template_and_never_b
 #[test]
 fn the_template_command_takes_its_cache_from_the_flag_or_else_the_batch_variable() {
     let parsed = |v: &[&str]| parse(&s(v)).unwrap();
-    let bare = parsed(&["template"]);
+    let bare = parsed(&["template", "--bd", "bd", "--dolt", "dolt"]);
     assert_eq!(cache_of(&bare, None), None);
     assert_eq!(cache_of(&bare, Some(String::new())), None, "empty is no cache");
     assert_eq!(cache_of(&bare, Some("/c/env".into())), Some(PathBuf::from("/c/env")));
-    let flagged = parsed(&["template", "--cache", "/c/flag"]);
+    let flagged = parsed(&["template", "--bd", "bd", "--dolt", "dolt", "--cache", "/c/flag"]);
     assert_eq!(cache_of(&flagged, Some("/c/env".into())), Some(PathBuf::from("/c/flag")));
 }
 
