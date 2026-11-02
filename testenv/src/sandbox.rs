@@ -103,6 +103,9 @@ impl Profile {
             ("CARGO_NET_OFFLINE".into(), "true".into()),
             ("CARGO_TERM_COLOR".into(), "never".into()),
             ("RUST_TEST_THREADS".into(), self.test_threads.to_string()),
+            // The image's system-level git identity (spira/testenv/Containerfile), at the same
+            // lowest priority, so a test's own repo identity still wins (sp-fdsfq1).
+            ("GIT_CONFIG_SYSTEM".into(), s(&self.gitconfig())),
         ]
     }
 
@@ -152,6 +155,23 @@ impl Profile {
             a.extend(["--setenv".into(), k, v]);
         }
         a
+    }
+}
+
+/// The image's system git identity (`git config --system` in spira/testenv/Containerfile).
+pub const GIT_IDENTITY: &str = "[user]\n\tname = spirauser\n\temail = spirauser@localhost\n";
+
+impl Profile {
+    /// The system gitconfig the sandbox names, kept beside the branch target.
+    pub fn gitconfig(&self) -> PathBuf {
+        let mut p = self.target.clone().into_os_string();
+        p.push(".gitconfig");
+        PathBuf::from(p)
+    }
+
+    /// Writes [`GIT_IDENTITY`] where [`Self::gitconfig`] names it.
+    pub fn write_gitconfig(&self) -> Result<(), String> {
+        fs::write(self.gitconfig(), GIT_IDENTITY).map_err(|e| format!("cannot write {}: {e}", self.gitconfig().display()))
     }
 }
 
@@ -234,6 +254,7 @@ pub struct Ran {
 /// Err: the sandbox could not be started at all (no bwrap, a refused namespace).
 pub fn run(bwrap: &str, profile: &Profile, script: &Path, out: &Path, deadline: Option<Duration>) -> Result<Ran, String> {
     fs::create_dir_all(&profile.target).map_err(|e| format!("cannot create {}: {e}", profile.target.display()))?;
+    profile.write_gitconfig()?;
     let log = fs::File::create(out).map_err(|e| format!("cannot write {}: {e}", out.display()))?;
     let err = log.try_clone().map_err(|e| e.to_string())?;
     let started = Instant::now();
@@ -393,6 +414,20 @@ mod tests {
         let gone = prune_targets(d.path(), &current, 2);
         assert_eq!(gone, [middle.clone(), oldest.clone()]);
         assert!(current.exists() && newest.exists() && !middle.exists() && !oldest.exists());
+    }
+
+    #[test]
+    fn the_sandbox_carries_the_images_system_git_identity_and_never_overrides_a_tests_own() {
+        let p = profile();
+        let env = p.env();
+        let sys = env.iter().find(|(k, _)| k == "GIT_CONFIG_SYSTEM").map(|(_, v)| v.clone());
+        assert_eq!(sys.as_deref(), Some("/srv/t/spira-unit-cargo-target-b.gitconfig"));
+        assert!(env.iter().all(|(k, _)| !k.starts_with("GIT_AUTHOR") && !k.starts_with("GIT_COMMITTER")), "{env:?}");
+        let d = testkit::TempDir::new("sandbox-gitconfig");
+        let q = Profile { target: d.path().join("t"), ..profile() };
+        q.write_gitconfig().unwrap();
+        let text = fs::read_to_string(q.gitconfig()).unwrap();
+        assert!(text.contains("name = spirauser") && text.contains("email = spirauser@localhost"), "{text}");
     }
 
     #[test]
