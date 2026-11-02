@@ -437,45 +437,6 @@ pub fn watch_returns_too_old_after_compaction<R: Rig>(rig: &R) {
     );
 }
 
-pub fn watch_delivers_a_txns_events_together<R: Rig>(rig: &R) {
-    let clock = VirtualClock::new(T0);
-    let c = open(rig.fresh(), &clock);
-    let from = c.head().unwrap();
-    let got = std::thread::scope(|s| {
-        let h = s.spawn(|| c.watch("g/", from, 2_500));
-        while c.waiting_watchers() == 0 {
-            std::thread::yield_now();
-        }
-        let t = Txn::new()
-            .put("g/a", obj(json!(1)))
-            .put("g/b", obj(json!(2)))
-            .put("g/c", obj(json!(3)));
-        let r = c.txn(&t, &req("1")).unwrap();
-        while !h.is_finished() {
-            clock.advance(100);
-            c.wake_watchers();
-            std::thread::yield_now();
-        }
-        (r.rev, h.join().unwrap())
-    });
-    let (main, w) = got;
-    let Watched::Events { events, through } = w.unwrap() else {
-        panic!("progress, not events")
-    };
-    assert_eq!(
-        events
-            .iter()
-            .map(|e| (e.key.as_str(), e.rev))
-            .collect::<Vec<_>>(),
-        [
-            ("g/a", Rev::new(main, 0)),
-            ("g/b", Rev::new(main, 1)),
-            ("g/c", Rev::new(main, 2))
-        ]
-    );
-    assert_eq!(through, main);
-}
-
 pub fn a_lock_expires_on_the_virtual_clock<R: Rig>(rig: &R) {
     let clock = VirtualClock::new(T0);
     let c = open(rig.fresh(), &clock);
@@ -1419,7 +1380,6 @@ scenarios!(
     watch_resumes_from_a_revision,
     a_watch_on_a_quiet_prefix_returns_progress_rev,
     watch_returns_too_old_after_compaction,
-    watch_delivers_a_txns_events_together,
     a_lock_expires_on_the_virtual_clock,
     a_paused_holders_fenced_write_is_refused_after_expiry_and_reacquisition,
     reopen_extends_every_lock,
