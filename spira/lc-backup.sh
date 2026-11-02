@@ -115,6 +115,29 @@ _lcb_run_db() {
       _lcb_run_db_locked "$db" ) 9>"$lock"
 }
 
+# _lcb_compact db work stage head — replace the raw snapshot in $stage with a garbage-collected one.
+# A backup sync copies the whole chunk store, unreachable chunks included: the bd snapshot reached
+# 6.8 GB against the 5 GiB single-PUT limit, and 2.5 GB of it survives a gc. The live store is
+# never collected here (it sits on a tmpfs without the headroom); a restored copy beside the stage is.
+_lcb_compact() {
+    local db="$1" work="$2" stage="$3" head="$4" c="$2/compact" got
+    rm -rf "$c" && mkdir -p "$c" || return 1
+    # batch-job: restore, collect and re-sync of the whole snapshot run for as long as the store is large
+    ( cd "$c" && dolt backup restore "file://$stage" "$db" ) >"$c/restore.log" 2>&1 \
+        || { echo "lc-backup: compact: restore of the $db snapshot failed: $(tail -n2 "$c/restore.log")" >&2; return 1; }
+    rm -rf "$stage"
+    # batch-job: collecting the whole restored snapshot
+    ( cd "$c/$db" && dolt gc ) >"$c/gc.log" 2>&1 \
+        || { echo "lc-backup: compact: dolt gc of $db failed: $(tail -n2 "$c/gc.log")" >&2; return 1; }
+    # batch-job: a read of the restored scratch copy
+    got="$( cd "$c/$db" && dolt sql -r csv -q "SELECT commit_hash FROM dolt_log LIMIT 1" 2>/dev/null | tail -n +2 )"
+    [ "$got" = "$head" ] || { echo "lc-backup: compact: $db head moved from $head to ${got:-?} under gc" >&2; return 1; }
+    # batch-job: re-syncing the whole collected snapshot
+    mkdir -p "$stage" && ( cd "$c/$db" && dolt backup add compact "file://$stage" && dolt backup sync compact ) >"$c/sync.log" 2>&1 \
+        || { echo "lc-backup: compact: re-sync of $db failed: $(tail -n2 "$c/sync.log")" >&2; return 1; }
+    rm -rf "$c"
+}
+
 _lcb_run_db_locked() {
     local db="$1" out head work stage tarball prefix stamp key ext wm
     _lcb_require_db "$db" || return 1
@@ -130,6 +153,7 @@ _lcb_run_db_locked() {
     head="$(printf '%s\n' "$out" | sed -n '2p')"
     case "$head" in *[!0-9a-v]*|"") head="" ;; esac
     [ -n "$head" ] || { echo "lc-backup: snapshot taken but cannot read $db's head commit" >&2; return 1; }
+    _lcb_compact "$db" "$work" "$stage" "$head" || { rm -rf "$stage" "$work/compact"; return 1; }
     tar -C "$stage" -caf "$tarball.tmp" --format=posix . 2>/dev/null && mv "$tarball.tmp" "$tarball" \
         || { rm -f "$tarball.tmp"; echo "lc-backup: cannot pack the snapshot" >&2; return 1; }
     find "$work" -maxdepth 1 -name 'latest.tar.*' ! -name "latest.tar.$ext" -delete
