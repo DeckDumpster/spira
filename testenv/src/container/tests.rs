@@ -905,8 +905,6 @@ fn up_boots_with_the_label_limit_and_volumes_and_records_its_caller() {
             "--systemd=true",
             "--cap-add",
             "AUDIT_CONTROL",
-            "--security-opt",
-            "unmask=/proc/*",
             "--pids-limit",
             "32768",
             "--network",
@@ -915,6 +913,8 @@ fn up_boots_with_the_label_limit_and_volumes_and_records_its_caller() {
             "spira.testenv=1",
             "--volume",
             "/wt:/workspace:z",
+            "--security-opt",
+            "unmask=/proc/*",
             "--volume",
             "n1-cargo-reg:/var/spira/cargo/registry",
             "--volume",
@@ -954,6 +954,19 @@ fn up_uses_the_bridge_when_podman_is_rootful() {
     booting(&f);
     f.when(&["info", "--format"], 0, "false\n");
     assert_eq!(network_of_run(&f), "bridge");
+}
+
+#[test]
+fn proc_is_unmasked_for_the_test_sandbox_only_under_rootless_podman() {
+    let unmasked = |rootless: &str| {
+        let f = Fake::new();
+        booting(&f);
+        f.when(&["info", "--format"], 0, rootless);
+        network_of_run(&f);
+        f.calls_with("run")[0].windows(2).any(|w| w[0] == "--security-opt" && w[1] == "unmask=/proc/*")
+    };
+    assert!(unmasked("true\n"), "rootless: bwrap needs its own /proc");
+    assert!(!unmasked("false\n"), "rootful: the masks keep the container's root off the host's /proc/sys");
 }
 
 #[test]

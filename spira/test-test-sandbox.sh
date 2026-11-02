@@ -57,7 +57,9 @@ fn probe() {
     keys.sort();
     println!("SPIRA_KEYS {}", keys.join(","));
     println!("SPIRA_HOME {}", std::env::var("SPIRA_HOME").unwrap_or_default());
-    println!("NET {:?}", std::net::TcpStream::connect_timeout(&"192.0.2.1:9".parse().unwrap(), std::time::Duration::from_secs(1)).map(|_| ()));
+    let ifs = fs::read_to_string("/proc/net/dev").unwrap_or_default();
+    let ifs: Vec<&str> = ifs.lines().skip(2).filter_map(|l| l.split(':').next()).map(str::trim).filter(|i| *i != "lo").collect();
+    println!("NET_IFS {}", ifs.join(","));
     let git = std::env::var("GIT_CONFIG_SYSTEM").map(fs::read_to_string);
     println!("GIT_IDENTITY {git:?}");
 }
@@ -71,6 +73,15 @@ probe=("$TMP/target/debug/deps/probe-0" --exact probe --nocapture --test-threads
 run() { env -i HOME="$home" PATH="/usr/bin:/bin" SPIRA_HOME=/the/installed/harness SPIRA_RUN="$home/spira/run" "$@"; }
 field() { sed -n "s/^$1 //p" <<<"$2"; }
 
+# Run bare first: the probe's own checks find the installation when nothing hides it.
+out="$(run "${probe[@]}" 2>&1)"
+want "bare, the probe reads the caller's config" 'Ok("planted = true")' "$(field READ_CONFIG "$out")"
+want "bare, the probe writes the install's run directory" "Ok(())" "$(field WRITE_RUN "$out")"
+want "bare, the probe sees the caller's SPIRA_ keys" "SPIRA_RUN" "$(field SPIRA_KEYS "$out")"
+[ -n "$(field NET_IFS "$out")" ] && ok "bare, the probe sees a network interface besides loopback" ||
+    bad "bare, the probe sees a network interface besides loopback" "$out"
+rm -f "$home/spira/run/x"
+
 out="$(run "$RUNNER" "${probe[@]}" 2>&1)"
 rc=$?
 wantrc "the probe runs through the runner" 0 "$rc"
@@ -82,7 +93,7 @@ want "a write under the install's run directory fails read-only" "ReadOnlyFilesy
 want "the caller's ~/.local/bin is not there" "NotFound" "$(field LOCAL_BIN "$out")"
 is "no SPIRA_ key of the caller's gets in, SPIRA_HOME is the workspace's own" "SPIRA_HOME" "$(field SPIRA_KEYS "$out")"
 is "SPIRA_HOME names the workspace's spira directory" "$WORKSPACE/spira" "$(field SPIRA_HOME "$out")"
-want "there is no network" "Err" "$(field NET "$out")"
+is "there is no network but loopback" "" "$(field NET_IFS "$out")"
 want "the sandbox carries testenv's system git identity" 'email = spirauser@localhost' "$(field GIT_IDENTITY "$out")"
 
 # Without bwrap it refuses, naming why, and runs nothing — in a root where the binary could
@@ -99,19 +110,27 @@ want "the refusal names why" "bwrap (bubblewrap) is not on" "$out"
 
 # Inside a sandbox that already holds the policy — testenv's sandbox unit runner runs cargo
 # under bwrap — the runner makes no second sandbox; it clears the environment and runs there.
-held=(--die-with-parent --unshare-net --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --tmpfs /run
-      --tmpfs "$home" --bind "$TMP/target" "$TMP/target")
+# --disable-userns: the runner cannot make a sandbox of its own in there, so only the held
+# path can run the probe. The passwd home is hidden too, as the runner requires.
+pwhome="$(getent passwd "$(id -u)" | cut -d: -f6)"
+held=(--die-with-parent --unshare-user --disable-userns --unshare-net --ro-bind / / --dev /dev --proc /proc
+      --tmpfs /tmp --tmpfs /run --tmpfs "$pwhome" --tmpfs "$home" --bind "$TMP/target" "$TMP/target")
 out="$(run bwrap "${held[@]}" -- "$RUNNER" "${probe[@]}" 2>&1)"
 rc=$?
 wantrc "inside a sandbox that holds the policy the probe runs" 0 "$rc"
 is "inside it no SPIRA_ key of the caller's gets in either" "SPIRA_HOME" "$(field SPIRA_KEYS "$out")"
+want "inside it the caller's config cannot be read" "NotFound" "$(field READ_CONFIG "$out")"
 want "inside it the sandbox's git identity is still there" 'email = spirauser@localhost' "$(field GIT_IDENTITY "$out")"
 
 # A sandbox that does NOT hold it (a writable root, the network) is not mistaken for one: the
-# runner asks bwrap for its own, and whether this kernel lets bwrap nest or refuses, the binary
-# never runs where it could have left its marker.
+# runner asks bwrap for its own (which this kernel may refuse to nest, or which hides $TMP),
+# and the binary never runs where it could have left its marker.
 rm -f "$TMP/ran"
 out="$(run bwrap --die-with-parent --bind / / --dev /dev --proc /proc -- "$RUNNER" "$TMP/would-run" 2>&1)"
+rc=$?
+[ "$rc" != 0 ] && ok "a sandbox short of the policy fails the run" || bad "a sandbox short of the policy fails the run" "$out"
+[[ "$out" == *"bwrap:"* || "$out" == *"touch:"* ]] && ok "the failure is bwrap's refusal or the sandboxed binary's" ||
+    bad "the failure is bwrap's refusal or the sandboxed binary's" "$out"
 [ ! -e "$TMP/ran" ] && ok "a sandbox short of the policy is not taken for one" || bad "a sandbox short of the policy is not taken for one" "ran unsandboxed: $out"
 
 # `cargo run` keeps the caller's environment: cargo places its binaries beside .fingerprint.
