@@ -243,8 +243,12 @@ fn parents_of(m: &mut dyn Machine, ids: &[String]) -> Result<Vec<String>, String
 }
 
 /// Whether a child with no lifecycle record is closed, from its planning row. With no record
-/// the control plane holds no state for it, so bd's status is the state it has: a decision
-/// bead is read as an ask's, anything else as a member of its epic (`spira_config::nonwork`).
+/// the control plane holds no state for it, so bd's status is the state it has, read through
+/// `spira_config::nonwork`: a decision bead's as the planning copy of its ask (which may trail
+/// the ask record by one pass), anything else as a member of its epic. That last kind is a
+/// stand-in when the child is a work type: a rowless task predates its record (the import
+/// carries records; create-bead gives every new one a record), and is counted by bd as
+/// close-epic always counted it, not by a state the machine holds.
 fn rowless_closed(row: &Value) -> bool {
     use spira_config::nonwork::{row_closed, Kind};
     row_closed(if s(row, "issue_type") == "decision" { Kind::Ask } else { Kind::Epic }, row)
