@@ -199,6 +199,18 @@ impl FakeVerbs {
         crate::lock(&self.calls).clone()
     }
 
+    /// Adds an answer after the scripted ones, for a harness that scripts each call as it makes it.
+    pub fn script(&self, s: VerbScript) -> Result<(), String> {
+        crate::lock(&self.answers).push(s.answer()?);
+        Ok(())
+    }
+
+    /// Withdraws every answer still scripted for `verb` on `repo`: the call it was scripted for
+    /// was never made.
+    pub fn unscript(&self, verb: Verb, repo: &str) {
+        crate::lock(&self.answers).retain(|a| a.verb != verb || a.repo.as_deref() != Some(repo));
+    }
+
     /// Calls nobody scripted an answer for.
     pub fn faults(&self) -> Vec<String> {
         crate::lock(&self.faults).clone()

@@ -1,0 +1,87 @@
+# The round controller's world twin of round-controller/scenarios/replay-2026-10-31.toml: one
+# shard of the 10-31 slice seeded into the world's control store through the controller's door
+# (five ended passes of the repeat-red member with their Image fault standing, a parent left in
+# ATTRIBUTING under a hand driver's lease with three GREEN children stacked on it, and a stale
+# record), then the sim-only actor's passes over it. Each check step holds the slice to the
+# replay expectation it is named for; the passes exit 0 and the world's run state is untouched.
+# The replay's other expectations count what only its own harness runs (the cut, the runner, the
+# Judge's sub-passes and the landings they lead to), which no world actor does yet, so their
+# names are not carried here.
+epoch = 1800000000
+horizon = 150000
+real_actors = ["round-controller"]
+
+[[step]]
+name = "write-slice"
+at = 0
+command = "sh spira/sim/scenarios/steps/rc-replay-seed.sh"
+
+[[step]]
+name = "no_green_round_abandoned"
+at = 140000
+command = "sh spira/sim/scenarios/steps/rc-replay-check.sh no_green_round_abandoned"
+
+[[step]]
+name = "stacked_parent_wastes_at_most_one_pass"
+at = 140000
+command = "sh spira/sim/scenarios/steps/rc-replay-check.sh stacked_parent_wastes_at_most_one_pass"
+
+[[step]]
+name = "driver_recut_wastes_at_most_one_pass"
+at = 140000
+command = "sh spira/sim/scenarios/steps/rc-replay-check.sh driver_recut_wastes_at_most_one_pass"
+
+[[step]]
+name = "nothing_stacks_on_the_stale_record"
+at = 140000
+command = "sh spira/sim/scenarios/steps/rc-replay-check.sh nothing_stacks_on_the_stale_record"
+
+[[step]]
+name = "pokebot_one_image_fault"
+at = 140000
+command = "sh spira/sim/scenarios/steps/rc-replay-check.sh pokebot_one_image_fault"
+
+[[step]]
+name = "pokebot_no_eject"
+at = 140000
+command = "sh spira/sim/scenarios/steps/rc-replay-check.sh pokebot_no_eject"
+
+[[invariant]]
+name = "rc_pass_exited_nonzero"
+sql = "SELECT seq, exit FROM events WHERE actor = 'round-controller' AND kind = 'complete' AND exit <> 0"
+
+[[invariant]]
+name = "a_step_failed"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit <> 0"
+
+[[invariant]]
+name = "rc_changed_run_state"
+sql = "SELECT seq, 'queue' AS family, key AS what FROM run_queue UNION ALL SELECT seq, 'locks', name FROM run_locks UNION ALL SELECT seq, 'ejected', bead FROM run_ejected UNION ALL SELECT seq, 'verdicts', key FROM run_verdicts UNION ALL SELECT seq, 'gate-log', text FROM run_gate_log UNION ALL SELECT seq, 'landing-log', text FROM run_landing_log"
+
+[[expect]]
+name = "rc_passes_ran_over_the_slice"
+sql = "SELECT 1 FROM events WHERE actor = 'round-controller' AND kind = 'complete' AND exit = 0"
+
+[[expect]]
+name = "no_green_round_abandoned"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND actor = 'no_green_round_abandoned' AND exit = 0"
+
+[[expect]]
+name = "stacked_parent_wastes_at_most_one_pass"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND actor = 'stacked_parent_wastes_at_most_one_pass' AND exit = 0"
+
+[[expect]]
+name = "driver_recut_wastes_at_most_one_pass"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND actor = 'driver_recut_wastes_at_most_one_pass' AND exit = 0"
+
+[[expect]]
+name = "nothing_stacks_on_the_stale_record"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND actor = 'nothing_stacks_on_the_stale_record' AND exit = 0"
+
+[[expect]]
+name = "pokebot_one_image_fault"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND actor = 'pokebot_one_image_fault' AND exit = 0"
+
+[[expect]]
+name = "pokebot_no_eject"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND actor = 'pokebot_no_eject' AND exit = 0"

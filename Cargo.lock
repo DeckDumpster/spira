@@ -1573,6 +1573,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sift",
+ "sim",
  "spira-config",
  "spira-desired-state",
  "spira-lc",
