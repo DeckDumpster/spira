@@ -1536,7 +1536,9 @@ fn withdraw_named_asks(ask: &str, work_beads: &[String], actor: &str, m: &mut dy
 #[cfg(test)]
 mod tests;
 
+// Test support, under a `tests/` directory: lifecycle-guard reads a file there as test code.
 #[cfg(test)]
+#[path = "callers/tests/world.rs"]
 pub(crate) mod world;
 #[cfg(test)]
 mod ownership_tests;
