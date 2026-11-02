@@ -68,7 +68,7 @@ pub fn operator_mail(mut env: mail::env::Env) -> mail::env::Env {
     env
 }
 
-/// The mail environment the Concierge's alerts are sent under: no bd, as for a note, and the repeat guard left on.
+/// The mail environment the Concierge's alerts are sent under: no bd, as for a note.
 pub fn concierge_mail(mut env: mail::env::Env) -> mail::env::Env {
     env.db.clear();
     env

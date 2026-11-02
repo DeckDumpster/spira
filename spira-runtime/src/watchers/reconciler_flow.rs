@@ -82,9 +82,11 @@ pub struct Stage {
 }
 
 /// Every reading is its own `Result`: one that could not be taken is that invariant's
-/// `Unobservable`, never a pass.
+/// `Unobservable`, never a pass. `now` is the instant the series were cut at, which the verdicts
+/// are judged at too, as the binary judged one pass at one instant.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FlowSnapshot {
+    pub now: u64,
     pub halted: bool,
     pub export: Result<(), String>,
     pub velocity_floor: Option<f64>,
@@ -97,9 +99,9 @@ pub struct FlowSnapshot {
 }
 
 impl FlowSnapshot {
-    pub fn halted() -> FlowSnapshot {
+    pub fn halted(now: u64) -> FlowSnapshot {
         let halted = || "world is halted".to_string();
-        FlowSnapshot { halted: true, export: Err(halted()), velocity_floor: None, dwell_limit: None, backlog: Err(halted()), baseline: Err(halted()), stage: Err(halted()), slots: Err(halted()), sentinel: Err(halted()) }
+        FlowSnapshot { now, halted: true, export: Err(halted()), velocity_floor: None, dwell_limit: None, backlog: Err(halted()), baseline: Err(halted()), stage: Err(halted()), slots: Err(halted()), sentinel: Err(halted()) }
     }
 }
 
@@ -283,8 +285,8 @@ impl Handler for ReconcilerFlow {
         if ev.stream.0 != STREAM {
             return vec![];
         }
-        let now = ev.at / 1000;
         if ev.kind.tag == TICK {
+            let now = ev.at / 1000;
             return vec![
                 Command::Probe(EffectSpec { name: OBSERVE.into(), input: serde_json::to_string(&self.params(now)).unwrap_or_default(), deadline_ms: OBSERVE_DEADLINE_MS }),
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
@@ -299,6 +301,7 @@ impl Handler for ReconcilerFlow {
         if snap.halted {
             return vec![];
         }
+        let now = snap.now;
         let carry: Carry = super::carried(view, &ev.stream, STATE);
         let pass = judge(self, now, &carry, &snap);
         ctx.event().set("reconciler_flow.mails", pass.mails.len() as u64);
@@ -325,6 +328,7 @@ mod tests {
 
     fn quiet() -> FlowSnapshot {
         FlowSnapshot {
+            now: 1_000,
             halted: false,
             export: Ok(()),
             velocity_floor: None,

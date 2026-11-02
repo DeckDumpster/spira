@@ -43,7 +43,7 @@ impl Oracle {
     fn build(scenario: Scenario, now: u64) -> Oracle {
         let flow = Flow::build("oracle", scenario, now);
         let root = flow.dir.path().display().to_string();
-        let ids: Vec<String> = lc_rows(scenario).iter().filter(|r| r.repo == SCOPE).map(|r| format!(r#"{{"id":"{}"}}"#, r.id)).collect();
+        let ids: Vec<String> = lc_rows(scenario).iter().filter(|r| r.bd_selects()).map(|r| format!(r#"{{"id":"{}"}}"#, r.id)).collect();
         fs::write(flow.p("bd-out.json"), format!("[{}]", ids.join(","))).unwrap();
         let all: Vec<String> = lc_rows(scenario).iter().map(|r| format!(r#"{{"bead_id":"{}","state":"{}","repo":"{}"}}"#, r.id, r.state, r.repo)).collect();
         fs::write(flow.p("lc-out.json"), format!("[{}]", all.join(","))).unwrap();
@@ -160,10 +160,7 @@ impl Handler {
 }
 
 fn same(scenario: Scenario, expect: Option<&str>) {
-    if on_path("duckdb").is_none() {
-        eprintln!("skipped: no duckdb on PATH");
-        return;
-    }
+    assert!(on_path("duckdb").is_some(), "the oracle reads run/tsd through duckdb, which the test image ships (spira/testenv/Containerfile): a parity test that skipped would compare nothing");
     assert!(debug_dir().join("reconciler-flow").exists() && debug_dir().join("tsd-write").exists(), "build reconciler-flow and tsd-write first: they are the oracle");
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     let mut oracle = Oracle::build(scenario, now);

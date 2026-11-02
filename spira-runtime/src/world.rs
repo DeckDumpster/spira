@@ -27,6 +27,8 @@ use crate::watchers::reconciler_flow::{FlowSnapshot, Params, Slots, Stage, Statu
 use crate::watchers::round_duty::{RoundState, Snapshot};
 
 const STORE_ATTEMPTS: u32 = 3;
+/// Ids per `plan items` call when the flow pass reads the live beads' type and labels.
+const FLOW_CONTENT_CHUNK: usize = 200;
 // batch-job: the call deadline; the verb answers inside 4s on its own
 const UNPUBLISHED_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 const TMUX_DEADLINE: std::time::Duration = std::time::Duration::from_secs(3);
@@ -104,6 +106,17 @@ fn artifact_urls(text: &str) -> Vec<String> {
         })
         .filter(|u| u.len() > PREFIX.len())
         .collect()
+}
+
+/// The `items` of the `{watermark, items}` object a `spira-lc plan items` door printed, skipping
+/// any notice lines the store printed before it.
+fn plan_items(out: &str) -> Option<Vec<Value>> {
+    out.char_indices()
+        .filter(|&(i, c)| c == '{' && (i == 0 || out.as_bytes()[i - 1] == b'\n'))
+        .find_map(|(i, _)| match serde_json::from_str::<Value>(&out[i..]).ok()?.get_mut("items")?.take() {
+            Value::Array(list) => Some(list),
+            _ => None,
+        })
 }
 
 impl World {
@@ -324,12 +337,8 @@ impl World {
         let [flag, filter] = status_args(Kind::Ask, Which::Open);
         let argv = ["plan", "items", "--label", &self.ask_label, &flag, &filter, "--full"];
         let out = self.lc_named(&argv)?;
-        let items = out
-            .char_indices()
-            .filter(|&(i, c)| c == '{' && (i == 0 || out.as_bytes()[i - 1] == b'\n'))
-            .find_map(|(i, _)| serde_json::from_str::<Value>(&out[i..]).ok().and_then(|v| v.get("items").filter(|l| l.is_array()).cloned()));
-        match items {
-            Some(list) => Ok(list.to_string()),
+        match plan_items(&out) {
+            Some(list) => Ok(Value::Array(list).to_string()),
             None => Err(format!("spira-lc {} exited 0 but printed no item list: {:?}", argv.join(" "), out.chars().take(200).collect::<String>())),
         }
     }
@@ -471,15 +480,27 @@ impl World {
         serde_json::from_str(&text).map_err(|e| format!("{} unparsed: {e}", argv[0]))
     }
 
-    /// The beads still in the backlog: the non-terminal lifecycle rows of the scope's repository.
+    /// The beads still in the backlog: every work bead carrying the scope label whose lifecycle
+    /// row is not terminal, the set `bd list --exclude-type epic,event --label <scope>` selected.
+    /// The label is not the repository: a bead filed for another repository carries the scope
+    /// label too, and a live epic has a lifecycle row, so the content store decides both.
     fn flow_backlog(&self) -> Result<u64, String> {
-        let mut argv = vec!["list", "--live"];
-        if !self.scope_label.is_empty() {
-            argv.extend(["--repo", &self.scope_label]);
+        let rows = spira_config::lc_state::parse_rows(&self.lc_named(&["list", "--live"])?).map_err(|e| format!("lifecycle state unreadable: {e}"))?;
+        let live: Vec<&str> = rows.iter().filter(|r| !r.terminal()).map(|r| r.bead_id.as_str()).collect();
+        let mut ids = vec![];
+        for chunk in live.chunks(FLOW_CONTENT_CHUNK) {
+            let argv = ["plan", "items", "--ids", &chunk.join(",")];
+            let out = self.lc_named(&argv)?;
+            let found = plan_items(&out).ok_or_else(|| format!("spira-lc plan items printed no item list: {:?}", out.chars().take(200).collect::<String>()))?;
+            ids.extend(found.iter().filter(|r| self.in_flow_backlog(r)).filter_map(|r| r["id"].as_str().map(str::to_string)));
         }
-        let rows = spira_config::lc_state::parse_rows(&self.lc_named(&argv)?).map_err(|e| format!("lifecycle state unreadable: {e}"))?;
-        let ids: Vec<String> = rows.iter().map(|r| r.bead_id.clone()).collect();
         Ok(::reconciler_flow::io::backlog_of(&ids, &spira_config::lc_state::index(rows)))
+    }
+
+    fn in_flow_backlog(&self, content: &Value) -> bool {
+        let work = !matches!(content["issue_type"].as_str(), Some("epic" | "event"));
+        let scoped = self.scope_label.is_empty() || content["labels"].as_array().is_some_and(|l| l.iter().any(|x| x.as_str() == Some(self.scope_label.as_str())));
+        work && scoped
     }
 
     /// Brings `bead-stage` up to the lifecycle log, launching its exporter only when the log is ahead of it.
@@ -505,7 +526,7 @@ impl World {
         use ::reconciler_flow::io as flow;
         let p: Params = serde_json::from_str(input).map_err(|e| format!("reconciler-flow params unparsed: {e}"))?;
         if self.run_dir.join("world.halted").exists() {
-            return serde_json::to_string(&FlowSnapshot::halted()).map_err(|e| e.to_string());
+            return serde_json::to_string(&FlowSnapshot::halted(p.now)).map_err(|e| e.to_string());
         }
         let export = self.flow_export();
         let (velocity_floor, dwell_limit) = flow::flow_floors(&self.desired_dir);
@@ -525,7 +546,7 @@ impl World {
         });
         let slots = flow::slots_samples_in_process(&self.run_dir).map(|(prev, cur)| (Slots::from(prev), Slots::from(cur)));
         let sentinel = flow::sentinel_pass_wall_seconds(endpoint, p.now, (p.sentinel_timer_secs * 3).max(3600));
-        serde_json::to_string(&FlowSnapshot { halted: false, export, velocity_floor, dwell_limit, backlog, baseline, stage, slots, sentinel }).map_err(|e| e.to_string())
+        serde_json::to_string(&FlowSnapshot { now: p.now, halted: false, export, velocity_floor, dwell_limit, backlog, baseline, stage, slots, sentinel }).map_err(|e| e.to_string())
     }
 
     /// Records each verdict as a `reconciler-status` row; a row the store refuses is dropped, as the pass always did.

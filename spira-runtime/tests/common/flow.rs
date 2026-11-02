@@ -49,15 +49,29 @@ pub struct LcRow {
     pub id: String,
     pub state: &'static str,
     pub repo: &'static str,
+    pub label: &'static str,
+    pub issue_type: &'static str,
 }
 
-/// The lifecycle rows each scenario holds: the scope's, another repository's, and the epic that has none.
+impl LcRow {
+    /// What `bd list --exclude-type epic,event --label <scope>` selects: the oracle's bd answers these.
+    pub fn bd_selects(&self) -> bool {
+        self.label == SCOPE && !matches!(self.issue_type, "epic" | "event")
+    }
+}
+
+/// The lifecycle rows each scenario holds: the scope's work, landed work, work filed for another
+/// repository that still carries the scope label, the scope repository's work under another
+/// label, and a live epic and event, which bd excluded by type.
 pub fn lc_rows(s: Scenario) -> Vec<LcRow> {
-    let row = |i: usize, state, repo| LcRow { id: format!("sp-{i}"), state, repo };
+    let row = |i: usize, state, repo, label, issue_type| LcRow { id: format!("sp-{i}"), state, repo, label, issue_type };
     let live = if s == Scenario::BacklogRising { 30 } else { 8 };
-    let mut rows: Vec<LcRow> = (0..live).map(|i| row(i, ["READY", "WORKING", "SUBMITTED", "REWORK"][i % 4], SCOPE)).collect();
-    rows.extend((100..105).map(|i| row(i, "LANDED", SCOPE)));
-    rows.extend((200..203).map(|i| row(i, "WORKING", "elsewhere")));
+    let mut rows: Vec<LcRow> = (0..live).map(|i| row(i, ["READY", "WORKING", "SUBMITTED", "REWORK"][i % 4], SCOPE, SCOPE, "task")).collect();
+    rows.extend((100..105).map(|i| row(i, "LANDED", SCOPE, SCOPE, "task")));
+    rows.extend((200..203).map(|i| row(i, "WORKING", "elsewhere", SCOPE, "bug")));
+    rows.extend((300..302).map(|i| row(i, "READY", SCOPE, "other", "task")));
+    rows.push(row(400, "OPEN", SCOPE, SCOPE, "epic"));
+    rows.push(row(401, "READY", SCOPE, SCOPE, "event"));
     rows
 }
 
@@ -154,8 +168,9 @@ impl Flow {
         }
         f.sentinel_pass("p1", 30, now - 600);
         let family = |name: &str| tsd::family_path(&f.run(), name);
+        // Eleven: the scope label's live work, eight beads of this repository and three filed for another.
         for hours in 1..=11u64 {
-            let line = tsd::build_row(&tsd::iso_utc(now - hours * 3600), "h", "backlog", &[tsd::parse_field("count=8").unwrap()]).unwrap();
+            let line = tsd::build_row(&tsd::iso_utc(now - hours * 3600), "h", "backlog", &[tsd::parse_field("count=11").unwrap()]).unwrap();
             tsd::append_line(&family("backlog"), &line).unwrap();
         }
         for (i, at) in [now - 1800, now - 900].iter().enumerate() {
@@ -195,6 +210,11 @@ impl Flow {
                             .map(|r| json!({"bead_id": r.id, "state": r.state, "repo": r.repo}))
                             .collect();
                         (0, Value::Array(picked).to_string())
+                    }
+                    "plan" if argv.get(1).map(String::as_str) == Some("items") => {
+                        let ids: Vec<String> = flag("--ids").unwrap_or_default().split(',').map(str::to_string).collect();
+                        let found: Vec<Value> = rows.iter().filter(|r| ids.contains(&r.id)).map(|r| json!({"id": r.id, "labels": [r.label], "issue_type": r.issue_type, "status": "open"})).collect();
+                        (0, json!({"watermark": 0, "items": found}).to_string())
                     }
                     "event-seq" => (0, json!({"seq": seq.load(Ordering::SeqCst), "keys": []}).to_string()),
                     _ => (2, "no such door".into()),
