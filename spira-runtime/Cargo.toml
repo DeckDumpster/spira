@@ -5,7 +5,7 @@ edition = "2021"
 description = "spira-runtime — the long-running service that hosts the loop's workflows: pinned config, wide events as OTLP logs, a heartbeat schedule, a loop-kicked systemd watchdog and stall quarantine."
 
 [package.metadata.spira]
-test-bins = ["spira-config", "spira-lc", "reconciler"]
+test-bins = ["spira-config", "spira-lc", "reconciler", "reconciler-flow", "tsd"]
 
 [lib]
 name = "spira_runtime"
@@ -23,6 +23,7 @@ libc = "0.2"
 mail = { path = "../mail" }
 reconciler = { path = "../reconciler" }
 reconciler-engine = { path = "../reconciler-engine" }
+reconciler-flow = { path = "../reconciler-flow" }
 runtime = { path = "../runtime" }
 unit-run = { path = "../unit-run" }
 spira-config = { path = "../spira-config" }

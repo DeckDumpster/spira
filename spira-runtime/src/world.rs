@@ -18,14 +18,17 @@ use crate::watchers::asks;
 use crate::watchers::design_asks::{self, Page};
 use crate::hunk;
 use crate::watchers::view;
-use crate::wiki_git::{git, overrides_apply, tmux};
+use crate::wiki_git::{git, lifecycle_export, overrides_apply, tmux};
 use crate::watchers::brain_dirty;
 use crate::watchers::supersede_duty::{self, Act, Held, Reading, Verb};
 use crate::watchers::bead_sweep::{self, Bead, Repair, Repaired, Reservation, Row, Stop};
 use crate::watchers::publish_backlog::{self, Read};
+use crate::watchers::reconciler_flow::{FlowSnapshot, Params, Slots, Stage, Statuses};
 use crate::watchers::round_duty::{RoundState, Snapshot};
 
 const STORE_ATTEMPTS: u32 = 3;
+/// Ids per `plan items` call when the flow pass reads the live beads' type and labels.
+const FLOW_CONTENT_CHUNK: usize = 200;
 // batch-job: the call deadline; the verb answers inside 4s on its own
 const UNPUBLISHED_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 const TMUX_DEADLINE: std::time::Duration = std::time::Duration::from_secs(3);
@@ -47,6 +50,10 @@ pub struct World {
     pub cockpit_state: PathBuf,
     pub cockpit_session: String,
     pub tmux: PathBuf,
+    pub metrics_endpoint: Option<String>,
+    pub scope_label: String,
+    pub desired_dir: PathBuf,
+    pub export_bin: String,
 }
 
 struct MapRow {
@@ -99,6 +106,17 @@ fn artifact_urls(text: &str) -> Vec<String> {
         })
         .filter(|u| u.len() > PREFIX.len())
         .collect()
+}
+
+/// The `items` of the `{watermark, items}` object a `spira-lc plan items` door printed, skipping
+/// any notice lines the store printed before it.
+fn plan_items(out: &str) -> Option<Vec<Value>> {
+    out.char_indices()
+        .filter(|&(i, c)| c == '{' && (i == 0 || out.as_bytes()[i - 1] == b'\n'))
+        .find_map(|(i, _)| match serde_json::from_str::<Value>(&out[i..]).ok()?.get_mut("items")?.take() {
+            Value::Array(list) => Some(list),
+            _ => None,
+        })
 }
 
 impl World {
@@ -319,12 +337,8 @@ impl World {
         let [flag, filter] = status_args(Kind::Ask, Which::Open);
         let argv = ["plan", "items", "--label", &self.ask_label, &flag, &filter, "--full"];
         let out = self.lc_named(&argv)?;
-        let items = out
-            .char_indices()
-            .filter(|&(i, c)| c == '{' && (i == 0 || out.as_bytes()[i - 1] == b'\n'))
-            .find_map(|(i, _)| serde_json::from_str::<Value>(&out[i..]).ok().and_then(|v| v.get("items").filter(|l| l.is_array()).cloned()));
-        match items {
-            Some(list) => Ok(list.to_string()),
+        match plan_items(&out) {
+            Some(list) => Ok(Value::Array(list).to_string()),
             None => Err(format!("spira-lc {} exited 0 but printed no item list: {:?}", argv.join(" "), out.chars().take(200).collect::<String>())),
         }
     }
@@ -464,6 +478,81 @@ impl World {
     fn lc_json(&self, argv: &[&str]) -> Result<Value, String> {
         let text = lc_call(&self.lc_socket, argv).map_err(|e| e.to_string())?;
         serde_json::from_str(&text).map_err(|e| format!("{} unparsed: {e}", argv[0]))
+    }
+
+    /// The beads still in the backlog: every work bead carrying the scope label whose lifecycle
+    /// row is not terminal, the set `bd list --exclude-type epic,event --label <scope>` selected.
+    /// The label is not the repository: a bead filed for another repository carries the scope
+    /// label too, and a live epic has a lifecycle row, so the content store decides both.
+    fn flow_backlog(&self) -> Result<u64, String> {
+        let rows = spira_config::lc_state::parse_rows(&self.lc_named(&["list", "--live"])?).map_err(|e| format!("lifecycle state unreadable: {e}"))?;
+        let live: Vec<&str> = rows.iter().filter(|r| !r.terminal()).map(|r| r.bead_id.as_str()).collect();
+        let mut ids = vec![];
+        for chunk in live.chunks(FLOW_CONTENT_CHUNK) {
+            let argv = ["plan", "items", "--ids", &chunk.join(",")];
+            let out = self.lc_named(&argv)?;
+            let found = plan_items(&out).ok_or_else(|| format!("spira-lc plan items printed no item list: {:?}", out.chars().take(200).collect::<String>()))?;
+            ids.extend(found.iter().filter(|r| self.in_flow_backlog(r)).filter_map(|r| r["id"].as_str().map(str::to_string)));
+        }
+        Ok(::reconciler_flow::io::backlog_of(&ids, &spira_config::lc_state::index(rows)))
+    }
+
+    fn in_flow_backlog(&self, content: &Value) -> bool {
+        let work = !matches!(content["issue_type"].as_str(), Some("epic" | "event"));
+        let scoped = self.scope_label.is_empty() || content["labels"].as_array().is_some_and(|l| l.iter().any(|x| x.as_str() == Some(self.scope_label.as_str())));
+        work && scoped
+    }
+
+    /// Brings `bead-stage` up to the lifecycle log, launching its exporter only when the log is ahead of it.
+    fn flow_export(&self) -> Result<(), String> {
+        let logged = self.lc_json(&["event-seq"])?["seq"].as_u64().ok_or("event-seq: no seq")?;
+        let checkpoint = self.run_dir.join("tsd").join(".bead-stage-checkpoint-lifecycle.json");
+        let exported = fs::read_to_string(checkpoint).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["last_seq"].as_u64()).unwrap_or(0);
+        if logged <= exported {
+            return Ok(());
+        }
+        let bin = self.export_bin.as_str();
+        if bin.is_empty() {
+            return Err("bead-stage is behind the lifecycle log and no exporter is configured".into());
+        }
+        lifecycle_export(bin)
+    }
+
+    pub fn flow_snapshot(&self, input: &str) -> Result<String, String> {
+        use ::reconciler_flow::io as flow;
+        let p: Params = serde_json::from_str(input).map_err(|e| format!("reconciler-flow params unparsed: {e}"))?;
+        if self.run_dir.join("world.halted").exists() {
+            return serde_json::to_string(&FlowSnapshot::halted(p.now)).map_err(|e| e.to_string());
+        }
+        let export = self.flow_export();
+        let (velocity_floor, dwell_limit) = flow::flow_floors(&self.desired_dir);
+        let baseline = flow::backlog_baseline_in_process(&self.run_dir, p.now, p.baseline_hours);
+        let backlog = self.flow_backlog();
+        if let Ok(count) = &backlog {
+            let _ = flow::append_backlog_sample_in_process(&self.run_dir, p.now, *count);
+        }
+        let endpoint = self.metrics_endpoint.as_deref();
+        let stage = flow::stage_rows(endpoint).map(|rows| Stage {
+            waiting: flow::waiting_to_land(&rows),
+            velocity: flow::velocity_metrics(&rows, p.now, p.window_hours, p.baseline_hours),
+            dwell: flow::dwell_metrics(&rows, p.now, p.window_hours, p.baseline_hours),
+            round_health: flow::round_health_metrics(&rows, p.now, p.window_hours, p.baseline_hours),
+            rework: flow::rework_metrics(&rows, p.now, p.rework_window_hours),
+            regression: flow::dwell_regression_metrics(&rows, p.now, p.window_hours, p.baseline_hours),
+        });
+        let slots = flow::slots_samples_in_process(&self.run_dir).map(|(prev, cur)| (Slots::from(prev), Slots::from(cur)));
+        let sentinel = flow::sentinel_pass_wall_seconds(endpoint, p.now, (p.sentinel_timer_secs * 3).max(3600));
+        serde_json::to_string(&FlowSnapshot { now: p.now, halted: false, export, velocity_floor, dwell_limit, backlog, baseline, stage, slots, sentinel }).map_err(|e| e.to_string())
+    }
+
+    /// Records each verdict as a `reconciler-status` row; a row the store refuses is dropped, as the pass always did.
+    pub fn flow_status(&self, input: &str) -> Result<String, String> {
+        let s: Statuses = serde_json::from_str(input).map_err(|e| format!("reconciler-flow statuses unparsed: {e}"))?;
+        let store = tsd::store::Pusher::new(self.metrics_endpoint.clone());
+        for row in &s.rows {
+            reconciler_engine::io::push(&store, reconciler_engine::io::STATUS_FAMILY, &s.ts, row);
+        }
+        Ok(format!("{} rows", s.rows.len()))
     }
 
     pub fn sweep_snapshot(&self) -> Result<String, String> {

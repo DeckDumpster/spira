@@ -58,7 +58,9 @@ fn main() {
 }
 
 async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String> {
-    let mail_env = spira_runtime::operator_mail(mail::env::Env::load().map_err(|e| format!("mail environment: {e}"))?);
+    let base_mail = mail::env::Env::load().map_err(|e| format!("mail environment: {e}"))?;
+    let mail_env = spira_runtime::operator_mail(base_mail.clone());
+    let concierge_mail = spira_runtime::concierge_mail(base_mail);
     let kick: Arc<dyn Fn() + Send + Sync> = {
         let n = notifier.clone();
         Arc::new(move || n.kick())
@@ -72,7 +74,7 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
         let (settings, clock, sink) = (settings.clone(), clock.clone(), sink.clone());
         move || -> Result<runtime::Engine, String> {
             let mut engine = open_engine(&settings, journal, clock, Arc::new(FileMarker(settings.marker_path())), sink, vec![]).map_err(|e| e.to_string())?;
-            for (_, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), spira_runtime::watchers::round_duty::RoundDuty::boot(), spira_runtime::watchers::inbox_keeper::InboxKeeper::boot(), spira_runtime::watchers::pr_notify::PrNotify::boot(), spira_runtime::watchers::asks::Asks::boot(), spira_runtime::watchers::design_asks::DesignAsks::boot(), spira_runtime::watchers::brain_dirty::BrainDirty::boot(), spira_runtime::watchers::supersede_duty::SupersedeDuty::boot(), spira_runtime::watchers::bead_sweep::BeadSweep::boot(), spira_runtime::watchers::publish_backlog::PublishBacklog::boot(), spira_runtime::watchers::repo_events::RepoEvents::boot(), spira_runtime::watchers::overrides::Overrides::boot(), spira_runtime::watchers::view::View::boot(), spira_runtime::watchers::reconciler::Reconciler::boot()] {
+            for (_, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), spira_runtime::watchers::round_duty::RoundDuty::boot(), spira_runtime::watchers::inbox_keeper::InboxKeeper::boot(), spira_runtime::watchers::pr_notify::PrNotify::boot(), spira_runtime::watchers::asks::Asks::boot(), spira_runtime::watchers::design_asks::DesignAsks::boot(), spira_runtime::watchers::brain_dirty::BrainDirty::boot(), spira_runtime::watchers::supersede_duty::SupersedeDuty::boot(), spira_runtime::watchers::bead_sweep::BeadSweep::boot(), spira_runtime::watchers::publish_backlog::PublishBacklog::boot(), spira_runtime::watchers::repo_events::RepoEvents::boot(), spira_runtime::watchers::overrides::Overrides::boot(), spira_runtime::watchers::view::View::boot(), spira_runtime::watchers::reconciler::Reconciler::boot(), spira_runtime::watchers::reconciler_flow::ReconcilerFlow::boot()] {
                 engine.start(stream, kind);
             }
             Ok(engine)
@@ -84,5 +86,5 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
     let (_keep_open, rx) = mpsc::channel(1);
     notifier.ready();
     let opts = ServeOpts { kick: Some(kick), max_sleep_ms: max_sleep.map(|d| d.as_millis() as u64), sink: Some(sink), pool: None };
-    serve_with(engine, clock, Arc::new(Effects { heartbeat_url: settings.heartbeat_url.clone(), world: settings.world.clone(), forge: settings.forge.clone(), mail: Some(Arc::new(mail_env)), reconciler: Some(settings.reconciler.clone()), ..Effects::default() }), 4, rx, opts).await.map_err(|e| e.to_string())
+    serve_with(engine, clock, Arc::new(Effects { heartbeat_url: settings.heartbeat_url.clone(), world: settings.world.clone(), forge: settings.forge.clone(), mail: Some(Arc::new(mail_env)), reconciler: Some(settings.reconciler.clone()), concierge_mail: Some(Arc::new(concierge_mail)), ..Effects::default() }), 4, rx, opts).await.map_err(|e| e.to_string())
 }

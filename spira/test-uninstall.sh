@@ -724,15 +724,13 @@ echo "BINARY-BACKED UNITS ARE ALWAYS OWNED — a release carries every binary, s
 # left a unit out of UNITS when its binary was not built HERE, so spira-landing-pass/-loom units a
 # tarball install put there were left behind as strays. Since sp-gypjk there is no "not built"
 # state: units.sh lists these units unconditionally, so owned.sh's manifest always has them.
-for _ub in spira-landing-pass-test.service spira-landing-pass-test.timer spira-loom-test.service \
-           spira-reconciler-flow-test.service spira-reconciler-flow-test.timer; do
+for _ub in spira-landing-pass-test.service spira-landing-pass-test.timer spira-loom-test.service; do
     printf '[Unit]\nDescription=left by a tarball install\n' > "$DEST/$_ub"
 done
 unbuilt_out="$(un)"
 unbuilt_rc=$?
 iszero "unbuilt: uninstall exits 0" "$unbuilt_rc"
-for _ub in spira-landing-pass-test.service spira-landing-pass-test.timer spira-loom-test.service \
-           spira-reconciler-flow-test.service spira-reconciler-flow-test.timer; do
+for _ub in spira-landing-pass-test.service spira-landing-pass-test.timer spira-loom-test.service; do
     [ -e "$DEST/$_ub" ] \
         && bad "unbuilt: $_ub is removed" "still in $DEST" \
         || ok  "unbuilt: $_ub is removed"
