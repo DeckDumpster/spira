@@ -49,9 +49,10 @@ pub fn cockpit_db() -> Result<PathBuf, String> {
     resolve_db(cockpit_db.as_deref(), spira_db.as_deref(), |p| p.is_dir())
 }
 
-/// `$SPIRA_LC_BIN` if set and non-empty, else `"spira-lc"` — the one door to bead content.
-pub fn lc_bin() -> String {
-    std::env::var("SPIRA_LC_BIN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| spira_config::release_env::tool("spira-lc"))
+/// `$SPIRA_LC_BIN` if set and non-empty, else `spira-lc` in `$SPIRA_RELEASE` — the one door to
+/// bead content.
+pub fn lc_bin() -> Result<String, String> {
+    spira_config::lifecycle_row::lc_bin()
 }
 
 #[cfg(test)]

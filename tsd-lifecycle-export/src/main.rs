@@ -19,7 +19,7 @@ use tsd_lifecycle_export::{
 };
 
 fn main() {
-    spira_config::release_env::ensure_release_path();
+    spira_config::release_env::ensure_release_path_or_exit("tsd-lifecycle-export");
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mode = args.first().map(String::as_str);
     let since = flag(&args, "--since");

@@ -6,83 +6,15 @@ use skew::real::Real;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-/// `$SPIRA_HOME` first when a caller set it explicitly and it actually holds `lib.sh`:
-/// `_activated_release_cmd` (deploy.sh, sp-r15cf) pins it to the release just activated
-/// specifically so a stale predecessor's own `$PATH` corruption cannot matter, and
-/// `spira-skew.service` pins it to `@SPIRA_HOME@` rather than `@SPIRA_PROD@` on purpose in
-/// split-checkout mode (so `SPIRA_REPO` derives to the dev checkout, not the release) —
-/// both are deliberate overrides this binary must honor, not second-guess. Only when
-/// nothing set it does this fall back to release-relative self-location
-/// (`<release>/bin/skew` -> `<release>/spira/`), the equivalent of skew.sh's own
-/// `$(dirname "$0")/lib.sh` for a bare interactive invocation with no `$SPIRA_HOME` at all.
-///
-/// THAT FALLBACK READS `argv[0]`, NEVER `current_exe()`. `current_exe()` canonicalizes
-/// every symlink in the path; testenv's own release staging (and the gate's fixture
-/// release) link `bin/<tool>` to wherever cargo actually built it and `spira/` to the real
-/// checkout — two unrelated directories once resolved. `current_exe()` there returns
-/// cargo's own build output path, whose "sibling" spira/ doesn't exist, so the fallback
-/// always missed silently (empty stdout, exit 3 — indistinguishable from a real
-/// CANNOT-VERIFY until someone reads the exit code). `argv[0]` is exactly the path PATH
-/// search resolved to, unresolved further — bash's own `$0` never re-resolves it either.
+/// The declared harness home (`SPIRA_HOME`, else `$SPIRA_RELEASE/spira`), holding `lib.sh`; a
+/// refusal names what is missing. Never searched for beside the executable.
 fn resolve_home() -> Result<PathBuf, String> {
-    if let Ok(h) = std::env::var("SPIRA_HOME") {
-        if !h.is_empty() {
-            let p = PathBuf::from(&h);
-            if p.join("lib.sh").is_file() {
-                return Ok(p);
-            }
-        }
+    let home = spira_config::resolve::locate_home_for_process().map_err(|e| format!("skew: {e}"))?;
+    if home.join("lib.sh").is_file() {
+        Ok(home)
+    } else {
+        Err(format!("skew: {} holds no lib.sh", home.display()))
     }
-    if let Some(exe) = argv0_path() {
-        if let Some(bin_dir) = exe.parent() {
-            if let Some(release_dir) = bin_dir.parent() {
-                let candidate = release_dir.join("spira");
-                if candidate.join("lib.sh").is_file() {
-                    return Ok(candidate);
-                }
-            }
-        }
-    }
-    match std::env::var("SPIRA_HOME") {
-        Ok(h) if !h.is_empty() => Ok(PathBuf::from(h)),
-        _ => Err("skew: SPIRA_HOME is not set and no spira/lib.sh sits beside the executable".to_string()),
-    }
-}
-
-/// `argv[0]`, resolved to where it actually sits, but with every symlink component left
-/// exactly as invoked — never `current_exe()`'s fully resolved path. See `resolve_home`'s
-/// own comment for why that distinction is load-bearing.
-///
-/// A bare name (no `/`) is NOT already the resolved path the way it is when a shell execs
-/// a PATH-found command: bash rewrites its own `$0` to the full path PATH search landed on
-/// before exec, but a non-shell caller — `env PATH=... skew check`, `posix_spawnp`, a test
-/// harness's own `env -i PATH="$STUBBIN:$PATH" ... skew check` — calls `execvp` directly,
-/// which resolves the PATH search internally but passes argv[0] through to the new process
-/// completely unchanged: still the bare string "skew". Joining that onto the current
-/// directory (as if it were shell-relative) lands on nothing real. Caught live by testenv's
-/// test-skew-local-release.sh, whose fixture invokes exactly that way (sp-yyk47).
-fn argv0_path() -> Option<PathBuf> {
-    let arg0 = std::env::args_os().next()?;
-    let p = PathBuf::from(&arg0);
-    if p.components().count() > 1 {
-        // Has a directory component (relative or absolute) — this IS where it was found.
-        return if p.is_absolute() { Some(p) } else { Some(std::env::current_dir().ok()?.join(p)) };
-    }
-    // Bare name: redo the PATH search ourselves, exactly as execvp did, but keep the
-    // first matching entry's path unresolved (no canonicalize).
-    let path_var = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join(&arg0);
-        if is_exec(&candidate) {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
-fn is_exec(p: &std::path::Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
 }
 
 fn main() -> ExitCode {

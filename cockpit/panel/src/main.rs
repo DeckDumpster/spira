@@ -666,7 +666,13 @@ fn panel() {
     // Read once, here, through the one door (per Ryan 2026-10-05: one source of config) —
     // never again via `std::env::var` or `spira_config::process::cfg` directly. Carried from
     // here into every write path and into `view_items`, via `App.cfg`.
-    let cfg = store::Cfg::load();
+    let cfg = match store::Cfg::load() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("panel: {e}");
+            std::process::exit(2);
+        }
+    };
 
     let shared: store::Shared = Arc::new(Mutex::new(store::Snapshot::default()));
     store::refresh(&shared, &cfg);

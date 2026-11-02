@@ -174,8 +174,7 @@ fn main() {
         eprintln!("slay.sh: FATAL: {e}");
         spira_otel::oneshot::exit(1);
     });
-    let exe = env::current_exe().ok();
-    let lib_sh = exe.as_deref().and_then(spira_world::locate_home).map(|h| h.join("lib.sh"));
+    let lib_sh = spira_world::locate_home().map(|h| h.join("lib.sh"));
 
     // ---- 0. the bead must exist -------------------------------------------------------
     let found = lib_sh

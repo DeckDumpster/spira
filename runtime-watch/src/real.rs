@@ -64,7 +64,7 @@ impl Real {
 
     fn ledger_bump(&self, repo: &Repo, rt: Runtime) -> Result<Option<String>, String> {
         let Some(id) = self.bumps.borrow().get(&key(repo, rt)).cloned() else { return Ok(None) };
-        let mut c = bounded(spira_config::lifecycle_row::lc_bin());
+        let mut c = bounded(spira_config::lifecycle_row::lc_bin()?);
         c.args(["show", &id]);
         let out = c.output().map_err(|e| e.to_string())?;
         match out.status.code() {
@@ -132,7 +132,7 @@ impl World for Real {
         if let Some(id) = self.ledger_bump(repo, rt)? {
             return Ok(Some(id));
         }
-        let mut c = bounded(spira_config::lifecycle_row::lc_bin());
+        let mut c = bounded(spira_config::lifecycle_row::lc_bin()?);
         c.args(["list", "--live", "--repo", &repo.name]);
         let out = c.output().map_err(|e| e.to_string())?;
         if out.status.code() != Some(0) {

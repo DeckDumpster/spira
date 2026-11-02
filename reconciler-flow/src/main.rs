@@ -43,7 +43,7 @@ const LOCK_EX: i32 = 2;
 const LOCK_NB: i32 = 4;
 
 fn main() -> ExitCode {
-    spira_config::release_env::ensure_release_path();
+    spira_config::release_env::ensure_release_path_or_exit("reconciler-flow");
     let args: Vec<String> = env::args().collect();
     if args.get(1).map(String::as_str) != Some("--pass") {
         eprintln!("usage: reconciler-flow --pass");
@@ -96,7 +96,7 @@ struct Seams {
 
 impl Seams {
     fn production() -> Seams {
-        Seams { tsd: "tsd-write".into(), duckdb: "duckdb".into(), export: "tsd-lifecycle-export".into(), mail: "mail".into(), date: "date".into(), bdq: spira_config::release_env::tool("bdq") }
+        Seams { tsd: declared(spira_config::release_env::tool("tsd-write")), duckdb: "duckdb".into(), export: declared(spira_config::release_env::tool("tsd-lifecycle-export")), mail: declared(spira_config::release_env::tool("mail")), date: "date".into(), bdq: declared(spira_config::release_env::tool("bdq")) }
     }
 }
 
@@ -404,4 +404,13 @@ fn run_pass() -> Result<(), String> {
 
     drop(lock_file);
     Ok(())
+}
+
+/// A value this binary cannot run without (a release tool, the child PATH), or exit 2 naming
+/// the refusal.
+fn declared<T>(v: Result<T, String>) -> T {
+    v.unwrap_or_else(|e| {
+        eprintln!("reconciler-flow: {e}");
+        std::process::exit(2)
+    })
 }

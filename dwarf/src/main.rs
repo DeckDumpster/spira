@@ -85,10 +85,7 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
 /// rune file and lib.sh's own derived values, neither of which this subcommand needs.
 fn run_stop(args: &[String]) -> i32 {
     let original: BTreeMap<String, String> = std::env::vars().collect();
-    let exe = std::env::current_exe().ok();
-    let Some(home) = conf::resolve_home(None, &original, exe.as_deref()) else {
-        fatal("cannot find the harness's spira/ directory (set SPIRA_HOME)")
-    };
+    let home = conf::resolve_home(None, &original).unwrap_or_else(|e| fatal(&format!("dwarf: {e}")));
     let mut snap = seam::Snapshot::default();
     if let Err(e) = conf::merge_resolved_config(&mut snap, &home, &original) {
         fatal(&format!("config resolution: {e}"));
@@ -106,10 +103,7 @@ fn run_capacity(args: &[String]) -> i32 {
         Ok(None) => {}
         Err(e) => fatal(&format!("dwarf: {e}")),
     }
-    let exe = std::env::current_exe().ok();
-    let Some(home) = conf::resolve_home(None, &original, exe.as_deref()) else {
-        fatal("cannot find the harness's spira/ directory (set SPIRA_HOME)")
-    };
+    let home = conf::resolve_home(None, &original).unwrap_or_else(|e| fatal(&format!("dwarf: {e}")));
     let mut snap = seam::Snapshot::default();
     if let Err(e) = conf::merge_resolved_config(&mut snap, &home, &original) {
         fatal(&format!("config resolution: {e}"));
@@ -182,10 +176,7 @@ fn main() {
     // ops unit) hands it a PATH set outright from SPIRA_RELEASE, and the dwarf carries it to
     // the session and its subagents unchanged — it never rebuilds or appends to it.
     let original: BTreeMap<String, String> = std::env::vars().collect();
-    let exe = std::env::current_exe().ok();
-    let Some(home) = conf::resolve_home(cli.home.as_deref(), &original, exe.as_deref()) else {
-        fatal("cannot find the harness's spira/ directory (pass --home, or set SPIRA_HOME)")
-    };
+    let home = conf::resolve_home(cli.home.as_deref(), &original).unwrap_or_else(|e| fatal(&format!("dwarf: {e}")));
     let rune_file = home.join("runes").join(format!("{}.rune", cli.rune));
     if !rune_file.is_file() {
         fatal(&format!("no such rune: {}", rune_file.display()));
@@ -196,7 +187,8 @@ fn main() {
     let own_unit = original.get("DWARF_OWN_UNIT").cloned().unwrap_or_else(own_unit_from_cgroup);
 
     // conf.sh's resolution, once, through the seam.
-    let boot_env = Env::new(original.clone(), BTreeMap::new());
+    let seam_path = spira_config::release_env::child_path_env_for_process().unwrap_or_else(|e| fatal(&format!("dwarf: {e}")));
+    let boot_env = Env::new(original.clone(), BTreeMap::new()).with_seam_path(seam_path.clone());
     let boot = BashSeam { lib: home.join("lib.sh"), rune_file: rune_file.clone(), rune: cli.rune.clone(), env: &boot_env };
     let vars: Vec<String> = seam::SNAPSHOT_VARS.iter().map(|s| s.to_string()).collect();
     let raw = dwarf::ports::Seam::call(&boot, "_dwarf_snapshot", &vars);
@@ -208,13 +200,13 @@ fn main() {
         fatal(&format!("{}: config resolution: {e}", cli.rune));
     }
     conf::merge_capacity_env(&mut snap, &original);
-    let env = Env::new(original.clone(), snap.env.clone());
+    let env = Env::new(original.clone(), snap.env.clone()).with_seam_path(seam_path);
     let conf = Conf::new(&snap, &home);
     let rune = Rune::from_vars(&cli.rune, &snap.vars);
     if let Some(w) = conf::retired_sop_required_warning(&snap.vars, &cli.rune) {
         eprintln!("{w}");
     }
-    let claim_bin = "spira-claim".to_string();
+    let claim_bin = spira_config::release_env::tool("spira-claim").unwrap_or_else(|e| fatal(&format!("dwarf: {e}")));
 
     let seam = BashSeam { lib: home.join("lib.sh"), rune_file: rune_file.clone(), rune: cli.rune.clone(), env: &env };
 
@@ -232,7 +224,7 @@ fn main() {
         { let code = rc; spira_otel::run::finish(code); std::process::exit(code) };
     }
     let bd = BdCli {
-        bdq: spira_config::release_env::tool("bdq"),
+        bdq: spira_config::release_env::tool("bdq").unwrap_or_else(|e| fatal(&format!("dwarf: {e}"))),
         timeout_s: conf.n("BD_TIMEOUT", 180).max(1) as u64,
         conn_retries: conf.n("SPIRA_BDQ_CONN_RETRIES", 2).max(1) as u32,
         // Not a registered config key — `Conf::or`, not the strict `Conf::s`.

@@ -570,7 +570,10 @@ fn helper(
     }
     // batch-job: part of a testenv trial, which is bounded by the trial deadline, not per call
     let mut cmd = Command::new("bash");
-cmd.envs(spira_config::release_env::child_path_env_for_process());
+    match spira_config::release_env::child_path_env_for_process() {
+        Ok(e) => cmd.envs(e),
+        Err(e) => return Some((3, e)),
+    };
     cmd.arg(script).args(args).stderr(Stdio::inherit());
     for (k, v) in extra_env {
         cmd.env(k, v);
@@ -2891,7 +2894,14 @@ fn warm_conf_gen(wt: &Path) -> Option<Finish> {
     let conf_gen = wt.join("spira/conf-gen.sh");
     if conf_gen.exists() {
         // batch-job: the tree's own conf-gen, part of a testenv trial bounded by its deadline
-        match std::process::Command::new("bash").envs(spira_config::release_env::child_path_env_for_process())
+        let envs = match spira_config::release_env::child_path_env_for_process() {
+            Ok(e) => e,
+            Err(e) => {
+                stderr(&format!("batch: spira/conf-gen.sh cannot run: {e} — harness fault"));
+                return Some(Finish::fault(3, "conf-gen", 0));
+            }
+        };
+        match std::process::Command::new("bash").envs(envs)
             .arg(&conf_gen)
             .current_dir(wt)
             .output()

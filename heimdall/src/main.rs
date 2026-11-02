@@ -94,11 +94,14 @@ fn pass() -> i32 {
     // "unreachable" as far as a watchdog is concerned.
     let store_timeout = env_n(&original, "SPIRA_HEIMDALL_BD_TIMEOUT", 10).max(1);
     let mut lc_env = original.clone();
-    // law-a-binary-resolves-the-config-it-reads: `home` is `<release>/spira`, so its parent is
-    // this binary's own release root, whose bin/ goes on the child's PATH.
-    for (k, v) in spira_config::release_env::child_path_env(home.parent(), lc_env.get("PATH").map(String::as_str)) {
-        lc_env.insert(k, v);
-    }
+    let (child_env, lc_bin) = match spira_config::release_env::child_path_env_for_process().and_then(|e| Ok((e, spira_config::release_env::tool("spira-lc")?))) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("heimdall: {e}");
+            return 1;
+        }
+    };
+    lc_env.extend(child_env);
 
     // `SPIRA_REPO` (the home repo path), derived in-process the same way `cfg()` itself
     // derives it internally — not a config-key read, so it stays this direct call.
@@ -201,7 +204,7 @@ fn pass() -> i32 {
 
     // THE ALERT QUERY IS ALSO THE READ PROBE: asking a second, separate "is the store
     // readable" question would be a second thing to get out of step with the first.
-    let ops = LcConditions { bin: spira_config::release_env::tool("spira-lc"), env: &lc_env, timeout: Duration::from_secs(store_timeout as u64) };
+    let ops = LcConditions { bin: lc_bin, env: &lc_env, timeout: Duration::from_secs(store_timeout as u64) };
     let mut db_saturated = false;
     let (db_reachable, db_error, alert_rows) = match ops.list() {
         Ok(rows) => (true, String::new(), rows),

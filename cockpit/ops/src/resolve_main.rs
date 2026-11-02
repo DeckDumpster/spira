@@ -22,9 +22,10 @@ impl Closer for RealBd {
     }
 
     fn show_json(&self, _db: &Path, id: &str) -> String {
+        let Ok(lc) = db::lc_bin() else { return String::new() };
         Command::new("timeout")
             .arg("5")
-            .arg(db::lc_bin())
+            .arg(lc)
             .args(["content", "show", id, "--json"])
             .stdin(Stdio::null())
             .output()
@@ -33,7 +34,7 @@ impl Closer for RealBd {
     }
 
     fn has_lifecycle_row(&self, id: &str) -> Result<bool, String> {
-        match Command::new("timeout").args(["5", spira_config::release_env::tool("spira-lc").as_str(), "show", id]).stdin(Stdio::null()).output() {
+        match Command::new("timeout").args(["5", spira_config::release_env::tool("spira-lc")?.as_str(), "show", id]).stdin(Stdio::null()).output() {
             Ok(o) => match o.status.code() {
                 Some(0) => Ok(true),
                 Some(1) => Ok(false),
@@ -48,7 +49,10 @@ impl Closer for RealBd {
     }
 
     fn withdraw_ask_row(&self, id: &str, reason: &str) -> (i32, String) {
-        let mut c = Command::new(spira_config::lc_call::lc_bin());
+        let mut c = match spira_config::lc_call::lc_bin() {
+            Ok(b) => Command::new(b),
+            Err(e) => return (2, e),
+        };
         c.args(["close-ask", id, "--exit", "withdrawn", "--quote", reason, "--actor", "claude"]);
         spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT)
     }
@@ -59,7 +63,10 @@ impl Closer for RealBd {
                 return (3, String::new());
             }
         }
-        let mut c = Command::new(spira_config::lc_call::lc_bin());
+        let mut c = match spira_config::lc_call::lc_bin() {
+            Ok(b) => Command::new(b),
+            Err(e) => return (2, e),
+        };
         c.args(["withdraw-ask", work_bead, "claude"]);
         spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT)
     }

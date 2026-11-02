@@ -23,16 +23,9 @@ pub fn is_refusal(code: i32, out: &str) -> bool {
     code != 0 && out.starts_with("cannot tell")
 }
 
-/// `SPIRA_LC_BIN`, else `spira-lc` beside this executable, else the bare name.
-pub fn lc_bin() -> PathBuf {
-    if let Some(v) = std::env::var_os("SPIRA_LC_BIN").filter(|v| !v.is_empty()) {
-        return PathBuf::from(v);
-    }
-    std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(|d| d.join("spira-lc")))
-        .filter(|p| p.is_file())
-        .unwrap_or_else(|| PathBuf::from(crate::release_env::tool("spira-lc")))
+/// `SPIRA_LC_BIN`, else `spira-lc` in `$SPIRA_RELEASE`; a refusal naming the key otherwise.
+pub fn lc_bin() -> Result<PathBuf, String> {
+    crate::lifecycle_row::lc_bin().map(PathBuf::from)
 }
 
 /// Run `bin args` with a deadline enforced here, not by a `timeout` program. A deadline

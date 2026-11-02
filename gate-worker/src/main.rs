@@ -66,7 +66,13 @@ fn real_main(meter: &spira_otel::metrics::Run) -> ExitCode {
         eprintln!("gate-worker: SPIRA_HOME is unset");
         return ExitCode::FAILURE;
     };
-    let exe = std::env::current_exe().unwrap_or_else(|_| home.clone());
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("gate-worker: cannot locate this binary: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     let out = Reporter::stdout(None);
     let (s, repos) = match load_context(&home, &out) {
         Ok(x) => x,

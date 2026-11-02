@@ -159,6 +159,11 @@ fn tail(s: &str, n: usize) -> String {
 pub const IMAGE_PATH: &str =
     "/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
+/// The image's tool directories outside the system ones every launcher PATH ends with: the
+/// suite's declared `SPIRA_PATH`, so a Rust child PATH built from the declaration
+/// (`release_env::launcher_path`) still reaches cargo.
+pub const IMAGE_TOOL_PATH: &str = "/usr/local/cargo/bin:/usr/local/sbin:/usr/sbin:/sbin";
+
 /// Writes the container's config file ([`Fixture::config_toml`]): the complete fixture with
 /// the installed release (`…/spira-releases/current`) rewritten to the staged one and
 /// `/fixture/userhome` to this user's `$HOME`, then the batch's own keys set over it. The
@@ -981,7 +986,7 @@ impl<'a> Session<'a> {
         env.extend(self.release_env());
         env.extend(fixtures.env());
         env.push(kv("TMUX", ""));
-        env.push(kv("SPIRA_PATH", ""));
+        env.push(kv("SPIRA_PATH", IMAGE_TOOL_PATH));
         env.push(kv("SPIRA_BD_LOG", self.bd_log(mode, n, suite)));
         match mode {
             Mode::Parallel => {

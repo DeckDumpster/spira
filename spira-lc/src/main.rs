@@ -67,7 +67,7 @@ use serde_json::Value;
 use spira_lc::{flag, CANNOT_TELL, REFUSED};
 
 fn main() {
-    spira_config::release_env::ensure_release_path();
+    spira_config::release_env::ensure_release_path_or_exit("spira-lc");
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(|s| s.as_str()) == Some("check-config") {
         std::process::exit(spira_config::process::check_config_verb("spira-lc", &[]));

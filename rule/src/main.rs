@@ -233,7 +233,7 @@ fn commit_common_law(home: &str, verb: &str, key: &str) -> CommitOutcome {
     };
     let script = format!("{home}/wiki-commit.sh");
     // batch-job: runs a gate, build or forge script that takes as long as its work
-    let mut child = match Command::new("bash").envs(spira_config::release_env::child_path_env_for_process())
+    let mut child = match Command::new("bash").envs(declared(spira_config::release_env::child_path_env_for_process()))
         .arg(&script)
         .arg(&wiki)
         .arg(format!("law: {verb} {key}"))
@@ -1042,7 +1042,7 @@ fn fetch_memories_json() -> String {
     if let Ok(cmd) = std::env::var("SPIRA_MEMORIES_CMD") {
         if !cmd.is_empty() {
             // batch-job: runs a gate, build or forge script that takes as long as its work
-            return Command::new("bash").envs(spira_config::release_env::child_path_env_for_process())
+            return Command::new("bash").envs(declared(spira_config::release_env::child_path_env_for_process()))
                 .arg("-c")
                 .arg(&cmd)
                 .stdin(Stdio::null())
@@ -1095,6 +1095,15 @@ fn cmd_system_prompt_split(rest: &[String]) -> i32 {
         return 1;
     }
     0
+}
+
+/// A value this binary cannot run without (a release tool, the child PATH), or exit 2 naming
+/// the refusal.
+fn declared<T>(v: Result<T, String>) -> T {
+    v.unwrap_or_else(|e| {
+        eprintln!("rule: {e}");
+        std::process::exit(2)
+    })
 }
 
 #[cfg(test)]

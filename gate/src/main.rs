@@ -6,14 +6,12 @@ use gate::engine::{Args, Trial};
 use gate::real::{install_signal_handlers, Real};
 use std::path::PathBuf;
 
+/// The declared harness home: `SPIRA_HOME`, else `$SPIRA_RELEASE/spira`; neither set exits 2 naming them.
 fn default_home() -> PathBuf {
-    if let Some(h) = std::env::var_os("SPIRA_HOME").filter(|v| !v.is_empty()) {
-        return PathBuf::from(h);
-    }
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().and_then(|d| d.parent()).map(|r| r.join("spira")))
-        .unwrap_or_else(|| PathBuf::from("spira"))
+    spira_config::resolve::locate_home_for_process().unwrap_or_else(|e| {
+        eprintln!("gate: {e}");
+        std::process::exit(2)
+    })
 }
 
 const IN_UNIT_ENV: &str = "SPIRA_GATE_IN_UNIT";

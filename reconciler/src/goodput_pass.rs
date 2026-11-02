@@ -81,7 +81,7 @@ fn push(sink: &MetricsSink, outcome: &Outcome) {
 
 pub fn main(sink: &MetricsSink) -> Result<(), String> {
     let cfg = config()?;
-    let lc = SpiraLc { program: spira_config::release_env::tool("spira-lc") };
+    let lc = SpiraLc { program: spira_config::release_env::tool("spira-lc")? };
     let outcome = run(&lc, &WallClock, &cfg)?;
     push(sink, &outcome);
     match &outcome {

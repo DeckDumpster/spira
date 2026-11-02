@@ -237,7 +237,10 @@ pub fn frame(lib: &str, rune_file: &str, rune: &str, func: &str, args: &[String]
 
 impl Seam for BashSeam<'_> {
     fn call(&self, func: &str, args: &[String]) -> Out {
-        let env = self.env.seam();
+        let env = match self.env.seam() {
+            Ok(e) => e,
+            Err(e) => return Out { code: 2, stdout: String::new(), stderr: format!("dwarf: {e}") },
+        };
         let data = frame(&self.lib.display().to_string(), &self.rune_file.display().to_string(), &self.rune, func, args);
         util::run(Spec {
             prog: "bash",
@@ -255,6 +258,14 @@ mod tests {
     use super::*;
 
 
+
+    #[test]
+    fn the_lib_sh_seam_refuses_without_a_declared_path_naming_spira_release() {
+        let mut orig = BTreeMap::new();
+        orig.insert("PATH".to_string(), "/inherited".to_string());
+        let e = Env::new(orig, BTreeMap::new()).seam().unwrap_err();
+        assert!(e.contains("SPIRA_RELEASE"), "{e}");
+    }
 
     #[test]
     fn frame_is_nul_separated_records() {

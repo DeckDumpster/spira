@@ -47,15 +47,20 @@ impl Real {
 
     fn seam(&self, body: &str, args: &[&str]) -> String {
         let script = format!(". \"$0\" >/dev/null 2>&1 || exit 96\n{body}");
+        let envs = match spira_config::release_env::child_path_env_for_process() {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("gate-check: {e}");
+                return String::new();
+            }
+        };
         // batch-job: runs a gate, build or forge script that takes as long as its work
         let out = Command::new("bash")
             .arg("-c")
             .arg(script)
             .arg(self.home.join("lib.sh"))
             .args(args)
-            // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
-            // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-            .envs(spira_config::release_env::child_path_env_for_process())
+            .envs(envs)
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output();

@@ -58,30 +58,23 @@ fn build_env() -> Env {
     // just the subcmd, same as before).
     let cockpit_override = std::env::var("SOP_METRIC_COCKPIT").ok().filter(|v| !v.is_empty());
     let cockpit_bash_prefix = cockpit_override.is_some();
-    let cockpit_bin = cockpit_override.unwrap_or_else(|| spira_config::release_env::tool("cockpit-collect"));
+    let cockpit_bin = match cockpit_override {
+        Some(c) => c,
+        None => spira_config::release_env::tool("cockpit-collect").unwrap_or_else(|e| {
+            eprintln!("sop: {e}");
+            std::process::exit(2)
+        }),
+    };
     Env { word_cap, why_cap, actor, cockpit_bin, cockpit_bash_prefix }
 }
 
-/// `$SPIRA_HOME`, else the first ancestor of this executable that holds `lib.sh` — same
-/// fallback `spira_world::locate_home`/`mail::env::locate_home`/landing-pass's own
-/// `harness_home` already use. `resolve_for_process` needs a REAL `home/conf.d` to
-/// resolve almost every key (`SPIRA_RUN` included — sp-ivfu3) — an empty `home` makes it
-/// refuse outright ("no config registry at conf.d"), exactly what a bare shell with no
-/// `$SPIRA_HOME` exported would otherwise hit.
+/// The declared harness home: `SPIRA_HOME`, else `$SPIRA_RELEASE/spira`; neither set exits 2
+/// naming them.
 fn harness_home() -> PathBuf {
-    if let Ok(h) = std::env::var("SPIRA_HOME") {
-        if !h.is_empty() {
-            return PathBuf::from(h);
-        }
-    }
-    let Ok(exe) = std::env::current_exe() else { return PathBuf::new() };
-    let exe = exe.canonicalize().unwrap_or(exe);
-    exe.ancestors()
-        .skip(1)
-        .take(4)
-        .map(|a| a.join("spira"))
-        .find(|p| p.join("lib.sh").is_file())
-        .unwrap_or_default()
+    spira_config::resolve::locate_home_for_process().unwrap_or_else(|e| {
+        eprintln!("sop: {e}");
+        std::process::exit(2)
+    })
 }
 
 fn ledger_path() -> PathBuf {

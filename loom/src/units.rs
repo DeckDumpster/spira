@@ -20,7 +20,7 @@ pub struct Sources {
     pub run: String,
     pub systemctl: String,
     pub metrics_endpoint: Option<String>,
-    pub extra_path: String,
+    pub path: String,
     pub budget: Duration,
     pub desired_dir: String,
     pub units_install: String,
@@ -795,10 +795,7 @@ async fn declared_units(src: &Sources, path: &str) -> Result<BTreeSet<String>, S
 }
 
 pub async fn take(src: &Sources, now: i64, history: &History) -> Snapshot {
-    let path = {
-        let inherited = std::env::var("PATH").unwrap_or_default();
-        if src.extra_path.is_empty() { inherited } else { format!("{}:{inherited}", src.extra_path) }
-    };
+    let path = src.path.clone();
     let (list, nexts, declared) = tokio::join!(unit_list(src, &path), timer_nexts(src, &path), declared_units(src, &path));
     let mut errors = Vec::new();
     let declared = declared.map_err(|e| errors.push(format!("declared units: {e}"))).ok();

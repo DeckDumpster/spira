@@ -3,7 +3,7 @@
 //! and the enact path, plus store.rs's `refresh`, are the only cockpit surfaces that change
 //! bead state, and none of them had ever run against anything but the real `bd`.
 //!
-//! `store::bin`/`store::child_path` resolve `bd` by searching `cfg.extra_path` first, so
+//! `store::bin`/`store::child_path` resolve `bd` by searching `cfg.path` first, so
 //! pointing that at a directory holding a recording stub is the whole seam — no code under
 //! test changes. Per Ryan 2026-10-05 (one source of config), this no longer mutates
 //! `SPIRA_PATH`/`COCKPIT_DB`/`SPIRA_DB`/`SPIRA_OPERATOR_ACTOR`: `spira_config::process::cfg`
@@ -15,7 +15,7 @@
 //! sites (`App`, built once in `main`) now follow too.
 //!
 //! ENV VARS ARE STILL PROCESS-GLOBAL for every OTHER knob here (`BD_CLOSE_RC`, `MAIL_RC`,
-//! `LC_RC`, `RULE_RC`, `SPIRA_RULE`, …) — those are read by the stub shell scripts themselves,
+//! `LC_RC`, `RULE_RC`, `SPIRA_RELEASE`, …) — those are read by the stub shell scripts themselves,
 //! or by `model::rule_sh` (not a registered config key), never by `spira_config`. Every test
 //! using this must still hold `LOCK` for as long as the stub is in scope; `StubBd` does that
 //! itself (the guard lives in the struct) — a caller only has to keep the `StubBd` alive, not

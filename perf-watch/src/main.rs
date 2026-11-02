@@ -161,7 +161,7 @@ fn run() -> Result<(), String> {
 }
 
 const HAPPY_USAGE: &str = "usage: perf-watch happy --repo DIR --sim BIN --scratch DIR --history FILE [--scenario NAME] [--seed N] [--goal-ms N] [--run-limit-s N]";
-const PRODUCTION_LOCATORS: [&str; 4] = ["SPIRA_LC_PASSWORD_FILE", "SPIRA_LC_SOCKET", "SPIRA_RUN", "SPIRA_DB"];
+const PRODUCTION_LOCATORS: [&str; 5] = ["SPIRA_LC_PASSWORD_FILE", "SPIRA_LC_SOCKET", "SPIRA_RUN", "SPIRA_DB", "SPIRA_TOML"];
 
 struct RealSim {
     repo: String,
@@ -188,7 +188,7 @@ impl RealSim {
 
 impl Sim for RealSim {
     fn round_open(&mut self) -> Result<bool, String> {
-        let out = Command::new("timeout").args(["5", spira_config::release_env::tool("queue").as_str(), "round", "status"]).stdin(Stdio::null()).stderr(Stdio::null()).output().map_err(|e| format!("queue: {e}"))?;
+        let out = Command::new("timeout").args(["5", spira_config::release_env::tool("queue")?.as_str(), "round", "status"]).stdin(Stdio::null()).stderr(Stdio::null()).output().map_err(|e| format!("queue: {e}"))?;
         if !out.status.success() {
             return Err(format!("queue round status exited {}", out.status));
         }

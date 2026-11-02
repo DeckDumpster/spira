@@ -301,7 +301,7 @@ pub fn run(o: &Opts, ambient: &dyn Fn(&str) -> Option<String>) -> Result<Verdict
     let red = if o.suites.is_some() {
         Vec::new()
     } else {
-        match round_red(&PathBuf::from(spira_config::release_env::tool("spira-lc")), &env, &o.bead) {
+        match round_red(&PathBuf::from(spira_config::release_env::tool("spira-lc")?), &env, &o.bead) {
             Ok(r) if r.is_empty() => {
                 added.push(format!("no red suites recorded for {} in the last {ROUND_WINDOW_DAYS} days; using the default selection", o.bead));
                 r

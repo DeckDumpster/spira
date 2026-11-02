@@ -250,7 +250,13 @@ impl Host for RuntimeHost {
 
     fn certified_list(&self, repo: &Path) -> String {
         let Some(branches) = spira_branches(repo) else {
-            return reconciler::run_cmd(&spira_config::release_env::tool("queue-helpers"), &["certified-list", &repo.to_string_lossy()]);
+            return match spira_config::release_env::tool("queue-helpers") {
+                Ok(t) => reconciler::run_cmd(&t, &["certified-list", &repo.to_string_lossy()]),
+                Err(e) => {
+                    eprintln!("spira-runtime: {e}");
+                    String::new()
+                }
+            };
         };
         let Ok(rows) = self.lc(&["list", "--state", "CERTIFIED", "--snapshot"]) else { return String::new() };
         let Ok(rows) = serde_json::from_str::<Vec<serde_json::Value>>(&rows) else { return String::new() };
@@ -270,7 +276,13 @@ impl Host for RuntimeHost {
             ["rune", "partitions"] => runes::rune_partitions(&self.home, roster).into_iter().map(|(labels, exclude)| format!("{labels}\t{exclude}\n")).collect(),
             ["rune", "for-labels", labels] => runes::runes_for_labels(&self.home, labels).into_iter().map(|f| format!("{f}\n")).collect(),
             ["repo", "landref", name] => self.landref(name),
-            other => reconciler::run_cmd(&spira_config::release_env::tool("spira-config"), other),
+            other => match spira_config::release_env::tool("spira-config") {
+                Ok(t) => reconciler::run_cmd(&t, other),
+                Err(e) => {
+                    eprintln!("spira-runtime: {e}");
+                    String::new()
+                }
+            },
         }
     }
 

@@ -76,8 +76,7 @@ fn cmd_status() -> i32 {
     let pool = spira.and_then(|s| spira_config::said(s.get_u32("SPIRA_MAX_DWARVES")));
     let lanes_cap = spira.and_then(|s| spira_config::said(s.get_u32("SPIRA_LANES_MAX_LIVE")));
 
-    let exe = env::current_exe().ok();
-    let lib_sh = exe.as_deref().and_then(spira_world::locate_home).map(|h| h.join("lib.sh"));
+    let lib_sh = spira_world::locate_home().map(|h| h.join("lib.sh"));
     let (lt, ld) = lane_caps(lib_sh.as_deref());
     let live = live_now();
 

@@ -87,7 +87,7 @@ pub fn load(home: &Path) -> Result<Context, String> {
         // launcher otherwise leaves `command -v spira-config` unresolved inside conf.sh and
         // this seam dies at "exit 97" before it reads a single config value (inbox-triage's
         // own scar, same seam shape).
-        .envs(spira_config::release_env::child_path_env_for_process())
+        .envs(spira_config::release_env::child_path_env_for_process()?)
         .stdin(Stdio::null())
         .stderr(Stdio::inherit())
         .output()
@@ -128,7 +128,7 @@ pub fn load(home: &Path) -> Result<Context, String> {
         health_timeout: take("SPIRA_HEALTH_TIMEOUT"),
         notify_age: take("SPIRA_NOTIFY_AGE"),
         id_prefix: take("SPIRA_ID_PREFIX"),
-        bdq: spira_config::release_env::tool("bdq"),
+        bdq: spira_config::release_env::tool("bdq")?,
         placeholders,
         systemctl: std::env::var("SPIRA_SYSTEMCTL").unwrap_or_else(|_| "systemctl".to_string()),
         // SPIRA_INSTANCE is a registered key too (just not in CONFIG_VARS above, since it
@@ -174,97 +174,15 @@ impl Context {
     }
 }
 
-/// Where THIS BINARY's own `conf.sh` lives — found by searching upward from the binary's
-/// own directory for an ancestor whose `spira/conf.sh` exists.
-///
-/// DELIBERATELY NEVER `$SPIRA_HOME`, even when a caller has one set. `SPIRA_HOME` is a
-/// piece of a CALLER's resolved config — an input conf.sh computes, that a fixture may set
-/// to point somewhere else entirely for its own reasons (a test pointed it at a directory
-/// holding a three-line stub `conf.sh`, to fake `watch_unit_name` for an unrelated
-/// command). The bash's own `watchd.sh` never read `$SPIRA_HOME` to decide what to source
-/// either — it sourced conf.sh from `$(dirname "${BASH_SOURCE[0]}")`, i.e. its OWN
-/// location, ignoring whatever `$SPIRA_HOME` said. A compiled binary has no
-/// `BASH_SOURCE[0]`; searching upward from `current_exe()` is the equivalent question
-/// ("where do I, this program, actually live") asked the only way a binary can ask it.
-/// Scar: reading `$SPIRA_HOME` first sourced that fixture's stub conf.sh instead of the
-/// real one, and every var the real one would have set — `SPIRA_RUN`, `SPIRA_ACTIONABLE`,
-/// `SPIRA_NOTIFY_AGE`, the manifest path — came back empty, well before the test's actual
-/// assertions were reached.
-///
-/// NOT A FIXED PARENT COUNT either (a second scar this same walk fixed): a release runs
-/// this binary from `<release>/bin/watchd`, one level below `spira/`'s sibling; a testenv
-/// or dwarf-profile build tree runs it from `<checkout>/target/dwarf/watchd`, TWO levels
-/// below. Fixing the depth to the release's shape made the conf.sh seam fail closed
-/// ("conf.sh could not be sourced") on every other build layout.
+/// Where this binary's own `conf.sh` lives: `$SPIRA_RELEASE/spira`, the release it runs from.
+/// Never `$SPIRA_HOME`, which is a caller's config input a fixture may point elsewhere; never
+/// a search upward from the executable. Unset exits 2 naming the key.
 pub fn home_dir() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| find_spira_dir(&p, |d| d.join("conf.sh").is_file()))
-        .unwrap_or_else(|| PathBuf::from("spira"))
-}
-
-/// Walks `exe`'s directory and each ancestor after it, looking for the first whose
-/// `spira/` satisfies `exists` (real filesystem in `home_dir`; an in-memory set in tests,
-/// so the walk itself is unit tested without touching disk). `None` if no ancestor's
-/// `spira/` does — `home_dir` falls back to a bare `"spira"` then.
-fn find_spira_dir(exe: &Path, exists: impl Fn(&Path) -> bool) -> Option<PathBuf> {
-    let mut dir = exe.parent()?;
-    loop {
-        let candidate = dir.join("spira");
-        if exists(&candidate) {
-            return Some(candidate);
+    match spira_config::release_env::release_root_for_process() {
+        Ok(r) => r.join("spira"),
+        Err(e) => {
+            eprintln!("watchd: {e}");
+            std::process::exit(2)
         }
-        dir = dir.parent()?;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashSet;
-
-    fn has(dirs: &[&str]) -> impl Fn(&Path) -> bool {
-        let set: HashSet<PathBuf> = dirs.iter().map(PathBuf::from).collect();
-        move |p: &Path| set.contains(p)
-    }
-
-    #[test]
-    fn a_release_layout_finds_spira_one_level_above_bin() {
-        // <release>/bin/watchd; spira/ is a sibling of bin/, one level up.
-        let exe = Path::new("/opt/spira/spira-releases/abc123/bin/watchd");
-        let exists = has(&["/opt/spira/spira-releases/abc123/spira"]);
-        assert_eq!(find_spira_dir(exe, exists), Some(PathBuf::from("/opt/spira/spira-releases/abc123/spira")));
-    }
-
-    #[test]
-    fn a_testenv_dwarf_profile_build_finds_spira_two_levels_above_target_dwarf() {
-        // <checkout>/target/dwarf/watchd; spira/ is beside the checkout root, not beside
-        // target/dwarf/ — the exact shape that broke the fixed-parent-count version inside
-        // a testenv container (this crate's own scar).
-        let exe = Path::new("/workspace/target/dwarf/watchd");
-        let exists = has(&["/workspace/spira"]);
-        assert_eq!(find_spira_dir(exe, exists), Some(PathBuf::from("/workspace/spira")));
-    }
-
-    #[test]
-    fn a_plain_cargo_debug_build_finds_spira_two_levels_above_target_debug() {
-        let exe = Path::new("/checkout/target/debug/watchd");
-        let exists = has(&["/checkout/spira"]);
-        assert_eq!(find_spira_dir(exe, exists), Some(PathBuf::from("/checkout/spira")));
-    }
-
-    #[test]
-    fn no_ancestor_with_a_spira_dir_is_none() {
-        let exe = Path::new("/a/b/c/watchd");
-        assert_eq!(find_spira_dir(exe, |_| false), None);
-    }
-
-    #[test]
-    fn the_nearest_ancestor_wins_when_more_than_one_could_match() {
-        // A pathological case (an ancestor further up also happens to have a spira/) —
-        // the walk must stop at the first (nearest) match, not the outermost.
-        let exe = Path::new("/a/b/c/watchd");
-        let exists = has(&["/a/b/spira", "/a/spira"]);
-        assert_eq!(find_spira_dir(exe, exists), Some(PathBuf::from("/a/b/spira")));
     }
 }

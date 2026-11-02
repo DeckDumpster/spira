@@ -19,8 +19,15 @@ impl RealBd {
     /// read as shell syntax.
     fn seam(&self, body: &str, args: &[&str], stdin: Option<&[u8]>) -> (bool, Vec<u8>) {
         let script = format!(". \"$0\" >/dev/null || {{ echo \"sop: cannot source $0 (set SPIRA_HOME)\" >&2; exit 96; }}\n{body}");
+        let envs = match spira_config::release_env::child_path_env_for_process() {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("sop: {e}");
+                return (false, Vec::new());
+            }
+        };
         let mut cmd = spira_config::bounded::bounded("bash");
-cmd.envs(spira_config::release_env::child_path_env_for_process());
+        cmd.envs(envs);
         cmd.arg("-c").arg(script).arg(format!("{}/lib.sh", self.spira_home)).args(args);
         cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
         cmd.stdout(Stdio::piped()).stderr(Stdio::inherit());

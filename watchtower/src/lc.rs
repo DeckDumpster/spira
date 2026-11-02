@@ -22,8 +22,11 @@ pub struct DeliveryRow {
     pub version: String,
 }
 
-fn program() -> String {
-    std::env::var(PROGRAM_ENV).ok().filter(|s| !s.is_empty()).unwrap_or_else(|| spira_config::release_env::tool("spira-lc"))
+fn program() -> Result<String, String> {
+    match std::env::var(PROGRAM_ENV).ok().filter(|s| !s.is_empty()) {
+        Some(p) => Ok(p),
+        None => spira_config::release_env::tool("spira-lc"),
+    }
 }
 
 fn text(v: &Value, key: &str) -> String {
@@ -43,7 +46,7 @@ fn epoch(v: &Value, key: &str) -> Option<i64> {
 }
 
 fn run(args: &[&str]) -> Option<String> {
-    let out = spira_config::bounded::bounded(program()).args(args).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    let out = spira_config::bounded::bounded(program().ok()?).args(args).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 

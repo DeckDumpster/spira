@@ -99,6 +99,9 @@ const LOCK_NB: i32 = 4;
 // derived from a registered key.
 // ──────────────────────────────────────────────────────────────────────────────
 
+/// The programs a pass runs that the system, not the release, provides.
+const SYSTEM_PROGRAMS: [&str; 6] = ["systemctl", "tmux", "git", "podman", "df", "date"];
+
 /// Every program the pass runs, by name on the launcher's PATH, and the one unit it will
 /// never remedy. A test injects its own; nothing here is read from the environment.
 #[derive(Clone)]
@@ -129,36 +132,50 @@ pub struct Seams {
 }
 
 impl Seams {
-    pub fn production() -> Seams {
-        Seams::resolving(spira_config::release_env::tool)
+    /// Every release tool from `$SPIRA_RELEASE`, or the refusal naming it.
+    pub fn production() -> Result<Seams, String> {
+        Seams::from_release(std::env::var(spira_config::RELEASE_ENV).ok().as_deref())
     }
 
-    pub fn resolving(name: impl Fn(&str) -> String) -> Seams {
-        Seams {
-            systemctl: name("systemctl"),
-            tmux: name("tmux"),
-            git: name("git"),
-            forge: name("forge"),
-            mail: name("mail"),
-            units_install: name("units-install"),
-            spira_config: name("spira-config"),
-            spira_claim: name("spira-claim"),
-            strand: name("strand"),
-            queue_helpers: name("queue-helpers"),
-            queue: name("queue"),
-            spira_lc: name("spira-lc"),
-            bead: name("bead"),
-            bdq: name("bdq"),
-            target_reap: name("target-reap"),
-            podman: name("podman"),
-            df: name("df"),
-            rebuild: name("rebuild"),
-            layout: name("layout"),
-            date: name("date"),
-            store_unit: name("dolt-beads.service"),
-            lint: name("spira-lint"),
-            guard: name("lifecycle-guard"),
-        }
+    /// System programs (and the store's unit) by name on the launcher's PATH; every
+    /// release-shipped tool from `release`, or the refusal naming `SPIRA_RELEASE`.
+    pub fn from_release(release: Option<&str>) -> Result<Seams, String> {
+        Seams::resolving(|n| if SYSTEM_PROGRAMS.contains(&n) || n.ends_with(".service") { Ok(n.to_string()) } else { spira_config::release_env::resolve_tool(n, release) })
+    }
+
+    /// Every program through `name`.
+    pub fn resolving(name: impl Fn(&str) -> Result<String, String>) -> Result<Seams, String> {
+        Ok(Seams {
+            systemctl: name("systemctl")?,
+            tmux: name("tmux")?,
+            git: name("git")?,
+            forge: name("forge")?,
+            mail: name("mail")?,
+            units_install: name("units-install")?,
+            spira_config: name("spira-config")?,
+            spira_claim: name("spira-claim")?,
+            strand: name("strand")?,
+            queue_helpers: name("queue-helpers")?,
+            queue: name("queue")?,
+            spira_lc: name("spira-lc")?,
+            bead: name("bead")?,
+            bdq: name("bdq")?,
+            target_reap: name("target-reap")?,
+            podman: name("podman")?,
+            df: name("df")?,
+            rebuild: name("rebuild")?,
+            layout: name("layout")?,
+            date: name("date")?,
+            store_unit: name("dolt-beads.service")?,
+            lint: name("spira-lint")?,
+            guard: name("lifecycle-guard")?,
+        })
+    }
+
+    /// Every program by its bare name, for a [`Config`] read only for its rules and never run,
+    /// and for a test that injects the seams it exercises.
+    pub fn bare() -> Seams {
+        Seams::resolving(|n| Ok(n.to_string())).expect("bare names always resolve")
     }
 }
 
@@ -2358,7 +2375,7 @@ pub fn checks_of(groups: Vec<Group>) -> Vec<Check> {
 }
 
 pub fn run_pass() -> Result<(), String> {
-    let cfg = Config::from_process(Seams::production())?.with_desired_state();
+    let cfg = Config::from_process(Seams::production()?)?.with_desired_state();
 
     if world_halted(&cfg) {
         log_print(&cfg, "reconciler: skipped — world is halted");
@@ -2527,7 +2544,7 @@ mod tests {
 
     fn test_config() -> Config {
         Config {
-            seams: Seams::production(),
+            seams: Seams::bare(),
             spira_run: PathBuf::from("/tmp"),
             spira_home: String::new(),
             log: PathBuf::from("/dev/null"),

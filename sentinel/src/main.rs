@@ -47,21 +47,13 @@ use cfg::{Context, Declared, Repo};
 use host::{Clock, Host, Io, RealClock, RealRunner, RealSink, Runner, Spec};
 use pass::{Mode, Sentinel};
 
-/// DESIGN.md §2.7: SPIRA_HOME from the environment, else the first directory holding a
-/// lib.sh among the release and cargo layouts around this executable.
-pub fn locate_home(env_home: Option<&str>, exe: &Path) -> Option<PathBuf> {
-    if let Some(h) = env_home.filter(|h| !h.is_empty()) {
-        return Some(PathBuf::from(h));
+/// SPIRA_HOME, else `$SPIRA_RELEASE/spira` — declared, never searched for around this
+/// executable. A refusal names what is missing.
+pub fn locate_home(env_home: Option<&str>, env_release: Option<&str>) -> Result<PathBuf, String> {
+    match env_home.filter(|h| !h.is_empty()) {
+        Some(h) => Ok(PathBuf::from(h)),
+        None => Ok(spira_config::release_env::release_root(env_release).map_err(|e| format!("neither SPIRA_HOME nor SPIRA_RELEASE is set: {e}"))?.join("spira")),
     }
-    let dir = exe.parent()?;
-    [
-        dir.join("../spira"),
-        dir.join("../../spira"),
-        dir.join("../../../spira"),
-    ]
-    .into_iter()
-    .find(|c| c.join("lib.sh").is_file())
-    .map(|c| c.canonicalize().unwrap_or(c))
 }
 
 /// S0 — the context probe, run with this process's own environment. [`resolve_repos`] reads the probe's own `@vars` section (already every `SPIRA_*`
@@ -76,7 +68,7 @@ pub fn probe(r: &dyn Runner, home: &Path) -> Result<Context, String> {
     .err(Io::Inherit);
     // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
     // bin/+spira/ on the CHILD's PATH, never only inherited.
-    for (k, v) in spira_config::release_env::child_path_env_for_process() {
+    for (k, v) in spira_config::release_env::child_path_env_for_process()? {
         s = s.env(&k, v);
     }
     let o = r.run(&s);
@@ -188,7 +180,7 @@ fn classify_unclaimable_main() -> i32 {
 }
 
 fn main() {
-    spira_config::release_env::ensure_release_path();
+    spira_config::release_env::ensure_release_path_or_exit("sentinel");
     if std::env::args().nth(1).as_deref() == Some("--classify-unclaimable") {
         std::process::exit(classify_unclaimable_main());
     }
@@ -197,9 +189,13 @@ fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     spira_otel::run::operation(argv.first().and_then(|a| a.strip_prefix("--")).unwrap_or("pass"));
     let mode = Mode::from_argv(&argv);
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("sentinel")));
-    let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe) else {
-        { let code = fatal("cannot find lib.sh (set SPIRA_HOME)"); spira_otel::run::finish(code); std::process::exit(code) };
+    let home = match locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), std::env::var(spira_config::RELEASE_ENV).ok().as_deref()) {
+        Ok(h) => h,
+        Err(e) => {
+            let code = fatal(&e);
+            spira_otel::run::finish(code);
+            std::process::exit(code)
+        }
     };
     let ctx = match probe(&RealRunner { base_env: None }, &home) {
         Ok(c) => c,

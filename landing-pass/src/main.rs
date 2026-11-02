@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    spira_config::release_env::ensure_release_path();
+    spira_config::release_env::ensure_release_path_or_exit("landing-pass");
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cmd = match cli::parse(&args) {
         Ok(c) => c,
@@ -122,7 +122,7 @@ fn pr() -> i32 {
     }
     let beads = RealBeads {
         home: s.home.clone(),
-        bdq: spira_config::release_env::tool("bdq"),
+        bdq: release_tool("bdq"),
         timeout: s.bd_timeout,
         home_repo: s.home_repo.clone(),
         fixture: s.bdjson_fixture.clone(),
@@ -191,7 +191,7 @@ fn land() -> i32 {
     let out = Reporter::stdout(Some(files.mailbox()));
     let beads = RealBeads {
         home: s.home.clone(),
-        bdq: spira_config::release_env::tool("bdq"),
+        bdq: release_tool("bdq"),
         timeout: s.bd_timeout,
         home_repo: s.home_repo.clone(),
         fixture: s.bdjson_fixture.clone(),
@@ -311,7 +311,7 @@ fn noverdict_cmd(id: &str, branch: &str, repo: &str, reason: &str, outcome: &str
     };
     let beads = RealBeads {
         home: s.home.clone(),
-        bdq: spira_config::release_env::tool("bdq"),
+        bdq: release_tool("bdq"),
         timeout: s.bd_timeout,
         home_repo: s.home_repo.clone(),
         fixture: s.bdjson_fixture.clone(),
@@ -342,7 +342,7 @@ fn ask_rebase_loop_cmd(args: &[String]) -> i32 {
     };
     let beads = RealBeads {
         home: s.home.clone(),
-        bdq: spira_config::release_env::tool("bdq"),
+        bdq: release_tool("bdq"),
         timeout: s.bd_timeout,
         home_repo: s.home_repo.clone(),
         fixture: s.bdjson_fixture.clone(),
@@ -362,6 +362,14 @@ fn ask_rebase_loop_cmd(args: &[String]) -> i32 {
 /// (`$SPIRA_TOML`, per Ryan 2026-10-05), resolved once per process. No second,
 /// process-environment read behind it, and no crate-local derivation of `$SPIRA_HOME` to
 /// feed one: an unresolvable config is a refusal naming the key, never a guessed path.
+/// A release tool this pass cannot run without, or exit 2 naming the refusal.
+fn release_tool(name: &str) -> String {
+    spira_config::release_env::tool(name).unwrap_or_else(|e| {
+        eprintln!("landing-pass: {e}");
+        std::process::exit(2)
+    })
+}
+
 fn run_dir() -> Result<PathBuf, String> {
     let run = spira_config::process::cfg("SPIRA_RUN")?;
     if run.is_empty() {
@@ -370,24 +378,9 @@ fn run_dir() -> Result<PathBuf, String> {
     Ok(PathBuf::from(run))
 }
 
-/// Where lib.sh and the harness live, for [`run_dir`]'s fallback alone — never touches
-/// [`home`] or any of the other commands above, which keep requiring `$SPIRA_HOME`
-/// explicitly. The same three rungs queue's own `harness_home` climbs: `$SPIRA_HOME`, else
-/// spira-config's `spira.prod`, else beside this binary (`<release>/bin/landing-pass` →
-/// `<release>/spira`, `<workspace>/target/<profile>/landing-pass` → `<workspace>/spira`).
+/// The declared harness home (`SPIRA_HOME`, else `$SPIRA_RELEASE/spira`) when it holds `lib.sh`.
 fn harness_home(env: &BTreeMap<String, String>) -> Option<PathBuf> {
-    let has_lib = |p: &Path| p.join("lib.sh").is_file();
-    if let Some(h) = env.get("SPIRA_HOME").map(PathBuf::from).filter(|p| has_lib(p)) {
-        return Some(h);
-    }
-    if let Some(doc) = spira_config::discover(None).and_then(|p| spira_config::load(&p).ok()) {
-        if let Some(p) = spira_config::get_path(&doc, "spira.prod").map(PathBuf::from).filter(|p| has_lib(p)) {
-            return Some(p);
-        }
-    }
-    let exe = std::env::current_exe().ok()?;
-    let exe = exe.canonicalize().unwrap_or(exe);
-    exe.ancestors().skip(1).take(4).map(|a| a.join("spira")).find(|p| has_lib(p))
+    spira_config::resolve::locate_home(env, Path::new("")).ok().filter(|p| p.join("lib.sh").is_file())
 }
 
 // ── family R (sp-81t4d, "wave 4.17" — landed verification) ──────────────────────────────
@@ -403,7 +396,7 @@ fn resolve_home() -> Result<PathBuf, String> {
         return Ok(h);
     }
     let env: BTreeMap<String, String> = std::env::vars().collect();
-    harness_home(&env).ok_or_else(|| "SPIRA_HOME is unset and could not be resolved".to_string())
+    harness_home(&env).ok_or_else(|| "neither SPIRA_HOME nor SPIRA_RELEASE names a harness home holding lib.sh".to_string())
 }
 
 /// `SPIRA_HOME_REPO` is a registered key, read through `cfg`; `BD_TIMEOUT`/
@@ -413,7 +406,7 @@ fn resolve_beads(home: &Path) -> Result<RealBeads, String> {
     let ad_hoc = |k: &str, d: &str| env.get(k).filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| d.to_string());
     Ok(RealBeads {
         home: home.to_path_buf(),
-        bdq: spira_config::release_env::tool("bdq"),
+        bdq: release_tool("bdq"),
         timeout: ad_hoc("BD_TIMEOUT", "180").parse().unwrap_or(180),
         home_repo: spira_config::process::cfg("SPIRA_HOME_REPO")?,
         fixture: env.get("SPIRA_BDJSON_FIXTURE").filter(|s| !s.is_empty()).map(PathBuf::from),

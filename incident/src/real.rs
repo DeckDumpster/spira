@@ -17,12 +17,12 @@ pub struct RealBd {
 impl RealBd {
     /// `BD_TIMEOUT`/`SPIRA_BDQ_CONN_RETRIES` carry no `spira/conf.d/<KEY>` entry, so they
     /// stay ad hoc environment reads.
-    pub fn from_env() -> RealBd {
-        RealBd {
-            bdq: spira_config::release_env::tool("bdq"),
+    pub fn from_env() -> Result<RealBd, String> {
+        Ok(RealBd {
+            bdq: spira_config::release_env::tool("bdq")?,
             timeout_secs: std::env::var("BD_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(180),
             retries: std::env::var("SPIRA_BDQ_CONN_RETRIES").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
-        }
+        })
     }
 
     /// `bdq` addresses the configured database itself, so `_db` is not passed on.
@@ -44,7 +44,7 @@ impl RealBd {
 
     fn run_lc(&self, args: &[&str]) -> Result<(i32, String, String), String> {
         let mut cmd = Command::new("timeout");
-        cmd.arg(self.timeout_secs.to_string()).arg(spira_config::lifecycle_row::lc_bin()).args(args);
+        cmd.arg(self.timeout_secs.to_string()).arg(spira_config::lifecycle_row::lc_bin()?).args(args);
         let out = cmd.output().map_err(|e| format!("spira-lc: {e}"))?;
         Ok((
             out.status.code().unwrap_or(-1),
@@ -311,8 +311,9 @@ pub struct RealMailer;
 impl Mailer for RealMailer {
     fn send_operator_question(&self, subject: &str, default: &str, body: &str) -> bool {
         let full_body = format!("## Question\n{subject}\n\n## Default\n{default}\n\n{body}\n");
-        let mut cmd = spira_config::bounded::bounded("mail");
-        cmd.envs(spira_config::release_env::child_path_env_for_process());
+        let Ok((mail, envs)) = spira_config::release_env::tool("mail").and_then(|m| Ok((m, spira_config::release_env::child_path_env_for_process()?))) else { return false };
+        let mut cmd = spira_config::bounded::bounded(mail);
+        cmd.envs(envs);
         cmd.args(["send", "operator", "--from", "Incident <incident@spira>", "--subject", subject, "--kind", "question", "--default", default])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())

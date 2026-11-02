@@ -61,7 +61,7 @@ fn dispatch(cmd: &str, rest: &[String]) -> ExitCode {
 }
 
 fn bd_cli(env: &Env) -> BdCli {
-    BdCli { bdq: spira_config::release_env::tool("bdq"), conn_retries: env.bd_conn_retries }
+    BdCli { bdq: declared(spira_config::release_env::tool("bdq")), conn_retries: env.bd_conn_retries }
 }
 
 fn fail(msg: impl AsRef<str>) -> ExitCode {
@@ -387,4 +387,13 @@ fn run_sweep_dismissed(args: &[String]) -> ExitCode {
         }
         Err(e) => fail(format!("sweep-dismissed: {e}")),
     }
+}
+
+/// A value this binary cannot run without (a release tool, the child PATH), or exit 2 naming
+/// the refusal.
+fn declared<T>(v: Result<T, String>) -> T {
+    v.unwrap_or_else(|e| {
+        eprintln!("mail: {e}");
+        std::process::exit(2)
+    })
 }

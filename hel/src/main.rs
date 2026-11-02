@@ -39,7 +39,7 @@
 //! its own bash original made), printing the answer text `spira_destroy_branch`'s and
 //! `spira_reap_landed_branch`'s shims capture into `$SPIRA_DESTROY_ERR`/`$SPIRA_REAP_ERR`.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use hel::ports::World;
 use hel::real::{self, Real};
@@ -76,8 +76,7 @@ type ExitCodeLike = i32;
 /// directly never depends on the repo-NAME registry resolving (the full sweep's own
 /// `Real::new` is a different, stricter, path — see its own doc comment).
 fn real_world(status: Option<String>) -> Result<Real, String> {
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("hel")));
-    let home = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe).ok_or("cannot find lib.sh (set SPIRA_HOME)")?;
+    let home = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), std::env::var(spira_config::RELEASE_ENV).ok().as_deref()).ok_or("cannot find lib.sh (set SPIRA_HOME or SPIRA_RELEASE)")?;
     Ok(Real::minimal(home, real::run_dir()?, status))
 }
 
@@ -142,7 +141,7 @@ fn cmd_reap_terminal(mut args: Vec<String>) -> ExitCodeLike {
         Err(e) => return die(&e),
     };
     // batch-job: a unit with TimeoutStartSec=900 may outwait a loaded store; 5 s failed it intermittently.
-    let rows = match spira_config::lc_state::list_within(&spira_config::lifecycle_row::lc_bin(), 120) {
+    let rows = match spira_config::lc_state::list_within(&declared(spira_config::lifecycle_row::lc_bin()), 120) {
         Ok(r) if !r.is_empty() => r,
         Ok(_) => return die("reap-terminal: the lifecycle machine listed no beads — refusing to judge against nothing"),
         Err(e) => return die(&format!("reap-terminal: cannot read the lifecycle machine: {e}")),
@@ -185,9 +184,8 @@ fn cmd_reap_stale(mut args: Vec<String>) -> ExitCodeLike {
     if !args.is_empty() {
         return die("reap-stale [--dry-run] [--idle-hours <n>]");
     }
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("hel")));
-    let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe) else {
-        return die("cannot find lib.sh (set SPIRA_HOME)");
+    let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), std::env::var(spira_config::RELEASE_ENV).ok().as_deref()) else {
+        return die("cannot find lib.sh (set SPIRA_HOME or SPIRA_RELEASE)");
     };
     let (w, repos) = match Real::new(home, None) {
         Ok(x) => x,
@@ -375,9 +373,8 @@ fn dispatch() -> i32 {
             return 2;
         }
     };
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("hel")));
-    let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe) else {
-        eprintln!("hel: cannot find lib.sh (set SPIRA_HOME)");
+    let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), std::env::var(spira_config::RELEASE_ENV).ok().as_deref()) else {
+        eprintln!("hel: cannot find lib.sh (set SPIRA_HOME or SPIRA_RELEASE)");
         return 2;
     };
     let (w, repos) = match Real::new(home, status) {
@@ -398,4 +395,13 @@ fn main() {
     let first = std::env::args().nth(1);
     let code = hel::telemetry::run(&hel::telemetry::sink(), first.as_deref(), dispatch);
     std::process::exit(code);
+}
+
+/// A value this binary cannot run without (a release tool, the child PATH), or exit 2 naming
+/// the refusal.
+fn declared<T>(v: Result<T, String>) -> T {
+    v.unwrap_or_else(|e| {
+        eprintln!("hel: {e}");
+        std::process::exit(2)
+    })
 }

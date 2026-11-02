@@ -112,7 +112,7 @@ impl World for Real {
 
     fn open_bump(&self, site: &Site) -> Result<Option<Open>, String> {
         let Some((id, target)) = self.bumps.borrow().get(&site.name).cloned() else { return Ok(None) };
-        let mut c = bounded(spira_config::lifecycle_row::lc_bin());
+        let mut c = bounded(spira_config::lifecycle_row::lc_bin()?);
         c.args(["show", &id]);
         let out = c.output().map_err(|e| e.to_string())?;
         match out.status.code() {

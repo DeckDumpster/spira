@@ -92,6 +92,15 @@ const BDQ_SCRIPT: &str = r#"home="$1"; shift; . "$home/lib.sh" || exit 90; bdq "
 
 /// Runs `bdq` with inherited stdio (the shape every state-changing call needs: `bd`'s own
 /// stdout/stderr must reach the original caller exactly as it would running the bash).
+/// A value bead cannot run without (a release tool, the child PATH), or exit 2 naming the
+/// refusal.
+fn declared<T>(v: Result<T, String>) -> T {
+    v.unwrap_or_else(|e| {
+        eprintln!("bead: {e}");
+        std::process::exit(2)
+    })
+}
+
 fn bdq_status(home: &str, args: &[String]) -> i32 {
     // batch-job: runs a gate, build or forge script that takes as long as its work
     Command::new("bash")
@@ -102,7 +111,7 @@ fn bdq_status(home: &str, args: &[String]) -> i32 {
         .args(args)
         // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
         // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-        .envs(spira_config::release_env::child_path_env_for_process())
+        .envs(declared(spira_config::release_env::child_path_env_for_process()))
         .status()
         .map(|s| s.code().unwrap_or(1))
         .unwrap_or(127)
@@ -124,7 +133,7 @@ fn bdq_capture_with(home: &str, args: &[String], stderr: Stdio) -> (i32, String)
         .args(args)
         // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
         // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-        .envs(spira_config::release_env::child_path_env_for_process())
+        .envs(declared(spira_config::release_env::child_path_env_for_process()))
         .stdin(Stdio::inherit())
         .stdout(Stdio::piped())
         .stderr(stderr)
@@ -243,7 +252,7 @@ const BD_DEFAULT_PRIORITY: i64 = 2;
 /// instead of bd. Detached: filing has a server deadline and a second connect inside it
 /// overran it. A write that fails is repaired by `spira-lc backfill-titles`.
 fn mirror_to_lifecycle(id: &str, title: Option<&str>, priority: i64, repo: Option<&str>) {
-    let mut args = vec!["30".to_string(), spira_config::release_env::tool("spira-lc"), "create-bead".into(), id.to_string(), "--priority".into(), priority.to_string()];
+    let mut args = vec!["30".to_string(), declared(spira_config::release_env::tool("spira-lc")), "create-bead".into(), id.to_string(), "--priority".into(), priority.to_string()];
     if let Some(t) = title {
         args.extend(["--title".to_string(), t.to_string()]);
     }
@@ -253,7 +262,7 @@ fn mirror_to_lifecycle(id: &str, title: Option<&str>, priority: i64, repo: Optio
     // batch-job: detached, bounded by timeout(1), one point write
     let spawned = Command::new("timeout")
         .args(&args)
-        .envs(spira_config::release_env::child_path_env_for_process())
+        .envs(declared(spira_config::release_env::child_path_env_for_process()))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -281,7 +290,7 @@ fn create_row_retrying(id: &str, title: Option<&str>, priority: i64, tip: Option
 }
 
 fn create_row(id: &str, title: Option<&str>, priority: i64, tip: Option<&str>, repo: Option<&str>) -> Result<(), String> {
-    let bin = spira_config::lifecycle_row::lc_bin();
+    let bin = spira_config::lifecycle_row::lc_bin()?;
     let priority = priority.to_string();
     let mut args = vec!["5", &bin, "create-bead", id, "--priority", &priority];
     if let Some(t) = title {
@@ -295,7 +304,7 @@ fn create_row(id: &str, title: Option<&str>, priority: i64, tip: Option<&str>, r
     }
     let out = Command::new("timeout")
         .args(&args)
-        .envs(spira_config::release_env::child_path_env_for_process())
+        .envs(declared(spira_config::release_env::child_path_env_for_process()))
         .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("cannot run {bin}: {e}"))?;
@@ -710,7 +719,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         return 2;
     }
 
-    let kind = kind.unwrap_or_else(|| spira_config::release_env::tool("work"));
+    let kind = kind.unwrap_or_else(|| "work".to_string());
     if kind == "gate" {
         eprintln!("bead: kind=gate is a bd-internal type; use bd gate directly");
         return 2;
@@ -1466,9 +1475,9 @@ fn amend_enforce(home: &str, aid: &str) -> i32 {
     let reason = format!("amendment {aid} {why}; slain and requeued with the amendment merged into the body");
     rc |= bdq_status(home, &s(&["note", &id, &format!("Enforced {aid}: {reason}")]));
     // batch-job: slay waits out the holder's shutdown and salvages its work
-    let slay = Command::new(spira_config::release_env::tool("slay"))
+    let slay = Command::new(declared(spira_config::release_env::tool("slay")))
         .args(["--bead", &id, "--why", &reason, "--reopen"])
-        .envs(spira_config::release_env::child_path_env_for_process())
+        .envs(declared(spira_config::release_env::child_path_env_for_process()))
         .status()
         .map(|s| s.code().unwrap_or(1))
         .unwrap_or(127);
@@ -1909,14 +1918,14 @@ fn dep_type_name(t: &str) -> &str {
 /// and `blocker`. bd already holds the edge, so a failed mirror is reported and repaired by
 /// `spira-lc backfill-deps --force`, never turned into a failed `dep`.
 fn mirror_dep(verb: &str, id: &str, depid: &str, dep_type: Option<&str>) {
-    let mut args = vec!["30".to_string(), spira_config::release_env::tool("spira-lc"), verb.into(), id.into(), depid.into()];
+    let mut args = vec!["30".to_string(), declared(spira_config::release_env::tool("spira-lc")), verb.into(), id.into(), depid.into()];
     if let Some(t) = dep_type {
         args.extend(["--type".to_string(), t.to_string()]);
     }
     // batch-job: one point write, bounded by timeout(1)
     let done = Command::new("timeout")
         .args(&args)
-        .envs(spira_config::release_env::child_path_env_for_process())
+        .envs(declared(spira_config::release_env::child_path_env_for_process()))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1986,7 +1995,7 @@ fn bdq_status_stdin(home: &str, args: &[String], input: &str) -> i32 {
         .arg("bdq")
         .arg(home)
         .args(args)
-        .envs(spira_config::release_env::child_path_env_for_process())
+        .envs(declared(spira_config::release_env::child_path_env_for_process()))
         .stdin(Stdio::piped())
         .spawn();
     let Ok(mut child) = child else { return 127 };
@@ -2052,7 +2061,7 @@ fn cmd_label(home: &str, args: &[String]) -> i32 {
 /// Point the lifecycle row at the repo a `repo:` label names, before the label moves: claims,
 /// worktrees and rounds read the row, and a WORKING bead is refused by it.
 fn mirror_repo(verb: &str, id: &str, repo: &str) -> Result<(), i32> {
-    let mut args = vec!["30".to_string(), spira_config::release_env::tool("spira-lc"), "set-repo".into(), id.to_string()];
+    let mut args = vec!["30".to_string(), declared(spira_config::release_env::tool("spira-lc")), "set-repo".into(), id.to_string()];
     if verb == "add" {
         args.push(repo.to_string());
     } else {
@@ -2061,7 +2070,7 @@ fn mirror_repo(verb: &str, id: &str, repo: &str) -> Result<(), i32> {
     // batch-job: one point write, bounded by timeout(1)
     let out = Command::new("timeout")
         .args(&args)
-        .envs(spira_config::release_env::child_path_env_for_process())
+        .envs(declared(spira_config::release_env::child_path_env_for_process()))
         .stdin(Stdio::null())
         .output();
     match out {
@@ -2108,8 +2117,8 @@ fn cmd_drop(home: &str, args: &[String]) -> i32 {
 
     // batch-job: ejects from batches and closes the store, bounded by timeout(1)
     let status = Command::new("timeout")
-        .args(["120", spira_config::release_env::tool("spira-lc").as_str(), "drop-bead", &id, "--reason", &reason, "--actor", "bead"])
-        .envs(spira_config::release_env::child_path_env_for_process())
+        .args(["120", declared(spira_config::release_env::tool("spira-lc")).as_str(), "drop-bead", &id, "--reason", &reason, "--actor", "bead"])
+        .envs(declared(spira_config::release_env::child_path_env_for_process()))
         .status()
         .map(|s| s.code().unwrap_or(1))
         .unwrap_or(127);

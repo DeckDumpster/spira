@@ -17,69 +17,35 @@ pub struct Real {
     pub home: PathBuf, // the spira/ directory conf.sh and lib.sh live in
     pub env: BTreeMap<String, String>,
     pub bdq: String,
+    /// `PATH`/`SPIRA_RELEASE` every conf.sh/lib.sh child runs under, from the declared release.
+    pub child_env: Vec<(String, String)>,
 }
 
 impl Real {
-    /// Resolves `home` (an explicit, valid `$SPIRA_HOME` first; else release-relative:
-    /// `<release>/bin/doctor` -> `<release>/spira/`), then captures conf.sh's derived
-    /// environment once.
+    /// Requires `SPIRA_TOML`, resolves `home` from `SPIRA_HOME` or `$SPIRA_RELEASE/spira`, then
+    /// captures conf.sh's derived environment once. A missing declaration is a refusal naming it.
     pub fn try_new() -> Result<Real, String> {
-        let home = Self::resolve_home()?;
-        if std::env::var_os("SPIRA_HOME").is_none_or(|v| v.is_empty()) {
-            std::env::set_var("SPIRA_HOME", &home);
+        crate::require_spec(std::env::var("SPIRA_TOML").ok().as_deref())?;
+        let home = spira_config::resolve::locate_home_for_process().map_err(|e| format!("doctor: {e}"))?;
+        if !home.join("conf.sh").is_file() {
+            return Err(format!("doctor: {} holds no conf.sh", home.display()));
         }
-        let mut env = Self::capture_env(&home);
+        std::env::set_var("SPIRA_HOME", &home);
+        let child_env = spira_config::release_env::child_path_env_for_process().map_err(|e| format!("doctor: {e}"))?;
+        let mut env = Self::capture_env(&home, &child_env);
         env.entry("SPIRA_HOME".to_string()).or_insert_with(|| home.display().to_string());
-        Ok(Real { home, env, bdq: spira_config::release_env::tool("bdq") })
+        Ok(Real { home, env, bdq: spira_config::release_env::tool("bdq")?, child_env })
     }
 
     pub fn new() -> Real {
         Real::try_new().unwrap_or_else(|e| panic!("{e}"))
     }
 
-    /// `argv[0]`'s directory, never `current_exe()`'s. `current_exe()` canonicalizes every
-    /// symlink; testenv's own release staging (and the gate's fixture release) link
-    /// `bin/<tool>` to wherever cargo actually built it and `spira/` to the real checkout —
-    /// two unrelated directories once resolved, so `current_exe()`-based release-relative
-    /// resolution always missed silently there (empty output, exit code standing in for a
-    /// verdict). `argv[0]` is exactly the path PATH search resolved to, unresolved further
-    /// — bash's own `$0`/`${BASH_SOURCE[0]}` never re-resolved it either.
-    fn resolve_home() -> Result<PathBuf, String> {
-        if let Ok(h) = std::env::var("SPIRA_HOME") {
-            if !h.is_empty() {
-                let p = PathBuf::from(&h);
-                if p.join("conf.sh").is_file() {
-                    return Ok(p);
-                }
-            }
-        }
-        if let Some(exe) = argv0_path() {
-            if let Some(bin_dir) = exe.parent() {
-                if let Some(release_dir) = bin_dir.parent() {
-                    let candidate = release_dir.join("spira");
-                    if candidate.join("conf.sh").is_file() {
-                        return Ok(candidate);
-                    }
-                }
-            }
-        }
-        match std::env::var("SPIRA_HOME") {
-            Ok(h) if !h.is_empty() => Ok(PathBuf::from(h)),
-            _ => Err("doctor: SPIRA_HOME is not set and no spira/conf.sh sits beside the executable".to_string()),
-        }
-    }
-
-    fn capture_env(home: &Path) -> BTreeMap<String, String> {
+    fn capture_env(home: &Path, child_env: &[(String, String)]) -> BTreeMap<String, String> {
         let conf = home.join("conf.sh");
         let script = format!("export SPIRA_DOCTOR=1; . \"{}\" >/dev/null 2>&1; env -0", conf.display());
-        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): `home` is always
-        // `<release>/spira` (resolve_home's own contract — an explicit SPIRA_HOME or the
-        // argv0-relative derivation, never an unrelated target repo), so its parent IS this
-        // binary's own release root; prepend its bin/+spira/ onto the child's PATH rather
-        // than only inheriting whatever PATH this process happened to start with.
-        let envs = spira_config::release_env::child_path_env(home.parent(), std::env::var("PATH").ok().as_deref());
         let mut cmd = spira_config::bounded::bounded("bash");
-        cmd.arg("-c").arg(script).envs(envs);
+        cmd.arg("-c").arg(script).envs(child_env.iter().cloned());
         let out = cmd.stdin(Stdio::null()).stderr(Stdio::null()).output();
         let mut map = BTreeMap::new();
         if let Ok(o) = out {
@@ -116,10 +82,7 @@ impl Real {
             self.home.display(),
             self.home.display()
         );
-        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): see capture_env's own note —
-        // `self.home` is always `<release>/spira`, so its parent is this binary's release.
-        let envs = spira_config::release_env::child_path_env(self.home.parent(), std::env::var("PATH").ok().as_deref());
-        let out = spira_config::bounded::bounded("bash").arg("-c").arg(script).arg("--").args(args).envs(envs).stdin(Stdio::null()).stderr(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("bash").arg("-c").arg(script).arg("--").args(args).envs(self.child_env.iter().cloned()).stdin(Stdio::null()).stderr(Stdio::null()).output();
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string()).unwrap_or_default()
     }
 }
@@ -180,7 +143,8 @@ impl World for Real {
 
     fn release_status(&self) -> String {
         // batch-job: release runs for as long as its work does
-        Command::new(spira_config::release_env::tool("release")).arg("status").stdin(Stdio::null()).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+        let Ok(release) = spira_config::release_env::tool("release") else { return String::new() };
+        Command::new(release).arg("status").stdin(Stdio::null()).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
     }
 
     fn spira_config_validate(&self, toml_path: &Path) -> Result<(), String> {
@@ -452,7 +416,7 @@ impl World for Real {
     }
 
     fn bd_version(&self) -> Option<String> {
-        let out = spira_config::bounded::bounded(self.env("SPIRA_BD").unwrap_or_else(|| spira_config::release_env::tool("bd"))) // STORE_DOOR_CONSIDERED="the bd binary's own build version for the toolchain check; needs no database, and bdq refuses before SPIRA_DB is configured"
+        let out = spira_config::bounded::bounded(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string())) // STORE_DOOR_CONSIDERED="the bd binary's own build version for the toolchain check; needs no database, and bdq refuses before SPIRA_DB is configured"
             .arg("version")
             .stdin(Stdio::null())
             .output()
@@ -603,33 +567,6 @@ pub(crate) fn daemon_base_path(argv: &[String], port: u16) -> Option<String> {
 fn is_exec(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
-}
-
-/// `argv[0]`, resolved to where it actually sits, with every symlink component left
-/// exactly as invoked — see `Real::resolve_home`'s comment.
-///
-/// A bare name (no `/`) is NOT already the resolved path the way it is when a shell execs
-/// a PATH-found command: bash rewrites its own `$0` to the full path PATH search landed on
-/// before exec, but a non-shell caller — `env PATH=... doctor`, `posix_spawnp`, a test
-/// harness's own `env -i PATH="$STUBBIN:$PATH" ...` — calls `execvp` directly, which
-/// resolves the PATH search internally but passes argv[0] through unchanged: still the
-/// bare string "doctor". Joining that onto the current directory (as if shell-relative)
-/// lands on nothing real. Caught live by testenv's test-skew-local-release.sh exercising
-/// the identical pattern in `skew` (sp-yyk47) — ported here for the same reason.
-fn argv0_path() -> Option<PathBuf> {
-    let arg0 = std::env::args_os().next()?;
-    let p = PathBuf::from(&arg0);
-    if p.components().count() > 1 {
-        return if p.is_absolute() { Some(p) } else { Some(std::env::current_dir().ok()?.join(p)) };
-    }
-    let path_var = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join(&arg0);
-        if is_exec(&candidate) {
-            return Some(candidate);
-        }
-    }
-    None
 }
 
 fn has_file_within(path: &Path, name: &str, max_depth: u32) -> bool {

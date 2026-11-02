@@ -351,8 +351,9 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
 
     // RELEASE STATUS (for the hotfix escalation, computed here so escalate.rs need not
     // spawn `release` a second time).
-    let release_status = crate::deadline::output("release status", Command::new(spira_config::release_env::tool("release")).arg("status"))
+    let release_status = spira_config::release_env::tool("release")
         .ok()
+        .and_then(|release| crate::deadline::output("release status", Command::new(release).arg("status")).ok())
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
 
@@ -452,7 +453,10 @@ fn suites_block(cfg: &Cfg) -> String {
     let out = if let Some(sh) = &cfg.suites_sh {
         crate::deadline::output("suites status", Command::new("bash").arg(sh).arg("status"))
     } else {
-        crate::deadline::output("suites status", Command::new(spira_config::release_env::tool("testenv")).args(["suites", "status"]))
+        match spira_config::release_env::tool("testenv") {
+            Ok(testenv) => crate::deadline::output("suites status", Command::new(testenv).args(["suites", "status"])),
+            Err(e) => return format!("  (unreadable — {e})"),
+        }
     };
     match out {
         Ok(o) if !o.stdout.is_empty() => String::from_utf8_lossy(&o.stdout).into_owned(),

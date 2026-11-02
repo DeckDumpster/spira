@@ -101,7 +101,10 @@ impl Config {
         // cockpit.sh)}"`): a suite that overrides it points at its own mock script, invoked
         // directly with no subcommand prefix — the same direct-call shape the bash used.
         // Production leaves it unset and gets this binary's own `probe` subcommand.
-        let self_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("cockpit-collect")));
+        let self_exe = std::env::current_exe().unwrap_or_else(|e| {
+            eprintln!("cockpit-collect: cannot locate this binary: {e}");
+            std::process::exit(2)
+        });
         let (probe_exe, probe_exe_args) = match std::env::var_os("COCK").filter(|v| !v.is_empty()) {
             Some(cock) => (PathBuf::from(cock), Vec::new()),
             None => (self_exe.clone(), vec!["probe".to_string()]),

@@ -425,10 +425,11 @@ pub fn rotate_from_env(env: &std::collections::BTreeMap<String, String>) -> Resu
     let metadata = Path::new(store_dir).join(".beads/metadata.json");
     let client_cred = env.get("SPIRA_BEAD_CLIENT_CREDENTIALS").filter(|p| !p.is_empty()).map(PathBuf::from);
     let tmp = std::env::temp_dir();
+    let lc = spira_config::release_env::tool("spira-lc")?;
     let run = |args: &[String], e: &[(String, String)]| {
         // batch-job: one operator-run rotation against the local Dolt; bounded at 120 s by timeout(1).
         let mut c = std::process::Command::new("timeout");
-        c.arg("120").arg(spira_config::release_env::tool("spira-lc")).args(args).stdin(std::process::Stdio::null());
+        c.arg("120").arg(&lc).args(args).stdin(std::process::Stdio::null());
         for (k, v) in e {
             c.env(k, v);
         }
@@ -501,10 +502,11 @@ pub fn migrate_bead_clients_from_env(env: &std::collections::BTreeMap<String, St
         Some(p) => p.parse().map_err(|e| format!("SPIRA_LC_PORT: {e}"))?,
         None => 3307,
     };
+    let lc = spira_config::release_env::tool("spira-lc")?;
     let run = |args: &[String], e: &[(String, String)]| {
         // batch-job: one operator-run migration against the local Dolt; bounded at 120 s by timeout(1).
         let mut c = std::process::Command::new("timeout");
-        c.arg("120").arg(spira_config::release_env::tool("spira-lc")).args(args).stdin(std::process::Stdio::null());
+        c.arg("120").arg(&lc).args(args).stdin(std::process::Stdio::null());
         for (k, v) in e {
             c.env(k, v);
         }

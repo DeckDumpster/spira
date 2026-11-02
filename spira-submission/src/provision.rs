@@ -21,13 +21,17 @@ pub trait Host {
     fn now(&self) -> i64;
 }
 
+/// The programs a plan names that the release ships: run from `$SPIRA_RELEASE`, never `PATH`.
+const RELEASE_TOOLS: &[&str] = &["spira-config"];
+
 pub struct RealHost;
 
 impl Host for RealHost {
     fn run(&self, argv: &[&str]) -> Result<String, String> {
         let (prog, args) = argv.split_first().ok_or("empty command")?;
+        let prog = if RELEASE_TOOLS.contains(prog) { spira_config::release_env::tool(prog)? } else { prog.to_string() };
         // batch-job: tailscale cert blocks on certificate issuance
-        let out = Command::new(prog).args(args).stdin(Stdio::null()).output().map_err(|e| format!("{prog}: {e}"))?;
+        let out = Command::new(&prog).args(args).stdin(Stdio::null()).output().map_err(|e| format!("{prog}: {e}"))?;
         if out.status.success() {
             Ok(String::from_utf8_lossy(&out.stdout).into_owned())
         } else {
@@ -252,7 +256,7 @@ pub fn provision(host: &dyn Host, plan: &Plan) -> Report {
     }
 
     let set = |r: &mut Report, key: &str, value: &str, restart: &mut bool| -> bool {
-        match host.run(&[&spira_config::release_env::tool("spira-config"), "set", &format!("spira.{key}"), value, &layer]) {
+        match host.run(&["spira-config", "set", &format!("spira.{key}"), value, &layer]) {
             Ok(_) => {
                 r.notes.push(format!("set spira.{key} = {value}"));
                 *restart = true;

@@ -223,11 +223,11 @@ fn list_raw_within(bin: &str, secs: u32) -> Result<String, String> {
 }
 
 pub fn list_raw() -> Result<String, String> {
-    list_raw_with(&lc_bin())
+    list_raw_with(&lc_bin()?)
 }
 
 pub fn list() -> Result<Vec<Row>, String> {
-    list_with(&lc_bin())
+    list_with(&lc_bin()?)
 }
 
 /// One bead's row (`spira-lc show <id>`): Ok(None) when the machine has no row for it.
@@ -239,7 +239,7 @@ pub fn row_with(bin: &str, id: &str) -> Result<Option<Row>, String> {
 }
 
 pub fn row(id: &str) -> Result<Option<Row>, String> {
-    row_with(&lc_bin(), id)
+    row_with(&lc_bin()?, id)
 }
 
 /// The rows keyed by bead id.

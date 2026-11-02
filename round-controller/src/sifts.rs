@@ -41,7 +41,7 @@ impl Env {
             home,
             run: PathBuf::from(run),
             queue_dir: PathBuf::from(cfg("SPIRA_QUEUE_DIR")?),
-            lc_bin: spira_config::release_env::tool("spira-lc"),
+            lc_bin: spira_config::release_env::tool("spira-lc")?,
             lc_timeout: cfg_parse::<u64>("SPIRA_LC_TIMEOUT")?,
             wiki: cfg("SPIRA_WIKI").unwrap_or_default(),
             identity_projects: cfg("SPIRA_IDENTITY_PROJECTS").unwrap_or_default(),
@@ -657,7 +657,7 @@ fn bead_note(env: &Env, id: &str, text: &str) -> Result<(), String> {
     let mut cmd = Command::new("bash");
     cmd.arg(env.home.join("bead.sh"))
         .args(["amend", id, "--note", text])
-        .envs(spira_config::release_env::child_path_env_for_process());
+        .envs(spira_config::release_env::child_path_env_for_process()?);
     run(&mut cmd, "bead.sh amend").map(|_| ())
 }
 

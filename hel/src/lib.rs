@@ -2,7 +2,7 @@
 //! destruction in Rust") lives here so other binaries in this crate — and, in follow-up
 //! beads, other crates — can call it in-process instead of shelling back into lib.sh.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub mod telemetry;
 pub mod git;
@@ -19,17 +19,13 @@ mod tests;
 
 use sweep::{Opts, Scope};
 
-/// SPIRA_HOME from the environment, else the first directory holding a lib.sh among the
-/// release and cargo layouts around this executable (sentinel DESIGN.md §2.7).
-pub fn locate_home(env_home: Option<&str>, exe: &Path) -> Option<PathBuf> {
-    if let Some(h) = env_home.filter(|h| !h.is_empty()) {
-        return Some(PathBuf::from(h));
+/// `SPIRA_HOME`, else `$SPIRA_RELEASE/spira` — declared, never searched for around this
+/// executable. `None` when neither is set.
+pub fn locate_home(env_home: Option<&str>, env_release: Option<&str>) -> Option<PathBuf> {
+    match env_home.filter(|h| !h.is_empty()) {
+        Some(h) => Some(PathBuf::from(h)),
+        None => spira_config::release_env::release_root(env_release).ok().map(|r| r.join("spira")),
     }
-    let dir = exe.parent()?;
-    [dir.join("../spira"), dir.join("../../spira"), dir.join("../../../spira")]
-        .into_iter()
-        .find(|c| c.join("lib.sh").is_file())
-        .map(|c| c.canonicalize().unwrap_or(c))
 }
 
 /// The sweep's own command line; Err is the usage error to print.

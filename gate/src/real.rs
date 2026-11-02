@@ -193,15 +193,17 @@ impl Real {
     /// `bash -c '. lib.sh >/dev/null 2>&1; <body>' <args…>`.
     fn lib(&self, body: &str, args: &[&str]) {
         let script = format!(". \"$0\" >/dev/null 2>&1 || exit 97\n{body}");
+        let envs = match spira_config::release_env::child_path_env_for_process() {
+            Ok(e) => e,
+            Err(e) => return eprintln!("gate: {e}"),
+        };
         // batch-job: runs a gate, build or forge script that takes as long as its work
         let _ = Command::new("bash")
             .arg("-c")
             .arg(script)
             .arg(self.home.join("lib.sh"))
             .args(args)
-            // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
-            // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-            .envs(spira_config::release_env::child_path_env_for_process())
+            .envs(envs)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -229,7 +231,7 @@ impl World for Real {
             .args(VARS)
             // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
             // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-            .envs(spira_config::release_env::child_path_env_for_process())
+            .envs(spira_config::release_env::child_path_env_for_process()?)
             .stdin(Stdio::null())
             .stderr(Stdio::inherit())
             .output()

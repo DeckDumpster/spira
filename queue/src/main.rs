@@ -9,7 +9,7 @@ use queue::real::*;
 use queue::conf::harness_home;
 
 fn main() -> ExitCode {
-    spira_config::release_env::ensure_release_path();
+    spira_config::release_env::ensure_release_path_or_exit("queue");
     let argv: Vec<String> = std::env::args().skip(1).collect();
     if argv.len() == 1 && argv[0] == "check-config" {
         let rc = spira_config::process::check_config_verb("queue", queue::real::CONFIG_KEYS);
@@ -34,7 +34,7 @@ fn main() -> ExitCode {
     // spira-lc and the forge are configured by conf.sh; resolve once for them.
     let (bd, lc) = match queue::ports::Lib::context(&lib, None) {
         Ok((s, _)) => (
-            RealBd { bdq: spira_config::release_env::tool("bdq") },
+            RealBd { bdq: declared(spira_config::release_env::tool("bdq")) },
             RealLc {
                 bin: s.lc_bin.clone(),
             },
@@ -71,4 +71,13 @@ fn main() -> ExitCode {
         || queue::dispatch(&w, &cmd),
     );
     ExitCode::from(u8::try_from(rc.clamp(0, 255)).unwrap_or(1))
+}
+
+/// A value this binary cannot run without (a release tool, the child PATH), or exit 2 naming
+/// the refusal.
+fn declared<T>(v: Result<T, String>) -> T {
+    v.unwrap_or_else(|e| {
+        eprintln!("queue: {e}");
+        std::process::exit(2)
+    })
 }

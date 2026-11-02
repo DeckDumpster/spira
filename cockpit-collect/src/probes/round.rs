@@ -34,7 +34,7 @@ pub(super) fn list_batches() -> Option<String> {
 }
 
 fn list_batches_live() -> Option<String> {
-    let bin = spira_config::lifecycle_row::lc_bin();
+    let bin = spira_config::lifecycle_row::lc_bin().ok()?;
     let o = Command::new("timeout").arg("5").arg(bin).args(["list", "--batches"]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
 }

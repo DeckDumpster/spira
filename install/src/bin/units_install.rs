@@ -370,7 +370,7 @@ fn run_main() -> ExitCode {
     // which is gone) — this call site is preserved unconditionally, matching
     // systemd/install.sh's own unconditional call.
     // batch-job: release runs for as long as its work does
-    let hook_ok = Command::new(spira_config::release_env::tool("release")).args(["session-hook", "install"]).status().map(|s| s.success()).unwrap_or(false);
+    let hook_ok = Command::new(declared(spira_config::release_env::tool("release"))).args(["session-hook", "install"]).status().map(|s| s.success()).unwrap_or(false);
     if !hook_ok {
         eprintln!("note: the session hook was not registered — run release session-hook install");
     }
@@ -487,4 +487,13 @@ fn glob_dir(dir: &Path, glob: &str) -> Vec<String> {
             (e.path().is_file() && n.starts_with(pre) && n.ends_with(suf) && n.len() >= pre.len() + suf.len()).then_some(n)
         })
         .collect()
+}
+
+/// A value this binary cannot run without (a release tool, the child PATH), or exit 2 naming
+/// the refusal.
+fn declared<T>(v: Result<T, String>) -> T {
+    v.unwrap_or_else(|e| {
+        eprintln!("units-install: {e}");
+        std::process::exit(2)
+    })
 }

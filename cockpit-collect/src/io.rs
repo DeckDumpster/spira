@@ -52,17 +52,13 @@ pub fn now() -> i64 {
         .unwrap_or(0)
 }
 
-/// `SPIRA_HOME`, or — mirroring every other rewritten tool in this workspace (`gate-run`'s
-/// `default_home`) — `<release>/spira` derived from this binary's own install location
-/// (`<release>/bin/cockpit-collect`).
+/// The declared harness home: `SPIRA_HOME`, else `$SPIRA_RELEASE/spira`; neither set exits 2
+/// naming them.
 pub fn home_dir() -> PathBuf {
-    if let Some(h) = std::env::var_os("SPIRA_HOME").filter(|v| !v.is_empty()) {
-        return PathBuf::from(h);
-    }
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().and_then(|d| d.parent()).map(|r| r.join("spira")))
-        .unwrap_or_else(|| PathBuf::from("spira"))
+    spira_config::resolve::locate_home_for_process().unwrap_or_else(|e| {
+        eprintln!("cockpit-collect: {e}");
+        std::process::exit(2)
+    })
 }
 
 /// `spira/cockpit.sh` sourced `lib.sh` unconditionally at its own top level, before
@@ -199,7 +195,7 @@ fn env_or(key: &str, default: &str) -> String {
 pub fn content(args: &[&str]) -> Option<String> {
     if let Ok(fixture) = std::env::var("SPIRA_BDJSON_FIXTURE") {
         if !fixture.is_empty() {
-            let out = Command::new(spira_config::release_env::tool("bdsim"))
+            let out = Command::new(spira_config::release_env::tool("bdsim").ok()?)
                 .arg(&fixture)
                 .args(args)
                 .stdin(Stdio::null())
@@ -439,9 +435,7 @@ f="$2"; shift 2
         .arg(home)
         .arg(func)
         .args(args)
-        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
-        // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-        .envs(spira_config::release_env::child_path_env_for_process())
+        .envs(spira_config::release_env::child_path_env_for_process().ok()?)
         .stderr(Stdio::null());
     if let Some(input) = stdin {
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped());

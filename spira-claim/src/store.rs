@@ -86,12 +86,12 @@ pub fn load_config() -> Result<Config, String> {
 }
 
 impl Store {
-    pub fn new(timeout_s: u64) -> Store {
-        Store {
-            bdq: spira_config::release_env::tool("bdq"),
-            lc: "spira-lc".into(), // by name, on the launcher's PATH (sp-gypjk)
+    pub fn new(timeout_s: u64) -> Result<Store, String> {
+        Ok(Store {
+            bdq: spira_config::release_env::tool("bdq")?,
+            lc: spira_config::release_env::tool("spira-lc")?,
             timeout: Duration::from_secs(timeout_s.max(1)),
-        }
+        })
     }
 
     pub fn bdq_cmd(&self, args: &[&str]) -> Command {

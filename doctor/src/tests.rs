@@ -1393,3 +1393,11 @@ fn dovecot_dropin_missing_warns_and_present_is_ok() {
     f.files.borrow_mut().push(Path::new("/etc/systemd/system/dovecot.service.d/spira-tailnet.conf").to_path_buf());
     assert_eq!(levels(&check_dovecot_dropin(&f)), vec![Level::Ok]);
 }
+
+#[test]
+fn doctor_without_spira_toml_refuses_naming_it() {
+    let e = require_spec(None).unwrap_err();
+    assert!(e.contains("SPIRA_TOML is not set"), "{e}");
+    assert!(require_spec(Some("")).unwrap_err().contains("SPIRA_TOML"));
+    assert_eq!(require_spec(Some("/c/one-source.toml")).unwrap(), "/c/one-source.toml");
+}
