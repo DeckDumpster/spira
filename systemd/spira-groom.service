@@ -33,6 +33,7 @@ Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
+ExecStartPre=@SPIRA_PROD_ROOT@/bin/world guard
 ExecCondition=/usr/bin/test -f @SPIRA_PROD@/runes/groomer.rune
 ExecStart=@SPIRA_PROD@/groom-trigger.sh
 # The trigger script files one bead and exits; sixty seconds is generous.

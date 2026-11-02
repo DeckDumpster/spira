@@ -11,6 +11,7 @@
 //!   world.sh pause --reserve BEAD[,BEAD...] --reason WHY [--until CONDITION] [--owner O]
 //!   world.sh unpause --repo R [--lanes ...] | --reserve BEAD[,BEAD...]
 //!   world.sh status
+//!   world.sh guard        (every work unit's ExecStartPre: refuses while the work plane is halted)
 //!
 //! SCOPED PAUSES are recorded state (`spira_config::scoped_stop`), never halts: one repo's
 //! claims, rounds or publish lane, or named beads no dwarf may claim. Running work is never
@@ -211,7 +212,9 @@ fn missing_timers(timers: &[TimerSlot]) -> Vec<String> {
 
 fn work_services(planes: &BTreeSet<Plane>) -> Vec<String> {
     let sfx = sfx_or_die();
-    sysctl::run_lines(&["list-units", "spira-*.service", "--state=active", "--no-legend"])
+    // A oneshot is `activating` for as long as its ExecStart runs, which for the rounds loop
+    // and the gate worker is minutes to hours; `--state=active` alone skips exactly those.
+    sysctl::run_lines(&["list-units", "spira-*.service", "--state=active,activating,reloading", "--no-legend"])
         .into_iter()
         .filter_map(|l| sysctl::first_field(&l).map(str::to_string))
         .filter(|u| !spira_world::proc::is_excluded_work_service(u, &sfx))
@@ -290,7 +293,7 @@ fn notify_dwarves(notifier: &mut spira_world::notice::Notifier, what: &str, elap
     });
 }
 
-const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--until WHAT] [--owner O] [--owner-pid PID | --owner-unit UNIT] [--reboot] [--timeout SECS | --deadline SECS] | drain-check | resume | start [--work|--observability|--maintenance|--all] | pause --repo R [--lanes claims,rounds,publish] --reason WHY --until COND [--owner O] | pause --reserve BEADS --reason WHY [--owner O] | unpause --repo R [--lanes L] | unpause --reserve BEADS | status}";
+const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--until WHAT] [--owner O] [--owner-pid PID | --owner-unit UNIT] [--reboot] [--timeout SECS | --deadline SECS] | drain-check | resume | start [--work|--observability|--maintenance|--all] | pause --repo R [--lanes claims,rounds,publish] --reason WHY --until COND [--owner O] | pause --reserve BEADS --reason WHY [--owner O] | unpause --repo R [--lanes L] | unpause --reserve BEADS | status | guard}";
 
 fn cmd_stop(args: &[String]) -> i32 {
     let mut why = String::new();
@@ -501,6 +504,11 @@ fn cmd_start(args: &[String]) -> i32 {
         }
         return 1;
     }
+    // Lift before starting anything: every work unit's ExecStartPre refuses while the stamp
+    // is present, so a timer that fires the moment it starts must already find it gone.
+    for plane in &planes {
+        let _ = std::fs::remove_file(plane_stamp(*plane));
+    }
     let mut degraded = Vec::new();
     for t in &timers {
         let TimerSlot::Resolved(t) = t else { continue };
@@ -602,9 +610,6 @@ fn cmd_start(args: &[String]) -> i32 {
         for b in &failed {
             eprintln!("  WARNING: checkpoint hold on {b} not lifted — `spira-lc unhold {b} wait` (it expires on its own)");
         }
-    }
-    for plane in &planes {
-        let _ = std::fs::remove_file(plane_stamp(*plane));
     }
     if !degraded.is_empty() {
         eprintln!(
@@ -1059,6 +1064,19 @@ fn cmd_status() -> i32 {
     0
 }
 
+/// Every work-plane unit's `ExecStartPre=`: exit nonzero, naming the halt, while the work
+/// plane's stamp is present. A stamp path that cannot be resolved refuses too.
+fn cmd_guard() -> i32 {
+    let stamp = halt_stamp_or_die();
+    match spira_world::guard::halt_refusal(&stamp, std::fs::read_to_string(&stamp).ok().as_deref()) {
+        Some(refusal) => {
+            eprintln!("{refusal}");
+            1
+        }
+        None => 0,
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let cmd = args.first().cloned().unwrap_or_else(|| "status".to_string());
@@ -1073,6 +1091,7 @@ fn main() {
         "pause" => cmd_pause(rest),
         "unpause" => cmd_unpause(rest),
         "status" => cmd_status(),
+        "guard" => cmd_guard(),
         // `TIMER_PRIORITY`, one base name per line — the seam watchtower.sh's
         // disabled-timer-check reads instead of `WORLD_LIB=1 . world.sh`, which stopped
         // being possible the moment world.sh became a binary (sp-6onps).

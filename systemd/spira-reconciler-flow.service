@@ -14,6 +14,7 @@ Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
+ExecStartPre=@SPIRA_PROD_ROOT@/bin/world guard
 ExecStart=@SPIRA_PROD_ROOT@/bin/reconciler-flow --pass
 # A pass runs a handful of duckdb queries over run/tsd/, one bd list and at most one mail
 # send per gap. 60s is generous for all of that on a quiet box.

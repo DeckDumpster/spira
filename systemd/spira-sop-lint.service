@@ -5,6 +5,7 @@ Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
+ExecStartPre=@SPIRA_PROD_ROOT@/bin/world guard
 Nice=19
 IOSchedulingClass=idle
 IOWeight=10

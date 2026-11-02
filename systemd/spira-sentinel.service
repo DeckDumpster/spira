@@ -17,6 +17,7 @@ Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
+ExecStartPre=@SPIRA_PROD_ROOT@/bin/world guard
 # No SPIRA_RUNES here on purpose. It used to read `builder ops`, written when the harness
 # default was the literal string `builder` — and a roster pinned in a unit file is how a
 # persona lands complete and never runs, which is what happened to ops.rune. The runes is

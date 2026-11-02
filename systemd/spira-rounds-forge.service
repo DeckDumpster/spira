@@ -14,6 +14,7 @@ Environment=SPIRA_HOME=@SPIRA_HOME@
 Environment=SPIRA_RUN=@SPIRA_RUN@
 Environment=SPIRA_DB=@SPIRA_DB@
 Type=oneshot
+ExecStartPre=@SPIRA_PROD_ROOT@/bin/world guard
 ExecStart=@SPIRA_PROD_ROOT@/bin/batcher rounds-forge
 TimeoutStartSec=3600
 StandardOutput=append:@SPIRA_RUN@/rounds-forge.log
