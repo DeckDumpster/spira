@@ -34,6 +34,7 @@ Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
+ExecStartPre=@SPIRA_PROD_ROOT@/bin/world guard
 ExecCondition=/usr/bin/test -f @SPIRA_PROD@/runes/mimir.rune
 ExecStart=@SPIRA_PROD@/mimir-trigger.sh
 # The trigger script queries bd and counts git commits; 120 seconds is generous.

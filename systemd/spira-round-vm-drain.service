@@ -10,6 +10,7 @@ Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr
 Environment=SPIRA_HOME=@SPIRA_HOME@
 Environment=SPIRA_RUN=@SPIRA_RUN@
 Type=oneshot
+ExecStartPre=@SPIRA_PROD_ROOT@/bin/world guard
 ExecStart=@SPIRA_PROD_ROOT@/bin/round-vm drain
 TimeoutStartSec=600
 StandardOutput=journal

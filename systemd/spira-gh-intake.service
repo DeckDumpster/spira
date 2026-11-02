@@ -29,6 +29,7 @@ Environment=SPIRA_HOME=@SPIRA_PROD@
 Environment=SPIRA_RUN=@SPIRA_RUN@
 Environment=SPIRA_DB=@SPIRA_DB@
 Type=oneshot
+ExecStartPre=@SPIRA_PROD_ROOT@/bin/world guard
 ExecStart=@SPIRA_PROD_ROOT@/bin/gh-intake
 TimeoutStartSec=120
 StandardOutput=append:@SPIRA_RUN@/gh-intake.log

@@ -83,7 +83,10 @@ impl Fixture {
         testkit::write_exe(
             &stub,
             r#"#!/bin/sh
-verb=""; arg=""
+verb=""; arg=""; states=""
+for a in "$@"; do
+    case "$a" in --state=*) states="${a#--state=}" ;; esac
+done
 for a in "$@"; do
     case "$a" in --*|-p|Result|Type|--value) continue ;; esac
     if [ -z "$verb" ]; then verb="$a"; elif [ -z "$arg" ]; then arg="$a"; fi
@@ -93,13 +96,18 @@ case "$verb" in
 list-unit-files)
     case "$arg" in
         'spira-*.timer') for f in "$UNIT_DIR"/spira-*.timer; do b=$(basename "$f" .timer); echo "$b-prod.timer enabled"; done ;;
+        'spira-*.service') for f in "$UNIT_DIR"/spira-*.service; do b=$(basename "$f" .service); echo "$b-prod.service enabled"; done ;;
         *'*'*) ;;
         *) [ -f "$file" ] && echo "$arg enabled" ;;
     esac ;;
+list-units)
+    [ "$arg" = 'spira-*.service' ] && [ -f "$LIVE" ] && while read -r u s; do
+        case ",${states:-$s}," in *",$s,"*) echo "$u loaded $s running -" ;; esac
+    done < "$LIVE" ;;
 cat) [ -f "$file" ] && cat "$file" || exit 1 ;;
 is-enabled) echo enabled ;;
 is-active) echo inactive; exit 3 ;;
-stop|start) echo "$verb $arg" >> "$CALLS" ;;
+stop|start|reset-failed) echo "$verb $arg" >> "$CALLS" ;;
 esac
 exit 0
 "#,
@@ -124,6 +132,7 @@ exit 0
             .arg(format!("SPIRA_SYSTEMCTL={}", self.tmp.join("systemctl").display()))
             .arg(format!("UNIT_DIR={}", unit_dir().display()))
             .arg(format!("CALLS={}", calls.display()))
+            .arg(format!("LIVE={}", self.tmp.join("live").display()))
             .arg(format!("SPIRA_CTRL={}", self.tmp.join("no-ctrl.json").display()))
             .arg("world")
             .args(args)
@@ -132,6 +141,36 @@ exit 0
         let stdout = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
         let calls = std::fs::read_to_string(&calls).unwrap_or_default().lines().map(str::to_string).collect();
         (stdout, calls)
+    }
+
+    /// Units systemd reports as loaded, one `<unit> <ACTIVE state>` per line — what the stub
+    /// serves to `list-units spira-*.service`, filtered by `--state=` the way systemd does.
+    fn live(&self, units: &[(&str, &str)]) {
+        let text: String = units.iter().map(|(u, s)| format!("{u} {s}\n")).collect();
+        std::fs::write(self.tmp.join("live"), text).unwrap();
+    }
+
+    /// Run one `ExecStartPre=` line from a shipped unit, its `@SPIRA_PROD_ROOT@/bin/` resolved
+    /// to this build's binaries, in the fixture's environment. Returns (succeeded, output).
+    fn exec_start_pre(&self, line: &str) -> (bool, String) {
+        let bin_dir = PathBuf::from(env!("CARGO_BIN_EXE_world")).parent().unwrap().to_path_buf();
+        let resolved = line.replace("@SPIRA_PROD_ROOT@/bin/", &format!("{}/", bin_dir.display()));
+        let argv: Vec<&str> = resolved.split_whitespace().collect();
+        let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let out = Command::new("env")
+            .arg("-i")
+            .arg(format!("HOME={}", self.tmp.join("home").display()))
+            .arg(format!("PATH={}:/usr/bin:/bin", bin_dir.display()))
+            .arg(format!("SPIRA_HOME={}", real_home.display()))
+            .arg(format!("SPIRA_TOML={}", self.toml.display()))
+            .args(&argv)
+            .output()
+            .expect("cannot spawn the ExecStartPre command");
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr))
+    }
+
+    fn halt_stamp(&self) -> PathBuf {
+        self.tmp.join("run").join("world.halted")
     }
 
     fn stamp(&self, name: &str) -> bool {
@@ -194,4 +233,89 @@ fn status_reports_the_planes_separately_through_a_work_halt() {
     assert!(out.contains("spira: plane work: STOPPED"), "{out}");
     assert!(out.contains("spira: plane observability: RUNNING"), "{out}");
     assert!(out.contains("spira: plane maintenance: RUNNING"), "{out}");
+}
+
+#[test]
+fn a_plain_stop_ends_a_running_rounds_loop_and_gate_worker_as_services_and_as_timers() {
+    let f = Fixture::new("planes-stop-oneshots");
+    // A oneshot mid-run is `activating`, not `active`: the rounds loop and the gate worker
+    // are oneshots that run for minutes to hours.
+    f.live(&[
+        ("spira-sentinel-prod.service", "active"),
+        ("spira-rounds-prod.service", "activating"),
+        ("spira-gate-worker-prod.service", "activating"),
+    ]);
+    let (out, calls) = f.world(&["stop"]);
+    let stopped_unit = |u: &str| calls.iter().any(|c| c == &format!("stop {u}"));
+    assert!(stopped_unit("spira-sentinel-prod.service"), "positive control: an active work service is stopped\n{out}\n{calls:?}");
+    for u in ["spira-rounds-prod.service", "spira-gate-worker-prod.service", "spira-rounds-prod.timer", "spira-gate-worker-prod.timer"] {
+        assert!(stopped_unit(u), "{u} must be stopped by a work halt\n{out}\n{calls:?}");
+    }
+}
+
+#[test]
+fn a_plain_stop_leaves_mail_delivery_running() {
+    let f = Fixture::new("planes-stop-mail");
+    f.live(&[("spira-sentinel-prod.service", "active"), ("spira-mail-deliver-prod.service", "active")]);
+    let (out, calls) = f.world(&["stop"]);
+    assert!(calls.iter().any(|c| c == "stop spira-sentinel-prod.service"), "positive control\n{out}\n{calls:?}");
+    assert!(
+        !calls.iter().any(|c| c == "stop spira-mail-deliver-prod.service"),
+        "mail delivery is the operator's channel in; a halt must not take it down\n{out}\n{calls:?}"
+    );
+}
+
+fn halt_guard_lines(unit: &str) -> Vec<String> {
+    std::fs::read_to_string(unit_dir().join(unit))
+        .unwrap()
+        .lines()
+        .filter_map(|l| l.strip_prefix("ExecStartPre="))
+        .filter(|l| l.contains("/bin/world "))
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn while_halted_the_rounds_loop_and_the_gate_worker_refuse_to_start_naming_the_stamp() {
+    let f = Fixture::new("planes-halt-guard");
+    for unit in ["spira-rounds.service", "spira-gate-worker.service"] {
+        let guards = halt_guard_lines(unit);
+        assert_eq!(guards.len(), 1, "{unit} carries exactly one halt check in ExecStartPre: {guards:?}");
+        let (ok, out) = f.exec_start_pre(&guards[0]);
+        assert!(ok, "positive control: with no halt stamp {unit} starts\n{out}");
+
+        std::fs::write(f.halt_stamp(), "2000-01-01T00:00:00Z\nwhy: planted halt\n").unwrap();
+        let (ok, out) = f.exec_start_pre(&guards[0]);
+        assert!(!ok, "{unit} must refuse to start while the world is halted\n{out}");
+        assert!(out.contains(&f.halt_stamp().display().to_string()), "the refusal names the stamp\n{out}");
+        assert!(out.contains("planted halt") && out.contains("world start"), "the refusal names the halt and what lifts it\n{out}");
+        std::fs::remove_file(f.halt_stamp()).unwrap();
+    }
+}
+
+#[test]
+fn every_work_service_carries_the_halt_guard_and_no_other_does() {
+    let services: Vec<String> = shipped_units().into_iter().filter(|u| u.ends_with(".service")).collect();
+    let work: Vec<&String> = services.iter().filter(|u| plane_of_shipped(u) == Some(Plane::Work)).collect();
+    assert!(work.iter().any(|u| *u == "spira-rounds.service"), "positive control: the scan finds the work services");
+    let unguarded: Vec<_> = work.iter().filter(|u| halt_guard_lines(u).len() != 1).collect();
+    assert!(unguarded.is_empty(), "work services without exactly one halt check: {unguarded:?}");
+    let stray: Vec<_> = services.iter().filter(|u| plane_of_shipped(u) != Some(Plane::Work) && !halt_guard_lines(u).is_empty()).collect();
+    assert!(stray.is_empty(), "a unit off the work plane must keep running through a halt: {stray:?}");
+    assert_eq!(plane_of_shipped("spira-mail-deliver.service"), Some(Plane::Observability), "mail delivery stays up through a halt");
+}
+
+#[test]
+fn start_brings_back_a_work_daemon_that_no_timer_starts() {
+    let f = Fixture::new("planes-start-daemon");
+    f.world(&["stop"]);
+    let (out, calls) = f.world(&["start"]);
+    // The only shipped work-plane unit that is not a oneshot; a halted boot leaves it failed
+    // on its start guard and nothing else ever starts it.
+    assert!(calls.iter().any(|c| c == "reset-failed spira-submission-prod.service"), "{out}\n{calls:?}");
+    assert!(calls.iter().any(|c| c == "start spira-submission-prod.service"), "{out}\n{calls:?}");
+    for oneshot in ["spira-rounds-prod.service", "spira-gate-worker-prod.service", "spira-sentinel-prod.service"] {
+        assert!(!calls.iter().any(|c| c == &format!("start {oneshot}")), "a oneshot is its timer's to start: {oneshot}\n{out}");
+    }
+    assert!(!calls.iter().any(|c| c == "start spira-lc-prod.service" || c == "start spira-cockpit-prod.service"), "no plane, no start\n{out}");
 }

@@ -32,4 +32,4 @@ StandardError=append:@SPIRA_RUN@/watchd/mail-deliver.log
 WantedBy=default.target
 
 [X-Spira]
-Plane=work
+Plane=observability

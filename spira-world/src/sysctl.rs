@@ -221,6 +221,12 @@ pub fn plane_from_unit_text(text: &str) -> Option<Plane> {
     None
 }
 
+/// Whether a unit file's text declares `Type=oneshot`: a unit run to completion by a timer,
+/// not a daemon kept up.
+pub fn is_oneshot(text: &str) -> bool {
+    text.lines().any(|l| l.trim() == "Type=oneshot")
+}
+
 pub fn plane_of(unit: &str) -> Plane {
     plane_from_unit_text(&run(&["cat", unit])).unwrap_or(Plane::Work)
 }
@@ -286,6 +292,13 @@ mod tests {
     fn plane_is_read_from_the_x_spira_section_only() {
         let unit = "[Unit]\nPlane=maintenance\n[X-Spira]\nPlane=observability\n[Timer]\nPlane=work\n";
         assert_eq!(plane_from_unit_text(unit), Some(Plane::Observability));
+    }
+
+    #[test]
+    fn is_oneshot_reads_the_type_line() {
+        assert!(is_oneshot("[Service]\nType=oneshot\nExecStart=x\n"));
+        assert!(!is_oneshot("[Service]\nType=simple\n"));
+        assert!(!is_oneshot("[Service]\n# Type=oneshot\n"));
     }
 
     #[test]

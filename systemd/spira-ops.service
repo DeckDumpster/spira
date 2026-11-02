@@ -23,6 +23,7 @@ Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
+ExecStartPre=@SPIRA_PROD_ROOT@/bin/world guard
 # Inert until the persona exists on main. This unit is installed and enabled by the same
 # change that ADDS ops.rune, so between arming the timer and the branch landing there is a
 # window in which ExecStart would fail every five minutes — and a unit that is red for

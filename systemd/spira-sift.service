@@ -14,6 +14,7 @@ Environment=SPIRA_HOME=@SPIRA_HOME@
 Environment=SPIRA_RUN=@SPIRA_RUN@
 Environment=SPIRA_DB=@SPIRA_DB@
 Type=oneshot
+ExecStartPre=@SPIRA_PROD_ROOT@/bin/world guard
 CPUQuota=50%
 Nice=10
 ExecStart=@SPIRA_PROD_ROOT@/bin/round-controller sifts
