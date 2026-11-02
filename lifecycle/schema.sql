@@ -206,6 +206,11 @@ CREATE TABLE IF NOT EXISTS runtime_cursor (
     next BIGINT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS planning_watermark (
+    id  TINYINT NOT NULL PRIMARY KEY,
+    seq BIGINT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS runtime_schedule (
     row_id      VARCHAR(255) NOT NULL PRIMARY KEY,
     at          BIGINT NOT NULL,

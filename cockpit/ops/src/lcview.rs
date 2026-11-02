@@ -165,7 +165,7 @@ pub struct AskRow {
     pub class: String,
 }
 
-/// Fills each untitled ask from the content store's decision bead rows (`content-rows` JSON).
+/// Fills each untitled ask from its decision bead's `plan items` row.
 pub fn fill_ask_titles(asks: &mut [AskRow], content: &[serde_json::Value]) {
     for a in asks.iter_mut().filter(|a| a.title.is_empty()) {
         if let Some(t) = content.iter().find(|c| c["id"] == a.id.as_str()).and_then(|c| c["title"].as_str()) {

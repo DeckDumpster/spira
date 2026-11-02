@@ -284,7 +284,15 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deli
             }
             return Err("ask label does not resolve — refusing to file an ask under a guessed one".to_string());
         }
-        let created = match bead::create_tracking_bead(bd, true, args.subject, &body, &env.ask_label, work_bead) {
+        // The decision bead states its question, default and class, as the ask fence requires of
+        // every ask; a subject with no '?' is still the question the ask puts.
+        let mut decision = if args.subject.contains('?') || body.contains("## Question") { body.clone() } else { format!("## Question\n{}\n\n{body}", args.subject) };
+        for (key, value) in [("Default", args.default), ("Class", canonical_class(args.class).unwrap_or(args.class))] {
+            if !value.is_empty() {
+                decision.push_str(&format!("\n{key}: {value}"));
+            }
+        }
+        let created = match bead::create_tracking_bead(bd, true, args.subject, &decision, &env.ask_label, work_bead) {
             Ok(c) => c,
             Err(e) => {
                 if is_operator {
@@ -695,7 +703,6 @@ mod probe_tests {
             id_prefix: "sp".into(),
             ask_label: "needs-x".into(),
             db: String::new(),
-            bd_bin: String::new(),
             bd_conn_retries: 0,
             operator_actor: "op".into(),
             run_dir: root.join("run"),
@@ -928,7 +935,6 @@ mod probe_tests {
         let args = SendArgs { mailbox: "operator", from: None, subject: "Mute it?", kind: "question", default, class, bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" };
         let mut e = env(root);
         e.db = "db".into();
-        e.bd_bin = "bd".into();
         send(bd, &e, &args, body.to_string()).unwrap()
     }
 
@@ -957,7 +963,6 @@ mod probe_tests {
         }
         let mut e = env(root);
         e.db = "db".into();
-        e.bd_bin = "bd".into();
         e
     }
 

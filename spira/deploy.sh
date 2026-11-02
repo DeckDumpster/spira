@@ -346,15 +346,15 @@ _tarball="$_deploy_tmp/${release_stem}.tar.gz"
 if [ -d "${SPIRA_DB:-}/.beads" ]; then
     log "deploy: checking DB migration compatibility"
     # batch-job: schema migration over the whole store
-    _mig_out="$(timeout 30 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" migrate schema 2>&1)"
+    _mig_out="$(timeout 30 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" migrate schema 2>&1)" # STORE_DOOR_CONSIDERED="schema migration of the store itself, run before the drain; no bead is read or written"
     _mig_rc=$?
     if [ "$_mig_rc" -ne 0 ] \
             && printf '%s' "$_mig_out" | grep -qE 'unreachable|connection refused'; then
         log "deploy: Dolt server not running — starting"
         # batch-job: starts the dolt server
-        "${SPIRA_BD:-bd}" -C "$SPIRA_DB" dolt start 2>/dev/null || true
+        "${SPIRA_BD:-bd}" -C "$SPIRA_DB" dolt start 2>/dev/null || true # STORE_DOOR_CONSIDERED="starts the store's own server; no bead is read or written"
         # batch-job: schema migration over the whole store
-        _mig_out="$(timeout 30 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" migrate schema 2>&1)"
+        _mig_out="$(timeout 30 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" migrate schema 2>&1)" # STORE_DOOR_CONSIDERED="schema migration of the store itself, run before the drain; no bead is read or written"
         _mig_rc=$?
     fi
     if [ "$_mig_rc" -ne 0 ]; then

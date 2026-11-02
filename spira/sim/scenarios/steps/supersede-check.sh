@@ -4,13 +4,13 @@
 set -u
 mode="${1:?usage: supersede-check.sh landed|holds}"
 fail() { echo "supersede-check: $1" >&2; exit 9; }
-note() { timeout 5 bd -C "$SIM_BEADS_DB" show "$1" 2>/dev/null | grep -qF "$2" || fail "$1 has no note: $2"; }
+note() { timeout 5 spira-lc plan items --ids "$1" --full 2>/dev/null | grep -qF "$2" || fail "$1 has no note: $2"; }
 inbox="$SPIRA_RUN/duty-inbox.log"
 case "$mode" in
 landed)
     [ "$(spira-lc state sp-su02 2>/dev/null)" = SUPERSEDED ] || exit 3
     note sp-su02 "supersede-request confirmed: sp-su01 is LANDED"
-    timeout 5 bd -C "$SIM_BEADS_DB" show sp-su02 --json 2>/dev/null | grep -q '"status": *"closed"' || fail "sp-su02 is not closed on the bd side"
+    timeout 5 spira-lc plan items --ids sp-su02 2>/dev/null | grep -q '"status": *"closed"' || fail "sp-su02 is not closed on the bd side"
     grep -qF "[watch:supersede-duty] SUPERSEDE REQUEST sp-su02" "$inbox" || fail "the Concierge was not told of sp-su02"
     ;;
 holds)

@@ -36,7 +36,6 @@ const CONFIG_VARS: &[&str] = &[
     "SPIRA_HEALTH_TIMEOUT",
     "SPIRA_NOTIFY_AGE",
     "SPIRA_ID_PREFIX",
-    "SPIRA_BD",
     "SPIRA_CONCIERGE_INBOX",
 ];
 
@@ -57,8 +56,7 @@ pub struct Context {
     pub health_timeout: String,
     pub notify_age: String,
     pub id_prefix: String,
-    pub bd: String,
-    pub db: String,
+    pub bdq: String,
     /// The ten `WATCHD_KEYS` placeholder values, keyed by name — everything an `@KEY@` in a
     /// manifest row may reference.
     pub placeholders: HashMap<String, String>,
@@ -114,12 +112,8 @@ pub fn load(home: &Path) -> Result<Context, String> {
         let v = spira_config::process::cfg(name)?;
         kv.insert((*name).to_string(), v);
     }
-    // NON-DESTRUCTIVE: `SPIRA_RUN` and `SPIRA_DB` are both a `WATCHD_KEYS` placeholder AND
-    // a named `Context` field below. A `.remove()` here (as the `take` closure does for the
-    // fields that are ONLY a placeholder) would empty both before `run`/`db` ever got a
-    // chance to read them — caught only by an end-to-end run against the real seam, because
-    // every unit test constructs `Context` as a struct literal directly, never through this
-    // function.
+    // Placeholders are copied before `take` empties the map: `SPIRA_RUN` is both a placeholder
+    // and a field.
     let mut placeholders = HashMap::new();
     for key in crate::manifest::KEYS {
         placeholders.insert(key.to_string(), kv.get(*key).cloned().unwrap_or_default());
@@ -134,8 +128,7 @@ pub fn load(home: &Path) -> Result<Context, String> {
         health_timeout: take("SPIRA_HEALTH_TIMEOUT"),
         notify_age: take("SPIRA_NOTIFY_AGE"),
         id_prefix: take("SPIRA_ID_PREFIX"),
-        bd: take("SPIRA_BD"),
-        db: take("SPIRA_DB"),
+        bdq: spira_config::release_env::tool("bdq"),
         placeholders,
         systemctl: std::env::var("SPIRA_SYSTEMCTL").unwrap_or_else(|_| "systemctl".to_string()),
         // SPIRA_INSTANCE is a registered key too (just not in CONFIG_VARS above, since it
@@ -315,7 +308,6 @@ mod tests {
         let ctx = load(&d).expect("the seam to source this trivial conf.sh");
         assert_eq!(ctx.instance, "fixture");
         assert_eq!(ctx.run, "/fixture/run", "SPIRA_RUN is also a WATCHD_KEYS placeholder");
-        assert_eq!(ctx.db, "/fixture/db", "SPIRA_DB is also a WATCHD_KEYS placeholder");
         assert_eq!(ctx.watchers, "/fixture/watchers");
         assert_eq!(ctx.placeholders.get("SPIRA_RUN").map(String::as_str), Some("/fixture/run"));
         assert_eq!(ctx.placeholders.get("SPIRA_DB").map(String::as_str), Some("/fixture/db"));

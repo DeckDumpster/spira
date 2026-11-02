@@ -346,11 +346,11 @@ pub fn check_store(w: &dyn World) -> Vec<Line> {
 
     if w.dir_exists(&beads_dir) {
         out.push(ok(format!("{db} has a .beads")));
-        match w.bd_list(db_path, 60) {
+        match w.bd_list(60) {
             Ok(_) => {
                 out.push(ok("bd can read it"));
                 let cwd = w.env("SPIRA_HOME").unwrap_or_default();
-                match w.bd_role_warnings(db_path, Path::new(&cwd)) {
+                match w.bd_role_warnings(Path::new(&cwd)) {
                     Some(n) if n > 0 => out.push(warn(
                         format!("bd warns beads.role is unset ({n} line(s)) when run from {cwd}"),
                         "Fix: git config --global beads.role maintainer",
@@ -659,7 +659,7 @@ pub fn check_events_probe(w: &dyn World) -> Vec<Line> {
     if !w.dir_exists(&db_path.join(".beads")) {
         return vec![warn("cannot probe events substrate — no database yet", "")];
     }
-    let Some(id) = w.bd_first_id(db_path) else {
+    let Some(id) = w.bd_first_id() else {
         return vec![warn(
             "cannot probe events substrate — the store holds no issue to anchor a probe event to",
             "This is expected on a store that has not been used yet. The probe resumes once a bead exists.",

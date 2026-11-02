@@ -247,6 +247,7 @@ e2e_trig1="$(env -i HOME="$T" \
     SPIRA_REPO="$TESTREPO" \
     SPIRA_TOML="$SPIRA_TOML" \
     "$TRIGSH" 2>&1)"; e2e_rc1=$?
+[ "$e2e_rc1" = 0 ] || printf '%s\n' "$e2e_trig1" | head -40 | sed 's/^/# /'
 is   "e2e: trigger run 1 exits 0"           0                      "$e2e_rc1"
 want "e2e: trigger log mentions rows"        "invalid-closed trigger:" "$e2e_trig1"
 

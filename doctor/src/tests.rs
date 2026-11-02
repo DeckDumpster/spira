@@ -172,10 +172,10 @@ impl World for Fake {
     fn file_exists(&self, p: &Path) -> bool {
         self.files.borrow().contains(&p.to_path_buf())
     }
-    fn bd_list(&self, _db: &Path, _timeout_secs: u64) -> Result<String, String> {
+    fn bd_list(&self, _timeout_secs: u64) -> Result<String, String> {
         self.bd_list.borrow().clone()
     }
-    fn bd_role_warnings(&self, _db: &Path, _cwd: &Path) -> Option<usize> {
+    fn bd_role_warnings(&self, _cwd: &Path) -> Option<usize> {
         *self.role_warnings.borrow()
     }
     fn read_store_meta(&self, metadata_json: &Path) -> Option<StoreMeta> {
@@ -196,7 +196,7 @@ impl World for Fake {
     fn dolt_events_count(&self) -> usize {
         *self.dolt_events.borrow()
     }
-    fn bd_first_id(&self, _db: &Path) -> Option<String> {
+    fn bd_first_id(&self) -> Option<String> {
         self.bd_first_id.borrow().clone()
     }
     fn bump_write_event_try(&self, _id: &str, _etype: &str, _actor: &str) -> bool {

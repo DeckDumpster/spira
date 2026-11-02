@@ -101,6 +101,14 @@ pub fn run(args: &[String]) -> i32 {
         },
     };
 
+    crate::plan::serve_on(Arc::clone(&conn));
+    match crate::plan::read_watermark(&conn) {
+        Ok(w) => crate::plan::install_mirror(w),
+        Err(e) => {
+            eprintln!("spira-lc serve: planning watermark unread, bd kv is mirrored from the next stamp: {e}");
+            crate::plan::install_mirror(0);
+        }
+    }
     eprintln!("spira-lc serve: listening on {socket_path}");
     // A request may spawn a child (`work blocked` runs `mail`) that calls back into this
     // socket; serving one connection at a time deadlocks on that. The session mutex still
@@ -134,6 +142,7 @@ pub fn run(args: &[String]) -> i32 {
                 gc_tick(&store);
             });
         }
+        scope.spawn(crate::plan::run_mirror);
         let sweeper = Arc::clone(&conn);
         scope.spawn(move || loop {
             std::thread::sleep(SWEEP_EVERY);

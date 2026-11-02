@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use crate::util::{self, Out, Spec};
 
-/// `bdq` semantics: `bd -C $SPIRA_DB <args>`.
+/// `bdq <args>`.
 pub trait Bd: Send + Sync {
     fn bd(&self, args: &[String]) -> Out;
 }

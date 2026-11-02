@@ -1562,7 +1562,6 @@ impl T {
             // "spira" the harness (harness_world).
             home_repo: "harness".into(),
             db: "/db".into(),
-            bd: "bd".into(),
             transition_pollsec: 5,
             transition_maxsec: 30,
             preflight_wall_secs: 240,

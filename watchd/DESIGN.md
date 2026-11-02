@@ -102,7 +102,7 @@ SPIRA_DB SPIRA_WORKSPACES SPIRA_TOWN SPIRA_WIKI SPIRA_VIEW SPIRA_VIEW_SESSION SP
 | `SPIRA_NOTIFY_AGE` | backlog/unhealthy age before `notify` escalates, seconds | 1800 |
 | `SPIRA_INSTANCE` | unit-name suffix (`watch_unit_name`) | `prod` |
 | `SPIRA_SYSTEMCTL` | override for `systemctl` (tests) | `systemctl` |
-| `SPIRA_BD`, `SPIRA_DB`, `SPIRA_ID_PREFIX` | `health-ids`' own-prefix derivation | — |
+| `SPIRA_ID_PREFIX` (the store's own prefix via `bdq config get` wins) | `health-ids`' own-prefix derivation | — |
 | `SPIRA_NOW` | frozen clock for tests | wall clock |
 
 `watchd` refuses (NO_VERDICT-shaped: prints why, exits non-zero) when the seam itself cannot

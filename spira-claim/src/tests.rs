@@ -1,6 +1,6 @@
 //! CLI-level tests: the contract at the interface (exit codes, stdout shapes), with every
 //! store read replaced by a file (`--events`, `--ready`, `--epics`, `--lifecycle`,
-//! `--blocker-records`) or by a fake `bd` script driven through [`Store`] directly.
+//! `--blocker-records`) or by a fake `bdq` script driven through [`Store`] directly.
 
 use super::*;
 use std::path::PathBuf;
@@ -74,21 +74,50 @@ fn run(args: &[&str], stdin: &str) -> Outcome {
 }
 
 /// [`run`], plus `toml_declare` (registered-key overrides for the subprocess's own
-/// throwaway config file — `SPIRA_BD`, labels, `SPIRA_CLAIM_RETRIES`, … everything
+/// throwaway config file — labels, `SPIRA_CLAIM_RETRIES`, … everything
 /// `spira/conf.d` registers; raw env no longer reaches any of these) and `extra_env`
 /// (anything else the subprocess should see: `SPIRA_HOME` for a rune runes, `PATH`, the
 /// few still-unregistered knobs). `SPIRA_HOME` defaults to [`REAL_SPIRA_HOME`] unless
 /// `extra_env` overrides it. One `testkit::env` call for everything: its lock is not
 /// reentrant, so a caller must never also be holding it.
 fn run_cfg(args: &[&str], stdin: &str, toml_declare: &[(&str, &str)], extra_env: &[(&str, Option<&str>)]) -> Outcome {
-    let toml = toml_fixture(toml_declare);
+    let declare: Vec<(&str, &str)> = toml_declare.iter().filter(|(k, _)| *k != FAKE_BDQ).copied().collect();
+    let toml = toml_fixture(&declare);
     let mut edits: Vec<(&str, Option<&str>)> = vec![("SPIRA_HOME", Some(REAL_SPIRA_HOME)), ("SPIRA_TOML", Some(toml.as_str()))];
     edits.extend_from_slice(extra_env);
-    let bd_fixture = toml_declare.iter().find(|(k, _)| *k == "SPIRA_BD").map(|(_, v)| *v);
-    edits.push(("SPIRA_BD_FIXTURE", bd_fixture));
+    let fake = toml_declare.iter().find(|(k, _)| *k == FAKE_BDQ).map(|(_, v)| *v);
+    let bin = testkit::TempDir::new("spira-claim-bdq");
+    let path;
+    if let Some(f) = fake {
+        std::os::unix::fs::symlink(f, bin.join("bdq")).unwrap();
+        let given = extra_env.iter().find(|(k, _)| *k == "PATH").and_then(|(_, v)| *v);
+        if given.is_none() {
+            testkit::write_exe(bin.join("spira-lc"), &format!("#!/bin/sh\n{PLAN_STUB}exit 2\n"));
+        }
+        path = format!("{}:{}", bin.to_string_lossy(), given.unwrap_or("/usr/bin:/bin"));
+        edits.push(("PATH", Some(path.as_str())));
+    }
+    edits.push((FAKE_BDQ, fake));
     let _env = testkit::env(&edits);
     exec_spira_claim(args, stdin)
 }
+
+/// The `toml_declare` key that is no config key: a fake `bdq` for the subprocess, put first on
+/// its PATH and exported under this name for [`PLAN_STUB`].
+const FAKE_BDQ: &str = "SPIRA_CLAIM_FAKE_BDQ";
+
+/// A fake `spira-lc`'s plan verbs, answered from the fake bdq's rows for the same read
+/// (`list --id` / `children`), wrapped as the plan verbs wrap them.
+const PLAN_STUB: &str = r#"if [ "$1" = plan ]; then
+  case "$2 $3" in
+    "items --ids") set -- list --id "$4" --status all --limit 0 --json ;;
+    "children --ids") set -- children "$4" --json ;;
+    *) echo "unexpected plan argv: $*" >&2; exit 2 ;;
+  esac
+  rows=$("$SPIRA_CLAIM_FAKE_BDQ" "$@") || exit $?
+  printf '{"watermark":0,"items":%s}\n' "$rows"; exit 0
+fi
+"#;
 
 /// The compiled `spira-claim` binary, fed `args`/`stdin`, its exit code/stdout/stderr
 /// folded into an [`Outcome`] the same shape `dispatch` used to return directly.
@@ -508,7 +537,7 @@ fn cli_stack_reports_the_certified_prerequisites_tip() {
         {"bead_id":"A","state":"CERTIFIED","holds":"[]","stack_depth":"0","tip":"abc123"},
     ]).to_string());
     let recs = tmp(&serde_json::json!([{"id":"A","status":"open","issue_type":"task","labels":["repo:spira"]}]).to_string());
-    let o = run_cfg(&["stack", "B", "--lifecycle", &lc, "--blocker-records", &recs], "", &[("SPIRA_BD", bd.as_str())], &[]);
+    let o = run_cfg(&["stack", "B", "--lifecycle", &lc, "--blocker-records", &recs], "", &[(FAKE_BDQ, bd.as_str())], &[]);
     assert_eq!(o.code, 0, "{}", o.err);
     let v: serde_json::Value = serde_json::from_str(&o.out).unwrap();
     assert_eq!(v["claimable"], true);
@@ -528,7 +557,7 @@ fn cli_stack_refuses_a_member_of_an_open_integration() {
     std::fs::create_dir_all(queue.path().join("spira")).unwrap();
     std::fs::write(queue.path().join("spira/integrations"), "I A B\n").unwrap();
     let q = queue.path().to_string_lossy().into_owned();
-    let o = run_cfg(&["stack", "A", "--lifecycle", &lc, "--blocker-records", &recs], "", &[("SPIRA_BD", bd.as_str()), ("SPIRA_QUEUE_DIR", q.as_str())], &[]);
+    let o = run_cfg(&["stack", "A", "--lifecycle", &lc, "--blocker-records", &recs], "", &[(FAKE_BDQ, bd.as_str()), ("SPIRA_QUEUE_DIR", q.as_str())], &[]);
     assert_eq!(o.code, 3, "{}", o.err);
     assert_eq!(serde_json::from_str::<serde_json::Value>(&o.out).unwrap()["reason"], "Carried");
     assert_eq!(serde_json::from_str::<serde_json::Value>(&o.out).unwrap()["carrier"], "I");
@@ -542,7 +571,7 @@ fn cli_stack_past_the_ceiling_is_refused_but_still_names_the_attempted_depth() {
         {"bead_id":"A","state":"CERTIFIED","holds":"[]","stack_depth":"4","tip":"abc123"},
     ]).to_string());
     let recs = tmp(&serde_json::json!([{"id":"A","status":"open","issue_type":"task","labels":["repo:spira"]}]).to_string());
-    let o = run_cfg(&["stack", "B", "--lifecycle", &lc, "--blocker-records", &recs], "", &[("SPIRA_BD", bd.as_str())], &[]);
+    let o = run_cfg(&["stack", "B", "--lifecycle", &lc, "--blocker-records", &recs], "", &[(FAKE_BDQ, bd.as_str())], &[]);
     assert_eq!(o.code, 3, "{}", o.err);
     let v: serde_json::Value = serde_json::from_str(&o.out).unwrap();
     assert_eq!(v["claimable"], false);
@@ -564,9 +593,9 @@ fn cli_deadlocked_treats_apply_as_a_bare_flag_not_a_value_consumer() {
     assert_ne!(o.code, 1, "{}", o.err);
 }
 
-// ---- the store, through a fake bd -----------------------------------------------------
+// ---- the store, through a fake bdq ----------------------------------------------------
 
-/// A store over a fake bd; the fake lives as long as this does.
+/// A store over a fake bdq; the fake lives as long as this does.
 struct FakeStore {
     store: Store,
     _bd: Tmp,
@@ -588,7 +617,7 @@ fn fake_bd_lc(script: &str, lc_script: &str) -> FakeStore {
     let p = tmp_exe(&format!("#!/bin/sh\n{script}\n"));
     let lc = tmp_exe(&format!("#!/bin/sh\n{lc_script}\n"));
     FakeStore {
-        store: Store { bd: p.to_string(), db: Some("/fake/db".into()), lc: lc.to_string(), timeout: std::time::Duration::from_secs(10) },
+        store: Store { bdq: p.to_string(), lc: lc.to_string(), timeout: std::time::Duration::from_secs(10) },
         _bd: p,
         _lc: lc,
     }
@@ -626,8 +655,9 @@ fn store_events_parses_and_fails_closed() {
 }
 
 #[test]
-fn store_passes_db_and_chunks_ids() {
-    // The fake records its argv; 450 ids must arrive as three queries, each with -C.
+fn store_chunks_event_ids_and_names_no_db() {
+    // The fake records its argv; 450 ids must arrive as three queries, none with -C (bdq
+    // names the store).
     let log = tmp("");
     let st = fake_bd(&format!("printf '%s\\n' \"$*\" >> {log}; echo '[]'"));
     let ids: Vec<String> = (0..450).map(|i| format!("sp-{i}")).collect();
@@ -635,7 +665,7 @@ fn store_passes_db_and_chunks_ids() {
     let calls = std::fs::read_to_string(&log).unwrap();
     let lines: Vec<&str> = calls.lines().collect();
     assert_eq!(lines.len(), 3);
-    assert!(lines.iter().all(|l| l.starts_with("-C /fake/db sql --json select")));
+    assert!(lines.iter().all(|l| l.starts_with("sql --json select")), "{calls}");
 }
 
 /// `epics`: bd list --id gives the epic priorities, bd children the children, and each
@@ -655,7 +685,7 @@ esac"#);
     run_cfg(
         &["epics"],
         r#"[{"id":"a","parent":"sp-E"},{"id":"b","parent":"sp-F"}]"#,
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", "")],
+        &[(FAKE_BDQ, bd.as_str()), ("SPIRA_DB", "")],
         &[("SPIRA_LC_BIN", None), ("PATH", Some(path.as_str()))],
     )
 }
@@ -695,7 +725,7 @@ fn unpoison_usage_errors() {
 // ---- ready / claim CLI (wave 4.25, sp-obhv6) -------------------------------------------
 //
 // `rune-ready`/`rune-exclude`/`bulk-ready-by-rune`/`claim-retry` read real process
-// environment (`SPIRA_HOME`, `SPIRA_BD`, `SPIRA_TOML`, ...) — unlike the rest of this
+// environment (`SPIRA_HOME`, `SPIRA_TOML`, ...) — unlike the rest of this
 // file's tests, which thread every input through a file or a hand-built `Store`. These
 // edit the environment only through `testkit::env`, which serializes them against every
 // other test in this binary and restores on drop; `run` takes the same lock to read.
@@ -746,7 +776,7 @@ fn ready_count_cli_failed_query_prints_zero_and_fails_closed() {
     let o = run_cfg(
         &["ready-count", "plan", "spira-poison", "--noloop-label", "no-loop"], // literal-ok: fixture value
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", "")],
+        &[(FAKE_BDQ, bd.as_str()), ("SPIRA_DB", "")],
         &[("PATH", Some(path.as_str()))],
     );
     assert_eq!((o.code, o.out.as_str()), (1, "0"), "a failed query is not a clean zero (sp-3ntca)");
@@ -763,7 +793,7 @@ fn ready_count_cli_real_count() {
     let o = run_cfg(
         &["ready-count", "plan", ""],
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_SCOPE_LABEL", "")],
+        &[(FAKE_BDQ, bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_SCOPE_LABEL", "")],
         &[("PATH", Some(path.as_str()))],
     );
     assert_eq!((o.code, o.out.as_str(), o.err.as_str()), (0, "3", ""));
@@ -777,7 +807,7 @@ fn claim_retry_cli_succeeds_first_try_with_no_argv_parsing() {
     let o = run_cfg(
         &["claim-retry", "ready", "--limit", "0", "--claim", "--label", "plan"],
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", "")],
+        &[(FAKE_BDQ, bd.as_str()), ("SPIRA_DB", "")],
         &[],
     );
     assert_eq!(o.code, 0);
@@ -793,7 +823,7 @@ fn claim_retry_cli_retries_past_a_transient_failure() {
     let o = run_cfg(
         &["claim-retry", "ready", "--limit", "0"],
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_CLAIM_RETRIES", "3"), ("SPIRA_CLAIM_RETRY_DELAY_S", "0")],
+        &[(FAKE_BDQ, bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_CLAIM_RETRIES", "3"), ("SPIRA_CLAIM_RETRY_DELAY_S", "0")],
         &[],
     );
     assert_eq!((o.code, o.out.as_str()), (0, "[]\n"), "the contention case: the second attempt finds the real (empty) result");
@@ -805,7 +835,7 @@ fn claim_retry_cli_exhausts_and_reports_one_stderr_line_with_empty_stdout() {
     let o = run_cfg(
         &["claim-retry", "ready"],
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_CLAIM_RETRIES", "2"), ("SPIRA_CLAIM_RETRY_DELAY_S", "0")],
+        &[(FAKE_BDQ, bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_CLAIM_RETRIES", "2"), ("SPIRA_CLAIM_RETRY_DELAY_S", "0")],
         &[],
     );
     assert_eq!((o.code, o.out.as_str()), (1, ""));
@@ -909,7 +939,7 @@ fn rune_ready_cli_query_failure_is_rc1_not_rc2_the_sp_3ntca_defect() {
     let o = run_cfg(
         &["rune-ready", "probe"],
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes)],
+        &[(FAKE_BDQ, bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes)],
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str()))],
     );
     assert_eq!((o.code, o.out.as_str()), (1, "0"), "the rune file is right there — this is not the no-rune code");
@@ -938,7 +968,7 @@ fn rune_ready_cli_a_bare_reference_that_resolves_empty_refuses_rc3_never_widens(
         &["rune-ready", "ops"],
         "",
         &[
-            ("SPIRA_BD", bd.as_str()),
+            (FAKE_BDQ, bd.as_str()),
             ("SPIRA_DB", ""),
             ("SPIRA_RUNES", "[]"),
             ("SPIRA_RUNES_DIR", &runes),
@@ -967,7 +997,7 @@ fn rune_ready_cli_a_guarded_or_declared_literal_empty_never_refuses() {
     let o = run_cfg(
         &["rune-ready", "concierge"],
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes)],
+        &[(FAKE_BDQ, bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes)],
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str()))],
     );
     assert_eq!((o.code, o.out.as_str()), (0, "0"), "a declared-empty literal predicate must never refuse: {}", o.err);
@@ -1025,7 +1055,7 @@ fn rune_ready_cli_real_count_including_zero() {
     let o = run_cfg(
         &["rune-ready", "probe"],
         "",
-        &[("SPIRA_BD", bd_zero.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes), ("SPIRA_SCOPE_LABEL", "")],
+        &[(FAKE_BDQ, bd_zero.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes), ("SPIRA_SCOPE_LABEL", "")],
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path_zero.as_str()))],
     );
     assert_eq!((o.code, o.out.as_str(), o.err.as_str()), (0, "0", ""));
@@ -1036,7 +1066,7 @@ fn rune_ready_cli_real_count_including_zero() {
     let o2 = run_cfg(
         &["rune-ready", "probe"],
         "",
-        &[("SPIRA_BD", bd_seven.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes), ("SPIRA_SCOPE_LABEL", "")],
+        &[(FAKE_BDQ, bd_seven.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes), ("SPIRA_SCOPE_LABEL", "")],
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str()))],
     );
     assert_eq!((o2.code, o2.out.as_str()), (0, "7"), "{}", o2.err);
@@ -1051,7 +1081,7 @@ fn rune_ready_cli_cache_fast_path_skips_the_query_entirely() {
     let o = run_cfg(
         &["rune-ready", "probe"],
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes)],
+        &[(FAKE_BDQ, bd.as_str()), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes)],
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", Some(cache.as_str()))],
     );
     assert_eq!((o.code, o.out.as_str(), o.err.as_str()), (0, "9", ""));
@@ -1069,7 +1099,7 @@ fn bulk_ready_by_rune_cli_buckets_one_fetch_by_the_runes_roster() {
     let o = run_cfg(
         &["bulk-ready-by-rune"],
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes)],
+        &[(FAKE_BDQ, bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes)],
         &[("SPIRA_HOME", Some(home.as_str())), ("PATH", Some(path.as_str()))],
     );
     assert_eq!(o.out, "builder 2\nops 1\n", "c is READY in the lifecycle: a stale spira-submitted label must not hide it");
@@ -1082,7 +1112,7 @@ fn fake_lc_taking_verdicts(lc: &str, captured: &std::path::Path, verdicts_rc: i3
     testkit::write_exe(
         dir.join("spira-lc"),
         &format!(
-            "#!/bin/sh\n[ \"$1\" = claim-verdicts ] && {{ cat > '{}'; echo refused >&2; exit {verdicts_rc}; }}\n[ \"$1\" = content-rows ] && [ -n \"$SPIRA_BD_FIXTURE\" ] && exec \"$SPIRA_BD_FIXTURE\" list --id \"$3\" --status all --limit 0 --json\ncat <<'EOF'\n{lc}\nEOF\n",
+            "#!/bin/sh\n[ \"$1\" = claim-verdicts ] && {{ cat > '{}'; echo refused >&2; exit {verdicts_rc}; }}\n{PLAN_STUB}cat <<'EOF'\n{lc}\nEOF\n",
             captured.display()
         ),
     );
@@ -1102,7 +1132,7 @@ fn bulk_with_verdicts(lc: &str, recs: &str, verdicts_rc: i32) -> (Outcome, Optio
     let o = run_cfg(
         &["bulk-ready-by-rune"],
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes)],
+        &[(FAKE_BDQ, bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes)],
         &[("SPIRA_HOME", Some(home.as_str())), ("PATH", Some(path.as_str())), ("SPIRA_READY_CACHE", None)],
     );
     let sent = std::fs::read_to_string(&file).ok().map(|t| serde_json::from_str(&t).expect("a parseable payload"));
@@ -1170,7 +1200,7 @@ fn bulk_ready_by_rune_cli_excludes_exactly_what_rune_ready_excludes() {
     let o = run_cfg(
         &["bulk-ready-by-rune"],
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes)],
+        &[(FAKE_BDQ, bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes)],
         &[("SPIRA_HOME", Some(home.as_str())), ("PATH", Some(path.as_str())), ("SPIRA_READY_CACHE", None)],
     );
     assert_eq!(o.out, "builder 1\nops 0\n", "{}", o.err);
@@ -1194,7 +1224,7 @@ fn plan_rows(ids: &[&str]) -> String {
 /// A PATH directory holding a `spira-lc` that prints `lc`.
 fn fake_lc_path(lc: &str) -> Tmp {
     let dir = testkit::TempDir::new("spira-claim-lc");
-    testkit::write_exe(dir.join("spira-lc"), &format!("#!/bin/sh\n[ \"$1\" = content-rows ] && [ -n \"$SPIRA_BD_FIXTURE\" ] && exec \"$SPIRA_BD_FIXTURE\" list --id \"$3\" --status all --limit 0 --json\ncat <<'EOF'\n{lc}\nEOF\n"));
+    testkit::write_exe(dir.join("spira-lc"), &format!("#!/bin/sh\n{PLAN_STUB}cat <<'EOF'\n{lc}\nEOF\n"));
     // The system directories, never the process PATH: another test may hold a narrowed PATH
     // (an unreachable-machine fixture) while this one is built, outside the env lock.
     let path = format!("{}:/usr/bin:/bin", dir.to_string_lossy());
@@ -1213,7 +1243,7 @@ fn enforced_count(ready: &str, lc: &str, recs: &str, verb: &[&str]) -> Outcome {
     run_cfg(
         verb,
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes), ("SPIRA_SCOPE_LABEL", "")],
+        &[(FAKE_BDQ, bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes), ("SPIRA_SCOPE_LABEL", "")],
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str()))],
     )
 }
@@ -1267,7 +1297,7 @@ fn cli_stack_refuses_a_filed_child_of_a_reworked_parent_as_blocked() {
     let lc = tmp(r#"[{"bead_id":"P","state":"REWORK","holds":"[]","tip":"t1"},{"bead_id":"P.2","state":"READY","holds":"[]"}]"#);
     let recs = tmp(r#"[{"id":"P","status":"open","issue_type":"task","labels":["repo:spira"]}]"#);
     let bd_child = tmp_exe(&format!("#!/bin/sh\necho '{}'\n", r#"[{"id":"P.2","priority":1,"issue_type":"task","parent":"P","labels":["repo:spira"]}]"#));
-    let o = run_cfg(&["stack", "P.2", "--lifecycle", &lc, "--blocker-records", &recs], "", &[("SPIRA_BD", bd_child.as_str())], &[]);
+    let o = run_cfg(&["stack", "P.2", "--lifecycle", &lc, "--blocker-records", &recs], "", &[(FAKE_BDQ, bd_child.as_str())], &[]);
     assert_eq!(o.code, 3, "{}", o.err);
     let v: serde_json::Value = serde_json::from_str(&o.out).unwrap();
     assert_eq!((v["claimable"].clone(), v["reason"].clone()), (false.into(), "Blocked(\"P\")".into()), "{}", o.out);
@@ -1278,7 +1308,7 @@ fn cli_stack_proposes_no_stack_for_a_filed_child_of_a_certified_parent() {
     let lc = tmp(r#"[{"bead_id":"P","state":"CERTIFIED","holds":"[]","tip":"t1"},{"bead_id":"P.2","state":"READY","holds":"[]"}]"#);
     let recs = tmp(r#"[{"id":"P","status":"open","issue_type":"task","labels":["repo:spira"]}]"#);
     let bd_child = tmp_exe(&format!("#!/bin/sh\necho '{}'\n", r#"[{"id":"P.2","priority":1,"issue_type":"task","parent":"P","labels":["repo:spira"]}]"#));
-    let o = run_cfg(&["stack", "P.2", "--lifecycle", &lc, "--blocker-records", &recs], "", &[("SPIRA_BD", bd_child.as_str()), ("SPIRA_STACK_MAX_DEPTH", "4")], &[]);
+    let o = run_cfg(&["stack", "P.2", "--lifecycle", &lc, "--blocker-records", &recs], "", &[(FAKE_BDQ, bd_child.as_str()), ("SPIRA_STACK_MAX_DEPTH", "4")], &[]);
     assert_eq!(o.code, 3, "{}", o.err);
     let v: serde_json::Value = serde_json::from_str(&o.out).unwrap();
     assert_eq!((v["claimable"].clone(), v["reason"].clone()), (false.into(), "Blocked(\"P\")".into()), "{}", o.out);
@@ -1376,7 +1406,7 @@ fn label_ready_set(extra_toml: &[(&str, &str)], exported: Option<&str>) -> Outco
     let bd = sh(&format!("echo '{rows}'"));
     let path = fake_lc_path(lc);
     let mut declare = vec![
-        ("SPIRA_BD", bd.as_str()),
+        (FAKE_BDQ, bd.as_str()),
         ("SPIRA_DB", ""),
         ("SPIRA_RUNES", "[]"),
         ("SPIRA_RUNES_DIR", runes.as_str()),
@@ -1469,7 +1499,7 @@ fn a_blocker_the_lifecycle_has_landed_costs_no_second_bd_call() {
     let o = run_cfg(
         &["bulk-ready-by-rune"],
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes), ("SPIRA_SCOPE_LABEL", "")],
+        &[(FAKE_BDQ, bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes), ("SPIRA_SCOPE_LABEL", "")],
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str()))],
     );
     assert_eq!((o.code, o.out.as_str()), (0, "probe 2\n"), "{}", o.err);
@@ -1492,7 +1522,7 @@ fn ready_count_twice(ttl: &str) -> (Outcome, Outcome) {
             &["ready-count", "plan", ""],
             "",
             &[
-                ("SPIRA_BD", bd.as_str()),
+                (FAKE_BDQ, bd.as_str()),
                 ("SPIRA_DB", ""),
                 ("SPIRA_RUNES", "[]"),
                 ("SPIRA_RUNES_DIR", &runes),
@@ -1528,7 +1558,7 @@ fn urgent_names_the_claimable_p0_and_rework_beads_with_their_kind() {
     testkit::write_exe(
         dir.join("spira-lc"),
         &format!(
-            "#!/bin/sh\ncase \"$*\" in\ncontent-rows*) cat <<'EOF'\n{rows}\nEOF\n;;\n*--express*) echo '[{x}]';;\n*REWORK,*|*READY,REWORK*) echo '[{a},{b},{c},{d}]';;\n*REWORK*) echo '[{c}]';;\n*) echo '[]';;\nesac\n",
+            "#!/bin/sh\ncase \"$*\" in\n'plan items --ids '*) cat <<'EOF'\n{{\"watermark\":0,\"items\":{rows}}}\nEOF\n;;\n*--express*) echo '[{x}]';;\n*REWORK,*|*READY,REWORK*) echo '[{a},{b},{c},{d}]';;\n*REWORK*) echo '[{c}]';;\n*) echo '[]';;\nesac\n",
             rows = rows,
             x = r#"{"bead_id":"p0x","state":"READY","express":"1","holds":"[]"}"#,
             a = lc("p0x", "READY"),
@@ -1542,7 +1572,7 @@ fn urgent_names_the_claimable_p0_and_rework_beads_with_their_kind() {
     let o = run_cfg(
         &["urgent"],
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_SCOPE_LABEL", "")],
+        &[(FAKE_BDQ, bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_SCOPE_LABEL", "")],
         &[("PATH", Some(path.as_str()))],
     );
     assert_eq!(o.code, 0, "{}", o.err);

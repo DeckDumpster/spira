@@ -197,7 +197,7 @@ fn build_sweep_cfg() -> sweep::Cfg {
         incident_sh: resolved_incident_sh(),
         suites_sh: getenv("SPIRA_SUITES_SH"),
         moot_sh: getenv("SPIRA_MOOT_SH"),
-        bd: "bd".to_string(),
+        bdq: spira_config::release_env::tool("bdq"),
         branch_guard_sh: getenv("SPIRA_BRANCH_GUARD_SH"),
         lc_bin: spira_config::lifecycle_row::lc_bin(),
     }
@@ -257,7 +257,7 @@ fn main() {
             };
             czar_outcome::run(
                 n,
-                "bd",
+                &spira_config::release_env::tool("bdq"),
                 &reg("SPIRA_DB"),
                 &reg("SPIRA_HOME_REPO"),
                 &resolved_incident_sh(),
@@ -419,7 +419,8 @@ fn main() {
             let home_repo = reg("SPIRA_HOME_REPO");
             let inc = resolved_incident_sh();
             let lc_bin = spira_config::lifecycle_row::lc_bin();
-            let ctx = conditions::Ctx { run: &run, db: &db, home_repo: &home_repo, incident_sh: &inc, bd: "bd", lc_bin: &lc_bin };
+            let bdq = spira_config::release_env::tool("bdq");
+            let ctx = conditions::Ctx { run: &run, db: &db, home_repo: &home_repo, incident_sh: &inc, bdq: &bdq, lc_bin: &lc_bin };
             conditions::reconcile(n, &ctx, "release-currency", probes::release_currency(&cfg));
             conditions::reconcile(n, &ctx, "failing-units", probes::failing_units(&cfg, &run));
             conditions::reconcile(n, &ctx, "oom-restarts", probes::oom_restarts(&cfg, n, &run));
@@ -427,8 +428,7 @@ fn main() {
             conditions::reconcile(n, &ctx, "cold-overlap", probes::cold_overlap(&cfg, &run));
             conditions::reconcile(n, &ctx, "release-store", probes::release_store(&cfg));
             let rowless_cfg = probes::RowlessCfg {
-                bd: "bd".to_string(),
-                db: db.clone(),
+                bdq: spira_config::release_env::tool("bdq"),
                 lc_bin: spira_config::lifecycle_row::lc_bin(),
                 cap: getenv_i64("SPIRA_ROWLESS_CAP", 20).max(1) as usize,
                 sustain_secs: getenv_i64("SPIRA_ROWLESS_SUSTAIN_SECS", 300),

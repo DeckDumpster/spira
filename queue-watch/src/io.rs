@@ -25,7 +25,6 @@ pub struct Repo {
 pub struct Env {
     pub queue_dir: PathBuf,
     pub db: Option<PathBuf>,
-    pub bd: String,
     /// `spira-lc` — the one binary allowed to touch `spira_lifecycle` (see `read_certified`).
     pub lc_bin: Option<PathBuf>,
     pub lc_timeout: u64,
@@ -163,16 +162,14 @@ pub fn read_beads(env: &Env, ids: &BTreeSet<String>, express: &BTreeSet<String>)
     if ids.is_empty() {
         return Ok((beads, repos));
     }
-    let mut cmd = Command::new(&env.bd);
-    if let Some(db) = &env.db {
-        cmd.current_dir(db);
-    }
-    cmd.arg("show").arg("--json").args(ids);
-    let text = run_bd(&mut cmd, "bd show")?;
-    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("bd show: unparsed output: {e}"))?;
-    let items = match v {
-        serde_json::Value::Array(a) => a,
-        o => vec![o],
+    let bin = env.lc_bin.as_ref().ok_or_else(|| "SPIRA_LC_BIN unset".to_string())?;
+    let csv = ids.iter().map(String::as_str).collect::<Vec<_>>().join(",");
+    let mut cmd = Command::new("timeout");
+    cmd.arg(env.lc_timeout.to_string()).arg(bin).args(["plan", "items", "--ids", &csv]);
+    let text = run_bd(&mut cmd, "spira-lc plan items")?;
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("spira-lc plan items: unparsed output: {e}"))?;
+    let Some(serde_json::Value::Array(items)) = v.get("items").cloned() else {
+        return Err("spira-lc plan items: no items array".into());
     };
     for it in items {
         let Some(id) = it.get("id").and_then(|x| x.as_str()) else { continue };
@@ -499,7 +496,7 @@ echo ok"#,
     }
 
     fn env_with_lc(bin: PathBuf) -> Env {
-        Env { queue_dir: PathBuf::new(), db: None, bd: "bd".into(), lc_bin: Some(bin), lc_timeout: 5 }
+        Env { queue_dir: PathBuf::new(), db: None, lc_bin: Some(bin), lc_timeout: 5 }
     }
 
     // POSITIVE CONTROL: a stub that answers with something other than the JSON array
@@ -524,9 +521,24 @@ echo '[{"bead_id":"sp-b","state":"CERTIFIED"},{"bead_id":"sp-a","state":"CERTIFI
 
     #[test]
     fn read_certified_needs_spira_lc_bin() {
-        let env = Env { queue_dir: PathBuf::new(), db: None, bd: "bd".into(), lc_bin: None, lc_timeout: 5 };
+        let env = Env { queue_dir: PathBuf::new(), db: None, lc_bin: None, lc_timeout: 5 };
         let err = read_certified(&env).unwrap_err();
         assert!(err.contains("SPIRA_LC_BIN unset"), "{err}");
+    }
+
+    #[test]
+    fn read_beads_reads_plan_items_by_id() {
+        let (_dir, stub) = make_stub(
+            r#"[ "$*" = "plan items --ids sp-a,sp-b" ] || { echo "unexpected args: $*" >&2; exit 2; }
+echo '{"watermark":0,"items":[{"id":"sp-a","title":"A","priority":2,"labels":["repo:r1"]},{"id":"sp-b","title":"B","labels":[]}]}'"#,
+        );
+        let ids: BTreeSet<String> = ["sp-b", "sp-a"].iter().map(|s| s.to_string()).collect();
+        let express: BTreeSet<String> = ["sp-b".to_string()].into_iter().collect();
+        let (beads, repos) = read_beads(&env_with_lc(stub), &ids, &express).unwrap();
+        assert_eq!(beads["sp-a"], Bead { priority: Some(2), title: "A".into(), express: false });
+        assert_eq!(beads["sp-b"], Bead { priority: None, title: "B".into(), express: true });
+        assert_eq!(repos.get("sp-a").map(String::as_str), Some("r1"));
+        assert_eq!(repos.len(), 1);
     }
 
     // POSITIVE CONTROL: a connection that never recovers is retried exactly once, not forever.

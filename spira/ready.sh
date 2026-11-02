@@ -38,7 +38,7 @@
 #                        must print "200 Nms", "ERR Nms reason", or "NNN Nms"
 set -uo pipefail
 export SPIRA_ADOPT_CONFIGURE_DEFAULT=1
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/conf.sh" || exit 1
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/lib.sh" || exit 1
 
 SC="${SPIRA_SYSTEMCTL:-systemctl}"
 
@@ -147,7 +147,7 @@ if ! [ -d "$SPIRA_DB/.beads" ]; then
     FAIL "database absent — no .beads at $SPIRA_DB" \
          "Create it: bd -C $SPIRA_DB init"
 # batch-job: full store listing, the health probe of the ready poller
-elif ! _db_out="$(timeout 30 "$SPIRA_BD" -C "$SPIRA_DB" list --limit 0 --json 2>&1)"; then
+elif ! _db_out="$(BD_TIMEOUT=30 bdq list --limit 0 --json 2>&1)"; then
     _rdy_dp=""
     if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
         _rdy_dp=3307
@@ -207,13 +207,13 @@ else
 fi
 
 _cdb="$(sed -n 's/.*"dolt_database"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$SPIRA_DB/.beads/metadata.json" 2>/dev/null | head -1)"
-if _cr="$(timeout 5 spira-lc content-rows --ids sp-ready-probe 2>&1)"; then
-    PASS "spira_lc can read bead content (content-rows, database ${_cdb:-unnamed})"
+if _cr="$(timeout 5 spira-lc plan items --ids sp-ready-probe 2>&1)"; then
+    PASS "spira_lc can read bead content (plan items, database ${_cdb:-unnamed})"
 elif printf '%s' "$_cr" | grep -qi 'denied'; then
     FAIL "spira_lc cannot read bead content — the sentinel can never see ready work" \
          "grant SELECT on the content database (${_cdb:-unnamed})'s issues, labels, dependencies: re-run spira-lc admin-migrate as the Dolt admin ($(printf '%s' "$_cr" | head -1))"
 else
-    UNKN "bead content read — spira-lc content-rows failed" "$(printf '%s' "$_cr" | head -2)"
+    UNKN "bead content read — spira-lc plan items failed" "$(printf '%s' "$_cr" | head -2)"
 fi
 
 # =============================================================================

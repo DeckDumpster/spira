@@ -158,8 +158,6 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         home: path_opt("home").unwrap_or_else(|| home.to_path_buf()),
         run: PathBuf::from(&run),
         repo: PathBuf::from(g("repo")),
-        db: g("db"),
-        bd: kv.get("bd").filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| "bd".into()),
         bd_timeout: num("bd_timeout", 180).max(1) as u64,
         home_repo: reg.home_repo().to_string(),
         id_prefix: g("id_prefix"),
@@ -592,8 +590,7 @@ impl<'a> Lib for RealLib<'a> {
 #[derive(Clone)]
 pub struct RealBeads {
     pub home: PathBuf,
-    pub db: String,
-    pub bd: String,
+    pub bdq: String,
     pub timeout: u64,
     pub home_repo: String,
     pub fixture: Option<PathBuf>,
@@ -647,15 +644,10 @@ impl RealBeads {
             let (rc, so, _) = run_capture(c);
             return if rc == 0 { Ok(String::from_utf8_lossy(&so).into_owned()) } else { Err(format!("bdsim exited {rc}")) };
         }
-        // bdq's refusal: an empty SPIRA_DB would let bd discover whatever store the working
-        // directory resolves to.
-        if self.db.is_empty() {
-            return Err("SPIRA_DB is empty — refusing to let bd auto-discover a store".into());
-        }
         let mut last = String::new();
         for _try in 0..2 {
             let mut c = command("timeout");
-            c.arg(self.timeout.to_string()).arg(&self.bd).arg("-C").arg(&self.db).arg("show").args(ids).arg("--json");
+            c.arg(self.timeout.to_string()).arg(&self.bdq).arg("show").args(ids).arg("--json");
             c.stdin(Stdio::null());
             let (rc, so, se) = run_capture(c);
             if rc == 0 {
@@ -663,7 +655,7 @@ impl RealBeads {
             }
             last = String::from_utf8_lossy(&se).into_owned();
             // A pooled connection the server already dropped: the query never ran, retrying
-            // is as safe as the first attempt (bdq's own rule).
+            // is as safe as the first attempt.
             if !last.contains("invalid connection") {
                 break;
             }
@@ -671,33 +663,37 @@ impl RealBeads {
         Err(format!("bd show failed: {}", last.lines().next().unwrap_or("")))
     }
 
-    /// `bdq <verb> <args…> --json` (sp-31hjr): the same retry-on-dropped-connection rule
-    /// as `show_raw`, for a verb other than `show`.
-    fn bdq_raw(&self, verb: &str, args: &[&str]) -> Result<String, String> {
-        if let Some(fx) = &self.fixture {
-            let mut c = command("bdsim");
-            c.arg(fx).arg(verb).args(args).arg("--json").stdin(Stdio::null());
-            let (rc, so, _) = run_capture(c);
-            return if rc == 0 { Ok(String::from_utf8_lossy(&so).into_owned()) } else { Err(format!("bdsim exited {rc}")) };
-        }
-        if self.db.is_empty() {
-            return Err("SPIRA_DB is empty — refusing to let bd auto-discover a store".into());
-        }
-        let mut last = String::new();
-        for _try in 0..2 {
-            let mut c = command("timeout");
-            c.arg(self.timeout.to_string()).arg(&self.bd).arg("-C").arg(&self.db).arg(verb).args(args).arg("--json");
-            c.stdin(Stdio::null());
-            let (rc, so, se) = run_capture(c);
-            if rc == 0 {
-                return Ok(String::from_utf8_lossy(&so).into_owned());
+    /// The open asks carrying `label`: bdsim's `list` under a fixture, else `spira-lc plan items`.
+    fn open_asks(&self, label: &str) -> Result<Vec<serde_json::Value>, String> {
+        let [flag, open] = spira_config::nonwork::status_args(spira_config::nonwork::Kind::Ask, spira_config::nonwork::Which::Open);
+        let mut c = match &self.fixture {
+            Some(fx) => {
+                let mut c = command("bdsim");
+                c.arg(fx).args(["list", &flag, &open, "--label", label, "--limit", "0", "--json"]);
+                c
             }
-            last = String::from_utf8_lossy(&se).into_owned();
-            if !last.contains("invalid connection") {
-                break;
+            None => {
+                let mut c = command("timeout");
+                c.arg(self.timeout.to_string()).arg(self.lc()?).args(["plan", "items", "--label", label, &flag, &open]);
+                c
             }
+        };
+        c.stdin(Stdio::null());
+        let (rc, so, _) = run_capture(c);
+        if rc != 0 {
+            return Err(format!("open asks: exited {rc}"));
         }
-        Err(format!("bd {verb} failed: {}", last.lines().next().unwrap_or("")))
+        let raw = String::from_utf8_lossy(&so).into_owned();
+        let v: serde_json::Value = serde_json::from_str(json_only(&raw)).map_err(|e| format!("open asks: not JSON ({e})"))?;
+        Ok(match v {
+            serde_json::Value::Object(mut o) if o.contains_key("items") => match o.remove("items") {
+                Some(serde_json::Value::Array(a)) => a,
+                _ => Vec::new(),
+            },
+            serde_json::Value::Array(a) => a,
+            o @ serde_json::Value::Object(_) => vec![o],
+            _ => Vec::new(),
+        })
     }
 }
 
@@ -733,19 +729,7 @@ impl Beads for RealBeads {
             return false;
         }
         // An ask is not a work bead: its bd status is its only state (nonwork::Kind::Ask).
-        let [flag, open] = spira_config::nonwork::status_args(spira_config::nonwork::Kind::Ask, spira_config::nonwork::Which::Open);
-        let Ok(raw) = self.bdq_raw("list", &[&flag, &open, "--label", label, "--limit", "0"]) else {
-            return false;
-        };
-        let js = json_only(&raw);
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(js) else {
-            return false;
-        };
-        let items: Vec<serde_json::Value> = match v {
-            serde_json::Value::Array(a) => a,
-            o @ serde_json::Value::Object(_) => vec![o],
-            _ => Vec::new(),
-        };
+        let Ok(items) = self.open_asks(label) else { return false };
         items.iter().any(|i| i.get("title").and_then(|t| t.as_str()).is_some_and(|t| t.contains(subject)))
     }
     fn context(&self, id: &str, now: i64) -> String {
@@ -1314,13 +1298,13 @@ mod holder_alive_tests {
 mod lifecycle_join_tests {
     use super::*;
 
-    /// A bd stand-in whose `show` answers every id with bd's own row: hand-closed, carrying
+    /// A bdq stand-in whose `show` answers every id with bd's own row: hand-closed, carrying
     /// the retired submitted label — everything bd status used to say "done" with.
-    fn stub_bd(dir: &Path) -> String {
-        let p = dir.join("bd");
+    fn stub_bdq(dir: &Path) -> String {
+        let p = dir.join("bdq");
         testkit::write_exe(
             &p,
-            "#!/bin/bash\nshift 3; o=; for a in \"$@\"; do [ \"$a\" = --json ] && continue; o=\"$o${o:+,}{\\\"id\\\":\\\"$a\\\",\\\"status\\\":\\\"closed\\\",\\\"labels\\\":[\\\"spira-submitted\\\",\\\"repo:spira\\\"]}\"; done; echo \"[$o]\"\n",
+            "#!/bin/bash\n[ \"$1\" = show ] || exit 2; shift; o=; for a in \"$@\"; do [ \"$a\" = --json ] && continue; o=\"$o${o:+,}{\\\"id\\\":\\\"$a\\\",\\\"status\\\":\\\"closed\\\",\\\"labels\\\":[\\\"spira-submitted\\\",\\\"repo:spira\\\"]}\"; done; echo \"[$o]\"\n",
         );
         p.display().to_string()
     }
@@ -1328,8 +1312,7 @@ mod lifecycle_join_tests {
     fn beads(dir: &Path) -> RealBeads {
         RealBeads {
             home: dir.to_path_buf(),
-            db: dir.display().to_string(),
-            bd: stub_bd(dir),
+            bdq: stub_bdq(dir),
             timeout: 5,
             home_repo: "spira".into(),
             fixture: None,
@@ -1337,12 +1320,13 @@ mod lifecycle_join_tests {
         }
     }
 
-    /// A spira-lc stand-in: `show`/`list` answer every bead WORKING.
+    /// A spira-lc stand-in: `show`/`list` answer every bead WORKING; `plan items` for the
+    /// open asks labelled `needs-x` holds one.
     fn stub_lc(dir: &Path) -> PathBuf {
         let p = dir.join("spira-lc");
         testkit::write_exe(
             &p,
-            "#!/bin/bash\ncase \"$1\" in show) echo '{\"bead\":{\"bead_id\":\"'$2'\",\"state\":\"WORKING\"}}' ;; list) echo '[{\"bead_id\":\"sp-w\",\"state\":\"WORKING\"},{\"bead_id\":\"sp-x\",\"state\":\"SUBMITTED\",\"express\":\"1\"}]' ;; esac\n",
+            "#!/bin/bash\ncase \"$1\" in show) echo '{\"bead\":{\"bead_id\":\"'$2'\",\"state\":\"WORKING\"}}' ;; list) echo '[{\"bead_id\":\"sp-w\",\"state\":\"WORKING\"},{\"bead_id\":\"sp-x\",\"state\":\"SUBMITTED\",\"express\":\"1\"}]' ;; plan) [ \"$*\" = 'plan items --label needs-x --status open' ] && echo '{\"watermark\":0,\"items\":[{\"id\":\"sp-q\",\"title\":\"Land sp-w?\"}]}' ;; esac\n",
         );
         p
     }
@@ -1364,6 +1348,15 @@ mod lifecycle_join_tests {
         assert_eq!(st, vec![("WORKING", false), ("SUBMITTED", true), ("-", false)]);
         let ex: Vec<bool> = rows.iter().map(|r| r.express).collect();
         assert_eq!(ex, vec![false, true, false], "express is the lifecycle row's column, not a bd label");
+    }
+
+    #[test]
+    fn an_open_ask_is_read_from_the_plan() {
+        let d = testkit::TempDir::new("landing-pass-ask-open");
+        let b = beads(&d);
+        assert!(b.ask_open("needs-x", "sp-w"));
+        assert!(!b.ask_open("needs-x", "sp-z"));
+        assert!(!b.ask_open("needs-y", "sp-w"));
     }
 
     /// A machine that cannot answer is an Err, never a row read as handed on.

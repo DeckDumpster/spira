@@ -119,8 +119,6 @@ fn column(rec: &LifecycleRecord, r: Option<&Readiness>, name: &str) -> Value {
         "ejected_red_tip" => text(row.ejected_red_tip.as_deref()),
         "sifted_tip" => text(row.sifted_tip.as_deref()),
         "updated_at" => number(Some(rec.updated_at)),
-        // Planning-plane fields: the control plane keeps none, so it answers none.
-        "title" | "priority" => Value::Null,
         "repo" => text(rec.repo.as_deref()),
         "claim_verdict" => text(r.and_then(|r| r.verdict.as_deref())),
         "claim_blocker" => text(r.and_then(|r| r.blocker.as_deref())),
@@ -180,8 +178,6 @@ const LISTED: &[&str] = &[
     "disposition_note",
     "ejected_red_tip",
     "sifted_tip",
-    "title",
-    "priority",
     "repo",
     "claim_verdict",
     "claim_blocker",

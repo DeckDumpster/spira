@@ -13,13 +13,23 @@ echo "test-asks.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/run/watchd"
 INBOX="$TMP/inbox.log"; ASKS="$TMP/asks.json"
-printf '#!/usr/bin/env bash\ncat "$FAKE_ASKS"\n' > "$TMP/fakebd"; chmod +x "$TMP/fakebd"
+mkdir -p "$TMP/fakebin"
+cat > "$TMP/fakebin/spira-lc" <<FAKE
+#!/usr/bin/env bash
+case "\$1" in
+    plan) printf '{"watermark":0,"items":%s}' "\$(cat "\$FAKE_ASKS")" ;;
+    list-held) [ -e "$TMP/armed" ] && printf 'sp-held\nsp-nomail\n' ;;
+    history) echo '[{"seq":"7","event":"Hold","applied":"1","evidence":"{\\"Hold\\":{\\"kind\\":\\"manual\\",\\"detail\\":\\"no build spec: which repo?\\"}}"}]' ;;
+esac
+exit 0
+FAKE
+chmod +x "$TMP/fakebin/spira-lc"
 LOG="$TMP/run/watchd/asks.log"; CUR="$TMP/run/watchd/asks.cursor"
 
 arun() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db" SPIRA_ASK_LABEL=ask-x \
-        SPIRA_CONCIERGE_INBOX="${WINBOX:-$INBOX}" SPIRA_BD="$TMP/fakebd"
-    env -i PATH="$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" FAKE_ASKS="$ASKS" \
+        SPIRA_CONCIERGE_INBOX="${WINBOX:-$INBOX}"
+    env -i PATH="$TMP/fakebin:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" FAKE_ASKS="$ASKS" \
         bash "$HERE/asks.sh" "$@" 2>&1
 }
 
@@ -48,21 +58,12 @@ arun health >/dev/null; is "health passes after a fresh poll" "0" "$?"
 echo "ok 1 100 7" > "$TMP/run/watchd/asks.health"
 arun health >/dev/null; is "health fails once the last poll is stale" "1" "$?"
 
-mkdir -p "$TMP/mail/concierge/new" "$TMP/fakebin"
+mkdir -p "$TMP/mail/concierge/new"
 printf 'Subject: Which branch?\nX-Spira-Default: take main\nX-Spira-Work-Bead: sp-held\nMessage-ID: <m9@spira>\n\nbody\n' > "$TMP/mail/concierge/new/m9"
 rm -f "$LOG" "$CUR" "$TMP/run/watchd/asks.health"
 echo '[]' > "$ASKS"
-tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db" SPIRA_ASK_LABEL=ask-x SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_BD="$TMP/fakebd" SPIRA_MAIL="$TMP/mail"
+tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db" SPIRA_ASK_LABEL=ask-x SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_MAIL="$TMP/mail"
 : > "$INBOX"
-cat > "$TMP/fakebin/spira-lc" <<FAKE
-#!/usr/bin/env bash
-case "\$1" in
-    list-held) [ -e "$TMP/armed" ] && printf 'sp-held\nsp-nomail\n' ;;
-    history) echo '[{"seq":"7","event":"Hold","applied":"1","evidence":"{\\"Hold\\":{\\"kind\\":\\"manual\\",\\"detail\\":\\"no build spec: which repo?\\"}}"}]' ;;
-esac
-exit 0
-FAKE
-chmod +x "$TMP/fakebin/spira-lc"
 (env -i PATH="$TMP/fakebin:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" FAKE_ASKS="$ASKS" bash "$HERE/asks.sh" watch --interval 1 --ticks 4 >/dev/null 2>&1) &
 wpid=$!
 for _ in $(seq 100); do [ -e "$TMP/run/watchd/asks.health" ] && break; sleep 0.1; done

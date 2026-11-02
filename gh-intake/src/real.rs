@@ -182,15 +182,12 @@ pub fn parse_show(code: Option<i32>, stdout: &[u8]) -> Result<Option<LcBead>, St
 }
 
 pub struct RealBd {
-    pub bd_bin: String,
-    pub db: String,
+    pub bdq: String,
 }
 
 impl RealBd {
     fn cmd(&self) -> Command {
-        let mut c = Command::new(&self.bd_bin);
-        c.arg("-C").arg(&self.db);
-        c
+        Command::new(&self.bdq)
     }
 }
 
@@ -237,13 +234,7 @@ impl Bd for RealBd {
             let _ = stdin.write_all(body);
         }
         let Ok(out) = child.wait_with_output() else { return false };
-        if !out.status.success() {
-            return false;
-        }
-        if let Err(e) = spira_config::lifecycle_row::after_create("gh-intake", &String::from_utf8_lossy(&out.stdout)) {
-            eprintln!("gh-intake: LIFECYCLE: row not written after create: {e}; the new bead is rowless and cannot be claimed");
-        }
-        true
+        out.status.success()
     }
 
     fn note(&self, id: &str, text: &str) -> bool {

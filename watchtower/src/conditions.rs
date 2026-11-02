@@ -31,7 +31,8 @@ pub struct Ctx<'a> {
     pub db: &'a str,
     pub home_repo: &'a str,
     pub incident_sh: &'a str,
-    pub bd: &'a str,
+    /// The sanctioned bd wrapper, which reads the store from the config.
+    pub bdq: &'a str,
     /// The lifecycle machine (`spira-lc`): an incident bead is a work bead, so whether it is
     /// still unfinished is its lifecycle row's answer, never bd's status (sp-jgjvh).
     pub lc_bin: &'a str,
@@ -55,7 +56,7 @@ fn names(d: &Path) -> BTreeSet<String> {
 fn open_beads(ctx: &Ctx, reference: &str) -> Option<Vec<String>> {
     let out = crate::deadline::output(
         "beads by ref",
-        Command::new(ctx.bd).args(["-C", ctx.db, "list", "--external-ref", reference, "--all", "--json", "--limit", "0", "--brief"]),
+        Command::new(ctx.bdq).args(["list", "--external-ref", reference, "--all", "--json", "--limit", "0", "--brief"]),
     )
     .ok()
     .filter(|o| o.status.success())?;
@@ -149,7 +150,7 @@ pub mod tests {
         pub fn new(name: &str) -> Self {
             let dir = testkit::TempDir::new(name);
             std::fs::create_dir_all(dir.join("run")).unwrap();
-            let bd = "#!/bin/bash\nS=\"$(dirname \"$0\")/store\"\ntouch \"$S\"\ncase \"$3\" in\nlist) ref=\"$5\"; ids=$(awk -v r=\"$ref\" '$2==r{print $1}' \"$S\"); printf '['; s=''; for i in $ids; do printf '%s{\"id\":\"%s\"}' \"$s\" \"$i\"; s=','; done; printf ']\\n';;\nclose) id=\"$4\"; cat > /dev/null; grep -v \"^$id \" \"$S\" > \"$S.n\"; mv \"$S.n\" \"$S\"; echo \"$id\" >> \"$(dirname \"$0\")/closed\";;\nesac\n";
+            let bd = "#!/bin/bash\n[ \"$1\" = -C ] && shift 2\nS=\"$(dirname \"$0\")/store\"\ntouch \"$S\"\ncase \"$1\" in\nlist) ref=\"$3\"; ids=$(awk -v r=\"$ref\" '$2==r{print $1}' \"$S\"); printf '['; s=''; for i in $ids; do printf '%s{\"id\":\"%s\"}' \"$s\" \"$i\"; s=','; done; printf ']\\n';;\nclose) id=\"$2\"; cat > /dev/null; grep -v \"^$id \" \"$S\" > \"$S.n\"; mv \"$S.n\" \"$S\"; echo \"$id\" >> \"$(dirname \"$0\")/closed\";;\nesac\n";
             let inc = "#!/bin/bash\nD=\"$(dirname \"$0\")\"\ncat > /dev/null\nn=$(wc -l < \"$D/store\"); echo \"b$((n+1)) $SPIRA_INCIDENT_REF\" >> \"$D/store\"; echo \"$2\" >> \"$D/filed\"\n";
             // The lifecycle machine: every bead the store still lists is READY (unfinished), and
             // a close goes through it (sp-3fue0j), which closes the store — here, the bd stub.
@@ -164,7 +165,7 @@ pub mod tests {
         pub fn ctx(&self) -> Ctx<'_> {
             let run: &'static Path = Box::leak(self.dir.join("run").into_boxed_path());
             let leak = |p: PathBuf| -> &'static str { Box::leak(p.to_string_lossy().into_owned().into_boxed_str()) };
-            Ctx { run, db: "db", home_repo: "harness", incident_sh: leak(self.dir.join("inc.sh")), bd: leak(self.dir.join("bd")), lc_bin: leak(self.dir.join("lc")) }
+            Ctx { run, db: "db", home_repo: "harness", incident_sh: leak(self.dir.join("inc.sh")), bdq: leak(self.dir.join("bd")), lc_bin: leak(self.dir.join("lc")) }
         }
         pub fn filed(&self) -> usize {
             std::fs::read_to_string(self.dir.join("filed")).map(|s| s.lines().count()).unwrap_or(0)

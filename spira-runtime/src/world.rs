@@ -317,12 +317,15 @@ impl World {
     /// The open asks as a JSON list; lines before the list (a notice the store printed) are skipped.
     fn open_asks_json(&self) -> Result<String, String> {
         let [flag, filter] = status_args(Kind::Ask, Which::Open);
-        let argv = ["content-rows", "--label", &self.ask_label, &flag, &filter, "--full"];
+        let argv = ["plan", "items", "--label", &self.ask_label, &flag, &filter, "--full"];
         let out = self.lc_named(&argv)?;
-        let list = out.char_indices().filter(|&(i, c)| c == '[' && (i == 0 || out.as_bytes()[i - 1] == b'\n')).map(|(i, _)| &out[i..]).find(|rest| serde_json::from_str::<Vec<Value>>(rest).is_ok());
-        match list {
-            Some(rest) => Ok(rest.to_string()),
-            None => Err(format!("spira-lc {} exited 0 but printed no JSON list: {:?}", argv.join(" "), out.chars().take(200).collect::<String>())),
+        let items = out
+            .char_indices()
+            .filter(|&(i, c)| c == '{' && (i == 0 || out.as_bytes()[i - 1] == b'\n'))
+            .find_map(|(i, _)| serde_json::from_str::<Value>(&out[i..]).ok().and_then(|v| v.get("items").filter(|l| l.is_array()).cloned()));
+        match items {
+            Some(list) => Ok(list.to_string()),
+            None => Err(format!("spira-lc {} exited 0 but printed no item list: {:?}", argv.join(" "), out.chars().take(200).collect::<String>())),
         }
     }
 

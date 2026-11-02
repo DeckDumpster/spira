@@ -122,8 +122,7 @@ fn pr() -> i32 {
     }
     let beads = RealBeads {
         home: s.home.clone(),
-        db: s.db.clone(),
-        bd: s.bd.clone(),
+        bdq: spira_config::release_env::tool("bdq"),
         timeout: s.bd_timeout,
         home_repo: s.home_repo.clone(),
         fixture: s.bdjson_fixture.clone(),
@@ -192,8 +191,7 @@ fn land() -> i32 {
     let out = Reporter::stdout(Some(files.mailbox()));
     let beads = RealBeads {
         home: s.home.clone(),
-        db: s.db.clone(),
-        bd: s.bd.clone(),
+        bdq: spira_config::release_env::tool("bdq"),
         timeout: s.bd_timeout,
         home_repo: s.home_repo.clone(),
         fixture: s.bdjson_fixture.clone(),
@@ -313,8 +311,7 @@ fn noverdict_cmd(id: &str, branch: &str, repo: &str, reason: &str, outcome: &str
     };
     let beads = RealBeads {
         home: s.home.clone(),
-        db: s.db.clone(),
-        bd: s.bd.clone(),
+        bdq: spira_config::release_env::tool("bdq"),
         timeout: s.bd_timeout,
         home_repo: s.home_repo.clone(),
         fixture: s.bdjson_fixture.clone(),
@@ -345,8 +342,7 @@ fn ask_rebase_loop_cmd(args: &[String]) -> i32 {
     };
     let beads = RealBeads {
         home: s.home.clone(),
-        db: s.db.clone(),
-        bd: s.bd.clone(),
+        bdq: spira_config::release_env::tool("bdq"),
         timeout: s.bd_timeout,
         home_repo: s.home_repo.clone(),
         fixture: s.bdjson_fixture.clone(),
@@ -410,19 +406,14 @@ fn resolve_home() -> Result<PathBuf, String> {
     harness_home(&env).ok_or_else(|| "SPIRA_HOME is unset and could not be resolved".to_string())
 }
 
-/// bd's own connection facts: `SPIRA_DB`/`SPIRA_BD`/`SPIRA_HOME_REPO` are registered keys
-/// (`spira/conf.d`), read through `spira_config::process::cfg` — the one source of config
-/// (per Ryan 2026-10-05) — never a literal default standing in for an unresolved value.
-/// `BD_TIMEOUT`/`SPIRA_BDJSON_FIXTURE` carry no `spira/conf.d/<KEY>` entry — ad hoc
-/// overrides `cfg` never produces (dwarf's own seam doc names the same split), so these two
-/// are still read straight off the raw environment.
+/// `SPIRA_HOME_REPO` is a registered key, read through `cfg`; `BD_TIMEOUT`/
+/// `SPIRA_BDJSON_FIXTURE` are not, so they are read off the environment.
 fn resolve_beads(home: &Path) -> Result<RealBeads, String> {
     let env: BTreeMap<String, String> = std::env::vars().collect();
     let ad_hoc = |k: &str, d: &str| env.get(k).filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| d.to_string());
     Ok(RealBeads {
         home: home.to_path_buf(),
-        db: spira_config::process::cfg("SPIRA_DB")?,
-        bd: spira_config::process::cfg("SPIRA_BD")?,
+        bdq: spira_config::release_env::tool("bdq"),
         timeout: ad_hoc("BD_TIMEOUT", "180").parse().unwrap_or(180),
         home_repo: spira_config::process::cfg("SPIRA_HOME_REPO")?,
         fixture: env.get("SPIRA_BDJSON_FIXTURE").filter(|s| !s.is_empty()).map(PathBuf::from),

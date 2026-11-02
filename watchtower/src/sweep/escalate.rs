@@ -44,8 +44,8 @@ fn usable_inc(cfg: &Cfg) -> Option<&str> {
 /// (sp-jgjvh: an incident bead is a work bead). A failed query — bd's or the machine's —
 /// counts as tracked: re-filing on a probe that did not answer is noise.
 fn tracked_by_open_bead(cfg: &Cfg, unit: &str) -> bool {
-    let out = spira_config::bounded::bounded(&cfg.bd)
-        .args(["-C", &cfg.db, "list", "--external-ref", &format!("incident:failed-unit-{unit}")])
+    let out = spira_config::bounded::bounded(&cfg.bdq)
+        .args(["list", "--external-ref", &format!("incident:failed-unit-{unit}")])
         .args(["--all", "--json", "--limit", "0", "--brief"])
         .output();
     let ids: Vec<String> = match out {
@@ -453,7 +453,7 @@ mod tests {
             throttle_stamp: None,
             queue_throttle_override: String::new(),
             incident_sh,
-            bd: "/does/not/exist/bd".into(),
+            bdq: "/does/not/exist/bdq".into(),
             suites_sh: None,
             moot_sh: Some("/does/not/exist/moot-sweep.sh".into()),
             branch_guard_sh: None,
@@ -488,7 +488,7 @@ mod tests {
         let d = testkit::TempDir::new(tag);
         let inc = fake_incident(&d);
         let mut cfg = cfg_with(&d, inc);
-        cfg.bd = fake_bd(&d, bd_out, bd_rc);
+        cfg.bdq = fake_bd(&d, bd_out, bd_rc);
         cfg.lc_bin = fake_lc(&d, lc_state);
         std::fs::write(d.join("failed-units.state"), "a.service 1700000000 1\n").unwrap();
         let mut data = SweepData::fixture_nominal(1_700_100_000);

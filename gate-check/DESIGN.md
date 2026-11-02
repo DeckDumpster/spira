@@ -59,7 +59,7 @@ Five legs, in this order, each best-effort (one leg's failure never stops the ne
 ### Environment (unchanged names)
 
 `SPIRA_FLAKY_GH_REPO` (legs 5-7 are no-ops without it and without `gh` on PATH),
-`SPIRA_BD`/`SPIRA_DB` (via the `lib.sh` seam, same as every other crate in this rewrite).
+the store through `bdq`, which reads `SPIRA_BD`/`SPIRA_DB` itself.
 
 ## Non-goals
 

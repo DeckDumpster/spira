@@ -87,7 +87,7 @@ _sd_adjudicate() {
             _sd_terminal "$(timeout 5 spira-lc state "$id" 2>/dev/null)" && return 0
             _sd_retry "$id" "supersede failed"; return 0
         fi
-        timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" supersede "$id" --with "$succ" >/dev/null 2>&1 \
+        timeout 5 spira-lc bd-supersede "$id" "$succ" >/dev/null 2>&1 \
             || _sd_say "SUPERSEDE REQUEST $id: lifecycle row SUPERSEDED but bd supersede failed (not retried)"
         _sd_note "$id" "supersede-request confirmed: $succ is LANDED. Superseded by $succ."
         _sd_say "SUPERSEDE REQUEST $id: confirmed, superseded by LANDED $succ"

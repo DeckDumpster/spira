@@ -1,4 +1,4 @@
-//! The bead store, as `groomer.sh` called it: `$SPIRA_BD -C $SPIRA_DB <verb> …`. A trait
+//! The bead store, through `bdq <verb> …`. A trait
 //! so every subcommand's argument-construction is testable against a recording fake
 //! without a live Dolt server (law-gates-run-in-a-clean-environment) — the same split
 //! `rebase-stale::seam::Seam` uses for the lib.sh boundary.
@@ -33,17 +33,14 @@ pub trait Bd {
     fn dep_add(&self, bug_id: &str, fix_id: &str) -> Result<(), String>;
 }
 
-/// Shells to `$SPIRA_BD -C $SPIRA_DB …`, exactly as `groomer.sh` did.
+/// Shells to `bdq …`, which addresses the configured database itself.
 pub struct RealBd {
-    pub bd: String,
-    pub db: String,
+    pub bdq: String,
 }
 
 impl RealBd {
     fn cmd(&self) -> Command {
-        let mut c = Command::new(&self.bd);
-        c.arg("-C").arg(&self.db);
-        c
+        Command::new(&self.bdq)
     }
 
     /// Captures stdout — for a call whose value this needs to read.
@@ -52,7 +49,7 @@ impl RealBd {
             .args(args)
             .stdin(Stdio::null())
             .output()
-            .map_err(|e| format!("{} {}: {e}", self.bd, args.join(" ")))
+            .map_err(|e| format!("{} {}: {e}", self.bdq, args.join(" ")))
     }
 
     /// Discards bd's own stdout (a write verb's confirmation chatter), keeping stderr
@@ -69,7 +66,7 @@ impl RealBd {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .status()
-            .map_err(|e| format!("{} {}: {e}", self.bd, args.join(" ")))
+            .map_err(|e| format!("{} {}: {e}", self.bdq, args.join(" ")))
     }
 
     fn ok(status: std::process::ExitStatus, what: &str) -> Result<(), String> {
@@ -114,9 +111,6 @@ impl Bd for RealBd {
         let id = String::from_utf8_lossy(&o.stdout).trim().to_string();
         if id.is_empty() {
             return Err("bd create returned no id".into());
-        }
-        if let Err(e) = spira_config::lifecycle_row::after_create("groomer", &id) {
-            eprintln!("groomer: LIFECYCLE: row not written after create: {e}; the new bead is rowless and cannot be claimed");
         }
         Ok(id)
     }

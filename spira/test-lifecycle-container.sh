@@ -175,7 +175,7 @@ want "spira_lc cannot INSERT into the content store" "denied" "$out"
 out="$(as_user spira_lc "$PASS" sql -q "UPDATE spira.issues SET title='hack'" 2>&1)"
 want "spira_lc cannot UPDATE the content store" "denied" "$out"
 
-# ── content-rows reads beads' real column names (sp-9j0937) ──────────────────────────
+# ── plan items reads beads' real column names (sp-9j0937) ──────────────────────────
 # The claim decision's content read once named spira.dependencies.depends_on_id, a column no
 # beads schema has (the real one is depends_on_issue_id), and every prod claim check failed
 # while every suite passed: this fixture invented the column and the suites read content
@@ -188,27 +188,27 @@ printf '{"dolt_mode":"server","dolt_database":"spira"}\n' > "$TMP/store/.beads/m
 printf '{"dolt_mode":"server"}\n' > "$TMP/store-unnamed/.beads/metadata.json"
 tl_config SPIRA_DB="$TMP/store"
 # A store whose metadata names no database is refused by name (law-a-config-value-has-no-fallback).
-out="$(SPIRA_TOML="$(tl_layer SPIRA_DB="$TMP/store-unnamed")" "$BIN" content-rows --ids sp-row-a 2>&1)"; rc=$?
-is "content-rows refuses a store whose metadata names no database (exit 2)" "2" "$rc"
+out="$(SPIRA_TOML="$(tl_layer SPIRA_DB="$TMP/store-unnamed")" "$BIN" plan items --ids sp-row-a 2>&1)"; rc=$?
+is "plan items refuses a store whose metadata names no database (exit 2)" "2" "$rc"
 want "the refusal names the missing dolt_database" "names no dolt_database" "$out"
 want "the refusal names the metadata file" "$TMP/store-unnamed/.beads/metadata.json" "$out"
 out="$(SPIRA_TOML="$(tl_layer SPIRA_DB="$TMP/store-unnamed")" "$BIN" pane-facets repo-labels --valid known 2>&1)"; rc=$?
 is "pane-facets refuses a store whose metadata names no database (exit 2)" "2" "$rc"
 root_sql sql -q "INSERT INTO spira.issues (id, title, priority, issue_type, status, defer_until, created_at, updated_at, closed_at, description, notes, external_ref) VALUES ('sp-row-a','a',1,'task','open',NULL,NOW(),NOW(),NULL,'the body','the notes','basefail:rr:t.sh'),('sp-row-b','b',1,'task','open',NULL,NOW(),NOW(),NULL,NULL,NULL,NULL),('sp-row-bug','c',0,'bug','open',NULL,NOW(),NOW(),NULL,NULL,NULL,NULL),('sp-row-ev','e',2,'event','open',NULL,NOW(),NOW(),NULL,NULL,NULL,NULL),('sp-row-old','o',2,'task','closed',NULL,NOW() - INTERVAL 3 DAY,NOW(),NOW() - INTERVAL 2 DAY,NULL,NULL,NULL); INSERT INTO spira.labels (issue_id, label) VALUES ('sp-row-a','repo:known'),('sp-row-b','repo:stray'),('sp-row-bug','incident'); INSERT INTO spira.dependencies (id, issue_id, type, depends_on_issue_id) VALUES ('d1','sp-row-a','blocks','sp-row-b'); INSERT INTO spira.dependencies (id, issue_id, type, depends_on_external) VALUES ('d2','sp-row-a','blocks','ext:x')" >/dev/null 2>&1
-out="$("$BIN" content-rows --ids sp-row-a 2>&1)"
-want "content-rows reads depends_on_issue_id (beads' real column)" '"depends_on_id":"sp-row-b"' "$out"
+out="$("$BIN" plan items --ids sp-row-a 2>&1)"
+want "plan items reads depends_on_issue_id (beads' real column)" '"depends_on_id":"sp-row-b"' "$out"
 "$BIN" dep-add sp-row-bug sp-row-b >/dev/null 2>&1
-out="$("$BIN" content-rows --ids sp-row-bug 2>&1)"
-want "content-rows carries an edge written only by dep-add, so a claim sees it" '"depends_on_id":"sp-row-b"' "$out"
-out_full="$("$BIN" content-rows --full --ids sp-row-a 2>&1)"
-want "content-rows --full carries the description" '"description":"the body"' "$out_full"
-want "content-rows --full carries the notes" '"notes":"the notes"' "$out_full"
-case "$out" in *"the body"*) want "content-rows without --full omits the description" "absent" "present: $out" ;; *) want "content-rows without --full omits the description" "absent" "absent" ;; esac
-out="$("$BIN" content-rows --external-contains basefail:rr: 2>&1)"
-want "content-rows --external-contains selects by external_ref" '"id":"sp-row-a"' "$out"
-case "$out" in *'"id":"sp-row-b"'*) want "content-rows --external-contains selects only matching rows" "absent" "present: $out" ;; *) want "content-rows --external-contains selects only matching rows" "absent" "absent" ;; esac
-out="$("$BIN" content-rows --ids sp-row-a 2>&1)"
-case "$out" in *ext:x*) want "content-rows ignores non-issue edges (depends_on_external)" "absent" "present: $out" ;; *) want "content-rows ignores non-issue edges (depends_on_external)" "absent" "absent" ;; esac
+out="$("$BIN" plan items --ids sp-row-bug 2>&1)"
+want "plan items carries an edge written only by dep-add, so a claim sees it" '"depends_on_id":"sp-row-b"' "$out"
+out_full="$("$BIN" plan items --full --ids sp-row-a 2>&1)"
+want "plan items --full carries the description" '"description":"the body"' "$out_full"
+want "plan items --full carries the notes" '"notes":"the notes"' "$out_full"
+case "$out" in *"the body"*) want "plan items without --full omits the description" "absent" "present: $out" ;; *) want "plan items without --full omits the description" "absent" "absent" ;; esac
+out="$("$BIN" plan items --external-contains basefail:rr: 2>&1)"
+want "plan items --external-contains selects by external_ref" '"id":"sp-row-a"' "$out"
+case "$out" in *'"id":"sp-row-b"'*) want "plan items --external-contains selects only matching rows" "absent" "present: $out" ;; *) want "plan items --external-contains selects only matching rows" "absent" "absent" ;; esac
+out="$("$BIN" plan items --ids sp-row-a 2>&1)"
+case "$out" in *ext:x*) want "plan items ignores non-issue edges (depends_on_external)" "absent" "present: $out" ;; *) want "plan items ignores non-issue edges (depends_on_external)" "absent" "absent" ;; esac
 
 # ── pane-facets answers aggregates, never the table ───────────────────────────────────
 out="$("$BIN" pane-facets inflow --window-secs 3600 2>&1)"

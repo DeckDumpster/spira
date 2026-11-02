@@ -1,14 +1,7 @@
-//! The bead store, with lib.sh `bdq`'s rules for every call the dwarf makes itself:
-//! refuse an empty SPIRA_DB (bd would auto-discover the operator's real store), a timeout
+//! The bead store: every call the dwarf makes itself goes through `bdq`, under a timeout
 //! (BD_TIMEOUT, 180 s), one retry on a pooled connection the server already dropped
 //! ("invalid connection"), and SPIRA_BDJSON_FIXTURE → bdsim.
-//!
-//! bdq's create-time checks (repo label, destructive vocabulary, schema delete) and the czar
-//! fence (reopen/update/close by a czar with a class) guard calls the dwarf never makes
-//! itself: it never creates, and its one `update` (the claim) precedes SPIRA_CZAR_CLASS.
-//! Reopens go through lib.sh's bead_reopen, where the fence still applies.
 
-use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -17,12 +10,10 @@ use crate::ports::{Bd, Env};
 use crate::util::{self, Out, Spec};
 
 pub struct BdCli<'a> {
-    pub bd: String,
-    pub db: String,
+    pub bdq: String,
     pub timeout_s: u64,
     pub conn_retries: u32,
     pub fixture: Option<String>,
-    pub home: PathBuf,
     pub env: &'a Env,
 }
 
@@ -34,24 +25,17 @@ impl Bd for BdCli<'_> {
             a.extend(args.iter().cloned());
             return util::run(Spec { prog: "bdsim", args: a, env: Some(&env), cwd: None, stdin: None, timeout: None });
         }
-        if self.db.is_empty() {
-            return Out::fail(1, "bdq: refusing - SPIRA_DB is empty/unset (would fall through to bd auto-discovery)");
-        }
-        let mut a = vec!["-C".to_string(), self.db.clone()];
-        a.extend(args.iter().cloned());
         let tries = self.conn_retries.max(1);
         let mut last = Out::default();
         for t in 1..=tries {
             last = util::run(Spec {
-                prog: &self.bd,
-                args: a.clone(),
+                prog: &self.bdq,
+                args: args.to_vec(),
                 env: Some(&env),
                 cwd: None,
                 stdin: None,
                 timeout: Some(Duration::from_secs(self.timeout_s.max(1))),
             });
-            // Collapsed onto bead::bdq::should_retry (sp-pwmlj, wave 4.15) — the retry
-            // decision bdq's own binary makes, rather than a second copy of it here.
             if !bead::bdq::should_retry(last.code, t, tries, last.stderr.contains("invalid connection")) {
                 break;
             }
@@ -217,11 +201,13 @@ mod tests {
     }
 
     #[test]
-    fn empty_db_is_refused_not_autodiscovered() {
+    fn runs_bdq_with_the_args_unchanged() {
+        let t = testkit::TempDir::new("dwarf-bdcli");
+        let stub = t.join("bdq");
+        testkit::write_exe(&stub, "#!/bin/sh\necho \"$@\"\n");
         let env = Env::new(Default::default(), Default::default());
-        let bd = BdCli { bd: "bd".into(), db: String::new(), timeout_s: 1, conn_retries: 2, fixture: None, home: "/nonexistent".into(), env: &env };
+        let bd = BdCli { bdq: stub.display().to_string(), timeout_s: 5, conn_retries: 2, fixture: None, env: &env };
         let o = bd.bd(&args(&["show", "sp-a"]));
-        assert_eq!(o.code, 1);
-        assert!(o.stderr.contains("refusing"));
+        assert_eq!((o.code, o.stdout.as_str()), (0, "show sp-a\n"));
     }
 }

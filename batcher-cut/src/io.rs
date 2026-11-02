@@ -60,8 +60,6 @@ pub struct Env {
     pub home: PathBuf,
     pub run: PathBuf,
     pub queue_dir: PathBuf,
-    #[allow(dead_code)]
-    pub bd: String,
     /// `SPIRA_FORGE` — the forge seam `find_repo` hands to `Repo.forge` (bare name on the
     /// launcher's PATH, sp-gypjk; resolved once, here, not re-read per repo).
     pub forge: PathBuf,
@@ -383,19 +381,27 @@ fn drop_stacked_on_barred(members: Vec<Member>, mut barred: std::collections::BT
 /// lc-serve, never by spawning bd.
 pub fn bd_show_text(env: &Env, id: &str) -> Result<String, String> {
     let rows = bd_show(env, &[id.to_string()])?;
-    let row = rows.as_array().and_then(|a| a.first()).ok_or_else(|| format!("content-rows: no row for {id}"))?;
+    let row = rows.as_array().and_then(|a| a.first()).ok_or_else(|| format!("plan items: no row for {id}"))?;
     let field = |k: &str| row.get(k).and_then(|v| v.as_str()).unwrap_or("");
     Ok(format!("{}\n{}", field("description"), field("notes")))
 }
 
-/// The content rows of `ids` (title, priority, description, notes, external_ref, dependencies as
-/// `{depends_on_id, type}`), from `spira-lc content-rows --full`.
+/// The item rows of `ids` (title, priority, description, notes, external_ref, dependencies as
+/// `{depends_on_id, type}`), from `spira-lc plan items --full`.
 fn bd_show(env: &Env, ids: &[String]) -> Result<serde_json::Value, String> {
     if ids.is_empty() {
         return Ok(serde_json::Value::Array(vec![]));
     }
-    let text = lcq(env, &["content-rows", "--full", "--ids", &ids.join(",")])?;
-    serde_json::from_str(&text).map_err(|e| format!("content-rows: unparsed output: {e}"))
+    plan_items(&lcq(env, &["plan", "items", "--full", "--ids", &ids.join(",")])?)
+}
+
+/// The `items` of a `plan items` answer.
+fn plan_items(text: &str) -> Result<serde_json::Value, String> {
+    let mut v: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("plan items: unparsed output: {e}"))?;
+    match v.get_mut("items").map(serde_json::Value::take) {
+        Some(items @ serde_json::Value::Array(_)) => Ok(items),
+        _ => Err(format!("plan items: no items in {}", text.chars().take(200).collect::<String>())),
+    }
 }
 
 /// `repo`'s own `refs/heads/spira/*` tips, keyed by bead id — the same authority
@@ -505,8 +511,8 @@ fn base_fix_ids(env: &Env, repo: &Repo, texts: &BTreeMap<String, (bool, String)>
     // The content store lists the base-red beads; whether one is still open is its lifecycle
     // row's — not terminal (sp-mve9i). A base-red bead with no row, or a machine that cannot
     // answer, accelerates nothing: the lane is never a gate.
-    let Ok(text) = lcq(env, &["content-rows", "--external-contains", &format!("basefail:{}:", repo.name)]) else { return fixes };
-    let Ok(serde_json::Value::Array(rows)) = serde_json::from_str::<serde_json::Value>(&text) else { return fixes };
+    let Ok(text) = lcq(env, &["plan", "items", "--external-contains", &format!("basefail:{}:", repo.name)]) else { return fixes };
+    let Ok(serde_json::Value::Array(rows)) = plan_items(&text) else { return fixes };
     let basefail_ids: Vec<String> = rows.iter().filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string)).collect();
     let Ok(lc) = lc_rows_of(env, &basefail_ids).and_then(|r| spira_config::lc_state::parse_rows(&serde_json::Value::Array(r).to_string())) else { return fixes };
     let lc = spira_config::lc_state::index(lc);
@@ -2825,9 +2831,9 @@ mod pool_parity_tests {
     /// `list` (the given certified ids at their live tips, then every
     /// row in `lc_rows`) and `show`, and a bd stand-in whose `list` honours `--status` the way
     /// bd does — so a reader that still filtered on bd status would see bd's answer.
-    /// The `content-rows` case arm of a `spira-lc` stub, answering from the fixture's `show-*` and `list-all` files.
-    fn content_rows_arm(sd: &str) -> String {
-        format!("content-rows) echo content-rows >> {sd}/content.log; if [ \"$2\" = --external-contains ]; then cat {sd}/list-all; else IFS=, read -ra a <<<\"$4\"; o=; for i in \"${{a[@]}}\"; do [ -f {sd}/show-$i ] && o=\"$o${{o:+,}}$(cat {sd}/show-$i)\"; done; echo \"[$o]\"; fi ;;")
+    /// The `plan items` case arm of a `spira-lc` stub, answering from the fixture's `show-*` and `list-all` files.
+    fn plan_items_arm(sd: &str) -> String {
+        format!("plan) echo plan-items >> {sd}/content.log; if [ \"$3\" = --external-contains ]; then echo \"{{\\\"watermark\\\":0,\\\"items\\\":$(cat {sd}/list-all)}}\"; else IFS=, read -ra a <<<\"$5\"; o=; for i in \"${{a[@]}}\"; do [ -f {sd}/show-$i ] && o=\"$o${{o:+,}}$(cat {sd}/show-$i)\"; done; echo \"{{\\\"watermark\\\":0,\\\"items\\\":[$o]}}\"; fi ;;")
     }
 
     fn pool_fixture(tag: &str, certified: &[&str], lc_rows: &[(&str, &str)], bd_rows: &[(&str, &str, &str, &str)]) -> (testkit::TempDir, testkit::TempDir, Env, Repo) {
@@ -2853,12 +2859,11 @@ mod pool_parity_tests {
         let sd = stubs.path().display().to_string();
         testkit::write_exe(
             stubs.join("spira-lc"),
-            &format!("#!/bin/bash\ncase \"$1\" in list) cat {sd}/lc-all ;; show*) echo '{{\"bead\":{{\"bead_id\":\"'$2'\"}}}}' ;; {} esac\n", content_rows_arm(&sd)),
+            &format!("#!/bin/bash\ncase \"$1\" in list) cat {sd}/lc-all ;; show*) echo '{{\"bead\":{{\"bead_id\":\"'$2'\"}}}}' ;; {} esac\n", plan_items_arm(&sd)),
         );
         testkit::write_exe(stubs.join("bd"), &format!("#!/bin/bash\ntouch {sd}/bd-spawned\nexit 99\n"));
         let mut env = super::lifecycle_tests_env(stubs.path());
         env.lc_bin = Some(stubs.join("spira-lc"));
-        env.bd = stubs.join("bd").display().to_string();
         let repo = Repo { name: "r".into(), path: d.path().to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Forge };
         (d, stubs, env, repo)
     }
@@ -2902,7 +2907,7 @@ mod pool_parity_tests {
             stubs.join("spira-lc"),
             &format!(
                 "#!/bin/bash\necho \"$@\" >> {sd}/lc.log\nfor a in \"$@\"; do case \"$a\" in --state|--ids) f=1;; esac; done\ncase \"$1\" in list) if [ -z \"$f\" ]; then head -c 200000 /dev/zero | tr '\\0' x; exit 0; fi; cat {sd}/lc-all ;; show*) echo '{{\"bead\":{{\"bead_id\":\"'$2'\"}}}}' ;; {} esac\n",
-                content_rows_arm(&sd)
+                plan_items_arm(&sd)
             ),
         );
         let ids: Vec<String> = certified_pool(&env, &repo).unwrap().into_iter().map(|m| m.id).collect();
@@ -2954,7 +2959,7 @@ mod pool_parity_tests {
             stubs.join("spira-lc"),
             &format!(
                 "#!/bin/bash\ncase \"$1\" in list) cat {sd}/lc-all ;; show*) if [ \"$2\" = sp-done ]; then echo '{{\"bead\":{{\"state\":\"LANDED\"}}}}'; else echo '{{\"bead\":{{\"state\":\"CERTIFIED\"}}}}'; fi ;; {} esac\n",
-                content_rows_arm(&sd)
+                plan_items_arm(&sd)
             ),
         );
         assert!(blocked_of(&env).is_empty(), "a landed prerequisite blocks nothing");
@@ -3772,7 +3777,7 @@ mod integration_tests {
         let dir = testkit::TempDir::new("batcher-hold");
         let mut env = lifecycle_tests_env(dir.path());
         let lc = dir.join("spira-lc");
-        testkit::write_exe(&lc, "#!/usr/bin/env bash\necho '[{\"id\":\"'$4'\",\"status\":\"'$(cat \"$(dirname \"$0\")/status\")'\"}]'\n");
+        testkit::write_exe(&lc, "#!/usr/bin/env bash\n[ \"$1 $2\" = \"plan items\" ] || exit 2\necho '{\"watermark\":0,\"items\":[{\"id\":\"'$5'\",\"status\":\"'$(cat \"$(dirname \"$0\")/status\")'\"}]}'\n");
         env.lc_bin = Some(lc);
         let key = batcher::core::round_key(&[("sp-b".into(), "2".into()), ("sp-a".into(), "1".into())]);
         write_hold(&env, "r", &key, "sp-hold1").unwrap();
@@ -3870,7 +3875,6 @@ pub(crate) fn lifecycle_tests_env(dir: &Path) -> Env {
         home: dir.to_path_buf(),
         run: dir.to_path_buf(),
         queue_dir: dir.join("queue"),
-        bd: "bd".into(),
         forge: PathBuf::from("forge"),
         tsd_bin: None,
         round_vm: dir.join("round-vm"),

@@ -1,4 +1,4 @@
-//! The only I/O: reading bd and spira-lc through their CLIs, and config through
+//! The only I/O: reading the store through bdq and spira-lc, and config through
 //! spira-config. Every read is bounded in time and in argv size. DESIGN.md §2 "Data in".
 
 use std::collections::HashMap;
@@ -11,14 +11,13 @@ use lifecycle::bead::BeadState;
 
 use crate::rank::{self, LifecycleRow, ReadyRow};
 
-/// Ids per `bd sql` events query and per `bd list --id` call: keeps the argv bounded.
+/// Ids per `bd sql` events query and per `plan items --ids` call: keeps the argv bounded.
 pub const EVENT_CHUNK: usize = 200;
 pub const LIST_CHUNK: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct Store {
-    pub bd: String,
-    pub db: Option<String>,
+    pub bdq: String,
     pub lc: String,
     pub timeout: Duration,
 }
@@ -30,14 +29,8 @@ pub struct Store {
 /// one exactly once, at construction, and is the ONLY place in this crate that may.
 #[derive(Debug, Clone, Default)]
 pub struct Config {
-    /// `spira.bd` (`SPIRA_BD`) — the `bd` binary to exec. Registered but documented as
-    /// carrying no default of its own (conf.d: "resolves empty unless set"); an empty
-    /// resolved value is passed through as-is — `Store::new` no longer substitutes the
-    /// literal `"bd"` for it (see the migration report: this is a behaviour change).
-    pub bd: String,
-    /// `spira.db` (`SPIRA_DB`) — `None` when the declared value is "" (conf.d: deliberately
-    /// `=` not `:=`, "an explicitly empty SPIRA_DB means 'no database for this run'"), same
-    /// as this field's own pre-cfg() emptiness check; never a substituted default.
+    /// `spira.db` (`SPIRA_DB`) — `None` when declared "" ("no database for this run"). bdq
+    /// reads it itself; this copy only gates writes and keys the ready cache.
     pub db: Option<String>,
     pub stack_max_depth: u32,
     #[allow(dead_code)]
@@ -77,7 +70,6 @@ pub struct Config {
 pub fn load_config() -> Result<Config, String> {
     let db = spira_config::process::cfg("SPIRA_DB")?;
     Ok(Config {
-        bd: spira_config::process::cfg("SPIRA_BD")?,
         db: (!db.is_empty()).then_some(db),
         stack_max_depth: spira_config::process::cfg_parse("SPIRA_STACK_MAX_DEPTH")?,
         submitted_label: spira_config::process::cfg("SPIRA_SUBMITTED_LABEL")?,
@@ -97,20 +89,16 @@ pub fn load_config() -> Result<Config, String> {
 }
 
 impl Store {
-    pub fn new(db_flag: Option<String>, timeout_s: u64, cfg: &Config) -> Store {
+    pub fn new(timeout_s: u64) -> Store {
         Store {
-            bd: cfg.bd.clone(),
-            db: db_flag.or_else(|| cfg.db.clone()),
+            bdq: spira_config::release_env::tool("bdq"),
             lc: "spira-lc".into(), // by name, on the launcher's PATH (sp-gypjk)
             timeout: Duration::from_secs(timeout_s.max(1)),
         }
     }
 
-    pub fn bd_cmd(&self, args: &[&str]) -> Command {
-        let mut c = Command::new(&self.bd);
-        if let Some(db) = &self.db {
-            c.args(["-C", db]);
-        }
+    pub fn bdq_cmd(&self, args: &[&str]) -> Command {
+        let mut c = Command::new(&self.bdq);
         c.args(args);
         c
     }
@@ -121,12 +109,10 @@ impl Store {
         c
     }
 
-    /// Run `bd <args>` to completion; `Err` names the verb and bd's own first stderr line
-    /// (or the timeout/spawn failure). `pub` so `cmd_claim_retry` (the
-    /// generic bd-retry verb, which takes arbitrary caller argv main.rs never parses) can
-    /// call it directly, same as every other read here.
-    pub fn bd(&self, args: &[&str]) -> Result<String, String> {
-        run(self.bd_cmd(args), self.timeout).map_err(|e| format!("bd {}: {e}", args.first().unwrap_or(&"")))
+    /// Run `bdq <args>` to completion; `Err` names the verb and bd's own first stderr line
+    /// (or the timeout/spawn failure).
+    pub fn bdq(&self, args: &[&str]) -> Result<String, String> {
+        run(self.bdq_cmd(args), self.timeout).map_err(|e| format!("bd {}: {e}", args.first().unwrap_or(&"")))
     }
 
     /// Every folded event for `ids`, one query per [`EVENT_CHUNK`] ids: bd's own rows (its
@@ -136,7 +122,7 @@ impl Store {
         let mut out = Vec::new();
         for chunk in ids.chunks(EVENT_CHUNK) {
             let q = events_sql(chunk);
-            let text = self.bd(&["sql", "--json", &q])?;
+            let text = self.bdq(&["sql", "--json", &q])?;
             out.extend(events::parse_rows(&text)?);
             out.extend(self.facts(chunk)?);
         }
@@ -149,35 +135,30 @@ impl Store {
         events::parse_rows(&text)
     }
 
-    /// bd rows by id, `--status all`, chunked.
-    pub fn list_by_ids(&self, ids: &[String]) -> Result<Vec<ReadyRow>, String> {
-        let mut out = Vec::new();
-        for chunk in ids.chunks(LIST_CHUNK) {
-            let csv = chunk.join(",");
-            let text = self.bd(&["list", "--id", &csv, "--status", "all", "--limit", "0", "--json"])?;
-            if text.trim().is_empty() {
-                return Err("bd list --id returned nothing".into());
-            }
-            out.extend(rank::parse_ready(&text)?);
+    /// `spira-lc plan <args>`'s `items`, as JSON array text. No `items` is an error, never
+    /// zero rows.
+    pub fn plan(&self, args: &[&str]) -> Result<String, String> {
+        let what = format!("spira-lc plan {}", args.first().unwrap_or(&""));
+        let argv: Vec<String> = std::iter::once("plan").chain(args.iter().copied()).map(str::to_string).collect();
+        let text = run(self.lc_cmd(&argv), self.timeout).map_err(|e| format!("{what}: {e}"))?;
+        let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| format!("{what}: not JSON: {e}"))?;
+        match v.get("items") {
+            Some(items @ serde_json::Value::Array(_)) => Ok(items.to_string()),
+            _ => Err(format!("{what}: no items array")),
         }
-        Ok(out)
     }
 
-    /// The same rows as [`Store::list_by_ids`], read over the lifecycle connection
-    /// (`spira-lc content-rows`): no bd, no git.
-    pub fn content_by_ids(&self, ids: &[String]) -> Result<Vec<ReadyRow>, String> {
+    /// The plan rows of `ids`, every status, chunked.
+    pub fn items_by_ids(&self, ids: &[String]) -> Result<Vec<ReadyRow>, String> {
         let mut out = Vec::new();
         for chunk in ids.chunks(LIST_CHUNK) {
-            let args = ["content-rows".to_string(), "--ids".into(), chunk.join(",")];
-            let text = run(self.lc_cmd(&args), self.timeout).map_err(|e| format!("spira-lc content-rows: {e}"))?;
-            out.extend(rank::parse_ready(&text)?);
+            out.extend(rank::parse_ready(&self.plan(&["items", "--ids", &chunk.join(",")])?)?);
         }
         Ok(out)
     }
 
     pub fn children(&self, epic: &str) -> Result<Vec<ReadyRow>, String> {
-        let text = self.bd(&["children", epic, "--json"])?;
-        rank::parse_ready(&text)
+        rank::parse_ready(&self.plan(&["children", "--ids", epic])?)
     }
 
     /// The lifecycle rows in `states`. Never the whole store: it holds every bead ever.

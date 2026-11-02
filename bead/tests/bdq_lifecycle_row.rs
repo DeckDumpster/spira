@@ -15,6 +15,10 @@ struct Run {
 }
 
 fn bdq(bd_body: &str, lc_body: &str, args: &[&str]) -> Run {
+    bdq_with_stdin(bd_body, lc_body, args, "")
+}
+
+fn bdq_with_stdin(bd_body: &str, lc_body: &str, args: &[&str], stdin: &str) -> Run {
     let t = testkit::TempDir::new("bdq-lcrow");
     let d = t.path();
     let log = d.join("lc.log");
@@ -38,7 +42,15 @@ fn bdq(bd_body: &str, lc_body: &str, args: &[&str]) -> Run {
         .env("SPIRA_HOME", &home)
         .env("SPIRA_LC_BIN", &lc)
         .env("SPIRA_BDQ_CONN_RETRIES", "1")
-        .output()
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut c| {
+            use std::io::Write;
+            c.stdin.take().unwrap().write_all(stdin.as_bytes())?;
+            c.wait_with_output()
+        })
         .unwrap();
     Run {
         code: out.status.code().unwrap_or(-1),
@@ -55,7 +67,7 @@ fn a_create_makes_the_row_and_still_prints_the_id() {
     let r = bdq("echo sp-new1", "exit 0", CREATE);
     assert_eq!(r.code, 0, "{}", r.stderr);
     assert_eq!(r.stdout.trim(), "sp-new1");
-    assert_eq!(r.lc_calls, "create-bead sp-new1 --ready\n");
+    assert_eq!(r.lc_calls, "create-bead sp-new1 --ready\nplan stamp\n");
 }
 
 #[test]
@@ -79,20 +91,20 @@ fn a_failed_create_makes_no_row_and_other_verbs_none_either() {
 fn a_bead_created_closed_gets_no_row() {
     let r = bdq("echo sp-ins", "exit 0", &["create", "an insight", "--status", "closed", "--silent"]);
     assert_eq!(r.code, 0);
-    assert_eq!(r.lc_calls, "");
+    assert_eq!(r.lc_calls, "plan stamp\n", "no row, but the bead is still a planning write");
 }
 
 #[test]
 fn a_no_row_type_create_gets_no_row() {
     let r = bdq("echo sp-probe", "exit 0", &["create", "Heimdall write probe", "--type", "event", "--labels", "heimdall:probe,overseer", "--silent"]);
     assert_eq!(r.code, 0, "{}", r.stderr);
-    assert_eq!(r.lc_calls, "", "a probe is not work: no claimable row");
+    assert_eq!(r.lc_calls, "plan stamp\n", "a probe is not work: no claimable row");
 }
 
 #[test]
 fn json_create_output_is_read() {
     let r = bdq("echo '{\"id\":\"sp-js\"}'", "exit 0", &["create", "a plain title", "--json"]);
-    assert_eq!(r.lc_calls, "create-bead sp-js --ready\n");
+    assert_eq!(r.lc_calls, "create-bead sp-js --ready\nplan stamp\n");
     assert!(r.stdout.contains("sp-js"));
 }
 
@@ -106,4 +118,36 @@ fn a_description_edit_is_refused_by_the_lifecycle_claim_not_bd_status() {
     assert_eq!(r.code, 1, "stdout={} stderr={}", r.stdout, r.stderr);
     assert!(r.stderr.contains("claimed by dwarf-7"), "{}", r.stderr);
     assert!(r.lc_calls.contains("show sp-c"), "{}", r.lc_calls);
+}
+
+#[test]
+fn each_planning_write_stamps_the_watermark_once_and_a_read_or_a_failed_write_never_does() {
+    for args in [&["dep", "add", "sp-a", "sp-b"][..], &["label", "add", "sp-a", "x"], &["note", "sp-a", "words"], &["comments", "add", "sp-a", "words"]] {
+        let r = bdq("exit 0", "exit 0", args);
+        assert_eq!(r.code, 0, "{args:?}: {}", r.stderr);
+        assert_eq!(r.lc_calls.matches("plan stamp").count(), 1, "{args:?}: {}", r.lc_calls);
+    }
+    for args in [&["show", "sp-a", "--json"][..], &["list", "--json"], &["dep", "list", "sp-a"]] {
+        assert!(!bdq("echo '[]'", "exit 0", args).lc_calls.contains("plan stamp"), "{args:?}");
+    }
+    assert!(!bdq("exit 1", "exit 0", &["dep", "add", "sp-a", "sp-b"]).lc_calls.contains("plan stamp"));
+}
+
+#[test]
+fn a_stamp_that_fails_is_reported_and_never_fails_the_write() {
+    let r = bdq("exit 0", "case \"$1\" in plan) echo down >&2; exit 2;; esac", &["dep", "add", "sp-a", "sp-b"]);
+    assert_eq!(r.code, 0, "the edge exists; a nonzero rc would invite a retry that doubles it");
+    assert!(r.stderr.contains("watermark did not advance"), "{}", r.stderr);
+}
+
+#[test]
+fn an_ask_whose_body_comes_on_stdin_is_judged_by_that_body_and_bd_still_reads_it() {
+    let bd = "for a in \"$@\"; do case \"$prev\" in --body-file) cat \"$a\";; esac; prev=$a; done\necho sp-ask1";
+    let args = ["create", "Ship it?", "-l", "ask-pin", "--type", "decision", "--body-file", "-", "--silent"];
+    let r = bdq_with_stdin(bd, "exit 0", &args, "## Question\nShip it?\nDefault: ship\nClass: policy\n");
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert!(r.stdout.contains("Default: ship") && r.stdout.contains("sp-ask1"), "bd read the spooled body: {}", r.stdout);
+    let r = bdq_with_stdin(bd, "exit 0", &args, "Ship it?\n");
+    assert_eq!(r.code, 1, "a body with no default or class is still refused");
+    assert!(r.stderr.contains("default: false"), "{}", r.stderr);
 }

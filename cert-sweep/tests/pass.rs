@@ -27,7 +27,7 @@ impl Fx {
         fs::create_dir_all(p.join("bin")).unwrap();
         fs::create_dir_all(p.join("run")).unwrap();
         write_exe(p.join("bin/bead.sh"), "#!/bin/sh\necho \"$@\" >> \"$FX/beads\"\n[ -e \"$FX/bead-fail\" ] && { echo no >&2; exit 1; }\necho '{\"id\":\"sp-fake1\"}'\n");
-        write_exe(p.join("bin/bd"), "#!/bin/sh\ncat \"$FX/open.json\" 2>/dev/null || echo '[]'\n");
+        write_exe(p.join("bin/bdq"), "#!/bin/sh\n[ \"$*\" = \"list --all --limit 0 --brief --json\" ] || exit 2\ncat \"$FX/open.json\" 2>/dev/null || echo '[]'\n");
         // The lifecycle machine: which filed beads are still open is its answer (sp-mve9i).
         write_exe(p.join("bin/spira-lc"), "#!/bin/sh\n[ \"$1\" = list ] || exit 2\ncat \"$FX/lc.json\" 2>/dev/null || echo '[]'\n");
         write_exe(
@@ -54,19 +54,13 @@ impl Fx {
 
     fn cert(&self, args: &[&str]) -> (i32, String, String) {
         let p = self.d.path();
-        // SPIRA_RUN/SPIRA_DB/SPIRA_BD are registered keys (spira/conf.d) — cert-sweep now
-        // reads them through `spira_config::process::cfg`, resolved from `$SPIRA_TOML`,
-        // never a bare env var (per Ryan 2026-10-05: one source of config). Each test here
-        // spawns a fresh process, so a per-test fixture is safe (`cfg`'s `OnceLock` is
-        // per-process, not shared across these `Command::new` children). SPIRA_HOME still
-        // has to be the checkout's own spira/ (where conf.d — the key registry — lives).
+        // Config comes from `$SPIRA_TOML` through `cfg`, never a bare env var; SPIRA_HOME is the
+        // checkout's own spira/, where the key registry lives.
         let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
         let toml = spira_config::process::fixture_toml(
             p,
             &[
                 ("SPIRA_RUN", &p.join("run").display().to_string()),
-                ("SPIRA_DB", &p.join("db").display().to_string()),
-                ("SPIRA_BD", "bd"),
                 // An empty repository map, DECLARED (the environment's copy is never read): no row
                 // names this fixture repo, so landref falls to its own current branch.
                 ("SPIRA_REPO_MAP", &p.join("map.txt").display().to_string()),

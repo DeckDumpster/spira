@@ -16,6 +16,7 @@ use std::time::Duration;
 pub struct Real {
     pub home: PathBuf, // the spira/ directory conf.sh and lib.sh live in
     pub env: BTreeMap<String, String>,
+    pub bdq: String,
 }
 
 impl Real {
@@ -29,7 +30,7 @@ impl Real {
         }
         let mut env = Self::capture_env(&home);
         env.entry("SPIRA_HOME".to_string()).or_insert_with(|| home.display().to_string());
-        Ok(Real { home, env })
+        Ok(Real { home, env, bdq: spira_config::release_env::tool("bdq") })
     }
 
     pub fn new() -> Real {
@@ -269,12 +270,10 @@ impl World for Real {
     fn file_exists(&self, p: &Path) -> bool {
         p.is_file()
     }
-    fn bd_list(&self, db: &Path, timeout_secs: u64) -> Result<String, String> {
+    fn bd_list(&self, timeout_secs: u64) -> Result<String, String> {
         let out = Command::new("timeout")
             .arg(timeout_secs.to_string())
-            .arg(self.env("SPIRA_BD").unwrap_or_else(|| spira_config::release_env::tool("bd")))
-            .arg("-C")
-            .arg(db)
+            .arg(&self.bdq)
             .args(["list", "--limit", "1", "--json"])
             .stdin(Stdio::null())
             .output();
@@ -284,12 +283,10 @@ impl World for Real {
             Err(e) => Err(e.to_string()),
         }
     }
-    fn bd_role_warnings(&self, db: &Path, cwd: &Path) -> Option<usize> {
+    fn bd_role_warnings(&self, cwd: &Path) -> Option<usize> {
         let o = Command::new("timeout")
             .arg("5")
-            .arg(self.env("SPIRA_BD").unwrap_or_else(|| spira_config::release_env::tool("bd")))
-            .arg("-C")
-            .arg(db)
+            .arg(&self.bdq)
             .args(["list", "--limit", "1", "--json"])
             .current_dir(cwd)
             .stdin(Stdio::null())
@@ -325,7 +322,7 @@ impl World for Real {
     }
 
     fn dolt_metrics_disabled(&self) -> bool {
-        spira_config::bounded::bounded(self.env("SPIRA_DOLT_BIN").unwrap_or_else(|| "dolt".to_string()))
+        spira_config::bounded::bounded(self.env("SPIRA_DOLT_BIN").unwrap_or_else(|| "dolt".to_string())) // STORE_DOOR_CONSIDERED="dolt's own global config file, read for one key; no database and no bead"
             .args(["config", "--global", "--get", "metrics.disabled"])
             .stdin(Stdio::null())
             .output()
@@ -341,7 +338,7 @@ impl World for Real {
         if !self.tcp_connect(host, port) {
             return None;
         }
-        let out = spira_config::bounded::bounded(self.env("SPIRA_DOLT_BIN").unwrap_or_else(|| "dolt".to_string()))
+        let out = spira_config::bounded::bounded(self.env("SPIRA_DOLT_BIN").unwrap_or_else(|| "dolt".to_string())) // STORE_DOOR_CONSIDERED="probes whether the server lets root in with no password: a login check on the server itself, reads no bead"
             .args(["--host", host, "--port", &port.to_string(), "--user", "root", "--no-tls", "sql", "-q", "SELECT 1"])
             .env("DOLT_CLI_PASSWORD", "")
             .stdin(Stdio::null())
@@ -354,10 +351,8 @@ impl World for Real {
         text.contains("access denied").then_some(false)
     }
 
-    fn bd_first_id(&self, db: &Path) -> Option<String> {
-        let out = spira_config::bounded::bounded(self.env("SPIRA_BD").unwrap_or_else(|| spira_config::release_env::tool("bd")))
-            .arg("-C")
-            .arg(db)
+    fn bd_first_id(&self) -> Option<String> {
+        let out = spira_config::bounded::bounded(&self.bdq)
             .args(["list", "--limit", "1", "--json"])
             .stdin(Stdio::null())
             .output()
@@ -457,7 +452,7 @@ impl World for Real {
     }
 
     fn bd_version(&self) -> Option<String> {
-        let out = spira_config::bounded::bounded(self.env("SPIRA_BD").unwrap_or_else(|| spira_config::release_env::tool("bd")))
+        let out = spira_config::bounded::bounded(self.env("SPIRA_BD").unwrap_or_else(|| spira_config::release_env::tool("bd"))) // STORE_DOOR_CONSIDERED="the bd binary's own build version for the toolchain check; needs no database, and bdq refuses before SPIRA_DB is configured"
             .arg("version")
             .stdin(Stdio::null())
             .output()
@@ -741,7 +736,7 @@ mod tests {
         let bin = fake_sccache(d.path(), REAL_SCCACHE_018_HELP);
         let mut env = BTreeMap::new();
         env.insert("PATH".to_string(), d.path().display().to_string());
-        let real = Real { home: PathBuf::from("/nonexistent-sp-xtdqi-3"), env };
+        let real = Real { home: PathBuf::from("/nonexistent-sp-xtdqi-3"), env, bdq: "bdq".into() };
         // `check_sccache` (below) reads `SPIRA_OPERATED`, a `RESOLVED_KEYS` name — through
         // `spira_config::process::cfg`, a process-global `OnceLock`. Same reasoning as the
         // `sccache_show_stats` test below: seed it with the identical real-home + complete
@@ -780,7 +775,7 @@ mod tests {
         std::fs::create_dir_all(home.join("conf.d")).unwrap();
         std::fs::create_dir_all(home.join("conf.toml.d")).unwrap();
         std::fs::write(home.join("conf.d/SPIRA_SCCACHE_DAV_ADDR"), conf_d_stub()).unwrap();
-        let real = Real { home, env };
+        let real = Real { home, env, bdq: "bdq".into() };
         // `sccache_show_stats` calls `self.sccache_dav_addr()`, which goes through
         // `spira_config::process::cfg` unconditionally now (per Ryan 2026-10-05) — its
         // resolution is a process-global `OnceLock`, so SOME test in this binary has to

@@ -1,6 +1,6 @@
 # landing-fixture.sh — shared by test-landing*.sh: a real bd on a throwaway database, a real
 # bare remote and clone, a fixture harness copy with gate.sh/confine.sh/mail/gh stubs, and the
-# helpers landing/seed/branch/drop_branch/reap_during_gate/status_of/notes_of. The stub gate is
+# helpers landing/seed/branch/drop_branch/reap_during_gate. The stub gate is
 # also the clock: reaping or reopening from inside it reproduces a mid-pass race exactly.
 # Sourced after testlib.sh, with HERE and LAND_SUITE set.
 # shellcheck disable=SC1090
@@ -109,12 +109,6 @@ stub gh 'exit 1'
 # can restore it.
 cp "$SH/gate.sh" "$TMP/gate-full.sh"
 
-B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
-status_of() { B show "$1" --json 2>/dev/null | python3 -c '
-import json, sys
-d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
-print(d[0].get("status") or "")'; }
-
 landing() {
     rm -f "$RUN/landing.progress"
     # SPIRA_REPO_MAP EXPLICITLY and nothing else inherited: a pass that falls back reads the
@@ -151,7 +145,6 @@ landing() {
     SPIRA_HOME="$SH" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         PATH="$SH:$PATH" landing-pass land 2>&1
 }
-notes_of() { B show "$1" 2>/dev/null; }
 
 seed() {
     testdb_reset

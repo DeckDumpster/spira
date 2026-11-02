@@ -29,7 +29,7 @@ struct Fake {
     /// bead id -> the `(batch, state)` pairs it is a member of, and the `eject-member` calls made.
     batches: BTreeMap<String, Vec<(String, String)>>,
     ejects: Vec<Vec<String>>,
-    /// bead id -> content status, as `content-rows` reports it.
+    /// bead id -> content status, as `plan items` reports it.
     content: BTreeMap<String, String>,
     /// The `event-seq` answer: newest seq and the keys changed after any `--since`.
     seq: u64,
@@ -95,7 +95,7 @@ impl Machine for Fake {
                 let keys: Vec<&String> = if since >= self.seq { Vec::new() } else { self.changed.iter().collect() };
                 (0, json!({"seq": self.seq, "keys": keys}).to_string())
             }
-            "content-rows" => {
+            "plan" if args.get(1).map(String::as_str) == Some("items") => {
                 self.content_reads += 1;
                 let ids = flag(args, "--ids").unwrap_or_default();
                 let only_open = args.iter().any(|a| a == "--open");
@@ -105,7 +105,7 @@ impl Machine for Fake {
                     .filter(|(_, st)| !only_open || st.as_str() != "closed")
                     .map(|(i, st)| json!({"id": i, "status": st}))
                     .collect();
-                (0, Value::Array(rows).to_string())
+                (0, json!({"watermark": 0, "items": rows}).to_string())
             }
             "list" => {
                 let st = flag(args, "--state");
@@ -1273,7 +1273,7 @@ fn reconcile_content_reads_no_bd_and_cannot_tell_when_the_store_is_down() {
     struct Refusing(Fake);
     impl Machine for Refusing {
         fn call(&mut self, args: &[String]) -> (i32, String) {
-            if args[0] == "content-rows" {
+            if args[0] == "plan" {
                 return (CANNOT_TELL, "cannot tell: deadline".into());
             }
             self.0.call(args)

@@ -65,8 +65,6 @@ fn home_dir() -> PathBuf {
 /// naming the key, not a fallback.
 struct Cfg {
     spira_run: PathBuf,
-    db: String,
-    bd: String,
     repo_map: Option<PathBuf>,
     labels: LaneLabels,
     scope_label: String,
@@ -79,8 +77,6 @@ fn load_cfg() -> Result<Cfg, String> {
     let repo_map = spira_config::process::cfg("SPIRA_REPO_MAP")?;
     Ok(Cfg {
         spira_run: PathBuf::from(spira_config::process::cfg("SPIRA_RUN")?),
-        db: spira_config::process::cfg("SPIRA_DB")?,
-        bd: spira_config::process::cfg("SPIRA_BD")?,
         repo_map: if repo_map.is_empty() { None } else { Some(PathBuf::from(repo_map)) },
         labels: LaneLabels {
             plan: spira_config::process::cfg("SPIRA_PLAN_LABEL")?,
@@ -128,7 +124,7 @@ fn main() {
         }
     };
     let spira_home = home_dir();
-    let world = Real::new(spira_home, cfg.spira_run.clone(), cfg.db.clone(), cfg.bd.clone(), cfg.repo_map.clone(), cfg.labels.clone());
+    let world = Real::new(spira_home, cfg.spira_run.clone(), spira_config::release_env::tool("bdq"), cfg.repo_map.clone(), cfg.labels.clone());
 
     // THE THREE LIB.SH SHIM DOORS (wave 4.35, row V) — none of them touches the sweep's own
     // lock file below; `groom-trigger.sh` calling `lane-admitted` must never contend with, or
@@ -418,8 +414,6 @@ mod tests {
         let s = || "x".to_string();
         let cfg = Cfg {
             spira_run: PathBuf::new(),
-            db: s(),
-            bd: s(),
             repo_map: None,
             labels: LaneLabels { plan: s(), incident: s(), groomer: s(), mimir: s(), spike: s(), czar: s() },
             scope_label: s(),

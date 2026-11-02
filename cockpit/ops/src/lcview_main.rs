@@ -63,6 +63,13 @@ fn lc_json(args: &[&str]) -> Result<Vec<serde_json::Value>, String> {
         .map(|v| v.as_array().cloned().unwrap_or_default())
 }
 
+/// The `items` of a `spira-lc plan items` answer.
+fn plan_items(args: &[&str]) -> Result<Vec<serde_json::Value>, String> {
+    let name = format!("spira-lc {}", args.join(" "));
+    let v: serde_json::Value = run("spira-lc", args).and_then(|t| serde_json::from_str(&t).map_err(|e| format!("{name}: {e}")))?;
+    v["items"].as_array().cloned().ok_or_else(|| format!("{name}: no items in the answer"))
+}
+
 fn gather_state_machine(s: &mut Snapshot) {
     match lc_json(&["ops-graph"]) {
         Ok(rows) => s.graph = rows.iter().map(|g| GraphEdge { from: text(&g["from"]), event: text(&g["event"]), to: text(&g["to"]) }).collect(),
@@ -336,7 +343,7 @@ fn gather() -> Snapshot {
     }
     if s.asks.iter().any(|a| a.title.is_empty()) {
         let ids = s.asks.iter().filter(|a| a.title.is_empty()).map(|a| a.id.as_str()).collect::<Vec<_>>().join(",");
-        match lc_json(&["content-rows", "--ids", &ids]) {
+        match plan_items(&["plan", "items", "--ids", &ids]) {
             Ok(rows) => cockpit_ops::lcview::fill_ask_titles(&mut s.asks, &rows),
             Err(e) => s.errors.push(e),
         }

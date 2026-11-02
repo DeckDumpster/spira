@@ -64,7 +64,7 @@ if last: print("%s\t%s" % last)' 2>/dev/null)"
 
 _as_tick() {
     local id title json
-    json="$(timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --label "$SPIRA_ASK_LABEL" --status open --limit 0 --json 2>/dev/null)" || return 0
+    json="$(timeout 5 spira-lc plan items --label "$SPIRA_ASK_LABEL" --status open 2>/dev/null)" || return 0
     while IFS=$'\t' read -r id title; do
         [ -n "$id" ] || continue
         [ -n "${_as_seen[$id]:-}" ] && continue
@@ -72,7 +72,7 @@ _as_tick() {
         [ "$_as_seeded" -eq 1 ] && _as_say "NEW ASK $id: $title"
     done < <(printf '%s' "$json" | python3 -c '
 import sys, json
-try: rows = json.load(sys.stdin)
+try: rows = json.load(sys.stdin)["items"]
 except Exception: sys.exit(0)
 for r in rows:
     if isinstance(r, dict) and isinstance(r.get("id"), str) and isinstance(r.get("title"), str):

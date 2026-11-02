@@ -76,11 +76,11 @@ fn write_exec(path: &Path, body: &str) -> Result<(), String> {
 }
 
 /// The stage's content store is an embedded bd, not a database on its lifecycle server, so
-/// `spira-lc content-rows` is answered from bd here; every other verb goes to the next
+/// `spira-lc plan items --ids` is answered from bd here; every other verb goes to the next
 /// `spira-lc` on PATH.
 fn lc_content_shim(db: &Path) -> String {
     format!(
-        "#!/bin/sh\nif [ \"$1\" = content-rows ]; then\n    exec bd-embedded -C '{}' list --id \"$3\" --status all --limit 0 --json\nfi\nme=$(readlink -f \"$0\")\nIFS=:\nfor d in $PATH; do\n    [ -x \"$d/spira-lc\" ] && [ \"$(readlink -f \"$d/spira-lc\")\" != \"$me\" ] && exec \"$d/spira-lc\" \"$@\"\ndone\nexit 127\n",
+        "#!/bin/sh\nif [ \"$1\" = plan ] && [ \"$2\" = items ]; then\n    ids=; prev=\n    for a in \"$@\"; do [ \"$prev\" = --ids ] && ids=$a; prev=$a; done\n    printf '{{\"watermark\":0,\"items\":%s}}\\n' \"$(bd-embedded -C '{}' list --id \"$ids\" --status all --limit 0 --json)\"\n    exit\nfi\nme=$(readlink -f \"$0\")\nIFS=:\nfor d in $PATH; do\n    [ -x \"$d/spira-lc\" ] && [ \"$(readlink -f \"$d/spira-lc\")\" != \"$me\" ] && exec \"$d/spira-lc\" \"$@\"\ndone\nexit 127\n",
         db.display()
     )
 }

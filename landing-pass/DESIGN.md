@@ -101,7 +101,7 @@ landing-pass -h | --help
 `SPIRA_HOME` (required: where lib.sh lives), and whatever conf.sh reads — the sentinel's
 dispatch passes `PATH HOME SPIRA_HOME SPIRA_RUN SPIRA_DB SPIRA_REPO SPIRA_REPO_MAP
 SPIRA_HOME_REPO SPIRA_BD SPIRA_GH SPIRA_BATCH_MAXPAR SPIRA_LAND_MAXSEC`. Everything else is
-read from the context seam's answer: `SPIRA_RUN`, `SPIRA_REPO`, `SPIRA_DB`, `SPIRA_BD`,
+read from the context seam's answer: `SPIRA_RUN`, `SPIRA_REPO`,
 `SPIRA_LAND_MAXSEC` (3600), `SPIRA_LAND_GATE_RESERVE` (conf 2700), `SPIRA_GATE_LOCK_WAIT`,
 `SPIRA_VERDICT_TTL` (86400), `SPIRA_VERDICTS`, `SPIRA_DEFERRAL_ESCALATE_AT` (5),
 `SPIRA_CUTOVER_ROUND_LABEL`, `SPIRA_SUBMITTED_LABEL`,
@@ -174,7 +174,8 @@ All paths under `$SPIRA_RUN` unless absolute. Formats unchanged (§3).
 | `testenv container down --name <c> --volumes --force-foreign` | | `halt` |
 | `forge pr-state/pr-create/pr-list-open/pr-automerge <repo> …` | `pr-create`'s body on stdin | `pr_branch`'s `land_pr`/needs_refresh decision (sp-t4y60) |
 | `spira-lc show/event delivery …` | | pr pass content proof (unchanged) |
-| `bd -C $SPIRA_DB show <ids…> --json` under `timeout $BD_TIMEOUT` | one retry on "invalid connection" | scan, re-reads, prune |
+| `bdq show <ids…> --json` under `timeout $BD_TIMEOUT` | one retry on "invalid connection" | scan, re-reads, prune |
+| `spira-lc plan items --label <ask> --status open` under `timeout $BD_TIMEOUT` | | open-ask check |
 | `git` | | everything else |
 
 ### 2.6 Callers (every one found)

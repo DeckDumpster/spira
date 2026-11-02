@@ -60,15 +60,15 @@ TRIGSH=mimir-trigger.sh   # invoked by name on the suite's PATH (sp-gypjk)
 # Every run_trigger below wipes env and rebuilds PATH for isolation; since sp-0ekp7 moved
 # mimir-trigger.sh's logic into a compiled binary the shim execs, PATH must still reach
 # it — appending the ambient $PATH (the staged release's bin/, under testenv) after the
-# deterministic $HERE prefix does that. Safe with the stub bd: it's referenced by its
-# absolute path via SPIRA_BD, never found through PATH, so this cannot substitute the
-# real `bd` for the stub.
+# deterministic $HERE prefix does that. Safe with the stub bd: mimir-trigger reaches the
+# store through bdq, which execs SPIRA_BD by its absolute path, never through PATH, so this
+# cannot substitute the real `bd` for the stub.
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
 
 # ---------------------------------------------------------------------------
 # STUB BD. Records argv to BD_LOG_PATH; returns BD_LIST_OUTPUT for `list`
-# subcommands; exits 0 for all others. Strips `-C <db>` prefix so the
+# subcommands; exits 0 for all others. Strips the `-C <db>` bdq prepends so the
 # subcommand is always $1 at dispatch time (same pattern as test-groom-trigger.sh).
 # ---------------------------------------------------------------------------
 STUB_BD="$T/stub-bd"
@@ -355,6 +355,7 @@ echo "DEDUP: the list query includes in_progress, not just open (sp-mp9s)"
 # content only (`--all`), and a CLAIMED trigger bead — WORKING — still blocks a second pass,
 # while one the machine has seen handed on does not.
 want   "dedup list call lists content, no bd status filter" "list --all --label" "$(cat "$BD_LOG")"
+want   "the list reaches bd through bdq, on the configured db" "-C $T/fixture.db list --all --label" "$(cat "$BD_LOG")"
 nowant "dedup list call never filters on bd status" "--status" "$(cat "$BD_LOG")"
 printf '0\n' > "$WATERMARK_FILE"
 BD_LIST_OUTPUT='[{"id":"sp-test","title":"Mimir pass"}]'

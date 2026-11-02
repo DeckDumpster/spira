@@ -80,3 +80,7 @@ GRANT SELECT ON spira_lifecycle.runtime_applied TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.runtime_cursor TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.runtime_schedule TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.runtime_poison TO 'spira_lc_ro'@'%';
+
+-- The planning watermark (migrations/0037-planning-watermark.sql): `plan stamp` advances it.
+GRANT SELECT, INSERT, UPDATE ON spira_lifecycle.planning_watermark TO 'spira_lc'@'%';
+GRANT SELECT ON spira_lifecycle.planning_watermark TO 'spira_lc_ro'@'%';

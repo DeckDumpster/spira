@@ -1,5 +1,5 @@
 //! For one fixture world, asks.sh and the asks handler leave the same rows in the Concierge
-//! inbox. The script is the oracle: it runs unmodified against a stubbed `bd` and `spira-lc`;
+//! inbox. The script is the oracle: it runs unmodified against a stubbed `spira-lc`;
 //! the handler runs on a virtual clock against a fake spira-lc socket serving the same files.
 
 use std::fs;
@@ -39,11 +39,10 @@ impl Fixture {
         fs::write(f.p("history.json"), HISTORY).unwrap();
         fs::write(f.p("mail/concierge/new/m9"), "Subject: Which branch?\nX-Spira-Default: take main\nX-Spira-Work-Bead: sp-held\nMessage-ID: <m9@spira>\n\nbody\n").unwrap();
         let root = f.dir.path().display();
-        testkit::write_exe(f.p("bin/bd"), &format!("#!/usr/bin/env bash\n[ -e {root}/bdfail ] && exit 1\ncat {root}/asks.json\n"));
-        testkit::write_exe(f.p("bin/spira-lc"), &format!("#!/usr/bin/env bash\ncase \"$1\" in\n  list-held) cat {root}/held.txt ;;\n  history) cat {root}/history.json ;;\nesac\nexit 0\n"));
+        testkit::write_exe(f.p("bin/spira-lc"), &format!("#!/usr/bin/env bash\ncase \"$1\" in\n  plan) [ -e {root}/bdfail ] && exit 1; printf '{{\"watermark\":0,\"items\":%s}}' \"$(cat {root}/asks.json)\" ;;\n  list-held) cat {root}/held.txt ;;\n  history) cat {root}/history.json ;;\nesac\nexit 0\n"));
         fs::write(
             f.p("layer.toml"),
-            format!("[spira]\nrun = \"{}\"\nask_label = \"{LABEL}\"\nmail = \"{}\"\nbd = \"{}\"\nconcierge_inbox = \"{}\"\n", f.p("run").display(), f.p("mail").display(), f.p("bin/bd").display(), f.p("old-inbox").display()),
+            format!("[spira]\nrun = \"{}\"\nask_label = \"{LABEL}\"\nmail = \"{}\"\nconcierge_inbox = \"{}\"\n", f.p("run").display(), f.p("mail").display(), f.p("old-inbox").display()),
         )
         .unwrap();
         f
@@ -69,14 +68,17 @@ impl Fixture {
                 let mut line = String::new();
                 BufReader::new(&stream).read_line(&mut line).unwrap();
                 let argv: Vec<String> = serde_json::from_str(&line).unwrap();
-                let down = root.join("bdfail").exists() && argv[0] == "content-rows";
-                let file = match (argv[0].as_str(), argv.get(2).map(String::as_str)) {
-                    ("content-rows", Some(l)) if argv[1] == "--label" && l == LABEL => "asks.json",
+                let down = root.join("bdfail").exists() && argv[0] == "plan";
+                let file = match (argv[0].as_str(), argv.get(3).map(String::as_str)) {
+                    ("plan", Some(l)) if argv[1] == "items" && argv[2] == "--label" && l == LABEL => "asks.json",
                     ("list", _) if argv[1..] == ["--live", "--hold", "ask"] => "held.txt",
                     ("history", _) => "history.json",
                     _ => "",
                 };
                 let mut body = if down { "boom".into() } else { fs::read_to_string(root.join(file)).unwrap_or_default() };
+                if argv[0] == "plan" && !down {
+                    body = format!("{{\"watermark\":0,\"items\":{}}}", Some(body.trim()).filter(|b| !b.is_empty()).unwrap_or("[]"));
+                }
                 if argv[0] == "list" && !down {
                     let rows: Vec<_> = body.lines().map(|id| serde_json::json!({"bead_id": id})).collect();
                     body = serde_json::to_string(&rows).unwrap();

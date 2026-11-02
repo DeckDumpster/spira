@@ -40,6 +40,7 @@ pub mod local_pass;
 pub mod escalation;
 pub mod locate;
 pub mod nonwork;
+pub mod planning;
 pub mod process;
 pub mod proof;
 pub mod recipe;

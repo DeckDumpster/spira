@@ -52,12 +52,6 @@ fn die(msg: &str) -> ! {
     std::process::exit(1);
 }
 
-fn conf_env() -> (String, String) {
-    let bd = spira_config::process::cfg("SPIRA_BD").unwrap_or_else(|e| die(&e));
-    let db = spira_config::process::cfg("SPIRA_DB").unwrap_or_else(|e| die(&e));
-    (bd, db)
-}
-
 fn main() {
     spira_otel::run::begin("groomer", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -67,8 +61,7 @@ fn main() {
     };
 
     spira_otel::run::operation(&cmd);
-    let (bd_bin, db) = conf_env();
-    let bd = RealBd { bd: bd_bin, db };
+    let bd = RealBd { bdq: spira_config::release_env::tool("bdq") };
 
     let exe = std::env::current_exe().unwrap_or_else(|_| "groomer".into());
     let home = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe);
@@ -166,7 +159,8 @@ fn main() {
                 die("cannot find lib.sh (set SPIRA_HOME)");
             };
             let seam = LibSeam::new(home.join("lib.sh"));
-            let (code, out) = deadlocked::run(&seam, &bd.db, apply, "spira-claim");
+            let db = spira_config::process::cfg("SPIRA_DB").unwrap_or_else(|e| die(&e));
+            let (code, out) = deadlocked::run(&seam, &db, apply, "spira-claim");
             print!("{out}");
             { spira_otel::run::finish(code); std::process::exit(code) };
         }

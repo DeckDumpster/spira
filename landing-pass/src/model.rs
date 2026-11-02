@@ -64,8 +64,6 @@ pub struct Settings {
     pub home: PathBuf,
     pub run: PathBuf,
     pub repo: PathBuf,
-    pub db: String,
-    pub bd: String,
     pub bd_timeout: u64,
     pub home_repo: String,
     pub id_prefix: String,
@@ -138,8 +136,6 @@ impl Settings {
         Settings {
             home: run.join("home"),
             repo: run.join("repo"),
-            db: "db".into(),
-            bd: "bd".into(),
             bd_timeout: 180,
             home_repo: "spira".into(),
             id_prefix: "sp".into(),

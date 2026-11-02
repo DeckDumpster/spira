@@ -41,19 +41,11 @@ pub trait Bd {
     fn ensure_ask(&self, id: &str, work_bead: &str) -> Result<(), String>;
 }
 
-/// The real `bd` binary, `-C <db>` prefixed. Refuses (matching mail.sh's own
-/// `[ -n "${SPIRA_DB:-}" ]` guards at every call site) rather than let `bd` fall through to
-/// auto-discovering the operator's real store when `SPIRA_DB` is unset.
-///
-/// `conn_retries` (>= 1) retries a call whose stderr names a dropped pooled connection —
-/// `bead::bdq::should_retry`'s own rule, the one every other `bd` caller in this workspace
-/// (dwarf, cockpit-collect, incident, sentinel) already applies. A store freshly started by
-/// install (dolt-beads.service listening, but the pool's first connection already stale) is
-/// not "unreachable" — it is the one failure mode retrying past is sound for; every other
-/// failure (a real auth/schema/network refusal) still surfaces on the first try, unretried.
+/// The store through `bdq`, which locates the database itself. `conn_retries` (>= 1) retries
+/// only a call whose stderr names a dropped pooled connection (`bead::bdq::should_retry`);
+/// every other failure surfaces on the first try.
 pub struct BdCli {
-    pub bin: String,
-    pub db: String,
+    pub bdq: String,
     pub conn_retries: u32,
 }
 
@@ -68,9 +60,6 @@ impl Bd for BdCli {
         }
     }
     fn run(&self, args: &[String], stdin: Option<&str>) -> BdOut {
-        if self.db.is_empty() {
-            return BdOut::fail(1, "SPIRA_DB is empty/unset");
-        }
         let tries = self.conn_retries.max(1);
         let mut last = BdOut::default();
         for t in 1..=tries {
@@ -85,8 +74,7 @@ impl Bd for BdCli {
 
 impl BdCli {
     fn run_once(&self, args: &[String], stdin: Option<&str>) -> BdOut {
-        let mut cmd = spira_config::bounded::bounded(&self.bin);
-        cmd.arg("-C").arg(&self.db);
+        let mut cmd = spira_config::bounded::bounded(&self.bdq);
         cmd.args(args);
         cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
         cmd.stdout(Stdio::piped());
@@ -706,25 +694,17 @@ mod tests {
     }
 
     // -- BdCli's own retry on a dropped pooled connection ------------------------------------
-    //
-    // A store install just started (dolt-beads.service listening, but the first pooled
-    // connection already gone stale) fails `bd`'s first call with "invalid connection" on
-    // stderr — not a genuinely unreachable store, the one case every other `bd` caller in
-    // this workspace (dwarf::bd::BdCli, cockpit-collect, incident, sentinel) already retries
-    // past via `bead::bdq::should_retry`. Before this fix, mail's own `BdCli` had no retry
-    // at all, so `open_ask_ids` surfaced that single transient hiccup as "bead store query
-    // failed — refusing to move any mail" on a store that was, in truth, healthy.
 
-    /// A scripted fake `bd`: fails once with "invalid connection" on stderr, then succeeds —
+    /// A scripted fake `bdq`: fails once with "invalid connection" on stderr, then succeeds —
     /// a stand-in for a store whose pool just dropped its first connection. `calls.log`
     /// (one line per invocation) is the test's own call count, independent of the script's
     /// internal state file.
     fn flaky_bd_script(dir: &Path) -> std::path::PathBuf {
-        let script = dir.join("fake-bd.sh");
+        let script = dir.join("fake-bdq.sh");
         let state = dir.join("state");
         let log = dir.join("calls.log");
         let body = format!(
-            "#!/bin/sh\necho called >> {log}\nif [ ! -f {state} ]; then\n  touch {state}\n  echo 'Error 1105: invalid connection' >&2\n  exit 1\nfi\necho '[]'\nexit 0\n",
+            "#!/bin/sh\necho \"$*\" >> {log}\nif [ ! -f {state} ]; then\n  touch {state}\n  echo 'Error 1105: invalid connection' >&2\n  exit 1\nfi\necho '[]'\nexit 0\n",
             log = log.display(),
             state = state.display(),
         );
@@ -738,24 +718,24 @@ mod tests {
     fn retries_once_past_a_dropped_connection_then_succeeds() {
         let d = testkit::TempDir::new("mail-bdcli-retry");
         let script = flaky_bd_script(d.path());
-        let bd = BdCli { bin: script.display().to_string(), db: d.path().display().to_string(), conn_retries: 2 };
+        let bd = BdCli { bdq: script.display().to_string(), conn_retries: 2 };
         let out = bd.run(&a(&["list", "--json"]), None);
         assert_eq!(out.code, 0, "stderr={}", out.stderr);
         assert_eq!(out.stdout.trim(), "[]");
         let calls = std::fs::read_to_string(d.path().join("calls.log")).unwrap();
-        assert_eq!(calls.lines().count(), 2, "expected exactly one retry: {calls:?}");
+        assert_eq!(calls, "list --json\nlist --json\n", "expected exactly one retry, bdq's own argv: {calls:?}");
     }
 
     #[test]
     fn does_not_retry_a_failure_that_is_not_a_dropped_connection() {
         let d = testkit::TempDir::new("mail-bdcli-no-retry");
-        let script = d.path().join("fake-bd.sh");
+        let script = d.path().join("fake-bdq.sh");
         let log = d.path().join("calls.log");
         let body = format!("#!/bin/sh\necho called >> {log}\necho 'Error: no beads project found' >&2\nexit 1\n", log = log.display());
         // testkit::write_exe, never fs::write + chmod: a write descriptor another test thread's
         // fork inherits makes the exec below fail ETXTBSY under load (a round VM's unit step).
         testkit::write_exe(&script, &body);
-        let bd = BdCli { bin: script.display().to_string(), db: d.path().display().to_string(), conn_retries: 2 };
+        let bd = BdCli { bdq: script.display().to_string(), conn_retries: 2 };
         let out = bd.run(&a(&["list", "--json"]), None);
         assert_eq!(out.code, 1);
         let calls = std::fs::read_to_string(&log).unwrap();
@@ -766,7 +746,7 @@ mod tests {
     fn open_ask_ids_succeeds_through_bdcli_once_the_dropped_connection_is_retried() {
         let d = testkit::TempDir::new("mail-bdcli-retry-open-ask");
         let script = flaky_bd_script(d.path());
-        let bd = BdCli { bin: script.display().to_string(), db: d.path().display().to_string(), conn_retries: 2 };
+        let bd = BdCli { bdq: script.display().to_string(), conn_retries: 2 };
         assert_eq!(open_ask_ids(&bd, "needs-operator").unwrap(), Vec::<String>::new()); // literal-ok: test fixture
     }
 }
@@ -775,14 +755,8 @@ mod tests {
 mod after_create_not_discarded {
     #[test]
     fn no_caller_discards_after_create_failure() {
-        let sources = [
-            ("gh-intake", include_str!("../../gh-intake/src/real.rs")),
-            ("groomer", include_str!("../../groomer/src/bd.rs")),
-            ("incident", include_str!("../../incident/src/real.rs")),
-            ("mimir-trigger", include_str!("../../mimir-trigger/src/real.rs")),
-            ("mail", include_str!("bead.rs")),
-            ("bdq", include_str!("../../bead/src/bin/bdq.rs")),
-        ];
+        // Every create goes through bdq, which writes the lifecycle row; nothing else calls it.
+        let sources = [("bdq", include_str!("../../bead/src/bin/bdq.rs"))];
         for (name, src) in sources {
             assert!(src.contains("lifecycle_row::after_create"), "{name}: positive control: caller not found");
             for line in src.lines() {

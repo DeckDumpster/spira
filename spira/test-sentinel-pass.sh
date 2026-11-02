@@ -43,7 +43,11 @@ mkdir -p "$STUBS"
 # stub's `list` seeds a READY row for each work bead the bd fixture below declares.
 cat > "$STUBS/spira-lc" <<'LCSTUB'
 #!/bin/sh
-[ "$1" = content-rows ] && exec "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --id "$3" --status all --limit 0 --json
+if [ "$1 ${2:-}" = "plan items" ]; then
+    ids=; while [ $# -gt 0 ]; do [ "$1" = --ids ] && ids="${2:-}"; shift; done
+    out="$("${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --id "$ids" --status all --limit 0 --json)" || exit $?
+    printf '{"watermark":0,"items":%s}\n' "${out:-[]}"; exit 0
+fi
 if [ "$1" = list ]; then
     printf '['
     sep=''

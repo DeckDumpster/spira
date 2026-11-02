@@ -67,7 +67,7 @@ fn resolved_config() -> &'static spira_config::resolve::Resolved {
 /// called with is NOT in `spira/conf.d` (an ad hoc override with no registry entry, same as
 /// it has always been for the bash function) and keeps the old env/registry/default chain.
 const REGISTERED: &[&str] =
-    &["SPIRA_RUN", "SPIRA_INCIDENT_LABEL", "SPIRA_DB", "SPIRA_WATCHER_INTERVAL_S", "SPIRA_INCIDENT_PRIORITY", "SPIRA_HOME_REPO", "SPIRA_ASK_LABEL", "SPIRA_REPO_MAP", "SPIRA_BD", "SPIRA_CONCIERGE_INBOX"];
+    &["SPIRA_RUN", "SPIRA_INCIDENT_LABEL", "SPIRA_DB", "SPIRA_WATCHER_INTERVAL_S", "SPIRA_INCIDENT_PRIORITY", "SPIRA_HOME_REPO", "SPIRA_ASK_LABEL", "SPIRA_REPO_MAP", "SPIRA_CONCIERGE_INBOX"];
 
 /// The environment, then `spira_config::resolve()`'s in-process answer — never the
 /// reverse, so an explicit env override still wins exactly as it did before this bead.
@@ -499,25 +499,13 @@ fn cmd_drain(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock) -> 
 }
 
 fn cmd_list(env: &Env, _bd: &dyn Bd) -> ExitCode {
-    let db = match env.db.as_deref() {
-        Some(d) => d,
-        None => return require_db(env),
-    };
-    // `bd list` in its OWN default (non-JSON) rendering — the bash's `list` prints bd's
-    // human-readable table for an operator to read. Which incidents are open is each bead's
-    // lifecycle row (sp-jgjvh: incident beads are work beads): the labelled beads come from
-    // bd as content, the unfinished ones (READY/WORKING/REWORK) are kept, and bd renders
-    // those by id. Filters the same four leading-character classes the bash's
-    // `grep -vE '^💡|^warning|^  Fix|^  Or'` drops (bd's own tip/warning chrome).
-    // SPIRA_BD is a registered key (spira/conf.d) — the one source of config (per Ryan
-    // 2026-10-05), through `spira_config::process::cfg`, never a literal default.
-    let bd_bin = match spira_config::process::cfg("SPIRA_BD") {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("incident: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    if env.db.is_none() {
+        return require_db(env);
+    }
+    // bd's human table for an operator to read. Which incidents are open is each bead's
+    // lifecycle row: the labelled beads come from bd as content, the unfinished ones are kept,
+    // and bd renders those by id, minus its tip/warning chrome.
+    let bdq = spira_config::release_env::tool("bdq");
     let lc = match spira_config::lc_state::list().map(spira_config::lc_state::index) {
         Ok(m) => m,
         Err(e) => {
@@ -528,8 +516,8 @@ fn cmd_list(env: &Env, _bd: &dyn Bd) -> ExitCode {
     // Both reads are bounded (spira-lint call-deadline): an operator's `list` waits 5 s at most.
     let labelled = std::process::Command::new("timeout")
         .arg("5")
-        .arg(&bd_bin)
-        .args(["-C", db, "list", "--all", "--limit", "0", "--json", "--label", &env.labels])
+        .arg(&bdq)
+        .args(["list", "--all", "--limit", "0", "--json", "--label", &env.labels])
         .output();
     let ids: Vec<String> = match labelled {
         Ok(out) if out.status.success() => {
@@ -548,7 +536,7 @@ fn cmd_list(env: &Env, _bd: &dyn Bd) -> ExitCode {
         }
     };
     if !ids.is_empty() {
-        match std::process::Command::new("timeout").arg("5").arg(&bd_bin).args(["-C", db, "list", "--all", "--limit", "0", "--id", &ids.join(",")]).output() {
+        match std::process::Command::new("timeout").arg("5").arg(&bdq).args(["list", "--all", "--limit", "0", "--id", &ids.join(",")]).output() {
             Ok(out) => {
                 for line in String::from_utf8_lossy(&out.stdout).lines() {
                     if line.starts_with("💡") || line.starts_with("warning") || line.starts_with("  Fix") || line.starts_with("  Or") {
@@ -632,17 +620,11 @@ fn main() -> ExitCode {
             eprintln!("usage: incident alarm <title> [-|<file>]");
             return ExitCode::from(2);
         };
-        let bd = RealBd::from_env().ok();
-        return cmd_alarm(&env_cfg, bd.as_ref().map(|b| b as &dyn Bd), &RealMailer, &RealClock, title);
+        let bd = RealBd::from_env();
+        return cmd_alarm(&env_cfg, Some(&bd as &dyn Bd), &RealMailer, &RealClock, title);
     }
 
-    let bd = match RealBd::from_env() {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("incident: {e}");
-            return ExitCode::from(1);
-        }
-    };
+    let bd = RealBd::from_env();
     let mailer = RealMailer;
     let clock = RealClock;
     let provenance = env_cfg.provenance();

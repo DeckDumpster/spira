@@ -20,7 +20,6 @@ pub struct Env {
     pub id_prefix: String,
     pub ask_label: String,
     pub db: String,
-    pub bd_bin: String,
     pub bd_conn_retries: u32,
     pub operator_actor: String,
     pub run_dir: PathBuf,
@@ -67,7 +66,6 @@ impl Env {
             id_prefix: cfg("SPIRA_ID_PREFIX")?,
             ask_label: cfg("SPIRA_ASK_LABEL")?,
             db: cfg("SPIRA_DB")?,
-            bd_bin: cfg("SPIRA_BD")?,
             // Not registered yet: read as before until the registration round declares them.
             bd_conn_retries: var_u64("SPIRA_BDQ_CONN_RETRIES", 2) as u32,
             operator_actor: cfg("SPIRA_OPERATOR_ACTOR")?,

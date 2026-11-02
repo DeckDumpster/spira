@@ -194,8 +194,7 @@ struct Config {
     shadow_kinds: Vec<String>,
     effect_passes: u32,
     lock_path: PathBuf,
-    spira_db: String,
-    bd_bin: String,
+    bdq_bin: String,
     queue_dir: PathBuf,
     repo_map: Option<PathBuf>,
     releases_dir: PathBuf,
@@ -255,8 +254,7 @@ impl Config {
                 n => n,
             },
             lock_path: spira_run.join("reconciler.lock"),
-            spira_db: cfg("SPIRA_DB")?,
-            bd_bin: cfg("SPIRA_BD")?,
+            bdq_bin: spira_config::release_env::tool("bdq"),
             queue_dir: PathBuf::from(cfg("SPIRA_QUEUE_DIR")?),
             repo_map: Some(PathBuf::from(cfg("SPIRA_REPO_MAP")?)),
             releases_dir: PathBuf::from(cfg("SPIRA_RELEASES")?),
@@ -1357,20 +1355,20 @@ fn junk_row_ids(rows: &[spira_config::lc_state::Row], store_ids: &HashSet<String
 }
 
 fn store_bead_ids(cfg: &Config) -> Result<HashSet<String>, String> {
-    if cfg.bd_bin.is_empty() {
-        return Err("SPIRA_BD is not set".into());
+    if cfg.bdq_bin.is_empty() {
+        return Err("no bdq to list the store with".into());
     }
-    let out = spira_config::bounded::bounded(&cfg.bd_bin)
-        .args(["-C", &cfg.spira_db, "list", "--all", "--brief", "--json", "--limit", "0"])
+    let out = spira_config::bounded::bounded(&cfg.bdq_bin)
+        .args(["list", "--all", "--brief", "--json", "--limit", "0"])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
-        .map_err(|e| format!("{}: {}", cfg.bd_bin, e))?;
+        .map_err(|e| format!("{}: {}", cfg.bdq_bin, e))?;
     if !out.status.success() {
-        return Err(format!("{} list exited {}", cfg.bd_bin, out.status.code().unwrap_or(-1)));
+        return Err(format!("{} list exited {}", cfg.bdq_bin, out.status.code().unwrap_or(-1)));
     }
     let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout)
-        .map_err(|e| format!("{} list: unparsable json: {}", cfg.bd_bin, e))?;
+        .map_err(|e| format!("{} list: unparsable json: {}", cfg.bdq_bin, e))?;
     let ids: HashSet<String> = rows
         .iter()
         .filter_map(|r| r.get("id").and_then(|v| v.as_str()).map(String::from))
@@ -3006,8 +3004,7 @@ mod tests {
             shadow_kinds: Vec::new(),
             effect_passes: 2,
             lock_path: PathBuf::from("/dev/null"),
-            spira_db: String::new(),
-            bd_bin: String::new(),
+            bdq_bin: String::new(),
             queue_dir: PathBuf::from("/dev/null"),
             repo_map: None,
             releases_dir: PathBuf::new(),

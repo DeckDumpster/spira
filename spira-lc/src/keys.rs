@@ -17,6 +17,8 @@ pub const KNOBS: &str = "knobs/";
 /// Each record's blocker-facing projection, under a prefix of its own so a `lifecycle/` list or
 /// watch sees records and nothing else.
 pub const GATES: &str = "gates/";
+/// The planning watermark: `{seq}`, advanced by `plan stamp` after every planning write.
+pub const PLANNING_WATERMARK: &str = "planning/watermark";
 /// The finalizer that keeps a lifecycle record until the planning plane has closed its bead.
 pub const PLANNING_CLOSED: &str = "planning-closed";
 
@@ -133,6 +135,7 @@ mod tests {
         let prefixes = [
             LIFECYCLE, READINESS, DELIVERIES, ASKS, MENDINGS, MENDS, BATCHES, BATCH_IDS, RUNTIME,
             HISTORY, KNOBS, GATES,
+            PLANNING_WATERMARK,
         ];
         for (i, a) in prefixes.iter().enumerate() {
             for b in &prefixes[i + 1..] {
