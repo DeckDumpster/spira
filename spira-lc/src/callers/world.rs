@@ -99,6 +99,10 @@ impl Machine for &World {
         if args.first().map(String::as_str) == Some("plan") {
             return self.plan_answer(args);
         }
+        // One world holds both planes, so they never skew: the repair sweeps' guard passes.
+        if args.first().map(String::as_str) == Some(crate::skew::CHECK_VERB) {
+            return (0, format!("{}: the planes agree", crate::skew::CHECK_VERB));
+        }
         if args.first().map(String::as_str) == Some("create-bead") {
             let mut read = |ids: &[&str]| {
                 let argv: Vec<String> = ["plan", "items", "--ids", &ids.join(",")].iter().map(|s| s.to_string()).collect();
@@ -154,5 +158,8 @@ impl Bd for &World {
     }
     fn blocking_dependents(&mut self, _id: &str) -> Result<Vec<String>, String> {
         Ok(Vec::new())
+    }
+    fn planning_watermark(&mut self) -> Result<Option<u64>, String> {
+        Ok(None)
     }
 }
