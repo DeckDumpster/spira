@@ -108,7 +108,7 @@ fn old_rows(f: &Fixture, ticks: usize, change: bool) -> Vec<String> {
     let mut child = Command::new("bash")
         .arg(&script)
         .args(["watch", "--interval", "1", "--ticks", &ticks.to_string()])
-        .env_clear()
+        .env_clear().current_dir(f.dir.path())
         .env("PATH", path)
         .env("HOME", f.dir.path())
         .env("SPIRA_TOML", format!("{}:{}", Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira-config/tests/fixtures/complete.toml").display(), f.p("layer.toml").display()))

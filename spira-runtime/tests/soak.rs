@@ -93,7 +93,7 @@ fn store(root: &Path, toml: &Path, socket: &Path, seed: &str) -> Store {
         ];
         let lc = |args: &[String], env: &[(String, String)]| -> (i32, String) {
             // batch-job: one spira-lc admin call against the test's private server; bounded by the test timeout.
-            let o = Command::new(&bin).args(args).env_clear().envs(base.iter().chain(env).map(|(k, v)| (k, v))).stdin(Stdio::null()).output().expect("spira-lc runs");
+            let o = Command::new(&bin).args(args).env_clear().current_dir(root).envs(base.iter().chain(env).map(|(k, v)| (k, v))).stdin(Stdio::null()).output().expect("spira-lc runs");
             (o.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)))
         };
         // batch-job: the test's own disposable sql-server, killed by Proc::drop.
@@ -152,7 +152,7 @@ fn store(root: &Path, toml: &Path, socket: &Path, seed: &str) -> Store {
         let serve = Proc(
             Command::new(&bin)
                 .arg("serve")
-                .env_clear()
+                .env_clear().current_dir(root)
                 .envs(base.iter().map(|(k, v)| (k, v)))
                 .env("SPIRA_LC_USER", "spira_lc")
                 .stdin(Stdio::null())
@@ -275,7 +275,7 @@ fn spira_runtime_serves_for_twenty_beats_against_the_production_store() {
     let mut rt = Proc(
         Command::new(env!("CARGO_BIN_EXE_spira-runtime"))
             .arg("serve")
-            .env_clear()
+            .env_clear().current_dir(&root)
             .env("PATH", std::env::var("PATH").unwrap_or_default())
             .env("HOME", root.join("home"))
             .envs(env)

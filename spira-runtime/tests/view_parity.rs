@@ -237,7 +237,7 @@ impl Oracle<'_> {
         let child = Command::new("bash")
             .arg(&script)
             .arg("watch")
-            .env_clear()
+            .env_clear().current_dir(f.dir.path())
             .env("PATH", format!("{}:/usr/bin:/bin", f.p("bin").display()))
             .env("HOME", f.dir.path())
             .env("TMPDIR", f.p("tmp"))

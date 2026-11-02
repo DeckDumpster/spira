@@ -304,7 +304,7 @@ impl Parity {
         let out = Command::new("bash")
             .arg(root.join("spira/pr-notify.sh"))
             .arg("--show")
-            .env_clear()
+            .env_clear().current_dir(self.dir.path())
             .env("PATH", path)
             .env("HOME", self.dir.path())
             .env("OLD_MAIL", self.p("old-mail"))
