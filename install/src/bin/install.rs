@@ -1936,7 +1936,7 @@ fn populate_phase(dry: bool) -> Result<(), String> {
 /// rounds from there and its round files are removed; refused while one names an open round.
 fn round_records_phase(dry: bool) -> Result<(), String> {
     let on_store = bootstrap::declared("SPIRA_LC_STORE_PATH").is_some()
-        && bootstrap::declared("SPIRA_LC_LIFECYCLE_ON_STORE").is_some_and(|v| v.trim().parse::<bool>() == Ok(true));
+        && bootstrap::declared("SPIRA_LC_LIFECYCLE_ON_STORE").is_some_and(|v| v.trim().parse::<u8>().is_ok_and(|n| n != 0));
     if !on_store {
         skip("the batch machine is not on the control store — the queue's round files are still the record of the open rounds");
         return Ok(());

@@ -1521,7 +1521,8 @@ fn rounds_on_store() -> &'static Result<bool, String> {
         }
         let on = crate::conf::value("SPIRA_LC_LIFECYCLE_ON_STORE")?;
         on.trim()
-            .parse::<bool>()
+            .parse::<u8>()
+            .map(|v| v != 0)
             .map_err(|e| format!("SPIRA_LC_LIFECYCLE_ON_STORE = {on:?} does not parse: {e}"))
     })
 }
