@@ -49,7 +49,9 @@ fn config(root: &Path, name: &str, socket: &str, store: Option<&Path>) -> PathBu
         ("SPIRA_DB", db.to_str().unwrap()),
     ];
     if !store.is_empty() {
+        // The store answers the bead-state verbs, history and event-seq only with this on.
         keys.push(("SPIRA_LC_STORE_PATH", store.as_str()));
+        keys.push(("SPIRA_LC_LIFECYCLE_ON_STORE", "1"));
     }
     spira_config::process::fixture_toml(&dir, &keys)
 }
