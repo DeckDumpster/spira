@@ -16,7 +16,7 @@ const CONTENT_STORE: &str = "CREATE DATABASE sptest_content;\n\
     CREATE TABLE sptest_content.issues (id VARCHAR(64) PRIMARY KEY, title VARCHAR(255), priority INT, issue_type VARCHAR(32), status VARCHAR(32), defer_until DATETIME, created_at DATETIME, updated_at DATETIME);\n\
     CREATE TABLE sptest_content.labels (issue_id VARCHAR(64), label VARCHAR(255));\n\
     CREATE TABLE sptest_content.dependencies (issue_id VARCHAR(64), depends_on_issue_id VARCHAR(64), `type` VARCHAR(32));\n\
-    INSERT INTO sptest_content.issues (id, issue_type, status) VALUES ('sp-land', 'task', 'open'), ('sp-work', 'task', 'open'), ('sp-ready', 'bug', 'open'), ('sp-epic', 'epic', 'open');\n";
+    INSERT INTO sptest_content.issues (id, issue_type, status) VALUES ('sp-land', 'task', 'open'), ('sp-work', 'task', 'open'), ('sp-ready', 'bug', 'open'), ('sp-epic', 'task', 'open');\n";
 
 struct Proc(Child);
 impl Drop for Proc {
@@ -232,6 +232,10 @@ fn seed(f: &Fixture) {
         "USE spira_lifecycle;\nINSERT INTO mending (batch_id, pass, suite, state, failed_at, version) VALUES ('b-1', 1, 'unit', 'WAITING', 100, 0);\n\
          INSERT INTO mend (batch_id, pass, suite, bead_id, from_tip, tip, checked, at) VALUES ('b-1', 1, 'unit', 'sp-land', '{TIP}', 'abc', 'x,y', 101);\n"
     ));
+    // create-bead now refuses an epic (sp-ll5kqx), so sp-epic's record was made while the
+    // planning plane typed it a task; retyping it leaves the record production still holds from
+    // before that refusal, which the import must leave behind.
+    f.sql("UPDATE sptest_content.issues SET issue_type = 'epic' WHERE id = 'sp-epic';\n");
 }
 
 /// The old store's history of `id` as `(seq, event)`.
