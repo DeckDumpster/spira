@@ -1,26 +1,26 @@
-//! `round-controller` — the round controller's binary. Inert: no unit runs it; the world sim's
-//! `round-controller` actor does.
+//! `round-controller` — the round controller's binary. `spira-sift.service` runs its `sifts`
+//! verb; every other verb runs only under the world sim's `round-controller` actor.
 
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use round_controller::cut;
+use round_controller::ledger::{FaultPolicy, StoreLedger};
 use round_controller::liveness::LeaseSettings;
 use round_controller::outcome::StdoutLog;
 use round_controller::pass::pass;
 use round_controller::ports::{Launched, Ports};
 use round_controller::probe::{probe, ThreadSleep};
+use round_controller::real;
 use round_controller::real::child::SysSpawn;
 use round_controller::real::git::RealGit;
 use round_controller::real::launch::{Programs, Systemd, SystemdUnits};
 use round_controller::real::lc::SpiraLc;
-use round_controller::ledger::{FaultPolicy, StoreLedger};
 use round_controller::real::liveness::NoVmRecords;
 use round_controller::real::store::LcStore;
 use round_controller::real::verbs::{Deadlines, RealVerbs};
 use round_controller::real::vm_runner::{Repo, VmEnv, VmRunner};
-use round_controller::real;
 use round_controller::resources::RoundView;
 use round_controller::run::{self, RunEnv};
 use round_controller::switches::RunDir;
@@ -31,6 +31,7 @@ use runtime::ports::{Proc, SeededRng, SysProc};
 const USAGE: &str = "usage: round-controller <verb>
 
   pass                                      visit every registered repo once and run the controller's steps
+  sifts                                     screen every queue repo's SUBMITTED and CERTIFIED beads and record a verdict per tip
   cut --repo <r> --members <id@tip,...>     open one round of exactly these members, refused through the ledger
   run --repo <r> --batch <b> --lease-token <t> --slot <pool>/<n> --slot-token <s>
                                             one pass and its Judge under the round lease and the slot pass handed over
@@ -135,6 +136,13 @@ fn dispatch(args: &[String]) -> i32 {
                 Ok(())
             }),
         ),
+        ["sifts"] => match sifts_verb() {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("round-controller sifts: {e}");
+                1
+            }
+        },
         ["cut", rest @ ..] => match cut::parse_explicit(rest) {
             Err(e) => {
                 eprintln!("round-controller cut: {e}\n{USAGE}");
@@ -183,6 +191,11 @@ fn dispatch(args: &[String]) -> i32 {
             2
         }
     }
+}
+
+fn sifts_verb() -> Result<(), String> {
+    spira_config::release_env::ensure_release_path();
+    round_controller::sifts::for_process(&mut std::io::stdout().lock())
 }
 
 fn run_probe(secs: &str, out: &str) -> Result<(), String> {

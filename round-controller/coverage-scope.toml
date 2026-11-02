@@ -93,3 +93,9 @@ functions = ["pass_with"]
 [[scope]]
 path = "round-controller/src/schedule.rs"
 functions = ["schedule", "start"]
+
+# The Sift: which repositories are screened, the pool a screen judges, what a pass records, and
+# every verdict the screen reaches written to the store, the bead and the Concierge's inbox.
+[[scope]]
+path = "round-controller/src/sifts.rs"
+functions = ["sifts", "sift_one", "sift_repo", "certified_pool", "read_pool", "barred_ids", "drop_stacked_on_barred", "Live::pass", "Live::tell", "lc_sifted", "lc_gate_red", "fetch_base"]

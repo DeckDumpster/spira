@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tier: T2
 # requires: testenv
-# covers: spira/sim/** spira/sim-scenario-lib.sh lifecycle/src/** spira-lc/src/** queue/src/** round-vm/src/** batcher-cut/src/**
+# covers: round-controller/src/sifts.rs spira/sim/** spira/sim-scenario-lib.sh lifecycle/src/** spira-lc/src/** queue/src/** round-vm/src/** batcher-cut/src/**
 # lane: sim
 # pids: 400
 #

@@ -1,6 +1,6 @@
 //! round-controller — a round is a resource with one owner and one store. Every effect goes
 //! through [`ports::Ports`], so [`pass::pass`] runs the same code against the real queue and
-//! against the scenario harness in [`sim`]. Inert: nothing installs it (DESIGN.md).
+//! against the scenario harness in [`sim`]. Only [`sifts`] is installed (DESIGN.md).
 
 pub mod clear;
 pub mod cut;
@@ -23,6 +23,7 @@ pub mod resources;
 pub mod run;
 pub mod schedule;
 pub mod section;
+pub mod sifts;
 #[cfg(feature = "sim")]
 pub mod sim;
 pub mod slots;

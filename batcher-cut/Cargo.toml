@@ -23,6 +23,7 @@ serde_json = "1"
 
 
 [dev-dependencies]
+round-controller = { path = "../round-controller" }
 testkit = { path = "../testkit" }
 
 [profile.release]

@@ -2,7 +2,7 @@
 After=lc-serve.service
 Wants=lc-serve.service
 Description=Spira sift — screen the proto-round (SUBMITTED and CERTIFIED beads) ahead of rounds and record a verdict per tip
-Documentation=file://@SPIRA_PROD_ROOT@/batcher-cut/DESIGN.md
+Documentation=file://@SPIRA_PROD_ROOT@/round-controller/DESIGN.md
 After=default.target
 
 [Service]
@@ -16,7 +16,7 @@ Environment=SPIRA_DB=@SPIRA_DB@
 Type=oneshot
 CPUQuota=50%
 Nice=10
-ExecStart=@SPIRA_PROD_ROOT@/bin/batcher sifts
+ExecStart=@SPIRA_PROD_ROOT@/bin/round-controller sifts
 TimeoutStartSec=900
 StandardOutput=append:@SPIRA_RUN@/sift.log
 StandardError=append:@SPIRA_RUN@/sift.log

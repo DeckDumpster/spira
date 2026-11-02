@@ -2,7 +2,7 @@
 name = "round-controller"
 version = "0.1.0"
 edition = "2021"
-description = "round-controller — rounds as resources with one owner and one store: injected ports, typed stamped outcomes, and the scenario harness its every branch is driven through. Inert: nothing installs it."
+description = "round-controller — rounds as resources with one owner and one store: injected ports, typed stamped outcomes, and the scenario harness its every branch is driven through. Only its sifts verb is installed."
 
 [lib]
 name = "round_controller"
@@ -19,6 +19,7 @@ batcher = { path = "../batcher" }
 lifecycle = { path = "../lifecycle" }
 migration-numbers = { path = "../migration-numbers" }
 runtime = { path = "../runtime" }
+sift = { path = "../sift" }
 spira-config = { path = "../spira-config" }
 spira-desired-state = { path = "../desired-state" }
 spira-lc = { path = "../spira-lc", optional = true }
