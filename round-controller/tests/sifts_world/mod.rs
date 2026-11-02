@@ -20,13 +20,17 @@ case "$1 $2" in
   "list --state") cat "$d/lc/rows.json" ;;
   "list --ids") printf '[]' ;;
   "show "*) [ -f "$d/lc/show/$2.json" ] || { echo "no bead $2" >&2; exit 1; }; cat "$d/lc/show/$2.json" ;;
-  "content-rows --full")
-    printf '['; sep=''
-    for i in ${4//,/ }; do
-      [ -f "$d/lc/content/$i.json" ] && { printf '%s' "$sep"; cat "$d/lc/content/$i.json"; sep=','; }
-    done
-    printf ']' ;;
-  "content-rows --external-contains") printf '[]' ;;
+  "plan items")
+    case "$3 $4" in
+      "--full --ids")
+        printf '{"watermark":0,"items":['; sep=''
+        for i in ${5//,/ }; do
+          [ -f "$d/lc/content/$i.json" ] && { printf '%s' "$sep"; cat "$d/lc/content/$i.json"; sep=','; }
+        done
+        printf ']}' ;;
+      "--external-contains "*) printf '{"watermark":0,"items":[]}' ;;
+      *) echo "stub spira-lc: unexpected $*" >&2; exit 2 ;;
+    esac ;;
   "event bead") printf 'spira-lc %s\n' "$*" >> "$d/effects.log"; printf '{}' ;;
   "close "*) printf 'spira-lc %s <<< %s\n' "$*" "$(/bin/cat)" >> "$d/effects.log" ;;
   *) echo "stub spira-lc: unexpected $*" >&2; exit 2 ;;
