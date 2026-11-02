@@ -10,8 +10,9 @@ use runtime::{EffectSpec, Engine, Executor, Journal, MemJournal, Outcome};
 use spira_runtime::watchers::reconciler_flow::{ReconcilerFlow, MAIL, OBSERVE, STATE, STATUS};
 use spira_runtime::Effects;
 
-mod common;
-use common::flow::*;
+#[path = "common/flow.rs"]
+mod flow;
+use flow::*;
 
 /// Counts each effect the runtime asks for before running it.
 struct Counting {

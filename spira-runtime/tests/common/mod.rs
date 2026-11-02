@@ -1,5 +1,3 @@
-pub mod flow;
-
 use spira_runtime::Settings;
 
 pub fn settings(url: &str, run: &std::path::Path) -> Settings {

@@ -16,8 +16,9 @@ use runtime::{Engine, Executor, Journal, MemJournal, Outcome};
 use spira_runtime::watchers::reconciler_flow::{Carry, STATE};
 use spira_runtime::Effects;
 
-mod common;
-use common::flow::*;
+#[path = "common/flow.rs"]
+mod flow;
+use flow::*;
 
 fn debug_dir() -> PathBuf {
     let exe = std::env::current_exe().unwrap();
