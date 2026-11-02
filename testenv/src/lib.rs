@@ -23,6 +23,7 @@ pub mod resume;
 pub mod record;
 pub mod run;
 pub mod runtime;
+pub mod sandbox;
 pub mod schedule;
 pub mod selection;
 pub mod settings;

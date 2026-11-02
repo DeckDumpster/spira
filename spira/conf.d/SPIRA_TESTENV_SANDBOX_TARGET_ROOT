@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=testenv
+DOC=WHERE THE UNIT SANDBOX KEEPS EACH BRANCH'S CARGO TARGET, one directory per branch, named as the container's target volume is. Empty refuses a sandbox run rather than guessing a disk.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHERE THE UNIT SANDBOX KEEPS EACH BRANCH'S CARGO TARGET (sp-yx0yu9): one directory per
+    # branch, named as the container's target volume is, kept between runs so a branch's
+    # dependencies compile once. Put it on a disk that can take build writes. Empty refuses
+    # a sandbox run (naming this key) rather than guessing a disk.
+    : "${SPIRA_TESTENV_SANDBOX_TARGET_ROOT:=}"
+SPIRA_CONF_DEFAULT_EOF

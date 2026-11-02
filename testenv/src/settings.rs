@@ -86,6 +86,11 @@ pub struct Settings {
     /// this much MemAvailable; otherwise the run is refused (`scratch-short`).
     pub scratch_min_free_mib: u64,
     pub scratch_min_mem_mib: u64,
+    /// sp-yx0yu9: what a filtered unit run runs in (`SPIRA_TESTENV_UNIT_RUNNER`).
+    pub unit_runner: crate::sandbox::Runner,
+    /// sp-yx0yu9: where the sandbox keeps each branch's cargo target
+    /// (`SPIRA_TESTENV_SANDBOX_TARGET_ROOT`); empty refuses a sandbox run.
+    pub sandbox_target_root: String,
     /// DESIGN.md §11.2: warm slots tried under `--deadline` (0 = no warm path).
     pub warm_slots: usize,
     /// DESIGN.md D9: setup's share of `--deadline`, percent, clamped to 10..=90.
@@ -211,6 +216,9 @@ impl Settings {
                 .get("GITHUB_RUN_ID")
                 .or_else(|| src.get("SPIRA_BATCH_RUN_ID"))
                 .unwrap_or_else(|| format!("local-{now}")),
+            unit_runner: crate::sandbox::Runner::parse(&cfg("SPIRA_TESTENV_UNIT_RUNNER")?)
+                .map_err(|e| format!("SPIRA_TESTENV_UNIT_RUNNER {e}"))?,
+            sandbox_target_root: cfg("SPIRA_TESTENV_SANDBOX_TARGET_ROOT")?,
             scratch_slots: src.num("SPIRA_TESTENV_SCRATCH_SLOTS").unwrap_or(4),
             scratch_min_free_mib: src
                 .num("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB")
