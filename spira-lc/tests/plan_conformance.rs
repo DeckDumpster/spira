@@ -107,7 +107,8 @@ fn admin_env(empty: &Path) -> Vec<(&'static str, &str)> {
 }
 
 /// A Dolt server holding a fresh `bd init` store and the lifecycle store, and `spira-lc serve`
-/// over both; `control` also opens a state store, so the watermark is the control plane's key.
+/// over both; `control` also opens a state store, so the watermark is the control plane's key
+/// and the bead-state verbs are its too.
 fn fixture(tag: &str, control: bool) -> Fixture {
     let real_bd = on_path("bd");
     let dolt = on_path("dolt");
@@ -139,7 +140,10 @@ fn fixture(tag: &str, control: bool) -> Fixture {
         ("SPIRA_LC_PASSWORD_FILE", cred.to_str().unwrap().to_string()),
     ];
     if control {
+        // The store serves the bead-state verbs only with the lifecycle key on as well, so
+        // `list` and `create-bead` here are the control plane's, joined to bd's planning fields.
         declare.push(("SPIRA_LC_STORE_PATH", store.to_str().unwrap().to_string()));
+        declare.push(("SPIRA_LC_LIFECYCLE_ON_STORE", "1".to_string()));
     }
     let declare: Vec<(&str, &str)> = declare.iter().map(|(k, v)| (*k, v.as_str())).collect();
     let toml = spira_config::process::fixture_toml(&root, &declare);
