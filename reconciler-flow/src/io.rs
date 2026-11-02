@@ -275,7 +275,7 @@ pub fn slots_samples_in_process(root: &Path) -> Result<(crate::core::SlotsSample
         Err(f) => return Err(f.message),
     };
     let mut stamped: Vec<(u64, usize, &Value)> = rows.iter().enumerate().filter_map(|(i, r)| Some((tsd::query::ts_of(r)?, i, r))).collect();
-    stamped.sort_by(|a, b| (b.0, b.1).cmp(&(a.0, a.1)));
+    stamped.sort_by_key(|a| std::cmp::Reverse((a.0, a.1)));
     if stamped.len() < 2 {
         return Err(format!("{}: fewer than two samples yet", path.display()));
     }
