@@ -8,7 +8,7 @@ use crate::batch::{self, now_epoch, BatchCfg, Hooks};
 use crate::build::{artifacts_dir, profile_dir, BuildError, Builder};
 use crate::cap;
 use crate::cli::{Invocation, RunArgs, SuitesArg};
-use crate::fixture::{Fixtures, Session, SetupFault, WORKSPACE};
+use crate::fixture::{Fixtures, Provision, Session, SetupFault, WORKSPACE};
 use crate::foreign;
 use crate::load;
 use crate::phase::{RunEvent, RunLog};
@@ -1714,13 +1714,39 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         deps,
     };
 
-    let sim_wanted = args.mode == Mode::Parallel
-        && active.iter().any(|n| {
-            schedule::is_sim(&Job {
-                lane: headers[n].lane.clone(),
-                ..Job::new(n, headers[n].exclusive.clone())
-            })
-        });
+    let in_sim = |n: &&String| {
+        schedule::is_sim(&Job {
+            lane: headers[*n].lane.clone(),
+            ..Job::new(n, headers[*n].exclusive.clone())
+        })
+    };
+    let sim_wanted = args.mode == Mode::Parallel && active.iter().any(|n| in_sim(&n));
+    // sp-vkmgmx: only a `# requires: testenv` suite uses the instance's systemd user units, so
+    // a session whose suites declare none is configured (every suite's SPIRA_TOML) and never
+    // installed. The unit tier is not a corpus suite and declares nothing, so it keeps its
+    // install. A sim-lane suite runs in the sim session when there is one (split_sim, below),
+    // so only the suites left in main decide main's install.
+    let main_provision = Provision::for_batch(
+        !s.skip_install && !(unit_tests_only && prebuilt.is_none()),
+        unit_batch
+            || active
+                .iter()
+                .filter(|n| !(sim_wanted && in_sim(n)))
+                .any(|n| headers[n].needs_install()),
+    );
+    let sim_provision = Provision::for_batch(
+        !s.skip_install,
+        active.iter().filter(in_sim).any(|n| headers[n].needs_install()),
+    );
+    deps.log(&format!(
+        "setup: main session {}{}",
+        main_provision.describe(),
+        if sim_wanted {
+            format!(", sim session {}", sim_provision.describe())
+        } else {
+            String::new()
+        }
+    ));
     let sim_session = sim_wanted.then(|| {
         let mut ss = Session::new(deps.rt, &format!("{instance}-sim"), &pdir);
         ss.bins = session.bins.clone();
@@ -1769,7 +1795,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             return Err(Finish::fault(f.rc(), "container-up", 0));
         }
         let sim_setup = ss
-            .setup(&runner, !s.skip_install, std::iter::empty(), &|m| {
+            .setup(&runner, sim_provision, std::iter::empty(), &|m| {
                 sim_steps.lock().unwrap_or_else(|e| e.into_inner()).push(m.to_string());
                 sim_log(m)
             })
@@ -1810,7 +1836,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         let setup_res = up.is_ok().then(|| {
             session.setup(
                 &runner,
-                !s.skip_install && !(unit_tests_only && prebuilt.is_none()),
+                main_provision,
                 active.iter().flat_map(|n| headers[n].checkable_requires()),
                 &|m| {
                     setup_log.lock().unwrap_or_else(|e| e.into_inner()).push(m.to_string());
