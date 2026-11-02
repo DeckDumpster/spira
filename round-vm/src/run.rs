@@ -2770,9 +2770,9 @@ mod tests {
     fn the_round_runs_the_bare_host_suites_on_the_vm_after_the_corpus() {
         let corpus = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         let bare = REMOTE_SCRIPT.find("spira/bare-suites.sh").unwrap();
-        let unit_wait = REMOTE_SCRIPT.find("wait \"$unit_pid\"").unwrap();
-        assert!(bare < corpus && corpus < unit_wait, "the bare lane starts before the corpus and is waited on after it");
-        let lane = &REMOTE_SCRIPT[bare..unit_wait];
+        let integ_wait = REMOTE_SCRIPT.find("wait \"$integ_pid\"").unwrap();
+        assert!(bare < corpus && corpus < integ_wait, "the bare lane starts before the corpus and is waited on after it");
+        let lane = &REMOTE_SCRIPT[bare..integ_wait];
         assert!(REMOTE_SCRIPT[bare..corpus].contains("&\nbare_pid=$!"), "the bare lane runs in the background beside the corpus");
         let gate = REMOTE_SCRIPT.find("bare_after_setup()").unwrap();
         let call = REMOTE_SCRIPT.find("bare_after_setup \"${bare_sel[@]}\"").unwrap();
