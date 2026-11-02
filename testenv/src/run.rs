@@ -1696,10 +1696,15 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     // sp-vkmgmx: only a `# requires: testenv` suite uses the instance's systemd user units, so
     // a session whose suites declare none is configured (every suite's SPIRA_TOML) and never
     // installed. The unit tier is not a corpus suite and declares nothing, so it keeps its
-    // install.
+    // install. A sim-lane suite runs in the sim session when there is one (split_sim, below),
+    // so only the suites left in main decide main's install.
     let main_provision = Provision::for_batch(
         !s.skip_install && !(unit_tests_only && prebuilt.is_none()),
-        unit_batch || active.iter().any(|n| headers[n].needs_install()),
+        unit_batch
+            || active
+                .iter()
+                .filter(|n| !(sim_wanted && in_sim(n)))
+                .any(|n| headers[n].needs_install()),
     );
     let sim_provision = Provision::for_batch(
         !s.skip_install,

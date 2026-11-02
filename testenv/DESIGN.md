@@ -504,9 +504,10 @@ uid 1001, `XDG_RUNTIME_DIR=/run/user/1001`, `CARGO_HOME=/var/spira/cargo`,
   CPUQuota on its unit hid the crash loop from install's is-active check until quotas were
   retired, sp-b4oct); `systemd/install.sh <instance>`
   with `SPIRA_PROD=/workspace/spira SPIRA_INSTALL_FORCE=1 SPIRA_RUN=/tmp/spira-batch-<i>`. Any failure → rc 3.
-  Configure runs for every batch that is not skipping the install; the suspends and the install run only for a session one of
-  whose selected suites declares `# requires: testenv` (or the unit tier), since only those
-  use the instance's systemd user units (sp-vkmgmx). The run log's `setup:` line says which.
+  Configure runs unless the batch is stage-only (`SPIRA_BATCH_SKIP_INSTALL`, or a filtered
+  unit run with nothing prebuilt); the suspends and the install run only for a session that
+  holds the unit tier or a suite declaring `# requires: testenv`, since only those use the
+  instance's systemd user units (sp-vkmgmx). The run log's `setup:` line says which.
 * **Requirements**: each distinct `# requires:` token (bar `testenv`) is checked once with
   `command -v` inside the container.
 * **Test databases (sp-34ru2, DESIGN-testdb.md §2.4)**: the server-mode template is built

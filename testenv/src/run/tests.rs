@@ -1092,6 +1092,28 @@ fn a_batch_with_a_requires_testenv_suite_configures_suspends_and_installs() {
 }
 
 #[test]
+fn only_the_session_running_the_requires_testenv_suite_installs() {
+    let w = World::new("provision-split");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(w.run(&rt, &b, &["--suites", "test-a.sh,test-st.sh", "topic"], "", &w.root), 0);
+    let execs = rt.execs.lock().unwrap();
+    let installed_in = |sim: bool| {
+        execs.iter().any(|r| {
+            r.container.ends_with("-sim") == sim && r.argv.first().is_some_and(|a| a.ends_with("/bin/units-install"))
+        })
+    };
+    let configured_in = |sim: bool| {
+        execs.iter().any(|r| r.container.ends_with("-sim") == sim && r.env_value("CONFIGURE_OUT").is_some())
+    };
+    assert!(installed_in(true), "the sim session runs test-st.sh and installs");
+    assert!(!installed_in(false), "main runs only test-a.sh and does not install");
+    assert!(configured_in(true) && configured_in(false), "both sessions are configured");
+    assert!(w.has_line(|l| l.contains("setup: main session stages and configures, no install")
+        && l.contains("sim session stages, configures and installs")));
+}
+
+#[test]
 fn a_clean_checkout_of_the_branch_is_built_in_place() {
     let w = World::new("inplace");
     sh(&w.repo, "git checkout -q topic");

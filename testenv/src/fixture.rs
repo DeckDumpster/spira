@@ -49,10 +49,10 @@ pub enum Provision {
 }
 
 impl Provision {
-    /// The level for a batch: `Stage` when provisioning is off (`provision` false), else
-    /// `Install` when a selected suite needs the installed instance, else `Configure`.
-    pub fn for_batch(provision: bool, needs_install: bool) -> Self {
-        match (provision, needs_install) {
+    /// The level for a batch: `Stage` when `provisioning` is off, else `Install` when a
+    /// selected suite needs the installed instance, else `Configure`.
+    pub fn for_batch(provisioning: bool, needs_install: bool) -> Self {
+        match (provisioning, needs_install) {
             (false, _) => Provision::Stage,
             (true, true) => Provision::Install,
             (true, false) => Provision::Configure,
