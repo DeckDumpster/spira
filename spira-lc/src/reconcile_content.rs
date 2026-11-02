@@ -28,7 +28,7 @@ fn plan(m: &mut dyn Machine, args: &[&str]) -> Result<Vec<Value>, String> {
     argv.extend(args.iter().map(|a| a.to_string()));
     let (rc, out) = m.call(&argv);
     if rc != 0 {
-        return Err(format!("the planning plane is unreadable: {}", out.trim()));
+        return Err(out.trim().to_string());
     }
     match serde_json::from_str::<Value>(out.trim()).ok().and_then(|mut v| v.get_mut("items").map(Value::take)) {
         Some(Value::Array(items)) => Ok(items),
