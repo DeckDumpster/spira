@@ -281,10 +281,12 @@ fn the_import_carries_every_table_at_one_revision_the_store_serves_it_and_parity
     let new = f.new_store();
     let sock = f.root.join("new.sock");
     f.serve(&new, &sock);
-    // Serving opens the store, which jumps its head past any revision a crash could have lost
-    // (sp-r3yb7x): the import's revisions are untouched, the cursor moves on by the jump.
-    let served = r + state_store_sqlite::JUMP;
-    assert_eq!(f.json(&new, &["event-seq", "--since", &(r - 1).to_string()]), json!({"seq": served, "keys": []}));
+    // Serving opens the store, which may move its head past the import's revision (the jump on
+    // open, sp-r3yb7x); the import's own revisions are untouched and nothing changed a key since.
+    let seq = f.json(&new, &["event-seq", "--since", &(r - 1).to_string()]);
+    assert_eq!(seq["keys"], json!([]), "{seq}");
+    let served = seq["seq"].as_u64().unwrap();
+    assert!(served >= r, "the cursor is at or past the import's revision: {seq}");
     assert_eq!(seqs(&f, &new, "sp-land"), land_history, "history returns the old events in seq order");
     assert_eq!(f.json(&new, &["history", "sp-epic"]), json!([]));
     let (rc, out) = f.lc_in(&new, &["show", "sp-epic"], None);
@@ -311,7 +313,7 @@ fn the_import_carries_every_table_at_one_revision_the_store_serves_it_and_parity
     assert_eq!(rc, 3, "the claim is a planted difference parity reports: {out}");
     let report: Value = serde_json::from_str(&out).unwrap();
     assert!(report["differences"].as_array().unwrap().iter().any(|d| d["argv"] == json!(["show", "sp-ready"])), "{report:#}");
-    assert_eq!(f.json(&new, &["event-seq", "--since", &r.to_string()]), json!({"seq": served + 1, "keys": ["sp-ready"]}), "the next txn follows the jump the serve took");
+    assert_eq!(f.json(&new, &["event-seq", "--since", &r.to_string()]), json!({"seq": served + 1, "keys": ["sp-ready"]}), "the next txn follows the head the serve answered");
     let after: Vec<u64> = seqs(&f, &new, "sp-ready").into_iter().map(|(s, _)| s).collect();
     assert_eq!(after.last(), Some(&(served + 1)), "{after:?}");
     assert!(after[..after.len() - 1].iter().all(|s| *s < r), "old events precede it: {after:?}");

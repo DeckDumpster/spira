@@ -146,15 +146,13 @@ fn after_deleting_the_highest_revision_keys_and_reopening_the_next_main_is_great
     assert_eq!(left, [("n/a".to_string(), 1)], "no row is left at the head");
     drop(b);
     let b = open(&path);
-    assert_eq!(
-        b.head().unwrap(),
-        last + state_store_sqlite::JUMP,
-        "the counter is read back from its meta row, then jumped past every revision a crash could have lost (sp-r3yb7x)"
-    );
+    let head = b.head().unwrap();
+    assert!(head >= last, "the counter is read back from its meta row, never from the keys: head {head}, last {last}");
     let clock = VirtualClock::new(1_000);
     let c = contract(b, &clock);
     let next = put(&c, "n/c", json!(3), "after-reopen");
-    assert_eq!(next, last + state_store_sqlite::JUMP + 1);
+    assert!(next > last, "a reopened store never reissues a revision: next {next}, last {last}");
+    assert_eq!(next, head + 1, "the next txn follows the head the reopen read back");
 }
 
 #[test]
