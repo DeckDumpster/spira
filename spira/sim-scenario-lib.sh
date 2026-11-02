@@ -4,13 +4,10 @@
 
 tl_config SPIRA_TEST_CASE_DEADLINE=180   # one case is a whole sim world
 
-sim_fixture_repo() {  # sim_fixture_repo <dir> — the harness tree as a one-commit repo
-    local repo="$1" here
+sim_fixture_repo() {  # sim_fixture_repo <dir> — the harness tree's tracked files as a one-commit repo
+    local here
     here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-    mkdir -p "$repo"
-    tar -C "$here/.." --exclude=./target --exclude=./.git -cf - . | tar -xf - -C "$repo"
-    git -C "$repo" init -q --initial-branch=main && git -C "$repo" add -A \
-        && git -C "$repo" -c user.name=t -c user.email=t@t.invalid commit -q -m seed || bail "fixture repo commit failed"
+    "$SPIRA_RELEASE/bin/sim" world fixture "$here/.." "$1" || bail "fixture repo failed"
 }
 
 sim_failed_commands() {  # sim_failed_commands <run output> — the output of every kept-world command that exited neither 0 nor 3

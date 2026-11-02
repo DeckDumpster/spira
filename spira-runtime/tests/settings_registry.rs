@@ -8,7 +8,7 @@ fn check_config_resolves_every_setting_against_the_shipped_registry() {
     let env = spira_config::process::fixture_metrics_env(&dir, "", &[("SPIRA_LC_SOCKET", &sock)]);
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_spira-runtime"))
         .arg("check-config")
-        .env_clear()
+        .env_clear().current_dir(dir.path())
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .envs(env)
         .output()
@@ -21,7 +21,7 @@ fn check_config_resolves_every_setting_against_the_shipped_registry() {
 fn runtime(verb: &str, release: &std::path::Path, toml: &std::path::Path) -> std::process::Output {
     std::process::Command::new(env!("CARGO_BIN_EXE_spira-runtime"))
         .arg(verb)
-        .env_clear()
+        .env_clear().current_dir(release)
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("SPIRA_RELEASE", release)
         .env("SPIRA_TOML", toml)

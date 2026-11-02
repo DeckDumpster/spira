@@ -87,7 +87,7 @@ impl Fixture {
                 let mut line = String::new();
                 BufReader::new(&stream).read_line(&mut line).unwrap();
                 let argv: Vec<String> = serde_json::from_str(&line).unwrap();
-                let out = Command::new(debug_dir().join("spira-lc")).args(&argv).env_clear().env("PATH", &path).env("HOME", &root).env("SPIRA_TOML", &toml).env("SPIRA_HOME", &home).env("SPIRA_REPO", &repo).output().unwrap();
+                let out = Command::new(debug_dir().join("spira-lc")).args(&argv).env_clear().current_dir(&root).env("PATH", &path).env("HOME", &root).env("SPIRA_TOML", &toml).env("SPIRA_HOME", &home).env("SPIRA_REPO", &repo).output().unwrap();
                 let body = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
                 let mut w = &stream;
                 writeln!(w, "{{\"exit_code\": {}, \"len\": {}}}", out.status.code().unwrap(), body.len()).unwrap();
@@ -135,7 +135,7 @@ fn old_rows(f: &Fixture, s: &Scenario) -> Vec<String> {
     let mut child = Command::new("bash")
         .arg(&script)
         .args(["watch", "--interval", "1", "--ticks", &s.ticks.to_string()])
-        .env_clear()
+        .env_clear().current_dir(f.dir.path())
         .env("PATH", path)
         .env("HOME", f.dir.path())
         .env("SPIRA_TOML", format!("{}:{}", Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/testlib/complete.toml").display(), f.p("layer.toml").display()))

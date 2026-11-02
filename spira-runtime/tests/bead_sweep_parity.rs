@@ -137,7 +137,7 @@ fn old_rows(f: &Fixture, ticks: usize) -> Vec<String> {
     let status = Command::new("bash")
         .arg(&script)
         .args(["watch", "--interval", "1", "--ticks", &ticks.to_string()])
-        .env_clear()
+        .env_clear().current_dir(f.dir.path())
         .env("PATH", path)
         .env("HOME", f.dir.path())
         .env("BEAD_SWEEP_HOLD_MIN", "30")

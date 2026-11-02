@@ -77,7 +77,7 @@ fn serve(root: &Path, socket: &Path) -> (Proc, Proc, PathBuf) {
         ];
         let lc = |args: &[String], env: &[(&str, &str)]| -> (i32, String) {
             // batch-job: one spira-lc admin call against the test's private server.
-            let o = Command::new(&bin).args(args).env_clear().envs(base.iter().map(|(k, v)| (k, v))).envs(env.iter().copied()).stdin(Stdio::null()).output().expect("spira-lc runs");
+            let o = Command::new(&bin).args(args).env_clear().current_dir(root).envs(base.iter().map(|(k, v)| (k, v))).envs(env.iter().copied()).stdin(Stdio::null()).output().expect("spira-lc runs");
             (o.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)))
         };
         // batch-job: the test's own disposable sql-server, killed by Proc::drop.
@@ -127,7 +127,7 @@ fn serve(root: &Path, socket: &Path) -> (Proc, Proc, PathBuf) {
         }
         let log = fs::File::create(root.join("serve.log")).unwrap();
         // batch-job: the test's own spira-lc serve, killed by Proc::drop.
-        let serve = Proc(Command::new(&bin).arg("serve").env_clear().envs(base.iter().map(|(k, v)| (k, v))).env("SPIRA_LC_USER", "spira_lc").stdin(Stdio::null()).stdout(log.try_clone().unwrap()).stderr(log).spawn().unwrap());
+        let serve = Proc(Command::new(&bin).arg("serve").env_clear().current_dir(root).envs(base.iter().map(|(k, v)| (k, v))).env("SPIRA_LC_USER", "spira_lc").stdin(Stdio::null()).stdout(log.try_clone().unwrap()).stderr(log).spawn().unwrap());
         while Instant::now() < deadline && runtime::socket::lc_call(socket, &["journal", "cursor"]).is_err() { // clock-safe: caps the wait for serve to answer
             std::thread::sleep(Duration::from_millis(100)); // clock-safe: poll interval inside that cap
         }
@@ -144,7 +144,7 @@ fn the_open_asks_are_listed_through_a_real_lifecycle_socket() {
     let (_server, _serve, toml) = serve(t.path(), &socket);
     for args in [&["create-bead", "sp-held"][..], &["hold", "sp-held", "ask", "waiting on an answer", "fixture"]] {
         // batch-job: one spira-lc call through the serve under test.
-        let o = Command::new(spira_lc_bin()).args(args).env_clear().env("SPIRA_TOML", &toml).env("SPIRA_HOME", Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira")).stdin(Stdio::null()).output().unwrap();
+        let o = Command::new(spira_lc_bin()).args(args).env_clear().current_dir(t.path()).env("SPIRA_TOML", &toml).env("SPIRA_HOME", Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira")).stdin(Stdio::null()).output().unwrap();
         assert!(o.status.success(), "{args:?}: {}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
     }
     let wiki = t.path().join("wiki");

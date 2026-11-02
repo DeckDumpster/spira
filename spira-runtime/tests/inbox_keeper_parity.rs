@@ -79,7 +79,7 @@ fn old_wakes(s: &Scenario) -> Vec<String> {
     let mut child = Command::new("timeout")
         .args(["300", "bash"])
         .arg(&script)
-        .env_clear()
+        .env_clear().current_dir(d.path())
         .env("PATH", path)
         .env("HOME", d.path())
         .env("SPIRA_TOML", format!("{}:{}", Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/testlib/complete.toml").display(), d.path().join("layer.toml").display()))

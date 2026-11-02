@@ -35,10 +35,7 @@ RUN_LIMIT=280
 SCENARIO="$HERE/sim/scenarios/happy-path.toml"
 
 REPO="$T/repo"
-mkdir -p "$REPO"
-tar -C "$HERE/.." --exclude=./target --exclude=./.git -cf - . | tar -xf - -C "$REPO"
-git -C "$REPO" init -q --initial-branch=main && git -C "$REPO" add -A \
-    && git -C "$REPO" -c user.name=t -c user.email=t@t.invalid commit -q -m seed || bail "fixture repo commit failed"
+"$SIM" world fixture "$HERE/.." "$REPO" || bail "fixture repo failed"
 
 NOLOC=(-u SPIRA_RUN -u SPIRA_DB -u SPIRA_LC_PASSWORD_FILE -u SPIRA_LC_SOCKET -u SPIRA_LC_HOST -u SPIRA_LC_PORT -u SPIRA_LC_USER -u SPIRA_HOME -u SPIRA_WORK_BEAD_ID)
 
