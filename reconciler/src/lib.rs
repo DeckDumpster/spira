@@ -2429,6 +2429,14 @@ fn stamp_pass(cfg: &Config) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seams_refuse_naming_spira_release_when_it_is_unset_or_lacks_a_tool() {
+        let e = Seams::from_release(None).err().unwrap();
+        assert!(e.contains("SPIRA_RELEASE is not set"), "{e}");
+        let e = Seams::from_release(Some("/nonexistent-release")).err().unwrap();
+        assert!(e.contains("forge is not in SPIRA_RELEASE"), "{e}");
+    }
     use std::time::SystemTime;
 
     fn scratch_dir(name: &str) -> testkit::TempDir {

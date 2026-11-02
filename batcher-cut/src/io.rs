@@ -2930,3 +2930,17 @@ mod round_status_tests {
         assert_eq!(members_of_batch(STATUS, "gone"), None);
     }
 }
+
+#[cfg(test)]
+mod forge_release_tests {
+    use super::*;
+
+    #[test]
+    fn a_bare_forge_without_spira_release_refuses_naming_the_key() {
+        let repo = Repo { name: "r".into(), path: PathBuf::from("/tmp/r"), base: "local/main".into(), forge: PathBuf::from("forge"), land: Land::Forge };
+        let e = forge_pr_arm_on(&repo, "1", None).unwrap_err();
+        assert!(e.contains("SPIRA_RELEASE is not set"), "{e}");
+        let e = forge_pr_arm_on(&repo, "1", Some("/nonexistent-release")).unwrap_err();
+        assert!(e.contains("forge is not in SPIRA_RELEASE"), "{e}");
+    }
+}

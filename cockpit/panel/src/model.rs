@@ -914,11 +914,9 @@ mod tests {
 
     #[test]
     fn rule_sh_is_the_release_s_own_and_never_searched_for() {
-        let t = testkit::TempDir::new("panel-rule-sh");
-        let rel = t.path().display().to_string();
-        assert!(rule_sh_in(Some(&rel)).unwrap_err().contains("has no rule.sh"));
-        testkit::write_exe(t.join("rule.sh"), "");
-        assert_eq!(rule_sh_in(Some(&rel)).unwrap(), format!("{rel}/rule.sh"));
+        assert!(rule_sh_in(Some("/nonexistent-release")).unwrap_err().contains("has no rule.sh"));
+        let tree = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+        assert_eq!(rule_sh_in(Some(tree)).unwrap(), format!("{tree}/rule.sh"));
     }
 
     fn an_alert(labels: &[&str]) -> Item {

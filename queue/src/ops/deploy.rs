@@ -263,3 +263,21 @@ pub fn run(w: &World, plan: &Plan, head: &str) -> Outcome {
         Err(why) => Outcome::Fault(why),
     }
 }
+
+#[cfg(test)]
+mod release_bin_tests {
+    use super::*;
+
+    #[test]
+    fn a_bin_dir_without_a_release_binary_refuses_naming_it() {
+        let e = release_bin(Some(Path::new("/nonexistent/bins"))).unwrap_err();
+        assert!(e.contains("no release binary at /nonexistent/bins/release"), "{e}");
+    }
+
+    #[test]
+    fn no_bin_dir_and_no_spira_release_refuses_naming_the_key() {
+        let _env = testkit::env(&[("SPIRA_RELEASE", None)]);
+        let e = release_bin(None).unwrap_err();
+        assert!(e.contains("SPIRA_RELEASE is not set"), "{e}");
+    }
+}
