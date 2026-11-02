@@ -148,20 +148,21 @@ fn after_deleting_the_highest_revision_keys_and_reopening_the_next_main_is_great
     let b = open(&path);
     assert_eq!(
         b.head().unwrap(),
-        last,
-        "the counter is read back from its meta row"
+        last + state_store_sqlite::JUMP,
+        "the counter is read back from its meta row, then jumped past every revision a crash could have lost (sp-r3yb7x)"
     );
     let clock = VirtualClock::new(1_000);
     let c = contract(b, &clock);
     let next = put(&c, "n/c", json!(3), "after-reopen");
-    assert_eq!(next, last + 1);
+    assert_eq!(next, last + state_store_sqlite::JUMP + 1);
 }
 
 #[test]
-fn journal_mode_and_synchronous_read_back_as_wal_and_2() {
+fn journal_mode_and_synchronous_read_back_as_wal_and_normal() {
     let dir = TempDir::new("sqlite-pragmas");
     let b = open(&dir.path().join("s.db"));
-    assert_eq!(b.pragmas().unwrap(), ("wal".to_string(), 2));
+    // NORMAL, per Ryan 2026-11-02 (sp-3uvzc6, sp-r3yb7x): the jump on open covers what a crash loses.
+    assert_eq!(b.pragmas().unwrap(), ("wal".to_string(), 1));
 }
 
 #[test]
@@ -225,6 +226,7 @@ fn a_reader_held_past_max_read_ms_is_ended_and_the_next_checkpoint_truncates_the
         readers: 1,
         clock: Arc::new(clock.clone()),
         read_probe: Some(probe),
+        jump_on_open: true,
     };
     let b = SqliteBackend::open(&path, opts).unwrap();
     *slot.lock().unwrap() = Some(b.clone());
@@ -284,6 +286,7 @@ fn a_single_long_statement_is_ended_past_max_read_ms_by_the_progress_handler() {
         readers: 1,
         clock: clock.clone(),
         read_probe: None,
+        jump_on_open: true,
     };
     let b = SqliteBackend::open(&dir.path().join("s.db"), opts).unwrap();
     let keys: Vec<String> = (0..5_000).map(|i| format!("t/{i:05}")).collect();
@@ -369,7 +372,8 @@ fn a_backup_taken_in_steps_while_commits_continue_matches_the_live_keys_at_its_r
     assert!(steps > 1, "the backup finished in one step");
     put(&c, "after/backup", json!(1), "after");
     let live = c.backend().clone();
-    let copy = open(&dest);
+    // A copy being verified keeps its revisions exactly: no jump on this open.
+    let copy = SqliteBackend::open(&dest, Options { jump_on_open: false, ..Options::default() }).unwrap();
     assert_eq!(
         copy.head().unwrap(),
         rev,

@@ -27,6 +27,12 @@ fn open(path: &Path) -> SqliteBackend {
     SqliteBackend::open(path, Options::default()).unwrap()
 }
 
+/// A copy being checked (a snapshot, a restore, a backup): opened without the jump, so its
+/// revisions read exactly as written (sp-r3yb7x).
+fn verify(path: &Path) -> SqliteBackend {
+    SqliteBackend::open(path, Options { jump_on_open: false, ..Options::default() }).unwrap()
+}
+
 fn req(id: &str) -> Request {
     Request::new(id, "durability-test", "test.write")
 }
@@ -423,7 +429,7 @@ fn the_drill_passes_on_the_uploaded_objects_and_names_its_exclusions() {
             && out.contains("skew guard: after a restore"),
         "{out}"
     );
-    let restored_db = open(&dir.path().join("scratch/control.db"));
+    let restored_db = verify(&dir.path().join("scratch/control.db"));
     let head = c.backend().head().unwrap();
     assert_eq!(
         keys_at(&restored_db, head),
@@ -484,7 +490,7 @@ fn a_flipped_byte_in_a_restored_value_fails_the_drill_naming_the_key() {
         let (out, base, runs) = restored_copy(&sub, &s);
         tamper(&out, key, &flipped(c.backend(), key));
         let rep =
-            drill::fold_compare(&open(&base), &runs, &open(&out), Exclusions::CONTRACT).unwrap();
+            drill::fold_compare(&verify(&base), &runs, &verify(&out), Exclusions::CONTRACT).unwrap();
         assert_eq!(
             rep.mismatches,
             [Mismatch::Value { key: key.into() }],
@@ -594,7 +600,7 @@ fn a_snapshot_stepped_while_commits_run_opens_with_the_live_keys_at_its_revision
     let snap = s.sent(SNAPSHOT).join(revlog::snapshot_name(rev));
     let copy = dir.path().join("copy.db");
     std::fs::copy(&snap, &copy).unwrap();
-    let copy = open(&copy);
+    let copy = verify(&copy);
     assert_eq!(
         copy.head().unwrap(),
         rev,
@@ -619,7 +625,7 @@ fn an_audit_record_that_does_not_describe_its_txn_fails_the_drill_naming_it() {
         let (out, base, runs) = restored_copy(&sub, &s);
         tamper(&out, &key, &value);
         let rep =
-            drill::fold_compare(&open(&base), &runs, &open(&out), Exclusions::CONTRACT).unwrap();
+            drill::fold_compare(&verify(&base), &runs, &verify(&out), Exclusions::CONTRACT).unwrap();
         assert!(
             matches!(rep.mismatches.as_slice(), [Mismatch::Event { main, .. }] if *main == head),
             "{name}: {}",
@@ -750,7 +756,7 @@ fn a_ttl_d_key_deleted_by_an_audited_write_but_still_restored_missing_is_a_misma
     let clock = VirtualClock::new(1_000);
     let (c, s) = shipped_store(dir.path(), &clock);
     let (out, base, runs) = restored_copy(dir.path(), &s);
-    let b = open(&out);
+    let b = verify(&out);
     let head = b.head().unwrap();
     let prev = b.get("intents/claim/sp-1", head).unwrap().unwrap().mod_rev;
     b.commit(
@@ -762,8 +768,8 @@ fn a_ttl_d_key_deleted_by_an_audited_write_but_still_restored_missing_is_a_misma
     )
     .unwrap();
     drop(b);
-    let restored = open(&out);
-    let rep = drill::fold_compare(&open(&base), &runs, &restored, Exclusions::CONTRACT).unwrap();
+    let restored = verify(&out);
+    let rep = drill::fold_compare(&verify(&base), &runs, &restored, Exclusions::CONTRACT).unwrap();
     assert!(
         rep.mismatches.contains(&Mismatch::Missing {
             key: "intents/claim/sp-1".into()
@@ -792,4 +798,72 @@ fn a_cleared_compaction_floor_lets_compaction_reach_the_head() {
     b.clear_compaction_floor().unwrap();
     b.compact(3).unwrap();
     assert_eq!(b.compacted().unwrap(), 3);
+}
+
+// ---- sp-r3yb7x: synchronous=NORMAL and the recorded jump on open --------------------------
+
+fn reopened(path: &Path) -> SqliteBackend {
+    open(path)
+}
+
+#[test]
+fn reopening_a_store_jumps_its_head_records_the_jump_and_commits_in_normal_mode() {
+    let dir = TempDir::new("jump-reopen");
+    let clock = VirtualClock::new(1_000);
+    let path = dir.path().join("live.db");
+    let first = {
+        let c = suite::open(open(&path), &clock);
+        assert_eq!(c.backend().synchronous().unwrap(), 1, "NORMAL");
+        put(&c, "lifecycle/sp-1", Object::new(json!({"state": "READY"})), "j1")
+    };
+    let b = reopened(&path);
+    let jumped = first + state_store_sqlite::JUMP;
+    assert_eq!(b.head().unwrap(), jumped);
+    assert_eq!(b.jumps(0, jumped).unwrap(), vec![(first + 1, jumped)]);
+    let c = suite::open(b, &clock);
+    assert_eq!(put(&c, "lifecycle/sp-2", Object::new(json!({"state": "READY"})), "j2"), jumped + 1, "the next commit follows the jump");
+    drop(c);
+    let quiet = SqliteBackend::open(&path, Options { jump_on_open: false, ..Options::default() }).unwrap();
+    assert_eq!(quiet.head().unwrap(), jumped + 1, "a verifying open leaves the revisions as they are");
+}
+
+#[test]
+fn a_jump_at_the_head_with_nothing_after_it_is_shipped() {
+    let dir = TempDir::new("jump-ship-head");
+    let clock = VirtualClock::new(1_000);
+    let path = dir.path().join("live.db");
+    {
+        let (c, mut s) = shipped_store(dir.path(), &clock);
+        s.tick().unwrap();
+        drop((c, s));
+    }
+    let b = reopened(&path);
+    let head = b.head().unwrap();
+    let mut s = Shipper::open(b, ship_cfg(dir.path(), u64::MAX), file_put(&dir.path().join("off")), Arc::new(clock.clone())).unwrap();
+    s.tick().unwrap();
+    assert_eq!(s.shipped_through().unwrap(), head, "the jump ships, so the lag clears and compaction can follow");
+}
+
+#[test]
+fn a_restore_across_a_jump_reproduces_the_head_the_contents_and_the_jump() {
+    let dir = TempDir::new("jump-restore");
+    let clock = VirtualClock::new(1_000);
+    let path = dir.path().join("live.db");
+    {
+        let (c, mut s) = shipped_store(dir.path(), &clock);
+        s.tick().unwrap();
+        drop((c, s));
+    }
+    let c = suite::open(reopened(&path), &clock);
+    put(&c, "lifecycle/sp-9", Object::new(json!({"state": "LANDED"})), "after-jump");
+    let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), file_put(&dir.path().join("off")), Arc::new(clock.clone())).unwrap();
+    s.tick().unwrap();
+    let live = c.backend().clone();
+    let head = live.head().unwrap();
+    assert_eq!(s.shipped_through().unwrap(), head);
+    let (out, _base, _runs) = restored_copy(dir.path(), &s);
+    let r = SqliteBackend::open(&out, Options { jump_on_open: false, ..Options::default() }).unwrap();
+    assert_eq!(r.head().unwrap(), head);
+    assert_eq!(keys_at(&r, head), keys_at(&live, head));
+    assert_eq!(r.jumps(0, head).unwrap(), live.jumps(0, head).unwrap());
 }
