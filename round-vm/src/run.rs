@@ -447,6 +447,49 @@ unit_hang_watch() {
         done < <(unit_hang_scan < "$log")
     done
 }
+# The test binary a cargo log last started, by file name; empty before the first.
+last_binary() {
+    awk '/^ *Running / { if (match($0, /\(.*\)/)) b = substr($0, RSTART + 1, RLENGTH - 2); else b = $0 } END { sub(/.*\//, "", b); print b }' "$1"
+}
+# Bounds a test phase's job: past <secs> it is killed and named hung (<label>: HUNG guard=<guard>).
+test_phase_bound() {
+    local pid="$1" secs="$2" log="$3" hung="$4" label="$5" guard="$6" end running
+    end=$(( $(date +%s) + secs ))
+    while kill -0 "$pid" 2>/dev/null && [ "$(date +%s)" -lt "$end" ]; do sleep 2; done
+    kill -0 "$pid" 2>/dev/null || return 0
+    running="$(last_binary "$log")"
+    echo "round-vm: $label: HUNG guard=$guard elapsed=${secs}s; binary=${running:-none-started}; killed" | tee -a "$hung" >&2
+    pkill -TERM -P "$pid" 2>/dev/null; kill "$pid" 2>/dev/null
+    return 0
+}
+json_str() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\000-\037'; }
+# A red test phase's evidence: <out> (its cause, the failures and the log's tail) and <json>, the
+# verdict as a record the host judges the pass from, never an exit code:
+# {"stage","verdict":"red","ran_before_suites","cause","secs","last_binary","failed":[test names]}.
+test_phase_red() {
+    local stage="$1" log="$2" rc="$3" secs="$4" hung="$5" out="$6" json="$7" before="$8" cause last n first=1
+    if [ "$rc" -gt 128 ]; then cause="killed by signal $(( rc - 128 ))"; else cause="exit status $rc"; fi
+    [ ! -s "$hung" ] || cause="$cause, hung past its guard"
+    last="$(last_binary "$log")"
+    {
+        echo "${stage^^}-CAUSE: $cause after ${secs}s; last binary=${last:-none-started}; failures=$(grep -c -E '^test .* FAILED|^test result: FAILED' "$log")"
+        grep -E -A8 '^(test .* FAILED|---- |error(\[|:))|panicked at|^test result: FAILED|^failures:' "$log" | head -400
+        echo "--- last output of the log ---"
+        tail -100 "$log"
+        [ ! -s "$hung" ] || { echo "round-vm: ${stage^^}: HUNG (test<TAB>binary):"; cat "$hung"; }
+    } > "$out"
+    {
+        printf '{"stage":"%s","verdict":"red","ran_before_suites":%s,"cause":"%s","secs":%s,"last_binary":"%s","failed":[' \
+            "$stage" "$before" "$(json_str "$cause")" "$secs" "$(json_str "$last")"
+        while IFS= read -r n; do
+            [ -n "$n" ] || continue
+            [ -n "$first" ] || printf ','
+            first=""
+            printf '"%s"' "$(json_str "$n")"
+        done < <(grep -oE '^test [^ ]+ \.\.\. FAILED' "$log" | awk '{print $2}' | sort -u | head -200)
+        printf ']}\n'
+    } > "$json"
+}
 # The round's one source of config: the tree's complete fixture, with this VM's own paths
 # declared over it. Nothing here is searched for or defaulted.
 mkdir -p "$HOME/round-work/.runtime/spira"
@@ -637,22 +680,67 @@ if [ -n "$lint" ] && { [ "${lint_rc:-0}" -ne 0 ] || [ -n "$fence_fail" ]; }; the
     kill "$sampler_pid" 2>/dev/null
     exit 1
 fi
-# THE WORKSPACE'S OWN UNIT TESTS, once per round (per Ryan 2026-10-05: no suite invokes cargo).
-# They run beside the suites, on the binaries built above; a red here makes the round red.
-unit_progress="$HOME/round-work/.runtime/spira/batch-results/unit-progress"
-mkdir -p "$(dirname "$unit_progress")"
+# THE WORKSPACE'S OWN TESTS, once per round (per Ryan 2026-10-05: no suite invokes cargo), in the
+# standard two phases (sp-cddf76). UNIT FIRST: the tests inside src/ (--lib --bins) run to the end
+# BEFORE any suite. They are the cheapest red the round can find, so a red there ends the pass:
+# unit.json records it and no suite is run. THEN THE INTEGRATION TESTS (every crate's tests/ and
+# its doc-tests) run beside the suites, and a red there makes the round red: integration.json.
+# No suite has run when either record is written, so both go at the top of the results, where
+# the host pulls them by name (TEST_PHASE_FILES).
+rdir="$HOME/round-work/.runtime/spira/batch-results"
+unit_progress="$rdir/unit-progress"
+mkdir -p "$rdir"
+unit_lib_total=$(grep -c '^ *Executable unittests ' ~/round-unit-build.log)
 : > ~/round-unit-tests.log
-unit_t0=$(date +%s)
-unit_cargo --no-fail-fast > ~/round-unit-tests.log 2>&1 &
-unit_pid=$!
-tail -n +1 -f --pid="$unit_pid" ~/round-unit-tests.log | unit_stream "$unit_total" "$unit_progress" &
-stream_pid=$!
 unit_hung="$HOME/round-unit-hung"
 : > "$unit_hung"
+unit_t0=$(date +%s)
+unit_cargo --no-fail-fast --lib --bins > ~/round-unit-tests.log 2>&1 &
+unit_pid=$!
+tail -n +1 -f --pid="$unit_pid" ~/round-unit-tests.log | unit_stream "$unit_lib_total" "$unit_progress" &
+stream_pid=$!
 unit_hang_watch ~/round-unit-tests.log "$unit_hung" "$unit_pid" &
 hang_pid=$!
+test_phase_bound "$unit_pid" "$cap" ~/round-unit-tests.log "$unit_hung" UNIT-TESTS unit-cap
+wait "$unit_pid"; unit_rc=$?
+unit_secs=$(( $(date +%s) - unit_t0 ))
+wait "$stream_pid"
+kill "$hang_pid" 2>/dev/null; wait "$hang_pid" 2>/dev/null
+[ ! -s "$unit_hung" ] || [ "$unit_rc" -ne 0 ] || unit_rc=1
+echo "round-vm: UNIT-TESTS took ${unit_secs}s (--lib --bins, ${unit_lib_total} test binaries)" >&2
+if [ "$unit_rc" -eq 0 ]; then
+    echo "round-vm: UNIT-TESTS: PASS ($(grep -c '^test result: ok' ~/round-unit-tests.log) test binaries)" >&2
+else
+    echo "round-vm: UNIT-TESTS: FAIL (unit run rc=$unit_rc):" >&2
+    grep -E -A3 '^(test .* FAILED|---- |error(\[|:))|panicked at' ~/round-unit-tests.log | head -120 >&2
+    test_phase_red unit-tests ~/round-unit-tests.log "$unit_rc" "$unit_secs" "$unit_hung" "$rdir/unit-tests.out" "$rdir/unit.json" true
+    echo "round-vm: UNIT-TESTS RED before the suites: no suite was run" >&2
+    kill "$sampler_pid" 2>/dev/null
+    exit 1
+fi
+integ_cargo() {
+    local rc=0 doc_rc=0
+    unit_cargo --no-fail-fast --test '*' || rc=$?
+    unit_cargo --no-fail-fast --doc || doc_rc=$?
+    [ "$rc" -ne 0 ] || rc=$doc_rc
+    return "$rc"
+}
+integ_total=$(( unit_total - unit_lib_total ))
+: > ~/round-integration-tests.log
+integ_hung="$HOME/round-integration-hung"
+: > "$integ_hung"
+integ_t0=$(date +%s)
+integ_end="$HOME/round-integration-end"
+rm -f "$integ_end"
+# The job stamps its own end: it is collected only after the suites, so the wait says nothing of its length.
+( integ_cargo; r=$?; date +%s > "$integ_end"; exit "$r" ) > ~/round-integration-tests.log 2>&1 &
+integ_pid=$!
+tail -n +1 -f --pid="$integ_pid" ~/round-integration-tests.log | unit_stream "$integ_total" "$unit_progress" &
+integ_stream_pid=$!
+unit_hang_watch ~/round-integration-tests.log "$integ_hung" "$integ_pid" &
+integ_hang_pid=$!
 # THE CAP CLOCK runs from testenv's first suite to the bare lane's end: container setup, post-processing,
-# the unit-test wait and the pulls are outside it, each under its own guard. testenv's "running N
+# the unit tier before it and the pulls are outside it, each under its own guard. testenv's "running N
 # suite(s)" line is the start mark; one guard times the corpus and the bare lane from it.
 suites_cap_guard() {
     local mark="$1" cap="$2" fired="$3" pid alive; shift 3
@@ -742,17 +830,22 @@ fi
 if [ -n "$over_cap" ]; then
     echo "round-vm: OVER-CAP: guard=suites-cap elapsed=${suites_clock}s cap=${cap}s — the suites and bare lane ran past the cap" >&2
 fi
-if kill -0 "$unit_pid" 2>/dev/null; then echo "round-vm: UNIT-TESTS: waiting (suites done, unit job still running)" >&2; fi
-unit_deadline=$(( $(date +%s) + post_guard ))
-while kill -0 "$unit_pid" 2>/dev/null && [ "$(date +%s)" -lt "$unit_deadline" ]; do sleep 2; done
-if kill -0 "$unit_pid" 2>/dev/null; then
-    unit_running="$(awk '/^ *Running / { if (match($0, /\(.*\)/)) b = substr($0, RSTART + 1, RLENGTH - 2); else b = $0 } END { sub(/.*\//, "", b); print b }' ~/round-unit-tests.log)"
-    echo "round-vm: UNIT-TESTS: HUNG guard=unit-post elapsed=${post_guard}s past the ${post_guard}s guard after the cap clock stopped; binary=${unit_running:-none-started}; killed" | tee -a "$unit_hung" >&2
-    pkill -TERM -P "$unit_pid" 2>/dev/null; kill "$unit_pid" 2>/dev/null
+if kill -0 "$integ_pid" 2>/dev/null; then echo "round-vm: INTEGRATION-TESTS: waiting (suites done, integration tests still running)" >&2; fi
+test_phase_bound "$integ_pid" "$post_guard" ~/round-integration-tests.log "$integ_hung" INTEGRATION-TESTS integration-post
+wait "$integ_pid"; integ_rc=$?
+integ_secs=$(( $(cat "$integ_end" 2>/dev/null || date +%s) - integ_t0 ))
+wait "$integ_stream_pid"
+kill "$integ_hang_pid" 2>/dev/null; wait "$integ_hang_pid" 2>/dev/null
+[ ! -s "$integ_hung" ] || [ "$integ_rc" -ne 0 ] || integ_rc=1
+echo "round-vm: INTEGRATION-TESTS took ${integ_secs}s (tests/ and doc-tests, ${integ_total} test binaries, beside the suites)" >&2
+if [ "$integ_rc" -eq 0 ]; then
+    echo "round-vm: INTEGRATION-TESTS: PASS ($(grep -c '^test result: ok' ~/round-integration-tests.log) test binaries)" >&2
+else
+    echo "round-vm: INTEGRATION-TESTS: FAIL (integration run rc=$integ_rc):" >&2
+    grep -E -A3 '^(test .* FAILED|---- |error(\[|:))|panicked at' ~/round-integration-tests.log | head -120 >&2
+    test_phase_red integration-tests ~/round-integration-tests.log "$integ_rc" "$integ_secs" "$integ_hung" "$rdir/integration-tests.out" "$rdir/integration.json" false
+    [ "$rc" -eq 0 ] && rc=1
 fi
-wait "$unit_pid"; unit_rc=$?
-unit_secs=$(( $(date +%s) - unit_t0 ))
-wait "$stream_pid"
 if [ -n "$unit_cov_env" ]; then
     # The line report is read off the profile data the unit run just wrote; it reports and never gates.
     # The report must read the same show-env environment the unit run used, or it looks in the
@@ -768,30 +861,6 @@ if [ -n "$unit_cov_env" ]; then
     else
         echo "round-vm: COVERAGE: lines unavailable (cargo llvm-cov report failed): $(printf '%s' "$unit_cargo_report" | tail -5)" >&2
     fi
-fi
-kill "$hang_pid" 2>/dev/null; wait "$hang_pid" 2>/dev/null
-[ ! -s "$unit_hung" ] || [ "$unit_rc" -ne 0 ] || unit_rc=1
-if [ "$unit_rc" -eq 0 ]; then
-    echo "round-vm: UNIT-TESTS: PASS ($(grep -c '^test result: ok' ~/round-unit-tests.log) test binaries)" >&2
-else
-    echo "round-vm: UNIT-TESTS: FAIL (unit run rc=$unit_rc):" >&2
-    grep -E -A3 '^(test .* FAILED|---- |error(\[|:))|panicked at' ~/round-unit-tests.log | head -120 >&2
-    rdir="$HOME/round-work/.runtime/spira/batch-results"
-    leaf="$(find "$rdir" -name '*.result' -printf '%h\n' 2>/dev/null | head -1)"
-    leaf="${leaf:-$rdir}"
-    mkdir -p "$leaf"
-    if [ "$unit_rc" -gt 128 ]; then unit_cause="killed by signal $(( unit_rc - 128 ))"; else unit_cause="exit status $unit_rc"; fi
-    [ ! -s "$unit_hung" ] || unit_cause="$unit_cause, hung past its guard"
-    unit_last="$(awk '/^ *Running / { if (match($0, /\(.*\)/)) b = substr($0, RSTART + 1, RLENGTH - 2); else b = $0 } END { sub(/.*\//, "", b); print b }' ~/round-unit-tests.log)"
-    unit_failed="$(grep -c -E '^test .* FAILED|^test result: FAILED' ~/round-unit-tests.log)"
-    {
-        echo "UNIT-TESTS-CAUSE: $unit_cause after ${unit_secs}s; last binary=${unit_last:-none-started}; failures=$unit_failed"
-        grep -E -A8 '^(test .* FAILED|---- |error(\[|:))|panicked at|^test result: FAILED|^failures:' ~/round-unit-tests.log | head -400
-        echo "--- last output of the log ---"
-        tail -100 ~/round-unit-tests.log
-    } > "$leaf/unit-tests.out"
-    [ ! -s "$unit_hung" ] || { echo "round-vm: UNIT-TESTS: HUNG (test<TAB>binary):"; cat "$unit_hung"; } >> "$leaf/unit-tests.out"
-    [ "$rc" -eq 0 ] && rc=1
 fi
 suites_secs=$suites_clock
 kill "$sampler_pid" 2>/dev/null; wait "$sampler_pid" 2>/dev/null
@@ -1694,6 +1763,12 @@ fn fence_seconds(results: &Path, started: u64) -> Vec<(String, u64)> {
 /// What REMOTE_SCRIPT records each fence's seconds in, at the top of the results.
 pub const FENCE_TIMES: &str = "fence-times";
 
+/// What REMOTE_SCRIPT leaves at the top of the results when a test phase goes red (sp-cddf76):
+/// each phase's verdict as a record and its failures' output — the unit phase's, before any
+/// suite, and the integration phase's, beside them. They sit outside testenv's leaf, so the host
+/// carries them over by name, as it does [`FENCE_TIMES`].
+pub const TEST_PHASE_FILES: [&str; 4] = ["unit.json", "unit-tests.out", "integration.json", "integration-tests.out"];
+
 /// `round-vm run`. Returns the process exit code (DESIGN.md §2.2). A pass that began is recorded
 /// exactly once, whatever way it ended; a record that cannot be written ends the pass unjudged.
 pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
@@ -2482,7 +2557,7 @@ fn after_batch(
     if args.ci_entry.is_none() {
         keep_runner_output(remote, cfg, &vm.addr, &scratch("runner"), &results_dir);
     }
-    for top in [FIXTURE_FAULT_FILE, FENCE_TIMES] {
+    for top in [FIXTURE_FAULT_FILE, FENCE_TIMES].into_iter().chain(TEST_PHASE_FILES) {
         if pulled.join(top).is_file() {
             let _ = fs::create_dir_all(&results_dir);
             let _ = fs::copy(pulled.join(top), results_dir.join(top));
@@ -2695,9 +2770,9 @@ mod tests {
     fn the_round_runs_the_bare_host_suites_on_the_vm_after_the_corpus() {
         let corpus = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         let bare = REMOTE_SCRIPT.find("spira/bare-suites.sh").unwrap();
-        let unit_wait = REMOTE_SCRIPT.find("wait \"$unit_pid\"").unwrap();
-        assert!(bare < corpus && corpus < unit_wait, "the bare lane starts before the corpus and is waited on after it");
-        let lane = &REMOTE_SCRIPT[bare..unit_wait];
+        let integ_wait = REMOTE_SCRIPT.find("wait \"$integ_pid\"").unwrap();
+        assert!(bare < corpus && corpus < integ_wait, "the bare lane starts before the corpus and is waited on after it");
+        let lane = &REMOTE_SCRIPT[bare..integ_wait];
         assert!(REMOTE_SCRIPT[bare..corpus].contains("&\nbare_pid=$!"), "the bare lane runs in the background beside the corpus");
         let gate = REMOTE_SCRIPT.find("bare_after_setup()").unwrap();
         let call = REMOTE_SCRIPT.find("bare_after_setup \"${bare_sel[@]}\"").unwrap();
@@ -3135,10 +3210,10 @@ mod tests {
 
     #[test]
     fn a_killed_unit_run_saves_its_cause_and_its_last_output() {
-        let f = REMOTE_SCRIPT.find("unit_cause=\"killed by signal").expect("the cause");
+        let f = REMOTE_SCRIPT.find("cause=\"killed by signal").expect("the cause");
         let tail = &REMOTE_SCRIPT[f..];
-        assert!(tail.contains("killed by signal") && tail.contains("${unit_secs}s"), "{tail}");
-        assert!(tail.contains("tail -100 ~/round-unit-tests.log"), "the saved output ends with the log's own tail");
+        assert!(tail.contains("killed by signal") && tail.contains("${secs}s"), "{tail}");
+        assert!(tail.contains("tail -100 \"$log\""), "the saved output ends with the log's own tail");
         assert!(!REMOTE_SCRIPT.contains("^test result:' ~/round-unit-tests.log | head"), "passing binaries no longer fill the head");
     }
 
@@ -3202,13 +3277,13 @@ mod tests {
         let watch = REMOTE_SCRIPT.find("unit_hang_watch ~/round-unit-tests.log").unwrap();
         assert!(run < watch);
         assert!(REMOTE_SCRIPT.contains("[ ! -s \"$unit_hung\" ] || [ \"$unit_rc\" -ne 0 ] || unit_rc=1"));
-        assert!(REMOTE_SCRIPT.contains("binary=${unit_running:-none-started}; killed"), "the post-guard kill names the binary running");
+        assert!(REMOTE_SCRIPT.contains("binary=${running:-none-started}; killed"), "the post-guard kill names the binary running");
     }
 
     /// The lint, the fences and the early exit on a red one: everything before the unit tests.
     fn lint_segment() -> String {
         let a = REMOTE_SCRIPT.find("lint_rc=0\nlint_secs=0").unwrap();
-        let b = REMOTE_SCRIPT.find("# THE WORKSPACE'S OWN UNIT TESTS").unwrap();
+        let b = REMOTE_SCRIPT.find("# THE WORKSPACE'S OWN TESTS").unwrap();
         REMOTE_SCRIPT[a..b].to_string()
     }
 
@@ -3307,9 +3382,112 @@ mod tests {
     fn the_fences_finish_before_the_unit_tier_starts() {
         let fences = REMOTE_SCRIPT.find("fence_run \"$fname\" \"$fcmd\"").expect("the fence loop");
         let early = REMOTE_SCRIPT.find("LINT/FENCE RED before the suites").unwrap();
-        let units = REMOTE_SCRIPT.find("unit_cargo --no-fail-fast > ~/round-unit-tests.log 2>&1 &").expect("the unit tier's launch");
+        let units = REMOTE_SCRIPT.find("unit_cargo --no-fail-fast --lib --bins > ~/round-unit-tests.log 2>&1 &").expect("the unit tier's launch");
         assert!(fences < early && early < units, "the fences run in the foreground and the unit tier starts only after them");
         assert!(!REMOTE_SCRIPT[fences..fences + 80].contains('&'), "the fence loop is not backgrounded");
+    }
+
+    #[test]
+    fn the_unit_tier_is_waited_for_before_the_bare_lane_or_any_suite_starts() {
+        let launch = REMOTE_SCRIPT.find("unit_cargo --no-fail-fast --lib --bins > ~/round-unit-tests.log 2>&1 &").expect("the unit tier's launch");
+        let waited = REMOTE_SCRIPT.find("wait \"$unit_pid\"; unit_rc=$?").expect("the unit wait");
+        let early = REMOTE_SCRIPT.find("UNIT-TESTS RED before the suites: no suite was run").expect("the early exit");
+        let bare = REMOTE_SCRIPT.find("bare_after_setup \"${bare_sel[@]}\"").expect("the bare lane's start");
+        let corpus = REMOTE_SCRIPT.find("testenv --mode parallel").expect("the corpus's start");
+        assert!(launch < waited && waited < early && early < bare && early < corpus, "the unit verdict is settled before any suite runs");
+        assert_eq!(REMOTE_SCRIPT.matches("wait \"$unit_pid\"").count(), 1, "one unit wait, before the suites; none after them");
+        assert!(!REMOTE_SCRIPT.contains("beside the suites, on the binaries"), "the unit phase no longer runs beside the suites");
+        let integ = REMOTE_SCRIPT.find("( integ_cargo; r=$?;").expect("the integration phase's launch");
+        let integ_wait = REMOTE_SCRIPT.find("wait \"$integ_pid\"; integ_rc=$?").expect("the integration wait");
+        let stop = REMOTE_SCRIPT.find("if [ -e \"$suites_mark\" ]; then suites_clock=").unwrap();
+        assert!(early < integ && integ < corpus && stop < integ_wait, "the integration phase starts once the unit phase passed and runs beside the suites");
+    }
+
+    #[test]
+    fn the_unit_phase_runs_only_the_tests_inside_src_and_the_integration_phase_the_rest() {
+        let f = REMOTE_SCRIPT.find("integ_cargo() {").unwrap();
+        let integ = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap()];
+        assert!(integ.contains("unit_cargo --no-fail-fast --test '*'") && integ.contains("unit_cargo --no-fail-fast --doc"), "{integ}");
+        assert!(REMOTE_SCRIPT.contains("unit_lib_total=$(grep -c '^ *Executable unittests ' ~/round-unit-build.log)"));
+        for line in ["round-vm: UNIT-TESTS took ${unit_secs}s", "round-vm: INTEGRATION-TESTS took ${integ_secs}s"] {
+            assert!(REMOTE_SCRIPT.contains(line), "each phase says how long it took: {line}");
+        }
+    }
+
+    /// Runs REMOTE_SCRIPT's two test phases with a stub `unit_cargo`: the unit phase (`--lib`)
+    /// prints `unit` and exits `unit_rc`; the integration phase (`--test`) prints `integ` and exits
+    /// `integ_rc`. Between the phases' launch and their collection stands the marker a pass that
+    /// goes on to the suites prints, `SUITES-REACHED`.
+    fn phases_run(d: &TempDir, unit: &str, unit_rc: i32, integ: &str, integ_rc: i32) -> std::process::Output {
+        let a = REMOTE_SCRIPT.find("# THE WORKSPACE'S OWN TESTS").unwrap();
+        let b = REMOTE_SCRIPT.find("# THE CAP CLOCK runs").unwrap();
+        let c = REMOTE_SCRIPT.find("if kill -0 \"$integ_pid\" 2>/dev/null; then echo").unwrap();
+        let e = REMOTE_SCRIPT.find("if [ -n \"$unit_cov_env\" ]; then").unwrap();
+        fs::write(d.path().join("unit.log"), unit).unwrap();
+        fs::write(d.path().join("integ.log"), integ).unwrap();
+        fs::write(d.path().join("round-unit-build.log"), "  Executable unittests src/lib.rs (a)\n  Executable tests/it.rs (b)\n").unwrap();
+        let script = format!(
+            "{fns}\nunit_cargo() {{ case \"$*\" in *--lib*) cat \"$HOME/unit.log\"; return {unit_rc};; *--doc*) return 0;; *) cat \"$HOME/integ.log\"; return {integ_rc};; esac; }}\n\
+             unit_total=2; cap=60; post_guard=60; unit_cov_env=\n\
+             sleep 300 & sampler_pid=$!\nset +e; ( {launch}\necho SUITES-REACHED; rc=0\n{collect}\necho \"rc=$rc\" ); echo exit=$?; kill $sampler_pid 2>/dev/null",
+            fns = unit_fns(),
+            launch = &REMOTE_SCRIPT[a..b],
+            collect = &REMOTE_SCRIPT[c..e],
+        );
+        sh(d.path(), &script)
+    }
+
+    const GREEN_LOG: &str = "   Running unittests src/lib.rs (target/unittest/deps/alpha-0123abcd)\ntest a::fine ... ok\ntest result: ok. 1 passed; 0 failed\n";
+
+    #[test]
+    fn a_red_unit_tier_writes_its_record_and_ends_the_pass_before_any_suite() {
+        let d = TempDir::new();
+        let log = "   Running unittests src/lib.rs (target/unittest/deps/alpha-0123abcd)\nrunning 2 tests\ntest a::fine ... ok\ntest a::\"quoted\" ... FAILED\ntest a::broken ... FAILED\n\
+                   test result: FAILED. 1 passed; 2 failed\n";
+        let o = phases_run(&d, log, 101, GREEN_LOG, 0);
+        let out = String::from_utf8_lossy(&o.stdout);
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(out.contains("exit=1") && !out.contains("SUITES-REACHED"), "a unit red ends the pass before the suites: {out}{err}");
+        assert!(err.contains("UNIT-TESTS RED before the suites: no suite was run"), "{err}");
+        assert!(err.contains("round-vm: UNIT-TESTS took ") && !err.contains("INTEGRATION-TESTS"), "the integration phase never starts: {err}");
+        let r = results_of(&d);
+        let rec: Value = serde_json::from_str(&fs::read_to_string(r.join("unit.json")).unwrap()).expect("unit.json is JSON");
+        assert_eq!((rec["stage"].as_str(), rec["verdict"].as_str(), rec["ran_before_suites"].as_bool()), (Some("unit-tests"), Some("red"), Some(true)), "{rec}");
+        assert_eq!(rec["failed"], serde_json::json!(["a::\"quoted\"", "a::broken"]), "{rec}");
+        assert_eq!(rec["cause"].as_str(), Some("exit status 101"), "{rec}");
+        assert_eq!(rec["last_binary"].as_str(), Some("alpha-0123abcd"), "{rec}");
+        assert!(fs::read_to_string(r.join("unit-tests.out")).unwrap().starts_with("UNIT-TESTS-CAUSE: exit status 101"));
+        assert!(!fs::read_dir(&r).unwrap().flatten().any(|e| e.path().extension().is_some_and(|x| x == "result")), "no .result is invented for a step that is not a suite");
+    }
+
+    #[test]
+    fn a_green_unit_tier_reports_its_pass_and_goes_on_to_the_suites() {
+        let d = TempDir::new();
+        let o = phases_run(&d, GREEN_LOG, 0, GREEN_LOG, 0);
+        let out = String::from_utf8_lossy(&o.stdout);
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(out.contains("SUITES-REACHED") && out.contains("rc=0") && out.contains("exit=0"), "{out}{err}");
+        assert!(err.contains("UNIT-TESTS: PASS (1 test binaries)") && err.contains("INTEGRATION-TESTS: PASS (1 test binaries)"), "{err}");
+        assert!(err.contains("round-vm: UNIT-TESTS took ") && err.contains("round-vm: INTEGRATION-TESTS took "), "{err}");
+        assert!(!results_of(&d).join("unit.json").exists() && !results_of(&d).join("integration.json").exists(), "green phases write no red record");
+    }
+
+    #[test]
+    fn a_red_integration_phase_beside_the_suites_records_its_red_and_makes_the_pass_red() {
+        let d = TempDir::new();
+        let integ = "     Running tests/journal_dolt.rs (target/unittest/deps/journal_dolt-0123abcd)\ntest replays_in_order ... FAILED\ntest result: FAILED. 0 passed; 1 failed\n";
+        let o = phases_run(&d, GREEN_LOG, 0, integ, 101);
+        let out = String::from_utf8_lossy(&o.stdout);
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(out.contains("SUITES-REACHED") && out.contains("rc=1"), "an integration red does not stop the suites, and makes the pass red: {out}{err}");
+        assert!(err.contains("INTEGRATION-TESTS: FAIL (integration run rc=101)"), "{err}");
+        let r = results_of(&d);
+        let rec: Value = serde_json::from_str(&fs::read_to_string(r.join("integration.json")).unwrap()).expect("integration.json is JSON");
+        assert_eq!((rec["stage"].as_str(), rec["verdict"].as_str(), rec["ran_before_suites"].as_bool()), (Some("integration-tests"), Some("red"), Some(false)), "{rec}");
+        assert_eq!(rec["failed"], serde_json::json!(["replays_in_order"]), "{rec}");
+        assert_eq!(rec["last_binary"].as_str(), Some("journal_dolt-0123abcd"), "{rec}");
+        assert!(fs::read_to_string(r.join("integration-tests.out")).unwrap().starts_with("INTEGRATION-TESTS-CAUSE: exit status 101"));
+        assert!(!r.join("unit.json").exists());
     }
 
     #[test]
@@ -4381,6 +4559,34 @@ mod tests {
     }
 
     #[test]
+    fn a_batch_ended_red_by_its_unit_tier_brings_its_record_home_with_no_suite_result() {
+        let fx = fixture();
+        let rec = FakeRecorder::default();
+        let mut remote = FakeRemote { rc: Ok(1), ..FakeRemote::green() };
+        let record = "{\"stage\":\"unit-tests\",\"verdict\":\"red\",\"ran_before_suites\":true,\"cause\":\"exit status 101\",\"secs\":9,\"last_binary\":\"alpha\",\"failed\":[\"a::broken\"]}\n";
+        remote.files.insert(REMOTE_RESULTS, vec![("unit.json", record), ("unit-tests.out", "UNIT-TESTS-CAUSE: exit status 101 after 9s\n"), ("unit-progress", "1 2 alpha\n")]);
+        let a = batch_args(&fx, "b-unit");
+        assert_eq!(go_recorded(&fx, &remote, &a, &rec), 1, "a red, as the VM said");
+        let r = a.results_dir.as_ref().unwrap();
+        assert_eq!(fs::read_to_string(r.join("unit.json")).unwrap(), record, "the record certify judges the pass from");
+        assert!(fs::read_to_string(r.join("unit-tests.out")).unwrap().starts_with("UNIT-TESTS-CAUSE: exit status 101"));
+        assert!(!rec.calls.lock().unwrap().iter().any(|c| c.starts_with("incomplete")), "{:?}", rec.calls.lock().unwrap());
+    }
+
+    #[test]
+    fn an_integration_red_beside_the_suites_brings_its_record_home_beside_the_suites_results() {
+        let fx = fixture();
+        let mut remote = FakeRemote { rc: Ok(1), ..FakeRemote::green() };
+        let record = "{\"stage\":\"integration-tests\",\"verdict\":\"red\",\"ran_before_suites\":false,\"cause\":\"exit status 101\",\"secs\":61,\"last_binary\":\"it\",\"failed\":[\"t\"]}\n";
+        remote.files.get_mut(REMOTE_RESULTS).unwrap().extend([("integration.json", record), ("integration-tests.out", "INTEGRATION-TESTS-CAUSE: exit status 101\n")]);
+        let a = batch_args(&fx, "b-integ");
+        assert_eq!(go(&fx, &remote, &a), 1);
+        let r = a.results_dir.as_ref().unwrap();
+        assert_eq!(fs::read_to_string(r.join("integration.json")).unwrap(), record);
+        assert!(r.join("integration-tests.out").is_file() && r.join("test-a.sh.result").is_file(), "the record sits beside the suites' results");
+    }
+
+    #[test]
     fn a_batch_that_faulted_or_went_red_with_no_red_step_on_record_is_still_incomplete() {
         let fx = fixture();
         let rec = FakeRecorder::default();
@@ -4582,12 +4788,13 @@ mod tests {
         let stop = REMOTE_SCRIPT.find("if [ -e \"$suites_mark\" ]; then suites_clock=").expect("the clock stops");
         let unit_wait = REMOTE_SCRIPT.find("wait \"$unit_pid\"").unwrap();
         let bins = REMOTE_SCRIPT.find("round-bins/ \\;").unwrap();
-        assert!(start < bare && bare < corpus && corpus < guard && guard < stop && stop < unit_wait && unit_wait < bins);
+        assert!(unit_wait < start && start < bare && bare < corpus && corpus < guard && guard < stop && stop < bins, "the unit tier is settled before the clock starts");
         assert!(REMOTE_SCRIPT[guard..stop].contains("\"$testenv_pid\" \"$bare_pid\""), "the lane runs under the same cap, beside the corpus");
         assert!(!REMOTE_SCRIPT[start..stop].contains("timeout -k 5 \"$cap\""), "no timer counts from before the first suite");
         assert!(REMOTE_SCRIPT.contains("round-vm: BARE-SUITES: PASS"));
         assert!(REMOTE_SCRIPT.contains("round-vm: OVER-CAP: guard=suites-cap elapsed=") && REMOTE_SCRIPT.contains("if [ -n \"$over_cap\" ]; then exit 124; fi"));
-        assert!(REMOTE_SCRIPT[stop..bins].contains("+ post_guard ))"), "the unit-test wait has its own guard");
+        assert!(REMOTE_SCRIPT[..unit_wait].contains("test_phase_bound \"$unit_pid\" \"$cap\""), "the unit phase's wait has its own guard, outside the cap clock");
+        assert!(REMOTE_SCRIPT[stop..bins].contains("test_phase_bound \"$integ_pid\" \"$post_guard\""), "the integration phase's wait after the suites has its own guard");
         assert_eq!(exit_for_remote(124), 124, "over-cap reaches the caller as itself");
     }
 

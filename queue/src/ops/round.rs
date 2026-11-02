@@ -42,6 +42,53 @@ pub(super) const BUILD_RED: &str = "workspace-build";
 pub(super) const LINT_RED: &str = "spira-lint";
 const FENCE_RED_PREFIX: &str = "fence-";
 pub(super) const UNIT_RED: &str = "unit-tests";
+
+/// The round VM's two test phases (sp-cddf76), each leaving its red as a record: the unit phase
+/// (tests inside src/) before any suite, the integration phase (tests/ and doc-tests) beside them.
+/// Either is red on the `unit-tests` step, the testenv suite that runs both for a tip.
+pub(super) const TEST_PHASES: [(&str, &str); 2] = [("unit.json", "unit-tests"), ("integration.json", "integration-tests")];
+
+/// A test phase the round VM recorded red.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PhaseRed {
+    pub stage: String,
+    pub before_suites: bool,
+    pub failed: Vec<String>,
+    pub cause: String,
+    pub secs: u64,
+}
+
+impl PhaseRed {
+    /// The lines certify prints for the red: the failed tests by name, and why.
+    pub(super) fn report(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        if !self.failed.is_empty() {
+            lines.push(format!("unit-tests-failed={}", self.failed.join(",")));
+        }
+        let when = if self.before_suites { "before the suites" } else { "beside the suites" };
+        lines.push(format!("unit-tests-cause={}: {} ({when}, after {}s)", self.stage, self.cause, self.secs));
+        lines
+    }
+}
+
+/// Each test phase whose record in `results` is red, unit phase first; an absent, unreadable or
+/// green record is no red.
+pub(super) fn phase_reds(results: &std::path::Path) -> Vec<PhaseRed> {
+    TEST_PHASES
+        .iter()
+        .filter_map(|(file, stage)| {
+            let v: serde_json::Value = serde_json::from_str(&fs::read_to_string(results.join(file)).ok()?).ok()?;
+            (v["stage"] == *stage && v["verdict"] == "red").then(|| PhaseRed {
+                stage: stage.to_string(),
+                before_suites: v["ran_before_suites"].as_bool().unwrap_or(false),
+                failed: v["failed"].as_array().map(|a| a.iter().filter_map(|n| n.as_str().map(String::from)).collect()).unwrap_or_default(),
+                cause: v["cause"].as_str().unwrap_or("").to_string(),
+                secs: v["secs"].as_u64().unwrap_or(0),
+            })
+        })
+        .collect()
+}
+
 /// Steps a round runs over its whole tree that are not testenv suites; only a green round proves them.
 pub const ROUND_STEPS: [&str; 3] = [BUILD_RED, LINT_RED, UNIT_RED];
 /// The round steps `testenv --suites <step>` cannot run for a tip.
@@ -1793,7 +1840,8 @@ pub(crate) fn unjudgeable(wt: &Path, found: &[(String, String)]) -> Option<Strin
 /// The wall bounds the tests, not the landing: a run the wall killed after every suite reported
 /// and the unit tests passed is judged on its results.
 fn wall_complete(wt: &Path, found: &[(String, String)], err: &str) -> bool {
-    !found.is_empty() && unjudgeable(wt, found).is_none() && err.contains("UNIT-TESTS: PASS")
+    // Both test phases (sp-cddf76): the unit phase passed before the suites, the integration phase beside them.
+    !found.is_empty() && unjudgeable(wt, found).is_none() && err.contains("UNIT-TESTS: PASS") && err.contains("INTEGRATION-TESTS: PASS")
 }
 
 fn over_cap_why(err: &str, cap: u64) -> String {
@@ -2711,7 +2759,19 @@ fn certify_pass(
         if out.rc == VM_LOST {
             return lost_vm_pass(w, label, batch, &out.err);
         }
+        // UNIT FIRST (sp-cddf76): each test phase's red is a record, not an exit code. A unit red
+        // ends the pass before any suite, so a pass with no suite results is judged red on it,
+        // not as a machinery fault; an integration red is one more red beside the suites'.
+        let phase_red = phase_reds(&results);
+        let ended_by_unit = out.rc == 1 && phase_red.iter().any(|p| p.before_suites);
+        for p in &phase_red {
+            reds.push(UNIT_RED.into());
+            for line in p.report() {
+                w.out(line);
+            }
+        }
         let fault = match out.rc {
+            1 if ended_by_unit => None,
             0 | 1 if found.is_empty() => Some("round-vm ran and left no verdicts — a fault of the round machinery, not of the candidates".to_string()),
             0 | 1 => unjudgeable(&wt, &found),
             124 | 137 if !out.err.contains("OVER-CAP") && wall_complete(&wt, &found, &out.err) => None,
