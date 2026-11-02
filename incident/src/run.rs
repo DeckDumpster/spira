@@ -30,6 +30,7 @@ pub struct FileConfig<'a> {
     pub retired_keys: &'a [String],
 }
 
+#[derive(Debug)]
 pub enum FileOutcome {
     Filed(String),
     /// The database could not be reached; the caller must keep the spool entry.

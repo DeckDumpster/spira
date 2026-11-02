@@ -3,7 +3,10 @@
 //! down is never lost. DESIGN.md has the contract, the scar and what was retired.
 
 pub mod alarm;
+pub mod alarms_pass;
+pub mod attempts;
 pub mod decide;
+pub mod page;
 pub mod ports;
 pub mod real;
 pub mod settle;

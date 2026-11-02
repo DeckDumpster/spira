@@ -140,6 +140,7 @@ extern "C" {
 const LOCK_EX: i32 = 2;
 const LOCK_UN: i32 = 8;
 
+pub mod alarm;
 pub mod pass;
 pub mod prune;
 pub mod query;

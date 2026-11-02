@@ -123,6 +123,7 @@ fn check_status(v: &Value) -> Result<(), SchemaError> {
 pub const KIND: SectionKind = SectionKind {
     name: NAME,
     owner: OWNER,
+    escalation: None,
     conditions: &[
         ConditionDecl {
             type_: STACKED_ON_UNDRIVEN_PARENT,

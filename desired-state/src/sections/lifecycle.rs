@@ -122,6 +122,7 @@ fn check_status(v: &Value) -> Result<(), SchemaError> {
 pub const KIND: SectionKind = SectionKind {
     name: NAME,
     owner: OWNER,
+    escalation: None,
     conditions: &[ConditionDecl {
         type_: BELOW_FLOOR,
         page_on_raise: false,

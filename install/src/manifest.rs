@@ -154,6 +154,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-sop-lint.timer", true));
     m.units.push(t("spira-event-continuity.service", false));
     m.units.push(t("spira-event-continuity.timer", true));
+    m.units.push(t("spira-alarms.service", false));
+    m.units.push(t("spira-alarms.timer", true));
     // No timer yet: the reconciler's arm step ships and enables one.
     m.units.push(t("spira-lifecycle-section.service", false));
     m.units.push(t("spira-reconciler-goodput.service", false));
@@ -539,6 +541,18 @@ mod tests {
         assert!(svc.lines().any(|l| l.starts_with("ExecStart=") && l.ends_with("/bin/reconciler goodput-pass")), "{svc}");
         assert!(svc.lines().any(|l| l == "TimeoutStartSec=60"), "{svc}");
         assert!(!root.join("spira-reconciler-goodput.timer").exists(), "a shipped timer must be enabled; this one waits for the arm step");
+    }
+
+    #[test]
+    fn the_alarms_pass_ships_with_its_minute_timer_enabled() {
+        let m = build(&inputs()).unwrap();
+        assert!(m.units.iter().any(|u| u.name == "spira-alarms.timer" && u.enable), "the alarms timer ships enabled");
+        assert!(m.units.iter().any(|u| u.name == "spira-alarms.service" && !u.enable), "its timer starts the service");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("systemd");
+        let svc = std::fs::read_to_string(root.join("spira-alarms.service")).unwrap();
+        assert!(svc.lines().any(|l| l.starts_with("ExecStart=") && l.ends_with("/bin/incident alarms-pass")), "{svc}");
+        let timer = std::fs::read_to_string(root.join("spira-alarms.timer")).unwrap();
+        assert!(timer.lines().any(|l| l == "OnUnitActiveSec=60s"), "{timer}");
     }
 
     #[test]

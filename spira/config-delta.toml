@@ -212,6 +212,8 @@ lc_lifecycle_on_store = 0
 reconciler_pass_timeout_secs = 50
 testenv_unit_runner = "container"
 testenv_sandbox_target_root = ""
+reconciler_deadman_secs = 180
+reconciler_heartbeat_url = ""
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok

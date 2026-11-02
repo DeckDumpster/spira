@@ -574,3 +574,5 @@ reconciler_pass_timeout_secs
 lc_lifecycle_on_store
 testenv_unit_runner
 testenv_sandbox_target_root
+reconciler_deadman_secs
+reconciler_heartbeat_url

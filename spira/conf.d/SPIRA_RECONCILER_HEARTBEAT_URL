@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=reconciler
+DOC=URL the alarms pass pings after each dead-man check that finds the goodput pass fresh, telling an off-box dead-man switch the reconciler, the alarms pass and the host are alive; empty sends no ping.
+SCHEMA=URL requested (HTTP GET, with a deadline) after each fresh dead-man check. Empty disables the ping and is recorded as "no heartbeat url configured".
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RECONCILER_HEARTBEAT_URL:=}"
+SPIRA_CONF_DEFAULT_EOF

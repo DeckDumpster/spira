@@ -1,0 +1,21 @@
+# The alarms component: its page rule, its attempt reading and its pass. The bead's own gate
+# reports any branch in them no test takes.
+[[scope]]
+path = "incident/src/page.rs"
+functions = ["Candidate::new", "Candidate::identity", "Candidate::evidence", "Candidate::body", "parse", "render", "decide", "sent", "noted"]
+
+[[scope]]
+path = "incident/src/attempts.rs"
+functions = ["of_file", "undelivered", "counts"]
+
+[[scope]]
+path = "incident/src/alarms_pass.rs"
+functions = ["deliver", "seen", "steps_tried", "record_facts", "from_pass", "raised", "deadman", "deadman_candidate", "page_all", "floor", "ping", "retry", "condition", "publish", "run", "floor_cleared", "probe", "probe_health", "floor_proposal", "FileSwitch::observability_halted", "MaildirFallback::deliver"]
+
+[[scope]]
+path = "tsd/src/alarm.rs"
+functions = ["Attempt::validate", "Attempt::fields", "Attempt::from_row", "Attempt::write", "read"]
+
+[[scope]]
+path = "desired-state/src/sections/alarms.rs"
+functions = ["check_spec", "check_status"]

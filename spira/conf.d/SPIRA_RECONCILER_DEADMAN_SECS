@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=reconciler
+DOC=Seconds the goodput pass's record may age before the alarms pass's dead-man check pages: 3x the 60 s goodput interval, a tuning knob (law-tuning-is-not-policy).
+SCHEMA=Seconds since the latest goodput pass record past which the dead-man check raises ReconcilerPassStale and pages once.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RECONCILER_DEADMAN_SECS:=180}"
+SPIRA_CONF_DEFAULT_EOF

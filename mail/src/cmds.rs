@@ -395,6 +395,31 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deli
     Ok(SendOutcome { delivered_path, x_bead: if x_bead.is_empty() { None } else { Some(x_bead) }, steps })
 }
 
+/// A `mail send` as an alarm attempt: delivered as its tracking bead or message file, or failed
+/// with the message kept so a retry can send it again. A dry run attempts nothing.
+pub fn attempt_of_send(args: &SendArgs, body: &str, result: &Result<SendOutcome, String>, at: u64) -> Option<tsd::alarm::Attempt> {
+    use tsd::alarm::{Attempt, Message, Outcome};
+    if args.dry_run {
+        return None;
+    }
+    let outcome = match result {
+        Ok(o) => match o.x_bead.clone().or_else(|| o.delivered_path.file_name().map(|f| f.to_string_lossy().into_owned())) {
+            Some(id) if !id.trim().is_empty() => Outcome::Delivered { id },
+            _ => Outcome::Failed { reason: "send returned no id".into() },
+        },
+        Err(e) => Outcome::Failed { reason: e.clone() },
+    };
+    let message = matches!(outcome, Outcome::Failed { .. }).then(|| Message {
+        mailbox: args.mailbox.into(),
+        subject: args.subject.into(),
+        kind: args.kind.into(),
+        class: (!args.class.is_empty()).then(|| args.class.to_string()),
+        default: args.default.into(),
+        body: body.into(),
+    });
+    Some(Attempt { at, caller: "mail".into(), kind: "mail".into(), reference: format!("mail:{}:{}", args.mailbox, args.subject), outcome, message })
+}
+
 /// One TSV line: mailbox, message id, tracking bead, kind, default, and — sixth, possibly
 /// empty — the work bead the question is about (read by `sweep_dismissed` to lift its hold;
 /// a five-field line from before the column existed still parses).
@@ -936,6 +961,24 @@ mod probe_tests {
         let mut e = env(root);
         e.db = "db".into();
         send(bd, &e, &args, body.to_string()).unwrap()
+    }
+
+    #[test]
+    fn every_send_is_one_attempt_a_failure_keeps_its_message_and_a_dry_run_is_none() {
+        use tsd::alarm::Outcome;
+        let args = SendArgs { mailbox: "operator", from: None, subject: "Mute it?", kind: "question", default: "mute", class: "policy", bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" };
+        let ok = Ok(SendOutcome { delivered_path: PathBuf::from("/m/operator/new/1.2.3"), x_bead: Some("sp-ask1".into()), steps: vec![] });
+        let a = attempt_of_send(&args, "body", &ok, 7).unwrap();
+        assert_eq!((a.at, a.reference.as_str(), &a.outcome, a.message.is_none()), (7, "mail:operator:Mute it?", &Outcome::Delivered { id: "sp-ask1".into() }, true));
+        let plain = Ok(SendOutcome { delivered_path: PathBuf::from("/m/concierge/new/1.2.3"), x_bead: None, steps: vec![] });
+        assert_eq!(attempt_of_send(&args, "body", &plain, 7).unwrap().outcome, Outcome::Delivered { id: "1.2.3".into() });
+        let none = Ok(SendOutcome { delivered_path: PathBuf::new(), x_bead: None, steps: vec![] });
+        assert!(matches!(attempt_of_send(&args, "body", &none, 7).unwrap().outcome, Outcome::Failed { .. }), "a send with no id failed");
+        let failed = attempt_of_send(&args, "body", &Err("disk full".into()), 7).unwrap();
+        assert_eq!(failed.outcome, Outcome::Failed { reason: "disk full".into() });
+        let m = failed.message.unwrap();
+        assert_eq!((m.mailbox.as_str(), m.class.as_deref(), m.body.as_str()), ("operator", Some("policy"), "body"));
+        assert!(attempt_of_send(&SendArgs { dry_run: true, ..args }, "body", &Err("x".into()), 7).is_none());
     }
 
     #[test]

@@ -8,6 +8,9 @@
 //!   incident list                     open incidents
 //!   incident settle                   close incidents whose fixes landed and whose detector is quiet
 //!   incident collapse <dup> --of <keep>  mark <dup> a duplicate of <keep> and label it for the meter
+//!   incident alarms-pass [--no-fallback]  the alarms component's minute pass
+//!   incident floor-cleared            exit 0 once the goodput rate is back at its floor
+//!   incident page --no-fallback --probe <mailbox> [--interval S] | --probe-health [--max-age S]
 //!
 //! `backfill-ref-labels`, `retire-unsatisfiable-delivers` and `repair-mismatch-delivers`
 //! are retired (DESIGN.md §Decisions): one-time migrations with no live caller, already
@@ -252,6 +255,27 @@ fn now_iso() -> String {
     incident::run::iso_now_public(now_epoch())
 }
 
+/// One alarm attempt in the run directory's alarm-attempt family; a row that cannot be written is
+/// said on stderr, never silently dropped.
+fn record_attempt(env: &Env, caller: &str, kind: &str, reference: &str, outcome: tsd::alarm::Outcome, message: Option<tsd::alarm::Message>) {
+    let a = tsd::alarm::Attempt { at: now_epoch().max(0) as u64, caller: caller.into(), kind: kind.into(), reference: reference.into(), outcome, message };
+    if let Err(e) = a.write(std::path::Path::new(&env.spira_run), &hostname()) {
+        ilog(env, &format!("alarm attempt for {reference} not recorded: {e}"));
+    }
+}
+
+/// What a retry sends when an incident reached no one: the event as a note to the Concierge.
+fn note_of(title: &str, body: &[u8]) -> tsd::alarm::Message {
+    tsd::alarm::Message {
+        mailbox: "concierge".into(),
+        subject: title.to_string(),
+        kind: "note".into(),
+        class: None,
+        default: String::new(),
+        body: format!("## Note\n{}\n", String::from_utf8_lossy(body)),
+    }
+}
+
 /// `drain_one`: process one spool entry — file it, and on success remove the spool file.
 /// `exec 8>>"$lock"; flock -w "$wait" 8`: one lock for the whole intake (not one per
 /// ref), so two callers racing the check-then-create pair on the SAME ref (the watchtower
@@ -318,10 +342,15 @@ fn drain_one(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, pat
     });
     let Some(outcome) = locked else {
         ilog(env, &format!("another intake held {} for {}s — {} stays spooled, drain will retry", env.lock_path.display(), env.lock_wait_s, entry.reference));
+        record_attempt(env, "incident-file", "incident", &entry.reference, tsd::alarm::Outcome::Failed { reason: "another intake held the lock; the event stays spooled".into() }, Some(note_of(&entry.title, &entry.body)));
         return Err(());
     };
     for l in &log {
         ilog(env, l);
+    }
+    if let Some(o) = incident::attempts::of_file(&outcome) {
+        let message = matches!(o, tsd::alarm::Outcome::Failed { .. }).then(|| note_of(&entry.title, &entry.body));
+        record_attempt(env, "incident-file", "incident", &entry.reference, o, message);
     }
     match outcome {
         FileOutcome::Filed(id) => {
@@ -451,6 +480,15 @@ fn cmd_alarm(env: &Env, bd: Option<&dyn Bd>, mailer: &dyn Mailer, clock: &dyn Cl
         });
         wrote.is_ok() && std::fs::write(&state_path, next).is_ok()
     });
+    if was_due.get() || noted.is_none() {
+        let outcome = match noted {
+            Some(true) => tsd::alarm::Outcome::Delivered { id: format!("inbox:{reference}") },
+            Some(false) => tsd::alarm::Outcome::Failed { reason: format!("the note was not written to {inbox}") },
+            None => tsd::alarm::Outcome::Failed { reason: "another intake held the lock".into() },
+        };
+        let message = matches!(outcome, tsd::alarm::Outcome::Failed { .. }).then(|| note_of(title, incident::alarm::line(title, &reference).as_bytes()));
+        record_attempt(env, "incident-alarm", "alarm", &reference, outcome, message);
+    }
     if noted == Some(true) {
         if let (true, Some(bd), Some(_)) = (was_due.get(), bd, env.db.as_deref()) {
             own_alarm(env, bd, mailer, clock, title, &reference);
@@ -592,6 +630,144 @@ fn cmd_settle(env: &Env, bd: &RealBd) -> ExitCode {
     }
 }
 
+/// `spira-lc` as a program on the launcher's PATH, every answer JSON.
+struct SpiraLc {
+    program: String,
+}
+
+impl reconciler_engine::goodput_pass::Lc for SpiraLc {
+    fn call(&self, args: &[String]) -> (i32, serde_json::Value) {
+        let out = spira_config::bounded::bounded(&self.program).args(args).stdin(std::process::Stdio::null()).output();
+        match out {
+            Ok(o) => {
+                let code = o.status.code().unwrap_or(-1);
+                let v = serde_json::from_str(String::from_utf8_lossy(&o.stdout).trim())
+                    .unwrap_or_else(|_| serde_json::json!({ "cannot_tell": format!("{} answered non-JSON: {}", self.program, String::from_utf8_lossy(&o.stderr).trim()) }));
+                (code, v)
+            }
+            Err(e) => (-1, serde_json::json!({ "cannot_tell": format!("{}: {e}", self.program) })),
+        }
+    }
+}
+
+struct UreqHttp;
+
+impl incident::alarms_pass::Http for UreqHttp {
+    fn get(&self, url: &str, deadline: std::time::Duration) -> Result<String, String> {
+        let r = ureq::AgentBuilder::new().timeout(deadline).build().get(url).call().map_err(|e| e.to_string())?;
+        Ok(format!("status {}", r.status()))
+    }
+}
+
+fn spira_lc() -> SpiraLc {
+    SpiraLc { program: spira_config::release_env::tool("spira-lc") }
+}
+
+fn alarms_config(env: &Env, fallback: bool) -> Result<incident::alarms_pass::Config, String> {
+    use spira_config::process::{cfg, cfg_parse};
+    let causal_map = spira_home_dir().parent().map(|r| r.join("reconciler/causal-map.toml"));
+    Ok(incident::alarms_pass::Config {
+        run_dir: std::path::PathBuf::from(&env.spira_run),
+        host: hostname(),
+        deadman_secs: cfg_parse::<u64>("SPIRA_RECONCILER_DEADMAN_SECS")?,
+        heartbeat_url: cfg("SPIRA_RECONCILER_HEARTBEAT_URL")?,
+        fallback,
+        floor_proposal: causal_map.and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| incident::alarms_pass::floor_proposal(&t)),
+    })
+}
+
+/// Runs `f` with the real ports: spira-lc, mail in-process, the mailbox fallback, systemd's view
+/// of the goodput timer and the wall clock.
+fn with_ports<R>(env: &Env, f: impl FnOnce(&incident::alarms_pass::Ports) -> R) -> Result<R, String> {
+    use incident::alarms_pass::{FileSwitch, MailPrimary, MaildirFallback, Ports, GOODPUT_UNIT};
+    let mail_env = mail::env::Env::load()?;
+    let bd = mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq"), conn_retries: mail_env.bd_conn_retries };
+    let fallback = MaildirFallback { mail_root: mail_env.mail_root.clone(), mute: mail_env.mute };
+    let primary = MailPrimary { env: mail_env, bd };
+    let instance = spira_world::instance()?;
+    let timer_on = || {
+        let unit = spira_config::unit::resolve_unit(GOODPUT_UNIT, "timer", &instance, &spira_world::sysctl::systemctl_bin());
+        unit != "?" && spira_world::sysctl::unit_exists(&unit) && spira_world::sysctl::run_ok(&["is-enabled", "--quiet", &unit])
+    };
+    let run_dir = std::path::PathBuf::from(&env.spira_run);
+    let switch = FileSwitch { run_dir: &run_dir, timer_on: &timer_on };
+    let lc = spira_lc();
+    let ports = Ports { lc: &lc, primary: &primary, fallback: &fallback, http: &UreqHttp, switch: &switch, clock: &runtime::ports::WallClock };
+    Ok(f(&ports))
+}
+
+/// `incident alarms-pass [--no-fallback]`.
+fn cmd_alarms_pass(env: &Env, args: &[String]) -> ExitCode {
+    let fallback = !args.iter().any(|a| a == "--no-fallback");
+    let result = alarms_config(env, fallback).and_then(|cfg| with_ports(env, |p| incident::alarms_pass::run(p, &cfg))).and_then(|r| r);
+    match result {
+        Ok(r) => {
+            println!(
+                "incident: alarms-pass: {} sent, {} noted, {} retried, {} undelivered, deadman {:?}, heartbeat {}, floor {}, published={}",
+                r.sent.len(),
+                r.noted.len(),
+                r.retried.len(),
+                r.undelivered_open,
+                r.deadman,
+                r.heartbeat.as_deref().unwrap_or("-"),
+                r.floor.as_deref().unwrap_or("-"),
+                r.published
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("incident: alarms-pass: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `incident floor-cleared`: 0 when the goodput rate is at least its floor, 1 while it is not or
+/// cannot be told, so a MOOT-WHEN never reads a blind check as cleared.
+fn cmd_floor_cleared() -> ExitCode {
+    match incident::alarms_pass::floor_cleared(&spira_lc()) {
+        Ok(true) => ExitCode::SUCCESS,
+        Ok(false) => ExitCode::FAILURE,
+        Err(e) => {
+            eprintln!("incident: floor-cleared: {e}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// `incident page --no-fallback --probe <mailbox> [--interval S]` sends the probe through the
+/// primary path alone, once or every S seconds; `incident page --probe-health [--max-age S]` exits
+/// 0 only when the latest probe delivered within S seconds.
+fn cmd_page(env: &Env, args: &[String]) -> ExitCode {
+    let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    if args.iter().any(|a| a == "--probe-health") {
+        let max_age = flag("--max-age").and_then(|v| v.parse().ok()).unwrap_or(7200);
+        return match incident::alarms_pass::probe_health(std::path::Path::new(&env.spira_run), now_epoch().max(0) as u64, max_age) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                println!("{e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    let (Some(mailbox), true) = (flag("--probe"), args.iter().any(|a| a == "--no-fallback")) else {
+        eprintln!("usage: incident page --no-fallback --probe <mailbox> [--interval S] | incident page --probe-health [--max-age S]");
+        return ExitCode::from(2);
+    };
+    let interval = flag("--interval").and_then(|v| v.parse::<u64>().ok());
+    loop {
+        let r = alarms_config(env, false).and_then(|cfg| with_ports(env, |p| incident::alarms_pass::probe(p, &cfg, &mailbox))).and_then(|r| r);
+        match &r {
+            Ok(id) => println!("{} probe delivered as {id}", now_iso()),
+            Err(e) => println!("{} probe FAILED: {e}", now_iso()),
+        }
+        let Some(secs) = interval else {
+            return if r.is_ok() { ExitCode::SUCCESS } else { ExitCode::FAILURE };
+        };
+        std::thread::sleep(std::time::Duration::from_secs(secs));
+    }
+}
+
 impl Env {
     fn repo_override_ref(&self) -> Option<String> {
         env("SPIRA_INCIDENT_REF")
@@ -613,6 +789,13 @@ fn main() -> ExitCode {
     if env_cfg.db.is_none() && !args.first().map(String::as_str).is_none() {
         // `list` handles its own missing-DB message via require_db for parity with the
         // bash's per-subcommand behaviour; every other subcommand refuses up front.
+    }
+
+    match args.first().map(String::as_str) {
+        Some("alarms-pass") => return cmd_alarms_pass(&env_cfg, &args[1..]),
+        Some("floor-cleared") => return cmd_floor_cleared(),
+        Some("page") => return cmd_page(&env_cfg, &args[1..]),
+        _ => {}
     }
 
     if args.first().map(String::as_str) == Some("alarm") {
@@ -685,7 +868,7 @@ fn main() -> ExitCode {
             }
         }
         _ => {
-            eprintln!("incident.sh — turn a production event into a bead Ops can claim\n\n  incident systemd <unit>           file an incident for a failed systemd user unit\n  incident file <title> [-|<file>]  file one from an arbitrary payload\n  incident drain                    file everything the spool is holding\n  incident list                     open incidents\n  incident settle                   close incidents whose fix landed and detector is quiet\n  incident collapse <dup> --of <keep>  mark a duplicate incident");
+            eprintln!("incident.sh — turn a production event into a bead Ops can claim\n\n  incident systemd <unit>           file an incident for a failed systemd user unit\n  incident file <title> [-|<file>]  file one from an arbitrary payload\n  incident drain                    file everything the spool is holding\n  incident list                     open incidents\n  incident settle                   close incidents whose fix landed and detector is quiet\n  incident collapse <dup> --of <keep>  mark a duplicate incident\n  incident alarms-pass [--no-fallback]  the alarms component's minute pass\n  incident floor-cleared            exit 0 once the goodput rate is back at its floor\n  incident page --no-fallback --probe <mailbox> [--interval S] | --probe-health [--max-age S]");
             ExitCode::from(1)
         }
     }
