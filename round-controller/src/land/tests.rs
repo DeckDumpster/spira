@@ -581,3 +581,20 @@ fn every_blocker_has_its_own_word() {
     assert_eq!(v["blocker"], "stacked-on-unlanded");
     assert_eq!(serde_json::from_value::<Status>(v).unwrap(), s);
 }
+
+#[test]
+fn a_held_round_whose_head_landed_outside_the_lander_is_recorded_landed_from_git() {
+    let b = bench(vec![refuse("k1", Some(1), "refused: the gate is red at k1-h\n")]);
+    round(&b, "k1", "Green", "k1-h", "base-0", None);
+    assert!(matches!(
+        land(&b.ports(), "lane").unwrap()[..],
+        [(_, Landing::Held(_))]
+    ));
+    b.git.advance("lane", "k1-h");
+    assert_eq!(
+        land(&b.ports(), "lane").unwrap(),
+        [("k1".into(), Landing::FastForward { at: "k1-h".into() })]
+    );
+    assert_eq!((state(&b, "k1"), landing_ref(&b)), (BatchState::Landed, "k1-h".to_string()));
+    assert_eq!(lands(&b), 1, "recorded from git, with no second land call");
+}

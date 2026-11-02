@@ -40,6 +40,7 @@ const USAGE: &str = "usage: round-controller <verb>
                                             start that run as the transient unit round-controller-run-<batch>-<lease-token>
   lease clear --repo <r> --batch <b>        release a round's lease once its holder is proven dead; refused otherwise
   lease probe --secs <n> --out <file>       renew a lease of its own for n seconds and write each renewal's lateness
+  lane record                               write each registered repo's lanes/<repo> from git and the installed release, and nothing else
   version                                   print the version
   -h, --help";
 
@@ -184,6 +185,21 @@ fn dispatch(args: &[String]) -> i32 {
                 }
             }
         }
+        ["lane", "record"] => match with_ports(|p| {
+            let home = spira_config::resolve::locate_home_for_process()?;
+            let repos =
+                spira_config::repos::Registry::from_env(std::env::vars().collect(), &home).all();
+            Ok(round_controller::lane::record_all(p, &repos))
+        }) {
+            Ok((out, ok)) => {
+                print!("{out}");
+                i32::from(!ok)
+            }
+            Err(e) => {
+                eprintln!("round-controller lane record: {e}");
+                2
+            }
+        },
         ["lease", "probe", "--secs", secs, "--out", out] => {
             report("lease probe", run_probe(secs, out))
         }

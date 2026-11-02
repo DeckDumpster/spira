@@ -202,8 +202,12 @@ each sub-pass. Otherwise the steps run in a fixed order: forge sweep, orphans, s
 lane, schedule, intents, section (the forge sweep does nothing until its piece registers it). The
 lane step records `lanes/<repo>` for each repo the registry lands by rounds: the commit git's
 landing ref is at, the image built from the installed release's recipe (`round-vm recipe-sha`)
-and the commit its `MANIFEST` names, written only when one changed. It leaves the landing ref
-where it was while a live round's head is already under git's ref, which is the Lander's to record. The
+and the commit its `MANIFEST` names, written only when one changed. The landing ref moves only
+forward, and not while a live round's head is already under git's ref, which is the Lander's to
+record; the Lander retries a held round whose head git's ref has taken. `round-controller lane
+record` runs this step alone, so the lanes `cutover-check` reads exist before any pass; a lane
+is still what `pass` acts on, so the next pass takes the repo over. The image is named by its
+recipe, so every release changes the harness and needs a fresh base verdict. The
 orphans step leaves a round that can no longer land to supersede. The schedule step takes a slot
 for a repo with members ready and room in its stack, cuts on it, takes the round's lease and
 launches the runner with both tokens; a failed launch gives both back and records the attempt in

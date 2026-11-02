@@ -211,7 +211,13 @@ fn one(p: &Ports, repo: &str, batch: &str, parent: Option<&str>) -> Result<Landi
         parent_head: parent.as_ref().and_then(|q| q.head.clone()),
     };
     let status = read_status(p, &status_key(repo, batch))?;
-    if status.as_ref().is_some_and(|s| s.inputs == inputs) {
+    // A head that landed outside the Lander is an input too: unrecorded, it holds the lane back.
+    if status.as_ref().is_some_and(|s| s.inputs == inputs)
+        && !p
+            .git
+            .under_landing_ref(repo, &head)
+            .map_err(|e| Refusal::unreadable(&git_key(repo), e))?
+    {
         return Ok(Landing::Unchanged);
     }
     let lease = match acquire(p, &Resource::round(repo, batch), HOLDER) {

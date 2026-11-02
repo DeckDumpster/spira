@@ -104,4 +104,4 @@ functions = ["sifts", "sift_one", "sift_repo", "certified_pool", "read_pool", "b
 # recorded, and the CAS that is re-read when another writer moved the lane.
 [[scope]]
 path = "round-controller/src/lane.rs"
-functions = ["record", "unrecorded_landing"]
+functions = ["record", "follows_git", "unrecorded_landing"]

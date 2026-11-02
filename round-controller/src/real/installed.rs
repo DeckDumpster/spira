@@ -11,8 +11,8 @@ use runtime::ports::{Proc, ProcSpec};
 
 use crate::lane::{Installed, LaneInputs};
 
-/// `recipe-sha` hashes six files compiled into round-vm; this bounds a wedged spawn.
-const RECIPE_DEADLINE: Duration = Duration::from_secs(10);
+/// `recipe-sha` hashes six files compiled into round-vm: milliseconds; this bounds a wedged spawn.
+const RECIPE_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Whether a repo lands by rounds, as the registry says.
 pub type LandsByRounds = dyn Fn(&str) -> bool + Send + Sync;

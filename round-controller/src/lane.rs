@@ -58,16 +58,17 @@ pub fn record(p: &Ports, repo: &str) -> Result<Recorded, Refusal> {
     else {
         return Ok(Recorded::NotRounds);
     };
-    let at = p
-        .git
-        .landing_sha(repo)
-        .map_err(|e| Refusal::unreadable(&git_key(repo), e))?;
     let key = lane_key(repo);
     for _ in 0..TRIES {
         let item = p
             .store
             .get(&key)
             .map_err(|e| Refusal::unreadable(&key, e))?;
+        // Read after the lane, so a landing the Lander recorded in between is never moved back.
+        let at = p
+            .git
+            .landing_sha(repo)
+            .map_err(|e| Refusal::unreadable(&git_key(repo), e))?;
         let rev = item.as_ref().map(|i| i.mod_rev);
         let mut value = item.map_or_else(|| Object::new(json!({})), |i| i.value);
         let lane = value
@@ -75,7 +76,7 @@ pub fn record(p: &Ports, repo: &str) -> Result<Recorded, Refusal> {
             .as_object_mut()
             .ok_or_else(|| Refusal::unreadable(&key, "the lane is not an object"))?;
         let landing = match lane.get("landing_ref").and_then(Value::as_str) {
-            Some(was) if was != at && unrecorded_landing(p, repo)? => was.to_string(),
+            Some(was) if was != at && !follows_git(p, repo, was)? => was.to_string(),
             _ => at.clone(),
         };
         let want = [
@@ -116,8 +117,17 @@ pub fn record(p: &Ports, repo: &str) -> Result<Recorded, Refusal> {
     ))
 }
 
-/// A live round whose head git's landing ref already holds is the Lander's to record: moving the
-/// lane past it first would leave it ungrounded, and supersede would take a round that landed.
+/// The lane moves only forward to git's landing ref, and not past a live round whose head the
+/// ref already holds: that landing is the Lander's to record, and moving the lane first would
+/// leave the round ungrounded for supersede to take.
+fn follows_git(p: &Ports, repo: &str, was: &str) -> Result<bool, Refusal> {
+    let forward = p
+        .git
+        .under_landing_ref(repo, was)
+        .map_err(|e| Refusal::unreadable(&git_key(repo), e))?;
+    Ok(forward && !unrecorded_landing(p, repo)?)
+}
+
 fn unrecorded_landing(p: &Ports, repo: &str) -> Result<bool, Refusal> {
     for r in stack::live(p, repo)? {
         let Some(head) = r.round.row.head.as_deref() else {
@@ -131,6 +141,27 @@ fn unrecorded_landing(p: &Ports, repo: &str) -> Result<bool, Refusal> {
         }
     }
     Ok(false)
+}
+
+/// `round-controller lane record`: [`record`] for each repo alone, so the lanes `cutover-check`
+/// reads can be written before any pass runs. One `repo=<r> lane=<what>` line each, and whether
+/// every repo was recorded.
+pub fn record_all(p: &Ports, repos: &[String]) -> (String, bool) {
+    let mut out = String::new();
+    let mut ok = true;
+    for repo in repos {
+        let what = match record(p, repo) {
+            Ok(Recorded::NotRounds) => "not-rounds".to_string(),
+            Ok(Recorded::Unchanged) => "unchanged".to_string(),
+            Ok(Recorded::Written) => "written".to_string(),
+            Err(r) => {
+                ok = false;
+                format!("refused {r}")
+            }
+        };
+        out.push_str(&format!("repo={repo} lane={what}\n"));
+    }
+    (out, ok)
 }
 
 /// `pass`'s lane step: [`record`], its refusal told once.
