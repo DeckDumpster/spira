@@ -183,7 +183,7 @@ pub const HARNESS_MARKER: &str = "spira/testenv/Containerfile";
 pub const USAGE: &[&str] = &[
     "usage: testenv container up|down|exec|probe|tag|image|publish [OPTIONS]",
     "  up      [--name NAME] [--checkout PATH] [--queue-timeout SECS] [--pids-limit N] [--memory SIZE]",
-    "  down    [--name NAME] [--volumes] [--force-foreign]",
+    "  down    [--name NAME] [--volumes | --volumes-of NAME] [--no-grace] [--force-foreign]",
     "  exec    [--name NAME] [--user USER] CMD ARGS...",
     "  probe   [--name NAME]",
     "  tag              # print the computed image tag (the build closure hash)",
@@ -1052,7 +1052,8 @@ impl Driver<'_> {
 
     pub fn cmd_down(&self, args: &[String]) -> i32 {
         let mut name = s(DEFAULT_NAME);
-        let (mut volumes, mut force) = (false, false);
+        let (mut volumes, mut force, mut no_grace) = (false, false, false);
+        let mut volumes_of: Option<String> = None;
         let mut i = 0;
         while i < args.len() {
             match (args[i].as_str(), args.get(i + 1)) {
@@ -1060,7 +1061,14 @@ impl Driver<'_> {
                     name = v.clone();
                     i += 1;
                 }
+                // The volumes are named for the container's original name, not the one a
+                // detached teardown renamed it to (sp-ikh6qw).
+                ("--volumes-of", Some(v)) => {
+                    volumes_of = Some(v.clone());
+                    i += 1;
+                }
                 ("--volumes", _) => volumes = true,
+                ("--no-grace", _) => no_grace = true,
                 ("--force-foreign", _) => force = true,
                 (a, _) => {
                     self.err(&format!("testenv down: unknown argument: {a}"));
@@ -1085,15 +1093,21 @@ impl Driver<'_> {
                 }
             }
         }
-        self.pq(&["stop", &name]);
-        self.pq(&["rm", &name]);
+        if no_grace {
+            // A batch's container holds nothing worth a clean shutdown: its results are
+            // already on the host. `stop`'s grace was most of a 33 s teardown (sp-ikh6qw).
+            self.pq(&["rm", "-f", "-t", "0", &name]);
+        } else {
+            self.pq(&["stop", &name]);
+            self.pq(&["rm", &name]);
+        }
         // A failed teardown keeps the owner file, so an orphan sweep can still find both.
         if !self.pq(&["container", "exists", &name]) {
             self.host.remove(&owner);
         }
-        if volumes {
-            self.pq(&["volume", "rm", &format!("{name}-cargo-reg")]);
-            self.pq(&["volume", "rm", &format!("{name}-cargo-git")]);
+        if let Some(base) = volumes_of.as_deref().or(volumes.then_some(name.as_str())) {
+            self.pq(&["volume", "rm", &format!("{base}-cargo-reg")]);
+            self.pq(&["volume", "rm", &format!("{base}-cargo-git")]);
         }
         0
     }
