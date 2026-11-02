@@ -147,15 +147,27 @@ impl Profile {
         if let Some(g) = &self.gitdir {
             a.extend(["--ro-bind".into(), s(g), s(g)]);
         }
-        a.extend(["--bind".into(), s(&self.tree), s(&self.tree)]);
+        // The tree at one path whatever the host's worktree is called (sp-a2thtg): a branch's target
+        // is shared by every run of that branch, and the source paths cargo compiles in must still
+        // name a real file when the next run's worktree lives somewhere else.
+        a.extend(["--bind".into(), s(&self.tree), TREE_MOUNT.into()]);
         a.extend(["--bind".into(), s(&self.target), s(&self.target)]);
-        a.extend(["--chdir".into(), s(&self.tree)]);
+        a.extend(["--chdir".into(), TREE_MOUNT.into()]);
         a.push("--clearenv".into());
         for (k, v) in self.env() {
             a.extend(["--setenv".into(), k, v]);
         }
         a
     }
+}
+
+/// Where the run's tree is inside the sandbox, the same for every run: under the sandbox's own
+/// tmpfs /tmp, since the read-only root cannot take a new mountpoint.
+pub const TREE_MOUNT: &str = "/tmp/spira-sandbox-tree";
+
+/// The unit script as the sandbox sees it.
+pub fn mounted_script(script: &str) -> PathBuf {
+    Path::new(TREE_MOUNT).join("spira").join(script)
 }
 
 /// The image's system git identity (`git config --system` in spira/testenv/Containerfile).
@@ -340,6 +352,7 @@ mod tests {
         assert_eq!(pairs(&a, "--ro-bind").first(), Some(&("/".into(), "/".into())), "the root is bound read-only first: {a:?}");
         let rw: Vec<String> = pairs(&a, "--bind").into_iter().map(|(src, _)| src).collect();
         assert_eq!(rw, ["/h/u/.cargo/registry", "/tmp/spira-testenv-x/tree", "/srv/t/spira-unit-cargo-target-b"]);
+        assert!(pairs(&a, "--bind").contains(&("/tmp/spira-testenv-x/tree".into(), TREE_MOUNT.into())), "the tree is bound at the fixed path: {a:?}");
         assert!(pairs(&a, "--ro-bind").contains(&("/h/u/repo/.git".into(), "/h/u/repo/.git".into())), "the repo's git dir is read-only: {a:?}");
     }
 
@@ -428,6 +441,17 @@ mod tests {
         q.write_gitconfig().unwrap();
         let text = fs::read_to_string(q.gitconfig()).unwrap();
         assert!(text.contains("name = spirauser") && text.contains("email = spirauser@localhost"), "{text}");
+    }
+
+    #[test]
+    fn every_run_sees_its_tree_at_the_same_path_whatever_the_host_worktree_is_called() {
+        let one = Profile { tree: "/tmp/spira-testenv-a/.testenv-warm-0".into(), ..profile() }.bwrap_args();
+        let two = Profile { tree: "/tmp/spira-testenv-b/.testenv-warm-1".into(), ..profile() }.bwrap_args();
+        let dest = |a: &[String], src: &str| pairs(a, "--bind").into_iter().find(|(s, _)| s == src).map(|(_, d)| d);
+        assert_eq!(dest(&one, "/tmp/spira-testenv-a/.testenv-warm-0").as_deref(), Some(TREE_MOUNT));
+        assert_eq!(dest(&two, "/tmp/spira-testenv-b/.testenv-warm-1").as_deref(), Some(TREE_MOUNT));
+        assert!(one.windows(2).any(|w| w[0] == "--chdir" && w[1] == TREE_MOUNT), "{one:?}");
+        assert_eq!(mounted_script("unit-tests.sh"), PathBuf::from(TREE_MOUNT).join("spira/unit-tests.sh"));
     }
 
     #[test]
