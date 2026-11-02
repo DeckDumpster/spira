@@ -256,10 +256,10 @@ mod tests {
     #[test]
     fn a_heimdall_lane_stopped_on_every_repo_skips_the_pass() {
         let d = testkit::TempDir::new("heimdall-lane");
-        let repos = ["spira", "cubby"];
+        let repos = ["spira", "other"];
         spira_config::scoped_stop::pause_repo(d.path(), "spira", &["heimdall".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
-        assert_eq!(lane_skip(spira_config::scoped_stop::stop_everywhere(d.path(), &repos, LANE)), None, "cubby is still watched");
-        spira_config::scoped_stop::pause_repo(d.path(), "cubby", &["heimdall".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
+        assert_eq!(lane_skip(spira_config::scoped_stop::stop_everywhere(d.path(), &repos, LANE)), None, "the other repo is still watched");
+        spira_config::scoped_stop::pause_repo(d.path(), "other", &["heimdall".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
         let why = lane_skip(spira_config::scoped_stop::stop_everywhere(d.path(), &repos, LANE)).expect("stopped everywhere");
         assert!(why.starts_with("heimdall: skipped") && why.contains("world stop"), "{why}");
     }

@@ -338,8 +338,14 @@ pub fn manifest_from_env(instance: &str) -> Result<Manifest, String> {
     Ok(m)
 }
 
+/// The halt stamp, or cutover mode's record: a world held for a cutover is still stopped, so an
+/// install enables its units without starting them.
 pub fn world_halted() -> bool {
-    declared("SPIRA_RUN").map(|r| Path::new(&r).join("world.halted").exists()).unwrap_or(false)
+    declared("SPIRA_RUN").map(|r| halted_at(Path::new(&r))).unwrap_or(false)
+}
+
+fn halted_at(run: &Path) -> bool {
+    run.join("world.halted").exists() || run.join("world.cutover-mode").exists()
 }
 
 #[cfg(test)]
@@ -437,5 +443,16 @@ mod stale_release_tests {
         assert_eq!(units_repo(Some("/h/not-git".into()), "/r/rel".into(), git), "/r/rel", "a mapped path that is not a checkout is not used");
         assert_eq!(units_repo(None, "/r/rel".into(), git), "/r/rel", "no map: the derivation, as before");
         assert_eq!(units_repo(Some(String::new()), "/r/rel".into(), git), "/r/rel");
+    }
+}
+
+#[cfg(test)]
+mod halt_tests {
+    #[test]
+    fn a_world_in_cutover_mode_installs_as_a_halted_one() {
+        let d = testkit::TempDir::new("install-cutover-halted");
+        assert!(!super::halted_at(d.path()));
+        std::fs::write(d.path().join("world.cutover-mode"), "{}").unwrap();
+        assert!(super::halted_at(d.path()), "the stamp is lifted for the window, the world is not running");
     }
 }

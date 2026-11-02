@@ -57,7 +57,7 @@ fn config() -> Result<PassConfig, String> {
         holder: holder(),
         timeout_secs: cfg_parse::<u64>("SPIRA_RECONCILER_PASS_TIMEOUT_SECS")?,
         shadow: cfg("SPIRA_RECONCILER_SHADOW_KINDS")?.split_whitespace().map(String::from).collect(),
-        halted: run_dir.join("world.halted").exists(),
+        halted: run_dir.join("world.halted").exists() || spira_config::scoped_stop::stop_everywhere_registered(&run_dir, "remedies").is_some(),
     })
 }
 

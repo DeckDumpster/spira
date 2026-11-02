@@ -56,7 +56,8 @@ file = "sp-cm02"
 at = 0
 file = "sp-cm03"
 
-# The unclaimed bead is reserved until cutover mode is entered, so only the window can claim it.
+# The unclaimed bead is reserved until cutover mode is entered, so only the window can claim it;
+# its claim step is the script a claim would run, there to make a wrong claim visible.
 [[step]]
 at = 0
 command = 'world pause --reserve sp-cm02 --reason "claimable only under cutover mode" --until "cutover mode is entered"'
@@ -247,6 +248,10 @@ sql = "SELECT seq, bead, lc_state FROM bead_state WHERE bead = 'sp-cm02' AND lc_
 [[invariant]]
 name = "a_round_landed_that_was_not_hand_landed"
 sql = "SELECT seq, text FROM run_landing_log WHERE event = 'ROUND-LAND' AND text NOT LIKE '%batch=rc-cm%'"
+
+[[invariant]]
+name = "a_certified_bead_landed_outside_the_hand_round"
+sql = "SELECT seq, bead FROM bead_state WHERE bead = 'sp-cm03' AND lc_state = 'LANDED'"
 
 [[expect]]
 name = "round_recert_landed_the_round_under_cutover_mode"

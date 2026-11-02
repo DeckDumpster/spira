@@ -28,7 +28,7 @@ while IFS= read -r line; do
     'exits '[0-9]*) want="${note#exits }" retry=0 ;;
     *) echo "runbook $entry:$n: unreadable exit note: $note" >&2; exit 9 ;;
     esac
-    out=$(eval "$cmd" 2>&1)
+    out=$(eval "$cmd" </dev/null 2>&1)
     rc=$?
     echo "runbook $entry:$n: $cmd -> $rc"
     if [ "$rc" != "$want" ]; then

@@ -380,10 +380,10 @@ mod tests {
     #[test]
     fn a_host_wide_lane_is_stopped_only_when_every_repo_stops_it() {
         let d = testkit::TempDir::new("scoped-stop-everywhere");
-        let repos = ["spira", "cubby"];
+        let repos = ["spira", "other"];
         pause_repo(d.path(), "spira", &lanes("czar"), "o", "r", "u", 1).unwrap();
-        assert!(stop_everywhere(d.path(), &repos, "czar").is_none(), "cubby still runs");
-        pause_repo(d.path(), "cubby", &lanes("czar,land"), "o", "r", "u", 1).unwrap();
+        assert!(stop_everywhere(d.path(), &repos, "czar").is_none(), "the other repo still runs");
+        pause_repo(d.path(), "other", &lanes("czar,land"), "o", "r", "u", 1).unwrap();
         assert_eq!(stop_everywhere(d.path(), &repos, "czar").map(|s| s.repo), Some("spira".into()));
         assert!(stop_everywhere(d.path(), &repos, "land").is_none());
         assert!(stop_everywhere::<&str>(d.path(), &[], "czar").is_none(), "no repos is no stop");

@@ -1744,10 +1744,10 @@ mod lane_tests {
     #[test]
     fn a_czar_lane_stopped_on_every_repo_skips_the_pass() {
         let d = testkit::TempDir::new("czar-pass-lane");
-        let repos = ["spira".to_string(), "cubby".to_string()];
+        let repos = ["spira".to_string(), "other".to_string()];
         spira_config::scoped_stop::pause_repo(d.path(), "spira", &["czar".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
-        assert_eq!(czar_lane_stopped(spira_config::scoped_stop::stop_everywhere(d.path(), &repos, CZAR_LANE)), None, "cubby still runs");
-        spira_config::scoped_stop::pause_repo(d.path(), "cubby", &["czar".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
+        assert_eq!(czar_lane_stopped(spira_config::scoped_stop::stop_everywhere(d.path(), &repos, CZAR_LANE)), None, "the other repo still runs");
+        spira_config::scoped_stop::pause_repo(d.path(), "other", &["czar".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
         let why = czar_lane_stopped(spira_config::scoped_stop::stop_everywhere(d.path(), &repos, CZAR_LANE)).expect("stopped everywhere");
         assert!(why.starts_with("czar pass: skipped") && why.contains("world stop"), "{why}");
     }

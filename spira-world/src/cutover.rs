@@ -124,10 +124,7 @@ pub fn enter(e: &Enter) -> Result<Record, String> {
 pub fn leave(run: &Path) -> Result<Option<Record>, String> {
     let Some(rec) = read(run)? else { return Ok(None) };
     for o in &rec.stops {
-        if o.lanes.is_empty() {
-            continue;
-        }
-        let left = scoped_stop::unpause_repo(run, &o.repo, &o.lanes)?.unwrap_or_default();
+        let left = if o.lanes.is_empty() { o.prior.as_ref().map(|p| p.lanes.clone()).unwrap_or_default() } else { scoped_stop::unpause_repo(run, &o.repo, &o.lanes)?.unwrap_or_default() };
         if let Some(prior) = o.prior.as_ref().filter(|_| !left.is_empty()) {
             scoped_stop::put_repo(run, &RepoStop { lanes: left, ..prior.clone() })?;
         }
@@ -158,7 +155,7 @@ mod tests {
         fn new(name: &str) -> W {
             let d = testkit::TempDir::new(name);
             std::fs::write(d.join("world.halted"), "stopped\n").unwrap();
-            W { d, repos: vec!["spira".into(), "cubby".into()] }
+            W { d, repos: vec!["spira".into(), "other".into()] }
         }
         fn run(&self) -> &Path {
             self.d.path()
@@ -208,15 +205,26 @@ mod tests {
     #[test]
     fn leaving_lifts_exactly_the_stops_cutover_mode_laid() {
         let w = W::new("cutover-leave");
-        scoped_stop::pause_repo(w.run(), "cubby", &["rounds".to_string(), "claims".to_string()], "concierge", "drain", "fix lands", 7).unwrap();
-        let before = scoped_stop::stop_for(w.run(), "cubby", "rounds").unwrap();
+        scoped_stop::pause_repo(w.run(), "other", &["rounds".to_string(), "claims".to_string()], "concierge", "drain", "fix lands", 7).unwrap();
+        let before = scoped_stop::stop_for(w.run(), "other", "rounds").unwrap();
         w.enter(&[]).unwrap();
-        assert_eq!(scoped_stop::stop_for(w.run(), "cubby", "rounds").unwrap().owner, OWNER);
+        assert_eq!(scoped_stop::stop_for(w.run(), "other", "rounds").unwrap().owner, OWNER);
         let rec = leave(w.run()).unwrap().unwrap();
-        assert_eq!(rec.stops.iter().find(|o| o.repo == "cubby").unwrap().lanes, ["publish", "land", "dwarves", "czar", "heimdall", "remedies"], "claims was already stopped");
+        assert_eq!(rec.stops.iter().find(|o| o.repo == "other").unwrap().lanes, ["publish", "land", "dwarves", "czar", "heimdall", "remedies"], "claims was already stopped");
         assert!(scoped_stop::stop_for(w.run(), "spira", "claims").is_none(), "spira's stop is gone");
-        assert_eq!(scoped_stop::repo_stops(w.run()), vec![before], "cubby's own stop is back as it was");
+        assert_eq!(scoped_stop::repo_stops(w.run()), vec![before], "the other repo's own stop is back as it was");
         assert!(read(w.run()).unwrap().is_none());
         assert_eq!(leave(w.run()).unwrap(), None, "leaving twice is a no-op");
+    }
+
+    #[test]
+    fn a_prior_stop_on_every_lane_gets_its_owner_back() {
+        let w = W::new("cutover-full-prior");
+        let all: Vec<String> = LANES.iter().map(|l| l.to_string()).collect();
+        scoped_stop::pause_repo(w.run(), "spira", &all, "concierge", "hold", "fix lands", 7).unwrap();
+        let before = scoped_stop::stop_for(w.run(), "spira", "claims").unwrap();
+        w.enter(&[]).unwrap();
+        leave(w.run()).unwrap();
+        assert_eq!(scoped_stop::stop_for(w.run(), "spira", "claims"), Some(before));
     }
 }

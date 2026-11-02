@@ -2679,10 +2679,10 @@ mod lane_tests {
     #[test]
     fn a_remedies_lane_stopped_on_every_repo_skips_the_pass() {
         let d = testkit::TempDir::new("reconciler-lane");
-        let repos = ["spira".to_string(), "cubby".to_string()];
+        let repos = ["spira".to_string(), "other".to_string()];
         spira_config::scoped_stop::pause_repo(d.path(), "spira", &["remedies".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
-        assert_eq!(remedies_lane_stopped(spira_config::scoped_stop::stop_everywhere(d.path(), &repos, REMEDIES_LANE)), None, "cubby still runs");
-        spira_config::scoped_stop::pause_repo(d.path(), "cubby", &["remedies".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
+        assert_eq!(remedies_lane_stopped(spira_config::scoped_stop::stop_everywhere(d.path(), &repos, REMEDIES_LANE)), None, "the other repo still runs");
+        spira_config::scoped_stop::pause_repo(d.path(), "other", &["remedies".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
         let why = remedies_lane_stopped(spira_config::scoped_stop::stop_everywhere(d.path(), &repos, REMEDIES_LANE)).expect("stopped everywhere");
         assert!(why.starts_with("reconciler: skipped") && why.contains("world stop"), "{why}");
     }
