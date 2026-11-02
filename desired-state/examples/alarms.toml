@@ -1,0 +1,17 @@
+# The Alarms section's spec: no alarm left undelivered. Not part of the default document, which
+# every install composes and publishes: a section spec reaches the control store, so it is
+# applied when the alarms section is armed
+# (`spira compose desired-state/examples/default.toml desired-state/examples/alarms.toml`).
+
+[producer]
+producer = "spira-default"
+version = "1"
+time = "2026-11-01T00:00:00Z"
+
+[[resources]]
+apiVersion = "spira/v1"
+kind = "Alarms"
+[resources.metadata]
+name = "all"
+[resources.spec]
+undelivered_open = { value = 0, statute = "law-answers-need-a-delivery-path" }

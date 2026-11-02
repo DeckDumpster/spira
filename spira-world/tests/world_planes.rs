@@ -54,6 +54,7 @@ fn detectors_are_observability_and_the_loop_is_work() {
     }
     assert_eq!(plane_of_shipped("spira-lifecycle-section.service"), Some(Plane::Observability));
     assert_eq!(plane_of_shipped("spira-reconciler-goodput.service"), Some(Plane::Observability));
+    assert_eq!(plane_of_shipped("spira-alarms.timer"), Some(Plane::Observability), "the dead-man check outlives a world stop");
     for w in ["call", "sentinel", "landing-pass", "verdict", "publish", "reconciler", "reconciler-flow", "groom", "gh-intake", "ops", "czar-pass", "mimir", "straggler-sweep", "reap-terminal"] {
         assert_eq!(plane_of_shipped(&format!("spira-{w}.timer")), Some(Plane::Work), "{w}");
     }

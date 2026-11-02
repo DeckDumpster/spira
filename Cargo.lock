@@ -796,12 +796,20 @@ name = "incident"
 version = "1.0.0"
 dependencies = [
  "bead",
+ "mail",
+ "reconciler-engine",
  "regex",
+ "runtime",
  "serde",
  "serde_json",
  "sha2",
  "spira-config",
+ "spira-desired-state",
+ "spira-world",
  "testkit",
+ "toml",
+ "tsd",
+ "ureq",
 ]
 
 [[package]]
@@ -991,6 +999,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "testkit",
+ "tsd",
 ]
 
 [[package]]
@@ -2017,6 +2026,7 @@ dependencies = [
 name = "spira-lc"
 version = "1.0.0"
 dependencies = [
+ "incident",
  "lifecycle",
  "opentelemetry-proto",
  "reconciler-engine",
@@ -2463,6 +2473,7 @@ dependencies = [
 name = "tsd"
 version = "1.0.0"
 dependencies = [
+ "serde",
  "serde_json",
  "spira-otel",
  "testkit",

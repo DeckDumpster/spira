@@ -5,6 +5,7 @@
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+pub mod alarms;
 pub mod lifecycle;
 pub mod probe;
 pub mod round_controller;
@@ -38,6 +39,8 @@ pub struct SectionKind {
     /// The one actor that writes this kind's status, flow, distance and actions, and acks its
     /// intents.
     pub owner: &'static str,
+    /// The escalation class its pages ask under; `None` sends them to the Concierge.
+    pub escalation: Option<&'static str>,
     pub conditions: &'static [ConditionDecl],
     pub fields: &'static [(&'static str, FieldShape)],
     pub check_spec: fn(&Value) -> Result<(), SchemaError>,
@@ -61,7 +64,7 @@ pub fn typed<T: DeserializeOwned>(v: &Value) -> Result<(), SchemaError> {
         .map_err(|e| (e.path().to_string(), e.inner().to_string()))
 }
 
-static KINDS: &[SectionKind] = &[lifecycle::KIND, probe::KIND, round_controller::KIND];
+static KINDS: &[SectionKind] = &[alarms::KIND, lifecycle::KIND, probe::KIND, round_controller::KIND];
 
 pub fn registry() -> &'static [SectionKind] {
     KINDS

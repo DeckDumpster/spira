@@ -13,6 +13,7 @@ regex = "1"
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
 bead = { path = "../bead" }
+tsd = { path = "../tsd" }
 
 [[bin]]
 name = "mail"

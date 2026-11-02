@@ -14,6 +14,7 @@ use state_store::{
 
 use super::{run, Call, REFUSALS, WRITES};
 
+mod alarms_pass;
 mod assemble;
 mod goodput_pass;
 

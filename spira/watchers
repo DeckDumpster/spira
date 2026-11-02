@@ -184,3 +184,8 @@ skew-refresh|log|@SPIRA_RUN@/skew-refresh.log
 # verdict=.. red=..`, which offers the incident to a matching SOP's tool first and puts the page in the
 # inbox only when none handled it.
 rounds-loop|log|@SPIRA_RUN@/rounds-loop.log
+
+# ALARMS-PROBE proves the alarms component's primary delivery path every hour: one probe note to
+# its own test mailbox through `mail send` alone, never the fallback (law-a-fallback-has-a-forced-mode).
+# Health is red when the latest probe failed or is over two hours old.
+alarms-probe|daemon|incident page --no-fallback --probe alarms-probe --interval 3600|incident page --probe-health --max-age 7200
