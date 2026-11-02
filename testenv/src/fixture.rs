@@ -875,14 +875,12 @@ impl<'a> Session<'a> {
         let mut env = vec![kv("XDG_RUNTIME_DIR", USER_RUNTIME)];
         env.extend(self.release_env());
         env.extend(testdb_root_env());
-        if self.testdb_cache.is_some() {
-            env.push(kv(crate::testdb::CACHE_ENV, CONTAINER_TESTDB_CACHE));
-        }
         let exe = self.in_release("bin/testenv");
-        self.setup_as_user(
-            &[&exe, "testdb", "template", "--bd", "bd", "--dolt", "dolt"],
-            env,
-        )
+        let mut argv = vec![exe.as_str(), "testdb", "template", "--bd", "bd", "--dolt", "dolt"];
+        if self.testdb_cache.is_some() {
+            argv.extend(["--cache", CONTAINER_TESTDB_CACHE]);
+        }
+        self.setup_as_user(&argv, env)
     }
 
     /// After setup: a template the step built is copied out of the container into the host
@@ -1841,17 +1839,18 @@ mod tests {
     fn the_template_step_reads_the_host_cache_only_when_the_session_binds_one() {
         let rt = FakeRuntime::new();
         let s = session(&rt);
-        assert_eq!(s.testdb_template_request().env_value(crate::testdb::CACHE_ENV), None);
+        assert!(!s.testdb_template_request().argv.iter().any(|a| a == "--cache"));
         s.up(Path::new("/wt")).unwrap();
         assert!(!rt.testenv_calls.lock().unwrap()[0].iter().any(|a| a == "--testdb-cache"));
 
         let rt = FakeRuntime::new();
         let mut s = session(&rt);
         s.testdb_cache = Some(PathBuf::from("/host/tpl-cache"));
-        assert_eq!(
-            s.testdb_template_request().env_value(crate::testdb::CACHE_ENV),
-            Some(CONTAINER_TESTDB_CACHE)
-        );
+        assert!(s
+            .testdb_template_request()
+            .argv
+            .windows(2)
+            .any(|w| w == ["--cache", CONTAINER_TESTDB_CACHE]));
         s.up(Path::new("/wt")).unwrap();
         assert!(rt.testenv_calls.lock().unwrap()[0]
             .windows(2)

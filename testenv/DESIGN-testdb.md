@@ -42,7 +42,7 @@ diagnostics on stderr; exit 0 success, 1 failure, 2 usage.
 
 | command | does |
 |---|---|
-| `template --bd B --dolt D [--root R]` | ensure the template for (B, D) exists, copying it from `$TESTDB_TEMPLATE_CACHE` when that holds it (§2.6); print `TESTDB_TEMPLATE= TESTDB_TEMPLATE_KEY= TESTDB_TEMPLATE_ORIGIN=root\|cache\|built` |
+| `template --bd B --dolt D [--root R] [--cache C]` | ensure the template for (B, D) exists, copying it from `C` when that holds it (§2.6); print `TESTDB_TEMPLATE= TESTDB_TEMPLATE_KEY= TESTDB_TEMPLATE_ORIGIN=root\|cache\|built` |
 | `up --tag T --bd B --dolt D [--root R] [--owner PID]` | a fresh fixture from the template; print `TESTDB_NAME TESTDB_DIR TESTDB_FIXTURE TESTDB_SERVER_PORT TESTDB_SERVER_PID TESTDB_UP_MS TESTDB_BD` (`TESTDB_BD`: B as an absolute path, the first on PATH, links not resolved — §2.4) |
 | `reset --fixture F` | back to exactly the template state; print `TESTDB_SERVER_PORT TESTDB_SERVER_PID TESTDB_RESET_MS` |
 | `down --fixture F` | stop the server, remove the fixture; print `TESTDB_SERVER_CPU_MS TESTDB_LIFE_MS TESTDB_RESETS` |
@@ -239,12 +239,14 @@ keeps what one batch built and the next batch with the same key copies it.
 
 * **Where.** `$SPIRA_RUN/testdb-templates/template-<key>/` on the host, bound **read-only**
   into every batch container (`container up --testdb-cache DIR`) at
-  `/var/cache/spira-testdb-templates`; the template step is given that path as
-  `TESTDB_TEMPLATE_CACHE`. Nothing inside a container writes the cache.
+  `/var/cache/spira-testdb-templates`; the template step is given that path as `--cache`.
+  Nothing inside a container writes the cache.
 * **Hit.** `template` copies the cached entry into `R`'s temporary sibling and renames it
   into place, exactly where a build would have put it — fixtures and suites see nothing
   different. A copy that fails (the entry evicted mid-copy, a half entry without `READY`) is
-  discarded and the template built: the cache can make a batch faster, never wrong.
+  discarded and the template built: the cache can make a batch faster, never wrong. An
+  eviction renames an entry away before deleting it, so a copy whose source entry is still in
+  place afterwards was whole throughout; one whose entry vanished is discarded the same way.
 * **Miss.** `template` builds as before and says `TESTDB_TEMPLATE_ORIGIN=built`; the host
   then copies the directory out of the container (`podman cp`, which reads the container's
   tmpfs) into a fresh `.incoming-*` name, makes it world-readable (the container reads it as

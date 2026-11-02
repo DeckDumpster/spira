@@ -18,8 +18,6 @@ use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const DEFAULT_ROOT: &str = "/var/tmp/spira-testdb";
-/// The read-only host template cache `testdb template` copies from ([`cache_template`]).
-pub const CACHE_ENV: &str = "TESTDB_TEMPLATE_CACHE";
 /// The database every template (and so every fixture) holds; unique per server, so fixed.
 pub const DATABASE: &str = "sptest";
 // batch-job: waiting for a throwaway dolt server to come up
@@ -28,7 +26,7 @@ const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const PORT_ATTEMPTS: u32 = 5;
 
-const USAGE: &str = "usage: testenv testdb template --bd B --dolt D [--root R]\n       testenv testdb up --tag T --bd B --dolt D [--root R] [--owner PID]\n       testenv testdb reset --fixture F\n       testenv testdb down --fixture F\n       testenv testdb reap --fixture F --owner PID\n       testenv testdb embedded-check --bd B\n       testenv testdb embedded-up --tag T --bd B\n       testenv testdb embedded-borrow --baseline BASE\n       testenv testdb embedded-reset --dir D --baseline BASE\n       testenv testdb embedded-down [--dir D] [--baseline BASE] [--bin BIN]";
+const USAGE: &str = "usage: testenv testdb template --bd B --dolt D [--root R] [--cache C]\n       testenv testdb up --tag T --bd B --dolt D [--root R] [--owner PID]\n       testenv testdb reset --fixture F\n       testenv testdb down --fixture F\n       testenv testdb reap --fixture F --owner PID\n       testenv testdb embedded-check --bd B\n       testenv testdb embedded-up --tag T --bd B\n       testenv testdb embedded-borrow --baseline BASE\n       testenv testdb embedded-reset --dir D --baseline BASE\n       testenv testdb embedded-down [--dir D] [--baseline BASE] [--bin BIN]";
 
 // ---- pure pieces ---------------------------------------------------------------------
 
@@ -521,7 +519,12 @@ pub fn ensure_template_cached(
         .map(|c| c.join(&name))
         .filter(|c| c.join("READY").is_file());
     let from_cache = cached.is_some_and(|c| {
-        let ok = copy_tree(&c, &tmp).is_ok() && tmp.join("READY").is_file();
+        // An eviction renames the entry away before it deletes it, and a directory listing
+        // already open skips what is deleted under it: an entry still in place after the
+        // copy was whole throughout.
+        let ok = copy_tree(&c, &tmp).is_ok()
+            && tmp.join("READY").is_file()
+            && c.join("READY").is_file();
         if !ok {
             remove_tree(&tmp);
         }
@@ -1136,6 +1139,7 @@ pub struct Args {
     pub dir: Option<String>,
     pub baseline: Option<String>,
     pub bin: Option<String>,
+    pub cache: Option<String>,
 }
 
 pub fn parse(args: &[String]) -> Result<Args, String> {
@@ -1172,6 +1176,7 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
             "--dir" => a.dir = Some(v()?),
             "--baseline" => a.baseline = Some(v()?),
             "--bin" => a.bin = Some(v()?),
+            "--cache" => a.cache = Some(v()?),
             "--owner" => {
                 let s = v()?;
                 a.owner = Some(
@@ -1273,11 +1278,7 @@ pub fn main(args: &[String]) -> i32 {
                     root.display()
                 ));
             }
-            let cache = (a.cmd == "template")
-                .then(|| std::env::var(CACHE_ENV).ok())
-                .flatten()
-                .filter(|s| !s.is_empty())
-                .map(PathBuf::from);
+            let cache = a.cache.as_deref().filter(|s| !s.is_empty()).map(PathBuf::from);
             let (tpl, origin) = match ensure_template_cached(&root, &tools, cache.as_deref()) {
                 Ok(t) => t,
                 Err(e) => return fail(e),

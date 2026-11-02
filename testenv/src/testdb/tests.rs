@@ -378,6 +378,31 @@ fn a_second_batch_with_the_same_tools_key_copies_the_cached_template_and_never_b
 }
 
 #[test]
+fn the_template_command_copies_from_the_cache_it_is_given() {
+    let Some((d, fake)) = fakes("cachecli") else {
+        return;
+    };
+    let (bd, dolt) = (fake.bd.display().to_string(), fake.dolt.display().to_string());
+    // The command canonicalises its tools; so does the key it looks the cache up by.
+    let tools = Tools::resolve(&bd, &dolt).unwrap();
+    let cache = d.join("host-cache");
+    let built = ensure_template(&d.join("seed"), &tools).unwrap();
+    let key = tools.key().unwrap();
+    cache_template(&cache, &key, TEMPLATE_CACHE_KEYS, |dst| {
+        copy_tree(&built, dst).map_err(|e| e.to_string())
+    })
+    .unwrap();
+    assert_eq!(bd_inits(&d), 1);
+    let root = d.join("root").display().to_string();
+    let cache_s = cache.display().to_string();
+    let rc = main(&s(&["template", "--bd", &bd, "--dolt", &dolt, "--root", &root, "--cache", &cache_s]));
+    assert_eq!(rc, 0);
+    assert_eq!(bd_inits(&d), 1, "the command copied the cached template, no build");
+    assert!(d.join(format!("root/template-{key}/READY")).is_file());
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
 fn a_cache_entry_without_ready_is_a_miss_and_the_template_is_built() {
     let Some((d, tools)) = fakes("cachehalf") else {
         return;
