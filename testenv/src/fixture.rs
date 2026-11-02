@@ -1053,6 +1053,15 @@ pub fn reap_name(name: &str) -> String {
     format!("{name}-reap-{}", std::process::id())
 }
 
+/// The name a container's cargo volumes carry: its original name, before any [`reap_name`].
+/// A sweep that removes a reaped container must remove these, not `<reap name>-cargo-*`.
+pub fn volume_base(name: &str) -> &str {
+    match name.rsplit_once("-reap-") {
+        Some((base, pid)) if !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()) => base,
+        _ => name,
+    }
+}
+
 #[cfg(test)]
 pub mod fake {
     //! A scripted container runtime: records every call; answers exec by the first rule
@@ -1338,6 +1347,16 @@ pub mod fake {
 mod tests {
     use super::fake::FakeRuntime;
     use super::*;
+
+    #[test]
+    fn a_reaped_containers_volumes_are_named_for_its_original_name() {
+        let reap = reap_name("spira-warm-0-17-42-0");
+        assert_ne!(reap, "spira-warm-0-17-42-0");
+        assert_eq!(volume_base(&reap), "spira-warm-0-17-42-0");
+        assert_eq!(volume_base("spira-batch-abc123"), "spira-batch-abc123");
+        assert_eq!(volume_base("spira-batch-x-reap-"), "spira-batch-x-reap-");
+        assert_eq!(volume_base("spira-batch-x-reap-1a"), "spira-batch-x-reap-1a");
+    }
 
     #[test]
     fn the_summary_line_parses_a_cgroup_peak() {

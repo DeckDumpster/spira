@@ -438,8 +438,9 @@ impl ContainerRuntime for Podman {
 
     fn purge(&self, name: &str) {
         self.podman_quiet(&["rm", "-f", "-t", "0", name]);
-        self.podman_quiet(&["volume", "rm", &format!("{name}-cargo-reg")]);
-        self.podman_quiet(&["volume", "rm", &format!("{name}-cargo-git")]);
+        let base = crate::fixture::volume_base(name);
+        self.podman_quiet(&["volume", "rm", &format!("{base}-cargo-reg")]);
+        self.podman_quiet(&["volume", "rm", &format!("{base}-cargo-git")]);
     }
 
     fn rename(&self, from: &str, to: &str) -> bool {

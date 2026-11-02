@@ -645,7 +645,7 @@ impl Drop for ContainerGuard<'_> {
             detached = self.session.down_detached();
             if detached.is_none() {
                 self.deps.log(&format!(
-                    "could not rename {} out of the next run's way — removing it inline",
+                    "could not rename {} out of the next run's way (gone, or podman refused) — removing it inline",
                     self.session.name
                 ));
                 if !self.session.down().ok() {
