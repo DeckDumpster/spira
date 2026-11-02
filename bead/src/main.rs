@@ -1967,19 +1967,13 @@ fn cmd_dep_convert(home: &str, args: &[String]) -> i32 {
         eprintln!("bead: dep convert: refusing — {epic} is not an epic");
         return 1;
     }
-    let rc = bdq_status_stdin(home, &s(&["batch"]), &convert_batch(&id, &epic));
+    let rc = bdq_status_stdin(home, &s(&["batch"]), &bead::dep_convert_batch(&id, &epic));
     if rc != 0 {
         eprintln!("bead: dep convert: the batch was refused (exit {rc}); the edge is unchanged");
         return rc;
     }
     println!("converted edge: {id} -> {epic} blocks => parent-child");
     0
-}
-
-/// The edge swap as one `bd batch`: both lines commit together or neither does, so no reader
-/// ever sees the child with no edge to its epic.
-fn convert_batch(id: &str, epic: &str) -> String {
-    format!("dep remove {id} {epic}\ndep add {id} {epic} parent-child\n")
 }
 
 /// [`bdq_status`] with `input` on bd's stdin.
@@ -2160,14 +2154,4 @@ fn cmd_dep_remove(home: &str, args: &[String]) -> i32 {
         println!("removed edge: {id} -> {depid}");
     }
     rc
-}
-
-#[cfg(test)]
-mod convert_tests {
-    use super::convert_batch;
-
-    #[test]
-    fn dep_convert_is_one_batch_that_removes_the_blocks_edge_and_adds_the_parent_edge() {
-        assert_eq!(convert_batch("sp-c", "sp-e"), "dep remove sp-c sp-e\ndep add sp-c sp-e parent-child\n");
-    }
 }
