@@ -232,6 +232,9 @@ impl World {
         suite("test-q.sh", "");
         suite("test-x.sh", "# exclusive: builds the world\n");
         suite("test-s.sh", "# lane: sim\n");
+        // sp-vkmgmx: only a `# requires: testenv` suite makes its session install.
+        suite("test-t.sh", "# requires: testenv\n");
+        suite("test-st.sh", "# lane: sim\n# requires: testenv\n");
         // For the skip contract (DESIGN.md §3.7): e/f are never declared, g is.
         suite("test-e.sh", "# requires: reallymissing\n");
         suite("test-f.sh", "");
@@ -978,7 +981,7 @@ fn an_install_failure_is_rc_3_and_still_tears_down() {
     );
     let b = FakeBuilder::new(None);
     assert_eq!(
-        w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root),
+        w.run(&rt, &b, &["--suites", "test-t.sh", "topic"], "", &w.root),
         3
     );
     assert_eq!(w.last(), "VERDICT FAULT rc=3 ran=0 reason=install session=main");
@@ -997,7 +1000,7 @@ fn an_install_failure_leaves_the_failing_step_in_the_results() {
         },
     );
     let b = FakeBuilder::new(None);
-    assert_eq!(w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root), 3);
+    assert_eq!(w.run(&rt, &b, &["--suites", "test-t.sh", "topic"], "", &w.root), 3);
     let found: Vec<String> = fs::read_dir(w.root.join("run/batch-results"))
         .unwrap()
         .flatten()
@@ -1020,7 +1023,7 @@ fn a_sim_session_install_failure_leaves_its_step_and_names_the_session() {
         },
     );
     let b = FakeBuilder::new(None);
-    assert_eq!(w.run(&rt, &b, &["--suites", "test-a.sh,test-s.sh", "topic"], "", &w.root), 3);
+    assert_eq!(w.run(&rt, &b, &["--suites", "test-a.sh,test-st.sh", "topic"], "", &w.root), 3);
     assert_eq!(w.last(), "VERDICT FAULT rc=3 ran=0 reason=install session=sim");
     let res = w.results_dir();
     let fault = fs::read_to_string(res.join(FIXTURE_FAULT_FILE)).expect("the sim fault leaves its file");
@@ -1028,6 +1031,64 @@ fn a_sim_session_install_failure_leaves_its_step_and_names_the_session() {
     assert!(fault.contains("units-install: sim world has no unit"), "{fault}");
     let events = fs::read_to_string(res.join("run.events")).unwrap();
     assert!(events.lines().any(|l| l.contains(" verdict FAULT install sim")), "{events}");
+}
+
+/// What a run's setup provisioned, read from its execs.
+struct Provisioned {
+    /// CONFIGURE_OUT of every configure step.
+    configured: Vec<String>,
+    /// Each suite exec and the SPIRA_TOML it was handed.
+    suites: Vec<(String, Option<String>)>,
+    suspended: bool,
+    installed: bool,
+}
+
+fn provisioned(rt: &FakeRuntime) -> Provisioned {
+    let execs = rt.execs.lock().unwrap();
+    Provisioned {
+        configured: execs.iter().filter_map(|r| r.env_value("CONFIGURE_OUT").map(str::to_string)).collect(),
+        suites: execs
+            .iter()
+            .filter_map(|r| {
+                let s = r.argv.get(1)?.strip_prefix("/workspace/spira/test-")?;
+                Some((format!("test-{s}"), r.env_value("SPIRA_TOML").map(str::to_string)))
+            })
+            .collect(),
+        suspended: execs.iter().any(|r| r.argv.get(4).map(String::as_str) == Some("suspend")),
+        installed: execs.iter().any(|r| r.argv.first().is_some_and(|a| a.ends_with("/bin/units-install"))),
+    }
+}
+
+#[test]
+fn a_batch_with_no_requires_testenv_suite_configures_and_never_installs() {
+    let w = World::new("provision-configure");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(w.run(&rt, &b, &["--suites", "test-a.sh,test-x.sh", "topic"], "", &w.root), 0);
+    let Provisioned { configured, suites, suspended, installed } = provisioned(&rt);
+    assert_eq!(configured.len(), 1, "configure runs once: {configured:?}");
+    assert!(!suspended && !installed, "no suspend and no install without a requires: testenv suite");
+    assert_eq!(suites.len(), 2, "{suites:?}");
+    for (suite, toml) in &suites {
+        assert_eq!(toml.as_ref(), Some(&configured[0]), "{suite} is handed the configured SPIRA_TOML");
+    }
+    assert!(w.has_line(|l| l.contains("setup: main session stages and configures, no install")));
+}
+
+#[test]
+fn a_batch_with_a_requires_testenv_suite_configures_suspends_and_installs() {
+    let w = World::new("provision-install");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(w.run(&rt, &b, &["--suites", "test-a.sh,test-t.sh", "topic"], "", &w.root), 0);
+    let Provisioned { configured, suites, suspended, installed } = provisioned(&rt);
+    assert_eq!(configured.len(), 1, "configure runs once: {configured:?}");
+    assert!(suspended && installed, "a requires: testenv suite gets the suspends and the install");
+    assert_eq!(suites.len(), 2, "{suites:?}");
+    for (suite, toml) in &suites {
+        assert_eq!(toml.as_ref(), Some(&configured[0]), "{suite} is handed the configured SPIRA_TOML");
+    }
+    assert!(w.has_line(|l| l.contains("setup: main session stages, configures and installs")));
 }
 
 #[test]

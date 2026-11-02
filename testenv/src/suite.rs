@@ -103,6 +103,12 @@ impl SuiteHeaders {
         h
     }
 
+    /// Whether the suite declares `# requires: testenv`: it uses the installed instance's
+    /// systemd user units, so its batch runs the install (sp-vkmgmx).
+    pub fn needs_install(&self) -> bool {
+        self.requires.iter().any(|t| t == "testenv")
+    }
+
     /// Requirement tokens that need a check; `testenv` is met by being in the container.
     pub fn checkable_requires(&self) -> impl Iterator<Item = &str> {
         self.requires

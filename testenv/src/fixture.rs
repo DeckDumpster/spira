@@ -32,6 +32,47 @@ pub const SUSPENDED_UNITS: [(&str, &str); 4] = [
     ),
 ];
 
+/// How much of the instance a batch's setup provisions ([`Session::setup_steps`]). Ordered:
+/// each level is the one before it plus more.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Provision {
+    /// Stage the release only: `SPIRA_BATCH_SKIP_INSTALL`, or a filtered unit run that
+    /// stages no binary.
+    Stage,
+    /// Stage and configure, so every suite's `SPIRA_TOML` exists; nothing installed. A batch
+    /// none of whose suites declares `# requires: testenv` needs no more (sp-vkmgmx): only
+    /// those suites use the instance's systemd user units, and testlib.sh bails any of them
+    /// run outside testenv.
+    Configure,
+    /// Stage, configure, suspend [`SUSPENDED_UNITS`] and install the instance's units.
+    Install,
+}
+
+impl Provision {
+    /// The level for a batch: `Stage` when provisioning is off (`provision` false), else
+    /// `Install` when a selected suite needs the installed instance, else `Configure`.
+    pub fn for_batch(provision: bool, needs_install: bool) -> Self {
+        match (provision, needs_install) {
+            (false, _) => Provision::Stage,
+            (true, true) => Provision::Install,
+            (true, false) => Provision::Configure,
+        }
+    }
+
+    /// What the run's log says this session's setup does.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Provision::Stage => "stages only (no configure, no install)",
+            Provision::Configure => {
+                "stages and configures, no install: no selected suite declares `# requires: testenv`"
+            }
+            Provision::Install => {
+                "stages, configures and installs: a selected suite needs the installed instance"
+            }
+        }
+    }
+}
+
 pub const SPIRA_USER: &str = "spirauser";
 pub const USER_RUNTIME: &str = "/run/user/1001";
 pub const CONTAINER_CARGO: &str = "/var/spira/cargo";
@@ -570,14 +611,15 @@ impl<'a> Session<'a> {
         self.setup_as_user(&[&install, &self.instance], env)
     }
 
-    /// The setup's steps, in order (sp-t26yx, DESIGN.md §11.4): stage; unless `install` is
-    /// false, configure, suspend the Rust-backed units the container cannot run
-    /// ([`SUSPENDED_UNITS`]) and install; one `command -v` per distinct requirement token
-    /// (`testenv` is testenv's own and never checked); the testdb template. Each step is
-    /// exactly the request that used to be its own `podman exec`.
+    /// The setup's steps, in order (sp-t26yx, DESIGN.md §11.4): stage; from
+    /// [`Provision::Configure`] up, configure; at [`Provision::Install`], suspend the
+    /// Rust-backed units the container cannot run ([`SUSPENDED_UNITS`]) and install; one
+    /// `command -v` per distinct requirement token (`testenv` is testenv's own and never
+    /// checked); the testdb template. Each step is exactly the request that used to be its
+    /// own `podman exec`.
     pub fn setup_steps<'t>(
         &self,
-        install: bool,
+        provision: Provision,
         tokens: impl IntoIterator<Item = &'t str>,
     ) -> Vec<plan::Step> {
         let step = |name: String, phase: &str, req: ExecRequest, must: bool| plan::Step {
@@ -588,8 +630,10 @@ impl<'a> Session<'a> {
             must,
         };
         let mut steps = vec![step("stage".into(), "install", self.stage_request(), true)];
-        if install {
+        if provision >= Provision::Configure {
             steps.push(step("configure".into(), "install", self.configure_request(), true));
+        }
+        if provision == Provision::Install {
             for (unit, reason) in SUSPENDED_UNITS {
                 steps.push(step(
                     format!("suspend:{unit}"),
@@ -640,13 +684,13 @@ impl<'a> Session<'a> {
     pub fn setup<'t>(
         &self,
         runner: &str,
-        install: bool,
+        provision: Provision,
         tokens: impl IntoIterator<Item = &'t str>,
         log: &dyn Fn(&str),
     ) -> Result<Setup, SetupFault> {
         let plan = plan::Plan {
             nonce: plan::nonce(),
-            steps: self.setup_steps(install, tokens),
+            steps: self.setup_steps(provision, tokens),
         };
         let json = serde_json::to_string(&plan).unwrap_or_default();
         let mut req = ExecRequest::new(&self.name, &[runner, plan::PLAN_ARG, &json]).user(SPIRA_USER);
@@ -746,13 +790,18 @@ impl<'a> Session<'a> {
             self.bins.len(),
             self.release_path()
         ));
-        if install {
-            log(&format!(
+        match provision {
+            Provision::Stage => {}
+            Provision::Configure => log(&format!(
+                "configured instance {} inside {}; no install and no unit suspended — no selected suite declares `# requires: testenv`",
+                self.instance, self.name
+            )),
+            Provision::Install => log(&format!(
                 "configured, suspended the Rust-backed units ({}) and installed instance {} inside {}",
                 SUSPENDED_UNITS.map(|(u, _)| u).join(", "),
                 self.instance,
                 self.name
-            ));
+            )),
         }
         log(&format!(
             "setup in one exec: {wall:.1}s wall, {inside:.1}s in the container ({}) — podman exec overhead {:.1}s",
@@ -1326,15 +1375,15 @@ mod tests {
 
     const RUNNER: &str = "/workspace/target/.testenv-runner/testenv";
 
-    fn run_setup(s: &Session, install: bool, tokens: &[&str]) -> Result<Setup, SetupFault> {
-        s.setup(RUNNER, install, tokens.iter().copied(), &|_| {})
+    fn run_setup(s: &Session, provision: Provision, tokens: &[&str]) -> Result<Setup, SetupFault> {
+        s.setup(RUNNER, provision, tokens.iter().copied(), &|_| {})
     }
 
     #[test]
     fn install_runs_configure_suspends_then_install_from_the_staged_release() {
         let rt = FakeRuntime::new();
         let s = session(&rt);
-        run_setup(&s, true, &[]).unwrap();
+        run_setup(&s, Provision::Install, &[]).unwrap();
         // stage first, then configure, four suspends, install, then the template
         let mut argv = rt.exec_argv();
         assert_eq!(argv.remove(0)[..3], ["bash", "-c", STAGE_SCRIPT]);
@@ -1383,11 +1432,42 @@ mod tests {
     }
 
     #[test]
+    fn configure_provision_stages_and_configures_and_never_suspends_or_installs() {
+        let rt = FakeRuntime::new();
+        let s = session(&rt);
+        let lines = std::sync::Mutex::new(Vec::<String>::new());
+        s.setup(RUNNER, Provision::Configure, ["jq"], &|m| lines.lock().unwrap().push(m.into()))
+            .unwrap();
+        let argv = rt.exec_argv();
+        assert_eq!(argv.len(), 4, "stage, configure, the jq check, the template: {argv:?}");
+        assert_eq!(argv[0][..3], ["bash", "-c", STAGE_SCRIPT]);
+        assert_eq!(argv[1], vec!["bash", "-c", CONFIGURE_SCRIPT]);
+        assert_eq!(argv[3][1..3], ["testdb", "template"]);
+        assert!(!argv.iter().any(|a| a.iter().any(|w| w == "suspend" || w.ends_with("/bin/units-install"))));
+        let execs = rt.execs.lock().unwrap();
+        assert_eq!(
+            execs[1].env_value("CONFIGURE_OUT").map(str::to_string),
+            Some(s.config_toml()),
+            "configure writes the file every suite is handed as SPIRA_TOML"
+        );
+        let lines = lines.lock().unwrap();
+        assert!(lines.iter().any(|l| l.contains("no install") && l.contains("# requires: testenv")), "{lines:?}");
+    }
+
+    #[test]
+    fn a_batch_provisions_the_install_only_when_a_suite_needs_it() {
+        assert_eq!(Provision::for_batch(true, true), Provision::Install);
+        assert_eq!(Provision::for_batch(true, false), Provision::Configure);
+        assert_eq!(Provision::for_batch(false, true), Provision::Stage);
+        assert_eq!(Provision::for_batch(false, false), Provision::Stage);
+    }
+
+    #[test]
     fn staging_links_the_tree_and_the_workspace_binaries_as_a_release() {
         let rt = FakeRuntime::new();
         let mut s = session(&rt);
         s.bins = vec!["spira-config".into(), "testenv".into()];
-        run_setup(&s, false, &[]).unwrap();
+        run_setup(&s, Provision::Stage, &[]).unwrap();
         let argv = rt.exec_argv();
         assert_eq!(argv.len(), 2, "stage, then the template (no install)");
         assert_eq!(argv[0][..3], ["bash", "-c", STAGE_SCRIPT]);
@@ -1400,7 +1480,7 @@ mod tests {
             rc: 1,
             output: "testenv: stage: testenv was not built into /workspace/target/dwarf".into(),
         });
-        let e = run_setup(&session(&rt), true, &[]).unwrap_err();
+        let e = run_setup(&session(&rt), Provision::Install, &[]).unwrap_err();
         assert_eq!(e.fault.rc(), 3, "a release that cannot be staged is a harness fault");
         assert_eq!(e.reason, "stage");
         assert_eq!(rt.exec_argv().len(), 1, "nothing runs after a failed stage");
@@ -1485,7 +1565,7 @@ mod tests {
                 output: String::new(),
             },
         );
-        let e = run_setup(&session(&rt), true, &["jq"]).unwrap_err();
+        let e = run_setup(&session(&rt), Provision::Install, &["jq"]).unwrap_err();
         assert_eq!(e.fault.rc(), 3);
         assert_eq!(e.reason, "install");
         assert!(e.fault.message().contains("spira-loom"));
@@ -1498,7 +1578,7 @@ mod tests {
         let mut s = session(&rt);
         let cut = Instant::now() + Duration::from_secs(60);
         s.setup_deadline = Some(cut);
-        let got = run_setup(&s, true, &["jq", "dolt"]).unwrap();
+        let got = run_setup(&s, Provision::Install, &["jq", "dolt"]).unwrap();
         assert_eq!(*rt.plans.lock().unwrap(), 1, "one podman exec for every setup step");
         assert_eq!(rt.exec_argv().len(), 10, "stage, configure, 4 suspends, install, 2 checks, template");
         for r in rt.execs.lock().unwrap().iter() {
@@ -1519,7 +1599,7 @@ mod tests {
             |r| r.argv.first().is_some_and(|a| a.ends_with("/bin/units-install")),
             |_| ExecOutcome { rc: RC_DEADLINE, output: String::new() },
         );
-        let e = run_setup(&session(&rt), true, &["jq"]).unwrap_err();
+        let e = run_setup(&session(&rt), Provision::Install, &["jq"]).unwrap_err();
         assert_eq!(e.fault, Fault::Deadline("install"));
     }
 
@@ -1530,7 +1610,7 @@ mod tests {
             |r| r.argv.get(1).map(String::as_str) == Some("testdb"),
             |_| ExecOutcome { rc: RC_DEADLINE, output: String::new() },
         );
-        let e = run_setup(&session(&rt), true, &[]).unwrap_err();
+        let e = run_setup(&session(&rt), Provision::Install, &[]).unwrap_err();
         assert_eq!(e.fault, Fault::Deadline("testdb"));
     }
 
@@ -1541,7 +1621,7 @@ mod tests {
             |r| r.argv.get(1).map(String::as_str) == Some("testdb"),
             |_| ExecOutcome { rc: 1, output: "bd init (server) failed".into() },
         );
-        let got = run_setup(&session(&rt), true, &[]).unwrap();
+        let got = run_setup(&session(&rt), Provision::Install, &[]).unwrap();
         assert_eq!(got.template.rc, 1);
         assert!(got.template.output.contains("bd init"));
     }
@@ -1553,11 +1633,11 @@ mod tests {
             rc: 127,
             output: "crun: executable file not found".into(),
         });
-        let e = run_setup(&session(&rt), true, &[]).unwrap_err();
+        let e = run_setup(&session(&rt), Provision::Install, &[]).unwrap_err();
         assert_eq!((e.fault.rc(), e.reason), (3, "stage"));
         // and one cut before it said anything is a deadline in its first phase
         *rt.plan_answer.lock().unwrap() = Some(ExecOutcome { rc: RC_DEADLINE, output: String::new() });
-        let e = run_setup(&session(&rt), true, &[]).unwrap_err();
+        let e = run_setup(&session(&rt), Provision::Install, &[]).unwrap_err();
         assert_eq!(e.fault, Fault::Deadline("install"));
     }
 
@@ -1609,7 +1689,7 @@ mod tests {
                 output: String::new(),
             },
         );
-        let got = run_setup(&session(&rt), false, &["jq", "dolt", "jq", "testenv"]).unwrap();
+        let got = run_setup(&session(&rt), Provision::Stage, &["jq", "dolt", "jq", "testenv"]).unwrap();
         assert_eq!(got.unmet.into_iter().collect::<Vec<_>>(), vec!["dolt"]);
         let checks = rt
             .exec_argv()
@@ -1651,7 +1731,7 @@ mod tests {
             },
         );
         assert_eq!(
-            run_setup(&session(&rt), true, &["jq"]).map(|_| ()),
+            run_setup(&session(&rt), Provision::Install, &["jq"]).map(|_| ()),
             Err(SetupFault {
                 fault: Fault::Deadline("requirements"),
                 reason: "deadline"
