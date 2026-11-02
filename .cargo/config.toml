@@ -1,2 +1,8 @@
 [env]
 SPIRA_HOME = { value = "spira", relative = true }
+
+# Every test binary runs inside bubblewrap and cannot see the caller's installation
+# (tools/test-sandbox/runner says how, and why there is no unsandboxed fallback). A relative
+# runner path with a slash resolves against this file's parent directory, the workspace root.
+[target.'cfg(target_os = "linux")']
+runner = "tools/test-sandbox/runner"

@@ -128,8 +128,11 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 # iproute2: `ip -br addr`, which round-vm's mirror daemon reads to check its listen address.
 # locales: locale-gen; suites need a UTF-8 locale for string operations.
 # inotify-tools/aerc: installed above; comments updated there.
+# bubblewrap: cargo's target runner (tools/test-sandbox/runner) runs every test binary under
+#   bwrap and refuses to run one without it.
 RUN apt-get update -q && \
     apt-get install -yq --no-install-recommends \
+        bubblewrap \
         systemd \
         systemd-sysv \
         libpam-systemd \

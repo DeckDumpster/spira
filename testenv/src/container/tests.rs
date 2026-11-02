@@ -905,6 +905,8 @@ fn up_boots_with_the_label_limit_and_volumes_and_records_its_caller() {
             "--systemd=true",
             "--cap-add",
             "AUDIT_CONTROL",
+            "--security-opt",
+            "unmask=/proc/*",
             "--pids-limit",
             "32768",
             "--network",

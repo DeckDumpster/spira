@@ -957,6 +957,12 @@ impl Driver<'_> {
             // started from a service (loginuid unset) or with this capability came up.
             s("--cap-add"),
             s("AUDIT_CONTROL"),
+            // EVERY TEST BINARY RUNS UNDER BWRAP, here too (tools/test-sandbox/runner), and
+            // bwrap mounts a fresh /proc for its PID namespace. The kernel refuses that mount
+            // while podman's masks sit over parts of the container's /proc, so they are lifted
+            // from /proc alone; /sys keeps its masks.
+            s("--security-opt"),
+            s("unmask=/proc/*"),
             s("--pids-limit"),
             pids_limit.to_string(),
             s("--network"),
