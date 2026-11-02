@@ -1284,11 +1284,12 @@ fn observe_disk(cfg: &Config) -> Vec<Check> {
     checks
 }
 
-/// podman's storage root, or empty when podman is absent. A long-lived host asks once: the
-/// root is podman's configuration, not its state.
+/// podman's storage root, or empty when podman is absent or did not answer. A long-lived
+/// host remembers only a root podman named: the root is podman's configuration, not its
+/// state, while one slow or failed `podman info` is not an answer to keep.
 fn podman_graph_root(cfg: &Config) -> String {
     let held = cfg.host.as_ref().map(|_| "podman-graph-root".to_string());
-    cfg.remembered(held, || Some(run_cmd(&cfg.seams.podman, &["info", "--format", "{{.Store.GraphRoot}}"]))).unwrap_or_default()
+    cfg.remembered(held, || Some(run_cmd(&cfg.seams.podman, &["info", "--format", "{{.Store.GraphRoot}}"])).filter(|r| !r.trim().is_empty())).unwrap_or_default()
 }
 
 /// The positive control on testenv's own image cleanup: a store holding more dangling
@@ -3593,6 +3594,20 @@ mod tests {
         assert_eq!(mergeable_remembered(&cfg, repo.path(), "main", "nonesuch"), None, "an unreadable branch is not an answer and is asked again");
         assert_eq!(mergeable_remembered(&cfg, repo.path(), "main", "nonesuch"), None);
         assert_eq!(fs::read_to_string(&log).unwrap().lines().count(), 3);
+    }
+
+    #[test]
+    fn a_host_keeps_the_storage_root_podman_named_but_asks_again_after_a_failed_info() {
+        let dir = scratch_dir("graph-root");
+        let (podman, log, answer) = (dir.path().join("podman"), dir.path().join("podman-calls"), dir.path().join("root"));
+        testkit::write_exe(&podman, &format!("#!/bin/sh\necho \"$*\" >> {}\ncat {} 2>/dev/null\n", log.display(), answer.display()));
+        let cfg = Config { seams: Seams { podman: podman.to_string_lossy().into_owned(), ..Seams::production() }, ..test_config() }.with_host(Arc::new(Refs));
+        assert_eq!(podman_graph_root(&cfg), "", "podman answered nothing");
+        fs::write(&answer, "/store\n").unwrap();
+        assert_eq!(podman_graph_root(&cfg).trim(), "/store", "an empty answer was not kept");
+        fs::write(&answer, "/elsewhere\n").unwrap();
+        assert_eq!(podman_graph_root(&cfg).trim(), "/store", "a named root is kept");
+        assert_eq!(fs::read_to_string(&log).unwrap().lines().count(), 2);
     }
 
     #[test]

@@ -61,7 +61,7 @@ fn applying_the_default_document_bootstraps_a_fresh_install() {
 }
 
 #[test]
-fn the_default_document_declares_the_reconciler_timer_enabled_and_active() {
+fn the_default_document_declares_the_watchtower_timer_enabled_and_active() {
     let text = fs::read_to_string(manifest_path("examples/default.toml")).unwrap();
     let doc: toml::Value = toml::from_str(&text).unwrap();
     let units = doc["resources"]
