@@ -21,6 +21,10 @@ target/
 /spira/testenv/.doctor-check-spira-config
 /spira/testenv/.doctor-check.toml
 
+# Coverage profiles. An instrumented binary run without LLVM_PROFILE_FILE (a test child started
+# with a cleared environment) writes default_*.profraw into its working directory.
+*.profraw
+
 # Python bytecode.
 __pycache__/
 *.pyc

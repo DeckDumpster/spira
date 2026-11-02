@@ -823,8 +823,11 @@ fn hold_seed(seed: &Path) -> Result<Option<HeldSeed>, String> {
         Err(e) => return Err(format!("{}: {e}", seed.display())),
     };
     lock.lock_shared().map_err(|e| format!("{}: {e}", seed.display()))?;
-    // A prune that held the seed while this waited has removed it by now.
-    if !seed.join(".complete").is_file() {
+    // A prune that held the seed while this waited has removed it by now, and a rebuild may
+    // stand at the same path: the hold is good only on the `.complete` that is there now.
+    use std::os::unix::fs::MetadataExt;
+    let same = |m: std::fs::Metadata| lock.metadata().is_ok_and(|l| l.ino() == m.ino() && l.dev() == m.dev());
+    if !std::fs::metadata(seed.join(".complete")).is_ok_and(same) {
         return Ok(None);
     }
     Ok(Some(HeldSeed { path: seed.to_path_buf(), _lock: lock }))
@@ -839,10 +842,13 @@ fn hold_seed(seed: &Path) -> Result<Option<HeldSeed>, String> {
 pub fn fixture_repo(root: &Path, dst: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dst).map_err(|e| format!("{}: {e}", dst.display()))?;
     git(dst, &["init", "-q", "--initial-branch=main"])?;
-    let git_dir = dst.join(".git");
+    let root = root.canonicalize().map_err(|e| format!("{}: {e}", root.display()))?;
+    let git_dir = dst.canonicalize().map_err(|e| format!("{}: {e}", dst.display()))?.join(".git");
+    let root = root.as_path();
+    // Run from the root: ls-files names paths from the top, and git reads a pathspec from its cwd.
     let from_root = |args: &[&str]| {
         let mut cmd = Command::new("git");
-        cmd.arg("--literal-pathspecs").arg("--git-dir").arg(&git_dir).arg("--work-tree").arg(root).args(args);
+        cmd.current_dir(root).arg("--literal-pathspecs").arg("--git-dir").arg(&git_dir).arg("--work-tree").arg(root).args(args);
         run(&mut cmd, CALL_DEADLINE)
     };
     match git(root, &["ls-files", "-z", "--cached"]) {
@@ -854,7 +860,9 @@ pub fn fixture_repo(root: &Path, dst: &Path) -> Result<(), String> {
             from_root(&["add", "-f", "--pathspec-file-nul", &format!("--pathspec-from-file={}", list.display())])?;
             let _ = std::fs::remove_file(&list);
         }
-        Err(_) => {
+        Err(e) => {
+            // Said, because here an untracked file enters the fixture and can move the seed key.
+            eprintln!("sim: {} has no readable git index ({}); the fixture takes every file its .gitignore admits", root.display(), e.lines().next().unwrap_or(""));
             from_root(&["add", "-A"])?;
         }
     }
@@ -930,6 +938,10 @@ fn build_seed(repo: &Path, tree: &str, cache: &Path, seed: &Path) -> Result<(), 
 /// Cuts the cache to `keep` seeds, least recently used first. A seed a world holds is skipped,
 /// so the cache can stand over its bound only while more than `keep` seeds are in use at once.
 fn prune_seeds(cache: &Path, keep: usize) {
+    // An eviction whose removal failed left its renamed copy, which no lookup can reach.
+    for e in std::fs::read_dir(cache).into_iter().flatten().flatten().filter(|e| e.file_name().to_string_lossy().contains(".evict-")) {
+        let _ = std::fs::remove_dir_all(e.path());
+    }
     let mut seeds: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(cache)
         .into_iter()
         .flatten()
