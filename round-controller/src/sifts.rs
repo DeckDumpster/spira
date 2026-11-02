@@ -414,6 +414,8 @@ fn live_stack(env: &Env, id: &str) -> Vec<String> {
             o.iter()
                 .filter(|(_, v)| v.is_string())
                 .map(|(k, _)| k.clone())
+                .collect::<BTreeSet<String>>()
+                .into_iter()
                 .filter(|k| !prereq_is_finished(env, k))
                 .collect()
         })

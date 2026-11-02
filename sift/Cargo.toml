@@ -2,7 +2,7 @@
 name = "sift"
 version = "0.1.0"
 edition = "2021"
-description = "sift — the deterministic pre-round screen: conflict, duplicate, and stacked-on-a-reworked-bead, with a per-tip verdict cache, a send-back cap and a fail-open seam. The batcher's `sifts` timer runs it on the proto-round, never inside a cut."
+description = "sift — the deterministic pre-round screen: conflict, duplicate, and stacked-on-a-reworked-bead, with a per-tip verdict cache, a send-back cap and a fail-open seam. `round-controller sifts`, on the spira-sift timer, runs it on the proto-round, never inside a cut."
 
 [lib]
 name = "sift"

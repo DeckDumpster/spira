@@ -136,7 +136,7 @@ fn dispatch(args: &[String]) -> i32 {
                 Ok(())
             }),
         ),
-        ["sifts"] => match round_controller::sifts::for_process(&mut std::io::stdout().lock()) {
+        ["sifts"] => match sifts_verb() {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("round-controller sifts: {e}");
@@ -191,6 +191,11 @@ fn dispatch(args: &[String]) -> i32 {
             2
         }
     }
+}
+
+fn sifts_verb() -> Result<(), String> {
+    spira_config::release_env::ensure_release_path();
+    round_controller::sifts::for_process(&mut std::io::stdout().lock())
 }
 
 fn run_probe(secs: &str, out: &str) -> Result<(), String> {

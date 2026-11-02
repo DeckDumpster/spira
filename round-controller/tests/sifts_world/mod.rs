@@ -150,6 +150,11 @@ impl World {
             "local/main",
             &[("nc.txt", "nc\n", "sp-nocontent: no content row")],
         );
+        branch(
+            "sp-ejected",
+            "local/main",
+            &[("ejected.txt", "e\n", "sp-ejected: ejected red at this tip")],
+        );
         git(&repo, &["checkout", "-q", "local/main"]);
         write(&repo.join("base.txt"), "two\n");
         git(&repo, &["commit", "-qam", "base moves"]);
@@ -170,6 +175,7 @@ impl World {
             row("sp-clean", "SUBMITTED", ""),
             row("sp-conflict", "CERTIFIED", ""),
             row("sp-dupe", "SUBMITTED", ""),
+            row("sp-ejected", "SUBMITTED", &format!(r#","ejected_red_tip":"{}""#, tips["sp-ejected"])),
             row("sp-gone", "SUBMITTED", ""),
             row("sp-held", "SUBMITTED", r#","holds":["operator"]"#),
             row("sp-ident", "SUBMITTED", ""),
@@ -205,10 +211,15 @@ impl World {
                 } else {
                     ""
                 };
+                let deps = if id == "sp-clean" {
+                    r#","dependencies":[{"depends_on_id":"sp-broken","type":"blocks"}]"#
+                } else {
+                    ""
+                };
                 write(
                     &lc.join(format!("content/{id}.json")),
                     &format!(
-                        r#"{{"id":"{id}","title":"{id}","description":"{description}","notes":""}}"#
+                        r#"{{"id":"{id}","title":"{id}","description":"{description}","notes":"","priority":2{deps}}}"#
                     ),
                 );
             }

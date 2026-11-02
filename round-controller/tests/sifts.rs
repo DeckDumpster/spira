@@ -59,6 +59,7 @@ fn every_pool_bead_takes_its_verdict_and_an_unscreenable_repo_is_named() {
     assert!(has(&v, &sifted("sp-clean")), "{v:#?}");
     for id in [
         "sp-seen",
+        "sp-ejected",
         "sp-gone",
         "sp-moved",
         "sp-held",
