@@ -89,7 +89,7 @@ impl Rig {
 fn counting_path(flow: &Flow) -> std::path::PathBuf {
     let dir = flow.p("shims");
     std::fs::create_dir_all(&dir).unwrap();
-    for program in ["timeout", "date", "uname", "duckdb", "tsd-write", "tsd-lifecycle-export", "bd", "dolt", "spira-lc", "mail"] {
+    for program in ["timeout", "date", "uname", "duckdb", "tsd-write", "tsd-lifecycle-export", "bd", "bdq", "dolt", "spira-lc", "mail"] {
         testkit::write_exe(dir.join(program), &format!("#!/bin/sh\necho \"{program} $*\" >> {}\n", flow.p("launches.log").display()));
     }
     dir

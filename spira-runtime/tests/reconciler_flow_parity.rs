@@ -47,7 +47,7 @@ impl Oracle {
         fs::write(flow.p("bd-out.json"), format!("[{}]", ids.join(","))).unwrap();
         let all: Vec<String> = lc_rows(scenario).iter().map(|r| format!(r#"{{"bead_id":"{}","state":"{}","repo":"{}"}}"#, r.id, r.state, r.repo)).collect();
         fs::write(flow.p("lc-out.json"), format!("[{}]", all.join(","))).unwrap();
-        shell(flow.p("bin/bd"), &format!("case \" $* \" in *' --label {SCOPE} '*) cat {root}/bd-out.json ;; *) echo '[]' ;; esac"));
+        shell(flow.p("bin/bdq"), &format!("case \" $* \" in *' --label {SCOPE} '*) cat {root}/bd-out.json ;; *) echo '[]' ;; esac"));
         shell(flow.p("bin/spira-lc"), &format!("[ \"$1\" = list ] && cat {root}/lc-out.json"));
         shell(flow.p("bin/tsd-lifecycle-export"), "exit 0");
         shell(flow.p("bin/date"), &format!("case \"$*\" in *%s*) cat {root}/now ;; *) cat {root}/now_iso ;; esac"));
@@ -59,8 +59,6 @@ impl Oracle {
         let declare = [
             ("SPIRA_RUN", flow.run().display().to_string()),
             ("SPIRA_METRICS_ENDPOINT", flow.store.addr().to_string()),
-            ("SPIRA_BD", flow.p("bin/bd").display().to_string()),
-            ("SPIRA_DB", "unused".into()),
             ("SPIRA_SCOPE_LABEL", SCOPE.into()),
             ("SPIRA_DESIRED_DIR", flow.p("desired").display().to_string()),
             ("SPIRA_FLOW_WINDOW_HOURS", WINDOW_HOURS.to_string()),
