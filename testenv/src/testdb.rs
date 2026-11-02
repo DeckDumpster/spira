@@ -26,7 +26,7 @@ const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const PORT_ATTEMPTS: u32 = 5;
 
-const USAGE: &str = "usage: testenv testdb template --bd B --dolt D [--root R]\n       testenv testdb up --tag T --bd B --dolt D [--root R] [--owner PID]\n       testenv testdb reset --fixture F\n       testenv testdb down --fixture F\n       testenv testdb reap --fixture F --owner PID\n       testenv testdb embedded-check --bd B\n       testenv testdb embedded-up --tag T --bd B\n       testenv testdb embedded-borrow --baseline BASE\n       testenv testdb embedded-reset --dir D --baseline BASE\n       testenv testdb embedded-down [--dir D] [--baseline BASE] [--bin BIN]";
+const USAGE: &str = "usage: testenv testdb template --bd B --dolt D [--root R] [--cache C]\n       testenv testdb up --tag T --bd B --dolt D [--root R] [--owner PID]\n       testenv testdb reset --fixture F\n       testenv testdb down --fixture F\n       testenv testdb reap --fixture F --owner PID\n       testenv testdb embedded-check --bd B\n       testenv testdb embedded-up --tag T --bd B\n       testenv testdb embedded-borrow --baseline BASE\n       testenv testdb embedded-reset --dir D --baseline BASE\n       testenv testdb embedded-down [--dir D] [--baseline BASE] [--bin BIN]";
 
 // ---- pure pieces ---------------------------------------------------------------------
 
@@ -88,12 +88,35 @@ pub fn exe_identity(p: &Path) -> io::Result<String> {
     Ok(format!("{}\0{}\0{}", p.display(), m.len(), m.mtime()))
 }
 
-/// The template key: a new `bd` or `dolt` binary gets a new template.
+/// `bd init`'s arguments around the server port: with [`render_config`], the recipe that
+/// shapes a template beyond the two binaries.
+const BD_INIT_HEAD: [&str; 10] = [
+    "init",
+    "--non-interactive",
+    "--prefix",
+    "sp",
+    "--skip-agents",
+    "--skip-hooks",
+    "--server",
+    "--server-host",
+    "127.0.0.1",
+    "--server-port",
+];
+const BD_INIT_TAIL: [&str; 4] = ["--database", DATABASE, "--external", "-q"];
+
+/// The template key: a new `bd` (which carries the schema migrations) or `dolt` binary, or a
+/// change to how this file builds a template, gets a new template. A host cache outlives
+/// the testenv that filled it, so the recipe is in the key: without it a changed build
+/// would be served the old one.
 pub fn template_key(bd_identity: &str, dolt_identity: &str) -> String {
     let mut h = Sha256::new();
     h.update(bd_identity.as_bytes());
     h.update(b"\n");
     h.update(dolt_identity.as_bytes());
+    h.update(b"\n");
+    h.update(BD_INIT_HEAD.join(" ").as_bytes());
+    h.update(BD_INIT_TAIL.join(" ").as_bytes());
+    h.update(render_config(0, Path::new("")).as_bytes());
     let d = h.finalize();
     d.iter().take(8).fold(String::new(), |mut s, b| {
         let _ = std::fmt::Write::write_fmt(&mut s, format_args!("{b:02x}"));
@@ -440,29 +463,219 @@ impl Flock {
     }
 }
 
+/// Where a template under `root` came from: already there, copied from the host cache, or
+/// built here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    Root,
+    Cache,
+    Built,
+}
+
+impl Origin {
+    pub fn word(self) -> &'static str {
+        match self {
+            Origin::Root => "root",
+            Origin::Cache => "cache",
+            Origin::Built => "built",
+        }
+    }
+    pub fn parse(w: &str) -> Option<Origin> {
+        [Origin::Root, Origin::Cache, Origin::Built]
+            .into_iter()
+            .find(|o| o.word() == w)
+    }
+}
+
 /// The template for `tools` under `root`, building it once if absent.
 pub fn ensure_template(root: &Path, tools: &Tools) -> Result<PathBuf, String> {
+    ensure_template_cached(root, tools, None).map(|(d, _)| d)
+}
+
+/// [`ensure_template`], first trying a copy of `cache`'s `template-<key>` (a read-only host
+/// directory, [`cache_template`]). The copy is the fixture's own, so nothing ever writes the
+/// cache; a copy that fails — the entry evicted mid-copy, say — is discarded and the
+/// template is built as though the cache had missed.
+pub fn ensure_template_cached(
+    root: &Path,
+    tools: &Tools,
+    cache: Option<&Path>,
+) -> Result<(PathBuf, Origin), String> {
     let key = tools.key()?;
-    let dir = root.join(format!("template-{key}"));
+    let name = format!("template-{key}");
+    let dir = root.join(&name);
     if dir.join("READY").is_file() {
-        return Ok(dir);
+        return Ok((dir, Origin::Root));
     }
     fs::create_dir_all(root).map_err(|e| format!("mkdir {}: {e}", root.display()))?;
-    let _lock = Flock::exclusive(&root.join(format!("template-{key}.lock")))
+    let _lock = Flock::exclusive(&root.join(format!("{name}.lock")))
         .map_err(|e| format!("lock template: {e}"))?;
     if dir.join("READY").is_file() {
-        return Ok(dir);
+        return Ok((dir, Origin::Root));
     }
-    let tmp = root.join(format!("template-{key}.build-{}", std::process::id()));
+    let tmp = root.join(format!("{name}.build-{}", std::process::id()));
     remove_tree(&tmp);
-    let r = build_template(&tmp, tools);
-    if let Err(e) = r {
-        remove_tree(&tmp);
-        return Err(e);
+    let cached = cache
+        .map(|c| c.join(&name))
+        .filter(|c| c.join("READY").is_file());
+    let from_cache = cached.is_some_and(|c| {
+        // An eviction renames the entry away before it deletes it, and a directory listing
+        // already open skips what is deleted under it: an entry still in place after the
+        // copy was whole throughout.
+        let ok = copy_tree(&c, &tmp).is_ok()
+            && tmp.join("READY").is_file()
+            && c.join("READY").is_file();
+        if !ok {
+            remove_tree(&tmp);
+        }
+        ok
+    });
+    if !from_cache {
+        if let Err(e) = build_template(&tmp, tools) {
+            remove_tree(&tmp);
+            return Err(e);
+        }
     }
     remove_tree(&dir);
     fs::rename(&tmp, &dir).map_err(|e| format!("rename template: {e}"))?;
-    Ok(dir)
+    Ok((dir, if from_cache { Origin::Cache } else { Origin::Built }))
+}
+
+/// What `testenv testdb template` printed: where the template is, its key, and its origin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateReport {
+    pub path: String,
+    pub key: String,
+    pub origin: Origin,
+}
+
+impl TemplateReport {
+    pub fn parse(out: &str) -> Option<TemplateReport> {
+        let get = |k: &str| {
+            out.lines()
+                .find_map(|l| l.strip_prefix(k)?.strip_prefix('='))
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+        };
+        Some(TemplateReport {
+            path: get("TESTDB_TEMPLATE")?.to_string(),
+            key: get("TESTDB_TEMPLATE_KEY")?.to_string(),
+            origin: Origin::parse(get("TESTDB_TEMPLATE_ORIGIN")?)?,
+        })
+    }
+}
+
+// ---- the host's template cache -------------------------------------------------------
+
+/// Keys the host cache keeps: one per bd/dolt/recipe combination in recent use. A key
+/// changes only with the image's tools or the recipe, so a handful covers the images a host
+/// tests against at once.
+pub const TEMPLATE_CACHE_KEYS: usize = 4;
+/// A `.incoming-*` or `.evict-*` entry this old was left by a killed store, not a live one.
+// batch-job: how long a store that copies a few MB out of a container may take
+const CACHE_LITTER_AGE: Duration = Duration::from_secs(3600);
+
+static CACHE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Mark `template-<key>` used now: [`evict_templates`] removes the least recently used.
+pub fn touch_template(cache: &Path, key: &str) {
+    if let Ok(f) = fs::File::open(cache.join(format!("template-{key}"))) {
+        let _ = f.set_modified(SystemTime::now());
+    }
+}
+
+/// Store a template built inside a container as `cache`'s `template-<key>`: `fetch` copies
+/// it to the path it is given (a fresh name in `cache`), which is made world-readable — the
+/// container reads it as another user — and renamed into place, so no reader ever sees half
+/// a template. A key already cached is only touched; a concurrent store of the same key
+/// loses the rename and discards its copy. Then the cache is cut to `keep` keys. Returns the
+/// names evicted.
+pub fn cache_template(
+    cache: &Path,
+    key: &str,
+    keep: usize,
+    fetch: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<Vec<String>, String> {
+    let dst = cache.join(format!("template-{key}"));
+    if !dst.join("READY").is_file() {
+        fs::create_dir_all(cache).map_err(|e| format!("mkdir {}: {e}", cache.display()))?;
+        let incoming = cache.join(format!(
+            ".incoming-{key}-{}-{}",
+            std::process::id(),
+            CACHE_SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        remove_tree(&incoming);
+        let stored = fetch(&incoming)
+            .and_then(|()| {
+                incoming
+                    .join("READY")
+                    .is_file()
+                    .then_some(())
+                    .ok_or_else(|| "the fetched template has no READY".to_string())
+            })
+            .and_then(|()| make_readable(&incoming).map_err(|e| format!("chmod: {e}")));
+        if let Err(e) = stored {
+            remove_tree(&incoming);
+            return Err(e);
+        }
+        if fs::rename(&incoming, &dst).is_err() {
+            remove_tree(&incoming);
+            if !dst.join("READY").is_file() {
+                return Err(format!("rename into {}", dst.display()));
+            }
+        }
+    }
+    touch_template(cache, key);
+    Ok(evict_templates(cache, keep))
+}
+
+/// a+r on every file and a+rx on every directory under `p`, owner bits kept.
+fn make_readable(p: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let m = fs::symlink_metadata(p)?;
+    if m.file_type().is_symlink() {
+        return Ok(());
+    }
+    let mode = m.permissions().mode();
+    let add = if m.is_dir() { 0o555 } else { 0o444 };
+    fs::set_permissions(p, fs::Permissions::from_mode(mode | add))?;
+    if m.is_dir() {
+        for e in fs::read_dir(p)? {
+            make_readable(&e?.path())?;
+        }
+    }
+    Ok(())
+}
+
+/// Cut `cache` to its `keep` most recently used templates, and clear what a killed store or
+/// eviction left behind. An entry goes by rename first, so a reader never copies from a
+/// directory that is half removed under its old name. Returns the templates evicted.
+pub fn evict_templates(cache: &Path, keep: usize) -> Vec<String> {
+    let Ok(rd) = fs::read_dir(cache) else {
+        return Vec::new();
+    };
+    let mut live: Vec<(SystemTime, String)> = Vec::new();
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let mtime = e.metadata().and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH);
+        if name.starts_with("template-") {
+            live.push((mtime, name));
+        } else if (name.starts_with(".incoming-") || name.starts_with(".evict-"))
+            && mtime.elapsed().is_ok_and(|a| a > CACHE_LITTER_AGE)
+        {
+            remove_tree(&e.path());
+        }
+    }
+    live.sort_by(|a, b| b.cmp(a));
+    let mut gone = Vec::new();
+    for (_, name) in live.into_iter().skip(keep) {
+        let doomed = cache.join(format!(".evict-{name}-{}", std::process::id()));
+        if fs::rename(cache.join(&name), &doomed).is_ok() {
+            remove_tree(&doomed);
+            gone.push(name);
+        }
+    }
+    gone
 }
 
 fn build_template(tmp: &Path, tools: &Tools) -> Result<(), String> {
@@ -488,20 +701,9 @@ fn build_template(tmp: &Path, tools: &Tools) -> Result<(), String> {
         .arg("TERM=dumb")
         .arg("BD_NON_INTERACTIVE=1")
         .arg(&tools.bd)
-        .args([
-            "init",
-            "--non-interactive",
-            "--prefix",
-            "sp",
-            "--skip-agents",
-            "--skip-hooks",
-            "--server",
-            "--server-host",
-            "127.0.0.1",
-            "--server-port",
-        ])
+        .args(BD_INIT_HEAD)
         .arg(port.to_string())
-        .args(["--database", DATABASE, "--external", "-q"])
+        .args(BD_INIT_TAIL)
         .current_dir(&ws)
         .stdin(Stdio::null())
         .output();
@@ -937,6 +1139,7 @@ pub struct Args {
     pub dir: Option<String>,
     pub baseline: Option<String>,
     pub bin: Option<String>,
+    pub cache: Option<String>,
 }
 
 pub fn parse(args: &[String]) -> Result<Args, String> {
@@ -973,6 +1176,7 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
             "--dir" => a.dir = Some(v()?),
             "--baseline" => a.baseline = Some(v()?),
             "--bin" => a.bin = Some(v()?),
+            "--cache" => a.cache = Some(v()?),
             "--owner" => {
                 let s = v()?;
                 a.owner = Some(
@@ -1040,6 +1244,12 @@ fn root_of(a: &Args) -> PathBuf {
     )
 }
 
+/// `--cache`, else the variable a batch sets ([`crate::fixture::TESTDB_TEMPLATE_CACHE_ENV`]);
+/// empty is none.
+pub(crate) fn cache_of(a: &Args, from_env: Option<String>) -> Option<PathBuf> {
+    a.cache.clone().or(from_env).filter(|s| !s.is_empty()).map(PathBuf::from)
+}
+
 fn emit(text: &str) {
     let mut o = io::stdout().lock();
     let _ = o.write_all(text.as_bytes());
@@ -1074,12 +1284,18 @@ pub fn main(args: &[String]) -> i32 {
                     root.display()
                 ));
             }
-            let tpl = match ensure_template(&root, &tools) {
+            let cache = cache_of(&a, std::env::var(crate::fixture::TESTDB_TEMPLATE_CACHE_ENV).ok());
+            let (tpl, origin) = match ensure_template_cached(&root, &tools, cache.as_deref()) {
                 Ok(t) => t,
                 Err(e) => return fail(e),
             };
             if a.cmd == "template" {
-                emit(&report(&[("TESTDB_TEMPLATE", tpl.display().to_string())]));
+                let key = tools.key().unwrap_or_default();
+                emit(&report(&[
+                    ("TESTDB_TEMPLATE", tpl.display().to_string()),
+                    ("TESTDB_TEMPLATE_KEY", key),
+                    ("TESTDB_TEMPLATE_ORIGIN", origin.word().to_string()),
+                ]));
                 return 0;
             }
             let exe = std::env::current_exe().ok();

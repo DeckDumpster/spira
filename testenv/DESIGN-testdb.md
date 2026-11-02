@@ -42,7 +42,7 @@ diagnostics on stderr; exit 0 success, 1 failure, 2 usage.
 
 | command | does |
 |---|---|
-| `template --bd B --dolt D [--root R]` | ensure the template for (B, D) exists; print `TESTDB_TEMPLATE=` |
+| `template --bd B --dolt D [--root R] [--cache C]` | ensure the template for (B, D) exists, copying it from `C` when that holds it (§2.6); print `TESTDB_TEMPLATE= TESTDB_TEMPLATE_KEY= TESTDB_TEMPLATE_ORIGIN=root\|cache\|built` |
 | `up --tag T --bd B --dolt D [--root R] [--owner PID]` | a fresh fixture from the template; print `TESTDB_NAME TESTDB_DIR TESTDB_FIXTURE TESTDB_SERVER_PORT TESTDB_SERVER_PID TESTDB_UP_MS TESTDB_BD` (`TESTDB_BD`: B as an absolute path, the first on PATH, links not resolved — §2.4) |
 | `reset --fixture F` | back to exactly the template state; print `TESTDB_SERVER_PORT TESTDB_SERVER_PID TESTDB_RESET_MS` |
 | `down --fixture F` | stop the server, remove the fixture; print `TESTDB_SERVER_CPU_MS TESTDB_LIFE_MS TESTDB_RESETS` |
@@ -61,7 +61,8 @@ existing embedded fallback, logged.
 ### 2.1 Template
 
 `R/template-<key>/` where `key` = the first 16 hex of sha256 over the canonical path, size
-and mtime of the `bd` and `dolt` executables — a new binary gets a new template, and a
+and mtime of the `bd` and `dolt` executables, and over the build recipe (the `bd init`
+arguments and the server config rendering, §2.6) — a new binary gets a new template, and a
 stub `bd` (test-testdb-failsafe) never finds a real one's. Built once, under an exclusive
 `flock` on `R/template-<key>.lock`, into a temporary sibling that is renamed into place
 when complete, so a reader sees a whole template or none:
@@ -228,6 +229,38 @@ so it is not bought: `R` is on the container's tmpfs (`podman run --systemd=true
 *Rejected:* raising bd's read timeout (`BEADS_DOLT_POOL_READ_TIMEOUT`) or the setup share —
 both move the knee and keep the database IO-bound; a shared long-lived server — the
 isolation §1 exists for.
+
+### 2.6 The host keeps built templates across batches (sp-vqq0e1)
+
+Every batch is a fresh container with a fresh tmpfs `R`, so every batch used to build the
+template again: a private server, `bd init`'s DDL, a clean stop — seconds idle, and the
+testdb phase's whole cost under load. The template depends only on its key, so the host
+keeps what one batch built and the next batch with the same key copies it.
+
+* **Where.** `$SPIRA_RUN/testdb-templates/template-<key>/` on the host, bound **read-only**
+  into every batch container (`container up --testdb-cache DIR`) at
+  `/var/cache/spira-testdb-templates`; the template step is given that path in
+  `TESTDB_TEMPLATE_CACHE` (the same as `--cache`), not as a flag: the binary is the tree
+  under test's, and one from before the cache ignores the variable and builds, where it
+  would reject the flag and fail the template. Nothing inside a container writes the cache.
+* **Hit.** `template` copies the cached entry into `R`'s temporary sibling and renames it
+  into place, exactly where a build would have put it — fixtures and suites see nothing
+  different. A copy that fails (the entry evicted mid-copy, a half entry without `READY`) is
+  discarded and the template built: the cache can make a batch faster, never wrong. An
+  eviction renames an entry away before deleting it, so a copy whose source entry is still in
+  place afterwards was whole throughout; one whose entry vanished is discarded the same way.
+* **Miss.** `template` builds as before and says `TESTDB_TEMPLATE_ORIGIN=built`; the host
+  then copies the directory out of the container (`podman cp`, which reads the container's
+  tmpfs) into a fresh `.incoming-*` name, makes it world-readable (the container reads it as
+  another user), and renames it into place. The copy is cut at 60 s (or the setup cutoff,
+  if sooner) whatever the batch's deadline: the next batch just builds. Two batches storing one key: the second rename
+  loses and its copy is removed.
+* **Bound.** At most `TEMPLATE_CACHE_KEYS` (4) entries; a hit or a store marks its entry's
+  mtime, and each store removes the least recently used beyond the bound — by rename to an
+  `.evict-*` name first, then delete. `.incoming-*`/`.evict-*` litter older than an hour (a
+  killed store) is removed by the same pass.
+* **Why the recipe is in the key.** The cache outlives the testenv that filled it; a change
+  to how a template is built must not be served the old one.
 
 ## 3. Non-goals
 

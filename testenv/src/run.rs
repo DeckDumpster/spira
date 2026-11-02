@@ -1625,6 +1625,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     session.liveness_retries = s.liveness_retries;
     session.liveness_sleep = Duration::from_secs(s.liveness_sleep);
     session.setup_deadline = setup_cutoff.get();
+    session.testdb_cache = crate::fixture::host_testdb_cache(&s.run);
     let unit_batch = crate::unit::selected(&active);
     if unit_batch {
         // A branch name keys the volume; a SHA (or any rev that is no local branch) its tree.
@@ -1756,6 +1757,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         ss.queue_bound = session.queue_bound;
         ss.pids_limit = Some(schedule::SIM_PIDS_LIMIT);
         ss.memory = Some(schedule::SIM_MEMORY.to_string());
+        ss.testdb_cache = session.testdb_cache.clone();
         ss
     });
     let mut _sim_guard = None;
@@ -1807,6 +1809,9 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
                 }
                 Finish::fault(fault.rc(), reason, 0).in_session("sim")
             })?;
+        if let Some(m) = ss.keep_template(&sim_setup.template) {
+            sim_log(&m);
+        }
         Ok(if sim_setup.template.ok() {
             Fixtures::Server
         } else {
@@ -2006,6 +2011,9 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             setup.template_ms,
             crate::fixture::CONTAINER_TESTDB_ROOT
         ));
+        if let Some(m) = session.keep_template(tpl) {
+            deps.log(&m);
+        }
         Fixtures::Server
     } else {
         deps.log(&format!(

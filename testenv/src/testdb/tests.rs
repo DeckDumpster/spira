@@ -340,6 +340,191 @@ fn a_failed_template_build_leaves_nothing_and_says_why() {
     let _ = fs::remove_dir_all(&d);
 }
 
+fn bd_inits(d: &Path) -> usize {
+    fs::read_to_string(d.join("bd-inits"))
+        .map(|s| s.lines().count())
+        .unwrap_or(0)
+}
+
+#[test]
+fn a_second_batch_with_the_same_tools_key_copies_the_cached_template_and_never_builds() {
+    let Some((d, tools)) = fakes("cache") else {
+        return;
+    };
+    let cache = d.join("host-cache");
+    // Batch one: an empty container root, an empty cache — built, then stored by the host.
+    let (tpl1, o1) = ensure_template_cached(&d.join("root1"), &tools, Some(&cache)).unwrap();
+    assert_eq!((o1, bd_inits(&d)), (Origin::Built, 1));
+    let key = tools.key().unwrap();
+    cache_template(&cache, &key, TEMPLATE_CACHE_KEYS, |dst| {
+        copy_tree(&tpl1, dst).map_err(|e| e.to_string())
+    })
+    .unwrap();
+    assert!(cache.join(format!("template-{key}/READY")).is_file());
+
+    // Batch two: a fresh container root, the same key — a copy, and no build at all.
+    let (tpl2, o2) = ensure_template_cached(&d.join("root2"), &tools, Some(&cache)).unwrap();
+    assert_eq!(o2, Origin::Cache);
+    assert_eq!(bd_inits(&d), 1, "the template build was not invoked again");
+    assert!(tpl2.starts_with(d.join("root2")), "the copy is the container's own: {tpl2:?}");
+    assert!(tpl2.join("ws/.beads/metadata.json").is_file());
+
+    // A changed bd — the binary that carries the schema — is a new key, and a rebuild.
+    exe(&tools.bd, &(fs::read_to_string(&tools.bd).unwrap() + "# schema v2\n"));
+    assert_ne!(tools.key().unwrap(), key);
+    let (_, o3) = ensure_template_cached(&d.join("root3"), &tools, Some(&cache)).unwrap();
+    assert_eq!((o3, bd_inits(&d)), (Origin::Built, 2));
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn the_template_command_takes_its_cache_from_the_flag_or_else_the_batch_variable() {
+    let parsed = |v: &[&str]| parse(&s(v)).unwrap();
+    let bare = parsed(&["template", "--bd", "bd", "--dolt", "dolt"]);
+    assert_eq!(cache_of(&bare, None), None);
+    assert_eq!(cache_of(&bare, Some(String::new())), None, "empty is no cache");
+    assert_eq!(cache_of(&bare, Some("/c/env".into())), Some(PathBuf::from("/c/env")));
+    let flagged = parsed(&["template", "--bd", "bd", "--dolt", "dolt", "--cache", "/c/flag"]);
+    assert_eq!(cache_of(&flagged, Some("/c/env".into())), Some(PathBuf::from("/c/flag")));
+}
+
+#[test]
+fn the_template_command_copies_from_the_cache_it_is_given() {
+    let Some((d, fake)) = fakes("cachecli") else {
+        return;
+    };
+    let (bd, dolt) = (fake.bd.display().to_string(), fake.dolt.display().to_string());
+    // The command canonicalises its tools; so does the key it looks the cache up by.
+    let tools = Tools::resolve(&bd, &dolt).unwrap();
+    let cache = d.join("host-cache");
+    let built = ensure_template(&d.join("seed"), &tools).unwrap();
+    let key = tools.key().unwrap();
+    cache_template(&cache, &key, TEMPLATE_CACHE_KEYS, |dst| {
+        copy_tree(&built, dst).map_err(|e| e.to_string())
+    })
+    .unwrap();
+    assert_eq!(bd_inits(&d), 1);
+    let root = d.join("root").display().to_string();
+    let cache_s = cache.display().to_string();
+    let rc = main(&s(&["template", "--bd", &bd, "--dolt", &dolt, "--root", &root, "--cache", &cache_s]));
+    assert_eq!(rc, 0);
+    assert_eq!(bd_inits(&d), 1, "the command copied the cached template, no build");
+    assert!(d.join(format!("root/template-{key}/READY")).is_file());
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_cache_entry_without_ready_is_a_miss_and_the_template_is_built() {
+    let Some((d, tools)) = fakes("cachehalf") else {
+        return;
+    };
+    let cache = d.join("host-cache");
+    fs::create_dir_all(cache.join(format!("template-{}/data", tools.key().unwrap()))).unwrap();
+    let (tpl, o) = ensure_template_cached(&d.join("root"), &tools, Some(&cache)).unwrap();
+    assert_eq!((o, bd_inits(&d)), (Origin::Built, 1));
+    assert!(tpl.join("READY").is_file());
+    let _ = fs::remove_dir_all(&d);
+}
+
+fn fake_template(dst: &Path) -> Result<(), String> {
+    fs::create_dir_all(dst.join("data")).map_err(|e| e.to_string())?;
+    use std::os::unix::fs::PermissionsExt;
+    let secret = dst.join("data/owner-only");
+    fs::write(&secret, "x").map_err(|e| e.to_string())?;
+    fs::set_permissions(&secret, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
+    fs::write(dst.join("READY"), "").map_err(|e| e.to_string())
+}
+
+fn cached_names(cache: &Path) -> Vec<String> {
+    let mut v: Vec<String> = fs::read_dir(cache)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn the_template_cache_is_bounded_and_evicts_the_least_recently_used_key() {
+    let d = tmpdir("cachebound");
+    let cache = d.join("cache");
+    for k in ["k0", "k1", "k2", "k3"] {
+        assert!(cache_template(&cache, k, 4, fake_template).unwrap().is_empty());
+    }
+    // Ages set outright (a second's mtime resolution would tie them), then k0 used again.
+    let base = SystemTime::now() - Duration::from_secs(600);
+    for (i, k) in ["k0", "k1", "k2", "k3"].iter().enumerate() {
+        fs::File::open(cache.join(format!("template-{k}")))
+            .unwrap()
+            .set_modified(base + Duration::from_secs(i as u64))
+            .unwrap();
+    }
+    touch_template(&cache, "k0");
+    // Litter from a killed store: old goes, fresh (a store in flight) stays.
+    fs::create_dir_all(cache.join(".incoming-old-1-0")).unwrap();
+    fs::File::open(cache.join(".incoming-old-1-0"))
+        .unwrap()
+        .set_modified(SystemTime::now() - Duration::from_secs(7200))
+        .unwrap();
+    fs::create_dir_all(cache.join(".incoming-live-1-0")).unwrap();
+
+    let gone = cache_template(&cache, "k4", 4, fake_template).unwrap();
+    assert_eq!(gone, ["template-k1"]);
+    assert_eq!(
+        cached_names(&cache),
+        [".incoming-live-1-0", "template-k0", "template-k2", "template-k3", "template-k4"]
+    );
+    // A stored template is readable by the container's other user, owner bits kept.
+    use std::os::unix::fs::PermissionsExt;
+    let mode = fs::metadata(cache.join("template-k4/data/owner-only"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o644);
+    // Storing a key already cached fetches nothing.
+    let gone = cache_template(&cache, "k4", 4, |_| panic!("fetched a cached key")).unwrap();
+    assert!(gone.is_empty());
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_failed_fetch_stores_nothing() {
+    let d = tmpdir("cachefail");
+    let cache = d.join("cache");
+    let e = cache_template(&cache, "k", 4, |dst| {
+        fs::create_dir_all(dst).unwrap();
+        Err("podman cp rc=125".into())
+    })
+    .unwrap_err();
+    assert!(e.contains("rc=125"), "{e}");
+    let e = cache_template(&cache, "k", 4, |dst| {
+        fs::create_dir_all(dst).map_err(|e| e.to_string())
+    })
+    .unwrap_err();
+    assert!(e.contains("READY"), "{e}");
+    assert!(cached_names(&cache).is_empty(), "{:?}", cached_names(&cache));
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn the_template_report_round_trips() {
+    let out = report(&[
+        ("TESTDB_TEMPLATE", "/tmp/spira-testdb/template-ab".into()),
+        ("TESTDB_TEMPLATE_KEY", "ab".into()),
+        ("TESTDB_TEMPLATE_ORIGIN", Origin::Built.word().into()),
+    ]);
+    assert_eq!(
+        TemplateReport::parse(&format!("noise\n{out}")),
+        Some(TemplateReport {
+            path: "/tmp/spira-testdb/template-ab".into(),
+            key: "ab".into(),
+            origin: Origin::Built
+        })
+    );
+    assert_eq!(TemplateReport::parse("TESTDB_TEMPLATE=/x\n"), None);
+}
+
 // fixtures_are_isolated_reset_is_fresh_and_down_removes_all was deleted under
 // law-a-test-that-flips-is-deleted: r-auto-147's recert (2026-10-15) failed it at
 // `assert!(!pid_alive(pid2))` with a member that touches only round-vm/src/pool.rs —

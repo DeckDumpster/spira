@@ -182,7 +182,7 @@ pub const HARNESS_MARKER: &str = "spira/testenv/Containerfile";
 
 pub const USAGE: &[&str] = &[
     "usage: testenv container up|down|exec|probe|tag|image|publish [OPTIONS]",
-    "  up      [--name NAME] [--checkout PATH] [--queue-timeout SECS] [--pids-limit N] [--memory SIZE]",
+    "  up      [--name NAME] [--checkout PATH] [--queue-timeout SECS] [--pids-limit N] [--memory SIZE] [--testdb-cache DIR]",
     "  down    [--name NAME] [--volumes | --volumes-of NAME] [--no-grace] [--force-foreign]",
     "  exec    [--name NAME] [--user USER] CMD ARGS...",
     "  probe   [--name NAME]",
@@ -859,6 +859,7 @@ impl Driver<'_> {
         let mut pids_limit = self.conf.pids_limit;
         let mut memory: Option<String> = None;
         let mut target_volume: Option<String> = None;
+        let mut testdb_cache: Option<String> = None;
         let mut i = 0;
         while i < args.len() {
             if args[i] == "--no-build" {
@@ -879,6 +880,7 @@ impl Driver<'_> {
                 }
                 ("--memory", Some(v)) if !v.is_empty() => memory = Some(v.clone()),
                 ("--cargo-target-volume", Some(v)) if !v.is_empty() => target_volume = Some(v.clone()),
+                ("--testdb-cache", Some(v)) if !v.is_empty() => testdb_cache = Some(v.clone()),
                 ("--name", Some(v)) => name = v.clone(),
                 ("--checkout", Some(v)) => checkout = Some(v.clone()),
                 (a, _) => {
@@ -969,6 +971,9 @@ impl Driver<'_> {
         .chain(memory.iter().flat_map(|m| [s("--memory"), m.clone()]))
         .chain(extra_mounts)
         .chain(target_volume.iter().flat_map(|v| [s("--volume"), format!("{v}:{CONTAINER_CARGO_TARGET}")]))
+        .chain(testdb_cache.iter().flat_map(|c| {
+            [s("--volume"), format!("{c}:{}:ro", crate::fixture::CONTAINER_TESTDB_CACHE)]
+        }))
         .chain([
             s("--volume"),
             format!("{name}-cargo-reg:{CONTAINER_CARGO}/registry"),

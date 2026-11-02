@@ -848,6 +848,27 @@ fn up_gives_a_container_its_own_pids_limit_and_memory() {
 }
 
 #[test]
+fn up_binds_the_testdb_template_cache_read_only_and_only_when_given() {
+    let f = Fake::new();
+    booting(&f);
+    let c = conf("/h");
+    let a = args(&["--name", "n1", "--testdb-cache", "/run/tpl-cache"]);
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&a), 0);
+    let run = &f.calls_with("run")[0];
+    let want = format!("/run/tpl-cache:{}:ro", crate::fixture::CONTAINER_TESTDB_CACHE);
+    assert!(run.windows(2).any(|w| w[0] == "--volume" && w[1] == want), "{run:?}");
+
+    let f = Fake::new();
+    booting(&f);
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1"])), 0);
+    let run = &f.calls_with("run")[0];
+    assert!(
+        !run.iter().any(|a| a.contains(crate::fixture::CONTAINER_TESTDB_CACHE)),
+        "{run:?}"
+    );
+}
+
+#[test]
 fn up_refuses_a_non_numeric_pids_limit() {
     let f = Fake::new();
     booting(&f);
@@ -1324,6 +1345,25 @@ fn a_no_grace_down_force_removes_with_no_stop_and_drops_the_original_names_volum
             .into_iter()
             .collect(),
         "the volumes are the original name's, never the reap name's"
+    );
+}
+
+#[test]
+fn a_detached_teardown_leaves_the_testdb_template_cache_alone() {
+    let f = Fake::new();
+    booting(&f);
+    let c = conf("/h");
+    let d = Driver { host: &f, conf: &c };
+    assert_eq!(d.cmd_up(&args(&["--name", "c", "--testdb-cache", "/run/tpl-cache"])), 0);
+    let before = f.calls.borrow().len();
+    f.when(&["container", "exists"], 1, "");
+    assert_eq!(down(&f, &["--name", "c-reap-7", "--volumes-of", "c", "--no-grace"]), 0);
+    let teardown = f.calls.borrow()[before..].to_vec();
+    assert!(!teardown.is_empty());
+    // The cache is a bind mount, which `rm -f` never deletes; only named volumes go.
+    assert!(
+        !teardown.iter().flatten().any(|a| a.contains("tpl-cache")),
+        "teardown names the cache: {teardown:?}"
     );
 }
 

@@ -201,6 +201,9 @@ pub trait ContainerRuntime: Send + Sync {
     /// stderr passed through. Past `deadline` it is killed (its whole process group) and
     /// reports [`RC_DEADLINE`] (DESIGN.md D9).
     fn testenv(&self, args: &[String], deadline: Option<Instant>) -> ExecOutcome;
+    /// `podman cp <name>:<from> <to>`: a directory in the container (its tmpfs included)
+    /// copied to `to` on the host, which must not exist yet. Killed past `deadline`.
+    fn copy_out(&self, name: &str, from: &str, to: &Path, deadline: Option<Instant>) -> Result<(), String>;
 }
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -478,6 +481,22 @@ impl ContainerRuntime for Podman {
         cmd.env_remove("SPIRA_ARTIFACTS")
             .env_remove("SPIRA_ARTIFACTS_ROOT");
         capture_bounded(cmd, deadline)
+    }
+
+    fn copy_out(&self, name: &str, from: &str, to: &Path, deadline: Option<Instant>) -> Result<(), String> {
+        let mut cmd = Command::new("podman");
+        cmd.arg("cp")
+            .arg(format!("{name}:{from}"))
+            .arg(to)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        let out = capture_bounded(cmd, deadline);
+        if out.ok() {
+            Ok(())
+        } else {
+            Err(format!("podman cp {name}:{from} rc={}", out.rc))
+        }
     }
 }
 
