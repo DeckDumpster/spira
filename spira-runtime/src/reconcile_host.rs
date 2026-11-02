@@ -210,7 +210,7 @@ pub fn send_mail(env: Option<&mail::env::Env>, m: &Mail) -> Result<(), String> {
         dry_run: false,
         requested_by: "",
     };
-    let bd = mail::bead::BdCli { bin: String::new(), db: String::new(), conn_retries: 1 };
+    let bd = mail::bead::BdCli { bdq: String::new(), conn_retries: 1 };
     mail::cmds::send(&bd, env, &args, m.body.clone()).map(|_| ())
 }
 

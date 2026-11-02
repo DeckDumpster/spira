@@ -344,7 +344,7 @@ impl Fixture {
         fs::write(self.p("now.iso"), format!("{}\n", iso_of(secs))).unwrap();
     }
 
-    fn values(&self, bin: &Path) -> BTreeMap<String, String> {
+    fn values(&self) -> BTreeMap<String, String> {
         let floor = if self.scenario == Scenario::Broken { "100" } else { "0" };
         let mut v: BTreeMap<String, String> = [
             ("COCKPIT_SESSIONS", "brain".to_string()),
@@ -392,7 +392,7 @@ fn seams_in(bin: &Path) -> Seams {
 fn pass_of_oracle(f: &Fixture, bin: &Path, pass: u64) {
     f.set_now(T0 + pass * PASS_SECS);
     // The two list-valued keys keep the fixture's own: the oracle reads neither of them here.
-    let pairs: Vec<(String, String)> = f.values(bin).into_iter().filter(|(k, _)| k != "SPIRA_RUNES" && k != "COCKPIT_SESSIONS").collect();
+    let pairs: Vec<(String, String)> = f.values().into_iter().filter(|(k, _)| k != "SPIRA_RUNES" && k != "COCKPIT_SESSIONS").collect();
     let declare: Vec<(&str, &str)> = pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
     let toml = spira_config::process::fixture_toml(f.dir.path(), &declare);
     let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
@@ -483,7 +483,6 @@ fn mail_env(root: &Path) -> mail::env::Env {
         id_prefix: "sp".into(),
         ask_label: "ask".into(),
         db: String::new(),
-        bd_bin: String::new(),
         bd_conn_retries: 1,
         operator_actor: "operator".into(),
         run_dir: root.join("run"),
@@ -517,7 +516,7 @@ impl Host {
         let created = iso_of(T0 - 900);
         let api = serve_forge(f.scenario, created);
 
-        let values = f.values(bin);
+        let values = f.values();
         let probe = reconciler::Config::from_lookup(&|k| values.get(k).cloned().ok_or_else(|| format!("{k} unknown")), Seams::production(), f.p("run"), String::new(), 0, String::new()).unwrap();
         let rules: Rules = probe.rules();
         let reconciler = Reconciler { interval_ms: PASS_SECS * 1000, rules, values, home: f.p("home").display().to_string() };
