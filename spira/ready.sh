@@ -38,7 +38,7 @@
 #                        must print "200 Nms", "ERR Nms reason", or "NNN Nms"
 set -uo pipefail
 export SPIRA_ADOPT_CONFIGURE_DEFAULT=1
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/conf.sh" || exit 1
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/lib.sh" || exit 1
 
 SC="${SPIRA_SYSTEMCTL:-systemctl}"
 
@@ -147,7 +147,7 @@ if ! [ -d "$SPIRA_DB/.beads" ]; then
     FAIL "database absent — no .beads at $SPIRA_DB" \
          "Create it: bd -C $SPIRA_DB init"
 # batch-job: full store listing, the health probe of the ready poller
-elif ! _db_out="$(SPIRA_HOME="$SPIRA_HOME" BD_TIMEOUT=30 command bdq list --limit 0 --json 2>&1)"; then
+elif ! _db_out="$(BD_TIMEOUT=30 bdq list --limit 0 --json 2>&1)"; then
     _rdy_dp=""
     if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
         _rdy_dp=3307
