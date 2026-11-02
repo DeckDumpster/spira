@@ -231,3 +231,20 @@ fn with_the_lifecycle_key_on_list_answers_from_the_control_store() {
     assert_eq!(code, 0, "{out}");
     assert_eq!(w.reached_dolt(), 0, "{out}");
 }
+
+#[test]
+fn with_the_lifecycle_key_off_a_condition_is_written_and_listed_on_the_control_store() {
+    let w = world(&[("SPIRA_LC_LIFECYCLE_ON_STORE", "0")]);
+    w.created();
+    let (code, out) = w.run(
+        &["condition", "set", "db-down", "--type", "Alert", "--reason", "Unreachable", "--message", "the store is down", "--owner", "heimdall"],
+        "",
+    );
+    assert_eq!(code, 0, "{out}");
+    let (code, out) = w.run(&["condition", "list", "--owner", "heimdall"], "");
+    assert_eq!(code, 0, "{out}");
+    let listed: Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| panic!("{e}: {out}"));
+    let row = &listed["conditions"][0];
+    assert_eq!((row["key"].as_str(), row["status"].as_str()), (Some("db-down"), Some("True")), "{out}");
+    assert_eq!(w.reached_dolt(), 0, "a condition has no dolt path: {out}");
+}
