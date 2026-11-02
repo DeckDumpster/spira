@@ -57,8 +57,10 @@ fn the_run_directory_reads_as_one_row_set_per_family() {
     put(&w, "gate.log", "2026-10-25T03:31:26Z sim spira/sp-a rc=0\n2026-10-25T03:32:00Z sim spira/sp-b rc=1\n");
     put(&w, "landing.log", "QUEUE ROUND-LAND 1 repo=sim batch=b members=sp-a:t\n");
     put(&w, "sim-units/round-controller-run-b1-3-0", "inactive\nexit=7\n");
+    put(&w, "verdicts/trees/sim/8c7a9232", "repo=sim\nbranch=round/sim-1\nby=round GREEN\n");
     let all = read(&w, "");
-    assert_eq!(rows(&all, "run_verdicts").len(), 1);
+    let keys: Vec<&str> = rows(&all, "run_verdicts").iter().map(|r| r["key"].as_str().unwrap()).collect();
+    assert_eq!(keys, ["k1", "trees/sim/8c7a9232"], "a round's certificate lives under trees/<repo>/<tree>");
     let q: Vec<(String, String)> = rows(&all, "run_queue").iter().map(|r| (r["file"].as_str().unwrap().into(), r["key"].as_str().unwrap_or("-").into())).collect();
     assert!(q.contains(&("publish".into(), "members".into())) && q.contains(&("round-seq".into(), "-".into())), "{q:?}");
     assert!(!q.iter().any(|(f, _)| f.contains("lock")), "lock files belong to run_locks: {q:?}");

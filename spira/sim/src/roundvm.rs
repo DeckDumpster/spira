@@ -2,7 +2,9 @@
 //! the way the real one does (round-vm/DESIGN.md), without a VM. Its verdict is scripted by
 //! the scenario through `<world>/gate-verdict`; on a verdict it installs the world's release
 //! executables into `<tree>/target/release`, where `queue round land` looks for the round's
-//! own build, and writes one `<suite>.result` per suite into the results dir.
+//! own build, and writes one `<suite>.result` per suite into the results dir. Given `--base`, it
+//! lists the tree's fences as the real one does (`gate fences`) and reports each as a
+//! `fence-<name>.result` before any suite; a red fence ends the pass there.
 
 use std::path::{Path, PathBuf};
 
@@ -69,17 +71,19 @@ pub struct Run {
     /// `--round-batch` and `--round-repo`: the round whose batch row the pass is recorded on.
     pub round_batch: Option<String>,
     pub round_repo: Option<String>,
+    /// `--base`: the round is judged against a landing ref, so it runs the tree's fences.
+    pub base: Option<String>,
 }
 
 /// Flags the batcher passes that say how a real VM runs, and mean nothing to a stub.
-const IGNORED_FLAGS: &[&str] = &["--maxpar", "--toolchain", "--attr-spool", "--base"];
+const IGNORED_FLAGS: &[&str] = &["--maxpar", "--toolchain", "--attr-spool"];
 
 pub fn parse_args(args: &[String]) -> Result<Run, String> {
     let Some((verb, rest)) = args.split_first() else { return Err("usage: round-vm run <tree> --results-dir <dir>".into()) };
     if verb != "run" {
         return Err(format!("the sim round-vm answers only `run`, not {verb:?}"));
     }
-    let (mut tree, mut results, mut suites, mut on_red, mut round_batch, mut round_repo) = (None, None, None, None, None, None);
+    let (mut tree, mut results, mut suites, mut on_red, mut round_batch, mut round_repo, mut base) = (None, None, None, None, None, None, None);
     let words = |v: &str| Some(v.split_whitespace().map(str::to_string).collect::<Vec<_>>()).filter(|w| !w.is_empty());
     let csv = |v: &str| v.split(',').filter(|s| !s.is_empty()).map(str::to_string).collect::<Vec<_>>();
     let mut it = rest.iter();
@@ -92,6 +96,10 @@ pub fn parse_args(args: &[String]) -> Result<Run, String> {
             suites = Some(csv(v));
         } else if a == "--suites" {
             suites = Some(csv(it.next().ok_or("--suites needs a value")?));
+        } else if let Some(v) = a.strip_prefix("--base=") {
+            base = Some(v.to_string());
+        } else if a == "--base" {
+            base = Some(it.next().ok_or("--base needs a value")?.clone());
         } else if let Some(v) = a.strip_prefix("--on-red=") {
             on_red = words(v);
         } else if a == "--on-red" {
@@ -113,7 +121,7 @@ pub fn parse_args(args: &[String]) -> Result<Run, String> {
             return Err("round-vm run takes one tree".into());
         }
     }
-    Ok(Run { tree: tree.ok_or("round-vm run needs a tree")?, results: results.ok_or("the sim round-vm needs --results-dir")?, suites, on_red, round_batch, round_repo })
+    Ok(Run { tree: tree.ok_or("round-vm run needs a tree")?, results: results.ok_or("the sim round-vm needs --results-dir")?, suites, on_red, round_batch, round_repo, base })
 }
 
 /// The corpus as testenv defines it: every `test-*.sh` regular file in `<tree>/spira`.
@@ -165,6 +173,16 @@ fn install_bins(bin: &Path, tree: &Path) -> Result<usize, String> {
         n += 1;
     }
     Ok(n)
+}
+
+/// The fence names `gate fences` lists for `tree`, from the world's release.
+fn fence_names(bin: &Path, tree: &Path) -> Result<Vec<String>, String> {
+    // batch-job: one listing of the tree's gate definition
+    let o = std::process::Command::new(bin.join("gate")).arg("fences").arg("--tree").arg(tree).output().map_err(|e| format!("gate fences: {e}"))?;
+    if !o.status.success() {
+        return Err(format!("gate fences exited {}: {}", o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stderr).trim()));
+    }
+    Ok(String::from_utf8_lossy(&o.stdout).lines().filter_map(|l| l.split('\t').next()).filter(|n| !n.is_empty()).map(str::to_string).collect())
 }
 
 fn write_result(dir: &Path, suite: &str, line: &str) -> Result<(), String> {
@@ -244,6 +262,19 @@ fn run_inner(world: &Path, args: &[String], env: &dyn Fn(&str) -> Option<String>
         Verdict::Red(s) => s,
         Verdict::RedEarly(steps) => return ended_early(world, &r, env, &steps, now),
     };
+    if r.base.is_some() {
+        let bin = release_bin(world, env)?;
+        let fences: Vec<String> = fence_names(&bin, &r.tree)?.into_iter().map(|n| format!("fence-{n}")).collect();
+        std::fs::create_dir_all(&r.results).map_err(|e| e.to_string())?;
+        for f in &fences {
+            let line = if reds.contains(f) { format!("red {now} 0 - - - 1") } else { format!("ok {now} 0 - - - 0") };
+            write_result(&r.results, f, &line)?;
+        }
+        let red: Vec<&String> = fences.iter().filter(|f| reds.contains(f)).collect();
+        if !red.is_empty() {
+            return Ok((1, format!("sim round-vm: fence red before the suites: {}\n", red.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(","))));
+        }
+    }
     let mut suites = r.suites.clone().unwrap_or_else(|| corpus(&r.tree));
     suites.extend(reds.iter().cloned());
     suites.sort();

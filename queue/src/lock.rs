@@ -123,6 +123,37 @@ pub fn certify_holder(queue_dir: &Path, repo: &str, batch: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Deletes the certify lock of a round that has ended. A lock another process holds is kept:
+/// unlinking it would let a second certify take a fresh file beside the held one.
+pub fn remove_certify_lock(queue_dir: &Path, repo: &str, batch: &str) -> bool {
+    let path = queue_dir.join(repo).join(format!("certify-{batch}.lock"));
+    let Ok(f) = OpenOptions::new().write(true).open(&path) else {
+        return false;
+    };
+    let mine = certify_holder(queue_dir, repo, batch).starts_with(&format!("pid={} ", std::process::id()));
+    // SAFETY: flock on a descriptor we own; no memory is shared with the kernel call.
+    let free = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
+    (free || mine) && fs::remove_file(&path).is_ok()
+}
+
+/// The batch of every certify lock file `repo` has on disk, sorted.
+pub fn certify_lock_batches(queue_dir: &Path, repo: &str) -> Vec<String> {
+    let mut out: Vec<String> = fs::read_dir(queue_dir.join(repo))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            e.file_name()
+                .to_str()?
+                .strip_prefix("certify-")?
+                .strip_suffix(".lock")
+                .map(str::to_string)
+        })
+        .collect();
+    out.sort();
+    out
+}
+
 /// The step lock (`<repo>/step.lock`): one stepper per repository. Deliberately NOT the
 /// queue lock — queue verdict and batch.sh take that one themselves inside a step.
 pub fn try_step_lock(queue_dir: &Path, repo: &str) -> Acquire {
@@ -242,6 +273,23 @@ mod tests {
             try_certify_lock(&d, "spira", "r-1"),
             Acquire::Held(_)
         ));
+    }
+
+    #[test]
+    fn an_ended_rounds_certify_lock_is_removed_unless_another_process_holds_it() {
+        let _serial = crate::testutil::serial();
+        let d = tmpdir("certrm");
+        drop(try_certify_lock(&d, "spira", "r-1"));
+        let held = try_certify_lock(&d, "spira", "r-2");
+        let ours = try_certify_lock(&d, "spira", "r-3");
+        fs::write(d.join("spira/certify-r-2.lock"), "pid=1 verb=round certify\n").unwrap();
+        assert_eq!(certify_lock_batches(&d, "spira"), ["r-1", "r-2", "r-3"]);
+        assert!(remove_certify_lock(&d, "spira", "r-1"), "a free lock goes");
+        assert!(!remove_certify_lock(&d, "spira", "r-2"), "another holder's lock stays");
+        assert!(remove_certify_lock(&d, "spira", "r-3"), "this process's own certify ended the round");
+        assert!(!remove_certify_lock(&d, "spira", "r-9"), "no file, nothing removed");
+        assert_eq!(certify_lock_batches(&d, "spira"), ["r-2"]);
+        drop((held, ours));
     }
 
     #[test]

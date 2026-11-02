@@ -453,7 +453,7 @@ pub fn gate_string(comp: &Composition, gate: &str) -> (String, bool) {
 /// Top-level `&&` elements of a gate string, or `None` when any element is not a `gate.steps`
 /// step (a `bash` script, a quoted tool variable, a `{ }` group) or the string chains with
 /// anything but `&&`: such a string keeps its own short-circuit semantics.
-fn chain_steps(cmd: &str) -> Option<Vec<String>> {
+pub(crate) fn chain_steps(cmd: &str) -> Option<Vec<String>> {
     let (mut steps, mut cur, mut depth) = (Vec::new(), String::new(), 0i32);
     let c: Vec<char> = cmd.chars().collect();
     let mut i = 0;

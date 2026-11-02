@@ -43,6 +43,9 @@ pub struct RunArgs {
     /// A foreign repository's own full CI entry point: the VM clones the tree and runs this
     /// command instead of the harness corpus, and its exit status is the round's one verdict.
     pub ci_entry: Option<String>,
+    /// The tree's fences (`gate fences`, `name<TAB>command` lines), listed on the host before the
+    /// VM is taken; never a command-line option.
+    pub fences: Option<String>,
 }
 
 /// Parses `run`'s arguments; `--opt value` and `--opt=value` both work.
@@ -94,6 +97,9 @@ pub trait Host: Sync {
     fn suites_in(&self, tree: &Path) -> Result<Vec<String>, String>;
     /// Recorded median wall seconds per suite (`testenv --report`).
     fn suite_medians(&self) -> Result<std::collections::HashMap<String, f64>, String>;
+    /// The fences `tree`'s own gate definition runs (`gate fences`), their bins read from the
+    /// VM's build: `name<TAB>command` lines.
+    fn fences(&self, tree: &Path) -> Result<String, String>;
 }
 
 /// The explicit longest-first suite list for a full-corpus round, naming on stderr every suite
@@ -145,6 +151,8 @@ pub struct BatchJob {
     pub round_sha: String,
     /// Set: the VM runs [`FOREIGN_SCRIPT`] with this command rather than the harness round.
     pub ci_entry: Option<String>,
+    /// The tree's fences, `name<TAB>command` lines, run after the lint when `lint` is set.
+    pub fences: String,
 }
 
 /// The VM side, reached only by address.
@@ -224,7 +232,7 @@ printf '%s %s %s - - - %s\n' "$status" 1 "$(( $(date +%s) - t0 ))" "$rc" > "$res
 /// into `~/round-bins/` so the host pulls the binaries and not cargo's target directory.
 pub const REMOTE_SCRIPT: &str = concat!(r#"set -euo pipefail
 host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" build_image="${12}" round_ref="${13}" round_sha="${14}"
-testenv_limits="${16:-}" resume_url="${17:-}" disk_need_gib="${18:-}"
+testenv_limits="${16:-}" resume_url="${17:-}" disk_need_gib="${18:-}" fences="${19:-}"
 [ -n "$testenv_limits" ] || { echo "round-vm: the host sent no testenv limits; a round never takes them from the tree's test fixture" >&2; exit 2; }
 t_start=$(date +%s)
 export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -585,23 +593,35 @@ if [ -n "$lint" ]; then
     fi
     echo "round-vm: LINT: ${lint_secs}s of the 900s cap (rc=$lint_rc)" >&2
 fi
-# THE BASE FENCES the gate runs on every branch beyond the lint (gate.steps), on the merged
-# tree: a round that passes the suites but breaks one is red. build-fence is the workspace
-# build above and the unit tests below.
+# THE TREE'S FENCES, on the merged tree: the host's `gate fences` list (name<TAB>command per line),
+# each run in the tree root against the mirrored landing ref, one after another and all before the
+# unit tier starts, and without the round's sccache: a fence that compiles (build-fence) must not
+# load the server the unit tests' own cargo builds connect to. Each one's seconds go to the
+# fence-times file; a red one is recorded as fence-<name>.result and makes the round red. A
+# green one writes no .result: the top directory of the results holds .result files only when
+# the pass ended before the suites.
 fence_fail=""
+fence_res="$HOME/round-work/.runtime/spira/batch-results"
 fence_run() {
-    local name="$1"; shift
-    ( cd "$HOME/round-work" && "$@" ) > ~/round-fence-"$name".out 2>&1
-    local frc=$?
+    local name="$1" cmd="$2" t0 frc
+    t0=$(date +%s)
+    ( cd "$HOME/round-work" && env -u RUSTC_WRAPPER SPIRA_GATE_BASE=origin/base SPIRA_GATE_BRANCH=HEAD bash -c "$cmd" ) < /dev/null > ~/round-fence-"$name".out 2>&1
+    frc=$?
+    mkdir -p "$fence_res"
+    echo "$name $(( $(date +%s) - t0 )) $frc" >> "$fence_res/fence-times"
     if [ "$frc" -ne 0 ]; then
         echo "round-vm: FENCE $name: RED (rc=$frc)" >&2
         head -40 ~/round-fence-"$name".out >&2
         fence_fail="$fence_fail $name"
+        cp ~/round-fence-"$name".out "$fence_res/fence-$name.out"
+        echo "red $(date +%s) $(( $(date +%s) - t0 )) - - - $frc" > "$fence_res/fence-$name.result"
     fi
 }
 if [ -n "$lint" ]; then
-    fence_run lifecycle-guard "$HOME/round-work/target/release/lifecycle-guard" --gate .
-    fence_run boundary bash spira/boundary.sh check
+    while IFS=$'\t' read -r fname fcmd; do
+        [ -n "$fname" ] || continue
+        fence_run "$fname" "$fcmd"
+    done <<< "$fences"
 fi
 # LINT AND FENCES ARE LOW-PASS FILTERS: a red one ends the pass HERE, before any unit test or
 # suite runs, so no validation work is spent on a tree they already refuse (per Ryan 2026-10-29).
@@ -612,10 +632,6 @@ if [ -n "$lint" ] && { [ "${lint_rc:-0}" -ne 0 ] || [ -n "$fence_fail" ]; }; the
         cp ~/round-lint.report "$early/spira-lint.out" 2>/dev/null || cp ~/round-lint.out "$early/spira-lint.out"
         echo "red 1 ${lint_secs:-0} - - - $lint_rc" > "$early/spira-lint.result"
     fi
-    for name in $fence_fail; do
-        cp ~/round-fence-"$name".out "$early/fence-$name.out"
-        echo "red 1 0 - - - 1" > "$early/fence-$name.result"
-    done
     echo "$(date +%s) verdict RED lint-or-fence" >> "$early/run.events"
     echo "round-vm: LINT/FENCE RED before the suites: no unit test or suite was run" >&2
     kill "$sampler_pid" 2>/dev/null
@@ -910,6 +926,7 @@ pub fn remote_command(job: &BatchJob) -> String {
     args.push(job.testenv_limits.clone());
     args.push(job.resume_url.clone().unwrap_or_default());
     args.push(job.disk_need_gib.to_string());
+    args.push(job.fences.clone());
     let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
     format!("bash -c {} launcher {}", shell_quote(REMOTE_LAUNCHER), quoted.join(" "))
 }
@@ -1211,6 +1228,22 @@ impl Host for GitHost {
             return Err(format!("testenv --report exited {}: {}", o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stderr).trim()));
         }
         crate::lpt::parse_medians(&String::from_utf8_lossy(&o.stdout))
+    }
+
+    fn fences(&self, tree: &Path) -> Result<String, String> {
+        let o = command("gate")
+            .arg("fences")
+            .arg("--tree")
+            .arg(tree)
+            // path-ok: the VM's own workspace build, relative to the round tree the fences run in.
+            .args(["--bin-dir", "target/release"])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("gate fences: {e}"))?;
+        if !o.status.success() {
+            return Err(format!("gate fences exited {}: {}", o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stderr).trim()));
+        }
+        Ok(String::from_utf8_lossy(&o.stdout).into_owned())
     }
 
     fn prepare_mirror(&self, tree: &Path, round_ref: &str) -> Result<(), String> {
@@ -1641,6 +1674,26 @@ struct Facts {
     marks: Option<crate::progress::Marks>,
 }
 
+/// Seconds per fence from this pass's pulled `fence-times` (`<name> <secs> <rc>` lines); a file
+/// older than the pass is a previous pass's and is not counted.
+fn fence_seconds(results: &Path, started: u64) -> Vec<(String, u64)> {
+    let path = results.join(FENCE_TIMES);
+    let fresh = fs::metadata(&path).and_then(|m| m.modified()).is_ok_and(|t| t >= std::time::UNIX_EPOCH + Duration::from_secs(started));
+    let text = if fresh { fs::read_to_string(&path).unwrap_or_default() } else { String::new() };
+    let mut out: Vec<(String, u64)> = text
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split_whitespace();
+            Some((f.next()?.to_string(), f.next()?.parse().ok()?))
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// What REMOTE_SCRIPT records each fence's seconds in, at the top of the results.
+pub const FENCE_TIMES: &str = "fence-times";
+
 /// `round-vm run`. Returns the process exit code (DESIGN.md §2.2). A pass that began is recorded
 /// exactly once, whatever way it ended; a record that cannot be written ends the pass unjudged.
 pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
@@ -1676,6 +1729,7 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         suites_s,
         cause: tsd::pass::Cause::from_exit(code, lost.is_some()),
         detail: lost.unwrap_or_default(),
+        fences: fence_seconds(&args.results_dir.clone().unwrap_or_else(|| env.cfg.run_dir.join("batch-results")), started),
     };
     match env.record.pass_record(&env.cfg.run_dir, &record) {
         Ok(()) => {
@@ -1744,6 +1798,21 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
             }
             Err(e) => {
                 eprintln!("round-vm run: cannot order the corpus longest-first: {e}");
+                return 2;
+            }
+        }
+    } else {
+        args
+    };
+    let fenced;
+    let args = if lints(args) {
+        match env.host.fences(&args.tree_dir) {
+            Ok(list) => {
+                fenced = RunArgs { fences: Some(list), ..args.clone() };
+                &fenced
+            }
+            Err(e) => {
+                eprintln!("round-vm run: cannot list the tree's fences, so the round would judge nothing they guard: {e}");
                 return 2;
             }
         }
@@ -1859,6 +1928,11 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
         eprintln!("round-vm run: warning: release of {} failed: {e}", vm.handle);
     }
     code
+}
+
+/// The round is judged against a landing ref, so it runs the lint and the tree's fences.
+fn lints(args: &RunArgs) -> bool {
+    args.base.is_some() && args.ci_entry.is_none()
 }
 
 /// The suite slots for a spilled VM: one per vCPU of its type, unless the operator or the caller
@@ -1991,13 +2065,14 @@ fn on_vm_run(
         testenv_limits: cfg.testenv_limits.clone(),
         post_guard_secs: cfg.post_guard_secs,
         disk_need_gib: cfg.disk_need_gib,
-        lint: args.base.is_some() && args.ci_entry.is_none(),
+        lint: lints(args),
         build_image,
         round_ref: round_ref.to_string(),
         round_sha: commit_sha.to_string(),
         ssh_log: results_dir.join(SSH_LOG_FILE),
         ci_entry: args.ci_entry.clone(),
         resume_url: args.ci_entry.is_none().then(|| cfg.resume_url.clone()).flatten(),
+        fences: args.fences.clone().unwrap_or_default(),
     };
     if let (Some(dir), None) = (&cfg.resume_credentials, &args.ci_entry) {
         if job.resume_url.is_some() && !crate::ec2::is_ec2_handle(&vm.handle) {
@@ -2407,9 +2482,11 @@ fn after_batch(
     if args.ci_entry.is_none() {
         keep_runner_output(remote, cfg, &vm.addr, &scratch("runner"), &results_dir);
     }
-    if pulled.join(FIXTURE_FAULT_FILE).is_file() {
-        let _ = fs::create_dir_all(&results_dir);
-        let _ = fs::copy(pulled.join(FIXTURE_FAULT_FILE), results_dir.join(FIXTURE_FAULT_FILE));
+    for top in [FIXTURE_FAULT_FILE, FENCE_TIMES] {
+        if pulled.join(top).is_file() {
+            let _ = fs::create_dir_all(&results_dir);
+            let _ = fs::copy(pulled.join(top), results_dir.join(top));
+        }
     }
     if executables(&bins).is_empty() {
         show_setup_log(remote, cfg, &vm.addr, &scratch("setup-log"));
@@ -3145,23 +3222,110 @@ mod tests {
         let home = d.path();
         let w = home.join("round-work");
         fs::create_dir_all(w.join("target/release")).unwrap();
+        testkit::write_exe(w.join("target/release/lifecycle-guard"), &format!("#!/bin/sh\n[ \"$1\" = --gate ] || exit 9\necho 'guard finding'\nexit {guard_rc}\n"));
+        fs::create_dir_all(w.join("spira")).unwrap();
+        fs::write(w.join("spira/boundary.sh"), format!("[ \"$1\" = check ] || exit 9\necho 'README is stale'\nexit {boundary_rc}\n")).unwrap();
+        listed_fixture(d, hit, FAKE_FENCES)
+    }
+
+    /// A round of two members on a base, running the shipped `fences` list after the stub lint.
+    fn listed_fixture(d: &TempDir, hit: Option<&str>, fences: &str) -> std::process::Output {
+        let home = d.path();
+        let w = home.join("round-work");
+        fs::create_dir_all(w.join("target/release")).unwrap();
         let stub = match hit {
             Some(h) => format!("#!/bin/sh\necho '{h}'\nexit 1\n"),
             None => "#!/bin/sh\nexit 0\n".to_string(),
         };
         testkit::write_exe(w.join("target/release/spira-lint"), &stub);
-        testkit::write_exe(w.join("target/release/lifecycle-guard"), &format!("#!/bin/sh\n[ \"$1\" = --gate ] || exit 9\necho 'guard finding'\nexit {guard_rc}\n"));
-        fs::create_dir_all(w.join("spira")).unwrap();
-        fs::write(w.join("spira/boundary.sh"), format!("[ \"$1\" = check ] || exit 9\necho 'README is stale'\nexit {boundary_rc}\n")).unwrap();
         let lint = lint_segment();
         let script = format!(
             "set -e; cd ~/round-work; git init -q -b main .; echo x > base.txt; git add base.txt; git commit -qm base; \
              git update-ref refs/remotes/origin/base HEAD; \
              echo 1 > ok.rs; git add ok.rs; git commit -qm 'spira: round r-1: merge sp-clean (aaa)'; \
              echo 2 > bad.rs; git add bad.rs; git commit -qm 'spira: round r-1: merge sp-dirty (bbb)'; \
-             set +e; ( lint=1; {lint}\necho UNITS-AND-SUITES-REACHED ); echo rc=$?"
+             set +e; ( export RUSTC_WRAPPER=/round/sccache; lint=1; fences={}; {lint}\necho UNITS-AND-SUITES-REACHED ); echo rc=$?",
+            shell_quote(fences)
         );
         sh(home, &script)
+    }
+
+    fn results_of(d: &TempDir) -> PathBuf {
+        d.path().join("round-work/.runtime/spira/batch-results")
+    }
+
+    #[test]
+    fn a_shipped_list_of_three_fences_runs_all_three_against_the_landing_ref() {
+        let d = TempDir::new();
+        let fences = "one\techo \"one base=$SPIRA_GATE_BASE wrapper=${RUSTC_WRAPPER:-}\" > one.ran\ntwo\techo two > two.ran; if read -r x; then echo \"$x\" > stole; fi\nthree\techo three > three.ran\n";
+        let o = listed_fixture(&d, None, fences);
+        let out = String::from_utf8_lossy(&o.stdout);
+        assert!(out.contains("rc=0") && out.contains("UNITS-AND-SUITES-REACHED"), "{out}{}", String::from_utf8_lossy(&o.stderr));
+        let w = d.path().join("round-work");
+        assert_eq!(fs::read_to_string(w.join("one.ran")).unwrap(), "one base=origin/base wrapper=\n");
+        assert!(w.join("two.ran").is_file() && w.join("three.ran").is_file());
+        let times = fs::read_to_string(results_of(&d).join("fence-times")).unwrap();
+        let names: Vec<&str> = times.lines().map(|l| l.split(' ').next().unwrap()).collect();
+        assert_eq!(names, ["one", "two", "three"], "{times}");
+        assert!(times.lines().all(|l| l.ends_with(" 0")), "{times}");
+        assert!(!w.join("stole").exists() && !fs::read_dir(results_of(&d)).unwrap().flatten().any(|e| e.path().extension().is_some_and(|x| x == "result")), "a green fence leaves no .result at the top of the results, where the host would take it for the suites' leaf");
+    }
+
+    /// The environment `unit_cargo` hands cargo, after the round's setup exports and, with
+    /// `fences`, after the lint and fence segment has run them.
+    fn unit_env(fences: Option<&str>) -> String {
+        let d = TempDir::new();
+        let home = d.path();
+        let w = home.join("round-work");
+        fs::create_dir_all(w.join("target/release")).unwrap();
+        testkit::write_exe(w.join("target/release/spira-lint"), "#!/bin/sh\nexit 0\n");
+        fs::create_dir_all(home.join("spira-env/bin")).unwrap();
+        testkit::write_exe(home.join("spira-env/bin/cargo"), "#!/bin/sh\nenv | sort > \"$HOME/unit.env\"\n");
+        let f = REMOTE_SCRIPT.find("unit_cargo() {").unwrap();
+        let unit_fn = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap() + 3];
+        let segment = fences.map(|l| format!("lint=1; fences={}; {}", shell_quote(l), lint_segment())).unwrap_or_default();
+        let script = format!(
+            "set -e; cd ~/round-work; git init -q -b main .; echo x > base.txt; git add base.txt; git commit -qm base; \
+             git update-ref refs/remotes/origin/base HEAD; set +e\n\
+             export CARGO_HOME=\"$HOME/cargo\" RUSTC_WRAPPER=/round/sccache SCCACHE_WEBDAV_ENDPOINT=http://h:9431 SCCACHE_WEBDAV_KEY_PREFIX=/ unit_cov_env=\n\
+             {unit_fn}{segment}\nunit_cargo --no-fail-fast; echo rc=$?"
+        );
+        let o = sh(home, &script);
+        assert!(String::from_utf8_lossy(&o.stdout).contains("rc=0"), "{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        fs::read_to_string(home.join("unit.env")).unwrap().replace(&home.display().to_string(), "$HOME")
+    }
+
+    #[test]
+    fn the_unit_tier_gets_the_same_environment_with_and_without_the_fence_loop() {
+        let leaky = "one\texport OTEL_EXPORTER_OTLP_ENDPOINT=http://x:4318 SCCACHE_DIR=/elsewhere LEAK=1; true\ntwo\tunset HOME PATH; true\n";
+        let without = unit_env(None);
+        assert!(without.contains("RUSTC_WRAPPER=/round/sccache"), "positive control: the unit tier's own wrapper is seen: {without}");
+        assert_eq!(unit_env(Some(leaky)), without, "a fence's exports and unsets stay in its subshell");
+    }
+
+    #[test]
+    fn the_fences_finish_before_the_unit_tier_starts() {
+        let fences = REMOTE_SCRIPT.find("fence_run \"$fname\" \"$fcmd\"").expect("the fence loop");
+        let early = REMOTE_SCRIPT.find("LINT/FENCE RED before the suites").unwrap();
+        let units = REMOTE_SCRIPT.find("unit_cargo --no-fail-fast > ~/round-unit-tests.log 2>&1 &").expect("the unit tier's launch");
+        assert!(fences < early && early < units, "the fences run in the foreground and the unit tier starts only after them");
+        assert!(!REMOTE_SCRIPT[fences..fences + 80].contains('&'), "the fence loop is not backgrounded");
+    }
+
+    #[test]
+    fn a_red_second_fence_writes_its_result_red_and_ends_the_pass() {
+        let d = TempDir::new();
+        let o = listed_fixture(&d, None, "one\ttrue\ntwo\techo broken; exit 3\nthree\ttrue\n");
+        let out = String::from_utf8_lossy(&o.stdout);
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(out.contains("rc=1") && !out.contains("UNITS-AND-SUITES-REACHED"), "a red fence ends the pass before any unit test or suite: {out}{err}");
+        assert!(err.contains("FENCE two: RED (rc=3)") && !err.contains("FENCE one") && !err.contains("FENCE three"), "{err}");
+        let r = results_of(&d);
+        assert!(fs::read_to_string(r.join("fence-two.result")).unwrap().starts_with("red "));
+        assert!(fs::read_to_string(r.join("fence-two.out")).unwrap().contains("broken"));
+        assert!(!r.join("fence-one.result").exists());
+        assert!(fs::read_to_string(r.join("fence-times")).unwrap().contains("two "), "a red fence's seconds are recorded too");
+        assert!(fs::read_to_string(r.join("run.events")).unwrap().contains("verdict RED lint-or-fence"));
     }
 
     #[test]
@@ -3219,7 +3383,7 @@ mod tests {
         let out = String::from_utf8_lossy(&o.stdout);
         assert!(out.contains("rc=0"), "{out}{}", String::from_utf8_lossy(&o.stderr));
         assert!(out.contains("UNITS-AND-SUITES-REACHED"), "a clean lint goes on to the units and suites: {out}");
-        assert!(!d.path().join("round-work/.runtime").exists());
+        assert!(!results_of(&d).join("spira-lint.result").exists() && !results_of(&d).join("run.events").exists());
         assert!(String::from_utf8_lossy(&o.stderr).contains("of the 900s cap"));
     }
 
@@ -3353,8 +3517,9 @@ mod tests {
             round_ref: "refs/rounds/7-abc".into(),
             round_sha: "abc".into(),
             ci_entry: Some("deploy/ci.sh all".into()),
+            fences: String::new(),
         });
-        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '7'", shell_quote(REMOTE_LAUNCHER)));
+        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '7' ''", shell_quote(REMOTE_LAUNCHER)));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -3452,9 +3617,9 @@ mod tests {
             host_addr: "h".into(), mirror_port: 1, suites: None, maxpar: 1, toolchain: None, cache_home: None,
             testenv_registry: None, resume_url: Some("s3://bkt/pre".into()), setup_alarm_secs: 1, cap_secs: 1,
             testenv_limits: "x".into(), post_guard_secs: 1, disk_need_gib: 1, lint: false, build_image: false,
-            ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None,
+            ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None, fences: String::new(),
         };
-        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '1'"));
+        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '1' ''"));
         assert!(!REMOTE_SCRIPT.contains("AWS_SECRET_ACCESS_KEY"), "the script never carries a key");
         let remote = FakeRemote::green();
         push_resume_credentials(&remote, "10.0.0.2", Path::new("/creds"));
@@ -3788,6 +3953,33 @@ mod tests {
         fn suite_medians(&self) -> Result<std::collections::HashMap<String, f64>, String> {
             Ok([("test-fast.sh".to_string(), 2.0), ("test-slow.sh".to_string(), 90.0)].into())
         }
+        fn fences(&self, tree: &Path) -> Result<String, String> {
+            if tree.ends_with("fences-unreadable") { Err("gate.steps: unknown directive".into()) } else { Ok(FAKE_FENCES.into()) }
+        }
+    }
+
+    const FAKE_FENCES: &str = "lifecycle-guard\texport SPIRA_GUARD_BIN=target/release/lifecycle-guard; \"$SPIRA_GUARD_BIN\" --gate .\nboundary\tbash spira/boundary.sh check\n";
+
+    #[test]
+    fn a_round_with_a_base_ships_the_trees_fence_list_and_one_without_ships_none() {
+        let fx = fixture();
+        let remote = FakeRemote::green();
+        let mut a = tree(&fx);
+        a.base = Some("main".into());
+        assert_eq!(go(&fx, &remote, &a), 0);
+        assert!(remote.jobs.lock().unwrap()[0].ends_with(&format!(" {}", shell_quote(FAKE_FENCES))), "the list is the last argument: {:?}", remote.jobs.lock().unwrap());
+        let remote = FakeRemote::green();
+        assert_eq!(go(&fx, &remote, &tree(&fx)), 0);
+        assert!(remote.jobs.lock().unwrap()[0].ends_with(" ''"), "no base, no fences: {:?}", remote.jobs.lock().unwrap());
+    }
+
+    #[test]
+    fn a_tree_whose_fences_cannot_be_listed_is_refused_before_a_vm_is_taken() {
+        let fx = fixture();
+        let remote = FakeRemote::green();
+        let a = RunArgs { tree_dir: fx.d.path().join("fences-unreadable"), maxpar: Some(24), base: Some("main".into()), ..Default::default() };
+        assert_eq!(go(&fx, &remote, &a), 2);
+        assert!(remote.jobs.lock().unwrap().is_empty(), "no batch ran");
     }
 
     fn wait_until(cond: impl Fn() -> bool) {
@@ -4073,6 +4265,21 @@ mod tests {
 
     fn batch_args(fx: &Fixture, batch: &str) -> RunArgs {
         RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh,test-b.sh".into()), round_batch: Some(batch.into()), round_repo: Some("sp".into()), ..tree(fx) }
+    }
+
+    #[test]
+    fn the_pass_record_carries_each_fences_seconds_from_this_pass_only() {
+        let fx = fixture();
+        let rec = FakeRecorder::default();
+        let mut remote = FakeRemote::green();
+        remote.files.insert(REMOTE_RESULTS, vec![("fence-times", "lifecycle-guard 9 0\nboundary 4 0\n"), ("KEY/batch.meta", "key=KEY\ntree=treesha\n"), ("KEY/test-a.sh.result", "ok 1 1 -\n"), ("KEY/test-b.sh.result", "ok 1 1 -\n")]);
+        let a = RunArgs { base: Some("main".into()), ..batch_args(&fx, "b-fences") };
+        assert_eq!(go_recorded(&fx, &remote, &a, &rec), 0, "a green pass with fences is still green");
+        let row = pass_rows(&fx).into_iter().find(|r| r["batch"] == "b-fences").unwrap();
+        assert_eq!(row["fence_s"], serde_json::json!({"boundary": 4, "lifecycle-guard": 9}), "{row}");
+        let times = a.results_dir.as_ref().unwrap().join(FENCE_TIMES);
+        fs::File::options().write(true).open(&times).unwrap().set_modified(std::time::UNIX_EPOCH + Duration::from_secs(1)).unwrap();
+        assert!(fence_seconds(a.results_dir.as_ref().unwrap(), 1000).is_empty(), "a previous pass's times are not this pass's");
     }
 
     #[test]

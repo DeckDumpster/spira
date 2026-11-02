@@ -620,24 +620,6 @@ fn stabilize_round(
     let round_branch = format!("spira/batcher-attr/{}-{round}", repo.name);
     io::set_branch(repo, &round_branch, &io::head_of(wt)?);
 
-    // The corpus selects `test-*.sh` and never runs the fences a single branch's gate chains
-    // ahead of it. Held, not attributed: a fence reads the whole merged tree, not one member's diff.
-    match io::run_fences(env_, repo, &round_branch) {
-        Ok(()) => {}
-        Err(io::FencesEnd::Refused(why)) => {
-            println!("batcher {}: fences refused, nothing judged — round held, no incident filed: {why}", repo.name);
-            return Ok(None);
-        }
-        Err(io::FencesEnd::Red(evidence)) => {
-            println!("batcher {}: local round red (fences) — held before reaching CI", repo.name);
-            match io::file_local_red_incident(env_, repo, &[io::GATE_FENCES.to_string()], &round_branch, &evidence, "fences") {
-                Ok(id) => println!("batcher {}: filed {id} for Ops", repo.name),
-                Err(e) => println!("batcher {}: could not file for Ops: {e}", repo.name),
-            }
-            return Ok(None);
-        }
-    }
-
     let history = std::fs::read_to_string(tsd::family_path(&env_.run, "suite-timing")).unwrap_or_default();
     let ordered = order::longest_first(&io::all_suites(repo, &round_branch), &history);
     if !ordered.unmeasured.is_empty() {
@@ -777,7 +759,7 @@ fn finish_local_round(
 
     let refuse = |msg: String| {
         println!("{msg}");
-        io::round_abandon(env_, repo, batch, &msg);
+        io::round_abandon(env_, repo, batch, &msg, "refused");
         stop_on_repeat(env_, &repo.name, batch, &msg);
         io::write_local_verdict(env_, &repo.name, "red", &msg);
         io::tsd_append_round(
@@ -840,7 +822,7 @@ fn finish_local_round(
                         Err(e) => println!("batcher {}: could not eject {id} from round {batch}: {e}", repo.name),
                     }
                 }
-                io::round_abandon(env_, repo, batch, &format!("ci red on {}; the rest are re-cut without them", guilty.join(", ")));
+                io::round_abandon(env_, repo, batch, &format!("ci red on {}; the rest are re-cut without them", guilty.join(", ")), "ci-red");
                 io::tsd_append_round(
                     env_,
                     &[
@@ -904,7 +886,7 @@ fn finish_local_round(
         if let Some(bg) = stage_test {
             io::round_stage_test_done(repo, bg);
         }
-        io::round_abandon(env_, repo, batch, "queue round land refused — the round did not land");
+        io::round_abandon(env_, repo, batch, "queue round land refused — the round did not land", "land-refused");
         io::write_local_verdict(env_, &repo.name, "red", "queue round land refused — see its own stderr above");
         io::tsd_append_round(
             env_,
@@ -1030,9 +1012,9 @@ fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &Trigge
     println!("{}", cut_event(reason, &combined).text);
 
     let batch = if repo.land == Land::Local { Some(io::round_open(env_, repo, &wt, &combined.merged)?) } else { None };
-    let abandon = |why: &str| {
+    let abandon = |why: &str, cause: &str| {
         if let Some(b) = batch.as_deref() {
-            io::round_abandon(env_, repo, b, why);
+            io::round_abandon(env_, repo, b, why, cause);
         }
     };
 
@@ -1040,12 +1022,12 @@ fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &Trigge
     let stage_pool: Vec<Member> = sorted.iter().filter(|m| !merged_ids.contains(&m.id.as_str())).cloned().collect();
     let stable = match stabilize_round(env_, repo, &wt, &base_sha, combined.merged.clone(), batch.as_deref(), &stage_pool) {
         Err(e) => {
-            abandon(&e);
+            abandon(&e, "error");
             return Err(e);
         }
         Ok(Some(s)) => s,
         Ok(None) => {
-            abandon("the round was blocked before it could land");
+            abandon("the round was blocked before it could land", "blocked");
             io::write_local_verdict(env_, &repo.name, "red", "local corpus red — held before reaching CI");
             io::tsd_append_round(
                 env_,
@@ -1068,7 +1050,7 @@ fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &Trigge
             moved.join(", ")
         );
         println!("{msg}");
-        abandon(&msg);
+        abandon(&msg, "moved");
         io::write_local_verdict(env_, &repo.name, "red", &msg);
         io::tsd_append_round(
             env_,
@@ -1101,7 +1083,7 @@ fn follow_promoted(env_: &Env, repo: &Repo, pool: &[Member], p: io::Promotion) -
     let round_start = now();
     let wt = staged_worktree(env_, repo);
     let base_sha = io::resolve_base_sha(repo)?;
-    let abandon = |why: &str| io::round_abandon(env_, repo, &p.batch, why);
+    let abandon = |why: &str, cause: &str| io::round_abandon(env_, repo, &p.batch, why, cause);
     let mut members = Vec::new();
     for (id, tip) in &p.members {
         match pool.iter().find(|m| &m.id == id && &m.tip == tip) {
@@ -1109,7 +1091,7 @@ fn follow_promoted(env_: &Env, repo: &Repo, pool: &[Member], p: io::Promotion) -
             None => {
                 let why = format!("promoted round {} holds {id}@{tip}, which is not in the certified pool at that tip", p.batch);
                 println!("batcher {}: {why}", repo.name);
-                abandon(&why);
+                abandon(&why, "unpooled");
                 return Ok(None);
             }
         }
@@ -1119,12 +1101,12 @@ fn follow_promoted(env_: &Env, repo: &Repo, pool: &[Member], p: io::Promotion) -
     } else {
         match stabilize_round(env_, repo, &wt, &base_sha, members, Some(&p.batch), &[]) {
             Err(e) => {
-                abandon(&e);
+                abandon(&e, "error");
                 return Err(e);
             }
             Ok(Some(s)) => s,
             Ok(None) => {
-                abandon("the round was blocked before it could land");
+                abandon("the round was blocked before it could land", "blocked");
                 io::write_local_verdict(env_, &repo.name, "red", "local corpus red — held before reaching CI");
                 return Ok(None);
             }
@@ -1134,7 +1116,7 @@ fn follow_promoted(env_: &Env, repo: &Repo, pool: &[Member], p: io::Promotion) -
     if !moved.is_empty() {
         let msg = format!("batcher {}: refused to open — {} changed since the round was built (new patches); rebuild and retest", repo.name, moved.join(", "));
         println!("{msg}");
-        abandon(&msg);
+        abandon(&msg, "moved");
         io::write_local_verdict(env_, &repo.name, "red", &msg);
         return Ok(None);
     }
@@ -1826,13 +1808,15 @@ mod base_conflict_handling {
             let t2 = git(&d, &["rev-parse", "HEAD"]);
             git(&d, &["checkout", "-q", "--detach", &base]);
             let mut e = io::lifecycle_tests_env(&d);
-            fs::write(d.join("gate.sh"), "exit 0\n").unwrap();
+            // The round VM runs the fences; a host gate.sh that would refuse the round is never called.
+            fs::write(d.join("gate.sh"), "touch \"$0.ran\"\nexit 1\n").unwrap();
             testkit::write_exe(&e.testenv_bin, "#!/bin/sh\nexit 0\n");
             e.run = d.to_path_buf();
             e.home = d.to_path_buf();
             let repo = Repo { name: "deck".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land };
             let wt = d.join("wt");
             let r = stabilize_round(&e, &repo, &wt, &base, vec![member("sp-1", &t1), member("sp-2", &t2)], None, &[]).unwrap();
+            assert!(!d.join("gate.sh.ran").exists(), "no fence runs on the host");
             assert_eq!(r.is_some(), opens, "land={land:?}");
             if let Some(s) = r {
                 let ids: Vec<&str> = s.members.iter().map(|m| m.id.as_str()).collect();
@@ -1854,7 +1838,6 @@ mod base_conflict_handling {
         let t1 = git(&d, &["rev-parse", "HEAD"]);
         git(&d, &["checkout", "-q", "--detach", &base]);
         let mut e = io::lifecycle_tests_env(&d);
-        fs::write(d.join("gate.sh"), "exit 0\n").unwrap();
         testkit::write_exe(&e.testenv_bin, "#!/bin/sh\nexit 0\n");
         e.run = d.to_path_buf();
         e.home = d.to_path_buf();
