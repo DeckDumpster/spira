@@ -33,6 +33,9 @@ pub struct RunArgs {
     /// `--runner container|sandbox`: this run's unit runner, outranking
     /// `SPIRA_TESTENV_UNIT_RUNNER` (sp-yx0yu9).
     pub runner: Option<crate::sandbox::Runner>,
+    /// `--bare-tip`: test the branch tip alone, not merged onto the landing ref (sp-5zz517);
+    /// for a red-first run, which must see the old base exactly.
+    pub bare_tip: bool,
     pub branch: String,
     pub repo: Option<String>,
 }
@@ -56,6 +59,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     let mut suites: Option<String> = None;
     let mut profile: Option<String> = None;
     let mut with_bins = false;
+    let mut bare_tip = false;
     let mut report: Option<usize> = None;
     let mut deadline: Option<u64> = None;
     let mut artifacts: Option<String> = None;
@@ -112,6 +116,10 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                     _ => profile = Some(v),
                 }
                 i += 2;
+            }
+            "--bare-tip" => {
+                bare_tip = true;
+                i += 1;
             }
             "--with-bins" => {
                 with_bins = true;
@@ -229,6 +237,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         suites,
         profile,
         with_bins,
+        bare_tip,
         deadline,
         artifacts,
         repeat_reason,

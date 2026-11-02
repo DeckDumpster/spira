@@ -1034,6 +1034,41 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         ));
         return Finish::fault(2, "revision", 0);
     };
+    // ---- the branch as it would land (sp-5zz517) ----------------------------------------
+    // Every local test sees the branch's delta on the current landing ref, the base the
+    // round will merge it onto; --bare-tip tests the tip alone (a red-first run at an old base).
+    let (commit, tree) = if args.bare_tip {
+        (commit, tree)
+    } else {
+        match crate::base::onto(&repo.path, &base, &commit) {
+            Ok(crate::base::Basis::Tip) => (commit, tree),
+            Ok(crate::base::Basis::Merged { commit: m, tree: t, base: b }) => {
+                deps.log(&format!(
+                    "testing {br} merged onto {base} ({}): tip {} -> run commit {}",
+                    &b[..b.len().min(12)],
+                    &commit[..commit.len().min(12)],
+                    &m[..m.len().min(12)]
+                ));
+                (m, t)
+            }
+            Ok(crate::base::Basis::Conflict { base: b, paths }) => {
+                stderr(&format!(
+                    "batch: {br} does not merge onto {base} ({}): conflicts in {} — rebase it onto {base}; nothing was tested",
+                    &b[..b.len().min(12)],
+                    paths.join(", ")
+                ));
+                return Finish::fault(2, "merge-conflict", 0);
+            }
+            Err(e) => {
+                stderr(&format!("batch: cannot merge {br} onto {base}: {e}"));
+                return Finish::fault(2, "base-merge", 0);
+            }
+        }
+    };
+    // `named` is the branch as the caller gave it: labels, the meta file, the per-branch
+    // unit volume. `br` is the revision tested: the tip, or its merge onto the landing ref.
+    let named = br;
+    let br = &commit;
 
     // ---- worktree ------------------------------------------------------------------
     let wreq = worktree::Request {
@@ -1074,7 +1109,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         spawn: deps.warm_refill,
     });
     deps.log(&format!(
-        "testing {br} ({}) {} at {}",
+        "testing {named} ({}) {} at {}",
         &commit[..commit.len().min(12)],
         wt.describe(),
         wt.path.display()
@@ -1456,7 +1491,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
                 deps,
                 &s,
                 &repo,
-                br,
+                named,
                 &key,
                 &verdict_path,
                 &when,
@@ -1539,7 +1574,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         deps.log(&format!("unit-tests: runner=container for this run: {to_container} listed in {} as needing a running system", crate::sandbox::CONTAINER_TESTS_REL));
     }
     if runs_sandboxed && active.len() == 1 {
-        let branch = git(&repo.path, &["rev-parse", "--symbolic-full-name", br])
+        let branch = git(&repo.path, &["rev-parse", "--symbolic-full-name", named])
             .ok()
             .and_then(|r| r.strip_prefix("refs/heads/").map(str::to_string));
         let volume = crate::container::unit_target_volume(branch.as_deref(), &tree);
@@ -1629,7 +1664,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     let unit_batch = crate::unit::selected(&active);
     if unit_batch {
         // A branch name keys the volume; a SHA (or any rev that is no local branch) its tree.
-        let branch = git(&repo.path, &["rev-parse", "--symbolic-full-name", br])
+        let branch = git(&repo.path, &["rev-parse", "--symbolic-full-name", named])
             .ok()
             .and_then(|r| r.strip_prefix("refs/heads/").map(str::to_string));
         session.cargo_target_volume = Some(crate::container::unit_target_volume(branch.as_deref(), &tree));
@@ -2267,8 +2302,9 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         "batch.meta",
         &[
             ("image_tag", image_tag.clone()),
-            ("branch", br.clone()),
+            ("branch", named.clone()),
             ("base", base.clone()),
+            ("tested", br.clone()),
             ("key", key.clone()),
             ("mode", args.mode.as_str().into()),
             ("selection", producer.as_str().into()),

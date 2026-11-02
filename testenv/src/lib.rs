@@ -1,5 +1,6 @@
 //! testenv — the harness's test runner (sp-5odic). See DESIGN.md for the contract.
 
+pub mod base;
 pub mod batch;
 pub mod bdmeter;
 pub mod build;
