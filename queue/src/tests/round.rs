@@ -4340,6 +4340,7 @@ fn a_round_is_addressed_by_its_batch_id_and_the_oldest_record_follows_the_landed
         "{}",
         t.err()
     );
+    assert_eq!(t.run(&["round", "certify", "r-1"]), 0, "{}", t.err());
     assert_eq!(
         t.run(&["round", "open", "--members", "sp-b", "--name", "r-2"]),
         0,
@@ -4359,7 +4360,6 @@ fn a_round_is_addressed_by_its_batch_id_and_the_oldest_record_follows_the_landed
         "{}",
         t.err()
     );
-    assert_eq!(t.run(&["round", "certify", "r-1"]), 0, "{}", t.err());
     t.git.ancestor("ta", "merged-ta");
     assert_eq!(t.run(&["round", "land", "r-1"]), 0, "{}", t.err());
     assert_eq!(
