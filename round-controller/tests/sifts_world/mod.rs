@@ -63,6 +63,10 @@ impl World {
         let repo = root.join("repo");
         fs::create_dir_all(&repo).unwrap();
         git(&repo, &["init", "-q", "-b", "local/main"]);
+        // The screen's own trial merge commits here; the repository carries the identity, so
+        // the world screens the same without a user git config (the unit sandbox has none).
+        git(&repo, &["config", "user.name", "sift-world"]);
+        git(&repo, &["config", "user.email", "sift-world@t.invalid"]);
         write(&repo.join("base.txt"), "one\n");
         git(&repo, &["add", "-A"]);
         git(&repo, &["commit", "-qm", "root"]);
