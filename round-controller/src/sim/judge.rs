@@ -450,6 +450,11 @@ impl JudgeRun {
         }
     }
 
+    /// Sub-passes launched across every drive.
+    pub fn launches(&self) -> u64 {
+        crate::lock(&self.book).launched.len() as u64
+    }
+
     /// What the harness itself refuses: an unscripted sub-pass, or one that finished and was
     /// never read.
     pub fn broken(&self, now: u64, at: &str) -> Vec<String> {

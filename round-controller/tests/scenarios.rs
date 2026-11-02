@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use round_controller::sim::fixture::{Recorded, Tally};
 use round_controller::sim::{self, harness_seed, parse, profiles, Report};
 
 /// The seed every scenario here runs on: `SPIRA_SEED`, as the simulator sets it, else the default.
@@ -20,12 +21,22 @@ fn text(slug: &str) -> String {
     std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
 }
 
+/// A replay's virtual walls and Judge passes are reported on stdout, never asserted.
+fn reported(reports: &[Report]) {
+    for line in reports.iter().flat_map(|r| &r.lines) {
+        if ["virtual-wall ", "judge-passes ", "redrives ", "replay-passes "].iter().any(|p| line.starts_with(p)) {
+            println!("{line}");
+        }
+    }
+}
+
 macro_rules! scenario {
     ($($test:ident),* $(,)?) => {
         $( #[test] fn $test() {
             let slug = stringify!($test).strip_prefix("scenario_").expect("a scenario test is named scenario_<slug>").replace('_', "-");
-            if let Err(e) = run_all(&text(&slug)) {
-                panic!("scenario {slug}:\n{e}");
+            match run_all(&text(&slug)) {
+                Err(e) => panic!("scenario {slug}:\n{e}"),
+                Ok(reports) => reported(&reports),
             }
         } )*
         const COVERED: &[&str] = &[$(stringify!($test)),*];
@@ -72,6 +83,7 @@ scenario!(
     scenario_switch_andon_absent,
     scenario_two_repos_overlap,
     scenario_launch_fail_releases,
+    scenario_replay_2026_10_31,
 );
 
 #[test]
@@ -169,4 +181,51 @@ fn the_virtual_clock_is_deterministic_under_a_fixed_spira_seed() {
         "{:?}",
         lines("7")
     );
+}
+
+/// The figures MANIFEST.md states under the tally titled `title`: its output block's lines, each
+/// split on whitespace.
+fn manifest_rows(manifest: &str, title: &str) -> Vec<Vec<String>> {
+    let at = manifest
+        .find(&format!("**{title}**"))
+        .unwrap_or_else(|| panic!("MANIFEST.md has no tally titled {title:?}"));
+    let mut fences = manifest[at..].match_indices("```").map(|(i, _)| at + i);
+    let (_, _, open, close) = (fences.next(), fences.next(), fences.next(), fences.next());
+    let (open, close) = (open.expect("an output block"), close.expect("its end"));
+    manifest[open + 3..close]
+        .lines()
+        .map(|l| l.split_whitespace().map(str::to_string).collect::<Vec<_>>())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+fn manifest_figure(manifest: &str, t: &Tally) -> Option<u64> {
+    let (title, key): (&str, Vec<&str>) = match t {
+        Tally::Passes { repo, cause } => ("10-31: certification passes per repo by cause", vec![repo, cause.word()]),
+        Tally::RepeatStarts { member } => ("10-31: the most-repeated (member, tip) pass starts, per repo", vec![member]),
+        Tally::Stacked { parent } => ("10-31: rounds stacked on an unlanded parent (distinct children), and the parent", vec![parent]),
+        Tally::GreenMembers => ("10-31: distinct beads certified green (the members of every round a green pass moved to GREEN)", vec![]),
+    };
+    manifest_rows(manifest, title)
+        .into_iter()
+        .find(|row| row.len() > key.len() && row[row.len() - key.len()..] == key[..])
+        .and_then(|row| row[0].parse().ok())
+}
+
+#[test]
+fn every_tally_the_replay_asserts_is_the_figure_the_manifest_states_for_it() {
+    let manifest = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../sim/fixtures/replay/MANIFEST.md"),
+    )
+    .unwrap();
+    let tallies = sim::replay::parse(&text("replay-2026-10-31")).unwrap().tallies();
+    for kind in ["fixture-passes:", "fixture-repeat-starts:", "fixture-stacked:", "fixture-green-members"] {
+        assert!(tallies.iter().any(|(w, _, _)| w.starts_with(kind)), "the replay asserts no {kind} tally");
+    }
+    for (word, t, asserted) in &tallies {
+        assert_eq!(manifest_figure(&manifest, t), Some(*asserted), "{word}");
+    }
+    let off = Tally::Passes { repo: "repo-c".into(), cause: Recorded::Green };
+    assert_eq!(manifest_figure(&manifest, &off), Some(1), "the reader finds a figure it can be wrong about");
+    assert_eq!(manifest_figure(&manifest, &Tally::Stacked { parent: "repo-x".into() }), None);
 }

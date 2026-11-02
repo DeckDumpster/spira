@@ -3,9 +3,11 @@
 //! `scenarios/profiles.toml`.
 
 pub mod bench;
+pub mod fixture;
 pub mod git;
 pub mod judge;
 pub mod ledger;
+pub mod replay;
 pub mod run_pass;
 pub mod runner;
 pub mod scenario;

@@ -176,6 +176,16 @@ repo-b 38 9
 repo-c 1 1
 ```
 
+**10-31: distinct beads certified green (the members of every round a green pass moved to GREEN)**
+
+```sh
+jq -n -r --slurpfile c sim/fixtures/replay/1031/cert_pass.ndjson --slurpfile r sim/fixtures/replay/1031/round.ndjson '[$c[]|select(.cause=="green")|.batch] as $g | [$r[]|select(.state_to=="GREEN" and (.batch as $b|$g|index($b)))|.members[].bead]|unique|length'
+```
+
+```
+46
+```
+
 **10-31: the most-repeated (member, tip) pass starts, per repo**
 
 ```sh

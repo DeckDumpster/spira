@@ -67,6 +67,11 @@ pub fn profiles() -> Result<Vec<Profile>, String> {
     parse_profiles(PROFILES)
 }
 
+/// A scenario document parsed into `T`, whose types refuse every unknown key by name.
+pub fn document<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, String> {
+    toml::from_str(text).map_err(|e| e.to_string())
+}
+
 pub fn harness_seed(raw: Option<&str>) -> u64 {
     crate::seed_from(raw).unwrap_or(DEFAULT_SEED)
 }
@@ -396,14 +401,14 @@ pub enum Bound {
 }
 
 impl Bound {
-    fn holds(self, got: u64) -> bool {
+    pub(crate) fn holds(self, got: u64) -> bool {
         match self {
             Bound::Equals(n) => got == n,
             Bound::AtMost(n) => got <= n,
         }
     }
 
-    fn said(self) -> String {
+    pub(crate) fn said(self) -> String {
         match self {
             Bound::Equals(n) => format!("{n}"),
             Bound::AtMost(n) => format!("at most {n}"),
@@ -433,7 +438,7 @@ pub struct LeaseSpec {
 }
 
 impl LeaseSpec {
-    fn settings(&self) -> LeaseSettings {
+    pub(crate) fn settings(&self) -> LeaseSettings {
         let d = &self.deadline_secs;
         LeaseSettings {
             ttl_ms: self.ttl_secs * 1000,
@@ -1431,6 +1436,9 @@ fn redrive_attempts(b: &Bench) -> u64 {
 /// The scenario under every profile on one seed; every profile's
 /// failure is reported, not just the first.
 pub fn run_all(text: &str, seed: u64) -> Result<Vec<Report>, String> {
+    if crate::sim::replay::is_replay(text) {
+        return crate::sim::replay::run_all(text, seed);
+    }
     let sc = parse(text)?;
     let (mut ok, mut bad) = (Vec::new(), Vec::new());
     for p in profiles().expect("the shipped profiles parse") {

@@ -1,19 +1,27 @@
 # The hardware every controller scenario runs under. Each scenario runs once per profile.
 
+# pass_cap_secs admits the longest pass the 10-31 slice measured to a verdict on a default-sized
+# round VM (1163 s, red-attributed), rounded up to the minute: a recorded pass is never an
+# over-cap of the harness's own making.
 [default]
 runner_slots = 2
 vm_vcpus = 16
 vm_mem_mib = 32768
 duration_factor = 1.0
-pass_cap_secs = 900
+pass_cap_secs = 1200
 
 # The smallest box the controller must be correct on: one runner slot and a 2 vCPU / 4096 MiB
 # round VM. Proving ordering, slots and no lost verdict here is the simulator's job; memory and
 # a real over-cap are not visible to it.
+#
+# duration_factor: the 10-31 slice's pass walls were measured on default-sized round VMs, and a
+# pass is taken to scale with the VM's vCPUs, so each wall here is the measured one times
+# 16 vCPU / 2 vCPU = 8.0 (its longest, 1163 s, becomes 9304 s). That is a goal, not a
+# measurement. pass_cap_secs is the default cap scaled by the same factor.
 [reference-minimum]
 runner_slots = 1
 vm_vcpus = 2
 vm_mem_mib = 4096
 duration_factor = 8.0
-pass_cap_secs = 7200
-note = "duration_factor is a goal, not a measurement: 16 vCPU over 2, re-measured by round-controller/tiny-hardware, one real round on a 2 vCPU / 4 GB round VM, whose wall replaces it"
+pass_cap_secs = 9600
+note = "duration_factor is a goal, not a measurement: the 10-31 slice's measured pass walls times 16 vCPU over 2, re-measured by round-controller/tiny-hardware, one real round on a 2 vCPU / 4 GB round VM, whose wall replaces it"

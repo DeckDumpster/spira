@@ -105,3 +105,9 @@ functions = ["sifts", "sift_one", "sift_repo", "certified_pool", "read_pool", "b
 [[scope]]
 path = "round-controller/src/lane.rs"
 functions = ["record", "follows_git", "unrecorded_landing"]
+
+# The replay's fixture loader: every pass it places from the captured slice, each record it
+# refuses by name, and the tallies a reader checks against the slice's manifest.
+[[scope]]
+path = "round-controller/src/sim/fixture.rs"
+functions = ["Fixture::from_dir", "Fixture::span", "Fixture::tally", "Fixture::certified_green", "Tally::parse", "Recorded::from_word"]
