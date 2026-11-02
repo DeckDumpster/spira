@@ -681,7 +681,7 @@ fn alarms_config(env: &Env, fallback: bool) -> Result<incident::alarms_pass::Con
 fn with_ports<R>(env: &Env, f: impl FnOnce(&incident::alarms_pass::Ports) -> R) -> Result<R, String> {
     use incident::alarms_pass::{FileSwitch, MailPrimary, MaildirFallback, Ports, GOODPUT_UNIT};
     let mail_env = mail::env::Env::load()?;
-    let bd = mail::bead::BdCli { bin: mail_env.bd_bin.clone(), db: mail_env.db.clone(), conn_retries: mail_env.bd_conn_retries };
+    let bd = mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq"), conn_retries: mail_env.bd_conn_retries };
     let fallback = MaildirFallback { mail_root: mail_env.mail_root.clone(), mute: mail_env.mute };
     let primary = MailPrimary { env: mail_env, bd };
     let instance = spira_world::instance()?;
