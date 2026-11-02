@@ -1546,7 +1546,7 @@ fn a_pass_the_unit_tier_ended_before_any_suite_is_judged_red_on_unit_tests_not_f
     ];
     assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}{}", t.out(), t.err());
     assert!(t.out().contains("unit-tests-failed=a::broken,b::also"), "{}", t.out());
-    assert!(t.out().contains("unit-tests-cause=exit status 101 (before the suites, after 42s)"), "{}", t.out());
+    assert!(t.out().contains("unit-tests-cause=unit-tests: exit status 101 (before the suites, after 42s)"), "{}", t.out());
     assert!(!t.err().contains("left no verdicts") && !t.err().contains("not judged"), "{}", t.err());
     let events = events_of(&t, &batch);
     assert!(events.iter().any(|e| e.starts_with("{\"PassRed\"") && e.contains("\"red_suites\":[\"unit-tests\"]")), "{events:?}");
@@ -2979,7 +2979,7 @@ fn a_staged_pass_the_unit_tier_ended_before_any_suite_is_red_on_unit_tests() {
     )];
     assert_eq!(t.run(&["round", "stage-test"]), 1, "{}{}", t.out(), t.err());
     assert_eq!(kv_of(&t, "round-staged")["phase"], "red");
-    assert!(t.out().contains("red=unit-tests"), "{}", t.out());
+    assert!(t.out().contains("red=unit-tests") && t.out().contains("unit-tests-failed=a::broken"), "{}", t.out());
     assert!(!t.err().contains("left no verdicts"), "{}", t.err());
 }
 
@@ -3538,11 +3538,44 @@ fn certify_judges_a_wall_killed_run_whose_results_and_unit_tests_are_complete() 
     *t.scripts.round_vm.borrow_mut() = RunOut {
         rc: 124,
         out: String::new(),
-        err: "round-vm: UNIT-TESTS: PASS (3 test binaries)".into(),
+        err: "round-vm: UNIT-TESTS: PASS (3 test binaries)\nround-vm: INTEGRATION-TESTS: PASS (2 test binaries)".into(),
     };
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
     assert!(t.out().contains("GREEN"), "{}", t.out());
+}
+
+#[test]
+fn a_wall_killed_run_whose_integration_tests_never_reported_is_not_judged() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.scripts.round_vm.borrow_mut() = RunOut {
+        rc: 124,
+        out: String::new(),
+        err: "round-vm: UNIT-TESTS: PASS (3 test binaries)".into(),
+    };
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
+    assert!(!t.out().contains("GREEN"), "the unit phase alone does not complete the run: {}", t.out());
+}
+
+#[test]
+fn an_integration_red_beside_green_suites_is_judged_red_on_unit_tests() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: "round-vm: INTEGRATION-TESTS: FAIL (integration run rc=101):\n".into() };
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
+    *t.scripts.round_vm_files.borrow_mut() = vec![(
+        "integration.json".to_string(),
+        "{\"stage\":\"integration-tests\",\"verdict\":\"red\",\"ran_before_suites\":false,\"cause\":\"exit status 101\",\"secs\":61,\"last_binary\":\"journal_dolt\",\"failed\":[\"replays_in_order\"]}\n".to_string(),
+    )];
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}{}", t.out(), t.err());
+    assert!(t.out().contains("unit-tests-failed=replays_in_order"), "{}", t.out());
+    assert!(t.out().contains("unit-tests-cause=integration-tests: exit status 101 (beside the suites, after 61s)"), "{}", t.out());
+    let events = events_of(&t, &batch);
+    assert!(events.iter().any(|e| e.starts_with("{\"PassRed\"") && e.contains("\"red_suites\":[\"unit-tests\"]")), "{events:?}");
 }
 
 #[test]
