@@ -42,13 +42,7 @@ export SPIRA_ADOPT_CONFIGURE_DEFAULT=1
 
 SC="${SPIRA_SYSTEMCTL:-systemctl}"
 
-pass=0; warn=0; fail=0; unkn=0; skip=0
-PASS() { printf '  pass  %s\n' "$1"; [ -n "${2:-}" ] && printf '        %s\n' "$2"; pass=$((pass+1)); }
-WARN() { printf '  WARN  %s\n' "$1"; [ -n "${2:-}" ] && printf '        %s\n' "$2"; warn=$((warn+1)); }
-FAIL() { printf '  FAIL  %s\n' "$1"; [ -n "${2:-}" ] && printf '        %s\n' "$2"; fail=$((fail+1)); }
-UNKN() { printf '  ?     %s\n' "$1"; [ -n "${2:-}" ] && printf '        %s\n' "$2"; unkn=$((unkn+1)); }
-# SKIP: component deliberately not installed; counts as neither pass nor fail.
-SKIP() { printf '  skip  %s\n' "$1"; [ -n "${2:-}" ] && printf '        %s\n' "$2"; skip=$((skip+1)); }
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/ready-lib.sh" || exit 1
 
 echo "spira ready"
 echo
@@ -77,36 +71,7 @@ fi
 echo ""
 echo "timers"
 # =============================================================================
-# A timer that has stopped scheduling still reports is-active — "active (elapsed)" is
-# an active state, not an inactive one — so the sentinel check above cannot see it. This
-# is the sp-ly6l9 shape: OnBootSec's deadline was already past and no OnUnitActiveSec
-# activation existed in this run to measure from, so the timer elapsed once and never
-# rearmed. NextElapseUSecRealtime and NextElapseUSecMonotonic are both unset (empty or
-# 0) in exactly that state; a timer with any future trigger reports at least one of them.
-_timer_dir="$HOME/.config/systemd/user"
-_timers_checked=0
-if [ -d "$_timer_dir" ]; then
-    for _tf in "$_timer_dir"/spira-*-"${SPIRA_INSTANCE:-prod}".timer; do
-        [ -e "$_tf" ] || continue
-        _tu="$(basename "$_tf")"
-        "$SC" --user is-active --quiet "$_tu" 2>/dev/null || continue
-        _timers_checked=$((_timers_checked+1))
-        _next_r="$("$SC" --user show -p NextElapseUSecRealtime --value "$_tu" 2>/dev/null)"
-        _next_m="$("$SC" --user show -p NextElapseUSecMonotonic --value "$_tu" 2>/dev/null)"
-        if { [ -z "$_next_r" ] || [ "$_next_r" = "0" ]; } && \
-           { [ -z "$_next_m" ] || [ "$_next_m" = "0" ]; }; then
-            FAIL "$_tu is active but has stopped scheduling (elapsed, no next trigger)" \
-                 "systemctl --user status $_tu
-    Likely cause: the user manager restarted after OnBootSec's deadline had already
-    passed. Restart it: systemctl --user restart $_tu"
-        else
-            PASS "$_tu still scheduled"
-        fi
-    done
-fi
-[ "$_timers_checked" -eq 0 ] && \
-    SKIP "timers — no installed spira-*-${SPIRA_INSTANCE:-prod}.timer found"
-unset _timer_dir _timers_checked _tf _tu _next_r _next_m
+ready_timers "$HOME/.config/systemd/user" "${SPIRA_INSTANCE:-prod}"
 
 # =============================================================================
 echo ""
@@ -427,10 +392,5 @@ unset _rdy_snap _rdy_snap_age _rdy_stale_s _ckp_unit _ckp_tmux_up
 
 # =============================================================================
 echo ""
-if [ "$fail" -gt 0 ] || [ "$unkn" -gt 0 ]; then
-    printf '%d pass, %d WARN, %d FAIL, %d unknown, %d skip — NOT READY: loop may not receive work.\n' \
-        "$pass" "$warn" "$fail" "$unkn" "$skip"
-    exit 1
-fi
-printf '%d pass, %d WARN, %d skip — armed: loop is ready to receive work.\n' "$pass" "$warn" "$skip"
-exit 0
+ready_verdict
+exit $?
