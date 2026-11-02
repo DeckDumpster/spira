@@ -170,6 +170,13 @@ tl_layer() {
     printf '%s' "$SPIRA_TOML:$f"
 }
 
+# tl_repo_map ROW... — the suite's own repo-map, one row per argument, declared as its
+# spira.repo_map, so nothing the suite runs reads the operator's real repositories.
+tl_repo_map() {
+    local f="$_TL_CONF_DIR/repo-map"
+    printf '%s\n' "$@" > "$f" && tl_config SPIRA_REPO_MAP="$f"
+}
+
 _tl_declare() {
     local file="$1" kv k v d t w out; shift
     for kv in "$@"; do
