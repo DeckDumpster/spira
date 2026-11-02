@@ -9,6 +9,7 @@ repos = ["other:queue.local"]
 # The call claims the bead and plays its script; nothing lands or certifies it.
 real_actors = ["sentinel-call"]
 
+# Filed naming its repo, so the lifecycle row carries the repo readiness counts SUBMITTED beads by.
 [[step]]
 at = 0
 file = "sp-cr01"
@@ -17,7 +18,6 @@ repo = "sim"
 [[step]]
 at = 0
 claim = "sp-cr01"
-repo = "sim"
 script = ["commit out/cr01.txt", "submit"]
 
 [[actor]]
