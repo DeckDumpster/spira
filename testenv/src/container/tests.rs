@@ -848,6 +848,27 @@ fn up_gives_a_container_its_own_pids_limit_and_memory() {
 }
 
 #[test]
+fn up_binds_the_testdb_template_cache_read_only_and_only_when_given() {
+    let f = Fake::new();
+    booting(&f);
+    let c = conf("/h");
+    let a = args(&["--name", "n1", "--testdb-cache", "/run/tpl-cache"]);
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&a), 0);
+    let run = &f.calls_with("run")[0];
+    let want = format!("/run/tpl-cache:{}:ro", crate::fixture::CONTAINER_TESTDB_CACHE);
+    assert!(run.windows(2).any(|w| w[0] == "--volume" && w[1] == want), "{run:?}");
+
+    let f = Fake::new();
+    booting(&f);
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1"])), 0);
+    let run = &f.calls_with("run")[0];
+    assert!(
+        !run.iter().any(|a| a.contains(crate::fixture::CONTAINER_TESTDB_CACHE)),
+        "{run:?}"
+    );
+}
+
+#[test]
 fn up_refuses_a_non_numeric_pids_limit() {
     let f = Fake::new();
     booting(&f);

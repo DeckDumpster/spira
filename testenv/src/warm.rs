@@ -296,6 +296,7 @@ pub fn boot(
     let mut session = Session::new(rt, "warm", "dwarf");
     session.name = name.clone();
     session.setup_deadline = Some(Instant::now() + timeout);
+    session.testdb_cache = crate::fixture::host_testdb_cache(run);
     if let Err(f) = session.up(&slot) {
         discard(rt, owner_dir, &name);
         return Err(format!("boot of {name} failed: {}", f.message()));

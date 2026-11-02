@@ -7,7 +7,8 @@ use crate::record::Mode;
 use crate::container::RC_QUEUE;
 use crate::runtime::{ContainerRuntime, ExecOutcome, ExecRequest, RC_DEADLINE};
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 // Baked into the image; must agree with the Containerfile (and container.rs).
@@ -83,6 +84,16 @@ pub const WORKSPACE: &str = "/workspace";
 /// host disk. On the overlay (`/var/tmp`) a `bd init`'s CREATE DATABASE queued behind the
 /// host's writeback and overran bd's 10 s read timeout (`[mysql] i/o timeout`).
 pub const CONTAINER_TESTDB_ROOT: &str = "/tmp/spira-testdb";
+/// Where the host's template cache is bound, read-only, inside the container: the template
+/// step copies a cached template from it instead of building one ([`Session::keep_template`]).
+pub const CONTAINER_TESTDB_CACHE: &str = "/var/cache/spira-testdb-templates";
+
+/// The host's template cache under the batch run directory, created if missing; None when it
+/// cannot be, and every batch builds its template as before.
+pub fn host_testdb_cache(run: &Path) -> Option<PathBuf> {
+    let d = run.join("testdb-templates");
+    fs::create_dir_all(&d).ok().map(|()| d)
+}
 
 /// Pure over the two cgroup files' contents (`pids.max` is a number or the word `max`).
 pub fn pids_peak_line(peak: &str, max: &str) -> Option<String> {
@@ -370,6 +381,9 @@ pub struct Session<'a> {
     pub memory: Option<String>,
     /// A named volume to mount as the container's cargo target (`up --cargo-target-volume`).
     pub cargo_target_volume: Option<String>,
+    /// The host's template cache ([`host_testdb_cache`]), bound read-only at
+    /// [`CONTAINER_TESTDB_CACHE`] (`up --testdb-cache`). None = no cache: build every time.
+    pub testdb_cache: Option<PathBuf>,
 }
 
 fn kv(k: &str, v: impl Into<String>) -> (String, String) {
@@ -392,6 +406,7 @@ impl<'a> Session<'a> {
             pids_limit: None,
             memory: None,
             cargo_target_volume: None,
+            testdb_cache: None,
         }
     }
 
@@ -488,6 +503,9 @@ impl<'a> Session<'a> {
         }
         if let Some(v) = &self.cargo_target_volume {
             args.extend(["--cargo-target-volume".into(), v.clone()]);
+        }
+        if let Some(c) = &self.testdb_cache {
+            args.extend(["--testdb-cache".into(), c.display().to_string()]);
         }
         let up = self.rt.testenv(&args, self.setup_deadline);
         if up.rc == RC_DEADLINE {
@@ -857,11 +875,46 @@ impl<'a> Session<'a> {
         let mut env = vec![kv("XDG_RUNTIME_DIR", USER_RUNTIME)];
         env.extend(self.release_env());
         env.extend(testdb_root_env());
+        if self.testdb_cache.is_some() {
+            env.push(kv(crate::testdb::CACHE_ENV, CONTAINER_TESTDB_CACHE));
+        }
         let exe = self.in_release("bin/testenv");
         self.setup_as_user(
             &[&exe, "testdb", "template", "--bd", "bd", "--dolt", "dolt"],
             env,
         )
+    }
+
+    /// After setup: a template the step built is copied out of the container into the host
+    /// cache, so the next batch with the same key copies it instead of building; one it
+    /// copied from the cache is marked used. The line to log, when there is a cache.
+    pub fn keep_template(&self, template: &ExecOutcome) -> Option<String> {
+        let cache = self.testdb_cache.as_ref()?;
+        let r = crate::testdb::TemplateReport::parse(&template.output).filter(|_| template.ok())?;
+        Some(match r.origin {
+            crate::testdb::Origin::Root => return None,
+            crate::testdb::Origin::Cache => {
+                crate::testdb::touch_template(cache, &r.key);
+                format!("testdb template {} copied from the host cache {} — no build", r.key, cache.display())
+            }
+            crate::testdb::Origin::Built => match crate::testdb::cache_template(
+                cache,
+                &r.key,
+                crate::testdb::TEMPLATE_CACHE_KEYS,
+                |dst| self.rt.copy_out(&self.name, &r.path, dst, self.setup_deadline),
+            ) {
+                Ok(gone) if gone.is_empty() => {
+                    format!("testdb template {} built and stored in the host cache {}", r.key, cache.display())
+                }
+                Ok(gone) => format!(
+                    "testdb template {} built and stored in the host cache {} (evicted {})",
+                    r.key,
+                    cache.display(),
+                    gone.join(", ")
+                ),
+                Err(e) => format!("testdb template {} built; storing it in the host cache failed: {e}", r.key),
+            },
+        })
     }
 
     /// Build the shared baseline once; None falls back to per-suite databases.
@@ -1155,6 +1208,10 @@ pub mod fake {
         pub detached_threads: Mutex<Vec<std::thread::JoinHandle<()>>>,
         /// A detached `down` that fails: the container survives it.
         pub detached_fails: Mutex<bool>,
+        /// `copy_out` calls (container, path) seen; each copies `<container_fs>/<path>`.
+        pub copies: Mutex<Vec<(String, String)>>,
+        /// The host directory standing in for the container's filesystem; None = cp fails.
+        pub container_fs: Mutex<Option<PathBuf>>,
     }
 
     impl FakeRuntime {
@@ -1388,6 +1445,11 @@ pub mod fake {
                     String::new()
                 },
             }
+        }
+        fn copy_out(&self, name: &str, from: &str, to: &Path, _deadline: Option<Instant>) -> Result<(), String> {
+            self.copies.lock().unwrap().push((name.into(), from.into()));
+            let root = self.container_fs.lock().unwrap().clone().ok_or("no such container path")?;
+            crate::testdb::copy_tree(&root.join(from.trim_start_matches('/')), to).map_err(|e| e.to_string())
         }
     }
 }
@@ -1773,6 +1835,68 @@ mod tests {
         s.up(Path::new("/wt")).unwrap();
         let calls = rt.testenv_calls.lock().unwrap().clone();
         assert!(calls[0].windows(2).any(|w| w == ["--cargo-target-volume", "vol-x"]));
+    }
+
+    #[test]
+    fn the_template_step_reads_the_host_cache_only_when_the_session_binds_one() {
+        let rt = FakeRuntime::new();
+        let s = session(&rt);
+        assert_eq!(s.testdb_template_request().env_value(crate::testdb::CACHE_ENV), None);
+        s.up(Path::new("/wt")).unwrap();
+        assert!(!rt.testenv_calls.lock().unwrap()[0].iter().any(|a| a == "--testdb-cache"));
+
+        let rt = FakeRuntime::new();
+        let mut s = session(&rt);
+        s.testdb_cache = Some(PathBuf::from("/host/tpl-cache"));
+        assert_eq!(
+            s.testdb_template_request().env_value(crate::testdb::CACHE_ENV),
+            Some(CONTAINER_TESTDB_CACHE)
+        );
+        s.up(Path::new("/wt")).unwrap();
+        assert!(rt.testenv_calls.lock().unwrap()[0]
+            .windows(2)
+            .any(|w| w == ["--testdb-cache", "/host/tpl-cache"]));
+    }
+
+    fn template_out(origin: crate::testdb::Origin) -> ExecOutcome {
+        ExecOutcome {
+            rc: 0,
+            output: format!(
+                "TESTDB_TEMPLATE=/tmp/spira-testdb/template-k1\nTESTDB_TEMPLATE_KEY=k1\nTESTDB_TEMPLATE_ORIGIN={}\n",
+                origin.word()
+            ),
+        }
+    }
+
+    #[test]
+    fn a_built_template_is_copied_out_to_the_host_cache_and_a_cached_one_is_not() {
+        let d = testkit::TempDir::new("testenv-keep-template");
+        let ctr = d.join("ctr");
+        let tpl = ctr.join("tmp/spira-testdb/template-k1");
+        std::fs::create_dir_all(tpl.join("ws/.beads")).unwrap();
+        std::fs::write(tpl.join("READY"), "").unwrap();
+        let rt = FakeRuntime::new();
+        *rt.container_fs.lock().unwrap() = Some(ctr.clone());
+        let mut s = session(&rt);
+        s.testdb_cache = Some(d.join("cache"));
+
+        let m = s.keep_template(&template_out(crate::testdb::Origin::Built)).unwrap();
+        assert!(m.contains("stored in the host cache"), "{m}");
+        assert_eq!(
+            rt.copies.lock().unwrap().clone(),
+            [("spira-batch-abc123".to_string(), "/tmp/spira-testdb/template-k1".to_string())]
+        );
+        assert!(d.join("cache/template-k1/READY").is_file());
+        assert!(d.join("cache/template-k1/ws/.beads").is_dir());
+
+        let m = s.keep_template(&template_out(crate::testdb::Origin::Cache)).unwrap();
+        assert!(m.contains("no build"), "{m}");
+        assert_eq!(rt.copies.lock().unwrap().len(), 1, "a cache hit copies nothing out");
+        assert_eq!(s.keep_template(&template_out(crate::testdb::Origin::Root)), None);
+        let failed = ExecOutcome { rc: 1, ..template_out(crate::testdb::Origin::Built) };
+        assert_eq!(s.keep_template(&failed), None, "a failed step stores nothing");
+        s.testdb_cache = None;
+        assert_eq!(s.keep_template(&template_out(crate::testdb::Origin::Built)), None);
     }
 
     #[test]
