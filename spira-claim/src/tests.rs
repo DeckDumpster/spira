@@ -1123,6 +1123,11 @@ fn fake_lc_taking_verdicts(lc: &str, captured: &std::path::Path, verdicts_rc: i3
 /// `bulk-ready-by-rune` over `lc` rows and bd `recs`; returns its outcome and the verdicts it
 /// handed to `spira-lc claim-verdicts` (`None` when it made no such call).
 fn bulk_with_verdicts(lc: &str, recs: &str, verdicts_rc: i32) -> (Outcome, Option<spira_claim::verdicts::VerdictFile>) {
+    verb_with_verdicts(&["bulk-ready-by-rune"], lc, recs, verdicts_rc)
+}
+
+/// [`bulk_with_verdicts`] for any verb `args`, under a runes roster of `builder` alone.
+fn verb_with_verdicts(args: &[&str], lc: &str, recs: &str, verdicts_rc: i32) -> (Outcome, Option<spira_claim::verdicts::VerdictFile>) {
     let home = runes_home(&[("builder", "spira,plan", "")]);
     let runes = runes_path(&home);
     let captured = testkit::TempDir::new("spira-claim-captured");
@@ -1130,7 +1135,7 @@ fn bulk_with_verdicts(lc: &str, recs: &str, verdicts_rc: i32) -> (Outcome, Optio
     let bd = sh(&format!("echo '{recs}'"));
     let path = fake_lc_taking_verdicts(lc, &file, verdicts_rc);
     let o = run_cfg(
-        &["bulk-ready-by-rune"],
+        args,
         "",
         &[(FAKE_BDQ, bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes)],
         &[("SPIRA_HOME", Some(home.as_str())), ("PATH", Some(path.as_str())), ("SPIRA_READY_CACHE", None)],
@@ -1175,6 +1180,27 @@ fn bulk_ready_by_rune_still_counts_when_the_store_refuses_the_verdicts_and_says_
     assert!(sent.is_some(), "positive control: the call was made");
     assert_eq!((o.code, o.out.as_str()), (0, "builder 1\n"), "{}", o.err);
     assert!(o.err.contains("claim-verdicts"), "{}", o.err);
+}
+
+/// The claim-check probe perf-watch runs every pass, read from the shipped probe file.
+fn claim_check_probe() -> Vec<&'static str> {
+    let line = include_str!("../../spira/perf-probes").lines().find_map(|l| l.strip_prefix("claim-check\t")).expect("a claim-check probe");
+    line.split_whitespace().collect()
+}
+
+#[test]
+fn the_claim_check_probe_judges_the_ready_set_and_writes_nothing_to_the_store() {
+    // sp-s5ndy5: perf-watch holds its probes to a read budget. bulk-ready-by-rune publishes
+    // every READY row's verdict through lc-serve's group commit, and that write took the probe
+    // from ~215 ms to 400-1600 ms; it also had the watcher rewriting prod rows every pass.
+    let argv = claim_check_probe();
+    assert_eq!(argv.first(), Some(&"spira-claim"), "{argv:?}");
+    let lc = r#"[{"bead_id":"sp-free","state":"READY","holds":"[]"}]"#;
+    let recs = r#"[{"id":"sp-free","status":"open","issue_type":"task","labels":["spira","plan"]}]"#;
+    let (o, sent) = verb_with_verdicts(&argv[1..], lc, recs, 0);
+    assert_eq!(o.code, 0, "{}", o.err);
+    assert!(o.out.contains("sp-free"), "the probe judges the real ready set: {}", o.out);
+    assert!(sent.is_none(), "the probe wrote verdicts to the store: {sent:?}");
 }
 
 #[test]

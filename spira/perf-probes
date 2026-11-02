@@ -3,5 +3,8 @@ lc-list	spira-lc list --live
 lc-show	spira-lc show sp-perf-probe
 lc-ops-view	spira-lc ops-view ops_live
 work-list	work list --json
-claim-check	spira-claim bulk-ready-by-rune
+# claim-check is a dwarf's ready read: the same judgement bulk-ready-by-rune makes, without
+# its verdict publish, which is a write (~140-350 ms of group commit; the probe ran 400-1600 ms
+# with it and ~215 ms without, 2026-11-01). sp-s5ndy5.
+claim-check	spira-claim rune-ready builder --json
 lc-ready	spira-lc list --state READY
