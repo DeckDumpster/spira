@@ -105,7 +105,7 @@ fn production() -> Settings {
             "SPIRA_RUNTIME_RECONCILER_SECS" => "60".into(),
             "COCKPIT_SESSIONS" => "one two".into(),
             "COCKPIT_MAIL" | "SPIRA_RECONCILER_SHADOW_KINDS" | "SPIRA_DOLT_DATA" | "SPIRA_MAX_LIVE_DWARVES" | "SPIRA_LANES_MAX_LIVE" | "SPIRA_MAX_DWARVES" => String::new(),
-            "SPIRA_DB" | "SPIRA_BD" | "SPIRA_RELEASES" | "SPIRA_CTRL" | "SPIRA_DESIRED_DIR" | "SPIRA_RUNES" | "SPIRA_LC_PASSWORD_FILE" => "/unused".into(),
+            "SPIRA_RELEASES" | "SPIRA_CTRL" | "SPIRA_DESIRED_DIR" | "SPIRA_RUNES" | "SPIRA_LC_PASSWORD_FILE" => "/unused".into(),
             "SPIRA_INSTANCE" => "prod".into(),
             "SPIRA_RECONCILER_EFFECT_PASSES" | "SPIRA_NO_PROGRESS_BREAKER_CLAIMS" | "SPIRA_NO_PROGRESS_BREAKER_WINDOW_MINUTES" => "3".into(),
             "SPIRA_DISK_FLOOR_PCT" => "11".into(),
