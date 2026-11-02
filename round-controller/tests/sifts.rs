@@ -72,28 +72,22 @@ fn every_pool_bead_takes_its_verdict_and_an_unscreenable_repo_is_named() {
             "{id} takes no write: {v:#?}"
         );
     }
+    // The kind's key order follows serde_json's map order, which a workspace feature may change.
     let red = |id: &str, state: &str, reason: &str| {
-        format!(
-            r#"spira-lc event bead {id} --expect {state} --version 4 --actor sift --kind {{"GateRed":{{"reason":"{reason}","tip":"{}"}}}}"#,
-            t[id]
-        )
+        let prefix = format!(
+            r#"spira-lc event bead {id} --expect {state} --version 4 --actor sift --kind {{"GateRed":{{"#
+        );
+        let (tip, reason) = (
+            format!(r#""tip":"{}""#, t[id]),
+            format!(r#""reason":"{reason}""#),
+        );
+        v.iter()
+            .any(|l| l.contains(&prefix) && l.contains(&tip) && l.contains(&reason))
     };
-    assert!(
-        has(&v, &red("sp-conflict", "CERTIFIED", "no-rebase")),
-        "{v:#?}"
-    );
-    assert!(
-        has(&v, &red("sp-stacked", "SUBMITTED", "suites-failed")),
-        "{v:#?}"
-    );
-    assert!(
-        has(&v, &red("sp-ident", "SUBMITTED", "policy-violation")),
-        "{v:#?}"
-    );
-    assert!(
-        has(&v, &red("sp-target", "SUBMITTED", "policy-violation")),
-        "{v:#?}"
-    );
+    assert!(red("sp-conflict", "CERTIFIED", "no-rebase"), "{v:#?}");
+    assert!(red("sp-stacked", "SUBMITTED", "suites-failed"), "{v:#?}");
+    assert!(red("sp-ident", "SUBMITTED", "policy-violation"), "{v:#?}");
+    assert!(red("sp-target", "SUBMITTED", "policy-violation"), "{v:#?}");
     assert!(
         has(
             &v,
