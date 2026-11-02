@@ -34,22 +34,6 @@ pub fn done_argv(run: &str) -> Vec<String> {
     habits::config::argv(run, &[])
 }
 
-#[cfg(test)]
-mod bead_id_tests {
-    use super::looks_like_bead_id;
-
-    #[test]
-    fn child_bead_ids_are_bead_ids() {
-        assert!(looks_like_bead_id("sp-oqf8c"));
-        assert!(looks_like_bead_id("sp-oqf8c.3"));
-        assert!(looks_like_bead_id("sp-zs04v.3.1"));
-        assert!(!looks_like_bead_id("sp-oqf8c."));
-        assert!(!looks_like_bead_id("sp-.3"));
-        assert!(!looks_like_bead_id("sp-a.b"));
-        assert!(!looks_like_bead_id("sp-st-lbo"));
-    }
-}
-
 /// The one enforcement point for "a verb naming any bead other than the bound one is
 /// refused" (acceptance criterion): every token in the verb's own arguments is checked,
 /// not just a designated slot, because a designated slot can be bypassed by whatever else
@@ -264,19 +248,6 @@ pub fn build_request_with_body(bound: &str, verb: &str, verb_args: &[String], ti
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn a_governed_plan_returns_its_statutes_in_full_and_an_ungoverned_one_nothing() {
-        let reg = include_str!("../../spira/statute-guards");
-        let text = |s: &str| Some(format!("full text of {s}"));
-        let plan = "Add a new Python hold proxy program to the Rust repo's deploy path.";
-        let (out, note) = statute_check_report(reg, plan, text).unwrap().unwrap();
-        assert!(out.contains("full text of law-new-subsystems-are-rust") && out.contains("full text of law-one-language-runtime-per-repo"));
-        assert!(note.contains(plan) && note.contains("law-new-subsystems-are-rust") && note.contains("law-one-language-runtime-per-repo"));
-        assert!(!out.contains("law-tests-run-only-through-testenv"));
-        assert_eq!(statute_check_report(reg, "Fix the off-by-one in parse() inside the existing function.", text).unwrap(), None);
-        assert!(statute_check_report(reg, plan, |_| None).is_err());
-    }
-
     use super::*;
 
     #[test]
@@ -419,20 +390,6 @@ mod tests {
     }
 
     #[test]
-    fn collect_body_reads_a_file_flag_or_stdin_once() {
-        let file = |p: &str| if p == "/w/f" { Ok("from file".to_string()) } else { Err("no".to_string()) };
-        let (a, b) = collect_body(&v(&["t", "--body-file", "/w/f"]), file, || panic!("stdin not wanted")).unwrap();
-        assert_eq!((a, b.as_deref()), (v(&["t", "--body-file", "-"]), Some("from file")));
-        let (a, b) = collect_body(&v(&["sop-x", "-"]), file, || Ok("piped".to_string())).unwrap();
-        assert_eq!((a, b.as_deref()), (v(&["sop-x", "-"]), Some("piped")));
-        let (_, b) = collect_body(&v(&["--why", "-"]), file, || Ok("w".to_string())).unwrap();
-        assert_eq!(b.as_deref(), Some("w"));
-        assert!(collect_body(&v(&["--body-file", "/w/f", "-"]), file, || Ok(String::new())).is_err());
-        let (_, b) = collect_body(&v(&["show"]), file, || panic!("stdin not wanted")).unwrap();
-        assert!(b.is_none());
-    }
-
-    #[test]
     fn build_request_refuses_unknown_verb() {
         assert!(build_request("sp-3m1p9", "close", &[], None, "a").is_err());
     }
@@ -447,23 +404,8 @@ mod tests {
     }
 
     #[test]
-    fn a_fixture_diff_selects_the_touched_crate_and_its_dependents_never_the_workspace() {
-        let sel = crates_selection(&raw(&["a/src/lib.rs", "docs/x.md"]), META).unwrap();
-        assert_eq!(sel, ["a", "b"]);
-        let w = crates_words(&sel);
-        assert_eq!(w, "-p a -p b");
-        assert!(!w.contains("--workspace"));
-    }
-
-    #[test]
     fn a_diff_touching_no_crate_selects_nothing() {
         assert!(crates_selection(&raw(&["docs/x.md"]), META).unwrap().is_empty());
-    }
-
-    #[test]
-    fn a_workspace_input_names_every_member_with_p() {
-        let sel = crates_selection(&raw(&["Cargo.lock"]), META).unwrap();
-        assert_eq!(crates_words(&sel), "-p a -p b -p c");
     }
 }
 

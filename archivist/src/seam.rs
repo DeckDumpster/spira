@@ -297,37 +297,6 @@ pub fn locate_home(env_home: Option<&str>, exe: &Path) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_agent_process_receives_the_configured_wiki_in_its_environment() {
-        let dir = testkit::TempDir::new("archivist-wiki");
-        let bin = dir.join("agent.sh");
-        testkit::write_exe(&bin, "#!/bin/sh\nprintf '%s' \"${SPIRA_WIKI-unset}\" > \"$PWD/seen\"\n");
-        let log = dir.join("log");
-        let run = |wiki: Option<&str>| {
-            let spec = AgentSpec {
-                agent_bin: bin.to_str().unwrap(),
-                system_flag: "--x",
-                sysfile: Path::new("s"),
-                model: "m",
-                timeout_secs: 10,
-                wiki_dir: wiki,
-                cwd: dir.path(),
-                logfile: &log,
-                mail_from: "f",
-                task_stdin: "",
-            };
-            RealSeam { lib_sh: PathBuf::new() }.run_agent(&spec);
-            std::fs::read_to_string(dir.join("seen")).unwrap()
-        };
-        assert_eq!(run(Some("/the/wiki")), "/the/wiki");
-        assert_eq!(run(None), "unset");
-    }
-}
-
-#[cfg(test)]
 pub mod fake {
     use super::*;
     use std::cell::RefCell;

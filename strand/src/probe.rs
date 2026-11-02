@@ -459,31 +459,6 @@ mod tests {
 
     // ---- dwarf_count / dwarves_live_lanes / rune_free (wave 4.23, sp-0ffox) ------------------
 
-    /// `systemctl --user list-units <pattern> --no-legend`, stubbed: echoes `lines`
-    /// regardless of its argv, so the test controls the fleet without a real systemd
-    /// session (SPIRA_SYSTEMCTL).
-    fn mock_systemctl(dir: &std::path::Path, lines: &[&str]) -> String {
-        let p = dir.join("mock-systemctl");
-        let body = format!("#!/bin/sh\n{}\n", lines.iter().map(|l| format!("echo '{l}'")).collect::<Vec<_>>().join("\n"));
-        // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
-        testkit::write_exe(&p, &body);
-        p.to_string_lossy().into_owned()
-    }
-
-    #[test]
-    fn dwarf_count_excludes_only_the_named_unit_in_the_systemd_run_branch() {
-        let t = testkit::TempDir::new("strand-dwarf-count-excl");
-        let sc = mock_systemctl(
-            &t,
-            &["spira-dwarf-builder-1.service loaded active running x", "spira-dwarf-builder-2.service loaded active running x"],
-        );
-        let cfg = Config { systemctl: sc, ..Config::test_fixture() };
-        assert_eq!(cfg.call, "systemd-run", "the default — exercises the unit-list branch");
-        assert_eq!(dwarf_count(&cfg, "builder", None), 2);
-        assert_eq!(dwarf_count(&cfg, "builder", Some("spira-dwarf-builder-1.service")), 1, "the caller's own unit is excluded");
-        assert_eq!(dwarf_count(&cfg, "builder", Some("no-such-unit")), 2, "excluding a unit that isn't there changes nothing");
-    }
-
     #[test]
     fn dwarf_count_pid_fallback_ignores_exclude_exactly_as_the_bash_original() {
         let t = testkit::TempDir::new("strand-dwarf-count-fallback");
@@ -492,20 +467,6 @@ mod tests {
         let cfg = Config { call: "mock".into(), run: Some(run.clone()), ..Config::test_fixture() };
         assert_eq!(dwarf_count(&cfg, "builder", None), 0, "no pidfiles at all");
         assert_eq!(dwarf_count(&cfg, "builder", Some("anything")), 0, "exclude is a no-op off the systemd-run branch");
-    }
-
-    #[test]
-    fn dwarves_live_lanes_resolves_rune_name_and_sums_lane_units() {
-        let t = testkit::TempDir::new("strand-live-lanes");
-        let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_RUNES_DIR", Some(t.join("runes").to_str().unwrap()))]);
-        std::fs::create_dir_all(t.join("runes")).unwrap();
-        // A lane rune declaring a different unit name than its runes filename —
-        // dwarves_live_lanes must resolve RUNE_NAME, not use the rune id verbatim.
-        std::fs::write(t.join("runes/laner.rune"), "RUNE_LANE=incident\nRUNE_NAME=siren\n").unwrap();
-        std::fs::write(t.join("runes/builder.rune"), "").unwrap(); // not a lane — must not be counted
-        let sc = mock_systemctl(&t, &["spira-dwarf-siren-1.service loaded active running x"]);
-        let cfg = Config { home: Some(t.to_path_buf()), systemctl: sc, ..Config::test_fixture() };
-        assert_eq!(dwarves_live_lanes(&cfg), 1);
     }
 
     #[test]

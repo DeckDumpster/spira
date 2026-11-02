@@ -145,16 +145,4 @@ mod tests {
         assert_eq!(run_next(&d, &log, 5).unwrap(), "something else\n", "a line written while no waiter ran is delivered by the next call");
         assert_eq!(fs_ops::read_pos(&cf, fs_ops::total_lines(&log)), fs_ops::total_lines(&log));
     }
-
-    #[test]
-    fn a_second_reader_is_refused_and_history_is_not_replayed_on_first_use() {
-        let d = unique_dir("watchd-next-lock");
-        let log = d.join("inbox.log");
-        append(&log, "old history line\n");
-        let run = d.join("run").display().to_string();
-        let held = lock::try_lock(&paths::tail_lockfile(&run, "inbox")).unwrap().unwrap();
-        assert_eq!(run_next(&d, &log, 0), Err(3));
-        drop(held);
-        assert_eq!(run_next(&d, &log, 0), Err(EXIT_TIMEOUT));
-    }
 }

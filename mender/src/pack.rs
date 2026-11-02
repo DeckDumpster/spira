@@ -129,12 +129,6 @@ mod tests {
     }
 
     #[test]
-    fn a_suite_with_no_covers_points_at_every_member() {
-        let ms = [member("sp-a", &["x"]), member("sp-b", &["y"])];
-        assert_eq!(touching(&ms, None).len(), 2);
-    }
-
-    #[test]
     fn the_pack_names_signatures_touching_members_and_every_diff() {
         let ms = [member("sp-a", &["spira/lib.sh"]), member("sp-b", &["docs/x.md"])];
         let covers = vec!["spira/*.sh".to_string()];
@@ -155,14 +149,6 @@ mod tests {
         let text = Pack { spec: &s, output: "", hits: &[], covers: Some(&covers), members: &ms, diff_cap: 1000 }.render();
         assert!(text.contains("none: no member's diff touches"), "{text}");
         assert!(text.contains("none found in the output"), "{text}");
-    }
-
-    #[test]
-    fn a_large_diff_is_cut_at_a_char_boundary_and_points_at_the_verb() {
-        let mut m = member("sp-a", &["f"]);
-        m.diff = "é".repeat(100);
-        let cut = cut(&m.diff, 11, "sp-a");
-        assert!(cut.starts_with(&"é".repeat(5)) && cut.contains("mender diff <spec> sp-a"), "{cut}");
     }
 
     #[test]

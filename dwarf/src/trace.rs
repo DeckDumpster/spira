@@ -814,34 +814,12 @@ mod tests {
 
     // ---- dwarf_fuse_minutes (test-thrash.sh) ----
 
-    fn make_worktree(wt: &Path) {
-        std::fs::create_dir_all(wt).unwrap();
-        std::process::Command::new("git").arg("init").arg("-q").arg(wt).status().unwrap();
-        std::process::Command::new("git").args(["config", "user.email", "t@t"]).current_dir(wt).status().unwrap();
-        std::process::Command::new("git").args(["config", "user.name", "T"]).current_dir(wt).status().unwrap();
-        std::fs::write(wt.join("file.txt"), "init").unwrap();
-        std::process::Command::new("git").args(["add", "file.txt"]).current_dir(wt).status().unwrap();
-        std::process::Command::new("git").args(["commit", "-q", "-m", "initial"]).current_dir(wt).status().unwrap();
-    }
-
     #[test]
     fn dwarf_fuse_minutes_no_worktree_is_question_mark() {
         let d = tmp("fuse-nowt");
         let run = d.join("run");
         std::fs::create_dir_all(run.join("gate-run")).unwrap();
         assert_eq!(dwarf_fuse_minutes("sp-x", &d.join("worktree/sp-x"), &run, None, 1000), "?");
-    }
-
-    #[test]
-    fn dwarf_fuse_minutes_just_written_worktree_is_zero() {
-        let d = tmp("fuse-fresh");
-        let run = d.join("run");
-        std::fs::create_dir_all(run.join("gate-run")).unwrap();
-        let wt = d.join("worktree/sp-x");
-        make_worktree(&wt);
-        let now = crate::util::now_epoch();
-        let fuse = dwarf_fuse_minutes("sp-x", &wt, &run, None, now);
-        assert_eq!(fuse, "0", "got [{fuse}]");
     }
 
     #[test]

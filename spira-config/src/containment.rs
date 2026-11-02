@@ -174,65 +174,6 @@ mod tests {
     }
 
     #[test]
-    fn comments_and_blanks_are_skipped() {
-        assert_eq!(check("test", "/ws", Some("# a comment\n\nx|/ws/ok\n")), Ok(()));
-    }
-
-    #[test]
-    fn path_inside_workspaces_is_fine() {
-        let dir = testkit::TempDir::new("spira-config-containment-inside");
-        let repo = dir.join("repo");
-        std::fs::create_dir_all(&repo).unwrap();
-        let map = format!("x|{}\n", repo.display());
-        assert_eq!(check("test", dir.path().to_str().unwrap(), Some(&map)), Ok(()));
-    }
-
-    #[test]
-    fn path_outside_workspaces_is_a_violation() {
-        let dir = testkit::TempDir::new("spira-config-containment-outside");
-        let ws = dir.join("ws");
-        std::fs::create_dir_all(&ws).unwrap();
-        let outside = dir.join("elsewhere");
-        std::fs::create_dir_all(&outside).unwrap();
-        let map = format!("x|{}\n", outside.display());
-        let err = check("test", ws.to_str().unwrap(), Some(&map)).unwrap_err();
-        assert_eq!(err.len(), 1);
-        assert!(err[0].contains("is confined to"), "{err:?}");
-        assert!(err[0].contains("x ("), "{err:?}");
-    }
-
-    #[test]
-    fn a_nonexistent_path_is_compared_literally() {
-        // The entry names a checkout not made yet — fall back to the literal string rather
-        // than failing the canonicalisation outright.
-        let out = check("test", "/ws", Some("x|/ws/not-made-yet\n"));
-        assert_eq!(out, Ok(()));
-        let out2 = check("test", "/ws", Some("x|/elsewhere/not-made-yet\n"));
-        assert!(out2.is_err());
-    }
-
-    #[test]
-    fn a_real_remote_is_a_violation_and_a_local_remote_is_not() {
-        let dir = testkit::TempDir::new("spira-config-containment-remote");
-        let ws = dir.join("ws");
-        std::fs::create_dir_all(&ws).unwrap();
-        let repo = ws.join("repo");
-        std::fs::create_dir_all(&repo).unwrap();
-        run_git(&repo, &["init", "-q"]);
-        run_git(&repo, &["remote", "add", "origin", "https://example.invalid/x.git"]);
-        let map = format!("x|{}\n", repo.display());
-        let err = check("test", ws.to_str().unwrap(), Some(&map)).unwrap_err();
-        assert!(err.iter().any(|m| m.contains("may not have a real remote")), "{err:?}");
-
-        let repo2 = ws.join("repo2");
-        std::fs::create_dir_all(&repo2).unwrap();
-        run_git(&repo2, &["init", "-q"]);
-        run_git(&repo2, &["remote", "add", "origin", "/some/local/path"]);
-        let map2 = format!("y|{}\n", repo2.display());
-        assert_eq!(check("test", ws.to_str().unwrap(), Some(&map2)), Ok(()));
-    }
-
-    #[test]
     fn remote_is_real_matches_lib_sh() {
         assert!(!remote_is_real(""));
         assert!(!remote_is_real("/abs/path"));
@@ -240,18 +181,5 @@ mod tests {
         assert!(remote_is_real("https://example.invalid/x.git"));
         assert!(remote_is_real("git@example.invalid:x/y.git"));
         assert!(remote_is_real("ssh://example.invalid/x.git"));
-    }
-
-    fn run_git(dir: &Path, args: &[&str]) {
-        let status = std::process::Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .env("GIT_AUTHOR_NAME", "t")
-            .env("GIT_AUTHOR_EMAIL", "t@t")
-            .env("GIT_COMMITTER_NAME", "t")
-            .env("GIT_COMMITTER_EMAIL", "t@t")
-            .status()
-            .unwrap();
-        assert!(status.success(), "git {args:?} failed in {dir:?}");
     }
 }

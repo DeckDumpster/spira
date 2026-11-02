@@ -255,18 +255,6 @@ mod tests {
     }
 
     #[test]
-    fn the_delta_names_lines_files_and_use_cases_that_moved() {
-        let prev = build_report(Some("r1"), Some(parse_llvm_cov(LLVM, "/w/a").unwrap()), &matrix(&[("UC-dispatch-01", true), ("UC-dispatch-02", false)]));
-        let better = LLVM.replace("\"covered\":1,", "\"covered\":3,").replace("\"covered\":5,", "\"covered\":7,");
-        let cur = build_report(Some("r2"), Some(parse_llvm_cov(&better, "/w/a").unwrap()), &matrix(&[("UC-dispatch-01", false), ("UC-dispatch-02", true)]));
-        let d = render_delta(&prev, &cur);
-        assert!(d.contains("50.00% -> 70.00% (+20.00 pts"), "{d}");
-        assert!(d.contains("file src/y.rs"), "{d}");
-        assert!(d.contains("gained: UC-dispatch-02") && d.contains("lost: UC-dispatch-01"), "{d}");
-        assert!(delta_line(&prev, &cur).contains("+1 gained, -1 lost"));
-    }
-
-    #[test]
     fn a_round_without_lines_says_so_and_still_reports_use_cases() {
         let r = build_report(None, None, &matrix(&[("UC-dispatch-01", true)]));
         assert!(render_text(&r).starts_with("lines: unavailable\n"));

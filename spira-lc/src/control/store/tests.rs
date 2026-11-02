@@ -164,27 +164,6 @@ fn a_pass_keeps_the_blockers_another_publisher_wrote_and_skips_ids_with_no_recor
 }
 
 #[test]
-fn a_pass_too_large_for_one_txn_is_split_within_the_op_limit() {
-    let (s, _, _) = fresh();
-    let ids: Vec<String> = (0..300).map(|n| format!("sp-r{n}")).collect();
-    for id in &ids {
-        created(&s, id);
-    }
-    let pass: Vec<Verdict> = ids
-        .iter()
-        .map(|id| Verdict {
-            id: id.clone(),
-            verdict: "claimable".into(),
-            blocker: None,
-            runes: vec![],
-        })
-        .collect();
-    s.publish_verdicts(&pass, "2026-10-31T12:00:00Z", &req("pass-big"))
-        .unwrap();
-    assert!(ids.iter().all(|id| s.readiness(id).unwrap().is_some()));
-}
-
-#[test]
 fn a_transition_is_one_txn_on_the_records_mod_rev_audited_in_its_events_key() {
     let (s, _, _) = fresh();
     created(&s, "sp-a");

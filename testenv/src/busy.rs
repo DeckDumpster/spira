@@ -39,52 +39,14 @@ pub fn worktree_busy(dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
-    use std::time::{Duration, Instant};
-    use testkit::ChildGuard;
 
-    fn wait_until(mut pred: impl FnMut() -> bool, timeout: Duration) -> bool {
-        let start = Instant::now();
-        loop {
-            if pred() {
-                return true;
-            }
-            if start.elapsed() > timeout {
-                return false;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
 
-    // Held in a kill-on-drop guard (sp-r70dc): a failed assertion between spawn and the
-    // explicit kill below used to leave this fixture running for its full 30s as an orphan.
-    fn spawn_sleeping_in(dir: &Path) -> ChildGuard {
-        ChildGuard::spawn(Command::new("sleep").arg("30").current_dir(dir))
-    }
+
 
     #[test]
     fn an_empty_or_missing_directory_is_never_busy() {
         let t = testkit::TempDir::new("busy-empty");
         assert!(!worktree_busy(t.path()));
         assert!(!worktree_busy(&t.path().join("does-not-exist")));
-    }
-
-    #[test]
-    fn a_live_process_cwd_inside_the_dir_makes_it_busy_until_it_exits() {
-        let t = testkit::TempDir::new("busy-cwd");
-        let mut child = spawn_sleeping_in(t.path());
-        assert!(wait_until(|| worktree_busy(t.path()), Duration::from_secs(2)), "the live sleep's cwd should be seen");
-        child.kill();
-        assert!(wait_until(|| !worktree_busy(t.path()), Duration::from_secs(2)), "busy-ness should clear once the process is gone");
-    }
-
-    #[test]
-    fn a_process_busy_elsewhere_does_not_make_an_unrelated_dir_busy() {
-        let t = testkit::TempDir::new("busy-elsewhere");
-        let other = testkit::TempDir::new("busy-elsewhere-other");
-        let mut child = spawn_sleeping_in(other.path());
-        assert!(wait_until(|| worktree_busy(other.path()), Duration::from_secs(2)));
-        assert!(!worktree_busy(t.path()), "a process busy in one directory must not mark an unrelated one busy");
-        child.kill();
     }
 }

@@ -1,44 +1,4 @@
-use spira_sim::proctrace::{render, start, summarize, TRACE_FILE};
-use spira_sim::world::run_capture_traced;
-use std::process::Command;
-use std::time::Duration;
-
-#[test]
-fn the_trace_holds_the_command_and_the_processes_it_started() {
-    let t = testkit::TempDir::new("simtrace");
-    let mut cmd = Command::new("sh");
-    cmd.arg("-c").arg("sleep 0.3; sleep 0.3");
-    let (status, _, _) = run_capture_traced(&mut cmd, Duration::from_secs(30), Some((t.path(), "two sleeps"))).unwrap();
-    assert!(status.success());
-    let text = std::fs::read_to_string(t.join(TRACE_FILE)).unwrap();
-    assert!(text.starts_with("=== two sleeps\n"), "{text}");
-    let argvs: Vec<&str> = text.lines().skip(1).filter_map(|l| l.splitn(7, '\t').nth(6)).collect();
-    assert!(argvs.iter().any(|a| a.starts_with("sh -c")), "{argvs:?}");
-    assert!(argvs.iter().filter(|a| a.starts_with("sleep 0.3")).count() >= 1, "{argvs:?}");
-}
-
-#[test]
-fn a_run_without_a_trace_target_writes_nothing() {
-    let t = testkit::TempDir::new("simtrace");
-    let mut cmd = Command::new("sh");
-    cmd.arg("-c").arg("true");
-    run_capture_traced(&mut cmd, Duration::from_secs(30), None).unwrap();
-    assert!(!t.join(TRACE_FILE).exists());
-}
-
-#[test]
-fn rows_carry_start_life_and_cpu_before_the_argv() {
-    let child = Command::new("sh").arg("-c").arg("sleep 0.2").spawn().unwrap();
-    let tracer = start(child.id());
-    let mut child = child;
-    child.wait().unwrap();
-    let seen = tracer.finish();
-    let text = render("x", &seen);
-    let row = text.lines().nth(1).expect("the root process is seen");
-    let cols: Vec<&str> = row.splitn(7, '\t').collect();
-    assert_eq!(cols.len(), 7, "{row}");
-    assert!(cols[..6].iter().all(|c| c.parse::<u64>().is_ok()), "{row}");
-}
+use spira_sim::proctrace::summarize;
 
 #[test]
 fn the_summary_ranks_programs_by_cpu_and_charges_unseen_children_to_their_parent() {

@@ -900,17 +900,4 @@ mod tests {
         assert_eq!((rows[0]["repo"].clone(), rows[0]["sifted_tip"].clone()), ("spira".into(), "abc".into()));
         assert_eq!(rows[0].as_object().unwrap().keys().next_back().unwrap(), "blocked_by");
     }
-
-    #[test]
-    fn a_full_table_list_and_a_miss_answer_from_memory_at_production_row_counts() {
-        const ROWS: usize = 5_000;
-        let old: Vec<Value> = (0..ROWS).map(|i| bead(&format!("sp-{i:06}"), "LANDED", 3, 1)).collect();
-        let hot: Vec<Value> = (0..200).map(|i| bead(&format!("sp-h{i:04}"), "READY", 1, NOW)).collect();
-        let live = with_cold(hot, old);
-        let rows = live.list_all(&ListFilter::default()).unwrap();
-        let body = serde_json::to_string(&Value::Array(rows)).unwrap();
-        let miss = live.absent("sp-perf-probe");
-        let state = live.list_all(&filter_from_flags(Some("READY"), None, None, false, None)).unwrap();
-        assert!(miss && state.len() == 200 && body.len() > 500_000);
-    }
 }

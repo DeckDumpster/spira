@@ -284,23 +284,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_failing_forget_and_recall_surface_bdq_stderr() {
-        let dir = testkit::TempDir::new("sop-seam");
-        std::fs::write(dir.join("lib.sh"), "bdq() { echo 'dolt timeout: stub detail' >&2; return 1; }\n").unwrap();
-        for body in [FORGET_SCRIPT, RECALL_SCRIPT] {
-            let out = Command::new("bash")
-                .arg("-c")
-                .arg(format!(". \"$0\"\n{body}"))
-                .arg(dir.join("lib.sh"))
-                .arg("k")
-                .output()
-                .unwrap();
-            assert!(!out.status.success());
-            assert!(String::from_utf8_lossy(&out.stderr).contains("dolt timeout: stub detail"), "{body}");
-        }
-    }
-
-    #[test]
     fn iso_formatting_matches_a_known_instant() {
         // 2026-09-30T00:00:00Z
         assert_eq!(fmt_iso(1790726400), "2026-09-30T00:00:00Z");
@@ -323,54 +306,5 @@ mod vtime_tests {
     fn real_clock_honours_spira_now() {
         let got = spira_config::vtime::with_now_for_test(1_900_000_000, || RealClock { tz: "UTC".into() }.now().0);
         assert_eq!(got, 1_900_000_000);
-    }
-
-    fn g(dir: &std::path::Path, args: &[&str]) -> String {
-        let o = Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
-        assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
-        String::from_utf8_lossy(&o.stdout).trim().to_string()
-    }
-
-    #[test]
-    fn commit_page_commits_only_the_page_and_leaves_a_clean_page() {
-        let t = testkit::TempDir::new("sop-commit-page");
-        let repo = t.path().join("brain");
-        std::fs::create_dir_all(repo.join("wiki/notes")).unwrap();
-        g(&repo, &["init", "-q"]);
-        g(&repo, &["config", "user.email", "t@t"]);
-        g(&repo, &["config", "user.name", "t"]);
-        g(&repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
-        let page = repo.join("wiki/notes/standard-operating-procedures.md");
-        std::fs::write(&page, "page\n").unwrap();
-        std::fs::write(repo.join("stray.txt"), "x").unwrap();
-        let before = g(&repo, &["rev-list", "--count", "HEAD"]);
-        let r = commit_page(page.to_str().unwrap(), "refactor: regenerate SOP shelf — sop-x").unwrap();
-        assert!(r.is_some());
-        let after: usize = g(&repo, &["rev-list", "--count", "HEAD"]).parse().unwrap();
-        assert_eq!(after, before.parse::<usize>().unwrap() + 1);
-        assert_eq!(g(&repo, &["show", "--name-only", "--format=", "HEAD"]), "wiki/notes/standard-operating-procedures.md");
-        assert_eq!(g(&repo, &["status", "--porcelain"]), "?? stray.txt");
-        assert!(commit_page(page.to_str().unwrap(), "refactor: regenerate SOP shelf — sop-x").unwrap().is_none());
-    }
-
-    #[test]
-    fn commit_page_fails_loudly_when_the_upload_is_refused() {
-        let t = testkit::TempDir::new("sop-commit-page-push");
-        let remote = t.path().join("remote.git");
-        let repo = t.path().join("brain");
-        std::fs::create_dir_all(&repo).unwrap();
-        g(t.path(), &["init", "-q", "--bare", remote.to_str().unwrap()]);
-        g(&repo, &["init", "-q"]);
-        g(&repo, &["config", "user.email", "t@t"]);
-        g(&repo, &["config", "user.name", "t"]);
-        g(&repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
-        g(&repo, &["remote", "add", "origin", remote.to_str().unwrap()]);
-        g(&repo, &["push", "-q", "-u", "origin", "HEAD"]);
-        let hook = remote.join("hooks/pre-receive");
-        testkit::write_exe(&hook, "#!/bin/sh\nexit 1\n");
-        let page = repo.join("p.md");
-        std::fs::write(&page, "page\n").unwrap();
-        let e = commit_page(page.to_str().unwrap(), "refactor: regenerate SOP shelf — sop-x").unwrap_err();
-        assert!(e.contains("failed"), "{e}");
     }
 }

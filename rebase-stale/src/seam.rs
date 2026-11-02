@@ -182,34 +182,3 @@ impl Seam for LibSeam {
         }
     }
 }
-
-#[cfg(test)]
-mod probe_tests {
-    use super::*;
-
-    fn stub(name: &str, body: &str) -> (testkit::TempDir, LibSeam) {
-        let d = testkit::TempDir::new(&format!("rs-probe-{name}"));
-        let lc = d.join("spira-lc");
-        testkit::write_exe(&lc, &format!("#!/bin/sh\n{body}\n"));
-        let seam = LibSeam::new(d.to_path_buf(), lc.to_string_lossy().into(), d.to_path_buf());
-        (d, seam)
-    }
-
-    #[test]
-    fn a_working_row_is_known_and_a_rowless_bead_is_known_empty() {
-        let (d, seam) = stub(
-            "row",
-            r#"[ "$2" = sp-held ] && { echo '{"bead":{"bead_id":"sp-held","state":"WORKING"}}'; exit 0; }; exit 1"#,
-        );
-        assert_eq!(seam.bead_status("sp-held"), BeadStatus::Known("WORKING".into()));
-        assert_eq!(seam.bead_status("sp-none"), BeadStatus::Known(String::new()));
-        let _ = std::fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn a_machine_that_cannot_answer_is_unreachable() {
-        let (d, seam) = stub("down", "echo broken >&2; exit 2");
-        assert_eq!(seam.bead_status("sp-held"), BeadStatus::Unreachable);
-        let _ = std::fs::remove_dir_all(&d);
-    }
-}

@@ -134,15 +134,3 @@ pub fn which(prog: &str, path: &str) -> Option<PathBuf> {
     }
     path.split(':').filter(|d| !d.is_empty()).map(|d| Path::new(d).join(prog)).find(|p| crate::fsutil::is_executable(p))
 }
-
-#[cfg(test)]
-mod vtime_tests {
-    use super::*;
-    use super::Host;
-
-    #[test]
-    fn real_host_honours_spira_now() {
-        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || RealHost.now());
-        assert_eq!(got, 1_900_000_000);
-    }
-}

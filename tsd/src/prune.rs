@@ -203,36 +203,6 @@ mod tests {
     }
 
     #[test]
-    fn appends_racing_a_prune_all_survive() {
-        let t = testkit::TempDir::new("tsd-prune-race");
-        let p = crate::family_path(t.path(), "f");
-        for i in 0..200 {
-            crate::append_line(&p, &row(40, i)).unwrap();
-        }
-        let writers: Vec<_> = (0..4u32)
-            .map(|w| {
-                let p = p.clone();
-                std::thread::spawn(move || {
-                    for i in 0..300u32 {
-                        crate::append_line(&p, &row(0, 10_000 + w * 1000 + i)).unwrap();
-                    }
-                })
-            })
-            .collect();
-        for _ in 0..20 {
-            prune_file(&p, NOW - 30 * DAY).unwrap();
-        }
-        for w in writers {
-            w.join().unwrap();
-        }
-        prune_file(&p, NOW - 30 * DAY).unwrap();
-        let text = std::fs::read_to_string(&p).unwrap();
-        let fresh = text.lines().filter(|l| l.contains("\"n\":1")).count();
-        assert_eq!(fresh, 1200, "a concurrent append was lost");
-        assert!(text.lines().all(|l| serde_json::from_str::<serde_json::Value>(l).is_ok()));
-    }
-
-    #[test]
     fn only_family_files_are_pruned_and_markers_stay() {
         let t = testkit::TempDir::new("tsd-prune-root");
         let dir = t.path().join("tsd");

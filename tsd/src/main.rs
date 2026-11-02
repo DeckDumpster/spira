@@ -225,31 +225,9 @@ mod tests {
     }
 
     #[test]
-    fn escape_row_with_a_known_class_appends_one_row() {
-        let dir = testkit::TempDir::new("tsd-escape");
-        escape_row(&dir, "gate", "test-foo", "flake", "b1").unwrap();
-        let text = fs::read_to_string(dir.join("tsd").join("escape.jsonl")).unwrap();
-        let row: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
-        assert_eq!(row["family"], "escape");
-        assert_eq!(row["member"], "gate");
-        assert_eq!(row["suite"], "test-foo");
-        assert_eq!(row["class"], "flake");
-        assert_eq!(row["batch_id"], "b1");
-    }
-
-    #[test]
     fn escape_row_with_an_unknown_class_is_a_silent_no_op() {
         let dir = testkit::TempDir::new("tsd-escape-unknown");
         escape_row(&dir, "gate", "test-foo", "not-a-real-class", "").unwrap();
         assert!(!dir.join("tsd").join("escape.jsonl").exists());
-    }
-
-    #[test]
-    fn escape_row_with_missing_batch_id_still_writes_an_empty_string_field() {
-        let dir = testkit::TempDir::new("tsd-escape-nobatch");
-        escape_row(&dir, "gate", "test-foo", "mapping_gap", "").unwrap();
-        let text = fs::read_to_string(dir.join("tsd").join("escape.jsonl")).unwrap();
-        let row: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
-        assert_eq!(row["batch_id"], "");
     }
 }

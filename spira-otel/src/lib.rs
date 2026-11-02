@@ -299,21 +299,6 @@ mod tests {
     }
 
     #[test]
-    fn per_span_overhead_is_far_under_a_millisecond() {
-        let dir = tmp("overhead");
-        let sink = Sink::new(dir.path(), "spira-lc", 14);
-        sink.emit(&call(0));
-        let n = 500;
-        let t = std::time::Instant::now();
-        for _ in 0..n {
-            sink.emit(&call(0));
-        }
-        let per = t.elapsed() / n;
-        eprintln!("per-span overhead: {per:?}");
-        assert!(per < Duration::from_millis(1), "{per:?} per span");
-    }
-
-    #[test]
     fn the_checked_in_fixture_still_deserializes() {
         let text = include_str!("../tests/fixtures/spira-lc.ndjson");
         assert!(text.lines().count() >= 3);

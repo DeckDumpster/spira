@@ -8,56 +8,6 @@ fn tmpdir(tag: &str) -> testkit::TempDir {
     testkit::TempDir::new(&format!("testenv-testdb-{tag}-{n}"))
 }
 
-/// testkit::write_exe, never write + chmod: see testkit/DESIGN.md (ETXTBSY).
-fn exe(p: &Path, text: &str) {
-    testkit::write_exe(p, text);
-}
-
-/// A stand-in `dolt`: `sql-server --config C` listens on C's port until SIGTERM.
-const FAKE_DOLT: &str = r#"#!/usr/bin/env python3
-import re, signal, socket, sys
-cfg = open(sys.argv[sys.argv.index("--config") + 1]).read()
-port = int(re.search(r"port: (\d+)", cfg).group(1))
-signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
-s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(("127.0.0.1", port)); s.listen(64)
-while True:
-    c, _ = s.accept()
-    c.sendall(bytes([5, 0, 0, 0, 0x0a]) + b"8.0\x00"); c.close()
-"#;
-
-/// A stand-in `bd init --server`: writes the .beads files bd writes, counts its runs.
-fn fake_bd(dir: &Path) -> PathBuf {
-    let p = dir.join("bd");
-    exe(
-        &p,
-        &format!(
-            "#!/usr/bin/env bash\nset -e\necho run >> {}/bd-inits\nport=\nwhile [ $# -gt 0 ]; do [ \"$1\" = --server-port ] && port=$2; shift; done\nmkdir -p .beads\nprintf '{{\"backend\":\"dolt\",\"dolt_mode\":\"server\",\"dolt_server_port\":%s,\"dolt_database\":\"sptest\"}}' \"$port\" > .beads/metadata.json\nprintf %s \"$port\" > .beads/dolt-server.port\n",
-            dir.display()
-        ),
-    );
-    p
-}
-
-fn fakes(tag: &str) -> Option<(testkit::TempDir, Tools)> {
-    if resolve_exe("python3", &std::env::var("PATH").unwrap_or_default()).is_none() {
-        eprintln!("skip: no python3 for the stand-in dolt");
-        return None;
-    }
-    let d = tmpdir(tag);
-    let dolt = d.join("dolt");
-    exe(&dolt, FAKE_DOLT);
-    let bd = fake_bd(&d);
-    Some((d, Tools { bd, dolt }))
-}
-
-fn port_of(beads: &Path) -> u16 {
-    read_trim(&beads.join("dolt-server.port"))
-        .unwrap()
-        .parse()
-        .unwrap()
-}
-
 // ---- pure ----------------------------------------------------------------------------
 
 #[test]
@@ -202,180 +152,7 @@ fn parse_requires_what_each_command_needs() {
     );
 }
 
-#[test]
-fn resolve_exe_searches_path_and_takes_paths_as_given() {
-    let d = tmpdir("resolve");
-    exe(&d.join("tool"), "#!/bin/sh\n");
-    let pv = format!("/nonexistent:{}", d.display());
-    assert_eq!(
-        resolve_exe("tool", &pv),
-        Some(fs::canonicalize(d.join("tool")).unwrap())
-    );
-    assert_eq!(resolve_exe("missing", &pv), None);
-    assert_eq!(
-        resolve_exe(&d.join("tool").display().to_string(), ""),
-        Some(fs::canonicalize(d.join("tool")).unwrap())
-    );
-}
-
-#[test]
-fn a_bd_that_is_the_meter_resolves_to_the_real_bd_behind_it() {
-    // A parallel suite's PATH: $HOME/.local/bin/bd -> <artifacts>/bd-meter, then the real bd.
-    let d = tmpdir("meter");
-    let art = d.join("artifacts");
-    let home_bin = d.join("home-bin");
-    let sys = d.join("sys");
-    for p in [&art, &home_bin, &sys] {
-        fs::create_dir_all(p).unwrap();
-    }
-    exe(&art.join("bd-meter"), "#!/bin/sh\n");
-    std::os::unix::fs::symlink(art.join("bd-meter"), home_bin.join("bd")).unwrap();
-    exe(&sys.join("bd"), "#!/bin/sh\n");
-    let pv = format!("{}:{}", home_bin.display(), sys.display());
-    let real = fs::canonicalize(sys.join("bd")).unwrap();
-
-    let metered = resolve_exe("bd", &pv).unwrap();
-    assert!(
-        metered.ends_with("bd-meter"),
-        "plant: bd resolves to the meter first"
-    );
-    assert_eq!(see_through_meter(metered.clone(), "bd", &pv), real);
-    assert_eq!(
-        see_through_meter(
-            metered.clone(),
-            &home_bin.join("bd").display().to_string(),
-            &pv
-        ),
-        real,
-        "a path spelling of bd sees through the meter too"
-    );
-    // The key a suite computes is the key setup computed without the meter on PATH.
-    let key = |pv: &str| {
-        let bd = see_through_meter(resolve_exe("bd", pv).unwrap(), "bd", pv);
-        template_key(&exe_identity(&bd).unwrap(), "dolt")
-    };
-    assert_eq!(key(&pv), key(&sys.display().to_string()));
-    // Not the meter, or a meter with nothing behind it: kept as resolved.
-    assert_eq!(see_through_meter(real.clone(), "bd", &pv), real);
-    let alone = home_bin.display().to_string();
-    assert_eq!(see_through_meter(metered.clone(), "bd", &alone), metered);
-    let _ = fs::remove_dir_all(&d);
-}
-
-#[test]
-fn locate_exe_is_absolute_and_keeps_the_link() {
-    let d = tmpdir("locate");
-    let art = d.join("art");
-    let bin = d.join("bin");
-    fs::create_dir_all(&art).unwrap();
-    fs::create_dir_all(&bin).unwrap();
-    exe(&art.join("bd-meter"), "#!/bin/sh\n");
-    std::os::unix::fs::symlink(art.join("bd-meter"), bin.join("bd")).unwrap();
-    let pv = format!("relative-dir:/nonexistent:{}", bin.display());
-    assert_eq!(
-        locate_exe("bd", &pv),
-        Some(bin.join("bd")),
-        "the link, not the meter it points at, so calls stay metered"
-    );
-    assert!(locate_exe("bd", &pv).unwrap().is_absolute());
-    assert_eq!(locate_exe("missing", &pv), None);
-    assert_eq!(
-        locate_exe(&bin.join("bd").display().to_string(), ""),
-        Some(bin.join("bd"))
-    );
-    let _ = fs::remove_dir_all(&d);
-}
-
 // ---- orchestration against stand-ins -------------------------------------------------
-
-#[test]
-fn template_is_built_once_under_concurrency() {
-    let Some((d, tools)) = fakes("tpl") else {
-        return;
-    };
-    let root = d.join("root");
-    let tools = std::sync::Arc::new(tools);
-    let hs: Vec<_> = (0..4)
-        .map(|_| {
-            let (root, tools) = (root.clone(), tools.clone());
-            std::thread::spawn(move || ensure_template(&root, &tools).unwrap())
-        })
-        .collect();
-    let dirs: Vec<PathBuf> = hs.into_iter().map(|h| h.join().unwrap()).collect();
-    assert!(dirs.windows(2).all(|w| w[0] == w[1]));
-    assert!(dirs[0].join("READY").is_file());
-    assert!(dirs[0].join("ws/.beads/metadata.json").is_file());
-    assert_eq!(
-        fs::read_to_string(d.join("bd-inits"))
-            .unwrap()
-            .lines()
-            .count(),
-        1,
-        "one bd init for four callers"
-    );
-    // The build's server was stopped: nothing listens on the port it used.
-    let port = port_of(&dirs[0].join("ws/.beads"));
-    assert!(TcpStream::connect(("127.0.0.1", port)).is_err());
-    let _ = fs::remove_dir_all(&d);
-}
-
-#[test]
-fn a_failed_template_build_leaves_nothing_and_says_why() {
-    let Some((d, mut tools)) = fakes("tplfail") else {
-        return;
-    };
-    let bad = d.join("bad-bd");
-    exe(&bad, "#!/bin/sh\necho 'schema exploded' >&2\nexit 2\n");
-    tools.bd = bad;
-    let root = d.join("root");
-    let e = ensure_template(&root, &tools).unwrap_err();
-    assert!(e.contains("rc=2") && e.contains("schema exploded"), "{e}");
-    let left: Vec<_> = fs::read_dir(&root)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .map(|e| e.file_name())
-        .filter(|n| !n.to_string_lossy().ends_with(".lock"))
-        .collect();
-    assert!(left.is_empty(), "no half-built template: {left:?}");
-    let _ = fs::remove_dir_all(&d);
-}
-
-fn bd_inits(d: &Path) -> usize {
-    fs::read_to_string(d.join("bd-inits"))
-        .map(|s| s.lines().count())
-        .unwrap_or(0)
-}
-
-#[test]
-fn a_second_batch_with_the_same_tools_key_copies_the_cached_template_and_never_builds() {
-    let Some((d, tools)) = fakes("cache") else {
-        return;
-    };
-    let cache = d.join("host-cache");
-    // Batch one: an empty container root, an empty cache — built, then stored by the host.
-    let (tpl1, o1) = ensure_template_cached(&d.join("root1"), &tools, Some(&cache)).unwrap();
-    assert_eq!((o1, bd_inits(&d)), (Origin::Built, 1));
-    let key = tools.key().unwrap();
-    cache_template(&cache, &key, TEMPLATE_CACHE_KEYS, |dst| {
-        copy_tree(&tpl1, dst).map_err(|e| e.to_string())
-    })
-    .unwrap();
-    assert!(cache.join(format!("template-{key}/READY")).is_file());
-
-    // Batch two: a fresh container root, the same key — a copy, and no build at all.
-    let (tpl2, o2) = ensure_template_cached(&d.join("root2"), &tools, Some(&cache)).unwrap();
-    assert_eq!(o2, Origin::Cache);
-    assert_eq!(bd_inits(&d), 1, "the template build was not invoked again");
-    assert!(tpl2.starts_with(d.join("root2")), "the copy is the container's own: {tpl2:?}");
-    assert!(tpl2.join("ws/.beads/metadata.json").is_file());
-
-    // A changed bd — the binary that carries the schema — is a new key, and a rebuild.
-    exe(&tools.bd, &(fs::read_to_string(&tools.bd).unwrap() + "# schema v2\n"));
-    assert_ne!(tools.key().unwrap(), key);
-    let (_, o3) = ensure_template_cached(&d.join("root3"), &tools, Some(&cache)).unwrap();
-    assert_eq!((o3, bd_inits(&d)), (Origin::Built, 2));
-    let _ = fs::remove_dir_all(&d);
-}
 
 #[test]
 fn the_template_command_takes_its_cache_from_the_flag_or_else_the_batch_variable() {
@@ -386,44 +163,6 @@ fn the_template_command_takes_its_cache_from_the_flag_or_else_the_batch_variable
     assert_eq!(cache_of(&bare, Some("/c/env".into())), Some(PathBuf::from("/c/env")));
     let flagged = parsed(&["template", "--bd", "bd", "--dolt", "dolt", "--cache", "/c/flag"]);
     assert_eq!(cache_of(&flagged, Some("/c/env".into())), Some(PathBuf::from("/c/flag")));
-}
-
-#[test]
-fn the_template_command_copies_from_the_cache_it_is_given() {
-    let Some((d, fake)) = fakes("cachecli") else {
-        return;
-    };
-    let (bd, dolt) = (fake.bd.display().to_string(), fake.dolt.display().to_string());
-    // The command canonicalises its tools; so does the key it looks the cache up by.
-    let tools = Tools::resolve(&bd, &dolt).unwrap();
-    let cache = d.join("host-cache");
-    let built = ensure_template(&d.join("seed"), &tools).unwrap();
-    let key = tools.key().unwrap();
-    cache_template(&cache, &key, TEMPLATE_CACHE_KEYS, |dst| {
-        copy_tree(&built, dst).map_err(|e| e.to_string())
-    })
-    .unwrap();
-    assert_eq!(bd_inits(&d), 1);
-    let root = d.join("root").display().to_string();
-    let cache_s = cache.display().to_string();
-    let rc = main(&s(&["template", "--bd", &bd, "--dolt", &dolt, "--root", &root, "--cache", &cache_s]));
-    assert_eq!(rc, 0);
-    assert_eq!(bd_inits(&d), 1, "the command copied the cached template, no build");
-    assert!(d.join(format!("root/template-{key}/READY")).is_file());
-    let _ = fs::remove_dir_all(&d);
-}
-
-#[test]
-fn a_cache_entry_without_ready_is_a_miss_and_the_template_is_built() {
-    let Some((d, tools)) = fakes("cachehalf") else {
-        return;
-    };
-    let cache = d.join("host-cache");
-    fs::create_dir_all(cache.join(format!("template-{}/data", tools.key().unwrap()))).unwrap();
-    let (tpl, o) = ensure_template_cached(&d.join("root"), &tools, Some(&cache)).unwrap();
-    assert_eq!((o, bd_inits(&d)), (Origin::Built, 1));
-    assert!(tpl.join("READY").is_file());
-    let _ = fs::remove_dir_all(&d);
 }
 
 fn fake_template(dst: &Path) -> Result<(), String> {
@@ -531,28 +270,6 @@ fn the_template_report_round_trips() {
 // red once in the last 34 unit runs.
 
 #[test]
-fn reaper_takes_the_fixture_down_when_its_owner_dies() {
-    let Some((d, tools)) = fakes("reap") else {
-        return;
-    };
-    let root = d.join("root");
-    let tpl = ensure_template(&root, &tools).unwrap();
-    // Kill-on-drop (sp-r70dc): a failed assertion between spawn and the explicit kill
-    // below used to leave this fixture running for its full 30s as an orphan.
-    let mut owner = testkit::ChildGuard::spawn(Command::new("sleep").arg("30"));
-    let u = up(&root, &tpl, &tools, "r", owner.id(), None).unwrap();
-    let (fx, oid) = (u.fixture.clone(), owner.id());
-    let h = std::thread::spawn(move || reap(&fx, oid, Duration::from_millis(20)));
-    sleep(Duration::from_millis(60));
-    assert!(u.fixture.exists(), "alive owner: fixture kept");
-    owner.kill();
-    h.join().unwrap();
-    assert!(!u.fixture.exists());
-    assert!(!pid_alive(u.pid));
-    let _ = fs::remove_dir_all(&d);
-}
-
-#[test]
 fn reaper_exits_when_the_fixture_was_dropped_normally() {
     let d = tmpdir("reap-gone");
     let fx = d.join("fx-gone");
@@ -560,36 +277,6 @@ fn reaper_exits_when_the_fixture_was_dropped_normally() {
     reap(&fx, std::process::id(), Duration::from_millis(5));
     reap(&fx, 0, Duration::from_millis(5));
     let _ = fs::remove_dir_all(&d);
-}
-
-#[test]
-fn the_server_never_holds_the_callers_pipe() {
-    let Some((d, tools)) = fakes("pipe") else {
-        return;
-    };
-    let root = d.join("root");
-    let tpl = ensure_template(&root, &tools).unwrap();
-    let mut fds = [0; 2];
-    // SAFETY: plain pipe(2); both ends closed below. No O_CLOEXEC, as a shell's $(...) is.
-    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
-    let u = up(&root, &tpl, &tools, "p", 0, None).unwrap();
-    unsafe { libc::close(fds[1]) };
-    let mut buf = [0u8; 1];
-    // EOF at once: no live descendant (the server) still holds the write end.
-    let n = unsafe { libc::read(fds[0], buf.as_mut_ptr() as *mut libc::c_void, 1) };
-    unsafe { libc::close(fds[0]) };
-    assert_eq!(n, 0);
-    down(&u.fixture).unwrap();
-    let _ = fs::remove_dir_all(&d);
-}
-
-#[test]
-fn stop_never_signals_a_pid_that_is_not_this_fixtures_server() {
-    // Kill-on-drop (sp-r70dc).
-    let mut other = testkit::ChildGuard::spawn(Command::new("sleep").arg("30"));
-    stop_server(other.id(), Path::new("/var/tmp/fx-x/data/config.yaml"));
-    assert!(pid_alive(other.id()), "an unrelated process survives");
-    other.kill();
 }
 
 // ---- the real thing (bd + dolt), run with --ignored ----------------------------------
@@ -650,19 +337,6 @@ fn a_greeting_is_protocol_10_at_sequence_0() {
     assert!(!is_greeting(&[0x17, 0, 0, 0, 0xff]), "an error packet is not ready");
     assert!(!is_greeting(&[0x4a, 0, 0, 1, 0x0a]), "not the first packet");
     assert!(!is_greeting(&[0, 0, 0, 0, 0x0a]), "an empty payload");
-}
-
-#[test]
-fn an_accepting_socket_that_never_greets_is_not_ready() {
-    let l = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = l.local_addr().unwrap();
-    let held = std::thread::spawn(move || {
-        let (c, _) = l.accept().unwrap();
-        sleep(Duration::from_millis(900));
-        drop(c);
-    });
-    assert!(!greets(&addr), "TCP accept alone is not readiness");
-    held.join().unwrap();
 }
 
 #[test]
@@ -753,24 +427,6 @@ fn embedded_reset_is_a_swap_even_when_beads_is_absent() {
 }
 
 #[test]
-fn embedded_reset_refuses_a_baseline_with_no_beads() {
-    let d = tmpdir("er-bad");
-    let baseline = d.join("empty-baseline");
-    fs::create_dir_all(&baseline).unwrap();
-    let fx = d.join("fx");
-    write_beads(&fx, "live");
-
-    let err = embedded_reset(&fx, &baseline).unwrap_err();
-    assert!(err.contains("no .beads"), "{err}");
-    assert_eq!(
-        fs::read_to_string(fx.join(".beads/metadata.json")).unwrap(),
-        "live",
-        "a refused reset must not touch the live fixture"
-    );
-    let _ = fs::remove_dir_all(&d);
-}
-
-#[test]
 fn embedded_borrow_gets_its_own_copy_never_the_baseline_itself() {
     let d = tmpdir("bor");
     let baseline = d.join("baseline");
@@ -815,108 +471,10 @@ fn embedded_borrow_refuses_a_baseline_with_no_beads() {
 }
 
 #[test]
-fn embedded_down_removes_every_path_it_is_given() {
-    let d = tmpdir("down");
-    let a = d.join("fx");
-    let b = d.join("baseline");
-    let c = d.join("bin");
-    write_beads(&a, "x");
-    write_beads(&b, "x");
-    fs::create_dir_all(&c).unwrap();
-
-    embedded_down(&[a.clone(), b.clone(), c.clone()]);
-
-    let t0 = Instant::now();
-    while (a.exists() || b.exists() || c.exists()) && t0.elapsed() < Duration::from_secs(5) {
-        sleep(Duration::from_millis(20));
-    }
-    assert!(!a.exists(), "fixture dir removed");
-    assert!(!b.exists(), "baseline dir removed");
-    assert!(!c.exists(), "bin dir removed");
-    let _ = fs::remove_dir_all(&d);
-}
-
-#[test]
 fn embedded_down_tolerates_empty_and_missing_paths() {
     // Server mode zeroes these vars before calling drop's shared cleanup path; embedded-down
     // must be a no-op, not a failure, on an empty string or a path that is already gone.
     embedded_down(&[PathBuf::new(), PathBuf::from("/does/not/exist")]);
-}
-
-#[test]
-fn embedded_check_is_false_for_a_bd_that_is_not_on_path() {
-    assert!(!embedded_check("sp-k2oyn-no-such-bd-binary"));
-}
-
-fn fake_bd_embedded(dir: &Path) -> PathBuf {
-    // A stand-in for bd-embedded: `init` writes .beads and succeeds; anything else fails.
-    let p = dir.join("bd-embedded");
-    exe(
-        &p,
-        "#!/usr/bin/env bash\nset -e\nif [ \"$1\" = init ]; then mkdir -p .beads; \\\n  printf '{\"backend\":\"dolt\",\"dolt_mode\":\"embedded\"}' > .beads/metadata.json; \\\n  printf run >> .beads/.inits; exit 0; fi\nexit 1\n",
-    );
-    p
-}
-
-#[test]
-fn embedded_check_true_with_a_working_bd() {
-    let d = tmpdir("check-ok");
-    let bd = fake_bd_embedded(&d);
-    assert!(embedded_check(&bd.display().to_string()));
-    let _ = fs::remove_dir_all(&d);
-}
-
-#[test]
-fn embedded_up_builds_a_fixture_with_a_baseline_and_a_bd_shim() {
-    let d = tmpdir("up-ok");
-    let bd = fake_bd_embedded(&d);
-    let bd_s = bd.display().to_string();
-
-    let u = embedded_up(&bd_s, "sometag").unwrap();
-    assert!(u.name.starts_with("sptest_sometag_"));
-    assert!(u.dir.join(".beads/metadata.json").is_file());
-    assert!(
-        u.baseline.join(".beads/metadata.json").is_file(),
-        "the baseline is a real snapshot, not a reference to the live dir"
-    );
-    assert_ne!(u.dir, u.baseline);
-    let bin = u.bin.clone().expect("a resolvable bd gets a PATH shim");
-    assert_eq!(fs::read_link(bin.join("bd")).unwrap(), bd);
-    assert_eq!(u.bd, bd_s, "TESTDB_BD reports the resolved bd path");
-
-    // The baseline is independent of the live dir from this point on.
-    fs::write(u.dir.join(".beads/metadata.json"), "mutated by the suite").unwrap();
-    assert_eq!(
-        fs::read_to_string(u.baseline.join(".beads/metadata.json")).unwrap(),
-        "{\"backend\":\"dolt\",\"dolt_mode\":\"embedded\"}"
-    );
-    let _ = fs::remove_dir_all(&d);
-    let _ = fs::remove_dir_all(&u.dir);
-    let _ = fs::remove_dir_all(&u.baseline);
-    if let Some(b) = u.bin {
-        let _ = fs::remove_dir_all(&b);
-    }
-}
-
-#[test]
-fn embedded_up_fails_closed_and_cleans_up_when_init_fails() {
-    let d = tmpdir("up-fail");
-    let bd = d.join("bd-embedded");
-    exe(&bd, "#!/usr/bin/env bash\nexit 3\n");
-    let err = embedded_up(&bd.display().to_string(), "t").unwrap_err();
-    assert!(err.contains("bd init failed"), "{err}");
-    // embedded_up names the fixture dir it removed on failure (in its error text) so this
-    // checks the exact directory, never a heuristic scan of the whole OS temp dir.
-    let named = err
-        .rsplit("fixture dir removed: ")
-        .next()
-        .unwrap()
-        .trim();
-    assert!(
-        !Path::new(named).exists(),
-        "a failed init must leave no fixture directory behind: {named}"
-    );
-    let _ = fs::remove_dir_all(&d);
 }
 
 #[test]

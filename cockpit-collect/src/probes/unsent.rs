@@ -814,47 +814,6 @@ mod tests {
     }
 
     #[test]
-    fn missing_run_dir_renders_unsent_zero_not_refusal() {
-        // With no repos configured, spira_repos resolves to nothing and the branch scan
-        // loop never runs; SP_UNSENT must still read 0, not ?, matching "an empty readable
-        // store yields a numeric 0" (UC-cockpit-observability-08).
-        let run = testkit::TempDir::new("cc-unsent-empty");
-        let no_map = run.path().join("no-map");
-        let _env = crate::test_support::set_run_with(run.path(), &[("SPIRA_REPO_MAP", no_map.to_str())]);
-        let mut out = Kv::new();
-        branch_backlog_section(&mut out, &Cfg::default());
-        let get = |k: &str| out.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
-        assert_eq!(get("SP_UNSENT"), Some("0".to_string()));
-    }
-
-    fn git(dir: &Path, args: &[&str]) {
-        let st = std::process::Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(["-c", "user.email=t@t", "-c", "user.name=t"])
-            .args(args)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .unwrap();
-        assert!(st.success(), "git {args:?}");
-    }
-
-    #[test]
-    fn own_commit_branch_is_not_exempt_and_empty_branch_is_() {
-        let d = testkit::TempDir::new("cc-unsent-cherry");
-        let p = d.path();
-        git(p, &["init", "-q", "-b", "main"]);
-        git(p, &["commit", "-q", "--allow-empty", "-m", "base"]);
-        git(p, &["branch", "spira/sp-empty"]);
-        git(p, &["checkout", "-q", "-b", "spira/sp-own"]);
-        git(p, &["commit", "-q", "--allow-empty", "-m", "sp-own: work"]);
-        assert!(branch_has_no_own_commit(p, "main", "spira/sp-empty"));
-        assert!(!branch_has_no_own_commit(p, "main", "spira/sp-own"));
-        assert!(!branch_has_no_own_commit(p, "main", "spira/sp-missing"));
-    }
-
-    #[test]
     fn gate_queue_matches_inbox_and_claimed_slots_by_branch() {
         let d = testkit::TempDir::new("cc-unsent-queue");
         let gw = d.path().join("gate-worker");

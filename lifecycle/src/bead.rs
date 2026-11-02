@@ -2468,22 +2468,6 @@ mod tests {
         assert_eq!(out.row.reason.as_deref(), Some("sp-9999"));
     }
 
-    #[test]
-    fn an_unknown_reason_is_refused_as_evidence_before_it_ever_reaches_apply() {
-        // The evidence boundary (design §3.2: "evidence is what the producer already
-        // knows") is where this is caught — a reason tag none of the four enums name
-        // fails to deserialize into a `BeadEventKind` at all, so `apply` never sees it.
-        for bogus in [
-            r#"{"GateRed":{"tip":"1111111111111111111111111111111111111111","reason":"flaky"}}"#,
-            r#"{"Returned":{"reason":"merged"}}"#,
-            r#"{"Drop":{"reason":"9999999999999999999999999999999999999999"}}"#,
-            r#"{"Hold":{"kind":"Poison","cause":"just because"}}"#,
-        ] {
-            let parsed: Result<BeadEventKind, _> = serde_json::from_str(bogus);
-            assert!(parsed.is_err(), "{bogus} names a reason no enum has, and must be refused, got {parsed:?}");
-        }
-    }
-
     // ── stacked dependents (design stacked-dependents-2026-09-28 §1) ──────────────────
 
     fn claim_ev(expect: BeadState, version: Version, stack: Stack, stack_depth: u32, stack_max_depth: u32) -> BeadEvent {

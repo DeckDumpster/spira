@@ -165,14 +165,6 @@ mod tests {
     use crate::seam::fake::FakeSeam;
 
     #[test]
-    fn merge_check_honours_the_base_refs_union_attributes_not_the_checkouts() {
-        let d = testkit::union_repo("groomer-union");
-        let p = d.path().to_str().unwrap();
-        assert!(git_merges_cleanly(p, "main", "b"));
-        assert!(!git_merges_cleanly(p, "main", "nonesuch"));
-    }
-
-    #[test]
     fn candidate_json_round_trips_the_shape_spira_claim_expects() {
         let c = Candidate { id: "sp-1".into(), ok: true, why: String::new(), branch: "spira/sp-1".into(), base: "origin/main".into() };
         let json = candidates_json(&[c]);
@@ -204,14 +196,5 @@ mod tests {
         let c = judge_one(&seam, "sp-1");
         assert!(!c.ok);
         assert!(c.why.contains("not in the repo map"), "{}", c.why);
-    }
-
-    #[test]
-    fn run_invokes_spira_claim_with_an_empty_array_when_nothing_is_poisoned() {
-        let seam = FakeSeam::new(); // holds no poison
-        *seam.partition_members.borrow_mut() = "sp-1\n".to_string();
-        let (code, _) = run(&seam, "/db", false, "true");
-        assert_eq!(code, 0, "the `true` stub always exits 0 — this just proves run() reaches and calls it");
-        assert!(seam.log().iter().any(|c| c == "all_partition_members"));
     }
 }

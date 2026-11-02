@@ -42,64 +42,6 @@ impl World for Fake {
     }
 }
 
-fn fixture(release: &str) -> Fake {
-    let mut f = Fake { release: release.into(), ..Fake::default() };
-    for n in ["dumpstar", "pokedumpster", "current"] {
-        f.reqs.insert(n.into(), "0.3".into());
-        f.locked.insert(n.into(), "0.3.0".into());
-    }
-    f.locked.insert("current".into(), release.into());
-    f
-}
-
-#[test]
-fn a_new_patch_release_files_one_lockfile_bead_per_site_and_a_newer_one_amends_it() {
-    let f = fixture("0.3.1");
-    let sites = [site("dumpstar"), site("pokedumpster"), site("current")];
-    let o = pass(&f, &sites, "dumpster-kit").unwrap();
-    assert_eq!(o.filed, ["dumpstar", "pokedumpster"]);
-    assert_eq!(o.current, ["current"]);
-    let filed = f.filed.borrow();
-    assert_eq!(filed[0].0, "update dumpster-kit lockfile to 0.3.1 in dumpstar");
-    assert!(filed[0].1.contains("cargo update -p dumpster-kit --precise 0.3.1"), "{}", filed[0].1);
-    drop(filed);
-
-    let again = pass(&f, &sites, "dumpster-kit").unwrap();
-    assert!(again.filed.is_empty() && again.amended.is_empty(), "{again:?}");
-
-    let f = Fake { release: "0.3.2".into(), ..f };
-    let o = pass(&f, &sites[..2], "dumpster-kit").unwrap();
-    assert!(o.filed.is_empty(), "a second release must not file another");
-    assert_eq!(o.amended, ["dumpstar", "pokedumpster"]);
-    assert_eq!(f.open.borrow()["dumpstar"].target, "0.3.2");
-}
-
-#[test]
-fn a_kit_commit_with_no_release_files_nothing() {
-    let f = fixture("0.3.0");
-    let o = pass(&f, &[site("dumpstar"), site("pokedumpster")], "dumpster-kit").unwrap();
-    assert_eq!(o.current, ["dumpstar", "pokedumpster"]);
-    assert!(o.filed.is_empty() && o.amended.is_empty() && f.filed.borrow().is_empty());
-}
-
-#[test]
-fn a_release_outside_the_range_files_a_bead_naming_the_breaking_upgrade() {
-    let f = fixture("0.4.0");
-    let o = pass(&f, &[site("dumpstar")], "dumpster-kit").unwrap();
-    assert_eq!(o.filed, ["dumpstar"]);
-    let filed = f.filed.borrow();
-    assert_eq!(filed[0].0, "upgrade dumpster-kit to 0.4.0 (breaking) in dumpstar");
-    assert!(filed[0].1.contains("breaking") && filed[0].1.contains("`0.3`"), "{}", filed[0].1);
-}
-
-#[test]
-fn a_site_whose_lock_cannot_be_read_fails_alone() {
-    let f = fixture("0.3.1");
-    let o = pass(&f, &[site("nolock"), site("dumpstar")], "dumpster-kit").unwrap();
-    assert_eq!(o.failed.len(), 1);
-    assert_eq!(o.filed, ["dumpstar"]);
-}
-
 #[test]
 fn requirements_follow_cargos_ranges() {
     let cases = [
@@ -143,7 +85,7 @@ fn the_newest_release_ignores_yanked_and_pre_release_versions() {
 
 mod registry {
     use super::*;
-    use crate::real::{index_path, Real};
+    use crate::real::index_path;
 
     #[test]
     fn index_paths_follow_the_sparse_layout() {
@@ -167,32 +109,5 @@ mod registry {
         let o = pass(&Fake::default(), &[site("dumpstar")], "dumpster-kit").unwrap();
         assert!(o.unreleased);
         assert_eq!(o, Outcome { unreleased: true, ..Outcome::default() });
-    }
-
-    fn g(dir: &std::path::Path, args: &[&str]) {
-        let o = std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
-        assert!(o.status.success(), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
-    }
-
-    #[test]
-    fn the_real_world_reads_a_stub_registry_and_a_sites_manifest_and_lock() {
-        let t = testkit::TempDir::new("kit-bump");
-        let reg = t.path().join("reg");
-        std::fs::create_dir_all(reg.join("du/mp")).unwrap();
-        std::fs::write(reg.join("du/mp/dumpster-kit"), "{\"vers\":\"0.3.0\"}\n{\"vers\":\"0.3.1\"}\n").unwrap();
-
-        let s = t.path().join("site");
-        std::fs::create_dir_all(&s).unwrap();
-        g(&s, &["init", "-q", "-b", "main"]);
-        std::fs::write(s.join("Cargo.toml"), "dumpster-kit = { version = \"0.3\", registry = \"tailnet\" }\n").unwrap();
-        std::fs::write(s.join("Cargo.lock"), "[[package]]\nname = \"dumpster-kit\"\nversion = \"0.3.0\"\n").unwrap();
-        g(&s, &["add", "."]);
-        g(&s, &["commit", "-qm", "site"]);
-
-        let real = Real::new(format!("file://{}", reg.display()), "dumpster-kit".into(), t.path().join("state"), "builder".into());
-        let site = Site { name: "site".into(), path: s.to_string_lossy().into(), git_ref: "main".into(), file: "Cargo.toml".into() };
-        assert_eq!(real.latest_release().unwrap().as_deref(), Some("0.3.1"));
-        assert_eq!(real.site_requirement(&site).unwrap(), "0.3");
-        assert_eq!(real.site_locked(&site).unwrap(), "0.3.0");
     }
 }

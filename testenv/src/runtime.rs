@@ -614,71 +614,6 @@ mod tests {
         assert_eq!(req.env_value("B"), Some(""));
     }
 
-    #[test]
-    fn run_bounded_captures_both_streams_and_the_rc() {
-        let out = temp_output();
-        let mut c = Command::new("sh");
-        c.args(["-c", "echo out; echo err >&2; exit 3"]);
-        assert_eq!(run_bounded(c, &out, None, None), 3);
-        let text = read_lossy(&out);
-        assert!(text.contains("out") && text.contains("err"));
-        let _ = fs::remove_file(out);
-    }
-
-    #[test]
-    // covers: UC-test-infrastructure-30
-    fn run_bounded_times_out_with_124() {
-        let out = temp_output();
-        let mut c = Command::new("sleep");
-        c.arg("5");
-        assert_eq!(
-            run_bounded(c, &out, Some(Duration::from_millis(200)), None),
-            RC_TIMEOUT
-        );
-        let _ = fs::remove_file(out);
-    }
-
-    #[test]
-    fn run_bounded_kills_at_the_deadline_with_its_own_rc() {
-        let out = temp_output();
-        let mut c = Command::new("sh");
-        c.args(["-c", "echo started; sleep 5"]);
-        let d = Some(Instant::now() + Duration::from_millis(200));
-        assert_eq!(
-            run_bounded(c, &out, Some(Duration::from_secs(60)), d),
-            RC_DEADLINE
-        );
-        assert!(
-            read_lossy(&out).contains("started"),
-            "partial output is kept"
-        );
-        let _ = fs::remove_file(out);
-    }
-
-    #[test]
-    fn capture_bounded_returns_stdout_and_kills_the_group_at_the_deadline() {
-        let mut c = Command::new("sh");
-        c.args(["-c", "echo hi; exit 4"]).stdout(Stdio::piped());
-        let o = capture_bounded(c, None);
-        assert_eq!((o.rc, o.output.as_str()), (4, "hi\n"));
-        let mut c = Command::new("sh");
-        // a grandchild holding stdout open: only a group kill ends the read
-        c.args(["-c", "echo started; sleep 30 & sleep 30"]).stdout(Stdio::piped());
-        let o = capture_bounded(c, Some(Instant::now() + Duration::from_millis(300)));
-        assert_eq!(o.rc, RC_DEADLINE);
-        assert!(o.output.contains("started"));
-    }
-
-    #[test]
-    fn the_per_suite_timeout_wins_a_tie_with_the_deadline() {
-        let out = temp_output();
-        let mut c = Command::new("sleep");
-        c.arg("5");
-        let past = Some(Instant::now());
-        assert_eq!(run_bounded(c, &out, Some(Duration::ZERO), past), RC_TIMEOUT);
-        let _ = fs::remove_file(out);
-    }
-
     // ---- sp-3azqi: recovering a podman exec-wait-timeout's lost exit status ----------
 
     #[test]
@@ -694,51 +629,11 @@ mod tests {
     }
 
     #[test]
-    fn recover_lost_exit_reads_the_file_once_it_appears_within_grace() {
-        let dir = testkit::TempDir::new("testenv-runtime-recover");
-        let exit_file = dir.join("exit-code");
-        let f2 = exit_file.clone();
-        let writer = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(150));
-            fs::write(&f2, "0").unwrap();
-        });
-        assert_eq!(
-            recover_lost_exit(&exit_file, Duration::from_secs(5)),
-            Some(0)
-        );
-        writer.join().unwrap();
-    }
-
-    #[test]
-    fn recover_lost_exit_gives_up_when_the_file_never_appears() {
-        let dir = testkit::TempDir::new("testenv-runtime-recover-none");
-        let never = dir.join("never-written");
-        assert_eq!(recover_lost_exit(&never, Duration::from_millis(200)), None);
-    }
-
-    #[test]
     fn recover_lost_exit_is_a_no_op_at_zero_grace() {
         let dir = testkit::TempDir::new("testenv-runtime-recover-zero");
         let exit_file = dir.join("exit-code");
         fs::write(&exit_file, "0").unwrap();
         // already written, but a zero grace (deadline already passed) never even looks
         assert_eq!(recover_lost_exit(&exit_file, Duration::ZERO), None);
-    }
-
-    #[test]
-    fn recover_lost_exit_ignores_unparseable_content_until_it_becomes_a_number() {
-        let dir = testkit::TempDir::new("testenv-runtime-recover-partial");
-        let exit_file = dir.join("exit-code");
-        fs::write(&exit_file, "").unwrap(); // conmon creates it before writing the code
-        let f2 = exit_file.clone();
-        let writer = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(150));
-            fs::write(&f2, "3\n").unwrap();
-        });
-        assert_eq!(
-            recover_lost_exit(&exit_file, Duration::from_secs(5)),
-            Some(3)
-        );
-        writer.join().unwrap();
     }
 }

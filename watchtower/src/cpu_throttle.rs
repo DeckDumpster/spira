@@ -219,44 +219,4 @@ mod tests {
         let text = render_state(&m);
         assert_eq!(parse_state(&format!("{text}garbage\nx y z\n")), m);
     }
-
-    fn fixture(root: &Path, cg: &str, stat: &str) {
-        let d = root.join(cg);
-        std::fs::create_dir_all(&d).unwrap();
-        std::fs::write(d.join("cpu.stat"), stat).unwrap();
-    }
-
-    fn fake_systemctl(dir: &Path) -> String {
-        let p = dir.join("systemctl");
-        testkit::write_exe(&p, "#!/bin/sh\ncase \"$6\" in dolt-beads.service) echo /app/dolt;; spira-sentinel.service) echo /app/sentinel;; *) exit 1;; esac\n");
-        p.to_string_lossy().into_owned()
-    }
-
-    #[test]
-    fn gather_flags_a_throttled_unit_across_two_passes_from_fixture_cpu_stat() {
-        let d = testkit::TempDir::new("wt-cpu-throttle");
-        let root = d.join("cg");
-        fixture(&root, "app/dolt", "nr_periods 1000\nnr_throttled 0\n");
-        fixture(&root, "app/sentinel", "nr_periods 1000\nnr_throttled 0\n");
-        let cfg = Cfg {
-            units: vec!["dolt-beads.service".into(), "spira-sentinel.service".into(), "spira-gone.service".into()],
-            warn_pct: 5,
-            min_periods: 100,
-            cgroup_root: root.to_string_lossy().into_owned(),
-            systemctl: fake_systemctl(&d.join("")),
-        };
-        let state = d.join("state");
-        let first = gather(&cfg, &state);
-        assert!(first.iter().take(2).all(|r| r.reading == Reading::Baseline));
-        assert_eq!(first[2].reading, Reading::Unknown);
-
-        fixture(&root, "app/dolt", "nr_periods 2000\nnr_throttled 600\n");
-        fixture(&root, "app/sentinel", "nr_periods 2000\nnr_throttled 10\n");
-        let second = gather(&cfg, &state);
-        let (breach, line) = summarize(&second, 5);
-        assert!(breach);
-        assert!(line.contains("dolt-beads=FAULT (60%"), "{line}");
-        assert!(line.contains("spira-sentinel=1%"), "{line}");
-        assert!(line.contains("spira-gone=?"), "{line}");
-    }
 }

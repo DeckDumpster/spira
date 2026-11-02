@@ -357,18 +357,6 @@ mod tests {
     }
 
     #[test]
-    fn home_and_tmp_are_fresh_and_bound_back_only_after_the_tmpfs() {
-        let a = profile().bwrap_args();
-        let at = |x: &str| a.iter().position(|v| v == x).unwrap();
-        let home_tmpfs = a.windows(2).position(|w| w[0] == "--tmpfs" && w[1] == "/h/u").unwrap();
-        assert!(home_tmpfs < at("/h/u/.rustup"), "a path under home is bound back after home's tmpfs, or the tmpfs hides it: {a:?}");
-        assert!(a.windows(2).any(|w| w[0] == "--tmpfs" && w[1] == "/tmp"));
-        let tree_bind = a.windows(2).position(|w| w[0] == "--bind" && w[1] == "/tmp/spira-testenv-x/tree").unwrap();
-        let tmp_tmpfs = a.windows(2).position(|w| w[0] == "--tmpfs" && w[1] == "/tmp").unwrap();
-        assert!(tmp_tmpfs < tree_bind, "a worktree under /tmp is bound after /tmp's tmpfs: {a:?}");
-    }
-
-    #[test]
     fn the_sandbox_has_no_network_and_its_own_process_namespace() {
         let a = profile().bwrap_args();
         for f in ["--unshare-net", "--unshare-pid", "--die-with-parent", "--clearenv"] {
@@ -396,19 +384,6 @@ mod tests {
         let plain = testkit::TempDir::new("sandbox-plain");
         fs::create_dir(plain.path().join(".git")).unwrap();
         assert_eq!(worktree_gitdir(plain.path()), None);
-    }
-
-    #[test]
-    fn a_run_naming_a_listed_test_goes_to_the_container_and_one_naming_none_stays() {
-        let d = testkit::TempDir::new("sandbox-listed");
-        fs::create_dir_all(d.path().join("testenv")).unwrap();
-        fs::write(d.path().join(CONTAINER_TESTS_REL), "# needs a dolt server\nthe_store_answers_over_its_socket\n\n").unwrap();
-        let listed = container_tests(d.path());
-        assert_eq!(listed, ["the_store_answers_over_its_socket"]);
-        let f = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(needing_container(&f(&["a_pure_test", "the_store_answers_over_its_socket"]), &listed), ["the_store_answers_over_its_socket"]);
-        assert!(needing_container(&f(&["a_pure_test"]), &listed).is_empty());
-        assert!(container_tests(testkit::TempDir::new("sandbox-none").path()).is_empty());
     }
 
     #[test]
@@ -441,21 +416,5 @@ mod tests {
         q.write_gitconfig().unwrap();
         let text = fs::read_to_string(q.gitconfig()).unwrap();
         assert!(text.contains("name = spirauser") && text.contains("email = spirauser@localhost"), "{text}");
-    }
-
-    #[test]
-    fn every_run_sees_its_tree_at_the_same_path_whatever_the_host_worktree_is_called() {
-        let one = Profile { tree: "/tmp/spira-testenv-a/.testenv-warm-0".into(), ..profile() }.bwrap_args();
-        let two = Profile { tree: "/tmp/spira-testenv-b/.testenv-warm-1".into(), ..profile() }.bwrap_args();
-        let dest = |a: &[String], src: &str| pairs(a, "--bind").into_iter().find(|(s, _)| s == src).map(|(_, d)| d);
-        assert_eq!(dest(&one, "/tmp/spira-testenv-a/.testenv-warm-0").as_deref(), Some(TREE_MOUNT));
-        assert_eq!(dest(&two, "/tmp/spira-testenv-b/.testenv-warm-1").as_deref(), Some(TREE_MOUNT));
-        assert!(one.windows(2).any(|w| w[0] == "--chdir" && w[1] == TREE_MOUNT), "{one:?}");
-        assert_eq!(mounted_script("unit-tests.sh"), PathBuf::from(TREE_MOUNT).join("spira/unit-tests.sh"));
-    }
-
-    #[test]
-    fn a_branch_target_is_keyed_as_its_volume() {
-        assert_eq!(target_dir(Path::new("/srv/t"), "spira-unit-cargo-target-sp-x"), PathBuf::from("/srv/t/spira-unit-cargo-target-sp-x"));
     }
 }

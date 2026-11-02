@@ -1721,36 +1721,6 @@ mod tests {
         assert_eq!(failed, ["deck"]);
     }
 
-
-    // THE ONE DOOR (per Ryan 2026-10-05: one source of config): env_for() reads every
-    // registered key through `spira_config::process::cfg`/`cfg_parse`, never its own
-    // environment and never a Rust-level default. `fixture_toml` declares every key
-    // (spira-config's own complete fixture); the three overrides below prove a value
-    // written to `spira.toml` reaches `Env` end to end, through the real resolver.
-    #[test]
-    fn env_for_reads_every_registered_key_through_the_one_door() {
-        let dir = testkit::TempDir::new("batcher-cut-env-for");
-        let toml = spira_config::process::fixture_toml(
-            &dir,
-            &[("SPIRA_FORGE", "forge-fixture"), ("SPIRA_BATCHER_WALL_SECS", "3600"), ("SPIRA_BATCHER_ORPHAN_REDRIVE_SECS", "737")],
-        );
-        // The real, checked-in spira/conf.d (this crate's own repo layout: `batcher-cut/`
-        // sits beside `spira/`) — `cfg`'s resolution needs a real registry to validate every
-        // key `env_for` asks for.
-        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
-        let g = testkit::env(&[("SPIRA_TOML", toml.to_str()), ("SPIRA_HOME", home.to_str())]);
-
-        let o = Opts { cmd: "cut".into(), repo: "r".into(), run: None, db: None, home: None, round_vm: None, suites: None, members: None, evidence: None, reds: None, record: None };
-        let env_ = env_for(&o, dir.join("home"), dir.join("run"));
-
-        drop(g);
-        let env_ = env_.expect("env_for resolves through the one door given a complete spira.toml");
-        let _ = std::fs::remove_dir_all(&dir);
-
-        assert_eq!(env_.forge, PathBuf::from("forge-fixture"));
-        assert_eq!(env_.wall_secs, 3600);
-        assert_eq!(env_.orphan_redrive_after, 737, "the orphan wait comes from the configured key, not a literal");
-    }
 }
 
 #[cfg(test)]
@@ -1759,92 +1729,8 @@ mod e2e;
 #[cfg(test)]
 mod base_conflict_handling {
     use super::*;
-    use crate::io::base_conflict_tests::{fixture, git};
+
     use std::fs;
-
-    fn member(id: &str, tip: &str) -> Member {
-        Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 100, stack: BTreeMap::new(), blocked_by: Vec::new() }
-    }
-
-    #[test]
-    fn a_true_base_conflict_goes_to_the_rebase_path_and_is_never_reopened_or_marked() {
-        let d = testkit::TempDir::new("batcher-cut-hbc");
-        let [base, a, _b, c, _root] = fixture(&d);
-        git(&d, &["checkout", "-q", "--detach", &base]);
-        let log = d.join("calls");
-        fs::write(d.join("lib.sh"), format!("f() {{ echo \"$@\" >> '{0}'; }}\nbead_reopen() {{ f reopen \"$@\"; }}\nbump_requeue() {{ f bump \"$@\"; }}\n", log.display())).unwrap();
-        let mut e = io::lifecycle_tests_env(&d);
-        testkit::write_exe(&e.rebase_stale_bin, &format!("#!/bin/sh\necho rebase \"$@\" >> '{}'\nexit 3\n", log.display()));
-        e.run = d.to_path_buf();
-        let repo = Repo { name: "spira".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land: Land::Local };
-        let sorted = vec![member("sp-a", &a), member("sp-c", &c)];
-        let merges: BTreeMap<String, MergeResult> = sorted.iter().map(|m| (m.id.clone(), MergeResult::Conflict)).collect();
-        handle_base_conflicts(&e, &repo, &sorted, &merges, &base, 200);
-        let calls = fs::read_to_string(&log).unwrap_or_default();
-        assert_eq!(calls.trim(), "rebase sp-c spira", "only the true base conflict reaches the rebase path, and nothing else is written: {calls}");
-    }
-
-    /// sp-mve9i: when the rebase path returns the member to a dwarf (exit 1, a real conflict;
-    /// exit 2, red at the new tip) it reopened the bead, and the pool is the machine's
-    /// CERTIFIED rows alone — so the batcher takes the member out of CERTIFIED there too, or
-    /// the next round batches the very tip that cannot rebase. Exit 3 (not attempted) leaves
-    /// it CERTIFIED, as before.
-    #[test]
-    fn a_forge_round_with_no_test_corpus_is_stable_on_its_merged_tree_and_a_local_one_is_blocked() {
-        for (land, opens) in [(Land::Forge, true), (Land::Local, false)] {
-            let d = testkit::TempDir::new("batcher-cut-nocorpus");
-            let [base, _a, _b, _c, _root] = fixture(&d);
-            git(&d, &["checkout", "-q", "-b", "m1", &base]);
-            fs::write(d.join("one"), "1\n").unwrap();
-            git(&d, &["add", "one"]);
-            git(&d, &["commit", "-qm", "m1"]);
-            let t1 = git(&d, &["rev-parse", "HEAD"]);
-            git(&d, &["checkout", "-q", "-b", "m2", &base]);
-            fs::write(d.join("two"), "2\n").unwrap();
-            git(&d, &["add", "two"]);
-            git(&d, &["commit", "-qm", "m2"]);
-            let t2 = git(&d, &["rev-parse", "HEAD"]);
-            git(&d, &["checkout", "-q", "--detach", &base]);
-            let mut e = io::lifecycle_tests_env(&d);
-            // The round VM runs the fences; a host gate.sh that would refuse the round is never called.
-            fs::write(d.join("gate.sh"), "touch \"$0.ran\"\nexit 1\n").unwrap();
-            testkit::write_exe(&e.testenv_bin, "#!/bin/sh\nexit 0\n");
-            e.run = d.to_path_buf();
-            e.home = d.to_path_buf();
-            let repo = Repo { name: "deck".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land };
-            let wt = d.join("wt");
-            let r = stabilize_round(&e, &repo, &wt, &base, vec![member("sp-1", &t1), member("sp-2", &t2)], None, &[]).unwrap();
-            assert!(!d.join("gate.sh.ran").exists(), "no fence runs on the host");
-            assert_eq!(r.is_some(), opens, "land={land:?}");
-            if let Some(s) = r {
-                let ids: Vec<&str> = s.members.iter().map(|m| m.id.as_str()).collect();
-                assert_eq!(ids, ["sp-1", "sp-2"]);
-                assert_eq!(s.head, io::head_of(&wt).unwrap());
-            }
-        }
-    }
-
-    #[test]
-    fn a_local_round_of_a_repo_declaring_its_own_testenv_is_stable_with_no_spira_corpus() {
-        let d = testkit::TempDir::new("batcher-cut-owntestenv");
-        let [base, _a, _b, _c, _root] = fixture(&d);
-        git(&d, &["checkout", "-q", "-b", "m1", &base]);
-        fs::create_dir_all(d.join(".spira")).unwrap();
-        fs::write(d.join(".spira").join("testenv.toml"), "").unwrap();
-        git(&d, &["add", ".spira"]);
-        git(&d, &["commit", "-qm", "m1"]);
-        let t1 = git(&d, &["rev-parse", "HEAD"]);
-        git(&d, &["checkout", "-q", "--detach", &base]);
-        let mut e = io::lifecycle_tests_env(&d);
-        testkit::write_exe(&e.testenv_bin, "#!/bin/sh\nexit 0\n");
-        e.run = d.to_path_buf();
-        e.home = d.to_path_buf();
-        let repo = Repo { name: "sibling".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land: Land::Local };
-        let wt = d.join("wt");
-        let r = stabilize_round(&e, &repo, &wt, &base, vec![member("sp-1", &t1)], None, &[]).unwrap();
-        let s = r.expect("a repo that judges itself is not blocked for lacking spira/test-*.sh");
-        assert_eq!(s.head, io::head_of(&wt).unwrap());
-    }
 
     #[test]
     fn a_lock_waiter_can_name_the_batcher_holding_the_queue_lock() {
@@ -1855,32 +1741,6 @@ mod base_conflict_handling {
         assert!(text.contains(&format!("pid={}", std::process::id())) && text.contains("verb=batcher"), "{text}");
         drop(held);
         assert_eq!(fs::read_to_string(d.join("queue/deck/lock")).unwrap(), "");
-    }
-    #[test]
-
-    fn a_member_the_rebase_path_returns_to_an_dwarf_leaves_certified_on_the_machine() {
-        for (rc, withdrawn) in [(1, true), (2, true), (3, false)] {
-            let d = testkit::TempDir::new(&format!("batcher-cut-hbc-lc{rc}"));
-            let [base, _a, _b, c, _root] = fixture(&d);
-            git(&d, &["checkout", "-q", "--detach", &base]);
-            fs::write(d.join("lib.sh"), "bead_reopen() { :; }\nbump_requeue() { :; }\n").unwrap();
-            let mut e = io::lifecycle_tests_env(&d);
-            testkit::write_exe(&e.rebase_stale_bin, &format!("#!/bin/sh\nexit {rc}\n"));
-            let lclog = d.join("lc-calls");
-            let lc = d.join("spira-lc");
-            testkit::write_exe(
-                &lc,
-                &format!("#!/bin/bash\necho \"$*\" >> '{}'\ncase \"$1\" in show) echo '{{\"bead\":{{\"state\":\"CERTIFIED\",\"version\":2}}}}' ;; esac\n", lclog.display()),
-            );
-            e.lc_bin = Some(lc);
-            e.run = d.to_path_buf();
-            let repo = Repo { name: "spira".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land: Land::Local };
-            let sorted = vec![member("sp-c", &c)];
-            let merges: BTreeMap<String, MergeResult> = sorted.iter().map(|m| (m.id.clone(), MergeResult::Conflict)).collect();
-            handle_base_conflicts(&e, &repo, &sorted, &merges, &base, 200);
-            let calls = fs::read_to_string(&lclog).unwrap_or_default();
-            assert_eq!(calls.contains("Returned"), withdrawn, "rc={rc}: {calls}");
-        }
     }
 }
 

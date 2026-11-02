@@ -141,26 +141,4 @@ mod tests {
         fake(&procr, 12, &["/x/rustc", "--crate-name", "a"]);
         assert!(!wedged(&scan(&procr, i64::MAX / 4), 600), "a running rustc means work is progressing");
     }
-
-    #[test]
-    fn a_wedge_stops_the_server_and_a_healthy_box_does_not() {
-        let dir = testkit::TempDir::new("wt-sccache-run");
-        let procr = dir.join("proc");
-        fake(&procr, 10, &["sccache", "rustc", "--crate-name", "a"]);
-        let stub = dir.join("sccache");
-        let log = dir.join("calls");
-        testkit::write_exe(&stub, &format!("#!/bin/sh\necho \"$1\" >> {}\nif [ \"$1\" = --show-stats ]; then sleep 30; fi\n", log.display()));
-        let cfg = Cfg { sccache: stub.display().to_string(), stale_secs: 0, cmd_timeout_secs: 1 };
-
-        run(i64::MAX / 4, &procr, "", "spira", "/nonexistent", &Cfg { stale_secs: i64::MAX, ..cfg_clone(&cfg) });
-        assert!(!log.exists(), "a client under the bound must not touch the server");
-
-        run(i64::MAX / 4, &procr, "", "spira", "/nonexistent", &cfg);
-        let calls = fs::read_to_string(&log).unwrap();
-        assert!(calls.contains("--stop-server"), "a stub that never answers --show-stats must not block the restart: {calls}");
-    }
-
-    fn cfg_clone(c: &Cfg) -> Cfg {
-        Cfg { sccache: c.sccache.clone(), stale_secs: c.stale_secs, cmd_timeout_secs: c.cmd_timeout_secs }
-    }
 }

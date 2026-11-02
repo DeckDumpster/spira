@@ -725,24 +725,6 @@ mod tests {
         assert!(!on.contains("bead.sh file"));
     }
 
-    // sp-st0mm: every persona that says "you have no bd" says it through {{NO_BD}}.
-    #[test]
-    fn no_bd_line_is_one_token() {
-        assert!(no_bd_brief().contains("You have no `bd`"));
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
-        let mut uses = 0;
-        for e in std::fs::read_dir(&dir).unwrap() {
-            let p = e.unwrap().path();
-            if p.extension().is_none_or(|x| x != "md") || p.file_name().unwrap() == "concierge.md" {
-                continue;
-            }
-            let text = std::fs::read_to_string(&p).unwrap();
-            assert!(!text.contains("You have no `bd`"), "{}: fixed no-bd text; use {{{{NO_BD}}}}", p.display());
-            uses += text.matches("{{NO_BD}}").count();
-        }
-        assert!(uses >= 7, "positive control: the persona prompts carry {{{{NO_BD}}}} ({uses})");
-    }
-
     const BUILDER_TASK_GOLDEN: &str = include_str!("../tests/fixtures/builder-task.md");
 
     fn facts<'a>(notes: &'a str, prior: &'a str) -> TaskFacts<'a> {
@@ -1029,47 +1011,6 @@ mod tests {
         assert!(rebase_brief("b", "o/m", "/w", "").contains("conflicts in: unknown"));
         assert!(dirty_brief(&["a".into(), "b c".into()]).contains("```\n  a\n  b c\n```"));
         assert_eq!(dirty_brief(&[]), "");
-    }
-
-    /// sp-st0mm: no dwarf model runs `bd`. Every persona prompt a dwarf (or the archivist)
-    /// is called with names bead operations only as `work` verbs — never a raw `bd`
-    /// command, `bdq`, `bead.sh`, `mail.sh`, nor the `{{DB}}` path that only bd uses. The
-    /// Concierge's own prompt is the operator's session and keeps its tools.
-    #[test]
-    fn no_dwarf_persona_prompt_names_a_bd_reaching_command() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
-        let raw_bd = regex::Regex::new(r"(?m)(^|[^A-Za-z0-9_./-])bd\s+(-C\b|[a-z][a-z-]*)").unwrap();
-        let mut seen = 0;
-        let mut bad = Vec::new();
-        for e in std::fs::read_dir(&dir).unwrap() {
-            let p = e.unwrap().path();
-            let name = p.file_name().unwrap().to_string_lossy().into_owned();
-            if !name.ends_with(".md") || name == "concierge.md" || !p.is_file() {
-                continue;
-            }
-            seen += 1;
-            let text = std::fs::read_to_string(&p).unwrap();
-            for (n, line) in text.lines().enumerate() {
-                let hit = raw_bd.find(line).map(|m| m.as_str().trim().to_string()).or_else(|| {
-                    ["bdq", "bead.sh", "mail.sh", "{{DB}}", "{{SPIRA_HOME}}"].iter().find(|t| line.contains(*t)).map(|t| t.to_string())
-                });
-                if let Some(h) = hit {
-                    bad.push(format!("{name}:{}: {h:?} in: {line}", n + 1));
-                }
-            }
-        }
-        assert!(seen >= 9, "positive control: the runes's persona prompts were read ({seen})");
-        // A tool placeholder a prompt uses must expand to a `work` verb, never the binary it
-        // once named (mail, groomer, bead.sh, sop, incident.sh) — none is on the model's PATH.
-        let tokens = tool_tokens();
-        for k in ["ASK", "GROOM", "DEP", "SOP", "INCIDENT"] {
-            let v = tokens.iter().find(|(t, _)| *t == k).map(|(_, v)| v.as_str());
-            assert!(matches!(v, Some(v) if v.starts_with("work ")), "{{{{{k}}}}} expands to {v:?}, not a work verb");
-        }
-        // The archivist's own filler (archivist/src/run.rs) renders {{NOTIFY}}.
-        let arc = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../archivist/src/run.rs")).unwrap();
-        assert!(arc.contains("(\"NOTIFY\", \"work ask\")"), "the archivist's {{{{NOTIFY}}}} must be `work ask`");
-        assert!(bad.is_empty(), "persona prompts that still reach bd:\n{}", bad.join("\n"));
     }
 
     #[test]

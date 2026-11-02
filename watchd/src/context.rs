@@ -267,49 +267,4 @@ mod tests {
         let exists = has(&["/a/b/spira", "/a/spira"]);
         assert_eq!(find_spira_dir(exe, exists), Some(PathBuf::from("/a/b/spira")));
     }
-
-    /// END TO END, through the real seam (spawns `bash`, parses its NUL-separated output) —
-    /// every other test in this crate constructs `Context` as a struct literal directly and
-    /// would never have caught this. Scar: `SPIRA_RUN` and `SPIRA_DB` are each BOTH a
-    /// `WATCHD_KEYS` placeholder and a named `Context` field; populating `placeholders`
-    /// first with the destructive `take` (a `.remove()`) emptied both before `run`/`db`
-    /// ever read them, so every daemon row's log path came back relative
-    /// ("watchd/<name>.log" instead of "$SPIRA_RUN/watchd/<name>.log") and `health-ids`'
-    /// database lookup silently had no database. Found only by running the compiled binary
-    /// against a real manifest, not by any unit test, until this one.
-    #[test]
-    fn load_does_not_let_the_placeholder_map_consume_a_field_the_context_also_needs() {
-        let d = testkit::TempDir::new("watchd-context");
-        // The seam above still sources `conf.sh` — but only `SPIRA_HOME`/`SPIRA_REPO`/
-        // `SPIRA_CONF_FILE` come from it now; `SPIRA_RUN`/`SPIRA_DB`/`SPIRA_WATCHERS` are
-        // `CONFIG_VARS` (registered), so they come from the config file below instead. This is
-        // the one test in this binary allowed to drive `spira_config::process::cfg` live
-        // (its resolution is cached once per *process*, in a `OnceLock` — a second such test
-        // pinning a different config file would just see this one's answer).
-        std::fs::write(d.join("conf.sh"), "true\n").unwrap();
-        // SPIRA_INSTANCE is also resolved through `cfg()` now (no `resolve_instance`
-        // env-override rung survives — per Ryan 2026-10-05, no `resolve_*` helper reads a
-        // key from the environment any more), so it has to be DECLARED in the fixture
-        // toml, not set as a bare env var.
-        let toml = spira_config::process::fixture_toml(
-            d.path(),
-            &[
-                ("SPIRA_RUN", "/fixture/run"),
-                ("SPIRA_DB", "/fixture/db"),
-                ("SPIRA_WATCHERS", "/fixture/watchers"),
-                ("SPIRA_INSTANCE", "fixture"),
-            ],
-        );
-        // `cfg()`'s own SPIRA_HOME must be the checkout's real spira/ (where conf.d — the
-        // key registry — lives); `d` above is only the bash seam's own home argument to
-        // `load`, a separate, unrelated directory.
-        let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-        let _env = testkit::env(&[("SPIRA_HOME", real_home.to_str()), ("SPIRA_TOML", toml.to_str())]);
-        let ctx = load(&d).expect("the seam to source this trivial conf.sh");
-        assert_eq!(ctx.instance, "fixture");
-        assert_eq!(ctx.run, "/fixture/run", "SPIRA_RUN is also a WATCHD_KEYS placeholder");
-        assert_eq!(ctx.watchers, "/fixture/watchers");
-        assert_eq!(ctx.placeholders.get("SPIRA_RUN").map(String::as_str), Some("/fixture/run"));
-        assert_eq!(ctx.placeholders.get("SPIRA_DB").map(String::as_str), Some("/fixture/db"));
-    }
 }

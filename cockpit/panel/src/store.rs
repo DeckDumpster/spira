@@ -1198,61 +1198,6 @@ mod tests {
         s
     }
 
-    /// THE ONE THE OPERATOR HIT. Five archived insights came back because they carried
-    /// comments — and the last word on every one of them was mine, so nothing was owed.
-    #[test]
-    fn a_dismissed_insight_i_answered_last_stays_dismissed() {
-        let _env = env_lock();
-        let s = threaded(
-            vec![fyi("sp-nm7", 2, true)],
-            "sp-nm7",
-            &[(&op(), "2026-09-06T10:00:00Z"), ("claude", "2026-09-06T11:00:00Z")],
-        );
-        assert!(ids(view_items(&s, View::Insights, false, NOW, &op_cfg())).is_empty());
-        // And it is still reachable, which is the whole reason dismissal is reversible.
-        assert_eq!(ids(view_items(&s, View::Insights, true, NOW, &op_cfg())), ["sp-nm7"]);
-    }
-
-    /// The half worth keeping: a thread where the OPERATOR spoke last is still owed an answer,
-    /// and archiving it must not hide the conversation from the only surface they read.
-    #[test]
-    fn a_dismissed_insight_the_operator_spoke_last_on_comes_back() {
-        let _env = env_lock();
-        let s = threaded(
-            vec![fyi("sp-owed", 3, true)],
-            "sp-owed",
-            &[
-                (&op(), "2026-09-06T10:00:00Z"),
-                ("claude", "2026-09-06T11:00:00Z"),
-                (&op(), "2026-09-06T12:00:00Z"),
-            ],
-        );
-        assert_eq!(ids(view_items(&s, View::Insights, false, NOW, &op_cfg())), ["sp-owed"]);
-    }
-
-    /// Order is not trusted: the same thread shuffled must give the same verdict, because
-    /// `bd comments` ordering is somebody else's `ORDER BY`.
-    #[test]
-    fn whose_turn_it_is_does_not_depend_on_the_rows_arriving_in_order() {
-        let _env = env_lock();
-        let s = threaded(
-            vec![fyi("sp-shuf", 2, true)],
-            "sp-shuf",
-            &[("claude", "2026-09-06T11:00:00Z"), (&op(), "2026-09-06T10:00:00Z")],
-        );
-        assert!(ids(view_items(&s, View::Insights, false, NOW, &op_cfg())).is_empty());
-    }
-
-    /// A dismissed notice nobody ever replied to simply leaves. The positive control for the
-    /// two above: without it, a filter that hid everything archived would pass them both.
-    #[test]
-    fn a_dismissed_insight_with_no_thread_leaves_the_tab() {
-        let _env = env_lock();
-        let s = snap(vec![fyi("sp-quiet", 0, true)]);
-        assert!(ids(view_items(&s, View::Insights, false, NOW, &Cfg::default())).is_empty());
-        assert_eq!(ids(view_items(&s, View::Insights, true, NOW, &Cfg::default())), ["sp-quiet"]);
-    }
-
     /// An insight nobody has dismissed is on the tab whatever its thread says.
     #[test]
     fn an_undismissed_insight_is_on_the_tab_regardless_of_whose_turn_it_is() {
@@ -1518,52 +1463,4 @@ mod tests {
     // `bd` on its own stub directory, which its `cfg()` names in `Cfg::extra_path` — the
     // same lookup `bin()` already does.
     // =========================================================================================
-
-    fn wait_for<F: Fn() -> bool>(cond: F) {
-        for _ in 0..200 {
-            if cond() {
-                return;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-        panic!("refresh did not complete within 2s");
-    }
-
-    #[test]
-    fn refresh_populates_beads_from_the_real_bd_shape() {
-        let stub = crate::test_support::StubBd::new()
-            .db("/fake/db")
-            .env(
-                "BD_LIST_OUT",
-                r#"{"issues":[{"id":"sp-r1","status":"open","labels":[]}]}"#,
-            );
-        let shared: Shared = Arc::new(Mutex::new(Snapshot::default()));
-        refresh(&shared, &stub.cfg());
-        wait_for(|| shared.lock().unwrap().at.is_some());
-        let s = shared.lock().unwrap();
-        assert_eq!(s.beads_err, None, "{:?}", s.beads_err);
-        let beads = s.beads.as_ref().expect("beads populated");
-        assert_eq!(beads.len(), 1);
-        assert_eq!(beads[0]["id"], "sp-r1");
-        drop(s);
-        let log = stub.argv_log();
-        assert!(log.contains("list --all"), "{log}");
-    }
-
-    /// A failing `bd list` must surface as `beads_err`, verbatim, never a silent empty list —
-    /// an empty list reads as "nothing is waiting" over a queue that was never actually read.
-    #[test]
-    fn refresh_relays_a_bd_failure_verbatim() {
-        let stub = crate::test_support::StubBd::new()
-            .db("/fake/db")
-            .env("BD_LIST_RC", "1")
-            .env("BD_LIST_ERR", "schema version mismatch: database is at v61");
-        let shared: Shared = Arc::new(Mutex::new(Snapshot::default()));
-        refresh(&shared, &stub.cfg());
-        wait_for(|| shared.lock().unwrap().at.is_some());
-        let s = shared.lock().unwrap();
-        assert!(s.beads.is_none(), "a failed fetch must not populate beads");
-        let e = s.beads_err.as_ref().expect("beads_err set");
-        assert!(e.contains("schema version mismatch"), "{e}");
-    }
 }

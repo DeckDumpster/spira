@@ -64,33 +64,3 @@ pub fn sink() -> MetricsSink {
 pub fn push_eviction(sink: &MetricsSink, files: u64, bytes: u64) {
     sink.push(&[Point::Count { name: "spira_sccache_dav_evicted_files", value: files }, Point::Count { name: "spira_sccache_dav_evicted_bytes", value: bytes }], &[("component", COMPONENT)]);
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn gets_split_into_hits_and_misses_and_flush_pushes_count_and_duration() {
-        let t = Tally::default();
-        t.record("GET", 200, Duration::from_millis(5));
-        let (addr, h) = spira_otel::metrics::run::fixture_sink();
-        t.flush(&MetricsSink::new(Some(&addr), "spira-sccache-dav", Duration::from_secs(2)));
-        let body = h.join().unwrap();
-        for want in ["spira_component_invocations", "spira_component_duration_seconds", COMPONENT, "get", "hit"] {
-            assert!(body.contains(want), "{want} missing from the push");
-        }
-        assert_eq!(outcome("GET", 404), "miss");
-        assert_eq!(outcome("PUT", 201), "ok");
-        assert_eq!(outcome("PUT", 500), "error");
-        assert_eq!(outcome("GET", 401), "denied");
-        assert_eq!(operation("PATCH"), "other");
-    }
-
-    #[test]
-    fn a_flush_drains_so_the_next_push_never_repeats_a_request() {
-        let t = Tally::default();
-        t.record("PUT", 201, Duration::from_millis(1));
-        t.flush(&MetricsSink::new(None, "s", Duration::from_millis(10)));
-        assert!(t.0.lock().unwrap().is_empty());
-    }
-}

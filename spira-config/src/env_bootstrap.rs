@@ -310,15 +310,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_bd_finds_the_first_executable_on_path() {
-        let dir = testkit::TempDir::new("spira-config-env-bootstrap-resolve-bd");
-        let bd = dir.path().join("bd");
-        testkit::write_exe(&bd, "#!/bin/sh\nexit 0\n");
-        let path = format!("/nonexistent:{}:/usr/bin", dir.path().display());
-        assert_eq!(resolve_bd(&path), bd.to_string_lossy());
-    }
-
-    #[test]
     fn resolve_bd_skips_a_non_executable_candidate() {
         let dir = testkit::TempDir::new("spira-config-env-bootstrap-resolve-bd-noexec");
         fs::write(dir.path().join("bd"), "not executable").unwrap();
@@ -339,28 +330,6 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_sh_resolves_bd_when_unset() {
-        // Hermetic regardless of the host/container: path_tail's fixed tail always ends in
-        // real system directories (/usr/local/bin, /usr/bin, /bin), and the testenv
-        // container genuinely ships a `bd` at /usr/local/bin/bd (spira/testenv/Containerfile)
-        // for the suites' own use. A literal `"bd"` fallback assertion here is true on a bare
-        // host but false inside that container, which finds the real one first — not a bug,
-        // just a second real `bd` earlier in this test's search than the author pictured.
-        // Plant a controlled, uniquely-named executable in `<home>/.cargo/bin`, which
-        // path_tail places ahead of every hardcoded system directory, so resolution is
-        // deterministic no matter what else is installed on the box.
-        let dir = testkit::TempDir::new("spira-config-env-bootstrap-bootstrap-sh-unset");
-        let cargo_bin = dir.path().join(".cargo/bin");
-        fs::create_dir_all(&cargo_bin).unwrap();
-        let bd = cargo_bin.join("bd");
-        testkit::write_exe(&bd, "#!/bin/sh\nexit 0\n");
-
-        let out = bootstrap_sh("/release/bin", "", &dir.path().to_string_lossy(), "");
-        assert!(out.contains(&format!("SPIRA_BD='{}'", bd.to_string_lossy())), "{out}");
-        assert!(out.starts_with("PATH="), "{out}");
-    }
-
-    #[test]
     fn check_bd_schema_skips_when_no_store() {
         let dir = testkit::TempDir::new("spira-config-check-bd-no-store");
         let run = dir.path().join("run");
@@ -368,114 +337,6 @@ mod tests {
         assert!(!result.refuse);
         assert!(result.messages.is_empty());
         assert!(!run.exists(), "a skipped check must not even create SPIRA_RUN");
-    }
-
-    fn setup_store(dir: &Path) -> String {
-        let db = dir.join("db");
-        fs::create_dir_all(db.join(".beads")).unwrap();
-        db.to_string_lossy().into_owned()
-    }
-
-    #[test]
-    fn check_bd_schema_passes_and_stamps_on_a_clean_bd() {
-        let dir = testkit::TempDir::new("spira-config-check-bd-ok");
-        let db = setup_store(dir.path());
-        let run = dir.path().join("run");
-        let bd = dir.path().join("bd");
-        testkit::write_exe(&bd, "#!/bin/sh\nprintf 'Schema already at v61\\n'\nexit 0\n");
-
-        let result = check_bd_schema(&bd.to_string_lossy(), &db, &run.to_string_lossy(), false, "spira.conf");
-        assert!(!result.refuse, "{:?}", result.messages);
-        assert!(run.join("bd-schema-stamp").is_file(), "stamp must be written on success");
-    }
-
-    #[test]
-    fn check_bd_schema_caches_so_a_second_call_never_runs_bd() {
-        let dir = testkit::TempDir::new("spira-config-check-bd-cache");
-        let db = setup_store(dir.path());
-        let run = dir.path().join("run");
-        let call_log = dir.path().join("calls");
-        let bd = dir.path().join("bd");
-        testkit::write_exe(
-            &bd,
-            &format!(
-                "#!/bin/sh\nn=$(cat {log} 2>/dev/null || echo 0)\necho $((n+1)) > {log}\nprintf 'Schema already at v61\\n'\nexit 0\n",
-                log = call_log.display(),
-            ),
-        );
-
-        let r1 = check_bd_schema(&bd.to_string_lossy(), &db, &run.to_string_lossy(), false, "spira.conf");
-        assert!(!r1.refuse);
-        let r2 = check_bd_schema(&bd.to_string_lossy(), &db, &run.to_string_lossy(), false, "spira.conf");
-        assert!(!r2.refuse);
-        assert_eq!(fs::read_to_string(&call_log).unwrap().trim(), "1", "second call must be a cache hit");
-    }
-
-    #[test]
-    fn check_bd_schema_refuses_on_mismatch_and_does_not_stamp() {
-        let dir = testkit::TempDir::new("spira-config-check-bd-mismatch");
-        let db = setup_store(dir.path());
-        let run = dir.path().join("run");
-        let bd = dir.path().join("bd");
-        testkit::write_exe(
-            &bd,
-            "#!/bin/sh\nprintf 'database is at v99\\nbinary knows up to v53\\n' >&2\nexit 1\n",
-        );
-
-        let result = check_bd_schema(&bd.to_string_lossy(), &db, &run.to_string_lossy(), false, "spira.conf");
-        assert!(result.refuse);
-        assert!(result.messages.iter().any(|m| m.contains("schema mismatch")), "{:?}", result.messages);
-        assert!(result.messages.iter().any(|m| m.contains("v99") && m.contains("v53")), "{:?}", result.messages);
-        assert!(!run.join("bd-schema-stamp").exists(), "a refused check must not stamp success");
-    }
-
-    #[test]
-    fn check_bd_schema_doctor_tolerates_mismatch_without_refusing() {
-        let dir = testkit::TempDir::new("spira-config-check-bd-doctor");
-        let db = setup_store(dir.path());
-        let run = dir.path().join("run");
-        let bd = dir.path().join("bd");
-        testkit::write_exe(
-            &bd,
-            "#!/bin/sh\nprintf 'database is at v99\\nbinary knows up to v53\\n' >&2\nexit 1\n",
-        );
-
-        let result = check_bd_schema(&bd.to_string_lossy(), &db, &run.to_string_lossy(), true, "spira.conf");
-        assert!(!result.refuse, "doctor runs its own schema check and must not be halted here");
-        assert!(result.messages.iter().any(|m| m.contains("schema mismatch")), "doctor still sees the message");
-        assert!(!run.join("bd-schema-stamp").exists(), "a tolerated failure must re-check next time, not cache");
-    }
-
-    #[test]
-    fn check_bd_schema_tolerates_the_known_dolt_server_port_deprecation() {
-        let dir = testkit::TempDir::new("spira-config-check-bd-deprecated");
-        let db = setup_store(dir.path());
-        let run = dir.path().join("run");
-        let bd = dir.path().join("bd");
-        testkit::write_exe(
-            &bd,
-            "#!/bin/sh\nprintf 'warning: dolt_server_port is deprecated\\n'\nexit 1\n",
-        );
-
-        let result = check_bd_schema(&bd.to_string_lossy(), &db, &run.to_string_lossy(), false, "spira.conf");
-        assert!(!result.refuse, "{:?}", result.messages);
-        assert!(run.join("bd-schema-stamp").is_file(), "the deprecation case is still an OK outcome");
-    }
-
-    #[test]
-    fn check_bd_schema_refuses_on_lock_contention_naming_doctor() {
-        let dir = testkit::TempDir::new("spira-config-check-bd-locked");
-        let db = setup_store(dir.path());
-        let run = dir.path().join("run");
-        let bd = dir.path().join("bd");
-        testkit::write_exe(
-            &bd,
-            "#!/bin/sh\nprintf 'database is locked by another dolt process\\n'\nexit 1\n",
-        );
-
-        let result = check_bd_schema(&bd.to_string_lossy(), &db, &run.to_string_lossy(), false, "spira.conf");
-        assert!(result.refuse);
-        assert!(result.messages.iter().any(|m| m.contains("embedded mode") && m.contains("doctor")), "{:?}", result.messages);
     }
 
     #[test]

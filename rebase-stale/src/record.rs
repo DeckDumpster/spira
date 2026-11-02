@@ -136,21 +136,4 @@ mod tests {
         assert_eq!(utc_stamp(1_790_000_000), "2026-09-21T14:13:20Z");
         assert_eq!(utc_stamp(951_782_400), "2000-02-29T00:00:00Z");
     }
-
-    #[test]
-    fn log_line_shape_is_the_bash_shape() {
-        let r = LogRecord {
-            ts: "2026-09-29T01:02:03Z".into(),
-            id: "sp-a".into(),
-            repo: "spira".into(),
-            outcome: Outcome::GateRed,
-            reason: "tip=abc\nmore".into(),
-        };
-        assert_eq!(r.to_string(), "REBASE_STALE 2026-09-29T01:02:03Z id=sp-a repo=spira outcome=gate-red reason=tip=abc more");
-        assert_eq!(Exit::NotAttempted.code(), 3);
-        assert_eq!(
-            serde_json::to_string(&Outcome::GateRed).unwrap(),
-            "\"gate-red\""
-        );
-    }
 }

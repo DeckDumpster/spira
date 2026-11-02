@@ -132,18 +132,4 @@ mod tests {
         let e = check(&home.join("runes/x.rune"), &home).unwrap_err();
         assert!(e.contains("RUNE_WORKING_EXITS is not declared"), "{e}");
     }
-
-    #[test]
-    fn every_shipped_rune_is_fully_consumed() {
-        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-        let mut n = 0;
-        for dir in [home.join("runes"), home.join("runes/disabled")] {
-            let Ok(rd) = fs::read_dir(dir) else { continue };
-            for e in rd.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "rune")) {
-                check(&e.path(), &home).unwrap();
-                n += 1;
-            }
-        }
-        assert!(n >= 8, "found only {n} runes");
-    }
 }

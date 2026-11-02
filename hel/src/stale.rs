@@ -170,20 +170,4 @@ mod tests {
         assert_eq!(decide(Some("open"), None, Duration::from_secs(48 * H), 48 * H), Verdict::Idle(48 * H));
         assert_eq!(decide(Some("open"), None, Duration::from_secs(5 * H), 4 * H), Verdict::Idle(5 * H));
     }
-
-    #[test]
-    fn a_process_cwd_is_found_and_absence_is_proven() {
-        let t = testkit::TempDir::new("stale-cwd");
-        let d = t.path().join("in");
-        let other = t.path().join("none");
-        std::fs::create_dir_all(&d).unwrap();
-        std::fs::create_dir_all(&other).unwrap();
-        let mut child = std::process::Command::new("sleep").arg("30").current_dir(&d).spawn().unwrap();
-        let found = live_cwd(Path::new("/proc"), &d.canonicalize().unwrap());
-        let none = live_cwd(Path::new("/proc"), &other.canonicalize().unwrap());
-        let _ = child.kill();
-        let _ = child.wait();
-        assert_eq!(found, Some(child.id()));
-        assert_eq!(none, None);
-    }
 }

@@ -16,9 +16,6 @@ test = false
 [dependencies]
 spira-config = { path = "../spira-config" }
 
-[dev-dependencies]
-testkit = { path = "../testkit" }
-
 [profile.release]
 opt-level = "z"
 lto = true

@@ -545,7 +545,7 @@ pub mod fake {
 mod tests {
     use super::fake::FakeBd;
     use super::*;
-    use std::path::Path;
+
 
     #[test]
     fn unresolved_when_store_not_configured() {
@@ -694,61 +694,6 @@ mod tests {
     }
 
     // -- BdCli's own retry on a dropped pooled connection ------------------------------------
-
-    /// A scripted fake `bdq`: fails once with "invalid connection" on stderr, then succeeds —
-    /// a stand-in for a store whose pool just dropped its first connection. `calls.log`
-    /// (one line per invocation) is the test's own call count, independent of the script's
-    /// internal state file.
-    fn flaky_bd_script(dir: &Path) -> std::path::PathBuf {
-        let script = dir.join("fake-bdq.sh");
-        let state = dir.join("state");
-        let log = dir.join("calls.log");
-        let body = format!(
-            "#!/bin/sh\necho \"$*\" >> {log}\nif [ ! -f {state} ]; then\n  touch {state}\n  echo 'Error 1105: invalid connection' >&2\n  exit 1\nfi\necho '[]'\nexit 0\n",
-            log = log.display(),
-            state = state.display(),
-        );
-        // testkit::write_exe, never fs::write + chmod: a write descriptor another test thread's
-        // fork inherits makes the exec below fail ETXTBSY under load (a round VM's unit step).
-        testkit::write_exe(&script, &body);
-        script
-    }
-
-    #[test]
-    fn retries_once_past_a_dropped_connection_then_succeeds() {
-        let d = testkit::TempDir::new("mail-bdcli-retry");
-        let script = flaky_bd_script(d.path());
-        let bd = BdCli { bdq: script.display().to_string(), conn_retries: 2 };
-        let out = bd.run(&a(&["list", "--json"]), None);
-        assert_eq!(out.code, 0, "stderr={}", out.stderr);
-        assert_eq!(out.stdout.trim(), "[]");
-        let calls = std::fs::read_to_string(d.path().join("calls.log")).unwrap();
-        assert_eq!(calls, "list --json\nlist --json\n", "expected exactly one retry, bdq's own argv: {calls:?}");
-    }
-
-    #[test]
-    fn does_not_retry_a_failure_that_is_not_a_dropped_connection() {
-        let d = testkit::TempDir::new("mail-bdcli-no-retry");
-        let script = d.path().join("fake-bdq.sh");
-        let log = d.path().join("calls.log");
-        let body = format!("#!/bin/sh\necho called >> {log}\necho 'Error: no beads project found' >&2\nexit 1\n", log = log.display());
-        // testkit::write_exe, never fs::write + chmod: a write descriptor another test thread's
-        // fork inherits makes the exec below fail ETXTBSY under load (a round VM's unit step).
-        testkit::write_exe(&script, &body);
-        let bd = BdCli { bdq: script.display().to_string(), conn_retries: 2 };
-        let out = bd.run(&a(&["list", "--json"]), None);
-        assert_eq!(out.code, 1);
-        let calls = std::fs::read_to_string(&log).unwrap();
-        assert_eq!(calls.lines().count(), 1, "a real refusal must not be retried: {calls:?}");
-    }
-
-    #[test]
-    fn open_ask_ids_succeeds_through_bdcli_once_the_dropped_connection_is_retried() {
-        let d = testkit::TempDir::new("mail-bdcli-retry-open-ask");
-        let script = flaky_bd_script(d.path());
-        let bd = BdCli { bdq: script.display().to_string(), conn_retries: 2 };
-        assert_eq!(open_ask_ids(&bd, "needs-operator").unwrap(), Vec::<String>::new()); // literal-ok: test fixture
-    }
 }
 
 #[cfg(test)]

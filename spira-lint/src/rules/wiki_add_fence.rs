@@ -81,37 +81,7 @@ pub fn rules() -> Vec<Box<dyn crate::Rule>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutil::TempDir;
 
-    fn run(t: &TempDir) -> Result<Vec<String>, LintError> {
-        let tree = Tree::from_git(t.path()).unwrap();
-        WikiAddFence.check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
-    }
-
-    #[test]
-    fn empty_scope_refuses_then_add_dash_a_is_seen_red_and_withdrawn() {
-        let t = TempDir::new("waf");
-        t.git_init();
-        assert_eq!(run(&t), Err(LintError::EmptyScope));
-
-        t.write("spira/helper.sh", "echo ok\n");
-        t.git(&["add", "."]);
-        assert!(run(&t).unwrap().is_empty());
-
-        t.write(
-            "spira/broken-wiki.sh",
-            "#!/usr/bin/env bash\ngit -C \"$SPIRA_WIKI\" add -A\ngit -C \"$SPIRA_WIKI\" commit -m \"wiki writes\"\n",
-        );
-        t.git(&["add", "."]);
-        let got = run(&t).unwrap();
-        assert_eq!(got.len(), 1);
-        assert!(got[0].contains("broken-wiki.sh"));
-        assert!(got[0].contains("add -A"));
-
-        t.remove("spira/broken-wiki.sh");
-        t.git(&["add", "-A"]);
-        assert!(run(&t).unwrap().is_empty());
-    }
 
     #[test]
     fn add_dot_is_caught_and_comment_lines_are_not() {

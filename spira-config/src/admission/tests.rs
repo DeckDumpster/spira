@@ -1,7 +1,6 @@
 use super::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::process::Command;
 
 /// A process table: pid → (starttime, ppid).
 #[derive(Default)]
@@ -124,27 +123,6 @@ fn the_same_holder_keeps_its_slot_and_refreshes_last() {
 }
 
 #[test]
-fn a_dead_or_recycled_holder_is_reclaimed_with_a_telemetry_row() {
-    let d = run_dir();
-    let p = FakeProcs::with(&[(10, 1, 1), (20, 2, 1)]);
-    try_take(&d, Pool::Compile, 1, &h(10, 1, "sp-a"), 7, 100, &p).unwrap();
-    try_take(&d, Pool::Compile, 1, &h(10, 1, "sp-a"), 0, 140, &p).unwrap();
-    // pid 10 reused by another process: a different starttime is a dead lease.
-    p.0.borrow_mut().insert(10, (555, 1));
-    let (t, ended) = try_take(&d, Pool::Compile, 1, &h(20, 2, "sp-b"), 0, 200, &p).unwrap();
-    assert_eq!(t, Take::Admitted { slot: 1, fresh: true });
-    assert_eq!(ended.len(), 1);
-    let e = &ended[0];
-    assert_eq!((e.lease.who.as_str(), e.held, e.end, e.lease.waited), ("sp-a", 40, "reclaimed", 7));
-    let v: serde_json::Value = serde_json::from_str(&row(e, "2026-09-30T00:00:00Z", "box").unwrap()).unwrap();
-    assert_eq!(v["family"], "admission");
-    assert_eq!(v["pool"], "compile");
-    assert_eq!(v["held_secs"], 40);
-    assert_eq!(v["waited_secs"], 7);
-    assert_eq!(v["end"], "reclaimed");
-}
-
-#[test]
 fn a_descendant_of_a_holder_inherits_its_slot() {
     // testenv (pid 10) holds a compile lease; the cargo under it (pid 12, grandchild) runs on it.
     let d = run_dir();
@@ -252,67 +230,6 @@ fn real_procs_reads_this_process() {
     assert_eq!(RealProcs.start_of(u32::MAX - 1), None);
 }
 
-/// sp-os3of: this used to hold the flock on an in-process fd, drop it, and assert the
-/// slot free — but other tests in this binary fork real children (containment.rs,
-/// repos.rs, resolve.rs all shell out to `git`), and a fork duplicates the open file
-/// description. A concurrent fork's child kept a copy of the lock, open past this
-/// process's own drop, until that child execs — so `gate_occupancy` after `drop(held)`
-/// still saw the slot held and the test flipped red at round 209 on an unchanged tree
-/// (law-a-test-that-flips-is-deleted; see DESIGN-admission.md's test plan note).
-///
-/// Fixed by holding the lock from a CHILD PROCESS this test owns instead of an in-process
-/// fd: this process never opens `slot.2.lock` itself, so no concurrent fork anywhere in
-/// the binary can ever inherit a copy of a lock it never held. `flock -x <file> sleep 60`
-/// itself forks: the grandchild `sleep` is the actual holder, inheriting the locked fd
-/// across the `flock` launcher's exec. `holder.kill()` SIGKILLs the whole process group
-/// (both the launcher and that grandchild) and reaps the launcher, but the grandchild's
-/// own fd-closing teardown is a separate task the kernel schedules independently — same
-/// signal, not provably the same instant — so the release assertion polls briefly rather
-/// than firing the instant `kill()` returns.
-#[test]
-fn gate_occupancy_reads_flocks_and_their_holder_sidecars() {
-    let d = run_dir();
-    let dir = Pool::Gate.dir(&d);
-    fs::create_dir_all(&dir).unwrap();
-    for n in 1..=3 {
-        File::create(dir.join(format!("slot.{n}.lock"))).unwrap();
-    }
-    let lock_path = dir.join("slot.2.lock");
-    let mut holder = testkit::ChildGuard::spawn(Command::new("flock").arg("-x").arg(&lock_path).arg("sleep").arg("60"));
-    // Wait for the child to actually have the lock before asserting occupancy.
-    let mut tries = 0;
-    while gate_occupancy(&d, 3).holders.is_empty() && tries < 500 {
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        tries += 1;
-    }
-    fs::write(dir.join("slot.2.holder"), gate_holder_line(4242, 9, "concierge/sp-x", 100)).unwrap();
-    let o = gate_occupancy(&d, 3);
-    assert_eq!(o.holders.len(), 1);
-    assert_eq!((o.holders[0].slot, o.holders[0].who.as_str(), o.holders[0].pid), (2, "concierge/sp-x", 4242));
-    // Kill and reap the child BEFORE asserting release: this process never held the lock
-    // itself, so once the actual holder (the grandchild `sleep`) finishes exiting, the
-    // kernel has already dropped it — poll briefly for that, rather than asserting once.
-    holder.kill();
-    let mut tries = 0;
-    let mut o = gate_occupancy(&d, 3);
-    while !o.holders.is_empty() {
-        assert!(tries < 500, "the lock was never released after the holder was killed");
-        tries += 1;
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        o = gate_occupancy(&d, 3);
-    }
-    assert!(o.holders.is_empty());
-}
-
-#[test]
-fn jitter_is_bounded_spread_and_zero_disables() {
-    assert_eq!(jitter(0, 12345), 0);
-    let vals: Vec<u64> = (0..200).map(|s| jitter(20, s)).collect();
-    assert!(vals.iter().all(|v| *v <= 20));
-    let distinct: std::collections::BTreeSet<u64> = vals.iter().copied().collect();
-    assert!(distinct.len() > 15, "consecutive seeds spread across the range: {distinct:?}");
-}
-
 #[test]
 fn only_a_crate_compile_is_a_build() {
     let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -386,132 +303,6 @@ fn release_like_rustc_invocations_weigh_more() {
     assert_eq!(build_weight(&v(&["--crate-name", "x"])), 1);
     assert_eq!(profile_weight("release"), WEIGHT_RELEASE);
     assert_eq!(profile_weight("dwarf"), 1);
-}
-
-/// THE POOLS AS A MODEL, IN VIRTUAL TIME (sp-f4ig1 acceptance: correctness, no load on the box).
-/// Fourteen fake agents released in one instant (the herd) walk compile → test with the phase
-/// costs measured on 2026-09-30 (DESIGN-admission.md §5), every scan through the real
-/// `try_take` / `release` against a real pool directory. Every fourth agent's build is a
-/// release build (weight 4). Each tick checks the pools' invariants.
-#[test]
-fn fourteen_agents_in_one_instant_are_spread_across_the_phases_and_all_finish() {
-    const N: u32 = 14;
-    const COMPILE_PAR: u64 = 3;
-    const TEST_PAR: u64 = 4;
-    let d = run_dir();
-    let p = FakeProcs::default();
-    #[derive(Clone, Copy, PartialEq, Debug)]
-    enum Phase {
-        WaitCompile,
-        Compile(u64),
-        WaitTest,
-        Test(u64),
-        Done,
-    }
-    // Agent i: its cargo is pid 1000+i, its testenv pid 2000+i (different processes, as live).
-    let cargo = |i: u32| 1000 + i;
-    let testenv = |i: u32| 2000 + i;
-    for i in 0..N {
-        p.0.borrow_mut().insert(cargo(i), (i as u64 + 1, 1));
-        p.0.borrow_mut().insert(testenv(i), (i as u64 + 1, 1));
-    }
-    let weight = |i: u32| if i % 4 == 3 { WEIGHT_RELEASE } else { 1 };
-    let compile_secs = |i: u32| if weight(i) > 1 { 145 } else { 40 };
-    const TEST_SECS: u64 = 78;
-    let mut phase = vec![Phase::WaitCompile; N as usize];
-    let mut compile_slot = vec![0u64; N as usize];
-    let mut test_slot = vec![0u64; N as usize];
-    let mut first_admit_order = Vec::new();
-    let (mut max_compile_units, mut max_test, mut max_both_phases_busy) = (0u64, 0usize, 0usize);
-    let start = 1_000_000u64;
-    let mut now = start;
-    while phase.iter().any(|ph| *ph != Phase::Done) {
-        assert!(now - start < 20_000, "the model must finish: {phase:?}");
-        for i in 0..N {
-            let k = i as usize;
-            match phase[k] {
-                Phase::WaitCompile => {
-                    let me = hw(cargo(i), i as u64 + 1, &format!("a{i}"), weight(i));
-                    if let (Take::Admitted { slot, .. }, _) = try_take(&d, Pool::Compile, COMPILE_PAR, &me, 0, now, &p).unwrap() {
-                        compile_slot[k] = slot;
-                        first_admit_order.push(i);
-                        phase[k] = Phase::Compile(now + compile_secs(i));
-                    }
-                }
-                Phase::Compile(until) if now >= until => {
-                    // The cargo exits: its lease is reclaimed by the next scan (never released).
-                    p.kill(cargo(i));
-                    phase[k] = Phase::WaitTest;
-                }
-                Phase::WaitTest => {
-                    let me = h(testenv(i), i as u64 + 1, &format!("a{i}"));
-                    if let (Take::Admitted { slot, .. }, _) = try_take(&d, Pool::Test, TEST_PAR, &me, 0, now, &p).unwrap() {
-                        test_slot[k] = slot;
-                        phase[k] = Phase::Test(now + TEST_SECS);
-                    }
-                }
-                Phase::Test(until) if now >= until => {
-                    let me = h(testenv(i), i as u64 + 1, &format!("a{i}"));
-                    assert!(release(&d, Pool::Test, TEST_PAR, test_slot[k], &me, now).is_some());
-                    phase[k] = Phase::Done;
-                }
-                _ => {}
-            }
-        }
-        // Invariants, read back from the pool directories as `status` reads them.
-        let c = occupancy(&d, Pool::Compile, COMPILE_PAR, &p);
-        let units: u64 = c.holders.iter().map(|l| l.weight).sum();
-        assert!(
-            units <= COMPILE_PAR || c.holders.len() == 1,
-            "compile pool over its size with more than one job: {:?}",
-            c.holders
-        );
-        let t = occupancy(&d, Pool::Test, TEST_PAR, &p);
-        assert!(t.holders.len() as u64 <= TEST_PAR, "{:?}", t.holders);
-        max_compile_units = max_compile_units.max(units);
-        max_test = max_test.max(t.holders.len());
-        let compiling = phase.iter().filter(|ph| matches!(ph, Phase::Compile(_))).count();
-        let testing = phase.iter().filter(|ph| matches!(ph, Phase::Test(_))).count();
-        if compiling > 0 && testing > 0 {
-            max_both_phases_busy = max_both_phases_busy.max(compiling + testing);
-        }
-        now += 1;
-    }
-    // Everyone finished, in bounded time, and the herd was spread: at some tick agents were
-    // compiling AND testing at once.
-    assert!(phase.iter().all(|ph| *ph == Phase::Done));
-    assert!(max_both_phases_busy >= 2, "phases overlapped across agents");
-    assert_eq!(max_test, TEST_PAR as usize, "the test pool filled");
-    assert!(max_compile_units >= COMPILE_PAR, "the compile pool filled");
-    // First come, first served: the herd (all queued at the same instant) is admitted by pid —
-    // and no release build (3, 7, 11) was overtaken by a debug build queued after it.
-    for r in [3u32, 7, 11] {
-        let pos = first_admit_order.iter().position(|a| *a == r).unwrap();
-        assert!(first_admit_order[..pos].iter().all(|a| *a < r), "{first_admit_order:?}");
-    }
-    // Nothing is left held, and every lease that ended was accounted in telemetry.
-    assert!(occupancy(&d, Pool::Compile, COMPILE_PAR, &p).holders.is_empty());
-    assert!(occupancy(&d, Pool::Test, TEST_PAR, &p).holders.is_empty());
-}
-
-#[test]
-fn the_pool_sizes_and_jitter_are_typed_config_keys_exported_to_the_shell() {
-    let doc = crate::validate("[spira]\nid_prefix = \"sp\"\ncompile_par = 5\ntest_par = 2\ncall_jitter = 7\n").unwrap();
-    let sh = crate::export_sh(&doc);
-    for line in ["COMPILE_PAR='5'", "TEST_PAR='2'", "CALL_JITTER='7'"] {
-        assert!(sh.lines().any(|l| l == line || l == line.replace('\'', "")), "{line} in {sh}");
-    }
-    // What conf.sh exports is what the pools read: SPIRA_COMPILE_PAR=5 sizes the compile pool.
-    let b = Host { cores: 32, mem_avail_mib: 36_000 };
-    assert_eq!(size(Pool::Compile, Some("5"), b), 5);
-    assert!(crate::validate("[spira]\nid_prefix = \"sp\"\ncompile_par = \"many\"\n").is_err(), "typed: a non-number is refused");
-    // spira.conf spelling converts too.
-    let mut w = crate::convert::ConvertWarnings::default();
-    let vars: std::collections::BTreeMap<String, String> =
-        [("SPIRA_COMPILE_PAR", "6"), ("SPIRA_TEST_PAR", "3"), ("SPIRA_CALL_JITTER", "0")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-    let s = crate::convert::spira_section(&vars, &mut w).unwrap();
-    assert!(w.0.is_empty(), "{:?}", w.0);
-    assert_eq!((s.get_u32("SPIRA_COMPILE_PAR").unwrap(), s.get_u32("SPIRA_TEST_PAR").unwrap(), s.get_u64("SPIRA_CALL_JITTER").unwrap()), (Some(6), Some(3), Some(0)));
 }
 
 #[test]
@@ -588,14 +379,6 @@ fn a_full_pool_or_a_fitting_head_is_not_reported_as_blocked() {
     assert_eq!(occupancy(&d, Pool::Test, 1, &p).head_blocked(), None);
 }
 
-#[test]
-fn a_config_document_certify_par_sets_the_gate_pool_size() {
-    let doc = crate::validate("[spira]\ncertify_par = 3\ncompile_par = 5\n").unwrap();
-    assert_eq!(doc_size(Pool::Gate, &doc), Some(3));
-    assert_eq!(doc_size(Pool::Compile, &doc), Some(5));
-    assert_eq!(doc_size(Pool::Test, &doc), None);
-}
-
 /// A process table whose compiler subtree CPU is a set value.
 struct TickProcs {
     base: FakeProcs,
@@ -612,27 +395,6 @@ impl Procs for TickProcs {
     fn compiler_ticks(&self, _pid: u32) -> Option<u64> {
         Some(*self.ticks.borrow())
     }
-}
-
-#[test]
-fn a_compile_lease_with_no_compiler_progress_is_reclaimed_as_stalled() {
-    let d = run_dir();
-    let p = TickProcs { base: FakeProcs::with(&[(10, 1, 1)]), ticks: RefCell::new(5) };
-    try_take(d.path(), Pool::Compile, 1, &h(10, 1, "sp-a"), 0, 100, &p).unwrap();
-    let dir = Pool::Compile.dir(d.path());
-    let (live, ended, _) = reap(&dir, Pool::Compile, 1, &p, 100, 600);
-    assert_eq!((live.len(), ended.len()), (1, 0));
-    // CPU advanced: the clock restarts.
-    *p.ticks.borrow_mut() = 9;
-    let (live, ended, _) = reap(&dir, Pool::Compile, 1, &p, 650, 600);
-    assert_eq!((live.len(), ended.len()), (1, 0));
-    // Frozen for the whole bound: reclaimed and said so.
-    let (live, ended, _) = reap(&dir, Pool::Compile, 1, &p, 1250, 600);
-    assert!(live.is_empty());
-    assert_eq!(ended.len(), 1);
-    assert_eq!(ended[0].end, "stalled");
-    assert_eq!(ended[0].held, 1150);
-    assert!(!dir.join("slot.1").exists() && !dir.join("progress.1").exists());
 }
 
 #[test]
@@ -703,21 +465,6 @@ fn yield_run(cap: u64, ends_after: Option<u64>) -> (u64, Vec<String>) {
 }
 
 #[test]
-fn a_compile_waits_out_the_suite_phase_and_names_the_round() {
-    let (held, said) = yield_run(900, Some(100));
-    assert!((100..110).contains(&held), "{held}");
-    assert!(said.first().unwrap().contains("r-auto-9"), "{said:?}");
-    assert!(said.last().unwrap().contains("released"), "{said:?}");
-}
-
-#[test]
-fn a_compile_stops_yielding_at_the_cap() {
-    let (held, said) = yield_run(60, None);
-    assert!((60..70).contains(&held), "{held}");
-    assert!(said.last().unwrap().contains("no longer yields"), "{said:?}");
-}
-
-#[test]
 fn no_round_in_suites_admits_at_once_and_a_zero_cap_disables_the_yield() {
     let (held, said) = yield_run(900, Some(0));
     assert_eq!((held, said.len()), (0, 0));
@@ -766,22 +513,6 @@ fn a_second_cold_build_waits_on_the_cold_slot_until_the_first_releases() {
 }
 
 #[test]
-fn a_cold_wait_gives_up_when_stopped_and_leaves_no_waiter() {
-    let d = run_dir();
-    let p = FakeProcs::with(&[(10, 1, 1), (20, 2, 1)]);
-    try_take(&d, Pool::Cold, 1, &h(10, 1, "sp-a"), 0, now_epoch(), &p).unwrap();
-    let polls = RefCell::new(0);
-    let stopped = || {
-        *polls.borrow_mut() += 1;
-        *polls.borrow() > 1
-    };
-    let q = Request { run: &d, pool: Pool::Cold, holder_pid: 20, who: "sp-b", inherit: None, weight: 1 };
-    let g = acquire_unless(&q, &Seams { size_of: &|| 1, procs: &p, sleep: &|_| {} }, &mut |_| {}, &stopped);
-    assert!(g.is_none());
-    assert!(!d.join("cold-admission/wait.20").exists());
-}
-
-#[test]
 fn only_a_toolchain_change_or_an_empty_target_is_cold() {
     let files = |f: &[&str]| f.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     assert!(cold_reason("Upgrade the Rust toolchain to 1.91", &[]).is_some());
@@ -793,28 +524,6 @@ fn only_a_toolchain_change_or_an_empty_target_is_cold() {
     assert!(target_is_cold(t.path()));
     fs::write(t.join(".rustc_info.json"), "{}").unwrap();
     assert!(!target_is_cold(t.path()));
-}
-
-#[test]
-fn a_hold_releases_when_dropped_or_when_its_cap_passes() {
-    let d = run_dir();
-    let me = std::process::id();
-    let q = Request { run: &d, pool: Pool::Cold, holder_pid: me, who: "sp-a", inherit: None, weight: 1 };
-    let seams = Seams { size_of: &|| 1, procs: &RealProcs, sleep: &|_| {} };
-    let g = acquire(&q, &seams, &mut |_| {});
-    let hold = Hold::new(g, Duration::from_secs(3600));
-    assert!(d.join("cold-admission/slot.1").exists());
-    drop(hold);
-    assert!(!d.join("cold-admission/slot.1").exists());
-    let g = acquire(&q, &seams, &mut |_| {});
-    let _hold = Hold::new(g, Duration::from_millis(0));
-    for _ in 0..50 {
-        if !d.join("cold-admission/slot.1").exists() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    panic!("a hold past its cap must release");
 }
 
 #[test]

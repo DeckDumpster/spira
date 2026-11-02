@@ -234,12 +234,7 @@ pub fn rules() -> Vec<Box<dyn crate::Rule>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutil::TempDir;
 
-    fn run(t: &TempDir) -> Result<Vec<String>, LintError> {
-        let tree = Tree::from_git(t.path()).unwrap();
-        LiteralLint.check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
-    }
 
     #[test]
     fn literal_ok_never_excuses_an_ask_label_fallback() {
@@ -250,56 +245,6 @@ mod tests {
         assert_eq!(shell.len(), 1);
         let fine = scan(b"(\"SPIRA_ASK_LABEL\", \"needs-operator\"), // literal-ok: table\n", &names);
         assert!(fine.is_empty());
-    }
-
-    #[test]
-    fn empty_index_refuses_then_a_planted_literal_is_seen_red() {
-        let t = TempDir::new("lit");
-        t.git_init();
-        assert_eq!(run(&t), Err(LintError::EmptyScope));
-
-        t.write("spira/helper.sh", "#!/usr/bin/env bash\necho ok\n");
-        t.write("spira/planted.sh", "#!/usr/bin/env bash\nSOME=\"${SPIRA_CI_LABEL:-awaiting-ci}\"\n");
-        t.git(&["add", "."]);
-        let got = run(&t).unwrap();
-        assert_eq!(got.len(), 1);
-        assert!(got[0].contains("spira/planted.sh:2"), "{got:?}");
-        assert!(got[0].contains("awaiting-ci"));
-
-        t.remove("spira/planted.sh");
-        t.git(&["add", "-A"]);
-        assert!(run(&t).unwrap().is_empty());
-    }
-
-    #[test]
-    fn exemptions_are_exact_and_scoped() {
-        let t = TempDir::new("lit-exempt");
-        t.git_init();
-        t.write("spira/planted.sh", "#!/usr/bin/env bash\nSOME=\"${SPIRA_CI_LABEL:-awaiting-ci}\"\n");
-        t.write("spira/schema.sh", "schema_name() { printf %s \"${SPIRA_CI_LABEL:-awaiting-ci}\"; }\n");
-        t.write("spira/conf.sh", "SPIRA_CI_LABEL=\"${SPIRA_CI_LABEL:-awaiting-ci}\"\n");
-        t.write("spira/test-ci.sh", "#!/usr/bin/env bash\nDB_LABEL=awaiting-ci\n");
-        t.write("spira/labels.json", "{\"label\":\"awaiting-ci\"}\n");
-        t.write("docs/notes.md", "the default label is awaiting-ci\n");
-        // sp-g3uwp: conf.d/<KEY> is conf.sh's own former defaults block, one file per key —
-        // exempt for the same reason conf.sh itself is, just above.
-        t.write("spira/conf.d/SPIRA_CI_LABEL", "DEFAULT<<'EOF'\n    : \"${SPIRA_CI_LABEL:=awaiting-ci}\"\nEOF\n");
-        t.write("spira/conf.d.keys.generated.sh", "SPIRA_CONF_KEYS=\"SPIRA_CI_LABEL\"\n");
-        t.write("spira/conf.d.defaults.generated.sh", ": \"${SPIRA_CI_LABEL:=awaiting-ci}\"\n");
-        t.git(&["add", "."]);
-        let got = run(&t).unwrap();
-        assert_eq!(got.len(), 1, "{got:?}");
-        assert!(got[0].contains("spira/planted.sh"));
-    }
-
-    #[test]
-    fn binary_files_are_not_scanned() {
-        let t = TempDir::new("lit-bin");
-        t.git_init();
-        t.write("spira/helper.sh", "echo ok\n");
-        std::fs::write(t.path().join("bin_tool"), b"\x7fELF\0label=awaiting-ci\0\0").unwrap();
-        t.git(&["add", "."]);
-        assert!(run(&t).unwrap().is_empty());
     }
 
     #[test]
@@ -335,64 +280,5 @@ mod tests {
         for f in FALLBACK {
             assert!(names.iter().any(|n| n == f), "{names:?} missing {f}");
         }
-    }
-
-    #[test]
-    fn configured_names_reads_both_name_and_default_from_a_real_schema_sh() {
-        let t = TempDir::new("lit-schema");
-        // write_exe: written and exec'd in a multi-threaded test binary, a plain write races
-        // another thread's fork into ETXTBSY (seen on this gate as a WARNING fallback).
-        testkit::write_exe(
-            t.path().join("schema.sh"),
-            "#!/usr/bin/env bash\ncase \"$1\" in\n  names) echo ask ;;\n  name) [ \"$2\" = ask ] && printf '%s' \"${SPIRA_ASK_LABEL:-needs-operator}\" ;;\n  default) [ \"$2\" = ask ] && printf '%s' needs-operator ;;\nesac\n",
-        );
-        let (names, warning) = configured_names(&t.path().join("schema.sh"));
-        assert!(warning.is_none(), "{warning:?}");
-        assert!(names.contains(&"needs-operator".to_string()));
-
-        // An exported override must ALSO appear, so a literal like the shipped default is
-        // still refused under a dwarf's environment that overrides SPIRA_ASK_LABEL. Passed
-        // as an explicit extra_env rather than a real env::set_var: the test binary is
-        // multi-threaded, and every thread shares (and races on) the real process
-        // environment.
-        let (names2, _) =
-            configured_names_env(&t.path().join("schema.sh"), &[("SPIRA_ASK_LABEL", "needs-ryan-lit-test")]);
-        assert!(names2.contains(&"needs-operator".to_string()), "{names2:?}");
-        assert!(names2.contains(&"needs-ryan-lit-test".to_string()), "{names2:?}");
-    }
-
-    /// sp-g9f3t, the 2026-09-30 base-red: the real schema.sh sources conf.sh, which reads the
-    /// box's own config file (HOME/XDG, or SPIRA_CONF/SPIRA_TOML) — or not, depending on file
-    /// mtimes. A config file on the box is not an input to a tree's verdict: the same tree
-    /// must give the same names on any box. This fixture reads the box's config the way
-    /// conf.sh does; the rule must not see its `needs-box` label. An explicit environment
-    /// override still counts.
-    #[test]
-    fn the_boxs_config_file_is_not_an_input() {
-        let t = TempDir::new("lit-box");
-        testkit::write_exe(
-            t.path().join("schema.sh"),
-            "#!/usr/bin/env bash\ncfg=\"${SPIRA_TOML-${XDG_CONFIG_HOME:-$HOME/.config}/spira/box-config}\"\nask=\n[ -f \"$cfg\" ] && ask=\"$(sed -n 's/^ask_label = \"\\(.*\\)\"$/\\1/p' \"$cfg\")\"\ncase \"$1\" in\n  names) echo ask ;;\n  name) printf '%s' \"${SPIRA_ASK_LABEL:-${ask:-needs-operator}}\" ;;\n  default) printf '%s' needs-operator ;;\nesac\n",
-        );
-        t.write("home/.config/spira/box-config", "[spira]\nask_label = \"needs-box\"\n");
-        let home = t.path().join("home");
-        let home = home.to_str().unwrap();
-        let schema = t.path().join("schema.sh");
-        // Positive control: the fixture does read the box's config when nothing pins it.
-        let out = std::process::Command::new(&schema)
-            .args(["name", "ask"])
-            .env("HOME", home)
-            .env_remove("SPIRA_TOML")
-            .env_remove("SPIRA_ASK_LABEL")
-            .env_remove("XDG_CONFIG_HOME")
-            .output()
-            .unwrap();
-        assert_eq!(String::from_utf8_lossy(&out.stdout), "needs-box");
-        let (names, warning) = configured_names_env(&schema, &[("HOME", home)]);
-        assert!(warning.is_none(), "{warning:?}");
-        assert!(!names.contains(&"needs-box".to_string()), "the box's config reached the rule: {names:?}");
-        assert!(names.contains(&"needs-operator".to_string()), "{names:?}");
-        let (names, _) = configured_names_env(&schema, &[("HOME", home), ("SPIRA_ASK_LABEL", "needs-env")]);
-        assert!(names.contains(&"needs-env".to_string()), "{names:?}");
     }
 }

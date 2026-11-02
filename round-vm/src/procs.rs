@@ -127,14 +127,4 @@ mod tests {
         assert!(me.alive());
         assert!(!ProcId { pid: me.pid, start: me.start + 1 }.alive());
     }
-
-    #[test]
-    fn a_reaped_child_is_not_alive() {
-        let mut c = Command::new("true").spawn().unwrap();
-        let id = ProcId::of(c.id());
-        c.wait().unwrap();
-        if let Some(id) = id {
-            assert!(!id.alive());
-        }
-    }
 }

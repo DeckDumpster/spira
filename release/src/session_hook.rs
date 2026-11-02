@@ -570,18 +570,4 @@ mod tests {
         assert!(e.contains("not executable"), "{e}");
         assert_eq!(doc, json!({}), "a refusal must change nothing");
     }
-
-    #[test]
-    fn install_registers_for_real_when_both_are_executable() {
-        let tmp = testkit::TempDir::new("session-hook-real");
-        let hook = tmp.path().join("session.sh");
-        let meter = tmp.path().join("ctx-meter.sh");
-        testkit::write_exe(&hook, "#!/bin/sh\nexit 0\n");
-        testkit::write_exe(&meter, "#!/bin/sh\nexit 0\n");
-        let mut doc = json!({});
-        let paths = Paths { settings: tmp.path().join("settings.json"), release: "/r/spira-releases/current".into(), path: "/bin".into(), toml: "/c/one-source.toml".into(), hook, meter };
-        let changed = install(&mut doc, &paths).unwrap();
-        assert!(changed.contains(&"SessionStart".to_string()));
-        assert!(changed.contains(&"statusLine".to_string()));
-    }
 }

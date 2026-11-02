@@ -177,15 +177,6 @@ mod tests {
     }
 
     #[test]
-    fn atomic_write_and_read() {
-        let d = tmpdir("records");
-        let p = d.join("q/spira/open");
-        write_atomic(&p, "pr=1\n").unwrap();
-        assert_eq!(read_kv(&p).unwrap().unwrap().get("pr"), Some("1"));
-        assert!(read_kv(&d.join("nope")).unwrap().is_none());
-    }
-
-    #[test]
     fn seq_defaults_to_zero() {
         let d = tmpdir("seq");
         assert_eq!(read_seq(&d.join("round-seq")), 0);

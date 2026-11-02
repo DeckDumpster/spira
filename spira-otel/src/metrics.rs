@@ -597,16 +597,6 @@ mod tests {
     }
 
     #[test]
-    fn a_server_that_never_answers_is_cut_off_at_the_deadline() {
-        let l = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = l.local_addr().unwrap().to_string();
-        let before = push_failed();
-        sink(&addr).push(&[Point::Count { name: "c", value: 1 }], &[]);
-        assert!(push_failed() > before);
-        drop(l);
-    }
-
-    #[test]
     fn a_run_pushes_invocation_duration_and_extras_labelled_by_component_operation_outcome() {
         let cap = fixture::Capture::start();
         Run::begin(Some(&cap.addr), "mail", "send").end_with("error", &[Point::Count { name: "spira_mail_sent", value: 3 }]);

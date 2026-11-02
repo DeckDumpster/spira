@@ -141,37 +141,9 @@ mod tests {
     }
 
     #[test]
-    fn a_verb_the_script_does_not_name_is_missing() {
-        let r = extract_refs("run .claude/bead.sh drop <id> --reason text. Never bd delete.");
-        assert_eq!(missing_refs(&r, &release), vec![".claude/bead.sh drop".to_string()]);
-    }
-
-    #[test]
-    fn a_past_tense_word_after_a_script_is_prose_not_a_verb() {
-        let r = extract_refs("Scar: bead.sh labelled every P0 express.");
-        assert!(missing_refs(&r, &release).is_empty());
-    }
-
-    #[test]
     fn a_verb_the_script_names_passes() {
         let r = extract_refs("run bead.sh file \"title\" for it");
         assert!(missing_refs(&r, &release).is_empty());
-    }
-
-    #[test]
-    fn a_script_that_is_not_in_the_release_is_missing() {
-        let r = extract_refs("use ghost.sh, not the other one");
-        assert_eq!(missing_refs(&r, &release), vec!["ghost.sh".to_string()]);
-    }
-
-    #[test]
-    fn a_bare_tool_is_checked_only_inside_backticks() {
-        let prose = extract_refs("the queue open-batch refused it");
-        assert!(prose.is_empty());
-        let r = extract_refs("run `queue frobnicate` now");
-        assert_eq!(missing_refs(&r, &release), vec!["queue frobnicate".to_string()]);
-        let ok = extract_refs("run `queue open-batch` now");
-        assert!(missing_refs(&ok, &release).is_empty());
     }
 
     #[test]

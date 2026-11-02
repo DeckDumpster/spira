@@ -343,24 +343,6 @@ mod tests {
         assert_eq!(utc(0), "1970-01-01T00:00:00Z");
         assert_eq!(utc(1_790_653_638), "2026-09-29T03:47:18Z");
     }
-
-    #[test]
-    fn real_runner_captures_feeds_stdin_and_times_out() {
-        let r = RealRunner { base_env: None };
-        let o = r.run(&Spec::new("cat", &[]).stdin("hi"));
-        assert_eq!((o.rc, o.stdout.as_str()), (0, "hi"));
-        let o = r.run(&Spec::new("sh", &["-c", "exit 3"]));
-        assert_eq!(o.rc, 3);
-        let o = r.run(&Spec::new("sleep", &["5"]).timeout(0));
-        assert_eq!(o.rc, 124);
-        let o = r.run(&Spec::new("/nonexistent/x", &[]));
-        assert_eq!(o.rc, 127);
-        let r = RealRunner {
-            base_env: Some(vec![("A".into(), "1".into())]),
-        };
-        let o = r.run(&Spec::new("/usr/bin/env", &[]).env("B", "2"));
-        assert_eq!(o.stdout, "A=1\nB=2\n");
-    }
 }
 
 #[cfg(test)]

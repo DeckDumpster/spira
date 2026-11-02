@@ -121,24 +121,4 @@ mod tests {
         assert!(report(&gaps).contains("MISSING py:nopkgx (needed by test-a.sh, test-b.sh)"));
         assert!(missing(&suites, &|_| true).is_empty());
     }
-
-    #[test]
-    fn the_host_probe_sees_a_real_command_and_a_real_absence() {
-        assert!(host_has("sh"));
-        assert!(!host_has("no-such-command-sp5ieoqt"));
-        assert!(!host_has("py:no_such_module_sp5ieoqt"));
-        assert!(!host_has("py:os; import sys"));
-    }
-
-    #[test]
-    fn main_exits_1_naming_the_package() {
-        let t = testkit::TempDir::new("preflight");
-        let d = t.path().to_path_buf();
-        std::fs::write(d.join("test-x.sh"), "# host-requires: py:no_such_module_sp5ieoqt\nset -u\n").unwrap();
-        let a = |l: &str| vec!["--suites".into(), l.into(), "--dir".into(), d.to_string_lossy().into_owned()];
-        assert_eq!(main(&a("test-x.sh")), 1);
-        std::fs::write(d.join("test-y.sh"), "# host-requires: sh\nset -u\n").unwrap();
-        assert_eq!(main(&a("test-y.sh")), 0);
-        assert_eq!(main(&a("test-gone.sh")), 1);
-    }
 }

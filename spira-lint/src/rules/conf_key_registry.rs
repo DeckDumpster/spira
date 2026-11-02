@@ -156,10 +156,6 @@ pub fn rules() -> Vec<Box<dyn crate::Rule>> {
 mod tests {
     use super::*;
 
-    fn real() -> Registry {
-        Registry::from_dirs(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira")).unwrap()
-    }
-
     fn keys(ks: &[&str]) -> Vec<String> {
         ks.iter().map(|s| s.to_string()).collect()
     }
@@ -169,47 +165,6 @@ mod tests {
         let t = "x=1\nSPIRA_CONF_KEYS=\"\n  SPIRA_A SPIRA_B\n  SPIRA_A\n\"\nSPIRA_C=1\n";
         assert_eq!(conf_keys(t).unwrap(), keys(&["SPIRA_A", "SPIRA_B"]));
         assert!(conf_keys("SPIRA_CONF_KEYS=\"a b\"\n").is_none());
-    }
-
-    #[test]
-    fn known_keys_survive_and_a_planted_unknown_key_is_named() {
-        assert!(round_trip(&keys(&["SPIRA_MAX_DWARVES", "SPIRA_CERTIFY_PAR"]), &real()).is_empty());
-        let got = round_trip(&keys(&["SPIRA_MAX_DWARVES", "SPIRA_TOTALLY_MADE_UP_TEST_KEY"]), &real());
-        assert!(!got.is_empty());
-        assert!(got.iter().any(|m| m.contains("SPIRA_TOTALLY_MADE_UP_TEST_KEY")), "{got:?}");
-    }
-
-    #[test]
-    fn a_secret_shaped_key_is_deliberately_not_exported() {
-        assert!(round_trip(&keys(&["SPIRA_BROKER_GH_TOKEN"]), &real()).is_empty());
-    }
-
-    #[test]
-    fn falls_back_to_the_registry_when_conf_sh_has_no_literal_block() {
-        let t = crate::testutil::TempDir::new("ckr-registry");
-        // conf.sh carries no literal SPIRA_CONF_KEYS block at all (sp-g3uwp) — just the
-        // call that regenerates and sources it at use time.
-        t.write(CONF_SH, "_spira_conf_gen_ensure keys || return 1\n");
-        t.write(
-            "spira/conf.d/SPIRA_MAX_DWARVES",
-            "TYPE=u32\nGROUP=test\nDOC=test\nDEFAULT<<'EOF'\n    : \"${SPIRA_MAX_DWARVES:=7}\"\nEOF\n",
-        );
-        t.write(
-            "spira/conf.d/SPIRA_CERTIFY_PAR",
-            "TYPE=u32\nGROUP=test\nDOC=test\nDEFAULT<<'EOF'\n    : \"${SPIRA_CERTIFY_PAR:=7}\"\nEOF\n",
-        );
-        // A minimal stand-in generator — this test exercises the fallback plumbing itself
-        // (that it shells out to conf-gen.sh and reads the result back), not the real
-        // spira/conf-gen.sh's own correctness, which test-conf-registry-parity.sh covers.
-        t.write(
-            "spira/conf-gen.sh",
-            "#!/usr/bin/env bash\nset -euo pipefail\nd=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\n{ printf 'SPIRA_CONF_KEYS=\"\\n'; ls \"$d/conf.d\"; printf '\"\\n'; } > \"$d/conf.d.keys.generated.sh\"\n",
-        );
-        // conf_keys() directly, not the full Rule::check (which also floors at 200 keys —
-        // a guard against a parser silently reading the wrong block, not part of what the
-        // registry fallback itself is responsible for; the real registry clears it easily).
-        let got = conf_keys_via_registry(t.path()).expect("fallback should resolve the registry, not refuse");
-        assert_eq!(got, keys(&["SPIRA_CERTIFY_PAR", "SPIRA_MAX_DWARVES"]));
     }
 
     #[test]

@@ -89,34 +89,4 @@ mod tests {
         }
         assert!(PROBE.contains("printf '@end\\0'"));
     }
-
-    /// Wave 4.8 retired the `compgen -v SPIRA_` dump: `@vars` now carries only
-    /// `SPIRA_HOME_REPO_RESOLVED`/`SPIRA_TOML_FILE` from the script itself —
-    /// `crate::probe` (main.rs) merges `spira_config::resolve()`'s own answer into
-    /// `Context.vars` afterward, in-process, rather than this script re-deriving it a
-    /// second time by shelling out. See `main.rs`'s own
-    /// `probe_merges_resolved_config_into_vars_without_shelling_a_second_time` for that
-    /// merge's own test.
-    #[test]
-    fn vars_section_no_longer_dumps_the_whole_shell() {
-        let d = testkit::TempDir::new("sentinel-probe");
-        std::fs::write(
-            d.join("lib.sh"),
-            "SPIRA_REPO=/the/repo\nSPIRA_GH=/the/gh-app.sh\nspira_home_repo() { echo spira; }\nspira_runes() { :; }\nrune_partitions() { :; }\nrune_names() { :; }\n",
-        )
-        .unwrap();
-        let o = std::process::Command::new("bash")
-            .args(["-c", PROBE])
-            .env("SENTINEL_LIB", d.join("lib.sh"))
-            .env_remove("SPIRA_REPO")
-            .env_remove("SPIRA_GH")
-            .output()
-            .unwrap();
-        let out = String::from_utf8_lossy(&o.stdout);
-        let vars = out.split("@vars\0").nth(1).unwrap_or("");
-        assert!(vars.starts_with("SPIRA_HOME_REPO_RESOLVED=spira\0SPIRA_TOML_FILE="), "{out:?}");
-        assert!(!vars.contains("SPIRA_REPO=/the/repo\0"), "the bash dump must no longer carry conf vars: {out:?}");
-        assert!(!vars.contains("SPIRA_GH=/the/gh-app.sh\0"), "{out:?}");
-        let _ = std::fs::remove_dir_all(&d);
-    }
 }

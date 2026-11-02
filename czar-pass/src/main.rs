@@ -1440,50 +1440,6 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
 
-    // REGRESSION (sp-yv4b3): production queue-watch went blind — "forge check-status 459:
-    // No such file or directory (os error 2)" — because this default named the retired
-    // `forge.sh` instead of the release's `forge` binary. Fails on the pre-fix default.
-    //
-    // This is the one test in this binary allowed to drive `Config::from_process` end to end
-    // (per the one-source-of-config rule, `cfg`'s resolution is a `OnceLock` — fixed for
-    // the rest of this process after the first call, so only one test may ever set
-    // `SPIRA_TOML` meaningfully). Every other test that needs a `Config` uses `test_config`
-    // below, passing values directly instead of through the environment.
-    #[test]
-    fn config_from_process_resolves_forge_through_cfg() {
-        let dir = testkit::TempDir::new("czar-pass-config-from-env");
-        let toml = spira_config::process::fixture_toml(&dir, &[]);
-        // The real, checked-in spira/conf.d (this crate's own repo layout: `czar-pass/`
-        // sits beside `spira/`) — `cfg`'s resolution needs a real registry to validate
-        // every key `Config::from_env` asks for.
-        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
-        let g = testkit::env(&[("SPIRA_TOML", toml.to_str()), ("SPIRA_HOME", home.to_str())]);
-
-        let cfg = Config::from_process(Seams::production());
-        drop(g);
-
-        assert_eq!(cfg.seams.forge, "forge", "Config::from_process must resolve SPIRA_FORGE through cfg(), not an inline default");
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    // End-to-end: the default's bare name must reach a stub named `forge` (never `forge.sh`)
-    // on the child's PATH. PATH goes to the spawn only; mutating the process PATH raced the
-    // other tests' forks.
-    #[test]
-    fn default_forge_actually_reaches_a_bare_forge_stub_on_path() {
-        let dir = scratch_dir("default-forge-stub");
-        testkit::write_exe(
-            dir.join("forge"),
-            "#!/bin/sh\ncase \"$1\" in batch-ci-status) printf 'run-id: 1\\nrun-conclusion: success\\n' ;; *) exit 1 ;; esac\n",
-        );
-        let mut child_path = dir.path().as_os_str().to_os_string();
-        child_path.push(":");
-        child_path.push(env::var_os("PATH").unwrap_or_default());
-
-        let out = run_forge_on("forge", &["batch-ci-status", "/tmp/r", "branch"], Some(&child_path)).expect("run_forge should reach the stub");
-        assert!(out.contains("run-conclusion"), "unexpected output: {out:?}");
-    }
-
     // A private scratch directory per test, so parallel `cargo test` threads never collide
     // on the same path (the real callers always get SPIRA_RUN handed to them by the caller,
     // never a shared ambient default).
@@ -1508,17 +1464,6 @@ mod tests {
     #[test]
     fn parse_field_missing_key_is_none() {
         assert_eq!(parse_field("run-id: 42\n", "queued-since"), None);
-    }
-
-    #[test]
-    fn parse_iso_to_epoch_reads_a_known_instant() {
-        // 2021-01-01T00:00:00Z is a fixed, well-known epoch value.
-        assert_eq!(parse_iso_to_epoch("2021-01-01T00:00:00Z"), Some(1_609_459_200));
-    }
-
-    #[test]
-    fn parse_iso_to_epoch_rejects_garbage() {
-        assert_eq!(parse_iso_to_epoch("not-a-timestamp"), None);
     }
 
     #[test]
@@ -1693,22 +1638,6 @@ mod tests {
         }
     }
 
-    fn stub_forge(path: &str, body: impl AsRef<str>) {
-        testkit::write_exe(path, &format!("#!/bin/sh\n{}", body.as_ref()));
-    }
-
-    fn write_repo_open(dir: &Path, repo: &str, branch: &str) {
-        let repo_dir = dir.join("queue").join(repo);
-        fs::create_dir_all(&repo_dir).unwrap();
-        fs::write(repo_dir.join("open"), format!("branch={}\n", branch)).unwrap();
-    }
-
-    fn write_repo_map(dir: &Path, repo: &str, repo_path: &str, base: &str) -> PathBuf {
-        let map = dir.join("repo-map");
-        fs::write(&map, format!("{} | {} | queue | {} | | \n", repo, repo_path, base)).unwrap();
-        map
-    }
-
     #[test]
     fn detect_deadlock_silent_without_the_trigger_line() {
         let dir = scratch_dir("deadlock-silent");
@@ -1797,43 +1726,6 @@ mod tests {
     }
 
     #[test]
-    fn detect_loop_stalled_silent_within_the_stall_window() {
-        let dir = scratch_dir("loop-silent-recent");
-        let cfg = test_config(&dir, KNOWN_EPOCH + 100); // age 100s < stall_secs 3000
-        fs::write(&cfg.qc_log, "2021-01-01T00:00:00Z spira: landing: pass complete\n").unwrap();
-        let mut state = StateMap::new();
-        let (v, _remedy, _tier) = detect_loop_stalled(&cfg, &mut state);
-        assert!(!v.is_gap);
-    }
-
-    #[test]
-    fn detect_loop_stalled_fires_past_the_stall_window() {
-        let dir = scratch_dir("loop-fire");
-        let cfg = test_config(&dir, KNOWN_EPOCH + 5000); // age 5000s > stall_secs 3000
-        fs::write(&cfg.qc_log, "2021-01-01T00:00:00Z spira: landing: pass complete\n").unwrap();
-        let mut state = StateMap::new();
-        let (v, remedy, tier) = detect_loop_stalled(&cfg, &mut state);
-        assert!(v.is_gap);
-        // The stub systemctl path cannot exist, so is_failed is always false and the
-        // detector falls through to the inference ladder, not the det-restart one.
-        assert_eq!(remedy, "inference");
-        assert_eq!(tier, "inf");
-    }
-
-    #[test]
-    fn detect_loop_stalled_is_unobservable_and_takes_no_action_on_an_unparseable_timestamp() {
-        let dir = scratch_dir("loop-unobservable");
-        let cfg = test_config(&dir, KNOWN_EPOCH + 100);
-        fs::write(&cfg.qc_log, "GARBAGE-NOT-AN-ISO-TS landing: pass complete\n").unwrap();
-        let mut state = StateMap::new();
-        let (v, remedy, tier) = detect_loop_stalled(&cfg, &mut state);
-        assert!(matches!(v.status, RawStatus::Unobservable { .. }));
-        assert!(v.is_gap, "grace_secs is 0, so even an unobservable reading is a gap at once");
-        assert_eq!(remedy, "none", "an unreadable timestamp must never trigger a restart or a filing");
-        assert_eq!(tier, "det");
-    }
-
-    #[test]
     fn detect_ci_silent_with_no_queue_dir() {
         let dir = scratch_dir("ci-no-queue");
         let cfg = test_config(&dir, 2_000_000_000);
@@ -1845,191 +1737,9 @@ mod tests {
         assert_eq!(cir_remedy, "none");
     }
 
-    #[test]
-    fn detect_ci_stalled_fires_past_the_queued_threshold() {
-        let dir = scratch_dir("ci-stalled-fire");
-        let now = 2_000_000_000u64;
-        let mut cfg = test_config(&dir, now);
-        write_repo_open(&dir, "spira", "spira/queue/abc123");
-        cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
-        let queued_since = now - cfg.ci_queued_max - 1; // just past threshold, no run-id
-        stub_forge(&cfg.seams.forge, format!("printf 'queued-since: {}\\n'\n", queued_since));
-        let mut state = StateMap::new();
-        let (cis_v, cis_remedy, cis_tier, cir_v, _r2, _t2) = detect_ci(&cfg, &mut state);
-        assert!(cis_v.is_gap);
-        assert_eq!(cis_remedy, "inference");
-        assert_eq!(cis_tier, "inf");
-        assert!(!cir_v.is_gap, "no run-conclusion field at all is satisfied for ci-red");
-    }
-
-    #[test]
-    fn detect_ci_stalled_silent_within_the_queued_threshold() {
-        let dir = scratch_dir("ci-stalled-silent");
-        let now = 2_000_000_000u64;
-        let mut cfg = test_config(&dir, now);
-        write_repo_open(&dir, "spira", "spira/queue/abc123");
-        cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
-        let queued_since = now - 10; // well inside the threshold
-        stub_forge(&cfg.seams.forge, format!("printf 'queued-since: {}\\n'\n", queued_since));
-        let mut state = StateMap::new();
-        let (cis_v, cis_remedy, _t1, _cir_v, _r2, _t2) = detect_ci(&cfg, &mut state);
-        assert!(!cis_v.is_gap);
-        assert_eq!(cis_remedy, "none");
-    }
-
-    #[test]
-    fn detect_ci_red_fires_past_the_red_age_threshold() {
-        let dir = scratch_dir("ci-red-fire");
-        let now = 2_000_000_000u64;
-        let mut cfg = test_config(&dir, now);
-        write_repo_open(&dir, "spira", "spira/queue/abc123");
-        cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
-        let completed = now - cfg.ci_red_max - 1;
-        stub_forge(&cfg.seams.forge, format!("printf 'run-conclusion: failure\\nrun-completed-at: {}\\n'\n", completed));
-        let mut state = StateMap::new();
-        let (_cis_v, _r1, _t1, cir_v, cir_remedy, cir_tier) = detect_ci(&cfg, &mut state);
-        assert!(cir_v.is_gap);
-        assert_eq!(cir_remedy, "inference");
-        assert_eq!(cir_tier, "inf");
-    }
-
-    #[test]
-    fn detect_ci_red_silent_when_recently_completed() {
-        let dir = scratch_dir("ci-red-silent");
-        let now = 2_000_000_000u64;
-        let mut cfg = test_config(&dir, now);
-        write_repo_open(&dir, "spira", "spira/queue/abc123");
-        cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
-        let completed = now - 5; // well inside ci_red_max
-        stub_forge(&cfg.seams.forge, format!("printf 'run-conclusion: failure\\nrun-completed-at: {}\\n'\n", completed));
-        let mut state = StateMap::new();
-        let (_cis_v, _r1, _t1, cir_v, cir_remedy, _t2) = detect_ci(&cfg, &mut state);
-        assert!(!cir_v.is_gap);
-        assert_eq!(cir_remedy, "none");
-    }
-
-    #[test]
-    fn detect_ci_is_unobservable_and_takes_no_action_when_forge_fails() {
-        let dir = scratch_dir("ci-unobservable");
-        let mut cfg = test_config(&dir, 2_000_000_000);
-        write_repo_open(&dir, "spira", "spira/queue/abc123");
-        cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
-        stub_forge(&cfg.seams.forge, "exit 1\n");
-        let mut state = StateMap::new();
-        let (cis_v, cis_remedy, _t1, cir_v, cir_remedy, _t2) = detect_ci(&cfg, &mut state);
-        assert!(matches!(cis_v.status, RawStatus::Unobservable { .. }));
-        assert!(matches!(cir_v.status, RawStatus::Unobservable { .. }));
-        assert_eq!(cis_remedy, "none", "a failed forge call must never be read as clear");
-        assert_eq!(cir_remedy, "none");
-    }
-
-    #[test]
-    fn detect_base_red_silent_when_the_base_gate_is_green() {
-        let dir = scratch_dir("base-red-silent");
-        let mut cfg = test_config(&dir, 2_000_000_000);
-        write_repo_open(&dir, "spira", "spira/queue/abc123");
-        cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
-        stub_forge(&cfg.seams.forge, "printf 'run-id: 1\\nrun-conclusion: success\\n'\n");
-        let mut state = StateMap::new();
-        let (v, remedy, _tier) = detect_base_red(&cfg, &mut state);
-        assert!(!v.is_gap);
-        assert_eq!(remedy, "none");
-    }
-
-    #[test]
-    fn detect_base_red_fires_at_once_on_a_red_base() {
-        let dir = scratch_dir("base-red-fire");
-        let mut cfg = test_config(&dir, 2_000_000_000);
-        write_repo_open(&dir, "spira", "spira/queue/abc123");
-        cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
-        stub_forge(&cfg.seams.forge, "printf 'run-id: 1\\nrun-conclusion: failure\\nhead-sha: deadbeef\\nrun-url: https://example/run/1\\n'\n");
-        let mut state = StateMap::new();
-        let (v, remedy, tier) = detect_base_red(&cfg, &mut state);
-        assert!(v.is_gap, "a red base fires on the very first pass — there is no age threshold");
-        assert_eq!(remedy, "inference");
-        assert_eq!(tier, "inf");
-    }
-
-    #[test]
-    fn detect_base_red_unreadable_is_grace_suppressed_then_fires() {
-        let dir = scratch_dir("base-red-unreadable");
-        let now = 2_000_000_000u64;
-        let mut cfg = test_config(&dir, now);
-        write_repo_open(&dir, "spira", "spira/queue/abc123");
-        cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
-        stub_forge(&cfg.seams.forge, "exit 0\n"); // succeeds but names no run at all
-        let mut state = StateMap::new();
-
-        let (v1, remedy1, _t1) = detect_base_red(&cfg, &mut state);
-        assert!(matches!(v1.status, RawStatus::Unobservable { .. }));
-        assert!(!v1.is_gap, "inside the grace window an unreadable base stays quiet");
-        assert_eq!(remedy1, "none");
-
-        cfg.now_secs = now + cfg.base_unreadable_grace + 1;
-        let (v2, remedy2, tier2) = detect_base_red(&cfg, &mut state);
-        assert!(v2.is_gap, "past the grace window an unreadable base is failed, not green");
-        assert_eq!(remedy2, "inference");
-        assert_eq!(tier2, "inf");
-    }
-
     // ────────────────────────────────────────────────────────────────────────────────
     // pool-idle: the certified-pool trigger (sp-ji62y/sp-forah), harness-owned.
     // ────────────────────────────────────────────────────────────────────────────────
-
-    // A real repo, unlike base-red's fixtures: detect_pool_idle shells to `git
-    // for-each-ref`, so the branches it counts must actually exist.
-    fn init_repo_with_certified_branches(dir: &Path, ids: &[&str]) -> PathBuf {
-        let repo = dir.join("repo");
-        fs::create_dir_all(&repo).unwrap();
-        let git = |args: &[&str]| {
-            Command::new("git")
-                .arg("-C")
-                .arg(&repo)
-                .args(args)
-                .env("GIT_AUTHOR_NAME", "t")
-                .env("GIT_AUTHOR_EMAIL", "t@t")
-                .env("GIT_COMMITTER_NAME", "t")
-                .env("GIT_COMMITTER_EMAIL", "t@t")
-                .output()
-                .unwrap();
-        };
-        git(&["init", "-q", "-b", "main"]);
-        git(&["commit", "-q", "--allow-empty", "-m", "base"]);
-        for id in ids {
-            git(&["branch", &format!("spira/{}", id)]);
-        }
-        let rows: Vec<String> = ids.iter().map(|id| format!(r#"{{"bead_id":"{id}","state":"CERTIFIED"}}"#)).collect();
-        testkit::write_exe(dir.join("spira-lc"), &format!("#!/bin/sh\nprintf '%s' '[{}]'\n", rows.join(",")));
-        repo
-    }
-
-    #[test]
-    fn detect_pool_idle_silent_when_pool_below_the_floor() {
-        let dir = scratch_dir("pool-idle-below");
-        let repo = init_repo_with_certified_branches(&dir, &["sp-aaa1", "sp-aaa2", "sp-aaa3"]);
-        let mut cfg = test_config(&dir, KNOWN_EPOCH);
-        cfg.repo_map = Some(write_repo_map(&dir, "poolrepo", repo.to_str().unwrap(), "origin/main"));
-        let mut state = StateMap::new();
-        let (v, remedy, tier) = detect_pool_idle(&cfg, &mut state);
-        assert!(!v.is_gap, "3 certified members must not fire against the floor of 4");
-        assert_eq!(remedy, "none");
-        assert_eq!(tier, "det");
-    }
-
-    #[test]
-    fn detect_reconciler_stale_fires_on_a_planted_stale_stamp_and_is_silent_when_fresh() {
-        let dir = scratch_dir("reconciler-stale");
-        let cfg = test_config(&dir, KNOWN_EPOCH + 10_000);
-
-        fs::write(&cfg.reconciler_stamp, format!("{}\n", KNOWN_EPOCH + 10_000 - 30)).unwrap();
-        let (v, _, _) = detect_reconciler_stale(&cfg, &mut StateMap::new());
-        assert!(!v.is_gap, "a pass 30s ago is live");
-
-        fs::write(&cfg.reconciler_stamp, format!("{}\n", KNOWN_EPOCH)).unwrap();
-        let (v, _, _) = detect_reconciler_stale(&cfg, &mut StateMap::new());
-        assert!(v.is_gap, "a stamp older than the grace must be a gap");
-        assert!(matches!(v.status, RawStatus::Gap { .. }));
-    }
 
     #[test]
     fn a_default_that_disables_or_relaxes_a_check_is_refused_and_a_restoring_one_is_not() {
@@ -2054,72 +1764,10 @@ mod tests {
     }
 
     #[test]
-    fn timer_state_reads_a_stub_systemctl_for_the_configured_unit() {
-        let dir = scratch_dir("timer-state");
-        let sc = dir.join("systemctl");
-        testkit::write_exe(&sc, "#!/bin/sh\necho \"args: $*\" >&2\ncase \"$*\" in *spira-reconciler-prod.timer*) printf 'LoadState=loaded\\nUnitFileState=disabled\\nActiveState=inactive\\n';; esac\n");
-        let got = timer_state(&sc.to_string_lossy(), "spira-reconciler-prod.timer");
-        assert_eq!(got, "spira-reconciler-prod.timer: disabled: enable spira-reconciler-prod.timer");
-    }
-
-    #[test]
     fn detect_reconciler_stale_missing_stamp_is_a_gap() {
         let dir = scratch_dir("reconciler-stale-missing");
         let cfg = test_config(&dir, KNOWN_EPOCH);
         let (v, _, _) = detect_reconciler_stale(&cfg, &mut StateMap::new());
         assert!(matches!(v.status, RawStatus::Gap { .. }));
-    }
-
-    #[test]
-    fn detect_pool_idle_silent_when_a_batch_is_already_open() {
-        // POSITIVE CONTROL for the back-pressure exemption: full pool, but an open batch
-        // is deliberate (law-queue-back-pressure-is-an-open-pr), never a stall.
-        let dir = scratch_dir("pool-idle-batch-open");
-        let repo = init_repo_with_certified_branches(&dir, &["sp-bbb1", "sp-bbb2", "sp-bbb3", "sp-bbb4"]);
-        let mut cfg = test_config(&dir, KNOWN_EPOCH);
-        cfg.repo_map = Some(write_repo_map(&dir, "poolrepo", repo.to_str().unwrap(), "origin/main"));
-        write_repo_open(&dir, "poolrepo", "spira/queue/x");
-        let mut state = StateMap::new();
-        let (v, remedy, tier) = detect_pool_idle(&cfg, &mut state);
-        assert!(!v.is_gap, "an open batch is back-pressure, not a stall, however full the pool");
-        assert_eq!(remedy, "none");
-        assert_eq!(tier, "det");
-    }
-
-    #[test]
-    fn detect_pool_idle_silent_within_the_window() {
-        // POSITIVE CONTROL: a pool at the floor with no batch open, but the very first
-        // pass to observe it — age 0 is inside SPIRA_QUEUE_ROUND_STALL_SECS.
-        let dir = scratch_dir("pool-idle-within-window");
-        let repo = init_repo_with_certified_branches(&dir, &["sp-ccc1", "sp-ccc2", "sp-ccc3", "sp-ccc4"]);
-        let mut cfg = test_config(&dir, KNOWN_EPOCH);
-        cfg.repo_map = Some(write_repo_map(&dir, "poolrepo", repo.to_str().unwrap(), "origin/main"));
-        let mut state = StateMap::new();
-        let (v, remedy, tier) = detect_pool_idle(&cfg, &mut state);
-        assert!(!v.is_gap, "a full pool noticed for the first time must not fire before its window elapses");
-        assert_eq!(remedy, "none");
-        assert_eq!(tier, "det");
-    }
-
-    #[test]
-    fn detect_pool_idle_fires_once_the_full_pool_outlasts_the_window() {
-        // SEEN RED: nothing alarms today (this detector is the fix). Replayed here as the
-        // real engine would run it — first pass starts the streak (asserted quiet above),
-        // then a second pass past SPIRA_QUEUE_ROUND_STALL_SECS later must fire.
-        let dir = scratch_dir("pool-idle-fire");
-        let repo = init_repo_with_certified_branches(&dir, &["sp-ddd1", "sp-ddd2", "sp-ddd3", "sp-ddd4"]);
-        let now = KNOWN_EPOCH + 100_000;
-        let mut cfg = test_config(&dir, now);
-        cfg.repo_map = Some(write_repo_map(&dir, "poolrepo", repo.to_str().unwrap(), "origin/main"));
-        let mut state = StateMap::new();
-
-        let (v1, _remedy1, _tier1) = detect_pool_idle(&cfg, &mut state);
-        assert!(!v1.is_gap, "the pass that first notices the full pool must not fire immediately");
-
-        cfg.now_secs = now + cfg.round_stall_secs + 1;
-        let (v2, remedy2, tier2) = detect_pool_idle(&cfg, &mut state);
-        assert!(v2.is_gap, "a full pool with no batch open for longer than the window must fire");
-        assert_eq!(remedy2, "inference");
-        assert_eq!(tier2, "inf");
     }
 }

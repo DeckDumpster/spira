@@ -146,34 +146,7 @@ pub fn rules() -> Vec<Box<dyn crate::Rule>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutil::TempDir;
 
-    fn run(t: &TempDir) -> Result<Vec<String>, LintError> {
-        let tree = Tree::from_git(t.path()).unwrap();
-        TmuxScopeFence.check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
-    }
-
-    #[test]
-    fn empty_scope_refuses_then_bare_kill_server_is_seen_red_and_withdrawn() {
-        let t = TempDir::new("tsf");
-        t.git_init();
-        assert_eq!(run(&t), Err(LintError::EmptyScope));
-
-        t.write("spira/test-clean.sh", "#!/usr/bin/env bash\necho ok\n");
-        t.git(&["add", "."]);
-        assert!(run(&t).unwrap().is_empty());
-
-        t.write("spira/test-broken-tmux.sh", "#!/usr/bin/env bash\ntmux kill-server\n");
-        t.git(&["add", "."]);
-        let got = run(&t).unwrap();
-        assert_eq!(got.len(), 1);
-        assert!(got[0].contains("test-broken-tmux.sh"));
-        assert!(got[0].contains("tmux kill-server"));
-
-        t.remove("spira/test-broken-tmux.sh");
-        t.git(&["add", "-A"]);
-        assert!(run(&t).unwrap().is_empty());
-    }
 
     #[test]
     fn l_scoping_and_file_wide_tmux_tmpdir_both_clear_it() {

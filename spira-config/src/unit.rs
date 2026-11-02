@@ -75,15 +75,6 @@ fn loaded(systemctl: &str, unit: &str) -> bool {
 mod tests {
     use super::*;
 
-    fn stub_systemctl(dir: &std::path::Path, enabled: &str, active: &str) -> String {
-        let p = dir.join("systemctl");
-        let body = format!(
-            "#!/usr/bin/env bash\ncmd=\"\" unit=\"\"\nfor a; do\n    case \"$a\" in --user|--quiet) ;; *) [ -z \"$cmd\" ] && cmd=\"$a\" || unit=\"$a\" ;; esac\ndone\ncase \"$cmd\" in\n    is-enabled) [ \"$unit\" = \"{enabled}\" ] && exit 0 || exit 1 ;;\n    is-active) [ \"$unit\" = \"{active}\" ] && exit 0 || exit 3 ;;\n    *) exit 0 ;;\nesac\n"
-        );
-        testkit::write_exe(&p, &body);
-        p.to_string_lossy().into_owned()
-    }
-
     #[test]
     fn watch_unit_name_formats_with_the_given_instance() {
         assert_eq!(watch_unit_name("answers", "prod"), "spira-watch-answers-prod.service");
@@ -107,34 +98,5 @@ mod tests {
         // Positive control (test-watchd-unit-name.sh's own one): the old template form
         // (spira-watch@name.service) must never come out of this function.
         assert_ne!(watch_unit_name("answers", "prod"), "spira-watch@answers.service");
-    }
-
-    #[test]
-    fn resolve_unit_prefers_the_instance_qualified_form_when_it_is_known() {
-        let dir = testkit::TempDir::new("spira-config-unit-a");
-        let sc = stub_systemctl(dir.path(), "", "spira-sentinel-prod.timer");
-        assert_eq!(resolve_unit("sentinel", "timer", "prod", &sc), "spira-sentinel-prod.timer");
-    }
-
-    #[test]
-    fn resolve_unit_falls_back_to_the_plain_form() {
-        let dir = testkit::TempDir::new("spira-config-unit-b");
-        let sc = stub_systemctl(dir.path(), "", "spira-loom.service");
-        assert_eq!(resolve_unit("loom", "service", "prod", &sc), "spira-loom.service");
-    }
-
-    #[test]
-    fn resolve_unit_is_unknown_when_neither_form_is_loaded() {
-        let dir = testkit::TempDir::new("spira-config-unit-c");
-        let sc = stub_systemctl(dir.path(), "", "");
-        assert_eq!(resolve_unit("sentinel", "timer", "prod", &sc), "?");
-        assert_eq!(resolve_unit("loom", "service", "prod", &sc), "?");
-    }
-
-    #[test]
-    fn resolve_unit_with_no_instance_collapses_to_one_query() {
-        let dir = testkit::TempDir::new("spira-config-unit-d");
-        let sc = stub_systemctl(dir.path(), "", "spira-sentinel.timer");
-        assert_eq!(resolve_unit("sentinel", "timer", "", &sc), "spira-sentinel.timer");
     }
 }

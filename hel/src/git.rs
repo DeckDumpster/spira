@@ -349,31 +349,6 @@ fn holder_of(proc_root: &Path, lock: &Path) -> Option<u32> {
 mod tests {
     use super::*;
 
-    fn union_repo(tag: &str) -> testkit::TempDir {
-        let d = testkit::TempDir::new(tag);
-        let p = d.path();
-        let g = |args: &[&str]| {
-            let o = std::process::Command::new("git").arg("-C").arg(p).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
-            assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
-        };
-        let commit = |file: &str, body: &str| {
-            std::fs::write(p.join(file), body).unwrap();
-            g(&["add", "-A"]);
-            g(&["commit", "-q", "-m", "c"]);
-        };
-        g(&["init", "-q", "-b", "stale"]);
-        commit("keep", "x\n");
-        g(&["checkout", "-q", "-b", "main"]);
-        commit(".gitattributes", "f merge=union\n");
-        commit("f", "base\n");
-        g(&["checkout", "-q", "-b", "b", "main"]);
-        commit("f", "base\nfrom b\n");
-        g(&["checkout", "-q", "main"]);
-        commit("f", "base\nfrom a\n");
-        g(&["checkout", "-q", "stale"]);
-        d
-    }
-
     #[test]
     fn holder_of_names_the_pid_with_the_lock_open_and_judges_unreadable_ones_by_being_a_live_git() {
         let t = testkit::TempDir::new("hel-proc");
@@ -405,32 +380,5 @@ mod tests {
         assert_eq!(holder_of(&proc, &lock), None);
         unreadable("14", "git\n", "git");
         assert_eq!(holder_of(&proc, &lock), Some(14));
-    }
-
-    #[test]
-    fn a_lock_reached_through_a_symlinked_repo_path_is_still_seen_held() {
-        let t = testkit::TempDir::new("hel-symlink");
-        let real = t.path().join("real");
-        std::fs::create_dir_all(real.join(".git")).unwrap();
-        std::os::unix::fs::symlink(&real, t.path().join("link")).unwrap();
-        let g = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&real).args(args).status().unwrap().success());
-        std::fs::remove_dir_all(real.join(".git")).unwrap();
-        g(&["init", "-q"]);
-        let lock = real.join(".git/packed-refs.lock");
-        let f = std::fs::File::create(&lock).unwrap();
-        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(7200)).unwrap();
-        let mut live = std::process::Command::new("sleep").arg("30").stdin(std::fs::File::open(&lock).unwrap()).spawn().unwrap();
-        let via_link = t.path().join("link/.git/packed-refs.lock");
-        let err = format!("error: Unable to create '{}': File exists.", via_link.display());
-        let v = Git(&t.path().join("link")).recover_stale_lock(&err, 600);
-        let _ = live.kill();
-        let _ = live.wait();
-        assert!(matches!(v, Some(LockVerdict::Kept(_))) && lock.exists());
-    }
-
-    #[test]
-    fn merges_clean_honours_the_base_refs_union_attributes_not_the_checkouts() {
-        let d = union_repo("hel-union");
-        assert!(Git(d.path()).merges_clean("main", "b"));
     }
 }

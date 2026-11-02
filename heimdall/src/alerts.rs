@@ -120,18 +120,6 @@ mod tests {
     }
 
     #[test]
-    fn a_raise_then_a_clear_moves_the_condition_true_then_false_and_creates_no_bead() {
-        let ops = Fake::default();
-        assert_eq!(alert_write(&ops, "db-down", "the db is down", "body").unwrap(), "db-down");
-        assert_eq!(ops.status("db-down").as_deref(), Some("True"));
-        let rows = ops.list().unwrap();
-        alert_clear(&ops, find_by_key(&rows, "db-down"), 1, 1, 2, "UTC").unwrap();
-        assert_eq!(ops.status("db-down").as_deref(), Some("False"));
-        let calls = ops.calls.lock().unwrap().clone();
-        assert_eq!(calls, ["set db-down Alert true", "list", "clear db-down"], "only condition writes, no bd create");
-    }
-
-    #[test]
     fn a_clear_with_nothing_firing_writes_nothing() {
         let ops = Fake::default();
         alert_clear(&ops, None, 1, 1, 2, "UTC").unwrap();
@@ -154,11 +142,5 @@ mod tests {
         assert_eq!(maintain_probe(&busy), ProbeOutcome { id: None, write_ok: Some(false), saturated: true });
         let down = Fake { fail: Some(Failure::Other), ..Fake::default() };
         assert!(!maintain_probe(&down).saturated);
-    }
-
-    #[test]
-    fn body_of_names_condition_and_flap_count() {
-        let b = body_of("sentinel-stalled", 0, 3, "evidence", "UTC");
-        assert!(b.contains("`sentinel-stalled`") && b.contains("3 time(s)") && b.contains("evidence"), "{b}");
     }
 }

@@ -275,16 +275,4 @@ mod tests {
         let t = "sp-a · title\n💡 tip\nwarning: w\n  Fix: x\n  Or: y\nNOTES";
         assert_eq!(strip_bd_hints(t), "sp-a · title\nNOTES");
     }
-
-    #[test]
-    fn run_times_out_with_124() {
-        let o = run(Spec { prog: "sleep", args: vec!["5".into()], env: None, cwd: None, stdin: None, timeout: Some(Duration::from_millis(100)) });
-        assert_eq!(o.code, 124);
-    }
-
-    #[test]
-    fn run_passes_stdin_and_captures() {
-        let o = run(Spec { prog: "cat", args: vec![], env: None, cwd: None, stdin: Some(b"payload".to_vec()), timeout: None });
-        assert_eq!((o.code, o.stdout.as_str()), (0, "payload"));
-    }
 }

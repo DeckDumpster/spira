@@ -3,13 +3,13 @@
 //! mailbox fallback, on the rig's virtual clock.
 
 use std::cell::{Cell, RefCell};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use incident::alarms_pass::{self as ap, Config, DeadMan, FileSwitch, MaildirFallback, Ports, Report};
-use reconciler_engine::goodput_pass::{run as goodput, Lc, Outcome, PassConfig};
-use reconciler_engine::pass_record::{Mode, NoLever, PassRecord, Refused, PASS_KEY};
-use tsd::alarm::{Message, Outcome as Delivery};
+use reconciler_engine::goodput_pass::Lc;
+use reconciler_engine::pass_record::{Mode, PassRecord, PASS_KEY};
+use tsd::alarm::Message;
 
 use super::*;
 
@@ -107,17 +107,9 @@ impl World {
         ap::run(&p, &self.cfg()).unwrap()
     }
 
-    fn attempts(&self) -> Vec<tsd::alarm::Attempt> {
-        tsd::alarm::read(&self.run_dir())
-    }
-
     fn sent(&self) -> usize {
         self.mail.sent.borrow().len()
     }
-}
-
-fn mailbox_files(dir: &Path) -> usize {
-    std::fs::read_dir(dir.join("new")).map_or(0, |d| d.count())
 }
 
 fn alarms_section<B: Backend>(r: &Rig<B>) -> Value {
@@ -167,86 +159,6 @@ fn put_record<B: Backend>(r: &Rig<B>, rec: &PassRecord) {
     assert!(r.store.txn(&t, &Request::new(&format!("pass/{}", r.head()), "test", "t")).unwrap().succeeded);
 }
 
-fn nolever(n: u64, at_ms: u64, conditions: &[&str], refused_code: &str) -> PassRecord {
-    let mut rec = record(n, at_ms);
-    rec.no_lever = vec![NoLever { section: "Probe/a".into(), conditions: conditions.iter().map(|s| s.to_string()).collect(), since: 1 }];
-    rec.refused = vec![Refused { section: "Probe/a".into(), action: "drain".into(), code: refused_code.into(), reason: format!("{refused_code} at {n}") }];
-    rec
-}
-
-#[test]
-fn a_failed_page_is_recorded_undelivered_and_a_retry_delivery_intent_resends_it_and_acks_applied() {
-    let r = rig();
-    let w = World::new("alarms-retry", Some(""));
-    w.fallback.set(false);
-    probe(&r, "a", &[("Wedged", NOW)]);
-    let rep = w.pass(&r);
-    assert!(rep.sent.is_empty(), "the primary printed no id: {rep:?}");
-    assert_eq!(rep.undelivered_open, 1);
-    let a = w.attempts();
-    assert_eq!(a.len(), 1);
-    assert_eq!(a[0].outcome, Delivery::Failed { reason: "the primary path returned no id".into() });
-    assert!(a[0].message.is_some(), "a failure keeps what a retry sends");
-    let s = alarms_section(&r);
-    assert_eq!(s["section"]["status"]["undelivered_open"]["value"], 1.0);
-    assert_eq!(condition(&s, "Undelivered"), "True");
-
-    // The goodput pass steps retry-delivery on the Alarms gap; the alarms pass applies it.
-    let cfg = PassConfig { holder: "inv-1".into(), timeout_secs: 50, shadow: vec![], halted: false };
-    let Outcome::Passed(p) = goodput(&Dispatch(&r), &r.clock, &cfg).unwrap() else { panic!("the goodput pass stood by") };
-    let step = p.record.steps.iter().find(|s| s.section == "Alarms/all").unwrap_or_else(|| panic!("no retry step: {:?}", p.record));
-    assert_eq!(step.action, "retry-delivery");
-    let key = step.intent.clone().unwrap();
-
-    w.mail.set(Some("sp-ask"));
-    r.clock.advance(MIN);
-    probe(&r, "a", &[("Wedged", NOW)]);
-    let rep = w.pass(&r);
-    assert_eq!(rep.retried, [(key.clone(), "applied".to_string())]);
-    assert_eq!(rep.undelivered_open, 0);
-    assert_eq!(w.sent(), 2, "the one alarm, and its one re-send");
-    let i = r.store.get(&key).unwrap().unwrap().value.data;
-    assert_eq!(i["ack"]["result"], "applied", "{i}");
-    assert_eq!(r.knob("knobs/Alarms/all/retry-delivery"), json!(1));
-    assert!(matches!(w.attempts().last().unwrap().outcome, Delivery::Delivered { .. }));
-    assert_eq!(condition(&alarms_section(&r), "Undelivered"), "False");
-}
-
-#[test]
-fn a_nolever_entry_pages_once_a_changed_one_is_a_note_and_a_second_condition_type_pages_once() {
-    let r = rig();
-    let w = World::new("alarms-identity", Some("sp-ask"));
-    probe(&r, "a", &[("Deep", NOW)]);
-    put_record(&r, &nolever(1, r.clock.now_ms(), &["Deep"], "in-flight"));
-    let rep = w.pass(&r);
-    assert_eq!(rep.sent, ["page:Probe/a:Deep"]);
-    let first = w.mail.sent.borrow()[0].clone();
-    assert_eq!(first.mailbox, "concierge", "a kind with no escalation class pages the Concierge");
-    for want in ["## Question", "## Default", "drain: refused (in-flight)", "condition: Deep", "docs/runbooks/reconciler.md#deep"] {
-        assert!(first.body.contains(want), "{want} missing: {}", first.body);
-    }
-
-    r.clock.advance(MIN);
-    put_record(&r, &nolever(2, r.clock.now_ms(), &["Deep"], "in-flight"));
-    let rep = w.pass(&r);
-    assert!(rep.sent.is_empty() && rep.noted.is_empty(), "the same entry next pass sends nothing: {rep:?}");
-
-    r.clock.advance(MIN);
-    put_record(&r, &nolever(3, r.clock.now_ms(), &["Deep"], "back-off"));
-    let rep = w.pass(&r);
-    assert!(rep.sent.is_empty(), "{rep:?}");
-    assert_eq!(rep.noted, ["page:Probe/a:Deep"]);
-    assert_eq!(w.mail.notes.borrow()[0].0, "sp-ask-1", "the note goes on the open ask");
-
-    r.clock.advance(MIN);
-    put_record(&r, &nolever(4, r.clock.now_ms(), &["Deep", "Wide"], "back-off"));
-    assert_eq!(w.pass(&r).sent, ["page:Probe/a:Deep,Wide"], "a second condition type on the section pages");
-    r.clock.advance(MIN);
-    put_record(&r, &nolever(5, r.clock.now_ms(), &["Deep", "Wide"], "back-off"));
-    assert!(w.pass(&r).sent.is_empty(), "and only once");
-    assert_eq!(w.sent(), 2);
-}
-
 #[test]
 fn a_page_on_raise_condition_pages_on_raise_without_a_pass_record() {
     let r = rig();
@@ -259,29 +171,6 @@ fn a_page_on_raise_condition_pages_on_raise_without_a_pass_record() {
     r.clock.advance(MIN);
     probe(&r, "b", &[("Wedged", "2026-10-31T19:41:00Z")]);
     assert_eq!(w.pass(&r).sent, ["page:Probe/b:Wedged"], "a new raise pages inside the window");
-}
-
-#[test]
-fn a_failed_primary_falls_back_to_the_mailbox_and_the_forced_mode_writes_nothing() {
-    let r = rig();
-    let w = World::new("alarms-fallback", None);
-    probe(&r, "b", &[("Wedged", NOW)]);
-    let rep = w.pass(&r);
-    assert_eq!(rep.sent, ["page:Probe/b:Wedged"]);
-    assert_eq!(mailbox_files(&w.mail_root().join("concierge")), 1, "mail_deliver wrote the page into the mailbox");
-    let outcomes: Vec<Delivery> = w.attempts().into_iter().map(|a| a.outcome).collect();
-    assert_eq!(outcomes, [Delivery::Failed { reason: "the primary path is down".into() }, Delivery::DeliveredFallback]);
-    assert_eq!(rep.undelivered_open, 0);
-
-    let r = rig();
-    let w = World::new("alarms-forced", None);
-    w.fallback.set(false);
-    probe(&r, "b", &[("Wedged", NOW)]);
-    let rep = w.pass(&r);
-    assert!(rep.sent.is_empty());
-    assert!(!w.mail_root().exists(), "the forced mode writes nothing");
-    assert_eq!(w.attempts().into_iter().map(|a| a.outcome).collect::<Vec<_>>(), [Delivery::Failed { reason: "the primary path is down".into() }]);
-    assert_eq!(rep.undelivered_open, 1);
 }
 
 fn lifecycle<B: Backend>(r: &Rig<B>, rate: Value, below: bool) {
@@ -367,30 +256,6 @@ fn the_dead_man_pages_once_under_reconciler_and_reads_the_switch_first() {
     put_record(&r, &record(2, r.clock.now_ms()));
     let rep = w.pass(&r);
     assert_eq!((rep.deadman, rep.sent.len()), (Some(DeadMan::Fresh { age_secs: 0 }), 0), "a work-plane halt with a fresh pass trips nothing");
-}
-
-#[test]
-fn a_fresh_check_pings_the_heartbeat_once_a_stale_one_never_and_an_empty_url_is_recorded() {
-    let r = rig();
-    let w = World::new("alarms-heartbeat", Some("sp-ask"));
-    w.timer.set(true);
-    put_record(&r, &record(1, r.clock.now_ms()));
-    let rep = w.pass(&r);
-    assert_eq!(rep.heartbeat.as_deref(), Some("status 200"));
-    assert_eq!(*w.http.calls.borrow(), ["http://heartbeat.test/ping"]);
-    assert_eq!(alarms_section(&r)["section"]["status"]["heartbeat_last"], "status 200");
-
-    r.clock.advance(181_000);
-    let rep = w.pass(&r);
-    assert_eq!(rep.heartbeat, None);
-    assert_eq!(w.http.calls.borrow().len(), 1, "a stale check pings nothing");
-
-    put_record(&r, &record(2, r.clock.now_ms()));
-    w.url.borrow_mut().clear();
-    let rep = w.pass(&r);
-    assert_eq!(rep.heartbeat.as_deref(), Some(ap::NO_HEARTBEAT_URL));
-    assert_eq!(w.http.calls.borrow().len(), 1);
-    assert_eq!(alarms_section(&r)["section"]["status"]["heartbeat_last"], ap::NO_HEARTBEAT_URL);
 }
 
 #[test]

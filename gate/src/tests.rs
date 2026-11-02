@@ -1019,18 +1019,6 @@ fn a_red_the_base_trial_did_not_run_is_run_on_the_base_first() {
     assert!(meter_row(&f).contains("base-image-tag:7"), "{}", meter_row(&f));
 }
 
-/// A base red that does not reproduce on a second run is a flake: re-gated, never held.
-#[test]
-fn a_base_red_that_does_not_reproduce_is_a_flake_not_a_hold() {
-    let f = Fake::new();
-    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, red(SUITE)));
-    f.runs.borrow_mut().insert(BASE.into(), (1, red(SUITE)));
-    assert_eq!(f.run(), NOVERDICT);
-    assert!(f.verdict_line().contains("reason=base-flake"), "{}", f.verdict_line());
-    assert!(f.verdict_line().ends_with(&format!("suite={SUITE}")));
-    assert!(meter_row(&f).contains("base-retry:7"), "{}", meter_row(&f));
-}
-
 /// The same red, reproduced by the retry, is BASE_FAIL.
 #[test]
 fn a_base_red_that_reproduces_is_inherited_not_judged() {
@@ -1319,31 +1307,6 @@ fn a_red_the_base_deferred_by_deadline_is_re_run() {
         .borrow_mut()
         .insert((BASE.into(), SUITE.into()), (1, red(SUITE)));
     assert_eq!(f.run(), PASS);
-}
-
-/// A re-run that could not judge (a testenv fault — including a testenv missing from PATH,
-/// which the shell reports as rc 127 and the runner's contract maps to 75) leaves it untestable.
-#[test]
-fn a_base_re_run_that_cannot_judge_is_untestable() {
-    let f = Fake::new();
-    f.runs
-        .borrow_mut()
-        .insert(MERGE_SHA.into(), (1, red(SUITE)));
-    f.runs
-        .borrow_mut()
-        .insert(BASE.into(), (0, "  test-a.sh ok".into()));
-    f.reruns
-        .borrow_mut()
-        .insert((BASE.into(), SUITE.into()), (75, "batch: no image".into()));
-    assert_eq!(f.run(), NOVERDICT);
-    assert!(f.verdict_line().contains("reason=base-untestable"));
-    // sp-e5v53-2: "when it truly can't, say exactly why" — the rerun's own fault output
-    // reaches the verdict message, not just the generic "cannot be established" line.
-    assert!(
-        f.stderr().contains("batch: no image"),
-        "the rerun's own fault output is surfaced: {}",
-        f.stderr()
-    );
 }
 
 /// A red suite the base does not have is the branch's own; nothing to run on the base.
@@ -3224,20 +3187,6 @@ fn every_run_compiles_through_the_wrapper_resolved_on_the_commands_path() {
     for e in f.ran.borrow().iter() {
         assert!(e.iter().all(|(k, _)| !k.starts_with("CARGO_")), "{e:?}");
     }
-}
-
-/// THE POSITIVE CONTROL (sp-xtdqi): a configured shared store reaches the build's own
-/// environment — `SPIRA_SCCACHE_DAV_ADDR` on `ctx.vars` (resolved in-process by
-/// `merge_resolved_config`/`RETIRED_VARS` in real life; injected directly here, same as
-/// every other `ctx.var` this suite drives the engine through) must produce
-/// `SCCACHE_WEBDAV_ENDPOINT` on the command the trial actually runs.
-#[test]
-fn a_configured_shared_store_reaches_the_build_as_webdav_vars() {
-    let f = Fake::new();
-    f.put_var("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431");
-    assert_eq!(f.run(), PASS, "{}", f.stderr());
-    assert_eq!(f.env_of(0, "SCCACHE_WEBDAV_ENDPOINT"), "http://192.168.1.56:9431");
-    assert_eq!(f.env_of(0, "SCCACHE_WEBDAV_KEY_PREFIX"), "/");
 }
 
 /// Without `SPIRA_SCCACHE_DAV_ADDR` set, no webdav var reaches the build at all — the

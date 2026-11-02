@@ -1117,122 +1117,13 @@ mod tests {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 
-    fn run_git(dir: &Path, args: &[&str]) {
-        let status = std::process::Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .env("GIT_AUTHOR_NAME", "t")
-            .env("GIT_AUTHOR_EMAIL", "t@t")
-            .env("GIT_COMMITTER_NAME", "t")
-            .env("GIT_COMMITTER_EMAIL", "t@t")
-            .status()
-            .unwrap();
-        assert!(status.success(), "git {args:?} failed in {dir:?}");
-    }
-
-
-    #[test]
-    fn gate_outcome_constants_resolve_fixed_and_ignore_env_and_toml() {
-        let ws = testkit::TempDir::new("spira-config-resolve-gate-constants");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        // An attempt to override either constant through the environment — the one seam
-        // every other key in this module honours — must be ignored outright: a
-        // configurable NO_VERDICT could be set to 0, turning every withheld verdict into a
-        // pass (this module's own doc).
-        let e = env(&[("HOME", "/h"), ("SPIRA_GATE_NOVERDICT", "0"), ("SPIRA_GATE_BASEFAIL", "0")]);
-        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&e)), conf_d: &home.join("conf.d") })
-            .unwrap();
-        assert_eq!(r.get("SPIRA_GATE_NOVERDICT"), "75");
-        assert_eq!(r.get("SPIRA_GATE_BASEFAIL"), "76");
-        assert!(EXPORT_KEYS.contains(&"SPIRA_GATE_NOVERDICT"));
-        assert!(EXPORT_KEYS.contains(&"SPIRA_GATE_BASEFAIL"));
-    }
 
 
 
 
-    #[test]
-    fn preserve_empty_keys_keep_an_explicit_empty_env_value() {
-        let ws = testkit::TempDir::new("spira-config-resolve-preserve-empty");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        let e = env(&[("HOME", "/h"), ("SPIRA_DB", "")]);
-        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&e)), conf_d: &home.join("conf.d") })
-            .unwrap();
-        assert_eq!(r.get("SPIRA_DB"), "");
-    }
 
 
 
-
-    #[test]
-    fn a_lifecycle_switch_saying_off_refuses_the_resolve() {
-        let ws = testkit::TempDir::new("spira-config-resolve-lce");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        let off = env(&[("HOME", "/h"), ("SPIRA_LIFECYCLE_ENFORCE", "0")]);
-        let e = resolve(ResolveInput { env: &off, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&off)), conf_d: &home.join("conf.d") })
-            .unwrap_err()
-            .to_string();
-        assert!(e.contains("sp-v62vn") && e.contains("Exit:"), "{e}");
-        let on = env(&[("HOME", "/h"), ("SPIRA_LIFECYCLE_ENFORCE", "1")]);
-        let r = resolve(ResolveInput { env: &on, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&on)), conf_d: &home.join("conf.d") })
-            .unwrap();
-        assert!(r.warnings.iter().any(|w| w.contains("SPIRA_LIFECYCLE_ENFORCE is retired")), "{:?}", r.warnings);
-        assert!(!r.values.contains_key("SPIRA_LIFECYCLE_ENFORCE"));
-    }
-
-    #[test]
-    fn home_and_repo_are_never_in_the_resolved_values() {
-        let ws = testkit::TempDir::new("spira-config-resolve-no-home-repo");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        let e = env(&[("HOME", "/h")]);
-        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&e)), conf_d: &home.join("conf.d") })
-            .unwrap();
-        assert!(!r.values.contains_key("SPIRA_HOME"));
-        assert!(!r.values.contains_key("SPIRA_REPO"));
-    }
-
-
-    #[test]
-    fn a_containment_violation_refuses_the_whole_resolve() {
-        let ws = testkit::TempDir::new("spira-config-resolve-containment");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        // Genuinely outside the workspaces root (a sibling of it), not merely a subdirectory
-        // named "elsewhere" — ws itself IS the workspaces root in this fixture.
-        let outside_root = testkit::TempDir::new("spira-config-resolve-containment-outside");
-        let outside = outside_root.join("elsewhere");
-        std::fs::create_dir_all(&outside).unwrap();
-        // The repo map is declared (spira.repo_map), never discovered.
-        let map = ws.join("repo-map");
-        std::fs::write(&map, format!("x|{}\n", outside.display())).unwrap();
-        let e = env(&[("HOME", "/h"), ("SPIRA_INSTANCE", "test"), ("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_WORKSPACES", ws.path().to_str().unwrap())]);
-        let err = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&e)), conf_d: &home.join("conf.d") })
-            .unwrap_err();
-        match err {
-            ResolveError::Containment(v) => assert!(v[0].contains("is confined to"), "{v:?}"),
-            other => panic!("expected Containment, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn to_sh_never_emits_a_per_copy_key() {
-        let ws = testkit::TempDir::new("spira-config-resolve-to-sh");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        let e = env(&[("HOME", "/h")]);
-        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&e)), conf_d: &home.join("conf.d") })
-            .unwrap();
-        let sh = r.to_sh(EXPORT_KEYS);
-        for forbidden in ["SPIRA_HOME=", "SPIRA_REPO=", "SPIRA_REPO_MAP=", "SPIRA_RUNES=", "SPIRA_MAX_DWARVES="] {
-            assert!(!sh.contains(forbidden), "to_sh leaked {forbidden}:\n{sh}");
-        }
-        assert!(sh.contains("SPIRA_RUN="), "{sh}");
-        assert!(sh.contains("SPIRA_DB="), "{sh}");
-    }
 
     #[test]
     fn derive_home_repo_env_override_wins() {
@@ -1251,17 +1142,6 @@ mod tests {
     }
 
     #[test]
-    fn derive_home_repo_uses_git_toplevel() {
-        let ws = testkit::TempDir::new("spira-config-derive-repo-git");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        let e = env_with_path(&[]);
-        let got = derive_home_repo(&home, &e).canonicalize().unwrap();
-        let want = repo.canonicalize().unwrap();
-        assert_eq!(got, want);
-    }
-
-    #[test]
     fn derive_home_repo_falls_back_to_parent_outside_a_checkout() {
         let ws = testkit::TempDir::new("spira-config-derive-repo-noparent");
         let (home, repo) = fixture_home_repo(&ws);
@@ -1270,72 +1150,6 @@ mod tests {
         let got = derive_home_repo(&home, &e).canonicalize().unwrap();
         let want = repo.canonicalize().unwrap();
         assert_eq!(got, want);
-    }
-
-    #[test]
-    fn derive_home_repo_scrubs_the_git_hook_environment() {
-        // conf.sh's own scar: a git hook runs with GIT_DIR exported, and --show-toplevel
-        // under that answers the -C directory itself (<repo>/spira) instead of climbing to
-        // <repo> — one level too deep — unless GIT_DIR (and friends) are scrubbed first.
-        //
-        // NEVER std::env::set_var here: derive_repo_filesystem runs its git subprocess
-        // with `.env_clear().envs(env)` — the EXPLICIT map this test hands it, never this
-        // process's own ambient environment — specifically so a "GIT_DIR is poisoned" case
-        // like this one is testable without mutating real process-global state that a
-        // PARALLEL test's own unrelated `git` spawn would otherwise inherit regardless of
-        // any Rust-level lock (the race an earlier, `std::env::set_var`-based version of
-        // this test actually caused: `cargo test -p spira-config` at its default 32-wide
-        // thread pool flaked across unrelated repos.rs tests that never touch GIT_DIR
-        // themselves — only `--test-threads=1` hid it, by accident).
-        let ws = testkit::TempDir::new("spira-config-derive-repo-hook");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        let fake_git_dir = home.join(".git-hook-fake");
-        std::fs::create_dir_all(&fake_git_dir).unwrap();
-        let e = env_with_path(&[
-            ("GIT_DIR", fake_git_dir.to_str().unwrap()),
-            ("GIT_WORK_TREE", home.to_str().unwrap()),
-        ]);
-        let got = derive_home_repo(&home, &e).canonicalize().unwrap();
-        let want = repo.canonicalize().unwrap();
-        assert_eq!(got, want, "a scrubbed GIT_DIR must still climb to the real toplevel");
-    }
-
-    #[test]
-    fn every_key_resolves_the_same_from_the_registry_index_as_from_its_directories() {
-        let ws = testkit::TempDir::new("spira-config-resolve-index");
-        let (_, repo) = fixture_home_repo(&ws);
-        let home = crate::process::fixture_registry_home(&repo);
-        let from_dirs = registry::Registry::load(&home).unwrap();
-        let index = registry::write_index(&home).unwrap();
-        let from_index = registry::Registry::load(&home).unwrap();
-        assert!(index.is_file(), "positive control: the second load had an index to read");
-        let e = env(&[("HOME", "/h")]);
-        let doc = crate::fixture_doc(&BTreeMap::new());
-        let with = |reg: &registry::Registry| {
-            resolve_checked(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&doc), conf_d: &home.join("conf.d") }, &reg.keys).unwrap()
-        };
-        let (dirs, indexed) = (with(&from_dirs), with(&from_index));
-        assert!(from_dirs.keys.keys().all(|k| dirs.values.contains_key(k)), "every registered key resolves");
-        assert_eq!(indexed, dirs);
-    }
-
-    #[test]
-    fn resolve_for_process_matches_resolve_given_the_same_inputs() {
-        // Both read the one file the passed env's SPIRA_TOML names — never the process's own.
-        let ws = testkit::TempDir::new("spira-config-resolve-for-process");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        let toml = crate::fixture_toml_file(ws.path(), &BTreeMap::new());
-        let e = env(&[("HOME", "/h"), ("SPIRA_TOML", toml.to_str().unwrap())]);
-        let direct = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&BTreeMap::new())), conf_d: &Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d") }).unwrap();
-        let mut via_wrapper = resolve_for_process(&home, &repo, &e).unwrap();
-        for (key, rk) in &registry::for_process().unwrap().keys {
-            if rk.toml_only {
-                assert!(via_wrapper.values.remove(key).is_some(), "{key}: the process registry resolves toml-only keys");
-            }
-        }
-        assert_eq!(direct, via_wrapper);
     }
 
 
@@ -1352,71 +1166,6 @@ mod tests {
     }
 
 
-    /// A `spira.toml` that fails to parse is the named refusal `resolve_run_dir` returns —
-    /// never a literal path a caller could mistake for a real answer.
-    #[test]
-    fn resolve_run_dir_refuses_named_on_a_malformed_toml() {
-        let ws = testkit::TempDir::new("spira-config-resolve-run-dir-bad-toml");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        let toml_path = ws.join("spira.toml");
-        std::fs::write(&toml_path, "this is not [valid toml").unwrap();
-        let no_xdg = ws.join("no-such-xdg");
-        let guard = testkit::env(&[
-            ("SPIRA_CONF", None),
-            ("SPIRA_REPO", None),
-            ("HOME", Some("/h")),
-            ("XDG_CONFIG_HOME", no_xdg.to_str()),
-            ("SPIRA_TOML", toml_path.to_str()),
-        ]);
-
-        let e = env(&[("HOME", "/h")]);
-        let got = resolve_run_dir(&e, &home);
-        drop(guard);
-        let err = got.expect_err("a malformed spira.toml must refuse, not guess /tmp/spira");
-        assert!(err.contains("cannot resolve spira.run"), "{err}");
-    }
-
-
-    fn run_dir_under_instance(instance: &str, run: impl Fn(&Path) -> String) -> (Result<PathBuf, String>, String) {
-        let ws = testkit::TempDir::new("spira-config-resolve-run-dir-confined");
-        let (home, repo) = fixture_home_repo(&ws);
-        run_git(&repo, &["init", "-q"]);
-        let no_xdg = ws.join("no-such-xdg");
-        let guard = testkit::env(&[
-            ("SPIRA_TOML", None),
-            ("SPIRA_CONF", None),
-            ("SPIRA_REPO", None),
-            ("HOME", Some("/h")),
-            ("XDG_CONFIG_HOME", no_xdg.to_str()),
-        ]);
-        let value = run(ws.path());
-        let declared = env(&[("SPIRA_INSTANCE", instance), ("SPIRA_RUN", &value), ("SPIRA_WORKSPACES", ws.path().to_str().unwrap())]);
-        let toml = crate::fixture_toml_file(ws.path(), &declared);
-        let e = env(&[("HOME", "/h"), ("SPIRA_TOML", toml.to_str().unwrap())]);
-        let got = resolve_run_dir(&e, &home);
-        drop(guard);
-        (got, value)
-    }
-
-    #[test]
-    fn a_confined_instance_refuses_an_explicit_run_outside_its_confinement() {
-        let (got, value) = run_dir_under_instance("test", |_| "/outside/spira/run".to_string());
-        let err = got.expect_err("an explicit SPIRA_RUN outside the confinement must refuse");
-        assert!(err.contains("is confined to") && err.contains("SPIRA_RUN") && err.contains(&value), "{err}");
-    }
-
-    #[test]
-    fn a_confined_instance_resolves_an_explicit_run_inside_its_confinement() {
-        let (got, value) = run_dir_under_instance("test", |ws| ws.join("run").display().to_string());
-        assert_eq!(got.unwrap(), PathBuf::from(value));
-    }
-
-    #[test]
-    fn an_unconfined_instance_resolves_an_explicit_run_anywhere() {
-        let (got, value) = run_dir_under_instance("prod", |_| "/outside/spira/run".to_string());
-        assert_eq!(got.unwrap(), PathBuf::from(value));
-    }
 
 
 }

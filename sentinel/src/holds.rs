@@ -225,29 +225,6 @@ mod tests {
     }
 
     #[test]
-    fn a_closed_ask_leaves_no_hold_and_an_open_one_keeps_it() {
-        let ask = "needs-operator"; // literal-ok: test fixture
-        let rows = vec![row("sp-w", "READY", &["ask"], Some("should we ship?"), NOW - GRACE)];
-        let open = snap(
-            r#"[{"id":"sp-w","status":"open","labels":[]},
-                {"id":"sp-d","status":"open","labels":["needs-operator","work-bead:sp-w"]}]"#, // literal-ok: test fixture
-        );
-        assert!(stale_ask_holds(&rows, &open, ask, NOW, GRACE, &|_| true).is_empty(), "its ask bead is open");
-        let closed = snap(
-            r#"[{"id":"sp-w","status":"open","labels":[]},
-                {"id":"sp-d","status":"closed","labels":["needs-operator","work-bead:sp-w"]}]"#, // literal-ok: test fixture
-        );
-        let out = stale_ask_holds(&rows, &closed, ask, NOW, GRACE, &|_| true);
-        assert_eq!(out.len(), 1, "the ask closed and the hold stayed");
-        let relabelled = snap(r#"[{"id":"sp-w","status":"open","labels":[]}]"#);
-        assert_eq!(stale_ask_holds(&rows, &relabelled, ask, NOW, GRACE, &|_| true).len(), 1);
-        let labelled = snap(r#"[{"id":"sp-w","status":"open","labels":["needs-operator"]}]"#); // literal-ok: test fixture
-        assert!(stale_ask_holds(&rows, &labelled, ask, NOW, GRACE, &|_| true).is_empty());
-        let young = vec![row("sp-w", "READY", &["ask"], Some("q"), NOW - 5)];
-        assert!(stale_ask_holds(&young, &closed, ask, NOW, GRACE, &|_| true).is_empty(), "ask may not be filed yet");
-    }
-
-    #[test]
     fn rows_without_an_ask_hold_are_never_touched() {
         let s = snap(r#"[{"id":"sp-a","status":"open","labels":[]}]"#);
         let rows = vec![row("sp-a", "READY", &["poison"], Some("repo:spira has no mapped entry"), 0)];

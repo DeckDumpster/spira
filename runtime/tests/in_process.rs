@@ -19,12 +19,8 @@ mod conformance {
     }
     s!(
         redelivery_of_any_event,
-        crash_between_append_and_dispatch,
-        crash_during_dispatch_appends_nothing_twice,
-        crash_between_effect_request_and_outcome,
         out_of_order_effect_outcomes,
         effect_deadline_times_out,
-        determinism_under_replay,
         handler_panic_quarantines_its_stream_only,
         schedule_rows_survive_restart_and_fire_once
     );

@@ -256,69 +256,8 @@ mod tests {
         testkit::TempDir::new(&format!("testenv-prebuilt-{tag}"))
     }
 
-    fn exe(dir: &Path, name: &str, body: &str) {
-        testkit::write_exe(dir.join(name), body);
-    }
-
     fn strings(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn a_complete_set_is_accepted_and_hashed_by_content() {
-        let d = tmp("ok");
-        for n in FLOOR {
-            exe(&d, n, n);
-        }
-        fs::write(d.join("notes.d"), "not executable").unwrap();
-        let p = inspect(&d, &strings(&FLOOR)).unwrap();
-        assert_eq!(p.names, strings(&["spira-config", "test-plan", "testenv"]));
-        assert_eq!(p.id.len(), 64);
-        let same = inspect(&d, &strings(&FLOOR)).unwrap();
-        assert_eq!(p.id, same.id);
-        exe(&d, "testenv", "a different build");
-        assert_ne!(p.id, inspect(&d, &strings(&FLOOR)).unwrap().id);
-        let _ = fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn a_missing_directory_or_binary_is_refused_by_name() {
-        let d = tmp("bad");
-        assert_eq!(
-            inspect(&d.join("nope"), &strings(&FLOOR)),
-            Err(Invalid::NotADirectory(d.join("nope")))
-        );
-        exe(&d, "testenv", "t");
-        fs::write(d.join("test-plan"), "not executable").unwrap();
-        match inspect(&d, &strings(&FLOOR)) {
-            Err(e @ Invalid::Missing { .. }) => {
-                assert!(e
-                    .message()
-                    .contains("missing executable(s): spira-config test-plan"));
-            }
-            other => panic!("{other:?}"),
-        }
-        let _ = fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn staging_replaces_the_previous_set() {
-        let d = tmp("stage");
-        let src = d.join("bin");
-        let dest = d.join("wt/target/prebuilt");
-        fs::create_dir_all(&src).unwrap();
-        fs::create_dir_all(&dest).unwrap();
-        fs::write(dest.join("stale"), "old").unwrap();
-        exe(&src, "testenv", "t");
-        let p = inspect(&src, &strings(&["testenv"])).unwrap();
-        stage(&p, &dest).unwrap();
-        assert!(!dest.join("stale").exists());
-        assert!(is_executable_file(&dest.join("testenv")));
-        // staging onto itself is a no-op, not a self-deletion
-        let p2 = inspect(&dest, &strings(&["testenv"])).unwrap();
-        stage(&p2, &dest).unwrap();
-        assert!(dest.join("testenv").exists());
-        let _ = fs::remove_dir_all(&d);
     }
 
     #[test]

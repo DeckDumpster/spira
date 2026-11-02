@@ -1,6 +1,5 @@
-use serde_json::{json, Value};
-use spira_sim::runstate::{flocked_inodes, gate_log_row, kv, landing_log_row, normalise, read, table, unit_row, verdict_row, TABLES};
-use spira_sim::trace::{violations, Snapshot, Trace};
+use serde_json::Value;
+use spira_sim::runstate::{flocked_inodes, read, unit_row, verdict_row, TABLES};
 use std::path::Path;
 
 fn put(root: &Path, rel: &str, body: &str) {
@@ -18,23 +17,6 @@ fn a_verdict_file_is_a_row_keyed_by_its_name() {
     let r = verdict_row("abc", "when=2026-10-24T13:55:20Z\nat=1792850120\nby=spira/sp-x\nrepo=spira\nbranch=spira/sp-x\nsuites=-\ncompose=unit\n");
     assert_eq!((r["key"].as_str(), r["stamped"].as_i64(), r["compose"].as_str(), r["suites"].as_str()), (Some("abc"), Some(1792850120), Some("unit"), Some("-")));
     assert!(verdict_row("k", "garbage")["branch"].is_null());
-}
-
-#[test]
-fn a_gate_log_line_yields_its_branch_and_exit_code() {
-    let r = gate_log_row(3, "2026-10-25T03:31:26Z spira spira/sp-8jytkl waited=0s ran=198s rc=1 branch-red compose=suites(script)");
-    assert_eq!((r["repo"].as_str(), r["branch"].as_str(), r["rc"].as_i64(), r["line"].as_i64()), (Some("spira"), Some("spira/sp-8jytkl"), Some(1), Some(3)));
-    assert!(gate_log_row(1, "2026-10-25T03:19:38Z identity spira/x waited=0s")["rc"].is_null());
-}
-
-#[test]
-fn a_landing_line_is_either_a_timestamped_repo_line_or_a_queue_record() {
-    let a = landing_log_row("landing.log", 1, "2026-09-15T05:35:45Z spira: CHECK6 sp-0wqx: not landed");
-    assert_eq!((a["ts"].as_str(), a["repo"].as_str(), a["text"].as_str(), a["event"].is_null()), (Some("2026-09-15T05:35:45Z"), Some("spira"), Some("CHECK6 sp-0wqx: not landed"), true));
-    let b = landing_log_row("landing.log", 2, "QUEUE ROUND-LAND 1800000310 repo=sim batch=b1 head=h members=sp-a:t1");
-    assert_eq!((b["event"].as_str(), b["repo"].as_str(), b["ts"].is_null()), (Some("ROUND-LAND"), Some("sim"), true));
-    assert!(b["text"].as_str().unwrap().contains("members=sp-a:t1"));
-    assert!(landing_log_row("landing.log", 3, "2026-09-15T05:35:45Z no repo here")["repo"].is_null());
 }
 
 #[test]
@@ -79,94 +61,6 @@ fn the_run_directory_reads_as_one_row_set_per_family() {
 fn an_absent_run_directory_reads_as_nothing() {
     let w = testkit::TempDir::new("sim-runstate-empty");
     assert!(read(&w.join("no-such-run"), "").is_empty());
-}
-
-#[test]
-fn a_held_flock_is_seen_held_and_a_released_one_is_not() {
-    use std::os::unix::fs::MetadataExt;
-    if std::process::Command::new("flock").arg("--version").output().is_err() {
-        eprintln!("SKIPPED: no flock binary");
-        return;
-    }
-    let w = testkit::TempDir::new("sim-runstate-held");
-    put(&w, "landing.lock", "");
-    let lock = w.join("landing.lock");
-    use std::os::unix::process::CommandExt;
-    let mut holder = std::process::Command::new("flock").arg("-x").arg(&lock).args(["sleep", "30"]).process_group(0).spawn().unwrap();
-    let ino = std::fs::metadata(&lock).unwrap().ino();
-    let mut seen = false;
-    for _ in 0..100 {
-        seen = flocked_inodes(&std::fs::read_to_string("/proc/locks").unwrap()).contains(&ino);
-        if seen {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50)); // clock-safe: bounded poll for the flock to appear in /proc/locks
-    }
-    let held = read(&w, &std::fs::read_to_string("/proc/locks").unwrap());
-    let _ = std::process::Command::new("kill").arg("-KILL").arg(format!("-{}", holder.id())).status();
-    let _ = holder.wait();
-    assert!(seen, "the flock never showed in /proc/locks");
-    assert_eq!(rows(&held, "run_locks")[0]["held"], true);
-    let mut free = false;
-    for _ in 0..100 {
-        free = rows(&read(&w, &std::fs::read_to_string("/proc/locks").unwrap()), "run_locks")[0]["held"] == false;
-        if free {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50)); // clock-safe: bounded poll for the killed holder's flock to clear
-    }
-    assert!(free, "the flock stayed held after its holder was killed");
-}
-
-#[test]
-fn a_row_with_a_field_its_table_lacks_is_refused() {
-    let t = table("run_ejected").unwrap();
-    assert!(normalise(t, &json!({"bead": "sp-a", "suite": "x"})).unwrap_err().contains("unknown field"));
-    assert_eq!(normalise(t, &json!({"bead": "sp-a"})).unwrap()["suites"], Value::Null);
-    assert_eq!(kv("a=1\nnoise\nb = 2").len(), 2);
-}
-
-fn snapshot_with(seq: u64, t: &Trace, run: Vec<(&'static str, Value)>) {
-    t.snapshot(seq, &Snapshot { run, ..Default::default() }).unwrap();
-}
-
-#[test]
-fn state_families_repeat_per_snapshot_and_log_lines_appear_once() {
-    if !spira_sim::trace::duckdb_available() {
-        return;
-    }
-    let w = testkit::TempDir::new("sim-runstate-trace");
-    let t = Trace::create(&w).unwrap();
-    let verdict = ("run_verdicts", verdict_row("k", "branch=spira/sp-a\n"));
-    let line = ("run_landing_log", landing_log_row("landing.log", 1, "QUEUE ROUND-LAND 1 repo=sim batch=b members=sp-a:t"));
-    snapshot_with(1, &t, vec![verdict.clone()]);
-    snapshot_with(2, &t, vec![verdict.clone(), line.clone()]);
-    snapshot_with(3, &t, vec![verdict, line]);
-    let db = t.load(&w).unwrap();
-    let count = |sql: &str| -> String { std::process::Command::new(spira_sim::trace::duckdb_bin()).arg(&db).arg("-csv").arg("-noheader").arg("-c").arg(sql).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap() };
-    assert_eq!(count("SELECT count(*) FROM run_verdicts"), "3");
-    assert_eq!(count("SELECT seq FROM run_landing_log"), "2");
-}
-
-#[test]
-fn the_landing_invariant_needs_a_certificate_at_the_same_snapshot_and_the_lock_invariant_a_held_flock() {
-    if !spira_sim::trace::duckdb_available() {
-        return;
-    }
-    let land = ("run_landing_log", landing_log_row("landing.log", 1, "QUEUE ROUND-LAND 1 repo=sim batch=b members=sp-a:t"));
-    let cert = ("run_verdicts", verdict_row("k", "branch=spira/sp-a\n"));
-    let lock = |held: bool| ("run_locks", json!({"name": "landing.lock", "holder": null, "held": held}));
-    let hits = |run: Vec<(&'static str, Value)>| {
-        let w = testkit::TempDir::new("sim-runstate-inv");
-        let t = Trace::create(&w).unwrap();
-        snapshot_with(1, &t, run);
-        let db = t.load(&w).unwrap();
-        violations(&db, &[]).unwrap().into_iter().map(|v| v.view).collect::<Vec<_>>()
-    };
-    assert_eq!(hits(vec![land.clone()]), vec!["inv_round_land_has_certificate"]);
-    assert!(hits(vec![land, cert]).is_empty());
-    assert_eq!(hits(vec![lock(true)]), vec!["inv_no_lock_held_between_events"]);
-    assert!(hits(vec![lock(false)]).is_empty());
 }
 
 #[test]

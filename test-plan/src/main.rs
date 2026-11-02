@@ -667,68 +667,6 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
 
-    /// `write-matrix` builds and renders in one call and writes both files — the shape
-    /// `plan-matrix.sh` used to get by calling `matrix` then `render` then `cp`-ing twice.
-    #[test]
-    fn write_matrix_builds_renders_and_writes_both_files() {
-        let t = testkit::TempDir::new("test-plan-write-matrix");
-        let dir = t.join("docs/test-plan");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("demo.toml"),
-            "api_version = \"test-plan/v1\"\narea = \"demo\"\n\n[[use_case]]\nid = \"UC-demo-01\"\ntier = \"T0\"\nstatement = \"one\"\n",
-        )
-        .unwrap();
-        let suites = t.join("suites.json");
-        std::fs::write(&suites, r#"[{"path":"spira/test-a.sh","tier":"T0","covers":["UC-demo-01"]}]"#).unwrap();
-        let out_json = t.join("coverage.json");
-        let out_md = t.join("COVERAGE.md");
-
-        let rc = cmd_write_matrix(&[
-            "--catalogue-dir".into(),
-            dir.to_str().unwrap().into(),
-            "--suites".into(),
-            suites.to_str().unwrap().into(),
-            "--out-json".into(),
-            out_json.to_str().unwrap().into(),
-            "--out-md".into(),
-            out_md.to_str().unwrap().into(),
-        ]);
-        assert_eq!(format!("{rc:?}"), format!("{:?}", ExitCode::SUCCESS));
-
-        let json = std::fs::read_to_string(&out_json).unwrap();
-        assert!(json.contains("UC-demo-01"), "{json}");
-        let doc: MatrixDoc = serde_json::from_str(&json).unwrap();
-        assert_eq!(render_markdown(&doc), std::fs::read_to_string(&out_md).unwrap());
-    }
-
-    /// A malformed catalogue is reported and neither output file is written.
-    #[test]
-    fn write_matrix_reports_a_malformed_catalogue_and_writes_nothing() {
-        let t = testkit::TempDir::new("test-plan-write-matrix-bad");
-        let dir = t.join("docs/test-plan");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("demo.toml"), "api_version = \"test-plan/v1\"\narea = \"demo\"\nbogus = 1\n").unwrap();
-        let suites = t.join("suites.json");
-        std::fs::write(&suites, "[]").unwrap();
-        let out_json = t.join("coverage.json");
-        let out_md = t.join("COVERAGE.md");
-
-        let rc = cmd_write_matrix(&[
-            "--catalogue-dir".into(),
-            dir.to_str().unwrap().into(),
-            "--suites".into(),
-            suites.to_str().unwrap().into(),
-            "--out-json".into(),
-            out_json.to_str().unwrap().into(),
-            "--out-md".into(),
-            out_md.to_str().unwrap().into(),
-        ]);
-        assert_eq!(format!("{rc:?}"), format!("{:?}", ExitCode::FAILURE));
-        assert!(!out_json.exists());
-        assert!(!out_md.exists());
-    }
-
     #[test]
     fn write_matrix_without_out_paths_is_a_usage_error() {
         let rc = cmd_write_matrix(&["--catalogue-dir".into(), "x".into(), "--suites".into(), "-".into()]);

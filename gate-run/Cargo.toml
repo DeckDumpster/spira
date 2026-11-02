@@ -13,9 +13,6 @@ spira-otel = { path = "../spira-otel" }
 libc = "0.2"
 spira-config = { path = "../spira-config" }
 
-[dev-dependencies]
-testkit = { path = "../testkit" }
-
 [profile.release]
 opt-level = "z"
 lto = true

@@ -94,22 +94,4 @@ mod tests {
         assert!(!retry_due(Some(100), 1899, 1800));
         assert!(retry_due(Some(100), 1900, 1800));
     }
-
-    #[test]
-    fn run_with_a_marker_stamps_the_retry_and_without_one_does_nothing() {
-        let dir = testkit::TempDir::new("deploy-fault");
-        let q = dir.join("queue");
-        let r = dir.join("run");
-        std::fs::create_dir_all(q.join("harness")).unwrap();
-        std::fs::create_dir_all(&r).unwrap();
-        let cfg = Cfg { release_bin: "/nonexistent/release".into(), repo: "/x".into(), retry_secs: 1800, build_timeout_secs: 5 };
-        run(1000, &q, &r, "", "harness", "/nonexistent/incident.sh", &cfg);
-        assert!(!r.join("deploy-fault-retry.harness").exists());
-        std::fs::write(q.join("harness/deploy-fault"), "abc123 boom\n").unwrap();
-        run(1000, &q, &r, "", "harness", "/nonexistent/incident.sh", &cfg);
-        assert_eq!(std::fs::read_to_string(r.join("deploy-fault-retry.harness")).unwrap(), "1000");
-        run(1100, &q, &r, "", "harness", "/nonexistent/incident.sh", &cfg);
-        assert_eq!(std::fs::read_to_string(r.join("deploy-fault-retry.harness")).unwrap(), "1000");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 }

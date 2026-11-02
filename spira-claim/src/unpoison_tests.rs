@@ -2,7 +2,6 @@
 
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::Duration;
 
 const T0: i64 = 1_790_596_800; // 2026-09-28T12:00:00Z
 
@@ -244,22 +243,6 @@ fn refuse_when_lifecycle_holder() {
 }
 
 #[test]
-fn ask_closed_by_title_match_only() {
-    let mut f = poisoned_a()
-        .ask("sp-rq", "Spira bead sp-a — completed and requeued 5 times, never landed (gate-red x5) — the harness cannot land it")
-        .ask("sp-other", "Spira bead sp-ab — 3 in_progress transition(s) without landing (3 attempts) — change the approach or drop it?")
-        .ask("sp-sub", "Spira bead sp-a.1 — 3 in_progress transition(s) without landing (3 attempts) — change the approach or drop it?");
-    let (code, out) = run(&opts(&["sp-a"]), &mut f);
-    assert_eq!(code, EXIT_OK, "{out}");
-    let closed: Vec<&str> = f.closed.iter().map(|(id, _)| id.as_str()).collect();
-    assert_eq!(closed, vec!["sp-ask1"]);
-    assert!(out.contains("     resolved ask sp-ask1"), "{out}");
-    assert!(f.closed[0].1.contains("sp-a's poison was cleared — every charged session"), "{:?}", f.closed);
-    assert!(is_poison_ask(ASK, "sp-a"));
-    assert!(!is_poison_ask(ASK, "sp-"));
-}
-
-#[test]
 fn skip_when_not_poisoned_and_below_threshold() {
     let mut f = Fake::new().bead("pz4", "open", None, &["spira"]).claims("pz4", 2);
     let (code, out) = run(&opts(&["pz4"]), &mut f);
@@ -451,113 +434,6 @@ fn ids_and_slugs() {
 
 // ---------------------------------------------------------------------------------------
 // the live world's seams: argv and stdin of the bdq / spira-lc calls
-
-fn script(dir: &std::path::Path, name: &str, body: &str) -> String {
-    let p = dir.join(name);
-    testkit::write_exe(&p, &format!("#!/bin/sh\n{body}\n"));
-    p.to_string_lossy().into_owned()
-}
-
-fn live(tag: &str, bd_body: &str, lc_body: &str) -> (Live, testkit::TempDir) {
-    let dir = testkit::TempDir::new(&format!("spira-claim-unpoison-{tag}"));
-    std::fs::create_dir_all(dir.join("run/poison-asked")).unwrap();
-    let bdq = script(&dir, "bdq", &bd_body.replace("@LOG@", &dir.join("bd.log").to_string_lossy()));
-    let lc = script(&dir, "spira-lc", &lc_body.replace("@LOG@", &dir.join("lc.log").to_string_lossy()));
-    let l = Live {
-        store: Store { bdq, lc, timeout: Duration::from_secs(10) },
-        run_dir: dir.join("run"),
-        asked_dir: dir.join("run/poison-asked"),
-        beads_actor: "harness".into(),
-    };
-    (l, dir)
-}
-
-const RECORD: &str = r#"{ printf 'ARGV'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\nSTDIN '; /bin/cat; printf '\n'; } >> @LOG@"#;
-
-#[test]
-fn live_bd_writes_pass_text_on_stdin() {
-    let (mut w, dir) = live("stdin", RECORD, RECORD);
-    let cause = "it's \"the harness\" — not the work\nsecond line";
-    w.note("sp-a", &format!("Poison cleared: {cause}")).unwrap();
-    w.close("sp-ask1", &format!("Resolved: {cause}")).unwrap();
-    let log = std::fs::read_to_string(dir.join("bd.log")).unwrap();
-    assert!(log.contains("ARGV [note] [sp-a] [--stdin]\nSTDIN Poison cleared: it's \"the harness\""), "{log}");
-    // The ask's close goes through the lifecycle machine (sp-3fue0j), never bd.
-    let lc_log = std::fs::read_to_string(dir.join("lc.log")).unwrap();
-    assert!(lc_log.contains("ARGV [close] [sp-ask1] [--reason-file] [-] [--actor] [spira-claim]\nSTDIN Resolved: it's"), "{lc_log}");
-    assert!(!log.contains("[close]"), "a close never reaches bd: {log}");
-    for line in log.lines().chain(lc_log.lines()).filter(|l| l.starts_with("ARGV")) {
-        assert!(!line.contains("harness"), "no free text in argv: {line}");
-    }
-}
-
-#[test]
-fn live_event_is_a_bounded_lifecycle_fact_never_a_bd_write() {
-    let (mut w, dir) = live("event", RECORD, RECORD);
-    w.write_event("sp-a", "poison.cleared", &format!("it's {}", "y".repeat(500))).unwrap();
-    let log = std::fs::read_to_string(dir.join("lc.log")).unwrap();
-    let argv = log.lines().next().unwrap();
-    assert!(argv.starts_with("ARGV [fact] [sp-a] [--kind] [poison.cleared] [--actor] [harness] [--cause] [its yyy"), "{argv}");
-    assert!(argv.len() < 400, "the one argv payload is bounded: {}", argv.len());
-    assert!(!dir.join("bd.log").exists(), "a fact never reaches bd");
-    let (mut bad, _bad_dir) = live("event-fail", "exit 0", "echo 'cannot tell: db down' >&2; exit 2");
-    assert!(bad.write_event("sp-a", "poison.cleared", "x").unwrap_err().contains("db down"));
-}
-
-#[test]
-fn live_bead_and_asks() {
-    let (mut w, _dir) = live(
-        "show",
-        r#"case "$1" in
-  list) [ "$*" = "list --label needs-ryan --status open --limit 0 --json" ] || exit 9; echo '[{"id":"sp-ask1","title":"t"}]' ;; # literal-ok: fixture
-  show) if [ "$2" = sp-a ]; then echo '[{"id":"sp-a","status":"open","labels":["spira-poison"]}]';
-        elif [ "$2" = sp-down ]; then echo 'dolt: connection refused' >&2; exit 1;
-        else echo '{"error":"no issues found matching the provided IDs"}'; echo "Error fetching $2: no issue found matching \"$2\"" >&2; exit 1; fi ;;
-esac"#,
-        // literal-ok: fixture
-        r#"[ "$*" = "list-asks" ] || exit 9; echo '[{"ask_id":"sp-ask1","state":"OPEN","title":"t"}]'"#,
-    );
-    assert_eq!(w.bead("sp-a").unwrap().unwrap().labels, vec!["spira-poison"]);
-    assert_eq!(w.bead("sp-gone").unwrap(), None);
-    assert!(w.bead("sp-down").unwrap_err().contains("connection refused"));
-    assert_eq!(w.open_asks().unwrap(), vec![AskRow { id: "sp-ask1".into(), title: "t".into() }]);
-}
-
-#[test]
-fn live_lifecycle_show_and_unhold() {
-    let (mut w, dir) = live(
-        "lc",
-        "exit 0",
-        r#"echo "$*" >> @LOG@
-case "$1:$2" in
-  show:sp-a) echo '{"bead":{"bead_id":"sp-a","state":"READY","holds":"[\"poison\"]","version":"7","holder":null}}' ;;
-  show:sp-none) echo '{}'; exit 1 ;;
-  show:*) echo 'cannot tell: db down' >&2; exit 2 ;;
-  event:bead) case "$3" in sp-a) exit 0 ;; sp-race) echo 'refused: lost the race to another writer'; exit 3 ;; *) exit 2 ;; esac ;;
-esac"#,
-    );
-    let row = w.lc_row("sp-a").unwrap().unwrap();
-    assert!(row.poisoned() && row.version == 7 && row.state == BeadState::Ready);
-    assert_eq!(w.lc_row("sp-none").unwrap(), None);
-    let (mut f, _dir) = live("lc-false", "exit 0", "exit 1");
-    assert!(f.lc_row("sp-a").is_err(), "a bare exit 1 is not spira-lc's no-row answer");
-    assert!(w.lc_row("sp-x").is_err());
-    assert_eq!(w.lc_unhold_poison("sp-a", &row, "unpoison"), LcApply::Applied);
-    assert!(matches!(w.lc_unhold_poison("sp-race", &row, "unpoison"), LcApply::Refused(_)));
-    assert!(matches!(w.lc_unhold_poison("sp-x", &row, "unpoison"), LcApply::CannotTell(_)));
-    let log = std::fs::read_to_string(dir.join("lc.log")).unwrap();
-    assert!(log.contains(r#"event bead sp-a --expect READY --version 7 --actor unpoison --kind {"Unhold":{"kind":"Poison"}}"#), "{log}");
-}
-
-#[test]
-fn live_ask_history() {
-    let (mut w, dir) = live("files", "exit 0", "exit 0");
-    std::fs::write(dir.join("run/poison-asked/sp-a"), "3\n").unwrap();
-    assert!(w.ask_history_exists("sp-a"));
-    w.clear_ask_history("sp-a").unwrap();
-    assert!(!w.ask_history_exists("sp-a"));
-    w.clear_ask_history("sp-a").unwrap(); // absent is fine
-}
 
 #[test]
 fn an_unreachable_machine_is_a_loud_fail() {

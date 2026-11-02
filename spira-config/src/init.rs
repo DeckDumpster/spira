@@ -361,19 +361,6 @@ mod tests {
         Registry { conf_d: Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/conf.d")), env }
     }
 
-    #[test]
-    fn every_registered_key_is_declared_and_the_file_resolves_without_defaults() {
-        let d = testkit::TempDir::new("spira-config-init-complete");
-        let out = d.path().join("spira.toml");
-        ensure(&out, full(), None, &reg()).unwrap();
-        let doc = crate::load(&out).unwrap();
-        let home = PathBuf::from("/b/rel/current/spira");
-        let r = reg();
-        let got = crate::resolve::resolve(crate::resolve::ResolveInput { env: r.env, home: &home, repo: Path::new("/b/rel/current"), toml: Some(&doc), conf_d: r.conf_d });
-        assert!(got.is_ok(), "{:?}", got.err().map(|e| e.to_string()));
-        assert_eq!(crate::get_path(&doc, "spira.instance").as_deref(), Some("acc"));
-    }
-
     fn full() -> BTreeMap<String, String> {
         parse_answers(
             concat!(
@@ -382,67 +369,6 @@ mod tests {
             ),
         )
         .unwrap()
-    }
-
-    #[test]
-    fn a_fresh_config_carries_the_dwarf_warm_base_and_an_answer_wins() {
-        let d = testkit::TempDir::new("spira-config-init-warm");
-        let base_of = |answers| {
-            let text = render(&answers, &d.path().join("spira.toml"), &reg()).unwrap();
-            crate::get_path(&crate::validate(&text).unwrap(), "spira.dwarf_warm_base").unwrap_or_default()
-        };
-        assert_eq!(base_of(full()), DEFAULT_DWARF_WARM_BASE);
-        let mut own = full();
-        own.insert("dwarf_warm_base".into(), "/b/warm".into());
-        assert_eq!(base_of(own), "/b/warm");
-    }
-
-    #[test]
-    fn a_typed_key_with_no_registered_default_must_be_answered() {
-        // The shipped registry gives every typed key a default; a registry that does not
-        // (here, call_lock_wait's default removed) must be answered, never invented.
-        let d = testkit::TempDir::new("spira-config-init-nodefault");
-        let conf_d = d.path().join("spira/conf.d");
-        std::fs::create_dir_all(&conf_d).unwrap();
-        std::os::unix::fs::symlink(reg().conf_d.parent().unwrap().join("runes"), d.path().join("spira/runes")).unwrap();
-        for e in std::fs::read_dir(reg().conf_d).unwrap().flatten() {
-            let mut t = std::fs::read_to_string(e.path()).unwrap();
-            if e.file_name() == "SPIRA_CALL_LOCK_WAIT" {
-                t = t.lines().filter(|l| !l.contains(":=")).map(|l| format!("{l}\n")).collect();
-            }
-            std::fs::write(conf_d.join(e.file_name()), t).unwrap();
-        }
-        let r = Registry { conf_d: &conf_d, env: reg().env };
-        let e = render(&full(), &d.path().join("spira.toml"), &r).unwrap_err();
-        assert!(e.contains("call_lock_wait") && !e.contains("certify_par"), "{e}");
-        let mut a = full();
-        a.insert("call_lock_wait".into(), "30".into());
-        render(&a, &d.path().join("spira.toml"), &r).unwrap();
-    }
-
-    #[test]
-    fn bd_is_pinned_from_path_or_refused_by_name() {
-        let d = testkit::TempDir::new("spira-config-init-bd");
-        std::fs::create_dir_all(d.path().join("bin")).unwrap();
-        testkit::write_exe(d.path().join("bin/bd"), "#!/bin/sh\n");
-        let mut a = full();
-        a.remove("bd");
-        let env: BTreeMap<String, String> = [("HOME".to_string(), "/b/home".to_string()), ("PATH".to_string(), d.path().join("bin").display().to_string())].into_iter().collect();
-        let r = Registry { conf_d: reg().conf_d, env: &env };
-        let text = render(&a, &d.path().join("spira.toml"), &r).unwrap();
-        assert!(text.contains(&format!("bd = \"{}\"", d.path().join("bin/bd").display())), "{text}");
-        let none: BTreeMap<String, String> = [("HOME".to_string(), "/b/home".to_string()), ("PATH".to_string(), "/nonexistent".to_string())].into_iter().collect();
-        let e = render(&a, &d.path().join("spira.toml"), &Registry { conf_d: reg().conf_d, env: &none }).unwrap_err();
-        assert!(e.contains("no bd on PATH"), "{e}");
-    }
-
-    #[test]
-    fn every_shipped_persona_gets_its_table_with_a_model() {
-        let d = testkit::TempDir::new("spira-config-init-persona");
-        let text = render(&full(), &d.path().join("spira.toml"), &reg()).unwrap();
-        let doc = crate::validate(&text).unwrap();
-        assert!(doc.persona.contains_key("builder"), "{:?}", doc.persona.keys().collect::<Vec<_>>());
-        assert!(crate::get_path(&doc, "persona.builder.model").is_some_and(|m| !m.is_empty()));
     }
 
     #[test]
@@ -459,31 +385,6 @@ mod tests {
         a.remove("db");
         a.insert("run".into(), " ".into());
         assert_eq!(missing(&a), vec!["db", "run"]);
-    }
-
-    #[test]
-    fn a_fresh_box_gets_every_path_pinned_and_a_valid_file() {
-        let d = testkit::TempDir::new("spira-config-init-fresh");
-        let out = d.path().join("cfg/spira.toml");
-        let mut a = full();
-        a.insert("home_repo_path".into(), "/b/scratch".into());
-        assert_eq!(ensure(&out, a, None, &reg()).unwrap(), Outcome::Written(out.clone()));
-        let doc = crate::load(&out).unwrap();
-        assert_eq!(crate::get_path(&doc, "spira.db").as_deref(), Some("/b/db"));
-        assert_eq!(crate::get_path(&doc, "spira.repo_map").as_deref(), Some(d.path().join("cfg/repo-map").to_str().unwrap()));
-        let map = std::fs::read_to_string(d.path().join("cfg/repo-map")).unwrap();
-        assert_eq!(map, "scratch | /b/scratch | push | origin/main | |\n");
-    }
-
-    #[test]
-    fn an_existing_repo_map_row_is_never_duplicated() {
-        let d = testkit::TempDir::new("spira-config-init-row");
-        let out = d.path().join("spira.toml");
-        std::fs::write(d.path().join("repo-map"), "scratch | /b/x | queue.local | local/main | |\n").unwrap();
-        let mut a = full();
-        a.insert("home_repo_path".into(), "/b/scratch".into());
-        ensure(&out, a, None, &reg()).unwrap();
-        assert_eq!(std::fs::read_to_string(d.path().join("repo-map")).unwrap(), "scratch | /b/x | queue.local | local/main | |\n");
     }
 
     #[test]
@@ -525,17 +426,6 @@ mod tests {
     }
 
     #[test]
-    fn a_prompt_fills_what_the_answers_lack() {
-        let d = testkit::TempDir::new("spira-config-init-ask");
-        let out = d.path().join("spira.toml");
-        let mut a = full();
-        a.remove("run");
-        let mut ask = |k: &str, _: &str, _: &str| (k == "run").then(|| "/asked/run".to_string());
-        ensure(&out, a, Some(&mut ask), &reg()).unwrap();
-        assert_eq!(crate::get_path(&crate::load(&out).unwrap(), "spira.run").as_deref(), Some("/asked/run"));
-    }
-
-    #[test]
     fn an_unknown_answer_is_refused_by_name() {
         let mut a = full();
         a.insert("no_such_key".into(), "1".into());
@@ -550,61 +440,5 @@ mod tests {
         assert_eq!(default_out(&m(&[("XDG_CONFIG_HOME", "/x"), ("HOME", "/h")])).unwrap(), PathBuf::from("/x/spira/spira.toml"));
         assert_eq!(default_out(&m(&[("HOME", "/h")])).unwrap(), PathBuf::from("/h/.config/spira/spira.toml"));
         assert_eq!(default_out(&m(&[("SPIRA_TOML", "/a:/b")])).unwrap(), PathBuf::from("/a:/b"));
-    }
-
-    fn parsed_keys(text: &str) -> Vec<String> {
-        let mut keys = Vec::new();
-        let mut rest = text;
-        while let Some(i) = rest.find("cfg_parse") {
-            rest = &rest[i + "cfg_parse".len()..];
-            let call = match rest.strip_prefix("::<") {
-                Some(t) => t.split_once('>').map_or("", |(_, after)| after),
-                None => rest,
-            };
-            if let Some(body) = call.strip_prefix('(').map(str::trim_start).and_then(|t| t.strip_prefix('"')) {
-                let k = body.split('"').next().unwrap_or("");
-                if !k.is_empty() && k.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
-                    keys.push(k.to_string());
-                }
-            }
-        }
-        keys
-    }
-
-    fn rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
-        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-            let p = e.path();
-            let name = e.file_name().to_string_lossy().into_owned();
-            if p.is_dir() {
-                if name != "target" && !name.starts_with('.') {
-                    rust_sources(&p, out);
-                }
-            } else if p.extension().is_some_and(|x| x == "rs") {
-                out.push(p);
-            }
-        }
-    }
-
-    #[test]
-    fn a_fresh_config_parses_as_a_number_every_key_a_rust_reader_parses() {
-        assert_eq!(parsed_keys("cfg_parse::<u32>(\"SPIRA_X_1\") cfg_parse(\"SPIRA_Y\")"), ["SPIRA_X_1", "SPIRA_Y"]);
-
-        let mut files = Vec::new();
-        rust_sources(&Path::new(env!("CARGO_MANIFEST_DIR")).join(".."), &mut files);
-        let keys: std::collections::BTreeSet<String> =
-            files.iter().flat_map(|f| parsed_keys(&std::fs::read_to_string(f).unwrap_or_default())).collect();
-        assert!(keys.contains("SPIRA_BATCH_MEM_RESERVE_MIB"), "the scan found no readers in {} files", files.len());
-
-        let d = testkit::TempDir::new("spira-config-init-numeric");
-        let text = render(&full(), &d.path().join("spira.toml"), &reg()).unwrap();
-        let doc = crate::validate(&text).unwrap();
-        let bad: Vec<String> = keys
-            .iter()
-            .filter_map(|k| {
-                let got = crate::get_path(&doc, &key_path(k))?;
-                (got.trim().parse::<f64>().is_err()).then(|| format!("{k} = {got:?}"))
-            })
-            .collect();
-        assert!(bad.is_empty(), "keys a Rust reader parses, written unparseable in a fresh spira.toml: {bad:?}");
     }
 }

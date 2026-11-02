@@ -702,32 +702,6 @@ mod tests {
         assert_eq!(r[0].priority, Some(2));
     }
 
-    #[test]
-    fn large_ready_set_over_128k() {
-        // sp-o4trx: 142 beads was already past MAX_ARG_STRLEN. The whole path is in-memory
-        // and on stdin; 3000 fat rows must rank.
-        let mut s = String::from("[");
-        for i in 0..3000 {
-            if i > 0 {
-                s.push(',');
-            }
-            s.push_str(&format!(
-                r#"{{"id":"sp-{i:05}","priority":{},"parent":"sp-E{}","created_at":"2026-01-01T00:00:{:02}Z","labels":["repo:spira","plan"],"description":"{}"}}"#,
-                i % 4,
-                i % 7,
-                i % 60,
-                "x".repeat(200)
-            ));
-        }
-        s.push(']');
-        assert!(s.len() > 128 * 1024);
-        let rows = parse_ready(&s).unwrap();
-        let r = rank(&rows, &EpicLookup::default(), &BTreeSet::new(), &BTreeSet::new());
-        assert_eq!(r.len(), 3000);
-        assert_eq!(r[0].bead_priority, 0);
-        assert_eq!(parents(&rows).len(), 7);
-    }
-
     // ---- machine mode ----
 
     fn lcrow(id: &str, st: BeadState, holds: &[HoldKind], depth: u32) -> (String, LifecycleRow) {

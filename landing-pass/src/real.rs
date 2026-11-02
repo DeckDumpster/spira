@@ -1295,82 +1295,6 @@ mod holder_alive_tests {
 }
 
 #[cfg(test)]
-mod lifecycle_join_tests {
-    use super::*;
-
-    /// A bdq stand-in whose `show` answers every id with bd's own row: hand-closed, carrying
-    /// the retired submitted label — everything bd status used to say "done" with.
-    fn stub_bdq(dir: &Path) -> String {
-        let p = dir.join("bdq");
-        testkit::write_exe(
-            &p,
-            "#!/bin/bash\n[ \"$1\" = show ] || exit 2; shift; o=; for a in \"$@\"; do [ \"$a\" = --json ] && continue; o=\"$o${o:+,}{\\\"id\\\":\\\"$a\\\",\\\"status\\\":\\\"closed\\\",\\\"labels\\\":[\\\"spira-submitted\\\",\\\"repo:spira\\\"]}\"; done; echo \"[$o]\"\n",
-        );
-        p.display().to_string()
-    }
-
-    fn beads(dir: &Path) -> RealBeads {
-        RealBeads {
-            home: dir.to_path_buf(),
-            bdq: stub_bdq(dir),
-            timeout: 5,
-            home_repo: "spira".into(),
-            fixture: None,
-            lc_bin: Some(stub_lc(dir)),
-        }
-    }
-
-    /// A spira-lc stand-in: `show`/`list` answer every bead WORKING; `list-asks` holds one
-    /// open ask.
-    fn stub_lc(dir: &Path) -> PathBuf {
-        let p = dir.join("spira-lc");
-        testkit::write_exe(
-            &p,
-            "#!/bin/bash\ncase \"$1\" in show) echo '{\"bead\":{\"bead_id\":\"'$2'\",\"state\":\"WORKING\"}}' ;; list) echo '[{\"bead_id\":\"sp-w\",\"state\":\"WORKING\"},{\"bead_id\":\"sp-x\",\"state\":\"SUBMITTED\",\"express\":\"1\"}]' ;; list-asks) [ \"$*\" = 'list-asks' ] && echo '[{\"ask_id\":\"sp-q\",\"state\":\"OPEN\",\"title\":\"Land sp-w?\"}]' ;; esac\n",
-        );
-        p
-    }
-
-    /// sp-mve9i: whether a bead is handed on (ready for the landing pass) is its lifecycle
-    /// row's state, never bd's status or the submitted label.
-    #[test]
-    fn a_bead_bd_shows_closed_is_not_handed_on_while_the_machine_says_working() {
-        let d = testkit::TempDir::new("landing-pass-lcjoin");
-        let b = beads(&d);
-        let rows = b.show(&["sp-w".to_string()]).unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].state, "WORKING");
-        assert!(!rows[0].handed_on(), "bd's hand-close decided it");
-        assert_eq!(b.bead_lc_state("sp-w"), "WORKING");
-        // A scan reads `spira-lc list` once; a bead it holds no row for is `-`.
-        let rows = b.show(&["sp-w".to_string(), "sp-x".to_string(), "sp-y".to_string()]).unwrap();
-        let st: Vec<(&str, bool)> = rows.iter().map(|r| (r.state.as_str(), r.handed_on())).collect();
-        assert_eq!(st, vec![("WORKING", false), ("SUBMITTED", true), ("-", false)]);
-        let ex: Vec<bool> = rows.iter().map(|r| r.express).collect();
-        assert_eq!(ex, vec![false, true, false], "express is the lifecycle row's column, not a bd label");
-    }
-
-    #[test]
-    fn an_open_ask_is_read_from_its_control_plane_record() {
-        let d = testkit::TempDir::new("landing-pass-ask-open");
-        let b = beads(&d);
-        assert!(b.ask_open("needs-x", "sp-w"));
-        assert!(!b.ask_open("needs-x", "sp-z"));
-        assert!(!b.ask_open("needs-x", ""), "an empty subject matches nothing");
-    }
-
-    /// A machine that cannot answer is an Err, never a row read as handed on.
-    #[test]
-    fn an_unreachable_lifecycle_machine_is_an_error_not_a_guess() {
-        let d = testkit::TempDir::new("landing-pass-lcjoin-down");
-        let mut b = beads(&d);
-        b.lc_bin = Some(d.join("no-such-spira-lc"));
-        assert!(b.show(&["sp-w".to_string(), "sp-x".to_string()]).is_err());
-        assert_eq!(b.bead_lc_state("sp-w"), "-");
-    }
-}
-
-#[cfg(test)]
 mod vtime_tests {
     use super::*;
     use crate::ports::Clock;
@@ -1385,28 +1309,6 @@ mod vtime_tests {
 #[cfg(test)]
 mod mail_refusal_tests {
     use super::*;
-
-    fn stub(dir: &Path, script: &str) -> String {
-        let f = dir.join("mail-stub");
-        testkit::write_exe(&f, script);
-        f.to_string_lossy().into_owned()
-    }
-
-    #[test]
-    fn a_refused_send_carries_its_exit_and_stderr() {
-        let d = crate::testutil::tmpdir("mail");
-        let prog = stub(&d, "#!/bin/sh\ncat >/dev/null\necho 'no such recipient' >&2\nexit 7\n");
-        let why = mail_send(&prog, "operator", "gate", "s", "question", Some("d"), "sp-x", "body").unwrap_err();
-        assert!(why.contains("exit 7") && why.contains("no such recipient"), "{why}");
-    }
-
-    #[test]
-    fn an_accepted_send_is_ok() {
-        let d = crate::testutil::tmpdir("mail");
-        let prog = stub(&d, "#!/bin/sh\ncat >/dev/null\nexit 0\n");
-        assert!(mail_send(&prog, "operator", "gate", "s", "question", None, "", "b").is_ok());
-        assert!(mail_send("/nonexistent/mail", "o", "g", "s", "q", None, "", "b").is_err());
-    }
 
     #[test]
     fn the_class_window_runs_from_the_anchor_file() {

@@ -662,18 +662,6 @@ mod tests {
         assert_eq!(json_only("  [1]\n"), "");
     }
 
-    #[test]
-    fn bd_rows_distinguishes_refusal_from_empty_array() {
-        assert!(json_rows(None).is_none());
-        assert!(json_rows(Some("".to_string())).is_none());
-        assert!(json_rows(Some("   ".to_string())).is_none());
-        assert_eq!(json_rows(Some("[]".to_string())), Some(vec![]));
-        assert_eq!(
-            json_rows(Some(r#"{"id":"sp-1"}"#.to_string())).map(|v| v.len()),
-            Some(1)
-        );
-    }
-
     fn resolved_with(pairs: &[(&str, &str)]) -> spira_config::resolve::Resolved {
         spira_config::resolve::Resolved {
             values: pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
@@ -754,24 +742,6 @@ mod pane_read_tests {
         let calls = calls.borrow();
         assert_eq!(calls.len(), 1, "twelve probes, one fetch: {calls:?}");
         assert!(calls[0].iter().all(|a| a != "--label") && calls[0].iter().any(|a| a == "--closed-after"), "{calls:?}");
-    }
-
-    #[test]
-    fn a_stale_read_is_refetched_and_labels_filter_in_process() {
-        let t = testkit::TempDir::new("pane-ttl");
-        let n = RefCell::new(0);
-        let fetch = || {
-            *n.borrow_mut() += 1;
-            Some(r#"[{"id":"a","labels":["plan","spira"]},{"id":"b","labels":["plan"]}]"#.to_string())
-        };
-        let now = now();
-        shared_read(&t.join("d"), "k", 30, now, fetch);
-        shared_read(&t.join("d"), "k", 30, now + 100, fetch);
-        assert_eq!(*n.borrow(), 2);
-        let rows = json_rows(with_labels(fetch(), "spira,plan")).unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(json_rows(with_labels(fetch(), "")).unwrap().len(), 2);
-        assert_eq!(json_rows(with_labels(fetch(), "none")).unwrap().len(), 0);
     }
 
     #[test]

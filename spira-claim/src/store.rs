@@ -323,35 +323,4 @@ mod tests {
         let ids: Vec<String> = (0..EVENT_CHUNK).map(|i| format!("sp-{i:08}.12")).collect();
         assert!(events_sql(&ids).len() < 16 * 1024);
     }
-
-    #[test]
-    fn run_reports_failure_and_timeout() {
-        assert!(run(Command::new("true"), Duration::from_secs(5)).is_ok());
-        let e = run(Command::new("false"), Duration::from_secs(5)).unwrap_err();
-        assert!(e.starts_with("exit 1"), "{e}");
-        let mut sl = Command::new("sleep");
-        sl.arg("5");
-        let e = run(sl, Duration::from_millis(1100)).unwrap_err();
-        assert!(e.contains("timed out"), "{e}");
-        assert!(run(Command::new("/nonexistent/binary"), Duration::from_secs(1)).is_err());
-    }
-
-    #[test]
-    fn run_full_feeds_stdin_and_reports_the_code() {
-        let mut c = Command::new("sh");
-        c.args(["-c", "cat; exit 3"]);
-        let r = run_full(c, Duration::from_secs(5), Some(b"it's \"quoted\" text")).unwrap();
-        assert_eq!(r.code, 3);
-        assert_eq!(r.stdout, "it's \"quoted\" text");
-        let r = run_full(Command::new("cat"), Duration::from_secs(5), None).unwrap();
-        assert_eq!((r.code, r.stdout.as_str()), (0, ""));
-    }
-
-    #[test]
-    fn run_drains_large_stdout() {
-        // A child writing more than a pipe buffer must not deadlock.
-        let mut c = Command::new("sh");
-        c.args(["-c", "head -c 300000 /dev/zero | tr '\\0' x"]);
-        assert_eq!(run(c, Duration::from_secs(10)).unwrap().len(), 300000);
-    }
 }

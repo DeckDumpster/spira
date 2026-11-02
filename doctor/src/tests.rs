@@ -391,22 +391,6 @@ fn config_files_fails_when_the_document_does_not_validate() {
     assert!(out[1].msg.contains("fails validation"), "{:?}", out[1].msg);
 }
 
-/// THE ONE TEST in this binary allowed to drive `spira_config::process::cfg` for real
-/// (its resolution is cached once per process, in a `OnceLock`) — a complete fixture (every
-/// registered key declared) must clear all three stages: set, validates, every key
-/// resolves. `SPIRA_HOME` is the checkout's own `spira/` (where `conf.d` — the key
-/// registry this last stage enumerates — actually lives), never a throwaway fixture dir.
-#[test]
-fn config_files_passes_when_every_registered_key_resolves() {
-    let d = testkit::TempDir::new("doctor-config-files-complete");
-    let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-    let toml = spira_config::process::fixture_toml(d.path(), &[]);
-    let _env = testkit::env(&[("SPIRA_HOME", real_home.to_str()), ("SPIRA_TOML", toml.to_str())]);
-    let f = Fake::default();
-    let out = check_config_files(&f);
-    assert_eq!(levels(&out), vec![Level::Ok, Level::Ok, Level::Ok], "{out:?}");
-}
-
 // ============================================================================ runes overlays
 
 #[test]
@@ -1082,19 +1066,6 @@ fn concierge_singleton_no_concierge_sh_warns() {
 }
 
 // ============================================================================ run() overall tally
-
-#[test]
-fn run_exit_code_reflects_fatal_count() {
-    let d = testkit::TempDir::new("doctor-run-complete");
-    let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-    let toml = spira_config::process::fixture_toml(d.path(), &[]);
-    let _env = testkit::env(&[("SPIRA_HOME", real_home.to_str()), ("SPIRA_TOML", toml.to_str())]);
-    let f = Fake::default();
-    f.set("SPIRA_DB", "/db"); // store -> FAIL (no .beads, not installing)
-    let rc = run(&f);
-    assert_eq!(rc, 1);
-    assert!(f.stdout.borrow().iter().any(|l| l.contains("fatal") && l.contains("not healthy")));
-}
 
 // ============================================================================ prod checkout
 

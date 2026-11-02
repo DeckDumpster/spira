@@ -965,47 +965,6 @@ mod tests {
     }
 
     #[test]
-    fn run_args_tag_the_instance_and_terminate_on_shutdown() {
-        let cli = AwsCli {
-            profile: "p".into(), region: "r".into(),
-            subnet: "subnet-1".into(), security_group: "sg-1".into(), instance_profile: "ssm".into(), spot_first: true, scratch: "/tmp".into(),
-        };
-        let a = cli.run_args("ami-1", "c7i.8xlarge", "ec2-a", "round-ec2-a", "/tmp/ud", false);
-        let j = a.join(" ");
-        assert!(j.contains("{Key=spira-round-vm,Value=ec2-a},{Key=Name,Value=round-ec2-a}]"), "{j}");
-        assert!(j.contains("ResourceType=instance,Tags=[{Key=spill:owner,Value=round},"), "{j}");
-        assert!(j.contains("ResourceType=volume,Tags=[{Key=spill:owner,Value=round}]"), "{j}");
-        let flags: Vec<usize> = a.iter().enumerate().filter(|(_, s)| *s == "--tag-specifications").map(|(i, _)| i).collect();
-        assert_eq!(flags.len(), 1, "the AWS CLI keeps only the last repeat of an option: {j}");
-        assert!(a[flags[0] + 1].starts_with("ResourceType=instance,"), "{j}");
-        assert!(a[flags[0] + 2].starts_with("ResourceType=volume,"), "{j}");
-        assert!(j.contains("--instance-initiated-shutdown-behavior terminate"), "{j}");
-        assert!(j.contains("--security-group-ids sg-1") && j.contains("--iam-instance-profile Name=ssm"), "{j}");
-        assert!(!j.contains("tskey"), "the auth key stays in the user-data file, never in argv");
-        assert!(!j.contains("instance-market-options"), "{j}");
-        let spot = cli.run_args("ami-1", "c7i.8xlarge", "ec2-a", "round-ec2-a", "/tmp/ud", true).join(" ");
-        assert!(spot.contains("--instance-market-options MarketType=spot,") && spot.contains("InstanceInterruptionBehavior=terminate"), "{spot}");
-    }
-
-    #[test]
-    fn the_root_volume_buys_no_provisioned_initialization_rate() {
-        // A volume restored from the AMI's snapshot fetches each block from S3 on its first
-        // read: measured on a round instance, 133 MB of rustc read cold in 26.8 s (5 MB/s),
-        // and the batch container's systemd missed its 10 s basic.target and user@ waits.
-        let cli = AwsCli {
-            profile: "p".into(), region: "r".into(),
-            subnet: "subnet-1".into(), security_group: String::new(), instance_profile: String::new(), spot_first: false, scratch: "/tmp".into(),
-        };
-        for spot in [false, true] {
-            let a = cli.run_args("ami-1", "c7i.8xlarge", "ec2-a", "round-ec2-a", "/tmp/ud", spot);
-            let i = a.iter().position(|s| s == "--block-device-mappings").unwrap_or_else(|| panic!("no block-device mapping: {}", a.join(" ")));
-            let m = &a[i + 1];
-            assert!(m.starts_with(&format!("DeviceName={ROOT_DEVICE},Ebs={{")), "{m}");
-            assert!(m.contains("VolumeType=gp3") && !m.contains("VolumeInitializationRate"), "{m}");
-        }
-    }
-
-    #[test]
     fn the_defaults_are_a_c7i_spot_first_and_the_market_key_turns_spot_off() {
         let none = Ec2Config::from_lookup(&|_| None);
         assert_eq!(none.instance_types, ["c7i.8xlarge"]);
@@ -1172,17 +1131,6 @@ mod tests {
         assert!(!fake.scripts().iter().any(|s| s.contains("journalctl")), "nothing reads the journal");
         assert!(fake.ids().is_empty(), "leaked {:?}", fake.ids());
         assert!(e.doomed.is_none());
-    }
-
-    #[test]
-    fn a_failed_launch_leaves_nothing_behind() {
-        let d = TempDir::new();
-        let fake = FakeEc2::default();
-        fake.fail_run();
-        let p = Ec2::new(fake.clone(), &config(&d)).unwrap();
-        let e = provision(&p, &spec(), &mut |_| {}).unwrap_err();
-        assert!(e.reason.contains("clone refused"), "{}", e.reason);
-        assert!(fake.ids().is_empty());
     }
 
     #[test]

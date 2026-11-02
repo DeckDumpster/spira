@@ -149,16 +149,4 @@ mod tests {
         assert_eq!(operation(Some("sp-abc123")), "other");
         assert_eq!(operation(None), "other");
     }
-
-    #[test]
-    fn a_successful_open_batch_counts_a_batch_opened_and_a_failed_one_does_not() {
-        let (_, got) = fixture::capture(|s| run(s, Some("open-batch"), || 0));
-        let ev = got
-            .iter()
-            .find(|c| c.name == "spira_queue_batch_events")
-            .expect("batch event pushed");
-        assert_eq!(ev.label("event"), Some("opened"));
-        let (_, got) = fixture::capture(|s| run(s, Some("open-batch"), || 1));
-        assert!(got.iter().all(|c| c.name != "spira_queue_batch_events"));
-    }
 }

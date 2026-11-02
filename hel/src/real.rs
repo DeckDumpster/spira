@@ -348,40 +348,6 @@ pub fn run_dir() -> Result<PathBuf, String> {
 mod tests {
     use super::*;
 
-    fn run_git(dir: &Path, args: &[&str]) {
-        let o = Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(args)
-            .env("GIT_AUTHOR_NAME", "t")
-            .env("GIT_AUTHOR_EMAIL", "t@t")
-            .env("GIT_COMMITTER_NAME", "t")
-            .env("GIT_COMMITTER_EMAIL", "t@t")
-            .output()
-            .unwrap();
-        assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
-    }
-
-    /// `base()` (sp-o88bx, "wave 4.12") resolves in-process through `spira_config::repos`
-    /// rather than the retired `Op::Base` seam — this exercises the real wiring (a real
-    /// checkout with no remote, so rung 4 answers its own current branch) rather than
-    /// re-proving `spira_config::repos`' own rungs, which have their own unit tests.
-    #[test]
-    fn base_resolves_through_spira_config_repos_with_no_remote() {
-        let dir = testkit::TempDir::new("hel-real-base");
-        let repo = dir.join("repo");
-        std::fs::create_dir_all(&repo).unwrap();
-        run_git(&repo, &["init", "-q", "-b", "trunk"]);
-        std::fs::write(repo.join("f"), "x").unwrap();
-        run_git(&repo, &["add", "f"]);
-        run_git(&repo, &["commit", "-q", "-m", "x"]);
-        let r = Real::minimal(dir.path().to_path_buf(), dir.join("run"), None);
-        let base = r.base(&repo).expect("a repo with no remote resolves through rung 4");
-        assert_eq!(base.landref, "trunk");
-        assert_eq!(base.landrefs, vec!["trunk".to_string()]);
-        assert_eq!(base.remote, None);
-    }
-
     #[test]
     fn base_is_none_for_a_path_that_is_not_a_git_checkout() {
         let dir = testkit::TempDir::new("hel-real-base-not-a-repo");

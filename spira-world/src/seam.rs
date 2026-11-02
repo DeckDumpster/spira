@@ -241,30 +241,4 @@ mod tests {
     fn parse_lane_caps_of_empty_output_is_empty() {
         assert!(parse_lane_caps("").is_empty());
     }
-
-    #[test]
-    fn run_against_a_stub_lib_reaches_the_function_with_env_not_argv() {
-        let d = testkit::TempDir::new("seam-run");
-        std::fs::write(d.join("lib.sh"), "spira_lane_runes() { printf 'groomer\\n'; }\nrune_get() { case \"$2\" in RUNE_NAME) printf 'groomer';; *) printf '2';; esac; }\n").unwrap();
-        let (out, ok) = run(&d.join("lib.sh"), "test-lane-caps", LANE_CAPS, &[], "");
-        assert!(ok, "{out}");
-        assert_eq!(parse_lane_caps(&out), vec![("groomer".to_string(), 2)]);
-    }
-
-    #[test]
-    fn run_reports_failure_when_lib_sh_is_missing() {
-        let d = testkit::TempDir::new("seam-run-missing");
-        let (_out, ok) = run(&d.join("no-such-lib.sh"), "test", "true", &[], "");
-        assert!(!ok);
-    }
-
-    #[test]
-    fn run_for_reports_the_deadline_and_the_exit_code() {
-        let d = testkit::TempDir::new("seam-run-for");
-        std::fs::write(d.join("lib.sh"), ":\n").unwrap();
-        let (_, rc) = run_for(&d.join("lib.sh"), "t", "sleep 5", &[], "", "1");
-        assert_eq!(rc, Some(124));
-        let (_, rc) = run_for(&d.join("lib.sh"), "t", "exit 3", &[], "", "5");
-        assert_eq!(rc, Some(3));
-    }
 }

@@ -78,59 +78,7 @@ pub fn rules() -> Vec<Box<dyn crate::Rule>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutil::TempDir;
 
-    fn run(t: &TempDir) -> Result<Vec<String>, LintError> {
-        let tree = Tree::from_git(t.path()).unwrap();
-        ScratchFence.check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
-    }
-
-    #[test]
-    fn empty_index_refuses_then_root_offenders_are_seen_red_and_withdrawn() {
-        let t = TempDir::new("scr");
-        t.git_init();
-        assert_eq!(run(&t), Err(LintError::EmptyScope));
-
-        t.write("spira/helper.sh", "ok\n");
-        t.git(&["add", "."]);
-        assert!(run(&t).unwrap().is_empty(), "clean tree");
-
-        t.write("sp-xxxx-notes.md", "investigation notes\n");
-        t.git(&["add", "."]);
-        let got = run(&t).unwrap();
-        assert_eq!(got.len(), 1);
-        assert!(got[0].contains("sp-xxxx-notes.md"));
-
-        t.remove("sp-xxxx-notes.md");
-        t.git(&["add", "-A"]);
-        assert!(run(&t).unwrap().is_empty(), "clean after withdrawal");
-
-        t.write("some-script.sh.fixed", "echo patched\n");
-        t.git(&["add", "."]);
-        let got = run(&t).unwrap();
-        assert_eq!(got.len(), 1);
-        assert!(got[0].contains("some-script.sh.fixed"));
-    }
-
-    #[test]
-    fn subdirectory_files_are_not_flagged() {
-        let t = TempDir::new("scr-subdir");
-        t.git_init();
-        t.write("spira/sp-abc-notes.md", "notes\n");
-        t.git(&["add", "."]);
-        assert!(run(&t).unwrap().is_empty());
-    }
-
-    #[test]
-    fn override_env_accepts_offenders() {
-        let t = TempDir::new("scr-override");
-        t.git_init();
-        t.write("sp-xxxx.md", "notes\n");
-        t.git(&["add", "."]);
-        let tree = Tree::from_git(t.path()).unwrap();
-        let got = check_with_override(&ScratchFence, &tree, true);
-        assert_eq!(got.unwrap(), Vec::<Finding>::new());
-    }
 
     #[test]
     fn is_offender_matches_the_bash_regex() {

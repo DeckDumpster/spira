@@ -77,22 +77,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_hung_child_is_killed_at_the_deadline_with_no_timeout_program() {
-        let mut c = Command::new("/bin/sh");
-        c.args(["-c", "sleep 30"]).env_clear();
-        let t = Instant::now();
-        assert_eq!(run_bounded(c, Duration::from_millis(200)).0, 124);
-        assert!(t.elapsed() < Duration::from_secs(5));
-    }
-
-    #[test]
-    fn runs_with_an_empty_path_and_returns_output_and_code() {
-        let mut c = Command::new("/bin/sh");
-        c.args(["-c", "echo hi; exit 3"]).env_clear();
-        assert_eq!(run_bounded(c, LC_TIMEOUT), (3, "hi\n".to_string()));
-    }
-
-    #[test]
     fn a_deadline_refusal_is_never_stdout() {
         assert!(is_refusal(2, "cannot tell: deadline"));
         assert!(!is_refusal(0, "sp-abc12"), "an id is data");

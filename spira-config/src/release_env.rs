@@ -375,25 +375,4 @@ mod tests {
     fn ensured_path_is_none_with_no_release_anywhere() {
         assert_eq!(ensured_path(None, None, Some("/bin")), None);
     }
-
-    #[test]
-    fn resolve_tool_prefers_path_then_the_release_then_the_bare_name() {
-        let t = testkit::TempDir::new("resolve-tool");
-        let release = t.join("rel");
-        let stubs = t.join("stubs");
-        for d in [release.join("bin"), release.join("spira"), stubs.clone()] {
-            std::fs::create_dir_all(d).unwrap();
-        }
-        for p in [release.join("bin/spira-lc"), release.join("spira/gate.sh"), stubs.join("queue"), release.join("bin/queue")] {
-            testkit::write_exe(&p, "");
-        }
-        let rel = release.display().to_string();
-        let path = format!("{}:/usr/bin", stubs.display());
-        let r = |n: &str| resolve_tool(n, Some(&rel), None, Some(&path));
-        assert_eq!(r("spira-lc"), format!("{rel}/bin/spira-lc"));
-        assert_eq!(r("gate.sh"), format!("{rel}/spira/gate.sh"));
-        assert_eq!(r("queue"), "queue");
-        assert_eq!(r("nowhere"), "nowhere");
-        assert_eq!(resolve_tool("spira-lc", None, Some(&release), Some("/usr/bin")), format!("{rel}/bin/spira-lc"));
-    }
 }

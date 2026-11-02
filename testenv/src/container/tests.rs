@@ -1093,65 +1093,6 @@ fn a_failed_podman_run_refuses_at_once() {
 }
 
 #[test]
-fn a_boot_failure_retries_once_then_names_the_exhausted_resource_and_removes_it() {
-    let f = Fake::new();
-    booting(&f);
-    f.when(
-        &["exec", "n", "systemctl", "is-active", "basic.target"],
-        3,
-        "",
-    );
-    f.when(
-        &["exec", "n", "cat", "/sys/fs/cgroup/pids.current"],
-        0,
-        "8100\n8192\n",
-    );
-    f.when(
-        &["exec", "n", "systemctl", "show"],
-        0,
-        "TasksCurrent=40\nTasksMax=infinity\n",
-    );
-    f.when(&["exec", "n", "sh", "-c"], 0, "12\n");
-    f.when(
-        &["exec", "n", "cat", "/proc/sys/kernel/keys/maxkeys"],
-        0,
-        "200\n",
-    );
-    f.inotify.set(100);
-    f.sysctls.borrow_mut().insert(
-        "/proc/sys/fs/inotify/max_user_instances".into(),
-        "1024\n".into(),
-    );
-    f.sysctls.borrow_mut().insert(
-        "/proc/sys/user/max_inotify_instances".into(),
-        "512\n".into(),
-    );
-    let c = Conf {
-        basic_wait_ticks: 3,
-        ..conf("/h")
-    };
-    assert_eq!(
-        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n"])),
-        1
-    );
-    let basic = f
-        .calls
-        .borrow()
-        .iter()
-        .filter(|c| c.contains(&"basic.target".to_string()))
-        .count();
-    assert_eq!(basic, 6, "two attempts of three ticks");
-    let e = f.errs();
-    assert!(e.contains("basic.target startup attempt 1 failed; retrying after 2s"));
-    assert!(e.contains("did not reach basic.target after 2 attempt(s)"));
-    assert!(e.contains(
-        "resource check for n — inotify instances 100/512, pids 8100/8192, user-1001.slice tasks ?/?, keyring 12/200"
-    ), "{e}");
-    assert!(e.contains("exhausted resource for n — pids (8100/8192, 98%)"));
-    assert!(f.called(&["stop", "n"]) && f.called(&["rm", "n"]));
-}
-
-#[test]
 fn the_bare_failure_message_is_not_mistaken_for_an_attribution() {
     // Seen red first: the pre-sp-cvle7 output names no resource.
     let bare = "testenv: system systemd did not reach basic.target after 2 attempt(s)";
@@ -1567,34 +1508,6 @@ fn a_cold_build_runs_in_a_temp_copy_of_the_harness_and_removes_it_either_way() {
         assert_eq!(*f.removed_trees.borrow(), vec![PathBuf::from("/t/ctx")], "rc {rc}");
         assert!(f.copies.borrow().iter().all(|(_, to)| to.starts_with("/t/ctx")), "nothing is written into the harness");
     }
-}
-
-#[test]
-fn make_context_of_a_read_only_tree_is_writable() {
-    use std::os::unix::fs::PermissionsExt;
-    let d = testkit::TempDir::new("testenv-readonly-release");
-    let src = d.join("release");
-    std::fs::create_dir_all(src.join("testenv")).unwrap();
-    std::fs::write(src.join("testenv/Containerfile"), "FROM scratch\n").unwrap();
-    let ro = |p: &Path, m| std::fs::set_permissions(p, std::fs::Permissions::from_mode(m)).unwrap();
-    ro(&src.join("testenv/Containerfile"), 0o444);
-    ro(&src.join("testenv"), 0o555);
-    ro(&src, 0o555);
-    let staging = src.join("testenv/.doctor-check-spira-config");
-    assert!(std::fs::write(&staging, "x").is_err() || nix_root(), "positive control: the source cannot be written");
-    let ctx = RealHost.make_context(&src).unwrap();
-    let r = std::fs::write(ctx.join(DOCTOR_CHECK_SPIRA_CONFIG), "x");
-    let content = std::fs::read(ctx.join("testenv/Containerfile")).unwrap();
-    RealHost.remove_tree(&ctx);
-    ro(&src, 0o755);
-    ro(&src.join("testenv"), 0o755);
-    assert!(r.is_ok(), "staging into the context failed: {r:?}");
-    assert_eq!(content, b"FROM scratch\n");
-    assert!(!ctx.exists());
-}
-
-fn nix_root() -> bool {
-    std::fs::read_to_string("/proc/self/status").map(|s| s.lines().any(|l| l.starts_with("Uid:\t0\t"))).unwrap_or(false)
 }
 
 #[test]

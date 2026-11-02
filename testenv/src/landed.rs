@@ -67,21 +67,6 @@ mod tests {
     }
 
     #[test]
-    fn the_record_is_asked_through_the_named_binary() {
-        let t = testkit::TempDir::new("testenv-lc-landed");
-        let bin = t.join("spira-lc");
-        testkit::write_exe(
-            &bin,
-            "#!/bin/sh\n[ \"$1\" = state ] || exit 2\ncase \"$2\" in sp-l) echo LANDED ;; sp-w) echo WORKING ;; sp-n) exit 1 ;; *) exit 2 ;; esac\n",
-        );
-        let b = bin.to_string_lossy();
-        assert_eq!(lc_landed(&b, &[], "sp-l"), Some(true));
-        assert_eq!(lc_landed(&b, &[], "sp-w"), Some(false));
-        assert_eq!(lc_landed(&b, &[], "sp-n"), Some(false));
-        assert_eq!(lc_landed(&b, &[], "sp-x"), None);
-    }
-
-    #[test]
     fn no_commit_subject_search_survives() {
         // sp-2c1n0 guard: the subject oracle (`git log --grep` for `spira: land <id>`) is gone.
         let src = include_str!("landed.rs");

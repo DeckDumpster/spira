@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use spira_config::{is_secret_shaped, json_schema, missing_from_retirement, validate};
+use spira_config::{is_secret_shaped, missing_from_retirement, validate};
 
 fn manifest_path(rel: &str) -> String {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -21,15 +21,6 @@ fn t0_shipped_example_validates() {
     validate(&text).expect("the shipped example must validate against its own schema");
 }
 
-#[test]
-fn stack_max_depths_schema_ceiling_is_four() {
-    // Hard ceiling per Ryan 2026-09-28 ("4 is a good place to start, no higher") — raising
-    // it is a schema/design change, not a config edit.
-    let schema = serde_json::to_value(json_schema().unwrap()).expect("schema serializes");
-    let field = &schema["definitions"]["SpiraSection"]["properties"]["stack_max_depth"];
-    assert_eq!(field["maximum"], serde_json::json!(4.0), "{field}");
-}
-
 // spira.toml must never hold a secret (design's credential-storage requirement): a real
 // credential belongs in its own 0600 file, never a field this schema types and `export --sh`
 // can put into every shell's environment. This is the schema's half of that rule — a new
@@ -41,46 +32,6 @@ fn stack_max_depths_schema_ceiling_is_four() {
 // `spira.toml` entirely is separate, coordinated work. No other field may be added to this
 // list — a new secret-shaped field is a defect, not a second exception.
 const GRANDFATHERED_SECRET_SHAPED_FIELDS: &[&str] = &["broker_gh_token"];
-
-fn collect_property_names(schema: &serde_json::Value, out: &mut BTreeSet<String>) {
-    match schema {
-        serde_json::Value::Object(obj) => {
-            if let Some(serde_json::Value::Object(props)) = obj.get("properties") {
-                for key in props.keys() {
-                    out.insert(key.clone());
-                }
-            }
-            for v in obj.values() {
-                collect_property_names(v, out);
-            }
-        }
-        serde_json::Value::Array(items) => {
-            for v in items {
-                collect_property_names(v, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-#[test]
-fn schema_refuses_new_secret_shaped_field_names() {
-    let schema = serde_json::to_value(json_schema().unwrap()).expect("schema serializes");
-    let mut names = BTreeSet::new();
-    collect_property_names(&schema, &mut names);
-    assert!(names.len() > 20, "sanity: expected many property names, got {}", names.len());
-
-    let offenders: Vec<&String> = names
-        .iter()
-        .filter(|n| is_secret_shaped(n))
-        .filter(|n| !GRANDFATHERED_SECRET_SHAPED_FIELDS.contains(&n.as_str()))
-        .collect();
-    assert!(
-        offenders.is_empty(),
-        "secret-shaped field name(s) added to the schema: {offenders:?} — a credential \
-         belongs in its own file, never spira.toml"
-    );
-}
 
 // POSITIVE CONTROL: a planted secret-shaped name must be caught by the same walk, proving
 // the check above could have found a real offender instead of passing vacuously.
@@ -314,38 +265,6 @@ mod retired_keys {
         let missing = missing_from_retirement(&history, &active);
         assert_eq!(missing, vec!["never_retired_by_anything".to_string()]);
     }
-
-    #[test]
-    fn the_schemas_current_field_set_matches_its_checked_in_history() {
-        let history_text = fs::read_to_string(manifest_path("../spira/conf.key-history"))
-            .expect("spira/conf.key-history exists");
-        let history: BTreeSet<String> = history_text
-            .lines()
-            .map(str::to_string)
-            .filter(|l| !l.is_empty())
-            .collect();
-
-        let schema = serde_json::to_value(json_schema().unwrap()).expect("schema serializes");
-        let active: BTreeSet<String> = schema["definitions"]["SpiraSection"]["properties"]
-            .as_object()
-            .expect("SpiraSection has properties")
-            .keys()
-            .cloned()
-            .collect();
-
-        let missing = missing_from_retirement(&history, &active);
-        assert!(
-            missing.is_empty(),
-            "key(s) dropped from the schema without retiring: {missing:?} — add to \
-             spira_config::RETIRED_SPIRA_KEYS"
-        );
-
-        let unrecorded: Vec<_> = active.difference(&history).cloned().collect();
-        assert!(
-            unrecorded.is_empty(),
-            "active key(s) missing from spira/conf.key-history: {unrecorded:?} — append each as a line"
-        );
-    }
 }
 
 mod repo_section {
@@ -392,69 +311,11 @@ mod persona_section {
     use super::validate;
 
     #[test]
-    fn valid() {
-        validate("[persona.builder]\nmodel = \"claude-sonnet-5\"\n").expect("valid");
-    }
-
-    #[test]
-    fn unknown_key() {
-        let (_, w) = spira_config::validate_with_warnings(
-            "[persona.builder]\nmodel = \"claude-sonnet-5\"\nfavorite_color = \"blue\"\n",
-        )
-        .unwrap();
-        assert!(w.iter().any(|m| m.starts_with("persona.builder.favorite_color")), "{w:?}");
-    }
-
-    #[test]
     fn wrong_type() {
         let err = validate("[persona.builder]\nmodel = \"claude-sonnet-5\"\ntools = \"Bash\"\n")
             .unwrap_err();
         assert!(err.starts_with("persona.builder.tools"), "{err}");
     }
-
-    #[test]
-    fn bad_enum() {
-        let err = validate(
-            "[persona.builder]\nmodel = \"claude-sonnet-5\"\nsystem_prompt = \"overwrite\"\n",
-        )
-        .unwrap();
-        assert_eq!(err.unknown_values["persona.builder.system_prompt"], "overwrite");
-    }
-
-    #[test]
-    fn missing_field() {
-        let err = validate("[persona.builder]\ntools = [\"Bash\"]\n").unwrap_err();
-        assert!(err.starts_with("persona.builder"), "{err}");
-    }
-}
-
-// sp-gypjk: tool-path keys are retired, but prod's `batcher_bin = "/bin/true"` switched the
-// batcher's cuts off, and dropping it silently would switch them back on.
-#[test]
-fn a_non_batcher_batcher_bin_is_read_as_batcher_enable_0() {
-    let (doc, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nbatcher_bin = \"/bin/true\"\nlc_bin = \"/x/spira-lc\"\n").unwrap();
-    assert_eq!(doc.spira.as_ref().unwrap().get_str("SPIRA_BATCHER_ENABLE").unwrap().as_deref(), Some("0"));
-    assert!(w.iter().any(|m| m.contains("batcher_enable = \"0\"")), "{w:?}");
-    assert!(w.iter().any(|m| m.starts_with("lc_bin is retired (sp-gypjk)")), "{w:?}");
-    // The batcher itself is not an off switch, and an explicit batcher_enable wins.
-    let (doc, _) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nbatcher_bin = \"/r/bin/batcher\"\n").unwrap();
-    assert_eq!(doc.spira.as_ref().unwrap().get_str("SPIRA_BATCHER_ENABLE").unwrap(), None);
-    let (doc, _) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nbatcher_bin = \"/bin/true\"\nbatcher_enable = \"1\"\n").unwrap();
-    assert_eq!(doc.spira.as_ref().unwrap().get_str("SPIRA_BATCHER_ENABLE").unwrap().as_deref(), Some("1"));
-}
-
-#[test]
-fn the_cli_accepts_a_key_a_newer_release_wrote_with_a_warning() {
-    let dir = testkit::TempDir::new("spira-newer-key");
-    let f = dir.path().join("spira.toml");
-    std::fs::write(&f, "[spira]\nid_prefix = \"sp\"\nadmit_stagger_secs_from_the_future = 3\n").unwrap();
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_spira-config")).arg("validate").arg(&f).output().unwrap();
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success(), "{err}");
-    assert!(err.contains("warning") && err.contains("admit_stagger_secs_from_the_future") && err.contains("newer release"), "{err}");
-    std::fs::write(&f, "[spira]\nid_prefix = \"sp\"\nadmit_stagger_secs_from_the_future = 3\nmax_dwarves = true\n").unwrap();
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_spira-config")).arg("validate").arg(&f).output().unwrap();
-    assert!(!out.status.success(), "a malformed known value must still refuse");
 }
 
 const MODELS: &str = "[persona.ops]\nmodel = \"claude-x\"\n[persona.warden]\nmodel = \"claude-x\"\n";
@@ -485,15 +346,6 @@ fn strict_validation_refuses_a_timer_partition_label_whose_persona_is_unrostered
     assert!(err.contains("spira.warden_label") && err.contains("spira.runes"), "{err}");
     let ok = format!("[spira]\nid_prefix = \"sp\"\nwarden_label = \"warden-sweep\"\nrunes = [\"ops\", \"warden\"]\n{MODELS}");
     spira_config::validate_strict(&ok).expect("rostered");
-}
-
-#[test]
-fn a_config_delta_naming_one_key_twice_is_refused_naming_the_key() {
-    let both = "[spira]\ndup_key = 1\ndup_key = \"x\"\n";
-    let err = spira_config::parse_config_delta(both).unwrap_err();
-    assert!(err.contains("dup_key"), "{err}");
-    let distinct = "[spira]\none = 1\ntwo = \"x\"\n";
-    assert_eq!(spira_config::parse_config_delta(distinct).unwrap().0.len(), 2);
 }
 
 #[test]

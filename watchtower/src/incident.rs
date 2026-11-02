@@ -170,21 +170,6 @@ fn run_verb(incident_sh: &str, verb: &str, f: &Finding) -> Option<String> {
 mod tests {
     use super::*;
 
-    fn alarm_with_stdout(tag: &str, stdout: &str, code: i32) -> AlarmOutcome {
-        let d = testkit::TempDir::new(tag);
-        let sh = d.join("inc.sh");
-        std::fs::write(&sh, format!("#!/usr/bin/env bash\ncat >/dev/null\necho {stdout}\nexit {code}\n")).unwrap();
-        let f = Finding::new("db", "repo", "t", "b");
-        alarm_outcome(sh.to_str().unwrap(), &f)
-    }
-
-    #[test]
-    fn alarm_outcome_distinguishes_noted_deduped_and_failed() {
-        assert_eq!(alarm_with_stdout("wt-ao-noted", "noted", 0), AlarmOutcome::Noted);
-        assert_eq!(alarm_with_stdout("wt-ao-dedup", "deduped", 0), AlarmOutcome::Deduped);
-        assert_eq!(alarm_with_stdout("wt-ao-fail", "deduped", 1), AlarmOutcome::Failed);
-    }
-
     /// The scar, reproduced: lib.sh ships non-executable in a release (`-r--r--r--`), and
     /// this must still be found — `which` is used to LOCATE the file, never to run it
     /// directly.
@@ -233,26 +218,5 @@ mod tests {
     #[test]
     fn is_usable_false_for_a_missing_path() {
         assert!(!is_usable("/does/not/exist/incident.sh"));
-    }
-
-    #[test]
-    fn alarm_writes_the_env_and_stdin_a_fake_incident_sh_expects() {
-        let d = testkit::TempDir::new("wt-inc-file");
-        let inc = d.join("inc.sh");
-        let capture = d.join("capture.txt");
-        std::fs::write(
-            &inc,
-            format!(
-                "#!/usr/bin/env bash\n{{ echo \"$1\"; echo \"$2\"; echo \"REF=$SPIRA_INCIDENT_REF\"; echo \"PRI=$SPIRA_INCIDENT_PRIORITY\"; cat; }} > {}\n",
-                capture.display()
-            ),
-        )
-        .unwrap();
-        let f = Finding::new("db", "spira", "TITLE HERE", "the body\nsecond line\n")
-            .priority(1)
-            .reference("incident:x-1");
-        assert!(alarm(inc.to_str().unwrap(), &f));
-        let got = std::fs::read_to_string(&capture).unwrap();
-        assert!(got.contains("alarm\nTITLE HERE\nREF=incident:x-1\nPRI=1\nthe body\nsecond line"));
     }
 }

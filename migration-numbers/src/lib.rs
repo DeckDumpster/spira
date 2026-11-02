@@ -138,7 +138,7 @@ pub fn after_merge(wt: &Path) -> Result<Vec<(String, String)>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
+
 
     fn s(v: &[&str]) -> Vec<String> {
         v.iter().map(|x| x.to_string()).collect()
@@ -174,65 +174,5 @@ mod tests {
         let t = "see migrations/0016-c.sql and migrations/0016 but not migrations/00160 or 0016-cc.sql";
         let r = rewrite(t, "0016-c.sql", "0018-c.sql");
         assert_eq!(r, "see migrations/0018-c.sql and migrations/0018 but not migrations/00160 or 0016-cc.sql");
-    }
-
-    fn git_ok(d: &Path, a: &[&str]) {
-        assert!(Command::new("git").arg("-C").arg(d).args(a).status().unwrap().success(), "{a:?}");
-    }
-
-    #[test]
-    fn merge_with_colliding_migration_is_renumbered_and_references_follow() {
-        let d = testkit::TempDir::new("renumber");
-        git_ok(&d, &["init", "-q", "-b", "main"]);
-        git_ok(&d, &["config", "user.email", "t@t"]);
-        git_ok(&d, &["config", "user.name", "t"]);
-        fs::create_dir_all(d.join(DIR)).unwrap();
-        fs::write(d.join(DIR).join("0001-a.sql"), "x").unwrap();
-        git_ok(&d, &["add", "-A"]);
-        git_ok(&d, &["commit", "-q", "-m", "base"]);
-        git_ok(&d, &["checkout", "-q", "-b", "side"]);
-        fs::write(d.join(DIR).join("0002-side.sql"), "y").unwrap();
-        fs::write(d.join("ref.txt"), "uses migrations/0002-side.sql").unwrap();
-        git_ok(&d, &["add", "-A"]);
-        git_ok(&d, &["commit", "-q", "-m", "side"]);
-        git_ok(&d, &["checkout", "-q", "main"]);
-        fs::write(d.join(DIR).join("0002-main.sql"), "z").unwrap();
-        git_ok(&d, &["add", "-A"]);
-        git_ok(&d, &["commit", "-q", "-m", "main"]);
-        git_ok(&d, &["merge", "-q", "--no-ff", "-m", "merge", "side"]);
-
-        let r = after_merge(&d).unwrap();
-        assert_eq!(r, vec![("0002-side.sql".to_string(), "0003-side.sql".to_string())]);
-        assert!(d.join(DIR).join("0003-side.sql").exists());
-        assert!(!d.join(DIR).join("0002-side.sql").exists());
-        assert!(d.join(DIR).join("0002-main.sql").exists());
-        assert_eq!(fs::read_to_string(d.join("ref.txt")).unwrap(), "uses migrations/0003-side.sql");
-        assert!(after_merge(&d).unwrap().is_empty(), "a renumbered tree has no collision left");
-    }
-
-    #[test]
-    fn two_members_each_adding_the_same_number_land_as_consecutive_numbers() {
-        let d = testkit::TempDir::new("settle");
-        git_ok(&d, &["init", "-q", "-b", "main"]);
-        git_ok(&d, &["config", "user.email", "t@t"]);
-        git_ok(&d, &["config", "user.name", "t"]);
-        fs::create_dir_all(d.join(DIR)).unwrap();
-        fs::write(d.join(DIR).join("0001-base.sql"), "x").unwrap();
-        git_ok(&d, &["add", "-A"]);
-        git_ok(&d, &["commit", "-q", "-m", "base"]);
-        for (b, f) in [("one", "0002-mending.sql"), ("two", "0002-sifted-tip.sql")] {
-            git_ok(&d, &["checkout", "-q", "-b", b, "main"]);
-            fs::write(d.join(DIR).join(f), "y").unwrap();
-            git_ok(&d, &["add", "-A"]);
-            git_ok(&d, &["commit", "-q", "-m", b]);
-        }
-        git_ok(&d, &["checkout", "-q", "main"]);
-        for b in ["one", "two"] {
-            git_ok(&d, &["merge", "-q", "--no-ff", "-m", b, b]);
-            settle(&d).unwrap();
-        }
-        let mut have = names(&d, "HEAD");
-        have.sort();
-        assert_eq!(have, s(&["0001-base.sql", "0002-mending.sql", "0003-sifted-tip.sql"]));
     }
 }

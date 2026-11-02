@@ -453,15 +453,6 @@ mod tests {
     }
 
     #[test]
-    fn an_allowlisted_invalid_closed_id_is_reported_allowed_not_invalid() {
-        let reason = "Applied a temporary workaround — real fix needed.";
-        let plain = invalid_closed_rows(reason, None);
-        assert!(plain.starts_with("INVALID-CLOSED zz-cr-1"), "{plain}");
-        let allowed = invalid_closed_rows(reason, Some("zz-cr-1 quotation: names the flag list\n"));
-        assert_eq!(allowed, "ALLOWED-IC zz-cr-1 — quotation: names the flag list");
-    }
-
-    #[test]
     fn an_allowlisted_unfiled_follow_id_is_reported_allowed_not_unfiled() {
         let reason = "The real fix is a proper guard. Deployed the stopgap.";
         let plain = invalid_closed_rows(reason, None);

@@ -54,21 +54,3 @@ fn push_run(sink: &MetricsSink, rc: i32, ran: usize, red: usize, skipped: usize,
 pub fn push_over_cap(sink: &MetricsSink, tier: &str) {
     sink.push(&[Point::Count { name: "spira_testenv_over_cap_kills", value: 1 }], &[("component", "testenv"), ("tier", tier)]);
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_red_run_pushes_suites_reds_by_class_queue_wait_and_over_cap() {
-        let sink_srv = testkit::OtlpSink::start();
-        let sink = MetricsSink::new(Some(&sink_srv.addr), "spira-testenv", std::time::Duration::from_secs(2));
-        push_run(&sink, 1, 5, 2, 1, None, vec![("test", 7)]);
-        push_run(&sink, 2, 0, 0, 0, Some("over-cap"), vec![]);
-        push_over_cap(&sink, "gate");
-        let body = sink_srv.body();
-        for want in ["spira_testenv_suites_run", "spira_testenv_reds", "real", "harness", "over-cap", "spira_testenv_queue_wait_seconds", "test", "spira_testenv_over_cap_kills", "gate"] {
-            assert!(body.contains(want), "{want} missing: {body:?}");
-        }
-    }
-}

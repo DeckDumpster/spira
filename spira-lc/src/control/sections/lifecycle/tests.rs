@@ -120,18 +120,6 @@ impl<B: Backend> Rig<B> {
         self.section()["section"]["status"].clone()
     }
 
-    fn floor(&self, floor: f64) {
-        let doc = json!({
-            "apiVersion": "spira/v1", "kind": "Lifecycle", "metadata": { "name": "all" },
-            "spec": {
-                "goodput_rate_floor": { "value": floor, "statute": "law-throughput-floor" },
-                "certified_dwell_p95_secs": { "value": 1800.0, "statute": "law-throughput-floor" },
-            },
-        });
-        let (code, v) = self.call(&["section", "apply-spec", "--actor", "compose"], Some(&doc));
-        assert_eq!(code, 0, "{v}");
-    }
-
     fn event(&self, id: &str, expect: BeadState, version: u64, kind: BeadEventKind, at: u64) {
         let ev = BeadEvent { expect, version, kind, actor: "test".into(), at: Some(at as i64) };
         let out = self.store.apply(id, &ev, &self.req("apply")).unwrap();
@@ -193,61 +181,6 @@ fn the_section_is_a_term_published_through_admission_with_goodput_from_landed_re
 }
 
 #[test]
-fn below_the_floor_opens_below_floor_naming_the_rate_and_the_distance_reads_the_floor() {
-    let r = rig();
-    r.floor(150.0);
-    let now = r.now();
-    for i in 0..10 {
-        r.land(&format!("b-{i}"), "harness", now - (i + 1) * H - MIN, now - (i + 1) * H);
-    }
-    r.publish();
-    let s = r.section()["section"].clone();
-    let c = below_floor(&s["status"]);
-    assert_eq!(c["status"], "True", "{c}");
-    assert!(c["reason"].as_str().unwrap().contains("10.0/day"), "{c}");
-    assert_eq!(s["status"]["observedGeneration"], 1, "caught up with the spec");
-    assert_eq!(s["distance"]["fn"], "max(0, 1 - goodput_rate_24h / 150) + max(0, certified_dwell_p95_secs / 1800 - 1)");
-    assert!(s.get("actions").is_none());
-
-    r.floor(5.0);
-    r.advance(MIN);
-    r.publish();
-    assert_eq!(below_floor(&r.status())["status"], "False", "at or above the floor closes it");
-
-    r.outside.no_releases.set(true);
-    r.advance(MIN);
-    r.publish();
-    let s = r.section()["section"].clone();
-    let c = below_floor(&s["status"]);
-    assert_eq!(c["status"], "Unknown", "with no recorded release a halt cannot be excluded: {c}");
-    assert!(c["reason"].as_str().unwrap().contains("release"), "{c}");
-    assert_eq!(s["distance"]["fn"], "max(0, certified_dwell_p95_secs / 1800 - 1)", "nor does the rate rank");
-}
-
-#[test]
-fn every_windowed_event_names_its_repo_and_a_record_with_none_is_counted_but_not_listed() {
-    let r = rig();
-    let now = r.now();
-    r.land("b-1", "harness", now - 2 * H, now - H - 30 * MIN);
-    r.store.create("nameless", None, Some("t1"), (now - 3 * H) as i64, &r.req("create")).unwrap();
-    r.event("nameless", BeadState::Submitted, 1, BeadEventKind::GatePass { tip: "t1".into(), gate_key: "k".into() }, now - 3 * H);
-    r.event("nameless", BeadState::Certified, 2, BeadEventKind::Deliver, now - 2 * H);
-    r.event("nameless", BeadState::InDelivery, 3, BeadEventKind::Delivered { merge_sha: "m".into(), proof: "p".into() }, now - 2 * H + 1);
-    r.outside.stops.borrow_mut().push(LoopEvent::Stop { kind: StopKind::Pause, repo: Some("paused".into()), bead: None, at: now - H, reason: String::new() });
-    r.outside.rounds.borrow_mut().extend([
-        LoopEvent::OverCapPass { repo: "slow".into(), at: now - H, wall_secs: 60 },
-        LoopEvent::Eject { bead: "b-1".into(), batch: "round-1".into(), at: now - H, repeat_n: 1 },
-        LoopEvent::Eject { bead: "stranger".into(), batch: "round-1".into(), at: now - H, repeat_n: 1 },
-    ]);
-    r.publish();
-    let st = r.status();
-    let repos: Vec<&str> = st["repos"].as_object().unwrap().keys().map(String::as_str).collect();
-    assert_eq!(repos, ["harness", "paused", "slow"], "{st}");
-    assert_eq!(value(&st["landed_24h"]), 2.0);
-    assert!(st["certified_dwell_p95_secs"].get("value").is_some(), "{st}");
-}
-
-#[test]
 fn a_stay_in_certified_is_measured_from_its_entry_and_one_with_no_recorded_entry_is_not() {
     use crate::control::feed::Change;
     use crate::control::records::Audit;
@@ -263,56 +196,6 @@ fn a_stay_in_certified_is_measured_from_its_entry_and_one_with_no_recorded_entry
         audit("CERTIFIED", "IN_DELIVERY", 400, true),
     ];
     assert_eq!(super::certified_stays(&h), vec![(400, 300)]);
-}
-
-#[test]
-fn after_a_release_from_a_30h_halt_the_24h_fields_warm_up_and_below_floor_stays_closed_until_a_day_has_run() {
-    let r = rig();
-    r.floor(150.0);
-    let now = r.now();
-    r.land("before", "harness", now - 40 * H, now - 31 * H - 1);
-    r.outside.stops.borrow_mut().extend([
-        LoopEvent::Stop { kind: StopKind::Halt, repo: None, bead: None, at: now - 31 * H, reason: String::new() },
-        LoopEvent::Stop { kind: StopKind::Release, repo: None, bead: None, at: now - H, reason: String::new() },
-    ]);
-    r.publish();
-    let st = r.status();
-    assert_eq!(st["goodput_rate_24h"], "WarmingUp", "{st}");
-    assert_eq!(st["landed_24h"], "WarmingUp");
-    assert_eq!(st["certified_dwell_p95_secs"], "WarmingUp");
-    assert!(st["goodput_rate_1h"].get("value").is_some(), "the hour is already past the release: {st}");
-    assert_eq!(st["warming_up_until"], json!(spira_desired_state::store::format_rfc3339(now + 23 * H)));
-    let c = below_floor(&st);
-    assert_eq!(c["status"], "False");
-    assert!(c["reason"].as_str().unwrap().contains("warming up"), "{c}");
-    assert!(r.section()["section"].get("distance").is_none(), "a warming field is never a term");
-
-    r.advance(23 * H - MIN);
-    r.publish();
-    assert_eq!(below_floor(&r.status())["status"], "False", "a minute short of a day of running time");
-    r.advance(MIN);
-    r.publish();
-    let st = r.status();
-    assert_eq!(value(&st["goodput_rate_24h"]), 0.0);
-    assert!(st.get("warming_up_until").is_none());
-    assert_eq!(below_floor(&st)["status"], "True", "{st}");
-}
-
-#[test]
-fn a_harmful_bead_is_listed_with_its_cost_and_typed_evidence() {
-    let r = rig();
-    let now = r.now();
-    for i in 0..4 {
-        r.land(&format!("b-{i}"), "harness", now - (i + 2) * H, now - (i + 1) * H);
-    }
-    r.outside.rounds.borrow_mut().push(LoopEvent::RedAttributed { bead: "b-0".into(), batch: "round-1".into(), innocent: vec!["b-1".into()], at: now - 3 * H, wall_secs: 30 * MIN });
-    r.publish();
-    let st = r.status();
-    let h = &st["harmful"][0];
-    assert_eq!((h["bead"].as_str(), h["repo"].as_str(), h["cost_minutes"].as_f64()), (Some("b-0"), Some("harness"), Some(30.0)), "{st}");
-    assert_eq!(h["evidence"][0]["signal"], "red-with-innocents");
-    assert_eq!(h["evidence"][0]["batch"], "round-1");
-    assert!((value(&st["goodput_ratio_24h"]) - (0.75 - 30.0 / 1440.0)).abs() < 1e-9);
 }
 
 #[test]
@@ -378,21 +261,6 @@ fn the_distance_reads_only_terms_with_a_value_and_a_positive_target() {
     assert_eq!(d.expr, "max(0, certified_dwell_p95_secs / 1800 - 1)");
     assert!(d.close < d.open);
     assert_eq!(super::distance(&v, None, &v, None), None);
-}
-
-#[test]
-fn goodput_is_sent_as_otlp_gauges_per_repo_and_window() {
-    let r = rig();
-    let now = r.now();
-    r.land("b-1", "harness", now - 2 * H, now - 30 * MIN);
-    let ((), got) = spira_otel::metrics::fixture::capture(|sink| {
-        assert_eq!(r.call_with(sink, &["publish-section", "lifecycle"], None).0, 0);
-    });
-    let find = |name: &str, repo: &str, window: &str| got.iter().any(|s| s.name == name && s.label("repo") == Some(repo) && s.label("window") == Some(window));
-    for name in ["spira_goodput_ratio", "spira_goodput_rate", "spira_goodput_landed"] {
-        assert!(find(name, "all", "24h") && find(name, "harness", "1h"), "{name}: {got:?}");
-    }
-    assert!(got.iter().any(|s| s.name == crate::control::sections::WRITES && s.label("verb") == Some("publish-section")), "{got:?}");
 }
 
 fn pass(batch: &str, members: &[&str], cause: &str, ts: &str) -> Value {

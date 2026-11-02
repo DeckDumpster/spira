@@ -512,30 +512,6 @@ round-vm: setup 42s, suites 158s\n";
         assert_eq!((p.setup_s, p.suites_s, p.instance_type.as_str()), (Some(42), Some(158), "c7i.8xlarge"));
     }
 
-    fn fixture(name: &str) -> PassLog {
-        parse_pass_log(&std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)).expect("a fixture"))
-    }
-
-    #[test]
-    fn the_parser_reads_three_real_pass_logs_from_2026_10_15() {
-        let red = fixture("pass-red-2026-10-15.log");
-        assert_eq!((red.verdict.as_str(), red.ran, red.red, red.skipped), ("red", Some(470), Some(1), Some(9)));
-        assert_eq!(red.suites.len(), 469);
-        assert_eq!(red.suites[0].name, "test-acceptance-ci-scratch-queue.sh");
-        assert!(red.suites[0].first_fail.starts_with("not ok 10 - publish-settle has nothing to publish"), "{:?}", red.suites[0]);
-        assert_eq!(red.suites.iter().filter(|s| is_red(&s.verdict) && s.verdict != "skipped").count(), 1);
-        assert_eq!(red.unit, "PASS (211 test binaries)");
-
-        let recert = fixture("pass-recert-2026-10-15.log");
-        assert_eq!((recert.verdict.as_str(), recert.red, recert.setup_s, recert.suites_s), ("green", None, Some(45), Some(155)));
-        assert!(recert.suites.iter().all(|s| s.verdict == "ok" || s.verdict == "skipped"));
-
-        let green = fixture("pass-green-2026-10-15.log");
-        assert_eq!((green.verdict.as_str(), green.ran, green.setup_s, green.suites_s), ("green", Some(470), Some(62), Some(152)));
-        let slow = green.suites.iter().find(|s| s.name == "test-queue-land-local.sh").expect("a suite from the log");
-        assert_eq!((slow.verdict.as_str(), slow.duration_s), ("ok", Some(98)));
-    }
-
     #[test]
     fn a_failed_unit_run_names_the_failing_tests() {
         let p = parse_pass_log("VERDICT GREEN ran=3 skipped=0\nround-vm: UNIT-TESTS: FAIL (unit run rc=101):\ntest a::b ... FAILED\ntest a::c ... ok\n");

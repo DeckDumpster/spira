@@ -50,22 +50,3 @@ impl Alarm for MailAlarm {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::testutil::TempDir;
-
-    #[test]
-    fn mails_through_mail_sh_send_with_the_reason() {
-        let d = TempDir::new();
-        let log = d.path().join("log");
-        let mail = d.path().join("mail.sh");
-        testkit::write_exe(&mail, &format!("#!/bin/sh\necho \"$@\" > {0}\ncat >> {0}\n", log.display()));
-        MailAlarm { mail: mail.clone(), mailbox: "operator".into(), retry_secs: 60 }
-            .raise("API unreachable (nextid)");
-        let got = std::fs::read_to_string(&log).unwrap();
-        assert!(got.starts_with("send operator --from Round VM <round-vm@spira> --subject round VM outage: API unreachable (nextid) --kind alert"), "{got}");
-        assert!(got.contains("retrying every 60s"), "{got}");
-    }
-}

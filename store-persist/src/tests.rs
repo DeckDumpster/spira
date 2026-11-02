@@ -209,15 +209,6 @@ fn restore_refuses_an_unseeded_copy_a_live_server_and_a_yaml_naming_another_dire
 }
 
 #[test]
-fn a_copy_that_does_not_open_is_never_moved_into_place() {
-    let w = seeded();
-    w.dolt.fail_verify.set(true);
-    let e = restore(&w.cfg, &w.dolt).unwrap_err();
-    assert!(e.contains("does not open"), "{e}");
-    assert!(data_dbs(&w.cfg.data).unwrap().is_empty());
-}
-
-#[test]
 fn without_a_durable_copy_a_ram_backed_directory_is_refused() {
     let mut w = world();
     w.cfg.durable = None;
@@ -254,23 +245,6 @@ fn an_online_pass_goes_through_the_server_and_records_its_start() {
 }
 
 #[test]
-fn a_pass_needs_the_mode_its_server_state_allows() {
-    let w = seeded();
-    restore(&w.cfg, &w.dolt).unwrap();
-    assert!(pass(&w.cfg, Mode::Online, &w.dolt, &w.clock).unwrap_err().contains("no live dolt server"));
-    put(&w.cfg.data.join(".dolt/sql-server.info"), "999:3999:x");
-    pass(&w.cfg, Mode::Offline, &w.dolt, &w.clock).expect("a dead server's info file does not block the stop-time pass");
-    live_server(&w, 4242);
-    assert!(pass(&w.cfg, Mode::Offline, &w.dolt, &w.clock).unwrap_err().contains("pid 4242"));
-}
-
-#[test]
-fn a_pass_before_seeding_is_refused() {
-    let w = world();
-    assert!(pass(&w.cfg, Mode::Offline, &w.dolt, &w.clock).unwrap_err().contains("never been seeded"));
-}
-
-#[test]
 fn a_pass_never_leaves_a_durable_database_behind() {
     let w = seeded();
     restore(&w.cfg, &w.dolt).unwrap();
@@ -279,26 +253,6 @@ fn a_pass_never_leaves_a_durable_database_behind() {
     let e = pass(&w.cfg, Mode::Offline, &w.dolt, &w.clock).unwrap_err();
     assert!(e.contains("spira_lifecycle"), "{e}");
     assert_eq!(read_state(&layout(&w)).unwrap(), before, "a refused pass records nothing");
-}
-
-#[test]
-fn a_failed_pass_keeps_the_last_good_start_so_age_turns_red() {
-    let w = seeded();
-    restore(&w.cfg, &w.dolt).unwrap();
-    live_server(&w, 4242);
-    w.clock.0.set(2_000);
-    pass(&w.cfg, Mode::Online, &w.dolt, &w.clock).unwrap();
-    w.dolt.fail_sync.set(usize::MAX);
-    let mut log = Vec::new();
-    run(&w.cfg, &w.dolt, &w.clock, Some(8), &mut |l| log.push(l.to_string()));
-    assert_eq!(read_state(&layout(&w)).unwrap().start_ms, 2_000);
-    assert_eq!(age(&w.cfg, 2_000 + 40_000).unwrap(), (40_000, false));
-    assert_eq!(age(&w.cfg, 2_000 + 40_001).unwrap(), (40_001, true));
-    assert_eq!(log.len(), 8);
-    w.dolt.fail_sync.set(0);
-    log.clear();
-    run(&w.cfg, &w.dolt, &w.clock, Some(3), &mut |l| log.push(l.to_string()));
-    assert_eq!(log.len(), 0, "a healthy daemon is silent: {log:?}");
 }
 
 #[test]

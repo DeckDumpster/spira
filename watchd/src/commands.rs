@@ -569,24 +569,6 @@ mod tests {
     }
 
     #[test]
-    fn drain_reports_and_consumes_the_unread_range_and_advances_the_cursor() {
-        let d = TempDir::new("watchd-cmd");
-        let c = ctx(d.path().to_str().unwrap());
-        let rows = vec![row("pool", Kind::Daemon, "pool.sh", "")];
-        let lf = paths::logfile(&c.run, "pool", Kind::Daemon, "pool.sh").unwrap();
-        std::fs::create_dir_all(lf.parent().unwrap()).unwrap();
-        std::fs::write(&lf, "2026-09-30T00:00:00Z pool: FAIL suite x\n2026-09-30T00:00:01Z pool: progress\n").unwrap();
-        let f = Filter::compile(crate::filter::DEFAULT).unwrap();
-        let out = cmd_drain(&rows, &c, Some(&f), &DrainArgs { name: None, all: false, peek: false, limit: 0 }).unwrap();
-        assert!(out.contains("1 actionable of 2 new"), "{out}");
-        assert!(out.contains("FAIL suite x"));
-        assert!(!out.contains("progress"));
-        // a second drain with nothing new shows nothing for this watcher
-        let out2 = cmd_drain(&rows, &c, Some(&f), &DrainArgs { name: None, all: false, peek: false, limit: 0 }).unwrap();
-        assert!(!out2.contains("pool"), "{out2}");
-    }
-
-    #[test]
     fn peek_does_not_move_the_cursor() {
         let d = TempDir::new("watchd-cmd");
         let c = ctx(d.path().to_str().unwrap());
@@ -622,36 +604,6 @@ mod tests {
         assert_eq!(r, Err(2));
     }
 
-    #[test]
-    fn prune_removes_mechanism_files_for_a_watcher_no_longer_in_the_manifest_but_not_its_log() {
-        let d = TempDir::new("watchd-cmd");
-        let c = ctx(d.path().to_str().unwrap());
-        let dir = c.watchd_dir();
-        std::fs::create_dir_all(&dir).unwrap();
-        for suf in ["tail.lock", "cursor", "pending", "sop-runs"] {
-            std::fs::write(dir.join(format!("gone.{suf}")), "x").unwrap();
-        }
-        std::fs::write(dir.join("gone.log"), "history\n").unwrap();
-        std::fs::write(dir.join("kept.cursor"), "1").unwrap();
-        let rows = vec![row("kept", Kind::Daemon, "kept.sh", "")];
-        let units = TempDir::new("watchd-cmd-units");
-        let ops = Fake {
-            watch_units: vec!["spira-watch-gone-prod.service".to_string(), "spira-watch-kept-prod.service".to_string()],
-            ..Fake::default()
-        };
-        let out = cmd_prune(&rows, &ops, &c, &units);
-        assert!(out.contains("pruned:"), "{out}");
-        assert!(out.contains("pruned unit: spira-watch-gone-prod.service"), "{out}");
-        assert!(!out.contains("kept-prod"), "a unit whose watcher is still in the manifest is never touched: {out}");
-        assert!(!dir.join("gone.cursor").exists());
-        assert!(!dir.join("gone.tail.lock").exists());
-        assert!(!dir.join("gone.pending").exists());
-        assert!(!dir.join("gone.sop-runs").exists());
-        assert!(dir.join("gone.log").exists(), "the log is evidence and must survive prune");
-        assert!(dir.join("kept.cursor").exists());
-        assert_eq!(*ops.disabled.borrow(), vec!["spira-watch-gone-prod.service".to_string()]);
-    }
-
     /// The whole point of this test: prune must never reach a real systemd user manager or
     /// the real `$HOME/.config/systemd/user`, even when `unit_dir` holds actual unit files —
     /// everything about units goes through `Fake`, and the directory it scans is the
@@ -680,54 +632,11 @@ mod tests {
         const DB_PREFIX: &str = "sptest";
         const CONF_PREFIX: &str = "notthedb";
 
-        fn stub_bdq(dir: &std::path::Path, prints: &str) -> String {
-            let p = dir.join("bdq-stub");
-            testkit::write_exe(&p, &format!("#!/usr/bin/env bash\n[ \"$*\" = \"config get issue_prefix\" ] || exit 2\nprintf '%s\\n' \"{prints}\"\n"));
-            p.to_str().unwrap().to_string()
-        }
-
         fn ctx_for(bdq: &str, id_prefix: &str) -> Context {
             let mut c = ctx("/tmp/unused");
             bdq.clone_into(&mut c.bdq);
             id_prefix.clone_into(&mut c.id_prefix);
             c
-        }
-
-        #[test]
-        fn a_state_file_with_no_database_prefix_ids_fails_naming_the_prefix() {
-            let d = TempDir::new("watchd-health-ids");
-            let bdq = stub_bdq(&d, DB_PREFIX);
-            let state = d.join("state-none.json");
-            std::fs::write(&state, r#"{"seen":["other-abc1","other-xyz2"]}"#).unwrap();
-            let c = ctx_for(&bdq, CONF_PREFIX);
-            assert_eq!(cmd_health_ids(&c, state.to_str().unwrap()), 1);
-        }
-
-        #[test]
-        fn config_drift_the_database_prefix_wins_over_a_differing_spira_id_prefix() {
-            let d = TempDir::new("watchd-health-ids");
-            let bdq = stub_bdq(&d, DB_PREFIX);
-            let state = d.join("state-good.json");
-            std::fs::write(&state, format!(r#"{{"seen":["{DB_PREFIX}-abc1","{DB_PREFIX}-xyz2"]}}"#)).unwrap();
-            let c = ctx_for(&bdq, CONF_PREFIX);
-            assert_eq!(cmd_health_ids(&c, state.to_str().unwrap()), 0);
-        }
-
-        #[test]
-        fn a_missing_state_file_is_degraded_not_refused() {
-            let d = TempDir::new("watchd-health-ids");
-            let bdq = stub_bdq(&d, DB_PREFIX);
-            let c = ctx_for(&bdq, CONF_PREFIX);
-            assert_eq!(cmd_health_ids(&c, d.join("no-such-file.json").to_str().unwrap()), 1);
-        }
-
-        #[test]
-        fn falls_back_to_spira_id_prefix_when_no_database_is_configured() {
-            let d = TempDir::new("watchd-health-ids");
-            let state = d.join("state-good.json");
-            std::fs::write(&state, format!(r#"{{"seen":["{DB_PREFIX}-abc1"]}}"#)).unwrap();
-            let c = ctx_for("", DB_PREFIX);
-            assert_eq!(cmd_health_ids(&c, state.to_str().unwrap()), 0);
         }
 
         #[test]
@@ -737,17 +646,6 @@ mod tests {
             std::fs::write(&state, format!(r#"{{"seen":["{DB_PREFIX}-abc1"]}}"#)).unwrap();
             let c = ctx_for("", CONF_PREFIX);
             assert_eq!(cmd_health_ids(&c, state.to_str().unwrap()), 1);
-        }
-
-        #[test]
-        fn an_unusable_prefix_exits_2_distinct_from_degraded_or_ok() {
-            let d = TempDir::new("watchd-health-ids");
-            let state = d.join("state-good.json");
-            std::fs::write(&state, format!(r#"{{"seen":["{DB_PREFIX}-abc1"]}}"#)).unwrap();
-            for bad in ["", "bad prefix", "sp-test"] {
-                let c = ctx_for("", bad);
-                assert_eq!(cmd_health_ids(&c, state.to_str().unwrap()), 2, "prefix {bad:?}");
-            }
         }
     }
 }

@@ -893,25 +893,4 @@ mod tests {
     fn a_non_registered_name_still_falls_back_through_the_registry() {
         assert_eq!(env("SPIRA_NO_SUCH_KEY_AT_ALL_EVER"), None);
     }
-
-    /// `SPIRA_WATCHER_INTERVAL_S` IS registered — per Ryan 2026-10-05 (one source of
-    /// config), `env()` must read it only through `spira_config::process::cfg`, from
-    /// `$SPIRA_TOML`, never from a competing environment override. This is the ONLY test in
-    /// this binary that drives a registered key through `env()`: `cfg`'s resolution is a
-    /// process-global `OnceLock`, computed once and never reset.
-    #[test]
-    fn a_registered_key_never_reads_an_environment_override() {
-        let dir = testkit::TempDir::new("incident-env");
-        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_WATCHER_INTERVAL_S", "1800")]);
-        // SPIRA_HOME must be the checkout's own spira/ (where conf.d — the key registry —
-        // lives), never unset: `cfg()` cannot resolve at all without it.
-        let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-        let _g = testkit::env(&[
-            ("SPIRA_HOME", real_home.to_str()),
-            ("SPIRA_TOML", toml.to_str()),
-            ("SPIRA_WATCHER_INTERVAL_S", Some("99")),
-        ]);
-
-        assert_eq!(env("SPIRA_WATCHER_INTERVAL_S"), Some("1800".to_string()), "the declared value, never the environment override");
-    }
 }

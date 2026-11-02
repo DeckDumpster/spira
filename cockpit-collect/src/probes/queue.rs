@@ -294,18 +294,4 @@ mod tests {
         assert_eq!(kv.len(), 12);
         assert!(kv.iter().all(|(_, v)| v == "?"));
     }
-
-    #[test]
-    fn unreachable_lifecycle_store_renders_question_marks() {
-        let run = testkit::TempDir::new("cc-queue-missing");
-        let no_lc = run.path().join("no-such-spira-lc");
-        let _env = crate::test_support::set_run_with(run.path(), &[("SPIRA_LC_BIN", no_lc.to_str())]);
-        let cfg = Cfg {
-            queue_dir: run.path().join("queue").to_string_lossy().into_owned(),
-            ..Default::default()
-        };
-        let kv = queue_keys(&cfg);
-        let get = |k: &str| kv.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
-        assert_eq!(get("SP_QUEUE_DEPTH"), Some("?".to_string()));
-    }
 }

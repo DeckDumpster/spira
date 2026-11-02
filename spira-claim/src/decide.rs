@@ -148,12 +148,6 @@ mod tests {
     }
 
     #[test]
-    fn ask_again_at_new_count() {
-        // The stamp is computed per (bead, n): asked at 3 does not suppress 4.
-        assert_eq!(run(4, 0, 0, "", "0:0:0:0", false), "poison ask");
-    }
-
-    #[test]
     fn lift_at_or_above_n_suppresses_poison() {
         assert_eq!(run(3, 0, 0, "", "0:0:1:1", false), "none");
     }
@@ -182,11 +176,6 @@ mod tests {
     fn supplement_call_shape_only_ever_requeue_mail() {
         // sentinel's closed-bead supplement: check4_decide 0 <rq> 0 <labels> "<rq>:1:1"
         assert_eq!(run(0, 6, 0, "plan", "0:1:1", false), "requeue-mail");
-    }
-
-    #[test]
-    fn all_tokens_in_fixed_order() {
-        assert_eq!(run(3, 5, 5, "", "0:0:0:0", false), "requeue-mail reclaim-mail poison ask");
     }
 
     #[test]

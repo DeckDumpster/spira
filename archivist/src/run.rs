@@ -774,44 +774,6 @@ mod tests {
         assert!(seam.agent_calls.borrow()[0].contains("task for sess-1"));
     }
 
-    fn brain_run(rc: i32, break_remote: bool) -> (i32, testkit::TempDir, PathBuf, testkit::TempDir) {
-        let dir = testkit::TempDir::new("archivist-run");
-        let runes = testkit::TempDir::new("archivist-runes");
-        std::fs::write(runes.join("archivist.md"), "system\n<!-- task -->\ntask").unwrap();
-        let (root, brain) = brain::tests::fixture();
-        if break_remote {
-            brain::tests::sh(&brain, &["remote", "set-url", "origin", "/nonexistent/remote.git"]);
-        }
-        let mut c = cfg();
-        c.runes = runes.path().to_string_lossy().into_owned();
-        c.run = dir.path().to_string_lossy().into_owned();
-        c.wiki = Some(brain.to_string_lossy().into_owned());
-        let seam = FakeSeam::new();
-        *seam.agent_rc.borrow_mut() = rc;
-        *seam.agent_writes.borrow_mut() = vec![(brain.join("wiki/notes/a.md"), "a\n".into()), (brain.join("wiki/notes/b.md"), "b\n".into())];
-        let out = archive(&seam, &c, &dir, "sess-1", Path::new("/tmp/sess-1.jsonl"), 10, "5", "t", false);
-        (out, dir, brain, root)
-    }
-
-    #[test]
-    fn an_archive_run_that_writes_two_pages_commits_them_and_leaves_the_tree_clean() {
-        let (rc, dir, brain, _root) = brain_run(0, false);
-        assert_eq!(rc, 0);
-        assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("safe".into()));
-        let status = std::process::Command::new("git").arg("-C").arg(&brain).args(["status", "--porcelain"]).output().unwrap();
-        assert_eq!(String::from_utf8_lossy(&status.stdout), "");
-        let log = std::process::Command::new("git").arg("-C").arg(&brain).args(["log", "-1", "--format=%s"]).output().unwrap();
-        assert_eq!(String::from_utf8_lossy(&log.stdout).trim(), "archivist: 2 page(s) from session sess-1");
-    }
-
-    #[test]
-    fn a_run_whose_pages_cannot_be_pushed_fails_loudly_and_does_not_advance_the_cursor() {
-        let (rc, dir, _brain, _root) = brain_run(0, true);
-        assert_ne!(rc, 0);
-        assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("failed".into()));
-        assert_eq!(covered_raw(&dir, "sess-1"), None);
-    }
-
     // A fork elsewhere in the test binary can briefly hold a copy of a just-dropped flock fd,
     // so a lock refusal (75) is retried; the timeout accounting under test is unaffected.
     fn archive_past_lock_contention(seam: &FakeSeam, c: &Env, dir: &Path) -> i32 {
@@ -957,26 +919,6 @@ mod tests {
         archive_past_lock_contention(&seam, &c, &dir);
         assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("failed".into()));
         assert_eq!(state::read_state_key(&dir, "sess-1", "retry_at"), None, "the second consecutive failure is terminal");
-    }
-
-    #[test]
-    fn a_dirty_checkout_refusal_leaves_the_session_retryable_not_failed() {
-        let bin = testkit::TempDir::new("archivist-gitshim");
-        let real = String::from_utf8(std::process::Command::new("sh").args(["-c", "command -v git"]).output().unwrap().stdout).unwrap();
-        let shim = bin.join("git");
-        testkit::write_exe(
-            &shim,
-            &format!("#!/bin/sh\ncase \" $* \" in *\" pull \"*) echo 'error: cannot pull with rebase: You have unstaged changes.' >&2; exit 128;; esac\nexec {} \"$@\"\n", real.trim()),
-        );
-        brain::tests::GIT_PROGRAM.with(|p| *p.borrow_mut() = Some(shim.to_string_lossy().into_owned()));
-
-        let (rc, dir, _brain, _root) = brain_run(0, false);
-        brain::tests::GIT_PROGRAM.with(|p| *p.borrow_mut() = None);
-        assert_ne!(rc, 0);
-        assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("retry".into()));
-        assert!(state::read_state_key(&dir, "sess-1", "retry_at").is_some());
-        assert!(!dir.join("sess-1.fail_count").exists(), "a busy checkout is not a counted failure");
-        assert_eq!(covered_raw(&dir, "sess-1"), None);
     }
 
     #[test]

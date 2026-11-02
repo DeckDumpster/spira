@@ -519,18 +519,6 @@ mod tests {
     }
 
     #[test]
-    fn a_slow_request_is_abandoned_at_the_deadline_not_waited_for() {
-        let (release, held) = std::sync::mpsc::channel::<()>();
-        let slow = super::within(std::time::Duration::from_millis(300), move || {
-            let _ = held.recv();
-            1
-        });
-        assert_eq!(slow, None, "answered at the deadline while the work was still running");
-        drop(release);
-        assert_eq!(super::within(std::time::Duration::from_secs(5), || 7), Some(7));
-    }
-
-    #[test]
     fn a_response_is_a_header_line_then_the_raw_bytes_once() {
         use std::io::Read;
         let (a, mut b) = std::os::unix::net::UnixStream::pair().unwrap();

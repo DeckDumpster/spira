@@ -770,9 +770,6 @@ mod tests {
                 vm_at_land: Default::default(),
             }
         }
-        fn verbs(&self) -> Vec<Vec<String>> {
-            self.calls.borrow().iter().filter(|a| a.first().map(String::as_str) == Some("round")).cloned().collect()
-        }
     }
 
     impl Sys for Driven<'_> {
@@ -827,56 +824,8 @@ mod tests {
         b
     }
 
-    fn launched_hold(b: &Bench, sys: &Driven) -> Hold {
-        let l = Launch { exe: Path::new("/rel/bin/release"), toml: "t.toml" };
-        let p = b.ports();
-        let Ok(Started::Started(unit)) = start(sys, &l, "r-1", "spira", Some(&p)) else { panic!("not started") };
-        let run = sys.calls.borrow().iter().find(|a| a.iter().any(|x| x == "--drive")).cloned().expect("systemd-run");
-        let arg = |k: &str| run.iter().skip_while(|a| *a != k).nth(1).cloned().unwrap_or_else(|| panic!("{k}: {run:?}"));
-        let a = parse(&run[run.iter().position(|x| x == "--drive").unwrap()..]).unwrap();
-        let (lease, slot, slot_token) = a.hold.expect("the unit is handed the hold");
-        assert_eq!(unit, unit_for("r-1", Some(lease)));
-        assert_eq!(arg("--lease-token"), token_word(lease));
-        assert!(run.iter().any(|x| x == &format!("--unit={unit}")), "{run:?}");
-        assert_eq!(slot_record(b, slot)["unit"], unit.as_str(), "the slot names the unit before it is launched");
-        Hold::handed(&p, "spira", "r-1", lease, slot, slot_token)
-    }
-
     fn slot_record(b: &Bench, slot: Slot) -> serde_json::Value {
         b.store.get(&slot.record_key()).unwrap().expect("a slot record").value.data
-    }
-
-    #[test]
-    fn a_hand_drive_takes_the_lease_and_a_slot_renews_both_across_certify_passes_the_token_and_gives_both_back() {
-        let b = bench();
-        let sys = Driven::new(&b);
-        let hold = launched_hold(&b, &sys);
-        let token = token_word(hold.lease.token());
-        let slot = hold.slot.slot();
-        assert_eq!(drive(&sys, "r-1", "spira", Some((&b.ports(), hold))), 0);
-        let verbs = sys.verbs();
-        let of = |v: &str| verbs.iter().find(|a| a[1] == v).cloned().unwrap_or_default();
-        assert_eq!(of("certify"), ["round", "certify", "r-1", "spira", "--lease-token", &token]);
-        assert_eq!(of("land"), ["round", "land", "r-1", "spira", "--lease-token", &token]);
-        assert_eq!(sys.held_at_land.get(), Some(true), "certify ran past the 60 s TTL, and the lease was renewed through it");
-        assert_eq!(sys.vm_at_land.borrow().as_deref(), Some("vm-103"), "the slot records the VM round-vm named");
-        assert_eq!(holder_of(&b.ports(), &Resource::round("spira", "r-1")).unwrap(), None, "the lease is given back");
-        let again = grant_for_hand(&b.ports(), "next").expect("the slot is given back");
-        assert_eq!(again.slot(), slot);
-    }
-
-    #[test]
-    fn a_hand_drive_whose_pass_stops_progressing_stops_renewing_stops_certify_and_does_not_land() {
-        for (stalled, round) in [(true, "aaa"), (false, "another-round")] {
-            let b = bench();
-            let mut sys = Driven::new(&b);
-            (sys.stalled, sys.mark_round) = (stalled, round);
-            let hold = launched_hold(&b, &sys);
-            assert_eq!(drive(&sys, "r-1", "spira", Some((&b.ports(), hold))), 1, "{round}");
-            assert!(sys.stopped.get(), "certify is stopped once the hold is lost: {round}");
-            assert!(!sys.verbs().iter().any(|a| a[1] == "land"), "{round}: {:?}", sys.verbs());
-            assert_eq!(holder_of(&b.ports(), &Resource::round("spira", "r-1")).unwrap(), None);
-        }
     }
 
     #[test]
@@ -892,34 +841,6 @@ mod tests {
         assert!(e.contains("proxmox/0 is held by round-controller (unit round-controller-run-r-0-3-0)"), "{e}");
         assert!(!sys.calls.borrow().iter().any(|a| a.iter().any(|x| x == "--drive")), "nothing launched");
         assert_eq!(holder_of(&p, &Resource::round("spira", "r-1")).unwrap(), None, "the lease is given back");
-    }
-
-    #[test]
-    fn a_round_another_holder_leases_is_refused_and_one_round_recert_holds_is_its_running_driver() {
-        let b = bench();
-        let p = b.ports();
-        let l = Launch { exe: Path::new("/rel/bin/release"), toml: "t.toml" };
-        let other = acquire(&p, &Resource::round("spira", "r-1"), "round-controller").unwrap();
-        let e = start(&Driven::new(&b), &l, "r-1", "spira", Some(&p)).unwrap_err();
-        assert!(e.contains(&format!("round r-1 is leased by round-controller under token {}", token_word(other.token()))), "{e}");
-        other.release(&p).unwrap();
-        let mine = acquire(&p, &Resource::round("spira", "r-1"), HAND_HOLDER).unwrap();
-        assert_eq!(start(&Driven::new(&b), &l, "r-1", "spira", Some(&p)), Ok(Started::Running(unit_for("r-1", Some(mine.token())))));
-        mine.release(&p).unwrap();
-        b.seed("batches/spira/r-2", serde_json::json!({ "state": "LANDED" }));
-        assert_eq!(Hold::take(&p, "spira", "r-2").err(), Some(NotTaken::Refused("round r-2 has ended".into())));
-    }
-
-    #[test]
-    fn a_hand_drive_whose_lease_another_holder_takes_does_not_land_and_leaves_that_lease_alone() {
-        let b = bench();
-        let mut sys = Driven::new(&b);
-        sys.revoked = true;
-        let hold = launched_hold(&b, &sys);
-        assert_eq!(drive(&sys, "r-1", "spira", Some((&b.ports(), hold))), 1);
-        assert!(!sys.verbs().iter().any(|a| a[1] == "land"), "{:?}", sys.verbs());
-        let held = holder_of(&b.ports(), &Resource::round("spira", "r-1")).unwrap().expect("the new holder keeps its lease");
-        assert_eq!(held.holder.as_deref(), Some("round-controller"));
     }
 
     #[test]

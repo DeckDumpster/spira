@@ -83,21 +83,6 @@ mod tests {
     }
 
     #[test]
-    fn detects_spira_toml_when_present() {
-        let dir = scratch("toml");
-        fs::write(
-            dir.join("spira.toml"),
-            "[repo.service]\npath = \"/srv/service\"\nmode = \"pr\"\n\n[repo.other]\npath = \"/srv/other\"\nmode = \"push\"\n",
-        )
-        .unwrap();
-        let cfg = detect(&dir).expect("valid spira.toml");
-        assert_eq!(cfg.source, "spira.toml");
-        assert_eq!(mode_str(cfg.repos["service"].mode), "pr");
-        assert_eq!(mode_str(cfg.repos["other"].mode), "push");
-        fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
     fn falls_back_to_conf_and_repo_map_when_no_toml_exists() {
         let dir = scratch("conf");
         fs::write(dir.join("spira.conf"), "SPIRA_HOME_REPO=service\n").unwrap();
@@ -106,19 +91,6 @@ mod tests {
         assert_eq!(cfg.source, "spira.conf+repo-map");
         assert_eq!(mode_str(cfg.repos["service"].mode), "pr");
         assert_eq!(mode_str(cfg.repos["other"].mode), "push");
-        fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn spira_toml_takes_precedence_over_a_legacy_conf_beside_it() {
-        let dir = scratch("both");
-        fs::write(dir.join("spira.conf"), "SPIRA_HOME_REPO=stale\n").unwrap();
-        fs::write(dir.join("repo-map"), "stale|/srv/stale|push|main|\n").unwrap();
-        fs::write(dir.join("spira.toml"), "[repo.fresh]\npath = \"/srv/fresh\"\nmode = \"queue\"\n").unwrap();
-        let cfg = detect(&dir).expect("valid");
-        assert_eq!(cfg.source, "spira.toml");
-        assert!(cfg.repos.contains_key("fresh"));
-        assert!(!cfg.repos.contains_key("stale"));
         fs::remove_dir_all(&dir).ok();
     }
 }

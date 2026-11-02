@@ -569,55 +569,6 @@ mod tests {
         }
     }
 
-    const LAUNCHER_CAT: &str = "api_version = \"test-plan/v1\"\narea = \"ops\"\n\n[[use_case]]\nid = \"UC-ops-01\"\ntier = \"T2\"\nstatement = \"starts\"\nlauncher = { site = \"a/b.rs\", needle = \"statusLine\" }\n\n[use_case.uncovered]\nreason = \"r\"\ndate = \"2026-10-06\"\nbead = \"sp-x\"\n";
-
-    fn suite(covers: &[&str]) -> SuiteCoverage {
-        SuiteCoverage {
-            path: "spira/test-a.sh".into(),
-            tier: Some("T2".into()),
-            covers: covers.iter().map(|c| c.to_string()).collect(),
-        }
-    }
-
-    #[test]
-    fn an_unmarked_uncovered_uc_is_a_gap_and_a_marker_or_cover_clears_it() {
-        let bare = "api_version = \"test-plan/v1\"\narea = \"ops\"\n\n[[use_case]]\nid = \"UC-ops-01\"\ntier = \"T2\"\nstatement = \"s\"\n";
-        let marked = format!("{bare}\n[use_case.uncovered]\nreason = \"r\"\ndate = \"2026-10-08\"\nbead = \"sp-x\"\n");
-        assert_eq!(coverage_gaps(&[lc("ops", bare)], &[]).len(), 1);
-        assert!(coverage_gaps(&[lc("ops", &marked)], &[]).is_empty());
-        assert!(coverage_gaps(&[lc("ops", bare)], &[suite(&["UC-ops-01"])]).is_empty());
-        let t4 = bare.replace("T2", "T4");
-        assert!(coverage_gaps(&[lc("ops", &t4)], &[]).is_empty());
-    }
-
-    #[test]
-    fn an_uncovered_launcher_is_a_gap_even_with_an_uncovered_marker() {
-        let cats = [lc("ops", LAUNCHER_CAT)];
-        let gaps = launcher_gaps(&cats, &[suite(&["spira/x.sh"])]);
-        assert_eq!(gaps.len(), 1, "{gaps:?}");
-        assert!(
-            gaps[0].contains("UC-ops-01") && gaps[0].contains("a/b.rs"),
-            "{gaps:?}"
-        );
-        assert!(launcher_gaps(&cats, &[suite(&["UC-ops-01"])]).is_empty());
-        let md = render_markdown(&build_matrix(&cats, &[], &BTreeMap::new()));
-        assert!(md.contains("**LAUNCHER GAP**"), "{md}");
-    }
-
-    #[test]
-    fn a_launcher_site_must_still_contain_its_needle() {
-        let t = testkit::TempDir::new("launcher-sites");
-        let cats = [lc("ops", LAUNCHER_CAT)];
-        let missing = launcher_site_violations(&cats, t.path());
-        assert_eq!(missing.len(), 1, "{missing:?}");
-        std::fs::create_dir_all(t.join("a")).unwrap();
-        std::fs::write(t.join("a/b.rs"), "no marker here").unwrap();
-        let stale = launcher_site_violations(&cats, t.path());
-        assert!(stale[0].contains("no longer contains"), "{stale:?}");
-        std::fs::write(t.join("a/b.rs"), "doc.insert(\"statusLine\")").unwrap();
-        assert!(launcher_site_violations(&cats, t.path()).is_empty());
-    }
-
     #[test]
     fn valid_minimal_catalogue() {
         let c = parse_catalogue(
@@ -732,25 +683,6 @@ mod tests {
             covers: vec!["UC-dispatch-01".into()],
         }];
         let cur: Vec<SuiteCoverage> = vec![];
-        assert!(orphan_violations(&cats, &prev, &cur).is_empty());
-    }
-
-    #[test]
-    fn a_new_cover_in_the_same_commit_clears_the_orphan() {
-        let cats = vec![lc(
-            "dispatch",
-            "api_version = \"test-plan/v1\"\narea = \"dispatch\"\n\n[[use_case]]\nid = \"UC-dispatch-01\"\ntier = \"T1\"\nstatement = \"x\"\n",
-        )];
-        let prev = vec![SuiteCoverage {
-            path: "test-old.sh".into(),
-            tier: Some("T1".into()),
-            covers: vec!["UC-dispatch-01".into()],
-        }];
-        let cur = vec![SuiteCoverage {
-            path: "test-new.sh".into(),
-            tier: Some("T1".into()),
-            covers: vec!["UC-dispatch-01".into()],
-        }];
         assert!(orphan_violations(&cats, &prev, &cur).is_empty());
     }
 

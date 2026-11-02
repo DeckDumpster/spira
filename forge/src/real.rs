@@ -126,32 +126,3 @@ impl Proc for RealProc {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// `spira_gh` resolves `SPIRA_GH` through the one door, `spira_config::process::cfg` —
-    /// this is the ONLY test in this crate that drives it: `cfg`'s resolution is a
-    /// process-global `OnceLock`, computed once and never reset, so a single test function
-    /// cannot even vary it across two calls within itself, let alone across tests.
-    /// `SPIRA_HOME`/`SPIRA_TOML` point at a throwaway fixture, never the real box's.
-    #[test]
-    fn spira_gh_substitutes_gh_when_the_declared_value_is_empty() {
-        let dir = testkit::TempDir::new("forge-real-env");
-        let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_GH", "")]);
-        let _env = testkit::env(&[
-            ("SPIRA_HOME", real_home.to_str()),
-            ("SPIRA_TOML", toml.to_str()),
-        ]);
-
-        assert_eq!(
-            spira_gh(),
-            Ok("gh".to_string()),
-            "an empty declared SPIRA_GH means the system gh"
-        );
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}

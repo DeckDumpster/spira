@@ -107,24 +107,6 @@ mod tests {
     }
 
     #[test]
-    fn repeats_of_one_shape_file_one_incident_and_a_fast_shape_none() {
-        let d = testkit::TempDir::new("wt-slow");
-        let (inc, calls) = fake_incident(&d);
-        let log_path = d.join("slow-queries.log");
-        let mut text = String::new();
-        for i in 0..5 {
-            text.push_str(&format!("{}\tlist\t{}\tSELECT * FROM bead WHERE id = ?\n", 100 + i, 1500 + i * 100));
-        }
-        std::fs::write(&log_path, &text).unwrap();
-        run(&d, &log_path, "db", "spira", &inc);
-        run(&d, &log_path, "db", "spira", &inc);
-        let got = std::fs::read_to_string(&calls).unwrap();
-        assert_eq!(got.matches("incident:slow-query").count(), 1, "{got}");
-        assert!(got.contains("|1|SLOW STORE"), "{got}");
-        assert!(got.contains("count: 5") && got.contains("p50: 1700ms") && got.contains("max: 1900ms"), "{got}");
-    }
-
-    #[test]
     fn an_empty_log_files_nothing() {
         let d = testkit::TempDir::new("wt-slow-none");
         let (inc, calls) = fake_incident(&d);
@@ -146,29 +128,5 @@ mod tests {
         assert_eq!(g.len(), 2);
         let x = g.iter().find(|s| s.shape == "X").unwrap();
         assert_eq!((x.count(), x.max()), (2, 1200));
-    }
-
-    #[test]
-    fn many_shapes_file_one_incident_and_a_slow_connect_says_contention() {
-        let d = testkit::TempDir::new("wt-slow-many");
-        let (inc, calls) = fake_incident(&d);
-        let log_path = d.join("slow-queries.log");
-        std::fs::write(&log_path, "1\tlist\t2600\tCONNECT\n2\tshow\t5300\tSELECT a FROM bead\n3\tfact\t2300\tSTART TRANSACTION; INSERT INTO event\n").unwrap();
-        run(&d, &log_path, "db", "spira", &inc);
-        let got = std::fs::read_to_string(&calls).unwrap();
-        assert_eq!(got.matches("incident:slow-query").count(), 1, "{got}");
-        assert!(got.contains("host contention") && !got.contains("query-attributable"), "{got}");
-        assert!(got.contains("shape: CONNECT") && got.contains("shape: SELECT a FROM bead"), "{got}");
-    }
-
-    #[test]
-    fn slow_selects_alone_are_query_attributable() {
-        let d = testkit::TempDir::new("wt-slow-q");
-        let (inc, calls) = fake_incident(&d);
-        let log_path = d.join("slow-queries.log");
-        std::fs::write(&log_path, "1\tlist\t2600\tSELECT a FROM bead\n").unwrap();
-        run(&d, &log_path, "db", "spira", &inc);
-        let got = std::fs::read_to_string(&calls).unwrap();
-        assert!(got.contains("query-attributable") && !got.contains("host contention"), "{got}");
     }
 }

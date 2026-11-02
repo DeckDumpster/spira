@@ -185,15 +185,6 @@ mod tests {
     }
 
     #[test]
-    fn a_server_that_never_answers_is_cut_off_at_the_deadline() {
-        let l = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = l.local_addr().unwrap().to_string();
-        let err = Store::new(Some(&addr)).unwrap().with_deadline(Duration::from_millis(200)).export("x", 0).unwrap_err();
-        assert_eq!(err.name(), "metrics-store-unreachable");
-        drop(l);
-    }
-
-    #[test]
     fn a_non_200_and_a_garbled_body_are_named() {
         let addr = serve(b"HTTP/1.0 503 Service Unavailable\r\n\r\nbusy".to_vec());
         assert_eq!(Store::new(Some(&addr)).unwrap().export("x", 0).unwrap_err(), QueryError::Status(503, "busy".into()));

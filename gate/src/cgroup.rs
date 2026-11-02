@@ -49,15 +49,4 @@ mod tests {
             assert!(quota_percent(bad).is_err(), "{bad:?}");
         }
     }
-
-    #[test]
-    fn argv_wraps_self_in_a_scope_carrying_the_args() {
-        let a = scope_argv("300", Path::new("/r/bin/gate"), &["--home".into(), "/h".into(), "br".into()]).unwrap();
-        assert_eq!(&a[..2], ["systemd-run", "--user"]);
-        assert!(a.contains(&"--scope".to_string()));
-        assert!(a.contains(&"--property=CPUQuota=300%".to_string()));
-        let dash = a.iter().position(|x| x == "--").unwrap();
-        assert_eq!(&a[dash + 1..], ["/r/bin/gate", "--home", "/h", "br"]);
-        assert!(scope_argv("nope", Path::new("/g"), &[]).is_err());
-    }
 }

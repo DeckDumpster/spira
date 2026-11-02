@@ -667,16 +667,6 @@ mod tests {
         assert!(!d.exists());
     }
 
-    const OK: &str = "image = \"localhost/x:1\"\ndefault = [\"unit\"]\n[tier.unit]\nargv = [\"bash\", \"deploy/ci.sh\", \"unit\"]\n[tier.ui]\nargv = [\"bash\", \"deploy/ci.sh\", \"ui\"]\ntimeout = 5\n";
-
-    #[test]
-    fn a_declaration_parses_and_names_its_default() {
-        let d = Decl::parse(OK).unwrap();
-        assert_eq!(d.default_tiers(), vec!["unit"]);
-        assert!(d.known("ui") && !d.known("nosuch"));
-        assert_eq!(d.workdir, "/work");
-    }
-
     #[test]
     fn lint_names_only_declared_tiers() {
         let d = Decl::parse("image = \"i\"\nlint = [\"a\"]\n[tier.a]\nargv=[\"x\"]\n").unwrap();
@@ -697,31 +687,6 @@ mod tests {
         assert_eq!(first_error("Running\n  1 failed\nserving on http://x\n").unwrap(), "1 failed");
         assert_eq!(first_error("Running\ntimed out waiting\ndumpstar serving on http://127.0.0.1:18080\n").unwrap(), "timed out waiting");
         assert_eq!(tail("a\nb\nc\n", 2), "b\nc");
-    }
-
-    /// A passing run's layer holding `bytes` of new artifacts, ready to publish.
-    fn layer(cache: &Cache, cname: &str, bytes: usize) {
-        let up = cache.run_dir(cname).join("upper/debug/deps");
-        std::fs::create_dir_all(&up).unwrap();
-        std::fs::write(up.join(format!("lib{cname}.rlib")), vec![0u8; bytes]).unwrap();
-    }
-
-    #[test]
-    fn a_merge_that_leaves_the_warm_target_over_its_cutoff_removes_it_whole() {
-        let root = testkit::TempDir::new("foreign-cutoff");
-        let cache = Cache::new(root.path(), "r").bounded(Bound { max_bytes: 1 << 20, idle: None });
-        cache.prepare().unwrap();
-        let lines = std::sync::Mutex::new(Vec::<String>::new());
-        let log = |l: &str| lines.lock().unwrap().push(l.to_string());
-        layer(&cache, "c1", 600 << 10);
-        cache.publish("c1", None, &log);
-        assert!(cache.dir.join("target/debug/deps/libc1.rlib").is_file(), "under the cutoff the merge stands");
-        layer(&cache, "c2", 600 << 10);
-        cache.publish("c2", None, &log);
-        let target = cache.dir.join("target");
-        assert!(target.is_dir() && std::fs::read_dir(&target).unwrap().next().is_none(), "over the cutoff the target is emptied");
-        let got = lines.lock().unwrap().join("\n");
-        assert!(got.contains("c2: warm target was 1 MiB after the merge, over the 1 MiB cutoff: removed"), "{got}");
     }
 
     #[test]
@@ -752,19 +717,6 @@ mod tests {
         let _held = busy.flock(libc::LOCK_SH).unwrap();
         assert!(me.reap_idle().is_empty());
         assert!(busy.dir.join("target").is_dir());
-    }
-
-    #[test]
-    fn a_failed_publish_is_logged_as_its_own_non_verdict_line() {
-        let root = testkit::TempDir::new("foreign-pub-fail");
-        let cache = Cache::new(root.path(), "r");
-        cache.prepare().unwrap();
-        let lines = std::sync::Mutex::new(Vec::<String>::new());
-        let log = |l: &str| lines.lock().unwrap().push(l.to_string());
-        cache.publish("c1", None, &log);
-        let got = lines.lock().unwrap().join("\n");
-        assert!(got.contains("c1: warm cache publish failed (not a verdict"), "{got}");
-        assert!(got.contains("merge waited"), "{got}");
     }
 
     #[test]

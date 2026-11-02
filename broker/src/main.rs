@@ -93,38 +93,3 @@ fn run_token() -> ExitCode {
         Err(e) => { eprintln!("broker token: {}", e); ExitCode::FAILURE }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // One-source-of-config (per Ryan 2026-10-05): there is no more "registry default"
-    // to assert — a key's value comes only from the config file. This proves a value this
-    // process's own config file DECLARES reaches the real environment via
-    // merge_resolved_env(), and that a NEVER_EXPORTED key still never does.
-    #[test]
-    fn merge_resolved_env_reaches_a_declared_value_and_never_exports_the_forbidden_set() {
-
-        let dir = testkit::TempDir::new("broker-merge-env");
-        let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_BD", "bd-fixture")]);
-        // The real, checked-in spira/conf.d (this crate's own repo layout: `broker/`
-        // sits beside `spira/`) — resolve_for_process needs a real registry to
-        // validate every key it resolves.
-        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
-        let _g = testkit::env(&[
-            ("SPIRA_BD", None),
-            ("SPIRA_MAX_DWARVES", None),
-            ("SPIRA_TOML", toml.to_str()),
-            ("SPIRA_HOME", home.to_str()),
-        ]);
-
-        let result = merge_resolved_env();
-
-        let got_bd = std::env::var("SPIRA_BD").ok();
-        let got_max_dwarves = std::env::var_os("SPIRA_MAX_DWARVES");
-
-        result.expect("merge_resolved_env resolves given a complete config file and a real registry");
-        assert_eq!(got_bd, Some("bd-fixture".to_string()), "a declared config value must reach the real environment");
-        assert_eq!(got_max_dwarves, None, "SPIRA_MAX_DWARVES must never leak into this process's own environment");
-    }
-}

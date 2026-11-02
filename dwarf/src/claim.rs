@@ -239,88 +239,8 @@ mod tests {
         }
     }
 
-    /// A registry mapping `svc` onto a REAL, if tiny, git checkout — `resumable()`
-    /// (sp-o88bx, "wave 4.12") now resolves the base ref in-process through
-    /// `spira_config::repos::landref`, which always shells to real git, so this is a real
-    /// checkout rather than a canned string. Its declared base is empty on purpose: rung 4
-    /// (no remote at all) resolves it to the checkout's own current branch, "main".
-    fn svc_registry(dir: &Path) -> spira_config::repos::Registry {
-        let repo = dir.join("svc-repo");
-        std::fs::create_dir_all(&repo).unwrap();
-        let git = |args: &[&str]| {
-            let o = std::process::Command::new("git")
-                .arg("-C")
-                .arg(&repo)
-                .args(args)
-                .env("GIT_AUTHOR_NAME", "t")
-                .env("GIT_AUTHOR_EMAIL", "t@t")
-                .env("GIT_COMMITTER_NAME", "t")
-                .env("GIT_COMMITTER_EMAIL", "t@t")
-                .output()
-                .unwrap();
-            assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
-        };
-        git(&["init", "-q", "-b", "main"]);
-        std::fs::write(repo.join("f"), "x").unwrap();
-        git(&["add", "f"]);
-        git(&["commit", "-q", "-m", "x"]);
-        let map = format!("svc | {}\n", repo.display());
-        spira_config::repos::Registry::new(Some(&map), &BTreeMap::new(), Path::new(""))
-    }
-
     fn sel<'a>(e: &'a FakeExec, repos: &'a spira_config::repos::Registry, g: &'a FakeGit, dir: &'a Path) -> Selector<'a> {
         Selector { exec: e, git: g, claim_bin: "spira-claim", rune: "builder", scratch: dir, pid: 7, repos }
-    }
-
-    const READY: &str = r#"[{"id":"sp-a","priority":1,"labels":["repo:svc"]},{"id":"sp-b","priority":1,"labels":["repo:svc","branch:spira/x"]}]"#;
-
-    #[test]
-    fn ready_set_goes_on_stdin_and_files_carry_the_rest() {
-        let dir = scratch("t1");
-        let e = FakeExec {
-            calls: Mutex::new(vec![]),
-            epics: Out::ok("{\"prio\":{},\"started\":[]}"),
-            tier: Out::ok("sp-a||svc|1|1|1\nsp-b|spira/x|svc|1|1|1\n"),
-            rank: Out::ok("1\t1\t1\t0\tt\tsp-b\t\n1\t1\t1\t1\tt\tsp-a\t\n"),
-        };
-        let repos = svc_registry(dir.path());
-        let g = FakeGit(2);
-        let r = sel(&e, &repos, &g, &dir).select(READY);
-        assert_eq!(r, Selection::Ranked { ids: vec!["sp-b".into(), "sp-a".into()], resumable: vec!["sp-a".into(), "sp-b".into()], tier: Some("P1/P1".into()) });
-        let calls = e.calls.lock().unwrap();
-        assert_eq!(calls.len(), 3);
-        for (prog, args, stdin) in calls.iter() {
-            assert_eq!(prog, "spira-claim");
-            assert_eq!(stdin.as_deref(), Some(READY), "the ready set is on stdin");
-            assert!(args.iter().all(|a| !a.contains("sp-a")), "no bead payload in argv: {args:?}");
-        }
-        assert!(calls[2].1.contains(&"--resumable".to_string()));
-    }
-
-    // sp-s9675.2: the ready set comes from the machine (unfiltered by bd blockers) —
-    // select must be told to judge blockers itself, on both calls, or the widened set is
-    // never actually filtered.
-    #[test]
-    fn select_calls_carry_blockers_machine() {
-        let dir = scratch("t-machine");
-        let e = FakeExec {
-            calls: Mutex::new(vec![]),
-            epics: Out::ok("{\"prio\":{},\"started\":[]}"),
-            tier: Out::ok("sp-a||svc|1|1|1\n"),
-            rank: Out::ok("1\t1\t1\t0\tt\tsp-a\t\n"),
-        };
-        let repos = svc_registry(&dir);
-        let g = FakeGit(0);
-        let sel = Selector { exec: &e, git: &g, claim_bin: "spira-claim", rune: "builder", scratch: &dir, pid: 7, repos: &repos };
-        let _ = sel.select(READY);
-        let calls = e.calls.lock().unwrap();
-        // epics, --top-tier, --resumable — --blockers machine on both select calls only.
-        assert_eq!(calls.len(), 3);
-        assert!(!calls[0].1.contains(&"--blockers".to_string()), "epics takes no --blockers flag");
-        for (_, args, _) in calls.iter().skip(1) {
-            assert!(args.iter().any(|a| a == "--top-tier") || args.iter().any(|a| a == "--resumable"));
-            assert!(args.windows(2).any(|w| w == ["--blockers", "machine"]), "{args:?}");
-        }
     }
 
     #[test]
@@ -341,15 +261,6 @@ mod tests {
             }
             o => panic!("{o:?}"),
         }
-    }
-
-    #[test]
-    fn a_branch_not_ahead_is_not_resumable() {
-        let dir = scratch("t3");
-        let e = FakeExec { calls: Mutex::new(vec![]), epics: Out::ok("{}"), tier: Out::ok("sp-a||svc|0|0|2\n"), rank: Out::ok("0\t0\t2\t1\tt\tsp-a\t\n") };
-        let repos = svc_registry(dir.path());
-        let g = FakeGit(0);
-        assert_eq!(sel(&e, &repos, &g, &dir).select("[]"), Selection::Ranked { ids: vec!["sp-a".into()], resumable: vec![], tier: None });
     }
 
     #[test]

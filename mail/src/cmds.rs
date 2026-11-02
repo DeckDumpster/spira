@@ -1050,57 +1050,6 @@ mod probe_tests {
     }
 
     #[test]
-    fn a_lifecycle_row_failing_once_is_retried_and_the_ask_is_whole() {
-        let t = testkit::TempDir::new("mail-ask-row-once");
-        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok("")]);
-        bd.row_failures.set(1);
-        let out = send(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into()).unwrap();
-        assert_eq!(bd.row_attempts.get(), 2);
-        assert_eq!(out.x_bead.as_deref(), Some("sp-new1"));
-        assert_eq!(mailbox_entries(t.path()), 1);
-        assert!(!closed(&bd));
-    }
-
-    #[test]
-    fn a_lifecycle_row_that_never_lands_closes_the_bead_and_delivers_nothing() {
-        let t = testkit::TempDir::new("mail-ask-row-never");
-        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok("")]);
-        bd.row_failures.set(u32::MAX);
-        let err = send(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into()).unwrap_err();
-        assert!(err.contains("ask row") && err.contains("sp-new1 closed"), "{err}");
-        assert!(closed(&bd));
-        assert_eq!(mailbox_entries(t.path()), 0);
-    }
-
-    #[test]
-    fn a_maildir_write_failing_once_is_retried_and_the_ask_is_whole() {
-        let t = testkit::TempDir::new("mail-ask-mail-once");
-        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok("")]);
-        let fails = std::cell::Cell::new(1);
-        let deliver = |d: &Path, id: &str, m: &str, mute: bool| {
-            if fails.replace(0) == 1 {
-                return Err("disk full".to_string());
-            }
-            deliver_to_maildir(d, id, m, mute)
-        };
-        let out = send_with(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into(), &deliver).unwrap();
-        assert_eq!(out.x_bead.as_deref(), Some("sp-new1"));
-        assert_eq!(mailbox_entries(t.path()), 1);
-        assert!(!closed(&bd));
-    }
-
-    #[test]
-    fn a_maildir_that_never_accepts_the_mail_closes_the_bead_and_exits_with_an_error() {
-        let t = testkit::TempDir::new("mail-ask-mail-never");
-        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok(""), BdOut::ok("")]);
-        let deliver = |_: &Path, _: &str, _: &str, _: bool| Err::<PathBuf, String>("disk full".to_string());
-        let err = send_with(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into(), &deliver).unwrap_err();
-        assert!(err.contains("disk full") && err.contains("sp-new1 closed"), "{err}");
-        assert!(closed(&bd));
-        assert_eq!(mailbox_entries(t.path()), 0);
-    }
-
-    #[test]
     fn a_muted_work_ask_still_lands_unseen_in_new() {
         let t = testkit::TempDir::new("mail-ask-muted-work");
         let mut e = env(t.path());

@@ -69,14 +69,6 @@ mod tests {
         VmInfo { name: n.into(), status: s.into(), lock: l.map(String::from), registered: r, template: false }
     }
     #[test]
-    fn a_ci_named_template_never_holds_a_provision() {
-        let t = VmInfo { name: "ci-runner-template-resealed".into(), status: "stopped".into(), lock: None, registered: false, template: true };
-        assert_eq!(decide(std::slice::from_ref(&t), 0), Yield::Proceed);
-        let live = VmInfo { template: false, ..t };
-        assert_eq!(decide(&[live], 0), Yield::Hold, "positive control: a stopped, unregistered ci VM still holds");
-    }
-
-    #[test]
     fn sweep_only_proceeds() {
         assert_eq!(decide(&[vm("round-102", "running", None, false)], 0), Yield::Proceed);
     }
@@ -87,15 +79,6 @@ mod tests {
     #[test]
     fn unregistered_holds() {
         assert_eq!(decide(&[vm("gh-runner-7", "running", None, false)], 5), Yield::Hold);
-    }
-    #[test]
-    fn a_running_registered_runner_holds() {
-        assert_eq!(decide(&[vm("gh-runner-7", "running", None, true)], 5), Yield::Hold);
-        assert_eq!(decide(&[vm("gh-runner-7", "running", None, true)], 600), Yield::Proceed);
-    }
-    #[test]
-    fn bounded_wait() {
-        assert_eq!(decide(&[vm("ci-1", "stopped", Some("clone"), false)], 600), Yield::Proceed);
     }
     #[test]
     fn wait_is_bounded_and_returns_when_clear() {

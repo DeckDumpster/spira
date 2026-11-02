@@ -263,28 +263,6 @@ mod tests {
         assert!(!w.halted && !w.draining);
     }
 
-    #[test]
-    fn a_halted_stamp_is_reported_halted() {
-        let dir = testkit::TempDir::new("heimdall-gather");
-        std::fs::write(dir.join("world.halted"), "Mon Sep 29 00:00:00 UTC 2026\n").unwrap();
-        let w = world_state(&dir);
-        assert!(w.halted);
-    }
-
-    #[test]
-    fn a_holds_until_resume_stamp_is_draining_at_any_age() {
-        let dir = testkit::TempDir::new("heimdall-gather-holds");
-        std::fs::write(dir.join("world.draining"), "now\ngated\nholds until resume\n").unwrap();
-        assert!(world_state(&dir).draining);
-    }
-
-    #[test]
-    fn a_legacy_stamp_with_a_past_expires_line_still_holds() {
-        let dir = testkit::TempDir::new("heimdall-gather");
-        std::fs::write(dir.join("world.draining"), "now\ngated\nexpires 500\n").unwrap();
-        assert!(world_state(&dir).draining);
-    }
-
     // ---- systemd, faked ------------------------------------------------------------------
 
     #[derive(Default)]

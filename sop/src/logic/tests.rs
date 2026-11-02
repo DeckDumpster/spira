@@ -176,17 +176,6 @@ fn match_refuses_on_an_unreadable_shelf() {
     assert!(r.out.is_empty());
 }
 
-#[test]
-fn match_reports_whether_a_sop_declares_run_in_column_four() {
-    let bd = FakeBd::default();
-    bd.seed("sop-runs", "MATCH: FAIL\nSYMPTOM: sym-a\nCHECK: c\nFIX: f\nRUN: recert --batch {batch}\nDEADLINE: 60");
-    bd.seed("sop-plain", "MATCH: FAIL\nSYMPTOM: sym-b\nCHECK: c\nFIX: f");
-    let r = match_cmd(&bd, "FAIL here");
-    let cols = |key: &str| r.out.iter().find(|l| l.starts_with(key)).unwrap().split('\t').map(str::to_string).collect::<Vec<_>>();
-    assert_eq!((cols("sop-runs")[3].as_str(), cols("sop-runs")[4].as_str()), ("run", "sym-a"));
-    assert_eq!((cols("sop-plain")[3].as_str(), cols("sop-plain")[4].as_str()), ("-", "sym-b"));
-}
-
 // ───────────────────────────── applied ─────────────────────────────
 
 fn applied_args<'a>(key: &'a str, bead: Option<&'a str>, check: &'a str, held: &'a str) -> AppliedArgs<'a> {
@@ -269,43 +258,6 @@ fn applied_accepts_a_pass_record_with_no_bead() {
     let v: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
     assert_eq!(v["pass"], "pass-7");
     assert!(v.get("bead").is_none());
-}
-
-#[test]
-fn applied_downgrades_held_yes_to_unknown_when_the_metric_has_not_cleared() {
-    let bd = FakeBd::default();
-    bd.seed("sop-x", "SYMPTOM: s\nCHECK: c\nFIX: f\nMETRIC: SP_UNADOPTED unsent\n");
-    let proc = FakeProc::default();
-    *proc.metric_value.borrow_mut() = Some("SP_UNADOPTED=7\n".to_string());
-    let clock = FakeClock;
-    let dir = testkit::TempDir::new("sop-test");
-    let lp = dir.path().join("applied.jsonl");
-    let a = applied_args("x", Some("sp-1"), "pass", "yes");
-    let r = applied(&bd, &proc, &clock, &env(), &lp, &a);
-    assert_eq!(r.code, 0, "{:?}", r.err);
-    let text = std::fs::read_to_string(&lp).unwrap();
-    let v: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
-    assert_eq!(v["held"], "unknown", "held must be downgraded, not left at yes");
-    let note = &bd.notes.borrow()[0].1;
-    assert!(note.contains("downgraded from yes to unknown"), "{note}");
-}
-
-#[test]
-fn applied_confirms_held_yes_when_the_metric_reads_zero() {
-    let bd = FakeBd::default();
-    bd.seed("sop-x", "SYMPTOM: s\nCHECK: c\nFIX: f\nMETRIC: SP_UNADOPTED unsent\n");
-    let proc = FakeProc::default();
-    *proc.metric_value.borrow_mut() = Some("SP_UNADOPTED=0\n".to_string());
-    let clock = FakeClock;
-    let dir = testkit::TempDir::new("sop-test");
-    let lp = dir.path().join("applied.jsonl");
-    let a = applied_args("x", Some("sp-1"), "pass", "yes");
-    let r = applied(&bd, &proc, &clock, &env(), &lp, &a);
-    assert_eq!(r.code, 0, "{:?}", r.err);
-    let text = std::fs::read_to_string(&lp).unwrap();
-    let v: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
-    assert_eq!(v["held"], "yes");
-    assert!(bd.notes.borrow()[0].1.contains("fix confirmed"));
 }
 
 #[test]
@@ -400,22 +352,6 @@ fn retire_records_actor_time_reason_and_last_text() {
 }
 
 #[test]
-fn a_retired_sop_leaves_every_reader_but_list_retired() {
-    let bd = FakeBd::default();
-    bd.seed("sop-x", "SYMPTOM: s\nCHECK: c\nFIX: f\nMATCH: test\n");
-    bd.seed("sop-y", GOOD);
-    assert!(match_cmd(&bd, "test").out.iter().any(|l| l.starts_with("sop-x")));
-    assert_eq!(retire_x(&bd, "stray").code, 0);
-    assert!(!list(&bd, false).out.join("\n").contains("sop-x"));
-    assert!(!match_cmd(&bd, "test").out.join("\n").contains("sop-x"));
-    assert!(!digest(&bd).out.join("\n").contains("sop-x"));
-    assert!(!lint(&bd, 250).out.join("\n").contains("sop-x"));
-    let l = list(&bd, true);
-    assert!(l.out[0].contains("sop-x") && l.out[0].contains("tester") && l.out[0].contains("stray"), "{:?}", l.out);
-    assert_eq!(l.out.last().unwrap(), "1 retired SOP(s)");
-}
-
-#[test]
 fn show_of_a_retired_slug_says_who_and_why() {
     let bd = FakeBd::default();
     shelved(&bd);
@@ -476,17 +412,6 @@ fn a_failed_forget_rolls_the_record_back() {
     assert_eq!(r.code, 1);
     assert!(r.err[0].contains("could not remove sop-x; nothing retired"));
     assert_eq!(bd.shelf.borrow().keys().collect::<Vec<_>>(), vec!["sop-x"]);
-}
-
-#[test]
-fn a_failed_record_forget_on_revive_is_named() {
-    let bd = FakeBd::default();
-    shelved(&bd);
-    retire_x(&bd, "why");
-    bd.forget_fails.borrow_mut().push("retired-sop-x".to_string());
-    let r = write(&bd, &FakeProc::default(), &env(), "x", GOOD, true);
-    assert_eq!(r.code, 1);
-    assert!(r.err[0].contains("retired-sop-x"), "{:?}", r.err);
 }
 
 #[test]

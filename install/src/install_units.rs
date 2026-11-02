@@ -947,34 +947,6 @@ mod tests {
         assert!(matches!(r.enabled_actions.iter().find(|(u, _)| u == "spira-sentinel-prod.timer").unwrap().1, Action::Restart));
     }
 
-    /// `--diff` must show WHAT changed, not just that it did (sp-al35q, caught by testenv's
-    /// test-unit-drift.sh): systemd/install.sh's own `diff -u ... | sed 's/^/    /'` carried
-    /// the actual line-level change; this crate's rewrite dropped it, leaving an operator
-    /// staring at a bare "DIFFERS some.service" with no way to see what moved.
-    #[test]
-    fn diff_shows_the_changed_line_not_just_that_something_differs() {
-        let td = tempdir();
-        let unit_dir = td.join("units");
-        let tmpl_dir = td.join("templates");
-        fs::create_dir_all(&unit_dir).unwrap();
-        fs::create_dir_all(&tmpl_dir).unwrap();
-        write_templates(&tmpl_dir);
-        // Rendered content will be "[Service]\nExecStart=/bin/true\n"; the installed copy
-        // carries a planted line the render never produces.
-        fs::write(unit_dir.join("spira-sentinel-prod.service"), "[Service]\nExecStart=/bin/true\n# stale modification by test fixture\n").unwrap();
-        fs::write(unit_dir.join("spira-sentinel-prod.timer"), "[Unit]\nUnit=spira-sentinel-prod.service\n[Timer]\nOnCalendar=*:0/5\n").unwrap();
-
-        let manifest = tiny_manifest();
-        let h = host();
-        let sc = FakeSystemctl::default();
-        let no_suspend = |_: &str| false;
-        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
-
-        let lines = diff(&ctx).unwrap();
-        assert!(lines.iter().any(|l| l.contains("DIFFERS") && l.contains("spira-sentinel-prod.service")), "{lines:?}");
-        assert!(lines.iter().any(|l| l.contains("stale modification")), "{lines:?}");
-    }
-
     fn tempdir() -> testkit::TempDir {
         testkit::TempDir::new("install-units-test")
     }

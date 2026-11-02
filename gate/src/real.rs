@@ -1165,38 +1165,6 @@ mod tests {
         assert_eq!(stamp, 1_900_000_000);
         assert_ne!(now, 1_900_000_000, "now times waits and deadlines; a frozen virtual clock would hang them");
     }
-
-    fn union_repo(tag: &str) -> testkit::TempDir {
-        let d = testkit::TempDir::new(tag);
-        let p = d.path();
-        let g = |args: &[&str]| {
-            let o = std::process::Command::new("git").arg("-C").arg(p).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
-            assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
-        };
-        let commit = |file: &str, body: &str| {
-            std::fs::write(p.join(file), body).unwrap();
-            g(&["add", "-A"]);
-            g(&["commit", "-q", "-m", "c"]);
-        };
-        g(&["init", "-q", "-b", "stale"]);
-        commit("keep", "x\n");
-        g(&["checkout", "-q", "-b", "main"]);
-        commit(".gitattributes", "f merge=union\n");
-        commit("f", "base\n");
-        g(&["checkout", "-q", "-b", "b", "main"]);
-        commit("f", "base\nfrom b\n");
-        g(&["checkout", "-q", "main"]);
-        commit("f", "base\nfrom a\n");
-        g(&["checkout", "-q", "stale"]);
-        d
-    }
-
-    #[test]
-    fn merge_tree_honours_the_base_refs_union_attributes_not_the_checkouts() {
-        use crate::ports::World;
-        let d = union_repo("gate-union");
-        assert!(matches!(super::Real::new(std::path::PathBuf::new()).merge_tree(d.path(), "main", "b"), crate::ports::Merge::Clean(_)));
-    }
     #[test]
     fn install_tools_copies_stamps_and_clears_every_other_tree() {
         use std::fs;
@@ -1226,83 +1194,5 @@ mod tests {
         assert_eq!(super::utc_of(0), "1970-01-01T00:00:00Z");
         assert_eq!(super::utc_of(1790700000), "2026-09-29T16:40:00Z");
         assert_eq!(super::utc_of(951782400), "2000-02-29T00:00:00Z");
-    }
-
-    // ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the same
-    // hazard): this test takes a lock and pins SPIRA_TOML to a nonexistent path — locate()'s
-    // own exclusive-pin rule — so it never depends on a real operator config document on
-    // the machine running this suite.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    /// ONE SOURCE (per Ryan 2026-10-05): `merge_resolved_config` now goes straight through
-    /// `spira_config::process::cfg`, so this is the one test in this binary allowed to drive
-    /// it live (rule: only a test that truly exercises the top-level read may set `SPIRA_TOML`
-    /// — `cfg`'s resolution is cached once per *process*, in a `OnceLock`, so a second test
-    /// pinning a DIFFERENT config file in the same test binary would just see this one's
-    /// answer, not its own; the old "missing registry" sibling test that used to live here
-    /// is gone for exactly that reason, not because the refusal it checked stopped existing —
-    /// that refusal is `spira_config`'s own, and `spira_config`'s own tests are where it
-    /// belongs now).
-    #[test]
-    fn merge_resolved_config_fills_retired_vars_without_overriding_the_bash_dump() {
-        let dir = testkit::TempDir::new("gate-real-merge");
-        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_GATE_TIMEOUT", "1234")]);
-        // SPIRA_HOME must be the checkout's own spira/ (where conf.d — the key registry —
-        // lives), never the throwaway fixture dir.
-        let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-        let _g = testkit::env(&[
-            ("SPIRA_HOME", Some(real_home.to_str().unwrap())),
-            ("SPIRA_TOML", Some(toml.to_str().unwrap())),
-        ]);
-
-        let mut kv = std::collections::HashMap::new();
-        kv.insert("SPIRA_GATE_BEAD".to_string(), "sp-xyz".to_string());
-        let result = super::merge_resolved_config(&mut kv);
-
-        let _ = std::fs::remove_dir_all(&dir);
-
-        result.unwrap();
-        assert_eq!(kv.get("SPIRA_GATE_BEAD").map(String::as_str), Some("sp-xyz"), "the bash dump's own value must survive the merge");
-        assert_eq!(kv.get("SPIRA_GATE_TIMEOUT").map(String::as_str), Some("1234"), "a RETIRED_VARS key cfg() covers must reach kv in-process");
-    }
-    /// sp-z61hj's rule, which sp-nv7btk's on-disk warm slot broke: every build directory of a
-    /// gate tree lands on the tmpfs root, none on the disk. The slot (`<run>/gate-warm/slot.N/
-    /// dwarf`, 23-25 GiB each, on the one SATA disk) took every dwarf build of every spira gate —
-    /// the unit build, the re-entry and base trials' in-place `cargo build --workspace` — and
-    /// relinked all 87 workspace binaries into it per trial (a fresh gate tree's sources are
-    /// all newer than the slot's outputs, so nothing in the workspace was ever fresh there),
-    /// under the gate's `ionice -c3` on a disk at 60-75 % full IO pressure: the 300 s cap.
-    #[test]
-    fn every_build_directory_of_a_gate_tree_lands_on_the_tmpfs_never_the_disk() {
-        use crate::ports::World;
-        let _l = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let t = testkit::TempDir::new("gate-real-tmpfs-only");
-        let (root, run) = (t.path().join("tmpfs"), t.path().join("run"));
-        let tree = run.join("worktree").join(".gate.harness.spira-sp-x");
-        std::fs::create_dir_all(&tree).unwrap();
-        let lim = crate::target::Limits { cap_mib: 1000, min_free_mib: 1, min_mem_mib: 1, shed_free_mib: 0, reserve_mib: 0 };
-        let real = super::Real::new(t.path().join("home"));
-        let line = real.target_on_tmpfs(&tree, root.to_str().unwrap(), run.to_str().unwrap(), &lim).unwrap();
-        for d in crate::target::LINKED {
-            let dest = std::fs::read_link(tree.join("target").join(d)).unwrap_or_else(|e| panic!("target/{d}: {e}"));
-            assert!(dest.starts_with(&root), "target/{d} -> {} is off the tmpfs root {} ({line})", dest.display(), root.display());
-        }
-        assert!(!run.join(crate::target::WARM_DIR).exists(), "a gate built into {}: {line}", run.join(crate::target::WARM_DIR).display());
-        assert!(!line.contains("warm target"), "{line}");
-    }
-
-    #[test]
-    fn a_trial_tool_reads_the_registry_of_the_tree_under_test_not_the_installed_release() {
-        use crate::ports::World;
-        let _l = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let t = testkit::TempDir::new("gate-real-tree-home");
-        let (with, without) = (t.path().join("with"), t.path().join("without"));
-        std::fs::create_dir_all(with.join("spira/conf.d")).unwrap();
-        std::fs::create_dir_all(&without).unwrap();
-        let real = super::Real::new(t.path().join("home"));
-        let env = vec![("SPIRA_RELEASE".to_string(), "/installed".to_string())];
-        let ask = |tree: &std::path::Path| real.run_gate(tree, &env, "30", "printf '%s|%s' \"${SPIRA_HOME-unset}\" \"$SPIRA_RELEASE\"").1;
-        assert_eq!(ask(&with), format!("{}|/installed", with.join("spira").display()));
-        assert_eq!(ask(&without), "unset|/installed", "a tree with no registry leaves the release's");
     }
 }

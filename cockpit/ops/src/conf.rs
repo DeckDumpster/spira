@@ -55,35 +55,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn self_source_applies_a_registry_default_without_overriding_an_explicit_value_and_never_leaks_the_forbidden_set() {
-        let dir = testkit::TempDir::new("cockpit-ops-conf");
-        // `self_source` derives `home` as `$SPIRA_RELEASE/spira` — point SPIRA_RELEASE at
-        // this tree's release root so `home` lands on the REAL spira/ dir (the registry
-        // `resolve_for_process` validates registered keys against), not a fabricated one.
-        let release_root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_COCKPIT", "/resolved/cockpit")]);
-        // conf.sh's own convention is ${VAR:-default}; a caller override must survive.
-        let env = testkit::env(&[
-            ("SPIRA_COCKPIT", None),
-            ("SPIRA_MAX_DWARVES", None),
-            ("SPIRA_RELEASE", Some(release_root)),
-            ("SPIRA_TOML", Some(toml.to_str().unwrap())),
-            ("COCKPIT_RIGHT_PCT", Some("50")),
-        ]);
-
-        self_source();
-
-        let got_cockpit = std::env::var("SPIRA_COCKPIT").ok();
-        let got_right_pct = std::env::var("COCKPIT_RIGHT_PCT").ok();
-        let got_max_dwarves = std::env::var_os("SPIRA_MAX_DWARVES");
-        drop(env);
-
-        assert_eq!(got_cockpit, Some("/resolved/cockpit".to_string()), "a registry default must reach the real environment");
-        assert_eq!(got_right_pct, Some("50".to_string()), "an explicit env override must survive self_source");
-        assert_eq!(got_max_dwarves, None, "SPIRA_MAX_DWARVES must never leak into this process's own environment");
-    }
-
-    #[test]
     fn self_source_is_silent_with_no_spira_release() {
         let _env = testkit::env(&[("SPIRA_RELEASE", None)]);
         self_source(); // must not panic

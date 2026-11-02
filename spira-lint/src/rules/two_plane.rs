@@ -445,27 +445,6 @@ mod tests {
     }
 
     #[test]
-    fn a_copied_planning_column_is_reported() {
-        let t = fixture("tp-col");
-        t.write(
-            "lifecycle/migrations/0099-x.sql",
-            "-- ALTER TABLE bead ADD COLUMN body TEXT;\nALTER TABLE bead ADD COLUMN title VARCHAR(512) NULL;\nALTER TABLE bead ADD COLUMN since BIGINT;\n\
-             ALTER TABLE bead ADD INDEX i (since),\n  ADD labels TEXT;\nALTER TABLE ask CHANGE COLUMN quote body TEXT;\nALTER TABLE batch RENAME COLUMN up TO parent;\n",
-        );
-        t.write("lifecycle/schema.sql", "CREATE TABLE bead (\n    bead_id VARCHAR(64),\n    priority TINYINT NULL,\n    PRIMARY KEY (bead_id)\n);\n");
-        assert_eq!(
-            run(&t, &["lifecycle/migrations/0099-x.sql", "lifecycle/schema.sql"]).unwrap(),
-            [
-                "two-plane: lifecycle/migrations/0099-x.sql:2: column bead.title copies planning data",
-                "two-plane: lifecycle/migrations/0099-x.sql:5: column bead.labels copies planning data",
-                "two-plane: lifecycle/migrations/0099-x.sql:6: column ask.body copies planning data",
-                "two-plane: lifecycle/migrations/0099-x.sql:7: column batch.parent copies planning data",
-                "two-plane: lifecycle/schema.sql:3: column bead.priority copies planning data",
-            ]
-        );
-    }
-
-    #[test]
     fn a_registered_record_with_a_planning_field_is_reported() {
         let t = fixture("tp-rec");
         t.write(

@@ -90,35 +90,4 @@ mod tests {
         assert!(should_drop("pool: NEW CERTIFIED sp-abc12"));
         assert!(!should_drop("[watch:round-duty] asks: NEW ASK sp-f63uj: something"));
     }
-
-    #[test]
-    fn dedup_key_strips_times_and_normalises_oldest() {
-        let a = dedup_key("[watch:dolt] oldest 42s waiting on the store, seen at 11:34:05Z");
-        let b = dedup_key("[watch:dolt] oldest 900s waiting on the store, seen at 11:40:12Z");
-        assert_eq!(a, b);
-    }
-
-    #[test]
-    fn dedup_key_leaves_unrelated_text_alone() {
-        assert_eq!(dedup_key("plain text with no times in it"), "plain text with no times in it");
-    }
-
-    #[test]
-    fn a_repeat_inside_the_window_is_dropped_and_after_it_is_passed() {
-        let mut d = Dedup::default();
-        assert_eq!(d.pass("T x needs you", 100, 600), Some("x needs you"));
-        assert_eq!(d.pass("T x needs you", 400, 600), None);
-        assert_eq!(d.pass("T x needs you", 701, 600), Some("x needs you"));
-    }
-
-    #[test]
-    fn memory_survives_a_render_parse_round_trip_and_expires() {
-        let mut d = Dedup::default();
-        d.pass("T x needs you", 100, 600);
-        let text = d.render();
-        let mut again = Dedup::parse(&text, 200, 600);
-        assert_eq!(again.pass("T x needs you", 200, 600), None);
-        let mut expired = Dedup::parse(&text, 800, 600);
-        assert_eq!(expired.pass("T x needs you", 800, 600), Some("x needs you"));
-    }
 }

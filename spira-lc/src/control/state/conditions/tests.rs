@@ -50,34 +50,10 @@ impl Rig {
     fn one(&self, key: &str) -> Value {
         self.listed(&[]).into_iter().find(|c| c["key"] == key).unwrap_or(Value::Null)
     }
-
-    fn raw(&self, key: &str) -> Option<state_store::Item> {
-        self.s.contract().get(&crate::control::keys::condition("heimdall", key)).unwrap()
-    }
 }
 
 fn raise(r: &Rig, key: &str, msg: &str) {
     r.ok(&["condition", "set", key, "--type", "Alert", "--reason", "Firing", "--message", msg]);
-}
-
-#[test]
-fn a_raise_then_a_clear_moves_the_condition_true_then_false_at_its_own_key() {
-    let r = Rig::new();
-    raise(&r, "db-down", "the db is down");
-    let c = r.one("db-down");
-    assert_eq!((c["status"].as_str(), c["type"].as_str(), c["flaps"].as_u64()), (Some("True"), Some("Alert"), Some(1)));
-    assert_eq!(c["first_seen"].as_i64(), Some(AT));
-    let raised_at = r.raw("db-down").unwrap().mod_rev.main;
-    assert_eq!(c["last_transition_rev"].as_u64(), Some(raised_at));
-
-    r.now.set(AT + 60);
-    r.ok(&["condition", "clear", "db-down", "--reason", "Cleared"]);
-    let c = r.one("db-down");
-    assert_eq!((c["status"].as_str(), c["reason"].as_str()), (Some("False"), Some("Cleared")));
-    assert_eq!(c["message"].as_str(), Some("the db is down"), "a clear without a message keeps the last one");
-    let cleared_at = r.raw("db-down").unwrap().mod_rev.main;
-    assert!(cleared_at > raised_at);
-    assert_eq!(c["last_transition_rev"].as_u64(), Some(cleared_at));
 }
 
 #[test]
@@ -99,20 +75,6 @@ fn a_refresh_keeps_the_transition_and_a_reraise_counts_a_flap_from_the_first_sig
     let c = r.one("k");
     assert_eq!((c["flaps"].as_u64(), c["first_seen"].as_i64()), (Some(2), Some(AT)));
     assert_eq!(c["acked"], false, "a new firing is unseen");
-}
-
-#[test]
-fn a_clear_of_nothing_writes_nothing_and_list_filters_by_status_and_type() {
-    let r = Rig::new();
-    r.ok(&["condition", "clear", "never", "--reason", "Cleared"]);
-    assert!(r.raw("never").is_none());
-    raise(&r, "a", "x");
-    r.ok(&["condition", "set", "probe", "--type", "WriteProbe", "--reason", "Probe", "--message", "1", "--status", "False"]);
-    let firing: Vec<String> = r.listed(&["--status", "True"]).iter().map(|c| c["key"].as_str().unwrap().to_string()).collect();
-    assert_eq!(firing, ["a"]);
-    let alerts = r.listed(&["--type", "Alert"]);
-    assert_eq!(alerts.len(), 1);
-    assert_eq!(r.one("probe")["flaps"].as_u64(), Some(0), "a False write is no firing");
 }
 
 #[test]

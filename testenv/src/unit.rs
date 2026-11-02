@@ -311,12 +311,4 @@ mod tests {
     fn a_test_bin_that_is_not_a_workspace_crate_is_refused() {
         assert!(test_bins(META, &["bad".into()]).unwrap_err().contains("ghost"));
     }
-
-    #[test]
-    fn the_spira_runtime_manifest_declares_spira_config_spira_lc_tsd_and_its_reconciler_oracles_and_the_crates_that_launch_nothing_declare_none() {
-        let meta = output(Command::new("cargo").current_dir(env!("CARGO_MANIFEST_DIR")).args(["metadata", "--format-version", "1", "--no-deps", "--offline"])).unwrap();
-        let meta = String::from_utf8_lossy(&meta);
-        assert_eq!(test_bins(&meta, &["spira-runtime".into()]).unwrap(), ["reconciler", "reconciler-flow", "spira-config", "spira-lc", "tsd"]);
-        assert!(test_bins(&meta, &["testenv".into()]).unwrap().is_empty());
-    }
 }

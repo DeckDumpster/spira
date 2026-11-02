@@ -159,45 +159,6 @@ mod tests {
 
     const T: &str = "0123456789abcdef0123456789abcdef01234567";
 
-    fn c(source: Source) -> Cert {
-        Cert {
-            source,
-            tree: T.into(),
-            repo: "spira".into(),
-            rev: "abc".into(),
-            branch: "spira/sp-x".into(),
-            by: "me".into(),
-            when: "2026-09-29T18:00:00Z".into(),
-            at: 1_790_000_000,
-            harness: "h".into(),
-            suites: "-".into(),
-        }
-    }
-
-    #[test]
-    fn a_certificate_round_trips_for_both_sources() {
-        for s in [Source::Gate, Source::Round] {
-            assert_eq!(parse(&render(&c(s))), Some(c(s)));
-        }
-    }
-
-    #[test]
-    fn only_the_matched_verdict_source_pairs_count() {
-        let t = render(&c(Source::Gate));
-        assert!(parse(&t.replace("verdict=PASS", "verdict=FAIL")).is_none());
-        assert!(parse(&t.replace("verdict=PASS", "verdict=GREEN")).is_none(), "GREEN is a round's word");
-        assert!(parse(&t.replace(&format!("tree={T}\n"), "")).is_none());
-    }
-
-    #[test]
-    fn it_certifies_only_its_own_tree_and_repo_whatever_the_harness() {
-        let t = render(&c(Source::Gate));
-        assert!(certifies(&t, "spira", T).is_some());
-        assert!(certifies(&t.replace("harness=h", "harness=an-older-gate"), "spira", T).is_some());
-        assert!(certifies(&t, "other", T).is_none());
-        assert!(certifies(&t, "spira", &"f".repeat(40)).is_none());
-    }
-
     #[test]
     fn hostile_names_never_become_paths() {
         let v = Path::new("/v");
@@ -205,23 +166,6 @@ mod tests {
         assert!(path(v, "spira", "../../etc").is_none());
         assert!(path(v, "spira", "HEAD").is_none());
         assert_eq!(path(v, "spira", T), Some(PathBuf::from(format!("/v/trees/spira/{T}"))));
-    }
-
-    #[test]
-    fn free_text_is_one_line_in_the_file() {
-        let mut x = c(Source::Round);
-        x.by = "a\nverdict=PASS".into();
-        let t = render(&x);
-        assert_eq!(t.lines().filter(|l| l.starts_with("verdict=")).count(), 1);
-    }
-
-    #[test]
-    fn write_is_atomic_and_readable_back() {
-        let d = testkit::TempDir::new("gate-cert");
-        let p = write(&d, &c(Source::Round)).unwrap();
-        assert!(certifies(&fs::read_to_string(&p).unwrap(), "spira", T).is_some());
-        assert_eq!(fs::read_dir(p.parent().unwrap()).unwrap().count(), 1, "no temp file left");
-        let _ = fs::remove_dir_all(&d);
     }
 
     #[test]

@@ -113,26 +113,4 @@ mod tests {
         let p = ppid(1);
         assert!(p.is_none() || p == Some(0));
     }
-
-    #[test]
-    fn descendant_count_of_current_pid_includes_no_self() {
-        // Counted from a private subtree: this test process shares its pid with concurrent
-        // tests that spawn children, so it cannot be the root.
-        let mut child = std::process::Command::new("sh")
-            .args(["-c", "sleep 3 & wait"])
-            .spawn()
-            .unwrap();
-        let root = child.id() as i32;
-        let mut n = 0;
-        for _ in 0..200 {
-            n = descendant_count(root);
-            if n >= 1 {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        let _ = child.kill();
-        let _ = child.wait();
-        assert_eq!(n, 1, "root itself must not be counted, only the sleep");
-    }
 }

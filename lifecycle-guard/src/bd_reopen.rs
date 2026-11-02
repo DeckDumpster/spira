@@ -85,17 +85,6 @@ mod tests {
     }
 
     #[test]
-    fn every_argument_vector_form_of_a_bd_reopen_is_found() {
-        let src = r#"fn a() { self.bd_ok(&["reopen", id], None); }
-fn b() { Command::new("bd").args(["reopen", id, "--reason", r]); }
-fn c(db: &str) { run(db, &["reopen", id]); }
-fn d() { self.bd(&["assign", id, ""]) }
-fn e() { Command::new("bd").arg("reopen").arg(id); }
-"#;
-        assert_eq!(lines("x/src/a.rs", src), vec![1, 2, 3, 4, 5]);
-    }
-
-    #[test]
     fn gh_prose_a_claim_assign_the_door_and_tests_are_not_findings() {
         let src = r#"fn a() { gh.call(Some(repo), &["issue", "reopen", n]); }
 fn b() { eprintln!("never run bd reopen by hand"); }

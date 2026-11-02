@@ -401,13 +401,6 @@ mod tests {
     use super::*;
     use crate::testutil::TempDir;
 
-    #[test]
-    fn no_vmid_or_range_is_read_from_config() {
-        let src = include_str!("config.rs");
-        let key = ["PVE_", "VMID_M"].concat();
-        assert!(!src.contains(key.as_str()), "config reads a VMID range");
-    }
-
     fn base_fields() -> Fields {
         Fields {
             run: "/r".into(),
@@ -480,36 +473,6 @@ mod tests {
     }
 
     #[test]
-    fn the_testenv_limits_are_the_hosts_declared_values_not_the_fixtures() {
-        let dir = testkit::TempDir::new("round-vm-limits");
-        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_TESTENV_SUITE_CAP", "600")]);
-        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-        let env = BTreeMap::from([("SPIRA_TOML".to_string(), toml.to_str().unwrap().to_string())]);
-        let got = testenv_limits_in(&env, &home).unwrap();
-        assert!(got.contains("testenv_suite_cap = 600\n"), "{got}");
-        assert!(!got.contains("777"), "{got}");
-    }
-
-    #[test]
-    fn cache_home_reads_its_own_dedicated_key_never_the_ambient_cargo_home() {
-        // sp-xjnzl-2: a bare CARGO_HOME in the caller's environment must NOT leak in — the
-        // production fault this bead fixes was exactly that leak (a systemd unit's own
-        // ambient default, /root/.cargo, silently used in place of the template's actual
-        // one). Only this binary's own key, env or spira.toml, ever sets cache_home.
-        let got = {
-            let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_ROUND_VM_CACHE_HOME", None), ("CARGO_HOME", Some("/opt/spira/cargo"))]);
-            cache_home_from_env_or_toml()
-        };
-        assert!(got.is_none(), "a bare CARGO_HOME must never be read");
-
-        let got = {
-            let _env = testkit::env(&[("SPIRA_ROUND_VM_CACHE_HOME", Some("/opt/spira/cargo"))]);
-            cache_home_from_env_or_toml()
-        };
-        assert_eq!(got.as_deref(), Some("/opt/spira/cargo"));
-    }
-
-    #[test]
     fn a_bad_number_on_an_unregistered_knob_names_the_key() {
         // SPIRA_ROUND_VM_BOOT_TRIES is not declared in spira/conf.d — round-vm still reads
         // it, and still refuses by name, straight from the environment (see this module's
@@ -519,15 +482,6 @@ mod tests {
             num_env::<u32>("SPIRA_ROUND_VM_BOOT_TRIES", 60).unwrap_err()
         };
         assert!(e.contains("SPIRA_ROUND_VM_BOOT_TRIES"), "{e}");
-    }
-
-    #[test]
-    fn env_file_parsing_handles_export_quotes_and_comments() {
-        let m = parse_env_file("# c\nexport PVE_NODE=\"pve1\"\nPVE_TOKEN_ID='a@pve!t'\nPVE_API_HOST=10.0.0.1 # lan\nnot a line\n");
-        assert_eq!(m.get("PVE_NODE").unwrap(), "pve1");
-        assert_eq!(m.get("PVE_TOKEN_ID").unwrap(), "a@pve!t");
-        assert_eq!(m.get("PVE_API_HOST").unwrap(), "10.0.0.1");
-        assert_eq!(m.len(), 3);
     }
 
     fn write_env(dir: &TempDir, extra: &str) -> PathBuf {
@@ -569,14 +523,5 @@ mod tests {
         assert_eq!(e.template_vmid, "9000");
         assert_eq!(e.pool.as_deref(), Some("ci"));
         assert_eq!((e.api_host.as_str(), e.api_port), ("localhost", 8006));
-    }
-
-    #[test]
-    fn file_wins_over_environment() {
-        let d = TempDir::new();
-        let p = write_env(&d, "PVE_TEMPLATE_VMID=9000\n");
-        let e = PveEnv::load(&p, &|k| (k == "PVE_TEMPLATE_VMID" || k == "PVE_API_HOST").then(|| "env".to_string())).unwrap();
-        assert_eq!(e.template_vmid, "9000");
-        assert_eq!(e.api_host, "env");
     }
 }

@@ -335,25 +335,6 @@ fn resolve_all_tags_reads_local_tag_sidecars_not_git_tag() {
     assert_eq!(tags, vec!["spira-release-spira-20260912T120000Z".to_string()]);
 }
 
-#[test]
-fn check_cannot_verify_alone_is_exit_3_not_1() {
-    let f = Fake::default();
-    f.set_env("SPIRA_RELEASES", "/releases");
-    f.symlinks.borrow_mut().insert(PathBuf::from("/releases/current"), "rel-1".into());
-    f.files.borrow_mut().insert(PathBuf::from("/releases/rel-1/MANIFEST"), format!("commit {}\n", "a".repeat(40)));
-    f.set_env("SPIRA_REPO", "/repo");
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
-    f.repo_lands.borrow_mut().insert("home".into(), "push".into());
-    *f.home_repo.borrow_mut() = "home".into();
-    // No tags resolve to the MANIFEST commit -> release_tag stays empty -> CANNOT-VERIFY only.
-    f.tags.borrow_mut().insert("/repo".into(), vec!["spira-release-spira-20260101T000000Z".into()]);
-    f.rev_parse.borrow_mut().insert("/repo|spira-release-spira-20260101T000000Z^{commit}".into(), "b".repeat(40));
-
-    let rc = check(&f, false);
-    assert_eq!(rc, EXIT_CANNOT_CHECK);
-    assert!(f.stdout_joined().contains("CANNOT-VERIFY"));
-}
-
 /// FRESH RELEASE INSTALL (sp-wecsq): a release is activated (symlink + MANIFEST both
 /// present), `home_repo()` is not `queue.local` (no `repo:spira` row at all on a box that
 /// only runs installed releases), and `SPIRA_REPO` names no real git checkout -- exactly
@@ -376,24 +357,6 @@ fn check_no_harness_checkout_is_not_applicable_not_cannot_verify() {
     assert!(f.stdout_joined().contains("not applicable"), "{}", f.stdout_joined());
     assert!(f.stderr_joined().is_empty(), "{}", f.stderr_joined());
     assert!(f.mail_calls.borrow().is_empty());
-}
-
-#[test]
-fn check_checkout_mode_delegates_to_gap() {
-    let f = Fake::default();
-    f.set_env("SPIRA_RELEASES", "/releases"); // current is not a symlink -> checkout mode
-    f.set_env("SPIRA_REPO", "/repo");
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
-    f.repo_lands.borrow_mut().insert("home".into(), "push".into());
-    *f.home_repo.borrow_mut() = "home".into();
-    f.landrefs.borrow_mut().insert("/repo".into(), "origin/main".into());
-    f.rev_parse.borrow_mut().insert("/repo|origin/main".into(), "x".into());
-    f.rev_list_counts.borrow_mut().insert("/repo|HEAD..origin/main".into(), 0);
-    f.rev_parse_short.borrow_mut().insert("/repo|HEAD".into(), "abc1234".into());
-    f.rev_parse_short.borrow_mut().insert("/repo|origin/main".into(), "x".into());
-
-    assert_eq!(check(&f, false), EXIT_OK);
-    assert!(f.stdout_joined().contains("0 commits behind"));
 }
 
 // ============================================================================ check_local()

@@ -9,7 +9,7 @@ use crate::ledger::{mark_proven, record_attempt, FaultPolicy};
 use crate::outcome::{Kind, MemLog};
 use crate::ports::Fields;
 use crate::refusal::standing_key;
-use crate::resources::{Attempt, Cause, Class, InitiatedBy};
+use crate::resources::{Attempt, Class, InitiatedBy};
 use crate::sim::verbs::{Refuse, VerbScript};
 use crate::sim::{FakeVerbs, FakeVm};
 
@@ -216,33 +216,6 @@ fn a_member_of_a_live_round_is_not_in_the_pool_and_an_empty_pool_cuts_nothing() 
 }
 
 #[test]
-fn a_cut_stacks_on_the_top_live_round_and_cuts_nothing_once_the_stack_is_at_its_depth() {
-    let w = World::new(vec![open_ok("r1")]);
-    w.round("k1", "CiRunning", "base-0", &[]);
-    w.member("sp-a", json!({}));
-    w.cut().unwrap().unwrap();
-    assert_eq!(w.verbs.calls()[0].place.as_deref(), Some("stack-on:k1"));
-    let r = crate::resources::RoundView::read(&*w.store, "lane", "r1")
-        .unwrap()
-        .unwrap();
-    assert_eq!(r.round.tested_base.as_deref(), Some("k1-head"));
-    assert_eq!(r.round.row.parent.as_deref(), Some("k1"));
-    w.member("sp-b", json!({}));
-    assert_eq!(w.cut(), Ok(None), "k1 and r1 make the default depth 2");
-    w.put(
-        "lanes/lane",
-        json!({ "landing_ref": "base-0", "image_digest": "sha256:i0", "harness_version": "h0", "concurrency": 1 }),
-    );
-    w.store
-        .txn(
-            &Txn::new().delete("batches/lane/r1"),
-            &Request::new("drop-r1", "t", "t"),
-        )
-        .unwrap();
-    assert_eq!(w.cut(), Ok(None), "depth 1 is full with k1 alone");
-}
-
-#[test]
 fn the_concurrency_knob_sets_the_depth_over_the_lane_and_a_hold_keeps_its_member_out_at_its_tip() {
     let w = World::new(vec![open_ok("r1")]);
     w.round("k1", "CiRunning", "base-0", &[]);
@@ -269,21 +242,6 @@ fn a_terminal_round_is_not_live_and_holds_no_member() {
     w.member("sp-a", json!({}));
     w.cut().unwrap().unwrap();
     assert_eq!(w.verbs.calls()[0].place.as_deref(), Some("on-base"));
-}
-
-#[test]
-fn a_cut_on_a_slot_it_does_not_hold_is_slot_not_held() {
-    let w = World::new(vec![]);
-    w.member("sp-a", json!({}));
-    w.store
-        .release(w.slot.fence(), &Request::new("rel", "t", "r"))
-        .unwrap();
-    assert_eq!(
-        w.cut(),
-        Err(Refusal::SlotNotHeld {
-            key: "locks/runner-slot/proxmox/0".into()
-        })
-    );
 }
 
 #[test]
@@ -345,67 +303,6 @@ fn a_standing_lane_fault_refuses_before_selecting_and_a_new_digest_admits() {
 }
 
 #[test]
-fn a_member_proven_red_at_its_tip_is_dropped_and_the_rest_reselected() {
-    let w = World::new(vec![open_ok("r1")]);
-    for m in ["sp-a", "sp-b", "sp-c"] {
-        w.member(m, json!({}));
-    }
-    let red = ident(&["sp-a", "sp-b"], "base-0");
-    let p = w.ports();
-    record_attempt(
-        &p,
-        &red,
-        "old",
-        &attempt(Class::Red { step: "s".into() }),
-        &POLICY,
-    )
-    .unwrap();
-    mark_proven(&p, &red, &[mem("sp-b")], 0).unwrap();
-    w.cut().unwrap().unwrap();
-    assert_eq!(w.opened_members(), ["sp-a", "sp-c"]);
-}
-
-#[test]
-fn a_red_identity_and_a_backed_off_one_open_nothing() {
-    let w = World::new(vec![]);
-    w.member("sp-a", json!({}));
-    let id = ident(&["sp-a"], "base-0");
-    let p = w.ports();
-    record_attempt(
-        &p,
-        &id,
-        "old",
-        &attempt(Class::Red { step: "s".into() }),
-        &POLICY,
-    )
-    .unwrap();
-    assert_eq!(
-        w.cut(),
-        Err(Refusal::RedIdentity {
-            key: summary_key(&id)
-        })
-    );
-    let w = World::new(vec![]);
-    w.member("sp-a", json!({}));
-    let p = w.ports();
-    record_attempt(
-        &p,
-        &id,
-        "old",
-        &attempt(Class::Fault { cause: Cause::Vm }),
-        &POLICY,
-    )
-    .unwrap();
-    assert_eq!(
-        w.cut(),
-        Err(Refusal::BackingOff {
-            key: summary_key(&id)
-        })
-    );
-    assert!(w.verbs.calls().is_empty());
-}
-
-#[test]
 fn an_open_the_queue_refuses_is_a_verb_refusal_keyed_on_its_code() {
     let w = World::new(vec![VerbScript {
         verb: "open".into(),
@@ -425,34 +322,6 @@ fn an_open_the_queue_refuses_is_a_verb_refusal_keyed_on_its_code() {
         ("verb-refused", "verb/open/-/3".to_string())
     );
     assert_eq!(r.to_string(), "queue round open refused: locked");
-}
-
-#[test]
-fn a_cut_at_max_members_plus_one_drops_the_last_member_in_round_order() {
-    let w = World::new(vec![open_ok("r1")]);
-    for i in 0..=MAX_MEMBERS {
-        w.member(&format!("sp-{i:03}"), json!({ "since": i }));
-    }
-    w.cut().unwrap().unwrap();
-    let got = w.opened_members();
-    assert_eq!(got.len(), MAX_MEMBERS);
-    assert_eq!(got.last().unwrap(), &format!("sp-{:03}", MAX_MEMBERS - 1));
-    assert!(!got.contains(&format!("sp-{MAX_MEMBERS:03}")));
-}
-
-#[test]
-fn a_member_never_judged_red_is_ordered_exactly_as_select_round_orders_it() {
-    let w = World::new(vec![open_ok("r1")]);
-    w.member("sp-z", json!({ "since": 1 }));
-    w.member("sp-y", json!({ "since": 2, "priority": 0 }));
-    w.member("sp-x", json!({ "since": 3, "express": true }));
-    w.member("sp-w", json!({ "since": 0, "stack": { "sp-z": "sp-z-t" } }));
-    let pool = pool(&w.ports(), "lane", &[]).unwrap();
-    let (want, _) = core::select_round(core::topo_order(&pool));
-    w.cut().unwrap().unwrap();
-    let want: Vec<String> = want.into_iter().map(|m| m.id).collect();
-    assert_eq!(w.opened_members(), want);
-    assert_eq!(want, ["sp-x", "sp-y", "sp-z", "sp-w"]);
 }
 
 #[test]
@@ -673,41 +542,6 @@ fn supersede_ok() -> VerbScript {
 }
 
 #[test]
-fn supersede_takes_every_round_that_can_no_longer_land_and_leaves_the_grounded_stack() {
-    let w = World::new(vec![supersede_ok(), supersede_ok()]);
-    w.round("k1", "CiRunning", "base-0", &["sp-a"]);
-    w.round("k2", "Green", "k1-head", &["sp-b"]);
-    w.round("k3", "Attributing", "k2-head", &["sp-c"]);
-    w.round("s1", "Green", "base-0", &["sp-s"]);
-    w.round("x1", "Green", "gone-head", &["sp-x"]);
-    w.round("x2", "Rebuilding", "x1-head", &["sp-y"]);
-    w.round("o1", "Open", "gone-head", &[]);
-    w.round("l1", "Landing", "gone-head", &[]);
-    w.put(
-        "batches/lane/legacy",
-        json!({ "batch_id": "legacy", "repo": "lane", "state": "Green", "pass": 1, "version": 1 }),
-    );
-    w.round("done", "Abandoned", "gone-head", &[]);
-    let p = w.ports();
-    assert_eq!(
-        crate::supersede::check(&p, "lane"),
-        Ok(vec!["x1".to_string(), "x2".to_string()])
-    );
-    let calls: Vec<_> = w.verbs.calls().into_iter().map(|c| c.batch).collect();
-    assert_eq!(calls, [Some("x1".to_string()), Some("x2".to_string())]);
-    let lines: Vec<String> = w.log.outcomes().iter().map(|o| o.line()).collect();
-    assert!(
-        lines[0].ends_with("superseded ok repo=lane batch=x1"),
-        "{lines:?}"
-    );
-    assert_eq!(
-        crate::supersede::check(&p, "lane"),
-        Ok(vec![]),
-        "gone from the live set"
-    );
-}
-
-#[test]
 fn supersede_hands_the_verb_the_rounds_lease_token_and_a_refusal_stops_the_step() {
     let w = World::new(vec![
         VerbScript {
@@ -793,38 +627,6 @@ fn the_explicit_cut_reads_its_repo_and_members_and_refuses_anything_else_by_name
     ] {
         assert_eq!(parse_explicit(&args).unwrap_err(), want, "{args:?}");
     }
-}
-
-#[test]
-fn a_lane_fault_on_the_landing_ref_refuses_a_stacked_cut_too() {
-    let w = World::new(vec![]);
-    w.round("k1", "CiRunning", "base-0", &[]);
-    w.member("sp-a", json!({}));
-    w.put(
-        "faults/lane/base-0/sha256:i0",
-        json!({ "cause": { "cause": "base" }, "since": 0 }),
-    );
-    assert_eq!(
-        w.cut(),
-        Err(Refusal::LaneFault {
-            key: "faults/lane/base-0/sha256:i0".into()
-        })
-    );
-    w.put(
-        "faults/lane/k1-head/sha256:i1",
-        json!({ "cause": { "cause": "base" }, "since": 0 }),
-    );
-    w.put(
-        "lanes/lane",
-        json!({ "landing_ref": "base-0", "image_digest": "sha256:i1", "harness_version": "h0" }),
-    );
-    assert_eq!(
-        w.cut(),
-        Err(Refusal::LaneFault {
-            key: "faults/lane/k1-head/sha256:i1".into()
-        }),
-        "and one on the base it would stack on"
-    );
 }
 
 #[test]

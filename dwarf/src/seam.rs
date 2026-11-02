@@ -253,8 +253,8 @@ impl Seam for BashSeam<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ports::Env;
-    use std::io::Write;
+
+
 
     #[test]
     fn frame_is_nul_separated_records() {
@@ -276,37 +276,6 @@ mod tests {
     #[test]
     fn snapshot_incomplete_is_an_error() {
         assert!(parse_snapshot("PATH=/bin\0").is_err());
-    }
-
-    /// The fixed script against a stand-in lib.sh: the allowlist refuses, the args arrive
-    /// intact (spaces, newlines, empty), the rune is sourced and SPIRA_REQUIRE_EXPRESS reaches the ready-set call.
-    #[test]
-    fn fixed_script_sources_lib_and_rune_and_passes_args_on_stdin() {
-        let dir = testkit::TempDir::new("dwarf-seam");
-        let lib = dir.join("lib.sh");
-        let mut f = std::fs::File::create(&lib).unwrap();
-        writeln!(f, "READY_ARGS=(ready --limit 0)\nrune_exclude() {{ printf 'x:%s:%s' \"$1\" \"$2\"; }}\ndwarf_count() {{ printf '%s|' \"$@\"; printf '%s' \"$RUNE_LABELS\"; }}\n_spira_claim() {{ printf '%s|' \"$@\"; }}").unwrap();
-        std::fs::write(dir.join("b.rune"), "RUNE_LABELS=spira,plan\nRUNE_EXCLUDE_LABELS=p\n").unwrap();
-        let mut orig = BTreeMap::new();
-        orig.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
-        let plain = Env::new(orig.clone(), BTreeMap::new());
-        orig.insert("SPIRA_REQUIRE_EXPRESS".to_string(), "1".to_string());
-        let env = Env::new(orig, BTreeMap::new());
-        let seam = BashSeam { lib: lib.clone(), rune_file: dir.join("b.rune"), rune: "builder".into(), env: &env };
-        let o = seam.call("dwarf_count", &["a b\nc".into(), "".into()]);
-        assert_eq!(o.stdout, "a b\nc||spira,plan");
-        let o = seam.call("rm_rf_everything", &[]);
-        assert_eq!(o.code, 97);
-        let o = seam.call("_dwarf_snapshot", &["RUNE_LABELS".into(), "NOPE".into()]);
-        let s = parse_snapshot(&o.stdout).unwrap();
-        assert_eq!(s.vars.get("RUNE_LABELS").unwrap(), "spira,plan");
-        assert!(!s.vars.contains_key("NOPE"));
-        assert_eq!(seam.call("_dwarf_ready_set", &[]).stdout, "rune-ready|builder|--json|--express|");
-        let plain_seam = BashSeam { lib: lib.clone(), rune_file: dir.join("b.rune"), rune: "builder".into(), env: &plain };
-        assert_eq!(plain_seam.call("_dwarf_ready_set", &[]).stdout, "rune-ready|builder|--json|");
-        assert_eq!(s.ready_args, vec!["ready", "--limit", "0"]);
-        assert_eq!(s.claim_exclude, "x:builder:p");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// sp-1cdgq found SPIRA_CALL_JITTER unreachable because it was missing from

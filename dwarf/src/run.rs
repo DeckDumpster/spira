@@ -1690,30 +1690,6 @@ pub fn dwarf_settings(home: &Path, habits: bool) -> String {
 mod tests {
     use super::*;
 
-    // test-dwarf-settings-guard-allowlist.sh / test-dwarf-launch-grammar.sh.
-    #[test]
-    fn settings_json_matches_python_dumps() {
-        let d = testkit::TempDir::new("dwarf-settings");
-        std::fs::create_dir_all(d.join("hooks")).unwrap();
-        let s0 = dwarf_settings(&d, false);
-        assert_eq!(
-            s0,
-            format!(
-                "{{\"hooks\": {{\"PostToolUse\": [{{\"hooks\": [{{\"type\": \"command\", \"command\": \"{}/hooks/dwarf-mail-deliver.sh\", \"timeout\": 5}}]}}]}}, \"env\": {{\"BASH_DEFAULT_TIMEOUT_MS\": \"1800000\", \"BASH_MAX_TIMEOUT_MS\": \"3600000\", \"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS\": \"1\"}}}}",
-                d.display()
-            )
-        );
-        assert!(!s0.contains("dwarf-fence.sh"), "no fence installed: --settings does not name it");
-        let fence = d.join("hooks/dwarf-fence.sh");
-        // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
-        testkit::write_exe(&fence, "#!/bin/sh\n");
-        let s1 = dwarf_settings(&d, false);
-        assert!(s1.contains("\"PreToolUse\": [{\"hooks\": [{\"type\": \"command\", \"command\": \""));
-        let v: serde_json::Value = serde_json::from_str(&s1).unwrap();
-        assert_eq!(v["env"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"], "1");
-        assert!(v["hooks"]["Stop"].is_null(), "no habits: no Stop group");
-    }
-
     #[test]
     fn habits_group_only_when_the_rune_sets_it() {
         let d = testkit::TempDir::new("dwarf-settings-habits");

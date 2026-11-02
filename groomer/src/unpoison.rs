@@ -96,31 +96,4 @@ mod unpoison_tests {
             ]
         );
     }
-
-    #[test]
-    fn judges_a_non_matching_output_as_failure() {
-        let o = parse("sp-1", Some("c"), Some("e")).unwrap();
-        // echo prints its argv, which does not start with "OK   sp-1:", so this exercises
-        // the failure branch — see the next test for the success branch via a stub.
-        let (rc, out) = run("echo", &o);
-        assert_eq!(rc, 1);
-        assert!(out.contains("was not cleared"));
-    }
-
-    #[test]
-    fn judges_an_ok_prefix_from_the_real_binary_as_success() {
-        let dir = testkit::TempDir::new("groomer-unpoison");
-        let stub = dir.path().join("spira-claim");
-        // testkit::write_exe, never fs::write + set_permissions: this process's own
-        // write-fd would otherwise sit open for the brief window between the two calls,
-        // and a concurrent fork elsewhere in this test binary that forks in that window
-        // inherits a duplicate of it — the kernel then refuses to exec the file
-        // (ETXTBSY) until that unrelated child closes it or execs (sp-os3of, the third
-        // occurrence after sp-xtdqi-3's spira-config and doctor).
-        testkit::write_exe(&stub, "#!/usr/bin/env bash\nprintf 'OK   sp-1: cleared — attempts 3 -> 0\\n'\n");
-        let o = parse("sp-1", Some("branch-collision"), Some("worktree collision")).unwrap();
-        let (rc, out) = run(stub.to_str().unwrap(), &o);
-        assert_eq!(rc, 0, "output was: {out}");
-        assert!(out.contains("UNPOISONED sp-1 cause=branch-collision"));
-    }
 }

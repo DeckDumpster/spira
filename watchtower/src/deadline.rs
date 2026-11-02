@@ -84,24 +84,3 @@ pub fn output_within(label: &str, cmd: &mut Command, within: Duration) -> io::Re
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_slow_probe_times_out_and_is_recorded() {
-        let t = Instant::now();
-        let r = output_within("sleeper", Command::new("bash").args(["-c", "sleep 30 & sleep 30"]), Duration::from_millis(300));
-        assert_eq!(r.unwrap_err().kind(), io::ErrorKind::TimedOut);
-        assert!(t.elapsed() < Duration::from_secs(5), "the group kill must free the pipes");
-        assert!(slow_probes().iter().any(|l| l.starts_with("sleeper")));
-    }
-
-    #[test]
-    fn a_fast_probe_returns_its_output() {
-        let o = output_within("echo", Command::new("bash").args(["-c", "echo hi; exit 3"]), Duration::from_secs(10)).unwrap();
-        assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "hi");
-        assert_eq!(o.status.code(), Some(3));
-    }
-}

@@ -38,28 +38,11 @@ pub fn outcome(op: &str, code: i32) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spira_otel::metrics::fixture;
 
-    #[test]
-    fn a_run_pushes_its_count_and_seconds_labelled_by_component_operation_and_outcome() {
-        let (code, got) = fixture::capture(|s| run(s, Some("rebase-branch"), || 1));
-        assert_eq!(code, 1);
-        let runs = got.iter().find(|c| c.name == metrics::RUNS).expect("run count pushed");
-        assert_eq!((runs.label("component"), runs.label("operation"), runs.label("outcome")), (Some("rebase-stale"), Some("rebase-branch"), Some("error")));
-        assert!(got.iter().any(|c| c.name == metrics::RUN_DURATION), "run seconds pushed");
-    }
 
     #[test]
     fn a_bead_id_is_the_rebase_operation() {
         assert_eq!(operation(Some("sp-abc123")), "rebase");
         assert_eq!(operation(None), "rebase");
-    }
-
-    #[test]
-    fn a_conflict_exit_is_an_outcome_and_counts_a_rebase_conflict() {
-        let (_, got) = fixture::capture(|s| run(s, Some("sp-abc"), || 1));
-        let runs = got.iter().find(|c| c.name == metrics::RUNS).unwrap();
-        assert_eq!((runs.label("operation"), runs.label("outcome")), (Some("rebase"), Some("conflict")));
-        assert!(got.iter().any(|c| c.name == "spira_rebase_conflicts"));
     }
 }

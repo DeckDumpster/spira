@@ -126,15 +126,6 @@ impl Proc for SysProc {
 mod tests {
     use super::*;
 
-    fn spec(prog: &str, args: &[&str], deadline_ms: u64) -> ProcSpec {
-        ProcSpec {
-            prog: prog.into(),
-            args: args.iter().map(|s| s.to_string()).collect(),
-            stdin: b"in".to_vec(),
-            deadline: Duration::from_millis(deadline_ms),
-        }
-    }
-
     #[test]
     fn virtual_clock_only_moves_forward() {
         let c = VirtualClock::new(10);
@@ -150,13 +141,5 @@ mod tests {
         let (x, y) = (a.next_u64(), b.next_u64());
         assert_eq!(x, y);
         assert_ne!(x, c.next_u64());
-    }
-
-    #[test]
-    fn sys_proc_pipes_stdin_and_enforces_the_deadline() {
-        let out = SysProc.run(&spec("cat", &[], 2000)).unwrap();
-        assert_eq!(out.stdout, b"in");
-        let err = SysProc.run(&spec("sleep", &["5"], 40)).unwrap_err();
-        assert!(err.contains("deadline"), "{err}");
     }
 }

@@ -20,5 +20,3 @@ path = "../../spira-config"
 [dependencies.spira-otel]
 path = "../../spira-otel"
 
-[dev-dependencies]
-testkit = { path = "../../testkit" }

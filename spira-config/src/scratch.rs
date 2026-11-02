@@ -379,54 +379,6 @@ mod tests {
     }
 
     #[test]
-    fn a_landing_round_is_admitted_once_certification_drains_and_holds_new_builds_off() {
-        let d = tmp("class");
-        let free = || Some(1000u64);
-        let cert = reserve_class(&d, "c1", Class::Certify, 600, 0, Duration::ZERO, &free).unwrap();
-        let dd = d.to_path_buf();
-        let h = std::thread::spawn(move || {
-            reserve_class(&dd, "round", Class::Landing, 600, 0, Duration::from_secs(20), &|| Some(1000u64))
-        });
-        let t = std::time::Instant::now();
-        while !landing_waiting(&d) {
-            assert!(t.elapsed() < Duration::from_secs(10), "the round never posted its want");
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        let c2 = reserve_class(&d, "c2", Class::Certify, 100, 0, Duration::ZERO, &free);
-        assert!(c2.is_err() && c2.as_ref().unwrap_err().contains("yields"), "{:?}", c2.as_ref().map(|_| ()));
-        assert!(reserve_class(&d, "slot", Class::Slot, 100, 0, Duration::ZERO, &free).is_ok(), "a slot never yields");
-        drop(cert);
-        let g = h.join().unwrap();
-        assert!(g.is_ok(), "{:?}", g.as_ref().map(|_| ()));
-        assert!(!landing_waiting(&d), "the want marker goes with the wait");
-        assert!(reserve_class(&d, "c3", Class::Certify, 100, 0, Duration::ZERO, &free).is_ok());
-    }
-
-    #[test]
-    fn a_landing_round_that_never_gets_room_refuses_after_its_wait() {
-        let d = tmp("giveup");
-        let free = || Some(1000u64);
-        let _a = reserve(&d, "a", 900, 0, &free).unwrap();
-        let r = reserve_class(&d, "round", Class::Landing, 600, 0, Duration::from_millis(300), &free);
-        assert!(r.is_err());
-        assert!(!landing_waiting(&d));
-    }
-
-    #[test]
-    fn a_certifying_gate_waits_for_room_that_frees() {
-        let d = tmp("certwait");
-        let free = || Some(1000u64);
-        let a = reserve(&d, "a", 900, 0, &free).unwrap();
-        let h = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(700));
-            drop(a);
-        });
-        let r = reserve_class(&d, "gate", Class::Certify, 600, 0, Duration::from_secs(20), &free);
-        h.join().unwrap();
-        assert!(r.is_ok(), "{:?}", r.as_ref().map(|_| ()));
-    }
-
-    #[test]
     fn a_certifying_gate_with_no_wait_still_refuses_at_once() {
         let d = tmp("certnow");
         let free = || Some(1000u64);

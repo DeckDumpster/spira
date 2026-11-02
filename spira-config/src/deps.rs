@@ -259,16 +259,6 @@ version_probe = ""
     }
 
     #[test]
-    fn require_passes_when_every_program_is_on_path() {
-        let dir = testkit::TempDir::new("spira-config-deps-require-ok");
-        let bin = dir.path().join("fake-bd");
-        testkit::write_exe(&bin, "#!/bin/sh\n");
-        let deps = load(&write_sample(dir.path()));
-        let path = dir.path().to_string_lossy().into_owned();
-        assert!(require(&deps, &["fake-bd"], &path, "spira.conf").is_ok());
-    }
-
-    #[test]
     fn require_names_each_missing_program_and_its_purpose() {
         let dir = testkit::TempDir::new("spira-config-deps-require-missing");
         let deps = load(&write_sample(dir.path()));

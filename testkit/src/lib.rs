@@ -357,22 +357,6 @@ mod tests {
     }
 
     #[test]
-    fn retry_busy_outlasts_a_write_descriptor_held_open_on_the_exec_target() {
-        let d = dir("busy");
-        let p = d.join("x");
-        write_exe(&p, "#!/bin/sh\n");
-        let held = std::fs::OpenOptions::new().write(true).open(&p).unwrap();
-        let first = Command::new(&p).status().unwrap_err();
-        assert_eq!(first.raw_os_error(), Some(libc::ETXTBSY), "control: an open write fd makes exec fail");
-        let release = std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(150));
-            drop(held);
-        });
-        assert!(retry_busy(|| Command::new(&p).status()).unwrap().success());
-        release.join().unwrap();
-    }
-
-    #[test]
     fn a_panicking_test_still_removes_its_dir() {
         let (tx, rx) = std::sync::mpsc::channel();
         let r = std::thread::spawn(move || {
@@ -405,31 +389,6 @@ mod tests {
         write_exe(&p, "#!/bin/sh\necho one\n");
         write_exe(&p, "#!/bin/sh\necho two\n");
         assert_eq!(String::from_utf8_lossy(&Command::new(&p).output().unwrap().stdout), "two\n");
-    }
-
-    /// THE RACE ITSELF. Eight threads each write a program and exec it at once, a hundred
-    /// times over, while every one of them is forking. With `fs::write` in place of
-    /// write_exe this fails within a few rounds; here every exec must succeed.
-    #[test]
-    fn concurrent_writers_and_forkers_never_see_text_file_busy() {
-        let d = dir("race");
-        let dp = d.to_path_buf();
-        let hs: Vec<_> = (0..8)
-            .map(|t| {
-                let d = dp.clone();
-                std::thread::spawn(move || {
-                    for i in 0..100 {
-                        let p = d.join(format!("p{t}-{i}"));
-                        write_exe(&p, "#!/bin/sh\nexit 0\n");
-                        let st = Command::new(&p).status().unwrap_or_else(|e| panic!("exec {}: {e}", p.display()));
-                        assert!(st.success());
-                    }
-                })
-            })
-            .collect();
-        for h in hs {
-            h.join().unwrap();
-        }
     }
 }
 

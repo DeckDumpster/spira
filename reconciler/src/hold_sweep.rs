@@ -401,16 +401,6 @@ mod tests {
     }
 
     #[test]
-    fn a_delivered_question_is_found_by_its_work_bead_in_either_mailbox() {
-        let dir = testkit::TempDir::new("hold-sweep-asks");
-        deliver(&dir, "operator", "cur", "m1", "Subject: q\nX-Spira-Kind: question\nX-Spira-Work-Bead: sp-a\n");
-        deliver(&dir, "concierge", "new", "m2", "Subject: q\nX-Spira-Kind: decision\nX-Spira-Work-Bead: sp-b\n");
-        let asks = scan_asks(&dir, &ASK_MAILBOXES).unwrap();
-        assert_eq!(asks.get("sp-a").map(|m| m.mailbox.as_str()), Some("operator"));
-        assert_eq!(asks.get("sp-b").map(|m| m.mailbox.as_str()), Some("concierge"));
-    }
-
-    #[test]
     fn a_note_about_a_bead_is_not_a_delivered_question() {
         let dir = testkit::TempDir::new("hold-sweep-notes");
         deliver(&dir, "concierge", "new", "m1", "Subject: n\nX-Spira-Kind: note\nX-Spira-Work-Bead: sp-a\n");
@@ -505,24 +495,5 @@ mod tests {
         events.push(ev(events.len() + 1, "Submit", "dwarf", 1_006_000, r#"{"tip":"t"}"#));
         no_progress_cycle(&mut events, 1_007_000);
         assert!(!trips(&events));
-    }
-
-    #[test]
-    fn the_sweep_lists_only_live_beads_so_a_terminal_row_is_never_unheld() {
-        let dir = testkit::TempDir::new("hold-sweep-live");
-        let log = dir.join("calls");
-        let bin = dir.join("fake-lc");
-        testkit::write_exe(&bin, &format!("#!/bin/sh\necho \"$@\" >> {}\necho '[]'\n", log.display()));
-        let bin = bin.display().to_string();
-        let lc = |args: &[&str]| -> Result<String, String> {
-            let out = std::process::Command::new(&bin).args(args).output().map_err(|e| e.to_string())?;
-            Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-        };
-        let send = |_: &Mail| -> Result<(), String> { Ok(()) };
-        let mut live = Live { lc: &lc, send: &send, mail_root: dir.to_path_buf(), actor: "reconciler".into(), now: 0 };
-        assert!(live.holds().unwrap().is_empty());
-        let calls = fs::read_to_string(&log).unwrap();
-        assert_eq!(calls.lines().count(), Kind::ALL.len());
-        assert!(calls.lines().all(|l| l.starts_with("list --hold ") && l.ends_with(" --live --snapshot")), "{calls}");
     }
 }

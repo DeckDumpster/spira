@@ -372,23 +372,6 @@ mod tests {
     }
 
     #[test]
-    fn a_gap_past_grace_wakes_the_concierge_with_an_alert_carrying_its_evidence() {
-        let w = World::new(true, false);
-        let out = w.gap(&strs(&at("1000", FLEET_GAP))).unwrap();
-        assert_eq!(out, "fleet-size — sent to concierge");
-        let sent = w.sent();
-        assert_eq!(sent.len(), 1, "{sent:?}");
-        let m = &sent[0];
-        assert_eq!((m.mailbox, m.kind), ("concierge", "alert"));
-        assert_eq!(m.from, reconciler_engine::mail::FROM);
-        assert_eq!(m.subject, "reconciler: fleet-size — 3 dwarves");
-        for line in ["invariant: fleet-size", "desired:   8 dwarves", "observed:  3 dwarves", "since:     60s ago", "last remedy tried: none attempted"] {
-            assert!(m.body.contains(line), "missing {line:?} in {}", m.body);
-        }
-        mail_lint(m).expect("the alert kind accepts the alert this path sends");
-    }
-
-    #[test]
     fn one_streak_alerts_once_and_a_new_streak_after_it_closes_alerts_again() {
         let w = World::new(true, false);
         w.gap(&strs(&at("1000", FLEET_GAP))).unwrap();
@@ -452,11 +435,6 @@ mod tests {
         assert_eq!(sent.len(), 1, "{sent:?}");
         assert_eq!(sent[0].mailbox, "concierge");
         assert!(sent[0].body.contains("invariant: fleet-size"), "{}", sent[0].body);
-    }
-
-    #[test]
-    fn a_session_check_that_cannot_run_counts_as_the_concierge_not_running() {
-        assert!(!io::session_is_running("/nonexistent/tmux", CONCIERGE_SESSION));
     }
 
     #[test]

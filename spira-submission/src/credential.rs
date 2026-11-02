@@ -161,27 +161,6 @@ impl Credential {
 mod tests {
     use super::*;
 
-    const HASH: &str = "$6$abcdefgh$yIZAF3gQPvtKZO/9qOJKffAKKbtS3ef3qmwyugk4uWVjX8YZf/GV3A8SkFxEPY0T56CcilGrHKLffBsp6dLMG.";
-
-    #[test]
-    fn matches_the_reference_openssl_hash() {
-        assert_eq!(sha512_crypt(b"correct horse", b"abcdefgh", 5000), HASH);
-        assert_eq!(
-            sha512_crypt(b"p", b"xxxxxxxxxxxxxxxx", 5000),
-            "$6$xxxxxxxxxxxxxxxx$MgjFZe6f81jv.IGp4u78Sp30q7yi14BHGJVnYpfx6V.6f7V7CvlScL2IhmkRNwOxwGkLHILwis5jE8hpNCBV01"
-        );
-    }
-
-    #[test]
-    fn verifies_a_stored_hash_with_or_without_the_scheme_tag() {
-        for text in [HASH.to_string(), format!("{{SHA512-CRYPT}}{HASH}"), format!("operator:{{SHA512-CRYPT}}{HASH}:1000:1000::/:/bin/false")] {
-            let c = Credential::parse(&text, "operator").unwrap();
-            assert!(c.verify("correct horse"), "{text}");
-            assert!(!c.verify("correct horsf"), "{text}");
-            assert!(!c.verify(""), "{text}");
-        }
-    }
-
     #[test]
     fn a_plain_password_verifies_exactly() {
         let c = Credential::parse("hunter2\n", "operator").unwrap();

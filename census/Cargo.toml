@@ -18,8 +18,5 @@ spira-config = { path = "../spira-config" }
 dwarf = { path = "../dwarf" }
 serde_json = "1"
 
-[dev-dependencies]
-testkit = { path = "../testkit" }
-
 [profile.release]
 opt-level = "z"

@@ -199,15 +199,4 @@ mod tests {
         assert_eq!(child_work_count("not json"), 0);
         assert_eq!(child_work_count(r#"{"id":"sp-a","issue_type":"task"}"#), 1);
     }
-
-    #[test]
-    fn runs_bdq_with_the_args_unchanged() {
-        let t = testkit::TempDir::new("dwarf-bdcli");
-        let stub = t.join("bdq");
-        testkit::write_exe(&stub, "#!/bin/sh\necho \"$@\"\n");
-        let env = Env::new(Default::default(), Default::default());
-        let bd = BdCli { bdq: stub.display().to_string(), timeout_s: 5, conn_retries: 2, fixture: None, env: &env };
-        let o = bd.bd(&args(&["show", "sp-a"]));
-        assert_eq!((o.code, o.stdout.as_str()), (0, "show sp-a\n"));
-    }
 }

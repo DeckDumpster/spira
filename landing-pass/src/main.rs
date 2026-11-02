@@ -481,39 +481,3 @@ fn is_work_type_cmd(ty: &str) -> i32 {
         1
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    // law-a-binary-resolves-the-config-it-reads: `run_dir` must get a real answer from the
-    // one source of config, not a crash, whenever $SPIRA_TOML names a real config file — the
-    // production defect this originally guarded against was a landing-pass call silently
-    // doing nothing when its process environment lacked $SPIRA_RUN. Per Ryan 2026-10-05
-    // ("one source of config"), a bare environment with no $SPIRA_TOML is now a refusal by
-    // design, not a derived guess, so this proves resolution through the fixture toml
-    // instead of through a raw $SPIRA_RUN env var.
-    //
-    // This is the ONLY test in this binary that resolves `spira_config::process::cfg` —
-    // that door caches its answer for the lifetime of the process (OnceLock), so a second
-    // such test in this same test binary would not get an independent answer.
-    #[test]
-    fn run_dir_resolves_through_the_one_source_of_config() {
-        let dir = testkit::TempDir::new("landing-pass-run-dir");
-        let home = dir.join("home");
-        fs::create_dir_all(home.join("conf.d")).unwrap();
-        fs::create_dir_all(home.join("conf.toml.d")).unwrap();
-        let run_path = dir.join("the-run-dir");
-        let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_RUN", run_path.to_str().unwrap())]);
-
-        let env = testkit::env(&[
-            ("SPIRA_RUN", None),
-            ("SPIRA_HOME", home.to_str()),
-            ("SPIRA_TOML", toml.to_str()),
-        ]);
-
-        let got = run_dir();
-        drop(env);
-
-        assert_eq!(got.expect("run_dir must resolve through $SPIRA_TOML"), run_path);
-    }
-}

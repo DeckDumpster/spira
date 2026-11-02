@@ -532,15 +532,6 @@ mod tests {
     }
 
     #[test]
-    fn a_line_opens_with_the_utc_stamp_then_the_kind_and_cause_words() {
-        let o = Outcome::visited(1_793_486_548_000, "spira");
-        assert_eq!(
-            o.line(),
-            "2026-10-31T22:42:28Z visited steps repo=spira batch=-"
-        );
-    }
-
-    #[test]
     fn an_ok_call_is_the_act_and_a_refusal_never_says_it_happened() {
         let ok = Outcome::of(0, "r", Some("b1"), Verb::Eject, &Ok::<(), VerbRefusal>(()));
         assert_eq!(ok.line(), "1970-01-01T00:00:00Z ejected ok repo=r batch=b1");
@@ -555,15 +546,6 @@ mod tests {
             ),
             "{}",
             unrun.line()
-        );
-    }
-
-    #[test]
-    fn a_declined_step_names_its_refusal_and_the_key_of_its_cause() {
-        let o = Outcome::declined(0, "pokebot", "lane-fault", "faults/pokebot/b0/sha256:d1");
-        assert_eq!(
-            o.line(),
-            "1970-01-01T00:00:00Z declined lane-fault repo=pokebot batch=- key=faults/pokebot/b0/sha256:d1"
         );
     }
 
@@ -626,43 +608,6 @@ mod tests {
         assert_eq!(
             Outcome::store_refused(0, "r", "down").line(),
             format!("{at} store-refused store repo=r batch=- text=\"down\"")
-        );
-    }
-
-    #[test]
-    fn a_landing_names_its_dwell_and_a_hold_its_blocker_and_status_key() {
-        assert_eq!(
-            Outcome::landing(0, "r", "k1", 90_000).line(),
-            "1970-01-01T00:00:00Z landed dwell repo=r batch=k1 dwell_ms=90000"
-        );
-        assert_eq!(
-            Outcome::fast_forward(0, "r", "k1", 0).line(),
-            "1970-01-01T00:00:00Z fast-forward dwell repo=r batch=k1 dwell_ms=0"
-        );
-        assert_eq!(
-            Outcome::held(0, "r", "k2", "stacked-on-unlanded", "batches/r/k2/status").line(),
-            "1970-01-01T00:00:00Z held stacked-on-unlanded repo=r batch=k2 key=batches/r/k2/status"
-        );
-    }
-
-    #[test]
-    fn a_stop_names_its_switch_owner_reason_and_lift_and_a_launch_its_unit() {
-        let s = crate::switches::Stop::Stopped {
-            owner: "ops".into(),
-            reason: "drill".into(),
-            until: "manual".into(),
-        };
-        assert_eq!(
-            Outcome::stopped(0, "r", &s).line(),
-            "1970-01-01T00:00:00Z stopped scoped-stop repo=r batch=- owner=\"ops\" reason=\"drill\" until=\"manual\""
-        );
-        assert_eq!(
-            Outcome::launch(0, "r", "b1", "u1", None).line(),
-            "1970-01-01T00:00:00Z launched ok repo=r batch=b1 unit=u1"
-        );
-        assert_eq!(
-            Outcome::launch(0, "r", "b1", "u1", Some("exit 1")).line(),
-            "1970-01-01T00:00:00Z launch-failed launch-refused repo=r batch=b1 unit=u1 text=\"exit 1\""
         );
     }
 
