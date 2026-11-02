@@ -18,7 +18,7 @@ use crate::watchers::asks;
 use crate::watchers::design_asks::{self, Page};
 use crate::hunk;
 use crate::watchers::view;
-use crate::wiki_git::{git, tmux};
+use crate::wiki_git::{git, overrides_apply, tmux};
 use crate::watchers::brain_dirty;
 use crate::watchers::supersede_duty::{self, Act, Held, Reading, Verb};
 use crate::watchers::bead_sweep::{self, Bead, Repair, Repaired, Reservation, Row, Stop};
@@ -377,9 +377,7 @@ impl World {
 
     /// One `overrides.sh apply` pass; a failed override fails the pass, and its stdout and stderr say which.
     pub fn overrides_apply(&self) -> Result<String, String> {
-        let out = spira_config::bounded::bounded("overrides.sh").arg("apply").stdin(std::process::Stdio::null()).output().map_err(|e| format!("overrides.sh: {e}"))?;
-        let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        if out.status.success() { Ok(said.trim().to_string()) } else { Err(said.trim().to_string()) }
+        overrides_apply()
     }
 
     /// The wiki checkout's changed paths and their mtimes. A path that no longer exists has none
