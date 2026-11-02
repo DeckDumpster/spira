@@ -31,3 +31,5 @@ Placeholder Part until the table of contents is approved.
 - §1.27 law-tests-are-the-unit-of-measure — Spira measures tests, never suites.
 - §1.28 law-bead-facts-come-from-the-lifecycle — Every fact about work has one owner and is read from it through spira-lc, never copied into the other plane.
 - §1.29 law-a-tool-bounds-the-state-it-leaves — A tool that writes durable state — images, volumes, build targets, worktrees, clones, logs — bounds it: it removes what it superseded, or caps what it keeps, on its own path, every run.
+- §1.30 law-a-measurement-ends-when-its-verdict-settles — A measurement runs until its verdict is settled, not for a round-number duration.
+- §1.31 law-no-fallbacks — Nothing resolves a value by fallback: no default path, no inherited PATH, no search up from the executable, no second source tried when the first is missing.

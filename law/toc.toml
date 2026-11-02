@@ -33,4 +33,6 @@ slugs = [
   "law-tests-are-the-unit-of-measure",
   "law-bead-facts-come-from-the-lifecycle",
   "law-a-tool-bounds-the-state-it-leaves",
+  "law-a-measurement-ends-when-its-verdict-settles",
+  "law-no-fallbacks",
 ]
