@@ -531,6 +531,29 @@ fn a_lock_renews_under_its_token_and_refuses_another_holder() {
 }
 
 #[test]
+fn lock_show_names_a_round_leases_token_ttl_and_the_holder_its_record_names() {
+    let r = rig();
+    let lock = "round/spira/b-1";
+    assert_eq!(r.call(&["lock", "show", lock], None).0, 1, "nothing holds it yet");
+    let held = r.ok(&["lock", "acquire", lock, "--ttl", "300", "--holder", "rc"], None);
+    let token = held["token"].as_str().unwrap().to_string();
+    let (main, sub) = token.split_once('.').unwrap();
+    let last = json!({ "main": main.parse::<u64>().unwrap(), "sub": sub.parse::<u32>().unwrap() });
+    r.put_knob("batches/spira/b-1", json!({ "state": "OPEN", "lease_holder": "round-recert", "last_lease_token": last }));
+    r.clock.advance(60_000);
+    let v = r.ok(&["lock", "show", lock], None);
+    assert_eq!(
+        (v["token"].as_str(), v["holder"].as_str(), v["ttl_left_secs"].as_u64()),
+        (Some(token.as_str()), Some("round-recert"), Some(240))
+    );
+    let other = json!({ "main": main.parse::<u64>().unwrap() + 1000, "sub": 0 });
+    r.put_knob("batches/spira/b-1", json!({ "state": "OPEN", "lease_holder": "old", "last_lease_token": other }));
+    assert_eq!(r.ok(&["lock", "show", lock], None)["holder"], Value::Null, "a record naming another token names no holder");
+    r.clock.advance(241_000);
+    assert_eq!(r.call(&["lock", "show", lock], None).0, 1, "a lapsed lease holds nothing");
+}
+
+#[test]
 fn writes_and_refusals_are_counted_by_kind_and_reason() {
     let r = rig();
     let ((), got) = spira_otel::metrics::fixture::capture(|sink| {

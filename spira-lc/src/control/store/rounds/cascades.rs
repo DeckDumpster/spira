@@ -26,6 +26,8 @@ pub struct Orphans {
     pub abandoned: Vec<String>,
     pub requeued: Vec<String>,
     pub failed: Vec<String>,
+    /// Rounds that never began but whose holder's lease is live: theirs, not the sweep's.
+    pub leased: Vec<String>,
 }
 
 const FINISHED: [BatchState; 3] = [
@@ -422,7 +424,8 @@ impl<B: Backend> Store<B> {
     /// `requeue-orphans`: records IN_DELIVERY that no unfinished round names, and the members of
     /// a round that opened and never began (OPEN, no run, pass or phase, cut more than
     /// `stale_secs` before `now`). With `apply`, each such round is abandoned and each other
-    /// orphan released in its own txn. A delivery live outside a round is no orphan.
+    /// orphan released in its own txn. A delivery live outside a round is no orphan, and a round
+    /// whose lease is live is its holder's: it is listed `leased` and left alone.
     pub fn requeue_orphans(
         &self,
         actor: &str,
@@ -451,10 +454,10 @@ impl<B: Backend> Store<B> {
                 out.orphans.push(row.bead_id.clone());
             }
         }
-        let mut phantoms: Vec<&BatchRecord> = rounds
+        let never_began: Vec<(&String, &BatchRecord)> = rounds
             .iter()
-            .map(|(_, r)| &r.value)
-            .filter(|r| {
+            .map(|(k, r)| (k, &r.value))
+            .filter(|(_, r)| {
                 let row = &r.row;
                 row.state == BatchState::Open
                     && row.run.is_none()
@@ -463,6 +466,15 @@ impl<B: Backend> Store<B> {
                     && r.opened_at < now - stale_secs
             })
             .collect();
+        let mut phantoms: Vec<&BatchRecord> = Vec::new();
+        for (key, r) in never_began {
+            if self.round_leased(key)? {
+                out.leased.push(r.row.batch_id.clone());
+            } else {
+                phantoms.push(r);
+            }
+        }
+        out.leased.sort();
         phantoms.sort_by(|a, b| a.row.batch_id.cmp(&b.row.batch_id));
         out.phantom_batches = phantoms.iter().map(|r| r.row.batch_id.clone()).collect();
         let phantom_members: BTreeSet<&str> = phantoms
@@ -522,5 +534,17 @@ impl<B: Backend> Store<B> {
             }
         }
         Ok(out)
+    }
+
+    /// Whether `locks/round/<repo>/<id>` is live for the round at `batches/<repo>/<id>`.
+    fn round_leased(&self, batch_key: &str) -> Result<bool> {
+        let Some(round) = batch_key.strip_prefix(keys::BATCHES) else {
+            return Ok(false);
+        };
+        let lock = format!("{}round/{round}", state_store::LOCKS_PREFIX);
+        Ok(self
+            .contract()
+            .get(&lock)?
+            .is_some_and(|l| l.lock_expires_at_ms.is_some()))
     }
 }

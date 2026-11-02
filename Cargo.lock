@@ -1519,12 +1519,15 @@ name = "release"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "round-controller",
+ "runtime",
  "sccache-dav",
  "serde",
  "serde_json",
  "sha2",
  "spira-config",
  "spira-otel",
+ "state-store",
  "testkit",
  "tokio",
  "toml",

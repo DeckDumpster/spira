@@ -2,6 +2,7 @@
 //! through [`ports::Ports`], so [`pass::pass`] runs the same code against the real queue and
 //! against the scenario harness in [`sim`]. Inert: nothing installs it (DESIGN.md).
 
+pub mod clear;
 pub mod cut;
 pub mod death;
 pub mod intents;

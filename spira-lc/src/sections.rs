@@ -68,6 +68,11 @@ pub fn render(a: Answer) -> (i32, String) {
     }
 }
 
+/// `lock show`'s answer for a lock no store holds.
+pub fn unheld(resource: &str) -> (i32, String) {
+    render(Answer::Missing(json!({ "resource": resource, "held": false, "store": "none configured" })))
+}
+
 /// `{"cannot_tell": reason}`, for the routing seam's own failures.
 pub fn cannot_tell(reason: &str) -> (i32, String) {
     render(Answer::CannotTell(format!("cannot tell: {reason}")))
@@ -89,6 +94,7 @@ pub fn run<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -> (i3
         ("intent", Some("judge")) => written(intent_judge(store, rest, call)),
         ("intent", Some("apply")) => written(intent_apply(store, rest, call)),
         ("intent", Some("knob-init")) => written(knob_init(store, rest, call)),
+        ("lock", Some("show")) => (lock_show(store, rest, call), None),
         ("lock", Some("acquire")) => written(lock_acquire(store, rest, call)),
         ("lock", Some("renew")) => written(lock_renew(store, rest, call)),
         ("lock", Some("release")) => written(lock_release(store, rest, call)),
@@ -96,7 +102,7 @@ pub fn run<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -> (i3
         ("pass", Some("standby")) => written(pass_standby(store, rest, call)),
         _ => (
             Answer::CannotTell(format!(
-                "cannot tell: {verb:?} is not a verb: section get|list|snapshot|apply-spec|publish-status, intent get|put|ack|judge|apply|knob-init, lock acquire|renew|release, pass record|standby"
+                "cannot tell: {verb:?} is not a verb: section get|list|snapshot|apply-spec|publish-status, intent get|put|ack|judge|apply|knob-init, lock show|acquire|renew|release, pass record|standby"
             )),
             None,
         ),
@@ -843,6 +849,46 @@ fn lock_release<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -
         Ok(Answer::Ok(json!({ "resource": fence.resource, "released": true })))
     })();
     (answer.unwrap_or_else(|a| a), "lock".into())
+}
+
+/// `lock show <resource>`: the live lock's token and TTL left, and, for a round's lease
+/// (`round/<repo>/<batch>`), the holder its batch record names under that token. 1 when no live
+/// lock holds it.
+fn lock_show<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -> Answer {
+    (|| {
+        let r = resource(args)?;
+        let key = format!("{LOCKS_PREFIX}{r}");
+        let live = store
+            .get(&key)
+            .map_err(cannot)?
+            .and_then(|l| Some((l.create_rev, l.lock_expires_at_ms?)));
+        let Some((token, expires)) = live else {
+            return Ok(Answer::Missing(json!({ "resource": r, "held": false })));
+        };
+        let holder = match r.strip_prefix("round/") {
+            Some(round) => round_holder(store, &format!("{}{round}", keys::BATCHES), token)?,
+            None => None,
+        };
+        Ok(Answer::Ok(json!({
+            "resource": r,
+            "held": true,
+            "token": token_text(token),
+            "holder": holder,
+            "ttl_left_secs": expires.saturating_sub(call.now_ms) / 1000,
+        })))
+    })()
+    .unwrap_or_else(|a| a)
+}
+
+/// The holder a round's batch record names, when its last lease token is `token`.
+fn round_holder<B: Backend>(store: &Contract<B>, record: &str, token: Rev) -> Result<Option<String>, Answer> {
+    let Some(item) = store.get(record).map_err(cannot)? else {
+        return Ok(None);
+    };
+    let d = &item.value.data;
+    let last = d.get("last_lease_token");
+    let named = last.and_then(|t| Some(Rev::new(t.get("main")?.as_u64()?, u32::try_from(t.get("sub")?.as_u64()?).ok()?)));
+    Ok((named == Some(token)).then(|| d.get("lease_holder").and_then(Value::as_str).map(str::to_string)).flatten())
 }
 
 /// `pass record --token T --actor reconciler` (body: the pass record): the latest record and

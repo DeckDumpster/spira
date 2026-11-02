@@ -698,6 +698,7 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
                 Some(&head),
                 Some(staged_ran),
                 None,
+                super::round::LeaseCheck::Inside,
             );
             landing_log(&c.s.run, &format!("QUEUE ROUND-ATTEST {} repo={repo_name} batch={batch} head={head} tree={tree} tested={tested_head} rc={rc}", w.clock.now()));
             if rc == OK {

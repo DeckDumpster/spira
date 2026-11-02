@@ -148,6 +148,15 @@ fn dispatch_sections(args: &[String]) -> (i32, String) {
     let path = match store_path() {
         Some(Ok(p)) => p,
         Some(Err(e)) => return sections::cannot_tell(&e),
+        // A lock lives only in the control store, so with none configured nothing holds one; an
+        // unreadable config is not "none configured".
+        None if args.get(1).map(String::as_str) == Some("show") && args[0] == "lock" => {
+            return match spira_config::process::cfg("SPIRA_LC_STORE_PATH") {
+                Ok(p) if p.is_empty() => sections::unheld(args.get(2).map_or("", String::as_str)),
+                Ok(_) => sections::cannot_tell("SPIRA_LC_STORE_PATH is set and did not resolve"),
+                Err(e) => sections::cannot_tell(&e),
+            };
+        }
         None => {
             return sections::cannot_tell(&format!(
                 "{} is served by the control store, and SPIRA_LC_STORE_PATH is unset or unreadable",

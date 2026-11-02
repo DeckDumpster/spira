@@ -988,6 +988,8 @@ struct FLc {
     mend_tips: RefCell<BTreeMap<String, String>>,
     /// The next `mending mend` is refused with this text.
     mend_refused: RefCell<Option<String>>,
+    /// `lock show round/<repo>/<batch>` per `<repo>/<batch>`; absent is unleased.
+    leases: RefCell<BTreeMap<String, Result<Option<RoundLease>, String>>>,
     calls: RefCell<Vec<String>>,
 }
 
@@ -1020,6 +1022,7 @@ impl Default for FLc {
             late_boundaries: Cell::new(false),
             mend_tips: RefCell::default(),
             mend_refused: RefCell::default(),
+            leases: RefCell::default(),
             calls: RefCell::default(),
         }
     }
@@ -1032,6 +1035,13 @@ impl FLc {
 }
 
 impl Lc for FLc {
+    fn round_lease(&self, repo: &str, batch: &str) -> Result<Option<RoundLease>, String> {
+        let key = format!("{repo}/{batch}");
+        self.calls
+            .borrow_mut()
+            .push(format!("lock-show round/{key}"));
+        self.leases.borrow().get(&key).cloned().unwrap_or(Ok(None))
+    }
     fn available(&self) -> bool {
         self.calls.borrow_mut().push("available".into());
         self.available.get()

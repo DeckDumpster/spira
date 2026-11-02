@@ -152,7 +152,15 @@ pub struct Ec2Config {
     pub run_deadline: Duration,
     pub host_addr: String,
     pub recipe_sha: String,
+    /// How long after boot the instance powers itself off, and so terminates: zero is unset.
+    pub max_lifetime: Duration,
 }
+
+pub const MAX_LIFETIME_KEY: &str = "SPIRA_ROUND_VM_EC2_MAX_LIFETIME_SECS";
+
+/// The lifetime is counted from launch and the power-off is scheduled from user-data, after boot:
+/// it is scheduled this much early so that boot, the power-off and the terminate all fit inside it.
+pub const SHUTDOWN_MARGIN: Duration = Duration::from_secs(600);
 
 const LAUNCH_CONFIRM_TRIES: u32 = 3;
 const SSM_REGISTER_TRIES: u32 = 90;
@@ -215,6 +223,7 @@ impl Ec2Config {
             run_deadline: Duration::from_secs(deadline),
             host_addr: s("SPIRA_ROUND_VM_EC2_HOST_ADDR"),
             recipe_sha: crate::recipe::sha(),
+            max_lifetime: Duration::from_secs(s(MAX_LIFETIME_KEY).parse().unwrap_or(0)),
         }
     }
 
@@ -232,6 +241,10 @@ impl Ec2Config {
         .filter(|(_, v)| v.is_empty())
         .map(|(k, _)| k.to_string())
         .collect();
+        // Without it, an instance whose state cannot be read is never proven dead.
+        if self.max_lifetime.is_zero() {
+            m.push(format!("{MAX_LIFETIME_KEY} (a positive number of seconds)"));
+        }
         if !self.tailscale_key_file.is_empty() {
             match std::fs::read_to_string(&self.tailscale_key_file) {
                 Ok(k) if !k.trim().is_empty() => {}
@@ -246,6 +259,7 @@ pub struct Ec2<A: Ec2Api> {
     pub api: A,
     tailscale_key: String,
     run_deadline: Duration,
+    max_lifetime: Duration,
     ami: String,
     instance_types: Vec<String>,
     recipe_sha: String,
@@ -265,6 +279,7 @@ impl<A: Ec2Api> Ec2<A> {
             api,
             tailscale_key: key.trim().to_string(),
             run_deadline: cfg.run_deadline,
+            max_lifetime: cfg.max_lifetime,
             ami: cfg.ami.clone(),
             instance_types: cfg.instance_types.clone(),
             recipe_sha: cfg.recipe_sha.clone(),
@@ -318,7 +333,7 @@ impl<A: Ec2Api> Ec2<A> {
     pub fn probe_dry(&self) -> Result<(), String> {
         let handle = self.next_id()?;
         let ami = self.image().map_err(|e| format!("image selection: {e}"))?;
-        first_accepted(&self.instance_types, |t| self.api.run_dry(&ami, t, &handle, &vm_name(&handle), &user_data(&self.tailscale_key, &vm_name(&handle))))
+        first_accepted(&self.instance_types, |t| self.api.run_dry(&ami, t, &handle, &vm_name(&handle), &user_data(&self.tailscale_key, &vm_name(&handle), self.max_lifetime)))
             .map(|_| ())
             .map_err(|e| format!("dry-run launch: {e}"))
     }
@@ -401,11 +416,14 @@ pub const TAILSCALE_BACKOFF_SECS: u32 = 5;
 /// Seconds to wait for tailscaled to be active before the first `tailscale up`.
 pub const TAILSCALED_READY_SECS: u32 = 60;
 
-/// Instance user-data: wait for tailscaled, then join the tailnet as `hostname`, ephemeral and
-/// tagged, retrying with backoff until logged in. The key is never echoed.
-pub fn user_data(auth_key: &str, hostname: &str) -> String {
+/// Instance user-data: first schedule the power-off that ends the instance at `lifetime` (it
+/// launches with instance-initiated shutdown behaviour terminate), then wait for tailscaled and
+/// join the tailnet as `hostname`, ephemeral and tagged, retrying with backoff until logged in.
+/// The key is never echoed.
+pub fn user_data(auth_key: &str, hostname: &str, lifetime: Duration) -> String {
     format!(
         "#!/bin/bash\nset +x\n\
+shutdown -P +{mins}\n\
 for _w in $(seq 1 {ready}); do systemctl is-active --quiet tailscaled && break; sleep 1; done\n\
 for _i in $(seq 1 {tries}); do\n\
   tailscale up --auth-key={key} --hostname={host} --advertise-tags=tag:round-vm --accept-dns=false --timeout=60s && break\n\
@@ -413,6 +431,7 @@ for _i in $(seq 1 {tries}); do\n\
   sleep $((_i * {backoff}))\n\
 done\n\
 tailscale status >/dev/null 2>&1 || echo \"round-vm: tailscale never logged in after {tries} attempts\" >&2\n",
+        mins = lifetime.saturating_sub(SHUTDOWN_MARGIN).as_secs() / 60,
         ready = TAILSCALED_READY_SECS,
         tries = TAILSCALE_UP_TRIES,
         backoff = TAILSCALE_BACKOFF_SECS,
@@ -441,7 +460,7 @@ impl<A: Ec2Api> Provider for Ec2<A> {
         }
         let ami = self.image()?;
         let (chosen, _) = first_accepted(&self.instance_types, |t| {
-            let id = self.api.run(&ami, t, vmid, name, &user_data(&self.tailscale_key, name))?;
+            let id = self.api.run(&ami, t, vmid, name, &user_data(&self.tailscale_key, name, self.max_lifetime))?;
             self.confirm_launched(&id, vmid, t)
         })?;
         eprintln!("round-vm: EC2 instance type {chosen} for {vmid}");
@@ -1007,6 +1026,7 @@ mod tests {
             ("EC2_SUBNET", |c| c.subnet.clear()),
             ("EC2_TAILSCALE_KEY_FILE", |c| c.tailscale_key_file.clear()),
             ("EC2_HOST_ADDR", |c| c.host_addr.clear()),
+            ("EC2_MAX_LIFETIME_SECS", |c| c.max_lifetime = Duration::ZERO),
         ] {
             let mut c = config(&d);
             clear(&mut c);
@@ -1019,18 +1039,44 @@ mod tests {
 
     #[test]
     fn user_data_quotes_the_key_and_joins_as_the_instance_name() {
-        let u = user_data("tskey-a'b", "round-ec2-a");
+        let u = user_data("tskey-a'b", "round-ec2-a", LIFETIME);
         assert!(u.contains("--auth-key='tskey-a'\\''b'") && u.contains("--hostname='round-ec2-a'") && u.contains("tag:round-vm"), "{u}");
     }
 
     #[test]
     fn user_data_waits_for_tailscaled_and_retries_tailscale_up_without_echoing_the_key() {
-        let u = user_data("tskey-secret", "round-ec2-a");
+        let u = user_data("tskey-secret", "round-ec2-a", LIFETIME);
         assert!(u.starts_with("#!/bin/bash\nset +x\n"), "{u}");
         assert!(u.contains("systemctl is-active --quiet tailscaled"), "waits for tailscaled: {u}");
         assert!(u.contains(&format!("for _i in $(seq 1 {TAILSCALE_UP_TRIES}); do")) && u.contains("&& break"), "retries: {u}");
         assert_eq!(u.matches("tskey-secret").count(), 1, "the key appears once, in the tailscale up argv: {u}");
         assert!(!u.contains("echo") || u.lines().filter(|l| l.contains("echo")).all(|l| !l.contains("tskey")), "{u}");
+    }
+
+    const LIFETIME: Duration = Duration::from_secs(4 * 3600);
+
+    #[test]
+    fn a_launched_instance_powers_itself_off_at_the_configured_lifetime_and_terminates() {
+        let d = TempDir::new();
+        let key = d.path().join("ts.key");
+        std::fs::write(&key, "tskey-auth-abc\n").unwrap();
+        let cfg = Ec2Config::from_lookup(&|k| {
+            let v = match k {
+                MAX_LIFETIME_KEY => "10830",
+                "SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE" => key.to_str().unwrap(),
+                "SPIRA_ROUND_VM_EC2_PROFILE" | "SPIRA_ROUND_VM_EC2_REGION" | "SPIRA_ROUND_VM_EC2_SUBNET" | "SPIRA_ROUND_VM_EC2_HOST_ADDR" => "x",
+                "SPIRA_ROUND_VM_EC2_AMI" => "ami-1",
+                _ => return None,
+            };
+            Some(v.to_string())
+        });
+        let fake = FakeEc2::default();
+        Ec2::new(fake.clone(), &cfg).unwrap().clone_to("h1", "n1").unwrap();
+        let u = fake.user_data()[0].clone();
+        let first = u.lines().nth(2).unwrap_or_default();
+        assert_eq!(first, "shutdown -P +170", "10830 s less the boot margin, in whole minutes rounded down, before anything that can hang: {u}");
+        let none = Ec2Config::from_lookup(&|_| None);
+        assert!(none.missing().iter().any(|m| m.contains(MAX_LIFETIME_KEY)), "no instance launches without a lifetime");
     }
 
     use crate::provider::{destroy_verified, provision, DestroyError, ProvisionSpec, Timing};
@@ -1044,7 +1090,7 @@ mod tests {
         Ec2Config {
             profile: "p".into(), region: "r".into(), ami: "ami-1".into(), instance_types: vec!["c7i.8xlarge".into()], subnet: "subnet-1".into(),
             security_group: String::new(), instance_profile: String::new(), spot_first: true, tailscale_key_file: key.to_string_lossy().into(),
-            run_deadline: Duration::from_secs(7200), host_addr: "100.64.0.1".into(), recipe_sha: "sha-now".into(),
+            run_deadline: Duration::from_secs(7200), host_addr: "100.64.0.1".into(), recipe_sha: "sha-now".into(), max_lifetime: LIFETIME,
         }
     }
 

@@ -1103,6 +1103,8 @@ pub fn cmd_requeue_orphans(args: &[String], conn: &Conn) -> (i32, String) {
         "abandoned": abandoned,
         "requeued": requeued,
         "failed": failed,
+        // Round leases live only in the control store, so on this path none is held.
+        "leased": [],
     });
     (if failed.is_empty() { 0 } else { REFUSED }, serde_json::to_string(&summary).unwrap())
 }

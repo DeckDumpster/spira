@@ -25,9 +25,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
+round-controller = { path = "../round-controller" }
+state-store = { path = "../state-store" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+round-controller = { path = "../round-controller", features = ["sim"] }
+runtime = { path = "../runtime" }
 sccache-dav = { path = "../sccache-dav" }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net"] }

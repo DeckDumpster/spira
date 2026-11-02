@@ -48,7 +48,7 @@ functions = ["start", "is_active"]
 
 [[scope]]
 path = "round-controller/src/death.rs"
-functions = ["unit_name"]
+functions = ["unit_name", "hand_unit_name"]
 
 # The Lander's decisions: which rounds it takes, the retry rule, the store-held stack, git's
 # fast-forward, the verb's refusal classifier and the landing's txn.
@@ -65,3 +65,17 @@ functions = ["build", "green", "repeats", "lane_faults", "publish", "published",
 [[scope]]
 path = "round-controller/src/intents.rs"
 functions = ["apply", "decide", "concurrency", "hold", "init_concurrency", "answered", "ack_word"]
+
+# The lease verbs: the queue guard every leased round verb meets, lease clear's proof of death,
+# and the hand driver's hold and its renewal.
+[[scope]]
+path = "queue/src/ops/lease.rs"
+functions = ["lease_guard"]
+
+[[scope]]
+path = "round-controller/src/clear.rs"
+functions = ["clear"]
+
+[[scope]]
+path = "release/src/round_recert.rs"
+functions = ["Hold::take", "Keeper::tick", "drive", "start"]

@@ -5800,3 +5800,214 @@ fn a_round_the_lifecycle_abandoned_is_closed_out_by_the_next_locked_verb() {
         .unwrap()
         .starts_with("ended: ABANDONED on the lifecycle"));
 }
+
+/// Another holder's live lease on `batch` of the fixture's repo.
+fn leased_by(t: &T, batch: &str, holder: &str, token: &str) {
+    t.lc.leases.borrow_mut().insert(
+        format!("spira/{batch}"),
+        Ok(Some(RoundLease {
+            holder: Some(holder.into()),
+            token: token.into(),
+            ttl_left_secs: 240,
+        })),
+    );
+}
+
+/// What one call wrote to stderr, without the calls before it.
+fn err_of(t: &T, f: impl FnOnce() -> i32) -> (i32, String) {
+    let mark = t.io.err.borrow().len();
+    let rc = f();
+    (rc, t.io.err.borrow()[mark..].to_string())
+}
+
+#[test]
+fn a_round_leased_by_another_holder_refuses_every_verb_that_touches_it_naming_holder_token_and_ttl(
+) {
+    let (t, batch) = certified_round();
+    seed_suite(&t, "test-b.sh");
+    leased_by(&t, &batch, "round-recert", "7-0");
+    let before = kv_of(&t, "round");
+    let runs = vm_runs(&t);
+    let verbs: [&[&str]; 5] = [
+        &["round", "abandon", &batch, "--reason", "batcher: stale"],
+        &[
+            "round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh",
+        ],
+        &["round", "land", &batch],
+        &["round", "certify", &batch],
+        &["round", "preempt", &batch, "--eject", "sp-b", "--reason", "batcher: fresh"],
+    ];
+    for argv in verbs {
+        let (rc, e) = err_of(&t, || t.run(argv));
+        assert_eq!(rc, 1, "{argv:?}: {e}");
+        assert!(
+            e.contains(&format!(
+                "round {batch} is leased by round-recert under token 7-0 with 240s left"
+            )) && e.contains("--lease-token 7-0"),
+            "{argv:?}: {e}"
+        );
+    }
+    assert_eq!(kv_of(&t, "round"), before, "nothing changed");
+    assert_eq!(vm_runs(&t), runs, "no pass ran");
+    for write in ["abandon-batch", "eject-member", "land "] {
+        assert!(!t.lc.has(write), "{write}: {:?}", t.lc.calls.borrow());
+    }
+    assert_eq!(t.landed_ref().as_deref(), Some("b0"));
+    assert!(t.lc.has(&format!("lock-show round/spira/{batch}")));
+}
+
+#[test]
+fn the_holders_lease_token_lets_each_verb_through() {
+    let (t, batch) = certified_round();
+    leased_by(&t, &batch, "round-recert", "7-0");
+    assert_eq!(
+        t.run(&["round", "certify", &batch, "--lease-token", "7-0"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert_eq!(
+        t.run(&["round", "land", &batch, "--lease-token", "7-0"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"));
+
+    let t = round_world();
+    let open = ["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "r-1"];
+    assert_eq!(t.run(&open), 0, "{}", t.err());
+    seed_suite(&t, "test-b.sh");
+    leased_by(&t, "r-1", "round-controller", "12-0");
+    assert_eq!(
+        t.run(&[
+            "round", "eject", "r-1", "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh",
+            "--lease-token", "12.0",
+        ]),
+        0,
+        "the store's spelling of the token is the same token: {}",
+        t.err()
+    );
+    assert_eq!(
+        t.run(&["round", "abandon", "r-1", "--reason", "hand", "--lease-token", "12-0"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(t.lc.has("abandon-batch r-1"));
+}
+
+#[test]
+fn an_unleased_round_is_touched_as_before_and_a_lapsed_token_or_an_unread_lease_refuses() {
+    let t = round_world();
+    let open = ["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "r-1"];
+    assert_eq!(t.run(&open), 0, "{}", t.err());
+    let (rc, e) = err_of(&t, || {
+        t.run(&["round", "abandon", "r-1", "--reason", "x", "--lease-token", "3-0"])
+    });
+    assert_eq!(rc, 1, "{e}");
+    assert!(
+        e.contains("holds no lease, so --lease-token 3-0 no longer holds it"),
+        "{e}"
+    );
+    t.lc.leases.borrow_mut().insert(
+        "spira/r-1".into(),
+        Err("spira-lc lock show round/spira/r-1 exited Some(2): cannot tell".into()),
+    );
+    let (rc, e) = err_of(&t, || t.run(&["round", "abandon", "r-1", "--reason", "x"]));
+    assert_eq!(rc, 1, "{e}");
+    assert!(
+        e.contains("cannot tell whether round r-1 is leased") && e.contains("exited Some(2)"),
+        "{e}"
+    );
+    assert!(!t.lc.has("abandon-batch"), "{:?}", t.lc.calls.borrow());
+    t.lc.leases.borrow_mut().clear();
+    assert_eq!(
+        t.run(&["round", "abandon", "r-1", "--reason", "x"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(t.lc.has("abandon-batch r-1"));
+}
+
+#[test]
+fn an_eject_naming_the_testenv_run_of_a_repo_that_judges_itself_is_accepted() {
+    let t = round_world();
+    let open = ["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "r-1"];
+    assert_eq!(t.run(&open), 0, "{}", t.err());
+    seed_suite(&t, "test-b.sh");
+    let (rc, e) = err_of(&t, || {
+        t.run(&[
+            "round", "eject", "r-1", "sp-b", "--reason", "red", "--red", "--suites", "testenv",
+        ])
+    });
+    assert_eq!(rc, 0, "{e}");
+    assert!(t.lc.has("eject-member r-1"), "{:?}", t.lc.calls.borrow());
+}
+
+/// `queue round land` as the Lander calls it (round-controller's `RealVerbs::land` argv), and
+/// the word the Lander classifies its refusal by: stderr's first word, a trailing colon stripped.
+fn land_as_the_lander(t: &T, batch: &str, token: Option<&str>) -> (i32, String) {
+    let mut argv = vec!["round", "land", batch, "spira"];
+    argv.extend(token.map(|t| ["--lease-token", t]).into_iter().flatten());
+    let (rc, e) = err_of(t, || t.run(&argv));
+    let word = e.split_whitespace().next().unwrap_or("");
+    (rc, word.trim_end_matches(':').to_string())
+}
+
+#[test]
+fn each_land_refusal_starts_with_the_word_the_lander_acts_on() {
+    let t = concurrent_world();
+    two_green_stacked_rounds(&t);
+    for b in ["r-1", "r-2"] {
+        leased_by(&t, b, "round-controller", "5-0");
+    }
+    let lander = |token| land_as_the_lander(&t, "r-2", Some(token));
+    assert_eq!(lander("5-0"), (1, "stacked".into()), "{}", t.err());
+    assert_eq!(lander("6-0"), (1, "refused".into()), "another holder's lease");
+    let abandon = ["round", "abandon", "r-1", "--reason", "red", "--lease-token", "5-0"];
+    assert_eq!(t.run(&abandon), 0, "{}", t.err());
+    tree_of(&t, "merged-tb");
+    assert_eq!(
+        lander("5-0"),
+        (1, "base-moved".into()),
+        "the parent ended unlanded, so the round was rebuilt on the landing ref: {}",
+        t.err()
+    );
+    assert_eq!(
+        lander("5-0"),
+        (1, "refused".into()),
+        "rebuilt and not certified again, it is not green"
+    );
+    assert_eq!(t.landed_ref().as_deref(), Some("b0"));
+    t.git.ancestor("tb", "merged-tb");
+    let certify = ["round", "certify", "r-2", "--lease-token", "5-0"];
+    assert_eq!(t.run(&certify), 0, "{}", t.err());
+    let (rc, e) = err_of(&t, || {
+        t.run(&["round", "land", "r-2", "spira", "--lease-token", "5-0"])
+    });
+    assert_eq!(rc, 0, "{e}");
+    assert!(
+        !["stacked", "base-moved", "refused"]
+            .iter()
+            .any(|w| e.starts_with(w)),
+        "{e}"
+    );
+    assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"));
+}
+
+#[test]
+fn a_round_cut_before_its_base_moved_refuses_land_as_base_moved() {
+    let (t, batch) = certified_round();
+    t.git.set("refs/heads/local/main", "b1");
+    t.git.ancestor("b0", "b1");
+    assert_eq!(
+        land_as_the_lander(&t, &batch, None),
+        (1, "base-moved".into()),
+        "{}",
+        t.err()
+    );
+    assert!(t.err().contains("re-merged"), "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("b1"));
+}

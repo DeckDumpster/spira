@@ -2484,6 +2484,7 @@ mod tests {
             run_deadline: Duration::from_secs(7200),
             host_addr: "h".into(),
             recipe_sha: String::new(),
+            max_lifetime: Duration::from_secs(10_800),
         };
         Arc::new(crate::ec2::Ec2::new(fake.clone(), &cfg).unwrap())
     }
@@ -2737,6 +2738,7 @@ mod tests {
             run_deadline: Duration::from_secs(7200),
             host_addr: "h".into(),
             recipe_sha: String::new(),
+            max_lifetime: Duration::from_secs(10_800),
         };
         Arc::new(crate::ec2::Ec2::new(fake.clone(), &cfg).unwrap())
     }

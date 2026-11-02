@@ -320,6 +320,7 @@ fn requeue_orphans<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -
                 "abandoned": o.abandoned,
                 "requeued": o.requeued,
                 "failed": o.failed,
+                "leased": o.leased,
             });
             let code = if o.failed.is_empty() { 0 } else { REFUSED };
             (code, out.to_string())
