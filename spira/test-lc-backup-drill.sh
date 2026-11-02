@@ -34,4 +34,8 @@ timer="$HERE/../systemd/lc-backup-drill.timer"
 service="$HERE/../systemd/lc-backup-drill.service"
 nowant "the oneshot unit carries no Restart= policy" "Restart" "$(cat "$service")"
 
+run_unit="$HERE/../systemd/lc-backup.service"
+t="$(sed -n 's/^TimeoutStartSec=//p' "$run_unit")"
+[ "${t:-0}" -ge 3600 ]; wantrc "the run unit's start timeout (${t:-unset}s) covers a compaction at its CPU quota" 0 $?
+
 tl_summary
