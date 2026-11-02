@@ -17,8 +17,8 @@ use serde::{Deserialize, Serialize};
 pub use backend::{Backend, LogEntry, Version, Write};
 pub use clock::MonotonicClock;
 pub use contract::{
-    Compare, Config, Contract, Created, Deleted, Event, Fence, ListPage, Op, Ports, Request,
-    Selector, Txn, TxnResult, Watched,
+    carries_ttl, Compare, Config, Contract, Created, Deleted, Event, Fence, ListPage, Op, Ports,
+    Request, Selector, Txn, TxnResult, Watched,
 };
 pub use mem::MemBackend;
 

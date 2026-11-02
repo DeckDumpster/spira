@@ -67,7 +67,7 @@ impl Fixture {
         testkit::write_exe(
             f.p("bin/spira-lc"),
             &format!(
-                "#!/usr/bin/env bash\n[ -e {root}/down ] && exit 1\ncase \"$1\" in\n  list) case \"$3\" in LANDED*) cat {root}/term.json ;; *) cat {root}/rows.json ;; esac ;;\n  content) cat {root}/content.json ;;\n  history) cat {root}/history-$2.json ;;\n  create-bead) [ -e {root}/refuse-create ] && exit 2; echo \"$*\" >> {root}/creates.log ;;\nesac\nexit 0\n"
+                "#!/usr/bin/env bash\n[ -e {root}/down ] && exit 1\ncase \"$1\" in\n  list) case \"$3\" in LANDED*) cat {root}/term.json ;; *) cat {root}/rows.json ;; esac ;;\n  content) cat {root}/content.json ;;\n  history) cat {root}/history-$2.json ;;\n  create-bead) [ -e {root}/refuse-create ] && exit 2; echo \"$*\" >> {root}/creates.log ;;\n  skew-check) [ -e {root}/skewed ] && {{ echo refused: skewed; exit 3; }} ;;\nesac\nexit 0\n"
             ),
         );
         fs::write(f.p("rows"), format!("{HOME} | {}/w | queue | origin/main | | |\nprrepo | {}/p | pr | origin/main | | |\n", f.dir.path().display(), f.dir.path().display())).unwrap();
@@ -103,6 +103,7 @@ impl Fixture {
                         "content" => (0, fs::read_to_string(root.join("content.json")).unwrap()),
                         "history" => (0, fs::read_to_string(root.join(format!("history-{}.json", argv[1]))).unwrap_or_default()),
                         "create-bead" if root.join("refuse-create").exists() => (2, "refused".into()),
+                        "skew-check" if root.join("skewed").exists() => (3, "refused: skewed".into()),
                         "create-bead" => {
                             let mut log = fs::OpenOptions::new().append(true).open(root.join("creates.log")).unwrap();
                             writeln!(log, "{}", argv.join(" ")).unwrap();
@@ -348,6 +349,15 @@ fn an_open_bead_with_no_row_is_given_one_and_a_refused_repair_stays_a_suspect() 
     assert!(has(&r, "SUSPECT sp-busy ROWLESS"), "an in-progress rowless bead is reported, not created: {r:?}");
 
     let (r, _) = same_rows("refused", 2, &[], &[orphan], |f| fs::write(f.p("refuse-create"), "").unwrap());
+    assert_eq!(r.iter().filter(|l| l.contains("SUSPECT sp-orph ROWLESS")).count(), 1, "{r:?}");
+    assert!(!has(&r, "REPAIRED"), "{r:?}");
+}
+
+#[test]
+fn with_the_planes_skewed_the_rowless_repair_creates_nothing_and_the_bead_stays_a_suspect() {
+    let orphan = json!({"id": "sp-orph", "labels": ["repo:widgets"], "issue_type": "task", "status": "open", "priority": 0, "title": "t"});
+    let (r, g) = same_rows("skewed", 2, &[], &[orphan], |f| fs::write(f.p("skewed"), "").unwrap());
+    assert_eq!(fs::read_to_string(g.p("creates.log")).unwrap(), "", "a skewed repair creates no row");
     assert_eq!(r.iter().filter(|l| l.contains("SUSPECT sp-orph ROWLESS")).count(), 1, "{r:?}");
     assert!(!has(&r, "REPAIRED"), "{r:?}");
 }

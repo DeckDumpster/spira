@@ -978,6 +978,8 @@ pub trait Bd {
     fn blocking_dependents(&mut self, id: &str) -> Result<Vec<String>, String>;
     /// The beads whose `parent-child` edge names `id` as their parent.
     fn children(&mut self, id: &str) -> Result<Vec<String>, String>;
+    /// bd's own copy of the planning watermark (`skew::BD_KV_KEY`); `None` while unstamped.
+    fn planning_watermark(&mut self) -> Result<Option<u64>, String>;
 }
 
 /// An epic's children by lifecycle state; `pending` names those not yet terminal. A child with
@@ -1319,10 +1321,10 @@ pub fn reconcile_epics(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) ->
     Answer::out(code, lines.join("\n"))
 }
 
-/// `reconcile-content [--apply] [<id>...]` — close in the store every bead whose lifecycle row
+/// `reconcile-content [--apply | --dry-run] [<id>...]` — close in the store every bead whose lifecycle row
 /// is terminal (LANDED, DONE, DROPPED, SUPERSEDED) and which bd still holds open, with a close
 /// reason citing the transition. The row is never written: it already says the bead is over,
-/// and the store is made to agree. Dry run unless `--apply`. Without ids, a bd that reports
+/// and the store is made to agree. Dry run unless `--apply`, which the skew guard must clear. Without ids, a bd that reports
 /// none of the terminal rows open is the normal steady state; a bd that cannot answer is not.
 ///
 /// `--since-seq N` reads only the beads with a bead-machine event after seq N, plus any ids
@@ -1332,16 +1334,19 @@ pub fn reconcile_epics(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) ->
 /// Exit: 0 done (or listed) · 2 cannot tell · 3 a store close failed.
 pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
     let apply = args.iter().any(|a| a == "--apply");
+    if apply && args.iter().any(|a| a == "--dry-run") {
+        return usage("reconcile-content [--apply | --dry-run] [--since-seq N] [<bead-id>...] (--apply and --dry-run together)");
+    }
     let since = args.iter().position(|a| a == "--since-seq").map(|i| args.get(i + 1).cloned().unwrap_or_default());
     let mut only: Vec<&String> = Vec::new();
     let mut rest = args.iter();
     while let Some(a) = rest.next() {
         match a.as_str() {
-            "--apply" => {}
+            "--apply" | "--dry-run" => {}
             "--since-seq" => {
                 rest.next();
             }
-            f if f.starts_with('-') => return usage(&format!("reconcile-content [--apply] [--since-seq N] [<bead-id>...] (unknown flag {f})")),
+            f if f.starts_with('-') => return usage(&format!("reconcile-content [--apply | --dry-run] [--since-seq N] [<bead-id>...] (unknown flag {f})")),
             _ => only.push(a),
         }
     }
@@ -1357,7 +1362,7 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
     let mut scope: Option<BTreeSet<String>> = None;
     if let Some(since) = &since {
         if since.parse::<u64>().is_err() {
-            return usage("reconcile-content [--apply] [--since-seq N] [<bead-id>...] (--since-seq wants a number)");
+            return usage("reconcile-content [--apply | --dry-run] [--since-seq N] [<bead-id>...] (--since-seq wants a number)");
         }
         let (rc, out) = m.call(&["event-seq".into(), "--since".into(), since.clone()]);
         let tail = if rc == 0 { serde_json::from_str::<Value>(out.trim()).ok() } else { None };
@@ -1394,6 +1399,11 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
         };
         open.extend(found.iter().map(|r| s(r, "id")).filter(|i| !i.is_empty()));
     }
+    if apply {
+        if let Err((code, why)) = crate::skew::guard(m) {
+            return Answer { code, stderr: format!("spira-lc reconcile-content: {why}\n"), ..Default::default() };
+        }
+    }
     let (mut lines, mut code, mut done) = (Vec::new(), APPLIED, 0usize);
     for id in open {
         let state = &terminal[&id];
@@ -1423,16 +1433,19 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
     Answer::out(code, lines.join("\n"))
 }
 
-/// `drop-orphans [--apply] [<id>...]` — move the READY lifecycle row of every key bd has no
-/// bead for to DROPPED. Dry run unless `--apply`. A row is never deleted (spira_lc holds no
+/// `drop-orphans [--apply | --dry-run] [<id>...]` — move the READY lifecycle row of every key bd has no
+/// bead for to DROPPED. Dry run unless `--apply`, which the skew guard must clear. A row is never deleted (spira_lc holds no
 /// DELETE); DROPPED takes it off READY and keeps its history. Without ids, a bd that knows
 /// none of the READY rows is read as bd misreading, not as every row being an orphan.
 ///
 /// Exit: 0 done (or listed) · 2 cannot tell · 3 an event was refused.
 pub fn drop_orphans(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
     let apply = args.iter().any(|a| a == "--apply");
-    if let Some(bad) = args.iter().find(|a| a.starts_with('-') && *a != "--apply") {
-        return usage(&format!("drop-orphans [--apply] [<bead-id>...] (unknown flag {bad})"));
+    if let Some(bad) = args.iter().find(|a| a.starts_with('-') && *a != "--apply" && *a != "--dry-run") {
+        return usage(&format!("drop-orphans [--apply | --dry-run] [<bead-id>...] (unknown flag {bad})"));
+    }
+    if apply && args.iter().any(|a| a == "--dry-run") {
+        return usage("drop-orphans [--apply | --dry-run] [<bead-id>...] (--apply and --dry-run together)");
     }
     let only: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
     let cannot = |why: String| Answer { code: CANNOT_TELL, stderr: format!("spira-lc drop-orphans: {why}\n"), ..Default::default() };
@@ -1454,6 +1467,11 @@ pub fn drop_orphans(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> An
     }
     if only.is_empty() && !ids.is_empty() && known.is_empty() {
         return cannot("bd knows none of the READY rows; refusing to drop them all".into());
+    }
+    if apply {
+        if let Err((code, why)) = crate::skew::guard(m) {
+            return Answer { code, stderr: format!("spira-lc drop-orphans: {why}\n"), ..Default::default() };
+        }
     }
     let (mut lines, mut code, mut done) = (Vec::new(), APPLIED, 0usize);
     for r in ready {

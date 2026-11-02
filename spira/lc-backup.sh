@@ -4,7 +4,7 @@
 #
 #   lc-backup.sh run                 per database: snapshot locally, tar it, upload ONE object, stamp it
 #   lc-backup.sh age [--now EPOCH]   exit 0 when every database's newest good backup is younger than SPIRA_LC_BACKUP_MAX_AGE
-#   lc-backup.sh drill [--db NAME] [TARBALL]   per database: restore a snapshot into a scratch dir under SPIRA_RUN; row counts must equal live; exit 0 with a recorded DEFERRED verdict when the store stays busy past the cap
+#   lc-backup.sh drill [--db NAME] [TARBALL]   per database: restore a snapshot into a scratch dir under SPIRA_RUN; row counts must equal live; exit 0 with a recorded DEFERRED verdict when the store stays busy past the cap. With SPIRA_LC_STORE_PATH set, the control store (--db control) first: spira-lc admin-drill
 #   lc-backup.sh watch [--interval S] [--ticks N]   watchd daemon: mails the crossing into and out of stale
 #   lc-backup.sh health              exit non-zero when the watch loop has stopped polling
 #   lc-backup.sh explain             after a failed run: put the log's last error line on stderr and in the journal
@@ -29,6 +29,12 @@
 #
 # No destination, an unreadable stamp or an age beyond the limit is red, never a skip — a
 # store that was never backed up must look different from one that is.
+#
+# The control store is not tarred here: lc-serve ships it to revlog/ and snapshot/ under the same
+# URL, and the drill restores its local copies with `spira-lc admin-drill`. Retention is the
+# bucket's lifecycle rule, which must expire revision runs no sooner than snapshots.
+#
+# The stamp's third field is bd's planning watermark when it was tarred (`-` when unstamped).
 
 # covers: spira/lc-backup.sh spira/watchers spira/conf.d/SPIRA_LC_BACKUP_* systemd/lc-backup.service systemd/lc-backup.timer systemd/lc-backup-drill.*
 set -uo pipefail
@@ -92,6 +98,14 @@ _lcb_upload() {
         "$host/$key" >/dev/null
 }
 
+# bd's own planning watermark, or `-` while nothing is stamped or it cannot be read.
+_lcb_plan_watermark() {
+    local out
+    out="$(timeout 5 spira-lc plane-watermarks 2>/dev/null)" || out=""
+    out="$(sed -n 's/.*"bd": *\([0-9][0-9]*\).*/\1/p' <<<"$out")"
+    printf '%s' "${out:--}"
+}
+
 _lcb_lock() { mkdir -p "$SPIRA_RUN/lc-backup/$1" && printf '%s/lc-backup/%s/.lock' "$SPIRA_RUN" "$1"; }
 
 _lcb_run_db() {
@@ -102,8 +116,9 @@ _lcb_run_db() {
 }
 
 _lcb_run_db_locked() {
-    local db="$1" out head work stage tarball prefix stamp key ext
+    local db="$1" out head work stage tarball prefix stamp key ext wm
     _lcb_require_db "$db" || return 1
+    wm="$(_lcb_plan_watermark)"
     out="$(_lcb_sql "$db" -q "CALL DOLT_COMMIT('-Am', 'lc-backup $(date -u +%Y-%m-%dT%H:%M:%SZ)')" 2>&1)" \
         || case "$out" in *"nothing to commit"*) ;; *) echo "lc-backup: commit failed: $out" >&2; return 1 ;; esac
     work="$SPIRA_RUN/lc-backup/$db"; stage="$work/stage"
@@ -124,7 +139,7 @@ _lcb_run_db_locked() {
     stamp="$(date -u +%Y%m%dT%H%M%SZ)"
     key="$prefix$db/$stamp.tar.$ext"
     _lcb_upload "$tarball" "$key" || { echo "lc-backup: upload of $key failed" >&2; return 1; }
-    printf '%s %s\n' "$(date +%s)" "$head" > "$(_lcb_stamp "$db").tmp" && mv "$(_lcb_stamp "$db").tmp" "$(_lcb_stamp "$db")"
+    printf '%s %s %s\n' "$(date +%s)" "$head" "$wm" > "$(_lcb_stamp "$db").tmp" && mv "$(_lcb_stamp "$db").tmp" "$(_lcb_stamp "$db")"
     echo "lc-backup: uploaded $db at $head as $key to $SPIRA_LC_BACKUP_URL"
 }
 
@@ -151,7 +166,7 @@ cmd_explain() {
 cmd_explain_drill() {
     [ "${SERVICE_RESULT:-}" != success ] || return 0
     local db f msg=""
-    for db in $(_lcb_dbs); do
+    for db in $(_lcb_dbs) ${SPIRA_LC_STORE_PATH:+control}; do
         f="$(_lcb_verdict "$db")"
         [ -s "$f" ] && ! grep -q 'drill ok' "$f" && msg="$msg$(cat "$f")"$'\n'
     done
@@ -167,7 +182,7 @@ _lcb_measure_db() {
     local db="$1" now="${2:-$(date +%s)}" t head age stamp
     stamp="$(_lcb_stamp "$db")"
     [ -r "$stamp" ] || { echo "never"; return 0; }
-    read -r t head < "$stamp" 2>/dev/null
+    read -r t head _ < "$stamp" 2>/dev/null
     case "$t" in ''|*[!0-9]*) return 1 ;; esac
     age=$((now - t))
     if [ "$age" -gt "$SPIRA_LC_BACKUP_MAX_AGE" ]; then echo "stale $age"; else echo "ok $age"; fi
@@ -233,7 +248,7 @@ _lcb_drill_db_locked() {
     local t head scratch rc=0 tables tbl live restored live_head err
     [ -r "$tarball" ] || { _lcb_drill_fail "$db" "$db: no snapshot at $tarball"; return 1; }
     [ -r "$stamp" ] || { _lcb_drill_fail "$db" "$db: no stamp — nothing has been backed up"; return 1; }
-    read -r t head < "$stamp"
+    read -r t head _ < "$stamp"
     local need=$(( $(stat -c %s "$tarball") * 4 / 1024 )) have
     mkdir -p "$SPIRA_LC_BACKUP_DRILL_DIR" && scratch="$(mktemp -d "$SPIRA_LC_BACKUP_DRILL_DIR/$db.XXXXXX")" \
         || { _lcb_drill_fail "$db" "$db: cannot make a scratch dir under $SPIRA_LC_BACKUP_DRILL_DIR"; return 1; }
@@ -296,6 +311,25 @@ _lcb_drill_wait_quiet() {
     done
 }
 
+# The control store's drill: restore the local copy of every uploaded object and prove it by
+# fold-and-compare. It reads no live store, so a busy one never defers it.
+_lcb_drill_control() {
+    local verdict="$SPIRA_RUN/lc-backup/control/drill.verdict" scratch out rc
+    mkdir -p "$(dirname "$verdict")" "$SPIRA_LC_BACKUP_DRILL_DIR" || return 1
+    scratch="$(mktemp -d "$SPIRA_LC_BACKUP_DRILL_DIR/control.XXXXXX")" \
+        || { echo "lc-backup: drill: control: cannot make a scratch dir under $SPIRA_LC_BACKUP_DRILL_DIR" | tee "$verdict" >&2; return 1; }
+    # batch-job: a restore and a full fold of the control store's local copy
+    out="$(spira-lc admin-drill --scratch "$scratch/restore" 2>&1)"; rc=$?
+    rm -rf "$scratch"
+    printf '%s\n' "$out"
+    if [ "$rc" -eq 0 ]; then
+        echo "lc-backup: drill ok — control: $(head -n1 <<<"$out")" > "$verdict"
+    else
+        printf 'lc-backup: drill: control: %s\n' "$out" > "$verdict"
+    fi
+    return "$rc"
+}
+
 cmd_drill() {
     local only="" tarball="" db rc=0
     while [ $# -gt 0 ]; do
@@ -305,7 +339,11 @@ cmd_drill() {
         esac
     done
     [ -z "$tarball" ] || [ -n "$only" ] || only="$(_lcb_dbs | head -1)"
-    _lcb_drill_wait_quiet || return 0
+    if [ -n "$SPIRA_LC_STORE_PATH" ] && { [ -z "$only" ] || [ "$only" = control ]; }; then
+        _lcb_drill_control || rc=1
+        [ "$only" = control ] && return "$rc"
+    fi
+    _lcb_drill_wait_quiet || return "$rc"
     for db in ${only:-$(_lcb_dbs)}; do _lcb_drill_db "$db" "$tarball" || rc=1; done
     return "$rc"
 }

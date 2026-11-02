@@ -532,8 +532,14 @@ impl World {
     }
 
     /// Gives each rowless bead the row it lacks; `create-bead` ignores a bead that already has one.
+    /// Nothing is created while `skew-check` refuses: after a restore bd can be hours behind the
+    /// control plane, and its open beads may be ones the control plane already closed.
     pub fn sweep_repair(&self, input: &str) -> Result<String, String> {
         let Repair { snapshot, todo } = serde_json::from_str(input).map_err(|e| e.to_string())?;
+        if let Err(e) = lc_call(&self.lc_socket, &["skew-check"]) {
+            eprintln!("bead-sweep: the rowless repair is refused: {e}");
+            return serde_json::to_string(&Repaired { snapshot, ids: vec![] }).map_err(|e| e.to_string());
+        }
         let ids = todo
             .iter()
             .filter(|r| {

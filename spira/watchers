@@ -146,6 +146,11 @@ event-continuity|log|@SPIRA_RUN@/event-continuity.log
 # writes the log. Brokered tool verbs (groom, queue, ...) and facts-query are batch jobs and exempt.
 lc-latency|log|@SPIRA_RUN@/lc-latency.log
 
+# LC-SHIP is the control store's off-box age alarm: lc-serve appends a RED line when the oldest
+# staged, not yet uploaded object has waited past SPIRA_LC_SHIP_MAX_AGE_SECS, and a CLEAR line
+# when it is back inside it. Nothing else writes the log.
+lc-ship|log|@SPIRA_RUN@/lc-ship.log
+
 # ROUND-SPILL-KEY warns SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS before the tailscale auth key spilled round
 # instances join the tailnet with expires (the expiry is recorded in <key file>.expires). It says
 # nothing while SPIRA_ROUND_VM_SPILL is unset.

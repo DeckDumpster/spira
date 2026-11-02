@@ -139,6 +139,9 @@ pub fn labels(bead_id: &str) -> Result<Vec<String>, String> {
 pub struct LiveBd;
 
 impl crate::callers::Bd for LiveBd {
+    fn planning_watermark(&mut self) -> Result<Option<u64>, String> {
+        crate::skew::parse_bd_kv(&run(&["kv", "get", crate::skew::BD_KV_KEY, "--json"])?)
+    }
     fn issue_type(&mut self, id: &str) -> Result<String, String> {
         let out = run(&["show", id, "--json"])?;
         let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;

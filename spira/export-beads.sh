@@ -28,6 +28,8 @@ trap 'rm -rf "$WORK"' EXIT INT TERM
 timeout 300 spira-lc content list --all --json >"$WORK/content.json" || { echo "export-beads: content list failed" >&2; exit 1; } # batch-job: full-store dump on a timer
 timeout 120 spira-lc list-all >"$WORK/state.tsv" || { echo "export-beads: lifecycle list failed" >&2; exit 1; } # batch-job: full-store dump on a timer
 timeout 60 spira-lc content memories --json >"$WORK/memories.json" || echo '{}' >"$WORK/memories.json" # batch-job: full-store dump on a timer
+# Both planes' planning watermarks, so a reader can tell how far apart the two reads were.
+watermarks="$(timeout 5 spira-lc plane-watermarks --manifest 2>&1)" || watermarks="Planning watermarks: unreadable ($watermarks)."
 
 previous=0
 [ -f "$OUT" ] && previous=$(grep -c '"id": *"sp-' "$OUT" 2>/dev/null || echo 0)
@@ -69,6 +71,8 @@ cat >"$SPIRA_WIKI/raw/spira-beads/manifest.md" <<MANIFEST
 Machine-written by \`spira/export-beads.sh\`. **Do not hand-edit**: the next run overwrites it.
 
 Snapshot: **$(date '+%Y-%m-%d %H:%M %Z')** — $count beads, newest created $newest.
+
+$watermarks
 
 \`spira.jsonl\` is the current mirror. A \`spira-pre-*.jsonl\` beside it is frozen history from before
 a store reset, never current. Each bead carries \`lifecycle_state\` (authoritative) beside the

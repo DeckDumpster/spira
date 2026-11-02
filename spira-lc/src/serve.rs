@@ -74,6 +74,33 @@ pub fn run(args: &[String]) -> i32 {
         }
     };
 
+    // lc-serve is the store's only opener, so it is the one process that can ship it off-box.
+    let shipping = match &control {
+        None => None,
+        Some(store) => {
+            let shipper = crate::lifecycle_run_dir().and_then(|run| match crate::durability::configured(store.contract().backend().clone(), &run) {
+                None => Ok(None),
+                Some(s) => s.map(Some),
+            });
+            match shipper {
+                Ok(None) => {
+                    eprintln!("spira-lc serve: SPIRA_LC_BACKUP_URL is empty: the control store is not shipped off-box");
+                    // A floor left by an earlier shipper would pin compaction for good.
+                    if let Err(e) = store.contract().backend().clear_compaction_floor() {
+                        eprintln!("spira-lc serve: the control store's compaction floor: {e}");
+                        return 2;
+                    }
+                    None
+                }
+                Ok(Some(s)) => Some(s),
+                Err(e) => {
+                    eprintln!("spira-lc serve: the control store's shipper: {e}");
+                    return 2;
+                }
+            }
+        }
+    };
+
     let conn = match Conn::from_env() {
         Ok(mut c) => {
             c.enable_live();
@@ -135,6 +162,17 @@ pub fn run(args: &[String]) -> i32 {
             }
             (Ok(_), Ok(_)) => {}
             (Err(e), _) | (_, Err(e)) => eprintln!("spira-lc serve: snapshot not written: {e}"),
+        }
+        if let Some(mut shipping) = shipping {
+            scope.spawn(move || {
+                let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
+                let metrics = spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-lc", Duration::from_millis(250));
+                let mut red = false;
+                loop {
+                    std::thread::sleep(shipping.every);
+                    red = crate::durability::tick(&mut shipping, red, &metrics, &runtime::ports::WallClock);
+                }
+            });
         }
         if let Some(store) = control {
             scope.spawn(move || loop {

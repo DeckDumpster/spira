@@ -1,0 +1,21 @@
+# The control store's off-box copy: the bead's own gate reports any branch in these that the
+# durability suite leaves uncovered.
+[[scope]]
+path = "state-store-sqlite/src/durability/revlog.rs"
+functions = ["parse_run_name", "parse_snapshot_name", "decode", "mains"]
+
+[[scope]]
+path = "state-store-sqlite/src/durability/restore.rs"
+functions = ["plan"]
+
+[[scope]]
+path = "state-store-sqlite/src/durability/drill.rs"
+functions = ["fold_compare", "render"]
+
+[[scope]]
+path = "state-store-sqlite/src/durability/ship.rs"
+functions = ["alarm", "Shipper::upload", "Shipper::prune", "Shipper::snapshot_step"]
+
+[[scope]]
+path = "state-store-sqlite/src/durability/put.rs"
+functions = ["Dest::parse"]

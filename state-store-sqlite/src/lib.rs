@@ -8,6 +8,7 @@
 //! rowid, which SQLite may reuse.
 
 pub mod bench;
+pub mod durability;
 pub mod live;
 
 use std::fs::{File, OpenOptions};
@@ -607,6 +608,16 @@ impl SqliteBackend {
     /// Compaction never drops a revision above `rev`; it persists across opens.
     pub fn set_compaction_floor(&self, rev: u64) -> Result<()> {
         set_meta(&lock(&self.0.writer).conn, "floor", rev)
+    }
+
+    /// Lifts the floor: compaction may drop any revision again.
+    pub fn clear_compaction_floor(&self) -> Result<()> {
+        exec(
+            &lock(&self.0.writer).conn,
+            "DELETE FROM meta WHERE name = 'floor'",
+            [],
+        )
+        .map(drop)
     }
 
     pub fn compacted(&self) -> Result<u64> {

@@ -216,7 +216,13 @@ _bs_say() {
 # An open bead with no lifecycle row is converged, not reported: create-bead is an ignoring
 # insert, so repeating it is safe. Only a repair that fails stays a SUSPECT.
 _bs_converge_rowless() {
-    local f="$1" id prio repo title args
+    local f="$1" id prio repo title args why
+    # After a restore bd can be hours behind the control plane: no row is created while the
+    # planes' planning watermarks disagree.
+    if ! why="$(timeout 30 spira-lc skew-check 2>&1)"; then # batch-job: one bounded point read
+        echo "bead-sweep: the rowless repair is refused: $why" >&2
+        return 0
+    fi
     while IFS=$'\t' read -r id prio repo title; do
         [ -n "$id" ] || continue
         args=(create-bead "$id" --priority "$prio" --title "$title")
