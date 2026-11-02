@@ -42,6 +42,11 @@ pub struct KeyInputs {
     /// crates says nothing about the others; None leaves every other key line as it was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unit: Option<UnitSelection>,
+    /// sp-7p5la8: `sandbox` when the run executes in the unit sandbox, so a sandbox verdict
+    /// never answers for a container run of the same tree, or the reverse; None (the
+    /// container) leaves every existing key line as it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,7 +90,8 @@ impl KeyInputs {
                 format!(" unit-base={} unit-crates={}", u.base, c.join(","))
             })
             .unwrap_or_default();
-        format!("{tests}{unit}")
+        let runner = self.runner.as_deref().map(|r| format!(" runner={r}")).unwrap_or_default();
+        format!("{tests}{unit}{runner}")
     }
 
     pub fn key(&self) -> String {
@@ -299,7 +305,16 @@ mod tests {
             artifacts_id: None,
             tests: None,
             unit: None,
+            runner: None,
         }
+    }
+
+    #[test]
+    fn a_sandbox_run_has_its_own_key_and_a_container_run_keeps_the_old_one() {
+        let container = inputs();
+        let sandbox = KeyInputs { runner: Some("sandbox".into()), ..inputs() };
+        assert_ne!(container.key(), sandbox.key(), "a sandbox verdict must never answer for a container run");
+        assert!(!format!("{:?}", container.tests_suffix()).contains("runner"), "the container's key line is unchanged");
     }
 
     #[test]

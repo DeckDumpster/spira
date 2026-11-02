@@ -576,3 +576,4 @@ testenv_unit_runner
 testenv_sandbox_target_root
 reconciler_deadman_secs
 reconciler_heartbeat_url
+testenv_sandbox_target_keep

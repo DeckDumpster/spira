@@ -214,6 +214,7 @@ testenv_unit_runner = "container"
 testenv_sandbox_target_root = ""
 reconciler_deadman_secs = 180
 reconciler_heartbeat_url = ""
+testenv_sandbox_target_keep = 24
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok

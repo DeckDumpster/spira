@@ -1,0 +1,3 @@
+# Tests that need a running system and so run in the testenv container even when
+# testenv.unit_runner = sandbox (sp-7p5la8): systemd units, a real dolt server, a real install.
+# One test name per line. A run whose --tests names any of these runs in the container.

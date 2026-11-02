@@ -468,6 +468,7 @@ testenv_queue_timeout = "900"
 testenv_registry = ""
 testenv_unit_runner = "container"
 testenv_sandbox_target_root = ""
+testenv_sandbox_target_keep = 24
 test_par = 4
 thrash_minutes = 45
 thrash_streak_cap = "2"
