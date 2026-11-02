@@ -143,7 +143,7 @@ fn every_world_gets_a_control_store_its_config_names_with_the_bead_state_verbs_l
     let dir = dir.canonicalize().unwrap();
     let cfg = std::fs::read_to_string(dir.join("config/sim.toml")).unwrap();
     assert!(cfg.contains(&format!("spira.lc_store_path={}\n", control_store(&dir).display())), "{cfg}");
-    assert!(cfg.contains("spira.lc_lifecycle_on_store=false\n"), "{cfg}");
+    assert!(cfg.contains("spira.lc_lifecycle_on_store=0\n"), "{cfg}");
     assert!(control_store(&dir).starts_with(&dir), "the store is the world's own");
     down(&dir, &fake).unwrap();
     assert!(!dir.exists());

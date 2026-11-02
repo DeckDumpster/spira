@@ -36,7 +36,7 @@ fn confined(path: &str) -> Result<(), String> {
 
 /// Whether the bead-state verbs, `history` and `event-seq` answer from the control store.
 fn lifecycle_on_store() -> Result<bool, String> {
-    spira_config::process::cfg_parse::<bool>("SPIRA_LC_LIFECYCLE_ON_STORE")
+    Ok(spira_config::process::cfg_parse::<u8>("SPIRA_LC_LIFECYCLE_ON_STORE")? != 0)
 }
 
 /// The shortest lock the contract grants, and so the shortest claim: `SPIRA_LC_LOCK_TTL_MIN_MS`.

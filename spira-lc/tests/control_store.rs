@@ -216,7 +216,7 @@ fn rc_with_the_path_unset_cannot_tell_naming_the_key() {
 
 #[test]
 fn with_the_path_set_and_the_lifecycle_key_off_list_reaches_dolt() {
-    let w = world(&[("SPIRA_LC_LIFECYCLE_ON_STORE", "false")]);
+    let w = world(&[("SPIRA_LC_LIFECYCLE_ON_STORE", "0")]);
     w.created();
     let (code, out) = w.run(&["list"], "");
     assert_eq!(code, 2, "{out}");
@@ -225,7 +225,7 @@ fn with_the_path_set_and_the_lifecycle_key_off_list_reaches_dolt() {
 
 #[test]
 fn with_the_lifecycle_key_on_list_answers_from_the_control_store() {
-    let w = world(&[("SPIRA_LC_LIFECYCLE_ON_STORE", "true")]);
+    let w = world(&[("SPIRA_LC_LIFECYCLE_ON_STORE", "1")]);
     w.created();
     let (code, out) = w.run(&["list"], "");
     assert_eq!(code, 0, "{out}");

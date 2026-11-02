@@ -965,7 +965,7 @@ pub fn lc_settings(world: &Path) -> Vec<(String, String)> {
         ("spira.lc_password_file".to_string(), world.join("config/lc-credential").display().to_string()),
         ("spira.run".to_string(), world.join("run").display().to_string()),
         ("spira.lc_store_path".to_string(), control_store(world).display().to_string()),
-        ("spira.lc_lifecycle_on_store".to_string(), "false".to_string()),
+        ("spira.lc_lifecycle_on_store".to_string(), "0".to_string()),
     ]
 }
 
