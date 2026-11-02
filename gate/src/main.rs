@@ -6,12 +6,9 @@ use gate::engine::{Args, Trial};
 use gate::real::{install_signal_handlers, Real};
 use std::path::PathBuf;
 
-/// The declared harness home: `SPIRA_HOME`, else `$SPIRA_RELEASE/spira`; neither set exits 2 naming them.
-fn default_home() -> PathBuf {
-    spira_config::resolve::locate_home_for_process().unwrap_or_else(|e| {
-        eprintln!("gate: {e}");
-        std::process::exit(2)
-    })
+/// The declared harness home: `SPIRA_HOME`, else `$SPIRA_RELEASE/spira`; neither set is a refusal naming them.
+fn default_home() -> Result<PathBuf, String> {
+    spira_config::resolve::locate_home_for_process()
 }
 
 const IN_UNIT_ENV: &str = "SPIRA_GATE_IN_UNIT";
@@ -64,6 +61,13 @@ fn main() {
         home = Some(PathBuf::from(argv.remove(1)));
         argv.remove(0);
     }
+    let home = match home.map(Ok).unwrap_or_else(default_home) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("gate: {e}");
+            std::process::exit(2);
+        }
+    };
     // `--release-bins` (sp-z61hj): on a PASS, build the judged tree's release binaries in the
     // gate tree for a hand landing (engine.rs `release_bins`).
     let mut release_bins = false;
@@ -87,14 +91,14 @@ fn main() {
                 }
             }
         }
-        let world = Real::new(home.clone().unwrap_or_else(default_home));
+        let world = Real::new(home.clone());
         let branch = rev.clone().unwrap_or_default();
-        let code = Trial::new(&world, Args { home: home.unwrap_or_else(default_home), branch, repo, release_bins: false }).warm(rev.as_deref());
+        let code = Trial::new(&world, Args { home, branch, repo, release_bins: false }).warm(rev.as_deref());
         std::process::exit(code);
     }
     if argv.first().map(String::as_str) == Some("--definition") {
         let repo = argv.get(1).filter(|r| !r.is_empty()).cloned();
-        let world = Real::new(home.clone().unwrap_or_else(default_home));
+        let world = Real::new(home.clone());
         match gate::engine::definition(&world, repo.as_deref()) {
             Ok(cmd) => {
                 println!("{cmd}");
@@ -111,7 +115,6 @@ fn main() {
         std::process::exit(1);
     };
     let repo = argv.get(1).filter(|r| !r.is_empty()).cloned();
-    let home = home.unwrap_or_else(default_home);
     if let Some(Err(why)) = std::env::current_exe()
         .map_err(|e| e.to_string())
         .map(|exe| confine(&exe, &std::env::args().skip(1).collect::<Vec<_>>()))

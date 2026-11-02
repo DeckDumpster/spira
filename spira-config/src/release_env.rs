@@ -138,14 +138,6 @@ pub fn ensure_release_path() -> Result<(), String> {
     Ok(())
 }
 
-/// [`ensure_release_path`], or exit 2 naming the refusal under `who` — for a `main`.
-pub fn ensure_release_path_or_exit(who: &str) {
-    if let Err(e) = ensure_release_path() {
-        eprintln!("{who}: {e}");
-        std::process::exit(2);
-    }
-}
-
 /// The program to exec for a release-shipped tool: its file in `<release>/bin` or
 /// `<release>/spira`, where the release is `$SPIRA_RELEASE`. Unset, or a tool the release does
 /// not ship, is a refusal naming the key — never a `PATH` lookup or a bare name.

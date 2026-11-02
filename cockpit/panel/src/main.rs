@@ -658,11 +658,6 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let op = if args.iter().any(|a| a == "--dump") { "dump" } else if args.iter().any(|a| a == "--once") { "once" } else { "interactive" };
     let run = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "panel", op);
-    panel();
-    run.end("ok");
-}
-
-fn panel() {
     // Read once, here, through the one door (per Ryan 2026-10-05: one source of config) —
     // never again via `std::env::var` or `spira_config::process::cfg` directly. Carried from
     // here into every write path and into `view_items`, via `App.cfg`.
@@ -670,10 +665,15 @@ fn panel() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("panel: {e}");
+            run.end("refused");
             std::process::exit(2);
         }
     };
+    panel(cfg);
+    run.end("ok");
+}
 
+fn panel(cfg: store::Cfg) {
     let shared: store::Shared = Arc::new(Mutex::new(store::Snapshot::default()));
     store::refresh(&shared, &cfg);
     store::spawn_refresher(Arc::clone(&shared), REFRESH, cfg.clone());

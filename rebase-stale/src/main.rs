@@ -140,7 +140,14 @@ fn dispatch() -> ExitCode {
         lock_wait: Duration::from_secs(60),
         run: run.clone(),
     };
-    let seam = LibSeam::new(home, declared(spira_config::lifecycle_row::lc_bin()), PathBuf::from(declared(spira_config::release_env::tool("queue"))), run.clone());
+    let (lc, queue) = match spira_config::lifecycle_row::lc_bin().and_then(|lc| Ok((lc, spira_config::release_env::tool("queue")?))) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("rebase-stale: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let seam = LibSeam::new(home, lc, PathBuf::from(queue), run.clone());
     let rules = Rules::standard(Some(run.join("rebase-stale.target")));
     let r = engine::run(&id, repo_arg.as_deref(), &config, &seam, &rules);
     if let Some(s) = r.stdout {
@@ -150,13 +157,4 @@ fn dispatch() -> ExitCode {
         eprintln!("{s}");
     }
     ExitCode::from(r.exit.code())
-}
-
-/// A value this binary cannot run without (a release tool, the child PATH), or exit 2 naming
-/// the refusal.
-fn declared<T>(v: Result<T, String>) -> T {
-    v.unwrap_or_else(|e| {
-        eprintln!("rebase-stale: {e}");
-        std::process::exit(2)
-    })
 }

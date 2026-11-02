@@ -211,7 +211,7 @@ fn dispatch(args: &[String]) -> i32 {
 }
 
 fn sifts_verb() -> Result<(), String> {
-    spira_config::release_env::ensure_release_path_or_exit("round-controller");
+    spira_config::release_env::ensure_release_path()?;
     round_controller::sifts::for_process(&mut std::io::stdout().lock())
 }
 

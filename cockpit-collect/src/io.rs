@@ -52,13 +52,16 @@ pub fn now() -> i64 {
         .unwrap_or(0)
 }
 
-/// The declared harness home: `SPIRA_HOME`, else `$SPIRA_RELEASE/spira`; neither set exits 2
-/// naming them.
+/// The declared harness home: `SPIRA_HOME`, else `$SPIRA_RELEASE/spira`; neither set is a
+/// refusal naming them.
+pub fn try_home_dir() -> Result<PathBuf, String> {
+    spira_config::resolve::locate_home_for_process().map_err(|e| format!("cockpit-collect: {e}"))
+}
+
+/// Panics when [`try_home_dir`] fails; `main` calls [`try_run_dir`], which resolves the home,
+/// first and refuses, so only a caller that skipped that check reaches the panic.
 pub fn home_dir() -> PathBuf {
-    spira_config::resolve::locate_home_for_process().unwrap_or_else(|e| {
-        eprintln!("cockpit-collect: {e}");
-        std::process::exit(2)
-    })
+    try_home_dir().unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// `spira/cockpit.sh` sourced `lib.sh` unconditionally at its own top level, before
@@ -90,7 +93,7 @@ pub fn home_dir() -> PathBuf {
 /// exactly as it was (the same as every `lib_call` already tolerates a bash failure
 /// returning `None`).
 pub fn bootstrap_config() {
-    let home = home_dir();
+    let Ok(home) = try_home_dir() else { return };
     let env_map: BTreeMap<String, String> = std::env::vars().collect();
     let repo_derived = spira_config::resolve::derive_repo_filesystem(&home, &env_map);
     let repo = env_map
@@ -174,7 +177,7 @@ pub fn max_dwarves() -> String {
 
 pub fn try_run_dir() -> Result<PathBuf, String> {
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    spira_config::resolve::resolve_run_dir(&env, &home_dir()).map_err(|e| format!("cockpit-collect: {e}"))
+    spira_config::resolve::resolve_run_dir(&env, &try_home_dir()?).map_err(|e| format!("cockpit-collect: {e}"))
 }
 
 /// Panics when [`try_run_dir`] fails; `main` calls `try_run_dir` first and refuses, so only

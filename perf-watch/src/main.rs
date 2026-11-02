@@ -161,7 +161,7 @@ fn run() -> Result<(), String> {
 }
 
 const HAPPY_USAGE: &str = "usage: perf-watch happy --repo DIR --sim BIN --scratch DIR --history FILE [--scenario NAME] [--seed N] [--goal-ms N] [--run-limit-s N]";
-const PRODUCTION_LOCATORS: [&str; 5] = ["SPIRA_LC_PASSWORD_FILE", "SPIRA_LC_SOCKET", "SPIRA_RUN", "SPIRA_DB", "SPIRA_TOML"];
+const PRODUCTION_LOCATORS: [&str; 5] = ["SPIRA_LC_PASSWORD_FILE", "SPIRA_LC_SOCKET", "SPIRA_RUN", "SPIRA_DB", spira_config::process::TOML_ENV];
 
 struct RealSim {
     repo: String,

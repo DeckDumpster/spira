@@ -43,7 +43,10 @@ const LOCK_EX: i32 = 2;
 const LOCK_NB: i32 = 4;
 
 fn main() -> ExitCode {
-    spira_config::release_env::ensure_release_path_or_exit("reconciler-flow");
+    if let Err(e) = spira_config::release_env::ensure_release_path() {
+        eprintln!("reconciler-flow: {e}");
+        std::process::exit(2);
+    }
     let args: Vec<String> = env::args().collect();
     if args.get(1).map(String::as_str) != Some("--pass") {
         eprintln!("usage: reconciler-flow --pass");
@@ -95,8 +98,9 @@ struct Seams {
 }
 
 impl Seams {
-    fn production() -> Seams {
-        Seams { tsd: declared(spira_config::release_env::tool("tsd-write")), duckdb: "duckdb".into(), export: declared(spira_config::release_env::tool("tsd-lifecycle-export")), mail: declared(spira_config::release_env::tool("mail")), date: "date".into(), bdq: declared(spira_config::release_env::tool("bdq")) }
+    fn production() -> Result<Seams, String> {
+        let tool = spira_config::release_env::tool;
+        Ok(Seams { tsd: tool("tsd-write")?, duckdb: "duckdb".into(), export: tool("tsd-lifecycle-export")?, mail: tool("mail")?, date: "date".into(), bdq: tool("bdq")? })
     }
 }
 
@@ -227,7 +231,7 @@ fn run_export(cfg: &Config) -> Result<(), String> {
 }
 
 fn run_pass() -> Result<(), String> {
-    let cfg = Config::from_process(Seams::production())?;
+    let cfg = Config::from_process(Seams::production()?)?;
 
     if cfg.spira_run.join("world.halted").exists() {
         log_print(&cfg, "reconciler-flow: skipped — world is halted");
@@ -404,13 +408,4 @@ fn run_pass() -> Result<(), String> {
 
     drop(lock_file);
     Ok(())
-}
-
-/// A value this binary cannot run without (a release tool, the child PATH), or exit 2 naming
-/// the refusal.
-fn declared<T>(v: Result<T, String>) -> T {
-    v.unwrap_or_else(|e| {
-        eprintln!("reconciler-flow: {e}");
-        std::process::exit(2)
-    })
 }

@@ -8,12 +8,9 @@ use ports::World;
 use real::Real;
 use std::path::PathBuf;
 
-/// The declared harness home: `SPIRA_HOME`, else `$SPIRA_RELEASE/spira`; neither set exits 2 naming them.
-fn default_home() -> PathBuf {
-    spira_config::resolve::locate_home_for_process().unwrap_or_else(|e| {
-        eprintln!("gate-diag: {e}");
-        std::process::exit(2)
-    })
+/// The declared harness home: `SPIRA_HOME`, else `$SPIRA_RELEASE/spira`; neither set is a refusal naming them.
+fn default_home() -> Result<PathBuf, String> {
+    spira_config::resolve::locate_home_for_process()
 }
 
 fn main() {
@@ -58,7 +55,13 @@ fn real_main(meter: &spira_otel::metrics::Run) -> i32 {
         return 1;
     };
     let root = PathBuf::from(root);
-    let home = home.unwrap_or_else(default_home);
+    let home = match home.map(Ok).unwrap_or_else(default_home) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("gate-diag: {e}");
+            return 1;
+        }
+    };
     // ONE SOURCE: the config file via spira_config::process::cfg_parse — no env fallback, no
     // literal default (per Ryan 2026-10-05: one source of config).
     let batch_tail_lines = match spira_config::process::cfg_parse::<usize>("SPIRA_BATCH_TAIL_LINES") {

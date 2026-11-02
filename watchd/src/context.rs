@@ -176,13 +176,7 @@ impl Context {
 
 /// Where this binary's own `conf.sh` lives: `$SPIRA_RELEASE/spira`, the release it runs from.
 /// Never `$SPIRA_HOME`, which is a caller's config input a fixture may point elsewhere; never
-/// a search upward from the executable. Unset exits 2 naming the key.
-pub fn home_dir() -> PathBuf {
-    match spira_config::release_env::release_root_for_process() {
-        Ok(r) => r.join("spira"),
-        Err(e) => {
-            eprintln!("watchd: {e}");
-            std::process::exit(2)
-        }
-    }
+/// a search upward from the executable. Unset is a refusal naming the key.
+pub fn home_dir() -> Result<PathBuf, String> {
+    spira_config::release_env::release_root_for_process().map(|r| r.join("spira"))
 }

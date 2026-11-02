@@ -464,11 +464,9 @@ fn cmd_stop(args: &[String]) -> i32 {
             }
             println!("  slaying {bead} (pid {pid})");
             let why_text = if why.is_empty() { "the world was stopped".to_string() } else { why.clone() };
-            let ok = Command::new(declared(spira_config::release_env::tool("slay")))
-                .args(["--bead", &bead, "--keep-work", "--why", &why_text])
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
+            let ok = spira_config::release_env::tool("slay").map_err(|e| eprintln!("    {e}")).is_ok_and(|slay| {
+                Command::new(slay).args(["--bead", &bead, "--keep-work", "--why", &why_text]).output().is_ok_and(|o| o.status.success())
+            });
             if !ok {
                 println!("    slay.sh could not stop {bead} — left running, say so rather than pretend");
             }
@@ -771,11 +769,9 @@ fn cmd_drain(args: &[String]) -> i32 {
                         continue;
                     }
                     println!("  slaying {bead} (pid {pid})");
-                    let ok = Command::new(declared(spira_config::release_env::tool("slay")))
-                        .args(["--bead", &bead, "--keep-work", "--reopen", "--why", "drain deadline reached"])
-                        .output()
-                        .map(|o| o.status.success())
-                        .unwrap_or(false);
+                    let ok = spira_config::release_env::tool("slay").map_err(|e| eprintln!("    {e}")).is_ok_and(|slay| {
+                        Command::new(slay).args(["--bead", &bead, "--keep-work", "--reopen", "--why", "drain deadline reached"]).output().is_ok_and(|o| o.status.success())
+                    });
                     if !ok {
                         eprintln!("    slay.sh could not stop {bead} — left running");
                     }
@@ -1168,13 +1164,4 @@ fn main() {
         spira_otel::oneshot::event("spira_world_state_changes", 1, &[("to", &cmd)]);
     }
     spira_otel::oneshot::exit(rc);
-}
-
-/// A value this binary cannot run without (a release tool, the child PATH), or exit 2 naming
-/// the refusal.
-fn declared<T>(v: Result<T, String>) -> T {
-    v.unwrap_or_else(|e| {
-        eprintln!("world: {e}");
-        std::process::exit(2)
-    })
 }

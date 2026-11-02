@@ -1478,10 +1478,11 @@ The repository declares `runtime = "<name>"` in `.spira/testenv.toml`, plus opti
 
 ## Rule `release-tool-exec`
 
-A release-shipped tool (every workspace `[[bin]]`, plus `bd`) is exec'd by the name
+A release-shipped tool (every workspace `[[bin]]`) is exec'd by the path
 `spira_config::release_env::tool("<name>")` returns, never as a bare literal: a unit or shell
-whose PATH lacks the release dies with exit 127. `tool` keeps a name already on PATH (stubs and
-overrides win) and otherwise names the file in `$SPIRA_RELEASE` or the exe's own release.
+whose PATH lacks the release dies with exit 127. `tool` names the file in `$SPIRA_RELEASE` and
+nothing else, refusing by name when it is unset (law-no-fallbacks). `bd` is not a release tool:
+it runs by name on the launcher PATH the declared toolchain provides.
 
 Flagged in non-test code: `Command::new("<tool>")`, the program slot of a `timeout` argument
 list (`.args([N, "<tool>"…`, `.arg(N).arg("<tool>")`, `"N".to_string(), "<tool>"`),

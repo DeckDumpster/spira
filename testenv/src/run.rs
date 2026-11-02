@@ -2893,7 +2893,6 @@ fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume:
 fn warm_conf_gen(wt: &Path) -> Option<Finish> {
     let conf_gen = wt.join("spira/conf-gen.sh");
     if conf_gen.exists() {
-        // batch-job: the tree's own conf-gen, part of a testenv trial bounded by its deadline
         let envs = match spira_config::release_env::child_path_env_for_process() {
             Ok(e) => e,
             Err(e) => {
@@ -2901,6 +2900,7 @@ fn warm_conf_gen(wt: &Path) -> Option<Finish> {
                 return Some(Finish::fault(3, "conf-gen", 0));
             }
         };
+        // batch-job: the tree's own conf-gen, part of a testenv trial bounded by its deadline
         match std::process::Command::new("bash").envs(envs)
             .arg(&conf_gen)
             .current_dir(wt)

@@ -1586,7 +1586,10 @@ fn path_attribute(o: &Opts) -> Result<ExitCode, String> {
 }
 
 fn main() -> std::process::ExitCode {
-    spira_config::release_env::ensure_release_path_or_exit("batcher-cut");
+    if let Err(e) = spira_config::release_env::ensure_release_path() {
+        eprintln!("batcher-cut: {e}");
+        std::process::exit(2);
+    }
     let first = std::env::args().nth(1);
     spira_otel::exit::finish(telemetry::run(&telemetry::sink(), first.as_deref(), || dispatch().code()))
 }

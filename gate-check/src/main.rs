@@ -8,12 +8,9 @@ use ports::World;
 use real::Real;
 use std::path::PathBuf;
 
-/// The declared harness home: `SPIRA_HOME`, else `$SPIRA_RELEASE/spira`; neither set exits 2 naming them.
-fn default_home() -> PathBuf {
-    spira_config::resolve::locate_home_for_process().unwrap_or_else(|e| {
-        eprintln!("gate-check: {e}");
-        std::process::exit(2)
-    })
+/// The declared harness home: `SPIRA_HOME`, else `$SPIRA_RELEASE/spira`; neither set is a refusal naming them.
+fn default_home() -> Result<PathBuf, String> {
+    spira_config::resolve::locate_home_for_process()
 }
 
 fn main() {
@@ -34,7 +31,13 @@ fn real_main() -> i32 {
         home = Some(PathBuf::from(argv.remove(1)));
         argv.remove(0);
     }
-    let home = home.unwrap_or_else(default_home);
+    let home = match home.map(Ok).unwrap_or_else(default_home) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("gate-check: {e}");
+            return 1;
+        }
+    };
     // ONE SOURCE: the config file via spira_config::process::cfg — no env fallback, no literal
     // default (per Ryan 2026-10-05: one source of config). A key the config file cannot resolve
     // is a refusal naming it, not a guessed value.

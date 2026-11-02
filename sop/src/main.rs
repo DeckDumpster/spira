@@ -43,7 +43,7 @@ fn env_or(name: &str, default: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| default.to_string())
 }
 
-fn build_env() -> Env {
+fn build_env() -> Result<Env, String> {
     let word_cap: usize = env_or("SOP_WORD_CAP", "250").parse().unwrap_or(250);
     let why_cap: usize = env_or("SOP_WHY_CAP", "400").parse().unwrap_or(400);
     let actor = std::env::var("BEADS_ACTOR")
@@ -60,21 +60,15 @@ fn build_env() -> Env {
     let cockpit_bash_prefix = cockpit_override.is_some();
     let cockpit_bin = match cockpit_override {
         Some(c) => c,
-        None => spira_config::release_env::tool("cockpit-collect").unwrap_or_else(|e| {
-            eprintln!("sop: {e}");
-            std::process::exit(2)
-        }),
+        None => spira_config::release_env::tool("cockpit-collect")?,
     };
-    Env { word_cap, why_cap, actor, cockpit_bin, cockpit_bash_prefix }
+    Ok(Env { word_cap, why_cap, actor, cockpit_bin, cockpit_bash_prefix })
 }
 
-/// The declared harness home: `SPIRA_HOME`, else `$SPIRA_RELEASE/spira`; neither set exits 2
-/// naming them.
-fn harness_home() -> PathBuf {
-    spira_config::resolve::locate_home_for_process().unwrap_or_else(|e| {
-        eprintln!("sop: {e}");
-        std::process::exit(2)
-    })
+/// The declared harness home: `SPIRA_HOME`, else `$SPIRA_RELEASE/spira`; neither set is a
+/// refusal naming them.
+fn harness_home() -> Result<PathBuf, String> {
+    spira_config::resolve::locate_home_for_process()
 }
 
 fn ledger_path() -> PathBuf {
@@ -86,7 +80,7 @@ fn ledger_path() -> PathBuf {
     // unset (law-a-binary-resolves-the-config-it-reads). REFUSES, named, rather than
     // guessing, when `spira_config` itself cannot resolve.
     let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    let run = spira_config::resolve::resolve_run_dir(&env_map, &harness_home()).unwrap_or_else(|e| {
+    let run = harness_home().and_then(|home| spira_config::resolve::resolve_run_dir(&env_map, &home)).unwrap_or_else(|e| {
         eprintln!("sop: FATAL: {e}");
         spira_otel::oneshot::exit(1);
     });
@@ -148,11 +142,13 @@ fn main() -> ExitCode {
 }
 
 fn dispatch(args: &[String]) -> ExitCode {
-    let home = harness_home();
-    if home.as_os_str().is_empty() {
-        eprintln!("sop: cannot source lib.sh: SPIRA_HOME is unset and lib.sh not found beside the binary; export SPIRA_HOME=<checkout>/spira");
-        return ExitCode::from(2);
-    }
+    let home = match harness_home() {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("sop: cannot source lib.sh: {e}");
+            return ExitCode::from(2);
+        }
+    };
     let spira_home = home.to_string_lossy().into_owned();
     let bd = RealBd { spira_home };
     let proc = RealProc;
@@ -182,7 +178,13 @@ fn dispatch(args: &[String]) -> ExitCode {
                     return ExitCode::from(1);
                 }
             };
-            let env = build_env();
+            let env = match build_env() {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("sop: {e}");
+                    return ExitCode::from(2);
+                }
+            };
             let r = logic::write(&bd, &proc, &env, key, &text, revive);
             let code = print_report(&r);
             if r.code == 0 {
@@ -241,7 +243,13 @@ fn dispatch(args: &[String]) -> ExitCode {
             };
             let mut text = String::new();
             let _ = std::io::stdin().read_to_string(&mut text);
-            let env = build_env();
+            let env = match build_env() {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("sop: {e}");
+                    return ExitCode::from(2);
+                }
+            };
             print_report(&logic::validate_cmd(&proc, key, &text, env.word_cap))
         }
         "applied" => {
@@ -296,7 +304,13 @@ fn dispatch(args: &[String]) -> ExitCode {
             } else {
                 None
             };
-            let env = build_env();
+            let env = match build_env() {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("sop: {e}");
+                    return ExitCode::from(2);
+                }
+            };
             let lp = ledger_path();
             let a = AppliedArgs { key, bead, pass, check, held, why: why_text.as_deref() };
             let clock = match make_clock() {
@@ -369,7 +383,13 @@ fn dispatch(args: &[String]) -> ExitCode {
                 Ok(c) => c,
                 Err(c) => return c,
             };
-            let env = build_env();
+            let env = match build_env() {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("sop: {e}");
+                    return ExitCode::from(2);
+                }
+            };
             let r = logic::retire(&bd, &clock, &env, key, reason);
             let code = print_report(&r);
             if r.code == 0 {
@@ -405,7 +425,13 @@ fn dispatch(args: &[String]) -> ExitCode {
             print_report(&logic::synth(&bd, &clock, out.as_deref()))
         }
         "lint" => {
-            let env = build_env();
+            let env = match build_env() {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("sop: {e}");
+                    return ExitCode::from(2);
+                }
+            };
             print_report(&logic::lint(&bd, env.word_cap))
         }
         _ => {

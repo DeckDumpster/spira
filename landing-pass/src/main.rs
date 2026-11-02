@@ -30,7 +30,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    spira_config::release_env::ensure_release_path_or_exit("landing-pass");
+    if let Err(e) = spira_config::release_env::ensure_release_path() {
+        eprintln!("landing-pass: {e}");
+        std::process::exit(2);
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cmd = match cli::parse(&args) {
         Ok(c) => c,
@@ -120,9 +123,16 @@ fn pr() -> i32 {
         out.log("landing-pass: repository map is not configured or unreadable — refusing to run");
         return 1;
     }
+    let bdq = match spira_config::release_env::tool("bdq") {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("landing-pass: {e}");
+            return 1;
+        }
+    };
     let beads = RealBeads {
         home: s.home.clone(),
-        bdq: release_tool("bdq"),
+        bdq,
         timeout: s.bd_timeout,
         home_repo: s.home_repo.clone(),
         fixture: s.bdjson_fixture.clone(),
@@ -189,9 +199,16 @@ fn land() -> i32 {
     let _ = fs::write(files.containers(), "");
 
     let out = Reporter::stdout(Some(files.mailbox()));
+    let bdq = match spira_config::release_env::tool("bdq") {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("landing-pass: {e}");
+            return 1;
+        }
+    };
     let beads = RealBeads {
         home: s.home.clone(),
-        bdq: release_tool("bdq"),
+        bdq,
         timeout: s.bd_timeout,
         home_repo: s.home_repo.clone(),
         fixture: s.bdjson_fixture.clone(),
@@ -309,9 +326,16 @@ fn noverdict_cmd(id: &str, branch: &str, repo: &str, reason: &str, outcome: &str
             return 1;
         }
     };
+    let bdq = match spira_config::release_env::tool("bdq") {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("landing-pass: {e}");
+            return 1;
+        }
+    };
     let beads = RealBeads {
         home: s.home.clone(),
-        bdq: release_tool("bdq"),
+        bdq,
         timeout: s.bd_timeout,
         home_repo: s.home_repo.clone(),
         fixture: s.bdjson_fixture.clone(),
@@ -340,9 +364,16 @@ fn ask_rebase_loop_cmd(args: &[String]) -> i32 {
             return 1;
         }
     };
+    let bdq = match spira_config::release_env::tool("bdq") {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("landing-pass: {e}");
+            return 1;
+        }
+    };
     let beads = RealBeads {
         home: s.home.clone(),
-        bdq: release_tool("bdq"),
+        bdq,
         timeout: s.bd_timeout,
         home_repo: s.home_repo.clone(),
         fixture: s.bdjson_fixture.clone(),
@@ -362,14 +393,6 @@ fn ask_rebase_loop_cmd(args: &[String]) -> i32 {
 /// (`$SPIRA_TOML`, per Ryan 2026-10-05), resolved once per process. No second,
 /// process-environment read behind it, and no crate-local derivation of `$SPIRA_HOME` to
 /// feed one: an unresolvable config is a refusal naming the key, never a guessed path.
-/// A release tool this pass cannot run without, or exit 2 naming the refusal.
-fn release_tool(name: &str) -> String {
-    spira_config::release_env::tool(name).unwrap_or_else(|e| {
-        eprintln!("landing-pass: {e}");
-        std::process::exit(2)
-    })
-}
-
 fn run_dir() -> Result<PathBuf, String> {
     let run = spira_config::process::cfg("SPIRA_RUN")?;
     if run.is_empty() {
@@ -406,7 +429,7 @@ fn resolve_beads(home: &Path) -> Result<RealBeads, String> {
     let ad_hoc = |k: &str, d: &str| env.get(k).filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| d.to_string());
     Ok(RealBeads {
         home: home.to_path_buf(),
-        bdq: release_tool("bdq"),
+        bdq: spira_config::release_env::tool("bdq")?,
         timeout: ad_hoc("BD_TIMEOUT", "180").parse().unwrap_or(180),
         home_repo: spira_config::process::cfg("SPIRA_HOME_REPO")?,
         fixture: env.get("SPIRA_BDJSON_FIXTURE").filter(|s| !s.is_empty()).map(PathBuf::from),

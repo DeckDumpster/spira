@@ -25,7 +25,7 @@ impl Real {
     /// Requires `SPIRA_TOML`, resolves `home` from `SPIRA_HOME` or `$SPIRA_RELEASE/spira`, then
     /// captures conf.sh's derived environment once. A missing declaration is a refusal naming it.
     pub fn try_new() -> Result<Real, String> {
-        crate::require_spec(std::env::var("SPIRA_TOML").ok().as_deref())?;
+        crate::require_spec(spira_config::process::spec().ok().as_deref())?;
         let home = spira_config::resolve::locate_home_for_process().map_err(|e| format!("doctor: {e}"))?;
         if !home.join("conf.sh").is_file() {
             return Err(format!("doctor: {} holds no conf.sh", home.display()));
@@ -142,8 +142,8 @@ impl World for Real {
     }
 
     fn release_status(&self) -> String {
-        // batch-job: release runs for as long as its work does
         let Ok(release) = spira_config::release_env::tool("release") else { return String::new() };
+        // batch-job: release runs for as long as its work does
         Command::new(release).arg("status").stdin(Stdio::null()).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
     }
 
