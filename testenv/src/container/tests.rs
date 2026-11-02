@@ -1348,6 +1348,25 @@ fn a_no_grace_down_force_removes_with_no_stop_and_drops_the_original_names_volum
     );
 }
 
+#[test]
+fn a_detached_teardown_leaves_the_testdb_template_cache_alone() {
+    let f = Fake::new();
+    booting(&f);
+    let c = conf("/h");
+    let d = Driver { host: &f, conf: &c };
+    assert_eq!(d.cmd_up(&args(&["--name", "c", "--testdb-cache", "/run/tpl-cache"])), 0);
+    let before = f.calls.borrow().len();
+    f.when(&["container", "exists"], 1, "");
+    assert_eq!(down(&f, &["--name", "c-reap-7", "--volumes-of", "c", "--no-grace"]), 0);
+    let teardown = f.calls.borrow()[before..].to_vec();
+    assert!(!teardown.is_empty());
+    // The cache is a bind mount, which `rm -f` never deletes; only named volumes go.
+    assert!(
+        !teardown.iter().flatten().any(|a| a.contains("tpl-cache")),
+        "teardown names the cache: {teardown:?}"
+    );
+}
+
 // ---- exec, probe, usage ------------------------------------------------------------------
 
 #[test]
