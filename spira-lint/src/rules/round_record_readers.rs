@@ -1,6 +1,7 @@
-//! `round-record-readers` — nothing outside `queue/` reads the round record file. The lifecycle
-//! batch is the one record of a round's state; `queue round status` is how operator-facing
-//! tooling asks for it.
+//! `round-record-readers` — nothing reads a round file (`round` or `round.<batch>` in a queue
+//! directory) but the queue's own pre-store reader and install's remover. The lifecycle batch is
+//! the one record of a round's state; `queue round status` is how operator-facing tooling asks
+//! for it.
 //!
 //! `round-records-live-only` — inside `queue/`, only `live_records` calls `open_records`, so no
 //! reader can take the record of an ended round for the open one.
@@ -24,19 +25,37 @@ impl Default for RoundRecordReaders {
 
 const NAME: &str = "round-record-readers";
 
-fn re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r#"queue/[^/\s"']+/round(["'\s)]|$)|queue_file\(\s*"round"\s*\)"#).expect("static regex"))
+/// The round files' only reader until the batch machine is on the control store, and the install
+/// step that removes them after; the reader's tests plant the files it reads.
+const OWNERS: [&str; 2] = ["queue/src/ops/round_files.rs", "install/src/round_records.rs"];
+const OWNER_TESTS: [&str; 2] = ["queue/src/tests.rs", "queue/src/tests/"];
+
+fn owns(path: &str) -> bool {
+    OWNERS.contains(&path) || OWNER_TESTS.iter().any(|t| path.starts_with(t))
 }
 
-fn scan(text: &str) -> Vec<(usize, String)> {
+fn re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"queue/[^/\s"']+/round(\.[^/\s"']*)?(["'\s)]|$)|queue_file\(\s*(&format!\(\s*)?"round(\.[^"]*)?"|"round\.\{"#)
+            .expect("static regex")
+    })
+}
+
+/// Inside the queue crate a constant holding the file's name is how a reader names it.
+fn queue_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"=\s*"round\.?"\s*;"#).expect("static regex"))
+}
+
+fn scan(text: &str, in_queue: bool) -> Vec<(usize, String)> {
     text.lines()
         .enumerate()
         .filter(|(_, l)| {
             let t = l.trim_start();
             !(t.starts_with('#') || t.starts_with("//"))
         })
-        .filter(|(_, l)| re().is_match(l))
+        .filter(|(_, l)| re().is_match(l) || (in_queue && queue_re().is_match(l)))
         .map(|(i, l)| (i + 1, l.trim_start().to_string()))
         .collect()
 }
@@ -47,7 +66,9 @@ impl Rule for RoundRecordReaders {
     }
 
     fn applies_to(&self, e: &Entry) -> bool {
-        (e.path.ends_with(".rs") || e.path.ends_with(".sh")) && !e.path.starts_with("queue/") && !e.path.starts_with("spira-lint/")
+        (e.path.ends_with(".rs") || e.path.ends_with(".sh"))
+            && !owns(&e.path)
+            && !e.path.starts_with("spira-lint/")
     }
 
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
@@ -56,7 +77,7 @@ impl Rule for RoundRecordReaders {
         let mut out = Vec::new();
         for e in &files {
             let Some(c) = tree.content(e) else { continue };
-            for (line, text) in scan(&String::from_utf8_lossy(c)) {
+            for (line, text) in scan(&String::from_utf8_lossy(c), e.path.starts_with("queue/")) {
                 out.push(Finding { rule: NAME, path: e.path.clone(), line: Some(line), message: text });
             }
         }
@@ -178,11 +199,27 @@ mod tests {
     }
 
     #[test]
-    fn the_verb_comments_the_queue_crate_and_longer_names_are_silent() {
+    fn a_planted_read_inside_the_queue_crate_is_caught_in_each_spelling() {
+        let t = TempDir::new("rrr-queue");
+        t.write(
+            "queue/src/ops/round.rs",
+            "const RECORD: &str = \"round\";\nconst EXTRA: &str = \"round.\";\nlet p = c.queue_file(&format!(\"round.{batch}\"));\nlet q = c.queue_file(\"round.b1\");\nlet r = dir.join(\"queue/spira/round.b1\");\n",
+        );
+        let found = run(&t, &["queue/src/ops/round.rs"]).unwrap();
+        assert_eq!(found.len(), 5, "{found:?}");
+    }
+
+    #[test]
+    fn the_verb_comments_the_owners_and_other_names_are_silent() {
         let t = TempDir::new("rrr-ok");
-        t.write("spira/a.sh", "out=\"$(queue round status)\"\n# queue/spira/round is gone\nls queue/spira/round.lock\n");
-        t.write("queue/src/r.rs", "let f = c.queue_file(\"round\");\n");
-        assert_eq!(run(&t, &["spira/a.sh", "queue/src/r.rs"]).unwrap(), Vec::<String>::new());
+        t.write("spira/a.sh", "out=\"$(queue round status)\"\n# queue/spira/round is gone\nls queue/spira/round-seq\n");
+        t.write("queue/src/ops/round_files.rs", "const RECORD: &str = \"round\";\nlet f = c.queue_file(RECORD);\n");
+        t.write("install/src/round_records.rs", "name == \"round\" || name.strip_prefix(\"round.\")\n");
+        t.write("queue/src/r.rs", "let s = c.queue_file(\"round-staged\");\nlet n = c.queue_file(\"round-seq\");\nlet v = \"round\".to_string();\n");
+        t.write("queue/src/tests/round.rs", "fs::write(t.qfile(\"round\"), rec);\n");
+        t.write("testenv/src/timing.rs", "pub const ROUND: &str = \"round\";\n");
+        let files = ["spira/a.sh", "queue/src/ops/round_files.rs", "install/src/round_records.rs", "queue/src/r.rs", "queue/src/tests/round.rs", "testenv/src/timing.rs"];
+        assert_eq!(run(&t, &files).unwrap(), Vec::<String>::new());
     }
 
     #[test]
