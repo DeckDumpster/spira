@@ -21,10 +21,11 @@ book() {  # book <entry> [NAME=value ...] — that runbook entry, with this worl
 }
 
 # world stop and world status ask systemd for the timers they act on; the world has no user bus, so
-# this answers every unit name as known and does nothing.
-export SPIRA_SYSTEMCTL="$SIM_WORLD/systemctl-stub"
-if [ ! -x "$SPIRA_SYSTEMCTL" ]; then
-    printf '#!/bin/sh\n[ "$2" = list-unit-files ] && case "$3" in *"*"*) ;; *) echo "$3 enabled" ;; esac\nexit 0\n' > "$SPIRA_SYSTEMCTL" && chmod +x "$SPIRA_SYSTEMCTL" || exit 9
+# a systemctl first on this step's PATH answers every unit name as known and does nothing.
+stub="$SIM_WORLD/cutover-stub-bin"
+if [ ! -x "$stub/systemctl" ]; then
+    mkdir -p "$stub" || exit 9
+    printf '#!/bin/sh\n[ "$2" = list-unit-files ] && case "$3" in *"*"*) ;; *) echo "$3 enabled" ;; esac\nexit 0\n' > "$stub/systemctl" && chmod +x "$stub/systemctl" || exit 9
 fi
 # round-recert finds its release from where its own executable is; the world's release links its
 # executables out of the build tree, so a release of links with a real round-recert in bin/ stands
@@ -45,7 +46,7 @@ if [ ! -x "$rel/bin/round-recert" ]; then
     printf '#!/bin/sh\nSIM_WORLD=%s exec %s "$@"\n' "'$SIM_WORLD'" "'$vm'" > "$rel/bin/round-vm" && chmod +x "$rel/bin/round-vm" || exit 9
     rm -f "$rel/bin/round-recert" && cp "$(readlink -f "$src/bin/round-recert")" "$rel/bin/round-recert" || exit 9
 fi
-export PATH="$rel/bin:$PATH"
+export PATH="$stub:$rel/bin:$PATH"
 [ -z "$final" ] || [ "$phase" = done ] || fail "the walk never finished"
 
 while :; do
