@@ -18,7 +18,7 @@ use crate::watchers::asks;
 use crate::watchers::design_asks::{self, Page};
 use crate::hunk;
 use crate::watchers::view;
-use crate::wiki_git::{git, overrides_apply, tmux};
+use crate::wiki_git::{git, lifecycle_export, overrides_apply, tmux};
 use crate::watchers::brain_dirty;
 use crate::watchers::supersede_duty::{self, Act, Held, Reading, Verb};
 use crate::watchers::bead_sweep::{self, Bead, Repair, Repaired, Reservation, Row, Stop};
@@ -515,11 +515,7 @@ impl World {
         if bin.is_empty() {
             return Err("bead-stage is behind the lifecycle log and no exporter is configured".into());
         }
-        let out = spira_config::bounded::bounded(bin).arg("lifecycle").stdin(std::process::Stdio::null()).output().map_err(|e| format!("{bin}: {e}"))?;
-        if out.status.success() {
-            return Ok(());
-        }
-        Err(format!("{bin} lifecycle: exit {}: {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
+        lifecycle_export(bin)
     }
 
     pub fn flow_snapshot(&self, input: &str) -> Result<String, String> {

@@ -1,6 +1,7 @@
 //! The processes the runtime launches, each under a deadline: git on the wiki checkout (not store
-//! state, so spira-lc has no verb over it), tmux on a view flip and `overrides.sh apply` on the
-//! overrides tick. Effects run on the offload pool, never on the event loop.
+//! state, so spira-lc has no verb over it), tmux on a view flip, `overrides.sh apply` on the
+//! overrides tick, and the bead-stage exporter on a reconciler-flow pass. Effects run on the offload
+//! pool, never on the event loop.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -44,6 +45,16 @@ pub fn overrides_apply() -> Result<String, String> {
     let out = spira_config::bounded::bounded("overrides.sh").arg("apply").stdin(Stdio::null()).output().map_err(|e| format!("overrides.sh: {e}"))?;
     let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     if out.status.success() { Ok(said.trim().to_string()) } else { Err(said.trim().to_string()) }
+}
+
+/// One `<exporter> lifecycle` run under `timeout`, which brings the `bead-stage` family up to the
+/// lifecycle log; a failed run names its exit code and what it said on stderr.
+pub fn lifecycle_export(bin: &str) -> Result<(), String> {
+    let out = spira_config::bounded::bounded(bin).arg("lifecycle").stdin(Stdio::null()).output().map_err(|e| format!("{bin}: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(format!("{bin} lifecycle: exit {}: {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
 }
 
 fn bounded(mut cmd: Command, deadline: Duration) -> Result<(Option<i32>, Vec<u8>), String> {
