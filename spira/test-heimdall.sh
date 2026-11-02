@@ -302,29 +302,6 @@ is "restart: the count rising again re-raises the same condition" "True 2" "$(re
 unset _rst
 
 echo
-echo "heimdall — deliberately halted loop does not raise sentinel-stalled:"
-
-heal; rm -f "$RUN/heimdall.state"
-printf '2026-01-01T00:00:00Z\nwhy: test halt\n' > "$RUN/world.halted"
-wedge
-heimdall >/dev/null; heimdall >/dev/null
-# An earlier test already created a closed sentinel-stalled bead. The check is that no
-# NEW OPEN bead was raised, not that no bead exists at all.
-_st_halt="$(alert_status sentinel-stalled)"
-case "$_st_halt" in
-    "-"|*" closed") ok "a halted loop does not raise sentinel-stalled" ;;
-    *) bad "halt suppress" "sentinel-stalled raised while loop is deliberately halted" ;;
-esac
-unset _st_halt
-rm -f "$RUN/world.halted"
-# Without the halt stamp, the same wedged log fires after CONFIRM=2 passes.
-heimdall >/dev/null; heimdall >/dev/null
-st_h="$(alert_status sentinel-stalled)"
-case "$st_h" in *" open") ok "lifting the halt stamp restores normal alerting" ;;
-    *) bad "halt lifted" "expected sentinel-stalled open after halt stamp removed, got [$st_h]" ;; esac
-unset st_h
-
-echo
 echo "heimdall — a deliberately halted loop does not raise sentinel-stalled:"
 
 heal; rm -f "$RUN/heimdall.state"
