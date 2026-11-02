@@ -53,3 +53,21 @@ functions = [
 [[scope]]
 path = "spira-lc/src/skew.rs"
 functions = ["judge", "served", "guard", "both", "parse_control", "parse_bd_kv"]
+
+# The cutover's import: its archive, its mapping onto the control plane's keys and its checks.
+[[scope]]
+path = "spira-lc/src/import/archive.rs"
+functions = ["row_key", "row_sha", "table_sum", "parse"]
+
+[[scope]]
+path = "spira-lc/src/import/map.rs"
+functions = ["import_rev", "audit_of", "record_of", "readiness_of", "mend_of", "runtime_key", "project"]
+
+[[scope]]
+path = "spira-lc/src/import/checks.rs"
+functions = ["loaded", "kind_of", "fields", "differences", "fold_bead", "delivery_seed", "delivery_exit", "fold_delivery", "fold_batch", "logs", "replay", "cursors"]
+
+# The parity tool's comparison.
+[[scope]]
+path = "spira-lc/src/parity.rs"
+functions = ["normalize", "strip", "first_difference", "judge", "ids_in", "calls", "enumerate", "run"]

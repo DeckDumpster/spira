@@ -24,7 +24,7 @@ fn num(row: &Value, col: &str) -> Option<i64> {
     cell(row, col).and_then(|s| s.parse().ok())
 }
 
-fn from_json(row: &Value) -> Result<MendingRow, DbError> {
+pub(crate) fn from_json(row: &Value) -> Result<MendingRow, DbError> {
     let state = MendingState::from_str(&cell(row, "state").unwrap_or_default())
         .ok_or_else(|| DbError::CannotTell(format!("bad state in mending row: {row}")))?;
     Ok(MendingRow {
