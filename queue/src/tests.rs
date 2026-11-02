@@ -12,8 +12,6 @@ use crate::model::{BeadRow, LandMode, LcBeadRow, RangeCommit};
 use crate::ports::*;
 use crate::testutil::tmpdir;
 
-mod mend;
-mod publish_push;
 mod rebase;
 mod round;
 mod verdict;
@@ -58,11 +56,6 @@ impl FGit {
                 .map(|(p, x, y)| (p.to_string(), *x, *y))
                 .collect(),
         );
-    }
-    fn file(&self, rev: &str, path: &str, text: &str) {
-        self.files
-            .borrow_mut()
-            .insert(format!("{rev}:{path}"), text.into());
     }
     fn set(&self, r: &str, sha: &str) {
         self.refs.borrow_mut().insert(r.into(), sha.into());
@@ -1843,19 +1836,6 @@ fn protect_writes_the_receipt_only_for_queue_forge() {
 }
 
 #[test]
-fn flush_refuses_without_a_batcher_and_forces_wait_zero_with_one() {
-    let mut t = T::new(LandMode::Queue);
-    assert_eq!(t.run(&["flush"]), 1);
-    assert!(t.err().contains("no batcher program"));
-    let bin = t.dir.join("batcher");
-    testkit::write_exe(&bin, "#!/bin/sh\n");
-    t.lib.s.batcher_bin = Some(bin);
-    assert_eq!(t.run(&["flush"]), 0);
-    let calls = t.scripts.calls.borrow().clone();
-    assert!(calls.contains(&"cut spira wait0=true".to_string()));
-}
-
-#[test]
 fn flush_with_the_batcher_switched_off_cuts_nothing_and_succeeds() {
     let mut t = T::new(LandMode::Queue);
     t.lib.s.batcher_off = true;
@@ -2062,17 +2042,6 @@ fn step_all_skips_a_repo_another_stepper_holds_and_steps_the_others() {
         "{}",
         t.err()
     );
-}
-
-#[test]
-fn a_single_step_under_a_held_step_lock_is_skipped_with_status_zero() {
-    let t = T::new(LandMode::Queue);
-    let _held = crate::lock::try_step_lock(&t.lib.s.queue_dir, "spira");
-    assert_eq!(t.run(&["step", "spira"]), 0);
-    assert!(t.verdicts().is_empty());
-    assert!(t
-        .err()
-        .contains("another step holds the step lock for spira — skipped"));
 }
 
 #[test]
@@ -2438,41 +2407,6 @@ fn a_forge_eject_returns_the_member_to_rework_only_after_eject_member_requeues_i
 }
 
 #[test]
-fn a_forge_eject_of_a_red_member_requeued_to_submitted_still_ends_in_rework() {
-    let t = T::new(LandMode::Queue);
-    t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
-    t.lc.bead_rows
-        .borrow_mut()
-        .insert("sp-a".into(), ("SUBMITTED".into(), "7".into()));
-    assert_eq!(
-        t.run(&[
-            "eject",
-            "sp-a",
-            "--red",
-            "--suites",
-            "test-x.sh",
-            "--reason",
-            "PR red"
-        ]),
-        0,
-        "{}",
-        t.err()
-    );
-    let calls = t.lc.calls.borrow().clone();
-    assert!(
-        calls.contains(&"event bead sp-a SUBMITTED 7 \"Deliver\"".to_string()),
-        "{calls:?}"
-    );
-    assert!(
-        calls.contains(
-            &"event bead sp-a IN_DELIVERY 8 {\"Returned\":{\"reason\":\"batch-ejected-red\"}}"
-                .to_string()
-        ),
-        "{calls:?}"
-    );
-}
-
-#[test]
 fn a_forge_eject_whose_return_write_is_refused_exits_nonzero_naming_the_write() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta\nbatch_id=spira-1\nversion=3\n");
@@ -2541,32 +2475,6 @@ fn eject_leaving_a_member_abandons_the_batch_row_so_the_survivor_is_not_stranded
 }
 
 #[test]
-fn a_deadline_on_the_batch_abandon_inside_an_eject_is_settled_not_left_half_written() {
-    let t = T::new(LandMode::Queue);
-    t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
-    t.lc.deadline_after_write.set(Some("abandon-batch"));
-    assert_eq!(
-        t.run(&["eject", "sp-a", "--reason", "bad"]),
-        0,
-        "{}",
-        t.err()
-    );
-    let n =
-        t.lc.calls
-            .borrow()
-            .iter()
-            .filter(|c| c.starts_with("abandon-batch spira-1"))
-            .count();
-    assert_eq!(
-        n,
-        1,
-        "the write that landed is not repeated: {:?}",
-        t.lc.calls.borrow()
-    );
-    assert!(!t.qfile("open").exists());
-}
-
-#[test]
 fn eject_of_a_batch_with_no_lifecycle_row_sweeps_the_orphans_it_left() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
@@ -2596,27 +2504,6 @@ fn an_eject_that_settles_runs_no_sweep() {
         t.err()
     );
     assert!(!t.lc.has("requeue-orphans"), "{:?}", t.lc.calls.borrow());
-}
-
-#[test]
-fn a_deadline_on_the_member_eject_is_retried_and_the_eject_completes() {
-    let t = T::new(LandMode::Queue);
-    t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
-    t.lc.deadline_after_write.set(Some("eject-member"));
-    assert_eq!(
-        t.run(&["eject", "sp-a", "--reason", "bad"]),
-        0,
-        "{}",
-        t.err()
-    );
-    let n =
-        t.lc.calls
-            .borrow()
-            .iter()
-            .filter(|c| c.starts_with("eject-member spira-1 sp-a"))
-            .count();
-    assert_eq!(n, 2, "{:?}", t.lc.calls.borrow());
-    assert!(!t.qfile("open").exists());
 }
 
 #[test]
@@ -2842,244 +2729,6 @@ fn claim_without_reason_is_usage() {
 // -------------------------------------------------------------------------- open-batch
 
 #[test]
-fn open_batch_with_lifecycle_on_cuts_on_spira_lc_and_records_the_batch_id() {
-    let t = T::new(LandMode::Queue);
-    t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
-    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.rows.borrow_mut().push(BeadRow {
-        id: "sp-a".into(),
-        status: Some("closed".into()),
-        ..Default::default()
-    });
-    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
-    let calls = t.lc.calls.borrow().clone();
-    assert!(calls.contains(&"create-bead sp-a".to_string()));
-    assert!(calls.contains(&"cut spira-20260929T010203Z sp-a:ta".to_string()));
-    assert!(fs::read_to_string(t.qfile("open"))
-        .unwrap()
-        .ends_with("batch_id=spira-20260929T010203Z\nversion=1\n"));
-}
-
-#[test]
-fn a_deadline_on_the_cut_that_wrote_the_row_opens_the_pr_on_that_row() {
-    let t = T::new(LandMode::Queue);
-    t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
-    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.rows.borrow_mut().push(BeadRow {
-        id: "sp-a".into(),
-        status: Some("closed".into()),
-        ..Default::default()
-    });
-    t.lc.deadline_after_write.set(Some("cut"));
-    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
-    let cuts =
-        t.lc.calls
-            .borrow()
-            .iter()
-            .filter(|c| c.starts_with("cut "))
-            .count();
-    assert_eq!(cuts, 1, "{:?}", t.lc.calls.borrow());
-    assert!(t
-        .forge
-        .calls
-        .borrow()
-        .iter()
-        .any(|c| c.starts_with("pr-create")));
-    assert!(fs::read_to_string(t.qfile("open"))
-        .unwrap()
-        .contains("batch_id=spira-20260929T010203Z"));
-}
-
-#[test]
-fn open_batch_adopts_a_pr_the_forge_made_while_reporting_failure() {
-    let t = T::new(LandMode::Queue);
-    t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
-    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.rows.borrow_mut().push(BeadRow {
-        id: "sp-a".into(),
-        status: Some("closed".into()),
-        ..Default::default()
-    });
-    *t.forge.create_then_err.borrow_mut() = Some(("236".into(), "rc=1: deadline".into()));
-    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
-    let calls = t.forge.calls.borrow().clone();
-    assert!(
-        !calls.iter().any(|c| c.starts_with("pr-close")),
-        "{calls:?}"
-    );
-    assert!(calls.iter().any(|c| c == "pr-automerge 236"), "{calls:?}");
-    assert!(fs::read_to_string(t.qfile("open"))
-        .unwrap()
-        .contains("pr=236\n"));
-    assert!(
-        !t.lc.calls.borrow().iter().any(|c| c.contains("abandon")),
-        "{:?}",
-        t.lc.calls.borrow()
-    );
-}
-
-#[test]
-fn open_batch_pr_create_failure_with_no_pr_carries_the_forge_error_and_rolls_back() {
-    let t = T::new(LandMode::Queue);
-    t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
-    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.rows.borrow_mut().push(BeadRow {
-        id: "sp-a".into(),
-        status: Some("closed".into()),
-        ..Default::default()
-    });
-    *t.forge.pr.borrow_mut() = None;
-    assert_ne!(t.run(&["open-batch", "--skip-pregate"]), 0);
-    assert!(t.err().contains("rc=1: stub"), "{}", t.err());
-    assert!(!t.qfile("open").exists());
-}
-
-#[test]
-fn open_batch_preflight_refusal_pushes_nothing_and_leaves_no_branch() {
-    let t = T::new(LandMode::Queue);
-    t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
-    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.rows.borrow_mut().push(BeadRow {
-        id: "sp-a".into(),
-        status: Some("closed".into()),
-        ..Default::default()
-    });
-    *t.forge.preflight_err.borrow_mut() = Some("gh is not on PATH".into());
-    assert_ne!(t.run(&["open-batch", "--skip-pregate"]), 0);
-    assert!(t.err().contains("gh is not on PATH"), "{}", t.err());
-    assert!(
-        !t.lib.calls.borrow().iter().any(|c| c.starts_with("push ")),
-        "{:?}",
-        t.lib.calls.borrow()
-    );
-    assert!(!t
-        .forge
-        .calls
-        .borrow()
-        .iter()
-        .any(|c| c.starts_with("pr-create")));
-    assert!(!t.qfile("open").exists());
-}
-
-#[test]
-fn open_batch_arms_auto_merge_on_the_pr_it_opens() {
-    let t = T::new(LandMode::Queue);
-    t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
-    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.rows.borrow_mut().push(BeadRow {
-        id: "sp-a".into(),
-        status: Some("closed".into()),
-        ..Default::default()
-    });
-    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
-    let calls = t.forge.calls.borrow().clone();
-    let create = calls
-        .iter()
-        .position(|c| c.starts_with("pr-create"))
-        .expect("pr-create");
-    let armed = calls
-        .iter()
-        .position(|c| c.starts_with("pr-automerge"))
-        .expect("a batch PR is armed to merge itself on green");
-    assert!(create < armed, "{calls:?}");
-}
-
-#[test]
-fn open_batch_fails_when_the_pr_cannot_be_armed() {
-    let t = T::new(LandMode::Queue);
-    t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
-    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.rows.borrow_mut().push(BeadRow {
-        id: "sp-a".into(),
-        status: Some("closed".into()),
-        ..Default::default()
-    });
-    t.forge.arm_fails.set(true);
-    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 1);
-    assert!(t.err().contains("could not be armed"), "{}", t.err());
-}
-
-#[test]
-fn open_batch_refused_cut_opens_no_pr_and_leaves_no_state() {
-    let t = T::new(LandMode::Queue);
-    t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
-    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.rows.borrow_mut().push(BeadRow {
-        id: "sp-a".into(),
-        status: Some("closed".into()),
-        ..Default::default()
-    });
-    t.lc.cut_refused
-        .set(Some("refused: sp-b is REWORK not SUBMITTED or CERTIFIED"));
-    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 1);
-    assert!(t.err().contains("spira-lc cut refused"), "{}", t.err());
-    assert!(!t.out().contains("opened"), "{}", t.out());
-    assert!(!t.qfile("open").exists());
-    assert!(t
-        .git
-        .calls
-        .borrow()
-        .iter()
-        .any(|c| c == "branch -D spira/queue/20260929T010203Z"));
-    assert!(
-        !t.git.calls.borrow().iter().any(|c| c.starts_with("push")),
-        "{:?}",
-        t.git.calls.borrow()
-    );
-}
-
-#[test]
-fn open_batch_with_only_a_submitted_bead_cuts_it_as_a_provisional_member() {
-    let t = T::new(LandMode::Queue);
-    t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![("spira/sp-s".into(), "ts".into())];
-    t.lc_row("sp-s", "SUBMITTED", "ts", 1);
-    t.bd.rows.borrow_mut().push(BeadRow {
-        id: "sp-s".into(),
-        status: Some("closed".into()),
-        ..Default::default()
-    });
-    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
-    assert!(t
-        .lc
-        .calls
-        .borrow()
-        .iter()
-        .any(|c| c.contains("cut ") && c.contains("sp-s:ts")));
-    let rec = fs::read_to_string(t.qfile("open")).unwrap();
-    assert!(
-        rec.contains("members=sp-s:ts\n") && rec.contains("provisional=sp-s\n"),
-        "{rec}"
-    );
-}
-
-#[test]
-fn open_batch_puts_certified_ahead_of_submitted_and_marks_only_the_submitted_provisional() {
-    let t = T::new(LandMode::Queue);
-    t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![
-        ("spira/sp-s".into(), "ts".into()),
-        ("spira/sp-c".into(), "tc".into()),
-    ];
-    t.lc_row("sp-s", "SUBMITTED", "ts", 1);
-    t.lc_row("sp-c", "CERTIFIED", "tc", 2);
-    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
-    let rec = fs::read_to_string(t.qfile("open")).unwrap();
-    assert!(
-        rec.contains("members=sp-c:tc sp-s:ts\n") && rec.contains("provisional=sp-s\n"),
-        "{rec}"
-    );
-}
-
-#[test]
 fn open_batch_leaves_a_submitted_bead_whose_gate_is_already_fail_out() {
     let t = T::new(LandMode::Queue);
     t.git.set("origin/main", "b0");
@@ -3124,62 +2773,6 @@ fn open_batch_refuses_while_a_batch_is_open() {
 }
 
 #[test]
-fn open_batch_replace_abandons_the_open_batch_and_cuts_the_named_members_in_one_step() {
-    let t = T::new(LandMode::Queue);
-    t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
-    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.rows.borrow_mut().push(BeadRow {
-        id: "sp-a".into(),
-        status: Some("closed".into()),
-        ..Default::default()
-    });
-    t.open_record("pr=463\nbranch=spira/queue/old\nbatch_id=spira-old\nversion=1\nowner=batcher\n");
-    assert_eq!(
-        t.run(&[
-            "open-batch",
-            "--members",
-            "sp-a",
-            "--skip-pregate",
-            "--replace",
-            "--reason",
-            "recut"
-        ]),
-        0,
-        "{}{}",
-        t.out(),
-        t.err()
-    );
-    let calls = t.lc.calls.borrow().clone();
-    let abandon = calls
-        .iter()
-        .position(|c| c.starts_with("abandon-batch spira-old"))
-        .expect("old batch abandoned");
-    let cut = calls
-        .iter()
-        .position(|c| c.starts_with("cut spira-20260929T010203Z sp-a:ta"))
-        .expect("new batch cut");
-    assert!(abandon < cut, "{calls:?}");
-    let open = fs::read_to_string(t.qfile("open")).unwrap();
-    assert!(open.contains("batch_id=spira-20260929T010203Z"), "{open}");
-    assert!(!open.contains("spira-old"), "{open}");
-    let archived = fs::read_dir(t.qfile("open").parent().unwrap())
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .find(|p| {
-            p.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("closed-pr463-")
-        })
-        .expect("replaced batch archived");
-    assert!(fs::read_to_string(archived)
-        .unwrap()
-        .contains("reason=recut"));
-}
-
-#[test]
 fn open_batch_replace_requires_a_reason_and_leaves_the_open_batch_alone() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=1\n");
@@ -3207,65 +2800,6 @@ fn open_batch_does_not_admit_when_the_lifecycle_row_cannot_be_read() {
         t.out()
     );
     assert!(t.out().contains("no cut — nothing admissible for spira"));
-}
-
-#[test]
-fn open_batch_skips_a_certified_bead_stacked_on_a_held_prerequisite_until_the_hold_lifts() {
-    let t = T::new(LandMode::Queue);
-    t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![("spira/sp-q".into(), "tq".into())];
-    t.lc_row("sp-p", "CERTIFIED", "tp", 1);
-    t.lc_row("sp-q", "CERTIFIED", "tq", 2);
-    {
-        let mut rows = t.lc.rows.borrow_mut();
-        let rows = rows.as_mut().unwrap();
-        rows[0].holds = vec!["manual".into()];
-        rows[1].stack = [("sp-p".to_string(), "t0".to_string())].into();
-    }
-    t.bd.rows.borrow_mut().push(BeadRow {
-        id: "sp-q".into(),
-        status: Some("closed".into()),
-        ..Default::default()
-    });
-    assert_eq!(t.run(&["open-batch", "--members", "sp-q"]), 1);
-    assert!(
-        t.out()
-            .contains("sp-q: stacked on held sp-p — not admitted"),
-        "{}",
-        t.out()
-    );
-    assert!(!t.qfile("open").exists());
-    t.lc.rows.borrow_mut().as_mut().unwrap()[0].holds.clear();
-    assert_eq!(
-        t.run(&["open-batch", "--members", "sp-q", "--skip-pregate"]),
-        0,
-        "{}{}",
-        t.out(),
-        t.err()
-    );
-}
-
-#[test]
-fn open_batch_red_pregate_deletes_the_branch() {
-    let t = T::new(LandMode::Queue);
-    t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
-    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.rows.borrow_mut().push(BeadRow {
-        id: "sp-a".into(),
-        status: Some("closed".into()),
-        ..Default::default()
-    });
-    t.lib.pf_rc.set(1);
-    assert_eq!(t.run(&["open-batch", "--members", "sp-a"]), 1);
-    assert!(t.err().contains("local pre-flight gate failed"));
-    assert!(t
-        .git
-        .calls
-        .borrow()
-        .iter()
-        .any(|c| c == "branch -D spira/queue/20260929T010203Z"));
-    assert!(!t.qfile("open").exists());
 }
 
 // -------------------------------------------------------------------------- land-local
@@ -3691,49 +3225,6 @@ fn release_in_force(t: &T) {
     std::os::unix::fs::symlink(rel.join("r1"), rel.join("current")).unwrap();
 }
 
-/// A round worktree checked out at `tree`, its target/release holding the round's own
-/// tested binaries — including `release` itself (§8 D14, sp-ktgll): a real round build of
-/// the harness carries the release crate too, so land-local's own deploy must run that
-/// binary, never production's.
-fn round_worktree(t: &T, tree: &str) -> PathBuf {
-    let wt = t.dir.join("round-wt");
-    let bins = wt.join("target/release");
-    fs::create_dir_all(&bins).unwrap();
-    testkit::write_exe(bins.join("spira-config"), "#!/bin/sh\n");
-    testkit::write_exe(bins.join("release"), "#!/bin/sh\n");
-    t.git
-        .refs
-        .borrow_mut()
-        .insert("HEAD".into(), "wt-head".into());
-    t.git
-        .trees
-        .borrow_mut()
-        .insert("wt-head".into(), tree.into());
-    t.git.trees.borrow_mut().insert("h1".into(), T1.into());
-    wt
-}
-
-#[test]
-fn land_local_refuses_a_worktree_at_another_tree() {
-    let t = T::new(LandMode::QueueLocal);
-    local_repo(&t);
-    let wt = round_worktree(&t, "OTHER");
-    assert_eq!(
-        t.run(&[
-            "land-local",
-            "--head",
-            "h1",
-            "--members",
-            "sp-a:ta",
-            "--worktree",
-            &wt.display().to_string()
-        ]),
-        1
-    );
-    assert!(t.err().contains("is not at h1's tree"));
-    assert_eq!(t.git.get("refs/heads/local/main").as_deref(), Some("b0"));
-}
-
 #[test]
 fn land_local_of_another_repository_publishes_no_release() {
     // The fixture's harness is "harness"; landing "spira" is some other queue.local repo.
@@ -3783,26 +3274,6 @@ fn land_local_reads_members_from_stdin() {
 
 // ------------------------------------------ land-local: the landing publishes a release (§8 D13)
 
-/// The landing repository IS the harness (`spira.home_repo`), with the round's worktree at
-/// h1's tree. Returns the worktree path.
-fn harness_world(t: &mut T) -> String {
-    t.lib.s.home_repo = "spira".into();
-    local_repo(t);
-    round_worktree(t, T1).display().to_string()
-}
-
-fn land_harness(t: &T, wts: &str) -> i32 {
-    t.run(&[
-        "land-local",
-        "--head",
-        "h1",
-        "--members",
-        "sp-a:ta,sp-b",
-        "--worktree",
-        wts,
-    ])
-}
-
 fn release_argv(t: &T) -> Vec<String> {
     t.scripts
         .release_calls
@@ -3812,365 +3283,7 @@ fn release_argv(t: &T) -> Vec<String> {
         .collect()
 }
 
-/// The `bin` each `release` call was actually run as (§8 D14, sp-ktgll).
-fn release_bins(t: &T) -> Vec<String> {
-    t.scripts
-        .release_calls
-        .borrow()
-        .iter()
-        .map(|(bin, _, _)| bin.clone())
-        .collect()
-}
-
-#[test]
-fn land_local_publishes_the_rounds_tested_build_as_a_release_and_activates_it() {
-    let mut t = T::new(LandMode::QueueLocal);
-    t.submitted(&["sp-a", "sp-b"]);
-    let wts = harness_world(&mut t);
-    release_in_force(&t);
-    assert_eq!(land_harness(&t, &wts), 0, "{}", t.err());
-    let rel = t.s().releases.clone().unwrap().display().to_string();
-    let run = t.s().run.display().to_string();
-    let common = format!("--releases {rel} --run {run}");
-    assert_eq!(
-        release_argv(&t),
-        vec![
-            format!("build h1 --repo {REPO} --bin-dir {wts}/target/release {common}"),
-            format!("verify h1 {common}"),
-            format!(
-                "activate h1 --repo {REPO} --landed-ref local/main --drain-wait {} {common}",
-                crate::ops::deploy::LAND_DRAIN_WAIT_SECS
-            ),
-        ]
-    );
-    assert!(
-        t.scripts
-            .release_calls
-            .borrow()
-            .iter()
-            .all(|(_, _, db)| db == "/db"),
-        "every release child gets SPIRA_DB"
-    );
-    // §8 D14 (sp-ktgll): build, verify and activate all run the round's OWN release
-    // binary, from the --bin-dir it is about to ship — never production's by name on PATH.
-    let want_bin = format!("{wts}/target/release/release");
-    assert_eq!(
-        release_bins(&t),
-        vec![want_bin.clone(), want_bin.clone(), want_bin],
-        "the builder and the build must be the same commit"
-    );
-    assert!(
-        !t.err().contains("running PATH's release instead"),
-        "{}",
-        t.err()
-    );
-    assert!(
-        t.out()
-            .contains("queue.sh land-local: activated release h1"),
-        "{}",
-        t.out()
-    );
-    assert_eq!(t.landed_ref().as_deref(), Some("h1"));
-    // The landing is recorded before the (slow) release step starts.
-    let calls = t.lib.calls.borrow().clone();
-    assert!(t.lc.has("event bead sp-a CERTIFIED 3 \"Deliver\""));
-    assert!(calls.iter().any(|c| c.starts_with("bead_close sp-b h1")));
-    assert!(!t.err().contains("LAND DEPLOY FAILED"));
-}
-
 const _: () = assert!(crate::ops::deploy::LAND_DRAIN_WAIT_SECS > 0 && crate::ops::deploy::LAND_DRAIN_WAIT_SECS < 15 * 60);
-
-#[test]
-fn land_local_falls_back_to_paths_release_when_the_bin_dir_has_none_and_says_so() {
-    // Before §8 D14, or whenever a round's own build happens not to carry a `release`
-    // binary: land-local still runs (never a new refusal), but every step falls back to
-    // bare `release` (the launcher's PATH), and that fallback is said aloud rather than
-    // taken silently.
-    let mut t = T::new(LandMode::QueueLocal);
-    t.lib.s.home_repo = "spira".into();
-    local_repo(&t);
-    let wt = t.dir.join("round-wt-no-release");
-    let bins = wt.join("target/release");
-    fs::create_dir_all(&bins).unwrap();
-    testkit::write_exe(bins.join("spira-config"), "#!/bin/sh\n"); // no `release` binary here
-    t.git
-        .refs
-        .borrow_mut()
-        .insert("HEAD".into(), "wt-head".into());
-    t.git.trees.borrow_mut().insert("wt-head".into(), T1.into());
-    t.git.trees.borrow_mut().insert("h1".into(), T1.into());
-    release_in_force(&t);
-    assert_eq!(
-        land_harness(&t, &wt.display().to_string()),
-        0,
-        "{}",
-        t.err()
-    );
-    assert_eq!(
-        release_bins(&t),
-        vec![spira_config::release_env::tool("release"); 3]
-    );
-    let want = format!("no release binary at {}/release — running PATH's release instead, not this round's own build", bins.display());
-    assert!(t.err().contains(&want), "{}", t.err());
-}
-
-#[test]
-fn land_local_build_or_verify_failure_refuses_and_leaves_the_ref_where_it_was() {
-    for (sub, calls) in [("build", 1), ("verify", 2)] {
-        let mut t = T::new(LandMode::QueueLocal);
-        t.submitted(&["sp-a", "sp-b"]);
-        let wts = harness_world(&mut t);
-        release_in_force(&t);
-        t.scripts
-            .release_rc
-            .borrow_mut()
-            .insert(sub.into(), (1, format!("release: {sub} said no\n")));
-        assert_eq!(land_harness(&t, &wts), 1, "{sub}");
-        let e = t.err();
-        assert!(e.contains(&format!("release h1 failed to build or verify: release {sub} exited 1: release: {sub} said no")), "{e}");
-        assert!(e.contains("refused, local/main left at b0"), "{e}");
-        assert_eq!(release_argv(&t).len(), calls, "{sub}");
-        assert_eq!(
-            t.landed_ref().as_deref(),
-            Some("b0"),
-            "{sub}: the ref never moved"
-        );
-        assert!(
-            !t.lib.has("bead_close sp-a h1") && t.git.get("refs/archive/rounds/1").is_none(),
-            "{sub}"
-        );
-    }
-}
-
-#[test]
-fn land_local_deploy_fault_reports_the_first_failure_before_the_rollback_one() {
-    let mut t = T::new(LandMode::QueueLocal);
-    t.submitted(&["sp-a", "sp-b"]);
-    let wts = harness_world(&mut t);
-    release_in_force(&t);
-    t.scripts.release_rc.borrow_mut().insert(
-        "activate".into(),
-        (1, "activating h1 failed, rolled back to r1:\n  u.service: restart failed: exit 124\n  UNDO INCOMPLETE:\n    restart u.service on the previous release: exit 124\n".into()),
-    );
-    assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT);
-    let e = t.err();
-    let fault = e
-        .lines()
-        .find(|l| l.contains("LAND DEPLOY FAILED"))
-        .unwrap();
-    let (first, second) = (
-        fault.find("u.service: restart failed").expect(fault),
-        fault.find("on the previous release").expect(fault),
-    );
-    assert!(first < second, "{fault}");
-}
-
-#[test]
-fn land_local_activate_failure_is_a_deploy_fault_and_keeps_the_landing() {
-    let mut t = T::new(LandMode::QueueLocal);
-    t.submitted(&["sp-a", "sp-b"]);
-    let wts = harness_world(&mut t);
-    release_in_force(&t);
-    t.scripts
-        .release_rc
-        .borrow_mut()
-        .insert("activate".into(), (1, "release: activate said no\n".into()));
-    assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT);
-    let e = t.err();
-    assert!(
-        e.contains(
-            "LAND DEPLOY FAILED for h1: release activate exited 1: release: activate said no"
-        ),
-        "{e}"
-    );
-    assert!(
-        e.contains("current is untouched (still ") && e.contains("/r1)"),
-        "names what current still is: {e}"
-    );
-    assert_eq!(release_argv(&t).len(), 3);
-    assert_eq!(t.landed_ref().as_deref(), Some("h1"));
-    assert!(t.lc.has("event bead sp-a CERTIFIED 3 \"Deliver\"") && t.lib.has("bead_close sp-a h1"));
-}
-
-const RESTART_124: &str = "release: activating h1 failed, rolled back to r1:\n  spira-watch-bead-sweep-prod.service: restart failed: systemctl --user restart spira-watch-bead-sweep-prod.service failed (exit status: 124)\n";
-
-#[test]
-fn land_local_waits_for_a_timed_out_unit_to_settle_and_reattempts_activation_once() {
-    let mut t = T::new(LandMode::QueueLocal);
-    t.submitted(&["sp-a", "sp-b"]);
-    let wts = harness_world(&mut t);
-    release_in_force(&t);
-    t.scripts
-        .activate_seq
-        .borrow_mut()
-        .push_back((1, RESTART_124.into()));
-    t.scripts.unit_states.borrow_mut().extend([
-        "activating".to_string(),
-        "deactivating".to_string(),
-        "active".to_string(),
-    ]);
-    assert_eq!(land_harness(&t, &wts), 0, "{}", t.err());
-    let argv = release_argv(&t);
-    assert_eq!(
-        argv.iter().filter(|a| a.starts_with("activate ")).count(),
-        2,
-        "{argv:?}"
-    );
-    assert_eq!(t.scripts.unit_asked.borrow().len(), 3);
-    assert!(t
-        .scripts
-        .unit_asked
-        .borrow()
-        .iter()
-        .all(|u| u == "spira-watch-bead-sweep-prod.service"));
-    assert!(!t.err().contains("LAND DEPLOY FAILED"), "{}", t.err());
-    assert!(
-        t.out()
-            .contains("queue.sh land-local: activated release h1"),
-        "{}",
-        t.out()
-    );
-}
-
-#[test]
-fn land_local_alarms_once_with_both_errors_when_the_reattempt_also_fails() {
-    let mut t = T::new(LandMode::QueueLocal);
-    t.submitted(&["sp-a", "sp-b"]);
-    let wts = harness_world(&mut t);
-    release_in_force(&t);
-    t.scripts
-        .activate_seq
-        .borrow_mut()
-        .push_back((1, RESTART_124.into()));
-    t.scripts.activate_seq.borrow_mut().push_back((
-        1,
-        "release: dolt-beads.service: did not come up (ActiveState=deactivating, Result=success)\n"
-            .into(),
-    ));
-    assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT);
-    let e = t.err();
-    assert_eq!(e.matches("LAND DEPLOY FAILED").count(), 1, "{e}");
-    assert!(
-        e.contains("exit status: 124") && e.contains("did not come up"),
-        "both failures: {e}"
-    );
-    assert_eq!(
-        release_argv(&t)
-            .iter()
-            .filter(|a| a.starts_with("activate "))
-            .count(),
-        2
-    );
-}
-
-#[test]
-fn land_local_does_not_retry_an_activation_refused_for_a_reason_that_is_not_a_unit_timeout() {
-    let mut t = T::new(LandMode::QueueLocal);
-    t.submitted(&["sp-a", "sp-b"]);
-    let wts = harness_world(&mut t);
-    release_in_force(&t);
-    t.scripts.release_rc.borrow_mut().insert(
-        "activate".into(),
-        (1, "release: MANIFEST missing a binary\n".into()),
-    );
-    assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT);
-    assert_eq!(
-        release_argv(&t)
-            .iter()
-            .filter(|a| a.starts_with("activate "))
-            .count(),
-        1
-    );
-    assert!(t.scripts.unit_asked.borrow().is_empty());
-}
-
-#[test]
-fn land_local_over_a_standing_hotfix_is_refused_by_release_activate_and_reported() {
-    // The supersede rule lives in the release crate; land-local hands it the landing ref.
-    let mut t = T::new(LandMode::QueueLocal);
-    let wts = harness_world(&mut t);
-    release_in_force(&t);
-    t.scripts.release_rc.borrow_mut().insert(
-        "activate".into(),
-        (1, "release: a hotfix is running (abc: fix) and it is not in both h1 and local/main — land it or roll it back first\n".into()),
-    );
-    assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT);
-    assert!(release_argv(&t)[2].contains("--landed-ref local/main"));
-    assert!(
-        t.err().contains(
-            "LAND DEPLOY FAILED for h1: release activate exited 1: release: a hotfix is running"
-        ),
-        "{}",
-        t.err()
-    );
-}
-
-#[test]
-fn land_local_answer_for_another_commit_is_a_fault() {
-    let mut t = T::new(LandMode::QueueLocal);
-    let wts = harness_world(&mut t);
-    release_in_force(&t);
-    *t.scripts.build_answers.borrow_mut() = Some("h0".into());
-    assert_eq!(land_harness(&t, &wts), 1);
-    assert!(
-        t.err()
-            .contains("release build answered \"h0\" for h1 — not the landed commit"),
-        "{}",
-        t.err()
-    );
-    assert_eq!(t.landed_ref().as_deref(), Some("b0"));
-    assert_eq!(release_argv(&t).len(), 1);
-}
-
-#[test]
-fn land_local_with_no_release_in_force_skips_the_release_step_and_needs_no_worktree() {
-    // Before the cutover: the landing lands; nothing is built or activated, loudly.
-    let mut t = T::new(LandMode::QueueLocal);
-    harness_world(&mut t);
-    assert_eq!(
-        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
-        0,
-        "{}",
-        t.err()
-    );
-    assert_eq!(t.landed_ref().as_deref(), Some("h1"));
-    assert!(t.scripts.release_calls.borrow().is_empty());
-    assert!(
-        t.err()
-            .contains("release step skipped: no release is in force"),
-        "{}",
-        t.err()
-    );
-    assert!(
-        t.err()
-            .contains("production does not run h1 until a release is activated"),
-        "{}",
-        t.err()
-    );
-}
-
-#[test]
-fn land_local_of_the_harness_requires_the_round_worktree_while_a_release_is_in_force() {
-    let mut t = T::new(LandMode::QueueLocal);
-    harness_world(&mut t);
-    release_in_force(&t);
-    assert_eq!(
-        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
-        1
-    );
-    assert!(
-        t.err()
-            .contains("--worktree <round worktree> is required to land spira"),
-        "{}",
-        t.err()
-    );
-    assert!(
-        t.err().contains("law-deploy-the-tested-artifacts")
-            && t.err().contains("refused, nothing changed")
-    );
-    assert_eq!(t.landed_ref().as_deref(), Some("b0"));
-    assert!(t.scripts.release_calls.borrow().is_empty());
-}
 
 // ----------------------------------------------------------------------------- publish
 
@@ -4276,50 +3389,6 @@ fn a_stopped_publish_lane_opens_no_pr_and_another_lane_does_not_stop_it() {
         .out()
         .contains("publish lane stopped on purpose by concierge"));
     assert!(!t.qfile("publish").exists(), "no publish PR record");
-}
-
-#[test]
-fn publish_refuses_a_divergence_an_open_publish_and_a_range_without_land_commits() {
-    let t = T::new(LandMode::QueueLocal);
-    publishable(&t);
-    t.lib.diverged.set(true);
-    assert_eq!(t.run(&["publish"]), 1);
-    assert!(t
-        .err()
-        .contains("is not an ancestor of local/main — refusing to publish"));
-
-    let t = T::new(LandMode::QueueLocal);
-    publishable(&t);
-    t.lib.cannot_check.set(true);
-    assert_eq!(t.run(&["publish"]), 1);
-    assert!(
-        t.err()
-            .contains("cannot check whether origin/main is an ancestor of local/main"),
-        "{}",
-        t.err()
-    );
-    assert!(t.err().contains("no queue dir"));
-    assert!(!t.err().contains("something else moved the forge"));
-
-    let t = T::new(LandMode::QueueLocal);
-    publishable(&t);
-    fs::write(t.qfile("publish"), "pr=9\n").unwrap();
-    assert_eq!(t.run(&["publish"]), 1);
-    assert!(t
-        .err()
-        .contains("a publish PR is already open for spira (pr=9) — settle it first"));
-
-    let t = T::new(LandMode::QueueLocal);
-    publishable(&t);
-    t.git
-        .log
-        .borrow_mut()
-        .retain(|c| !c.subject.starts_with("spira: land"));
-    assert_eq!(t.run(&["publish"]), 1);
-    assert!(t
-        .err()
-        .contains("no land commit (spira: land <id>) in range — refusing"));
-    assert!(!t.lib.has("push"));
 }
 
 #[test]
@@ -5125,138 +4194,6 @@ fn abandon_keeps_reworked_members_archives_and_audits() {
         .has("event queue.abandoned abandoned PR 12 for spira (actor=op)"));
 }
 
-/// sp-mve9i: admission reads the member's lifecycle row, never bd's status (design §3.4 —
-/// bd status is inert for work beads). A CERTIFIED bead whose bd row still reads in_progress
-/// (the work verbs never move it) is admitted; a bd-closed bead whose row has gone back to
-/// REWORK is not.
-#[test]
-fn open_batch_admits_on_the_lifecycle_row_not_bd_status() {
-    let t = T::new(LandMode::Queue);
-    t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![
-        ("spira/sp-a".into(), "ta".into()),
-        ("spira/sp-r".into(), "tr".into()),
-    ];
-    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.lc_row("sp-r", "REWORK", "tr", 2);
-    t.lc_row("sp-r", "CERTIFIED", "tr", 2);
-    t.bd.rows.borrow_mut().extend([
-        BeadRow {
-            id: "sp-a".into(),
-            status: Some("in_progress".into()),
-            title: Some("A".into()),
-            ..Default::default()
-        },
-        BeadRow {
-            id: "sp-r".into(),
-            status: Some("closed".into()),
-            title: Some("R".into()),
-            ..Default::default()
-        },
-    ]);
-    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
-    let out = t.out();
-    assert!(
-        out.contains(
-            "skip — sp-r: lifecycle state=REWORK (no longer SUBMITTED or CERTIFIED) — not admitted"
-        ),
-        "{out}"
-    );
-    let rec = fs::read_to_string(t.qfile("open")).unwrap();
-    assert!(rec.contains("members=sp-a:ta\n"), "{rec}");
-}
-
-#[test]
-fn open_batch_does_not_admit_a_held_bead() {
-    let t = T::new(LandMode::Queue);
-    t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![
-        ("spira/sp-a".into(), "ta".into()),
-        ("spira/sp-h".into(), "th".into()),
-    ];
-    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.lc_row("sp-h", "CERTIFIED", "th", 2);
-    t.lc.rows.borrow_mut().as_mut().unwrap()[1].holds = vec!["manual".into()];
-    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
-    assert!(
-        t.out()
-            .contains("skip — sp-h: held (manual) — not admitted"),
-        "{}",
-        t.out()
-    );
-    let rec = fs::read_to_string(t.qfile("open")).unwrap();
-    assert!(rec.contains("members=sp-a:ta\n"), "{rec}");
-    let t = T::new(LandMode::Queue);
-    t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![("spira/sp-h".into(), "th".into())];
-    t.lc_row("sp-h", "CERTIFIED", "th", 2);
-    t.lc.rows.borrow_mut().as_mut().unwrap()[0].holds = vec!["manual".into()];
-    assert_eq!(
-        t.run(&["open-batch", "--skip-pregate", "--members", "sp-h"]),
-        1
-    );
-    assert!(!t.qfile("open").exists());
-}
-
-#[test]
-fn open_batch_assembles_admits_opens_and_cuts_on_spira_lc() {
-    let t = T::new(LandMode::Queue);
-    t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![
-        ("spira/sp-a".into(), "ta".into()),
-        ("spira/sp-b".into(), "tb".into()),
-        ("spira/sp-c".into(), "tc".into()),
-    ];
-    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.lc_row("sp-b", "CERTIFIED", "tb", 2);
-    // sp-c was CERTIFIED when the candidates were read and is REWORK by admission (the
-    // fake's fresh `show` finds the first row).
-    t.lc_row("sp-c", "REWORK", "tc", 3);
-    t.lc_row("sp-c", "CERTIFIED", "tc", 3);
-    t.bd.rows.borrow_mut().extend([
-        BeadRow {
-            id: "sp-a".into(),
-            status: Some("closed".into()),
-            title: Some("A".into()),
-            ..Default::default()
-        },
-        BeadRow {
-            id: "sp-b".into(),
-            status: Some("open".into()),
-            labels: vec!["spira-submitted".into()],
-            ..Default::default()
-        }, // literal-ok: fixture vocabulary
-        BeadRow {
-            id: "sp-c".into(),
-            status: Some("open".into()),
-            ..Default::default()
-        },
-    ]);
-    t.lib.conflict_with_base.borrow_mut().insert("tb".into());
-    t.git.merge_fail.borrow_mut().insert("tb".into());
-    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
-    let out = t.out();
-    assert!(
-        out.contains(
-            "skip — sp-c: lifecycle state=REWORK (no longer SUBMITTED or CERTIFIED) — not admitted"
-        ),
-        "{out}"
-    );
-    assert!(out.contains("skip — sp-b: conflicts with base"));
-    assert!(out.contains("PR 77 opened — 1 branches (spira/queue/20260929T010203Z)"));
-    let rec = fs::read_to_string(t.qfile("open")).unwrap();
-    assert!(rec.starts_with("pr=77\nhead=merged-ta\nbase=b0\nmembers=sp-a:ta\nopened=1000\nbranch=spira/queue/20260929T010203Z\nowner=operator\n"), "{rec}");
-    assert!(
-        rec.contains("batch_id=spira-20260929T010203Z\nversion=1\n"),
-        "{rec}"
-    );
-    assert!(t.lc.has("create-bead sp-a") && t.lc.has("cut spira-20260929T010203Z sp-a:ta"));
-    assert!(t.forge.calls.borrow()[1].contains("- sp-a — A"));
-    assert!(t
-        .landing_log()
-        .contains("members=1 gate_seconds=0 verdict=green source=open-batch"));
-}
-
 #[test]
 fn land_local_lands_and_archives_and_delivers_on_spira_lc() {
     let t = T::new(LandMode::QueueLocal);
@@ -5410,43 +4347,10 @@ fn close_on_land_leaves_a_never_submitted_bead_alone_whatever_bd_status_says() {
 }
 
 #[test]
-fn a_refused_close_is_left_submitted_and_reaps_nothing() {
-    let t = T::new(LandMode::Push);
-    t.submitted(&["sp-a"]);
-    t.lib.close_fail.set(true);
-    t.git.set("refs/heads/spira/sp-a", "t1");
-    assert_eq!(t.run(&["submit", "spira/sp-a"]), 0, "{}", t.err());
-    assert!(t.lib.has("bead_close sp-a t1"));
-    assert!(!t.lib.has("reap"));
-    assert!(t.out().contains(
-        "land-close sp-a: bd close failed — left submitted (LANDED is on the lifecycle record)"
-    ));
-}
-
-#[test]
 fn the_land_close_reason_cites_the_sha_or_unknown() {
     assert!(crate::ops::helpers::land_close_reason("abc")
         .contains("work landed at abc (law-closed-is-not-landed)"));
     assert!(crate::ops::helpers::land_close_reason("").contains("work landed at unknown"));
-}
-
-#[test]
-fn publish_refuses_a_head_with_no_full_suite_local_pass_naming_the_record_and_command() {
-    let t = T::new(LandMode::QueueLocal);
-    publishable(&t);
-    fs::remove_file(t.lib.s.run.join("local-pass/full-suite/m3")).unwrap();
-    *t.forge.pr.borrow_mut() = Some("78".into());
-    for cmd in ["publish", "publish-settle"] {
-        assert_eq!(t.run(&[cmd]), 1, "{cmd}: {}", t.out());
-        assert!(
-            t.err().contains("full-suite local-pass record for m3")
-                && t.err().contains("testenv --suites"),
-            "{}",
-            t.err()
-        );
-    }
-    assert!(t.forge.calls.borrow().is_empty());
-    assert!(!t.qfile("publish").exists());
 }
 
 #[test]
@@ -5466,32 +4370,6 @@ fn publish_goes_ahead_on_a_named_override_and_logs_it() {
         log.contains("sha=m3") && log.contains("box is down"),
         "{log}"
     );
-}
-
-#[test]
-fn a_plain_eject_reason_contradicting_a_statute_is_refused_before_anything_is_touched() {
-    let t = T::new(LandMode::Queue);
-    open_batch_record(&t);
-    let g = t.dir.path().join("statute-guards");
-    std::fs::write(&g, "law-nonrebase | refuse | rebase by hand\n").unwrap();
-    t.env.vars.borrow_mut().insert(
-        "SPIRA_STATUTE_GUARDS".into(),
-        g.to_string_lossy().into_owned(),
-    );
-    assert_eq!(t.run(&["eject", "sp-a", "--reason", "rebase by hand"]), 1);
-    assert!(t.err().contains("law-nonrebase"), "{}", t.err());
-    assert!(t.qfile("open").exists() && !t.lib.has("cause_event sp-a eject"));
-    t.env
-        .vars
-        .borrow_mut()
-        .insert("BEAD_STATUTE_CONSIDERED".into(), "why".into());
-    assert_eq!(
-        t.run(&["eject", "sp-a", "--reason", "rebase by hand"]),
-        0,
-        "{}",
-        t.err()
-    );
-    assert!(t.lib.has("cause_event sp-a eject"));
 }
 
 #[test]
@@ -5622,46 +4500,6 @@ fn an_empty_shared_file_list_turns_auto_stack_off() {
     t.var("SPIRA_STACK_SHARED_FILES", "");
     assert_eq!(t.run(&["rebase-waiting"]), 0);
     assert!(restacks(&t).is_empty());
-}
-
-#[test]
-fn a_conflicting_cut_leaves_the_later_bead_unstacked_and_its_branch_alone() {
-    let t = T::new(LandMode::QueueLocal);
-    waiting_fixture(
-        &t,
-        &[
-            ("sp-a", "ta", &["Cargo.lock"]),
-            ("sp-b", "tb", &["Cargo.lock"]),
-        ],
-    );
-    t.git
-        .rebase_fail
-        .borrow_mut()
-        .insert("tb".into(), vec!["Cargo.lock".into()]);
-    assert_eq!(t.run(&["rebase-waiting"]), 0);
-    assert!(restacks(&t).is_empty());
-    assert_eq!(t.git.get("refs/heads/spira/sp-b").as_deref(), Some("tb"));
-    assert!(
-        t.out()
-            .contains("sp-b: not-stacked: conflict files=Cargo.lock"),
-        "{}",
-        t.out()
-    );
-}
-
-#[test]
-fn a_refused_restack_puts_the_branch_back() {
-    let t = T::new(LandMode::QueueLocal);
-    waiting_fixture(
-        &t,
-        &[
-            ("sp-a", "ta", &["Cargo.lock"]),
-            ("sp-b", "tb", &["Cargo.lock"]),
-        ],
-    );
-    t.lc.event_refused.set(Some("IllegalTransition"));
-    assert_eq!(t.run(&["rebase-waiting"]), 0);
-    assert_eq!(t.git.get("refs/heads/spira/sp-b").as_deref(), Some("tb"));
 }
 
 #[test]

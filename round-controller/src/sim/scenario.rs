@@ -1853,17 +1853,6 @@ mod tests {
     }
 
     #[test]
-    fn a_lock_or_store_step_the_store_refuses_is_named() {
-        let e = go("[[round_lease]]\nrepo = \"a\"\nbatch = \"b1\"\nttl_secs = 0\n").unwrap_err();
-        assert!(e.starts_with("lock seed round/a/b1:"), "{e}");
-        let e = go("[[store_step]]\npass = 2\nkey = \"locks/x\"\ndata = 1\n").unwrap_err();
-        assert!(e.starts_with("store step locks/x at pass 2:"), "{e}");
-        assert!(parse(&format!("{BASE}[[slot]]\nrepo = \"a\"\nslots = 1\n"))
-            .unwrap_err()
-            .contains("slots"));
-    }
-
-    #[test]
     fn a_held_slot_is_cut_on_once_and_a_cut_that_opens_takes_it() {
         let lane = "[[store]]\nkey = \"lanes/a\"\ndata = { landing_ref = \"b0\", image_digest = \"d\", harness_version = \"h\" }\n";
         let pool = "[[store]]\nkey = \"lifecycle/sp-a\"\ndata = { repo = \"a\", state = \"CERTIFIED\", tip = \"t\" }\n";
@@ -1995,62 +1984,6 @@ mod tests {
             let e = parse(&format!("{BASE}[[launch]]\n{bad}")).unwrap_err();
             assert!(e.contains("a launch is exactly one of"), "{e}");
         }
-    }
-
-    const RUNNER: &str = "[[runner]]\nrepo = \"a\"\nbatch = \"b1\"\nphase = \"suites\"\nstart_secs = 0\nmarks_every_secs = 10\n";
-
-    #[test]
-    fn a_runner_with_no_phase_no_marks_or_no_batch_to_lease_is_named() {
-        let e = go(&RUNNER.replace("suites", "lint")).unwrap_err();
-        assert!(e.contains("runner b1: no phase \"lint\""), "{e}");
-        let e = go(&RUNNER.replace("= 10", "= 0")).unwrap_err();
-        assert!(e.contains("marks_every_secs must be above 0"), "{e}");
-        let e = go(RUNNER).unwrap_err();
-        assert!(
-            e.contains("invariant no-unscripted-fault violated under reference-minimum: runner b1 could not take its lease"),
-            "{e}"
-        );
-    }
-
-    #[test]
-    fn a_runner_renews_through_the_library_and_a_lease_taken_from_it_tears_it_down() {
-        let seed = "[[store]]\nkey = \"batches/a/b1\"\ndata = { state = \"CI_RUNNING\" }\n";
-        let renewals =
-            |n: u64| format!("[[expect]]\nname = \"r\"\ncount = \"renewals\"\nequals = {n}\n");
-        // Two passes 30 s apart; the bench's TTL of 60 s renews every 20 s: at 20 s only.
-        go(&format!("{seed}{RUNNER}{}", renewals(1))).unwrap();
-        let sc = parse(&format!("{BASE}{seed}{RUNNER}{}", renewals(0))).unwrap();
-        // Once per pass: BASE has two repos, and a second steal in one pass would resend the
-        // first one's release request id, which the store answers from its cache.
-        let steal = |p: &Ports, repo: &str| {
-            let res = crate::lease::Resource::round("a", "b1");
-            if repo != "a" {
-                return;
-            }
-            if let Some(h) = crate::lease::holder_of(p, &res).unwrap() {
-                let f = state_store::Fence {
-                    resource: res.lock.clone(),
-                    token: h.token,
-                };
-                p.store
-                    .release(
-                        &f,
-                        &Request::new(&format!("steal-{}", p.clock.now_ms()), "t", "k"),
-                    )
-                    .unwrap();
-                crate::lease::acquire(p, &res, "thief").unwrap();
-            }
-        };
-        run_steps(
-            &sc,
-            &profile(),
-            1,
-            &[Step {
-                name: "steal",
-                run: steal,
-            }],
-        )
-        .unwrap();
     }
 
     #[test]

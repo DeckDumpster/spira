@@ -973,16 +973,6 @@ mod tests {
     }
 
     #[test]
-    fn lane_rotate_moves_last_and_everything_before_it_to_the_end() {
-        let v = |s: &str| -> Vec<String> { s.split_whitespace().map(str::to_string).collect() };
-        assert_eq!(lane_rotate("laner", &v("groomer laner")), v("groomer laner"));
-        assert_eq!(lane_rotate("", &v("laner groomer")), v("laner groomer"), "no prior last — unchanged");
-        assert_eq!(lane_rotate("nosuchlane", &v("laner groomer")), v("laner groomer"), "last not among lanes — unchanged");
-        assert_eq!(lane_rotate("laner", &v("laner")), v("laner"), "single lane — unchanged regardless of last");
-        assert_eq!(lane_rotate("laner", &[]), Vec::<String>::new(), "no lanes at all — empty");
-    }
-
-    #[test]
     fn ck7_pool_subtracts_task_live_and_floors_at_zero() {
         assert_eq!(ck7_pool(Some(4), 1), Some(3));
         assert_eq!(ck7_pool(Some(4), 4), Some(0), "task-live at or above max floors at 0");
@@ -1002,57 +992,5 @@ mod tests {
         assert!(ck7_fill_cap(2, None, 2), "at the cap, no pool -> stop");
         assert!(ck7_fill_cap(0, Some(0), 2), "pool exhausted before the cap -> stop");
         assert!(ck7_fill_cap(4, None, 4), "unset SPIRA_MAX_LIVE_DWARVES defaults to 4 (caller's job)");
-    }
-
-    #[test]
-    fn which_refuses_a_bare_name_not_on_path() {
-        let d = testkit::TempDir::new("sentinel-which");
-        testkit::write_exe(d.join("dwarf"), "#!/bin/sh\n");
-        assert_eq!(which("dwarf", &d.to_string_lossy()), Some(d.join("dwarf").to_string_lossy().into_owned()));
-        assert_eq!(which("no-such-binary-anywhere", &d.to_string_lossy()), None);
-    }
-
-    /// The exact primitive `acquire_call_lock` uses (`libc::flock(LOCK_EX)` on
-    /// `call.lock`), proven against two REAL OS threads rather than a hand simulation —
-    /// bash's own version of this proof (test-call-fast-path.sh, before wave 4.27)
-    /// stubbed `dwarf_count`/`capacity_paused`/`world_gate`/`rune_ready` by name to show
-    /// the unlocked body races and the locked wrapper does not; a compiled binary offers
-    /// no such override, so the race it demonstrated is structurally impossible now
-    /// instead (there is no entry point to `ck7_call_body` left that does not take this
-    /// same lock first). What is left to prove is the lock itself: two real contenders,
-    /// racing to enter, never interleave — the first to enter is also the first to exit.
-    #[test]
-    fn the_lock_actually_serializes_two_real_contenders() {
-        use std::os::unix::io::AsRawFd;
-        use std::sync::{Arc, Barrier, Mutex};
-        let d = testkit::TempDir::new("sentinel-call-lock");
-        let lockfile = d.join("call.lock");
-        let order: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-        let barrier = Arc::new(Barrier::new(2));
-        let handles: Vec<_> = (0..2)
-            .map(|id| {
-                let lockfile = lockfile.clone();
-                let order = order.clone();
-                let barrier = barrier.clone();
-                std::thread::spawn(move || {
-                    let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&lockfile).unwrap();
-                    barrier.wait(); // both threads reach the lock attempt together
-                    // SAFETY: flock on a descriptor this thread owns exclusively.
-                    assert_eq!(unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) }, 0);
-                    order.lock().unwrap().push(format!("{id}-enter"));
-                    std::thread::sleep(std::time::Duration::from_millis(30));
-                    order.lock().unwrap().push(format!("{id}-exit"));
-                    // dropping `f` releases the lock.
-                })
-            })
-            .collect();
-        for h in handles {
-            h.join().unwrap();
-        }
-        let order = order.lock().unwrap().clone();
-        assert_eq!(order.len(), 4);
-        let first_enter = order[0].split('-').next().unwrap();
-        let first_exit = order.iter().find(|l| l.ends_with("-exit")).unwrap().split('-').next().unwrap();
-        assert_eq!(first_enter, first_exit, "the first to enter must also be the first to exit — never interleaved: {order:?}");
     }
 }

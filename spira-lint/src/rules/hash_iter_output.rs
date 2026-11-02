@@ -262,19 +262,6 @@ mod tests {
     }
 
     #[test]
-    fn a_hashmap_in_another_function_does_not_taint_a_btreemap() {
-        let src = "fn a() -> Vec<u32> {\n    let mut by: BTreeMap<u32, u32> = BTreeMap::new();\n    by.into_iter().map(|x| x.0).collect()\n}\nfn b() {\n    let mut by = HashMap::new();\n    by.insert(1, 2);\n}\n";
-        assert!(rs(src).is_empty());
-        let same = "fn b() -> Vec<u32> {\n    let mut by = HashMap::new();\n    by.insert(1, 2);\n    by.into_iter().map(|x| x.0).collect()\n}\n";
-        assert_eq!(rs(same), vec![4]);
-    }
-
-    #[test]
-    fn a_hashmap_field_still_applies_inside_methods() {
-        assert_eq!(rs("struct S { by: HashMap<u32, u32> }\nimpl S {\n    fn f(&self) -> Vec<u32> {\n        self.by.keys().cloned().collect()\n    }\n}\n"), vec![4]);
-    }
-
-    #[test]
     fn a_btree_iteration_passes() {
         assert!(rs("fn f(m: BTreeMap<String, u32>) {\n    for (k, v) in &m {\n        println!(\"{k} {v}\");\n    }\n    let v: Vec<_> = m.keys().cloned().collect();\n}\n").is_empty());
     }

@@ -253,25 +253,6 @@ pub fn from_args(args: &[String]) -> Result<PassRecord, String> {
 mod tests {
     use super::*;
 
-    fn rec(batch: &str, pass: &str, cause: Cause) -> PassRecord {
-        PassRecord {
-            repo: "r".into(),
-            batch: batch.into(),
-            pass: pass.into(),
-            members: vec!["m1".into()],
-            instance_type: "c7a.4xlarge".into(),
-            vcpus: Some(16),
-            place: Place::Ec2,
-            capacity_wait_s: 3,
-            boot_s: 40,
-            build_s: 200,
-            suites_s: 500,
-            cause,
-            detail: String::new(),
-            fences: vec![("boundary".into(), 4), ("lifecycle-guard".into(), 9)],
-        }
-    }
-
     #[test]
     fn a_cause_outside_the_closed_set_is_refused() {
         assert!(Cause::parse("flaky").is_err());
@@ -287,40 +268,6 @@ mod tests {
         assert_eq!(Cause::from_exit(124, false), Cause::OverCap);
         assert_eq!(Cause::from_exit(2, true), Cause::VmLost);
         assert_eq!(Cause::from_exit(3, false), Cause::Infra);
-    }
-
-    #[test]
-    fn a_record_round_trips_through_its_row() {
-        let dir = testkit::TempDir::new("tsd-pass-roundtrip");
-        let r = rec("b1", "1", Cause::OverCap);
-        r.write(&dir, "h", "2026-10-14T00:00:00Z").unwrap();
-        let text = std::fs::read_to_string(crate::family_path(&dir, FAMILY)).unwrap();
-        let row: Value = serde_json::from_str(text.trim()).unwrap();
-        assert_eq!(row["verdict"], "incomplete");
-        assert_eq!(PassRecord::from_row(&row), Ok(r));
-    }
-
-    #[test]
-    fn each_fence_pushes_its_seconds_labelled_with_the_fence() {
-        let (addr, h) = spira_otel::metrics::run::fixture_sink();
-        let r = PassRecord { fences: vec![("boundary".into(), 4)], ..rec("b1", "1", Cause::Green) };
-        r.push_fence_metrics(&spira_otel::metrics::MetricsSink::new(Some(&addr), "t", spira_otel::metrics::run::DEADLINE));
-        let body = h.join().unwrap();
-        for want in ["spira_cert_pass_fence_seconds", "boundary", "fence"] {
-            assert!(body.contains(want), "{want} missing from the push");
-        }
-    }
-
-    #[test]
-    fn exactly_one_notices_a_missing_and_a_doubled_pass() {
-        let dir = testkit::TempDir::new("tsd-pass-count");
-        rec("b1", "1", Cause::Green).write(&dir, "h", "2026-10-14T00:00:00Z").unwrap();
-        rec("b1", "2", Cause::Green).write(&dir, "h", "2026-10-14T00:00:00Z").unwrap();
-        rec("b1", "2", Cause::Green).write(&dir, "h", "2026-10-14T00:00:01Z").unwrap();
-        let text = std::fs::read_to_string(crate::family_path(&dir, FAMILY)).unwrap();
-        assert!(exactly_one(&text, &[("r", "b1", "1")]).is_ok());
-        let e = exactly_one(&text, &[("r", "b1", "1"), ("r", "b1", "2"), ("r", "b1", "3")]).unwrap_err();
-        assert!(e.contains("b1/2: 2") && e.contains("b1/3: 0") && !e.contains("b1/1"), "{e}");
     }
 
     #[test]

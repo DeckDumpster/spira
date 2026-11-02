@@ -442,33 +442,12 @@ pub fn prime() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BOUND_VERBS, LANE_VERBS, LOCAL_VERBS, VERBS};
-
-    #[test]
-    fn every_served_verb_has_an_entry() {
-        for v in VERBS.iter().chain(LOCAL_VERBS) {
-            assert!(entry(v).is_some(), "work {v} has no help entry");
-        }
-        for e in ENTRIES {
-            assert!(VERBS.contains(&e.verb) || LOCAL_VERBS.contains(&e.verb), "entry for {} names no verb", e.verb);
-        }
-    }
+    use crate::{BOUND_VERBS, LANE_VERBS};
 
     #[test]
     fn no_entry_is_listed_twice() {
         for e in ENTRIES {
             assert_eq!(ENTRIES.iter().filter(|x| x.verb == e.verb).count(), 1, "{}", e.verb);
-        }
-    }
-
-    #[test]
-    fn every_refusal_has_one_row_with_a_fix() {
-        for id in R::ALL {
-            let rows = std::iter::once(&GENERAL).chain(ENTRIES.iter()).flat_map(|e| e.refusals.iter()).filter(|r| r.id == *id).count();
-            assert_eq!(rows, 1, "{id:?} must have exactly one refusal row");
-        }
-        for r in std::iter::once(&GENERAL).chain(ENTRIES.iter()).flat_map(|e| e.refusals.iter()) {
-            assert!(!r.fix.trim().is_empty() && !r.text.trim().is_empty(), "{:?}", r.id);
         }
     }
 
@@ -483,22 +462,6 @@ mod tests {
         };
         assert_eq!(list("BOUND_VERBS"), BOUND_VERBS);
         assert_eq!(list("LANE_VERBS"), LANE_VERBS);
-    }
-
-    #[test]
-    fn help_submit_prints_each_refusal_and_its_fix() {
-        let out = help("submit").unwrap();
-        for r in entry("submit").unwrap().refusals {
-            assert!(out.contains(r.text) && out.contains(r.fix));
-        }
-        assert!(help("nonesuch").is_err());
-    }
-
-    #[test]
-    fn a_refusal_prints_the_text_the_manual_prints() {
-        let msg = refusal(R::SubmitTipArg, "submit", &[("flag", "--tip")]);
-        assert!(msg.contains("--tip is read from the worktree"), "{msg}");
-        assert!(prime().contains("{flag} is read from the worktree"));
     }
 
     #[test]

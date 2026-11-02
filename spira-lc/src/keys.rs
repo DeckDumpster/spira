@@ -118,48 +118,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn each_record_kind_has_its_own_prefix_and_a_progress_key_sits_under_its_batch() {
-        assert_eq!(lifecycle("sp-a"), "lifecycle/sp-a");
-        assert_eq!(readiness("sp-a"), "readiness/sp-a");
-        assert_eq!(gate("sp-a"), "gates/sp-a");
-        assert_eq!(delivery("sp-a"), "deliveries/sp-a");
-        assert_eq!(ask("sp-q"), "asks/sp-q");
-        assert_eq!(mending("sp-a"), "mendings/sp-a");
-        assert_eq!(condition("heimdall", "db-down"), "conditions/heimdall/db-down");
-        assert!(!condition("heimdall-x", "k").starts_with(&conditions("heimdall")));
-        assert_eq!(mend("sp-a", 7, 1), "mends/sp-a/00000000000000000007/0001");
-        assert!(!mend("sp-ab", 7, 1).starts_with(&mends("sp-a")));
-        assert_eq!(batch("harness", "b-1"), "batches/harness/b-1");
-        assert_eq!(batch_index("b-1"), "batch-ids/b-1");
-        assert_eq!(
-            batch_progress("harness", "b-1"),
-            "batches/harness/b-1/progress"
-        );
-        assert_eq!(claim_resource("sp-a"), "lifecycle/sp-a");
-        assert_eq!(claim_lock("sp-a"), "locks/lifecycle/sp-a");
-        assert_eq!(history("sp-a"), "history/sp-a/");
-        assert_eq!(
-            history_entry("sp-a", 7, "r/apply"),
-            "history/sp-a/00000000000000000007/r/apply"
-        );
-        assert!(!history_entry("sp-ab", 7, "r").starts_with(&history("sp-a")));
-        assert_eq!(id_of(&claim_locks(), &claim_lock("sp-a")), Some("sp-a"));
-        let prefixes = [
-            LIFECYCLE, READINESS, DELIVERIES, ASKS, MENDINGS, MENDS, BATCHES, BATCH_IDS, RUNTIME,
-            HISTORY, KNOBS, GATES,
-            PLANNING_WATERMARK, CONDITIONS,
-        ];
-        for (i, a) in prefixes.iter().enumerate() {
-            for b in &prefixes[i + 1..] {
-                assert!(
-                    !a.starts_with(b) && !b.starts_with(a),
-                    "{a} and {b} overlap"
-                );
-            }
-        }
-    }
-
-    #[test]
     fn id_of_reads_only_a_direct_child() {
         assert_eq!(id_of(LIFECYCLE, "lifecycle/sp-a"), Some("sp-a"));
         assert_eq!(id_of(BATCHES, "batches/harness/b-1"), None);

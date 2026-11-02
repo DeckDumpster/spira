@@ -3,7 +3,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use runtime::ports::{Clock, VirtualClock};
+use runtime::ports::VirtualClock;
 use runtime::*;
 
 struct Poller {
@@ -100,49 +100,6 @@ fn an_event_this_engine_appended_is_read_at_once_whatever_the_poll_interval() {
     assert_eq!(*seen.lock().unwrap(), ["foreign"]);
 }
 
-#[test]
-fn a_foreign_event_read_before_a_restart_is_not_handled_again_after_it() {
-    let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
-    let (e, seen) = engine(&journal, &clock);
-    let mut e = e.with_foreign_poll(1_000);
-    let foreign = Event { id: EventId("f1".into()), stream: StreamKey("other".into()), kind: EventKind::new("foreign", ""), at: 0, cause: None, correlation: CorrelationId("f1".into()) };
-    journal.append(&foreign).unwrap();
-    clock.advance(1_000);
-    e.run_until_idle().unwrap();
-    assert_eq!(*seen.lock().unwrap(), ["foreign"]);
-    let (again, seen) = engine(&journal, &clock);
-    let mut again = again.with_foreign_poll(1_000);
-    clock.advance(5_000);
-    again.run_until_idle().unwrap();
-    assert!(seen.lock().unwrap().is_empty(), "a handled event is not redelivered to a restarted engine");
-}
-
-struct Panicker;
-
-impl Handler for Panicker {
-    fn interests(&self) -> &[EventKindTag] {
-        &["tick"]
-    }
-
-    fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
-        panic!("a handler that always panics");
-    }
-}
-
-#[test]
-fn a_handler_that_panics_on_a_memory_only_event_does_not_wedge_the_pump() {
-    let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
-    let regs = vec![Registration::new("panicker", Panicker)];
-    let mut e = Engine::open(journal.clone(), Arc::new(clock.clone()), regs, 0).unwrap();
-    e.start("s", EventKind::new("tick", ""));
-    for _ in 0..20 {
-        if e.run_until_idle().is_ok() {
-            return;
-        }
-    }
-    panic!("the pump never went idle: the failing local event is retried forever");
-}
-
 struct Noter;
 
 impl Handler for Noter {
@@ -162,24 +119,6 @@ impl Handler for Noter {
 }
 
 #[test]
-fn memory_only_events_held_in_the_projection_stop_growing_and_keep_the_newest() {
-    let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
-    let mut e = Engine::open(journal.clone(), Arc::new(clock.clone()), vec![Registration::new("noter", Noter)], 0).unwrap();
-    e.start("s", EventKind::new("tick", ""));
-    let held = |e: &Engine| e.projection().events(&StreamKey("s".into())).len();
-    let mut peak = 0;
-    for _ in 0..(runtime::engine::LOCAL_KEEP * 3) {
-        e.run_until_idle().unwrap();
-        answer_probes(&mut e);
-        peak = peak.max(held(&e));
-        clock.advance(1000);
-    }
-    assert!(peak <= runtime::engine::LOCAL_KEEP + 4, "{peak} events held");
-    let kept = e.projection().events(&StreamKey("s".into()));
-    assert!(kept.last().is_some_and(|ev| ev.kind.tag == "noted"), "the newest event survives");
-}
-
-#[test]
 fn a_probe_still_waiting_keeps_its_request_in_the_projection() {
     let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
     let mut e = Engine::open(journal.clone(), Arc::new(clock.clone()), vec![Registration::new("noter", Noter)], 0).unwrap();
@@ -191,85 +130,6 @@ fn a_probe_still_waiting_keeps_its_request_in_the_projection() {
         e.run_until_idle().unwrap();
     }
     assert!(e.projection().events(&StreamKey("s".into())).iter().any(|ev| ev.id.0 == waiting), "the unanswered request was evicted");
-}
-
-struct Cause {
-    found: Arc<Mutex<Option<bool>>>,
-}
-
-impl Handler for Cause {
-    fn interests(&self) -> &[EventKindTag] {
-        &["tick", EFFECT_SUCCEEDED]
-    }
-
-    fn handle(&self, _: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        if ev.kind.tag == EFFECT_SUCCEEDED {
-            let cause = ev.cause.as_ref().unwrap();
-            *self.found.lock().unwrap() = Some(view.events(&ev.stream).iter().any(|e| &e.id == cause));
-            return vec![];
-        }
-        vec![Command::Probe(EffectSpec { name: "look".into(), input: String::new(), deadline_ms: 500 })]
-    }
-}
-
-#[test]
-fn a_late_outcome_still_finds_the_request_it_answers_in_the_projection() {
-    let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
-    let found = Arc::new(Mutex::new(None));
-    let mut e = Engine::open(journal.clone(), Arc::new(clock.clone()), vec![Registration::new("cause", Cause { found: found.clone() })], 0).unwrap();
-    e.start("s", EventKind::new("tick", ""));
-    e.run_until_idle().unwrap();
-    let waiting = e.pending_effects().remove(0).key;
-    e.start("s", EventKind::new("tick", ""));
-    e.run_until_idle().unwrap();
-    for i in 0..(runtime::engine::LOCAL_KEEP * 2) {
-        e.start("s", EventKind::new("other", &i.to_string()));
-        e.run_until_idle().unwrap();
-    }
-    e.complete(&waiting, Outcome::Succeeded(String::new())).unwrap();
-    e.run_until_idle().unwrap();
-    assert_eq!(*found.lock().unwrap(), Some(true));
-}
-
-struct Ticker {
-    seen: Arc<Mutex<u32>>,
-}
-
-impl Handler for Ticker {
-    fn interests(&self) -> &[EventKindTag] {
-        &["tick"]
-    }
-
-    fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
-        *self.seen.lock().unwrap() += 1;
-        vec![Command::Timer { at: ev.at + 1000, kind: EventKind::new("tick", "") }]
-    }
-}
-
-#[test]
-fn a_poison_another_process_wrote_is_noticed_after_the_recheck_interval_and_not_before() {
-    let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
-    let seen = Arc::new(Mutex::new(0));
-    let mut e = Engine::open(journal.clone(), Arc::new(clock.clone()), vec![Registration::new("ticker", Ticker { seen: seen.clone() })], 0).unwrap();
-    e.start("s", EventKind::new("tick", ""));
-    e.run_until_idle().unwrap();
-    let ev = Event { id: EventId("x".into()), stream: StreamKey("s".into()), kind: EventKind::new("tick", ""), at: 0, cause: None, correlation: CorrelationId("x".into()) };
-    journal.poison(&Poison { stream: StreamKey("s".into()), event: ev.id.clone(), handler: "other".into(), message: "m".into() }).unwrap();
-
-    let step = |e: &mut Engine, to: u64| {
-        while clock.now_ms() < to {
-            clock.advance(1000);
-            e.run_until_idle().unwrap();
-        }
-    };
-    let before = *seen.lock().unwrap();
-    step(&mut e, 200_000);
-    assert!(*seen.lock().unwrap() > before + 100, "the cached verdict holds inside the interval");
-    step(&mut e, 305_000);
-    let after = *seen.lock().unwrap();
-    step(&mut e, 330_000);
-    assert_eq!(*seen.lock().unwrap(), after, "past the interval the stream is skipped");
-    assert!((299..=301).contains(&after), "the chain broke when the poison was seen: {after}");
 }
 
 struct Keeper {

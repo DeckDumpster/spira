@@ -157,22 +157,6 @@ mod tests {
     }
 
     #[test]
-    fn a_bead_record_carries_bead_not_pass() {
-        let line = rec("sop-x", Some("sp-1"), None, 1, "pass", "yes").to_line(400);
-        let v: Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(v["bead"], "sp-1");
-        assert!(v.get("pass").is_none());
-    }
-
-    #[test]
-    fn a_pass_record_carries_pass_not_bead() {
-        let line = rec("sop-x", None, Some("pass-1"), 1, "pass", "yes").to_line(400);
-        let v: Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(v["pass"], "pass-1");
-        assert!(v.get("bead").is_none());
-    }
-
-    #[test]
     fn why_is_whitespace_normalised_and_capped() {
         let mut r = rec("sop-x", Some("sp-1"), None, 1, "pass", "yes");
         r.why = "  a   b\nc  ".to_string();

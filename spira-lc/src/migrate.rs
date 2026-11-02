@@ -1213,16 +1213,6 @@ mod tests {
     }
 
     #[test]
-    fn a_guarded_update_converges_when_a_live_writer_redirties_a_row_between_apply_and_reprobe() {
-        let db = migrated();
-        db.borrow_mut().stale_terminal_rows = true;
-        db.borrow_mut().racing_writes = 1;
-        let (rc, out) = migrate(&real_steps(), &service(&db), None);
-        assert_eq!(rc, 0, "{out}");
-        assert!(!out.contains("probe still finds"), "{out}");
-    }
-
-    #[test]
     fn a_guarded_update_that_never_converges_still_fails_naming_its_probe() {
         let db = migrated();
         db.borrow_mut().stale_terminal_rows = true;

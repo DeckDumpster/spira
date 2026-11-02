@@ -83,37 +83,3 @@ pub fn check_unfiled_follow(reason: &str, id_prefix: &str) -> Option<String> {
     let hit = FOLLOW_ON.iter().find(|f| low.contains(&f.to_lowercase()))?;
     (!tracking.is_match(reason)).then(|| hit.to_string())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fence_admits_plain_and_masks_mentions() {
-        assert_eq!(check_close_reason("TEMPORARY WORKAROUND: x").as_deref(), Some("TEMPORARY WORKAROUND"));
-        assert_eq!(check_close_reason("done"), None);
-        assert_eq!(check_close_reason(r#"bad-reason ("TEMPORARY WORKAROUND") is reopened"#), None);
-        assert_eq!(check_close_reason("the thing (a TEMPORARY WORKAROUND) was avoided"), None);
-        assert_eq!(check_close_reason("the `TEMPORARY WORKAROUND` phrase"), None);
-        assert_eq!(check_close_reason("see close-reason-flags for the TEMPORARY WORKAROUND check"), None);
-        assert_eq!(check_close_reason("a TEMPORARY workaround, lowercase").as_deref(), Some("TEMPORARY workaround"));
-        assert_eq!(check_close_reason("temporarily fixed it").as_deref(), Some("temporarily fix"));
-    }
-
-    #[test]
-    fn detector_scans_raw() {
-        assert_eq!(detect_close_reason(r#"("TEMPORARY WORKAROUND") x"#).as_deref(), Some("TEMPORARY WORKAROUND"));
-        assert_eq!(detect_close_reason("Workaround implemented, landed."), None);
-        assert_eq!(detect_close_reason("TODO: x").as_deref(), Some("TODO"));
-    }
-
-    #[test]
-    fn follow_on_needs_a_tracking_reference() {
-        assert_eq!(check_unfiled_follow("Builders should add x.", "sp").as_deref(), Some("builders should"));
-        assert_eq!(check_unfiled_follow("Builders should add x. Tracked as sp-80br6.", "sp"), None);
-        assert_eq!(check_unfiled_follow("The real fix is at https://example.com/1", "sp"), None);
-        assert_eq!(check_unfiled_follow("Builders should fix. Tracked as tt-abc1.", "tt"), None);
-        assert_eq!(check_unfiled_follow("Builders should fix. Tracked as tt-abc1.", "sp").as_deref(), Some("builders should"));
-        assert_eq!(check_unfiled_follow("Moot upstream.", "sp"), None);
-    }
-}

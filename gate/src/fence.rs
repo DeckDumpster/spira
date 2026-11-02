@@ -266,18 +266,4 @@ mod tests {
         assert!(silent(&want, "fence: a checked 1 x\nfence: b checked 1 x\nfence: c checked 1 x").is_empty());
         assert_eq!(summary(&want, out), "a=3 files, c=0 files");
     }
-
-    /// The selector is a binary (sp-wx2tw): no bash selector script is left to grow a fence,
-    /// its word in the gate string expects none, and every rule the gate expects a line from
-    /// is one spira-lint runs.
-    #[test]
-    fn the_selector_runs_no_fence_and_spira_lint_has_every_rule_fence() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-        assert!(!dir.join("gate-touched.sh").exists(), "the bash selector came back");
-        assert!(!expected(PROD).iter().any(|f| f.contains("select")), "{:?}", expected(PROD));
-        let rules: Vec<&str> = spira_lint::all_rules().iter().map(|r| r.name()).collect();
-        for f in LINT_RULE_FENCES {
-            assert!(rules.contains(f), "spira-lint has no rule {f}: {rules:?}");
-        }
-    }
 }

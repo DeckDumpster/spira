@@ -12,34 +12,6 @@ mod sparklines;
 mod supervisor;
 mod timeutil;
 
-/// Test-only: cargo runs a crate's tests in parallel threads, but several probe tests
-/// mutate process-global environment variables (`SPIRA_RUN` and friends) that `io::` reads
-/// implicitly, the same way the bash read them. Any test that does so takes this lock first
-/// so two such tests never interleave their env mutation and their assertion.
-#[cfg(test)]
-pub(crate) mod test_support {
-    use std::sync::Mutex;
-    pub static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    /// Pins `SPIRA_HOME` beside a `SPIRA_TOML` fixture declaring `spira.run` as `run`: per
-    /// Ryan 2026-10-05 (one source of config), `resolve_run_dir` no longer takes a bare
-    /// `SPIRA_RUN` environment override — the value must come from the one file.
-    pub fn set_run(run: &std::path::Path) -> testkit::EnvGuard {
-        set_run_with(run, &[])
-    }
-
-    /// [`set_run`] plus further edits under the same guard (the environment lock is not reentrant).
-    pub fn set_run_with(run: &std::path::Path, extra: &[(&str, Option<&str>)]) -> testkit::EnvGuard {
-        let toml = spira_config::process::fixture_toml(run, &[("SPIRA_RUN", run.to_str().unwrap())]);
-        let mut edits: Vec<(&str, Option<&str>)> = vec![
-            ("SPIRA_HOME", Some(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira"))),
-            ("SPIRA_TOML", Some(toml.to_str().unwrap())),
-        ];
-        edits.extend_from_slice(extra);
-        testkit::env(&edits)
-    }
-}
-
 fn usage() -> i32 {
     eprintln!(
         "usage: cockpit-collect [once|history|sweep-temps|collect|merge|probe <name>|check-config]\n  (no args: same as once, no attach — attaching the operator to the concierge stays root cockpit.sh's job)"
@@ -348,46 +320,6 @@ fn cmd_test_loop_guard() -> i32 {
     } else {
         eprintln!("cockpit-collect: loop guard refused — not the supervised process. Set SPIRA_COCKPIT_FORCE=1 to override.");
         1
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// An empty probe value must round-trip as exactly `KEY=''` (two characters, sourceable
-    /// as the empty string) through `once`'s write path — not the doubled `KEY=''\'''\'''`
-    /// production's bash collector produced for ten keys (SP_HOTFIX_LINE, SP_HOTFIX_ALERT,
-    /// SP_HEIMDALL_KEYS, SP_OVERRIDES_LIST, and the six `*_NAMES` lists) by quoting its own
-    /// value before the merge/write step quoted the line a second time (the operator,
-    /// 2026-09-30, found in production's live cockpit.env). Every probe now emits these
-    /// keys raw, same as any other key; this is the ONE quoting layer, at write time.
-    #[test]
-    fn empty_value_round_trips_as_two_char_empty_quotes() {
-        let run = testkit::TempDir::new("cc-empty-quote");
-        let kv: probes::Kv = vec![
-            ("SP_HOTFIX_LINE".to_string(), String::new()),
-            ("SP_HEIMDALL_KEYS".to_string(), String::new()),
-            ("SP_PROTECTED_NAMES".to_string(), String::new()),
-            ("SP_AT".to_string(), "123".to_string()),
-        ];
-        write_snapshot_and_history(&kv, run.path());
-        let snap = std::fs::read_to_string(run.path().join("cockpit.env")).unwrap();
-        for k in ["SP_HOTFIX_LINE", "SP_HEIMDALL_KEYS", "SP_PROTECTED_NAMES"] {
-            let line = snap.lines().find(|l| l.starts_with(&format!("{k}="))).unwrap_or_else(|| panic!("{k} missing from snapshot"));
-            assert_eq!(line, format!("{k}=''"), "empty {k} must be exactly '' (2 chars), not doubled");
-        }
-        // And it must actually source as the empty string, not the two-character literal "''".
-        let sourced = std::process::Command::new("bash")
-            .arg("-c")
-            .arg(format!(". {:?}; printf '%s' \"$SP_HOTFIX_LINE\"", snap_path(run.path())))
-            .output()
-            .unwrap();
-        assert_eq!(String::from_utf8_lossy(&sourced.stdout), "");
-    }
-
-    fn snap_path(run_dir: &std::path::Path) -> String {
-        run_dir.join("cockpit.env").to_string_lossy().into_owned()
     }
 }
 

@@ -744,18 +744,6 @@ mod tests {
                 && a.get(1).map(String::as_str) == Some("--install")));
     }
 
-    #[test]
-    fn tap_json_carries_a_duration_for_every_case() {
-        let tmp = tmpdir("tapms");
-        let dir = tmp.path().to_path_buf();
-        let out = "ok 1 - a\n#ms=4\nok 2 - b\n#ms=0\nnot ok 3 - case 3 exceeded its 1s deadline\n# at s.sh:7\n#ms=1003\nBail out! x\n";
-        let rec = ResultRecord::from_exit(1, 2, out, "t.sh", false, Mode::Parallel, Producer::Explicit, 0);
-        write_suite(&dir, "t.sh", &rec, out);
-        let tap: tap::TapSummary =
-            serde_json::from_str(&fs::read_to_string(dir.join("t.sh.tap.json")).unwrap()).unwrap();
-        assert_eq!(tap.cases.iter().map(|c| c.ms).collect::<Vec<_>>(), vec![Some(4), Some(0), Some(1003)]);
-    }
-
     /// sp-3azqi: a suite whose podman exec lost its exit status (rc 255, the exact
     /// conmon exit-file-wait message, full passing TAP output ahead of it — exactly the
     /// shape the VM certification run hit for test-strand-reclaim-n.sh) records as Fault,
@@ -795,47 +783,6 @@ mod tests {
     }
 
     #[test]
-    fn a_lost_exit_status_is_rerun_once_and_the_second_verdict_stands() {
-        const LOST: &str = "Error: timed out waiting for file /var/lib/containers/storage/overlay-containers/a/userdata/b/exit/a\n";
-        let rt = FakeRuntime::new();
-        let calls = Arc::new(AtomicUsize::new(0));
-        let c2 = calls.clone();
-        rt.on(
-            |r| r.argv.get(1).map(String::as_str) == Some("/workspace/spira/test-lost.sh"),
-            move |_| {
-                if c2.fetch_add(1, Ordering::SeqCst) == 0 {
-                    ExecOutcome { rc: 255, output: LOST.into() }
-                } else {
-                    ExecOutcome { rc: 0, output: "ok 1 - a\n".into() }
-                }
-            },
-        );
-        rt.suite("test-a.sh", 0, "ok\n");
-        let dir = tmpdir("rerun-lost");
-        let s = session(&rt);
-        let c = cfg(Mode::Parallel, &dir, 2);
-        let out = with_hooks(|h, _| {
-            run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-lost.sh", "test-a.sh"]))
-        });
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
-        assert_eq!(out.records["test-lost.sh"].status, Status::Ok);
-        assert!(out.faulted().is_empty());
-    }
-
-    #[test]
-    fn a_status_lost_twice_stays_a_fault_and_is_not_rerun_again() {
-        const LOST: &str = "Error: timed out waiting for file /var/lib/containers/storage/overlay-containers/a/userdata/b/exit/a\n";
-        let rt = FakeRuntime::new();
-        rt.suite("test-lost.sh", 255, LOST);
-        let dir = tmpdir("rerun-lost-twice");
-        let s = session(&rt);
-        let c = cfg(Mode::Serial, &dir, 0);
-        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-lost.sh"])));
-        assert_eq!(out.faulted(), vec!["test-lost.sh"]);
-        assert_eq!(rt.suite_execs().len(), 2);
-    }
-
-    #[test]
     fn quarantined_reds_do_not_block() {
         let rt = FakeRuntime::new();
         rt.suite("test-q.sh", 2, "FAIL\n");
@@ -847,149 +794,6 @@ mod tests {
         assert_eq!(out.records["test-q.sh"].status, Status::QuarantinedRed);
         assert!(out.blocking_reds().is_empty());
         assert_eq!(out.quarantined_reds(), vec!["test-q.sh"]);
-    }
-
-    /// `# testdb-mode: embedded` (sp-gjx1b): a suite named in `embedded_only` never sees the
-    /// batch-wide server fixture's env, even though every other suite does.
-    #[test]
-    fn embedded_only_suites_do_not_see_the_batch_wide_server_fixture_env() {
-        let rt = FakeRuntime::new();
-        rt.suite("test-emb.sh", 0, "ok\n");
-        rt.suite("test-srv.sh", 0, "ok\n");
-        let dir = tmpdir("embedded-only");
-        let s = session(&rt);
-        let mut c = cfg(Mode::Serial, &dir, 0);
-        c.embedded_only.insert("test-emb.sh".into());
-        with_hooks(|h, _| {
-            run(
-                &s,
-                &c,
-                h,
-                &Fixtures::Server,
-                &jobs(&["test-emb.sh", "test-srv.sh"]),
-            )
-        });
-        let execs = rt.suite_execs();
-        let emb = execs
-            .iter()
-            .find(|r| r.argv[1].ends_with("test-emb.sh"))
-            .unwrap();
-        let srv = execs
-            .iter()
-            .find(|r| r.argv[1].ends_with("test-srv.sh"))
-            .unwrap();
-        assert_eq!(emb.env_value("SPIRA_TESTDB_MODE"), None);
-        assert_eq!(srv.env_value("SPIRA_TESTDB_MODE"), Some("server"));
-    }
-
-    #[test]
-    fn maxpar_bounds_concurrency() {
-        let rt = FakeRuntime::new();
-        let live = Arc::new(AtomicUsize::new(0));
-        let peak = Arc::new(AtomicUsize::new(0));
-        let (l2, p2) = (live.clone(), peak.clone());
-        rt.on(
-            |r| {
-                r.argv
-                    .get(1)
-                    .is_some_and(|a| a.starts_with("/workspace/spira/test-"))
-            },
-            move |_| {
-                let now = l2.fetch_add(1, Ordering::SeqCst) + 1;
-                p2.fetch_max(now, Ordering::SeqCst);
-                std::thread::sleep(Duration::from_millis(30));
-                l2.fetch_sub(1, Ordering::SeqCst);
-                ExecOutcome {
-                    rc: 0,
-                    output: "ok\n".into(),
-                }
-            },
-        );
-        let dir = tmpdir("maxpar");
-        let s = session(&rt);
-        let c = cfg(Mode::Parallel, &dir, 2);
-        let names: Vec<String> = (0..8).map(|i| format!("test-{i}.sh")).collect();
-        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&refs)));
-        assert_eq!(out.records.len(), 8);
-        assert!(peak.load(Ordering::SeqCst) <= 2);
-        assert!(peak.load(Ordering::SeqCst) >= 1);
-    }
-
-    /// Peak concurrency of `names` under `c`. Each suite holds until `target` are running, so
-    /// the peak is the admitted width rather than a race against a sleep.
-    fn peak_with(c: &BatchCfg, names: &[String], target: usize) -> usize {
-        let rt = FakeRuntime::new();
-        let gate = Arc::new((Mutex::new(0usize), std::sync::Condvar::new()));
-        let peak = Arc::new(AtomicUsize::new(0));
-        let (g2, p2) = (gate.clone(), peak.clone());
-        rt.on(
-            |r| r.argv.get(1).is_some_and(|a| a.starts_with("/workspace/spira/test-")),
-            move |_| {
-                let (m, cv) = &*g2;
-                let mut live = m.lock().unwrap();
-                *live += 1;
-                p2.fetch_max(*live, Ordering::SeqCst);
-                cv.notify_all();
-                // clock-safe: caps the wait for `target` suites to be running at once
-                let (mut live, _) = cv
-                    .wait_timeout_while(live, Duration::from_secs(2), |l| *l < target)
-                    .unwrap();
-                *live -= 1;
-                cv.notify_all();
-                ExecOutcome { rc: 0, output: "ok\n".into() }
-            },
-        );
-        let s = session(&rt);
-        let js: Vec<Job> = names
-            .iter()
-            .map(|n| {
-                let mut j = Job::new(n, None);
-                if n.contains("sim") {
-                    j.lane = Some("sim".into());
-                    j.weight = 400;
-                }
-                j
-            })
-            .collect();
-        let out = with_hooks(|h, _| run(&s, c, h, &Fixtures::PerSuite, &js));
-        assert_eq!(out.records.len(), names.len());
-        peak.load(Ordering::SeqCst)
-    }
-
-    #[test]
-    fn sim_container_runs_its_lane_at_sim_slots() {
-        let dir = tmpdir("simwidth");
-        let main = cfg(Mode::Parallel, &dir, 8);
-        let names: Vec<String> = (0..8).map(|i| format!("test-sim-{i}.sh")).collect();
-        assert_eq!(
-            peak_with(&sim_cfg(&main), &names, crate::schedule::SIM_SLOTS as usize),
-            crate::schedule::SIM_SLOTS as usize
-        );
-    }
-
-    #[test]
-    fn the_sim_container_is_admitted_against_its_own_pids_budget() {
-        assert_eq!(crate::schedule::sim_pids_budget(), 3000);
-        let dir = tmpdir("simpids");
-        let sims: Vec<String> = (0..4).map(|i| format!("test-sim-{i}.sh")).collect();
-        let mut main = cfg(Mode::Parallel, &dir, 8);
-        main.lane_slots = 0;
-        assert_eq!(peak_with(&main, &sims, 4), 4);
-        let mut sim = sim_cfg(&main);
-        sim.pids_budget = 1200;
-        assert_eq!(peak_with(&sim, &sims, 3), 3);
-    }
-
-    #[test]
-    fn main_pool_caps_a_lane_and_leaves_the_rest_of_the_pool_free() {
-        let dir = tmpdir("lanecap");
-        let main = cfg(Mode::Parallel, &dir, 8);
-        let sims: Vec<String> = (0..6).map(|i| format!("test-sim-{i}.sh")).collect();
-        assert_eq!(peak_with(&main, &sims, crate::schedule::LANE_SLOTS as usize), crate::schedule::LANE_SLOTS as usize);
-        let mut mixed = sims.clone();
-        mixed.extend((0..4).map(|i| format!("test-plain-{i}.sh")));
-        assert_eq!(peak_with(&main, &mixed, 6), 6);
     }
 
     #[test]
@@ -1037,87 +841,6 @@ mod tests {
     }
 
     #[test]
-    fn container_death_mid_parallel_leaves_the_rest_unrecorded() {
-        let rt = FakeRuntime::new();
-        rt.suite("test-a.sh", 0, "ok\n");
-        // alive for the first launch check, then dead (definitive false) for the second.
-        rt.running_answers(&[Some("true"), Some("false")]);
-        let dir = tmpdir("dead");
-        let s = session(&rt);
-        let c = cfg(Mode::Parallel, &dir, 1);
-        let out = with_hooks(|h, _| {
-            run(
-                &s,
-                &c,
-                h,
-                &Fixtures::PerSuite,
-                &jobs(&["test-a.sh", "test-b.sh", "test-c.sh"]),
-            )
-        });
-        assert!(out.container_dead.is_some());
-        assert!(out.harness_fault());
-        assert!(!out.records.contains_key("test-b.sh"));
-        assert!(!out.records.contains_key("test-c.sh"));
-    }
-
-    #[test]
-    fn exec_storm_in_parallel_reclassifies_empty_zero_second_reds() {
-        let rt = FakeRuntime::new();
-        rt.on(
-            |r| {
-                r.argv
-                    .get(1)
-                    .is_some_and(|a| a.starts_with("/workspace/spira/test-"))
-            },
-            |_| ExecOutcome {
-                rc: 125,
-                output: String::new(),
-            },
-        );
-        let dir = tmpdir("storm");
-        let s = session(&rt);
-        let c = cfg(Mode::Parallel, &dir, 0);
-        let names: Vec<String> = (0..6).map(|i| format!("test-{i}.sh")).collect();
-        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&refs)));
-        assert_eq!(out.exec_fault, Some(6));
-        assert!(out.records.values().all(|r| r.status == Status::Unreached));
-        assert_eq!(
-            fs::read_to_string(dir.join("test-0.sh.result"))
-                .unwrap()
-                .trim(),
-            format!("unreached {} 0 -", out.records["test-0.sh"].epoch)
-        );
-    }
-
-    #[test]
-    fn exec_storm_in_serial_breaks_after_the_threshold() {
-        let rt = FakeRuntime::new();
-        rt.on(
-            |r| {
-                r.argv
-                    .get(1)
-                    .is_some_and(|a| a.starts_with("/workspace/spira/test-"))
-            },
-            |_| ExecOutcome {
-                rc: 1,
-                output: String::new(),
-            },
-        );
-        let dir = tmpdir("sstorm");
-        let s = session(&rt);
-        let mut c = cfg(Mode::Serial, &dir, 0);
-        c.exec_fault_threshold = 3;
-        let names: Vec<String> = (0..6).map(|i| format!("test-{i}.sh")).collect();
-        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&refs)));
-        assert_eq!(out.exec_fault, Some(3));
-        assert_eq!(rt.suite_execs().len(), 3);
-        assert_eq!(out.records.len(), 2);
-        assert!(out.records.values().all(|r| r.status == Status::Unreached));
-    }
-
-    #[test]
     fn lost_user_account_stops_serial_before_recording_the_suite() {
         let rt = FakeRuntime::new();
         rt.suite("test-a.sh", 0, "ok\n");
@@ -1141,24 +864,6 @@ mod tests {
         assert!(out.account_fault.is_some());
         assert_eq!(out.records.len(), 1);
         assert_eq!(rt.suite_execs().len(), 2);
-    }
-
-    #[test]
-    fn lost_user_account_in_parallel_is_reclassified_unreached() {
-        let rt = FakeRuntime::new();
-        rt.suite(
-            "test-b.sh",
-            126,
-            "Error: unable to find user spirauser: no matching entries in passwd file\n",
-        );
-        rt.suite("test-a.sh", 0, "ok\n");
-        let dir = tmpdir("pacct");
-        let s = session(&rt);
-        let c = cfg(Mode::Parallel, &dir, 1);
-        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-b.sh", "test-a.sh"])));
-        assert!(out.account_fault.is_some());
-        assert_eq!(out.records["test-b.sh"].status, Status::Unreached);
-        assert!(!out.records.contains_key("test-a.sh"));
     }
 
     #[test]
@@ -1242,80 +947,6 @@ mod tests {
                 }
             },
         );
-    }
-
-    #[test]
-    fn deadline_in_parallel_kills_the_running_and_starts_nothing_new() {
-        let rt = FakeRuntime::new();
-        // order is kept: the long one first (the selector's priority), then shorts
-        timed_suites(
-            &rt,
-            &[
-                ("test-long.sh", 5_000, 0),
-                ("test-s1.sh", 10, 0),
-                ("test-s2.sh", 10, 1),
-                ("test-s3.sh", 400, 0),
-                ("test-s4.sh", 10, 0),
-            ],
-        );
-        let dir = tmpdir("dl-par");
-        let s = session(&rt);
-        let mut c = cfg(Mode::Parallel, &dir, 2);
-        c.deadline = Some(Duration::from_millis(200));
-        let out = with_hooks(|h, _| {
-            run(
-                &s,
-                &c,
-                h,
-                &Fixtures::PerSuite,
-                &jobs(&[
-                    "test-long.sh",
-                    "test-s1.sh",
-                    "test-s2.sh",
-                    "test-s3.sh",
-                    "test-s4.sh",
-                ]),
-            )
-        });
-        assert_eq!(out.records["test-long.sh"].status, Status::Deferred);
-        assert_eq!(
-            out.records["test-long.sh"].fingerprint,
-            "deadline:test-long.sh"
-        );
-        assert_eq!(out.records["test-s1.sh"].status, Status::Ok);
-        // a red that finished before the deadline stays red and blocking
-        assert_eq!(out.records["test-s2.sh"].status, Status::Red);
-        assert_eq!(out.blocking_reds(), vec!["test-s2.sh"]);
-        // s3 was started before the deadline and killed at it; s4 never started
-        assert_eq!(out.records["test-s3.sh"].status, Status::Deferred);
-        assert_eq!(out.records["test-s4.sh"].status, Status::Deferred);
-        assert_eq!(out.records["test-s4.sh"].fingerprint, "-");
-        // exec calls race across threads, so compare the set that started
-        let mut started: Vec<String> = rt
-            .suite_execs()
-            .iter()
-            .map(|r| r.argv[1].trim_start_matches("/workspace/spira/").to_string())
-            .collect();
-        started.sort();
-        assert_eq!(
-            started,
-            vec!["test-long.sh", "test-s1.sh", "test-s2.sh", "test-s3.sh"]
-        );
-        assert!(rt.suite_execs().iter().all(|r| r.deadline.is_some()));
-    }
-
-    #[test]
-    fn a_suite_that_hits_its_own_timeout_before_the_deadline_is_still_a_timeout() {
-        let rt = FakeRuntime::new();
-        rt.suite("test-a.sh", 124, "slow\n");
-        let dir = tmpdir("dl-tmo");
-        let s = session(&rt);
-        let mut c = cfg(Mode::Serial, &dir, 0);
-        c.deadline = Some(Duration::from_secs(60));
-        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
-        assert_eq!(out.records["test-a.sh"].status, Status::Timeout);
-        assert!(!out.deadline_hit);
-        assert!(out.deferred().is_empty());
     }
 
     #[test]

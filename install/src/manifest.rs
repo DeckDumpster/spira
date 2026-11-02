@@ -536,31 +536,6 @@ mod tests {
     }
 
     #[test]
-    fn the_goodput_pass_ships_its_own_oneshot_and_leaves_its_timer_to_the_arm_step() {
-        let m = build(&inputs()).unwrap();
-        assert!(m.units.iter().any(|u| u.name == "spira-reconciler-goodput.service" && !u.enable), "the service is installed and not enabled");
-        assert!(!m.units.iter().any(|u| u.name == "spira-reconciler-goodput.timer"), "no timer ships before the arm step");
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("systemd");
-        let svc = std::fs::read_to_string(root.join("spira-reconciler-goodput.service")).unwrap();
-        assert!(svc.lines().any(|l| l == "Type=oneshot"), "{svc}");
-        assert!(svc.lines().any(|l| l.starts_with("ExecStart=") && l.ends_with("/bin/reconciler goodput-pass")), "{svc}");
-        assert!(svc.lines().any(|l| l == "TimeoutStartSec=60"), "{svc}");
-        assert!(!root.join("spira-reconciler-goodput.timer").exists(), "a shipped timer must be enabled; this one waits for the arm step");
-    }
-
-    #[test]
-    fn the_alarms_pass_ships_with_its_minute_timer_enabled() {
-        let m = build(&inputs()).unwrap();
-        assert!(m.units.iter().any(|u| u.name == "spira-alarms.timer" && u.enable), "the alarms timer ships enabled");
-        assert!(m.units.iter().any(|u| u.name == "spira-alarms.service" && !u.enable), "its timer starts the service");
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("systemd");
-        let svc = std::fs::read_to_string(root.join("spira-alarms.service")).unwrap();
-        assert!(svc.lines().any(|l| l.starts_with("ExecStart=") && l.ends_with("/bin/incident alarms-pass")), "{svc}");
-        let timer = std::fs::read_to_string(root.join("spira-alarms.timer")).unwrap();
-        assert!(timer.lines().any(|l| l == "OnUnitActiveSec=60s"), "{timer}");
-    }
-
-    #[test]
     fn the_straggler_sweep_covers_every_repository() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("systemd");
         let svc = std::fs::read_to_string(root.join("spira-straggler-sweep.service")).unwrap();

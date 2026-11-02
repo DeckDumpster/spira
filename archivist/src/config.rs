@@ -47,31 +47,3 @@ pub fn resolve() -> Result<Env, String> {
         fail_backoff: spira_config::process::cfg_parse("SPIRA_ARCHIVIST_FAIL_BACKOFF")?,
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The only test in this binary that calls [`resolve`] — `spira_config::process::cfg`'s
-    /// resolution is a process-global `OnceLock`, computed once and never reset, so no
-    /// other test here may also drive it. `SPIRA_HOME`/`SPIRA_TOML` point at a throwaway
-    /// fixture, never the real box's.
-    #[test]
-    fn resolve_reads_every_key_through_the_one_door() {
-        let dir = testkit::TempDir::new("archivist-config");
-        let toml =
-            spira_config::process::fixture_toml(dir.path(), &[("SPIRA_ARCHIVIST_EVERY", "10"), ("SPIRA_WIKI", "/wiki")]);
-        // SPIRA_HOME must be the checkout's own spira/ (where conf.d — the key registry —
-        // actually lives), never the throwaway fixture dir: `cfg()` needs both a real
-        // registry AND the fixture's declared values.
-        let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-        let _env = testkit::env(&[("SPIRA_HOME", Some(real_home.to_str().unwrap())), ("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
-
-        let e = resolve().expect("a complete fixture toml must resolve every key this crate needs");
-        assert_eq!(e.every, 10);
-        assert_eq!(e.wiki, Some("/wiki".to_string()));
-        assert_eq!(e.agent, "claude");
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}

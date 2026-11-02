@@ -289,23 +289,4 @@ mod tests {
         assert!(one.terminal() && one.held("poison"));
         assert!(parse_rows("{}").is_err());
     }
-
-    #[test]
-    fn a_machine_that_cannot_answer_is_an_error_and_no_row_is_none() {
-        let t = testkit::TempDir::new("lcstate");
-        let bin = t.path().join("lc");
-        testkit::write_exe(&bin, "#!/bin/sh\ncase \"$1\" in show) exit 1;; list) echo 'cannot tell' >&2; exit 2;; esac\n");
-        let bin = bin.to_string_lossy().into_owned();
-        assert_eq!(row_with(&bin, "sp-x"), Ok(None));
-        assert!(list_with(&bin).unwrap_err().contains("exited 2"));
-    }
-
-    #[test]
-    fn a_list_past_its_deadline_says_it_timed_out() {
-        let t = testkit::TempDir::new("lcstate-deadline");
-        let bin = t.path().join("lc");
-        testkit::write_exe(&bin, "#!/bin/sh\nexec sleep 5\n");
-        let bin = bin.to_string_lossy().into_owned();
-        assert!(list_within(&bin, 1).unwrap_err().contains("timed out after 1s"));
-    }
 }

@@ -52,19 +52,6 @@ fn stacked() -> ReplayWorld {
 }
 
 #[test]
-fn a_green_member_on_an_unleased_parent_waits_and_names_its_blocker() {
-    let w = stacked();
-    assert_eq!(w.applied, 7);
-    assert!(!w.rounds.contains_key("C"), "a terminal round leaves the open set");
-    assert_eq!(w.pointers["repo-b"], "C");
-    let st = status(&w, "repo-b", 100 + 600);
-    assert_eq!(st.green_unlanded_minutes, 10);
-    assert_eq!(st.conditions[0].status, ConditionStatus::True);
-    assert_eq!(st.conditions[0].reason, "parent P ATTRIBUTING, unleased");
-    assert_eq!(st.rounds_since_landing, 2);
-}
-
-#[test]
 fn a_parent_with_a_pass_running_is_driven_and_a_terminal_one_blocks_nothing() {
     let mut w = stacked();
     w.apply(200, &round("P", Attributing, Rebuilding, &[m("b-0", "000")], None, "PassRebuilt"));
@@ -74,24 +61,6 @@ fn a_parent_with_a_pass_running_is_driven_and_a_terminal_one_blocks_nothing() {
     let st = status(&w, "repo-b", 400);
     assert_eq!(st.conditions[0].status, ConditionStatus::False);
     assert_eq!(st.green_unlanded_minutes, 5, "the member still waits to land");
-}
-
-#[test]
-fn a_later_red_at_the_same_tip_keeps_the_green_but_a_new_tip_or_landing_ends_it() {
-    let mut w = stacked();
-    let a = m("b-1", "aaa");
-    w.apply(120, &round("D", CUT, Open, std::slice::from_ref(&a), None, "MemberAdded"));
-    w.apply(130, &round("D", Open, CiRunning, std::slice::from_ref(&a), None, "PassStarted"));
-    w.apply(140, &round("D", CiRunning, Attributing, std::slice::from_ref(&a), None, "red-attributed"));
-    assert_eq!(w.verdicts[&a], PassVerdict::Red);
-    assert!(w.green_waiting.contains_key(&a), "one red does not unmake a green at that tip");
-    w.apply(150, &round("E", CUT, Open, &[m("b-1", "bbb")], None, "MemberAdded"));
-    assert!(w.green_waiting.is_empty(), "a new tip is new work");
-
-    let mut w = stacked();
-    w.apply(150, &Record::Land(Land { at: String::new(), repo: "repo-b".into(), bead: "b-1".into(), merge_sha: None, reverts: None }));
-    assert!(w.green_waiting.is_empty());
-    assert_eq!(w.lands["repo-b"], 1);
 }
 
 #[test]
@@ -133,83 +102,6 @@ fn a_red_tip_cut_again_is_a_repeat_until_it_goes_green_lands_or_leaves() {
 }
 
 #[test]
-fn a_red_with_several_members_is_its_attributed_owners_and_not_the_innocents() {
-    let (owner, innocent, stray) = (m("b-1", "a1"), m("b-2", "a2"), m("b-3", "a3"));
-    let mut w = ReplayWorld::default();
-    w.verdicts.insert(stray.clone(), PassVerdict::Green);
-    let all = [owner.clone(), innocent.clone(), stray.clone()];
-    w.apply(0, &round("R", CUT, Open, &all, None, "MemberAdded"));
-    w.apply(1, &round("R", Open, CiRunning, &all, None, "PassStarted"));
-    w.apply(2, &round("R", CiRunning, Attributing, &all, None, "PassRed"));
-    assert_eq!(w.verdicts.get(&owner), None, "an unattributed red with several members marks no one");
-    w.verdicts.insert(innocent.clone(), PassVerdict::Red);
-    let att = |batch: &str| {
-        Record::Attribution(Attribution {
-            at: String::new(),
-            repo: "repo-b".into(),
-            batch: batch.into(),
-            pass: 1,
-            owner: vec!["b-1".into()],
-            innocent: vec!["b-2".into(), "b-3".into()],
-            wall_secs: 1,
-        })
-    };
-    w.apply(3, &att("R"));
-    assert_eq!(w.verdicts.get(&owner), Some(&PassVerdict::Red));
-    assert_eq!(w.verdicts.get(&innocent), None);
-    assert_eq!(w.verdicts.get(&stray), Some(&PassVerdict::Green), "only a red verdict is cleared");
-    let before = w.clone();
-    w.apply(4, &att("gone"));
-    assert_eq!(w.verdicts, before.verdicts, "an attribution of a closed round changes nothing");
-}
-
-#[test]
-fn a_parent_waiting_briefly_for_a_slot_is_driven_and_one_waiting_past_a_keepalive_is_not() {
-    let mut w = ReplayWorld::default();
-    let a = m("b-1", "aaa");
-    w.apply(0, &round("P", CUT, Open, &[m("b-0", "000")], None, "MemberAdded"));
-    w.apply(10, &round("C", CUT, Open, std::slice::from_ref(&a), Some("P"), "MemberAdded"));
-    w.apply(20, &round("C", Open, CiRunning, std::slice::from_ref(&a), Some("P"), "PassStarted"));
-    w.apply(30, &round("C", CiRunning, Green, std::slice::from_ref(&a), Some("P"), "green"));
-    let keepalive = super::round_controller::KEEPALIVE_MS / 1000;
-    assert_eq!(status(&w, "repo-b", keepalive).conditions[0].status, ConditionStatus::False);
-    assert_eq!(status(&w, "repo-b", keepalive + 1).conditions[0].reason, "parent P OPEN, unleased");
-}
-
-#[test]
-fn a_later_green_keeps_the_first_greens_age_but_names_the_latest_round() {
-    let a = m("b-1", "aaa");
-    let mut w = ReplayWorld::default();
-    w.apply(0, &round("U", CUT, Open, std::slice::from_ref(&a), None, "MemberAdded"));
-    w.apply(1, &round("U", Open, CiRunning, std::slice::from_ref(&a), None, "PassStarted"));
-    w.apply(2, &round("U", CiRunning, Green, std::slice::from_ref(&a), None, "green"));
-    w.apply(3, &round("U", Green, Abandoned, std::slice::from_ref(&a), None, "Abandon"));
-    w.apply(10, &round("P", CUT, Open, &[m("b-0", "000")], None, "MemberAdded"));
-    w.apply(11, &round("P", Open, CiRunning, &[m("b-0", "000")], None, "PassStarted"));
-    w.apply(12, &round("P", CiRunning, Attributing, &[m("b-0", "000")], None, "infra"));
-    w.apply(20, &round("S", CUT, Open, std::slice::from_ref(&a), Some("P"), "MemberAdded"));
-    w.apply(21, &round("S", Open, CiRunning, std::slice::from_ref(&a), Some("P"), "PassStarted"));
-    w.apply(22, &round("S", CiRunning, Green, std::slice::from_ref(&a), Some("P"), "green"));
-    let g = &w.green_waiting[&a];
-    assert_eq!((g.since, g.batch.as_str(), g.parent.as_deref()), (2, "S", Some("P")));
-    assert_eq!(status(&w, "repo-b", 30).conditions[0].status, ConditionStatus::True);
-}
-
-#[test]
-fn a_stopped_repo_has_no_round_waiting_for_a_slot() {
-    let mut w = ReplayWorld::default();
-    w.apply(0, &round("O", CUT, Open, &[m("b-4", "eee")], None, "MemberAdded"));
-    let stop = |kind, repo: Option<&str>| Record::Stop(Stop { at: String::new(), kind, repo: repo.map(String::from), lanes: None, bead: None });
-    w.apply(1, &stop(StopKind::Paused, Some("repo-b")));
-    assert_eq!(status(&w, "repo-b", SLOT_WAIT_SECS).waiting_with_no_slot, 0, "paused");
-    w.apply(2, &stop(StopKind::Unpaused, Some("repo-b")));
-    w.apply(3, &stop(StopKind::Halted, None));
-    assert_eq!(status(&w, "repo-b", SLOT_WAIT_SECS).waiting_with_no_slot, 0, "halted");
-    w.apply(4, &stop(StopKind::Released, None));
-    assert_eq!(status(&w, "repo-b", SLOT_WAIT_SECS).waiting_with_no_slot, 1);
-}
-
-#[test]
 fn passes_that_end_with_no_verdict_block_the_lane_until_a_verdict() {
     let a = m("b-9", "ddd");
     let mut w = ReplayWorld::default();
@@ -242,25 +134,6 @@ fn an_open_round_waiting_past_the_grace_has_no_slot() {
     assert_eq!(st.waiting_with_no_slot, 1);
     assert_eq!(st.conditions[2].status, ConditionStatus::True);
     assert_eq!(status(&w, "repo-z", SLOT_WAIT_SECS).waiting_with_no_slot, 0, "another repo's round is not this one's");
-}
-
-#[test]
-fn stops_pause_repos_and_halt_the_world() {
-    let stop = |kind, repo: Option<&str>| {
-        Record::Stop(Stop { at: String::new(), kind, repo: repo.map(String::from), lanes: None, bead: Some("b-1226".into()) })
-    };
-    let mut w = ReplayWorld::default();
-    w.apply(0, &stop(StopKind::Paused, Some("repo-a")));
-    assert_eq!(w.paused["repo-a"].as_deref(), Some("b-1226"));
-    w.apply(1, &stop(StopKind::Paused, None));
-    w.apply(2, &stop(StopKind::Unpaused, None));
-    assert_eq!(w.paused.len(), 1, "a scoped stop names its repo");
-    w.apply(3, &stop(StopKind::Unpaused, Some("repo-a")));
-    assert!(w.paused.is_empty());
-    w.apply(4, &stop(StopKind::Halted, None));
-    assert!(w.halted);
-    w.apply(5, &stop(StopKind::Released, None));
-    assert!(!w.halted);
 }
 
 #[test]

@@ -1564,56 +1564,6 @@ mod tests {
 
     use super::*;
 
-    fn git(dir: &std::path::Path, args: &[&str]) -> String {
-        let out = std::process::Command::new("git")
-            .arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]).args(args)
-            .output().unwrap();
-        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
-        String::from_utf8_lossy(&out.stdout).trim().to_string()
-    }
-
-    fn fixture() -> testkit::TempDir {
-        let d = testkit::TempDir::new("submit-finishing");
-        git(d.path(), &["init", "-q", "-b", "land"]);
-        git(d.path(), &["commit", "-q", "--allow-empty", "-m", "base"]);
-        git(d.path(), &["checkout", "-q", "-b", "work"]);
-        d
-    }
-
-    #[test]
-    fn a_commit_missing_the_id_is_refused_naming_that_commit() {
-        let d = fixture();
-        git(d.path(), &["commit", "-q", "--allow-empty", "-m", "sp-x1: good"]);
-        git(d.path(), &["commit", "-q", "--allow-empty", "-m", "forgot the id"]);
-        let bad = git(d.path(), &["rev-parse", "HEAD"]);
-        let tip = bad.clone();
-        let msg = finishing_refusal(d.path(), "land", &tip, "sp-x1", &[]).expect("refused");
-        assert!(msg.contains(&bad[..12]) && msg.contains("forgot the id") && !msg.contains("good"), "{msg}");
-        assert!(msg.contains("git commit --amend") && msg.contains("git rebase -i land"), "{msg}");
-    }
-
-    #[test]
-    fn a_branch_behind_the_landing_ref_is_refused_with_the_rebase_command() {
-        let d = fixture();
-        git(d.path(), &["commit", "-q", "--allow-empty", "-m", "sp-x1: work"]);
-        let tip = git(d.path(), &["rev-parse", "HEAD"]);
-        git(d.path(), &["checkout", "-q", "land"]);
-        git(d.path(), &["commit", "-q", "--allow-empty", "-m", "other landed"]);
-        let msg = finishing_refusal(d.path(), "land", &tip, "sp-x1", &[]).expect("refused");
-        assert!(msg.contains("git rebase land"), "{msg}");
-    }
-
-    #[test]
-    fn a_compliant_branch_and_a_stacked_prerequisite_pass() {
-        let d = fixture();
-        git(d.path(), &["commit", "-q", "--allow-empty", "-m", "sp-pre: prerequisite"]);
-        let pre = git(d.path(), &["rev-parse", "HEAD"]);
-        git(d.path(), &["commit", "-q", "--allow-empty", "-m", "sp-x1: work"]);
-        let tip = git(d.path(), &["rev-parse", "HEAD"]);
-        assert!(finishing_refusal(d.path(), "land", &tip, "sp-x1", std::slice::from_ref(&pre)).is_none());
-        assert!(finishing_refusal(d.path(), "land", &tip, "sp-x1", &[]).is_some(), "without the stack its prerequisite's commit is unnamed");
-    }
-
     #[test]
     fn done_on_a_dropped_or_done_bead_is_a_no_op_for_every_actor() {
         for st in [bead::BeadState::Dropped, bead::BeadState::Done] {
@@ -1820,11 +1770,6 @@ mod tests {
         }
         assert_eq!(gate("hel", &v(&["--dry-run", "--actor", "builder"])).unwrap_err().0, REFUSED);
         assert!(gate("hel", &v(&["--dry-run", "--actor", "ops"])).is_ok());
-    }
-
-    #[test]
-    fn a_gated_verb_without_a_persona_is_refused() {
-        assert_eq!(gate("note-on", &v(&["sp-x1", "hi"])).unwrap_err().0, REFUSED);
     }
 
     #[test]

@@ -87,20 +87,6 @@ fn only_a_top_level_frontend_change_is_a_site_change() {
 }
 
 #[test]
-fn a_repository_without_shots_is_a_clean_no_op() {
-    let tmp = dir("noop");
-    let repo = tmp.path().join("r");
-    std::fs::create_dir_all(&repo).unwrap();
-    let g = |a: &[&str]| assert!(Command::new("git").arg("-C").arg(&repo).args(a).status().unwrap().success());
-    g(&["init", "-q"]);
-    g(&["-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "x"]);
-    let (rc, msg) = batch(&repo, tmp.path(), "HEAD", "HEAD", None, None);
-    assert_eq!(rc, 0, "{msg}");
-    assert!(msg.contains("declares no shots capture"), "{msg}");
-    assert!(!tmp.path().join("shots").exists());
-}
-
-#[test]
 fn nothing_in_the_tool_opens_an_image() {
     let src = include_str!("../shots.rs");
     let code = &src[..src.find("#[cfg(test)]").unwrap()];

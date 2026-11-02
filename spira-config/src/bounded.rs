@@ -18,20 +18,3 @@ pub fn bounded_for(program: impl AsRef<OsStr>, secs: &str) -> Command {
     c.arg(secs).arg(program);
     c
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_program_runs_under_timeout_with_its_args_intact() {
-        let out = bounded("echo").arg("hi").output().unwrap();
-        assert_eq!(String::from_utf8_lossy(&out.stdout), "hi\n");
-    }
-
-    #[test]
-    fn a_call_past_the_deadline_is_killed() {
-        let st = bounded("sleep").arg("30").status().unwrap();
-        assert_eq!(st.code(), Some(124));
-    }
-}

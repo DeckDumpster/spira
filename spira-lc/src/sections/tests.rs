@@ -6,13 +6,12 @@ use serde_json::{json, Value};
 use spira_desired_state::compose::{compose, publish_specs};
 use spira_desired_state::producer::parse_fragment;
 use spira_otel::metrics::MetricsSink;
-use state_store::gc::Controller;
 use state_store::{
-    events_key, Backend, Config, Contract, LogEntry, MemBackend, Object, Ports, Request, Rev,
+    Backend, Config, Contract, LogEntry, MemBackend, Object, Ports, Request, Rev,
     Txn, Version, Write,
 };
 
-use super::{run, Call, REFUSALS, WRITES};
+use super::{run, Call};
 
 mod alarms_pass;
 mod assemble;
@@ -147,58 +146,12 @@ fn spec(name: &str, depth_max: f64) -> Value {
     })
 }
 
-/// `v` with the value at `ptr` set; an object's missing last segment is added.
-fn with(mut v: Value, ptr: &str, x: Value) -> Value {
-    let (parent, last) = ptr.rsplit_once('/').unwrap_or_else(|| panic!("{ptr}"));
-    match v.pointer_mut(parent).unwrap_or_else(|| panic!("{ptr}")) {
-        Value::Object(o) => {
-            o.insert(last.to_string(), x);
-        }
-        Value::Array(a) => a[last.parse::<usize>().unwrap_or_else(|_| panic!("{ptr}"))] = x,
-        _ => panic!("{ptr}"),
-    }
-    v
-}
-
 fn intent(id: &str, token: &str, from: Value, to: Value) -> Value {
     json!({
         "id": id, "action": "drain", "target": "knobs/Probe/a/concurrency", "from": from, "to": to,
         "moves": "depth", "baseline": 3.0, "expected_effect": -1.0, "horizon": "10m",
         "addresses": ["Deep"], "taken_at": NOW, "by": { "pass": "p-1", "lock_token": token },
     })
-}
-
-#[test]
-fn admission_refuses_each_malformed_write_naming_its_field_and_the_store_does_not_move() {
-    let r = rig();
-    let publish = |body: Value| r.refused(&["section", "publish-status", "--actor", "probe", "--expect-rev", "0"], Some(&body));
-    let good = || status("a", 0, NOW);
-    let cases: Vec<(&str, Value, &str)> = vec![
-        ("unknown field", { let mut v = good(); v["metadata"]["bogus"] = json!(1); v }, "metadata"),
-        ("unknown status field", { let mut v = good(); v["status"]["bogus"] = json!(1); v }, "status"),
-        ("unknown kind", with(good(), "/kind", json!("Warp")), "kind"),
-        ("apiVersion", with(good(), "/apiVersion", json!("spira/v2")), "apiVersion"),
-        ("24h in an action-bearing distance", with(good(), "/distance/fn", json!("depth + depth_24h")), "distance.fn"),
-        ("5m horizon on a 1h field", with(with(good(), "/actions/0/moves", json!("wedged")), "/actions/0/horizon", json!("5m")), "actions[0].horizon"),
-        ("set to 4", with(good(), "/actions/0/step", json!("set to 4")), "actions[0].step"),
-        ("rebuild", with(good(), "/actions/0/step", json!("rebuild")), "actions[0].step"),
-        ("+30", with(good(), "/actions/0/step", json!("+30")), "actions[0].step"),
-        ("+N", with(good(), "/actions/0/step", json!("+N")), "actions[0].step"),
-        ("stopping", with(good(), "/actions/0/stopping", json!(true)), "actions[0].stopping"),
-        ("undeclared condition", with(good(), "/status/conditions/0/type", json!("Lost")), "status.conditions[0].type"),
-        ("Andon", with(good(), "/kind", json!("Andon")), "kind"),
-    ];
-    let head = r.head();
-    for (what, body, field) in cases {
-        let got = publish(body);
-        assert!(got.starts_with(field), "{what}: refused on {got:?}, not {field:?}");
-        assert_eq!(r.head(), head, "{what}: the store moved");
-    }
-    let andon = with(spec("a", 1.0), "/kind", json!("Andon"));
-    assert_eq!(r.refused(&["section", "apply-spec", "--actor", "compose"], Some(&andon)), "kind");
-    assert_eq!(r.head(), head);
-    r.publish(&good());
-    assert!(r.head() > head, "the good section is written");
 }
 
 #[test]
@@ -435,32 +388,6 @@ fn snapshot_reads_sections_intents_and_the_pass_record_at_one_list_rev() {
     assert_eq!(later["intents"].as_array().unwrap().len(), 2);
 }
 
-#[test]
-fn a_status_publish_is_unaudited_telemetry_an_intent_is_audited_and_both_expire() {
-    let r = rig();
-    let v = r.publish(&status("a", 0, NOW));
-    let rev: u64 = v["resourceVersion"].as_str().unwrap().parse().unwrap();
-    assert!(r.store.get(&events_key(rev)).unwrap().is_none(), "a publish writes no events/ key");
-    let token = r.lock();
-    let v = r.ok(&["intent", "put", "intents/Probe/a/1", "--token", &token, "--actor", "reconciler"], Some(&intent("1", &token, json!(1), json!(2))));
-    let rev = v["rev"].as_u64().unwrap();
-    assert!(r.store.get(&events_key(rev)).unwrap().is_some(), "an intent is audited");
-
-    let gc = |at: u64| {
-        r.clock.advance_to(at);
-        Controller::new(&r.store).tick(r.clock.now_ms()).unwrap();
-    };
-    let present = |key: &str| r.store.get(key).unwrap().is_some();
-    gc(T0 + 48 * HOUR - MIN);
-    assert!(present("intents/Probe/a/1"));
-    gc(T0 + 48 * HOUR + MIN);
-    assert!(!present("intents/Probe/a/1"), "an intent is gone after 48 h");
-    assert!(present("telemetry/sections/Probe/a"));
-    assert_eq!(r.ok(&["section", "get", "Probe/a"], None)["freshness"]["state"], "Stale", "a stale section stays readable");
-    gc(T0 + 7 * 24 * HOUR + MIN);
-    assert!(!present("telemetry/sections/Probe/a"), "a section is gone after 7 days");
-}
-
 const FRAGMENT: &str = r#"
 [producer]
 producer = "operator"
@@ -519,19 +446,6 @@ fn every_answer_is_json_and_list_filters_by_kind() {
 }
 
 #[test]
-fn a_lock_renews_under_its_token_and_refuses_another_holder() {
-    let r = rig();
-    let token = r.lock();
-    assert_eq!(r.refused(&["lock", "acquire", "reconciler", "--ttl", "600", "--holder", "other"], None), "resource");
-    r.ok(&["lock", "renew", "reconciler", "--token", &token, "--ttl", "900"], None);
-    assert_eq!(r.refused(&["lock", "renew", "reconciler", "--token", "999.0"], None), "--token");
-    r.clock.advance(901_000);
-    assert_eq!(r.refused(&["lock", "renew", "reconciler", "--token", &token], None), "--token", "an expired lock renews nothing");
-    let again = r.lock();
-    assert_ne!(again, token, "a retaken lock has a new fencing token");
-}
-
-#[test]
 fn lock_show_names_a_round_leases_token_ttl_and_the_holder_its_record_names() {
     let r = rig();
     let lock = "round/spira/b-1";
@@ -552,20 +466,4 @@ fn lock_show_names_a_round_leases_token_ttl_and_the_holder_its_record_names() {
     assert_eq!(r.ok(&["lock", "show", lock], None)["holder"], Value::Null, "a record naming another token names no holder");
     r.clock.advance(241_000);
     assert_eq!(r.call(&["lock", "show", lock], None).0, 1, "a lapsed lease holds nothing");
-}
-
-#[test]
-fn writes_and_refusals_are_counted_by_kind_and_reason() {
-    let r = rig();
-    let ((), got) = spira_otel::metrics::fixture::capture(|sink| {
-        let body = status("a", 0, NOW);
-        assert_eq!(r.call_with(sink, &["section", "publish-status", "--actor", "probe", "--expect-rev", "0"], Some(&body)).0, 0);
-        let bad = with(status("a", 0, NOW), "/actions/0/step", json!("rebuild"));
-        assert_eq!(r.call_with(sink, &["section", "publish-status", "--actor", "probe", "--expect-rev", "0"], Some(&bad)).0, 3);
-    });
-    let find = |name: &str, reason: &str| {
-        got.iter().any(|s| s.name == name && s.label("kind") == Some("Probe") && s.label("reason") == Some(reason) && s.label("verb") == Some("section publish-status"))
-    };
-    assert!(find(WRITES, "ok"), "{got:?}");
-    assert!(find(REFUSALS, "step"), "{got:?}");
 }

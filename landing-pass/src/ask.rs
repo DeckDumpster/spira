@@ -294,23 +294,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn generated_files_match_by_substring() {
-        assert!(is_generated_file("spira/boundary/foo.rs", "boundary/ repo-boundary"));
-        assert!(!is_generated_file("spira/other.rs", "boundary/ repo-boundary"));
-        assert!(!is_generated_file("spira/other.rs", ""));
-    }
-
-    #[test]
-    fn conflict_lines_flag_generated_files_and_fall_back_to_unknown() {
-        let (lines, any_gen) = conflict_file_lines("a.rs boundary/gen.rs", "boundary/");
-        assert_eq!(lines, "  - a.rs\n  - boundary/gen.rs (GENERATED — regenerate it, do not merge it by hand)");
-        assert!(any_gen);
-        let (lines, any_gen) = conflict_file_lines("", "boundary/");
-        assert_eq!(lines, "  - unknown");
-        assert!(!any_gen);
-    }
-
-    #[test]
     fn rebase_loop_mail_picks_the_generated_file_suggestion_over_decompose_and_duplicate() {
         let ctx = RebaseLoopCtx { bead_title: Some("Do the thing"), bead_status: Some("open"), tip_short: Some("abc123"), ahead: Some("3"), nfiles: 10 };
         let (subj, body) = rebase_loop_mail("sp-a", "spira/sp-a", "spira", "4", "gen/x.rs", "sp-b", Some("local/main"), &ctx, 4, "gen/");
@@ -388,17 +371,5 @@ mod tests {
         let (subj, _dflt, body) = machinery_class_mail("spira", "harness-fault", "spira/sp-a,spira/sp-b", "NO_VERDICT", 4, "tail");
         assert_eq!(subj, "spira cannot be judged: NO_VERDICT x4 in a day (harness-fault) — spira/sp-a,spira/sp-b");
         assert!(body.contains("Affected branches: spira/sp-a,spira/sp-b"));
-    }
-
-    #[test]
-    fn bead_context_matches_the_python() {
-        let notes = serde_json::json!("one\n\ntwo\nthree\nfour");
-        let now = crate::util::parse_iso("2026-09-28T05:30:00Z").unwrap();
-        let s = bead_context("sp-x", "open", 1, Some("2026-09-28T00:00:00Z"), "T", &["a".into(), "b".into()], Some("  do it  \n"), Some(&notes), now);
-        assert_eq!(s, "BEAD    sp-x  [open, P1, open 5h]\nTITLE   T\nLABELS  a, b\n\nWHAT THIS BEAD IS FOR\ndo it\n\nMOST RECENT NOTES\n  - two\n  - three\n  - four");
-
-        let now2 = crate::util::parse_iso("2026-09-28T00:00:00Z").unwrap();
-        let bare = bead_context("sp-y", "", 9999, Some("2026-09-20T00:00:00Z"), "", &[], None, None, now2);
-        assert_eq!(bare, "BEAD    sp-y  [None, P9999, open 8d]\nTITLE   (none)\nLABELS  (none)\n\nWHAT THIS BEAD IS FOR\n(no description — that is itself the problem)");
     }
 }

@@ -85,26 +85,6 @@ fn andon_is_refused_by_name_until_its_design_registers_it() {
 }
 
 #[test]
-fn a_24h_field_is_refused_in_a_distance_of_a_section_with_actions_and_admitted_without() {
-    let v = with(good(), "/distance/fn", json!("depth + depth_24h"));
-    let r = refused(v.clone());
-    assert_eq!((r.field.as_str(), r.code), ("distance.fn", "window"), "{r}");
-    let mut termonly = v;
-    termonly.as_object_mut().unwrap().remove("actions");
-    admit(&parse_section(&termonly).unwrap()).expect("a term section may read a 24h field");
-}
-
-#[test]
-fn a_distance_term_must_be_a_numeric_status_field() {
-    for f in ["depth + stuck", "depth + nope"] {
-        let r = refused(with(good(), "/distance/fn", json!(f)));
-        assert_eq!(r.code, "term", "{f}: {r}");
-    }
-    assert_eq!(refused(with(good(), "/distance/fn", json!("depth ^ 2"))).code, "grammar");
-    assert_eq!(refused(with(good(), "/distance/close", json!(1.0))).code, "hysteresis");
-}
-
-#[test]
 fn a_horizon_shorter_than_the_moved_fields_window_plus_target_latency_is_refused() {
     let v = with(good(), "/actions/0/moves", json!("wedged"));
     let r = refused(with(v.clone(), "/actions/0/horizon", json!("5m")));

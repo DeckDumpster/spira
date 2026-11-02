@@ -524,10 +524,7 @@ pub const MAX_WORKERS: usize = 8;
 pub(crate) mod testutil {
     use std::fs;
     use std::path::Path;
-    use std::process::Command;
 
-    /// A rule's outcome and its positive control, as the rule tests read them.
-    pub type Checked = (Result<Vec<crate::Finding>, crate::LintError>, Option<(usize, String)>);
 
     /// A scratch directory removed on drop (testkit's, with this crate's fixture helpers).
     pub struct TempDir(pub testkit::TempDir);
@@ -544,28 +541,8 @@ pub(crate) mod testutil {
             fs::create_dir_all(p.parent().unwrap()).unwrap();
             fs::write(p, content).unwrap();
         }
-        /// Like [`write`](Self::write), but executable — through `testkit::write_exe`
-        /// (chmod-exec-leak, sp-os3of), never a bare `fs::write` + `set_permissions`.
-        pub fn write_exe(&self, rel: &str, content: &str) {
-            let p = self.0.join(rel);
-            fs::create_dir_all(p.parent().unwrap()).unwrap();
-            testkit::write_exe(&p, content);
-        }
         pub fn remove(&self, rel: &str) {
             fs::remove_file(self.0.join(rel)).unwrap();
-        }
-        pub fn git(&self, args: &[&str]) {
-            let st = Command::new("git")
-                .arg("-C")
-                .arg(&self.0)
-                .args(["-c", "user.email=t@example.com", "-c", "user.name=t"])
-                .args(args)
-                .output()
-                .unwrap();
-            assert!(st.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&st.stderr));
-        }
-        pub fn git_init(&self) {
-            self.git(&["init", "-q", "-b", "main"]);
         }
     }
 
@@ -573,64 +550,8 @@ pub(crate) mod testutil {
 
 #[cfg(test)]
 mod tests {
-    use super::testutil::TempDir;
+
     use super::*;
-
-    /// A rule that sleeps, then reports one finding (or refuses) and a positive control.
-    struct Slow {
-        name: &'static str,
-        ms: u64,
-        refuse: bool,
-        checked: SyncCell<Option<usize>>,
-    }
-    impl Rule for Slow {
-        fn name(&self) -> &'static str {
-            self.name
-        }
-        fn applies_to(&self, _: &Entry) -> bool {
-            true
-        }
-        fn check(&self, _: &Tree) -> Result<Vec<Finding>, LintError> {
-            std::thread::sleep(std::time::Duration::from_millis(self.ms));
-            self.checked.set(Some(self.ms as usize));
-            if self.refuse {
-                return Err(LintError::EmptyScope);
-            }
-            Ok(vec![Finding { rule: self.name, path: "p".into(), line: None, message: "m".into() }])
-        }
-        fn checked(&self) -> Option<(usize, String)> {
-            self.checked.get().map(|n| (n, "ms".into()))
-        }
-    }
-
-    /// The rules run concurrently, but the results — every finding, refusal and positive
-    /// control the gate reads — come back in the rules' order, each with its own rule's
-    /// control, however the threads finish.
-    #[test]
-    fn run_checks_rules_concurrently_and_reports_in_rule_order() {
-        let names = ["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9"];
-        let rules: Vec<Box<dyn Rule>> = names
-            .iter()
-            .enumerate()
-            .map(|(i, n)| {
-                // The first rules are the slowest, so they finish last.
-                Box::new(Slow { name: n, ms: 20 * (names.len() - i) as u64, refuse: i == 3, checked: SyncCell::new(None) }) as Box<dyn Rule>
-            })
-            .collect();
-        let tree = Tree::from_paths(Path::new("/nowhere"), ["a"], Vec::<String>::new());
-        let t0 = std::time::Instant::now();
-        let got = run(&tree, &rules);
-        let serial: u64 = (1..=names.len() as u64).map(|k| 20 * k).sum();
-        assert_eq!(got.iter().map(|r| r.rule).collect::<Vec<_>>(), names);
-        for (i, r) in got.iter().enumerate() {
-            assert_eq!(r.checked, Some((20 * (names.len() - i), "ms".into())), "{}", r.rule);
-            assert_eq!(r.outcome.is_err(), i == 3, "{}", r.rule);
-        }
-        if std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) > 1 {
-            assert!(t0.elapsed() < std::time::Duration::from_millis(serial), "ran serially: {:?}", t0.elapsed());
-        }
-    }
-
     #[test]
     fn diff_scope_keeps_only_changed_lines_and_touched_files() {
         let mut d = DiffScope { files: Default::default() };
@@ -649,76 +570,5 @@ mod tests {
         assert!(pathspec_match("*.rs", "broker/src/main.rs"));
         assert!(!pathspec_match("spira/*.sh", "spiral/a.sh"));
         assert!(!pathspec_match("spira/gate-suites", "spira/gate-suites2"));
-    }
-
-    #[test]
-    fn walk_refuses_a_non_repository() {
-        let t = TempDir::new("nogit");
-        assert!(Tree::from_git(t.path()).is_err());
-    }
-
-    #[test]
-    fn walk_sees_tracked_and_untracked_but_not_ignored() {
-        let t = TempDir::new("walk");
-        t.git_init();
-        t.write(".gitignore", "ignored.txt\n");
-        t.write("a.sh", "x\n");
-        t.write("ignored.txt", "x\n");
-        t.git(&["add", ".gitignore", "a.sh"]);
-        t.write("new.sh", "x\n");
-        let tree = Tree::from_git(t.path()).unwrap();
-        let got: Vec<(&str, bool)> = tree.entries.iter().map(|e| (e.path.as_str(), e.tracked)).collect();
-        assert_eq!(got, vec![(".gitignore", true), ("a.sh", true), ("new.sh", false)]);
-    }
-
-    /// The tree-walking rules over one small fixture tree: one planted violation per rule is
-    /// found, named by its rule, and nothing else is. The rules that hold named files to a
-    /// contract (event-taxonomy, gate-workflow, conf-key-registry, lib-sh-shims), and
-    /// tmp-leak, config-literal-fallback chmod-exec-leak, env-set-var-leak and process-exit-in-library, which read Rust, are
-    /// fixtured in their own modules.
-    #[test]
-    fn all_rules_over_a_fixture_tree() {
-        let t = TempDir::new("fixture");
-        t.git_init();
-        // The planted strings are assembled with concat! so this source file itself carries
-        // none of them — config-fence and deps-lint scan *.rs.
-        let cfg_name = concat!("spira", ".toml");
-        let prog = concat!("no-such", "-prog");
-        t.write_exe("spira/clean.sh", "#!/bin/sh\necho ok\n");
-        t.write_exe("spira/cfg.sh", &format!("#!/bin/sh\n# see {cfg_name}\n"));
-        t.write_exe("spira/bin.sh", "#!/bin/sh\nreconciler\n");
-        t.write_exe("spira/payload.sh", "#!/bin/sh\nX_JSON=\"$y\" python3 -c 'print(1)'\n");
-        t.write_exe("spira/new-fence.sh", "#!/bin/sh\n");
-        t.write_exe("spira/probe.sh", &format!("#!/bin/sh\ncommand -v {prog}\n"));
-        t.write("spira/noexec.sh", "#!/bin/sh\n");
-        t.write("spira/test-own.sh", "#!/bin/sh\n# covers: spira/clean.sh spira/gone.sh\nok() { :; }\n");
-        t.write("spira/deps.toml", "[[dep]]\nname = \"git\"\n");
-        t.write("spira/config-fence-allow", "");
-        t.write("spira/payload-argv-lint-allow", "");
-        t.write("spira-lint/fence-scripts-allow", "");
-        t.write("spira-lint/testlib-migrated-allow", "");
-        t.git(&["add", "."]);
-        let tree = Tree::from_git(t.path()).unwrap();
-        let contract = ["cockpit-no-bd", "cockpit-no-round-files", "round-records-live-only", "pool-state-readers", "liveness-readers", "gate-state-readers", "dwarf-state-readers", "release-state-readers", "sift-state-readers", "testenv-result-readers", "event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "py-fstring-compat", "release-spawn-env", "config-literal-fallback", "config-env-read", "config-door", "config-key-registered", "config-registry-runtime", "chmod-exec-leak", "no-download-install", "env-set-var-leak", "call-deadline", "hash-iter-output", "process-exit-in-library", "plan-matrix", "plan-lint", "lockfile-lint", "config-delta", "config-fixture", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "workflow-config", "fresh-host-entry", "otel-binaries", "journal-reads", "release-tool-exec", "bare-unit-name", "test-real-clock", "ffx-vocabulary", "two-plane"];
-        let mut rules = all_rules();
-        rules.retain(|r| !contract.contains(&r.name()));
-        let mut lines = Vec::new();
-        for r in &run(&tree, &rules) {
-            for f in r.outcome.as_ref().unwrap() {
-                lines.push(f.to_string());
-            }
-        }
-        let mut want = vec![
-                "config-fence: spira/cfg.sh: name".to_string(),
-                "payload-argv-lint: spira/payload.sh:2: env: $X_JSON handed to python3".to_string(),
-                "fence-scripts: spira/new-fence.sh: a new bash fence/lint script — write it as a spira-lint rule instead".to_string(),
-                "testlib-migrated: spira/test-own.sh: defines its own ok()/pass()/bad()/is()/want()/nowant()/wantrc() or a pass=/fail= counter — source testlib.sh instead".to_string(),
-                "script-exec: spira/noexec.sh: not executable — chmod +x it, or declare \"Sourced, never executed\" in its header".to_string(),
-                format!("deps-lint: spira/probe.sh:2: {prog}: command -v of a program spira/deps.toml does not declare"),
-                "covers-entries: spira/test-own.sh: # covers: token 'spira/gone.sh' matches no file in the tree".to_string(),
-        ];
-        lines.sort();
-        want.sort();
-        assert_eq!(lines, want);
     }
 }

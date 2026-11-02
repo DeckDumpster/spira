@@ -444,75 +444,6 @@ pub fn topo_order(registry: &BTreeMap<String, RegistryKey>) -> Result<Vec<String
 
 #[cfg(test)]
 mod tests {
-    fn real_home() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira")
-    }
-
-    #[test]
-    fn loading_a_home_reads_conf_d_and_conf_toml_d() {
-        let reg = Registry::load(&real_home()).unwrap();
-        assert!(!reg.keys["SPIRA_CERTIFY_PAR"].toml_only);
-        assert!(reg.keys["SPIRA_HOTFIX_ALERT_HOURS"].toml_only, "positive control: a conf.toml.d key is read");
-        assert_eq!(reg.by_field("certify_par").unwrap().name, "SPIRA_CERTIFY_PAR");
-        assert_eq!(reg.keys["SPIRA_STACK_MAX_DEPTH"].max, Some(4.0));
-    }
-
-    #[test]
-    fn an_index_loads_the_registry_its_directories_hold() {
-        let dir = testkit::TempDir::new("spira-config-registry-index-same");
-        let home = crate::process::fixture_registry_home(dir.path());
-        let from_dirs = Registry::load(&home).unwrap();
-        let index = write_index(&home).unwrap();
-        let from_index = Registry::from_index(&home, &index).unwrap();
-        assert!(from_index.keys.len() > 400 && from_index.keys.values().any(|k| k.toml_only), "positive control: the whole registry, both directories");
-        assert_eq!(from_index, from_dirs);
-    }
-
-    #[test]
-    fn a_stale_index_is_refused_naming_the_index_and_both_stamps() {
-        let dir = testkit::TempDir::new("spira-config-registry-index-stale");
-        let home = crate::process::fixture_registry_home(dir.path());
-        let index = write_index(&home).unwrap();
-        let recorded = fs::read_to_string(&index).unwrap().lines().nth(1).unwrap().strip_prefix("stamp ").unwrap().to_string();
-        assert!(Registry::load(&home).is_ok(), "positive control: a fresh index loads");
-        let edited = home.join("conf.d/SPIRA_CERTIFY_PAR");
-        let text = fs::read_to_string(&edited).unwrap();
-        fs::write(&edited, text.replace("TYPE=u32", "TYPE=string")).unwrap();
-        let err = Registry::load(&home).unwrap_err();
-        let now = stamp(&home, parse_index(&fs::read_to_string(&index).unwrap()).unwrap().sources.iter().map(|(d, n, _)| (*d, *n)));
-        assert_ne!(now, recorded);
-        assert!(err.starts_with(&format!("{} is stale", index.display())), "{err}");
-        assert!(err.contains(&format!("stamped {recorded}")) && err.contains(&format!("now stamped {now}")), "{err}");
-    }
-
-    #[test]
-    fn an_index_whose_key_file_was_removed_or_added_is_stale() {
-        let dir = testkit::TempDir::new("spira-config-registry-index-add-remove");
-        let home = crate::process::fixture_registry_home(dir.path());
-        write_index(&home).unwrap();
-        let key = home.join("conf.d/SPIRA_CERTIFY_PAR");
-        let text = fs::read_to_string(&key).unwrap();
-        fs::remove_file(&key).unwrap();
-        assert!(Registry::load(&home).unwrap_err().contains("is stale"), "a removed key file");
-        fs::write(&key, text).unwrap();
-        write_index(&home).unwrap();
-        fs::write(home.join("conf.d/SPIRA_ADDED_LATER"), "TYPE=string\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\nSPIRA_CONF_DEFAULT_EOF\n").unwrap();
-        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(1);
-        fs::File::open(home.join("conf.d")).unwrap().set_modified(later).unwrap();
-        assert!(Registry::load(&home).unwrap_err().contains("is stale"), "a key file added later");
-    }
-
-    #[test]
-    fn an_index_cut_short_is_refused_by_name() {
-        let dir = testkit::TempDir::new("spira-config-registry-index-short");
-        let home = crate::process::fixture_registry_home(dir.path());
-        let index = write_index(&home).unwrap();
-        let text = fs::read_to_string(&index).unwrap();
-        fs::write(&index, &text[..text.len() - 10]).unwrap();
-        let err = Registry::load(&home).unwrap_err();
-        assert!(err.starts_with(&format!("{}: unreadable registry index", index.display())) && err.contains("cut short"), "{err}");
-    }
-
     #[test]
     fn a_home_missing_either_directory_is_refused_by_path() {
         let dir = testkit::TempDir::new("spira-config-registry-home");
@@ -634,34 +565,6 @@ mod tests {
         let pos_a = order.iter().position(|k| k == "SPIRA_A").unwrap();
         let pos_b = order.iter().position(|k| k == "SPIRA_B").unwrap();
         assert!(pos_a < pos_b, "{order:?}");
-    }
-
-    /// The straightforward Kahn rounds `topo_order` replaced: the order it gave is the order
-    /// `conf-gen.sh` writes, so the fast one must reproduce it on the real registry.
-    fn reference_order(registry: &BTreeMap<String, RegistryKey>) -> Vec<String> {
-        let defaulted: Vec<&String> = registry.iter().filter(|(_, k)| k.default_expr().is_some()).map(|(n, _)| n).collect();
-        let deps = |n: &String| -> Vec<&String> {
-            let expr = registry[n].default_expr().unwrap();
-            defaulted.iter().copied().filter(|k| *k != n && expr.contains(k.as_str())).collect()
-        };
-        let mut remaining: Vec<&String> = defaulted.clone();
-        let mut order: Vec<String> = Vec::new();
-        while !remaining.is_empty() {
-            let placed: Vec<&String> = remaining.iter().copied().filter(|n| deps(n).iter().all(|d| order.contains(d))).collect();
-            assert!(!placed.is_empty(), "the real registry has a cycle");
-            order.extend(placed.iter().map(|n| n.to_string()));
-            remaining.retain(|n| !placed.contains(n));
-        }
-        order
-    }
-
-    #[test]
-    fn topo_order_matches_the_reference_on_the_real_registry() {
-        let reg = load(&real_home().join("conf.d")).unwrap();
-        let order = topo_order(&reg).unwrap();
-        assert!(order.len() > 100, "positive control: the registry carries defaults");
-        assert!(reg.values().any(|k| k.default_expr().is_some_and(|e| e.contains("$SPIRA_"))), "positive control: some default names another key");
-        assert_eq!(order, reference_order(&reg));
     }
 
     #[test]

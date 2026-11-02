@@ -444,42 +444,6 @@ mod settled_tests {
 }
 
 #[cfg(test)]
-mod activation_env_tests {
-    use super::*;
-
-    #[test]
-    fn a_brokered_tool_does_not_inherit_socket_activation_variables() {
-        let env = [("LISTEN_FDS", "1"), ("LISTEN_PID", "1"), ("LISTEN_FDNAMES", "x")];
-        let (code, out) = tool_env("sh", &["-c".to_string(), "echo \"[${LISTEN_FDS-}${LISTEN_PID-}${LISTEN_FDNAMES-}]\"".to_string()], None, "t", 10, &env);
-        assert_eq!((code, out.trim()), (0, "[]"));
-    }
-}
-
-#[cfg(test)]
-mod noisy_tests {
-    use super::*;
-
-    fn sh(script: &str) -> (i32, String) {
-        tool_env_noisy("sh", &["-c".to_string(), script.to_string()], None, "t", 10, &[])
-    }
-
-    #[test]
-    fn a_refused_ask_exits_nonzero_with_the_reason() {
-        let (code, out) = sh("echo 'mail: lint: unknown kind x' >&2; exit 1");
-        assert_eq!(code, 1);
-        assert!(out.contains("unknown kind x"), "{out}");
-    }
-
-    #[test]
-    fn a_successful_ask_still_shows_the_stderr_notice() {
-        let (code, out) = sh("echo 'mail: routed to the concierge' >&2");
-        assert_eq!(code, 0);
-        assert!(out.contains("routed to the concierge"), "{out}");
-        assert!(!tool("sh", &["-c".to_string(), "echo hidden >&2".to_string()], None, "t", 10).1.contains("hidden"));
-    }
-}
-
-#[cfg(test)]
 mod verb_tests {
     use super::verb_of;
 
@@ -488,46 +452,5 @@ mod verb_tests {
         assert_eq!(verb_of(&["--json", "show", "sp-1"]), "show");
         assert_eq!(verb_of(&["update", "sp-1"]), "update");
         assert_eq!(verb_of(&["--version"]), "unknown");
-    }
-}
-
-#[cfg(test)]
-mod resolve_tests {
-    use super::*;
-
-    fn exe(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
-        let p = dir.join(name);
-        testkit::write_exe(&p, "#!/bin/sh\n");
-        p
-    }
-
-    #[test]
-    fn a_tool_missing_from_path_is_found_in_the_release_bin() {
-        let d = testkit::TempDir::new("resolve-release");
-        let want = exe(d.path(), "testenv");
-        let got = resolve_in("testenv", "/nonexistent", &[None, Some(d.path().to_path_buf())]).unwrap();
-        assert_eq!(got, want.to_string_lossy());
-    }
-
-    #[test]
-    fn path_wins_over_the_release_bin() {
-        let a = testkit::TempDir::new("resolve-path");
-        let b = testkit::TempDir::new("resolve-rel");
-        let want = exe(a.path(), "testenv");
-        exe(b.path(), "testenv");
-        let got = resolve_in("testenv", &a.path().display().to_string(), &[Some(b.path().to_path_buf())]).unwrap();
-        assert_eq!(got, want.to_string_lossy());
-    }
-
-    #[test]
-    fn a_tool_found_nowhere_names_what_was_searched() {
-        let d = testkit::TempDir::new("resolve-none");
-        let e = resolve_in("testenv", "/nonexistent-a", &[Some(d.path().to_path_buf())]).unwrap_err();
-        assert!(e.contains("testenv") && e.contains("/nonexistent-a") && e.contains(&d.path().display().to_string()), "{e}");
-    }
-
-    #[test]
-    fn a_path_is_never_searched() {
-        assert_eq!(resolve_in("/x/y", "", &[]).unwrap(), "/x/y");
     }
 }

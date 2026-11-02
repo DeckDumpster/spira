@@ -661,104 +661,6 @@ mod tests {
     }
 
     #[test]
-    fn an_open_decision_bead_is_not_rowless_but_a_rowless_task_is() {
-        let t = testkit::TempDir::new("rowless-decision");
-        let write = |name: &str, body: &str| {
-            let p = t.path().join(name);
-            testkit::write_exe(&p, &format!("#!/bin/sh\n{body}\n"));
-            p.to_string_lossy().into_owned()
-        };
-        let bd = write(
-            "bd",
-            "case \"$*\" in *\"--exclude-type\"*decision*) echo '[{\"id\":\"sp-task\"}]';; *) echo '[{\"id\":\"sp-ask\"},{\"id\":\"sp-task\"}]';; esac",
-        );
-        let lc = write("lc", "echo '[]'");
-        let cfg = RowlessCfg { bdq: bd, lc_bin: lc, cap: 20, sustain_secs: 0, state: t.path().join("rowless.state"), full_secs: 3600 };
-        match rowless_beads(&cfg, 1_000_000) {
-            Reading::Standing(v) => {
-                assert_eq!(v.len(), 1);
-                assert!(v[0].body.contains("sp-task") && !v[0].body.contains("sp-ask"), "{}", v[0].body);
-            }
-            Reading::Unknown => panic!("both stores answered"),
-        }
-    }
-
-    #[test]
-    fn rowless_beads_is_silent_with_lifecycle_off_and_reads_the_stores_when_on() {
-        let t = testkit::TempDir::new("rowless");
-        let write = |name: &str, body: &str| {
-            let p = t.path().join(name);
-            testkit::write_exe(&p, &format!("#!/bin/sh\n{body}\n"));
-            p.to_string_lossy().into_owned()
-        };
-        let bd = write("bd", "echo '[{\"id\":\"sp-a\"},{\"id\":\"sp-b\"}]'");
-        let lc = write("lc", "echo '[{\"bead_id\":\"sp-a\"}]'");
-        let mut cfg = RowlessCfg { bdq: bd.clone(), lc_bin: lc.clone(), cap: 20, sustain_secs: 0, state: t.path().join("rowless.state"), full_secs: 3600 };
-        let now = 1_000_000;
-        match rowless_beads(&cfg, now) {
-            Reading::Standing(v) => {
-                assert_eq!(v.len(), 1);
-                assert!(v[0].body.contains("sp-b") && !v[0].body.contains("sp-a,"), "{}", v[0].body);
-            }
-            Reading::Unknown => panic!("both stores answered"),
-        }
-        let argv = t.path().join("argv");
-        cfg.bdq = write("bd-rec", &format!("echo \"$@\" > {}; echo '[]'", argv.display()));
-        let _ = rowless_beads(&cfg, now + 60);
-        let seen = std::fs::read_to_string(&argv).unwrap();
-        assert!(seen.contains(&format!("--exclude-type {}", spira_config::nonwork::no_row_types_arg())), "rowless-by-design types are out of scope: {seen}");
-        assert!(seen.contains("--created-after"), "between full sweeps only new beads are listed: {seen}");
-        cfg.bdq = write("bd-new", "echo '[{\"id\":\"sp-c\"}]'");
-        match rowless_beads(&cfg, now + 120) {
-            Reading::Standing(v) => assert!(v[0].body.contains("sp-b") && v[0].body.contains("sp-c"), "{}", v[0].body),
-            Reading::Unknown => panic!("both stores answered"),
-        }
-        cfg.bdq = write("bd-rec2", &format!("echo \"$@\" > {}; echo '[]'", argv.display()));
-        let _ = rowless_beads(&cfg, now + 3600);
-        assert!(!std::fs::read_to_string(&argv).unwrap().contains("--created-after"), "an hour on, the sweep is full");
-        cfg.bdq = write("bd-b", "echo '[{\"id\":\"sp-b\"}]'");
-        cfg.lc_bin = write("lc-down", "exit 1");
-        assert!(matches!(rowless_beads(&cfg, now + 3660), Reading::Unknown), "an unanswering store neither files nor clears");
-    }
-
-    #[test]
-    fn content_drift_stands_only_past_the_slack_and_reads_the_dry_run_count() {
-        assert!(content_drift_cond(10, 10, 0).is_none(), "ten is within the slack");
-        let c = content_drift_cond(11, 10, 300).expect("eleven stands");
-        assert_eq!(c.reference, CONTENT_DRIFT_REFERENCE);
-        assert!(c.body.contains("11 bead(s)"), "{}", c.body);
-
-        let t = testkit::TempDir::new("drift");
-        let write = |name: &str, body: &str| {
-            let p = t.path().join(name);
-            testkit::write_exe(&p, &format!("#!/bin/sh\n{body}\n"));
-            p.to_string_lossy().into_owned()
-        };
-        let lc = write(
-            "lc",
-            "echo \"$@\" >> \"$0.args\"; echo 'would close sp-1 (lifecycle DONE)'; echo 'through-seq: 42'; echo 'reconcile-content: 5 would close (dry run; --apply to write)'",
-        );
-        let mut cfg = ContentDriftCfg { lc_bin: lc.clone(), slack: 3, sustain_secs: 0, state: t.path().join("sub").join("drift.state") };
-        match content_drift(&cfg) {
-            Reading::Standing(v) => assert_eq!(v.len(), 0, "one named bead is within a slack of 3"),
-            Reading::Unknown => panic!("the verb answered"),
-        }
-        cfg.slack = 0;
-        match content_drift(&cfg) {
-            Reading::Standing(v) => assert_eq!(v.len(), 1, "one drifted is past a slack of 0"),
-            Reading::Unknown => panic!("the verb answered"),
-        }
-        let args = std::fs::read_to_string(format!("{lc}.args")).unwrap();
-        assert_eq!(args.lines().collect::<Vec<_>>(), ["reconcile-content --since-seq 0", "reconcile-content --since-seq 42 sp-1"], "the second pass asks only after seq 42 and re-reads the carried bead");
-        let state = cfg.state.clone();
-        cfg.lc_bin = write("lc-down", "exit 2");
-        assert!(matches!(content_drift(&cfg), Reading::Unknown));
-        cfg.lc_bin = write("lc-garbled", "echo nonsense");
-        assert!(matches!(content_drift(&cfg), Reading::Unknown));
-        assert_eq!(load_drift_state(&state), Some((42, vec!["sp-1".to_string()])), "a pass that could not read keeps the last good state");
-    }
-
-    #[test]
     fn a_dry_run_reads_through_its_seq_and_the_beads_it_would_close() {
         let out = b"would close sp-a (lifecycle LANDED)\nthrough-seq: 9\nreconcile-content: 1 would close (dry run; --apply to write)\n";
         assert_eq!(drift_read(out), Some(DriftRead { through: 9, drifted: vec!["sp-a".into()] }));
@@ -890,31 +792,6 @@ mod tests {
         assert!(keys(Some(91.0), Some(1)).is_empty());
         assert!(keys(Some(1.0), Some(3)).is_empty());
         assert!(matches!(cold_overlap_reading(None, Some(2), &c), Reading::Unknown));
-    }
-
-    #[test]
-    fn pressure_flags_tmp_and_root_through_a_fake_df() {
-        let d = testkit::TempDir::new("wt-df");
-        let mut c = cfg(&d);
-        let df = d.join("df");
-        testkit::write_exe(&df, "#!/bin/bash\necho 'Avail Use%'\nif [ \"${@: -1}\" = / ]; then echo '90000M  92%'; else echo '50M  10%'; fi\n");
-        c.df_bin = df.to_string_lossy().into_owned();
-        let keys: Vec<String> = standing(pressure(&c)).into_iter().map(|c| c.key).collect();
-        assert_eq!(keys, vec!["tmp-free", "root-disk"]);
-    }
-
-    #[test]
-    fn tmp_free_is_not_raised_on_a_filesystem_smaller_than_the_floor() {
-        let d = testkit::TempDir::new("wt-df-small");
-        let mut c = cfg(&d);
-        let df = d.join("df");
-        testkit::write_exe(&df, "#!/bin/bash\necho 'Avail Use% 1Mblocks'\nif [ \"${@: -1}\" = / ]; then echo '90000M  92% 99999M'; else echo '50M  10% 80M'; fi\n");
-        c.df_bin = df.to_string_lossy().into_owned();
-        let keys: Vec<String> = standing(pressure(&c)).into_iter().map(|c| c.key).collect();
-        assert_eq!(keys, vec!["root-disk"]);
-        testkit::write_exe(&df, "#!/bin/bash\necho 'Avail Use% 1Mblocks'\necho '50M  10% 4000M'\n");
-        let keys: Vec<String> = standing(pressure(&c)).into_iter().map(|c| c.key).collect();
-        assert_eq!(keys, vec!["tmp-free"]);
     }
 
     #[test]

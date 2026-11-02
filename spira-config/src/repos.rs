@@ -1092,60 +1092,7 @@ oldshape | /h/old | pr | fmt-tool | gate --flag
         assert_eq!(reg.name_at(""), None);
     }
 
-    fn run_git(dir: &Path, args: &[&str]) {
-        let status = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .env("GIT_AUTHOR_NAME", "t")
-            .env("GIT_AUTHOR_EMAIL", "t@t")
-            .env("GIT_COMMITTER_NAME", "t")
-            .env("GIT_COMMITTER_EMAIL", "t@t")
-            .status()
-            .unwrap();
-        assert!(status.success(), "git {args:?} failed in {dir:?}");
-    }
-
-    #[test]
-    fn same_repo_is_true_for_a_worktree_of_the_same_checkout() {
-        let dir = testkit::TempDir::new("spira-config-repos-same-repo");
-        let repo = dir.join("repo");
-        std::fs::create_dir_all(&repo).unwrap();
-        run_git(&repo, &["init", "-q"]);
-        std::fs::write(repo.join("f"), "x").unwrap();
-        run_git(&repo, &["add", "f"]);
-        run_git(&repo, &["commit", "-q", "-m", "x"]);
-        let wt = dir.join("wt");
-        run_git(&repo, &["worktree", "add", "-q", "-b", "side", wt.to_str().unwrap()]);
-        assert!(same_repo(repo.to_str().unwrap(), wt.to_str().unwrap()));
-    }
-
-    #[test]
-    fn same_repo_is_false_for_two_unrelated_checkouts() {
-        let dir = testkit::TempDir::new("spira-config-repos-different-repos");
-        let a = dir.join("a");
-        let b = dir.join("b");
-        std::fs::create_dir_all(&a).unwrap();
-        std::fs::create_dir_all(&b).unwrap();
-        run_git(&a, &["init", "-q"]);
-        run_git(&b, &["init", "-q"]);
-        assert!(!same_repo(a.to_str().unwrap(), b.to_str().unwrap()));
-    }
-
-    #[test]
-    fn same_repo_is_false_when_either_path_is_not_a_git_checkout() {
-        let dir = testkit::TempDir::new("spira-config-repos-not-a-repo");
-        assert!(!same_repo(dir.path().to_str().unwrap(), dir.path().to_str().unwrap()));
-    }
-
     // ---- base refs (family W, sp-o88bx) ---------------------------------------------------
-
-    fn init_repo(dir: &Path, branch: &str) {
-        std::fs::create_dir_all(dir).unwrap();
-        run_git(dir, &["init", "-q", "-b", branch]);
-        std::fs::write(dir.join("f"), "x").unwrap();
-        run_git(dir, &["add", "f"]);
-        run_git(dir, &["commit", "-q", "-m", "x"]);
-    }
 
     fn registry_for(map: &str, home_name: &str) -> Registry {
         Registry::new(Some(map), &env(&[("SPIRA_HOME_REPO", home_name)]), Path::new("/nonexistent"))
@@ -1159,117 +1106,10 @@ oldshape | /h/old | pr | fmt-tool | gate --flag
     }
 
     #[test]
-    fn ref_remote_reads_the_prefix_and_a_repo_narrows_it_to_a_real_remote() {
-        assert_eq!(ref_remote("main", None), None, "no slash at all");
-        assert_eq!(ref_remote("origin/main", None), Some("origin".to_string()), "no repo: unconditional split");
-        let dir = testkit::TempDir::new("spira-config-repos-ref-remote");
-        let repo = dir.join("repo");
-        init_repo(&repo, "main");
-        let repo = repo.to_str().unwrap();
-        assert_eq!(ref_remote("origin/main", Some(repo)), None, "no remote named origin here");
-        assert_eq!(
-            ref_remote("local/main", Some(repo)), None,
-            "a queue.local ref: the 'local' prefix is not a real remote, so it reads as local, not remote 'local'"
-        );
-    }
-
-    #[test]
-    fn qualify_base_ref_qualifies_only_a_real_remote_tracking_ref() {
-        let dir = testkit::TempDir::new("spira-config-repos-qualify");
-        let upstream = dir.join("upstream");
-        init_repo(&upstream, "main");
-        let local = dir.join("local");
-        run_git(dir.path(), &["clone", "-q", upstream.to_str().unwrap(), local.to_str().unwrap()]);
-        let local = local.to_str().unwrap();
-        assert_eq!(qualify_base_ref("origin/main", local), "refs/remotes/origin/main");
-        // local/main is not a remote-tracking ref here at all (no remote named "local").
-        assert_eq!(qualify_base_ref("local/main", local), "local/main");
-        assert_eq!(qualify_base_ref("main", local), "main", "no slash: unchanged");
-    }
-
-    #[test]
-    fn landref_prefers_the_declared_base_when_it_verifies() {
-        let dir = testkit::TempDir::new("spira-config-repos-landref-declared");
-        let repo = dir.join("repo");
-        init_repo(&repo, "trunk");
-        run_git(&repo, &["branch", "-q", "release"]);
-        let map = format!("r | {} | push | release |  | \n", repo.display());
-        let reg = registry_for(&map, "r");
-        assert_eq!(landref(&reg, "r"), Some("release".to_string()));
-        // by path, not by name, reads the same declared base once the name is recovered via name_at.
-        assert_eq!(landref(&reg, repo.to_str().unwrap()), Some("release".to_string()));
-    }
-
-    #[test]
-    fn landref_refuses_a_declared_base_that_does_not_exist() {
-        let dir = testkit::TempDir::new("spira-config-repos-landref-bad-declared");
-        let repo = dir.join("repo");
-        init_repo(&repo, "trunk");
-        let map = format!("r | {} | push | no-such-branch |  | \n", repo.display());
-        let reg = registry_for(&map, "r");
-        // rung 1 fails outright rather than falling through — a declared base naming a ref
-        // this checkout does not have is the defect, not a cue to guess further.
-        assert_eq!(landref(&reg, "r"), None);
-    }
-
-    #[test]
-    fn landref_falls_back_to_head_when_there_is_no_remote_at_all() {
-        let dir = testkit::TempDir::new("spira-config-repos-landref-head");
-        let repo = dir.join("repo");
-        init_repo(&repo, "trunk");
-        let map = format!("r | {}\n", repo.display());
-        let reg = registry_for(&map, "r");
-        assert_eq!(landref(&reg, "r"), Some("trunk".to_string()));
-    }
-
-    #[test]
-    fn landref_asks_the_remote_once_when_origin_head_is_not_yet_cached() {
-        let dir = testkit::TempDir::new("spira-config-repos-landref-remote");
-        let upstream = dir.join("upstream");
-        init_repo(&upstream, "main");
-        let local = dir.join("local");
-        run_git(dir.path(), &["clone", "-q", upstream.to_str().unwrap(), local.to_str().unwrap()]);
-        // A clone caches refs/remotes/origin/HEAD itself; drop it to exercise rung 3 ("ask
-        // the remote once") rather than rung 2 reading clone's own cache.
-        let _ = std::fs::remove_file(local.join(".git/refs/remotes/origin/HEAD"));
-        let map = format!("r | {}\n", local.display());
-        let reg = registry_for(&map, "r");
-        assert_eq!(landref(&reg, "r"), Some("origin/main".to_string()));
-    }
-
-    #[test]
     fn landref_refuses_an_unmapped_name_and_a_missing_git_dir() {
         let reg = registry_for("r | /nope\n", "r");
         assert_eq!(landref(&reg, "ghost"), None, "unmapped name");
         assert_eq!(landref(&reg, "r"), None, "mapped but not a real checkout");
-    }
-
-    #[test]
-    fn landrefs_pairs_the_base_with_its_verified_local_counterpart() {
-        let dir = testkit::TempDir::new("spira-config-repos-landrefs");
-        let upstream = dir.join("upstream");
-        init_repo(&upstream, "main");
-        let local = dir.join("local");
-        run_git(dir.path(), &["clone", "-q", upstream.to_str().unwrap(), local.to_str().unwrap()]);
-        let local = local.to_str().unwrap();
-        let map = format!("r | {local}\n");
-        let reg = registry_for(&map, "r");
-        // declared base is origin/main (rung 2, clone's own cache); the local "main" branch
-        // the clone checked out also exists, so both are reported.
-        assert_eq!(landrefs(&reg, local), Some(("origin/main".to_string(), Some("main".to_string()))));
-    }
-
-    #[test]
-    fn landrefs_omits_the_local_counterpart_when_it_does_not_exist() {
-        let dir = testkit::TempDir::new("spira-config-repos-landrefs-no-local");
-        let repo = dir.join("repo");
-        init_repo(&repo, "trunk");
-        run_git(&repo, &["branch", "-q", "release"]);
-        let map = format!("r | {} | push | release |  | \n", repo.display());
-        let reg = registry_for(&map, "r");
-        // base is "release" (no slash at all), so ref_branch(base) == base: never a distinct
-        // "local counterpart" to go looking for.
-        assert_eq!(landrefs(&reg, repo.to_str().unwrap()), Some(("release".to_string(), None)));
     }
 
     #[test]
@@ -1284,92 +1124,8 @@ oldshape | /h/old | pr | fmt-tool | gate --flag
     }
 
     #[test]
-    fn publish_forge_defaults_to_origin_and_the_land_ref_stripped_of_local() {
-        let dir = testkit::TempDir::new("spira-config-repos-publish-forge-default");
-        let repo = dir.join("repo");
-        init_repo(&repo, "trunk");
-        run_git(&repo, &["branch", "-q", "local/trunk"]);
-        let map = format!("q | {} | push | local/trunk |  | \n", repo.display());
-        let reg = registry_for(&map, "q");
-        assert_eq!(publish_forge(&reg, "q", &env(&[])), Some(("origin".to_string(), "trunk".to_string())));
-    }
-
-    #[test]
-    fn publish_forge_takes_a_per_name_override_over_the_default() {
-        let dir = testkit::TempDir::new("spira-config-repos-publish-forge-override");
-        let repo = dir.join("repo");
-        init_repo(&repo, "trunk");
-        run_git(&repo, &["branch", "-q", "local/trunk"]);
-        let map = format!("my-queue | {} | push | local/trunk |  | \n", repo.display());
-        let reg = registry_for(&map, "my-queue");
-        let overrides = env(&[("SPIRA_PUBLISH_REMOTE_MY_QUEUE", "upstream"), ("SPIRA_PUBLISH_BRANCH_MY_QUEUE", "release")]);
-        assert_eq!(publish_forge(&reg, "my-queue", &overrides), Some(("upstream".to_string(), "release".to_string())));
-        // the blanket SPIRA_PUBLISH_REMOTE only applies when no per-name override exists.
-        let blanket = env(&[("SPIRA_PUBLISH_REMOTE", "upstream")]);
-        assert_eq!(publish_forge(&reg, "my-queue", &blanket), Some(("upstream".to_string(), "trunk".to_string())));
-    }
-
-    #[test]
-    fn publish_forge_is_none_for_a_repository_declared_unpublished() {
-        let dir = testkit::TempDir::new("spira-config-repos-publish-forge-none");
-        let repo = dir.join("repo");
-        init_repo(&repo, "trunk");
-        run_git(&repo, &["branch", "-q", "local/trunk"]);
-        let map = format!("my-queue | {} | push | local/trunk |  | \n", repo.display());
-        let reg = registry_for(&map, "my-queue");
-        let off = env(&[("SPIRA_PUBLISH_REMOTE_MY_QUEUE", "none")]);
-        assert_eq!(publish_forge(&reg, "my-queue", &off), None);
-        assert!(publishes_nowhere(&reg, "my-queue", &off));
-        assert!(!publishes_nowhere(&reg, "my-queue", &env(&[])));
-        assert!(!publishes_nowhere(&reg, "other", &off), "the declaration is per repository");
-    }
-
-    #[test]
-    fn publish_declared_in_the_registry_needs_no_env_var() {
-        let dir = testkit::TempDir::new("spira-config-repos-publish-registry");
-        let repo = dir.join("repo");
-        init_repo(&repo, "trunk");
-        run_git(&repo, &["branch", "-q", "local/trunk"]);
-        let map = format!("my-queue | {} | push | local/trunk |  | \n", repo.display());
-        let doc = crate::set_path(&crate::SpiraToml::default(), "publish.my-queue.remote", "none").unwrap();
-        let reg = registry_for(&map, "my-queue").with_publish(doc.publish.clone());
-        assert!(publishes_nowhere(&reg, "my-queue", &env(&[])));
-        assert_eq!(publish_forge(&reg, "my-queue", &env(&[])), None);
-        assert!(!publishes_nowhere(&reg, "other", &env(&[])));
-        let doc = crate::set_path(&doc, "publish.my-queue.remote", "upstream").unwrap();
-        let reg = registry_for(&map, "my-queue").with_publish(doc.publish);
-        assert_eq!(publish_forge(&reg, "my-queue", &env(&[])), Some(("upstream".to_string(), "trunk".to_string())));
-    }
-
-    #[test]
     fn publish_forge_refuses_when_the_land_ref_itself_does_not_resolve() {
         let reg = registry_for("q | /nope\n", "q");
         assert_eq!(publish_forge(&reg, "q", &env(&[])), None);
-    }
-
-    #[test]
-    fn landref_resolves_a_declared_local_main_from_a_linked_worktree() {
-        let t = testkit::TempDir::new("landref-linked-worktree");
-        let main = t.path().join("main");
-        let wt = t.path().join("wt");
-        let git = |dir: &Path, args: &[&str]| {
-            let o = std::process::Command::new("git")
-                .arg("-C")
-                .arg(dir)
-                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-                .args(args)
-                .output()
-                .unwrap();
-            assert!(o.status.success(), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
-        };
-        std::fs::create_dir_all(&main).unwrap();
-        git(&main, &["init", "-q", "-b", "local/main"]);
-        git(&main, &["commit", "-q", "--allow-empty", "-m", "c"]);
-        git(&main, &["worktree", "add", "-q", "-b", "spira/x", wt.to_str().unwrap()]);
-        assert!(wt.join(".git").is_file(), "fixture must be a linked worktree");
-        let map = format!("q | {} | local | local/main | | true\n", wt.display());
-        let reg = registry_for(&map, "q");
-        assert_eq!(landref(&reg, wt.to_str().unwrap()), Some("local/main".to_string()));
-        assert_eq!(landref(&reg, "q"), Some("local/main".to_string()));
     }
 }

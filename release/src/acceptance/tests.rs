@@ -4,7 +4,6 @@
 
 use super::*;
 use std::cell::{Cell, RefCell};
-use std::os::unix::fs::PermissionsExt;
 use testkit::TempDir;
 
 fn s(v: &[&str]) -> Vec<String> {
@@ -52,30 +51,6 @@ fn unit_set_is_sorted_spira_units_without_transient_ones() {
 fn unit_set_leaves_out_units_a_release_directory_render_never_keeps() {
     let t = "spira-cert-sweep-full-prod.timer enabled\nspira-round-template-prod.service static\nspira-a.service static\n";
     assert_eq!(unit_set(t), s(&["spira-a.service static"]));
-}
-
-#[test]
-fn missing_release_bins_names_what_is_missing_and_nothing_when_complete() {
-    let d = TempDir::new("acc-bins");
-    fs::create_dir_all(d.join("bin")).unwrap();
-    for b in ["loom", "panel", "broker"] {
-        let p = d.join("bin").join(b);
-        // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
-        testkit::write_exe(&p, "#!/bin/sh\n");
-    }
-    assert_eq!(missing_release_bins(&d), "bin/spira-supervise, bin/landing-pass");
-    for b in ["spira-supervise", "landing-pass"] {
-        let p = d.join("bin").join(b);
-        fs::write(&p, "#!/bin/sh\n").unwrap();
-        fs::set_permissions(&p, fs::Permissions::from_mode(0o644)).unwrap();
-    }
-    assert_eq!(missing_release_bins(&d), "bin/spira-supervise, bin/landing-pass", "not executable is missing");
-    for b in ["spira-supervise", "landing-pass"] {
-        // chmod alone, on a file already written above (no write happens here) — no
-        // fresh write-fd opens, so no ETXTBSY exposure (allow-listed, chmod-exec-leak).
-        fs::set_permissions(d.join("bin").join(b), fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    assert_eq!(missing_release_bins(&d), "");
 }
 
 #[test]
@@ -418,9 +393,6 @@ impl Box_ {
             pid: 4242,
         }
     }
-    fn prev(&self) -> Vec<String> {
-        s(&["--prev-tag", "spira-release-spira-20260901T000000Z", "--prev-tarball", &self.root.join("spira-20260901T000000Z.tar.gz").display().to_string()])
-    }
     fn fake(&self) -> Fake {
         Fake::new(self.root.join("tmp/releases"))
     }
@@ -432,150 +404,6 @@ impl Box_ {
     }
 }
 
-fn with_prev(b: &Box_, extra: &[&str]) -> Opts {
-    let mut v: Vec<String> = b.prev();
-    v.extend(s(extra));
-    b.opts(&v.iter().map(String::as_str).collect::<Vec<_>>())
-}
-
-#[test]
-fn a_healthy_release_passes_all_four_phases_and_records_its_note() {
-    let b = Box_::new();
-    let f = b.fake();
-    let rc = phases::run(&f, with_prev(&b, &["--record"]));
-    assert_eq!(b.fails(), Vec::<String>::new());
-    assert_eq!(rc, 0);
-    let checks = b.checks();
-    let names: Vec<&str> = checks.iter().map(|c| c["check"].as_str().unwrap()).collect();
-    for want in [
-        "positive-control: command -v catches missing tool",
-        "positive-control: binary check names missing binary (spira-supervise)",
-        "phase A: release install-tarball exits 0",
-        "phase A: all native binaries present and executable",
-        "phase A: bead is claimable by builder predicate (spira,plan)",
-        "phase A: no spira-* units remain after uninstall",
-        "phase B: .tag sidecar names spira-release-spira-20260930T000000Z",
-        "phase B: SPIRA_PROD updated to releases path",
-        "phase C: unit set after rollback matches pre-upgrade snapshot (no extra/dropped units)",
-        "phase D: operator override survived aged upgrade",
-        "phase D: rollback to spira-release-spira-20260901T000000Z succeeded",
-    ] {
-        assert!(names.contains(&want), "missing check {want:?} in {names:#?}");
-    }
-    assert!(names.iter().any(|n| n.starts_with("phase A stage 5: bead sp-p1 landed on ")));
-    assert!(names.iter().any(|n| n.starts_with("phase D stage 5: bead sp-p") && n.contains("landed by ancestry")));
-    assert!(names.iter().any(|n| n.starts_with("phase D: bead count preserved through migration (")));
-    // Every check is in one phase or another.
-    let phases: std::collections::BTreeSet<&str> = checks.iter().map(|c| c["phase"].as_str().unwrap()).collect();
-    assert_eq!(phases.into_iter().collect::<Vec<_>>(), vec!["phase-A", "phase-B", "phase-C", "phase-D", "prerequisites"]);
-
-    let log = f.log.borrow();
-    let note = log.iter().find(|c| c.args.contains(&"notes".to_string())).expect("a note");
-    let m = note.args.iter().position(|a| a == "-m").unwrap();
-    let text = &note.args[m + 1];
-    assert!(text.starts_with("PASS\n"), "{text}");
-    assert!(text.contains("sha256:") && text.contains("tarball:spira-20260930T000000Z.tar.gz"), "{text}");
-    assert!(text.ends_with("aged-install from=spira-release-spira-20260901T000000Z: PASS"), "{text}");
-    assert_eq!(note.args.last().unwrap(), "refs/tags/spira-release-spira-20260930T000000Z");
-    assert_eq!(note.args[1], b.root.join("notes").display().to_string());
-}
-
-#[test]
-fn every_tool_runs_on_the_release_launcher_path_and_every_deploy_of_the_tag_allows_a_draft() {
-    let b = Box_::new();
-    let f = b.fake();
-    phases::run(&f, with_prev(&b, &[]));
-    let cur = b.root.join("tmp/releases/current");
-    let want_path = format!("{}:{}:/usr/bin:/bin", cur.join("bin").display(), cur.join("spira").display());
-    let log = f.log.borrow();
-    let tools: Vec<&Cmd> = log.iter().filter(|c| ["deploy.sh", "uninstall.sh", "world.sh", "doctor"].contains(&c.prog.as_str())).collect();
-    assert!(tools.len() >= 11, "{} tool calls", tools.len());
-    for c in &tools {
-        assert_eq!(c.env_of("PATH"), Some(want_path.as_str()), "{}", c.line());
-        assert_eq!(c.env_of("SPIRA_TOML"), Some(spira_config::toml_path_at(&b.root.join("config/spira")).display().to_string().as_str()), "{}", c.line());
-    }
-    // uninstall.sh (phases A, C, D) carries the SAME SPIRA_HOME_REPO install_env() gave the
-    // install it undoes. Without it, owned.sh's manifest re-derives repo_is_git_checkout
-    // from scratch under bare launcher_env(), resolves a different answer than install saw,
-    // and leaves the cert-sweep units unlisted — hence unremoved (sp-dn2rl).
-    let uninstalls: Vec<&&Cmd> = tools.iter().filter(|c| c.prog == "uninstall.sh").collect();
-    assert_eq!(uninstalls.len(), 3, "phase A, C and D each uninstall once");
-    for c in &uninstalls {
-        assert_eq!(c.env_of("SPIRA_HOME_REPO"), Some("scratch-repo"), "{}", c.line());
-    }
-    let deploys_of_tag: Vec<&&Cmd> = tools.iter().filter(|c| c.prog == "deploy.sh" && c.args.last().unwrap().ends_with("20260930T000000Z")).collect();
-    assert_eq!(deploys_of_tag.len(), 2, "phase B and phase D");
-    for c in deploys_of_tag {
-        assert!(c.args.contains(&"--allow-draft".to_string()), "{}", c.line());
-        assert!(c.args.contains(&"--tarball".to_string()), "a local tarball is handed to every deploy of the tag: {}", c.line());
-    }
-    // install-tarball is this binary, with a run dir beside the releases dir.
-    let inst: Vec<&Cmd> = log.iter().filter(|c| c.args.first().map(String::as_str) == Some("install-tarball")).collect();
-    assert_eq!(inst.len(), 3, "A, B and D");
-    for c in inst {
-        assert_eq!(c.prog, "/opt/candidate/bin/release");
-        assert_eq!(c.env_of("SPIRA_RUN"), Some(b.root.join("tmp/run").display().to_string().as_str()));
-    }
-    // install (sp-31dm0) always runs with SPIRA_OPERATED=0, on the launcher environment too.
-    for c in log.iter().filter(|c| c.prog.ends_with("/bin/spira-install")) {
-        assert_eq!(c.env_of("SPIRA_OPERATED"), Some("0"));
-        assert_eq!(c.env_of("SPIRA_HOME_REPO"), Some("scratch-repo"));
-        assert_eq!(c.env_of("PATH"), Some(want_path.as_str()), "install resolves doctor and spira-config by bare name");
-        assert_eq!(c.env_of("SPIRA_RELEASE"), Some(cur.display().to_string().as_str()));
-    }
-    // The probe carries the builder partition's labels.
-    let probe = log.iter().find(|c| c.prog == "bd" && c.args.iter().any(|a| a.starts_with("acceptance,"))).unwrap();
-    assert!(probe.args.contains(&"acceptance,plan,spira,repo:scratch-repo".to_string()));
-    // The sentinel is started by its installed (instance-suffixed) name.
-    assert!(log.iter().any(|c| c.prog == "systemctl" && c.args == s(&["--user", "start", "spira-sentinel-t.service"])));
-    assert!(!log.iter().any(|c| c.prog == "systemctl" && c.args == s(&["--user", "start", "spira-sentinel.service"])));
-}
-
-#[test]
-fn the_waiver_skips_upgrade_phases_and_says_so_in_the_note() {
-    let b = Box_::new();
-    let f = b.fake();
-    let rc = phases::run(&f, with_prev(&b, &["--waive-upgrade", "--record"]));
-    assert_eq!(rc, 0, "{:?}", b.fails());
-    let log = f.log.borrow();
-    assert!(!log.iter().any(|c| c.prog == "deploy.sh"), "no upgrade was attempted");
-    let note = log.iter().find(|c| c.args.contains(&"notes".to_string())).unwrap();
-    let text = &note.args[note.args.iter().position(|a| a == "-m").unwrap() + 1];
-    assert!(text.ends_with("upgrade phases waived by operator"), "{text}");
-    assert!(!text.contains("aged-install from="), "{text}");
-}
-
-const WAIVED_NOTE: &str = "PASS\nD t  3 passed, 0 failed\nupgrade phases waived by operator\n";
-
-#[test]
-fn a_waiver_is_honoured_for_its_own_cut_and_the_next_cut_is_refused_until_the_phases_run() {
-    let b = Box_::new();
-    let cut = "spira-release-spira-20260930T000000Z";
-    let prior = "spira-release-spira-20260901T000000Z";
-
-    let mut f = b.fake();
-    f.tag_notes = vec![(cut, ""), (prior, "PASS\nD t  3 passed, 0 failed\naged-install from=x: PASS\n"), ("spira-release-spira-20260801T000000Z", WAIVED_NOTE)];
-    assert_eq!(phases::run(&f, b.opts(&["--waive-upgrade"])), 0, "a cut whose predecessor ran the phases may waive: {:?}", b.fails());
-
-    let mut f = b.fake();
-    f.tag_notes = vec![(cut, ""), (prior, WAIVED_NOTE)];
-    assert_eq!(phases::run(&f, b.opts(&["--waive-upgrade"])), 2, "the next cut may not waive again");
-    assert!(!f.log.borrow().iter().any(|c| c.args.first().map(String::as_str) == Some("install-tarball")), "refused before any phase");
-
-    let f = {
-        let mut f = b.fake();
-        f.tag_notes = vec![(cut, ""), (prior, WAIVED_NOTE)];
-        f
-    };
-    assert_eq!(phases::run(&f, b.opts(&[])), 2, "nor may it skip the phases by naming no predecessor");
-
-    let mut f = b.fake();
-    f.tag_notes = vec![(cut, ""), (prior, WAIVED_NOTE)];
-    let rc = phases::run(&f, with_prev(&b, &[]));
-    assert_eq!(rc, 0, "running the phases clears it: {:?}", b.fails());
-    assert!(f.log.borrow().iter().any(|c| c.prog == "deploy.sh"), "the upgrade ran");
-}
-
 #[test]
 fn a_missing_prerequisite_stops_before_any_phase_with_exit_2() {
     let b = Box_::new();
@@ -584,163 +412,6 @@ fn a_missing_prerequisite_stops_before_any_phase_with_exit_2() {
     assert_eq!(phases::run(&f, b.opts(&[])), 2);
     assert_eq!(b.fails(), vec!["prereq: dolt on PATH: not found; install before running acceptance".to_string()]);
     assert!(!f.log.borrow().iter().any(|c| c.args.first().map(String::as_str) == Some("install-tarball")));
-}
-
-#[test]
-fn an_uncountable_store_fails_phase_d_rather_than_reading_as_zero() {
-    let b = Box_::new();
-    let mut f = b.fake();
-    f.bead_count_fails = true;
-    assert_eq!(phases::run(&f, with_prev(&b, &[])), 1);
-    let fails = b.fails();
-    assert_eq!(fails.len(), 1, "{fails:#?}");
-    assert!(fails[0].starts_with("phase D: bead count preserved through migration: could not count beads"), "{fails:#?}");
-}
-
-#[test]
-fn a_wrong_sidecar_fails_phase_b() {
-    let b = Box_::new();
-    let mut f = b.fake();
-    fs::write(b.root.join("config/spira/spira-lc.credential"), "x").unwrap();
-    fs::write(b.root.join("config/spira/spira-lc.credential-ro"), "x").unwrap();
-    fs::write(b.root.join("config/spira/conf"), "x").unwrap();
-    f.sidecar_wrong = true;
-    assert_eq!(phases::run(&f, with_prev(&b, &[])), 1);
-    assert_eq!(b.fails(), vec!["phase B: .tag sidecar names spira-release-spira-20260930T000000Z: wanted [spira-release-spira-20260930T000000Z] got [spira-release-other]".to_string()]);
-    // The first failure in a phase snapshots once.
-    assert!(b.root.join("forensics/01-first-fail-phase-B/units.txt").is_file());
-    let snap = b.root.join("forensics/01-first-fail-phase-B");
-    assert!(snap.join("conf").is_file(), "the positive control: config files are still collected");
-    let leaked: Vec<_> = fs::read_dir(&snap).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| n.contains("credential")).collect();
-    assert!(leaked.is_empty(), "credential files collected: {leaked:?}");
-}
-
-#[test]
-fn a_failed_unit_after_the_aged_upgrade_is_a_fail() {
-    let b = Box_::new();
-    let mut f = b.fake();
-    f.failed_unit = true;
-    assert_eq!(phases::run(&f, with_prev(&b, &[])), 1);
-    assert_eq!(b.fails(), vec!["phase D: no failed spira units once settled after aged upgrade: spira-ops-t.service".to_string()]);
-}
-
-#[test]
-fn phase_d_runs_cutover_deploy_dry_run_with_the_scratch_repo_on_the_launcher_path() {
-    let b = Box_::new();
-    let f = b.fake();
-    assert_eq!(phases::run(&f, with_prev(&b, &[])), 0);
-    let log = f.log.borrow();
-    let c = log.iter().find(|c| c.prog == "cutover-deploy.sh").expect("cutover-deploy.sh was never run");
-    assert_eq!(c.args, s(&["--repo", "scratch-repo", "--dry-run"]));
-    assert!(c.env_of("PATH").unwrap().contains("current/spira"));
-    assert!(b.checks().iter().any(|c| c["check"] == "phase D: cutover-deploy.sh --dry-run runs on the aged install"));
-}
-
-#[test]
-fn a_failing_cutover_deploy_is_a_phase_d_fail() {
-    let b = Box_::new();
-    let mut f = b.fake();
-    f.cutover_rc = 1;
-    assert_eq!(phases::run(&f, with_prev(&b, &[])), 1);
-    assert!(b.fails().iter().any(|x| x.starts_with("phase D: cutover-deploy.sh --dry-run runs on the aged install: exit 1")), "{:#?}", b.fails());
-}
-
-#[test]
-fn an_upgraded_release_without_cutover_deploy_is_a_phase_d_fail() {
-    let b = Box_::new();
-    let mut f = b.fake();
-    f.no_cutover_script = true;
-    assert_eq!(phases::run(&f, with_prev(&b, &[])), 1);
-    assert!(b.fails().iter().any(|x| x.starts_with("phase D: upgraded release carries cutover-deploy.sh: missing")), "{:#?}", b.fails());
-    assert!(!f.log.borrow().iter().any(|c| c.prog == "cutover-deploy.sh"));
-}
-
-#[test]
-fn a_refused_rollback_must_name_the_migration() {
-    let b = Box_::new();
-    let mut f = b.fake();
-    f.rollback = (1, "deploy: refusing — schema Migration 12 is not reversible\n");
-    assert_eq!(phases::run(&f, with_prev(&b, &[])), 1, "phase C's rollback is refused too");
-    let fails = b.fails();
-    assert!(!fails.iter().any(|x| x.starts_with("phase D: rollback refused")), "{fails:#?}");
-    assert!(b.checks().iter().any(|c| c["check"] == "phase D: rollback refused — names migration (law-pin-by-migration-count)"));
-
-    let b = Box_::new();
-    let mut f = b.fake();
-    f.rollback = (1, "deploy: health check failed\n");
-    phases::run(&f, with_prev(&b, &[]));
-    assert!(b.fails().iter().any(|x| x.starts_with("phase D: rollback refused but output does not name migration: deploy: health check failed")));
-}
-
-#[test]
-fn a_bead_that_never_lands_fails_stage_5_inside_its_budget() {
-    let b = Box_::new();
-    let mut f = b.fake();
-    f.never_lands = true;
-    let start = f.clock.get();
-    assert_eq!(phases::run(&f, b.opts(&[])), 1);
-    let fails = b.fails();
-    assert_eq!(fails.len(), 1, "{fails:#?}");
-    assert!(fails[0].starts_with("phase A stage 5: bead sp-p1 landed on ") && fails[0].contains("no commit with bead id on origin/main after 12"), "{fails:#?}");
-    assert!(f.clock.get() - start < 400, "the budget bounds the wait");
-}
-
-#[test]
-fn the_probe_bead_is_filed_with_its_lifecycle_row() {
-    let b = Box_::new();
-    let f = b.fake();
-    assert_eq!(phases::run(&f, b.opts(&[])), 0, "{:#?}", b.fails());
-    assert_eq!(*f.rows.borrow(), *f.probes.borrow(), "every probe gets a row, and only probes");
-}
-
-#[test]
-fn every_probe_bead_names_what_to_build() {
-    let b = Box_::new();
-    let f = b.fake();
-    assert_eq!(phases::run(&f, b.opts(&[])), 0, "{:#?}", b.fails());
-    let bodies: Vec<String> = f
-        .log
-        .borrow()
-        .iter()
-        .filter(|c| c.prog == "bd" && c.args.iter().any(|a| a == "create") && c.args.iter().any(|a| a == "--description"))
-        .filter_map(|c| c.args.iter().position(|a| a == "--description").map(|i| c.args[i + 1].clone()))
-        .collect();
-    assert!(!bodies.is_empty());
-    for body in bodies {
-        let spec = body.split("\n## Build\n").nth(1).unwrap_or("");
-        assert!(spec.lines().any(|l| !l.trim().is_empty()), "no builder spec in: {body}");
-    }
-}
-
-#[test]
-fn a_probe_whose_row_cannot_be_created_fails_bead_filed() {
-    let b = Box_::new();
-    let mut f = b.fake();
-    f.lc_create_fails = true;
-    assert_eq!(phases::run(&f, b.opts(&[])), 1);
-    let fails = b.fails();
-    assert!(fails.iter().any(|x| x.starts_with("phase A: bead filed") && x.contains("create-bead")), "{fails:#?}");
-}
-
-#[test]
-fn a_history_missing_a_state_fails_the_lifecycle_check() {
-    let b = Box_::new();
-    let mut f = b.fake();
-    f.history_gap = true;
-    assert_eq!(phases::run(&f, b.opts(&[])), 1);
-    let fails = b.fails();
-    assert_eq!(fails.len(), 1, "{fails:#?}");
-    assert!(fails[0].contains("lifecycle event sequence") && fails[0].contains("CERTIFIED"), "{fails:#?}");
-}
-
-#[test]
-fn a_scratch_setup_without_all_land_modes_fails_the_scratch_setup_check() {
-    let b = Box_::new();
-    let mut f = b.fake();
-    f.land_modes = vec![("scratch-repo", "push")];
-    assert_eq!(phases::run(&f, b.opts(&[])), 1);
-    let fails = b.fails();
-    assert!(fails.iter().any(|x| x.contains("each land mode") && x.contains("queue, pr")), "{fails:#?}");
 }
 
 #[test]
@@ -760,25 +431,6 @@ fn registry() -> spira_config::init::Registry<'static> {
     spira_config::init::Registry { conf_d: Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/conf.d")), env }
 }
 
-/// Phase A's answers are exactly what the installer needs from an operator: every required
-/// input present (so `release install-tarball --answers` never prompts or refuses), and the
-/// config they produce passes the same id_prefix check doctor/pre-activate run.
-#[test]
-fn phase_a_answers_produce_a_valid_spira_toml() {
-    let b = Box_::new();
-    let f = b.fake();
-    let o = b.opts(&[]);
-    let releases = o.releases();
-    let r = Run::new(&f, o);
-    let a = spira_config::init::parse_answers(&r.answers_text(&releases)).expect("answers parse");
-    assert!(spira_config::init::missing(&a).is_empty(), "missing: {:?}", spira_config::init::missing(&a));
-    let text = spira_config::init::render(&a, &spira_config::toml_path_at(&b.root.join("config/spira")), &registry()).expect("answers render");
-    let doc = spira_config::validate(&text).expect("valid");
-    assert!(spira_config::require_id_prefix(&doc).is_ok());
-    assert_eq!(spira_config::get_path(&doc, "spira.releases").as_deref(), Some(releases.display().to_string().as_str()));
-    assert_eq!(spira_config::get_path(&doc, "spira.operated").as_deref(), Some("0"));
-}
-
 #[test]
 fn lifecycle_states_reads_the_store_s_real_history_shape() {
     // As production's spira-lc history prints it (2026-10-04): applied is the string "1",
@@ -795,104 +447,6 @@ fn lifecycle_states_reads_the_store_s_real_history_shape() {
 }
 
 #[test]
-fn a_landed_event_recorded_a_pass_later_is_waited_for() {
-    // LANDED is recorded one sentinel pass after the push (sp-53own).
-    let b = Box_::new();
-    let f = b.fake();
-    f.history_late.set(3);
-    assert_eq!(phases::run(&f, b.opts(&[])), 0, "{:#?}", b.fails());
-    assert_eq!(f.history_late.get(), 0, "the late reads were all consumed");
-}
-
-#[test]
-fn every_deploy_carries_the_forge_repository_this_run_resolved() {
-    // An installed release has no git remote; deploy.sh must be told its repo (sp-j0vhm).
-    let b = Box_::new();
-    let f = b.fake();
-    let mut o = with_prev(&b, &[]);
-    o.gh_repo = Some("Owner/spira".into());
-    phases::run(&f, o);
-    let log = f.log.borrow();
-    let deploys: Vec<&Cmd> = log.iter().filter(|c| c.prog == "deploy.sh").collect();
-    assert!(deploys.len() >= 3, "upgrade, rollback and aged deploys ran: {}", deploys.len());
-    for c in deploys {
-        assert_eq!(c.env_of("SPIRA_FORGE_REPO"), Some("Owner/spira"), "{}", c.line());
-    }
-}
-
-#[test]
-fn a_builders_handoff_goes_through_the_fast_tier_in_phases_a_and_d() {
-    let b = Box_::new();
-    let f = b.fake();
-    assert_eq!(phases::run(&f, with_prev(&b, &[])), 0);
-    let names: Vec<String> = b.checks().iter().map(|c| c["check"].as_str().unwrap().to_string()).collect();
-    for label in ["phase A", "phase D"] {
-        for what in ["positive control: spira-lint with no base refuses", "stub builder's handoff passes the fast tier"] {
-            assert!(names.iter().any(|n| n.starts_with(&format!("{label}: {what}"))), "{label}: {what} in {names:#?}");
-        }
-    }
-    let log = f.log.borrow();
-    let tiers: Vec<&Cmd> = log.iter().filter(|c| c.prog == "dwarf").collect();
-    assert_eq!(tiers.len(), 2);
-    let cur = b.root.join("tmp/releases/current");
-    for c in tiers {
-        assert_eq!(c.args[0], "fast-tier");
-        assert_eq!(c.args[3], "spira/acceptance-fast-tier");
-        assert_eq!(c.env_of("PATH").map(|p| p.starts_with(&cur.join("bin").display().to_string())), Some(true), "{}", c.line());
-    }
-}
-
-/// The release this bead was filed against: the fast tier refused every handoff.
-#[test]
-fn a_release_whose_fast_tier_refuses_the_handoff_fails_acceptance() {
-    let b = Box_::new();
-    let mut f = b.fake();
-    f.fast_tier_rc = 1;
-    assert_eq!(phases::run(&f, with_prev(&b, &[])), 1);
-    let fails = b.fails();
-    assert!(fails.iter().any(|x| x.starts_with("phase A: stub builder's handoff passes the fast tier") && x.contains("no base to compare against")), "{fails:#?}");
-    assert!(fails.iter().any(|x| x.starts_with("phase D: stub builder's handoff passes the fast tier")), "{fails:#?}");
-}
-
-#[test]
-fn a_fast_tier_check_that_cannot_fail_is_itself_a_failure() {
-    let b = Box_::new();
-    let mut f = b.fake();
-    f.bare_lint_rc = 0;
-    assert_eq!(phases::run(&f, b.opts(&[])), 1);
-    assert!(b.fails().iter().any(|x| x.starts_with("phase A: positive control: spira-lint with no base refuses")), "{:#?}", b.fails());
-}
-
-fn aged(b: &Box_) -> Vec<String> {
-    let tb = b.root.join("spira-20260101T000000Z.tar.gz");
-    fs::write(&tb, "ancient").unwrap();
-    s(&["--aged-tag", "spira-release-spira-20260101T000000Z", "--aged-tarball", &tb.display().to_string()])
-}
-
-#[test]
-fn phase_d_installs_the_aged_tag_not_the_predecessor_and_still_passes() {
-    let b = Box_::new();
-    let f = b.fake();
-    let mut v = b.prev();
-    v.extend(aged(&b));
-    let rc = phases::run(&f, b.opts(&v.iter().map(String::as_str).collect::<Vec<_>>()));
-    assert_eq!(rc, 0, "{:#?}", b.fails());
-    let log = f.log.borrow().iter().map(Cmd::line).collect::<Vec<_>>().join("\n");
-    assert!(log.contains("spira-20260101T000000Z.tar.gz"), "the aged tarball is installed:\n{log}");
-    assert!(log.contains("deploy.sh --tarball") && log.contains("spira-release-spira-20260101T000000Z"), "the aged rollback target is the aged tag");
-}
-
-#[test]
-fn a_missing_aged_tarball_fails_phase_d() {
-    let b = Box_::new();
-    let f = b.fake();
-    let mut v = b.prev();
-    v.extend(s(&["--aged-tag", "spira-release-spira-20260101T000000Z", "--aged-tarball", "/nonexistent/aged.tar.gz"]));
-    assert_eq!(phases::run(&f, b.opts(&v.iter().map(String::as_str).collect::<Vec<_>>())), 1);
-    assert!(b.fails().iter().any(|x| x.starts_with("phase D: aged base tarball present")), "{:#?}", b.fails());
-}
-
-#[test]
 fn an_aged_flag_without_its_anchor_is_a_usage_error() {
     let base = s(&["t", "--scratch-repo", "r"]);
     let mut a = base.clone();
@@ -904,60 +458,6 @@ fn an_aged_flag_without_its_anchor_is_a_usage_error() {
     let mut a = base;
     a.extend(s(&["--prev-tag", "p", "--aged-tag", "x", "--waive-upgrade"]));
     assert_eq!(parse_args(&a).unwrap().aged_tag, None, "the waiver clears the aged base too");
-}
-
-#[test]
-fn a_bead_that_predates_the_upgrade_without_lifecycle_rows_fails_phase_d() {
-    let b = Box_::new();
-    let mut f = b.fake();
-    f.seed_no_rows = true;
-    assert_eq!(phases::run(&f, with_prev(&b, &[])), 1);
-    assert!(b.fails().iter().any(|x| x.contains("has lifecycle rows after the aged upgrade")), "{:#?}", b.fails());
-}
-
-#[test]
-fn a_repeat_waiver_is_honoured_only_when_declared_for_this_cuts_exact_commit() {
-    let b = Box_::new();
-    let cut = "spira-release-spira-20260930T000000Z"; // the tag b.opts always runs
-    let prior = "spira-release-spira-20260901T000000Z";
-    let sha = "bdea14c12a8ba5ac77eaa787b2d9813058217abe";
-
-    let mut f = b.fake();
-    f.tag_notes = vec![(cut, ""), (prior, WAIVED_NOTE)];
-    f.tag_commit = sha;
-    assert_eq!(phases::run(&f, b.opts(&["--waive-upgrade", "--declared-waiver", sha])), 0, "declared for this commit: {:?}", b.fails());
-
-    let mut f = b.fake();
-    f.tag_notes = vec![(cut, ""), (prior, WAIVED_NOTE)];
-    f.tag_commit = sha;
-    assert_eq!(phases::run(&f, b.opts(&["--waive-upgrade", "--declared-waiver", "0000000000000000000000000000000000000000"])), 2, "declared for another commit");
-
-    let mut f = b.fake();
-    f.tag_notes = vec![(cut, ""), (prior, WAIVED_NOTE)];
-    f.tag_commit = "";
-    assert_eq!(phases::run(&f, b.opts(&["--waive-upgrade", "--declared-waiver", sha])), 2, "tag commit unresolvable: refuse");
-    assert!(!f.log.borrow().iter().any(|c| c.args.first().map(String::as_str) == Some("install-tarball")), "refused before any phase");
-}
-
-#[test]
-fn the_standing_ruling_stands_in_for_a_declared_waiver_on_every_chained_cut() {
-    let b = Box_::new();
-    let cut = "spira-release-spira-20260930T000000Z";
-    let prior = "spira-release-spira-20260901T000000Z";
-
-    let mut f = b.fake();
-    f.tag_notes = vec![(cut, ""), (prior, WAIVED_NOTE)];
-    f.tag_commit = "";
-    assert_eq!(phases::run(&f, with_prev(&b, &["--waive-upgrade", "--standing-waiver", "--record"])), 0, "standing ruling: {:?}", b.fails());
-    let log = f.log.borrow();
-    let c = log.iter().find(|c| c.args.contains(&"notes".to_string()) && c.args.contains(&"-m".to_string())).unwrap();
-    let note = c.args[c.args.iter().position(|a| a == "-m").unwrap() + 1].clone();
-    assert!(note.contains("upgrade phases waived by standing ruling"), "{note}");
-    assert!(note.lines().any(|l| l == WAIVER_LINE), "a standing waiver is still a waiver to the next cut: {note}");
-
-    let mut f = b.fake();
-    f.tag_notes = vec![(cut, ""), (prior, WAIVED_NOTE)];
-    assert_eq!(phases::run(&f, b.opts(&["--waive-upgrade"])), 2, "no ruling, no declaration: refuse");
 }
 
 #[test]

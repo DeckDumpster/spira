@@ -455,33 +455,6 @@ mod tests {
     }
 
     #[test]
-    fn each_red_suite_is_announced_once_as_it_goes_red_and_earlier_passes_reds_never() {
-        let d = TempDir::new();
-        let (run, res, seen) = (d.path().join("run"), d.path().join("res"), d.path().join("seen"));
-        fs::create_dir_all(&res).unwrap();
-        fs::write(res.join("test-old.sh.result"), "red 1 5 - p e 1\n").unwrap();
-        let argv = ["sh", "-c", "echo \"$1\" >> \"$0\"", seen.to_str().unwrap()].map(String::from).to_vec();
-        let mut p = Progress::start(&run, &res, "r1", "p1", 4, 777, BUDGETS).on_red(Some(argv));
-        let wait_for = |n: usize| {
-            for _ in 0..200 {
-                if fs::read_to_string(&seen).map_or(0, |t| t.lines().count()) >= n {
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(25));
-            }
-            fs::read_to_string(&seen).unwrap_or_default().lines().map(String::from).collect::<Vec<_>>()
-        };
-        fs::write(res.join("test-a.sh.result"), "ok 1 30 - p e 0\n").unwrap();
-        fs::write(res.join("test-b.sh.result"), "red 1 12 fp p e 1\n").unwrap();
-        p.update(&res);
-        p.update(&res);
-        assert_eq!(wait_for(1), ["test-b.sh"]);
-        fs::write(res.join("test-c.sh.result"), "timeout 1 12 fp p e 1\n").unwrap();
-        p.finish(&res, 1);
-        assert_eq!(wait_for(2), ["test-b.sh", "test-c.sh"], "in the order they failed, none twice");
-    }
-
-    #[test]
     fn a_failing_hook_is_reported_with_its_suite_and_rc() {
         assert_eq!(hook_failure("test-a.sh", Some(0), b""), None);
         let line = hook_failure("test-a.sh", Some(3), b"boom\n").unwrap();

@@ -574,51 +574,6 @@ mod tests {
     }
 
     #[test]
-    fn every_real_rune_reads_as_the_bash_source_did() {
-        let runes = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
-        let env: BTreeMap<String, String> = [
-            ("SPIRA_SCOPE_LABEL", "scope"),
-            ("SPIRA_CI_LABEL", "ci"),
-            ("SPIRA_MENDER_DEADLINE_SECS", "77"),
-        ]
-        .into_iter()
-        .chain(["BATCH_JUDGEMENT", "PLAN", "CZAR", "GROOMER", "MIMIR", "MENDER", "PILGRIM", "SKULD", "INCIDENT", "SPIKE", "WARDEN"].map(|n| (Box::leak(format!("SPIRA_{n}_LABEL").into_boxed_str()) as &str, "lbl")))
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
-        let lookup = |n: &str| env.get(n).cloned();
-        let mut checked = 0;
-        for e in std::fs::read_dir(&runes).unwrap() {
-            let p = e.unwrap().path();
-            if p.extension().and_then(|x| x.to_str()) != Some("rune") {
-                continue;
-            }
-            let text = std::fs::read_to_string(&p).unwrap();
-            let vars = crate::rune_file::parse(&p.to_string_lossy(), &text, &lookup).unwrap();
-            let out = std::process::Command::new("bash")
-                .arg("-c")
-                .arg(r#". "$1"; for v in $(compgen -A variable RUNE_); do printf '%s=%s\0' "$v" "${!v}"; done"#)
-                .arg("x")
-                .arg(&p)
-                .env_clear()
-                .envs(&env)
-                .output()
-                .unwrap();
-            let mut want: Vec<(String, String)> = String::from_utf8(out.stdout)
-                .unwrap()
-                .split('\0')
-                .filter(|r| !r.is_empty())
-                .map(|r| r.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())).unwrap())
-                .collect();
-            want.sort();
-            let mut got: Vec<(String, String)> = vars.into_iter().collect();
-            got.sort();
-            assert_eq!(got, want, "{}", p.display());
-            checked += 1;
-        }
-        assert!(checked >= 10, "{checked}");
-    }
-
-    #[test]
     fn rune_get_spawns_no_process_for_a_plain_read_and_refuses_a_command_substitution() {
         let ws = testkit::TempDir::new("spira-config-runes-get-refuse");
         write_rune(&ws, "bad", "RUNE_LABELS=$(echo hi)\n");

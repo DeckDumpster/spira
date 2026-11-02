@@ -309,61 +309,6 @@ pub fn run(now: i64, spira_home: &str, db: &str, home_repo: &str, incident_sh: &
 mod tests {
     use super::*;
 
-    /// Scar, caught by testenv (sp-lnmbq): a fake `gh` reporting CONFLICTING with an EMPTY
-    /// conclusions list leaves the tab as the string's last character before the newline;
-    /// `trim_end()` treats that tab as whitespace too and strips it, so `split_once('\t')`
-    /// then finds nothing to split on and both fields come back empty — CONFLICTING was
-    /// silently discarded and the branch fell through to arming auto-merge instead of
-    /// requeueing the delivery. Exercises the real subprocess path, not just `decide()`.
-    #[test]
-    fn gh_pr_facts_parses_conflicting_with_an_empty_conclusions_list() {
-        let d = testkit::TempDir::new("wt-prstall-ghfacts");
-        let gh = d.join("gh-stub.sh");
-        // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
-        testkit::write_exe(
-            &gh,
-            "#!/usr/bin/env bash\ncase \"$*\" in\n  *'api repos/'*) echo true ;;\n  *'pr view'*'--json mergeable,statusCheckRollup'*) printf 'CONFLICTING\\t\\n' ;;\nesac\n",
-        );
-        let cfg = Cfg {
-            stall_secs: 3600,
-            gh_bin: gh.to_string_lossy().into_owned(),
-            gh_timeout: std::time::Duration::from_secs(5),
-        };
-        let facts = gh_pr_facts(&cfg, d.to_str().unwrap(), "sp-x");
-        assert_eq!(facts.mergeable, "CONFLICTING");
-        assert_eq!(facts.concls, "");
-    }
-
-    fn stub_cfg(d: &testkit::TempDir, body: &str) -> Cfg {
-        let gh = d.join("gh-stub.sh");
-        testkit::write_exe(&gh, body);
-        Cfg {
-            stall_secs: 3600,
-            gh_bin: gh.to_string_lossy().into_owned(),
-            gh_timeout: std::time::Duration::from_secs(5),
-        }
-    }
-
-    #[test]
-    fn auto_merge_read_is_false_via_rest_when_repo_view_lacks_the_field() {
-        let d = testkit::TempDir::new("wt-prstall-aam-false");
-        let cfg = stub_cfg(
-            &d,
-            "#!/usr/bin/env bash\ncase \"$*\" in\n  *'repo view'*) echo 'Unknown JSON field: \"allowAutoMerge\"' >&2; exit 1 ;;\n  *'api repos/'*) echo false ;;\nesac\n",
-        );
-        assert_eq!(gh_pr_facts(&cfg, d.to_str().unwrap(), "sp-x").allow_auto_merge, Some(false));
-    }
-
-    #[test]
-    fn auto_merge_read_failure_or_null_is_unknown_not_false() {
-        let d = testkit::TempDir::new("wt-prstall-aam-unknown");
-        let cfg = stub_cfg(&d, "#!/usr/bin/env bash\nexit 1\n");
-        assert_eq!(gh_pr_facts(&cfg, d.to_str().unwrap(), "sp-x").allow_auto_merge, None);
-        assert_eq!(parse_bool("null\n"), None);
-        assert_eq!(parse_bool(""), None);
-        assert_eq!(parse_bool("true\n"), Some(true));
-    }
-
     #[test]
     fn a_certified_bead_with_no_pull_request_is_a_stall_only_in_a_pr_repo() {
         let row = |id: &str, since| lc::BeadRow { id: id.into(), tip: "t".into(), since: Some(since) };

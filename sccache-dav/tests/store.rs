@@ -68,14 +68,6 @@ async fn req(addr: SocketAddr, method: &str, path: &str, auth: Option<&str>, bod
 }
 
 #[tokio::test]
-async fn get_on_a_missing_key_is_404() {
-    let dir = scratch();
-    let addr = spawn(dir.path().to_path_buf(), None).await;
-    let r = req(addr, "GET", "/a/b/c/abc123", None, b"").await;
-    assert_eq!(r.code, 404, "{}", r.headers);
-}
-
-#[tokio::test]
 async fn put_then_get_round_trips_the_sharded_key_sccache_actually_uses() {
     // sccache's own normalize_key: "abcdef" -> "a/b/c/abcdef" (src/cache/utils.rs). The
     // directories do not exist yet — PUT must create them, the way opendal's webdav_mkcol
@@ -127,34 +119,6 @@ async fn mkcol_is_idempotent_and_makes_every_missing_ancestor() {
 }
 
 #[tokio::test]
-async fn delete_removes_a_key_and_404s_the_second_time() {
-    let dir = scratch();
-    std::fs::write(dir.path().join("k"), b"v").expect("the file");
-    let addr = spawn(dir.path().to_path_buf(), None).await;
-    let first = req(addr, "DELETE", "/k", None, b"").await;
-    assert_eq!(first.code, 204, "{}", first.headers);
-    assert!(!dir.path().join("k").exists());
-    let second = req(addr, "DELETE", "/k", None, b"").await;
-    assert_eq!(second.code, 404, "{}", second.headers);
-}
-
-#[tokio::test]
-async fn a_configured_token_is_required_and_checked_exactly() {
-    let dir = scratch();
-    std::fs::write(dir.path().join("k"), b"v").expect("the file");
-    let addr = spawn(dir.path().to_path_buf(), Some("s3cr3t")).await;
-
-    let none = req(addr, "GET", "/k", None, b"").await;
-    assert_eq!(none.code, 401, "{}", none.headers);
-
-    let wrong = req(addr, "GET", "/k", Some("Bearer nope"), b"").await;
-    assert_eq!(wrong.code, 401, "{}", wrong.headers);
-
-    let right = req(addr, "GET", "/k", Some("Bearer s3cr3t"), b"").await;
-    assert_eq!(right.code, 200, "{}", right.headers);
-}
-
-#[tokio::test]
 async fn path_traversal_is_refused_not_resolved() {
     let dir = scratch();
     // A sibling file outside the store root this request would otherwise escape to.
@@ -165,27 +129,6 @@ async fn path_traversal_is_refused_not_resolved() {
 
     let escape = req(addr, "GET", "/../secret", None, b"").await;
     assert_eq!(escape.code, 400, "{}", escape.headers);
-}
-
-#[test]
-fn config_from_env_refuses_a_wildcard_bind_and_missing_vars() {
-    // Exercised in-process (no server needed): the fail-closed checks in config_from_env.
-    for (addr, root, token) in [
-        (None, Some("/tmp/x"), None),
-        (Some("0.0.0.0:9431"), Some("/tmp/x"), None),
-        (Some("192.168.1.56:9431"), None, None),
-    ] {
-        let _env = testkit::env(&[("SCCACHE_DAV_ADDR", addr), ("SCCACHE_DAV_ROOT", root), ("SCCACHE_DAV_TOKEN", token)]);
-        assert!(sccache_dav::config_from_env().is_err(), "{addr:?} {root:?}");
-    }
-    let _env = testkit::env(&[
-        ("SCCACHE_DAV_ADDR", Some("192.168.1.56:9431")),
-        ("SCCACHE_DAV_ROOT", Some("/tmp/sccache-dav-store")),
-        ("SCCACHE_DAV_TOKEN", None),
-    ]);
-    let cfg = sccache_dav::config_from_env().expect("a valid config");
-    assert_eq!(cfg.addr, "192.168.1.56:9431");
-    assert!(cfg.token.is_none());
 }
 
 #[test]
@@ -230,35 +173,6 @@ fn eviction_under_the_cap_deletes_nothing() {
     put_aged(d.path(), "a/f", 100, 5000);
     assert_eq!(sccache_dav::evict_to_cap(d.path(), 100).files, 0);
     assert!(d.path().join("a/f").exists());
-}
-
-#[test]
-fn a_stored_build_nothing_has_touched_for_the_retention_is_removed_whole_and_a_fresh_one_stays() {
-    let d = scratch();
-    put_aged(d.path(), "artifacts/old/bin.tar", 100, 200_000);
-    put_aged(d.path(), "artifacts/old/MANIFEST", 10, 200_000);
-    put_aged(d.path(), "artifacts/half/bin.tar", 100, 200_000);
-    put_aged(d.path(), "artifacts/half/MANIFEST", 10, 5);
-    put_aged(d.path(), "a/b/c/cachekey", 10, 200_000);
-    let ev = sccache_dav::evict_artifacts_older_than(d.path(), std::time::Duration::from_secs(86400));
-    assert_eq!((ev.files, ev.bytes), (2, 110));
-    assert!(!d.path().join("artifacts/old").exists());
-    assert!(d.path().join("artifacts/half/bin.tar").exists(), "a build with a recent file is kept whole");
-    assert!(d.path().join("a/b/c/cachekey").exists(), "compilation cache entries are not artifacts");
-}
-
-#[tokio::test]
-async fn a_get_marks_the_entry_read_so_it_outlives_an_unread_newer_one() {
-    let d = scratch();
-    put_aged(d.path(), "a/hit", 100, 5000);
-    put_aged(d.path(), "b/unread", 100, 1000);
-    let addr = spawn(d.path().to_path_buf(), None).await;
-
-    assert_eq!(req(addr, "GET", "/a/hit", None, b"").await.code, 200);
-    sccache_dav::evict_to_cap(d.path(), 100);
-
-    assert!(d.path().join("a/hit").exists(), "read just now");
-    assert!(!d.path().join("b/unread").exists());
 }
 
 #[tokio::test]

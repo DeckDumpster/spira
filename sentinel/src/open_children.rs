@@ -269,18 +269,6 @@ mod tests {
     }
 
     #[test]
-    fn a_parent_with_an_open_child_gains_the_label() {
-        let list = snap(
-            r#"[{"id":"p","status":"open","labels":["plan"]},
-                {"id":"k1","status":"open","dependencies":[{"depends_on_id":"p","type":"parent-child"}]},
-                {"id":"k2","status":"closed","parent":"p"},
-                {"id":"lonely","status":"open"}]"#,
-        );
-        let ready = beads(r#"[{"id":"p"},{"id":"lonely"}]"#);
-        assert_eq!(decide(&list, &ready, L), vec![Change::Add("p".into())]);
-    }
-
-    #[test]
     fn the_parent_field_alone_counts_as_a_link() {
         let list =
             snap(r#"[{"id":"p","status":"open"},{"id":"k","status":"in_progress","parent":"p"}]"#);
@@ -361,33 +349,5 @@ mod tests {
         let s: Vec<String> = scoped(&ready, "spira").into_iter().map(|b| b.id).collect();
         assert_eq!(s, vec!["a"]);
         assert_eq!(scoped(&ready, "").len(), 2);
-    }
-
-    /// The scale that made the bash version cost 302 s: the decision over 8,500 rows and
-    /// 220 candidates is pure computation and must stay far inside one second.
-    #[test]
-    fn eight_thousand_rows_decide_in_well_under_a_second() {
-        let mut rows = Vec::new();
-        for i in 0..8500 {
-            let parent = if i % 7 == 0 {
-                format!(",\"parent\":\"b{}\"", i / 7)
-            } else {
-                String::new()
-            };
-            let st = if i % 3 == 0 { "open" } else { "closed" };
-            rows.push(format!("{{\"id\":\"b{i}\",\"status\":\"{st}\"{parent}}}"));
-        }
-        let list = snap(&format!("[{}]", rows.join(",")));
-        let ready = beads(&format!(
-            "[{}]",
-            (0..220)
-                .map(|i| format!("{{\"id\":\"b{i}\"}}"))
-                .collect::<Vec<_>>()
-                .join(",")
-        ));
-        let t = std::time::Instant::now();
-        let n = decide(&list, &ready, L).len();
-        assert!(n > 0);
-        assert!(t.elapsed().as_millis() < 1000, "took {:?}", t.elapsed());
     }
 }

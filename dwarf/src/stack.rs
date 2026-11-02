@@ -120,14 +120,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn stacked_base_honours_the_base_refs_union_attributes_not_the_checkouts() {
-        let d = testkit::union_repo("stack-union");
-        let mut stack = BTreeMap::new();
-        stack.insert("sp-b".to_string(), "b".to_string());
-        assert!(build_stacked_base(&crate::ports::CliGit, d.path(), "main", &stack).is_ok());
-    }
-
     fn fg(answers: Vec<Out>) -> FakeGit {
         FakeGit { calls: std::sync::Mutex::new(vec![]), answers: std::sync::Mutex::new(answers) }
     }

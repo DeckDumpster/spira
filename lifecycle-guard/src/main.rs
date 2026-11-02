@@ -10,6 +10,9 @@ mod landstate;
 mod rules;
 mod shell;
 
+#[cfg(test)]
+mod cli_tests;
+
 use finding::{Class, Finding};
 use rules::{Rules, GATE_CLASSES};
 use std::path::{Path, PathBuf};

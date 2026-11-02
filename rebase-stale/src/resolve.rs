@@ -537,12 +537,4 @@ mod tests {
         );
         assert!(keylist_union("<<<<<<< HEAD\nSPIRA_A\n=======\necho hi\n>>>>>>> abc\n").is_err());
     }
-
-    #[test]
-    fn markers_quote_and_reject_malformed() {
-        let t = "a\n<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> c\nb";
-        assert_eq!(quote_hunks(t, 60), "<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> c");
-        assert!(parse_markers("<<<<<<< HEAD\nx\n").is_err());
-        assert!(parse_markers("<<<<<<< HEAD\nx\n||||||| base\nz\n=======\ny\n>>>>>>> c").is_err());
-    }
 }

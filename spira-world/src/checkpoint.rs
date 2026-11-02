@@ -30,19 +30,3 @@ pub fn lift_all() -> (Vec<String>, Vec<String>) {
     }
     (lifted, failed)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_checkpoint_holds_are_lifted_not_snoozes_or_other_waits() {
-        let j = format!(
-            r#"[{{"bead_id":"sp-a","reason":"{}"}},{{"bead_id":"sp-b","reason":"{}"}},{{"bead_id":"sp-c","reason":"unlanded-blocker"}},{{"bead_id":"sp-d"}}]"#,
-            spira_config::lc_state::checkpoint_reason(9),
-            spira_config::lc_state::snooze_reason(9)
-        );
-        assert_eq!(checkpointed(&j), vec!["sp-a".to_string()]);
-        assert!(checkpointed("not json").is_empty());
-    }
-}

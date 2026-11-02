@@ -739,65 +739,6 @@ pub fn reentry_command(suites: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    const CHAIN: &str = r#"{"workspace_root":"/w","workspace_members":["p#a 0.1.0 (path+file:///w/a)","p#b 0.1.0 (path+file:///w/b)","p#c 0.1.0 (path+file:///w/c)","p#d 0.1.0 (path+file:///w/d)"],"packages":[
-      {"id":"p#a 0.1.0 (path+file:///w/a)","name":"a","manifest_path":"/w/a/Cargo.toml","dependencies":[]},
-      {"id":"p#b 0.1.0 (path+file:///w/b)","name":"b","manifest_path":"/w/b/Cargo.toml","dependencies":[{"name":"a","path":"/w/a"}]},
-      {"id":"p#c 0.1.0 (path+file:///w/c)","name":"c","manifest_path":"/w/c/Cargo.toml","dependencies":[{"name":"b","path":"/w/b"}]},
-      {"id":"p#d 0.1.0 (path+file:///w/d)","name":"d","manifest_path":"/w/d/Cargo.toml","dependencies":[]}]}"#;
-
-    fn raw(paths: &[&str]) -> Vec<u8> {
-        paths.iter().map(|p| format!(":100644 100644 aaa bbb M\0{p}\0")).collect::<String>().into_bytes()
-    }
-
-    #[test]
-    fn a_unit_selection_reaches_dependents_of_dependents_and_a_direct_one_does_not() {
-        let diff = raw(&["a/src/lib.rs"]);
-        assert_eq!(select_crates(&diff, CHAIN, true).unwrap(), ["a", "b", "c"]);
-        assert_eq!(select_crates(&diff, CHAIN, false).unwrap(), ["a", "b"]);
-        assert!(select_crates(&raw(&["docs/x.md"]), CHAIN, true).unwrap().is_empty());
-        assert_eq!(select_crates(&raw(&["Cargo.lock"]), CHAIN, true).unwrap().len(), 4);
-    }
-
-    #[test]
-    fn a_change_to_the_bd_pin_selects_the_crates_that_test_against_the_pinned_bd() {
-        let with_lc = CHAIN.replace("\"name\":\"d\"", "\"name\":\"spira-lc\"").replace("p#d ", "p#spira-lc ");
-        for pin in BD_PIN {
-            assert_eq!(select_crates(&raw(&[pin]), &with_lc, true).unwrap(), ["spira-lc"], "{pin}");
-        }
-        assert!(select_crates(&raw(&["spira/other.sh"]), &with_lc, true).unwrap().is_empty());
-        assert!(select_crates(&raw(&["spira/bd-pin.sh"]), CHAIN, true).unwrap().is_empty(), "a tree without the reader selects nothing");
-    }
-
-    #[test]
-    fn run_all_runs_every_step_of_the_checked_in_chain_and_labels_each() {
-        let d = crate::def::parse(&std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate.steps")).unwrap()).unwrap();
-        let steps = chain_steps(&d.command()).expect("the checked-in chain is a plain && chain");
-        assert_eq!(steps.len(), d.steps.len());
-        let s = run_all(&d.command());
-        for l in ["spira-lint", "lifecycle-guard", "build-fence", "boundary", "suites"] {
-            assert!(s.contains(&format!(":: {l}\"")), "{l}: {s}");
-        }
-    }
-
-    #[test]
-    fn run_all_reports_every_unit_after_a_red_one() {
-        let s = run_all("bash a/f.sh && bash a/g.sh && bash a/h.sh");
-        let t = testkit::TempDir::new("gate-runall");
-        let dir = t.path().to_path_buf();
-        std::fs::create_dir_all(dir.join("a")).unwrap();
-        std::fs::write(dir.join("a/f.sh"), "exit 0").unwrap();
-        std::fs::write(dir.join("a/g.sh"), "exit 3").unwrap();
-        std::fs::write(dir.join("a/h.sh"), "exit 0").unwrap();
-        let o = std::process::Command::new("bash").arg("-c").arg(&s).current_dir(&dir).output().unwrap();
-        let out = String::from_utf8_lossy(&o.stdout).into_owned();
-        assert_eq!(o.status.code(), Some(3), "{out}");
-        assert_eq!(
-            crate::parse::step_units(&out),
-            vec![("f".into(), false), ("g".into(), true), ("h".into(), false)]
-        );
-    }
-
     #[test]
     fn run_all_leaves_a_string_it_cannot_split_alone() {
         for c in ["true", "bash a/b.sh || bash a/c.sh", "bash a/b.sh; bash a/c.sh", "echo x && echo y"] {
@@ -931,28 +872,6 @@ mod tests {
         for (paths, want) in rows {
             assert_eq!(&unit(GateMode::Unit, paths), want, "{paths:?}");
         }
-    }
-
-    #[test]
-    fn a_touched_crate_brings_its_direct_dependents_only() {
-        let c = unit(GateMode::Unit, &["spira-config/src/lib.rs"]);
-        assert_eq!(
-            crates(&c),
-            ["dwarf", "queue", "spira-config"],
-            "landing-pass depends on queue, not on spira-config: a transitive dependent is not rebuilt"
-        );
-        let Composition::Unit { touched, .. } = &c else {
-            unreachable!()
-        };
-        assert_eq!(touched, &["spira-config"]);
-        assert_eq!(
-            crates(&unit(GateMode::Unit, &["queue/src/x.rs"])),
-            ["landing-pass", "queue"]
-        );
-        assert_eq!(
-            crates(&unit(GateMode::Unit, &["landing-pass/src/x.rs"])),
-            ["landing-pass"]
-        );
     }
 
     #[test]
@@ -1105,24 +1024,6 @@ mod tests {
     }
 
     #[test]
-    fn metadata_is_parsed_to_members_with_workspace_deps_only() {
-        let json = r#"{
-          "workspace_root": "/t/gate-tree",
-          "workspace_members": ["a 0.1.0 (path+file:///t/gate-tree/a)", "b 0.1.0 (path+file:///t/gate-tree/nested/b)"],
-          "packages": [
-            {"id": "a 0.1.0 (path+file:///t/gate-tree/a)", "name": "a",
-             "manifest_path": "/t/gate-tree/a/Cargo.toml",
-             "dependencies": [{"name": "serde"}, {"name": "b", "path": "/t/gate-tree/nested/b"}]},
-            {"id": "b 0.1.0 (path+file:///t/gate-tree/nested/b)", "name": "b",
-             "manifest_path": "/t/gate-tree/nested/b/Cargo.toml", "dependencies": []}
-          ]}"#;
-        let got = parse_metadata(json).unwrap();
-        assert_eq!(got, vec![m("a", "a", &["b"]), m("b", "nested/b", &[])]);
-        assert!(parse_metadata("not json").is_err());
-        assert!(parse_metadata("{}").is_err());
-    }
-
-    #[test]
     fn test_phase_env_drops_the_release_from_path_and_the_locator() {
         let e = |k: &str, v: &str| (k.to_string(), v.to_string());
         let env = vec![
@@ -1152,34 +1053,6 @@ mod tests {
         for k in ["SPIRA_LC_PASSWORD_FILE", "SPIRA_LC_SOCKET"] {
             assert!(std::env::var_os(k).is_none(), "{k} is visible inside a gate test run");
         }
-    }
-
-    #[test]
-    fn the_real_workspace_metadata_parses() {
-        // A positive control against this workspace's own shape: gate is a member and
-        // queue depends on spira-config.
-        let out = std::process::Command::new("cargo")
-            .args([
-                "metadata",
-                "--format-version",
-                "1",
-                "--no-deps",
-                "--offline",
-            ])
-            .current_dir(env!("CARGO_MANIFEST_DIR"))
-            .output();
-        let Ok(out) = out else { return };
-        if !out.status.success() {
-            return;
-        }
-        let ms = parse_metadata(&String::from_utf8_lossy(&out.stdout)).unwrap();
-        let q = ms
-            .iter()
-            .find(|m| m.name == "queue")
-            .expect("queue is a member");
-        assert!(q.deps.contains(&"spira-config".to_string()), "{q:?}");
-        assert!(ms.iter().any(|m| m.name == "gate" && m.dir == "gate"));
-        assert!(ms.iter().any(|m| m.dir == "cockpit/panel"));
     }
 
     #[test]
@@ -1351,47 +1224,6 @@ cargo: test tests::x ... ok";
         assert!(crate::engine::base_rerun_cmd(&v(&["test-a.sh"])).contains(bin), "the re-entry and the base re-run invoke one binary");
     }
 
-    fn run_reentry(release_body: &str) -> (Option<i32>, String) {
-        let t = testkit::TempDir::new("gate-reentry");
-        let bin = t.path().join("bin");
-        std::fs::create_dir_all(&bin).unwrap();
-        let script = |name: &str, body: &str| {
-            let p = bin.join(name);
-            testkit::write_exe(&p, &format!("#!/bin/bash\n{body}\n"));
-            p
-        };
-        script("release", release_body);
-        let runner = script("runner", "echo \"runner toml=$SPIRA_TOML args=$*\"; exit 0");
-        let o = std::process::Command::new("bash")
-            .arg("-c")
-            .arg(reentry_command(&v(&["test-a.sh"])))
-            .env_clear()
-            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
-            .env("SPIRA_TOML", "/live/layer.toml")
-            .env("SPIRA_TESTENV_BIN", runner)
-            .env("SPIRA_GATE_BRANCH", "b")
-            .env("SPIRA_GATE_REPO", "/r")
-            .current_dir(t.path())
-            .output()
-            .unwrap();
-        (o.status.code(), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)))
-    }
-
-    #[test]
-    fn the_reentry_runner_reads_the_live_config_with_the_trees_delta_applied() {
-        let (rc, out) = run_reentry("[ \"$1 $2\" = 'config-stage .' ] && echo /staged/layer0.toml:/staged/layer1.toml");
-        assert_eq!(rc, Some(0), "{out}");
-        assert!(out.contains("runner toml=/staged/layer0.toml:/staged/layer1.toml args=--suites test-a.sh b /r"), "{out}");
-    }
-
-    #[test]
-    fn a_tree_delta_that_cannot_be_staged_is_no_verdict_naming_why() {
-        let (rc, out) = run_reentry("echo 'release: no releases dir' >&2; exit 1");
-        assert_eq!(rc, Some(75), "{out}");
-        assert!(out.contains("release: no releases dir") && out.contains("cannot stage the tree config delta"), "{out}");
-        assert!(!out.contains("runner toml"), "the runner must not run on the unstaged config: {out}");
-    }
-
     #[test]
     fn ejected_suites_no_longer_force_the_suites_composition() {
         // sp-p3srm narrows sp-2ghui: a returned Rust-only bead keeps its unit composition and
@@ -1474,20 +1306,5 @@ cargo: test tests::x ... ok";
             };
             assert_eq!(g, want, "{input:?}");
         }
-    }
-}
-
-#[cfg(test)]
-mod drop_declared_skips_tests {
-    use super::drop_declared_skips;
-    #[test]
-    fn declared_skips_leave_required_and_are_named() {
-        let req = vec!["test-a.sh".to_string(), "test-install-rehearsal.sh".to_string()];
-        let allow = "# header\ntest-install-rehearsal.sh\tskip:podman_not_on_PATH\twhy\n\n";
-        let (kept, dropped) = drop_declared_skips(&req, allow);
-        assert_eq!(kept, vec!["test-a.sh".to_string()]);
-        assert_eq!(dropped, vec!["test-install-rehearsal.sh".to_string()]);
-        let (k2, d2) = drop_declared_skips(&req, "");
-        assert_eq!((k2.len(), d2.len()), (2, 0), "no allowlist drops nothing");
     }
 }

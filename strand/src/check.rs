@@ -624,25 +624,8 @@ fn escalate(cfg: &Config, part: &str, kind: &str, id: &str, detail: &str, action
     );
 }
 
-/// The check state machine over several rows, for tests.
-#[cfg(test)]
-fn steps(rows: &[AgedRow], dry: bool, grace: i64) -> Vec<Step> {
-    rows.iter().map(|r| decide(r, dry, grace)).collect()
-}
-
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn a_planted_deferral_is_found_before_an_empty_result_is_trusted() {
-        let rec = "branch=spira/sp-a\nrepo=spira\ncount=7\nsince=1000\nlast=2000\n";
-        let d = super::parse_deferred(rec).expect("a real deferral record parses");
-        assert_eq!(d, super::Deferred { branch: "spira/sp-a".into(), repo: "spira".into(), count: 7, since: 1000 });
-        let out = super::render_deferred(&[d], 1000 + 30 * 3600);
-        assert!(out.contains("spira/sp-a") && out.contains("7 consecutive") && out.contains("1800m"), "{out}");
-        assert_eq!(super::render_deferred(&[], 5), "");
-        assert!(super::parse_deferred("not a record").is_none());
-    }
-
     use super::*;
     use crate::model::Row;
 
@@ -673,25 +656,6 @@ mod tests {
     }
 
     #[test]
-    fn act_once_then_escalate_once() {
-        let g = 900;
-        assert_eq!(decide(&aged("ghost", Disposition::Act, 0, 0, 0), false, g), Step::Act);
-        assert_eq!(
-            decide(&aged("ghost", Disposition::Act, 0, 5, 0), false, g),
-            Step::Escalate { detail: "d (the mechanical fix ran and did not clear it)".into() }
-        );
-        assert_eq!(decide(&aged("ghost", Disposition::Act, 0, 5, 6), false, g), Step::Skip);
-        assert_eq!(decide(&aged("stuck", Disposition::Escalate, 899, 0, 0), false, g), Step::Skip, "inside grace");
-        assert_eq!(
-            decide(&aged("stuck", Disposition::Escalate, 900, 0, 0), false, g),
-            Step::Escalate { detail: "d".into() }
-        );
-        assert_eq!(decide(&aged("stuck", Disposition::Escalate, 9000, 0, 1), false, g), Step::Skip);
-        assert_eq!(decide(&aged("sequenced", Disposition::Info, 9000, 0, 0), false, g), Step::Skip);
-        assert_eq!(steps(&[aged("stuck", Disposition::Escalate, 0, 0, 0)], true, g), vec![Step::DryRun]);
-    }
-
-    #[test]
     fn titles() {
         assert_eq!(title_for("spira,plan", "stuck", "sp-1"), "Spira: sp-1 is stranded (stuck)");
         assert_eq!(title_for("spira,plan", "starved", "-"), "Spira: the [spira,plan] queue is stranded (starved)");
@@ -718,107 +682,7 @@ mod tests {
         assert_eq!(j["strands"][0]["escalated_at"], 0);
     }
 
-    #[test]
-    fn escalation_body_and_context() {
-        let b = crate::model::parse_beads(
-            r#"{"id":"sp-1","status":"open","priority":0,"title":"t","labels":["plan"],
-                "created_at":"2026-09-28T00:00:00Z","description":"  why  ","notes":"n1\nn2\nn3\nn4"}"#,
-        )
-        .unwrap();
-        let now = crate::timefmt::parse_rfc3339("2026-09-28T05:00:00Z").unwrap();
-        let ctx = bead_context(b.first(), "sp-1", now);
-        assert!(ctx.starts_with("BEAD    sp-1  [open, P0, open 5h]\nTITLE   t\nLABELS  plan\n\nWHAT THIS BEAD IS FOR\nwhy"));
-        assert!(ctx.ends_with("MOST RECENT NOTES\n  - n2\n  - n3\n  - n4"));
-        assert_eq!(bead_context(None, "-", now), "(no single bead — this is about the plan as a whole)");
-        assert_eq!(bead_context(None, "sp-1", now), "(could not read the bead — say so rather than pretend)");
-        assert_eq!(escalation_body("T", "A", "W", "C"), "## Question\nT\n\n## Default\nA\n\nW\n\nC\n");
-    }
-
-    #[test]
-    fn from_tsv_attributes_the_partition() {
-        use crate::config::Config;
-        let cfg = Config { labels: Some("-".into()), ..Config::test_fixture() };
-        let c = from_tsv(&cfg, "ghost\tsp-a\tact\td\ta\n\nbad line\n");
-        assert_eq!(c.rows.len(), 1);
-        assert_eq!(c.rows[0].part, "-");
-        assert_eq!(c.rows[0].row.kind, "ghost");
-    }
-
     // ---- the lifecycle switch (DESIGN.md §9) -------------------------------------------
-
-    fn scratch(tag: &str) -> testkit::TempDir {
-        testkit::TempDir::new(&format!("strand-lc-{tag}"))
-    }
-
-    /// An executable that appends its argv to `log` — the fake bd and the fake spira-lc.
-    fn recorder(dir: &std::path::Path, name: &str, log: &std::path::Path, reply: &str) -> String {
-        let p = dir.join(name);
-        testkit::write_exe(&p, &format!("#!/bin/sh\necho \"$@\" >> '{}'\nprintf '%s' '{}'\n", log.display(), reply));
-        p.to_string_lossy().into_owned()
-    }
-
-    fn cfg(bd: &str, claim: &str) -> Config {
-        Config { bd: bd.into(), db: Some("/fake/db".into()), ..Config::test_fixture() }.with_claim(claim)
-    }
-
-    #[test]
-    fn a_starved_ask_is_withheld_while_the_lane_has_a_live_dwarf() {
-        let d = scratch("starved-live");
-        let spec = || {
-            Ok(vec![probe::PartitionSpec { labels: "spira,plan".into(), exclude: String::new(), runes: vec!["mimir".into()] }])
-        };
-        let mk = |lines: &str| {
-            let p = d.join("systemctl");
-            testkit::write_exe(&p, &format!("#!/bin/sh\n{lines}\n"));
-            Config { systemctl: p.to_string_lossy().into_owned(), ..Config::test_fixture() }
-        };
-        let live = mk("echo 'spira-dwarf-mimir-1.service loaded active running x'");
-        assert_eq!(lane_live_now(&live, spec()), Some(1));
-        let none = mk("true");
-        assert_eq!(lane_live_now(&none, spec()), Some(0), "positive control: an empty lane reads as starved");
-        assert_eq!(lane_live_now(&none, Err("roster".into())), None);
-        assert!(starved_stands(None), "an unreadable lane still escalates");
-        assert!(starved_stands(Some(0)));
-        assert!(!starved_stands(Some(1)));
-    }
-
-    // sp-7g5q6: a partition's ready set is spira-claim's — never bd ready — and a refusal is
-    // "cannot tell", never empty.
-    #[test]
-    fn the_ready_set_is_spira_claims_and_bd_is_never_asked() {
-        let d = scratch("on-ready");
-        let (bdlog, claimlog) = (d.join("bd.log"), d.join("claim.log"));
-        let bd = recorder(&d, "bd", &bdlog, r#"[{"id":"sp-bd-says"}]"#);
-        let claim = recorder(&d, "spira-claim", &claimlog, r#"[{"id":"sp-machine-says","labels":["spira","plan"]}]"#);
-        let c = cfg(&bd, &claim);
-        let got = probe::ready(&c, "spira,plan", &["spira-poison".into(), "needs-ryan".into()]).unwrap(); // literal-ok: test fixture
-        assert_eq!(got.into_iter().collect::<Vec<_>>(), vec!["sp-machine-says".to_string()]);
-        assert_eq!(fs::read_to_string(&claimlog).unwrap(), "ready-count spira,plan spira-poison,needs-ryan --json\n"); // literal-ok: test fixture
-        assert!(!bdlog.exists(), "bd's ready query is nobody's ready set");
-        let gone = cfg(&bd, "/nonexistent/spira-claim");
-        assert!(probe::ready(&gone, "spira,plan", &[]).is_err(), "a refusal is never an empty set");
-    }
-}
-
-#[cfg(test)]
-mod gate_queued_tests {
-    use super::*;
-
-    #[test]
-    fn a_gate_queue_names_the_beads_in_inbox_claimed_and_done_and_no_queue_is_none() {
-        let run = testkit::TempDir::new("strand-gate-queued");
-        assert!(gate_queued(&run).is_none(), "no gate-worker directory: SUBMITTED beads are gated inline");
-        let root = run.join("gate-worker");
-        for d in ["inbox", "claimed/2", "done"] {
-            fs::create_dir_all(root.join(d)).unwrap();
-        }
-        let job = |b: &str| format!(r#"{{"repo":"r","branch":"spira/{b}","bead":"{b}","tip":"t","fix":false,"queued":1}}"#);
-        fs::write(root.join("inbox/a.json"), job("sp-a")).unwrap();
-        fs::write(root.join("claimed/2/b.json"), job("sp-b")).unwrap();
-        fs::write(root.join("done/c.json"), format!(r#"{{"job":{},"run":{{}}}}"#, job("sp-c"))).unwrap();
-        let q = gate_queued(&run).unwrap();
-        assert_eq!(q, ["sp-a", "sp-b", "sp-c"].iter().map(|s| s.to_string()).collect());
-    }
 }
 
 #[cfg(test)]

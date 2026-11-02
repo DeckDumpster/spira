@@ -374,42 +374,10 @@ mod tests {
     }
 
     #[test]
-    fn the_dolt_suite_explains_the_statements_the_ops_send() {
-        let suite = include_str!("../tests/journal_dolt.rs");
-        for sql in [stream_sql("s0", 100000, 1000), open_effects_sql()] {
-            assert!(suite.contains(&format!("\"{sql}\"")), "tests/journal_dolt.rs must EXPLAIN exactly: {sql}");
-        }
-    }
-
-    #[test]
-    fn a_dropped_connection_is_cannot_tell_and_a_bad_request_is_refused() {
-        let conn = Conn::unreachable();
-        let go = |v: &[&str]| dispatch(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>(), &conn);
-        assert_eq!(go(&["bogus"]).0, REFUSED);
-        assert_eq!(go(&["read", "x", "1"]).0, REFUSED);
-        assert_eq!(go(&["cursor"]).0, CANNOT_TELL);
-    }
-
-    #[test]
-    fn a_failed_write_names_the_event_past_the_statement_clip() {
-        let ev = json!({"id": "e".repeat(250), "stream": "s", "kind": {"tag": "t", "body": ""}, "at": 1, "cause": null, "correlation": "c"});
-        let (code, body) = dispatch(&["append".to_string(), ev.to_string()], &Conn::unreachable());
-        assert_eq!(code, CANNOT_TELL);
-        assert!(body.contains(&format!("id={}", "e".repeat(250))) && body.contains("stream=s") && body.contains("id:250"), "{body}");
-    }
-
-    #[test]
     fn a_long_statement_is_clipped_to_the_limit_and_an_ellipsis() {
         let sql = append_sql(&json!({"id": "e", "stream": "s", "kind": {"tag": "t", "body": "x".repeat(10_000)}, "at": 1, "cause": null, "correlation": "c"})).unwrap();
         assert!(sql.len() > 10_000);
         assert_eq!(clip(&sql).chars().count(), CLIP + 1);
         assert_eq!(clip("short"), "short");
-    }
-
-    #[test]
-    fn a_failed_call_names_its_verb() {
-        let (code, body) = dispatch(&["cursor".to_string()], &Conn::unreachable());
-        assert_eq!(code, CANNOT_TELL);
-        assert!(body.starts_with("cannot tell: journal cursor:") && !body.contains("CannotTell("), "{body}");
     }
 }

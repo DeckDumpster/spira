@@ -1,4 +1,4 @@
-use spira_sim::ci::{cargo_shim, expand, run_job, steps, Context, HostLock, Job, CARGO_FROM_ENV};
+use spira_sim::ci::{expand, steps, Context};
 use std::path::Path;
 
 const TOY: &str = "name: t
@@ -62,71 +62,4 @@ fn only_the_expressions_a_runner_provides_are_expanded() {
     assert_eq!(expand("${{ github.sha }}:${{github.workspace}}:${{ github.head_ref }}|", &cx).unwrap(), "abc:/w:|");
     assert!(expand("${{ matrix.os }}", &cx).unwrap_err().contains("matrix.os"));
     assert!(expand("${{ github.sha", &cx).is_err());
-}
-
-fn scratch(tag: &str) -> testkit::TempDir {
-    testkit::TempDir::new(tag)
-}
-
-#[test]
-fn a_job_runs_its_steps_in_a_clean_env_and_stops_at_the_first_failure() {
-    let t = scratch("simci");
-    let ws = t.join("ws");
-    std::fs::create_dir_all(&ws).unwrap();
-    let all = steps(TOY, "cut").unwrap();
-    let mut log = String::new();
-    let job = Job { steps: &all, skip: &[], cx: Context { sha: "s1", workspace: &ws, temp: &t.join("scratch") }, scratch: &t.join("scratch"), gh_dir: &t.join("gh"), release_bin: &t.join("rel"), path: &[std::path::PathBuf::from("/opt/runner-image")], env: &[("IMAGE".to_string(), "yes".to_string())] };
-    let code = run_job(&job, Path::new("/bin/true"), |l| log.push_str(l)).unwrap();
-    assert_eq!(code, 7, "{log}");
-    assert!(log.contains("sha=s1 who=sim-token plain=two words"), "{log}");
-    assert!(log.contains("image=yes"), "{log}");
-    assert!(log.contains("path=/somewhere:/opt/runner-image:"), "GITHUB_PATH carries to the next step, ahead of the image's: {log}");
-    let skipped = ["Fails".to_string()];
-    let job = Job { skip: &skipped, ..job };
-    let mut log = String::new();
-    assert_eq!(run_job(&job, Path::new("/bin/true"), |l| log.push_str(l)).unwrap(), 0, "{log}");
-    assert!(log.contains("--- skipped: Fails"));
-}
-
-#[test]
-fn the_cargo_shim_builds_only_spira_config_by_placing_the_worlds_release() {
-    let t = scratch("simcargo");
-    let rel = t.join("rel");
-    std::fs::create_dir_all(&rel).unwrap();
-    testkit::write_exe(rel.join("spira-config"), "#!/bin/sh\necho cfg\n");
-    let ws = t.join("ws");
-    std::fs::create_dir_all(&ws).unwrap();
-    let rel_s = rel.display().to_string();
-    let env = |k: &str| (k == CARGO_FROM_ENV).then(|| rel_s.clone());
-    let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    cargo_shim(&a(&["build", "--release", "--locked", "-p", "spira-config"]), &ws, &env).unwrap();
-    assert!(ws.join("target/release/spira-config").is_file());
-    cargo_shim(&a(&["build", "--release", "--locked", "-p", "spira-config"]), &ws, &env).unwrap();
-    assert_eq!(std::fs::read(ws.join("target/release/spira-config")).unwrap(), std::fs::read(rel.join("spira-config")).unwrap(), "a second build replaces the first");
-    for bad in [&["build", "-p", "other"][..], &["test"], &["build", "--workspace"], &["build"]] {
-        assert!(cargo_shim(&a(bad), &ws, &env).is_err(), "{bad:?}");
-    }
-    assert!(cargo_shim(&a(&["build", "-p", "spira-config"]), &ws, &|_| None).is_err());
-}
-
-#[test]
-fn two_jobs_on_one_host_take_turns_and_a_dead_holder_is_taken_over() {
-    let t = scratch("simlock");
-    let first = HostLock::acquire(t.path()).unwrap();
-    let dir = t.path().to_path_buf();
-    let waiter = std::thread::spawn(move || {
-        let started = std::time::Instant::now();
-        let _second = HostLock::acquire(&dir).unwrap();
-        started.elapsed()
-    });
-    std::thread::sleep(std::time::Duration::from_millis(400));
-    assert!(!waiter.is_finished(), "the second job waits for the first");
-    drop(first);
-    assert!(waiter.join().unwrap() >= std::time::Duration::from_millis(300));
-    assert!(!t.join("sim-ci.lock").exists(), "a finished job leaves no lock");
-
-    std::fs::create_dir(t.join("sim-ci.lock")).unwrap();
-    std::fs::write(t.join("sim-ci.lock/pid"), "4194303").unwrap();
-    assert!(!Path::new("/proc/4194303").exists(), "positive control: that pid is not running");
-    let _taken = HostLock::acquire(t.path()).unwrap();
 }

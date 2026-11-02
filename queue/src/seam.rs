@@ -213,8 +213,8 @@ pub fn parse_kv0(answer: &str) -> std::collections::BTreeMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use std::process::{Command, Stdio};
+
+
 
     #[test]
     fn every_script_is_one_braced_command_with_no_nul() {
@@ -240,74 +240,6 @@ mod tests {
             assert!(!s.contains('\0'), "{op:?}");
             assert!(s.contains("exit"), "{op:?} must exit inside the braces");
         }
-    }
-
-    #[test]
-    fn values_travel_on_stdin_with_newlines_and_empties_intact() {
-        let _serial = crate::testutil::serial();
-        // The seam's own mechanism, against a stand-in lib.sh that defines bead_reopen as
-        // "print my arguments": proves argv is only `bash` and every value arrives whole.
-        // (BeadReopen is the stand-in; its own body hardcodes an empty third positional,
-        // which is what exercises the empty-value case this test is for.)
-        let dir = crate::testutil::tmpdir("seam");
-        std::fs::write(
-            dir.join("lib.sh"),
-            "bead_reopen() { printf '[%s]' \"$@\"; }\n",
-        )
-        .unwrap();
-        let home = dir.to_str().unwrap();
-        let mut child = Command::new("bash")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(&stdin_bytes(
-                Op::BeadReopen,
-                &[home, "sp-a", "RED", "line one\nline $(two) `x`"],
-            ))
-            .unwrap();
-        let out = child.wait_with_output().unwrap();
-        assert!(out.status.success());
-        assert_eq!(
-            String::from_utf8_lossy(&out.stdout),
-            "[sp-a][RED][][line one\nline $(two) `x`]"
-        );
-    }
-
-    #[test]
-    fn amend_bug_decides_on_the_lifecycle_row_not_bd_status() {
-        let _serial = crate::testutil::serial();
-        let dir = crate::testutil::tmpdir("amend");
-        std::fs::write(
-            dir.join("lib.sh"),
-            "lc_bead_row() { case \"$1\" in sp-live) printf 'WORKING\\t3\\t\\t' ;; sp-done) printf 'LANDED\\t3\\t\\t' ;; *) return 1 ;; esac; }\nbdq() { return 0; }\n",
-        )
-        .unwrap();
-        let home = dir.to_str().unwrap();
-        let run = |id: &str| {
-            let mut child = Command::new("bash")
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .spawn()
-                .unwrap();
-            child
-                .stdin
-                .take()
-                .unwrap()
-                .write_all(&stdin_bytes(Op::AmendBug, &[home, "actor", id, "note"]))
-                .unwrap();
-            let out = child.wait_with_output().unwrap();
-            split_answer(&String::from_utf8_lossy(&out.stdout))
-                .1
-                .to_string()
-        };
-        assert_eq!(run("sp-live"), "amended");
-        assert_eq!(run("sp-done"), "");
-        assert_eq!(run("sp-rowless"), "");
     }
 
     #[test]

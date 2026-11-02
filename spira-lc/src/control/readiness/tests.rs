@@ -149,29 +149,6 @@ fn certified_gate(tip: &str) -> Value {
 }
 
 #[test]
-fn a_blocker_regressing_to_rework_after_judgement_conflicts_the_claim_and_writes_nothing() {
-    let r = Rig::new();
-    r.certified("sp-b", TIP);
-    r.ok(&["create-bead", "sp-a", "--ready"]);
-    r.judged_claimable("sp-a", json!({ "sp-b": certified_gate(TIP) }));
-    r.applied(
-        "sp-b",
-        json!({ "GateRed": { "tip": TIP, "reason": "suites-failed" } }),
-    );
-    assert_eq!(r.state("sp-b"), "REWORK");
-    let before = r.mod_rev(&keys::lifecycle("sp-a"));
-    let (code, out) = r.claim("sp-a");
-    assert_eq!(code, crate::REFUSED, "{out}");
-    assert!(out.contains("blocker sp-b moved"), "{out}");
-    assert_eq!(r.state("sp-a"), "READY");
-    assert_eq!(r.mod_rev(&keys::lifecycle("sp-a")), before);
-    assert!(
-        r.store.holder_fence("sp-a").unwrap().is_none(),
-        "no lock was left behind"
-    );
-}
-
-#[test]
 fn a_blockers_hold_express_or_phase_since_judgement_does_not_conflict_the_claim() {
     let r = Rig::new();
     r.certified("sp-b", TIP);

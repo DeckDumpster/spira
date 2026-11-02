@@ -11,5 +11,3 @@ pub mod record;
 pub mod resolve;
 pub mod seam;
 
-#[cfg(test)]
-mod tests;

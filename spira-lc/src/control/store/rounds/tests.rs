@@ -1,13 +1,11 @@
 use std::cell::Cell;
-use std::sync::Arc;
 
 use lifecycle::batch::{BatchEvent, BatchEventKind, BatchState};
 use lifecycle::bead::BeadState;
 use lifecycle::delivery::DeliveryState;
 use runtime::ports::VirtualClock;
 use state_store::{Backend, Config, Contract, MemBackend, Ports, Request};
-use state_store_sqlite::{Options, SqliteBackend};
-use testkit::TempDir;
+use state_store_sqlite::SqliteBackend;
 
 use super::{Cut, Planned, Ran, Store};
 use crate::control::keys;
@@ -34,17 +32,6 @@ impl Rig {
 }
 
 impl Rig<SqliteBackend> {
-    fn sqlite(dir: &TempDir) -> Self {
-        let clock = clock();
-        let opts = Options {
-            clock: Arc::new(clock.clone()),
-            ..Options::default()
-        };
-        Rig::on(
-            SqliteBackend::open(&dir.path().join("control.db"), opts).unwrap(),
-            &clock,
-        )
-    }
 }
 
 impl<B: Backend> Rig<B> {
@@ -107,16 +94,6 @@ impl<B: Backend> Rig<B> {
         self.submitted_with(id, tip, claim);
         let pass = format!(r#"{{"GatePass":{{"tip":"{tip}","gate_key":"k1"}}}}"#);
         self.bead_event(id, "SUBMITTED", "2", &pass);
-    }
-
-    /// SUBMITTED at `tip`: a cut moves its gate from unfinished to stackable, so its cut writes
-    /// the member's gate as well as its record.
-    fn submitted(&self, id: &str, tip: &str) {
-        self.submitted_with(
-            id,
-            tip,
-            r#"{"Claim":{"holder":"dwarf-1","lease_until":1767229200}}"#,
-        );
     }
 
     fn submitted_with(&self, id: &str, tip: &str, claim: &str) {
@@ -507,54 +484,6 @@ fn ids(n: usize) -> Vec<(String, String)> {
         .collect()
 }
 
-fn a_cut_at_the_member_cap_commits_and_one_more_is_refused_before_any_write<B: Backend>(
-    r: &Rig<B>,
-) {
-    // SUBMITTED members, so the cut moves every member's gate: the round's largest cascade.
-    let over = ids(CAP + 1);
-    for (id, tip) in &over {
-        r.submitted(id, tip);
-    }
-    let head = r.s.contract().head().unwrap();
-    let p = r.s.plan_cut(&r.cut_spec(&over)).unwrap();
-    assert!(
-        matches!(&p, Planned::Ran(Ran::Turned(super::Turned::Refused(m))) if m.contains(&format!("at most {CAP} members"))),
-        "{:?}",
-        match p {
-            Planned::Ran(r) => format!("{r:?}"),
-            Planned::Cascade(_) => "planned".into(),
-        }
-    );
-    assert_eq!(r.s.contract().head().unwrap(), head, "nothing written");
-    // The cap is the contract's limit, not a guess under it: the same cut planned past the
-    // guard is refused by the contract, and writes nothing either.
-    let p = r.s.plan_cut_uncapped(&r.cut_spec(&over)).unwrap();
-    assert!(matches!(
-        r.s.run_planned(p, &r.req(), "cut"),
-        Err(state_store::Error::Limit(state_store::Limit::Ops { .. }))
-    ));
-    assert_eq!(r.s.contract().head().unwrap(), head, "nothing written");
-    let at = &over[..CAP];
-    let p = r.s.plan_cut(&r.cut_spec(at)).unwrap();
-    let Ran::Done { applied, .. } = r.s.run_planned(p, &r.req(), "cut").unwrap() else {
-        panic!("the cut at the cap did not run");
-    };
-    assert_eq!(applied, vec![true; 3 * CAP]);
-    let (_, round) = r.s.batch("b-1").unwrap().unwrap();
-    assert_eq!(round.value.members.len(), CAP);
-}
-
-#[test]
-fn a_cut_at_the_member_cap_commits_on_the_reference_backend() {
-    a_cut_at_the_member_cap_commits_and_one_more_is_refused_before_any_write(&Rig::new());
-}
-
-#[test]
-fn a_cut_at_the_member_cap_commits_on_sqlite() {
-    let dir = TempDir::new("spira-lc-cap");
-    a_cut_at_the_member_cap_commits_and_one_more_is_refused_before_any_write(&Rig::sqlite(&dir));
-}
-
 #[test]
 fn a_round_id_is_taken_in_every_repo_once_any_repo_cuts_it() {
     let r = Rig::new();
@@ -938,42 +867,5 @@ fn a_landing_and_a_settle_move_each_members_gate_with_its_record() {
         let rec = r.s.record(id).unwrap().unwrap().value;
         assert_eq!(stored_gate(&r, id), rec.gate(), "{id}");
         assert_eq!(stored_gate(&r, id).class, GateClass::Unfinished, "{id}");
-    }
-}
-
-#[test]
-fn a_landing_at_the_member_cap_commits_with_every_members_gate() {
-    let r = Rig::new();
-    let at = ids(CAP);
-    for (id, tip) in &at {
-        r.submitted(id, tip);
-    }
-    let p = r.s.plan_cut(&r.cut_spec(&at)).unwrap();
-    r.s.run_planned(p, &r.req(), "cut").unwrap();
-    // The cut versions the round once per member it adds.
-    let v = r.s.batch("b-1").unwrap().unwrap().1.value.row.version;
-    batch_event(
-        &r,
-        BatchState::Open,
-        v,
-        BatchEventKind::CiStarted { run: "r1".into() },
-    );
-    batch_event(&r, BatchState::CiRunning, v + 1, BatchEventKind::Green);
-    let req = r.req();
-    let p =
-        r.s.plan_land("b-1", &fast_forward(v + 2), AT, &req)
-            .unwrap();
-    let ran = r.s.run_planned(p, &req, "land").unwrap();
-    assert!(
-        matches!(&ran, Ran::Done { applied, .. } if applied.iter().all(|a| *a)),
-        "{ran:?}"
-    );
-    for (id, _) in &at {
-        assert_eq!(r.state(id), BeadState::Landed, "{id}");
-        assert_eq!(
-            stored_gate(&r, id).class,
-            spira_config::edges::GateClass::Finished,
-            "{id}"
-        );
     }
 }

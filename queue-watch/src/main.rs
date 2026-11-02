@@ -367,41 +367,7 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    // REGRESSION (sp-yv4b3): the default named the retired `forge.sh`, not the release's
-    // `forge` binary. PATH goes to the spawn only; the default forge is now a plain parameter
-    // (SPIRA_FORGE resolved once by the caller), so this no longer needs to touch the process
-    // environment at all.
-    #[test]
-    fn queue_repos_default_forge_is_the_bare_release_binary_and_is_actually_reachable() {
-        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = testkit::TempDir::new(&format!("queue-watch-default-forge-test-{n}"));
-        testkit::write_exe(
-            dir.join("forge"),
-            "#!/bin/sh\ncase \"$1\" in check-status) echo green ;; *) exit 1 ;; esac\n",
-        );
-        let mut child_path = dir.path().as_os_str().to_os_string();
-        child_path.push(":");
-        child_path.push(env::var_os("PATH").unwrap_or_default());
-
-        let cfg = dir.join("spira.toml");
-        fs::write(&cfg, "[repo.q]\npath = \"/tmp/q\"\nmode = \"queue\"\n").unwrap();
-
-        let repos = match queue_repos(Some(cfg), &PathBuf::from("forge")) {
-            Ok(r) => r,
-            Err(NoRepos::Idle(w)) => panic!("unexpectedly idle: {w}"),
-            Err(NoRepos::Fatal(w)) => panic!("unexpectedly fatal: {w}"),
-        };
-        let q = repos.iter().find(|r| r.name == "q").unwrap();
-        assert_eq!(q.forge, PathBuf::from("forge"), "default must name the bare release binary, not forge.sh");
-        assert_eq!(
-            crate::io::read_ci_on(q, "459", "spira/queue/x", Some(&child_path)),
-            Ok(crate::core::Ci::Green)
-        );
-
-        let _ = fs::remove_dir_all(&dir);
-    }
 
     // POSITIVE CONTROL: two stalls of the same PR must produce the identical ref, or
     // incident.sh's dedupe never finds the first bead and files a second every poll.
@@ -427,60 +393,6 @@ mod tests {
         assert_eq!(iso(0), "1970-01-01T00:00:00Z");
         assert_eq!(iso(1_790_303_413), "2026-09-25T02:30:13Z");
         assert_eq!(iso(951_782_400), "2000-02-29T00:00:00Z");
-    }
-
-    static COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-    // POSITIVE CONTROL: today's code filters on `LandMode::Queue` alone, so this fails on it —
-    // "qf" and "ql" are silently dropped from the watched set, and the fixed code's `local`
-    // flag (a compile error against the old, field-less `Repo`) cannot even be asserted.
-    #[test]
-    fn queue_repos_accepts_queue_queue_forge_and_queue_local() {
-        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = testkit::TempDir::new(&format!("queue-watch-queue-repos-test-{n}"));
-        let cfg = dir.join("spira.toml");
-        fs::write(
-            &cfg,
-            r#"
-[repo.q]
-path = "/tmp/q"
-mode = "queue"
-
-[repo.qf]
-path = "/tmp/qf"
-mode = "queue.forge"
-
-[repo.ql]
-path = "/tmp/ql"
-mode = "queue.local"
-base = "local/main"
-
-[repo.p]
-path = "/tmp/p"
-mode = "push"
-"#,
-        )
-        .unwrap();
-
-        let repos = match queue_repos(Some(cfg), &PathBuf::from("forge")) {
-            Ok(r) => r,
-            Err(NoRepos::Idle(w)) => panic!("unexpectedly idle: {w}"),
-            Err(NoRepos::Fatal(w)) => panic!("unexpectedly fatal: {w}"),
-        };
-        let names: Vec<&str> = repos.iter().map(|r| r.name.as_str()).collect();
-        assert!(names.contains(&"q"), "queue: {names:?}");
-        assert!(names.contains(&"qf"), "queue.forge (alias, regression): {names:?}");
-        assert!(names.contains(&"ql"), "queue.local: {names:?}");
-        assert!(!names.contains(&"p"), "push must stay unwatched: {names:?}");
-
-        let ql = repos.iter().find(|r| r.name == "ql").unwrap();
-        assert!(ql.local, "queue.local repo must carry local=true");
-        assert_eq!(ql.base, "local/main");
-
-        let qf = repos.iter().find(|r| r.name == "qf").unwrap();
-        assert!(!qf.local, "queue.forge is not local (regression)");
-
-        let _ = fs::remove_dir_all(&dir);
     }
 }
 

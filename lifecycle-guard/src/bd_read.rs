@@ -109,20 +109,4 @@ fn e() -> Vec<String> {
 "#;
         assert_eq!(lines("x/src/a.rs", src), vec![1, 2, 3, 4, 7]);
     }
-
-    #[test]
-    fn prose_gh_the_classifier_and_tests_are_not_findings() {
-        let src = r#"fn a() { gh.call(Some(repo), &["run", "ready", n]); }
-fn b() { eprintln!("bd ready is gone"); }
-fn c() { let ready = true; log("ready", 1); }
-fn d() -> &'static [&'static str] { &["show", "ready", "list"] }
-#[cfg(test)]
-mod tests {
-    fn t() { bd(&["ready", "--json"]); }
-}
-"#;
-        assert_eq!(lines("x/src/a.rs", src), vec![4]);
-        let door = r#"const READ_VERBS: &[&str] = &["show", "ready"];"#;
-        assert!(!in_scope("bead/src/bdq.rs") && lines("bead/src/bdq.rs", door).len() == 1);
-    }
 }

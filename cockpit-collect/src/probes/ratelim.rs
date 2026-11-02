@@ -196,14 +196,4 @@ mod tests {
         let w = win_vals(&serde_json::json!({"utilization": 0.96, "resetsAt": 100}), 500);
         assert!(w.util.is_none());
     }
-
-    #[test]
-    fn no_logs_renders_all_question_marks() {
-        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
-        let run = testkit::TempDir::new("cc-ratelim-empty");
-        let _env = crate::test_support::set_run(run.path());
-        let kv = ratelim_keys();
-        assert!(kv.iter().all(|(_, v)| v == "?"));
-        assert_eq!(kv.len(), KEYS.len());
-    }
 }

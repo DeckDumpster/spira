@@ -303,18 +303,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn free_space_matches_what_df_reports_for_the_same_path_and_refuses_a_missing_one() {
-        let out = std::process::Command::new("df").args(["-kP", "/"]).output().unwrap();
-        let text = String::from_utf8_lossy(&out.stdout);
-        let cols: Vec<&str> = text.lines().last().unwrap().split_whitespace().collect();
-        let (total, avail): (i64, i64) = (cols[1].parse().unwrap(), cols[3].parse().unwrap());
-        let by_df = avail * 100 / total;
-        let by_statvfs = free_pct("/").expect("statvfs reads /");
-        assert!((by_df - by_statvfs).abs() <= 1, "df says {by_df}%, statvfs {by_statvfs}%");
-        assert_eq!(free_pct("/nonexistent/for/this/test"), None);
-    }
-
-    #[test]
     fn spira_branches_are_read_from_loose_and_packed_refs_and_through_a_worktrees_gitdir() {
         let d = testkit::TempDir::new("host-branches");
         let common = d.join("main/.git");

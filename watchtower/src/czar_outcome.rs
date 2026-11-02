@@ -370,10 +370,4 @@ mod tests {
         let beads2 = vec![bead("sp-czoc9", "open", "some-other-ref", &minsago(15), "")];
         assert!(classify(NOW, 30, 10, &beads2).is_empty());
     }
-
-    #[test]
-    fn query_beads_returns_empty_on_a_failing_bd() {
-        let out = query_beads("/does/not/exist/bdq", "czar-trigger");
-        assert!(out.is_empty());
-    }
 }

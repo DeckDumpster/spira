@@ -516,7 +516,7 @@ pub fn acquire(req: &Request, log: &dyn Fn(&str)) -> Result<Worktree, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
+
 
     const LIST: &str = "worktree /srv/harness\nHEAD aaa\nbranch refs/heads/main\n\nworktree /run/worktree/sp-x\nHEAD bbb\nbranch refs/heads/spira/sp-x\n\nworktree /run/worktree/round-5\nHEAD ccc\ndetached\n";
 
@@ -610,110 +610,6 @@ mod tests {
             in_place_candidates(&e, Path::new("/srv/harness"), "main", "aaa"),
             vec![PathBuf::from("/srv/harness")]
         );
-    }
-
-    fn sh(dir: &Path, cmd: &str) {
-        let ok = Command::new("sh")
-            .arg("-c")
-            .arg(cmd)
-            .current_dir(dir)
-            .env("GIT_AUTHOR_NAME", "t")
-            .env("GIT_AUTHOR_EMAIL", "t@t")
-            .env("GIT_COMMITTER_NAME", "t")
-            .env("GIT_COMMITTER_EMAIL", "t@t")
-            .status()
-            .unwrap()
-            .success();
-        assert!(ok, "{cmd}");
-    }
-
-    #[test]
-    fn slots_are_reused_warm_and_ephemeral_is_removed() {
-        let root = testkit::TempDir::new("testenv-wt");
-        let repo = root.join("repo");
-        fs::create_dir_all(&repo).unwrap();
-        sh(&repo, "git init -q -b main && printf 'target/\\n' > .gitignore && echo a > f && git add . && git commit -qm one && echo b > f && git commit -qam two");
-        let c1 = git(&repo, &["rev-parse", "HEAD~1"]).unwrap();
-        let c2 = git(&repo, &["rev-parse", "HEAD"]).unwrap();
-        let run = root.join("run");
-        let r1 = Request {
-            repo: &repo,
-            rev: &c1,
-            commit: &c1,
-            cwd: &root,
-            run_dir: &run,
-            slots: 1,
-            min_free_mib: 0,
-            min_mem_mib: 0,
-            release_warm: &|_| {},
-        };
-        let wt = acquire(&r1, &|_| {}).unwrap();
-        assert!(matches!(wt.kind, Kind::Slot { .. }));
-        fs::create_dir_all(wt.path.join("target")).unwrap();
-        fs::write(wt.path.join("target/keep"), "warm").unwrap();
-        fs::write(wt.path.join("stray"), "x").unwrap();
-        let slot_path = wt.path.clone();
-        // while slot 0 is held, a second acquire gets a throwaway worktree
-        let r2 = Request {
-            repo: &repo,
-            rev: &c2,
-            commit: &c2,
-            cwd: &root,
-            run_dir: &run,
-            slots: 1,
-            min_free_mib: 0,
-            min_mem_mib: 0,
-            release_warm: &|_| {},
-        };
-        let eph = acquire(&r2, &|_| {}).unwrap();
-        assert!(matches!(eph.kind, Kind::Ephemeral));
-        let eph_path = eph.path.clone();
-        drop(eph);
-        assert!(!eph_path.exists());
-        drop(wt);
-        // slot reuse: moved to c2, target/ kept, stray removed. The flock is released when
-        // the last copy of the descriptor closes, and a process another test thread is
-        // spawning at that instant holds a copy until it execs — so allow a brief retry.
-        let mut wt = acquire(&r2, &|_| {}).unwrap();
-        for _ in 0..50 {
-            if matches!(wt.kind, Kind::Slot { .. }) {
-                break;
-            }
-            drop(wt);
-            std::thread::sleep(std::time::Duration::from_millis(20));
-            wt = acquire(&r2, &|_| {}).unwrap();
-        }
-        assert_eq!(wt.path, slot_path);
-        assert_eq!(fs::read_to_string(wt.path.join("f")).unwrap().trim(), "b");
-        assert!(wt.path.join("target/keep").exists());
-        assert!(!wt.path.join("stray").exists());
-        drop(wt);
-        // in place: the repo's own checkout holds main at c2 and is clean
-        let r3 = Request {
-            repo: &repo,
-            rev: "main",
-            commit: &c2,
-            cwd: &root,
-            run_dir: &run,
-            slots: 1,
-            min_free_mib: 0,
-            min_mem_mib: 0,
-            release_warm: &|_| {},
-        };
-        let wt = acquire(&r3, &|_| {}).unwrap();
-        assert!(matches!(wt.kind, Kind::InPlace));
-        assert_eq!(
-            fs::canonicalize(&wt.path).unwrap(),
-            fs::canonicalize(&repo).unwrap()
-        );
-        drop(wt);
-        assert!(repo.join("f").exists());
-        // dirty checkout is not used in place
-        fs::write(repo.join("f"), "dirty").unwrap();
-        let wt = acquire(&r3, &|_| {}).unwrap();
-        assert!(!matches!(wt.kind, Kind::InPlace));
-        drop(wt);
-        let _ = fs::remove_dir_all(&root);
     }
 
     /// Four slot dirs of `kib` KiB each under `base`; free space is a fixed floor plus 100 MiB

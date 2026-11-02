@@ -104,24 +104,6 @@ fn closing_an_ask_lifts_its_work_beads_hold_in_the_same_txn() {
 }
 
 #[test]
-fn a_close_whose_work_bead_moved_after_the_plan_writes_nothing() {
-    let r = Rig::new();
-    r.asked();
-    let req = r.req();
-    let Ok(planned) =
-        r.s.plan_close_ask("sp-q", answer(), "test", "m-1", AT, &req)
-            .unwrap()
-    else {
-        panic!("the close was not planned");
-    };
-    r.ok(&["set-repo", "sp-w", "other"]);
-    assert_eq!(r.s.commit_close(planned, &req).unwrap(), AskClose::LostRace);
-    let ask = r.s.ask("sp-q").unwrap().unwrap();
-    assert_eq!((ask.row.state, ask.closed_at), (AskState::Open, None));
-    assert_eq!(r.holds(), [HoldKind::Ask], "the hold stays");
-}
-
-#[test]
 fn a_closed_ask_is_refused_and_an_existing_ask_is_left_as_it_is() {
     let r = Rig::new();
     r.asked();

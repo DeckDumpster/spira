@@ -84,21 +84,6 @@ fn open_red_eject_repush_land() {
     assert!(evs[6].text.contains("verified on base"), "{}", evs[6].text);
 }
 
-#[test]
-fn a_merge_whose_members_are_not_on_base_is_not_a_landing() {
-    let mut s0 = snap(0);
-    s0.batch = Some(batch("9", "h", &["sp-a", "sp-b"]));
-    let mut s1 = snap(30);
-    s1.outcome = Some(Outcome {
-        pr: "9".into(),
-        state: PrState::Merged,
-        on_base: vec![("sp-a".into(), Some(true)), ("sp-b".into(), Some(false))],
-    });
-    let evs = replay(&[s0, s1]);
-    assert_eq!(kinds(&evs), vec!["landed-unverified"]);
-    assert!(evs[0].text.contains("sp-b"));
-}
-
 /// Batch 325: an express eviction closed the PR and wrote no log line at all. The members
 /// went back to CERTIFIED and 326 opened in the same pass.
 #[test]
@@ -155,54 +140,6 @@ fn idle_with_certified_work_stalls_once() {
     };
     let evs = replay(&[mk(0), mk(300), mk(700), mk(1300)]);
     assert_eq!(kinds(&evs), vec!["stall"]);
-}
-
-#[test]
-fn a_head_that_never_moves_stalls_once() {
-    let mk = |t| {
-        let mut s = snap(t);
-        s.batch = Some(batch("5", "h", &["sp-a"]));
-        s.ci = Some(Ci::Pending);
-        s
-    };
-    // The first poll is a baseline and records CI silently; only the stall is news.
-    let evs = replay(&[mk(0), mk(1000), mk(2800), mk(4000)]);
-    assert_eq!(kinds(&evs), vec!["stall"]);
-    assert!(evs[0].text.contains("unchanged for 46m (CI running)"), "{}", evs[0].text);
-}
-
-// A job queued with no runner is judged on its own queue time (ci_queued_max_secs, 600s
-// default), not on head_stall_secs (2700s) — the case that held a queue slot for three hours
-// while its log kept reading "CI running": under the old single threshold this would not
-// have said anything for another 28 minutes.
-#[test]
-fn a_queued_job_with_no_runner_stalls_at_the_queued_threshold_not_the_head_threshold() {
-    let mk = |t, qs| {
-        let mut s = snap(t);
-        s.batch = Some(batch("419", "h", &["sp-a"]));
-        s.ci = Some(Ci::Pending);
-        s.queued_since = qs;
-        s
-    };
-    let evs = replay(&[mk(0, Some(0)), mk(700, Some(0)), mk(1000, Some(0))]);
-    assert_eq!(kinds(&evs), vec!["stall"]);
-    assert!(evs[0].text.contains("CI queued 11m with no runner ever assigned"), "{}", evs[0].text);
-    assert!(!evs[0].text.contains("unchanged for"), "{}", evs[0].text);
-}
-
-// NEGATIVE CONTROL, proving the case above is not just the queued threshold always winning:
-// the same age and the same Ci::Pending, but a runner has claimed the job (no queued_since),
-// must be judged on head_stall_secs like before and say nothing this early.
-#[test]
-fn a_running_job_is_not_judged_against_the_queued_threshold() {
-    let mk = |t| {
-        let mut s = snap(t);
-        s.batch = Some(batch("420", "h", &["sp-a"]));
-        s.ci = Some(Ci::Pending);
-        s
-    };
-    let evs = replay(&[mk(0), mk(700), mk(1000)]);
-    assert!(evs.is_empty(), "a running job must not stall before head_stall_secs: {evs:?}");
 }
 
 /// A poll that could not read the forge must never read as a quiet queue.

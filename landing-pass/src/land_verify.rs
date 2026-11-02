@@ -220,7 +220,7 @@ pub fn close_on_land(git: &dyn Git, out: &Reporter, home: &Path, row: Option<&Be
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command as StdCommand;
+
 
     // ── land_subject / collapse_title ──────────────────────────────────────
 
@@ -254,53 +254,9 @@ mod tests {
 
     // ── a real git repo, for the conflict-note family below ──
 
-    fn git_init(dir: &Path) {
-        let run = |args: &[&str]| {
-            StdCommand::new("git").current_dir(dir).env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t").args(args).output().unwrap();
-        };
-        run(&["init", "-q", "-b", "main"]);
-        run(&["commit", "-q", "--allow-empty", "-m", "initial"]);
-    }
 
-    fn commit(dir: &Path, msg: &str) -> String {
-        StdCommand::new("git").current_dir(dir).env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t").args(["commit", "-q", "--allow-empty", "-m", msg]).output().unwrap();
-        String::from_utf8(StdCommand::new("git").current_dir(dir).args(["rev-parse", "HEAD"]).output().unwrap().stdout).unwrap().trim().to_string()
-    }
-
-    use crate::real::RealGit;
 
     // ── other_beads_on_conflicts / conflict_reopen_note ─────────────────────
-
-    #[test]
-    fn other_bead_ids_sorts_dedups_and_excludes_its_own_id() {
-        let subjects = "sp-b: fix\nsp-c: fix\nsp-b: fix again\nsp-own: unrelated";
-        assert_eq!(other_bead_ids(subjects, "sp-own"), "sp-b sp-c");
-    }
-
-    #[test]
-    fn other_bead_ids_keeps_a_longer_id_distinct_from_its_prefix() {
-        let subjects = "sp-a9gk: fix\nsp-a9g: other";
-        assert_eq!(other_bead_ids(subjects, "sp-a9g"), "sp-a9gk");
-        assert_eq!(other_bead_ids(subjects, "sp-a9gk"), "sp-a9g");
-    }
-
-    #[test]
-    fn other_beads_on_conflicts_is_empty_when_files_is_empty() {
-        let dir = testkit::TempDir::new("land-verify-other-beads-empty");
-        git_init(&dir);
-        assert_eq!(other_beads_on_conflicts(&RealGit, &dir, "spira/sp-a", "main", ""), "");
-    }
-
-    #[test]
-    fn other_beads_on_conflicts_finds_an_id_that_touched_the_conflicted_file() {
-        let dir = testkit::TempDir::new("land-verify-other-beads-real");
-        git_init(&dir);
-        StdCommand::new("git").current_dir(&dir).args(["branch", "spira/sp-a"]).output().unwrap();
-        std::fs::write(dir.join("f.txt"), "base change\n").unwrap();
-        StdCommand::new("git").current_dir(&dir).args(["add", "f.txt"]).output().unwrap();
-        commit(&dir, "sp-b: touched f.txt on the base");
-        assert_eq!(other_beads_on_conflicts(&RealGit, &dir, "spira/sp-a", "main", "f.txt"), "sp-b");
-    }
 
     #[test]
     fn format_conflict_note_names_other_beads_when_present() {

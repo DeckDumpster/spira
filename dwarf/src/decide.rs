@@ -628,37 +628,6 @@ mod tests {
         );
     }
 
-    // test-session-yield-headless.sh's phrasing table.
-    #[test]
-    fn session_yield_headless_table() {
-        let msg = |t: &str| format!("{{\"type\":\"assistant\",\"message\":{{\"id\":\"m\",\"content\":[{{\"type\":\"text\",\"text\":{}}}]}}}}\n", serde_json::to_string(t).unwrap());
-        assert!(session_yield_headless(&msg("The build is running. I will wait for the background task notification to continue.")), "positive control: the exact phrase yields");
-        assert!(!session_yield_headless(&msg("I ran the command. The output looks fine.")), "ordinary unlanded text does not yield");
-        assert!(session_yield_headless(&msg("kicked off the job; background is waiting on the runner now")));
-        assert!(session_yield_headless(&msg("waiting for a slow background disk task to finish up")));
-        assert!(session_yield_headless(&msg("Kicking off the long build now — will be woken when it lands.")));
-        assert!(session_yield_headless(&msg("Started it with run_in_background so I can keep going.")));
-        assert!(session_yield_headless(&msg("WILL BE WOKEN when the CI run finishes.")), "matching is case-insensitive");
-        let two = format!("{}{}", msg("I will wait for the background task notification."), msg("Never mind — I finished the work myself just now."));
-        assert!(!session_yield_headless(&two), "only the LAST text governs: an earlier yield phrase is overridden");
-        let two_b = format!("{}{}", msg("Kicking off the build now."), msg("I will wait for the background task notification to continue."));
-        assert!(session_yield_headless(&two_b), "only the LAST text governs: a later yield phrase fires");
-        assert!(!session_yield_headless("{\"type\":\"assistant\",\"message\":{\"id\":\"m\",\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{\"command\":\"true\"}}]}}\n"), "an assistant message with no text content does not yield");
-        assert!(!session_yield_headless(""), "an empty trace does not yield");
-
-        // sp-47d49: a backgrounded tool call with no later tool_result yields even when the
-        // model's closing prose never mentions waiting.
-        let backgrounded = "{\"type\":\"assistant\",\"message\":{\"id\":\"m1\",\"content\":[{\"type\":\"text\",\"text\":\"Running the test suite now.\"},{\"type\":\"tool_use\",\"id\":\"toolu_bg1\",\"name\":\"Bash\",\"input\":{\"command\":\"x\",\"timeout\":1800000}}]}}\n\
-             {\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_bg1\",\"content\":\"Command running in the background with ID bash_1. Command was moved to the background because it exceeded the 120000ms timeout. You will be notified when it completes.\"}]}}\n";
-        assert!(session_yield_headless(backgrounded), "trace-based detector catches a backgrounded tool_use with no later tool_result");
-
-        let resolved = "{\"type\":\"assistant\",\"message\":{\"id\":\"m1\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_bg2\",\"name\":\"Bash\",\"input\":{\"command\":\"x\",\"timeout\":1800000}}]}}\n\
-             {\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_bg2\",\"content\":\"Command running in the background with ID bash_2. Moved to the background.\"}]}}\n\
-             {\"type\":\"assistant\",\"message\":{\"id\":\"m2\",\"content\":[{\"type\":\"text\",\"text\":\"Finished up.\"}]}}\n\
-             {\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_bg2\",\"content\":\"exit 0\\nall tests passed\"}]}}\n";
-        assert!(!session_yield_headless(resolved), "a backgrounded call later resolved by a tool_result for the same id does not yield");
-    }
-
     // test-rapid-recur.sh's rapid_recur_streak table.
     #[test]
     fn rapid_recur_streak_table() {

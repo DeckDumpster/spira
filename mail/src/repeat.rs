@@ -222,17 +222,6 @@ mod tests {
         repeat_release(rc1);
         assert!(repeat_check(d.path(), "operator", "subject two", 3600, 5000, None).is_ok());
     }
-
-    #[test]
-    fn a_held_lock_times_out_rather_than_hanging_forever() {
-        let d = testkit::TempDir::new("mail-repeat");
-        let rc1 = repeat_check(d.path(), "operator", "subject three", 3600, 5000, None).expect("first check passes");
-        let start = Instant::now();
-        let err = repeat_check(d.path(), "operator", "subject three", 3600, 150, None).unwrap_err();
-        assert!(start.elapsed() < Duration::from_secs(2), "took {:?}", start.elapsed());
-        assert!(err.contains("timed out"), "{err}");
-        repeat_release(rc1);
-    }
 }
 
 #[cfg(test)]

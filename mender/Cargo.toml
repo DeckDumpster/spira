@@ -20,5 +20,3 @@ path = "src/lib.rs"
 name = "mender"
 path = "src/main.rs"
 
-[dev-dependencies]
-testkit = { path = "../testkit" }

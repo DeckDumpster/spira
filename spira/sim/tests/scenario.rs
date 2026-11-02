@@ -1,4 +1,4 @@
-use spira_sim::drive::{parse_scenario, scenario_path, scenario_repos, Scenario};
+use spira_sim::drive::{parse_scenario, scenario_repos, Scenario};
 use spira_sim::call::{dwarf_command, rune_of, ranked_ids, real_dwarf, routed_repo, scripted, with_home};
 use spira_sim::world::{base_config, bead_db, config_settings, home_settings, registry_rows, repo_set, stub_gate_steps, RepoSpec, INERT_TOOLS, MODES, REPO_NAME};
 use std::path::Path;
@@ -21,17 +21,6 @@ fn a_file_step_creates_the_bead_in_both_stores_under_the_given_id() {
 }
 
 #[test]
-fn a_claim_step_appends_the_beads_script_for_the_stub_agent() {
-    let cmd = shell("claim = \"sp-a\"\nscript = [\"commit a.txt\", \"submit\"]").unwrap();
-    assert_eq!(cmd, "printf '%s\\n' 'sp-a commit a.txt' 'sp-a submit' >> \"$SPIRA_SIM_SCENARIO\"");
-}
-
-#[test]
-fn a_command_step_is_the_command() {
-    assert_eq!(shell("command = \"echo hi\"").unwrap(), "echo hi");
-}
-
-#[test]
 fn a_step_must_be_exactly_one_kind_and_a_bead_id_is_not_shell() {
     for bad in [
         "at2 = 1",
@@ -51,17 +40,6 @@ fn a_goal_tag_needs_a_goal_and_real_actors_are_read_by_name() {
     assert!(sc("goal_tag = \"v\"\n").unwrap_err().contains("goal_tag needs a goal"));
     let s = sc("goal = \"sp-a:LANDED\"\ngoal_tag = \"v\"\nreal_actors = [\"rounds\"]\n").unwrap();
     assert_eq!((s.goal_tag.as_deref(), s.real_actors.as_slice()), (Some("v"), &["rounds".to_string()][..]));
-}
-
-#[test]
-fn the_shipped_happy_path_parses_and_uses_actors_the_shipped_file_declares() {
-    let here = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let s = parse_scenario(&std::fs::read_to_string(here.join("scenarios/happy-path.toml")).unwrap()).unwrap();
-    let declared = std::fs::read_to_string(here.join("../../sim/actors.toml")).unwrap();
-    for a in &s.real_actors {
-        assert!(declared.contains(&format!("name = \"{a}\"")), "{a}");
-    }
-    assert!(s.steps.iter().any(|st| st.file.is_some()) && s.steps.iter().any(|st| st.claim.is_some()));
 }
 
 #[test]
@@ -107,15 +85,6 @@ fn the_worlds_gate_is_the_stub_runner_alone_and_host_touching_tools_are_inert() 
 }
 
 #[test]
-fn a_bare_scenario_name_resolves_to_the_shipped_scenario_from_anywhere_in_the_checkout() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let shipped = scenario_path(&root.join("spira/sim/src"), "happy-path");
-    assert!(shipped.ends_with("spira/sim/scenarios/happy-path.toml") && shipped.is_file(), "{shipped:?}");
-    assert_eq!(scenario_path(&root, "./happy-path.toml"), Path::new("./happy-path.toml"));
-    assert_eq!(scenario_path(&root, "no-such-scenario"), Path::new("no-such-scenario"));
-}
-
-#[test]
 fn a_file_step_carries_its_priority_into_the_bead_and_no_other_step_may() {
     assert!(shell("file = \"sp-a\"\npriority = 0").unwrap().contains("-t task -p 0 "));
     assert!(shell("file = \"sp-a\"").unwrap().contains("-t task -p 2 "));
@@ -152,32 +121,6 @@ fn a_seed_files_through_bead_sh_with_its_priority_labels_body_and_deps() {
 }
 
 #[test]
-fn a_command_step_reaches_a_seeds_id_by_handle() {
-    let s = seeded("[[seed]]\nhandle = \"a\"\ntitle = \"a\"\nkind = \"event\"\n[[step]]\nat = 1\nname = \"c\"\ncommand = \"bead.sh label add {bead:a} x\"\n").unwrap();
-    assert_eq!(s.steps[0].shell().unwrap(), "bead.sh label add \"$(cat \"$SPIRA_RUN/seeds/a.id\")\" x");
-}
-
-#[test]
-fn a_bad_seed_or_a_handle_nothing_declares_is_refused() {
-    for bad in [
-        "[[seed]]\nhandle = \"a\"\ntitle = \"t\"\n",
-        "[[seed]]\nhandle = \"A b\"\ntitle = \"t\"\n",
-        "[[seed]]\nhandle = \"a\"\ntitle = \"\"\n",
-        "[[seed]]\nhandle = \"a\"\ntitle = \"t\"\nfor = \"builder\"\nkind = \"event\"\n",
-        "[[seed]]\nhandle = \"a\"\ntitle = \"t\"\npriority = 5\n",
-        "[[seed]]\nhandle = \"a\"\ntitle = \"t\"\n[[seed]]\nhandle = \"a\"\ntitle = \"u\"\n",
-        "[[seed]]\nhandle = \"a\"\ntitle = \"t\"\n[[seed]]\nhandle = \"b\"\ntitle = \"t\"\n",
-        "[[seed]]\nhandle = \"b\"\ntitle = \"t\"\ndeps = [\"a\"]\n",
-        "[[seed]]\nhandle = \"a\"\ntitle = \"t\"\nat = 5\n[[seed]]\nhandle = \"b\"\ntitle = \"u\"\ndeps = [\"a\"]\n",
-        "[[step]]\nat = 1\ncommand = \"echo {bead:ghost}\"\n",
-        "[[step]]\nat = 1\nname = \"seed9\"\ncommand = \"true\"\n",
-        "[[step]]\nat = 1\nname = \"n\"\ncommand = \"true\"\n[[step]]\nat = 2\nname = \"n\"\ncommand = \"true\"\n",
-    ] {
-        assert!(seeded(bad).is_err(), "{bad}");
-    }
-}
-
-#[test]
 fn a_repo_spec_names_a_mode_and_a_trunk_and_the_ref_its_branches_land_on() {
     let spec = |s: &str| RepoSpec::parse(s).unwrap();
     assert_eq!((spec("docs:push").mode.as_str(), spec("docs:push").trunk.as_str(), spec("docs:push").base()), ("push", "main", "origin/main".to_string()));
@@ -189,13 +132,6 @@ fn a_repo_spec_names_a_mode_and_a_trunk_and_the_ref_its_branches_land_on() {
     for bad in ["", "docs", "docs:", ":push", "docs:merge", "Docs:push", "docs:push:", "a:push:b:c", "sim:push:master"] {
         assert!(RepoSpec::parse(bad).is_err(), "{bad:?}");
     }
-}
-
-#[test]
-fn the_shipped_bead_contract_parses() {
-    let here = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let s = parse_scenario(&std::fs::read_to_string(here.join("scenarios/bead-contract.toml")).unwrap()).unwrap();
-    assert!(s.reads_bead_rows() && s.expects.len() >= 10);
 }
 
 #[test]

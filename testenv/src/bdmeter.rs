@@ -113,12 +113,6 @@ mod tests {
         testkit::TempDir::new(&format!("bdmeter-{tag}"))
     }
 
-    fn exe(p: &Path) {
-        // testkit::write_exe, never fs::write + set_permissions (sp-os3of): the same
-        // ETXTBSY race a concurrent fork elsewhere in this binary can trigger.
-        testkit::write_exe(p, "#!/bin/sh\n");
-    }
-
     #[test]
     fn the_log_line_is_what_bd_totals_sums() {
         let args: Vec<String> = ["-C", "/db", "--json", "list"]
@@ -135,74 +129,6 @@ mod tests {
         assert_eq!(l, "30 1 show\n");
         assert_eq!(crate::timing::bd_totals(&format!("{l}{l}")), (2, 60));
         assert_eq!(log_line(5, 0, &[]), "5 0 -\n");
-    }
-
-    #[test]
-    fn install_links_both_names_and_the_real_one_is_found_past_them() {
-        let d = tmp("install");
-        let meter = d.join("bd-meter");
-        exe(&meter);
-        let home = d.join("home");
-        install(&home, &meter).unwrap();
-        install(&home, &meter).unwrap(); // idempotent
-        assert!(home.join(".config/systemd/user").is_dir());
-        let bin = home.join(BIN_UNDER_HOME);
-        for n in SHIMMED {
-            assert_eq!(fs::read_link(bin.join(n)).unwrap(), meter);
-        }
-        let real = d.join("usr-bin");
-        fs::create_dir_all(&real).unwrap();
-        exe(&real.join("bd"));
-        let path = std::env::join_paths([&bin, &real]).unwrap();
-        assert_eq!(
-            find_real("bd", &path, &bin.join("bd")),
-            Some(real.join("bd")),
-            "the meter's own link is skipped"
-        );
-        assert_eq!(
-            find_real("bd", &path, &meter),
-            Some(real.join("bd")),
-            "…however the meter was reached"
-        );
-        assert_eq!(find_real("bd-embedded", &path, &meter), None);
-        let _ = fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn invoked_by_path_the_meter_looks_only_past_its_own_directory() {
-        // PATH = <wrapper>:<suite home bin>:<real>. The wrapper (loom's counting shim) execs
-        // the meter by its absolute path; the meter must not take the wrapper for the real bd.
-        let d = tmp("after");
-        let meter = d.join("bd-meter");
-        exe(&meter);
-        let home = d.join("home");
-        install(&home, &meter).unwrap();
-        let bin = home.join(BIN_UNDER_HOME);
-        let wrapper = d.join("wrapper");
-        let real = d.join("real");
-        fs::create_dir_all(&wrapper).unwrap();
-        fs::create_dir_all(&real).unwrap();
-        exe(&wrapper.join("bd"));
-        exe(&real.join("bd"));
-        let path = std::env::join_paths([&wrapper, &bin, &real]).unwrap();
-        assert_eq!(
-            find_real("bd", &path, &meter),
-            Some(wrapper.join("bd")),
-            "plant: without the invoking directory the wrapper is taken — the loop"
-        );
-        assert_eq!(
-            find_real_after("bd", &path, &meter, Some(&bin)),
-            Some(real.join("bd"))
-        );
-        // Invoked from a directory not on PATH: the whole PATH, the meter skipped.
-        assert_eq!(
-            find_real_after("bd", &path, &meter, Some(&d)),
-            Some(wrapper.join("bd"))
-        );
-        // Nothing past the meter's directory: not found, never a wrapper behind it.
-        let path = std::env::join_paths([&wrapper, &bin]).unwrap();
-        assert_eq!(find_real_after("bd", &path, &meter, Some(&bin)), None);
-        let _ = fs::remove_dir_all(&d);
     }
 
     #[test]

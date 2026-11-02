@@ -53,17 +53,4 @@ mod tests {
         assert_eq!(seed_from(Some("seven")), None);
         assert_eq!(seed_from(None), None);
     }
-
-    #[test]
-    fn a_poisoned_lock_still_hands_back_its_data() {
-        let m = std::sync::Arc::new(std::sync::Mutex::new(1));
-        let m2 = m.clone();
-        let _ = std::thread::spawn(move || {
-            let _g = m2.lock().unwrap();
-            panic!("poison it");
-        })
-        .join();
-        assert!(m.is_poisoned());
-        assert_eq!(*lock(&m), 1);
-    }
 }

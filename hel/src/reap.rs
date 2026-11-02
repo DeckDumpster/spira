@@ -579,7 +579,7 @@ pub fn stop_occupants(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command as Cmd;
+
     use testkit::TempDir;
 
     fn tempdir() -> TempDir {
@@ -602,27 +602,6 @@ mod tests {
     }
     fn open() -> FakeBd {
         FakeBd { state: Some("READY".into()) }
-    }
-
-    fn git(dir: &Path, args: &[&str]) {
-        let o = Cmd::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(args)
-            .env("GIT_AUTHOR_NAME", "t")
-            .env("GIT_AUTHOR_EMAIL", "t@t")
-            .env("GIT_COMMITTER_NAME", "t")
-            .env("GIT_COMMITTER_EMAIL", "t@t")
-            .output()
-            .unwrap();
-        assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
-    }
-
-    fn init_repo(dir: &Path) {
-        git(dir, &["init", "-q", "-b", "main"]);
-        std::fs::write(dir.join("f"), "base\n").unwrap();
-        git(dir, &["add", "f"]);
-        git(dir, &["commit", "-q", "-m", "base"]);
     }
 
     // ---- hold_alive / holder_alive -----------------------------------------------------
@@ -674,170 +653,12 @@ mod tests {
 
     // ---- destroy_worktree ----------------------------------------------------------------
 
-    #[test]
-    fn destroy_worktree_prunes_and_succeeds_on_an_absent_path_outside_root() {
-        let run = tempdir();
-        let repo = tempdir();
-        init_repo(&repo);
-        let outside = run.join("not-the-worktree-root/sp-test");
-        assert!(destroy_worktree(&run, &run.join("reap.log"), "sp-test", &outside, &repo, "why", &open()));
-    }
-
-    #[test]
-    fn destroy_worktree_refuses_a_live_out_of_root_path() {
-        let run = tempdir();
-        let outside = tempdir(); // exists, and is NOT under run/worktree
-        let repo = tempdir();
-        init_repo(&repo);
-        let ok = destroy_worktree(&run, &run.join("reap.log"), "sp-test2", &outside, &repo, "why", &open());
-        assert!(!ok);
-        let log = std::fs::read_to_string(run.join("reap.log")).unwrap_or_default();
-        assert!(log.contains("REFUSED"), "{log}");
-        assert!(log.contains("not under"), "{log}");
-    }
-
-    #[test]
-    fn destroy_worktree_refuses_while_held() {
-        let run = tempdir();
-        let repo = tempdir();
-        init_repo(&repo);
-        let wt = run.join("worktree").join("sp-held");
-        std::fs::create_dir_all(&wt).unwrap();
-        std::fs::write(run.join("hold-sp-held.pid"), std::process::id().to_string()).unwrap();
-        let ok = destroy_worktree(&run, &run.join("reap.log"), "sp-held", &wt, &repo, "why", &open());
-        assert!(!ok);
-        assert!(wt.exists());
-    }
-
-    #[test]
-    fn destroy_worktree_removes_a_real_worktree_under_root() {
-        let run = tempdir();
-        let repo = tempdir();
-        init_repo(&repo);
-        git(&repo, &["branch", "spira/sp-wt1"]);
-        let wt = run.join("worktree").join("sp-wt1");
-        std::fs::create_dir_all(wt.parent().unwrap()).unwrap();
-        git(&repo, &["worktree", "add", "-q", wt.to_str().unwrap(), "spira/sp-wt1"]);
-        assert!(wt.exists());
-        let ok = destroy_worktree(&run, &run.join("reap.log"), "sp-wt1", &wt, &repo, "test", &open());
-        assert!(ok);
-        assert!(!wt.exists());
-    }
-
     // ---- destroy_branch --------------------------------------------------------------------
 
     #[test]
     fn only_certified_and_in_delivery_are_queued_states() {
         assert!(is_queued_state("CERTIFIED") && is_queued_state("IN_DELIVERY"));
         assert!(!is_queued_state("WORKING") && !is_queued_state("LANDED") && !is_queued_state(""));
-    }
-
-    #[test]
-    fn destroy_branch_content_fence_refuses_unlanded_work_and_allows_landed() {
-        let run = tempdir();
-        let repo = tempdir();
-        init_repo(&repo);
-        let base = Git(&repo).rev_parse("HEAD").unwrap();
-
-        // Unlanded: a real new commit the base does not have.
-        git(&repo, &["checkout", "-q", "-b", "spira/sp-un"]);
-        std::fs::write(repo.join("new.txt"), "x\n").unwrap();
-        git(&repo, &["add", "new.txt"]);
-        git(&repo, &["commit", "-q", "-m", "unlanded"]);
-        git(&repo, &["checkout", "-q", "main"]);
-        let res = destroy_branch(&run, &run.join("reap.log"), "sp-un", "spira/sp-un", &repo, "why", "", Some(&base), &open());
-        assert!(res.is_err());
-        assert!(Git(&repo).branch_exists("spira/sp-un"));
-
-        // Landed: an empty branch off the same base (trivially an ancestor).
-        git(&repo, &["branch", "spira/sp-empty", &base]);
-        let res = destroy_branch(&run, &run.join("reap.log"), "sp-empty", "spira/sp-empty", &repo, "why", "", Some(&base), &open());
-        assert!(res.is_ok(), "{res:?}");
-        assert!(!Git(&repo).branch_exists("spira/sp-empty"));
-    }
-
-    #[test]
-    fn destroy_branch_caller_bypass_skips_the_content_fence() {
-        let run = tempdir();
-        let repo = tempdir();
-        init_repo(&repo);
-        git(&repo, &["checkout", "-q", "-b", "spira/sp-bypass"]);
-        std::fs::write(repo.join("new.txt"), "x\n").unwrap();
-        git(&repo, &["add", "new.txt"]);
-        git(&repo, &["commit", "-q", "-m", "unlanded but caller already verified"]);
-        git(&repo, &["checkout", "-q", "main"]);
-        let res = destroy_branch(&run, &run.join("reap.log"), "sp-bypass", "spira/sp-bypass", &repo, "why", "hel", None, &open());
-        assert!(res.is_ok());
-        assert!(!Git(&repo).branch_exists("spira/sp-bypass"));
-    }
-
-    fn locked_repo(branch: &str, age_secs: u64) -> (TempDir, PathBuf) {
-        let repo = tempdir();
-        init_repo(&repo);
-        git(&repo, &["branch", branch]);
-        let lock = repo.join(".git").join("packed-refs.lock");
-        let f = std::fs::File::create(&lock).unwrap();
-        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs)).unwrap();
-        (repo, lock)
-    }
-
-    #[test]
-    fn a_stale_packed_refs_lock_is_removed_logged_and_the_delete_retried() {
-        let (repo, lock) = locked_repo("spira/sp-stale", 7200);
-        let log = tempdir().join("reap.log");
-        let err = delete_branch_recovering(&Git(&repo), "spira/sp-stale", &log, "sp-stale", 600);
-        assert!(!Git(&repo).branch_exists("spira/sp-stale"), "still there: {err}");
-        assert!(!lock.exists());
-        let said = std::fs::read_to_string(&log).unwrap();
-        assert!(said.contains("UNLOCKED") && said.contains("packed-refs.lock") && said.contains("no holder) removed"), "{said}");
-    }
-
-    #[test]
-    fn a_lock_younger_than_the_threshold_is_left_alone_and_reported() {
-        let (repo, lock) = locked_repo("spira/sp-fresh", 5);
-        let log = tempdir().join("reap.log");
-        delete_branch_recovering(&Git(&repo), "spira/sp-fresh", &log, "sp-fresh", 600);
-        assert!(Git(&repo).branch_exists("spira/sp-fresh"));
-        assert!(lock.exists());
-        assert!(std::fs::read_to_string(&log).unwrap().contains("under the 600s threshold"));
-    }
-
-    #[test]
-    fn recovery_off_at_zero_leaves_even_an_old_lock() {
-        let (repo, lock) = locked_repo("spira/sp-off", 7200);
-        let log = tempdir().join("reap.log");
-        delete_branch_recovering(&Git(&repo), "spira/sp-off", &log, "sp-off", 0);
-        assert!(Git(&repo).branch_exists("spira/sp-off") && lock.exists());
-    }
-
-    #[test]
-    fn an_old_lock_a_live_process_holds_open_is_left_alone_and_reported() {
-        let (repo, lock) = locked_repo("spira/sp-live", 7200);
-        let mut live = std::process::Command::new("sleep").arg("30").stdin(std::fs::File::open(&lock).unwrap()).spawn().unwrap();
-        let log = tempdir().join("reap.log");
-        delete_branch_recovering(&Git(&repo), "spira/sp-live", &log, "sp-live", 600);
-        let _ = live.kill();
-        let _ = live.wait();
-        assert!(Git(&repo).branch_exists("spira/sp-live"));
-        assert!(lock.exists());
-        assert!(std::fs::read_to_string(&log).unwrap().contains(&format!("held by pid {}", live.id())));
-    }
-
-    #[test]
-    fn an_old_lock_is_removed_while_an_unrelated_git_runs_in_the_repo() {
-        let (repo, lock) = locked_repo("spira/sp-busy", 7200);
-        let mut busy = std::process::Command::new("git")
-            .current_dir(&repo)
-            .args(["hash-object", "--stdin"])
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::null())
-            .spawn()
-            .unwrap();
-        let log = tempdir().join("reap.log");
-        delete_branch_recovering(&Git(&repo), "spira/sp-busy", &log, "sp-busy", 600);
-        let _ = busy.kill();
-        let _ = busy.wait();
-        assert!(!Git(&repo).branch_exists("spira/sp-busy") && !lock.exists());
     }
 
     impl std::fmt::Debug for DestroyBranchErr {

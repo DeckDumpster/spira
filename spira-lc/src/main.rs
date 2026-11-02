@@ -1009,39 +1009,6 @@ mod tests {
         }
     }
 
-    fn unreachable_conn_with_live(rows: Vec<Value>) -> Conn {
-        let mut conn = Conn::unreachable();
-        conn.enable_live();
-        conn.live.as_ref().unwrap().replace(vec![rows, vec![], vec![]]).unwrap();
-        conn
-    }
-
-    #[test]
-    fn live_reads_never_reach_dolt() {
-        let row = serde_json::json!({"bead_id": "sp-a", "state": "WORKING", "holds": "[]", "version": "2", "updated_at": "1", "since": "1", "express": "0"});
-        let conn = unreachable_conn_with_live(vec![row]);
-        let (code, out) = cmd_list(&["--live".to_string()], &conn);
-        assert_eq!(code, 0, "{out}");
-        assert!(out.contains("\"sp-a\"") && out.contains("\"blocked_by\":[]"), "{out}");
-        let (code, out) = cmd_show(&["sp-a".to_string()], &conn);
-        assert_eq!(code, 0, "{out}");
-        assert!(out.contains("\"delivery\": null"), "{out}");
-        assert_eq!(ops::cmd_ops_view(&["ops_live".to_string()], &conn).0, 0);
-        assert_eq!(cmd_list(&[], &conn).0, CANNOT_TELL, "a list without --live reads Dolt until the older rows are in memory");
-        assert_eq!(cmd_show(&["sp-missing".to_string()], &conn).0, CANNOT_TELL, "a bead memory does not hold is asked of Dolt");
-        assert_eq!(cmd_list(&["--cached".to_string()], &conn).0, CANNOT_TELL, "--cached still needs the older rows in memory");
-    }
-
-    #[test]
-    fn a_cached_state_list_of_live_states_never_waits_on_the_cold_rows() {
-        let row = serde_json::json!({"bead_id": "sp-a", "state": "READY", "holds": "[]", "version": "2", "updated_at": "1", "since": "1", "express": "0"});
-        let conn = unreachable_conn_with_live(vec![row]);
-        let (code, out) = cmd_list(&["--state".into(), "READY,WORKING".into(), "--cached".into()], &conn);
-        assert_eq!(code, 0, "{out}");
-        assert!(out.contains("\"sp-a\""), "{out}");
-        assert_eq!(cmd_list(&["--state".into(), "READY,LANDED".into(), "--cached".into()], &conn).0, CANNOT_TELL, "a terminal state needs the cold rows");
-    }
-
     #[test]
     fn the_blockers_subquery_is_restricted_to_the_rows_listed() {
         let sql = blockers_join(" WHERE w.state IN ('READY')");

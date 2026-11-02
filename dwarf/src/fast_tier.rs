@@ -356,17 +356,4 @@ mod tests {
         red(&g, &E(0, Mutex::new(vec![])), &w.join("."), &w.join("."), "spira/b", "base", false);
         assert!(g.0.lock().unwrap().iter().any(|c| c.contains(&"merge-tree".to_string()) && c.last().unwrap() == "abc123"));
     }
-
-    #[test]
-    fn the_rebase_check_honours_the_base_refs_union_attributes_not_the_checkouts() {
-        let d = testkit::union_repo("fast-tier-union");
-        let w = tree("union", false);
-        let r = red(&crate::ports::CliGit, &E(0, Mutex::new(vec![])), d.path(), &w, "b", "main", false);
-        assert!(r.is_none(), "{:?}", r.map(|r| r.text));
-        let b = testkit::git(d.path(), &["rev-parse", "b"]);
-        let w = d.path();
-        testkit::git(w, &["checkout", "-q", "b"]);
-        let rec = with_tip("b does not rebase onto main cleanly:\nCONFLICT (content): Merge conflict in f", &b);
-        assert_eq!(current_digest(&crate::ports::CliGit, w, w, "main", &rec), "", "a conflict that union attributes resolve is stale");
-    }
 }

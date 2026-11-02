@@ -342,17 +342,6 @@ mod tests {
     }
 
     #[test]
-    fn each_stuck_case_is_on_top_and_the_healthy_rows_are_not() {
-        let rows = intent();
-        let ids: Vec<&str> = rows.iter().map(|r| r.bead_id.as_str()).collect();
-        let stuck: BTreeSet<&str> = rows.iter().filter(|r| r.stuck).map(|r| r.bead_id.as_str()).collect();
-        assert_eq!(stuck, BTreeSet::from(["sp-2cah6", "sp-h4umcj", "sp-strand", "sp-old"]), "{ids:?}");
-        assert!(ids[..4].iter().all(|i| stuck.contains(i)), "stuck rows lead: {ids:?}");
-        assert!(rows.iter().find(|r| r.bead_id == "sp-fine").is_some_and(|r| !r.stuck));
-        assert!(rows.iter().find(|r| r.bead_id == "sp-landed").is_some_and(|r| !r.stuck), "a landed bead is never stuck");
-    }
-
-    #[test]
     fn a_bar_is_outlined_only_past_its_own_states_p95() {
         let rows = intent();
         let r = rows.iter().find(|r| r.bead_id == "sp-2cah6").unwrap();

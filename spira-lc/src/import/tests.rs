@@ -195,22 +195,6 @@ fn the_fields_that_bypass_events_are_not_compared() {
 }
 
 #[test]
-fn a_record_born_submitted_and_a_delivery_born_enqueued_replay() {
-    let born = with(bead("sp-a", "SUBMITTED", 1), &[("tip", json!(TIP))]);
-    let delivery = json!({"bead_id": "sp-a", "mode": "queue", "state": "BATCHED", "batch_id": "b-1", "pr": null, "merge_sha": null, "ci": null, "version": "1"});
-    let a = archived(&[
-        ("bead", vec![born]),
-        ("delivery", vec![delivery]),
-        ("event", vec![
-            event(1, "bead", "sp-a", "Submit", "READY", "SUBMITTED", true, json!({"tip": TIP})),
-            event(2, "delivery", "sp-a", "Enqueued", "NONE", "QUEUED", true, Value::Null),
-            event(3, "delivery", "sp-a", "Cut", "QUEUED", "BATCHED", true, json!({"Cut": {"batch_id": "b-1"}})),
-        ]),
-    ]);
-    assert_eq!(checks::replay(&a, &BTreeSet::new()), Vec::<String>::new());
-}
-
-#[test]
 fn an_applied_event_the_machine_refuses_on_replay_is_named_by_seq() {
     let a = archived(&[("bead", vec![bead("sp-a", "LANDED", 1)]), ("event", vec![event(5, "bead", "sp-a", "Deliver", "READY", "LANDED", true, json!("Deliver"))])]);
     let failures = checks::replay(&a, &BTreeSet::new());

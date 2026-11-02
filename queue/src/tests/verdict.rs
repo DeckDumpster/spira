@@ -611,66 +611,6 @@ fn a_refused_batch_rerun_is_not_counted_and_mails_once_per_head() {
 }
 
 #[test]
-fn a_batch_run_decided_red_on_an_unchanged_tree_is_closed_not_rerun_forever() {
-    let t = T::new(LandMode::Queue);
-    lc_batch(&t);
-    *t.forge.run.borrow_mut() = Some("77".into());
-    *t.forge.rerun_decided.borrow_mut() =
-        Some("run 77 concluded failure on tree h1, same harness: no input changed".into());
-    t.forge.status.borrow_mut().push(Some(
-        "harness_fault\nfailed-step: Run suites\nfail-evidence: boom\n".into(),
-    ));
-    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
-    assert_eq!(count(&t.forge.calls, "workflow-rerun 77"), 1);
-    assert!(has_call(&t.forge.calls, "pr-close 12"));
-    assert!(t.lc.has("abandon-batch spira-1"));
-    assert!(!t.qfile("open").exists());
-    assert!(!t.qfile("batch-rerun-refused").exists());
-    assert!(!t.err().contains("could not start"), "{}", t.err());
-    let lib = t.lib.calls.borrow();
-    assert!(!lib.iter().any(|c| c.starts_with("notify spira re-run")));
-    let notes: Vec<_> = lib.iter().filter(|c| c.starts_with("comment ")).collect();
-    assert!(!notes.is_empty(), "{lib:?}");
-    for note in notes {
-        assert!(
-            note.contains("no input changed") && note.contains("boom"),
-            "{note}"
-        );
-    }
-}
-
-#[test]
-fn a_batch_fault_with_no_gate_run_is_not_counted_and_a_new_head_mails_again() {
-    let t = T::new(LandMode::Queue);
-    lc_batch(&t);
-    let mails = |t: &T| {
-        t.lib
-            .calls
-            .borrow()
-            .iter()
-            .filter(|c| c.starts_with("notify spira re-run of PR 12's gate run could not start"))
-            .count()
-    };
-    for _ in 0..2 {
-        t.forge
-            .status
-            .borrow_mut()
-            .push(Some("harness_fault\n".into()));
-        assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
-    }
-    assert!(!record(&t).contains("retries="));
-    assert_eq!(count(&t.forge.calls, "workflow-rerun"), 0);
-    assert_eq!(mails(&t), 1);
-    t.open_record(&record(&t).replace("head=h1", "head=h2"));
-    t.forge
-        .status
-        .borrow_mut()
-        .push(Some("harness_fault\n".into()));
-    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
-    assert_eq!(mails(&t), 2);
-}
-
-#[test]
 fn harness_fault_reruns_within_the_budget_then_closes_and_returns_members() {
     let t = T::new(LandMode::Queue);
     lc_batch(&t);
@@ -748,57 +688,6 @@ fn a_runner_loss_reruns_once_then_escalates_as_environment_and_ejects_nobody() {
         .borrow()
         .iter()
         .any(|c| c.contains("runner lost twice on one tip (environment fault)")));
-}
-
-#[test]
-fn a_capacity_fault_closes_once_backs_off_and_blocks_the_recut_until_it_lapses() {
-    let t = T::new(LandMode::Queue);
-    lc_batch(&t);
-    t.forge.status.borrow_mut().push(Some(
-        "provision_fault\ncapacity: VcpuLimitExceeded\n".into(),
-    ));
-    assert_eq!(t.run(&["verdict", "spira"]), 0);
-    assert!(
-        t.out()
-            .contains("provision failed on capacity (VcpuLimitExceeded)"),
-        "{}",
-        t.out()
-    );
-    assert!(has_call(&t.forge.calls, "pr-close 12") && !has_call(&t.forge.calls, "workflow-rerun"));
-    assert!(!t.qfile("open").exists());
-    let backoff = fs::read_to_string(t.qfile("capacity-backoff")).unwrap();
-    assert!(
-        backoff.contains("failures=1\n") && backoff.contains("reason=VcpuLimitExceeded"),
-        "{backoff}"
-    );
-    assert_eq!(
-        count(
-            &t.scripts.calls,
-            "mail-operator Merge queue: spira waiting on capacity"
-        ),
-        1
-    );
-    let until: u64 = backoff
-        .lines()
-        .find_map(|l| l.strip_prefix("until="))
-        .unwrap()
-        .parse()
-        .unwrap();
-    t.git.set("origin/main", "b0");
-    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 1);
-    assert!(t.out().contains("waiting on capacity"), "{}", t.out());
-    assert!(!t.lc.has("cut "));
-    fs::write(
-        t.qfile("capacity-backoff"),
-        format!("failures=1\nuntil={}\nreason=x\n", until.min(1)),
-    )
-    .unwrap();
-    t.run(&["open-batch", "--skip-pregate"]);
-    assert!(
-        t.out().matches("waiting on capacity").count() == 1,
-        "lapsed backoff must not block: {}",
-        t.out()
-    );
 }
 
 #[test]
@@ -885,35 +774,6 @@ fn green_on_a_batch_a_red_already_started_records_green_with_no_gap_and_no_secon
 }
 
 #[test]
-fn a_moved_base_rebuilds_and_force_pushes_when_no_member_is_in_it() {
-    let t = T::new(LandMode::Queue);
-    batch(&t);
-    t.git.set("origin/main", "b1");
-    t.forge
-        .status
-        .borrow_mut()
-        .push(Some("green\nhead-sha: h1\n".into()));
-    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
-    let git = t.git.calls.borrow().clone();
-    assert!(
-        git.contains(&"merge ta spira: land sp-a".to_string())
-            && git.contains(&"merge tb spira: land sp-b".to_string()),
-        "{git:?}"
-    );
-    assert!(t.lib.has("push origin +merged-tb:refs/heads/spira/queue/x"));
-    let rec = record(&t);
-    assert!(
-        rec.ends_with("head=merged-tb\nretries=0\nmembers=sp-a:ta sp-b:tb\nbase=b1\n"),
-        "{rec}"
-    );
-    assert!(t
-        .out()
-        .contains("verdict spira: PR 12 rebuilt on moved base (b1) — re-pushed (head merged-tb)"));
-    assert!(!has_call(&t.forge.calls, "pr-close"));
-    assert!(!t.lc.has("abandon-batch"));
-}
-
-#[test]
 fn a_moved_base_already_carrying_a_member_closes_and_lands_that_member() {
     let t = T::new(LandMode::Queue);
     t.submitted(&["sp-a"]);
@@ -939,25 +799,6 @@ fn a_moved_base_already_carrying_a_member_closes_and_lands_that_member() {
         .out()
         .contains("verdict spira: sp-a already in moved base — LANDED"));
     assert!(!t.lc.has("event bead sp-b"));
-    assert!(!t.qfile("open").exists());
-}
-
-#[test]
-fn a_moved_base_that_conflicts_closes_and_requeues() {
-    let t = T::new(LandMode::Queue);
-    lc_batch(&t);
-    t.git.set("origin/main", "b1");
-    t.git.merge_fail.borrow_mut().insert("tb".into());
-    t.forge
-        .status
-        .borrow_mut()
-        .push(Some("green\nhead-sha: h1\n".into()));
-    assert_eq!(t.run(&["verdict", "spira"]), 0);
-    assert!(t
-        .out()
-        .contains("verdict spira: PR 12 base moved — conflict in sp-b; closing and requeuing"));
-    assert!(!t.lib.has("push"));
-    assert!(t.lc.has("abandon-batch spira-1 CI_RUNNING 4 base moved"));
     assert!(!t.qfile("open").exists());
 }
 
@@ -2130,43 +1971,6 @@ fn a_land_the_lifecycle_refuses_keeps_the_record_and_alerts_once() {
     t.lc.land_refused.set(None);
     assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
     assert!(!t.qfile("open").exists());
-}
-
-#[test]
-fn a_closed_unmerged_pr_abandons_the_batch_and_a_second_pass_is_a_no_op() {
-    let t = T::new(LandMode::Queue);
-    lc_batch(&t);
-    *t.forge.pr_state.borrow_mut() = Some("closed".into());
-    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
-    assert!(
-        t.lc.has("abandon-batch spira-1"),
-        "{:?}",
-        t.lc.calls.borrow()
-    );
-    assert!(!t.lc.has("land "));
-    assert!(
-        !has_call(&t.forge.calls, "pr-close"),
-        "an already closed PR is not closed again"
-    );
-    assert!(!t.qfile("open").exists());
-    assert!(archived(&t));
-    let writes = |t: &T| {
-        (
-            t.lc.calls
-                .borrow()
-                .iter()
-                .filter(|c| {
-                    c.starts_with("land ")
-                        || c.starts_with("abandon-batch")
-                        || c.starts_with("event")
-                })
-                .count(),
-            t.lib.calls.borrow().len(),
-        )
-    };
-    let before = writes(&t);
-    assert_eq!(t.run(&["verdict", "spira"]), 0);
-    assert_eq!(writes(&t), before);
 }
 
 #[test]

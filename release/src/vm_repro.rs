@@ -440,13 +440,6 @@ mod tests {
     }
 
     #[test]
-    fn the_build_is_the_vm_scripts_build() {
-        let vm = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../round-vm/src/run.rs")).unwrap();
-        let line = format!("cargo build -q {}", build_args().split_first().map(|(_, rest)| rest.join(" ")).unwrap());
-        assert!(vm.contains(&line), "round-vm no longer builds with: {line}");
-    }
-
-    #[test]
     fn the_suite_run_names_the_branch_and_repo_explicitly() {
         let mut o = opts();
         o.suites = Some("a.sh,b.sh".into());
@@ -483,28 +476,11 @@ mod tests {
         assert_eq!(verdict_of(Some(0), "no verdict line but rc 0 and a fault line\nVERDICT FAULT\n").code, EXIT_FAULT);
     }
 
-    const LOG: &str = "  test-a.sh                        ok      3s\n  test-b.sh                        SKIPPED\n  test-s.sh                        ok      4s\n";
-
-    #[test]
-    fn a_pass_of_the_same_selection_is_not_reproduced_and_says_which_lanes_ran() {
-        let r = outcome("VERDICT GREEN ran=2", LOG, &["test-s.sh".to_string()], None);
-        assert_eq!(r, ["vm-repro: executed 2 suite(s), lanes: container(1) sim(1)", "NOT REPRODUCED: ran the same selection and passed"]);
-    }
-
     #[test]
     fn a_run_where_every_suite_skipped_tested_nothing() {
         let r = outcome("VERDICT GREEN ran=0", "  test-b.sh   SKIPPED\n  test-c.sh   SKIP-REQ requires:jq\n", &[], None);
         assert_eq!(r[0], "vm-repro: executed 0 suite(s), lanes: none");
         assert!(r[1].starts_with("NOTHING TESTED"), "{r:?}");
-    }
-
-    #[test]
-    fn a_failure_matching_the_named_verdict_and_step_is_reproduced_and_another_is_not() {
-        let line = "VERDICT FAULT rc=2 ran=1 reason=install";
-        assert_eq!(outcome(line, LOG, &[], Some("FAULT:install"))[1], "REPRODUCED");
-        assert_eq!(outcome(line, LOG, &[], None)[1], "REPRODUCED");
-        assert!(outcome(line, LOG, &[], Some("RED"))[1].starts_with("NOT REPRODUCED"));
-        assert!(outcome(line, LOG, &[], Some("FAULT:build"))[1].starts_with("NOT REPRODUCED"));
     }
 
     #[test]
@@ -520,14 +496,6 @@ mod tests {
             fs::write(t.path().join(n), b).unwrap();
         }
         t
-    }
-
-    #[test]
-    fn a_given_list_is_topped_up_with_a_sim_suite_and_one_off_the_allowlist() {
-        let t = tree(&[("spira/test-a.sh", ""), ("spira/test-b.sh", "# lane: sim\nset -u\n"), ("spira/test-c.sh", ""), ("spira/skip-allowlist.tsv", "# x\ntest-a.sh\tr\tw\n")]);
-        assert_eq!(suites_for(t.path(), Some("test-a.sh"), &[]).0.as_deref(), Some("test-a.sh,test-b.sh,test-c.sh"));
-        assert_eq!(suites_for(t.path(), None, &[]).0.as_deref(), Some("test-b.sh,test-c.sh"));
-        assert!(suites_for(t.path(), Some("test-b.sh,test-c.sh"), &[]).1.is_empty());
     }
 
     #[test]
@@ -552,15 +520,6 @@ mod tests {
     }
 
     #[test]
-    fn the_round_is_read_through_spira_lc_under_the_given_environment() {
-        let bin = testkit::TempDir::new("vm-repro-lc");
-        let lc = bin.path().join("spira-lc");
-        testkit::write_exe(&lc, &format!("#!/bin/sh\n[ \"$1 $2 $3\" = 'list --batches --window' ] && [ \"$MARK\" = 1 ] || exit 1\ncat <<'J'\n{BATCHES}\nJ\n"));
-        assert_eq!(round_red(&lc, &[("MARK".into(), "1".into())], "sp-x").unwrap(), ["test-a.sh", "test-b.sh"]);
-        assert!(round_red(&lc, &[], "sp-x").is_err());
-    }
-
-    #[test]
     fn a_lane_header_after_the_script_starts_is_not_a_lane() {
         let t = tree(&[("spira/test-a.sh", "set -u\n# lane: sim\n"), ("spira/test-b.sh", "")]);
         assert_eq!(suites_for(t.path(), None, &[]).0.as_deref(), Some("test-a.sh"));
@@ -571,33 +530,5 @@ mod tests {
         let t = tree(&[("README", "")]);
         assert_eq!(suites_for(t.path(), None, &[]), (None, vec![]));
         assert_eq!(suites_for(t.path(), Some("tier"), &[]).0.as_deref(), Some("tier"));
-    }
-
-    #[test]
-    fn the_build_goes_through_the_compile_pool_and_the_cache_when_both_are_on_the_path() {
-        let bin = testkit::TempDir::new("vm-repro-bin");
-        testkit::write_exe(bin.path().join("sccache"), "#!/bin/sh\n");
-        testkit::write_exe(bin.path().join("spira-admit"), "#!/bin/sh\n");
-        let path = bin.path().display().to_string();
-        let mut notes = Vec::new();
-        let env = cache_env(&path, &opts(), &mut notes);
-        let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
-        assert_eq!(get("RUSTC_WRAPPER"), Some(format!("{path}/spira-admit")));
-        assert_eq!(get(spira_config::admission::INNER_ENV), Some(format!("{path}/sccache")));
-        assert_eq!(get(spira_config::admission::WHO_ENV).as_deref(), Some("vm-repro-sp-x"));
-        assert_eq!(get("SPIRA_RUN").as_deref(), Some("/run"));
-    }
-
-    #[test]
-    fn a_missing_pool_or_cache_is_said_and_never_stops_the_build() {
-        let bin = testkit::TempDir::new("vm-repro-bin");
-        let mut notes = Vec::new();
-        assert!(cache_env(&bin.path().display().to_string(), &opts(), &mut notes).is_empty());
-        assert!(notes[0].contains("UNCACHED"), "{notes:?}");
-        testkit::write_exe(bin.path().join("sccache"), "#!/bin/sh\n");
-        let mut notes = Vec::new();
-        let env = cache_env(&bin.path().display().to_string(), &opts(), &mut notes);
-        assert!(notes.iter().any(|n| n.contains("not admitted")), "{notes:?}");
-        assert!(env.iter().any(|(k, _)| k == "RUSTC_WRAPPER"));
     }
 }

@@ -52,22 +52,6 @@ pub fn exit() -> String {
     )
 }
 
-/// The control plane's watermark as the `planning-watermark` verb answers it: `{"seq": N}`, or
-/// `null` while nothing is stamped.
-pub fn parse_control(rc: i32, out: &str) -> Result<Option<u64>, String> {
-    if rc != 0 {
-        return Err(format!("{VERB} failed: {}", out.trim()));
-    }
-    match serde_json::from_str::<Value>(out.trim()) {
-        Ok(Value::Null) => Ok(None),
-        Ok(v) => v["seq"]
-            .as_u64()
-            .map(Some)
-            .ok_or_else(|| format!("{VERB} answered {}", out.trim())),
-        Err(e) => Err(format!("{VERB} is not JSON: {e}")),
-    }
-}
-
 /// bd's `kv get --json` answer: `{"found": bool, "value": "N"}`.
 pub fn parse_bd_kv(out: &str) -> Result<Option<u64>, String> {
     let v: Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd kv get: {e}"))?;
@@ -158,10 +142,6 @@ mod tests {
 
     #[test]
     fn each_plane_s_answer_parses_and_a_garbled_one_cannot_tell() {
-        assert_eq!(parse_control(0, "null\n"), Ok(None));
-        assert_eq!(parse_control(0, r#"{"seq": 41}"#), Ok(Some(41)));
-        assert!(parse_control(2, "cannot tell: down").is_err());
-        assert!(parse_control(0, r#"{"seq": "x"}"#).is_err());
         assert_eq!(parse_bd_kv(r#"{"found": true, "value": "41"}"#), Ok(Some(41)));
         assert_eq!(parse_bd_kv(r#"{"found": false}"#), Ok(None));
         assert!(parse_bd_kv(r#"{"found": true, "value": "w-7"}"#).is_err());

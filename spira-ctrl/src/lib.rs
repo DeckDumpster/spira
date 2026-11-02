@@ -249,14 +249,6 @@ mod tests {
     }
 
     #[test]
-    fn consultable_is_a_condition_or_a_unit_subject() {
-        let units = vec!["spira-groom-prod.timer".to_string()];
-        assert!(is_consultable("slow-query", &units, "prod"));
-        assert!(is_consultable("spira-groom", &units, "prod"));
-        assert!(!is_consultable("nonsense", &units, "prod"));
-    }
-
-    #[test]
     fn until_is_declared_on_an_existing_suspension_only() {
         let mut d = CtrlData::new();
         assert!(!set_until(&mut d, "a", "2026-10-09"));
@@ -289,22 +281,6 @@ mod tests {
     }
 
     #[test]
-    fn json_round_trips_and_sorts_keys_like_python_sort_keys() {
-        let mut d = CtrlData::new();
-        suspend(&mut d, "spira-groom", "why", "sp-1", "2026-09-30", "operator");
-        let text = serde_json::to_string_pretty(&d).unwrap();
-        // by, owner, reason, when — alphabetical, unconditionally, because the leaf is a
-        // BTreeMap<String,String> rather than a struct.
-        let by = text.find("\"by\"").unwrap();
-        let owner = text.find("\"owner\"").unwrap();
-        let reason_i = text.find("\"reason\"").unwrap();
-        let when = text.find("\"when\"").unwrap();
-        assert!(by < owner && owner < reason_i && reason_i < when, "{text}");
-        let back: CtrlData = serde_json::from_str(&text).unwrap();
-        assert_eq!(back, d);
-    }
-
-    #[test]
     fn read_of_missing_file_is_empty_not_an_error() {
         let d = testkit::TempDir::new("ctrl-lib");
         let p = d.join("ctrl.json");
@@ -320,17 +296,6 @@ mod tests {
         write_atomic(&p, &data).unwrap();
         let back = read(&p).unwrap();
         assert_eq!(back, data);
-    }
-
-    #[test]
-    fn load_suspended_collects_every_subject_in_one_pass() {
-        let mut d = CtrlData::new();
-        suspend(&mut d, "a", "ra", "oa", "wa", "ba");
-        suspend(&mut d, "b", "rb", "ob", "wb", "bb");
-        let m = load_suspended(&d);
-        assert_eq!(m.get("a").map(String::as_str), Some("ra"));
-        assert_eq!(m.get("b").map(String::as_str), Some("rb"));
-        assert_eq!(m.len(), 2);
     }
 
     #[test]

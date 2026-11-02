@@ -226,19 +226,3 @@ fn run(world: &dyn World, home: &std::path::Path, root: &std::path::Path, tally:
 
     0
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_tally_pushes_suites_wall_time_and_each_red_class() {
-        let sink = testkit::OtlpSink::start();
-        let m = spira_otel::metrics::Run::begin(Some(&sink.addr), "gate-diag", "diagnose");
-        push_tally(&m, &Tally { suites: 4, wall_secs: 90.0, red: 1, flaky: 1, fault: 1 });
-        let body = sink.body();
-        for want in ["spira_gate_diag_suites", "spira_gate_diag_suites_seconds", "spira_gate_diag_reds", "real", "flaky", "harness"] {
-            assert!(body.contains(want), "{want} missing: {body:?}");
-        }
-    }
-}

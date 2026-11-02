@@ -11,5 +11,3 @@ serde_json = "1"
 socket2 = "0.6"
 tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
 
-[dev-dependencies]
-testkit = { path = "../testkit" }

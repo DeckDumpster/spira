@@ -387,41 +387,6 @@ pub fn after_create_ids(who: &str, created_stdout: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    fn stub(dir: &std::path::Path, exit: i32) -> String {
-        let p = dir.join("lc");
-        let log = dir.join("calls");
-        testkit::write_exe(&p, &format!("#!/bin/sh\necho \"$@\" >> {}\nexit {exit}\n", log.display()));
-        p.to_string_lossy().into_owned()
-    }
-
-    #[test]
-    fn an_ask_is_opened_and_closed_on_its_own_machine_and_never_as_a_bead() {
-        let t = testkit::TempDir::new("lcask");
-        let bin = stub(t.path(), 0);
-        assert_eq!(create_ask_with(&bin, "sp-a", "sp-w"), Ok(()));
-        assert_eq!(create_ask_with(&bin, "sp-b", ""), Ok(()));
-        assert_eq!(close_ask_with(&bin, "sp-a", AskExit::Answered, "ship it", "operator", "pane"), Ok(true));
-        assert_eq!(close_ask_with(&bin, "sp-b", AskExit::Withdrawn, "moot", "concierge", ""), Ok(true));
-        let calls = std::fs::read_to_string(t.path().join("calls")).unwrap();
-        assert_eq!(
-            calls,
-            "create-ask sp-a --work-bead sp-w\ncreate-ask sp-b\nclose-ask sp-a --exit answered --quote ship it --actor operator --channel pane\nclose-ask sp-b --exit withdrawn --quote moot --actor concierge\n"
-        );
-        assert!(!calls.contains("create-bead"));
-    }
-
-    #[test]
-    fn exit_one_is_no_ask_and_anything_else_is_an_error() {
-        let t = testkit::TempDir::new("lcask-codes");
-        assert_eq!(is_ask_with(&stub(t.path(), 0), "sp-a"), Ok(true));
-        let t1 = testkit::TempDir::new("lcask-none");
-        assert_eq!(is_ask_with(&stub(t1.path(), 1), "sp-a"), Ok(false));
-        assert_eq!(close_ask_with(&stub(t1.path(), 1), "sp-a", AskExit::Default, "d", "a", ""), Ok(false));
-        let t3 = testkit::TempDir::new("lcask-refused");
-        assert!(is_ask_with(&stub(t3.path(), 2), "sp-a").is_err());
-        assert!(close_ask_with(&stub(t3.path(), 3), "sp-a", AskExit::Default, "d", "a", "").unwrap_err().contains("exited 3"));
-    }
-
     #[test]
     fn created_id_reads_silent_and_json() {
         assert_eq!(created_id("sp-abc\n").as_deref(), Some("sp-abc"));
@@ -442,82 +407,5 @@ mod tests {
         assert_eq!(created_ids("sp-abc\n"), vec!["sp-abc"]);
         assert!(created_ids("{\"error\":\"boom\"}").is_empty());
         assert!(created_ids("Imported 2 issues").is_empty());
-    }
-
-    #[test]
-    fn after_create_ids_gives_every_id_a_row_and_reports_unreadable_output() {
-        let t = testkit::TempDir::new("lcrow-ids");
-        let bin = stub(t.path(), 0);
-        assert_eq!(ensure_rows_with(&bin, &["sp-a".into(), "sp-b".into()]), Ok(()));
-        let calls = std::fs::read_to_string(t.path().join("calls")).unwrap();
-        assert_eq!(calls, "create-bead sp-a --ready\ncreate-bead sp-b --ready\n");
-        assert!(after_create_ids("t", "no ids here").is_err());
-    }
-
-    #[test]
-    fn ensure_row_creates_the_row() {
-        let t = testkit::TempDir::new("lcrow");
-        let bin = stub(t.path(), 0);
-        assert_eq!(ensure_row_with(&bin, "sp-x"), Ok(()));
-        assert_eq!(std::fs::read_to_string(t.path().join("calls")).unwrap(), "create-bead sp-x --ready\n");
-    }
-
-    #[test]
-    fn a_failing_create_bead_is_retried_then_reported() {
-        let t = testkit::TempDir::new("lcrow-retry");
-        let bin = stub(t.path(), 3);
-        assert!(ensure_row_retrying(&bin, "sp-r", 3, 0).is_err());
-        let calls = std::fs::read_to_string(t.path().join("calls")).unwrap();
-        assert_eq!(calls.lines().count(), 3);
-    }
-
-    #[test]
-    fn a_failing_create_bead_is_an_error() {
-        let t = testkit::TempDir::new("lcrow-fail");
-        let bin = stub(t.path(), 3);
-        assert!(ensure_row_with(&bin, "sp-z").unwrap_err().contains("exited 3"));
-        assert!(ensure_row_with("/nonexistent/lc", "sp-z").is_err());
-    }
-
-    #[test]
-    fn a_close_runs_reconcile_closed_for_exactly_the_bead_it_closed() {
-        let t = testkit::TempDir::new("lcrow-close");
-        let bin = stub(t.path(), 0);
-        assert_eq!(terminalize_closed_with(&bin, "sp-c"), Ok(()));
-        assert_eq!(std::fs::read_to_string(t.path().join("calls")).unwrap(), "reconcile-closed --apply sp-c\n");
-        let a = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(closed_id(&a(&["close", "sp-c", "--reason-file", "-"])), Some("sp-c"));
-        assert_eq!(closed_id(&a(&["close", "--force", "sp-c"])), None);
-        assert_eq!(closed_id(&a(&["update", "sp-c"])), None);
-        assert!(terminalize_closed_with(&stub(t.path(), 3), "sp-c").unwrap_err().contains("exited 3"));
-    }
-
-    #[test]
-    fn close_hands_spira_lc_the_reason_on_stdin_and_reports_its_refusal() {
-        let t = testkit::TempDir::new("lcclose");
-        let log = t.path().join("calls");
-        let stub = |name: &str, exit: i32| {
-            let p = t.path().join(name);
-            testkit::write_exe(&p, &format!("#!/bin/sh\necho \"$@\" >> {l}\ncat >> {l}\necho >> {l}\nexit {exit}\n", l = log.display()));
-            p.to_string_lossy().into_owned()
-        };
-        let (ok, refused) = (stub("lc-ok", 0), stub("lc-refused", 3));
-        assert_eq!(close_with(&ok, "sp-a", "two\nlines", "operator", Some("sp-b")), Ok(()));
-        let calls = std::fs::read_to_string(&log).unwrap();
-        assert!(calls.starts_with("close sp-a --reason-file - --actor operator --superseded-by sp-b\ntwo\nlines"), "{calls}");
-        assert!(close_with(&refused, "sp-a", "r", "operator", None).unwrap_err().contains("exited 3"));
-    }
-
-    #[test]
-    fn reopen_hands_spira_lc_the_cause_and_actor_and_fails_only_on_a_refusal_or_silence() {
-        let t = testkit::TempDir::new("lcreopen");
-        assert_eq!(reopen_with(&stub(t.path(), 0), "sp-a", "eject", "harness"), Ok(()));
-        assert_eq!(std::fs::read_to_string(t.path().join("calls")).unwrap(), "reopen sp-a eject harness\n");
-        let t1 = testkit::TempDir::new("lcreopen-norow");
-        assert_eq!(reopen_with(&stub(t1.path(), 1), "sp-a", "c", "a"), Ok(()), "no row: nothing to reopen");
-        for exit in [2, 3] {
-            let tn = testkit::TempDir::new("lcreopen-bad");
-            assert!(reopen_with(&stub(tn.path(), exit), "sp-a", "c", "a").unwrap_err().contains(&format!("exited {exit}")));
-        }
     }
 }

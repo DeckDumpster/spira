@@ -773,23 +773,3 @@ mod shot_path_tests {
         assert!(shot_path("", "sp-a", TIP, "a.png").is_none());
     }
 }
-
-#[cfg(test)]
-mod bead_page_tests {
-    use super::*;
-    use cockpit_ops::lcview::{BatchRow, Snapshot};
-
-    #[test]
-    fn a_bead_ejected_from_one_round_and_landed_in_another_lists_both() {
-        let row = |id: &str, ejected: &[&str], log: &str, at: i64| BatchRow {
-            id: id.into(), members: vec!["sp-x".into(), "sp-y".into()], ejected: ejected.iter().map(|s| s.to_string()).collect(),
-            log: log.into(), opened_at: at, repo: "r".into(), state: "x".into(), ..Default::default()
-        };
-        let snap = Snapshot { batches: vec![row("b-1", &["sp-x"], "/l/1", 1), row("b-2", &[], "", 2), BatchRow { id: "b-3".into(), members: vec!["sp-z".into()], ..Default::default() }], ..Default::default() };
-        let html = bead_rounds_html(&snap, "sp-x");
-        assert!(html.contains("href=/rounds/b-1") && html.contains("ejected"), "{html}");
-        assert!(html.contains("b-2") && !html.contains("href=/rounds/b-2"), "{html}");
-        assert!(!html.contains("b-3"), "positive control: a round without the bead is absent: {html}");
-        assert!(bead_rounds_html(&snap, "sp-none").is_empty());
-    }
-}

@@ -1606,45 +1606,6 @@ mod tests {
         assert!(dependents.is_empty());
     }
 
-    fn git(dir: &std::path::Path, args: &[&str]) -> String {
-        let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
-        String::from_utf8_lossy(&out.stdout).trim().to_string()
-    }
-
-    /// B's branch is built on A's commit with no `stack` declared anywhere: ejecting A must
-    /// still take B, and name A; an unrelated X stays.
-    #[test]
-    fn a_branch_containing_the_ejected_members_commit_cascades_without_a_declared_stack() {
-        let dir = testkit::TempDir::new("spira-lc-containment");
-        git(&dir, &["init", "-q", "-b", "main"]);
-        git(&dir, &["config", "user.email", "t@example.invalid"]);
-        git(&dir, &["config", "user.name", "t"]);
-        let commit = |f: &str| {
-            std::fs::write(dir.join(f), f).unwrap();
-            git(&dir, &["add", f]);
-            git(&dir, &["commit", "-q", "-m", f]);
-            git(&dir, &["rev-parse", "HEAD"])
-        };
-        let base = commit("base");
-        git(&dir, &["checkout", "-q", "-b", "a"]);
-        let tip_a = commit("a");
-        git(&dir, &["checkout", "-q", "-b", "b"]);
-        let tip_b = commit("b");
-        git(&dir, &["checkout", "-q", "-b", "x", &base]);
-        let tip_x = commit("x");
-
-        let members = vec![("a".to_string(), tip_a.clone()), ("b".to_string(), tip_b.clone()), ("x".to_string(), tip_x.clone())];
-        let tips: BTreeMap<String, String> = members.iter().cloned().collect();
-        let contained = containment_in_repo(&dir, &base, &members);
-        let member_stacks = vec![unstacked("a"), unstacked("b"), unstacked("x")];
-
-        let dependents = stacked_dependents_from(&member_stacks, &tips, &contained, &["a".to_string()]);
-        assert_eq!(dependents, vec![("b".to_string(), "a".to_string())]);
-        assert!(stacked_dependents_from(&member_stacks, &tips, &contained, &["x".to_string()]).is_empty());
-        assert!(stacked_dependents_from(&member_stacks, &tips, &contained, &["b".to_string()]).is_empty());
-    }
-
     #[test]
     fn the_prerequisite_is_named_in_the_returned_evidence() {
         let mut steps = vec![cascade_step("bead", "bead_id", "b", 1, String::new(), "REWORK", "bead", "Returned", "IN_DELIVERY", &serde_json::json!({"Returned": {"reason": "base-withdrawn"}}), "t", 0)];

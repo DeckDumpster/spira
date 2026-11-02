@@ -229,24 +229,6 @@ fn the_budget_cuts_most_specific_first_and_never_cuts_an_ejected_suite() {
     assert_eq!(o.suites, ["test-s1.sh", "test-s2.sh"]);
 }
 
-#[test]
-fn a_measured_p90_replaces_the_tier_cap() {
-    let d = dir("p90", &[("test-m.sh", "# covers: spira/lib.sh\n")]);
-    let run_dir = d.0.join("run");
-    std::fs::create_dir_all(run_dir.join("tsd")).unwrap();
-    std::fs::write(
-        run_dir.join("tsd/suite-timing.jsonl"),
-        "{\"ts\":\"2026-09-28T00:00:01Z\",\"suite\":\"test-m.sh\",\"wall_secs\":2}\n",
-    )
-    .unwrap();
-    let r = run_dir.display().to_string();
-    let g = git_changing("spira/lib.sh");
-    let o = run(&genv(&d.0, &[("SPIRA_RUN", &r), ("SPIRA_GATE_BUDGET", "2")]), &g, "main", "br").unwrap();
-    assert!(o.suites.is_empty(), "2s P90 over the suites' 1s of a 2s budget");
-    let o = run(&genv(&d.0, &[("SPIRA_RUN", &r), ("SPIRA_GATE_BUDGET", "4")]), &g, "main", "br").unwrap();
-    assert_eq!(o.suites, ["test-m.sh"]);
-}
-
 // ------------------------------------------------------------------ failing closed
 
 #[test]

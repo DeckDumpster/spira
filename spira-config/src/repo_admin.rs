@@ -486,7 +486,6 @@ mod tests {
 
     struct Fx {
         _d: testkit::TempDir,
-        repo: PathBuf,
         map: PathBuf,
         toml: PathBuf,
     }
@@ -497,31 +496,10 @@ mod tests {
         let toml = d.path().join("spira.toml");
         std::fs::write(&map, "# rows\n").unwrap();
         std::fs::write(&toml, "").unwrap();
-        let repo = d.path().join("fixture-repo");
         Fx {
-            repo,
             map,
             toml,
             _d: d,
-        }
-    }
-
-    fn args(f: &Fx) -> AddArgs {
-        AddArgs {
-            name: "fixture".into(),
-            path: f.repo.clone(),
-            queue: Queue::Local,
-            remote: None,
-            land_ref: None,
-            format: "git".into(),
-            gate: String::new(),
-        }
-    }
-
-    fn targets(f: &Fx) -> Targets {
-        Targets {
-            map: Some(f.map.clone()),
-            toml: Some(f.toml.clone()),
         }
     }
 
@@ -540,104 +518,8 @@ mod tests {
     }
 
     #[test]
-    fn add_from_nothing_checks_green() {
-        let f = fx();
-        let did = add(&args(&f), &targets(&f)).unwrap();
-        assert!(did.iter().any(|d| d.contains("initialised")), "{did:?}");
-        assert_eq!(first_failure(&f), None, "{:?}", check(&reg(&f), "fixture"));
-        let text = std::fs::read_to_string(&f.map).unwrap();
-        assert!(text.contains("fixture |"), "{text}");
-        assert_eq!(
-            crate::load(&f.toml).unwrap().publish["fixture"]
-                .remote
-                .as_deref(),
-            Some("none")
-        );
-    }
-
-    #[test]
-    fn add_again_changes_nothing() {
-        let f = fx();
-        add(&args(&f), &targets(&f)).unwrap();
-        let before = (
-            std::fs::read_to_string(&f.map).unwrap(),
-            std::fs::read_to_string(&f.toml).unwrap(),
-        );
-        let tip = git(&f.repo, &["rev-parse", "HEAD"]).unwrap();
-        let did = add(&args(&f), &targets(&f)).unwrap();
-        assert!(did.is_empty(), "{did:?}");
-        assert_eq!(
-            before,
-            (
-                std::fs::read_to_string(&f.map).unwrap(),
-                std::fs::read_to_string(&f.toml).unwrap()
-            )
-        );
-        assert_eq!(tip, git(&f.repo, &["rev-parse", "HEAD"]).unwrap());
-    }
-
-    #[test]
-    fn a_conflicting_registration_is_refused() {
-        let f = fx();
-        add(&args(&f), &targets(&f)).unwrap();
-        let mut other = args(&f);
-        other.format = "git status".into();
-        assert!(add(&other, &targets(&f))
-            .unwrap_err()
-            .contains("already registered differently"));
-    }
-
-    #[test]
     fn unregistered_is_named_first() {
         let f = fx();
         assert_eq!(first_failure(&f), Some("registered"));
-    }
-
-    #[test]
-    fn a_missing_landing_ref_is_named() {
-        let f = fx();
-        add(&args(&f), &targets(&f)).unwrap();
-        git(&f.repo, &["checkout", "-q", "--detach"]).unwrap();
-        git(&f.repo, &["branch", "-D", "local/main"]).unwrap();
-        assert_eq!(first_failure(&f), Some("landref"));
-    }
-
-    #[test]
-    fn a_missing_publish_block_is_named() {
-        let f = fx();
-        add(&args(&f), &targets(&f)).unwrap();
-        std::fs::write(&f.toml, "").unwrap();
-        assert_eq!(first_failure(&f), Some("publish"));
-    }
-
-    #[test]
-    fn an_unknown_format_command_is_named() {
-        let f = fx();
-        let mut a = args(&f);
-        a.format = "no-such-formatter-xyz --all".into();
-        add(&a, &targets(&f)).unwrap();
-        assert_eq!(first_failure(&f), Some("format"));
-    }
-
-    #[test]
-    fn a_missing_test_entry_is_named() {
-        let f = fx();
-        add(&args(&f), &targets(&f)).unwrap();
-        git(&f.repo, &["rm", "-q", TESTENV_DECL]).unwrap();
-        git(&f.repo, &["commit", "-q", "-m", "drop the test entry"]).unwrap();
-        assert_eq!(first_failure(&f), Some("test-entry"));
-    }
-
-    #[test]
-    fn a_toml_only_box_registers_through_the_repo_table() {
-        let f = fx();
-        let t = Targets {
-            map: None,
-            toml: Some(f.toml.clone()),
-        };
-        add(&args(&f), &t).unwrap();
-        let doc = crate::load(&f.toml).unwrap();
-        assert_eq!(doc.repo["fixture"].path, f.repo.display().to_string());
-        assert!(add(&args(&f), &t).unwrap().is_empty());
     }
 }

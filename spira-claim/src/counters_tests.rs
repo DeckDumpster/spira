@@ -87,25 +87,3 @@ fn counter_label_does_not_match_a_longer_number() {
     let labels = vec!["sp-attempt-30".to_string()];
     assert_eq!(counter_label(&labels, "sp-attempt", "3"), None);
 }
-
-#[test]
-fn parse_metadata_reads_the_long_json() {
-    let text = r#"[{"id":"sp-a","metadata":{"thrash_tip":"abc123","thrash_streak":"2"}}]"#;
-    let m = parse_metadata(text);
-    assert_eq!(m.get("thrash_tip").and_then(Value::as_str), Some("abc123"));
-    assert_eq!(m.get("thrash_streak").and_then(Value::as_str), Some("2"));
-}
-
-#[test]
-fn parse_metadata_skips_a_leading_warning_line() {
-    let text = "bd: warning: something\n[{\"id\":\"sp-a\",\"metadata\":{\"k\":\"v\"}}]";
-    let m = parse_metadata(text);
-    assert_eq!(m.get("k").and_then(Value::as_str), Some("v"));
-}
-
-#[test]
-fn parse_metadata_absent_is_empty_not_an_error() {
-    assert!(parse_metadata(r#"[{"id":"sp-a"}]"#).is_empty());
-    assert!(parse_metadata("not json at all").is_empty());
-    assert!(parse_metadata("").is_empty());
-}

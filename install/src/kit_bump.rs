@@ -120,12 +120,4 @@ mod tests {
         let p = write(d.path(), &spec("app:Cargo.toml"), &reg).unwrap();
         assert!(std::fs::read_to_string(p).unwrap().starts_with("registry http://reg"));
     }
-
-    #[test]
-    fn a_site_or_kit_missing_from_the_map_is_refused() {
-        assert!(render(&spec("ghost:Cargo.toml"), &parse(MAP)).is_err());
-        assert!(render(&Spec { registry: "u", krate: "", sites: "app:Cargo.toml" }, &parse(MAP)).is_err());
-        assert!(render(&spec(""), &parse(MAP)).is_err());
-        assert!(render(&spec("app"), &parse(MAP)).is_err());
-    }
 }

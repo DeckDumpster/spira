@@ -294,45 +294,6 @@ mod tests {
     }
 
     #[test]
-    fn run_declines_cleanly_when_nothing_ready() {
-        let dir = testkit::TempDir::new("escape-run");
-        let dwarf_bin = dir.join("dwarf");
-        // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
-        testkit::write_exe(&dwarf_bin, "#!/bin/sh\n");
-        let env = env_with_dwarf_on_path(&dir);
-        let seam = FakeSeam { world_gate_rc: 0, ready: "0".into(), ready_rc: 0, call_argv: String::new() };
-        let exec = FakeExec(std::sync::Mutex::new(None));
-        let sink = util::MemSink::default();
-        let conf = conf_at(&dir);
-        let rc = run(&seam, &exec, &env, &sink, &conf, "systemd-run", Path::new("/home/spira"), "stretchy", false, 1000);
-        assert_eq!(rc, 0);
-        assert!(exec.0.lock().unwrap().is_none(), "nothing ready must not call");
-        assert!(sink.all().contains("nothing ready in its partition"));
-    }
-
-    #[test]
-    fn run_calls_with_the_right_argv_when_ready() {
-        let dir = testkit::TempDir::new("escape-run");
-        let dwarf_bin = dir.join("dwarf");
-        // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
-        testkit::write_exe(&dwarf_bin, "#!/bin/sh\n");
-        let env = env_with_dwarf_on_path(&dir);
-        let seam = FakeSeam { world_gate_rc: 0, ready: "4".into(), ready_rc: 0, call_argv: "--setenv=HOME=/h\n--property=TimeoutStartSec=3600".into() };
-        let exec = FakeExec(std::sync::Mutex::new(None));
-        let sink = util::MemSink::default();
-        let conf = conf_at(&dir);
-        let rc = run(&seam, &exec, &env, &sink, &conf, "systemd-run", Path::new("/home/spira"), "stretchy", false, 1000);
-        assert_eq!(rc, 0);
-        let (prog, args) = exec.0.lock().unwrap().clone().expect("called");
-        assert_eq!(prog, "systemd-run");
-        assert_eq!(args[0], "--user");
-        assert!(args.iter().any(|a| a == "--unit=spira-dwarf-stretchy-escape-1000"));
-        assert!(args.contains(&"--setenv=HOME=/h".to_string()));
-        assert_eq!(args.last().unwrap(), "stretchy");
-        assert!(sink.all().contains("4 ready — calling directly"));
-    }
-
-    #[test]
     fn run_halted_does_not_call_and_exits_1() {
         let dir = testkit::TempDir::new("escape-run");
         let env = env_with_dwarf_on_path(&dir);

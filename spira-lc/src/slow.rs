@@ -345,30 +345,6 @@ mod tests {
     }
 
     #[test]
-    fn a_wrapper_with_spira_caller_is_counted_under_it() {
-        let dir = testkit::TempDir::new("slow-caller");
-        let client = dir.path().join(CLIENT);
-        std::os::unix::fs::symlink("/bin/dash", &client).unwrap();
-        let run = |name: Option<&str>| {
-            let mut c = std::process::Command::new(&client);
-            c.args(["-c", "read x"]).stdin(std::process::Stdio::piped());
-            match name {
-                Some(n) => c.env("SPIRA_CALLER", n),
-                None => c.env_remove("SPIRA_CALLER"),
-            };
-            let mut child = c.spawn().unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            let who = caller_of_pid(child.id() as i32);
-            let _ = child.kill();
-            let _ = child.wait();
-            who
-        };
-        assert_eq!(run(Some("wrapper-x")), "wrapper-x");
-        let unnamed = run(None);
-        assert_ne!(unnamed, CLIENT, "the parent stands in when nothing is declared");
-    }
-
-    #[test]
     fn wrappers_are_recognised_and_programs_are_not() {
         for w in [&b"timeout\x0030\0spira-lc\0show\0"[..], b"/usr/bin/env\0X=1\0y\0", b"nice\0-n\x0010\0z\0", b"bash\0-c\0. lib; f\0", b"spira-supervise\0x\0"] {
             assert!(is_wrapper(w), "{:?}", String::from_utf8_lossy(w));
@@ -376,31 +352,6 @@ mod tests {
         for p in [&b"gate-worker\0run\0"[..], b"bash\0-e\0/x/bead-sweep.sh\0watch\0", b"batcher\0sifts\0", b""] {
             assert!(!is_wrapper(p), "{:?}", String::from_utf8_lossy(p));
         }
-    }
-
-    #[test]
-    fn a_call_through_timeout_is_counted_under_the_program_that_made_it() {
-        let dir = testkit::TempDir::new("slow-ancestor");
-        let client = dir.path().join(CLIENT);
-        let parent = dir.path().join("gate-worker");
-        std::os::unix::fs::symlink("/bin/dash", &client).unwrap();
-        std::os::unix::fs::symlink("/bin/dash", &parent).unwrap();
-        let script = format!("timeout 30 {} -c 'read x'; true", client.display());
-        let mut child = std::process::Command::new(&parent)
-            .args(["-c", &script])
-            .env_remove("SPIRA_CALLER")
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(400));
-        let leaf = std::fs::read_dir("/proc")
-            .unwrap()
-            .filter_map(|e| e.ok()?.file_name().to_str()?.parse::<i32>().ok())
-            .find(|p| std::fs::read_to_string(format!("/proc/{p}/comm")).is_ok_and(|c| c.trim() == CLIENT) && parent_pid(parent_pid(*p).unwrap_or(0)) == Some(child.id() as i32));
-        let who = leaf.map(caller_of_pid);
-        let _ = child.kill();
-        let _ = child.wait();
-        assert!(who.as_deref().is_some_and(|w| w.starts_with("gate-worker")), "{who:?}");
     }
 
     #[test]

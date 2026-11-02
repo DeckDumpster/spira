@@ -17,10 +17,6 @@ spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
 hel = { path = "../hel" }
 
-
-[dev-dependencies]
-testkit = { path = "../testkit" }
-
 [profile.release]
 opt-level = "z"
 lto = true

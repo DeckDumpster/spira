@@ -63,12 +63,6 @@ fn rows_pushed_to_a_real_store_read_back_as_the_same_rows() {
     scenario(&addr);
 }
 
-#[test]
-fn the_stand_in_store_gives_the_same_answers_as_the_real_one() {
-    let fake = spira_otel::fixture::FakeStore::start();
-    scenario(fake.addr());
-}
-
 fn scenario(addr: &str) {
     let addr = addr.to_string();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();

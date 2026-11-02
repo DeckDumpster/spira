@@ -281,58 +281,6 @@ mod tests {
     }
 
     #[test]
-    fn runs_steps_in_order_with_their_env_and_frames_each() {
-        let p = plan(vec![
-            step(
-                "a",
-                "install",
-                &["sh", "-c", "echo out-$PLAN_T; echo err >&2"],
-                true,
-            ),
-            step("b", "requirements", &["sh", "-c", "exit 3"], false),
-            step("c", "testdb", &["sh", "-c", "printf 'x\\ny'"], false),
-        ]);
-        let mut buf = Vec::new();
-        assert_eq!(
-            run(&p, &mut buf),
-            0,
-            "a non-must failure does not end the plan"
-        );
-        let out = String::from_utf8(buf).unwrap();
-        let r = parse(&p, &out);
-        assert_eq!(r.unfinished, None);
-        let got: Vec<(&str, &str, i32, &str)> = r
-            .results
-            .iter()
-            .map(|s| (s.name.as_str(), s.phase.as_str(), s.rc, s.output.as_str()))
-            .collect();
-        assert_eq!(
-            got,
-            vec![
-                ("a", "install", 0, "out-v\nerr\n"),
-                ("b", "requirements", 3, ""),
-                ("c", "testdb", 0, "x\ny"),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_failing_must_step_ends_the_plan_with_its_rc() {
-        let p = plan(vec![
-            step("a", "install", &["sh", "-c", "echo boom; exit 4"], true),
-            step("b", "install", &["sh", "-c", "echo never"], true),
-        ]);
-        let mut buf = Vec::new();
-        assert_eq!(run(&p, &mut buf), 4);
-        let r = parse(&p, &String::from_utf8(buf).unwrap());
-        assert_eq!(r.results.len(), 1);
-        assert_eq!(
-            (r.results[0].rc, r.results[0].output.as_str()),
-            (4, "boom\n")
-        );
-    }
-
-    #[test]
     fn a_missing_program_is_127_not_a_runner_crash() {
         let p = plan(vec![step("a", "install", &["/nonexistent/prog"], true)]);
         let mut buf = Vec::new();

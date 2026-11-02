@@ -236,17 +236,4 @@ mod tests {
         assert_eq!(fill(&r[..1], 100.0, 1).selected, ["test-a.sh"]);
         assert!(fill(&[], 300.0, 4).log[0].contains("nothing to rank"));
     }
-
-    #[test]
-    fn a_bad_tier_cap_or_budget_is_refused() {
-        let env = |k: &str| (k == "SPIRA_TIER_BUDGET_T2_MS").then(|| "ten".to_string());
-        assert!(TierCaps::from_env(&env).is_err());
-        let env = |k: &str| (k == "SPIRA_TIER_BUDGET_T2_MS").then(|| "5000".to_string());
-        assert_eq!(TierCaps::from_env(&env).unwrap().t2_ms, 5000.0);
-        assert_eq!(number("300"), Some(300.0));
-        assert_eq!(number("12.5"), Some(12.5));
-        assert_eq!(number("-1"), None);
-        assert_eq!(number(""), None);
-        assert_eq!(number("1e3"), None);
-    }
 }

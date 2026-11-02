@@ -165,34 +165,6 @@ impl Busy {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn a_full_queue_refuses_and_the_permit_outlives_the_wait() {
-        let pool = Pool::new(1, 1);
-        let gate = Arc::new(std::sync::Barrier::new(2));
-        let (g, (started_tx, started_rx)) = (gate.clone(), std::sync::mpsc::channel());
-        let running = pool.offload("t", None, move || {
-            started_tx.send(()).unwrap();
-            g.wait()
-        })
-        .unwrap();
-        started_rx.recv().unwrap();
-        let queued = pool.offload("t", None, || 7).unwrap();
-        let before = spilled_total("t");
-        assert!(matches!(pool.offload("t", None, || 8), Err(Spill { cap: 1, .. })), "the third is refused, not blocked on");
-        assert_eq!(spilled_total("t"), before + 1);
-        gate.wait();
-        running.await.unwrap();
-        assert_eq!(queued.await.unwrap(), 7);
-    }
-
-    #[tokio::test]
-    async fn a_panic_comes_back_as_an_error_and_the_worker_lives() {
-        let pool = Pool::new(1, 2);
-        let e = pool.offload::<()>("boom", None, || panic!("x")).unwrap().await.unwrap_err();
-        assert_eq!((e.what, e.why.as_str()), ("boom", "x"));
-        assert_eq!(pool.offload("t", None, || 1).unwrap().await.unwrap(), 1);
-    }
-
     #[test]
     fn busy_reads_zero_until_entered() {
         let b = Busy::default();

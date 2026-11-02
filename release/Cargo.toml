@@ -32,6 +32,3 @@ state-store = { path = "../state-store" }
 testkit = { path = "../testkit" }
 round-controller = { path = "../round-controller", features = ["sim"] }
 runtime = { path = "../runtime" }
-sccache-dav = { path = "../sccache-dav" }
-axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
-tokio = { version = "1", features = ["rt-multi-thread", "net"] }

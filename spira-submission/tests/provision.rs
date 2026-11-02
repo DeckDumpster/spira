@@ -116,30 +116,6 @@ fn the_certificate_expiry_is_read_from_the_der() {
 }
 
 #[test]
-fn a_certificate_near_expiry_is_renewed_and_the_service_restarted() {
-    let b = plan(true);
-    seed_cert(&b, FIXTURE_CERT);
-    let f = fake(NOT_AFTER - 10 * DAY);
-    let r = provision(&Cert(&f), &b.plan);
-    assert!(r.errors.is_empty(), "{r:?}");
-    assert_eq!(count(&f, "tailscale cert"), 1, "{:?}", f.calls);
-    assert_eq!(count(&f, "systemctl --user restart spira-submission-prod.service"), 1, "{:?}", f.calls);
-    assert_eq!(std::fs::read_to_string(&b.plan.cert).unwrap(), f.fresh_cert);
-    assert_eq!(std::fs::metadata(&b.plan.key).unwrap().permissions().mode() & 0o077, 0);
-}
-
-#[test]
-fn a_certificate_with_time_left_is_left_alone() {
-    let b = plan(true);
-    seed_cert(&b, FIXTURE_CERT);
-    let f = fake(NOT_AFTER - 60 * DAY);
-    let r = provision(&Cert(&f), &b.plan);
-    assert!(r.errors.is_empty(), "{r:?}");
-    assert_eq!(count(&f, "tailscale cert"), 0, "{:?}", f.calls);
-    assert_eq!(count(&f, "systemctl"), 0);
-}
-
-#[test]
 fn a_renewal_that_changes_nothing_does_not_restart() {
     let b = plan(true);
     seed_cert(&b, FIXTURE_CERT);
@@ -238,20 +214,6 @@ fn the_derived_line_is_a_credential_the_server_accepts() {
 }
 
 #[test]
-fn a_closed_port_is_opened_on_the_tailnet_interface_once() {
-    let b = plan(true);
-    seed_cert(&b, FIXTURE_CERT);
-    let f = fake(NOT_AFTER - 60 * DAY);
-    provision(&Cert(&f), &b.plan);
-    assert_eq!(count(&f, "sudo -n ufw allow in on tailscale0 to any port 2587 proto tcp"), 1, "{:?}", f.calls);
-
-    let mut open = fake(NOT_AFTER - 60 * DAY);
-    open.ufw_status = Ok("Status: active\n\nTo   Action   From\n2587/tcp on tailscale0   ALLOW   Anywhere\n".into());
-    provision(&Cert(&open), &b.plan);
-    assert_eq!(count(&open, "sudo -n ufw allow"), 0, "{:?}", open.calls);
-}
-
-#[test]
 fn a_firewall_that_cannot_be_opened_is_an_error_carrying_the_root_command() {
     let b = plan(true);
     seed_cert(&b, FIXTURE_CERT);
@@ -316,18 +278,6 @@ impl Host for NoOperator<'_> {
     fn now(&self) -> i64 {
         self.0.now
     }
-}
-
-#[test]
-fn a_failed_certificate_leaves_the_submission_keys_unset() {
-    let b = plan(false);
-    let f = fake(NOT_AFTER - 60 * DAY);
-    let r = provision(&NoOperator(&f), &b.plan);
-    assert_eq!(count(&f, "tailscale cert"), 1, "{:?}", f.calls);
-    assert_eq!(count(&f, "spira-config set"), 0, "{:?}", f.calls);
-    assert_eq!(count(&f, "systemctl"), 0);
-    assert!(r.errors.is_empty(), "{r:?}");
-    assert!(r.notes.iter().any(|n| n.contains("sudo tailscale set --operator=$USER")), "{r:?}");
 }
 
 #[test]

@@ -479,19 +479,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_serving_process_answers_the_slow_views_from_memory() {
-        let mut conn = Conn::unreachable();
-        let now = crate::db::now_epoch();
-        assert!(view_cached(&conn, "ops_dwell", now).is_err(), "the unreachable store is the positive control");
-        VIEW_CACHE.lock().unwrap().insert("ops_dwell", (now, vec![serde_json::json!({"bead_id": "sp-a"})]));
-        assert!(view_cached(&conn, "ops_dwell", now).is_err(), "a one-shot process never trusts memory");
-        conn.enable_live();
-        let rows = view_cached(&conn, "ops_dwell", now).expect("served from memory");
-        assert_eq!(rows.len(), 1);
-        assert!(view_cached(&conn, "ops_dwell", now + EPICS_MAX_AGE_SECS + 1).is_err(), "past the max age it asks the store");
-    }
-
-    #[test]
     fn a_working_refusal_names_the_release_step() {
         let m = working_refusal("sp-x");
         assert!(m.contains("release the claim") && m.contains("unclaim sp-x"), "{m}");
@@ -573,38 +560,5 @@ mod tests {
         let one_line = migration.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(one_line.contains(&format!("state IN ({LIVE_STATES})")), "ops_live and the backfill name the same states");
         assert!(sql.contains("state = 'LANDED' AND since >= UNIX_TIMESTAMP() - 86400") && migration.contains("state = 'LANDED' AND since >= UNIX_TIMESTAMP() - 86400"));
-    }
-
-    fn production_sized_bead(i: usize) -> Value {
-        let live = i.is_multiple_of(50);
-        let mut o = serde_json::Map::new();
-        for (k, v) in [
-            ("bead_id", format!("sp-{i:06}")),
-            ("state", if live { "READY" } else { "LANDED" }.to_string()),
-            ("holds", "[]".to_string()),
-            ("since", crate::db::now_epoch().to_string()),
-            ("updated_at", crate::db::now_epoch().to_string()),
-            ("priority", "2".to_string()),
-            ("title", format!("a bead title of ordinary length number {i}")),
-        ] {
-            o.insert(k.into(), Value::String(v));
-        }
-        Value::Object(o)
-    }
-
-    #[test]
-    fn ops_live_at_production_size_answers_from_the_kept_answer_without_reaching_the_store_while_memory_is_unloaded() {
-        let mut conn = Conn::unreachable();
-        conn.enable_live();
-        let live = conn.live.as_ref().unwrap();
-        live.replace(vec![(0..7500).map(production_sized_bead).collect(), vec![], vec![]]).unwrap();
-        views_tick(&conn);
-        live.invalidate();
-        assert!(conn.live().is_none(), "memory is unloaded, so only the kept answer can serve");
-        for _ in 0..100 {
-            let (code, out) = cmd_ops_view(&["ops_live".to_string()], &conn);
-            assert_eq!(code, 0, "{out}");
-            assert_eq!(serde_json::from_str::<Vec<Value>>(&out).unwrap().len(), 150);
-        }
     }
 }

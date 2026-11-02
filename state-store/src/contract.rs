@@ -2,7 +2,6 @@
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -263,7 +262,6 @@ pub struct Contract<B: Backend> {
     deadlines: Mutex<BTreeMap<String, u64>>,
     commits: Mutex<u64>,
     committed: Condvar,
-    waiting: AtomicUsize,
 }
 
 /// What a plan decides at one snapshot head.
@@ -448,7 +446,6 @@ impl<B: Backend> Contract<B> {
             deadlines: Mutex::new(BTreeMap::new()),
             commits: Mutex::new(0),
             committed: Condvar::new(),
-            waiting: AtomicUsize::new(0),
         };
         let head = c.backend.head()?;
         let now = c.now_ms();
@@ -746,19 +743,12 @@ impl<B: Backend> Contract<B> {
             }
             let g = self.commits.lock().unwrap_or_else(lock_err);
             if *g == seen {
-                self.waiting.fetch_add(1, Ordering::SeqCst);
                 let _ = self
                     .committed
                     .wait_timeout(g, WATCH_SLICE)
                     .unwrap_or_else(lock_err);
-                self.waiting.fetch_sub(1, Ordering::SeqCst);
             }
         }
-    }
-
-    /// How many watches are parked waiting for a commit.
-    pub fn waiting_watchers(&self) -> usize {
-        self.waiting.load(Ordering::SeqCst)
     }
 
     /// Wakes every waiting watch to re-read the log and the clock.

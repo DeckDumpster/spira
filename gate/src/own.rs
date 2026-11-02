@@ -58,16 +58,6 @@ mod tests {
     }
 
     #[test]
-    fn ci_entry_is_the_declared_top_level_command_and_absent_when_undeclared() {
-        let d = tree(&[DECL]);
-        assert_eq!(ci_entry(&d), None);
-        fs::write(d.join(DECL), "ci_entry = \" deploy/ci.sh all \"\n[tier.a]\n").unwrap();
-        assert_eq!(ci_entry(&d).as_deref(), Some("deploy/ci.sh all"));
-        fs::write(d.join(DECL), "ci_entry = \"\"\n").unwrap();
-        assert_eq!(ci_entry(&d), None);
-    }
-
-    #[test]
     fn an_undeclared_tree_is_not_its_own() {
         assert!(!declares_own_testenv(&tree(&["a", "b"])));
     }

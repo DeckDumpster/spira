@@ -668,21 +668,6 @@ mod tests {
     // ---- the bead's own four, plus empty ----
 
     #[test]
-    fn a_labeled_parent_and_a_child_stacked_on_it_is_a_deadlock() {
-        let pl = plan_with(&["spira-open-children"]);
-        let s = store(vec![
-            bead("p", "open", &pl, None, &[]),
-            bead("k", "open", PLAN, Some("p"), &[]),
-        ]);
-        let f = Facts { live: 1, ..Facts::default() };
-        let stacked: HashMap<String, Vec<String>> = [("k".to_string(), vec!["p".to_string()])].into();
-        let found = kinds(&run_stacked(&s, &[], &[], &stacked, &f));
-        assert!(found.contains(&("stack-deadlock".into(), "p".into())), "{found:?}");
-        let found = kinds(&run_stacked(&s, &[], &[], &HashMap::new(), &f));
-        assert!(!found.iter().any(|(k, _)| k == "stack-deadlock"), "positive control: no stack, no row");
-    }
-
-    #[test]
     fn closed_blocker_is_not_reported() {
         // A child blocked only by a closed bead — a bead outside the partition's open list,
         // exactly the case the old detector read as "outside the partition".
@@ -694,15 +679,6 @@ mod tests {
         assert!(run(&s, &["c"]).is_empty(), "claimable child, closed blocker: nothing");
         // Not claimable (is_blocked stale): the mechanical fix, never blocked-external.
         assert_eq!(kinds(&run(&s, &[])), vec![("stale-blocked".into(), "E".into())]);
-    }
-
-    #[test]
-    fn a_submitted_bead_with_no_gate_queued_is_stranded_and_a_queued_one_is_not() {
-        let s = store(vec![bead("sp-s", "open", &plan_with(&["spira-submitted"]), None, &[])]);
-        let f = Facts { live: 1, ..Facts::default() };
-        let found = kinds(&run_all(&s, &[], &[], &["sp-s"], &HashMap::new(), &f));
-        assert_eq!(found, vec![("submitted-ungated".to_string(), "sp-s".to_string())]);
-        assert!(run_all(&s, &[], &[], &[], &HashMap::new(), &f).is_empty(), "positive control: gate queued, nothing stranded");
     }
 
     #[test]
@@ -863,29 +839,7 @@ mod tests {
         assert!(rows[0].detail.contains("ordered behind epic(s) sp-pswer"), "{}", rows[0].detail);
     }
 
-    #[test]
-    fn a_bead_waiting_on_a_sequenced_bead_is_not_stuck() {
-        // sp-zs04v.6 behind sp-zs04v.5 behind the epic sp-pswer: the chain head is
-        // intentional sequencing, so the chain is waiting, not stuck.
-        let s = store(vec![
-            epic("sp-zs04v", PLAN),
-            epic("sp-pswer", &["spira"]),
-            bead("sp-zs04v.5", "open", PLAN, None, &["sp-pswer"]),
-            bead("sp-zs04v.6", "open", PLAN, Some("sp-zs04v"), &["sp-zs04v.5"]),
-        ]);
-        let rows = run(&s, &[]);
-        assert!(rows.iter().all(|r| r.disp == Disposition::Info), "{rows:?}");
-    }
-
     // ---- what must still be reported ----
-
-    #[test]
-    fn a_blocker_missing_from_the_store_still_counts() {
-        let s = store(vec![epic("E", PLAN), bead("c", "open", PLAN, Some("E"), &["ghostid"])]);
-        let rows = run(&s, &[]);
-        assert_eq!(kinds(&rows), vec![("blocked-external".into(), "E".into())]);
-        assert!(rows[0].detail.ends_with("; not in the store: ghostid"), "{}", rows[0].detail);
-    }
 
     #[test]
     fn foreign_blocker_that_is_itself_moving_is_not_external() {

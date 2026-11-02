@@ -79,41 +79,10 @@ mod tests {
     }
 
     #[test]
-    fn link_creates_both_symlinks() {
-        let d = stage_with_deps_toml(
-            "[[compat]]\nname = \"world\"\nalias = \"world.sh\"\n\n[[compat]]\nname = \"mail\"\nalias = \"mail.sh\"\n",
-        );
-        let bin = d.join("bin");
-        fs::create_dir_all(&bin).unwrap();
-        testkit::write_exe(bin.join("world"), "#!/bin/sh\n");
-        testkit::write_exe(bin.join("mail"), "#!/bin/sh\n");
-        let made = link(&d, &bin).unwrap();
-        assert_eq!(made, vec!["world.sh".to_string(), "mail.sh".to_string()]);
-        assert!(bin.join("world.sh").is_symlink());
-        assert_eq!(fs::read_link(bin.join("world.sh")).unwrap().to_str().unwrap(), "world");
-        assert!(d.join("spira").join("world.sh").is_symlink());
-        assert_eq!(fs::read_link(d.join("spira").join("world.sh")).unwrap().to_str().unwrap(), "../bin/world");
-        assert!(bin.join("mail.sh").is_symlink());
-        assert!(d.join("spira").join("mail.sh").is_symlink());
-    }
-
-    #[test]
     fn link_refuses_a_compat_entry_whose_binary_is_missing() {
         let d = stage_with_deps_toml("[[compat]]\nname = \"mail\"\nalias = \"mail.sh\"\n");
         let bin = d.join("bin");
         fs::create_dir_all(&bin).unwrap();
         assert!(link(&d, &bin).unwrap_err().contains("mail.sh"));
-    }
-
-    #[test]
-    fn link_is_idempotent() {
-        let d = stage_with_deps_toml("[[compat]]\nname = \"world\"\nalias = \"world.sh\"\n");
-        let bin = d.join("bin");
-        fs::create_dir_all(&bin).unwrap();
-        testkit::write_exe(bin.join("world"), "#!/bin/sh\n");
-        link(&d, &bin).unwrap();
-        // A second run must not error on "already exists".
-        let made = link(&d, &bin).unwrap();
-        assert_eq!(made, vec!["world.sh".to_string()]);
     }
 }

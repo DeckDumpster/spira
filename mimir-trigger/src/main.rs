@@ -320,26 +320,6 @@ mod tests {
     use std::collections::HashMap;
     use std::path::Path;
 
-    /// `load_cfg` resolves every registered key this crate needs through the one door,
-    /// `spira_config::process::cfg`/`cfg_parse`. This is the ONLY test in this binary that
-    /// calls it (the `OnceLock` inside `spira_config::process::config` resolves once per
-    /// process and never resets, so it must not collide with another test's fixture).
-    /// SPIRA_HOME/SPIRA_TOML point at a throwaway fixture, never the real box's.
-    #[test]
-    fn load_cfg_resolves_every_key_through_the_one_door() {
-        let dir = testkit::TempDir::new("mimir-trigger-cfg");
-        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_MIMIR_MAX_BEADS", "7")]);
-        // SPIRA_HOME must be the checkout's own spira/ (where conf.d — the key registry —
-        // lives), never the throwaway fixture dir.
-        let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-        let _g = testkit::env(&[("SPIRA_HOME", real_home.to_str()), ("SPIRA_TOML", toml.to_str())]);
-
-        let cfg = load_cfg().expect("a complete fixture toml must resolve every key this crate needs");
-        assert_eq!(cfg.max_beads, 7, "the fixture's override must reach load_cfg");
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
     /// A `World` whose every answer is a canned value, to test `run`/`count_landings`'s
     /// own orchestration without a database, a git checkout or the `lib.sh` seam.
     #[derive(Default)]

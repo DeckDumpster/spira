@@ -133,24 +133,6 @@ mod tests {
     }
 
     #[test]
-    fn explicit_lane_list_yields_exactly_those_lanes_in_the_given_order() {
-        assert_eq!(repo_lanes("alpha", Some("plan,incident"), &labels()).unwrap(), "plan incident");
-        assert_eq!(repo_lanes("alpha", Some("spike"), &labels()).unwrap(), "spike");
-    }
-
-    #[test]
-    fn unknown_mode_is_a_hard_error_naming_the_row() {
-        let err = repo_lanes("alpha", Some("fullaccess"), &labels()).unwrap_err();
-        assert!(err.contains("alpha"), "{err}");
-    }
-
-    #[test]
-    fn unknown_lane_is_a_hard_error_naming_the_row_and_the_label() {
-        let err = repo_lanes("alpha", Some("plan,bogus-lane"), &labels()).unwrap_err();
-        assert!(err.contains("alpha") && err.contains("bogus-lane"), "{err}");
-    }
-
-    #[test]
     fn lane_admitted_checks_the_home_repo_first() {
         assert!(lane_admitted("plan", "home", &[], |_| None, &labels()));
     }

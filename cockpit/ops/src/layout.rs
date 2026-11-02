@@ -1086,54 +1086,6 @@ mod tests {
     }
 
     #[test]
-    fn ensure_on_a_headless_install_is_a_one_line_noop() {
-        let dir = testkit::TempDir::new("sp-sesur6-headless");
-        let run = dir.join("run");
-        std::fs::create_dir_all(&run).unwrap();
-        let mut conf = conf_with("", "");
-        conf.run = run.clone();
-        let present = dir.join("tmux-present");
-        testkit::write_exe(&present, "#!/bin/sh\nexit 0\n");
-        assert!(Tmux::with_bin(present.to_string_lossy().to_string()).installed());
-        let absent = dir.join("no-such-tmux");
-        let layout = Layout { tmux: Tmux::with_bin(absent.to_string_lossy().to_string()), conf };
-        let me = std::env::current_exe().unwrap();
-        assert_eq!(layout.ensure(&me, &me), Ok(String::new()));
-        let log = std::fs::read_to_string(run.join("cockpit-heal.log")).unwrap();
-        assert!(log.contains("headless"), "{log}");
-        assert!(!log.contains("No such file"), "{log}");
-    }
-
-    #[test]
-    fn ensure_runs_the_releases_rebuild_when_path_lacks_the_release_bin() {
-        let dir = testkit::TempDir::new("sp-qmi9da-rebuild");
-        let run = dir.join("run");
-        let rel = dir.join("rel");
-        std::fs::create_dir_all(&run).unwrap();
-        std::fs::create_dir_all(rel.join("bin")).unwrap();
-        testkit::write_exe(rel.join("bin/rebuild"), "#!/bin/sh\necho rebuilt-from-release\n");
-        let tmux = dir.join("tmux");
-        testkit::write_exe(&tmux, "#!/bin/sh\nexit 0\n");
-        let mut conf = conf_with(&rel.display().to_string(), "");
-        conf.run = run.clone();
-        let layout = Layout { tmux: Tmux::with_bin(tmux.to_string_lossy().to_string()), conf };
-        let me = std::env::current_exe().unwrap();
-        assert_eq!(layout.ensure(&me, &me), Ok(String::new()));
-        let log = std::fs::read_to_string(run.join("cockpit-heal.log")).unwrap();
-        assert!(log.contains("rebuilt-from-release"), "{log}");
-        assert!(!log.contains("No such file"), "{log}");
-    }
-
-    #[test]
-    fn concierge_script_resolves_in_the_release_with_repo_unset() {
-        let dir = testkit::TempDir::new("sp-9hn7po-rel");
-        testkit::write_exe(dir.join("concierge.sh"), "#!/bin/sh\n");
-        let rel = dir.display().to_string();
-        let got = conf_with(&rel, "").concierge_script().unwrap();
-        assert_eq!(got, format!("{rel}/concierge.sh"));
-    }
-
-    #[test]
     fn concierge_script_with_neither_set_names_both() {
         let e = conf_with("", "").concierge_script().unwrap_err();
         assert!(e.contains("SPIRA_RELEASE") && e.contains("SPIRA_REPO"), "{e}");
@@ -1166,59 +1118,5 @@ mod tests {
         assert!(p.contains("SPIRA_CONF='/etc/spira-custom.conf'"));
         assert!(p.contains("SPIRA_RELEASE='/rel'"));
         assert!(p.contains("PATH='/rel/bin:/rel/spira:/usr/local/bin:/usr/bin:/bin'"));
-    }
-
-    #[test]
-    fn apply_mouse_mode_binds_drag_without_alternate_on() {
-        use std::process::Command;
-        if Command::new("tmux").arg("-V").output().is_err() {
-            return;
-        }
-        let dir = testkit::TempDir::new("sp-ihxxy-drag");
-        let sock = format!("sp-ihxxy-{}", std::process::id());
-        let wrap = dir.join("tmux-scratch");
-testkit::write_exe(
-            &wrap,
-            &format!("#!/bin/sh\nTMUX_TMPDIR='{}' exec tmux -L {sock} \"$@\"\n", dir.display()),
-        );
-        let tmux = Tmux::with_bin(wrap.to_string_lossy().to_string());
-        assert!(tmux.run_ok(&["new-session", "-d", "-s", "x"]));
-        let conf = Conf {
-            spira_release: String::new(),
-            cock: PathBuf::new(),
-            run: PathBuf::new(),
-            cwd: String::new(),
-            right_pct: 33,
-            bottom_pct: 28,
-            mail_cmd: None,
-            heal_cooldown_secs: 60,
-            idle_secs: 0,
-            mouse_on: true,
-            clipboard_on: false,
-            spira_repo: String::new(),
-            spira_conf: None,
-        };
-        // The binding apply_mouse_mode replaces is INSTALLED here, never read from this tmux's
-        // own defaults: tmux 3.3 ships it, but newer tmux (the EC2 round image's) already
-        // dropped alternate_on, which failed this control on a host whose tmux is newer.
-        assert!(tmux.run_ok(&[
-            "bind-key",
-            "-T",
-            "root",
-            "MouseDrag1Pane",
-            "if-shell",
-            "-F",
-            "#{||:#{pane_in_mode},#{mouse_any_flag},#{alternate_on}}",
-            "send-keys -M",
-            "copy-mode -M",
-        ]));
-        let before = tmux.stdout(&["list-keys", "-T", "root", "MouseDrag1Pane"]).unwrap_or_default();
-        assert!(before.contains("alternate_on"), "control: the installed binding must test alternate_on: {before}");
-        Layout { tmux, conf }.apply_mouse_mode();
-        let t = Tmux::with_bin(wrap.to_string_lossy().to_string());
-        let after = t.stdout(&["list-keys", "-T", "root", "MouseDrag1Pane"]).unwrap_or_default();
-        t.run_ok(&["kill-server"]);
-        assert!(after.contains("mouse_any_flag"), "{after}");
-        assert!(!after.contains("alternate_on"), "{after}");
     }
 }

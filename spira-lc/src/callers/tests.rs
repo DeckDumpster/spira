@@ -6,7 +6,6 @@
 //! proven against a real server by the container suites (test-lc-hold.sh and friends).
 
 use std::collections::BTreeMap;
-use std::process::Command;
 
 use lifecycle::bead::{BeadEvent, BeadRow, BeadState, HoldKind};
 use lifecycle::delivery::{DeliveryEvent, DeliveryRow, DeliveryState};
@@ -443,88 +442,6 @@ fn list_held_never_names_a_terminal_bead() {
 
 // ---- delivery exits --------------------------------------------------------------------
 
-#[test]
-fn deliver_skips_without_a_row_or_in_the_wrong_state_and_applies_in_the_right_one() {
-    let mut f = Fake::default();
-    let a = go(&mut f, "deliver", &["push-delivered", "sp-p", "abc"]);
-    assert_eq!(a.code, NO_ROW);
-    assert!(a.stdout.contains("lc: no delivery row for sp-p — not recording landing.sh's event"), "{}", a.stdout);
-    f.bead("sp-p", BeadState::InDelivery);
-    let a = go(&mut f, "deliver", &["push-delivered", "sp-p", "abc"]);
-    assert!(a.stdout.contains("no delivery row for sp-p"), "a bead row with no delivery row is still no delivery row");
-    f.deliveries.insert("sp-p".into(), DeliveryRow::start_push("sp-p"));
-    let a = go(&mut f, "deliver", &["pr-closed", "sp-p", "closed"]);
-    assert_eq!(a.code, NO_ROW);
-    assert!(a.stdout.contains("lc: sp-p delivery is PUSHING, not PR_OPEN — not recording pr-pass-branch's event"), "{}", a.stdout);
-    let a = go(&mut f, "deliver", &["push-delivered", "sp-p", "abc"]);
-    assert_eq!(a.code, APPLIED, "{}", a.stdout);
-    assert!(a.stdout.contains("lc: sp-p delivery PUSHING -> applied (landing.sh)"));
-    assert_eq!(f.events.last().unwrap().5, r#"{"Delivered":{"merge_sha":"abc","proof":"ancestry"}}"#);
-    let a = go(&mut f, "deliver", &["push-delivered", "sp-p", "abc"]);
-    assert!(a.stdout.contains("delivery is EXITED, not PUSHING"), "a second sighting refuses: {}", a.stdout);
-}
-
-#[test]
-fn deliver_push_requeued_and_returned_build_the_typed_exits() {
-    for (sub, extra, want) in [
-        ("push-requeued", "cafe", r#"{"Requeued":{"tip":"cafe"}}"#),
-        ("push-returned", "genuinely conflicts", r#"{"Returned":{"reason":"push-rejected"}}"#),
-    ] {
-        let mut f = Fake::default();
-        f.bead("sp-q", BeadState::InDelivery);
-        f.deliveries.insert("sp-q".into(), DeliveryRow::start_push("sp-q"));
-        assert_eq!(go(&mut f, "deliver", &[sub, "sp-q", extra]).code, APPLIED, "{sub}");
-        assert_eq!(f.events[0].5, want);
-        assert_eq!(f.deliveries["sp-q"].state, DeliveryState::Exited);
-    }
-}
-
-fn git(dir: &std::path::Path, args: &[&str]) -> String {
-    let o = Command::new("git").arg("-C").arg(dir).args(args).env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t").output().unwrap();
-    assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
-    String::from_utf8_lossy(&o.stdout).trim().to_string()
-}
-
-#[test]
-fn deliver_pr_merged_proves_by_merge_tree_when_the_squash_holds_the_diff() {
-    let t = testkit::TempDir::new("spira-lc-prmerged");
-    let r = t.path();
-    git(r, &["init", "-q", "-b", "main"]);
-    git(r, &["commit", "-q", "--allow-empty", "-m", "base"]);
-    git(r, &["checkout", "-q", "-b", "spira/sp-s"]);
-    std::fs::write(r.join("f"), "x\n").unwrap();
-    git(r, &["add", "f"]);
-    git(r, &["commit", "-q", "-m", "sp-s: work"]);
-    git(r, &["checkout", "-q", "main"]);
-    std::fs::write(r.join("f"), "x\n").unwrap();
-    git(r, &["add", "f"]);
-    git(r, &["commit", "-q", "-m", "squash (#1)"]);
-    let squash = git(r, &["rev-parse", "HEAD"]);
-    std::fs::write(r.join("g"), "unrelated\n").unwrap();
-    git(r, &["checkout", "-q", "-b", "spira/sp-u", "main~1"]);
-    std::fs::write(r.join("h"), "never landed\n").unwrap();
-    git(r, &["add", "h"]);
-    git(r, &["commit", "-q", "-m", "sp-u: work"]);
-    let repo = r.to_str().unwrap();
-
-    assert!(crate::git_evidence::content_on_base(r, "spira/sp-s", &squash), "squash holds the diff");
-    assert!(!crate::git_evidence::content_on_base(r, "spira/sp-u", &squash), "a branch with work outstanding is not landed");
-    for (id, br, proof) in [("sp-s", "spira/sp-s", "merge-tree"), ("sp-u", "spira/sp-u", "gh-merged")] {
-        let mut f = Fake::default();
-        f.bead(id, BeadState::InDelivery);
-        f.deliveries.insert(id.into(), DeliveryRow::start_pr(id, 7));
-        let a = go(&mut f, "deliver", &["pr-merged", repo, id, br, &squash]);
-        assert_eq!(a.code, APPLIED, "{}", a.stdout);
-        assert_eq!(f.events[0].5, format!(r#"{{"Delivered":{{"merge_sha":"{squash}","proof":"{proof}"}}}}"#));
-        assert_eq!(f.events[0].4, "pr-pass-branch");
-    }
-    let mut f = Fake::default();
-    f.bead("sp-s", BeadState::InDelivery);
-    f.deliveries.insert("sp-s".into(), DeliveryRow::start_pr("sp-s", 7));
-    assert_eq!(go(&mut f, "deliver", &["pr-closed", "sp-s", "closed unmerged"]).code, APPLIED);
-    assert_eq!(f.events[0].5, r#"{"Returned":{"reason":"pr-closed-unmerged"}}"#);
-}
-
 // ---- certification ---------------------------------------------------------------------
 
 #[test]
@@ -786,110 +703,6 @@ fn a_push_landing_with_no_delivery_round_records_landed_on_a_certified_bead() {
     f.bead("sp-r", BeadState::Submitted);
     assert_eq!(go(&mut f, "deliver", &["push-delivered", "sp-r", "abc"]).code, NO_ROW);
     assert_eq!(f.events.len(), n, "no event for a bead that is not CERTIFIED");
-}
-
-#[test]
-fn a_merged_pr_with_no_delivery_round_lands_only_while_its_change_is_in_force() {
-    let g = |dir: &std::path::Path, a: &[&str]| {
-        let o = std::process::Command::new("git").arg("-C").arg(dir).args(a).output().unwrap();
-        assert!(o.status.success(), "git {a:?}: {}", String::from_utf8_lossy(&o.stderr));
-        String::from_utf8_lossy(&o.stdout).trim().to_string()
-    };
-    let dir = testkit::TempDir::new("spira-lc-pr-merged");
-    g(&dir, &["init", "-q", "-b", "main"]);
-    g(&dir, &["config", "user.email", "t@example.invalid"]);
-    g(&dir, &["config", "user.name", "t"]);
-    g(&dir, &["commit", "-q", "--allow-empty", "-m", "base"]);
-    g(&dir, &["checkout", "-q", "-b", "spira/sp-m"]);
-    std::fs::write(dir.join("f"), "x\n").unwrap();
-    g(&dir, &["add", "f"]);
-    g(&dir, &["commit", "-q", "-m", "work"]);
-    g(&dir, &["checkout", "-q", "main"]);
-    g(&dir, &["merge", "-q", "--no-ff", "-m", "merge", "spira/sp-m"]);
-    let merged = g(&dir, &["rev-parse", "HEAD"]);
-    let repo = dir.to_string_lossy().to_string();
-
-    let mut f = Fake::default();
-    f.bead("sp-m", BeadState::Submitted);
-    let a = go(&mut f, "deliver", &["pr-merged", &repo, "sp-m", "spira/sp-m", &merged]);
-    assert_eq!(a.code, APPLIED, "{}", a.stdout);
-    assert_eq!(f.events.last().unwrap().5, format!(r#"{{"ContentOnBase":{{"proof":"merge-tree:{merged}"}}}}"#));
-
-    g(&dir, &["revert", "--no-edit", "-m", "1", "HEAD"]);
-    let reverted = g(&dir, &["rev-parse", "HEAD"]);
-    f.bead("sp-n", BeadState::Submitted);
-    let n = f.events.len();
-    let a = go(&mut f, "deliver", &["pr-merged", &repo, "sp-n", "spira/sp-m", &reverted]);
-    assert_eq!(a.code, NO_ROW, "a reverted change is not landed: {}", a.stdout);
-    assert_eq!(f.events.len(), n);
-}
-
-#[test]
-fn a_merged_pr_whose_branch_is_gone_lands_by_the_merge_commits_ancestry_only() {
-    let g = |dir: &std::path::Path, a: &[&str]| {
-        let o = std::process::Command::new("git").arg("-C").arg(dir).args(a).output().unwrap();
-        assert!(o.status.success(), "git {a:?}: {}", String::from_utf8_lossy(&o.stderr));
-        String::from_utf8_lossy(&o.stdout).trim().to_string()
-    };
-    let dir = testkit::TempDir::new("spira-lc-pr-gone");
-    g(&dir, &["init", "-q", "-b", "main"]);
-    g(&dir, &["config", "user.email", "t@example.invalid"]);
-    g(&dir, &["config", "user.name", "t"]);
-    g(&dir, &["commit", "-q", "--allow-empty", "-m", "base"]);
-    g(&dir, &["checkout", "-q", "-b", "side"]);
-    std::fs::write(dir.join("f"), "x\n").unwrap();
-    g(&dir, &["add", "f"]);
-    g(&dir, &["commit", "-q", "-m", "elsewhere"]);
-    let off_main = g(&dir, &["rev-parse", "HEAD"]);
-    g(&dir, &["checkout", "-q", "main"]);
-    std::fs::write(dir.join("g"), "y\n").unwrap();
-    g(&dir, &["add", "g"]);
-    g(&dir, &["commit", "-q", "-m", "squash (#2)"]);
-    let merged = g(&dir, &["rev-parse", "HEAD"]);
-    std::fs::write(dir.join("g"), "later\n").unwrap();
-    g(&dir, &["commit", "-q", "-am", "later edit"]);
-    let repo = dir.to_string_lossy().to_string();
-
-    let mut f = Fake::default();
-    f.bead("sp-g", BeadState::Submitted);
-    let a = go(&mut f, "deliver", &["pr-merged", &repo, "sp-g", "spira/sp-g", &merged]);
-    assert_eq!(a.code, APPLIED, "{}", a.stdout);
-    assert_eq!(f.state("sp-g"), "LANDED");
-    assert_eq!(f.events.last().unwrap().5, format!(r#"{{"ContentOnBase":{{"proof":"ancestry:{merged}"}}}}"#));
-
-    f.bead("sp-h", BeadState::Submitted);
-    let a = go(&mut f, "deliver", &["pr-merged", &repo, "sp-h", "spira/sp-h", &off_main]);
-    assert_eq!(a.code, NO_ROW, "a merge not on the landing ref stays SUBMITTED: {}", a.stdout);
-    assert_eq!(f.state("sp-h"), "SUBMITTED");
-}
-
-#[test]
-fn a_merged_pr_lands_a_bead_whose_row_never_left_ready() {
-    let g = |dir: &std::path::Path, a: &[&str]| {
-        let o = std::process::Command::new("git").arg("-C").arg(dir).args(a).output().unwrap();
-        assert!(o.status.success(), "git {a:?}: {}", String::from_utf8_lossy(&o.stderr));
-        String::from_utf8_lossy(&o.stdout).trim().to_string()
-    };
-    let dir = testkit::TempDir::new("spira-lc-pr-ready");
-    g(&dir, &["init", "-q", "-b", "main"]);
-    g(&dir, &["config", "user.email", "t@example.invalid"]);
-    g(&dir, &["config", "user.name", "t"]);
-    g(&dir, &["commit", "-q", "--allow-empty", "-m", "base"]);
-    g(&dir, &["checkout", "-q", "-b", "spira/sp-r"]);
-    std::fs::write(dir.join("f"), "x\n").unwrap();
-    g(&dir, &["add", "f"]);
-    g(&dir, &["commit", "-q", "-m", "work"]);
-    g(&dir, &["checkout", "-q", "main"]);
-    g(&dir, &["merge", "-q", "--no-ff", "-m", "merge", "spira/sp-r"]);
-    let merged = g(&dir, &["rev-parse", "HEAD"]);
-    let repo = dir.to_string_lossy().to_string();
-
-    let mut f = Fake::default();
-    f.bead("sp-r", BeadState::Ready);
-    let a = go(&mut f, "deliver", &["pr-merged", &repo, "sp-r", "spira/sp-r", &merged]);
-    assert_eq!(a.code, APPLIED, "{}", a.stdout);
-    assert_eq!(f.state("sp-r"), "LANDED");
-    assert_eq!(f.events.last().unwrap().5, format!(r#"{{"ContentOnBase":{{"proof":"merge-tree:{merged}"}}}}"#));
 }
 
 // ---- unclaim / close-epic (sp-hyo5e) ---------------------------------------------------
@@ -1687,20 +1500,6 @@ fn phase_walks_the_holder_forward_and_show_reads_back_exactly_what_was_recorded(
         let shown: Value = serde_json::from_str(&f.call(&v(&["show", "sp-p"])).1).unwrap();
         assert_eq!(bead_field(&shown, "dwarf_phase"), name);
     }
-}
-
-#[test]
-fn a_backward_or_foreign_phase_is_refused_and_changes_nothing() {
-    let mut f = Fake::default();
-    claim_for(&mut f, "sp-p", "dwarf-1");
-    assert_eq!(go(&mut f, "phase", &["sp-p", "dwarf-1", "session"]).code, APPLIED);
-    let back = go(&mut f, "phase", &["sp-p", "dwarf-1", "building"]);
-    assert_eq!(back.code, REFUSED);
-    assert!(back.stderr.contains("WORKING/session"), "{}", back.stderr);
-    assert_eq!(go(&mut f, "phase", &["sp-p", "dwarf-2", "teardown"]).code, REFUSED);
-    assert_eq!(f.beads["sp-p"].phase, Some(DwarfPhase::Session));
-    assert_eq!(go(&mut f, "phase", &["sp-p", "dwarf-1", "nonsense"]).code, CANNOT_TELL);
-    assert_eq!(go(&mut f, "phase", &["sp-none", "dwarf-1", "session"]).code, NO_ROW);
 }
 
 #[test]

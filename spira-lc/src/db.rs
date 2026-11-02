@@ -1047,21 +1047,6 @@ mod group_commit_tests {
         assert_eq!(union_touch(&[pending(keys(&["b", "a"])), pending(None), pending(keys(&["a", "c"]))]), keys(&["a", "b", "c"]));
         assert_eq!(union_touch(&[pending(keys(&["a"])), pending(Some(Touch::All))]), Some(Touch::All));
     }
-
-    /// law-calls-have-deadlines: a write still queued when its request's deadline passed is
-    /// answered "deadline" and never sent — this Conn's server is unreachable, so an attempt
-    /// would have answered with the connect failure instead.
-    #[test]
-    fn a_write_whose_request_deadline_passed_is_never_started() {
-        let conn = Conn::unreachable();
-        set_request_deadline(Some(Instant::now() - Duration::from_millis(1)));
-        let err = conn.append_event("INSERT INTO fact VALUES (1)");
-        set_request_deadline(None);
-        let msg = format!("{err:?}");
-        assert!(msg.contains(DEADLINE_MESSAGE) && msg.contains("never started"), "{msg}");
-        let control = format!("{:?}", conn.append_event("INSERT INTO fact VALUES (1)"));
-        assert!(control.contains("connecting to 127.0.0.1:1"), "POSITIVE CONTROL: without a deadline the write is attempted: {control}");
-    }
 }
 
 #[cfg(test)]

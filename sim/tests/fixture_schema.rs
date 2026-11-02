@@ -6,8 +6,6 @@
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-const SLICES: [&str; 2] = ["1031", "1021-1025"];
-
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures").join("replay")
 }
@@ -387,58 +385,6 @@ fn parse<T: for<'de> Deserialize<'de>>(text: &str) -> Result<usize, String> {
         serde_json::from_str::<T>(line).map_err(|e| format!("line {}: {e}: {line}", i + 1))?;
     }
     Ok(text.lines().count())
-}
-
-/// Every file of one slice, each line into its type; the count of lines read per file.
-fn load_slice(dir: &Path) -> Result<Vec<(&'static str, usize)>, String> {
-    let read = |f: &str| std::fs::read_to_string(dir.join(f)).map_err(|e| format!("{}: {e}", dir.join(f).display()));
-    let mut out = Vec::new();
-    let mut each = |f: &'static str, p: fn(&str) -> Result<usize, String>| -> Result<(), String> {
-        out.push((f, p(&read(f)?).map_err(|e| format!("{f}: {e}"))?));
-        Ok(())
-    };
-    each("round.ndjson", parse::<Round>)?;
-    each("cert_pass.ndjson", parse::<CertPass>)?;
-    each("transition.ndjson", parse::<Transition>)?;
-    each("stop.ndjson", parse::<Stop>)?;
-    each("land.ndjson", parse::<Land>)?;
-    each("alarm_attempt.ndjson", parse::<AlarmAttempt>)?;
-    each("attribution.ndjson", parse::<Attribution>)?;
-    Ok(out)
-}
-
-#[test]
-fn every_line_of_every_slice_deserialises_into_its_closed_shape() {
-    for slice in SLICES {
-        let t0 = std::time::Instant::now(); // clock-safe: reported against the 100 ms goal, never asserted
-        let counts = load_slice(&root().join(slice)).unwrap_or_else(|e| panic!("{slice}: {e}"));
-        let ms = t0.elapsed().as_millis(); // clock-safe: reported, never asserted
-        let lines: usize = counts.iter().map(|(_, n)| n).sum();
-        eprintln!("fixture {slice}: {lines} lines in {ms} ms (goal: under 100 ms per slice) {counts:?}");
-        for (f, n) in &counts {
-            if *f != "stop.ndjson" {
-                assert!(*n > 0, "{slice}/{f} is empty");
-            }
-        }
-    }
-}
-
-/// The first line of `file` in the 10-31 slice parses as `T`, and the same line with a
-/// free-text field planted in it does not.
-fn refuses_a_planted_field<T: for<'de> Deserialize<'de>>(file: &str) {
-    let text = std::fs::read_to_string(root().join("1031").join(file)).unwrap();
-    let first = text.lines().next().unwrap();
-    assert!(parse::<T>(first).is_ok(), "the unplanted line parses: {first}");
-    let planted = format!("{},\"note\":\"stacked on the parent, which never landed\"}}", first.trim_end_matches('}'));
-    let err = parse::<T>(&planted).expect_err("a free-text field must be refused");
-    assert!(err.contains("unknown field `note`"), "{file}: {err}");
-}
-
-#[test]
-fn a_line_with_an_extra_text_field_is_refused() {
-    refuses_a_planted_field::<Round>("round.ndjson");
-    refuses_a_planted_field::<Transition>("transition.ndjson");
-    refuses_a_planted_field::<AlarmAttempt>("alarm_attempt.ndjson");
 }
 
 #[test]

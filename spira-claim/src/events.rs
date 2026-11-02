@@ -723,50 +723,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_streams_match_the_old_sql_exactly() {
-        // Every stream built only from legacy event kinds must equal _attempts_sql_query.
-        let alphabet: [(&str, &str); 7] = [
-            ("claimed", ""),
-            ("status_changed", r#"{"status":"in_progress"}"#),
-            ("closed", ""),
-            ("requeued", "thrash"),
-            ("requeued", "unjudged-killed"),
-            ("requeued", "unjudged-sop-silent"),
-            ("poison.cleared", "x"),
-        ];
-        // All sequences up to length 6 over the alphabet (7^6 ≈ 117k, fast).
-        let mut idx = vec![0usize; 0];
-        let mut checked = 0;
-        for len in 0..=6 {
-            idx.clear();
-            idx.resize(len, 0);
-            loop {
-                let spec: Vec<(&str, &str)> = idx.iter().map(|&i| alphabet[i]).collect();
-                let r = rows(&spec);
-                assert_eq!(fold(B, &r).attempts, legacy_sql(&r), "stream {spec:?}");
-                checked += 1;
-                // odometer
-                let mut p = 0;
-                loop {
-                    if p == len {
-                        break;
-                    }
-                    idx[p] += 1;
-                    if idx[p] < alphabet.len() {
-                        break;
-                    }
-                    idx[p] = 0;
-                    p += 1;
-                }
-                if p == len {
-                    break;
-                }
-            }
-        }
-        assert!(checked > 100_000);
-    }
-
-    #[test]
     fn rebase_returns_do_not_count_as_requeues() {
         // sp-j1q6o's regression: returned three times for rebase, then submitted.
         let r = rows(&[

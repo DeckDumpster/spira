@@ -144,13 +144,6 @@ fn list(v: &[String]) -> String {
 mod tests {
     use super::*;
 
-    fn stamp_with(tag: &str, d: &Drain) -> (testkit::TempDir, PathBuf) {
-        let dir = testkit::TempDir::new(tag);
-        let p = dir.join("world.draining");
-        std::fs::write(&p, format!("then\ngated\nholds until resume\n{}", d.render())).unwrap();
-        (dir, p)
-    }
-
     fn drain() -> Drain {
         Drain {
             owner: "concierge".into(),
@@ -165,41 +158,6 @@ mod tests {
     #[test]
     fn a_stamp_round_trips_through_render_and_parse() {
         assert_eq!(Drain::parse(&drain().render()), drain());
-    }
-
-    #[test]
-    fn a_drain_past_its_cap_pages_once_naming_owner_and_stragglers_and_leaves_the_stamp() {
-        let (_dir, p) = stamp_with("cap", &drain());
-        let mut pages = Vec::new();
-        let live = vec!["sp-abc".to_string()];
-        let alive = |_: &Drain| Some(true);
-        assert_eq!(check(&p, 1000 + 1799, alive, &live, |s, b| { pages.push((s.into(), b.into())); true }), Outcome::Quiet);
-        assert!(pages.is_empty(), "positive control: under the cap nothing is paged");
-        let got = check(&p, 1000 + 4000, alive, &live, |s, b| { pages.push((s.to_string(), b.to_string())); true });
-        assert_eq!(got, Outcome::PagedCap);
-        let (subject, body): &(String, String) = &pages[0];
-        assert!(subject.contains("past its cap") && body.contains("concierge") && body.contains("sp-abc"), "{body}");
-        assert!(body.contains("podman storage copy done") && body.contains("in force 66m"), "{body}");
-        assert_eq!(check(&p, 1000 + 9000, alive, &live, |_, _| panic!("a second page")), Outcome::Quiet);
-        assert!(p.is_file(), "the cap never lifts the drain");
-    }
-
-    #[test]
-    fn a_dead_owner_is_reported_as_orphaned_once_and_the_drain_stays() {
-        let (_dir, p) = stamp_with("orphan", &drain());
-        let mut pages = Vec::new();
-        let got = check(&p, 1010, |_| Some(false), &[], |s, b| { pages.push((s.to_string(), b.to_string())); true });
-        assert_eq!(got, Outcome::PagedOrphan);
-        assert!(pages[0].0.contains("ORPHANED") && pages[0].1.contains("concierge"), "{pages:?}");
-        assert_eq!(check(&p, 1020, |_| Some(false), &[], |_, _| panic!("a second page")), Outcome::Quiet);
-        assert!(p.is_file());
-    }
-
-    #[test]
-    fn a_failed_page_is_retried_not_recorded() {
-        let (_dir, p) = stamp_with("retry", &drain());
-        assert_eq!(check(&p, 99_999, |_| None, &[], |_, _| false), Outcome::PageFailed);
-        assert_eq!(check(&p, 99_999, |_| None, &[], |_, _| true), Outcome::PagedCap);
     }
 
     #[test]

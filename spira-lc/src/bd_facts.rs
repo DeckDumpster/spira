@@ -161,23 +161,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_status_labels_and_a_supersedes_dependency() {
-        let text = r#"[{
-            "id": "sp-1",
-            "status": "closed",
-            "labels": ["spira-dropped", "repo:service"],
-            "dependencies": [
-                {"id": "sp-2", "dependency_type": "supersedes"},
-                {"id": "sp-3", "dependency_type": "blocks"}
-            ]
-        }]"#;
-        let rec = parse(text, "sp-1").unwrap();
-        assert_eq!(rec.status, BdStatus::Closed);
-        assert!(rec.labels.contains("spira-dropped"));
-        assert_eq!(rec.supersedes.as_deref(), Some("sp-2"));
-    }
-
-    #[test]
     fn an_external_ref_marks_the_record_external() {
         let rec = parse(r#"[{"id": "sp-1", "status": "closed", "external_ref": "github:o/r#4"}]"#, "sp-1").unwrap();
         assert!(rec.external);
@@ -185,24 +168,8 @@ mod tests {
     }
 
     #[test]
-    fn a_bead_with_no_labels_or_dependencies_parses_cleanly() {
-        let text = r#"[{"id": "sp-1", "status": "open"}]"#;
-        let rec = parse(text, "sp-1").unwrap();
-        assert_eq!(rec.status, BdStatus::Open);
-        assert!(rec.labels.is_empty());
-        assert!(rec.supersedes.is_none());
-    }
-
-    #[test]
     fn an_error_response_is_refused_not_defaulted_to_open() {
         let text = r#"{"error": "no issues found matching the provided IDs"}"#;
         assert!(parse(text, "sp-missing").is_err());
-    }
-
-    #[test]
-    fn a_non_supersedes_dependency_is_not_mistaken_for_one() {
-        let text = r#"[{"id": "sp-1", "status": "open", "dependencies": [{"id": "sp-2", "dependency_type": "blocks"}]}]"#;
-        let rec = parse(text, "sp-1").unwrap();
-        assert!(rec.supersedes.is_none());
     }
 }

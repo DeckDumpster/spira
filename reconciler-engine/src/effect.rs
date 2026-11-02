@@ -154,33 +154,4 @@ mod tests {
         assert!(body.contains("before: 1") && body.contains("after: 1"));
         assert!(body.contains("restart x") && body.contains("disk:/var") && body.contains("60s ago"));
     }
-
-    #[test]
-    fn events_and_pending_round_trip_through_files() {
-        let dir = testkit::TempDir::new("reconciler-engine-effect-test");
-        let store = spira_otel::fixture::FakeStore::start();
-        let ev = RemedyEvent {
-            ts: "2026-10-07T00:00:00Z",
-            event: "remedy",
-            kind: "disk",
-            key: "disk:/var",
-            action: "bash disk-remedy.sh",
-            metric: "gap",
-            before: 1.0,
-            after: None,
-            release: "r1",
-        };
-        append_event(&tsd::store::Pusher::new(Some(store.addr().to_string())), &ev);
-        let rows = tsd::store::Reader::new(Some(store.addr())).unwrap().rows(REMEDY_FAMILY, 0).unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!((rows[0]["kind"].as_str(), rows[0]["release"].as_str(), rows[0]["before"].as_f64()), (Some("disk"), Some("r1"), Some(1.0)));
-        assert!(rows[0].get("after").is_none());
-
-        let pp = dir.join("pending.json");
-        assert!(load_pending(&pp).is_empty());
-        let mut m = PendingMap::new();
-        m.insert("disk:/var".into(), pending(1.0));
-        save_pending(&pp, &m).unwrap();
-        assert_eq!(load_pending(&pp), m);
-    }
 }

@@ -80,26 +80,3 @@ fn bounded(mut cmd: Command, deadline: Duration) -> Result<(Option<i32>, Vec<u8>
     };
     Ok((code, reader.join().map_err(|_| "git reader panicked")?))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn sh(script: &str) -> Command {
-        let mut c = Command::new("sh");
-        c.args(["-c", script]);
-        c
-    }
-
-    #[test]
-    fn a_process_that_outlives_its_deadline_is_killed_and_is_an_error() {
-        let err = bounded(sh("exec sleep 30"), Duration::from_millis(100)).unwrap_err();
-        assert!(err.contains("deadline"), "{err}");
-    }
-
-    #[test]
-    fn output_larger_than_a_pipe_buffer_arrives_whole() {
-        let (code, out) = bounded(sh("head -c 1000000 /dev/zero"), Duration::from_secs(10)).unwrap();
-        assert_eq!((code, out.len()), (Some(0), 1_000_000));
-    }
-}

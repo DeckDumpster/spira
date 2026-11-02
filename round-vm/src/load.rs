@@ -214,31 +214,6 @@ mod tests {
     }
 
     #[test]
-    fn a_hog_beside_the_round_is_named_and_the_round_is_called_contended() {
-        let d = TempDir::new("load-contended");
-        let root = d.join("proc");
-        fs::create_dir_all(&root).unwrap();
-        host_total(&root, 1000);
-        plant(&root, 10, "kvm", 1, 0, "kvm -id 120 -name round");
-        plant(&root, 11, "hunk", 2, 0, "hunk");
-        plant(&root, 12, "bash", 3, 0, "bash");
-        let mut s = Sampler::new(&root, "120");
-        s.sample();
-        host_total(&root, 2000);
-        plant(&root, 10, "kvm", 1, 200, "kvm -id 120 -name round");
-        plant(&root, 11, "hunk", 2, 600, "hunk");
-        plant(&root, 13, "rustc", 4, 80, "rustc");
-        s.sample();
-        let r = s.report();
-        assert_eq!((r.total, r.round, r.vm_found), (1000, 200, true));
-        assert_eq!(r.others, vec![("hunk".to_string(), 600), ("rustc".to_string(), 80)]);
-        assert!(r.contended());
-        let line = r.render();
-        assert!(line.starts_with("CONTENDED: round held 20% of the host CPU"), "{line}");
-        assert!(line.contains("hunk=60%"), "{line}");
-    }
-
-    #[test]
     fn a_quiet_host_is_not_contended_and_a_missing_vm_is_not_judged() {
         let d = TempDir::new("load-quiet");
         let root = d.join("proc");

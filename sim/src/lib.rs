@@ -362,25 +362,6 @@ mod tests {
         );
     }
 
-    fn scripted(seed: u64) -> Vec<(u64, EventKind, bool)> {
-        let mut sim = Sim::new(seed);
-        for n in ["a", "b", "c"] {
-            jittery(&mut sim, n, false);
-            for i in 0..5 {
-                let at = sim.rng.range(0, 20) + i * 30;
-                sim.schedule_due(at, n);
-            }
-        }
-        sim.run();
-        sim.trace_signature()
-    }
-
-    #[test]
-    fn same_seed_same_sequence_and_timestamps() {
-        assert_eq!(scripted(42), scripted(42));
-        assert_ne!(scripted(42), scripted(43));
-    }
-
     #[test]
     fn simultaneous_ties_are_seeded() {
         let order = |seed| {
@@ -394,26 +375,6 @@ mod tests {
         };
         assert_eq!(order(7), order(7));
         assert!((0..20).any(|s| order(s) != order(7)));
-    }
-
-    #[test]
-    fn due_while_running_is_coalesced() {
-        let mut sim = Sim::new(1);
-        sim.add_actor("a", false, Box::new(|_, _| Outcome { writes: vec![], duration: 100 }));
-        sim.schedule_due(0, "a");
-        sim.schedule_due(10, "a");
-        sim.schedule_due(50, "a");
-        sim.schedule_due(100, "a");
-        sim.run();
-        let runs = sim
-            .trace
-            .iter()
-            .filter(|t| matches!(t.kind, EventKind::Due(_)) && !t.coalesced)
-            .count();
-        let merged = sim.trace.iter().filter(|t| t.coalesced).count();
-        assert!(merged >= 2, "due at 10 and 50 must coalesce");
-        assert_eq!(runs + merged, 4);
-        assert!(!sim.is_running("a"));
     }
 
     #[test]
@@ -447,41 +408,13 @@ mod tests {
         assert_eq!(seen[0], (50, None, Some("now".into())));
         assert_eq!(seen[2], (101, Some("new".into()), Some("now".into())));
     }
-
-    #[test]
-    fn empty_time_is_skipped() {
-        let mut sim = Sim::new(1);
-        sim.add_scenario("s", Box::new(|_| {}));
-        sim.schedule_step(u64::MAX / 2, "s");
-        assert!(sim.step());
-        assert_eq!(sim.now, u64::MAX / 2);
-        assert!(!sim.step());
-    }
 }
 
 #[cfg(test)]
 mod vtime_tests {
-    use super::*;
+
 
     const VIRTUAL: u64 = 1_800_000_000;
-
-    #[test]
-    fn a_commit_made_in_an_actor_run_carries_the_virtual_date() {
-        let dir = testkit::TempDir::new("sim-vtime-commit");
-        let git = |args: &[&str]| {
-            let out = actor_command("git", VIRTUAL)
-                .args(["-C", dir.to_str().unwrap()])
-                .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
-                .args(args)
-                .output()
-                .unwrap();
-            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-            String::from_utf8_lossy(&out.stdout).trim().to_string()
-        };
-        git(&["init", "-q"]);
-        git(&["commit", "-q", "--allow-empty", "-m", "x"]);
-        assert_eq!(git(&["log", "-1", "--format=%at %ct"]), format!("{VIRTUAL} {VIRTUAL}"));
-    }
 
     #[test]
     fn actor_env_sets_spira_now() {

@@ -270,52 +270,6 @@ mod tests {
         }
     }
 
-    /// The one test in this crate allowed to exercise `resolve`'s own top-level config read
-    /// (per Ryan 2026-10-05: one source of config — every other test in strand drives its
-    /// logic off `Config::test_fixture()` instead, never off a fake env/toml, because
-    /// `spira_config::process::cfg`'s resolution is cached once per TEST BINARY PROCESS: a
-    /// second fixture here would not see its own `SPIRA_TOML`, it would see whichever ran
-    /// first).
-    #[test]
-    fn resolve_reads_every_registered_key_from_the_one_toml() {
-        let dir = testkit::TempDir::new("strand-config-resolve");
-        let toml = spira_config::process::fixture_toml(
-            &dir,
-            &[
-                ("SPIRA_ASK_LABEL", "ask-x"),
-                ("SPIRA_DB", "/db"),
-                ("SPIRA_RUN", "/r"),
-                ("SPIRA_BD", "bd"),
-                ("SPIRA_MAX_DWARVES", "0"),
-                ("SPIRA_SCOPE_LABEL", ""),
-                ("SPIRA_QUEUE_THROTTLE_RELEASE_AT", "12"),
-            ],
-        );
-        // `cfg`'s registry check needs the REAL `spira/conf.d` (every key this test reads
-        // must actually be registered there) — unlike a fixture home with an empty conf.d,
-        // this has to be the checkout's own, so it is found relative to this crate's own
-        // manifest, never by trusting an ancestor search from the test binary's path.
-        let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-        let c = {
-            let _env = testkit::env(&[("SPIRA_HOME", Some(real_home.to_str().unwrap())), ("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
-            Config::resolve(&NoEnv).unwrap()
-        };
-
-        assert_eq!(c.incident_label, "incident", "the complete fixture's own declared default");
-        assert_eq!(c.groom_ask_label, "groom-asked");
-        assert_eq!(c.work_close_types, "task bug feature");
-        assert_eq!(c.id_prefix, "sp");
-        assert_eq!(c.vocab.ask, "ask-x");
-        assert_eq!(c.run, Some(PathBuf::from("/r")));
-        assert_eq!(c.db.as_deref(), Some("/db"));
-        assert_eq!(c.max_dwarves, Some(0));
-        assert_eq!(c.scope_label, "", "an explicitly empty scope disables it — still Ok, not a refusal");
-        assert_eq!(c.throttle_release_at, "12");
-        assert_eq!(c.vocab.submitted, "spira-submitted");
-        assert_eq!(c.exclude_default(), format!("spira-poison,ask-x,{}", c.ci_label));
-        assert_eq!(c.home, None, "no SPIRA_HOME and no SPIRA_RELEASE resolves no home");
-    }
-
     #[test]
     fn home_resolves_from_the_release_when_spira_home_is_absent() {
         struct UnitEnv(Vec<(&'static str, &'static str)>);

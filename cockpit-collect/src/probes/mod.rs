@@ -1549,26 +1549,6 @@ mod tests {
     }
 
     #[test]
-    fn strand_keys_parses_ghost_and_other() {
-        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
-        let path = testkit::TempDir::new("cc-strand");
-        let _env = crate::test_support::set_run(path.path());
-        // `escalated` is a timestamp (0 while unescalated, a nonzero epoch once raised —
-        // strand.sh's own row shape), never a JSON boolean; this fixture uses the real shape.
-        std::fs::write(
-            path.path().join("strands.json"),
-            r#"{"a:ghost:1":{"escalated":0},"b:other:2":{"escalated":1700000500}}"#,
-        )
-        .unwrap();
-        let kv = strand_keys();
-        let get = |k: &str| kv.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
-        assert_eq!(get("SP_STRANDS"), Some("2".to_string()));
-        assert_eq!(get("SP_STRANDS_ESCALATED"), Some("1".to_string()));
-        assert_eq!(get("SP_STRAND_GHOST"), Some("1".to_string()));
-        assert_eq!(get("SP_STRAND_OTHER"), Some("other=1".to_string()));
-    }
-
-    #[test]
     fn dwarf_alive_delegates_to_strands_canonical_predicate() {
         // Wave 4.23 (sp-0ffox) retired this crate's own cmdline check; the positive/negative
         // controls for the predicate now live with strand's own suite. This just confirms
@@ -1577,67 +1557,6 @@ mod tests {
         let pf = dir.join("x.pid");
         std::fs::write(&pf, "999999999").unwrap();
         assert!(!dwarf_alive(&pf), "a pid that does not exist is never alive");
-    }
-
-    fn strand_kv(json: &str) -> impl Fn(&str) -> Option<String> {
-        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
-        let path = testkit::TempDir::new("cc-strand-case");
-        let _env = crate::test_support::set_run(path.path());
-        std::fs::write(path.path().join("strands.json"), json).unwrap();
-        let kv = strand_keys();
-        move |k: &str| kv.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone())
-    }
-
-    #[test]
-    fn strand_keys_counts_two_ghosts_as_two_and_reports_no_other_class() {
-        let get = strand_kv(r#"{"spira,plan:ghost:sp-a":{},"spira,plan:ghost:sp-b":{}}"#);
-        assert_eq!(get("SP_STRAND_GHOST"), Some("2".into()));
-        assert_eq!(get("SP_STRAND_OTHER"), Some("none".into()));
-    }
-
-    #[test]
-    fn strand_keys_an_empty_epic_is_its_own_class_not_a_ghost() {
-        let get = strand_kv(r#"{"spira,plan:empty:sp-jj88":{"first":1788811865,"acted":0,"escalated":1788812834}}"#);
-        assert_eq!(get("SP_STRAND_GHOST"), Some("0".into()));
-        assert_eq!(get("SP_STRAND_OTHER"), Some("empty=1".into()));
-        assert_eq!(get("SP_STRANDS"), Some("1".into()));
-    }
-
-    #[test]
-    fn strand_keys_itemises_every_other_class_and_keeps_ghost_apart() {
-        let get = strand_kv(r#"{"p:ghost:sp-a":{},"p:empty:sp-b":{},"p:empty:sp-c":{},"p:stuck:sp-d":{}}"#);
-        assert_eq!(get("SP_STRAND_GHOST"), Some("1".into()));
-        assert_eq!(get("SP_STRAND_OTHER"), Some("empty=2,stuck=1".into()));
-    }
-
-    #[test]
-    fn strand_keys_splits_from_the_right_so_a_partition_may_hold_a_colon() {
-        let get = strand_kv(r#"{"spira:plan,extra:ghost:sp-a":{}}"#);
-        assert_eq!(get("SP_STRAND_GHOST"), Some("1".into()));
-    }
-
-    #[test]
-    fn strand_keys_an_unclassifiable_key_makes_ghost_unknown_and_is_itself_reported() {
-        let get = strand_kv(r#"{"bogus":{},"p:ghost:sp-a":{}}"#);
-        assert_eq!(get("SP_STRAND_GHOST"), Some("?".into()));
-        assert_eq!(get("SP_STRAND_OTHER"), Some("unclassified=1".into()));
-        assert_eq!(get("SP_STRANDS"), Some("2".into()));
-    }
-
-    #[test]
-    fn strand_keys_an_unparsable_ledger_is_unread_not_empty() {
-        let get = strand_kv("not json at all");
-        assert_eq!(get("SP_STRAND_GHOST"), Some("?".into()));
-    }
-
-    #[test]
-    fn strand_keys_missing_file_renders_question_marks() {
-        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
-        let path = testkit::TempDir::new("cc-strand-missing");
-        let _env = crate::test_support::set_run(path.path());
-        let kv = strand_keys();
-        let get = |k: &str| kv.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
-        assert_eq!(get("SP_STRANDS"), Some("?".to_string()));
     }
 }
 

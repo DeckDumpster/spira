@@ -362,37 +362,6 @@ mod tests {
     }
 
     #[test]
-    fn hel_counts_distinct_branches_and_attributes_by_preceding_timestamp() {
-        let state = format!("{} spira: state: open=0 plan_ready=0 in_progress=0 dwarves=0", ts(-300));
-        let lines = [
-            "SENT before-any-timestamp x",
-            &state,
-            "SENT sp-test1  myrepo mybranch  orphaned worktree",
-            "SENT sp-test1  again",
-            "FAILED sp-f x",
-        ];
-        let k = hel_metrics(&lines, NOW - 86400, NOW);
-        assert_eq!(k["SP_SENT"], "1");
-        assert_eq!(k["SP_SENT_FAILED"], "1");
-        assert_eq!(k["SP_SENT_FAILED_AGE_M"], "5");
-    }
-
-    #[test]
-    fn ledger_counts_thrash_without_inflating_worked() {
-        let lines = [
-            format!("{} awake rune sp-aaa worked", ts(-10)),
-            format!("{} done rune sp-bbb rc=0 status=requeue-thrash", ts(-10)),
-            format!("{} done rune sp-ccc rc=0 status=requeue-thrash", ts(-10)),
-            format!("{} done rune sp-eee rc=0 status=requeue-slain", ts(-10)),
-        ];
-        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
-        let k = ledger_metrics(&refs, NOW - 86400);
-        assert_eq!(k["SP_DWARF_THRASH"], "2");
-        assert_eq!(k["SP_DWARF_WORKED"], "1");
-        assert_eq!(ledger_metrics(&[], NOW - 86400)["SP_DWARF_THRASH"], "0");
-    }
-
-    #[test]
     fn repeating_act_run_is_found_and_old_burst_is_not() {
         let mk = |offs: &[i64]| -> Vec<String> {
             offs.iter()

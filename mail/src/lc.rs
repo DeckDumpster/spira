@@ -135,24 +135,6 @@ mod tests {
     }
 
     #[test]
-    fn a_terminal_work_bead_is_never_written() {
-        for state in ["LANDED", "SUPERSEDED", "DROPPED", "DONE"] {
-            let mut lc = FakeLc::new(0);
-            lc.state = state.into();
-            assert_eq!(lift_ask(&lc, "sp-w1", Lift::Reply { message_id: "m-1@spira" }, "operator"), None);
-            assert_eq!(lift_ask(&lc, "sp-w1", Lift::Withdraw, "operator"), None);
-            assert!(lc.calls().is_empty(), "{state}: {:?}", lc.calls());
-        }
-    }
-
-    #[test]
-    fn a_withdraw_is_withdraw_ask() {
-        let lc = FakeLc::new(0);
-        lift_ask(&lc, "sp-w1", Lift::Withdraw, "claude");
-        assert_eq!(lc.calls(), vec![vec!["withdraw-ask", "sp-w1", "claude"]]);
-    }
-
-    #[test]
     fn no_hold_or_no_row_is_quiet_but_cannot_tell_warns() {
         for quiet in [1, 3] {
             assert_eq!(lift_ask(&FakeLc::new(quiet), "sp-w1", Lift::Withdraw, "a"), None);

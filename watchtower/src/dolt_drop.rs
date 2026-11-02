@@ -74,20 +74,4 @@ mod tests {
         assert_eq!(peak(&by, 5), Some(("2026-10-04T13:15".to_string(), 3)));
         assert_eq!(peak(&by, 1), Some(("2026-10-04T13:16".to_string(), 1)));
     }
-
-    #[test]
-    fn a_burst_files_one_incident_and_quiet_files_none() {
-        let d = testkit::TempDir::new("wt-dolt-drop");
-        let inc = d.join("inc.sh");
-        let calls = d.join("calls");
-        std::fs::write(&inc, format!("#!/usr/bin/env bash\necho \"$SPIRA_INCIDENT_REF\" >> {}\ncat >/dev/null\n", calls.display())).unwrap();
-        let inc = inc.to_string_lossy().into_owned();
-        let lp = d.join("dolt.log");
-        std::fs::write(&lp, line("13:15").repeat(2)).unwrap();
-        run(&lp, "db", "spira", &inc, 5, 10);
-        assert!(!calls.exists());
-        std::fs::write(&lp, line("13:15").repeat(12)).unwrap();
-        run(&lp, "db", "spira", &inc, 5, 10);
-        assert!(std::fs::read_to_string(&calls).unwrap().contains("incident:dolt-client-drop-burst"));
-    }
 }

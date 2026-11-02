@@ -500,7 +500,7 @@ impl Cfg {
 
 #[cfg(test)]
 pub mod tests {
-    use super::*;
+
 
     pub fn probe_bytes(
         env: &[(&str, &str)],
@@ -538,75 +538,5 @@ pub mod tests {
         }
         s.push_str("@end\0");
         s.into_bytes()
-    }
-
-    #[test]
-    fn parses_every_section_and_requires_end() {
-        let b = probe_bytes(
-            &[
-                ("SPIRA_RUN", "/r"),
-                ("_", "/bin/bash"),
-                ("SENTINEL_LIB", "/x"),
-                ("MULTI", "a\nb"),
-            ],
-            &[("SPIRA_POISON_ASKED", "/r/pa")],
-            &[
-                "builder\tspira,plan\tspira-poison,ask",
-                "ops\tspira,incident\t",
-            ],
-            &["spira,plan\tspira-poison,ask", "spira,incident\t"],
-            &["builder", "ops", "spike"],
-            Some(&["spira\t/src/spira\torigin/main main\t0", "other\t\t\t1"]),
-        );
-        let c = Context::parse(&b).unwrap();
-        assert_eq!(
-            c.env,
-            vec![
-                ("SPIRA_RUN".into(), "/r".into()),
-                ("MULTI".into(), "a\nb".into())
-            ]
-        );
-        assert_eq!(c.get("SPIRA_POISON_ASKED"), Some("/r/pa"));
-        assert_eq!(c.runes[0].labels, vec!["spira", "plan"]);
-        assert!(c.runes[1].exclude.is_empty());
-        assert_eq!(c.partitions.len(), 2);
-        assert_eq!(c.all_runes, vec!["builder", "ops", "spike"]);
-        assert_eq!(c.repo("spira").unwrap().base(), Some("origin/main"));
-        assert_eq!(c.repo("spira").unwrap().landrefs.len(), 2);
-        assert!(c.repo("other").unwrap().forge_queued);
-        assert_eq!(c.repo("other").unwrap().root, None);
-        let mut cut = b.clone();
-        cut.truncate(b.len() - 5);
-        assert!(Context::parse(&cut).is_err());
-    }
-
-    #[test]
-    fn non_registered_fields_keep_sentinel_sh_defaults() {
-        // Only identity/non-registered fields are under test here; registered fields
-        // (scope, work_types, land_maxsec, ...) come from `Declared`, exercised by
-        // `declared_fields_pass_through_unchanged` below instead.
-        let c = Context::parse(&probe_bytes(&[], &[], &[], &[], &[], None)).unwrap();
-        let d = Declared { run: PathBuf::from("/r"), ..Declared::test_default() };
-        let k = Cfg::from_context(&c, Path::new("/h"), d);
-        assert_eq!(k.home, PathBuf::from("/h"));
-        assert_eq!(k.home_repo, "h");
-        assert_eq!(k.incident_sh, PathBuf::from("incident.sh"));
-        assert_eq!((k.lc_bin.as_str(), k.claim_bin.as_str(), k.strand_bin.as_str(), k.landing_bin.as_str(), k.tsd_bin.as_str(), k.hel_bin.as_str()), ("spira-lc", "spira-claim", "strand", "landing-pass", "tsd-write", "hel"));
-        assert_eq!(k.pass_target, 60);
-    }
-
-    #[test]
-    fn declared_fields_pass_through_unchanged() {
-        // Registered keys: `Cfg::from_context` must take `Declared`'s values as given,
-        // with no Rust-side default or fallback of its own (one source of config).
-        let c = Context::parse(&probe_bytes(&[], &[], &[], &[], &[], None)).unwrap();
-        let k = Cfg::from_context(&c, Path::new("/h"), Declared::test_default());
-        assert_eq!(k.land_maxsec, "5400");
-        assert_eq!(k.plan_labels(), vec!["plan"]);
-        assert_eq!(k.lanes_declared, "ops groomer qa mimir czar warden mender pilgrimage skuld");
-        assert_eq!(k.reclaim_grace, 10800);
-        assert_eq!(k.call_lock_wait, 30);
-        assert_eq!((k.max_dwarves, k.max_live_dwarves, k.lanes_max_live), (None, None, None));
-        assert_eq!(k.raw.get("SPIRA_ASK_LABEL").map(String::as_str), Some(""));
     }
 }

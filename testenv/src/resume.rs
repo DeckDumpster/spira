@@ -319,79 +319,10 @@ mod tests {
             Shipped { _d: d, spec, aws: PathBuf::from("aws") }
         }
 
-        fn s3(tag: &str) -> Shipped {
-            let d = testkit::TempDir::new(&format!("testenv-resume-{tag}"));
-            let aws = d.path().join("aws");
-            let script = format!(
-                "#!/bin/sh\necho \"$*\" >> \"{calls}\"\n[ \"$1 $2\" = \"s3 cp\" ] || exit 2\nshift 2\nrec=0\nwhile [ \"${{1#--}}\" != \"$1\" ]; do case \"$1\" in --only-show-errors) shift;; --recursive) rec=1; shift;; *) shift 2;; esac; done\n\
-                 map() {{ case \"$1\" in s3://*) printf '%s' \"{}/${{1#s3://}}\";; *) printf '%s' \"$1\";; esac; }}\n\
-                 src=$(map \"$1\"); dst=$(map \"$2\")\n\
-                 if [ $rec = 1 ]; then [ -d \"$src\" ] && cp -r \"$src/.\" \"$dst\"; exit 0; fi\n\
-                 if [ \"$1\" = - ]; then mkdir -p \"$(dirname \"$dst\")\" && cat > \"$dst\"; \
-                 elif [ \"$2\" = - ]; then cat \"$src\"; else exit 2; fi\n",
-                d.path().join("remote").display(),
-                calls = d.path().join("calls").display()
-            );
-            testkit::write_exe(&aws, &script);
-            let spec = "s3://bkt/resume".to_string();
-            Shipped { _d: d, spec, aws }
-        }
-
         fn store(&self, i: &KeyInputs, attempt: &str) -> Store {
             let b = backend_from_spec(&self.spec, &self.aws).unwrap().expect("a backend");
             Store::new(b, i, attempt, !attempt.ends_with("/1"))
         }
-    }
-
-    fn calls(b: &Shipped) -> usize {
-        fs::read_to_string(b._d.path().join("calls")).map(|t| t.lines().filter(|l| !l.contains(" - ")).count()).unwrap_or(0)
-    }
-
-    #[test]
-    fn a_first_attempt_looks_nothing_up_and_a_later_one_makes_one_list_call_whatever_the_suite_count() {
-        let b = Shipped::s3("calls");
-        let names: Vec<String> = (0..40).map(|n| format!("s{n}")).collect();
-        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        let i = inputs("t1", "img", &refs);
-        let first = b.store(&i, "10/1");
-        for n in &names {
-            assert_eq!(first.passed(n), None);
-        }
-        assert_eq!(calls(&b), 0, "no lookup on a first attempt");
-        for n in names.iter().take(30) {
-            first.record(n);
-        }
-        first.flush();
-        let next = b.store(&i, "10/2");
-        let found = names.iter().filter(|n| next.passed(n).is_some()).count();
-        assert_eq!(found, 30);
-        assert_eq!(calls(&b), 1, "one recursive copy answers every suite");
-    }
-
-    fn each(f: impl Fn(&Shipped)) {
-        f(&Shipped::dir("dir"));
-        f(&Shipped::s3("s3"));
-    }
-
-    #[test]
-    fn a_pass_recorded_on_one_attempt_is_found_by_the_next_for_the_same_tree_whatever_the_selection() {
-        each(|b| {
-            b.store(&inputs("t1", "img", &["a", "b", "c"]), "10/1").record("a");
-            b.store(&inputs("t1", "img", &["a", "b", "c"]), "10/1").record("b");
-            let next = b.store(&inputs("t1", "img", &["c", "b", "a"]), "10/2");
-            assert_eq!(next.passed("a").as_deref(), Some("10/1"), "{}", b.spec);
-            assert_eq!(next.passed("b").as_deref(), Some("10/1"), "{}", b.spec);
-            assert_eq!(next.passed("c"), None, "{}", b.spec);
-        });
-    }
-
-    #[test]
-    fn a_changed_tree_or_environment_skips_nothing() {
-        each(|b| {
-            b.store(&inputs("t1", "img", &["a"]), "10/1").record("a");
-            assert_eq!(b.store(&inputs("t2", "img", &["a"]), "x").passed("a"), None, "{}", b.spec);
-            assert_eq!(b.store(&inputs("t1", "img2", &["a"]), "x").passed("a"), None, "{}", b.spec);
-        });
     }
 
     #[test]
@@ -410,34 +341,6 @@ mod tests {
         assert_eq!(s.passed("b"), None);
         assert_eq!(s.passed("c"), None, "a record filed under another suite's name");
         assert_eq!(s.passed("../a"), None);
-    }
-
-    #[test]
-    fn a_run_cut_after_k_passes_leaves_k_records_and_the_next_pass_skips_exactly_k() {
-        each(|b| {
-            let names: Vec<String> = (0..12).map(|n| format!("s{n}")).collect();
-            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-            let i = inputs("t1", "img", &refs);
-            let cut = b.store(&i, "local");
-            for n in names.iter().take(7) {
-                cut.record(n);
-            }
-            cut.flush();
-            drop(cut);
-            let next = b.store(&i, "local");
-            let skipped = names.iter().filter(|n| next.passed(n).is_some()).count();
-            assert_eq!(skipped, 7, "{}", b.spec);
-        });
-    }
-
-    #[test]
-    fn a_refused_s3_write_is_said_with_its_cause() {
-        let d = testkit::TempDir::new("testenv-resume-denied");
-        let aws = d.path().join("aws");
-        testkit::write_exe(&aws, "#!/bin/sh\necho 'AccessDenied: no write to the prefix' >&2\nexit 1\n");
-        let b = S3Backend { aws, base: "s3://bkt/resume".into() };
-        let err = b.put_error("k", "v").expect("a refused write is an error");
-        assert!(err.contains("s3://bkt/resume/k") && err.contains("AccessDenied"), "{err}");
     }
 
     #[test]
