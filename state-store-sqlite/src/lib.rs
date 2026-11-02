@@ -1,6 +1,8 @@
-//! state-store-sqlite — the contract's [`Backend`] on SQLite: WAL with `synchronous=FULL`, one
+//! state-store-sqlite — the contract's [`Backend`] on SQLite: WAL with `synchronous=NORMAL`, one
 //! writer connection, a small pool of reader connections, and an exclusive opener, because the
-//! contract keeps TTLs and lock liveness in its own process's memory.
+//! contract keeps TTLs and lock liveness in its own process's memory. NORMAL may lose the last
+//! commits to a power cut, so every open jumps the head past anything it could have issued and
+//! records the jump.
 //!
 //! Every version of a key is a row of `versions` until compaction drops it, so a read at any
 //! revision since the compaction point is served from the table itself, and the rows above that

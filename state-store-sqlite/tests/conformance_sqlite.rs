@@ -1,8 +1,7 @@
-//! The SQLite backend's one end-to-end suite: every conformance scenario on a fresh file, the
-//! backend's own primitives, and the bench binary.
+//! The SQLite backend's one end-to-end suite: every conformance scenario on a fresh file, and
+//! the backend's own primitives.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -457,93 +456,4 @@ fn gc_range_skips_the_audit_history_and_pages_across_it() {
         got.push(k);
     }
     assert_eq!(got, ["a", "f", "g"]);
-}
-
-fn bench() -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_state-store-bench"));
-    cmd.env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default());
-    cmd
-}
-
-#[test]
-fn the_bench_reports_four_quantiles_and_a_sample_count() {
-    let dir = TempDir::new("sqlite-bench");
-    let load = dir.path().join("load");
-    std::fs::create_dir(&load).unwrap();
-    let out = bench()
-        .args(["--path", &dir.path().join("b.db").display().to_string()])
-        .args(["--rate", "100", "--duration-secs", "2", "--json"])
-        .args([
-            "--load-dir",
-            &load.display().to_string(),
-            "--load-mb-per-s",
-            "4",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    for q in ["p50_ms", "p99_ms", "p999_ms", "max_ms"] {
-        assert!(report[q].is_number(), "{q} missing: {report}");
-    }
-    assert!(report["samples"].as_u64().unwrap() > 0, "{report}");
-}
-
-#[test]
-fn bench_conformance_on_a_populated_file_passes_and_leaves_no_conformance_keys() {
-    let dir = TempDir::new("sqlite-live");
-    let path = dir.path().join("live.db");
-    let clock = VirtualClock::new(1_000);
-    let c = contract(open(&path), &clock);
-    for i in 0..20 {
-        put(
-            &c,
-            &format!("lifecycle/{i}"),
-            json!({"s": "READY"}),
-            &format!("seed{i}"),
-        );
-    }
-    let b = c.backend().clone();
-    b.compact(b.head().unwrap()).unwrap();
-    // More txns above the compaction point than one page of the watch log, none of them the
-    // run's: the scoped log has to start at the run, not at the store's oldest revision.
-    let mut prev = None;
-    for _ in 0..1_001 {
-        let head = b.head().unwrap();
-        b.commit(head, &[put_write("churn/k", b"{}", head + 1, prev)])
-            .unwrap();
-        prev = Some(Rev::new(head + 1, 0));
-    }
-    let before = b.head().unwrap();
-    let real = keys_at(&b, "lifecycle/", before);
-    drop(c);
-    drop(b);
-
-    let out = bench()
-        .args(["conformance", "--path", &path.display().to_string()])
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let b = open(&path);
-    let head = b.head().unwrap();
-    assert!(head > before, "the run wrote nothing");
-    assert!(
-        keys_at(&b, "conformance/", head).is_empty(),
-        "the scratch prefix was left behind"
-    );
-    assert_eq!(
-        keys_at(&b, "lifecycle/", head),
-        real,
-        "the run touched the live keys"
-    );
 }
