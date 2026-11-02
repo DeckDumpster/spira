@@ -2792,7 +2792,7 @@ fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume:
     let profile = crate::sandbox::Profile::for_run(tree, &target, Path::new(&home), threads);
     let out = results.join(format!("{script}.out"));
     deps.log(&format!("unit-tests: runner=sandbox tree={} target={}", tree.display(), target.display()));
-    let ran = match crate::sandbox::run("bwrap", &profile, &tree.join("spira").join(script), &out, args.deadline.map(Duration::from_secs)) {
+    let ran = match crate::sandbox::run("bwrap", &profile, &crate::sandbox::mounted_script(script), &out, args.deadline.map(Duration::from_secs)) {
         Ok(r) => r,
         Err(e) => {
             deps.log(&format!("unit-tests: runner=sandbox could not start: {e}"));
