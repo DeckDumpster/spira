@@ -10,7 +10,6 @@ use state_store::{Backend, Contract, Fence, Item, Request, Rev, Selector, Txn, T
 use crate::death::{Units, Vms};
 use crate::liveness::LeaseSettings;
 use crate::outcome::Log;
-use crate::run::Switches;
 use crate::slots::{SlotGrant, SlotSettings};
 
 pub struct Ports<'a> {
@@ -28,7 +27,8 @@ pub struct Ports<'a> {
     pub leases: &'a LeaseSettings,
     pub slots: &'a SlotSettings,
     pub lc: &'a dyn Lc,
-    pub switches: &'a dyn Switches,
+    /// The run directory's off switches: the halt stamp and the scoped stops.
+    pub stops: &'a dyn crate::switches::Stops,
 }
 
 /// One `spira-lc` control-store verb (`section`, `intent`): its exit code and its JSON answer.

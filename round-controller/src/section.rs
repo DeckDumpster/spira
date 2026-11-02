@@ -109,9 +109,9 @@ pub fn build(p: &Ports, repo: &str) -> Result<Option<Built>, Refusal> {
 
     let saturated = (waiting > 0 && used >= budget)
         .then(|| format!("{waiting} round(s) waiting with {used} of {budget} runner slots in use"));
-    let (halted, stopped) = match p.switches.set(repo) {
-        Some(why) if p.switches.halted() => (Some(why), None),
-        Some(why) => (None, Some(why)),
+    let (halted, stopped) = match crate::switches::check(p, repo) {
+        Some(s @ crate::switches::Stop::Halted) => (Some(s.why(repo)), None),
+        Some(s) => (None, Some(s.why(repo))),
         None => (None, None),
     };
     let fields = BTreeMap::from([

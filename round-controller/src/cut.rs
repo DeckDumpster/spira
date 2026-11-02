@@ -29,6 +29,23 @@ pub fn cut(p: &Ports, repo: &str, slot: &SlotGrant) -> Result<Option<Opened>, Re
     {
         return Err(Refusal::SlotNotHeld { key });
     }
+    match plan(p, repo)? {
+        None => Ok(None),
+        Some(Plan { members, place }) => open(p, repo, members, place).map(Some),
+    }
+}
+
+/// The round a cut would open: its members and where it goes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Plan {
+    pub members: Vec<Member>,
+    pub place: Place,
+}
+
+/// What [`cut`] would open for `repo`, read and refused through the ledger but opened nowhere and
+/// on no slot: the schedule step asks it first, so a repo with nothing to cut, a full stack or a
+/// standing refusal takes no slot.
+pub fn plan(p: &Ports, repo: &str) -> Result<Option<Plan>, Refusal> {
     let (lane, rounds) = lane_and_rounds(p, repo)?;
     let stack = Stack::of(&lane, &rounds);
     let Some((place, base)) = stack.place(&lane, &rounds) else {
@@ -54,7 +71,7 @@ pub fn cut(p: &Ports, repo: &str, slot: &SlotGrant) -> Result<Option<Opened>, Re
         }
         let id = identity(repo, &members, &base, &lane)?;
         match refuses(p, &id).map_err(|e| Refusal::unreadable(&summary_key(&id), e))? {
-            None => return open(p, repo, members, place).map(Some),
+            None => return Ok(Some(Plan { members, place })),
             Some(LedgerRefusal::RedMember { id: m, .. }) => {
                 dropped.insert(m);
             }

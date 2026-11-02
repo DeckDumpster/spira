@@ -522,6 +522,8 @@ struct FScripts {
     /// `round-vm` records the pass's verdict on the batch itself while it runs: the shared view
     /// it moves, and where to.
     round_vm_records: RefCell<Option<(SharedView, BatchView)>>,
+    /// Runs while a round VM runs: what another process does in the meantime.
+    during_vm: RefCell<Option<Box<dyn Fn()>>>,
 }
 
 impl Scripts for FScripts {
@@ -670,6 +672,9 @@ impl Scripts for FScripts {
             ami.map(|a| format!(" ami={a}")).unwrap_or_default()
         ));
         fs::write(handle, "777").unwrap();
+        if let Some(f) = self.during_vm.borrow().as_ref() {
+            f();
+        }
         if self.preempted_during_vm.get() {
             fs::write(handle.with_extension("preempt"), "why").unwrap();
         }

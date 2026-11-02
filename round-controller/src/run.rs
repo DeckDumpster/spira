@@ -6,7 +6,6 @@
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use batcher::attrib::{Budget, Job, JobResult};
 use batcher::core::Member as RoundMember;
@@ -173,40 +172,6 @@ pub fn parse_args(args: &[&str]) -> Result<RunArgs, String> {
     })
 }
 
-/// The off switches a runner obeys before each pass or sub-pass: why it must start nothing.
-pub trait Switches {
-    fn set(&self, repo: &str) -> Option<String>;
-    /// Whether the switch [`Switches::set`] names is the world's halt, not a scoped stop.
-    fn halted(&self) -> bool {
-        false
-    }
-}
-
-/// The run directory's switches: `world.halted`, and a scoped stop on the repo's rounds lane.
-/// The andon section does not exist yet, so no cord is pulled.
-pub struct RunDir(pub PathBuf);
-
-pub const HALTED_FILE: &str = "world.halted";
-pub const ROUNDS_LANE: &str = "rounds";
-
-impl Switches for RunDir {
-    fn halted(&self) -> bool {
-        self.0.join(HALTED_FILE).exists()
-    }
-
-    fn set(&self, repo: &str) -> Option<String> {
-        if self.halted() {
-            return Some(format!("{HALTED_FILE} is present: the world is stopped"));
-        }
-        spira_config::scoped_stop::stop_for(&self.0, repo, ROUNDS_LANE).map(|s| {
-            format!(
-                "{repo}'s {ROUNDS_LANE} lane is stopped by {}: {}",
-                s.owner, s.reason
-            )
-        })
-    }
-}
-
 /// The VM that serves the Judge's sub-passes, and the runner it answers through.
 pub trait SubPasses: RoundRunner {
     /// The child serving the sub-passes, once one is up.
@@ -216,7 +181,6 @@ pub trait SubPasses: RoundRunner {
 }
 
 pub struct RunEnv<'a> {
-    pub switches: &'a dyn Switches,
     pub sleep: &'a dyn Sleep,
     pub poll_ms: u64,
     pub teardown_ms: u64,
@@ -582,7 +546,8 @@ impl<R: SubPasses> RoundRunner for Guard<'_, '_, '_, R> {
         if let Some(l) = self.lost.get() {
             return Err(format!("the lease is lost ({})", l.word()));
         }
-        if let Some(why) = self.env.switches.set(&self.keeper.a.repo) {
+        let repo = &self.keeper.a.repo;
+        if let Some(why) = crate::switches::check(self.keeper.p, repo).map(|s| s.why(repo)) {
             self.stopped = Some(why.clone());
             return Err(format!("no sub-pass starts: {why}"));
         }
@@ -746,7 +711,7 @@ pub fn run<R: SubPasses>(p: &Ports, env: &RunEnv, subs: &mut R, a: &RunArgs) -> 
         Err(e) => return refuse(slot, lease, e),
     };
     if resumed.is_none() {
-        if let Some(why) = env.switches.set(&a.repo) {
+        if let Some(why) = crate::switches::check(p, &a.repo).map(|s| s.why(&a.repo)) {
             give_back(p, slot, lease);
             return RunEnd::Stopped { why };
         }
@@ -811,7 +776,7 @@ pub fn run<R: SubPasses>(p: &Ports, env: &RunEnv, subs: &mut R, a: &RunArgs) -> 
         leases: p.leases,
         slots: p.slots,
         lc: p.lc,
-        switches: p.switches,
+        stops: p.stops,
     };
     let mut guard = Guard {
         last_progress: p.clock.now_ms(),

@@ -569,7 +569,7 @@ mod tests {
                 leases: &self.leases,
                 slots: &self.slots,
                 lc: &crate::real::Unserved,
-                switches: &crate::sim::NoSwitches,
+                stops: &crate::switches::NoStops,
             }
         }
 

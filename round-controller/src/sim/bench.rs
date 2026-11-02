@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
-use runtime::ports::{Proc, ProcOutput, ProcSpec, SeededRng, VirtualClock};
+use runtime::ports::{Clock, Proc, ProcOutput, ProcSpec, SeededRng, VirtualClock};
 use state_store::{
     Config, Contract, Fence, Item, MemBackend, Object, Request, Rev, Selector, Txn, TxnResult,
 };
@@ -14,12 +14,13 @@ use crate::liveness::LeaseSettings;
 use crate::outcome::MemLog;
 use crate::ports::{Launch, Launched, Lc, Ports, Store};
 use crate::real::Unserved;
-use crate::run::Switches;
 use crate::sim::git::FakeGit;
 use crate::sim::judge::FakeLedger;
 use crate::sim::verbs::FakeVerbs;
 use crate::sim::vm::FakeVm;
 use crate::slots::{SlotGrant, SlotSettings};
+use crate::switches::Stops;
+use spira_config::scoped_stop::RepoStop;
 
 /// Unit states by name; a unit never set is one systemd does not know, and a state set `until` a
 /// time reads as unknown from then on.
@@ -47,7 +48,6 @@ impl FakeUnits {
 
 impl Units for FakeUnits {
     fn state(&self, unit: &str) -> UnitState {
-        use runtime::ports::Clock;
         match crate::lock(&self.states).get(unit) {
             Some((s, until)) if until.is_none_or(|u| self.clock.now_ms() < u) => s.clone(),
             _ => UnitState::Stopped("unknown".into()),
@@ -86,7 +86,6 @@ impl FakeVms {
     }
 
     fn fact(&self, unit: &str) -> VmFact {
-        use runtime::ports::Clock;
         match crate::lock(&self.facts).get(unit) {
             Some((f, until)) if until.is_none_or(|u| self.clock.now_ms() < u) => f.clone(),
             _ => VmFact::NoVm,
@@ -115,18 +114,85 @@ pub struct Tried {
     pub slot_token: Rev,
 }
 
+/// A launched runner that holds its round's lease and its slot from `from_ms` and, at `ends_ms`,
+/// records its round GREEN and gives both back, as a runner whose pass was green does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Running {
+    pub repo: String,
+    pub batch: String,
+    pub lease_token: Rev,
+    pub slot: crate::slots::Slot,
+    pub slot_token: Rev,
+    pub from_ms: u64,
+    pub ends_ms: u64,
+    pub ended: bool,
+}
+
+/// One scripted launch: its answer, and how long a started runner runs before it finishes green.
+pub type LaunchAnswer = (Result<(), String>, Option<u64>);
+
 /// Launches answered in script order: `Ok` starts, `Err` fails with its text. An unscripted
-/// launch fails and is kept as a fault.
+/// launch fails and is kept as a fault. A start scripted with a run time is a [`Running`] runner.
 #[derive(Default)]
 pub struct FakeLaunch {
-    script: Mutex<VecDeque<Result<(), String>>>,
+    script: Mutex<VecDeque<LaunchAnswer>>,
     tried: Mutex<Vec<Tried>>,
     faults: Mutex<Vec<String>>,
+    running: Mutex<Vec<Running>>,
 }
 
 impl FakeLaunch {
     pub fn script(&self, r: Result<(), String>) {
-        crate::lock(&self.script).push_back(r);
+        crate::lock(&self.script).push_back((r, None));
+    }
+
+    /// A start whose runner finishes green `ms` after it is launched.
+    pub fn script_running(&self, ms: u64) {
+        crate::lock(&self.script).push_back((Ok(()), Some(ms)));
+    }
+
+    /// Every runner started with a run time, ended or not.
+    pub fn running(&self) -> Vec<Running> {
+        crate::lock(&self.running).clone()
+    }
+
+    /// When the next running runner ends.
+    pub fn next_end_ms(&self) -> Option<u64> {
+        crate::lock(&self.running)
+            .iter()
+            .filter(|r| !r.ended)
+            .map(|r| r.ends_ms)
+            .min()
+    }
+
+    /// Ends the runner due first: its round GREEN, then its lease and slot given back.
+    pub fn end_next(&self, p: &Ports) {
+        let r = {
+            let mut running = crate::lock(&self.running);
+            let Some(r) = running
+                .iter_mut()
+                .filter(|r| !r.ended)
+                .min_by_key(|r| r.ends_ms)
+            else {
+                return;
+            };
+            r.ended = true;
+            r.clone()
+        };
+        let key = crate::resources::round_key(&r.repo, &r.batch);
+        if let Ok(Some(i)) = p.store.get(&key) {
+            let mut data = i.value.data;
+            data["state"] = serde_json::json!("Green");
+            let t = Txn::new().put(&key, Object::new(data));
+            let _ = p.store.txn(
+                &t,
+                &Request::new(&format!("runner-green-{}", r.batch), "runner", "green"),
+            );
+        }
+        let lease =
+            crate::lease::Lease::handed(crate::lease::Resource::round(&r.repo, &r.batch), r.lease_token);
+        let _ = lease.release(p);
+        let _ = SlotGrant::handed(p, r.slot, r.slot_token).release(p);
     }
 
     /// The unit of every launch tried, started or not.
@@ -146,7 +212,7 @@ impl FakeLaunch {
 impl Launch for FakeLaunch {
     fn start(
         &self,
-        _: &Ports,
+        p: &Ports,
         repo: &str,
         batch: &str,
         lease_token: Rev,
@@ -162,8 +228,23 @@ impl Launch for FakeLaunch {
             slot_token: slot.token(),
         });
         match crate::lock(&self.script).pop_front() {
-            Some(Ok(())) => Launched::Started { unit },
-            Some(Err(text)) => Launched::Failed { text },
+            Some((Ok(()), runs)) => {
+                if let Some(ms) = runs {
+                    let from_ms = p.clock.now_ms();
+                    crate::lock(&self.running).push(Running {
+                        repo: repo.into(),
+                        batch: batch.into(),
+                        lease_token,
+                        slot: slot.slot(),
+                        slot_token: slot.token(),
+                        from_ms,
+                        ends_ms: from_ms + ms,
+                        ended: false,
+                    });
+                }
+                Launched::Started { unit }
+            }
+            Some((Err(text), _)) => Launched::Failed { text },
             None => {
                 let text = format!("unscripted launch of {unit} for {repo}");
                 crate::lock(&self.faults).push(text.clone());
@@ -173,33 +254,44 @@ impl Launch for FakeLaunch {
     }
 }
 
-/// The off switches a bench is under: none until a test sets the world's halt or a repo's stop.
+/// The run directory's off switches, set by a test or a scenario: the halt stamp, and scoped
+/// stops on the rounds lane by repo.
 #[derive(Default)]
-pub struct BenchSwitches {
+pub struct FakeStops {
     halted: Mutex<bool>,
-    stopped: Mutex<BTreeMap<String, String>>,
+    stops: Mutex<BTreeMap<String, RepoStop>>,
 }
 
-impl BenchSwitches {
+impl FakeStops {
     pub fn halt(&self) {
         *crate::lock(&self.halted) = true;
     }
 
-    pub fn stop(&self, repo: &str, why: &str) {
-        crate::lock(&self.stopped).insert(repo.into(), why.into());
+    /// A stop on `repo`'s rounds lane.
+    pub fn stop(&self, repo: &str, owner: &str, reason: &str, until: &str) {
+        crate::lock(&self.stops).insert(
+            repo.into(),
+            RepoStop {
+                repo: repo.into(),
+                lanes: vec![crate::switches::ROUNDS_LANE.into()],
+                owner: owner.into(),
+                reason: reason.into(),
+                until: until.into(),
+                since: 0,
+            },
+        );
     }
 }
 
-impl Switches for BenchSwitches {
+impl Stops for FakeStops {
     fn halted(&self) -> bool {
         *crate::lock(&self.halted)
     }
-
-    fn set(&self, repo: &str) -> Option<String> {
-        if self.halted() {
-            return Some("world.halted is present: the world is stopped".into());
-        }
-        crate::lock(&self.stopped).get(repo).cloned()
+    fn scoped(&self, repo: &str, lane: &str) -> Option<RepoStop> {
+        crate::lock(&self.stops)
+            .get(repo)
+            .filter(|s| s.lanes.iter().any(|l| l == lane))
+            .cloned()
     }
 }
 
@@ -280,7 +372,7 @@ pub struct Bench {
     pub git: Arc<FakeGit>,
     /// When each runner slot was given back, on the virtual clock.
     pub slot_releases: Mutex<Vec<u64>>,
-    pub switches: BenchSwitches,
+    pub stops: FakeStops,
     /// Every section and intent verb, in order, answered by spira-lc's own dispatch.
     pub lc_calls: Mutex<Vec<LcCall>>,
     front: Mutex<Front>,
@@ -349,7 +441,7 @@ impl Bench {
             ledger: FakeLedger::default(),
             git: Arc::default(),
             slot_releases: Mutex::default(),
-            switches: BenchSwitches::default(),
+            stops: FakeStops::default(),
             lc_calls: Mutex::default(),
             front: Mutex::new(front),
         }
@@ -382,7 +474,7 @@ impl Bench {
             leases: &self.settings,
             slots: &self.slot_settings,
             lc: self,
-            switches: &self.switches,
+            stops: &self.stops,
         }
     }
 
@@ -507,7 +599,6 @@ impl Store for Bench {
         }
         self.store.release(f, req)?;
         if f.resource.starts_with("runner-slot/") {
-            use runtime::ports::Clock;
             crate::lock(&self.slot_releases).push(self.clock.now_ms());
         }
         Ok(())

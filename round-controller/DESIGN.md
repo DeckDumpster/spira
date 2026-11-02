@@ -131,9 +131,18 @@ counts.
   know. `[[vm_fact]]` — `unit`, `fact` (`none`, `running`, `unreadable`,
   `ec2-unreadable` with `launched_at` in epoch seconds), optional `until` (epoch seconds) from
   which the VM is gone. `[[launch]]` — `ok = true` or
-  `refuse = "<why>"`, answered in order; an unscripted launch is a fault.
-- `[slots]` — `spill` (`SPIRA_ROUND_VM_SPILL`'s word) and `ec2` (`SPIRA_ROUND_RUNNER_SLOTS_EC2`).
-  Absent, the bench's: spill on with three EC2 slots.
+  `refuse = "<why>"`, answered in order; an unscripted launch is a fault. A start with
+  `finish_secs` is a runner that holds its lease and slot that long, then records its round
+  GREEN and gives both back; it renews nothing, so the scenario's lease TTL must outlast it.
+- `[off]` — `halted` (`run/world.halted`) and `stop = [{ repo, owner, reason, until }]`, scoped
+  stops on those repos' rounds lanes, for the whole scenario. The andon section is a `[[store]]`
+  seed under `telemetry/sections/Andon/`.
+- `[slots]` — `spill` (`SPIRA_ROUND_VM_SPILL`'s word) and `ec2` (`SPIRA_ROUND_RUNNER_SLOTS_EC2`),
+  or `per_profile = true` alone: the profile's `runner_slots`, the Proxmox slot first and the
+  rest on EC2 spill. Absent, the bench's: spill on with three EC2 slots.
+- `[[slot]]` — `repo`, optional `pool`, `n`, `ttl_secs`, `released`: a slot the harness hands the
+  cut itself after each pass. A scenario with one is about the cut, and runs without the
+  schedule step, which would cut on slots of its own.
 - `[[slot_user]]` — `name` (its holder and unit), `start_secs`, `hold_secs`, optional `prefer`
   (pool words, default `proxmox` then `ec2`), `hand` (asks through `grant_for_hand`) and
   `retry_secs` (default the renewal interval): a round's runner or a hand driver that takes a
@@ -151,7 +160,10 @@ counts.
   `vms-at-once[:<pool>]`, `first-grant-secs`, `section-writes`, `section-refusals`,
   `section-raised:<Type>`, `section-distance:positive`, `section-last-distance` (rounded up),
   `section-green-with-blocker`, `acks:<applied|already-applied|refused>`, `acks-stale:<json>`,
-  `opened-with:<bead>`), exactly one of `equals` and `at_most`, optional `inverted`.
+  `opened-with:<bead>`, `stops:<word>` (repos stopped by that off switch), `calls-of:<repo>`,
+  `writes-under:<prefix>` (keys written there since seeding), `members:<STATE>` (lifecycle
+  records in it), `runners-at-once[:<repo>]`, `repos-at-once`), exactly one of `equals` and
+  `at_most`, optional `inverted`, and optional `profile`, the one profile it is held under.
   `store-writes` leaves out the section door's own writes.
 
 The store's GC ticks before every pass, so a lapsed lock is gone by the pass that follows it.
@@ -174,6 +186,24 @@ name. `real::launch::start` runs `systemd-run --user --unit=… --collect --quie
 `SPIRA_LAUNCH` and `SPIRA_LAUNCH_CTL` name the programs standing for `systemd-run` and
 `systemctl`; a world sets both to `sim-launch`. A re-drive grants a slot, takes the lease,
 records the unit under the slot, then launches; a failed launch gives both back and is recorded.
+
+## Pass
+
+`pass` checks the off switches first for each repo (`switches::check`): `run/world.halted`, then a
+scoped stop on the repo's `rounds` lane, then the andon sections under
+`telemetry/sections/Andon/`, where a condition `True` whose `reason` is `RoundController/<repo>`
+(or the whole kind, `RoundController`) is a pulled cord. Under any of them the repo gets only its section
+published, which names the switch, and one `stopped <switch>` outcome naming the owner, reason
+and lift condition; a store that
+cannot list the andon sections stops it too. The runner checks the same three before its pass and
+each sub-pass. Otherwise the steps run in a fixed order: forge sweep, orphans, supersede, land,
+schedule, intents, section (the forge sweep does nothing until its piece registers it). The
+orphans step leaves a round that can no longer land to supersede. The schedule step takes a slot
+for a repo with members ready and room in its stack, cuts on it, takes the round's lease and
+launches the runner with both tokens; a failed launch gives both back and records the attempt in
+`redrive`, and a round whose lease cannot be taken is abandoned before any pass ran. Nothing in
+`pass` waits on a VM, sets `SPIRA_QUEUE_LOCK_HELD` or takes the per-repo queue lock. The hand
+verbs `cut --members` and `launch` are the operator's and check no switch.
 
 ## Lander
 

@@ -1,0 +1,68 @@
+description = "the schedule step cuts a round on a slot it took and takes its lease, and the launch fails: both are given back at once, the attempt is recorded in the round's redrive, and the next pass finds the round an orphan inside its back-off rather than cutting again"
+repos = ["home"]
+
+[run]
+epoch = 1800000000
+passes = 2
+every_secs = 30
+
+[[store]]
+key = "lanes/home"
+data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
+
+[[store]]
+key = "lifecycle/sp-a"
+data = { repo = "home", state = "SUBMITTED", tip = "a1" }
+
+[[verb]]
+verb = "open"
+ok = { batch = "r1", head = "r1-h" }
+
+[[launch]]
+refuse = "systemd-run: exit 1"
+
+[[expect]]
+name = "one-round-cut"
+count = "calls:open"
+equals = 1
+
+[[expect]]
+name = "one-launch-tried"
+count = "launches"
+equals = 1
+
+[[expect]]
+name = "the-failure-told"
+count = "outcomes:launch-failed:r1"
+equals = 1
+
+[[expect]]
+name = "the-attempt-recorded"
+count = "redrive-attempts"
+equals = 1
+
+[[expect]]
+name = "the-slot-given-back"
+count = "slot-releases"
+equals = 1
+
+[[expect]]
+name = "no-lease-left-held"
+count = "live-locks:round/"
+equals = 0
+
+[[expect]]
+name = "no-slot-left-held"
+count = "live-locks:runner-slot/"
+equals = 0
+
+[[expect]]
+name = "the-next-pass-waits-out-the-back-off"
+count = "outcomes:redrive-waiting:r1"
+equals = 1
+
+[[expect]]
+name = "inverted-launched"
+count = "outcomes:launched"
+equals = 1
+inverted = true

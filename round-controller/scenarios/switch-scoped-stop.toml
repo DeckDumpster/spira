@@ -1,0 +1,99 @@
+description = "a scoped stop on one repo's rounds lane: that repo gets no verb call and no write and is published Stopped with the stop's owner, reason and lift condition, while the other repo's orphan is re-driven as usual"
+repos = ["held", "free"]
+
+[run]
+epoch = 1800000000
+passes = 2
+every_secs = 30
+
+[off]
+stop = [{ repo = "held", owner = "concierge", reason = "hand fix in flight", until = "bead:sp-fix=LANDED" }]
+
+[[store]]
+key = "lanes/held"
+data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
+
+[[git]]
+repo = "held"
+landing = "base-0"
+
+[[store]]
+key = "batches/held/o1"
+data = { batch_id = "o1", repo = "held", state = "CiRunning", head = "o1-h", base = "base-0", pass = 1, version = 2, tested_base = "base-0", members = [{ id = "sp-o", tip = "o1" }], last_lease_token = { main = 7, sub = 0 } }
+
+[[store]]
+key = "batches/held/g1"
+data = { batch_id = "g1", repo = "held", state = "Green", head = "g1-h", base = "base-0", pass = 1, version = 3, tested_base = "base-0", members = [{ id = "sp-g", tip = "g1" }] }
+
+[[store]]
+key = "lifecycle/sp-n"
+data = { repo = "held", state = "SUBMITTED", tip = "n1" }
+
+[[verb]]
+verb = "land"
+batch = "g1"
+ok = {}
+
+[[verb]]
+verb = "open"
+repo = "held"
+ok = { batch = "n-r1", head = "n-h1" }
+
+# The free repo's orphan: no lane record, so only the orphans step has anything to do there.
+[[store]]
+key = "batches/free/f1"
+data = { state = "CI_RUNNING", members = "sp-f:1", last_lease_token = { main = 9, sub = 0 } }
+
+[[launch]]
+ok = true
+
+[[expect]]
+name = "no-verb-called-for-the-stopped-repo"
+count = "calls-of:held"
+equals = 0
+
+[[expect]]
+name = "no-round-of-the-stopped-repo-written"
+count = "writes-under:batches/held/"
+equals = 0
+
+[[expect]]
+name = "no-lease-of-the-stopped-repo-taken"
+count = "writes-under:locks/round/held/"
+equals = 0
+
+[[expect]]
+name = "no-refusal-of-the-stopped-repo-kept"
+count = "writes-under:telemetry/round-controller/held/"
+equals = 0
+
+[[expect]]
+name = "stopped-published-every-pass"
+count = "outcomes:stopped"
+equals = 2
+
+[[expect]]
+name = "the-free-repo-was-visited"
+count = "outcomes:visited"
+equals = 2
+
+[[expect]]
+name = "the-free-repo-s-orphan-is-re-driven"
+count = "outcomes:redriven:f1"
+equals = 1
+
+[[expect]]
+name = "only-the-free-repo-launched"
+count = "launches"
+equals = 1
+
+[[expect]]
+name = "stopped-by-that-switch"
+count = "stops:scoped-stop"
+equals = 2
+
+[[expect]]
+name = "inverted-the-stopped-repo-s-orphan-re-driven"
+count = "outcomes:redriven:o1"
+equals = 1
+inverted = true
