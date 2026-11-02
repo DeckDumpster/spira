@@ -9,6 +9,7 @@ pub mod intents;
 pub mod judge;
 pub mod knobs;
 pub mod land;
+pub mod lane;
 pub mod lease;
 pub mod ledger;
 pub mod liveness;

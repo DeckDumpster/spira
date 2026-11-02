@@ -270,6 +270,7 @@ pub fn drive<W: Advance>(
     };
     let p = &Ports {
         stops: &switches,
+        installed: &crate::lane::NoRounds,
         ..*p
     };
     let env = RunEnv {

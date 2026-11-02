@@ -57,6 +57,7 @@ authority.
 | `verdicts/<repo>/<hash>` | the identity's summary: class, attempt count, back-off, last attempt | CAS on `mod_rev` |
 | `verdicts/<repo>/<hash>/attempt/<n>` | one attempt's verdict, with its sub-passes | create-if-absent |
 | `verdicts/<repo>/by-member/<id>/<tip>` | the identity hash that proved this member red | the Judge, only for proven members |
+| `lanes/<repo>` | what every cut on the repo is tested on: `landing_ref`, `image_digest`, `harness_version`, `selection`, `concurrency` | `pass`'s lane step, CAS; the Lander moves `landing_ref` in its landing txn |
 | `faults/<repo>/<base>/<image-digest>` | a standing lane fault: cause (Base, Image, Install), evidence, since | the Judge |
 | `locks/round/<repo>/<batch>` | the round's driver lease | the contract's `lock` |
 | `locks/runner-slot/<pool>/<n>` | one runner slot | the contract's `lock` |
@@ -198,7 +199,15 @@ published, which names the switch, and one `stopped <switch>` outcome naming the
 and lift condition; a store that
 cannot list the andon sections stops it too. The runner checks the same three before its pass and
 each sub-pass. Otherwise the steps run in a fixed order: forge sweep, orphans, supersede, land,
-schedule, intents, section (the forge sweep does nothing until its piece registers it). The
+lane, schedule, intents, section (the forge sweep does nothing until its piece registers it). The
+lane step records `lanes/<repo>` for each repo the registry lands by rounds: the commit git's
+landing ref is at, the image built from the installed release's recipe (`round-vm recipe-sha`)
+and the commit its `MANIFEST` names, written only when one changed. The landing ref moves only
+forward, and not while a live round's head is already under git's ref, which is the Lander's to
+record; the Lander retries a held round whose head git's ref has taken. `round-controller lane
+record` runs this step alone, so the lanes `cutover-check` reads exist before any pass; a lane
+is still what `pass` acts on, so the next pass takes the repo over. The image is named by its
+recipe, so every release changes the harness and needs a fresh base verdict. The
 orphans step leaves a round that can no longer land to supersede. The schedule step takes a slot
 for a repo with members ready and room in its stack, cuts on it, takes the round's lease and
 launches the runner with both tokens; a failed launch gives both back and records the attempt in

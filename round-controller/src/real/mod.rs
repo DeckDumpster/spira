@@ -2,6 +2,7 @@
 
 pub mod child;
 pub mod git;
+pub mod installed;
 pub mod launch;
 pub mod lc;
 pub mod liveness;

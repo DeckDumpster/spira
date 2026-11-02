@@ -23,7 +23,8 @@ fn unregistered(_: &Ports, _: &str) {}
 /// a re-drive takes its slot first. Supersede releases the members of a round that can no longer
 /// land, so they are in the pool for the cut the schedule step makes later in the same pass. Land
 /// runs before the schedule step, so a round it lands moves the base the next cut is made on. The
-/// intents are applied next and the section is built last, so it shows what every other step did.
+/// lane follows git only after the Lander has recorded what landed. The intents are applied next
+/// and the section is built last, so it shows what every other step did.
 pub const STEPS: &[Step] = &[
     Step {
         name: FORGE_SWEEP,
@@ -40,6 +41,10 @@ pub const STEPS: &[Step] = &[
     Step {
         name: crate::land::STEP,
         run: crate::land::step,
+    },
+    Step {
+        name: crate::lane::STEP,
+        run: crate::lane::step,
     },
     Step {
         name: crate::schedule::STEP,
@@ -97,13 +102,13 @@ mod tests {
         let names: Vec<&str> = STEPS.iter().map(|s| s.name).collect();
         assert_eq!(
             names,
-            ["forge-sweep", "orphans", "supersede", "land", "schedule", "intents", "section"]
+            ["forge-sweep", "orphans", "supersede", "land", "lane", "schedule", "intents", "section"]
         );
         let kept: Vec<&str> = steps_without(&["intents".into(), "section".into()])
             .iter()
             .map(|s| s.name)
             .collect();
-        assert_eq!(kept, ["forge-sweep", "orphans", "supersede", "land", "schedule"]);
+        assert_eq!(kept, ["forge-sweep", "orphans", "supersede", "land", "lane", "schedule"]);
     }
 
     #[test]

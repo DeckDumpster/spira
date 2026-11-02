@@ -29,6 +29,8 @@ pub struct Ports<'a> {
     pub lc: &'a dyn Lc,
     /// The run directory's off switches: the halt stamp and the scoped stops.
     pub stops: &'a dyn crate::switches::Stops,
+    /// The round image and harness the installed release runs each round repo's rounds on.
+    pub installed: &'a dyn crate::lane::Installed,
 }
 
 /// One `spira-lc` control-store verb (`section`, `intent`): its exit code and its JSON answer.
