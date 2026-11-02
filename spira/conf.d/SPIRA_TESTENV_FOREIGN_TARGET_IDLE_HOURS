@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=testenv
+DOC=HOW LONG A REGISTERED REPOSITORY'S WARM CARGO TARGET MAY SIT UNUSED before another repository's run removes it, in hours. 0 never removes one.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG AN UNUSED FOREIGN WARM TARGET IS KEPT (sp-ejhs5j), in hours. Any repository's run
+    # removes another's target past this, unless a run holds it; the next run of that
+    # repository builds cold.
+    : "${SPIRA_TESTENV_FOREIGN_TARGET_IDLE_HOURS:=48}"
+SPIRA_CONF_DEFAULT_EOF

@@ -215,6 +215,21 @@ pub const DEFAULT_CAP: u64 = 900;
 /// exclusive to merge, so runs overlap and only a merge waits for them to finish.
 pub struct Cache {
     dir: PathBuf,
+    bound: Bound,
+}
+
+/// How large a warm target may grow and how long a repository's target may sit unused
+/// (sp-ejhs5j). A run merges only what it newly built and nothing ever removes an artifact,
+/// so a warm target keeps every lock variant and invocation it has ever seen: dumpstar's
+/// held ~100 copies of each workspace crate, 117 GB, 2026-11-02. Over the cutoff the target
+/// is dropped whole and the next run builds cold once; per-artifact pruning by age would
+/// delete live dependencies, since cargo never touches an artifact it reuses.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Bound {
+    /// A warm target larger than this after a merge is removed. 0: no cutoff.
+    pub max_bytes: u64,
+    /// Another repository's target unused for this long is removed. None: never.
+    pub idle: Option<Duration>,
 }
 
 /// How old an unreferenced run directory must be before the reaper takes it: past any tier's cap.
@@ -280,13 +295,58 @@ impl Cache {
             .chars()
             .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' })
             .collect();
-        Cache { dir: root.join(name) }
+        Cache { dir: root.join(name), bound: Bound::default() }
+    }
+
+    pub fn bounded(self, bound: Bound) -> Cache {
+        Cache { bound, ..self }
     }
 
     fn prepare(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(self.dir.join("target"))?;
         std::fs::create_dir_all(self.dir.join("runs"))?;
-        std::fs::create_dir_all(self.dir.join("cargo"))
+        std::fs::create_dir_all(self.dir.join("cargo"))?;
+        crate::sandbox::touch(&self.dir.join("target"));
+        Ok(())
+    }
+
+    /// Removes the warm target of every other repository whose target has gone unused for
+    /// the idle window and that no run holds. Returns what it removed.
+    fn reap_idle(&self) -> Vec<PathBuf> {
+        let (Some(idle), Some(root)) = (self.bound.idle, self.dir.parent()) else { return Vec::new() };
+        let mut gone = Vec::new();
+        for e in std::fs::read_dir(root).into_iter().flatten().flatten() {
+            let dir = e.path();
+            let target = dir.join("target");
+            if dir == self.dir || !target.is_dir() {
+                continue;
+            }
+            let age = std::fs::metadata(&target).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+            if age.is_none_or(|a| a < idle) {
+                continue;
+            }
+            let other = Cache { dir: dir.clone(), bound: self.bound };
+            let Some(_ex) = other.flock(libc::LOCK_EX) else { continue };
+            if std::fs::remove_dir_all(&target).is_ok() {
+                gone.push(target);
+            }
+        }
+        gone
+    }
+
+    /// Drops this repository's warm target when a merge has left it over the cutoff; the
+    /// caller holds the exclusive lock. Returns the size it removed.
+    fn enforce_cutoff(&self) -> Option<u64> {
+        if self.bound.max_bytes == 0 {
+            return None;
+        }
+        let target = self.dir.join("target");
+        let bytes = crate::reap::size_of(&target);
+        if bytes <= self.bound.max_bytes || std::fs::remove_dir_all(&target).is_err() {
+            return None;
+        }
+        let _ = std::fs::create_dir_all(&target);
+        Some(bytes)
     }
 
     fn run_dir(&self, cname: &str) -> PathBuf {
@@ -367,7 +427,15 @@ impl Cache {
                     .output();
                 let _ = std::fs::remove_file(self.holder_path());
                 match merged {
-                    Ok(o) if o.status.success() => {}
+                    Ok(o) if o.status.success() => {
+                        if let Some(b) = self.enforce_cutoff() {
+                            log(&format!(
+                                "{cname}: warm target was {} MiB after the merge, over the {} MiB cutoff: removed; the next run builds cold",
+                                b >> 20,
+                                self.bound.max_bytes >> 20
+                            ));
+                        }
+                    }
                     Ok(o) => log(&format!(
                         "{cname}: warm cache publish failed (not a verdict; the warm target is stale): cp rc={} {}",
                         o.status.code().unwrap_or(-1),
@@ -417,6 +485,9 @@ impl TierRun<'_> {
         let t0 = Instant::now();
         if self.cache.prepare().is_err() {
             return (Outcome::Fault("cache-dir"), 0);
+        }
+        for t in self.cache.reap_idle() {
+            (self.log)(&format!("{name}: removed {}, unused past the idle window", t.display()));
         }
         static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let cname = format!(
@@ -626,6 +697,61 @@ mod tests {
         assert_eq!(first_error("Running\n  1 failed\nserving on http://x\n").unwrap(), "1 failed");
         assert_eq!(first_error("Running\ntimed out waiting\ndumpstar serving on http://127.0.0.1:18080\n").unwrap(), "timed out waiting");
         assert_eq!(tail("a\nb\nc\n", 2), "b\nc");
+    }
+
+    /// A passing run's layer holding `bytes` of new artifacts, ready to publish.
+    fn layer(cache: &Cache, cname: &str, bytes: usize) {
+        let up = cache.run_dir(cname).join("upper/debug/deps");
+        std::fs::create_dir_all(&up).unwrap();
+        std::fs::write(up.join(format!("lib{cname}.rlib")), vec![0u8; bytes]).unwrap();
+    }
+
+    #[test]
+    fn a_merge_that_leaves_the_warm_target_over_its_cutoff_removes_it_whole() {
+        let root = testkit::TempDir::new("foreign-cutoff");
+        let cache = Cache::new(root.path(), "r").bounded(Bound { max_bytes: 1 << 20, idle: None });
+        cache.prepare().unwrap();
+        let lines = std::sync::Mutex::new(Vec::<String>::new());
+        let log = |l: &str| lines.lock().unwrap().push(l.to_string());
+        layer(&cache, "c1", 600 << 10);
+        cache.publish("c1", None, &log);
+        assert!(cache.dir.join("target/debug/deps/libc1.rlib").is_file(), "under the cutoff the merge stands");
+        layer(&cache, "c2", 600 << 10);
+        cache.publish("c2", None, &log);
+        let target = cache.dir.join("target");
+        assert!(target.is_dir() && std::fs::read_dir(&target).unwrap().next().is_none(), "over the cutoff the target is emptied");
+        let got = lines.lock().unwrap().join("\n");
+        assert!(got.contains("c2: warm target was 1 MiB after the merge, over the 1 MiB cutoff: removed"), "{got}");
+    }
+
+    #[test]
+    fn another_repositorys_target_unused_past_the_idle_window_is_removed_and_a_fresh_one_kept() {
+        let root = testkit::TempDir::new("foreign-idle");
+        let idle = Some(Duration::from_secs(3600));
+        let stale = Cache::new(root.path(), "stale");
+        let fresh = Cache::new(root.path(), "fresh");
+        let me = Cache::new(root.path(), "me").bounded(Bound { max_bytes: 0, idle });
+        for c in [&stale, &fresh, &me] {
+            c.prepare().unwrap();
+        }
+        let old = std::time::SystemTime::now() - Duration::from_secs(7200);
+        std::fs::File::open(stale.dir.join("target")).unwrap().set_modified(old).unwrap();
+        let gone = me.reap_idle();
+        assert_eq!(gone, vec![stale.dir.join("target")]);
+        assert!(!stale.dir.join("target").exists() && fresh.dir.join("target").is_dir() && me.dir.join("target").is_dir());
+    }
+
+    #[test]
+    fn a_held_target_is_never_reaped_however_old() {
+        let root = testkit::TempDir::new("foreign-idle-held");
+        let busy = Cache::new(root.path(), "busy");
+        let me = Cache::new(root.path(), "me").bounded(Bound { max_bytes: 0, idle: Some(Duration::from_secs(1)) });
+        busy.prepare().unwrap();
+        me.prepare().unwrap();
+        std::fs::File::open(busy.dir.join("target")).unwrap().set_modified(std::time::SystemTime::now() - Duration::from_secs(60)).unwrap();
+        let _held = busy.flock(libc::LOCK_SH).unwrap();
+        assert!(me.reap_idle().is_empty());
+        assert!(busy.dir.join("target").is_dir());
     }
 
     #[test]
