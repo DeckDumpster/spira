@@ -25,7 +25,8 @@ const LOAD_CHUNK: usize = 1 << 20;
 const LOAD_FILE_MAX: u64 = 256 << 20;
 /// Section keys the reconciler mix cycles through: one per publishing component.
 const SECTIONS: u64 = 16;
-/// Padding on a section write, so it carries a section document's bytes, not a counter's.
+/// Padding on a section write, so it carries a section document's bytes, not a counter's. An
+/// estimate of a section with its actions and distance terms, sized up rather than down.
 const SECTION_BYTES: usize = 4 << 10;
 /// The TTLs the real writers put on a section and on a pass record.
 const SECTION_TTL_SECS: u64 = 7 * 24 * 3600;
@@ -443,6 +444,20 @@ mod tests {
         ));
         assert!(matches!(
             with("reconciler"),
+            Ok(Command::Cas(CasArgs {
+                mix: Mix::Reconciler,
+                ..
+            }))
+        ));
+        assert!(matches!(
+            parse(&args(&[
+                "--path",
+                "p",
+                "--rate",
+                "5",
+                "--duration-secs",
+                "1"
+            ])),
             Ok(Command::Cas(CasArgs {
                 mix: Mix::Reconciler,
                 ..
