@@ -48,7 +48,7 @@ fn answers(state: &str, lease: Value) -> Vec<(&'static [&'static str], Value)> {
         (&["list-asks", "--state", "DEFAULT_TAKEN"], json!([])),
         (&["list-asks", "--state", "WITHDRAWN"], json!([])),
         (&["event-seq"], json!({"seq": 5, "keys": ["sp-a"]})),
-        (&["content-rows", "--ids", "sp-a"], json!([{"id": "sp-a", "issue_type": "task"}])),
+        (&["plan", "items", "--ids", "sp-a"], json!({"watermark": 1, "items": [{"id": "sp-a", "issue_type": "task"}]})),
         (&["show", "sp-a"], json!({"bead": row})),
         (&["show-batch", "b-1"], json!({"batch_id": "b-1", "state": "OPEN"})),
         (&["show-ask", "q-1"], json!({"ask_id": "q-1", "state": "OPEN"})),
@@ -91,13 +91,13 @@ fn a_record_the_planning_plane_types_as_never_having_one_is_named_not_imported_a
     for (argv, out) in with_epic.iter_mut() {
         match *argv {
             ["list", "--state", _] => out.as_array_mut().unwrap().push(epic.clone()),
-            ["content-rows", ..] => *argv = &["content-rows", "--ids", "sp-a,sp-e"],
+            ["plan", "items", ..] => *argv = &["plan", "items", "--ids", "sp-a,sp-e"],
             _ => {}
         }
     }
     for (argv, out) in with_epic.iter_mut() {
-        if argv[0] == "content-rows" {
-            *out = json!([{"id": "sp-a", "issue_type": "task"}, {"id": "sp-e", "issue_type": "epic"}]);
+        if argv[0] == "plan" {
+            *out = json!({"watermark": 1, "items": [{"id": "sp-a", "issue_type": "task"}, {"id": "sp-e", "issue_type": "epic"}]});
         }
     }
     let mut old = store(&with_epic);

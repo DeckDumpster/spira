@@ -209,7 +209,7 @@ fn enumerate(call: &mut dyn FnMut(&[String]) -> (i32, String)) -> Result<(Ids, S
     let seq = parsed(&ask(&["event-seq"])?)["seq"].to_string().trim_matches('"').to_string();
     let mut no_record = BTreeSet::new();
     for chunk in beads.chunks(TIPS_CHUNK) {
-        let rows = parsed(&ask(&["content-rows", "--ids", &chunk.join(",")])?);
+        let rows = parsed(&ask(&["plan", "items", "--ids", &chunk.join(",")])?)["items"].take();
         no_record.extend(rows.as_array().into_iter().flatten().filter(|r| !spira_config::nonwork::is_work_type(r.get("issue_type").and_then(Value::as_str))).filter_map(|r| r.get("id").and_then(Value::as_str)).map(str::to_string));
     }
     let beads = beads.into_iter().filter(|b| !no_record.contains(b)).collect();
