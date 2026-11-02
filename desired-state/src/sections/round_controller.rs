@@ -246,12 +246,17 @@ mod tests {
 
     #[test]
     fn a_repeat_hold_names_its_identity_member_and_tip_or_the_section_is_refused() {
-        let ok = section(json!({ "observedGeneration": 0,
-            "repeat_identity_holds": [{ "identity": "h1", "id": "sp-a", "tip": "a1" }] }));
-        assert!(admit_publish(&parse_section(&ok).unwrap()).is_ok());
-        let bad = section(json!({ "observedGeneration": 0,
-            "repeat_identity_holds": [{ "identity": "h1", "id": "sp-a" }] }));
+        let with = |hold: serde_json::Value| {
+            let level = |v: f64| json!({ "value": v, "window": "level" });
+            section(json!({ "observedGeneration": 0,
+                "green_unlanded_minutes": level(0.0), "repeat_identity_open": level(1.0),
+                "waiting_with_no_slot": level(0.0), "lanes_blocked": level(0.0),
+                "repeat_identity_holds": [hold] }))
+        };
+        let ok = with(json!({ "identity": "h1", "id": "sp-a", "tip": "a1" }));
+        admit_publish(&parse_section(&ok).unwrap()).unwrap();
+        let bad = with(json!({ "identity": "h1", "id": "sp-a" }));
         let r = admit_publish(&parse_section(&bad).unwrap()).unwrap_err();
-        assert!(r.field.starts_with("status"), "{r:?}");
+        assert_eq!((r.field.as_str(), r.rule.contains("tip")), ("status.repeat_identity_holds[0]", true), "{r:?}");
     }
 }
