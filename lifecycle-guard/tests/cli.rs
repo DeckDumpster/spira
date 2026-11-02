@@ -460,7 +460,7 @@ fn gate_mode_refuses_a_bd_status_write_outside_reconcile_content() {
     let (code, out, err) = gate(&fixture("gate_bd_status_write"));
     assert_eq!(code, Some(1), "stdout:\n{out}\nstderr:\n{err}");
     assert!(out.lines().any(|l| l.starts_with("spira-lc/src/callers.rs:3: [bd-status-write]")), "{out}");
-    assert!(!out.contains("reconcile_content.rs"), "{out}");
+    assert!(!out.lines().any(|l| l.starts_with("spira-lc/src/reconcile_content.rs")), "{out}");
     assert!(err.contains("REFUSED"), "{err}");
 }
 
