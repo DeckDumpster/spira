@@ -242,7 +242,13 @@ pub struct Ran {
     /// The members the run's tree left out: none for the rerun, all of them for a base run.
     pub removal: Vec<Id>,
     pub result: String,
+    /// The steps a red run found red, when the runner named them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub red: Vec<String>,
 }
+
+/// One sub-pass's answer: its result, and the steps it found red.
+type Answer = (JobResult, Vec<String>);
 
 pub fn result_word(r: JobResult) -> &'static str {
     match r {
@@ -351,7 +357,7 @@ impl<'a, 'p, R: RoundRunner> Subs<'a, 'p, R> {
         })
     }
 
-    fn recall(&mut self, removal: &[Id]) -> Option<JobResult> {
+    fn recall(&mut self, removal: &[Id]) -> Option<Answer> {
         let k = self.used.get(removal).copied().unwrap_or(0);
         let r = self
             .progress
@@ -359,15 +365,16 @@ impl<'a, 'p, R: RoundRunner> Subs<'a, 'p, R> {
             .iter()
             .filter(|r| r.removal == removal)
             .nth(k)
-            .map(|r| result_of(&r.result))?;
+            .map(|r| (result_of(&r.result), r.red.clone()))?;
         self.used.insert(removal.to_vec(), k + 1);
         Some(r)
     }
 
-    fn remember(&mut self, removal: &[Id], r: JobResult) -> Result<(), String> {
+    fn remember(&mut self, removal: &[Id], (r, red): &Answer) -> Result<(), String> {
         self.progress.runs.push(Ran {
             removal: removal.to_vec(),
-            result: result_word(r).into(),
+            result: result_word(*r).into(),
+            red: red.clone(),
         });
         *self.used.entry(removal.to_vec()).or_default() += 1;
         self.save()
@@ -434,17 +441,17 @@ impl<'a, 'p, R: RoundRunner> Subs<'a, 'p, R> {
     }
 
     /// One run on the round tree without `removal`, retried once if it faulted.
-    fn sub(&mut self, removal: &[Id], purpose: Purpose) -> Result<JobResult, String> {
-        let r = self.once(removal, purpose.clone())?;
-        if r == JobResult::Fault {
+    fn sub(&mut self, removal: &[Id], purpose: Purpose) -> Result<Answer, String> {
+        let a = self.once(removal, purpose.clone())?;
+        if a.0 == JobResult::Fault {
             return self.once(removal, purpose);
         }
-        Ok(r)
+        Ok(a)
     }
 
-    fn once(&mut self, removal: &[Id], purpose: Purpose) -> Result<JobResult, String> {
-        if let Some(r) = self.recall(removal) {
-            return Ok(r);
+    fn once(&mut self, removal: &[Id], purpose: Purpose) -> Result<Answer, String> {
+        if let Some(a) = self.recall(removal) {
+            return Ok(a);
         }
         let id = self.launch(removal, purpose)?;
         let r = loop {
@@ -453,17 +460,46 @@ impl<'a, 'p, R: RoundRunner> Subs<'a, 'p, R> {
             }
             self.runner.wait();
         };
-        self.remember(removal, r)?;
-        Ok(r)
+        let a = (r, self.red_steps(id, r));
+        self.remember(removal, &a)?;
+        Ok(a)
+    }
+
+    /// The steps job `id` found red, when it answered red and the runner names them.
+    fn red_steps(&mut self, id: u64, r: JobResult) -> Vec<String> {
+        if r == JobResult::Red {
+            self.runner.red_steps(id)
+        } else {
+            vec![]
+        }
     }
 }
 
-fn note(subs: &mut Vec<SubPass>, evidence: &mut Vec<String>, kind: SubPassKind, r: JobResult) {
+/// `what: red (steps)`, naming the steps when the runner named them.
+fn said(what: &str, (r, red): &Answer) -> String {
+    if red.is_empty() {
+        format!("{what}: {}", result_word(*r))
+    } else {
+        format!("{what}: {} ({})", result_word(*r), red.join(","))
+    }
+}
+
+/// The red verdict, naming the steps the plain rerun found red when the runner named them,
+/// else the steps certify reported.
+fn red_class(steps: &[String], rerun: &Answer) -> Class {
+    let named = if rerun.1.is_empty() { steps } else { &rerun.1 };
+    Class::Red {
+        step: named.join(","),
+    }
+}
+
+fn note(subs: &mut Vec<SubPass>, evidence: &mut Vec<String>, kind: SubPassKind, a: &Answer) {
     let what = match kind {
         SubPassKind::Rerun => "plain rerun on the full tree",
         SubPassKind::Base => "base run",
     };
-    evidence.push(format!("{what}: {}", result_word(r)));
+    evidence.push(said(what, a));
+    let r = a.0;
     if r != JobResult::Fault {
         subs.push(SubPass {
             kind,
@@ -487,26 +523,24 @@ fn judge_red<R: RoundRunner>(
     steps: &[String],
 ) -> Result<Judged, String> {
     let mut s = Subs::open(p, runner, round, steps)?;
-    let red = Class::Red {
-        step: steps.join(","),
-    };
     let (mut subs, mut evidence) = (vec![], vec![]);
     let rerun = s.sub(&[], Purpose::Plain)?;
-    note(&mut subs, &mut evidence, SubPassKind::Rerun, rerun);
-    match rerun {
+    note(&mut subs, &mut evidence, SubPassKind::Rerun, &rerun);
+    let red = red_class(steps, &rerun);
+    match rerun.0 {
         JobResult::Green => return finish(&mut s, pass, Class::Flaky, subs, evidence, vec![]),
         JobResult::Fault => return finish(&mut s, pass, red, subs, evidence, vec![]),
         JobResult::Red => {}
     }
     let all = round.ids();
     let base = s.sub(&all, Purpose::Base)?;
-    note(&mut subs, &mut evidence, SubPassKind::Base, base);
-    match base {
+    note(&mut subs, &mut evidence, SubPassKind::Base, &base);
+    match base.0 {
         JobResult::Fault => return finish(&mut s, pass, red, subs, evidence, vec![]),
         JobResult::Red => {
             let again = s.sub(&all, Purpose::Base)?;
-            note(&mut subs, &mut evidence, SubPassKind::Base, again);
-            return match again {
+            note(&mut subs, &mut evidence, SubPassKind::Base, &again);
+            return match again.0 {
                 JobResult::Green => finish(&mut s, pass, Class::Flaky, subs, evidence, vec![]),
                 JobResult::Fault => finish(&mut s, pass, red, subs, evidence, vec![]),
                 JobResult::Red => {
@@ -571,7 +605,7 @@ fn removal_sets<R: RoundRunner>(
                 a.on_job_result(job.id, JobResult::Red, now);
             } else if job.removal.len() == all.len() {
                 a.on_job_result(job.id, JobResult::Green, now);
-            } else if let Some(r) = s.recall(&job.removal) {
+            } else if let Some((r, _)) = s.recall(&job.removal) {
                 a.on_job_result(job.id, r, now);
             } else if let Some(r) = reused(s.p, &round.identity(&job.removal))? {
                 evidence.push(format!(
@@ -596,8 +630,12 @@ fn removal_sets<R: RoundRunner>(
                 continue;
             };
             arrived = true;
+            let answer = (r, s.red_steps(rid, r));
             let class = match r {
                 JobResult::Green => Class::Green,
+                JobResult::Red if !answer.1.is_empty() => Class::Red {
+                    step: answer.1.join(","),
+                },
                 JobResult::Red => red.clone(),
                 JobResult::Fault => Class::Fault { cause: Cause::Vm },
             };
@@ -615,12 +653,8 @@ fn removal_sets<R: RoundRunner>(
             };
             s.p.ledger
                 .record_attempt(s.p, &round.identity(&job.removal), &round.batch, &a_)?;
-            s.remember(&job.removal, r)?;
-            evidence.push(format!(
-                "without {}: {}",
-                job.removal.join(","),
-                result_word(r)
-            ));
+            s.remember(&job.removal, &answer)?;
+            evidence.push(said(&format!("without {}", job.removal.join(",")), &answer));
             a.on_job_result(job.id, r, s.runner.now());
         }
         if !arrived && !running.is_empty() {

@@ -571,6 +571,9 @@ impl<R: SubPasses> RoundRunner for Guard<'_, '_, '_, R> {
         }
         got
     }
+    fn red_steps(&mut self, id: u64) -> Vec<String> {
+        self.inner.red_steps(id)
+    }
     fn now(&self) -> u64 {
         self.inner.now()
     }

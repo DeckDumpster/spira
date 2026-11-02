@@ -465,6 +465,7 @@ fn progress_of_another_pass_is_not_resumed_and_a_judgement_clears_its_progress()
         runs: vec![Ran {
             removal: vec![],
             result: "green".into(),
+            red: vec![],
         }],
         ..Progress::default()
     };
@@ -533,4 +534,111 @@ fn a_judge_count_in_a_scenario_with_no_judge_is_refused_by_name() {
     ))
     .unwrap_err();
     assert!(e.contains("which only a [judge] table runs"), "{e}");
+}
+
+/// A runner whose plain rerun answers `rerun` naming `red` as its red steps, and whose every
+/// other sub-pass faults.
+struct Steps {
+    rerun: JobResult,
+    red: Vec<String>,
+    launched: Vec<Job>,
+    answered: Vec<u64>,
+}
+
+impl RoundRunner for Steps {
+    fn set_members(&mut self, _: &[RoundMember]) {}
+    fn set_base(&mut self, _: &str) {}
+    fn start_main(&mut self, _: batcher::drive::MainKind, _: &[String]) -> Result<(), String> {
+        Ok(())
+    }
+    fn poll_main(&mut self) -> Result<batcher::drive::MainPoll, String> {
+        Ok(batcher::drive::MainPoll::default())
+    }
+    fn stop_main(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    fn launch(&mut self, job: &Job) -> Result<(), String> {
+        self.launched.push(job.clone());
+        Ok(())
+    }
+    fn poll_jobs(&mut self) -> Vec<(u64, JobResult)> {
+        let out: Vec<(u64, JobResult)> = self
+            .launched
+            .iter()
+            .filter(|j| !self.answered.contains(&j.id))
+            .map(|j| {
+                let r = if j.removal.is_empty() {
+                    self.rerun
+                } else {
+                    JobResult::Fault
+                };
+                (j.id, r)
+            })
+            .collect();
+        self.answered.extend(out.iter().map(|(id, _)| *id));
+        out
+    }
+    fn red_steps(&mut self, _: u64) -> Vec<String> {
+        self.red.clone()
+    }
+    fn now(&self) -> u64 {
+        0
+    }
+    fn wait(&mut self) {}
+}
+
+fn steps(rerun: JobResult, red: &[&str]) -> Steps {
+    Steps {
+        rerun,
+        red: red.iter().map(|s| s.to_string()).collect(),
+        launched: vec![],
+        answered: vec![],
+    }
+}
+
+#[test]
+fn a_two_step_sub_pass_red_on_one_step_reads_red_and_its_verdict_names_that_step() {
+    let w = world();
+    let r = round(&["sp-a"]);
+    let p = ports(&w, &w.store, &w.ledger);
+    let mut runner = steps(JobResult::Red, &["test-b.sh"]);
+    let j = judge(
+        &p,
+        &mut runner,
+        &r,
+        &pass(1, &["test-a.sh", "test-b.sh"], None),
+    );
+    assert_eq!(
+        runner.launched[0].suite, "test-a.sh,test-b.sh",
+        "one sub-pass runs every red step"
+    );
+    assert!(
+        matches!(&j, Judged::Recorded { class: Class::Red { step }, .. } if step == "test-b.sh"),
+        "{j:?}"
+    );
+}
+
+#[test]
+fn a_two_step_sub_pass_green_on_every_step_reads_green() {
+    let w = world();
+    let r = round(&["sp-a"]);
+    let p = ports(&w, &w.store, &w.ledger);
+    let mut runner = steps(JobResult::Green, &[]);
+    let j = judge(
+        &p,
+        &mut runner,
+        &r,
+        &pass(1, &["test-a.sh", "test-b.sh"], None),
+    );
+    assert!(
+        matches!(
+            &j,
+            Judged::Recorded {
+                class: Class::Flaky,
+                ..
+            }
+        ),
+        "a green rerun of a red pass is flaky: {j:?}"
+    );
+    assert_eq!(runner.launched.len(), 1, "a green rerun runs nothing more");
 }
