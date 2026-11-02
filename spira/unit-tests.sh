@@ -11,7 +11,7 @@ LIST="$ROOT/target/unit-tests.crates"
 words=()
 while IFS= read -r c; do [ -n "$c" ] && words+=(-p "$c"); done < "$LIST"
 [ "${#words[@]}" -gt 0 ] || { echo "unit-tests: the diff touches no crate — nothing to run"; exit 0; }
-# Per Ryan 2026-11-01: a build and its tests share the host with other builders, so neither
+# sp-mgmjhy: a build and its tests share the host with other builders, so neither
 # claims every core. nproc inside a container reports the whole host.
 cores="$(nproc 2>/dev/null || echo 2)"
 jobs="${CARGO_BUILD_JOBS:-6}"

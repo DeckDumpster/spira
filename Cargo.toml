@@ -122,7 +122,7 @@ strip = false
 opt-level = 2
 codegen-units = 16
 
-# Workspace builds share the host with other builders (per Ryan, 2026-11-01): 4 LLVM codegen
+# Workspace builds share the host with other builders (sp-mgmjhy): 4 LLVM codegen
 # units per crate instead of the default 256, so one rustc does not fan out across every core.
 [profile.dev]
 codegen-units = 4
