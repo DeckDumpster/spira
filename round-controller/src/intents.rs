@@ -5,6 +5,7 @@
 
 use serde_json::Value;
 use spira_desired_state::intent::{intent_key, parse_intent, Intent};
+pub use spira_desired_state::sections::round_controller::{CONCURRENCY, HOLD_MEMBER};
 use spira_desired_state::sections::round_controller::{NAME, OWNER};
 use state_store::Selector;
 
@@ -16,8 +17,6 @@ use crate::slots::{self, Pool};
 use crate::stack;
 
 pub const STEP: &str = "intents";
-pub const HOLD_MEMBER: &str = "hold-member";
-pub const CONCURRENCY: &str = "concurrency";
 
 fn args(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|s| s.to_string()).collect()

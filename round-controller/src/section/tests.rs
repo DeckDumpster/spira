@@ -219,6 +219,11 @@ fn a_planner_rerun_of_an_identity_still_red_is_a_repeat_and_judge_passes_are_the
         reason(&s, REPEAT_IDENTITY).as_deref(),
         Some("identity h1 run 2 times by the planner, still red")
     );
+    assert_eq!(
+        s.fields[REPEAT_IDENTITY_HOLDS],
+        json!([{ "identity": "h1", "id": "sp-a", "tip": "a1" }]),
+        "the open identity's proven member at its tip, for hold-member to name"
+    );
 }
 
 #[test]
@@ -227,6 +232,7 @@ fn an_attempt_or_summary_that_does_not_decode_makes_the_section_unreadable() {
         ("verdicts/lane/h1", json!("garbled")),
         ("verdicts/lane/h1/attempt/one", json!({})),
         ("verdicts/lane/h1/attempt/1", json!({ "class": "red" })),
+        ("verdicts/lane/by-member/sp-a/a1", json!({ "at": 1 })),
     ] {
         let b = Bench::new();
         lane(&b);

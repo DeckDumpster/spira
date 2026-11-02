@@ -47,6 +47,7 @@ fn every_refusal_has_a_stable_code_and_a_reason_naming_what() {
         Refusal::KnobAbsent("knobs/x".into()),
         Refusal::KnobNotNumeric("knobs/x".into()),
         Refusal::MovesUnreadable("depth".into()),
+        Refusal::NoHoldTarget("RoundController/lane".into()),
     ];
     let mut codes: Vec<_> = all.iter().map(Refusal::code).collect();
     codes.sort_unstable();
@@ -152,4 +153,52 @@ fn among_candidates_the_one_attempted_longest_ago_goes_first_never_declaration_o
     let gaps = crate::goodput_pass::interim_ranking(&a);
     let p = select(&Inputs { assembled: &a, gaps: &gaps, shadow: &[], halted: false, now_ms: T0, token: "1.0" });
     assert_eq!(p.steps.iter().map(|s| s.action.as_str()).collect::<Vec<_>>(), ["b-first"], "never attempted beats attempted a day ago");
+}
+
+fn round_controller(holds: serde_json::Value) -> serde_json::Value {
+    json!({ "section": {
+        "apiVersion": "spira/v1", "kind": "RoundController",
+        "metadata": { "name": "lane", "owner": "round-controller", "observedAt": NOW, "target_latency": "5m", "max_age": "15m" },
+        "status": {
+            "observedGeneration": 0,
+            "repeat_identity_open": { "value": 2.0, "window": "level" },
+            "repeat_identity_holds": holds,
+            "conditions": [{ "type": "RepeatIdentity", "status": "True", "reason": "identity h1 run 2 times by the planner, still red", "lastTransitionTime": NOW }],
+        },
+        "distance": { "fn": "repeat_identity_open", "open": 1.0, "close": 0.5 },
+        "actions": [{ "name": "hold-member", "class": "local", "step": "one member at one tip", "moves": "repeat_identity_open",
+                      "addresses": ["RepeatIdentity"], "expected_effect": -1.0, "horizon": "10m" }],
+    }})
+}
+
+#[test]
+fn a_hold_member_step_creates_the_hold_on_the_first_named_member_not_already_held() {
+    let holds = json!([
+        { "identity": "h1", "id": "sp-a", "tip": "a1" },
+        { "identity": "h1", "id": "sp-b", "tip": "b1" },
+    ]);
+    let p = plan(vec![round_controller(holds.clone())], json!({}));
+    assert_eq!(refused(&p), Vec::<&str>::new());
+    let i = &p.steps[0].intent;
+    assert_eq!(
+        (i.action.as_str(), i.target.as_str(), &i.from, &i.to),
+        ("hold-member", "knobs/RoundController/lane/hold/sp-a/a1", &serde_json::Value::Null, &json!({ "lifted_by": "reconciler" })),
+        "an absent hold reads as null, so no knob need exist first"
+    );
+    let p = plan(vec![round_controller(holds)], json!({ "knobs/RoundController/lane/hold/sp-a/a1": { "lifted_by": "reconciler" } }));
+    assert_eq!(p.steps[0].intent.target, "knobs/RoundController/lane/hold/sp-b/b1");
+}
+
+#[test]
+fn a_hold_member_step_with_no_member_left_to_hold_is_refused_by_name() {
+    let held = json!({ "knobs/RoundController/lane/hold/sp-a/a1": { "lifted_by": "reconciler" } });
+    for (holds, knobs) in [
+        (json!([{ "identity": "h1", "id": "sp-a", "tip": "a1" }]), held),
+        (json!([]), json!({})),
+    ] {
+        let p = plan(vec![round_controller(holds)], knobs);
+        assert!(p.steps.is_empty());
+        assert_eq!(refused(&p), ["no-hold-target"]);
+        assert!(p.refused[0].reason.contains("RoundController/lane"), "{}", p.refused[0].reason);
+    }
 }

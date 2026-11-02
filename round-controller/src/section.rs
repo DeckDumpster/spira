@@ -12,7 +12,8 @@ use spira_desired_state::section::{
     Distance, Flow, Section, SectionMeta, Status, API_VERSION,
 };
 use spira_desired_state::sections::round_controller::{
-    HALTED, NAME, OWNER, REPEAT_IDENTITY, SLOTS_SATURATED, STACKED_ON_UNDRIVEN_PARENT, STOPPED,
+    RepeatHold, CONCURRENCY, HALTED, HOLD_MEMBER, NAME, OWNER, REPEAT_IDENTITY,
+    REPEAT_IDENTITY_HOLDS, SLOTS_SATURATED, STACKED_ON_UNDRIVEN_PARENT, STOPPED,
 };
 use spira_desired_state::store::format_rfc3339;
 use state_store::Selector;
@@ -137,6 +138,10 @@ pub fn build(p: &Ports, repo: &str) -> Result<Option<Built>, Refusal> {
             day(repeats.planner_24h as f64),
         ),
         ("judge_passes_24h".into(), day(repeats.judge_24h as f64)),
+        (
+            REPEAT_IDENTITY_HOLDS.into(),
+            serde_json::to_value(&repeats.holds).unwrap_or_default(),
+        ),
     ]);
     Ok(Some(Built {
         fields,
@@ -276,6 +281,9 @@ fn slot_use(p: &Ports) -> Result<(Vec<Value>, u32, u32), Refusal> {
 struct Repeats {
     /// Each identity the planner ran again and that still holds a red or a fault.
     open: Vec<String>,
+    /// Each open identity's members proven red under it, at their tips: what `hold-member`
+    /// keeps out of the cut.
+    holds: Vec<RepeatHold>,
     planner_24h: u64,
     judge_24h: u64,
 }
@@ -290,17 +298,24 @@ fn repeats(p: &Ports, repo: &str, now: u64) -> Result<Repeats, Refusal> {
         .map_err(|e| Refusal::unreadable(&prefix, e))?;
     let mut summaries: BTreeMap<&str, Summary> = BTreeMap::new();
     let mut attempts: BTreeMap<&str, Vec<(u32, Attempt)>> = BTreeMap::new();
+    let mut proven: BTreeMap<String, Vec<(&str, &str)>> = BTreeMap::new();
     for i in &items {
-        let Some(rest) = i
-            .key
-            .strip_prefix(&prefix)
-            .filter(|r| !r.starts_with("by-member/"))
-        else {
+        let Some(rest) = i.key.strip_prefix(&prefix) else {
             continue;
         };
         let parts: Vec<&str> = rest.split('/').collect();
         let bad = |e: serde_json::Error| Refusal::unreadable(&i.key, e);
         match *parts.as_slice() {
+            ["by-member", id, tip] => {
+                let hash = i
+                    .value
+                    .data
+                    .get("hash")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| Refusal::unreadable(&i.key, "a proven red names no hash"))?;
+                proven.entry(hash.into()).or_default().push((id, tip));
+            }
+            ["by-member", ..] => {}
             [hash] => {
                 summaries.insert(
                     hash,
@@ -335,6 +350,13 @@ fn repeats(p: &Ports, repo: &str, now: u64) -> Result<Repeats, Refusal> {
             .get(hash)
             .filter(|s| s.class.retained_by_members());
         if let (true, Some(s)) = (planner.len() > 1, standing) {
+            for (id, tip) in proven.get(hash).into_iter().flatten() {
+                r.holds.push(RepeatHold {
+                    identity: hash.into(),
+                    id: (*id).into(),
+                    tip: (*tip).into(),
+                });
+            }
             r.open.push(format!(
                 "identity {hash} run {} times by the planner, still {}",
                 planner.len(),
@@ -364,7 +386,7 @@ fn actions() -> Vec<Action> {
     };
     vec![
         act(
-            "hold-member",
+            HOLD_MEMBER,
             ActionClass::Local,
             "one member at one tip",
             "repeat_identity_open",
@@ -373,7 +395,7 @@ fn actions() -> Vec<Action> {
             "10m",
         ),
         act(
-            "concurrency",
+            CONCURRENCY,
             ActionClass::CapacityRaise,
             "+1 slot",
             "waiting_with_no_slot",
@@ -382,7 +404,7 @@ fn actions() -> Vec<Action> {
             "1h",
         ),
         act(
-            "concurrency",
+            CONCURRENCY,
             ActionClass::CapacityLower,
             "-1 slot",
             "waiting_with_no_slot",

@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{typed, ConditionDecl, FieldShape, SchemaError, SectionKind};
@@ -18,6 +18,64 @@ pub const SLOTS_SATURATED: &str = "SlotsSaturated";
 pub const LANE_BLOCKED: &str = "LaneBlocked";
 pub const HALTED: &str = "Halted";
 pub const STOPPED: &str = "Stopped";
+
+/// The two actions the section declares, by the names its intents carry.
+pub const HOLD_MEMBER: &str = "hold-member";
+pub const CONCURRENCY: &str = "concurrency";
+
+/// The status field naming, for each open `RepeatIdentity`, the members a hold would keep out
+/// of the cut: one [`RepeatHold`] per member proven red under that identity.
+pub const REPEAT_IDENTITY_HOLDS: &str = "repeat_identity_holds";
+
+/// Who lifts a hold the reconciler places (law-every-hold-names-who-lifts-it).
+pub const HOLD_LIFTED_BY: &str = "reconciler";
+
+/// One member at one tip that a hold keeps out of the cut, and the identity it stops repeating.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepeatHold {
+    pub identity: String,
+    pub id: String,
+    pub tip: String,
+}
+
+/// A hold's value: who lifts it. The applier takes no hold without one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Hold {
+    pub lifted_by: String,
+}
+
+impl Hold {
+    pub fn of(v: &Value) -> Option<Hold> {
+        serde_json::from_value::<Hold>(v.clone()).ok().filter(|h| !h.lifted_by.trim().is_empty())
+    }
+}
+
+/// The section's knobs, under the controller's own `knobs/RoundController/<repo>/`. The
+/// reconciler writes intents on these keys and the controller applies only these, so both
+/// sides build them here.
+pub fn knobs_prefix(repo: &str) -> String {
+    format!("knobs/{NAME}/{repo}/")
+}
+
+pub fn concurrency_key(repo: &str) -> String {
+    format!("{}{CONCURRENCY}", knobs_prefix(repo))
+}
+
+pub fn holds_prefix(repo: &str) -> String {
+    format!("{}hold/", knobs_prefix(repo))
+}
+
+/// The hold on member `id` at `tip`: created from null, so an absent key is an unheld member.
+pub fn hold_key(repo: &str, id: &str, tip: &str) -> String {
+    format!("{}{id}/{tip}", holds_prefix(repo))
+}
+
+/// The (member, tip) a hold key names, `None` for any other key.
+pub fn parse_hold_key<'a>(repo: &str, key: &'a str) -> Option<(&'a str, &'a str)> {
+    let (id, tip) = key.strip_prefix(&holds_prefix(repo))?.split_once('/')?;
+    [id, tip].iter().all(|p| !p.is_empty() && !p.contains('/')).then_some((id, tip))
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,6 +109,7 @@ pub struct Status {
     pub stack_depth: Option<Numeric>,
     pub repeat_identity_passes_24h: Option<Windowed>,
     pub judge_passes_24h: Option<Windowed>,
+    pub repeat_identity_holds: Option<Vec<RepeatHold>>,
 }
 
 fn check_spec(v: &Value) -> Result<(), SchemaError> {
@@ -106,6 +165,7 @@ pub const KIND: SectionKind = SectionKind {
         ("stack_depth", FieldShape::Numeric),
         ("repeat_identity_passes_24h", FieldShape::Windowed),
         ("judge_passes_24h", FieldShape::Windowed),
+        (REPEAT_IDENTITY_HOLDS, FieldShape::List),
     ],
     check_spec,
     check_status,
@@ -166,5 +226,37 @@ mod tests {
         let r = admit_publish(&parse_section(&v).unwrap()).unwrap_err();
         assert!(r.field.starts_with("status"), "{r:?}");
         assert!(r.rule.contains("wedgedness"), "{r:?}");
+    }
+
+    #[test]
+    fn a_hold_key_names_one_member_at_one_tip_and_reads_back_as_it() {
+        let k = super::hold_key("lane", "sp-a", "a1");
+        assert_eq!(k, "knobs/RoundController/lane/hold/sp-a/a1");
+        assert_eq!(super::parse_hold_key("lane", &k), Some(("sp-a", "a1")));
+        for bad in [
+            "knobs/RoundController/lane/hold/sp-a",
+            "knobs/RoundController/lane/hold/sp-a/a1/x",
+            "knobs/RoundController/lane/hold//a1",
+            "knobs/RoundController/other/hold/sp-a/a1",
+        ] {
+            assert_eq!(super::parse_hold_key("lane", bad), None, "{bad}");
+        }
+        assert_eq!(super::concurrency_key("lane"), "knobs/RoundController/lane/concurrency");
+    }
+
+    #[test]
+    fn a_repeat_hold_names_its_identity_member_and_tip_or_the_section_is_refused() {
+        let with = |hold: serde_json::Value| {
+            let level = |v: f64| json!({ "value": v, "window": "level" });
+            section(json!({ "observedGeneration": 0,
+                "green_unlanded_minutes": level(0.0), "repeat_identity_open": level(1.0),
+                "waiting_with_no_slot": level(0.0), "lanes_blocked": level(0.0),
+                "repeat_identity_holds": [hold] }))
+        };
+        let ok = with(json!({ "identity": "h1", "id": "sp-a", "tip": "a1" }));
+        admit_publish(&parse_section(&ok).unwrap()).unwrap();
+        let bad = with(json!({ "identity": "h1", "id": "sp-a" }));
+        let r = admit_publish(&parse_section(&bad).unwrap()).unwrap_err();
+        assert_eq!((r.field.as_str(), r.rule.contains("tip")), ("status.repeat_identity_holds[0]", true), "{r:?}");
     }
 }
