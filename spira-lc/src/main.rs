@@ -619,7 +619,9 @@ fn cmd_list_batches(args: &[String], conn: &Conn) -> (i32, String) {
     let run = || -> Result<Vec<Value>, String> {
         let scope = match (flag(args, "--batch"), flag(args, "--window").and_then(|w| w.parse::<u64>().ok())) {
             (Some(id), _) => format!(" WHERE batch_id = '{}'", rows::escape(&id)),
-            (None, Some(w)) => format!(" WHERE opened_at >= UNIX_TIMESTAMP() - {w} OR state NOT IN ('LANDED','SETTLED','ABANDONED','DISCARDED')"),
+            // UNIX_TIMESTAMP() is unsigned: `now - w` with a window reaching past the epoch is an
+            // out-of-range error, so the window is added to opened_at instead.
+            (None, Some(w)) => format!(" WHERE opened_at + {w} >= UNIX_TIMESTAMP() OR state NOT IN ('LANDED','SETTLED','ABANDONED','DISCARDED')"),
             (None, None) => String::new(),
         };
         let limit = if scope.is_empty() { format!(" LIMIT {BATCHES_SHOWN}") } else { String::new() };
