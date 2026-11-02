@@ -90,7 +90,7 @@ fn counting_path(flow: &Flow) -> std::path::PathBuf {
     let dir = flow.p("shims");
     std::fs::create_dir_all(&dir).unwrap();
     for program in ["timeout", "date", "uname", "duckdb", "tsd-write", "tsd-lifecycle-export", "bd", "dolt", "spira-lc", "mail"] {
-        testkit::write_exe(dir.join(program), &format!("#!/bin/sh\necho {program} >> {}\n", flow.p("launches.log").display()));
+        testkit::write_exe(dir.join(program), &format!("#!/bin/sh\necho \"{program} $*\" >> {}\n", flow.p("launches.log").display()));
     }
     dir
 }
@@ -113,11 +113,14 @@ fn ten_quiet_passes_journal_nothing_after_the_first_state_and_launch_no_program(
     assert_eq!(rig.flow.exports(), 0, "the exporter was not launched");
     assert_eq!(std::fs::read_to_string(rig.flow.p("launches.log")).unwrap_or_default(), "", "no program was launched by name");
     std::process::Command::new("date").status().unwrap();
-    assert_eq!(std::fs::read_to_string(rig.flow.p("launches.log")).unwrap(), "date\n", "positive control: a launch by name is counted");
+    assert_eq!(std::fs::read_to_string(rig.flow.p("launches.log")).unwrap(), "date \n", "positive control: a launch by name is counted");
 }
 
 #[test]
 fn the_exporter_is_launched_once_the_lifecycle_log_is_ahead_of_it() {
+    // The environment lock, held unchanged: the quiet test swaps PATH for its shims, and a launch
+    // of `timeout` here while it does would run a shim instead of the exporter.
+    let _env = testkit::env(&[]);
     let mut rig = Rig::build();
     rig.pass(0);
     assert_eq!(rig.flow.exports(), 0);
