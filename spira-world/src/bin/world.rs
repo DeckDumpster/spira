@@ -222,6 +222,21 @@ fn work_services(planes: &BTreeSet<Plane>) -> Vec<String> {
         .collect()
 }
 
+/// Installed services that declare the work plane and are not oneshots: the ones no timer
+/// starts. A unit declaring no plane is left alone here; start never guesses one into life.
+fn work_daemons() -> Vec<String> {
+    let sfx = sfx_or_die();
+    sysctl::run_lines(&["list-unit-files", "spira-*.service", "--no-legend"])
+        .into_iter()
+        .filter_map(|l| sysctl::first_field(&l).map(str::to_string))
+        .filter(|u| !u.contains('@') && !spira_world::proc::is_excluded_work_service(u, &sfx))
+        .filter(|u| {
+            let text = sysctl::run(&["cat", u]);
+            sysctl::plane_from_unit_text(&text) == Some(Plane::Work) && !sysctl::is_oneshot(&text)
+        })
+        .collect()
+}
+
 fn dwarf_pidfiles() -> Vec<PathBuf> {
     let run = run_or_die();
     let Ok(rd) = std::fs::read_dir(&run) else { return Vec::new() };
@@ -563,6 +578,20 @@ fn cmd_start(args: &[String]) -> i32 {
         }
         if sysctl::run_ok(&["start", &u]) {
             println!("  started {u}");
+        }
+    }
+
+    // A work-plane daemon has no timer to bring it back, and booting while halted leaves it
+    // failed on its start guard, possibly past its start limit; so start lifts that too.
+    if planes.contains(&Plane::Work) {
+        for u in work_daemons() {
+            if sysctl::run(&["is-enabled", &u]) == "disabled" || sysctl::run(&["is-active", &u]) == "active" {
+                continue;
+            }
+            let _ = sysctl::run_ok(&["reset-failed", &u]);
+            if sysctl::run_ok(&["start", &u]) {
+                println!("  started {u}");
+            }
         }
     }
 

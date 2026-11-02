@@ -96,6 +96,7 @@ case "$verb" in
 list-unit-files)
     case "$arg" in
         'spira-*.timer') for f in "$UNIT_DIR"/spira-*.timer; do b=$(basename "$f" .timer); echo "$b-prod.timer enabled"; done ;;
+        'spira-*.service') for f in "$UNIT_DIR"/spira-*.service; do b=$(basename "$f" .service); echo "$b-prod.service enabled"; done ;;
         *'*'*) ;;
         *) [ -f "$file" ] && echo "$arg enabled" ;;
     esac ;;
@@ -106,7 +107,7 @@ list-units)
 cat) [ -f "$file" ] && cat "$file" || exit 1 ;;
 is-enabled) echo enabled ;;
 is-active) echo inactive; exit 3 ;;
-stop|start) echo "$verb $arg" >> "$CALLS" ;;
+stop|start|reset-failed) echo "$verb $arg" >> "$CALLS" ;;
 esac
 exit 0
 "#,
@@ -283,7 +284,7 @@ fn while_halted_the_rounds_loop_and_the_gate_worker_refuse_to_start_naming_the_s
         let (ok, out) = f.exec_start_pre(&guards[0]);
         assert!(ok, "positive control: with no halt stamp {unit} starts\n{out}");
 
-        std::fs::write(f.halt_stamp(), "2026-10-31T19:44:36Z\nwhy: planted halt\n").unwrap();
+        std::fs::write(f.halt_stamp(), "2000-01-01T00:00:00Z\nwhy: planted halt\n").unwrap();
         let (ok, out) = f.exec_start_pre(&guards[0]);
         assert!(!ok, "{unit} must refuse to start while the world is halted\n{out}");
         assert!(out.contains(&f.halt_stamp().display().to_string()), "the refusal names the stamp\n{out}");
@@ -302,4 +303,19 @@ fn every_work_service_carries_the_halt_guard_and_no_other_does() {
     let stray: Vec<_> = services.iter().filter(|u| plane_of_shipped(u) != Some(Plane::Work) && !halt_guard_lines(u).is_empty()).collect();
     assert!(stray.is_empty(), "a unit off the work plane must keep running through a halt: {stray:?}");
     assert_eq!(plane_of_shipped("spira-mail-deliver.service"), Some(Plane::Observability), "mail delivery stays up through a halt");
+}
+
+#[test]
+fn start_brings_back_a_work_daemon_that_no_timer_starts() {
+    let f = Fixture::new("planes-start-daemon");
+    f.world(&["stop"]);
+    let (out, calls) = f.world(&["start"]);
+    // The only shipped work-plane unit that is not a oneshot; a halted boot leaves it failed
+    // on its start guard and nothing else ever starts it.
+    assert!(calls.iter().any(|c| c == "reset-failed spira-submission-prod.service"), "{out}\n{calls:?}");
+    assert!(calls.iter().any(|c| c == "start spira-submission-prod.service"), "{out}\n{calls:?}");
+    for oneshot in ["spira-rounds-prod.service", "spira-gate-worker-prod.service", "spira-sentinel-prod.service"] {
+        assert!(!calls.iter().any(|c| c == &format!("start {oneshot}")), "a oneshot is its timer's to start: {oneshot}\n{out}");
+    }
+    assert!(!calls.iter().any(|c| c == "start spira-lc-prod.service" || c == "start spira-cockpit-prod.service"), "no plane, no start\n{out}");
 }

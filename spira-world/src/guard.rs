@@ -30,8 +30,8 @@ mod tests {
 
     #[test]
     fn the_refusal_names_the_stamp_the_reason_and_what_lifts_it() {
-        let r = halt_refusal(Path::new("/run/world.halted"), Some("2026-10-31T19:44:36Z\nwhy: disk pressure\n")).unwrap();
-        assert!(r.contains("/run/world.halted") && r.contains("2026-10-31T19:44:36Z") && r.contains("why: disk pressure") && r.contains("world start"), "{r}");
+        let r = halt_refusal(Path::new("/run/world.halted"), Some("2000-01-01T00:00:00Z\nwhy: planted reason\n")).unwrap();
+        assert!(r.contains("/run/world.halted") && r.contains("2000-01-01T00:00:00Z") && r.contains("why: planted reason") && r.contains("world start"), "{r}");
     }
 
     #[test]
