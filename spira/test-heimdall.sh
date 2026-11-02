@@ -51,10 +51,12 @@ cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$SH/"
 # ITS OWN SPIRA_HOME AND ITS OWN repo-map, so nothing reads the operator's real repositories.
 printf 'brain | %s | push | origin/main | |\n' "$TMP/repo" > "$SH/repo-map"
 
-# A fresh control store: SQLite makes an empty file a new database. Direct mode, no service.
+# A fresh control store: SQLite makes an empty file a new database. Direct mode, no service,
+# and no lifecycle credential: SPIRA_LC_PASSWORD_FILE is a registered key, so undeclared it
+# names the fixture home's absent credential, and spira-lc refuses before reaching the store.
 STORE="$TMP/control.db"; : > "$STORE"
 export SPIRA_LC_PASSWORD=unused
-tl_config SPIRA_LC_SOCKET="" SPIRA_LC_STORE_PATH="$STORE"
+tl_config SPIRA_LC_SOCKET="" SPIRA_LC_PASSWORD_FILE="" SPIRA_LC_STORE_PATH="$STORE"
 
 # The shim in front of the real spira-lc: `ok` passes through, `write-fail` refuses every
 # write, `timeout` answers nothing as a timed-out call does.
