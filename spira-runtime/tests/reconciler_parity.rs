@@ -524,7 +524,7 @@ impl Host {
         let world = World { run_dir: f.p("run"), queue_dir: f.p("run/queue"), repo_map: f.p("rows"), home_repo: "widgets".into(), lc_socket: f.p("lc.sock"), ..World::default() };
         let fx = Effects {
             world,
-            forge: Forge { api, token: String::new() },
+            forge: Forge { api, token: "t0ken".into(), ..Forge::default() },
             mail: Some(Arc::new(mail_env(f.dir.path()))),
             reconciler: Some(reconciler.clone()),
             seams: Some(seams_in(bin)),

@@ -67,7 +67,7 @@ fn both(world: World) -> (Vec<String>, Vec<String>) {
     let by_gh = forge::cmds::stranded_runners(&FakeGh(&world), Path::new("/r"), NOW, 300).lines;
     let world = std::sync::Arc::new(world);
     let api = serve(world);
-    (Forge { api, token: String::new() }.stranded_runners("acme/widgets", NOW, 300), by_gh)
+    (Forge { api, token: "t0ken".into(), ..Forge::default() }.stranded_runners("acme/widgets", NOW, 300), by_gh)
 }
 
 const RUNS: &str = r#"{"workflow_runs":[{"id":55,"status":"queued"},{"id":56,"status":"completed"}]}"#;
