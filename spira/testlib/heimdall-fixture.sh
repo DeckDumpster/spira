@@ -39,8 +39,9 @@ heimdall() {   # heimdall [--report] — one run against the fixture, with a cho
     SPIRA_HEIMDALL_SENTINEL_LOG="$RUN/sentinel.log" \
         command heimdall --home "$SH" "$@" 2>&1
 }
+fixture_bd() { timeout 5 bd -C "$SPIRA_DB" "$@"; } # STORE_DOOR_CONSIDERED="a fixture call against the suite's own throwaway store"
 alert_status() {   # alert_status <key> -> "<id> <status>", or "-" if there is no bead
-    timeout 5 bd -C "$SPIRA_DB" list --all --limit 0 --label alert --json 2>/dev/null \
+    fixture_bd list --all --limit 0 --label alert --json 2>/dev/null \
         | sed -n '/^[[{]/,$p' | KEY="$1" python3 -c '
 import sys, os, json
 try: d = json.load(sys.stdin)
@@ -52,7 +53,7 @@ else:
     print("-")'
 }
 n_alert_beads() {
-    timeout 5 bd -C "$SPIRA_DB" list --all --limit 0 --label alert --json 2>/dev/null \
+    fixture_bd list --all --limit 0 --label alert --json 2>/dev/null \
         | sed -n '/^[[{]/,$p' | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
@@ -60,7 +61,7 @@ except Exception: d = []
 print(len(d if isinstance(d, list) else [d]))'
 }
 n_probe_beads() {   # open + closed heimdall:probe beads
-    timeout 5 bd -C "$SPIRA_DB" list --all --limit 0 --label heimdall:probe --json 2>/dev/null \
+    fixture_bd list --all --limit 0 --label heimdall:probe --json 2>/dev/null \
         | sed -n '/^[[{]/,$p' | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
@@ -68,7 +69,7 @@ except Exception: d = []
 print(len(d if isinstance(d, list) else [d]))'
 }
 create_probe() {    # create_probe -> id on stdout
-    timeout 5 bd -C "$SPIRA_DB" create --title "Heimdall write probe" --type event -p 0 \
+    fixture_bd create --title "Heimdall write probe" --type event -p 0 \
         --labels "heimdall:probe,overseer" \
         --body "write-path probe — updated on every Heimdall pass" --json 2>/dev/null \
         | python3 -c '
