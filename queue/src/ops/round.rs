@@ -1394,15 +1394,20 @@ fn open(
         })
         .max_by_key(|(_, _, at)| *at)
         .filter(|(_, head, _)| !head.is_empty());
-    if let Some((p, _, _)) = &parent {
-        if let Some(why) = open_now
-            .iter()
-            .find(|(_, kv)| kv.get("batch_id") == Some(p.as_str()))
-            .and_then(|(_, kv)| unstackable(w, kv))
-        {
-            w.err(format!("queue.sh {label}: the newest open round {p} is {why} — a round is cut only on {base} or on a live round still certifying; refused, nothing changed"));
+    let mut below = parent.as_ref().map(|(p, _, _)| p.clone());
+    let mut seen: Vec<String> = Vec::new();
+    while let Some(p) = below.take().filter(|p| !seen.contains(p)) {
+        let Some((_, kv)) = open_now.iter().find(|(_, kv)| kv.get("batch_id") == Some(p.as_str())) else {
+            break;
+        };
+        if let Some(why) = unstackable(w, kv) {
+            let newest = parent.as_ref().map_or("", |(n, _, _)| n.as_str());
+            let via = if p == newest { String::new() } else { format!(", under the newest open round {newest},") };
+            w.err(format!("queue.sh {label}: open round {p}{via} is {why} — a round is cut only on {base} or on a live round still certifying; refused, nothing changed"));
             return FAIL;
         }
+        below = kv.get("parent").filter(|q| !q.is_empty()).map(str::to_string);
+        seen.push(p);
     }
     let base_sha = parent
         .as_ref()
@@ -1735,7 +1740,7 @@ fn unstackable(w: &World, kv: &Kv) -> Option<String> {
         return Some(format!("red ({red})"));
     }
     match w.lc.batch_state(kv.get("batch_id").unwrap_or("")) {
-        Some((s, _)) if matches!(s.as_str(), "OPEN" | "CI_RUNNING" | "GREEN" | "LANDING" | "DEPLOYING") => None,
+        Some((s, _)) if matches!(s.as_str(), "OPEN" | "CI_RUNNING" | "REBUILDING" | "GREEN" | "LANDING" | "DEPLOYING") => None,
         Some((s, _)) => Some(s),
         None => Some("of a state spira-lc could not say".into()),
     }
@@ -4104,8 +4109,9 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text, token: Opt
 }
 
 /// Every live round cut on `parent`'s head is abandoned with it: its tree holds the parent's
-/// members, so a verdict on it judges code that will not land. Each is named. The caller holds
-/// the queue lock; `Err` when any could not be voided.
+/// members, so a verdict on it judges code that will not land. Each is named. A child's lease
+/// does not shield it: a pass its holder runs on that tree is void whoever holds it. The caller
+/// holds the queue lock; `Err` when any could not be voided.
 fn void_stacked(w: &World, label: &str, c: &Ctx, path: &Path, parent: &str) -> Result<(), i32> {
     let children: Vec<Kv> = live_records(w, c, keep)
         .into_iter()

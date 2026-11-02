@@ -4359,12 +4359,9 @@ fn a_round_is_addressed_by_its_batch_id_and_the_oldest_record_follows_the_landed
         "{}",
         t.err()
     );
-    assert_eq!(
-        t.run(&["round", "abandon", "r-1", "--reason", "x"]),
-        0,
-        "{}",
-        t.err()
-    );
+    assert_eq!(t.run(&["round", "certify", "r-1"]), 0, "{}", t.err());
+    t.git.ancestor("ta", "merged-ta");
+    assert_eq!(t.run(&["round", "land", "r-1"]), 0, "{}", t.err());
     assert_eq!(
         kv_of(&t, "round")["batch_id"],
         "r-3",
@@ -4496,12 +4493,28 @@ fn open_refuses_to_stack_on_an_open_round_that_went_red() {
     assert_eq!(t.run(&["round", "certify", "r-1"]), 1);
     assert_eq!(t.run(&["round", "open", "--members", "sp-b", "--name", "r-2"]), 1);
     assert!(
-        t.err().contains("the newest open round r-1 is red (test-a.sh)") && t.err().contains("refused"),
+        t.err().contains("open round r-1 is red (test-a.sh)") && t.err().contains("refused"),
         "{}",
         t.err()
     );
     assert!(!t.qfile("round.r-2").exists());
     assert!(!t.lc.has("cut r-2"), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
+fn open_refuses_to_stack_on_a_live_round_whose_own_parent_went_red() {
+    let mut t = concurrent_world();
+    t.lib.s.rounds_max = 3;
+    stacked_pair(&t);
+    let mut kv = crate::records::Kv::default();
+    for (k, v) in kv_of(&t, "round") {
+        kv.push(&k, &v);
+    }
+    kv.push("red", "test-a.sh");
+    crate::records::write_atomic(&t.qfile("round"), &kv.render()).unwrap();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-c", "--name", "r-3"]), 1);
+    assert!(t.err().contains("open round r-1, under the newest open round r-2, is red"), "{}", t.err());
+    assert!(!t.lc.has("cut r-3"), "{:?}", t.lc.calls.borrow());
 }
 
 #[test]
@@ -6316,8 +6329,8 @@ fn each_land_refusal_starts_with_the_word_the_lander_acts_on() {
     let lander = |token| land_as_the_lander(&t, "r-2", Some(token));
     assert_eq!(lander("5-0"), (1, "stacked".into()), "{}", t.err());
     assert_eq!(lander("6-0"), (1, "refused".into()), "another holder's lease");
-    let abandon = ["round", "abandon", "r-1", "--reason", "red", "--lease-token", "5-0"];
-    assert_eq!(t.run(&abandon), 0, "{}", t.err());
+    // The parent ends outside the queue's verbs, which would have voided the child with it.
+    t.lc.batch_states.borrow_mut().insert("r-1".into(), ("ABANDONED".into(), "9".into()));
     tree_of(&t, "merged-tb");
     assert_eq!(
         lander("5-0"),
