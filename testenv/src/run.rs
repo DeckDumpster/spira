@@ -637,12 +637,23 @@ impl Drop for ContainerGuard<'_> {
         let mine = fs::read_to_string(&self.owner_file)
             .map(|s| s.trim() == std::process::id().to_string())
             .unwrap_or(false);
+        // sp-ikh6qw: the removal is detached, so the verdict never waits on it. The rename
+        // frees the name, so this run's owner file goes with it: the next run of the same
+        // key is not blocked, and a failed removal is an ownerless orphan the sweep removes.
+        let mut detached = None;
         if mine {
-            if !self.session.down().ok() {
+            detached = self.session.down_detached();
+            if detached.is_none() {
                 self.deps.log(&format!(
-                    "teardown failed for {} — checking whether it survived",
+                    "could not rename {} out of the next run's way — removing it inline",
                     self.session.name
                 ));
+                if !self.session.down().ok() {
+                    self.deps.log(&format!(
+                        "teardown failed for {} — checking whether it survived",
+                        self.session.name
+                    ));
+                }
             }
         } else {
             self.deps.log(&format!(
@@ -651,7 +662,13 @@ impl Drop for ContainerGuard<'_> {
             ));
         }
         let _ = fs::remove_dir_all(&self.home);
-        if self.session.rt.exists(&self.session.name) {
+        if let Some(reap) = &detached {
+            self.deps.log(&format!(
+                "container {} renamed {reap}, removed detached (rm -f -t 0); the orphan sweep removes it if that fails",
+                self.session.name
+            ));
+            let _ = fs::remove_file(&self.owner_file);
+        } else if self.session.rt.exists(&self.session.name) {
             self.deps.log(&format!(
                 "container {} survived teardown — leaving owner file for the orphan sweep",
                 self.session.name

@@ -1008,6 +1008,8 @@ impl<'a> Session<'a> {
         pids_peak_line(&read("pids.peak")?, &read("pids.max")?)
     }
 
+    /// Remove the container inline, with no stop grace: the fallback when it cannot be
+    /// renamed out of the way for [`Session::down_detached`].
     pub fn down(&self) -> ExecOutcome {
         self.rt.testenv(
             &[
@@ -1015,10 +1017,40 @@ impl<'a> Session<'a> {
                 "--name".into(),
                 self.name.clone(),
                 "--volumes".into(),
+                "--no-grace".into(),
             ],
             None,
         )
     }
+
+    /// Teardown off the run's critical path (sp-ikh6qw): rename the container to
+    /// [`reap_name`], which frees its name for the next run of the same key at once, then
+    /// remove it with `rm -f -t 0` in a detached `testenv container down` this run never
+    /// waits on. The reap name keeps the orphan prefix and has no owner file, so the orphan
+    /// sweep removes it if the detached removal fails. The reap name on success; None when
+    /// the rename failed and nothing was spawned.
+    pub fn down_detached(&self) -> Option<String> {
+        let reap = reap_name(&self.name);
+        if !self.rt.rename(&self.name, &reap) {
+            return None;
+        }
+        self.rt.testenv_detached(&[
+            "down".into(),
+            "--name".into(),
+            reap.clone(),
+            "--volumes-of".into(),
+            self.name.clone(),
+            "--no-grace".into(),
+        ]);
+        Some(reap)
+    }
+}
+
+/// The name a torn-down container is renamed to before its detached removal (sp-ikh6qw):
+/// `name` itself as the prefix, so it stays inside the orphan sweep's prefix, and this pid,
+/// so it is never the name of the next run's container.
+pub fn reap_name(name: &str) -> String {
+    format!("{name}-reap-{}", std::process::id())
 }
 
 #[cfg(test)]
@@ -1039,7 +1071,8 @@ pub mod fake {
         rules: Mutex<Vec<Rule>>,
         pub running: Mutex<Vec<Option<String>>>,
         pub testenv_rc: Mutex<std::collections::HashMap<String, i32>>,
-        pub containers: Mutex<Vec<String>>,
+        /// Shared, so a held detached removal can finish on a thread of its own.
+        pub containers: std::sync::Arc<Mutex<Vec<String>>>,
         pub inspect_extra: Mutex<std::collections::HashMap<String, String>>,
         /// `testenv container` subcommand → how long it takes (for the setup-cutoff tests).
         pub testenv_delay: Mutex<std::collections::HashMap<String, Duration>>,
@@ -1052,6 +1085,18 @@ pub mod fake {
         pub once_rc: Mutex<std::collections::HashMap<String, i32>>,
         /// Tiers that run until the run is cancelled, then answer the cancelled rc.
         pub once_hang: Mutex<std::collections::HashSet<String>>,
+        /// `(from, to)` of every rename; a rename fails while `rename_fails` is set.
+        pub renames: Mutex<Vec<(String, String)>>,
+        pub rename_fails: Mutex<bool>,
+        /// The detached calls ([`ContainerRuntime::testenv_detached`]), also in `testenv_calls`.
+        pub detached: Mutex<Vec<Vec<String>>>,
+        /// While set, a detached `down` runs on a thread of its own that waits for this
+        /// signal (or 10 s) before it removes the container: a removal still in flight.
+        pub detached_hold: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+        /// The threads of held detached removals, to join on.
+        pub detached_threads: Mutex<Vec<std::thread::JoinHandle<()>>>,
+        /// A detached `down` that fails: the container survives it.
+        pub detached_fails: Mutex<bool>,
     }
 
     impl FakeRuntime {
@@ -1209,6 +1254,38 @@ pub mod fake {
         fn purge(&self, name: &str) {
             self.purged.lock().unwrap().push(name.into());
             self.containers.lock().unwrap().retain(|c| c != name);
+        }
+        fn rename(&self, from: &str, to: &str) -> bool {
+            self.renames.lock().unwrap().push((from.into(), to.into()));
+            let mut cs = self.containers.lock().unwrap();
+            if *self.rename_fails.lock().unwrap() || !cs.iter().any(|c| c == from) {
+                return false;
+            }
+            for c in cs.iter_mut().filter(|c| *c == from) {
+                *c = to.to_string();
+            }
+            true
+        }
+        fn testenv_detached(&self, args: &[String]) {
+            self.testenv_calls.lock().unwrap().push(args.to_vec());
+            self.detached.lock().unwrap().push(args.to_vec());
+            if args.first().map(String::as_str) != Some("down") || *self.detached_fails.lock().unwrap() {
+                return;
+            }
+            let Some(name) = args.iter().position(|a| a == "--name").and_then(|i| args.get(i + 1)).cloned() else {
+                return;
+            };
+            match self.detached_hold.lock().unwrap().take() {
+                None => self.containers.lock().unwrap().retain(|c| *c != name),
+                Some(hold) => {
+                    let containers = std::sync::Arc::clone(&self.containers);
+                    let t = std::thread::spawn(move || {
+                        let _ = hold.recv_timeout(Duration::from_secs(10));
+                        containers.lock().unwrap().retain(|c| *c != name);
+                    });
+                    self.detached_threads.lock().unwrap().push(t);
+                }
+            }
         }
         fn testenv(&self, args: &[String], deadline: Option<Instant>) -> ExecOutcome {
             self.testenv_calls.lock().unwrap().push(args.to_vec());

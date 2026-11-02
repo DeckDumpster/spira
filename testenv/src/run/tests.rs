@@ -457,7 +457,7 @@ fn a_mixed_batch_reports_every_suite_and_a_red_verdict() {
     assert!(calls.iter().any(|c| c[0] == "up"));
     assert!(
         calls.last().unwrap()[0] == "down"
-            && calls.last().unwrap().contains(&"--volumes".to_string())
+            && calls.last().unwrap().contains(&"--volumes-of".to_string())
     );
     assert!(fs::read_dir(&w.owner)
         .unwrap()
@@ -1099,6 +1099,84 @@ fn orphans_with_dead_owners_are_swept_before_starting() {
     );
     assert_eq!(rt.purged.lock().unwrap().clone(), vec!["spira-batch-dead"]);
     assert!(!w.owner.join("spira-batch-dead.owner").exists());
+}
+
+/// The batch's container, by the name `up` gave it.
+fn batch_container(rt: &FakeRuntime) -> String {
+    let calls = rt.testenv_calls.lock().unwrap().clone();
+    let up = calls.iter().find(|c| c[0] == "up").expect("a container came up");
+    up[up.iter().position(|a| a == "--name").unwrap() + 1].clone()
+}
+
+#[test]
+fn the_verdict_is_printed_while_the_batch_container_is_still_being_removed() {
+    let w = World::new("detached-down");
+    let rt = runtime();
+    let (release, hold) = std::sync::mpsc::channel();
+    *rt.detached_hold.lock().unwrap() = Some(hold);
+    let b = FakeBuilder::new(None);
+    assert_eq!(w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root), 0);
+    assert_eq!(w.last(), "VERDICT GREEN ran=1");
+    let name = batch_container(&rt);
+    let reap = crate::fixture::reap_name(&name);
+    assert_eq!(rt.renames.lock().unwrap().clone(), vec![(name.clone(), reap.clone())]);
+    assert_eq!(
+        rt.detached.lock().unwrap().clone(),
+        vec![["down", "--name", &reap, "--volumes-of", &name, "--no-grace"].map(String::from).to_vec()],
+        "removed detached, with no stop grace, the volumes by the original name"
+    );
+    assert!(rt.exists(&reap), "the removal is still in flight when the verdict is out");
+    assert!(!rt.exists(&name), "the name is free for the next run of this key");
+    assert!(
+        fs::read_dir(&w.owner)
+            .unwrap()
+            .flatten()
+            .all(|e| !e.file_name().to_string_lossy().ends_with(".owner")),
+        "the owner files are released, so the next run is not blocked"
+    );
+    release.send(()).unwrap();
+    for t in rt.detached_threads.lock().unwrap().drain(..) {
+        t.join().unwrap();
+    }
+    assert!(!rt.exists(&reap), "and the removal then finishes");
+}
+
+#[test]
+fn a_batch_container_that_cannot_be_renamed_is_removed_inline_with_no_grace() {
+    let w = World::new("inline-down");
+    let rt = runtime();
+    *rt.rename_fails.lock().unwrap() = true;
+    let b = FakeBuilder::new(None);
+    assert_eq!(w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root), 0);
+    assert!(rt.detached.lock().unwrap().is_empty());
+    let calls = rt.testenv_calls.lock().unwrap().clone();
+    let down = calls.last().unwrap();
+    assert_eq!(down[0], "down");
+    assert!(down.contains(&"--no-grace".to_string()) && down.contains(&"--volumes".to_string()));
+    assert!(!rt.exists(&batch_container(&rt)));
+}
+
+#[test]
+fn a_failed_detached_removal_is_swept_as_an_ownerless_orphan() {
+    let mut w = World::new("detached-fail");
+    w.env.insert("SPIRA_BATCH_ORPHAN_MIN_AGE".into(), "0".into());
+    let rt = runtime();
+    *rt.detached_fails.lock().unwrap() = true;
+    let b = FakeBuilder::new(None);
+    assert_eq!(w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root), 0);
+    let reap = crate::fixture::reap_name(&batch_container(&rt));
+    assert!(rt.exists(&reap), "the detached removal failed: the container survived it");
+    assert!(!w.owner.join(format!("{reap}.owner")).exists());
+    rt.inspect_extra
+        .lock()
+        .unwrap()
+        .insert(format!("{reap} {{{{.State.StartedAt}}}}"), "2026-01-01 00:00:00 +0000 UTC".into());
+    *rt.detached_fails.lock().unwrap() = false;
+    // The next run's orphan sweep finds it: ownerless and old enough. (Another selection,
+    // so a cached green does not answer for it.)
+    assert_eq!(w.run(&rt, &b, &["--suites", "test-x.sh", "topic"], "", &w.root), 0);
+    assert!(rt.purged.lock().unwrap().contains(&reap), "{:?}", rt.purged.lock().unwrap());
+    assert!(w.has_line(|l| l.contains(&format!("swept ownerless container {reap}"))));
 }
 
 #[test]
@@ -1795,7 +1873,7 @@ fn a_warm_trial_claims_the_slots_spare_once_tears_it_down_and_asks_for_a_refill(
         "the spare is probed before use"
     );
     assert!(
-        calls.iter().any(|c| c[0] == "down" && c[2] == spare),
+        calls.iter().any(|c| c[0] == "down" && c.contains(&spare)),
         "and torn down after — never reused"
     );
     assert!(!record.exists(), "the record was consumed by the claim");

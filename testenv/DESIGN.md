@@ -526,9 +526,15 @@ uid 1001, `XDG_RUNTIME_DIR=/run/user/1001`, `CARGO_HOME=/var/spira/cargo`,
   `SPIRA_RUN=/tmp/spira-batch-<i>-<n>`.
 * **Every** exec that runs harness code (configure, suspend, install, baseline, suites)
   carries `SPIRA_RELEASE=<stage>` and `PATH=<stage>/bin:<stage>/spira:<image PATH>` (§5).
-* **Teardown** (always, including on SIGINT/SIGTERM): only while the owner file still names
-  us, `testenv container down --name <n> --volumes`; remove the host home; release the owner file
-  only once podman confirms the container is gone.
+* **Teardown** (always, including on SIGINT/SIGTERM), off the critical path (sp-ikh6qw): only
+  while the owner file still names us, `podman rename <n> <n>-reap-<pid>` (the name is free
+  for the next run of the same key at once), then a **detached** `testenv container down
+  --name <n>-reap-<pid> --volumes-of <n> --no-grace` (`rm -f -t 0`: no stop grace, which was
+  most of a 33 s teardown) that the run never waits on; remove the host home; release the
+  owner file. The reap name keeps the orphan prefix and has no owner file, so a removal that
+  fails is an ownerless orphan the sweep removes. When the rename fails the removal runs
+  inline (`down --name <n> --volumes --no-grace`), and the owner file is released only once
+  podman confirms the container is gone.
 
 The runtime is a trait (`ContainerRuntime`); the orchestration is unit-tested against a fake.
 
@@ -1067,7 +1073,7 @@ What matters, and is ported:
 
 ```
 testenv container up      [--name N] [--checkout PATH]
-testenv container down    [--name N] [--volumes] [--force-foreign]
+testenv container down    [--name N] [--volumes | --volumes-of BASE] [--no-grace] [--force-foreign]
 testenv container exec    [--name N] [--user U] [--] CMD ARGS...
 testenv container probe   [--name N]
 testenv container tag                 # the build-closure hash, stdout

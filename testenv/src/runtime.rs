@@ -188,8 +188,15 @@ pub trait ContainerRuntime: Send + Sync {
     fn exists(&self, name: &str) -> bool;
     /// Every container (running or not) whose name starts with `prefix`.
     fn names_with_prefix(&self, prefix: &str) -> Vec<String>;
-    /// stop, rm, and remove both cargo volumes — the orphan sweep's teardown.
+    /// Force-remove with no stop grace (`rm -f -t 0`), then both cargo volumes — the orphan
+    /// sweep's teardown.
     fn purge(&self, name: &str);
+    /// `podman rename <from> <to>`: frees `from` for the next container at once (sp-ikh6qw).
+    fn rename(&self, from: &str, to: &str) -> bool;
+    /// `<this executable> container <args>` spawned detached — its own process group, no
+    /// stdio of ours — and never waited on: the batch's teardown, off the run's critical
+    /// path (sp-ikh6qw), the way the orphan sweep is spawned (DESIGN.md D12).
+    fn testenv_detached(&self, args: &[String]);
     /// `<this executable> container <args>` (tag, up, probe, down; DESIGN.md §12, D17): stdout captured,
     /// stderr passed through. Past `deadline` it is killed (its whole process group) and
     /// reports [`RC_DEADLINE`] (DESIGN.md D9).
@@ -430,10 +437,32 @@ impl ContainerRuntime for Podman {
     }
 
     fn purge(&self, name: &str) {
-        self.podman_quiet(&["stop", name]);
-        self.podman_quiet(&["rm", name]);
+        self.podman_quiet(&["rm", "-f", "-t", "0", name]);
         self.podman_quiet(&["volume", "rm", &format!("{name}-cargo-reg")]);
         self.podman_quiet(&["volume", "rm", &format!("{name}-cargo-git")]);
+    }
+
+    fn rename(&self, from: &str, to: &str) -> bool {
+        self.podman_quiet(&["rename", from, to])
+    }
+
+    fn testenv_detached(&self, args: &[String]) {
+        use std::os::unix::process::CommandExt;
+        // batch-job: a detached teardown, bounded by podman's own rm; the orphan sweep
+        // removes whatever it leaves
+        let _ = Command::new(&self.exe)
+            .arg("container")
+            .args(args)
+            .env("SPIRA_TESTENV_HARNESS", &self.harness)
+            .env_remove("SPIRA_ARTIFACTS")
+            .env_remove("SPIRA_ARTIFACTS_ROOT")
+            // Never the caller's cwd: a gate's is the worktree it is about to remove.
+            .current_dir("/")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn();
     }
 
     fn testenv(&self, args: &[String], deadline: Option<Instant>) -> ExecOutcome {

@@ -1307,6 +1307,26 @@ fn a_failed_teardown_keeps_the_owner_file_and_volumes_go_only_when_asked() {
     assert_eq!(down(&f, &["--bogus"]), 1);
 }
 
+#[test]
+fn a_no_grace_down_force_removes_with_no_stop_and_drops_the_original_names_volumes() {
+    let f = Fake::new();
+    f.when(&["container", "exists"], 1, "");
+    assert_eq!(
+        down(&f, &["--name", "c-reap-7", "--volumes-of", "c", "--no-grace"]),
+        0
+    );
+    assert!(f.called(&["rm", "-f", "-t", "0", "c-reap-7"]), "removed with -t 0");
+    assert!(f.calls_with("stop").is_empty(), "no stop, so no stop grace");
+    let v: BTreeSet<Vec<String>> = f.calls_with("volume").into_iter().collect();
+    assert_eq!(
+        v,
+        [args(&["volume", "rm", "c-cargo-reg"]), args(&["volume", "rm", "c-cargo-git"])]
+            .into_iter()
+            .collect(),
+        "the volumes are the original name's, never the reap name's"
+    );
+}
+
 // ---- exec, probe, usage ------------------------------------------------------------------
 
 #[test]
