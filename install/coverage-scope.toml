@@ -1,0 +1,5 @@
+# Install's removal of the queue's round files: every branch of the plan is a file kept, removed
+# or refused by name.
+[[scope]]
+path = "install/src/round_records.rs"
+functions = ["is_round_file", "round_files", "plan"]

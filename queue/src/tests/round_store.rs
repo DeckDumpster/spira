@@ -126,6 +126,34 @@ fn with_the_store_no_ended_round_counts_toward_the_limit_or_is_a_parent() {
         "{:?}",
         rec.kv
     );
+    t.lc.store.get().unwrap().set_state("spira", &batch, "GREEN");
+    assert_eq!(t.run(&["round", "land", &batch]), 1);
+    assert!(
+        t.err().contains(&format!("round {batch} is stacked on round spira-open, which has not landed")),
+        "{}",
+        t.err()
+    );
+}
+
+#[test]
+fn with_the_store_unreadable_every_verb_refuses_saying_it_cannot_tell() {
+    let t = store_world();
+    t.lc.store.get().unwrap().down.set(true);
+    for verb in [
+        vec!["round", "status"],
+        vec!["round", "open", "--members", "sp-b:tb"],
+        vec!["round", "certify", "spira-open"],
+        vec!["round", "stage", "--members", "sp-b:tb"],
+    ] {
+        let from = t.io.err.borrow().len();
+        assert_eq!(t.run(&verb), 1, "{verb:?}");
+        let err = t.err()[from..].to_string();
+        assert!(
+            err.contains("cannot tell which rounds are open for spira: cannot tell: lc-serve did not answer"),
+            "{verb:?}: {err}"
+        );
+    }
+    assert!(!t.lc.has("cut "), "nothing is cut on a store that cannot say what is open");
 }
 
 #[test]

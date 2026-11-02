@@ -178,6 +178,8 @@ pub mod mem {
     pub struct MemDoor {
         pub store: Contract<MemBackend>,
         n: Cell<u64>,
+        /// Every call answers "cannot tell", as an unreachable lc-serve does.
+        pub down: Cell<bool>,
     }
 
     impl Default for MemDoor {
@@ -190,6 +192,7 @@ pub mod mem {
                 store: Contract::open(MemBackend::new(), ports, Config { min_lock_ttl_ms: 1 })
                     .expect("an in-memory store opens"),
                 n: Cell::new(0),
+                down: Cell::new(false),
             }
         }
     }
@@ -242,17 +245,29 @@ pub mod mem {
         }
     }
 
+    impl MemDoor {
+        fn up(&self) -> Result<(), String> {
+            match self.down.get() {
+                true => Err("cannot tell: lc-serve did not answer".into()),
+                false => Ok(()),
+            }
+        }
+    }
+
     impl Door for MemDoor {
         fn get(&self, key: &str) -> Result<Option<Item>, String> {
+            self.up()?;
             self.store.get(key).map_err(|e| e.to_string())
         }
         fn list(&self, prefix: &str) -> Result<Vec<Item>, String> {
+            self.up()?;
             self.store
                 .list(&[prefix], &state_store::Selector::Everything)
                 .map(|(items, _)| items)
                 .map_err(|e| e.to_string())
         }
         fn txn(&self, t: &Txn, kind: &str) -> Result<TxnResult, String> {
+            self.up()?;
             self.store.txn(t, &self.request(kind)).map_err(|e| e.to_string())
         }
     }

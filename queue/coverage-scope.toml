@@ -1,0 +1,19 @@
+# The rounds read from the control store's batches/<repo>/<id> and the verbs that read them: the
+# bead's own gate reports any branch in them no test takes.
+[[scope]]
+path = "queue/src/batches.rs"
+functions = ["decode", "machine_fields", "batches", "open_batches", "batch", "save", "round_id"]
+
+[[scope]]
+path = "queue/src/ops/round.rs"
+functions = [
+    "live_records",
+    "record_of",
+    "abandoned_record",
+    "save_record",
+    "drop_record",
+    "sweep",
+    "load",
+    "status",
+    "abandon",
+]
