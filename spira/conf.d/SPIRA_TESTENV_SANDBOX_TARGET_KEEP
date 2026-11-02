@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=testenv
+DOC=THE MOST BRANCH TARGETS THE UNIT SANDBOX KEEPS under SPIRA_TESTENV_SANDBOX_TARGET_ROOT; after a run the least recently used beyond this are removed, never the one just used.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE MOST BRANCH TARGETS THE UNIT SANDBOX KEEPS (sp-7p5la8). Each is one branch's cargo
+    # target, a few GiB; after a run the least recently used past this count are removed, never
+    # the one just used. A removed branch's next run compiles its dependencies again.
+    : "${SPIRA_TESTENV_SANDBOX_TARGET_KEEP:=24}"
+SPIRA_CONF_DEFAULT_EOF

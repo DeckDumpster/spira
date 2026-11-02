@@ -1510,7 +1510,17 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         None
     };
     // ---- the sandbox runner (sp-yx0yu9): a filtered unit run under bwrap, no container ---
-    if args.tests.is_some() && active.len() == 1 && crate::unit::selected(&active) && args.runner.unwrap_or(s.unit_runner) == crate::sandbox::Runner::Sandbox {
+    let sandboxed = args.tests.is_some() && active.len() == 1 && crate::unit::selected(&active) && args.runner.unwrap_or(s.unit_runner) == crate::sandbox::Runner::Sandbox;
+    let to_container = if sandboxed {
+        let listed = crate::sandbox::container_tests(&wt.path);
+        crate::sandbox::needing_container(args.tests.as_deref().unwrap_or_default(), &listed).join(",")
+    } else {
+        String::new()
+    };
+    if !to_container.is_empty() {
+        deps.log(&format!("unit-tests: runner=container for this run: {to_container} listed in {} as needing a running system", crate::sandbox::CONTAINER_TESTS_REL));
+    }
+    if sandboxed && to_container.is_empty() {
         let branch = git(&repo.path, &["rev-parse", "--symbolic-full-name", br])
             .ok()
             .and_then(|r| r.strip_prefix("refs/heads/").map(str::to_string));
@@ -2724,6 +2734,8 @@ fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume:
         return Finish::fault(2, "sandbox-home", 0);
     };
     let target = crate::sandbox::target_dir(Path::new(root), volume);
+    let _ = fs::create_dir_all(&target);
+    crate::sandbox::touch(&target);
     let threads = (deps.env)("RUST_TEST_THREADS").and_then(|v| v.trim().parse().ok()).unwrap_or(4);
     let profile = crate::sandbox::Profile::for_run(tree, &target, Path::new(&home), threads);
     let out = results.join(format!("{script}.out"));
@@ -2735,6 +2747,9 @@ fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume:
             return Finish::fault(2, "sandbox-start", 0);
         }
     };
+    for gone in crate::sandbox::prune_targets(Path::new(root), &target, s.sandbox_target_keep) {
+        deps.log(&format!("unit-tests: pruned the least recently used sandbox target {}", gone.display()));
+    }
     let text = fs::read_to_string(&out).unwrap_or_default();
     let compiled = text.lines().filter(|l| l.trim_start().starts_with("Compiling ")).count();
     deps.log(&format!(

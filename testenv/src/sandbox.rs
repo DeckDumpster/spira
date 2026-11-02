@@ -170,6 +170,58 @@ pub fn target_dir(root: &Path, volume: &str) -> PathBuf {
     root.join(volume)
 }
 
+/// The tests that need a running system and so stay in the container (sp-7p5la8), read from
+/// the tree's `testenv/container-tests.txt`: one name per line, `#` comments. A missing file
+/// lists none.
+pub fn container_tests(tree: &Path) -> Vec<String> {
+    fs::read_to_string(tree.join(CONTAINER_TESTS_REL))
+        .unwrap_or_default()
+        .lines()
+        .map(|l| l.split('#').next().unwrap_or("").trim())
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+pub const CONTAINER_TESTS_REL: &str = "testenv/container-tests.txt";
+
+/// The named tests that are listed as needing the container; a run naming any of them runs
+/// there. A filter matches a listed name as cargo's filter would: by substring.
+pub fn needing_container<'a>(filters: &'a [String], listed: &[String]) -> Vec<&'a str> {
+    filters.iter().map(String::as_str).filter(|f| listed.iter().any(|l| l.contains(f) || f.contains(l.as_str()))).collect()
+}
+
+/// Removes the least recently used branch targets under `root` past `keep`, never `current`.
+/// Returns the paths removed. A target's age is its directory's mtime, which every run touches.
+pub fn prune_targets(root: &Path, current: &Path, keep: usize) -> Vec<PathBuf> {
+    let mut dirs: Vec<(std::time::SystemTime, PathBuf)> = fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .map(|e| (e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH), e.path()))
+        .collect();
+    dirs.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    let mut kept = usize::from(dirs.iter().any(|(_, p)| p == current));
+    let mut removed = Vec::new();
+    for (_, p) in dirs {
+        if p == current {
+            continue;
+        }
+        if kept < keep {
+            kept += 1;
+        } else if fs::remove_dir_all(&p).is_ok() {
+            removed.push(p);
+        }
+    }
+    removed
+}
+
+/// Marks `target` as just used, so pruning keeps it.
+pub fn touch(target: &Path) {
+    let _ = fs::File::open(target).and_then(|f| f.set_modified(std::time::SystemTime::now()));
+}
+
 /// How one sandboxed run ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ran {
@@ -310,6 +362,37 @@ mod tests {
         let plain = testkit::TempDir::new("sandbox-plain");
         fs::create_dir(plain.path().join(".git")).unwrap();
         assert_eq!(worktree_gitdir(plain.path()), None);
+    }
+
+    #[test]
+    fn a_run_naming_a_listed_test_goes_to_the_container_and_one_naming_none_stays() {
+        let d = testkit::TempDir::new("sandbox-listed");
+        fs::create_dir_all(d.path().join("testenv")).unwrap();
+        fs::write(d.path().join(CONTAINER_TESTS_REL), "# needs a dolt server\nthe_store_answers_over_its_socket\n\n").unwrap();
+        let listed = container_tests(d.path());
+        assert_eq!(listed, ["the_store_answers_over_its_socket"]);
+        let f = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(needing_container(&f(&["a_pure_test", "the_store_answers_over_its_socket"]), &listed), ["the_store_answers_over_its_socket"]);
+        assert!(needing_container(&f(&["a_pure_test"]), &listed).is_empty());
+        assert!(container_tests(testkit::TempDir::new("sandbox-none").path()).is_empty());
+    }
+
+    #[test]
+    fn pruning_keeps_the_most_recent_targets_and_never_the_current_one() {
+        let d = testkit::TempDir::new("sandbox-prune");
+        let mk = |n: &str, age: u64| {
+            let p = d.path().join(n);
+            fs::create_dir(&p).unwrap();
+            fs::File::open(&p).unwrap().set_modified(std::time::SystemTime::now() - Duration::from_secs(age)).unwrap();
+            p
+        };
+        let oldest = mk("t-oldest", 300);
+        let middle = mk("t-middle", 200);
+        let current = mk("t-current", 400);
+        let newest = mk("t-newest", 100);
+        let gone = prune_targets(d.path(), &current, 2);
+        assert_eq!(gone, [middle.clone(), oldest.clone()]);
+        assert!(current.exists() && newest.exists() && !middle.exists() && !oldest.exists());
     }
 
     #[test]

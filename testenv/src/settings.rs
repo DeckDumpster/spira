@@ -91,6 +91,8 @@ pub struct Settings {
     /// sp-yx0yu9: where the sandbox keeps each branch's cargo target
     /// (`SPIRA_TESTENV_SANDBOX_TARGET_ROOT`); empty refuses a sandbox run.
     pub sandbox_target_root: String,
+    /// sp-7p5la8: the most branch targets the sandbox keeps (`SPIRA_TESTENV_SANDBOX_TARGET_KEEP`).
+    pub sandbox_target_keep: usize,
     /// DESIGN.md §11.2: warm slots tried under `--deadline` (0 = no warm path).
     pub warm_slots: usize,
     /// DESIGN.md D9: setup's share of `--deadline`, percent, clamped to 10..=90.
@@ -219,6 +221,7 @@ impl Settings {
             unit_runner: crate::sandbox::Runner::parse(&cfg("SPIRA_TESTENV_UNIT_RUNNER")?)
                 .map_err(|e| format!("SPIRA_TESTENV_UNIT_RUNNER {e}"))?,
             sandbox_target_root: cfg("SPIRA_TESTENV_SANDBOX_TARGET_ROOT")?,
+            sandbox_target_keep: cfg_parse("SPIRA_TESTENV_SANDBOX_TARGET_KEEP")?,
             scratch_slots: src.num("SPIRA_TESTENV_SCRATCH_SLOTS").unwrap_or(4),
             scratch_min_free_mib: src
                 .num("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB")
