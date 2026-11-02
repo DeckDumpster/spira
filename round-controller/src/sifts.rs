@@ -477,13 +477,25 @@ fn drop_stacked_on_barred(mut kept: Vec<Member>, mut barred: BTreeSet<String>) -
     kept
 }
 
-/// The content rows of `ids`, from the lifecycle store's content mirror.
+/// The item rows of `ids`, from `spira-lc plan items --full`, the planning plane's read door.
 fn bd_show(env: &Env, ids: &[String]) -> Result<Value, String> {
     if ids.is_empty() {
         return Ok(Value::Array(vec![]));
     }
-    let text = lcq(env, &["content-rows", "--full", "--ids", &ids.join(",")])?;
-    serde_json::from_str(&text).map_err(|e| format!("content-rows: unparsed output: {e}"))
+    plan_items(&lcq(env, &["plan", "items", "--full", "--ids", &ids.join(",")])?)
+}
+
+/// The `items` of a `plan items` answer.
+fn plan_items(text: &str) -> Result<Value, String> {
+    let mut v: Value =
+        serde_json::from_str(text).map_err(|e| format!("plan items: unparsed output: {e}"))?;
+    match v.get_mut("items").map(Value::take) {
+        Some(items @ Value::Array(_)) => Ok(items),
+        _ => Err(format!(
+            "plan items: no items in {}",
+            text.chars().take(200).collect::<String>()
+        )),
+    }
 }
 
 /// The description and notes of `id`, where a target and its verdict live.
@@ -492,7 +504,7 @@ fn bd_show_text(env: &Env, id: &str) -> Result<String, String> {
     let row = rows
         .as_array()
         .and_then(|a| a.first())
-        .ok_or_else(|| format!("content-rows: no row for {id}"))?;
+        .ok_or_else(|| format!("plan items: no row for {id}"))?;
     Ok(format!(
         "{}\n{}",
         str_of(row, "description").unwrap_or(""),
