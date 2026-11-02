@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=testenv
+DOC=THE LARGEST A REGISTERED REPOSITORY'S WARM CARGO TARGET MAY GROW, in GiB; a merge that leaves it larger removes it whole and the next run builds cold. 0 disables the cutoff.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE LARGEST A FOREIGN REPOSITORY'S WARM CARGO TARGET MAY GROW (sp-ejhs5j), in GiB. A run
+    # merges only what it newly built and nothing removes an artifact, so without a cutoff the
+    # target keeps every lock variant it has seen (dumpstar's reached 123 GiB, 2026-11-02).
+    : "${SPIRA_TESTENV_FOREIGN_TARGET_MAX_GIB:=40}"
+SPIRA_CONF_DEFAULT_EOF

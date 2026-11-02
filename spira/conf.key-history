@@ -578,6 +578,8 @@ testenv_sandbox_target_root
 reconciler_deadman_secs
 reconciler_heartbeat_url
 testenv_sandbox_target_keep
+testenv_foreign_target_max_gib
+testenv_foreign_target_idle_hours
 lc_ship_secs
 lc_ship_max_age_secs
 lc_ship_snapshot_secs
