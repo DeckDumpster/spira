@@ -19,3 +19,4 @@ strip = true
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+mail = { path = "../mail" }

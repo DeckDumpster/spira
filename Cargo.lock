@@ -1440,6 +1440,7 @@ dependencies = [
 name = "reconciler-alert"
 version = "1.0.0"
 dependencies = [
+ "mail",
  "reconciler-engine",
  "serde",
  "serde_json",

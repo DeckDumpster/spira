@@ -15,11 +15,29 @@ mod io;
 use reconciler_engine::alert::{classify_escalation, compose_alert, should_alert};
 use reconciler_engine::core::{RawStatus, Verdict};
 use std::env;
-use std::io::Read as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-/// Every program the alert path runs, by name on the launcher's PATH; a test injects its own.
+/// One message for `mail send`.
+#[derive(Debug, Clone, PartialEq)]
+struct Message {
+    mailbox: &'static str,
+    from: String,
+    subject: String,
+    kind: &'static str,
+    default: Option<String>,
+    class: Option<String>,
+    body: String,
+}
+
+/// The alert path's two effects: a message into a mailbox, and whether the Concierge is there
+/// to read it. Tests answer both in memory.
+trait Wake {
+    fn mail(&self, m: &Message) -> Result<(), String>;
+    fn concierge_running(&self) -> bool;
+}
+
+/// Every program the alert path runs, by name on the launcher's PATH.
 struct Seams {
     mail: String,
     tmux: String,
@@ -28,6 +46,16 @@ struct Seams {
 impl Seams {
     fn production() -> Seams {
         Seams { mail: "mail".into(), tmux: "tmux".into() }
+    }
+}
+
+impl Wake for Seams {
+    fn mail(&self, m: &Message) -> Result<(), String> {
+        io::mail_send(&self.mail, m.mailbox, &m.from, &m.subject, m.kind, m.default.as_deref(), m.class.as_deref(), &m.body)
+    }
+
+    fn concierge_running(&self) -> bool {
+        io::session_is_running(&self.tmux, CONCIERGE_SESSION)
     }
 }
 
@@ -89,11 +117,14 @@ fn main() -> ExitCode {
     let sink = spira_otel::metrics::MetricsSink::for_component(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "spira-reconciler-alert");
     let result = spira_otel::metrics::instrument_result(&sink, "reconciler-alert", sub.unwrap_or("none"), || match sub {
         Some("gap") => run_gap(&seams, &Args::parse(&rest)),
-        Some("escalate") => run_escalate(&seams, &Args::parse(&rest)),
+        Some("escalate") => run_escalate(&seams, &Args::parse(&rest), &mut std::io::stdin()),
         _ => Err("usage: reconciler-alert gap|escalate ...".to_string()),
     });
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(outcome) => {
+            println!("reconciler-alert: {outcome}");
+            ExitCode::SUCCESS
+        }
         Err(e) => {
             eprintln!("reconciler-alert: {}", e);
             ExitCode::FAILURE
@@ -118,7 +149,8 @@ fn parse_status(args: &Args) -> Result<RawStatus, String> {
     }
 }
 
-fn run_gap(seams: &Seams, args: &Args) -> Result<(), String> {
+/// One verdict through the alert path; the outcome line says where the wake went, or why none was sent.
+fn run_gap(wake: &dyn Wake, args: &Args) -> Result<String, String> {
     let invariant = args.get("invariant").ok_or("missing --invariant")?;
     let now: u64 = args
         .get("now")
@@ -149,8 +181,7 @@ fn run_gap(seams: &Seams, args: &Args) -> Result<(), String> {
     io::save_alerted(&state_path, &alerted).map_err(|e| format!("could not persist {}: {}", state_path.display(), e))?;
 
     if !fire {
-        println!("reconciler-alert: {} — no alert (deduped or not a gap)", invariant);
-        return Ok(());
+        return Ok(format!("{} — no alert (deduped or not a gap)", invariant));
     }
 
     let short = match &verdict.status {
@@ -162,21 +193,22 @@ fn run_gap(seams: &Seams, args: &Args) -> Result<(), String> {
     let evidence = compose_alert(invariant, now, &verdict, last_remedy);
 
     let body = format!("## Alert\n{subject}\n\n{evidence}");
-    io::mail_send(&seams.mail, "concierge", &from, &subject, "alert", None, None, &body)?;
-    if io::session_is_running(&seams.tmux, CONCIERGE_SESSION) {
-        println!("reconciler-alert: {} — sent to concierge", invariant);
+    wake.mail(&Message { mailbox: "concierge", from, subject, kind: "alert", default: None, class: None, body })?;
+    if wake.concierge_running() {
+        Ok(format!("{} — sent to concierge", invariant))
     } else {
-        println!("reconciler-alert: {} — concierge not running, queued in its mailbox", invariant);
+        Ok(format!("{} — concierge not running, queued in its mailbox", invariant))
     }
-    Ok(())
 }
 
-fn run_escalate(seams: &Seams, args: &Args) -> Result<(), String> {
+/// One escalation, its body read from `input` once the arguments hold; the outcome line says
+/// which mailbox it reached.
+fn run_escalate(wake: &dyn Wake, args: &Args, input: &mut dyn std::io::Read) -> Result<String, String> {
     let class = args.get("class").ok_or("missing --class")?;
     let subject = args.get("subject").ok_or("missing --subject")?;
     let from = args.get("from").map(str::to_string).unwrap_or_else(default_from);
     let mut body = String::new();
-    std::io::stdin().read_to_string(&mut body).map_err(|e| format!("reading body from stdin: {}", e))?;
+    input.read_to_string(&mut body).map_err(|e| format!("reading body from stdin: {}", e))?;
 
     match classify_escalation(class) {
         Some(_) => {
@@ -184,8 +216,16 @@ fn run_escalate(seams: &Seams, args: &Args) -> Result<(), String> {
                 "escalating to the operator requires --default (law-escalate-decisions-not-problems: every ask carries a default)",
             )?;
             let full_body = format!("## Question\n{subject}\n\n## Default\n{default}\n\n## Class basis\nEscalated as {class}.\n\n{body}");
-            io::mail_send(&seams.mail, "operator", &from, subject, "question", Some(default), Some(class), &full_body)?;
-            println!("reconciler-alert: escalation ({}) sent to operator", class);
+            wake.mail(&Message {
+                mailbox: "operator",
+                from,
+                subject: subject.to_string(),
+                kind: "question",
+                default: Some(default.to_string()),
+                class: Some(class.to_string()),
+                body: full_body,
+            })?;
+            Ok(format!("escalation ({}) sent to operator", class))
         }
         None => {
             let refused_subject = format!(
@@ -197,11 +237,18 @@ fn run_escalate(seams: &Seams, args: &Args) -> Result<(), String> {
                  operator path accepts (permissions, policy, destructive-or-irreversible-on-production-data). \
                  Refused by construction and routed back for your judgement.\n\n{body}"
             );
-            io::mail_send(&seams.mail, "concierge", &from, &refused_subject, "alert", None, None, &full_body)?;
-            println!("reconciler-alert: escalation class '{}' refused, routed to concierge", class);
+            wake.mail(&Message {
+                mailbox: "concierge",
+                from,
+                subject: refused_subject,
+                kind: "alert",
+                default: None,
+                class: None,
+                body: full_body,
+            })?;
+            Ok(format!("escalation class '{}' refused, routed to concierge", class))
         }
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -238,5 +285,226 @@ mod tests {
     fn parse_status_rejects_unknown_values() {
         let a = Args::parse(&["--status".to_string(), "wat".to_string()]);
         assert!(parse_status(&a).is_err());
+    }
+
+    // Each recorded message goes through the real mail lint against the tree's kind files, as
+    // `mail send` would.
+
+    use std::path::Path;
+
+    /// Records every message and answers "is the Concierge running" with a fixed value.
+    struct Recorder {
+        concierge_up: bool,
+        refuse: bool,
+        sent: std::cell::RefCell<Vec<Message>>,
+    }
+
+    impl Wake for Recorder {
+        fn mail(&self, m: &Message) -> Result<(), String> {
+            if self.refuse {
+                return Err(format!("mail send {}: exit 1", m.mailbox));
+            }
+            self.sent.borrow_mut().push(m.clone());
+            Ok(())
+        }
+
+        fn concierge_running(&self) -> bool {
+            self.concierge_up
+        }
+    }
+
+    struct World {
+        dir: testkit::TempDir,
+        wake: Recorder,
+    }
+
+    impl World {
+        /// `concierge_up`: whether the Concierge's session is there. `refuse`: whether mail refuses.
+        fn new(concierge_up: bool, refuse: bool) -> World {
+            World { dir: testkit::TempDir::new("ralert"), wake: Recorder { concierge_up, refuse, sent: Default::default() } }
+        }
+
+        fn gap(&self, argv: &[&str]) -> Result<String, String> {
+            let mut a: Vec<String> = vec!["--state".into(), self.dir.join("alerted.json").display().to_string()];
+            a.extend(argv.iter().map(|s| s.to_string()));
+            run_gap(&self.wake, &Args::parse(&a))
+        }
+
+        fn escalate(&self, argv: &[&str], body: &str) -> Result<String, String> {
+            let a: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+            run_escalate(&self.wake, &Args::parse(&a), &mut body.as_bytes())
+        }
+
+        /// Every message sent so far, in the order sent.
+        fn sent(&self) -> Vec<Message> {
+            self.wake.sent.borrow().clone()
+        }
+    }
+
+    /// What `mail send` would say of this message, judged by the tree's own kind files.
+    fn mail_lint(m: &Message) -> Result<(), String> {
+        let kinds = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/mail/kinds");
+        let input = mail::lint::LintInput {
+            from: &m.from,
+            subject: &m.subject,
+            kind: m.kind,
+            default: m.default.as_deref().unwrap_or(""),
+            urgent: false,
+            body: &m.body,
+            digest: false,
+        };
+        mail::lint::lint_check(&input, &kinds, "sp")
+    }
+
+    const FLEET_GAP: &[&str] = &[
+        "--invariant", "fleet-size", "--status", "gap", "--desired", "8 dwarves", "--observed", "3 dwarves",
+        "--since", "940", "--is-gap",
+    ];
+
+    fn at(now: &str, argv: &[&str]) -> Vec<String> {
+        let mut a = vec!["--now".to_string(), now.to_string()];
+        a.extend(argv.iter().map(|s| s.to_string()));
+        a
+    }
+
+    fn strs(v: &[String]) -> Vec<&str> {
+        v.iter().map(String::as_str).collect()
+    }
+
+    #[test]
+    fn a_gap_past_grace_wakes_the_concierge_with_an_alert_carrying_its_evidence() {
+        let w = World::new(true, false);
+        let out = w.gap(&strs(&at("1000", FLEET_GAP))).unwrap();
+        assert_eq!(out, "fleet-size — sent to concierge");
+        let sent = w.sent();
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        let m = &sent[0];
+        assert_eq!((m.mailbox, m.kind), ("concierge", "alert"));
+        assert_eq!(m.from, reconciler_engine::mail::FROM);
+        assert_eq!(m.subject, "reconciler: fleet-size — 3 dwarves");
+        for line in ["invariant: fleet-size", "desired:   8 dwarves", "observed:  3 dwarves", "since:     60s ago", "last remedy tried: none attempted"] {
+            assert!(m.body.contains(line), "missing {line:?} in {}", m.body);
+        }
+        mail_lint(m).expect("the alert kind accepts the alert this path sends");
+    }
+
+    #[test]
+    fn one_streak_alerts_once_and_a_new_streak_after_it_closes_alerts_again() {
+        let w = World::new(true, false);
+        w.gap(&strs(&at("1000", FLEET_GAP))).unwrap();
+        assert_eq!(w.sent().len(), 1, "the first pass past grace alerts");
+        let out = w.gap(&strs(&at("1060", FLEET_GAP))).unwrap();
+        assert_eq!(out, "fleet-size — no alert (deduped or not a gap)");
+        assert_eq!(w.sent().len(), 1, "the same streak on a later pass sends nothing");
+
+        w.gap(&["--invariant", "fleet-size", "--now", "1100", "--status", "satisfied"]).unwrap();
+        let reopened = [
+            "--invariant", "fleet-size", "--now", "1200", "--status", "gap", "--desired", "8 dwarves", "--observed", "2 dwarves",
+            "--since", "1150", "--is-gap",
+        ];
+        assert_eq!(w.gap(&reopened).unwrap(), "fleet-size — sent to concierge");
+        let sent = w.sent();
+        assert_eq!(sent.len(), 2, "{sent:?}");
+        assert!(sent[1].body.contains("observed:  2 dwarves"), "{}", sent[1].body);
+    }
+
+    #[test]
+    fn a_gap_still_inside_its_grace_sends_nothing() {
+        let w = World::new(true, false);
+        let graced = [
+            "--invariant", "cockpit-dashboards", "--now", "3000", "--status", "gap", "--desired", "configured", "--observed", "none",
+            "--since", "2990",
+        ];
+        assert_eq!(w.gap(&graced).unwrap(), "cockpit-dashboards — no alert (deduped or not a gap)");
+        assert!(w.sent().is_empty());
+    }
+
+    #[test]
+    fn an_unobservable_input_past_grace_alerts_as_unobservable_never_as_satisfied() {
+        let w = World::new(true, false);
+        let blind = [
+            "--invariant", "queue-watch", "--now", "4000", "--status", "unobservable", "--reason", "no reading in 90s",
+            "--since", "3900", "--is-gap",
+        ];
+        assert_eq!(w.gap(&blind).unwrap(), "queue-watch — sent to concierge");
+        let m = &w.sent()[0];
+        assert!(m.body.contains("desired:   (unobservable)") && m.body.contains("observed:  no reading in 90s"), "{}", m.body);
+        assert!(!m.body.contains("satisfied"), "{}", m.body);
+        mail_lint(m).unwrap();
+    }
+
+    #[test]
+    fn a_remedy_that_did_not_close_the_gap_is_named_as_failed() {
+        let w = World::new(true, false);
+        let mut a = at("5000", FLEET_GAP);
+        a.extend(["--remedy-failed".to_string(), "--last-remedy".to_string(), "restart the landing unit".to_string()]);
+        w.gap(&strs(&a)).unwrap();
+        let m = &w.sent()[0];
+        assert!(m.body.contains("last remedy tried: restart the landing unit — did not close the gap"), "{}", m.body);
+    }
+
+    #[test]
+    fn with_the_concierge_not_running_the_alert_still_waits_in_its_mailbox_not_the_operators() {
+        let w = World::new(false, false);
+        let out = w.gap(&strs(&at("6000", FLEET_GAP))).unwrap();
+        assert_eq!(out, "fleet-size — concierge not running, queued in its mailbox");
+        let sent = w.sent();
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert_eq!(sent[0].mailbox, "concierge");
+        assert!(sent[0].body.contains("invariant: fleet-size"), "{}", sent[0].body);
+    }
+
+    #[test]
+    fn a_session_check_that_cannot_run_counts_as_the_concierge_not_running() {
+        assert!(!io::session_is_running("/nonexistent/tmux", CONCIERGE_SESSION));
+    }
+
+    #[test]
+    fn a_mail_refusal_is_an_error_never_a_delivered_wake() {
+        let w = World::new(true, true);
+        let err = w.gap(&strs(&at("1000", FLEET_GAP))).unwrap_err();
+        assert!(err.contains("send concierge: exit 1"), "{err}");
+    }
+
+    #[test]
+    fn an_escalation_in_a_permitted_class_reaches_the_operator_as_a_question_with_its_default() {
+        for class in ["permissions", "policy", "destructive"] {
+            let w = World::new(true, false);
+            let subject = format!("escalation-{class} needs a decision");
+            let argv = ["--class", class, "--subject", &subject, "--default", "wait for the operator"];
+            let out = w.escalate(&argv, "the console needs a one-time grant\n").unwrap();
+            assert_eq!(out, format!("escalation ({class}) sent to operator"));
+            let sent = w.sent();
+            assert_eq!(sent.len(), 1, "{class}: {sent:?}");
+            let m = &sent[0];
+            assert_eq!((m.mailbox, m.kind), ("operator", "question"), "{class}");
+            assert_eq!(m.default.as_deref(), Some("wait for the operator"), "{class}");
+            assert_eq!(m.class.as_deref(), Some(class));
+            assert!(m.body.contains("the console needs a one-time grant"), "{class}: {}", m.body);
+            mail_lint(m).unwrap_or_else(|e| panic!("{class}: the question kind refuses it: {e}"));
+        }
+    }
+
+    #[test]
+    fn an_escalation_without_a_default_is_refused_and_sends_nothing() {
+        let w = World::new(true, false);
+        let err = w.escalate(&["--class", "policy", "--subject", "s"], "b\n").unwrap_err();
+        assert!(err.contains("requires --default"), "{err}");
+        assert!(w.sent().is_empty());
+    }
+
+    #[test]
+    fn an_escalation_in_any_other_class_is_refused_and_routed_back_to_the_concierge_as_an_alert() {
+        let w = World::new(true, false);
+        let argv = ["--class", "urgent", "--subject", "an unpermitted escalation class", "--default", "d"];
+        let out = w.escalate(&argv, "stop filing the same ticket every night\n").unwrap();
+        assert_eq!(out, "escalation class 'urgent' refused, routed to concierge");
+        let sent = w.sent();
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        let m = &sent[0];
+        assert_eq!((m.mailbox, m.kind), ("concierge", "alert"));
+        assert!(m.subject.contains("'urgent' is not permissions, policy or destructive"), "{}", m.subject);
+        assert!(m.body.contains("stop filing the same ticket every night"), "{}", m.body);
+        mail_lint(m).expect("the alert kind accepts the refusal this path sends");
     }
 }
