@@ -1244,6 +1244,12 @@ fn root_of(a: &Args) -> PathBuf {
     )
 }
 
+/// `--cache`, else the variable a batch sets ([`crate::fixture::TESTDB_TEMPLATE_CACHE_ENV`]);
+/// empty is none.
+pub(crate) fn cache_of(a: &Args, from_env: Option<String>) -> Option<PathBuf> {
+    a.cache.clone().or(from_env).filter(|s| !s.is_empty()).map(PathBuf::from)
+}
+
 fn emit(text: &str) {
     let mut o = io::stdout().lock();
     let _ = o.write_all(text.as_bytes());
@@ -1278,7 +1284,7 @@ pub fn main(args: &[String]) -> i32 {
                     root.display()
                 ));
             }
-            let cache = a.cache.as_deref().filter(|s| !s.is_empty()).map(PathBuf::from);
+            let cache = cache_of(&a, std::env::var(crate::fixture::TESTDB_TEMPLATE_CACHE_ENV).ok());
             let (tpl, origin) = match ensure_template_cached(&root, &tools, cache.as_deref()) {
                 Ok(t) => t,
                 Err(e) => return fail(e),

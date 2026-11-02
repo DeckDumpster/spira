@@ -239,8 +239,10 @@ keeps what one batch built and the next batch with the same key copies it.
 
 * **Where.** `$SPIRA_RUN/testdb-templates/template-<key>/` on the host, bound **read-only**
   into every batch container (`container up --testdb-cache DIR`) at
-  `/var/cache/spira-testdb-templates`; the template step is given that path as `--cache`.
-  Nothing inside a container writes the cache.
+  `/var/cache/spira-testdb-templates`; the template step is given that path in
+  `TESTDB_TEMPLATE_CACHE` (the same as `--cache`), not as a flag: the binary is the tree
+  under test's, and one from before the cache ignores the variable and builds, where it
+  would reject the flag and fail the template. Nothing inside a container writes the cache.
 * **Hit.** `template` copies the cached entry into `R`'s temporary sibling and renames it
   into place, exactly where a build would have put it — fixtures and suites see nothing
   different. A copy that fails (the entry evicted mid-copy, a half entry without `READY`) is
@@ -250,7 +252,8 @@ keeps what one batch built and the next batch with the same key copies it.
 * **Miss.** `template` builds as before and says `TESTDB_TEMPLATE_ORIGIN=built`; the host
   then copies the directory out of the container (`podman cp`, which reads the container's
   tmpfs) into a fresh `.incoming-*` name, makes it world-readable (the container reads it as
-  another user), and renames it into place. Two batches storing one key: the second rename
+  another user), and renames it into place. The copy is cut at 60 s (or the setup cutoff,
+  if sooner) whatever the batch's deadline: the next batch just builds. Two batches storing one key: the second rename
   loses and its copy is removed.
 * **Bound.** At most `TEMPLATE_CACHE_KEYS` (4) entries; a hit or a store marks its entry's
   mtime, and each store removes the least recently used beyond the bound — by rename to an

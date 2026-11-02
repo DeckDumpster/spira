@@ -87,6 +87,12 @@ pub const CONTAINER_TESTDB_ROOT: &str = "/tmp/spira-testdb";
 /// Where the host's template cache is bound, read-only, inside the container: the template
 /// step copies a cached template from it instead of building one ([`Session::keep_template`]).
 pub const CONTAINER_TESTDB_CACHE: &str = "/var/cache/spira-testdb-templates";
+/// The longest a built template's copy out to the host cache may take; past it the batch
+/// goes on and the next batch builds again.
+const TEMPLATE_STORE_TIMEOUT: Duration = Duration::from_secs(60);
+/// The variable that hands the template step [`CONTAINER_TESTDB_CACHE`] (`testdb template
+/// --cache` in the environment).
+pub const TESTDB_TEMPLATE_CACHE_ENV: &str = "TESTDB_TEMPLATE_CACHE";
 
 /// The host's template cache under the batch run directory, created if missing; None when it
 /// cannot be, and every batch builds its template as before.
@@ -875,12 +881,23 @@ impl<'a> Session<'a> {
         let mut env = vec![kv("XDG_RUNTIME_DIR", USER_RUNTIME)];
         env.extend(self.release_env());
         env.extend(testdb_root_env());
-        let exe = self.in_release("bin/testenv");
-        let mut argv = vec![exe.as_str(), "testdb", "template", "--bd", "bd", "--dolt", "dolt"];
+        // In the environment, not argv: the binary is the tree under test's, and one from
+        // before the cache rejects an unknown flag but ignores an unknown variable.
         if self.testdb_cache.is_some() {
-            argv.extend(["--cache", CONTAINER_TESTDB_CACHE]);
+            env.push(kv(TESTDB_TEMPLATE_CACHE_ENV, CONTAINER_TESTDB_CACHE));
         }
-        self.setup_as_user(&argv, env)
+        let exe = self.in_release("bin/testenv");
+        self.setup_as_user(
+            &[&exe, "testdb", "template", "--bd", "bd", "--dolt", "dolt"],
+            env,
+        )
+    }
+
+    /// The store is only ever a speed-up, so its copy is bounded on its own even when the
+    /// batch has no setup cutoff: a podman call can take minutes under load (DESIGN.md D12).
+    fn store_deadline(&self) -> Instant {
+        let cap = Instant::now() + TEMPLATE_STORE_TIMEOUT;
+        self.setup_deadline.map_or(cap, |d| d.min(cap))
     }
 
     /// After setup: a template the step built is copied out of the container into the host
@@ -899,7 +916,7 @@ impl<'a> Session<'a> {
                 cache,
                 &r.key,
                 crate::testdb::TEMPLATE_CACHE_KEYS,
-                |dst| self.rt.copy_out(&self.name, &r.path, dst, self.setup_deadline),
+                |dst| self.rt.copy_out(&self.name, &r.path, dst, Some(self.store_deadline())),
             ) {
                 Ok(gone) if gone.is_empty() => {
                     format!("testdb template {} built and stored in the host cache {}", r.key, cache.display())
@@ -1839,18 +1856,19 @@ mod tests {
     fn the_template_step_reads_the_host_cache_only_when_the_session_binds_one() {
         let rt = FakeRuntime::new();
         let s = session(&rt);
-        assert!(!s.testdb_template_request().argv.iter().any(|a| a == "--cache"));
+        assert!(!s.testdb_template_request().env.iter().any(|(k, _)| k == TESTDB_TEMPLATE_CACHE_ENV));
         s.up(Path::new("/wt")).unwrap();
         assert!(!rt.testenv_calls.lock().unwrap()[0].iter().any(|a| a == "--testdb-cache"));
 
         let rt = FakeRuntime::new();
         let mut s = session(&rt);
         s.testdb_cache = Some(PathBuf::from("/host/tpl-cache"));
-        assert!(s
-            .testdb_template_request()
-            .argv
-            .windows(2)
-            .any(|w| w == ["--cache", CONTAINER_TESTDB_CACHE]));
+        let r = s.testdb_template_request();
+        assert!(r
+            .env
+            .contains(&(TESTDB_TEMPLATE_CACHE_ENV.to_string(), CONTAINER_TESTDB_CACHE.to_string())));
+        // A tree under test from before the cache rejects an unknown flag: argv stays as it was.
+        assert_eq!(r.argv[1..], ["testdb", "template", "--bd", "bd", "--dolt", "dolt"]);
         s.up(Path::new("/wt")).unwrap();
         assert!(rt.testenv_calls.lock().unwrap()[0]
             .windows(2)
@@ -1865,6 +1883,19 @@ mod tests {
                 origin.word()
             ),
         }
+    }
+
+    #[test]
+    fn storing_a_template_is_bounded_even_when_the_batch_has_no_setup_cutoff() {
+        let rt = FakeRuntime::new();
+        let mut s = session(&rt);
+        s.setup_deadline = None;
+        let before = Instant::now();
+        let d = s.store_deadline();
+        assert!(d > before && d <= Instant::now() + TEMPLATE_STORE_TIMEOUT);
+        let soon = Instant::now() + Duration::from_secs(5);
+        s.setup_deadline = Some(soon);
+        assert_eq!(s.store_deadline(), soon, "an earlier setup cutoff still wins");
     }
 
     #[test]
