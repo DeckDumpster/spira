@@ -8,9 +8,9 @@
 # The policy is testenv's sandbox unit runner's (testenv/src/sandbox.rs, Profile::bwrap_args;
 # testenv/tests/test_sandbox.rs holds the two together): read-only root; tmpfs /tmp, /run and
 # home; the toolchain bound back; the workspace and CARGO_TARGET_DIR writable; the environment
-# cleared to an allow-list; no network. It differs in two ways: every directory the home
-# already holds comes back empty and READ-ONLY, so a write to the install fails rather than
-# landing in a tmpfs; and the home hidden is both $HOME and the passwd entry's.
+# cleared to an allow-list; no network. Every directory the home already holds comes back
+# empty and writable, so a write to the install lands in tmpfs and never on disk. It differs in
+# hiding both $HOME and the passwd entry's home.
 #
 # No fallback: without an executable bwrap it refuses and runs nothing. The one binary run as
 # is, is a `cargo run` artifact, which cargo places beside .fingerprint (test harnesses live in
@@ -81,7 +81,7 @@ late_bin=""
 if ! under "$bindir/" "$workspace" && ! { [ -n "$target" ] && under "$bindir" "$target"; }; then
     if under_tree "$bindir"; then late_bin=1; else a+=(--ro-bind "$bindir" "$bindir"); fi
 fi
-# Each shadow goes on before what is bound back beneath it, and turns read-only after.
+# Each shadow goes on before what is bound back beneath it.
 shadows=()
 for t in "${trees[@]}"; do
     a+=(--tmpfs "$t")
@@ -103,7 +103,6 @@ fi
 a+=(--bind "$workspace" "$workspace")
 if [ -n "$target" ] && ! under "$target" "$workspace"; then a+=(--bind "$target" "$target"); fi
 if [ -n "$late_bin" ]; then a+=(--ro-bind "$bindir" "$bindir"); fi
-for d in "${shadows[@]}"; do a+=(--remount-ro "$d"); done
 a+=(--chdir "$PWD")
 
 # testenv's system git identity (GIT_IDENTITY), lowest priority, on the sandbox's /run.
