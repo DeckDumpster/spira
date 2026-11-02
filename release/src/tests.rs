@@ -2771,3 +2771,23 @@ fn install_tarball_finds_the_whole_key_registry_in_the_unpacked_tree() {
     let source = spira_config::registry::Registry::load(&repo.join("spira")).unwrap();
     assert_eq!(reg.keys.keys().collect::<Vec<_>>(), source.keys.keys().collect::<Vec<_>>(), "the unpacked registry is the source registry");
 }
+
+#[test]
+fn the_registry_index_outlasts_a_write_descriptor_held_on_the_staged_spira_config() {
+    let d = testkit::TempDir::new("registry-index-busy");
+    let stage = d.join("stage");
+    fs::create_dir_all(stage.join("spira/conf.d")).unwrap();
+    fs::create_dir_all(stage.join("bin")).unwrap();
+    let bin = stage.join("bin/spira-config");
+    fs::write(&bin, format!("#!/bin/sh\n: > \"$2/{}\"\n", spira_config::registry::INDEX_FILE)).unwrap();
+    fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+    let held = fs::OpenOptions::new().write(true).open(&bin).unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(150)); // clock-safe: holds the descriptor past the first exec
+        drop(held);
+    });
+    let r = build::write_registry_index(&stage);
+    release.join().unwrap();
+    assert_eq!(r, Ok(()));
+    assert!(stage.join("spira").join(spira_config::registry::INDEX_FILE).is_file());
+}
