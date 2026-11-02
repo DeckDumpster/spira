@@ -164,6 +164,17 @@ fn main() {
         Some("reopen") => std::process::exit(emit(&args[1..], callers::reopen_cmd(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd))),
         Some("bd-supersede") => std::process::exit(emit(&args[1..], store_write::supersede(&args[1..], &bd::write))),
         Some("bd-note") => std::process::exit(emit(&args[1..], store_write::note(&args[1..], &bd::write))),
+        Some("content") if args.get(1).map(String::as_str) == Some("purge-alerts") => {
+            let delete = |ids: &[String]| match bd::tool("bdq", &[&["delete".to_string()][..], ids, &["--force".to_string()]].concat(), None, "purge-alerts", 120) {
+                (0, _) => Ok(()),
+                (rc, out) => Err(format!("bdq delete exited {rc}: {out}")),
+            };
+            let ans = match lifecycle_run_dir() {
+                Ok(run) => content::purge_alerts(&args[2..], &|a| bd::run_stdin(a, None), &delete, &run, db::now_epoch()),
+                Err(e) => callers::Answer { code: CANNOT_TELL, stderr: format!("spira-lc content purge-alerts: {e}\n"), ..Default::default() },
+            };
+            std::process::exit(emit(&args[1..], ans))
+        }
         Some("content") => {
             let ans = content::run(&args[1..], &|a| bd::run_stdin(a, None));
             std::process::exit(emit(&args[1..], ans))
