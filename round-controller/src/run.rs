@@ -215,7 +215,7 @@ pub fn kill_child(p: &Ports, env: &RunEnv, child: &dyn Child, keep: &mut dyn FnM
     Killed::Lingering
 }
 
-fn wait_gone(
+pub fn wait_gone(
     p: &Ports,
     env: &RunEnv,
     child: &dyn Child,

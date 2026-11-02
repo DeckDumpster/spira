@@ -7,6 +7,8 @@ use std::time::Duration;
 
 use round_controller::cut;
 use round_controller::ledger::{FaultPolicy, StoreLedger};
+use round_controller::cutover_check;
+use round_controller::real::facts::RealFacts;
 use round_controller::liveness::LeaseSettings;
 use round_controller::outcome::StdoutLog;
 use round_controller::pass::pass;
@@ -27,7 +29,7 @@ use round_controller::run::{self, RunEnv};
 use round_controller::switches::RunDir;
 use round_controller::slots::{self, SlotGrant, SlotSettings};
 use round_controller::telemetry;
-use runtime::ports::{Proc, SeededRng, SysProc};
+use runtime::ports::{Proc, ProcSpec, SeededRng, SysProc};
 
 const USAGE: &str = "usage: round-controller <verb>
 
@@ -41,8 +43,14 @@ const USAGE: &str = "usage: round-controller <verb>
   lease clear --repo <r> --batch <b>        release a round's lease once its holder is proven dead; refused otherwise
   lease probe --secs <n> --out <file>       renew a lease of its own for n seconds and write each renewal's lateness
   lane record                               write each registered repo's lanes/<repo> from git and the installed release, and nothing else
+  cutover-check --readiness                 one row per round repo (ci, base, submitted) and the world's; exit 0 only when all are green
+  cutover-check --since-rev <rev>           each round repo's first round landed after store revision rev, or none; exit 0 only when none reads none
+  cutover-check --probe-base <repo>         the base run on the landing ref at the lane's image, under a hand slot, recorded as the base identity's attempt
   version                                   print the version
   -h, --help";
+
+/// A worktree of the landing ref is checked out for the probe; git's work scales with the tree.
+const PROBE_GIT_DEADLINE: Duration = Duration::from_secs(600); // batch-job: a worktree checkout scales with the repository
 
 /// A transition verb takes the queue lock for its own transition only, but may merge, build a worktree or push.
 const VERB_DEADLINE: Duration = Duration::from_secs(120); // batch-job: a queue round verb merges, builds a worktree or pushes
@@ -200,6 +208,19 @@ fn dispatch(args: &[String]) -> i32 {
                 2
             }
         },
+        ["cutover-check", rest @ ..] => match cutover_check::parse(rest) {
+            Err(e) => {
+                eprintln!("round-controller cutover-check: {e}");
+                2
+            }
+            Ok(mode) => match with_ports(|p| cutover(p, &mode)) {
+                Ok(code) => code,
+                Err(e) => {
+                    eprintln!("round-controller cutover-check: {e}");
+                    2
+                }
+            },
+        },
         ["lease", "probe", "--secs", secs, "--out", out] => {
             report("lease probe", run_probe(secs, out))
         }
@@ -213,6 +234,114 @@ fn dispatch(args: &[String]) -> i32 {
 fn sifts_verb() -> Result<(), String> {
     spira_config::release_env::ensure_release_path()?;
     round_controller::sifts::for_process(&mut std::io::stdout().lock())
+}
+
+fn cutover(p: &Ports, mode: &cutover_check::Mode) -> Result<i32, String> {
+    let home = spira_config::resolve::locate_home_for_process()?;
+    let registry = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home);
+    let located = registry.clone();
+    let facts = RealFacts {
+        proc_: Arc::new(SysProc),
+        repos: round_controller::real::facts::round_repos(&registry),
+        locate: Box::new(move |repo| {
+            Some((
+                located.root(repo)?,
+                spira_config::repos::landref(&located, repo)?,
+            ))
+        }),
+        queue_dir: spira_config::process::cfg("SPIRA_QUEUE_DIR")?.into(),
+        spira_lc: spira_config::release_env::tool("spira-lc"),
+    };
+    match mode {
+        cutover_check::Mode::Readiness => {
+            let r = cutover_check::readiness(p, &facts);
+            print!("{}", r.render());
+            Ok(r.code())
+        }
+        cutover_check::Mode::SinceRev(rev) => {
+            let (out, err, code) = cutover_check::render_since(&cutover_check::since_rev(p, &facts, *rev)?);
+            print!("{out}");
+            eprint!("{err}");
+            Ok(code)
+        }
+        cutover_check::Mode::ProbeBase(repo) => {
+            let probed = probe_base(p, &registry, repo)?;
+            print!("{}", probed.render());
+            Ok(probed.code())
+        }
+    }
+}
+
+/// The base probe on a detached worktree of the landing ref, the round VM serving its one job.
+fn probe_base(
+    p: &Ports,
+    registry: &spira_config::repos::Registry,
+    repo: &str,
+) -> Result<cutover_check::Probed, String> {
+    const ROUND: &str = "base-probe";
+    let lane = cutover_check::probe_target(p, repo)?;
+    let cfg = spira_config::process::cfg;
+    let num = |k: &str| -> Result<u64, String> {
+        cfg(k)?.trim().parse().map_err(|e| format!("{k}: {e}"))
+    };
+    let run_dir = spira_config::resolve::run_dir_for_process()?;
+    let root = registry
+        .root(repo)
+        .ok_or_else(|| format!("{repo} has no checkout in the registry"))?;
+    let wt = run_dir.join("worktree").join(format!(".round-controller-{ROUND}-{repo}"));
+    let git = |args: &[&str]| -> Result<(), String> {
+        let mut all = vec!["-C".to_string(), root.clone()];
+        all.extend(args.iter().map(|a| a.to_string()));
+        let o = SysProc.run(&ProcSpec {
+            prog: "git".into(),
+            args: all,
+            stdin: vec![],
+            deadline: PROBE_GIT_DEADLINE,
+        })?;
+        if o.code == Some(0) {
+            Ok(())
+        } else {
+            Err(format!(
+                "git {} exited {:?}: {}",
+                args.join(" "),
+                o.code,
+                String::from_utf8_lossy(&o.stderr).trim()
+            ))
+        }
+    };
+    let at = wt.display().to_string();
+    let _ = git(&["worktree", "remove", "-f", &at]);
+    let _ = git(&["worktree", "prune"]);
+    git(&["worktree", "add", "-q", "--detach", &at, &lane.landing_ref])?;
+    let spawn = SysSpawn {
+        proc_: Arc::new(SysProc),
+    };
+    let env = VmEnv {
+        round_vm: spira_config::release_env::tool("round-vm").into(),
+        run: run_dir.clone(),
+        wall_secs: num("SPIRA_BATCHER_WALL_SECS")?,
+        maxpar: u32::try_from(num("SPIRA_BATCH_MAXPAR")?).map_err(|e| e.to_string())?,
+        cpu_quota: std::env::var("ROUND_CPU_QUOTA").ok(),
+        git_name: cfg("SPIRA_GIT_NAME")?,
+        git_email: cfg("SPIRA_GIT_EMAIL")?,
+    };
+    let vm_repo = Repo {
+        name: repo.into(),
+        path: root.clone().into(),
+        base: registry.base(repo).unwrap_or_default(),
+    };
+    let mut subs = VmRunner::new(p, &spawn, &ThreadSleep, env, vm_repo, &wt, &lane.landing_ref, ROUND)?;
+    let renv = RunEnv {
+        sleep: &ThreadSleep,
+        poll_ms: run::POLL_MS,
+        teardown_ms: run::TEARDOWN_MS,
+        kill_grace_ms: run::KILL_GRACE_MS,
+    };
+    let unit = format!("round-controller-subpass-{repo}-{ROUND}.scope");
+    let probed = cutover_check::probe_base(p, &renv, &mut subs, repo, &lane, &unit);
+    drop(subs);
+    let _ = git(&["worktree", "remove", "-f", &at]);
+    probed
 }
 
 fn run_probe(secs: &str, out: &str) -> Result<(), String> {

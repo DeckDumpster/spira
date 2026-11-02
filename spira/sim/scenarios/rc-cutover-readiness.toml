@@ -1,0 +1,39 @@
+# The round controller's cutover readiness in a world of two round repos: both declare a gate in
+# gate.steps and carry a green base on their lane's image, and only sim has a SUBMITTED bead. The
+# checker waits (exit 3) until sim's bead is SUBMITTED, then seeds both lanes and base verdicts
+# and runs `round-controller cutover-check --readiness`, which must exit 1 with sim's row green,
+# other's red on submitted alone and the global row green.
+epoch = 1800000000
+horizon = 300000
+repos = ["other:queue.local"]
+
+[[step]]
+at = 0
+file = "sp-cr01"
+repo = "sim"
+
+[[step]]
+at = 0
+claim = "sp-cr01"
+repo = "sim"
+script = ["commit out/cr01.txt", "submit"]
+
+[[actor]]
+name = "readiness"
+command = "sh spira/sim/scenarios/steps/rc-cutover-readiness.sh sp-cr01"
+first = 30000
+every = 30000
+duration_min = 1000
+duration_max = 2000
+
+[[invariant]]
+name = "step_failed"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit <> 0"
+
+[[invariant]]
+name = "readiness_rows_wrong"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'complete' AND actor = 'readiness' AND exit NOT IN (0, 3)"
+
+[[expect]]
+name = "readiness_named_the_unready_repo"
+sql = "SELECT 1 FROM events WHERE kind = 'complete' AND actor = 'readiness' AND exit = 0"
