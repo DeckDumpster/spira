@@ -266,7 +266,7 @@ pub fn fold_compare(
 
 /// The skew guard's way out, printed by every drill: after a restore the control plane can be
 /// seconds old and the planning plane hours old, and the repair sweeps refuse until both agree.
-pub const SKEW_PROCEDURE: &str = "after a restore: (0) move SPIRA_RUN/lc-ship aside and ship the restored store under a new SPIRA_LC_BACKUP_URL prefix, since its revisions repeat ones already shipped; (1) restore bd from lc-backup's tar at its stamped planning watermark; (2) reconcile: re-file in bd the planning writes the tar is missing, which lie between the two planes' watermarks; (3) lift the guard: stamp both planes to one planning watermark, or raise SPIRA_PLANE_SKEW_MAX past the measured skew for one pass of reconcile-content, drop-orphans and the rowless repair, then put it back";
+pub const SKEW_PROCEDURE: &str = "after a restore: (0) move SPIRA_RUN/lc-ship aside and ship the restored store under a new SPIRA_LC_BACKUP_URL prefix, since its revisions repeat ones already shipped; (1) restore bd from lc-backup's newest manifest at its stamped planning watermark; (2) reconcile: re-file in bd the planning writes that backup is missing, which lie between the two planes' watermarks; (3) lift the guard: stamp both planes to one planning watermark, or raise SPIRA_PLANE_SKEW_MAX past the measured skew for one pass of reconcile-content, drop-orphans and the rowless repair, then put it back";
 
 /// The newest local snapshot in `ship_dir/sent/`, as `(rev, path)`.
 pub fn newest_snapshot(ship_dir: &Path) -> Result<(u64, std::path::PathBuf), String> {

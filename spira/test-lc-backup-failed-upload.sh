@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# test-lc-backup-failed-upload.sh — a run whose upload fails leaves the drill's copy at the last
-# uploaded snapshot, so the next drill restores what the stamp names and passes; the age check
-# then reports the stamp's real age (sp-t08b53: a drill read a never-uploaded pack as a corrupt backup).
+# test-lc-backup-failed-upload.sh — a run whose upload fails leaves the stamp and the newest manifest
+# at the last upload, so the next drill restores what the stamp names and passes.
 #
 # tier: T1
-# covers: spira/lc-backup.sh
+# covers: spira/lc-backup.sh spira-lc/src/durability.rs state-store-sqlite/src/durability/dolt.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -23,7 +22,7 @@ RUN="$TMP/run" DATA="$TMP/data"; mkdir -p "$RUN" "$DATA/d0"
 
 lcb() {
     SPIRA_TOML="$(tl_layer SPIRA_RUN="$RUN" SPIRA_DOLT_DATA="$DATA" SPIRA_LC_BACKUP_URL="file://$TMP/dest" \
-        SPIRA_LC_BACKUP_ALLOW_LOCAL=1 SPIRA_LC_BACKUP_DB="d0" SPIRA_LC_BACKUP_DRILL_DIR="$TMP/scratch")" \
+        SPIRA_LC_BACKUP_ALLOW_LOCAL=1 SPIRA_LC_BACKUP_DB="d0" SPIRA_LC_BACKUP_DRILL_DIR="$TMP/scratch" SPIRA_LC_BACKUP_SYNC_DIR="$TMP/sync")" \
         bash "$HERE/lc-backup.sh" "$@" 2>&1
 }
 
@@ -37,10 +36,11 @@ out="$(lcb run)"; rc=$?
 want "the failure names the upload" "upload of" "$out"
 read -r _ after _ < "$RUN/lc-backup.d0.ok"
 want "the stamp stays at the last upload" "$first" "$after"
-nowant "the never-uploaded pack is discarded" "pending" "$(ls "$RUN/lc-backup/d0")"
+want "the never-uploaded manifest is not the drill's" "1" "$(ls "$RUN/lc-backup/d0/manifests" | wc -l | tr -d ' ')"
+nowant "nothing is left pending" "pending" "$(ls "$RUN/lc-backup/d0")"
 
 out="$(lcb drill --db d0)"; rc=$?
-wantrc "the drill restores the snapshot the stamp names" 0 $rc
+wantrc "the drill restores the manifest the stamp names" 0 $rc
 want "the drill verdict is ok" "drill ok" "$(cat "$RUN/lc-backup/d0/drill.verdict" 2>/dev/null)"
 
 tl_summary

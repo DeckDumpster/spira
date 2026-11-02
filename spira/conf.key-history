@@ -586,3 +586,4 @@ lc_ship_snapshot_secs
 plane_skew_max
 runtime_reconciler_secs
 runtime_reconciler_flow_secs
+lc_backup_sync_dir

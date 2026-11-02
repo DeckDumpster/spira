@@ -1,5 +1,6 @@
 //! The control store's off-box copy as spira-lc runs it: lc-serve's shipper thread, and the
-//! operator's `admin-restore` and `admin-drill`, which read local files only.
+//! operator's `admin-restore` and `admin-drill`, which read local files only; and lc-backup's
+//! put-only upload of a dolt store, `admin-dolt-ship`, with `admin-dolt-assemble` for its restore.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -8,6 +9,7 @@ use std::time::Duration;
 
 use runtime::ports::{Clock, SysProc, WallClock};
 use spira_otel::metrics::{MetricsSink, Point};
+use state_store_sqlite::durability::dolt;
 use state_store_sqlite::durability::drill::{self, Exclusions};
 use state_store_sqlite::durability::put::{Dest, S3Creds, Uploader};
 use state_store_sqlite::durability::restore;
@@ -140,6 +142,57 @@ pub fn admin_drill(args: &[String], run: impl FnOnce() -> Result<PathBuf, String
     match drill::drill(&dir, Path::new(scratch), Exclusions::CONTRACT) {
         Ok((_, rep)) => (if rep.passed() { 0 } else { 1 }, drill::render(&rep)),
         Err(e) => (CANNOT_TELL, format!("admin-drill: cannot tell: {e}")),
+    }
+}
+
+const DOLT_SHIP_USAGE: &str =
+    "usage: spira-lc admin-dolt-ship --url <s3://bucket/prefix/|file://dir> --db <name> --sync <dir> --state <dir> --stamp <UTC stamp> --head <commit>";
+// batch-job: one table file's upload, bounded by its size, not a round trip
+const TABLE_PUT_DEADLINE: Duration = Duration::from_secs(1_500);
+
+/// `admin-dolt-ship`: uploads what `--sync` (a `DOLT_BACKUP('sync-url')` directory) holds that
+/// the ledger in `--state` lacks, then its manifest. Exit 0 uploaded, 1 failed (the previous
+/// manifest is still the newest off-box), 2 usage.
+pub fn admin_dolt_ship(args: &[String]) -> (i32, String) {
+    let get = |n| flag(args, n);
+    let (Some(url), Some(db), Some(sync), Some(state), Some(stamp), Some(head)) =
+        (get("--url"), get("--db"), get("--sync"), get("--state"), get("--stamp"), get("--head"))
+    else {
+        return (CANNOT_TELL, DOLT_SHIP_USAGE.into());
+    };
+    let run = || -> Result<dolt::Shipped, String> {
+        let dest = Dest::parse(url)?;
+        let creds = match dest {
+            Dest::S3 { .. } => Some(S3Creds::from_env()?),
+            Dest::File(_) => None,
+        };
+        let put = Uploader { dest, creds, proc: Arc::new(SysProc), deadline: TABLE_PUT_DEADLINE };
+        dolt::ship(&put, Path::new(sync), Path::new(state), db, stamp, head)
+    };
+    match run() {
+        Ok(s) => (0, format!("admin-dolt-ship: {db}: {} table file(s) and manifest {}, {} bytes", s.uploaded.len(), s.key, s.bytes)),
+        Err(e) => (1, format!("admin-dolt-ship: {db}: {e}")),
+    }
+}
+
+const DOLT_ASSEMBLE_USAGE: &str =
+    "usage: spira-lc admin-dolt-assemble (--state <dir> | --manifest <file>) --files <dir> --out <dir>";
+
+/// `admin-dolt-assemble`: lays the newest manifest in `--state` (or `--manifest`) and the files
+/// it names in `--files` into a fresh `--out`, the source `dolt backup restore` reads. Prints
+/// `<head> <files> <bytes>`. Exit 0, 1 refused, 2 usage.
+pub fn admin_dolt_assemble(args: &[String]) -> (i32, String) {
+    let (Some(files), Some(out)) = (flag(args, "--files"), flag(args, "--out")) else {
+        return (CANNOT_TELL, DOLT_ASSEMBLE_USAGE.into());
+    };
+    let manifest = match (flag(args, "--manifest"), flag(args, "--state")) {
+        (Some(m), None) => Ok(PathBuf::from(m)),
+        (None, Some(s)) => dolt::newest_manifest(Path::new(s)),
+        _ => return (CANNOT_TELL, DOLT_ASSEMBLE_USAGE.into()),
+    };
+    match manifest.and_then(|m| dolt::assemble(&m, Path::new(files), Path::new(out))) {
+        Ok(a) => (0, format!("{} {} {}", a.head, a.files, a.bytes)),
+        Err(e) => (1, format!("admin-dolt-assemble: {e}")),
     }
 }
 

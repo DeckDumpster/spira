@@ -11,9 +11,8 @@ Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr
 Type=oneshot
 ExecStart=@SPIRA_HOME@/lc-backup.sh run
 ExecStopPost=@SPIRA_HOME@/lc-backup.sh explain
-# Sized to the work at this unit's own CPU quota: the bd snapshot's compaction (restore, dolt gc,
-# re-sync; ~15 CPU-minutes, sp-lcptkd) takes ~30 wall-minutes at CPUQuota=50%, before the raw
-# sync and the upload. 1800 killed the 2026-11-02 08:39 run at 30m09s with 14m36s of CPU used.
+# A run uploads what changed since the last one, minutes at this unit's CPU quota; the first
+# run into an empty backup dir uploads the whole store once, and this bound covers that.
 TimeoutStartSec=5400
 IOSchedulingClass=idle
 Nice=19

@@ -70,7 +70,7 @@ fn io(p: &Path) -> impl Fn(std::io::Error) -> String + '_ {
 
 /// Written whole and renamed into place, then the directory synced, so a crash leaves the old
 /// file or the new one.
-fn write_durably(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn write_durably(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let dir = path.parent().ok_or("a path with no directory")?;
     fs::create_dir_all(dir).map_err(io(dir))?;
     let tmp = PathBuf::from(format!("{}.tmp", path.display()));

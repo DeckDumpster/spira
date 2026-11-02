@@ -80,6 +80,9 @@ impl S3Creds {
     }
 }
 
+/// S3's ceiling on one `PutObject`.
+pub const MAX_PUT_BYTES: u64 = 5 << 30;
+
 pub struct Uploader {
     pub dest: Dest,
     /// Needed for an `s3://` destination only.
@@ -109,11 +112,16 @@ impl Uploader {
             .creds
             .as_ref()
             .ok_or("an s3:// destination with no credentials")?;
-        let body = std::fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
-        let sum: String = Sha256::digest(&body)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        let mut body = std::fs::File::open(file).map_err(|e| format!("{}: {e}", file.display()))?;
+        let mut hash = Sha256::new();
+        let len =
+            std::io::copy(&mut body, &mut hash).map_err(|e| format!("{}: {e}", file.display()))?;
+        if len > MAX_PUT_BYTES {
+            return Err(format!(
+                "PUT {key}: {len} bytes is over S3's single-PUT limit of {MAX_PUT_BYTES}"
+            ));
+        }
+        let sum: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
         let url = match &c.endpoint {
             Some(e) => format!("{}/{bucket}/{key}", e.trim_end_matches('/')),
             None => format!("https://{bucket}.s3.{}.amazonaws.com/{key}", c.region),

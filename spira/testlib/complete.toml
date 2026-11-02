@@ -51,6 +51,7 @@ lc_backup_drill_dir = "/dev/shm/spira-lc-drill"
 lc_backup_drill_budget_ms = 1500
 lc_backup_drill_wait_secs = 7200
 lc_backup_drill_poll_secs = 60
+lc_backup_sync_dir = "/fixture/userhome/spira/lc-backup-sync"
 batch_maxpar = 8
 batch_maxpar_ceiling = ""
 batch_mem_avail_mib = ""

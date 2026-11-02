@@ -98,3 +98,40 @@ worktree: merging does not deploy, activation does.
 
 Never read state from the files, logs or process lists another component owns; each state has
 one owning command (see the lint rules in [development](development.md)).
+
+## Restoring a dolt store from its off-box backup
+
+`lc-backup.sh run` keeps the bucket at `SPIRA_LC_BACKUP_URL` laid out per database as
+`<prefix>/<db>/files/<name>` (content-addressed table files, each uploaded once and never
+rewritten) and `<prefix>/<db>/manifests/<UTC stamp>-<head commit>` (one per run; the newest
+is the backup). The backup key can only upload, so a restore runs under your own identity:
+
+1. **Pick the manifest.** List `<prefix>/<db>/manifests/` and take the newest key (keys sort by
+   stamp). Its suffix after the `-` is the commit it restores to.
+2. **Download it and the table files** into two empty directories, `m/` and `files/`. A dolt
+   manifest is one colon-separated line, `5:<format>:<lock>:<root>:<gc gen>` followed by
+   `<name>:<chunk count>` pairs; each `<name>` is stored as `files/<name>` or
+   `files/<name>.darc`. Downloading all of `files/` is simplest; fetching only the named ones
+   is enough. With the AWS CLI:
+
+   ```
+   aws s3 cp s3://<bucket>/<prefix>/<db>/manifests/<key> m/<key>
+   aws s3 sync s3://<bucket>/<prefix>/<db>/files/ files/
+   ```
+
+3. **Lay down the restore source and restore it:**
+
+   ```
+   spira-lc admin-dolt-assemble --manifest m/<key> --files files --out src
+   src="$PWD/src"; (cd <new data dir> && dolt backup restore "file://$src" <db>)
+   ```
+
+   `admin-dolt-assemble` refuses when the manifest names a file `files/` lacks, and prints
+   `<head> <files> <bytes>`. Check `SELECT commit_hash FROM dolt_log LIMIT 1` in the restored
+   database equals `<head>`.
+4. **For bd, reconcile the planes** as the control store's drill prints under `skew guard`:
+   the restored planning store is as old as the manifest's stamp.
+
+The bucket's lifecycle rule may expire old `manifests/` but must never expire `files/`: a file
+is uploaded once and every later manifest may still name it. `lc-backup.sh drill` proves the
+same path twice a day against the local backup dir.
