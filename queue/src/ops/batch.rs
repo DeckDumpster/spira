@@ -1278,9 +1278,9 @@ pub fn batch_show(w: &World, repo: Option<&str>) -> i32 {
     let Ok(c) = resolve(w, "batch show", repo) else {
         return FAIL;
     };
-    match super::forge_batch::read(w, &c) {
-        Ok(Some(o)) => {
-            w.io.out(&o.kv.render());
+    match super::forge_batch::read(w, &c).and_then(|o| o.map(|o| super::forge_batch::shown(&c, &o)).transpose()) {
+        Ok(Some(kv)) => {
+            w.io.out(&kv.render());
             OK
         }
         Ok(None) => OK,

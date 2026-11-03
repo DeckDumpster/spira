@@ -24,6 +24,8 @@ pub struct Repo {
 #[derive(Clone, Debug)]
 pub struct Env {
     pub queue_dir: PathBuf,
+    /// `queue`, whose `batch show` is the one reader of a forge batch's record.
+    pub queue_bin: PathBuf,
     pub db: Option<PathBuf>,
     /// `spira-lc` — the one binary allowed to touch `spira_lifecycle` (see `read_certified`).
     pub lc_bin: Option<PathBuf>,
@@ -53,12 +55,24 @@ fn members(s: &str) -> Vec<Member> {
         .collect()
 }
 
-pub fn read_batch(dir: &Path) -> Result<Option<Batch>, String> {
-    let Some(kv) = read_kv(&dir.join("open"))? else { return Ok(None) };
+/// `queue batch show --repo <repo>`: the open forge batch's record as `key=value` lines, wherever
+/// the queue keeps it; nothing when none is open.
+pub fn batch_show(env: &Env, repo: &str) -> Result<String, String> {
+    let mut cmd = Command::new("timeout");
+    cmd.arg(env.lc_timeout.to_string()).arg(&env.queue_bin).args(["batch", "show", "--repo", repo]);
+    run(&mut cmd, &format!("queue batch show --repo {repo}"))
+}
+
+/// The repo's open forge batch, from the queue's record of it (`show`). Ok(None) when none is
+/// open, or when it is still opening: a batch with no PR is not one anyone can watch yet.
+pub fn read_batch(show: &dyn Fn(&str) -> Result<String, String>, repo: &str) -> Result<Option<Batch>, String> {
+    let kv: BTreeMap<String, String> = show(repo)?
+        .lines()
+        .filter_map(|l| l.split_once('='))
+        .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        .collect();
     let pr = kv.get("pr").cloned().unwrap_or_default();
     if pr.is_empty() {
-        // The queue writes the file before it knows the PR number; an open file with no PR
-        // is a cut in progress, not a batch anyone can watch yet.
         return Ok(None);
     }
     Ok(Some(Batch {
@@ -331,7 +345,7 @@ pub fn snapshot(env: &Env, repo: &Repo, prev: &RepoState, now: u64) -> Snapshot 
     let mut s = Snapshot { now, ..Default::default() };
     let qdir = env.queue_dir.join(&repo.name);
 
-    match read_batch(&qdir) {
+    match read_batch(&|r| batch_show(env, r), &repo.name) {
         Ok(b) => s.batch = b,
         Err(e) => s.errors.push(e),
     }
@@ -422,8 +436,22 @@ mod tests {
 
     #[test]
     fn read_certified_needs_spira_lc_bin() {
-        let env = Env { queue_dir: PathBuf::new(), db: None, lc_bin: None, lc_timeout: 5 };
+        let env = Env { queue_dir: PathBuf::new(), queue_bin: PathBuf::new(), db: None, lc_bin: None, lc_timeout: 5 };
         let err = read_certified(&env).unwrap_err();
         assert!(err.contains("SPIRA_LC_BIN unset"), "{err}");
+    }
+
+    #[test]
+    fn the_open_batch_is_the_store_record_the_queue_shows() {
+        let show = |repo: &str| -> Result<String, String> {
+            assert_eq!(repo, "deck");
+            Ok("batch_id=deck-1\nforge.phase=open\npr=12\nhead=h1\nbranch=spira/queue/deck-1\nmembers=sp-a:ta sp-b:tb\n".into())
+        };
+        let b = read_batch(&show, "deck").unwrap().expect("the store's batch is seen");
+        assert_eq!((b.pr.as_str(), b.head.as_str(), b.branch.as_str()), ("12", "h1", "spira/queue/deck-1"));
+        assert_eq!(b.members.iter().map(|m| (m.id.as_str(), m.tip.as_str())).collect::<Vec<_>>(), [("sp-a", "ta"), ("sp-b", "tb")]);
+        assert_eq!(read_batch(&|_| Ok("batch_id=deck-1\nforge.phase=opening\n".into()), "deck").unwrap(), None);
+        assert_eq!(read_batch(&|_| Ok(String::new()), "deck").unwrap(), None);
+        assert!(read_batch(&|_| Err("queue batch show exited 1".into()), "deck").is_err(), "cannot tell is not no batch");
     }
 }

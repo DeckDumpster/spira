@@ -56,6 +56,8 @@ pub struct Config {
     pub desired_dir: String,
     /// The `units-install` that lists the enable manifest when no Composite declares units.
     pub units_install: String,
+    /// The `queue` whose `batch show` is a forge repo's open batch.
+    pub queue: String,
 }
 
 impl Config {
@@ -86,6 +88,7 @@ impl Config {
                 Some(u) => u,
                 None => spira_config::release_env::tool("units-install")?,
             },
+            queue: spira_config::release_env::tool("queue")?,
         })
     }
 }
@@ -500,7 +503,7 @@ async fn dwarves_api_route(State(loom): State<Arc<Loom>>) -> Response {
 }
 
 async fn round_route(State(loom): State<Arc<Loom>>, axum::extract::Path((repo, batch)): axum::extract::Path<(String, String)>) -> Response {
-    if let Some(b) = forge_rounds::read_all(&forge_queue_dir(&loom)).into_iter().find(|b| b.repo == repo && b.key == batch) {
+    if let Some(b) = forge_batches(&loom).await.into_iter().find(|b| b.repo == repo && b.key == batch) {
         let target = format!("{}/{}", b.repo, b.run);
         let fetch = {
             let loom = loom.clone();
@@ -545,9 +548,39 @@ fn forge_queue_dir(loom: &Loom) -> std::path::PathBuf {
     std::path::Path::new(&loom.config().run).join("queue")
 }
 
+/// Every forge batch on record, each repo's open one as `queue batch show` gives it.
+async fn forge_batches(loom: &Loom) -> Vec<forge_rounds::Batch> {
+    let dir = forge_queue_dir(loom);
+    let mut open = std::collections::BTreeMap::new();
+    for repo in forge_rounds::repos(&dir) {
+        let shown = queue_text(loom, &["batch", "show", "--repo", &repo]).await;
+        open.insert(repo, shown);
+    }
+    forge_rounds::read_all(&dir, &open)
+}
+
+async fn queue_text(loom: &Loom, args: &[&str]) -> Result<String, String> {
+    let cfg = loom.config();
+    let mut cmd = tokio::process::Command::new(&cfg.queue);
+    cmd.args(args)
+        .env("PATH", &cfg.path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    let out = tokio::time::timeout(cfg.budget, cmd.output())
+        .await
+        .map_err(|_| format!("queue {} over its {} ms budget", args.join(" "), cfg.budget.as_millis()))?
+        .map_err(|e| format!("could not run {}: {e}", cfg.queue))?;
+    if !out.status.success() {
+        return Err(format!("queue {} exited {}: {}", args.join(" "), out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim().chars().take(300).collect::<String>()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 async fn rounds_page_route(State(loom): State<Arc<Loom>>) -> Response {
     let window = rounds::WINDOW_S.to_string();
-    let forge = forge_rounds::render_list(now_s(), &forge_rounds::read_all(&forge_queue_dir(&loom)));
+    let forge = forge_rounds::render_list(now_s(), &forge_batches(&loom).await);
     match loom.batches(&["--window", &window]).await {
         Ok((batches, stale)) => {
             let page = rounds::render_list(now_s(), &batches, stale.as_deref()).replacen("</main>", &format!("{forge}</main>"), 1);

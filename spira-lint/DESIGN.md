@@ -823,6 +823,23 @@ record, and never by matching `gate.sh` in a process listing.
 **Refuses** (exit 3): no file in scope. **Positive control:** `fence: gate-state-readers checked
 <n> files`.
 
+## Rule `forge-batch-readers`
+
+**Intent.** Nothing outside the queue reads a forge batch's `open`, `prepared` or `forge-state`
+file. Once the batch machine is on the control store the batch's record holds them, and
+`queue batch show --repo <r>` (whose `forge.*` lines carry the verdict's last look at the PR) is
+how anything else asks.
+
+**Scope.** `.rs` and `.sh` files outside `queue/`, `install/src/round_records.rs` (the remover) and
+`spira-lint/`.
+
+**Violation.** A live (non-comment) line joining or naming one of those files in a queue directory.
+Files that still do are listed in `spira-lint/forge-batch-readers-allow`, which only shrinks: a
+listed file with no match is a finding.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: forge-batch-readers checked
+<n> files`.
+
 ## Rule `dwarf-state-readers`
 
 **Intent.** A dwarf's phase and how its session was cut short are fields of its WORKING row,

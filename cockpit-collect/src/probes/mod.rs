@@ -153,7 +153,7 @@ pub fn full_pass(cfg: &Cfg) -> Kv {
     out.extend(tsd::tsd_keys());
     out.extend(unsent::unsent_keys(cfg));
     out.extend(queue::queue_keys(cfg));
-    out.extend(round::round_keys(cfg.round_cap_secs, &cfg.queue_dir));
+    out.extend(round::round_keys(cfg.round_cap_secs));
     out.extend(inflight::inflight_keys(cfg));
     out.extend(reachable::reachable_keys(cfg));
     out.extend(well_keys(cfg));
@@ -193,7 +193,7 @@ pub fn run(subcommand: &str, cfg: &Cfg) -> Option<Kv> {
         "tsd" => Some(tsd::tsd_keys()),
         "unsent" => Some(unsent::unsent_keys(cfg)),
         "queue" => Some(queue::queue_keys(cfg)),
-        "round" => Some(round::round_keys(cfg.round_cap_secs, &cfg.queue_dir)),
+        "round" => Some(round::round_keys(cfg.round_cap_secs)),
         "inflight" => Some(inflight::inflight_keys(cfg)),
         "reachable" => Some(reachable::reachable_keys(cfg)),
         "well" => Some(well_keys(cfg)),

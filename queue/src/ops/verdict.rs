@@ -61,7 +61,7 @@ pub fn pass(w: &World, c: &Ctx) -> i32 {
 /// (merged lands, closed abandons) runs, never the CI read or a push, and once the open record
 /// is gone the forge-state record goes with it.
 pub fn settle_forge_leftovers(w: &World, c: &Ctx, path: &Path) -> i32 {
-    let leftovers = ["forge-state"];
+    let leftovers = [forge_batch::FORGE_STATE];
     let open = match forge_batch::read(w, c) {
         Ok(o) => o,
         Err(e) => {
@@ -1159,7 +1159,7 @@ fn record_forge_state(w: &World, c: &Ctx, b: &Batch, ci: &str, run: &str, meta: 
             let add: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
             rewrite(w, c, b, &drop, &add)
         }
-        forge_batch::At::File(_) => write_atomic(&c.queue_file("forge-state"), &kv.render()),
+        forge_batch::At::File(_) => write_atomic(&c.queue_file(forge_batch::FORGE_STATE), &kv.render()),
     };
     if let Err(e) = written {
         w.err(format!(
