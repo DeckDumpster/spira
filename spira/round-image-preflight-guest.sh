@@ -15,6 +15,7 @@ rm -rf /root/tree && mkdir -p /root/tree && cp -a /src/. /root/tree/
 mkdir -p /etc/systemd/system /cache/toolchains /root/.cargo/rustup
 ln -sfn /cache/registry /root/.cargo/registry
 ln -sfn /cache/toolchains /root/.cargo/rustup/toolchains
+mkdir -p /cache/toolchains/.rustup-tmp && ln -sfn /cache/toolchains/.rustup-tmp /root/.cargo/rustup/tmp
 export CARGO_TARGET_DIR=/cache/target
 
 printf '#!/bin/sh\nexit 0\n' > /usr/local/bin/systemctl
