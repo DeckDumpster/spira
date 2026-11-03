@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn a_testenv_settings_refusal_names_its_reason_its_key_and_ends_the_tail_at_the_refusal() {
-        let mut log: Vec<String> = (1..=30).map(|i| format!("round-vm: setup line {i}")).collect();
+        let mut log: Vec<String> = (1..=50).map(|i| format!("round-vm: setup line {i}")).collect();
         log.push("batch: SPIRA_TESTENV_SCRATCH_ROOT is not declared — every key is required; refusing".into());
         log.push("VERDICT FAULT rc=2 ran=0 reason=settings-refused".into());
         log.push("round-vm: PHASE-FAILED phase=suites rc=2".into());
