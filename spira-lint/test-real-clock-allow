@@ -7,7 +7,7 @@
 1 gate/src/tests.rs
 1 gate-worker/src/tests.rs
 3 round-vm/src/pool.rs
-5 round-vm/src/run.rs
+2 round-vm/src/run.rs
 2 spira-otel/src/metrics.rs
 2 strand/src/state.rs
 4 testenv/src/batch.rs

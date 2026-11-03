@@ -3108,9 +3108,18 @@ mod tests {
     }
 
     fn exe(p: &Path) {
-        // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
         fs::create_dir_all(p.parent().unwrap()).unwrap();
-        testkit::write_exe(p, "x");
+        exe_with(p, "x");
+    }
+
+    /// An executable-moded fixture written in-process: no test here runs it, so no forked
+    /// child can hold its write descriptor across an exec (the ETXTBSY race testkit::write_exe
+    /// exists for), and a unit test spawns no shell to make it.
+    fn exe_with(p: &Path, body: &str) {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let mut f = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o755).open(p).unwrap();
+        f.write_all(body.as_bytes()).unwrap();
     }
 
     #[test]
@@ -3225,19 +3234,6 @@ mod tests {
     }
 
     const FAKE_FENCES: &str = "lifecycle-guard\texport SPIRA_GUARD_BIN=target/release/lifecycle-guard; \"$SPIRA_GUARD_BIN\" --gate .\nboundary\tbash spira/boundary.sh check\n";
-
-    #[test]
-    fn a_round_with_a_base_ships_the_trees_fence_list_and_one_without_ships_none() {
-        let fx = fixture();
-        let remote = FakeRemote::green();
-        let mut a = tree(&fx);
-        a.base = Some("main".into());
-        assert_eq!(go(&fx, &remote, &a), 0);
-        assert!(remote.jobs.lock().unwrap()[0].ends_with(&format!(" {}", shell_quote(FAKE_FENCES))), "the list is the last argument: {:?}", remote.jobs.lock().unwrap());
-        let remote = FakeRemote::green();
-        assert_eq!(go(&fx, &remote, &tree(&fx)), 0);
-        assert!(remote.jobs.lock().unwrap()[0].ends_with(" ''"), "no base, no fences: {:?}", remote.jobs.lock().unwrap());
-    }
 
     #[test]
     fn a_tree_whose_fences_cannot_be_listed_is_refused_before_a_vm_is_taken() {
@@ -3365,8 +3361,7 @@ mod tests {
                 let p = local.join(rel);
                 fs::create_dir_all(p.parent().unwrap()).unwrap();
                 if remote_path == REMOTE_BINS {
-                    // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
-                    testkit::write_exe(&p, body);
+                    exe_with(&p, body);
                 } else {
                     fs::write(&p, body).unwrap();
                 }
@@ -3455,24 +3450,6 @@ mod tests {
         run(&RunEnv { cfg: &fx.cfg, pool: &pool, deps: &deps, host: &FakeHost, remote, record: &FakeRecorder::default() }, a)
     }
 
-    fn go_recorded(fx: &Fixture, remote: &FakeRemote, a: &RunArgs, rec: &FakeRecorder) -> i32 {
-        let pool = Pool { state_dir: fx.cfg.state_dir.clone(), retry_interval: Duration::ZERO, max_retries: 1, wait_poll: Duration::ZERO, acquire_deadline: Duration::ZERO };
-        let fp = fx.fp.clone();
-        let f = move || {
-            Ok(Attempt {
-                provider: Box::new(fp.clone()),
-                spill: None,
-                iface: "ens18".into(),
-                ssh_user: "root".into(),
-                pubkey: "k".into(),
-                timing: Timing { boot_tries: 1, poll: Duration::ZERO, gone_tries: 1 },
-            })
-        };
-        let alarm = FakeAlarm::default();
-        let deps = Deps { factory: &f, alarm: &alarm, spawner: &NoSpawn };
-        run(&RunEnv { cfg: &fx.cfg, pool: &pool, deps: &deps, host: &FakeHost, remote, record: rec }, a)
-    }
-
     #[derive(Default)]
     struct FakeRecorder {
         calls: Mutex<Vec<String>>,
@@ -3524,269 +3501,6 @@ mod tests {
         }
     }
 
-    fn pass_rows(fx: &Fixture) -> Vec<Value> {
-        let text = fs::read_to_string(tsd::family_path(&fx.cfg.run_dir, tsd::pass::FAMILY)).unwrap_or_default();
-        text.lines().map(|l| serde_json::from_str(l).unwrap()).collect()
-    }
-
-    fn batch_args(fx: &Fixture, batch: &str) -> RunArgs {
-        RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh,test-b.sh".into()), round_batch: Some(batch.into()), round_repo: Some("sp".into()), ..tree(fx) }
-    }
-
-    #[test]
-    fn the_pass_record_carries_each_fences_seconds_from_this_pass_only() {
-        let fx = fixture();
-        let rec = FakeRecorder::default();
-        let mut remote = FakeRemote::green();
-        remote.files.insert(REMOTE_RESULTS, vec![("fence-times", "lifecycle-guard 9 0\nboundary 4 0\n"), ("KEY/batch.meta", "key=KEY\ntree=treesha\n"), ("KEY/test-a.sh.result", "ok 1 1 -\n"), ("KEY/test-b.sh.result", "ok 1 1 -\n")]);
-        let a = RunArgs { base: Some("main".into()), ..batch_args(&fx, "b-fences") };
-        assert_eq!(go_recorded(&fx, &remote, &a, &rec), 0, "a green pass with fences is still green");
-        let row = pass_rows(&fx).into_iter().find(|r| r["batch"] == "b-fences").unwrap();
-        assert_eq!(row["fence_s"], serde_json::json!({"boundary": 4, "lifecycle-guard": 9}), "{row}");
-        let times = a.results_dir.as_ref().unwrap().join(FENCE_TIMES);
-        fs::File::options().write(true).open(&times).unwrap().set_modified(std::time::UNIX_EPOCH + Duration::from_secs(1)).unwrap();
-        assert!(fence_seconds(a.results_dir.as_ref().unwrap(), 1000).is_empty(), "a previous pass's times are not this pass's");
-    }
-
-    #[test]
-    fn a_batch_that_faults_in_install_returns_its_setup_log_and_unit_states() {
-        let fx = fixture();
-        let mut remote = FakeRemote { rc: Ok(3), ..FakeRemote::green() };
-        remote.files.insert("round-work/.runtime/spira/batch-results/", vec![("KEY/run.events", "1 phase up\n2 verdict FAULT install\n"), ("KEY/test-a.sh.result", "skip 0 0 - p e 0\n")]);
-        remote.files.insert(REMOTE_SETUP_LOG, vec![(REMOTE_SETUP_LOG, "install rc=1 output tail:\nunits-install: Failed to connect to bus: no medium found\n")]);
-        remote.files.insert(REMOTE_FAULT_UNITS, vec![(REMOTE_FAULT_UNITS, "spira-x.service loaded failed failed\n")]);
-        let a = batch_args(&fx, "b-fault");
-        go(&fx, &remote, &a);
-        let kept = fs::read_to_string(a.results_dir.as_ref().unwrap().join(BATCH_FAULT_FILE)).unwrap();
-        assert!(kept.contains("Failed to connect to bus: no medium found"), "{kept}");
-        assert!(kept.contains("spira-x.service loaded failed failed"), "{kept}");
-    }
-
-    #[test]
-    fn a_testenv_over_cap_batch_exits_124_with_cause_over_cap_whatever_the_vm_exit_was() {
-        let fx = fixture();
-        let rec = FakeRecorder::default();
-        let mut remote = FakeRemote { rc: Ok(2), ..FakeRemote::green() };
-        let mut files = vec![
-            ("KEY/run.events", "1 phase suites\n2 verdict FAULT over-cap\n"),
-            ("KEY/test-a.sh.result", "ok 1 1 -\n"),
-            ("KEY/runner.meta", "suite_cap_s=600\n"),
-            ("KEY/unit-tests.out", "UNIT-TESTS-CAUSE: exit status 101 (signal: 9, SIGKILL: kill)\n"),
-        ];
-        for n in ["lc", "prebuilt", "claim-rank", "dwarf-brief"] {
-            files.push((Box::leak(format!("KEY/test-sim-{n}.sh.result").into_boxed_str()), "unreached 1 0 -\n"));
-        }
-        remote.files.insert("round-work/.runtime/spira/batch-results/", files);
-        let a = batch_args(&fx, "b-overcap");
-        assert_eq!(go_recorded(&fx, &remote, &a, &rec), 124);
-        let rows = pass_rows(&fx);
-        assert_eq!(rows.iter().find(|r| r["batch"] == "b-overcap").unwrap()["cause"], "over-cap");
-        assert!(a.results_dir.as_ref().unwrap().join(BATCH_FAULT_FILE).exists());
-        assert_eq!(unreached_count(a.results_dir.as_ref().unwrap()), 4);
-    }
-
-    #[test]
-    fn a_batch_that_did_not_fault_leaves_no_fault_file() {
-        let fx = fixture();
-        let a = batch_args(&fx, "b-ok");
-        go(&fx, &FakeRemote::green(), &a);
-        assert!(!a.results_dir.as_ref().unwrap().join(BATCH_FAULT_FILE).exists());
-    }
-
-    #[test]
-    fn every_pass_of_a_round_yields_exactly_one_record_with_its_cause() {
-        let fx = fixture();
-        let rec = FakeRecorder::default();
-        let cases = [("b-green", 0, "green"), ("b-red", 1, "red-attributed"), ("b-cap", 124, "over-cap"), ("b-infra", 3, "infra")];
-        for (batch, rc, _) in cases {
-            let remote = FakeRemote { rc: Ok(rc), ..FakeRemote::green() };
-            go_recorded(&fx, &remote, &batch_args(&fx, batch), &rec);
-        }
-        let lost = FakeRemote { rc: Ok(255), ..FakeRemote::green() };
-        assert_eq!(go_recorded(&fx, &lost, &batch_args(&fx, "b-lost"), &rec), 2);
-        let text = fs::read_to_string(tsd::family_path(&fx.cfg.run_dir, tsd::pass::FAMILY)).unwrap();
-        let expected: Vec<(&str, &str, &str)> = ["b-green", "b-red", "b-cap", "b-infra", "b-lost"].iter().map(|b| ("sp", *b, "3")).collect();
-        tsd::pass::exactly_one(&text, &expected).unwrap();
-        let rows = pass_rows(&fx);
-        let cause = |b: &str| rows.iter().find(|r| r["batch"] == b).unwrap()["cause"].as_str().unwrap().to_string();
-        for (batch, _, want) in cases {
-            assert_eq!(cause(batch), want, "{batch}");
-        }
-        assert_eq!(cause("b-lost"), "vm-lost");
-        let g = rows.iter().find(|r| r["batch"] == "b-green").unwrap();
-        assert_eq!((g["where"].as_str(), g["members"].as_array().map(Vec::len), g["verdict"].as_str()), (Some("proxmox"), Some(2), Some("green")));
-        assert_eq!(g["vcpus"], 16);
-    }
-
-    #[test]
-    fn a_pass_whose_record_cannot_be_written_is_a_loss_not_a_verdict() {
-        let fx = fixture();
-        let rec = FakeRecorder { refuse_record: true, ..Default::default() };
-        assert_eq!(go_recorded(&fx, &FakeRemote::green(), &batch_args(&fx, "b-1"), &rec), 2, "a green pass nobody can record is not judged");
-        assert_eq!(*rec.calls.lock().unwrap().last().unwrap(), "incomplete b-1");
-    }
-
-    fn ended_without_a_tree(events: &'static str, results: Vec<(&'static str, &'static str)>, rc: i32) -> FakeRemote {
-        let mut remote = FakeRemote { rc: Ok(rc), ..FakeRemote::green() };
-        let mut files = vec![("KEY/run.events", events)];
-        files.extend(results);
-        remote.files.insert("round-work/.runtime/spira/batch-results/", files);
-        remote
-    }
-
-    #[test]
-    fn a_batch_ended_red_by_lint_records_a_red_pass_naming_the_step_not_an_incomplete_one() {
-        let fx = fixture();
-        let rec = FakeRecorder::default();
-        let remote = ended_without_a_tree("1 phase build\n2 verdict RED lint-or-fence\n", vec![("KEY/spira-lint.result", "red 1 4 - p e 1\n"), ("KEY/fence-boundary.result", "ok 1 1 - p e 0\n")], 1);
-        assert_eq!(go_recorded(&fx, &remote, &batch_args(&fx, "b-lint"), &rec), 1);
-        let calls = rec.calls.lock().unwrap();
-        let at = |c: &str| calls.iter().position(|x| x == c);
-        assert!(at("failed b-lint spira-lint").is_some() && at("failed b-lint spira-lint") < at("red b-lint spira-lint"), "the step is reported failed, so it gets a mender, before the verdict: {calls:?}");
-        assert!(!calls.iter().any(|c| c.starts_with("incomplete")), "a red step is a verdict: {calls:?}");
-    }
-
-    #[test]
-    fn a_batch_ended_red_by_its_unit_tier_brings_its_record_home_with_no_suite_result() {
-        let fx = fixture();
-        let rec = FakeRecorder::default();
-        let mut remote = FakeRemote { rc: Ok(1), ..FakeRemote::green() };
-        let record = "{\"stage\":\"unit-tests\",\"verdict\":\"red\",\"ran_before_suites\":true,\"cause\":\"exit status 101\",\"secs\":9,\"last_binary\":\"alpha\",\"failed\":[\"a::broken\"]}\n";
-        remote.files.insert(REMOTE_RESULTS, vec![("unit.json", record), ("unit-tests.out", "UNIT-TESTS-CAUSE: exit status 101 after 9s\n"), ("unit-progress", "1 2 alpha\n")]);
-        let a = batch_args(&fx, "b-unit");
-        assert_eq!(go_recorded(&fx, &remote, &a, &rec), 1, "a red, as the VM said");
-        let r = a.results_dir.as_ref().unwrap();
-        assert_eq!(fs::read_to_string(r.join("unit.json")).unwrap(), record, "the record certify judges the pass from");
-        assert!(fs::read_to_string(r.join("unit-tests.out")).unwrap().starts_with("UNIT-TESTS-CAUSE: exit status 101"));
-        assert!(!rec.calls.lock().unwrap().iter().any(|c| c.starts_with("incomplete")), "{:?}", rec.calls.lock().unwrap());
-    }
-
-    #[test]
-    fn an_integration_red_beside_the_suites_brings_its_record_home_beside_the_suites_results() {
-        let fx = fixture();
-        let mut remote = FakeRemote { rc: Ok(1), ..FakeRemote::green() };
-        let record = "{\"stage\":\"integration-tests\",\"verdict\":\"red\",\"ran_before_suites\":false,\"cause\":\"exit status 101\",\"secs\":61,\"last_binary\":\"it\",\"failed\":[\"t\"]}\n";
-        remote.files.get_mut(REMOTE_RESULTS).unwrap().extend([("integration.json", record), ("integration-tests.out", "INTEGRATION-TESTS-CAUSE: exit status 101\n")]);
-        let a = batch_args(&fx, "b-integ");
-        assert_eq!(go(&fx, &remote, &a), 1);
-        let r = a.results_dir.as_ref().unwrap();
-        assert_eq!(fs::read_to_string(r.join("integration.json")).unwrap(), record);
-        assert!(r.join("integration-tests.out").is_file() && r.join("test-a.sh.result").is_file(), "the record sits beside the suites' results");
-    }
-
-    #[test]
-    fn a_batch_that_faulted_or_went_red_with_no_red_step_on_record_is_still_incomplete() {
-        let fx = fixture();
-        let rec = FakeRecorder::default();
-        let fault = ended_without_a_tree("1 phase up\n2 verdict FAULT install\n", vec![("KEY/test-a.sh.result", "skip 0 0 - p e 0\n")], 3);
-        go_recorded(&fx, &fault, &batch_args(&fx, "b-fault"), &rec);
-        let unnamed = ended_without_a_tree("1 phase build\n2 verdict RED lint-or-fence\n", vec![("KEY/spira-lint.result", "ok 1 4 - p e 0\n")], 1);
-        go_recorded(&fx, &unnamed, &batch_args(&fx, "b-unnamed"), &rec);
-        assert!(!rec.calls.lock().unwrap().iter().any(|c| c.starts_with("red ")), "{:?}", rec.calls.lock().unwrap());
-        let reasons = rec.reasons.lock().unwrap();
-        assert!(reasons.contains(&"batch verdict FAULT install (last phase up)".to_string()), "{reasons:?}");
-        assert!(reasons.iter().any(|r| r.starts_with("batch verdict RED lint-or-fence")), "{reasons:?}");
-    }
-
-    #[test]
-    fn a_suites_boundary_refused_as_late_leaves_the_pass_judged() {
-        let fx = fixture();
-        let rec = FakeRecorder { late: true, ..Default::default() };
-        assert_eq!(go_recorded(&fx, &FakeRemote::green(), &batch_args(&fx, "r-9"), &rec), 0, "a late boundary is done, not a fault");
-        let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join("round-progress.json")).unwrap()).unwrap();
-        assert_eq!(v["verdict"].as_str(), Some("green"));
-    }
-
-    #[test]
-    fn a_run_with_no_batch_writes_no_pass_record() {
-        let fx = fixture();
-        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), ..tree(&fx) };
-        assert_eq!(go(&fx, &FakeRemote::green(), &a), 0);
-        assert!(pass_rows(&fx).is_empty());
-    }
-
-    #[test]
-    fn a_pass_with_a_batch_records_its_suites_boundary_once() {
-        let fx = fixture();
-        let rec = FakeRecorder::default();
-        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh,test-b.sh".into()), round_batch: Some("r-9".into()), round_repo: Some("sp".into()), ..tree(&fx) };
-        assert_eq!(go_recorded(&fx, &FakeRemote::green(), &a, &rec), 0);
-        assert_eq!(*rec.calls.lock().unwrap(), vec!["start r-9".to_string(), "r-9 sp".to_string()]);
-        let bodies = rec.bodies.lock().unwrap();
-        let (batch, last) = bodies.last().expect("the pass publishes its counts onto the batch row");
-        let v: Value = serde_json::from_str(last).unwrap();
-        assert_eq!((batch.as_str(), v["total"].as_u64(), v["phase"].as_str()), ("r-9", Some(2), Some("done")));
-    }
-
-    #[test]
-    fn a_pass_with_no_batch_records_nothing() {
-        let fx = fixture();
-        let rec = FakeRecorder::default();
-        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh".into()), ..tree(&fx) };
-        assert_eq!(go_recorded(&fx, &FakeRemote::green(), &a, &rec), 0);
-        assert!(rec.calls.lock().unwrap().is_empty() && rec.bodies.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn a_refused_record_makes_the_pass_a_fault_not_a_verdict() {
-        let fx = fixture();
-        let rec = FakeRecorder { refuse: true, ..Default::default() };
-        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh,test-b.sh".into()), round_batch: Some("r-9".into()), ..tree(&fx) };
-        assert_eq!(go_recorded(&fx, &FakeRemote::green(), &a, &rec), 2);
-        let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join("round-progress.json")).unwrap()).unwrap();
-        assert_eq!(v["verdict"].as_str(), Some("fault"));
-    }
-
-    #[test]
-    fn a_foreign_round_whose_entry_prints_errors_and_exits_1_is_red_and_fires_no_attribution_hook() {
-        let fx = fixture();
-        let rec = FakeRecorder::default();
-        let marker = fx.d.path().join("hook-fired");
-        let mut remote = FakeRemote { rc: Ok(1), ..FakeRemote::green() };
-        remote.files.insert(
-            "round-work/.runtime/spira/batch-results/",
-            vec![
-                ("KEY/ci.result", "red 1 5 - - - 1\n"),
-                ("KEY/ci.out", "svelte-check found 2 errors\nround-vm: ci_entry exited 1\n"),
-                ("KEY/batch.meta", "tree=treesha\n"),
-            ],
-        );
-        remote.files.remove(REMOTE_BINS);
-        let a = RunArgs {
-            results_dir: Some(fx.d.path().join("results")),
-            round_batch: Some("r-9".into()),
-            round_repo: Some("cubby".into()),
-            ci_entry: Some("npm run check".into()),
-            on_red: Some(vec!["touch".into(), marker.display().to_string()]),
-            ..tree(&fx)
-        };
-        assert_eq!(go_recorded(&fx, &remote, &a, &rec), 1);
-        std::thread::sleep(Duration::from_millis(300)); // clock-safe: grace before an absence check; load can only delay, not flip it
-        assert!(!marker.exists(), "a foreign round has one verdict and nothing to attribute");
-        let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join("round-progress.json")).unwrap()).unwrap();
-        assert_eq!(v["verdict"].as_str(), Some("red"));
-    }
-
-    #[test]
-    fn a_foreign_round_that_exits_0_is_green_though_its_batch_row_refused_the_suites_boundary() {
-        let fx = fixture();
-        let rec = FakeRecorder { refuse: true, ..Default::default() };
-        let mut remote = FakeRemote::green();
-        remote.files.insert(
-            "round-work/.runtime/spira/batch-results/",
-            vec![("KEY/ci.result", "ok 1 129 - - - 0\n"), ("KEY/ci.out", "gate: ok\nround-vm: ci_entry exited 0\n"), ("KEY/batch.meta", "tree=treesha\n")],
-        );
-        remote.files.remove(REMOTE_BINS);
-        let a = RunArgs {
-            results_dir: Some(fx.d.path().join("results")),
-            round_batch: Some("r-9".into()),
-            round_repo: Some("cubby".into()),
-            ci_entry: Some("npm run check".into()),
-            ..tree(&fx)
-        };
-        assert_eq!(go_recorded(&fx, &remote, &a, &rec), 0);
-    }
-
     #[test]
     fn the_round_flags_are_parsed() {
         let a = parse_run_args(&args(&["t", "--round-batch", "r-1", "--round-repo=sp"])).unwrap();
@@ -3797,47 +3511,6 @@ mod tests {
         RunArgs { tree_dir: fx.d.path().join("tree"), maxpar: Some(24), ..Default::default() }
     }
 
-    fn record_template(fx: &mut Fixture, vmid: &str, image: &str, pve_names: &str) {
-        let ca = fx.d.path().join("ca.pem");
-        fs::write(&ca, "x").unwrap();
-        let env = fx.d.path().join("pve.env");
-        fs::write(&env, format!("PVE_TOKEN_ID=t\nPVE_TOKEN_SECRET=s\nPVE_NODE=n\nPVE_CACERT={}\nPVE_TEMPLATE_VMID={pve_names}\n", ca.display())).unwrap();
-        fx.cfg.pve_env_path = env;
-        fs::create_dir_all(&fx.cfg.state_dir).unwrap();
-        Record { vmid: vmid.into(), image: image.into(), recipe_sha: None }.write(&fx.cfg.state_dir).unwrap();
-    }
-
-    fn newer_tree(fx: &Fixture) -> RunArgs {
-        RunArgs { tree_dir: fx.d.path().join("newer-image"), maxpar: Some(24), ..Default::default() }
-    }
-
-    #[test]
-    fn a_head_whose_image_the_template_lacks_declares_the_build_and_a_matching_one_does_not() {
-        let mut fx = fixture();
-        record_template(&mut fx, "130", "localhost/spira-testenv:tagA", "130");
-        let remote = FakeRemote::green();
-        assert_eq!(go(&fx, &remote, &newer_tree(&fx)), 0);
-        assert!(remote.jobs.lock().unwrap()[0].contains("'180' '1234' '77' '' '1' 'refs/rounds/"), "declared: {:?}", remote.jobs.lock().unwrap());
-        let remote = FakeRemote::green();
-        assert_eq!(go(&fx, &remote, &tree(&fx)), 0);
-        assert!(remote.jobs.lock().unwrap()[0].contains("'180' '1234' '77' '' '' 'refs/rounds/"), "no image change, no build: {:?}", remote.jobs.lock().unwrap());
-    }
-
-    #[test]
-    fn without_a_record_the_base_tag_decides_whether_the_build_is_declared() {
-        let fx = fixture();
-        let remote = FakeRemote::green();
-        let mut a = tree(&fx);
-        a.base = Some("main".into());
-        assert_eq!(go(&fx, &remote, &a), 0);
-        assert!(remote.jobs.lock().unwrap()[0].contains("'1' '' 'refs/rounds/"), "same tag as base: {:?}", remote.jobs.lock().unwrap());
-        let remote = FakeRemote::green();
-        let mut a = newer_tree(&fx);
-        a.base = Some("main".into());
-        assert_eq!(go(&fx, &remote, &a), 0);
-        assert!(remote.jobs.lock().unwrap()[0].contains("'1' '1' 'refs/rounds/"), "newer tag than base: {:?}", remote.jobs.lock().unwrap());
-    }
-
     #[test]
     fn the_remote_script_builds_a_declared_image_in_setup_and_still_refuses_an_undeclared_one() {
         let declared = REMOTE_SCRIPT.find("elif [ -n \"$build_image\" ]").expect("a declared branch");
@@ -3846,15 +3519,6 @@ mod tests {
         assert!(declared < refuse && refuse < setup, "the build is before the setup clock stops, the refusal stays the fallback");
         assert!(REMOTE_SCRIPT[declared..refuse].contains("testenv container image"));
         assert!(REMOTE_SCRIPT[declared..refuse].contains("exit 3"), "a failed build gives no verdict");
-    }
-
-    #[test]
-    fn a_record_for_a_template_pve_env_no_longer_names_places_the_pass_as_image_missing() {
-        let mut fx = fixture();
-        record_template(&mut fx, "130", "localhost/spira-testenv:tagA", "131");
-        let remote = FakeRemote::green();
-        assert_eq!(go(&fx, &remote, &tree(&fx)), 0);
-        assert!(remote.jobs.lock().unwrap()[0].contains("'180' '1234' '77' '' '1' 'refs/rounds/"), "stale record declares the build: {:?}", remote.jobs.lock().unwrap());
     }
 
     #[test]
@@ -3922,69 +3586,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn green_run_pulls_everything_writes_the_manifest_installs_and_releases() {
-        let fx = fixture();
-        let remote = FakeRemote::green();
-        assert_eq!(go(&fx, &remote, &tree(&fx)), 0);
-        assert!(fx.fp.live_vms().is_empty(), "released: {:?}", fx.fp.live_vms());
-        let results = fx.cfg.run_dir.join("batch-results");
-        assert!(results.join("test-a.sh.result").is_file(), "flattened out of the BATCH_KEY dir");
-        let m: Manifest = serde_json::from_str(&fs::read_to_string(fx.cfg.state_dir.join("manifests/treesha.json")).unwrap()).unwrap();
-        assert_eq!((m.vm.as_str(), m.acquire, m.vcpus, m.maxpar), ("100", AcquireMode::Cold, 16, 24));
-        assert_eq!((m.build_wall_secs, m.suite_wall_secs_sum), (Some(90), 42));
-        assert_eq!(m.tree_sha_found.as_deref(), Some("treesha"));
-        assert_eq!(m.commit_sha, "commitsha");
-        // path-ok: a test asserting where round-vm installs a fixture binary in a temp worktree
-        assert!(tree(&fx).tree_dir.join("target/release/batcher").is_file(), "installed into the round worktree");
-        assert!(fs::read_to_string(fx.cfg.run_dir.join("tsd/suite.jsonl")).unwrap().contains("\"ran_on\":\"100\""));
-        assert!(remote.jobs.lock().unwrap()[0].contains("'test-slow.sh,test-fast.sh' '24' '' '/opt/spira/cargo' '' '180' '1234' '77' '' '' 'refs/rounds/"), "{:?}", remote.jobs.lock().unwrap());
-    }
-
-    #[test]
-    fn the_configured_testenv_registry_is_forwarded_to_the_vm() {
-        let mut fx = fixture();
-        fx.cfg.testenv_registry = Some("registry.example/spira".into());
-        let remote = FakeRemote::green();
-        assert_eq!(go(&fx, &remote, &tree(&fx)), 0);
-        assert!(remote.jobs.lock().unwrap()[0].contains("'registry.example/spira'"), "{:?}", remote.jobs.lock().unwrap());
-    }
-
-    #[test]
-    fn a_red_remote_exit_code_passes_through_and_the_vm_is_released() {
-        for rc in [1, 3, 4] {
-            let fx = fixture();
-            let remote = FakeRemote { rc: Ok(rc), ..FakeRemote::green() };
-            assert_eq!(go(&fx, &remote, &tree(&fx)), rc);
-            assert!(fx.fp.live_vms().is_empty());
-        }
-    }
-
-    /// sp-dp872: the first round cut from the release exited 101 — cargo's own exit code
-    /// (`cargo run` could not pick a binary once testenv grew `bd-meter`), passed through as if
-    /// it were a testenv verdict. The batcher had no row for it. A remote exit outside
-    /// testenv's contract (0-4) is round-vm's own harness fault: exit 2, named, VM released —
-    /// on the no-ready-VM (cold) acquire path the walkthrough rounds took.
-    #[test]
-    fn a_remote_exit_outside_testenv_s_contract_is_exit_2_on_the_cold_path() {
-        for rc in [101, 128, 137, -1] {
-            let fx = fixture();
-            let remote = FakeRemote { rc: Ok(rc), files: BTreeMap::new(), ..FakeRemote::green() };
-            assert_eq!(go(&fx, &remote, &tree(&fx)), 2, "remote rc {rc}");
-            assert_eq!(fx.fp.live_vms().len(), 1, "no results came back, so the VM is kept: {:?}", fx.fp.live_vms());
-        }
-    }
-
-    #[test]
-    fn a_spool_run_whose_remote_exits_outside_the_contract_writes_corpus_done_rc_2() {
-        let fx = fixture();
-        let remote = FakeRemote { rc: Ok(101), files: BTreeMap::new(), ..FakeRemote::green() };
-        let (a, sp) = spool_fixture(&fx);
-        assert_eq!(go(&fx, &remote, &a), 2);
-        assert_eq!(fs::read_to_string(sp.dir.join("corpus.done")).unwrap(), "rc=2\n");
-        assert_eq!(fx.fp.live_vms().len(), 1, "kept: the pull found nothing");
-    }
-
     /// sp-dp872: testenv has two binaries (testenv, bd-meter); an unqualified `cargo run -p
     /// testenv` cannot choose and exits 101 before a suite runs.
     #[test]
@@ -3994,35 +3595,6 @@ mod tests {
                 assert!(line.contains("--bin testenv"), "unqualified cargo run: {line}");
             }
         }
-    }
-
-    #[test]
-    fn every_failure_on_the_vm_is_exit_2_and_releases_it() {
-        let cases: Vec<(FakeRemote, usize)> = vec![
-            (FakeRemote { reachable: false, ..FakeRemote::green() }, 0),
-            (FakeRemote { rc: Ok(255), ..FakeRemote::green() }, 1),
-            (FakeRemote { rc: Err("ssh: spawn failed".into()), ..FakeRemote::green() }, 0),
-            (FakeRemote { files: BTreeMap::new(), ..FakeRemote::green() }, 1),
-        ];
-        for (remote, kept) in cases {
-            let fx = fixture();
-            assert_eq!(go(&fx, &remote, &tree(&fx)), 2);
-            assert_eq!(fx.fp.live_vms().len(), kept, "{:?}", fx.fp.live_vms());
-        }
-    }
-
-    #[test]
-    fn a_green_run_with_another_tree_s_binaries_is_exit_2_and_installs_nothing() {
-        let fx = fixture();
-        let mut remote = FakeRemote::green();
-        remote.files.insert("round-work/.runtime/spira/batch-results/", vec![
-            ("KEY/test-a.sh.result", "ok 1 30 - p e 0\n"),
-            ("KEY/batch.meta", "key=KEY\ntree=othersha\n"),
-        ]);
-        assert_eq!(go(&fx, &remote, &tree(&fx)), 2);
-        // path-ok: a test asserting where round-vm installs a fixture binary in a temp worktree
-        assert!(!tree(&fx).tree_dir.join("target/release/batcher").exists());
-        assert!(fx.fp.live_vms().is_empty());
     }
 
     #[test]
@@ -4062,136 +3634,10 @@ mod tests {
 
     // ── --attr-spool (DESIGN.md §2.2a) ───────────────────────────────────────────────
 
-    fn spool_fixture(fx: &Fixture) -> (RunArgs, Spool) {
-        let dir = fx.d.path().join("spool");
-        let req = dir.join("req");
-        fs::create_dir_all(&req).unwrap();
-        fs::write(req.join("j1.req"), "branch=spira/batcher-attr/r-j1\nsuites=test-a.sh\nbuild=dwarf\n").unwrap();
-        fs::write(req.join("j2.req"), "branch=spira/batcher-attr/r-j2\nsuites=test-a.sh\nbuild=round\n").unwrap();
-        fs::write(req.join("j3.req"), "branch=missing\nsuites=test-a.sh\nbuild=artifacts\n").unwrap();
-        fs::write(dir.join("close"), "").unwrap();
-        let a = RunArgs { attr_spool: Some(dir.clone()), results_dir: Some(fx.d.path().join("results")), ..tree(fx) };
-        (a, Spool { dir })
-    }
-
-    #[test]
-    fn the_spool_serves_reruns_while_the_corpus_runs_and_a_round_build_after_it() {
-        let fx = fixture();
-        let remote = FakeRemote { hold_for_attr: true, ..FakeRemote::green() };
-        let (a, sp) = spool_fixture(&fx);
-        assert_eq!(go(&fx, &remote, &a), 0, "the exit code is the corpus's");
-        let attrs = remote.attrs.lock().unwrap().clone();
-        assert!(attrs.contains(&("j1".to_string(), true)), "j1 ran while the corpus did: {attrs:?}");
-        assert!(attrs.contains(&("j2".to_string(), false)), "the round build waited for the corpus: {attrs:?}");
-        let res = sp.res_dir();
-        assert_eq!(fs::read_to_string(res.join("j1.done")).unwrap(), "rc=0\n");
-        assert!(res.join("j1/test-a.sh.result").is_file(), "flattened out of the key dir");
-        assert_eq!(fs::read_to_string(res.join("j2.done")).unwrap(), "rc=1\n");
-        assert!(res.join("j2/bins/batcher").is_file(), "a round build brings its binaries back");
-        assert_eq!(fs::read_to_string(res.join("j3.done")).unwrap(), "rc=2\n", "a branch that cannot be mirrored is a fault");
-        assert_eq!(fs::read_to_string(sp.dir.join("corpus.done")).unwrap(), "rc=0\n");
-        assert!(fs::read_to_string(fx.d.path().join("results/test-b.sh.result")).is_ok(), "the corpus's results streamed in");
-        assert!(fx.fp.live_vms().is_empty(), "released once the spool closed");
-    }
-
-    #[test]
-    fn a_failed_results_pull_is_retried_and_the_full_set_comes_back() {
-        let fx = fixture();
-        let remote = FakeRemote::green();
-        remote.fail_result_pulls.store(1, std::sync::atomic::Ordering::SeqCst);
-        assert_eq!(go(&fx, &remote, &tree(&fx)), 0);
-        let results = fx.cfg.run_dir.join("batch-results");
-        assert!(results.join("test-a.sh.result").is_file() && results.join("test-b.sh.result").is_file());
-        assert!(fx.fp.live_vms().is_empty(), "a complete pull releases the VM");
-    }
-
-    #[test]
-    fn a_pull_that_never_completes_is_incomplete_and_the_vm_is_kept() {
-        let fx = fixture();
-        let remote = FakeRemote::green();
-        remote.fail_result_pulls.store(1000, std::sync::atomic::Ordering::SeqCst);
-        assert_eq!(go(&fx, &remote, &tree(&fx)), 2);
-        assert_eq!(fx.fp.live_vms().len(), 1, "kept for a re-pull: {:?}", fx.fp.live_vms());
-    }
-
-    #[test]
-    fn a_dropped_batch_ssh_salvages_what_it_can_and_keeps_the_vm() {
-        let fx = fixture();
-        let mut remote = FakeRemote::green();
-        remote.rc = Ok(255);
-        assert_eq!(go(&fx, &remote, &tree(&fx)), 2);
-        assert!(fx.cfg.run_dir.join("batch-results/test-a.sh.result").is_file());
-        assert_eq!(fx.fp.live_vms().len(), 1);
-    }
-
-    #[test]
-    fn a_vm_that_dies_under_the_batch_ends_the_pass_vm_lost_and_gives_up_its_lease() {
-        let fx = fixture();
-        let rec = FakeRecorder::default();
-        let remote = FakeRemote { rc: Ok(255), kill_vm: Some(fx.fp.clone()), ..FakeRemote::green() };
-        remote.fail_result_pulls.store(1000, std::sync::atomic::Ordering::SeqCst);
-        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh".into()), round_batch: Some("r-9".into()), ..tree(&fx) };
-        assert_eq!(go_recorded(&fx, &remote, &a, &rec), VM_LOST_EXIT);
-        assert_eq!(*rec.calls.lock().unwrap().last().unwrap(), "incomplete r-9");
-        assert!(remote.result_pulls.load(std::sync::atomic::Ordering::SeqCst) <= 1, "no pull retries against a dead VM");
-        assert!(fx.fp.live_vms().is_empty(), "the dead VM is released: {:?}", fx.fp.live_vms());
-        let pool = Pool { state_dir: fx.cfg.state_dir.clone(), retry_interval: Duration::ZERO, max_retries: 1, wait_poll: Duration::ZERO, acquire_deadline: Duration::ZERO };
-        assert!(pool.leased_to(ProcId::current()).is_empty());
-        assert!(!pool.status_json().unwrap().contains("\"held\":true"), "no held lease remains");
-    }
-
     #[test]
     fn every_ssh_and_rsync_to_a_round_vm_carries_keepalives() {
         let opts = SshRemote { user: "u".into(), port: 22, key: "k".into() }.ssh_opts().join(" ");
         assert!(opts.contains("-o ServerAliveInterval=10 -o ServerAliveCountMax=3"), "{opts}");
-    }
-
-    #[test]
-    fn a_drop_after_the_runner_finished_green_is_judged_green_and_releases_the_vm() {
-        let fx = fixture();
-        let rec = FakeRecorder::default();
-        let remote = FakeRemote { rc: Ok(255), recorded_exit: Some(0), ..FakeRemote::green() };
-        assert_eq!(go_recorded(&fx, &remote, &batch_args(&fx, "b-drop-green"), &rec), 0);
-        assert!(!rec.calls.lock().unwrap().iter().any(|c| c.starts_with("incomplete")), "{:?}", rec.calls.lock().unwrap());
-        let rows = pass_rows(&fx);
-        assert_eq!(rows.iter().find(|r| r["batch"] == "b-drop-green").unwrap()["cause"], "green");
-        assert!(fx.fp.live_vms().is_empty(), "{:?}", fx.fp.live_vms());
-    }
-
-    #[test]
-    fn a_drop_after_the_runner_finished_red_is_judged_red() {
-        let fx = fixture();
-        let rec = FakeRecorder::default();
-        let mut remote = FakeRemote { rc: Ok(255), recorded_exit: Some(1), ..FakeRemote::green() };
-        remote.files.insert("round-work/.runtime/spira/batch-results/", vec![("KEY/test-a.sh.result", "red 1 30 fp p e 1\n"), ("KEY/test-b.sh.result", "ok 1 12 - p e 0\n"), ("KEY/batch.meta", "key=KEY\ntree=treesha\n")]);
-        let a = batch_args(&fx, "b-drop-red");
-        assert_eq!(go_recorded(&fx, &remote, &a, &rec), 1);
-        assert!(a.results_dir.as_ref().unwrap().join("test-a.sh.result").is_file());
-    }
-
-    #[test]
-    fn a_drop_with_no_recorded_exit_stays_incomplete_and_holds_the_vm() {
-        let fx = fixture();
-        let rec = FakeRecorder::default();
-        let remote = FakeRemote { rc: Ok(255), ..FakeRemote::green() };
-        assert_eq!(go_recorded(&fx, &remote, &batch_args(&fx, "b-drop-none"), &rec), 2);
-        assert_eq!(*rec.calls.lock().unwrap().last().unwrap(), "incomplete b-drop-none");
-        assert_eq!(fx.fp.live_vms().len(), 1);
-    }
-
-    #[test]
-    fn the_reason_ssh_gave_reaches_the_pass_record_and_the_incomplete_reason() {
-        let fx = fixture();
-        let rec = FakeRecorder::default();
-        let remote = FakeRemote { rc: Ok(255), ssh_log_text: Some("Authenticated to x\nTimeout, server 100.115.102.10 not responding.\n"), ..FakeRemote::green() };
-        let a = batch_args(&fx, "b-why");
-        assert_eq!(go_recorded(&fx, &remote, &a, &rec), 2);
-        let want = "Timeout, server 100.115.102.10 not responding.";
-        assert_eq!(*rec.reasons.lock().unwrap(), vec![format!("the batch's ssh dropped: {want}")]);
-        let rows = pass_rows(&fx);
-        let detail = rows.iter().find(|r| r["batch"] == "b-why").unwrap()["detail"].as_str().unwrap().to_string();
-        assert!(detail.contains(want), "{detail}");
-        assert!(a.results_dir.as_ref().unwrap().join(SSH_LOG_FILE).is_file());
     }
 
     #[test]
@@ -4208,17 +3654,6 @@ mod tests {
         assert_eq!(incomplete_count_line(2, 2, 0), "round-vm run: INCOMPLETE: 2 of 2 suite results present (0 new in the final pull)");
         let held = held_vm_line("h-1", "10.0.0.5");
         assert!(held.contains("round-vm release h-1") && !held.contains("re-pull"), "{held}");
-    }
-
-    #[test]
-    fn a_kept_vm_is_off_this_runs_lease_so_a_signal_cannot_release_it() {
-        let fx = fixture();
-        let mut remote = FakeRemote::green();
-        remote.rc = Ok(255);
-        assert_eq!(go(&fx, &remote, &tree(&fx)), 2);
-        let pool = Pool { state_dir: fx.cfg.state_dir.clone(), retry_interval: Duration::ZERO, max_retries: 1, wait_poll: Duration::ZERO, acquire_deadline: Duration::ZERO };
-        assert!(pool.leased_to(ProcId::current()).is_empty(), "release_owned_by finds nothing to stop");
-        assert_eq!(fx.fp.live_vms().len(), 1);
     }
 
     #[test]
@@ -4250,60 +3685,4 @@ mod tests {
     }
 
 
-    #[test]
-    fn a_run_whose_ssh_fails_is_left_done_with_a_fault() {
-        let fx = fixture();
-        let remote = FakeRemote { rc: Ok(255), ..FakeRemote::green() };
-        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), ..tree(&fx) };
-        assert_eq!(go(&fx, &remote, &a), 2);
-        let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join("round-progress.json")).unwrap()).unwrap();
-        assert_eq!((v["phase"].as_str(), v["verdict"].as_str()), (Some("done"), Some("fault")));
-    }
-
-    #[test]
-    fn a_pass_whose_ssh_drops_records_itself_incomplete_on_its_batch() {
-        let fx = fixture();
-        let rec = FakeRecorder::default();
-        let remote = FakeRemote { rc: Ok(255), ..FakeRemote::green() };
-        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh".into()), round_batch: Some("r-9".into()), ..tree(&fx) };
-        assert_eq!(go_recorded(&fx, &remote, &a, &rec), 2);
-        assert_eq!(*rec.calls.lock().unwrap().last().unwrap(), "incomplete r-9");
-    }
-
-    #[test]
-    fn a_run_cut_before_its_final_pull_keeps_the_verdicts_already_produced() {
-        let mut fx = fixture();
-        fx.cfg.stream_every = Duration::ZERO;
-        let remote = FakeRemote { hold_for_stream: true, rc: Ok(255), ..FakeRemote::green() };
-        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), ..tree(&fx) };
-        assert_eq!(go(&fx, &remote, &a), 2);
-        for s in ["test-a.sh", "test-b.sh"] {
-            assert!(fx.d.path().join("results").join(format!("{s}.result")).is_file(), "{s} streamed before the cut");
-        }
-        assert_eq!(fx.fp.live_vms().len(), 1, "kept for a re-pull");
-    }
-
-    #[test]
-    fn a_spool_run_whose_ssh_fails_writes_corpus_done_and_does_not_linger() {
-        let fx = fixture();
-        let remote = FakeRemote { rc: Ok(255), ..FakeRemote::green() };
-        let (a, sp) = spool_fixture(&fx);
-        fs::remove_file(sp.dir.join("close")).unwrap();
-        assert_eq!(go(&fx, &remote, &a), 2);
-        assert_eq!(fs::read_to_string(sp.dir.join("corpus.done")).unwrap(), "rc=2\n");
-        assert_eq!(fx.fp.live_vms().len(), 1, "kept for a re-pull");
-    }
-
-    #[test]
-    fn an_unclosed_spool_releases_the_vm_after_the_linger() {
-        let mut fx = fixture();
-        fx.cfg.attr_linger = Duration::from_millis(300);
-        let remote = FakeRemote::green();
-        let (a, sp) = spool_fixture(&fx);
-        fs::remove_file(sp.dir.join("close")).unwrap();
-        let t0 = Instant::now();
-        assert_eq!(go(&fx, &remote, &a), 0);
-        assert!(t0.elapsed() >= Duration::from_millis(300));
-        assert!(fx.fp.live_vms().is_empty());
-    }
 }

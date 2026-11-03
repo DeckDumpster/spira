@@ -348,7 +348,7 @@ fn certified_round() -> (T, String) {
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
     let wt = PathBuf::from(&kv_of(&t, "round")["worktree"]);
     fs::create_dir_all(wt.join("target/release")).unwrap();
-    testkit::write_exe(wt.join("target/release/release"), "#!/bin/sh\n");
+    std::os::unix::fs::symlink(std::env::current_exe().unwrap(), wt.join("target/release/release")).unwrap();
     release_in_force(&t);
     (t, batch)
 }
