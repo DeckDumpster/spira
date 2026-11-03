@@ -33,29 +33,30 @@ fn a_difference_only_in_an_allowed_field_is_counted_and_any_other_is_reported_wi
 
 #[test]
 fn the_cutovers_pass_times_and_sifted_tip_are_allowed_on_their_own_list_and_path_only() {
-    let round = |ended: Value, started: Value| {
-        json!([{"batch_id": "spira/queue/x", "state": "LANDED",
-            "last_pass": {"n": 1, "ended_at": ended, "started_at": started},
-            "passes": [{"n": 1, "ended_at": ended, "started_at": started}]}])
-        .to_string()
+    let round = |t: Value, verdict: &str| {
+        let pass = json!({"n": 1, "verdict": verdict, "started_at": t, "suites_at": t, "ended_at": t});
+        json!([{"batch_id": "spira/queue/x", "state": "LANDED", "phase_since": t, "last_pass": pass, "passes": [pass]}]).to_string()
     };
-    let (dolt, store) = (round(json!("0"), json!("0")), round(json!(1700), json!(1600)));
+    let (dolt, store) = (round(json!("0"), "green"), round(json!(1700), "green"));
     let batches = "list --batches --batch spira/queue/x";
-    let only_last = |v: &str| {
-        let mut v: Value = serde_json::from_str(v).unwrap();
-        v[0]["passes"] = json!([{"n": 1, "ended_at": "0", "started_at": "0"}]);
-        v.to_string()
-    };
     assert_eq!(
-        judge(batches, (0, &only_last(&dolt)), (0, &only_last(&store))),
-        Verdict::Allowed(vec!["last_pass.ended_at", "last_pass.started_at"])
+        judge(batches, (0, &dolt), (0, &store)),
+        Verdict::Allowed(vec![
+            "last_pass.ended_at",
+            "last_pass.started_at",
+            "last_pass.suites_at",
+            "passes.started_at",
+            "passes.ended_at",
+            "passes.suites_at",
+            "phase_since",
+        ])
     );
     assert!(
-        matches!(judge(batches, (0, &dolt), (0, &store)), Verdict::Differs { at, .. } if at == ".out[0].passes[0].ended_at"),
-        "a pass's own times are not allowed, only last_pass's"
+        matches!(judge(batches, (0, &dolt), (0, &round(json!(1700), "red"))), Verdict::Differs { at, .. } if at == ".out[0].last_pass.verdict"),
+        "only the times are allowed, not the pass beside them"
     );
-    assert!(matches!(judge("show-batch spira/queue/x", (0, &only_last(&dolt)), (0, &only_last(&store))), Verdict::Differs { .. }));
-    assert!(matches!(judge("list --live", (0, &only_last(&dolt)), (0, &only_last(&store))), Verdict::Differs { .. }));
+    assert!(matches!(judge("show-batch spira/queue/x", (0, &dolt), (0, &store)), Verdict::Differs { .. }));
+    assert!(matches!(judge("list --live", (0, &dolt), (0, &store)), Verdict::Differs { .. }));
 
     let live = |tip: Value| json!([{"bead_id": "sp-a", "state": "SUBMITTED", "sifted_tip": tip}]).to_string();
     let (dolt, store) = (live(Value::Null), live(json!("abc")));
