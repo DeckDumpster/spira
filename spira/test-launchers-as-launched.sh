@@ -99,6 +99,7 @@ out="$(printf '%s' "$hook_in" | client_env "$TMP/home" "$HOOK" 2>&1)"; rc=$?
 wantrc "the SessionStart command exits 0 as the client runs it" 0 "$rc"
 [ "$rc" = 0 ] || note "SessionStart said: $out; command: $HOOK"
 want "and prints the watcher summary" "probe" "$out"
+case "$out" in *probe*) ;; *) note "DBG watchd: $(client_env "$TMP/home" "${HOOK% *} watchd status" 2>&1)" ;; esac
 out="$(printf '%s' "$hook_in" | client_env "$TMP/home" "$(unconfigured "$HOOK")" 2>&1)"
 nowant "SEEN RED: the same command without SPIRA_TOML prints no summary" "probe" "$out"
 

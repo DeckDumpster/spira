@@ -30,9 +30,6 @@ lcfix_up || { echo "test-config-compat-master-base: could not build a lifecycle 
 # The batcher reads bead content through `spira-lc plan items` (sp-jf7spl); the lifecycle
 # fixture server holds no content store, so the shim answers it from this suite's bd fixture.
 lc_content_shim "$TMP/lcshim"
-# The shim hands other verbs to the next spira-lc on PATH; a child's PATH is the declared
-# release, where this shim stands in for spira-lc, so it hands them to the staged one.
-sed -i "s|^exit 2\$|exec \"$_TL_STAGED_RELEASE/bin/spira-lc\" \"\$@\"|" "$TMP/lcshim/spira-lc"
 export PATH="$TMP/lcshim:$PATH"; tl_declare_release
 
 # The batcher is the tree's own build, by name on this suite's PATH (sp-gypjk).

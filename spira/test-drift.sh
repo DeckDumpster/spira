@@ -328,9 +328,10 @@ is "SPIRA_REPO and SPIRA_RELEASE unset: no incident is filed without a release" 
 
 rm -rf "$TMP/run/conditions"; rm -f "$TMP/inc-calls"
 for _ in 1 2 3 4; do
-    env -i PATH="$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
-        SPIRA_RELEASE="$(PATH="$PATH" tl_release)" SPIRA_INCIDENT_SH="$MOCK_INC" watchtower --drift-check >/dev/null 2>&1
+    rel_out="$(env -i PATH="$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
+        SPIRA_RELEASE="$(PATH="$PATH" tl_release)" SPIRA_INCIDENT_SH="$MOCK_INC" watchtower --drift-check 2>&1)"
 done
 is "release directory: checkout half retired, no incident" "" "$(inc_calls)"
+[ -z "$(inc_calls)" ] || note "the last run said: $rel_out"
 
 tl_summary

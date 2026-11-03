@@ -302,9 +302,6 @@ esac
 LCSTUB
 chmod +x "$SH/spira-lc-stub.sh"
 lc_content_shim "$SH/lcshim"; export SH_CONTENT_SHIM="$SH/lcshim" PATH="$SH/lcshim:$PATH"
-# The shim hands other verbs to the next spira-lc on PATH; a child's PATH is the declared
-# release, where this shim stands in for spira-lc, so it hands them to the staged one.
-sed -i "s|^exit 2\$|exec \"$_TL_STAGED_RELEASE/bin/spira-lc\" \"\$@\"|" "$SH/lcshim/spira-lc"
 # The stub, by name: a directory whose spira-lc is it, put first on PATH for a case (sp-gypjk).
 mkdir -p "$SH/lc-stub-bin" && ln -sf ../spira-lc-stub.sh "$SH/lc-stub-bin/spira-lc"
 
