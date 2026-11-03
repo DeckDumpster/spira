@@ -14,6 +14,17 @@ pub fn slugify(raw: &str) -> String {
     format!("law-{}", raw.strip_prefix("law-").unwrap_or(raw))
 }
 
+/// The refusal for statute text the `inventory` fence of spira-lint would refuse in the
+/// projected files, or `None` when it is clean.
+pub fn inventory_refusal(text: &str) -> Option<String> {
+    let re = match spira_lint::rules::inventory::pattern_re(&[]) {
+        Ok(re) => re,
+        Err(e) => return Some(format!("rule: refusing — spira-lint's inventory patterns do not compile ({e}), so the text cannot be checked against the fence.")),
+    };
+    let hit = spira_lint::rules::inventory::scan(text.as_bytes(), &re).into_iter().next()?;
+    Some(format!("rule: refusing — the text holds {hit:?}, which spira-lint's inventory fence refuses in the shipped law/ tree. Cite the mechanism, not the case: drop the provenance, then enact again."))
+}
+
 /// The refusal for a slug or statute text holding a term spira-lint's `ffx-vocabulary` would flag
 /// in the projected files, or `None` when it is clean.
 pub fn vocabulary_refusal(key: &str, text: &str) -> Option<String> {
@@ -335,6 +346,17 @@ mod tests {
             EnactError::Message(m) => m,
             EnactError::Usage => panic!("expected a named message"),
         }
+    }
+
+    #[test]
+    fn text_with_a_per_name_date_provenance_is_refused_naming_the_fence() {
+        let m = inventory_refusal(&format!("Never skip the gate. (per {}, {}-09-01)", "Alice", 2025)).expect("the fence refuses this text");
+        assert!(m.contains("inventory fence"), "{m}");
+    }
+
+    #[test]
+    fn text_that_states_only_the_mechanism_passes_the_fence_pre_check() {
+        assert_eq!(inventory_refusal("Never skip the gate; it fails closed."), None);
     }
 
     #[test]

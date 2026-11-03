@@ -35,7 +35,7 @@ rule [--home <spira-dir>] render-memories [prefix-csv] [char-budget] [core-csv]
 rule system-prompt-split <sysfile> <taskfile> <statutes> <prompt>
 ```
 
-`enact` finds the home repository through the repo map, never the caller's directory: it cuts a short-lived worktree under `$SPIRA_RUN/worktree/` from the repo's land ref, regenerates `law/`, commits on a branch `law/<slug>-<epoch>` and removes the worktree. It then files a SUBMITTED ops bead at that commit, renames the branch to `spira/<bead>` and runs `queue submit`, so the next round lands it; `retire` does the same. Section numbers account for enacts still in flight: slugs filed by an unlanded `law/` or `spira/` branch are counted first.
+`enact` finds the home repository through the repo map, never the caller's directory. It refuses text the `inventory` fence of spira-lint would refuse, then files one builder bead titled `law: enact <slug> — land the statute book` whose deliverable is a procedure (list the slug in its Part, run `rule.sh code`, commit the result) so the law/ it lands is the store's at submit time; a re-enact of a slug with a not-closed bead amends that bead instead of filing another. `retire` still cuts a law/ commit on a branch of its own, files a SUBMITTED bead at it, renames the branch to `spira/<bead>` and runs `queue submit`. `rule.sh code` writes the seed texts under `spira/statutes/` along with law/.
 
 `<slug>` is written without the `law-` prefix; it is added for you (stripped once if
 already present, so `rule enact law-foo ...` and `rule enact foo ...` enact the same key).
