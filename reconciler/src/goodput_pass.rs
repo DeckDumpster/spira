@@ -13,8 +13,14 @@ use spira_otel::metrics::{MetricsSink, Point};
 pub const VERB: &str = "goodput-pass";
 
 /// `spira-lc` as a program on the launcher's PATH.
-struct SpiraLc {
+pub struct SpiraLc {
     program: String,
+}
+
+impl SpiraLc {
+    pub fn installed() -> Result<SpiraLc, String> {
+        Ok(SpiraLc { program: spira_config::lifecycle_row::lc_bin()? })
+    }
 }
 
 impl Lc for SpiraLc {
@@ -81,7 +87,7 @@ fn push(sink: &MetricsSink, outcome: &Outcome) {
 
 pub fn main(sink: &MetricsSink) -> Result<(), String> {
     let cfg = config()?;
-    let lc = SpiraLc { program: spira_config::lifecycle_row::lc_bin()? };
+    let lc = SpiraLc::installed()?;
     let outcome = run(&lc, &WallClock, &cfg)?;
     push(sink, &outcome);
     match &outcome {

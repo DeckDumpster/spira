@@ -1,0 +1,17 @@
+[Unit]
+Description=Run the reconciler's goodput pass every minute
+
+[Timer]
+# Every kind on SPIRA_RECONCILER_SHADOW_KINDS is planned and recorded, never written; the arm
+# step takes a kind off that list. The pass keeps running under a halt and takes no step.
+OnBootSec=2min
+OnActiveSec=1min
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=spira-reconciler-goodput.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=observability

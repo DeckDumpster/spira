@@ -16,6 +16,12 @@ pub const UNDELIVERED: &str = "Undelivered";
 pub const RECONCILER_PASS_STALE: &str = "ReconcilerPassStale";
 pub const RETRY_DELIVERY: &str = "retry-delivery";
 pub const UNDELIVERED_OPEN: &str = "undelivered_open";
+/// `deadman` while the latest pass record is inside the dead-man.
+pub const DEADMAN_FRESH: &str = "fresh";
+/// `heartbeat_last` when no off-box receiver is configured.
+pub const NO_HEARTBEAT_URL: &str = "no heartbeat url configured";
+/// `heartbeat_last` begins with this when the last ping did not reach the receiver.
+pub const HEARTBEAT_FAILED: &str = "failed: ";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

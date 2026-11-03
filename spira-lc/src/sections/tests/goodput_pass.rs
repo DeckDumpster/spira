@@ -560,3 +560,19 @@ fn a_step_counts_only_once_its_intent_reads_back() {
     assert!(p.record.steps.is_empty(), "{:?}", p.record);
     assert_eq!(codes(&p.record), [("Probe/a".to_string(), "no-read-back".to_string())]);
 }
+
+#[test]
+fn pass_history_lists_every_retained_record_oldest_first_and_reads_back_as_records() {
+    let r = rig();
+    assert_eq!(r.owner(&["pass", "history"])["passes"], json!([]));
+    let a = sec("a", vec![local("drain")]);
+    for _ in 0..11 {
+        r.world(&[&a]);
+        r.passed(&PassConfig { shadow: vec!["Probe".into()], ..cfg() });
+        r.clock.advance(MIN);
+    }
+    let v = r.owner(&["pass", "history"]);
+    let passes: Vec<PassRecord> = serde_json::from_value(v["passes"].clone()).unwrap();
+    assert_eq!(passes.iter().map(|p| p.n).collect::<Vec<_>>(), (1..=11).collect::<Vec<_>>(), "by number, so pass 10 follows pass 9");
+    assert!(passes.iter().all(|p| p.mode == Mode::Shadow && p.would_step.len() == 1), "{passes:?}");
+}

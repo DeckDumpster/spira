@@ -99,6 +99,22 @@ worktree: merging does not deploy, activation does.
 Never read state from the files, logs or process lists another component owns; each state has
 one owning command (see the lint rules in [development](development.md)).
 
+## The goodput loop
+
+The reconciler's goodput pass (`spira-reconciler-goodput.timer`, every minute) and the
+lifecycle section (`spira-lifecycle-section.timer`) run on the observability plane, so a world
+stop never silences them. Every section kind on `SPIRA_RECONCILER_SHADOW_KINDS` (by default
+`RoundController Lifecycle Alarms`) is planned and recorded as a would-step, and nothing is
+written to `intents/` for it.
+
+| Task | Do |
+|---|---|
+| Read a section | `spira-lc section get <Kind>/<name>`; every section with its age: `spira-lc section list [--kind K]` |
+| Read the pass record | `spira-lc section snapshot` (`pass` is the latest record); the day of history: `spira-lc pass history` |
+| Arm a kind | `reconciler arm-check <Kind>`: it checks that the kind's sections are fresh, that the dead-man and heartbeat are green, and that shadow passes recorded the kind. It prints the kind's would-be steps for review and the one `spira-config set spira.reconciler_shadow_kinds ...` that takes the kind off the list and shadows every old path it replaces. Run the printed command. arm-check itself writes nothing, and it exits non-zero naming each unmet precondition. |
+| Disarm a kind | `reconciler arm-check <Kind> --disarm` prints the reverse write; run it |
+| Answer a dead-man page | the `reconciler` page means the latest pass record is older than three intervals. Check `systemctl --user status spira-reconciler-goodput.timer` and the tail of `reconciler-goodput.log` in the run directory. A standby line names the holder of `locks/reconciler` (`spira-lc lock show reconciler`). A timer the operator stopped reads as WAITING, not stale. |
+
 ## Restoring a dolt store from its off-box backup
 
 `lc-backup.sh run` keeps the bucket at `SPIRA_LC_BACKUP_URL` laid out per database as

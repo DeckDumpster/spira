@@ -39,7 +39,7 @@ pub const DEADMAN_SECTION: &str = "reconciler";
 /// The goodput pass's unit base: its installed timer is `spira_config::unit`'s name for it.
 pub const GOODPUT_UNIT: &str = "reconciler-goodput";
 pub const OBSERVABILITY_HALT: &str = "world.halted.observability";
-pub const NO_HEARTBEAT_URL: &str = "no heartbeat url configured";
+pub use spira_desired_state::sections::alarms::NO_HEARTBEAT_URL;
 pub const HEARTBEAT_DEADLINE: Duration = Duration::from_secs(5);
 /// The predicate that moots the floor's standing ask.
 pub const FLOOR_MOOT: &str = "incident floor-cleared";
@@ -496,7 +496,7 @@ fn ping(p: &Ports, cfg: &Config) -> String {
     }
     match p.http.get(&cfg.heartbeat_url, HEARTBEAT_DEADLINE) {
         Ok(s) => s,
-        Err(e) => format!("failed: {e}"),
+        Err(e) => format!("{}{e}", alarms::HEARTBEAT_FAILED),
     }
 }
 
@@ -567,7 +567,7 @@ fn publish(p: &Ports, cfg: &Config, seen: &[Seen], pass: Option<&PassRecord>, dm
     let stale = matches!(dm, DeadMan::Stale { .. });
     let deadman = match dm {
         DeadMan::Waiting(why) => format!("WAITING: {why}"),
-        DeadMan::Fresh { .. } => "fresh".into(),
+        DeadMan::Fresh { .. } => alarms::DEADMAN_FRESH.into(),
         DeadMan::Stale { age_secs: Some(_) } => "stale: the last pass record is past the dead-man".into(),
         DeadMan::Stale { age_secs: None } => "stale: no pass record".into(),
     };
