@@ -178,7 +178,7 @@ fn with_the_store_abandon_closes_the_open_round_and_finishes_one_the_reconciler_
     let t = store_world();
     assert_eq!(t.run(&["round", "abandon", "spira-orphaned", "--reason", "orphaned"]), 0, "{}", t.err());
     assert!(
-        fs::read_to_string(marker(&t, "spira-orphaned", "result")).unwrap().contains("abandoned: orphaned"),
+        fs::read_to_string(marker(&t, "spira-orphaned", "result")).unwrap().contains(" abandoned:hand orphaned"),
         "the hand abandon finishes the round requeue-orphans ended"
     );
     assert_eq!(t.run(&["round", "abandon", "spira-landed", "--reason", "x"]), 1);
@@ -197,7 +197,7 @@ fn with_the_store_a_round_the_lifecycle_ended_is_swept_once_under_the_lock() {
     assert_eq!(t.run(&["round", "open", "--members", "sp-b:tb"]), 1);
     assert!(!running.exists());
     let result = fs::read_to_string(marker(&t, "spira-orphaned", "result")).unwrap();
-    assert_eq!(result, "ended: ABANDONED on the lifecycle; record swept\n");
+    assert!(result.ends_with(" abandoned:swept ended: ABANDONED on the lifecycle; record swept\n"), "{result}");
     assert_eq!(t.run(&["round", "open", "--members", "sp-b:tb"]), 1);
     assert_eq!(fs::read_to_string(marker(&t, "spira-orphaned", "result")).unwrap(), result);
 }
@@ -289,6 +289,8 @@ fn with_the_store_a_round_whose_landing_record_is_refused_is_ended_and_recorded_
     assert_eq!(d.find(&batch).unwrap().1, "GREEN", "the landing record was refused");
     assert!(status(&t).starts_with("round=none\n"), "a landed round is no open round");
     t.lc.land_refused.set(None);
+    // The fake git compares names; the landed head is on the landing ref.
+    t.git.ancestor("merged-tb", "local/main");
     let next = opened(&t, "spira-2", "sp-c:tc");
     let rec = batches::batch(d, "spira", &next).unwrap().unwrap();
     assert_eq!(rec.kv.get("parent"), None, "a landed round is no parent: {:?}", rec.kv);
