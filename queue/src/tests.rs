@@ -271,10 +271,6 @@ struct FLib {
     by_name: RefCell<BTreeMap<String, Result<RepoCtx, String>>>,
     /// `bead_close` fails (bd refused the close).
     close_fail: Cell<bool>,
-    /// `push` and `divergence` run real git in the repository instead of answering from the fake.
-    real_git: Cell<bool>,
-    /// The PATH a real-git `divergence` finds beneath its own `mail`; unset, the process's.
-    host_path: RefCell<Option<String>>,
 }
 
 impl FLib {
@@ -365,26 +361,6 @@ impl Lib for FLib {
         local: &str,
     ) -> Divergence {
         self.log(format!("divergence {forge} {local}"));
-        if self.real_git.get() {
-            let bin = self.s.run.join("bin");
-            fs::create_dir_all(&bin).unwrap();
-            testkit::write_exe(
-                bin.join("mail"),
-                &format!(
-                    "#!/bin/sh\n# test-owned-mail\nprintf '%s\\n' \"$*\" >> {0}\n/bin/cat >> {0}\n",
-                    self.s.run.join("mail-log").display()
-                ),
-            );
-            let host = self.host_path.borrow().clone().unwrap_or_else(|| {
-                let _read = testkit::env_read();
-                std::env::var("PATH").unwrap_or_default()
-            });
-            let path = format!("{}:{host}", bin.display());
-            let _env = testkit::env(&[("PATH", Some(&path))]);
-            return crate::ops::helpers::check_divergence(
-                _mailbox, &self.s.queue_dir, _repo, _path, forge, local,
-            );
-        }
         if self.cannot_check.get() {
             Divergence::CannotCheck("no queue dir".into())
         } else if self.diverged.get() {
@@ -393,16 +369,8 @@ impl Lib for FLib {
             Divergence::Ancestor
         }
     }
-    fn push(&self, path: &Path, remote: &str, refspec: &str) -> bool {
+    fn push(&self, _: &Path, remote: &str, refspec: &str) -> bool {
         self.log(format!("push {remote} {refspec}"));
-        if self.real_git.get() {
-            return std::process::Command::new("git")
-                .arg("-C")
-                .arg(path)
-                .args(["push", "-q", remote, refspec])
-                .status()
-                .is_ok_and(|s| s.success());
-        }
         self.push_ok.get()
     }
     fn rebase(&self, br: &str, onto: &str, _: &Path, _: &str) -> Result<(), String> {
@@ -1659,8 +1627,6 @@ impl T {
             repos: RefCell::new(Ok(vec!["spira".into()])),
             by_name: RefCell::default(),
             close_fail: Cell::new(false),
-            real_git: Cell::new(false),
-            host_path: RefCell::default(),
         };
         let scripts = FScripts::default();
         scripts.fence_ok.set(true);

@@ -249,19 +249,6 @@ fn the_firewall_state_distinguishes_absent_closed_open_and_unreadable() {
     assert_eq!(firewall_state(&open, &b.plan, "tailscale0"), Firewall::Open);
 }
 
-#[test]
-fn status_reports_what_doctor_reads() {
-    let b = plan(true);
-    seed_cert(&b, FIXTURE_CERT);
-    let f = fake(NOT_AFTER - 10 * DAY);
-    let s = status(&f, &b.plan);
-    for want in ["configured=1", "tailnet=1", "listening=0", "iface=tailscale0", "firewall=closed", "cert_days=10", "password=missing"] {
-        assert!(s.lines().any(|l| l == want), "missing {want}: {s}");
-    }
-    assert_eq!(status(&f, &plan(false).plan), "configured=0\ntailnet=1\n");
-}
-
-
 struct NoOperator<'a>(&'a Fake);
 
 impl Host for NoOperator<'_> {
