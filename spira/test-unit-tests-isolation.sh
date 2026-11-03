@@ -83,4 +83,17 @@ chmod 600 "$WS/sealed/f"
 wantrc "tree A passes" 0 "$rc"
 want "after recompiling the workspace" "Compiling app" "$out"
 
+echo "6. the tier shares the host: 6 jobs and 4 test threads by default, the env overrides them, temp on /tmp:"
+put_tree a alpha_only
+FAKE="$TMP/fakebin"; mkdir -p "$FAKE"
+printf '#!/bin/sh\n[ "$1" = test ] && echo "fake-cargo $* TMPDIR=$TMPDIR"\nexit 0\n' > "$FAKE/cargo"; chmod +x "$FAKE/cargo"
+fake_run() { (cd "$WS" && env PATH="$FAKE:$PATH" CARGO_TARGET_DIR="$VOL" "$@" bash spira/unit-tests.sh 2>&1); }
+out="$(fake_run env -u CARGO_BUILD_JOBS -u RUST_TEST_THREADS)"
+want "6 cargo jobs by default" "-j 6 --" "$out"
+want "4 test threads by default" "--test-threads=4" "$out"
+want "test temp files on the tmpfs" "TMPDIR=/tmp" "$out"
+out="$(fake_run env CARGO_BUILD_JOBS=2 RUST_TEST_THREADS=1)"
+want "CARGO_BUILD_JOBS overrides the jobs" "-j 2 --" "$out"
+want "RUST_TEST_THREADS overrides the threads" "--test-threads=1" "$out"
+
 tl_summary
