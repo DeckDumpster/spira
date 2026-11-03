@@ -31,7 +31,7 @@
 #      changes (ported from test-watchtower-queue.sh).
 #  28-30. attribution-failed/loop-stalled/ci-stalled: each detector's own trigger-condition
 #      boundary (requeued=0 no-op, multi-digit requeued, missing/silent log, configurable
-#      threshold, below-threshold, malformed open file) — ported from test-watchtower-queue.sh,
+#      threshold, below-threshold) — ported from test-watchtower-queue.sh,
 #      which is retired once these land (UC-23).
 #  32. reconciler engine wiring: a failed forge call reports STATUS=unobservable, never
 #      STATUS=satisfied — the old code could not distinguish that from no CI activity.
@@ -49,7 +49,7 @@
 # verifies detection. A detector that fires on empty data is not a detector.
 #
 # tier: T1
-# covers: czar-pass/src/main.rs reconciler-engine/src/**.rs spira/conf.sh sentinel/src/* watchtower/src/* systemd/spira-czar-pass.service systemd/spira-czar-pass.timer UC-ops-detection-remediation-23 UC-ops-detection-remediation-24
+# covers: czar-pass/src/main.rs reconciler-engine/src/**.rs spira/conf.sh spira/testlib/lc-fixture.sh spira/testlib/forge-batch.sh sentinel/src/* watchtower/src/* systemd/spira-czar-pass.service systemd/spira-czar-pass.timer UC-ops-detection-remediation-23 UC-ops-detection-remediation-24
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
@@ -62,7 +62,14 @@ lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1: did not want [$2] in [$3]";
 CZAR="$(command -v czar-pass 2>/dev/null || true)"
 [ -n "$CZAR" ] && [ -x "$CZAR" ] || { printf 'czar-pass not found on PATH\n' >&2; exit 2; }
 
-T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
+T="$(mktemp -d)"; trap 'lcfix_down; rm -rf "$T"' EXIT INT TERM
+
+# THE OPEN BATCHES ARE THE QUEUE'S OWN. czar-pass asks `queue batch show` for each repo's
+# open batch, so every one this suite needs is opened through `queue batch open`
+# (testlib/forge-batch.sh), which cuts it on a lifecycle fixture.
+. "$HERE/testlib/lc-fixture.sh"
+. "$HERE/testlib/forge-batch.sh"
+lcfix_up || { printf 'test-czar-pass: could not build a lifecycle fixture\n' >&2; exit 2; }
 
 # czar-pass is found directly on this suite's PATH (sp-gypjk).
 
@@ -76,6 +83,23 @@ SPIRA_DB="$T/db"
 # has to be pointed there too (sfail round 3, pattern 7).
 tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_QUEUE_DIR="$SPIRA_RUN/queue"
 mkdir -p "$SPIRA_RUN/queue" "$SPIRA_DB"
+
+# open_batch <repo> [secs-ago] — an open batch on $T/<repo>, which becomes a git repository
+# if it is not one; prints the batch's branch. The batch is opened while a one-row map names
+# the repo in queue mode, whatever land the suite's own map gives it: the CI detectors judge
+# every repo the queue shows an open batch for.
+open_batch() {
+    local repo="$1" path="$T/$1"
+    [ -d "$path/.git" ] || { mkdir -p "$path" && git -C "$path" init -q -b main \
+        && git -C "$path" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base; } || return 1
+    printf '%s | %s | queue | origin/main | |\n' "$repo" "$path" > "$T/seed-map"
+    SPIRA_TOML="$(tl_layer SPIRA_REPO_MAP="$T/seed-map")" \
+        seed_forge_batch "$repo" "sp-$repo" ${2:+--opened-ago "$2"} | sed -n 's/^branch=//p'
+}
+close_batch() {
+    printf '%s | %s | queue | origin/main | |\n' "$1" "$T/$1" > "$T/seed-map"
+    SPIRA_TOML="$(tl_layer SPIRA_REPO_MAP="$T/seed-map")" end_forge_batch "$1"
+}
 
 # Stub forge.sh: returns empty by default (no CI activity)
 STUB_FORGE="$T/forge.sh"
@@ -152,9 +176,7 @@ want "ci-stalled: DETECTED=no when no open batch" "CLASS=ci-stalled DETECTED=no"
 # SEEN RED: add a fixture open batch whose CI job has been queued for > threshold.
 _now_e="$(date +%s)"
 _old_e=$(( _now_e - 700 ))   # 700s > default threshold of 600s
-_batch_dir="$SPIRA_RUN/queue/testrepo"
-mkdir -p "$_batch_dir"
-printf 'branch=spira/queue/test\n' > "$_batch_dir/open"
+[ -n "$(open_batch testrepo)" ] || bad "ci-stalled: testrepo's batch is opened"
 
 # Forge stub now returns queued-since for batch-ci-status
 cat > "$STUB_FORGE" <<FEOF2
@@ -174,7 +196,6 @@ chmod +x "$STUB_FORGE"
 # Register testrepo in the repo map (pipe-separated: name | path | land | ...)
 SPIRA_REPO_MAP="$T/repo-map"
 tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
-mkdir -p "$T/testrepo"
 printf 'testrepo | %s | push | origin/main | |\n' "$T/testrepo" > "$SPIRA_REPO_MAP"
 
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
@@ -282,10 +303,7 @@ printf '\n%s\n' "13. ci-red: batch old, run just turned red → DETECTED=no (POS
 # The batch opened 30 min ago; the CI run completed (failure) only 60s ago.
 # The detector must NOT fire: the verdict has not had its turn yet.
 _now_e2="$(date +%s)"
-_batch_dir2="$SPIRA_RUN/queue/redrepo"
-mkdir -p "$_batch_dir2"
-printf 'branch=spira/queue/test-red\n' > "$_batch_dir2/open"
-touch -d "30 minutes ago" "$_batch_dir2/open"
+[ -n "$(open_batch redrepo 1800)" ] || bad "ci-red: redrepo's batch is opened"
 
 _ci_completed_recent=$(( _now_e2 - 60 ))   # completed 60s ago
 cat > "$STUB_FORGE" <<FEOF13
@@ -303,7 +321,6 @@ FEOF13
 chmod +x "$STUB_FORGE"
 
 SPIRA_REPO_MAP="$T/repo-map"
-mkdir -p "$T/redrepo"
 printf 'redrepo | %s | push | origin/main | |\n' "$T/redrepo" >> "$SPIRA_REPO_MAP"
 
 tl_config SPIRA_CI_RED_MAX_SECS=600
@@ -374,10 +391,7 @@ printf '\n%s\n' "16. base-red: green base → DETECTED=no (POSITIVE CONTROL)"
 # (the repo's base, from repo-map column 4) so ci-stalled/ci-red on the batch's own
 # branch stay silent and this section isolates base-red alone.
 _now_e3="$(date +%s)"
-_br_dir="$SPIRA_RUN/queue/baseredrepo"
-mkdir -p "$_br_dir"
-printf 'branch=spira/queue/baseredtest\n' > "$_br_dir/open"
-mkdir -p "$T/baseredrepo"
+[ -n "$(open_batch baseredrepo)" ] || bad "base-red: baseredrepo's batch is opened"
 printf 'baseredrepo | %s | queue | origin/main | |\n' "$T/baseredrepo" >> "$SPIRA_REPO_MAP"
 
 cat > "$STUB_FORGE" <<'FEOF16'
@@ -627,9 +641,7 @@ printf '\n%s\n' "27. ci-stalled: dedupe ref stable across passes with different 
 # duration — otherwise every pass files a fresh bead instead of bumping incident.sh's
 # recurrence count. Same proof as row 18 (base-red).
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
-mkdir -p "$SPIRA_RUN/queue/refstable"
-printf 'branch=spira/queue/refstable-test\n' > "$SPIRA_RUN/queue/refstable/open"
-mkdir -p "$T/refstable"
+_br27="$(open_batch refstable)"; [ -n "$_br27" ] || bad "ci-stalled: refstable's batch is opened"
 printf 'refstable | %s | push | origin/main | |\n' "$T/refstable" >> "$SPIRA_REPO_MAP"
 
 # Other open batches from earlier sections (testrepo, redrepo, baseredrepo) are still on
@@ -640,7 +652,7 @@ cat > "$STUB_FORGE" <<FEOF27A
 #!/usr/bin/env bash
 cmd="\${1:-}"; branch_arg="\${3:-}"
 case "\$cmd:\$branch_arg" in
-    batch-ci-status:*refstable*) printf 'queued-since: ${_qs1}\n' ;;
+    batch-ci-status:${_br27}) printf 'queued-since: ${_qs1}\n' ;;
 esac
 exit 0
 FEOF27A
@@ -659,7 +671,7 @@ cat > "$STUB_FORGE" <<FEOF27B
 #!/usr/bin/env bash
 cmd="\${1:-}"; branch_arg="\${3:-}"
 case "\$cmd:\$branch_arg" in
-    batch-ci-status:*refstable*) printf 'queued-since: ${_qs2}\n' ;;
+    batch-ci-status:${_br27}) printf 'queued-since: ${_qs2}\n' ;;
 esac
 exit 0
 FEOF27B
@@ -730,10 +742,7 @@ printf '\n%s\n' "30. CI-STALLED: below threshold, forge returns nothing queued, 
 # ==========================================================================================
 # Ported from test-watchtower-queue.sh (UC-23): none of these are the shared marker/ref
 # mechanism (row 27) — each is ci-stalled's own trigger-condition boundary.
-_ci30_dir="$SPIRA_RUN/queue/ci30repo"
-mkdir -p "$_ci30_dir"
-printf 'branch=spira/queue/ci30-test\n' > "$_ci30_dir/open"
-mkdir -p "$T/ci30repo"
+_br30="$(open_batch ci30repo)"; [ -n "$_br30" ] || bad "ci-stalled: ci30repo's batch is opened"
 printf 'ci30repo | %s | push | origin/main | |\n' "$T/ci30repo" >> "$SPIRA_REPO_MAP"
 
 # Other open batches from earlier sections are still on disk — SPIRA_RUN is never wiped
@@ -743,7 +752,7 @@ cat > "$STUB_FORGE" <<FEOF30A
 #!/usr/bin/env bash
 cmd="\${1:-}"; branch_arg="\${3:-}"
 case "\$cmd:\$branch_arg" in
-    batch-ci-status:*ci30*) printf 'run-id: 1\nqueued-since: ${_ci30_below}\n' ;;
+    batch-ci-status:${_br30}) printf 'run-id: 1\nqueued-since: ${_ci30_below}\n' ;;
 esac
 exit 0
 FEOF30A
@@ -769,21 +778,6 @@ _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "ci-stalled: DETECTED=no when forge returns no queued-since (nothing queued)" \
     "CLASS=ci-stalled DETECTED=no" "$_log"
 
-# A missing branch= means read_branch() returns None and the loop skips this open dir
-# before ever calling forge.sh for it — so the stub is never queried for ci30repo at all;
-# it must still answer nothing for every OTHER open repo, or one of those would fire instead.
-printf 'opened_at=100\n' > "$_ci30_dir/open"   # malformed: no branch= field
-cat > "$STUB_FORGE" <<'FEOF30C'
-#!/usr/bin/env bash
-exit 0
-FEOF30C
-chmod +x "$STUB_FORGE"
-rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
-"$CZAR" --pass >/dev/null 2>&1
-_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
-want "ci-stalled: DETECTED=no when the open file has no branch= field" \
-    "CLASS=ci-stalled DETECTED=no" "$_log"
-printf 'branch=spira/queue/ci30-test\n' > "$_ci30_dir/open"   # restore for later sections
 
 # ==========================================================================================
 printf '\n%s\n' "32. ci-stalled: a forge call failure is unobservable, never satisfied"
@@ -815,9 +809,7 @@ printf '\n%s\n' "33. ci-stalled: a remedy that doesn't close its gap escalates o
 # ==========================================================================================
 _now_e33="$(date +%s)"
 _old_queued33=$(( _now_e33 - 700 ))
-mkdir -p "$SPIRA_RUN/queue/remedyrepo"
-printf 'branch=spira/queue/remedy-test\n' > "$SPIRA_RUN/queue/remedyrepo/open"
-mkdir -p "$T/remedyrepo"
+_br33="$(open_batch remedyrepo)"; [ -n "$_br33" ] || bad "ci-stalled: remedyrepo's batch is opened"
 printf 'remedyrepo | %s | push | origin/main | |\n' "$T/remedyrepo" >> "$SPIRA_REPO_MAP"
 
 # Scoped to remedy-test's own branch so the other repos left open by earlier sections
@@ -828,7 +820,7 @@ cat > "$STUB_FORGE" <<FEOF33
 cmd="\${1:-}"; branch_arg="\${3:-}"
 case "\$cmd" in
     batch-ci-status)
-        if [ "\$branch_arg" = "spira/queue/remedy-test" ]; then
+        if [ "\$branch_arg" = "${_br33}" ]; then
             printf 'run-id: 77777\n'
             printf 'queued-since: ${_old_queued33}\n'
         fi
@@ -907,13 +899,12 @@ want "pool-idle: DETECTED=no below the floor (2 < 3)" "CLASS=pool-idle DETECTED=
 # POSITIVE CONTROL: a third member reaches the floor, but an open batch is deliberate
 # back-pressure — must stay quiet however full the pool.
 certify_pool_member sp-poola3
-mkdir -p "$SPIRA_RUN/queue/poolrepo"
-printf 'branch=spira/queue/x\n' > "$SPIRA_RUN/queue/poolrepo/open"
+[ -n "$(open_batch poolrepo)" ] || bad "pool-idle: poolrepo's batch is opened"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$INC_LOG" "$SPIRA_RUN/reconciler-state.json"
 "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "pool-idle: DETECTED=no with a batch already open, at the floor" "CLASS=pool-idle DETECTED=no" "$_log"
-rm -f "$SPIRA_RUN/queue/poolrepo/open"
+close_batch poolrepo || bad "pool-idle: poolrepo's batch is ended"
 
 # SEEN RED: at the floor, no batch open, streak seeded past the window — must fire and
 # file an incident naming the repo and its depth. Before this detector, nothing here

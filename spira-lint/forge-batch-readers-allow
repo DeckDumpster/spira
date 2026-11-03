@@ -4,11 +4,3 @@
 #
 # SHRINK-ONLY. A line leaves when its file asks `queue batch show` instead; nothing is ever
 # added for a NEW reader.
-spira/test-batcher-cut.sh
-spira/test-cockpit-queue-section.sh
-spira/test-config-compat-master-base.sh
-spira/test-czar-pass.sh
-spira/test-landing-halt.sh
-spira/test-queue-flush.sh
-spira/test-queue-ops.sh
-spira/test-queue-watch.sh
