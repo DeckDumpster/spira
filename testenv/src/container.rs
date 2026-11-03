@@ -973,6 +973,11 @@ impl Driver<'_> {
             // root there); under it this also hands the container's root a writable /proc/sys.
             s("--security-opt"),
             s("unmask=/proc/*"),
+            // Rootful podman confines the container with AppArmor's containers-default, which
+            // denies mount and grants no userns, so bwrap could make neither its namespace nor
+            // its mounts. Rootless podman applies no profile; this names that for both.
+            s("--security-opt"),
+            s("apparmor=unconfined"),
         ]
         .into_iter()
         .chain(self.conf.cpus.iter().flat_map(|c| [s("--cpus"), c.clone()]))
