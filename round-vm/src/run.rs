@@ -499,6 +499,7 @@ run = "$HOME/round-work/.runtime/spira"   # where REMOTE_RESULTS pulls batch-res
 releases = "$HOME/round-releases"
 home_repo = "spira"
 batch_maxpar = $maxpar
+testenv_scratch_root = "$HOME/round-scratch"
 $testenv_limits
 
 # home_repo names the repo; this section says where it is on the VM and what its base is
@@ -3031,6 +3032,16 @@ mod tests {
         let end = cfg + REMOTE_SCRIPT[cfg..].find("ROUNDCFG\nexport").unwrap();
         assert!(REMOTE_SCRIPT[cfg..end].contains("\n$testenv_limits\n"), "the heredoc declares the host's limits over the fixture");
         assert!(REMOTE_SCRIPT.contains("[ -n \"$testenv_limits\" ] ||"), "no limits sent is a refusal");
+    }
+
+    #[test]
+    fn the_round_config_declares_testenvs_scratch_root_outside_the_checkout() {
+        let cfg = REMOTE_SCRIPT.find("cat > \"$HOME/round-config.toml\"").unwrap();
+        let end = cfg + REMOTE_SCRIPT[cfg..].find("ROUNDCFG\nexport").unwrap();
+        assert!(
+            REMOTE_SCRIPT[cfg..end].contains("\ntestenv_scratch_root = \"$HOME/round-scratch\"\n"),
+            "testenv refuses a round whose config leaves its scratch root undeclared"
+        );
     }
 
     #[test]

@@ -184,6 +184,7 @@ parses spira.toml or the repo-map itself (law-config-through-the-cli-only).
 | `SPIRA_GATE_SELECT_HEAD` | `<branch>` | — |
 | `SPIRA_ROUND_BATCH_ID`, `SPIRA_ROUND_MEMBERS` | — | — |
 | `GITHUB_RUN_ID` / `SPIRA_BATCH_RUN_ID` | `local-<epoch>` | — |
+| `SPIRA_TESTENV_SCRATCH_ROOT` (D16) | none: unset refuses every run, naming the key | — |
 | `SPIRA_TESTENV_SCRATCH_SLOTS` (new) | 4 | — |
 | `SPIRA_TESTENV_HARNESS` (new) | the ancestor of the running binary that holds `spira/testenv/Containerfile` (was `spira/testenv.sh`, §12) | — |
 
@@ -469,7 +470,7 @@ parse args ─ resolve repo, landref, tree ─ acquire worktree (in place | scra
 1. If the current directory is inside a worktree of the repo, or the branch is checked out
    in one, **and** that worktree's `HEAD` is the revision's commit **and** `git status
    --porcelain` is empty, build and test there in place.
-2. Otherwise a scratch slot `$SPIRA_RUN/worktree/.testenv-slot-<n>` (n < slots), taken
+2. Otherwise a scratch slot `$SPIRA_TESTENV_SCRATCH_ROOT/.testenv-slot-<n>` (n < slots), taken
    under an exclusive `flock` on `<slot>.lock`, `git checkout --detach --force <rev>` +
    `git clean -fdq -e target` — checkout rewrites only the files that differ, so cargo's
    mtime fingerprints keep `target/` warm across runs.
@@ -960,24 +961,20 @@ container (<step> <s>, …) — podman exec overhead <s>`.
   `podman exec` per step with retries (multiplies the toll); running setup through
   `podman run` arguments (the container is booted before the tree is built — warm spares).
 * **D14 — test databases live on the container tmpfs** (DESIGN-testdb.md §2.5).
-* **D16 — scratch and warm slots live on a tmpfs, bounded, fail closed.** A slot is
-  disposable build state: cargo's `target/` (1.4–2.4 GB a slot, seven slots) is rewritten
-  on every relink, and on the host's one virtual disk (66–100 % utilised, IO pressure
-  `full` 30–70 % under gate load) it competed with production Dolt and podman's own
-  database. The slots' root is `worktree::scratch_root($SPIRA_RUN)`:
-  `$SPIRA_TESTENV_SCRATCH` if set; else `$SPIRA_RUN/worktree` when `$SPIRA_RUN` is itself on
-  a tmpfs (unit tests); else `/tmp/spira-testenv-<sha256(SPIRA_RUN)[..6]>` when `/tmp` is a
-  tmpfs; else `$SPIRA_RUN/worktree`. Slot locks and spare records move with the slots.
-  Before a scratch or warm slot is used, the root must have
-  `SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB` (default 4096) free and, on a tmpfs,
-  `SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB` (default 8192) of MemAvailable — tmpfs pages are RAM,
-  and a build that pushed the host into swap would put it back on the disk. Short of either:
-  no warm slot, and a scratch slot is refused with `VERDICT FAULT rc=2
-  reason=scratch-short` — never a silent fallback to the disk. The caller's own worktree
-  (in place) is untouched. After the move every slot starts cold once (cargo keys its
-  fingerprints on the workspace path, so the old `target/` cannot be carried over); the old
-  disk slots under `$SPIRA_RUN/worktree/.testenv-{slot,warm}-*` are no longer read and can
-  be removed with `git worktree remove`.
+* **D16 — scratch and warm slots live where one key says, and nothing refuses for room.** A
+  slot is disposable build state: cargo's `target/` (1.4–2.4 GB a slot) is rewritten on every
+  relink. The slots' root is `SPIRA_TESTENV_SCRATCH_ROOT` (`worktree::scratch_root`), an
+  absolute path the operator points at a disk that can take build writes; unset or relative,
+  every testenv run refuses at startup (`reason=settings-refused`), naming the key. Slot locks
+  and spare records live with the slots. **Rejected:** choosing the root by heuristic (an
+  environment override, else `$SPIRA_RUN/worktree` or `/tmp/spira-testenv-<hash>` depending on
+  which was a tmpfs) — a fallback chain that put 4 GB slots in RAM and decided by mount type
+  where builds went; and refusing a slot before it was used for want of free space or
+  MemAvailable, with a reservation ledger shared with the gate — a late refusal that faulted
+  runs (`reason=scratch-short`) while the test disk had a hundred GB free. A disk that genuinely
+  fills is a defect in its consumer, cut there: scratch slots are bounded by
+  `SPIRA_TESTENV_SCRATCH_SLOTS`, warm spares are shed below `SPIRA_TMPFS_SHED_FREE_MIB`, and a
+  build that hits ENOSPC is a harness fault (`build-enospc`), never the candidate's red.
 * **D15 — the refill boots through the slot's own harness.** `testenv warm refill <i>` is
   spawned with `SPIRA_TESTENV_HARNESS=<slot worktree>` and cwd `$SPIRA_RUN`. A gate's testenv
   lives in a transient `.gate.harness.*` worktree the gate removes the moment testenv exits;

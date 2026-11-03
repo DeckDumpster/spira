@@ -112,7 +112,6 @@ reached the bash.
 | `SPIRA_GATE_BEAD` | ejected-suites lookup (the re-entry check), the key, `lc_certify` | — |
 | `SPIRA_GATE_CALLER` | `by=` in the cache entry | the branch |
 | `LANDSTATE` (lib.sh) | `<bead>.ejected`, else an `EJECTED` landstate row | `$SPIRA_RUN/landstate` |
-| `SPIRA_GATE_CLASS` (`certify` set by gate-worker; anything else is a landing round) | scratch reservation class: a round waits up to `SPIRA_GATE_LOCK_WAIT` for room and holds new certification builds off; certification yields, never preempted | as bash |
 | `SPIRA_GATE_BUDGET`, `SPIRA_GATE_ALL`, `SPIRA_CERTIFY_ALWAYS_COVERS`, `SPIRA_BATCH_MAXPAR`, `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS` (sp-govet), `HOME` | passed through to the gate command | as bash |
 | `SPIRA_RELEASE` | the gate command's PATH, built from it (below) | the launcher |
 
@@ -946,10 +945,9 @@ Full contract: `spira-config/DESIGN-build-cache.md`. In the gate:
   `$SPIRA_GATE_TARGET_ROOT` (default `/tmp/spira-gate-target-<run hash>`); orphaned
   directories are removed, the least recently used unlocked ones evicted over
   `SPIRA_GATE_TARGET_CAP_MIB`, and short of room (`_MIN_FREE_MIB`, `_MIN_MEM_MIB`) is
-  `NO_VERDICT reason=scratch-short` — never the disk. Each trial also reserves
-  `SPIRA_GATE_TARGET_RESERVE_MIB` in the scratch ledger (`spira_config::scratch`) shared with
-  testenv slots, so concurrent consumers cannot each pass the free-space check and jointly
-  overflow it; a refused reservation is the same NO_VERDICT. A build whose output says
+  `NO_VERDICT reason=scratch-short` — never the disk. No trial reserves room in advance: the
+  shared reservation ledger that once refused a trial for want of room it had not yet used is
+  gone, since a filesystem that fills is cut at the consumer that filled it. A build whose output says
   `No space left on device` / `Disk quota exceeded` (branch or base trial) is
   `scratch-short` too, never a red.
 * **No on-disk warm target (concierge/gate-overcap, 2026-10-14; retires sp-nv7btk's slots).**

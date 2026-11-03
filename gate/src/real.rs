@@ -82,7 +82,6 @@ const VARS: &[&str] = &[
     "SPIRA_GATE_BEAD",
     "SPIRA_GATE_CALLER",
     "SPIRA_GATE_ALL",
-    "SPIRA_GATE_CLASS",
     "SPIRA_VERDICT_REPEAT_CONSIDERED",
     "SPIRA_TESTENV_SETUP_SHARE",
     "SPIRA_TESTENV_WARM_SLOTS",
@@ -91,10 +90,7 @@ const VARS: &[&str] = &[
     "SPIRA_GATE_TARGET_CAP_MIB",
     "SPIRA_GATE_TARGET_MIN_FREE_MIB",
     "SPIRA_GATE_TARGET_MIN_MEM_MIB",
-    // sp-ardq8: the scratch-ledger reservation a gate tree takes; was read by target.rs but never
-    // admitted here, so it was a dead knob pinned at the 4096 MiB default.
-    "SPIRA_GATE_TARGET_RESERVE_MIB",
-    // sp-s8v5r: the shared floor testenv's warm-slot shedding also reads — same tmpfs.
+    // sp-s8v5r: the free-space floor below which idle gate targets are evicted.
     "SPIRA_TMPFS_SHED_FREE_MIB",
     "SPIRA_RELEASE",
     // The one source of config (per Ryan 2026-10-05): every Spira tool a step runs — testenv
@@ -825,43 +821,7 @@ impl World for Real {
         Ok(line)
     }
     fn release_target(&self, tree: &Path, keep_release: bool) {
-        let root = crate::target::tree_root(tree);
-        let mib = crate::target::release_tree(tree, keep_release);
-        if let (Some(root), true) = (root, mib > 0) {
-            spira_config::scratch::record_peak(&spira_config::scratch::ledger_for(&root), &crate::target::composition(tree), mib);
-        }
-    }
-    fn reserve_scratch(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits, class: &str, wait_secs: u64) -> Result<Box<dyn std::any::Any>, String> {
-        use crate::target;
-        let Some(root) = target::root(explicit_root, run, target::on_tmpfs(Path::new("/tmp"))) else {
-            return Ok(Box::new(()));
-        };
-        let owner = format!("gate-{}", tree.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
-        let ledger = spira_config::scratch::ledger_for(&root);
-        let mib = spira_config::scratch::estimate_mib(&ledger, &target::composition(tree), lim.reserve_mib);
-        let reserve = |wait: u64| {
-            spira_config::scratch::reserve_class(
-                &ledger,
-                &owner,
-                spira_config::scratch::Class::parse(class),
-                mib,
-                0,
-                std::time::Duration::from_secs(wait),
-                &|| target::free_mib(&root),
-            )
-        };
-        let mut g = match reserve(0) {
-            Ok(g) => g,
-            Err(first) => {
-                let need = mib.saturating_add(spira_config::scratch::reserved_mib(&ledger));
-                if target::shed_idle_slots(&root, need, &|| target::free_mib(&root), &|l| eprintln!("{l}")) == 0 && wait_secs == 0 {
-                    return Err(first);
-                }
-                reserve(wait_secs)?
-            }
-        };
-        g.account(tree);
-        Ok(Box::new(g))
+        crate::target::release_tree(tree, keep_release);
     }
     fn remove_worktree(&self, repo: &Path, tree: &Path) {
         let _ = self

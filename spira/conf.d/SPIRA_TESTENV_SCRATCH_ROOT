@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=testenv
+DOC=WHERE TESTENV KEEPS ITS SCRATCH AND WARM SLOTS, an absolute path on a disk that can take build writes. Empty refuses every testenv run, naming this key, rather than guessing a disk.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHERE TESTENV KEEPS ITS SCRATCH AND WARM SLOTS: one git worktree per slot, each with its
+    # own cargo target (a few GiB, rewritten on every relink), plus the slots' locks and spare
+    # records. An absolute path on a disk that can take build writes. Empty refuses every
+    # testenv run, naming this key; no other place is guessed.
+    : "${SPIRA_TESTENV_SCRATCH_ROOT:=}"
+SPIRA_CONF_DEFAULT_EOF

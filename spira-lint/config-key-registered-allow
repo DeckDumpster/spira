@@ -245,9 +245,6 @@ SPIRA_GATE_BRANCH spira/round-image-preflight.sh
 SPIRA_GATE_CALLER gate/src/engine.rs
 SPIRA_GATE_CALLER gate/src/real.rs
 SPIRA_GATE_CAP_SECS spira/gate.sh
-SPIRA_GATE_CLASS gate-worker/src/main.rs
-SPIRA_GATE_CLASS gate/src/engine.rs
-SPIRA_GATE_CLASS gate/src/real.rs
 SPIRA_GATE_COVERED gate/src/engine.rs
 SPIRA_GATE_COVERED suite-select/src/gate.rs
 SPIRA_GATE_CPU_QUOTA gate/src/cgroup.rs
@@ -279,8 +276,6 @@ SPIRA_GATE_TARGET_MIN_FREE_MIB gate/src/engine.rs
 SPIRA_GATE_TARGET_MIN_FREE_MIB gate/src/real.rs
 SPIRA_GATE_TARGET_MIN_MEM_MIB gate/src/engine.rs
 SPIRA_GATE_TARGET_MIN_MEM_MIB gate/src/real.rs
-SPIRA_GATE_TARGET_RESERVE_MIB gate/src/engine.rs
-SPIRA_GATE_TARGET_RESERVE_MIB gate/src/real.rs
 SPIRA_GATE_TARGET_ROOT gate/src/engine.rs
 SPIRA_GATE_TARGET_ROOT gate/src/real.rs
 SPIRA_GATE_TARGET_ROOT testenv/src/target_reap_main.rs
@@ -873,9 +868,6 @@ SPIRA_TESTENV_HARNESS testenv/src/main.rs
 SPIRA_TESTENV_HARNESS testenv/src/run.rs
 SPIRA_TESTENV_HARNESS testenv/src/runtime.rs
 SPIRA_TESTENV_RESUME testenv/src/settings.rs
-SPIRA_TESTENV_SCRATCH testenv/src/worktree.rs
-SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB testenv/src/settings.rs
-SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB testenv/src/settings.rs
 SPIRA_TESTENV_SCRATCH_SLOTS testenv/src/settings.rs
 SPIRA_TESTENV_SETUP_SHARE gate/src/engine.rs
 SPIRA_TESTENV_SETUP_SHARE gate/src/real.rs

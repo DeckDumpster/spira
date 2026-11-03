@@ -2,7 +2,8 @@
 # tier: T2
 # covers: spira/ci-config.sh spira/testlib/complete.toml
 #
-# ci-config.sh layers a writable run dir and the testenv registry over the complete fixture.
+# ci-config.sh layers a writable run dir, testenv's scratch root and the testenv registry over
+# the complete fixture.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -24,6 +25,7 @@ out="$W/tmp/ci-config.toml"
 want "run is rewritten to a runner dir" "run = \"$W/tmp/spira-run\"" "$(grep '^run = ' "$out")"
 nowant "no fixture run path remains" '"/fixture/userhome/spira/run"' "$(grep '^run = ' "$out")"
 [ -d "$W/tmp/spira-run" ] && ok "the run dir exists" || bad "the run dir exists"
+want "testenv's scratch root is declared in the runner's temp" "testenv_scratch_root = \"$W/tmp/testenv-scratch\"" "$(grep '^testenv_scratch_root = ' "$out")"
 want "registry is still layered" 'testenv_registry = "ghcr.io/some-owner"' "$(cat "$out")"
 
 env -i PATH="$PATH" RUNNER_TEMP="$W/tmp" GITHUB_REPOSITORY="Some-Owner/repo" GITHUB_BASE_REF="release-x" \

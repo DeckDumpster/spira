@@ -253,8 +253,8 @@ pub struct Deps<'a> {
     pub cwd: PathBuf,
     /// Bytes that identify this runner for the batch key (the executable in production).
     pub runner_identity: Vec<u8>,
-    /// Spawn the detached refill of warm slot `i` under run dir (DESIGN.md §11.2).
-    pub warm_refill: &'a (dyn Fn(usize, &Path) + Sync),
+    /// Spawn the detached refill of warm slot `i` (run dir, the slot's checkout; DESIGN.md §11.2).
+    pub warm_refill: &'a (dyn Fn(usize, &Path, &Path) + Sync),
     /// Spawn `testenv warm sweep` detached (DESIGN.md D12): a gate trial never runs the
     /// orphan sweep on its critical path.
     pub spawn_sweep: &'a (dyn Fn(&Path) + Sync),
@@ -852,12 +852,13 @@ fn deadline_reason(phase: &str) -> &'static str {
 struct RefillOnDrop<'a> {
     index: usize,
     run: PathBuf,
-    spawn: &'a (dyn Fn(usize, &Path) + Sync),
+    slot: PathBuf,
+    spawn: &'a (dyn Fn(usize, &Path, &Path) + Sync),
 }
 
 impl Drop for RefillOnDrop<'_> {
     fn drop(&mut self) {
-        (self.spawn)(self.index, &self.run);
+        (self.spawn)(self.index, &self.run, &self.slot);
     }
 }
 
@@ -1076,11 +1077,8 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         rev: br,
         commit: &commit,
         cwd: &deps.cwd,
-        run_dir: &s.run,
+        scratch: &s.scratch_root,
         slots: s.scratch_slots,
-        min_free_mib: s.scratch_min_free_mib,
-        min_mem_mib: s.scratch_min_mem_mib,
-        release_warm: &|i| warm::drop_spare(deps.rt, &deps.owner_dir, &s.run, i),
     };
     let warm_wanted = args.deadline.is_some() && args.artifacts.is_none() && s.warm_slots > 0;
     let warm_wt = if warm_wanted {
@@ -1092,11 +1090,6 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         Some(w) => w,
         None => match worktree::acquire(&wreq, &|m| deps.log(m)) {
             Ok(w) => w,
-            Err(e) if e.starts_with(worktree::SCRATCH_SHORT) => {
-                // Fail closed (sp-t26yx): never fall back to building on the host disk.
-                deps.log(&e);
-                return Finish::fault(2, worktree::SCRATCH_SHORT, 0);
-            }
             Err(e) => {
                 stderr(&format!("batch: {e}"));
                 return Finish::fault(2, "worktree", 0);
@@ -1106,6 +1099,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     let _refill = wt.warm_index().map(|index| RefillOnDrop {
         index,
         run: s.run.clone(),
+        slot: wt.path.clone(),
         spawn: deps.warm_refill,
     });
     deps.log(&format!(
@@ -1704,7 +1698,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         } else {
             warm::claim(
                 deps.rt,
-                &s.run,
+                &s.scratch_root,
                 &deps.owner_dir,
                 i,
                 &wt.path,
@@ -2669,7 +2663,7 @@ pub(crate) fn record_full_suite_pass(run: &Path, commit: &str, selected: &[Strin
 /// the trial that spawned it; a failure only means the next trial boots cold.
 pub fn warm_refill(i: usize, deps: &Deps) -> i32 {
     let s = deps.settings.clone();
-    let (_, lock_path, _) = warm::paths(&s.run, i);
+    let (_, lock_path, _) = warm::paths(&s.scratch_root, i);
     let end = Instant::now() + Duration::from_secs(s.warm_boot_timeout);
     let lock = loop {
         if let Some(l) = worktree::try_lock(&lock_path) {
@@ -2688,7 +2682,7 @@ pub fn warm_refill(i: usize, deps: &Deps) -> i32 {
     warm::sweep(
         deps.rt,
         &deps.owner_dir,
-        &s.run,
+        &s.scratch_root,
         s.warm_slots,
         s.orphan_min_age,
         &|n| {
@@ -2704,10 +2698,9 @@ pub fn warm_refill(i: usize, deps: &Deps) -> i32 {
     warm::shed(
         deps.rt,
         &deps.owner_dir,
-        &s.run,
         s.warm_slots,
         s.warm_shed_free_mib,
-        &worktree::scratch_root(&s.run),
+        &s.scratch_root,
         &worktree::free_mib,
         &|m| deps.log(m),
     );
@@ -2718,7 +2711,7 @@ pub fn warm_refill(i: usize, deps: &Deps) -> i32 {
         return 1;
     }
     let left = end.saturating_duration_since(Instant::now());
-    let rc = match warm::boot(deps.rt, &s.run, &deps.owner_dir, i, &tag, left) {
+    let rc = match warm::boot(deps.rt, &s.run, &s.scratch_root, &deps.owner_dir, i, &tag, left) {
         Ok(Some(n)) => {
             deps.log(&format!(
                 "warm refill {i}: spare {n} booted and recorded (image {tag})"
@@ -2751,7 +2744,7 @@ pub fn warm_sweep(deps: &Deps) -> i32 {
     warm::sweep(
         deps.rt,
         &deps.owner_dir,
-        &s.run,
+        &s.scratch_root,
         s.warm_slots,
         s.orphan_min_age,
         &|n| {
@@ -2764,14 +2757,12 @@ pub fn warm_sweep(deps: &Deps) -> i32 {
     // sp-s8v5r: the scratch root's real free space, not its byte usage, is what paged
     // "Disk quota exceeded" — reduce the COUNT of warm slots when it runs short, rather
     // than throttle a trial (law-reduce-the-count-never-throttle-the-job).
-    let root = worktree::scratch_root(&s.run);
     warm::shed(
         deps.rt,
         &deps.owner_dir,
-        &s.run,
         s.warm_slots,
         s.warm_shed_free_mib,
-        &root,
+        &s.scratch_root,
         &worktree::free_mib,
         &|m| deps.log(m),
     );

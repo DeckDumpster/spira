@@ -81,11 +81,9 @@ pub struct Settings {
     pub round_batch_id: Option<String>,
     pub round_members: u64,
     pub run_id: String,
+    /// Where the scratch and warm slots live (`SPIRA_TESTENV_SCRATCH_ROOT`); unset refuses.
+    pub scratch_root: PathBuf,
     pub scratch_slots: usize,
-    /// sp-t26yx: a slot on the scratch root needs this much free there, and — on a tmpfs —
-    /// this much MemAvailable; otherwise the run is refused (`scratch-short`).
-    pub scratch_min_free_mib: u64,
-    pub scratch_min_mem_mib: u64,
     /// sp-yx0yu9: what a filtered unit run runs in (`SPIRA_TESTENV_UNIT_RUNNER`).
     pub unit_runner: crate::sandbox::Runner,
     /// sp-yx0yu9: where the sandbox keeps each branch's cargo target
@@ -106,8 +104,7 @@ pub struct Settings {
     /// DESIGN.md §11.2: how long a refill may wait for its slot and boot its spare.
     pub warm_boot_timeout: u64,
     /// sp-s8v5r: below this much free on the scratch root, drop idle warm slots
-    /// oldest-first (law-reduce-the-count-never-throttle-the-job) — the same floor gate's
-    /// LRU eviction of its tmpfs build targets reads, since both share the /tmp tmpfs.
+    /// oldest-first (law-reduce-the-count-never-throttle-the-job).
     pub warm_shed_free_mib: u64,
     pub landing_containers: Option<PathBuf>,
     pub spira_db: Option<String>,
@@ -230,13 +227,8 @@ impl Settings {
             sandbox_target_keep: cfg_parse("SPIRA_TESTENV_SANDBOX_TARGET_KEEP")?,
             foreign_target_max_gib: cfg_parse("SPIRA_TESTENV_FOREIGN_TARGET_MAX_GIB")?,
             foreign_target_idle_hours: cfg_parse("SPIRA_TESTENV_FOREIGN_TARGET_IDLE_HOURS")?,
+            scratch_root: crate::worktree::scratch_root(&cfg(crate::worktree::SCRATCH_ROOT_KEY)?)?,
             scratch_slots: src.num("SPIRA_TESTENV_SCRATCH_SLOTS").unwrap_or(4),
-            scratch_min_free_mib: src
-                .num("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB")
-                .unwrap_or(4096),
-            scratch_min_mem_mib: src
-                .num("SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB")
-                .unwrap_or(8192),
             warm_slots: src.num("SPIRA_TESTENV_WARM_SLOTS").unwrap_or(3),
             setup_share: src
                 .num("SPIRA_TESTENV_SETUP_SHARE")

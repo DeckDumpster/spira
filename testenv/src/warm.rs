@@ -16,10 +16,9 @@ pub const PREFIX: &str = "spira-warm-";
 /// this slot's checkout.
 pub const NONCE_FILE: &str = "target/.testenv-warm-nonce";
 
-/// (worktree, lock, spare record) of slot `i`, under the scratch root of `$SPIRA_RUN`
+/// (worktree, lock, spare record) of slot `i` under the scratch root `base`
 /// ([`crate::worktree::scratch_root`]).
-pub fn paths(run: &Path, i: usize) -> (PathBuf, PathBuf, PathBuf) {
-    let base = crate::worktree::scratch_root(run);
+pub fn paths(base: &Path, i: usize) -> (PathBuf, PathBuf, PathBuf) {
     (
         base.join(format!(".testenv-warm-{i}")),
         base.join(format!(".testenv-warm-{i}.lock")),
@@ -70,10 +69,10 @@ pub fn write_spare(record: &Path, spare: &Spare) -> std::io::Result<()> {
     fs::rename(&tmp, record)
 }
 
-/// Names every spare record under `run` currently holds (for the warm sweep).
-pub fn recorded_names(run: &Path, slots: usize) -> Vec<String> {
+/// Names every spare record under the scratch root currently holds (for the warm sweep).
+pub fn recorded_names(scratch: &Path, slots: usize) -> Vec<String> {
     (0..slots.max(16))
-        .filter_map(|i| read_spare(&paths(run, i).2))
+        .filter_map(|i| read_spare(&paths(scratch, i).2))
         .map(|s| s.name)
         .collect()
 }
@@ -111,8 +110,8 @@ fn discard(rt: &dyn ContainerRuntime, owner_dir: &Path, name: &str) {
 }
 
 /// Drop slot `i`'s recorded spare, if any (the caller holds the slot lock).
-pub fn drop_spare(rt: &dyn ContainerRuntime, owner_dir: &Path, run: &Path, i: usize) {
-    let record = paths(run, i).2;
+pub fn drop_spare(rt: &dyn ContainerRuntime, owner_dir: &Path, scratch: &Path, i: usize) {
+    let record = paths(scratch, i).2;
     if let Some(sp) = read_spare(&record) {
         let _ = fs::remove_file(&record);
         discard(rt, owner_dir, &sp.name);
@@ -125,14 +124,14 @@ pub fn drop_spare(rt: &dyn ContainerRuntime, owner_dir: &Path, run: &Path, i: us
 /// ownerless; once the record is gone no other trial can claim it, whatever happens next.
 pub fn claim(
     rt: &dyn ContainerRuntime,
-    run: &Path,
+    scratch: &Path,
     owner_dir: &Path,
     i: usize,
     slot: &Path,
     image_tag: &str,
     deadline: Option<Instant>,
 ) -> Claim {
-    let record = paths(run, i).2;
+    let record = paths(scratch, i).2;
     let Some(spare) = read_spare(&record) else {
         let _ = fs::remove_file(&record);
         return Claim::Cold("no spare booted in this slot yet".into());
@@ -190,13 +189,13 @@ pub fn claim(
 pub fn sweep(
     rt: &dyn ContainerRuntime,
     owner_dir: &Path,
-    run: &Path,
+    scratch: &Path,
     slots: usize,
     min_age: u64,
     started_at: &dyn Fn(&str) -> Option<u64>,
     log: &dyn Fn(&str),
 ) {
-    let keep = recorded_names(run, slots);
+    let keep = recorded_names(scratch, slots);
     for name in rt.names_with_prefix(PREFIX) {
         if keep.contains(&name) {
             continue;
@@ -226,7 +225,6 @@ pub fn sweep(
 pub fn shed(
     rt: &dyn ContainerRuntime,
     owner_dir: &Path,
-    run: &Path,
     slots: usize,
     floor_mib: u64,
     root: &Path,
@@ -240,7 +238,7 @@ pub fn shed(
         return 0;
     }
     let mut oldest: Vec<(usize, Spare)> = (0..slots)
-        .filter_map(|i| read_spare(&paths(run, i).2).map(|sp| (i, sp)))
+        .filter_map(|i| read_spare(&paths(root, i).2).map(|sp| (i, sp)))
         .collect();
     oldest.sort_by_key(|(_, sp)| sp.booted);
     let mut dropped = 0;
@@ -248,7 +246,7 @@ pub fn shed(
         if free >= floor_mib {
             break;
         }
-        let (_, lock_path, record) = paths(run, i);
+        let (_, lock_path, record) = paths(root, i);
         let Some(_lock) = crate::worktree::try_lock(&lock_path) else {
             continue; // busy: a trial (or a refill) holds this slot right now — never dropped
         };
@@ -274,12 +272,13 @@ pub fn shed(
 pub fn boot(
     rt: &dyn ContainerRuntime,
     run: &Path,
+    scratch: &Path,
     owner_dir: &Path,
     i: usize,
     image_tag: &str,
     timeout: Duration,
 ) -> Result<Option<String>, String> {
-    let (slot, _, record) = paths(run, i);
+    let (slot, _, record) = paths(scratch, i);
     if let Some(sp) = read_spare(&record) {
         if sp.tag == image_tag
             && rt.inspect(&sp.name, "{{.State.Running}}").as_deref() == Some("true")
@@ -320,13 +319,16 @@ mod tests {
     use crate::runtime::ExecOutcome;
     use std::sync::Arc;
 
-    fn world(tag: &str) -> (testkit::TempDir, PathBuf, PathBuf) {
+    /// (root, run dir, scratch root, owner dir), the scratch root holding slot 0's checkout.
+    fn world(tag: &str) -> (testkit::TempDir, PathBuf, PathBuf, PathBuf) {
         let root = testkit::TempDir::new(&format!("testenv-warm-{tag}"));
         let run = root.join("run");
+        let scratch = root.join("scratch");
         let owner = root.join("owner");
-        fs::create_dir_all(run.join("worktree/.testenv-warm-0/.git")).unwrap();
+        fs::create_dir_all(&run).unwrap();
+        fs::create_dir_all(scratch.join(".testenv-warm-0/.git")).unwrap();
         fs::create_dir_all(&owner).unwrap();
-        (root, run, owner)
+        (root, run, scratch, owner)
     }
 
     /// The fake container "mounts" the slot: `cat` of the nonce reads the host file.
@@ -354,17 +356,17 @@ mod tests {
 
     #[test]
     fn a_spare_is_claimed_once_and_its_record_is_gone_before_use() {
-        let (_root, run, owner) = world("once");
+        let (_root, run, scratch, owner) = world("once");
         let rt = FakeRuntime::new();
-        let (slot, _, record) = paths(&run, 0);
+        let (slot, _, record) = paths(&scratch, 0);
         mounts(&rt, slot.clone());
-        assert!(boot(&rt, &run, &owner, 0, "t1", Duration::from_secs(5))
+        assert!(boot(&rt, &run, &scratch, &owner, 0, "t1", Duration::from_secs(5))
             .unwrap()
             .is_some());
         let name = read_spare(&record).unwrap().name;
         assert!(name.starts_with("spira-warm-0-"));
         assert_eq!(
-            claim(&rt, &run, &owner, 0, &slot, "t1", None),
+            claim(&rt, &scratch, &owner, 0, &slot, "t1", None),
             Claim::Spare(name.clone())
         );
         assert!(!record.exists(), "claimed: no second trial can take it");
@@ -375,31 +377,31 @@ mod tests {
             std::process::id().to_string()
         );
         assert!(matches!(
-            claim(&rt, &run, &owner, 0, &slot, "t1", None),
+            claim(&rt, &scratch, &owner, 0, &slot, "t1", None),
             Claim::Cold(_)
         ));
     }
 
     #[test]
     fn a_stale_spare_is_discarded_not_used() {
-        let (_root, run, owner) = world("stale");
-        let (slot, _, record) = paths(&run, 0);
+        let (_root, run, scratch, owner) = world("stale");
+        let (slot, _, record) = paths(&scratch, 0);
         // image changed since the spare booted
         let rt = FakeRuntime::new();
         mounts(&rt, slot.clone());
-        boot(&rt, &run, &owner, 0, "old", Duration::from_secs(5)).unwrap();
+        boot(&rt, &run, &scratch, &owner, 0, "old", Duration::from_secs(5)).unwrap();
         let name = read_spare(&record).unwrap().name;
         assert!(
-            matches!(claim(&rt, &run, &owner, 0, &slot, "new", None), Claim::Cold(w) if w.contains("image"))
+            matches!(claim(&rt, &scratch, &owner, 0, &slot, "new", None), Claim::Cold(w) if w.contains("image"))
         );
         assert!(rt.purged.lock().unwrap().contains(&name));
         // not running
         let rt = FakeRuntime::new();
         mounts(&rt, slot.clone());
-        boot(&rt, &run, &owner, 0, "t", Duration::from_secs(5)).unwrap();
+        boot(&rt, &run, &scratch, &owner, 0, "t", Duration::from_secs(5)).unwrap();
         rt.running_answers(&[Some("false")]);
         assert!(
-            matches!(claim(&rt, &run, &owner, 0, &slot, "t", None), Claim::Cold(w) if w.contains("not running"))
+            matches!(claim(&rt, &scratch, &owner, 0, &slot, "t", None), Claim::Cold(w) if w.contains("not running"))
         );
         // mounts some other checkout: the nonce does not read back
         let rt = FakeRuntime::new();
@@ -410,9 +412,9 @@ mod tests {
                 output: "someone-else".into(),
             },
         );
-        boot(&rt, &run, &owner, 0, "t", Duration::from_secs(5)).unwrap();
+        boot(&rt, &run, &scratch, &owner, 0, "t", Duration::from_secs(5)).unwrap();
         assert!(
-            matches!(claim(&rt, &run, &owner, 0, &slot, "t", None), Claim::Cold(w) if w.contains("mount"))
+            matches!(claim(&rt, &scratch, &owner, 0, &slot, "t", None), Claim::Cold(w) if w.contains("mount"))
         );
         assert!(
             !slot.join(NONCE_FILE).exists(),
@@ -422,24 +424,24 @@ mod tests {
 
     #[test]
     fn a_failed_boot_records_nothing_and_leaves_no_container() {
-        let (_root, run, owner) = world("fail");
+        let (_root, run, scratch, owner) = world("fail");
         let rt = FakeRuntime::new();
         rt.testenv_rc.lock().unwrap().insert("probe".into(), 1);
-        assert!(boot(&rt, &run, &owner, 0, "t", Duration::from_secs(5)).is_err());
-        assert!(read_spare(&paths(&run, 0).2).is_none());
+        assert!(boot(&rt, &run, &scratch, &owner, 0, "t", Duration::from_secs(5)).is_err());
+        assert!(read_spare(&paths(&scratch, 0).2).is_none());
         assert!(rt.names_with_prefix(PREFIX).is_empty());
         // a slot with no checkout yet is not booted at all
         let rt = FakeRuntime::new();
-        assert!(boot(&rt, &run, &owner, 1, "t", Duration::from_secs(5)).is_err());
+        assert!(boot(&rt, &run, &scratch, &owner, 1, "t", Duration::from_secs(5)).is_err());
         assert!(rt.testenv_calls.lock().unwrap().is_empty());
     }
 
     #[test]
     fn the_warm_sweep_keeps_recorded_and_owned_spares_and_takes_orphans() {
-        let (_root, run, owner) = world("sweep");
+        let (_root, run, scratch, owner) = world("sweep");
         let rt = FakeRuntime::new();
-        boot(&rt, &run, &owner, 0, "t", Duration::from_secs(5)).unwrap();
-        let recorded = read_spare(&paths(&run, 0).2).unwrap().name;
+        boot(&rt, &run, &scratch, &owner, 0, "t", Duration::from_secs(5)).unwrap();
+        let recorded = read_spare(&paths(&scratch, 0).2).unwrap().name;
         for n in ["spira-warm-5-1-1", "spira-warm-6-1-1", "spira-warm-7-1-1"] {
             rt.containers.lock().unwrap().push(n.into());
         }
@@ -452,7 +454,7 @@ mod tests {
         fs::write(owner.join("spira-warm-6-1-1.owner"), "999999999\n").unwrap();
         let logs = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         let l2 = logs.clone();
-        sweep(&rt, &owner, &run, 3, 3600, &|_| Some(0), &move |m| {
+        sweep(&rt, &owner, &scratch, 3, 3600, &|_| Some(0), &move |m| {
             l2.lock().unwrap().push(m.into())
         });
         let purged = rt.purged.lock().unwrap().clone();
@@ -467,14 +469,13 @@ mod tests {
     /// oldest-booted idle spare, and stops as soon as the (fake) drop clears the floor.
     #[test]
     fn shed_drops_the_oldest_idle_spare_first_until_the_floor_clears() {
-        let (_root, run, owner) = world("shed");
-        let base = crate::worktree::scratch_root(&run);
-        fs::create_dir_all(&base).unwrap();
+        let (_root, _run, scratch, owner) = world("shed");
+        let base = scratch.clone();
         let rt = FakeRuntime::new();
         for (i, booted) in [(0usize, 100u64), (1, 200), (2, 300)] {
             let name = format!("spira-warm-{i}-x");
             rt.containers.lock().unwrap().push(name.clone());
-            write_spare(&paths(&run, i).2, &Spare { name, tag: "t".into(), booted }).unwrap();
+            write_spare(&paths(&scratch, i).2, &Spare { name, tag: "t".into(), booted }).unwrap();
         }
         // Below the 15 MiB floor until the first drop frees real space, as a real
         // container's teardown would — then above it, so exactly one spare goes.
@@ -486,7 +487,7 @@ mod tests {
         };
         let logs = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         let l2 = logs.clone();
-        let dropped = shed(&rt, &owner, &run, 3, 15, &base, &free, &move |m| {
+        let dropped = shed(&rt, &owner, 3, 15, &base, &free, &move |m| {
             l2.lock().unwrap().push(m.into())
         });
         assert_eq!(dropped, 1);
@@ -494,9 +495,9 @@ mod tests {
             rt.purged.lock().unwrap().contains(&"spira-warm-0-x".to_string()),
             "the oldest-booted spare goes first"
         );
-        assert!(read_spare(&paths(&run, 0).2).is_none());
-        assert!(read_spare(&paths(&run, 1).2).is_some(), "slot 1 untouched");
-        assert!(read_spare(&paths(&run, 2).2).is_some(), "slot 2 untouched");
+        assert!(read_spare(&paths(&scratch, 0).2).is_none());
+        assert!(read_spare(&paths(&scratch, 1).2).is_some(), "slot 1 untouched");
+        assert!(read_spare(&paths(&scratch, 2).2).is_some(), "slot 2 untouched");
         assert_eq!(logs.lock().unwrap().len(), 1);
     }
 
@@ -504,21 +505,20 @@ mod tests {
     /// though it is the oldest and free space stays short the whole time.
     #[test]
     fn shed_never_drops_a_slot_whose_lock_is_held() {
-        let (_root, run, owner) = world("shed-busy");
-        let base = crate::worktree::scratch_root(&run);
-        fs::create_dir_all(&base).unwrap();
+        let (_root, _run, scratch, owner) = world("shed-busy");
+        let base = scratch.clone();
         let rt = FakeRuntime::new();
         for (i, booted) in [(0usize, 100u64), (1, 200)] {
             let name = format!("spira-warm-{i}-x");
             rt.containers.lock().unwrap().push(name.clone());
-            write_spare(&paths(&run, i).2, &Spare { name, tag: "t".into(), booted }).unwrap();
+            write_spare(&paths(&scratch, i).2, &Spare { name, tag: "t".into(), booted }).unwrap();
         }
-        let (_, lock0, _) = paths(&run, 0);
+        let (_, lock0, _) = paths(&scratch, 0);
         let _held = crate::worktree::try_lock(&lock0).unwrap();
-        let dropped = shed(&rt, &owner, &run, 2, 1_000_000, &base, &|_| Some(0), &|_| {});
+        let dropped = shed(&rt, &owner, 2, 1_000_000, &base, &|_| Some(0), &|_| {});
         assert_eq!(dropped, 1, "slot 0 is skipped; the idle slot 1 goes instead");
         assert!(!rt.purged.lock().unwrap().contains(&"spira-warm-0-x".to_string()), "never a slot in use");
-        assert!(read_spare(&paths(&run, 0).2).is_some(), "the busy slot's record is untouched");
+        assert!(read_spare(&paths(&scratch, 0).2).is_some(), "the busy slot's record is untouched");
         assert!(rt.purged.lock().unwrap().contains(&"spira-warm-1-x".to_string()));
     }
 
@@ -526,34 +526,32 @@ mod tests {
     /// floor, so the idle spare is shed.
     #[test]
     fn shed_fires_on_quota_headroom_even_when_the_filesystem_has_room() {
-        let (_root, run, owner) = world("shed-quota");
-        let base = crate::worktree::scratch_root(&run);
-        fs::create_dir_all(&base).unwrap();
+        let (_root, _run, scratch, owner) = world("shed-quota");
+        let base = scratch.clone();
         let rt = FakeRuntime::new();
         let name = "spira-warm-0-x".to_string();
         rt.containers.lock().unwrap().push(name.clone());
-        write_spare(&paths(&run, 0).2, &Spare { name: name.clone(), tag: "t".into(), booted: 1 }).unwrap();
+        write_spare(&paths(&scratch, 0).2, &Spare { name: name.clone(), tag: "t".into(), booted: 1 }).unwrap();
         let mib = 1024 * 1024;
         let quota = spira_config::room::Quota { limit: 20 * 1024 * mib, used: 19 * 1024 * mib };
         let probe = move |_: &Path| spira_config::room::combine_mib(Some(6200), Some(quota));
-        assert_eq!(shed(&rt, &owner, &run, 1, 6144, &base, &probe, &|_| {}), 1);
+        assert_eq!(shed(&rt, &owner, 1, 6144, &base, &probe, &|_| {}), 1);
         assert!(rt.purged.lock().unwrap().contains(&name));
     }
 
     #[test]
     fn shed_does_nothing_when_free_space_already_clears_the_floor() {
-        let (_root, run, owner) = world("shed-ok");
-        let base = crate::worktree::scratch_root(&run);
-        fs::create_dir_all(&base).unwrap();
+        let (_root, _run, scratch, owner) = world("shed-ok");
+        let base = scratch.clone();
         let rt = FakeRuntime::new();
         rt.containers.lock().unwrap().push("spira-warm-0-x".into());
         write_spare(
-            &paths(&run, 0).2,
+            &paths(&scratch, 0).2,
             &Spare { name: "spira-warm-0-x".into(), tag: "t".into(), booted: 1 },
         )
         .unwrap();
-        let dropped = shed(&rt, &owner, &run, 1, 10, &base, &|_| Some(50), &|_| {});
+        let dropped = shed(&rt, &owner, 1, 10, &base, &|_| Some(50), &|_| {});
         assert_eq!(dropped, 0);
-        assert!(read_spare(&paths(&run, 0).2).is_some());
+        assert!(read_spare(&paths(&scratch, 0).2).is_some());
     }
 }
