@@ -5524,7 +5524,7 @@ fn a_candidate_image_build_that_outlasts_its_wait_leaves_the_round_unjudged() {
 }
 
 #[test]
-fn open_rounds_a_recipe_changing_member_apart_from_the_ordinary_ones() {
+fn open_admits_a_recipe_changing_member_with_the_ordinary_ones() {
     let t = round_world();
     t.git.stat("b0", "tb", &[("round-vm/ami-setup.sh", 1, 1)]);
     assert_eq!(
@@ -5534,32 +5534,48 @@ fn open_rounds_a_recipe_changing_member_apart_from_the_ordinary_ones() {
         t.err()
     );
     let o = t.out();
-    assert!(
-        o.contains("skip — sp-b: solo: sp-b changes the round recipe")
-            && o.contains("members=sp-a:ta sp-c:tc")
-            && !o.contains("sp-b:tb"),
-        "{o}"
-    );
+    assert!(o.contains("members=sp-a:ta sp-b:tb sp-c:tc") && !o.contains("solo:"), "{o}");
+}
+
+const PREFLIGHT_OUT: &str = "round-image-preflight: recipe inputs touched: flake.nix\nround-image-preflight: RED rc=1 after 12s (image debian:12)\nround-image-preflight: failing setup line: + nix profile install .#round-deps\n";
+
+/// A two-member round whose pass ends red on the image preflight fence, `recipe` naming the
+/// members whose diff touches a round-recipe input.
+fn preflight_red_round(recipe: &[&str]) -> (T, String) {
+    let t = round_world();
+    for tip in recipe {
+        t.git.stat("b0", tip, &[("flake.nix", 1, 1)]);
+    }
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: String::new() };
+    *t.scripts.round_vm_results.borrow_mut() = vec![("fence-round-image-preflight".into(), "red".into())];
+    *t.scripts.round_vm_files.borrow_mut() = vec![("fence-round-image-preflight.out".into(), PREFLIGHT_OUT.into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    assert!(t.out().contains("red=fence-round-image-preflight"), "{}", t.out());
+    (t, batch)
 }
 
 #[test]
-fn open_admits_a_lone_recipe_changing_member_by_itself() {
-    let t = round_world();
-    t.git.stat("b0", "ta", &[("flake.nix", 1, 1)]);
-    t.git.stat("b0", "tb", &[("flake.lock", 1, 1)]);
-    assert_eq!(
-        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
-        0,
-        "{}",
-        t.err()
-    );
-    let o = t.out();
+fn a_preflight_red_ejects_exactly_the_recipe_changing_member_with_the_fence_evidence() {
+    let (t, _) = preflight_red_round(&["tb"]);
+    assert!(t.lib.has("bead_reopen sp-b eject-red"), "{:?}", t.lib.calls.borrow());
+    assert!(!t.lib.has("bead_reopen sp-a"), "{:?}", t.lib.calls.borrow());
+    let comment = t.lib.calls.borrow().iter().find(|c| c.starts_with("comment sp-b")).cloned().unwrap_or_default();
     assert!(
-        o.contains("members=sp-a:ta")
-            && !o.contains("sp-b:tb")
-            && o.contains("sp-b: solo: sp-b changes the round recipe"),
-        "{o}"
+        comment.contains("failing setup line: + nix profile install .#round-deps") && comment.contains("flake.nix"),
+        "{comment}"
     );
+    let members = kv_of(&t, "round").get("members").cloned().unwrap_or_default();
+    assert!(members.contains("sp-a") && !members.contains("sp-b"), "{members}");
+}
+
+#[test]
+fn a_preflight_red_with_no_recipe_changing_member_ejects_nobody() {
+    let (t, _) = preflight_red_round(&[]);
+    assert!(!t.lib.has("bead_reopen"), "{:?}", t.lib.calls.borrow());
+    let members = kv_of(&t, "round").get("members").cloned().unwrap_or_default();
+    assert!(members.contains("sp-a") && members.contains("sp-b"), "{members}");
 }
 
 fn touches(t: &T, tip: &str, file: &str) {
