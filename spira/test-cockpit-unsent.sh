@@ -166,18 +166,6 @@ git -C "$ALPHA" branch "spira/queue/$QSTAMP"
 SUITE_BR="test-reclaim-slay-branch-guard-20260917T164605Z"
 git -C "$ALPHA" branch "spira-suite-state/$SUITE_BR"
 
-# Open batch record naming the queue branch — the belt-and-suspenders path protects it
-# regardless of name, even though the namespace scan above already would.
-mkdir -p "$RUN/queue/alpha"
-{
-    printf 'pr=56\n'
-    printf 'head=abc\n'
-    printf 'base=def\n'
-    printf 'members=sp-foo:abc\n'
-    printf 'opened=1726598000\n'
-    printf 'branch=spira/queue/%s\n' "$QSTAMP"
-} > "$RUN/queue/alpha/open"
-
 # Run cockpit-collect probe unsent — the probe's own subcommand, not a full `once` — with bd reads
 # answered from a canned-JSON fixture rather than a live store.
 unsent() {    # unsent <fixture-file>
@@ -186,7 +174,7 @@ unsent() {    # unsent <fixture-file>
     tl_config SPIRA_HOME_REPO=alpha SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$MAP" SPIRA_RUNES=t SPIRA_QUEUE_DIR="$RUN/queue" \
         SPIRA_QUEUE_BATCH_WAIT=1800
-    env -i SPIRA_PANE_READ_TTL=0 SPIRA_HISTORY_READ_TTL=0 PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i SPIRA_RELEASE="$(tl_release)" SPIRA_PANE_READ_TTL=0 SPIRA_HISTORY_READ_TTL=0 PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$ALPHA" \
@@ -263,12 +251,8 @@ echo "BATCHED-stranded detection:"
 # ======================================================================================
 # BATCHED (spira-lc: IN_DELIVERY) branch absent from any open batch → SP_BATCHED_STRANDED=1.
 # This is the sp-kogm shape: sp-bbb in beta has in_progress status; we give it a spira-lc
-# row in IN_DELIVERY and provide no open batch file naming it. The probe must count it as
-# stranded.
-#
-# POSITIVE CONTROL FIRST: a run with IN_DELIVERY state and no open batch must report 1.
-# Only after that do we verify the BATCHED-in-batch case reports 0 — an all-zero result
-# could pass both tests if the probe is not running at all.
+# row in IN_DELIVERY and no batch naming it. The probe must count it as stranded once the
+# one-sweep grace is past, and not before.
 lc_seed_bead sp-bbb IN_DELIVERY "$(date +%s)"
 out_grace="$(unsent "$TMP/beads.json")"
 is "IN_DELIVERY inside the one-sweep grace → SP_BATCHED_STRANDED=0" "0" "$(printf '%s' "$out_grace" | grep '^SP_BATCHED_STRANDED=' | head -1 | sed 's/^SP_BATCHED_STRANDED=//')"
@@ -278,16 +262,9 @@ val2() { printf '%s' "$out2" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 is "BATCHED with no open batch → SP_BATCHED_STRANDED=1" "1" "$(val2 SP_BATCHED_STRANDED)"
 want "SP_BATCHED_STRANDED_NAMES names the branch" "sp-bbb" "$(val2 SP_BATCHED_STRANDED_NAMES)"
 
-# BATCHED branch present in the open batch → SP_BATCHED_STRANDED=0.
-# Create an open batch file for beta whose members= line includes sp-bbb:<tip>.
-_bbb_tip="$(git -C "$BETA" rev-parse spira/sp-bbb 2>/dev/null)"
-mkdir -p "$RUN/queue/beta"
-printf 'pr=1\nopened=%s\nmembers=sp-bbb:%s\nbranch=spira/queue/test\n' \
-    "$(date +%s)" "$_bbb_tip" > "$RUN/queue/beta/open"
-out3="$(unsent "$TMP/beads.json")"
-val3() { printf '%s' "$out3" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
-is "BATCHED present in open batch → SP_BATCHED_STRANDED=0" "0" "$(val3 SP_BATCHED_STRANDED)"
-rm -f "$RUN/queue/beta/open"
+# A BATCHED branch the open forge batch names is not stranded: the forge batch is the queue's
+# record (`queue batch show`), pinned by cockpit-collect's
+# a_forge_batch_on_the_store_names_its_members_and_branch.
 lc_drop_bead sp-bbb
 
 # BATCHED-too-long detection: epoch old enough → SP_BATCHED_TOO_LONG=1.

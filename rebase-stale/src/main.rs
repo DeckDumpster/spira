@@ -140,7 +140,14 @@ fn dispatch() -> ExitCode {
         lock_wait: Duration::from_secs(60),
         run: run.clone(),
     };
-    let seam = LibSeam::new(home, spira_config::lifecycle_row::lc_bin(), run.clone());
+    let (lc, queue) = match spira_config::lifecycle_row::lc_bin().and_then(|lc| Ok((lc, spira_config::release_env::tool("queue")?))) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("rebase-stale: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let seam = LibSeam::new(home, lc, PathBuf::from(queue), run.clone());
     let rules = Rules::standard(Some(run.join("rebase-stale.target")));
     let r = engine::run(&id, repo_arg.as_deref(), &config, &seam, &rules);
     if let Some(s) = r.stdout {

@@ -78,23 +78,22 @@ fn args(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
 }
 
-/// The `release` binary to run (§8 D14, sp-ktgll): `<bins>/release` when the round's own
-/// bin-dir holds one — the same commit that is about to ship, so a fix to how releases are
-/// BUILT can deploy itself. Else bare `release`, resolved from the launcher's PATH (the
-/// only case before `--bin-dir` exists, or when that bin-dir's build happens not to include
-/// a `release` binary), and that fallback is said aloud rather than taken silently.
-fn release_bin(w: &World, bins: Option<&Path>) -> PathBuf {
-    if let Some(dir) = bins {
-        let candidate = dir.join("release");
-        if super::simple::is_executable(&candidate) {
-            return candidate;
+/// The `release` binary to run (§8 D14): `<bins>/release`, the round's own build — the same
+/// commit that is about to ship, so a fix to how releases are BUILT can deploy itself. A
+/// bin-dir without one is a refusal, never another release's binary. With no bin-dir, the
+/// declared release's own (`$SPIRA_RELEASE`).
+fn release_bin(bins: Option<&Path>, declared: impl FnOnce() -> Result<PathBuf, String>) -> Result<PathBuf, String> {
+    match bins {
+        Some(dir) => {
+            let candidate = dir.join("release");
+            if super::simple::is_executable(&candidate) {
+                Ok(candidate)
+            } else {
+                Err(format!("no release binary at {} — the round's own build ships one; there is no fallback to another release", candidate.display()))
+            }
         }
-        w.err(format!(
-            "queue.sh land-local: no release binary at {} — running PATH's release instead, not this round's own build",
-            candidate.display()
-        ));
+        None => declared(),
     }
-    PathBuf::from(spira_config::release_env::tool("release"))
 }
 
 /// Run one `release` step; forward its stderr (release prefixes its own lines); Err is the
@@ -133,7 +132,7 @@ pub fn build_and_verify(w: &World, plan: &Plan, head: &str) -> Result<String, St
     let Some(bins) = &plan.bins else {
         return Err("no tested build to publish (--bin-dir)".into());
     };
-    let bin = release_bin(w, Some(bins));
+    let bin = release_bin(Some(bins), || w.scripts.release_tool())?;
     let out = step(
         w,
         plan,
@@ -166,7 +165,7 @@ pub fn build_and_verify(w: &World, plan: &Plan, head: &str) -> Result<String, St
 
 /// `release verify <sha>` alone (rollback-local: the release already exists; never rebuilt).
 pub fn verify(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
-    let bin = release_bin(w, plan.bins.as_deref());
+    let bin = release_bin(plan.bins.as_deref(), || w.scripts.release_tool())?;
     step(w, plan, &bin, "verify", args(&["verify", sha])).map(|_| ())
 }
 
@@ -229,7 +228,7 @@ fn settle_unit(w: &World, unit: &str) {
 }
 
 fn activate_once(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
-    let bin = release_bin(w, plan.bins.as_deref());
+    let bin = release_bin(plan.bins.as_deref(), || w.scripts.release_tool())?;
     let out = step(
         w,
         plan,
@@ -262,5 +261,22 @@ pub fn run(w: &World, plan: &Plan, head: &str) -> Outcome {
     match activate(w, plan, &sha) {
         Ok(()) => Outcome::Activated(sha),
         Err(why) => Outcome::Fault(why),
+    }
+}
+
+#[cfg(test)]
+mod release_bin_tests {
+    use super::*;
+
+    #[test]
+    fn a_bin_dir_without_a_release_binary_refuses_naming_it() {
+        let e = release_bin(Some(Path::new("/nonexistent/bins")), || Ok(PathBuf::from("/unused"))).unwrap_err();
+        assert!(e.contains("no release binary at /nonexistent/bins/release"), "{e}");
+    }
+
+    #[test]
+    fn no_bin_dir_runs_the_declared_releases_own_binary() {
+        assert_eq!(release_bin(None, || Ok(PathBuf::from("/r/bin/release"))).unwrap(), PathBuf::from("/r/bin/release"));
+        assert!(release_bin(None, || Err("SPIRA_RELEASE is not set".into())).unwrap_err().contains("SPIRA_RELEASE"));
     }
 }

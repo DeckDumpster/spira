@@ -1247,6 +1247,8 @@ struct FakeHalt {
     signals: RefCell<Vec<(String, i32)>>,
     live_containers: Vec<String>,
     torn: RefCell<Vec<String>>,
+    /// Each repo's `queue batch show` answer; a repo not named has no batch open.
+    shown: Vec<(String, Result<String, String>)>,
 }
 
 impl HaltPorts for FakeHalt {
@@ -1270,6 +1272,9 @@ impl HaltPorts for FakeHalt {
         self.torn.borrow_mut().push(name.into());
         true
     }
+    fn batch_show(&self, repo: &str) -> Result<String, String> {
+        self.shown.iter().find(|(r, _)| r == repo).map_or(Ok(String::new()), |(_, s)| s.clone())
+    }
 }
 
 fn halt_setup(ignores_term: bool) -> (crate::testutil::TmpDir, FakeHalt) {
@@ -1283,6 +1288,7 @@ fn halt_setup(ignores_term: bool) -> (crate::testutil::TmpDir, FakeHalt) {
         signals: RefCell::new(vec![]),
         live_containers: vec!["c2".into()],
         torn: RefCell::new(vec![]),
+        shown: vec![],
     };
     (dir, h)
 }
@@ -1290,7 +1296,7 @@ fn halt_setup(ignores_term: bool) -> (crate::testutil::TmpDir, FakeHalt) {
 #[test]
 fn halt_dry_run_reports_and_touches_nothing() {
     let (dir, ports) = halt_setup(false);
-    let cx = HaltCtx { files: Files::new(&dir), grace: 3, self_pid: 1, repos: None, queue_dir: dir.join("q") };
+    let cx = HaltCtx { files: Files::new(&dir), grace: 3, self_pid: 1, repos: None };
     let (rc, out, _) = halt::halt(&cx, &HaltArgs { reason: String::new(), dry_run: true }, &ports, &FakeGit::default());
     assert_eq!(rc, 0);
     assert_eq!(out[0], "landing: pass running — pid=777 elapsed=100s repo=spira branch=spira/sp-a phase=gate");
@@ -1304,16 +1310,15 @@ fn halt_dry_run_reports_and_touches_nothing() {
 
 #[test]
 fn halt_terms_then_kills_records_why_and_tears_down_only_live_containers() {
-    let (dir, ports) = halt_setup(true);
+    let (dir, mut ports) = halt_setup(true);
     let mut repo = repo_row(&dir, "spira", LandMode::Queue);
     repo.path = dir.join("spira");
     let repos = vec![repo];
-    fs::create_dir_all(dir.join("q/spira")).unwrap();
-    fs::write(dir.join("q/spira/open"), "pr=1\nbranch=spira/queue/open1\n").unwrap();
+    ports.shown = vec![("spira".into(), Ok("batch_id=spira-1\nforge.phase=armed\npr=1\nbranch=spira/queue/open1\n".into()))];
     let git = FakeGit::default();
     git.matching.borrow_mut().insert("refs/heads/spira/queue/*".into(), vec!["spira/queue/open1".into(), "spira/queue/old".into(), "spira/queue/pushed".into()]);
     git.matching.borrow_mut().insert("refs/remotes/*/spira/queue/pushed".into(), vec!["origin/spira/queue/pushed".into()]);
-    let cx = HaltCtx { files: Files::new(&dir), grace: 3, self_pid: 1, repos: Some(&repos), queue_dir: dir.join("q") };
+    let cx = HaltCtx { files: Files::new(&dir), grace: 3, self_pid: 1, repos: Some(&repos) };
     let (rc, out, _) = halt::halt(&cx, &HaltArgs { reason: "operator\nsaid so".into(), dry_run: false }, &ports, &git);
     assert_eq!(rc, 0);
     assert_eq!(*ports.signals.borrow(), vec![("777".to_string(), libc::SIGTERM), ("777".to_string(), libc::SIGKILL)]);
@@ -1327,9 +1332,25 @@ fn halt_terms_then_kills_records_why_and_tears_down_only_live_containers() {
 }
 
 #[test]
+fn halt_keeps_every_batch_branch_of_a_repo_whose_open_batch_the_queue_cannot_show() {
+    let (dir, mut ports) = halt_setup(false);
+    let mut repo = repo_row(&dir, "spira", LandMode::Queue);
+    repo.path = dir.join("spira");
+    let repos = vec![repo];
+    ports.shown = vec![("spira".into(), Err("queue batch show exited 1".into()))];
+    let git = FakeGit::default();
+    git.matching.borrow_mut().insert("refs/heads/spira/queue/*".into(), vec!["spira/queue/open1".into(), "spira/queue/old".into()]);
+    let cx = HaltCtx { files: Files::new(&dir), grace: 3, self_pid: 1, repos: Some(&repos) };
+    let (rc, out, _) = halt::halt(&cx, &HaltArgs { reason: "x".into(), dry_run: false }, &ports, &git);
+    assert_eq!(rc, 0);
+    assert!(git.deleted.borrow().is_empty(), "cannot tell is not no batch");
+    assert!(out.iter().any(|l| l.contains("cannot tell spira's open batch (queue batch show exited 1)")), "{out:?}");
+}
+
+#[test]
 fn halt_refuses_when_no_pass_is_running_or_the_record_is_our_own_pid() {
     let (dir, ports) = halt_setup(false);
-    let cx = HaltCtx { files: Files::new(&dir), grace: 3, self_pid: 777, repos: None, queue_dir: dir.join("q") };
+    let cx = HaltCtx { files: Files::new(&dir), grace: 3, self_pid: 777, repos: None };
     let (rc, _, err) = halt::halt(&cx, &HaltArgs { reason: String::new(), dry_run: false }, &ports, &FakeGit::default());
     assert_eq!((rc, err[0].as_str()), (1, "landing: no pass running — nothing to halt"));
 }

@@ -64,7 +64,7 @@ inst() {
     tl_config "SPIRA_PATH=$MOCK_BIN" "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
         SPIRA_DOLT_DATA= "SPIRA_RUN=$SPIRA_RUN_DIR" "SPIRA_MAIL=$SPIRA_RUN_DIR/mail" \
         "SPIRA_PROD=${TEST_PROD-$PROD}" "SPIRA_COCKPIT=$REAL_COCKPIT"
-    env -i \
+    env -i SPIRA_RELEASE="$(tl_release)" \
         "PATH=$MOCK_BIN:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
@@ -102,7 +102,7 @@ echo
 echo "CONF EMPTY — SPIRA_PROD= (empty) is preserved, not replaced by default:"
 tl_config SPIRA_PROD=
 conf_result="$(
-    env -i "PATH=$PATH" "HOME=$TMP/home" SPIRA_CONF=/nonexistent "SPIRA_TOML=$SPIRA_TOML" \
+    env -i SPIRA_RELEASE="$(tl_release)" "PATH=$PATH" "HOME=$TMP/home" SPIRA_CONF=/nonexistent "SPIRA_TOML=$SPIRA_TOML" \
         bash -c '. '"$HERE/conf.sh"'; printf "%s" "${SPIRA_PROD:-__EMPTY__}"' 2>/dev/null
 )"
 [ "$conf_result" = "__EMPTY__" ] && ok "conf empty: SPIRA_PROD= preserved as empty" \

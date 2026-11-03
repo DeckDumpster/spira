@@ -2,18 +2,12 @@
 //! bead the lifecycle record has LANDED (sp-z61hj, sp-x9kbg, sp-2c1n0; testenv::reap,
 //! testenv::landed, testenv::busy, spira-config/DESIGN-build-cache.md §2.4).
 //!
-//! SPIRA_RUN (worktrees default to $SPIRA_RUN/worktree) is a registered key, read through
-//! `spira_config::process::cfg` — the one source of config (per Ryan 2026-10-05). `SPIRA_HOME`
-//! is not registered (it is the bootstrap that locates `$SPIRA_TOML` in the first place), so
-//! it is still read straight from the environment — but a binary that resolves its own config
-//! by searching beside its executable for a `spira/` is exactly the "second source" the law
-//! forbids: `landing-pass` and every unit this runs under set `SPIRA_HOME` (and `SPIRA_RELEASE`)
-//! explicitly now. Neither set is a refusal, never a search.
+//! SPIRA_RUN (worktrees default to $SPIRA_RUN/worktree) is read through
+//! `spira_config::process::cfg`; spira-lc and the child PATH come from `$SPIRA_RELEASE`.
 //! Exit 0 on a completed pass (even one that reaped nothing), 1 when a removal failed
 //! (nothing else is fatal — a worktree whose landed-ness cannot be told, or that is busy,
-//! is simply kept), 2 on usage or when SPIRA_HOME/SPIRA_RUN cannot be resolved at all.
+//! is simply kept), 2 on usage or when a declared value cannot be resolved.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use testenv::{busy, landed, reap};
@@ -35,14 +29,6 @@ fn main() -> ExitCode {
         }
     }
     let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
-    // SPIRA_HOME is not registered config (it is the bootstrap that locates $SPIRA_TOML),
-    // so it is read straight from the environment — but unset is now a refusal, never a
-    // search beside this binary's own executable (per Ryan 2026-10-05: one source of
-    // config, no second source improvised from the filesystem layout).
-    let Some(home) = var("SPIRA_HOME").map(PathBuf::from) else {
-        eprintln!("target-reap: SPIRA_HOME is not set — refusing to guess the harness home");
-        return ExitCode::from(2);
-    };
     let dir = match dir {
         Some(d) => d,
         None => match spira_config::process::cfg("SPIRA_RUN") {
@@ -53,12 +39,14 @@ fn main() -> ExitCode {
             }
         },
     };
-    let env: BTreeMap<String, String> = std::env::vars().collect();
-    // Landed-ness is the lifecycle record's (sp-2c1n0): `spira-lc state <id>` = LANDED,
-    // spira-lc found beside this harness's own release first (census's own rule), or
-    // SPIRA_LC_BIN (a suite's pin).
-    let lc_bin = var("SPIRA_LC_BIN").unwrap_or_else(|| spira_config::release_env::tool("spira-lc"));
-    let path_env = spira_config::release_env::child_path_env(home.parent(), env.get("PATH").map(String::as_str));
+    // Landed-ness is the lifecycle record's: `spira-lc state <id>` = LANDED.
+    let (lc_bin, path_env) = match spira_config::lifecycle_row::lc_bin().and_then(|b| Ok((b, spira_config::release_env::child_path_env_for_process()?))) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("target-reap: {e}");
+            return ExitCode::from(2);
+        }
+    };
     let landed_fn = |id: &str, _wt: &Path| landed::lc_landed(&lc_bin, &path_env, id);
     let busy_fn = |wt: &Path| busy::worktree_busy(wt);
 

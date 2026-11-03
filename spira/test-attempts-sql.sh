@@ -59,6 +59,7 @@ testdb_available || skip "no fixture database reachable"
 testdb_require attempts-sql
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 lc_facts_stub "$TMP/lc"
+tl_declare_release
 # testdb-mode: server — attempts_of reads the events table via bd sql, which embedded
 # mode refuses.
 export SPIRA_TESTDB_MODE=server

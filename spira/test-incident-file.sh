@@ -50,7 +50,7 @@ inc() {
             *) extra+=("$_a") ;;
         esac
     done
-    env -i HOME="$HOME" PATH="$PATH" \
+    env -i SPIRA_RELEASE="$(tl_release)" HOME="$HOME" PATH="$PATH" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/nonexistent.conf" \
         SPIRA_SPOOL="$SPOOL" \

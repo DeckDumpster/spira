@@ -1,0 +1,6 @@
+# forge-batch-readers: files outside the queue that still read or plant a forge batch's open,
+# prepared or forge-state file in a queue directory, one repo-relative path per line. Blank
+# lines and `#` comments are ignored.
+#
+# SHRINK-ONLY. A line leaves when its file asks `queue batch show` instead; nothing is ever
+# added for a NEW reader.

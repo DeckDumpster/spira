@@ -631,30 +631,20 @@ pub fn parse_enact(input: &str) -> Result<(String, String), String> {
     Ok((slug.to_string(), text.to_string()))
 }
 
-/// Where `rule.sh` is, found rather than known.
-///
-/// NO HARDCODED PATH — a harness that names one operator's checkout is unbuildable for
-/// anyone else, which is the whole reason `spira.conf` exists. `SPIRA_RULE` overrides for a
-/// fixture; otherwise the binary walks up from itself, because this panel lives at
-/// `cockpit/panel/target/*/panel` and the script at `rule.sh` — an ancestor
-/// of wherever the binary was built, debug or release.
-///
-/// It fails loudly when there is none. Guessing a path here would run some other tree's
-/// `rule.sh` against a statute book Ryan is not reading.
+/// `rule.sh` of the release `$SPIRA_RELEASE` names; a refusal naming the key when it is
+/// unset or the release has none. Guessing a path would run some other tree's `rule.sh`
+/// against a statute book the operator is not reading.
 fn rule_sh() -> Result<String, String> {
-    if let Ok(p) = std::env::var("SPIRA_RULE") {
-        if !p.is_empty() {
-            return Ok(p);
-        }
+    rule_sh_in(std::env::var(spira_config::RELEASE_ENV).ok().as_deref())
+}
+
+fn rule_sh_in(release: Option<&str>) -> Result<String, String> {
+    let p = spira_config::release_env::release_root(release)?.join("rule.sh");
+    if p.is_file() {
+        Ok(p.to_string_lossy().into_owned())
+    } else {
+        Err(format!("{} has no rule.sh (SPIRA_RELEASE names the release)", p.display()))
     }
-    let exe = std::env::current_exe().map_err(|e| format!("cannot locate myself: {e}"))?;
-    for anc in exe.ancestors() {
-        let c = anc.join("rule.sh");
-        if c.is_file() {
-            return Ok(c.to_string_lossy().to_string());
-        }
-    }
-    Err("rule.sh not found above this binary — set SPIRA_RULE".into())
 }
 
 /// Run a command for its exit status, keeping the END of stderr.
@@ -915,6 +905,19 @@ pub fn comment(view: View, item: &Item, text: &str, cfg: &Cfg) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rule_sh_without_spira_release_refuses_naming_the_key() {
+        let e = rule_sh_in(None).unwrap_err();
+        assert!(e.contains("SPIRA_RELEASE is not set"), "{e}");
+    }
+
+    #[test]
+    fn rule_sh_is_the_release_s_own_and_never_searched_for() {
+        assert!(rule_sh_in(Some("/nonexistent-release")).unwrap_err().contains("has no rule.sh"));
+        let tree = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+        assert_eq!(rule_sh_in(Some(tree)).unwrap(), format!("{tree}/rule.sh"));
+    }
 
     fn an_alert(labels: &[&str]) -> Item {
         Item {

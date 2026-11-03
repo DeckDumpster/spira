@@ -33,7 +33,10 @@ pub fn is_planning_write<S: AsRef<str>>(args: &[S]) -> bool {
 /// Runs `spira-lc plan stamp` after a planning write `caller` made. A stamp that fails is
 /// reported, never raised: the write it follows has already landed.
 pub fn stamp_after(caller: &str) {
-    let bin = crate::lifecycle_row::lc_bin();
+    let bin = match crate::lifecycle_row::lc_bin() {
+        Ok(b) => b,
+        Err(e) => return eprintln!("{caller}: the planning write landed but the watermark did not advance: {e}"),
+    };
     let out = crate::bounded::bounded_for(&bin, "15").args(["plan", "stamp"]).stdin(std::process::Stdio::null()).output();
     match out {
         Ok(o) if o.status.success() => {}

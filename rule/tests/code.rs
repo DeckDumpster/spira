@@ -185,7 +185,7 @@ fn a_trailing_citation_stays_out_of_the_shipped_section_and_a_midtext_parenthesi
 
 #[test]
 fn law_submission_runs_queue_submit_with_no_call_timeout_so_the_gate_survives() {
-    let c = rule::code::queue_submit_command("spira/sp-x", "spira");
+    let c = rule::code::queue_submit_command("queue", "spira/sp-x", "spira");
     let program = std::path::Path::new(c.get_program());
     assert_eq!(program.file_name().and_then(|n| n.to_str()), Some("queue"), "queue submit must not run under a call-timeout wrapper: it runs the gate");
     let args: Vec<_> = c.get_args().collect();

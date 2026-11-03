@@ -93,7 +93,7 @@ tl_config SPIRA_BATCHER_ENABLE=1 SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD=
 landing() {
     rm -f "$RUN/landing.progress"
     SPIRA_HOME="$SH" SPIRA_REPO="$REPO" \
-        PATH="$SH:$PATH" landing-pass land 2>&1
+        SPIRA_RELEASE="$(PATH="$SH:$PATH" tl_release)" PATH="$SH:$PATH" landing-pass land 2>&1
 }
 
 seed() {

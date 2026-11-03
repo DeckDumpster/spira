@@ -184,6 +184,7 @@ pub struct Report {
     pub floor: Option<String>,
     pub deadman: Option<DeadMan>,
     pub heartbeat: Option<String>,
+    pub heartbeat_state: Option<alarms::HeartbeatState>,
     pub undelivered_open: usize,
     pub published: bool,
 }
@@ -490,13 +491,14 @@ fn floor(p: &Ports, cfg: &Config, seen: &[Seen], pass: Option<&PassRecord>, pass
     report.floor = Some(binding);
 }
 
-fn ping(p: &Ports, cfg: &Config) -> String {
+fn ping(p: &Ports, cfg: &Config) -> (String, alarms::HeartbeatState) {
+    use alarms::HeartbeatState;
     if cfg.heartbeat_url.trim().is_empty() {
-        return NO_HEARTBEAT_URL.into();
+        return (NO_HEARTBEAT_URL.into(), HeartbeatState::Unconfigured);
     }
     match p.http.get(&cfg.heartbeat_url, HEARTBEAT_DEADLINE) {
-        Ok(s) => s,
-        Err(e) => format!("failed: {e}"),
+        Ok(s) => (s, HeartbeatState::Delivered),
+        Err(e) => (format!("failed: {e}"), HeartbeatState::Failed),
     }
 }
 
@@ -571,6 +573,11 @@ fn publish(p: &Ports, cfg: &Config, seen: &[Seen], pass: Option<&PassRecord>, dm
         DeadMan::Stale { age_secs: Some(_) } => "stale: the last pass record is past the dead-man".into(),
         DeadMan::Stale { age_secs: None } => "stale: no pass record".into(),
     };
+    let deadman_state = match dm {
+        DeadMan::Waiting(_) => alarms::DeadManState::Waiting,
+        DeadMan::Fresh { .. } => alarms::DeadManState::Fresh,
+        DeadMan::Stale { .. } => alarms::DeadManState::Stale,
+    };
     let mut status = json!({
         "observedGeneration": prev.and_then(|s| s.metadata.generation).unwrap_or(0),
         "conditions": [
@@ -583,12 +590,18 @@ fn publish(p: &Ports, cfg: &Config, seen: &[Seen], pass: Option<&PassRecord>, dm
         "failed_24h": day(n.failed),
         "pages_sent_24h": day(n.pages),
         "deadman": deadman,
+        alarms::DEADMAN_STATE: deadman_state,
         "undelivered": open.iter().map(|a| json!({ "reference": a.reference, "kind": a.kind, "at": format_rfc3339(a.at) })).collect::<Vec<_>>(),
     });
     if let Some(h) = &report.heartbeat {
         status["heartbeat_last"] = json!(h);
     } else if let Some(h) = prev.and_then(|s| s.status.fields.get("heartbeat_last")) {
         status["heartbeat_last"] = h.clone();
+    }
+    if let Some(h) = &report.heartbeat_state {
+        status[alarms::HEARTBEAT_STATE] = json!(h);
+    } else if let Some(h) = prev.and_then(|s| s.status.fields.get(alarms::HEARTBEAT_STATE)) {
+        status[alarms::HEARTBEAT_STATE] = h.clone();
     }
     let unchanged = prev.is_some_and(|s| {
         let mut was = serde_json::to_value(&s.status).unwrap_or(Value::Null);
@@ -648,7 +661,9 @@ pub fn run(p: &Ports, cfg: &Config) -> Result<Report, String> {
     page_all(p, cfg, &cands, now, &mut report);
     floor(p, cfg, &seen, pass.as_ref(), snap.get("pass").unwrap_or(&Value::Null), now, &mut report);
     if matches!(dm, DeadMan::Fresh { .. }) {
-        report.heartbeat = Some(ping(p, cfg));
+        let (said, state) = ping(p, cfg);
+        report.heartbeat = Some(said);
+        report.heartbeat_state = Some(state);
     }
     publish(p, cfg, &seen, pass.as_ref(), &dm, &mut report, now)?;
     report.deadman = Some(dm);

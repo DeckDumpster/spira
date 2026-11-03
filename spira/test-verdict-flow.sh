@@ -404,7 +404,7 @@ export SPIRA_HOME="$HERE"
 
 do_escalate() {
     printf 'the landing worker will not start\nevidence\n' | \
-        PATH="$LESC_HOME:$PATH" SPIRA_LAND_ESCALATE_EVERY=0 sentinel --land-escalate
+        SPIRA_RELEASE="$(PATH="$LESC_HOME:$PATH" tl_release)" PATH="$LESC_HOME:$PATH" SPIRA_LAND_ESCALATE_EVERY=0 sentinel --land-escalate
 }
 
 echo "land_escalate: positive control — reaches the operator when no ask is open"

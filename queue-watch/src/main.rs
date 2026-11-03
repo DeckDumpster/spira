@@ -194,9 +194,13 @@ fn stall_incident(repo: &str, pr: &str, text: &str) -> (String, String) {
 /// stall anyway, but a restarted queue-watch process has no memory of that latch.
 fn file_stall_incident(incident_sh: &Path, db: Option<&Path>, repo: &str, pr: &str, text: &str) {
     let (ref_, subject) = stall_incident(repo, pr, text);
+    let envs = match spira_config::release_env::child_path_env_for_process() {
+        Ok(e) => e,
+        Err(e) => return eprintln!("queue-watch: not filing the stall incident: {e}"),
+    };
     let mut cmd = spira_config::bounded::bounded("bash");
     cmd.arg(incident_sh)
-        .envs(spira_config::release_env::child_path_env_for_process())
+        .envs(envs)
         .arg("file")
         .arg(&subject)
         .arg("-")
@@ -228,6 +232,7 @@ fn watch(o: &Opts) -> Result<(), String> {
     let queue_dir = spira_config::process::cfg("SPIRA_QUEUE_DIR")?;
     let env_ = Env {
         queue_dir: if queue_dir.is_empty() { run.join("queue") } else { PathBuf::from(queue_dir) },
+        queue_bin: PathBuf::from(spira_config::release_env::tool("queue")?),
         db: o.db.clone(),
         // SPIRA_LC_BIN is not a registered config key — a bare binary found on PATH, same as
         // always.

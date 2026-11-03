@@ -51,10 +51,10 @@ fn agrees(w: &World, c: &Ctx) -> Result<(), i32> {
 /// failed spira-lc read is Err (cannot tell), which refuses like a positive answer.
 pub fn in_delivery(w: &World, c: &Ctx, path: &std::path::Path) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
-    if let Ok(Some(kv)) = records::read_kv(&c.queue_file("open")) {
+    if let Some(o) = super::forge_batch::read(w, c)? {
         out.push(format!(
             "open batch PR {}",
-            kv.get_first("pr").unwrap_or("?")
+            o.kv.get_first("pr").unwrap_or("?")
         ));
     }
     let here = |t: &str| crate::ident::check("tip", t).is_ok() && w.git.commit_exists(path, t);

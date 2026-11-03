@@ -9,7 +9,10 @@ use queue::real::*;
 use queue::conf::harness_home;
 
 fn main() -> ExitCode {
-    spira_config::release_env::ensure_release_path();
+    if let Err(e) = spira_config::release_env::ensure_release_path() {
+        eprintln!("queue: {e}");
+        std::process::exit(2);
+    }
     let argv: Vec<String> = std::env::args().skip(1).collect();
     if argv.len() == 1 && argv[0] == "check-config" {
         let rc = spira_config::process::check_config_verb("queue", queue::real::CONFIG_KEYS);
@@ -27,14 +30,21 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let Some(home) = harness_home() else {
-        eprintln!("queue.sh: cannot find the harness (lib.sh): set SPIRA_HOME or spira.prod");
+        eprintln!("queue.sh: cannot find the harness (lib.sh): set SPIRA_HOME or SPIRA_RELEASE");
         return ExitCode::from(1);
     };
     let lib = RealLib { home: home.clone() };
     // spira-lc and the forge are configured by conf.sh; resolve once for them.
+    let bdq = match spira_config::release_env::tool("bdq") {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("queue.sh: {e}");
+            return ExitCode::from(1);
+        }
+    };
     let (bd, lc) = match queue::ports::Lib::context(&lib, None) {
         Ok((s, _)) => (
-            RealBd { bdq: spira_config::release_env::tool("bdq") },
+            RealBd { bdq },
             RealLc {
                 bin: s.lc_bin.clone(),
             },

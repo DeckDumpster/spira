@@ -22,7 +22,7 @@
 # exercised through the `queue` subcommand at all once this suite stopped calling `once`.
 #
 # tier: T2
-# covers: cockpit-collect/src/* spira/lib.sh cockpit/ops/src/health.rs UC-cockpit-observability-11 spira-lc/* spira/testlib/lc-fixture.sh
+# covers: cockpit-collect/src/* spira/lib.sh cockpit/ops/src/health.rs UC-cockpit-observability-11 spira-lc/* spira/testlib/lc-fixture.sh spira/testlib/forge-batch.sh
 # scar: UNLND read closed beads and commit bodies, so batched open beads were invisible
 #       and body mentions falsely marked beads as landed.
 #
@@ -42,6 +42,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 tl_config SPIRA_TEST_CASE_DEADLINE=60
 
 . "$HERE/testlib/lc-fixture.sh"
+. "$HERE/testlib/forge-batch.sh"
 
 TMP="$(mktemp -d)"
 trap 'lcfix_down; rm -rf "$TMP"' EXIT INT TERM
@@ -84,33 +85,17 @@ JSON
 NOW_EPOCH="$(date +%s)"
 EPOCH_C1=$(( NOW_EPOCH - 600 ))
 EPOCH_C2=$(( NOW_EPOCH - 300 ))
-TIP_B1="$(git -C "$REPO" rev-parse spira/sp-b1)"
-TIP_B2="$(git -C "$REPO" rev-parse spira/sp-b2)"
-TIP_B3="$(git -C "$REPO" rev-parse spira/sp-b3)"
-TIP_BOPEN="$(git -C "$REPO" rev-parse spira/sp-bopen)"
 TIP_C1="$(git -C "$REPO" rev-parse spira/sp-c1)"
 TIP_C2="$(git -C "$REPO" rev-parse spira/sp-c2)"
 
-lcfix_seed sp-b1 IN_DELIVERY "$TIP_B1" "$NOW_EPOCH"
-lcfix_seed sp-b2 IN_DELIVERY "$TIP_B2" "$NOW_EPOCH"
-lcfix_seed sp-b3 IN_DELIVERY "$TIP_B3" "$NOW_EPOCH"
-lcfix_seed sp-bopen IN_DELIVERY "$TIP_BOPEN" "$NOW_EPOCH"
 lcfix_seed sp-c1 CERTIFIED "$TIP_C1" "$EPOCH_C1"
 lcfix_seed sp-c2 CERTIFIED "$TIP_C2" "$EPOCH_C2"
 
-# Open batch file: PR 42, members sp-b1 sp-b2 sp-b3 sp-bopen, opened 180s ago (ABSORBED FROM
-# test-cockpit-queue.sh: a non-zero SP_QUEUE_BATCH_AGE).
-OPENED_EPOCH=$(( NOW_EPOCH - 180 ))
-BATCH_DIR="$TMP/queue/alpha"
-mkdir -p "$BATCH_DIR"
-cat > "$BATCH_DIR/open" <<BATCHEOF
-pr=42
-head=$(git -C "$REPO" rev-parse main)
-base=$(git -C "$REPO" rev-parse main)
-members=sp-b1:$TIP_B1 sp-b2:$TIP_B2 sp-b3:$TIP_B3 sp-bopen:$TIP_BOPEN
-opened=$OPENED_EPOCH
-branch=spira/queue/test
-BATCHEOF
+# The open batch: PR 42, members sp-b1 sp-b2 sp-b3 sp-bopen, opened 180s ago (ABSORBED FROM
+# test-cockpit-queue.sh: a non-zero SP_QUEUE_BATCH_AGE), cut on spira-lc as IN_DELIVERY.
+tl_config SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$MAP" SPIRA_QUEUE_DIR="$TMP/queue"
+seed_forge_batch alpha sp-b1,sp-b2,sp-b3,sp-bopen --pr 42 --opened-ago 180 >/dev/null \
+    || bail "could not seed the open batch"
 
 # ABSORBED FROM test-cockpit-queue.sh: one quarantined suite in the repo's suite-state file.
 mkdir -p "$REPO/spira"
@@ -123,7 +108,7 @@ queue() {
     tl_config SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$MAP" SPIRA_RUNES=t \
         SPIRA_QUEUE_DIR="$TMP/queue" SPIRA_SUITE_STATE_FILE="spira/suite-state-test"
-    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
         SPIRA_BDJSON_FIXTURE="$TMP/beads.json" \
@@ -182,7 +167,7 @@ for line in sys.stdin:
 
 REAL_BD="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null)"
 tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$MAP" SPIRA_RUNES=t SPIRA_BD="${REAL_BD:-bd}"
-pane="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+pane="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
     "$PANE" once 0 120 2>/dev/null)"
@@ -232,7 +217,7 @@ printf '# name | path | land | base | format | gate\nalpha | %s | queue | main |
 tl_config SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
     SPIRA_RUN="$RUN2" SPIRA_DB="$TMP2/nodb" SPIRA_REPO_MAP="$MAP2" SPIRA_RUNES=t \
     SPIRA_QUEUE_DIR="$TMP2/queue" SPIRA_SUITE_STATE_FILE="spira/suite-state"
-out2="$(env -i PATH="$BASE_PATH" HOME="$TMP2" LC_ALL=C.UTF-8 \
+out2="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$BASE_PATH" HOME="$TMP2" LC_ALL=C.UTF-8 \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$TMP2/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$REPO2" \
     SPIRA_BDJSON_FIXTURE="$BEADS2_JSON" \
@@ -262,7 +247,7 @@ for line in sys.stdin:
 } > "$RUN2/cockpit.env"
 
 tl_config SPIRA_RUN="$RUN2" SPIRA_DB="$TMP2/nodb" SPIRA_REPO_MAP="$MAP2" SPIRA_RUNES=t SPIRA_BD="${REAL_BD:-bd}"
-pane2="$(env -i PATH="$BASE_PATH" HOME="$TMP2" LC_ALL=C.UTF-8 \
+pane2="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$BASE_PATH" HOME="$TMP2" LC_ALL=C.UTF-8 \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$TMP2/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$REPO2" \
     "$PANE2" once 0 120 2>/dev/null)"

@@ -50,7 +50,7 @@ wt() {  # wt [VAR=val ...] -> the snapshot
     # SPIRA_RUN is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare
     # via tl_config and thread SPIRA_TOML through env -i, which clears it.
     tl_config SPIRA_RUN="$TMP/run"
-    env -i PATH="$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
         SPIRA_LAPSED_DIR="${SPIRA_LAPSED_DIR_OVERRIDE:-$TMP/run/lapsed}" \
         SPIRA_LAPSED_MARKER="${SPIRA_LAPSED_MARKER_OVERRIDE:-$TMP/run/lapsed.swept}" \
@@ -67,7 +67,7 @@ wt_file() {  # wt_file [VAR=val ...] -> $TMP/ops-prompt written
     # SPIRA_RUN is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare
     # via tl_config and thread SPIRA_TOML through env -i, which clears it.
     tl_config SPIRA_RUN="$TMP/run"
-    env -i PATH="$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
         SPIRA_LAPSED_DIR="${SPIRA_LAPSED_DIR_OVERRIDE:-$TMP/run/lapsed}" \
         SPIRA_LAPSED_MARKER="${SPIRA_LAPSED_MARKER_OVERRIDE:-$TMP/run/lapsed.swept}" \
@@ -113,7 +113,7 @@ if [ "$(type -t write_lapse_record 2>/dev/null)" = function ]; then
     # write_lapse_record shells out to the compiled spira-claim binary (lib.sh is a thin
     # wrapper now), which reads SPIRA_RUN only through the one source of config — a plain
     # env prefix no longer reaches it. Declare the override (SPIRA_TOML is already exported
-    # by testlib.sh for this in-process call, no env -i needed) before calling it.
+    # by testlib.sh for this in-process call, no env -i SPIRA_RELEASE="$(tl_release)" needed) before calling it.
     tl_config SPIRA_RUN="$TMP/run"
     write_lapse_record sp-g8real 600 "writing output file" abc1234 >/dev/null
     n_written="$(ls "$TMP/run/lapsed" 2>/dev/null | wc -l | tr -d ' ')"

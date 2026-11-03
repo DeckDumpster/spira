@@ -31,7 +31,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 # Create HOME directory to prevent git write failures in batch isolation
 mkdir -p "$TMP/home"
 
-# Create HOME directory that will be used by env -i in run_skew
+# Create HOME directory that will be used by env -i SPIRA_RELEASE="$(tl_release)" in run_skew
 mkdir -p "$TMP/home"
 
 # ---------------------------------------------------------------------------
@@ -128,7 +128,7 @@ run_skew() {
 
     # Use the test-specific RELEASES set up by reset_releases, not a new isolated copy.
     # This allows test blocks to control what scenario skew sees.
-    env -i PATH="$PATH" \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF=/nonexistent \
@@ -236,7 +236,7 @@ run_skew_noart() {
         esac
     done
 
-    env -i PATH="$PATH" \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF=/nonexistent \
@@ -317,7 +317,7 @@ printf 'spira | %s | push | origin/main | |\n' "$ARTIFACT_REPO" > "$TMP/repomap-
         esac
     done
 
-    env -i PATH="$PATH" \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF=/nonexistent \
@@ -492,7 +492,7 @@ run_skew_checkout() {
             *) extra+=("$_a") ;;
         esac
     done
-    env -i PATH="$PATH" \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF=/nonexistent \

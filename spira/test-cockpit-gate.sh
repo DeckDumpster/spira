@@ -31,14 +31,14 @@ tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" SPI
 # section, `cockpit-collect probe unsent` for landing.status/landing.progress — instead of a full
 # `once`, which ran every probe (16 tiers) just to reach one of them.
 run_now() {
-    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         "$@" \
         cockpit-collect probe now 2>/dev/null
 }
 run_unsent() {
-    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         BD_TIMEOUT=1 \
@@ -127,7 +127,7 @@ echo "gate-run.sh --status emits nothing on stderr:"
 # need to exist — exit code 1 (no branch) is fine; what matters is that NO STDERR is
 # emitted while scanning the process table.
 # Use a non-existent branch to trigger exit 3 (nothing running, nothing finished).
-stderr_out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+stderr_out="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_TOML="$SPIRA_TOML" \
     gate-run.sh --status spira/sp-nonexistent spira 2>&1 >/dev/null)" || true
@@ -158,7 +158,7 @@ SP_SENTINEL_AGE='10'
 SP_OPS_TIMER='1'
 SP_OPS_AGE='10'
 SNAP
-health_out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 TERM=dumb \
+health_out="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 TERM=dumb \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_TOML="$SPIRA_TOML" \
     health once 2>/dev/null)" || true

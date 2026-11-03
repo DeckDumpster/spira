@@ -22,7 +22,7 @@ rsk() {
     local spill="$1"; shift
     tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_ROUND_VM_SPILL="$spill" \
         SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9 SPIRA_ROUND_VM_EC2_PROBE_DEADLINE=7
-    env -i PATH="$TMP/ok:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" "$@" 2>&1
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$TMP/ok:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" "$@" 2>&1
 }
 fresh() { rm -f "$TMP/run/watchd/round-spill-key.said" "$INBOX"; }
 
@@ -45,7 +45,7 @@ rskp() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_ROUND_VM_SPILL=ec2-only \
         SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9 \
         SPIRA_ROUND_VM_EC2_PROBE_DEADLINE="${DL:-7}" SPIRA_ROUND_VM_STATE_DIR=
-    env -i PATH="$TMP/stub:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" "$@" 2>&1
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$TMP/stub:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" "$@" 2>&1
 }
 echo "$((now + 30 * 86400))" > "$KEY.expires"
 fresh; rm -f "$TMP/probe.log"
@@ -89,7 +89,7 @@ printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && exit "${TC_RC:-0}"\nsl
 rskd() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_ROUND_VM_SPILL=ec2-only SPIRA_ROUND_VM_STATE_DIR="$TMP/state" SPIRA_ROUND_VM_EC2_LAUNCH_WINDOW=3600 \
         SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9 SPIRA_ROUND_VM_EC2_PROBE_DEADLINE=1
-    env -i PATH="$TMP/stub:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" "$@" 2>&1
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$TMP/stub:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" "$@" 2>&1
 }
 echo "$((now + 30 * 86400))" > "$KEY.expires"
 cat > "$TMP/state/pool.json" <<JSON
@@ -139,7 +139,7 @@ chmod +x "$TMP/bin/aws"
 KEY="$TMP/keydir/k.tskey"
 rsp() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_ROUND_VM_EC2_PROFILE=prof-x SPIRA_ROUND_VM_EC2_REGION=eu-test-9 SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY"
-    env -i PATH="$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" SPIRA_AWS="$TMP/bin/aws" bash "$HERE/round-spill-profile.sh" "$@" 2>&1
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" SPIRA_AWS="$TMP/bin/aws" bash "$HERE/round-spill-profile.sh" "$@" 2>&1
 }
 rsp ensure >/dev/null; is "ensure succeeds" "0" "$?"
 want "ensure sets the configured profile's region" "configure set region eu-test-9 --profile prof-x" "$(cat "$TMP/aws.log")"
@@ -158,7 +158,7 @@ out="$(TC_RC=1 rskp pass)"
 nowant "ec2-only never checks the local template" "ROUND TEMPLATE" "$out"
 tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_ROUND_VM_SPILL=ec2 \
     SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9
-tpl() { env -i PATH="$TMP/stub:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" pass 2>&1; }
+tpl() { env -i SPIRA_RELEASE="$(tl_release)" PATH="$TMP/stub:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" pass 2>&1; }
 fresh
 want "a missing local template raises the watch row" "ROUND TEMPLATE: the local round pool cannot lease: local round template 9000 is missing" "$(tpl)"
 want "the row reaches the inbox" "ROUND TEMPLATE" "$(cat "$INBOX")"

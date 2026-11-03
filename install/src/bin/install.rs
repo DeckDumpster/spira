@@ -148,7 +148,7 @@ const AERC_VERSION: &str = "0.22.0";
 /// Where the release build (`spira/build-tarball.sh`) ships the aerc binary it built once,
 /// relative to the release root — the same ancestor whose `bin/` holds this very
 /// `spira-install` binary, and what
-/// `spira_config::release_env::own_release_root_for_process` resolves to for it. Deliberately
+/// `$SPIRA_RELEASE` names for it. Deliberately
 /// NOT under `bin/`: `release::build::clashes` (and anything else that assumes `bin/` holds
 /// only this workspace's own `[[bin]]` targets) never has to learn that aerc is not one of
 /// them, and `spira/build-tarball.sh`'s own compat-symlink pass over `bin/` never has to
@@ -183,8 +183,8 @@ fn dependencies(dry: bool) -> Result<(), String> {
         std::env::set_var("PATH", format!("{}:{path}", bin.display()));
     }
 
-    let release_root = spira_config::release_env::own_release_root_for_process();
-    build_spira_env(dry, &home, release_root.as_deref())?;
+    let release_root = spira_config::release_env::release_root_for_process()?;
+    build_spira_env(dry, &home, Some(&release_root))?;
     let env_bin = spira_config::spira_env_bin(&home);
     let path = std::env::var("PATH").unwrap_or_default();
     std::env::set_var("PATH", format!("{env_bin}:{path}"));
@@ -204,7 +204,7 @@ fn dependencies(dry: bool) -> Result<(), String> {
     fetch_duckdb(dry, &bin)?;
     fetch_sccache(dry, &bin)?;
     fetch_inotifywait(dry, &bin)?;
-    install_aerc(dry, &bin, spira_config::release_env::own_release_root_for_process().as_deref())?;
+    install_aerc(dry, &bin, Some(&release_root))?;
     install_sendmail(dry, &home, &bin)?;
     Ok(())
 }
@@ -558,7 +558,7 @@ fn fetch_inotifywait(dry: bool, bin: &Path) -> Result<(), String> {
 /// `AERC_VERSION`'s comment for why.
 ///
 /// `release_root` is this `spira-install` binary's own release
-/// (`spira_config::release_env::own_release_root_for_process`, resolved once by the
+/// (`$SPIRA_RELEASE`, resolved once by the
 /// caller). `None` means this process is not running from a built release at all — a dev
 /// checkout, `cargo run --bin spira-install` with no `spira/build-tarball.sh` output
 /// anywhere above it — and that is a FAIL-CLOSED condition: law-install-installs-every-
@@ -687,26 +687,18 @@ fn refuse_instance(c: &install::guards::Conflict) -> ExitCode {
     ExitCode::from(2)
 }
 
-/// A fresh host exports neither `SPIRA_TOML` nor `SPIRA_RELEASES`: the config is where
-/// `configure` wrote it, and the release is the one this binary was run from.
-fn resolve_own_config_and_release() {
-    spira_config::locate::adopt_configure_default();
-    let Some(root) = spira_config::release_env::own_release_root_for_process() else { return };
+/// The launcher declares `SPIRA_TOML` and `SPIRA_RELEASE`; install refuses, naming the key,
+/// without either. The release's `bin/`+`spira/` go ahead of the operator's PATH, and the
+/// releases directory is the config's `spira.releases`.
+fn require_declared_config_and_release() -> Result<(), String> {
+    let root = install::guards::require_declared(nonempty_env("SPIRA_TOML").as_deref(), nonempty_env(spira_config::RELEASE_ENV).as_deref())?;
     let path = std::env::var("PATH").unwrap_or_default();
     let bin = root.join("bin");
     if !path.split(':').any(|p| Path::new(p) == bin) {
-        for (k, v) in spira_config::release_env::child_path_env(Some(&root), Some(&path)) {
-            if k != spira_config::RELEASE_ENV || nonempty_env(&k).is_none() {
-                std::env::set_var(k, v);
-            }
-        }
+        std::env::set_var("PATH", format!("{}:{}:{path}", bin.display(), root.join("spira").display()));
     }
-    if nonempty_env("SPIRA_RELEASES").is_none() {
-        let canon = |p: &Path| std::fs::canonicalize(p).ok();
-        if let Some(parent) = root.parent().filter(|par| canon(&par.join("current")).is_some_and(|c| Some(c) == canon(&root))) {
-            std::env::set_var("SPIRA_RELEASES", parent);
-        }
-    }
+    std::env::set_var("SPIRA_RELEASES", spira_config::process::cfg("SPIRA_RELEASES")?);
+    Ok(())
 }
 
 fn main() -> ExitCode {
@@ -714,7 +706,10 @@ fn main() -> ExitCode {
 }
 
 fn run_main() -> ExitCode {
-    resolve_own_config_and_release();
+    if let Err(e) = require_declared_config_and_release() {
+        eprintln!("install: {e}");
+        return ExitCode::from(2);
+    }
     let opts = match parse_args() {
         Ok(o) => o,
         Err(e) => {
@@ -937,7 +932,7 @@ fn run_main() -> ExitCode {
         // to run at all). This ALSO proves the post-init skip check keeps -C — only the
         // fresh-init call below lost it.
         let bead_count = Command::new("timeout")
-            .args([FIRST_RUN_SECS, spira_config::release_env::tool("bd").as_str(), "-C", &db, "list", "--limit", "0", "--json"])
+            .args([FIRST_RUN_SECS, "bd", "-C", &db, "list", "--limit", "0", "--json"])
             .output()
             .ok()
             .and_then(|o| o.status.success().then_some(o.stdout))
@@ -1291,7 +1286,13 @@ fn run_main() -> ExitCode {
     } else if nonempty_env("SPIRA_INSTALL_LC_STORE_CONSIDERED").is_some() {
         skip("certify-lock sweep: no lifecycle store to say which rounds ended");
     } else {
-        let queue = spira_config::release_env::tool("queue");
+        let queue = match spira_config::release_env::tool("queue") {
+            Ok(q) => q,
+            Err(e) => {
+                eprintln!("install: {e}");
+                return ExitCode::from(2);
+            }
+        };
         let (rc, out) = tool_output(&queue, &["round", "sweep-locks", "--all"], &[]);
         print!("{out}");
         if rc != 0 {
@@ -1917,9 +1918,10 @@ fn populate_phase(dry: bool) -> Result<(), String> {
         return Ok(());
     }
     let port = lc_port(bootstrap::declared("SPIRA_DOLT_DATA").as_deref());
+    let lc = spira_config::lifecycle_row::lc_bin()?;
     let counts = install::populate::run(&inputs, |args| {
         // batch-job: one-time install population of the lifecycle store; bounded at 600 s by timeout(1).
-        let out = Command::new("timeout").arg("600").arg(spira_config::release_env::tool("spira-lc")).args(args).env("SPIRA_LC_PORT", port.to_string()).stdin(Stdio::null()).output();
+        let out = Command::new("timeout").arg("600").arg(&lc).args(args).env("SPIRA_LC_PORT", port.to_string()).stdin(Stdio::null()).output();
         match out {
             Ok(o) => (o.status.code().unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
             Err(e) => (127, format!("cannot run spira-lc: {e}")),
@@ -1947,9 +1949,10 @@ fn round_records_phase(dry: bool) -> Result<(), String> {
         skip("no round files to remove");
         return Ok(());
     }
+    let lc = spira_config::lifecycle_row::lc_bin()?;
     let gone = install::round_records::plan(&files, |batch| {
         // batch-job: one store read per round file; bounded at 30 s by timeout(1).
-        let o = Command::new("timeout").arg("30").arg(spira_config::release_env::tool("spira-lc")).args(["show-batch", batch]).stdin(Stdio::null()).output().map_err(|e| format!("cannot run spira-lc: {e}"))?;
+        let o = Command::new("timeout").arg("30").arg(&lc).args(["show-batch", batch]).stdin(Stdio::null()).output().map_err(|e| format!("cannot run spira-lc: {e}"))?;
         let v: serde_json::Value = serde_json::from_slice(&o.stdout).map_err(|_| format!("spira-lc show-batch {batch} exited {:?}: {}", o.status.code(), String::from_utf8_lossy(&o.stderr).trim()))?;
         match (o.status.code(), v.get("state").and_then(|s| s.as_str())) {
             (Some(0), Some(state)) => Ok(Some(state.to_string())),
@@ -1982,10 +1985,11 @@ fn lifecycle_store_phase(port: u16) -> Result<Vec<String>, String> {
     let cred = same_user_credential_path();
     let rw = lifecycle_store::read_credential(Path::new(&cred))?;
     let ro = lifecycle_store::read_credential(Path::new(&format!("{cred}-ro")))?;
+    let lc = spira_config::lifecycle_row::lc_bin()?;
     let run = |args: &[String], env: &[(String, String)]| {
         // batch-job: one-time install DDL against the local Dolt server; bounded at 120 s by timeout(1).
         let mut c = Command::new("timeout");
-        c.arg("120").arg(spira_config::release_env::tool("spira-lc")).args(args).stdin(Stdio::null());
+        c.arg("120").arg(&lc).args(args).stdin(Stdio::null());
         for (k, v) in env {
             c.env(k, v);
         }

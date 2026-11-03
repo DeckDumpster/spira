@@ -43,7 +43,7 @@ echo "T1: argument parsing — before testdb/bd is ever touched, no store"
 T1TMP="$(mktemp -d)"; trap 'rm -rf "$T1TMP"' EXIT INT TERM
 slay_noargv() {   # slay_noargv <args...> -> stdout+stderr, with SLAY_RC set
     tl_config SPIRA_RUN="$T1TMP/run" SPIRA_DB="$T1TMP/no-such-store"
-    SLAY_OUT="$(env -i PATH="$PATH" HOME="$T1TMP" LC_ALL=C.UTF-8 \
+    SLAY_OUT="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$T1TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$T1TMP/no.conf" \
         SPIRA_TOML="$SPIRA_TOML" \
         slay "$@" 2>&1)"

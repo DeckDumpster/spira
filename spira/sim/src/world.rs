@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-pub const PRODUCTION_LOCATORS: &[&str] = &["SPIRA_LC_PASSWORD_FILE", "SPIRA_LC_SOCKET", "SPIRA_RUN", "SPIRA_DB"];
+pub const PRODUCTION_LOCATORS: &[&str] = &["SPIRA_LC_PASSWORD_FILE", "SPIRA_LC_SOCKET", "SPIRA_RUN", "SPIRA_DB", "SPIRA_TOML"];
 pub const MARKER: &str = ".sim-world";
 /// The world's landing ref: `repo.sim.base`, and the ref a LANDED bead's commit must reach.
 pub const LANDING_BASE: &str = "local/main";
@@ -409,7 +409,7 @@ impl Steps for ProcessSteps {
     }
     fn db_up(&self, world: &Path) -> Result<String, String> {
         let out = run(
-            Command::new(spira_config::release_env::tool("testenv")).args(["testdb", "up", "--tag", "simworld", "--bd", "bd", "--dolt", "dolt", "--root"]).arg(db_root(world, &|k| std::env::var(k).ok())),
+            Command::new(spira_config::release_env::tool("testenv")?).args(["testdb", "up", "--tag", "simworld", "--bd", "bd", "--dolt", "dolt", "--root"]).arg(db_root(world, &|k| std::env::var(k).ok())),
             CALL_DEADLINE,
         )?;
         out.lines()
@@ -459,7 +459,7 @@ impl Steps for ProcessSteps {
     }
 
     fn db_down(&self, fixture: &str) -> Result<(), String> {
-        run(Command::new(spira_config::release_env::tool("testenv")).args(["testdb", "down", "--fixture", fixture]), CALL_DEADLINE).map(|_| ())
+        run(Command::new(spira_config::release_env::tool("testenv")?).args(["testdb", "down", "--fixture", fixture]), CALL_DEADLINE).map(|_| ())
     }
 
     fn control_store(&self, release: &Path, world: &Path) -> Result<(), String> {
@@ -469,7 +469,8 @@ impl Steps for ProcessSteps {
                 .env_clear()
                 .env("PATH", std::env::var_os("PATH").unwrap_or_default())
                 .env("SPIRA_TOML", world.join("config/sim.toml"))
-                .env("SPIRA_RELEASE", release),
+                .env("SPIRA_RELEASE", release)
+                .env("HOME", world.join(HOME)),
             CALL_DEADLINE,
         )
         .map(|_| ())
@@ -486,6 +487,7 @@ impl Steps for ProcessSteps {
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
             .env("SPIRA_TOML", world.join("config/sim.toml"))
             .env("SPIRA_RELEASE", world.join("release"))
+            .env("HOME", world.join(HOME))
             .env("SPIRA_LC_HOST", "127.0.0.1")
             .env("SPIRA_LC_PORT", port.trim())
             .env("SPIRA_LC_USER", "root")
@@ -542,6 +544,7 @@ pub fn lc_command(release: &Path, config: &Path, port: &str) -> Command {
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .env("SPIRA_RELEASE", release)
         .env("SPIRA_TOML", config.join("lc.toml"))
+        .env("HOME", config.join("..").join(HOME))
         .env("SPIRA_LC_HOST", "127.0.0.1")
         .env("SPIRA_LC_PORT", port.trim())
         .env("SPIRA_LC_USER", "root")
@@ -614,7 +617,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
             steps.release(repo, tree, &cache)?
         }
     };
-    link(&release, &dir.join("release"))?;
+    world_release(&release, &dir.join("release"), &std::env::current_exe().map_err(|e| e.to_string())?)?;
 
     let origin = dir.join("origin.git");
     let work = dir.join("work");
@@ -1107,6 +1110,30 @@ fn cache_dir(dir: &Path) -> PathBuf {
     }
 }
 
+/// The world's release: the release under test linked file by file, with the world's stand-ins
+/// for the release tools it fakes (`round-vm`, [`INERT_TOOLS`]) laid over its `bin/`. A binary
+/// finds its tools only in the release it declares, so a stand-in must live there.
+fn world_release(release: &Path, at: &Path, sim_exe: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(at.join("bin")).map_err(|e| e.to_string())?;
+    let entries = |d: &Path| std::fs::read_dir(d).map_err(|e| format!("{}: {e}", d.display()));
+    for e in entries(release)? {
+        let e = e.map_err(|e| e.to_string())?;
+        if e.file_name() != "bin" {
+            link(&e.path(), &at.join(e.file_name()))?;
+        }
+    }
+    for e in entries(&release.join("bin"))? {
+        let e = e.map_err(|e| e.to_string())?;
+        link(&e.path(), &at.join("bin").join(e.file_name()))?;
+    }
+    for stub in std::iter::once(&"round-vm").chain(INERT_TOOLS) {
+        let p = at.join("bin").join(stub);
+        let _ = std::fs::remove_file(&p);
+        link(sim_exe, &p)?;
+    }
+    Ok(())
+}
+
 fn link(target: &Path, at: &Path) -> Result<(), String> {
     std::os::unix::fs::symlink(target, at).map_err(|e| e.to_string())
 }
@@ -1129,4 +1156,15 @@ pub fn down(dir: &Path, steps: &dyn Steps) -> Result<(), String> {
         steps.db_down(fixture.trim())?;
     }
     std::fs::remove_dir_all(dir).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod locator_tests {
+    use super::*;
+
+    #[test]
+    fn a_world_is_refused_while_spira_toml_names_a_config() {
+        let e = refuse_production(&|k| (k == "SPIRA_TOML").then(|| "/c/one-source.toml".to_string())).unwrap_err();
+        assert!(e.contains("SPIRA_TOML"), "{e}");
+    }
 }

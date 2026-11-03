@@ -63,7 +63,7 @@ printf '#!/bin/sh\nexit 0\n' > "$MOCK_SC" && chmod +x "$MOCK_SC"
 # directly, but locate_home (sp-v62vn) still refuses outright with neither SPIRA_HOME nor
 # SPIRA_RELEASE set at all — SPIRA_HOME is the real tree, read only to find conf.d.
 tl_config SPIRA_RUN="$RUN_DIR" SPIRA_RELEASES="$RELEASES" SPIRA_INSTANCE=prod
-env -i \
+env -i SPIRA_RELEASE="$(tl_release)" \
     "PATH=$PATH" "HOME=$HOME" \
     "SPIRA_TOML=$SPIRA_TOML" \
     "SPIRA_HOME=$HERE" \

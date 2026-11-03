@@ -26,7 +26,7 @@ fn usage() -> &'static str {
 }
 
 fn load_context() -> context::Context {
-    match context::load(&context::home_dir()) {
+    match context::home_dir().and_then(|home| context::load(&home)) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("{e}");
@@ -43,7 +43,10 @@ fn need_rows(ctx: &context::Context) -> Vec<Row> {
 }
 
 fn main() {
-    spira_config::release_env::ensure_release_path();
+    if let Err(e) = spira_config::release_env::ensure_release_path() {
+        eprintln!("watchd: {e}");
+        std::process::exit(2);
+    }
     let args: Vec<String> = std::env::args().collect();
     let sub = args.get(1).map(|s| s.as_str()).unwrap_or("status");
     let rest = &args[args.len().min(2)..];

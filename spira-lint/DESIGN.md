@@ -823,6 +823,24 @@ record, and never by matching `gate.sh` in a process listing.
 **Refuses** (exit 3): no file in scope. **Positive control:** `fence: gate-state-readers checked
 <n> files`.
 
+## Rule `forge-batch-readers`
+
+**Intent.** Nothing outside the queue reads a forge batch's `open`, `prepared` or `forge-state`
+file. Once the batch machine is on the control store the batch's record holds them, and
+`queue batch show --repo <r>` (whose `forge.*` lines carry the verdict's last look at the PR) is
+how anything else asks.
+
+**Scope.** `.rs` and `.sh` files outside `queue/`, `install/src/round_records.rs` (the remover),
+`spira-lc/src/legacy_files.rs` (the migration classifier, which reads the queue directory install
+names) and `spira-lint/`.
+
+**Violation.** A live (non-comment) line joining or naming one of those files in a queue directory.
+Files that still do are listed in `spira-lint/forge-batch-readers-allow`, which only shrinks: a
+listed file with no match is a finding.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: forge-batch-readers checked
+<n> files`.
+
 ## Rule `dwarf-state-readers`
 
 **Intent.** A dwarf's phase and how its session was cut short are fields of its WORKING row,
@@ -1478,10 +1496,11 @@ The repository declares `runtime = "<name>"` in `.spira/testenv.toml`, plus opti
 
 ## Rule `release-tool-exec`
 
-A release-shipped tool (every workspace `[[bin]]`, plus `bd`) is exec'd by the name
+A release-shipped tool (every workspace `[[bin]]`) is exec'd by the path
 `spira_config::release_env::tool("<name>")` returns, never as a bare literal: a unit or shell
-whose PATH lacks the release dies with exit 127. `tool` keeps a name already on PATH (stubs and
-overrides win) and otherwise names the file in `$SPIRA_RELEASE` or the exe's own release.
+whose PATH lacks the release dies with exit 127. `tool` names the file in `$SPIRA_RELEASE` and
+nothing else, refusing by name when it is unset (law-no-fallbacks). `bd` is not a release tool:
+it runs by name on the launcher PATH the declared toolchain provides.
 
 Flagged in non-test code: `Command::new("<tool>")`, the program slot of a `timeout` argument
 list (`.args([N, "<tool>"…`, `.arg(N).arg("<tool>")`, `"N".to_string(), "<tool>"`),

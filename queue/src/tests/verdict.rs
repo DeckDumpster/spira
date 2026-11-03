@@ -2319,7 +2319,6 @@ fn a_merged_forge_batch_left_in_queue_local_lands_and_clears_its_records() {
     let t = T::new(LandMode::QueueLocal);
     t.submitted(&["sp-a", "sp-b"]);
     lc_batch(&t);
-    fs::write(t.qfile("prepared"), "head=h\n").unwrap();
     fs::write(t.qfile("forge-state"), "ci=green\n").unwrap();
     *t.forge.pr_state.borrow_mut() = Some("merged".into());
     *t.forge.merge_commit.borrow_mut() = Some("m1".into());
@@ -2328,7 +2327,7 @@ fn a_merged_forge_batch_left_in_queue_local_lands_and_clears_its_records() {
         .insert("spira-1".into(), ("GREEN".into(), "5".into()));
     assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
     assert!(t.lc.has("land spira-1 5 m1"), "{:?}", t.lc.calls.borrow());
-    for f in ["open", "prepared", "forge-state"] {
+    for f in ["open", "forge-state"] {
         assert!(!t.qfile(f).exists(), "{f} survived the settle");
     }
 }
@@ -2338,11 +2337,10 @@ fn a_live_forge_batch_left_in_queue_local_is_not_driven_and_keeps_its_records() 
     let t = T::new(LandMode::QueueLocal);
     t.submitted(&["sp-a", "sp-b"]);
     lc_batch(&t);
-    fs::write(t.qfile("prepared"), "head=h\n").unwrap();
     *t.forge.pr_state.borrow_mut() = Some("open".into());
     t.run(&["verdict", "spira"]);
     assert!(!has_call(&t.forge.calls, "check-status"));
-    assert!(t.qfile("open").exists() && t.qfile("prepared").exists());
+    assert!(t.qfile("open").exists());
 }
 
 #[test]

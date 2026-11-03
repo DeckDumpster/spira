@@ -76,7 +76,7 @@ echo
 echo "the partition is the spike's own:"
 # ======================================================================================
 SPIRA_RUN="$TMP/run"; tl_config SPIRA_RUN="$SPIRA_RUN"
-export SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH"
+export SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH"; tl_declare_release
 mkdir -p "$SPIRA_RUN" "$SPIRA_HOME/runes"
 # SPIRA_RUNES_DIR no longer derives from SPIRA_HOME (the fixture declares its own path) —
 # point it at this suite's own fixture runes explicitly.
@@ -96,10 +96,10 @@ ln -s "$HERE/conf.toml.d" "$SPIRA_HOME/conf.toml.d"
 # kept only because answering "open" here is also harmless.
 printf '#!/bin/sh\ncase "$1 $2" in\n"capacity paused") exit 1 ;;\nesac\nexit 0\n' > "$SPIRA_HOME/dwarf"
 chmod +x "$SPIRA_HOME/dwarf"
-export PATH="$SPIRA_HOME:$PATH"   # call_rune launches the dwarf on PATH; a stub here
+export PATH="$SPIRA_HOME:$PATH"; tl_declare_release   # call_rune launches the dwarf on PATH; a stub here
 # Readiness is the lifecycle's (sp-860zj): the bd fixture is told to rune_ready in lifecycle
 # terms — open is READY, the spira-poison label and the ask label are holds.
-lc_dwarf_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
+lc_dwarf_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH" SPIRA_RELEASE="$(PATH="$TMP/lcm:$PATH" tl_release)"
 CALLED="$TMP/called.txt"
 export SPIRA_CALL="$TMP/call.sh"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %s\n' "$CALLED" > "$SPIRA_CALL"
@@ -257,7 +257,7 @@ land() {
     tl_config SPIRA_BATCHER_ENABLE=1 SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_HOME_REPO=home \
         SPIRA_REPO_MAP="$SH/repo-map" SPIRA_SPIKE_LABEL="$SPIRA_SPIKE_LABEL" \
         SPIRA_SPIKE_DIR="$SPIRA_SPIKE_DIR" SPIRA_SPIKE_PATHS="$SPIRA_SPIKE_PATHS"
-    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_REPO="$LREPO" \
+    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RELEASE="$(PATH="$SH:$PATH" tl_release)" SPIRA_REPO="$LREPO" \
         landing-pass land 2>&1
 }
 # batch-job: fixture bd call against the suite's throwaway store

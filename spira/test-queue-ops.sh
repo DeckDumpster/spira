@@ -5,12 +5,13 @@
 # (membership, locks, dry-run, unreachable store, run-cancel failure) are queue tests.
 #
 # tier: T2
-# covers: queue/src/* forge/src/* spira/conf.sh UC-landing-merge-queue-29
+# covers: queue/src/* forge/src/* spira/conf.sh spira/testlib/forge-batch.sh UC-landing-merge-queue-29
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 tl_config SPIRA_TEST_CASE_DEADLINE=360
 . "$HERE/testlib/lc-fixture.sh"
+. "$HERE/testlib/forge-batch.sh"
 
 echo "test-queue-ops.sh"
 
@@ -83,7 +84,7 @@ run() {
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="${SPIRA_DB:-/nonexistent}" SPIRA_BD="$SH/bd-stub.sh" \
         SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$QUEUEDIR" \
         SPIRA_FORGE="$SH/forge-fake.sh"
-    env -i ${LCENV:-$(lcfix_env)} PATH="$SH:$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(tl_release)" ${LCENV:-$(lcfix_env)} PATH="$SH:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$SH" \
         BD_LOG="$BD_LOG" \
@@ -96,62 +97,11 @@ run() {
         SPIRA_HOME="$SH" queue "$@" 2>&1
 }
 
-TIP01="aabbcc1100000000000000000000000000000001"
-TIP02="ddeeff2200000000000000000000000000000002"
 TIP03="eeff003300000000000000000000000000000003"
 
-write_eject_batch() {
-    {
-        printf 'pr=42\n'
-        printf 'head=ffff0000000000000000000000000000000000ff\n'
-        printf 'base=0000000000000000000000000000000000000000\n'
-        printf 'members=sp-ej01:%s sp-ej02:%s\n' "$TIP01" "$TIP02"
-        printf 'opened=%s\n' "$(date +%s)"
-        printf 'branch=spira/queue/20260917T120000Z\n'
-    } > "$OPEN_FILE"
-}
-
-BATCH_SEQ=0
-BATCH_ID=""
-lc_reset() { local t; for t in event delivery batch_member batch bead; do lcfix_sql -q "DELETE FROM $t" >/dev/null 2>&1; done; }
+# The queue the seeding opens batches through reads the same layer every case's own call does.
+tl_config SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$QUEUEDIR"
 batch_state() { lcfix_sql -q "SELECT state FROM batch WHERE batch_id='$1'" -r csv 2>/dev/null | sed -n 2p; }
-seed_eject() {
-    lcfix_seed sp-ej01 IN_DELIVERY "$TIP01"
-    lcfix_seed sp-ej02 IN_DELIVERY "$TIP02"
-}
-seed_abandon() {
-    lcfix_seed sp-ab01 IN_DELIVERY "$TIP01"
-    lcfix_seed sp-ab02 IN_DELIVERY "$TIP02"
-    lcfix_seed sp-ab03 IN_DELIVERY "$TIP03"
-}
-
-# write_abandon_batch [cut] — the open record; with "cut" the three members are CERTIFIED
-# rows cut into a real batch on spira-lc and the record names it.
-write_abandon_batch() {
-    local extra=""
-    if [ "${1:-}" = cut ]; then
-        BATCH_SEQ=$((BATCH_SEQ + 1)); BATCH_ID="$REPONAME-20260917T13000${BATCH_SEQ}Z"
-        lc_reset
-        lcfix_seed sp-ab01 CERTIFIED "$TIP01"
-        lcfix_seed sp-ab02 CERTIFIED "$TIP02"
-        lcfix_seed sp-ab03 CERTIFIED "$TIP03"
-        spira-lc cut "$BATCH_ID" --repo "$REPONAME" --head ffff0000000000000000000000000000000000ff \
-            --base 0000000000000000000000000000000000000000 \
-            --members "sp-ab01:$TIP01,sp-ab02:$TIP02,sp-ab03:$TIP03" --actor fixture >/dev/null 2>&1
-        extra="batch_id=$BATCH_ID"
-    fi
-    {
-        printf 'pr=58\n'
-        printf 'head=ffff0000000000000000000000000000000000ff\n'
-        printf 'base=0000000000000000000000000000000000000000\n'
-        printf 'members=sp-ab01:%s sp-ab02:%s sp-ab03:%s\n' "$TIP01" "$TIP02" "$TIP03"
-        printf 'opened=%s\n' "$(date +%s)"
-        printf 'branch=spira/queue/20260917T130000Z\n'
-        [ -n "$extra" ] && printf '%s\n' "$extra"
-    } > "$OPEN_FILE"
-}
-
-OPEN_FILE="$QUEUEDIR/$REPONAME/open"
 
 # =============================================================================
 # EJECT — recording-bd stub, real spira-lc (UC-29).
@@ -180,7 +130,7 @@ real_run() {
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD:-bd}" \
         SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$QUEUEDIR" \
         SPIRA_FORGE="$SH/forge-fake.sh"
-    env -i $(lcfix_env) PATH="$SH:$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(tl_release)" $(lcfix_env) PATH="$SH:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" \
         FORGE_LOG="$FORGE_LOG" \
         SPIRA_TOML="$SPIRA_TOML" \
@@ -195,8 +145,7 @@ testdb_seed <<'JSONL'
 {"id":"sp-ab02","title":"ab02","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-17T00:00:00Z","closed_at":"2026-09-17T00:00:00Z"}
 JSONL
 
-write_eject_batch
-seed_eject
+seed_forge_batch "$REPONAME" sp-ej01,sp-ej02 --pr 42 >/dev/null || bad "eject: the batch is seeded" "no batch opened"
 > "$FORGE_LOG"
 
 out="$(real_run eject sp-ej01 --reason 'test-suite-x.sh RED: assertion mismatch at line 42')"; rc=$?
@@ -215,7 +164,7 @@ echo "real bd: eject on a CERTIFIED, unbatched bead withdraws it (no open batch 
 testdb_seed <<'JSONL'
 {"id":"sp-ej-cert","title":"ej-cert","status":"closed","issue_type":"task","labels":[],"assignee":"dwarf-someone-else","updated_at":"2026-09-17T00:00:00Z","closed_at":"2026-09-17T00:00:00Z"}
 JSONL
-rm -f "$OPEN_FILE"
+end_forge_batch "$REPONAME" "the eject case is done" || bad "eject: the batch is ended" "abandon failed"
 lcfix_seed sp-ej-cert CERTIFIED "$TIP03"
 
 out="$(real_run eject sp-ej-cert --reason 'holding for a fix')"; rc=$?
@@ -230,16 +179,8 @@ is "real bd: the withdrawn bead is REWORK on spira-lc" "REWORK" "$(lcfix_state s
 
 echo
 echo "real bd — gap G7: abandon's return-to-CERTIFIED path makes no bd call at all:"
-write_abandon_batch cut
-{
-    printf 'pr=91\n'
-    printf 'head=ffff0000000000000000000000000000000000ff\n'
-    printf 'base=0000000000000000000000000000000000000000\n'
-    printf 'members=sp-ab01:%s sp-ab02:%s\n' "$TIP01" "$TIP02"
-    printf 'opened=%s\n' "$(date +%s)"
-    printf 'branch=spira/queue/20260917T140000Z\n'
-    printf 'batch_id=%s\n' "$BATCH_ID"
-} > "$OPEN_FILE"
+rec="$(seed_forge_batch "$REPONAME" sp-ab01,sp-ab02 --pr 91)" || bad "G7: the batch is seeded" "no batch opened"
+BATCH_ID="$(printf '%s\n' "$rec" | sed -n 's/^batch_id=//p')"
 > "$FORGE_LOG"
 
 out="$(real_run abandon $REPONAME --reason 'gap G7 probe')"; rc=$?
@@ -256,6 +197,22 @@ ab01_assignee="$(field sp-ab01 assignee)"
     || bad "G7: sp-ab01 assignee untouched" "got $ab01_assignee"
 ab01_comments="$(B comments sp-ab01 2>/dev/null || true)"
 want "G7: abandon posted no comment to sp-ab01" "No comments" "$ab01_comments"
+
+# =============================================================================
+# THE SWITCH ON — last, since it moves the bead and batch machines for the rest of the suite:
+# with SPIRA_LC_LIFECYCLE_ON_STORE on, the same seeding opens the batch as its own record on
+# the control store, and no open file is written; an abandon ends that record.
+# =============================================================================
+echo
+echo "the batch machine on the control store: a seeded batch is its record, and abandon ends it:"
+fb_store_up || bad "store: the control store is up" "fb_store_up failed"
+rec="$(seed_forge_batch "$REPONAME" sp-st01 --pr 77)" || bad "store: the batch is seeded" "no batch opened"
+want "store: queue batch show prints the seeded PR" "pr=77" "$rec"
+want "store: the record is the store's own (only a store record carries forge.phase), past its PR" \
+    "forge.phase=armed" "$rec"
+out="$(real_run abandon $REPONAME --reason 'the store-era abandon')"; rc=$?
+[ "$rc" -eq 0 ] && ok "store: abandon exit 0" || bad "store: abandon exit 0" "rc=$rc out=$out"
+is   "store: queue batch show prints no batch once it is abandoned" "" "$(queue batch show --repo "$REPONAME" 2>&1)"
 
 echo
 tl_summary

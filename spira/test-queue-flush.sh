@@ -7,12 +7,13 @@
 # with no verdict after it opens one pull request and never lands it.
 #
 # tier: T1
-# covers: queue/src/* landing-pass/src/* spira/lib.sh UC-landing-merge-queue-28
+# covers: queue/src/* landing-pass/src/* spira/lib.sh spira/testlib/forge-batch.sh UC-landing-merge-queue-28
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 tl_config SPIRA_TEST_CASE_DEADLINE=120
 . "$HERE/testlib/lc-fixture.sh"
+. "$HERE/testlib/forge-batch.sh"
 
 echo "test-queue-flush.sh"
 TMP="$(mktemp -d)"; trap 'lcfix_down; rm -rf "$TMP"' EXIT INT TERM
@@ -53,7 +54,7 @@ run() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_BATCH_WAIT=1800 \
         SPIRA_FORGE="$TMP/spira/forge-fake.sh" SPIRA_BATCHER_ENABLE=1 \
         SPIRA_QUEUE_DIR="$TMP/run/queue"
-    env -i SPIRA_TOML="$SPIRA_TOML" $(lcfix_env) PATH="$TMP/bin:$TMP/spira:$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(PATH="$TMP/bin:$TMP/spira:$PATH" tl_release)" SPIRA_TOML="$SPIRA_TOML" $(lcfix_env) PATH="$TMP/bin:$TMP/spira:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$TMP/spira" queue "$@" 2>&1
 }
@@ -61,7 +62,7 @@ run() {
 echo
 echo "positive control — the fake batcher is reachable and sees the configured wait:"
 printf 'fixq | %s | queue | main | | |\n' "$TMP/repo" > "$RMAP"
-out="$(env -i PATH=/usr/bin:/bin SPIRA_QUEUE_BATCH_WAIT=1800 "$TMP/spira/batcher" cut fixq)"
+out="$(env -i SPIRA_RELEASE="$(tl_release)" PATH=/usr/bin:/bin SPIRA_QUEUE_BATCH_WAIT=1800 "$TMP/spira/batcher" cut fixq)"
 want "fake batcher reports the inherited wait" "wait=1800" "$out"
 
 echo
@@ -87,8 +88,8 @@ nowant "batcher not called"    "batcher-called" "$out"
 echo
 echo "step settles the open batch, then cuts the next — verdict before the batcher:"
 printf 'fixq | %s | queue | main | | |\n' "$TMP/repo" > "$RMAP"
-mkdir -p "$TMP/run/queue/fixq"
-printf 'pr=1\nhead=h\nbase=b\nmembers=sp-a:ta\nopened=1\nbranch=spira/queue/x\n' > "$TMP/run/queue/fixq/open"
+tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$TMP/run/queue"
+seed_forge_batch fixq sp-a --pr 1 >/dev/null || bad "step: the open batch is seeded" "no batch opened"
 : > "$ORDER"
 out="$(run step fixq)"
 want "verdict settled the open batch (pending)" "verdict fixq: PR 1 pending" "$out"

@@ -77,7 +77,7 @@ fn git(work: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 fn claim_tool(args: &[&str], stdin: &str) -> Result<String, String> {
-    let mut child = Command::new(spira_config::release_env::tool("spira-claim")).args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() // batch-job: spira-claim against a world, stdin-fed
+    let mut child = Command::new(spira_config::release_env::tool("spira-claim")?).args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() // batch-job: spira-claim against a world, stdin-fed
         .map_err(|e| format!("spira-claim: {e}"))?;
     child.stdin.take().ok_or("spira-claim: no stdin")?.write_all(stdin.as_bytes()).map_err(|e| e.to_string())?;
     let out = child.wait_with_output().map_err(|e| e.to_string())?;
@@ -107,7 +107,7 @@ fn ranked(rune: &str, scratch: &Path) -> Result<Vec<String>, String> {
 fn claim(world: &Path, id: &str, rune: &str) -> Result<bool, String> {
     let lease = spira_config::vtime::now_epoch() + LEASE_SECS;
     let (status, _, _) = run_capture(
-        Command::new("bash").args(["-c", LC_CLAIM, "lc-claim", id, HOLDER, &lease.to_string(), rune]).envs(spira_config::release_env::child_path_env_for_process()),
+        Command::new("bash").args(["-c", LC_CLAIM, "lc-claim", id, HOLDER, &lease.to_string(), rune]).envs(spira_config::release_env::child_path_env_for_process()?),
         CALL_DEADLINE,
     )?;
     match status.code() {
@@ -157,7 +157,7 @@ fn run_dwarf(world: &Path, argv: &[String]) -> Result<(), String> {
         *path = format!("{}:{path}", world.join("bin").display());
     }
     let (prog, args) = command.split_first().ok_or("sim-call: empty dwarf command")?;
-    let (status, out, err) = run_capture(Command::new(prog).args(args).envs(spira_config::release_env::child_path_env_for_process()).envs(env), DWARF_DEADLINE)?;
+    let (status, out, err) = run_capture(Command::new(prog).args(args).envs(spira_config::release_env::child_path_env_for_process()?).envs(env), DWARF_DEADLINE)?;
     print!("{out}{err}");
     println!("sim call: dwarf exited {status}");
     Ok(())

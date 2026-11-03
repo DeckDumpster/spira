@@ -26,6 +26,10 @@ pub fn config() -> Result<&'static Resolved, String> {
         .map_err(|e| e.clone())
 }
 
+/// The environment variable naming the one config spec: for a caller that must strip or hand
+/// it on by name (a production-locator guard) rather than read it.
+pub const TOML_ENV: &str = "SPIRA_TOML";
+
 /// The spec `$SPIRA_TOML` names — one file, or `base:override` layers — for a caller that must
 /// HAND it on (a rendered unit, a launched process) rather than read it: the only door onto the
 /// spec's location (spira-config is the only door onto spira.toml). Unset is a refusal.

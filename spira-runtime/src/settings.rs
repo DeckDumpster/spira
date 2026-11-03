@@ -223,7 +223,7 @@ impl Settings {
         }
         let view = View { interval_ms: secs("SPIRA_RUNTIME_VIEW_SECS")? * 1000, forget_secs: DEFAULT_FORGET_SECS, enabled: !view_program.trim().is_empty() };
         let values: std::collections::BTreeMap<String, String> = reconciler::Config::KEYS.iter().chain(&["SPIRA_RUNES", "SPIRA_STRANDED_RUNNER_MIN_AGE", "SPIRA_LC_PASSWORD_FILE"]).map(|k| Ok((k.to_string(), get(k)?))).collect::<Result<_, String>>()?;
-        let reads = reconciler::Config::from_lookup(&|k| values.get(k).cloned().ok_or_else(|| format!("{k} unknown")), reconciler::Seams::production(), run_dir.clone(), String::new(), 0, String::new())?;
+        let reads = reconciler::Config::from_lookup(&|k| values.get(k).cloned().ok_or_else(|| format!("{k} unknown")), reconciler::Seams::bare(), run_dir.clone(), String::new(), 0, String::new())?;
         let reconciler = Reconciler { interval_ms: secs("SPIRA_RUNTIME_RECONCILER_SECS")? * 1000, rules: reads.rules(), values, home: String::new() };
         let overrides = Overrides { interval_ms: secs("SPIRA_RUNTIME_OVERRIDES_SECS")? * 1000 };
         let world = World {

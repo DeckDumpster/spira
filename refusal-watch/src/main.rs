@@ -40,7 +40,7 @@ fn args(argv: &[String]) -> Result<(Config, PathBuf), String> {
 }
 
 fn read_refusals(window: u64) -> Result<String, String> {
-    let out = spira_config::bounded::bounded(spira_config::lifecycle_row::lc_bin())
+    let out = spira_config::bounded::bounded(spira_config::lifecycle_row::lc_bin()?)
         .args(["ops-refusals", &window.to_string()])
         .stdin(Stdio::null())
         .output()

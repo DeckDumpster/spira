@@ -9,7 +9,7 @@ use crate::ports::Git;
 use crate::records::Files;
 use crate::util::{atomic_write, iso_utc};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub trait HaltPorts {
     fn pid_alive(&self, pid: &str) -> bool;
@@ -20,6 +20,9 @@ pub trait HaltPorts {
     fn running_containers(&self) -> Vec<String>;
     /// `testenv container down --name <c> --volumes --force-foreign`.
     fn teardown(&self, name: &str) -> bool;
+    /// `queue batch show --repo <repo>`: the repo's open forge batch record, wherever the queue
+    /// keeps it; empty when none is open.
+    fn batch_show(&self, repo: &str) -> Result<String, String>;
 }
 
 pub struct HaltArgs {
@@ -33,7 +36,6 @@ pub struct HaltCtx<'a> {
     pub self_pid: u32,
     /// None when the context seam could not run: signal, but skip branch cleanup.
     pub repos: Option<&'a [RepoRow]>,
-    pub queue_dir: PathBuf,
 }
 
 /// Returns (exit code, stdout lines, stderr lines).
@@ -118,20 +120,23 @@ pub fn halt(cx: &HaltCtx, a: &HaltArgs, ports: &dyn HaltPorts, git: &dyn Git) ->
         }
     }
     if let Some(repos) = cx.repos {
-        cleanup_orphan_batch_branches(repos, &cx.queue_dir, git, &mut out);
+        cleanup_orphan_batch_branches(repos, ports, git, &mut out);
     }
     out.push(format!("landing: halted — interrupted at phase={} in {} ({el})", dash(&run.phase), dash(&run.repo)));
     (0, out, err)
 }
 
-/// Unpushed `spira/queue/*` branches other than the open batch's, in queue(forge) repos.
-fn cleanup_orphan_batch_branches(repos: &[RepoRow], queue_dir: &Path, git: &dyn Git, out: &mut Vec<String>) {
+/// Unpushed `spira/queue/*` branches other than the open batch's, in queue(forge) repos. A repo
+/// whose open batch the queue cannot show keeps every branch: one of them may be the batch's.
+fn cleanup_orphan_batch_branches(repos: &[RepoRow], ports: &dyn HaltPorts, git: &dyn Git, out: &mut Vec<String>) {
     for r in repos.iter().filter(|r| r.mode == LandMode::Queue && !r.path.as_os_str().is_empty()) {
-        let open_br = fs::read_to_string(queue_dir.join(&r.name).join("open"))
-            .unwrap_or_default()
-            .lines()
-            .find_map(|l| l.strip_prefix("branch=").map(String::from))
-            .unwrap_or_default();
+        let open_br = match ports.batch_show(&r.name) {
+            Ok(text) => text.lines().find_map(|l| l.strip_prefix("branch=").map(String::from)).unwrap_or_default(),
+            Err(e) => {
+                out.push(format!("landing halt: WARNING — cannot tell {}'s open batch ({e}); its batch branches are left", r.name));
+                continue;
+            }
+        };
         for br in git.refs_matching(&r.path, "refs/heads/spira/queue/*") {
             if br == open_br {
                 continue;
@@ -150,6 +155,8 @@ fn cleanup_orphan_batch_branches(repos: &[RepoRow], queue_dir: &Path, git: &dyn 
 pub struct RealHalt {
     /// PATH for podman and testenv (see [`child_path`]); None inherits the caller's.
     pub path: Option<String>,
+    /// The `queue` whose `batch show` names each forge repo's open batch.
+    pub queue: PathBuf,
 }
 
 /// The PATH halt's podman and testenv run under. landing.sh halt sourced conf.sh, which
@@ -207,6 +214,15 @@ impl HaltPorts for RealHalt {
         }
         c.args(["container", "down", "--name", name, "--volumes", "--force-foreign"]);
         crate::util::run_capture(c).0 == 0
+    }
+    fn batch_show(&self, repo: &str) -> Result<String, String> {
+        let mut c = crate::util::command(&self.queue);
+        c.args(["batch", "show", "--repo", repo]);
+        let (rc, so, se) = crate::util::run_capture(c);
+        if rc != 0 {
+            return Err(format!("queue batch show --repo {repo} exited {rc}: {}", String::from_utf8_lossy(&se).trim()));
+        }
+        Ok(String::from_utf8_lossy(&so).into_owned())
     }
 }
 

@@ -137,8 +137,8 @@ fn parse() -> Result<Opts, String> {
 ///
 /// `repo_land` already normalizes the `queue.forge` alias to `queue`, so only `queue` and
 /// `queue.local` are ever seen here (sp-o1jm6, epic sp-hq9x8). `queue.local`'s push path is
-/// not implemented by this crate yet (sp-828tp) — `Land::Local` is recorded so `push_branch`/
-/// `push_branch` can refuse to guess at it.
+/// not implemented by this crate yet (sp-828tp) — `Land::Local` is recorded so the forge path
+/// can refuse to guess at it.
 fn find_repo(env_: &Env, name: &str) -> Result<Repo, String> {
     // spira_config::repos (sp-k6lku, "wave 4.13") in-process, instead of three separate
     // repo_land/repo_root/spira_landref bash seam calls.
@@ -170,9 +170,9 @@ fn now() -> u64 {
     spira_config::vtime::now_epoch()
 }
 
-/// `round-vm`, by name on the launcher's PATH (sp-gypjk), unless --round-vm names another.
-fn default_round_vm() -> PathBuf {
-    PathBuf::from(spira_config::release_env::tool("round-vm"))
+/// `round-vm` from the declared release, unless --round-vm names another.
+fn default_round_vm() -> Result<PathBuf, String> {
+    spira_config::release_env::tool("round-vm").map(PathBuf::from)
 }
 
 /// Every field sourced from a registered `spira/conf.d` key is read exactly once here, through
@@ -191,12 +191,15 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
         run: run.clone(),
         queue_dir: PathBuf::from(cfg("SPIRA_QUEUE_DIR")?),
         forge: PathBuf::from(cfg("SPIRA_FORGE")?),
-        // Every harness tool by name, on the launcher's PATH (sp-gypjk).
-        tsd_bin: Some(PathBuf::from(spira_config::release_env::tool("tsd-write"))),
-        round_vm: o.round_vm.clone().unwrap_or_else(default_round_vm),
-        queue_bin: PathBuf::from(spira_config::release_env::tool("queue")),
-        rebase_stale_bin: PathBuf::from(spira_config::release_env::tool("rebase-stale")),
-        testenv_bin: PathBuf::from(spira_config::release_env::tool("testenv")),
+        // Every harness tool from the declared release.
+        tsd_bin: Some(PathBuf::from(spira_config::release_env::tool("tsd-write")?)),
+        round_vm: match o.round_vm.clone() {
+            Some(r) => r,
+            None => default_round_vm()?,
+        },
+        queue_bin: PathBuf::from(spira_config::release_env::tool("queue")?),
+        rebase_stale_bin: PathBuf::from(spira_config::release_env::tool("rebase-stale")?),
+        testenv_bin: PathBuf::from(spira_config::release_env::tool("testenv")?),
         round_slots: env::var("SPIRA_BATCHER_ROUND_SLOTS").ok().and_then(|v| v.trim().parse().ok()).filter(|n: &u32| *n > 0),
         hypervisor: io::Hypervisor {
             host_mib: cfg_parse::<u64>("SPIRA_HYPERVISOR_MEM_MIB")?,
@@ -210,7 +213,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
         wall_secs: cfg_parse::<u64>("SPIRA_BATCHER_WALL_SECS")?,
         git_name: cfg("SPIRA_GIT_NAME")?,
         git_email: cfg("SPIRA_GIT_EMAIL")?,
-        lc_bin: Some(PathBuf::from(spira_config::release_env::tool("spira-lc"))),
+        lc_bin: Some(PathBuf::from(spira_config::lifecycle_row::lc_bin()?)),
         lc_timeout: cfg_parse::<u64>("SPIRA_LC_TIMEOUT")?,
         verdicts: gate::cert::verdicts_dir(env::var("SPIRA_VERDICTS").ok().as_deref(), &run),
         land_lock_attempts: env::var("SPIRA_BATCHER_LAND_LOCK_ATTEMPTS").ok().and_then(|v| v.parse().ok()).unwrap_or(10),
@@ -247,11 +250,12 @@ fn cut(o: &Opts) -> Result<(), String> {
         ));
     }
 
-    if repo.land == Land::Local && (io::read_open_batch(&env_, &repo.name)?.is_some() || io::read_prepared(&env_, &repo.name).is_some()) {
+    // A forge batch the queue cannot read may still be open: the verdict settles it or says why.
+    let forge_left = || io::read_open_batch(&env_, &repo.name).map_or(true, |o| o.is_some());
+    if repo.land == Land::Local && forge_left() {
         if let Err(e) = settle_batch(&env_, &repo.name) {
             eprintln!("batcher {}: forge batch left by a mode switch is unsettled: {e}", repo.name);
         }
-        io::clear_prepared(&env_, &repo.name);
     }
 
     let wait_secs = cfg_parse::<u64>("SPIRA_QUEUE_LOCK_WAIT")?;
@@ -272,10 +276,6 @@ fn cut(o: &Opts) -> Result<(), String> {
     }
     let open = if repo.land == Land::Local { None } else { io::read_open_batch(&env_, &repo.name)? };
 
-    if open.is_none() && repo.land == Land::Forge && open_prepared(&env_, &repo, &pool)? {
-        return Ok(());
-    }
-
     let inputs = TriggerInputs { pool: &pool, main_red: false, batch_open: open.is_some() };
     let Some(reason) = should_cut(&inputs) else {
         println!("{}", skipped_event("no trigger").text);
@@ -283,7 +283,10 @@ fn cut(o: &Opts) -> Result<(), String> {
     };
 
     match open {
-        Some(ob) => prepare_round(&env_, &repo, &pool, &ob),
+        Some(ob) => {
+            println!("batcher {}: batch PR {} is open — the next round is cut once it lands", repo.name, ob.pr);
+            Ok(())
+        }
         None => cut_new_round(&env_, &repo, &pool, &reason),
     }
 }
@@ -1124,46 +1127,17 @@ fn open_round_pr(
     if !foreign.is_empty() {
         return Err(format!("round head carries commits of non-member bead(s) {} — refusing to open", foreign.join(", ")));
     }
-    if let Some(ob) = io::read_open_batch(env_, &repo.name)? {
-        return Err(format!("batch PR {} ({}) is already recorded open — not cutting a second", ob.pr, ob.branch));
-    }
-    let stamp = io::utc_stamp(round_start);
-    let batch_br = format!("spira/queue/{stamp}");
-    io::set_branch(repo, &batch_br, batch_head);
-
-    io::push_branch(repo, batch_head, &batch_br)?;
     let prr = pr_record(merged);
     let base_branch = repo.base.rsplit('/').next().unwrap_or(&repo.base).to_string();
-    let title = format!("queue: {} beads for {}", merged.len(), repo.name);
     let shots = io::batch_shots_section(&env_.testenv_bin, &env_.run, spira_config::process::cfg("SPIRA_LOOM_ADDR").ok().as_deref(), &repo.name, base_sha, batch_head);
     let body = format!("Merge-queue batch: {} beads for {}, onto {}.\n\n{}\n{shots}", merged.len(), repo.name, base_branch, prr.body);
-    let pr_n = io::forge_pr_create(repo, &batch_br, &base_branch, &title, &body)?;
-
-    // spira-lc's own OPEN-batch lifecycle. Best-effort and additive, never blocking the PR or
-    // the write below. A refusal leaves batch_id/version unset on the record, so
-    // queue verdict's own land/settle wiring finds nothing to CAS against later.
+    // queue batch open records the batch before the PR exists, refuses while one is open, and
+    // arms auto-merge; the PR title is its own, `queue: <n> beads for <repo>`.
     let member_pairs: Vec<(String, String)> = merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
-    let lc_version = io::lc_cut_batch(env_, &repo.name, &batch_br, batch_head, base_sha, &member_pairs);
-
-    io::write_open_batch(
-        env_,
-        &repo.name,
-        &io::OpenBatch {
-            pr: pr_n.clone(),
-            head: batch_head.to_string(),
-            base: base_sha.to_string(),
-            members: member_pairs,
-            branch: batch_br.clone(),
-            opened: now().to_string(),
-            owner: "batcher".to_string(),
-            batch_id: lc_version.as_ref().map(|_| batch_br.clone()).unwrap_or_default(),
-            version: lc_version.unwrap_or_default(),
-        },
-    )?;
+    let (pr_n, armed) = io::batch_open(env_, repo, &member_pairs, batch_head, &body)?;
     io::write_local_verdict(env_, &repo.name, "green", "");
     println!("{}", opened_event(&prr).text);
-    println!("batcher {}: PR {} opened — {} member(s) ({})", repo.name, pr_n, merged.len(), batch_br);
-    let armed = io::forge_pr_arm(repo, &pr_n);
+    println!("batcher {}: PR {} opened — {} member(s)", repo.name, pr_n, merged.len());
 
     let mut fields = vec![
         ("repo", repo.name.clone()),
@@ -1181,91 +1155,6 @@ fn open_round_pr(
     }
     io::tsd_append_round(env_, &fields);
     armed
-}
-
-/// While a batch PR is open the next round is built and proven on that PR's head, from the
-/// ordinary certified pool, and recorded as prepared. The open PR, its branch and its
-/// record are never written — only `open_prepared` turns the round into a PR, after the
-/// open one has landed.
-fn prepare_round(env_: &Env, repo: &Repo, pool: &[Member], ob: &io::OpenBatch) -> Result<(), String> {
-    if ob.owner == "concierge" && env::var("SPIRA_QUEUE_OWNER_OVERRIDE").as_deref() != Ok("1") {
-        println!("batcher {}: refused — PR {} is claimed by concierge; override with SPIRA_QUEUE_OWNER_OVERRIDE=1", repo.name, ob.pr);
-        return Ok(());
-    }
-    let mut inputs: Vec<(String, String)> = pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
-    inputs.sort();
-    if let Some(p) = io::read_prepared(env_, &repo.name) {
-        let mut have = p.inputs.clone();
-        have.sort();
-        if p.parent == ob.head && have == inputs {
-            println!("batcher {}: next round already prepared on PR {}'s head ({} member(s))", repo.name, ob.pr, p.members.len());
-            return Ok(());
-        }
-    }
-    let round_start = now();
-    let sorted = topo_order(pool);
-    let sequenced = stack_sequencing(&sorted);
-
-    let wt = env_.run.join("worktree").join(format!(".batcher-{}", repo.name));
-    io::worktree_reset(repo, &wt, &ob.head)?;
-
-    let mut merges = BTreeMap::new();
-    for m in &sorted {
-        merges.insert(m.id.clone(), io::merge_member(env_, &wt, &m.id, &m.tip));
-    }
-    let combined = combine(&CombineInput { pool: &sorted, merges: &merges, deleted_suites: &BTreeMap::new(), sequenced: &sequenced, siblings: &BTreeMap::new() });
-    for sa in &combined.set_aside {
-        println!("{}", batcher::core::evicted_event(sa).text);
-    }
-    if combined.merged.is_empty() {
-        println!("{}", skipped_event("no members merged cleanly onto the open batch head").text);
-        return Ok(());
-    }
-
-    let stable = stabilize_round(env_, repo, &wt, &ob.head, combined.merged.clone(), None, &[])?;
-    let green = stable.is_some();
-    let (members, head) = match &stable {
-        Some(s) => (s.members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect(), io::head_of(&wt)?),
-        None => (vec![], io::head_of(&wt)?),
-    };
-    io::set_branch(repo, io::PREPARED_BRANCH, &head);
-    let prepared = io::Prepared { head, parent: ob.head.clone(), members, inputs, green, seconds: now() - round_start };
-    io::write_prepared(env_, &repo.name, &prepared)?;
-    if green {
-        println!("batcher {}: next round prepared on PR {}'s head — {} member(s), opens when it lands", repo.name, ob.pr, prepared.members.len());
-    } else {
-        println!("batcher {}: next round on PR {}'s head is red locally — held, not opened", repo.name, ob.pr);
-    }
-    Ok(())
-}
-
-/// With no batch open, a prepared round that still descends from the base and still names
-/// only members certified at the same tips opens as-is, corpus not re-run. Anything else
-/// is discarded and the ordinary cut proceeds. True when a PR was opened.
-fn open_prepared(env_: &Env, repo: &Repo, pool: &[Member]) -> Result<bool, String> {
-    let Some(p) = io::read_prepared(env_, &repo.name) else {
-        return Ok(false);
-    };
-    io::clear_prepared(env_, &repo.name);
-    let base_sha = io::resolve_base_sha(repo)?;
-    let current: BTreeMap<&str, &Member> = pool.iter().map(|m| (m.id.as_str(), m)).collect();
-    let still_certified = p.members.iter().all(|(id, tip)| current.get(id.as_str()).map(|m| &m.tip == tip).unwrap_or(false));
-    if !p.green || p.members.is_empty() || !still_certified || !io::is_ancestor(repo, &base_sha, &p.head) {
-        println!("batcher {}: prepared round discarded (red, stale members, or not on the new base) — cutting afresh", repo.name);
-        return Ok(false);
-    }
-    let merged: Vec<Member> = p.members.iter().filter_map(|(id, _)| current.get(id.as_str()).map(|m| (*m).clone())).collect();
-    let ids: Vec<String> = merged.iter().map(|m| m.id.clone()).collect();
-    match io::foreign_beads(repo, &base_sha, &p.head, &ids) {
-        Ok(f) if f.is_empty() => {}
-        Ok(f) => {
-            println!("batcher {}: prepared round discarded (head carries non-member bead(s) {}) — cutting afresh", repo.name, f.join(", "));
-            return Ok(false);
-        }
-        Err(e) => return Err(e),
-    }
-    open_round_pr(env_, repo, &merged, &p.head, now() - p.seconds, None, None)?;
-    Ok(true)
 }
 
 /// `batcher judgement-ci` — the CI-only judgement producer (sp-lomk3). queue verdict calls
@@ -1583,7 +1472,10 @@ fn path_attribute(o: &Opts) -> Result<ExitCode, String> {
 }
 
 fn main() -> std::process::ExitCode {
-    spira_config::release_env::ensure_release_path();
+    if let Err(e) = spira_config::release_env::ensure_release_path() {
+        eprintln!("batcher-cut: {e}");
+        std::process::exit(2);
+    }
     let first = std::env::args().nth(1);
     spira_otel::exit::finish(telemetry::run(&telemetry::sink(), first.as_deref(), || dispatch().code()))
 }

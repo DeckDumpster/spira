@@ -91,6 +91,7 @@ fn plan(configured: bool) -> Box {
         dir,
         ufw_conf,
         unit: "spira-submission-prod.service".into(),
+        spira_config: "spira-config".into(),
     };
     Box { _d: d, plan }
 }

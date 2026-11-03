@@ -39,7 +39,14 @@ fn run() -> u8 {
     let mut save = |s: &State| {
         std::fs::write(&state_path, s.render()).map_err(|e| format!("cannot record state in {}: {e}", state_path.display()))
     };
-    let o = pass(&Real::default(), &hosts, &mut state, &mut save);
+    let real = match Real::new() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("filings-collect: {e}");
+            return 2;
+        }
+    };
+    let o = pass(&real, &hosts, &mut state, &mut save);
     println!(
         "filings-collect: {} filed, {} amended, {} acknowledged, {} failed",
         o.filed.len(),

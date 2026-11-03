@@ -388,6 +388,10 @@ if [ -n "$toolchain" ] && [ "$have" != "$toolchain" ]; then
     rustup toolchain install "$toolchain" --profile minimal --no-self-update >&2
     for b in "$RUSTUP_HOME"/toolchains/"$toolchain"-*/bin/*; do ln -sf "$b" "$CARGO_HOME/bin/${b##*/}"; done
 fi
+# sp-bt6ep3: a tree's test-binary sandbox (tools/test-sandbox/runner) runs every test binary under
+# bwrap and refuses without it; an image built before the recipe carried bubblewrap has none,
+# so the round installs it here, as it does a toolchain the image lacks.
+command -v bwrap >/dev/null || { echo "round-vm: installing bubblewrap (the image has none)" >&2; DEBIAN_FRONTEND=noninteractive apt-get update -qq >&2 && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bubblewrap >&2; }
 export PATH="$CARGO_HOME/bin:$HOME/spira-env/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 rustc_id="$(rustc -vV | sed -n 's/^\(release\|commit-hash\): //p' | tr '\n' ' ')"
 echo "round-vm: round rustc $rustc_id" >&2
@@ -1679,7 +1683,7 @@ pub trait Recorder: Sync {
     /// The batch's current pass number and members, for the pass's record; `None` when the
     /// lifecycle machine cannot say.
     fn pass_context(&self, batch: &str) -> Option<(u64, Vec<String>)> {
-        let out = command("timeout").args(["-k", "5", spira_config::release_env::tool("30").as_str(), "spira-lc", "show-batch", batch]).stdin(Stdio::null()).output().ok()?;
+        let out = command("timeout").args(["-k", "5", "30", spira_config::lifecycle_row::lc_bin().ok()?.as_str(), "show-batch", batch]).stdin(Stdio::null()).output().ok()?;
         let v: Value = serde_json::from_slice(&out.stdout).ok()?;
         let members = v.get("members").and_then(Value::as_array).map(|a| a.iter().filter_map(|m| m.as_str().or_else(|| m.get("bead_id").and_then(Value::as_str)).map(str::to_string)).collect()).unwrap_or_default();
         Some((v.get("pass")?.as_u64()?, members))
@@ -1698,7 +1702,7 @@ impl Recorder for QueueRecorder {
     fn progress(&self, batch: &str, body: &str) -> Result<(), String> {
         use std::io::Write;
         let mut cmd = command("timeout");
-        cmd.args(["-k", "5", spira_config::release_env::tool("30").as_str(), "spira-lc", "batch-progress", batch]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.args(["-k", "5", "30", spira_config::lifecycle_row::lc_bin()?.as_str(), "batch-progress", batch]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = cmd.spawn().map_err(|e| format!("cannot run spira-lc: {e}"))?;
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(body.as_bytes());
@@ -1712,7 +1716,7 @@ impl Recorder for QueueRecorder {
 
     fn pass_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String> {
         let mut cmd = command("timeout");
-        cmd.args(["-k", "5", spira_config::release_env::tool("60").as_str(), "queue", "round", "pass-start", "--resume", batch]).args(repo).stdin(Stdio::null());
+        cmd.args(["-k", "5", "60", spira_config::release_env::tool("queue")?.as_str(), "round", "pass-start", "--resume", batch]).args(repo).stdin(Stdio::null());
         let out = cmd.output().map_err(|e| format!("cannot run queue: {e}"))?;
         if out.status.success() {
             return Ok(());
@@ -1722,7 +1726,7 @@ impl Recorder for QueueRecorder {
 
     fn pass_incomplete(&self, batch: &str, repo: Option<&str>, reason: &str) -> Result<(), String> {
         let mut cmd = command("timeout");
-        cmd.args(["-k", "5", spira_config::release_env::tool("60").as_str(), "queue", "round", "pass-verdict", "--verdict", "incomplete", "--reason", reason, batch]).args(repo).stdin(Stdio::null());
+        cmd.args(["-k", "5", "60", spira_config::release_env::tool("queue")?.as_str(), "round", "pass-verdict", "--verdict", "incomplete", "--reason", reason, batch]).args(repo).stdin(Stdio::null());
         let out = cmd.output().map_err(|e| format!("cannot run queue: {e}"))?;
         if out.status.success() {
             return Ok(());
@@ -1732,7 +1736,7 @@ impl Recorder for QueueRecorder {
 
     fn failed(&self, batch: &str, repo: Option<&str>, step: &str) -> Result<(), String> {
         let mut cmd = command("timeout");
-        cmd.args(["-k", "5", spira_config::release_env::tool("60").as_str(), "queue", "round", "failed", "--suite", step, batch]).args(repo).stdin(Stdio::null());
+        cmd.args(["-k", "5", "60", spira_config::release_env::tool("queue")?.as_str(), "round", "failed", "--suite", step, batch]).args(repo).stdin(Stdio::null());
         let out = cmd.output().map_err(|e| format!("cannot run queue: {e}"))?;
         if out.status.success() {
             return Ok(());
@@ -1742,7 +1746,7 @@ impl Recorder for QueueRecorder {
 
     fn pass_red(&self, batch: &str, repo: Option<&str>, red: &[String]) -> Result<(), String> {
         let mut cmd = command("timeout");
-        cmd.args(["-k", "5", spira_config::release_env::tool("60").as_str(), "queue", "round", "pass-verdict", "--verdict", "red", "--red-suites", &red.join(","), batch]).args(repo).stdin(Stdio::null());
+        cmd.args(["-k", "5", "60", spira_config::release_env::tool("queue")?.as_str(), "round", "pass-verdict", "--verdict", "red", "--red-suites", &red.join(","), batch]).args(repo).stdin(Stdio::null());
         let out = cmd.output().map_err(|e| format!("cannot run queue: {e}"))?;
         if out.status.success() {
             return Ok(());
@@ -1752,7 +1756,7 @@ impl Recorder for QueueRecorder {
 
     fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String> {
         let mut cmd = command("timeout");
-        cmd.args(["-k", "5", spira_config::release_env::tool("60").as_str(), "queue", "round", "suites-started", batch]).args(repo).stdin(Stdio::null());
+        cmd.args(["-k", "5", "60", spira_config::release_env::tool("queue")?.as_str(), "round", "suites-started", batch]).args(repo).stdin(Stdio::null());
         let out = cmd.output().map_err(|e| format!("cannot run queue: {e}"))?;
         if out.status.success() {
             return Ok(());
@@ -2862,6 +2866,17 @@ mod tests {
     }
 
     #[test]
+    fn the_round_installs_bubblewrap_before_any_test_binary_runs() {
+        // sp-bt6ep3: a tree's test-binary sandbox (tools/test-sandbox/runner) refuses without bwrap,
+        // and an image built before the recipe carried it has none.
+        let install = REMOTE_SCRIPT.find("command -v bwrap >/dev/null || ").expect("the round installs bubblewrap when the image lacks it");
+        let step = &REMOTE_SCRIPT[install..install + REMOTE_SCRIPT[install..].find('\n').unwrap()];
+        assert!(step.contains("apt-get install -y -qq bubblewrap"), "{step}");
+        assert!(install > REMOTE_SCRIPT.find("phase toolchain").unwrap(), "beside the toolchain install");
+        assert!(install < REMOTE_SCRIPT.find("phase unit-tests").unwrap(), "before the unit stage");
+    }
+
+    #[test]
     fn the_round_runs_the_bare_host_suites_on_the_vm_after_the_corpus() {
         let corpus = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         let bare = REMOTE_SCRIPT.find("spira/bare-suites.sh").unwrap();
@@ -2951,6 +2966,20 @@ mod tests {
         let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         assert!(clone < warm && warm < build && build < batch, "conf-gen.sh must be warmed after the clone but before either the workspace build or the suite batch");
         assert!(REMOTE_SCRIPT.contains("bash spira/conf-gen.sh >&2 || true"), "non-fatal: conf.sh's own per-suite self-heal is still the fallback if this one warm attempt fails");
+    }
+
+    /// Before the launcher declares SPIRA_RELEASE (the release the round just built), the
+    /// script runs only the steps that need no declared release: staging config, validating
+    /// it, and building and verifying the release itself, whose children run from the stage.
+    #[test]
+    fn nothing_before_the_built_release_is_declared_needs_spira_release() {
+        let declared = REMOTE_SCRIPT.find("export SPIRA_RELEASE=\"$HOME/round-releases/$rel_sha\"").expect("the launcher declares the built release");
+        let allowed = ["target/release/release config-stage", "target/release/spira-config validate", "target/release/release build", "target/release/release verify"];
+        let before = &REMOTE_SCRIPT[..declared];
+        for (at, _) in before.match_indices("target/release/") {
+            let step = &before[at..];
+            assert!(allowed.iter().any(|a| step.starts_with(a)) || step.starts_with("target/release\""), "runs a binary before SPIRA_RELEASE is declared: {}", step.lines().next().unwrap_or(""));
+        }
     }
 
     #[test]

@@ -1,0 +1,15 @@
+[Unit]
+Description=Publish the lifecycle section every minute
+
+[Timer]
+OnBootSec=2min
+OnActiveSec=1min
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=spira-lifecycle-section.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=observability

@@ -68,6 +68,14 @@ fn resolved_config() -> &'static spira_config::resolve::Resolved {
     })
 }
 
+/// A release tool this pass cannot run without, or exit 2 naming the refusal.
+fn required(tool: Result<String, String>) -> String {
+    tool.unwrap_or_else(|e| {
+        log::log(&format!("watchtower: {e}"));
+        std::process::exit(2)
+    })
+}
+
 /// The environment, then `spira_config::resolve()`'s in-process answer — never the
 /// reverse, so a test or a fixture's explicit env override still wins exactly as it did
 /// before this bead. For a key `spira/conf.d` registers, use [`reg`]/[`reg_i64`] instead —
@@ -197,9 +205,9 @@ fn build_sweep_cfg() -> sweep::Cfg {
         incident_sh: resolved_incident_sh(),
         suites_sh: getenv("SPIRA_SUITES_SH"),
         moot_sh: getenv("SPIRA_MOOT_SH"),
-        bdq: spira_config::release_env::tool("bdq"),
+        bdq: required(spira_config::release_env::tool("bdq")),
         branch_guard_sh: getenv("SPIRA_BRANCH_GUARD_SH"),
-        lc_bin: spira_config::lifecycle_row::lc_bin(),
+        lc_bin: required(spira_config::lifecycle_row::lc_bin()),
     }
 }
 
@@ -257,7 +265,7 @@ fn main() {
             };
             czar_outcome::run(
                 n,
-                &spira_config::release_env::tool("bdq"),
+                &required(spira_config::release_env::tool("bdq")),
                 &reg("SPIRA_DB"),
                 &reg("SPIRA_HOME_REPO"),
                 &resolved_incident_sh(),
@@ -340,7 +348,7 @@ fn main() {
                 return;
             }
             let cfg = deploy_fault::Cfg {
-                release_bin: getenv("SPIRA_RELEASE_BIN").unwrap_or_else(|| spira_config::release_env::tool("release")),
+                release_bin: getenv("SPIRA_RELEASE_BIN").unwrap_or_else(|| required(spira_config::release_env::tool("release"))),
                 repo: getenv("SPIRA_REPO").unwrap_or_default(),
                 retry_secs: getenv_i64("SPIRA_DEPLOY_FAULT_RETRY_SECS", 1800),
                 build_timeout_secs: getenv_i64("SPIRA_DEPLOY_FAULT_BUILD_TIMEOUT", 1800).max(1) as u64,
@@ -418,8 +426,8 @@ fn main() {
             let db = reg("SPIRA_DB");
             let home_repo = reg("SPIRA_HOME_REPO");
             let inc = resolved_incident_sh();
-            let lc_bin = spira_config::lifecycle_row::lc_bin();
-            let bdq = spira_config::release_env::tool("bdq");
+            let lc_bin = required(spira_config::lifecycle_row::lc_bin());
+            let bdq = required(spira_config::release_env::tool("bdq"));
             let ctx = conditions::Ctx { run: &run, db: &db, home_repo: &home_repo, incident_sh: &inc, bdq: &bdq, lc_bin: &lc_bin };
             conditions::reconcile(n, &ctx, "release-currency", probes::release_currency(&cfg));
             conditions::reconcile(n, &ctx, "failing-units", probes::failing_units(&cfg, &run));
@@ -428,8 +436,8 @@ fn main() {
             conditions::reconcile(n, &ctx, "cold-overlap", probes::cold_overlap(&cfg, &run));
             conditions::reconcile(n, &ctx, "release-store", probes::release_store(&cfg));
             let rowless_cfg = probes::RowlessCfg {
-                bdq: spira_config::release_env::tool("bdq"),
-                lc_bin: spira_config::lifecycle_row::lc_bin(),
+                bdq: required(spira_config::release_env::tool("bdq")),
+                lc_bin: required(spira_config::lifecycle_row::lc_bin()),
                 cap: getenv_i64("SPIRA_ROWLESS_CAP", 20).max(1) as usize,
                 sustain_secs: getenv_i64("SPIRA_ROWLESS_SUSTAIN_SECS", 300),
                 state: run.join("conditions").join("rowless.state"),
@@ -437,7 +445,7 @@ fn main() {
             };
             conditions::reconcile(n, &ctx, "rowless-beads", probes::rowless_beads(&rowless_cfg, n));
             let drift_cfg = probes::ContentDriftCfg {
-                lc_bin: spira_config::lifecycle_row::lc_bin(),
+                lc_bin: required(spira_config::lifecycle_row::lc_bin()),
                 slack: getenv_i64("SPIRA_CONTENT_DRIFT_SLACK", 10).max(0) as usize,
                 sustain_secs: getenv_i64("SPIRA_CONTENT_DRIFT_SUSTAIN_SECS", 1800),
                 state: run.join("conditions").join("content-drift.state"),

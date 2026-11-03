@@ -37,7 +37,7 @@ impl Ports for Real {
     }
 
     fn busy(&self) -> Result<bool, String> {
-        let out = spira_config::bounded::bounded(spira_config::lifecycle_row::lc_bin())
+        let out = spira_config::bounded::bounded(spira_config::lifecycle_row::lc_bin()?)
             .args(["list", "--state", BUSY_STATES])
             .stdin(Stdio::null())
             .output()

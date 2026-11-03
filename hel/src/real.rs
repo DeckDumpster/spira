@@ -145,15 +145,17 @@ impl Real {
         // `-s hel.seam.sh`: bash still reads the script from stdin; the extra word is only
         // so lib.sh's spira_caller (which names the `*.sh` programs up the process chain in
         // every reap-log line) can name this one — a bare `bash` under a binary names nothing.
+        let envs = match spira_config::release_env::child_path_env_for_process() {
+            Ok(e) => e,
+            Err(e) => return Answer { rc: 2, text: format!("hel: {e}") },
+        };
         // batch-job: runs a gate, build or forge script that takes as long as its work
         let child = Command::new("bash")
             .args(["-s", "hel.seam.sh"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
-            // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
-            // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-            .envs(spira_config::release_env::child_path_env_for_process())
+            .envs(envs)
             .spawn();
         let Ok(mut child) = child else { return Answer { rc: 127, text: String::new() } };
         if let Some(mut si) = child.stdin.take() {
@@ -200,7 +202,7 @@ impl World for Real {
         if !map.is_empty() {
             *self.beads.borrow_mut() = Some(map);
         }
-        if let Ok(rows) = spira_config::lc_state::list_with(&spira_config::lifecycle_row::lc_bin()) {
+        if let Ok(rows) = spira_config::lifecycle_row::lc_bin().and_then(|b| spira_config::lc_state::list_with(&b)) {
             *self.claims.borrow_mut() = Some(spira_config::lc_state::index(rows));
         }
     }
@@ -254,21 +256,22 @@ impl World for Real {
     fn lc_past_builder(&self, id: &str) -> bool {
         let row = match self.claims.borrow().as_ref() {
             Some(m) => m.get(id).cloned(),
-            None => spira_config::lc_state::row_with(&spira_config::lifecycle_row::lc_bin(), id).ok().flatten(),
+            None => spira_config::lifecycle_row::lc_bin().and_then(|b| spira_config::lc_state::row_with(&b, id)).ok().flatten(),
         };
         row.is_some_and(|r| r.past_builder())
     }
     fn lc_terminal(&self, id: &str) -> bool {
         let row = match self.claims.borrow().as_ref() {
             Some(m) => m.get(id).cloned(),
-            None => spira_config::lc_state::row_with(&spira_config::lifecycle_row::lc_bin(), id).ok().flatten(),
+            None => spira_config::lifecycle_row::lc_bin().and_then(|b| spira_config::lc_state::row_with(&b, id)).ok().flatten(),
         };
         row.is_some_and(|r| r.terminal())
     }
     fn lc_landed(&self, id: &str) -> bool {
         // Bounded like every other subprocess here: a hung record answers "not landed".
+        let Ok(lc) = spira_config::lifecycle_row::lc_bin() else { return false };
         Command::new("timeout")
-            .args(["5", spira_config::release_env::tool("spira-lc").as_str(), "state", id])
+            .args(["5", lc.as_str(), "state", id])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output()
@@ -323,7 +326,7 @@ impl reap::ClaimProbe for Real {
     /// `spira-lc show <id>`: the bead's lifecycle row, the one claim question
     /// `reap::holder_witnesses` cannot answer itself.
     fn probe(&self, id: &str) -> Result<Option<spira_config::lc_state::Row>, String> {
-        spira_config::lc_state::row_with(&spira_config::lifecycle_row::lc_bin(), id)
+        spira_config::lc_state::row_with(&spira_config::lifecycle_row::lc_bin()?, id)
     }
 }
 

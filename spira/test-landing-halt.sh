@@ -12,7 +12,7 @@
 # trusting the passing case (law-a-regression-test-must-be-seen-to-fail).
 #
 # tier: T2
-# covers: landing-pass/* spira/lib.sh UC-landing-merge-queue-24
+# covers: landing-pass/* spira/lib.sh spira/testlib/lc-fixture.sh spira/testlib/forge-batch.sh UC-landing-merge-queue-24
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
@@ -20,9 +20,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
 # pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
 
+. "$HERE/testlib/lc-fixture.sh"
+. "$HERE/testlib/forge-batch.sh"
+
 echo "test-landing-halt.sh"
 
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)"; trap 'lcfix_down; rm -rf "$TMP"' EXIT
 
 SPIRA_RUN="$TMP/run"
 mkdir -p "$SPIRA_RUN"
@@ -46,10 +49,11 @@ run_halt() {
     # empty value resolves the same as unset and this key is re-declared on every call.
     tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_PROD="$HERE" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
         SPIRA_QUEUE_DIR="${QUEUE_DIR:-}"
-    env -i PATH="$PATH" HOME="$HOME" \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$HOME" \
         SPIRA_HOME="$HERE" \
         SPIRA_CONF=/nonexistent \
         SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
         landing-pass halt "$@" 2>&1
 }
 
@@ -83,7 +87,7 @@ echo "dry-run with a running process"
 # Stand in for a landing pass with a long-lived process.
 sleep 300 &
 FAKE_PID=$!
-trap 'kill "$FAKE_PID" 2>/dev/null; rm -rf "$TMP"' EXIT
+trap 'kill "$FAKE_PID" 2>/dev/null; lcfix_down; rm -rf "$TMP"' EXIT
 
 printf 'pid=%s\nstarted=%s\nrepo=testrepo\nbranch=spira/sp-test\nphase=gate\n' \
     "$FAKE_PID" "$(( $(date +%s) - 60 ))" > "$LAND_RUN"
@@ -151,18 +155,20 @@ git init -q "$BATCHREPO"
 git -C "$BATCHREPO" commit --allow-empty -q -m "base"
 
 git -C "$BATCHREPO" branch "spira/queue/20260917T215100Z"
-git -C "$BATCHREPO" branch "spira/queue/20260917T220000Z"
 
 # Simulate spira_repos() and repo_land() returning this repo in queue mode.
 # Override via env vars that lib.sh/conf.sh expose.
 printf 'spira-test | %s | queue | refs/remotes/origin/main | | \n' "$BATCHREPO" \
     > "$SPIRA_REPO_MAP"
 
-# Write a fake open batch record for one of the branches (simulating it was pushed).
+# The open batch, opened through the queue, whose branch has been pushed. Its remote-tracking
+# ref is dropped, so only the queue's record of it can tell halt to keep it.
 QUEUE_DIR="$SPIRA_RUN/queue"
-mkdir -p "$QUEUE_DIR/spira-test"
-printf 'branch=spira/queue/20260917T220000Z\npr=42\n' \
-    > "$QUEUE_DIR/spira-test/open"
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_QUEUE_DIR="$QUEUE_DIR"
+lcfix_up || { echo "test-landing-halt: could not build a lifecycle fixture"; exit 1; }
+OPEN_BR="$(seed_forge_batch spira-test sp-halt --pr 42 | sed -n 's/^branch=//p')"
+[ -n "$OPEN_BR" ] && ok "halt: the open batch is seeded" || bad "halt: the open batch is seeded" "no batch opened"
+git -C "$BATCHREPO" update-ref -d "refs/remotes/origin/$OPEN_BR"
 
 sleep 300 &
 BATCH_PID=$!
@@ -182,7 +188,7 @@ else
 fi
 
 # The open-record branch should NOT be touched (it may be pushed).
-if git -C "$BATCHREPO" show-ref --verify -q "refs/heads/spira/queue/20260917T220000Z" 2>/dev/null; then
+if [ -n "$OPEN_BR" ] && git -C "$BATCHREPO" show-ref --verify -q "refs/heads/$OPEN_BR" 2>/dev/null; then
     ok "halt: open batch branch preserved"
 else
     bad "halt: open batch branch preserved" "branch was deleted"
@@ -234,7 +240,7 @@ printf '%s\n' "$CONT_NAME" > "$LAND_CONTAINERS"
 # ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
 tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_PROD="$PROD_DIR" SPIRA_PATH="$BIN_DIR" \
     SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
-out="$(env -i PATH="$PROD_DIR:$BIN_DIR:$PATH" HOME="$HOME" \
+out="$(env -i SPIRA_RELEASE="$(PATH="$PROD_DIR:$BIN_DIR:$PATH" tl_release)" PATH="$PROD_DIR:$BIN_DIR:$PATH" HOME="$HOME" \
     SPIRA_HOME="$HERE" \
     SPIRA_CONF=/nonexistent \
     SPIRA_TOML="$SPIRA_TOML" \
@@ -290,7 +296,7 @@ printf '%s\n' "$FAKE_CNAME" > "$LAND_CONTAINERS"
 # ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
 tl_config SPIRA_PATH="$STUBDIR" SPIRA_RUN="$SPIRA_RUN" SPIRA_PROD="$HERE" \
     SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
-out="$(env -i PATH="$STUBDIR:$PATH" HOME="$HOME" \
+out="$(env -i SPIRA_RELEASE="$(PATH="$STUBDIR:$PATH" tl_release)" PATH="$STUBDIR:$PATH" HOME="$HOME" \
     SPIRA_HOME="$HERE" \
     SPIRA_CONF=/nonexistent \
     PODMAN_LOG="$PODMAN_LOG" \

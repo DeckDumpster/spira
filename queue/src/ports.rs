@@ -332,6 +332,9 @@ pub trait Scripts {
     /// (`release verify`'s pre-activate store check reads it). Stdout and stderr are kept
     /// apart: `release build` answers the sha on stdout.
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut;
+    /// The declared release's own `release` binary (`$SPIRA_RELEASE/bin/release`), for a step with
+    /// no round bin-dir; a refusal naming `SPIRA_RELEASE` when it is not declared.
+    fn release_tool(&self) -> Result<PathBuf, String>;
     /// A user unit's `ActiveState` (`systemctl --user show -p ActiveState --value`); empty when unreadable.
     fn unit_active_state(&self, unit: &str) -> String;
     /// `round-vm run <tree> --results-dir <results> --base <base> --round-batch <batch> --round-repo <repo>` under `timeout <wall_secs>`: the full
@@ -504,6 +507,10 @@ pub trait Lc {
     /// The queue's own fields of round `kv` written into its record.
     fn save_batch(&self, repo: &str, kv: &Kv) -> Result<(), String> {
         batches::save(self.rounds_door().ok_or(NO_STORE)?, repo, kv)
+    }
+    /// [`Lc::save_batch`] only while field `field` of the record still reads `expect`.
+    fn save_batch_if(&self, repo: &str, kv: &Kv, field: &str, expect: &str) -> Result<bool, String> {
+        batches::save_if(self.rounds_door().ok_or(NO_STORE)?, repo, kv, field, expect)
     }
     /// `show-batch` → (state, version); None when the batch row does not exist.
     fn batch_state(&self, batch_id: &str) -> Option<(String, String)>;

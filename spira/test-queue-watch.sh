@@ -51,6 +51,23 @@ command -v "$BIN" >/dev/null 2>&1 || bail "queue-watch is not on PATH"
 # --- fixtures --------------------------------------------------------------------------------
 RUN="$T/run"; FX="$T/fx"; Q="$RUN/queue/q"
 mkdir -p "$Q" "$FX"
+# queue-watch asks `queue batch show` for the open batch, and that verb is its whole view of
+# one. The scenario moves a batch between polls (red, an ejection, a re-push, a landing) faster
+# than a real queue can be walked through them, so `queue` here is a seam: `batch show` prints
+# the record a section keeps in $BATCHES/<repo>, as the queue prints its own.
+BATCHES="$FX/batches"
+mkdir -p "$FX/bin" "$BATCHES"
+cat > "$FX/bin/queue" <<EOF
+#!/bin/sh
+[ "\$1 \$2 \$3" = "batch show --repo" ] || exit 2
+[ -f "$BATCHES/\$4" ] && cat "$BATCHES/\$4"
+exit 0
+EOF
+chmod +x "$FX/bin/queue"
+PATH="$FX/bin:$PATH"; export PATH
+# Every later call declares the release the seam is laid over (testlib's tl_declare_release,
+# once binaries stop searching PATH for their tools); until then the seam is found on PATH.
+if declare -F tl_declare_release >/dev/null; then tl_declare_release; fi
 # SPIRA_HOME/--home IS THE HOME now (locate_home no longer searches): every binary reads
 # <home>/conf.d (sfail round 2, pattern 1).
 ln -s "$HERE/conf.d" "$FX/conf.d"
@@ -129,36 +146,36 @@ EOF
 chmod +x "$FX/forge.sh" "$FX/spira-lc"
 
 # Poll 1 sees: batch 50 (sp-a, sp-b), sp-o certified in another repo.
-printf 'pr=50\nhead=h1\nmembers=sp-a:%s sp-b:bbbb\n' "$TIP_A" > "$Q/open"
+printf 'pr=50\nhead=h1\nmembers=sp-a:%s sp-b:bbbb\n' "$TIP_A" > "$BATCHES/q"
 printf '[{"bead_id":"sp-o"}]' > "$FX/certified.json"
 # After poll 1: CI red, sp-b ejected, survivors re-pushed.
 cat > "$FX/step-1.sh" <<EOF
 echo red > "$FX/ci-50"
-printf 'pr=50\nhead=h2\nmembers=sp-a:$TIP_A\n' > "$Q/open.t" && mv "$Q/open.t" "$Q/open"
+printf 'pr=50\nhead=h2\nmembers=sp-a:$TIP_A\n' > "$BATCHES/q.t" && mv "$BATCHES/q.t" "$BATCHES/q"
 EOF
-# After poll 2: PR 50 merged; the batch file is gone.
+# After poll 2: PR 50 merged; the queue shows no batch.
 cat > "$FX/step-2.sh" <<EOF
 echo merged > "$FX/state-50"
-rm -f "$Q/open"
+rm -f "$BATCHES/q"
 EOF
 # After poll 3: PR 51 forced to a stale bisect group of P3 work while a P0 waits.
 cat > "$FX/step-3.sh" <<EOF
 printf 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef sp-c:cccc\nsp-b:bbbb\n' > "$Q/bisect"
 touch -d '3 hours ago' "$Q/bisect"
-printf 'pr=51\nhead=h3\nmembers=sp-c:cccc\n' > "$Q/open"
+printf 'pr=51\nhead=h3\nmembers=sp-c:cccc\n' > "$BATCHES/q"
 printf '[{"bead_id":"sp-o"},{"bead_id":"sp-d"}]' > "$FX/certified.json"
 EOF
 # After poll 4: PR 51 closed without merging; its member back in CERTIFIED.
 cat > "$FX/step-4.sh" <<EOF
 echo closed > "$FX/state-51"
-rm -f "$Q/open"
+rm -f "$BATCHES/q"
 printf '[{"bead_id":"sp-o"},{"bead_id":"sp-d"},{"bead_id":"sp-c"}]' > "$FX/certified.json"
 EOF
 
 # SPIRA_QUEUE_DIR undeclared resolves to the complete fixture's own
 # /fixture/userhome/spira/run/queue (nonexistent, and non-empty so the "" -> run.join("queue")
-# fallback in queue-watch/src/main.rs never fires) — every "$Q/open" this suite writes under
-# "$RUN/queue/<repo>" went unread, reading as "no batch open" rather than a real refusal.
+# fallback in queue-watch/src/main.rs never fires) — the bisect record this suite writes under
+# "$RUN/queue/<repo>" went unread.
 tl_config SPIRA_FORGE="$FX/forge.sh" SPIRA_DB="" SPIRA_QUEUE_DIR="$RUN/queue"
 export FX SPIRA_LC_BIN="$FX/spira-lc"
 out="$("$BIN" watch --ticks 5 --interval 1 --run "$RUN" --home "$FX" --config "$FX/spira.toml" 2>&1)"
@@ -234,7 +251,7 @@ hout2="$("$BIN" health --run "$ARUN" --home "$FX" 2>&1)"; hrc2=$?
 SRUN="$T/stall-run"; SQ="$SRUN/queue/qs"
 mkdir -p "$SQ"
 STALL_BRANCH="spira/queue/20260927T150304Z"
-printf 'pr=419\nhead=deadbeef\nmembers=sp-a:%s\nbranch=%s\n' "$TIP_A" "$STALL_BRANCH" > "$SQ/open"
+printf 'pr=419\nhead=deadbeef\nmembers=sp-a:%s\nbranch=%s\n' "$TIP_A" "$STALL_BRANCH" > "$BATCHES/qs"
 
 cat > "$FX/stall.toml" <<EOF
 [repo.qs]

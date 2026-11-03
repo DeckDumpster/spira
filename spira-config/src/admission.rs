@@ -1190,7 +1190,7 @@ pub fn shared_round_probe(dir: &Path, now: u64, probe: &dyn Fn() -> Option<Strin
 /// host-wide through `<run>/admission/round-phase`.
 pub fn yield_to_round_real(run: &Path, say: &mut dyn FnMut(&str)) -> u64 {
     let lc = || {
-        let bin = crate::lifecycle_row::lc_bin();
+        let bin = crate::lifecycle_row::lc_bin().ok()?;
         let (code, out) = crate::lc_call::run_bounded({
             let mut c = std::process::Command::new(bin);
             c.args(["list", "--batches"]);

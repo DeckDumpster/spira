@@ -16,7 +16,7 @@ mkdir -p "$R/spira"
 git init -q -b main "$R"
 GIT=(git -C "$R" -c user.email=t@t -c user.name=t)
 
-ss() { env -i PATH="$PATH" HOME="$TMP" suite-select "$@"; }
+ss() { env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" suite-select "$@"; }
 sel() { ss select --repo "$R" --suite-dir "$R/spira" "$@" 2>/dev/null; }
 suite() {   # suite <name> <header lines...>
     local n="$1"; shift

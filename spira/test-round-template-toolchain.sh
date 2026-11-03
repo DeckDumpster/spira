@@ -32,7 +32,7 @@ fixture() {
     ch="$TMP/$1"; mkdir -p "$ch/bin"
     printf '#!/bin/sh\necho "rustc %s (fake)"\n' "$2" > "$ch/bin/rustc"; chmod +x "$ch/bin/rustc"
 }
-run() { env -i PATH="$TMP/bin:/usr/bin:/bin" CARGO_HOME="$TMP/$1" toolchain="$2" bash "$TMP/snippet.sh" 2>&1; }
+run() { env -i SPIRA_RELEASE="$(tl_release)" PATH="$TMP/bin:/usr/bin:/bin" CARGO_HOME="$TMP/$1" toolchain="$2" bash "$TMP/snippet.sh" 2>&1; }
 
 fixture old 1.82.0
 out="$(run old 1.99.1)"
@@ -58,11 +58,11 @@ cat > "$TMP/dbin/rustup" <<'R'
 echo "$RUSTUP_HOME $*" >> "$HOME/rustup.log"
 R
 chmod +x "$TMP/dbin/rustup"
-env -i PATH="$TMP/dbin:/usr/bin:/bin" HOME="$TMP/home" toolchain=1.99.1 bash "$TMP/default.sh" >/dev/null 2>&1
+env -i SPIRA_RELEASE="$(tl_release)" PATH="$TMP/dbin:/usr/bin:/bin" HOME="$TMP/home" toolchain=1.99.1 bash "$TMP/default.sh" >/dev/null 2>&1
 want "pin is installed in the ambient rustup home" "$TMP/home/.rustup toolchain install 1.99.1" "$(cat "$TMP/home/rustup.log")"
 want "pin becomes the ambient default" "$TMP/home/.rustup default 1.99.1" "$(cat "$TMP/home/rustup.log")"
 
-verify() { env -i PLAIN_PATH="$TMP/$1" PATH=/usr/bin:/bin HOME="$TMP/home" bash "$TMP/verify.sh" 2>&1; }
+verify() { env -i SPIRA_RELEASE="$(tl_release)" PLAIN_PATH="$TMP/$1" PATH=/usr/bin:/bin HOME="$TMP/home" bash "$TMP/verify.sh" 2>&1; }
 mkdir -p "$TMP/vbad" "$TMP/vgood"
 printf '#!/bin/sh\necho "error: rustup could not choose a version of cargo to run" >&2\nexit 1\n' > "$TMP/vbad/cargo"
 printf '#!/bin/sh\necho "cargo 1.99.1"\n' > "$TMP/vgood/cargo"

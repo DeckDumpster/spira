@@ -37,7 +37,7 @@ SCENARIO="$HERE/sim/scenarios/happy-path.toml"
 REPO="$T/repo"
 "$SIM" world fixture "$HERE/.." "$REPO" || bail "fixture repo failed"
 
-NOLOC=(-u SPIRA_RUN -u SPIRA_DB -u SPIRA_LC_PASSWORD_FILE -u SPIRA_LC_SOCKET -u SPIRA_LC_HOST -u SPIRA_LC_PORT -u SPIRA_LC_USER -u SPIRA_HOME -u SPIRA_WORK_BEAD_ID)
+NOLOC=(-u SPIRA_TOML -u SPIRA_RUN -u SPIRA_DB -u SPIRA_LC_PASSWORD_FILE -u SPIRA_LC_SOCKET -u SPIRA_LC_HOST -u SPIRA_LC_PORT -u SPIRA_LC_USER -u SPIRA_HOME -u SPIRA_WORK_BEAD_ID)
 
 sim_in_repo() {  # sim_in_repo <seconds> <args...> — sim from the fixture repo, no production locator, a prebuilt release
     local limit="$1"; shift

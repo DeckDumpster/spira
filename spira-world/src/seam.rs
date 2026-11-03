@@ -41,9 +41,10 @@ pub fn run_for(lib_sh: &Path, name: &str, script: &str, envs: &[(&str, &str)], s
     let mut cmd = spira_config::bounded::bounded_for("bash", secs);
     cmd.args(["-c", &full, name]);
     cmd.env("SPIRA_HOME_LIB", lib_sh);
-    // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
-    // bin/+spira/ on the CHILD's PATH, never only inherited.
-    cmd.envs(spira_config::release_env::child_path_env_for_process());
+    match spira_config::release_env::child_path_env_for_process() {
+        Ok(e) => cmd.envs(e),
+        Err(e) => return (format!("{name}: {e}"), None),
+    };
     for (k, v) in envs {
         cmd.env(k, v);
     }

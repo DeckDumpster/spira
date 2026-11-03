@@ -77,20 +77,13 @@ fn next_call(state: &Path, bead: &str) -> Result<usize, String> {
     Ok(n)
 }
 
-/// The model's restricted PATH, with the release's tools after it: the commit hook needs them and a
-/// release whose binaries are links has no `spira/hooks/../../bin` to find them by.
-fn hook_path() -> Option<String> {
-    let path = std::env::var("PATH").ok();
-    spira_config::release_env::ensured_path(std::env::var(spira_config::RELEASE_ENV).ok().as_deref(), None, path.as_deref()).map(|(_, p)| p)
-}
-
 fn git(worktree: &Path, args: &[&str]) -> Result<String, String> {
     run(
         Command::new("git")
             .arg("-C")
             .arg(worktree)
             .args(args)
-            .envs(hook_path().map(|p| ("PATH", p)))
+            .envs(spira_config::release_env::child_path_env_for_process()?)
             .env("GIT_AUTHOR_NAME", "sim-agent")
             .env("GIT_AUTHOR_EMAIL", "sim@sim.invalid")
             .env("GIT_COMMITTER_NAME", "sim-agent")
@@ -100,7 +93,7 @@ fn git(worktree: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 fn work(worktree: &Path, args: &[&str]) -> Result<String, String> {
-    run(Command::new(spira_config::release_env::tool("work")).args(args).current_dir(worktree), CALL_DEADLINE)
+    run(Command::new(spira_config::release_env::tool("work")?).args(args).current_dir(worktree), CALL_DEADLINE)
 }
 
 fn exec(worktree: &Path, bead: &str, step: &Step, ordinal: usize) -> Result<(), String> {
@@ -132,7 +125,7 @@ fn exec(worktree: &Path, bead: &str, step: &Step, ordinal: usize) -> Result<(), 
             git(worktree, &["commit", "-q", "-m", &format!("{bead}: sim drop {file}")]).map(|_| ())
         }
         Step::NoProgress => Ok(()),
-        Step::Slain => run(Command::new(spira_config::release_env::tool("spira-lc")).args(["disposition", bead, "slain", "slain by operator", "slay"]).current_dir(worktree), CALL_DEADLINE).map(|_| ()),
+        Step::Slain => run(Command::new(spira_config::lifecycle_row::lc_bin()?).args(["disposition", bead, "slain", "slain by operator", "slay"]).current_dir(worktree), CALL_DEADLINE).map(|_| ()),
         Step::Ask { question, default } => work(worktree, &["blocked", question, "--default", default]).map(|_| ()),
     }
 }

@@ -81,7 +81,7 @@ RUNE_WORKING_EXITS="SUBMITTED ask park hold"
 EOF
 touch -d '+1 minute' "$RUNES/builder.rune"
 
-resolved="$(env -i PATH="$PATH" HOME="$FIXHOME" \
+resolved="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$FIXHOME" \
     SPIRA_CONF=/nonexistent \
     SPIRA_TOML="$REAL_TOML" \
     SPIRA_WATCHERS="$HARNESS/spira/watchers" \

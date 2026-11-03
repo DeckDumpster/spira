@@ -42,7 +42,7 @@ find_id() { timeout 5 "$BD" -C "$SPIRA_DB" list --json --all --limit 0 2>/dev/nu
 run() {   # run <registry> args... ; BEAD_STATUTE_CONSIDERED passes through when set
     local reg="$1"; shift
     tl_config SPIRA_REPO_MAP="$MAP" SPIRA_BD="$BD" SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$TMP/run" SPIRA_STATUTE_GUARDS="$reg"
-    env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(tl_release)" SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" BD_TIMEOUT=10 \
         ${BEAD_STATUTE_CONSIDERED:+BEAD_STATUTE_CONSIDERED="$BEAD_STATUTE_CONSIDERED"} \
         bead.sh "$@" > "$TMP/out" 2>&1

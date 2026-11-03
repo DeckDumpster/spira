@@ -1,37 +1,7 @@
-//! `law-a-binary-resolves-the-config-it-reads`, for the one shape every release binary that
-//! shells into `conf.sh`/`lib.sh` shares: a Rust process spawns `bash -c '. "$HERE/conf.sh"
-//! ...'` (or `lib.sh`) and lets the CHILD inherit whatever PATH the PARENT happened to have —
-//! which is the release's own `bin/`+`spira/` only when a launcher (a systemd unit, `conf.sh`
-//! itself) put it there first. A binary reached by bare name from a plain shell (`env -i
-//! HOME=$HOME PATH=/usr/bin:/bin $RELEASE/bin/inbox-triage` — exactly how the SessionStart
-//! compact hook arms the Concierge's inbox Monitor) has no such launcher: its own PATH is
-//! bare, the child's is too, `command -v spira-config` in `conf.sh` fails, and the whole
-//! process dies with exit 97 before it does anything (sp-kgzql).
-//!
-//! THE FIX: the PARENT, not `conf.sh`, is the one thing that can answer "where is my own
-//! release" — `conf.sh` has no `BASH_SOURCE` standing for a compiled binary's own location,
-//! and has no business guessing which binary launched it anyway. So every one of these
-//! spawn sites resolves ITS OWN release root once, here, the same ascending search
-//! `inbox-triage`/`watchd`/... already ran to find `conf.sh`'s own directory (never
-//! `$SPIRA_HOME`, which is the CALLER's own config input — a fixture's `--home` may point
-//! at some OTHER tree's `conf.sh`/`lib.sh` entirely; this binary's PATH fix is about ITS OWN
-//! release's tools being reachable, regardless of whose config ends up getting read), then
-//! prepends `<release>/bin:<release>/spira` onto the child's PATH and sets `SPIRA_RELEASE`,
-//! exactly the two things a normal launcher already does for the TOP-level process
-//! ([`crate::release_path`]) — this module is that same contract, applied one process hop
-//! further in.
-//!
-//! NEVER `std::env::current_exe()` alone: it canonicalizes every symlink in the path, which
-//! is exactly wrong for a staged test release whose `bin/<tool>` is a symlink to a cargo
-//! build artifact with no `spira/` sibling at all (`testenv::fixture::STAGE_SCRIPT`) — the
-//! same hazard `install::bootstrap::argv0_path`'s own doc describes. [`own_release_root`]
-//! walks from the EXE's path as given (via [`std::env::current_exe`], which still resolves
-//! the FINAL symlink component but not ones a caller substitutes with `argv0`), ascending
-//! parent directories rather than trusting any one fixed depth, so it finds the nearest
-//! ancestor that actually holds `spira/conf.sh` — the `current` symlink's target (a release
-//! sha directory) and a sha directory named directly both satisfy this the same way, and a
-//! staged fixture whose `bin/` symlinks elsewhere falls through to whatever real tree is
-//! above it, same as today's per-crate `home_dir`/`locate_home` helpers already do.
+//! Where a process finds its own release's tools and builds a child's `PATH`
+//! (`law-a-binary-resolves-the-config-it-reads`, `law-no-fallbacks`): from `$SPIRA_RELEASE`,
+//! which every launcher sets, and nothing else. Unset is a refusal naming the key — no
+//! inherited `PATH` tier, no search upward from `current_exe()`.
 
 use std::path::{Path, PathBuf};
 
@@ -109,130 +79,92 @@ pub fn link_model_bin(release: &Path) -> Result<Vec<String>, String> {
     Ok(present.iter().map(|s| s.to_string()).collect())
 }
 
-/// Ascends from `exe`'s own directory to the nearest ancestor holding a `spira/conf.sh` —
-/// this binary's own release root (`<release>` such that `<release>/bin` holds `exe` and
-/// `<release>/spira/conf.sh` exists). The identical search `inbox-triage::find_spira_dir`
-/// and `watchd`'s `home_dir` already run for `conf.sh`'s own directory, generalized here so
-/// the RELEASE ROOT (`spira`'s parent, which also holds `bin/`) is available too — until
-/// this bead nothing computed that half, only `spira/`'s own location.
-///
-/// `None` when no ancestor qualifies (a bare `cargo test` binary under `target/debug` with
-/// no `spira/` anywhere above it) — the caller degrades to its PRE-this-bead behaviour
-/// (inherited PATH, unset `SPIRA_RELEASE`) rather than refusing outright, matching every
-/// other per-crate home-finder's own "best effort" contract.
-/// BOTH `<dir>/bin` (a directory) AND `<dir>/spira/conf.sh` (a file) must exist —
-/// `spira/conf.sh` alone is not enough: this process's OWN dev checkout satisfies that
-/// (every workspace crate's `target/debug/deps/<test-binary>` ascends straight into the
-/// checkout's own `spira/conf.sh`) but has no top-level `bin/`, and treating it as a
-/// release anyway shadows a test fixture's own deliberate PATH prepend with whatever the
-/// checkout's real `spira/*.sh` happens to hold — caught live by
-/// `queue::real::tests::pf_gate_returns_gates_output_and_rc_and_enforces_its_own_wall`,
-/// which stubs `gate.sh` in a tempdir it puts FIRST on PATH specifically so the stub wins;
-/// prepending the checkout's own `spira/gate.sh` ahead of it broke that contract. A real
-/// release (`<release>/bin/<tool>` + `<release>/spira/conf.sh`, or any test fixture that
-/// stages the same two directories — `release/tests/session_hook_minimal_env.rs`,
-/// `inbox-triage/tests/release_path.rs`, `testenv::fixture::STAGE_SCRIPT`) always has both.
-pub fn own_release_root(exe: &Path) -> Option<PathBuf> {
-    let mut dir = exe.parent()?;
-    loop {
-        if dir.join("bin").is_dir() && dir.join("spira").join("conf.sh").is_file() {
-            return Some(dir.to_path_buf());
-        }
-        dir = dir.parent()?;
+/// The release root `$SPIRA_RELEASE` names — the one declared source of where the running
+/// release is. Unset or empty is a refusal naming the key; nothing is searched for.
+pub fn release_root(value: Option<&str>) -> Result<PathBuf, String> {
+    match value.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(r) => Ok(PathBuf::from(r.trim_end_matches('/'))),
+        None => Err(format!("{} is not set — it names the release this process runs from; there is no fallback", crate::RELEASE_ENV)),
     }
 }
 
-/// [`own_release_root`] of `std::env::current_exe()` — what every real call site uses; kept
-/// separate from the pure function so a test can hand in a fabricated `exe` without
-/// controlling where the test binary itself happens to be installed.
-pub fn own_release_root_for_process() -> Option<PathBuf> {
-    std::env::current_exe().ok().and_then(|e| own_release_root(&e))
+/// [`release_root`] of this process's `$SPIRA_RELEASE`.
+pub fn release_root_for_process() -> Result<PathBuf, String> {
+    release_root(std::env::var(crate::RELEASE_ENV).ok().as_deref())
 }
 
-/// `PATH`/`SPIRA_RELEASE` for a CHILD process this binary is about to spawn to source
-/// `conf.sh`/`lib.sh`: `<release>/bin` and `<release>/spira` PREPENDED onto `existing_path`
-/// (never discarding it — unlike the top-level launcher's [`crate::release_path`], which
-/// sets PATH outright, a binary already running may have its own extra PATH entries in
-/// force for reasons that have nothing to do with this fix, and a child still needing one of
-/// those should degrade exactly as it would have before this bead, not lose it). `release`
-/// absent (nothing above this exe looks like a release) returns nothing to set, so the
-/// child's PATH passes through completely unmodified — the exact pre-this-bead behaviour,
-/// never a refusal.
-pub fn child_path_env(release: Option<&Path>, existing_path: Option<&str>) -> Vec<(String, String)> {
-    let Some(release) = release else { return Vec::new() };
-    let release_s = release.display().to_string();
-    let path = match existing_path.filter(|p| !p.is_empty()) {
-        Some(p) => format!("{release_s}/bin:{release_s}/spira:{p}"),
-        None => format!("{release_s}/bin:{release_s}/spira"),
-    };
-    vec![(crate::RELEASE_ENV.to_string(), release_s), ("PATH".to_string(), path)]
-}
-
-/// [`child_path_env`] for THIS process: [`own_release_root_for_process`] and this process's
-/// own `$PATH` — the one call every `conf.sh`/`lib.sh`-sourcing seam makes right before
-/// spawning `bash`, e.g. `cmd.envs(spira_config::release_env::child_path_env_for_process())`.
-pub fn child_path_env_for_process() -> Vec<(String, String)> {
-    child_path_env(own_release_root_for_process().as_deref(), std::env::var("PATH").ok().as_deref())
-}
-
-/// The `PATH` a process needs so every tool it execs by bare name can resolve from the active
-/// release: `<release>/bin` and `<release>/spira`, each appended to `existing_path` unless
-/// already an entry of it. Appended, never prepended: an entry the caller put first (a stub, an
-/// operator override) must still win. The release is `$SPIRA_RELEASE` when its `bin/` exists,
-/// else the one `own_root` names. `None` when there is no release or both dirs are on the path.
-pub fn ensured_path(env_release: Option<&str>, own_root: Option<&Path>, existing_path: Option<&str>) -> Option<(PathBuf, String)> {
-    let release = env_release.filter(|r| !r.is_empty()).map(|r| PathBuf::from(r.trim_end_matches('/'))).filter(|r| r.join("bin").is_dir()).or_else(|| own_root.map(Path::to_path_buf))?;
-    let existing = existing_path.unwrap_or("");
-    let mut entries: Vec<String> = existing.split(':').filter(|e| !e.is_empty()).map(str::to_string).collect();
-    let before = entries.len();
-    for dir in [release.join("bin"), release.join("spira")] {
-        let dir = dir.display().to_string();
-        if !entries.contains(&dir) {
-            entries.push(dir);
-        }
+/// The `PATH` a launched process runs under, the same one every unit template renders:
+/// `<release>/bin:<release>/spira:<spira-env bin>:<system dirs>[:<tail>]`. Built outright
+/// from the declared release, `HOME` (whose pinned tool environment it names) and the
+/// configured `SPIRA_PATH` tail — never from an inherited `PATH`.
+pub fn launcher_path(release: Option<&str>, home: Option<&str>, tail: &str) -> Result<String, String> {
+    let release = release_root(release)?;
+    let home = home.filter(|h| !h.is_empty()).ok_or_else(|| "HOME is not set — the child PATH names its spira-env bin; there is no fallback".to_string())?;
+    let r = release.display();
+    let base = format!("{r}/bin:{r}/spira:{}:{}", crate::spira_env_bin(home), crate::SYSTEM_PATH);
+    let tail = tail.trim();
+    if tail.is_empty() {
+        return Ok(base);
     }
-    if entries.len() == before {
-        return None;
+    let refusals = crate::tail_refusals(tail);
+    if !refusals.is_empty() {
+        return Err(refusals.join("; "));
     }
-    Some((release, entries.join(":")))
+    Ok(format!("{base}:{tail}"))
 }
 
-/// [`ensured_path`] applied to this process: call it first thing in `main`, before any thread
-/// starts, so every child inherits a `PATH` that finds the release's `bin/` and `spira/` and a
-/// `SPIRA_RELEASE` naming it, whatever environment launched this process.
-pub fn ensure_release_path() {
-    let env_release = std::env::var("SPIRA_RELEASE").ok();
-    let path = std::env::var("PATH").ok();
-    if let Some((release, path)) = ensured_path(env_release.as_deref(), own_release_root_for_process().as_deref(), path.as_deref()) {
-        std::env::set_var("PATH", path);
-        std::env::set_var(crate::RELEASE_ENV, release);
-    }
+/// `PATH` and `SPIRA_RELEASE` for a child process: [`launcher_path`] and the release it names.
+pub fn child_path_env(release: Option<&str>, home: Option<&str>, tail: &str) -> Result<Vec<(String, String)>, String> {
+    let path = launcher_path(release, home, tail)?;
+    let release = release_root(release)?;
+    Ok(vec![(crate::RELEASE_ENV.to_string(), release.display().to_string()), ("PATH".to_string(), path)])
 }
 
-/// The program name to exec for a release-shipped tool: the bare `name` when `path` already
-/// finds it (a stub or operator override on `PATH` wins), else its file in the release's
-/// `bin/` or `spira/` (`$SPIRA_RELEASE`, then this exe's own root), else the bare `name`.
-pub fn resolve_tool(name: &str, env_release: Option<&str>, own_root: Option<&Path>, path: Option<&str>) -> String {
+/// `PATH`/`SPIRA_RELEASE` for a child run against a release being BUILT: `stage` is the release it
+/// runs from, and its PATH is that release plus the system directories ([`crate::release_path`]).
+/// Declared by the builder, so a build needs no installed release and no config.
+pub fn stage_child_path_env(stage: &Path) -> Vec<(String, String)> {
+    let s = stage.display().to_string();
+    vec![(crate::RELEASE_ENV.to_string(), s.clone()), ("PATH".to_string(), crate::release_path(&s))]
+}
+
+/// [`child_path_env`] for THIS process: its `$SPIRA_RELEASE`, `$HOME` and configured
+/// `SPIRA_PATH` — what every spawn of a release tool or a `conf.sh`-sourcing shell sets,
+/// e.g. `cmd.envs(child_path_env_for_process()?)`.
+pub fn child_path_env_for_process() -> Result<Vec<(String, String)>, String> {
+    let tail = crate::process::cfg("SPIRA_PATH")?;
+    child_path_env(std::env::var(crate::RELEASE_ENV).ok().as_deref(), std::env::var("HOME").ok().as_deref(), &tail)
+}
+
+/// Sets this process's own `PATH` to [`child_path_env_for_process`]'s, so every child it
+/// spawns by bare name resolves from the declared release. Call it first thing in `main`,
+/// before any thread starts.
+pub fn ensure_release_path() -> Result<(), String> {
+    for (k, v) in child_path_env_for_process()? {
+        std::env::set_var(k, v);
+    }
+    Ok(())
+}
+
+/// The program to exec for a release-shipped tool: its file in `<release>/bin` or
+/// `<release>/spira`, where the release is `$SPIRA_RELEASE`. Unset, or a tool the release does
+/// not ship, is a refusal naming the key — never a `PATH` lookup or a bare name.
+pub fn resolve_tool(name: &str, release: Option<&str>) -> Result<String, String> {
+    let root = release_root(release).map_err(|e| format!("cannot resolve {name}: {e}"))?;
     let runnable = |p: &Path| std::fs::metadata(p).is_ok_and(|m| m.is_file() && std::os::unix::fs::PermissionsExt::mode(&m.permissions()) & 0o111 != 0);
-    if path.unwrap_or("").split(':').filter(|d| !d.is_empty()).any(|d| runnable(&Path::new(d).join(name))) {
-        return name.to_string();
-    }
-    let env_release = env_release.filter(|r| !r.is_empty()).map(PathBuf::from);
-    for release in env_release.iter().map(PathBuf::as_path).chain(own_root) {
-        for dir in ["bin", "spira"] {
-            let p = release.join(dir).join(name);
-            if runnable(&p) {
-                return p.display().to_string();
-            }
+    for dir in ["bin", "spira"] {
+        let p = root.join(dir).join(name);
+        if runnable(&p) {
+            return Ok(p.display().to_string());
         }
     }
-    name.to_string()
+    Err(format!("{name} is not in {} ({}) bin/ or spira/", crate::RELEASE_ENV, root.display()))
 }
 
 /// [`resolve_tool`] for this process: how every exec of a release-shipped tool names its
 /// program (`spira-lint`'s `release-tool-exec` refuses a bare name).
-pub fn tool(name: &str) -> String {
-    resolve_tool(name, std::env::var("SPIRA_RELEASE").ok().as_deref(), own_release_root_for_process().as_deref(), std::env::var("PATH").ok().as_deref())
+pub fn tool(name: &str) -> Result<String, String> {
+    resolve_tool(name, std::env::var(crate::RELEASE_ENV).ok().as_deref())
 }
 
 #[cfg(test)]
@@ -240,139 +172,62 @@ mod tests {
     use super::*;
 
     #[test]
-    fn own_release_root_finds_spira_one_level_above_bin() {
-        let t = testkit::TempDir::new("release-env-bin");
-        let release = t.join("spira-releases/abc123");
-        std::fs::create_dir_all(release.join("bin")).unwrap();
-        std::fs::create_dir_all(release.join("spira")).unwrap();
-        std::fs::write(release.join("spira/conf.sh"), "").unwrap();
-        let exe = release.join("bin/inbox-triage");
-        assert_eq!(own_release_root(&exe), Some(release));
+    fn resolve_tool_without_spira_release_refuses_naming_the_key() {
+        let e = resolve_tool("spira-lc", None).unwrap_err();
+        assert!(e.contains("SPIRA_RELEASE is not set"), "{e}");
+        assert!(resolve_tool("spira-lc", Some("")).unwrap_err().contains("SPIRA_RELEASE"));
     }
 
     #[test]
-    fn own_release_root_climbs_past_an_intermediate_directory() {
-        // A staged testenv/dwarf-profile release: target/dwarf/<bin>, bin/+spira/ two levels
-        // further up (testenv::fixture::STAGE_SCRIPT's own shape — `bin/` and `spira/`
-        // both siblings of the checkout's `target/`, never inside it).
-        let t = testkit::TempDir::new("release-env-climb");
-        std::fs::create_dir_all(t.join("target/dwarf")).unwrap();
+    fn resolve_tool_never_resolves_on_path_or_by_bare_name() {
+        let t = testkit::TempDir::new("resolve-tool-nopath");
         std::fs::create_dir_all(t.join("bin")).unwrap();
-        std::fs::create_dir_all(t.join("spira")).unwrap();
-        std::fs::write(t.join("spira/conf.sh"), "").unwrap();
-        let exe = t.join("target/dwarf/inbox-triage");
-        assert_eq!(own_release_root(&exe), Some(t.path().to_path_buf()));
+        let e = resolve_tool("sh", Some(&t.path().display().to_string())).unwrap_err();
+        assert!(e.contains("SPIRA_RELEASE") && e.contains("sh is not in"), "{e}");
     }
 
     #[test]
-    fn own_release_root_is_none_with_no_qualifying_ancestor() {
-        let t = testkit::TempDir::new("release-env-none");
-        let exe = t.join("a/b/c/inbox-triage");
-        assert_eq!(own_release_root(&exe), None);
-    }
-
-    /// THE REGRESSION THIS BEAD'S FIRST VERSION CAUSED: a `cargo test` binary's own
-    /// `current_exe()` ascends straight into the WORKSPACE CHECKOUT's `spira/conf.sh` —
-    /// every crate's test binary sits a few `target/debug/deps/` levels under it — which
-    /// is not a release at all (no top-level `bin/`), only a dev checkout. Treating it as
-    /// one would prepend the checkout's own `spira/*.sh` onto PATH ahead of a test
-    /// fixture's own deliberate stub directory, exactly the collision
-    /// `queue::real::tests::pf_gate_returns_gates_output_and_rc_and_enforces_its_own_wall`
-    /// hit (that test's tempdir `gate.sh` stub, prepended first on PATH, lost to the
-    /// checkout's real `spira/gate.sh` once this function treated the checkout as the
-    /// exe's own release). `spira/conf.sh` present with no sibling `bin/` must stay `None`.
-    #[test]
-    fn own_release_root_is_none_for_a_checkout_with_spira_but_no_bin() {
-        let t = testkit::TempDir::new("release-env-checkout");
-        std::fs::create_dir_all(t.join("target/debug/deps")).unwrap();
-        std::fs::create_dir_all(t.join("spira")).unwrap();
-        std::fs::write(t.join("spira/conf.sh"), "").unwrap();
-        let exe = t.join("target/debug/deps/some-crate-abc123");
-        assert_eq!(own_release_root(&exe), None);
+    fn resolve_tool_finds_bin_then_spira_under_the_release() {
+        let t = testkit::TempDir::new("resolve-tool");
+        for p in [t.join("bin/spira-lc"), t.join("spira/gate.sh"), t.join("bin/queue"), t.join("spira/queue")] {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            testkit::write_exe(&p, "");
+        }
+        let rel = t.path().display().to_string();
+        assert_eq!(resolve_tool("spira-lc", Some(&rel)).unwrap(), format!("{rel}/bin/spira-lc"));
+        assert_eq!(resolve_tool("gate.sh", Some(&rel)).unwrap(), format!("{rel}/spira/gate.sh"));
+        assert_eq!(resolve_tool("queue", Some(&format!("{rel}/"))).unwrap(), format!("{rel}/bin/queue"));
     }
 
     #[test]
-    fn child_path_env_prepends_bin_and_spira_and_keeps_the_existing_tail() {
-        let release = Path::new("/opt/spira-releases/abc123");
-        let got = child_path_env(Some(release), Some("/usr/bin:/bin"));
+    fn launcher_path_without_spira_release_refuses_naming_the_key() {
+        let e = launcher_path(None, Some("/h"), "").unwrap_err();
+        assert!(e.contains("SPIRA_RELEASE is not set"), "{e}");
+    }
+
+    #[test]
+    fn launcher_path_without_home_refuses_naming_the_key() {
+        let e = launcher_path(Some("/r"), None, "").unwrap_err();
+        assert!(e.contains("HOME is not set"), "{e}");
+    }
+
+    #[test]
+    fn child_path_env_never_carries_the_inherited_path() {
+        let got = child_path_env(Some("/opt/rel"), Some("/h"), "/box/bin").unwrap();
         let path = got.iter().find(|(k, _)| k == "PATH").map(|(_, v)| v.as_str());
-        assert_eq!(path, Some("/opt/spira-releases/abc123/bin:/opt/spira-releases/abc123/spira:/usr/bin:/bin"));
-        let release_env = got.iter().find(|(k, _)| k == crate::RELEASE_ENV).map(|(_, v)| v.as_str());
-        assert_eq!(release_env, Some("/opt/spira-releases/abc123"));
+        assert_eq!(path, Some("/opt/rel/bin:/opt/rel/spira:/h/.local/lib/spira-env/bin:/usr/local/bin:/usr/bin:/bin:/box/bin"));
+        let rel = got.iter().find(|(k, _)| k == crate::RELEASE_ENV).map(|(_, v)| v.as_str());
+        assert_eq!(rel, Some("/opt/rel"));
     }
 
     #[test]
-    fn child_path_env_with_no_existing_path_still_sets_bin_and_spira() {
-        let release = Path::new("/opt/spira-releases/abc123");
-        let got = child_path_env(Some(release), None);
-        let path = got.iter().find(|(k, _)| k == "PATH").map(|(_, v)| v.as_str());
-        assert_eq!(path, Some("/opt/spira-releases/abc123/bin:/opt/spira-releases/abc123/spira"));
+    fn a_build_child_runs_from_the_stage_it_builds() {
+        let got = stage_child_path_env(Path::new("/w/stage"));
+        assert_eq!(got, vec![(crate::RELEASE_ENV.to_string(), "/w/stage".to_string()), ("PATH".to_string(), "/w/stage/bin:/w/stage/spira:/usr/local/bin:/usr/bin:/bin".to_string())]);
     }
 
     #[test]
-    fn child_path_env_is_empty_with_no_resolvable_release() {
-        assert_eq!(child_path_env(None, Some("/usr/bin:/bin")), Vec::new());
-    }
-
-    #[test]
-    fn child_path_env_reproduces_the_bare_shell_scar_without_a_release() {
-        // The exact repro this bead names: `env -i HOME=$HOME PATH=/usr/bin:/bin
-        // $RELEASE/bin/inbox-triage` — a bare shell with no release anywhere on PATH. Before
-        // this bead's fix, nothing computed a release root at all, so a caller building a
-        // child's PATH straight from `std::env::var("PATH")` got exactly `/usr/bin:/bin`
-        // (no `spira-config` on it) — `command -v spira-config` in conf.sh fails and the
-        // whole seam exits 97. With a resolvable release, the fix prepends it regardless of
-        // how bare the parent's own PATH was.
-        let release = Path::new("/opt/spira-releases/abc123");
-        let bare = "/usr/bin:/bin";
-        let got = child_path_env(Some(release), Some(bare));
-        let path = got.iter().find(|(k, _)| k == "PATH").map(|(_, v)| v.as_str()).unwrap();
-        assert!(path.starts_with("/opt/spira-releases/abc123/bin:/opt/spira-releases/abc123/spira:"));
-        assert!(path.ends_with(bare));
-    }
-
-    #[test]
-    fn ensured_path_prepends_the_release_to_a_bare_path() {
-        let t = testkit::TempDir::new("ensured-bare");
-        std::fs::create_dir_all(t.join("bin")).unwrap();
-        let (rel, path) = ensured_path(None, Some(t.path()), Some("/usr/bin:/bin")).unwrap();
-        assert_eq!(rel, t.path());
-        assert_eq!(path, format!("/usr/bin:/bin:{0}/bin:{0}/spira", t.path().display()));
-    }
-
-    #[test]
-    fn ensured_path_prefers_spira_release_over_the_exe_s_own_root() {
-        let a = testkit::TempDir::new("ensured-env");
-        let b = testkit::TempDir::new("ensured-own");
-        std::fs::create_dir_all(a.join("bin")).unwrap();
-        let (rel, _) = ensured_path(Some(&a.path().display().to_string()), Some(b.path()), Some("/bin")).unwrap();
-        assert_eq!(rel, a.path());
-    }
-
-    #[test]
-    fn ensured_path_ignores_a_spira_release_with_no_bin_and_falls_to_the_own_root() {
-        let a = testkit::TempDir::new("ensured-nobin");
-        let b = testkit::TempDir::new("ensured-own2");
-        let (rel, _) = ensured_path(Some(&a.path().display().to_string()), Some(b.path()), None).unwrap();
-        assert_eq!(rel, b.path());
-    }
-
-    #[test]
-    fn ensured_path_leaves_a_path_that_already_holds_the_release() {
-        let t = testkit::TempDir::new("ensured-already");
-        let p = format!("/usr/bin:{0}/bin:/bin:{0}/spira", t.path().display());
-        assert_eq!(ensured_path(None, Some(t.path()), Some(&p)), None);
-    }
-
-    #[test]
-    fn ensured_path_never_shadows_an_entry_the_caller_put_first() {
-        let t = testkit::TempDir::new("ensured-stub");
-        let (_, path) = ensured_path(None, Some(t.path()), Some(&format!("/stubs:{}/spira:/usr/bin", t.path().display()))).unwrap();
-        assert_eq!(path, format!("/stubs:{0}/spira:/usr/bin:{0}/bin", t.path().display()));
-    }
-
-    #[test]
-    fn ensured_path_is_none_with_no_release_anywhere() {
-        assert_eq!(ensured_path(None, None, Some("/bin")), None);
+    fn child_path_env_refuses_a_tail_inside_a_release() {
+        assert!(child_path_env(Some("/opt/rel"), Some("/h"), "/x/spira-releases/abc/bin").is_err());
     }
 }

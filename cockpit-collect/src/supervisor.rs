@@ -79,7 +79,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn from_env(run_dir: PathBuf) -> Config {
+    pub fn from_env(run_dir: PathBuf) -> Result<Config, String> {
         let frag_dir = std::env::var_os("FRAG_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| run_dir.join("cockpit.d"));
@@ -101,12 +101,12 @@ impl Config {
         // cockpit.sh)}"`): a suite that overrides it points at its own mock script, invoked
         // directly with no subcommand prefix — the same direct-call shape the bash used.
         // Production leaves it unset and gets this binary's own `probe` subcommand.
-        let self_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("cockpit-collect")));
+        let self_exe = std::env::current_exe().map_err(|e| format!("cannot locate this binary: {e}"))?;
         let (probe_exe, probe_exe_args) = match std::env::var_os("COCK").filter(|v| !v.is_empty()) {
             Some(cock) => (PathBuf::from(cock), Vec::new()),
             None => (self_exe.clone(), vec!["probe".to_string()]),
         };
-        Config {
+        Ok(Config {
             run_dir,
             frag_dir,
             snap,
@@ -117,7 +117,7 @@ impl Config {
             probe_exe,
             probe_exe_args,
             self_exe,
-        }
+        })
     }
 }
 
@@ -567,7 +567,10 @@ pub fn run_loop(cfg: &Config, log: impl Fn(&str)) -> i32 {
 /// exit status).
 pub fn supervised_run_main(name: &str, timeout_s: u64, subcommand: &str) {
     let run = io::run_dir();
-    let cfg = Config::from_env(run);
+    let cfg = match Config::from_env(run) {
+        Ok(c) => c,
+        Err(e) => return eprintln!("cockpit-collect: {e}"),
+    };
     // Logging lives in `run_probe_body` itself now (both callers must see the same line).
     let _ = run_probe_body(&cfg, name, timeout_s, subcommand);
 }
@@ -577,15 +580,26 @@ pub fn supervised_run_main(name: &str, timeout_s: u64, subcommand: &str) {
 /// existing concurrency/quota suites can drive this binary's fragment lifecycle directly.
 pub fn probe_body_test_main(name: &str, timeout_s: u64, subcommand: &str) -> i32 {
     let run = io::run_dir();
-    let cfg = Config::from_env(run);
-    run_probe_body(&cfg, name, timeout_s, subcommand).exit_code()
+    match Config::from_env(run) {
+        Ok(cfg) => run_probe_body(&cfg, name, timeout_s, subcommand).exit_code(),
+        Err(e) => {
+            eprintln!("cockpit-collect: {e}");
+            1
+        }
+    }
 }
 
 /// `merge` subcommand: one-shot merge of whatever fragments are already on disk, no
 /// supervision check (the seam a test or an operator drives directly).
 pub fn merge_once() -> i32 {
     let run = io::run_dir();
-    let cfg = Config::from_env(run);
+    let cfg = match Config::from_env(run) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("cockpit-collect: {e}");
+            return 1;
+        }
+    };
     let ok = merge_fragments(&cfg);
     let n = std::fs::read_dir(&cfg.frag_dir)
         .map(|rd| rd.flatten().filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("env")).count())
@@ -600,7 +614,7 @@ mod tests {
     use testkit::TempDir;
 
     fn cfg(run: &Path) -> Config {
-        let mut c = Config::from_env(run.to_path_buf());
+        let mut c = Config::from_env(run.to_path_buf()).unwrap();
         c.frag_dir = run.join("cockpit.d");
         c
     }

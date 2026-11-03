@@ -41,7 +41,7 @@ record() { # id bead state deadline text
 
 run_bead() {
     tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_RUN="$TMP/run" SPIRA_MAIL="$MAIL"
-    OUT="$(SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" SPIRA_NOW="${NOW:-5000}" SLAY_LOG="$TMP/slay.log" PATH="$TMP/bin:$PATH" bead.sh amend "$@" 2>&1)"
+    OUT="$(SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" SPIRA_NOW="${NOW:-5000}" SLAY_LOG="$TMP/slay.log" PATH="$TMP/bin:$PATH" SPIRA_RELEASE="$(PATH="$TMP/bin:$PATH" tl_release)" bead.sh amend "$@" 2>&1)"
     RC=$?
 }
 desc_of() {

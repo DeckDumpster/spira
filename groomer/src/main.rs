@@ -61,10 +61,9 @@ fn main() {
     };
 
     spira_otel::run::operation(&cmd);
-    let bd = RealBd { bdq: spira_config::release_env::tool("bdq") };
+    let bd = RealBd { bdq: declared(spira_config::release_env::tool("bdq")) };
 
-    let exe = std::env::current_exe().unwrap_or_else(|_| "groomer".into());
-    let home = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe);
+    let home = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), std::env::var(spira_config::RELEASE_ENV).ok().as_deref());
 
     match cmd.as_str() {
         "split-piece" => {
@@ -199,4 +198,13 @@ fn run_cmd(r: cmds::CmdResult) {
             std::process::exit(code);
         }
     }
+}
+
+/// A value this binary cannot run without (a release tool, the child PATH), or exit 2 naming
+/// the refusal.
+fn declared<T>(v: Result<T, String>) -> T {
+    v.unwrap_or_else(|e| {
+        eprintln!("groomer: {e}");
+        std::process::exit(2)
+    })
 }

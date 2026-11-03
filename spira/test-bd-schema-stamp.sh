@@ -68,7 +68,7 @@ STUB
 # Source conf.sh in an isolated subprocess, capture combined output and exit status.
 source_conf() {
     local out rc=0
-    out=$(env -i \
+    out=$(env -i SPIRA_RELEASE="$(tl_release)" \
         PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \

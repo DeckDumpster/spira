@@ -13,11 +13,21 @@ const MAX_RECORDED_IDS: usize = 4000;
 pub struct Real {
     pub home: PathBuf,   // spira/ — where conf.sh and lib.sh live
     pub bdq: String,
+    /// `spira-lc`: `SPIRA_LC_BIN`, else the declared release's.
+    pub lc: String,
+    /// `PATH`/`SPIRA_RELEASE` every child runs under, from the declared release.
+    pub child_env: Vec<(String, String)>,
 }
 
 impl Real {
-    pub fn new(home: PathBuf) -> Real {
-        Real { home, bdq: spira_config::release_env::tool("bdq") }
+    /// Every tool and the child PATH from the declared release; a refusal names what is missing.
+    pub fn new(home: PathBuf) -> Result<Real, String> {
+        Ok(Real {
+            home,
+            bdq: spira_config::release_env::tool("bdq")?,
+            lc: spira_config::lifecycle_row::lc_bin()?,
+            child_env: spira_config::release_env::child_path_env_for_process()?,
+        })
     }
 
     /// Source conf.sh + lib.sh, then run `body` with `args` as `$1`, `$2`, ... Captures
@@ -39,18 +49,8 @@ impl Real {
             self.home.display(),
             self.home.display()
         );
-        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): `self.home` is always
-        // `<release>/spira` (resolve_home's own contract), so its parent is this binary's
-        // own release root.
-        let envs = spira_config::release_env::child_path_env(self.home.parent(), std::env::var("PATH").ok().as_deref());
-        let out = spira_config::bounded::bounded("bash").arg("-c").arg(script).arg("--").args(args).envs(envs).stdin(Stdio::null()).stderr(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("bash").arg("-c").arg(script).arg("--").args(args).envs(self.child_env.iter().cloned()).stdin(Stdio::null()).stderr(Stdio::null()).output();
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string()).unwrap_or_default()
-    }
-
-    /// SPIRA_LC_BIN (cockpit-collect's and queue-watch's own override) lets a suite pin the
-    /// record; nothing sets it in production, where spira-lc is found on PATH.
-    fn lc_bin(&self) -> String {
-        std::env::var("SPIRA_LC_BIN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "spira-lc".into())
     }
 
     /// `bdq sql <query>` — stdout/stderr returned separately (never combined the
@@ -75,7 +75,7 @@ impl Real {
     fn run_fact_sql(&self, query: &str) -> (bool, String, String) {
         let out = Command::new("timeout")
             .arg("30")
-            .arg(spira_config::lifecycle_row::lc_bin())
+            .arg(&self.lc)
             .arg("facts-query")
             .arg(query)
             .stdin(Stdio::null())
@@ -113,7 +113,7 @@ impl Real {
     // batch-job: census report, bounded at 30 s.
     fn recorded_cause_ids(&self, since: Option<i64>) -> Result<Vec<String>, String> {
         let mut cmd = Command::new("timeout");
-        cmd.arg("30").arg(spira_config::lifecycle_row::lc_bin()).args(["facts", "--kinds", "reopen,requeued"]);
+        cmd.arg("30").arg(&self.lc).args(["facts", "--kinds", "reopen,requeued"]);
         if let Some(t) = since.filter(|&t| t > 0) {
             cmd.args(["--since", &t.to_string()]);
         }
@@ -229,9 +229,7 @@ impl World for Real {
         }
     }
     fn lc_landed(&self, id: &str) -> i32 {
-        let envs = spira_config::release_env::child_path_env(self.home.parent(), std::env::var("PATH").ok().as_deref());
-        let bin = self.lc_bin();
-        let out = spira_config::bounded::bounded(bin).args(["state", id]).envs(envs).stdin(Stdio::null()).stderr(Stdio::null()).output();
+        let out = spira_config::bounded::bounded(&self.lc).args(["state", id]).envs(self.child_env.iter().cloned()).stdin(Stdio::null()).stderr(Stdio::null()).output();
         match out {
             Ok(o) if o.status.success() => i32::from(String::from_utf8_lossy(&o.stdout).trim() != "LANDED"),
             // rc 1 is spira-lc's NO_ROW: the record holds no row, so nothing says it landed.
@@ -273,12 +271,11 @@ impl World for Real {
     }
 
     fn lc_rows(&self) -> Result<Vec<spira_config::lc_state::Row>, String> {
-        let envs = spira_config::release_env::child_path_env(self.home.parent(), std::env::var("PATH").ok().as_deref());
-        let bin = self.lc_bin();
+        let bin = &self.lc;
         // call-deadline: 5 s, like every other caller of the machine.
         let o = Command::new("timeout")
-            .args(["5", &bin, "list"])
-            .envs(envs)
+            .args(["5", bin, "list"])
+            .envs(self.child_env.iter().cloned())
             .stdin(Stdio::null())
             .output()
             .map_err(|e| format!("cannot run {bin}: {e}"))?;

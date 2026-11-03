@@ -35,7 +35,10 @@ struct RealBd;
 
 impl Commenter for RealBd {
     fn comment(&self, _db: &Path, id: &str, text: &str) -> BdResult {
-        let bd = db::lc_bin();
+        let bd = match db::lc_bin() {
+            Ok(b) => b,
+            Err(e) => return BdResult { success: false, combined: e },
+        };
         let out = spira_config::bounded::bounded(&bd)
             .args(["content", "comments", "add", id, text])
             .env("BEADS_ACTOR", "claude")

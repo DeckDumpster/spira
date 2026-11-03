@@ -36,7 +36,7 @@ tl_config SPIRA_RUN="$TMP" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_RUNES=t SPIRA_COCK
 # docs/test-plan/cockpit-observability.md); this suite only needs the merge to prove the
 # real `queue` probe's keys reach cockpit.env.
 run_merge() {
-    env -i SPIRA_TOML="$SPIRA_TOML" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i SPIRA_RELEASE="$(tl_release)" SPIRA_TOML="$SPIRA_TOML" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_DB="$TMP/nodb" \
         FRAG_DIR="$FRAG_DIR" \
@@ -59,7 +59,7 @@ chmod +x "$MOCK_COCK"
 
 rm -f "$FRAG_DIR"/*.env
 printf '_PROBE_AT=0\n_PROBE_STATUS=never\n_PROBE_KILLED=0\n' > "$FRAG_DIR/queue.env"
-env -i SPIRA_TOML="$SPIRA_TOML" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+env -i SPIRA_RELEASE="$(tl_release)" SPIRA_TOML="$SPIRA_TOML" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_DB="$TMP/nodb" \
     FRAG_DIR="$FRAG_DIR" COCK="$MOCK_COCK" \

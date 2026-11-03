@@ -86,7 +86,7 @@ done
 unset _b
 
 run_build() {
-    env -i \
+    env -i SPIRA_RELEASE="$(tl_release)" \
         PATH="$PATH" \
         HOME="$TMP/home" \
         GIT_CONFIG_GLOBAL=/dev/null \

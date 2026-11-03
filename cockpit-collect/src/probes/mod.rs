@@ -57,7 +57,6 @@ pub struct Cfg {
     pub czar_label: String,
     pub wiki: String,
     pub mail: String,
-    pub queue_dir: String,
     pub queue_batch_max: i64,
     pub queue_batch_wait: i64,
     pub cert_window_mins: i64,
@@ -87,7 +86,6 @@ impl Cfg {
             czar_label: cfg("SPIRA_CZAR_LABEL")?,
             wiki: cfg("SPIRA_WIKI")?,
             mail: cfg("SPIRA_MAIL")?,
-            queue_dir: cfg("SPIRA_QUEUE_DIR")?,
             queue_batch_max: cfg_parse::<i64>("SPIRA_QUEUE_BATCH_MAX")?,
             queue_batch_wait: cfg_parse::<i64>("SPIRA_QUEUE_BATCH_WAIT")?,
             cert_window_mins: cert_window_mins(&cfg("SPIRA_CERT_WINDOW_MINS")?)?,
@@ -153,7 +151,7 @@ pub fn full_pass(cfg: &Cfg) -> Kv {
     out.extend(tsd::tsd_keys());
     out.extend(unsent::unsent_keys(cfg));
     out.extend(queue::queue_keys(cfg));
-    out.extend(round::round_keys(cfg.round_cap_secs, &cfg.queue_dir));
+    out.extend(round::round_keys(cfg.round_cap_secs));
     out.extend(inflight::inflight_keys(cfg));
     out.extend(reachable::reachable_keys(cfg));
     out.extend(well_keys(cfg));
@@ -193,7 +191,7 @@ pub fn run(subcommand: &str, cfg: &Cfg) -> Option<Kv> {
         "tsd" => Some(tsd::tsd_keys()),
         "unsent" => Some(unsent::unsent_keys(cfg)),
         "queue" => Some(queue::queue_keys(cfg)),
-        "round" => Some(round::round_keys(cfg.round_cap_secs, &cfg.queue_dir)),
+        "round" => Some(round::round_keys(cfg.round_cap_secs)),
         "inflight" => Some(inflight::inflight_keys(cfg)),
         "reachable" => Some(reachable::reachable_keys(cfg)),
         "well" => Some(well_keys(cfg)),
@@ -1221,10 +1219,12 @@ pub fn drift_value(code: Option<i32>, out: &str, dirty: &str, finding_prefix: &s
 pub fn drift_keys() -> Kv {
     let drift_sh = io::home_dir().join("drift.sh");
     let repo = std::env::var("SPIRA_REPO").ok().filter(|s| !s.is_empty());
+    let child_env = spira_config::release_env::child_path_env_for_process();
     let run_one = |args: &[&str]| {
+        let Ok(envs) = child_env.clone() else { return (None, String::new()) };
         // batch-job: runs a gate, build or forge script that takes as long as its work
         std::process::Command::new("bash")
-            .envs(spira_config::release_env::child_path_env_for_process())
+            .envs(envs)
             .arg(&drift_sh)
             .args(args)
             .stdin(std::process::Stdio::null())

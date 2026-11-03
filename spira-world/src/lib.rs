@@ -21,14 +21,9 @@ use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
 
-/// This process's own `SPIRA_HOME` — [`locate_home`] against [`env::current_exe`], for a
-/// caller (`spira_run`/`instance`) that has no executable path of its own to hand in. An
-/// unlocatable `current_exe` (never observed outside a test harness) falls back to an empty
-/// path, which [`spira_config::resolve::resolve_run_dir`] still resolves correctly: the
-/// derived default depends on `$HOME`/XDG, not on `home` itself (see that function's doc).
-fn resolve_home() -> PathBuf {
-    let exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("spira-world"));
-    locate_home(&exe).unwrap_or_default()
+/// The declared harness home, or the refusal naming `SPIRA_HOME`/`SPIRA_RELEASE`.
+fn resolve_home() -> Result<PathBuf, String> {
+    spira_config::resolve::locate_home_for_process()
 }
 
 /// `spira.run`, resolved in-process through `spira_config` — the declared value in
@@ -40,7 +35,7 @@ fn resolve_home() -> PathBuf {
 /// REFUSES, named, rather than guessing, when `spira_config` itself cannot resolve.
 pub fn spira_run() -> Result<PathBuf, String> {
     let env_map: BTreeMap<String, String> = env::vars().collect();
-    spira_config::resolve::resolve_run_dir(&env_map, &resolve_home())
+    spira_config::resolve::resolve_run_dir(&env_map, &resolve_home()?)
 }
 
 /// `spira.instance`, resolved the same way [`spira_run`] resolves `spira.run` — never a
@@ -49,25 +44,14 @@ pub fn spira_run() -> Result<PathBuf, String> {
 /// `spira-sentinel.timer` instead of the installed `spira-sentinel-prod.timer`).
 pub fn instance() -> Result<String, String> {
     let env_map: BTreeMap<String, String> = env::vars().collect();
-    spira_config::resolve::resolve_instance(&env_map, &resolve_home())
+    spira_config::resolve::resolve_instance(&env_map, &resolve_home()?)
 }
 
-/// `$SPIRA_HOME` — the checkout this instance runs from. Resolved the way `sentinel::locate_home`
-/// does (DESIGN.md §2.7): the environment if set, else the first ancestor of this executable
-/// that holds `lib.sh`, across both the release layout (`bin/<exe>` next to `spira/lib.sh`)
-/// and a cargo target layout. Needed only by the seams that call into lib.sh (slay's work
-/// destruction, dwarves' lane report) — `world.sh` and `ctrl.sh` proper never need it.
-pub fn locate_home(exe: &Path) -> Option<PathBuf> {
-    if let Ok(h) = env::var("SPIRA_HOME") {
-        if !h.is_empty() {
-            return Some(PathBuf::from(h));
-        }
-    }
-    let dir = exe.parent()?;
-    [dir.join("../spira"), dir.join("../../spira"), dir.join("../../../spira")]
-        .into_iter()
-        .find(|c| c.join("lib.sh").is_file())
-        .map(|c| c.canonicalize().unwrap_or(c))
+/// The declared harness home (`SPIRA_HOME`, else `$SPIRA_RELEASE/spira`) when it holds `lib.sh`.
+/// Needed only by the seams that call into lib.sh (slay's work destruction, dwarves' lane
+/// report) — `world.sh` and `ctrl.sh` proper never need it.
+pub fn locate_home() -> Option<PathBuf> {
+    resolve_home().ok().filter(|h| h.join("lib.sh").is_file())
 }
 
 /// `SPIRA_PROD`'s declared value if non-empty, else `home` — the same "both homes" fallback

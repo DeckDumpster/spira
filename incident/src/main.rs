@@ -32,17 +32,10 @@ fn raw_env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.is_empty())
 }
 
-/// `$SPIRA_HOME`, else `<release>/spira` derived from this binary's own install location
-/// (`<release>/bin/incident`) — mirroring every other rewritten tool with no unit of its
-/// own setting `SPIRA_HOME` directly (cockpit-collect's `home_dir`).
-fn spira_home_dir() -> std::path::PathBuf {
-    if let Some(h) = raw_env("SPIRA_HOME") {
-        return std::path::PathBuf::from(h);
-    }
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().and_then(|d| d.parent()).map(|r| r.join("spira")))
-        .unwrap_or_else(|| std::path::PathBuf::from("spira"))
+/// The declared harness home: `SPIRA_HOME`, else `$SPIRA_RELEASE/spira`; neither set is a
+/// refusal naming them.
+fn spira_home_dir() -> Result<std::path::PathBuf, String> {
+    spira_config::resolve::locate_home_for_process()
 }
 
 /// Wave 4.8 ("retire conf re-import seams in Rust"): this crate used to read every
@@ -58,7 +51,13 @@ fn resolved_config() -> &'static spira_config::resolve::Resolved {
     static RESOLVED: std::sync::OnceLock<spira_config::resolve::Resolved> = std::sync::OnceLock::new();
     RESOLVED.get_or_init(|| {
         let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-        let home = spira_home_dir();
+        let home = match spira_home_dir() {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("incident: {e}");
+                return spira_config::resolve::Resolved::default();
+            }
+        };
         let repo = spira_config::resolve::derive_home_repo(&home, &env_map);
         spira_config::resolve::resolve_or_say("incident", &home, &repo, &env_map)
     })
@@ -173,7 +172,7 @@ impl Env {
             path: env_or("SPIRA_INCIDENT_PATH", "?"),
             lock_path: std::path::PathBuf::from(env_or("SPIRA_INCIDENT_LOCK", &format!("{spira_run}/incident.lock"))),
             lock_wait_s: env("SPIRA_INCIDENT_LOCK_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30),
-            retired_keys: std::fs::read_to_string(spira_home_dir().join("config-delta.toml")).map(|t| decide::delta_removed_keys(&t)).unwrap_or_default(),
+            retired_keys: spira_home_dir().ok().and_then(|h| std::fs::read_to_string(h.join("config-delta.toml")).ok()).map(|t| decide::delta_removed_keys(&t)).unwrap_or_default(),
             spira_run,
         }
     }
@@ -543,7 +542,13 @@ fn cmd_list(env: &Env, _bd: &dyn Bd) -> ExitCode {
     // bd's human table for an operator to read. Which incidents are open is each bead's
     // lifecycle row: the labelled beads come from bd as content, the unfinished ones are kept,
     // and bd renders those by id, minus its tip/warning chrome.
-    let bdq = spira_config::release_env::tool("bdq");
+    let bdq = match spira_config::release_env::tool("bdq") {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("incident: list: {e}");
+            return ExitCode::from(2);
+        }
+    };
     let lc = match spira_config::lc_state::list().map(spira_config::lc_state::index) {
         Ok(m) => m,
         Err(e) => {
@@ -600,7 +605,13 @@ fn cmd_list(env: &Env, _bd: &dyn Bd) -> ExitCode {
 /// Close the incidents whose fixes have landed and whose detector is quiet; leave the rest.
 /// Exit 1 only when the candidates could not be read — a skipped incident is not a failure.
 fn cmd_settle(env: &Env, bd: &RealBd) -> ExitCode {
-    let home = spira_home_dir();
+    let home = match spira_home_dir() {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("incident: settle: {e}");
+            return ExitCode::from(1);
+        }
+    };
     let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
     let settler = incident::settle_real::RealSettler {
         bd,
@@ -659,13 +670,13 @@ impl incident::alarms_pass::Http for UreqHttp {
     }
 }
 
-fn spira_lc() -> SpiraLc {
-    SpiraLc { program: spira_config::release_env::tool("spira-lc") }
+fn spira_lc() -> Result<SpiraLc, String> {
+    Ok(SpiraLc { program: spira_config::lifecycle_row::lc_bin()? })
 }
 
 fn alarms_config(env: &Env, fallback: bool) -> Result<incident::alarms_pass::Config, String> {
     use spira_config::process::{cfg, cfg_parse};
-    let causal_map = spira_home_dir().parent().map(|r| r.join("reconciler/causal-map.toml"));
+    let causal_map = spira_home_dir()?.parent().map(|r| r.join("reconciler/causal-map.toml"));
     Ok(incident::alarms_pass::Config {
         run_dir: std::path::PathBuf::from(&env.spira_run),
         host: hostname(),
@@ -681,7 +692,7 @@ fn alarms_config(env: &Env, fallback: bool) -> Result<incident::alarms_pass::Con
 fn with_ports<R>(env: &Env, f: impl FnOnce(&incident::alarms_pass::Ports) -> R) -> Result<R, String> {
     use incident::alarms_pass::{FileSwitch, MailPrimary, MaildirFallback, Ports, GOODPUT_UNIT};
     let mail_env = mail::env::Env::load()?;
-    let bd = mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq"), conn_retries: mail_env.bd_conn_retries };
+    let bd = mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: mail_env.bd_conn_retries };
     let fallback = MaildirFallback { mail_root: mail_env.mail_root.clone(), mute: mail_env.mute };
     let primary = MailPrimary { env: mail_env, bd };
     let instance = spira_world::instance()?;
@@ -691,7 +702,7 @@ fn with_ports<R>(env: &Env, f: impl FnOnce(&incident::alarms_pass::Ports) -> R) 
     };
     let run_dir = std::path::PathBuf::from(&env.spira_run);
     let switch = FileSwitch { run_dir: &run_dir, timer_on: &timer_on };
-    let lc = spira_lc();
+    let lc = spira_lc()?;
     let ports = Ports { lc: &lc, primary: &primary, fallback: &fallback, http: &UreqHttp, switch: &switch, clock: &runtime::ports::WallClock };
     Ok(f(&ports))
 }
@@ -725,7 +736,7 @@ fn cmd_alarms_pass(env: &Env, args: &[String]) -> ExitCode {
 /// `incident floor-cleared`: 0 when the goodput rate is at least its floor, 1 while it is not or
 /// cannot be told, so a MOOT-WHEN never reads a blind check as cleared.
 fn cmd_floor_cleared() -> ExitCode {
-    match incident::alarms_pass::floor_cleared(&spira_lc()) {
+    match spira_lc().and_then(|lc| incident::alarms_pass::floor_cleared(&lc)) {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::FAILURE,
         Err(e) => {
@@ -783,7 +794,10 @@ fn spool_stamp() -> String {
 }
 
 fn main() -> ExitCode {
-    spira_config::release_env::ensure_release_path();
+    if let Err(e) = spira_config::release_env::ensure_release_path() {
+        eprintln!("incident: {e}");
+        std::process::exit(2);
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     let env_cfg = Env::load();
     if env_cfg.db.is_none() && !args.first().map(String::as_str).is_none() {
@@ -803,11 +817,23 @@ fn main() -> ExitCode {
             eprintln!("usage: incident alarm <title> [-|<file>]");
             return ExitCode::from(2);
         };
-        let bd = RealBd::from_env();
+        let bd = match RealBd::from_env() {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("incident: {e}");
+                return ExitCode::from(2);
+            }
+        };
         return cmd_alarm(&env_cfg, Some(&bd as &dyn Bd), &RealMailer, &RealClock, title);
     }
 
-    let bd = RealBd::from_env();
+    let bd = match RealBd::from_env() {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("incident: {e}");
+            return ExitCode::from(2);
+        }
+    };
     let mailer = RealMailer;
     let clock = RealClock;
     let provenance = env_cfg.provenance();

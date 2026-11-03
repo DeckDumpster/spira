@@ -357,30 +357,13 @@ pub fn tool_env_noisy(program: &str, args: &[String], stdin: Option<&str>, actor
     spawn_with(cmd, stdin, program, true)
 }
 
-/// A bare tool name resolves on PATH, then in the release this broker runs from (its own
-/// `bin/`, then `$SPIRA_RELEASE/bin`), so a unit whose PATH lacks the release still finds the
-/// release's tools. Not found anywhere is an error naming every directory searched.
+/// A bare tool name is the declared release's (`$SPIRA_RELEASE`); a path is taken as given.
+/// Never a `PATH` search or the directory this broker happens to run from.
 fn resolve_tool(program: &str) -> Result<String, String> {
-    let path = std::env::var("PATH").unwrap_or_default();
-    let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(std::path::Path::to_path_buf));
-    let release_bin = std::env::var("SPIRA_RELEASE").ok().filter(|r| !r.is_empty()).map(|r| std::path::Path::new(&r).join("bin"));
-    resolve_in(program, &path, &[exe_dir, release_bin])
-}
-
-fn resolve_in(program: &str, path: &str, fallbacks: &[Option<std::path::PathBuf>]) -> Result<String, String> {
-    use std::os::unix::fs::PermissionsExt;
     if program.contains('/') {
         return Ok(program.to_string());
     }
-    let is_exe = |p: &std::path::Path| std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false);
-    let dirs: Vec<std::path::PathBuf> = std::env::split_paths(path).filter(|d| !d.as_os_str().is_empty()).chain(fallbacks.iter().flatten().cloned()).collect();
-    match dirs.iter().map(|d| d.join(program)).find(|c| is_exe(c)) {
-        Some(found) => Ok(found.to_string_lossy().into_owned()),
-        None => Err(format!(
-            "running {program}: not found in any of: {}",
-            dirs.iter().map(|d| d.display().to_string()).collect::<Vec<_>>().join(":")
-        )),
-    }
+    spira_config::release_env::tool(program).map_err(|e| format!("running {program}: {e}"))
 }
 
 fn spawn(cmd: Command, stdin: Option<&str>, what: &str) -> (i32, String) {
@@ -452,5 +435,15 @@ mod verb_tests {
         assert_eq!(verb_of(&["--json", "show", "sp-1"]), "show");
         assert_eq!(verb_of(&["update", "sp-1"]), "update");
         assert_eq!(verb_of(&["--version"]), "unknown");
+    }
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::*;
+
+    #[test]
+    fn a_path_is_never_searched() {
+        assert_eq!(resolve_tool("/x/y").unwrap(), "/x/y");
     }
 }

@@ -96,7 +96,7 @@ impl RealSeam {
             .arg(&self.lib_sh)
             // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
             // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-            .envs(spira_config::release_env::child_path_env_for_process())
+            .envs(spira_config::release_env::child_path_env_for_process()?)
             .stdin(Stdio::null())
             .stderr(Stdio::inherit())
             .output()
@@ -158,14 +158,13 @@ impl Seam for RealSeam {
         // own warnings (SPIRA_CLAUDE's deprecation notice among them) are never silently
         // dropped just because this process happens to be reading lib.sh's variables.
         let script = r#". "$0" >&2 || exit 97; for _v in $(compgen -v SPIRA_); do printf '%s\0' "$_v=${!_v:-}"; done"#;
+        let Ok(envs) = spira_config::release_env::child_path_env_for_process() else { return HashMap::new() };
         // batch-job: runs a gate, build or forge script that takes as long as its work
         let o = Command::new("bash")
             .arg("-c")
             .arg(script)
             .arg(&self.lib_sh)
-            // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
-            // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-            .envs(spira_config::release_env::child_path_env_for_process())
+            .envs(envs)
             .stdin(Stdio::null())
             .stderr(Stdio::inherit())
             .output();

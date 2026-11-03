@@ -11,7 +11,14 @@ LIST="$ROOT/target/unit-tests.crates"
 words=()
 while IFS= read -r c; do [ -n "$c" ] && words+=(-p "$c"); done < "$LIST"
 [ "${#words[@]}" -gt 0 ] || { echo "unit-tests: the diff touches no crate — nothing to run"; exit 0; }
-jobs="$(nproc 2>/dev/null || echo 2)"
+# sp-mgmjhy: a build and its tests share the host with other builders, so neither
+# claims every core. nproc inside a container reports the whole host.
+cores="$(nproc 2>/dev/null || echo 2)"
+jobs="${CARGO_BUILD_JOBS:-6}"
+[ "$jobs" -le "$cores" ] 2>/dev/null || jobs="$cores"
+threads="${RUST_TEST_THREADS:-4}"
+# Test temp files go to the container's tmpfs /tmp, never the checkout's disk.
+export TMPDIR=/tmp
 cd "$ROOT" || exit 2
 # The target is shared by every tree at this path and cargo trusts mtimes across them, so
 # workspace crates last built from different bytes are cleaned; dependencies stay warm. A tree
@@ -36,4 +43,13 @@ if [ -f "$ROOT/target/unit-tests.filter" ]; then
   while IFS= read -r t; do [ -n "$t" ] && filters+=("$t"); done < "$ROOT/target/unit-tests.filter"
   echo "unit-tests: filtered to tests named ${filters[*]}"
 fi
-cargo test "${words[@]}" -j "$jobs" -- --test-threads="$jobs" "${filters[@]}"
+# The round runs this tier with no declared release, config or harness home and no release
+# on PATH (round-vm's unit_cargo: env -i); a test that passes only because the fixture's
+# launcher declared them must fail here too.
+unit_path=""
+IFS=: read -ra _dirs <<< "$PATH"
+for d in "${_dirs[@]}"; do
+  [ -x "$d/spira-config" ] || [ -f "$d/conf.sh" ] || unit_path="${unit_path:+$unit_path:}$d"
+done
+env -u SPIRA_RELEASE -u SPIRA_TOML -u SPIRA_HOME PATH="$unit_path" \
+    cargo test "${words[@]}" -j "$jobs" -- --test-threads="$threads" "${filters[@]}"

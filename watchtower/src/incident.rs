@@ -131,7 +131,13 @@ fn run_verb(incident_sh: &str, verb: &str, f: &Finding) -> Option<String> {
         return None;
     }
     let mut cmd = spira_config::bounded::bounded("bash");
-    cmd.envs(spira_config::release_env::child_path_env_for_process());
+    cmd.envs(match spira_config::release_env::child_path_env_for_process() {
+        Ok(e) => e,
+        Err(e) => {
+            crate::log::log(&format!("watchtower: not filing {}: {e}", f.title));
+            return None;
+        }
+    });
     cmd.arg(incident_sh).arg(verb).arg(&f.title).arg("-");
     cmd.env("SPIRA_DB", &f.db);
     cmd.env("SPIRA_INCIDENT_TYPE", &f.incident_type);

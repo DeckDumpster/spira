@@ -22,26 +22,19 @@ use super::*;
 // edit the environment only through `testkit::env`, which serializes them against every
 // other test in this binary and restores on drop; `run` takes the same lock to read.
 
-/// The same self-resolution, proven positively rather than by its failure mode: with
-/// `SPIRA_HOME` unset but THIS PROCESS physically sitting inside a release layout
-/// (`<release>/bin/<exe>` beside `<release>/spira/conf.sh`, exactly `own_release_root`'s own
-/// contract — sp-kgzql, reused here rather than invented a fourth way), `rune_home` must
-/// still answer `<release>/spira`, matching this bead's own manual repro
-/// (`SPIRA_HOME=<rel>/spira` recovers `rune_ready`). Exercises the pure function directly
-/// (`super::rune_home`) since faking this process's own `current_exe()` end-to-end would
-/// need a real exec; `own_release_root`'s own unit tests (spira-config) already cover the
-/// ascending search itself.
+/// `rune_home` is the declared home: `SPIRA_HOME` wins, else `$SPIRA_RELEASE/spira`, and
+/// neither set is a refusal naming both — never a search from this executable.
 #[test]
-fn rune_home_pure_function_prefers_the_env_override_and_falls_back_to_the_release_root() {
-    // The override still wins outright — a fixture, or a lib.sh shim that already
-    // resolved it, must be able to pin a different tree on purpose.
+fn rune_home_is_spira_home_then_the_declared_release_and_refuses_naming_both() {
     let pinned = testkit::env(&[("SPIRA_HOME", Some("/some/pinned/tree"))]);
     assert_eq!(super::rune_home().as_deref(), Ok(std::path::Path::new("/some/pinned/tree")));
     drop(pinned);
-    let _env = testkit::env(&[("SPIRA_HOME", None)]);
+    let rel = testkit::env(&[("SPIRA_HOME", None), ("SPIRA_RELEASE", Some("/r"))]);
+    assert_eq!(super::rune_home().as_deref(), Ok(std::path::Path::new("/r/spira")));
+    drop(rel);
+    let _env = testkit::env(&[("SPIRA_HOME", None), ("SPIRA_RELEASE", None)]);
     let err = super::rune_home().unwrap_err();
-    assert!(err.contains("cannot resolve SPIRA_HOME"), "{err}");
-    assert!(!err.contains("is not set"), "{err}");
+    assert!(err.contains("SPIRA_HOME") && err.contains("SPIRA_RELEASE"), "{err}");
 }
 
 // ---- rune-ready / bulk-ready-by-rune: the machine's ready set --------------------------------

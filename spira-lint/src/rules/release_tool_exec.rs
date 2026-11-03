@@ -14,7 +14,6 @@ pub struct ReleaseToolExec;
 
 const NAME: &str = "release-tool-exec";
 const ALLOW_FILE: &str = "spira-lint/release-tool-exec-allow";
-const EXTRA_TOOLS: &[&str] = &["bd"];
 const NOT_TOOLS: &[&str] = &["spira", "gate"];
 
 impl Rule for ReleaseToolExec {
@@ -104,9 +103,9 @@ fn build(alt: &str) -> Regex {
     .expect("static regex")
 }
 
-/// Every `[[bin]]` the workspace builds (what the release ships in `bin/`), plus [`EXTRA_TOOLS`].
+/// Every `[[bin]]` the workspace builds: what the release ships in `bin/`.
 fn tool_names(tree: &Tree) -> BTreeSet<String> {
-    let mut names: BTreeSet<String> = EXTRA_TOOLS.iter().map(|s| s.to_string()).collect();
+    let mut names = BTreeSet::new();
     for e in &tree.entries {
         let p = e.path.as_str();
         let comps: Vec<&str> = p.split('/').collect();

@@ -71,6 +71,7 @@
             openssl
             rust-code-analysis  # 0.0.25 — rust-code-analysis-cli, the habit hooks' per-function complexity
             shellcheck          # the habit hooks' shell lint
+            mold                # the linker for workspace builds (sp-mgmjhy)
           ] ++ [ terraform ];
         };
         default = self.packages.${system}.spira-env;

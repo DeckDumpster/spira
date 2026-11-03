@@ -43,11 +43,18 @@ pub struct Env {
     pub original: BTreeMap<String, String>,
     pub child_base: BTreeMap<String, String>,
     exports: RwLock<BTreeMap<String, Option<String>>>,
+    /// `PATH`/`SPIRA_RELEASE` for the lib.sh seam, from the declared release
+    /// (`release_env::child_path_env_for_process`). Unset, the seam refuses.
+    seam_path: Vec<(String, String)>,
 }
 
 impl Env {
     pub fn new(original: BTreeMap<String, String>, child_base: BTreeMap<String, String>) -> Env {
-        Env { original, child_base, exports: RwLock::new(BTreeMap::new()) }
+        Env { original, child_base, exports: RwLock::new(BTreeMap::new()), seam_path: Vec::new() }
+    }
+    pub fn with_seam_path(mut self, seam_path: Vec<(String, String)>) -> Env {
+        self.seam_path = seam_path;
+        self
     }
     pub fn set(&self, k: &str, v: &str) {
         self.exports.write().unwrap().insert(k.into(), Some(v.into()));
@@ -71,17 +78,15 @@ impl Env {
     pub fn child(&self) -> BTreeMap<String, String> {
         self.apply(self.child_base.clone())
     }
-    pub fn seam(&self) -> BTreeMap<String, String> {
-        let mut m = self.apply(self.original.clone());
-        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): the lib.sh seam re-derives
-        // conf.sh from the unit's ORIGINAL environment (this struct's own doc above) — bare
-        // whenever this dwarf itself was launched with no release on PATH. Prepend this
-        // binary's own release's bin/+spira/ rather than trusting `original`'s PATH alone.
-        let release = spira_config::release_env::own_release_root_for_process();
-        for (k, v) in spira_config::release_env::child_path_env(release.as_deref(), m.get("PATH").map(String::as_str)) {
-            m.insert(k, v);
+    /// The unit's original environment plus the exports, with `PATH`/`SPIRA_RELEASE` built from
+    /// the declared release, never the original `PATH`.
+    pub fn seam(&self) -> Result<BTreeMap<String, String>, String> {
+        if self.seam_path.is_empty() {
+            return Err(format!("the lib.sh seam has no declared PATH — {} names the release it is built from", spira_config::RELEASE_ENV));
         }
-        m
+        let mut m = self.apply(self.original.clone());
+        m.extend(self.seam_path.iter().cloned());
+        Ok(m)
     }
     pub fn get_export(&self, k: &str) -> Option<String> {
         self.exports.read().unwrap().get(k).cloned().flatten()

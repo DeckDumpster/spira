@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::OpenOptions;
-use std::io::{ErrorKind, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -20,7 +20,7 @@ const WHO: &str = "round-controller";
 pub struct Env {
     pub home: PathBuf,
     pub run: PathBuf,
-    pub queue_dir: PathBuf,
+    pub queue_bin: String,
     pub lc_bin: String,
     pub lc_timeout: u64,
     pub wiki: String,
@@ -40,8 +40,8 @@ impl Env {
         Ok(Env {
             home,
             run: PathBuf::from(run),
-            queue_dir: PathBuf::from(cfg("SPIRA_QUEUE_DIR")?),
-            lc_bin: spira_config::release_env::tool("spira-lc"),
+            queue_bin: spira_config::release_env::tool("queue")?,
+            lc_bin: spira_config::lifecycle_row::lc_bin()?,
             lc_timeout: cfg_parse::<u64>("SPIRA_LC_TIMEOUT")?,
             wiki: cfg("SPIRA_WIKI").unwrap_or_default(),
             identity_projects: cfg("SPIRA_IDENTITY_PROJECTS").unwrap_or_default(),
@@ -112,7 +112,7 @@ fn sift_one(
     out: &mut dyn Write,
 ) -> Result<(), String> {
     let repo = find_repo(reg, name, local)?;
-    let open = open_round(env, &repo.name)?;
+    let open = open_round(&|r| batch_show(env, r), &repo.name)?;
     let o = sift_repo(env, reg, &repo, &open, out)?;
     let _ = writeln!(
         out,
@@ -512,14 +512,23 @@ fn bd_show_text(env: &Env, id: &str) -> Result<String, String> {
     ))
 }
 
-/// The members of the repository's open round, whose patches a candidate may duplicate.
-fn open_round(env: &Env, repo: &str) -> Result<Vec<Candidate>, String> {
-    let p = env.queue_dir.join(repo).join("open");
-    let text = match std::fs::read_to_string(&p) {
-        Ok(t) => t,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(format!("{}: {e}", p.display())),
-    };
+/// `queue batch show --repo <repo>`: the repository's open forge batch record, as `key=value`
+/// lines; nothing when none is open.
+fn batch_show(env: &Env, repo: &str) -> Result<String, String> {
+    let mut cmd = Command::new("timeout");
+    cmd.arg(env.lc_timeout.to_string())
+        .arg(&env.queue_bin)
+        .args(["batch", "show", "--repo", repo]);
+    run(&mut cmd, "queue batch show")
+}
+
+/// The members of the repository's open round, whose patches a candidate may duplicate, read
+/// from the queue's record of its open batch (`show`).
+fn open_round(
+    show: &dyn Fn(&str) -> Result<String, String>,
+    repo: &str,
+) -> Result<Vec<Candidate>, String> {
+    let text = show(repo)?;
     let kv: BTreeMap<&str, &str> = text
         .lines()
         .filter_map(|l| l.split_once('='))
@@ -657,13 +666,30 @@ fn bead_note(env: &Env, id: &str, text: &str) -> Result<(), String> {
     let mut cmd = Command::new("bash");
     cmd.arg(env.home.join("bead.sh"))
         .args(["amend", id, "--note", text])
-        .envs(spira_config::release_env::child_path_env_for_process());
+        .envs(spira_config::release_env::child_path_env_for_process()?);
     run(&mut cmd, "bead.sh amend").map(|_| ())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_open_round_is_the_store_record_the_queue_shows() {
+        let show = |repo: &str| -> Result<String, String> {
+            assert_eq!(repo, "deck");
+            Ok("batch_id=deck-1\nforge.phase=open\npr=12\nmembers=sp-a:ta sp-b:tb\n".into())
+        };
+        let open = open_round(&show, "deck").unwrap();
+        assert_eq!(
+            open.iter().map(|c| (c.id.as_str(), c.tip.as_str())).collect::<Vec<_>>(),
+            [("sp-a", "ta"), ("sp-b", "tb")]
+        );
+        let opening = |_: &str| Ok("batch_id=deck-1\nforge.phase=opening\nmembers=sp-a:ta\n".to_string());
+        assert!(open_round(&opening, "deck").unwrap().is_empty(), "no PR yet: nothing to duplicate");
+        assert!(open_round(&|_| Ok(String::new()), "deck").unwrap().is_empty());
+        assert!(open_round(&|_| Err("queue batch show exited 1".into()), "deck").is_err(), "cannot tell is not no round");
+    }
 
     #[test]
     fn the_inbox_stamp_is_the_compact_utc_form() {

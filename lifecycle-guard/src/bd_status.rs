@@ -309,7 +309,7 @@ fn b(o: &Output) -> bool { o.status.success() }
 fn c(s: &str) -> Kind { match s { "closed" => Kind::C, _ => Kind::O } }
 fn d(pr: &str) -> bool { pr == "closed" }
 fn e(gh: &Gh) { gh.call(&["pr", "list", "--state", "open"]); }
-fn f(q: &Path) -> PathBuf { q.join("open") }
+fn f(q: &Path) -> PathBuf { q.join("closed") }
 fn g(b: &Bead) -> String { b.assignee.clone().unwrap_or_default() }
 #[cfg(test)]
 mod tests {

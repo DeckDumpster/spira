@@ -97,7 +97,7 @@ fi
 # because a later `$SPIRA_DB` reference is unbound under `set -u` (fix 1 alone). Either
 # way, no bd writes reach the stand-in.
 suite_env=(
-    env -i
+    env -i SPIRA_RELEASE="$(tl_release)"
     PATH="$PATH"
     HOME="$HOME"
     TERM="${TERM:-dumb}"
