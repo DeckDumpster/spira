@@ -120,6 +120,14 @@ pub fn child_path_env(release: Option<&str>, home: Option<&str>, tail: &str) -> 
     Ok(vec![(crate::RELEASE_ENV.to_string(), release.display().to_string()), ("PATH".to_string(), path)])
 }
 
+/// `PATH`/`SPIRA_RELEASE` for a child run against a release being BUILT: `stage` is the release it
+/// runs from, and its PATH is that release plus the system directories ([`crate::release_path`]).
+/// Declared by the builder, so a build needs no installed release and no config.
+pub fn stage_child_path_env(stage: &Path) -> Vec<(String, String)> {
+    let s = stage.display().to_string();
+    vec![(crate::RELEASE_ENV.to_string(), s.clone()), ("PATH".to_string(), crate::release_path(&s))]
+}
+
 /// [`child_path_env`] for THIS process: its `$SPIRA_RELEASE`, `$HOME` and configured
 /// `SPIRA_PATH` — what every spawn of a release tool or a `conf.sh`-sourcing shell sets,
 /// e.g. `cmd.envs(child_path_env_for_process()?)`.
@@ -210,6 +218,12 @@ mod tests {
         assert_eq!(path, Some("/opt/rel/bin:/opt/rel/spira:/h/.local/lib/spira-env/bin:/usr/local/bin:/usr/bin:/bin:/box/bin"));
         let rel = got.iter().find(|(k, _)| k == crate::RELEASE_ENV).map(|(_, v)| v.as_str());
         assert_eq!(rel, Some("/opt/rel"));
+    }
+
+    #[test]
+    fn a_build_child_runs_from_the_stage_it_builds() {
+        let got = stage_child_path_env(Path::new("/w/stage"));
+        assert_eq!(got, vec![(crate::RELEASE_ENV.to_string(), "/w/stage".to_string()), ("PATH".to_string(), "/w/stage/bin:/w/stage/spira:/usr/local/bin:/usr/bin:/bin".to_string())]);
     }
 
     #[test]

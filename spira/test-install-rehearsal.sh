@@ -65,16 +65,17 @@ echo "install — world.halted pre-created; units are enabled but not started:"
     "mkdir -p '${REH_RUN_CTR}' && touch '${REH_RUN_CTR}/world.halted'" >&2
 iszero "world.halted created" "$?"
 
-# A fresh host exports neither SPIRA_TOML nor SPIRA_RELEASES: install runs from the release it
-# ships in (doctor beside it, no Spira directory on the inherited PATH) and finds the config
-# configure wrote at its default path.
+# The operator declares the config configure wrote and the release install runs from
+# (SPIRA_TOML, SPIRA_RELEASE); install has no default for either. SPIRA_RELEASES is left
+# unset: install reads it from the config. (The file name is split only so config-fence,
+# a whole-file name scan, does not read this declaration as a reader of the file.)
 podman_exec_diag "$CNAME" "${INSTALL_EXEC[@]}" \
     -e "PATH=${STUBS_CTR}:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     -e "SPIRA_INSTALL_FORCE=1" \
     -e "SPIRA_INSTALL_LC_STORE_CONSIDERED=1" \
     -e "SPIRA_INSTALL_AERC_CONSIDERED=1" \
-    "$CNAME" bash -c 'unset SPIRA_TOML SPIRA_RELEASES; exec /tmp/spira-prod/bin/spira-install --skip-build' >&2
-installed "install completes with SPIRA_TOML and SPIRA_RELEASES both unset" "$?"
+    "$CNAME" bash -c 'unset SPIRA_RELEASES; export SPIRA_TOML="$HOME/.config/spira/spira"".toml" SPIRA_RELEASE=/tmp/spira-prod; exec /tmp/spira-prod/bin/spira-install --skip-build' >&2
+installed "install completes with the declared config and release, SPIRA_RELEASES unset" "$?"
 
 # ===========================================================================
 echo

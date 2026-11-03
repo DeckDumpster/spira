@@ -2953,6 +2953,20 @@ mod tests {
         assert!(REMOTE_SCRIPT.contains("bash spira/conf-gen.sh >&2 || true"), "non-fatal: conf.sh's own per-suite self-heal is still the fallback if this one warm attempt fails");
     }
 
+    /// Before the launcher declares SPIRA_RELEASE (the release the round just built), the
+    /// script runs only the steps that need no declared release: staging config, validating
+    /// it, and building and verifying the release itself, whose children run from the stage.
+    #[test]
+    fn nothing_before_the_built_release_is_declared_needs_spira_release() {
+        let declared = REMOTE_SCRIPT.find("export SPIRA_RELEASE=\"$HOME/round-releases/$rel_sha\"").expect("the launcher declares the built release");
+        let allowed = ["target/release/release config-stage", "target/release/spira-config validate", "target/release/release build", "target/release/release verify"];
+        let before = &REMOTE_SCRIPT[..declared];
+        for (at, _) in before.match_indices("target/release/") {
+            let step = &before[at..];
+            assert!(allowed.iter().any(|a| step.starts_with(a)) || step.starts_with("target/release\""), "runs a binary before SPIRA_RELEASE is declared: {}", step.lines().next().unwrap_or(""));
+        }
+    }
+
     #[test]
     fn the_heads_config_delta_is_staged_before_the_release_build_reads_config() {
         let export = REMOTE_SCRIPT.find("export SPIRA_TOML=\"$HOME/round-work/spira/testlib/complete.toml:").unwrap();
