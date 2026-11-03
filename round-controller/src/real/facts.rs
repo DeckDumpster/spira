@@ -12,7 +12,7 @@ use crate::real::git::Locate;
 
 const GIT_DEADLINE: Duration = Duration::from_secs(5);
 const LC_DEADLINE: Duration = Duration::from_secs(5);
-const QUEUE_DEADLINE: Duration = Duration::from_secs(10);
+const QUEUE_DEADLINE: Duration = Duration::from_secs(5);
 
 /// The registry's `queue.local` and `queue.forge` repos, in registry order.
 pub fn round_repos(reg: &Registry) -> Result<Vec<String>, String> {
