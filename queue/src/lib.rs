@@ -85,6 +85,7 @@ pub fn dispatch(w: &World, cmd: &Cmd) -> i32 {
             body,
             name,
             lease_token,
+            owner,
         } => batch::open_batch(
             w,
             &batch::OpenArgs {
@@ -97,6 +98,7 @@ pub fn dispatch(w: &World, cmd: &Cmd) -> i32 {
                 body,
                 name: name.as_deref(),
                 lease_token: lease_token.as_deref(),
+                owner: owner.as_deref(),
             },
         ),
         Cmd::BatchSweep { repo } => batch::batch_sweep(w, repo.as_deref()),

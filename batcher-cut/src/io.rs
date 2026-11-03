@@ -585,8 +585,8 @@ fn open_batch_from(text: &str) -> Option<OpenBatch> {
 /// the repo's queue lock.
 pub fn batch_open(env: &Env, repo: &Repo, members: &[(String, String)], head: &str, body: &str) -> Result<(String, Result<(), String>), String> {
     let named = members.iter().map(|(id, tip)| format!("{id}@{tip}")).collect::<Vec<_>>().join(",");
-    let args = ["batch", "open", "--repo", repo.name.as_str(), "--members", &named, "--head", head, "--skip-pregate", "--body-file", "-"];
-    let run = queue_verb(env, &args, body, &[("SPIRA_QUEUE_ACTOR", "batcher")])?;
+    let args = ["batch", "open", "--repo", repo.name.as_str(), "--members", &named, "--head", head, "--owner", "batcher", "--skip-pregate", "--body-file", "-"];
+    let run = queue_verb(env, &args, body, &[])?;
     print!("{}", run.out);
     eprint!("{}", run.err);
     opened_pr(&run)

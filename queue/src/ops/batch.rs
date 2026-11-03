@@ -628,6 +628,9 @@ pub struct OpenArgs<'a> {
     pub name: Option<&'a str>,
     /// The holder's token on `locks/round/<repo>/<name>`.
     pub lease_token: Option<&'a str>,
+    /// Who the batch belongs to (its `owner`): `batcher` when the batcher opens it; the acting
+    /// identity when absent.
+    pub owner: Option<&'a str>,
 }
 
 /// `batch open`. With the batch machine on the control store, in four steps, each leaving the
@@ -665,8 +668,10 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
             return USAGE;
         }
     };
-    let actor = w
-        .var("SPIRA_QUEUE_ACTOR")
+    let actor = a
+        .owner
+        .map(str::to_string)
+        .or_else(|| w.var("SPIRA_QUEUE_ACTOR"))
         .unwrap_or_else(|| "operator".into());
     let Ok(c) = resolve(w, "open-batch", repo) else {
         return FAIL;

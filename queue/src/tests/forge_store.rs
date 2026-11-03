@@ -52,7 +52,7 @@ fn seed(t: &T, id: &str, phase: &str, opened: u64, pr: Option<&str>) {
 }
 
 fn open_args() -> Vec<&'static str> {
-    vec!["batch", "open", "--repo", "spira", "--members", "sp-a@ta", "--head", "h1", "--skip-pregate"]
+    vec!["batch", "open", "--repo", "spira", "--members", "sp-a@ta", "--head", "h1", "--owner", "batcher", "--skip-pregate"]
 }
 
 fn forge_calls(t: &T) -> Vec<String> {
@@ -66,8 +66,8 @@ fn batch_open_records_the_batch_then_opens_and_arms_its_pr_with_no_open_file() {
     let (state, kv) = record(&t, "spira-20260929T010203Z");
     assert_eq!(state, "OPEN");
     assert_eq!(
-        (kv.get("forge.phase"), kv.get("pr"), kv.get("head"), kv.get("branch"), kv.get("members")),
-        (Some("armed"), Some("77"), Some("h1"), Some(BRANCH), Some("sp-a:ta")),
+        (kv.get("forge.phase"), kv.get("pr"), kv.get("head"), kv.get("branch"), kv.get("members"), kv.get("owner")),
+        (Some("armed"), Some("77"), Some("h1"), Some(BRANCH), Some("sp-a:ta"), Some("batcher")),
         "{kv:?}"
     );
     let calls = forge_calls(&t);
@@ -217,4 +217,107 @@ fn batch_show_prints_the_store_record_and_refuses_when_the_store_cannot_say() {
     door(&t).down.set(true);
     assert_eq!(t.run(&["batch", "show", "--repo", "spira"]), 1);
     assert!(t.err().contains("cannot tell whether spira has an open batch"), "{}", t.err());
+}
+
+#[test]
+fn a_failed_push_or_create_leaves_the_record_opening_and_a_create_the_forge_misreported_is_adopted() {
+    let id = "spira-20260929T010203Z";
+    let t = forge_world();
+    t.lib.push_ok.set(false);
+    assert_eq!(t.run(&open_args()), 1);
+    assert!(t.err().contains(&format!("could not push {BRANCH} — batch {id} stays forge.phase=opening")), "{}", t.err());
+    assert!(!forge_calls(&t).iter().any(|c| c.starts_with("pr-create")));
+
+    let t = forge_world();
+    *t.forge.pr.borrow_mut() = None;
+    assert_eq!(t.run(&open_args()), 1);
+    assert!(t.err().contains("forge pr-create failed"), "{}", t.err());
+    assert_eq!(record(&t, id).1.get("forge.phase"), Some("opening"));
+
+    let t = forge_world();
+    *t.forge.create_then_err.borrow_mut() = Some(("81".into(), "rc=1: timed out".into()));
+    assert_eq!(t.run(&open_args()), 0, "{}", t.err());
+    assert!(t.err().contains("but PR 81 is open on it — adopting it"), "{}", t.err());
+    let kv = record(&t, id).1;
+    assert_eq!((kv.get("forge.phase"), kv.get("pr")), (Some("armed"), Some("81")));
+}
+
+#[test]
+fn a_pr_whose_auto_merge_cannot_be_armed_stays_open_and_the_open_fails_naming_it() {
+    let t = forge_world();
+    t.forge.arm_fails.set(true);
+    assert_eq!(t.run(&open_args()), 1);
+    assert_eq!(record(&t, "spira-20260929T010203Z").1.get("forge.phase"), Some("open"));
+    assert!(t.out().contains("\npr=77\n"), "{}", t.out());
+    assert!(t.err().contains("auto-merge could not be armed"), "{}", t.err());
+}
+
+#[test]
+fn a_named_batch_open_is_refused_while_another_holder_leases_it() {
+    let t = forge_world();
+    t.lc.leases.borrow_mut().insert(
+        "spira/deck-9".into(),
+        Ok(Some(RoundLease { holder: Some("rc-1".into()), token: "9-0".into(), ttl_left_secs: 60 })),
+    );
+    let mut args = open_args();
+    args.extend(["--name", "deck-9"]);
+    assert_eq!(t.run(&args), 1);
+    assert!(t.err().contains("round deck-9 is leased by rc-1"), "{}", t.err());
+    args.extend(["--lease-token", "9-0"]);
+    assert_eq!(t.run(&args), 0, "{}", t.err());
+    assert_eq!(record(&t, "deck-9").1.get("forge.phase"), Some("armed"));
+    assert_eq!(t.run(&["batch", "open", "--lease-token", "9-0"]), 2, "a token names the batch it is on");
+}
+
+#[test]
+fn the_sweep_refuses_when_it_cannot_tell_and_names_a_refused_release() {
+    let t = forge_world();
+    t.var("SPIRA_ROUND_LEASE_TTL_SECS", "5m");
+    assert_eq!(t.run(&["batch", "sweep", "--repo", "spira"]), 1);
+    assert!(t.err().contains("SPIRA_ROUND_LEASE_TTL_SECS does not parse as seconds"), "{}", t.err());
+
+    let t = forge_world();
+    door(&t).down.set(true);
+    assert_eq!(t.run(&["batch", "sweep", "--repo", "spira"]), 1);
+    assert!(t.err().contains("cannot tell which batches spira has open"), "{}", t.err());
+
+    let t = forge_world();
+    seed(&t, "unread", "opening", 500, None);
+    seed(&t, "refused", "opening", 500, None);
+    t.lc.leases.borrow_mut().insert("spira/unread".into(), Err("lc-serve did not answer".into()));
+    t.lc.abandon_refused.set(Some("refused: IllegalTransition"));
+    t.clock.now.set(900);
+    assert_eq!(t.run(&["batch", "sweep", "--repo", "spira"]), 1);
+    assert!(t.err().contains("cannot tell whether batch unread is leased"), "{}", t.err());
+    assert!(t.err().contains("the release of batch refused was refused"), "{}", t.err());
+    assert_eq!(record(&t, "unread").0, "OPEN");
+
+    let t = forge_world();
+    t.lib.r.borrow_mut().mode = LandMode::QueueLocal;
+    assert_eq!(t.run(&["batch", "sweep", "--repo", "spira"]), 1);
+    assert!(t.err().contains("repo is not in queue mode"), "{}", t.err());
+}
+
+#[test]
+fn the_sweep_is_refused_while_the_batch_machine_is_not_on_the_store() {
+    let t = T::new(LandMode::Queue);
+    assert_eq!(t.run(&["batch", "sweep", "spira"]), 1);
+    assert!(t.err().contains("the batch machine is not on it"), "{}", t.err());
+}
+
+#[test]
+fn a_settled_batch_the_machine_has_not_ended_is_ended_on_its_record_and_reads_as_none() {
+    let t = forge_world();
+    seed(&t, "deck-1", "armed", 900, Some("12"));
+    t.with_world(|w| {
+        let c = crate::ops::resolve(w, "test", None).unwrap();
+        let open = crate::ops::forge_batch::read(w, &c).unwrap().unwrap();
+        assert_eq!(open.place(), "batch record deck-1");
+        open.rewrite(w, &c, &["owner"], &[("owner", "concierge")]).unwrap();
+        open.remove(w, &c, "settled").unwrap();
+        open.remove(w, &c, "again").unwrap();
+        assert!(crate::ops::forge_batch::read(w, &c).unwrap().is_none());
+    });
+    let (state, kv) = record(&t, "deck-1");
+    assert_eq!((state.as_str(), kv.get("ended"), kv.get("owner")), ("OPEN", Some("settled"), Some("concierge")), "{kv:?}");
 }
