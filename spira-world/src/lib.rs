@@ -9,6 +9,7 @@
 pub mod checkpoint;
 pub mod drain;
 pub mod fleet;
+pub mod freeze;
 pub mod guard;
 pub mod notice;
 pub mod proc;
