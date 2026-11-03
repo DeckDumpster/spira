@@ -668,6 +668,25 @@ mod tests {
         assert_eq!(sc.single_queries.get(), 0);
     }
 
+    #[test]
+    fn the_drain_of_a_running_oneshot_reads_the_batched_answer_then_polls_live() {
+        let td = tempdir();
+        let manifest = tiny_manifest();
+        let h = host();
+        let sc = FakeSystemctl::default();
+        sc.set("spira-sentinel-prod.service", FakeUnit { active: false, enabled: None, kind: "oneshot".into(), file_listed: true });
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &td, templates_dir: &td, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let svc = "spira-sentinel-prod.service".to_string();
+        let _env = testkit::env(&[("SPIRA_DRAIN_INTERVAL", Some("0"))]);
+
+        drain_oneshot(&ctx, "spira-sentinel-prod.timer", &BTreeMap::from([(&svc, true)]));
+        assert_eq!(sc.single_queries.get(), 1, "one live poll to see it finished; the was-running answer came from the batch");
+
+        drain_oneshot(&ctx, "spira-sentinel-prod.timer", &BTreeMap::from([(&svc, false)]));
+        assert_eq!(sc.single_queries.get(), 1, "a service the batch saw idle is not polled");
+    }
+
     use std::fs;
 
     fn host() -> HostValues {
