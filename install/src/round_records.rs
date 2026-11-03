@@ -1,7 +1,8 @@
-//! The queue's round files, `<queue dir>/<repo>/round` and `round.<batch>`. Once spira-lc serves
-//! the batch machine from the control store no reader consults them, so install removes them —
-//! and refuses while one still names a round the store holds open, since that round has to be
-//! drained (landed or abandoned) first, not orphaned.
+//! The queue's record files: the round files, `<queue dir>/<repo>/round` and `round.<batch>`, and
+//! the forge batch's, `open`, `prepared` and `forge-state`. Once spira-lc serves the batch machine
+//! from the control store the store's batch records replace them, so install removes them — and
+//! refuses while one still names a batch the store holds open, since that batch has to be drained
+//! (landed or abandoned) first, not orphaned.
 
 use std::path::{Path, PathBuf};
 
@@ -14,8 +15,14 @@ pub struct RoundFile {
     pub batch: String,
 }
 
+/// The forge batch's files: its open record, the batcher's prepared next round, and the verdict's
+/// last view of the forge.
+const FORGE_FILES: [&str; 3] = ["open", "prepared", "forge-state"];
+
 fn is_round_file(name: &str) -> bool {
-    name == "round" || name.strip_prefix("round.").is_some_and(|b| !b.is_empty())
+    name == "round"
+        || name.strip_prefix("round.").is_some_and(|b| !b.is_empty())
+        || FORGE_FILES.contains(&name)
 }
 
 /// Every round file in every repo directory under `queue_dir`, by path.
@@ -60,7 +67,7 @@ pub fn plan(
     }
     if !held.is_empty() {
         return Err(format!(
-            "{} — drain first: land or abandon each with `queue round land|abandon <batch>` until `queue round status` reads round=none, then install again",
+            "{} — drain first: land or abandon each, a round with `queue round land|abandon <batch>` until `queue round status` reads round=none, a forge batch with `queue verdict <repo>` once its PR merges or `queue abandon <repo>`, then install again",
             held.join("; ")
         ));
     }
@@ -104,6 +111,28 @@ mod tests {
         assert_eq!(names, ["other/round", "spira/round", "spira/round.spira-settled"]);
         let gone = plan(&files, states("SETTLED")).unwrap();
         assert_eq!(gone, files.iter().map(|f| f.path.clone()).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn the_forge_batch_files_are_removed_too_and_one_naming_an_open_batch_is_refused() {
+        let d = testkit::TempDir::new("install-round-records-forge");
+        std::fs::create_dir_all(d.join("deck")).unwrap();
+        for (name, text) in [
+            ("open", "pr=12\nbranch=spira/queue/x\nbatch_id=deck-open\n"),
+            ("prepared", "head=h\nparent=p\n"),
+            ("forge-state", "batch_id=deck-open\nci=pending\n"),
+            ("capacity-backoff", "until=9\n"),
+        ] {
+            std::fs::write(d.join("deck").join(name), text).unwrap();
+        }
+        let files = round_files(d.path());
+        let names: Vec<String> = files.iter().map(|f| f.path.strip_prefix(d.path()).unwrap().display().to_string()).collect();
+        assert_eq!(names, ["deck/forge-state", "deck/open", "deck/prepared"]);
+        let open = |b: &str| Ok((b == "deck-open").then(|| "OPEN".to_string()));
+        let e = plan(&files, open).unwrap_err();
+        assert!(e.contains("deck/open names round deck-open, which is OPEN") && e.contains("queue abandon"), "{e}");
+        let landed = |_: &str| Ok(Some("LANDED".to_string()));
+        assert_eq!(plan(&files, landed).unwrap().len(), 3);
     }
 
     #[test]

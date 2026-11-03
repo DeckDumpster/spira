@@ -7,7 +7,8 @@ use std::path::Path;
 use super::{idents, landing_log, lc_abandon, Ctx, World, FAIL, OK};
 use crate::ident::bounded_text;
 use crate::model::Member;
-use crate::records::{one_line, write_atomic, Kv};
+use super::forge_batch::Open;
+use crate::records::{one_line, Kv};
 
 const ALERT_KEY: &str = "reconcile_alert";
 
@@ -18,7 +19,7 @@ enum Verdict {
 
 /// `Some(rc)` when this pass was spent converging the batch; `None` when the batch is live
 /// and the ordinary verdict pass should read its CI.
-pub fn step(w: &World, c: &Ctx, path: &Path, file: &Path, kv: &Kv) -> Option<i32> {
+pub fn step(w: &World, c: &Ctx, path: &Path, file: &Open, kv: &Kv) -> Option<i32> {
     let pr = kv.get("pr").unwrap_or("").to_string();
     let members = kv.members();
     let verdict = if members.is_empty() && kv.get_first("members").is_some() {
@@ -61,7 +62,7 @@ pub fn step(w: &World, c: &Ctx, path: &Path, file: &Path, kv: &Kv) -> Option<i32
 
 /// Alert once per condition: the first failure mails and is recorded on the batch record, a
 /// repeat pass logs and stays quiet.
-fn cannot_act(w: &World, c: &Ctx, file: &Path, kv: &Kv, what: &str) -> i32 {
+fn cannot_act(w: &World, c: &Ctx, file: &Open, kv: &Kv, what: &str) -> i32 {
     let name = c.r.name.as_str();
     w.err(format!("verdict {name}: reconcile: {what}"));
     if kv.get(ALERT_KEY) == Some(what) {
@@ -70,7 +71,7 @@ fn cannot_act(w: &World, c: &Ctx, file: &Path, kv: &Kv, what: &str) -> i32 {
     let mut next = kv.clone();
     next.remove(ALERT_KEY);
     next.push(ALERT_KEY, &one_line(what));
-    if write_atomic(file, &next.render()).is_ok() {
+    if file.save(w, c, &next).is_ok() {
         w.lib.notify(&c.s.mailbox, name, "forge batch cannot converge", &format!("{name}: {what}\nThe record is kept; each verdict pass retries and logs, this mail is sent once."));
     }
     FAIL
@@ -84,7 +85,7 @@ fn land(
     w: &World,
     c: &Ctx,
     path: &Path,
-    file: &Path,
+    file: &Open,
     kv: &Kv,
     pr: &str,
     members: &[Member],
@@ -171,7 +172,9 @@ fn land(
         super::helpers::close_on_land(w, &c.s.submitted_label, &m.id, &sha);
     }
     retire_branch(w, c, path, kv);
-    let _ = std::fs::remove_file(file);
+    if let Err(e) = file.remove(w, c, "landed") {
+        w.err(format!("verdict {name}: reconcile: ALARM: PR {pr} landed but its record ({}) could not be closed: {e}", file.place()));
+    }
     landing_log(
         &c.s.run,
         &format!(
@@ -230,7 +233,7 @@ fn abandon(
     w: &World,
     c: &Ctx,
     path: &Path,
-    file: &Path,
+    file: &Open,
     kv: &Kv,
     pr: &str,
     members: &[Member],
@@ -279,8 +282,8 @@ fn abandon(
     archived.remove(ALERT_KEY);
     archived.push("reason", &one_line(why));
     archived.push("actor", "reconcile");
-    let archive = c.queue_file(&format!("closed-pr{pr}-{}", w.clock.stamp()));
-    if write_atomic(file, &archived.render()).is_err() || std::fs::rename(file, &archive).is_err() {
+    let archive = format!("closed-pr{pr}-{}", w.clock.stamp());
+    if file.archive(w, c, &archived, &archive, "abandoned").is_err() {
         return cannot_act(w, c, file, kv, "the open record could not be archived");
     }
     landing_log(

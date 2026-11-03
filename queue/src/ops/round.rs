@@ -817,11 +817,16 @@ fn lock_sparing(
 /// The record of the batch a mender reports on: the open round of a queue.local repo, or the open
 /// batch PR of a queue.forge one.
 pub(super) fn load_failed_batch(w: &World, label: &str, c: &Ctx, batch: &str) -> Result<Kv, i32> {
-    match records::read_kv(&c.queue_file("open")) {
-        Ok(Some(kv)) if c.r.mode != LandMode::QueueLocal && kv.get("batch_id") == Some(batch) => {
-            Ok(kv)
+    if c.r.mode == LandMode::QueueLocal {
+        return load(w, label, c, batch);
+    }
+    match super::forge_batch::read(w, c) {
+        Ok(Some(o)) if o.kv.get("batch_id") == Some(batch) => Ok(o.kv),
+        Ok(_) => load(w, label, c, batch),
+        Err(e) => {
+            w.err(format!("queue.sh {label}: cannot tell whether {batch} is {}'s open batch: {e} — refused, nothing changed", c.r.name));
+            Err(FAIL)
         }
-        _ => load(w, label, c, batch),
     }
 }
 

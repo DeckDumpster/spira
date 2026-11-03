@@ -137,8 +137,8 @@ fn parse() -> Result<Opts, String> {
 ///
 /// `repo_land` already normalizes the `queue.forge` alias to `queue`, so only `queue` and
 /// `queue.local` are ever seen here (sp-o1jm6, epic sp-hq9x8). `queue.local`'s push path is
-/// not implemented by this crate yet (sp-828tp) — `Land::Local` is recorded so `push_branch`/
-/// `push_branch` can refuse to guess at it.
+/// not implemented by this crate yet (sp-828tp) — `Land::Local` is recorded so the forge path
+/// can refuse to guess at it.
 fn find_repo(env_: &Env, name: &str) -> Result<Repo, String> {
     // spira_config::repos (sp-k6lku, "wave 4.13") in-process, instead of three separate
     // repo_land/repo_root/spira_landref bash seam calls.
@@ -1127,46 +1127,17 @@ fn open_round_pr(
     if !foreign.is_empty() {
         return Err(format!("round head carries commits of non-member bead(s) {} — refusing to open", foreign.join(", ")));
     }
-    if let Some(ob) = io::read_open_batch(env_, &repo.name)? {
-        return Err(format!("batch PR {} ({}) is already recorded open — not cutting a second", ob.pr, ob.branch));
-    }
-    let stamp = io::utc_stamp(round_start);
-    let batch_br = format!("spira/queue/{stamp}");
-    io::set_branch(repo, &batch_br, batch_head);
-
-    io::push_branch(repo, batch_head, &batch_br)?;
     let prr = pr_record(merged);
     let base_branch = repo.base.rsplit('/').next().unwrap_or(&repo.base).to_string();
-    let title = format!("queue: {} beads for {}", merged.len(), repo.name);
     let shots = io::batch_shots_section(&env_.testenv_bin, &env_.run, spira_config::process::cfg("SPIRA_LOOM_ADDR").ok().as_deref(), &repo.name, base_sha, batch_head);
     let body = format!("Merge-queue batch: {} beads for {}, onto {}.\n\n{}\n{shots}", merged.len(), repo.name, base_branch, prr.body);
-    let pr_n = io::forge_pr_create(repo, &batch_br, &base_branch, &title, &body)?;
-
-    // spira-lc's own OPEN-batch lifecycle. Best-effort and additive, never blocking the PR or
-    // the write below. A refusal leaves batch_id/version unset on the record, so
-    // queue verdict's own land/settle wiring finds nothing to CAS against later.
+    // queue batch open records the batch before the PR exists, refuses while one is open, and
+    // arms auto-merge; the PR title is its own, `queue: <n> beads for <repo>`.
     let member_pairs: Vec<(String, String)> = merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
-    let lc_version = io::lc_cut_batch(env_, &repo.name, &batch_br, batch_head, base_sha, &member_pairs);
-
-    io::write_open_batch(
-        env_,
-        &repo.name,
-        &io::OpenBatch {
-            pr: pr_n.clone(),
-            head: batch_head.to_string(),
-            base: base_sha.to_string(),
-            members: member_pairs,
-            branch: batch_br.clone(),
-            opened: now().to_string(),
-            owner: "batcher".to_string(),
-            batch_id: lc_version.as_ref().map(|_| batch_br.clone()).unwrap_or_default(),
-            version: lc_version.unwrap_or_default(),
-        },
-    )?;
+    let (pr_n, armed) = io::batch_open(env_, repo, &member_pairs, batch_head, &body)?;
     io::write_local_verdict(env_, &repo.name, "green", "");
     println!("{}", opened_event(&prr).text);
-    println!("batcher {}: PR {} opened — {} member(s) ({})", repo.name, pr_n, merged.len(), batch_br);
-    let armed = io::forge_pr_arm(repo, &pr_n);
+    println!("batcher {}: PR {} opened — {} member(s)", repo.name, pr_n, merged.len());
 
     let mut fields = vec![
         ("repo", repo.name.clone()),

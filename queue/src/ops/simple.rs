@@ -9,7 +9,7 @@ use super::{
 use crate::cli::Text;
 use crate::model::LandMode;
 use crate::ports::{ref_branch, Emit};
-use crate::records::{self, write_atomic};
+use crate::records;
 
 /// conf.sh's spira_gate_outcome.
 pub fn gate_outcome(rc: i32) -> &'static str {
@@ -546,14 +546,18 @@ pub fn claim(w: &World, repo: Option<&str>, reason: &Text, force: bool) -> i32 {
     let Ok(_g) = take_lock(w, "claim", &c, "") else {
         return FAIL;
     };
-    let open = c.queue_file("open");
-    let kv = match records::read_kv(&open) {
-        Ok(Some(kv)) => kv,
-        _ => {
+    let open = match super::forge_batch::read(w, &c) {
+        Ok(Some(o)) => o,
+        Ok(None) => {
             w.err(format!("queue.sh claim: no open batch for {}", c.r.name));
             return FAIL;
         }
+        Err(e) => {
+            w.err(format!("queue.sh claim: cannot tell whether {} has an open batch: {e} — refused, nothing changed", c.r.name));
+            return FAIL;
+        }
     };
+    let kv = open.kv.clone();
     let cur = kv.get("owner").unwrap_or("").to_string();
     if cur == "concierge" && !force {
         w.err(format!(
@@ -563,7 +567,7 @@ pub fn claim(w: &World, repo: Option<&str>, reason: &Text, force: bool) -> i32 {
         return FAIL;
     }
     let new = records::claim_rewrite(&kv, &cur, &reason);
-    if let Err(e) = write_atomic(&open, &new.render()) {
+    if let Err(e) = open.save(w, &c, &new) {
         w.err(format!("queue.sh claim: {e}"));
         return FAIL;
     }
@@ -1060,14 +1064,18 @@ pub fn release(w: &World, repo: Option<&str>) -> i32 {
     let Ok(_g) = take_lock(w, "release", &c, "") else {
         return FAIL;
     };
-    let open = c.queue_file("open");
-    let kv = match records::read_kv(&open) {
-        Ok(Some(kv)) => kv,
-        _ => {
+    let open = match super::forge_batch::read(w, &c) {
+        Ok(Some(o)) => o,
+        Ok(None) => {
             w.err(format!("queue.sh release: no open batch for {}", c.r.name));
             return FAIL;
         }
+        Err(e) => {
+            w.err(format!("queue.sh release: cannot tell whether {} has an open batch: {e} — refused, nothing changed", c.r.name));
+            return FAIL;
+        }
     };
+    let kv = open.kv.clone();
     if kv.get("owner").unwrap_or("") != "concierge" {
         w.err(format!(
             "queue.sh release: {} is not claimed by concierge",
@@ -1076,7 +1084,7 @@ pub fn release(w: &World, repo: Option<&str>) -> i32 {
         return FAIL;
     }
     let (new, restore) = records::release_rewrite(&kv);
-    if let Err(e) = write_atomic(&open, &new.render()) {
+    if let Err(e) = open.save(w, &c, &new) {
         w.err(format!("queue.sh release: {e}"));
         return FAIL;
     }

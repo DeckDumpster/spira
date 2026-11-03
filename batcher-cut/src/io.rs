@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
-use std::io::{ErrorKind, Write as _};
+use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -21,7 +21,7 @@ use batcher::core::{Member, MergeResult};
 
 /// Where a repo's landed branch goes — `repo_land`'s `queue`/`queue.forge` alias normalizes
 /// to `Forge`; `queue.local` is `Local`. Carried on `Repo` so a caller never has to re-derive
-/// it from the base ref's own spelling (see `push_branch`).
+/// it from the base ref's own spelling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Land {
     Forge,
@@ -233,25 +233,6 @@ fn in_pool_states(r: &serde_json::Value) -> bool {
 /// probe the queue crate makes.
 pub fn lc_probe(env: &Env) -> Result<(), String> {
     lc_rows(env).map(|_| ())
-}
-
-/// Ensure a bead row exists for every member (never a shortcut to CERTIFIED — that
-/// transition is sp-vd9dn's territory) then `spira-lc cut` a brand-new batch. On success
-/// the batch's version is exactly the member count (cut's own `MemberAdded` events are
-/// the only thing that advances it from 0) — returned so the caller can record it on the
-/// open-batch file the same way sp-o7nbr.2's `_lc_cut_batch` does.
-pub fn lc_cut_batch(env: &Env, repo: &str, batch_id: &str, head: &str, base: &str, members: &[(String, String)]) -> Option<String> {
-    for (id, _) in members {
-        let _ = lcq(env, &["create-bead", id, "--ready"]);
-    }
-    let members_s = members.iter().map(|(id, tip)| format!("{id}:{tip}")).collect::<Vec<_>>().join(",");
-    match lcq(env, &["cut", batch_id, "--repo", repo, "--head", head, "--base", base, "--members", &members_s, "--actor", "batcher"]) {
-        Ok(_) => Some(members.len().to_string()),
-        Err(e) => {
-            eprintln!("batcher {repo}: LIFECYCLE: spira-lc cut refused for {batch_id} (the round proceeds without batch_id/version): {e}");
-            None
-        }
-    }
 }
 
 /// `id`'s stack (design stacked-dependents-2026-09-28 §1: `{prereq_bead_id: certified_tip}`)
@@ -544,34 +525,20 @@ fn base_fix_ids(env: &Env, repo: &Repo, texts: &BTreeMap<String, (bool, String)>
 }
 
 // ---------------------------------------------------------------------------------------
-// The open-batch record: exactly the key=value shape queue verdict (and queue-watch) read.
+// The open batch: the fields of its record the batcher reads, from `queue batch show`.
 // ---------------------------------------------------------------------------------------
 
 #[derive(Clone, Debug, Default)]
 pub struct OpenBatch {
     pub pr: String,
     pub head: String,
-    pub base: String,
     pub members: Vec<(String, String)>,
-    pub branch: String,
-    pub opened: String,
     /// "batcher" when this record was written by this crate; empty for a record batch.sh
     /// wrote (batch.sh never writes this key, so its absence IS the legacy owner — no
     /// separate default to keep in sync). verdict.sh read it to decide whether a CI red
     /// on this PR was its own attribution's or the called batcher persona's (sp-lomk3);
     /// `queue verdict` sends every red to the persona (queue/DESIGN-verdict.md D1).
     pub owner: String,
-    /// spira-lc's own key for this batch and its current CAS version (sp-o7nbr.4, same
-    /// field names as sp-o7nbr.2's `_lc_cut_batch` writes for batch.sh) — present only
-    /// when `spira-lc cut`/`stack` actually succeeded. queue verdict's lifecycle land walk
-    /// (queue/DESIGN-verdict.md D3) reads these generically off this same open-batch file
-    /// regardless of which cutter wrote it; absent means skip, not CAS against nothing.
-    pub batch_id: String,
-    pub version: String,
-}
-
-fn open_file(env: &Env, repo: &str) -> PathBuf {
-    env.queue_dir.join(repo).join("open")
 }
 
 fn parse_kv(text: &str) -> BTreeMap<String, String> {
@@ -587,47 +554,52 @@ fn parse_members(s: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The repo's open batch, as `queue batch show` reads it from wherever the queue keeps it; `None`
+/// when there is none. Err when the queue cannot tell.
 pub fn read_open_batch(env: &Env, repo: &str) -> Result<Option<OpenBatch>, String> {
-    let p = open_file(env, repo);
-    let text = match fs::read_to_string(&p) {
-        Ok(t) => t,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(format!("{}: {e}", p.display())),
-    };
-    let kv = parse_kv(&text);
-    let pr = kv.get("pr").cloned().unwrap_or_default();
-    if pr.is_empty() {
-        return Ok(None);
+    let run = queue_verb(env, &["batch", "show", "--repo", repo], "", &[])?;
+    if run.code != Some(0) {
+        return Err(verb_failed("queue batch show", &run));
     }
-    Ok(Some(OpenBatch {
-        pr,
-        head: kv.get("head").cloned().unwrap_or_default(),
-        base: kv.get("base").cloned().unwrap_or_default(),
-        members: parse_members(kv.get("members").map(String::as_str).unwrap_or("")),
-        branch: kv.get("branch").cloned().unwrap_or_default(),
-        opened: kv.get("opened").cloned().unwrap_or_default(),
-        owner: kv.get("owner").cloned().unwrap_or_default(),
-        batch_id: kv.get("batch_id").cloned().unwrap_or_default(),
-        version: kv.get("version").cloned().unwrap_or_default(),
-    }))
+    Ok(open_batch_from(&run.out))
 }
 
-pub fn write_open_batch(env: &Env, repo: &str, ob: &OpenBatch) -> Result<(), String> {
-    let p = open_file(env, repo);
-    if let Some(dir) = p.parent() {
-        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+/// `queue batch show`'s answer: `None` when it printed no record. A record whose PR is not yet
+/// recorded (a batch still opening) is an open batch with no PR.
+fn open_batch_from(text: &str) -> Option<OpenBatch> {
+    let kv = parse_kv(text);
+    if kv.is_empty() {
+        return None;
     }
-    let members = ob.members.iter().map(|(id, tip)| format!("{id}:{tip}")).collect::<Vec<_>>().join(" ");
-    let mut body = format!(
-        "pr={}\nhead={}\nbase={}\nmembers={}\nopened={}\nbranch={}\nowner={}\n",
-        ob.pr, ob.head, ob.base, members, ob.opened, ob.branch, ob.owner
-    );
-    if !ob.batch_id.is_empty() && !ob.version.is_empty() {
-        body.push_str(&format!("batch_id={}\nversion={}\n", ob.batch_id, ob.version));
+    let pr = kv.get("pr").cloned().unwrap_or_default();
+    Some(OpenBatch {
+        pr,
+        head: kv.get("head").cloned().unwrap_or_default(),
+        members: parse_members(kv.get("members").map(String::as_str).unwrap_or("")),
+        owner: kv.get("owner").cloned().unwrap_or_default(),
+    })
+}
+
+/// Opens the batch PR for `members` at `head` through `queue batch open`, which records the batch
+/// before it pushes and creates the PR and arms auto-merge after: the PR's number. The caller holds
+/// the repo's queue lock.
+pub fn batch_open(env: &Env, repo: &Repo, members: &[(String, String)], head: &str, body: &str) -> Result<(String, Result<(), String>), String> {
+    let named = members.iter().map(|(id, tip)| format!("{id}@{tip}")).collect::<Vec<_>>().join(",");
+    let args = ["batch", "open", "--repo", repo.name.as_str(), "--members", &named, "--head", head, "--skip-pregate", "--body-file", "-"];
+    let run = queue_verb(env, &args, body, &[("SPIRA_QUEUE_ACTOR", "batcher")])?;
+    print!("{}", run.out);
+    eprint!("{}", run.err);
+    opened_pr(&run)
+}
+
+/// `queue batch open`'s answer: the PR it opened, and Err when the open also failed after it (auto-merge
+/// not armed, which the reconciler arms); an Err of its own when it opened none.
+fn opened_pr(run: &VerbRun) -> Result<(String, Result<(), String>), String> {
+    match (run.code, verb_value(&run.out, "pr")) {
+        (Some(0), Some(pr)) => Ok((pr, Ok(()))),
+        (_, Some(pr)) => Ok((pr, Err(verb_failed("queue batch open", run)))),
+        _ => Err(verb_failed("queue batch open", run)),
     }
-    let tmp = p.with_extension("tmp");
-    fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    fs::rename(&tmp, &p).map_err(|e| format!("{}: {e}", p.display()))
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1114,16 +1086,6 @@ pub fn moved_members(repo: &Repo, base_sha: &str, members: &[Member]) -> Vec<Str
         .collect()
 }
 
-pub fn push_branch(repo: &Repo, sha: &str, branch: &str) -> Result<(), String> {
-    assert_eq!(repo.land, Land::Forge, "push_branch: unreachable under queue.local — it lands via queue land-local (sp-828tp), never a push");
-    let remote = repo.base.split_once('/').map(|(r, _)| r).unwrap_or("origin");
-    run(
-        Command::new("git").arg("-C").arg(&repo.path).args(["push", "-q", remote]).arg(format!("{sha}:refs/heads/{branch}")),
-        "git push",
-    )
-    .map(|_| ())
-}
-
 pub fn set_branch(repo: &Repo, branch: &str, sha: &str) {
     let _ = spira_config::bounded::bounded("git").arg("-C").arg(&repo.path).args(["branch", "-f", branch, sha]).status();
 }
@@ -1602,46 +1564,16 @@ pub fn batch_shots_section(testenv_bin: &Path, run_dir: &Path, loom_addr: Option
     shots_section(run_dir, loom_addr, &pairs)
 }
 
-pub fn forge_pr_create(repo: &Repo, head: &str, base: &str, title: &str, body: &str) -> Result<String, String> {
-    forge_pr_create_on(repo, head, base, title, body, std::env::var(spira_config::RELEASE_ENV).ok().as_deref())
-}
-
-const PR_CREATE_DEADLINE_SECS: &str = "300";
-
 fn forge_cmd(repo: &Repo, release: Option<&str>) -> Result<std::process::Command, String> {
-    forge_cmd_for(repo, release, None)
-}
-
-fn forge_cmd_for(repo: &Repo, release: Option<&str>, secs: Option<&str>) -> Result<std::process::Command, String> {
-    let bound = |p: &dyn AsRef<std::ffi::OsStr>| match secs {
-        Some(s) => spira_config::bounded::bounded_for(p, s),
-        None => spira_config::bounded::bounded(p),
-    };
     // A bare name (the default, `forge`) is the release's own binary, from `release`
     // (`$SPIRA_RELEASE`); a configured SPIRA_FORGE path is run with bash, as batch.sh did.
     Ok(if repo.forge.components().count() == 1 {
-        bound(&spira_config::release_env::resolve_tool(&repo.forge.to_string_lossy(), release)?)
+        spira_config::bounded::bounded(&spira_config::release_env::resolve_tool(&repo.forge.to_string_lossy(), release)?)
     } else {
-        let mut c = bound(&"bash");
+        let mut c = spira_config::bounded::bounded("bash");
         c.arg(&repo.forge);
         c
     })
-}
-
-/// Arms auto-merge on a batch PR and requires the forge to have read the request back.
-pub fn forge_pr_arm(repo: &Repo, pr: &str) -> Result<(), String> {
-    forge_pr_arm_on(repo, pr, std::env::var(spira_config::RELEASE_ENV).ok().as_deref())
-}
-
-fn forge_pr_arm_on(repo: &Repo, pr: &str, release: Option<&str>) -> Result<(), String> {
-    let mut cmd = forge_cmd(repo, release)?;
-    cmd.arg("pr-automerge").arg(&repo.path).arg(pr).arg("merge");
-    let o = cmd.stdin(std::process::Stdio::null()).output().map_err(|e| format!("forge pr-automerge: {e}"))?;
-    if o.status.success() {
-        Ok(())
-    } else {
-        Err(format!("PR {pr} is open but auto-merge could not be armed (forge pr-automerge exited {})", o.status.code().unwrap_or(-1)))
-    }
 }
 
 /// The reconciler: arms every open batch PR found without auto-merge.
@@ -1659,54 +1591,6 @@ pub fn forge_arm_queue(repo: &Repo) -> Result<(), String> {
     }
 }
 
-/// `release` is the release a bare forge name resolves under — the seam tests use instead of
-/// mutating the process environment.
-fn forge_pr_create_on(repo: &Repo, head: &str, base: &str, title: &str, body: &str, release: Option<&str>) -> Result<String, String> {
-    match forge_pr_create_once(repo, head, base, title, body, release) {
-        Ok(n) => Ok(n),
-        Err(e) => match forge_pr_number_on(repo, head, release) {
-            Some(n) => {
-                eprintln!("batcher {}: {e}; adopting the existing PR {n} for {head}", repo.name);
-                Ok(n)
-            }
-            None => Err(e),
-        },
-    }
-}
-
-/// The open PR GitHub already holds for `head`, if any — a pr-create that failed after the
-/// forge created the PR must be adopted, never retried into a second one.
-fn forge_pr_number_on(repo: &Repo, head: &str, release: Option<&str>) -> Option<String> {
-    let mut cmd = forge_cmd_for(repo, release, Some(PR_CREATE_DEADLINE_SECS)).ok()?;
-    cmd.arg("pr-number").arg(&repo.path).arg(head);
-    let o = cmd.stdin(std::process::Stdio::null()).output().ok()?;
-    let n = String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().to_string();
-    (o.status.success() && !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())).then_some(n)
-}
-
-fn forge_pr_create_once(repo: &Repo, head: &str, base: &str, title: &str, body: &str, release: Option<&str>) -> Result<String, String> {
-    let mut cmd = forge_cmd_for(repo, release, Some(PR_CREATE_DEADLINE_SECS))?;
-    cmd.arg("pr-create").arg(&repo.path).arg(head).arg(base).arg(title);
-    cmd.stdin(std::process::Stdio::piped());
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("forge pr-create: {e}"))?;
-    use std::io::Write;
-    if let Some(stdin) = child.stdin.take() {
-        let mut stdin = stdin;
-        let _ = stdin.write_all(body.as_bytes());
-    }
-    let o = child.wait_with_output().map_err(|e| format!("forge pr-create: {e}"))?;
-    if !o.status.success() {
-        return Err(format!("forge pr-create exited {}", o.status.code().unwrap_or(-1)));
-    }
-    let n = String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().to_string();
-    if n.is_empty() {
-        return Err("forge pr-create: no PR number returned".into());
-    }
-    Ok(n)
-}
-
 // ---------------------------------------------------------------------------------------
 // queue.local's own terminal step (sp-828tp): fast-forward the local landing ref, package and
 // activate the round's own --with-bins corpus, mark every member LANDED and close its bead —
@@ -1721,24 +1605,31 @@ pub struct VerbRun {
     pub err: String,
 }
 
-fn round_verb(env: &Env, args: &[&str], stdin: &str) -> Result<VerbRun, String> {
-    round_verb_with(env, args, stdin, &[])
-}
-
-fn round_verb_with(env: &Env, args: &[&str], stdin: &str, vars: &[(&str, &str)]) -> Result<VerbRun, String> {
+/// One `queue <args…>` run, `stdin` on its stdin and `vars` in its environment, told the caller
+/// holds the repo's queue lock.
+fn queue_verb(env: &Env, args: &[&str], stdin: &str, vars: &[(&str, &str)]) -> Result<VerbRun, String> {
     use std::io::Write;
     // batch-job: this runs whatever its caller names, as long as that takes
     let mut cmd = Command::new(&env.queue_bin);
-    cmd.arg("round").args(args).envs(vars.iter().copied());
+    cmd.args(args).envs(vars.iter().copied());
     cmd.env("SPIRA_QUEUE_LOCK_HELD", "1");
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let what = format!("queue round {}", args.first().copied().unwrap_or(""));
+    let what = format!("queue {}", args.iter().take(2).copied().collect::<Vec<_>>().join(" "));
     let mut child = cmd.spawn().map_err(|e| format!("{what}: {e}"))?;
     if let Some(mut si) = child.stdin.take() {
         si.write_all(stdin.as_bytes()).map_err(|e| format!("{what}: stdin: {e}"))?;
     }
     let o = child.wait_with_output().map_err(|e| format!("{what}: {e}"))?;
-    let run = VerbRun { code: o.status.code(), out: String::from_utf8_lossy(&o.stdout).to_string(), err: String::from_utf8_lossy(&o.stderr).to_string() };
+    Ok(VerbRun { code: o.status.code(), out: String::from_utf8_lossy(&o.stdout).to_string(), err: String::from_utf8_lossy(&o.stderr).to_string() })
+}
+
+fn round_verb(env: &Env, args: &[&str], stdin: &str) -> Result<VerbRun, String> {
+    round_verb_with(env, args, stdin, &[])
+}
+
+fn round_verb_with(env: &Env, args: &[&str], stdin: &str, vars: &[(&str, &str)]) -> Result<VerbRun, String> {
+    let all: Vec<&str> = std::iter::once("round").chain(args.iter().copied()).collect();
+    let run = queue_verb(env, &all, stdin, vars)?;
     if !run.out.is_empty() {
         print!("{}", run.out);
     }
@@ -2531,10 +2422,6 @@ pub fn wait_lock(env: &Env, repo: &str, wait_secs: u64) -> Result<Option<Lock>, 
 mod land_tests {
     use super::*;
 
-    fn repo(land: Land) -> Repo {
-        Repo { name: "r".into(), path: PathBuf::from("/nonexistent"), base: "local/main".into(), forge: PathBuf::new(), land }
-    }
-
     #[test]
     fn foreign_in_names_only_non_members() {
         let subj = |s: &str| s.to_string();
@@ -2549,14 +2436,6 @@ mod land_tests {
         assert_eq!(foreign_in(&subjects, &members), vec!["sp-lc1puh".to_string()]);
         assert!(foreign_in(&subjects[2..4], &members).is_empty());
     }
-
-    #[test]
-    #[should_panic(expected = "unreachable under queue.local")]
-    fn push_branch_under_local_land_is_unreachable() {
-        let r = repo(Land::Local);
-        let _ = push_branch(&r, "deadbeef", "spira/queue/1");
-    }
-
 }
 #[cfg(test)]
 mod pool_parity_tests {
@@ -2684,31 +2563,33 @@ mod result_path_tests {
 }
 
 #[cfg(test)]
-mod lifecycle_tests {
-    //! The lifecycle machine (DESIGN.md §3): spira-lc runs, and an unreachable machine
-    //! fails the probe.
+mod open_batch_tests {
+    //! The open batch as the batcher reads and opens it: through `queue batch show` and
+    //! `queue batch open`, never a file of its own.
     use super::*;
-
-    fn scratch(tag: &str) -> testkit::TempDir {
-        testkit::TempDir::new(&format!("batcher-cut-lc-{tag}"))
-    }
-
-    fn env(dir: &Path, lc_bin: Option<PathBuf>) -> Env {
-        Env { lc_bin, ..super::lifecycle_tests_env(dir) }
-    }
 
     fn members() -> Vec<(String, String)> {
         vec![("sp-a".into(), "aaaa".into()), ("sp-b".into(), "bbbb".into())]
     }
 
     #[test]
-    fn a_cut_that_recorded_no_batch_id_writes_neither_key() {
-        let d = scratch("no-batch-id");
-        let e = env(&d, None);
-        let ob = OpenBatch { pr: "7".into(), members: members(), owner: "batcher".into(), ..OpenBatch::default() };
-        write_open_batch(&e, "r", &ob).unwrap();
-        let text = fs::read_to_string(d.join("queue/r/open")).unwrap();
-        assert!(!text.contains("batch_id=") && !text.contains("version="), "{text}");
+    fn the_open_batch_is_what_queue_batch_show_printed_and_none_when_it_printed_nothing() {
+        assert!(open_batch_from("").is_none());
+        let ob = open_batch_from("batch_id=deck-1\nrepo=deck\nhead=h1\nbase=b0\nmembers=sp-a:aaaa sp-b:bbbb\nbranch=spira/queue/x\nforge.phase=armed\nowner=batcher\npr=12\n").unwrap();
+        assert_eq!((ob.pr.as_str(), ob.head.as_str(), ob.owner.as_str()), ("12", "h1", "batcher"));
+        assert_eq!(ob.members, members());
+        let opening = open_batch_from("batch_id=deck-2\nforge.phase=opening\n").unwrap();
+        assert_eq!(opening.pr, "", "a batch still opening is open, with no PR yet");
+    }
+
+    #[test]
+    fn queue_batch_open_answers_its_pr_and_whether_the_open_finished() {
+        let run = |code, out: &str| VerbRun { code: Some(code), out: out.into(), err: "queue.sh open-batch: PR 12 for deck is open but auto-merge could not be armed".into() };
+        assert_eq!(opened_pr(&run(0, "x\nbatch_id=deck-1\npr=12\n")).unwrap(), ("12".to_string(), Ok(())));
+        let (pr, finished) = opened_pr(&run(1, "batch_id=deck-1\npr=12\n")).unwrap();
+        assert_eq!(pr, "12");
+        assert!(finished.unwrap_err().contains("queue batch open exited 1"));
+        assert!(opened_pr(&run(1, "queue.sh open-batch: no cut\n")).is_err());
     }
 }
 
@@ -2938,9 +2819,9 @@ mod forge_release_tests {
     #[test]
     fn a_bare_forge_without_spira_release_refuses_naming_the_key() {
         let repo = Repo { name: "r".into(), path: PathBuf::from("/tmp/r"), base: "local/main".into(), forge: PathBuf::from("forge"), land: Land::Forge };
-        let e = forge_pr_arm_on(&repo, "1", None).unwrap_err();
+        let e = forge_cmd(&repo, None).err().unwrap_or_default();
         assert!(e.contains("SPIRA_RELEASE is not set"), "{e}");
-        let e = forge_pr_arm_on(&repo, "1", Some("/nonexistent-release")).unwrap_err();
+        let e = forge_cmd(&repo, Some("/nonexistent-release")).err().unwrap_or_default();
         assert!(e.contains("forge is not in SPIRA_RELEASE"), "{e}");
     }
 }

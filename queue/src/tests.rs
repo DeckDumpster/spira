@@ -15,6 +15,7 @@ use crate::testutil::tmpdir;
 
 mod rebase;
 mod round;
+mod forge_store;
 mod round_store;
 mod verdict;
 

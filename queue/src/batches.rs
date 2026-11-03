@@ -191,6 +191,33 @@ pub fn save(d: &dyn Door, repo: &str, kv: &Kv) -> Result<(), String> {
     ))
 }
 
+/// [`save`], only while the record's field `field` still reads `expect`: `Ok(false)` when another
+/// writer moved that field first, so the caller's step is no longer the record's next one.
+pub fn save_if(d: &dyn Door, repo: &str, kv: &Kv, field: &str, expect: &str) -> Result<bool, String> {
+    let id = kv.get("batch_id").unwrap_or("");
+    let k = key(repo, id);
+    let own = fields(kv);
+    for _ in 0..SAVE_TRIES {
+        let Some(item) = d.get(&k)? else {
+            return Err(format!("the control store holds no round {id} for {repo}"));
+        };
+        if decode(&item)?.kv.get(field) != Some(expect) {
+            return Ok(false);
+        }
+        let mut value = item.value.clone();
+        value.data["round"] = Value::Object(own.clone());
+        let t = Txn::new()
+            .when(Compare::ModRev(k.clone(), Some(item.mod_rev)))
+            .put(&k, value);
+        if d.txn(&t, "queue.round-fields")?.succeeded {
+            return Ok(true);
+        }
+    }
+    Err(format!(
+        "round {id}'s record moved under each of {SAVE_TRIES} writes of its fields"
+    ))
+}
+
 #[cfg(test)]
 pub mod mem {
     //! A [`Door`] straight onto an in-memory contract, for the queue's unit tests.
