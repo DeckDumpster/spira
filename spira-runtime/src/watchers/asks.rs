@@ -130,4 +130,43 @@ mod tests {
         let say = decide(&c, &open(&[("sp-a", &long)])).1;
         assert_eq!(say[0].chars().count(), "NEW ASK sp-a: ".len() + 170 - "sp-a\t".len());
     }
+
+    mod on_the_rig {
+        use super::*;
+        use runtime::taskrig::{assert_deterministic, assert_silent_tick, TaskRig};
+        use std::sync::{Arc, Mutex};
+
+        fn rig(seed: u64, world: Arc<Mutex<Snapshot>>) -> TaskRig {
+            let (_, stream, kind) = Asks::boot();
+            let mut r = TaskRig::new(seed, Asks { interval_ms: 60_000 }.registration())
+                .unwrap()
+                .double(OBSERVE, move |_| Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap()))
+                .double(INBOX_APPEND, |line| Ok(line.into()));
+            r.tick(stream, kind).unwrap();
+            r
+        }
+
+        #[test]
+        fn an_idle_tick_is_silent() {
+            let mut r = rig(1, Arc::new(Mutex::new(open(&[("sp-old", "already open")]))));
+            assert_silent_tick(&mut r, STREAM);
+        }
+
+        #[test]
+        fn a_new_ask_is_appended_to_the_inbox_once_across_ticks() {
+            let world = Arc::new(Mutex::new(open(&[("sp-old", "t")])));
+            let mut r = rig(1, world.clone());
+            *world.lock().unwrap() = open(&[("sp-old", "t"), ("sp-new", "decide X")]);
+            r.advance(5 * 60_000).unwrap();
+            let said: Vec<_> = r.requested().iter().filter(|q| q.name == INBOX_APPEND).collect();
+            assert_eq!(said.len(), 1);
+            assert!(said[0].journaled && said[0].input.ends_with("[watch:asks] NEW ASK sp-new: decide X"));
+            assert!(r.refused().is_empty());
+        }
+
+        #[test]
+        fn a_day_is_deterministic() {
+            assert_deterministic(|seed| rig(seed, Arc::new(Mutex::new(open(&[("sp-a", "t")])))), 1, 1);
+        }
+    }
 }

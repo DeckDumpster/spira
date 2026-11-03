@@ -16,6 +16,7 @@ pub mod offload;
 pub mod ports;
 pub mod scheduler;
 pub mod socket;
+pub mod taskrig;
 pub mod wide;
 
 pub use engine::{Engine, Executor, Outcome, PendingEffect};
