@@ -18,12 +18,11 @@ use testenv::runtime::{self, Podman};
 /// refill that booted through that worktree's harness found it gone every time
 /// ("no image tag — no spare"), so no gate trial ever claimed a spare and every one paid
 /// a cold `up`. The slot holds the tree the trial just tested and outlives it.
-fn spawn_refill(i: usize, run: &std::path::Path) {
-    let slot = testenv::warm::paths(run, i).0;
+fn spawn_refill(i: usize, run: &std::path::Path, slot: &std::path::Path) {
     let harness = slot
         .join(testenv::container::HARNESS_MARKER)
         .is_file()
-        .then_some(slot);
+        .then(|| slot.to_path_buf());
     spawn_warm(&["refill".to_string(), i.to_string()], run, harness);
 }
 

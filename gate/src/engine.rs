@@ -628,8 +628,7 @@ impl<'w, W: World> Trial<'w, W> {
 
         // A cached PASS keeps its verdict, but --release-bins still needs the judged tree's binaries.
         if let Some(hit) = cached {
-            let mut _reservation = None;
-            if let Some(e) = self.prepare_build_tree(&ctx, &tree, &mut _reservation) {
+            if let Some(e) = self.prepare_build_tree(&ctx, &tree) {
                 return e;
             }
             return hit;
@@ -785,12 +784,11 @@ impl<'w, W: World> Trial<'w, W> {
         // A TRIAL THAT BUILDS IN THE TREE (the tools phase, the unit phases, --release-bins)
         // needs the build cache — absent, it refuses before any build (sp-z61hj) — and builds
         // on tmpfs.
-        let mut _scratch_reservation: Option<Box<dyn std::any::Any>> = None;
         let builds = tree_def.as_ref().is_some_and(|d| !d.bins.is_empty())
             || matches!(comp, Composition::Unit { .. })
             || self.a.release_bins;
         if builds {
-            if let Some(e) = self.prepare_build_tree(&ctx, &tree, &mut _scratch_reservation) {
+            if let Some(e) = self.prepare_build_tree(&ctx, &tree) {
                 return e;
             }
         }
@@ -1466,8 +1464,7 @@ impl<'w, W: World> Trial<'w, W> {
             println!("already warm {}", e.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
             return 0;
         }
-        let mut reservation = None;
-        if let Some(vd) = self.prepare_build_tree(ctx, tree, &mut reservation) {
+        if let Some(vd) = self.prepare_build_tree(ctx, tree) {
             return fail(vd.msg);
         }
         let jobs = compose::jobs(key::digits(&ctx.host_cores).unwrap_or(1));
@@ -1714,7 +1711,7 @@ impl<'w, W: World> Trial<'w, W> {
     }
 
     /// The refusals a tree build meets before it starts: no build cache, no room on tmpfs.
-    fn prepare_build_tree(&self, ctx: &Ctx, tree: &Path, reservation: &mut Option<Box<dyn std::any::Any>>) -> Option<Verdict> {
+    fn prepare_build_tree(&self, ctx: &Ctx, tree: &Path) -> Option<Verdict> {
         let w = self.w;
         if let Some(e) = &self.s.cache_refusal {
             return Some(v(NOVERDICT, "no-build-cache", format!("gate: {e} — refusing to judge")));
@@ -1724,17 +1721,11 @@ impl<'w, W: World> Trial<'w, W> {
             ctx.var("SPIRA_GATE_TARGET_MIN_FREE_MIB"),
             ctx.var("SPIRA_GATE_TARGET_MIN_MEM_MIB"),
             ctx.var("SPIRA_TMPFS_SHED_FREE_MIB"),
-            ctx.var("SPIRA_GATE_TARGET_RESERVE_MIB"),
         );
         let short = |e: String| Some(v(NOVERDICT, "scratch-short", format!("{e}\ngate: this is the host's room, not a fault in the branch.")));
         match w.target_on_tmpfs(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim) {
-            Ok(line) => w.eprint(&line),
-            Err(e) => return short(e),
-        }
-        let wait = key::digits(ctx.var("SPIRA_GATE_LOCK_WAIT")).unwrap_or(0);
-        match w.reserve_scratch(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim, ctx.var("SPIRA_GATE_CLASS"), wait) {
-            Ok(g) => {
-                *reservation = Some(g);
+            Ok(line) => {
+                w.eprint(&line);
                 None
             }
             Err(e) => short(e),

@@ -476,6 +476,7 @@ testenv_registry = ""
 testenv_unit_runner = "container"
 testenv_sandbox_target_root = ""
 testenv_sandbox_target_keep = 24
+testenv_scratch_root = "/tmp/spira-testenv-scratch"
 testenv_foreign_target_max_gib = 40
 testenv_foreign_target_idle_hours = 48
 test_par = 4

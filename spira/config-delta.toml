@@ -224,6 +224,7 @@ lc_ship_max_age_secs = 60
 lc_ship_snapshot_secs = 3600
 plane_skew_max = 25
 runtime_reconciler_secs = 60
+testenv_scratch_root = ""
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok

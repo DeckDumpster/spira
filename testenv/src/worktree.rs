@@ -7,62 +7,19 @@ use std::fs::{self, File, OpenOptions};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 
-/// Where the scratch and warm slots live (sp-t26yx, DESIGN.md §4.1): `$SPIRA_TESTENV_SCRATCH`
-/// when set; else `$SPIRA_RUN/worktree` when `$SPIRA_RUN` is itself on a tmpfs; else
-/// `/tmp/spira-testenv-<hash of $SPIRA_RUN>` when `/tmp` is a tmpfs; else
-/// `$SPIRA_RUN/worktree`. A slot is disposable build state (cargo's `target/`, 1.4–2.4 GB,
-/// rewritten on every relink): on a RAM-backed tmpfs it never competes for the host disk.
-pub fn scratch_root(run: &Path) -> PathBuf {
-    if let Some(v) = std::env::var_os("SPIRA_TESTENV_SCRATCH").filter(|v| !v.is_empty()) {
-        return PathBuf::from(v);
-    }
-    let legacy = run.join("worktree");
-    if crate::testdb::on_tmpfs(run) || !crate::testdb::on_tmpfs(Path::new("/tmp")) {
-        return legacy;
-    }
-    use sha2::{Digest, Sha256};
-    let h = Sha256::digest(run.as_os_str().as_encoded_bytes());
-    let hex: String = h.iter().take(6).map(|b| format!("{b:02x}")).collect();
-    PathBuf::from(format!("/tmp/spira-testenv-{hex}"))
-}
+/// The key that declares where the scratch and warm slots live.
+pub const SCRATCH_ROOT_KEY: &str = "SPIRA_TESTENV_SCRATCH_ROOT";
 
-/// Refuse a slot the scratch filesystem cannot hold (fail closed, sp-t26yx): at least
-/// `min_free_mib` free on it, and — when it is a tmpfs, whose pages are RAM — at least
-/// `min_mem_mib` of MemAvailable, so a build never pushes the host into swap (which is disk).
-pub fn scratch_room(base: &Path, min_free_mib: u64, min_mem_mib: u64) -> Result<(), String> {
-    let free = free_mib(base).ok_or_else(|| format!("cannot statvfs {}", base.display()))?;
-    if free < min_free_mib {
-        return Err(format!(
-            "scratch {} has {free} MiB free, below the {min_free_mib} MiB a slot needs (SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB)",
-            base.display()
-        ));
-    }
-    if crate::testdb::on_tmpfs(base) {
-        let avail = crate::util::meminfo_kb(&crate::util::read("/proc/meminfo"), "MemAvailable")
-            .unwrap_or(0)
-            / 1024;
-        if avail < min_mem_mib {
-            return Err(format!(
-                "scratch {} is a tmpfs and MemAvailable is {avail} MiB, below {min_mem_mib} MiB (SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB)",
-                base.display()
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// The slot's share of the scratch ledger every gate and testenv on this filesystem reserves
-/// in (spira_config::scratch); None when the base is not a tmpfs, where nothing is shared.
-fn reserve_slot(base: &Path, mib: u64) -> Result<Option<spira_config::scratch::Guard>, String> {
-    if !crate::testdb::on_tmpfs(base) {
-        return Ok(None);
-    }
-    let ledger = spira_config::scratch::ledger_for(base);
-    spira_config::scratch::reserve(&ledger, "testenv-slot", mib, 0, &|| free_mib(base)).map(Some)
+/// Where the scratch and warm slots live: the absolute path [`SCRATCH_ROOT_KEY`] declares,
+/// and nothing else. A slot is disposable build state (cargo's `target/`, 1.4–2.4 GB,
+/// rewritten on every relink), so the key names a disk that can take build writes. Unset or
+/// relative is a refusal naming the key; no other place is guessed.
+pub fn scratch_root(declared: &str) -> Result<PathBuf, String> {
+    crate::settings::required_path(SCRATCH_ROOT_KEY, declared)
 }
 
 /// Space this user can still write under `p`: statvfs free or quota headroom, whichever is
-/// smaller. `pub(crate)` so [`crate::warm::shed`] and the runner probe what a slot is refused on.
+/// smaller. `pub(crate)` so [`crate::warm::shed`] and the runner probe the filesystem a build filled.
 pub(crate) fn free_mib(p: &Path) -> Option<u64> {
     spira_config::room::avail_mib(p)
 }
@@ -165,7 +122,6 @@ pub struct Worktree {
     pub path: PathBuf,
     pub kind: Kind,
     repo: PathBuf,
-    _reservation: Option<spira_config::scratch::Guard>,
 }
 
 impl Worktree {
@@ -215,41 +171,6 @@ pub(crate) fn try_lock(path: &Path) -> Option<File> {
     (rc == 0).then_some(f)
 }
 
-/// [`try_lock`], stamping the lock's mtime on success: the recency [`shed_idle_slots`] evicts by.
-fn lock_slot(path: &Path) -> Option<File> {
-    let f = try_lock(path)?;
-    let _ = f.set_modified(std::time::SystemTime::now());
-    Some(f)
-}
-
-/// Scratch room and a ledger reservation for one slot. On a refusal, idle slot and warm caches
-/// are shed — least recently used first, only as far as the refusal's shortfall — and the
-/// check runs once more; the refusal stands only when they cannot cover it.
-fn make_room(req: &Request, base: &Path, log: &dyn Fn(&str)) -> Result<Option<spira_config::scratch::Guard>, String> {
-    let try_once = || {
-        scratch_room(base, req.min_free_mib, req.min_mem_mib)?;
-        reserve_slot(base, req.min_free_mib)
-    };
-    let refusal = match try_once() {
-        Ok(g) => return Ok(g),
-        Err(e) => e,
-    };
-    reap_stale_test_scratch(&std::env::temp_dir(), STALE_SCRATCH_AGE, &|pid| Path::new(&format!("/proc/{pid}")).exists(), log);
-    if let Ok(g) = try_once() {
-        return Ok(g);
-    }
-    let held = if crate::testdb::on_tmpfs(base) {
-        spira_config::scratch::reserved_mib(&spira_config::scratch::ledger_for(base))
-    } else {
-        0
-    };
-    let need = req.min_free_mib.saturating_add(held);
-    if shed_idle_slots(base, need, &|| free_mib(base), req.release_warm, log) == 0 {
-        return Err(refusal);
-    }
-    try_once()
-}
-
 /// Prefixes of the scratch directories `testkit::TempDir` names `<tag>-<pid>-<n>-<nanos>`
 /// for tests that copy binaries; a killed test process never runs `Drop`, so they are reaped here.
 const TEST_SCRATCH_PREFIXES: &[&str] = &["sp-hh599-unit-env-"];
@@ -288,74 +209,6 @@ pub(crate) fn reap_stale_test_scratch(
     n
 }
 
-fn dir_bytes(p: &Path) -> u64 {
-    let Ok(rd) = fs::read_dir(p) else { return 0 };
-    rd.flatten()
-        .map(|e| match e.file_type() {
-            Ok(t) if t.is_dir() => dir_bytes(&e.path()),
-            _ => e.metadata().map(|m| m.len()).unwrap_or(0),
-        })
-        .sum()
-}
-
-/// Evict idle `.testenv-slot-N` / `.testenv-warm-N` directories under `base`, least recently
-/// locked first, until `free()` reaches `need_mib`. Idle means the slot's lock can be taken
-/// with `flock -n`; the directory is removed while that lock is held, so a run never loses a
-/// slot it is using. Logs each eviction with the bytes freed; returns how many were evicted.
-pub(crate) fn shed_idle_slots(
-    base: &Path,
-    need_mib: u64,
-    free: &dyn Fn() -> Option<u64>,
-    release_warm: &dyn Fn(usize),
-    log: &dyn Fn(&str),
-) -> usize {
-    let Some(mut now_free) = free() else { return 0 };
-    if now_free >= need_mib {
-        return 0;
-    }
-    let mut cands: Vec<(std::time::SystemTime, String, bool, usize)> = Vec::new();
-    for e in fs::read_dir(base).into_iter().flatten().flatten() {
-        let name = e.file_name().to_string_lossy().into_owned();
-        let parsed = name
-            .strip_prefix(".testenv-slot-")
-            .map(|n| (false, n))
-            .or_else(|| name.strip_prefix(".testenv-warm-").map(|n| (true, n)))
-            .and_then(|(w, n)| n.parse::<usize>().ok().map(|i| (w, i)));
-        let Some((warm, i)) = parsed else { continue };
-        if !e.path().is_dir() {
-            continue;
-        }
-        let used = fs::metadata(base.join(format!("{name}.lock")))
-            .and_then(|m| m.modified())
-            .unwrap_or(std::time::UNIX_EPOCH);
-        cands.push((used, name, warm, i));
-    }
-    cands.sort();
-    let mut evicted = 0;
-    for (_, name, warm, i) in cands {
-        if now_free >= need_mib {
-            break;
-        }
-        let Some(_lock) = try_lock(&base.join(format!("{name}.lock"))) else {
-            continue;
-        };
-        if warm {
-            release_warm(i);
-        }
-        let dir = base.join(&name);
-        let bytes = dir_bytes(&dir);
-        if fs::remove_dir_all(&dir).is_err() {
-            continue;
-        }
-        log(&format!(
-            "evicted idle scratch slot {name}: {bytes} bytes freed (scratch short of {need_mib} MiB)"
-        ));
-        evicted += 1;
-        now_free = free().unwrap_or(now_free);
-    }
-    evicted
-}
-
 fn head_of(wt: &Path) -> Option<String> {
     git(wt, &["rev-parse", "--verify", "-q", "HEAD"]).ok()
 }
@@ -387,46 +240,27 @@ pub(crate) fn prepare_slot(repo: &Path, slot: &Path, commit: &str) -> Result<(),
     }
 }
 
-/// The prefix of [`acquire`]'s error when the scratch root has no room (fail closed).
-pub const SCRATCH_SHORT: &str = "scratch-short";
-
 pub struct Request<'a> {
     pub repo: &'a Path,
     pub rev: &'a str,
     pub commit: &'a str,
     pub cwd: &'a Path,
-    pub run_dir: &'a Path,
+    /// Where the slots live ([`scratch_root`]).
+    pub scratch: &'a Path,
     pub slots: usize,
-    /// [`scratch_room`]'s bounds for a slot on the scratch root.
-    pub min_free_mib: u64,
-    pub min_mem_mib: u64,
-    /// Called with a warm slot's index just before its idle directory is evicted, under the
-    /// slot's lock: the caller drops the spare container that mounts it.
-    pub release_warm: &'a dyn Fn(usize),
 }
 
 /// The first free warm slot (DESIGN.md §11.2), locked and checked out at the commit; None
 /// when every slot is busy or unusable (the caller falls back to [`acquire`]).
 pub fn acquire_warm(req: &Request, slots: usize, log: &dyn Fn(&str)) -> Option<Worktree> {
-    let base = scratch_root(req.run_dir);
-    if let Err(e) = fs::create_dir_all(&base) {
+    let base = req.scratch;
+    if let Err(e) = fs::create_dir_all(base) {
         log(&format!("no warm slot: cannot create {}: {e}", base.display()));
         return None;
     }
-    if let Err(e) = scratch_room(&base, req.min_free_mib, req.min_mem_mib) {
-        log(&format!("no warm slot: {e}"));
-        return None;
-    }
-    let reservation = match reserve_slot(&base, req.min_free_mib) {
-        Ok(g) => g,
-        Err(e) => {
-            log(&format!("no warm slot: {e}"));
-            return None;
-        }
-    };
     for i in 0..slots {
-        let (slot, lock_path, _) = crate::warm::paths(req.run_dir, i);
-        let Some(lock) = lock_slot(&lock_path) else {
+        let (slot, lock_path, _) = crate::warm::paths(base, i);
+        let Some(lock) = try_lock(&lock_path) else {
             log(&format!("warm slot {i} is locked — trying the next"));
             continue;
         };
@@ -439,7 +273,6 @@ pub fn acquire_warm(req: &Request, slots: usize, log: &dyn Fn(&str)) -> Option<W
                         _lock: lock,
                     },
                     repo: req.repo.to_path_buf(),
-                    _reservation: reservation,
                 })
             }
             Err(e) => log(&format!("warm slot {i} unusable ({e}) — trying the next")),
@@ -458,7 +291,6 @@ pub fn acquire(req: &Request, log: &dyn Fn(&str)) -> Result<Worktree, String> {
                 path: cand,
                 kind: Kind::InPlace,
                 repo: req.repo.to_path_buf(),
-                _reservation: None,
             });
         }
         log(&format!(
@@ -467,13 +299,13 @@ pub fn acquire(req: &Request, log: &dyn Fn(&str)) -> Result<Worktree, String> {
             req.rev
         ));
     }
-    let base = scratch_root(req.run_dir);
-    fs::create_dir_all(&base)
+    let base = req.scratch;
+    fs::create_dir_all(base)
         .map_err(|e| format!("cannot create worktree directory {}: {e}", base.display()))?;
-    let reservation = make_room(req, &base, log).map_err(|e| format!("{SCRATCH_SHORT}: {e}"))?;
+    reap_stale_test_scratch(&std::env::temp_dir(), STALE_SCRATCH_AGE, &|pid| Path::new(&format!("/proc/{pid}")).exists(), log);
     for i in 0..req.slots {
         let slot = base.join(format!(".testenv-slot-{i}"));
-        let Some(lock) = lock_slot(&base.join(format!(".testenv-slot-{i}.lock"))) else {
+        let Some(lock) = try_lock(&base.join(format!(".testenv-slot-{i}.lock"))) else {
             continue;
         };
         match prepare_slot(req.repo, &slot, req.commit) {
@@ -482,7 +314,6 @@ pub fn acquire(req: &Request, log: &dyn Fn(&str)) -> Result<Worktree, String> {
                     path: slot,
                     kind: Kind::Slot { _lock: lock },
                     repo: req.repo.to_path_buf(),
-                    _reservation: reservation,
                 })
             }
             Err(e) => log(&format!(
@@ -509,7 +340,6 @@ pub fn acquire(req: &Request, log: &dyn Fn(&str)) -> Result<Worktree, String> {
         path: eph,
         kind: Kind::Ephemeral,
         repo: req.repo.to_path_buf(),
-        _reservation: reservation,
     })
 }
 
@@ -546,41 +376,20 @@ mod tests {
     }
 
     #[test]
-    fn the_scratch_root_is_the_tmpfs_never_the_disk() {
-        if std::env::var_os("SPIRA_TESTENV_SCRATCH").is_some() {
-            eprintln!("skip: SPIRA_TESTENV_SCRATCH is set");
-            return;
-        }
-        // a run dir already on a tmpfs keeps its own worktree/ (unit tests, a tmpfs SPIRA_RUN)
-        if crate::testdb::on_tmpfs(Path::new("/dev/shm")) {
-            assert_eq!(
-                scratch_root(Path::new("/dev/shm/r")),
-                PathBuf::from("/dev/shm/r/worktree")
-            );
-        }
-        // a disk-backed run dir moves to /tmp when /tmp is a tmpfs, keyed by the run dir
-        let a = scratch_root(Path::new("/proc/a"));
-        let b = scratch_root(Path::new("/proc/b"));
-        if crate::testdb::on_tmpfs(Path::new("/tmp")) {
-            assert!(a.to_string_lossy().starts_with("/tmp/spira-testenv-"), "{a:?}");
-            assert_ne!(a, b, "two runs never share slots");
-            assert_eq!(a, scratch_root(Path::new("/proc/a")), "stable");
-        } else {
-            assert_eq!(a, PathBuf::from("/proc/a/worktree"));
+    fn the_declared_scratch_root_is_used_whatever_tmp_is() {
+        for declared in ["/srv/test-disk/testenv-scratch", "/tmp/declared", " /srv/padded "] {
+            assert_eq!(scratch_root(declared), Ok(PathBuf::from(declared.trim())));
         }
     }
 
     #[test]
-    fn scratch_room_refuses_below_its_bounds() {
-        let d = testkit::TempDir::new("scratch-room");
-        assert!(scratch_room(&d, 0, 0).is_ok());
-        let e = scratch_room(&d, u64::MAX, 0).unwrap_err();
-        assert!(e.contains("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB"), "{e}");
-        if crate::testdb::on_tmpfs(&d) {
-            let e = scratch_room(&d, 0, u64::MAX).unwrap_err();
-            assert!(e.contains("MemAvailable"), "{e}");
+    fn an_undeclared_or_relative_scratch_root_refuses_naming_the_key() {
+        for declared in ["", "   "] {
+            let e = scratch_root(declared).unwrap_err();
+            assert!(e.contains("SPIRA_TESTENV_SCRATCH_ROOT") && e.contains("not set"), "{e}");
         }
-        assert!(scratch_room(Path::new("/nonexistent/x"), 0, 0).is_err());
+        let e = scratch_root("scratch/slots").unwrap_err();
+        assert!(e.contains("SPIRA_TESTENV_SCRATCH_ROOT") && e.contains("absolute"), "{e}");
     }
 
     #[test]
@@ -610,95 +419,5 @@ mod tests {
             in_place_candidates(&e, Path::new("/srv/harness"), "main", "aaa"),
             vec![PathBuf::from("/srv/harness")]
         );
-    }
-
-    /// Four slot dirs of `kib` KiB each under `base`; free space is a fixed floor plus 100 MiB
-    /// per dir that is gone, so a test sees only evictions that really removed something.
-    fn idle_world(tag: &str) -> (testkit::TempDir, PathBuf) {
-        let d = testkit::TempDir::new(tag);
-        let base = d.join("scratch");
-        fs::create_dir_all(&base).unwrap();
-        for (n, age) in [(".testenv-slot-0", 40), (".testenv-warm-0", 10), (".testenv-slot-1", 30), (".testenv-warm-1", 20)] {
-            fs::create_dir_all(base.join(n)).unwrap();
-            fs::write(base.join(n).join("blob"), vec![0u8; 2048]).unwrap();
-            let lock = File::create(base.join(format!("{n}.lock"))).unwrap();
-            lock.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age * 60))
-                .unwrap();
-        }
-        (d, base)
-    }
-
-    fn free_of(base: &Path) -> impl Fn() -> Option<u64> + '_ {
-        move || {
-            let gone = [".testenv-slot-0", ".testenv-warm-0", ".testenv-slot-1", ".testenv-warm-1"]
-                .iter()
-                .filter(|n| !base.join(n).exists())
-                .count() as u64;
-            Some(10 + 100 * gone)
-        }
-    }
-
-    #[test]
-    fn a_shortfall_evicts_idle_slots_least_recently_used_first_and_no_more() {
-        let (_d, base) = idle_world("shed-lru");
-        let logs = std::cell::RefCell::new(Vec::new());
-        let released = std::cell::RefCell::new(Vec::new());
-        let n = shed_idle_slots(
-            &base,
-            210,
-            &free_of(&base),
-            &|i| released.borrow_mut().push(i),
-            &|m| logs.borrow_mut().push(m.to_string()),
-        );
-        assert_eq!(n, 2, "{logs:?}");
-        assert!(!base.join(".testenv-slot-0").exists(), "oldest goes first");
-        assert!(!base.join(".testenv-slot-1").exists(), "then the next oldest");
-        assert!(base.join(".testenv-warm-0").exists() && base.join(".testenv-warm-1").exists());
-        assert_eq!(*released.borrow(), Vec::<usize>::new(), "no warm slot was touched");
-        let logs = logs.borrow();
-        assert_eq!(logs.len(), 2);
-        assert!(logs[0].contains(".testenv-slot-0") && logs[0].contains("2048 bytes"), "{logs:?}");
-        assert_eq!(shed_idle_slots(&base, 0, &free_of(&base), &|_| {}, &|_| {}), 0, "no shortfall, no eviction");
-    }
-
-    #[test]
-    fn a_locked_slot_is_never_evicted() {
-        let (_d, base) = idle_world("shed-busy");
-        let held = try_lock(&base.join(".testenv-slot-0.lock")).unwrap();
-        let released = std::cell::RefCell::new(Vec::new());
-        let n = shed_idle_slots(&base, u64::MAX, &free_of(&base), &|i| released.borrow_mut().push(i), &|_| {});
-        assert_eq!(n, 3, "everything idle goes, the held slot stays");
-        assert!(base.join(".testenv-slot-0/blob").exists());
-        assert_eq!(*released.borrow(), vec![1, 0], "warm slots are released LRU-first");
-        drop(held);
-    }
-
-    #[test]
-    fn refusal_stands_only_when_idle_caches_cannot_cover_the_shortfall() {
-        let d = testkit::TempDir::new("make-room");
-        let repo = d.join("repo");
-        fs::create_dir_all(&repo).unwrap();
-        let run = d.join("run");
-        let req = |min_free_mib| Request {
-            repo: &repo,
-            rev: "HEAD",
-            commit: "HEAD",
-            cwd: &d,
-            run_dir: &run,
-            slots: 1,
-            min_free_mib,
-            min_mem_mib: 0,
-            release_warm: &|_| {},
-        };
-        let base = scratch_root(&run);
-        fs::create_dir_all(base.join(".testenv-slot-0")).unwrap();
-        // nothing the idle cache frees can reach an unreachable floor: refused, and the cache is gone
-        let e = make_room(&req(u64::MAX), &base, &|_| {}).unwrap_err();
-        assert!(e.contains("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB"), "{e}");
-        assert!(!base.join(".testenv-slot-0").exists());
-        // a floor that is met needs no eviction
-        fs::create_dir_all(base.join(".testenv-slot-0")).unwrap();
-        assert!(make_room(&req(0), &base, &|_| {}).is_ok());
-        assert!(base.join(".testenv-slot-0").exists());
     }
 }

@@ -50,25 +50,21 @@ pub struct Limits {
     /// MiB of MemAvailable this trial needs (tmpfs pages are RAM; short means swap, a disk).
     pub min_mem_mib: u64,
     /// sp-s8v5r: besides the byte cap, keep evicting LRU unlocked trees while the root's
-    /// real free space is below this — the same floor testenv sheds idle warm slots
-    /// against (`SPIRA_TMPFS_SHED_FREE_MIB`), since both compete for the same tmpfs.
+    /// real free space is below this (`SPIRA_TMPFS_SHED_FREE_MIB`).
     /// law-reduce-the-count-never-throttle-the-job: reduce the count of cached trees here
     /// rather than refuse the trial.
     pub shed_free_mib: u64,
-    /// MiB a trial reserves in the shared scratch ledger for its build's peak.
-    pub reserve_mib: u64,
 }
 
 impl Limits {
     /// From the operator's variables (empty or unparsable = the default).
-    pub fn from_vars(cap: &str, free: &str, mem: &str, shed: &str, reserve: &str) -> Limits {
+    pub fn from_vars(cap: &str, free: &str, mem: &str, shed: &str) -> Limits {
         let n = |s: &str, d: u64| s.trim().parse::<u64>().unwrap_or(d);
         Limits {
             cap_mib: n(cap, 12288),
             min_free_mib: n(free, 4096),
             min_mem_mib: n(mem, 4096),
             shed_free_mib: n(shed, 6144),
-            reserve_mib: n(reserve, 4096),
         }
     }
 }
@@ -249,20 +245,6 @@ pub fn prepare(
 
 /// Remove the tmpfs directories `tree`'s build links point at (a finished gate's output is
 /// read by nobody), sparing `release` when the caller still has to stage it. Returns MiB freed.
-/// The scratch root a tree's linked build dirs live under, read from its symlinks.
-pub fn tree_root(tree: &Path) -> Option<PathBuf> {
-    LINKED.iter().find_map(|d| {
-        let dest = fs::read_link(tree.join("target").join(d)).ok().filter(|p| !is_warm(p))?;
-        Some(dest.parent()?.parent()?.to_path_buf())
-    })
-}
-
-/// The composition a gate tree's name stands for: `.gate.<repo>.spira-<bead>` → `gate.<repo>`.
-pub fn composition(tree: &Path) -> String {
-    let name = tree.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    name.trim_start_matches('.').split('.').take(2).collect::<Vec<_>>().join(".")
-}
-
 pub fn release_tree(tree: &Path, keep_release: bool) -> u64 {
     let mut bytes = 0;
     let mut homes: Vec<PathBuf> = Vec::new();
@@ -326,55 +308,6 @@ pub fn reap_stale(
     out
 }
 
-/// Evict idle testenv slot and warm caches (`<sibling of root>/spira-testenv-*/.testenv-{slot,warm}-N`),
-/// least recently locked first, until `free()` reaches `need_mib`. A cache is idle when its
-/// `.lock` can be taken; it is removed while that lock is held, so a run never loses a slot it is
-/// using. A warm cache's spare record goes with it. Returns the number evicted.
-pub fn shed_idle_slots(root: &Path, need_mib: u64, free: &dyn Fn() -> Option<u64>, log: &dyn Fn(&str)) -> usize {
-    use std::os::unix::io::AsRawFd;
-    let Some(mut now_free) = free() else { return 0 };
-    if now_free >= need_mib {
-        return 0;
-    }
-    let parent = root.parent().unwrap_or(Path::new("/"));
-    let mut cands: Vec<(std::time::SystemTime, PathBuf, String)> = Vec::new();
-    for b in fs::read_dir(parent).into_iter().flatten().flatten() {
-        if !b.file_name().to_string_lossy().starts_with("spira-testenv-") {
-            continue;
-        }
-        for e in fs::read_dir(b.path()).into_iter().flatten().flatten() {
-            let name = e.file_name().to_string_lossy().into_owned();
-            let idx = name.strip_prefix(".testenv-slot-").or_else(|| name.strip_prefix(".testenv-warm-"));
-            if idx.is_some_and(|n| n.parse::<usize>().is_ok()) && e.path().is_dir() {
-                cands.push((mtime(&b.path().join(format!("{name}.lock"))), b.path(), name));
-            }
-        }
-    }
-    cands.sort();
-    let mut evicted = 0;
-    for (_, base, name) in cands {
-        if now_free >= need_mib {
-            break;
-        }
-        let Ok(lock) = fs::OpenOptions::new().create(true).truncate(false).write(true).open(base.join(format!("{name}.lock"))) else {
-            continue;
-        };
-        // SAFETY: flock on a descriptor we own; released when `lock` is dropped.
-        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-            continue;
-        }
-        let bytes = size_of(&base.join(&name));
-        if fs::remove_dir_all(base.join(&name)).is_err() {
-            continue;
-        }
-        let _ = fs::remove_file(base.join(format!("{name}.spare")));
-        log(&format!("gate: evicted idle testenv cache {name}: {} MiB freed (scratch short of {need_mib} MiB)", bytes / (1024 * 1024)));
-        evicted += 1;
-        now_free = free().unwrap_or(now_free);
-    }
-    evicted
-}
-
 /// Space this user can still write under `p`: statvfs free or quota headroom, whichever is smaller.
 pub fn free_mib(p: &Path) -> Option<u64> {
     spira_config::room::avail_mib(p)
@@ -398,34 +331,6 @@ pub fn mem_available_mib() -> u64 {
 mod tests {
     use super::*;
 
-    #[test]
-    fn idle_testenv_caches_are_shed_until_the_room_is_there_and_a_held_one_is_kept() {
-        use std::os::unix::io::AsRawFd;
-        let s = Scratch::new("shed");
-        let root = s.1.join("spira-gate-target-aa");
-        let base = s.1.join("spira-testenv-bb");
-        for n in [".testenv-warm-0", ".testenv-slot-1", ".testenv-slot-2"] {
-            write_mib(&base.join(n).join("blob"), 3);
-            fs::write(base.join(format!("{n}.lock")), b"").unwrap();
-        }
-        fs::write(base.join(".testenv-warm-0.spare"), b"x").unwrap();
-        let held = fs::File::open(base.join(".testenv-slot-2.lock")).unwrap();
-        assert_eq!(unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
-        let free = || {
-            let left = [".testenv-warm-0", ".testenv-slot-1", ".testenv-slot-2"].iter().filter(|n| base.join(n).exists()).count() as u64;
-            Some(10 + 3 * (3 - left))
-        };
-        assert_eq!(shed_idle_slots(&root, 1000, &free, &|_| {}), 2, "both idle caches go, the held one stays");
-        assert!(base.join(".testenv-slot-2").exists());
-        assert!(!base.join(".testenv-warm-0.spare").exists());
-        assert_eq!(shed_idle_slots(&root, 0, &free, &|_| {}), 0, "no shortfall, no eviction");
-    }
-
-    #[test]
-    fn a_tree_name_reduces_to_its_composition() {
-        assert_eq!(composition(Path::new("/tmp/x/.gate.harness.spira-sp-abc")), "gate.harness");
-    }
-
     #[allow(dead_code)]
     struct Scratch(testkit::TempDir, PathBuf);
     impl Scratch {
@@ -437,7 +342,7 @@ mod tests {
     }
 
     fn lim(cap: u64) -> Limits {
-        Limits { cap_mib: cap, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 0, reserve_mib: 0 }
+        Limits { cap_mib: cap, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 0 }
     }
     fn roomy(_: &Path) -> Option<u64> {
         Some(1 << 20)
@@ -535,9 +440,9 @@ mod tests {
         let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
         let tree = trees.join(".gate.harness.b");
         fs::create_dir_all(&tree).unwrap();
-        let e = prepare(&root, &trees, &tree, &Limits { cap_mib: 100, min_free_mib: 4096, min_mem_mib: 1, shed_free_mib: 0, reserve_mib: 0 }, &|_| Some(100), &mem).unwrap_err();
+        let e = prepare(&root, &trees, &tree, &Limits { cap_mib: 100, min_free_mib: 4096, min_mem_mib: 1, shed_free_mib: 0 }, &|_| Some(100), &mem).unwrap_err();
         assert!(e.contains("100 MiB free") && e.contains("refusing to build on the disk"), "{e}");
-        let e = prepare(&root, &trees, &tree, &Limits { cap_mib: 100, min_free_mib: 1, min_mem_mib: 4096, shed_free_mib: 0, reserve_mib: 0 }, &roomy, &|| 12).unwrap_err();
+        let e = prepare(&root, &trees, &tree, &Limits { cap_mib: 100, min_free_mib: 1, min_mem_mib: 4096, shed_free_mib: 0 }, &roomy, &|| 12).unwrap_err();
         assert!(e.contains("MemAvailable is 12 MiB"), "{e}");
         assert!(!tree.join("target").exists(), "nothing linked, nothing built");
         assert!(prepare(&root, &trees, &tree, &lim(100), &|_| None, &mem).is_err(), "an unreadable root refuses");
@@ -551,10 +456,10 @@ mod tests {
         assert_ne!(a, root("", "/srv/b/run", true).unwrap(), "two installs never share a root");
         assert_eq!(root("", "/run", false), None);
         assert_eq!(
-            Limits::from_vars("", "x", "7", "", ""),
-            Limits { cap_mib: 12288, min_free_mib: 4096, min_mem_mib: 7, shed_free_mib: 6144, reserve_mib: 4096 }
+            Limits::from_vars("", "x", "7", ""),
+            Limits { cap_mib: 12288, min_free_mib: 4096, min_mem_mib: 7, shed_free_mib: 6144 }
         );
-        assert_eq!(Limits::from_vars("1", "2", "3", "500", "").shed_free_mib, 500);
+        assert_eq!(Limits::from_vars("1", "2", "3", "500").shed_free_mib, 500);
     }
 
     /// sp-s8v5r, positive control: the byte cap alone (deliberately huge) would evict
@@ -591,7 +496,7 @@ mod tests {
             calls.set(n + 1);
             Some(if n < 2 { 50 } else { 300 })
         };
-        let lim_floor = Limits { cap_mib: 1_000_000, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 200, reserve_mib: 0 };
+        let lim_floor = Limits { cap_mib: 1_000_000, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 200 };
         let p = prepare(&root, &trees, &tree, &lim_floor, &short, &mem).unwrap();
         assert_eq!(p.evicted, vec![".gate.harness.old".to_string()], "held is skipped despite being the LRU; old alone clears the floor");
         assert!(root.join(".gate.harness.held/dwarf/x").is_file());
@@ -601,7 +506,7 @@ mod tests {
         // is shed, so the behavior above is the floor's, not an eviction that always runs.
         let tree2 = trees.join(".gate.harness.new2");
         fs::create_dir_all(&tree2).unwrap();
-        let lim_ok = Limits { cap_mib: 1_000_000, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 10, reserve_mib: 0 };
+        let lim_ok = Limits { cap_mib: 1_000_000, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 10 };
         let p2 = prepare(&root, &trees, &tree2, &lim_ok, &|_| Some(50u64), &mem).unwrap();
         assert!(p2.evicted.is_empty(), "50 MiB free already clears a 10 MiB floor — nothing to shed");
         drop(f);

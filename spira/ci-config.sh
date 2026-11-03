@@ -22,6 +22,13 @@ grep -q "^run = \"$rundir\"\$" "$layered" || {
 }
 mkdir -p "$rundir"
 
+scratch="${RUNNER_TEMP}/testenv-scratch"
+sed -i "s|^testenv_scratch_root = \"/tmp/spira-testenv-scratch\"\$|testenv_scratch_root = \"$scratch\"|" "$layered"
+grep -q "^testenv_scratch_root = \"$scratch\"\$" "$layered" || {
+  printf 'ci-config: the fixture has no fixture-path testenv_scratch_root to layer over\n' >&2
+  exit 1
+}
+
 if [ -n "${GITHUB_BASE_REF:-}" ]; then
   sed -i "s|^base = \"local/main\"\$|base = \"origin/$GITHUB_BASE_REF\"|" "$layered"
   grep -q "^base = \"origin/$GITHUB_BASE_REF\"\$" "$layered" || {
