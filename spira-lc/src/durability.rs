@@ -264,6 +264,74 @@ mod tests {
         assert_eq!(rc, CANNOT_TELL, "{out}");
     }
 
+    /// A fake curl that records the URL of every PUT and accepts it. No process is started.
+    #[derive(Default)]
+    struct RecordingCurl(std::sync::Mutex<Vec<String>>);
+
+    impl runtime::ports::Proc for RecordingCurl {
+        fn run(&self, spec: &runtime::ports::ProcSpec) -> Result<runtime::ports::ProcOutput, String> {
+            assert_eq!(spec.prog, "curl");
+            self.0.lock().unwrap().push(spec.args.last().cloned().unwrap_or_default());
+            Ok(runtime::ports::ProcOutput { code: Some(0), stdout: Vec::new(), stderr: Vec::new() })
+        }
+    }
+
+    /// The environment files the lc-serve unit loads, with `%h` read as `home`.
+    fn serve_unit_env_files(home: &Path) -> Vec<PathBuf> {
+        include_str!("../../systemd/lc-serve.service")
+            .lines()
+            .filter_map(|l| l.strip_prefix("EnvironmentFile="))
+            .map(|f| PathBuf::from(f.trim_start_matches('-').replace("%h", &home.display().to_string())))
+            .collect()
+    }
+
+    /// systemd's `EnvironmentFile=` grammar as far as a credentials file uses it.
+    fn read_env_file(p: &Path) -> std::collections::HashMap<String, String> {
+        std::fs::read_to_string(p)
+            .unwrap_or_default()
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .filter_map(|l| l.split_once('='))
+            .map(|(k, v)| (k.trim().to_string(), v.trim().trim_matches('"').to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn lc_serve_gets_the_backup_credentials_from_its_unit_and_ships_a_revision_to_s3() {
+        let dir = TempDir::new("lc-serve-env");
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(home.join(".config")).unwrap();
+        std::fs::write(
+            home.join(".config/lc-backup.env"),
+            "# the backup's write-only key\nAWS_ACCESS_KEY_ID=AKFAKE\nAWS_SECRET_ACCESS_KEY=\"fake\"\nAWS_DEFAULT_REGION=us-test-1\nAWS_ENDPOINT_URL_S3=http://s3.test\n",
+        )
+        .unwrap();
+        let files = serve_unit_env_files(&home);
+        assert!(!files.is_empty(), "lc-serve.service loads no EnvironmentFile");
+        let env: std::collections::HashMap<String, String> = files.iter().flat_map(|f| read_env_file(f)).collect();
+        let creds = S3Creds::from_vars(|k| env.get(k).cloned()).expect("the unit's environment carries the backup credentials");
+
+        let clock = VirtualClock::new(1_000);
+        let b = SqliteBackend::open(&dir.path().join("live.db"), Options::default()).unwrap();
+        let c = suite::open(b.clone(), &clock);
+        let curl = Arc::new(RecordingCurl::default());
+        let put: Arc<dyn Put> = Arc::new(Uploader {
+            dest: Dest::parse("s3://bucket/lc/").unwrap(),
+            creds: Some(creds),
+            proc: curl.clone(),
+            deadline: PUT_DEADLINE,
+        });
+        let cfg = ShipConfig { dir: dir.path().join("lc-ship"), max_mains: 100, snapshot_every_ms: u64::MAX, snapshot_pages: 64 };
+        let mut sh = Shipper::open(b, cfg, put, Arc::new(clock.clone())).unwrap();
+        let t = Txn::new().put("lifecycle/sp-1", Object::new(json!(1)));
+        assert!(c.txn(&t, &Request::new("1", "t", "t.write")).unwrap().succeeded);
+        let shipped = sh.tick().unwrap();
+        assert!(shipped.failed.is_none(), "{shipped:?}");
+        let urls = curl.0.lock().unwrap().clone();
+        assert!(urls.iter().any(|u| u.starts_with("http://s3.test/bucket/lc/revlog/")), "{urls:?}");
+    }
+
     #[test]
     fn the_ship_tick_writes_one_alarm_line_per_crossing() {
         let dir = TempDir::new("lc-ship-alarm");
