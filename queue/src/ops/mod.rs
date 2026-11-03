@@ -3,6 +3,7 @@
 
 pub mod batch;
 pub mod deploy;
+pub mod forge_batch;
 pub mod helpers;
 pub mod integrate;
 pub mod land;

@@ -119,8 +119,14 @@ pub fn eject(
         return FAIL;
     };
 
-    let open = c.queue_file("open");
-    let kv = records::read_kv(&open).ok().flatten();
+    let open = match super::forge_batch::read(w, &c) {
+        Ok(o) => o,
+        Err(e) => {
+            w.err(format!("queue.sh eject: cannot tell whether {} has an open batch: {e} — refused, nothing changed", c.r.name));
+            return FAIL;
+        }
+    };
+    let kv = open.as_ref().map(|o| o.kv.clone());
     let members = kv.as_ref().map(Kv::members).unwrap_or_default();
     let pr = kv
         .as_ref()
@@ -303,7 +309,12 @@ pub fn eject(
     if !pr.is_empty() && idents(w, "eject", &[("pr", &pr)]).is_ok() {
         w.forge.pr_close(&c.s.forge, &path, &pr);
     }
-    let _ = fs::remove_file(&open);
+    if let Some(o) = &open {
+        if let Err(e) = o.remove(w, &c, "ejected") {
+            failed = true;
+            w.err(format!("queue.sh eject: the batch record ({}) could not be closed: {e}", o.place()));
+        }
+    }
 
     let surv = if survivors.is_empty() {
         "<none>".to_string()
@@ -410,14 +421,18 @@ fn abandon_locked(
     dry_run: bool,
     label: &str,
 ) -> i32 {
-    let open = c.queue_file("open");
-    let kv = match records::read_kv(&open) {
-        Ok(Some(kv)) => kv,
-        _ => {
+    let open = match super::forge_batch::read(w, c) {
+        Ok(Some(o)) => o,
+        Ok(None) => {
             w.err(format!("queue.sh {label}: no open batch for {}", c.r.name));
             return FAIL;
         }
+        Err(e) => {
+            w.err(format!("queue.sh {label}: cannot tell whether {} has an open batch: {e} — refused, nothing changed", c.r.name));
+            return FAIL;
+        }
     };
+    let kv = open.kv.clone();
     if owner_refused(
         w,
         kv.get("owner").unwrap_or(""),
@@ -445,7 +460,7 @@ fn abandon_locked(
         let _ = super::round::forget_batch_red(c, &m.id, &m.tip);
     }
     let stamp = w.clock.stamp();
-    let archive = c.queue_file(&format!("closed-pr{pr}-{stamp}"));
+    let archive = format!("closed-pr{pr}-{stamp}");
     let reason_clean = one_line(reason);
 
     // A member already returned to REWORK is a verdict an abandon never overturns.
@@ -479,7 +494,10 @@ fn abandon_locked(
         w.out(format!(
             "dry-run: would cancel non-completed Gate run(s) for branch {branch}"
         ));
-        w.out(format!("dry-run: archive path: {}", archive.display()));
+        match &open.at {
+            super::forge_batch::At::File(_) => w.out(format!("dry-run: archive path: {}", c.queue_file(&archive).display())),
+            super::forge_batch::At::Store(id) => w.out(format!("dry-run: would end batch record {id}")),
+        }
         w.out(format!(
             "dry-run: audit line (landing.log): QUEUE ABANDON {} repo={} pr={pr} actor={actor} members={audit} reason={reason_clean}",
             w.clock.now(),
@@ -537,8 +555,8 @@ fn abandon_locked(
     let mut archived = kv.clone();
     archived.push("reason", &reason_clean);
     archived.push("actor", actor);
-    if write_atomic(&open, &archived.render()).is_err() || fs::rename(&open, &archive).is_err() {
-        w.err(format!("queue.sh {label}: failed to archive open record"));
+    if let Err(e) = open.archive(w, c, &archived, &archive, "abandoned") {
+        w.err(format!("queue.sh {label}: failed to archive open record: {e}"));
         return FAIL;
     }
     landing_log(
@@ -591,14 +609,44 @@ fn barred_prereq(w: &World, row: &crate::model::LcBeadRow) -> Option<String> {
     None
 }
 
-pub fn open_batch(
-    w: &World,
-    repo: Option<&str>,
-    members_arg: &Text,
-    skip_pregate: bool,
-    dry_run: bool,
-    replace: Option<&Text>,
-) -> i32 {
+/// What `batch open` (and its alias `open-batch`) is asked to open.
+#[derive(Debug, Clone, Copy)]
+pub struct OpenArgs<'a> {
+    pub repo: Option<&'a str>,
+    /// `id`, `id:tip` or `id@tip`, comma- or space-separated; empty: the ranked pool.
+    pub members: &'a Text,
+    pub skip_pregate: bool,
+    pub dry_run: bool,
+    /// `--replace`, with its reason.
+    pub replace: Option<&'a Text>,
+    /// A head the caller already assembled and proved from exactly these members; the queue
+    /// assembles one itself when it is absent.
+    pub head: Option<&'a str>,
+    /// The PR body; the queue writes its own when it is `Text::None`.
+    pub body: &'a Text,
+    /// The batch id; `<repo>-<stamp>` when absent.
+    pub name: Option<&'a str>,
+    /// The holder's token on `locks/round/<repo>/<name>`.
+    pub lease_token: Option<&'a str>,
+    /// Who the batch belongs to (its `owner`): `batcher` when the batcher opens it; the acting
+    /// identity when absent.
+    pub owner: Option<&'a str>,
+}
+
+/// `batch open`. With the batch machine on the control store, in four steps, each leaving the
+/// record in the phase it reached, so a crash never leaves a PR the store has no record of
+/// (round-controller v2 §Forge lane): 1. the batch record is written with `forge.phase = opening`
+/// and its branch; 2. the branch is pushed and the PR created; 3. the record moves to `open` with
+/// the PR's number, compared on `opening`; 4. auto-merge is armed and the record moves to `armed`.
+/// A record left `opening` is `batch sweep`'s to adopt or release.
+pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
+    let OpenArgs {
+        repo,
+        members: members_arg,
+        dry_run,
+        replace,
+        ..
+    } = *a;
     if !czar_ok(w) {
         return FAIL;
     }
@@ -620,8 +668,10 @@ pub fn open_batch(
             return USAGE;
         }
     };
-    let actor = w
-        .var("SPIRA_QUEUE_ACTOR")
+    let actor = a
+        .owner
+        .map(str::to_string)
+        .or_else(|| w.var("SPIRA_QUEUE_ACTOR"))
         .unwrap_or_else(|| "operator".into());
     let Ok(c) = resolve(w, "open-batch", repo) else {
         return FAIL;
@@ -640,21 +690,48 @@ pub fn open_batch(
     if !dry_run && require_lc(w, "open-batch").is_err() {
         return FAIL;
     }
-    let Ok(_g) = take_lock(w, "open-batch", &c, "") else {
+    // The batcher holds the repo's lock for its whole cut and says so.
+    let lock = match super::lock_held_by_caller(w) {
+        true => Ok(None),
+        false => take_lock(w, "open-batch", &c, ""),
+    };
+    let Ok(_g) = lock else {
         return FAIL;
     };
-    let open = c.queue_file("open");
-    if open.exists() && replace_reason.is_some() && !dry_run {
+    let store = super::forge_batch::on_store(w);
+    if a.lease_token.is_some() && !store {
+        w.err("queue.sh open-batch: --lease-token names a lease on the control store, and the batch machine is not on it — refused, nothing changed");
+        return FAIL;
+    }
+    if let (true, Some(id)) = (store, a.name) {
+        if super::lease::lease_guard(w, "open-batch", &name, id, a.lease_token).is_err() {
+            return FAIL;
+        }
+    }
+    let read_open = || match super::forge_batch::read(w, &c) {
+        Ok(o) => Ok(o),
+        Err(e) => {
+            w.err(format!("queue.sh open-batch: cannot tell whether {name} has an open batch: {e} — refused, nothing changed"));
+            Err(FAIL)
+        }
+    };
+    let Ok(mut open) = read_open() else {
+        return FAIL;
+    };
+    if open.is_some() && replace_reason.is_some() && !dry_run {
         let r = replace_reason.as_deref().unwrap_or_default();
         if abandon_locked(w, &c, &path, r, &actor, false, "open-batch --replace") != OK {
             return FAIL;
         }
+        let Ok(now) = read_open() else {
+            return FAIL;
+        };
+        open = now;
     }
-    if open.exists() && !(dry_run && replace_reason.is_some()) {
-        let owner = records::read_kv(&open)
-            .ok()
-            .flatten()
-            .and_then(|k| k.get("owner").map(String::from))
+    if open.is_some() && !(dry_run && replace_reason.is_some()) {
+        let owner = open
+            .as_ref()
+            .and_then(|o| o.kv.get("owner").map(String::from))
             .unwrap_or_default();
         let owner = if owner.is_empty() {
             "batcher".into()
@@ -695,24 +772,29 @@ pub fn open_batch(
         w.err(format!("queue.sh open-batch: cannot resolve {base}"));
         return FAIL;
     };
-    let remote = c.r.ref_remote(&base).unwrap_or_else(|| "origin".into());
-    let base_branch = ref_branch(&base).to_string();
-
     let branches = w.git.branches(&path, "refs/heads/spira/");
     let certs = super::helpers::certified_rows(w.lc, &branches);
     let submitted = super::helpers::state_rows(w.lc, &branches, "SUBMITTED");
     let mut skips: Vec<String> = Vec::new();
     let mut cands: Vec<(String, String)> = Vec::new();
     if !members_arg.trim().is_empty() {
-        for mid in members_arg
+        for spec in members_arg
             .split(|ch: char| ch == ',' || ch.is_whitespace())
             .filter(|s| !s.is_empty())
         {
+            let (mid, pin) = match spec.split_once(['@', ':']) {
+                Some((m, t)) => (m, Some(t)),
+                None => (spec, None),
+            };
             match certs
                 .iter()
                 .chain(submitted.iter())
                 .find(|(i, _, _)| i == mid)
             {
+                Some((_, t, _)) if pin.is_some_and(|p| p != t) => skips.push(format!(
+                    "{mid}: named at {}, but its tip is {t} — not admitted",
+                    pin.unwrap_or_default()
+                )),
                 Some((i, t, _)) => cands.push((i.clone(), t.clone())),
                 None => skips.push(format!("{mid}: not SUBMITTED or CERTIFIED")),
             }
@@ -792,6 +874,24 @@ pub fn open_batch(
     }
     super::stage::refuse_over_cap(&mut admitted, &mut skips, |(id, _)| id);
 
+    if let Some(given) = a.head {
+        // The caller's head carries every member it names: one left out is a head that is not
+        // the batch's, so nothing is cut.
+        for s in &skips {
+            w.out(format!("queue.sh open-batch: skip — {s}"));
+        }
+        if !skips.is_empty() || admitted.is_empty() {
+            w.err(format!("queue.sh open-batch: no cut — {given} is the head of every member named, and {} of them {} not admitted for {name}", skips.len().max(1), if skips.len() > 1 { "were" } else { "was" }));
+            return FAIL;
+        }
+        let Some(head) = w.git.rev_parse(&path, given) else {
+            w.err(format!("queue.sh open-batch: cannot resolve the head {given} — nothing cut"));
+            return FAIL;
+        };
+        let members: Vec<Member> = admitted.into_iter().map(|(id, tip)| Member { id, tip }).collect();
+        let provisional = provisional.join(" ");
+        return publish(w, &c, &path, a, &members, &head, None, &base_sha, &actor, &provisional);
+    }
     let wt =
         c.s.run
             .join("worktree")
@@ -841,14 +941,47 @@ pub fn open_batch(
     }
     w.lib.format_batch(&wt, &base_sha, &name);
     let head = w.git.rev_parse(&wt, "HEAD").unwrap_or_default();
+    let provisional = provisional
+        .iter()
+        .filter(|p| members.iter().any(|m| &m.id == *p))
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ");
+    publish(w, &c, &path, a, &members, &head, Some(&wt), &base_sha, &actor, &provisional)
+}
+
+/// The rest of `batch open` once its members and head are settled: the dry run, the forge's
+/// preflight and the pre-flight gate, then the batch's record, branch and PR.
+#[allow(clippy::too_many_arguments)]
+fn publish(
+    w: &World,
+    c: &super::Ctx,
+    path: &std::path::Path,
+    a: &OpenArgs,
+    members: &[Member],
+    head: &str,
+    wt: Option<&std::path::Path>,
+    base_sha: &str,
+    actor: &str,
+    provisional: &str,
+) -> i32 {
+    let name = c.r.name.as_str();
+    let drop_wt = || {
+        if let Some(wt) = wt {
+            w.git.worktree_remove(path, wt);
+        }
+    };
+    let base = c.r.landref.clone().unwrap_or_default();
+    let remote = c.r.ref_remote(&base).unwrap_or_else(|| "origin".into());
+    let base_branch = ref_branch(&base).to_string();
     let stamp = w.clock.stamp();
     let batch_br = format!("spira/queue/{stamp}");
-    let rendered = crate::model::render_members(&members);
+    let rendered = crate::model::render_members(members);
 
-    if dry_run {
+    if a.dry_run {
         w.out(format!("queue.sh open-batch: dry-run for {name}"));
         w.out("members:");
-        for m in &members {
+        for m in members {
             w.out(format!("  {}", m.render()));
         }
         w.out(format!("merge head: {head}"));
@@ -860,28 +993,28 @@ pub fn open_batch(
         w.out("  opened=<pending>");
         w.out(format!("  branch={batch_br}"));
         w.out(format!("  owner={actor}"));
-        w.git.worktree_remove(&path, &wt);
+        drop_wt();
         return OK;
     }
 
-    if let Err(e) = w.forge.pr_preflight(&c.s.forge, &path, &batch_br) {
+    if let Err(e) = w.forge.pr_preflight(&c.s.forge, path, &batch_br) {
         w.err(format!(
             "queue.sh open-batch: forge refuses {batch_br}: {e} — nothing pushed"
         ));
-        w.git.worktree_remove(&path, &wt);
+        drop_wt();
         return FAIL;
     }
-    w.git.branch_set(&path, &batch_br, &head, true);
-    w.git.worktree_remove(&path, &wt);
+    w.git.branch_set(path, &batch_br, head, true);
+    drop_wt();
 
-    if skip_pregate {
+    if a.skip_pregate {
         w.out(
             "queue.sh open-batch: pre-flight gate skipped (--skip-pregate) — CI is the authority",
         );
     } else {
         let (mut rc, out) = w
             .lib
-            .pf_gate(&batch_br, &name, &stamp, c.s.preflight_wall_secs);
+            .pf_gate(&batch_br, name, &stamp, c.s.preflight_wall_secs);
         if rc == 124 {
             w.out("queue.sh open-batch: pre-flight hit its wall — opening the PR, CI decides");
             rc = 0;
@@ -890,142 +1023,424 @@ pub fn open_batch(
             w.err(format!("queue.sh open-batch: local pre-flight gate failed for {batch_br} — not opening a batch"));
             w.err(out.trim_end_matches('\n'));
             w.err("queue.sh open-batch: retry with --skip-pregate to let CI be the gate");
-            w.git.branch_delete(&path, &batch_br);
+            w.git.branch_delete(path, &batch_br);
             return FAIL;
         }
     }
-    let lc_id = format!("{name}-{stamp}");
+    let body = match a.body {
+        Text::None => {
+            let ids: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
+            let titles = w.bd.show(&ids).unwrap_or_default();
+            let mut body = format!(
+                "Merge-queue batch: {} beads for {name}, onto {base_branch}.\n\n",
+                members.len()
+            );
+            if a.skip_pregate {
+                body.push_str("Opened with --skip-pregate: the local pre-flight gate was not run for this batch; CI is the gate.\n\n");
+            }
+            for id in &ids {
+                body.push_str(&format!("- {id} — {}\n", title_line(&titles, id)));
+            }
+            body
+        }
+        given => match read_text(w, given) {
+            Ok(b) => b,
+            Err(e) => {
+                w.err(format!("queue.sh open-batch: cannot read the PR body: {e} — nothing pushed"));
+                w.git.branch_delete(path, &batch_br);
+                return FAIL;
+            }
+        },
+    };
+    let lc_id = a.name.map_or_else(|| format!("{name}-{stamp}"), str::to_string);
     let csv = members
         .iter()
         .map(Member::render)
         .collect::<Vec<_>>()
         .join(",");
-    for m in &members {
+    for m in members {
         w.lc.create_bead(&m.id);
     }
-    let version = match cut_settled(w, &lc_id, &name, &head, &base_sha, &csv, "queue.sh", None) {
-        Ok(v) => v,
-        Err((rc, out)) => {
-            w.err(format!("queue.sh open-batch: spira-lc cut refused for {lc_id} (rc={rc}): {out} — no PR opened"));
-            w.git.branch_delete(&path, &batch_br);
-            return FAIL;
-        }
-    };
-    let undo = |why: &str| {
-        let _ = lc_abandon(w, &lc_id, "queue.sh", why);
-        w.git.branch_delete(&path, &batch_br);
-    };
-    if !w
-        .lib
-        .push(&path, &remote, &format!("{head}:refs/heads/{batch_br}"))
-    {
-        w.err(format!("queue.sh open-batch: could not push {batch_br}"));
-        undo("open-batch could not push the batch branch");
-        return FAIL;
-    }
-    let ids: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
-    let titles = w.bd.show(&ids).unwrap_or_default();
-    let mut body = format!(
-        "Merge-queue batch: {} beads for {name}, onto {base_branch}.\n\n",
-        members.len()
-    );
-    if skip_pregate {
-        body.push_str("Opened with --skip-pregate: the local pre-flight gate was not run for this batch; CI is the gate.\n\n");
-    }
-    for id in &ids {
-        body.push_str(&format!("- {id} — {}\n", title_line(&titles, id)));
-    }
-    let title = format!("queue: {} beads for {name}", members.len());
-    let pr = match w.forge.pr_create(
-        &c.s.forge,
-        &path,
-        &batch_br,
-        &base_branch,
-        &title,
-        body.trim_end_matches('\n'),
-    ) {
-        Ok(pr) => pr,
-        Err(e) => {
-            let adopted = w.forge.queue_prs(&c.s.forge, &path).and_then(|prs| {
-                prs.into_iter()
-                    .find(|(_, b)| *b == batch_br)
-                    .map(|(n, _)| n)
-            });
-            match adopted {
-                Some(n) => {
-                    w.err(format!("queue.sh open-batch: forge pr-create reported failure for {batch_br} ({e}) but PR {n} is open on it — adopting it"));
-                    n
-                }
-                None => {
-                    w.err(format!(
-                        "queue.sh open-batch: forge pr-create failed for {batch_br}: {e}"
-                    ));
-                    undo("open-batch could not open the PR");
-                    return FAIL;
-                }
-            }
-        }
-    };
-    if pr.is_empty() {
-        w.err(format!(
-            "queue.sh open-batch: forge returned no PR number for {batch_br}"
-        ));
-        undo("open-batch got no PR number");
-        return FAIL;
-    }
-    let armed = w.forge.pr_automerge(&c.s.forge, &path, &pr);
-    if !armed {
-        w.err(format!("queue.sh open-batch: PR {pr} for {name} is open but auto-merge could not be armed — the reconciler arms it on the next pass"));
-    }
     let opened = w.clock.now();
-    let provisional = provisional
-        .iter()
-        .filter(|p| members.iter().any(|m| &m.id == *p))
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(" ");
     let mut rec = Kv::default();
     for (k, v) in [
-        ("pr", pr.as_str()),
-        ("head", head.as_str()),
-        ("base", base_sha.as_str()),
+        ("head", head),
+        ("base", base_sha),
         ("members", rendered.as_str()),
         ("opened", &opened.to_string()),
         ("branch", batch_br.as_str()),
-        ("owner", actor.as_str()),
+        ("owner", actor),
     ] {
         rec.push(k, v);
     }
     if !provisional.is_empty() {
-        rec.push("provisional", &provisional);
+        rec.push("provisional", provisional);
         w.out(format!(
             "queue.sh open-batch: provisional (SUBMITTED, gate still running): {provisional}"
         ));
     }
-    if let Err(e) = write_atomic(&open, &rec.render()) {
-        w.err(format!("queue.sh open-batch: {e}"));
-        undo("open-batch could not write the open record");
+    let title = format!("queue: {} beads for {name}", members.len());
+    let pr_req = PrRequest {
+        path,
+        remote: &remote,
+        head,
+        branch: &batch_br,
+        base_branch: &base_branch,
+        title: &title,
+        body: body.trim_end_matches('\n'),
+    };
+    let opened_pr = if super::forge_batch::on_store(w) {
+        open_on_store(w, c, &pr_req, &lc_id, &csv, base_sha, rec)
+    } else {
+        open_with_file(w, c, &pr_req, &lc_id, &csv, base_sha, rec)
+    };
+    let Ok((pr, armed)) = opened_pr else {
         return FAIL;
-    }
-    if !version.is_empty() {
-        rec.push("batch_id", &lc_id);
-        rec.push("version", &version);
-        let _ = write_atomic(&open, &rec.render());
-        w.out(format!(
-            "queue.sh open-batch: {lc_id} cut on spira-lc (version={version})"
-        ));
-    }
+    };
     let _ = fs::remove_file(c.s.run.join(format!("queue-stuck-{name}")));
     landing_log(&c.s.run, &format!("QUEUE BATCH {opened} repo={name} members={} gate_seconds=0 verdict=green source=open-batch", members.len()));
     w.out(format!(
         "queue.sh open-batch: PR {pr} opened — {} branches ({batch_br})",
         members.len()
     ));
+    // For a caller that records them: never read off the line above.
+    w.out(format!("batch_id={lc_id}"));
+    w.out(format!("pr={pr}"));
     if armed {
         OK
     } else {
         FAIL
     }
+}
+
+/// The batch PR `batch open` asks the forge for.
+struct PrRequest<'a> {
+    path: &'a std::path::Path,
+    remote: &'a str,
+    head: &'a str,
+    branch: &'a str,
+    base_branch: &'a str,
+    title: &'a str,
+    body: &'a str,
+}
+
+impl PrRequest<'_> {
+    /// Pushes the branch and creates its PR: the PR's number, or why there is none. A create the
+    /// forge reports failed while a PR is open on the branch is that PR.
+    fn push_and_create(&self, w: &World, c: &super::Ctx) -> Result<String, String> {
+        let spec = format!("{}:refs/heads/{}", self.head, self.branch);
+        if !w.lib.push(self.path, self.remote, &spec) {
+            return Err(format!("could not push {}", self.branch));
+        }
+        let pr = match w.forge.pr_create(&c.s.forge, self.path, self.branch, self.base_branch, self.title, self.body) {
+            Ok(pr) => pr,
+            Err(e) => {
+                let on_branch = w.forge.queue_prs(&c.s.forge, self.path).and_then(|prs| {
+                    prs.into_iter().find(|(_, b)| b == self.branch).map(|(n, _)| n)
+                });
+                match on_branch {
+                    Some(n) => {
+                        w.err(format!("queue.sh open-batch: forge pr-create reported failure for {} ({e}) but PR {n} is open on it — adopting it", self.branch));
+                        n
+                    }
+                    None => return Err(format!("forge pr-create failed for {}: {e}", self.branch)),
+                }
+            }
+        };
+        if pr.is_empty() {
+            return Err(format!("forge returned no PR number for {}", self.branch));
+        }
+        Ok(pr)
+    }
+
+    fn arm(&self, w: &World, c: &super::Ctx, pr: &str) -> bool {
+        let armed = w.forge.pr_automerge(&c.s.forge, self.path, pr);
+        if !armed {
+            w.err(format!("queue.sh open-batch: PR {pr} for {} is open but auto-merge could not be armed — the reconciler arms it on the next pass", c.r.name));
+        }
+        armed
+    }
+}
+
+/// `batch open` with the batch machine on the control store: the record first, then the PR, so
+/// no step leaves a PR the store holds no record of. Ok((PR, armed)).
+fn open_on_store(
+    w: &World,
+    c: &super::Ctx,
+    p: &PrRequest,
+    lc_id: &str,
+    csv: &str,
+    base_sha: &str,
+    mut rec: Kv,
+) -> Result<(String, bool), ()> {
+    use super::forge_batch::{ARMED, OPEN, OPENING, PHASE};
+    let name = c.r.name.as_str();
+    rec.push(PHASE, OPENING);
+    if let Err((rc, out)) = cut_settled(w, lc_id, name, p.head, base_sha, csv, "queue.sh", Some(&rec)) {
+        w.err(format!("queue.sh open-batch: spira-lc cut refused for {lc_id} (rc={rc}): {out} — no PR opened"));
+        w.git.branch_delete(p.path, p.branch);
+        return Err(());
+    }
+    w.out(format!("queue.sh open-batch: {lc_id} recorded on the control store (forge.phase=opening)"));
+    let left_opening = |why: &str| {
+        w.err(format!("queue.sh open-batch: {why} — batch {lc_id} stays forge.phase=opening; `queue batch sweep --repo {name}` adopts its PR or releases it once its lease TTL has passed"));
+    };
+    let pr = match p.push_and_create(w, c) {
+        Ok(pr) => pr,
+        Err(e) => {
+            left_opening(&e);
+            return Err(());
+        }
+    };
+    let mut kv = rec;
+    kv.lines.insert(0, ("batch_id".into(), lc_id.into()));
+    kv.lines.insert(1, ("pr".into(), pr.clone()));
+    let mut step = |from: &str, to: &str| -> Result<(), String> {
+        kv.remove(PHASE);
+        kv.push(PHASE, to);
+        match w.lc.save_batch_if(name, &kv, PHASE, from) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(format!("batch {lc_id} left forge.phase={from} before this open moved it to {to} (a sweep took it on)")),
+            Err(e) => Err(format!("the move of batch {lc_id} to forge.phase={to} could not be written: {e}")),
+        }
+    };
+    if let Err(e) = step(OPENING, OPEN) {
+        left_opening(&format!("PR {pr} is open but {e}"));
+        return Err(());
+    }
+    let armed = p.arm(w, c, &pr);
+    if armed {
+        if let Err(e) = step(OPEN, ARMED) {
+            w.err(format!("queue.sh open-batch: PR {pr} is armed but {e}"));
+        }
+    }
+    Ok((pr, armed))
+}
+
+/// `batch open` while the open batch is the `open` file: the batch is cut, its PR opened and armed,
+/// then the file written.
+fn open_with_file(
+    w: &World,
+    c: &super::Ctx,
+    p: &PrRequest,
+    lc_id: &str,
+    csv: &str,
+    base_sha: &str,
+    rec: Kv,
+) -> Result<(String, bool), ()> {
+    let open = c.queue_file("open");
+    let version = match cut_settled(w, lc_id, &c.r.name, p.head, base_sha, csv, "queue.sh", None) {
+        Ok(v) => v,
+        Err((rc, out)) => {
+            w.err(format!("queue.sh open-batch: spira-lc cut refused for {lc_id} (rc={rc}): {out} — no PR opened"));
+            w.git.branch_delete(p.path, p.branch);
+            return Err(());
+        }
+    };
+    let undo = |why: &str| {
+        let _ = lc_abandon(w, lc_id, "queue.sh", why);
+        w.git.branch_delete(p.path, p.branch);
+    };
+    let pr = match p.push_and_create(w, c) {
+        Ok(pr) => pr,
+        Err(e) => {
+            w.err(format!("queue.sh open-batch: {e}"));
+            undo("open-batch could not open the batch PR");
+            return Err(());
+        }
+    };
+    let armed = p.arm(w, c, &pr);
+    let mut rec = rec;
+    rec.lines.insert(0, ("pr".into(), pr.clone()));
+    if let Err(e) = write_atomic(&open, &rec.render()) {
+        w.err(format!("queue.sh open-batch: {e}"));
+        undo("open-batch could not write the open record");
+        return Err(());
+    }
+    // The cut took, so the record names the batch; its version is read back when the machine
+    // answers show-batch, and every later CAS re-reads it anyway.
+    rec.push("batch_id", lc_id);
+    if !version.is_empty() {
+        rec.push("version", &version);
+    }
+    if let Err(e) = write_atomic(&open, &rec.render()) {
+        w.err(format!("queue.sh open-batch: {e}"));
+        undo("open-batch could not record the batch it cut");
+        return Err(());
+    }
+    w.out(format!("queue.sh open-batch: {lc_id} cut on spira-lc (version={version})"));
+    Ok((pr, armed))
+}
+
+/// `batch show`: the open batch's record as `key=value` lines, whatever its phase, and nothing when
+/// the repo has none. Exit 1 when the record cannot be read: no answer is never "none open".
+pub fn batch_show(w: &World, repo: Option<&str>) -> i32 {
+    let Ok(c) = resolve(w, "batch show", repo) else {
+        return FAIL;
+    };
+    match super::forge_batch::read(w, &c) {
+        Ok(Some(o)) => {
+            w.io.out(&o.kv.render());
+            OK
+        }
+        Ok(None) => OK,
+        Err(e) => {
+            w.err(format!("queue.sh batch show: cannot tell whether {} has an open batch: {e}", c.r.name));
+            FAIL
+        }
+    }
+}
+
+/// The config key whose value is one lease's TTL: a `batch open` that has held its record at
+/// `opening` for longer has crashed or been abandoned.
+const LEASE_TTL_KEY: &str = "SPIRA_ROUND_LEASE_TTL_SECS";
+
+/// `batch sweep`: settles what a crashed `batch open` left behind. A `spira/queue/*` PR no batch
+/// record names is closed and its branch deleted; a record still `opening` past one lease TTL, with
+/// no live lease, is adopted (moved to `open`) when its PR exists and released (its batch abandoned)
+/// when it does not. It never merges anything.
+pub fn batch_sweep(w: &World, repo: Option<&str>) -> i32 {
+    const LABEL: &str = "batch sweep";
+    if !czar_ok(w) {
+        return FAIL;
+    }
+    let Ok(c) = resolve(w, LABEL, repo) else {
+        return FAIL;
+    };
+    let Ok(path) = repo_path(w, LABEL, &c) else {
+        return FAIL;
+    };
+    if c.r.mode != LandMode::Queue {
+        w.err(format!(
+            "queue.sh {LABEL}: repo is not in queue mode (mode={}) — nothing swept",
+            c.r.mode.as_str()
+        ));
+        return FAIL;
+    }
+    if !super::forge_batch::on_store(w) {
+        w.err(format!("queue.sh {LABEL}: the sweep reads the batch records on the control store, and the batch machine is not on it (SPIRA_LC_LIFECYCLE_ON_STORE=0) — nothing swept"));
+        return FAIL;
+    }
+    if require_lc(w, LABEL).is_err() {
+        return FAIL;
+    }
+    let Ok(_g) = take_lock(w, LABEL, &c, "") else {
+        return FAIL;
+    };
+    sweep_locked(w, &c, &path)
+}
+
+/// The sweep itself, with the repo's queue lock held by the caller.
+pub(super) fn sweep_locked(w: &World, c: &super::Ctx, path: &std::path::Path) -> i32 {
+    use super::forge_batch::{OPEN, OPENING, PHASE};
+    const LABEL: &str = "batch sweep";
+    let name = c.r.name.as_str();
+    // The batch the queue kept before the store is no record the sweep reads: its PR would be
+    // closed as one no record names.
+    let legacy = c.queue_file("open");
+    if legacy.is_file() {
+        w.err(format!("queue.sh {LABEL}: {} still holds a batch recorded before the batch machine moved to the control store — nothing swept; it is settled through it (`queue verdict {name}`, or `queue abandon {name}`), which removes it", legacy.display()));
+        return FAIL;
+    }
+    let ttl = match w.env.config(LEASE_TTL_KEY).map(|v| v.trim().parse::<u64>()) {
+        Ok(Ok(t)) => t,
+        Ok(Err(e)) => {
+            w.err(format!("queue.sh {LABEL}: {LEASE_TTL_KEY} does not parse as seconds ({e}) — nothing swept"));
+            return FAIL;
+        }
+        Err(e) => {
+            w.err(format!("queue.sh {LABEL}: {LEASE_TTL_KEY} does not resolve ({e}) — nothing swept"));
+            return FAIL;
+        }
+    };
+    let live = match super::forge_batch::live(w, c) {
+        Ok(l) => l,
+        Err(e) => {
+            w.err(format!("queue.sh {LABEL}: cannot tell which batches {name} has open: {e} — nothing swept"));
+            return FAIL;
+        }
+    };
+    let Some(prs) = w.forge.queue_prs(&c.s.forge, path) else {
+        w.err(format!("queue.sh {LABEL}: the forge cannot list {name}'s spira/queue/* PRs — nothing swept"));
+        return FAIL;
+    };
+    let mut rc = OK;
+    for (pr, branch) in &prs {
+        if live.iter().any(|b| b.kv.get("branch") == Some(branch.as_str())) {
+            continue;
+        }
+        if idents(w, LABEL, &[("pr", pr), ("branch", branch)]).is_err() {
+            rc = FAIL;
+            continue;
+        }
+        w.out(format!("queue.sh {LABEL}: closing PR {pr} ({branch}) — no batch record of {name} names it; it is never merged"));
+        w.forge.pr_close(&c.s.forge, path, pr);
+        w.lib.cancel_runs(&c.s.forge, path, branch);
+        delete_branch(w, c, path, branch);
+    }
+    let now = w.clock.now();
+    for b in live.iter().filter(|b| b.kv.get(PHASE) == Some(OPENING)) {
+        let age = now.saturating_sub(b.kv.get("opened").and_then(|o| o.parse().ok()).unwrap_or(0));
+        if age < ttl {
+            w.out(format!("queue.sh {LABEL}: batch {} has been opening for {age}s, inside one lease TTL ({ttl}s) — left to its opener", b.id));
+            continue;
+        }
+        match w.lc.round_lease(name, &b.id) {
+            Err(e) => {
+                w.err(format!("queue.sh {LABEL}: cannot tell whether batch {} is leased: {e} — left as it is", b.id));
+                rc = FAIL;
+                continue;
+            }
+            Ok(Some(l)) => {
+                let holder = l.holder.as_deref().unwrap_or("a holder no record names");
+                w.out(format!("queue.sh {LABEL}: batch {} is opening under {holder}'s live lease (token {}) — left to its holder", b.id, l.token));
+                continue;
+            }
+            Ok(None) => {}
+        }
+        let branch = b.kv.get("branch").unwrap_or("");
+        match prs.iter().find(|(_, br)| br == branch) {
+            Some((pr, _)) => {
+                let mut kv = b.kv.clone();
+                kv.remove("pr");
+                kv.push("pr", pr);
+                kv.remove(PHASE);
+                kv.push(PHASE, OPEN);
+                match w.lc.save_batch_if(name, &kv, PHASE, OPENING) {
+                    Ok(true) => w.out(format!("queue.sh {LABEL}: adopted batch {} — its PR {pr} ({branch}) exists, forge.phase=open", b.id)),
+                    Ok(false) => w.out(format!("queue.sh {LABEL}: batch {} left forge.phase=opening while the sweep read it — left as it is", b.id)),
+                    Err(e) => {
+                        w.err(format!("queue.sh {LABEL}: batch {}'s adoption of PR {pr} could not be written: {e}", b.id));
+                        rc = FAIL;
+                    }
+                }
+            }
+            None => {
+                let why = bounded_text(&format!("batch open left {} opening for {age}s with no PR on {branch}", b.id));
+                match lc_abandon(w, &b.id, "queue.sh", &why) {
+                    Ok(()) => {
+                        w.out(format!("queue.sh {LABEL}: released batch {} — no PR exists on {branch}; its members go back to the pool", b.id));
+                        if !branch.is_empty() && idents(w, LABEL, &[("branch", branch)]).is_ok() {
+                            w.git.branch_delete_sanctioned(path, branch);
+                        }
+                    }
+                    Err((code, out)) => {
+                        w.err(format!("queue.sh {LABEL}: the release of batch {} was refused (rc={code}): {out}", b.id));
+                        rc = FAIL;
+                    }
+                }
+            }
+        }
+    }
+    rc
+}
+
+/// Deletes a batch branch on the landing remote and here.
+fn delete_branch(w: &World, c: &super::Ctx, path: &std::path::Path, branch: &str) {
+    if let Some(remote) = c.r.landref.as_deref().and_then(|b| c.r.ref_remote(b)) {
+        w.lib.push(path, &remote, &format!(":refs/heads/{branch}"));
+    }
+    w.git.branch_delete_sanctioned(path, branch);
 }
 
 /// The bd rows as the JSON array `queue_sort_rows` reads through PRIO_JSON.

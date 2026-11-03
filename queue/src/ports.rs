@@ -508,6 +508,10 @@ pub trait Lc {
     fn save_batch(&self, repo: &str, kv: &Kv) -> Result<(), String> {
         batches::save(self.rounds_door().ok_or(NO_STORE)?, repo, kv)
     }
+    /// [`Lc::save_batch`] only while field `field` of the record still reads `expect`.
+    fn save_batch_if(&self, repo: &str, kv: &Kv, field: &str, expect: &str) -> Result<bool, String> {
+        batches::save_if(self.rounds_door().ok_or(NO_STORE)?, repo, kv, field, expect)
+    }
     /// `show-batch` → (state, version); None when the batch row does not exist.
     fn batch_state(&self, batch_id: &str) -> Option<(String, String)>;
     /// `show-batch` → (pass, phase); phase is empty outside a CI_RUNNING pass.

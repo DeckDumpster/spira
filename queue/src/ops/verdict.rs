@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
+use super::forge_batch::{self, Open};
 use super::{idents, landing_log, owner_refused, require_lc, resolve, Ctx, World, FAIL, OK, USAGE};
 use crate::lock::{self, Acquire, Guard};
 use crate::model::{LandMode, Member};
@@ -58,11 +59,17 @@ pub fn pass(w: &World, c: &Ctx) -> i32 {
 
 /// A forge batch left behind by a mode switch settles whatever the mode: only the reconcile
 /// (merged lands, closed abandons) runs, never the CI read or a push, and once the open record
-/// is gone the prepared round and forge-state record go with it.
+/// is gone the forge-state record goes with it.
 pub fn settle_forge_leftovers(w: &World, c: &Ctx, path: &Path) -> i32 {
-    let open = c.queue_file("open");
-    let leftovers = ["open", "prepared", "forge-state"];
-    if !leftovers.iter().any(|f| c.queue_file(f).is_file()) {
+    let leftovers = ["forge-state"];
+    let open = match forge_batch::read(w, c) {
+        Ok(o) => o,
+        Err(e) => {
+            w.err(format!("verdict {}: cannot tell whether a forge batch is left open: {e}", c.r.name));
+            return FAIL;
+        }
+    };
+    if open.is_none() && !leftovers.iter().any(|f| c.queue_file(f).is_file()) {
         return OK;
     }
     let Ok(_g) = lock_waiting(w, c) else {
@@ -73,15 +80,14 @@ pub fn settle_forge_leftovers(w: &World, c: &Ctx, path: &Path) -> i32 {
         return OK;
     };
     let mut rc = OK;
-    if open.is_file() {
-        if let Ok(Some(kv)) = records::read_kv(&open) {
-            if let Some(r) = super::reconcile::step(w, c, path, &open, &kv) {
-                rc = r;
-            }
+    // A batch still opening may have a PR its record does not name yet: only the sweep settles it.
+    if let Some(o) = open.as_ref().filter(|o| !o.is_opening()) {
+        if let Some(r) = super::reconcile::step(w, c, path, o, &o.kv) {
+            rc = r;
         }
     }
-    if !open.is_file() {
-        for f in ["prepared", "forge-state"] {
+    if matches!(forge_batch::read(w, c), Ok(None)) {
+        for f in leftovers {
             let _ = std::fs::remove_file(c.queue_file(f));
         }
     }
@@ -819,9 +825,8 @@ fn lock_waiting(w: &World, c: &Ctx) -> Result<Guard, bool> {
 /// A provisional member (admitted SUBMITTED, its gate still running) whose gate has gone FAIL at
 /// the tip the batch carries is ejected with the gate's own failing reason; the batcher re-cuts.
 fn eject_gate_red_provisionals(w: &World, c: &Ctx) {
-    let kv = match records::read_kv(&c.queue_file("open")) {
-        Ok(Some(kv)) => kv,
-        _ => return,
+    let Some(kv) = forge_batch::read_or_none(w, c).map(|o| o.kv) else {
+        return;
     };
     let provisional: Vec<&str> = kv
         .get_first("provisional")
@@ -883,13 +888,28 @@ fn forge_pass(w: &World, c: &Ctx, path: &Path) -> i32 {
         }
     };
     let _ = std::fs::remove_file(&skips_file);
-    let open = c.queue_file("open");
-    let rc = if open.is_file() {
-        process(w, c, path, &open)
-    } else {
-        OK
+    let open = forge_batch::read(w, c);
+    let mut rc = match &open {
+        Err(e) => {
+            w.err(format!("verdict {name}: cannot tell whether {name} has an open batch: {e}"));
+            FAIL
+        }
+        Ok(Some(o)) if o.is_opening() => {
+            w.out(format!("verdict {name}: {} is still opening — `queue batch sweep` adopts its PR or releases it", o.place()));
+            OK
+        }
+        Ok(Some(o)) => process(w, c, path, o),
+        Ok(None) => OK,
     };
-    close_stray_queue_prs(w, c, path, &open);
+    let file_era = matches!(&open, Ok(Some(o)) if matches!(o.at, forge_batch::At::File(_)));
+    if forge_batch::on_store(w) && !file_era {
+        let swept = super::batch::sweep_locked(w, c, path);
+        if rc == OK {
+            rc = swept;
+        }
+    } else {
+        close_stray_queue_prs(w, c, path);
+    }
     drop(guard);
     // D2: the express-takeover stash had one writer (batch.sh, retired). Never silently skip one.
     let stashed = stashed_attributions(&c.s.queue_dir.join(name));
@@ -907,19 +927,14 @@ fn forge_pass(w: &World, c: &Ctx, path: &Path) -> i32 {
 
 /// A queue PR whose branch is not the recorded batch is a duplicate cut: close it and cancel
 /// its runs. A record that exists but names no branch is unreadable, so nothing is closed.
-fn close_stray_queue_prs(w: &World, c: &Ctx, path: &Path, open: &Path) {
-    let recorded = if open.is_file() {
-        match records::read_kv(open)
-            .ok()
-            .flatten()
-            .and_then(|kv| kv.get("branch").map(String::from))
-            .filter(|b| !b.is_empty())
-        {
-            Some(b) => b,
+fn close_stray_queue_prs(w: &World, c: &Ctx, path: &Path) {
+    let recorded = match forge_batch::read(w, c) {
+        Ok(None) => String::new(),
+        Ok(Some(o)) => match o.kv.get("branch").filter(|b| !b.is_empty()) {
+            Some(b) => b.to_string(),
             None => return,
-        }
-    } else {
-        String::new()
+        },
+        Err(_) => return,
     };
     let Some(prs) = w.forge.queue_prs(&c.s.forge, path) else {
         return;
@@ -1010,7 +1025,7 @@ pub fn parse_declared_timeout(meta: &str) -> Option<u64> {
 struct Batch<'a> {
     name: &'a str,
     path: &'a Path,
-    file: &'a Path,
+    rec: &'a Open,
     kv: Kv,
     pr: String,
     head: String,
@@ -1026,12 +1041,9 @@ impl Batch<'_> {
     }
 }
 
-fn process(w: &World, c: &Ctx, path: &Path, file: &Path) -> i32 {
+fn process(w: &World, c: &Ctx, path: &Path, rec: &Open) -> i32 {
     let name = c.r.name.as_str();
-    let kv = match records::read_kv(file) {
-        Ok(Some(kv)) => kv,
-        _ => Kv::default(),
-    };
+    let kv = rec.kv.clone();
     let g = |k: &str| kv.get(k).unwrap_or("").to_string();
     // ONE WRITER PER OPEN BATCH (sp-91hb5): a concierge claim refuses the whole pass.
     let actor = w
@@ -1045,7 +1057,7 @@ fn process(w: &World, c: &Ctx, path: &Path, file: &Path) -> i32 {
     ) {
         return OK;
     }
-    if let Some(rc) = super::reconcile::step(w, c, path, file, &kv) {
+    if let Some(rc) = super::reconcile::step(w, c, path, rec, &kv) {
         return rc;
     }
     let (pr, head, base_sha) = (g("pr"), g("head"), g("base"));
@@ -1072,7 +1084,7 @@ fn process(w: &World, c: &Ctx, path: &Path, file: &Path) -> i32 {
     let b = Batch {
         name,
         path,
-        file,
+        rec,
         pr,
         head,
         base_sha,
@@ -1134,7 +1146,22 @@ fn record_forge_state(w: &World, c: &Ctx, b: &Batch, ci: &str, run: &str, meta: 
     kv.push("step", &records::one_line(step));
     kv.push("wall", &c.s.verdict.ci_maxsec.to_string());
     kv.push("observed", &w.clock.now().to_string());
-    if let Err(e) = write_atomic(&c.queue_file("forge-state"), &kv.render()) {
+    // On the store the batch's own record carries it, as `forge.<field>`.
+    let written = match &b.rec.at {
+        forge_batch::At::Store(_) => {
+            let fields: Vec<(String, String)> = kv
+                .lines
+                .iter()
+                .filter(|(k, _)| k != "batch_id" && k != "pr")
+                .map(|(k, v)| (format!("forge.{k}"), v.clone()))
+                .collect();
+            let drop: Vec<&str> = fields.iter().map(|(k, _)| k.as_str()).collect();
+            let add: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+            rewrite(w, c, b, &drop, &add)
+        }
+        forge_batch::At::File(_) => write_atomic(&c.queue_file("forge-state"), &kv.render()),
+    };
+    if let Err(e) = written {
         w.err(format!(
             "verdict {}: cannot record the forge state: {e}",
             b.name
@@ -1197,7 +1224,7 @@ fn record_pass(w: &World, c: &Ctx, b: &Batch, status: &str, out: &str) {
     let written = rec.write(&c.s.run, &tsd::default_host(), &tsd::iso_utc(now));
     let marked = written.and_then(|()| {
         rewrite(
-            b.file,
+            w, c, b,
             &["pass_recorded", "passes"],
             &[
                 ("pass_recorded", &key),
@@ -1268,15 +1295,20 @@ fn pending(w: &World, c: &Ctx, b: &Batch) -> i32 {
     OK
 }
 
-fn rewrite(file: &Path, drop: &[&str], add: &[(&str, &str)]) -> Result<(), String> {
-    let mut kv = records::read_kv(file)?.unwrap_or_default();
-    for k in drop {
-        kv.remove(k);
+fn rewrite(w: &World, c: &Ctx, b: &Batch, drop: &[&str], add: &[(&str, &str)]) -> Result<(), String> {
+    b.rec.rewrite(w, c, drop, add)
+}
+
+/// The batch is settled: its record answers as open no longer.
+fn drop_record(w: &World, c: &Ctx, b: &Batch) {
+    if let Err(e) = b.rec.remove(w, c, "settled") {
+        w.err(format!(
+            "verdict {}: ALARM: PR {}'s batch is settled but its record ({}) could not be closed: {e} — it still reads as open",
+            b.name,
+            b.pr,
+            b.rec.place()
+        ));
     }
-    for (k, v) in add {
-        kv.push(k, v);
-    }
-    write_atomic(file, &kv.render())
 }
 
 /// Abandon the batch on spira-lc, which requeues every member to CERTIFIED. Reported, never
@@ -1299,7 +1331,7 @@ fn close_and_certify(w: &World, c: &Ctx, b: &Batch) {
     w.lib.cancel_runs(&c.s.forge, b.path, &b.branch);
     w.forge.pr_close(&c.s.forge, b.path, &b.pr);
     lc_requeue(w, c, b, "batch closed");
-    let _ = std::fs::remove_file(b.file);
+    drop_record(w, c, b);
 }
 
 /// A capacity failure changes nothing on a re-run or a re-cut: close the batch, hold the repo
@@ -1404,7 +1436,7 @@ fn harness_fault(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
             retries + 1
         ));
         if let Err(e) = rewrite(
-            b.file,
+            w, c, b,
             &["retries"],
             &[("retries", &(retries + 1).to_string())],
         ) {
@@ -1517,7 +1549,7 @@ fn fast_forward(
     for suite in tagged(out, "flaky: ") {
         w.scripts.observe_flake(suite.trim(), &b.head);
     }
-    let _ = std::fs::remove_file(b.file);
+    drop_record(w, c, b);
     if !b.branch.is_empty() {
         w.lib
             .push(b.path, remote, &format!(":refs/heads/{}", b.branch));
@@ -1537,10 +1569,11 @@ fn fast_forward(
 /// Delete local `spira/queue/*` refs already on the base, except the open batch's own.
 fn reap_stale_queue_refs(w: &World, c: &Ctx, path: &Path, base: &str) {
     let name = c.r.name.as_str();
-    let open_br = records::read_kv(&c.queue_file("open"))
-        .ok()
-        .flatten()
-        .and_then(|k| k.get("branch").map(String::from));
+    // A record that cannot be read may name any of them: none is reaped.
+    let Ok(open) = forge_batch::read(w, c) else {
+        return;
+    };
+    let open_br = open.and_then(|o| o.kv.get("branch").map(String::from));
     for (br, _) in w.git.branches(path, "refs/heads/spira/queue/") {
         if br.is_empty() || Some(&br) == open_br.as_ref() {
             continue;
@@ -1660,7 +1693,7 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
                 {
                     let members = b.members_str();
                     if let Err(e) = rewrite(
-                        b.file,
+                        w, c, b,
                         &["head", "members", "retries", "base"],
                         &[
                             ("head", &h),
@@ -1710,7 +1743,7 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
             ));
         }
     }
-    let _ = std::fs::remove_file(b.file);
+    drop_record(w, c, b);
     OK
 }
 
@@ -1890,7 +1923,7 @@ fn eject_red_members(
     );
     w.lib.cancel_runs(&c.s.forge, b.path, &b.branch);
     w.forge.pr_close(&c.s.forge, b.path, pr);
-    let _ = std::fs::remove_file(b.file);
+    drop_record(w, c, b);
     if failed {
         FAIL
     } else {
@@ -1923,7 +1956,7 @@ fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
         w.forge.workflow_rerun(&c.s.forge, b.path, &run);
         w.out(format!("verdict {name}: PR {pr} red — {bo}no suite annotations (step: {}); re-running run {run} once", if step.is_empty() { "unknown" } else { &step }));
         return match rewrite(
-            b.file,
+            w, c, b,
             &["setup_rerun", "setup_step"],
             &[("setup_rerun", &now.to_string()), ("setup_step", &step)],
         ) {
@@ -1984,7 +2017,7 @@ fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
             log.lines().last().unwrap_or("")
         ),
     );
-    let _ = std::fs::remove_file(b.file);
+    drop_record(w, c, b);
     w.out(format!("verdict {name}: PR {pr} red — {bo}no suite annotations, {same}; batch abandoned, members requeued"));
     OK
 }
@@ -2016,7 +2049,7 @@ fn failure_evidence(out: &str) -> String {
 
 /// A builder has no forge read path, so a member sent back by a red batch carries the failing
 /// lines in its own bead. Once per run: the verdict pass re-reads a settled red.
-fn note_red_evidence(w: &World, b: &Batch, out: &str) {
+fn note_red_evidence(w: &World, c: &Ctx, b: &Batch, out: &str) {
     let mut evidence = failure_evidence(out);
     let run = tagged(out, "run-id: ")
         .last()
@@ -2048,7 +2081,7 @@ fn note_red_evidence(w: &World, b: &Batch, out: &str) {
     for m in &b.members {
         w.lib.comment(&m.id, &note);
     }
-    if let Err(e) = rewrite(b.file, &["evidence_noted"], &[("evidence_noted", &key)]) {
+    if let Err(e) = rewrite(w, c, b, &["evidence_noted"], &[("evidence_noted", &key)]) {
         w.err(format!(
             "verdict {}: cannot record the evidence note: {e}",
             b.name
@@ -2073,7 +2106,7 @@ fn red(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
         ));
         return OK;
     }
-    note_red_evidence(w, b, out);
+    note_red_evidence(w, c, b, out);
     let mut suites = red_suites_csv(out);
     if suites.is_empty() {
         suites = test_red_csv(out);
@@ -2132,7 +2165,7 @@ fn red(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
         .filter(|i| !i.is_empty());
     match id {
         Some(id) if r.rc == 0 => {
-            if let Err(e) = rewrite(b.file, &["judgement"], &[("judgement", id)]) {
+            if let Err(e) = rewrite(w, c, b, &["judgement"], &[("judgement", id)]) {
                 w.err(format!(
                     "verdict {name}: PR {pr} judgement {id} filed but not recorded: {e}"
                 ));

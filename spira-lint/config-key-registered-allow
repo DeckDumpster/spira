@@ -632,7 +632,6 @@ SPIRA_QUEUE_ACTOR queue/src/ops/mod.rs
 SPIRA_QUEUE_ACTOR queue/src/ops/verdict.rs
 SPIRA_QUEUE_LOCK_HELD batcher-cut/src/io.rs
 SPIRA_QUEUE_LOCK_HELD queue/src/ops/mod.rs
-SPIRA_QUEUE_OWNER_OVERRIDE batcher-cut/src/main.rs
 SPIRA_QUEUE_OWNER_OVERRIDE queue/src/ops/mod.rs
 SPIRA_QUEUE_WATCH_BIN spira-config/src/convert.rs
 SPIRA_READY_CACHE sentinel/src/call.rs
