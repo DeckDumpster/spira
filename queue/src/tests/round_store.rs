@@ -249,6 +249,8 @@ fn with_the_store_a_queue_forge_repos_batch_is_not_a_round() {
 /// A store round opened through `round open` (members `members`), its batch id.
 fn opened(t: &T, members: &str) -> String {
     t.lc.store.get_or_init(MemDoor::default);
+    // A round's id is cut from the clock: each open its own.
+    t.clock.now.set(t.clock.now.get() + 60);
     assert_eq!(t.run(&["round", "open", "--members", members]), 0, "{}", t.err());
     batch_of(t)
 }
