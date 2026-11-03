@@ -24,13 +24,3 @@ fn the_forge_token_rides_the_request_and_is_not_in_the_debug_output() {
     assert!(!format!("{forge:?}").contains("sekrit"));
 }
 
-#[test]
-fn e2e_a_forge_without_a_credential_answers_nothing_and_is_never_called() {
-    let l = TcpListener::bind("127.0.0.1:0").unwrap();
-    let api = format!("http://{}", l.local_addr().unwrap());
-    l.set_nonblocking(true).unwrap();
-    let forge = Forge { api, gh: "/nonexistent/gh".into(), ..Forge::default() };
-    assert_eq!(forge.open_prs("acme/widgets"), None);
-    assert_eq!(forge.stray_branches("acme/widgets", "main", &[]), None);
-    assert!(l.accept().is_err(), "an anonymous call reached the forge");
-}

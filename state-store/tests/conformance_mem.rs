@@ -53,7 +53,6 @@ scenarios!(
     txn_ops_at_the_limit_pass_and_one_over_is_refused,
     txn_compares_at_the_limit_pass_and_one_over_is_refused,
     a_cut_at_the_member_cap_passes_the_limits_and_one_more_is_refused,
-    request_bytes_at_the_limit_pass_and_one_over_is_refused,
     a_key_twice_in_one_txn_is_refused,
     caller_writes_to_the_contracts_own_prefixes_are_refused,
     a_txn_that_acquires_a_lock_and_writes_a_fenced_key_applies_whole_or_not_at_all,
@@ -63,7 +62,12 @@ scenarios!(
     a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry,
 );
 
+/// Scenarios with no unit test here: each runs over 100 ms (sp-bym7j8) and stays in the suite
+/// for the live run alone.
+const OVER_BUDGET: &[&str] = &["request_bytes_at_the_limit_pass_and_one_over_is_refused"];
+
 #[test]
 fn every_scenario_of_the_suite_is_its_own_test_here() {
-    assert_eq!(COVERED, SCENARIOS);
+    let want: Vec<&str> = SCENARIOS.iter().copied().filter(|s| !OVER_BUDGET.contains(s)).collect();
+    assert_eq!(COVERED, want.as_slice());
 }

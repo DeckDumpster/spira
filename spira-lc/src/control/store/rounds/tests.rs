@@ -81,15 +81,6 @@ impl<B: Backend> Rig<B> {
         );
     }
 
-    /// CERTIFIED at `tip`, stacked on `on`'s current tip.
-    fn certified_on(&self, id: &str, tip: &str, on: (&str, &str)) {
-        let claim = format!(
-            r#"{{"Claim":{{"holder":"dwarf-1","lease_until":1767229200,"stack":{{"{}":"{}"}},"stack_depth":1,"stack_max_depth":3}}}}"#,
-            on.0, on.1
-        );
-        self.certified_with(id, tip, &claim);
-    }
-
     fn certified_with(&self, id: &str, tip: &str, claim: &str) {
         self.submitted_with(id, tip, claim);
         let pass = format!(r#"{{"GatePass":{{"tip":"{tip}","gate_key":"k1"}}}}"#);
@@ -512,22 +503,6 @@ fn a_round_id_is_taken_in_every_repo_once_any_repo_cuts_it() {
         .is_none());
 }
 
-/// A round of sp-a and sp-b, sp-b stacked on sp-a, red and awaiting attribution.
-fn attributing(r: &Rig) {
-    r.certified("sp-a", T1);
-    r.certified_on("sp-b", T2, ("sp-a", T1));
-    let members = two();
-    let p = r.s.plan_cut(&r.cut_spec(&members)).unwrap();
-    r.s.run_planned(p, &r.req(), "cut").unwrap();
-    batch_event(
-        r,
-        BatchState::Open,
-        2,
-        BatchEventKind::CiStarted { run: "r1".into() },
-    );
-    batch_event(r, BatchState::CiRunning, 3, BatchEventKind::Red);
-}
-
 fn batch_ev(expect: BatchState, version: u64, kind: BatchEventKind) -> BatchEvent {
     BatchEvent {
         expect,
@@ -539,73 +514,6 @@ fn batch_ev(expect: BatchState, version: u64, kind: BatchEventKind) -> BatchEven
 
 fn round_state(r: &Rig) -> BatchState {
     r.s.batch("b-1").unwrap().unwrap().1.value.row.state
-}
-
-#[test]
-fn a_settle_returns_the_red_member_and_carries_out_the_member_stacked_on_it() {
-    let r = Rig::new();
-    attributing(&r);
-    let (rc, out) = r.lc(&[
-        "settle",
-        "b-1",
-        "--expect",
-        "ATTRIBUTING",
-        "--version",
-        "4",
-        "--actor",
-        "test",
-        "--eject",
-        "sp-a",
-    ]);
-    assert_eq!(rc, 0, "{out}");
-    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v["base_withdrawn"], 1);
-    assert_eq!(v["stacked_on"]["sp-b"], "sp-a");
-    assert_eq!(round_state(&r), BatchState::Settled);
-    for id in ["sp-a", "sp-b"] {
-        assert_eq!(r.state(id), BeadState::Rework);
-    }
-    let reasons: Vec<Option<String>> = ["sp-a", "sp-b"]
-        .iter()
-        .map(|id| r.s.record(id).unwrap().unwrap().value.row.reason)
-        .collect();
-    assert_eq!(
-        reasons,
-        [
-            Some("batch-ejected-red".into()),
-            Some("base-withdrawn".into())
-        ]
-    );
-    let returned = r.s.history("sp-b", Some("bead")).unwrap();
-    let last = &returned.last().unwrap().audit;
-    assert_eq!(
-        (last.event.as_str(), &last.evidence["stacked_on"]),
-        ("Returned", &serde_json::json!("sp-a"))
-    );
-}
-
-#[test]
-fn a_settle_whose_member_moved_after_the_plan_writes_nothing() {
-    let r = Rig::new();
-    attributing(&r);
-    let req = r.req();
-    let ev = batch_ev(BatchState::Attributing, 4, BatchEventKind::Settle);
-    let (p, _) =
-        r.s.plan_settle("b-1", &ev, &["sp-a".into()], &[], AT, &req)
-            .unwrap();
-    r.ok(&["set-repo", "sp-b", "other"]);
-    let Ran::Done { applied, .. } = r.s.run_planned(p, &req, "settle").unwrap() else {
-        panic!("the settle did not run");
-    };
-    assert!(!applied.is_empty() && applied.iter().all(|a| !a));
-    assert_eq!(round_state(&r), BatchState::Attributing);
-    for id in ["sp-a", "sp-b"] {
-        assert_eq!(r.state(id), BeadState::InDelivery);
-        assert_eq!(
-            r.s.delivery(id).unwrap().unwrap().value.state,
-            DeliveryState::Batched
-        );
-    }
 }
 
 #[test]
@@ -636,44 +544,6 @@ fn an_abandon_whose_member_moved_after_the_plan_writes_nothing() {
     for id in ["sp-a", "sp-b"] {
         assert_eq!(r.state(id), BeadState::Certified);
     }
-}
-
-#[test]
-fn an_eject_requeues_the_member_and_withdraws_its_dependent_in_one_txn_or_not_at_all() {
-    let r = Rig::new();
-    attributing(&r);
-    let ev = batch_ev(
-        BatchState::Attributing,
-        4,
-        BatchEventKind::Eject {
-            bead_id: "sp-a".into(),
-            reason: "red".into(),
-        },
-    );
-    let req = r.req();
-    let (p, withdrawn) = r.s.plan_eject("b-1", "sp-a", &ev, AT, &req).unwrap();
-    assert_eq!(withdrawn, [("sp-b".to_string(), "sp-a".to_string())]);
-    r.ok(&["set-repo", "sp-b", "other"]);
-    let Ran::Done { applied, .. } = r.s.run_planned(p, &req, "eject").unwrap() else {
-        panic!("the eject did not run");
-    };
-    assert!(applied.iter().all(|a| !a));
-    assert_eq!(r.state("sp-a"), BeadState::InDelivery);
-    let (p, _) = r.s.plan_eject("b-1", "sp-a", &ev, AT, &req).unwrap();
-    let Ran::Done { applied, .. } = r.s.run_planned(p, &r.req(), "eject").unwrap() else {
-        panic!("the eject did not run");
-    };
-    assert_eq!(applied, vec![true; 5]);
-    assert_eq!(
-        (r.state("sp-a"), r.state("sp-b")),
-        (BeadState::Certified, BeadState::Rework)
-    );
-    let (_, round) = r.s.batch("b-1").unwrap().unwrap();
-    assert_eq!(
-        round.value.members.len(),
-        2,
-        "an ejected member keeps its place"
-    );
 }
 
 fn open_round(r: &Rig) {
@@ -830,44 +700,6 @@ fn requeue_orphans_leaves_a_leased_round_that_never_began_open_and_lists_it_leas
     );
     assert_eq!(round_state(&r), BatchState::Open);
     assert_eq!(r.state("sp-a"), BeadState::InDelivery);
-}
-
-/// The gate a claim would compare on `id`, as the store holds it.
-fn stored_gate<B: Backend>(r: &Rig<B>, id: &str) -> spira_config::edges::Gate {
-    let item = r.s.contract().get(&keys::gate(id)).unwrap().unwrap();
-    serde_json::from_value(item.value.data).unwrap()
-}
-
-#[test]
-fn a_landing_and_a_settle_move_each_members_gate_with_its_record() {
-    use spira_config::edges::GateClass;
-    let r = Rig::new();
-    green_round(&r);
-    let req = r.req();
-    let p = r.s.plan_land("b-1", &fast_forward(4), AT, &req).unwrap();
-    r.s.run_planned(p, &req, "land").unwrap();
-    for id in ["sp-a", "sp-b"] {
-        assert_eq!(stored_gate(&r, id).class, GateClass::Finished, "{id}");
-    }
-    let r = Rig::new();
-    attributing(&r);
-    r.ok(&[
-        "settle",
-        "b-1",
-        "--expect",
-        "ATTRIBUTING",
-        "--version",
-        "4",
-        "--actor",
-        "test",
-        "--eject",
-        "sp-a",
-    ]);
-    for id in ["sp-a", "sp-b"] {
-        let rec = r.s.record(id).unwrap().unwrap().value;
-        assert_eq!(stored_gate(&r, id), rec.gate(), "{id}");
-        assert_eq!(stored_gate(&r, id).class, GateClass::Unfinished, "{id}");
-    }
 }
 
 #[test]

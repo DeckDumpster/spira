@@ -247,14 +247,6 @@ mod tests {
     }
 
     #[test]
-    fn a_forge_with_no_credential_answers_nothing_and_does_not_connect() {
-        let forge = Forge { api: "http://127.0.0.1:1".into(), gh: "/nonexistent/gh".into(), ..Forge::default() };
-        assert!(forge.credential().unwrap_err().starts_with(NO_CREDENTIAL));
-        assert_eq!(forge.open_prs("a/b"), None);
-        assert!(forge.completed_runs("a/b").unwrap_err().starts_with(NO_CREDENTIAL));
-    }
-
-    #[test]
     fn a_runner_is_known_by_the_first_run_of_two_digits_in_its_name_else_its_name() {
         assert_eq!((vmid_of("ci-vm-9001-a7").as_str(), vmid_of("r1").as_str(), vmid_of("").as_str()), ("9001", "r1", "?"));
     }

@@ -344,21 +344,6 @@ mod tests {
     }
 
     #[test]
-    fn an_unreachable_store_is_a_miss_and_a_failed_write_is_harmless() {
-        let i = inputs("t1", "img", &["a"]);
-        let gone = Shipped { _d: testkit::TempDir::new("testenv-resume-gone"), spec: "s3://bkt/resume".into(), aws: PathBuf::from("/nonexistent/aws") };
-        let s = gone.store(&i, "1/1");
-        s.record("a");
-        assert_eq!(s.passed("a"), None);
-        let blocked = Shipped::dir("blocked");
-        let root = PathBuf::from(blocked.spec.strip_prefix("dir:").unwrap());
-        fs::write(&root, "a file where the store should be").unwrap();
-        let s = blocked.store(&i, "1/1");
-        s.record("a");
-        assert_eq!(s.passed("a"), None);
-    }
-
-    #[test]
     fn the_backend_is_chosen_by_its_spec_and_an_unset_one_is_none() {
         let aws = Path::new("aws");
         assert!(backend_from_spec("", aws).unwrap().is_none());

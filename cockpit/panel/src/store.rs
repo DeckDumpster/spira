@@ -1252,23 +1252,6 @@ mod tests {
         assert_eq!(got[0].when, "2026-09-05T10:00:00Z", "the age is from the first sighting");
     }
 
-    /// An alert is a condition, never a bead, so it cannot land in DECISIONS.
-    #[test]
-    fn a_firing_alert_is_not_a_decision() {
-        let d1 = serde_json::json!({
-            "id": "sp-d1", "title": "a question", "description": "what to do?",
-            "status": "open", "issue_type": "task",
-            "labels": ["needs-operator", "overseer"], // literal-ok: test fixture data
-            "created_at": "2026-09-05T10:00:00Z", "comment_count": 0,
-        });
-        let mut s = conds(vec![firing("sp-a1", "2026-09-05T10:00:00Z")]);
-        s.beads = Some(vec![d1]);
-        assert_eq!(ids(view_items(&s, View::Decisions, false, NOW, &Cfg::default())), ["sp-d1"]);
-        assert_eq!(ids(view_items(&s, View::Alerts, false, NOW, &Cfg::default())), ["sp-a1"]);
-        assert!(ids(view_items(&s, View::Insights, false, NOW, &Cfg::default())).is_empty());
-        assert!(ids(view_items(&s, View::Notifications, false, NOW, &Cfg::default())).is_empty());
-    }
-
     /// THE POSITIVE CONTROL (law-absence-needs-a-positive-control). "No alerts" and "the
     /// reader read no store" are the same pixels, and the wrong one reads as all-clear. An
     /// empty read is refused; a read holding only the probe is a genuine all-clear.

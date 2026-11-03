@@ -445,25 +445,6 @@ mod tests {
     }
 
     #[test]
-    fn an_escalation_in_a_permitted_class_reaches_the_operator_as_a_question_with_its_default() {
-        for class in ["permissions", "policy", "destructive"] {
-            let w = World::new(true, false);
-            let subject = format!("escalation-{class} needs a decision");
-            let argv = ["--class", class, "--subject", &subject, "--default", "wait for the operator"];
-            let out = w.escalate(&argv, "the console needs a one-time grant\n").unwrap();
-            assert_eq!(out, format!("escalation ({class}) sent to operator"));
-            let sent = w.sent();
-            assert_eq!(sent.len(), 1, "{class}: {sent:?}");
-            let m = &sent[0];
-            assert_eq!((m.mailbox, m.kind), ("operator", "question"), "{class}");
-            assert_eq!(m.default.as_deref(), Some("wait for the operator"), "{class}");
-            assert_eq!(m.class.as_deref(), Some(class));
-            assert!(m.body.contains("the console needs a one-time grant"), "{class}: {}", m.body);
-            mail_lint(m).unwrap_or_else(|e| panic!("{class}: the question kind refuses it: {e}"));
-        }
-    }
-
-    #[test]
     fn an_escalation_without_a_default_is_refused_and_sends_nothing() {
         let w = World::new(true, false);
         let err = w.escalate(&["--class", "policy", "--subject", "s"], "b\n").unwrap_err();

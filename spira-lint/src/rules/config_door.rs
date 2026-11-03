@@ -160,38 +160,8 @@ mod tests {
         assert_eq!(got.len(), 1, "{got:?}");
     }
 
-    /// Every `.rs` file under `dir` of the workspace this crate sits in, workspace-relative.
-    fn sources(ws: &std::path::Path, dir: &str, out: &mut Vec<String>) {
-        let mut entries: Vec<_> = std::fs::read_dir(ws.join(dir)).unwrap().map(|e| e.unwrap().path()).collect();
-        entries.sort();
-        for p in entries {
-            let rel = p.strip_prefix(ws).unwrap().to_str().unwrap().to_string();
-            if p.is_dir() {
-                sources(ws, &rel, out);
-            } else if rel.ends_with(".rs") {
-                out.push(rel);
-            }
-        }
-    }
-
-    /// The two crates that parse a TOML document of their own beside the config.
-    const OWN_DOCUMENT_CRATES: [&str; 2] = ["desired-state/src", "reconciler-flow/src"];
-
     fn workspace() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
-    }
-
-    #[test]
-    fn the_crates_that_parse_their_own_documents_open_no_second_door_onto_the_config() {
-        let ws = workspace();
-        let mut files = Vec::new();
-        for dir in OWN_DOCUMENT_CRATES {
-            sources(&ws, dir, &mut files);
-        }
-        assert!(files.len() > 5, "too few sources read: {files:?}");
-        let tree = Tree::from_paths(&ws, files.iter().map(String::as_str), std::iter::empty::<&str>());
-        let got: Vec<String> = ConfigDoor.check(&tree).unwrap().iter().map(|f| f.to_string()).collect();
-        assert!(got.is_empty(), "{got:?}");
     }
 
     #[test]

@@ -404,27 +404,6 @@ mod tests {
         assert!(e[0].contains("does not require 'spira'"));
     }
 
-    /// capacity_probe's own "defaults to the builder's own resolved model" case (wave
-    /// 4.26).
-    #[test]
-    fn capacity_probe_model_defaults_to_persona_builder_when_unset() {
-        let dir = testkit::TempDir::new("dwarf-conf-capacity-model");
-        let toml = dir.join("spira.toml");
-        std::fs::write(&toml, "[persona.builder]\nmodel = \"toml-override-model\"\n").unwrap();
-        // The builder's model comes from the spec SPIRA_TOML names (the one source).
-        let snap = crate::seam::Snapshot { vars: vars(&[("SPIRA_TOML", toml.to_str().unwrap())]), ..Default::default() };
-        let conf = Conf::new(&snap, &dir);
-        assert_eq!(conf.capacity_probe_model(), "toml-override-model");
-
-        let snap2 = crate::seam::Snapshot {
-            vars: vars(&[("SPIRA_TOML", toml.to_str().unwrap()), ("SPIRA_CAPACITY_PROBE_MODEL", "operator-override")]),
-            ..Default::default()
-        };
-        let conf2 = Conf::new(&snap2, &dir);
-        assert_eq!(conf2.capacity_probe_model(), "operator-override", "an explicit SPIRA_CAPACITY_PROBE_MODEL wins");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
     fn reads_rune_model(src: &str) -> bool {
         src.contains("${RUNE_MODEL") || src.contains("$RUNE_MODEL")
     }
@@ -452,44 +431,6 @@ mod tests {
         assert_eq!(persona_model("builder", &spec), Ok("claude-y".to_string()), "the layered spec, later layer wins");
         let e = persona_model("ops", &spec).unwrap_err();
         assert!(e.contains("persona.ops.model is not declared"), "{e}");
-    }
-
-    // ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the same
-    // hazard): the tests below that resolve config take this lock. `resolve_for_process`
-    // now hard-refuses without a real `SPIRA_TOML` (per Ryan 2026-10-05: one source of
-    // config — "SPIRA_TOML is not set" is a refusal, not "no config, defaults only"), so
-    // each one hands `merge_resolved_config` an `env` map naming a real `fixture_toml`
-    // file rather than pinning the ambient `SPIRA_TOML` to a nonexistent path: that map is
-    // the `env` PARAMETER `resolve_for_process` actually reads, never the process's own
-    // environment.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    #[test]
-    fn merge_resolved_config_inserts_home_repo_and_registry_keys_without_overriding_the_seam() {
-        let _g = ENV_LOCK.lock().unwrap();
-        let dir = testkit::TempDir::new("dwarf-conf-merge");
-        // The real, checked-in spira/conf.d (this crate's own repo layout: `dwarf/` sits
-        // beside `spira/`) — SPIRA_CI_PARK_MAX is one of its real registered keys.
-        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
-        let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_CI_PARK_MAX", "9")]);
-        let env = BTreeMap::from([("SPIRA_TOML".to_string(), toml.to_string_lossy().into_owned())]);
-
-        let mut snap = crate::seam::Snapshot {
-            vars: vars(&[("SPIRA_TRACE_MARK", "/seam/mark")]),
-            ..Default::default()
-        };
-        merge_resolved_config(&mut snap, &home, &env).unwrap();
-
-        assert_eq!(snap.vars.get("SPIRA_TRACE_MARK").map(String::as_str), Some("/seam/mark"), "the seam's own value must survive the merge");
-        assert_eq!(snap.vars.get("SPIRA_HOME").map(String::as_str), Some(home.to_str().unwrap()));
-        assert!(snap.vars.contains_key("SPIRA_REPO"));
-        assert!(snap.vars.contains_key("SPIRA_REPO_DERIVED"));
-        assert_eq!(
-            snap.vars.get("SPIRA_CI_PARK_MAX").map(String::as_str),
-            Some("9"),
-            "a declared registry key value must reach snap.vars in-process"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

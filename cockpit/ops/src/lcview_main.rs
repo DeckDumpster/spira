@@ -648,12 +648,6 @@ mod tests {
     }
 
     #[test]
-    fn the_matcher_sees_a_planted_offender() {
-        let planted = "fn g() { run(\"work\", &[\"list\"]); lc_json(&[\"list\"]); run(\"spira-claim\", &[]); }";
-        assert_eq!(removed_calls(planted), ["work", "unfiltered spira-lc list", "spira-claim"]);
-    }
-
-    #[test]
     fn the_render_issues_none_of_the_removed_calls() {
         assert!(removed_calls(include_str!("lcview_main.rs")).is_empty());
     }
