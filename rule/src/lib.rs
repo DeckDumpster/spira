@@ -349,6 +349,17 @@ mod tests {
     }
 
     #[test]
+    fn text_with_a_per_name_date_provenance_is_refused_naming_the_fence() {
+        let m = inventory_refusal("Never skip the gate. (per Alice, 2025-09-01)").expect("the fence refuses this text");
+        assert!(m.contains("inventory fence"), "{m}");
+    }
+
+    #[test]
+    fn text_that_states_only_the_mechanism_passes_the_fence_pre_check() {
+        assert_eq!(inventory_refusal("Never skip the gate; it fails closed."), None);
+    }
+
+    #[test]
     fn enact_without_tool_or_mechanism_refuses_naming_both() {
         let m = refusal(&["text"]);
         assert!(m.contains("--tool") && m.contains("--mechanism"), "{m}");
