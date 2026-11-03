@@ -29,6 +29,8 @@ pub const FENCES_CAP: &str = "fences-cap";
 /// The setup phases a red can stop in that name the lane rather than the tree.
 pub const IMAGE_SETUP: &str = "image-setup";
 pub const INSTALL: &str = "install";
+/// The fence that runs the image setup on the round's tree; certify attributes its red itself.
+pub const PREFLIGHT_RED: &str = "fence-round-image-preflight";
 
 const ACTOR: &str = "round-controller";
 /// The Judge's own sub-pass job ids start here, clear of the Attributor's.
@@ -47,6 +49,9 @@ pub struct PassResult {
     pub phase: Option<String>,
     /// The red's output.
     pub output: String,
+    /// The members certify itself ejected for the red: the recipe changers of a red image
+    /// preflight, already out of the round.
+    pub ejected: Vec<Id>,
 }
 
 /// The round being judged, and what its pass tested.
@@ -522,6 +527,9 @@ fn judge_red<R: RoundRunner>(
     pass: &PassResult,
     steps: &[String],
 ) -> Result<Judged, String> {
+    if steps.iter().any(|st| st == PREFLIGHT_RED) && !pass.ejected.is_empty() {
+        return certify_ejected(p, round, pass, steps);
+    }
     let mut s = Subs::open(p, runner, round, steps)?;
     let (mut subs, mut evidence) = (vec![], vec![]);
     let rerun = s.sub(&[], Purpose::Plain)?;
@@ -572,6 +580,22 @@ fn judge_red<R: RoundRunner>(
     }
     let ejects = removal_sets(&mut s, pass, &red, &mut evidence)?;
     finish(&mut s, pass, red, subs, evidence, ejects)
+}
+
+/// certify already ejected the recipe changers a red image preflight names: the red is theirs,
+/// recorded once with no sub-pass, and each is proven.
+fn certify_ejected(p: &Ports, round: &Round, pass: &PassResult, steps: &[String]) -> Result<Judged, String> {
+    let class = Class::Red { step: steps.join(",") };
+    let evidence = format!(
+        "certify ejected {}: each changes a round-recipe input and {PREFLIGHT_RED} went red\n{}",
+        pass.ejected.join(","),
+        pass.output
+    );
+    let n = attempt(p, round, &class, vec![], evidence)?;
+    let identity = round.identity(&[]);
+    let proven: Vec<Member> = identity.members.iter().filter(|m| pass.ejected.contains(&m.id)).cloned().collect();
+    p.ledger.mark_proven(p, &identity, &proven, p.clock.now_ms())?;
+    Ok(Judged::Recorded { n, class, ejected: pass.ejected.clone() })
 }
 
 /// The Attributor's removal sets, the base run green: each set is its own identity, reused

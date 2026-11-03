@@ -40,6 +40,9 @@ pub struct ResultSpec {
     pub phase: Option<String>,
     #[serde(default)]
     pub output: String,
+    /// The members certify itself ejected for the red.
+    #[serde(default)]
+    pub ejected: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -188,6 +191,7 @@ impl JudgeSpec {
             reason: r.reason.clone(),
             phase: r.phase.clone(),
             output: r.output.clone(),
+            ejected: r.ejected.clone(),
         }
     }
 }

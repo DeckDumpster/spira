@@ -1397,6 +1397,7 @@ impl Engine<'_> {
                         reason: None,
                         phase: None,
                         output: String::new(),
+                        ejected: vec![],
                     },
                     vec![],
                 );
@@ -1413,6 +1414,7 @@ impl Engine<'_> {
                         reason,
                         phase: None,
                         output: String::new(),
+                        ejected: vec![],
                     },
                     vec![],
                 );

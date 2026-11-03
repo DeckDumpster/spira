@@ -917,26 +917,6 @@ pub fn conflict_streak_bump(env: &Env, id: &str, tip: &str) -> u32 {
     n
 }
 
-fn solo_skips_file(env: &Env, id: &str) -> PathBuf {
-    env.run.join("solo-skips").join(id)
-}
-
-pub fn solo_skips_read(env: &Env, id: &str) -> u32 {
-    fs::read_to_string(solo_skips_file(env, id)).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0)
-}
-
-pub fn solo_skips_bump(env: &Env, id: &str) {
-    let path = solo_skips_file(env, id);
-    if let Some(dir) = path.parent() {
-        let _ = fs::create_dir_all(dir);
-    }
-    let _ = fs::write(&path, format!("{}\n", solo_skips_read(env, id) + 1));
-}
-
-pub fn solo_skips_clear(env: &Env, id: &str) {
-    let _ = fs::remove_file(solo_skips_file(env, id));
-}
-
 pub fn conflict_streak_clear(env: &Env, id: &str) {
     let _ = fs::remove_file(conflict_streak_file(env, id));
 }
@@ -1100,11 +1080,6 @@ pub fn changed_paths(repo: &Repo, base_sha: &str, tip: &str) -> Vec<String> {
         .filter(|l| !l.is_empty())
         .map(str::to_string)
         .collect()
-}
-
-/// The pool members whose diff against `repo.base` touches a round-recipe input.
-pub fn recipe_members(repo: &Repo, pool: &[Member]) -> std::collections::BTreeSet<String> {
-    pool.iter().filter(|m| spira_config::recipe::touches(&changed_paths(repo, &repo.base, &m.tip))).map(|m| m.id.clone()).collect()
 }
 
 fn patch_id(repo: &Repo, base_sha: &str, tip: &str) -> Option<String> {
