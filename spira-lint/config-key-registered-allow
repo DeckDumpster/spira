@@ -637,7 +637,6 @@ SPIRA_POISON_AT spira-claim/src/main.rs
 SPIRA_POISON_AT spira/capacity.sh
 SPIRA_PREFLIGHT_BASE_IMAGE spira/round-image-preflight.sh
 SPIRA_PREFLIGHT_CACHE spira/round-image-preflight.sh
-SPIRA_PREFLIGHT_FOREIGN spira/round-image-preflight.sh
 SPIRA_PREFLIGHT_TIMEOUT spira/round-image-preflight.sh
 SPIRA_PROC_ROOT spira/hooks/concierge-waiter-stop.sh
 SPIRA_PROC_ROOT spira/script-running-guard.sh

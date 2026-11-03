@@ -1,14 +1,16 @@
 #!/bin/bash
 #
 # round-image-preflight-guest.sh — inside the throwaway base-OS container: run the image
-# setup through the entry the Round AMI workflow uses. $1 toolchain, $2 foreign checkouts.
+# setup through the entry the Round AMI workflow uses. $1 toolchain.
+# Like the real builds (Proxmox setup_command, EC2 ssm-commands.jq), it passes ami-setup.sh no
+# foreign checkouts: a foreign repo's own dependency check is not the image's (sp-hyfjgl).
 #
 # Only the three things a container cannot do are replaced: systemd units, the nix daemon
 # install and testenv's nested image build. Every cargo and rustup step runs for real.
 
 # covers: spira/round-image-preflight.sh spira/round-image-preflight-guest.sh
 set -euo pipefail
-toolchain="$1" foreign="${2:-}"
+toolchain="$1"
 export DEBIAN_FRONTEND=noninteractive
 rm -rf /root/tree && mkdir -p /root/tree && cp -a /src/. /root/tree/
 
@@ -44,7 +46,7 @@ SHIM
 chmod +x "$nix_bin/nix"
 
 cd /root/tree
-bash -x round-vm/ami-setup.sh /root/tree "$toolchain" /root/.cargo "$foreign"
+bash -x round-vm/ami-setup.sh /root/tree "$toolchain" /root/.cargo
 
 # Names the recipe's cargo commands pass to -p must each resolve to exactly one package.
 export PATH="/root/.cargo/bin:$PATH"
