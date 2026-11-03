@@ -1257,14 +1257,18 @@ fn open_with_file(
         undo("open-batch could not write the open record");
         return Err(());
     }
+    // The cut took, so the record names the batch; its version is read back when the machine
+    // answers show-batch, and every later CAS re-reads it anyway.
+    rec.push("batch_id", lc_id);
     if !version.is_empty() {
-        rec.push("batch_id", lc_id);
         rec.push("version", &version);
-        let _ = write_atomic(&open, &rec.render());
-        w.out(format!(
-            "queue.sh open-batch: {lc_id} cut on spira-lc (version={version})"
-        ));
     }
+    if let Err(e) = write_atomic(&open, &rec.render()) {
+        w.err(format!("queue.sh open-batch: {e}"));
+        undo("open-batch could not record the batch it cut");
+        return Err(());
+    }
+    w.out(format!("queue.sh open-batch: {lc_id} cut on spira-lc (version={version})"));
     Ok((pr, armed))
 }
 
