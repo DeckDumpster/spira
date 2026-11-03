@@ -356,9 +356,12 @@ fn finishing_refusal(
     let out = spira_config::bounded::bounded("git").arg("-C").arg(root).args(&args).output().ok().filter(|o| o.status.success())?;
     let commits: Vec<(String, String, String)> = String::from_utf8_lossy(&out.stdout)
         .split('\x1e')
-        .filter_map(|rec| {
-            let mut f = rec.trim_start_matches('\n').splitn(3, '\x1f');
-            Some((f.next()?.to_string(), f.next()?.to_string(), f.next()?.to_string()))
+        .map(|rec| rec.trim_start_matches('\n'))
+        .filter(|rec| !rec.is_empty())
+        .map(|rec| {
+            // A record cut short keeps empty fields, so it names nothing and refuses.
+            let mut f = rec.splitn(3, '\x1f').map(str::to_string);
+            (f.next().unwrap_or_default(), f.next().unwrap_or_default(), f.next().unwrap_or_default())
         })
         .collect();
     let unnamed = unnamed_commits(&commits, bead_id, in_flight);
@@ -1635,6 +1638,13 @@ mod tests {
         let refused = unnamed_commits(&commits, "sp-own", &in_flight);
         assert_eq!(refused.len(), 1, "{refused:?}");
         assert!(refused[0].contains("ccc3"), "{refused:?}");
+    }
+
+    #[test]
+    fn a_sibling_named_with_trailing_punctuation_or_as_a_child_submits() {
+        let commits = [commit("aaa1", "fix for sp-sib.\n"), commit("ddd4", "sp-sib.1: the child\n")];
+        let in_flight = |id: &str| id == "sp-sib" || id == "sp-sib.1";
+        assert!(unnamed_commits(&commits, "sp-own", &in_flight).is_empty());
     }
 
     #[test]
