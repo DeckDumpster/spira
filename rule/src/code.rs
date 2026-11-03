@@ -666,11 +666,20 @@ pub fn submit_law(repo_path: &Path, repo_name: &str, wt_root: &Path, law_branch:
     let id = filed_id(&String::from_utf8_lossy(&filed.stdout))?;
     let branch = format!("spira/{id}");
     git_in(repo_path, &["branch", "-m", law_branch, &branch])?;
-    let submit = spira_config::bounded::bounded("queue").args(["submit", &branch, repo_name]).stdin(Stdio::null()).output().map_err(|e| format!("rule: queue: {e}"))?;
+    let submit = queue_submit_command(&branch, repo_name).stdin(Stdio::null()).output().map_err(|e| format!("rule: queue: {e}"))?;
     if !submit.status.success() {
         return Err(format!("rule: queue submit {branch} (bead {id}): {}", String::from_utf8_lossy(&submit.stderr).trim()));
     }
     Ok((id, branch))
+}
+
+/// `queue submit <branch> <repo>`, with no call deadline: queue submit runs the gate before it
+/// returns, and a 5 s `timeout` around it SIGTERMs the gate, which then records "died" (sp-esepir).
+pub fn queue_submit_command(branch: &str, repo_name: &str) -> std::process::Command {
+    // batch-job: runs the gate
+    let mut c = std::process::Command::new(spira_config::release_env::tool("queue"));
+    c.args(["submit", branch, repo_name]);
+    c
 }
 
 /// The id `bead.sh file --json` printed: the first JSON object (or one-element array) on stdout.
