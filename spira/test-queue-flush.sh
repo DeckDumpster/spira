@@ -7,12 +7,13 @@
 # with no verdict after it opens one pull request and never lands it.
 #
 # tier: T1
-# covers: queue/src/* landing-pass/src/* spira/lib.sh UC-landing-merge-queue-28
+# covers: queue/src/* landing-pass/src/* spira/lib.sh spira/testlib/forge-batch.sh UC-landing-merge-queue-28
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 tl_config SPIRA_TEST_CASE_DEADLINE=120
 . "$HERE/testlib/lc-fixture.sh"
+. "$HERE/testlib/forge-batch.sh"
 
 echo "test-queue-flush.sh"
 TMP="$(mktemp -d)"; trap 'lcfix_down; rm -rf "$TMP"' EXIT INT TERM
@@ -87,8 +88,8 @@ nowant "batcher not called"    "batcher-called" "$out"
 echo
 echo "step settles the open batch, then cuts the next — verdict before the batcher:"
 printf 'fixq | %s | queue | main | | |\n' "$TMP/repo" > "$RMAP"
-mkdir -p "$TMP/run/queue/fixq"
-printf 'pr=1\nhead=h\nbase=b\nmembers=sp-a:ta\nopened=1\nbranch=spira/queue/x\n' > "$TMP/run/queue/fixq/open"
+tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$TMP/run/queue"
+seed_forge_batch fixq sp-a --pr 1 >/dev/null || bad "step: the open batch is seeded" "no batch opened"
 : > "$ORDER"
 out="$(run step fixq)"
 want "verdict settled the open batch (pending)" "verdict fixq: PR 1 pending" "$out"

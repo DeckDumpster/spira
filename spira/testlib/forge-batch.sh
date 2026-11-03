@@ -11,15 +11,17 @@
 #   rec="$(seed_forge_batch fixq sp-a,sp-b --pr 42)" || bad ...
 #   end_forge_batch fixq "next case"
 #
-# seed_forge_batch <repo> <member>[,<member>...] [--pr N] [--owner A]
+# seed_forge_batch <repo> <member>[,<member>...] [--pr N] [--owner A] [--opened-ago SECS]
 #   A member is <id> or <id>:<tip>. Its spira/<id> branch is made when the repository has none:
 #   at <tip> when given, else as an empty commit on the landing ref. Its lifecycle row is made
 #   CERTIFIED at that tip. A repository with no remote for its landing ref gets a bare one
-#   beside it. The PR is N (default 1); the owner is A (default: queue's own, operator).
+#   beside it. The PR is N (default 1); the owner is A (default: queue's own, operator); the
+#   batch opened SECS ago (default now), on the queue's own virtual clock (SPIRA_NOW).
 #   Prints the record `queue batch show` answers; non-zero, saying why on stderr, when no batch
 #   opened.
 #
-# end_forge_batch <repo> [reason] — `queue abandon` the repo's open batch against the same stub.
+# end_forge_batch <repo> [reason] — `queue abandon` the repo's open batch against the same stub;
+#   nothing to do when the queue shows none open (a case's own eject or verdict ended it).
 #
 # fb_store_up — put the batch machine on the control store for the rest of the suite: a fresh
 #   SQLite store, SPIRA_LC_STORE_PATH and SPIRA_LC_LIFECYCLE_ON_STORE=1 declared. Members are
@@ -109,11 +111,12 @@ print(d.get("version", ""))' 2>/dev/null; }
 seed_forge_batch() {
     local repo="${1:?seed_forge_batch: <repo> required}" members="${2:?seed_forge_batch: <members> required}"
     shift 2
-    local pr=1 owner="" row path landref base spec id tip tips=() csv="" head forge out rc
+    local pr=1 owner="" now row path landref base spec id tip tips=() csv="" head forge out rc
     while [ $# -gt 0 ]; do
         case "$1" in
             --pr) pr="$2"; shift 2 ;;
             --owner) owner="$2"; shift 2 ;;
+            --opened-ago) now="$(( $(date -u +%s) - $2 ))"; shift 2 ;;
             *) echo "seed_forge_batch: unknown option $1" >&2; return 2 ;;
         esac
     done
@@ -142,14 +145,17 @@ seed_forge_batch() {
             commit-tree "$base^{tree}" $(printf -- '-p %s ' "${tips[@]}") -m "queue: seeded batch")" || return 1
     fi
     forge="$(_fb_forge "$pr")" || return 1
-    # A batch is named <repo>-<second>: a second batch seeded in the same second would reuse the
-    # name of the one before it.
-    while [ -f "$(_fb_dir)/stamp-$repo" ] && [ "$(cat "$(_fb_dir)/stamp-$repo")" = "$(date -u +%s)" ]; do sleep 0.2; done
-    date -u +%s > "$(_fb_dir)/stamp-$repo"
+    # A batch is named <repo>-<second> and its branch spira/queue/<second>: a batch seeded in a
+    # second another already took would reuse that one's name, or its branch in another repo.
+    while [ -f "$(_fb_dir)/stamps" ] && grep -qx "${now:-$(date -u +%s)}" "$(_fb_dir)/stamps"; do
+        if [ -n "${now:-}" ]; then now=$((now + 1)); else sleep 0.2; fi
+    done
+    printf '%s\n' "${now:-$(date -u +%s)}" >> "$(_fb_dir)/stamps"
     printf 'Seeded batch for %s.\n' "$repo" > "$(_fb_dir)/body"
-    out="$(SPIRA_TOML="$(tl_layer SPIRA_FORGE="$forge")" queue batch open --repo "$repo" \
+    out="$(SPIRA_TOML="$(tl_layer SPIRA_FORGE="$forge")" env ${now:+SPIRA_NOW="$now"} queue batch open --repo "$repo" \
         --members "$csv" --head "$head" --skip-pregate --body-file "$(_fb_dir)/body" \
         ${owner:+--owner "$owner"} 2>&1)"; rc=$?
+    [ -n "${now:-}" ] || date -u +%s >> "$(_fb_dir)/stamps"
     [ "$rc" -eq 0 ] || { printf 'seed_forge_batch: queue batch open %s exited %s:\n%s\n' "$repo" "$rc" "$out" >&2; return 1; }
     out="$(queue batch show --repo "$repo" 2>&1)" && [ -n "$out" ] \
         || { printf 'seed_forge_batch: queue batch show %s answers no batch after the open: %s\n' "$repo" "$out" >&2; return 1; }
@@ -158,6 +164,8 @@ seed_forge_batch() {
 
 end_forge_batch() {
     local repo="${1:?end_forge_batch: <repo> required}" reason="${2:-the suite ends this fixture batch}" forge out
+    out="$(queue batch show --repo "$repo" 2>&1)" || { printf 'end_forge_batch: queue batch show %s: %s\n' "$repo" "$out" >&2; return 1; }
+    [ -n "$out" ] || return 0
     forge="$(_fb_forge 0)" || return 1
     out="$(SPIRA_TOML="$(tl_layer SPIRA_FORGE="$forge")" queue abandon "$repo" --reason "$reason" 2>&1)" \
         || { printf 'end_forge_batch: queue abandon %s: %s\n' "$repo" "$out" >&2; return 1; }
