@@ -44,4 +44,5 @@ slugs = [
   "law-text-only-changes-land-without-a-round",
   "law-list-reads-run-on-indexed-tables",
   "law-list-reads-paginate-in-the-database",
+  "law-a-hand-dispatched-p0-builder-runs-under-a-watcher",
 ]
