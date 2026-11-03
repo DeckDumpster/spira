@@ -276,13 +276,21 @@ fn halt_cmd(reason: Reason, dry_run: bool) -> i32 {
         },
     };
     let grace = ctx.as_ref().map(|(s, _)| s.halt_grace).unwrap_or(30);
-    let queue_dir = ctx.as_ref().map(|(s, _)| s.queue_dir.clone()).unwrap_or_else(|| run.join("queue"));
+    let queue = match ctx.as_ref().and_then(|(s, _)| s.queue_bin.clone()) {
+        Some(q) => q,
+        None => match spira_config::release_env::tool("queue") {
+            Ok(q) => PathBuf::from(q),
+            Err(e) => {
+                eprintln!("landing halt: {e}");
+                return 1;
+            }
+        },
+    };
     let hc = HaltCtx {
         files: Files::new(&run),
         grace,
         self_pid: std::process::id(),
         repos: ctx.as_ref().map(|(_, r)| r.as_slice()),
-        queue_dir,
     };
     // SPIRA_PATH is a registered config key (spira/conf.d), declared empty by default — an
     // empty resolved value is exactly the "no override" this call already treated an unset
@@ -300,7 +308,7 @@ fn halt_cmd(reason: Reason, dry_run: bool) -> i32 {
         spira_path.as_deref(),
         std::env::var("PATH").ok().as_deref(),
     );
-    let (rc, out, err) = halt::halt(&hc, &HaltArgs { reason, dry_run }, &RealHalt { path }, &RealGit);
+    let (rc, out, err) = halt::halt(&hc, &HaltArgs { reason, dry_run }, &RealHalt { path, queue }, &RealGit);
     for l in out {
         println!("{l}");
     }

@@ -1,6 +1,6 @@
 //! `/rounds` and `/rounds/<repo>/<batch>`: the forge repos' batch PRs. The open batch, with the
 //! verdict's last look at its PR (`forge.*`), is the queue's record of it (`queue batch show`);
-//! closed ones come from the batcher's records under `<run>/queue/<repo>/`; the PR's CI run, jobs, failing
+//! closed ones are the queue's records of its ended batches (`queue batch show --ended`); the PR's CI run, jobs, failing
 //! step and first error lines come from `broker read run-jobs`, held per batch for
 //! [`CI_TTL`]. The list never calls the broker; a detail page whose fetch fails shows the last
 //! result marked stale, or says the detail is unavailable.
@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 pub const CI_TTL: Duration = Duration::from_secs(60);
-const CLOSED_SHOWN: usize = 5;
+pub const CLOSED_SHOWN: usize = 5;
 /// The state of a repo whose open batch the queue could not show.
 pub const UNREADABLE: &str = "cannot tell";
 
@@ -78,9 +78,10 @@ pub fn repos(queue: &Path) -> Vec<String> {
 }
 
 /// Every forge batch on record, per repo: the open one first, then the newest closed ones. `open`
-/// holds each repo's `queue batch show` answer; a repo the queue could not answer for is shown as
-/// [`UNREADABLE`], never as one with no batch open.
-pub fn read_all(queue: &Path, open: &BTreeMap<String, Result<String, String>>) -> Vec<Batch> {
+/// holds each repo's `queue batch show` answer and `ended` its `queue batch show --ended` answer
+/// (records separated by a blank line); a repo the queue could not answer for is shown as
+/// [`UNREADABLE`], never as one with no batch.
+pub fn read_all(queue: &Path, open: &BTreeMap<String, Result<String, String>>, ended: &BTreeMap<String, Result<String, String>>) -> Vec<Batch> {
     let mut out = Vec::new();
     for (repo, shown) in open {
         let dir = queue.join(repo);
@@ -104,14 +105,15 @@ pub fn read_all(queue: &Path, open: &BTreeMap<String, Result<String, String>>) -
                 }
             }
         }
-        let mut closed: Vec<Batch> = std::fs::read_dir(&dir)
-            .map(|d| d.flatten().filter(|e| e.file_name().to_string_lossy().starts_with("closed-pr")).map(|e| e.path()).collect::<Vec<_>>())
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|p| from_record(repo, "closed", &kv(p)))
-            .collect();
-        closed.sort_by_key(|r| std::cmp::Reverse(r.opened));
-        out.extend(closed);
+        match ended.get(repo) {
+            Some(Ok(text)) => {
+                let mut closed: Vec<Batch> = text.split("\n\n").filter_map(|r| from_record(repo, "closed", &kv_of(r))).collect();
+                closed.sort_by_key(|r| std::cmp::Reverse(r.opened));
+                out.extend(closed);
+            }
+            Some(Err(e)) => out.push(Batch { repo: repo.clone(), state: UNREADABLE.into(), reason: format!("its closed batches: {e}"), ..Batch::default() }),
+            None => {}
+        }
     }
     out
 }
@@ -341,20 +343,32 @@ mod tests {
         std::fs::create_dir_all(t.path().join("deck")).unwrap();
         let shown = "batch_id=deck-1\nforge.phase=armed\npr=12\nbranch=spira/queue/deck-1\nmembers=sp-a:ta\nopened=100\nforge.ci=red\nforge.run=77\nforge.step=unit\nforge.pr_state=open\n";
         let open = BTreeMap::from([("deck".to_string(), Ok(shown.to_string()))]);
-        let all = read_all(t.path(), &open);
+        let all = read_all(t.path(), &open, &BTreeMap::new());
         assert_eq!(all.len(), 1, "{all:?}");
         let b = &all[0];
         assert_eq!((b.repo.as_str(), b.key.as_str(), b.pr.as_str(), b.state.as_str()), ("deck", "deck-1", "12", "open"));
         assert_eq!((b.ci.as_str(), b.run.as_str(), b.step.as_str()), ("red", "77", "unit"));
         assert_eq!(b.members, [("sp-a".to_string(), "ta".to_string())]);
-        assert!(read_all(t.path(), &BTreeMap::from([("deck".to_string(), Ok(String::new()))])).is_empty());
+        assert!(read_all(t.path(), &BTreeMap::from([("deck".to_string(), Ok(String::new()))]), &BTreeMap::new()).is_empty());
+    }
+
+    #[test]
+    fn the_closed_batches_are_the_ended_records_the_queue_shows() {
+        let t = testkit::TempDir::new("loom-forge-ended");
+        let open = BTreeMap::from([("deck".to_string(), Ok(String::new()))]);
+        let ended = "batch_id=deck-2\npr=13\nopened=950\nmembers=sp-a:ta\nreason=red\nended=abandoned\n\nbatch_id=deck-0\npr=11\nopened=800\nmembers=sp-b:tb\n\n";
+        let all = read_all(t.path(), &open, &BTreeMap::from([("deck".to_string(), Ok(ended.to_string()))]));
+        assert_eq!(all.iter().map(|b| (b.pr.as_str(), b.state.as_str())).collect::<Vec<_>>(), [("13", "closed"), ("11", "closed")]);
+        assert_eq!(all[0].reason, "red");
+        let lost = read_all(t.path(), &open, &BTreeMap::from([("deck".to_string(), Err("queue batch show exited 1".to_string()))]));
+        assert_eq!(lost.iter().map(|b| b.state.as_str()).collect::<Vec<_>>(), [UNREADABLE], "cannot tell is not no closed batch");
     }
 
     #[test]
     fn a_repo_the_queue_cannot_answer_for_is_cannot_tell_not_quiet() {
         let t = testkit::TempDir::new("loom-forge-unreadable");
         let open = BTreeMap::from([("deck".to_string(), Err("queue batch show exited 1".to_string()))]);
-        let all = read_all(t.path(), &open);
+        let all = read_all(t.path(), &open, &BTreeMap::new());
         assert_eq!(all.iter().map(|b| b.state.as_str()).collect::<Vec<_>>(), [UNREADABLE]);
         assert!(render_list(0, &all).contains("queue batch show exited 1"));
     }

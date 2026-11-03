@@ -1291,6 +1291,24 @@ pub fn batch_show(w: &World, repo: Option<&str>) -> i32 {
     }
 }
 
+/// `batch show --ended <n>`: the repo's newest `n` ended forge batches, newest first, each record's
+/// `key=value` lines followed by a blank line. Exit 1 when they cannot be read.
+pub fn batch_show_ended(w: &World, repo: Option<&str>, n: usize) -> i32 {
+    let Ok(c) = resolve(w, "batch show", repo) else {
+        return FAIL;
+    };
+    match super::forge_batch::ended(w, &c, n) {
+        Ok(records) => {
+            w.io.out(&records.iter().map(|kv| format!("{}\n", kv.render())).collect::<String>());
+            OK
+        }
+        Err(e) => {
+            w.err(format!("queue.sh batch show: cannot read {}'s ended batches: {e}", c.r.name));
+            FAIL
+        }
+    }
+}
+
 /// The config key whose value is one lease's TTL: a `batch open` that has held its record at
 /// `opening` for longer has crashed or been abandoned.
 const LEASE_TTL_KEY: &str = "SPIRA_ROUND_LEASE_TTL_SECS";

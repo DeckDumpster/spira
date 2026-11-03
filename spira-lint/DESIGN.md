@@ -830,8 +830,9 @@ file. Once the batch machine is on the control store the batch's record holds th
 `queue batch show --repo <r>` (whose `forge.*` lines carry the verdict's last look at the PR) is
 how anything else asks.
 
-**Scope.** `.rs` and `.sh` files outside `queue/`, `install/src/round_records.rs` (the remover) and
-`spira-lint/`.
+**Scope.** `.rs` and `.sh` files outside `queue/`, `install/src/round_records.rs` (the remover),
+`spira-lc/src/legacy_files.rs` (the migration classifier, which reads the queue directory install
+names) and `spira-lint/`.
 
 **Violation.** A live (non-comment) line joining or naming one of those files in a queue directory.
 Files that still do are listed in `spira-lint/forge-batch-readers-allow`, which only shrinks: a

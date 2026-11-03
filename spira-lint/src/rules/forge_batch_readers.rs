@@ -1,7 +1,8 @@
 //! `forge-batch-readers` — nothing outside the queue reads a forge batch's `open`, `prepared` or
 //! `forge-state` file in a queue directory. Once the batch machine is on the control store the
 //! batch's own record holds them, and `queue batch show` is how anything else asks for it; a
-//! reader of the file goes blind on the store. Install's remover deletes the files after the move.
+//! reader of the file goes blind on the store. Install's remover deletes the files after the move,
+//! and the migration classifier imports the legacy file as install hands it over.
 //!
 //! Files that still read one are listed in `spira-lint/forge-batch-readers-allow`, which only
 //! shrinks.
@@ -27,8 +28,10 @@ impl Default for ForgeBatchReaders {
 const NAME: &str = "forge-batch-readers";
 const ALLOW_FILE: &str = "spira-lint/forge-batch-readers-allow";
 
-/// The queue reads and writes the files until the store holds the batch; install removes them.
-const OWNERS: [&str; 2] = ["queue/", "install/src/round_records.rs"];
+/// The queue reads and writes the files until the store holds the batch; install removes them,
+/// and the migration classifier imports the open one from whichever queue directory install
+/// names, which no queue verb can be pointed at.
+const OWNERS: [&str; 3] = ["queue/", "install/src/round_records.rs", "spira-lc/src/legacy_files.rs"];
 
 fn owns(path: &str) -> bool {
     OWNERS.iter().any(|o| path.starts_with(o))

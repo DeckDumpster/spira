@@ -19,6 +19,8 @@ pub const ARMED: &str = "armed";
 const FILE: &str = "open";
 /// Where the verdict leaves its last look at the forge while the open batch is the file.
 pub const FORGE_STATE: &str = "forge-state";
+/// The prefix of the archive a batch closed while it was the file is moved to.
+const CLOSED: &str = "closed-pr";
 /// Why the queue ended a batch the machine has not, as the round records name it.
 const ENDED: &str = "ended";
 
@@ -94,6 +96,39 @@ pub fn shown(c: &Ctx, open: &Open) -> Result<Kv, String> {
         }
     }
     Ok(kv)
+}
+
+/// The repo's newest `n` ended forge batches, newest first by `opened`: on the store, the records
+/// the machine or the queue ended; and the `closed-pr*` archives a batch closed before the move
+/// left in the repo's queue directory, until install removes them.
+pub fn ended(w: &World, c: &Ctx, n: usize) -> Result<Vec<Kv>, String> {
+    let mut out: Vec<Kv> = Vec::new();
+    if on_store(w) {
+        out.extend(
+            w.lc.batches(&c.r.name)?
+                .into_iter()
+                .filter(|b| b.kv.get(PHASE).is_some() && (b.is_terminal() || b.kv.get(ENDED).is_some()))
+                .map(|b| with_id(&b.kv, &b.id)),
+        );
+    }
+    let dir = c.queue_file("");
+    match std::fs::read_dir(&dir) {
+        Ok(entries) => {
+            for e in entries.flatten() {
+                if e.file_name().to_string_lossy().starts_with(CLOSED) {
+                    if let Some(kv) = records::read_kv(&e.path())? {
+                        out.push(kv);
+                    }
+                }
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("{}: {e}", dir.display())),
+    }
+    let opened = |kv: &Kv| kv.get("opened").and_then(|o| o.parse::<i64>().ok()).unwrap_or(0);
+    out.sort_by_key(|kv| std::cmp::Reverse(opened(kv)));
+    out.truncate(n);
+    Ok(out)
 }
 
 impl Open {

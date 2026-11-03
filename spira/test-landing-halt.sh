@@ -50,6 +50,7 @@ run_halt() {
         SPIRA_HOME="$HERE" \
         SPIRA_CONF=/nonexistent \
         SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
         landing-pass halt "$@" 2>&1
 }
 
