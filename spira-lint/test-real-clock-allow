@@ -16,4 +16,3 @@
 2 testenv/src/testdb/tests.rs
 2 testkit/src/lib.rs
 4 tsd/tests/victoria.rs
-5 unit-run/tests/dbus_live.rs

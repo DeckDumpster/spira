@@ -2683,36 +2683,6 @@ mod tests {
         assert_eq!(place_of("vm-9001"), "proxmox");
     }
 
-    #[test]
-    fn the_image_tag_is_computed_from_a_tree_by_a_process_standing_elsewhere() {
-        if std::process::Command::new("testenv").arg("--version").output().is_err() {
-            eprintln!("skipped: no testenv on PATH");
-            return;
-        }
-        let d = TempDir::new();
-        let tree = d.path().join("tree");
-        for (f, body) in [
-            ("spira/testenv/Containerfile", "FROM scratch\n"),
-            ("spira/deps.toml", "[meta]\n"),
-            ("rust-toolchain.toml", "[toolchain]\nchannel = \"1.90.0\"\n"),
-        ] {
-            let p = tree.join(f);
-            fs::create_dir_all(p.parent().unwrap()).unwrap();
-            fs::write(p, body).unwrap();
-        }
-        let g = |a: &[&str]| {
-            let st = std::process::Command::new("git").arg("-C").arg(&tree).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).status().unwrap();
-            assert!(st.success());
-        };
-        g(&["init", "-q"]);
-        g(&["add", "-A"]);
-        g(&["commit", "-qm", "x"]);
-        let host = GitHost { state_dir: d.path().to_path_buf(), mirror_port: 1, listen: String::new(), also_listen: vec![] };
-        let (commit, _) = host.head(&tree).unwrap();
-        let tag = host.image_tag(&tree, &commit);
-        assert!(tag.as_ref().is_ok_and(|t| t.len() == 12), "{tag:?}");
-    }
-
     use crate::config::Fields;
     use crate::pool::{Attempt, Spawner};
     use crate::provider::Timing;
@@ -2784,44 +2754,6 @@ mod tests {
     }
 
     #[test]
-    fn the_remote_script_refuses_a_disk_below_the_need_naming_the_shortfall_in_bytes() {
-        let a = REMOTE_SCRIPT.find("disk_preflight() {").expect("the disk preflight");
-        let b = REMOTE_SCRIPT.find("disk_preflight || exit 3").unwrap();
-        let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
-        assert!(b < batch, "refused before the suites start");
-        let func = &REMOTE_SCRIPT[a..b];
-        let run = |work: u64, tmp: u64, graph: u64, need: &str| {
-            let t = testkit::TempDir::new("rvm-disk");
-            let d = t.path().to_path_buf();
-            std::fs::create_dir_all(d.join("bin")).unwrap();
-            std::fs::create_dir_all(d.join("round-work")).unwrap();
-            testkit::write_exe(d.join("bin/podman"), "#!/bin/sh\necho /stub/graphroot\n");
-            let df = format!(
-                "#!/bin/sh\nfor a; do last=$a; done\ncase \"$last\" in\n*round-work) v={work};;\n/stub/graphroot) v={graph};;\n*) v={tmp};;\nesac\nprintf 'Avail\\n%s\\n' $v\n"
-            );
-            testkit::write_exe(d.join("bin/df"), &df);
-            let script = format!("set -uo pipefail\ndisk_need_gib={need}\n{func}disk_preflight\n");
-            let out = std::process::Command::new("bash").arg("-c").arg(script).env_clear().env("HOME", &d)
-                .env("TMPDIR", "/stub/tmp").env("PATH", format!("{}:/usr/bin:/bin", d.join("bin").display())).output().unwrap();
-            (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).into_owned())
-        };
-        let gib: u64 = 1 << 30;
-        let (code, err) = run(10 * gib, 90 * gib, 90 * gib, "40");
-        assert_eq!(code, 3, "{err}");
-        assert!(err.contains("FAULT disk: need 40 GiB, have 10 GiB"), "{err}");
-        assert!(err.contains(&format!("short {} bytes", 30 * gib)), "{err}");
-        assert!(err.contains("round-work"), "{err}");
-        let (code, err) = run(90 * gib, 5 * gib, 90 * gib, "40");
-        assert_eq!(code, 3, "{err}");
-        assert!(err.contains("under /stub/tmp"), "a short TMPDIR is named: {err}");
-        let (code, err) = run(90 * gib, 90 * gib, 7 * gib, "40");
-        assert_eq!(code, 3, "{err}");
-        assert!(err.contains("under /stub/graphroot"), "short container storage is named: {err}");
-        let (code, err) = run(40 * gib, 40 * gib, 40 * gib, "40");
-        assert_eq!(code, 0, "exactly the need is enough: {err}");
-    }
-
-    #[test]
     fn the_remote_script_says_whether_the_template_holds_the_rounds_image() {
         let clone = REMOTE_SCRIPT.find("git clone").unwrap();
         let check = REMOTE_SCRIPT.find("podman image exists").unwrap();
@@ -2840,57 +2772,6 @@ mod tests {
     fn the_round_builds_once_in_a_clean_tree_with_testenvs_own_flags() {
         assert!(!REMOTE_SCRIPT.contains("ln -sfn"), "a target symlink dirties the tree and dangles in the container");
         assert!(REMOTE_SCRIPT.contains(&format!("cargo build -q --profile release --workspace {}", spira_config::build::one_shot_words("release"))));
-    }
-
-    fn env_build_step() -> String {
-        let a = REMOTE_SCRIPT.find("nix_bin=").unwrap();
-        let b = REMOTE_SCRIPT.find("env_path=").unwrap();
-        format!("set -uo pipefail\n{}", &REMOTE_SCRIPT[a..b])
-    }
-
-    fn run_env_build(fail_first: usize, always_fail: bool) -> (i32, String) {
-        let tmp = testkit::TempDir::new("rvm-envbuild");
-        let d = tmp.path().to_path_buf();
-        let nixdir = d.join("nixbin");
-        std::fs::create_dir_all(&nixdir).unwrap();
-        std::fs::create_dir_all(d.join("round-work")).unwrap();
-        std::fs::create_dir_all(d.join(".cache/nix")).unwrap();
-        std::fs::write(d.join(".cache/nix/fetcher-cache-v4.sqlite"), "x").unwrap();
-        std::fs::write(d.join("round-work/flake.nix"), "{}").unwrap();
-        testkit::write_exe(
-            nixdir.join("nix"),
-            "#!/bin/sh\nif [ -e \"$HOME/.cache/nix/fetcher-cache-v4.sqlite\" ] && [ \"$FAIL\" != 0 ]; then echo \"error: path '/nix/store/x-source/flake.nix' does not exist\" >&2; exit 1; fi\nif [ \"$ALWAYS\" = 1 ]; then exit 1; fi\nexit 0\n",
-        );
-        let script = env_build_step().replace("nix_bin=/nix/var/nix/profiles/default/bin", &format!("nix_bin={}", nixdir.display()));
-        let out = std::process::Command::new("bash")
-            .arg("-c")
-            .arg(&script)
-            .env_clear()
-            .env("HOME", &d)
-            .env("PATH", "/usr/bin:/bin")
-            .env("FAIL", fail_first.to_string())
-            .env("ALWAYS", if always_fail { "1" } else { "0" })
-            .output()
-            .unwrap();
-        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).into_owned())
-    }
-
-    #[test]
-    fn a_stale_fetcher_cache_is_dropped_and_the_env_build_retried_naming_its_flake_ref() {
-        let (code, err) = run_env_build(1, false);
-        assert_eq!(code, 0, "{err}");
-        assert!(err.contains("flake ref path:") && err.contains("round-work#spira-env"), "{err}");
-        assert!(err.contains("flake.nix on disk: present"), "{err}");
-    }
-
-    #[test]
-    fn a_clean_env_build_does_not_retry_and_a_persistent_failure_names_the_flake_ref() {
-        let (code, err) = run_env_build(0, false);
-        assert_eq!(code, 0);
-        assert!(!err.contains("retrying"), "{err}");
-        let (code, err) = run_env_build(0, true);
-        assert_eq!(code, 3, "{err}");
-        assert!(err.contains("cannot build spira-env from the round's flake.lock (flake ref path:"), "{err}");
     }
 
     #[test]
@@ -2991,75 +2872,6 @@ mod tests {
         assert!(at < guard && guard < build);
     }
 
-    fn sh(home: &Path, script: &str) -> std::process::Output {
-        std::process::Command::new("bash").arg("-c").arg(script).env_clear().env("HOME", home).env("PATH", "/usr/bin:/bin")
-            .env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t")
-            .output().unwrap()
-    }
-
-    fn art_fns() -> String {
-        let a = REMOTE_SCRIPT.find("art_key() {").unwrap();
-        let end = REMOTE_SCRIPT.find("art_tree=").unwrap();
-        REMOTE_SCRIPT[a..end].to_string()
-    }
-
-    /// The store's wire on a local directory; `body` runs after the functions are defined.
-    fn art_sh(dir: &std::path::Path, body: &str) -> (bool, String) {
-        let script = format!(
-            "set -uo pipefail\ncd {d}\nSTORE={d}/store\nart_get() {{ if cp \"$STORE/$1\" \"$2\" 2>/dev/null; then echo 200; else echo 404; fi; }}\n\
-             art_put() {{ mkdir -p \"$STORE/$(dirname \"$1\")\"; cp \"$2\" \"$STORE/$1\"; }}\n{fns}\n{body}",
-            d = dir.display(), fns = art_fns());
-        let out = sh(dir, &script);
-        (out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
-    }
-
-    const ART_PUBLISHED: &str = "mkdir -p built && printf '#!/bin/sh\\necho one\\n' > built/one && printf '#!/bin/sh\\necho two\\n' > built/two && chmod +x built/one built/two && echo notbin > built/libx.rlib\n\
-         key=$(art_key t1 'deadbeef 1.99.0'); art_store \"$key\" t1 'deadbeef 1.99.0' built\n";
-
-    #[test]
-    fn the_artifact_key_is_the_one_the_release_producer_computes() {
-        let tmp = testkit::TempDir::new("art-key");
-        let (ok, text) = art_sh(tmp.path(), "art_key t1 'deadbeef 1.99.0'");
-        assert!(ok, "{text}");
-        assert_eq!(text.trim(), "55ff5d54bdd1a52763970e49c935c72df12820f8369f1e5d6ca4f4b1c2f56561");
-    }
-
-    #[test]
-    fn a_stored_build_is_fetched_by_the_next_pass_and_logs_a_hit() {
-        let tmp = testkit::TempDir::new("art-hit");
-        let (ok, text) = art_sh(tmp.path(), &format!("{ART_PUBLISHED}art_fetch \"$key\" got && cat got/one got/two; ls got"));
-        assert!(ok, "{text}");
-        assert!(text.contains("artifacts: stored 55ff5d54"), "{text}");
-        assert!(text.contains("artifacts: hit 55ff5d54"), "{text}");
-        assert!(text.contains("echo one") && text.contains("echo two"), "{text}");
-        assert!(!text.contains("libx.rlib"), "only executables are stored: {text}");
-    }
-
-    #[test]
-    fn a_different_key_misses_and_leaves_nothing_behind() {
-        let tmp = testkit::TempDir::new("art-miss");
-        let (ok, text) = art_sh(tmp.path(), &format!("{ART_PUBLISHED}art_fetch \"$(art_key t2 'deadbeef 1.99.0')\" got; echo rc=$?; ls got 2>&1; true"));
-        assert!(ok, "{text}");
-        assert!(text.contains("artifacts: miss") && text.contains("rc=1"), "{text}");
-        assert!(text.contains("No such file"), "{text}");
-    }
-
-    #[test]
-    fn a_damaged_upload_is_never_used() {
-        for (what, damage) in [
-            ("flipped byte", "printf X | dd of=\"$STORE/$key/bin.tar\" bs=1 seek=600 conv=notrunc 2>/dev/null"),
-            ("truncated tarball", "truncate -s 700 \"$STORE/$key/bin.tar\""),
-            ("tarball without manifest", "rm \"$STORE/$key/MANIFEST\""),
-            ("member checksum differs", "sed -i 's/^file [0-9a-f]* one$/file 0000 one/' \"$STORE/$key/MANIFEST\""),
-        ] {
-            let tmp = testkit::TempDir::new("art-bad");
-            let (ok, text) = art_sh(tmp.path(), &format!("{ART_PUBLISHED}{damage}\nart_fetch \"$key\" got; echo rc=$?; ls got 2>&1; true"));
-            assert!(ok, "{what}: {text}");
-            assert!(text.contains("rc=1") && text.contains("artifacts: miss") && !text.contains("hit"), "{what}: {text}");
-            assert!(text.contains("No such file"), "{what}: nothing was installed: {text}");
-        }
-    }
-
     #[test]
     fn the_build_is_skipped_on_a_hit_and_a_miss_stores_what_it_builds() {
         let fetch = REMOTE_SCRIPT.find("if art_fetch \"$art_id\"").expect("fetched before building");
@@ -3067,90 +2879,6 @@ mod tests {
         let store = REMOTE_SCRIPT.find("art_store \"$art_id\"").expect("a build is stored");
         assert!(fetch < build && build < store);
         assert!(REMOTE_SCRIPT[fetch..build].contains("\nelse\n"), "cargo runs only in the miss branch");
-    }
-
-    fn build_section() -> String {
-        let a = REMOTE_SCRIPT.find("art_tree=").unwrap();
-        let end = REMOTE_SCRIPT.find("echo \"round-vm: built the round in").unwrap();
-        let line_end = end + REMOTE_SCRIPT[end..].find('\n').unwrap();
-        REMOTE_SCRIPT[a..line_end].to_string()
-    }
-
-    #[test]
-    fn the_build_section_runs_cargo_once_per_tree_and_a_fake_cargo_that_fails_on_a_hit_is_never_run() {
-        let tmp = testkit::TempDir::new("art-e2e");
-        let bin = tmp.path().join("fakebin");
-        std::fs::create_dir_all(&bin).unwrap();
-        testkit::write_exe(bin.join("rustc"), "#!/bin/sh\nprintf 'rustc 1.99.0\\nrelease: 1.99.0\\ncommit-hash: deadbeef\\n'\n");
-        testkit::write_exe(bin.join("cargo"), &format!(
-            "#!/bin/sh\n[ ! -e {d}/hit-expected ] || {{ echo 'cargo ran on a hit' >&2; exit 99; }}\necho run >> {d}/cargo-runs\nmkdir -p {d}/round-work/target/release\n\
-             printf '#!/bin/sh\\necho one\\n' > {d}/round-work/target/release/one && chmod +x {d}/round-work/target/release/one\n", d = tmp.path().display()));
-        let body = format!(
-            "export PATH={bin}:$PATH SCCACHE_ERROR_LOG=/dev/null sccache_mode=test\n\
-             mkdir round-work && git -C round-work init -q && echo a > round-work/f && git -C round-work add f && git -C round-work commit -qm a\n\
-             section() {{\n{section}\n}}\n\
-             section; echo first=$?\n\
-             rm -rf round-work/target; touch hit-expected\n\
-             section; echo second=$?; round-work/target/release/one\n\
-             rm hit-expected; echo b > round-work/f && git -C round-work commit -qam b\n\
-             section; echo third=$?\n\
-             wc -l < cargo-runs",
-            bin = bin.display(), section = build_section());
-        let (ok, text) = art_sh(tmp.path(), &body);
-        assert!(ok, "{text}");
-        assert!(text.contains("first=0") && text.contains("second=0") && text.contains("third=0"), "{text}");
-        assert_eq!(text.matches("artifacts: stored").count(), 2, "{text}");
-        assert_eq!(text.matches("artifacts: hit").count(), 1, "{text}");
-        assert!(text.contains("used the stored build of this tree; cargo did not run"), "{text}");
-        assert!(!text.contains("cargo ran on a hit"), "{text}");
-        assert!(text.lines().any(|l| l.trim() == "2"), "cargo ran for the two trees, not the hit: {text}");
-    }
-
-    fn start_sccache_fn() -> String {
-        let a = REMOTE_SCRIPT.find("start_sccache() {").unwrap();
-        let b = a + REMOTE_SCRIPT[a..].find("\n}\n").unwrap() + 3;
-        REMOTE_SCRIPT[a..b].to_string()
-    }
-
-    fn run_start_sccache(fail_first: u32) -> (bool, String) {
-        let tmp = testkit::TempDir::new("sccache-start");
-        let dir = tmp.path().to_path_buf();
-        let stub = dir.join("sccache");
-        testkit::write_exe(&stub, &format!(
-            "#!/bin/bash\nif [ \"$1\" = --start-server ]; then n=$(cat {d}/n 2>/dev/null || echo 0); echo $((n+1)) > {d}/n; \
-             [ \"$n\" -ge {fail_first} ] || {{ echo 'sccache: error: Timed out waiting for server startup' >&2; exit 2; }}; fi\nexit 0\n",
-            d = dir.display()));
-        let script = format!("{}\nRUSTC_WRAPPER={}\nif start_sccache; then echo STARTED; else echo FALLBACK; fi\nenv | grep -c ^SCCACHE_STARTUP_TIMEOUT=120$",
-            start_sccache_fn(), stub.display());
-        let out = sh(&dir, &script);
-        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        (text.contains("STARTED"), text)
-    }
-
-    #[test]
-    fn a_server_start_that_times_out_once_is_retried_and_the_build_proceeds() {
-        let (started, log) = run_start_sccache(1);
-        assert!(started, "{log}");
-        assert!(log.contains("start failed (attempt 1)") && log.contains("started (attempt 2)"), "{log}");
-        assert!(log.lines().any(|l| l == "1"), "start-up deadline raised for the server: {log}");
-    }
-
-    #[test]
-    fn a_server_that_never_starts_falls_back_to_no_wrapper_and_the_log_says_so() {
-        let (started, log) = run_start_sccache(99);
-        assert!(!started, "{log}");
-        let fb = REMOTE_SCRIPT.find("building WITHOUT sccache").expect("fallback is named in the log");
-        let wrapper_off = REMOTE_SCRIPT.find("export RUSTC_WRAPPER=\"\"").expect("the wrapper is dropped");
-        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
-        assert!(fb < wrapper_off && wrapper_off < build);
-        assert!(REMOTE_SCRIPT.contains("built $sccache_mode"), "the build failure line names which happened");
-        assert!(REMOTE_SCRIPT.contains("tail -40 \"$SCCACHE_ERROR_LOG\""), "error log kept on build failure");
-    }
-
-    fn unit_stream_fn() -> String {
-        let a = REMOTE_SCRIPT.find("unit_stream() {").unwrap();
-        let b = a + REMOTE_SCRIPT[a..].find("\n}\n").unwrap() + 3;
-        REMOTE_SCRIPT[a..b].to_string()
     }
 
     #[test]
@@ -3218,164 +2946,12 @@ mod tests {
     }
 
     #[test]
-    fn a_cargo_log_streams_one_line_per_binary_in_order_and_a_red_when_it_fails() {
-        let d = TempDir::new();
-        let log = "   Running unittests src/lib.rs (target/release/deps/alpha-0123abcd)\nrunning 1 test\ntest result: ok. 1 passed; 0 failed\n\
-                   \x20    Running tests/it.rs (target/release/deps/it-feedbeef)\ntest result: FAILED. 0 passed; 1 failed\n\
-                   \x20  Doc-tests beta\ntest result: ok. 0 passed; 0 failed\n";
-        fs::write(d.path().join("cargo.log"), log).unwrap();
-        let script = format!("{}\nunit_stream 3 ~/prog < cargo.log", unit_stream_fn());
-        let out = std::process::Command::new("bash").arg("-c").arg(&script).current_dir(d.path()).env_clear().env("HOME", d.path()).env("PATH", "/usr/bin:/bin").output().unwrap();
-        let err = String::from_utf8_lossy(&out.stderr);
-        let lines: Vec<&str> = err.lines().collect();
-        assert_eq!(lines, ["round-vm: UNIT-TEST alpha ok (1/3)", "round-vm: UNIT-TEST it FAILED (2/3)", "round-vm: UNIT-TEST doc-tests beta ok (3/3)"], "{err}");
-        assert_eq!(fs::read_to_string(d.path().join("prog")).unwrap().trim(), "3 3 it");
-    }
-
-    fn unit_fns() -> String {
-        let a = REMOTE_SCRIPT.find("unit_hang_scan() {").unwrap();
-        let b = REMOTE_SCRIPT.find("# The round's one source of config").unwrap();
-        REMOTE_SCRIPT[a..b].to_string()
-    }
-
-    #[test]
-    fn a_unit_test_libtest_flags_as_slow_is_named_with_its_binary() {
-        let d = TempDir::new();
-        let log = "   Running unittests src/lib.rs (target/unittest/deps/alpha-0123abcd)\nrunning 2 tests\ntest a::quick ... ok\n\
-                   test a::sleeps_forever has been running for over 60 seconds\n";
-        let quiet = "   Running unittests src/lib.rs (target/unittest/deps/alpha-0123abcd)\ntest a::quick ... ok\n";
-        fs::write(d.path().join("hung.log"), log).unwrap();
-        fs::write(d.path().join("quiet.log"), quiet).unwrap();
-        let run = |f: &str| {
-            let script = format!("{}\nunit_hang_scan < {f}", unit_fns());
-            let o = std::process::Command::new("bash").arg("-c").arg(&script).current_dir(d.path()).output().unwrap();
-            String::from_utf8_lossy(&o.stdout).to_string()
-        };
-        assert_eq!(run("hung.log"), "a::sleeps_forever\ttarget/unittest/deps/alpha-0123abcd\n");
-        assert_eq!(run("quiet.log"), "", "a log with no slow test names nothing");
-    }
-
-    #[test]
-    fn the_watcher_kills_a_hung_test_binary_and_reports_it_while_the_job_runs() {
-        let d = TempDir::new();
-        fs::write(d.path().join("cargo.log"), "   Running unittests src/lib.rs (target/unittest/deps/sleepy-feedbeef)\ntest t::hangs has been running for over 60 seconds\n").unwrap();
-        let script = format!(
-            "{}\ncp /bin/bash sleepy-feedbeef\n./sleepy-feedbeef -c 'read -t 300 && :' </dev/zero &\njob=$!\nunit_hang_watch cargo.log hung \"$job\" &\nw=$!\nwait \"$job\"; echo job-rc=$?\nkill $w 2>/dev/null; cat hung",
-            unit_fns()
-        );
-        let o = std::process::Command::new("bash").arg("-c").arg(&script).current_dir(d.path()).output().unwrap();
-        let out = String::from_utf8_lossy(&o.stdout);
-        let err = String::from_utf8_lossy(&o.stderr);
-        assert!(out.contains("job-rc=137"), "{out}{err}");
-        assert!(out.contains("t::hangs\ttarget/unittest/deps/sleepy-feedbeef"), "{out}");
-        assert!(err.contains("UNIT-TESTS: HUNG test=t::hangs binary=sleepy-feedbeef"), "{err}");
-    }
-
-    #[test]
     fn the_unit_run_is_watched_for_hung_tests_and_a_hang_makes_the_round_red() {
         let run = REMOTE_SCRIPT.find("unit_cargo --no-fail-fast").unwrap();
         let watch = REMOTE_SCRIPT.find("unit_hang_watch ~/round-unit-tests.log").unwrap();
         assert!(run < watch);
         assert!(REMOTE_SCRIPT.contains("[ ! -s \"$unit_hung\" ] || [ \"$unit_rc\" -ne 0 ] || unit_rc=1"));
         assert!(REMOTE_SCRIPT.contains("binary=${running:-none-started}; killed"), "the post-guard kill names the binary running");
-    }
-
-    /// The lint, the fences and the early exit on a red one: everything before the unit tests.
-    fn lint_segment() -> String {
-        let a = REMOTE_SCRIPT.find("lint_rc=0\nlint_secs=0").unwrap();
-        let b = REMOTE_SCRIPT.find("# THE WORKSPACE'S OWN TESTS").unwrap();
-        REMOTE_SCRIPT[a..b].to_string()
-    }
-
-    /// A round of two members on a base; the stub lint reports `hit` (exit 1) or nothing (exit 0).
-    fn lint_fixture(d: &TempDir, hit: Option<&str>) -> std::process::Output {
-        fence_fixture(d, hit, 0, 0)
-    }
-
-    /// As [`lint_fixture`], with the lifecycle-guard and boundary fences exiting `guard_rc` and `boundary_rc`.
-    fn fence_fixture(d: &TempDir, hit: Option<&str>, guard_rc: i32, boundary_rc: i32) -> std::process::Output {
-        let home = d.path();
-        let w = home.join("round-work");
-        fs::create_dir_all(w.join("target/release")).unwrap();
-        testkit::write_exe(w.join("target/release/lifecycle-guard"), &format!("#!/bin/sh\n[ \"$1\" = --gate ] || exit 9\necho 'guard finding'\nexit {guard_rc}\n"));
-        fs::create_dir_all(w.join("spira")).unwrap();
-        fs::write(w.join("spira/boundary.sh"), format!("[ \"$1\" = check ] || exit 9\necho 'README is stale'\nexit {boundary_rc}\n")).unwrap();
-        listed_fixture(d, hit, FAKE_FENCES)
-    }
-
-    /// A round of two members on a base, running the shipped `fences` list after the stub lint.
-    fn listed_fixture(d: &TempDir, hit: Option<&str>, fences: &str) -> std::process::Output {
-        let home = d.path();
-        let w = home.join("round-work");
-        fs::create_dir_all(w.join("target/release")).unwrap();
-        let stub = match hit {
-            Some(h) => format!("#!/bin/sh\necho '{h}'\nexit 1\n"),
-            None => "#!/bin/sh\nexit 0\n".to_string(),
-        };
-        testkit::write_exe(w.join("target/release/spira-lint"), &stub);
-        let lint = lint_segment();
-        let script = format!(
-            "set -e; cd ~/round-work; git init -q -b main .; echo x > base.txt; git add base.txt; git commit -qm base; \
-             git update-ref refs/remotes/origin/base HEAD; \
-             echo 1 > ok.rs; git add ok.rs; git commit -qm 'spira: round r-1: merge sp-clean (aaa)'; \
-             echo 2 > bad.rs; git add bad.rs; git commit -qm 'spira: round r-1: merge sp-dirty (bbb)'; \
-             set +e; ( export RUSTC_WRAPPER=/round/sccache; lint=1; fences={}; {lint}\necho UNITS-AND-SUITES-REACHED ); echo rc=$?",
-            shell_quote(fences)
-        );
-        sh(home, &script)
-    }
-
-    fn results_of(d: &TempDir) -> PathBuf {
-        d.path().join("round-work/.runtime/spira/batch-results")
-    }
-
-    #[test]
-    fn a_shipped_list_of_three_fences_runs_all_three_against_the_landing_ref() {
-        let d = TempDir::new();
-        let fences = "one\techo \"one base=$SPIRA_GATE_BASE wrapper=${RUSTC_WRAPPER:-}\" > one.ran\ntwo\techo two > two.ran; if read -r x; then echo \"$x\" > stole; fi\nthree\techo three > three.ran\n";
-        let o = listed_fixture(&d, None, fences);
-        let out = String::from_utf8_lossy(&o.stdout);
-        assert!(out.contains("rc=0") && out.contains("UNITS-AND-SUITES-REACHED"), "{out}{}", String::from_utf8_lossy(&o.stderr));
-        let w = d.path().join("round-work");
-        assert_eq!(fs::read_to_string(w.join("one.ran")).unwrap(), "one base=origin/base wrapper=\n");
-        assert!(w.join("two.ran").is_file() && w.join("three.ran").is_file());
-        let times = fs::read_to_string(results_of(&d).join("fence-times")).unwrap();
-        let names: Vec<&str> = times.lines().map(|l| l.split(' ').next().unwrap()).collect();
-        assert_eq!(names, ["one", "two", "three"], "{times}");
-        assert!(times.lines().all(|l| l.ends_with(" 0")), "{times}");
-        assert!(!w.join("stole").exists() && !fs::read_dir(results_of(&d)).unwrap().flatten().any(|e| e.path().extension().is_some_and(|x| x == "result")), "a green fence leaves no .result at the top of the results, where the host would take it for the suites' leaf");
-    }
-
-    /// The environment `unit_cargo` hands cargo, after the round's setup exports and, with
-    /// `fences`, after the lint and fence segment has run them.
-    fn unit_env(fences: Option<&str>) -> String {
-        let d = TempDir::new();
-        let home = d.path();
-        let w = home.join("round-work");
-        fs::create_dir_all(w.join("target/release")).unwrap();
-        testkit::write_exe(w.join("target/release/spira-lint"), "#!/bin/sh\nexit 0\n");
-        fs::create_dir_all(home.join("spira-env/bin")).unwrap();
-        testkit::write_exe(home.join("spira-env/bin/cargo"), "#!/bin/sh\nenv | sort > \"$HOME/unit.env\"\n");
-        let f = REMOTE_SCRIPT.find("unit_cargo() {").unwrap();
-        let unit_fn = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap() + 3];
-        let segment = fences.map(|l| format!("lint=1; fences={}; {}", shell_quote(l), lint_segment())).unwrap_or_default();
-        let script = format!(
-            "set -e; cd ~/round-work; git init -q -b main .; echo x > base.txt; git add base.txt; git commit -qm base; \
-             git update-ref refs/remotes/origin/base HEAD; set +e\n\
-             export CARGO_HOME=\"$HOME/cargo\" RUSTC_WRAPPER=/round/sccache SCCACHE_WEBDAV_ENDPOINT=http://h:9431 SCCACHE_WEBDAV_KEY_PREFIX=/ unit_cov_env=\n\
-             {unit_fn}{segment}\nunit_cargo --no-fail-fast; echo rc=$?"
-        );
-        let o = sh(home, &script);
-        assert!(String::from_utf8_lossy(&o.stdout).contains("rc=0"), "{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
-        fs::read_to_string(home.join("unit.env")).unwrap().replace(&home.display().to_string(), "$HOME")
-    }
-
-    #[test]
-    fn the_unit_tier_gets_the_same_environment_with_and_without_the_fence_loop() {
-        let leaky = "one\texport OTEL_EXPORTER_OTLP_ENDPOINT=http://x:4318 SCCACHE_DIR=/elsewhere LEAK=1; true\ntwo\tunset HOME PATH; true\n";
-        let without = unit_env(None);
-        assert!(without.contains("RUSTC_WRAPPER=/round/sccache"), "positive control: the unit tier's own wrapper is seen: {without}");
-        assert_eq!(unit_env(Some(leaky)), without, "a fence's exports and unsets stay in its subshell");
     }
 
     #[test]
@@ -3414,263 +2990,11 @@ mod tests {
         }
     }
 
-    /// Runs REMOTE_SCRIPT's two test phases with a stub `unit_cargo`: the unit phase (`--lib`)
-    /// prints `unit` and exits `unit_rc`; the integration phase (`--test`) prints `integ` and exits
-    /// `integ_rc`. Between the phases' launch and their collection stands the marker a pass that
-    /// goes on to the suites prints, `SUITES-REACHED`.
-    fn phases_run(d: &TempDir, unit: &str, unit_rc: i32, integ: &str, integ_rc: i32) -> std::process::Output {
-        let a = REMOTE_SCRIPT.find("# THE WORKSPACE'S OWN TESTS").unwrap();
-        let b = REMOTE_SCRIPT.find("# THE CAP CLOCK runs").unwrap();
-        let c = REMOTE_SCRIPT.find("if kill -0 \"$integ_pid\" 2>/dev/null; then echo").unwrap();
-        let e = REMOTE_SCRIPT.find("if [ -n \"$unit_cov_env\" ]; then").unwrap();
-        fs::write(d.path().join("unit.log"), unit).unwrap();
-        fs::write(d.path().join("integ.log"), integ).unwrap();
-        fs::write(d.path().join("round-unit-build.log"), "  Executable unittests src/lib.rs (a)\n  Executable tests/it.rs (b)\n").unwrap();
-        let script = format!(
-            "{fns}\nunit_cargo() {{ case \"$*\" in *--lib*) cat \"$HOME/unit.log\"; return {unit_rc};; *--doc*) return 0;; *) cat \"$HOME/integ.log\"; return {integ_rc};; esac; }}\n\
-             unit_total=2; cap=60; post_guard=60; unit_cov_env=\n\
-             sleep 300 & sampler_pid=$!\nset +e; ( {launch}\necho SUITES-REACHED; rc=0\n{collect}\necho \"rc=$rc\" ); echo exit=$?; kill $sampler_pid 2>/dev/null",
-            fns = unit_fns(),
-            launch = &REMOTE_SCRIPT[a..b],
-            collect = &REMOTE_SCRIPT[c..e],
-        );
-        sh(d.path(), &script)
-    }
-
-    const GREEN_LOG: &str = "   Running unittests src/lib.rs (target/unittest/deps/alpha-0123abcd)\ntest a::fine ... ok\ntest result: ok. 1 passed; 0 failed\n";
-
-    #[test]
-    fn a_red_unit_tier_writes_its_record_and_ends_the_pass_before_any_suite() {
-        let d = TempDir::new();
-        let log = "   Running unittests src/lib.rs (target/unittest/deps/alpha-0123abcd)\nrunning 2 tests\ntest a::fine ... ok\ntest a::\"quoted\" ... FAILED\ntest a::broken ... FAILED\n\
-                   test result: FAILED. 1 passed; 2 failed\n";
-        let o = phases_run(&d, log, 101, GREEN_LOG, 0);
-        let out = String::from_utf8_lossy(&o.stdout);
-        let err = String::from_utf8_lossy(&o.stderr);
-        assert!(out.contains("exit=1") && !out.contains("SUITES-REACHED"), "a unit red ends the pass before the suites: {out}{err}");
-        assert!(err.contains("UNIT-TESTS RED before the suites: no suite was run"), "{err}");
-        assert!(err.contains("round-vm: UNIT-TESTS took ") && !err.contains("INTEGRATION-TESTS"), "the integration phase never starts: {err}");
-        let r = results_of(&d);
-        let rec: Value = serde_json::from_str(&fs::read_to_string(r.join("unit.json")).unwrap()).expect("unit.json is JSON");
-        assert_eq!((rec["stage"].as_str(), rec["verdict"].as_str(), rec["ran_before_suites"].as_bool()), (Some("unit-tests"), Some("red"), Some(true)), "{rec}");
-        assert_eq!(rec["failed"], serde_json::json!(["a::\"quoted\"", "a::broken"]), "{rec}");
-        assert_eq!(rec["cause"].as_str(), Some("exit status 101"), "{rec}");
-        assert_eq!(rec["last_binary"].as_str(), Some("alpha-0123abcd"), "{rec}");
-        assert!(fs::read_to_string(r.join("unit-tests.out")).unwrap().starts_with("UNIT-TESTS-CAUSE: exit status 101"));
-        assert!(!fs::read_dir(&r).unwrap().flatten().any(|e| e.path().extension().is_some_and(|x| x == "result")), "no .result is invented for a step that is not a suite");
-    }
-
-    #[test]
-    fn a_green_unit_tier_reports_its_pass_and_goes_on_to_the_suites() {
-        let d = TempDir::new();
-        let o = phases_run(&d, GREEN_LOG, 0, GREEN_LOG, 0);
-        let out = String::from_utf8_lossy(&o.stdout);
-        let err = String::from_utf8_lossy(&o.stderr);
-        assert!(out.contains("SUITES-REACHED") && out.contains("rc=0") && out.contains("exit=0"), "{out}{err}");
-        assert!(err.contains("UNIT-TESTS: PASS (1 test binaries)") && err.contains("INTEGRATION-TESTS: PASS (1 test binaries)"), "{err}");
-        assert!(err.contains("round-vm: UNIT-TESTS took ") && err.contains("round-vm: INTEGRATION-TESTS took "), "{err}");
-        assert!(!results_of(&d).join("unit.json").exists() && !results_of(&d).join("integration.json").exists(), "green phases write no red record");
-    }
-
-    #[test]
-    fn a_red_integration_phase_beside_the_suites_records_its_red_and_makes_the_pass_red() {
-        let d = TempDir::new();
-        let integ = "     Running tests/journal_dolt.rs (target/unittest/deps/journal_dolt-0123abcd)\ntest replays_in_order ... FAILED\ntest result: FAILED. 0 passed; 1 failed\n";
-        let o = phases_run(&d, GREEN_LOG, 0, integ, 101);
-        let out = String::from_utf8_lossy(&o.stdout);
-        let err = String::from_utf8_lossy(&o.stderr);
-        assert!(out.contains("SUITES-REACHED") && out.contains("rc=1"), "an integration red does not stop the suites, and makes the pass red: {out}{err}");
-        assert!(err.contains("INTEGRATION-TESTS: FAIL (integration run rc=101)"), "{err}");
-        let r = results_of(&d);
-        let rec: Value = serde_json::from_str(&fs::read_to_string(r.join("integration.json")).unwrap()).expect("integration.json is JSON");
-        assert_eq!((rec["stage"].as_str(), rec["verdict"].as_str(), rec["ran_before_suites"].as_bool()), (Some("integration-tests"), Some("red"), Some(false)), "{rec}");
-        assert_eq!(rec["failed"], serde_json::json!(["replays_in_order"]), "{rec}");
-        assert_eq!(rec["last_binary"].as_str(), Some("journal_dolt-0123abcd"), "{rec}");
-        assert!(fs::read_to_string(r.join("integration-tests.out")).unwrap().starts_with("INTEGRATION-TESTS-CAUSE: exit status 101"));
-        assert!(!r.join("unit.json").exists());
-    }
-
-    #[test]
-    fn a_red_second_fence_writes_its_result_red_and_ends_the_pass() {
-        let d = TempDir::new();
-        let o = listed_fixture(&d, None, "one\ttrue\ntwo\techo broken; exit 3\nthree\ttrue\n");
-        let out = String::from_utf8_lossy(&o.stdout);
-        let err = String::from_utf8_lossy(&o.stderr);
-        assert!(out.contains("rc=1") && !out.contains("UNITS-AND-SUITES-REACHED"), "a red fence ends the pass before any unit test or suite: {out}{err}");
-        assert!(err.contains("FENCE two: RED (rc=3)") && !err.contains("FENCE one") && !err.contains("FENCE three"), "{err}");
-        let r = results_of(&d);
-        assert!(fs::read_to_string(r.join("fence-two.result")).unwrap().starts_with("red "));
-        assert!(fs::read_to_string(r.join("fence-two.out")).unwrap().contains("broken"));
-        assert!(!r.join("fence-one.result").exists());
-        assert!(fs::read_to_string(r.join("fence-times")).unwrap().contains("two "), "a red fence's seconds are recorded too");
-        assert!(fs::read_to_string(r.join("run.events")).unwrap().contains("verdict RED lint-or-fence"));
-    }
-
-    #[test]
-    fn a_round_whose_member_adds_a_lint_hit_goes_red_naming_that_member() {
-        let d = TempDir::new();
-        let lint = lint_segment();
-        assert!(lint.contains("--base origin/base"), "the lint is judged against the mirrored landing ref");
-        let o = lint_fixture(&d, Some("call-deadline: bad.rs:3: a call without a deadline"));
-        let err = String::from_utf8_lossy(&o.stderr);
-        let out = String::from_utf8_lossy(&o.stdout);
-        assert!(out.contains("rc=1"), "{out}{err}");
-        assert!(err.contains("member=sp-dirty call-deadline: bad.rs:3"), "{err}");
-        assert!(!err.contains("member=sp-clean"), "{err}");
-        let res = fs::read_to_string(d.path().join("round-work/.runtime/spira/batch-results/spira-lint.result")).unwrap();
-        assert!(res.starts_with("red "), "{res}");
-        assert!(err.contains("of the 900s cap"), "the lint's wall time is reported: {err}");
-        assert!(!out.contains("UNITS-AND-SUITES-REACHED"), "a red lint ends the pass before any unit test or suite: {out}");
-        assert!(err.contains("no unit test or suite was run"), "{err}");
-    }
-
-    #[test]
-    fn a_round_that_breaks_only_a_base_fence_goes_red_naming_the_fence() {
-        let d = TempDir::new();
-        let o = fence_fixture(&d, None, 0, 1);
-        let err = String::from_utf8_lossy(&o.stderr);
-        assert!(String::from_utf8_lossy(&o.stdout).contains("rc=1"), "{err}");
-        assert!(err.contains("FENCE boundary: RED"), "{err}");
-        assert!(!err.contains("FENCE lifecycle-guard"), "{err}");
-        assert!(!String::from_utf8_lossy(&o.stdout).contains("UNITS-AND-SUITES-REACHED"), "a red fence ends the pass before any unit test or suite");
-        let r = d.path().join("round-work/.runtime/spira/batch-results");
-        assert!(fs::read_to_string(r.join("fence-boundary.result")).unwrap().starts_with("red "));
-        assert!(fs::read_to_string(r.join("fence-boundary.out")).unwrap().contains("README is stale"));
-        assert!(!r.join("spira-lint.result").exists(), "the lint was clean");
-    }
-
-    #[test]
-    fn a_lifecycle_guard_finding_alone_makes_the_round_red() {
-        let d = TempDir::new();
-        let o = fence_fixture(&d, None, 1, 0);
-        assert!(String::from_utf8_lossy(&o.stderr).contains("FENCE lifecycle-guard: RED"));
-        assert!(d.path().join("round-work/.runtime/spira/batch-results/fence-lifecycle-guard.result").exists());
-    }
-
-    #[test]
-    fn a_hit_in_a_file_no_member_touched_is_the_bases_own() {
-        let d = TempDir::new();
-        let o = lint_fixture(&d, Some("call-deadline: base.txt:1: old"));
-        assert!(String::from_utf8_lossy(&o.stderr).contains("member=the base itself"), "{}", String::from_utf8_lossy(&o.stderr));
-    }
-
-    #[test]
-    fn a_clean_round_is_unaffected_by_the_lint() {
-        let d = TempDir::new();
-        let o = lint_fixture(&d, None);
-        let out = String::from_utf8_lossy(&o.stdout);
-        assert!(out.contains("rc=0"), "{out}{}", String::from_utf8_lossy(&o.stderr));
-        assert!(out.contains("UNITS-AND-SUITES-REACHED"), "a clean lint goes on to the units and suites: {out}");
-        assert!(!results_of(&d).join("spira-lint.result").exists() && !results_of(&d).join("run.events").exists());
-        assert!(String::from_utf8_lossy(&o.stderr).contains("of the 900s cap"));
-    }
-
     #[test]
     fn base_is_parsed_and_asks_the_job_to_lint() {
         let a = parse_run_args(&["/t".into(), "--base".into(), "local/main".into()]).unwrap();
         assert_eq!(a.base.as_deref(), Some("local/main"));
         assert!(parse_run_args(&["/t".into()]).unwrap().base.is_none());
-    }
-
-    fn git_out(dir: &Path, a: &[&str]) -> String {
-        let o = std::process::Command::new("git").arg("-C").arg(dir).args(a).output().unwrap();
-        assert!(o.status.success(), "{a:?}");
-        String::from_utf8_lossy(&o.stdout).trim().to_string()
-    }
-
-    fn foreign_run(entry: &str) -> (std::process::Output, String) {
-        foreign_run_expecting(entry, None)
-    }
-
-    fn foreign_run_expecting(entry: &str, expect: Option<&str>) -> (std::process::Output, String) {
-        foreign_run_with(entry, expect, "", |_| {}, &[])
-    }
-
-    fn foreign_run_dir(entry: &str) -> (std::process::Output, String, String) {
-        foreign_run_full(entry, None, "", |_| {}, &[])
-    }
-
-    fn foreign_run_with(entry: &str, expect: Option<&str>, toolchain: &str, setup: impl Fn(&Path), env: &[(&str, &str)]) -> (std::process::Output, String) {
-        let (out, verdict, _) = foreign_run_full(entry, expect, toolchain, setup, env);
-        (out, verdict)
-    }
-
-    fn foreign_run_full(entry: &str, expect: Option<&str>, toolchain: &str, setup: impl Fn(&Path), env: &[(&str, &str)]) -> (std::process::Output, String, String) {
-        let home = TempDir::new();
-        setup(home.path());
-        let src = home.path().join("src");
-        fs::create_dir_all(&src).unwrap();
-        for a in [&["init", "-q"][..], &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]] {
-            assert!(std::process::Command::new("git").arg("-C").arg(&src).args(a).status().unwrap().success());
-        }
-        git_out(&src, &["update-ref", "refs/rounds/t", "HEAD"]);
-        let sha = expect.map(str::to_string).unwrap_or_else(|| git_out(&src, &["rev-parse", "HEAD"]));
-        let script = FOREIGN_SCRIPT.replace("\"git://${host_addr}:${port}/mirror.git\"", &format!("'{}'", src.display()));
-        assert_ne!(script, FOREIGN_SCRIPT);
-        let out = std::process::Command::new("bash")
-            .args(["-c", &script, "x", "h", "1", "", "", toolchain, "", "", "", "", "", "", "", "refs/rounds/t", &sha, entry])
-            .env_clear()
-            .envs(env.iter().copied())
-            .env("HOME", home.path())
-            .env("PATH", std::env::var("PATH").unwrap())
-            .output()
-            .unwrap();
-        let res = home.path().join("round-work/.runtime/spira/batch-results");
-        let verdict = fs::read_to_string(res.join("ci.result")).unwrap_or_default();
-        (out, verdict, fs::read_to_string(res.join("ci.out")).unwrap_or_default())
-    }
-
-    #[test]
-    fn the_foreign_script_checks_out_the_round_commit_and_refuses_another_naming_both() {
-        let (out, _) = foreign_run("exit 0");
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        let other = "0123456789012345678901234567890123456789";
-        let (out, verdict) = foreign_run_expecting("exit 0", Some(other));
-        assert_eq!(out.status.code(), Some(2));
-        let err = String::from_utf8_lossy(&out.stderr);
-        assert!(err.contains(other) && err.contains("expected the round's commit"), "{err}");
-        assert!(verdict.is_empty());
-    }
-
-    #[test]
-    fn the_foreign_script_runs_the_repos_entry_and_its_exit_is_the_verdict() {
-        let (out, verdict) = foreign_run("echo tier-one; exit 0");
-        assert!(out.status.success());
-        assert!(verdict.starts_with("ok "), "{verdict}");
-        let (out, verdict) = foreign_run("echo isolation tier failed; exit 7");
-        assert_eq!(out.status.code(), Some(1));
-        assert!(verdict.starts_with("red ") && verdict.trim_end().ends_with(" 7"), "{verdict}");
-        assert!(String::from_utf8_lossy(&out.stderr).contains("isolation tier failed"));
-    }
-
-    #[test]
-    fn the_foreign_script_leaves_the_entrys_output_and_exit_where_the_mender_reads_it() {
-        let (_, _, out) = foreign_run_dir("echo tier-one; echo oops >&2; exit 7");
-        let (_, _, early) = foreign_run_full("exit 0", Some("0123456789012345678901234567890123456789"), "", |_| {}, &[]);
-        assert!(early.contains("expected the round's commit") && early.contains("exited 2"), "{early}");
-        assert!(out.contains("tier-one") && out.contains("oops") && out.contains("ci_entry exited 7"), "{out}");
-    }
-
-    #[test]
-    fn the_foreign_script_resolves_rust_tools_through_rustup_from_the_trees_pin() {
-        use std::os::unix::fs::symlink;
-        let setup = |home: &Path| {
-            let bin = home.join(".cargo/bin");
-            fs::create_dir_all(&bin).unwrap();
-            let rustup = "#!/bin/sh\ncase \"${0##*/}\" in\n  rustup) echo \"$@\" > \"$HOME/rustup.args\" ;;\n  rustc) echo \"rustc via proxy pin=${RUSTUP_TOOLCHAIN:-none}\" ;;\nesac\n";
-            testkit::write_exe(bin.join("rustup"), rustup);
-            let image = home.join("image-rustc");
-            testkit::write_exe(&image, "#!/bin/sh\necho rustc 1.99.1 direct\n");
-            symlink(&image, bin.join("rustc")).unwrap();
-        };
-        let (out, _) = foreign_run_with("rustc -vV; echo \"[$RUSTUP_TOOLCHAIN]\"", None, "1.94", setup, &[("RUSTC", "/bin/false")]);
-        let err = String::from_utf8_lossy(&out.stderr);
-        assert!(out.status.success(), "{err}");
-        assert!(err.contains("rustc via proxy pin=1.94"), "{err}");
-        assert!(!err.contains("1.99.1"), "{err}");
-        assert!(err.contains("[1.94]"), "{err}");
-        let (out, _) = foreign_run_with("rustc -vV", None, "", setup, &[]);
-        assert!(!String::from_utf8_lossy(&out.stderr).contains("1.99.1"));
     }
 
     #[test]
@@ -3709,38 +3033,6 @@ mod tests {
         assert!(REMOTE_SCRIPT.contains("[ -n \"$testenv_limits\" ] ||"), "no limits sent is a refusal");
     }
 
-    fn resume_block() -> String {
-        let a = REMOTE_SCRIPT.find("if [ -z \"$resume_url\" ]; then").expect("the resume block");
-        let b = a + REMOTE_SCRIPT[a..].find("\nfi\nsig_out=").expect("the block ends before the signal sampler") + 3;
-        REMOTE_SCRIPT[a..b].to_string()
-    }
-
-    /// Runs the script's own resume block with a stub `aws` that exits `aws_rc`.
-    fn run_resume_block(url: &str, creds: bool, aws_rc: i32) -> (String, String) {
-        let tmp = testkit::TempDir::new("resume-block");
-        let home = tmp.path().join("home");
-        fs::create_dir_all(&home).unwrap();
-        if creds {
-            fs::create_dir_all(home.join("round-resume-aws")).unwrap();
-            fs::write(home.join("round-resume-aws/credentials"), "[default]\n").unwrap();
-        }
-        let bin = tmp.path().join("bin");
-        fs::create_dir_all(&bin).unwrap();
-        let stub = bin.join("aws");
-        testkit::write_exe(&stub, &format!("#!/bin/bash\necho \"CREDS=${{AWS_SHARED_CREDENTIALS_FILE:-}}\" > \"$HOME/aws-saw\"\n[ {aws_rc} -eq 0 ] || {{ echo 'AccessDenied: no write to the prefix' >&2; exit {aws_rc}; }}\nif [ \"$8\" = - ]; then cat > \"$HOME/obj\"; else cat \"$HOME/obj\"; fi\n"));
-        let script = format!("resume_url={}\n{}\necho \"RESUME=${{SPIRA_TESTENV_RESUME:-unset}}\"", shell_quote(url), resume_block());
-        let out = std::process::Command::new("bash")
-            .args(["-c", &script])
-            .env_clear()
-            .env("HOME", &home)
-            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
-            .output()
-            .unwrap();
-        let log = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        let saw = fs::read_to_string(home.join("aws-saw")).unwrap_or_default();
-        (log, saw)
-    }
-
     #[test]
     fn an_early_lint_red_exit_stops_the_sampler_that_holds_the_ssh_channel_open() {
         let red = REMOTE_SCRIPT.find("LINT/FENCE RED before the suites").expect("the early exit");
@@ -3770,26 +3062,6 @@ mod tests {
     }
 
     #[test]
-    fn a_vm_with_a_writable_resume_prefix_records_to_it_with_the_pushed_credentials() {
-        let (log, saw) = run_resume_block("s3://bkt/pre", true, 0);
-        assert!(log.contains("RESUME=s3://bkt/pre"), "{log}");
-        assert!(saw.contains("round-resume-aws/credentials"), "the aws call reads the pushed credentials: {saw}");
-    }
-
-    #[test]
-    fn a_resume_prefix_the_vm_cannot_write_is_a_named_failure_not_a_silent_empty_store() {
-        let (log, _) = run_resume_block("s3://bkt/pre", true, 1);
-        assert!(log.contains("RESUME-FAILED") && log.contains("s3://bkt/pre") && log.contains("AccessDenied"), "{log}");
-        assert!(log.contains("RESUME=unset"), "a store that cannot be written is not exported: {log}");
-    }
-
-    #[test]
-    fn no_configured_resume_prefix_is_said_not_skipped() {
-        let (log, _) = run_resume_block("", false, 0);
-        assert!(log.contains("RESUME-OFF") && log.contains("RESUME=unset"), "{log}");
-    }
-
-    #[test]
     fn resume_credentials_reach_only_a_proxmox_vm_and_never_the_command_line() {
         let job = BatchJob {
             host_addr: "h".into(), mirror_port: 1, suites: None, maxpar: 1, toolchain: None, cache_home: None,
@@ -3811,54 +3083,6 @@ mod tests {
         assert!(check < clone, "cargo must be checked before the clone, not after it fails");
         let path_export = REMOTE_SCRIPT.find(r#"export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin""#).expect("puts cargo's install dirs on PATH");
         assert!(path_export < check, "PATH must be widened before the check that reads it");
-    }
-
-    /// Runs only REMOTE_SCRIPT's guard, with no `cargo` reachable — never reaching the git
-    /// clone or the disk state a real round would leave behind.
-    #[test]
-    fn remote_script_fails_fast_and_named_with_no_cargo_on_path() {
-        // REMOTE_SCRIPT resets PATH to fixed system directories; where one of them carries a
-        // cargo (a round VM does), "no cargo on PATH" cannot be arranged here: nothing to judge.
-        if ["/usr/local/bin", "/usr/local/sbin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]
-            .iter()
-            .any(|d| std::path::Path::new(d).join("cargo").exists())
-        {
-            return;
-        }
-        let d = TempDir::new();
-        let cache_home = d.path().join("cargo-home");
-        let out = std::process::Command::new("bash")
-            .arg("-c")
-            .arg(REMOTE_SCRIPT)
-            .arg("round-vm-test")
-            .args(["host", "9430", "", "16", ""])
-            .arg(&cache_home)
-            .args(["", "60", "900", "600", "", "", "refs/rounds/t", "abc", "", "testenv_suite_cap = 600\n"])
-            .env("PATH", "/usr/bin:/bin")
-            .env("HOME", "/nonexistent-home")
-            .output()
-            .unwrap();
-        assert_eq!(out.status.code(), Some(127));
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(stderr.contains("cargo not found"), "{stderr}");
-    }
-
-    #[test]
-    fn an_image_without_a_cache_home_record_is_refused_out_loud() {
-        // The block runs under REMOTE_SCRIPT's own `set -euo pipefail`: a `sed` of a missing
-        // /etc/spira-round-ami.env inside `$(...)` failed the assignment, and the script
-        // exited 2 with nothing on stderr — a round that died between conf-gen and the build
-        // without a word (seen on an EC2 image that predates the record).
-        if std::path::Path::new("/etc/spira-round-ami.env").exists() {
-            return; // an image that HAS the record cannot show its absence
-        }
-        let start = REMOTE_SCRIPT.find("if [ -z \"$cache_home\" ]; then").expect("the cache-home block");
-        let end = REMOTE_SCRIPT.find("export CARGO_HOME=\"$cache_home\"").expect("CARGO_HOME export");
-        let block = format!("set -euo pipefail\ncache_home=\"\"\n{}", &REMOTE_SCRIPT[start..end]);
-        let out = std::process::Command::new("bash").arg("-c").arg(&block).env("PATH", "/usr/bin:/bin").output().unwrap();
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert_eq!(out.status.code(), Some(5), "{stderr}");
-        assert!(stderr.contains("this image records none"), "{stderr}");
     }
 
     #[test]
@@ -3964,147 +3188,11 @@ mod tests {
     // ── run end to end against fakes ────────────────────────────────────────────────
 
     #[test]
-    fn teardown_leaves_no_listener_and_nothing_running_is_success() {
-        let d = TempDir::new();
-        assert!(stop_mirror(d.path()).is_ok(), "no pidfile");
-        let pidfile = d.path().join("git-daemon.pid");
-        let st = std::process::Command::new("sh").arg("-c").arg(format!("sleep 300 </dev/null >/dev/null 2>&1 & echo $! > {}", pidfile.display())).status().unwrap();
-        assert!(st.success());
-        let pid: i32 = fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
-        assert!(pid_alive(pid));
-        stop_mirror(d.path()).unwrap();
-        assert!(!pid_alive(pid), "the daemon survived teardown");
-        assert!(!pidfile.exists());
-    }
-
-    #[test]
     fn host_addresses_reads_ip_br_addr() {
         let out = "lo UNKNOWN 127.0.0.1/8 ::1/128\neth0 UP 192.168.15.174/22 fe80::1/64\n";
         let a = host_addresses(out);
         assert!(a.iter().any(|x| x == "192.168.15.174") && a.iter().any(|x| x == "127.0.0.1"));
         assert!(!a.iter().any(|x| x == "192.168.1.56"));
-    }
-
-    fn accepts(addr: &str, port: u16) -> bool {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        loop {
-            if std::net::TcpStream::connect((addr, port)).is_ok() {
-                return true;
-            }
-            if std::time::Instant::now() >= deadline {
-                return false;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-    }
-
-    const RR: &str = "refs/rounds/t";
-
-    #[test]
-    fn a_kept_tree_with_an_old_round_branch_is_moved_to_the_round_commit() {
-        let d = TempDir::new();
-        let (src, kept) = (d.path().join("src"), d.path().join("kept"));
-        fs::create_dir_all(&src).unwrap();
-        let commit = |m: &str| {
-            {
-                let a = &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", m][..];
-                assert!(std::process::Command::new("git").arg("-C").arg(&src).args(a).status().unwrap().success());
-            }
-        };
-        assert!(std::process::Command::new("git").arg("-C").arg(&src).args(["init", "-q", "-b", "round"]).status().unwrap().success());
-        commit("old");
-        assert!(std::process::Command::new("git").args(["clone", "-q"]).arg(&src).arg(&kept).status().unwrap().success());
-        commit("new");
-        git_out(&src, &["update-ref", "refs/rounds/t", "HEAD"]);
-        let want = git_out(&src, &["rev-parse", "HEAD"]);
-        let line = REMOTE_SCRIPT.lines().find(|l| l.contains("checkout --quiet --force -B round FETCH_HEAD")).expect("the kept-tree checkout");
-        let script = format!("set -e\ngit -C \"$K\" fetch --quiet \"$S\" refs/rounds/t\ngit -C \"$K\" {}", line.trim().trim_start_matches("&& git -C ~/round-work").trim_end_matches('}').trim());
-        let out = std::process::Command::new("bash").args(["-c", &script]).env("K", &kept).env("S", &src).output().unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        assert_eq!(git_out(&kept, &["rev-parse", "round"]), want, "testenv's branch is the round's commit");
-        assert_eq!(git_out(&kept, &["rev-parse", "HEAD"]), want);
-    }
-
-    #[test]
-    fn two_repos_prepared_back_to_back_each_keep_their_own_ref_and_it_is_pruned() {
-        let d = TempDir::new();
-        let mk = |name: &str| {
-            let t = d.path().join(name);
-            fs::create_dir_all(&t).unwrap();
-            for a in [vec!["init", "--quiet"], vec!["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "--allow-empty", "-m", name]] {
-                assert!(std::process::Command::new("git").arg("-C").arg(&t).args(&a).status().unwrap().success());
-            }
-            t
-        };
-        let (a, b) = (mk("a"), mk("b"));
-        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let state = d.path().join("state");
-        let host = GitHost { state_dir: state.clone(), mirror_port: port, listen: "127.0.0.1".into(), also_listen: vec![] };
-        host.prepare_mirror(&a, "refs/rounds/1-a").unwrap();
-        host.prepare_mirror(&b, "refs/rounds/2-b").unwrap();
-        let m = state.join("mirror.git");
-        assert_eq!(git_out(&m, &["rev-parse", "refs/rounds/1-a"]), git_out(&a, &["rev-parse", "HEAD"]));
-        assert_eq!(git_out(&m, &["rev-parse", "refs/rounds/2-b"]), git_out(&b, &["rev-parse", "HEAD"]));
-        host.drop_round_ref("refs/rounds/1-a");
-        assert_eq!(git_out(&m, &["for-each-ref", "--format=%(refname)", "refs/rounds"]), "refs/rounds/2-b");
-        stop_mirror(&state).unwrap();
-    }
-
-    #[test]
-    fn a_real_mirror_daemon_listens_where_told_and_teardown_closes_it() {
-        let d = TempDir::new();
-        let tree = d.path().join("tree");
-        fs::create_dir_all(&tree).unwrap();
-        for a in [vec!["init", "--quiet"], vec!["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "--allow-empty", "-m", "x"]] {
-            assert!(std::process::Command::new("git").arg("-C").arg(&tree).args(&a).status().unwrap().success());
-        }
-        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let state = d.path().join("state");
-        let no_addr = GitHost { state_dir: state.clone(), mirror_port: port, listen: String::new(), also_listen: vec![] };
-        assert!(no_addr.prepare_mirror(&tree, RR).is_err(), "no address means no daemon, never every interface");
-        let host = GitHost { state_dir: state.clone(), mirror_port: port, listen: "127.0.0.1".into(), also_listen: vec![] };
-        host.prepare_mirror(&tree, RR).unwrap();
-        assert!(accepts("127.0.0.1", port), "daemon not listening");
-        let old_pid = fs::read_to_string(state.join("git-daemon.pid")).unwrap();
-        host.prepare_mirror(&tree, RR).unwrap();
-        assert_eq!(old_pid, fs::read_to_string(state.join("git-daemon.pid")).unwrap(), "a daemon on the right address is kept");
-        fs::write(state.join("git-daemon.addr"), "192.0.2.1").unwrap();
-        host.prepare_mirror(&tree, RR).unwrap();
-        assert_ne!(old_pid, fs::read_to_string(state.join("git-daemon.pid")).unwrap(), "a daemon recorded on another address is restarted");
-        assert_eq!(fs::read_to_string(state.join("git-daemon.addr")).unwrap(), "127.0.0.1");
-        assert!(accepts("127.0.0.1", port));
-        let foreign = GitHost { state_dir: state.clone(), mirror_port: port, listen: "192.0.2.1".into(), also_listen: vec![] };
-        let e = foreign.prepare_mirror(&tree, RR).unwrap_err();
-        assert!(e.contains("not an address of this host") && e.contains("set it to auto"), "{e}");
-        stop_mirror(&state).unwrap();
-        assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err(), "listener survived teardown");
-    }
-
-    #[test]
-    fn a_mirror_with_a_second_address_binds_both_and_refuses_a_foreign_one() {
-        let d = TempDir::new();
-        let tree = d.path().join("tree");
-        fs::create_dir_all(&tree).unwrap();
-        for a in [vec!["init", "--quiet"], vec!["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "--allow-empty", "-m", "x"]] {
-            assert!(std::process::Command::new("git").arg("-C").arg(&tree).args(&a).status().unwrap().success());
-        }
-        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let state = d.path().join("state");
-        let host = GitHost { state_dir: state.clone(), mirror_port: port, listen: "127.0.0.1".into(), also_listen: vec!["127.0.0.1".into()] };
-        assert_eq!(host.listen_set(), vec!["127.0.0.1"], "a duplicate address is bound once");
-        let two = GitHost { state_dir: state.clone(), mirror_port: port, listen: "192.0.2.1".into(), also_listen: vec!["127.0.0.1".into()] };
-        assert_eq!(two.listen_set(), vec!["192.0.2.1", "127.0.0.1"]);
-        let bad = GitHost { state_dir: state.clone(), mirror_port: port, listen: "127.0.0.1".into(), also_listen: vec!["192.0.2.1".into()] };
-        let e = bad.prepare_mirror(&tree, RR).unwrap_err();
-        assert!(e.starts_with("192.0.2.1 is not an address of this host"), "{e}");
-        let loopback2 = GitHost { state_dir: state.clone(), mirror_port: port, listen: "127.0.0.1".into(), also_listen: vec!["127.0.0.2".into()] };
-        let r = loopback2.prepare_mirror(&tree, RR);
-        if r.is_ok() {
-            assert!(accepts("127.0.0.2", port), "second address not listening");
-            assert!(accepts("127.0.0.1", port));
-            assert_eq!(fs::read_to_string(state.join("git-daemon.addr")).unwrap(), "127.0.0.1,127.0.0.2");
-        }
-        stop_mirror(&state).unwrap();
     }
 
     struct FakeHost;
@@ -4798,29 +3886,6 @@ mod tests {
         assert_eq!(exit_for_remote(124), 124, "over-cap reaches the caller as itself");
     }
 
-    fn run_guard(setup_secs: u64, run_secs: u64, cap: u64) -> (bool, String) {
-        let from = REMOTE_SCRIPT.find("suites_cap_guard() {").unwrap();
-        let func = &REMOTE_SCRIPT[from..from + REMOTE_SCRIPT[from..].find("\n}\n").unwrap() + 3];
-        let d = TempDir::new();
-        let script = format!(
-            "{func}\nmark={m}; fired={f}\n( sleep {setup_secs}; : > \"$mark\"; sleep {run_secs} ) &\nworker=$!\nsuites_cap_guard \"$mark\" {cap} \"$fired\" \"$worker\" &\nguard=$!\nwait \"$worker\"\nwait \"$guard\"\n",
-            m = d.path().join("mark").display(),
-            f = d.path().join("fired").display(),
-        );
-        let _o = std::process::Command::new("bash").arg("-c").arg(script).output().unwrap();
-        let fired = d.path().join("fired");
-        (fired.exists(), fs::read_to_string(fired).unwrap_or_default())
-    }
-
-    #[test]
-    fn a_long_setup_does_not_spend_the_cap_and_a_run_past_it_is_killed_with_its_elapsed() {
-        let (fired, _) = run_guard(3, 1, 2);
-        assert!(!fired, "setup longer than the cap, suites inside it: not killed");
-        let (fired, elapsed) = run_guard(1, 30, 2);
-        assert!(fired, "a run past the cap from its mark is killed");
-        assert!(elapsed.trim().parse::<u64>().unwrap() >= 2, "the elapsed counts from the mark: {elapsed}");
-    }
-
     #[test]
     fn the_vms_runner_output_is_kept_with_the_results() {
         let fx = fixture();
@@ -5081,44 +4146,6 @@ mod tests {
         assert!(opts.contains("-o ServerAliveInterval=10 -o ServerAliveCountMax=3"), "{opts}");
     }
 
-    fn launch(home: &Path, script: &str) -> std::process::Child {
-        use std::io::Write as _;
-        let mut c = std::process::Command::new("bash")
-            .args(["-c", REMOTE_LAUNCHER, "launcher", "a1", "", "a3"])
-            .env_clear()
-            .env("HOME", home)
-            .env("PATH", std::env::var("PATH").unwrap())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        c.stdin.take().unwrap().write_all(script.as_bytes()).unwrap();
-        c
-    }
-
-    #[test]
-    fn the_launcher_relays_the_scripts_stderr_and_exits_with_its_code() {
-        let home = TempDir::new();
-        let out = launch(home.path(), "echo \"args=$1|$2|$3\"; echo oops >&2; exit 7\n").wait_with_output().unwrap();
-        assert_eq!(out.status.code(), Some(7));
-        assert!(String::from_utf8_lossy(&out.stdout).contains("args=a1||a3"), "{out:?}");
-        assert!(String::from_utf8_lossy(&out.stderr).contains("oops"), "{out:?}");
-        assert_eq!(fs::read_to_string(home.path().join(REMOTE_EXIT_FILE)).unwrap(), "rc=7\n");
-    }
-
-    #[test]
-    fn a_script_started_by_the_launcher_outlives_a_killed_session_and_records_its_exit() {
-        let home = TempDir::new();
-        let mut c = launch(home.path(), "touch \"$HOME/started\"; sleep 2; exit 3\n");
-        wait_until(|| home.path().join("started").exists());
-        std::process::Command::new("kill").args(["-9", &c.id().to_string()]).status().unwrap();
-        let _ = c.wait();
-        assert!(!home.path().join(REMOTE_EXIT_FILE).exists(), "the script is still running");
-        wait_until(|| home.path().join(REMOTE_EXIT_FILE).exists());
-        assert_eq!(fs::read_to_string(home.path().join(REMOTE_EXIT_FILE)).unwrap(), "rc=3\n");
-    }
-
     #[test]
     fn a_drop_after_the_runner_finished_green_is_judged_green_and_releases_the_vm() {
         let fx = fixture();
@@ -5181,19 +4208,6 @@ mod tests {
         assert_eq!(incomplete_count_line(2, 2, 0), "round-vm run: INCOMPLETE: 2 of 2 suite results present (0 new in the final pull)");
         let held = held_vm_line("h-1", "10.0.0.5");
         assert!(held.contains("round-vm release h-1") && !held.contains("re-pull"), "{held}");
-    }
-
-    #[test]
-    fn a_failed_rsync_carries_what_rsync_or_ssh_said() {
-        let fx = fixture();
-        let key = fx.d.path().join("host_key");
-        let remote = SshRemote { user: "u".into(), port: 1, key };
-        let has_rsync = std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("rsync").is_file()));
-        let says = |e: &str| if has_rsync { e.contains("exited") && !e.ends_with("no output") } else { e.starts_with("rsync: ") };
-        let e = remote.pull("127.0.0.1", "x/", &fx.d.path().join("into")).unwrap_err();
-        assert!(says(&e), "{e}");
-        let e = remote.push("127.0.0.1", fx.d.path(), "x/").unwrap_err();
-        assert!(says(&e), "{e}");
     }
 
     #[test]
