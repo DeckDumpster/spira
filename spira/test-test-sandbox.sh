@@ -73,9 +73,9 @@ probe=("$TMP/target/debug/deps/probe-0" --exact probe --nocapture --test-threads
 run() { env -i HOME="$home" PATH="/usr/bin:/bin" SPIRA_HOME=/the/installed/harness SPIRA_RUN="$home/spira/run" "$@"; }
 field() { sed -n "s/^$1 //p" <<<"$2"; }
 # An exit status alone names nothing: a red one carries what the run printed (bwrap's own
-# refusal is on its stderr).
-# Each line of it stays a TAP comment.
-rcis() { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted rc=$2 got rc=$3; the run printed:"$'\n'"${4//$'\n'/$'\n'# }"; }
+# refusal is on its stderr), each line a TAP comment. A message, not a check, so the case's
+# location stays the line that asserts it.
+rcwhy() { printf 'wanted rc=%s got rc=%s; the run printed:\n# %s' "$1" "$2" "${3//$'\n'/$'\n'# }"; }
 
 # Run bare first: the probe's own checks find the installation when nothing hides it.
 out="$(run "${probe[@]}" 2>&1)"
@@ -88,7 +88,7 @@ rm -f "$home/spira/run/x"
 
 out="$(run "$RUNNER" "${probe[@]}" 2>&1)"
 rc=$?
-rcis "the probe runs through the runner" 0 "$rc" "$out"
+[ "$rc" = 0 ] && ok "the probe runs through the runner" || bad "the probe runs through the runner" "$(rcwhy 0 "$rc" "$out")"
 want "the probe could write its own TMPDIR, so its other answers mean something" "Ok(())" "$(field WRITE_TMP "$out")"
 want "the caller's config cannot be read" "NotFound" "$(field READ_CONFIG "$out")"
 want "the caller's config directory is not there at all" "NotFound" "$(field CONFIG_DIR "$out")"
@@ -108,7 +108,7 @@ hide=()
 for d in /usr/local/bin /usr/bin /bin; do [ -e "$d/bwrap" ] && hide+=(--ro-bind /dev/null "$d/bwrap"); done
 out="$(run bwrap --die-with-parent --ro-bind / / --dev /dev "${hide[@]}" --bind "$TMP" "$TMP" -- "$RUNNER" "$TMP/would-run" 2>&1)"
 rc=$?
-rcis "without bwrap the runner refuses" 2 "$rc" "$out"
+[ "$rc" = 2 ] && ok "without bwrap the runner refuses" || bad "without bwrap the runner refuses" "$(rcwhy 2 "$rc" "$out")"
 want "the refusal names why" "bwrap (bubblewrap) is not on" "$out"
 [ ! -e "$TMP/ran" ] && ok "without bwrap the binary never ran" || bad "without bwrap the binary never ran" "$out"
 
@@ -121,7 +121,7 @@ held=(--die-with-parent --unshare-user --disable-userns --unshare-net --ro-bind 
       --tmpfs /tmp --tmpfs /run --tmpfs "$pwhome" --tmpfs "$home" --bind "$TMP/target" "$TMP/target")
 out="$(run bwrap "${held[@]}" -- "$RUNNER" "${probe[@]}" 2>&1)"
 rc=$?
-rcis "inside a sandbox that holds the policy the probe runs" 0 "$rc" "$out"
+[ "$rc" = 0 ] && ok "inside a sandbox that holds the policy the probe runs" || bad "inside a sandbox that holds the policy the probe runs" "$(rcwhy 0 "$rc" "$out")"
 is "inside it no SPIRA_ key of the caller's gets in either" "SPIRA_HOME" "$(field SPIRA_KEYS "$out")"
 want "inside it the caller's config cannot be read" "NotFound" "$(field READ_CONFIG "$out")"
 want "inside it the sandbox's git identity is still there" 'email = spirauser@localhost' "$(field GIT_IDENTITY "$out")"
