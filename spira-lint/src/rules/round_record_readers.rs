@@ -227,8 +227,8 @@ mod tests {
     #[test]
     fn nothing_in_scope_refuses() {
         let t = TempDir::new("rrr-none");
-        t.write("queue/src/r.rs", "x\n");
-        assert!(run(&t, &["queue/src/r.rs"]).is_err());
+        t.write("queue/src/ops/round_files.rs", "x\n");
+        assert!(run(&t, &["queue/src/ops/round_files.rs"]).is_err(), "an owner is out of scope");
     }
 
     fn run_live_only(t: &TempDir, files: &[&str]) -> Result<Vec<String>, LintError> {
