@@ -43,6 +43,8 @@ const PREEMPT_POLLS: u32 = 120;
 pub(super) const BUILD_RED: &str = "workspace-build";
 pub(super) const LINT_RED: &str = "spira-lint";
 const FENCE_RED_PREFIX: &str = "fence-";
+/// The fence that runs the round image's setup on the merged tree before any suite.
+pub(super) const PREFLIGHT_RED: &str = "fence-round-image-preflight";
 pub(super) const UNIT_RED: &str = "unit-tests";
 
 /// The round VM's two test phases (sp-cddf76), each leaving its red as a record: the unit phase
@@ -1369,19 +1371,19 @@ pub(super) fn forget_batch_red(c: &Ctx, id: &str, tip: &str) -> std::io::Result<
     records::write_atomic(&path, &kept).map_err(std::io::Error::other)
 }
 
-fn changes_recipe(w: &World, repo: &Path, base: &str, tip: &str) -> bool {
+/// The round-recipe inputs (`spira_config::recipe::PATHS`) `tip` changes against `base`.
+fn recipe_inputs_touched(w: &World, repo: &Path, base: &str, tip: &str) -> Vec<String> {
     let from = w
         .git
         .merge_base(repo, base, tip)
         .unwrap_or_else(|| base.to_string());
-    let changed: Vec<String> = w
-        .git
+    w.git
         .numstat(repo, &from, tip)
         .unwrap_or_default()
         .into_iter()
         .map(|(p, ..)| p)
-        .collect();
-    spira_config::recipe::touches(&changed)
+        .filter(|p| spira_config::recipe::touches(std::slice::from_ref(p)))
+        .collect()
 }
 
 fn open(
@@ -1577,30 +1579,6 @@ fn open(
                 None => skips.push(format!("{}: no submitted tip — not admitted", m.id)),
             },
         }
-    }
-
-    let open_recipe = open_now
-        .iter()
-        .find(|kv| {
-            kv.members()
-                .iter()
-                .any(|h| changes_recipe(w, &path, &landed_sha, &h.tip))
-        })
-        .map(|kv| kv.get("batch_id").unwrap_or("?").to_string());
-    let (mut recipe, ordinary): (Vec<Member>, Vec<Member>) = admitted
-        .into_iter()
-        .partition(|m| changes_recipe(w, &path, &landed_sha, &m.tip));
-    let alone = open_recipe.is_none() && ordinary.is_empty();
-    let admitted = if alone {
-        recipe.drain(..1.min(recipe.len())).collect()
-    } else {
-        ordinary
-    };
-    for m in &recipe {
-        skips.push(match &open_recipe {
-            Some(open) => format!("{0}: solo: {0} changes the round recipe — waits for open recipe round {open}, not admitted", m.id),
-            None => format!("{0}: solo: {0} changes the round recipe — rounds alone, not admitted with other members", m.id),
-        });
     }
 
     let batch = name
@@ -2399,6 +2377,79 @@ fn fixture_fault_cause(results: &Path) -> Option<String> {
     })
 }
 
+/// What round-vm names a pass that ended with no verdict from, in `round-fault.out`: the
+/// fault, the config key a settings refusal names, and the tail of the VM script's log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct RoundFault {
+    pub cause: String,
+    pub settings_key: Option<String>,
+    pub tail: String,
+}
+
+pub(super) const ROUND_FAULT_FILE: &str = "round-fault.out";
+
+pub(super) fn round_fault(results: &Path) -> Option<RoundFault> {
+    let text = fs::read_to_string(results.join(ROUND_FAULT_FILE)).ok()?;
+    let mut lines = text.lines();
+    let cause = lines.next()?.strip_prefix("ROUND-FAULT: ")?.trim().to_string();
+    let rest: Vec<&str> = lines.collect();
+    let settings_key = rest.first().and_then(|l| l.strip_prefix("settings-key: ")).map(|k| k.trim().to_string());
+    let tail = rest.iter().skip_while(|l| !l.starts_with("--- ")).skip(1).copied().collect::<Vec<_>>().join("\n");
+    Some(RoundFault { cause, settings_key, tail })
+}
+
+/// A setting the round VM refused is the fault of the member whose diff adds its key: present
+/// at the member's tip and absent at the landing ref. Each such member is ejected with the
+/// fault; when none is, the harness is named and no member is counted against.
+fn settings_refused(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, f: &RoundFault, key: &str) -> i32 {
+    let Some(base) = c.r.landref.as_deref() else {
+        w.err(format!("queue.sh {label}: cannot resolve the landing ref of {} to attribute {key} — the fault is counted against no member", c.r.name));
+        return FAULT;
+    };
+    let members = match record_of(w, c, batch) {
+        Ok(Some(kv)) => kv.members(),
+        Ok(None) => Vec::new(),
+        Err(e) => {
+            w.err(format!("queue.sh {label}: cannot read the members of {batch} to attribute {key}: {e} — the fault is counted against no member"));
+            return FAULT;
+        }
+    };
+    let has = |rev: &str| {
+        w.git.grep_files(path, rev, key, "**").iter().any(|f| w.git.file_at(path, rev, f).is_some_and(|t| names_key(&t, key)))
+    };
+    let holders: Vec<Member> = if has(base) { Vec::new() } else { members.into_iter().filter(|m| has(&m.tip)).collect() };
+    // A member stacked on another carries that one's key at its tip without adding it.
+    let adders: Vec<Member> = holders
+        .iter()
+        .filter(|m| !holders.iter().any(|o| o.id != m.id && o.tip != m.tip && w.git.is_ancestor(path, &o.tip, &m.tip)))
+        .cloned()
+        .collect();
+    if adders.is_empty() {
+        w.err(format!("queue.sh {label}: {key} was refused on the round VM and no member's diff adds it: the harness is the cause (the round VM's script or config does not provide it); no member is counted against"));
+        w.out("fault-owner=harness");
+        return FAULT;
+    }
+    for m in adders {
+        let reason = format!("{}'s diff adds {key}, which the round VM refused: {}\nThe VM script's log, last lines:\n{}", m.id, f.cause, f.tail);
+        let rc = eject(w, batch, &m.id, Some(&c.r.name), &Text::Arg(reason), UNIT_RED, true, false, true, "", LeaseCheck::Inside);
+        if rc == OK {
+            note_pass_end(c, std::slice::from_ref(&m.id), PassEnd::Ejected);
+            w.out(format!("fault-owner={}", m.id));
+        } else {
+            w.err(format!("queue.sh {label}: could not eject {}, whose diff adds the refused {key} (rc={rc})", m.id));
+        }
+    }
+    FAULT
+}
+
+/// Whether `text` holds `key` as a whole word: `FOO_X` is not named by `FOO_X_ROOT`.
+fn names_key(text: &str, key: &str) -> bool {
+    let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    text.match_indices(key).any(|(i, _)| {
+        !text[..i].chars().next_back().is_some_and(word) && !text[i + key.len()..].chars().next().is_some_and(word)
+    })
+}
+
 fn vm_fault_cause(err: &str) -> Option<String> {
     let line = err.lines().rev().find(|l| {
         let l = l.trim_start();
@@ -2957,6 +3008,7 @@ fn certify_pass(
         // not as a machinery fault; an integration red is one more red beside the suites'.
         let phase_red = phase_reds(&results);
         let ended_by_unit = out.rc == 1 && phase_red.iter().any(|p| p.before_suites);
+        let vm_named = round_fault(&results);
         for p in &phase_red {
             reds.push(UNIT_RED.into());
             for line in p.report() {
@@ -2965,7 +3017,10 @@ fn certify_pass(
         }
         let fault = match out.rc {
             1 if ended_by_unit => None,
-            0 | 1 if found.is_empty() => Some("round-vm ran and left no verdicts — a fault of the round machinery, not of the candidates".to_string()),
+            0 | 1 if found.is_empty() => Some(vm_named.as_ref().map_or_else(
+                || "round-vm ran and left no verdicts — a fault of the round machinery, not of the candidates".to_string(),
+                |f| f.cause.clone(),
+            )),
             0 | 1 => unjudgeable(&wt, &found),
             124 | 137 if !out.err.contains("OVER-CAP") && wall_complete(&wt, &found, &out.err) => None,
             4 if build_env.is_some() => Some(format!(
@@ -2991,10 +3046,12 @@ fn certify_pass(
                 w.clock.now().saturating_sub(began),
                 c.s.round_wall_secs
             )),
-            rc => Some(match (stale_ami_cause(&out), fixture_fault_cause(&results).or_else(|| vm_fault_cause(&out.err))) {
-                (Some(cause), _) => format!("{STALE_AMI_MARK}: {cause}"),
-                (None, Some(c)) => format!("round-vm exited {rc}: {c}"),
-                (None, None) => format!("round-vm exited {rc}"),
+            rc => Some(match (stale_ami_cause(&out), fixture_fault_cause(&results), &vm_named, vm_fault_cause(&out.err)) {
+                (Some(cause), ..) => format!("{STALE_AMI_MARK}: {cause}"),
+                (None, Some(c), ..) => format!("round-vm exited {rc}: {c}"),
+                (None, None, Some(f), _) => f.cause.clone(),
+                (None, None, None, Some(c)) => format!("round-vm exited {rc}: {c}"),
+                (None, None, None, None) => format!("round-vm exited {rc}"),
             }),
         };
         if let Some(why) = fault {
@@ -3007,6 +3064,14 @@ fn certify_pass(
             );
             let shown = tail(&out.err, 20);
             w.err(format!("queue.sh {label}: {why}; the round is not judged\n{shown}"));
+            if let Some(f) = vm_named.as_ref().filter(|f| f.cause == why) {
+                w.out(format!("fault={}", one_line(&f.cause)));
+                w.err(format!("queue.sh {label}: the VM script's log, last lines:\n{}", f.tail));
+                if let Some(key) = &f.settings_key {
+                    return settings_refused(w, label, c, path, batch, f, key);
+                }
+                return faulted_pass(w, label, c, batch, &format!("{why}\n{}", f.tail));
+            }
             return faulted_pass(w, label, c, batch, &format!("{why}\n{shown}"));
         }
         reds.extend(
@@ -3096,6 +3161,10 @@ fn certify_pass(
                 .join(format!("{REPO_TESTENV_RED}.out"));
             w.out(format!("red-output={}", output.display()));
         }
+        if reds.iter().any(|r| r == PREFLIGHT_RED) {
+            drop(_g);
+            eject_recipe_changers(w, label, c, path, batch, &judged);
+        }
         return FAIL;
     }
 
@@ -3132,6 +3201,59 @@ fn certify_pass(
         &run_id,
         (ran, wall),
     )
+}
+
+/// A red image preflight is the recipe change's: every member whose diff touches a round-recipe
+/// input leaves the round, with the fence's output as the evidence, and the rest certify again.
+/// With no such member the red is the harness's and nobody leaves. Prints `ejected=<csv>`, so the
+/// round's driver knows the red is attributed.
+fn eject_recipe_changers(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, kv: &Kv) {
+    let base = kv.get("base").unwrap_or("");
+    let changers: Vec<(String, Vec<String>)> = kv
+        .members()
+        .into_iter()
+        .map(|m| {
+            let touched = recipe_inputs_touched(w, path, base, &m.tip);
+            (m.id, touched)
+        })
+        .filter(|(_, touched)| !touched.is_empty())
+        .collect();
+    if changers.is_empty() {
+        w.out(format!("queue.sh {label}: {PREFLIGHT_RED} is red and no member of {batch} changes a round-recipe input — the red is the harness's; nobody is ejected"));
+        return;
+    }
+    let results = rounds_dir(c).join(format!("{batch}.results"));
+    let Some(output) = suite_output(&results, PREFLIGHT_RED, 0).filter(|o| !o.trim().is_empty()) else {
+        w.err(format!("queue.sh {label}: {PREFLIGHT_RED} is red but left no output in {} — nothing names the evidence, so nobody is ejected; attribute it by hand", results.display()));
+        return;
+    };
+    let evidence = tail(&output, 40);
+    let mut ejected = Vec::new();
+    for (id, touched) in changers {
+        // A changer stacked on one ejected before it has already left with it.
+        match pass_members(w, c, batch) {
+            Ok(ids) if !ids.contains(&id) => continue,
+            Ok(_) => {}
+            Err(e) => {
+                w.err(format!("queue.sh {label}: cannot read the members of {batch} before ejecting {id}: {e} — not ejected"));
+                continue;
+            }
+        }
+        let reason = format!(
+            "{PREFLIGHT_RED} went red in round {batch}, and {id} changes the round recipe ({}).\n\n{evidence}",
+            touched.join(", ")
+        );
+        let rc = eject(w, batch, &id, Some(&c.r.name), &Text::Arg(reason), PREFLIGHT_RED, true, false, true, "", LeaseCheck::Inside);
+        if rc == OK {
+            note_pass_end(c, std::slice::from_ref(&id), PassEnd::Ejected);
+            ejected.push(id);
+        } else {
+            w.err(format!("queue.sh {label}: could not eject {id} for the red {PREFLIGHT_RED} (rc={rc})"));
+        }
+    }
+    if !ejected.is_empty() {
+        w.out(format!("ejected={}", ejected.join(",")));
+    }
 }
 
 /// The (repo, tree) certificate a green full-corpus pass earns. Rewriting it is harmless.

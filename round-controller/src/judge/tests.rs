@@ -465,3 +465,17 @@ fn progress_of_another_pass_is_not_resumed_and_a_judgement_clears_its_progress()
         "{j:?}"
     );
 }
+
+#[test]
+fn a_preflight_red_certify_attributed_is_recorded_once_with_no_sub_pass_and_its_ejected_proven() {
+    go(&[
+        member("sp-a", "changed = [\"flake.nix\"]\n"),
+        member("sp-b", ""),
+        "[judge.result]\nexit = 1\nred = [\"fence-round-image-preflight\"]\nejected = [\"sp-a\"]\noutput = \"round-image-preflight: failing setup line: + nix build\"\n".into(),
+        expect("recorded", "judged:recorded", 1),
+        expect("no-eject-call", "calls:eject", 0),
+        expect("no-judge-pass", "judge-passes", 0),
+        expect("proven", "proven", 1),
+    ])
+    .unwrap();
+}

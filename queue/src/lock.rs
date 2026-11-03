@@ -110,6 +110,10 @@ impl Drop for Beat {
 }
 
 impl Drop for Guard {
+    /// Unlocks before the descriptor closes: flock belongs to the open file description, which
+    /// a child forked by any thread shares until its exec, so closing alone can leave the lock
+    /// held after its guard is gone. The unlock comes last: the beat is stopped and its file
+    /// removed first, so the next holder's beat is never deleted by this guard's.
     fn drop(&mut self) {
         if self.recorded {
             let _ = self.f.set_len(0);
@@ -122,6 +126,8 @@ impl Drop for Guard {
                 held: t.at.elapsed(),
             });
         }
+        // SAFETY: flock on a descriptor we own; no memory is shared with the kernel call.
+        unsafe { libc::flock(self.f.as_raw_fd(), libc::LOCK_UN) };
     }
 }
 
@@ -253,9 +259,25 @@ mod tests {
     use super::*;
     use crate::testutil::tmpdir;
 
+    /// A forked child holds a copy of every descriptor until its exec closes it, and flock
+    /// belongs to the open file description that copy shares: a duplicate stands in for one.
+    #[test]
+    fn a_dropped_lock_is_free_while_a_forked_copy_of_its_descriptor_lives() {
+        let d = tmpdir("lockfork");
+        for take in [try_lock as fn(&Path, &str) -> Acquire, try_step_lock] {
+            let Acquire::Held(g) = take(&d, "spira") else { panic!("not held") };
+            // SAFETY: dup of a descriptor we own; closed below.
+            let copy = unsafe { libc::dup(g.f.as_raw_fd()) };
+            assert!(copy >= 0);
+            drop(g);
+            assert!(matches!(take(&d, "spira"), Acquire::Held(_)), "the copy kept the lock");
+            // SAFETY: closing the duplicate made above.
+            unsafe { libc::close(copy) };
+        }
+    }
+
     #[test]
     fn second_taker_is_refused_until_the_first_drops() {
-        let _serial = crate::testutil::serial();
         let d = tmpdir("lock");
         let a = try_lock(&d, "spira");
         assert!(matches!(a, Acquire::Held(_)));
@@ -266,7 +288,6 @@ mod tests {
 
     #[test]
     fn a_verb_s_hold_of_the_queue_lock_is_recorded_taken_then_released_and_nothing_else_is() {
-        let _serial = crate::testutil::serial();
         let d = tmpdir("lockhold");
         take_holds();
         let g = try_lock_as(&d, "spira", "round open");
@@ -297,7 +318,6 @@ mod tests {
 
     #[test]
     fn a_recording_queue_lock_holder_beats_until_it_drops() {
-        let _serial = crate::testutil::serial();
         let d = tmpdir("lockbeat");
         let a = try_lock_as(&d, "spira", "land-local");
         assert!(d.join("spira").join(BEAT_FILE).is_file());
@@ -319,7 +339,6 @@ mod tests {
 
     #[test]
     fn a_recorded_holder_is_named_while_held_and_cleared_on_drop() {
-        let _serial = crate::testutil::serial();
         let d = tmpdir("lockholder");
         let a = try_lock_as(&d, "spira", "round certify");
         assert!(matches!(a, Acquire::Held(_)));
@@ -340,7 +359,6 @@ mod tests {
 
     #[test]
     fn a_batch_certify_lock_is_per_batch_and_names_its_holder() {
-        let _serial = crate::testutil::serial();
         let d = tmpdir("certlock");
         let a = try_certify_lock(&d, "spira", "r-1");
         assert!(matches!(a, Acquire::Held(_)));
@@ -365,7 +383,6 @@ mod tests {
 
     #[test]
     fn an_ended_rounds_certify_lock_is_removed_unless_another_process_holds_it() {
-        let _serial = crate::testutil::serial();
         let d = tmpdir("certrm");
         drop(try_certify_lock(&d, "spira", "r-1"));
         let held = try_certify_lock(&d, "spira", "r-2");
@@ -382,7 +399,6 @@ mod tests {
 
     #[test]
     fn the_step_lock_is_a_different_file_from_the_queue_lock() {
-        let _serial = crate::testutil::serial();
         let d = tmpdir("steplock");
         let s = try_step_lock(&d, "spira");
         assert!(matches!(s, Acquire::Held(_)));

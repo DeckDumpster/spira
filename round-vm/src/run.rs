@@ -138,7 +138,6 @@ pub struct BatchJob {
     pub testenv_limits: String,
     /// Seconds the VM waits for the unit-test job once the cap clock has stopped.
     pub post_guard_secs: u64,
-    pub disk_need_gib: u64,
     /// Mirror ref `base` holds the landing ref; set: the round lints before its suites.
     pub lint: bool,
     /// The head's image tag differs from what the template (or the landing ref) holds: the VM
@@ -232,7 +231,34 @@ printf '%s %s %s - - - %s\n' "$status" 1 "$(( $(date +%s) - t0 ))" "$rc" > "$res
 /// into `~/round-bins/` so the host pulls the binaries and not cargo's target directory.
 pub const REMOTE_SCRIPT: &str = concat!(r#"set -euo pipefail
 host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" build_image="${12}" round_ref="${13}" round_sha="${14}"
-testenv_limits="${16:-}" resume_url="${17:-}" disk_need_gib="${18:-}" fences="${19:-}"
+testenv_limits="${16:-}" resume_url="${17:-}" fences="${18:-}"
+rm -rf ~/round-bins ~/round-launcher.env ~/round-setup.log ~/round-script.log
+exec > >(tee -a ~/round-script.log)
+script_out_tee=${!:-}
+exec 2> >(tee -a ~/round-script.log ~/round-setup.log >&2)
+script_err_tee=${!:-}
+# Every exit leaves its phase and the script's log in the results, where the host names a pass
+# that ended with no verdict from them (round-phase: the first phase that failed, else the last).
+round_phase=start fault_phase="" fault_rc=""
+phase() { round_phase="$1"; echo "round-vm: PHASE $1" >&2; }
+phase_failed() {
+    [ -n "$fault_phase" ] || { fault_phase="$1"; fault_rc="$2"; }
+    echo "round-vm: PHASE-FAILED phase=$1 rc=$2" >&2
+}
+round_exit() {
+    local rc=$? dir="$HOME/round-work/.runtime/spira/batch-results" i
+    trap - EXIT
+    exec >&- 2>&-
+    for i in {1..20}; do
+        { [ -n "$script_out_tee" ] && kill -0 "$script_out_tee" 2>/dev/null; } || { [ -n "$script_err_tee" ] && kill -0 "$script_err_tee" 2>/dev/null; } || break
+        sleep 0.1
+    done
+    { mkdir -p "$dir" && cp -f ~/round-script.log "$dir/round-script.log" \
+        && printf 'phase=%s rc=%s\n' "${fault_phase:-$round_phase}" "${fault_rc:-$rc}" > "$dir/round-phase"; } 2>/dev/null || true
+    exit "$rc"
+}
+trap round_exit EXIT
+phase preflight
 [ -n "$testenv_limits" ] || { echo "round-vm: the host sent no testenv limits; a round never takes them from the tree's test fixture" >&2; exit 2; }
 t_start=$(date +%s)
 export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -240,8 +266,7 @@ if ! command -v cargo >/dev/null 2>&1; then
     echo "round-vm: cargo not found on PATH ($PATH) — the template is missing a Rust toolchain" >&2
     exit 127
 fi
-rm -rf ~/round-bins ~/round-launcher.env ~/round-setup.log
-exec 2> >(tee ~/round-setup.log >&2)
+phase checkout
 mirror="git://${host_addr}:${port}/mirror.git"
 checkout_round() {
     git -C ~/round-work fetch --quiet origin "$round_ref" \
@@ -264,6 +289,43 @@ if [ "$got" != "$round_sha" ]; then
     exit 2
 fi
 cd ~/round-work
+disk_out="$HOME/round-work/.runtime/spira/batch-results/disk-usage"
+mkdir -p "$(dirname "$disk_out")"
+# Bytes used per directory, one line each, into the pass's results. A directory du cannot read
+# whole is counted as a lower bound and says so; one it cannot read at all is `unread`, never a
+# zero it did not measure, and the total then says it is incomplete. A measurement never ends the pass.
+disk_report() {
+    local phase="$1" label path bytes total=0 whole=yes graph
+    graph="$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null || true)"
+    for label in round-work tmpdir podman-graphroot cargo-target; do
+        case "$label" in
+            round-work) path="$HOME/round-work" ;;
+            tmpdir) path="${TMPDIR:-/tmp}" ;;
+            podman-graphroot) path="$graph" ;;
+            cargo-target) path="$HOME/round-work/target" ;;
+        esac
+        if [ -z "$path" ]; then
+            bytes=unread path="(podman named no graph root)"
+        elif [ ! -d "$path" ]; then
+            bytes=0
+        elif ! bytes="$(du -sxB1 "$path" 2>/dev/null | cut -f1)"; then
+            path="$path (du could not read all of it: a lower bound)"
+        fi
+        case "$bytes" in ''|*[!0-9]*) bytes=unread ;; esac
+        if [ "$bytes" = unread ]; then whole=no; elif [ "$label" != cargo-target ]; then total=$(( total + bytes )); fi
+        echo "round-vm: DISK $phase $label $bytes $path" | tee -a "$disk_out" >&2
+    done
+    [ "$whole" = yes ] || total="$total+unread"
+    echo "round-vm: DISK $phase total $total -" | tee -a "$disk_out" >&2
+}
+# The pass's last report; coverage profiles go once the line report has read them, or once a red
+# unit tier means none will.
+disk_report_last() {
+    disk_report "$1"
+    find "$HOME/round-work/target" \( -name '*.profraw' -o -name '*.profdata' \) -delete 2>/dev/null || true
+}
+disk_report start
+phase spira-env
 nix_bin=/nix/var/nix/profiles/default/bin
 flake_ref="path:$HOME/round-work#spira-env"
 build_env() { PATH="$nix_bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" nix --extra-experimental-features 'nix-command flakes' build "$flake_ref" -o "$HOME/spira-env" >&2; }
@@ -290,6 +352,7 @@ echo "round-vm: spira-env $env_path ($(dolt version | head -n1); bd $(bd --versi
 # all — this is what test-install-migrate.sh's intermittent "the watcher manifest is
 # malformed" (watchd's own conf.sh sourcing failing) traced back to.
 bash spira/conf-gen.sh >&2 || true
+phase toolchain
 if [ -n "$toolchain" ]; then export RUSTUP_TOOLCHAIN="$toolchain"; fi
 # sp-xjnzl: ONE compilation cache shared with the host itself, not a VM-local one — the
 # box's own address, which this VM already reaches for the mirror, is reused for the cache
@@ -361,6 +424,7 @@ if ! start_sccache; then
     export RUSTC_WRAPPER=""
     sccache_mode="without sccache (fallback after two failed server starts)"
 fi
+phase build
 art_base="$SCCACHE_WEBDAV_ENDPOINT/artifacts"
 "#, include_str!("../artifact-store.sh"), r#"art_tree="$(git -C ~/round-work rev-parse 'HEAD^{tree}')"
 art_id="$(art_key "$art_tree" "$(rustc -vV | sed -n 's/^\(release\|commit-hash\): //p' | paste -sd' ')")"
@@ -395,6 +459,7 @@ unit_cov_init() {
     fi
     [ -n "$unit_cov_env" ] || echo "round-vm: COVERAGE: lines unavailable (the image has no cargo-llvm-cov)" >&2
 }
+phase unit-build
 unit_cov_init
 unit_build_mark="$HOME/round-work/.runtime/spira/batch-results/unit-build"
 mkdir -p "$(dirname "$unit_build_mark")"
@@ -490,13 +555,18 @@ test_phase_red() {
         printf ']}\n'
     } > "$json"
 }
+phase release
 # The round's one source of config: the tree's complete fixture, with this VM's own paths
-# declared over it. Nothing here is searched for or defaulted.
-mkdir -p "$HOME/round-work/.runtime/spira"
+# declared over it. Nothing here is searched for or defaulted: a tree's binaries build every
+# child PATH from the declared release and `path`, never from this script's own PATH, so the
+# VM's dolt, bd and cargo (outside the release) are declared here.
+mkdir -p "$HOME/round-work/.runtime/spira" "$HOME/round-scratch"
 cat > "$HOME/round-config.toml" <<ROUNDCFG
 [spira]
 run = "$HOME/round-work/.runtime/spira"   # where REMOTE_RESULTS pulls batch-results from
 releases = "$HOME/round-releases"
+path = "$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin"
+testenv_scratch_root = "$HOME/round-scratch"
 home_repo = "spira"
 batch_maxpar = $maxpar
 $testenv_limits
@@ -529,6 +599,7 @@ if [ "$got" != "$SPIRA_RELEASE/bin/spira-config" ]; then
 fi
 printf 'export SPIRA_RELEASE=%q\nexport SPIRA_REPO=%q\nexport PATH=%q\n' "$SPIRA_RELEASE" "$SPIRA_REPO" "$PATH" > ~/round-launcher.env
 echo "round-vm: launcher: SPIRA_RELEASE=$SPIRA_RELEASE" >&2
+phase image
 tag="$(testenv container tag)" || tag=""
 # A ROUND NEVER COLD-BUILDS ITS IMAGE (law-unexpected-image-builds-are-killed-then-fixed,
 # sp-lktok). An absent image means this VM predates the template, or the template predates
@@ -551,21 +622,9 @@ else
     echo "round-vm: IMAGE-ABSENT: localhost/spira-testenv:$tag is not on this VM — refusing to cold-build it (law-unexpected-image-builds-are-killed-then-fixed); refresh the template with round-vm template and recycle the warm pool" >&2
     exit 3
 fi
-disk_preflight() {
-    local need=$(( disk_need_gib * 1073741824 )) have dir graph
-    graph="$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null || true)"
-    for dir in "$HOME/round-work" "${TMPDIR:-/tmp}" ${graph:+"$graph"}; do
-        have="$(df -B1 --output=avail "$dir" | tail -n1 | tr -d ' ')"
-        case "$have" in ''|*[!0-9]*) echo "round-vm: FAULT disk: cannot read free space under $dir" >&2; return 3 ;; esac
-        if [ "$have" -lt "$need" ]; then
-            echo "round-vm: FAULT disk: need $disk_need_gib GiB, have $(( have / 1073741824 )) GiB under $dir (short $(( need - have )) bytes) — refusing to start the suites pass on a disk that fills mid-pass" >&2
-            return 3
-        fi
-    done
-}
-disk_preflight || exit 3
 setup_secs=$(( $(date +%s) - t_start - unit_build_secs ))
 if [ -n "$registry" ]; then export SPIRA_TESTENV_REGISTRY="$registry"; fi
+disk_report build
 # Each passed suite is recorded to the resume prefix as it passes, so a VM that dies loses none.
 # A prefix the VM cannot write is named here, once, with the cause: a round that records nothing
 # otherwise looks the same as one that recorded everything until its re-run skips nothing.
@@ -607,6 +666,7 @@ set +e
 # THE ROUND'S LINT: the full spira-lint on the merged tree against the landing ref, before the suites.
 # A hit is a red round, named for the member whose diff touches the file (a hit in a file no
 # member touched is the base's own). Recorded as a suite result after the suites, so a certifier reading results sees it.
+phase lint
 lint_rc=0
 lint_secs=0
 if [ -n "$lint" ]; then
@@ -631,6 +691,7 @@ if [ -n "$lint" ]; then
             done < ~/round-lint.out
             cat ~/round-lint.err
         } > ~/round-lint.report
+        phase_failed lint "$lint_rc"
         echo "round-vm: LINT: RED (spira-lint rc=$lint_rc)" >&2
         head -60 ~/round-lint.report >&2
     fi
@@ -656,10 +717,12 @@ fence_run() {
         echo "round-vm: FENCE $name: RED (rc=$frc)" >&2
         head -40 ~/round-fence-"$name".out >&2
         fence_fail="$fence_fail $name"
+        phase_failed "fence-$name" "$frc"
         cp ~/round-fence-"$name".out "$fence_res/fence-$name.out"
         echo "red $(date +%s) $(( $(date +%s) - t0 )) - - - $frc" > "$fence_res/fence-$name.result"
     fi
 }
+phase fences
 if [ -n "$lint" ]; then
     while IFS=$'\t' read -r fname fcmd; do
         [ -n "$fname" ] || continue
@@ -687,6 +750,7 @@ fi
 # its doc-tests) run beside the suites, and a red there makes the round red: integration.json.
 # No suite has run when either record is written, so both go at the top of the results, where
 # the host pulls them by name (TEST_PHASE_FILES).
+phase unit-tests
 rdir="$HOME/round-work/.runtime/spira/batch-results"
 unit_progress="$rdir/unit-progress"
 mkdir -p "$rdir"
@@ -711,10 +775,12 @@ echo "round-vm: UNIT-TESTS took ${unit_secs}s (--lib --bins, ${unit_lib_total} t
 if [ "$unit_rc" -eq 0 ]; then
     echo "round-vm: UNIT-TESTS: PASS ($(grep -c '^test result: ok' ~/round-unit-tests.log) test binaries)" >&2
 else
+    phase_failed unit-tests "$unit_rc"
     echo "round-vm: UNIT-TESTS: FAIL (unit run rc=$unit_rc):" >&2
     grep -E -A3 '^(test .* FAILED|---- |error(\[|:))|panicked at' ~/round-unit-tests.log | head -120 >&2
     test_phase_red unit-tests ~/round-unit-tests.log "$unit_rc" "$unit_secs" "$unit_hung" "$rdir/unit-tests.out" "$rdir/unit.json" true
     echo "round-vm: UNIT-TESTS RED before the suites: no suite was run" >&2
+    disk_report_last unit-red
     kill "$sampler_pid" 2>/dev/null
     exit 1
 fi
@@ -772,6 +838,7 @@ runner_out="$HOME/round-runner.out"
 : > "$runner_out"
 cap_fired="$HOME/round-cap-fired"
 rm -f "$suites_mark" "$cap_fired"
+phase suites
 t_suites=$(date +%s)
 echo "round-vm: SUITES-CLOCK: start (cap ${cap}s from the first suite)" >&2
 over_cap=""
@@ -806,8 +873,11 @@ suites_cap_guard "$suites_mark" "$cap" "$cap_fired" "$testenv_pid" "$bare_pid" &
 guard_pid=$!
 wait "$testenv_pid"
 rc=$?
+[ "$rc" -eq 0 ] || phase_failed suites "$rc"
 wait "$bare_pid"
 bare_rc=$?
+[ "$bare_rc" -eq 0 ] || phase_failed bare-suites "$bare_rc"
+phase integration-tests
 pkill -P "$guard_pid" 2>/dev/null; kill "$guard_pid" 2>/dev/null; wait "$guard_pid" 2>/dev/null
 [ -e "$cap_fired" ] && over_cap=1
 case "$rc" in 124|137) over_cap=1 ;; esac
@@ -841,6 +911,7 @@ echo "round-vm: INTEGRATION-TESTS took ${integ_secs}s (tests/ and doc-tests, ${i
 if [ "$integ_rc" -eq 0 ]; then
     echo "round-vm: INTEGRATION-TESTS: PASS ($(grep -c '^test result: ok' ~/round-integration-tests.log) test binaries)" >&2
 else
+    phase_failed integration-tests "$integ_rc"
     echo "round-vm: INTEGRATION-TESTS: FAIL (integration run rc=$integ_rc):" >&2
     grep -E -A3 '^(test .* FAILED|---- |error(\[|:))|panicked at' ~/round-integration-tests.log | head -120 >&2
     test_phase_red integration-tests ~/round-integration-tests.log "$integ_rc" "$integ_secs" "$integ_hung" "$rdir/integration-tests.out" "$rdir/integration.json" false
@@ -862,6 +933,8 @@ if [ -n "$unit_cov_env" ]; then
         echo "round-vm: COVERAGE: lines unavailable (cargo llvm-cov report failed): $(printf '%s' "$unit_cargo_report" | tail -5)" >&2
     fi
 fi
+phase post
+disk_report_last suites
 suites_secs=$suites_clock
 kill "$sampler_pid" 2>/dev/null; wait "$sampler_pid" 2>/dev/null
 echo "round-vm: setup ${setup_secs}s, suites ${suites_secs}s" >&2
@@ -994,7 +1067,6 @@ pub fn remote_command(job: &BatchJob) -> String {
     args.push(job.ci_entry.clone().unwrap_or_default());
     args.push(job.testenv_limits.clone());
     args.push(job.resume_url.clone().unwrap_or_default());
-    args.push(job.disk_need_gib.to_string());
     args.push(job.fences.clone());
     let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
     format!("bash -c {} launcher {}", shell_quote(REMOTE_LAUNCHER), quoted.join(" "))
@@ -1769,6 +1841,43 @@ pub const FENCE_TIMES: &str = "fence-times";
 /// carries them over by name, as it does [`FENCE_TIMES`].
 pub const TEST_PHASE_FILES: [&str; 4] = ["unit.json", "unit-tests.out", "integration.json", "integration-tests.out"];
 
+/// What the VM script leaves at the top of the results on every exit: its phase marker and its log.
+pub const SCRIPT_FILES: [&str; 2] = [crate::vm_fault::PHASE_FILE, crate::vm_fault::SCRIPT_LOG_FILE];
+
+/// Carries the files the VM leaves outside testenv's leaf from `pulled` to `results_dir`, by name.
+pub fn keep_top_files(pulled: &Path, results_dir: &Path) {
+    for top in [FIXTURE_FAULT_FILE, FENCE_TIMES].into_iter().chain(TEST_PHASE_FILES).chain(SCRIPT_FILES) {
+        if pulled.join(top).is_file() {
+            let _ = fs::create_dir_all(results_dir);
+            let _ = fs::copy(pulled.join(top), results_dir.join(top));
+        }
+    }
+}
+
+/// A failed exit that left no testenv verdict, no result and no test-phase record has no verdict;
+/// a failed workspace build (4) is a verdict whose cause certify reads from the output.
+pub fn verdict_missing(pulled: &Path, remote_rc: i32) -> bool {
+    !matches!(remote_rc, 0 | 4)
+        && results_leaf(pulled).is_none()
+        && batch_cause(pulled).is_none()
+        && TEST_PHASE_FILES.iter().all(|f| !pulled.join(f).exists())
+}
+
+/// A pass with no verdict is named from the VM script's own evidence, said aloud and kept as
+/// [`crate::vm_fault::ROUND_FAULT_FILE`] in `results_dir` for certify.
+pub fn settle_missing_verdict(pulled: &Path, results_dir: &Path, remote_rc: i32) -> Option<crate::vm_fault::RoundFault> {
+    if !verdict_missing(pulled, remote_rc) {
+        return None;
+    }
+    let fault = crate::vm_fault::name(results_dir);
+    eprintln!("round-vm run: {} — the VM script's log, last {} lines:\n{}", fault.cause, crate::vm_fault::FAULT_TAIL, fault.tail);
+    let path = results_dir.join(crate::vm_fault::ROUND_FAULT_FILE);
+    if let Err(e) = fs::create_dir_all(results_dir).and_then(|_| fs::write(&path, fault.render())) {
+        eprintln!("round-vm run: {}: {e}", path.display());
+    }
+    Some(fault)
+}
+
 /// `round-vm run`. Returns the process exit code (DESIGN.md §2.2). A pass that began is recorded
 /// exactly once, whatever way it ended; a record that cannot be written ends the pass unjudged.
 pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
@@ -2139,7 +2248,6 @@ fn on_vm_run(
         cap_secs: cfg.cap_secs,
         testenv_limits: cfg.testenv_limits.clone(),
         post_guard_secs: cfg.post_guard_secs,
-        disk_need_gib: cfg.disk_need_gib,
         lint: lints(args),
         build_image,
         round_ref: round_ref.to_string(),
@@ -2425,6 +2533,7 @@ fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, expected: usiz
     }
     let _ = fs::remove_dir_all(&scratch);
     keep_runner_output(env.remote, env.cfg, &vm.addr, &env.cfg.state_dir.join(format!(".pulled-runner.{}", std::process::id())), results_dir);
+    keep_launcher_output(env.remote, env.cfg, &vm.addr, &env.cfg.state_dir.join(format!(".pulled-launcher.{}", std::process::id())), results_dir);
 }
 
 fn incomplete_count_line(present: usize, expected: usize, new: usize) -> String {
@@ -2474,6 +2583,23 @@ fn push_resume_credentials(remote: &dyn Remote, addr: &str, dir: &Path) {
 /// The whole stdout and stderr of the VM's testenv run, kept with the round's results.
 pub const REMOTE_RUNNER_OUT: &str = "round-runner.out";
 pub const RUNNER_OUT_FILE: &str = "runner.out";
+
+/// The launcher's capture of the script's stdout and stderr, kept with the results on every exit.
+pub const LAUNCHER_FILES: [(&str, &str); 2] = [("round-batch.out", crate::vm_fault::LAUNCHER_OUT_FILE), ("round-batch.err", crate::vm_fault::LAUNCHER_ERR_FILE)];
+
+fn keep_launcher_output(remote: &dyn Remote, cfg: &Config, addr: &str, scratch: &Path, results_dir: &Path) {
+    for (remote_name, kept) in LAUNCHER_FILES {
+        let _ = fs::remove_dir_all(scratch);
+        let copied = pull_retry(remote, cfg, addr, remote_name, scratch)
+            .then(|| fs::create_dir_all(results_dir).and_then(|_| fs::copy(scratch.join(remote_name), results_dir.join(kept))));
+        match copied {
+            Some(Ok(_)) => {}
+            Some(Err(e)) => eprintln!("round-vm run: {kept}: {e}"),
+            None => eprintln!("round-vm run: the VM's {remote_name} could not be pulled"),
+        }
+    }
+    let _ = fs::remove_dir_all(scratch);
+}
 
 fn keep_runner_output(remote: &dyn Remote, cfg: &Config, addr: &str, scratch: &Path, results_dir: &Path) {
     let _ = fs::remove_dir_all(scratch);
@@ -2557,11 +2683,10 @@ fn after_batch(
     if args.ci_entry.is_none() {
         keep_runner_output(remote, cfg, &vm.addr, &scratch("runner"), &results_dir);
     }
-    for top in [FIXTURE_FAULT_FILE, FENCE_TIMES].into_iter().chain(TEST_PHASE_FILES) {
-        if pulled.join(top).is_file() {
-            let _ = fs::create_dir_all(&results_dir);
-            let _ = fs::copy(pulled.join(top), results_dir.join(top));
-        }
+    keep_top_files(&pulled, &results_dir);
+    keep_launcher_output(remote, cfg, &vm.addr, &scratch("launcher"), &results_dir);
+    if pulled_ok {
+        settle_missing_verdict(&pulled, &results_dir, remote_rc);
     }
     if executables(&bins).is_empty() {
         show_setup_log(remote, cfg, &vm.addr, &scratch("setup-log"));
@@ -2751,6 +2876,47 @@ mod tests {
         assert!(lane.contains("--results \"$bare_out\"") || REMOTE_SCRIPT[bare..corpus].contains("--results \"$bare_out\""), "its results are copied beside the corpus's once the corpus has written its own");
         assert!(lane.contains("[ \"$rc\" -eq 0 ] && rc=1"), "a red bare suite makes the round red");
         assert!(REMOTE_SCRIPT.contains("--selected \"$suites\"") && REMOTE_SCRIPT.contains("--suites all"));
+    }
+
+    #[test]
+    fn the_remote_script_reports_bytes_used_per_directory_at_start_build_and_suites() {
+        let a = REMOTE_SCRIPT.find("disk_report() {").expect("the disk report");
+        let start = REMOTE_SCRIPT.find("disk_report start").unwrap();
+        let func = &REMOTE_SCRIPT[a..start];
+        let build = REMOTE_SCRIPT.find("disk_report build").expect("reported after the build");
+        let suites = REMOTE_SCRIPT.find("disk_report_last suites").expect("reported after the suites");
+        let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
+        assert!(start < build && build < batch && batch < suites, "at start, after the build and after the suites");
+        let red = REMOTE_SCRIPT.find("UNIT-TESTS RED before the suites").unwrap();
+        let red_exit = red + REMOTE_SCRIPT[red..].find("exit 1").unwrap();
+        assert!(REMOTE_SCRIPT[red..red_exit].contains("disk_report_last unit-red"), "a pass that ends at a red unit tier still reports its last usage");
+        for (label, path) in [("round-work", "\"$HOME/round-work\""), ("tmpdir", "\"${TMPDIR:-/tmp}\""), ("podman-graphroot", "\"$graph\""), ("cargo-target", "\"$HOME/round-work/target\"")] {
+            assert!(func.contains(&format!("{label}) path={path}")), "{label} is measured at {path}: {func}");
+        }
+        assert!(func.contains("[ \"$label\" != cargo-target ]; then total=$(( total + bytes ))"), "cargo-target lies inside round-work and is not added twice");
+        assert!(func.contains("| tee -a \"$disk_out\" >&2"), "the stderr log and the results file carry the same lines");
+        assert!(REMOTE_SCRIPT.contains("disk_out=\"$HOME/round-work/.runtime/spira/batch-results/disk-usage\""), "the lines land in the pass's results");
+    }
+
+    #[test]
+    fn a_directory_du_cannot_read_is_never_a_zero_and_never_ends_the_pass() {
+        let a = REMOTE_SCRIPT.find("disk_report() {").unwrap();
+        let func = &REMOTE_SCRIPT[a..REMOTE_SCRIPT.find("disk_report start").unwrap()];
+        assert!(func.contains("elif ! bytes=\"$(du -sxB1 \"$path\" 2>/dev/null | cut -f1)\"; then"), "du's failure is tested, so errexit cannot end the pass: {func}");
+        assert!(func.contains("a lower bound"), "a partial read says it is partial");
+        assert!(func.contains("''|*[!0-9]*) bytes=unread"), "no number read is unread, not 0");
+        assert!(func.contains("bytes=unread path=\"(podman named no graph root)\""), "an unnamed graph root is unread, not 0");
+        assert!(func.contains("[ \"$whole\" = yes ] || total=\"$total+unread\""), "an incomplete total says so");
+        assert!(!func.contains("bytes=0 ;;"), "no fallback to zero");
+    }
+
+    #[test]
+    fn coverage_profiles_are_deleted_only_after_the_line_report_has_read_them() {
+        let report = REMOTE_SCRIPT.find("cargo llvm-cov report").expect("the line report");
+        let last = REMOTE_SCRIPT.find("disk_report_last suites").expect("the pass's last report");
+        assert!(report < last);
+        let f = REMOTE_SCRIPT.find("disk_report_last() {").unwrap();
+        assert!(REMOTE_SCRIPT[f..f + 300].contains("-name '*.profraw' -o -name '*.profdata' \\) -delete"), "profiles deleted with the last report");
     }
 
     #[test]
@@ -3012,7 +3178,6 @@ mod tests {
             cap_secs: 900,
             testenv_limits: "testenv_suite_cap = 600\n".into(),
             post_guard_secs: 600,
-            disk_need_gib: 7,
             lint: false,
             build_image: false,
             ssh_log: PathBuf::from("ssh.log"),
@@ -3021,7 +3186,7 @@ mod tests {
             ci_entry: Some("deploy/ci.sh all".into()),
             fences: String::new(),
         });
-        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '7' ''", shell_quote(REMOTE_LAUNCHER)));
+        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' ''", shell_quote(REMOTE_LAUNCHER)));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -3050,6 +3215,21 @@ mod tests {
         assert!(cfg[sec..].contains("base = \"origin/base\""), "{cfg}");
     }
 
+    /// The VM's own tool directories, declared: every child PATH a tree's binary builds is
+    /// the declared release plus `spira.path`, never the script's inherited PATH, and the
+    /// VM's dolt, bd and cargo live outside the release. The scratch root is declared with it.
+    #[test]
+    fn the_round_config_declares_the_vms_toolchain_and_scratch_root() {
+        let start = REMOTE_SCRIPT.find("<<ROUNDCFG").unwrap();
+        let end = start + REMOTE_SCRIPT[start..].find("\nROUNDCFG\n").unwrap();
+        let cfg = &REMOTE_SCRIPT[start..end];
+        let spira = &cfg[..cfg.find("[repo.spira]").unwrap()];
+        assert!(spira.contains("\npath = \"$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin\"\n"), "{cfg}");
+        assert!(spira.contains("\ntestenv_scratch_root = \"$HOME/round-scratch\"\n"), "{cfg}");
+        let mk = REMOTE_SCRIPT.find("mkdir -p \"$HOME/round-work/.runtime/spira\" \"$HOME/round-scratch\"").expect("the scratch root is made before the config names it");
+        assert!(mk < start, "the scratch root exists before any tree binary reads the config");
+    }
+
     #[test]
     fn the_round_config_names_the_home_repo_not_its_path() {
         let scripts = [("run.rs", REMOTE_SCRIPT, "ROUNDCFG\nexport"), ("template.sh", include_str!("template.sh"), "TEMPLATECFG\nexport")];
@@ -3066,10 +3246,10 @@ mod tests {
         let job = BatchJob {
             host_addr: "h".into(), mirror_port: 1, suites: None, maxpar: 1, toolchain: None, cache_home: None,
             testenv_registry: None, resume_url: Some("s3://bkt/pre".into()), setup_alarm_secs: 1, cap_secs: 1,
-            testenv_limits: "x".into(), post_guard_secs: 1, disk_need_gib: 1, lint: false, build_image: false,
+            testenv_limits: "x".into(), post_guard_secs: 1, lint: false, build_image: false,
             ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None, fences: String::new(),
         };
-        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '1' ''"));
+        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' ''"));
         assert!(!REMOTE_SCRIPT.contains("AWS_SECRET_ACCESS_KEY"), "the script never carries a key");
         let remote = FakeRemote::green();
         push_resume_credentials(&remote, "10.0.0.2", Path::new("/creds"));
@@ -3425,7 +3605,6 @@ mod tests {
             cap_secs: 1234,
             testenv_limits: "testenv_suite_cap = 600\n".into(),
             post_guard_secs: 77,
-            disk_need_gib: 40,
             vm_budget_secs: 300,
             build_budget_secs: 600,
         });
@@ -3558,6 +3737,70 @@ mod tests {
         keep_runner_output(&remote, &fx.cfg, "addr", &fx.cfg.state_dir.join(".runner-test"), &results);
         let kept = fs::read_to_string(results.join(RUNNER_OUT_FILE)).unwrap();
         assert!(kept.contains("batch: resumed: test-a.sh"), "{kept}");
+    }
+
+    fn session_ending_after_the_build() -> FakeRemote {
+        let mut log: Vec<String> = (1..=60).map(|i| format!("round-vm: setup line {i}")).collect();
+        log.push("round-vm: built the round in 12s".into());
+        log.push("round-vm: cannot apply the head's config delta".into());
+        let log: &'static str = Box::leak(log.join("\n").into_boxed_str());
+        let mut remote = FakeRemote::green();
+        remote.rc = Ok(2);
+        remote.files.insert(REMOTE_RESULTS, vec![(crate::vm_fault::PHASE_FILE, "phase=release rc=2\n"), (crate::vm_fault::SCRIPT_LOG_FILE, log)]);
+        remote.files.insert("round-batch.err", vec![("round-batch.err", "release: config-delta.toml: TOML parse error at line 3\nround-vm: cannot apply the head's config delta\n")]);
+        remote.files.insert("round-batch.out", vec![("round-batch.out", "")]);
+        remote
+    }
+
+    #[test]
+    fn a_session_that_ends_after_the_build_phase_is_a_named_fault_carrying_its_logs_tail() {
+        let fx = fixture();
+        let remote = session_ending_after_the_build();
+        let pulled = fx.cfg.state_dir.join(".pulled-results-test");
+        let results = fx.cfg.run_dir.join("faulted");
+        remote.pull("addr", REMOTE_RESULTS, &pulled).unwrap();
+        keep_top_files(&pulled, &results);
+        keep_launcher_output(&remote, &fx.cfg, "addr", &fx.cfg.state_dir.join(".launcher-test"), &results);
+        assert!(fs::read_to_string(results.join(crate::vm_fault::LAUNCHER_ERR_FILE)).unwrap().contains("TOML parse error"), "the launcher's stderr is kept");
+        let fault = settle_missing_verdict(&pulled, &results, 2).expect("a pass with no verdict is a named fault");
+        assert_eq!(fault.cause, "FAULT phase=release rc=2: round-vm: cannot apply the head's config delta");
+        let kept = fs::read_to_string(results.join(crate::vm_fault::ROUND_FAULT_FILE)).unwrap();
+        assert!(kept.starts_with("ROUND-FAULT: FAULT phase=release rc=2: "), "{kept}");
+        assert!(kept.contains("round-vm: setup line 23\n") && !kept.contains("round-vm: setup line 22\n"), "the last 40 lines: {kept}");
+        assert!(kept.contains("round-vm: built the round in 12s"), "{kept}");
+    }
+
+    #[test]
+    fn a_pass_with_a_verdict_or_a_build_red_names_no_fault() {
+        let fx = fixture();
+        let pulled = fx.cfg.state_dir.join(".pulled-green-test");
+        FakeRemote::green().pull("addr", REMOTE_RESULTS, &pulled).unwrap();
+        assert_eq!(settle_missing_verdict(&pulled, &fx.cfg.run_dir.join("green"), 1), None, "testenv's results are the verdict");
+        let empty = fx.cfg.state_dir.join(".pulled-empty-test");
+        fs::create_dir_all(&empty).unwrap();
+        assert!(!verdict_missing(&empty, 0) && !verdict_missing(&empty, 4));
+        fs::write(empty.join("unit.json"), "{}").unwrap();
+        assert!(!verdict_missing(&empty, 1), "a unit red is its own record");
+    }
+
+    #[test]
+    fn every_exit_of_the_remote_script_leaves_its_phase_and_its_log_in_the_results() {
+        let s = REMOTE_SCRIPT;
+        let tee = s.find("exec 2> >(tee -a ~/round-script.log ~/round-setup.log >&2)").expect("stderr is kept in the script log");
+        let out = s.find("exec > >(tee -a ~/round-script.log)").expect("stdout too: testenv's VERDICT line is on it");
+        let trap = s.find("trap round_exit EXIT").expect("an EXIT trap");
+        let first_exit = s.find("exit 2;").unwrap();
+        assert!(out < trap && tee < trap && trap < first_exit, "the log and the trap are in place before the first exit");
+        let exit_fn = &s[s.find("round_exit() {").unwrap()..trap];
+        assert!(exit_fn.contains("cp -f ~/round-script.log \"$dir/round-script.log\""), "{exit_fn}");
+        assert!(exit_fn.contains("printf 'phase=%s rc=%s\\n' \"${fault_phase:-$round_phase}\" \"${fault_rc:-$rc}\" > \"$dir/round-phase\""), "{exit_fn}");
+        assert!(exit_fn.contains("dir=\"$HOME/round-work/.runtime/spira/batch-results\""), "into the dir REMOTE_RESULTS pulls");
+        assert_eq!(REMOTE_RESULTS, "round-work/.runtime/spira/batch-results/");
+        let wait = s.find("wait \"$testenv_pid\"").unwrap();
+        assert!(s[wait..].starts_with("wait \"$testenv_pid\"\nrc=$?\n[ \"$rc\" -eq 0 ] || phase_failed suites \"$rc\""), "testenv's refusal is the failed phase, not whatever ran after it");
+        for p in ["checkout", "build", "release", "unit-tests", "suites"] {
+            assert!(s.contains(&format!("\nphase {p}\n")), "phase {p} is marked");
+        }
     }
 
     #[test]

@@ -5524,7 +5524,7 @@ fn a_candidate_image_build_that_outlasts_its_wait_leaves_the_round_unjudged() {
 }
 
 #[test]
-fn open_rounds_a_recipe_changing_member_apart_from_the_ordinary_ones() {
+fn open_admits_a_recipe_changing_member_with_the_ordinary_ones() {
     let t = round_world();
     t.git.stat("b0", "tb", &[("round-vm/ami-setup.sh", 1, 1)]);
     assert_eq!(
@@ -5534,32 +5534,48 @@ fn open_rounds_a_recipe_changing_member_apart_from_the_ordinary_ones() {
         t.err()
     );
     let o = t.out();
-    assert!(
-        o.contains("skip — sp-b: solo: sp-b changes the round recipe")
-            && o.contains("members=sp-a:ta sp-c:tc")
-            && !o.contains("sp-b:tb"),
-        "{o}"
-    );
+    assert!(o.contains("members=sp-a:ta sp-b:tb sp-c:tc") && !o.contains("solo:"), "{o}");
+}
+
+const PREFLIGHT_OUT: &str = "round-image-preflight: recipe inputs touched: flake.nix\nround-image-preflight: RED rc=1 after 12s (image debian:12)\nround-image-preflight: failing setup line: + nix profile install .#round-deps\n";
+
+/// A two-member round whose pass ends red on the image preflight fence, `recipe` naming the
+/// members whose diff touches a round-recipe input.
+fn preflight_red_round(recipe: &[&str]) -> (T, String) {
+    let t = round_world();
+    for tip in recipe {
+        t.git.stat("b0", tip, &[("flake.nix", 1, 1)]);
+    }
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: String::new() };
+    *t.scripts.round_vm_results.borrow_mut() = vec![("fence-round-image-preflight".into(), "red".into())];
+    *t.scripts.round_vm_files.borrow_mut() = vec![("fence-round-image-preflight.out".into(), PREFLIGHT_OUT.into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    assert!(t.out().contains("red=fence-round-image-preflight"), "{}", t.out());
+    (t, batch)
 }
 
 #[test]
-fn open_admits_a_lone_recipe_changing_member_by_itself() {
-    let t = round_world();
-    t.git.stat("b0", "ta", &[("flake.nix", 1, 1)]);
-    t.git.stat("b0", "tb", &[("flake.lock", 1, 1)]);
-    assert_eq!(
-        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
-        0,
-        "{}",
-        t.err()
-    );
-    let o = t.out();
+fn a_preflight_red_ejects_exactly_the_recipe_changing_member_with_the_fence_evidence() {
+    let (t, _) = preflight_red_round(&["tb"]);
+    assert!(t.lib.has("bead_reopen sp-b eject-red"), "{:?}", t.lib.calls.borrow());
+    assert!(!t.lib.has("bead_reopen sp-a"), "{:?}", t.lib.calls.borrow());
+    let comment = t.lib.calls.borrow().iter().find(|c| c.starts_with("comment sp-b")).cloned().unwrap_or_default();
     assert!(
-        o.contains("members=sp-a:ta")
-            && !o.contains("sp-b:tb")
-            && o.contains("sp-b: solo: sp-b changes the round recipe"),
-        "{o}"
+        comment.contains("failing setup line: + nix profile install .#round-deps") && comment.contains("flake.nix"),
+        "{comment}"
     );
+    let members = kv_of(&t, "round").get("members").cloned().unwrap_or_default();
+    assert!(members.contains("sp-a") && !members.contains("sp-b"), "{members}");
+}
+
+#[test]
+fn a_preflight_red_with_no_recipe_changing_member_ejects_nobody() {
+    let (t, _) = preflight_red_round(&[]);
+    assert!(!t.lib.has("bead_reopen"), "{:?}", t.lib.calls.borrow());
+    let members = kv_of(&t, "round").get("members").cloned().unwrap_or_default();
+    assert!(members.contains("sp-a") && members.contains("sp-b"), "{members}");
 }
 
 fn touches(t: &T, tip: &str, file: &str) {
@@ -5927,6 +5943,84 @@ fn a_member_in_two_consecutive_faulted_passes_is_ejected_with_the_fault_text() {
         "{comment}"
     );
     assert!(kv_of(&t, "round").get("members").is_none_or(|m| !m.contains("sp-a")));
+}
+
+const SETTINGS_FAULT: &str = "ROUND-FAULT: FAULT settings-refused phase=suites rc=2: batch: SPIRA_NEW_KEY is not declared — every key is required; refusing
+settings-key: SPIRA_NEW_KEY
+--- the last 40 lines of the VM's script log ---
+round-vm: PHASE suites
+batch: SPIRA_NEW_KEY is not declared — every key is required; refusing
+VERDICT FAULT rc=2 ran=0 reason=settings-refused
+";
+
+fn holds_key(t: &T, rev: &str, text: &str) {
+    t.git.greps.borrow_mut().insert(format!("{rev}:SPIRA_NEW_KEY"), vec!["spira/conf.d/new.toml".into()]);
+    t.git.files.borrow_mut().insert(format!("{rev}:spira/conf.d/new.toml"), text.into());
+}
+
+fn vm_names_the_fault(t: &T, file: &str) {
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 2, out: String::new(), err: String::new() };
+    *t.scripts.round_vm_files.borrow_mut() = vec![("round-fault.out".into(), file.into())];
+}
+
+#[test]
+fn a_pass_the_vm_ended_with_no_verdict_is_its_named_fault_with_the_logs_tail() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    vm_names_the_fault(&t, "ROUND-FAULT: FAULT phase=release rc=2: round-vm: cannot apply the head's config delta\n--- the last 40 lines of the VM's script log ---\nround-vm: built the round in 12s\nround-vm: cannot apply the head's config delta\n");
+    assert_eq!(t.run(&["round", "certify", &batch]), 4);
+    assert!(t.out().contains("fault=FAULT phase=release rc=2: round-vm: cannot apply the head's config delta"), "{}", t.out());
+    let err = t.err();
+    assert!(err.contains("FAULT phase=release rc=2: round-vm: cannot apply the head's config delta; the round is not judged"), "{err}");
+    assert!(err.contains("round-vm: built the round in 12s"), "the log's tail is shown: {err}");
+    assert!(!err.contains("round-vm exited 2"), "{err}");
+}
+
+#[test]
+fn a_settings_refusal_ejects_the_member_whose_diff_adds_the_key_and_no_other() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    holds_key(&t, "tb", "SPIRA_NEW_KEY = 1\n");
+    holds_key(&t, "local/main", "SPIRA_NEW_KEY_ROOT = 1\n");
+    vm_names_the_fault(&t, SETTINGS_FAULT);
+    assert_eq!(t.run(&["round", "certify", &batch]), 4);
+    assert!(t.out().contains("fault-owner=sp-b"), "{}", t.out());
+    assert!(t.lib.has("bead_reopen sp-b eject-red"), "{:?}", t.lib.calls.borrow());
+    assert!(!t.lib.has("bead_reopen sp-a"), "{:?}", t.lib.calls.borrow());
+    let comment = t.lib.calls.borrow().iter().find(|c| c.starts_with("comment sp-b")).cloned().unwrap_or_default();
+    assert!(comment.contains("adds SPIRA_NEW_KEY") && comment.contains("reason=settings-refused"), "{comment}");
+}
+
+#[test]
+fn a_member_stacked_on_the_one_that_adds_the_key_is_not_ejected_for_it() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    holds_key(&t, "ta", "SPIRA_NEW_KEY = 1\n");
+    holds_key(&t, "tb", "SPIRA_NEW_KEY = 1\n");
+    t.git.ancestor("ta", "tb");
+    vm_names_the_fault(&t, SETTINGS_FAULT);
+    assert_eq!(t.run(&["round", "certify", &batch]), 4);
+    assert!(t.lib.has("bead_reopen sp-a eject-red"), "{:?}", t.lib.calls.borrow());
+    assert!(!t.lib.has("bead_reopen sp-b"), "{:?}", t.lib.calls.borrow());
+}
+
+#[test]
+fn a_settings_refusal_no_member_adds_names_the_harness_and_counts_against_none() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    holds_key(&t, "local/main", "SPIRA_NEW_KEY = 1\n");
+    holds_key(&t, "ta", "SPIRA_NEW_KEY = 1\n");
+    for _ in 0..3 {
+        vm_names_the_fault(&t, SETTINGS_FAULT);
+        assert_eq!(t.run(&["round", "certify", &batch]), 4);
+        assert!(t.out().contains("fault-owner=harness"), "{}", t.out());
+        assert!(t.err().contains("the harness is the cause"), "{}", t.err());
+    }
+    assert!(!t.lib.has("bead_reopen sp-a"), "{:?}", t.lib.calls.borrow());
 }
 
 #[test]
@@ -6445,4 +6539,11 @@ fn a_round_cut_before_its_base_moved_refuses_land_as_base_moved() {
     );
     assert!(t.err().contains("re-merged"), "{}", t.err());
     assert_eq!(t.landed_ref().as_deref(), Some("b1"));
+}
+
+#[test]
+fn a_preflight_red_ejects_every_recipe_changing_member_and_names_them() {
+    let (t, _) = preflight_red_round(&["ta", "tb"]);
+    assert!(t.lib.has("bead_reopen sp-a eject-red") && t.lib.has("bead_reopen sp-b eject-red"), "{:?}", t.lib.calls.borrow());
+    assert!(t.out().contains("ejected=sp-a,sp-b"), "{}", t.out());
 }

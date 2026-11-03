@@ -41,7 +41,7 @@ struct FGit {
     stats: RefCell<BTreeMap<(String, String), Vec<(String, u32, u32)>>>,
     /// "rev:path" -> contents, for `path_exists` and `file_at`.
     files: RefCell<BTreeMap<String, String>>,
-    /// needle -> suites that reference it.
+    /// needle -> files that hold it at any rev; "rev:needle" -> files that hold it at that rev.
     greps: RefCell<BTreeMap<String, Vec<String>>>,
     calls: RefCell<Vec<String>>,
     /// The base the last worktree was cut at, and whether a merge then names it in the head it makes.
@@ -139,8 +139,9 @@ impl Git for FGit {
     fn file_at(&self, _: &Path, rev: &str, path: &str) -> Option<String> {
         self.files.borrow().get(&format!("{rev}:{path}")).cloned()
     }
-    fn grep_files(&self, _: &Path, _: &str, needle: &str, _: &str) -> Vec<String> {
-        self.greps.borrow().get(needle).cloned().unwrap_or_default()
+    fn grep_files(&self, _: &Path, rev: &str, needle: &str, _: &str) -> Vec<String> {
+        let greps = self.greps.borrow();
+        greps.get(&format!("{rev}:{needle}")).or_else(|| greps.get(needle)).cloned().unwrap_or_default()
     }
     fn branch_set(&self, _: &Path, name: &str, sha: &str, _force: bool) -> bool {
         self.calls.borrow_mut().push(format!("branch-set {name}"));
@@ -1539,7 +1540,6 @@ impl Emit for Cap {
 }
 
 struct T {
-    _serial: crate::testutil::Serial,
     dir: testkit::TempDir,
     git: FGit,
     bd: FBd,
@@ -1557,7 +1557,6 @@ const REPO: &str = "/repo";
 
 impl T {
     fn new(mode: LandMode) -> T {
-        let serial = crate::testutil::serial();
         let dir = tmpdir("ops");
         let s = Settings {
             home: dir.join("home"),
@@ -1639,7 +1638,6 @@ impl T {
             ..lc
         };
         T {
-            _serial: serial,
             dir,
             git,
             bd: FBd::default(),
