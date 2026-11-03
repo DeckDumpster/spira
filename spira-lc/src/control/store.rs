@@ -66,6 +66,14 @@ pub struct Verdict {
     pub runes: Vec<String>,
 }
 
+/// One state's run through the state index in [`Store::records_page`]'s merge.
+struct StateRun {
+    name: String,
+    cursor: Option<String>,
+    buf: std::collections::VecDeque<Item>,
+    done: bool,
+}
+
 pub struct Store<B: Backend> {
     contract: Contract<B>,
     /// The shortest claim lock taken, whatever lease the claimant asked for.
@@ -290,6 +298,133 @@ impl<B: Backend> Store<B> {
             })
             .collect::<Result<Vec<_>>>()?;
         Ok((records, readiness, rev))
+    }
+
+    /// One `list` page of lifecycle records at `rev`, in id order after `after`, of at most
+    /// `limit` records that pass `keep`. Every read is bounded by the page: `ids` are read by
+    /// key, `states` through the store's state index (one key-ordered range per state, merged),
+    /// and otherwise the prefix by key range, so no call materialises the prefix (sp-zjkgeh).
+    /// `keep` filters what the reads cannot, and a page short of `limit` reads on.
+    pub fn records_page(
+        &self,
+        rev: u64,
+        states: Option<&[BeadState]>,
+        ids: Option<&[String]>,
+        after: Option<&str>,
+        limit: Option<usize>,
+        keep: impl Fn(&LifecycleRecord) -> bool,
+    ) -> Result<Vec<Read<LifecycleRecord>>> {
+        const CHUNK: usize = 1_000;
+        let want = limit.unwrap_or(usize::MAX);
+        let chunk = limit.map_or(CHUNK, |l| l.clamp(1, CHUNK));
+        let mut out = Vec::new();
+        let mut take = |item: &Item| -> Result<bool> {
+            if let Some(id) = keys::id_of(keys::LIFECYCLE, &item.key) {
+                let r = self.projected(id, item, rev)?;
+                if keep(&r.value) {
+                    out.push(r);
+                }
+            }
+            Ok(out.len() >= want)
+        };
+        let start = after.map(keys::lifecycle);
+        if let Some(ids) = ids {
+            let mut ids: Vec<&String> =
+                ids.iter().filter(|i| after.is_none_or(|a| i.as_str() > a)).collect();
+            ids.sort_unstable();
+            ids.dedup();
+            for id in ids {
+                if let Some(item) = self.contract.get_at(&keys::lifecycle(id), rev)? {
+                    if take(&item)? {
+                        break;
+                    }
+                }
+            }
+        } else if let Some(states) = states {
+            let mut runs = Vec::new();
+            for s in states {
+                let name = serde_json::to_value(s)
+                    .ok()
+                    .and_then(|v| v.as_str().map(String::from))
+                    .ok_or_else(|| Error::Backend(format!("{s:?}: no state name")))?;
+                runs.push(StateRun {
+                    name,
+                    cursor: start.clone(),
+                    buf: std::collections::VecDeque::new(),
+                    done: false,
+                });
+            }
+            loop {
+                for r in runs.iter_mut().filter(|r| r.buf.is_empty() && !r.done) {
+                    let page = self.contract.range_in_state(
+                        keys::LIFECYCLE,
+                        &r.name,
+                        r.cursor.as_deref(),
+                        chunk,
+                        rev,
+                    )?;
+                    r.done = page.len() < chunk;
+                    r.cursor = page.last().map(|i| i.key.clone()).or(r.cursor.take());
+                    r.buf.extend(page);
+                }
+                let Some(next) = runs
+                    .iter_mut()
+                    .filter(|r| !r.buf.is_empty())
+                    .min_by(|a, b| a.buf[0].key.cmp(&b.buf[0].key))
+                else {
+                    break;
+                };
+                let item = next.buf.pop_front().expect("a non-empty run");
+                if take(&item)? {
+                    break;
+                }
+            }
+        } else {
+            let mut cursor = start;
+            loop {
+                let page = self
+                    .contract
+                    .range_at(keys::LIFECYCLE, cursor.as_deref(), chunk, rev)?;
+                for item in &page {
+                    if take(item)? {
+                        return Ok(out);
+                    }
+                }
+                if page.len() < chunk {
+                    break;
+                }
+                cursor = page.last().map(|i| i.key.clone());
+            }
+        }
+        Ok(out)
+    }
+
+    /// `item`, the record of `id` at `rev`, with its lease projected from the claim lock then.
+    fn projected(&self, id: &str, item: &Item, rev: u64) -> Result<Read<LifecycleRecord>> {
+        let mut value: LifecycleRecord = decode(&item.key, &item.value)?;
+        if value.row.state == BeadState::Working {
+            let lock = self.contract.get_at(&keys::claim_lock(id), rev)?;
+            project_lease(&mut value, lock.as_ref());
+        }
+        Ok(Read {
+            value,
+            mod_rev: item.mod_rev,
+            create_rev: item.create_rev,
+        })
+    }
+
+    /// `id`'s readiness at `rev`.
+    pub fn readiness_at(&self, id: &str, rev: u64) -> Result<Option<Readiness>> {
+        Ok(self
+            .read::<Readiness>(&keys::readiness(id), Some(rev))?
+            .map(|(r, _)| r.value))
+    }
+
+    /// `id`'s state at `rev`, or `None` with no record.
+    pub fn state_at(&self, id: &str, rev: u64) -> Result<Option<BeadState>> {
+        Ok(self
+            .read::<LifecycleRecord>(&keys::lifecycle(id), Some(rev))?
+            .map(|(r, _)| r.value.row.state))
     }
 
     /// The fence of the claim now holding `id`: its lock, while it is live.

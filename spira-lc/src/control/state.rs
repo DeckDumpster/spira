@@ -3,8 +3,6 @@
 //! number a string, `holds` and `stack` as JSON text. The caller verbs built on them (release,
 //! renew, state, holds, list-state and the rest) reach the control store through these.
 
-use std::collections::BTreeMap;
-
 use lifecycle::bead::{self, BeadEvent, BeadEventKind, BeadState};
 use serde_json::{Map, Value};
 use state_store::{Backend, Error, Request};
@@ -265,10 +263,6 @@ fn list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, Str
         Ok(p) => p.unwrap_or_default(),
         Err(e) => return (CANNOT_TELL, format!("cannot tell: list: {e}")),
     };
-    let (records, readiness, _) = match store.records_with_readiness() {
-        Ok(r) => r,
-        Err(e) => return cannot_tell(e),
-    };
     let kept = |rec: &LifecycleRecord| {
         let row = &rec.row;
         let state = row.state.as_str();
@@ -287,23 +281,56 @@ fn list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, Str
                     && (!LISTED_TERMINAL.contains(&state)
                         || rec.updated_at >= call.now - LIVE_WINDOW_SECS)))
     };
-    let state_of: BTreeMap<&str, BeadState> = records
-        .iter()
-        .map(|r| (r.value.row.bead_id.as_str(), r.value.row.state))
-        .collect();
-    let mut rows: BTreeMap<&str, Value> = BTreeMap::new();
-    for r in records.iter().filter(|r| kept(&r.value)) {
-        let id = r.value.row.bead_id.as_str();
-        let ready = blocking(readiness.get(id).cloned(), |b| Ok(state_of.get(b).copied()));
-        let ready = match ready {
-            Ok(x) => x,
-            Err(e) => return cannot_tell(e),
-        };
-        rows.insert(id, row(&r.value, ready.as_ref(), LISTED));
+    // The states the state index is read for: those named, less the terminal ones under
+    // --live; a name no state has selects nothing.
+    let indexed: Option<Vec<BeadState>> = match (&states, live) {
+        (None, false) => None,
+        (named, _) => Some(
+            BEAD_STATES
+                .into_iter()
+                .filter(|s| named.as_ref().is_none_or(|n| n.iter().any(|x| x == s.as_str())))
+                .filter(|s| !live || !s.is_terminal())
+                .collect(),
+        ),
+    };
+    let read = || -> state_store::Result<Vec<Value>> {
+        let rev = store.contract().head()?;
+        let records = store.records_page(
+            rev,
+            indexed.as_deref(),
+            ids.as_deref(),
+            after.as_deref(),
+            limit,
+            kept,
+        )?;
+        let mut rows = Vec::with_capacity(records.len());
+        for r in &records {
+            let id = r.value.row.bead_id.as_str();
+            let ready = blocking(store.readiness_at(id, rev)?, |b| store.state_at(b, rev))?;
+            rows.push(row(&r.value, ready.as_ref(), LISTED));
+        }
+        Ok(rows)
+    };
+    match read() {
+        Ok(rows) => (0, Value::Array(rows).to_string()),
+        Err(e) => cannot_tell(e),
     }
-    let out = Value::Array(rows.into_values().take(limit.unwrap_or(usize::MAX)).collect());
-    (0, out.to_string())
 }
+
+/// Every bead state, for the state index's reads.
+const BEAD_STATES: [BeadState; 11] = [
+    BeadState::Open,
+    BeadState::Ready,
+    BeadState::Working,
+    BeadState::Submitted,
+    BeadState::Certified,
+    BeadState::InDelivery,
+    BeadState::Rework,
+    BeadState::Landed,
+    BeadState::Superseded,
+    BeadState::Dropped,
+    BeadState::Done,
+];
 
 fn answer(outcome: state_store::Result<Outcome>) -> (i32, String) {
     match outcome {

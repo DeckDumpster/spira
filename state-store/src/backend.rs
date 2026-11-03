@@ -57,6 +57,20 @@ pub trait Backend: Send + Sync {
         limit: usize,
         at: u64,
     ) -> Result<Vec<(String, Version)>>;
+    /// Keys starting with `prefix` whose value's `data.state` is the string `state`, strictly
+    /// after `after`, in key order, at most `limit`: a state-filtered list as one bounded read.
+    /// The default pages through [`Backend::range`] and filters; a backend that indexes the
+    /// state overrides it, so a page reads O(page) rows rather than the whole prefix.
+    fn range_in_state(
+        &self,
+        prefix: &str,
+        state: &str,
+        after: Option<&str>,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<(String, Version)>> {
+        range_in_state_by_scan(self, prefix, state, after, limit, at)
+    }
     /// Applies `batch` as main `expect + 1`, or `Stale` if the head is no longer `expect`. The
     /// contract never puts a key in a batch twice.
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64>;
@@ -91,4 +105,49 @@ pub trait Backend: Send + Sync {
         out.truncate(limit);
         Ok(out)
     }
+}
+
+/// The value's `data.state`, when it is a JSON object carrying one as a string.
+pub fn state_of(value: &[u8]) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct Data {
+        state: Option<serde_json::Value>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Obj {
+        data: Option<Data>,
+    }
+    let o: Obj = serde_json::from_slice(value).ok()?;
+    match o.data?.state? {
+        serde_json::Value::String(s) => Some(s),
+        _ => None,
+    }
+}
+
+/// [`Backend::range_in_state`] by paging through `range` and filtering on [`state_of`].
+pub fn range_in_state_by_scan<B: Backend + ?Sized>(
+    b: &B,
+    prefix: &str,
+    state: &str,
+    after: Option<&str>,
+    limit: usize,
+    at: u64,
+) -> Result<Vec<(String, Version)>> {
+    const SCAN: usize = 1_000;
+    let mut out = Vec::new();
+    let mut cursor = after.map(str::to_string);
+    while out.len() < limit {
+        let page = b.range(prefix, cursor.as_deref(), SCAN, at)?;
+        let full = page.len() == SCAN;
+        cursor = page.last().map(|(k, _)| k.clone());
+        out.extend(
+            page.into_iter()
+                .filter(|(_, v)| state_of(&v.value).as_deref() == Some(state)),
+        );
+        if !full {
+            break;
+        }
+    }
+    out.truncate(limit);
+    Ok(out)
 }

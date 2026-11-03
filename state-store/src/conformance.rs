@@ -104,6 +104,16 @@ impl<B: Backend> Backend for Interpose<B> {
         }
         out
     }
+    fn range_in_state(
+        &self,
+        prefix: &str,
+        state: &str,
+        after: Option<&str>,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<(String, Version)>> {
+        self.inner.range_in_state(prefix, state, after, limit, at)
+    }
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64> {
         let main = self.inner.commit(expect, batch)?;
         if self.ambiguous_commit.swap(false, Ordering::SeqCst) {
@@ -1351,6 +1361,40 @@ pub fn a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry<R: Rig>(rig:
     assert!(b.token > a.token);
 }
 
+/// A state-filtered range answers exactly the keys under the prefix whose `data.state` is that
+/// string, in key order, paged by `after` and `limit`, at the head and at an older revision.
+pub fn a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below_it<R: Rig>(
+    rig: &R,
+) {
+    let clock = VirtualClock::new(T0);
+    let c = open(rig.fresh(), &clock);
+    put(&c, "p/a", obj(json!({ "state": "A" })), "1");
+    put(&c, "p/b", obj(json!({ "state": "B" })), "2");
+    put(&c, "p/c", obj(json!({ "state": "A" })), "3");
+    put(&c, "q/d", obj(json!({ "state": "A" })), "4");
+    put(&c, "p/e", obj(json!({ "other": "A" })), "5");
+    let then = put(&c, "p/f", obj(json!({ "state": { "A": 1 } })), "6");
+    put(&c, "p/b", obj(json!({ "state": "A" })), "7");
+    c.delete("p/a", None, &req("8")).expect("delete");
+    let head = c.head().expect("head");
+    let keys = |state: &str, after: Option<&str>, limit: usize, at: u64| -> Vec<String> {
+        c.range_in_state("p/", state, after, limit, at)
+            .expect("range_in_state")
+            .into_iter()
+            .map(|i| i.key)
+            .collect()
+    };
+    assert_eq!(keys("A", None, 10, head), ["p/b", "p/c"]);
+    assert_eq!(keys("A", Some("p/b"), 10, head), ["p/c"]);
+    assert_eq!(keys("A", None, 1, head), ["p/b"]);
+    assert!(keys("B", None, 10, head).is_empty(), "p/b left B");
+    assert_eq!(keys("A", None, 10, then), ["p/a", "p/c"]);
+    assert_eq!(keys("B", None, 10, then), ["p/b"]);
+    let read = c.range_in_state("p/", "A", None, 10, head).expect("range_in_state");
+    assert_eq!(read[0].value.data, json!({ "state": "A" }));
+    assert_eq!(read[0].mod_rev.main, head - 1, "p/b as rewritten");
+}
+
 /// Every scenario, in order; a backend's own test file names each one as its own test.
 pub fn run_all<R: Rig>(rig: &R) {
     for s in scenarios::<R>() {
@@ -1409,4 +1453,5 @@ scenarios!(
     lock_check_fails_the_txn_after_the_lock_expired_or_was_retaken,
     get_and_list_return_a_locks_expiry_and_renew_moves_it_forward,
     a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry,
+    a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below_it,
 );
