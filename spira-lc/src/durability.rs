@@ -11,7 +11,7 @@ use runtime::ports::{Clock, SysProc, WallClock};
 use spira_otel::metrics::{MetricsSink, Point};
 use state_store_sqlite::durability::dolt;
 use state_store_sqlite::durability::drill::{self, Exclusions};
-use state_store_sqlite::durability::put::{Dest, S3Creds, Uploader};
+use state_store_sqlite::durability::put::{Dest, PutNew, S3Creds, Uploader, MAX_PUT_BYTES};
 use state_store_sqlite::durability::restore;
 use state_store_sqlite::durability::ship::{self, ShipConfig, Shipper};
 use state_store_sqlite::SqliteBackend;
@@ -175,6 +175,54 @@ pub fn admin_dolt_ship(args: &[String]) -> (i32, String) {
     }
 }
 
+const ARCHIVE_PUT_USAGE: &str = "usage: spira-lc admin-archive-put --file <path> --key <name>";
+// batch-job: one archive's upload, bounded by its size (up to one PUT's limit), not a round trip
+const ARCHIVE_PUT_DEADLINE: Duration = Duration::from_secs(3_600);
+
+/// A key is one plain file name: the archive is flat, and a name cannot reach outside it.
+fn archive_key_ok(key: &str) -> bool {
+    !key.is_empty() && !key.starts_with('.') && key.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+}
+
+/// `admin-archive-put --file <path> --key <name>`: uploads the file once, put-only, to
+/// `<backup_url>/archive/<name>`. Exit 0 uploaded, 1 failed, 3 refused (the key is already
+/// stored, the key is not a plain name, or the file is over one PUT's limit), 2 usage or no
+/// destination.
+pub fn admin_archive_put(args: &[String], backup_url: &str) -> (i32, String) {
+    let (Some(file), Some(key)) = (flag(args, "--file"), flag(args, "--key")) else {
+        return (CANNOT_TELL, ARCHIVE_PUT_USAGE.into());
+    };
+    if backup_url.is_empty() {
+        return (CANNOT_TELL, "admin-archive-put: SPIRA_LC_BACKUP_URL is empty: there is nowhere to archive to".into());
+    }
+    if !archive_key_ok(key) {
+        return (REFUSED, format!("admin-archive-put: refused: --key {key:?} is not a plain file name ([A-Za-z0-9._-], not starting with a dot)"));
+    }
+    let len = match std::fs::metadata(file) {
+        Ok(m) => m.len(),
+        Err(e) => return (1, format!("admin-archive-put: {file}: {e}")),
+    };
+    if len > MAX_PUT_BYTES {
+        return (REFUSED, format!("admin-archive-put: refused: {file} is {len} bytes, over the single-PUT limit of {MAX_PUT_BYTES}; this verb has no multipart upload"));
+    }
+    let name = format!("archive/{key}");
+    let up = match Dest::parse(backup_url).and_then(|dest| {
+        let creds = match dest {
+            Dest::S3 { .. } => Some(S3Creds::from_env()?),
+            Dest::File(_) => None,
+        };
+        Ok(Uploader { dest, creds, proc: Arc::new(SysProc), deadline: ARCHIVE_PUT_DEADLINE })
+    }) {
+        Ok(u) => u,
+        Err(e) => return (CANNOT_TELL, format!("admin-archive-put: {e}")),
+    };
+    match up.put_new(Path::new(file), &name) {
+        Ok(()) => (0, format!("admin-archive-put: {name}: {len} bytes")),
+        Err(PutNew::Exists) => (REFUSED, format!("admin-archive-put: refused: {name} exists; an archive is put once and never overwritten")),
+        Err(PutNew::Failed(e)) => (1, format!("admin-archive-put: {name}: {e}")),
+    }
+}
+
 const DOLT_ASSEMBLE_USAGE: &str =
     "usage: spira-lc admin-dolt-assemble (--state <dir> | --manifest <file>) --files <dir> --out <dir>";
 
@@ -330,6 +378,50 @@ mod tests {
         assert!(shipped.failed.is_none(), "{shipped:?}");
         let urls = curl.0.lock().unwrap().clone();
         assert!(urls.iter().any(|u| u.starts_with("http://s3.test/bucket/lc/revlog/")), "{urls:?}");
+    }
+
+    #[test]
+    fn admin_archive_put_lands_the_file_byte_identical_and_refuses_a_second_put_of_the_key() {
+        let dir = TempDir::new("lc-archive-put");
+        let url = format!("file://{}", dir.path().join("off").display());
+        let export = dir.path().join("export.jsonl");
+        let body: Vec<u8> = (0..=255u8).cycle().take(70_000).collect();
+        std::fs::write(&export, &body).unwrap();
+        let file = export.display().to_string();
+
+        let (rc, out) = admin_archive_put(&s(&["--file", &file, "--key", "lifecycle-export.jsonl"]), &url);
+        assert_eq!(rc, 0, "{out}");
+        assert_eq!(std::fs::read(dir.path().join("off/archive/lifecycle-export.jsonl")).unwrap(), body);
+
+        std::fs::write(&export, b"something else").unwrap();
+        let (rc, out) = admin_archive_put(&s(&["--file", &file, "--key", "lifecycle-export.jsonl"]), &url);
+        assert_eq!(rc, REFUSED, "{out}");
+        assert!(out.contains("archive/lifecycle-export.jsonl exists"), "{out}");
+        assert_eq!(std::fs::read(dir.path().join("off/archive/lifecycle-export.jsonl")).unwrap(), body, "never overwritten");
+    }
+
+    #[test]
+    fn admin_archive_put_refuses_by_name_what_one_put_cannot_carry() {
+        let dir = TempDir::new("lc-archive-refuse");
+        let url = format!("file://{}", dir.path().join("off").display());
+        let big = dir.path().join("big");
+        std::fs::File::create(&big).unwrap().set_len(MAX_PUT_BYTES + 1).unwrap();
+        let (rc, out) = admin_archive_put(&s(&["--file", &big.display().to_string(), "--key", "big"]), &url);
+        assert_eq!(rc, REFUSED, "{out}");
+        assert!(out.contains("over the single-PUT limit"), "{out}");
+        assert!(!dir.path().join("off").exists());
+
+        let small = dir.path().join("small");
+        std::fs::write(&small, b"x").unwrap();
+        let small = small.display().to_string();
+        for key in ["../escape", "a/b", ".hidden", ""] {
+            let (rc, out) = admin_archive_put(&s(&["--file", &small, "--key", key]), &url);
+            assert_eq!(rc, REFUSED, "{key}: {out}");
+        }
+        let (rc, out) = admin_archive_put(&s(&["--file", &small, "--key", "k"]), "");
+        assert_eq!(rc, CANNOT_TELL, "{out}");
+        assert!(out.contains("SPIRA_LC_BACKUP_URL is empty"), "{out}");
+        assert_eq!(admin_archive_put(&s(&["--file", &small]), &url).0, CANNOT_TELL);
     }
 
     #[test]

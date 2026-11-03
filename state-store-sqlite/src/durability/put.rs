@@ -89,6 +89,14 @@ impl S3Creds {
 /// S3's ceiling on one `PutObject`.
 pub const MAX_PUT_BYTES: u64 = 5 << 30;
 
+/// Why a put-only upload did not land.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PutNew {
+    /// Something is already stored under the name, and it is left as it is.
+    Exists,
+    Failed(String),
+}
+
 pub struct Uploader {
     pub dest: Dest,
     /// Needed for an `s3://` destination only.
@@ -113,20 +121,50 @@ impl Uploader {
             .map_err(|e| format!("{}: {e}", to.display()))
     }
 
+    /// A copy that fails rather than replace what `name` already holds: the link is the
+    /// atomic claim, so two writers cannot both land.
+    fn copy_new(dir: &Path, file: &Path, name: &str) -> Result<(), PutNew> {
+        let to = dir.join(name);
+        if to.exists() {
+            return Err(PutNew::Exists);
+        }
+        let parent = to.parent().unwrap_or(dir);
+        let fail = |e: std::io::Error| PutNew::Failed(format!("{}: {e}", to.display()));
+        std::fs::create_dir_all(parent).map_err(fail)?;
+        let tmp = PathBuf::from(format!("{}.tmp", to.display()));
+        std::fs::copy(file, &tmp).map_err(fail)?;
+        let linked = std::fs::hard_link(&tmp, &to);
+        let _ = std::fs::remove_file(&tmp);
+        match linked {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(PutNew::Exists),
+            Err(e) => Err(fail(e)),
+        }
+    }
+
     fn signed_put(&self, bucket: &str, key: &str, file: &Path) -> Result<(), String> {
+        self.signed(bucket, key, file, false).map_err(|(_, e)| e)
+    }
+
+    /// One signed PUT; with `if_absent`, conditional on no object under `key`, and a failure
+    /// carries the HTTP status curl reports (0 when it reports none) so a refusal can be told
+    /// apart.
+    fn signed(&self, bucket: &str, key: &str, file: &Path, if_absent: bool) -> Result<(), (u16, String)> {
+        let unsent = |e: String| (0, e);
         let c = self
             .creds
             .as_ref()
-            .ok_or("an s3:// destination with no credentials")?;
-        let mut body = std::fs::File::open(file).map_err(|e| format!("{}: {e}", file.display()))?;
-        let mut hash = Sha256::new();
-        let len =
-            std::io::copy(&mut body, &mut hash).map_err(|e| format!("{}: {e}", file.display()))?;
+            .ok_or_else(|| unsent("an s3:// destination with no credentials".into()))?;
+        let io = |e: std::io::Error| unsent(format!("{}: {e}", file.display()));
+        let len = std::fs::metadata(file).map_err(io)?.len();
         if len > MAX_PUT_BYTES {
-            return Err(format!(
+            return Err(unsent(format!(
                 "PUT {key}: {len} bytes is over S3's single-PUT limit of {MAX_PUT_BYTES}"
-            ));
+            )));
         }
+        let mut body = std::fs::File::open(file).map_err(io)?;
+        let mut hash = Sha256::new();
+        std::io::copy(&mut body, &mut hash).map_err(io)?;
         let sum: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
         let url = match &c.endpoint {
             Some(e) => format!("{}/{bucket}/{key}", e.trim_end_matches('/')),
@@ -143,7 +181,7 @@ impl Uploader {
             ));
         }
         let secs = self.deadline.as_secs().max(1).to_string();
-        let args = [
+        let mut args: Vec<String> = [
             "-q",
             "-sS",
             "--connect-timeout",
@@ -165,22 +203,51 @@ impl Uploader {
             "x-amz-server-side-encryption: AES256",
             "-o",
             "/dev/null",
-            &url,
         ]
-        .map(String::from);
-        let out = self.proc.run(&ProcSpec {
-            prog: "curl".into(),
-            args: args.to_vec(),
-            stdin: config.into_bytes(),
-            deadline: self.deadline + Duration::from_secs(5),
-        })?;
+        .map(String::from)
+        .to_vec();
+        if if_absent {
+            args.extend(["-H", "If-None-Match: *", "--write-out", "%{http_code}"].map(String::from));
+        }
+        args.push(url);
+        let out = self
+            .proc
+            .run(&ProcSpec {
+                prog: "curl".into(),
+                args,
+                stdin: config.into_bytes(),
+                deadline: self.deadline + Duration::from_secs(5),
+            })
+            .map_err(unsent)?;
         match out.code {
             Some(0) => Ok(()),
-            code => Err(format!(
-                "PUT {key}: curl exit {}: {}",
-                code.map_or("signal".into(), |c| c.to_string()),
-                String::from_utf8_lossy(&out.stderr).trim()
+            code => Err((
+                String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(0),
+                format!(
+                    "PUT {key}: curl exit {}: {}",
+                    code.map_or("signal".into(), |c| c.to_string()),
+                    String::from_utf8_lossy(&out.stderr).trim()
+                ),
             )),
+        }
+    }
+}
+
+impl Uploader {
+    /// Uploads `file` as `name` only when nothing is stored under it: never an overwrite. On
+    /// S3 that is `If-None-Match: *`, which the write-only key can send without reading the
+    /// bucket; S3 answers 412 when the object exists.
+    pub fn put_new(&self, file: &Path, name: &str) -> Result<(), PutNew> {
+        match &self.dest {
+            Dest::File(dir) => Self::copy_new(dir, file, name),
+            Dest::S3 { bucket, prefix } => {
+                let key = format!("{prefix}{name}");
+                match self.signed(bucket, &key, file, true) {
+                    Ok(()) => Ok(()),
+                    Err((412, _)) => Err(PutNew::Exists),
+                    Err((_, e)) => Err(PutNew::Failed(e)),
+                }
+            }
         }
     }
 }
@@ -219,6 +286,55 @@ mod tests {
         assert_eq!(Dest::parse("file:///x").unwrap(), Dest::File("/x".into()));
         assert!(Dest::parse("gs://b").is_err());
         assert!(Dest::parse("s3:///p").is_err());
+    }
+
+    /// A fake curl that answers every PUT with `status`, as `--write-out` prints it, and
+    /// records the argv. No process is started.
+    struct Answering(u16, std::sync::Mutex<Vec<Vec<String>>>);
+
+    impl Proc for Answering {
+        fn run(&self, spec: &ProcSpec) -> Result<runtime::ports::ProcOutput, String> {
+            self.1.lock().unwrap().push(spec.args.clone());
+            let code = if self.0 < 400 { 0 } else { 22 };
+            Ok(runtime::ports::ProcOutput { code: Some(code), stdout: self.0.to_string().into_bytes(), stderr: Vec::new() })
+        }
+    }
+
+    fn s3(status: u16) -> (Uploader, Arc<Answering>) {
+        let curl = Arc::new(Answering(status, Default::default()));
+        let creds = S3Creds { access_key: "AK".into(), secret_key: "sk".into(), session_token: None, region: "r".into(), endpoint: Some("http://s3.test".into()) };
+        let up = Uploader { dest: Dest::parse("s3://b/p/").unwrap(), creds: Some(creds), proc: curl.clone(), deadline: Duration::from_secs(5) };
+        (up, curl)
+    }
+
+    #[test]
+    fn a_put_new_to_s3_is_conditional_on_no_object_and_a_412_reads_as_exists() {
+        let dir = testkit::TempDir::new("put-new-s3");
+        let f = dir.path().join("f");
+        std::fs::write(&f, b"x").unwrap();
+        let (up, curl) = s3(200);
+        assert_eq!(up.put_new(&f, "archive/k"), Ok(()));
+        let args = curl.1.lock().unwrap()[0].clone();
+        assert!(args.windows(2).any(|w| w == ["-H", "If-None-Match: *"]), "{args:?}");
+        assert_eq!(args.last().unwrap(), "http://s3.test/b/p/archive/k");
+        let (up, _) = s3(412);
+        assert_eq!(up.put_new(&f, "archive/k"), Err(PutNew::Exists));
+        let (up, _) = s3(403);
+        assert!(matches!(up.put_new(&f, "archive/k"), Err(PutNew::Failed(m)) if m.contains("PUT p/archive/k")));
+    }
+
+    #[test]
+    fn a_put_new_to_a_directory_never_replaces_what_is_there() {
+        let dir = testkit::TempDir::new("put-new-file");
+        let up = Uploader { dest: Dest::File(dir.path().join("off")), creds: None, proc: Arc::new(Answering(200, Default::default())), deadline: Duration::from_secs(5) };
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        std::fs::write(&a, b"first").unwrap();
+        std::fs::write(&b, b"second").unwrap();
+        assert_eq!(up.put_new(&a, "archive/k"), Ok(()));
+        assert_eq!(up.put_new(&b, "archive/k"), Err(PutNew::Exists));
+        assert_eq!(std::fs::read(dir.path().join("off/archive/k")).unwrap(), b"first");
+        let left: Vec<_> = std::fs::read_dir(dir.path().join("off/archive")).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(left, ["k"], "no temporary left beside it");
     }
 
     #[test]
