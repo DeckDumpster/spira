@@ -246,19 +246,17 @@ fn with_the_store_a_queue_forge_repos_batch_is_not_a_round() {
     assert!(status.starts_with("round=none\nrepo=spira\n"), "{status}");
 }
 
-/// A store round opened through `round open` (members `members`), its batch id.
-fn opened(t: &T, members: &str) -> String {
+/// A store round `name` opened through `round open` (members `members`).
+fn opened(t: &T, name: &str, members: &str) -> String {
     t.lc.store.get_or_init(MemDoor::default);
-    // A round's id is cut from the clock: each open its own.
-    t.clock.now.set(t.clock.now.get() + 60);
-    assert_eq!(t.run(&["round", "open", "--members", members]), 0, "{}", t.err());
-    batch_of(t)
+    assert_eq!(t.run(&["round", "open", "--members", members, "--name", name]), 0, "{}", t.err());
+    name.to_string()
 }
 
 #[test]
 fn with_the_store_an_emptied_round_whose_abandon_is_refused_is_ended_visibly_and_abandoned_later() {
     let t = round_world();
-    let batch = opened(&t, "sp-a:ta");
+    let batch = opened(&t, "spira-1", "sp-a:ta");
     t.lc.abandon_refused.set(Some("refused: StaleVersion"));
     t.run(&["round", "eject", &batch, "sp-a", "--reason", "red"]);
     let d = t.lc.store.get().unwrap();
@@ -272,7 +270,7 @@ fn with_the_store_an_emptied_round_whose_abandon_is_refused_is_ended_visibly_and
         t.err()
     );
     t.lc.abandon_refused.set(None);
-    let next = opened(&t, "sp-b:tb");
+    let next = opened(&t, "spira-2", "sp-b:tb");
     let rec = batches::batch(d, "spira", &next).unwrap().unwrap();
     assert_eq!(rec.kv.get("parent"), None, "an ended round is no parent: {:?}", rec.kv);
     assert_eq!(d.find(&batch).unwrap().1, "ABANDONED", "round open retried the abandon");
@@ -283,7 +281,7 @@ fn with_the_store_a_round_whose_landing_record_is_refused_is_ended_and_recorded_
     let t = round_world();
     *t.scripts.round_vm.borrow_mut() = RunOut::default();
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
-    let batch = opened(&t, "sp-a:ta,sp-b");
+    let batch = opened(&t, "spira-1", "sp-a:ta,sp-b");
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
     t.lc.land_refused.set(Some("store unreachable"));
     assert_eq!(t.run(&["round", "land", &batch]), 1);
@@ -291,7 +289,7 @@ fn with_the_store_a_round_whose_landing_record_is_refused_is_ended_and_recorded_
     assert_eq!(d.find(&batch).unwrap().1, "GREEN", "the landing record was refused");
     assert!(status(&t).starts_with("round=none\n"), "a landed round is no open round");
     t.lc.land_refused.set(None);
-    let next = opened(&t, "sp-c:tc");
+    let next = opened(&t, "spira-2", "sp-c:tc");
     let rec = batches::batch(d, "spira", &next).unwrap().unwrap();
     assert_eq!(rec.kv.get("parent"), None, "a landed round is no parent: {:?}", rec.kv);
     assert_eq!(d.find(&batch).unwrap().1, "LANDED", "round open recorded the landing");
@@ -303,7 +301,7 @@ fn with_the_store_the_round_fields_ride_in_the_lifecycle_events_not_a_write_of_t
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-b.sh".into(), "red 1 2 fp p e 1".into())];
     let d = t.lc.store.get_or_init(MemDoor::default);
     d.lost_kind.set(Some("queue.round-fields"));
-    let batch = opened(&t, "sp-a:ta,sp-b:tb");
+    let batch = opened(&t, "spira-1", "sp-a:ta,sp-b:tb");
     let rec = batches::batch(d, "spira", &batch).unwrap().unwrap();
     assert!(
         rec.kv.get("worktree").is_some_and(|w| !w.is_empty()) && rec.kv.get("actor").is_some(),
