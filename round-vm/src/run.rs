@@ -388,6 +388,10 @@ if [ -n "$toolchain" ] && [ "$have" != "$toolchain" ]; then
     rustup toolchain install "$toolchain" --profile minimal --no-self-update >&2
     for b in "$RUSTUP_HOME"/toolchains/"$toolchain"-*/bin/*; do ln -sf "$b" "$CARGO_HOME/bin/${b##*/}"; done
 fi
+# sp-bt6ep3: a tree's cargo runner (tools/test-sandbox/runner) runs every test binary under
+# bwrap and refuses without it; an image built before the recipe carried bubblewrap has none,
+# so the round installs it here, as it does a toolchain the image lacks.
+command -v bwrap >/dev/null || { echo "round-vm: installing bubblewrap (the image has none)" >&2; DEBIAN_FRONTEND=noninteractive apt-get update -qq >&2 && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bubblewrap >&2; }
 export PATH="$CARGO_HOME/bin:$HOME/spira-env/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 rustc_id="$(rustc -vV | sed -n 's/^\(release\|commit-hash\): //p' | tr '\n' ' ')"
 echo "round-vm: round rustc $rustc_id" >&2
@@ -2859,6 +2863,17 @@ mod tests {
         assert!(parse_run_args(&args(&["/t", "--bogus"])).unwrap_err().contains("unknown option: --bogus"));
         assert!(parse_run_args(&args(&["/t", "--maxpar", "x"])).unwrap_err().contains("--maxpar"));
         assert!(parse_run_args(&args(&["/t", "--suites"])).unwrap_err().contains("needs a value"));
+    }
+
+    #[test]
+    fn the_round_installs_bubblewrap_before_any_test_binary_runs() {
+        // sp-bt6ep3: a tree's cargo runner (tools/test-sandbox/runner) refuses without bwrap,
+        // and an image built before the recipe carried it has none.
+        let install = REMOTE_SCRIPT.find("command -v bwrap >/dev/null || ").expect("the round installs bubblewrap when the image lacks it");
+        let step = &REMOTE_SCRIPT[install..install + REMOTE_SCRIPT[install..].find('\n').unwrap()];
+        assert!(step.contains("apt-get install -y -qq bubblewrap"), "{step}");
+        assert!(install > REMOTE_SCRIPT.find("phase toolchain").unwrap(), "beside the toolchain install");
+        assert!(install < REMOTE_SCRIPT.find("phase unit-tests").unwrap(), "before the unit stage");
     }
 
     #[test]
