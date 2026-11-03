@@ -248,6 +248,13 @@ mod retired_keys {
     }
 
     #[test]
+    fn a_config_written_while_the_round_vm_disk_preflight_shipped_still_validates() {
+        let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nround_vm_disk_need_gib = 40\n")
+            .expect("a retired key must validate, not error");
+        assert!(warnings.iter().any(|w| w.contains("round_vm_disk_need_gib is retired (sp-us9dro)")), "got {warnings:?}");
+    }
+
+    #[test]
     fn a_misspelt_key_warns_and_is_ignored() {
         let (_, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_batch_idle_cutt = 1\n").unwrap();
         assert!(w.iter().any(|m| m.starts_with("spira.queue_batch_idle_cutt")), "{w:?}");
