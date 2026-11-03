@@ -100,6 +100,7 @@ case "\$cmd" in
         printf '%s\n' "\$n" >> "$B_FORGE_LOG"
         printf '%s\n' "\$n"
         ;;
+    pr-preflight) : ;;
     *) printf 'forge-fixture: unknown: %s\n' "\$cmd" >&2; exit 1 ;;
 esac
 FORGE

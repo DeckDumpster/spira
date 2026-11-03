@@ -13,10 +13,8 @@
 #   A. happy path    — an express-certified member merges, the stub corpus is green, a PR
 #                       opens, and the queue's open-batch record reads exactly what
 #                       verdict.sh's own key=value format expects.
-#   D. stacking        — with case A's batch PR still open, certified members (one express)
-#                       are built and proven into a prepared round on that PR's head without
-#                       touching the open PR; once it lands the prepared round opens with no
-#                       second corpus run (law-batcher-earns-the-round-by-parity).
+#   D. open batch      — with case A's batch PR still open, a cut builds and opens nothing;
+#                       once it lands the next cut opens the next batch afresh (sp-o6t1gd).
 #   G. land mode        — find_repo (sp-o1jm6) accepts queue.local, not only queue, and treats
 #                       queue.forge byte-identically to a bare queue row.
 #   I. suite corpus     — the round's suite corpus comes from the round branch's own tree,
@@ -232,7 +230,7 @@ esac
 INC
 chmod +x "$SH/incident.sh"
 
-# ── fake forge: pr-create logs (head, base, title) and returns an incrementing PR number.
+# ── fake forge: pr-preflight passes; pr-create logs (head, base, title) and returns an incrementing PR number.
 FORGE_LOG="$TMP/forge-log"; : > "$FORGE_LOG"
 cat > "$SH/forge-fixture.sh" <<FORGE
 #!/usr/bin/env bash
@@ -246,6 +244,7 @@ case "\$cmd" in
         printf '%s\n' "\$body" >> "$TMP/pr-body-\$n"
         printf '%s\n' "\$n"
         ;;
+    pr-preflight) : ;;
     *) printf 'forge-fixture: unexpected call: %s\n' "\$cmd" >&2; exit 1 ;;
 esac
 FORGE
@@ -438,8 +437,7 @@ is   "A: open-batch members carries sp-caaa1:tip" "sp-caaa1:$tip_a" "$(open_fiel
 is   "A: open-batch branch is spira/queue/*" "1" "$(case "$(open_field branch)" in spira/queue/*) echo 1;; *) echo 0;; esac)"
 is   "A: open-batch owner=batcher (sp-lomk3: verdict's own CI-red routing reads this)" \
     "batcher" "$(open_field owner)"
-is   "A: open-batch batch_id is the batch branch spira-lc cut" "$(open_field branch)" "$(open_field batch_id)"
-is   "A: open-batch version is 1 (one member)"                 "1"                    "$(open_field version)"
+is   "A: open-batch batch_id is the batch queue batch open cut, <repo>-<stamp> (sp-o6t1gd)" "1" "$(case "$(open_field batch_id)" in "$REPONAME"-*T*Z) echo 1;; *) echo 0;; esac)"
 want "A: commit message names spira: land sp-caaa1, with the bead's own title" \
     "spira: land sp-caaa1 — sp-caaa1 bead" \
     "$(git -C "$REPO" log --format=%s "$(open_field branch)" -n 5 2>/dev/null)"
@@ -495,12 +493,13 @@ fi
 if cut_runs D; then
 
 # =============================================================================
-# CASE D — stacking: with case A's batch PR still open, the next round is built on its
-# head and proven, but the open PR's branch and record are untouched and nothing opens;
-# once the PR has landed, the prepared round opens without re-running the corpus.
+# CASE D — an open batch waits (sp-o6t1gd): with case A's batch PR still open, a cut builds
+# nothing, runs no corpus and opens no PR; the open PR's record and branches are untouched.
+# Once it has landed, the next cut opens the next batch afresh. (The prepared round the
+# batcher once built on the open head is gone with its record file.)
 # =============================================================================
 echo
-echo "D. stacking: the next round is prepared on the open batch's head, opened after it lands:"
+echo "D. an open batch waits: nothing is built or opened behind it; after it lands the next opens:"
 {
     printf 'pr=%s\n'      "$pr_case_a"
     printf 'head=%s\n'    "$head_case_a"
@@ -516,58 +515,47 @@ branch_ref_before="$(git -C "$REPO" rev-parse "$branch_case_a")"
 remote_ref_before="$(git -C "$REMOTE" rev-parse "$branch_case_a")"
 prcreate_before="$(grep -c '^pr-create' "$FORGE_LOG")"
 
-for spec in "sp-cddd4 express" "sp-cdde5" "sp-cddf6"; do
-    set -- $spec
-    plant "$@"
-    git -C "$REPO" worktree add -q -b "spira/$1" "$RUN/worktree/$1" main
-    printf '%s\n' "$1" > "$RUN/worktree/$1/$1.txt"
-    git -C "$RUN/worktree/$1" add -A
-    git -C "$RUN/worktree/$1" commit -q -m "$1: work"
-    certify "$1" "$(git -C "$REPO" rev-parse "spira/$1")"
-    git -C "$REPO" worktree remove -f "$RUN/worktree/$1"
-done
+plant sp-cddd4 express
+git -C "$REPO" worktree add -q -b spira/sp-cddd4 "$RUN/worktree/sp-cddd4" main
+printf 'sp-cddd4\n' > "$RUN/worktree/sp-cddd4/sp-cddd4.txt"
+git -C "$RUN/worktree/sp-cddd4" add -A
+git -C "$RUN/worktree/sp-cddd4" commit -q -m "sp-cddd4: work"
+certify sp-cddd4 "$(git -C "$REPO" rev-parse spira/sp-cddd4)"
+git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cddd4"
 tip_d="$(git -C "$REPO" rev-parse spira/sp-cddd4)"
 
 D_ARGV="$TMP/d-argv"; : > "$D_ARGV"
 out_d="$(STUB_ARGV_LOG="$D_ARGV" cut_repo)"
-want   "D: reports a round prepared on the open head" "next round prepared on PR $pr_before's head" "$out_d"
-nowant "D: no stacking message" "stacked" "$out_d"
-is     "D: the corpus ran once for the prepared round" "1" "$(grep -c '^argv:' "$D_ARGV")"
+want   "D: reports the open batch it waits on" "batch PR $pr_before is open — the next round is cut once it lands" "$out_d"
+is     "D: no corpus run behind an open batch" "0" "$(grep -c '^argv:' "$D_ARGV")"
 is     "D: open-batch record untouched" "$open_before" "$(cat "$(open_batch_file)")"
 is     "D: open PR's local branch untouched" "$branch_ref_before" "$(git -C "$REPO" rev-parse "$branch_case_a")"
 is     "D: open PR's remote branch untouched (never force-pushed)" "$remote_ref_before" "$(git -C "$REMOTE" rev-parse "$branch_case_a")"
 is     "D: forge pr-create not called" "$prcreate_before" "$(grep -c '^pr-create' "$FORGE_LOG")"
 is     "D: express member not BATCHED while the PR is open" "CERTIFIED" "$(cut -d' ' -f1 < "$LCSTUB/sp-cddd4")"
-
-: > "$D_ARGV"
-out_d2="$(STUB_ARGV_LOG="$D_ARGV" cut_repo)"
-want   "D: an unchanged pool is not rebuilt" "already prepared" "$out_d2"
-is     "D: no second corpus run for an unchanged pool" "0" "$(grep -c '^argv:' "$D_ARGV")"
+is     "D: no prepared record is written" "0" "$([ -f "$QUEUEDIR/$REPONAME/prepared" ] && echo 1 || echo 0)"
 
 # The open PR lands: the remote base moves to its head.
 git -C "$REMOTE" update-ref refs/heads/main "$head_case_a"
 timeout 5 git -C "$REPO" fetch -q origin
 rm -f "$(open_batch_file)"
-: > "$D_ARGV"
-out_d3="$(STUB_ARGV_LOG="$D_ARGV" cut_repo)"
-want   "D: after landing, the prepared round opens a PR" "opened" "$out_d3"
-is     "D: the prepared round opened without re-running the corpus" "0" "$(grep -c '^argv:' "$D_ARGV")"
+out_d3="$(cut_repo)"
+want   "D: after landing, the next batch opens a PR" "opened" "$out_d3"
 is     "D: exactly one new PR" "$((prcreate_before + 1))" "$(grep -c '^pr-create' "$FORGE_LOG")"
 want   "D: open-batch members carries the express member" "sp-cddd4:$tip_d" "$(open_field members)"
-is     "D: prepared record consumed" "0" "$([ -f "$QUEUEDIR/$REPONAME/prepared" ] && echo 1 || echo 0)"
 
 fi
 
 if cut_runs F; then
 
 # =============================================================================
-# CASE F — spira-lc wiring (sp-o7nbr.4): BATCHED at a fresh cut and a stack both call
-# spira-lc, and the open-batch record carries batch_id/version exactly when spira-lc
-# applied. POSITIVE CONTROL last: a planted refusal (rc=3) proves the call is additive —
-# the PR still opens and batch_id/version stay unset, never blocking the round.
+# CASE F — spira-lc wiring (sp-o6t1gd): the batcher opens through `queue batch open`, which
+# cuts the batch on spira-lc before it pushes or creates the PR, and the open-batch record
+# names the batch it cut. POSITIVE CONTROL last: a planted refusal (rc=3) opens no PR at all —
+# the record comes first, so a refused record is a round that never reaches the forge.
 # =============================================================================
 echo
-echo "F. spira-lc wiring: cut calls spira-lc and records batch_id/version; a prepared round does not:"
+echo "F. spira-lc wiring: queue batch open cuts the batch before the PR; a refused cut opens no PR:"
 rm -f "$(open_batch_file)"
 LC_LOG="$TMP/lc-log"; : > "$LC_LOG"
 
@@ -581,34 +569,15 @@ git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cfff6"
 certify sp-cfff6 "$tip_f"
 
 PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
-branch_f="$(open_field branch)"; head_f="$(open_field head)"; base_f="$(open_field base)"
-want "F: cut calls spira-lc create-bead for the member" "create-bead sp-cfff6" "$(cat "$LC_LOG")"
-want "F: cut calls spira-lc cut naming the same batch-id, head and base as the open-batch record" \
-    "cut $branch_f --repo $REPONAME --head $head_f --base $base_f --members sp-cfff6:$tip_f --actor batcher" \
+batch_f="$(open_field batch_id)"; head_f="$(open_field head)"; base_f="$(open_field base)"
+want "F: the open calls spira-lc create-bead for the member" "create-bead sp-cfff6" "$(cat "$LC_LOG")"
+want "F: the open calls spira-lc cut naming the same batch-id, head and base as the open-batch record" \
+    "cut $batch_f --repo $REPONAME --head $head_f --base $base_f --members sp-cfff6:$tip_f --actor queue.sh" \
     "$(cat "$LC_LOG")"
-is   "F: open-batch batch_id is the branch spira-lc cut" "$branch_f" "$(open_field batch_id)"
-is   "F: open-batch version is 1 (one MemberAdded)"      "1"         "$(open_field version)"
+is   "F: open-batch batch_id is <repo>-<stamp>" "1" "$(case "$batch_f" in "$REPONAME"-*T*Z) echo 1;; *) echo 0;; esac)"
 
-: > "$LC_LOG"
-plant sp-cggg7 express
-git -C "$REPO" worktree add -q -b spira/sp-cggg7 "$RUN/worktree/sp-cggg7" main
-printf 'g\n' > "$RUN/worktree/sp-cggg7/g.txt"
-git -C "$RUN/worktree/sp-cggg7" add -A
-git -C "$RUN/worktree/sp-cggg7" commit -q -m "sp-cggg7: work"
-tip_g="$(git -C "$REPO" rev-parse spira/sp-cggg7)"
-git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cggg7"
-certify sp-cggg7 "$tip_g"
-
-PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
-nowant "F: preparing the next round never calls spira-lc stack" "stack " "$(cat "$LC_LOG")"
-nowant "F: preparing the next round never calls spira-lc cut" "cut " "$(cat "$LC_LOG")"
-is   "F: open-batch batch_id unchanged by a prepared round" "$branch_f" "$(open_field batch_id)"
-is   "F: open-batch version unchanged by a prepared round"  "1"         "$(open_field version)"
-rm -f "$LCSTUB/sp-cggg7" "$QUEUEDIR/$REPONAME/prepared"
-
-# POSITIVE CONTROL: spira-lc refusing (rc=3, e.g. a member not CERTIFIED there) does not
-# block the round — the PR still opens, batch_id/version are simply left unset, same as
-# a legacy pre-cutover record.
+# POSITIVE CONTROL: spira-lc refusing the cut (rc=3, e.g. a member not CERTIFIED there) opens
+# no PR and writes no record: nothing reaches the forge that the lifecycle does not hold.
 rm -f "$(open_batch_file)"
 : > "$LC_LOG"
 plant sp-chhh8 express
@@ -620,11 +589,11 @@ tip_h="$(git -C "$REPO" rev-parse spira/sp-chhh8)"
 git -C "$REPO" worktree remove -f "$RUN/worktree/sp-chhh8"
 certify sp-chhh8 "$tip_h"
 
+prcreate_before_f="$(grep -c '^pr-create' "$FORGE_LOG")"
 out_f_refused="$(PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$LC_LOG" SPIRA_LC_STUB_RC=3 cut_repo)"
-want "F: PLANTED REFUSAL — cut still reports the PR opening" "PR " "$out_f_refused"
 want "F: PLANTED REFUSAL — the refusal is logged" "spira-lc cut refused for" "$out_f_refused"
-is   "F: PLANTED REFUSAL — open-batch batch_id stays unset" "" "$(open_field batch_id)"
-is   "F: PLANTED REFUSAL — open-batch version stays unset"  "" "$(open_field version)"
+is   "F: PLANTED REFUSAL — forge pr-create not called" "$prcreate_before_f" "$(grep -c '^pr-create' "$FORGE_LOG")"
+is   "F: PLANTED REFUSAL — no open-batch record" "0" "$([ -f "$(open_batch_file)" ] && echo 1 || echo 0)"
 fi
 
 
