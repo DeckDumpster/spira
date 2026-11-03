@@ -227,4 +227,12 @@ mod tests {
         leave(w.run()).unwrap();
         assert_eq!(scoped_stop::stop_for(w.run(), "spira", "claims"), Some(before));
     }
+
+    #[test]
+    fn status_names_the_revision_the_owner_and_the_way_out() {
+        let w = W::new("cutover-describe");
+        let line = w.enter(&[]).unwrap().describe(160);
+        assert!(line.starts_with("CUTOVER MODE") && line.contains("store revision r42") && line.contains("owner concierge"), "{line}");
+        assert!(line.contains("2 repo(s) held") && line.ends_with("leave with: world stop"), "{line}");
+    }
 }
