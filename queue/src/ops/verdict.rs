@@ -59,9 +59,9 @@ pub fn pass(w: &World, c: &Ctx) -> i32 {
 
 /// A forge batch left behind by a mode switch settles whatever the mode: only the reconcile
 /// (merged lands, closed abandons) runs, never the CI read or a push, and once the open record
-/// is gone the prepared round and forge-state record go with it.
+/// is gone the forge-state record goes with it.
 pub fn settle_forge_leftovers(w: &World, c: &Ctx, path: &Path) -> i32 {
-    let leftovers = ["prepared", "forge-state"];
+    let leftovers = ["forge-state"];
     let open = match forge_batch::read(w, c) {
         Ok(o) => o,
         Err(e) => {

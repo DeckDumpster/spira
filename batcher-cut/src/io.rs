@@ -531,14 +531,7 @@ fn base_fix_ids(env: &Env, repo: &Repo, texts: &BTreeMap<String, (bool, String)>
 #[derive(Clone, Debug, Default)]
 pub struct OpenBatch {
     pub pr: String,
-    pub head: String,
     pub members: Vec<(String, String)>,
-    /// "batcher" when this record was written by this crate; empty for a record batch.sh
-    /// wrote (batch.sh never writes this key, so its absence IS the legacy owner — no
-    /// separate default to keep in sync). verdict.sh read it to decide whether a CI red
-    /// on this PR was its own attribution's or the called batcher persona's (sp-lomk3);
-    /// `queue verdict` sends every red to the persona (queue/DESIGN-verdict.md D1).
-    pub owner: String,
 }
 
 fn parse_kv(text: &str) -> BTreeMap<String, String> {
@@ -574,9 +567,7 @@ fn open_batch_from(text: &str) -> Option<OpenBatch> {
     let pr = kv.get("pr").cloned().unwrap_or_default();
     Some(OpenBatch {
         pr,
-        head: kv.get("head").cloned().unwrap_or_default(),
         members: parse_members(kv.get("members").map(String::as_str).unwrap_or("")),
-        owner: kv.get("owner").cloned().unwrap_or_default(),
     })
 }
 
@@ -600,76 +591,6 @@ fn opened_pr(run: &VerbRun) -> Result<(String, Result<(), String>), String> {
         (_, Some(pr)) => Ok((pr, Err(verb_failed("queue batch open", run)))),
         _ => Err(verb_failed("queue batch open", run)),
     }
-}
-
-// ---------------------------------------------------------------------------------------
-// The prepared round: built and proven on an open batch's head while that PR is in CI,
-// opened only once it has landed. Never a push; the open record is not touched.
-// ---------------------------------------------------------------------------------------
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Prepared {
-    pub head: String,
-    /// The open batch's head the round was built on: a different parent means the round
-    /// was proven against a tree that is no longer the one in CI.
-    pub parent: String,
-    pub members: Vec<(String, String)>,
-    /// Every pool member the build considered, set aside or not: a pool that differs from
-    /// this is a different round to build.
-    pub inputs: Vec<(String, String)>,
-    pub green: bool,
-    pub seconds: u64,
-}
-
-pub const PREPARED_BRANCH: &str = "spira/queue-prepared";
-
-fn prepared_file(env: &Env, repo: &str) -> PathBuf {
-    env.queue_dir.join(repo).join("prepared")
-}
-
-pub fn read_prepared(env: &Env, repo: &str) -> Option<Prepared> {
-    let kv = parse_kv(&fs::read_to_string(prepared_file(env, repo)).ok()?);
-    let head = kv.get("head").cloned().filter(|h| !h.is_empty())?;
-    Some(Prepared {
-        head,
-        parent: kv.get("parent").cloned().unwrap_or_default(),
-        members: parse_members(kv.get("members").map(String::as_str).unwrap_or("")),
-        inputs: parse_members(kv.get("inputs").map(String::as_str).unwrap_or("")),
-        green: kv.get("state").map(String::as_str) == Some("green"),
-        seconds: kv.get("seconds").and_then(|v| v.parse().ok()).unwrap_or(0),
-    })
-}
-
-pub fn write_prepared(env: &Env, repo: &str, p: &Prepared) -> Result<(), String> {
-    let f = prepared_file(env, repo);
-    if let Some(dir) = f.parent() {
-        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    }
-    let members = p.members.iter().map(|(id, tip)| format!("{id}:{tip}")).collect::<Vec<_>>().join(" ");
-    let inputs = p.inputs.iter().map(|(id, tip)| format!("{id}:{tip}")).collect::<Vec<_>>().join(" ");
-    let body = format!(
-        "head={}\nparent={}\nmembers={}\ninputs={}\nstate={}\nseconds={}\n",
-        p.head, p.parent, members, inputs, if p.green { "green" } else { "red" }, p.seconds
-    );
-    let tmp = f.with_extension("tmp");
-    fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    fs::rename(&tmp, &f).map_err(|e| format!("{}: {e}", f.display()))
-}
-
-pub fn clear_prepared(env: &Env, repo: &str) {
-    let _ = fs::remove_file(prepared_file(env, repo));
-}
-
-/// True when `ancestor` is reachable from `descendant` — the prepared round descends from
-/// the base the landed PR left.
-pub fn is_ancestor(repo: &Repo, ancestor: &str, descendant: &str) -> bool {
-    spira_config::bounded::bounded("git")
-        .arg("-C")
-        .arg(&repo.path)
-        .args(["merge-base", "--is-ancestor", ancestor, descendant])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
 }
 
 fn subject_bead(subject: &str) -> Option<&str> {
@@ -2576,7 +2497,7 @@ mod open_batch_tests {
     fn the_open_batch_is_what_queue_batch_show_printed_and_none_when_it_printed_nothing() {
         assert!(open_batch_from("").is_none());
         let ob = open_batch_from("batch_id=deck-1\nrepo=deck\nhead=h1\nbase=b0\nmembers=sp-a:aaaa sp-b:bbbb\nbranch=spira/queue/x\nforge.phase=armed\nowner=batcher\npr=12\n").unwrap();
-        assert_eq!((ob.pr.as_str(), ob.head.as_str(), ob.owner.as_str()), ("12", "h1", "batcher"));
+        assert_eq!(ob.pr, "12");
         assert_eq!(ob.members, members());
         let opening = open_batch_from("batch_id=deck-2\nforge.phase=opening\n").unwrap();
         assert_eq!(opening.pr, "", "a batch still opening is open, with no PR yet");

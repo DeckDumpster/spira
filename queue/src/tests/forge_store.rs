@@ -332,3 +332,44 @@ fn a_queue_local_verdict_never_reconciles_a_forge_batch_still_opening() {
     assert!(!t.lc.has("abandon-batch left"), "{:?}", t.lc.calls.borrow());
     assert_eq!(record(&t, "left").0, "OPEN");
 }
+
+#[test]
+fn the_sweep_changes_nothing_when_the_forge_cannot_list_its_prs() {
+    let t = forge_world();
+    seed(&t, "lost", "opening", 1, None);
+    t.forge.queue_prs_unreadable.set(true);
+    t.clock.now.set(900);
+    assert_eq!(t.run(&["batch", "sweep", "--repo", "spira"]), 1);
+    assert!(t.err().contains("the forge cannot list spira's spira/queue/* PRs — nothing swept"), "{}", t.err());
+    assert_eq!(record(&t, "lost").0, "OPEN", "no PR list, so no release");
+    assert!(!t.lc.has("abandon-batch"), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
+fn the_sweep_changes_nothing_when_the_lease_ttl_does_not_resolve() {
+    let t = forge_world();
+    seed(&t, "lost", "opening", 1, None);
+    t.env.unresolved.borrow_mut().insert("SPIRA_ROUND_LEASE_TTL_SECS".into());
+    t.clock.now.set(900);
+    assert_eq!(t.run(&["batch", "sweep", "--repo", "spira"]), 1);
+    assert!(t.err().contains("SPIRA_ROUND_LEASE_TTL_SECS does not resolve (SPIRA_ROUND_LEASE_TTL_SECS is not declared) — nothing swept"), "{}", t.err());
+    assert_eq!(record(&t, "lost").0, "OPEN");
+}
+
+#[test]
+fn an_adoption_another_writer_beat_is_left_and_one_that_cannot_be_written_fails_the_sweep() {
+    let t = forge_world();
+    seed(&t, "deck-1", "opening", 1, None);
+    t.forge.queue_prs.borrow_mut().push(("12".into(), "spira/queue/deck-1".into()));
+    t.clock.now.set(900);
+    t.lc.cas_lost.set(true);
+    assert_eq!(t.run(&["batch", "sweep", "--repo", "spira"]), 0, "{}", t.err());
+    assert!(t.out().contains("batch deck-1 left forge.phase=opening while the sweep read it — left as it is"), "{}", t.out());
+    assert_eq!(record(&t, "deck-1").1.get("forge.phase"), Some("opening"));
+
+    t.lc.cas_lost.set(false);
+    door(&t).lost_kind.set(Some("queue.round-fields"));
+    assert_eq!(t.run(&["batch", "sweep", "--repo", "spira"]), 1);
+    assert!(t.err().contains("batch deck-1's adoption of PR 12 could not be written"), "{}", t.err());
+    assert!(!forge_calls(&t).iter().any(|c| c.starts_with("pr-close") || c.starts_with("pr-automerge")));
+}

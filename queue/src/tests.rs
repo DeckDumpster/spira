@@ -779,6 +779,8 @@ struct FForge {
     create_then_err: RefCell<Option<(String, String)>>,
     /// pr-preflight refuses with this message.
     preflight_err: RefCell<Option<String>>,
+    /// `pr-list-open` cannot be read.
+    queue_prs_unreadable: Cell<bool>,
 }
 
 impl Forge for FForge {
@@ -818,7 +820,7 @@ impl Forge for FForge {
         self.calls.borrow_mut().push(format!("pr-close {pr}"));
     }
     fn queue_prs(&self, _: &Path, _: &Path) -> Option<Vec<(String, String)>> {
-        Some(self.queue_prs.borrow().clone())
+        (!self.queue_prs_unreadable.get()).then(|| self.queue_prs.borrow().clone())
     }
     fn publish_prs(&self, _: &Path, _: &Path) -> Option<Vec<(String, String)>> {
         Some(self.publish_prs.borrow().clone())
@@ -967,6 +969,8 @@ struct FLc {
     mend_refused: RefCell<Option<String>>,
     /// `lock show round/<repo>/<batch>` per `<repo>/<batch>`; absent is unleased.
     leases: RefCell<BTreeMap<String, Result<Option<RoundLease>, String>>>,
+    /// Every compare-on-a-field write finds the field already moved by another writer.
+    cas_lost: Cell<bool>,
     calls: RefCell<Vec<String>>,
 }
 
@@ -1002,6 +1006,7 @@ impl Default for FLc {
             mend_refused: RefCell::default(),
             abandon_refused: Cell::new(None),
             leases: RefCell::default(),
+            cas_lost: Cell::new(false),
             calls: RefCell::default(),
         }
     }
@@ -1036,6 +1041,12 @@ impl Lc for FLc {
     fn available(&self) -> bool {
         self.calls.borrow_mut().push("available".into());
         self.available.get()
+    }
+    fn save_batch_if(&self, repo: &str, kv: &Kv, field: &str, expect: &str) -> Result<bool, String> {
+        if self.cas_lost.get() {
+            return Ok(false);
+        }
+        crate::batches::save_if(self.rounds_door().ok_or("no store")?, repo, kv, field, expect)
     }
     fn rounds_door(&self) -> Option<&dyn crate::batches::Door> {
         self.store.get().map(|d| d as &dyn crate::batches::Door)
@@ -1502,6 +1513,8 @@ struct FEnv {
     vars: RefCell<BTreeMap<String, String>>,
     resolved: RefCell<BTreeMap<String, String>>,
     stdin: RefCell<String>,
+    /// Config keys that do not resolve.
+    unresolved: RefCell<BTreeSet<String>>,
 }
 
 impl Env for FEnv {
@@ -1518,6 +1531,9 @@ impl Env for FEnv {
         fs::read_to_string(p).map_err(|e| e.to_string())
     }
     fn config(&self, k: &str) -> Result<String, String> {
+        if self.unresolved.borrow().contains(k) {
+            return Err(format!("{k} is not declared"));
+        }
         Ok(self
             .resolved
             .borrow()
