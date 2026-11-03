@@ -170,6 +170,16 @@ tl_release() {
     printf '%s\n' "$ov"
 }
 export -f tl_release tl_declared_release
+
+# tl_declare_release — declare, for every later direct call in this suite, the fake release
+# tl_release builds from the PATH as it stands now. Call it after the suite puts its stubs on
+# PATH (`export PATH="$STUBS:$PATH"; tl_declare_release`).
+tl_declare_release() { SPIRA_RELEASE="$(tl_release)"; export SPIRA_RELEASE; }
+
+# tl_at_path <path> <cmd> [args...] — run one command with <path> as its PATH and the release
+# that PATH's stubs make declared, for the `PATH="$STUBS:$PATH" cmd` form.
+tl_at_path() { local p="$1"; shift; PATH="$p" SPIRA_RELEASE="$(PATH="$p" tl_release)" "$@"; }
+export -f tl_declare_release tl_at_path
 _TL_TIER="$(suite-select header tier "${BASH_SOURCE[1]:-$0}")"
 _TL_UC="$(suite-select header uc "${BASH_SOURCE[1]:-$0}")"
 
