@@ -70,7 +70,8 @@ INSTALL_GUARD_S=$(( _reh_first_run + _reh_cockpit_wait + 60 ))
 # Every launch in the container declares the config configure wrote and the release the
 # tools run from: the binaries have no default for either. (The config file name is split
 # only so config-fence, a whole-file name scan, does not read this as a reader of the file.)
-INSTALL_EXEC=(timeout "$INSTALL_GUARD_S" "${CEXEC[@]:2}" -e "SPIRA_TOML=/home/spirauser/.config/spira/spira"".toml" -e SPIRA_RELEASE=/tmp/spira-prod)
+REH_USER_CTR=spirauser
+INSTALL_EXEC=(timeout "$INSTALL_GUARD_S" "${CEXEC[@]:2}" -e "SPIRA_TOML=/home/$REH_USER_CTR/.config/spira/spira"".toml" -e SPIRA_RELEASE=/tmp/spira-prod)
 
 # ---------------------------------------------------------------------------
 # CREATE STUB SCRIPTS INSIDE THE CONTAINER as spirauser so they are owned by
