@@ -234,7 +234,7 @@ printf '%s\n' "$CONT_NAME" > "$LAND_CONTAINERS"
 # ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
 tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_PROD="$PROD_DIR" SPIRA_PATH="$BIN_DIR" \
     SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
-out="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$PROD_DIR:$BIN_DIR:$PATH" HOME="$HOME" \
+out="$(env -i SPIRA_RELEASE="$(PATH="$PROD_DIR:$BIN_DIR:$PATH" tl_release)" PATH="$PROD_DIR:$BIN_DIR:$PATH" HOME="$HOME" \
     SPIRA_HOME="$HERE" \
     SPIRA_CONF=/nonexistent \
     SPIRA_TOML="$SPIRA_TOML" \
@@ -290,7 +290,7 @@ printf '%s\n' "$FAKE_CNAME" > "$LAND_CONTAINERS"
 # ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
 tl_config SPIRA_PATH="$STUBDIR" SPIRA_RUN="$SPIRA_RUN" SPIRA_PROD="$HERE" \
     SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
-out="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$STUBDIR:$PATH" HOME="$HOME" \
+out="$(env -i SPIRA_RELEASE="$(PATH="$STUBDIR:$PATH" tl_release)" PATH="$STUBDIR:$PATH" HOME="$HOME" \
     SPIRA_HOME="$HERE" \
     SPIRA_CONF=/nonexistent \
     PODMAN_LOG="$PODMAN_LOG" \

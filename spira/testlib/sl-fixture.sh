@@ -63,7 +63,7 @@ gate_pass() { gate_stub pass; }
 gate_fail() { gate_stub red; }
 gate_pass
 # The fixture home (and its stubs) is the harness in force: bare names resolve here first.
-export PATH="$SPIRA_HOME:$PATH"
+export PATH="$SPIRA_HOME:$PATH"; tl_declare_release
 
 cat > "$SPIRA_HOME/runes/builder.rune" <<RUNE
 RUNE_NAME=builder

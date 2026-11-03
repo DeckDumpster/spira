@@ -136,7 +136,7 @@ fresh; seed sp-tt-3
 rm -rf "$SPIRA_RUN/worktree"
 marker="$SPIRA_RUN/sp-tt-3.hung"
 rm -f "$marker"
-setsid dwarf --home "$SPIRA_HOME" builder > "$TMP/out3" 2>&1 &
+SPIRA_RELEASE="$(tl_release)" setsid dwarf --home "$SPIRA_HOME" builder > "$TMP/out3" 2>&1 &
 dwarf_pid=$!
 
 _waited=0

@@ -102,7 +102,7 @@ exit 0
 SHIM
 chmod +x "$BIN/claude"
 
-dwarf() { command dwarf --home "$SPIRA_HOME" "$@" 2>/dev/null; }
+dwarf() { SPIRA_RELEASE="$(tl_release)" command dwarf --home "$SPIRA_HOME" "$@" 2>/dev/null; }
 
 # bd helpers against the fixture database.
 bead_status()   { BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \

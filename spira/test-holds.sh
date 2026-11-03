@@ -188,7 +188,7 @@ testdb_seed <<JSONL
 JSONL
 
 rm -rf "$SPIRA_RUN/worktree"
-dwarf --home "$SPIRA_HOME" builder >/dev/null 2>&1
+SPIRA_RELEASE="$(tl_release)" dwarf --home "$SPIRA_HOME" builder >/dev/null 2>&1
 
 want "the claiming dwarf's prompt names the holds section" "Files already in flight" "$(cat "$TMP/prompt" 2>/dev/null)"
 want "and names the open bead already touching the file"  "tst-holder"              "$(cat "$TMP/prompt" 2>/dev/null)"

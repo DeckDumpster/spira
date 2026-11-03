@@ -65,12 +65,12 @@ tl_config SPIRA_BATCHER_ENABLE=1 SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_HOM
     SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh"
 landing() {
     rm -f "$RUN/landing.progress"
-    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_REPO="$REPO" \
+    SPIRA_HOME="$SH" SPIRA_RELEASE="$(PATH="$SH:$PATH" tl_release)" PATH="$SH:$PATH" SPIRA_REPO="$REPO" \
         landing-pass land 2>&1
 }
 
 hel() {
-    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_REPO="$REPO" \
+    SPIRA_HOME="$SH" SPIRA_RELEASE="$(PATH="$SH:$PATH" tl_release)" PATH="$SH:$PATH" SPIRA_REPO="$REPO" \
         command hel --all 2>&1
 }
 
@@ -239,7 +239,7 @@ seed
 superseded_branch sp-drysup conflict.txt "dry run test"
 advance_base conflict.txt "base content for dry run"
 timeout 5 git -C "$REPO" fetch -q origin
-out="$(SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_REPO="$REPO" \
+out="$(SPIRA_HOME="$SH" SPIRA_RELEASE="$(PATH="$SH:$PATH" tl_release)" PATH="$SH:$PATH" SPIRA_REPO="$REPO" \
     command hel --dry-run 2>&1)"
 want "dry-run names the superseded branch" "WOULD  sp-drysup" "$out"
 want "and mentions the reason"             "superseded" "$out"

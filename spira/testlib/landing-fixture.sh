@@ -143,7 +143,7 @@ landing() {
     # the branch it names is never actually removed (sp-zzz staying present makes the pass
     # read it as "already landed", not "gone since this pass began").
     SPIRA_HOME="$SH" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
-        PATH="$SH:$PATH" landing-pass land 2>&1
+        SPIRA_RELEASE="$(PATH="$SH:$PATH" tl_release)" PATH="$SH:$PATH" landing-pass land 2>&1
 }
 
 seed() {

@@ -82,7 +82,7 @@ seed() {
     printf '{"id":"%s","title":"t","status":"%s","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "${2:-open}" "$_lbl" | testdb_seed
 }
-run_dwarf() { rm -rf "$SPIRA_RUN/worktree"; dwarf --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
+run_dwarf() { rm -rf "$SPIRA_RUN/worktree"; SPIRA_RELEASE="$(tl_release)" dwarf --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
 
 echo "T3: stale local base — the branch is cut from fresh origin/main, not stale local main"
 # ===========================================================================================

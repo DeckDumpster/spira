@@ -130,7 +130,7 @@ testdb_reset
 b1="$(timeout 5 bd -C "$SPIRA_DB" create --title "test: wiki write" --type task -l "$_lbl" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b1" ] || { bad "bead created" "(bead-create failed)"; }
 rm -rf "$SPIRA_RUN/worktree"
-dwarf --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
+SPIRA_RELEASE="$(tl_release)" dwarf --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 # The session's bd close reads, in the lifecycle stand-in, as the builder's submit
 # (testlib lc_row_state: the restricted session never reaches sp-qsona's bd conversion).
 is "wiki-write: the session finished its bead (SUBMITTED)" "SUBMITTED" "$(lc_row_state "$b1")"
