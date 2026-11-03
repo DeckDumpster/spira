@@ -22,8 +22,7 @@ const USAGE: &str = "usage: spira-lc admin-parity --old-socket <path> --new-sock
 /// One difference the cutover allows: a field of a verb's answer (`*` for every verb), or
 /// for a tab-separated answer a column, by index. The verb is the call's leading words
 /// (`list --batches` covers every `list --batches …` call and no other `list`); a dotted field
-/// (`last_pass.ended_at`) is that path under any object holding its first name, and nowhere else;
-/// a name that holds an array reaches into each element (`passes.ended_at`).
+/// (`last_pass.ended_at`) is that path under any object holding its first name, and nowhere else.
 pub struct Allowed {
     pub verb: &'static str,
     pub field: &'static str,
@@ -38,11 +37,6 @@ pub const ALLOWED: &[Allowed] = &[
     Allowed { verb: "event-seq", field: "seq", why: "the added rev: the new store's head starts at the import revision, max(seq) + 1" },
     Allowed { verb: "list --batches", field: "last_pass.ended_at", why: "dolt stored 0 where it never wrote the time; the store derives it from the pass events — the store is right" },
     Allowed { verb: "list --batches", field: "last_pass.started_at", why: "dolt stored 0 where it never wrote the time; the store derives it from the pass events — the store is right" },
-    Allowed { verb: "list --batches", field: "last_pass.suites_at", why: "dolt stored 0 where it never wrote the time; the store derives it from the pass events — the store is right" },
-    Allowed { verb: "list --batches", field: "passes.started_at", why: "dolt stored 0 where it never wrote the time; the store derives it from the pass events — the store is right" },
-    Allowed { verb: "list --batches", field: "passes.ended_at", why: "dolt stored 0 where it never wrote the time; the store derives it from the pass events — the store is right" },
-    Allowed { verb: "list --batches", field: "passes.suites_at", why: "dolt stored 0 where it never wrote the time; the store derives it from the pass events — the store is right" },
-    Allowed { verb: "list --batches", field: "phase_since", why: "dolt stored 0 where it never wrote the time; the store derives it from the pass events — the store is right" },
     Allowed { verb: "list --live", field: "sifted_tip", why: "the dolt list omits a field show carries; the store's row is the full record" },
 ];
 
@@ -97,12 +91,9 @@ fn strip(v: &mut Value, field: &str) {
     }
 }
 
-/// `path` (dotted) removed from `v` itself, not searched for below it; through an array, from
-/// each of its elements (`passes.ended_at` is every pass's).
+/// `path` (dotted) removed from `v` itself, not searched for below it.
 fn strip_at(v: &mut Value, path: &str) {
-    if let Value::Array(a) = v {
-        a.iter_mut().for_each(|x| strip_at(x, path));
-    } else if let Value::Object(o) = v {
+    if let Value::Object(o) = v {
         match path.split_once('.') {
             Some((head, rest)) => {
                 if let Some(x) = o.get_mut(head) {
