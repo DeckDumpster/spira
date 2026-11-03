@@ -4259,10 +4259,13 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text, token: Opt
             return FAIL;
         }
     };
-    let kv = match abandoned {
-        Some(kv) => kv,
+    let (kv, reason) = match abandoned {
+        Some(kv) => (kv, reason),
         None => match load(w, label, &c, batch) {
-            Ok(kv) => kv,
+            Ok(kv) => match considered_abandon(w, label, &kv, reason) {
+                Ok(reason) => (kv, reason),
+                Err(rc) => return rc,
+            },
             Err(rc) => {
                 drop_or_warn(w, label, &c, batch, "abandoned");
                 return rc;
@@ -4270,6 +4273,31 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text, token: Opt
         },
     };
     close_abandoned(w, label, &c, &path, &kv, &reason, cause)
+}
+
+const ABANDON_CONSIDERED_ENV: &str = "QUEUE_ABANDON_CONSIDERED";
+
+/// A red round of more than one member is ejected, not abandoned: an abandon throws away the
+/// members the red does not implicate, and they pay a whole pass to certify again. An eject
+/// clears the round's `red`, so a round red with no eject since refuses unless the caller sets
+/// [`ABANDON_CONSIDERED_ENV`]; its why joins the reason, which the lifecycle records on the
+/// round's abandon event. Returns the reason to record.
+fn considered_abandon(w: &World, label: &str, kv: &Kv, reason: String) -> Result<String, i32> {
+    let members = kv.members();
+    let Some(red) = kv.get("red").filter(|r| !r.is_empty() && members.len() > 1) else {
+        return Ok(reason);
+    };
+    if let Some(why) = w.var(ABANDON_CONSIDERED_ENV) {
+        return Ok(format!("{reason} ({ABANDON_CONSIDERED_ENV}: {})", one_line(&why)));
+    }
+    let batch = kv.get("batch_id").unwrap_or("");
+    let ids: Vec<&str> = members.iter().map(|m| m.id.as_str()).collect();
+    w.err(format!(
+        "queue.sh {label}: refused — round {batch} is red ({red}) with {} members ({}) and nothing ejected since; an abandon discards the members the red does not implicate. Eject the culprit and let the rest certify: `queue round eject {batch} <id> --reason <why> --suites <csv> --red`; or set {ABANDON_CONSIDERED_ENV}=\"<why>\" to abandon it whole, recorded on the round's events. Nothing changed",
+        ids.len(),
+        ids.join(" ")
+    ));
+    Err(FAIL)
 }
 
 /// Every live round cut on `parent`'s head is abandoned with it: its tree holds the parent's
