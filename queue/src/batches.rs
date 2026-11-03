@@ -12,6 +12,10 @@ use crate::records::Kv;
 
 pub const PREFIX: &str = "batches/";
 
+/// The most rounds a repo can hold open at once that a reader takes as a whole set: far past
+/// any round limit, so more is a store gone wrong, said so, not a list.
+pub const OPEN_MAX: usize = 64;
+
 /// How many times a field write is retried when a machine step moved the record under it.
 const SAVE_TRIES: usize = 3;
 
@@ -24,6 +28,9 @@ const FIELD_ORDER: [&str; 7] = [
 pub trait Door {
     fn get(&self, key: &str) -> Result<Option<Item>, String>;
     fn list(&self, prefix: &str) -> Result<Vec<Item>, String>;
+    /// The items under `prefix` whose `data.state` is one of `states`, read through the store's
+    /// state index; more than `limit` is an error, never a part of the set.
+    fn list_in_states(&self, prefix: &str, states: &[String], limit: usize) -> Result<Vec<Item>, String>;
     /// `kind` names the write in the request the call commits under.
     fn txn(&self, t: &Txn, kind: &str) -> Result<TxnResult, String>;
 }
@@ -44,6 +51,40 @@ impl BatchRecord {
     }
 }
 
+/// Every state the batch machine has not ended, as a record can hold it: serde's name for the
+/// variant, which spira-lc writes, and the machine's word, so no spelling hides an open round.
+fn open_spellings() -> Vec<String> {
+    const OPEN: [BatchState; 8] = [
+        BatchState::Staged,
+        BatchState::Open,
+        BatchState::CiRunning,
+        BatchState::Green,
+        BatchState::Landing,
+        BatchState::Deploying,
+        BatchState::Attributing,
+        BatchState::Rebuilding,
+    ];
+    let mut out = Vec::new();
+    for s in OPEN {
+        debug_assert!(!s.is_terminal());
+        if let Some(v) = serde_json::to_value(s).ok().and_then(|v| v.as_str().map(str::to_string)) {
+            out.push(v);
+        }
+        out.push(s.as_str().to_string());
+    }
+    out.dedup();
+    out
+}
+
+/// The machine's word (`OPEN`, `CI_RUNNING`) for a record's `state` as spira-lc writes it: its
+/// `BatchRecord` carries the state as serde's name for the variant (`Open`, `CiRunning`), and a
+/// record written in the machine's own word reads the same. `None`: no state the machine knows.
+pub fn state_word(stored: &str) -> Option<&'static str> {
+    BatchState::from_str(stored)
+        .or_else(|| serde_json::from_value(Value::String(stored.to_string())).ok())
+        .map(BatchState::as_str)
+}
+
 pub fn key(repo: &str, id: &str) -> String {
     format!("{PREFIX}{repo}/{id}")
 }
@@ -62,7 +103,10 @@ pub fn decode(item: &Item) -> Result<BatchRecord, String> {
     let d = &item.value.data;
     let undecodable = |what: &str| format!("{}: undecodable round: no {what}", item.key);
     let id = text(d, "batch_id").ok_or_else(|| undecodable("batch_id"))?;
-    let state = text(d, "state").ok_or_else(|| undecodable("state"))?;
+    let stored = text(d, "state").ok_or_else(|| undecodable("state"))?;
+    let state = state_word(&stored)
+        .ok_or_else(|| undecodable(&format!("batch state (it holds {stored:?})")))?
+        .to_string();
     let mut kv = Kv::default();
     kv.push("batch_id", &id);
     kv.push("repo", &text(d, "repo").unwrap_or_default());
@@ -113,8 +157,12 @@ fn machine_fields(d: &Value, kv: &mut Kv) {
 
 /// Every round of `repo`, in the order they were created.
 pub fn batches(d: &dyn Door, repo: &str) -> Result<Vec<BatchRecord>, String> {
-    let mut items: Vec<Item> = d
-        .list(&format!("{PREFIX}{repo}/"))?
+    in_creation_order(repo, d.list(&format!("{PREFIX}{repo}/"))?)
+}
+
+/// The rounds among `items` (not the keys beneath them), decoded, oldest first.
+fn in_creation_order(repo: &str, items: Vec<Item>) -> Result<Vec<BatchRecord>, String> {
+    let mut items: Vec<Item> = items
         .into_iter()
         .filter(|i| round_id(repo, &i.key).is_some())
         .collect();
@@ -128,9 +176,12 @@ pub fn batches(d: &dyn Door, repo: &str) -> Result<Vec<BatchRecord>, String> {
     Ok(out)
 }
 
-/// The rounds of `repo` the batch machine has not ended, in the order they were created.
+/// The rounds of `repo` the batch machine has not ended, in the order they were created: read
+/// through the store's state index, so the cost is the open rounds, never every round the repo
+/// has had, which an import from an older store brings in by the thousand.
 pub fn open_batches(d: &dyn Door, repo: &str) -> Result<Vec<BatchRecord>, String> {
-    Ok(batches(d, repo)?
+    let items = d.list_in_states(&format!("{PREFIX}{repo}/"), &open_spellings(), OPEN_MAX)?;
+    Ok(in_creation_order(repo, items)?
         .into_iter()
         .filter(|b| !b.is_terminal())
         .collect())
@@ -145,6 +196,9 @@ impl Door for Unresolved {
         Err(self.0.clone())
     }
     fn list(&self, _: &str) -> Result<Vec<Item>, String> {
+        Err(self.0.clone())
+    }
+    fn list_in_states(&self, _: &str, _: &[String], _: usize) -> Result<Vec<Item>, String> {
         Err(self.0.clone())
     }
     fn txn(&self, _: &Txn, _: &str) -> Result<TxnResult, String> {
@@ -238,6 +292,8 @@ pub mod mem {
         pub lost_kind: Cell<Option<&'static str>>,
         /// The kinds of the txns written through the door, in order.
         pub kinds: std::cell::RefCell<Vec<String>>,
+        /// How many records the door has answered with: what a read costs the store.
+        pub items_read: Cell<usize>,
     }
 
     impl Default for MemDoor {
@@ -253,8 +309,19 @@ pub mod mem {
                 down: Cell::new(false),
                 lost_kind: Cell::new(None),
                 kinds: Default::default(),
+                items_read: Cell::new(0),
             }
         }
+    }
+
+    /// `state` (`OPEN`, the machine's word) spelled as spira-lc's `BatchRecord` writes it into
+    /// the record: serde's name for the variant (`Open`). A word the machine does not know is
+    /// written as given.
+    pub fn stored(state: &str) -> String {
+        BatchState::from_str(state)
+            .and_then(|s| serde_json::to_value(s).ok())
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_else(|| state.to_string())
     }
 
     impl MemDoor {
@@ -283,7 +350,7 @@ pub mod mem {
                 .map(|(m, tip)| serde_json::json!({ "bead_id": m, "tip": tip }))
                 .collect();
             let v = serde_json::json!({
-                "batch_id": id, "repo": repo, "state": state, "parent": null,
+                "batch_id": id, "repo": repo, "state": stored(state), "parent": null,
                 "head": format!("head-{id}"), "base": "b0", "run": null, "reason": null,
                 "pass": 0, "phase": null, "version": 1,
                 "members": members, "opened_at": opened_at,
@@ -309,7 +376,7 @@ pub mod mem {
                 return;
             };
             let mut value = item.value;
-            value.data["state"] = Value::String(state.into());
+            value.data["state"] = Value::String(stored(state));
             let n = value.data["version"].as_u64().unwrap_or(0) + 1;
             value.data["version"] = n.into();
             if let Some(kv) = round {
@@ -325,7 +392,7 @@ pub mod mem {
             let d = &items.iter().find(|i| i.value.data["batch_id"] == id)?.value.data;
             Some((
                 d["repo"].as_str()?.to_string(),
-                d["state"].as_str()?.to_string(),
+                state_word(d["state"].as_str()?).map_or_else(|| d["state"].to_string(), str::to_string),
                 d["version"].to_string(),
             ))
         }
@@ -343,14 +410,36 @@ pub mod mem {
     impl Door for MemDoor {
         fn get(&self, key: &str) -> Result<Option<Item>, String> {
             self.up()?;
-            self.store.get(key).map_err(|e| e.to_string())
+            let got = self.store.get(key).map_err(|e| e.to_string())?;
+            self.items_read.set(self.items_read.get() + usize::from(got.is_some()));
+            Ok(got)
         }
         fn list(&self, prefix: &str) -> Result<Vec<Item>, String> {
             self.up()?;
-            self.store
+            let items = self
+                .store
                 .list(&[prefix], &state_store::Selector::Everything)
                 .map(|(items, _)| items)
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.to_string())?;
+            self.items_read.set(self.items_read.get() + items.len());
+            Ok(items)
+        }
+        fn list_in_states(&self, prefix: &str, states: &[String], limit: usize) -> Result<Vec<Item>, String> {
+            self.up()?;
+            let at = self.store.head().map_err(|e| e.to_string())?;
+            let mut items = Vec::new();
+            for state in states {
+                items.extend(
+                    self.store
+                        .range_in_state(prefix, state, None, limit + 1, at)
+                        .map_err(|e| e.to_string())?,
+                );
+            }
+            self.items_read.set(self.items_read.get() + items.len());
+            if items.len() > limit {
+                return Err(format!("cannot tell: more than {limit} rounds under {prefix} are open"));
+            }
+            Ok(items)
         }
         fn txn(&self, t: &Txn, kind: &str) -> Result<TxnResult, String> {
             self.up()?;
@@ -422,6 +511,21 @@ mod tests {
         kv.push("batch_id", "spira-9");
         let e = save(&d, "spira", &kv).unwrap_err();
         assert!(e.contains("spira-9") && e.contains("spira"), "{e}");
+    }
+
+    #[test]
+    fn a_state_reads_in_either_spelling_and_an_unknown_one_is_undecodable_not_open() {
+        assert_eq!(state_word("Abandoned"), Some("ABANDONED"));
+        assert_eq!(state_word("CiRunning"), Some("CI_RUNNING"));
+        assert_eq!(state_word("LANDED"), Some("LANDED"));
+        assert_eq!(state_word("abandoned"), None);
+        let d = MemDoor::default();
+        d.put_round("spira", "spira-1", "LANDED", &[], 1);
+        let b = batch(&d, "spira", "spira-1").unwrap().unwrap();
+        assert!(b.is_terminal() && b.state == "LANDED", "{b:?}");
+        d.put_round("spira", "spira-2", "Retired", &[], 2);
+        let e = batch(&d, "spira", "spira-2").unwrap_err();
+        assert!(e.contains("Retired"), "{e}");
     }
 
     #[test]

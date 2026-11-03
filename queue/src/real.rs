@@ -1566,6 +1566,18 @@ impl crate::batches::Door for RealLc {
         let body = state_store::wire::List {
             prefixes: vec![prefix.into()],
             selector: state_store::Selector::Everything,
+            states: Vec::new(),
+            limit: None,
+        };
+        self.rc(state_store::wire::Verb::List, &body)
+            .map(|l: state_store::wire::Listed| l.items)
+    }
+    fn list_in_states(&self, prefix: &str, states: &[String], limit: usize) -> Result<Vec<state_store::Item>, String> {
+        let body = state_store::wire::List {
+            prefixes: vec![prefix.into()],
+            selector: state_store::Selector::Everything,
+            states: states.to_vec(),
+            limit: Some(limit),
         };
         self.rc(state_store::wire::Verb::List, &body)
             .map(|l: state_store::wire::Listed| l.items)

@@ -45,4 +45,5 @@ slugs = [
   "law-list-reads-run-on-indexed-tables",
   "law-list-reads-paginate-in-the-database",
   "law-a-hand-dispatched-p0-builder-runs-under-a-watcher",
+  "law-a-blinded-operator-surface-is-p0",
 ]
