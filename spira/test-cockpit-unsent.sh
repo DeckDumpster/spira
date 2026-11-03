@@ -251,12 +251,8 @@ echo "BATCHED-stranded detection:"
 # ======================================================================================
 # BATCHED (spira-lc: IN_DELIVERY) branch absent from any open batch → SP_BATCHED_STRANDED=1.
 # This is the sp-kogm shape: sp-bbb in beta has in_progress status; we give it a spira-lc
-# row in IN_DELIVERY and provide no open batch file naming it. The probe must count it as
-# stranded.
-#
-# POSITIVE CONTROL FIRST: a run with IN_DELIVERY state and no open batch must report 1.
-# Only after that do we verify the BATCHED-in-batch case reports 0 — an all-zero result
-# could pass both tests if the probe is not running at all.
+# row in IN_DELIVERY and no batch naming it. The probe must count it as stranded once the
+# one-sweep grace is past, and not before.
 lc_seed_bead sp-bbb IN_DELIVERY "$(date +%s)"
 out_grace="$(unsent "$TMP/beads.json")"
 is "IN_DELIVERY inside the one-sweep grace → SP_BATCHED_STRANDED=0" "0" "$(printf '%s' "$out_grace" | grep '^SP_BATCHED_STRANDED=' | head -1 | sed 's/^SP_BATCHED_STRANDED=//')"

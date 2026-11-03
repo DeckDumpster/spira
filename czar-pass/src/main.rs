@@ -61,8 +61,8 @@ fn pass_main() -> i32 {
 // Configuration
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// Every program the pass runs, by name on the launcher's PATH. A test injects its own;
-/// nothing here is read from the environment.
+/// The programs the pass runs by name on the launcher's PATH (the queue is asked through
+/// [`Config::batch_show`]). A test injects its own; nothing here is read from the environment.
 #[derive(Clone)]
 struct Seams {
     incident: String,
@@ -422,7 +422,7 @@ fn call_rune_czar(cfg: &Config) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Repo map lookup
+// Repo map: the base ref
 // ──────────────────────────────────────────────────────────────────────────────
 
 // The base ref a repository's branches are cut from and judged against (repo-map column
@@ -454,20 +454,27 @@ fn repo_base(name: &str, repo_map: &Option<PathBuf>) -> Option<String> {
 // Queue / forge helpers
 // ──────────────────────────────────────────────────────────────────────────────
 
+/// One pass is one process, so each repo's answer is asked once and every detector reads it.
 fn queue_batch_show(queue: String, timeout_secs: u64) -> BatchShow {
+    let asked = std::sync::Mutex::new(std::collections::BTreeMap::<String, Result<String, String>>::new());
     std::sync::Arc::new(move |repo: &str| {
-        let out = Command::new("timeout")
-            .arg(timeout_secs.to_string())
-            .arg(&queue)
-            .args(["batch", "show", "--repo", repo])
-            .stdin(std::process::Stdio::null())
-            .output()
-            .map_err(|e| format!("{queue}: {e}"))?;
-        if !out.status.success() {
-            return Err(format!("queue batch show --repo {repo} exited {}: {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()));
-        }
-        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+        let mut asked = asked.lock().unwrap_or_else(|e| e.into_inner());
+        asked.entry(repo.to_string()).or_insert_with(|| show_once(&queue, timeout_secs, repo)).clone()
     })
+}
+
+fn show_once(queue: &str, timeout_secs: u64, repo: &str) -> Result<String, String> {
+    let out = Command::new("timeout")
+        .arg(timeout_secs.to_string())
+        .arg(queue)
+        .args(["batch", "show", "--repo", repo])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("{queue}: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("queue batch show --repo {repo} exited {}: {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// A forge repo's open batch as the queue shows it.
@@ -1247,7 +1254,8 @@ fn queue_repo_names(repo_map: &Option<PathBuf>) -> Vec<(String, PathBuf)> {
     repo_map_rows(repo_map, true)
 }
 
-/// Every row of the repo-map whose open batch, if any, the queue shows.
+/// Every row of the repo-map, whatever its land: the CI and deadlock detectors judge whichever
+/// repo the queue shows an open batch for, as they judged every queue directory holding one.
 fn mapped_repos(repo_map: &Option<PathBuf>) -> Vec<(String, PathBuf)> {
     repo_map_rows(repo_map, false)
 }
