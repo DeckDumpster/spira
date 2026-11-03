@@ -3065,7 +3065,7 @@ mod tests {
         let spira = &cfg[..cfg.find("[repo.spira]").unwrap()];
         assert!(spira.contains("\npath = \"$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin\"\n"), "{cfg}");
         assert!(spira.contains("\ntestenv_scratch_root = \"$HOME/round-scratch\"\n"), "{cfg}");
-        let mk = REMOTE_SCRIPT.find("mkdir -p \"$HOME/round-scratch\"").expect("the scratch root is made before the config names it");
+        let mk = REMOTE_SCRIPT.find("mkdir -p \"$HOME/round-work/.runtime/spira\" \"$HOME/round-scratch\"").expect("the scratch root is made before the config names it");
         assert!(mk < start, "the scratch root exists before any tree binary reads the config");
         let template = include_str!("template.sh");
         assert!(template.contains("\npath = \"$nix_bin:$CARGO_HOME/bin:$HOME/.cargo/bin\"\n"), "the template build declares the same toolchain");
