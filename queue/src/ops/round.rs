@@ -2377,6 +2377,79 @@ fn fixture_fault_cause(results: &Path) -> Option<String> {
     })
 }
 
+/// What round-vm names a pass that ended with no verdict from, in `round-fault.out`: the
+/// fault, the config key a settings refusal names, and the tail of the VM script's log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct RoundFault {
+    pub cause: String,
+    pub settings_key: Option<String>,
+    pub tail: String,
+}
+
+pub(super) const ROUND_FAULT_FILE: &str = "round-fault.out";
+
+pub(super) fn round_fault(results: &Path) -> Option<RoundFault> {
+    let text = fs::read_to_string(results.join(ROUND_FAULT_FILE)).ok()?;
+    let mut lines = text.lines();
+    let cause = lines.next()?.strip_prefix("ROUND-FAULT: ")?.trim().to_string();
+    let rest: Vec<&str> = lines.collect();
+    let settings_key = rest.first().and_then(|l| l.strip_prefix("settings-key: ")).map(|k| k.trim().to_string());
+    let tail = rest.iter().skip_while(|l| !l.starts_with("--- ")).skip(1).copied().collect::<Vec<_>>().join("\n");
+    Some(RoundFault { cause, settings_key, tail })
+}
+
+/// A setting the round VM refused is the fault of the member whose diff adds its key: present
+/// at the member's tip and absent at the landing ref. Each such member is ejected with the
+/// fault; when none is, the harness is named and no member is counted against.
+fn settings_refused(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, f: &RoundFault, key: &str) -> i32 {
+    let Some(base) = c.r.landref.as_deref() else {
+        w.err(format!("queue.sh {label}: cannot resolve the landing ref of {} to attribute {key} — the fault is counted against no member", c.r.name));
+        return FAULT;
+    };
+    let members = match record_of(w, c, batch) {
+        Ok(Some(kv)) => kv.members(),
+        Ok(None) => Vec::new(),
+        Err(e) => {
+            w.err(format!("queue.sh {label}: cannot read the members of {batch} to attribute {key}: {e} — the fault is counted against no member"));
+            return FAULT;
+        }
+    };
+    let has = |rev: &str| {
+        w.git.grep_files(path, rev, key, "**").iter().any(|f| w.git.file_at(path, rev, f).is_some_and(|t| names_key(&t, key)))
+    };
+    let holders: Vec<Member> = if has(base) { Vec::new() } else { members.into_iter().filter(|m| has(&m.tip)).collect() };
+    // A member stacked on another carries that one's key at its tip without adding it.
+    let adders: Vec<Member> = holders
+        .iter()
+        .filter(|m| !holders.iter().any(|o| o.id != m.id && o.tip != m.tip && w.git.is_ancestor(path, &o.tip, &m.tip)))
+        .cloned()
+        .collect();
+    if adders.is_empty() {
+        w.err(format!("queue.sh {label}: {key} was refused on the round VM and no member's diff adds it: the harness is the cause (the round VM's script or config does not provide it); no member is counted against"));
+        w.out("fault-owner=harness");
+        return FAULT;
+    }
+    for m in adders {
+        let reason = format!("{}'s diff adds {key}, which the round VM refused: {}\nThe VM script's log, last lines:\n{}", m.id, f.cause, f.tail);
+        let rc = eject(w, batch, &m.id, Some(&c.r.name), &Text::Arg(reason), UNIT_RED, true, false, true, "", LeaseCheck::Inside);
+        if rc == OK {
+            note_pass_end(c, std::slice::from_ref(&m.id), PassEnd::Ejected);
+            w.out(format!("fault-owner={}", m.id));
+        } else {
+            w.err(format!("queue.sh {label}: could not eject {}, whose diff adds the refused {key} (rc={rc})", m.id));
+        }
+    }
+    FAULT
+}
+
+/// Whether `text` holds `key` as a whole word: `FOO_X` is not named by `FOO_X_ROOT`.
+fn names_key(text: &str, key: &str) -> bool {
+    let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    text.match_indices(key).any(|(i, _)| {
+        !text[..i].chars().next_back().is_some_and(word) && !text[i + key.len()..].chars().next().is_some_and(word)
+    })
+}
+
 fn vm_fault_cause(err: &str) -> Option<String> {
     let line = err.lines().rev().find(|l| {
         let l = l.trim_start();
@@ -2935,6 +3008,7 @@ fn certify_pass(
         // not as a machinery fault; an integration red is one more red beside the suites'.
         let phase_red = phase_reds(&results);
         let ended_by_unit = out.rc == 1 && phase_red.iter().any(|p| p.before_suites);
+        let vm_named = round_fault(&results);
         for p in &phase_red {
             reds.push(UNIT_RED.into());
             for line in p.report() {
@@ -2943,7 +3017,10 @@ fn certify_pass(
         }
         let fault = match out.rc {
             1 if ended_by_unit => None,
-            0 | 1 if found.is_empty() => Some("round-vm ran and left no verdicts — a fault of the round machinery, not of the candidates".to_string()),
+            0 | 1 if found.is_empty() => Some(vm_named.as_ref().map_or_else(
+                || "round-vm ran and left no verdicts — a fault of the round machinery, not of the candidates".to_string(),
+                |f| f.cause.clone(),
+            )),
             0 | 1 => unjudgeable(&wt, &found),
             124 | 137 if !out.err.contains("OVER-CAP") && wall_complete(&wt, &found, &out.err) => None,
             4 if build_env.is_some() => Some(format!(
@@ -2969,10 +3046,12 @@ fn certify_pass(
                 w.clock.now().saturating_sub(began),
                 c.s.round_wall_secs
             )),
-            rc => Some(match (stale_ami_cause(&out), fixture_fault_cause(&results).or_else(|| vm_fault_cause(&out.err))) {
-                (Some(cause), _) => format!("{STALE_AMI_MARK}: {cause}"),
-                (None, Some(c)) => format!("round-vm exited {rc}: {c}"),
-                (None, None) => format!("round-vm exited {rc}"),
+            rc => Some(match (stale_ami_cause(&out), fixture_fault_cause(&results), &vm_named, vm_fault_cause(&out.err)) {
+                (Some(cause), ..) => format!("{STALE_AMI_MARK}: {cause}"),
+                (None, Some(c), ..) => format!("round-vm exited {rc}: {c}"),
+                (None, None, Some(f), _) => f.cause.clone(),
+                (None, None, None, Some(c)) => format!("round-vm exited {rc}: {c}"),
+                (None, None, None, None) => format!("round-vm exited {rc}"),
             }),
         };
         if let Some(why) = fault {
@@ -2985,6 +3064,14 @@ fn certify_pass(
             );
             let shown = tail(&out.err, 20);
             w.err(format!("queue.sh {label}: {why}; the round is not judged\n{shown}"));
+            if let Some(f) = vm_named.as_ref().filter(|f| f.cause == why) {
+                w.out(format!("fault={}", one_line(&f.cause)));
+                w.err(format!("queue.sh {label}: the VM script's log, last lines:\n{}", f.tail));
+                if let Some(key) = &f.settings_key {
+                    return settings_refused(w, label, c, path, batch, f, key);
+                }
+                return faulted_pass(w, label, c, batch, &format!("{why}\n{}", f.tail));
+            }
             return faulted_pass(w, label, c, batch, &format!("{why}\n{shown}"));
         }
         reds.extend(

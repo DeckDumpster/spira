@@ -21,6 +21,7 @@ pub mod spill;
 pub mod spool;
 pub mod telemetry;
 pub mod template;
+pub mod vm_fault;
 
 #[cfg(test)]
 pub mod testutil;

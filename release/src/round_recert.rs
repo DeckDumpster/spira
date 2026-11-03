@@ -304,7 +304,7 @@ fn tail(text: &str, n: usize) -> String {
     lines[lines.len().saturating_sub(n)..].join("\n")
 }
 
-/// What certify said about a pass that did not come out green: the red steps it named, or incomplete.
+/// What certify said about a pass that did not come out green: the red steps it named, the fault it named, or incomplete.
 fn verdict(text: &str) -> String {
     let named = text.lines().find_map(|l| l.trim().strip_prefix("red=")).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).or_else(|| {
         text.lines().find_map(|l| {
@@ -312,10 +312,12 @@ fn verdict(text: &str) -> String {
             Some(rest.split_once(": ")?.1.trim().to_string()).filter(|s| !s.is_empty())
         })
     });
-    match named {
-        Some(steps) => format!("RED: {steps}"),
-        None if text.contains("red-output=") => "RED".to_string(),
-        None => "incomplete, no red named".to_string(),
+    let fault = text.lines().find_map(|l| l.trim().strip_prefix("fault=")).map(str::trim).filter(|s| s.starts_with("FAULT"));
+    match (named, fault) {
+        (Some(steps), _) => format!("RED: {steps}"),
+        (None, _) if text.contains("red-output=") => "RED".to_string(),
+        (None, Some(fault)) => fault.to_string(),
+        (None, None) => "incomplete, no red named".to_string(),
     }
 }
 
@@ -671,6 +673,11 @@ mod tests {
         assert_eq!(verdict("round r is RED at e198ebb: unit-tests\n"), "RED: unit-tests");
         assert_eq!(verdict("red=unit-tests\n"), "RED: unit-tests");
         assert_eq!(verdict("timed out waiting\n"), "incomplete, no red named");
+        assert_eq!(
+            verdict("queue.sh round certify: FAULT settings-refused phase=suites rc=2: batch: K is not set\nfault=FAULT settings-refused phase=suites rc=2: batch: K is not set\n"),
+            "FAULT settings-refused phase=suites rc=2: batch: K is not set"
+        );
+        assert_eq!(verdict("fault=over-cap unreached=3\n"), "incomplete, no red named", "only a named FAULT line");
         assert_eq!(verdict("red=\nround r is RED at abc: lint\n"), "RED: lint");
         assert_eq!(verdict("red-output=/tmp/x\n"), "RED");
         let line = not_green_line("r-1", &Out { code: Some(1), text: "red=unit-tests\n".into() });
