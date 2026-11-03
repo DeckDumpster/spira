@@ -24,14 +24,12 @@ pub const USAGE: &str = "cutover-check --readiness | --since-rev <rev> | --probe
 /// A registered repository's own CI declaration, and the harness's gate definition.
 pub const DECL: &str = ".spira/testenv.toml";
 pub const GATE_STEPS: &str = "gate.steps";
-/// The batcher's per-repo round files: a round the batcher opened carries no lease token.
-pub const QUEUE_FILES: [&str; 2] = ["open", "prepared"];
 
 /// The base probe's slot holder and the label its attempt is recorded under.
 pub const PROBE_HOLDER: &str = "round-controller-probe";
 
 /// What cutover-check reads beside the store: the registry, the trees at the landing refs, the
-/// queue's round files and the lifecycle's beads.
+/// queue's open batches and the lifecycle's beads.
 pub trait Facts {
     /// The registered round repos (`queue.local` and `queue.forge`), in registry order.
     fn round_repos(&self) -> Result<Vec<String>, String>;
@@ -39,8 +37,9 @@ pub trait Facts {
     fn at_landing(&self, repo: &str, path: &str) -> Result<Option<String>, String>;
     /// The entry names directly under `dir` at `repo`'s landing ref.
     fn names_at_landing(&self, repo: &str, dir: &str) -> Result<Vec<String>, String>;
-    /// Every `open` or `prepared` file under the queue directory, as `<repo>/<file>`.
-    fn queue_files(&self) -> Result<Vec<String>, String>;
+    /// The batch the queue holds open for `repo`, by its id, as `queue batch show` answers it:
+    /// a round the batcher opened carries no lease token. `None` when there is none.
+    fn open_batch(&self, repo: &str) -> Result<Option<String>, String>;
     /// How many of `repo`'s beads are SUBMITTED.
     fn submitted(&self, repo: &str) -> Result<usize, String>;
 }
@@ -172,7 +171,7 @@ pub fn readiness(p: &Ports, f: &dyn Facts) -> Readiness {
         }
     }
     global.push(rounds(p));
-    global.push(queue_files(f));
+    global.push(open_batches(f));
     rows.push(Row {
         scope: GLOBAL.into(),
         checks: global,
@@ -380,12 +379,25 @@ fn rounds(p: &Ports) -> Check {
     }
 }
 
-fn queue_files(f: &dyn Facts) -> Check {
-    const NAME: &str = "queue-files";
-    match f.queue_files() {
-        Err(e) => red(NAME, format!("cannot read the queue directory: {e}")),
-        Ok(v) if v.is_empty() => green(NAME, "no open or prepared file"),
-        Ok(v) => red(NAME, v.join(" ")),
+/// Every round repo's open batch, as the queue reports it: a repo whose answer cannot be read is red.
+fn open_batches(f: &dyn Facts) -> Check {
+    const NAME: &str = "open-batches";
+    let repos = match f.round_repos() {
+        Ok(r) => r,
+        Err(e) => return red(NAME, format!("cannot read the registry: {e}")),
+    };
+    let mut open = Vec::new();
+    for repo in repos {
+        match f.open_batch(&repo) {
+            Ok(None) => {}
+            Ok(Some(id)) => open.push(format!("{repo}/{id}")),
+            Err(e) => return red(NAME, format!("cannot tell whether {repo} has an open batch: {e}")),
+        }
+    }
+    if open.is_empty() {
+        green(NAME, "no open batch")
+    } else {
+        red(NAME, open.join(" "))
     }
 }
 

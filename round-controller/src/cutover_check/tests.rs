@@ -28,7 +28,8 @@ struct FakeFacts {
     trees: BTreeMap<(String, String), String>,
     unreadable_tree: Option<String>,
     names: BTreeMap<(String, String), Vec<String>>,
-    queue: Vec<String>,
+    open: BTreeMap<String, String>,
+    unreadable_queue: Option<String>,
     submitted: BTreeMap<String, usize>,
 }
 
@@ -66,8 +67,11 @@ impl Facts for FakeFacts {
             .cloned()
             .ok_or_else(|| format!("git ls-tree exited Some(128): no {dir} in {repo}"))
     }
-    fn queue_files(&self) -> Result<Vec<String>, String> {
-        Ok(self.queue.clone())
+    fn open_batch(&self, repo: &str) -> Result<Option<String>, String> {
+        if self.unreadable_queue.as_deref() == Some(repo) {
+            return Err("queue batch show exited Some(1): the store is down".into());
+        }
+        Ok(self.open.get(repo).cloned())
     }
     fn submitted(&self, repo: &str) -> Result<usize, String> {
         self.submitted
@@ -158,7 +162,7 @@ fn every_row_green_exits_0_and_names_each_check() {
     let text = r.render();
     assert!(text.contains("alpha green ci=green base=green submitted=green"), "{text}");
     assert!(text.contains("beta green ci=green base=green submitted=green"), "{text}");
-    assert!(text.contains("global green repos=green rounds=green queue-files=green"), "{text}");
+    assert!(text.contains("global green repos=green rounds=green open-batches=green"), "{text}");
     assert!(text.ends_with("readiness=green\n"), "{text}");
     assert!(why(&r, "alpha", "ci").why.contains("bash ci.sh"));
     assert!(why(&r, "beta", "ci").why.contains("2 steps"));
@@ -280,14 +284,21 @@ fn a_non_terminal_round_reds_the_global_row_and_names_it() {
 }
 
 #[test]
-fn an_open_or_prepared_file_reds_the_global_row() {
+fn an_open_batch_or_an_unreadable_one_reds_the_global_row() {
     let b = Bench::new();
     ready(&b);
     let mut f = FakeFacts::two();
-    f.queue = vec!["beta/open".into(), "gamma/prepared".into()];
+    f.open.insert("alpha".into(), "deck-1".into());
+    f.open.insert("beta".into(), "spira-9".into());
     let r = readiness(&b.ports(), &f);
-    let c = why(&r, GLOBAL, "queue-files");
-    assert_eq!((c.green, c.why.as_str()), (false, "beta/open gamma/prepared"));
+    let c = why(&r, GLOBAL, "open-batches");
+    assert_eq!((c.green, c.why.as_str()), (false, "alpha/deck-1 beta/spira-9"));
+    assert_eq!(r.code(), 1);
+    let mut f = FakeFacts::two();
+    f.unreadable_queue = Some("beta".into());
+    let r = readiness(&b.ports(), &f);
+    let c = why(&r, GLOBAL, "open-batches");
+    assert!(!c.green && c.why.contains("cannot tell whether beta has an open batch"), "{}", c.why);
     assert_eq!(r.code(), 1);
 }
 

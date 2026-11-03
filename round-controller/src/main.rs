@@ -249,7 +249,7 @@ fn cutover(p: &Ports, mode: &cutover_check::Mode) -> Result<i32, String> {
                 spira_config::repos::landref(&located, repo)?,
             ))
         }),
-        queue_dir: spira_config::process::cfg("SPIRA_QUEUE_DIR")?.into(),
+        queue: spira_config::release_env::tool("queue")?,
         spira_lc: spira_config::release_env::tool("spira-lc")?,
     };
     match mode {

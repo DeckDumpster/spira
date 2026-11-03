@@ -1,18 +1,18 @@
 //! [`Facts`] on the installed harness: the registry's round repos, their landing refs read with
-//! `git`, the queue directory's round files, and the SUBMITTED beads through `spira-lc list`.
+//! `git`, each repo's open batch through `queue batch show`, and the SUBMITTED beads through `spira-lc list`.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use runtime::ports::{Proc, ProcSpec};
 use spira_config::repos::Registry;
 
-use crate::cutover_check::{Facts, QUEUE_FILES};
+use crate::cutover_check::Facts;
 use crate::real::git::Locate;
 
 const GIT_DEADLINE: Duration = Duration::from_secs(5);
 const LC_DEADLINE: Duration = Duration::from_secs(5);
+const QUEUE_DEADLINE: Duration = Duration::from_secs(10);
 
 /// The registry's `queue.local` and `queue.forge` repos, in registry order.
 pub fn round_repos(reg: &Registry) -> Result<Vec<String>, String> {
@@ -27,7 +27,7 @@ pub struct RealFacts {
     pub repos: Result<Vec<String>, String>,
     /// Each repo's checkout and landing ref, as the registry resolves them.
     pub locate: Box<Locate>,
-    pub queue_dir: PathBuf,
+    pub queue: String,
     pub spira_lc: String,
 }
 
@@ -101,26 +101,19 @@ impl Facts for RealFacts {
         }
     }
 
-    fn queue_files(&self) -> Result<Vec<String>, String> {
-        let dir = &self.queue_dir;
-        let rd = match std::fs::read_dir(dir) {
-            Ok(rd) => rd,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
-            Err(e) => return Err(format!("{}: {e}", dir.display())),
-        };
-        let mut out = Vec::new();
-        for e in rd {
-            let e = e.map_err(|e| format!("{}: {e}", dir.display()))?;
-            let repo = e.file_name().to_string_lossy().into_owned();
-            for f in QUEUE_FILES {
-                let path = e.path().join(f);
-                if path.try_exists().map_err(|err| format!("{}: {err}", path.display()))? {
-                    out.push(format!("{repo}/{f}"));
-                }
-            }
+    fn open_batch(&self, repo: &str) -> Result<Option<String>, String> {
+        let args = ["batch", "show", "--repo", repo].map(String::from).to_vec();
+        match self.run(&self.queue, args, QUEUE_DEADLINE)? {
+            (Some(0), out, _) if out.trim().is_empty() => Ok(None),
+            (Some(0), out, _) => Ok(Some(
+                out.lines()
+                    .find_map(|l| l.strip_prefix("batch_id="))
+                    .map(|id| id.trim().to_string())
+                    .filter(|id| !id.is_empty())
+                    .unwrap_or_else(|| "open".into()),
+            )),
+            (code, out, err) => Err(format!("queue batch show exited {code:?}: {} {err}", out.trim())),
         }
-        out.sort();
-        Ok(out)
     }
 
     fn submitted(&self, repo: &str) -> Result<usize, String> {
@@ -190,7 +183,7 @@ mod tests {
         }
     }
 
-    fn facts(answers: &[(&str, Result<ProcOutput, String>)], queue_dir: &Path) -> Under {
+    fn facts(answers: &[(&str, Result<ProcOutput, String>)]) -> Under {
         let s = Script {
             answers: answers
                 .iter()
@@ -203,7 +196,7 @@ mod tests {
             proc_: script.clone(),
             repos: Ok(vec!["alpha".into()]),
             locate: Box::new(|r| (r == "alpha").then(|| ("/r/alpha".into(), "local/main".into()))),
-            queue_dir: queue_dir.to_path_buf(),
+            queue: "queue".into(),
             spira_lc: "spira-lc".into(),
         };
         Under { facts, script }
@@ -220,29 +213,26 @@ mod tests {
 
     #[test]
     fn a_file_at_the_landing_ref_is_read_and_an_absent_one_is_none() {
-        let d = testkit::TempDir::new("rc-facts");
         let f = facts(
             &[
                 ("rev-parse", out(0, "abc\n", "")),
                 ("ls-tree", out(0, "gate.steps\n", "")),
                 ("cat-file", out(0, "step make\n", "")),
             ],
-            &d,
         );
         assert_eq!(f.at_landing("alpha", "gate.steps"), Ok(Some("step make\n".into())));
-        let f = facts(&[("rev-parse", out(0, "abc\n", "")), ("ls-tree", out(0, "", ""))], &d);
+        let f = facts(&[("rev-parse", out(0, "abc\n", "")), ("ls-tree", out(0, "", ""))]);
         assert_eq!(f.at_landing("alpha", "gate.steps"), Ok(None));
     }
 
     #[test]
     fn a_landing_ref_or_file_git_cannot_read_is_refused_naming_the_call() {
-        let d = testkit::TempDir::new("rc-facts");
-        let f = facts(&[], &d);
+        let f = facts(&[]);
         assert!(f.at_landing("ghost", "x").unwrap_err().contains("no checkout"));
         assert!(f.at_landing("alpha", "x").unwrap_err().contains("unscripted rev-parse"));
-        let f = facts(&[("rev-parse", out(128, "", "unknown revision"))], &d);
+        let f = facts(&[("rev-parse", out(128, "", "unknown revision"))]);
         assert!(f.at_landing("alpha", "x").unwrap_err().contains("unknown revision"));
-        let f = facts(&[("rev-parse", out(0, "abc", "")), ("ls-tree", out(128, "", "bad tree"))], &d);
+        let f = facts(&[("rev-parse", out(0, "abc", "")), ("ls-tree", out(128, "", "bad tree"))]);
         assert!(f.at_landing("alpha", "x").unwrap_err().contains("git ls-tree abc x"));
         let f = facts(
             &[
@@ -250,52 +240,46 @@ mod tests {
                 ("ls-tree", out(0, "x\n", "")),
                 ("cat-file", out(128, "", "bad object")),
             ],
-            &d,
         );
         assert!(f.at_landing("alpha", "x").unwrap_err().contains("bad object"));
     }
 
     #[test]
     fn the_names_under_a_directory_of_the_landing_ref_are_listed() {
-        let d = testkit::TempDir::new("rc-facts");
-        let f = facts(&[("rev-parse", out(0, "abc\n", "")), ("ls-tree", out(0, "test-a.sh\nlib.sh\n", ""))], &d);
+        let f = facts(&[("rev-parse", out(0, "abc\n", "")), ("ls-tree", out(0, "test-a.sh\nlib.sh\n", ""))]);
         assert_eq!(f.names_at_landing("alpha", "spira"), Ok(vec!["test-a.sh".into(), "lib.sh".into()]));
         let spec = crate::lock(&f.script.seen).last().cloned().unwrap();
         assert_eq!(spec.args.join(" "), "-C /r/alpha ls-tree --name-only abc:spira");
-        let f = facts(&[("rev-parse", out(0, "abc\n", "")), ("ls-tree", out(128, "", "not a tree"))], &d);
+        let f = facts(&[("rev-parse", out(0, "abc\n", "")), ("ls-tree", out(128, "", "not a tree"))]);
         assert!(f.names_at_landing("alpha", "spira").unwrap_err().contains("not a tree"));
         assert!(f.names_at_landing("ghost", "spira").unwrap_err().contains("no checkout"));
     }
 
     #[test]
-    fn every_open_or_prepared_file_under_the_queue_directory_is_named() {
-        let d = testkit::TempDir::new("rc-facts");
-        assert_eq!(facts(&[], &d.join("absent")).queue_files(), Ok(vec![]));
-        for (repo, file) in [("beta", "prepared"), ("alpha", "open"), ("alpha", "round")] {
-            std::fs::create_dir_all(d.join(repo)).unwrap();
-            std::fs::write(d.join(repo).join(file), "").unwrap();
-        }
-        assert_eq!(
-            facts(&[], &d).queue_files(),
-            Ok(vec!["alpha/open".into(), "beta/prepared".into()])
-        );
-        std::fs::write(d.join("plain"), "").unwrap();
-        assert!(facts(&[], &d.join("plain")).queue_files().unwrap_err().contains("plain"));
+    fn the_open_batch_is_read_from_queue_batch_show_and_a_failed_answer_is_refused() {
+        assert_eq!(facts(&[("queue", out(0, "", ""))]).open_batch("alpha"), Ok(None));
+        let f = facts(&[("queue", out(0, "batch_id=deck-1\npr=12\nforge.phase=armed\n", ""))]);
+        assert_eq!(f.open_batch("alpha"), Ok(Some("deck-1".into())));
+        let spec = crate::lock(&f.script.seen).last().cloned().unwrap();
+        assert_eq!((spec.prog.as_str(), spec.args.join(" ")), ("queue", "batch show --repo alpha".into()));
+        let f = facts(&[("queue", out(0, "pr=12\n", ""))]);
+        assert_eq!(f.open_batch("alpha"), Ok(Some("open".into())));
+        let f = facts(&[("queue", out(1, "", "cannot tell whether alpha has an open batch"))]);
+        assert!(f.open_batch("alpha").unwrap_err().contains("cannot tell"));
     }
 
     #[test]
     fn the_submitted_beads_are_counted_from_spira_lc_and_a_bad_answer_is_refused() {
-        let d = testkit::TempDir::new("rc-facts");
-        let f = facts(&[("spira-lc", out(0, "[{\"bead_id\":\"sp-a\"},{\"bead_id\":\"sp-b\"}]\n", ""))], &d);
+        let f = facts(&[("spira-lc", out(0, "[{\"bead_id\":\"sp-a\"},{\"bead_id\":\"sp-b\"}]\n", ""))]);
         assert_eq!(f.submitted("alpha"), Ok(2));
         let spec = crate::lock(&f.script.seen).last().cloned().unwrap();
         assert_eq!(
             (spec.prog.as_str(), spec.args.join(" ")),
             ("spira-lc", "list --state SUBMITTED --repo alpha".into())
         );
-        let f = facts(&[("spira-lc", out(0, "not json", ""))], &d);
+        let f = facts(&[("spira-lc", out(0, "not json", ""))]);
         assert!(f.submitted("alpha").unwrap_err().contains("no JSON array"));
-        let f = facts(&[("spira-lc", out(2, "", "cannot tell"))], &d);
+        let f = facts(&[("spira-lc", out(2, "", "cannot tell"))]);
         assert!(f.submitted("alpha").unwrap_err().contains("cannot tell"));
     }
 }

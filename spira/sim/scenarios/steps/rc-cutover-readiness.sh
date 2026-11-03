@@ -40,7 +40,7 @@ rc=$?
 for row in \
     'sim green ci=green base=green submitted=green' \
     'other red ci=green base=green submitted=red' \
-    'global green repos=green rounds=green queue-files=green' \
+    'global green repos=green rounds=green open-batches=green' \
     '  submitted: no SUBMITTED bead' \
     'readiness=red'; do
     printf '%s\n' "$out" | grep -qxF -- "$row" || fail "no row: $row"
