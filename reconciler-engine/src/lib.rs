@@ -6,6 +6,7 @@
 //! store, the forge — and feed the result in as a [`core::RawStatus`].
 
 pub mod alert;
+pub mod arm;
 pub mod assemble;
 pub mod clock;
 pub mod core;
