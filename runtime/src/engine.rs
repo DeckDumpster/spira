@@ -68,6 +68,15 @@ struct RequestBody {
     deadline_at: u64,
 }
 
+#[derive(Serialize, Deserialize)]
+struct HeldBody {
+    stream: StreamKey,
+    spec: EffectSpec,
+}
+
+/// The `applied` key under which a held write's release is recorded.
+const RELEASE: &str = "scheduler.release";
+
 pub trait Executor {
     fn submit(&mut self, id: &str, stream: &str, kind: EventKind) -> Result<()>;
     fn run_until_idle(&mut self) -> Result<()>;
@@ -105,6 +114,8 @@ pub struct Engine {
     foreign_poll_ms: u64,
     next_read_at: u64,
     poison_cleared_at: u64,
+    halted: bool,
+    held: usize,
 }
 
 fn mix(seed: u64, parts: &[&str]) -> u64 {
@@ -158,10 +169,19 @@ impl Engine {
             foreign_poll_ms: 0,
             next_read_at: 0,
             poison_cleared_at: 0,
+            halted: false,
+            held: 0,
         };
         let cursor = e.journal.cursor()?;
         e.cursor = cursor;
         e.saved_cursor = cursor;
+        let (halted, held) = e.halt_state(cursor)?;
+        e.halted = halted;
+        for h in held {
+            if !e.journal.applied(RELEASE, &h.id)? {
+                e.held += 1;
+            }
+        }
         for (_, ev) in e.journal.unresolved_effects()? {
             e.track_effect(&ev)?;
         }
@@ -274,6 +294,75 @@ impl Engine {
         Ok(())
     }
 
+    /// Whether the scheduler stood halted at `below`, and the writes held since the last resume.
+    fn halt_state(&self, mut below: Offset) -> Result<(bool, Vec<Event>)> {
+        let stream = StreamKey(HALT_STREAM.into());
+        let (mut halted, mut held) = (None, vec![]);
+        loop {
+            let page = self.journal.read_stream(&stream, below, WINDOW)?;
+            let Some(&(first, _)) = page.first() else { break };
+            let full = page.len() == WINDOW;
+            for (_, e) in page.into_iter().rev() {
+                match e.kind.tag.as_str() {
+                    SCHEDULER_RESUMED => {
+                        held.reverse();
+                        return Ok((halted.unwrap_or(false), held));
+                    }
+                    SCHEDULER_HALTED => {
+                        halted.get_or_insert(true);
+                    }
+                    EFFECT_HELD => held.push(e),
+                    _ => {}
+                }
+            }
+            if !full {
+                break;
+            }
+            below = first;
+        }
+        held.reverse();
+        Ok((halted.unwrap_or(false), held))
+    }
+
+    /// Requests a held write once: a replay finds its release applied.
+    fn release(&mut self, held: &Event, at: u64) -> Result<()> {
+        if self.journal.applied(RELEASE, &held.id)? {
+            return Ok(());
+        }
+        let b: HeldBody = serde_json::from_str(&held.kind.body).map_err(|e| RuntimeError::new(format!("bad held effect {}: {e}", held.id.0)))?;
+        let deadline_at = at.saturating_add(b.spec.deadline_ms);
+        let body = serde_json::to_string(&RequestBody { spec: b.spec, deadline_at }).map_err(|e| RuntimeError::new(e.to_string()))?;
+        let req = self.append_derived(derive_id(format!("{}/released", held.id.0)), &b.stream, EventKind::new(EFFECT_REQUESTED, &body), held, at)?;
+        self.track_effect(&req)?;
+        self.journal.mark_applied(RELEASE, &held.id)?;
+        self.held = self.held.saturating_sub(1);
+        Ok(())
+    }
+
+    /// The halt stream is the engine's own: a halt holds every `Act` write from then on, a
+    /// resume releases what was held in the order it was held, and a write held after the
+    /// resume that ended its halt is released when it is read.
+    fn gate(&mut self, ev: &Event, off: Offset) -> Result<()> {
+        match ev.kind.tag.as_str() {
+            SCHEDULER_HALTED => self.halted = true,
+            SCHEDULER_RESUMED => {
+                self.halted = false;
+                for h in self.halt_state(off)?.1 {
+                    self.release(&h, ev.at)?;
+                }
+                self.held = 0;
+            }
+            EFFECT_HELD if self.halted => self.held += 1,
+            EFFECT_HELD => self.release(ev, ev.at)?,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub fn is_halted(&self) -> bool {
+        self.halted
+    }
+
     pub fn into_registrations(self) -> Vec<Registration> {
         self.regs
     }
@@ -319,18 +408,16 @@ impl Engine {
                 Command::Emit(kind) => {
                     self.append_derived(id, &ev.stream, kind, ev, ev.at)?;
                 }
+                Command::Effect(spec) if mode == Mode::Act && self.halted => {
+                    let body = serde_json::to_string(&HeldBody { stream: ev.stream.clone(), spec }).map_err(|e| RuntimeError::new(e.to_string()))?;
+                    self.append_derived(id, &StreamKey(HALT_STREAM.into()), EventKind::new(EFFECT_HELD, &body), ev, ev.at)?;
+                }
                 Command::Effect(spec) => {
                     let deadline_at = ev.at.saturating_add(spec.deadline_ms);
                     let body = serde_json::to_string(&RequestBody { spec, deadline_at }).map_err(|e| RuntimeError::new(e.to_string()))?;
-                    match mode {
-                        Mode::Act => {
-                            let req = self.append_derived(id, &ev.stream, EventKind::new(EFFECT_REQUESTED, &body), ev, ev.at)?;
-                            self.track_effect(&req)?;
-                        }
-                        Mode::Observe => {
-                            self.append_derived(id, &ev.stream, EventKind::new(EFFECT_SHADOWED, &body), ev, ev.at)?;
-                        }
-                    }
+                    let tag = if mode == Mode::Act { EFFECT_REQUESTED } else { EFFECT_SHADOWED };
+                    let req = self.append_derived(id, &ev.stream, EventKind::new(tag, &body), ev, ev.at)?;
+                    self.track_effect(&req)?;
                 }
                 Command::Schedule { at, kind } => {
                     let row = ScheduleRow { id, at, stream: ev.stream.clone(), kind, cause: Some(ev.id.clone()), correlation: ev.correlation.clone() };
@@ -371,6 +458,9 @@ impl Engine {
             self.projection.push(ev);
         } else {
             self.projection.push_local(ev, LOCAL_KEEP, |id| ev.cause.as_ref() == Some(id) || self.pending.contains_key(&id.0) || self.local.iter().any(|q| q.cause.as_ref() == Some(id)));
+        }
+        if let (Some((off, _)), true) = (at, ev.stream.0 == HALT_STREAM) {
+            self.gate(ev, off)?;
         }
         if self.is_poisoned(&ev.stream)? {
             return Ok(());

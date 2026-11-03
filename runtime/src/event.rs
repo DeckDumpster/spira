@@ -47,6 +47,13 @@ pub const EFFECT_TIMED_OUT: EventKindTag = "effect.timed_out";
 /// A write an `Observe` task asked for and the engine recorded instead of running. It is never
 /// an open effect: no restart, and no later switch to `Act`, runs it.
 pub const EFFECT_SHADOWED: EventKindTag = "effect.shadowed";
+/// A write an `Act` task asked for while the scheduler was halted; resuming requests it.
+pub const EFFECT_HELD: EventKindTag = "effect.held";
+
+/// The stream that carries the scheduler's halt state and the writes held under it.
+pub const HALT_STREAM: &str = "scheduler.halt";
+pub const SCHEDULER_HALTED: EventKindTag = "scheduler.halted";
+pub const SCHEDULER_RESUMED: EventKindTag = "scheduler.resumed";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventKind {
