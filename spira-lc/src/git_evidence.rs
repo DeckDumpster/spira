@@ -20,7 +20,11 @@ pub(crate) fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
 /// Whether `sha`'s commit message names `bead_id` as a whole id, not as the prefix of a longer one
 /// (`sp-x` inside `sp-x2` or the child `sp-x.1`).
 pub fn commit_names_bead(repo: &Path, sha: &str, bead_id: &str) -> bool {
-    let Some(message) = git_output(repo, &["log", "-1", "--format=%B", sha]) else { return false };
+    git_output(repo, &["log", "-1", "--format=%B", sha]).is_some_and(|m| message_names_bead(&m, bead_id))
+}
+
+/// Whether a commit message names `bead_id` as a whole id (see [`commit_names_bead`]).
+pub fn message_names_bead(message: &str, bead_id: &str) -> bool {
     let mut from = 0;
     while let Some(at) = message[from..].find(bead_id) {
         let start = from + at;
