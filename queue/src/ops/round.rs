@@ -3,6 +3,7 @@
 //! the verbs differ from a hand's scratch scripts in that spira-lc, loom and round-duty can
 //! all see the round (DESIGN.md §2.2).
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,6 +17,7 @@ use super::{
     lc_eject_member, lock_held_by_caller, read_text, repo_path, require_lc, resolve, statute_gate,
     take_lock, Ctx, World, FAIL, OK, USAGE,
 };
+use crate::batches::BatchRecord;
 use crate::cli::{Round, Text};
 use crate::ident::bounded_text;
 use crate::lock::Guard;
@@ -281,12 +283,20 @@ fn pass_event<F>(w: &World, batch: &str, kind: F) -> Result<(), (i32, String)>
 where
     F: FnOnce(&str, u32, &str) -> Option<String>,
 {
+    pass_event_with(w, batch, &Ride::none(), kind)
+}
+
+/// [`pass_event`], the event carrying `ride`'s fields.
+fn pass_event_with<F>(w: &World, batch: &str, ride: &Ride, kind: F) -> Result<(), (i32, String)>
+where
+    F: FnOnce(&str, u32, &str) -> Option<String>,
+{
     lc_cas(w, batch, |s, v| {
         let (n, phase) =
             w.lc.batch_pass(batch)
                 .ok_or((1, format!("spira-lc cannot say which pass {batch} is on")))?;
         match kind(s, n, &phase) {
-            Some(k) => w.lc.batch_event(batch, s, v, LC_ACTOR, &k),
+            Some(k) => ride.sent(w.lc.batch_event(batch, s, v, LC_ACTOR, &k, ride.fields())),
             None => Ok(()),
         }
     })
@@ -296,7 +306,12 @@ where
 /// and names the phase. certify and `pass-start --resume` are not strict: they resume a pass already recorded.
 /// A judged round (ATTRIBUTING) starts its next pass directly; PassRebuilt is for a rebuilt head.
 fn start_pass(w: &World, batch: &str, head: &str, strict: bool) -> Result<(), (i32, String)> {
-    pass_event(w, batch, |s, n, _| {
+    start_pass_with(w, batch, head, strict, &Ride::none())
+}
+
+/// [`start_pass`], the event carrying `ride`'s fields.
+fn start_pass_with(w: &World, batch: &str, head: &str, strict: bool, ride: &Ride) -> Result<(), (i32, String)> {
+    pass_event_with(w, batch, ride, |s, n, _| {
         (strict || matches!(s, "OPEN" | "REBUILDING" | "ATTRIBUTING"))
             .then(|| serde_json::json!({"PassStarted": {"n": n + 1, "head": head}}).to_string())
     })
@@ -330,6 +345,17 @@ fn pass_verdict_event(
     verdict: &Verdict,
     strict: bool,
 ) -> Result<(), (i32, String)> {
+    pass_verdict_event_with(w, batch, verdict, strict, &Ride::none())
+}
+
+/// [`pass_verdict_event`], the verdict carrying `ride`'s fields.
+fn pass_verdict_event_with(
+    w: &World,
+    batch: &str,
+    verdict: &Verdict,
+    strict: bool,
+    ride: &Ride,
+) -> Result<(), (i32, String)> {
     lc_cas(w, batch, |s, v| {
         if !strict && s != "CI_RUNNING" {
             return match (verdict, s) {
@@ -355,7 +381,7 @@ fn pass_verdict_event(
                 serde_json::json!({"PassIncomplete": {"n": n, "reason": why}})
             }
         };
-        w.lc.batch_event(batch, s, v, LC_ACTOR, &kind.to_string())
+        ride.sent(w.lc.batch_event(batch, s, v, LC_ACTOR, &kind.to_string(), ride.fields()))
     })
 }
 
@@ -846,9 +872,69 @@ pub(crate) fn live_records(w: &World, c: &Ctx) -> Result<Vec<Kv>, String> {
     Ok(w.lc
         .open_batches(&c.r.name)?
         .into_iter()
+        .filter(|b| ended(&b.kv).is_none())
         .map(|b| b.kv)
         .collect())
 }
+
+/// Why the queue ended round `kv` while the lifecycle had not (its abandon or its landing
+/// record was refused); `None` while the queue holds it open. Such a round is no reader's open
+/// round: it counts toward no limit and is no round's parent.
+fn ended(kv: &Kv) -> Option<&str> {
+    kv.get(ENDED).filter(|e| !e.is_empty())
+}
+
+const ENDED: &str = "ended";
+
+/// The rounds of the repo the queue has ended and the lifecycle has not, oldest first; none
+/// with the round files, which the queue removes.
+fn ended_rounds(w: &World, c: &Ctx) -> Result<Vec<BatchRecord>, String> {
+    if w.lc.rounds_door().is_none() || c.r.mode != LandMode::QueueLocal {
+        return Ok(Vec::new());
+    }
+    Ok(w.lc
+        .open_batches(&c.r.name)?
+        .into_iter()
+        .filter(|b| ended(&b.kv).is_some())
+        .collect())
+}
+
+/// Names each round the queue ended that the lifecycle still holds, so it is never silently
+/// open on one side and gone on the other.
+fn report_ended(w: &World, label: &str, c: &Ctx) {
+    match ended_rounds(w, c) {
+        Ok(all) => {
+            for b in all {
+                w.err(format!("queue.sh {label}: round {} ended ({}) but spira-lc holds it {} — it is not open; round open and round land retry recording its end", b.id, ended(&b.kv).unwrap_or(""), b.state));
+            }
+        }
+        Err(e) => w.err(format!("queue.sh {label}: cannot tell which ended rounds spira-lc still holds for {}: {e}", c.r.name)),
+    }
+}
+
+/// Retries the lifecycle end of each round the queue ended without one: an abandon refused for
+/// an emptied round is asked again. A landing is recorded by [`reconcile_unrecorded`].
+fn reconcile_ended(w: &World, c: &Ctx) {
+    let all = match ended_rounds(w, c) {
+        Ok(all) => all,
+        Err(e) => {
+            w.err(format!("queue.sh: cannot tell which ended rounds spira-lc still holds for {}: {e}", c.r.name));
+            return;
+        }
+    };
+    for b in all.iter().filter(|b| ended(&b.kv) != Some(END_LANDED)) {
+        let cause = ended(&b.kv).unwrap_or("");
+        match lc_abandon(w, &b.id, LC_ACTOR, &bounded_text(&format!("round ended: {cause}"))) {
+            Ok(()) => {
+                crate::lock::remove_certify_lock(&c.s.queue_dir, &c.r.name, &b.id);
+                w.out(format!("queue.sh: round {} ended ({cause}) with its abandon refused — abandoned now", b.id));
+            }
+            Err((rc, out)) => w.err(format!("queue.sh: WARNING — the abandon of the ended round {} is still refused (rc={rc}): {}", b.id, one_line(&out))),
+        }
+    }
+}
+
+const END_LANDED: &str = "landed";
 
 /// Round `batch`'s record while it is open; `Ok(None)` once it has ended or never was.
 pub(super) fn record_of(w: &World, c: &Ctx, batch: &str) -> Result<Option<Kv>, String> {
@@ -857,20 +943,20 @@ pub(super) fn record_of(w: &World, c: &Ctx, batch: &str) -> Result<Option<Kv>, S
     }
     Ok(w.lc
         .batch(&c.r.name, batch)?
-        .filter(|b| !b.is_terminal())
+        .filter(|b| !b.is_terminal() && ended(&b.kv).is_none())
         .map(|b| b.kv))
 }
 
 /// The record of a round the lifecycle has already abandoned, for the verb that finishes
-/// closing it.
-fn abandoned_record(w: &World, c: &Ctx, batch: &str) -> Option<Kv> {
+/// closing it. Err: the store could not say.
+fn abandoned_record(w: &World, c: &Ctx, batch: &str) -> Result<Option<Kv>, String> {
     if !batch_abandoned(w, batch) {
-        return None;
+        return Ok(None);
     }
     if w.lc.rounds_door().is_none() {
-        return round_files::ended_record(w, c, batch);
+        return Ok(round_files::ended_record(w, c, batch));
     }
-    w.lc.batch(&c.r.name, batch).ok().flatten().map(|b| b.kv)
+    Ok(w.lc.batch(&c.r.name, batch)?.map(|b| b.kv))
 }
 
 pub(super) fn save_record(w: &World, c: &Ctx, kv: &Kv) -> Result<(), String> {
@@ -880,11 +966,36 @@ pub(super) fn save_record(w: &World, c: &Ctx, kv: &Kv) -> Result<(), String> {
     w.lc.save_batch(&c.r.name, kv)
 }
 
-/// Round `batch` answers no reader from here on. On the store the machine's terminal state
-/// already says so; the round files are removed. The caller holds the queue lock.
-pub(super) fn drop_record(w: &World, c: &Ctx, batch: &str) {
+/// Round `batch` answers no reader from here on, ended for `cause`. On the store the machine's
+/// terminal state says so; when the lifecycle refused that end, the record says it instead
+/// ([`ended`]) until a retry records it. The round files are removed. The caller holds the
+/// queue lock. Err: the end could not be written, and the round still reads as open.
+pub(super) fn drop_record(w: &World, c: &Ctx, batch: &str, cause: &str) -> Result<(), String> {
     if w.lc.rounds_door().is_none() {
         round_files::drop_record(w, c, batch);
+        return Ok(());
+    }
+    // A queue.forge repo's batches are batch PRs, not rounds.
+    if c.r.mode != LandMode::QueueLocal {
+        return Ok(());
+    }
+    let Some(b) = w.lc.batch(&c.r.name, batch)? else {
+        return Ok(());
+    };
+    // The first end recorded stands: a landed round is never re-marked abandoned.
+    if b.is_terminal() || ended(&b.kv).is_some() {
+        return Ok(());
+    }
+    let mut kv = b.kv;
+    set(&mut kv, ENDED, cause);
+    set(&mut kv, "ended_at", &w.clock.now().to_string());
+    w.lc.save_batch(&c.r.name, &kv)
+}
+
+/// [`drop_record`], its failure named on stderr.
+fn drop_or_warn(w: &World, label: &str, c: &Ctx, batch: &str, cause: &str) {
+    if let Err(e) = drop_record(w, c, batch, cause) {
+        w.err(format!("queue.sh {label}: ALARM: round {batch} ended ({cause}) but its end could not be recorded: {e} — it still reads as open"));
     }
 }
 
@@ -938,6 +1049,52 @@ pub(super) fn load(w: &World, label: &str, c: &Ctx, batch: &str) -> Result<Kv, i
         )),
     }
     Err(FAIL)
+}
+
+/// The queue's fields of a round on their way to the store with the lifecycle step they
+/// accompany, so they commit in that step's txn. With the round files, or when no step carried
+/// them (it was refused, or none was sent), [`Ride::save_rest`] writes them on their own.
+pub(super) struct Ride<'a> {
+    kv: Option<&'a Kv>,
+    carried: Cell<bool>,
+}
+
+impl<'a> Ride<'a> {
+    /// No fields: the step carries what the round already holds.
+    pub(super) fn none() -> Self {
+        Ride {
+            kv: None,
+            carried: Cell::new(false),
+        }
+    }
+
+    pub(super) fn with(w: &World, kv: &'a Kv) -> Self {
+        Ride {
+            kv: w.lc.rounds_door().is_some().then_some(kv),
+            carried: Cell::new(false),
+        }
+    }
+
+    /// What a step is sent with: `--round` on the store, nothing with the round files.
+    pub(super) fn fields(&self) -> Option<&'a Kv> {
+        self.kv
+    }
+
+    /// `sent`, the answer to a step sent with [`Ride::fields`], recorded.
+    pub(super) fn sent<T, E>(&self, sent: Result<T, E>) -> Result<T, E> {
+        if sent.is_ok() && self.kv.is_some() {
+            self.carried.set(true);
+        }
+        sent
+    }
+
+    /// Writes `kv`'s fields unless a step already committed them.
+    pub(super) fn save_rest(&self, w: &World, label: &str, c: &Ctx, kv: &Kv) -> Result<(), i32> {
+        if self.carried.get() {
+            return Ok(());
+        }
+        save(w, label, c, kv)
+    }
 }
 
 fn save(w: &World, label: &str, c: &Ctx, kv: &Kv) -> Result<(), i32> {
@@ -1266,6 +1423,7 @@ fn open(
         return FAIL;
     };
     reconcile_unrecorded(w, &c, &path);
+    reconcile_ended(w, &c);
     let repo_name = c.r.name.clone();
     if let Some(n) = name {
         if idents(w, label, &[("name", n)]).is_err() {
@@ -1588,6 +1746,24 @@ fn open(
         return FAIL;
     }
     let mut head = w.git.rev_parse(&wt, "HEAD").unwrap_or_default();
+    let now = w.clock.now().to_string();
+    let record = |head: &str, merged: &[Member]| {
+        let mut kv = Kv::default();
+        kv.push("batch_id", &batch);
+        kv.push("repo", &repo_name);
+        kv.push("head", head);
+        kv.push("base", &base_sha);
+        if let Some((p, _, _)) = &parent {
+            kv.push("parent", p);
+        }
+        kv.push("members", &render_members(merged));
+        kv.push("worktree", &wt.display().to_string());
+        kv.push("actor", &actor(w));
+        kv.push("opened", &now);
+        kv
+    };
+    let mut kv;
+    let mut carried = false;
     let cut = loop {
         let cut_members: Vec<Member> = merged
             .iter()
@@ -1599,7 +1775,9 @@ fn open(
                     .unwrap_or_else(|| m.tip.clone()),
             })
             .collect();
-        let Err((rc, out)) = super::batch::cut_settled(
+        kv = record(&head, &merged);
+        let ride = Ride::with(w, &kv);
+        let cut = ride.sent(super::batch::cut_settled(
             w,
             &batch,
             &repo_name,
@@ -1607,7 +1785,10 @@ fn open(
             &base_sha,
             &csv(&cut_members),
             LC_ACTOR,
-        ) else {
+            ride.fields(),
+        ));
+        let Err((rc, out)) = cut else {
+            carried = ride.carried.get();
             break Ok(());
         };
         let refused = merged
@@ -1642,20 +1823,7 @@ fn open(
         return FAIL;
     }
 
-    let now = w.clock.now().to_string();
-    let mut kv = Kv::default();
-    kv.push("batch_id", &batch);
-    kv.push("repo", &repo_name);
-    kv.push("head", &head);
-    kv.push("base", &base_sha);
-    if let Some((p, _, _)) = &parent {
-        kv.push("parent", p);
-    }
-    kv.push("members", &render_members(&merged));
-    kv.push("worktree", &wt.display().to_string());
-    kv.push("actor", &actor(w));
-    kv.push("opened", &now);
-    if save(w, label, &c, &kv).is_err() {
+    if !carried && save(w, label, &c, &kv).is_err() {
         let why = "round open could not record the round it cut";
         if let Err((rc, out)) = lc_cas(w, &batch, |s, v| {
             w.lc.abandon_batch(&batch, s, v, LC_ACTOR, why)
@@ -1730,6 +1898,7 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
             return FAIL;
         }
     };
+    report_ended(w, label, &c);
     let Some(kv) = open.first() else {
         w.out(format!("round=none\nrepo={}", c.r.name));
         return OK;
@@ -2366,8 +2535,13 @@ fn faulted_run(c: &Ctx, id: &str) -> usize {
     n
 }
 
-fn pass_members(w: &World, c: &Ctx, batch: &str) -> Vec<String> {
-    record_of(w, c, batch).ok().flatten().map(|kv| kv.members().into_iter().map(|m| m.id).collect()).unwrap_or_default()
+/// The members of open round `batch`'s pass; none once it has ended. Err: the store could not say.
+pub(crate) fn pass_members(w: &World, c: &Ctx, batch: &str) -> Result<Vec<String>, String> {
+    Ok(record_of(w, c, batch)?.map_or_else(Vec::new, |kv| ids_of(&kv)))
+}
+
+fn ids_of(kv: &Kv) -> Vec<String> {
+    kv.members().into_iter().map(|m| m.id).collect()
 }
 
 fn lost_vm_pass(w: &World, label: &str, batch: &str, err: &str) -> i32 {
@@ -2381,7 +2555,13 @@ fn lost_vm_pass(w: &World, label: &str, batch: &str, err: &str) -> i32 {
 /// been aboard for [`FAULTED_PASSES_RED`] such passes. When every member of a multi-member pass
 /// qualifies, nothing separates them from the host, so none is ejected. Returns [`FAULT`] either way.
 fn faulted_pass(w: &World, label: &str, c: &Ctx, batch: &str, why: &str) -> i32 {
-    let ids = pass_members(w, c, batch);
+    let ids = match pass_members(w, c, batch) {
+        Ok(ids) => ids,
+        Err(e) => {
+            w.err(format!("queue.sh {label}: cannot tell which members rode the faulted pass of {batch}: {e} — the fault is counted against no member"));
+            return FAULT;
+        }
+    };
     note_pass_end(c, &ids, PassEnd::Faulted);
     let suspects: Vec<(&String, usize)> =
         ids.iter().map(|id| (id, faulted_run(c, id))).filter(|(_, n)| *n >= FAULTED_PASSES_RED).collect();
@@ -2585,7 +2765,9 @@ fn certify_pass(
                 pass_verdict_event(w, batch, &left, true),
             );
         }
-        let started = start_pass(w, batch, &head, false);
+        kv.remove("red");
+        let ride = Ride::with(w, &kv);
+        let started = start_pass_with(w, batch, &head, false, &ride);
         if let Err((rc, out)) = started {
             w.err(format!(
                 "queue.sh {label}: spira-lc refused to start the round {batch} (rc={rc}): {out}"
@@ -2593,8 +2775,7 @@ fn certify_pass(
             return FAIL;
         }
         let _ = fs::remove_file(preempt_marker(c, batch));
-        kv.remove("red");
-        if save(w, label, c, &kv).is_err() {
+        if ride.save_rest(w, label, c, &kv).is_err() {
             return FAIL;
         }
         mark_running(c, batch);
@@ -2858,7 +3039,7 @@ fn certify_pass(
     let Ok(_g) = lock(w, label, c) else {
         return FAIL;
     };
-    let Ok(mut kv) = load(w, label, c, batch) else {
+    let Ok(kv) = load(w, label, c, batch) else {
         return FAIL;
     };
     let already_green = reds.is_empty() && phase_of(w, batch) == "green";
@@ -2876,20 +3057,22 @@ fn certify_pass(
     }
     if !reds.is_empty() {
         raise_unreported_reds(w, c, batch, &kv, &reds);
+        let mut judged = kv.clone();
+        judged.remove("over-cap");
+        set(&mut judged, "red", &reds.join(","));
+        let ride = Ride::with(w, &judged);
         let recorded = (if reds != [BUILD_RED] {
             suites_started(w, batch, false)
         } else {
             Ok(())
         })
-        .and_then(|()| pass_verdict_event(w, batch, &Verdict::Red(&reds, timings), false));
+        .and_then(|()| pass_verdict_event_with(w, batch, &Verdict::Red(&reds, timings), false, &ride));
         if let Err((rc, e)) = recorded {
             w.err(format!("queue.sh {label}: REFUSED — the red pass of round {batch} was not recorded on spira-lc (rc={rc}): {e}"));
             return FAULT;
         }
-        note_pass_end(c, &pass_members(w, c, batch), PassEnd::Judged);
-        kv.remove("over-cap");
-        set(&mut kv, "red", &reds.join(","));
-        if save(w, label, c, &kv).is_err() {
+        note_pass_end(c, &ids_of(&judged), PassEnd::Judged);
+        if ride.save_rest(w, label, c, &judged).is_err() {
             return FAIL;
         }
         mark_running(c, batch);
@@ -2921,18 +3104,20 @@ fn certify_pass(
     if let Err(rc) = write_round_certificate(w, label, c, path, batch, &head, &who) {
         return rc;
     }
+    let mut judged = kv.clone();
+    judged.remove("over-cap");
+    set(&mut judged, "ran", &ran.to_string());
+    let ride = Ride::with(w, &judged);
     let greened = suites_started(w, batch, false)
-        .and_then(|()| pass_verdict_event(w, batch, &Verdict::Green(timings), false));
+        .and_then(|()| pass_verdict_event_with(w, batch, &Verdict::Green(timings), false, &ride));
     // A write that timed out may have applied: the batch row is the arbiter, not the reply.
     let applied = greened.is_err() && phase_of(w, batch) == "green";
     if let (Err((rc, out)), false) = (greened, applied) {
         w.err(format!("queue.sh {label}: spira-lc refused the GREEN for {batch} (rc={rc}): {out} — the round certificate for {head} is kept; certify again to finish without re-running"));
         return FAIL;
     }
-    note_pass_end(c, &pass_members(w, c, batch), PassEnd::Judged);
-    kv.remove("over-cap");
-    set(&mut kv, "ran", &ran.to_string());
-    if save(w, label, c, &kv).is_err() {
+    note_pass_end(c, &ids_of(&judged), PassEnd::Judged);
+    if ride.save_rest(w, label, c, &judged).is_err() {
         return FAIL;
     }
     let wall = timings.suites_s + timings.build_s;
@@ -3290,9 +3475,9 @@ fn eject(
             Ok(()) => {
                 crate::lock::remove_certify_lock(&c.s.queue_dir, &c.r.name, batch);
             }
-            Err((rc, out)) => w.err(format!("queue.sh {label}: spira-lc abandon-batch refused for the emptied round {batch} (rc={rc}): {out}")),
+            Err((rc, out)) => w.err(format!("queue.sh {label}: spira-lc abandon-batch refused for the emptied round {batch} (rc={rc}): {out} — the round is recorded ended; round open retries the abandon")),
         }
-        drop_record(w, &c, batch);
+        drop_or_warn(w, label, &c, batch, "emptied");
         w.git.worktree_remove(&path, &wt);
         finish(w, &c, batch, End::Abandoned("emptied"), &format!("{id} ejected, no member remains"));
         stage::discard_behind(w, &c, &path, batch, &format!("round {batch} was emptied"));
@@ -3307,14 +3492,6 @@ fn eject(
         return voided.map_or_else(|rc| rc, |()| OK);
     }
 
-    let rebuilt = serde_json::json!({"PassRebuilt": {"head": new_head}}).to_string();
-    warn_unrecorded(
-        w,
-        label,
-        batch,
-        "the rebuilt head",
-        pass_event(w, batch, |s, _, _| (s == "ATTRIBUTING").then_some(rebuilt)),
-    );
     set(&mut kv, "members", &render_members(&survivors));
     set(&mut kv, "head", &new_head);
     kv.remove("red");
@@ -3323,7 +3500,16 @@ fn eject(
         |acc, m| format!("{acc}{} ", m.id),
     );
     set(&mut kv, "ejected", &ejected);
-    if save(w, label, &c, &kv).is_err() {
+    let rebuilt = serde_json::json!({"PassRebuilt": {"head": new_head}}).to_string();
+    let ride = Ride::with(w, &kv);
+    warn_unrecorded(
+        w,
+        label,
+        batch,
+        "the rebuilt head",
+        pass_event_with(w, batch, &ride, |s, _, _| (s == "ATTRIBUTING").then_some(rebuilt)),
+    );
+    if ride.save_rest(w, label, &c, &kv).is_err() {
         return FAIL;
     }
     mark_running(&c, batch);
@@ -3375,16 +3561,17 @@ fn carry_mends(
     let new_head = assemble(w, c, path, wt, &base, &carried, &old_head).map_err(|why| {
         w.err(format!("queue.sh {label}: cannot rebuild the round with its mended tips: {why} — refused"));
     })?;
+    set(kv, "members", &render_members(&carried));
+    set(kv, "head", &new_head);
     let rebuilt = serde_json::json!({"PassRebuilt": {"head": new_head}}).to_string();
+    let ride = Ride::with(w, kv);
     warn_unrecorded(
         w,
         label,
         batch,
         "the rebuilt head",
-        pass_event(w, batch, |s, _, _| (s == "ATTRIBUTING").then_some(rebuilt)),
+        pass_event_with(w, batch, &ride, |s, _, _| (s == "ATTRIBUTING").then_some(rebuilt)),
     );
-    set(kv, "members", &render_members(&carried));
-    set(kv, "head", &new_head);
     w.out(format!(
         "queue.sh {label}: round {batch} rebuilt at {new_head} with its mended tips"
     ));
@@ -3531,19 +3718,20 @@ fn preempt(
             w.err(format!("queue.sh {label}: the round {batch} changed while its pass was stopping — nothing ejected"));
             return FAIL;
         }
+        set(&mut kv, "red", &reds.join(","));
+        let ride = Ride::with(w, &kv);
         let recorded = lc_cas(w, batch, |s, v| {
             let (n, _) =
                 w.lc.batch_pass(batch)
                     .ok_or((1, format!("spira-lc cannot say which pass {batch} is on")))?;
             let kind = serde_json::json!({"PassPreempted": {"n": n, "done": done, "total": total, "red_suites": reds}});
-            w.lc.batch_event(batch, s, v, LC_ACTOR, &kind.to_string())
+            ride.sent(w.lc.batch_event(batch, s, v, LC_ACTOR, &kind.to_string(), ride.fields()))
         });
         if let Err((rc, out)) = recorded {
             w.err(format!("queue.sh {label}: spira-lc refused PassPreempted for {batch} (rc={rc}): {out} — nothing ejected"));
             return FAIL;
         }
-        set(&mut kv, "red", &reds.join(","));
-        if save(w, label, &c, &kv).is_err() {
+        if ride.save_rest(w, label, &c, &kv).is_err() {
             return FAIL;
         }
         let _ = fs::remove_file(preempt_marker(&c, batch));
@@ -3781,6 +3969,7 @@ fn land_round(
     let refused = |rc: i32| (LandRefusal::Refused, rc);
     let (c, path) = local_ctx(w, label, repo).map_err(refused)?;
     reconcile_unrecorded(w, &c, &path);
+    reconcile_ended(w, &c);
     if idents(w, label, &[("batch id", batch)]).is_err() || require_lc(w, label).is_err() {
         return Err(refused(FAIL));
     }
@@ -3843,7 +4032,7 @@ fn land_round(
         }
     };
     retire_menders(w, &c, batch, "round landed");
-    drop_record(w, &c, batch);
+    drop_or_warn(w, label, &c, batch, END_LANDED);
     w.git.worktree_remove(&path, &wt);
     if recorded {
         crate::lock::remove_certify_lock(&c.s.queue_dir, &c.r.name, batch);
@@ -3932,13 +4121,14 @@ fn settle_parent(
     set(kv, "head", &new_head);
     set(kv, "base", &onto);
     kv.remove("red");
+    let ride = Ride::with(w, kv);
     let moved = lc_cas(w, batch, |s, v| {
-        w.lc.batch_event(batch, s, v, LC_ACTOR, "\"BaseMoved\"")
+        ride.sent(w.lc.batch_event(batch, s, v, LC_ACTOR, "\"BaseMoved\"", ride.fields()))
     });
     if let Err((rc, out)) = moved {
         w.err(format!("queue.sh {label}: spira-lc refused BaseMoved for {batch} (rc={rc}): {out} — the round worktree was rebuilt at {new_head}; certify it again"));
     }
-    if save(w, label, c, kv).is_err() {
+    if ride.save_rest(w, label, c, kv).is_err() {
         return Some((LandRefusal::Refused, FAIL));
     }
     mark_running(c, batch);
@@ -4000,13 +4190,14 @@ fn remerge_if_moved(
     set(kv, "head", &new_head);
     set(kv, "base", &base_now);
     kv.remove("red");
+    let ride = Ride::with(w, kv);
     let moved = lc_cas(w, batch, |s, v| {
-        w.lc.batch_event(batch, s, v, LC_ACTOR, "\"BaseMoved\"")
+        ride.sent(w.lc.batch_event(batch, s, v, LC_ACTOR, "\"BaseMoved\"", ride.fields()))
     });
     if let Err((rc, out)) = moved {
         w.err(format!("queue.sh {label}: spira-lc refused BaseMoved for {batch} (rc={rc}): {out} — the round worktree was rebuilt at {new_head}; certify it again"));
     }
-    if save(w, label, c, kv).is_err() {
+    if ride.save_rest(w, label, c, kv).is_err() {
         return Some((LandRefusal::Refused, FAIL));
     }
     mark_running(c, batch);
@@ -4061,12 +4252,19 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text, token: Opt
     let Ok(_g) = lock_sparing(w, label, &c, Some(batch)) else {
         return FAIL;
     };
-    let kv = match abandoned_record(w, &c, batch) {
+    let abandoned = match abandoned_record(w, &c, batch) {
+        Ok(a) => a,
+        Err(e) => {
+            w.err(format!("queue.sh {label}: cannot tell whether round {batch} is recorded: {e} — refused, nothing changed"));
+            return FAIL;
+        }
+    };
+    let kv = match abandoned {
         Some(kv) => kv,
         None => match load(w, label, &c, batch) {
             Ok(kv) => kv,
             Err(rc) => {
-                drop_record(w, &c, batch);
+                drop_or_warn(w, label, &c, batch, "abandoned");
                 return rc;
             }
         },
@@ -4127,7 +4325,7 @@ fn close_abandoned(w: &World, label: &str, c: &Ctx, path: &Path, kv: &Kv, reason
         w.out(format!("queue.sh {label}: {}: {state}", m.id));
     }
     retire_menders(w, c, batch, "round abandoned");
-    drop_record(w, c, batch);
+    drop_or_warn(w, label, c, batch, "abandoned");
     w.git.worktree_remove(path, &worktree_of(kv));
     finish(w, c, batch, End::Abandoned(cause), reason);
     stage::discard_behind(

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use super::round::{
     assemble, certify, csv, finish, handle_of, live_records, local_ctx, lock, mark_running,
-    phase_of, phase_reds, record_of, rounds_dir, save_record, set, suite_statuses, tail,
+    phase_of, phase_reds, record_of, rounds_dir, set, suite_statuses, tail, Ride,
     unjudgeable, BLOCKING, BUILD_RED, LC_ACTOR, UNIT_RED,
 };
 use super::{
@@ -474,7 +474,7 @@ pub(super) fn discard_staged(
     match w.lc.batch_state(&batch) {
         Some((state, _)) if state == "STAGED" => {
             lc_cas(w, &batch, |s, v| {
-                w.lc.batch_event(&batch, s, v, LC_ACTOR, &event)
+                w.lc.batch_event(&batch, s, v, LC_ACTOR, &event, None)
             })
             .map_err(|(rc, out)| format!("spira-lc refused to discard {batch} (rc={rc}): {out}"))?;
         }
@@ -679,7 +679,18 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
             }
         };
 
-        if let Err((rc, out)) = w.lc.promote(&batch, &head, &base_sha, LC_ACTOR) {
+        let now = w.clock.now().to_string();
+        let mut round = Kv::default();
+        round.push("batch_id", &batch);
+        round.push("repo", &repo_name);
+        round.push("head", &head);
+        round.push("base", &base_sha);
+        round.push("members", &render_members(&admitted));
+        round.push("worktree", &wt.display().to_string());
+        round.push("actor", &actor(w));
+        round.push("opened", &now);
+        let ride = Ride::with(w, &round);
+        if let Err((rc, out)) = ride.sent(w.lc.promote(&batch, &head, &base_sha, LC_ACTOR, ride.fields())) {
             w.err(format!("queue.sh {label}: spira-lc promote refused for {batch} (rc={rc}): {out} — the staged round is left as it was"));
             return FAIL;
         }
@@ -699,18 +710,8 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
             )
         });
 
-        let now = w.clock.now().to_string();
-        let mut round = Kv::default();
-        round.push("batch_id", &batch);
-        round.push("repo", &repo_name);
-        round.push("head", &head);
-        round.push("base", &base_sha);
-        round.push("members", &render_members(&admitted));
-        round.push("worktree", &wt.display().to_string());
-        round.push("actor", &actor(w));
-        round.push("opened", &now);
-        if let Err(e) = save_record(w, &c, &round) {
-            w.err(format!("queue.sh {label}: {batch} is OPEN on spira-lc but its round record cannot be written: {e}"));
+        if ride.save_rest(w, label, &c, &round).is_err() {
+            w.err(format!("queue.sh {label}: {batch} is OPEN on spira-lc but its round record cannot be written"));
             return FAIL;
         }
         let _ = fs::remove_file(c.queue_file(STAGED));

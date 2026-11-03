@@ -335,6 +335,7 @@ pub fn eject(
 
 /// A cut that answered "cannot tell" may have written the batch row: look before retrying, so a
 /// deadline neither strands BATCHED members behind no PR nor cuts the same batch twice.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn cut_settled(
     w: &World,
     id: &str,
@@ -343,6 +344,7 @@ pub(super) fn cut_settled(
     base: &str,
     members: &str,
     actor: &str,
+    round: Option<&Kv>,
 ) -> Result<String, (i32, String)> {
     let mut last = Err((2, "no attempt".to_string()));
     for attempt in 0..3u32 {
@@ -352,7 +354,7 @@ pub(super) fn cut_settled(
                 return Ok(version);
             }
         }
-        last = w.lc.cut(id, repo, head, base, members, actor);
+        last = w.lc.cut(id, repo, head, base, members, actor, round);
         if !matches!(&last, Err((2, _))) {
             return last;
         }
@@ -901,7 +903,7 @@ pub fn open_batch(
     for m in &members {
         w.lc.create_bead(&m.id);
     }
-    let version = match cut_settled(w, &lc_id, &name, &head, &base_sha, &csv, "queue.sh") {
+    let version = match cut_settled(w, &lc_id, &name, &head, &base_sha, &csv, "queue.sh", None) {
         Ok(v) => v,
         Err((rc, out)) => {
             w.err(format!("queue.sh open-batch: spira-lc cut refused for {lc_id} (rc={rc}): {out} — no PR opened"));

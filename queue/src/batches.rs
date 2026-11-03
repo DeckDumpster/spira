@@ -156,18 +156,23 @@ pub fn batch(d: &dyn Door, repo: &str, id: &str) -> Result<Option<BatchRecord>, 
     d.get(&key(repo, id))?.as_ref().map(decode).transpose()
 }
 
+/// The queue's own fields of `kv`: everything but `batch_id` and `repo`, as the record's `round`
+/// map holds them.
+pub fn fields(kv: &Kv) -> serde_json::Map<String, Value> {
+    kv.lines
+        .iter()
+        .filter(|(f, _)| f != "batch_id" && f != "repo")
+        .map(|(f, v)| (f.clone(), Value::String(v.clone())))
+        .collect()
+}
+
 /// Writes the queue's fields of `kv` (everything but `batch_id` and `repo`) into the round's
 /// record, compared on the revision it was read at, so a machine step in between is re-read and
 /// kept rather than overwritten.
 pub fn save(d: &dyn Door, repo: &str, kv: &Kv) -> Result<(), String> {
     let id = kv.get("batch_id").unwrap_or("");
     let k = key(repo, id);
-    let own: serde_json::Map<String, Value> = kv
-        .lines
-        .iter()
-        .filter(|(f, _)| f != "batch_id" && f != "repo")
-        .map(|(f, v)| (f.clone(), Value::String(v.clone())))
-        .collect();
+    let own = fields(kv);
     for _ in 0..SAVE_TRIES {
         let Some(item) = d.get(&k)? else {
             return Err(format!("the control store holds no round {id} for {repo}"));
@@ -202,6 +207,10 @@ pub mod mem {
         n: Cell<u64>,
         /// Every call answers "cannot tell", as an unreachable lc-serve does.
         pub down: Cell<bool>,
+        /// A txn of this kind answers "cannot tell": the queue died before it was written.
+        pub lost_kind: Cell<Option<&'static str>>,
+        /// The kinds of the txns written through the door, in order.
+        pub kinds: std::cell::RefCell<Vec<String>>,
     }
 
     impl Default for MemDoor {
@@ -215,6 +224,8 @@ pub mod mem {
                     .expect("an in-memory store opens"),
                 n: Cell::new(0),
                 down: Cell::new(false),
+                lost_kind: Cell::new(None),
+                kinds: Default::default(),
             }
         }
     }
@@ -227,6 +238,19 @@ pub mod mem {
 
         /// A round as spira-lc's cut writes it, in `state`.
         pub fn put_round(&self, repo: &str, id: &str, state: &str, members: &[(&str, &str)], opened_at: i64) {
+            self.cut_round(repo, id, state, members, opened_at, None);
+        }
+
+        /// [`MemDoor::put_round`], with the queue's fields `round` in the same txn when given.
+        pub fn cut_round(
+            &self,
+            repo: &str,
+            id: &str,
+            state: &str,
+            members: &[(&str, &str)],
+            opened_at: i64,
+            round: Option<&Kv>,
+        ) {
             let members: Vec<Value> = members
                 .iter()
                 .map(|(m, tip)| serde_json::json!({ "bead_id": m, "tip": tip }))
@@ -237,12 +261,22 @@ pub mod mem {
                 "pass": 0, "phase": null, "version": 1,
                 "members": members, "opened_at": opened_at,
             });
+            let mut v = v;
+            if let Some(kv) = round {
+                v["round"] = Value::Object(fields(kv));
+            }
             let t = Txn::new().put(&key(repo, id), Object::new(v));
             assert!(self.store.txn(&t, &self.request("seed")).unwrap().succeeded);
         }
 
         /// The machine moves round `id` to `state`, keeping every other field.
         pub fn set_state(&self, repo: &str, id: &str, state: &str) {
+            self.step(repo, id, state, None);
+        }
+
+        /// One machine step of round `id` to `state`, with the queue's fields `round` written in
+        /// the same txn when given, as spira-lc's `--round` writes them.
+        pub fn step(&self, repo: &str, id: &str, state: &str, round: Option<&Kv>) {
             let k = key(repo, id);
             let Some(item) = self.store.get(&k).unwrap() else {
                 return;
@@ -251,6 +285,9 @@ pub mod mem {
             value.data["state"] = Value::String(state.into());
             let n = value.data["version"].as_u64().unwrap_or(0) + 1;
             value.data["version"] = n.into();
+            if let Some(kv) = round {
+                value.data["round"] = Value::Object(fields(kv));
+            }
             let t = Txn::new().put(&k, value);
             assert!(self.store.txn(&t, &self.request("step")).unwrap().succeeded);
         }
@@ -290,6 +327,10 @@ pub mod mem {
         }
         fn txn(&self, t: &Txn, kind: &str) -> Result<TxnResult, String> {
             self.up()?;
+            if self.lost_kind.get() == Some(kind) {
+                return Err(format!("cannot tell: the {kind} write was lost"));
+            }
+            self.kinds.borrow_mut().push(kind.to_string());
             self.store.txn(t, &self.request(kind)).map_err(|e| e.to_string())
         }
     }

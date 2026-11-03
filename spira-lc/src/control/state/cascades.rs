@@ -261,7 +261,7 @@ fn stage<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, St
     }
 }
 
-/// `promote <batch-id> --head H --base B --actor A`.
+/// `promote <batch-id> --head H --base B --actor A [--round <json>]`.
 fn promote<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
     let Some(id) = args.first() else {
         return (CANNOT_TELL, "promote: missing <batch-id>".into());
@@ -276,6 +276,10 @@ fn promote<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
             "promote: --head, --base and --actor are all required".into(),
         );
     };
+    let round = match super::rounds::round_fields("promote", args) {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
     let req = Request::new(call.request, &actor, "lc.promote");
     let staged = match store.batch(id) {
         Ok(b) => b.map(|(_, r)| r.value.members),
@@ -283,6 +287,7 @@ fn promote<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
     };
     let ran = store
         .plan_promote(id, &head, &base, &actor, call.now, &req)
+        .and_then(|p| p.with_round(id, round.as_ref()))
         .and_then(|p| store.run_planned(p, &req, "promote"));
     let ids: Vec<String> = staged
         .unwrap_or_default()

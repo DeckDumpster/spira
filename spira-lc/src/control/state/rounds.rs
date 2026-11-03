@@ -3,6 +3,8 @@
 //! `batches-of`, `batch-progress`, `claim-verdicts`, `set-repo`, `dep-add`, `dep-remove` and
 //! `delete-bead-row`.
 
+use std::collections::BTreeMap;
+
 use lifecycle::batch::{BatchEvent, BatchEventKind, BatchState};
 use lifecycle::delivery::{DeliveryEvent, DeliveryEventKind, DeliveryRow, DeliveryState};
 use serde_json::{json, Value};
@@ -86,7 +88,25 @@ pub(super) fn members(s: &str) -> Option<Vec<(String, String)>> {
         .collect()
 }
 
-/// `cut <batch-id> --repo R --head H --base B --members "id:tip,..." --actor A [--parent P]`.
+/// `--round <json>`: the queue's own fields of the round, one JSON object of strings, written in
+/// the txn of the step they accompany. Absent: the step carries the fields the round holds.
+pub(super) fn round_fields(
+    verb: &str,
+    args: &[String],
+) -> Result<Option<BTreeMap<String, String>>, (i32, String)> {
+    let Some(text) = flag(args, "--round") else {
+        return Ok(None);
+    };
+    serde_json::from_str(&text).map(Some).map_err(|e| {
+        (
+            CANNOT_TELL,
+            format!("{verb}: --round must be one JSON object of strings: {e}"),
+        )
+    })
+}
+
+/// `cut <batch-id> --repo R --head H --base B --members "id:tip,..." --actor A [--parent P]
+/// [--round <json>]`.
 fn cut<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
     let Some(batch_id) = args.first() else {
         return (CANNOT_TELL, "cut: missing <batch-id>".into());
@@ -126,9 +146,14 @@ fn cut<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, Stri
         actor: &actor,
         at: call.now,
     };
+    let round = match round_fields("cut", args) {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
     let req = Request::new(call.request, &actor, "lc.cut");
     let ran = store
         .plan_cut(&spec)
+        .and_then(|p| p.with_round(batch_id, round.as_ref()))
         .and_then(|p| store.run_planned(p, &req, "cut"));
     let ids: Vec<&String> = members.iter().map(|(id, _)| id).collect();
     answered(
@@ -204,8 +229,8 @@ fn land<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, Str
     )
 }
 
-/// `event batch|delivery <key> --expect S --version N --actor A --kind <json>`, once `event`
-/// has checked the flags common to every machine.
+/// `event batch|delivery <key> --expect S --version N --actor A --kind <json> [--round <json>]`,
+/// once `event` has checked the flags common to every machine. `--round` is a batch's only.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn event<B: Backend>(
     store: &Store<B>,
@@ -215,9 +240,16 @@ pub(super) fn event<B: Backend>(
     version: u64,
     actor: &str,
     kind_json: &str,
+    round: Option<&BTreeMap<String, String>>,
     call: &Call,
 ) -> (i32, String) {
     let req = Request::new(call.request, actor, "lc.event");
+    if round.is_some() && machine != "batch" {
+        return (
+            CANNOT_TELL,
+            format!("event: --round is a batch's fields, not a {machine}'s"),
+        );
+    }
     let ran = match machine {
         "batch" => {
             let Some(expect) = BatchState::from_str(expect) else {
@@ -253,7 +285,7 @@ pub(super) fn event<B: Backend>(
                 kind,
                 actor: actor.into(),
             };
-            store.batch_event(key, &ev, call.now, &req)
+            store.batch_event_with(key, &ev, call.now, &req, round)
         }
         _ => {
             let Some(expect) = DeliveryState::from_str(expect) else {

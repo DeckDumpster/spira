@@ -15,6 +15,7 @@ use std::process::{Command, Stdio};
 
 use crate::model::{BeadRow, LandMode, LcBeadRow, RangeCommit};
 use crate::ports::*;
+use crate::records::Kv;
 use crate::seam::{self, Op};
 
 /// Close every fd >= 3 in the child before it execs. This process's own fds are already
@@ -1558,6 +1559,11 @@ impl crate::batches::Door for RealLc {
     }
 }
 
+/// `--round`'s value: the queue's fields of the round as one JSON object.
+fn round_flag(round: Option<&Kv>) -> Option<String> {
+    round.map(|kv| serde_json::Value::Object(crate::batches::fields(kv)).to_string())
+}
+
 fn json_str(v: &serde_json::Value, k: &str) -> Option<String> {
     match v.get(k)? {
         serde_json::Value::String(s) => Some(s.clone()),
@@ -1608,8 +1614,10 @@ impl Lc for RealLc {
         base: &str,
         members: &str,
         actor: &str,
+        round: Option<&Kv>,
     ) -> Result<String, (i32, String)> {
-        let (rc, out) = self.run(&[
+        let fields = round_flag(round);
+        let mut argv = vec![
             "cut",
             batch_id,
             "--repo",
@@ -1622,7 +1630,9 @@ impl Lc for RealLc {
             members,
             "--actor",
             actor,
-        ]);
+        ];
+        argv.extend(fields.iter().flat_map(|f| ["--round", f.as_str()]));
+        let (rc, out) = self.run(&argv);
         if rc != 0 {
             return Err((rc, out.trim().to_string()));
         }
@@ -1671,10 +1681,14 @@ impl Lc for RealLc {
         head: &str,
         base: &str,
         actor: &str,
+        round: Option<&Kv>,
     ) -> Result<(), (i32, String)> {
-        let (rc, out) = self.run(&[
+        let fields = round_flag(round);
+        let mut argv = vec![
             "promote", batch_id, "--head", head, "--base", base, "--actor", actor,
-        ]);
+        ];
+        argv.extend(fields.iter().flat_map(|f| ["--round", f.as_str()]));
+        let (rc, out) = self.run(&argv);
         if rc == 0 {
             Ok(())
         } else {
@@ -1743,8 +1757,10 @@ impl Lc for RealLc {
         version: &str,
         actor: &str,
         kind: &str,
+        round: Option<&Kv>,
     ) -> Result<(), (i32, String)> {
-        let (rc, out) = self.run(&[
+        let fields = round_flag(round);
+        let mut argv = vec![
             "event",
             "batch",
             batch_id,
@@ -1756,7 +1772,9 @@ impl Lc for RealLc {
             actor,
             "--kind",
             kind,
-        ]);
+        ];
+        argv.extend(fields.iter().flat_map(|f| ["--round", f.as_str()]));
+        let (rc, out) = self.run(&argv);
         if rc == 0 {
             Ok(())
         } else {

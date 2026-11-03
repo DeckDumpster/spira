@@ -306,6 +306,20 @@ pub(crate) fn lifecycle_run_dir() -> Result<std::path::PathBuf, String> {
     Ok(std::path::PathBuf::from(dir))
 }
 
+/// A round's queue fields (`--round`) are kept only in the state store's batch record; a verb
+/// that reached the dolt machine with them would drop them, so it is refused instead.
+fn round_fields_unserved(args: &[String]) -> Option<(i32, String)> {
+    args.iter().any(|a| a == "--round").then(|| {
+        (
+            CANNOT_TELL,
+            format!(
+                "{}: --round is written only when the batch machine is on the state store, and it is not here",
+                args.first().map_or("-", String::as_str)
+            ),
+        )
+    })
+}
+
 /// Every verb but `serve` (which never reaches here — see `main`, and `serve::run`'s own
 /// direct dispatch to this same function per request).
 pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
@@ -321,6 +335,9 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
             Some("list-asks") => plan::with_ask_titles(answer, conn),
             _ => answer,
         };
+    }
+    if let Some(refused) = round_fields_unserved(args) {
+        return refused;
     }
     match args.first().map(|s| s.as_str()) {
         Some("show") => cmd_show(&args[1..], conn),
@@ -991,6 +1008,15 @@ pub(crate) fn refusal_name(r: &lifecycle::Refusal) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rounds_fields_that_reach_the_dolt_machine_are_refused_not_dropped() {
+        let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (rc, why) = round_fields_unserved(&argv(&["cut", "b-1", "--round", "{}"])).unwrap();
+        assert_eq!(rc, CANNOT_TELL);
+        assert!(why.starts_with("cut: --round"), "{why}");
+        assert!(round_fields_unserved(&argv(&["cut", "b-1", "--repo", "r"])).is_none());
+    }
 
     #[test]
     fn every_refusal_name_fits_the_event_column() {

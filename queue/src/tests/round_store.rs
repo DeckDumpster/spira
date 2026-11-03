@@ -245,3 +245,90 @@ fn with_the_store_a_queue_forge_repos_batch_is_not_a_round() {
     let status = status(&t);
     assert!(status.starts_with("round=none\nrepo=spira\n"), "{status}");
 }
+
+/// A store round opened through `round open` (members `members`), its batch id.
+fn opened(t: &T, members: &str) -> String {
+    t.lc.store.get_or_init(MemDoor::default);
+    assert_eq!(t.run(&["round", "open", "--members", members]), 0, "{}", t.err());
+    batch_of(t)
+}
+
+#[test]
+fn with_the_store_an_emptied_round_whose_abandon_is_refused_is_ended_visibly_and_abandoned_later() {
+    let t = round_world();
+    let batch = opened(&t, "sp-a:ta");
+    t.lc.abandon_refused.set(Some("refused: StaleVersion"));
+    t.run(&["round", "eject", &batch, "sp-a", "--reason", "red"]);
+    let d = t.lc.store.get().unwrap();
+    assert_eq!(d.find(&batch).unwrap().1, "OPEN", "the lifecycle refused the end");
+    let from = t.io.err.borrow().len();
+    let status = status(&t);
+    assert!(status.starts_with("round=none\n"), "an ended round is no open round: {status}");
+    assert!(
+        t.err()[from..].contains(&format!("round {batch} ended (emptied) but spira-lc holds it OPEN")),
+        "{}",
+        t.err()
+    );
+    t.lc.abandon_refused.set(None);
+    let next = opened(&t, "sp-b:tb");
+    let rec = batches::batch(d, "spira", &next).unwrap().unwrap();
+    assert_eq!(rec.kv.get("parent"), None, "an ended round is no parent: {:?}", rec.kv);
+    assert_eq!(d.find(&batch).unwrap().1, "ABANDONED", "round open retried the abandon");
+}
+
+#[test]
+fn with_the_store_a_round_whose_landing_record_is_refused_is_ended_and_recorded_at_the_next_open() {
+    let t = round_world();
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
+    let batch = opened(&t, "sp-a:ta,sp-b");
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    t.lc.land_refused.set(Some("store unreachable"));
+    assert_eq!(t.run(&["round", "land", &batch]), 1);
+    let d = t.lc.store.get().unwrap();
+    assert_eq!(d.find(&batch).unwrap().1, "GREEN", "the landing record was refused");
+    assert!(status(&t).starts_with("round=none\n"), "a landed round is no open round");
+    t.lc.land_refused.set(None);
+    let next = opened(&t, "sp-c:tc");
+    let rec = batches::batch(d, "spira", &next).unwrap().unwrap();
+    assert_eq!(rec.kv.get("parent"), None, "a landed round is no parent: {:?}", rec.kv);
+    assert_eq!(d.find(&batch).unwrap().1, "LANDED", "round open recorded the landing");
+}
+
+#[test]
+fn with_the_store_the_round_fields_ride_in_the_lifecycle_events_not_a_write_of_their_own() {
+    let t = round_world();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-b.sh".into(), "red 1 2 fp p e 1".into())];
+    let d = t.lc.store.get_or_init(MemDoor::default);
+    d.lost_kind.set(Some("queue.round-fields"));
+    let batch = opened(&t, "sp-a:ta,sp-b:tb");
+    let rec = batches::batch(d, "spira", &batch).unwrap().unwrap();
+    assert!(
+        rec.kv.get("worktree").is_some_and(|w| !w.is_empty()) && rec.kv.get("actor").is_some(),
+        "the cut carried the worktree and actor: {:?}",
+        rec.kv
+    );
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    let rec = batches::batch(d, "spira", &batch).unwrap().unwrap();
+    assert_eq!(rec.state, "ATTRIBUTING");
+    assert_eq!(rec.kv.get("red"), Some("test-b.sh"), "the red verdict carried the red: {:?}", rec.kv);
+    assert!(
+        !d.kinds.borrow().iter().any(|k| k == "queue.round-fields"),
+        "{:?}",
+        d.kinds.borrow()
+    );
+}
+
+#[test]
+fn with_the_store_unreadable_a_passes_members_are_an_error_not_none() {
+    let t = store_world();
+    let d = t.lc.store.get().unwrap();
+    t.with_world(|w| {
+        let c = crate::ops::resolve(w, "certify", Some("spira")).unwrap();
+        let ids = crate::ops::round::pass_members(w, &c, "spira-open");
+        assert_eq!(ids, Ok(vec!["sp-a".to_string()]));
+        d.down.set(true);
+        let e = crate::ops::round::pass_members(w, &c, "spira-open").unwrap_err();
+        assert!(e.contains("cannot tell"), "{e}");
+    });
+}

@@ -368,9 +368,21 @@ fn event<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, St
     match machine.as_str() {
         "bead" => {}
         "batch" | "delivery" => {
+            let round = match rounds::round_fields("event", args) {
+                Ok(r) => r,
+                Err(e) => return e,
+            };
             return rounds::event(
-                store, machine, key, &expect, version, &actor, &kind_json, call,
-            )
+                store,
+                machine,
+                key,
+                &expect,
+                version,
+                &actor,
+                &kind_json,
+                round.as_ref(),
+                call,
+            );
         }
         other => {
             return (

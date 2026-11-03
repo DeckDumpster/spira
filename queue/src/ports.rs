@@ -511,7 +511,9 @@ pub trait Lc {
     fn batch_pass(&self, batch_id: &str) -> Option<(u32, String)>;
     fn create_bead(&self, id: &str);
     fn create_bead_in(&self, id: &str, repo: &str);
-    /// `cut` → Ok(version) or Err((rc, output)).
+    /// `cut` → Ok(version) or Err((rc, output)). `round`: the queue's fields of the round,
+    /// written in the cut's own txn (`--round`); only while the rounds are on the store.
+    #[allow(clippy::too_many_arguments)]
     fn cut(
         &self,
         batch_id: &str,
@@ -520,6 +522,7 @@ pub trait Lc {
         base: &str,
         members: &str,
         actor: &str,
+        round: Option<&Kv>,
     ) -> Result<String, (i32, String)>;
     /// `stage` → the batch row written STAGED behind `parent`; no member moves. Ok(version).
     #[allow(clippy::too_many_arguments)]
@@ -533,13 +536,15 @@ pub trait Lc {
         parent: &str,
         actor: &str,
     ) -> Result<String, (i32, String)>;
-    /// `promote` → STAGED to OPEN at `head`/`base`, every member delivered, in one transaction.
+    /// `promote` → STAGED to OPEN at `head`/`base`, every member delivered, in one transaction,
+    /// with `round`'s fields when given (see [`Lc::cut`]).
     fn promote(
         &self,
         batch_id: &str,
         head: &str,
         base: &str,
         actor: &str,
+        round: Option<&Kv>,
     ) -> Result<(), (i32, String)>;
     fn abandon_batch(
         &self,
@@ -558,7 +563,9 @@ pub trait Lc {
         actor: &str,
         reason: &str,
     ) -> Result<(), (i32, String)>;
-    /// `event batch <id> --expect S --version V --actor A --kind K` (one CAS'd event).
+    /// `event batch <id> --expect S --version V --actor A --kind K` (one CAS'd event), with
+    /// `round`'s fields when given (see [`Lc::cut`]).
+    #[allow(clippy::too_many_arguments)]
     fn batch_event(
         &self,
         batch_id: &str,
@@ -566,6 +573,7 @@ pub trait Lc {
         version: &str,
         actor: &str,
         kind: &str,
+        round: Option<&Kv>,
     ) -> Result<(), (i32, String)>;
     /// `show <bead>` → the bead row's (state, version); None when it has no row.
     fn bead_state(&self, bead: &str) -> Option<(String, String)>;
