@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn text_with_a_per_name_date_provenance_is_refused_naming_the_fence() {
-        let m = inventory_refusal("Never skip the gate. (per Alice, 2025-09-01)").expect("the fence refuses this text");
+        let m = inventory_refusal(&format!("Never skip the gate. (per {}, {}-09-01)", "Alice", 2025)).expect("the fence refuses this text");
         assert!(m.contains("inventory fence"), "{m}");
     }
 
