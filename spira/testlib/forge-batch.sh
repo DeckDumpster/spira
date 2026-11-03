@@ -65,14 +65,14 @@ FORGE
 # _fb_row <repo> — "<path>|<landref>" from the suite's declared repo map.
 _fb_row() {
     local map
-    map="$(spira-config get spira.repo_map 2>/dev/null)" || return 1
+    map="$(_fb_run spira-config get spira.repo_map 2>/dev/null)" || return 1
     [ -f "$map" ] || { echo "seed_forge_batch: the repo map ($map) does not exist" >&2; return 1; }
     awk -F'|' -v r="$1" '{ n=$1; gsub(/[ \t]/, "", n); if (n == r) { p=$2; l=$4; gsub(/^[ \t]+|[ \t]+$/, "", p); gsub(/^[ \t]+|[ \t]+$/, "", l); print p "|" l; exit } }' "$map"
 }
 
 _fb_on_store() {
-    [ -n "$(spira-config get spira.lc_store_path 2>/dev/null)" ] \
-        && [ "$(spira-config get spira.lc_lifecycle_on_store 2>/dev/null)" = 1 ]
+    [ -n "$(_fb_run spira-config get spira.lc_store_path 2>/dev/null)" ] \
+        && [ "$(_fb_run spira-config get spira.lc_lifecycle_on_store 2>/dev/null)" = 1 ]
 }
 
 # _fb_remote <path> <landref> — the landing ref resolves and its remote exists; a repository
@@ -169,14 +169,14 @@ seed_forge_batch() {
         ${owner:+--owner "$owner"} 2>&1)"; rc=$?
     [ -n "${now:-}" ] || date -u +%s >> "$(_fb_dir)/stamps"
     [ "$rc" -eq 0 ] || { printf 'seed_forge_batch: queue batch open %s exited %s:\n%s\n' "$repo" "$rc" "$out" >&2; return 1; }
-    out="$(_fb_run queue batch show --repo "$repo" 2>&1)" && [ -n "$out" ] \
+    out="$(_fb_run queue batch show --repo "$repo")" && [ -n "$out" ] \
         || { printf 'seed_forge_batch: queue batch show %s answers no batch after the open: %s\n' "$repo" "$out" >&2; return 1; }
     printf '%s\n' "$out"
 }
 
 end_forge_batch() {
     local repo="${1:?end_forge_batch: <repo> required}" reason="${2:-the suite ends this fixture batch}" forge out
-    out="$(_fb_run queue batch show --repo "$repo" 2>&1)" || { printf 'end_forge_batch: queue batch show %s: %s\n' "$repo" "$out" >&2; return 1; }
+    out="$(_fb_run queue batch show --repo "$repo")" || { printf 'end_forge_batch: queue batch show %s: %s\n' "$repo" "$out" >&2; return 1; }
     [ -n "$out" ] || return 0
     forge="$(_fb_forge 0)" || return 1
     out="$(SPIRA_TOML="$(tl_layer SPIRA_FORGE="$forge")" _fb_run queue abandon "$repo" --reason "$reason" 2>&1)" \
