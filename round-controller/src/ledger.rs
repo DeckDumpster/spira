@@ -138,9 +138,12 @@ fn digest(v: &impl Serialize) -> String {
 }
 
 /// Red and fault verdicts are kept while any member's lifecycle record lives; green and flaky
-/// ones while their round does. The v2 GC controller collects them.
+/// ones while their round does; a base identity's, which has no member and no round, while its
+/// lane does. The v2 GC controller collects them.
 fn owners(id: &PassIdentity, batch: &str, class: &Class) -> Vec<String> {
-    if class.retained_by_members() {
+    if id.members.is_empty() {
+        vec![crate::stack::lane_key(&id.repo)]
+    } else if class.retained_by_members() {
         id.members.iter().map(|m| lifecycle_key(&m.id)).collect()
     } else {
         vec![round_key(&id.repo, batch)]
