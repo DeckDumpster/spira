@@ -303,6 +303,11 @@ pub fn pass_result(end: &CertifyEnd, phases: &[String]) -> PassResult {
         red,
         reason: end.fields.get("fault").map(|f| fault_reason(f)),
         output: end.output.clone(),
+        ejected: end
+            .fields
+            .get("ejected")
+            .map(|e| e.split(',').filter(|s| !s.is_empty()).map(str::to_string).collect())
+            .unwrap_or_default(),
     }
 }
 

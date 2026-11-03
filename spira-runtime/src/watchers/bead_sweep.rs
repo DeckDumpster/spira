@@ -86,7 +86,6 @@ pub struct Snapshot {
     pub reserved: Vec<Reservation>,
     /// Open integrations and their members, in record order.
     pub carried: Vec<(String, Vec<String>)>,
-    pub solo_skipped: BTreeSet<String>,
     pub pr_repos: BTreeSet<String>,
 }
 
@@ -266,7 +265,7 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, now: f64) -> Vec<String> {
         } else if let Some((_, members)) = snap.carried.iter().rev().find(|(x, _)| x == i).filter(|_| age > p.wait_min as i64) {
             Some(format!("INTEGRATION STALLED over {}m in {st}; members {}", p.wait_min, members.join(" ")))
         } else if matches!(st, "SUBMITTED" | "CERTIFIED") && age > p.wait_min as i64 && !labels.iter().any(|l| pr_labels.contains(l)) {
-            Some(format!("WAITING over {}m for a round{}", p.wait_min, if snap.solo_skipped.contains(i) { " (solo: starved)" } else { "" }))
+            Some(format!("WAITING over {}m for a round", p.wait_min))
         } else if st == "WORKING" && r.lease_until != 0.0 && r.lease_until < now {
             Some(format!("LEASE EXPIRED holder {}", cut(r.holder.as_deref().unwrap_or("None"), 28)))
         } else {

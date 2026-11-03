@@ -43,6 +43,8 @@ const PREEMPT_POLLS: u32 = 120;
 pub(super) const BUILD_RED: &str = "workspace-build";
 pub(super) const LINT_RED: &str = "spira-lint";
 const FENCE_RED_PREFIX: &str = "fence-";
+/// The fence that runs the round image's setup on the merged tree before any suite.
+pub(super) const PREFLIGHT_RED: &str = "fence-round-image-preflight";
 pub(super) const UNIT_RED: &str = "unit-tests";
 
 /// The round VM's two test phases (sp-cddf76), each leaving its red as a record: the unit phase
@@ -1369,19 +1371,19 @@ pub(super) fn forget_batch_red(c: &Ctx, id: &str, tip: &str) -> std::io::Result<
     records::write_atomic(&path, &kept).map_err(std::io::Error::other)
 }
 
-fn changes_recipe(w: &World, repo: &Path, base: &str, tip: &str) -> bool {
+/// The round-recipe inputs (`spira_config::recipe::PATHS`) `tip` changes against `base`.
+fn recipe_inputs_touched(w: &World, repo: &Path, base: &str, tip: &str) -> Vec<String> {
     let from = w
         .git
         .merge_base(repo, base, tip)
         .unwrap_or_else(|| base.to_string());
-    let changed: Vec<String> = w
-        .git
+    w.git
         .numstat(repo, &from, tip)
         .unwrap_or_default()
         .into_iter()
         .map(|(p, ..)| p)
-        .collect();
-    spira_config::recipe::touches(&changed)
+        .filter(|p| spira_config::recipe::touches(std::slice::from_ref(p)))
+        .collect()
 }
 
 fn open(
@@ -1577,30 +1579,6 @@ fn open(
                 None => skips.push(format!("{}: no submitted tip — not admitted", m.id)),
             },
         }
-    }
-
-    let open_recipe = open_now
-        .iter()
-        .find(|kv| {
-            kv.members()
-                .iter()
-                .any(|h| changes_recipe(w, &path, &landed_sha, &h.tip))
-        })
-        .map(|kv| kv.get("batch_id").unwrap_or("?").to_string());
-    let (mut recipe, ordinary): (Vec<Member>, Vec<Member>) = admitted
-        .into_iter()
-        .partition(|m| changes_recipe(w, &path, &landed_sha, &m.tip));
-    let alone = open_recipe.is_none() && ordinary.is_empty();
-    let admitted = if alone {
-        recipe.drain(..1.min(recipe.len())).collect()
-    } else {
-        ordinary
-    };
-    for m in &recipe {
-        skips.push(match &open_recipe {
-            Some(open) => format!("{0}: solo: {0} changes the round recipe — waits for open recipe round {open}, not admitted", m.id),
-            None => format!("{0}: solo: {0} changes the round recipe — rounds alone, not admitted with other members", m.id),
-        });
     }
 
     let batch = name
@@ -3096,6 +3074,10 @@ fn certify_pass(
                 .join(format!("{REPO_TESTENV_RED}.out"));
             w.out(format!("red-output={}", output.display()));
         }
+        if reds.iter().any(|r| r == PREFLIGHT_RED) {
+            drop(_g);
+            eject_recipe_changers(w, label, c, path, batch, &judged);
+        }
         return FAIL;
     }
 
@@ -3132,6 +3114,59 @@ fn certify_pass(
         &run_id,
         (ran, wall),
     )
+}
+
+/// A red image preflight is the recipe change's: every member whose diff touches a round-recipe
+/// input leaves the round, with the fence's output as the evidence, and the rest certify again.
+/// With no such member the red is the harness's and nobody leaves. Prints `ejected=<csv>`, so the
+/// round's driver knows the red is attributed.
+fn eject_recipe_changers(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, kv: &Kv) {
+    let base = kv.get("base").unwrap_or("");
+    let changers: Vec<(String, Vec<String>)> = kv
+        .members()
+        .into_iter()
+        .map(|m| {
+            let touched = recipe_inputs_touched(w, path, base, &m.tip);
+            (m.id, touched)
+        })
+        .filter(|(_, touched)| !touched.is_empty())
+        .collect();
+    if changers.is_empty() {
+        w.out(format!("queue.sh {label}: {PREFLIGHT_RED} is red and no member of {batch} changes a round-recipe input — the red is the harness's; nobody is ejected"));
+        return;
+    }
+    let results = rounds_dir(c).join(format!("{batch}.results"));
+    let Some(output) = suite_output(&results, PREFLIGHT_RED, 0).filter(|o| !o.trim().is_empty()) else {
+        w.err(format!("queue.sh {label}: {PREFLIGHT_RED} is red but left no output in {} — nothing names the evidence, so nobody is ejected; attribute it by hand", results.display()));
+        return;
+    };
+    let evidence = tail(&output, 40);
+    let mut ejected = Vec::new();
+    for (id, touched) in changers {
+        // A changer stacked on one ejected before it has already left with it.
+        match pass_members(w, c, batch) {
+            Ok(ids) if !ids.contains(&id) => continue,
+            Ok(_) => {}
+            Err(e) => {
+                w.err(format!("queue.sh {label}: cannot read the members of {batch} before ejecting {id}: {e} — not ejected"));
+                continue;
+            }
+        }
+        let reason = format!(
+            "{PREFLIGHT_RED} went red in round {batch}, and {id} changes the round recipe ({}).\n\n{evidence}",
+            touched.join(", ")
+        );
+        let rc = eject(w, batch, &id, Some(&c.r.name), &Text::Arg(reason), PREFLIGHT_RED, true, false, true, "", LeaseCheck::Inside);
+        if rc == OK {
+            note_pass_end(c, std::slice::from_ref(&id), PassEnd::Ejected);
+            ejected.push(id);
+        } else {
+            w.err(format!("queue.sh {label}: could not eject {id} for the red {PREFLIGHT_RED} (rc={rc})"));
+        }
+    }
+    if !ejected.is_empty() {
+        w.out(format!("ejected={}", ejected.join(",")));
+    }
 }
 
 /// The (repo, tree) certificate a green full-corpus pass earns. Rewriting it is harmless.

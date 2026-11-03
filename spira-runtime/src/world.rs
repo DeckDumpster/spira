@@ -573,8 +573,7 @@ impl World {
         let terminal = term.as_array().ok_or("list is not an array")?.iter().filter_map(|r| Some((r["bead_id"].as_str()?.to_string(), r["state"].as_str()?.to_string()))).collect();
         let (stops, reserved) = self.scoped_stops();
         let pr_repos = fs::read_to_string(&self.repo_map).map(|t| map_rows(&t)).unwrap_or_default().into_iter().filter(|r| r.land == "pr").map(|r| r.name).collect();
-        let solo_skipped = fs::read_dir(self.run_dir.join("solo-skips")).into_iter().flatten().flatten().filter_map(|e| e.file_name().into_string().ok()).collect();
-        let snap = bead_sweep::Snapshot { rows, content: beads, terminal, stops, reserved, carried: self.integrations(), solo_skipped, pr_repos };
+        let snap = bead_sweep::Snapshot { rows, content: beads, terminal, stops, reserved, carried: self.integrations(), pr_repos };
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
 

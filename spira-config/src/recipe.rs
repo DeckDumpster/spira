@@ -1,6 +1,6 @@
 //! The repo-relative paths a round image is built from. `round-vm`'s recipe hash reads exactly
-//! these files (a test there holds the two together), and round admission uses them to give a
-//! member that changes one a round of its own.
+//! these files (a test there holds the two together), and a round whose image preflight goes red
+//! ejects the members that change one.
 
 pub const PATHS: [&str; 6] = [
     "round-vm/src/template.sh",
