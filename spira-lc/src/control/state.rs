@@ -246,7 +246,8 @@ fn csv(v: Option<String>) -> Option<Vec<String>> {
     })
 }
 
-/// `list [--live] [--state S,...] [--ids a,...] [--hold K] [--express] [--repo R]`, in id order.
+/// `list [--live] [--state S,...] [--ids a,...] [--hold K] [--express] [--repo R] [--after ID]
+/// [--limit N]`, in id order.
 fn list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
     if args.iter().any(|a| a == "--delivery") {
         return rounds::list_delivery(store, args);
@@ -260,6 +261,10 @@ fn list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, Str
     let repo = flag(args, "--repo");
     let express = args.iter().any(|a| a == "--express");
     let live = args.iter().any(|a| a == "--live");
+    let (after, limit) = match spira_lc::page(args) {
+        Ok(p) => p.unwrap_or_default(),
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: list: {e}")),
+    };
     let (records, readiness, _) = match store.records_with_readiness() {
         Ok(r) => r,
         Err(e) => return cannot_tell(e),
@@ -269,6 +274,7 @@ fn list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, Str
         let state = row.state.as_str();
         states.as_ref().is_none_or(|s| s.iter().any(|x| x == state))
             && ids.as_ref().is_none_or(|i| i.contains(&row.bead_id))
+            && after.as_ref().is_none_or(|a| row.bead_id > *a)
             && hold
                 .as_deref()
                 .is_none_or(|k| row.holds.iter().any(|h| h.as_str() == k))
@@ -295,7 +301,7 @@ fn list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, Str
         };
         rows.insert(id, row(&r.value, ready.as_ref(), LISTED));
     }
-    let out = Value::Array(rows.into_values().collect());
+    let out = Value::Array(rows.into_values().take(limit.unwrap_or(usize::MAX)).collect());
     (0, out.to_string())
 }
 

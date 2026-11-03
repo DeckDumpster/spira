@@ -40,9 +40,9 @@ fn store(answers: &[(&[&str], Value)]) -> impl FnMut(&[String]) -> (i32, String)
 fn answers(state: &str, lease: Value) -> Vec<(&'static [&'static str], Value)> {
     let row = json!({"bead_id": "sp-a", "state": state, "lease_until": lease});
     vec![
-        (&["list", "--state", BEAD_STATES], json!([row])),
+        (&["list", "--state", BEAD_STATES, "--limit", "100"], json!([row])),
         (&["list", "--state", "WORKING"], json!([row])),
-        (&["list", "--batches", "--window", ALL_TIME_SECS], json!([{"batch_id": "b-1"}])),
+        (&["list", "--batches", "--limit", "100"], json!([{"batch_id": "b-1"}])),
         (&["list-asks", "--state", "OPEN"], json!([{"ask_id": "q-1"}])),
         (&["list-asks", "--state", "ANSWERED"], json!([])),
         (&["list-asks", "--state", "DEFAULT_TAKEN"], json!([])),
@@ -59,7 +59,7 @@ fn answers(state: &str, lease: Value) -> Vec<(&'static [&'static str], Value)> {
 fn parity_over_two_equal_stores_finds_nothing_and_a_planted_difference_is_reported() {
     let mut old = store(&answers("WORKING", json!("9")));
     let mut new = store(&answers("WORKING", Value::Null));
-    let (clean, report) = run(&mut old, &mut new).unwrap();
+    let (clean, report) = run(&mut old, &mut new, 100).unwrap();
     assert!(clean, "{report:#}");
     assert_eq!(report["differences"], json!([]));
     assert_eq!(report["working_without_lock"], json!(["sp-a"]));
@@ -69,7 +69,7 @@ fn parity_over_two_equal_stores_finds_nothing_and_a_planted_difference_is_report
 
     let mut planted = store(&answers("READY", Value::Null));
     let mut old = store(&answers("WORKING", json!("9")));
-    let (clean, report) = run(&mut old, &mut planted).unwrap();
+    let (clean, report) = run(&mut old, &mut planted, 100).unwrap();
     assert!(!clean);
     let at: Vec<&str> = report["differences"].as_array().unwrap().iter().map(|d| d["at"].as_str().unwrap()).collect();
     assert!(at.contains(&".out.bead.state"), "{report:#}");
@@ -80,7 +80,7 @@ fn parity_over_two_equal_stores_finds_nothing_and_a_planted_difference_is_report
 fn an_old_store_that_cannot_list_is_cannot_tell() {
     let mut old = store(&[]);
     let mut new = store(&[]);
-    let e = run(&mut old, &mut new).unwrap_err();
+    let e = run(&mut old, &mut new, 100).unwrap_err();
     assert!(e.starts_with("list --state OPEN,READY"), "{e}");
 }
 
@@ -90,7 +90,7 @@ fn a_record_the_planning_plane_types_as_never_having_one_is_named_not_imported_a
     let mut with_epic = answers("READY", Value::Null);
     for (argv, out) in with_epic.iter_mut() {
         match *argv {
-            ["list", "--state", _] => out.as_array_mut().unwrap().push(epic.clone()),
+            ["list", "--state", ..] => out.as_array_mut().unwrap().push(epic.clone()),
             ["plan", "items", ..] => *argv = &["plan", "items", "--ids", "sp-a,sp-e"],
             _ => {}
         }
@@ -102,7 +102,92 @@ fn a_record_the_planning_plane_types_as_never_having_one_is_named_not_imported_a
     }
     let mut old = store(&with_epic);
     let mut new = store(&answers("READY", Value::Null));
-    let (clean, report) = run(&mut old, &mut new).unwrap();
+    let (clean, report) = run(&mut old, &mut new, 100).unwrap();
     assert!(clean, "{report:#}");
     assert_eq!(report["not_imported"], json!(["sp-e"]));
+}
+
+/// A store holding `beads` and `batches` that answers the verbs parity asks, and misses its
+/// deadline on any answer longer than `deadline_rows`, as lc-serve does on a full list of a
+/// large dolt store.
+fn timed_store(beads: Vec<Value>, batches: Vec<Value>, deadline_rows: usize) -> impl FnMut(&[String]) -> (i32, String) {
+    move |a: &[String]| {
+        let csv = |name: &str| flag(a, name).map(|v| v.split(',').map(str::to_string).collect::<Vec<_>>());
+        let after = flag(a, "--after");
+        let limit = flag(a, "--limit").map_or(usize::MAX, |n| n.parse().unwrap());
+        let page = |rows: &[Value], key: &str, keep: &dyn Fn(&Value) -> bool| -> Value {
+            let id = |r: &Value| r[key].as_str().unwrap().to_string();
+            let mut rows: Vec<Value> = rows.iter().filter(|r| keep(r) && after.as_ref().is_none_or(|x| id(r) > *x)).cloned().collect();
+            rows.sort_by_key(id);
+            Value::Array(rows.into_iter().take(limit).collect())
+        };
+        let answer = match a.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+            ["list", "--batches", ..] => page(&batches, "batch_id", &|r| flag(a, "--batch").is_none_or(|b| r["batch_id"] == json!(b))),
+            ["list", "--delivery"] | ["list-asks", ..] => json!([]),
+            ["list", ..] => page(&beads, "bead_id", &|r| {
+                let state = r["state"].as_str().unwrap().to_string();
+                csv("--state").is_none_or(|s| s.contains(&state))
+                    && csv("--ids").is_none_or(|i| i.contains(&r["bead_id"].as_str().unwrap().to_string()))
+                    && (!a.contains(&"--live".to_string()) || state != "LANDED")
+                    && flag(a, "--hold").is_none()
+            }),
+            ["event-seq", ..] => json!({"seq": 5, "keys": []}),
+            ["plan", "items", "--ids", ids] => json!({"items": ids.split(',').map(|id| json!({"id": id, "issue_type": "task"})).collect::<Vec<_>>()}),
+            ["show", id] => match beads.iter().find(|b| b["bead_id"] == json!(id)) {
+                Some(b) => json!({"bead": b}),
+                None => return (1, "{}".into()),
+            },
+            ["show-batch", id] => match batches.iter().find(|b| b["batch_id"] == json!(id)) {
+                Some(b) => b.clone(),
+                None => return (1, "{}".into()),
+            },
+            _ => return (2, "cannot tell: unasked".into()),
+        };
+        let rows = answer.as_array().or_else(|| answer["items"].as_array()).map_or(0, Vec::len);
+        if rows > deadline_rows {
+            return (2, "cannot tell: deadline".into());
+        }
+        (0, answer.to_string())
+    }
+}
+
+fn beads_and_batches(n_beads: usize, n_batches: usize) -> (Vec<Value>, Vec<Value>) {
+    let beads = (0..n_beads).map(|i| json!({"bead_id": format!("sp-{i:02}"), "state": if i < 2 { "READY" } else { "LANDED" }, "lease_until": null})).collect();
+    let batches = (0..n_batches).map(|i| json!({"batch_id": format!("b-{i:02}"), "state": "LANDED", "members": [format!("sp-{i:02}")]})).collect();
+    (beads, batches)
+}
+
+#[test]
+fn parity_over_stores_whose_deadline_is_shorter_than_a_full_list_completes_in_pages() {
+    let (beads, batches) = beads_and_batches(7, 5);
+    let mut probe = timed_store(beads.clone(), batches.clone(), 3);
+    assert_eq!(probe(&argv(&["list", "--state", BEAD_STATES])).0, CANNOT_TELL, "a full bead list outgrows the deadline");
+    assert_eq!(probe(&argv(&["list", "--batches", "--window", "4000000000"])).0, CANNOT_TELL, "so does a full batch list");
+
+    let mut old = timed_store(beads.clone(), batches.clone(), 3);
+    let mut new = timed_store(beads.clone(), batches.clone(), 3);
+    let (clean, report) = run(&mut old, &mut new, 2).unwrap();
+    assert!(clean, "{report:#}");
+    assert_eq!(report["differences"], json!([]));
+
+    let mut seeded_beads = beads.clone();
+    seeded_beads[6]["state"] = json!("DROPPED");
+    let mut seeded_batches = batches.clone();
+    seeded_batches.push(json!({"batch_id": "b-99", "state": "OPEN", "members": []}));
+    let mut old = timed_store(beads, batches, 3);
+    let mut seeded = timed_store(seeded_beads, seeded_batches, 3);
+    let (clean, report) = run(&mut old, &mut seeded, 2).unwrap();
+    assert!(!clean);
+    let differences = report["differences"].as_array().unwrap();
+    assert!(differences.iter().any(|d| d["argv"] == json!(["show", "sp-06"]) && d["at"] == ".out.bead.state"), "{report:#}");
+    assert!(differences.iter().any(|d| d["at"] == ".batch_id" && d["new"] == "b-99"), "a batch only the new store holds: {report:#}");
+}
+
+#[test]
+fn a_new_store_that_cannot_list_is_cannot_tell() {
+    let (beads, batches) = beads_and_batches(3, 1);
+    let mut old = timed_store(beads, batches, 3);
+    let mut new = store(&[]);
+    let e = run(&mut old, &mut new, 2).unwrap_err();
+    assert!(e.contains("on the new store"), "{e}");
 }

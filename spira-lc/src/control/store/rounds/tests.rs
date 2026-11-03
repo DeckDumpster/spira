@@ -947,3 +947,28 @@ fn fields_with_no_write_of_their_round_to_ride_in_are_an_error_not_dropped() {
     let e = p.with_round("b-9", Some(&fields)).err().expect("no write of b-9");
     assert!(e.to_string().contains("b-9"), "{e}");
 }
+
+#[test]
+fn a_list_with_after_and_limit_answers_one_page_of_rows_in_id_order() {
+    let r = Rig::new();
+    for (id, tip, round) in [("sp-c", T1, "b-3"), ("sp-a", T2, "b-1"), ("sp-b", T1, "b-2")] {
+        r.certified(id, tip);
+        let members = vec![(id.to_string(), tip.to_string())];
+        let p = r.s.plan_cut(&Cut { batch_id: round, ..r.cut_spec(&members) }).unwrap();
+        r.s.run_planned(p, &r.req(), "cut").unwrap();
+    }
+    let page = |argv: &[&str], key: &str| -> Vec<String> {
+        let (rc, out) = r.lc(argv);
+        assert_eq!(rc, 0, "{argv:?}: {out}");
+        let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+        rows.as_array().unwrap().iter().map(|x| x[key].as_str().unwrap().to_string()).collect()
+    };
+    assert_eq!(page(&["list", "--limit", "2"], "bead_id"), ["sp-a", "sp-b"]);
+    assert_eq!(page(&["list", "--limit", "2", "--after", "sp-b"], "bead_id"), ["sp-c"]);
+    assert_eq!(page(&["list", "--batches", "--limit", "2"], "batch_id"), ["b-1", "b-2"]);
+    assert_eq!(page(&["list", "--batches", "--limit", "2", "--after", "b-2"], "batch_id"), ["b-3"]);
+    assert_eq!(page(&["list", "--batches", "--after", "b-1"], "batch_id"), ["b-2", "b-3"]);
+    for bad in [&["list", "--limit", "0"][..], &["list", "--batches", "--limit", "x"]] {
+        assert_eq!(r.lc(bad).0, crate::CANNOT_TELL, "{bad:?}");
+    }
+}

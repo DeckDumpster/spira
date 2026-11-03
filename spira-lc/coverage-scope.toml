@@ -74,4 +74,4 @@ functions = ["import", "import_store", "report_path", "write_report"]
 # The parity tool's comparison.
 [[scope]]
 path = "spira-lc/src/parity.rs"
-functions = ["normalize", "strip", "first_difference", "judge", "ids_in", "calls", "enumerate", "run"]
+functions = ["normalize", "strip", "first_difference", "judge", "ids_in", "walk", "calls", "enumerate", "run"]
