@@ -1679,7 +1679,7 @@ pub trait Recorder: Sync {
     /// The batch's current pass number and members, for the pass's record; `None` when the
     /// lifecycle machine cannot say.
     fn pass_context(&self, batch: &str) -> Option<(u64, Vec<String>)> {
-        let out = command("timeout").args(["-k", "5", "30", spira_config::release_env::tool("spira-lc").ok()?.as_str(), "show-batch", batch]).stdin(Stdio::null()).output().ok()?;
+        let out = command("timeout").args(["-k", "5", "30", spira_config::lifecycle_row::lc_bin().ok()?.as_str(), "show-batch", batch]).stdin(Stdio::null()).output().ok()?;
         let v: Value = serde_json::from_slice(&out.stdout).ok()?;
         let members = v.get("members").and_then(Value::as_array).map(|a| a.iter().filter_map(|m| m.as_str().or_else(|| m.get("bead_id").and_then(Value::as_str)).map(str::to_string)).collect()).unwrap_or_default();
         Some((v.get("pass")?.as_u64()?, members))
@@ -1698,7 +1698,7 @@ impl Recorder for QueueRecorder {
     fn progress(&self, batch: &str, body: &str) -> Result<(), String> {
         use std::io::Write;
         let mut cmd = command("timeout");
-        cmd.args(["-k", "5", "30", spira_config::release_env::tool("spira-lc")?.as_str(), "batch-progress", batch]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.args(["-k", "5", "30", spira_config::lifecycle_row::lc_bin()?.as_str(), "batch-progress", batch]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = cmd.spawn().map_err(|e| format!("cannot run spira-lc: {e}"))?;
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(body.as_bytes());

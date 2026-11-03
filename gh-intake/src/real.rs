@@ -116,7 +116,7 @@ pub struct RealLifecycle {
 
 impl RealLifecycle {
     pub fn new() -> Result<Self, String> {
-        Ok(RealLifecycle { bin: spira_config::release_env::tool("spira-lc")? })
+        Ok(RealLifecycle { bin: spira_config::lifecycle_row::lc_bin()? })
     }
 }
 

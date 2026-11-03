@@ -552,7 +552,7 @@ impl Lib for RealLib {
             // Every harness tool by name, on the launcher's PATH (sp-gypjk).
             batcher_bin: Some(PathBuf::from(spira_config::release_env::tool("batcher")?)),
             batcher_off: g("batcher_enable").trim() == "0",
-            lc_bin: Some(PathBuf::from(spira_config::release_env::tool("spira-lc")?)),
+            lc_bin: Some(PathBuf::from(spira_config::lifecycle_row::lc_bin()?)),
             submitted_label: g("submitted_label"),
             home_repo: reg.home_repo().to_string(),
             db: g("db"),

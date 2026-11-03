@@ -1918,7 +1918,7 @@ fn populate_phase(dry: bool) -> Result<(), String> {
         return Ok(());
     }
     let port = lc_port(bootstrap::declared("SPIRA_DOLT_DATA").as_deref());
-    let lc = spira_config::release_env::tool("spira-lc")?;
+    let lc = spira_config::lifecycle_row::lc_bin()?;
     let counts = install::populate::run(&inputs, |args| {
         // batch-job: one-time install population of the lifecycle store; bounded at 600 s by timeout(1).
         let out = Command::new("timeout").arg("600").arg(&lc).args(args).env("SPIRA_LC_PORT", port.to_string()).stdin(Stdio::null()).output();
@@ -1949,7 +1949,7 @@ fn round_records_phase(dry: bool) -> Result<(), String> {
         skip("no round files to remove");
         return Ok(());
     }
-    let lc = spira_config::release_env::tool("spira-lc")?;
+    let lc = spira_config::lifecycle_row::lc_bin()?;
     let gone = install::round_records::plan(&files, |batch| {
         // batch-job: one store read per round file; bounded at 30 s by timeout(1).
         let o = Command::new("timeout").arg("30").arg(&lc).args(["show-batch", batch]).stdin(Stdio::null()).output().map_err(|e| format!("cannot run spira-lc: {e}"))?;
@@ -1985,7 +1985,7 @@ fn lifecycle_store_phase(port: u16) -> Result<Vec<String>, String> {
     let cred = same_user_credential_path();
     let rw = lifecycle_store::read_credential(Path::new(&cred))?;
     let ro = lifecycle_store::read_credential(Path::new(&format!("{cred}-ro")))?;
-    let lc = spira_config::release_env::tool("spira-lc")?;
+    let lc = spira_config::lifecycle_row::lc_bin()?;
     let run = |args: &[String], env: &[(String, String)]| {
         // batch-job: one-time install DDL against the local Dolt server; bounded at 120 s by timeout(1).
         let mut c = Command::new("timeout");

@@ -246,7 +246,7 @@ const BD_DEFAULT_PRIORITY: i64 = 2;
 /// instead of bd. Detached: filing has a server deadline and a second connect inside it
 /// overran it. A write that fails is repaired by `spira-lc backfill-titles`.
 fn mirror_to_lifecycle(id: &str, title: Option<&str>, priority: i64, repo: Option<&str>) {
-    let mut args = vec!["30".to_string(), match spira_config::release_env::tool("spira-lc") { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return; } }, "create-bead".into(), id.to_string(), "--priority".into(), priority.to_string()];
+    let mut args = vec!["30".to_string(), match spira_config::lifecycle_row::lc_bin() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return; } }, "create-bead".into(), id.to_string(), "--priority".into(), priority.to_string()];
     if let Some(t) = title {
         args.extend(["--title".to_string(), t.to_string()]);
     }
@@ -1912,7 +1912,7 @@ fn dep_type_name(t: &str) -> &str {
 /// and `blocker`. bd already holds the edge, so a failed mirror is reported and repaired by
 /// `spira-lc backfill-deps --force`, never turned into a failed `dep`.
 fn mirror_dep(verb: &str, id: &str, depid: &str, dep_type: Option<&str>) {
-    let mut args = vec!["30".to_string(), match spira_config::release_env::tool("spira-lc") { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return; } }, verb.into(), id.into(), depid.into()];
+    let mut args = vec!["30".to_string(), match spira_config::lifecycle_row::lc_bin() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return; } }, verb.into(), id.into(), depid.into()];
     if let Some(t) = dep_type {
         args.extend(["--type".to_string(), t.to_string()]);
     }
@@ -2055,7 +2055,7 @@ fn cmd_label(home: &str, args: &[String]) -> i32 {
 /// Point the lifecycle row at the repo a `repo:` label names, before the label moves: claims,
 /// worktrees and rounds read the row, and a WORKING bead is refused by it.
 fn mirror_repo(verb: &str, id: &str, repo: &str) -> Result<(), i32> {
-    let mut args = vec!["30".to_string(), match spira_config::release_env::tool("spira-lc") { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return Err(1); } }, "set-repo".into(), id.to_string()];
+    let mut args = vec!["30".to_string(), match spira_config::lifecycle_row::lc_bin() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return Err(1); } }, "set-repo".into(), id.to_string()];
     if verb == "add" {
         args.push(repo.to_string());
     } else {
@@ -2111,7 +2111,7 @@ fn cmd_drop(home: &str, args: &[String]) -> i32 {
 
     // batch-job: ejects from batches and closes the store, bounded by timeout(1)
     let status = Command::new("timeout")
-        .args(["120", match spira_config::release_env::tool("spira-lc") { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return 1; } }.as_str(), "drop-bead", &id, "--reason", &reason, "--actor", "bead"])
+        .args(["120", match spira_config::lifecycle_row::lc_bin() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return 1; } }.as_str(), "drop-bead", &id, "--reason", &reason, "--actor", "bead"])
         .envs(match spira_config::release_env::child_path_env_for_process() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return 1; } })
         .status()
         .map(|s| s.code().unwrap_or(1))

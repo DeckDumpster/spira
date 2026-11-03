@@ -41,7 +41,7 @@ impl Env {
             home,
             run: PathBuf::from(run),
             queue_dir: PathBuf::from(cfg("SPIRA_QUEUE_DIR")?),
-            lc_bin: spira_config::release_env::tool("spira-lc")?,
+            lc_bin: spira_config::lifecycle_row::lc_bin()?,
             lc_timeout: cfg_parse::<u64>("SPIRA_LC_TIMEOUT")?,
             wiki: cfg("SPIRA_WIKI").unwrap_or_default(),
             identity_projects: cfg("SPIRA_IDENTITY_PROJECTS").unwrap_or_default(),

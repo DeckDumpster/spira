@@ -213,7 +213,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
         wall_secs: cfg_parse::<u64>("SPIRA_BATCHER_WALL_SECS")?,
         git_name: cfg("SPIRA_GIT_NAME")?,
         git_email: cfg("SPIRA_GIT_EMAIL")?,
-        lc_bin: Some(PathBuf::from(spira_config::release_env::tool("spira-lc")?)),
+        lc_bin: Some(PathBuf::from(spira_config::lifecycle_row::lc_bin()?)),
         lc_timeout: cfg_parse::<u64>("SPIRA_LC_TIMEOUT")?,
         verdicts: gate::cert::verdicts_dir(env::var("SPIRA_VERDICTS").ok().as_deref(), &run),
         land_lock_attempts: env::var("SPIRA_BATCHER_LAND_LOCK_ATTEMPTS").ok().and_then(|v| v.parse().ok()).unwrap_or(10),

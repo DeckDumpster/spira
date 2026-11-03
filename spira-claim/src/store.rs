@@ -89,7 +89,7 @@ impl Store {
     pub fn new(timeout_s: u64) -> Result<Store, String> {
         Ok(Store {
             bdq: spira_config::release_env::tool("bdq")?,
-            lc: spira_config::release_env::tool("spira-lc")?,
+            lc: spira_config::lifecycle_row::lc_bin()?,
             timeout: Duration::from_secs(timeout_s.max(1)),
         })
     }

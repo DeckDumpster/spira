@@ -671,7 +671,7 @@ impl incident::alarms_pass::Http for UreqHttp {
 }
 
 fn spira_lc() -> Result<SpiraLc, String> {
-    Ok(SpiraLc { program: spira_config::release_env::tool("spira-lc")? })
+    Ok(SpiraLc { program: spira_config::lifecycle_row::lc_bin()? })
 }
 
 fn alarms_config(env: &Env, fallback: bool) -> Result<incident::alarms_pass::Config, String> {

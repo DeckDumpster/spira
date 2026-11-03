@@ -25,7 +25,7 @@ pub struct DeliveryRow {
 fn program() -> Result<String, String> {
     match std::env::var(PROGRAM_ENV).ok().filter(|s| !s.is_empty()) {
         Some(p) => Ok(p),
-        None => spira_config::release_env::tool("spira-lc"),
+        None => spira_config::lifecycle_row::lc_bin(),
     }
 }
 

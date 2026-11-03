@@ -269,7 +269,7 @@ impl World for Real {
     }
     fn lc_landed(&self, id: &str) -> bool {
         // Bounded like every other subprocess here: a hung record answers "not landed".
-        let Ok(lc) = spira_config::release_env::tool("spira-lc") else { return false };
+        let Ok(lc) = spira_config::lifecycle_row::lc_bin() else { return false };
         Command::new("timeout")
             .args(["5", lc.as_str(), "state", id])
             .stdin(Stdio::null())

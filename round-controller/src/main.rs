@@ -335,11 +335,11 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
     );
     let lc = SpiraLc {
         proc_: proc_.clone(),
-        program: spira_config::release_env::tool("spira-lc")?,
+        program: spira_config::lifecycle_row::lc_bin()?,
     };
     let store = LcStore {
         proc_: proc_.clone(),
-        program: spira_config::release_env::tool("spira-lc")?,
+        program: spira_config::lifecycle_row::lc_bin()?,
     };
     let ledger = StoreLedger {
         policy: FaultPolicy::from_config()?,

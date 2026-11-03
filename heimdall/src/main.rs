@@ -94,7 +94,7 @@ fn pass() -> i32 {
     // "unreachable" as far as a watchdog is concerned.
     let store_timeout = env_n(&original, "SPIRA_HEIMDALL_BD_TIMEOUT", 10).max(1);
     let mut lc_env = original.clone();
-    let (child_env, lc_bin) = match spira_config::release_env::child_path_env_for_process().and_then(|e| Ok((e, spira_config::release_env::tool("spira-lc")?))) {
+    let (child_env, lc_bin) = match spira_config::release_env::child_path_env_for_process().and_then(|e| Ok((e, spira_config::lifecycle_row::lc_bin()?))) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("heimdall: {e}");
