@@ -3143,6 +3143,15 @@ fn eject_recipe_changers(w: &World, label: &str, c: &Ctx, path: &Path, batch: &s
     let evidence = tail(&output, 40);
     let mut ejected = Vec::new();
     for (id, touched) in changers {
+        // A changer stacked on one ejected before it has already left with it.
+        match pass_members(w, c, batch) {
+            Ok(ids) if !ids.contains(&id) => continue,
+            Ok(_) => {}
+            Err(e) => {
+                w.err(format!("queue.sh {label}: cannot read the members of {batch} before ejecting {id}: {e} — not ejected"));
+                continue;
+            }
+        }
         let reason = format!(
             "{PREFLIGHT_RED} went red in round {batch}, and {id} changes the round recipe ({}).\n\n{evidence}",
             touched.join(", ")

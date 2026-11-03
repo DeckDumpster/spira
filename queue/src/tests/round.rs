@@ -6462,3 +6462,10 @@ fn a_round_cut_before_its_base_moved_refuses_land_as_base_moved() {
     assert!(t.err().contains("re-merged"), "{}", t.err());
     assert_eq!(t.landed_ref().as_deref(), Some("b1"));
 }
+
+#[test]
+fn a_preflight_red_ejects_every_recipe_changing_member_and_names_them() {
+    let (t, _) = preflight_red_round(&["ta", "tb"]);
+    assert!(t.lib.has("bead_reopen sp-a eject-red") && t.lib.has("bead_reopen sp-b eject-red"), "{:?}", t.lib.calls.borrow());
+    assert!(t.out().contains("ejected=sp-a,sp-b"), "{}", t.out());
+}
