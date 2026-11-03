@@ -491,12 +491,16 @@ test_phase_red() {
     } > "$json"
 }
 # The round's one source of config: the tree's complete fixture, with this VM's own paths
-# declared over it. Nothing here is searched for or defaulted.
-mkdir -p "$HOME/round-work/.runtime/spira"
+# declared over it. Nothing here is searched for or defaulted: a tree's binaries build every
+# child PATH from the declared release and `path`, never from this script's own PATH, so the
+# VM's dolt, bd and cargo (outside the release) are declared here.
+mkdir -p "$HOME/round-work/.runtime/spira" "$HOME/round-scratch"
 cat > "$HOME/round-config.toml" <<ROUNDCFG
 [spira]
 run = "$HOME/round-work/.runtime/spira"   # where REMOTE_RESULTS pulls batch-results from
 releases = "$HOME/round-releases"
+path = "$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin"
+testenv_scratch_root = "$HOME/round-scratch"
 home_repo = "spira"
 batch_maxpar = $maxpar
 $testenv_limits

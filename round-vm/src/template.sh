@@ -6,6 +6,7 @@ work="$1" host_addr="$2" toolchain="$3" cache_home="$4"
 cd "$work"
 export CARGO_HOME="${cache_home:-$HOME/.cargo}"
 mkdir -p "$CARGO_HOME/bin"
+nix_bin=/nix/var/nix/profiles/default/bin
 # toolchain-begin
 have=""
 [ -x "$CARGO_HOME/bin/rustc" ] && have="$("$CARGO_HOME/bin/rustc" --version 2>/dev/null | cut -d' ' -f2)"
@@ -34,9 +35,9 @@ cat > "$work/template-config.toml" <<TEMPLATECFG
 run = "$work/.runtime/spira"
 releases = "$work/.runtime/releases"
 home_repo = "spira"
+path = "$nix_bin:$CARGO_HOME/bin:$HOME/.cargo/bin"
 TEMPLATECFG
 export SPIRA_TOML="$work/spira/testlib/complete.toml:$work/template-config.toml"
-nix_bin=/nix/var/nix/profiles/default/bin
 if [ ! -x "$nix_bin/nix" ]; then
     echo "round-vm template: installing nix (multi-user)" >&2
     nix_installer="$(mktemp -d)/install"
