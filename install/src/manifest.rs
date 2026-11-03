@@ -154,9 +154,11 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-event-continuity.timer", true));
     m.units.push(t("spira-alarms.service", false));
     m.units.push(t("spira-alarms.timer", true));
-    // No timer yet: the reconciler's arm step ships and enables one.
+    // Both run every kind in shadow until the arm step takes one off SPIRA_RECONCILER_SHADOW_KINDS.
     m.units.push(t("spira-lifecycle-section.service", false));
+    m.units.push(t("spira-lifecycle-section.timer", true));
     m.units.push(t("spira-reconciler-goodput.service", false));
+    m.units.push(t("spira-reconciler-goodput.timer", true));
     m.units.push(t("spira-concierge-guard.service", false));
     m.units.push(t("spira-concierge-guard.timer", true));
     m.units.push(t("spira-mend-watch.service", false));
@@ -513,13 +515,19 @@ mod tests {
     }
 
     #[test]
-    fn the_lifecycle_section_publisher_ships_its_service_and_no_timer_until_the_arm_step() {
+    fn the_lifecycle_section_and_the_goodput_pass_run_every_minute_on_the_observability_plane() {
         let m = build(&inputs()).unwrap();
-        assert!(m.units.iter().any(|u| u.name == "spira-lifecycle-section.service" && !u.enable));
-        assert!(!m.units.iter().any(|u| u.name == "spira-lifecycle-section.timer"));
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("systemd");
-        let svc = std::fs::read_to_string(root.join("spira-lifecycle-section.service")).unwrap();
-        assert!(svc.lines().any(|l| l.starts_with("ExecStart=") && l.ends_with("/bin/spira-lc publish-section lifecycle")), "{svc}");
+        for (unit, exec) in [("spira-lifecycle-section", "/bin/spira-lc publish-section lifecycle"), ("spira-reconciler-goodput", "/bin/reconciler goodput-pass")] {
+            assert!(m.units.iter().any(|u| u.name == format!("{unit}.service") && !u.enable), "{unit}.service");
+            assert!(m.units.iter().any(|u| u.name == format!("{unit}.timer") && u.enable), "{unit}.timer ships enabled");
+            let svc = std::fs::read_to_string(root.join(format!("{unit}.service"))).unwrap();
+            assert!(svc.lines().any(|l| l.starts_with("ExecStart=") && l.ends_with(exec)), "{svc}");
+            let timer = std::fs::read_to_string(root.join(format!("{unit}.timer"))).unwrap();
+            for line in ["OnUnitActiveSec=60s", &format!("Unit={unit}.service"), "Plane=observability"] {
+                assert!(timer.lines().any(|l| l == line), "{unit}.timer lacks {line}: {timer}");
+            }
+        }
     }
 
     #[test]

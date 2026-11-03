@@ -100,9 +100,10 @@ pub fn run<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) -> (i3
         ("lock", Some("release")) => written(lock_release(store, rest, call)),
         ("pass", Some("record")) => written(pass_record(store, rest, call)),
         ("pass", Some("standby")) => written(pass_standby(store, rest, call)),
+        ("pass", Some("history")) => (pass_history(store), None),
         _ => (
             Answer::CannotTell(format!(
-                "cannot tell: {verb:?} is not a verb: section get|list|snapshot|apply-spec|publish-status, intent get|put|ack|judge|apply|knob-init, lock show|acquire|renew|release, pass record|standby"
+                "cannot tell: {verb:?} is not a verb: section get|list|snapshot|apply-spec|publish-status, intent get|put|ack|judge|apply|knob-init, lock show|acquire|renew|release, pass record|standby|history"
             )),
             None,
         ),
@@ -921,6 +922,24 @@ fn pass_record<B: Backend>(store: &Contract<B>, args: &[String], call: &Call) ->
         }
     })();
     (answer.unwrap_or_else(|a| a), "pass".into())
+}
+
+/// `pass history`: every pass record the day of history still holds, oldest first, from one
+/// list, for `reconciler arm-check` to read a kind's shadow passes from.
+fn pass_history<B: Backend>(store: &Contract<B>) -> Answer {
+    let (items, list_rev) = match store.list(&[PASSES_PREFIX], &Selector::Everything) {
+        Ok(x) => x,
+        Err(e) => return cannot(e),
+    };
+    let mut passes: Vec<(u64, Value)> = Vec::new();
+    for i in items {
+        let Some(n) = i.key.strip_prefix(PASSES_PREFIX).and_then(|n| n.parse::<u64>().ok()) else {
+            return cannot(format!("{} is not a pass number under {PASSES_PREFIX}", i.key));
+        };
+        passes.push((n, i.value.data));
+    }
+    passes.sort_by_key(|(n, _)| *n);
+    Answer::Ok(json!({ "passes": passes.into_iter().map(|(_, v)| v).collect::<Vec<_>>(), "list_rev": list_rev }))
 }
 
 /// Who holds `locks/<resource>`: the actor of the txn that took it, from its audit record.

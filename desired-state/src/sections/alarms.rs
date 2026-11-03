@@ -1,7 +1,7 @@
 //! `Alarms`: whether every alarm reached someone, written by `incident alarms-pass`. Its one
 //! lever re-sends one failed alarm; its own dead-man condition pages on raise.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{typed, ConditionDecl, FieldShape, SchemaError, SectionKind};
@@ -16,6 +16,30 @@ pub const UNDELIVERED: &str = "Undelivered";
 pub const RECONCILER_PASS_STALE: &str = "ReconcilerPassStale";
 pub const RETRY_DELIVERY: &str = "retry-delivery";
 pub const UNDELIVERED_OPEN: &str = "undelivered_open";
+/// The dead-man check's state, typed beside its prose `deadman`.
+pub const DEADMAN_STATE: &str = "deadman_state";
+/// The off-box heartbeat's last outcome, typed beside its prose `heartbeat_last`.
+pub const HEARTBEAT_STATE: &str = "heartbeat_state";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DeadManState {
+    /// The latest pass record is inside the dead-man.
+    Fresh,
+    /// The operator turned the pass off, or stopped the observability plane: nothing is judged.
+    Waiting,
+    /// The latest pass record is past the dead-man, or there is none.
+    Stale,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HeartbeatState {
+    /// No off-box receiver is configured.
+    Unconfigured,
+    Delivered,
+    Failed,
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -36,6 +60,8 @@ pub struct Status {
     pub pass_age_secs: Option<Numeric>,
     pub heartbeat_last: Option<String>,
     pub deadman: Option<String>,
+    pub deadman_state: Option<DeadManState>,
+    pub heartbeat_state: Option<HeartbeatState>,
     pub undelivered: Option<Vec<Value>>,
 }
 
