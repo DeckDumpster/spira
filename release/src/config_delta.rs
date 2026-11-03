@@ -396,11 +396,10 @@ fn registry_keys(rel: &Path) -> Result<Vec<spira_config::registry::RegistryKey>,
     Ok(keys)
 }
 
-/// The release's delta plus the registry default of every key its registry declares that the
-/// active release's registry (`active`) does not, the layers lack and the delta does not
+/// The release's delta plus the registry default of every key its registry declares, the layers lack and the delta does not
 /// mention, so a key added to the registry without a delta entry still reaches the config.
-/// A key the running release already declared is added too: the new release resolves every key. A new
-/// key whose default is absent or computed refuses, naming it. `None` when there is nothing
+/// A key the running release already declared is added too: the new release resolves every key.
+/// A new key whose default is absent or computed refuses, naming it. `None` when there is nothing
 /// to apply.
 pub fn complete(original: &[Table], rel: &Path, active: Option<&Path>, delta: Option<Delta>) -> Result<Option<Delta>, String> {
     let mut d = delta.unwrap_or_default();
@@ -427,9 +426,8 @@ pub fn complete(original: &[Table], rel: &Path, active: Option<&Path>, delta: Op
         if let Ok(v) = literal_default(&k) {
             d.added.insert(path, v);
         }
-        //             // No literal default, or one computed on the box: the key is optional and its code
-            // supplies the value (hotfix_alert_hours defaults to 4 in code). Refusing it blocked
-            // every round VM, which has no active release (r-auto-107 and r-auto-110, 2026-10-10).
+        // No literal default, or one computed on the box: the key is optional and its code supplies
+        // the value; refusing it would block a host with no active release.
     }
     if !unset.is_empty() {
         return Err(format!(
