@@ -191,3 +191,18 @@ fn a_new_store_that_cannot_list_is_cannot_tell() {
     let e = run(&mut old, &mut new, 2).unwrap_err();
     assert!(e.contains("on the new store"), "{e}");
 }
+
+#[test]
+fn a_store_that_ignores_the_page_flags_is_cannot_tell_not_an_endless_walk() {
+    let (beads, batches) = beads_and_batches(3, 1);
+    let mut old = timed_store(beads, batches, 3);
+    let rows = json!([{"bead_id": "sp-00"}, {"bead_id": "sp-01"}]).to_string();
+    let mut unpaged = move |_: &[String]| (0, rows.clone());
+    let e = run(&mut old, &mut unpaged, 2).unwrap_err();
+    assert!(e.contains("on the new store: it does not page by id"), "{e}");
+
+    let newest_first = json!([{"bead_id": "sp-02"}, {"bead_id": "sp-01"}]).to_string();
+    let mut truncating = move |_: &[String]| (0, newest_first.clone());
+    let e = run(&mut truncating, &mut store(&[]), 3).unwrap_err();
+    assert!(e.contains("on the old store: it does not page by id"), "a short page out of id order is no last page: {e}");
+}

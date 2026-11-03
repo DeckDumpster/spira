@@ -1,9 +1,9 @@
 //! `admin-parity --old-socket <a> --new-socket <b>`: every read verb the control store serves,
 //! with the same arguments, against the lc-serve on each socket, and the answers diffed.
 //!
-//! The ids come from the old store's own lists, walked in pages keyed by id so that no call
-//! outgrows lc-serve's per-request deadline, and every per-record verb is asked per id or per
-//! page of ids. An id only the new store lists is reported. A bead the planning plane types as never having a
+//! The ids come from the old store's own lists, walked in pages keyed by id so no call outgrows
+//! lc-serve's per-request deadline; every per-record verb is asked per id or per page of ids,
+//! and an id only the new store lists is reported. A bead the planning plane types as never having a
 //! record is left out of both sides and named, since the import does not carry it. Answers compare as values, not text: the dolt
 //! path renders every column as a string and a JSON column as JSON text, the control store
 //! renders typed JSON, and the two are the same answer. A difference that `ALLOWED` names is
@@ -175,7 +175,11 @@ fn walk(call: &mut dyn FnMut(&[String]) -> (i32, String), list: &[&str], field: 
             (0, out) => ids_in(&out, field),
             (rc, out) => return Err(format!("{} on the {side} store: exit {rc}: {}", a.join(" "), out.trim())),
         };
-        let full = got.len() >= page;
+        let ascending = got.windows(2).all(|w| w[0] < w[1]) && ids.last().zip(got.first()).is_none_or(|(last, first)| last < first);
+        if got.len() > page || !ascending {
+            return Err(format!("{} on the {side} store: it does not page by id", a.join(" ")));
+        }
+        let full = got.len() == page;
         ids.extend(got);
         if !full {
             return Ok(ids);
