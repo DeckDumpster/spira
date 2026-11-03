@@ -23,6 +23,11 @@ pub const PLANNING_WATERMARK: &str = "planning/watermark";
 pub const PLANNING_CLOSED: &str = "planning-closed";
 /// Each watcher's conditions, under its own name: `conditions/<owner>/<key>`.
 pub const CONDITIONS: &str = "conditions/";
+/// What the cutover import left: its baseline revision, the archive it read and its report.
+pub const IMPORT: &str = "import/";
+/// The import's baseline: every record's stored state at revision `rev`, one past the last
+/// dolt event seq. Records the report lists were imported as stored, not replayed.
+pub const IMPORT_BASELINE: &str = "import/baseline";
 
 pub fn lifecycle(id: &str) -> String {
     format!("{LIFECYCLE}{id}")

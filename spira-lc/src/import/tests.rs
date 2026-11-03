@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use runtime::ports::VirtualClock;
 use serde_json::{json, Value};
-use state_store::{Config, Contract, Object, Ports};
+use state_store::{Backend, Config, Contract, Object, Ports};
 use state_store_sqlite::{Options, SqliteBackend};
 
 use super::archive::{self, Archive};
@@ -180,9 +180,9 @@ fn the_runtime_tables_land_under_runtime() {
 fn a_record_equal_to_its_fold_passes_and_one_that_is_not_names_the_field() {
     let log = vec![claim(1, "sp-a", "d1"), event(2, "bead", "sp-a", "Submit", "READY", "READY", false, json!({"Submit": {"tip": TIP}}))];
     let good = archived(&[("bead", vec![working("sp-a", "d1")]), ("event", log.clone())]);
-    assert_eq!(checks::replay(&good, &BTreeSet::new()), Vec::<String>::new());
+    assert_eq!(checks::replay(&good, &BTreeSet::new()).refusals, Vec::<String>::new());
     let bad = archived(&[("bead", vec![working("sp-a", "d2")]), ("event", log)]);
-    let failures = checks::replay(&bad, &BTreeSet::new());
+    let failures = checks::replay(&bad, &BTreeSet::new()).refusals;
     assert_eq!(failures.len(), 1, "{failures:?}");
     assert!(failures[0].starts_with("bead sp-a: does not replay: holder: \"d2\" imported, \"d1\" replayed"), "{failures:?}");
 }
@@ -191,15 +191,19 @@ fn a_record_equal_to_its_fold_passes_and_one_that_is_not_names_the_field() {
 fn the_fields_that_bypass_events_are_not_compared() {
     let row = with(working("sp-a", "d1"), &[("repo", json!("elsewhere")), ("claim_verdict", json!("claimable")), ("claim_at", json!("2026-01-01T00:00:00Z")), ("since", json!("999"))]);
     let a = archived(&[("bead", vec![row]), ("event", vec![claim(1, "sp-a", "d1")])]);
-    assert_eq!(checks::replay(&a, &BTreeSet::new()), Vec::<String>::new());
+    assert_eq!(checks::replay(&a, &BTreeSet::new()).refusals, Vec::<String>::new());
 }
 
 #[test]
-fn an_applied_event_the_machine_refuses_on_replay_is_named_by_seq() {
-    let a = archived(&[("bead", vec![bead("sp-a", "LANDED", 1)]), ("event", vec![event(5, "bead", "sp-a", "Deliver", "READY", "LANDED", true, json!("Deliver"))])]);
-    let failures = checks::replay(&a, &BTreeSet::new());
-    assert_eq!(failures.len(), 1, "{failures:?}");
-    assert!(failures[0].starts_with("bead sp-a: seq 5: Deliver READY -> LANDED replays as refused"), "{failures:?}");
+fn an_applied_event_the_machine_refuses_on_replay_is_named_by_seq_and_refuses_only_a_live_record() {
+    let refused_at = |state: &str| archived(&[("bead", vec![bead("sp-a", state, 1)]), ("event", vec![event(5, "bead", "sp-a", "Deliver", "READY", state, true, json!("Deliver"))])]);
+    let live = checks::replay(&refused_at("CERTIFIED"), &BTreeSet::new());
+    assert_eq!((live.refusals.len(), live.as_stored.len()), (1, 0), "{live:?}");
+    assert!(live.refusals[0].starts_with("bead sp-a: seq 5: Deliver READY -> CERTIFIED replays as refused"), "{live:?}");
+    let terminal = checks::replay(&refused_at("LANDED"), &BTreeSet::new());
+    assert_eq!(terminal.refusals, Vec::<String>::new());
+    assert_eq!((terminal.as_stored.len(), terminal.as_stored[0].state.as_str()), (1, "LANDED"), "{terminal:?}");
+    assert!(terminal.as_stored[0].finding.starts_with("seq 5: Deliver READY -> LANDED replays as refused"), "{terminal:?}");
 }
 
 #[test]
@@ -292,4 +296,91 @@ fn a_mend_at_or_above_the_import_revision_is_named() {
     let mend = json!({"seq": "9", "batch_id": "b-1", "pass": "1", "suite": "u", "bead_id": "sp-a", "from_tip": "a", "tip": "b", "ask_id": null, "checked": "", "diagnosis": null, "at": "1"});
     let a = archived(&[("event", vec![claim(3, "sp-a", "d1")]), ("mend", vec![mend])]);
     assert_eq!(map::project(&a, &BTreeSet::new()).unwrap_err(), ["mend row 9: seq 9 is not below the import revision 4, so a later mend would sort before it"]);
+}
+
+/// An archive file on disk, as `export` leaves it, with a run directory holding no cursor.
+fn written(t: &testkit::TempDir, tables: &[(&str, Vec<Value>)]) -> std::path::PathBuf {
+    let rows: BTreeMap<&str, Vec<Value>> = tables.iter().cloned().collect();
+    let path = t.path().join("export.jsonl");
+    std::fs::write(&path, archive::render(&rows)).unwrap();
+    path
+}
+
+fn import_of(t: &testkit::TempDir, archive_path: &std::path::Path) -> (i32, String) {
+    super::import(archive_path, &BTreeSet::new(), &t.path().join("run"), &t.path().join("store.db"))
+}
+
+fn stored(t: &testkit::TempDir, key: &str) -> Object {
+    let b = SqliteBackend::open(&t.path().join("store.db"), Options::default()).unwrap();
+    let (_, v) = b.range(key, None, 1, u64::MAX).unwrap().into_iter().find(|(k, _)| k == key).unwrap_or_else(|| panic!("no {key} in the store"));
+    Object::decode(&v.value).unwrap()
+}
+
+/// A record dropped by a write that left no event: the log takes it straight to its state, and
+/// the stored row carries a `reason` no event wrote.
+fn dropped_outside_the_log(state: &str) -> [(&'static str, Vec<Value>); 2] {
+    [
+        ("bead", vec![with(bead("sp-a", state, 0), &[("reason", json!("residue-closed-no-landing-evidence"))])]),
+        ("event", vec![event(6, "bead", "sp-a", "Filed", "NONE", state, true, Value::Null)]),
+    ]
+}
+
+#[test]
+fn a_terminal_record_with_a_field_written_outside_the_event_log_imports_as_stored_and_is_reported() {
+    let t = testkit::TempDir::new("import-as-stored");
+    let path = written(&t, &dropped_outside_the_log("DROPPED"));
+    let (rc, out) = import_of(&t, &path);
+    assert_eq!(rc, 0, "{out}");
+    assert_eq!(stored(&t, "lifecycle/sp-a").data["reason"], json!("residue-closed-no-landing-evidence"), "imported as stored, never rewritten");
+    let report: Value = serde_json::from_slice(&std::fs::read(super::report_path(&path)).unwrap()).unwrap();
+    let listed = report["as_stored"].as_array().unwrap();
+    assert_eq!(listed.len(), 1, "{report}");
+    assert_eq!((listed[0]["table"].as_str(), listed[0]["key"].as_str(), listed[0]["state"].as_str()), (Some("bead"), Some("sp-a"), Some("DROPPED")));
+    assert!(listed[0]["finding"].as_str().unwrap().contains("reason: \"residue-closed-no-landing-evidence\" imported, null replayed"), "{report}");
+}
+
+#[test]
+fn a_live_record_with_a_field_written_outside_the_event_log_refuses_the_import() {
+    let t = testkit::TempDir::new("import-live-refuses");
+    let path = written(&t, &dropped_outside_the_log("READY"));
+    let (rc, out) = import_of(&t, &path);
+    assert_eq!(rc, crate::REFUSED, "{out}");
+    assert!(out.contains("bead sp-a: does not replay: reason: \"residue-closed-no-landing-evidence\" imported, null replayed"), "{out}");
+    assert!(!t.path().join("store.db").exists(), "a refused import leaves no store");
+    assert!(!super::report_path(&path).exists(), "a refused import writes no report");
+}
+
+#[test]
+fn the_baseline_is_recorded_on_the_store_at_one_past_the_last_event_seq() {
+    let t = testkit::TempDir::new("import-baseline");
+    let path = written(&t, &dropped_outside_the_log("DROPPED"));
+    let (rc, out) = import_of(&t, &path);
+    assert_eq!(rc, 0, "{out}");
+    let baseline = stored(&t, keys::IMPORT_BASELINE);
+    assert_eq!((baseline.data["rev"].as_u64(), baseline.data["max_event_seq"].as_u64()), (Some(7), Some(6)), "{}", baseline.data);
+    assert_eq!(baseline.data["as_stored"].as_u64(), Some(1), "{}", baseline.data);
+    assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["import_rev"], json!(7));
+}
+
+#[test]
+fn a_row_that_fails_its_checksum_refuses_the_import_even_when_its_record_is_terminal() {
+    let t = testkit::TempDir::new("import-checksum");
+    let path = written(&t, &dropped_outside_the_log("DROPPED"));
+    let text = std::fs::read_to_string(&path).unwrap().replace("residue-closed-no-landing-evidence", "rewritten");
+    std::fs::write(&path, text).unwrap();
+    let (rc, out) = import_of(&t, &path);
+    assert_eq!(rc, crate::REFUSED, "{out}");
+    assert!(out.contains("archive: bead row sp-a fails its checksum"), "{out}");
+    assert!(!t.path().join("store.db").exists());
+}
+
+#[test]
+fn a_store_missing_the_baseline_fails_the_load_check() {
+    let a = archived(&dropped_outside_the_log("DROPPED"));
+    let mut p = projected(&a, &[]);
+    map::record_baseline(&mut p, &map::Baseline { archive: "export.jsonl".into(), report: "export.jsonl.import-report.json".into(), as_stored: 1 });
+    let mut got: BTreeMap<String, Vec<u8>> = p.items.iter().map(|(k, i)| (k.clone(), i.value.clone())).collect();
+    assert_eq!(checks::loaded(&a, &p, &got), Vec::<String>::new());
+    got.remove(keys::IMPORT_BASELINE);
+    assert_eq!(checks::loaded(&a, &p, &got), [format!("import: 1 keys imported, 0 read back; first missing {}", keys::IMPORT_BASELINE)]);
 }

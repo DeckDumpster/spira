@@ -61,11 +61,15 @@ functions = ["row_key", "row_sha", "table_sum", "parse"]
 
 [[scope]]
 path = "spira-lc/src/import/map.rs"
-functions = ["import_rev", "audit_of", "record_of", "readiness_of", "mend_of", "runtime_key", "project"]
+functions = ["import_rev", "audit_of", "record_of", "readiness_of", "mend_of", "runtime_key", "project", "record_baseline"]
 
 [[scope]]
 path = "spira-lc/src/import/checks.rs"
 functions = ["loaded", "kind_of", "fields", "differences", "fold_bead", "delivery_seed", "delivery_exit", "fold_delivery", "fold_batch", "logs", "replay", "cursors"]
+
+[[scope]]
+path = "spira-lc/src/import/mod.rs"
+functions = ["import", "report_path", "write_report"]
 
 # The parity tool's comparison.
 [[scope]]
