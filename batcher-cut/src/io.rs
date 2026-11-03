@@ -1746,10 +1746,14 @@ pub struct VerbRun {
 }
 
 fn round_verb(env: &Env, args: &[&str], stdin: &str) -> Result<VerbRun, String> {
+    round_verb_with(env, args, stdin, &[])
+}
+
+fn round_verb_with(env: &Env, args: &[&str], stdin: &str, vars: &[(&str, &str)]) -> Result<VerbRun, String> {
     use std::io::Write;
     // batch-job: this runs whatever its caller names, as long as that takes
     let mut cmd = Command::new(&env.queue_bin);
-    cmd.arg("round").args(args);
+    cmd.arg("round").args(args).envs(vars.iter().copied());
     cmd.env("SPIRA_QUEUE_LOCK_HELD", "1");
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let what = format!("queue round {}", args.first().copied().unwrap_or(""));
@@ -2026,8 +2030,12 @@ pub fn read_local_verdict(env: &Env, repo: &str) -> Option<(String, u64)> {
 }
 
 /// `cause` is the one word the round's `.result` line carries as `abandoned:<cause>`.
+/// The batcher abandons only after it has ejected every member it can implicate, so its abandon
+/// of a red round is a considered one; `queue round abandon` refuses any other.
 pub fn round_abandon(env: &Env, repo: &Repo, batch: &str, why: &str, cause: &str) {
-    match round_verb(env, &["abandon", batch, &repo.name, "--reason-file", "-", "--cause", cause], why) {
+    let considered = format!("the batcher's {cause} abandon, after ejecting every member it could implicate");
+    let vars = [("QUEUE_ABANDON_CONSIDERED", considered.as_str())];
+    match round_verb_with(env, &["abandon", batch, &repo.name, "--reason-file", "-", "--cause", cause], why, &vars) {
         Ok(r) if r.code == Some(0) => {}
         Ok(r) => println!("batcher {}: could not abandon round {batch}: {}", repo.name, verb_failed("queue round abandon", &r)),
         Err(e) => println!("batcher {}: could not abandon round {batch}: {e}", repo.name),
