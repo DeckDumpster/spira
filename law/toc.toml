@@ -35,4 +35,9 @@ slugs = [
   "law-a-tool-bounds-the-state-it-leaves",
   "law-a-measurement-ends-when-its-verdict-settles",
   "law-no-fallbacks",
+  "law-a-unit-test-calls-no-binary",
+  "law-a-knob-is-set-inside-its-model",
+  "law-periodic-work-is-incremental",
+  "law-a-migration-certifies-the-living-and-imports-the-dead-as-stored",
+  "law-a-stop-stops-everything",
 ]
