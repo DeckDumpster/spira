@@ -310,9 +310,14 @@ fn import_of(t: &testkit::TempDir, archive_path: &std::path::Path) -> (i32, Stri
     super::import(archive_path, &BTreeSet::new(), &t.path().join("run"), &t.path().join("store.db"))
 }
 
-fn stored(t: &testkit::TempDir, key: &str) -> Object {
-    let b = SqliteBackend::open(&t.path().join("store.db"), Options::default()).unwrap();
-    let (_, v) = b.range(key, None, 1, u64::MAX).unwrap().into_iter().find(|(k, _)| k == key).unwrap_or_else(|| panic!("no {key} in the store"));
+/// An import that passed, with its store read through the import's own handle: a second
+/// opener is refused while one lives, and a child another test forks holds one too.
+fn imported(t: &testkit::TempDir, archive_path: &std::path::Path) -> (SqliteBackend, Value) {
+    super::import_store(archive_path, &BTreeSet::new(), &t.path().join("run"), &t.path().join("store.db")).unwrap_or_else(|(rc, out)| panic!("rc {rc}: {out}"))
+}
+
+fn stored(b: &SqliteBackend, key: &str) -> Object {
+    let (_, v) = b.range(key, None, 1, b.head().unwrap()).unwrap().into_iter().find(|(k, _)| k == key).unwrap_or_else(|| panic!("no {key} in the store"));
     Object::decode(&v.value).unwrap()
 }
 
@@ -329,9 +334,8 @@ fn dropped_outside_the_log(state: &str) -> [(&'static str, Vec<Value>); 2] {
 fn a_terminal_record_with_a_field_written_outside_the_event_log_imports_as_stored_and_is_reported() {
     let t = testkit::TempDir::new("import-as-stored");
     let path = written(&t, &dropped_outside_the_log("DROPPED"));
-    let (rc, out) = import_of(&t, &path);
-    assert_eq!(rc, 0, "{out}");
-    assert_eq!(stored(&t, "lifecycle/sp-a").data["reason"], json!("residue-closed-no-landing-evidence"), "imported as stored, never rewritten");
+    let (store, _) = imported(&t, &path);
+    assert_eq!(stored(&store, "lifecycle/sp-a").data["reason"], json!("residue-closed-no-landing-evidence"), "imported as stored, never rewritten");
     let report: Value = serde_json::from_slice(&std::fs::read(super::report_path(&path)).unwrap()).unwrap();
     let listed = report["as_stored"].as_array().unwrap();
     assert_eq!(listed.len(), 1, "{report}");
@@ -354,12 +358,11 @@ fn a_live_record_with_a_field_written_outside_the_event_log_refuses_the_import()
 fn the_baseline_is_recorded_on_the_store_at_one_past_the_last_event_seq() {
     let t = testkit::TempDir::new("import-baseline");
     let path = written(&t, &dropped_outside_the_log("DROPPED"));
-    let (rc, out) = import_of(&t, &path);
-    assert_eq!(rc, 0, "{out}");
-    let baseline = stored(&t, keys::IMPORT_BASELINE);
+    let (store, summary) = imported(&t, &path);
+    let baseline = stored(&store, keys::IMPORT_BASELINE);
     assert_eq!((baseline.data["rev"].as_u64(), baseline.data["max_event_seq"].as_u64()), (Some(7), Some(6)), "{}", baseline.data);
     assert_eq!(baseline.data["as_stored"].as_u64(), Some(1), "{}", baseline.data);
-    assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["import_rev"], json!(7));
+    assert_eq!(summary["import_rev"], json!(7));
 }
 
 #[test]

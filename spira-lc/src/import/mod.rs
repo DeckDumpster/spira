@@ -66,12 +66,13 @@ fn read_back(b: &SqliteBackend, rev: u64) -> Result<BTreeMap<String, Vec<u8>>, S
     }
 }
 
-/// Loads `p` into a new store at `out` and reads it back; `Err` leaves no store behind.
-fn load(out: &Path, p: &map::Projection) -> Result<BTreeMap<String, Vec<u8>>, String> {
+/// Loads `p` into a new store at `out` and reads it back through the same handle.
+fn load(out: &Path, p: &map::Projection) -> Result<(SqliteBackend, BTreeMap<String, Vec<u8>>), String> {
     let b = SqliteBackend::open(out, Options::default()).map_err(|e| format!("{}: {e}", out.display()))?;
     b.bulk_load(p.rev, p.items.iter().map(|(k, i)| (k.clone(), i.value.clone())))
         .map_err(|e| format!("bulk load into {}: {e}", out.display()))?;
-    read_back(&b, p.rev)
+    let got = read_back(&b, p.rev)?;
+    Ok((b, got))
 }
 
 pub fn cmd_admin_import(args: &[String], conn: &Conn) -> (i32, String) {
@@ -136,21 +137,30 @@ fn write_report(path: &Path, report: &serde_json::Value) -> Result<(), String> {
 /// the event log is imported as stored and listed in the report beside the archive. The store
 /// is written only when every check passes, and the report only with it.
 pub fn import(archive_path: &Path, no_record: &BTreeSet<String>, run: &Path, out: &Path) -> (i32, String) {
+    match import_store(archive_path, no_record, run, out) {
+        Ok((_, summary)) => (0, serde_json::to_string_pretty(&summary).unwrap_or_default()),
+        Err(refusal) => refusal,
+    }
+}
+
+/// `import`, handing back the open store: a caller reads it through this one handle, since a
+/// second opener is refused while any handle lives.
+pub fn import_store(archive_path: &Path, no_record: &BTreeSet<String>, run: &Path, out: &Path) -> Result<(SqliteBackend, serde_json::Value), (i32, String)> {
     let a = match archive::read(archive_path) {
         Ok(a) => a,
-        Err(f) => return refused(&f),
+        Err(f) => return Err(refused(&f)),
     };
     let mut p = match map::project(&a, no_record) {
         Ok(p) => p,
-        Err(f) => return refused(&f),
+        Err(f) => return Err(refused(&f)),
     };
     let failures = checks::cursors(run, p.rev);
     if !failures.is_empty() {
-        return refused(&failures);
+        return Err(refused(&failures));
     }
     let replay = checks::replay(&a, no_record);
     if !replay.refusals.is_empty() {
-        return refused(&replay.refusals);
+        return Err(refused(&replay.refusals));
     }
     let report = report_path(archive_path);
     map::record_baseline(
@@ -161,17 +171,18 @@ pub fn import(archive_path: &Path, no_record: &BTreeSet<String>, run: &Path, out
             as_stored: replay.as_stored.len(),
         },
     );
-    let got = match load(out, &p) {
+    let (store, got) = match load(out, &p) {
         Ok(g) => g,
         Err(e) => {
             remove_store(out);
-            return (CANNOT_TELL, format!("cannot tell: admin-import: {e}"));
+            return Err((CANNOT_TELL, format!("cannot tell: admin-import: {e}")));
         }
     };
     let failures = checks::loaded(&a, &p, &got);
     if !failures.is_empty() {
+        drop(store);
         remove_store(out);
-        return refused(&failures);
+        return Err(refused(&failures));
     }
     let written = write_report(
         &report,
@@ -183,8 +194,9 @@ pub fn import(archive_path: &Path, no_record: &BTreeSet<String>, run: &Path, out
         }),
     );
     if let Err(e) = written {
+        drop(store);
         remove_store(out);
-        return (CANNOT_TELL, format!("cannot tell: admin-import: the report: {e}"));
+        return Err((CANNOT_TELL, format!("cannot tell: admin-import: the report: {e}")));
     }
     let tables: serde_json::Map<String, serde_json::Value> = archive::TABLES
         .iter()
@@ -204,7 +216,7 @@ pub fn import(archive_path: &Path, no_record: &BTreeSet<String>, run: &Path, out
         "as_stored": replay.as_stored.len(),
         "checks": "passed",
     });
-    (0, serde_json::to_string_pretty(&summary).unwrap_or_default())
+    Ok((store, summary))
 }
 
 #[cfg(test)]

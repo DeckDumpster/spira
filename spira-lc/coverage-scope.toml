@@ -69,7 +69,7 @@ functions = ["loaded", "kind_of", "fields", "differences", "fold_bead", "deliver
 
 [[scope]]
 path = "spira-lc/src/import/mod.rs"
-functions = ["import", "report_path", "write_report"]
+functions = ["import", "import_store", "report_path", "write_report"]
 
 # The parity tool's comparison.
 [[scope]]
