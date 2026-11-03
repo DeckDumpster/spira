@@ -321,32 +321,79 @@ fn branch_refusal(conn: &Conn, bead_id: &str, tip: &str, stack_tips: &[String]) 
     let reg = spira_config::repos::Registry::from_env(env, std::path::Path::new(&home));
     let root = reg.root(&repo)?;
     let landref = spira_config::repos::landref(&reg, &root)?;
-    finishing_refusal(std::path::Path::new(&root), &landref, tip, bead_id, stack_tips).map(|m| (REFUSED, m))
+    let in_flight = |id: &str| sibling_in_flight(conn, id, &repo);
+    finishing_refusal(std::path::Path::new(&root), &landref, tip, bead_id, stack_tips, &in_flight).map(|m| (REFUSED, m))
 }
 
-/// Every commit above the landing ref names the bead, and the branch holds the landing ref's tip.
-fn finishing_refusal(root: &std::path::Path, landref: &str, tip: &str, bead_id: &str, stack_tips: &[String]) -> Option<String> {
+/// A sibling's commits may ride under this bead's (law-a-rebase-loop-is-sequenced-not-split): the
+/// sibling is in flight — submitted, certified, in a round, or landed — in the same repository.
+fn sibling_in_flight(conn: &Conn, id: &str, repo: &str) -> bool {
+    use bead::BeadState::{Certified, InDelivery, Landed, Submitted};
+    rows::bead_repo(conn, id).ok().flatten().as_deref() == Some(repo)
+        && rows::fetch_bead(conn, id)
+            .ok()
+            .flatten()
+            .is_some_and(|r| matches!(r.state, Submitted | Certified | InDelivery | Landed))
+}
+
+/// Every commit above the landing ref names the bead or an in-flight sibling, and the branch holds
+/// the landing ref's tip.
+fn finishing_refusal(
+    root: &std::path::Path,
+    landref: &str,
+    tip: &str,
+    bead_id: &str,
+    stack_tips: &[String],
+    in_flight: &dyn Fn(&str) -> bool,
+) -> Option<String> {
     if !crate::git_evidence::is_ancestor(root, landref, tip) {
         return Some(format!(
             "refused: {tip} does not contain the landing ref {landref} — run `git rebase {landref}`, resolve any conflict, and run `work submit` again"
         ));
     }
-    let mut args = vec!["log".to_string(), "--no-merges".to_string(), "--format=%H%x09%s".to_string(), tip.to_string(), format!("^{landref}")];
+    let mut args = vec!["log".to_string(), "--no-merges".to_string(), "--format=%H%x1f%s%x1f%B%x1e".to_string(), tip.to_string(), format!("^{landref}")];
     args.extend(stack_tips.iter().map(|t| format!("^{t}")));
     let out = spira_config::bounded::bounded("git").arg("-C").arg(root).args(&args).output().ok().filter(|o| o.status.success())?;
-    let unnamed: Vec<String> = String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|l| l.split_once('\t'))
-        .filter(|(sha, _)| !crate::git_evidence::commit_names_bead(root, sha, bead_id))
-        .map(|(sha, subject)| format!("  {} {subject}", &sha[..sha.len().min(12)]))
+    let commits: Vec<(String, String, String)> = String::from_utf8_lossy(&out.stdout)
+        .split('\x1e')
+        .map(|rec| rec.trim_start_matches('\n'))
+        .filter(|rec| !rec.is_empty())
+        .map(|rec| {
+            // A record cut short keeps empty fields, so it names nothing and refuses.
+            let mut f = rec.splitn(3, '\x1f').map(str::to_string);
+            (f.next().unwrap_or_default(), f.next().unwrap_or_default(), f.next().unwrap_or_default())
+        })
         .collect();
+    let unnamed = unnamed_commits(&commits, bead_id, in_flight);
     if unnamed.is_empty() {
         return None;
     }
     Some(format!(
-        "refused: these commits do not name {bead_id}:\n{}\nReword the tip with `git commit --amend -m \"{bead_id}: <subject>\"`, or earlier ones with `git rebase -i {landref}` (mark each `reword`), then run `work submit` again",
+        "refused: these commits name neither {bead_id} nor a bead in flight in this repository:\n{}\nReword the tip with `git commit --amend -m \"{bead_id}: <subject>\"`, or earlier ones with `git rebase -i {landref}` (mark each `reword`), then run `work submit` again",
         unnamed.join("\n")
     ))
+}
+
+/// The commits (sha, subject, message) that name neither `bead_id` nor a bead `in_flight`, each
+/// rendered as a refusal line.
+fn unnamed_commits(commits: &[(String, String, String)], bead_id: &str, in_flight: &dyn Fn(&str) -> bool) -> Vec<String> {
+    commits
+        .iter()
+        .filter(|(_, _, message)| {
+            !crate::git_evidence::message_names_bead(message, bead_id) && !named_beads(message).iter().any(|b| b != bead_id && in_flight(b))
+        })
+        .map(|(sha, subject, _)| format!("  {} {subject}", &sha[..sha.len().min(12)]))
+        .collect()
+}
+
+/// The whole bead ids a commit message names.
+fn named_beads(message: &str) -> Vec<String> {
+    message
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '.'))
+        .map(|t| t.trim_end_matches('.'))
+        .filter(|t| is_bead_id(t))
+        .map(str::to_string)
+        .collect()
 }
 
 /// A tip is submitted only on a recorded pass of its repository's compile-and-lint check; the
@@ -1563,6 +1610,49 @@ mod tests {
     }
 
     use super::*;
+
+    fn commit(sha: &str, message: &str) -> (String, String, String) {
+        (sha.into(), message.lines().next().unwrap_or("").into(), message.into())
+    }
+
+    #[test]
+    fn a_branch_rebased_onto_a_submitted_siblings_commits_submits() {
+        let commits = [commit("aaa1", "sp-sib: the sibling's change\n"), commit("bbb2", "sp-own: my change\n")];
+        let in_flight = |id: &str| id == "sp-sib";
+        assert!(unnamed_commits(&commits, "sp-own", &in_flight).is_empty());
+    }
+
+    #[test]
+    fn a_commit_naming_a_bead_not_in_flight_still_refuses() {
+        let commits = [commit("aaa1", "sp-gone: a dropped bead's change\n"), commit("bbb2", "sp-own: my change\n")];
+        let in_flight = |id: &str| id == "sp-sib";
+        let refused = unnamed_commits(&commits, "sp-own", &in_flight);
+        assert_eq!(refused.len(), 1, "{refused:?}");
+        assert!(refused[0].contains("aaa1") && refused[0].contains("sp-gone"), "{refused:?}");
+    }
+
+    #[test]
+    fn a_commit_naming_no_bead_still_refuses() {
+        let commits = [commit("ccc3", "fix the thing\n"), commit("bbb2", "sp-own: my change\n")];
+        let in_flight = |_: &str| true;
+        let refused = unnamed_commits(&commits, "sp-own", &in_flight);
+        assert_eq!(refused.len(), 1, "{refused:?}");
+        assert!(refused[0].contains("ccc3"), "{refused:?}");
+    }
+
+    #[test]
+    fn a_sibling_named_with_trailing_punctuation_or_as_a_child_submits() {
+        let commits = [commit("aaa1", "fix for sp-sib.\n"), commit("ddd4", "sp-sib.1: the child\n")];
+        let in_flight = |id: &str| id == "sp-sib" || id == "sp-sib.1";
+        assert!(unnamed_commits(&commits, "sp-own", &in_flight).is_empty());
+    }
+
+    #[test]
+    fn a_sibling_id_is_named_whole_not_as_a_prefix() {
+        let commits = [commit("aaa1", "sp-sib2: a longer id\n")];
+        let in_flight = |id: &str| id == "sp-sib";
+        assert_eq!(unnamed_commits(&commits, "sp-own", &in_flight).len(), 1);
+    }
 
     #[test]
     fn done_on_a_dropped_or_done_bead_is_a_no_op_for_every_actor() {
