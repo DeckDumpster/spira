@@ -167,6 +167,7 @@ mod tests {
         assert!(out.contains("\nEnvironment=SPIRA_LC_SOCKET=%t/spira-lc/sock\n"));
         assert!(out.contains("\nEnvironment=SPIRA_LC_PASSWORD_FILE=/h/lc.credential\n"));
         assert!(out.contains("\nRequires=lc-serve.socket\n"));
+        assert!(out.contains("\nEnvironmentFile=-%h/.config/lc-backup.env\n"), "the store's shipper needs the backup credentials lc-backup.service loads:\n{out}");
         assert!(!out.contains("RuntimeDirectory"), "the socket unit owns the runtime directory");
         let sock = render_file(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd/lc-serve.socket"), &hv(), None).unwrap();
         assert!(sock.contains("\nListenStream=%t/spira-lc/sock\n"), "{sock}");

@@ -59,7 +59,13 @@ pub struct S3Creds {
 
 impl S3Creds {
     pub fn from_env() -> Result<S3Creds, String> {
-        let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+        Self::from_vars(|k| std::env::var(k).ok())
+    }
+
+    /// The same keys read through `lookup`, so a caller can resolve them from a unit's
+    /// environment file rather than from this process's environment.
+    pub fn from_vars(lookup: impl Fn(&str) -> Option<String>) -> Result<S3Creds, String> {
+        let var = |k: &str| lookup(k).filter(|v| !v.is_empty());
         let (Some(access_key), Some(secret_key)) =
             (var("AWS_ACCESS_KEY_ID"), var("AWS_SECRET_ACCESS_KEY"))
         else {
