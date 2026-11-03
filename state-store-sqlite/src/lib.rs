@@ -75,6 +75,59 @@ pub const MIGRATIONS: &[&[&str]] = &[
          GROUP BY key HAVING value IS NOT NULL",
         "CREATE INDEX latest_by_state ON latest (state, key) WHERE state IS NOT NULL",
     ],
+    // 2 (sp-8ugeek): each delivery's `entered` — `{STATE: at}`, the newest applied delivery
+    // audit into each state — filled once from its history, so `list --delivery` reads when a
+    // delivery entered its state from the delivery and never from its history. History is
+    // read as the control plane's feed reads it: an imported entry carries its audit, any
+    // other names the `events/<rev>` whose branch carried it. The value is rewritten in place
+    // at its own revision, in `latest` and in the `versions` row it mirrors. A store without
+    // `deliveries/` keys is untouched.
+    &[
+        "CREATE TEMP TABLE m2_audits (id TEXT NOT NULL, to_state TEXT, at INTEGER)",
+        "INSERT INTO m2_audits
+         SELECT id, json_extract(v, '$.data.audit.to_state'), json_extract(v, '$.data.audit.at')
+         FROM (SELECT substr(CAST(key AS TEXT), 9, instr(substr(CAST(key AS TEXT), 9), '/') - 1) AS id,
+                      CAST(value AS TEXT) AS v
+               FROM latest WHERE key >= CAST('history/' AS BLOB) AND key < CAST('history0' AS BLOB))
+         WHERE json_valid(v)
+           AND json_extract(v, '$.data.seq') IS NOT NULL
+           AND json_extract(v, '$.data.audit.machine') = 'delivery'
+           AND json_extract(v, '$.data.audit.applied') = 1
+           AND json_extract(v, '$.data.audit.lc_key') = id",
+        "INSERT INTO m2_audits
+         SELECT h.id, json_extract(a.value, '$.to_state'), json_extract(a.value, '$.at')
+         FROM (SELECT substr(CAST(key AS TEXT), 9, instr(substr(CAST(key AS TEXT), 9), '/') - 1) AS id, main
+               FROM latest WHERE key >= CAST('history/' AS BLOB) AND key < CAST('history0' AS BLOB)
+                 AND json_valid(CAST(value AS TEXT))
+                 AND json_extract(CAST(value AS TEXT), '$.data.seq') IS NULL) AS h
+         JOIN latest AS e ON e.key = CAST('events/' || printf('%020d', h.main) AS BLOB)
+         JOIN json_each(CAST(e.value AS TEXT),
+              CASE WHEN json_extract(CAST(e.value AS TEXT), '$.data.refused')
+                   THEN '$.data.evidence.else' ELSE '$.data.evidence.then' END) AS a
+         WHERE json_extract(a.value, '$.machine') = 'delivery'
+           AND json_extract(a.value, '$.lc_key') = h.id
+           AND json_extract(a.value, '$.applied') = 1",
+        "CREATE TEMP TABLE m2_entered (id TEXT PRIMARY KEY, obj TEXT NOT NULL)",
+        "INSERT INTO m2_entered
+         SELECT id, json_group_object(to_state, at)
+         FROM (SELECT id, to_state, max(at) AS at FROM m2_audits WHERE to_state IS NOT NULL GROUP BY id, to_state)
+         GROUP BY id",
+        "UPDATE latest
+         SET value = CAST(json_set(CAST(value AS TEXT), '$.data.entered',
+             json(coalesce((SELECT obj FROM m2_entered WHERE id = substr(CAST(latest.key AS TEXT), 12)), '{}'))) AS BLOB)
+         WHERE key >= CAST('deliveries/' AS BLOB) AND key < CAST('deliveries0' AS BLOB)
+           AND instr(substr(CAST(key AS TEXT), 12), '/') = 0
+           AND json_valid(CAST(value AS TEXT))
+           AND json_type(CAST(value AS TEXT), '$.data') = 'object'
+           AND json_type(CAST(value AS TEXT), '$.data.entered') IS NULL",
+        "UPDATE versions SET value = l.value
+         FROM latest AS l
+         WHERE l.key = versions.key AND l.main = versions.main
+           AND l.key >= CAST('deliveries/' AS BLOB) AND l.key < CAST('deliveries0' AS BLOB)
+           AND versions.value IS NOT l.value",
+        "DROP TABLE m2_audits",
+        "DROP TABLE m2_entered",
+    ],
 ];
 
 /// How many schema migrations this binary knows: what a store's `user_version` is checked
@@ -1231,6 +1284,79 @@ mod tests {
             state_store::backend::range_in_state_by_scan(&b, "p/", "s3", Some("p/010000"), PAGE, head)
                 .unwrap();
         assert_eq!(page, scanned);
+    }
+
+    /// Migration 2 fills each delivery's `entered` from its history once, in place: the newest
+    /// applied delivery audit into each state, from imported entries and from the `events/`
+    /// branch a txn's entry names, in `latest` and in the version row it mirrors.
+    #[test]
+    fn migration_2_fills_each_deliverys_entered_from_its_history() {
+        let dir = testkit::TempDir::new("sqlite-m2");
+        let path = dir.path().join("m2.db");
+        let obj = |data: serde_json::Value| {
+            serde_json::to_vec(&serde_json::json!({ "metadata": {}, "data": data })).unwrap()
+        };
+        let audit = |machine: &str, to: &str, at: i64, applied: bool| {
+            serde_json::json!({ "machine": machine, "lc_key": "sp-a", "to_state": to, "at": at, "applied": applied })
+        };
+        let rows: Vec<(&str, i64, Vec<u8>)> = vec![
+            ("deliveries/sp-a", 9, obj(serde_json::json!({ "bead_id": "sp-a", "state": "Batched" }))),
+            ("deliveries/sp-b", 9, obj(serde_json::json!({ "bead_id": "sp-b", "state": "Queued" }))),
+            ("deliveries/sp-c/x", 9, obj(serde_json::json!({ "state": "Queued" }))),
+            ("history/sp-a/0/import/1", 1, obj(serde_json::json!({ "seq": 1, "audit": audit("delivery", "QUEUED", 10, true) }))),
+            ("history/sp-a/0/import/2", 1, obj(serde_json::json!({ "seq": 2, "audit": audit("delivery", "BATCHED", 20, true) }))),
+            ("history/sp-a/0/import/3", 1, obj(serde_json::json!({ "seq": 3, "audit": audit("bead", "BATCHED", 99, true) }))),
+            ("history/sp-a/0/import/4", 1, obj(serde_json::json!({ "seq": 4, "audit": audit("delivery", "BATCHED", 98, false) }))),
+            ("history/sp-a/5/r1", 7, obj(serde_json::json!({}))),
+            (
+                "events/00000000000000000007",
+                7,
+                obj(serde_json::json!({ "refused": false, "evidence": {
+                    "then": [audit("delivery", "BATCHED", 30, true)],
+                    "else": [audit("delivery", "BATCHED", 97, true)],
+                } })),
+            ),
+        ];
+        {
+            let conn = Connection::open(&path).unwrap();
+            for sql in SCHEMA.iter().chain(MIGRATIONS[0]) {
+                exec(&conn, sql, []).unwrap();
+            }
+            conn.pragma_update(None, "user_version", 1).unwrap();
+            for table in ["versions", "latest"] {
+                let sql = format!(
+                    "INSERT INTO {table} (key, main, sub, value, create_main, create_sub, version)
+                     VALUES (?1, ?2, 0, ?3, ?2, 0, 1)"
+                );
+                for (k, main, v) in &rows {
+                    exec(&conn, &sql, params![k.as_bytes(), main, v]).unwrap();
+                }
+            }
+            exec(&conn, "UPDATE meta SET value = 9 WHERE name = 'head'", []).unwrap();
+        }
+        let opts = Options {
+            jump_on_open: false,
+            ..Options::default()
+        };
+        let b = SqliteBackend::open(&path, opts).unwrap();
+        assert_eq!(b.schema_migrations().unwrap(), SCHEMA_MIGRATIONS);
+        let entered = |key: &str| {
+            let v = b.get(key, 9).unwrap().unwrap().value;
+            serde_json::from_slice::<serde_json::Value>(&v).unwrap()["data"]["entered"].clone()
+        };
+        assert_eq!(entered("deliveries/sp-a"), serde_json::json!({ "QUEUED": 10, "BATCHED": 30 }));
+        assert_eq!(entered("deliveries/sp-b"), serde_json::json!({}));
+        assert_eq!(entered("deliveries/sp-c/x"), serde_json::Value::Null, "not a delivery");
+        let w = lock(&b.0.writer);
+        let mirrored: i64 = w
+            .conn
+            .prepare(
+                "SELECT count(*) FROM versions v JOIN latest l ON l.key = v.key AND l.main = v.main
+                 WHERE v.value IS NOT l.value",
+            )
+            .and_then(|mut s| s.query_row([], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(mirrored, 0, "every version row mirrors its latest");
     }
 
     /// The migration counts in `user_version`, and a store from a binary that knows more

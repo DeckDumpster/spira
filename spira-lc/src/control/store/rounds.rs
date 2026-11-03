@@ -19,7 +19,8 @@ use super::mending::MendingRecord;
 use super::{Read, Store};
 use crate::control::keys;
 use crate::control::records::{
-    decode, encode, Audit, BatchIndex, BatchRecord, LifecycleRecord, Member,
+    decode, encode, entered_at, fold_entered, Audit, BatchIndex, BatchRecord, LifecycleRecord,
+    Member, ENTERED,
 };
 
 /// A machine event's audit, in the dolt `event` row's terms.
@@ -146,13 +147,19 @@ impl Cascade {
         value: &T,
         owners: &[&str],
     ) -> Result<()> {
-        let data = encode(value)?;
+        let mut data = encode(value)?;
         let slot = self.slot(store, key)?;
         slot.value = Some(match slot.value.take() {
-            Some(prior) => Object {
-                metadata: prior.metadata,
-                data,
-            },
+            Some(prior) => {
+                // A delivery's `entered` rides beside its row, which does not carry it.
+                if let (Some(e), Value::Object(d)) = (prior.data.get(ENTERED), &mut data) {
+                    d.entry(ENTERED).or_insert_with(|| e.clone());
+                }
+                Object {
+                    metadata: prior.metadata,
+                    data,
+                }
+            }
             None => Object::new(data).with_owners(owners),
         });
         slot.dirty = true;
@@ -222,10 +229,31 @@ impl Cascade {
         }
         for s in written() {
             if let Some(v) = &s.value {
-                t = t.put(&s.key, v.clone());
+                t = t.put(&s.key, self.with_entered(s, v));
             }
         }
         t
+    }
+
+    /// A delivery's object with this cascade's applied audits of it folded into `entered`. A
+    /// stored delivery without the field is never given a partial map: its reads refuse until
+    /// the store's migration fills it from history.
+    fn with_entered(&self, s: &Slot, v: &Object) -> Object {
+        let mut v = v.clone();
+        let (Some(id), Value::Object(data)) = (keys::id_of(keys::DELIVERIES, &s.key), &mut v.data)
+        else {
+            return v;
+        };
+        match data.get_mut(ENTERED) {
+            Some(Value::Object(m)) => fold_entered(m, id, &self.then),
+            _ if s.read_rev.is_none() => {
+                let mut m = serde_json::Map::new();
+                fold_entered(&mut m, id, &self.then);
+                data.insert(ENTERED.into(), Value::Object(m));
+            }
+            _ => {}
+        }
+        v
     }
 }
 
@@ -305,16 +333,83 @@ impl<B: Backend> Store<B> {
         Ok(self.read(&keys::delivery(id), None)?.map(|(r, _)| r))
     }
 
-    /// Every delivery, from one snapshot, in id order.
-    pub fn deliveries(&self) -> Result<Vec<Read<DeliveryRow>>> {
-        let (items, _) = self
-            .contract()
-            .list(&[keys::DELIVERIES], &Selector::Everything)?;
-        items
-            .iter()
-            .filter(|i| keys::id_of(keys::DELIVERIES, &i.key).is_some())
-            .map(read_of)
-            .collect()
+    /// One page of deliveries at the head, in id order after `after`, at most `limit`: `states`
+    /// read through the store's state index (one bounded range per state, merged), otherwise
+    /// the prefix by key range. Each comes with when it entered its state, from its own record
+    /// (`None` for a record without `entered`, which a migrated store never holds).
+    pub fn deliveries_page(
+        &self,
+        states: Option<&[DeliveryState]>,
+        after: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Vec<Listed>> {
+        const CHUNK: usize = 1_000;
+        let rev = self.contract().head()?;
+        let want = limit.unwrap_or(usize::MAX);
+        let chunk = limit.map_or(CHUNK, |l| l.clamp(1, CHUNK));
+        let mut out = Vec::new();
+        let mut take = |i: &Item| -> Result<bool> {
+            if keys::id_of(keys::DELIVERIES, &i.key).is_some() {
+                let d: Read<DeliveryRow> = read_of(i)?;
+                let entered = entered_at(&i.value.data, d.value.state.as_str());
+                out.push((d, entered));
+            }
+            Ok(out.len() >= want)
+        };
+        let start = after.map(keys::delivery);
+        let names: Vec<Option<String>> = match states {
+            None => vec![None],
+            Some(states) => states
+                .iter()
+                .map(|s| {
+                    serde_json::to_value(s)
+                        .ok()
+                        .and_then(|v| v.as_str().map(String::from))
+                        .map(Some)
+                        .ok_or_else(|| Error::Backend(format!("{s:?}: no state name")))
+                })
+                .collect::<Result<_>>()?,
+        };
+        let mut runs: Vec<Run> = names
+            .into_iter()
+            .map(|name| Run {
+                name,
+                cursor: start.clone(),
+                buf: Default::default(),
+                done: false,
+            })
+            .collect();
+        loop {
+            for Run { name, cursor, buf, done } in runs.iter_mut().filter(|r| r.buf.is_empty() && !r.done) {
+                let page = match name {
+                    Some(n) => self.contract().range_in_state(
+                        keys::DELIVERIES,
+                        n,
+                        cursor.as_deref(),
+                        chunk,
+                        rev,
+                    )?,
+                    None => self
+                        .contract()
+                        .range_at(keys::DELIVERIES, cursor.as_deref(), chunk, rev)?,
+                };
+                *done = page.len() < chunk;
+                *cursor = page.last().map(|i| i.key.clone()).or(cursor.take());
+                buf.extend(page);
+            }
+            let Some(next) = runs
+                .iter_mut()
+                .filter(|r| !r.buf.is_empty())
+                .min_by(|a, b| a.buf[0].key.cmp(&b.buf[0].key))
+            else {
+                break;
+            };
+            let item = next.buf.pop_front().expect("a non-empty run");
+            if take(&item)? {
+                break;
+            }
+        }
+        Ok(out)
     }
 
     /// The round `id` and its key, whichever repo it was cut in, found through its id index.
@@ -874,6 +969,18 @@ pub(crate) fn batch_key(key: &str) -> Option<(&str, &str)> {
     let rest = key.strip_prefix(keys::BATCHES)?;
     let (repo, id) = rest.split_once('/')?;
     (!repo.is_empty() && !id.is_empty() && !id.contains('/')).then_some((repo, id))
+}
+
+/// A listed delivery and when it entered its state, from its record: `None` when the record
+/// keeps no `entered`, `Some(None)` when no applied event entered that state.
+pub type Listed = (Read<DeliveryRow>, Option<Option<i64>>);
+
+/// One state's run (or, unnamed, the whole prefix's) through `deliveries_page`'s merge.
+struct Run {
+    name: Option<String>,
+    cursor: Option<String>,
+    buf: std::collections::VecDeque<Item>,
+    done: bool,
 }
 
 fn read_of<T: for<'de> Deserialize<'de>>(i: &Item) -> Result<Read<T>> {

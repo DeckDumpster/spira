@@ -144,6 +144,40 @@ pub struct Audit {
     pub at: i64,
 }
 
+/// The field a delivery's stored object keeps beside its row: `{STATE: at}`, the newest
+/// applied delivery event into each state, which is what the dolt path's `entered_at` join
+/// reads (`MAX(at)` per key and state). Every txn that writes a delivery folds its own audits
+/// in, so `list --delivery` answers from the record and never reads history (sp-8ugeek).
+pub const ENTERED: &str = "entered";
+
+/// `entered` with each applied delivery audit of `id` folded in, by the newest `at` per state.
+pub fn fold_entered<'a>(
+    entered: &mut serde_json::Map<String, Value>,
+    id: &str,
+    audits: impl IntoIterator<Item = &'a Audit>,
+) {
+    for a in audits {
+        if a.machine != "delivery" || a.lc_key != id || !a.applied {
+            continue;
+        }
+        let newer = entered
+            .get(&a.to_state)
+            .and_then(Value::as_i64)
+            .is_none_or(|t| a.at > t);
+        if newer {
+            entered.insert(a.to_state.clone(), Value::from(a.at));
+        }
+    }
+}
+
+/// When the delivery entered `state`, as its stored object's `entered` says: `None` when the
+/// object predates the field, `Some(None)` when no applied event ever entered that state.
+pub fn entered_at(data: &Value, state: &str) -> Option<Option<i64>> {
+    data.get(ENTERED)
+        .and_then(Value::as_object)
+        .map(|m| m.get(state).and_then(Value::as_i64))
+}
+
 pub fn encode<T: Serialize>(v: &T) -> Result<Value> {
     serde_json::to_value(v).map_err(|e| Error::Backend(format!("unencodable record: {e}")))
 }
