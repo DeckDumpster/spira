@@ -13,7 +13,7 @@ use state_store::Object;
 use super::archive::{Archive, Row};
 use crate::control::keys;
 use crate::control::records::{
-    encode, Audit, BatchIndex, BatchRecord, LifecycleRecord, Member, Readiness,
+    encode, fold_entered, Audit, ENTERED, BatchIndex, BatchRecord, LifecycleRecord, Member, Readiness,
 };
 use crate::control::store::{gate_object, AskRecord, MendRecord, MendingRecord};
 use crate::rows::{json_col, number, text};
@@ -235,7 +235,12 @@ pub fn project(a: &Archive, no_record: &BTreeSet<String>) -> Result<Projection, 
             Ok(mut d) => {
                 let log = logs.get(&("delivery".to_string(), r.key.clone())).unwrap_or(&none);
                 d.exit = super::checks::delivery_exit(&d, log);
-                let Some(data) = l.data("delivery", &r.key, &d) else { continue };
+                let Some(mut data) = l.data("delivery", &r.key, &d) else { continue };
+                let mut entered = serde_json::Map::new();
+                fold_entered(&mut entered, &r.key, log.iter().map(|(_, a)| a));
+                if let Value::Object(o) = &mut data {
+                    o.insert(ENTERED.into(), Value::Object(entered));
+                }
                 let owner = keys::lifecycle(&r.key);
                 l.put(
                     "delivery",

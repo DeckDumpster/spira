@@ -626,22 +626,30 @@ pub(super) fn list_batches<B: Backend>(
     }
 }
 
-/// `list --delivery [--state S]`: every delivery with when it entered its state.
+/// `list --delivery [--state S] [--after ID] [--limit N]`: deliveries in id order, each with
+/// when it entered its state. One bounded read per page: the state filter is the store's state
+/// index, and `entered_at` is read from the delivery's own record, never from its history. A
+/// record without `entered` is a store that missed its migration: an error, not a history read.
 pub(super) fn list_delivery<B: Backend>(store: &Store<B>, args: &[String]) -> (i32, String) {
     let state = flag(args, "--state");
+    let (after, limit) = match spira_lc::page(args) {
+        Ok(p) => p.unwrap_or_default(),
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: list: {e}")),
+    };
+    let states: Option<Vec<DeliveryState>> = state
+        .as_deref()
+        .map(|s| DeliveryState::from_str(s).into_iter().collect());
     let read = || -> state_store::Result<Vec<Value>> {
-        let mut out = Vec::new();
-        for d in store.deliveries()? {
+        let page = store.deliveries_page(states.as_deref(), after.as_deref(), limit)?;
+        let mut out = Vec::with_capacity(page.len());
+        for (d, entered) in page {
             let d = d.value;
-            if state.as_deref().is_some_and(|s| s != d.state.as_str()) {
-                continue;
-            }
-            let entered = store
-                .history(&d.bead_id, Some("delivery"))?
-                .into_iter()
-                .filter(|c| c.audit.applied && c.audit.to_state == d.state.as_str())
-                .map(|c| c.audit.at)
-                .max();
+            let Some(entered) = entered else {
+                return Err(state_store::Error::Backend(format!(
+                    "{} keeps no `entered`: the store predates migration 2 (sp-8ugeek)",
+                    crate::control::keys::delivery(&d.bead_id)
+                )));
+            };
             let mut v = delivery_view(&d);
             if let Value::Object(o) = &mut v {
                 o.insert("entered_at".into(), number(entered));
