@@ -253,6 +253,23 @@ mod tests {
     use super::*;
     use crate::testutil::tmpdir;
 
+    /// A forked child holds a copy of every descriptor until its exec closes it, and flock
+    /// belongs to the open file description that copy shares: a duplicate stands in for one.
+    #[test]
+    fn a_dropped_lock_is_free_while_a_forked_copy_of_its_descriptor_lives() {
+        let d = tmpdir("lockfork");
+        for take in [try_lock as fn(&Path, &str) -> Acquire, try_step_lock] {
+            let Acquire::Held(g) = take(&d, "spira") else { panic!("not held") };
+            // SAFETY: dup of a descriptor we own; closed below.
+            let copy = unsafe { libc::dup(g.f.as_raw_fd()) };
+            assert!(copy >= 0);
+            drop(g);
+            assert!(matches!(take(&d, "spira"), Acquire::Held(_)), "the copy kept the lock");
+            // SAFETY: closing the duplicate made above.
+            unsafe { libc::close(copy) };
+        }
+    }
+
     #[test]
     fn second_taker_is_refused_until_the_first_drops() {
         let _serial = crate::testutil::serial();
