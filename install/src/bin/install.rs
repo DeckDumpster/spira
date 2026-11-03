@@ -1949,9 +1949,10 @@ fn round_records_phase(dry: bool) -> Result<(), String> {
         skip("no round files to remove");
         return Ok(());
     }
+    let lc = spira_config::release_env::tool("spira-lc")?;
     let gone = install::round_records::plan(&files, |batch| {
         // batch-job: one store read per round file; bounded at 30 s by timeout(1).
-        let o = Command::new("timeout").arg("30").arg(spira_config::release_env::tool("spira-lc")).args(["show-batch", batch]).stdin(Stdio::null()).output().map_err(|e| format!("cannot run spira-lc: {e}"))?;
+        let o = Command::new("timeout").arg("30").arg(&lc).args(["show-batch", batch]).stdin(Stdio::null()).output().map_err(|e| format!("cannot run spira-lc: {e}"))?;
         let v: serde_json::Value = serde_json::from_slice(&o.stdout).map_err(|_| format!("spira-lc show-batch {batch} exited {:?}: {}", o.status.code(), String::from_utf8_lossy(&o.stderr).trim()))?;
         match (o.status.code(), v.get("state").and_then(|s| s.as_str())) {
             (Some(0), Some(state)) => Ok(Some(state.to_string())),
