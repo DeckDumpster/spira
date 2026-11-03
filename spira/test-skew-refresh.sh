@@ -392,17 +392,21 @@ run_lq() {
     # and thread SPIRA_TOML through env -i, which clears it.
     tl_config SPIRA_HOME_REPO=lfixq SPIRA_RUN="$LRUN" SPIRA_QUEUE_DIR="$LQDIR" \
         SPIRA_REPO_MAP="$LRMAP" SPIRA_RELEASES="$LRELEASES" SPIRA_DB="$TMP/local-no-db"
-    env -i SPIRA_RELEASE="$(PATH="$PATH" tl_release)" $(lcfix_env) PATH="$PATH" \
+    # The declared release: the staged one with this fixture's own skew/mail and the `release`
+    # stand-in laid over it. rollback-local has no round build of its own, so it runs the
+    # declared release's `release`; the stand-in's verify and activate are what land-local's
+    # round builds ship (lbins), never the real verify against a fixture release.
+    env -i $(lcfix_env) \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_HOME="$LSH" PATH="$LSH:$PATH" SPIRA_RELEASE="$(PATH="$LSH:$PATH" tl_release)" \
+        SPIRA_HOME="$LSH" PATH="$LSH:$PATH" SPIRA_RELEASE="$(PATH="$STUBBIN:$LSH:$PATH" tl_release)" \
         SPIRA_REPO="$LREPO" \
         SPIRA_SYSTEMCTL="$TMP/mock-sc" \
         SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged (queue/DESIGN.md §8 D12)" \
         SPIRA_LAND_UNGATED_BY=operator \
         SPIRA_LAND_UNGATED_EVIDENCE=local/main \
         SPIRA_TOML="$SPIRA_TOML" \
-        SPIRA_HOME="$LSH" PATH="$LSH:$PATH" SPIRA_RELEASE="$(PATH="$LSH:$PATH" tl_release)" queue "$@" 2>&1
+        queue "$@" 2>&1
 }
 run_lskew() {
     # SPIRA_RUN/SPIRA_REPO_MAP/SPIRA_RELEASES are registered keys (per Ryan 2026-10-05,
