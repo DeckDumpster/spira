@@ -42,4 +42,6 @@ slugs = [
   "law-a-stop-stops-everything",
   "law-a-twice-failed-landing-is-traced-before-the-third",
   "law-text-only-changes-land-without-a-round",
+  "law-list-reads-run-on-indexed-tables",
+  "law-list-reads-paginate-in-the-database",
 ]

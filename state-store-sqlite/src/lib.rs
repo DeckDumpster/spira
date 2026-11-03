@@ -8,6 +8,15 @@
 //! revision since the compaction point is served from the table itself, and the rows above that
 //! point, in revision order, are the watch log. The `main` counter lives in `meta`, never in a
 //! rowid, which SQLite may reuse.
+//!
+//! A read at the head never groups `versions`: `latest` holds each live key's newest version,
+//! written in the commit that writes `versions`, so a list at the head is a key-ordered range
+//! that reads only its page, and `latest_by_state` indexes each object's `data.state`, so a
+//! state-filtered list is a range too (sp-zjkgeh). Reads below the head still use `versions`.
+//!
+//! The schema is versioned: `PRAGMA user_version` counts the [`MIGRATIONS`] a store has applied,
+//! and every open applies the ones it lacks in place. A store that counts more migrations than
+//! this binary knows is refused (law-pin-by-migration-count).
 
 pub mod bench;
 pub mod durability;
@@ -41,6 +50,57 @@ const SCHEMA: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS jumps (from_main INTEGER PRIMARY KEY, to_main INTEGER NOT NULL)",
     "INSERT OR IGNORE INTO meta (name, value) VALUES ('head', 0), ('compacted', 0)",
 ];
+
+/// Each schema migration after the base [`SCHEMA`], in order; a store's `PRAGMA user_version`
+/// is how many it has applied. Append only: a migration once shipped is never edited.
+pub const MIGRATIONS: &[&[&str]] = &[
+    // 1 (sp-zjkgeh): every live key's newest version, so a read at the head is a range, and
+    // its `data.state`, indexed, so a state filter is a range.
+    &[
+        "CREATE TABLE latest (
+            key BLOB PRIMARY KEY,
+            main INTEGER NOT NULL,
+            sub INTEGER NOT NULL,
+            value BLOB NOT NULL,
+            create_main INTEGER,
+            create_sub INTEGER,
+            version INTEGER NOT NULL,
+            state TEXT GENERATED ALWAYS AS (CASE
+                WHEN json_valid(CAST(value AS TEXT))
+                 AND json_type(CAST(value AS TEXT), '$.data.state') = 'text'
+                THEN json_extract(CAST(value AS TEXT), '$.data.state') END) VIRTUAL
+        ) WITHOUT ROWID",
+        "INSERT INTO latest (key, main, sub, value, create_main, create_sub, version)
+         SELECT key, max(main), sub, value, create_main, create_sub, version FROM versions
+         GROUP BY key HAVING value IS NOT NULL",
+        "CREATE INDEX latest_by_state ON latest (state, key) WHERE state IS NOT NULL",
+    ],
+];
+
+/// How many schema migrations this binary knows: what a store's `user_version` is checked
+/// against (law-pin-by-migration-count).
+pub const SCHEMA_MIGRATIONS: usize = MIGRATIONS.len();
+
+/// Applies the migrations `conn`'s store lacks, inside the caller's transaction; refuses a store
+/// that has applied more than this binary knows.
+fn migrate(conn: &Connection) -> Result<()> {
+    let at: i64 = conn
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .map_err(db)?;
+    let applied = usize::try_from(at).unwrap_or(usize::MAX);
+    if applied > SCHEMA_MIGRATIONS {
+        return Err(Error::Backend(format!(
+            "the store has applied {at} schema migrations; this binary knows {SCHEMA_MIGRATIONS}"
+        )));
+    }
+    for m in &MIGRATIONS[applied..] {
+        for sql in *m {
+            exec(conn, sql, [])?;
+        }
+    }
+    conn.pragma_update(None, "user_version", SCHEMA_MIGRATIONS as i64)
+        .map_err(db)
+}
 
 /// How far the head jumps each time an existing store is opened, and the WAL frames between
 /// automatic checkpoints. Commits run at `synchronous=NORMAL` (sp-r3yb7x): the WAL is synced at
@@ -112,6 +172,8 @@ struct Inner {
     max_read_ms: u64,
     clock: Arc<dyn Clock>,
     probe: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// The VM steps every range statement has taken since [`SqliteBackend::take_read_steps`].
+    read_steps: AtomicU64,
     /// Held for the life of the handle: the exclusive opener. Last, so it outlives the
     /// connections.
     _lock: File,
@@ -306,39 +368,81 @@ const RANGE_BOUNDED: &str =
 const RANGE_OPEN: &str = "SELECT key, max(main), sub, value, create_main, create_sub FROM versions
      WHERE key >= ?1 AND main <= ?2 GROUP BY key HAVING value IS NOT NULL
      ORDER BY key LIMIT ?3";
+/// The head's live keys in `[?1, ?2)`: one key-ordered range over `latest`, reading its page.
+const LATEST_BOUNDED: &str = "SELECT key, main, sub, value, create_main, create_sub FROM latest
+     WHERE key >= ?1 AND key < ?2 ORDER BY key LIMIT ?3";
+const LATEST_OPEN: &str = "SELECT key, main, sub, value, create_main, create_sub FROM latest
+     WHERE key >= ?1 ORDER BY key LIMIT ?2";
+/// The head's live keys in `[?2, ?3)` whose `data.state` is `?1`: one range of `latest_by_state`.
+const STATE_BOUNDED: &str = "SELECT key, main, sub, value, create_main, create_sub FROM latest
+     WHERE state = ?1 AND key >= ?2 AND key < ?3 ORDER BY key LIMIT ?4";
+const STATE_OPEN: &str = "SELECT key, main, sub, value, create_main, create_sub FROM latest
+     WHERE state = ?1 AND key >= ?2 ORDER BY key LIMIT ?3";
 
-/// Live keys in `[lo, hi)` at `at`, in key order, at most `limit`.
+/// A key's newest version into `latest`, in the txn that writes it to `versions`.
+const PUT_LATEST: &str = "INSERT OR REPLACE INTO latest
+     (key, main, sub, value, create_main, create_sub, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+
+/// Which rows a range reads: the head's from `latest`, an older revision's from `versions`.
+enum Source<'a> {
+    Head,
+    At(u64),
+    State(&'a str),
+}
+
+/// Live keys in `[lo, hi)` as `source` reads them, in key order, at most `limit`. Adds the
+/// statement's VM steps to `steps`: the measure a test holds a page's reads to.
 fn range_rows(
     conn: &Connection,
+    source: Source<'_>,
     lo: &[u8],
     hi: Option<&[u8]>,
     limit: usize,
-    at: u64,
+    steps: &AtomicU64,
     deadline: &dyn Fn() -> Result<()>,
 ) -> Result<Vec<(String, Version)>> {
     let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-    let at = main_i64(at)?;
-    let mut stmt = conn
-        .prepare_cached(if hi.is_some() {
-            RANGE_BOUNDED
-        } else {
-            RANGE_OPEN
-        })
-        .map_err(db)?;
-    let mut rows = match hi {
-        Some(hi) => stmt.query(params![lo, hi, at, limit]),
-        None => stmt.query(params![lo, at, limit]),
-    }
-    .map_err(db)?;
+    let sql = match (&source, hi.is_some()) {
+        (Source::Head, true) => LATEST_BOUNDED,
+        (Source::Head, false) => LATEST_OPEN,
+        (Source::At(_), true) => RANGE_BOUNDED,
+        (Source::At(_), false) => RANGE_OPEN,
+        (Source::State(_), true) => STATE_BOUNDED,
+        (Source::State(_), false) => STATE_OPEN,
+    };
+    let mut stmt = conn.prepare_cached(sql).map_err(db)?;
+    stmt.reset_status(rusqlite::StatementStatus::VmStep);
     let mut out = Vec::new();
-    while let Some(r) = rows.next().map_err(db)? {
-        deadline()?;
-        let key: Vec<u8> = r.get(0).map_err(db)?;
-        if let Some(v) = version_row(r, 1).map_err(db)? {
-            out.push((key_of(key)?, v));
+    {
+        let mut rows = match (source, hi) {
+            (Source::Head, Some(hi)) => stmt.query(params![lo, hi, limit]),
+            (Source::Head, None) => stmt.query(params![lo, limit]),
+            (Source::At(at), Some(hi)) => stmt.query(params![lo, hi, main_i64(at)?, limit]),
+            (Source::At(at), None) => stmt.query(params![lo, main_i64(at)?, limit]),
+            (Source::State(s), Some(hi)) => stmt.query(params![s, lo, hi, limit]),
+            (Source::State(s), None) => stmt.query(params![s, lo, limit]),
+        }
+        .map_err(db)?;
+        while let Some(r) = rows.next().map_err(db)? {
+            deadline()?;
+            let key: Vec<u8> = r.get(0).map_err(db)?;
+            if let Some(v) = version_row(r, 1).map_err(db)? {
+                out.push((key_of(key)?, v));
+            }
         }
     }
+    let n = stmt.reset_status(rusqlite::StatementStatus::VmStep);
+    steps.fetch_add(u64::try_from(n).unwrap_or(0), Ordering::Relaxed);
     Ok(out)
+}
+
+/// The source a read at `at` takes under `snap`: `latest` at the head, `versions` below it.
+fn source(snap: &Snapshot, at: u64) -> Source<'static> {
+    if at == snap.head {
+        Source::Head
+    } else {
+        Source::At(at)
+    }
 }
 
 impl SqliteBackend {
@@ -383,6 +487,7 @@ impl SqliteBackend {
         for sql in SCHEMA {
             exec(&tx, sql, [])?;
         }
+        migrate(&tx)?;
         tx.commit().map_err(db)?;
         let mut head = meta(&conn, "head")?.unwrap_or(0);
         if opts.jump_on_open && head > 0 {
@@ -415,11 +520,28 @@ impl SqliteBackend {
             max_read_ms: opts.max_read_ms,
             clock: opts.clock,
             probe: opts.read_probe,
+            read_steps: AtomicU64::new(0),
             _lock: lock_file,
         })))
     }
 
     /// The writer connection's `synchronous` setting: 1 is NORMAL, 2 is FULL.
+    /// The VM steps the range reads have taken since the last call, and resets the count: how
+    /// many rows a list read, for a test that holds a page to O(page).
+    pub fn take_read_steps(&self) -> u64 {
+        self.0.read_steps.swap(0, Ordering::Relaxed)
+    }
+
+    /// How many schema migrations this store has applied (`PRAGMA user_version`).
+    pub fn schema_migrations(&self) -> Result<usize> {
+        let w = lock(&self.0.writer);
+        let n: i64 = w
+            .conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .map_err(db)?;
+        Ok(usize::try_from(n).unwrap_or(0))
+    }
+
     pub fn synchronous(&self) -> Result<i64> {
         lock(&self.0.writer).conn.pragma_query_value(None, "synchronous", |r| r.get(0)).map_err(db)
     }
@@ -571,10 +693,14 @@ impl SqliteBackend {
                      VALUES (?1, ?2, ?3, ?4, ?2, ?3, 1)",
                 )
                 .map_err(db)?;
+            let mut put_latest = tx.prepare_cached(PUT_LATEST).map_err(db)?;
             for (sub, (key, value)) in items.into_iter().enumerate() {
                 let sub = u32::try_from(sub)
                     .map_err(|_| Error::Backend("bulk_load of more than u32::MAX keys".into()))?;
                 ins.execute(params![key.as_bytes(), main, sub, value])
+                    .map_err(db)?;
+                put_latest
+                    .execute(params![key.as_bytes(), main, sub, value, main, sub, 1])
                     .map_err(db)?;
             }
         }
@@ -706,17 +832,29 @@ impl Backend for SqliteBackend {
     fn get(&self, key: &str, at: u64) -> Result<Option<Version>> {
         self.read(|conn, snap, _| {
             snap.readable(at)?;
-            conn.prepare_cached(
-                "SELECT main, sub, value, create_main, create_sub FROM versions
-                 WHERE key = ?1 AND main <= ?2 ORDER BY main DESC LIMIT 1",
-            )
-            .and_then(|mut s| {
-                s.query_row(
-                    params![key.as_bytes(), main_i64(at).unwrap_or(i64::MAX)],
-                    |r| version_row(r, 0),
-                )
-                .optional()
-            })
+            match source(snap, at) {
+                Source::At(at) => conn
+                    .prepare_cached(
+                        "SELECT main, sub, value, create_main, create_sub FROM versions
+                         WHERE key = ?1 AND main <= ?2 ORDER BY main DESC LIMIT 1",
+                    )
+                    .and_then(|mut s| {
+                        s.query_row(
+                            params![key.as_bytes(), main_i64(at).unwrap_or(i64::MAX)],
+                            |r| version_row(r, 0),
+                        )
+                        .optional()
+                    }),
+                _ => conn
+                    .prepare_cached(
+                        "SELECT main, sub, value, create_main, create_sub FROM latest
+                         WHERE key = ?1",
+                    )
+                    .and_then(|mut s| {
+                        s.query_row(params![key.as_bytes()], |r| version_row(r, 0))
+                            .optional()
+                    }),
+            }
             .map(Option::flatten)
             .map_err(db)
         })
@@ -733,8 +871,35 @@ impl Backend for SqliteBackend {
             snap.readable(at)?;
             let lo = lower_bound(prefix.as_bytes(), after);
             let hi = successor(prefix.as_bytes());
-            range_rows(conn, &lo, hi.as_deref(), limit, at, deadline)
+            let steps = &self.0.read_steps;
+            range_rows(conn, source(snap, at), &lo, hi.as_deref(), limit, steps, deadline)
         })
+    }
+
+    /// At the head, one range of `latest_by_state`; below it, the scan the default makes.
+    fn range_in_state(
+        &self,
+        prefix: &str,
+        state: &str,
+        after: Option<&str>,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<(String, Version)>> {
+        let indexed = self.read(|conn, snap, deadline| {
+            snap.readable(at)?;
+            if at != snap.head {
+                return Ok(None);
+            }
+            let lo = lower_bound(prefix.as_bytes(), after);
+            let hi = successor(prefix.as_bytes());
+            let steps = &self.0.read_steps;
+            range_rows(conn, Source::State(state), &lo, hi.as_deref(), limit, steps, deadline)
+                .map(Some)
+        })?;
+        match indexed {
+            Some(rows) => Ok(rows),
+            None => state_store::backend::range_in_state_by_scan(self, prefix, state, after, limit, at),
+        }
     }
 
     /// The two key ranges either side of `events/`, read from the key index, so the audit
@@ -750,18 +915,20 @@ impl Backend for SqliteBackend {
             let events = EVENTS_PREFIX.as_bytes();
             let past_events = successor(events).unwrap_or_default();
             let lo = lower_bound(b"", after);
+            let steps = &self.0.read_steps;
             let mut out = Vec::new();
             if lo.as_slice() < events {
-                out = range_rows(conn, &lo, Some(events), limit, at, deadline)?;
+                out = range_rows(conn, source(snap, at), &lo, Some(events), limit, steps, deadline)?;
             }
             if out.len() < limit {
                 let lo = lo.max(past_events);
                 out.extend(range_rows(
                     conn,
+                    source(snap, at),
                     &lo,
                     None,
                     limit - out.len(),
-                    at,
+                    steps,
                     deadline,
                 )?);
             }
@@ -793,10 +960,11 @@ impl Backend for SqliteBackend {
                 )
                 .map_err(db)?;
             let mut latest = tx
-                .prepare_cached(
-                    "SELECT version FROM versions WHERE key = ?1 AND value IS NOT NULL
-                     AND main = (SELECT max(main) FROM versions WHERE key = ?1)",
-                )
+                .prepare_cached("SELECT version FROM latest WHERE key = ?1")
+                .map_err(db)?;
+            let mut put_latest = tx.prepare_cached(PUT_LATEST).map_err(db)?;
+            let mut drop_latest = tx
+                .prepare_cached("DELETE FROM latest WHERE key = ?1")
                 .map_err(db)?;
             for (sub, w) in batch.iter().enumerate() {
                 let sub = sub as i64;
@@ -830,6 +998,17 @@ impl Backend for SqliteBackend {
                             prev.map(|p| p.sub),
                         ])
                         .map_err(db)?;
+                        put_latest
+                            .execute(params![
+                                key.as_bytes(),
+                                m,
+                                sub,
+                                value,
+                                main_i64(create_rev.main)?,
+                                create_rev.sub,
+                                version,
+                            ])
+                            .map_err(db)?;
                     }
                     Write::Delete { key, prev } => {
                         ins.execute(params![
@@ -844,6 +1023,7 @@ impl Backend for SqliteBackend {
                             prev.sub,
                         ])
                         .map_err(db)?;
+                        drop_latest.execute([key.as_bytes()]).map_err(db)?;
                     }
                 }
             }
@@ -960,5 +1140,111 @@ mod tests {
         assert_eq!(lower_bound(b"p/", None), b"p/");
         assert_eq!(lower_bound(b"p/", Some("a")), b"p/");
         assert_eq!(lower_bound(b"p/", Some("p/b")), b"p/b\0");
+    }
+
+    const KEYS: i64 = 50_000;
+    const VERSIONS: i64 = 20;
+    const PAGE: usize = 100;
+    const STATES: i64 = 10;
+
+    /// A store written by the base schema alone, as one from before the migrations: `KEYS` keys
+    /// of `VERSIONS` versions each (1M rows), each version's `data.state` one of `STATES`. Then
+    /// opened, which migrates it in place.
+    fn fixture(dir: &testkit::TempDir) -> SqliteBackend {
+        let path = dir.path().join("big.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            for sql in SCHEMA {
+                exec(&conn, sql, []).unwrap();
+            }
+            let versions = format!(
+                "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < {})
+                 INSERT INTO versions (key, main, sub, value, create_main, create_sub, version)
+                 SELECT CAST(printf('p/%06d', i / {VERSIONS}) AS BLOB), i % {VERSIONS} + 1,
+                        i / {VERSIONS}, CAST(json_object('data', json_object('state',
+                        's' || ((i / {VERSIONS} + i % {VERSIONS}) % {STATES}))) AS BLOB),
+                        1, i / {VERSIONS}, i % {VERSIONS} + 1
+                 FROM n",
+                KEYS * VERSIONS - 1
+            );
+            exec(&conn, &versions, []).unwrap();
+            exec(&conn, &format!("UPDATE meta SET value = {VERSIONS} WHERE name = 'head'"), []).unwrap();
+        }
+        let opts = Options {
+            jump_on_open: false,
+            ..Options::default()
+        };
+        SqliteBackend::open(&path, opts).unwrap()
+    }
+
+    fn plan(b: &SqliteBackend, sql: &str) -> Vec<String> {
+        let w = lock(&b.0.writer);
+        let mut stmt = w.conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        let mut rows = stmt.raw_query();
+        let mut out = Vec::new();
+        while let Some(r) = rows.next().unwrap() {
+            out.push(r.get::<_, String>(3).unwrap());
+        }
+        out
+    }
+
+    /// law: every list runs against an indexed table. A page of 100 at the head over 50k keys
+    /// and 1M versions reads its page from `latest`, never grouping the versions: the VM steps
+    /// it takes stay a small multiple of the page, and its plan neither scans nor sorts.
+    #[test]
+    fn a_page_at_the_head_reads_o_page_rows_over_a_million_versions() {
+        let dir = testkit::TempDir::new("sqlite-page");
+        let b = fixture(&dir);
+        assert_eq!(b.schema_migrations().unwrap(), SCHEMA_MIGRATIONS);
+        let head = b.head().unwrap();
+        b.take_read_steps();
+        let page = b.range("p/", Some("p/025000"), PAGE, head).unwrap();
+        let steps = b.take_read_steps();
+        let keys: Vec<&str> = page.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys.len(), PAGE);
+        assert_eq!(keys[0], "p/025001");
+        assert_eq!(page[0].1.mod_rev, Rev::new(VERSIONS as u64, 25_001), "the newest version");
+        assert!(steps <= 20 * PAGE as u64, "{steps} VM steps for a page of {PAGE}");
+        for sql in [LATEST_BOUNDED, LATEST_OPEN, STATE_BOUNDED, STATE_OPEN] {
+            for step in plan(&b, sql) {
+                assert!(
+                    !step.starts_with("SCAN") && !step.contains("TEMP B-TREE"),
+                    "{sql}: {step}"
+                );
+            }
+        }
+    }
+
+    /// law: a state filter is an indexed range. A page of one state's keys reads that page,
+    /// not the prefix, and agrees with the filter it replaces.
+    #[test]
+    fn a_state_filtered_page_reads_o_page_rows_and_matches_the_filter() {
+        let dir = testkit::TempDir::new("sqlite-state");
+        let b = fixture(&dir);
+        let head = b.head().unwrap();
+        b.take_read_steps();
+        let page = b.range_in_state("p/", "s3", Some("p/010000"), PAGE, head).unwrap();
+        let steps = b.take_read_steps();
+        assert_eq!(page.len(), PAGE);
+        assert!(steps <= 20 * PAGE as u64, "{steps} VM steps for a page of {PAGE}");
+        let scanned =
+            state_store::backend::range_in_state_by_scan(&b, "p/", "s3", Some("p/010000"), PAGE, head)
+                .unwrap();
+        assert_eq!(page, scanned);
+    }
+
+    /// The migration counts in `user_version`, and a store from a binary that knows more
+    /// migrations than this one is refused rather than read.
+    #[test]
+    fn a_store_with_more_migrations_than_this_binary_knows_is_refused() {
+        let dir = testkit::TempDir::new("sqlite-migrations");
+        let path = dir.path().join("s.db");
+        drop(SqliteBackend::open(&path, Options::default()).unwrap());
+        let conn = Connection::open(&path).unwrap();
+        conn.pragma_update(None, "user_version", SCHEMA_MIGRATIONS as i64 + 1)
+            .unwrap();
+        drop(conn);
+        let e = SqliteBackend::open(&path, Options::default()).err().unwrap();
+        assert!(e.to_string().contains("this binary knows"), "{e}");
     }
 }

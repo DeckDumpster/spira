@@ -85,6 +85,7 @@ scenarios!(
     lock_check_fails_the_txn_after_the_lock_expired_or_was_retaken,
     get_and_list_return_a_locks_expiry_and_renew_moves_it_forward,
     a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry,
+    a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below_it,
 );
 
 /// Scenarios with no unit test here: each runs over 100 ms (sp-bym7j8) and stays in the suite
@@ -274,7 +275,8 @@ impl runtime::ports::Clock for JumpAfter {
 }
 
 /// Every row a deleted key, so the statement scans thousands of rows and returns none: only the
-/// progress handler can see the deadline pass.
+/// progress handler can see the deadline pass. The read is below the head, where `versions` is
+/// read: at the head, `latest` holds no deleted key to scan.
 #[test]
 fn a_single_long_statement_is_ended_past_max_read_ms_by_the_progress_handler() {
     let dir = TempDir::new("sqlite-progress");
@@ -302,6 +304,7 @@ fn a_single_long_statement_is_ended_past_max_read_ms_by_the_progress_handler() {
         })
         .collect();
     b.commit(1, &dels).unwrap();
+    b.commit(2, &[put_write("u/after", b"{}", 3, None)]).unwrap();
     assert!(b.range("t/", None, 10, 2).unwrap().is_empty());
 
     clock.calls.store(0, Ordering::SeqCst);

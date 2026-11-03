@@ -374,15 +374,21 @@ fn the_drill_passes_on_the_uploaded_objects_and_names_its_exclusions() {
     );
 }
 
-/// Overwrites the newest version of `key` in the store file with `value`, keeping its revision.
+/// Overwrites the newest version of `key` in the store file with `value`, keeping its revision:
+/// in `versions` and in `latest`, which reads at the head answer from.
 fn tamper(path: &Path, key: &str, value: &[u8]) {
     let conn = rusqlite::Connection::open(path).unwrap();
-    let n = conn
-        .prepare("UPDATE versions SET value = ?1 WHERE key = ?2 AND main = (SELECT max(main) FROM versions WHERE key = ?2)")
-        .unwrap()
-        .execute(rusqlite::params![value, key.as_bytes()])
-        .unwrap();
-    assert_eq!(n, 1, "{key}");
+    for sql in [
+        "UPDATE versions SET value = ?1 WHERE key = ?2 AND main = (SELECT max(main) FROM versions WHERE key = ?2)",
+        "UPDATE latest SET value = ?1 WHERE key = ?2",
+    ] {
+        let n = conn
+            .prepare(sql)
+            .unwrap()
+            .execute(rusqlite::params![value, key.as_bytes()])
+            .unwrap();
+        assert_eq!(n, 1, "{key}: {sql}");
+    }
 }
 
 fn restored_copy(dir: &Path, s: &Shipper) -> (PathBuf, PathBuf, Vec<revlog::Run>) {

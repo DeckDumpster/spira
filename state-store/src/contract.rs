@@ -570,6 +570,39 @@ impl<B: Backend> Contract<B> {
         })
     }
 
+    /// At most `limit` items under `prefix` strictly after `after`, at `at`, in key order: one
+    /// bounded read, for a caller paging by key.
+    pub fn range_at(
+        &self,
+        prefix: &str,
+        after: Option<&str>,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<Item>> {
+        self.backend
+            .range(prefix, after, limit, at)?
+            .into_iter()
+            .map(|(k, v)| item(k, v).map(|i| self.with_expiry(i)))
+            .collect()
+    }
+
+    /// [`Contract::range_at`] over only the items whose `data.state` is `state`, read through the
+    /// backend's state index.
+    pub fn range_in_state(
+        &self,
+        prefix: &str,
+        state: &str,
+        after: Option<&str>,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<Item>> {
+        self.backend
+            .range_in_state(prefix, state, after, limit, at)?
+            .into_iter()
+            .map(|(k, v)| item(k, v).map(|i| self.with_expiry(i)))
+            .collect()
+    }
+
     /// `Conflict` if the key holds a different value; an equal value is success, writing nothing.
     pub fn create(&self, key: &str, value: Object, req: &Request) -> Result<Created> {
         let t = Txn::new()
