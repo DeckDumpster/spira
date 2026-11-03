@@ -142,6 +142,17 @@ fn must_cfg(key: &str) -> String {
     }
 }
 
+/// A release-shipped tool's program, or a named refusal: the pass never guesses a path.
+fn must_tool(name: &str) -> String {
+    match spira_config::release_env::tool(name) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("czar-pass: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
 fn must_cfg_parse<T: std::str::FromStr>(key: &str) -> T
 where
     T::Err: std::fmt::Display,
@@ -179,7 +190,7 @@ impl Config {
             qc_log: spira_run.join("landing.log"),
             marker: spira_run.join("czar-pass.swept"),
             seams,
-            batch_show: queue_batch_show(spira_config::release_env::tool("queue"), must_cfg_parse("SPIRA_LC_TIMEOUT")),
+            batch_show: queue_batch_show(must_tool("queue"), must_cfg_parse("SPIRA_LC_TIMEOUT")),
             stall_secs: must_cfg_parse("SPIRA_LOOP_STALL_SECS"),
             ci_queued_max: must_cfg_parse("SPIRA_CI_QUEUED_MAX_SECS"),
             ci_red_max: must_cfg_parse("SPIRA_CI_RED_MAX_SECS"),

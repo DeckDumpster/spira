@@ -276,7 +276,16 @@ fn halt_cmd(reason: Reason, dry_run: bool) -> i32 {
         },
     };
     let grace = ctx.as_ref().map(|(s, _)| s.halt_grace).unwrap_or(30);
-    let queue = ctx.as_ref().and_then(|(s, _)| s.queue_bin.clone()).unwrap_or_else(|| PathBuf::from(spira_config::release_env::tool("queue")));
+    let queue = match ctx.as_ref().and_then(|(s, _)| s.queue_bin.clone()) {
+        Some(q) => q,
+        None => match spira_config::release_env::tool("queue") {
+            Ok(q) => PathBuf::from(q),
+            Err(e) => {
+                eprintln!("landing halt: {e}");
+                return 1;
+            }
+        },
+    };
     let hc = HaltCtx {
         files: Files::new(&run),
         grace,
