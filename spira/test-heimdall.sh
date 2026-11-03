@@ -107,7 +107,6 @@ is "write probe: the probe is a condition that never fires" "WriteProbe False 0"
 is "write probe: the probe is not listed among the alerts" 1 "$(n_alerts)"
 
 printf write-fail > "$TMP/lc-mode"
-heimdall >/dev/null
 grep -q 'SP_HEIMDALL_DB_READ=ok' "$RUN/heimdall.status" \
     && ok "write probe: reads still ok during a write-only failure" \
     || bad "write probe read during fault" "SP_HEIMDALL_DB_READ is not ok with writes broken"

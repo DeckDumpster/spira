@@ -86,7 +86,7 @@ case "\$1" in
 esac
 LCSTUB
 chmod +x "$TMP/lc-bin/spira-lc"
-PATH="$TMP/lc-bin:$PATH"
+PATH="$TMP/lc-bin:$PATH"; tl_declare_release
 for id in sp-db1 sp-db2 sp-db3 sp-db6 sp-db8; do printf 'READY\n' > "$LCSTATE/$id"; done
 
 # ---- helpers -----------------------------------------------------------------------

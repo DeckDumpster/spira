@@ -149,9 +149,10 @@ inst() {
     [ "${1:-}" = "--" ] && shift
     tl_config SPIRA_REPO_MAP=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_DOLT_DATA=""
-    env -i SPIRA_RELEASE="$(tl_release)" \
+    env -i \
         SPIRA_TOML="${INST_TOML:-$SPIRA_TOML}" \
         "PATH=$MOCK_BIN:$FIXTURE/bin:$FIXTURE/spira:$GIT_BIN:$PATH" \
+        "SPIRA_RELEASE=$(PATH="$MOCK_BIN:$FIXTURE/bin:$FIXTURE/spira:$GIT_BIN:$PATH" tl_release)" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
         "SPIRA_REPO=$repo" \

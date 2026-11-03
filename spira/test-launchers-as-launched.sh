@@ -23,7 +23,7 @@ mkdir -p "$TMP/releases" "$TMP/stubs" "$TMP/run" "$TMP/tmux"
 
 R="$TMP/releases/rel1"
 mkdir -p "$R/bin"
-for b in mail spira-lc spira-config watchd release health lc-view layout cockpit-collect inbox-triage; do
+for b in mail spira-lc spira-config watchd release health lc-view layout cockpit-collect inbox-triage bdq; do
     p="$(command -v "$b" 2>/dev/null)" && cp "$p" "$R/bin/$b"
 done
 ln -s "$ROOT/spira" "$R/spira"
@@ -48,7 +48,7 @@ chmod +x "$TMP/stubs/"*
 AH="$TMP/aerc-home"
 mkdir -p "$AH/.config/aerc" "$TMP/mail/concierge/"{new,cur,tmp} "$TMP/mail/operator/"{new,cur,tmp}
 sed "s#maildir:///path/to/SPIRA_MAIL#maildir://$TMP/mail#" "$ROOT/aerc/accounts.conf" > "$AH/.config/aerc/accounts.conf"
-env -i HOME="$AH" PATH="$TMP/stubs:/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" SPIRA_RELEASES="$TMP/releases" \
+env -i HOME="$AH" PATH="$TMP/stubs:/usr/bin:/bin" SPIRA_RELEASE="$(PATH="$TMP/stubs:/usr/bin:/bin" tl_release)" SPIRA_TOML="$SPIRA_TOML" SPIRA_RELEASES="$TMP/releases" \
     SPIRA_INSTALL_AERC_CONSIDERED=1 "$(command -v spira-install)" >"$TMP/install.out" 2>&1
 OUTGOING="$(sed -n 's/^outgoing *= *//p' "$AH/.config/aerc/accounts.conf" | head -1)"
 case "$OUTGOING" in "$AH/.local/bin/spira-sendmail") ok "install repoints aerc's outgoing at spira-sendmail" ;;

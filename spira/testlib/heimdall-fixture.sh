@@ -51,7 +51,7 @@ esac
 exec "$REAL_LC" "\$@"
 SHIM
 chmod +x "$TMP/shim/spira-lc"
-export PATH="$TMP/shim:$PATH"
+export PATH="$TMP/shim:$PATH"; tl_declare_release
 
 heimdall() {   # heimdall [--report] — one run against the fixture
     tl_config SPIRA_RUN="$RUN" SPIRA_EXPORTER="" SPIRA_WIKI="" SPIRA_LC_STORE_PATH="${HEIMDALL_STORE:-$STORE}"

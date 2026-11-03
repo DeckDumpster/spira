@@ -37,7 +37,7 @@ echo "test-drift.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 drift() {
-    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent \
+    env -i SPIRA_RELEASE="$(PATH="$PATH" tl_release)" PATH="$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent \
         bash "$HERE/drift.sh" "$@"
 }
 
@@ -90,7 +90,7 @@ echo "units — a matching unit dir reports nothing, an unshipped drop-in is cau
 UNITDIR="$TMP/home/.config/systemd/user"
 mkdir -p "$UNITDIR"
 
-manifest="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent bash "$HERE/owned.sh" list 2>/dev/null)"
+manifest="$(env -i SPIRA_RELEASE="$(PATH="$PATH" tl_release)" PATH="$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent bash "$HERE/owned.sh" list 2>/dev/null)"
 [ -n "$manifest" ] || bail "owned.sh list produced nothing — cannot build the fixture"
 while IFS='|' read -r kind id loc phase retention; do
     [ "$kind" = unit ] || continue
@@ -145,7 +145,7 @@ LCSTATE="$TMP/lcstate"; mkdir -p "$LCSTATE" "$TMP/lcbin"
 printf '#!/usr/bin/env bash\n[ "${1:-}" = state ] || exit 2\nif [ -s "%s/${2:-}" ]; then cat "%s/${2:-}"; else echo SUBMITTED; fi\n' \
     "$LCSTATE" "$LCSTATE" > "$TMP/lcbin/spira-lc"
 chmod +x "$TMP/lcbin/spira-lc"
-PATH="$TMP/lcbin:$PATH"
+PATH="$TMP/lcbin:$PATH"; tl_declare_release
 
 land_base() {
     git -C "$LREPO" update-ref refs/remotes/origin/main HEAD
@@ -170,7 +170,7 @@ bead = "sp-local-prune"
 TOML
 ldrift() {
     tl_config SPIRA_LOCAL_UNITS="$LMANIFEST"
-    env -i SPIRA_RELEASE="$(tl_release)" PATH="$TMP/lcbin:$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent \
+    env -i SPIRA_RELEASE="$(PATH="$TMP/lcbin:$PATH" tl_release)" PATH="$TMP/lcbin:$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent \
         SPIRA_REPO="$LREPO" \
         bash "$HERE/drift.sh" units "$UNITDIR"
 }
@@ -250,7 +250,7 @@ echo
 echo "cockpit-collect probe drift: the pane's own keys, OK/DIRTY/UNSHIPPED, ? when unreadable:"
 # ==========================================================================
 drift_keys_out() {
-    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$1" \
+    env -i SPIRA_RELEASE="$(PATH="$PATH" tl_release)" PATH="$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$1" \
         cockpit-collect probe drift 2>/dev/null
 }
 
@@ -279,7 +279,7 @@ chmod +x "$MOCK_INC"
 
 wt_drift_check() {   # wt_drift_check <repo> <unitdir>
     tl_config SPIRA_RUN="$TMP/run"
-    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
+    env -i SPIRA_RELEASE="$(PATH="$PATH" tl_release)" PATH="$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
         SPIRA_REPO="$1" SPIRA_INCIDENT_SH="$MOCK_INC" \
         watchtower --drift-check 2>&1
 }
@@ -315,20 +315,21 @@ rm -f "$TMP/run/world.halted" "$REPO/spira/test-stray.sh"
 # A CHECKOUT HALF THAT CANNOT RUN MUST RAISE AN INCIDENT, NOT LOG FOREVER.
 wt_drift_blind() {
     tl_config SPIRA_RUN="$TMP/run"
-    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
+    env -i PATH="$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
         SPIRA_INCIDENT_SH="$MOCK_INC" watchtower --drift-check 2>&1
 }
 rm -rf "$TMP/run/conditions"; rm -f "$TMP/inc-calls"
 wt_drift_blind >/dev/null; wt_drift_blind >/dev/null
 is "SPIRA_REPO and SPIRA_RELEASE unset: two runs file nothing yet" "" "$(inc_calls)"
-wt_drift_blind >/dev/null
-want "SPIRA_REPO and SPIRA_RELEASE unset: third run files an incident" "incident:drift-unreadable-checkout" "$(inc_calls)"
+# With no declared release there is nothing to file through: the third run names the refusal.
+blind_out="$(wt_drift_blind)"
+want "SPIRA_REPO and SPIRA_RELEASE unset: the third run refuses to file, naming SPIRA_RELEASE" "SPIRA_RELEASE is not set" "$blind_out"
+is "SPIRA_REPO and SPIRA_RELEASE unset: no incident is filed without a release" "" "$(inc_calls)"
 
-mkdir -p "$TMP/release"
 rm -rf "$TMP/run/conditions"; rm -f "$TMP/inc-calls"
 for _ in 1 2 3 4; do
-    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
-        SPIRA_RELEASE="$TMP/release" SPIRA_INCIDENT_SH="$MOCK_INC" watchtower --drift-check >/dev/null 2>&1
+    env -i PATH="$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
+        SPIRA_RELEASE="$(PATH="$PATH" tl_release)" SPIRA_INCIDENT_SH="$MOCK_INC" watchtower --drift-check >/dev/null 2>&1
 done
 is "release directory: checkout half retired, no incident" "" "$(inc_calls)"
 

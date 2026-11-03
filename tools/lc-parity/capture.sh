@@ -37,6 +37,8 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$out" ] || die "usage: capture.sh [--source DATA_DIR | --save-seed DIR] [--spira-lc BIN] [--cases FILE] [--work DIR] OUT_DIR"
 lc_bin="$(command -v "$lc_bin")" || die "spira-lc not found"
+# The release that spira-lc ships in: declared to every call, which resolves its tools from it.
+lc_release="$(cd "$(dirname "$lc_bin")/.." && pwd -P)"
 DOLT="$(command -v dolt)" || die "dolt not on PATH"
 [ -f "$cases" ] || die "no cases file at $cases"
 
@@ -166,7 +168,7 @@ now() { NOW="$1"; }
 # An empty PATH: whatever a verb shells out to (bd, git) is absent on every host alike.
 run_lc() {  # run_lc <stdin-file-or-empty> args...
     local in="$1"; shift
-    env -i PATH="$work/bin" HOME="$work/home" LC_ALL=C TZ=UTC \
+    env -i PATH="$work/bin" HOME="$work/home" LC_ALL=C TZ=UTC SPIRA_RELEASE="$lc_release" \
         SPIRA_TOML="$CHILD_TOML" SPIRA_HOME="$REPO/spira" SPIRA_NOW="$NOW" \
         SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" SPIRA_LC_DB=spira_lifecycle \
         SPIRA_LC_DATA_DIR="$STORE" SPIRA_LC_USER=root SPIRA_LC_PASSWORD= \

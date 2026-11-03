@@ -84,7 +84,7 @@ run_skew_cmd() {
     # 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML
     # through env -i, which clears it.
     tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA=""
-    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" \
+    env -i SPIRA_RELEASE="$(PATH="$PATH" tl_release)" PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" \
@@ -229,7 +229,7 @@ run_skew_release() {
     # Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML
     # through env -i, which clears it.
     tl_config SPIRA_RUN="$run_dir" SPIRA_RELEASES="$RELEASES" SPIRA_DOLT_DATA=""
-    env -i SPIRA_RELEASE="$(tl_release)" PATH="$STUBBIN:$PATH" \
+    env -i SPIRA_RELEASE="$(PATH="$STUBBIN:$PATH" tl_release)" PATH="$STUBBIN:$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" \
@@ -331,10 +331,10 @@ MAP
 # checkout refresh, which fails here since this fixture carries no real release workspace.
 tl_config SPIRA_RUN="$QRUN" SPIRA_DB="$TMP/qland-no-db" SPIRA_HOME_REPO=qfixture \
     SPIRA_REPO_MAP="$QSH/repo-map" SPIRA_RELEASES="" SPIRA_DOLT_DATA=""
-q_out="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" \
+q_out="$(env -i SPIRA_RELEASE="$(PATH="$PATH" tl_release)" PATH="$PATH" \
     HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_HOME="$QSH" PATH="$QSH:$PATH" \
+    SPIRA_HOME="$QSH" PATH="$QSH:$PATH" SPIRA_RELEASE="$(PATH="$QSH:$PATH" tl_release)" \
     SPIRA_REPO="$QREPO" \
     SPIRA_TOML="$SPIRA_TOML" \
     landing-pass land 2>&1)"
@@ -392,26 +392,26 @@ run_lq() {
     # and thread SPIRA_TOML through env -i, which clears it.
     tl_config SPIRA_HOME_REPO=lfixq SPIRA_RUN="$LRUN" SPIRA_QUEUE_DIR="$LQDIR" \
         SPIRA_REPO_MAP="$LRMAP" SPIRA_RELEASES="$LRELEASES" SPIRA_DB="$TMP/local-no-db"
-    env -i SPIRA_RELEASE="$(tl_release)" $(lcfix_env) PATH="$PATH" \
+    env -i SPIRA_RELEASE="$(PATH="$PATH" tl_release)" $(lcfix_env) PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_HOME="$LSH" PATH="$LSH:$PATH" \
+        SPIRA_HOME="$LSH" PATH="$LSH:$PATH" SPIRA_RELEASE="$(PATH="$LSH:$PATH" tl_release)" \
         SPIRA_REPO="$LREPO" \
         SPIRA_SYSTEMCTL="$TMP/mock-sc" \
         SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged (queue/DESIGN.md §8 D12)" \
         SPIRA_LAND_UNGATED_BY=operator \
         SPIRA_LAND_UNGATED_EVIDENCE=local/main \
         SPIRA_TOML="$SPIRA_TOML" \
-        SPIRA_HOME="$LSH" PATH="$LSH:$PATH" queue "$@" 2>&1
+        SPIRA_HOME="$LSH" PATH="$LSH:$PATH" SPIRA_RELEASE="$(PATH="$LSH:$PATH" tl_release)" queue "$@" 2>&1
 }
 run_lskew() {
     # SPIRA_RUN/SPIRA_REPO_MAP/SPIRA_RELEASES are registered keys (per Ryan 2026-10-05,
     # ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
     tl_config SPIRA_RUN="$LRUN" SPIRA_REPO_MAP="$LRMAP" SPIRA_RELEASES="$LRELEASES"
-    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" \
+    env -i SPIRA_RELEASE="$(PATH="$PATH" tl_release)" PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_HOME="$LSH" PATH="$LSH:$PATH" \
+        SPIRA_HOME="$LSH" PATH="$LSH:$PATH" SPIRA_RELEASE="$(PATH="$LSH:$PATH" tl_release)" \
         SPIRA_REPO="$LREPO" \
         SPIRA_TOML="$SPIRA_TOML" \
         "$LSH/skew" "$@" 2>&1
@@ -442,6 +442,8 @@ lbins() {   # lbins <head> <content> -> the round's own release build in its wor
     mkdir -p "$dir"
     printf '%s' "$content" > "$dir/fakebin"
     chmod +x "$dir/fakebin"
+    # The round's own build ships its `release`; land-local runs that one, never another.
+    cp "$STUBBIN/release" "$dir/release"
 }
 
 LHEAD1="$(lround r1 f1.txt round1)"

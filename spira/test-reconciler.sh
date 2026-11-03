@@ -140,7 +140,7 @@ desired_state_clear() {
 # ------------------------------------------------------------------------------------------
 
 STUB_BIN="$T/stub-bin"; mkdir -p "$STUB_BIN"
-rpass() { PATH="$STUB_BIN:$PATH" reconciler --pass >/dev/null 2>&1; }
+rpass() { PATH="$STUB_BIN:$PATH" SPIRA_RELEASE="$(PATH="$STUB_BIN:$PATH" tl_release)" reconciler --pass >/dev/null 2>&1; }
 
 SYSTEMCTL_STATE="$T/systemctl-state"   # "<unit> <enabled|disabled> <active|inactive>" per line
 SYSTEMCTL_CALLS="$T/systemctl-calls.log"
@@ -355,7 +355,7 @@ printf '\n%s\n' "2. flock: concurrent pass is skipped"
 # ==========================================================================================
 _lock="$SPIRA_RUN/reconciler.lock"
 exec 9>"$_lock"; flock 9
-_out="$(PATH="$STUB_BIN:$PATH" reconciler --pass 2>&1 || true)"
+_out="$(PATH="$STUB_BIN:$PATH" SPIRA_RELEASE="$(PATH="$STUB_BIN:$PATH" tl_release)" reconciler --pass 2>&1 || true)"
 exec 9>&-
 want "concurrent pass logs 'already running'" "already running" "$_out"
 
