@@ -5,10 +5,9 @@
 #   runner BINARY [ARGS...]               what cargo calls
 #   runner --print-args BINARY [ARGS...]  the bwrap command line, one argument per line
 #
-# The policy is testenv's sandbox unit runner's (testenv/src/sandbox.rs, Profile::bwrap_args;
-# testenv/tests/test_sandbox.rs holds the two together): read-only root; tmpfs /tmp, /run and
-# home; the toolchain bound back; the workspace and CARGO_TARGET_DIR writable; the environment
-# cleared to an allow-list; no network. Every directory the home already holds comes back
+# The policy is testenv's sandbox unit runner's (testenv/src/sandbox.rs, Profile::bwrap_args):
+# read-only root; tmpfs /tmp, /run and home; the toolchain bound back; the workspace and
+# CARGO_TARGET_DIR writable; the environment cleared to an allow-list; no network. Every directory the home already holds comes back
 # empty and writable, so a write to the install lands in tmpfs and never on disk. It differs in
 # hiding both $HOME and the passwd entry's home.
 #
