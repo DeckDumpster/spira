@@ -399,7 +399,7 @@ fn registry_keys(rel: &Path) -> Result<Vec<spira_config::registry::RegistryKey>,
 /// The release's delta plus the registry default of every key its registry declares that the
 /// active release's registry (`active`) does not, the layers lack and the delta does not
 /// mention, so a key added to the registry without a delta entry still reaches the config.
-/// A key the running release already declared is left alone: it runs without it today. A new
+/// A key the running release already declared is added too: the new release resolves every key. A new
 /// key whose default is absent or computed refuses, naming it. `None` when there is nothing
 /// to apply.
 pub fn complete(original: &[Table], rel: &Path, active: Option<&Path>, delta: Option<Delta>) -> Result<Option<Delta>, String> {
