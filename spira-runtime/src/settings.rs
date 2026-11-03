@@ -292,11 +292,17 @@ impl Settings {
     }
 }
 
+/// A complete `Settings` from test values, none of them a shipped default.
+#[cfg(test)]
+pub(crate) fn fixture() -> Settings {
+    Settings::from_lookup(&tests::lookup("7")).expect("fixture settings")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn lookup(secs: &'static str) -> impl Fn(&str) -> Result<String, String> {
+    pub(crate) fn lookup(secs: &'static str) -> impl Fn(&str) -> Result<String, String> {
         move |k| {
             Ok(match k {
                 "SPIRA_RUNTIME_HEARTBEAT_URL" => "http://127.0.0.1:9/ping",

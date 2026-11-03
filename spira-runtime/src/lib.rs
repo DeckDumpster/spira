@@ -7,6 +7,7 @@ pub mod notify;
 pub mod reconcile_host;
 pub mod settings;
 pub mod sink;
+pub mod tasks;
 pub mod wake;
 pub mod watchers;
 pub mod wiki_git;
@@ -16,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use runtime::heartbeat::{Heartbeat, PING};
+use runtime::heartbeat::PING;
 use runtime::host::EffectRunner;
 use runtime::{Engine, EffectSpec, Journal, Marker, Registration, Value, WideSink};
 
@@ -26,9 +27,9 @@ pub use settings::Settings;
 /// this often rather than on every wake.
 const FOREIGN_POLL_MS: u64 = 30_000;
 
-/// Every workflow the service hosts. The heartbeat is registered here and nowhere else.
+/// Every task in `tasks::TASKS`, in table order.
 pub fn registrations(s: &Settings) -> Vec<Registration> {
-    vec![Heartbeat { interval_ms: s.heartbeat_secs * 1000, ping_deadline_ms: s.ping_deadline_ms() }.registration(), s.round_duty.clone().registration(), s.inbox_keeper.clone().registration(), s.pr_notify.clone().registration(), s.asks.clone().registration(), s.design_asks.clone().registration(), s.brain_dirty.clone().registration(), s.supersede_duty.clone().registration(), s.bead_sweep.clone().registration(), s.publish_backlog.clone().registration(), s.repo_events.clone().registration(), s.overrides.clone().registration(), s.view.clone().registration(), s.reconciler.clone().registration(), s.reconciler_flow.clone().registration()]
+    tasks::TASKS.iter().map(|t| (t.build)(s)).collect()
 }
 
 pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, extra: Vec<Registration>) -> runtime::Result<Engine> {
