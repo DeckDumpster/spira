@@ -770,7 +770,6 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "fayths", bead: "sp-yyuunv" }, // ffx-ok
     RetiredKey { key: "unit_test_slow_secs", bead: "sp-1qi6zt" },
     RetiredKey { key: "unit_test_terminate_after", bead: "sp-1qi6zt" },
-    RetiredKey { key: "round_vm_disk_need_gib", bead: "sp-us9dro" },
     RetiredKey { key: "queue_local_gate", bead: "sp-vsob2" },
     RetiredKey { key: "queue_batch_idle_cut", bead: "sp-vsob2" },
     RetiredKey { key: "cert_idle_skip", bead: "sp-6d9th" },
