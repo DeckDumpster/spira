@@ -15,6 +15,7 @@ use std::process::{Command, Stdio};
 
 use crate::model::{BeadRow, LandMode, LcBeadRow, RangeCommit};
 use crate::ports::*;
+use crate::records::Kv;
 use crate::seam::{self, Op};
 
 /// Close every fd >= 3 in the child before it execs. This process's own fds are already
@@ -1476,6 +1477,93 @@ impl RealLc {
     }
 }
 
+impl RealLc {
+    /// `spira-lc rc <verb> --json -`, the body on stdin, decoded as the door's wire answers.
+    fn rc<T: serde::de::DeserializeOwned>(
+        &self,
+        verb: state_store::wire::Verb,
+        body: &impl serde::Serialize,
+    ) -> Result<T, String> {
+        let what = format!("spira-lc rc {}", verb.word());
+        let bin = self.bin.as_ref().ok_or("no spira-lc program")?;
+        let timeout = crate::conf::nonempty("SPIRA_LC_TIMEOUT")?;
+        let body = serde_json::to_vec(body).map_err(|e| format!("{what}: {e}"))?;
+        let mut child = Command::new("timeout")
+            .arg(&timeout)
+            .arg(bin)
+            .args(["rc", verb.word(), "--json", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("{what}: {e}"))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(&body);
+        }
+        let o = child.wait_with_output().map_err(|e| format!("{what}: {e}"))?;
+        let Some(code) = o.status.code() else {
+            return Err(format!("{what} was killed: {}", String::from_utf8_lossy(&o.stderr).trim()));
+        };
+        state_store::wire::decode(code, &String::from_utf8_lossy(&o.stdout))
+            .map_err(|e| format!("{what}: {e}"))
+    }
+}
+
+/// Whether spira-lc serves the batch machine from the control store: the store is configured and
+/// the lifecycle verbs are switched onto it. Read once per process, as spira-lc reads it.
+/// Parsed as spira-lc parses it, so the two never disagree on one value. Err: the config does
+/// not resolve, which no reader may take for "the files are the record".
+fn rounds_on_store() -> &'static Result<bool, String> {
+    static ON: std::sync::OnceLock<Result<bool, String>> = std::sync::OnceLock::new();
+    ON.get_or_init(|| {
+        let path = crate::conf::value("SPIRA_LC_STORE_PATH")?;
+        if path.trim().is_empty() {
+            return Ok(false);
+        }
+        let on = crate::conf::value("SPIRA_LC_LIFECYCLE_ON_STORE")?;
+        on.trim()
+            .parse::<u8>()
+            .map(|v| v != 0)
+            .map_err(|e| format!("SPIRA_LC_LIFECYCLE_ON_STORE = {on:?} does not parse: {e}"))
+    })
+}
+
+/// A request id no other call mints, so a retried write is its own request.
+fn rc_request_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    format!("queue/{}/{nanos}/{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed))
+}
+
+impl crate::batches::Door for RealLc {
+    fn get(&self, key: &str) -> Result<Option<state_store::Item>, String> {
+        self.rc(state_store::wire::Verb::Get, &state_store::wire::Get { key: key.into() })
+    }
+    fn list(&self, prefix: &str) -> Result<Vec<state_store::Item>, String> {
+        let body = state_store::wire::List {
+            prefixes: vec![prefix.into()],
+            selector: state_store::Selector::Everything,
+        };
+        self.rc(state_store::wire::Verb::List, &body)
+            .map(|l: state_store::wire::Listed| l.items)
+    }
+    fn txn(&self, t: &state_store::Txn, kind: &str) -> Result<state_store::TxnResult, String> {
+        let body = state_store::wire::TxnCall {
+            txn: t.clone(),
+            request: state_store::Request::new(&rc_request_id(), crate::ops::round::LC_ACTOR, kind),
+        };
+        self.rc(state_store::wire::Verb::Txn, &body)
+    }
+}
+
+/// `--round`'s value: the queue's fields of the round as one JSON object.
+fn round_flag(round: Option<&Kv>) -> Option<String> {
+    round.map(|kv| serde_json::Value::Object(crate::batches::fields(kv)).to_string())
+}
+
 fn json_str(v: &serde_json::Value, k: &str) -> Option<String> {
     match v.get(k)? {
         serde_json::Value::String(s) => Some(s.clone()),
@@ -1488,6 +1576,16 @@ impl Lc for RealLc {
     fn available(&self) -> bool {
         // A program by name: whether it answers is the probe's question, not a file test.
         self.bin.is_some()
+    }
+    fn rounds_door(&self) -> Option<&dyn crate::batches::Door> {
+        static UNRESOLVED: std::sync::OnceLock<crate::batches::Unresolved> = std::sync::OnceLock::new();
+        match rounds_on_store() {
+            Ok(true) => Some(self),
+            Ok(false) => None,
+            Err(e) => Some(UNRESOLVED.get_or_init(|| {
+                crate::batches::Unresolved(format!("cannot tell where the rounds are: {e}"))
+            })),
+        }
     }
     fn batch_state(&self, batch_id: &str) -> Option<(String, String)> {
         let out = self.stdout(&["show-batch", batch_id]).ok()?;
@@ -1516,8 +1614,10 @@ impl Lc for RealLc {
         base: &str,
         members: &str,
         actor: &str,
+        round: Option<&Kv>,
     ) -> Result<String, (i32, String)> {
-        let (rc, out) = self.run(&[
+        let fields = round_flag(round);
+        let mut argv = vec![
             "cut",
             batch_id,
             "--repo",
@@ -1530,7 +1630,9 @@ impl Lc for RealLc {
             members,
             "--actor",
             actor,
-        ]);
+        ];
+        argv.extend(fields.iter().flat_map(|f| ["--round", f.as_str()]));
+        let (rc, out) = self.run(&argv);
         if rc != 0 {
             return Err((rc, out.trim().to_string()));
         }
@@ -1579,10 +1681,14 @@ impl Lc for RealLc {
         head: &str,
         base: &str,
         actor: &str,
+        round: Option<&Kv>,
     ) -> Result<(), (i32, String)> {
-        let (rc, out) = self.run(&[
+        let fields = round_flag(round);
+        let mut argv = vec![
             "promote", batch_id, "--head", head, "--base", base, "--actor", actor,
-        ]);
+        ];
+        argv.extend(fields.iter().flat_map(|f| ["--round", f.as_str()]));
+        let (rc, out) = self.run(&argv);
         if rc == 0 {
             Ok(())
         } else {
@@ -1651,8 +1757,10 @@ impl Lc for RealLc {
         version: &str,
         actor: &str,
         kind: &str,
+        round: Option<&Kv>,
     ) -> Result<(), (i32, String)> {
-        let (rc, out) = self.run(&[
+        let fields = round_flag(round);
+        let mut argv = vec![
             "event",
             "batch",
             batch_id,
@@ -1664,7 +1772,9 @@ impl Lc for RealLc {
             actor,
             "--kind",
             kind,
-        ]);
+        ];
+        argv.extend(fields.iter().flat_map(|f| ["--round", f.as_str()]));
+        let (rc, out) = self.run(&argv);
         if rc == 0 {
             Ok(())
         } else {

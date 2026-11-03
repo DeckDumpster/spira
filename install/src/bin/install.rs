@@ -1339,6 +1339,13 @@ fn run_main() -> ExitCode {
         changes += 1;
     }
 
+    // ---- phase 4.8: round record files ----------------------------------------------------
+    phase("phase 4.8: round record files");
+    if let Err(e) = round_records_phase(opts.dry) {
+        eprintln!("install: phase round record files failed — {e}");
+        return ExitCode::from(2);
+    }
+
     // ---- phase 5: hooks -------------------------------------------------------------------
     phase("phase 5: hooks");
     let repo = nonempty_env("SPIRA_REPO").unwrap_or_default();
@@ -1921,6 +1928,42 @@ fn populate_phase(dry: bool) -> Result<(), String> {
     info(&format!("lifecycle population: {} bead(s) in the database, {} row(s) created, {} already present", counts.beads, counts.created, counts.present));
     if let Some(w) = install::populate::unknown_repo_line(&counts.unknown_repo) {
         eprintln!("install: WARNING: {w}");
+    }
+    Ok(())
+}
+
+/// Phase 4.8: once spira-lc serves the batch machine from the control store, the queue reads
+/// rounds from there and its round files are removed; refused while one names an open round.
+fn round_records_phase(dry: bool) -> Result<(), String> {
+    let on_store = bootstrap::declared("SPIRA_LC_STORE_PATH").is_some()
+        && bootstrap::declared("SPIRA_LC_LIFECYCLE_ON_STORE").is_some_and(|v| v.trim().parse::<u8>().is_ok_and(|n| n != 0));
+    if !on_store {
+        skip("the batch machine is not on the control store — the queue's round files are still the record of the open rounds");
+        return Ok(());
+    }
+    let queue_dir = bootstrap::declared("SPIRA_QUEUE_DIR").ok_or("SPIRA_QUEUE_DIR is declared empty — cannot find the round files")?;
+    let files = install::round_records::round_files(Path::new(&queue_dir));
+    if files.is_empty() {
+        skip("no round files to remove");
+        return Ok(());
+    }
+    let gone = install::round_records::plan(&files, |batch| {
+        // batch-job: one store read per round file; bounded at 30 s by timeout(1).
+        let o = Command::new("timeout").arg("30").arg(spira_config::release_env::tool("spira-lc")).args(["show-batch", batch]).stdin(Stdio::null()).output().map_err(|e| format!("cannot run spira-lc: {e}"))?;
+        let v: serde_json::Value = serde_json::from_slice(&o.stdout).map_err(|_| format!("spira-lc show-batch {batch} exited {:?}: {}", o.status.code(), String::from_utf8_lossy(&o.stderr).trim()))?;
+        match (o.status.code(), v.get("state").and_then(|s| s.as_str())) {
+            (Some(0), Some(state)) => Ok(Some(state.to_string())),
+            (Some(1), None) => Ok(None),
+            (code, _) => Err(format!("spira-lc show-batch {batch} exited {code:?}: {v}")),
+        }
+    })?;
+    for p in &gone {
+        if dry {
+            would(&format!("remove {}", p.display()));
+        } else {
+            std::fs::remove_file(p).map_err(|e| format!("{}: {e}", p.display()))?;
+            info(&format!("removed {}", p.display()));
+        }
     }
     Ok(())
 }

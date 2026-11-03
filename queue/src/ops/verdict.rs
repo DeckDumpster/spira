@@ -1576,7 +1576,7 @@ pub(super) fn walk_to_green(
         ("CI_RUNNING", "\"Green\"", "GREEN"),
     ] {
         if s == from {
-            if let Err((rc, e)) = w.lc.batch_event(id, &s, &v.to_string(), actor, kind) {
+            if let Err((rc, e)) = w.lc.batch_event(id, &s, &v.to_string(), actor, kind, None) {
                 return Err((
                     s,
                     format!("spira-lc refused {kind} for batch {id} (rc={rc}): {e}"),

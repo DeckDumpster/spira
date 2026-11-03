@@ -357,6 +357,7 @@ impl<B: Backend> Store<B> {
                 })
                 .collect(),
             opened_at: cut.at,
+            round: Default::default(),
         };
         self.put_round(&mut c, &key, &rec)?;
         let r = self.audited_txn(c.txn(), &[], &[], req, "stage")?;

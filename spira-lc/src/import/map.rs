@@ -279,6 +279,7 @@ pub fn project(a: &Archive, no_record: &BTreeSet<String>) -> Result<Projection, 
         let rec = BatchRecord {
             members: members.remove(&row.batch_id).unwrap_or_default(),
             opened_at: number(&r.row, "opened_at").unwrap_or(0),
+            round: Default::default(),
             row,
         };
         let Some(data) = l.data("batch", &r.key, &rec) else { continue };

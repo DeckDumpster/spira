@@ -10,10 +10,12 @@ use std::path::{Path, PathBuf};
 use crate::cli::{self, Cmd};
 use crate::model::{BeadRow, LandMode, LcBeadRow, RangeCommit};
 use crate::ports::*;
+use crate::records::Kv;
 use crate::testutil::tmpdir;
 
 mod rebase;
 mod round;
+mod round_store;
 mod verdict;
 
 // ------------------------------------------------------------------------------- fakes
@@ -984,6 +986,10 @@ struct FLc {
     late_boundaries: Cell<bool>,
     /// The latest mended tip per bead.
     mend_tips: RefCell<BTreeMap<String, String>>,
+    /// Set: the batch machine is on this control store, so the rounds are its `batches/` records.
+    store: std::cell::OnceCell<crate::batches::mem::MemDoor>,
+    /// `abandon-batch` is refused with this text.
+    abandon_refused: Cell<Option<&'static str>>,
     /// The next `mending mend` is refused with this text.
     mend_refused: RefCell<Option<String>>,
     /// `lock show round/<repo>/<batch>` per `<repo>/<batch>`; absent is unleased.
@@ -1019,7 +1025,9 @@ impl Default for FLc {
             batch_view: Default::default(),
             late_boundaries: Cell::new(false),
             mend_tips: RefCell::default(),
+            store: Default::default(),
             mend_refused: RefCell::default(),
+            abandon_refused: Cell::new(None),
             leases: RefCell::default(),
             calls: RefCell::default(),
         }
@@ -1029,6 +1037,18 @@ impl Default for FLc {
 impl FLc {
     fn has(&self, prefix: &str) -> bool {
         self.calls.borrow().iter().any(|c| c.starts_with(prefix))
+    }
+
+    /// The machine moves round `id` to `state` on the store, when it holds the round.
+    fn store_step(&self, id: &str, state: &str) {
+        self.store_step_with(id, state, None);
+    }
+
+    /// [`FLc::store_step`], with the queue's fields of the round in the step's txn.
+    fn store_step_with(&self, id: &str, state: &str, round: Option<&Kv>) {
+        if let Some((repo, ..)) = self.store.get().and_then(|d| d.find(id)) {
+            self.store.get().unwrap().step(&repo, id, state, round);
+        }
     }
 }
 
@@ -1044,6 +1064,9 @@ impl Lc for FLc {
         self.calls.borrow_mut().push("available".into());
         self.available.get()
     }
+    fn rounds_door(&self) -> Option<&dyn crate::batches::Door> {
+        self.store.get().map(|d| d as &dyn crate::batches::Door)
+    }
     fn requeue_orphans(&self, _: &str) -> Result<String, (i32, String)> {
         self.calls.borrow_mut().push("requeue-orphans".into());
         Ok(String::new())
@@ -1056,6 +1079,9 @@ impl Lc for FLc {
         self.calls.borrow_mut().push(format!("show-batch {id}"));
         if self.no_batch_row.get() {
             return None;
+        }
+        if let Some((_, state, version)) = self.store.get().and_then(|d| d.find(id)) {
+            return Some((state, version));
         }
         if let Some(s) = self.batch_states.borrow().get(id) {
             return Some(s.clone());
@@ -1089,11 +1115,12 @@ impl Lc for FLc {
     fn cut(
         &self,
         id: &str,
-        _: &str,
+        repo: &str,
         _: &str,
         _: &str,
         members: &str,
         _: &str,
+        round: Option<&Kv>,
     ) -> Result<String, (i32, String)> {
         self.calls.borrow_mut().push(format!("cut {id} {members}"));
         if let Some(why) = self.cut_refused.get() {
@@ -1109,6 +1136,10 @@ impl Lc for FLc {
         self.batch_view
             .borrow_mut()
             .get_or_insert(("OPEN".into(), 1, 0, String::new()));
+        if let Some(d) = self.store.get() {
+            let ms: Vec<(&str, &str)> = members.split(',').filter_map(|m| m.split_once(':')).collect();
+            d.cut_round(repo, id, "OPEN", &ms, 0, round);
+        }
         if self.deadline_after_write.get() == Some("cut") {
             self.deadline_after_write.set(None);
             return Err((2, "cannot tell: deadline".into()));
@@ -1130,13 +1161,23 @@ impl Lc for FLc {
         ));
         Ok("0".into())
     }
-    fn promote(&self, id: &str, head: &str, base: &str, _: &str) -> Result<(), (i32, String)> {
+    fn promote(
+        &self,
+        id: &str,
+        head: &str,
+        base: &str,
+        _: &str,
+        round: Option<&Kv>,
+    ) -> Result<(), (i32, String)> {
         self.calls
             .borrow_mut()
             .push(format!("promote {id} {head} {base}"));
         match self.promote_refused.get() {
             Some(why) => Err((3, why.into())),
-            None => Ok(()),
+            None => {
+                self.store_step_with(id, "OPEN", round);
+                Ok(())
+            }
         }
     }
     fn abandon_batch(
@@ -1150,6 +1191,10 @@ impl Lc for FLc {
         self.calls
             .borrow_mut()
             .push(format!("abandon-batch {id} {s} {v} {r}"));
+        if let Some(why) = self.abandon_refused.get() {
+            return Err((3, why.into()));
+        }
+        self.store_step(id, "ABANDONED");
         if self.deadline_after_write.get() == Some("abandon-batch") {
             self.deadline_after_write.set(None);
             self.batch_states
@@ -1187,6 +1232,7 @@ impl Lc for FLc {
         v: &str,
         _: &str,
         kind: &str,
+        round: Option<&Kv>,
     ) -> Result<(), (i32, String)> {
         self.calls
             .borrow_mut()
@@ -1237,6 +1283,9 @@ impl Lc for FLc {
                 _ => (view.0.as_str(), view.2, view.3.as_str()),
             };
             *view = (state.to_string(), view.1 + 1, pass, phase.to_string());
+            self.store_step_with(id, &view.0, round);
+        } else if let (Some(_), Some((_, state, _))) = (round, self.store.get().and_then(|d| d.find(id))) {
+            self.store_step_with(id, &state, round);
         }
         if self
             .batch_event_times_out
@@ -1293,7 +1342,10 @@ impl Lc for FLc {
         }
         match self.land_refused.get() {
             Some(why) => Err((3, why.into())),
-            None => Ok(()),
+            None => {
+                self.store_step(id, "LANDED");
+                Ok(())
+            }
         }
     }
     fn bead_rows(&self, state: Option<&str>) -> Result<Vec<LcBeadRow>, String> {
@@ -1640,6 +1692,22 @@ impl T {
 
     fn run(&self, args: &[&str]) -> i32 {
         self.run_on(&self.git, args)
+    }
+
+    /// `f` on the world a verb would run in, for a library call below the verbs.
+    fn with_world<R>(&self, f: impl FnOnce(&World) -> R) -> R {
+        f(&World {
+            git: &self.git,
+            bd: &self.bd,
+            lib: &self.lib,
+            scripts: &self.scripts,
+            forge: &self.forge,
+            lc: &self.lc,
+            config: &self.config,
+            clock: &self.clock,
+            env: &self.env,
+            io: &self.io,
+        })
     }
 
     fn run_on(&self, git: &dyn Git, args: &[&str]) -> i32 {

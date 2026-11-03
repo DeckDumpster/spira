@@ -5,7 +5,7 @@ use super::*;
 
 const T_ROUND: &str = "3333333333333333333333333333333333333333";
 
-fn round_world() -> T {
+pub(super) fn round_world() -> T {
     let t = T::new(LandMode::QueueLocal);
     t.env.resolved.borrow_mut().insert("SPIRA_PLAN_LABEL".into(), "plan-fixture".into());
     t.git.set("refs/heads/local/main", "b0");
@@ -40,11 +40,11 @@ fn round_phase(t: &T) -> String {
     t.lc.batch_state(&rec["batch_id"]).unwrap().0
 }
 
-fn marker(t: &T, batch: &str, ext: &str) -> PathBuf {
+pub(super) fn marker(t: &T, batch: &str, ext: &str) -> PathBuf {
     t.s().run.join("rounds").join(format!("{batch}.{ext}"))
 }
 
-fn batch_of(t: &T) -> String {
+pub(super) fn batch_of(t: &T) -> String {
     t.out()
         .lines()
         .find_map(|l| l.strip_prefix("batch="))
@@ -2130,7 +2130,10 @@ fn a_red_pass_the_batch_row_refuses_is_a_fault_not_a_local_red() {
         "{}",
         t.err()
     );
-    assert_eq!(kv_of(&t, "round")["phase"], "fault");
+    assert!(
+        !kv_of(&t, "round").contains_key("phase"),
+        "the round's phase is the lifecycle's alone"
+    );
 }
 
 #[test]

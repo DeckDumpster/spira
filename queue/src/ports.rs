@@ -6,7 +6,11 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use crate::batches::{self, BatchRecord, Door};
 use crate::model::{BeadRow, LandMode, LcBeadRow, RangeCommit};
+use crate::records::Kv;
+
+const NO_STORE: &str = "the batch machine is not on the control store";
 
 /// Settings as conf.sh resolves them (seam R1).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -481,13 +485,35 @@ pub enum AmiLookup {
 /// spira-lc (the lifecycle machine's CLI).
 pub trait Lc {
     fn available(&self) -> bool;
+    /// The control store's rounds, reached through spira-lc's `rc` door; `None` while the batch
+    /// machine is not on the store, when the queue's round files are the record.
+    fn rounds_door(&self) -> Option<&dyn Door> {
+        None
+    }
+    /// The rounds of `repo` the machine has not ended, oldest first (by creation revision).
+    fn open_batches(&self, repo: &str) -> Result<Vec<BatchRecord>, String> {
+        batches::open_batches(self.rounds_door().ok_or(NO_STORE)?, repo)
+    }
+    /// Every round of `repo`, ended or not, oldest first.
+    fn batches(&self, repo: &str) -> Result<Vec<BatchRecord>, String> {
+        batches::batches(self.rounds_door().ok_or(NO_STORE)?, repo)
+    }
+    fn batch(&self, repo: &str, id: &str) -> Result<Option<BatchRecord>, String> {
+        batches::batch(self.rounds_door().ok_or(NO_STORE)?, repo, id)
+    }
+    /// The queue's own fields of round `kv` written into its record.
+    fn save_batch(&self, repo: &str, kv: &Kv) -> Result<(), String> {
+        batches::save(self.rounds_door().ok_or(NO_STORE)?, repo, kv)
+    }
     /// `show-batch` → (state, version); None when the batch row does not exist.
     fn batch_state(&self, batch_id: &str) -> Option<(String, String)>;
     /// `show-batch` → (pass, phase); phase is empty outside a CI_RUNNING pass.
     fn batch_pass(&self, batch_id: &str) -> Option<(u32, String)>;
     fn create_bead(&self, id: &str);
     fn create_bead_in(&self, id: &str, repo: &str);
-    /// `cut` → Ok(version) or Err((rc, output)).
+    /// `cut` → Ok(version) or Err((rc, output)). `round`: the queue's fields of the round,
+    /// written in the cut's own txn (`--round`); only while the rounds are on the store.
+    #[allow(clippy::too_many_arguments)]
     fn cut(
         &self,
         batch_id: &str,
@@ -496,6 +522,7 @@ pub trait Lc {
         base: &str,
         members: &str,
         actor: &str,
+        round: Option<&Kv>,
     ) -> Result<String, (i32, String)>;
     /// `stage` → the batch row written STAGED behind `parent`; no member moves. Ok(version).
     #[allow(clippy::too_many_arguments)]
@@ -509,13 +536,15 @@ pub trait Lc {
         parent: &str,
         actor: &str,
     ) -> Result<String, (i32, String)>;
-    /// `promote` → STAGED to OPEN at `head`/`base`, every member delivered, in one transaction.
+    /// `promote` → STAGED to OPEN at `head`/`base`, every member delivered, in one transaction,
+    /// with `round`'s fields when given (see [`Lc::cut`]).
     fn promote(
         &self,
         batch_id: &str,
         head: &str,
         base: &str,
         actor: &str,
+        round: Option<&Kv>,
     ) -> Result<(), (i32, String)>;
     fn abandon_batch(
         &self,
@@ -534,7 +563,9 @@ pub trait Lc {
         actor: &str,
         reason: &str,
     ) -> Result<(), (i32, String)>;
-    /// `event batch <id> --expect S --version V --actor A --kind K` (one CAS'd event).
+    /// `event batch <id> --expect S --version V --actor A --kind K` (one CAS'd event), with
+    /// `round`'s fields when given (see [`Lc::cut`]).
+    #[allow(clippy::too_many_arguments)]
     fn batch_event(
         &self,
         batch_id: &str,
@@ -542,6 +573,7 @@ pub trait Lc {
         version: &str,
         actor: &str,
         kind: &str,
+        round: Option<&Kv>,
     ) -> Result<(), (i32, String)>;
     /// `show <bead>` → the bead row's (state, version); None when it has no row.
     fn bead_state(&self, bead: &str) -> Option<(String, String)>;

@@ -4,6 +4,8 @@
 //! record that moved between the plan and the commit writes nothing, and the else branch audits
 //! each step as a lost race, as the dolt cascade's refusal rows record it.
 
+use std::collections::BTreeMap;
+
 use lifecycle::batch::{self, BatchEvent, BatchEventKind, BatchRow};
 use lifecycle::bead::{self, BeadEvent, BeadEventKind, BeadState};
 use lifecycle::delivery::{self, DeliveryEvent, DeliveryEventKind, DeliveryRow, DeliveryState};
@@ -193,6 +195,24 @@ impl Cascade {
         }
     }
 
+    /// Puts the queue's fields of round `id` into the write this cascade plans for the round,
+    /// so they commit in the txn of the step they accompany. `false`: the cascade writes no
+    /// round `id`.
+    pub fn set_round(&mut self, id: &str, fields: &BTreeMap<String, String>) -> bool {
+        let planned = self.slots.iter_mut().filter(|s| s.dirty).find_map(|s| {
+            let v = s.value.as_mut()?;
+            let repo = v.data.get("repo").and_then(Value::as_str)?;
+            let ours = v.data.get("batch_id").and_then(Value::as_str) == Some(id)
+                && s.key == keys::batch(repo, id);
+            ours.then_some(v)
+        });
+        let Some(v) = planned else {
+            return false;
+        };
+        v.data["round"] = serde_json::to_value(fields).unwrap_or(Value::Null);
+        true
+    }
+
     /// The txn: each written key compared at the revision it was read at, then written.
     fn txn(&self) -> Txn {
         let written = || self.slots.iter().filter(|s| s.dirty);
@@ -213,6 +233,25 @@ impl Cascade {
 pub enum Planned {
     Cascade(Cascade),
     Ran(Ran),
+}
+
+impl Planned {
+    /// The cascade with round `id`'s queue fields set in it (see [`Cascade::set_round`]); a
+    /// cascade that plans no write of the round is a fault of the verb, never a silent drop of
+    /// the fields.
+    pub fn with_round(self, id: &str, fields: Option<&BTreeMap<String, String>>) -> Result<Planned> {
+        match (self, fields) {
+            (Planned::Cascade(mut c), Some(f)) => {
+                if !c.set_round(id, f) {
+                    return Err(Error::Backend(format!(
+                        "the round fields of {id} have no write of {id} to ride in"
+                    )));
+                }
+                Ok(Planned::Cascade(c))
+            }
+            (p, _) => Ok(p),
+        }
+    }
 }
 
 /// A cut's or a stack's members: each admitted at its tip, refused otherwise.
@@ -339,6 +378,19 @@ impl<B: Backend> Store<B> {
     /// One batch-machine event on `id`, CAS'd on the round's own key. A `Failed` opens its
     /// failure's mending row, compared absent, in the same txn.
     pub fn batch_event(&self, id: &str, ev: &BatchEvent, at: i64, req: &Request) -> Result<Ran> {
+        self.batch_event_with(id, ev, at, req, None)
+    }
+
+    /// [`Store::batch_event`], with the queue's fields of the round, when given, written in the
+    /// event's own txn.
+    pub fn batch_event_with(
+        &self,
+        id: &str,
+        ev: &BatchEvent,
+        at: i64,
+        req: &Request,
+        round: Option<&BTreeMap<String, String>>,
+    ) -> Result<Ran> {
         let Some((key, rec)) = self.batch(id)? else {
             return Ok(Ran::Turned(Turned::CannotTell(format!(
                 "event: no batch row for {id}"
@@ -353,7 +405,10 @@ impl<B: Backend> Store<B> {
             let row = keys::mending(&failed.row.key());
             c.put(self, &row, &failed, &[])?;
         }
-        self.commit(c, req, "apply")
+        match Planned::Cascade(c).with_round(id, round)? {
+            Planned::Cascade(c) => self.commit(c, req, "apply"),
+            Planned::Ran(r) => Ok(r),
+        }
     }
 
     /// Plans `ev` on the round at `key`: the next row, or the audited refusal.
@@ -728,6 +783,7 @@ impl<B: Backend> Store<B> {
                 })
                 .collect(),
             opened_at: cut.at,
+            round: Default::default(),
         };
         self.put_round(&mut c, &key, &rec)?;
         Ok(Planned::Cascade(c))
