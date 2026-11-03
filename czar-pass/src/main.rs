@@ -84,6 +84,8 @@ impl Seams {
     }
 }
 
+type BatchShow = std::sync::Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync>;
+
 #[derive(Clone)]
 struct Config {
     spira_run: PathBuf,
@@ -91,7 +93,9 @@ struct Config {
     qc_log: PathBuf,
     marker: PathBuf,
     seams: Seams,
-    queue_dir: PathBuf,
+    /// `queue batch show --repo <r>`: a forge repo's open batch record, wherever the queue
+    /// keeps it; empty when none is open.
+    batch_show: BatchShow,
     stall_secs: u64,
     ci_queued_max: u64,
     ci_red_max: u64,
@@ -175,7 +179,7 @@ impl Config {
             qc_log: spira_run.join("landing.log"),
             marker: spira_run.join("czar-pass.swept"),
             seams,
-            queue_dir: PathBuf::from(must_cfg("SPIRA_QUEUE_DIR")),
+            batch_show: queue_batch_show(spira_config::release_env::tool("queue"), must_cfg_parse("SPIRA_LC_TIMEOUT")),
             stall_secs: must_cfg_parse("SPIRA_LOOP_STALL_SECS"),
             ci_queued_max: must_cfg_parse("SPIRA_CI_QUEUED_MAX_SECS"),
             ci_red_max: must_cfg_parse("SPIRA_CI_RED_MAX_SECS"),
@@ -421,26 +425,6 @@ fn call_rune_czar(cfg: &Config) {
 // Repo map lookup
 // ──────────────────────────────────────────────────────────────────────────────
 
-fn repo_root(name: &str, repo_map: &Option<PathBuf>) -> Option<PathBuf> {
-    let map_path = repo_map.as_ref()?;
-    let content = fs::read_to_string(map_path).ok()?;
-    for line in content.lines() {
-        let t = line.trim();
-        if t.starts_with('#') || t.is_empty() {
-            continue;
-        }
-        let parts: Vec<&str> = t.splitn(6, '|').collect();
-        if parts.len() >= 2 {
-            let n = parts[0].trim();
-            let p = parts[1].trim();
-            if n == name && !p.is_empty() {
-                return Some(PathBuf::from(p));
-            }
-        }
-    }
-    None
-}
-
 // The base ref a repository's branches are cut from and judged against (repo-map column
 // 4), reduced to a bare branch name: `gh run list --branch` wants "main", not "origin/main".
 // Empty in repo-map means "let spira_landref resolve it" (doctor.sh's own leave-empty
@@ -470,39 +454,40 @@ fn repo_base(name: &str, repo_map: &Option<PathBuf>) -> Option<String> {
 // Queue / forge helpers
 // ──────────────────────────────────────────────────────────────────────────────
 
-// Find all queue/<repo>/open files; returns (repo_name, open_path) pairs.
-fn find_open_files(queue_dir: &Path) -> Vec<(String, PathBuf)> {
-    let mut out = Vec::new();
-    let entries = match fs::read_dir(queue_dir) {
-        Ok(e) => e,
-        Err(_) => return out,
-    };
-    for entry in entries.flatten() {
-        let dir = entry.path();
-        if !dir.is_dir() {
-            continue;
+fn queue_batch_show(queue: String, timeout_secs: u64) -> BatchShow {
+    std::sync::Arc::new(move |repo: &str| {
+        let out = Command::new("timeout")
+            .arg(timeout_secs.to_string())
+            .arg(&queue)
+            .args(["batch", "show", "--repo", repo])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|e| format!("{queue}: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("queue batch show --repo {repo} exited {}: {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()));
         }
-        let open = dir.join("open");
-        if open.is_file() {
-            let name = dir
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("")
-                .to_string();
-            out.push((name, open));
-        }
-    }
-    out
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    })
 }
 
-fn read_branch(open_path: &Path) -> Option<String> {
-    let content = fs::read_to_string(open_path).ok()?;
-    for line in content.lines() {
-        if let Some(branch) = line.strip_prefix("branch=") {
-            return Some(branch.to_string());
-        }
-    }
-    None
+/// A forge repo's open batch as the queue shows it.
+#[derive(Debug, PartialEq, Eq)]
+struct OpenBatch {
+    branch: Option<String>,
+}
+
+/// `repos` with each one's open batch: `Ok(None)` when none is open, `Err` when the queue could
+/// not say — never read as no batch.
+fn open_batches(cfg: &Config, repos: Vec<(String, PathBuf)>) -> Vec<(String, PathBuf, Result<Option<OpenBatch>, String>)> {
+    repos
+        .into_iter()
+        .map(|(name, path)| {
+            let shown = (cfg.batch_show)(&name).map(|text| {
+                (!text.trim().is_empty()).then(|| OpenBatch { branch: text.lines().find_map(|l| l.strip_prefix("branch=")).map(str::to_string) })
+            });
+            (name, path, shown)
+        })
+        .collect()
 }
 
 // A failed forge call and "nothing going on" must stay distinguishable (sp-pu7v6): a
@@ -697,19 +682,16 @@ fn detect_deadlock(cfg: &Config, state: &mut StateMap, new_lines: &str) -> (Verd
     // next pass, remedy_failed says so and this pass escalates instead of retrying blind.
     let mut run_id = String::new();
     let mut repo_path = String::new();
-    if !verdict.remedy_failed && cfg.queue_dir.is_dir() {
-        'outer: for (repo_name, open_path) in find_open_files(&cfg.queue_dir) {
-            if let Some(branch) = read_branch(&open_path) {
-                if let Some(rp) = repo_root(&repo_name, &cfg.repo_map) {
-                    let rp_str = rp.to_string_lossy().to_string();
-                    let out = run_forge(&cfg.seams.forge, &["run-id", &rp_str, &branch]);
-                    let rid = out.map(|s| s.trim().to_string()).unwrap_or_default();
-                    if !rid.is_empty() {
-                        run_id = rid;
-                        repo_path = rp_str;
-                        break 'outer;
-                    }
-                }
+    if !verdict.remedy_failed {
+        for (_, rp, shown) in open_batches(cfg, mapped_repos(&cfg.repo_map)) {
+            let Ok(Some(OpenBatch { branch: Some(branch) })) = shown else { continue };
+            let rp_str = rp.to_string_lossy().to_string();
+            let out = run_forge(&cfg.seams.forge, &["run-id", &rp_str, &branch]);
+            let rid = out.map(|s| s.trim().to_string()).unwrap_or_default();
+            if !rid.is_empty() {
+                run_id = rid;
+                repo_path = rp_str;
+                break;
             }
         }
     }
@@ -954,20 +936,22 @@ fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'st
     let mut cis_verdicts: Vec<Verdict> = Vec::new();
     let mut cir_verdicts: Vec<Verdict> = Vec::new();
 
-    if cfg.queue_dir.is_dir() {
-        for (repo_name, open_path) in find_open_files(&cfg.queue_dir) {
-            let branch = match read_branch(&open_path) {
-                Some(b) => b,
-                None => continue,
-            };
-            let repo_path = match repo_root(&repo_name, &cfg.repo_map) {
-                Some(p) => p,
-                None => continue,
-            };
-            let repo_path_str = repo_path.to_string_lossy().to_string();
+    {
+        for (repo_name, repo_path, shown) in open_batches(cfg, mapped_repos(&cfg.repo_map)) {
             let repo_safe = repo_name.replace(',', "-");
             let cis_key = format!("ci-stalled:{}", repo_safe);
             let cir_key = format!("ci-red:{}", repo_safe);
+            let branch = match shown {
+                Ok(Some(OpenBatch { branch: Some(b) })) => b,
+                Ok(_) => continue,
+                Err(e) => {
+                    let reason = format!("{}: whether a batch is open: {}", repo_name, e);
+                    cis_verdicts.push(evaluate(cfg, state, &cis_key, RawStatus::Unobservable { reason: reason.clone() }, 0));
+                    cir_verdicts.push(evaluate(cfg, state, &cir_key, RawStatus::Unobservable { reason }, 0));
+                    continue;
+                }
+            };
+            let repo_path_str = repo_path.to_string_lossy().to_string();
 
             let ci_out = match run_forge(&cfg.seams.forge, &["batch-ci-status", &repo_path_str, &branch]) {
                 Ok(out) => out,
@@ -1102,19 +1086,24 @@ fn detect_base_red(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str
     let mut tier: &'static str = "det";
     let mut verdicts: Vec<Verdict> = Vec::new();
 
-    if cfg.queue_dir.is_dir() {
-        for (repo_name, _open_path) in find_open_files(&cfg.queue_dir) {
-            let repo_path = match repo_root(&repo_name, &cfg.repo_map) {
-                Some(p) => p,
-                None => continue,
-            };
+    {
+        for (repo_name, repo_path, shown) in open_batches(cfg, mapped_repos(&cfg.repo_map)) {
+            let repo_safe = repo_name.replace(',', "-");
+            let key = format!("base-red:{}", repo_safe);
+            match shown {
+                Ok(Some(_)) => {}
+                Ok(None) => continue,
+                Err(e) => {
+                    let reason = format!("{}: whether a batch is open: {}", repo_name, e);
+                    verdicts.push(evaluate(cfg, state, &key, RawStatus::Unobservable { reason }, 0));
+                    continue;
+                }
+            }
             let base_branch = match repo_base(&repo_name, &cfg.repo_map) {
                 Some(b) => b,
                 None => continue,
             };
             let repo_path_str = repo_path.to_string_lossy().to_string();
-            let repo_safe = repo_name.replace(',', "-");
-            let key = format!("base-red:{}", repo_safe);
 
             let ci_out = run_forge(&cfg.seams.forge, &["batch-ci-status", &repo_path_str, &base_branch]);
             let run_id = ci_out.as_ref().ok().and_then(|out| parse_field(out, "run-id"));
@@ -1251,10 +1240,19 @@ fn certified_depth(cfg: &Config, repo_path: &Path) -> u32 {
 }
 
 /// The queue-mode rows of the repo-map (`land` column `queue` or `queue.forge`, the same
-/// alias `repo_land` in lib.sh normalizes). Unlike `find_open_files`, this is not gated on an
+/// alias `repo_land` in lib.sh normalizes). It is not gated on an
 /// open batch existing — a repo whose pool has filled with NO batch open is exactly the
 /// failure `detect_pool_idle` exists to catch.
 fn queue_repo_names(repo_map: &Option<PathBuf>) -> Vec<(String, PathBuf)> {
+    repo_map_rows(repo_map, true)
+}
+
+/// Every row of the repo-map whose open batch, if any, the queue shows.
+fn mapped_repos(repo_map: &Option<PathBuf>) -> Vec<(String, PathBuf)> {
+    repo_map_rows(repo_map, false)
+}
+
+fn repo_map_rows(repo_map: &Option<PathBuf>, queue_only: bool) -> Vec<(String, PathBuf)> {
     let Some(map_path) = repo_map else { return Vec::new() };
     let Ok(content) = fs::read_to_string(map_path) else { return Vec::new() };
     let mut out = Vec::new();
@@ -1271,7 +1269,7 @@ fn queue_repo_names(repo_map: &Option<PathBuf>) -> Vec<(String, PathBuf)> {
         if name.is_empty() || path.is_empty() {
             continue;
         }
-        if land != "queue" && land != "queue.forge" {
+        if queue_only && land != "queue" && land != "queue.forge" {
             continue;
         }
         out.push((name.to_string(), PathBuf::from(path)));
@@ -1385,10 +1383,17 @@ fn detect_pool_idle(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static st
     let mut tier: &'static str = "det";
     let mut verdicts: Vec<Verdict> = Vec::new();
 
-    for (repo_name, repo_path) in queue_repo_names(&cfg.repo_map) {
+    for (repo_name, repo_path, shown) in open_batches(cfg, queue_repo_names(&cfg.repo_map)) {
         let repo_safe = repo_name.replace(',', "-");
         let key = format!("pool-idle:{}", repo_safe);
-        let batch_open = cfg.queue_dir.join(&repo_name).join("open").is_file();
+        let batch_open = match shown {
+            Ok(b) => b.is_some(),
+            Err(e) => {
+                let reason = format!("{}: whether a batch is open: {}", repo_name, e);
+                verdicts.push(evaluate(cfg, state, &key, RawStatus::Unobservable { reason }, cfg.round_stall_secs));
+                continue;
+            }
+        };
         let depth = certified_depth(cfg, &repo_path);
 
         let raw = if !batch_open && depth >= cfg.round_min_n {
@@ -1467,22 +1472,6 @@ mod tests {
     }
 
     #[test]
-    fn repo_root_finds_the_named_repo() {
-        let dir = scratch_dir("repo-root");
-        let map = dir.join("repo-map");
-        fs::write(&map, "spira | /srv/checkouts/spira | queue | origin/main | | \n").unwrap();
-        assert_eq!(
-            repo_root("spira", &Some(map)),
-            Some(PathBuf::from("/srv/checkouts/spira"))
-        );
-    }
-
-    #[test]
-    fn repo_root_with_no_map_configured_is_none() {
-        assert_eq!(repo_root("spira", &None), None);
-    }
-
-    #[test]
     fn repo_base_reduces_a_full_ref_to_a_bare_branch_name() {
         let dir = scratch_dir("repo-base");
         let map = dir.join("repo-map");
@@ -1499,32 +1488,32 @@ mod tests {
     }
 
     #[test]
-    fn find_open_files_lists_only_queue_dirs_that_have_an_open_marker() {
-        let dir = scratch_dir("find-open-files");
-        fs::create_dir_all(dir.join("spira")).unwrap();
-        fs::write(dir.join("spira").join("open"), "branch=spira/queue/x\n").unwrap();
-        fs::create_dir_all(dir.join("other-repo")).unwrap(); // no open marker: not returned
-
-        let mut found = find_open_files(&dir);
-        found.sort();
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].0, "spira");
-    }
-
-    #[test]
-    fn read_branch_reads_the_branch_line() {
-        let dir = scratch_dir("read-branch");
-        let open = dir.join("open");
-        fs::write(&open, "opened_at=100\nbranch=spira/queue/abc123\n").unwrap();
-        assert_eq!(read_branch(&open), Some("spira/queue/abc123".to_string()));
-    }
-
-    #[test]
-    fn read_branch_missing_line_is_none() {
-        let dir = scratch_dir("read-branch-missing");
-        let open = dir.join("open");
-        fs::write(&open, "opened_at=100\n").unwrap();
-        assert_eq!(read_branch(&open), None);
+    fn a_forge_batch_on_the_store_is_the_record_the_queue_shows() {
+        let dir = scratch_dir("open-batches-shown");
+        let map = dir.join("repo-map");
+        fs::write(&map, "deck | /srv/deck | queue.forge | main | | \nidle | /srv/idle | queue | main | | \nlost | /srv/lost | queue | main | | \npushy | /srv/p | push | | | \n").unwrap();
+        let mut cfg = test_config(&dir, 1000);
+        cfg.repo_map = Some(map);
+        cfg.batch_show = std::sync::Arc::new(|repo: &str| match repo {
+            "deck" => Ok("batch_id=deck-1\nforge.phase=armed\npr=12\nbranch=spira/queue/deck-1\nmembers=sp-a:ta\n".into()),
+            "idle" => Ok(String::new()),
+            _ => Err("queue batch show exited 1".into()),
+        });
+        let got: Vec<_> = open_batches(&cfg, queue_repo_names(&cfg.repo_map)).into_iter().map(|(n, _, s)| (n, s)).collect();
+        assert_eq!(
+            got,
+            [
+                ("deck".to_string(), Ok(Some(OpenBatch { branch: Some("spira/queue/deck-1".into()) }))),
+                ("idle".to_string(), Ok(None)),
+                ("lost".to_string(), Err("queue batch show exited 1".to_string())),
+            ]
+        );
+        let lost = dir.join("repo-map-lost");
+        fs::write(&lost, "lost | /srv/lost | queue | main | | \n").unwrap();
+        cfg.repo_map = Some(lost);
+        let mut state = StateMap::new();
+        let (v, _, _) = detect_pool_idle(&cfg, &mut state);
+        assert!(matches!(v.status, RawStatus::Unobservable { .. }), "cannot tell is not no batch: {:?}", v.status);
     }
 
     #[test]
@@ -1612,7 +1601,7 @@ mod tests {
                 spira_lc: dir.join("spira-lc").to_string_lossy().to_string(),
                 sentinel: dir.join("sentinel").to_string_lossy().to_string(),
             },
-            queue_dir: dir.join("queue"),
+            batch_show: std::sync::Arc::new(|_| Ok(String::new())),
             stall_secs: 3000,
             ci_queued_max: 600,
             ci_red_max: 600,

@@ -54,7 +54,11 @@ fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
     let mut awaiting_round = 0usize;
 
     let reg = io::repo_registry();
-    let qdir = std::path::PathBuf::from(&cfg.queue_dir);
+    let forge_repos: Vec<String> = reg.all().into_iter().filter(|r| reg.land(r) == "queue").collect();
+    let forge = forge_batches(&forge_repos, &super::round::batch_show);
+    if forge.is_none() {
+        fail = true;
+    }
     let in_delivery: std::collections::HashMap<String, super::lc::LcRow> =
         super::lc::list(Some("IN_DELIVERY")).unwrap_or_default().into_iter().map(|r| (r.id.clone(), r)).collect();
     // A branch's bead state is its lifecycle row's (design §3.4, sp-mve9i): one read for
@@ -136,7 +140,7 @@ fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
                     }
                     if batched_check_applies(&status, in_delivery.contains_key(id)) {
                         if let Some(row) = in_delivery.get(id) {
-                            let in_batch = in_forge_batch(&qdir, id) || round_members.contains(id);
+                            let in_batch = forge.as_ref().is_none_or(|f| f.has_member(id)) || round_members.contains(id);
                             let settled = row.updated_at.is_some_and(|ep| now - ep >= STRANDED_GRACE_SECS);
                             if !in_batch && settled {
                                 batched_stranded += 1;
@@ -168,14 +172,11 @@ fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
                 }
             }
         }
-        let open_f = qdir.join(rname).join("open");
-        if let Ok(content) = std::fs::read_to_string(&open_f) {
-            if let Some(ob) = content.lines().find_map(|l| l.strip_prefix("branch=")) {
-                let ob_id = ob.trim_start_matches("spira/");
-                if !protected_names.iter().any(|p| p == ob_id) {
-                    protected += 1;
-                    protected_names.push(ob_id.to_string());
-                }
+        if let Some(ob) = forge.as_ref().and_then(|f| f.branches.get(&rname)) {
+            let ob_id = ob.trim_start_matches("spira/");
+            if !protected_names.iter().any(|p| p == ob_id) {
+                protected += 1;
+                protected_names.push(ob_id.to_string());
             }
         }
     }
@@ -224,14 +225,35 @@ fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
 /// have its round or batch record written yet.
 const STRANDED_GRACE_SECS: i64 = 600;
 
-fn in_forge_batch(qdir: &Path, id: &str) -> bool {
-    let Ok(entries) = std::fs::read_dir(qdir) else { return false };
-    entries.flatten().any(|e| {
-        let Ok(oc) = std::fs::read_to_string(e.path().join("open")) else { return false };
-        oc.lines()
-            .find_map(|l| l.strip_prefix("members="))
-            .is_some_and(|mems| mems.split_whitespace().any(|m| m.split(':').next() == Some(id)))
-    })
+/// The open forge batches, as `queue batch show` (`show`) gives each forge repo's: every member,
+/// and each batch's branch by repo.
+struct ForgeBatches {
+    members: std::collections::BTreeSet<String>,
+    branches: std::collections::BTreeMap<String, String>,
+}
+
+impl ForgeBatches {
+    fn has_member(&self, id: &str) -> bool {
+        self.members.contains(id)
+    }
+}
+
+/// `None`: a repo the queue could not answer for — cannot tell which beads a batch holds.
+fn forge_batches(repos: &[String], show: &dyn Fn(&str) -> Option<String>) -> Option<ForgeBatches> {
+    let mut out = ForgeBatches { members: Default::default(), branches: Default::default() };
+    for repo in repos {
+        let text = show(repo)?;
+        for (k, v) in text.lines().filter_map(|l| l.split_once('=')) {
+            match k {
+                "members" => out.members.extend(v.split_whitespace().map(|m| m.split(':').next().unwrap_or(m).to_string())),
+                "branch" => {
+                    out.branches.insert(repo.clone(), v.to_string());
+                }
+                _ => {}
+            }
+        }
+    }
+    Some(out)
 }
 
 /// Every member the queue reports in flight for a repo: its open rounds and the staged one.
@@ -797,12 +819,17 @@ mod tests {
     }
 
     #[test]
-    fn a_forge_batch_names_its_members_and_an_absent_one_is_not_in_it() {
-        let d = testkit::TempDir::new("cc-unsent-forge");
-        std::fs::create_dir_all(d.path().join("r")).unwrap();
-        std::fs::write(d.path().join("r/open"), "pr=1\nmembers=sp-in:t\n").unwrap();
-        assert!(in_forge_batch(d.path(), "sp-in"));
-        assert!(!in_forge_batch(d.path(), "sp-out"));
+    fn a_forge_batch_on_the_store_names_its_members_and_branch() {
+        let show = |repo: &str| match repo {
+            "r" => Some("batch_id=r-1\nforge.phase=armed\npr=1\nbranch=spira/queue/r-1\nmembers=sp-in:t\n".to_string()),
+            _ => Some(String::new()),
+        };
+        let f = forge_batches(&["r".into(), "s".into()], &show).expect("both answered");
+        assert!(f.has_member("sp-in"));
+        assert!(!f.has_member("sp-out"));
+        assert_eq!(f.branches.get("r").map(String::as_str), Some("spira/queue/r-1"));
+        assert!(!f.branches.contains_key("s"));
+        assert!(forge_batches(&["r".into(), "lost".into()], &|r| show(r).filter(|_| r == "r")).is_none(), "cannot tell is not no batch");
     }
 
     #[test]

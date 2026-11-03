@@ -166,18 +166,6 @@ git -C "$ALPHA" branch "spira/queue/$QSTAMP"
 SUITE_BR="test-reclaim-slay-branch-guard-20260917T164605Z"
 git -C "$ALPHA" branch "spira-suite-state/$SUITE_BR"
 
-# Open batch record naming the queue branch — the belt-and-suspenders path protects it
-# regardless of name, even though the namespace scan above already would.
-mkdir -p "$RUN/queue/alpha"
-{
-    printf 'pr=56\n'
-    printf 'head=abc\n'
-    printf 'base=def\n'
-    printf 'members=sp-foo:abc\n'
-    printf 'opened=1726598000\n'
-    printf 'branch=spira/queue/%s\n' "$QSTAMP"
-} > "$RUN/queue/alpha/open"
-
 # Run cockpit-collect probe unsent — the probe's own subcommand, not a full `once` — with bd reads
 # answered from a canned-JSON fixture rather than a live store.
 unsent() {    # unsent <fixture-file>
@@ -278,16 +266,9 @@ val2() { printf '%s' "$out2" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 is "BATCHED with no open batch → SP_BATCHED_STRANDED=1" "1" "$(val2 SP_BATCHED_STRANDED)"
 want "SP_BATCHED_STRANDED_NAMES names the branch" "sp-bbb" "$(val2 SP_BATCHED_STRANDED_NAMES)"
 
-# BATCHED branch present in the open batch → SP_BATCHED_STRANDED=0.
-# Create an open batch file for beta whose members= line includes sp-bbb:<tip>.
-_bbb_tip="$(git -C "$BETA" rev-parse spira/sp-bbb 2>/dev/null)"
-mkdir -p "$RUN/queue/beta"
-printf 'pr=1\nopened=%s\nmembers=sp-bbb:%s\nbranch=spira/queue/test\n' \
-    "$(date +%s)" "$_bbb_tip" > "$RUN/queue/beta/open"
-out3="$(unsent "$TMP/beads.json")"
-val3() { printf '%s' "$out3" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
-is "BATCHED present in open batch → SP_BATCHED_STRANDED=0" "0" "$(val3 SP_BATCHED_STRANDED)"
-rm -f "$RUN/queue/beta/open"
+# A BATCHED branch the open forge batch names is not stranded: the forge batch is the queue's
+# record (`queue batch show`), pinned by cockpit-collect's
+# a_forge_batch_on_the_store_names_its_members_and_branch.
 lc_drop_bead sp-bbb
 
 # BATCHED-too-long detection: epoch old enough → SP_BATCHED_TOO_LONG=1.

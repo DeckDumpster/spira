@@ -35,7 +35,7 @@ fn forge_state(show: &dyn Fn(&str) -> Option<String>, repo: &str, batch: &str) -
 }
 
 /// `queue batch show --repo <repo>`, shared across panes like the lifecycle reads; `None` when it failed.
-fn batch_show(repo: &str) -> Option<String> {
+pub(super) fn batch_show(repo: &str) -> Option<String> {
     super::lc::shared_live(&format!("batch-show-{repo}"), || {
         let timeout = spira_config::process::cfg("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty())?;
         let o = Command::new("timeout")

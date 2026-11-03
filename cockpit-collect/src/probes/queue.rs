@@ -88,7 +88,6 @@ fn funnel_keys(funnel: Option<(Vec<LcRow>, Vec<LcRow>, Vec<LcRow>)>, now: i64) -
 
 pub fn queue_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
-    let qdir = std::path::PathBuf::from(&cfg.queue_dir);
     let now = io::now();
 
     let funnel = match (super::lc::list(Some("CERTIFIED")), super::lc::list(Some("SUBMITTED")), super::lc::list(Some("REWORK"))) {
@@ -104,43 +103,16 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
     push(&mut out, "SP_EXPRESS_N", enr.to_string());
 
     // --- Active batch ---
-    let mut batch_pr = 0i64;
-    let mut batch_age = "0".to_string();
-    let mut batch_member_ids: Vec<String> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&qdir) {
-        let mut opens: Vec<_> = entries.flatten().map(|e| e.path().join("open")).filter(|p| p.is_file()).collect();
-        opens.sort();
-        for open_f in opens {
-            let Ok(content) = std::fs::read_to_string(&open_f) else { continue };
-            let pr = content.lines().find_map(|l| l.strip_prefix("pr="));
-            let opened = content.lines().find_map(|l| l.strip_prefix("opened="));
-            let mems = content.lines().find_map(|l| l.strip_prefix("members="));
-            let (Some(pr), Some(opened), Some(mems)) = (pr, opened, mems) else { continue };
-            if pr.is_empty() {
-                continue;
-            }
-            batch_pr = pr.parse().unwrap_or(0);
-            let opened_epoch: i64 = opened.parse().unwrap_or(now);
-            let age_secs = now - opened_epoch;
-            batch_age = if age_secs < 90 {
-                format!("{age_secs}s")
-            } else if age_secs < 5400 {
-                format!("{}m", age_secs / 60)
-            } else if age_secs < 172800 {
-                format!("{}h", age_secs / 3600)
-            } else {
-                format!("{}d", age_secs / 86400)
-            };
-            for mem in mems.split_whitespace() {
-                let id = mem.split(':').next().unwrap_or(mem);
-                batch_member_ids.push(id.to_string());
-            }
-            break;
-        }
-    }
+    let reg = io::repo_registry();
+    let forge: Vec<String> = reg.all().into_iter().filter(|r| reg.land(r) == "queue").collect();
+    let active = active_batch(&forge, &super::round::batch_show, now);
+    let (batch_pr, batch_age, batch_member_ids) = match &active {
+        Some(Some(b)) => (b.pr, b.age.clone(), b.members.clone()),
+        _ => (0, "0".to_string(), Vec::new()),
+    };
     push(&mut out, "SP_QUEUE_BATCH_PR", batch_pr.to_string());
     push(&mut out, "SP_QUEUE_BATCH_AGE", batch_age);
-    push(&mut out, "SP_QUEUE_BATCH_N", batch_member_ids.len().to_string());
+    push(&mut out, "SP_QUEUE_BATCH_N", if active.is_none() { "?".to_string() } else { batch_member_ids.len().to_string() });
 
     if !batch_member_ids.is_empty() {
         let refs: Vec<&str> = batch_member_ids.iter().map(String::as_str).collect();
@@ -236,6 +208,48 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
     out
 }
 
+/// The open forge batch the pane shows: the first forge repo, in name order, whose record
+/// `queue batch show` (`show`) gives with a PR.
+pub struct ActiveBatch {
+    pub pr: i64,
+    pub age: String,
+    pub members: Vec<String>,
+}
+
+/// `Some(None)`: no forge repo has a batch with a PR open. `None`: one the queue could not answer
+/// for, and no other's batch to show — cannot tell, never "no batch".
+pub fn active_batch(repos: &[String], show: &dyn Fn(&str) -> Option<String>, now: i64) -> Option<Option<ActiveBatch>> {
+    let mut repos = repos.to_vec();
+    repos.sort();
+    let mut unanswered = false;
+    for repo in &repos {
+        let Some(content) = show(repo) else {
+            unanswered = true;
+            continue;
+        };
+        let pr = content.lines().find_map(|l| l.strip_prefix("pr="));
+        let opened = content.lines().find_map(|l| l.strip_prefix("opened="));
+        let mems = content.lines().find_map(|l| l.strip_prefix("members="));
+        let (Some(pr), Some(opened), Some(mems)) = (pr, opened, mems) else { continue };
+        if pr.is_empty() {
+            continue;
+        }
+        let age_secs = now - opened.parse().unwrap_or(now);
+        let age = if age_secs < 90 {
+            format!("{age_secs}s")
+        } else if age_secs < 5400 {
+            format!("{}m", age_secs / 60)
+        } else if age_secs < 172800 {
+            format!("{}h", age_secs / 3600)
+        } else {
+            format!("{}d", age_secs / 86400)
+        };
+        let members = mems.split_whitespace().map(|m| m.split(':').next().unwrap_or(m).to_string()).collect();
+        return Some(Some(ActiveBatch { pr: pr.parse().unwrap_or(0), age, members }));
+    }
+    (!unanswered).then_some(None)
+}
+
 fn row_pri_title(row: &Value) -> (String, String) {
     let pri = row.get("priority").map(|v| match v {
         Value::String(s) => s.clone(),
@@ -294,4 +308,19 @@ mod tests {
         assert_eq!(kv.len(), 12);
         assert!(kv.iter().all(|(_, v)| v == "?"));
     }
+    #[test]
+    fn the_active_batch_is_the_store_record_the_queue_shows() {
+        let now = 10_000;
+        let show = |repo: &str| match repo {
+            "deck" => Some(format!("batch_id=deck-1\nforge.phase=armed\npr=42\nmembers=sp-a:ta sp-b:tb\nopened={}\n", now - 180)),
+            "alpha" => Some("batch_id=alpha-1\nforge.phase=opening\nmembers=sp-x:tx\nopened=1\n".to_string()),
+            _ => Some(String::new()),
+        };
+        let b = active_batch(&["deck".into(), "alpha".into(), "zed".into()], &show, now).unwrap().expect("deck's batch is seen");
+        assert_eq!((b.pr, b.age.as_str()), (42, "3m"));
+        assert_eq!(b.members, ["sp-a", "sp-b"]);
+        assert!(active_batch(&["zed".into()], &show, now).unwrap().is_none(), "no record: no batch");
+        assert!(active_batch(&["zed".into(), "lost".into()], &|r| (r == "zed").then(String::new), now).is_none(), "cannot tell is not no batch");
+    }
+
 }
