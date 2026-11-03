@@ -256,4 +256,6 @@ and `knobs/RoundController/<repo>/hold/<id>/<tip>`, each naming who lifts it, wh
 cut leaves out at that tip. Both key shapes live in `spira_desired_state::sections::round_controller`,
 which the reconciler's selector builds its targets from too. The section's `repeat_identity_holds`
 names, for each open `RepeatIdentity`, the members proven red under it at their tips; the
-selector holds the first one not already held, from null. A stopped or halted repo takes no step; its section says which.
+selector holds the first one not already held, from null. An identity names its members at their tips, so
+once one of its proven members is held at that tip the cut cannot make it again, and it leaves
+`repeat_identity_open`: that fall is what a hold is judged fulfilled on. A stopped or halted repo takes no step; its section says which.
