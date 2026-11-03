@@ -69,7 +69,7 @@ inst() {
     # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): the self-location-by-
     # binary-path trick this comment block used to rely on is gone, so it must be named
     # explicitly — the same fixture that trick used to resolve to (sfail round 3, pattern 1).
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_TOML="$SPIRA_TOML" PATH="$FIXTURE/bin:$PATH" HOME="$TMP/home" \
+    env -i SPIRA_RELEASE="$(tl_release)" SPIRA_TOML="$SPIRA_TOML" PATH="$FIXTURE/bin:$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$FIXTURE/spira" \
         units-install "$@" 2>&1
@@ -135,7 +135,7 @@ tinstall_write_dest "$DEST" "$rendered"
 skew_units() {
     tl_config SPIRA_RUN="$TMP/home/run" SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
         SPIRA_DOLT_DATA=""
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" \
+    env -i SPIRA_RELEASE="$(tl_release)" SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$FIXTURE/spira" SPIRA_REPO="$FIXTURE" \
         skew units 2>&1
@@ -169,7 +169,7 @@ mkdir -p "$TMP/empty-spira"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$TMP/empty-spira/"
 cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$TMP/empty-spira/"
 tl_config SPIRA_DOLT_DATA=""
-out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" \
+out="$(env -i SPIRA_RELEASE="$(tl_release)" SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$TMP/empty-spira" SPIRA_REPO="$TMP" \
     SPIRA_INSTALL_SH="$TMP/no-such-units-install" \

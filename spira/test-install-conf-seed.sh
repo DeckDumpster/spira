@@ -62,7 +62,7 @@ FIXHOME="$TMP/home"; mkdir -p "$FIXHOME"
 # via units-install's own --seed-prod-instance test seam.
 seed() {
     local conf="$1" toml="$2" inst="$3"
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$FIXHOME" \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$FIXHOME" \
         SPIRA_HOME="$HARNESS/spira" SPIRA_CONF=/nonexistent \
         SPIRA_TOML="$SPIRA_TOML" \
         units-install --seed-prod-instance "$conf" "$toml" "$inst" "$HARNESS/spira" 2>&1

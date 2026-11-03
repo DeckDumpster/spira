@@ -118,7 +118,7 @@ chmod +x "$INC_STUB"
 # Run --pr-stall-check in an isolated environment.
 psc() {  # psc [VAR=val...]
     tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_GH="$GH_BIN"
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP/home" \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$HERE" \
@@ -310,13 +310,13 @@ is "no requeue when spira-lc is unreachable" "0" "$(requeued sp-testU)"
 echo
 echo "conf.sh: SPIRA_PR_STALL_MINS is a settable key"
 # ====================================================================================
-conf_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_CONF=/nonexistent SPIRA_REPO="$ROOT" PATH="$PATH" \
+conf_out="$(env -i SPIRA_RELEASE="$(tl_release)" SPIRA_CONF=/nonexistent SPIRA_REPO="$ROOT" PATH="$PATH" \
     SPIRA_TOML="$_TL_CONF_BASE" \
     bash -c '. '"$HERE"'/conf.sh; echo "stall=${SPIRA_PR_STALL_MINS}"' 2>/dev/null || true)"
 want  "SPIRA_PR_STALL_MINS has the fixture's default value of 60" "stall=60" "$conf_out"
 
 tl_config SPIRA_PR_STALL_MINS=30
-conf_out2="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_CONF=/nonexistent SPIRA_REPO="$ROOT" PATH="$PATH" \
+conf_out2="$(env -i SPIRA_RELEASE="$(tl_release)" SPIRA_CONF=/nonexistent SPIRA_REPO="$ROOT" PATH="$PATH" \
     SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. '"$HERE"'/conf.sh; echo "stall=${SPIRA_PR_STALL_MINS}"' 2>/dev/null || true)"
 want "SPIRA_PR_STALL_MINS is overridable via config" "stall=30" "$conf_out2"

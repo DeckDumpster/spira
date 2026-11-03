@@ -36,7 +36,7 @@ tl_config SPIRA_RELEASES="$TMP/releases" SPIRA_PROD="$R/spira" SPIRA_RUN="$TMP/r
     SPIRA_COCKPIT="$TMP/cockpit"
 
 note() { printf '# %s\n' "$*" >> "$TMP/notes"; }
-client_env() { env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$1" PATH=/usr/bin:/bin bash -c "$2"; }
+client_env() { env -i SPIRA_RELEASE="$(tl_release)" HOME="$1" PATH=/usr/bin:/bin bash -c "$2"; }
 
 # --- UC-operator-channel-46: aerc's outgoing line -------------------------------------------
 for s in duckdb inotifywait; do printf '#!/bin/sh\nexit 0\n' > "$TMP/stubs/$s"; done
@@ -118,7 +118,7 @@ pane() {  # pane <name> <toml-for-the-server-or-empty> — `layout up` in a fres
     local base=(HOME="$TMP/home" PATH="$R/bin:$TMP/stubs:/usr/bin:/bin" TMUX_TMPDIR="$sock" SPIRA_SYSTEMCTL="$TMP/stubs/systemctl")
     local srv=("${base[@]}")
     [ -n "$toml" ] && srv+=(SPIRA_TOML="$toml")
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" "${srv[@]}" tmux new-session -d -s c -x 200 -y 60
+    env -i SPIRA_RELEASE="$(tl_release)" "${srv[@]}" tmux new-session -d -s c -x 200 -y 60
     env -i "${base[@]}" SPIRA_TOML="$SPIRA_TOML" SPIRA_RELEASE="$R" SPIRA_REPO="$TMP" "$R/bin/layout" up --window c:0 >"$TMP/layout-$1.out" 2>&1
     sleep 4
     TMUX_TMPDIR="$sock" tmux list-panes -t c:0 -F '#{pane_id} #{@cockpit}' | awk '$2=="health"{print $1}' \

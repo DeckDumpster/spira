@@ -39,7 +39,7 @@ meter() {
     tl_config SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
         SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
         SPIRA_ARCHIVIST_IDLE="$IDLE"
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" \
+    env -i SPIRA_RELEASE="$(tl_release)" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_NOW="$at" \
         bash "$CTX" "$mode" "$@" 2>/dev/null
 }

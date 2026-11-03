@@ -130,7 +130,46 @@ case "${SPIRA_RELEASE:-}" in
 esac
 # The launcher declaration a suite's bare `env -i` carries: the release under test, as every
 # production launcher declares it (binaries resolve their tools and child PATH from it alone).
-TL_DECLARED_RELEASE="SPIRA_RELEASE=${SPIRA_RELEASE:-}"
+tl_declared_release() { printf 'SPIRA_RELEASE=%s\n' "$(tl_release)"; }
+_TL_STAGED_RELEASE="${SPIRA_RELEASE:-}"
+export _TL_STAGED_RELEASE
+
+# tl_release — the release a suite's launch declares. A binary resolves its tools and its
+# children's PATH from the declared release alone, so a stub a suite puts ahead of the
+# release on PATH is planted in a fake release instead: the staged release's bin/ and spira/
+# as links, with every program in those stub directories laid over them (in PATH order, the
+# first one wins). With no stub directory ahead of the release it is the staged release.
+tl_release() {
+    local rel="$_TL_STAGED_RELEASE" d f n key ov stubs=()
+    [ -n "$rel" ] || return 0
+    local IFS=:
+    for d in $PATH; do
+        [ "$d" = "$rel/bin" ] && break
+        case "$d" in "$rel"/*|/usr/*|/bin|/sbin|"") continue ;; esac
+        [ -d "$d" ] && stubs+=("$d")
+    done
+    unset IFS
+    [ "${#stubs[@]}" -gt 0 ] || { printf '%s\n' "$rel"; return 0; }
+    key="$(printf '%s\n' "${stubs[@]}" | cksum | cut -d' ' -f1)"
+    ov="${TMPDIR:-/tmp}/tl-release-$$-$key"
+    if [ ! -d "$ov" ]; then
+        mkdir -p "$ov.tmp/bin" "$ov.tmp/spira" || return 1
+        for f in "$rel"/bin/*; do ln -sf "$f" "$ov.tmp/bin/"; done
+        [ -e "$rel/model-bin" ] && ln -sfn "$rel/model-bin" "$ov.tmp/model-bin"
+        for f in "$rel"/spira/* "$rel"/spira/.[!.]*; do [ -e "$f" ] && ln -sfn "$f" "$ov.tmp/spira/"; done
+        for f in "$rel"/*; do n="${f##*/}"; [ "$n" = bin ] || [ "$n" = spira ] || [ "$n" = model-bin ] || ln -sfn "$f" "$ov.tmp/$n"; done
+        for ((i=${#stubs[@]}-1; i>=0; i--)); do
+            for f in "${stubs[$i]}"/*; do
+                [ -f "$f" ] && [ -x "$f" ] || continue
+                n="${f##*/}"
+                if [ -e "$rel/spira/$n" ] && [ ! -e "$rel/bin/$n" ]; then ln -sfn "$f" "$ov.tmp/spira/$n"; else ln -sfn "$f" "$ov.tmp/bin/$n"; fi
+            done
+        done
+        mv "$ov.tmp" "$ov" 2>/dev/null || rm -rf "$ov.tmp"
+    fi
+    printf '%s\n' "$ov"
+}
+export -f tl_release tl_declared_release
 _TL_TIER="$(suite-select header tier "${BASH_SOURCE[1]:-$0}")"
 _TL_UC="$(suite-select header uc "${BASH_SOURCE[1]:-$0}")"
 

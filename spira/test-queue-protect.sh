@@ -61,7 +61,7 @@ printf '%s | %s | queue | main | | |\n' "$QNAME" "$QREPO" > "$RMAP"
 
 tl_config SPIRA_REPO_MAP="$RMAP" SPIRA_RUN="$TMP/run" SPIRA_FORGE="$BIN/forge-fixture.sh"
 protect_out="$(
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
+    env -i SPIRA_RELEASE="$(tl_release)" \
         PATH="$BIN:$PATH" \
         HOME="$FAKE_HOME" \
         SPIRA_TOML="$SPIRA_TOML" \
@@ -99,7 +99,7 @@ rm -f "$TMP/run/queue-protected-$QNAME"
 
 tl_config SPIRA_REPO_MAP="$RMAP" SPIRA_RUN="$TMP/run" SPIRA_FORGE="$BIN/forge-fixture-fail.sh"
 fail_out="$(
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
+    env -i SPIRA_RELEASE="$(tl_release)" \
         PATH="$BIN:$PATH" \
         HOME="$FAKE_HOME" \
         SPIRA_TOML="$SPIRA_TOML" \

@@ -63,8 +63,8 @@ SPIRA_CONFIG_BIN="$(dirname "$(command -v spira-config)")" || bail "spira-config
 mkdir -p "$TMP/run"
 
 # SPIRA_REPO_MAP/SPIRA_DB/SPIRA_RUN/SPIRA_HOME_REPO are registered keys (per Ryan 2026-10-05,
-# ONE SOURCE OF CONFIG): declare them via tl_config and thread SPIRA_TOML through every env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}"
-# call below — env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" clears it otherwise, and no process reads these four from the
+# ONE SOURCE OF CONFIG): declare them via tl_config and thread SPIRA_TOML through every env -i SPIRA_RELEASE="$(tl_release)"
+# call below — env -i SPIRA_RELEASE="$(tl_release)" clears it otherwise, and no process reads these four from the
 # environment any more.
 #
 # A NAMED ROW, NOT AN EMPTY MAP. Leaving SPIRA_REPO_MAP pointing at a file that does not exist
@@ -85,7 +85,7 @@ run_guard() {
     # RUN IN AN EXPLICIT MINIMAL ENVIRONMENT. Ambient conf is the thing that silently decides
     # verdicts in a suite that inherits it. SPIRA_CONF points at a nonexistent file so no
     # legacy config file is read.
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$TMP" PATH="$GIT_BIN:$SPIRA_CONFIG_BIN:/usr/bin:/bin" \
+    env -i SPIRA_RELEASE="$(tl_release)" HOME="$TMP" PATH="$GIT_BIN:$SPIRA_CONFIG_BIN:/usr/bin:/bin" \
         GIT_COMMITTER_NAME="test" GIT_COMMITTER_EMAIL="$email" \
         SPIRA_CONF="$TMP/none.conf" SPIRA_REPO="$root" \
         SPIRA_TOML="$SPIRA_TOML" \
@@ -103,7 +103,7 @@ git -C "$REPO" add -A
 # first prove it could have found something" (law-absence-needs-a-positive-control).
 # Plant the bad case and require the guard to say so, then believe it when it is silent.
 # ---------------------------------------------------------------------------------------
-out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$TMP" PATH="$GIT_BIN:$SPIRA_CONFIG_BIN:/usr/bin:/bin" \
+out="$(env -i SPIRA_RELEASE="$(tl_release)" HOME="$TMP" PATH="$GIT_BIN:$SPIRA_CONFIG_BIN:/usr/bin:/bin" \
     GIT_COMMITTER_NAME="dwarf-andvari" GIT_COMMITTER_EMAIL="dwarf-andvari@spira.local" \
     SPIRA_CONF="$TMP/none.conf" SPIRA_REPO="$REPO" \
     SPIRA_TOML="$SPIRA_TOML" \
@@ -148,7 +148,7 @@ git -C "$REPO" commit -q -m "sp-test: dwarf commit planted directly on main"
 # base of origin/main, which this repo actually has — repo_names/repo_root resolve it as any
 # other mapped row would.
 run_check() {
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$TMP" PATH="$GIT_BIN:$SPIRA_CONFIG_BIN:/usr/bin:/bin" \
+    env -i SPIRA_RELEASE="$(tl_release)" HOME="$TMP" PATH="$GIT_BIN:$SPIRA_CONFIG_BIN:/usr/bin:/bin" \
         SPIRA_CONF="$TMP/none.conf" SPIRA_REPO="$REPO" \
         SPIRA_TOML="$SPIRA_TOML" \
         bash "$SH/branch-guard.sh" check 2>&1

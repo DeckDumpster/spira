@@ -28,14 +28,14 @@ trap 'rm -rf "$TMP"' EXIT
 RUN="$TMP/run"; mkdir -p "$RUN"
 BASE_PATH="$PATH"
 
-# Constant across every env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" invocation below unless re-declared (the ratelim "without a
+# Constant across every env -i SPIRA_RELEASE="$(tl_release)" invocation below unless re-declared (the ratelim "without a
 # trace" case re-points SPIRA_RUN at EMPTY_RUN further down).
 tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
     SPIRA_RUNES=builder SPIRA_COCKPIT="$TMP"
 
 # A minimal environment: no INVOCATION_ID, no real config, no inherited state.
 run_cockpit() {
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         "$@" \
@@ -86,7 +86,7 @@ SH
 chmod +x "$BIN/systemctl"
 
 rm -f "$RUN/cockpit.env"
-env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+env -i SPIRA_RELEASE="$(tl_release)" PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_TOML="$SPIRA_TOML" \
     INVOCATION_ID="inv-42" MOCK_INVOCATION_ID="inv-42" \
@@ -130,7 +130,7 @@ echo "the may-write fence and the collect-loop guard, driven directly:"
 
 # may_write [env <ASSIGN...>] -> prints 1 if the fence allows the write, else 0.
 may_write() {
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         "$@" \
@@ -139,7 +139,7 @@ may_write() {
 
 # run_loop_guard [env <ASSIGN...>] -> exits with the guard's own status, relaying stderr.
 run_loop_guard() {
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         "$@" \
@@ -175,7 +175,7 @@ cat > "$RUN/sp-ratelim-test.log" <<'TRACE'
 {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":9999999999,"unifiedWindows":{"five_hour":{"utilization":0.27,"resetsAt":9999999999},"seven_day":{"utilization":0.21,"resetsAt":9999999999}}}}
 TRACE
 
-rl_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+rl_out="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_TOML="$SPIRA_TOML" \
     cockpit-collect probe ratelim 2>/dev/null)"
@@ -197,7 +197,7 @@ echo "ratelim: without a trace (empty run dir):"
 
 EMPTY_RUN="$TMP/empty-run"; mkdir -p "$EMPTY_RUN"
 tl_config SPIRA_RUN="$EMPTY_RUN"
-rl_empty="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+rl_empty="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_TOML="$SPIRA_TOML" \
     cockpit-collect probe ratelim 2>/dev/null)"

@@ -150,7 +150,7 @@ run_intake() {
     tl_config SPIRA_DB=fixture SPIRA_BD="$T/bin_bd" SPIRA_REPO_MAP="$REPOMAP" \
         SPIRA_GH_INTAKE_REPO="acme/widgets" SPIRA_GH_INTAKE_BEAD_REPO="widgets" \
         SPIRA_GH_INTAKE_PRIORITY="2" SPIRA_SCOPE_LABEL="spira" SPIRA_PLAN_LABEL="plan"
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$T:$(dirname "$BIN"):/usr/bin:/bin" HOME="$HOME" \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$T:$(dirname "$BIN"):/usr/bin:/bin" HOME="$HOME" \
         SPIRA_TOML="$SPIRA_TOML" \
         BDLOG="$BDLOG" CREATED="$CREATED" MAILLOG="$MAILLOG" \
         SPIRA_MAIL_BIN="$T/bin_mail.sh" \
@@ -199,7 +199,7 @@ echo
 echo "4. an unresolvable bead repo is refused, not silently skipped"
 tl_config SPIRA_DB=fixture SPIRA_BD="$T/bin_bd" SPIRA_REPO_MAP="$REPOMAP" \
     SPIRA_GH_INTAKE_REPO="acme/widgets" SPIRA_GH_INTAKE_BEAD_REPO="no-such-repo"
-out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$T:$(dirname "$BIN"):/usr/bin:/bin" HOME="$HOME" \
+out="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$T:$(dirname "$BIN"):/usr/bin:/bin" HOME="$HOME" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_MAIL_BIN="$T/bin_mail.sh" \
     SPIRA_HOME="$T/spira-home" \

@@ -65,7 +65,7 @@ mkdir -p "$SPIRA_RUN"
 tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_BD="true"
 
 base_env() {
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
+    env -i SPIRA_RELEASE="$(tl_release)" \
         PATH="$BROKER_DIR:$HERE:/usr/local/bin:/usr/bin:/bin" \
         HOME="$T/home" \
         SPIRA_HOME="$HERE" \

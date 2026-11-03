@@ -26,7 +26,7 @@ echo "test-destructive-bead.sh"
 # Source conf.sh to read SPIRA_ASK_LABEL rather than hardcoding a value — the shipped default
 # (needs-operator) differs from a configured installation, so a hardcoded label never matches
 # the fence's check and the bypass test fails on a clean environment. Capture it before the
-# env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" helpers drop it from the environment.
+# env -i SPIRA_RELEASE="$(tl_release)" helpers drop it from the environment.
 # shellcheck source=spira/conf.sh
 . "$HERE/conf.sh" 2>/dev/null || true
 ASK_LABEL="${SPIRA_ASK_LABEL:-needs-operator}"
@@ -41,13 +41,13 @@ chmod +x "$STUB_BD"
 # These registered keys are constant across every check_*/run_bdq call below; declared once
 # via tl_config (the compiled `bdq` binary each bash -c execs resolves fresh from SPIRA_TOML,
 # never from this process's inherited env — per Ryan 2026-10-05, the one-source-of-config
-# law), with SPIRA_TOML threaded through the env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" helpers below so it survives to reach it.
+# law), with SPIRA_TOML threaded through the env -i SPIRA_RELEASE="$(tl_release)" helpers below so it survives to reach it.
 tl_config SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/nomap" SPIRA_BD="$STUB_BD" \
     SPIRA_ASK_LABEL="$ASK_LABEL"
 
 # Run _bdq_check_destructive directly for fine-grained tests of each pattern.
 check_title() {  # check_title <title> <labels> -> combined stdout+stderr
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" \
         bash -c '. "$1/lib.sh"; _bdq_check_destructive create "$2" --labels "$3"' \
@@ -56,7 +56,7 @@ check_title() {  # check_title <title> <labels> -> combined stdout+stderr
 
 # Same, but puts the text in the description rather than the title.
 check_desc() {  # check_desc <desc> <labels> -> combined stdout+stderr
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" \
         bash -c '. "$1/lib.sh"; _bdq_check_destructive create "clean title" -d "$2" --labels "$3"' \
@@ -65,7 +65,7 @@ check_desc() {  # check_desc <desc> <labels> -> combined stdout+stderr
 
 # Run bdq create end-to-end, with no repo: label so the repo-label check passes trivially.
 run_bdq() {  # run_bdq <title> <labels> -> combined stdout+stderr
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" BD_TIMEOUT=10 \
         bash -c '. "$1/lib.sh"; bdq create "$2" --labels "$3" -d "$4"' \
@@ -179,14 +179,14 @@ echo "DELETE FROM schema_migrations refused even with needs-ryan:"
 # This is the sp-1khst fence: three escalation beads carrying needs-ryan were approved.
 
 check_schema_title() {  # check_schema_title <title> <labels> -> combined stdout+stderr
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" \
         bash -c '. "$1/lib.sh"; _bdq_check_schema_delete create "$2" --labels "$3"' \
             -- "$HERE" "$1" "$2" 2>&1
 }
 check_schema_desc() {  # check_schema_desc <desc> <labels> -> combined stdout+stderr
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" \
         bash -c '. "$1/lib.sh"; _bdq_check_schema_delete create "clean title" -d "$2" --labels "$3"' \

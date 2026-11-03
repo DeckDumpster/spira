@@ -58,7 +58,7 @@ run_probe() {    # run_probe <subcommand> [env KEY=val ...]
         SPIRA_BD="${SPIRA_BD:-bd-embedded}"
     # Any caller override: a registered key (spira/conf.d) goes to tl_config, same as the
     # defaults just above; anything else (e.g. SPIRA_SOP_LEDGER, a seam, not in conf.d) stays
-    # a plain env assignment for the env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" call below.
+    # a plain env assignment for the env -i SPIRA_RELEASE="$(tl_release)" call below.
     local extra_env=() kv k
     for kv in "$@"; do
         k="${kv%%=*}"
@@ -67,7 +67,7 @@ run_probe() {    # run_probe <subcommand> [env KEY=val ...]
     # SPIRA_DB/SPIRA_BD ALSO AS PLAIN ENV: lc_mirror_bd's spira-lc stub (on PATH ahead of
     # the real one) is exec'd as cockpit-collect's own child for SP_READY and reads them as
     # raw shell variables, never through spira-config — tl_config's declaration never reaches it.
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_PANE_READ_TTL=0 SPIRA_HISTORY_READ_TTL=0 SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$TMP/lc:$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+    env -i SPIRA_RELEASE="$(tl_release)" SPIRA_PANE_READ_TTL=0 SPIRA_HISTORY_READ_TTL=0 SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$TMP/lc:$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd-embedded}" \
@@ -172,7 +172,7 @@ JSONL
     # panel queried an empty database. Declare cockpit_db itself (one source of config, per
     # Ryan 2026-10-05).
     tl_config SPIRA_DB="$SPIRA_DB" SPIRA_PATH="$SPIRA_PATH" COCKPIT_DB="$SPIRA_DB"
-    out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+    out="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         "$PANEL_BIN" --dump 2>"$TMP/panel-dump.err")"
     title="$(printf '%s' "$out" | python3 -c '

@@ -28,7 +28,7 @@ session() {   # session <with-waiter 0|1> -> sets SESS (no command substitution:
 }
 run_hook() {  # run_hook <session pid> [extra env...]
     local sp="$1"; shift
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" SPIRA_CONCIERGE=1 SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_SESSION_PID="$sp" "$@" \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" SPIRA_CONCIERGE=1 SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_SESSION_PID="$sp" "$@" \
         bash "$HOOK" </dev/null
 }
 
@@ -49,7 +49,7 @@ printf '%s\0next\0concierge-inbox\0' "$TMP/bin/watchd" > "$FX/200/cmdline"
 : > "$FX/300/cmdline"
 printf '400 (sleep) S 100 ' > "$FX/400/stat"
 printf 'sleep\0300\0' > "$FX/400/cmdline"
-fx_hook() { env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" SPIRA_CONCIERGE=1 SPIRA_RUN="$TMP/run" SPIRA_PROC_ROOT="$FX" SPIRA_CONCIERGE_SESSION_PID=100 bash "$HOOK" </dev/null 2>&1; }
+fx_hook() { env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" SPIRA_CONCIERGE=1 SPIRA_RUN="$TMP/run" SPIRA_PROC_ROOT="$FX" SPIRA_CONCIERGE_SESSION_PID=100 bash "$HOOK" </dev/null 2>&1; }
 is "vanishing siblings: live waiter still found, no noise" "" "$(fx_hook)"
 rm "$FX/200/cmdline"
 want "fixture control: without the waiter it blocks" '"decision": "block"' "$(fx_hook)"

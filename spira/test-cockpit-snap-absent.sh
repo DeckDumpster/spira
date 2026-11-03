@@ -45,7 +45,7 @@ pane_at() {
     # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): health refuses outright
     # without one (sfail round 3, pattern 1).
     tl_config SPIRA_RUN="$run"
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
+    env -i SPIRA_RELEASE="$(tl_release)" SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
         SPIRA_CONF="$PD/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$PD/repo" \
         SPIRA_SYSTEMCTL="$PD/bin/mock-systemctl" \
         "$PANE" once "$rows" 0 2>/dev/null \

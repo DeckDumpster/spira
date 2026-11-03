@@ -75,7 +75,7 @@ SESSJSONL
 tl_config SPIRA_REPO_MAP="$TMP/no-map" SPIRA_RUN="$RUN" SPIRA_TOKEN_PROJECTS="$PROJ" \
     SPIRA_TOKEN_WINDOW_H=87600
 run_tokens() {
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" \
         SPIRA_HOME="$TMP" SPIRA_REPO="$TMP" SPIRA_CONF="$TMP/no.conf" \
         SPIRA_TOML="$SPIRA_TOML" \
         tokens.sh "$1" 2>/dev/null
@@ -130,7 +130,7 @@ cp "$PROJ/$ARC_DIR_NAME/arc.jsonl"       "$PROJ2/$ARC_DIR_NAME/"
 cp "$PROJ/$SESS_DIR_NAME/session.jsonl"  "$PROJ2/$SESS_DIR_NAME/"
 
 tl_config SPIRA_TOKEN_PROJECTS="$PROJ2"
-ENV2="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
+ENV2="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" \
     SPIRA_HOME="$TMP" SPIRA_REPO="$TMP" SPIRA_CONF="$TMP/no.conf" \
     SPIRA_TOML="$SPIRA_TOML" \
     tokens.sh env 2>/dev/null)"
@@ -153,7 +153,7 @@ cp "$PROJ/$ARC_DIR_NAME/arc.jsonl"       "$PROJ3/-wrong-arc-dir/"
 cp "$PROJ/$SESS_DIR_NAME/session.jsonl"  "$PROJ3/$SESS_DIR_NAME/"
 
 tl_config SPIRA_TOKEN_PROJECTS="$PROJ3"
-ENV3="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
+ENV3="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" \
     SPIRA_HOME="$TMP" SPIRA_REPO="$TMP" SPIRA_CONF="$TMP/no.conf" \
     SPIRA_TOML="$SPIRA_TOML" \
     tokens.sh env 2>/dev/null)"

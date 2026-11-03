@@ -127,7 +127,7 @@ FIVE_OPEN='[{"bead_id":"x1","state":"READY"},{"bead_id":"x2","state":"WORKING"},
 run_trigger() {
     mkdir -p "$T/run"
     tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" SPIRA_BD="$STUB_BD" SPIRA_HOME_REPO="test-repo"
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
+    env -i SPIRA_RELEASE="$(tl_release)" HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
         SPIRA_HOME="$HERE" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
@@ -192,7 +192,7 @@ STUB
 chmod +x "$FAIL_BD"
 : > "$BD_LOG"
 tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/fixture.db" SPIRA_REPO_MAP="$GROOM_MAP" SPIRA_BD="$FAIL_BD"
-out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
+out="$(env -i SPIRA_RELEASE="$(tl_release)" HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
         BD_LOG_PATH="$BD_LOG" SPIRA_BEAD_BIN="$STUB_BEAD" BEAD_FAIL=1 \
@@ -211,7 +211,7 @@ printf '#!/usr/bin/env bash\nexit 1\n' > "$DEAD_LC"
 chmod +x "$DEAD_LC"
 : > "$BD_LOG"
 tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/fixture.db" SPIRA_REPO_MAP="$GROOM_MAP" SPIRA_BD="$STUB_BD"
-out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
+out="$(env -i SPIRA_RELEASE="$(tl_release)" HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
         BD_LOG_PATH="$BD_LOG" SPIRA_BEAD_BIN="$STUB_BEAD" \
@@ -234,7 +234,7 @@ BD_LIST_OUTPUT="[]"
 tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" \
     SPIRA_SCOPE_LABEL="myproject" SPIRA_GROOMER_LABEL="hygiene" SPIRA_BD="$STUB_BD"
 out="$(BD_LIST_OUTPUT="[]" \
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
+    env -i SPIRA_RELEASE="$(tl_release)" HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
         BD_LOG_PATH="$BD_LOG" SPIRA_BEAD_BIN="$STUB_BEAD" \
@@ -256,7 +256,7 @@ echo "EMPTY SCOPE: SPIRA_SCOPE_LABEL='' produces only the groomer label (no lead
 : > "$BD_LOG"
 tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" \
     SPIRA_SCOPE_LABEL="" SPIRA_GROOMER_LABEL="groom" SPIRA_BD="$STUB_BD"
-out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
+out="$(env -i SPIRA_RELEASE="$(tl_release)" HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
         BD_LOG_PATH="$BD_LOG" SPIRA_BEAD_BIN="$STUB_BEAD" \
@@ -278,7 +278,7 @@ printf 'plan-only | /tmp/plan-only | push | origin/main | | | consume\n' >> "$CO
 : > "$BD_LOG"
 tl_config SPIRA_DB="$T/fixture.db" SPIRA_REPO_MAP="$CONSUME_MAP" \
     SPIRA_HOME_REPO="home-tg" SPIRA_GROOMER_LABEL="groom" SPIRA_BD="$STUB_BD"
-out_ng="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
+out_ng="$(env -i SPIRA_RELEASE="$(tl_release)" HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$NONE" \
     BD_LOG_PATH="$BD_LOG" SPIRA_BEAD_BIN="$STUB_BEAD" \
@@ -293,7 +293,7 @@ want   "no-groom-map: logs skipping trigger"  "skipping trigger" "$out_ng"
 : > "$BD_LOG"
 tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" \
     SPIRA_HOME_REPO="spira" SPIRA_GROOMER_LABEL="groom" SPIRA_BD="$STUB_BD"
-out_gp="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
+out_gp="$(env -i SPIRA_RELEASE="$(tl_release)" HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$NONE" \
     BD_LOG_PATH="$BD_LOG" SPIRA_BEAD_BIN="$STUB_BEAD" \
@@ -334,7 +334,7 @@ echo "SHORT-CIRCUIT: custom SPIRA_GROOM_THRESHOLD respected"
 TWO_OPEN='[{"bead_id":"y1","state":"READY"},{"bead_id":"y2","state":"WORKING"},{"bead_id":"y3","state":"SUBMITTED"}]'
 : > "$BD_LOG"
 tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" SPIRA_GROOM_THRESHOLD="2" SPIRA_BD="$STUB_BD"
-out_t2="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
+out_t2="$(env -i SPIRA_RELEASE="$(tl_release)" HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$NONE" \
     BD_LOG_PATH="$BD_LOG" SPIRA_BEAD_BIN="$STUB_BEAD" \
@@ -345,7 +345,7 @@ is   "threshold=2, score=2: exits 0"        0        "$rc_t2"
 want "threshold=2, score=2: filed"  "bead-file" "$(cat "$BD_LOG")"
 : > "$BD_LOG"
 tl_config SPIRA_GROOM_THRESHOLD="3" SPIRA_BD="$STUB_BD"
-out_t3="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
+out_t3="$(env -i SPIRA_RELEASE="$(tl_release)" HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$NONE" \
     BD_LOG_PATH="$BD_LOG" SPIRA_BEAD_BIN="$STUB_BEAD" \

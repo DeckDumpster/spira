@@ -18,7 +18,7 @@ esac
 STUB
 chmod +x "$TMP/aws"
 export FIX="$TMP" PATH="$TMP:$PATH"
-envset() { env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" FIX="$FIX" SPIRA_AWS_BASE_PROFILE=zbase SPIRA_AWS_SESSION_PROFILE=zsess \
+envset() { env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" FIX="$FIX" SPIRA_AWS_BASE_PROFILE=zbase SPIRA_AWS_SESSION_PROFILE=zsess \
     SPIRA_AWS_ROLE_ARN=arn:aws:iam::000000000000:role/zrole SPIRA_AWS_MFA_SERIAL=arn:aws:iam::000000000000:mfa/zdev \
     SPIRA_AWS_REGION=zz-test-9 "$@"; }
 
@@ -34,5 +34,5 @@ want "writes configured region" "configure set region zz-test-9 --profile zsess"
 : > "$TMP/calls"
 envset bash "$HERE/aws-mfa.sh" 12345 >/dev/null 2>&1; wantrc "short code refused" 2 "$?"
 envset bash "$HERE/aws-mfa.sh" abcdef >/dev/null 2>&1; wantrc "non-numeric code refused" 2 "$?"
-env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" FIX="$FIX" bash "$HERE/aws-mfa.sh" 123456 >/dev/null 2>&1; wantrc "unset config refused" 2 "$?"
+env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" FIX="$FIX" bash "$HERE/aws-mfa.sh" 123456 >/dev/null 2>&1; wantrc "unset config refused" 2 "$?"
 is "refusals call aws never" "" "$(cat "$TMP/calls")"

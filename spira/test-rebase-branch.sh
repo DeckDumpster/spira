@@ -44,13 +44,13 @@ timeout 5 git -C "$REPO" fetch -q origin
 echo "test-rebase-branch.sh"
 
 # --------------------------------------------------------------------------------------
-# POSITIVE CONTROL. Bare rebase under env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" fails without identity — proves the test
+# POSITIVE CONTROL. Bare rebase under env -i SPIRA_RELEASE="$(tl_release)" fails without identity — proves the test
 # detects the problem before we trust the fix's passing result.
 # --------------------------------------------------------------------------------------
 echo
 CTRL_WT="$TMP/ctrl-wt"
 git -C "$REPO" worktree add -q --detach "$CTRL_WT" spira/testbranch
-ctrl_err="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$EMPTYHOME" PATH=/usr/bin:/bin GIT_CONFIG_NOSYSTEM=1 \
+ctrl_err="$(env -i SPIRA_RELEASE="$(tl_release)" HOME="$EMPTYHOME" PATH=/usr/bin:/bin GIT_CONFIG_NOSYSTEM=1 \
     git -C "$CTRL_WT" rebase -q origin/main 2>&1 || true)"
 git -C "$CTRL_WT" rebase --abort 2>/dev/null || true
 want "positive-control: bare rebase without identity fails" "Committer identity unknown" "$ctrl_err"
@@ -119,7 +119,7 @@ drop_branch() {
 # rebase failure reopened for all four. Asserted directly, because the pass can only be
 # steered into two of these and a guard reading a value nothing pins is a guard on a comment.
 # --------------------------------------------------------------------------------------
-# classify()/classify_ext() do NOT run under env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" — they inherit this suite's SPIRA_TOML,
+# classify()/classify_ext() do NOT run under env -i SPIRA_RELEASE="$(tl_release)" — they inherit this suite's SPIRA_TOML,
 # so lib.sh's own sourcing of conf.sh resolves every registered key straight from it and
 # would silently overwrite a plain env prefix the instant lib.sh loads. Declared through
 # tl_config once, instead, since the three values below are constant for every call here.
@@ -193,10 +193,10 @@ rebase_id_classify() {
     # rebase_branch (lib.sh) execs the compiled `rebase-stale` binary, which resolves its
     # own config fresh from SPIRA_TOML like any other Spira binary — it never sees this
     # shell's bash variables, so SPIRA_GIT_NAME/EMAIL (the whole point of this case) have
-    # to be declared via tl_config, with SPIRA_TOML threaded through env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" to reach it.
+    # to be declared via tl_config, with SPIRA_TOML threaded through env -i SPIRA_RELEASE="$(tl_release)" to reach it.
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$_home/nodb" SPIRA_REPO_MAP="$TMP/repo-map" \
         SPIRA_GIT_NAME=testharness SPIRA_GIT_EMAIL=testharness@test.invalid
-    _out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
+    _out="$(env -i SPIRA_RELEASE="$(tl_release)" \
         HOME="$_home" \
         PATH="$PATH" \
         SPIRA_TOML="$SPIRA_TOML" \

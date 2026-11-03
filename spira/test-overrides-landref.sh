@@ -41,7 +41,7 @@ printf 'fixture | %s | push | origin/main | | |\n' "$REPO" > "$RMAP"
 
 run_ov() { # run_ov <spec dir> <verb>
     tl_config SPIRA_RUN="$RUN" SPIRA_OVERRIDES="$1" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$RMAP" SPIRA_CONCIERGE_INBOX="$TMP/inbox.log"
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
+    env -i SPIRA_RELEASE="$(tl_release)" SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
         overrides.sh "$2" "$REPO" 2>&1
 }
 

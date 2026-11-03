@@ -269,7 +269,7 @@ tl_config SPIRA_RUN="$RUN_DIR" SPIRA_ROUND_VM_STATE_DIR="$STATE_DIR" SPIRA_PVE_E
     SPIRA_ROUND_VM_HOST_KEY="$TMP/client_key" SPIRA_ROUND_VM_HOST_PUBKEY="$TMP/client_key.pub" SPIRA_ROUND_VM_HOST_ADDR=127.0.0.1 \
     SPIRA_ROUND_VM_MIRROR_PORT="$MIRROR_PORT" SPIRA_ROUND_VM_MAX_RETRIES=1 \
     SPIRA_ROUND_VM_RETRY_INTERVAL=0 SPIRA_ROUND_VM_VCPUS=4 SPIRA_ROUND_VM_CACHE_HOME=/root/cache-home
-env -i PATH="$PATH" SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
+env -i PATH="$PATH" SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_RELEASE="$(tl_release)" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_ROUND_VM_SSH_TRIES=20 \
     SPIRA_ROUND_VM_BOOT_POLL=1 \
@@ -342,7 +342,7 @@ nowant "run: the leased VM was destroyed and verified gone" "\"vmid\": $VMID" "$
 # killed on the VM while the fake testenv sleeps after its results are written.
 vm_sh() { podman exec "$VM_NAME" sh -c "$1" 2>/dev/null; } # batch-job: container fixture call; image pulls and starts exceed 5 s
 vm_sh 'echo drop > /root/testenv-mode'
-env -i PATH="$PATH" SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_TOML="$SPIRA_TOML" SPIRA_ROUND_VM_SSH_TRIES=20 SPIRA_ROUND_VM_BOOT_POLL=1 \
+env -i PATH="$PATH" SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_RELEASE="$(tl_release)" SPIRA_TOML="$SPIRA_TOML" SPIRA_ROUND_VM_SSH_TRIES=20 SPIRA_ROUND_VM_BOOT_POLL=1 \
     "$BIN" run "$TREE_DIR" --suites e2e-a.sh,e2e-b.sh --maxpar 2 --results-dir "$TMP/drop1" >"$TMP/drop1.out" 2>"$TMP/drop1.err" &
 DROP_PID=$!
 for _ in $(seq 1 120); do
@@ -380,7 +380,7 @@ nowant "ssh drop: the VM was destroyed" "\"vmid\": $DROP_VMID" "$qemu_list"
 mkdir -p "$TMP/resume-creds"; printf '[default]\naws_access_key_id = scoped-fixture\n' > "$TMP/resume-creds/credentials"
 RESUME_URL="s3://e2e-bucket/e2e-prefix"
 RESUME_RUN() {
-    env -i PATH="$PATH" SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_TOML="$SPIRA_TOML" SPIRA_ROUND_VM_SSH_TRIES=20 SPIRA_ROUND_VM_BOOT_POLL=1 \
+    env -i PATH="$PATH" SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_RELEASE="$(tl_release)" SPIRA_TOML="$SPIRA_TOML" SPIRA_ROUND_VM_SSH_TRIES=20 SPIRA_ROUND_VM_BOOT_POLL=1 \
         SPIRA_ROUND_VM_RESUME_URL="$RESUME_URL" SPIRA_ROUND_VM_RESUME_CREDENTIALS="$TMP/resume-creds" \
         "$BIN" run "$TREE_DIR" --suites e2e-a.sh --maxpar 2 --results-dir "$1" >"$TMP/$2.out" 2>"$TMP/$2.err" || true
 }
@@ -401,7 +401,7 @@ is "resume: no store is kept on the host" "no" "$([ -e "$STATE_DIR/resume" ] && 
 # for the tree on a fresh VM skips them (the acceptance drill, at e2e scale).
 vm_sh 'rm -rf /root/fake-s3 /root/round-work /root/round-resume-aws; echo hang > /root/testenv-mode'
 RESUME_RUN_BG() {
-    env -i PATH="$PATH" SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_TOML="$SPIRA_TOML" SPIRA_ROUND_VM_SSH_TRIES=20 SPIRA_ROUND_VM_BOOT_POLL=1 \
+    env -i PATH="$PATH" SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_RELEASE="$(tl_release)" SPIRA_TOML="$SPIRA_TOML" SPIRA_ROUND_VM_SSH_TRIES=20 SPIRA_ROUND_VM_BOOT_POLL=1 \
         SPIRA_ROUND_VM_RESUME_URL="$RESUME_URL" SPIRA_ROUND_VM_RESUME_CREDENTIALS="$TMP/resume-creds" \
         "$BIN" run "$TREE_DIR" --suites e2e-a.sh --maxpar 2 --results-dir "$1" >"$TMP/$2.out" 2>"$TMP/$2.err" &
 }

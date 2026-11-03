@@ -129,7 +129,7 @@ call_repair() {   # call_repair <window> -> nothing; runs the real `ensure`, whi
     # declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
     tl_config COCKPIT_MAIL="fakemail" SPIRA_COCKPIT="$COCKPIT_DIR" SPIRA_RUN="$RUN" \
         SPIRA_INSTANCE=fixture COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33
-    # SPIRA_HOME is threaded through too, for parity with every other suite's env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" call —
+    # SPIRA_HOME is threaded through too, for parity with every other suite's env -i SPIRA_RELEASE="$(tl_release)" call —
     # cockpit-ops's self_source() does not actually read it (it derives its registry from
     # SPIRA_RELEASE/spira instead, fixed up above), but nothing reads SPIRA_HOME from env
     # any more regardless, so passing it costs nothing and keeps this call shaped like the

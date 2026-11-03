@@ -70,7 +70,7 @@ file_incident() {  # file_incident <ref> <title> <payload> [VAR=val ...]
     # CONFIG): declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
     tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run"
     printf '%s' "$payload" | \
-        env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$HOME" PATH="$PATH" \
+        env -i SPIRA_RELEASE="$(tl_release)" HOME="$HOME" PATH="$PATH" \
         STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         MAIL_LOG="$MAIL_LOG" \
         SPIRA_CONF="$TMP/no-conf" \

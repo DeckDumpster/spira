@@ -6,7 +6,7 @@
 #   . "$HERE/testlib/lc-fixture.sh"
 #   lcfix_up || exit 1            # starts the server, applies the schema, exports SPIRA_LC_*
 #   lcfix_seed sp-a CERTIFIED <tip>
-#   env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" ... $(lcfix_env) queue ...   # carry the connection through an `env -i`
+#   env -i SPIRA_RELEASE="$(tl_release)" ... $(lcfix_env) queue ...   # carry the connection through an `env -i`
 #   lcfix_state sp-a              # -> CERTIFIED
 #
 # lcfix_up_on_testdb instead puts the database on a server-mode testdb's own server, for a

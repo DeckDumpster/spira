@@ -469,7 +469,8 @@ impl Steps for ProcessSteps {
                 .env_clear()
                 .env("PATH", std::env::var_os("PATH").unwrap_or_default())
                 .env("SPIRA_TOML", world.join("config/sim.toml"))
-                .env("SPIRA_RELEASE", release),
+                .env("SPIRA_RELEASE", release)
+                .env("HOME", world.join(HOME)),
             CALL_DEADLINE,
         )
         .map(|_| ())
@@ -486,6 +487,7 @@ impl Steps for ProcessSteps {
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
             .env("SPIRA_TOML", world.join("config/sim.toml"))
             .env("SPIRA_RELEASE", world.join("release"))
+            .env("HOME", world.join(HOME))
             .env("SPIRA_LC_HOST", "127.0.0.1")
             .env("SPIRA_LC_PORT", port.trim())
             .env("SPIRA_LC_USER", "root")
@@ -542,6 +544,7 @@ pub fn lc_command(release: &Path, config: &Path, port: &str) -> Command {
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .env("SPIRA_RELEASE", release)
         .env("SPIRA_TOML", config.join("lc.toml"))
+        .env("HOME", config.join("..").join(HOME))
         .env("SPIRA_LC_HOST", "127.0.0.1")
         .env("SPIRA_LC_PORT", port.trim())
         .env("SPIRA_LC_USER", "root")

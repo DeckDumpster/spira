@@ -176,7 +176,7 @@ un() {
     tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_DOLT_DATA="" \
         SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" SPIRA_COCKPIT="$REAL_COCKPIT" \
         SPIRA_INSTANCE=test SPIRA_CLIENT_SETTINGS="$TMP/home/.claude/settings.json"
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
+    env -i SPIRA_RELEASE="$(tl_release)" \
         "PATH=$FIXTURE/spira:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
@@ -207,7 +207,7 @@ _seed_units() {
     # declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
     tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
         SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA=""
-    rendered="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
+    rendered="$(env -i SPIRA_RELEASE="$(tl_release)" \
         "PATH=$FIXTURE/spira:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
@@ -346,7 +346,7 @@ echo "INSTANCE AWARENESS — refuses multiple instances; accepts explicit:"
 # the unconvertible absence of SPIRA_INSTANCE used to give it for free.
 tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
     SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_DOLT_DATA="" SPIRA_INSTANCE=prod
-multi_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
+multi_out="$(env -i SPIRA_RELEASE="$(tl_release)" \
     "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \
     SPIRA_CONF=/nonexistent \
@@ -368,7 +368,7 @@ want    "instance: names the instances found" "test" "$multi_out"
 # declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
 tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
     SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA=""
-explicit_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
+explicit_out="$(env -i SPIRA_RELEASE="$(tl_release)" \
     "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \
     SPIRA_CONF=/nonexistent \
@@ -479,7 +479,7 @@ mkdir -p "$SPIRA_RUN_DIR/archive"
 # declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
 tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
     SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA=""
-purge_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
+purge_out="$(env -i SPIRA_RELEASE="$(tl_release)" \
     "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \
     SPIRA_CONF=/nonexistent \
@@ -514,7 +514,7 @@ _unit_before="$(ls -1 "$DEST" 2>/dev/null | wc -l | tr -d ' ')"
 # declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
 tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
     SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA=""
-dryrun_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
+dryrun_out="$(env -i SPIRA_RELEASE="$(tl_release)" \
     "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \
     SPIRA_CONF=/nonexistent \
@@ -585,7 +585,7 @@ un_purgedb() {
     tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
         SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DB="$PURGEDB_DIR" \
         SPIRA_BD="$MOCK_BIN/bd" SPIRA_DOLT_DATA="$PURGEDB_DOLT"
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
+    env -i SPIRA_RELEASE="$(tl_release)" \
         "PATH=$FIXTURE/spira:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
@@ -695,7 +695,7 @@ chmod +x "$RACE_BIN/systemctl"
 # declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
 tl_config SPIRA_PATH="$RACE_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
     SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA=""
-race_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
+race_out="$(env -i SPIRA_RELEASE="$(tl_release)" \
     "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \
     SPIRA_CONF=/nonexistent \

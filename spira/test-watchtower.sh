@@ -101,7 +101,7 @@ chmod +x "$SYSTEMCTL_CLEAN"
 # gathers and prints and touches nothing, so nothing here can reach a database or file a bead.
 wt() {                   # wt [VAR=val ...] -> the snapshot
     tl_config SPIRA_RUN="$TMP/run" SPIRA_PATH="$DF_CLEAN"
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$DF_CLEAN:$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(tl_release)" SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$DF_CLEAN:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
@@ -162,7 +162,7 @@ ledger() {               # ledger <json> -> the collector's keys for that ledger
     mkdir -p "$TMP/run"
     printf '%s' "$1" > "$TMP/run/strands.json"
     tl_config SPIRA_RUN="$TMP/run"
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    env -i SPIRA_RELEASE="$(tl_release)" SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         cockpit-collect probe strands 2>/dev/null
 }
 key() {                  # key <keys> <name> -> its value
@@ -239,7 +239,7 @@ wt_file() {   # wt_file [VAR=val ...] -> $TMP/ops-prompt written; $TMP/incident-
     chmod +x "$mock"
     rm -f "$TMP/incident-called" "$TMP/ops-prompt"
     tl_config SPIRA_RUN="$TMP/run" SPIRA_PATH="$DF_CLEAN"
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$DF_CLEAN:$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(tl_release)" SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$DF_CLEAN:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
@@ -314,7 +314,7 @@ wt_file_multi() {   # wt_file_multi [VAR=val ...] -> appends incident subjects t
         "$TMP/inc-subjects" > "$mock"
     chmod +x "$mock"
     tl_config SPIRA_RUN="$TMP/run"
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(tl_release)" SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
@@ -332,7 +332,7 @@ wt_sinexempt_multi() {   # wt_sinexempt_multi [VAR=val ...] -> appends to $TMP/i
         "$TMP/inc-sinexempt" > "$mock"
     chmod +x "$mock"
     tl_config SPIRA_RUN="$TMP/run"
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(tl_release)" SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \

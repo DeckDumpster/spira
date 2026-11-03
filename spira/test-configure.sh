@@ -81,7 +81,7 @@ mkdir -p "$FAKE_HOME" "$TMP/stub"
 printf '#!/bin/sh\nexit 0\n' > "$TMP/stub/bd"; chmod +x "$TMP/stub/bd"
 
 run_configure() {
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
+    env -i SPIRA_RELEASE="$(tl_release)" \
         PATH="$TMP/stub:$PATH" \
         HOME="$FAKE_HOME" \
         SPIRA_CONF=/nonexistent \
@@ -159,7 +159,7 @@ else
 fi
 
 # Resolution through conf.sh reads the values back.
-_rt_prod="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$FAKE_HOME" SPIRA_TOML="$_TL_CONF_BASE:$OUT" SPIRA_CONF=/nonexistent \
+_rt_prod="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$FAKE_HOME" SPIRA_TOML="$_TL_CONF_BASE:$OUT" SPIRA_CONF=/nonexistent \
     bash -c ". '$HERE/conf.sh' 2>/dev/null; printf %s \"\$SPIRA_PROD\"")"
 is "conf.sh resolves SPIRA_PROD from the generated toml" "$FAKE_PROD" "$_rt_prod"
 

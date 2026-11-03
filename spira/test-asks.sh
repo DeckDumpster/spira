@@ -29,7 +29,7 @@ LOG="$TMP/run/watchd/asks.log"; CUR="$TMP/run/watchd/asks.cursor"
 arun() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db" SPIRA_ASK_LABEL=ask-x \
         SPIRA_CONCIERGE_INBOX="${WINBOX:-$INBOX}"
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$TMP/fakebin:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" FAKE_ASKS="$ASKS" \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$TMP/fakebin:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" FAKE_ASKS="$ASKS" \
         bash "$HERE/asks.sh" "$@" 2>&1
 }
 
@@ -64,7 +64,7 @@ rm -f "$LOG" "$CUR" "$TMP/run/watchd/asks.health"
 echo '[]' > "$ASKS"
 tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db" SPIRA_ASK_LABEL=ask-x SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_MAIL="$TMP/mail"
 : > "$INBOX"
-(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$TMP/fakebin:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" FAKE_ASKS="$ASKS" bash "$HERE/asks.sh" watch --interval 1 --ticks 4 >/dev/null 2>&1) &
+(env -i SPIRA_RELEASE="$(tl_release)" PATH="$TMP/fakebin:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" FAKE_ASKS="$ASKS" bash "$HERE/asks.sh" watch --interval 1 --ticks 4 >/dev/null 2>&1) &
 wpid=$!
 for _ in $(seq 100); do [ -e "$TMP/run/watchd/asks.health" ] && break; sleep 0.1; done
 touch "$TMP/armed"; wait "$wpid"

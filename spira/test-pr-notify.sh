@@ -164,7 +164,7 @@ esac
 GHEOF
 chmod +x "$GH_BIN/gh"
 
-# SPIRA_HOME EXPLICITLY, on every env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" call below: pr-notify.sh's own conf.sh sourcing
+# SPIRA_HOME EXPLICITLY, on every env -i SPIRA_RELEASE="$(tl_release)" call below: pr-notify.sh's own conf.sh sourcing
 # finds it as a plain, never-exported shell variable (its own $HERE), which is enough for
 # pr-notify.sh itself but not for `mail send concierge`, a separate process that needs
 # SPIRA_HOME or SPIRA_RELEASE in ITS OWN environment (spira_config::resolve::locate_home) —
@@ -172,7 +172,7 @@ chmod +x "$GH_BIN/gh"
 # every tick3 mail assertion below reads an empty mailbox.
 run() {  # run [args...] -> pr-notify.sh in a clean env; stdout in $TMP/out
     tl_config SPIRA_REPO_MAP="$REPO_MAP" SPIRA_MAIL_MUTE=0
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$TMP/home" PATH="$GH_BIN:$PATH" \
+    env -i SPIRA_RELEASE="$(tl_release)" HOME="$TMP/home" PATH="$GH_BIN:$PATH" \
         SPIRA_CONF="$CONF" SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$TMP/empty-repo" GH_LOG="$GH_LOG" \
         pr-notify.sh "$@" > "$TMP/out" 2>"$TMP/err"
@@ -376,7 +376,7 @@ chmod +x "$GH_BIN/gh"
 
 runb() {  # runb <args...> -> pr-notify.sh against BRANCH_MAP
     tl_config SPIRA_REPO_MAP="$BRANCH_MAP"
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$TMP/home" PATH="$GH_BIN:$PATH" \
+    env -i SPIRA_RELEASE="$(tl_release)" HOME="$TMP/home" PATH="$GH_BIN:$PATH" \
         SPIRA_CONF="$CONF" SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$TMP/empty-repo" GH_LOG="$GH_LOG" \
         GH_BRANCH_HAS_PR="${GH_BRANCH_HAS_PR:-0}" \
@@ -442,7 +442,7 @@ rm -f "$TMP/repos/queue-repo/.gh-pr-state"
 
 run_gone() {
     tl_config SPIRA_REPO_MAP="$GONE_MAP"
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$TMP/home" PATH="$GH_BIN:$PATH" \
+    env -i SPIRA_RELEASE="$(tl_release)" HOME="$TMP/home" PATH="$GH_BIN:$PATH" \
         SPIRA_CONF="$CONF" SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$TMP/empty-repo" GH_LOG="$GH_LOG" \
         pr-notify.sh --show > "$TMP/out" 2>"$TMP/err"
@@ -475,7 +475,7 @@ EOF
 
 actionable() {
     tl_config SPIRA_REPO_MAP="$GONE_MAP" SPIRA_ACTIONABLE="${SPIRA_ACTIONABLE_OVERRIDE:-}"
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$TMP/home" PATH="$PATH" \
+    env -i SPIRA_RELEASE="$(tl_release)" HOME="$TMP/home" PATH="$PATH" \
         SPIRA_CONF="$CONF" SPIRA_TOML="$SPIRA_TOML" SPIRA_REPO="$TMP/empty-repo" \
         pr-notify.sh actionable "$FLOG"
 }

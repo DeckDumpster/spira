@@ -149,7 +149,7 @@ print(len(items))
 file_gap() {
     tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" SPIRA_RUN="$RUN" \
         SPIRA_MAIL="$TMP/mail" SPIRA_REPO_MAP="$REPO_MAP"
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$HOME" PATH="$PATH" \
+    env -i SPIRA_RELEASE="$(tl_release)" HOME="$HOME" PATH="$PATH" \
         SPIRA_CONF="$TMP/nonexistent.conf" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_SPOOL="$RUN/spool" \
@@ -185,17 +185,17 @@ OLD="$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)"
     printf '{"ts":"%s","family":"escape","member":"m","suite":"s","class":"environment_gap","batch_id":""}\n' "$OLD"
 } > "$CRUN/tsd/escape.jsonl"
 tl_config SPIRA_RUN="$CRUN"
-CENSUS="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_HOME="$HERE" \
+CENSUS="$(env -i SPIRA_RELEASE="$(tl_release)" HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_HOME="$HERE" \
     SPIRA_TOML="$SPIRA_TOML" \
     bash "$HERE/escape-classify.sh" census --hours 168)"
 is "census counts each class in the window; the old row is excluded" \
     "2 mapping_gap, 1 gate_gap, 0 environment_gap, 1 flake" "$CENSUS"
 
-RV_PASS="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_HOME="$HERE" \
+RV_PASS="$(env -i SPIRA_RELEASE="$(tl_release)" HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_HOME="$HERE" \
     SPIRA_TOML="$SPIRA_TOML" \
     bash "$HERE/escape-classify.sh" rerun-verdict --member mem-a --suite s --rerun-rc 0 | tail -1)"
 is "a suite that passes on rerun is a flip" "FLIP" "$RV_PASS"
-RV_FAIL="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_HOME="$HERE" \
+RV_FAIL="$(env -i SPIRA_RELEASE="$(tl_release)" HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_HOME="$HERE" \
     SPIRA_TOML="$SPIRA_TOML" \
     bash "$HERE/escape-classify.sh" rerun-verdict --member mem-a --suite s --rerun-rc 1 | tail -1)"
 is "a suite that fails on rerun is a real red, not a flake" "REAL_RED" "$RV_FAIL"

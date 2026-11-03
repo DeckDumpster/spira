@@ -46,9 +46,9 @@ BRIEF="$HERE/runes/mimir.md"
 SPIRA_CONFIG_DIR="$(command -v spira-config >/dev/null 2>&1 && dirname "$(command -v spira-config)" || true)"
 
 run_conf() {
-    # env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" clears SPIRA_TOML; conf.sh refuses outright without it (per Ryan 2026-10-05,
+    # env -i SPIRA_RELEASE="$(tl_release)" clears SPIRA_TOML; conf.sh refuses outright without it (per Ryan 2026-10-05,
     # ONE SOURCE OF CONFIG), so thread testlib's own hermetic fixture through.
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_CONF="$NONE" \
+    env -i SPIRA_RELEASE="$(tl_release)" HOME="$T" PATH="${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_CONF="$NONE" \
         SPIRA_TOML="$SPIRA_TOML" \
         bash -c ". '$HERE/conf.sh' && $1" 2>/dev/null
 }

@@ -55,7 +55,7 @@ tl_config SPIRA_BD="$T/stub-bd" SPIRA_DB="$T/db" SPIRA_REPO_MAP="$T/repos.map" \
     SPIRA_INCIDENT_LABEL="incident" SPIRA_RUN="$T/run"
 
 bead_sh() {
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" \
+    env -i SPIRA_RELEASE="$(tl_release)" HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$T/none.conf" \
         BD_LOG_PATH="$BD_LOG" SEQ_PATH="$SEQ" SPIRA_LC_BIN="$T/stub-lc" \
         SPIRA_HOME="$T" SPIRA_REPO="$T" bead.sh "$@"

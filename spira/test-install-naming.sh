@@ -20,7 +20,7 @@ WATCHERS="$TMP/watchers"; printf '# empty\n' > "$WATCHERS"
 
 tl_config SPIRA_WATCHERS="$WATCHERS" SPIRA_RUN="$TMP/run" \
     SPIRA_DOLT_DATA="" SPIRA_PROD="" SPIRA_REPO_MAP=/nonexistent
-rendered="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
+rendered="$(env -i SPIRA_RELEASE="$(tl_release)" \
     PATH="$PATH" \
     HOME="$TMP/home" \
     SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
@@ -59,7 +59,7 @@ want "naming: concierge.service present (shared, plain name)" \
 # on top of (not instead of) the tl_config declaration every other registered key here uses.
 tl_config SPIRA_INSTANCE=test SPIRA_DOLT_DATA="" SPIRA_RUN="$TMP/run" \
     SPIRA_WATCHERS="$WATCHERS"
-enable_arr="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$HOME" SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
+enable_arr="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$HOME" SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
     SPIRA_CONF=/nonexistent SPIRA_INSTANCE=test \
     units-install --list-enable 2>/dev/null | tr '\n' ' ')"
 want   "naming: ENABLE includes spira-sentinel-test.timer" "spira-sentinel-test.timer" "$enable_arr"

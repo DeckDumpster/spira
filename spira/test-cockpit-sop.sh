@@ -64,7 +64,7 @@ JSON
 # purpose: it is the same function probe() calls, so what is tested is what runs.
 run_sops() {    # run_sops [env KEY=val ...] — extra env entries are prepended before bash
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_RUNES=t
-    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
