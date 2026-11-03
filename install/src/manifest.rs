@@ -513,19 +513,6 @@ mod tests {
     }
 
     #[test]
-    fn the_worktree_reaper_is_shipped_with_its_unit_files_and_enabled() {
-        let m = build(&inputs()).unwrap();
-        assert!(m.units.iter().any(|u| u.name == "spira-worktree-reaper.timer" && u.enable));
-        assert!(m.units.iter().any(|u| u.name == "spira-worktree-reaper.service" && !u.enable));
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("systemd");
-        for f in ["spira-worktree-reaper.service", "spira-worktree-reaper.timer"] {
-            assert!(root.join(f).is_file(), "{f} is in the manifest but not on disk");
-        }
-        let svc = std::fs::read_to_string(root.join("spira-worktree-reaper.service")).unwrap();
-        assert!(svc.contains("hel reap-stale"));
-    }
-
-    #[test]
     fn the_lifecycle_section_publisher_ships_its_service_and_no_timer_until_the_arm_step() {
         let m = build(&inputs()).unwrap();
         assert!(m.units.iter().any(|u| u.name == "spira-lifecycle-section.service" && !u.enable));

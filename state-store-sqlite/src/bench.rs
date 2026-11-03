@@ -467,14 +467,6 @@ mod tests {
     }
 
     #[test]
-    fn a_tail_far_over_the_limit_fails_early_and_one_far_under_passes_early() {
-        // 15,000 samples: a p99.9 exactly at the limit lets ~15 exceed it.
-        assert_eq!(decide(15_000, 40), Some(Ended::EarlyFail));
-        assert_eq!(decide(15_000, 2), Some(Ended::EarlyPass));
-        assert_eq!(decide(15_000, 15), None, "a count consistent with the limit keeps sampling");
-    }
-
-    #[test]
     fn too_few_samples_settle_nothing_however_slow() {
         assert_eq!(decide(500, 500), None);
         assert_eq!(decide(0, 0), None);

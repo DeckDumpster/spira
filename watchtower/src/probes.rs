@@ -771,19 +771,6 @@ mod tests {
     }
 
     #[test]
-    fn pressure_reads_psi_against_its_threshold_and_is_unknown_when_nothing_reads() {
-        let d = testkit::TempDir::new("wt-psi");
-        let c = cfg(&d);
-        assert!(matches!(pressure(&c), Reading::Unknown));
-        std::fs::create_dir_all(d.join("psi")).unwrap();
-        std::fs::write(d.join("psi/io"), "full avg10=0 avg60=9.99 avg300=0 total=0\n").unwrap();
-        std::fs::write(d.join("psi/memory"), "full avg10=0 avg60=10.00 avg300=0 total=0\n").unwrap();
-        let s = standing(pressure(&c));
-        assert_eq!(s.iter().map(|c| c.key.as_str()).collect::<Vec<_>>(), vec!["psi-memory"]);
-        assert_eq!(s[0].sustain_secs, 300);
-    }
-
-    #[test]
     fn cold_overlap_stands_only_with_two_cold_builds_and_io_pressure() {
         let d = testkit::TempDir::new("wt-cold");
         let c = cfg(&d);

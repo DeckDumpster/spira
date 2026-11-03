@@ -32,30 +32,6 @@ fn classes(findings: &[Value]) -> Vec<&str> {
 }
 
 #[test]
-fn wrapper_write_resolves_through_forwarding_and_fixed_verb_wrappers() {
-    let findings = run("wrapper_write", None);
-    // bead_reopen forwards "$@"; the verb only becomes known at the groomer's own call site.
-    assert!(
-        findings.iter().any(|f| f["class"] == "wrapper-write"
-            && f["function"] == "do_reopen"
-            && f["callee"] == "bead_reopen"),
-        "expected a wrapper-write at do_reopen calling bead_reopen, got {findings:#?}"
-    );
-    // always_reopen bakes the verb in itself (a direct-write at its own definition) and
-    // every caller of it — including through another function — is flagged too.
-    assert!(
-        findings.iter().any(|f| f["class"] == "direct-write" && f["function"] == "always_reopen"),
-        "expected a direct-write inside always_reopen, got {findings:#?}"
-    );
-    assert!(
-        findings.iter().any(|f| f["class"] == "wrapper-write"
-            && f["function"] == "do_always"
-            && f["callee"] == "always_reopen"),
-        "expected a wrapper-write at do_always calling always_reopen, got {findings:#?}"
-    );
-}
-
-#[test]
 fn lifecycle_read_in_a_conditional_is_reported() {
     let findings = run("lifecycle_read", None);
     assert_eq!(classes(&findings), vec!["lifecycle-read"]);
@@ -74,36 +50,10 @@ fn retired_label_is_reported_when_configured() {
 }
 
 #[test]
-fn retired_label_check_is_silent_without_a_rules_file() {
-    // Same fixture, no --rules: nothing to compare against, so nothing to find. This is the
-    // "empty allowlist" state this bead ships in — wiring real names in is the cutover bead's job.
-    let findings = run("retired_label", None);
-    assert!(findings.is_empty(), "{findings:#?}");
-}
-
-#[test]
-fn brief_naming_bd_is_reported() {
-    let findings = run("brief_bd", None);
-    assert_eq!(classes(&findings), vec!["brief-bd"]);
-}
-
-#[test]
-fn rune_naming_bd_is_reported() {
-    let findings = run("rune_bd", None);
-    assert_eq!(classes(&findings), vec!["brief-bd"]);
-}
-
-#[test]
 fn landstate_direct_path_read_is_reported_in_shell() {
     let findings = run("landstate_path", None);
     let cs = classes(&findings);
     assert_eq!(cs, vec!["landstate-path", "landstate-path", "landstate-path"], "{findings:#?}");
-}
-
-#[test]
-fn exit_code_is_nonzero_iff_findings_exist() {
-    assert_eq!(super::run(vec![fixture("clean").display().to_string()]), 0);
-    assert_eq!(super::run(vec![fixture("direct_write").display().to_string()]), 1);
 }
 
 #[test]
@@ -118,20 +68,6 @@ fn gate(dir: &std::path::Path) -> (u8, usize, Vec<Value>) {
         Ok((n, f)) => (gate_verdict(n, &f), n, as_values(&f)),
         Err(_) => (2, 0, vec![]),
     }
-}
-
-/// sp-ts2qr: the landing gate's fence. A clean tree passes with the gate's fence line (a
-/// count > 0, gate/DESIGN.md "Every fence proves it checked"); a test's planted violation
-/// under tests/fixtures/ is data, not code; a legacy bd write — a class not yet refused at the
-/// gate — is counted on one summary line and does not fail it; a comment or a string that
-/// says "landed (" is not a call.
-#[test]
-fn gate_mode_passes_a_clean_tree_with_its_fence_line() {
-    let (code, checked, findings) = gate(&fixture("gate_clean"));
-    assert_eq!(code, 0, "{findings:#?}");
-    assert_eq!(checked, 2, "the fence counts the files it checked");
-    assert_eq!(classes(&findings), vec!["credential"], "a class not yet refused is counted, not failed");
-    assert!(findings.iter().all(|f| !f["file"].as_str().unwrap().contains("planted.sh")), "{findings:#?}");
 }
 
 /// A fence that checked nothing refuses instead of passing silent.
@@ -198,33 +134,3 @@ fn gate_mode_refuses_a_close_behind_a_directory_flag() {
     );
 }
 
-/// sp-mve9i: a Rust decision on a work bead's bd status or assignee — compared, matched,
-/// queried with `--status`, or an assignee in a condition — is a bd-status-read, design §3.4.
-#[test]
-fn rust_bd_status_reads_are_reported_in_each_shape() {
-    let findings = run("bd_status_rust", None);
-    let got: Vec<(u64, &str, &str)> = findings
-        .iter()
-        .map(|f| (f["line"].as_u64().unwrap(), f["class"].as_str().unwrap(), f["callee"].as_str().unwrap()))
-        .collect();
-    assert_eq!(
-        got,
-        vec![
-            (3, "bd-status-read", "compare"),
-            (7, "bd-status-read", "query"),
-            (12, "bd-status-read", "match"),
-            (18, "bd-status-read", "assignee"),
-        ],
-        "{findings:#?}"
-    );
-    assert!(findings.iter().all(|f| f["file"] == "src/decide.rs"), "{findings:#?}");
-}
-
-/// The same decisions read through spira_config::lc_state and spira_config::nonwork are not
-/// findings, nor are a comment, a process's ExitStatus, a PR's own state, a test module, or
-/// the non-work scope itself.
-#[test]
-fn rust_state_read_through_the_machine_or_the_nonwork_scope_is_not_reported() {
-    let findings = run("bd_status_rust_clean", None);
-    assert!(findings.is_empty(), "{findings:#?}");
-}

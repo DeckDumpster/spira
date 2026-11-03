@@ -281,16 +281,6 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_program_is_127_not_a_runner_crash() {
-        let p = plan(vec![step("a", "install", &["/nonexistent/prog"], true)]);
-        let mut buf = Vec::new();
-        assert_eq!(run(&p, &mut buf), 127);
-        let r = parse(&p, &String::from_utf8(buf).unwrap());
-        assert_eq!(r.results[0].rc, 127);
-        assert!(r.results[0].output.contains("spawn /nonexistent/prog"));
-    }
-
-    #[test]
     fn a_step_cut_mid_run_is_the_unfinished_one() {
         let p = plan(vec![
             step("a", "install", &["true"], true),

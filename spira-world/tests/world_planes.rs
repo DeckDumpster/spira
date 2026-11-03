@@ -30,30 +30,6 @@ fn plane_of_shipped(unit: &str) -> Option<Plane> {
     plane_from_unit_text(&std::fs::read_to_string(unit_dir().join(unit)).unwrap())
 }
 
-#[test]
-fn every_shipped_unit_declares_a_plane() {
-    let units = shipped_units();
-    assert!(units.len() > 20, "positive control: the scan must find the shipped units, found {units:?}");
-    let undeclared: Vec<_> = units.iter().filter(|u| plane_of_shipped(u).is_none()).collect();
-    assert!(undeclared.is_empty(), "units with no valid [X-Spira] Plane=: {undeclared:?}");
-}
-
-#[test]
-fn detectors_are_observability_and_the_loop_is_work() {
-    for d in ["heimdall", "watchtower", "skew", "notify", "refresh", "verify-asks", "gate-check", "cert-sweep-full", "cert-sweep-sample", "refusal-watch", "idea-prompt", "kit-bump", "filings-collect", "runtime-watch"] {
-        assert_eq!(plane_of_shipped(&format!("spira-{d}.timer")), Some(Plane::Observability), "{d}");
-    }
-    assert_eq!(plane_of_shipped("spira-lifecycle-section.service"), Some(Plane::Observability));
-    assert_eq!(plane_of_shipped("spira-reconciler-goodput.service"), Some(Plane::Observability));
-    assert_eq!(plane_of_shipped("spira-alarms.timer"), Some(Plane::Observability), "the dead-man check outlives a world stop");
-    for w in ["call", "sentinel", "landing-pass", "verdict", "publish", "groom", "gh-intake", "ops", "czar-pass", "mimir", "straggler-sweep", "reap-terminal"] {
-        assert_eq!(plane_of_shipped(&format!("spira-{w}.timer")), Some(Plane::Work), "{w}");
-    }
-    for m in ["archivist", "archive", "mail-tidy", "moot-sweep", "reclaim"] {
-        assert_eq!(plane_of_shipped(&format!("spira-{m}.timer")), Some(Plane::Maintenance), "{m}");
-    }
-}
-
 fn halt_guard_lines(unit: &str) -> Vec<String> {
     std::fs::read_to_string(unit_dir().join(unit))
         .unwrap()

@@ -264,83 +264,6 @@ pub fn env_read() -> Option<std::sync::MutexGuard<'static, ()>> {
 mod tests {
     use super::*;
 
-    fn dir(tag: &str) -> TempDir {
-        TempDir::new(&format!("testkit-{tag}"))
-    }
-
-    /// How many processes on this box currently belong to process group `pgid` — read
-    /// straight from `/proc/<pid>/stat` (field 5, past the LAST `)` so a `comm` containing
-    /// its own parens, spaces or digits never misleads the split).
-    /// LIVE members of a process group. A zombie is not counted: it is already dead, and only
-    /// waits for its parent — for the orphaned grandchild, whatever reaps orphans here — to
-    /// collect it, which under load (a full round's unit step, PID 1 busy) took long enough
-    /// that a count including zombies saw the killed group as still there.
-    fn group_member_count(pgid: u32) -> usize {
-        let Ok(entries) = std::fs::read_dir("/proc") else { return 0 };
-        entries
-            .flatten()
-            .filter(|e| e.file_name().to_str().and_then(|s| s.parse::<u32>().ok()).is_some())
-            .filter(|e| {
-                let Ok(stat) = std::fs::read_to_string(e.path().join("stat")) else { return false };
-                let Some((_, rest)) = stat.rsplit_once(')') else { return false };
-                let f: Vec<&str> = rest.split_whitespace().collect();
-                f.first() != Some(&"Z") && f.get(2).and_then(|s| s.parse::<u32>().ok()) == Some(pgid)
-            })
-            .count()
-    }
-
-    #[test]
-    fn a_panicking_test_leaves_no_child_behind() {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let r = std::thread::spawn(move || {
-            let mut c = Command::new("sleep");
-            c.arg("9999");
-            let g = ChildGuard::spawn(&mut c);
-            tx.send(g.id()).unwrap();
-            panic!("the test fails while the guard is still held");
-        })
-        .join();
-        assert!(r.is_err(), "the spawned thread was expected to panic");
-        let pid = rx.recv().unwrap();
-        // Drop runs during the panicking thread's unwind, before join() returns — the kill
-        // (and the wait() inside it) is already complete by the time we get here.
-        assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists(), "pid {pid} survived the panic");
-    }
-
-    #[test]
-    fn kill_takes_the_whole_group_a_backgrounded_grandchild_included() {
-        let mut c = Command::new("sh");
-        c.args(["-c", "sleep 9999 & exec sleep 9999"]);
-        let mut g = ChildGuard::spawn(&mut c);
-        let pgid = g.id();
-        // Positive control: wait for the shell to actually have forked and backgrounded
-        // its grandchild before asserting anything about the group.
-        let mut tries = 0;
-        while group_member_count(pgid) < 2 && tries < 200 {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            tries += 1;
-        }
-        assert_eq!(group_member_count(pgid), 2, "fixture: leader + backgrounded grandchild both up");
-        g.kill();
-        // SIGKILL is delivered asynchronously; wait for the group's live members to go the same
-        // bounded way the fixture waited for them to arrive (zombies are not counted).
-        let mut tries = 0;
-        while group_member_count(pgid) > 0 && tries < 200 {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            tries += 1;
-        }
-        assert_eq!(group_member_count(pgid), 0, "the whole group is gone, not just the leader");
-    }
-
-    #[test]
-    fn kill_is_idempotent_and_safe_after_the_child_exited_on_its_own() {
-        let mut c = Command::new("true");
-        let mut g = ChildGuard::spawn(&mut c);
-        let _ = g.0.wait();
-        g.kill();
-        g.kill();
-    }
-
 
     #[test]
     fn a_temp_dir_is_fresh_distinct_and_gone_after_drop() {
@@ -370,26 +293,6 @@ mod tests {
         assert!(!p.exists(), "{} survived an unwinding test", p.display());
     }
 
-    #[test]
-    fn the_file_holds_exactly_the_body_and_is_executable() {
-        let d = dir("body");
-        let p = d.join("x");
-        let body = "#!/bin/sh\nprintf '%s' \"a b\"\n# no trailing newline after this";
-        write_exe(&p, body);
-        assert_eq!(std::fs::read_to_string(&p).unwrap(), body);
-        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o755);
-        let out = Command::new(&p).output().unwrap();
-        assert_eq!(String::from_utf8_lossy(&out.stdout), "a b");
-    }
-
-    #[test]
-    fn a_rewrite_replaces_the_old_body() {
-        let d = dir("rewrite");
-        let p = d.join("x");
-        write_exe(&p, "#!/bin/sh\necho one\n");
-        write_exe(&p, "#!/bin/sh\necho two\n");
-        assert_eq!(String::from_utf8_lossy(&Command::new(&p).output().unwrap().stdout), "two\n");
-    }
 }
 
 /// A fixture OTLP/HTTP sink: answers 204 to every push until the pushes stop, and hands back

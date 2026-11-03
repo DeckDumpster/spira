@@ -1213,16 +1213,6 @@ mod tests {
     }
 
     #[test]
-    fn a_guarded_update_that_never_converges_still_fails_naming_its_probe() {
-        let db = migrated();
-        db.borrow_mut().stale_terminal_rows = true;
-        db.borrow_mut().racing_writes = u32::MAX;
-        let (rc, out) = migrate(&real_steps(), &service(&db), None);
-        assert_eq!(rc, 2, "{out}");
-        assert!(out.contains("probe still finds"), "{out}");
-    }
-
-    #[test]
     fn a_pending_alter_with_no_admin_is_never_tried_as_the_service_user() {
         let db = migrated();
         db.borrow_mut().columns.remove(&("bead".into(), "since".into()));

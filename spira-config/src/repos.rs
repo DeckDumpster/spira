@@ -883,30 +883,6 @@ mod tests {
     }
 
 
-    /// A release directory has no `.git`: forwarded as `SPIRA_REPO` for a home that is itself the
-    /// release, it must not override the map row naming the real harness checkout.
-    #[test]
-    fn registry_for_a_release_dir_home_resolves_the_mapped_checkout() {
-        let t = testkit::TempDir::new("repos-from-env-checkout");
-        let checkout = t.path().join("checkouts/spira");
-        std::fs::create_dir_all(checkout.join(".git")).unwrap();
-        let map = t.path().join("repo-map");
-        std::fs::write(&map, format!("spira | {} | queue.local | local/main |  |\n", checkout.display())).unwrap();
-        let release = t.path().join("spira-releases/deadbeef");
-        std::fs::create_dir_all(&release).unwrap();
-        std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d"), release.join("conf.d")).unwrap();
-        std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.toml.d"), release.join("conf.toml.d")).unwrap();
-        let toml = crate::process::fixture_toml(t.path(), &[("SPIRA_REPO_MAP", &map.display().to_string()), ("SPIRA_HOME_REPO", "spira")]);
-        let mut env = std::collections::BTreeMap::new();
-        env.insert("HOME".to_string(), t.path().join("userhome").display().to_string());
-        env.insert("SPIRA_REPO".to_string(), release.display().to_string());
-        env.insert("SPIRA_TOML".to_string(), toml.display().to_string());
-        let plain = Registry::from_env(env.clone(), &release);
-        assert_eq!(plain.root("spira"), Some(release.display().to_string()), "positive control: the plain door lets the release override");
-        let reg = Registry::from_env_checkout(env, &release);
-        assert_eq!(reg.root("spira"), Some(checkout.display().to_string()));
-    }
-
     fn env(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }

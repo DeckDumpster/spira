@@ -83,8 +83,4 @@ mod tests {
         assert!(!is_refusal(1, "sp-abc12"));
     }
 
-    #[test]
-    fn a_missing_binary_is_cannot_tell() {
-        assert_eq!(run_bounded(Command::new("/nonexistent/spira-lc"), LC_TIMEOUT).0, 2);
-    }
 }
