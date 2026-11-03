@@ -20,20 +20,49 @@ use crate::{flag, CANNOT_TELL, REFUSED};
 const USAGE: &str = "usage: spira-lc admin-parity --old-socket <path> --new-socket <path>";
 
 /// One difference the cutover allows: a field of a verb's answer (`*` for every verb), or
-/// for a tab-separated answer a column, by index.
+/// for a tab-separated answer a column, by index. The verb is the call's leading words
+/// (`list --batches` covers every `list --batches …` call and no other `list`).
 pub struct Allowed {
     pub verb: &'static str,
     pub field: &'static str,
     pub why: &'static str,
+    pub when: When,
 }
 
+/// Which values of an allowed field may differ.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum When {
+    /// Any: the field is set aside wherever it appears.
+    Always,
+    /// Only a time the old store never wrote (0, empty or absent) that the new store holds as
+    /// a real one; two different real times, or a time the new store lacks, are reported. The
+    /// field is a dotted path (`last_pass.ended_at`) under any object holding its first name,
+    /// reaching through an array into each element (`passes.ended_at` is every pass's).
+    FilledByStore,
+}
+
+const NEVER_WRITTEN: &str = "dolt stored 0 where it never wrote the time; the store derives it from the pass events — the store is right";
+
 pub const ALLOWED: &[Allowed] = &[
-    Allowed { verb: "*", field: "title", why: "a planning-plane field: the control plane keeps none" },
-    Allowed { verb: "*", field: "priority", why: "a planning-plane field: the control plane keeps none" },
-    Allowed { verb: "*", field: "blocked_by", why: "the dependency edges are not imported: the readiness record stands in for them once a readiness pass publishes it" },
-    Allowed { verb: "*", field: "lease_until", why: "not imported: a claim's lease is its lock, which does not survive the stop" },
-    Allowed { verb: "event-seq", field: "seq", why: "the added rev: the new store's head starts at the import revision, max(seq) + 1" },
+    Allowed { verb: "*", field: "title", why: "a planning-plane field: the control plane keeps none", when: When::Always },
+    Allowed { verb: "*", field: "priority", why: "a planning-plane field: the control plane keeps none", when: When::Always },
+    Allowed { verb: "*", field: "blocked_by", why: "the dependency edges are not imported: the readiness record stands in for them once a readiness pass publishes it", when: When::Always },
+    Allowed { verb: "*", field: "lease_until", why: "not imported: a claim's lease is its lock, which does not survive the stop", when: When::Always },
+    Allowed { verb: "event-seq", field: "seq", why: "the added rev: the new store's head starts at the import revision, max(seq) + 1", when: When::Always },
+    Allowed { verb: "list --batches", field: "last_pass.ended_at", why: NEVER_WRITTEN, when: When::FilledByStore },
+    Allowed { verb: "list --batches", field: "last_pass.started_at", why: NEVER_WRITTEN, when: When::FilledByStore },
+    Allowed { verb: "list --batches", field: "last_pass.suites_at", why: NEVER_WRITTEN, when: When::FilledByStore },
+    Allowed { verb: "list --batches", field: "passes.started_at", why: NEVER_WRITTEN, when: When::FilledByStore },
+    Allowed { verb: "list --batches", field: "passes.ended_at", why: NEVER_WRITTEN, when: When::FilledByStore },
+    Allowed { verb: "list --batches", field: "passes.suites_at", why: NEVER_WRITTEN, when: When::FilledByStore },
+    Allowed { verb: "list --batches", field: "phase_since", why: NEVER_WRITTEN, when: When::FilledByStore },
+    Allowed { verb: "list --live", field: "sifted_tip", why: "the dolt list omits a field show carries; the store's row is the full record", when: When::Always },
 ];
+
+/// Whether `al` covers a call whose argv, joined by spaces, is `call`.
+fn covers(al: &Allowed, call: &str) -> bool {
+    al.verb == "*" || call.split(' ').take(al.verb.split(' ').count()).eq(al.verb.split(' '))
+}
 
 const BEAD_STATES: &str = "OPEN,READY,WORKING,SUBMITTED,CERTIFIED,IN_DELIVERY,REWORK,LANDED,SUPERSEDED,DROPPED,DONE";
 const ASK_STATES: &[&str] = &["OPEN", "ANSWERED", "DEFAULT_TAKEN", "WITHDRAWN"];
@@ -69,6 +98,59 @@ fn strip(v: &mut Value, field: &str) {
         }
         Value::Array(a) => a.iter_mut().for_each(|x| strip(x, field)),
         _ => {}
+    }
+}
+
+/// `new` given `old`'s value of `field` (dotted) wherever `old` never wrote the time and `new`
+/// holds a real one, searched for at every depth where the two answers have the same shape.
+fn settle(old: &Value, new: &mut Value, field: &str) {
+    settle_at(old, new, field);
+    match (old, new) {
+        (Value::Object(o), Value::Object(n)) => n.iter_mut().filter_map(|(k, y)| o.get(k).map(|x| (x, y))).for_each(|(x, y)| settle(x, y, field)),
+        (Value::Array(o), Value::Array(n)) if o.len() == n.len() => o.iter().zip(n).for_each(|(x, y)| settle(x, y, field)),
+        _ => {}
+    }
+}
+
+/// `settle` of `path` at `new` itself, not below it; through an array, at each element.
+fn settle_at(old: &Value, new: &mut Value, path: &str) {
+    match (old, new) {
+        (Value::Array(o), Value::Array(n)) if o.len() == n.len() => o.iter().zip(n).for_each(|(x, y)| settle_at(x, y, path)),
+        (Value::Object(o), Value::Object(n)) => match path.split_once('.') {
+            Some((head, rest)) => {
+                if let (Some(x), Some(y)) = (o.get(head), n.get_mut(head)) {
+                    settle_at(x, y, rest);
+                }
+            }
+            None if never_written(o.get(path)) && n.get(path).is_some_and(is_time) => match o.get(path) {
+                Some(x) => {
+                    n.insert(path.to_string(), x.clone());
+                }
+                None => {
+                    n.shift_remove(path);
+                }
+            },
+            None => {}
+        },
+        _ => {}
+    }
+}
+
+/// A time the store never wrote, as `normalize` renders it: 0, empty, or absent.
+fn never_written(v: Option<&Value>) -> bool {
+    match v {
+        None | Some(Value::Null) => true,
+        Some(Value::String(s)) => s.is_empty() || s == "0",
+        Some(_) => false,
+    }
+}
+
+/// A real epoch time, as `normalize` renders it.
+fn is_time(v: &Value) -> bool {
+    match v {
+        Value::String(s) => s.parse::<u64>().is_ok_and(|t| t > 0),
+        Value::Number(n) => n.as_u64().is_some_and(|t| t > 0),
+        _ => false,
     }
 }
 
@@ -122,23 +204,40 @@ pub enum Verdict {
     Differs { at: String, old: Value, new: Value },
 }
 
-pub fn judge(verb: &str, old: (i32, &str), new: (i32, &str)) -> Verdict {
+/// `call` is the call's argv joined by spaces; `ALLOWED` entries cover it by leading words.
+pub fn judge(call: &str, old: (i32, &str), new: (i32, &str)) -> Verdict {
     let a = json!({ "rc": old.0, "out": normalize(&parsed(old.1)) });
     let b = json!({ "rc": new.0, "out": normalize(&parsed(new.1)) });
     if a == b {
         return Verdict::Same;
     }
-    let fields: Vec<&'static str> = ALLOWED.iter().filter(|al| al.verb == "*" || al.verb == verb).map(|al| al.field).collect();
-    let without = |v: &Value, keep: Option<&str>| {
-        let mut v = v.clone();
-        fields.iter().filter(|f| Some(**f) != keep).for_each(|f| strip(&mut v, f));
-        v
+    let fields: Vec<&Allowed> = ALLOWED.iter().filter(|al| covers(al, call)).collect();
+    // Both answers with every allowed field but `keep` set aside.
+    let set_aside = |keep: Option<&str>| {
+        let (mut a, mut b) = (a.clone(), b.clone());
+        for al in fields.iter().filter(|al| Some(al.field) != keep) {
+            match al.when {
+                When::Always => {
+                    strip(&mut a, al.field);
+                    strip(&mut b, al.field);
+                }
+                When::FilledByStore => settle(&a, &mut b, al.field),
+            }
+        }
+        (a, b)
     };
-    let (sa, sb) = (without(&a, None), without(&b, None));
+    let (sa, sb) = set_aside(None);
     if let Some((at, old, new)) = first_difference(&sa, &sb, "") {
         return Verdict::Differs { at, old, new };
     }
-    let used = fields.iter().copied().filter(|f| without(&a, Some(f)) != without(&b, Some(f))).collect();
+    let used = fields
+        .iter()
+        .filter(|al| {
+            let (x, y) = set_aside(Some(al.field));
+            x != y
+        })
+        .map(|al| al.field)
+        .collect();
     Verdict::Allowed(used)
 }
 
@@ -260,7 +359,7 @@ pub fn run(old: &mut dyn FnMut(&[String]) -> (i32, String), new: &mut dyn FnMut(
     for a in &all {
         let (o, n) = (old(a), new(a));
         let (o, n) = ((o.0, without(&o.1, &ids.no_record)), (n.0, without(&n.1, &ids.no_record)));
-        match judge(&a[0], (o.0, &o.1), (n.0, &n.1)) {
+        match judge(&a.join(" "), (o.0, &o.1), (n.0, &n.1)) {
             Verdict::Same => {}
             Verdict::Allowed(fields) => fields.into_iter().for_each(|f| *allowed.entry(f).or_default() += 1),
             Verdict::Differs { at, old, new } => differences.push(json!({ "argv": a, "at": at, "old": old, "new": new })),

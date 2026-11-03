@@ -31,6 +31,78 @@ fn a_difference_only_in_an_allowed_field_is_counted_and_any_other_is_reported_wi
     assert!(matches!(judge("show", (0, &seq(7)), (0, &seq(8))), Verdict::Differs { .. }), "seq is allowed on event-seq only");
 }
 
+/// A round as `list --batches` renders it, every pass time and `phase_since` at `t`.
+fn round_at(t: Value, verdict: &str) -> String {
+    let pass = json!({"n": 1, "verdict": verdict, "started_at": t, "suites_at": t, "ended_at": t});
+    json!([{"batch_id": "spira/queue/x", "state": "LANDED", "phase_since": t, "last_pass": pass, "passes": [pass]}]).to_string()
+}
+
+const PASS_TIMES: [&str; 7] = [
+    "last_pass.ended_at",
+    "last_pass.started_at",
+    "last_pass.suites_at",
+    "passes.started_at",
+    "passes.ended_at",
+    "passes.suites_at",
+    "phase_since",
+];
+
+#[test]
+fn a_pass_time_dolt_never_wrote_and_the_store_filled_is_allowed_on_list_batches_only() {
+    let batches = "list --batches --batch spira/queue/x";
+    let filled = round_at(json!(1700), "green");
+    for never in [json!("0"), json!(0), json!(""), Value::Null] {
+        assert_eq!(judge(batches, (0, &round_at(never.clone(), "green")), (0, &filled)), Verdict::Allowed(PASS_TIMES.to_vec()), "old {never}");
+    }
+    let dolt = round_at(json!("0"), "green");
+    assert!(
+        matches!(judge(batches, (0, &dolt), (0, &round_at(json!(1700), "red"))), Verdict::Differs { at, .. } if at == ".out[0].last_pass.verdict"),
+        "only the times are allowed, not the pass beside them"
+    );
+    assert!(matches!(judge("show-batch spira/queue/x", (0, &dolt), (0, &filled)), Verdict::Differs { .. }));
+    assert!(matches!(judge("list --live", (0, &dolt), (0, &filled)), Verdict::Differs { .. }));
+}
+
+#[test]
+fn a_pass_time_both_stores_wrote_differently_or_the_store_lost_is_reported() {
+    let batches = "list --batches --batch spira/queue/x";
+    assert!(
+        matches!(judge(batches, (0, &round_at(json!(1600), "green")), (0, &round_at(json!(1700), "green"))), Verdict::Differs { at, .. } if at == ".out[0].last_pass.ended_at"),
+        "two different real times are a difference"
+    );
+    let mut one_pass = serde_json::from_str::<Value>(&round_at(json!(1700), "green")).unwrap();
+    one_pass[0]["passes"][0]["ended_at"] = json!(1600);
+    assert!(
+        matches!(judge(batches, (0, &one_pass.to_string()), (0, &round_at(json!(1700), "green"))), Verdict::Differs { at, .. } if at == ".out[0].passes[0].ended_at"),
+        "a pass's own real time is held to the same rule"
+    );
+    for lost in [json!("0"), Value::Null] {
+        assert!(matches!(judge(batches, (0, &round_at(json!(1700), "green")), (0, &round_at(lost.clone(), "green"))), Verdict::Differs { .. }), "new {lost}");
+    }
+    assert!(matches!(judge(batches, (0, &round_at(json!("0"), "green")), (0, &round_at(json!("soon"), "green"))), Verdict::Differs { .. }), "a filled value is a time");
+}
+
+#[test]
+fn sifted_tip_is_allowed_on_list_live_only() {
+    let live = |tip: Value| json!([{"bead_id": "sp-a", "state": "SUBMITTED", "sifted_tip": tip}]).to_string();
+    let (dolt, store) = (live(Value::Null), live(json!("abc")));
+    assert_eq!(judge("list --live", (0, &dolt), (0, &store)), Verdict::Allowed(vec!["sifted_tip"]));
+    assert_eq!(judge("list --live --hold poison", (0, &dolt), (0, &store)), Verdict::Allowed(vec!["sifted_tip"]));
+    assert!(matches!(judge("list --ids sp-a", (0, &dolt), (0, &store)), Verdict::Differs { .. }));
+    assert!(matches!(judge("show sp-a", (0, &dolt), (0, &store)), Verdict::Differs { .. }));
+    assert!(matches!(judge("list --livestock", (0, &dolt), (0, &store)), Verdict::Differs { .. }), "a verb covers whole words");
+}
+
+#[test]
+fn every_allowed_difference_says_why_and_names_a_call_parity_makes() {
+    let ids = Ids { beads: vec!["sp-a".into()], batches: vec!["b-1".into()], asks: vec!["q-1".into()], ..Ids::default() };
+    let made: Vec<String> = calls(&ids, "5", 100).iter().map(|a| a.join(" ")).collect();
+    for al in ALLOWED {
+        assert!(!al.why.trim().is_empty(), "{} {}", al.verb, al.field);
+        assert!(al.verb == "*" || made.iter().any(|c| covers(al, c)), "{} covers no call parity makes", al.verb);
+    }
+}
+
 /// A store answering from a table of argv to answer; anything else is exit 2.
 fn store(answers: &[(&[&str], Value)]) -> impl FnMut(&[String]) -> (i32, String) {
     let table: BTreeMap<Vec<String>, String> = answers.iter().map(|(a, v)| (a.iter().map(|s| s.to_string()).collect(), v.to_string())).collect();

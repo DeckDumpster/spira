@@ -805,6 +805,32 @@ fn a_list_with_after_and_limit_answers_one_page_of_rows_in_id_order() {
     }
 }
 
+#[test]
+fn a_batch_filter_answers_the_round_for_an_id_with_a_slash_and_for_a_plain_id() {
+    let r = Rig::new();
+    for (id, tip, round) in [("sp-a", T1, "spira/queue/x"), ("sp-b", T2, "b-1")] {
+        r.certified(id, tip);
+        let members = vec![(id.to_string(), tip.to_string())];
+        let p = r.s.plan_cut(&Cut { batch_id: round, ..r.cut_spec(&members) }).unwrap();
+        r.s.run_planned(p, &r.req(), "cut").unwrap();
+    }
+    r.s.set_progress("spira", "spira/queue/x", serde_json::json!({"done": 1}), &r.req())
+        .unwrap();
+    let ids = |argv: &[&str]| -> Vec<String> {
+        let (rc, out) = r.lc(argv);
+        assert_eq!(rc, 0, "{argv:?}: {out}");
+        let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+        rows.as_array().unwrap().iter().map(|x| x["batch_id"].as_str().unwrap().to_string()).collect()
+    };
+    assert_eq!(ids(&["list", "--batches", "--batch", "spira/queue/x"]), ["spira/queue/x"]);
+    assert_eq!(ids(&["list", "--batches", "--batch", "b-1"]), ["b-1"]);
+    assert_eq!(ids(&["list", "--batches", "--limit", "10"]), ["b-1", "spira/queue/x"]);
+    assert_eq!(super::batch_key("batches/spira/spira/queue/x"), Some(("spira", "spira/queue/x")));
+    assert_eq!(super::batch_key("batches/spira/b-1"), Some(("spira", "b-1")));
+    assert_eq!(super::batch_key("batches/spira/spira/queue/x/progress"), None);
+    assert_eq!(super::batch_key("batches/spira/b-1/progress"), None);
+}
+
 /// Each read a backend served, by kind, prefix and limit: what a list's reads are held to.
 #[derive(Default)]
 struct Counting {
