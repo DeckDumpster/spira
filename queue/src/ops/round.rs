@@ -4280,15 +4280,15 @@ const ABANDON_CONSIDERED_ENV: &str = "QUEUE_ABANDON_CONSIDERED";
 /// A red round of more than one member is ejected, not abandoned: an abandon throws away the
 /// members the red does not implicate, and they pay a whole pass to certify again. An eject
 /// clears the round's `red`, so a round red with no eject since refuses unless the caller sets
-/// [`ABANDON_CONSIDERED_ENV`]; its why joins the reason, which the lifecycle records on the
-/// round's abandon event. Returns the reason to record.
+/// [`ABANDON_CONSIDERED_ENV`]; its why leads the reason, so a bounded reason never cuts it, and
+/// the lifecycle records it on the round's abandon event. Returns the reason to record.
 fn considered_abandon(w: &World, label: &str, kv: &Kv, reason: String) -> Result<String, i32> {
     let members = kv.members();
     let Some(red) = kv.get("red").filter(|r| !r.is_empty() && members.len() > 1) else {
         return Ok(reason);
     };
     if let Some(why) = w.var(ABANDON_CONSIDERED_ENV) {
-        return Ok(format!("{reason} ({ABANDON_CONSIDERED_ENV}: {})", one_line(&why)));
+        return Ok(format!("{ABANDON_CONSIDERED_ENV}: {} — {reason}", one_line(&why)));
     }
     let batch = kv.get("batch_id").unwrap_or("");
     let ids: Vec<&str> = members.iter().map(|m| m.id.as_str()).collect();

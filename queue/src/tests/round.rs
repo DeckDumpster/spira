@@ -700,7 +700,7 @@ fn an_abandon_of_a_red_round_under_the_override_records_why_on_the_rounds_events
         .borrow_mut()
         .insert("QUEUE_ABANDON_CONSIDERED".into(), "both members clash on one file".into());
     assert_eq!(t.run(&["round", "abandon", &batch, "--reason", "red"]), 0, "{}", t.err());
-    let recorded = "red (QUEUE_ABANDON_CONSIDERED: both members clash on one file)";
+    let recorded = "QUEUE_ABANDON_CONSIDERED: both members clash on one file — red";
     assert!(
         t.lc.calls.borrow().iter().any(|c| c.starts_with(&format!("abandon-batch {batch} ")) && c.ends_with(recorded)),
         "{:?}",
