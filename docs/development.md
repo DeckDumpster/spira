@@ -188,11 +188,11 @@ shrink-only allow ledgers live beside them. By theme:
   `conf-key-registry`); a new key needs its schema field, fixture entry, history line and a
   release delta entry (`config-delta`, `config-fixture`).
 - *One door per state:* a dwarf's phase, a gate's status, a pool, a release's state, a round's
-  record, a sift verdict, a testenv result and liveness are read through their owning command
+  record, a forge batch's record, a sift verdict, a testenv result and liveness are read through their owning command
   (`spira-lc`, `gate status`, `round-vm status --json`, `release status --json`,
-  `queue round status`, `sift status --json`, `testenv status --json`, `watchd status`), never
+  `queue round status`, `queue batch show`, `sift status --json`, `testenv status --json`, `watchd status`), never
   from their files, logs or process lists; nothing reads the journal (`dwarf-state-readers`,
-  `gate-state-readers`, `pool-state-readers`, `release-state-readers`, `round-record-readers`,
+  `gate-state-readers`, `pool-state-readers`, `release-state-readers`, `round-record-readers`, `forge-batch-readers`,
   `sift-state-readers`, `testenv-result-readers`, `liveness-readers`, `journal-reads`); inside
   the queue, the round records are read only through the lifecycle filter that drops ended
   rounds (`round-records-live-only`).

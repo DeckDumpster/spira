@@ -220,6 +220,22 @@ fn batch_show_prints_the_store_record_and_refuses_when_the_store_cannot_say() {
 }
 
 #[test]
+fn batch_show_carries_the_forge_state_file_as_forge_fields_while_the_batch_is_the_file() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("batch_id=deck-1\npr=12\nmembers=sp-a:ta\n");
+    fs::write(t.qfile("forge-state"), "batch_id=deck-1\npr=12\npr_state=open\nci=pending\nstep=unit\n").unwrap();
+    assert_eq!(t.run(&["batch", "show", "--repo", "spira"]), 0, "{}", t.err());
+    let shown = Kv::parse(&t.out());
+    assert_eq!((shown.get("pr"), shown.get("forge.ci"), shown.get("forge.pr_state"), shown.get("forge.step"), shown.get("forge.pr")), (Some("12"), Some("pending"), Some("open"), Some("unit"), None), "{}", t.out());
+
+    let stale = T::new(LandMode::Queue);
+    stale.open_record("batch_id=deck-2\npr=13\n");
+    fs::write(stale.qfile("forge-state"), "batch_id=deck-1\nci=red\n").unwrap();
+    assert_eq!(stale.run(&["batch", "show", "--repo", "spira"]), 0, "{}", stale.err());
+    assert_eq!(Kv::parse(&stale.out()).get("forge.ci"), None, "a record naming another batch is not this one's");
+}
+
+#[test]
 fn a_failed_push_or_create_leaves_the_record_opening_and_a_create_the_forge_misreported_is_adopted() {
     let id = "spira-20260929T010203Z";
     let t = forge_world();

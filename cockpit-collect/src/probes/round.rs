@@ -4,29 +4,50 @@
 use super::{push, Kv};
 use crate::quoting::sanitize;
 use serde_json::Value;
-use std::path::Path;
 use std::process::{Command, Stdio};
 
 const MAX_ROWS: usize = 12;
 const MAX_ROUNDS: usize = 4;
 
-pub fn round_keys(cap_secs: i64, queue_dir: &str) -> Kv {
+pub fn round_keys(cap_secs: i64) -> Kv {
     let batches = list_batches().and_then(|raw| parse_batches(&raw));
     let pool = super::lc::funnel_raw().and_then(|raw| spira_config::lc_state::parse_rows(&raw).ok()).map(|rows| pool_waiting(&rows));
-    let mut kv = round_keys_from(batches.as_deref(), pool, cap_secs, Path::new(queue_dir));
+    let mut kv = round_keys_from(batches.as_deref(), pool, cap_secs, &batch_show);
     if let Some(batches) = batches.as_deref() {
         progress_keys(&mut kv, batches);
     }
     kv
 }
 
-/// The verdict's last look at the forge for `batch`, read from the file it leaves beside the
-/// queue's `open` record; a record naming another batch is stale and ignored.
-fn forge_state(queue_dir: &Path, repo: &str, batch: &str) -> Option<Vec<(String, String)>> {
-    let text = std::fs::read_to_string(queue_dir.join(repo).join("forge-state")).ok()?;
-    let kv: Vec<(String, String)> = text.lines().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect();
-    let get = |k: &str| kv.iter().rev().find(|(key, _)| key == k).map(|(_, v)| v.as_str());
-    (get("batch_id") == Some(batch)).then_some(kv)
+/// The verdict's last look at the forge for `batch`: the `forge.<field>` lines of the record the
+/// queue shows for the repo's open batch (`show`), as `<field>` pairs; a record naming another
+/// batch is not this one's.
+fn forge_state(show: &dyn Fn(&str) -> Option<String>, repo: &str, batch: &str) -> Option<Vec<(String, String)>> {
+    let text = show(repo)?;
+    let kv: Vec<(&str, &str)> = text.lines().filter_map(|l| l.split_once('=')).collect();
+    let get = |k: &str| kv.iter().rev().find(|(key, _)| *key == k).map(|(_, v)| *v);
+    if get("batch_id") != Some(batch) {
+        return None;
+    }
+    let mut out: Vec<(String, String)> = get("pr").map(|pr| ("pr".to_string(), pr.to_string())).into_iter().collect();
+    out.extend(kv.iter().filter_map(|(k, v)| k.strip_prefix("forge.").map(|f| (f.to_string(), v.to_string()))));
+    Some(out)
+}
+
+/// `queue batch show --repo <repo>`, shared across panes like the lifecycle reads; `None` when it failed.
+fn batch_show(repo: &str) -> Option<String> {
+    super::lc::shared_live(&format!("batch-show-{repo}"), || {
+        let timeout = spira_config::process::cfg("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty())?;
+        let o = Command::new("timeout")
+            .arg(timeout)
+            .arg(spira_config::release_env::tool("queue").ok()?)
+            .args(["batch", "show", "--repo", repo])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+    })
 }
 
 pub(super) fn list_batches() -> Option<String> {
@@ -156,7 +177,7 @@ fn member_state(outcome: &str) -> &str {
     if outcome.is_empty() { "in" } else { outcome }
 }
 
-pub fn round_keys_from(batches: Option<&[Batch]>, pool: Option<usize>, cap_secs: i64, queue_dir: &Path) -> Kv {
+pub fn round_keys_from(batches: Option<&[Batch]>, pool: Option<usize>, cap_secs: i64, show: &dyn Fn(&str) -> Option<String>) -> Kv {
     let mut out = Kv::new();
     push(&mut out, "SP_ROUND_POOL", pool.map_or("?".to_string(), |n| n.to_string()));
     push(&mut out, "SP_ROUND_CAP", cap_secs.to_string());
@@ -184,7 +205,7 @@ pub fn round_keys_from(batches: Option<&[Batch]>, pool: Option<usize>, cap_secs:
             }
             let mut progress = b.last_at.unwrap_or(b.opened_at);
             let mut stall = if members.is_empty() { "no members" } else { "" };
-            if let Some(f) = forge_state(queue_dir, &b.repo, &b.id) {
+            if let Some(f) = forge_state(show, &b.repo, &b.id) {
                 let get = |key: &str| f.iter().rev().find(|(n, _)| n == key).map(|(_, v)| v.as_str()).filter(|v| !v.is_empty());
                 for (key, name) in [("pr", "PR"), ("pr_state", "PRSTATE"), ("ci", "CI"), ("step", "CI_STEP"), ("run_started", "CI_START"), ("wall", "WALL")] {
                     if let Some(v) = get(key) {
@@ -224,16 +245,30 @@ pub fn round_keys_from(batches: Option<&[Batch]>, pool: Option<usize>, cap_secs:
 mod tests {
     use super::*;
 
-    fn forge_dir(tag: &str, state: &str) -> testkit::TempDir {
-        let d = testkit::TempDir::new(tag);
-        std::fs::create_dir_all(d.path().join("deckdumpster")).unwrap();
-        std::fs::write(d.path().join("deckdumpster/forge-state"), state).unwrap();
-        d
+    /// The record `queue batch show` gives for deckdumpster's open batch, from the verdict's
+    /// forge-state fields (`pr` stays the record's own, every other one is `forge.<field>`).
+    fn shown(state: &str) -> String {
+        state.lines().filter_map(|l| l.split_once('=')).map(|(k, v)| if k == "batch_id" || k == "pr" { format!("{k}={v}\n") } else { format!("forge.{k}={v}\n") }).collect()
     }
 
-    fn forge_keys(tag: &str, members: &str, state: &str) -> Kv {
+    fn forge_keys(_tag: &str, members: &str, state: &str) -> Kv {
         let raw = format!(r#"[{{"batch_id":"dd-1","repo":"deckdumpster","state":"CI_RUNNING","opened_at":1000,"last_at":1010,"members":[{members}],"ejected":[]}}]"#);
-        round_keys_from(Some(&parse_batches(&raw).unwrap()), Some(0), 900, forge_dir(tag, state).path())
+        let record = shown(state);
+        round_keys_from(Some(&parse_batches(&raw).unwrap()), Some(0), 900, &|repo| (repo == "deckdumpster").then(|| record.clone()))
+    }
+
+    fn none(_: &str) -> Option<String> {
+        None
+    }
+
+    #[test]
+    fn a_forge_batch_on_the_store_carries_the_ci_its_record_shows() {
+        let raw = r#"[{"batch_id":"dd-1","repo":"deckdumpster","state":"CI_RUNNING","opened_at":1000,"last_at":1010,"members":[{"bead_id":"dd-a","outcome":null}],"ejected":[]}]"#;
+        let record = "batch_id=dd-1\nforge.phase=armed\npr=422\nmembers=dd-a:ta\nforge.pr_state=open\nforge.ci=red\nforge.step=unit\nforge.run_started=1100\n";
+        let kv = round_keys_from(Some(&parse_batches(raw).unwrap()), Some(0), 900, &|repo| (repo == "deckdumpster").then(|| record.to_string()));
+        for (k, v) in [("PR", "422"), ("PRSTATE", "open"), ("CI", "red"), ("CI_STEP", "unit"), ("CI_START", "1100")] {
+            assert_eq!(get(&kv, &format!("SP_ROUNDS0_{k}")), Some(v), "{k}");
+        }
     }
 
     const M: &str = r#"{"bead_id":"dd-a","outcome":null}"#;
@@ -284,7 +319,7 @@ mod tests {
     #[test]
     fn an_open_batch_reports_phase_opened_members_and_ejections() {
         let b = parse_batches(RAW).unwrap();
-        let kv = round_keys_from(Some(&b), Some(4), 900, Path::new("/nonexistent"));
+        let kv = round_keys_from(Some(&b), Some(4), 900, &none);
         assert_eq!(get(&kv, "SP_ROUND_STATE"), Some("open"));
         assert_eq!(get(&kv, "SP_ROUNDS_N"), Some("1"));
         assert_eq!(get(&kv, "SP_ROUNDS0_NAME"), Some("r-9"));
@@ -304,7 +339,7 @@ mod tests {
           {"batch_id":"r-11","state":"STAGED","opened_at":2000,"members":[{"bead_id":"sp-z","outcome":"skipped: unlanded dependency"}],"ejected":[]},
           {"batch_id":"r-10","state":"CI_RUNNING","opened_at":1000,"members":[{"bead_id":"sp-y","outcome":null}],"ejected":[]},
           {"batch_id":"r-9","state":"LANDED","opened_at":500,"members":[{"bead_id":"sp-x","outcome":null}],"ejected":[]}]"#;
-        let kv = round_keys_from(Some(&parse_batches(raw).unwrap()), Some(0), 900, Path::new("/nonexistent"));
+        let kv = round_keys_from(Some(&parse_batches(raw).unwrap()), Some(0), 900, &none);
         assert_eq!(get(&kv, "SP_ROUNDS_N"), Some("2"));
         assert_eq!(get(&kv, "SP_ROUNDS0_PHASE"), Some("staged"));
         assert_eq!(get(&kv, "SP_ROUNDS0_MEMBER0"), Some("sp-z|skipped: unlanded dependency"));
@@ -319,7 +354,7 @@ mod tests {
           {"batch_id":"r-11","state":"OPEN","parent":null,"opened_at":1500,"members":[],"ejected":[]},
           {"batch_id":"r-10","state":"CI_RUNNING","parent":null,"opened_at":1000,"members":[{"bead_id":"sp-y","outcome":null}],"ejected":[]},
           {"batch_id":"r-9","state":"DISCARDED","parent":"r-10","opened_at":900,"members":[],"ejected":[]}]"#;
-        let kv = round_keys_from(Some(&parse_batches(raw).unwrap()), Some(0), 900, Path::new("/nonexistent"));
+        let kv = round_keys_from(Some(&parse_batches(raw).unwrap()), Some(0), 900, &none);
         assert_eq!(get(&kv, "SP_ROUNDS_N"), Some("3"));
         let names: Vec<_> = (0..3).map(|i| get(&kv, &format!("SP_ROUNDS{i}_NAME")).unwrap()).collect();
         assert_eq!(names, ["r-11", "r-10", "r-12"]);
@@ -337,12 +372,12 @@ mod tests {
     #[test]
     fn no_open_batch_reports_the_last_verdict() {
         let b = parse_batches(RAW).unwrap();
-        let kv = round_keys_from(Some(&b[1..]), Some(0), 900, Path::new("/nonexistent"));
+        let kv = round_keys_from(Some(&b[1..]), Some(0), 900, &none);
         assert_eq!(get(&kv, "SP_ROUND_STATE"), Some("idle"));
         assert_eq!(get(&kv, "SP_ROUND_LAST_VERDICT"), Some("GREEN"));
         assert_eq!(get(&kv, "SP_ROUND_LAST_AT"), Some("700"));
         let red = parse_batches(r#"[{"batch_id":"r-7","state":"ABANDONED","reason":"red: test-a.sh test-b.sh","opened_at":1,"last_at":2,"members":[],"ejected":[]}]"#).unwrap();
-        let kv = round_keys_from(Some(&red), None, 900, Path::new("/nonexistent"));
+        let kv = round_keys_from(Some(&red), None, 900, &none);
         assert_eq!(get(&kv, "SP_ROUND_LAST_VERDICT"), Some("RED"));
         assert_eq!(get(&kv, "SP_ROUND_LAST_WHY"), Some("red: test-a.sh test-b.sh"));
         assert_eq!(get(&kv, "SP_ROUND_POOL"), Some("?"));
@@ -350,7 +385,7 @@ mod tests {
 
     #[test]
     fn an_unreadable_store_is_cannot_tell_not_idle() {
-        let kv = round_keys_from(None, None, 900, Path::new("/nonexistent"));
+        let kv = round_keys_from(None, None, 900, &none);
         assert_eq!(get(&kv, "SP_ROUND_STATE"), Some("?"));
         assert!(parse_batches("cannot tell: x").is_none());
     }

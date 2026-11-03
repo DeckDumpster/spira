@@ -17,6 +17,8 @@ pub const OPEN: &str = "open";
 pub const ARMED: &str = "armed";
 
 const FILE: &str = "open";
+/// Where the verdict leaves its last look at the forge while the open batch is the file.
+pub const FORGE_STATE: &str = "forge-state";
 /// Why the queue ended a batch the machine has not, as the round records name it.
 const ENDED: &str = "ended";
 
@@ -73,6 +75,25 @@ pub fn read(w: &World, c: &Ctx) -> Result<Option<Open>, String> {
 /// report on one (a status line, a refusal's list), never for one that acts on its absence.
 pub fn read_or_none(w: &World, c: &Ctx) -> Option<Open> {
     read(w, c).ok().flatten()
+}
+
+/// The open batch as a reader outside the queue sees it (`batch show`): the record, carrying the
+/// verdict's last look at the forge as `forge.<field>` lines. On the store those are the record's
+/// own; while the batch is the file they come from [`FORGE_STATE`], when it names this batch.
+pub fn shown(c: &Ctx, open: &Open) -> Result<Kv, String> {
+    let mut kv = open.kv.clone();
+    if let At::File(_) = open.at {
+        let Some(state) = records::read_kv(&c.queue_file(FORGE_STATE))? else {
+            return Ok(kv);
+        };
+        if state.get("batch_id").is_none() || state.get("batch_id") != kv.get("batch_id") {
+            return Ok(kv);
+        }
+        for (k, v) in state.lines.iter().filter(|(k, _)| k != "batch_id" && k != "pr") {
+            kv.push(&format!("forge.{k}"), v);
+        }
+    }
+    Ok(kv)
 }
 
 impl Open {

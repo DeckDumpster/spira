@@ -232,6 +232,7 @@ fn watch(o: &Opts) -> Result<(), String> {
     let queue_dir = spira_config::process::cfg("SPIRA_QUEUE_DIR")?;
     let env_ = Env {
         queue_dir: if queue_dir.is_empty() { run.join("queue") } else { PathBuf::from(queue_dir) },
+        queue_bin: PathBuf::from(spira_config::release_env::tool("queue")?),
         db: o.db.clone(),
         // SPIRA_LC_BIN is not a registered config key — a bare binary found on PATH, same as
         // always.

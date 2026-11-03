@@ -51,6 +51,17 @@ command -v "$BIN" >/dev/null 2>&1 || bail "queue-watch is not on PATH"
 # --- fixtures --------------------------------------------------------------------------------
 RUN="$T/run"; FX="$T/fx"; Q="$RUN/queue/q"
 mkdir -p "$Q" "$FX"
+# queue-watch asks `queue batch show` for the open batch; this one answers from the record a
+# section writes under one of its run directories, as the queue does before the store.
+mkdir -p "$FX/bin"
+cat > "$FX/bin/queue" <<EOF
+#!/bin/sh
+[ "\$1 \$2 \$3" = "batch show --repo" ] || exit 2
+for f in "$T"/*/queue/"\$4"/open; do [ -f "\$f" ] && cat "\$f"; done
+exit 0
+EOF
+chmod +x "$FX/bin/queue"
+PATH="$FX/bin:$PATH"; export PATH
 # SPIRA_HOME/--home IS THE HOME now (locate_home no longer searches): every binary reads
 # <home>/conf.d (sfail round 2, pattern 1).
 ln -s "$HERE/conf.d" "$FX/conf.d"

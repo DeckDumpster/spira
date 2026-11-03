@@ -1,5 +1,6 @@
-//! `/rounds` and `/rounds/<repo>/<batch>`: the forge repos' batch PRs. Membership and outcome
-//! come from the batcher's records under `<run>/queue/<repo>/`; the PR's CI run, jobs, failing
+//! `/rounds` and `/rounds/<repo>/<batch>`: the forge repos' batch PRs. The open batch, with the
+//! verdict's last look at its PR (`forge.*`), is the queue's record of it (`queue batch show`);
+//! closed ones come from the batcher's records under `<run>/queue/<repo>/`; the PR's CI run, jobs, failing
 //! step and first error lines come from `broker read run-jobs`, held per batch for
 //! [`CI_TTL`]. The list never calls the broker; a detail page whose fetch fails shows the last
 //! result marked stale, or says the detail is unavailable.
@@ -15,6 +16,8 @@ use tokio::sync::Mutex;
 
 pub const CI_TTL: Duration = Duration::from_secs(60);
 const CLOSED_SHOWN: usize = 5;
+/// The state of a repo whose open batch the queue could not show.
+pub const UNREADABLE: &str = "cannot tell";
 
 #[derive(Debug, Clone, Default)]
 pub struct Batch {
@@ -35,12 +38,11 @@ pub struct Batch {
 }
 
 fn kv(path: &Path) -> BTreeMap<String, String> {
-    std::fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|l| l.split_once('='))
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect()
+    kv_of(&std::fs::read_to_string(path).unwrap_or_default())
+}
+
+fn kv_of(text: &str) -> BTreeMap<String, String> {
+    text.lines().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect()
 }
 
 fn from_record(repo: &str, state: &str, r: &BTreeMap<String, String>) -> Option<Batch> {
@@ -66,35 +68,47 @@ fn from_record(repo: &str, state: &str, r: &BTreeMap<String, String>) -> Option<
     })
 }
 
-/// Every forge batch on record, per repo: the open one first, then the newest closed ones.
-pub fn read_all(queue: &Path) -> Vec<Batch> {
-    let mut repos: Vec<_> = std::fs::read_dir(queue).map(|d| d.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect()).unwrap_or_default();
+/// The repos with a queue directory, in name order.
+pub fn repos(queue: &Path) -> Vec<String> {
+    let mut repos: Vec<String> = std::fs::read_dir(queue)
+        .map(|d| d.flatten().filter(|e| e.path().is_dir()).filter_map(|e| e.file_name().to_str().map(str::to_string)).collect())
+        .unwrap_or_default();
     repos.sort();
+    repos
+}
+
+/// Every forge batch on record, per repo: the open one first, then the newest closed ones. `open`
+/// holds each repo's `queue batch show` answer; a repo the queue could not answer for is shown as
+/// [`UNREADABLE`], never as one with no batch open.
+pub fn read_all(queue: &Path, open: &BTreeMap<String, Result<String, String>>) -> Vec<Batch> {
     let mut out = Vec::new();
-    for dir in repos {
-        let repo = dir.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-        if let Some(mut b) = from_record(&repo, "open", &kv(&dir.join("open"))) {
-            let fs = kv(&dir.join("forge-state"));
-            if fs.get("batch_id").is_some_and(|id| *id == b.branch) {
-                let get = |k: &str| fs.get(k).cloned().unwrap_or_default();
-                b.ci = get("ci");
-                b.run = get("run");
-                b.step = get("step");
-                b.wall = get("wall").parse().unwrap_or(0);
-                if get("pr_state") == "merged" {
-                    b.state = "merged".into();
+    for (repo, shown) in open {
+        let dir = queue.join(repo);
+        match shown {
+            Err(e) => out.push(Batch { repo: repo.clone(), state: UNREADABLE.into(), reason: e.clone(), ..Batch::default() }),
+            Ok(text) => {
+                if let Some(mut b) = from_record(repo, "open", &kv_of(text)) {
+                    let r = kv_of(text);
+                    let get = |k: &str| r.get(&format!("forge.{k}")).cloned().unwrap_or_default();
+                    b.ci = get("ci");
+                    b.run = get("run");
+                    b.step = get("step");
+                    b.wall = get("wall").parse().unwrap_or(0);
+                    if get("pr_state") == "merged" {
+                        b.state = "merged".into();
+                    }
+                    let mut lv = kv(&dir.join("local-verdict"));
+                    b.local_verdict = lv.remove("verdict").unwrap_or_default();
+                    b.local_detail = lv.remove("detail").unwrap_or_default();
+                    out.push(b);
                 }
             }
-            let mut lv = kv(&dir.join("local-verdict"));
-            b.local_verdict = lv.remove("verdict").unwrap_or_default();
-            b.local_detail = lv.remove("detail").unwrap_or_default();
-            out.push(b);
         }
         let mut closed: Vec<Batch> = std::fs::read_dir(&dir)
             .map(|d| d.flatten().filter(|e| e.file_name().to_string_lossy().starts_with("closed-pr")).map(|e| e.path()).collect::<Vec<_>>())
             .unwrap_or_default()
             .iter()
-            .filter_map(|p| from_record(&repo, "closed", &kv(p)))
+            .filter_map(|p| from_record(repo, "closed", &kv(p)))
             .collect();
         closed.sort_by_key(|r| std::cmp::Reverse(r.opened));
         out.extend(closed);
@@ -104,6 +118,7 @@ pub fn read_all(queue: &Path) -> Vec<Batch> {
 
 fn badge(b: &Batch) -> (&'static str, String) {
     match (b.state.as_str(), b.ci.as_str()) {
+        (UNREADABLE, _) => ("red", UNREADABLE.into()),
         ("closed", _) => ("dim", "closed".into()),
         ("merged", _) => ("green", "merged".into()),
         (_, "red") => ("red", "CI red".into()),
@@ -131,6 +146,10 @@ pub fn render_list(now: i64, batches: &[Batch]) -> String {
             repo = &x.repo;
             shown_closed = 0;
             b.push_str(&format!("<h2>{}</h2>", esc(repo)));
+        }
+        if x.state == UNREADABLE {
+            b.push_str(&format!("<div class=card><span class=red>{UNREADABLE}</span> <span class=dim>whether a batch is open: {}</span></div>", esc(&x.reason)));
+            continue;
         }
         if x.state == "closed" {
             shown_closed += 1;
@@ -310,4 +329,33 @@ pub fn render_detail(now: i64, b: &Batch, ci: &CiView, forge_base: &str) -> Stri
         }
     }
     shell("rounds", &format!("{} PR {}", b.repo, b.pr), 60, &format!("<main>{h}</main>"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_open_batch_and_its_ci_are_the_store_record_the_queue_shows() {
+        let t = testkit::TempDir::new("loom-forge-rounds");
+        std::fs::create_dir_all(t.path().join("deck")).unwrap();
+        let shown = "batch_id=deck-1\nforge.phase=armed\npr=12\nbranch=spira/queue/deck-1\nmembers=sp-a:ta\nopened=100\nforge.ci=red\nforge.run=77\nforge.step=unit\nforge.pr_state=open\n";
+        let open = BTreeMap::from([("deck".to_string(), Ok(shown.to_string()))]);
+        let all = read_all(t.path(), &open);
+        assert_eq!(all.len(), 1, "{all:?}");
+        let b = &all[0];
+        assert_eq!((b.repo.as_str(), b.key.as_str(), b.pr.as_str(), b.state.as_str()), ("deck", "deck-1", "12", "open"));
+        assert_eq!((b.ci.as_str(), b.run.as_str(), b.step.as_str()), ("red", "77", "unit"));
+        assert_eq!(b.members, [("sp-a".to_string(), "ta".to_string())]);
+        assert!(read_all(t.path(), &BTreeMap::from([("deck".to_string(), Ok(String::new()))])).is_empty());
+    }
+
+    #[test]
+    fn a_repo_the_queue_cannot_answer_for_is_cannot_tell_not_quiet() {
+        let t = testkit::TempDir::new("loom-forge-unreadable");
+        let open = BTreeMap::from([("deck".to_string(), Err("queue batch show exited 1".to_string()))]);
+        let all = read_all(t.path(), &open);
+        assert_eq!(all.iter().map(|b| b.state.as_str()).collect::<Vec<_>>(), [UNREADABLE]);
+        assert!(render_list(0, &all).contains("queue batch show exited 1"));
+    }
 }
