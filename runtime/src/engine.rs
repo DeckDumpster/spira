@@ -312,7 +312,7 @@ impl Engine {
         Ok(ev)
     }
 
-    fn apply(&mut self, cmds: Vec<Command>, ev: &Event, handler: &str) -> Result<()> {
+    fn apply(&mut self, cmds: Vec<Command>, ev: &Event, handler: &str, mode: Mode) -> Result<()> {
         for (i, cmd) in cmds.into_iter().enumerate() {
             let id = derive_id(format!("{}/{handler}/{i}", ev.id.0));
             match cmd {
@@ -322,8 +322,15 @@ impl Engine {
                 Command::Effect(spec) => {
                     let deadline_at = ev.at.saturating_add(spec.deadline_ms);
                     let body = serde_json::to_string(&RequestBody { spec, deadline_at }).map_err(|e| RuntimeError::new(e.to_string()))?;
-                    let req = self.append_derived(id, &ev.stream, EventKind::new(EFFECT_REQUESTED, &body), ev, ev.at)?;
-                    self.track_effect(&req)?;
+                    match mode {
+                        Mode::Act => {
+                            let req = self.append_derived(id, &ev.stream, EventKind::new(EFFECT_REQUESTED, &body), ev, ev.at)?;
+                            self.track_effect(&req)?;
+                        }
+                        Mode::Observe => {
+                            self.append_derived(id, &ev.stream, EventKind::new(EFFECT_SHADOWED, &body), ev, ev.at)?;
+                        }
+                    }
                 }
                 Command::Schedule { at, kind } => {
                     let row = ScheduleRow { id, at, stream: ev.stream.clone(), kind, cause: Some(ev.id.clone()), correlation: ev.correlation.clone() };
@@ -369,7 +376,7 @@ impl Engine {
             return Ok(());
         }
         for i in 0..self.regs.len() {
-            let name = self.regs[i].name.clone();
+            let (name, mode) = (self.regs[i].name.clone(), self.regs[i].mode);
             if !self.regs[i].handler.interests().contains(&ev.kind.tag.as_str()) || (at.is_some_and(|(off, _)| off < self.check_applied_below) && self.journal.applied(&name, &ev.id)?) {
                 continue;
             }
@@ -377,6 +384,7 @@ impl Engine {
             let stalls = self.suspects.get(&key).copied().unwrap_or(0);
             let wide = self.unit("dispatch", Some(ev), at);
             wide.set("handler", name.as_str());
+            wide.set("task.mode", mode.as_str());
             if stalls >= self.stall_limit {
                 let message = format!("stalled {stalls} times in {name}");
                 self.quarantine(ev, &name, &message)?;
@@ -404,7 +412,7 @@ impl Engine {
                     wide.set("commands.emit", count(|c| matches!(c, Command::Emit(_))));
                     wide.set("commands.effect", count(|c| matches!(c, Command::Effect(_))));
                     wide.set("commands.schedule", count(|c| matches!(c, Command::Schedule { .. })));
-                    let done = self.apply(cmds, ev, &name).and_then(|()| if at.is_some() { self.journal.mark_applied(&name, &ev.id) } else { Ok(()) });
+                    let done = self.apply(cmds, ev, &name, mode).and_then(|()| if at.is_some() { self.journal.mark_applied(&name, &ev.id) } else { Ok(()) });
                     if matches!(&done, Err(e) if e.is_refused()) {
                         let message = done.unwrap_err().0;
                         wide.set("outcome", "refused");

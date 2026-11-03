@@ -44,6 +44,9 @@ pub const EFFECT_REQUESTED: EventKindTag = "effect.requested";
 pub const EFFECT_SUCCEEDED: EventKindTag = "effect.succeeded";
 pub const EFFECT_FAILED: EventKindTag = "effect.failed";
 pub const EFFECT_TIMED_OUT: EventKindTag = "effect.timed_out";
+/// A write an `Observe` task asked for and the engine recorded instead of running. It is never
+/// an open effect: no restart, and no later switch to `Act`, runs it.
+pub const EFFECT_SHADOWED: EventKindTag = "effect.shadowed";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventKind {
@@ -198,13 +201,38 @@ pub trait Handler: Send + Sync {
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command>;
 }
 
+/// `Observe` runs a task's probes and records its writes as `effect.shadowed` without running
+/// them; `Act` runs both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    Observe,
+    Act,
+}
+
+impl Mode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Mode::Observe => "observe",
+            Mode::Act => "act",
+        }
+    }
+}
+
 pub struct Registration {
     pub name: String,
     pub handler: Box<dyn Handler>,
+    pub mode: Mode,
 }
 
 impl Registration {
+    /// In `Act`; a service takes the mode of every task from its configured table.
     pub fn new(name: &str, handler: impl Handler + 'static) -> Self {
-        Registration { name: name.into(), handler: Box::new(handler) }
+        Registration { name: name.into(), handler: Box::new(handler), mode: Mode::Act }
+    }
+
+    pub fn with_mode(mut self, mode: Mode) -> Self {
+        self.mode = mode;
+        self
     }
 }
