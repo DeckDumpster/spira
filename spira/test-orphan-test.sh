@@ -47,7 +47,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 # SPIRA_GATE_BASE is always set (to origin/main) so the fence does not skip.
 fence_at() {
     local root="$1"; shift
-    ( cd "$root" && env -i PATH="$PATH" HOME="$TMP" TERM=dumb \
+    ( cd "$root" && env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" TERM=dumb \
         SPIRA_GATE_BASE=origin/main \
         bash "$root/spira/orphan-test.sh" "$@" 2>&1 )
 }
@@ -161,7 +161,7 @@ want "says clean"                                "clean" "$out3"
 # ---------------------------------------------------------------------------------------
 # SKIP CASE: no SPIRA_GATE_BASE in the environment → exit 77.
 # ---------------------------------------------------------------------------------------
-out4="$( cd "$ROOT" && env -i PATH="$PATH" HOME="$TMP" TERM=dumb \
+out4="$( cd "$ROOT" && env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" TERM=dumb \
     bash "$ROOT/spira/orphan-test.sh" 2>&1 )"; rc4=$?
 is   "skips when SPIRA_GATE_BASE is absent" "77" "$rc4"
 want "says why it is skipping"              "SPIRA_GATE_BASE" "$out4"

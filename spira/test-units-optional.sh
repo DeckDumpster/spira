@@ -25,7 +25,7 @@ mkdir -p "$TMP/run"
 # inotify-mode "without": units-install resolves `inotifywait` with its own raw PATH scan
 # (install::bootstrap::which), not `command -v` — so unlike the old bash (which needed a
 # `command` shadow because conf.sh unconditionally re-added /usr/bin to PATH), a PATH that
-# genuinely excludes inotifywait's directory is enough here. env -i prevents any of the
+# genuinely excludes inotifywait's directory is enough here. env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" prevents any of the
 # three from leaking in from this suite's own environment.
 _units() {
     local inotify_mode="$1" path="$PATH"
@@ -58,7 +58,7 @@ _units() {
     # refuses outright ("no watcher manifest at /fixture/userhome/...").
     tl_config SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_RUN="$TMP/run" \
         SPIRA_WATCHERS="$HERE/watchers"
-    env -i \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
         PATH="$path" \
         HOME="$HOME" \
         SPIRA_TOML="$SPIRA_TOML" \

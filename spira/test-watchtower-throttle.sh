@@ -91,7 +91,7 @@ MOCK
     # keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, always
     # starting from the complete fixture's own defaults so a call that omits one of the
     # throttle keys does not inherit an earlier call's override. SPIRA_TC_* stay plain env
-    # vars (not registered) and go through env -i as before. OVERRIDE's own conf.d default
+    # vars (not registered) and go through env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" as before. OVERRIDE's own conf.d default
     # is EMPTY ("no override, decide normally") — "off" is the operator kill switch
     # (watchtower/src/main.rs: override_off pins admission not-throttled unconditionally,
     # before depth is even read). Baselining it to "off" here force-disabled every case in
@@ -109,7 +109,7 @@ MOCK
     done
     # round 2 fix: SPIRA_HOME IS the home now (locate_home no longer searches); without
     # it, watchtower has no <home>/conf.d to resolve its config schema at all.
-    env -i PATH="$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" \
         SPIRA_THROTTLE_STAMP="$TMP/run/queue-throttled" \

@@ -33,7 +33,7 @@ printf '#!/usr/bin/env bash\necho "$BEAD_ID $*" >> "%s/work.log"\n' "$_ag_tmp" >
 chmod +x "$_ag_tmp/model-bin/work"
 _ag_path="$_ag_tmp/model-bin:$(dirname "$(command -v git)"):/usr/bin:/bin"
 _ag_run() {   # _ag_run <bead-id>
-    ( cd "$_ag_tmp/repo" && env -i PATH="$_ag_path" HOME="$_ag_tmp" BEAD_ID="$1" \
+    ( cd "$_ag_tmp/repo" && env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$_ag_path" HOME="$_ag_tmp" BEAD_ID="$1" \
         GIT_AUTHOR_NAME=a GIT_AUTHOR_EMAIL=a@a GIT_COMMITTER_NAME=a GIT_COMMITTER_EMAIL=a@a \
         bash "$(command -v "$AGENT")" </dev/null >"$_ag_tmp/out" 2>&1 )
 }
@@ -60,7 +60,7 @@ is   "a refused work submit fails the session" 1 "$_ag_rc"
 # BEAD_ID; the stub exited 1 ("BEAD_ID not set"), spira-ops was left FAILED, and every later
 # deploy's pre-health check refused on it (local phases B and D, 2026-09-26). A sweep has
 # nothing to commit or close: the stub reports a finished turn and exits 0.
-_sw_out="$( cd "$_ag_tmp/repo" && env -i PATH="$_ag_path" HOME="$_ag_tmp" \
+_sw_out="$( cd "$_ag_tmp/repo" && env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$_ag_path" HOME="$_ag_tmp" \
     bash "$(command -v "$AGENT")" </dev/null 2>&1 )"; _sw_rc=$?
 is   "acceptance-agent.sh: a sweep session (no BEAD_ID) exits 0" 0 "$_sw_rc"
 want "and reports a finished turn"                             '"type":"result"' "$_sw_out"

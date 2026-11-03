@@ -85,26 +85,26 @@ chmod +x "$STUB_BD"
 # protocol (gap 8) is: always exits 0, refusal is {"decision":"block"} on stdout alone.
 fence_run() {
     local cmd="$1"; shift
-    bash_payload "$cmd" | env -i PATH="$PATH" HOME="$TMP" \
+    bash_payload "$cmd" | env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
         SPIRA_RUN="$FAKE_RUN" SPIRA_PROD="$FAKE_PROD" "$@" \
         bash "$FENCE" 2>/dev/null
 }
 fence_rc() {  # fence_rc <cmd> [ENV..] -> the fence process's own exit code
     local cmd="$1"; shift
-    bash_payload "$cmd" | env -i PATH="$PATH" HOME="$TMP" \
+    bash_payload "$cmd" | env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
         SPIRA_RUN="$FAKE_RUN" SPIRA_PROD="$FAKE_PROD" "$@" \
         bash "$FENCE" >/dev/null 2>&1
     printf '%s' "$?"
 }
 fence_run_tool() {  # fence_run_tool <tool_name> <file_path> [ENV..]
     local tool="$1" path="$2"; shift 2
-    tool_payload "$tool" "$path" | env -i PATH="$PATH" HOME="$TMP" \
+    tool_payload "$tool" "$path" | env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
         SPIRA_RUN="$FAKE_RUN" SPIRA_PROD="$FAKE_PROD" "$@" \
         bash "$FENCE" 2>/dev/null
 }
 fence_run_raw() {  # fence_run_raw <raw-stdin> [ENV..] -- for malformed/empty payload rows
     local raw="$1"; shift
-    printf '%s' "$raw" | env -i PATH="$PATH" HOME="$TMP" \
+    printf '%s' "$raw" | env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
         SPIRA_RUN="$FAKE_RUN" SPIRA_PROD="$FAKE_PROD" "$@" \
         bash "$FENCE" 2>/dev/null
 }
@@ -123,14 +123,14 @@ mkfix() {  # mkfix <bid> <started_at> <notes> <comments-json>
 # "$?" — never from inside this function.
 bdclose_run() {
     local bid="$1" cmd="$2"; shift 2
-    bash_payload "$cmd" | env -i PATH="$PATH" HOME="$TMP" \
+    bash_payload "$cmd" | env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
         SPIRA_DWARF=1 BEAD_ID="$bid" BEADS_ACTOR="$ACTOR" \
         SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" \
         "$@" bash "$BDCLOSE_GUARD" 2>&1
 }
 close_cmd_for() { printf 'bd -C %s close %s --reason done' "$BDCLOSE_DB" "$1"; }
 deliver_run() {  # deliver_run <bid> <run-tmp> -> stdout
-    printf '{}' | env -i PATH="$PATH" HOME="$TMP" \
+    printf '{}' | env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
         BEAD_ID="$1" BEADS_ACTOR="$ACTOR" \
         SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" SPIRA_RUN="$2" \
         bash "$BDCLOSE_DELIVER" 2>/dev/null
@@ -180,13 +180,13 @@ echo "sp-4o925 — dwarf session: Bash run_in_background refused structurally, n
 # ===========================================================================
 fence_rib() {  # fence_rib <cmd> <0|1> [ENV..] -> fence stdout for a Bash call with run_in_background set
     local cmd="$1" rib="$2"; shift 2
-    bash_rib_payload "$cmd" "$rib" | env -i PATH="$PATH" HOME="$TMP" \
+    bash_rib_payload "$cmd" "$rib" | env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
         SPIRA_RUN="$FAKE_RUN" SPIRA_PROD="$FAKE_PROD" "$@" \
         bash "$FENCE" 2>/dev/null
 }
 fence_rib_rc() {  # fence_rib_rc <cmd> <0|1> [ENV..] -> the fence process's own exit code
     local cmd="$1" rib="$2"; shift 2
-    bash_rib_payload "$cmd" "$rib" | env -i PATH="$PATH" HOME="$TMP" \
+    bash_rib_payload "$cmd" "$rib" | env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
         SPIRA_RUN="$FAKE_RUN" SPIRA_PROD="$FAKE_PROD" "$@" \
         bash "$FENCE" >/dev/null 2>&1
     printf '%s' "$?"
@@ -323,7 +323,7 @@ echo "UC-safety-fences-03 — dwarf session: no bd create rule — no dwarf pers
 BDCREATE_DB="$TMP/prod-db"
 fence_bd() {  # fence_bd <cmd> [ENV..] -> fence stdout with a production SPIRA_DB in scope
     local cmd="$1"; shift
-    bash_payload "$cmd" | env -i PATH="$PATH" HOME="$TMP" \
+    bash_payload "$cmd" | env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
         SPIRA_DWARF=test-dwarf SPIRA_DB="$BDCREATE_DB" SPIRA_BD="$STUB_BD" "$@" \
         bash "$FENCE" 2>/dev/null
 }
@@ -432,12 +432,12 @@ nowant "UC-safety-fences-15/fence-override-allows" '"decision":"block"' "$out"
 
 BDCLOSE_REP="$(close_cmd_for bc1)"
 
-out=$(printf '%s' "$(bash_payload "$BDCLOSE_REP")" | env -i PATH="$PATH" HOME="$TMP" \
+out=$(printf '%s' "$(bash_payload "$BDCLOSE_REP")" | env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
     BEAD_ID="bc1" BEADS_ACTOR="$ACTOR" SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" \
     bash "$BDCLOSE_GUARD" 2>&1); rc=$?
 is "UC-safety-fences-15/bdclose-no-SPIRA_DWARF-allows" 0 "$rc"
 
-out=$(printf '{"tool_name":"Read","tool_input":{"file_path":"/tmp/x"}}' | env -i PATH="$PATH" HOME="$TMP" \
+out=$(printf '{"tool_name":"Read","tool_input":{"file_path":"/tmp/x"}}' | env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
     SPIRA_DWARF=1 BEAD_ID="bc1" BEADS_ACTOR="$ACTOR" SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" \
     bash "$BDCLOSE_GUARD" 2>&1); rc=$?
 is "UC-safety-fences-15/bdclose-non-Bash-tool-allows" 0 "$rc"
@@ -532,12 +532,12 @@ nowant "gap7/fence-malformed-payload-fails-open" '"decision":"block"' "$out"
 out="$(fence_run_raw '' SPIRA_DWARF=test-dwarf)"
 nowant "gap7/fence-empty-payload-fails-open" '"decision":"block"' "$out"
 
-out=$(printf 'not json at all' | env -i PATH="$PATH" HOME="$TMP" \
+out=$(printf 'not json at all' | env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
     SPIRA_DWARF=1 BEAD_ID="bc1" BEADS_ACTOR="$ACTOR" SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" \
     bash "$BDCLOSE_GUARD" 2>&1); rc=$?
 is "gap7/bdclose-malformed-payload-fails-open" 0 "$rc"
 
-out=$(printf '' | env -i PATH="$PATH" HOME="$TMP" \
+out=$(printf '' | env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" \
     SPIRA_DWARF=1 BEAD_ID="bc1" BEADS_ACTOR="$ACTOR" SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" \
     bash "$BDCLOSE_GUARD" 2>&1); rc=$?
 is "gap7/bdclose-empty-payload-fails-open" 0 "$rc"

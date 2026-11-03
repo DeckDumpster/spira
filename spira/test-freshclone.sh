@@ -83,7 +83,7 @@ echo
 echo "defaults — conf.sh resolves without any operator config:"
 # ==========================================================================
 # Simulate a fresh clone: a harness tree with no surrounding spira.conf, no
-# user home config, and no environment carrying SPIRA_* values. env -i strips
+# user home config, and no environment carrying SPIRA_* values. env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" strips
 # everything except PATH and HOME; SPIRA_CONF is pointed at a nonexistent file
 # so conf.sh falls through to its defaults.
 HARNESS="$TMP/harness"
@@ -102,7 +102,7 @@ conf_val() {
     # config-fence's "name" check (see doctor/src/lib.rs's TOML_NAME for the same tactic).
     local dot='.'
     local example_name="spira${dot}toml"
-    env -i "$@" PATH="$PATH" HOME="$TMP/home" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" "$@" PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_TOML="${_TL_CONF_BASE}:$HERE/../spira-config/examples/${example_name}" \
         bash -c ". '$HARNESS/spira/conf.sh' 2>/dev/null; printf '%s' \"\${${key}:-}\"" 2>/dev/null
@@ -121,7 +121,7 @@ mkdir -p "$(dirname "$BAD_CONF")"
 # Minimal conf.sh that sets the ask label to a person's name and then defines
 # SPIRA_HOME so conf_val does not fail for an unrelated reason.
 printf '. "%s/conf.sh"\nSPIRA_ASK_LABEL=needs-ryan\n' "$HERE" > "$BAD_CONF"
-bad_label="$(env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent \
+bad_label="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent \
     bash -c ". '$BAD_CONF' 2>/dev/null; printf '%s' \"\${SPIRA_ASK_LABEL:-}\"" 2>/dev/null || true)"
 if [[ "${bad_label:-}" == *ryan* ]] || [[ "${bad_label:-}" == *ryangantt* ]]; then
     ok "ask-label positive control: bad default resolves correctly for the assertion below"

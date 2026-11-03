@@ -305,7 +305,7 @@ tinstall_render() {    # tinstall_render <fixture> <home> -> rendered text (memo
         local out rc
         tl_config SPIRA_RUN="$home/run" SPIRA_WATCHERS="$fixture/spira/watchers" \
             SPIRA_DOLT_DATA=""
-        out="$(env -i PATH="$PATH" HOME="$home" SPIRA_TOML="$SPIRA_TOML" \
+        out="$(env -i "$TL_DECLARED_RELEASE" PATH="$PATH" HOME="$home" SPIRA_TOML="$SPIRA_TOML" \
             SPIRA_HOME="$fixture/spira" SPIRA_REPO="$fixture" \
             SPIRA_CONF=/nonexistent \
             units-install --render 2>&1)"; rc=$?

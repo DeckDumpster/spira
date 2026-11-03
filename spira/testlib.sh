@@ -128,6 +128,9 @@ case "${SPIRA_RELEASE:-}" in
             || "$SPIRA_RELEASE/bin/spira-config" link-model-bin "$SPIRA_RELEASE" >/dev/null || true
         ;;
 esac
+# The launcher declaration a suite's bare `env -i` carries: the release under test, as every
+# production launcher declares it (binaries resolve their tools and child PATH from it alone).
+TL_DECLARED_RELEASE="SPIRA_RELEASE=${SPIRA_RELEASE:-}"
 _TL_TIER="$(suite-select header tier "${BASH_SOURCE[1]:-$0}")"
 _TL_UC="$(suite-select header uc "${BASH_SOURCE[1]:-$0}")"
 

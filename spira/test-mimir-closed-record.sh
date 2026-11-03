@@ -85,7 +85,7 @@ printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 # SCOPE labels pinned to non-defaults (law-gates-run-in-a-clean-environment).
 ALLW_SCOPE="sptest-cr-allow"
 
-# Constant across every env -i invocation in this suite; sections below re-declare only
+# Constant across every env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" invocation in this suite; sections below re-declare only
 # what differs (SPIRA_SCOPE_LABEL, SPIRA_MIMIR_LABEL, SPIRA_BD).
 tl_config SPIRA_RUN="$RUNDIR" SPIRA_REPO_MAP="$SELFMAP" \
     SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci SPIRA_SPIKE_LABEL=spike \
@@ -116,7 +116,7 @@ printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 
 _tr_bd="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-bd}")"
 tl_config SPIRA_SCOPE_LABEL="$TR_SCOPE" SPIRA_MIMIR_LABEL="$TR_MAE" SPIRA_BD="$_tr_bd"
-tr_out="$(env -i HOME="$T" \
+tr_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_LC_BIN="$LCSTUB" \
@@ -143,7 +143,7 @@ want "trigger bead description: bead id present"    "sp-cr-trig1"     "$tr_desc"
 echo
 echo "TRIGGER: second run files nothing new (dedup)"
 # ==========================================================================================
-tr_out2="$(env -i HOME="$T" \
+tr_out2="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_LC_BIN="$LCSTUB" \
@@ -181,7 +181,7 @@ printf 'sp-cr-ant1 quotation: test bead\n' > "$ALLOW_FILE"
 
 _ant_bd="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-bd}")"
 tl_config SPIRA_SCOPE_LABEL="$ANT_SCOPE" SPIRA_MIMIR_LABEL="$ANT_MAE" SPIRA_BD="$_ant_bd"
-ant_out="$(env -i HOME="$T" \
+ant_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_LC_BIN="$LCSTUB" \
@@ -239,7 +239,7 @@ _e2e_bd="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-
 tl_config SPIRA_SCOPE_LABEL="$E2E_SCOPE" SPIRA_MIMIR_LABEL="$E2E_MAE" SPIRA_BD="$_e2e_bd"
 
 # Step 1: trigger files one bead carrying all three rows.
-e2e_trig1="$(env -i HOME="$T" \
+e2e_trig1="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_LC_BIN="$LCSTUB" \
@@ -264,7 +264,7 @@ want "e2e: sweep bead has bead B row" "sp-cr-e2e-b" "$e2e_desc"
 want "e2e: sweep bead has bead C row" "sp-cr-e2e-c" "$e2e_desc"
 
 # Step 2: second trigger run → dedup.
-e2e_trig2="$(env -i HOME="$T" \
+e2e_trig2="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
     SPIRA_LC_BIN="$LCSTUB" \
@@ -292,7 +292,7 @@ FOLLOW_ID="$("$SPIRA_BD" -C "$SPIRA_DB" create "follow-up: schema migration for 
 printf 'sp-cr-e2e-c follow-up filed as %s\n' "$FOLLOW_ID" >> "$ALLOW_FILE"
 
 # Step 4: detect_invalid_closed via cockpit seam → 0 counted, 1 allowed.
-e2e_final="$(env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+e2e_final="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$T/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$T" \
     SPIRA_TOML="$SPIRA_TOML" \
     cockpit-collect probe livelock 2>/dev/null)"

@@ -66,7 +66,7 @@ roster() { # roster <function>
     # SPIRA_RUNES_DIR EXPLICITLY: the complete fixture declares a fixed runes path of its
     # own now, no longer derived from SPIRA_HOME when unset.
     tl_config SPIRA_RUNES="worker laner human humanlane" SPIRA_RUNES_DIR="$TMP/runes"
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_CONF="$TMP/no.conf" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_CONF="$TMP/no.conf" \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$TMP" \
         bash -c '. "$2"/lib.sh 2>/dev/null; "$1"' _ "$1" "$HERE" 2>/dev/null
 }
@@ -94,7 +94,7 @@ echo "the shipped concierge — real persona, called by nobody"
 
 ship() { # ship <function>   — the REAL runes, with the concierge listed in the roster
     tl_config SPIRA_RUNES="builder ops concierge" SPIRA_RUNES_DIR="$HERE/runes"
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_CONF="$TMP/no.conf" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_CONF="$TMP/no.conf" \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         bash -c '. "$2"/lib.sh 2>/dev/null; "$1"' _ "$1" "$HERE" 2>/dev/null
 }
@@ -165,7 +165,7 @@ run_hook() {  # run_hook <session_id> <source> [extra-env...]
     local sid="$1" src="$2"; shift 2
     printf '{"hook_event_name":"SessionStart","session_id":"%s","source":"%s","cwd":"%s"}' \
         "$sid" "$src" "$SID_HOOK_DIR" \
-      | env -i HOME="$TMP/home" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" "$@" \
+      | env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$TMP/home" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" "$@" \
         bash "$HOOK" >/dev/null 2>&1
 }
 
@@ -223,7 +223,7 @@ run_hook_link() {
     local sid="$1" src="$2"; shift 2
     printf '{"hook_event_name":"SessionStart","session_id":"%s","source":"%s","cwd":"%s"}' \
         "$sid" "$src" "$SID_LINK_DIR" \
-      | env -i HOME="$TMP/home" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" "$@" \
+      | env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$TMP/home" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" "$@" \
         bash "$HOOK" >/dev/null 2>&1
 }
 # NEGATIVE CONTROL: a symlink SPIRA_PROD pointing somewhere else must still refuse.
@@ -233,7 +233,7 @@ rm -f "$SID_LINK_DIR/run/concierge-session"
 tl_config SPIRA_PROD="$SID_OTHER_DIR/spira-other"
 printf '{"hook_event_name":"SessionStart","session_id":"%s","source":"%s","cwd":"%s"}' \
     "hook-sid-refused" "startup" "$SID_LINK_DIR" \
-  | env -i HOME="$TMP/home" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONCIERGE=1 \
+  | env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$TMP/home" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONCIERGE=1 \
     bash "$HOOK" >/dev/null 2>&1
 is "symlink SPIRA_PROD to a different dir is still refused" \
    "" "$(cat "$SID_LINK_DIR/run/concierge-session" 2>/dev/null)"

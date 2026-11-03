@@ -158,7 +158,7 @@ inst() {
     tl_config "SPIRA_PATH=$MOCK_BIN" "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
         SPIRA_DOLT_DATA= "SPIRA_RUN=$SPIRA_RUN_DIR" \
         "SPIRA_PROD=$PROD" "SPIRA_COCKPIT=$REAL_COCKPIT" "SPIRA_MAIL=$TMP/mail"
-    env -i \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
         "PATH=$MOCK_BIN:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \

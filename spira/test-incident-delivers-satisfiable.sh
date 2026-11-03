@@ -48,13 +48,13 @@ file_one() {  # file_one <ref> [VAR=val ...]
     tl_config SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_BD="$STUB_BD"
     # Any caller override: a registered key (e.g. SPIRA_INCIDENT_PRIORITY) goes to tl_config
     # too; anything else (the non-registered SPIRA_INCIDENT_* seams) stays a plain env
-    # assignment for the env -i call below.
+    # assignment for the env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" call below.
     local extra_env=() kv k
     for kv in "$@"; do
         k="${kv%%=*}"
         if [ -f "$HERE/conf.d/$k" ]; then tl_config "$kv"; else extra_env+=("$kv"); fi
     done
-    printf 'payload' | env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
+    printf 'payload' | env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$HOME" PATH="$TMP/home:$PATH" \
         SPIRA_TOML="$SPIRA_TOML" \
         STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_CONF="$TMP/no-conf" \

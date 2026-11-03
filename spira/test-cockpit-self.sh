@@ -57,7 +57,7 @@ run_metrics() {   # run_metrics <sentinel-fixture-string> <ledger-fixture-string
     local sf="$TMP/sent.log" lf="$TMP/ledger.log"
     printf '%s' "$1" > "$sf"
     printf '%s' "$2" > "$lf"
-    env -i PATH="/usr/bin:/bin" HOME="$TMP" SPIRA_HOME="$SPIRA_HOME" SPIRA_TOML="$(tl_layer SPIRA_SELF_WINDOW=90)" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="/usr/bin:/bin" HOME="$TMP" SPIRA_HOME="$SPIRA_HOME" SPIRA_TOML="$(tl_layer SPIRA_SELF_WINDOW=90)" \
         "$COLLECT" metrics "$sf" "$lf" 24 2>/dev/null
 }
 
@@ -201,7 +201,7 @@ COCKPIT_DIR="$(dirname "$HEALTH")"
 
 run_health() {   # run_health: sources cockpit.env and renders once at 80 cols
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_RUNES=t
-    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 TERM=dumb \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 TERM=dumb \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         "$HEALTH" once 0 80 2>/dev/null

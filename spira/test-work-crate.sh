@@ -33,11 +33,11 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 # (this crate's own #[test]s run once per round as the workspace unit-test step, not here.)
 
 # The tree's own `work`, resolved on the suite's PATH (sp-gypjk); its absolute path is kept
-# because a case below runs it under a minimal `env -i PATH`.
+# because a case below runs it under a minimal `env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH`.
 WORK_BIN="$(command -v work)" || bail "work is not on PATH"
 
 # ── no SPIRA_WORK_BEAD_ID: cannot tell, never a guess at which bead ──────────────────
-out="$(env -i PATH="/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" "$WORK_BIN" show 2>&1)"; rc=$?
+out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" "$WORK_BIN" show 2>&1)"; rc=$?
 is   "no bound bead: exits 2 (cannot tell)" "2"                    "$rc"
 want "no bound bead: names the missing var" "SPIRA_WORK_BEAD_ID"   "$out"
 
@@ -46,22 +46,22 @@ want "no bound bead: names the missing var" "SPIRA_WORK_BEAD_ID"   "$out"
 # socket and fails with "cannot tell", not "refused" — proving the refusal case below is
 # a real, distinguishing decision and not just "everything fails without a socket".
 tl_config SPIRA_LC_SOCKET="$TMP/no-such-socket"
-out="$(env -i PATH="/usr/bin:/bin" SPIRA_WORK_BEAD_ID="sp-bound1" SPIRA_TOML="$SPIRA_TOML" \
+out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="/usr/bin:/bin" SPIRA_WORK_BEAD_ID="sp-bound1" SPIRA_TOML="$SPIRA_TOML" \
     "$WORK_BIN" note "an ordinary note" 2>&1)"; rc=$?
 is "POSITIVE CONTROL: bound bead, unreachable socket: exits 2 (cannot tell)" "2" "$rc"
 
-out="$(env -i PATH="/usr/bin:/bin" SPIRA_WORK_BEAD_ID="sp-bound1" SPIRA_TOML="$SPIRA_TOML" \
+out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="/usr/bin:/bin" SPIRA_WORK_BEAD_ID="sp-bound1" SPIRA_TOML="$SPIRA_TOML" \
     "$WORK_BIN" note "sp-other2" 2>&1)"; rc=$?
 is   "foreign bead in note: refused (exit 3), never reaches the socket" "3"        "$rc"
 want "foreign bead in note: names the offending id"                     "sp-other2" "$out"
 want "foreign bead in note: names the bound bead"                       "sp-bound1" "$out"
 
 # superseded-by names a different bead by design — must NOT be refused.
-out="$(env -i PATH="/usr/bin:/bin" SPIRA_WORK_BEAD_ID="sp-bound1" SPIRA_TOML="$SPIRA_TOML" \
+out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="/usr/bin:/bin" SPIRA_WORK_BEAD_ID="sp-bound1" SPIRA_TOML="$SPIRA_TOML" \
     "$WORK_BIN" superseded-by sp-other2 2>&1)"; rc=$?
 is "superseded-by names a different bead: NOT refused (exits 2, cannot tell — reached for the socket)" "2" "$rc"
 
-out="$(env -i PATH="/usr/bin:/bin" SPIRA_WORK_BEAD_ID="sp-bound1" SPIRA_TOML="$SPIRA_TOML" \
+out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="/usr/bin:/bin" SPIRA_WORK_BEAD_ID="sp-bound1" SPIRA_TOML="$SPIRA_TOML" \
     "$WORK_BIN" close 2>&1)"; rc=$?
 is "unknown verb: refused (exit 3)" "3" "$rc"
 

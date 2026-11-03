@@ -53,7 +53,7 @@ run() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_BATCH_WAIT=1800 \
         SPIRA_FORGE="$TMP/spira/forge-fake.sh" SPIRA_BATCHER_ENABLE=1 \
         SPIRA_QUEUE_DIR="$TMP/run/queue"
-    env -i SPIRA_TOML="$SPIRA_TOML" $(lcfix_env) PATH="$TMP/bin:$TMP/spira:$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_TOML="$SPIRA_TOML" $(lcfix_env) PATH="$TMP/bin:$TMP/spira:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$TMP/spira" queue "$@" 2>&1
 }
@@ -61,7 +61,7 @@ run() {
 echo
 echo "positive control — the fake batcher is reachable and sees the configured wait:"
 printf 'fixq | %s | queue | main | | |\n' "$TMP/repo" > "$RMAP"
-out="$(env -i PATH=/usr/bin:/bin SPIRA_QUEUE_BATCH_WAIT=1800 "$TMP/spira/batcher" cut fixq)"
+out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH=/usr/bin:/bin SPIRA_QUEUE_BATCH_WAIT=1800 "$TMP/spira/batcher" cut fixq)"
 want "fake batcher reports the inherited wait" "wait=1800" "$out"
 
 echo

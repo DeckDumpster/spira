@@ -59,7 +59,7 @@ tl_config SPIRA_WATCHERS="$HARNESS/spira/watchers"
 # override: a registered SPIRA_* name is written into a fresh, call-scoped toml layer (the
 # same KEY -> spira.key convention tl_config uses) so conf.sh sees it through SPIRA_TOML;
 # a non-registered identity var (SPIRA_REPO) or a plain env var (XDG_DATA_HOME) still rides
-# the env -i prefix, since neither is a registered config key.
+# the env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" prefix, since neither is a registered config key.
 conf_val() {
     local key="$1"; shift
     local override="$TMP/conf_val-override.toml"
@@ -76,7 +76,7 @@ conf_val() {
                 spira-config set "$d" "$v" "$override" >/dev/null ;;
         esac
     done
-    env -i SPIRA_TOML="$SPIRA_TOML:$override" "${env_extra[@]}" PATH="$PATH" HOME="$TMP/home" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_TOML="$SPIRA_TOML:$override" "${env_extra[@]}" PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent SPIRA_HOME="$HARNESS/spira" \
         bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${${key}:-}\"" 2>/dev/null
     rm -f "$override"
@@ -114,14 +114,14 @@ GH="$TMP/git-harness"
 mkdir -p "$GH/spira"
 ln -s "$HERE/conf.sh" "$GH/spira/conf.sh"
 git -C "$GH" init -q
-hook_repo="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/hook-home" SPIRA_CONF=/nonexistent GIT_DIR="$GH/.git" \
+hook_repo="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/hook-home" SPIRA_CONF=/nonexistent GIT_DIR="$GH/.git" \
     bash -c ". '$GH/spira/conf.sh' >/dev/null 2>&1; printf '%s' \"\$SPIRA_REPO\"" 2>/dev/null)"
 is "SPIRA_REPO is the checkout's top even with GIT_DIR exported" "$(cd "$GH" && pwd -P)" "$hook_repo"
 # G8: spira_require names each missing program and fails; a present one passes.
-req_present="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/hook-home" SPIRA_CONF=/nonexistent \
+req_present="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/hook-home" SPIRA_CONF=/nonexistent \
     bash -c ". '$HARNESS/spira/conf.sh' >/dev/null 2>&1; spira_require bash; echo rc=\$?" 2>&1)"
 want "spira_require: a present program returns 0" "rc=0" "$req_present"
-req_absent="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/hook-home" SPIRA_CONF=/nonexistent \
+req_absent="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/hook-home" SPIRA_CONF=/nonexistent \
     bash -c ". '$HARNESS/spira/conf.sh' >/dev/null 2>&1; spira_require no-such-prog-g8; echo rc=\$?" 2>&1)"
 want "spira_require: a missing program is named" "no-such-prog-g8" "$req_absent"
 nowant "spira_require: a missing program does not return 0" "rc=0" "$req_absent"
@@ -173,7 +173,7 @@ bd_conf_val() {
     local spira_path="${1:-}"; shift || true
     tl_config SPIRA_DB="$TMP/empty-db" SPIRA_PATH="$spira_path" SPIRA_WATCHERS="$HARNESS/spira/watchers"
     [ $# -gt 0 ] && tl_config "$@"
-    env -i PATH="$TOOLS:/usr/bin:/bin" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$TOOLS:/usr/bin:/bin" \
         HOME="$TMP/home" \
         SPIRA_HOME="$HARNESS/spira" \
         SPIRA_REPO="$HARNESS" \
@@ -187,7 +187,7 @@ bd_conf_with_db() {
     local spira_path="${1:-}"; shift || true
     tl_config SPIRA_DB="$FAKEDB" SPIRA_PATH="$spira_path" SPIRA_WATCHERS="$HARNESS/spira/watchers"
     [ $# -gt 0 ] && tl_config "$@"
-    env -i PATH="$TOOLS:/usr/bin:/bin" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$TOOLS:/usr/bin:/bin" \
         HOME="$TMP/home" \
         SPIRA_HOME="$HARNESS/spira" \
         SPIRA_REPO="$HARNESS" \
@@ -239,7 +239,7 @@ echo
 echo "SPIRA_BD is exported — child processes inherit it:"
 # ==========================================================================
 tl_config SPIRA_DB="$TMP/empty-db" SPIRA_PATH="$TMP/bin-good" SPIRA_WATCHERS="$HARNESS/spira/watchers"
-exported="$(env -i PATH="$TOOLS:/usr/bin:/bin" \
+exported="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$TOOLS:/usr/bin:/bin" \
     HOME="$TMP/home" \
     SPIRA_HOME="$HARNESS/spira" \
     SPIRA_REPO="$HARNESS" \
@@ -282,7 +282,7 @@ STUB
 # Extra KEY=VAL args are forwarded to env -i.
 lock_source_conf() {
     local out rc=0
-    out=$(env -i \
+    out=$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
         PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \

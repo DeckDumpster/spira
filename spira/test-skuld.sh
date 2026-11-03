@@ -22,7 +22,7 @@ export SPIRA_HOME="$HERE" SPIRA_CONF="$T/none.conf"
 echo "test-skuld.sh"
 
 echo; echo "CONTRACT: bead.sh contract lists skuld with its partition"
-out="$(env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" \
+out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$T/none.conf" SPIRA_HOME="$HERE" bead.sh contract 2>&1)"
 want "contract lists skuld" "$(printf '  %-14s %s' skuld 'fixscope,fixdraft')" "$out"
 want "contract still lists builder (positive control)" "  builder" "$out"
@@ -40,7 +40,7 @@ chmod +x "$T/stub-bd"; printf '#!/usr/bin/env bash\nexit 0\n' > "$T/stub-lc"; ch
 echo "testrepo | $T/testrepo | push | origin/main | | true | plan" > "$T/repos.map"
 tl_config SPIRA_BD="$T/stub-bd" SPIRA_DB="$T/db" SPIRA_REPO_MAP="$T/repos.map" SPIRA_RUN="$T/run"
 : > "$T/bd.log"
-fid="$(env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$T/none.conf" \
+fid="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$T/none.conf" \
     BD_LOG_PATH="$T/bd.log" SPIRA_LC_BIN="$T/stub-lc" SPIRA_HOME="$HERE" SPIRA_REPO="$T" \
     bead.sh file "draft a thing" --for skuld --repo testrepo --body-file /dev/null 2>&1)"
 is "bead.sh file --for skuld files a bead" "sp-n1" "$fid"
@@ -60,7 +60,7 @@ SH
 chmod +x "$T/fake-bd"; lc_mirror_bd "$T/lc"
 tl_config SPIRA_BD="$T/fake-bd"
 ready_set() {   # ready_set <rune> -> the rows spira-claim's ready set for that rune holds
-    env -i HOME="$T" PATH="$T/lc:$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$T/none.conf" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$T/lc:$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$T/none.conf" \
         SPIRA_HOME="$HERE" SPIRA_RUNES_DIR="$HERE/runes" SPIRA_BD="$T/fake-bd" SPIRA_DB=/fake/db \
         spira-claim rune-ready "$1" --json 2>&1
 }
@@ -75,7 +75,7 @@ is "two designs draft at once" "2" "$(rune_get skuld RUNE_MAX_CONCURRENT)"
 want "spira_lane_runes lists skuld" "skuld" "$(spira_lane_runes)"
 nowant "spira_task_runes does not list skuld" "skuld" "$(spira_task_runes)"
 DWARVES="$(command -v dwarves || command -v dwarves.sh || true)"
-dw="$([ -n "$DWARVES" ] && env -i HOME="$T" PATH="${DWARVES%/*}:$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$T/none.conf" SPIRA_HOME="$HERE" "$DWARVES" 2>&1 || echo "no dwarves binary on PATH")"
+dw="$([ -n "$DWARVES" ] && env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="${DWARVES%/*}:$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$T/none.conf" SPIRA_HOME="$HERE" "$DWARVES" 2>&1 || echo "no dwarves binary on PATH")"
 laneline="$(printf '%s\n' "$dw" | grep -E '^  lanes +[0-9]+ +\(' || true)"
 want "dwarves.sh lane report counts skuld at its concurrency" "skuld=2" "${laneline:-no lane line in dwarves.sh output: $dw}"
 nowant "positive control: the lane report omits a lane that is not declared" "nosuchlane=" "$laneline"

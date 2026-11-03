@@ -63,7 +63,7 @@ echo "1. SEEN TO FAIL FIRST: an unreachable database leaves the filing spooled, 
 BROKEN_BD="$TMP/no-such-bd"
 rm -rf "$SPOOL"; mkdir -p "$SPOOL"; : > "$ILOG"
 tl_config SPIRA_BD="$BROKEN_BD"
-out="$(printf 'db is down' | env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
+out="$(printf 'db is down' | env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$HOME" PATH="$TMP/home:$PATH" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_REF="incident:db-down-probe" \
@@ -85,7 +85,7 @@ spool_entry "incident:drain-good-1" "good one" suite-red "payload 1" >/dev/null
 spool_entry "incident:drain-good-2" "good two" suite-red "payload 2" >/dev/null
 
 tl_config SPIRA_BD="$STUB_BD"
-drain_out="$(env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
+drain_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$HOME" PATH="$TMP/home:$PATH" \
     SPIRA_TOML="$SPIRA_TOML" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
     SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
@@ -101,7 +101,7 @@ rm -rf "$SPOOL"; mkdir -p "$SPOOL"
 spool_entry "incident:drain-stuck-1" "stuck one" suite-red "payload 1" >/dev/null
 spool_entry "incident:drain-stuck-2" "stuck two" suite-red "payload 2" >/dev/null
 tl_config SPIRA_BD="$BROKEN_BD"
-drain_stuck_out="$(env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
+drain_stuck_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$HOME" PATH="$TMP/home:$PATH" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
@@ -118,7 +118,7 @@ echo "3. a REF-less entry is quarantined to .bad, not retried forever:"
 rm -rf "$SPOOL"; mkdir -p "$SPOOL"; : > "$ILOG"
 _bad_path="$(spool_entry "" "no ref here" suite-red "payload")"
 tl_config SPIRA_BD="$STUB_BD"
-env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
+env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$HOME" PATH="$TMP/home:$PATH" \
     SPIRA_TOML="$SPIRA_TOML" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
     SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
@@ -135,7 +135,7 @@ rm -rf "$SPOOL"; mkdir -p "$SPOOL"; rm -f "$STUB_BD_STATE" "$STUB_BD_LOG"
 PRECAUSE_REF="incident:pre-cause-entry"
 spool_entry "$PRECAUSE_REF" "pre-cause probe" "" "first filing" >/dev/null
 tl_config SPIRA_BD="$STUB_BD"
-env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
+env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$HOME" PATH="$TMP/home:$PATH" \
     SPIRA_TOML="$SPIRA_TOML" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
     SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
@@ -145,7 +145,7 @@ env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
 # a pre-CAUSE entry must default to.
 spool_entry "$PRECAUSE_REF" "pre-cause probe" "" "second filing" >/dev/null
 tl_config SPIRA_BD="$STUB_BD"
-env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
+env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$HOME" PATH="$TMP/home:$PATH" \
     SPIRA_TOML="$SPIRA_TOML" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
     SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \

@@ -84,7 +84,7 @@ run_skew_cmd() {
     # 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML
     # through env -i, which clears it.
     tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA=""
-    env -i PATH="$PATH" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" \
@@ -229,7 +229,7 @@ run_skew_release() {
     # Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML
     # through env -i, which clears it.
     tl_config SPIRA_RUN="$run_dir" SPIRA_RELEASES="$RELEASES" SPIRA_DOLT_DATA=""
-    env -i PATH="$STUBBIN:$PATH" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$STUBBIN:$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" \
@@ -331,7 +331,7 @@ MAP
 # checkout refresh, which fails here since this fixture carries no real release workspace.
 tl_config SPIRA_RUN="$QRUN" SPIRA_DB="$TMP/qland-no-db" SPIRA_HOME_REPO=qfixture \
     SPIRA_REPO_MAP="$QSH/repo-map" SPIRA_RELEASES="" SPIRA_DOLT_DATA=""
-q_out="$(env -i PATH="$PATH" \
+q_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" \
     HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$QSH" PATH="$QSH:$PATH" \
@@ -392,7 +392,7 @@ run_lq() {
     # and thread SPIRA_TOML through env -i, which clears it.
     tl_config SPIRA_HOME_REPO=lfixq SPIRA_RUN="$LRUN" SPIRA_QUEUE_DIR="$LQDIR" \
         SPIRA_REPO_MAP="$LRMAP" SPIRA_RELEASES="$LRELEASES" SPIRA_DB="$TMP/local-no-db"
-    env -i $(lcfix_env) PATH="$PATH" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" $(lcfix_env) PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$LSH" PATH="$LSH:$PATH" \
@@ -408,7 +408,7 @@ run_lskew() {
     # SPIRA_RUN/SPIRA_REPO_MAP/SPIRA_RELEASES are registered keys (per Ryan 2026-10-05,
     # ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
     tl_config SPIRA_RUN="$LRUN" SPIRA_REPO_MAP="$LRMAP" SPIRA_RELEASES="$LRELEASES"
-    env -i PATH="$PATH" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$LSH" PATH="$LSH:$PATH" \

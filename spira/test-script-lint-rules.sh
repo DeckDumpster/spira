@@ -15,7 +15,7 @@ R="$TMP/repo"
 mkdir -p "$R/spira"
 git init -q -b main "$R"
 commit() { git -C "$R" add -A && git -C "$R" -c user.email=t@t -c user.name=t commit -q -m "$1"; }
-lint() { env -i PATH="$PATH" HOME="$TMP" spira-lint --root "$R" --only "$1" 2>&1; }
+lint() { env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" spira-lint --root "$R" --only "$1" 2>&1; }
 
 printf '#!/usr/bin/env bash\n# tier: T1\n# covers: spira/real.sh spira/*.sh UC-area-01\n#   spira/ghost.sh\nset -uo pipefail\n' > "$R/spira/test-a.sh"
 printf '#!/usr/bin/env bash\ntrue\n' > "$R/spira/real.sh"

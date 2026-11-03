@@ -160,7 +160,7 @@ run_trigger() {
         SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-spira}" \
         SPIRA_MIMIR_LANDING_INTERVAL="${SPIRA_MIMIR_LANDING_INTERVAL:-25}" \
         SPIRA_MIMIR_MAX_GAP_SECONDS="${SPIRA_MIMIR_MAX_GAP_SECONDS:-10800}"
-    env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
         SPIRA_HOME="$HERE" \
         SPIRA_CONF="$NONE" \
         SPIRA_TOML="$SPIRA_TOML" \
@@ -307,7 +307,7 @@ tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO_MAP="$NONMATCH_MAP" SPIRA_MIMIR_LABEL="mimir-sweep" \
     SPIRA_SCOPE_LABEL="spira" SPIRA_MIMIR_LANDING_INTERVAL=2 \
     SPIRA_MIMIR_MAX_GAP_SECONDS=9999999999
-out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
+out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
         SPIRA_CONF="$NONE" \
@@ -392,7 +392,7 @@ printf '0\n' > "$WATERMARK_FILE"
 tl_config SPIRA_BD="$FAIL_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO_MAP="$SELFMAP" SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MIMIR_MAX_GAP_SECONDS=0 SPIRA_MIMIR_LANDING_INTERVAL=999
-out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
+out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
         SPIRA_CONF="$NONE" \
@@ -415,7 +415,7 @@ printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO_MAP="$SELFMAP" SPIRA_SCOPE_LABEL="myproject" SPIRA_MIMIR_LABEL="retro" \
     SPIRA_MIMIR_MAX_GAP_SECONDS=0 SPIRA_MIMIR_LANDING_INTERVAL=999
-out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
+out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
         SPIRA_CONF="$NONE" \
@@ -442,7 +442,7 @@ printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO_MAP="$SELFMAP" SPIRA_SCOPE_LABEL="" SPIRA_MIMIR_LABEL="mimir-sweep" \
     SPIRA_MIMIR_MAX_GAP_SECONDS=0 SPIRA_MIMIR_LANDING_INTERVAL=999
-out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
+out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
         SPIRA_CONF="$NONE" \
@@ -509,7 +509,7 @@ printf 'home-b4t | %s | push | origin/main | | true | self\nnoremote|%s|\ncounte
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO_MAP="$REPOMAP_B4T" SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MIMIR_MAX_GAP_SECONDS=9999999999 SPIRA_MIMIR_LANDING_INTERVAL=2
-out_b4t="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
+out_b4t="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
     SPIRA_CONF="$NONE" \
@@ -585,7 +585,7 @@ printf 'home-3ljk | %s | push | origin/main | | true | self\ngitea-repo|%s|\n' \
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO_MAP="$REPOMAP_3LJK" SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MIMIR_MAX_GAP_SECONDS=9999999999 SPIRA_MIMIR_LANDING_INTERVAL=2
-out_3ljk="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:/usr/lib/git-core:$PATH" \
+out_3ljk="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:/usr/bin:/bin:/usr/lib/git-core:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
     SPIRA_CONF="$NONE" \
@@ -624,7 +624,7 @@ printf 'land-form | %s | push | origin/main | | true | self\n' "$LAND_FORM_REPO"
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO_MAP="$T/map-land-form" SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MIMIR_MAX_GAP_SECONDS=9999999999 SPIRA_MIMIR_LANDING_INTERVAL=2
-out_lf="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
+out_lf="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
     SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
@@ -656,7 +656,7 @@ printf 'merge-form | %s | push | origin/main | | true | self\n' "$MERGE_FORM_REP
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO_MAP="$T/map-merge-form" SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MIMIR_MAX_GAP_SECONDS=9999999999 SPIRA_MIMIR_LANDING_INTERVAL=2
-out_mf="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
+out_mf="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
     SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
@@ -691,7 +691,7 @@ printf 'dedup-form | %s | push | origin/main | | true | self\n' "$DEDUP_FORM_REP
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO_MAP="$T/map-dedup-form" SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MIMIR_MAX_GAP_SECONDS=9999999999 SPIRA_MIMIR_LANDING_INTERVAL=2
-out_dd="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
+out_dd="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
     SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
@@ -707,7 +707,7 @@ git -C "$DEDUP_FORM_REPO" rev-parse HEAD > "$DEDUP_FORM_REPO/.git/refs/remotes/o
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO_MAP="$T/map-dedup-form" SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MIMIR_MAX_GAP_SECONDS=9999999999 SPIRA_MIMIR_LANDING_INTERVAL=2
-out_dd2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
+out_dd2="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
     SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
@@ -756,7 +756,7 @@ tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
     SPIRA_HOME_REPO="home-wpjm" SPIRA_REPO_MAP="$REPOMAP_WPJM" \
     SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MIMIR_MAX_GAP_SECONDS=9999999999 SPIRA_MIMIR_LANDING_INTERVAL=2
-out_wpjm="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
+out_wpjm="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
     SPIRA_CONF="$NONE" \
@@ -776,7 +776,7 @@ tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
     SPIRA_HOME_REPO="home-wpjm" SPIRA_REPO_MAP="$REPOMAP_WPJM" \
     SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MIMIR_MAX_GAP_SECONDS=9999999999 SPIRA_MIMIR_LANDING_INTERVAL=3
-out_wpjm2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
+out_wpjm2="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
     SPIRA_CONF="$NONE" \
@@ -811,7 +811,7 @@ printf '0\n' > "$WATERMARK_FILE"
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO_MAP="$NOLANEMAP" SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MIMIR_MAX_GAP_SECONDS=0 SPIRA_MIMIR_LANDING_INTERVAL=0
-out_ng="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
+out_ng="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
     SPIRA_CONF="$NONE" \
@@ -830,7 +830,7 @@ printf '0\n' > "$WATERMARK_FILE"
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO_MAP="$SELFMAP" SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MIMIR_MAX_GAP_SECONDS=0 SPIRA_MIMIR_LANDING_INTERVAL=0
-out_lp="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
+out_lp="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
     SPIRA_CONF="$NONE" \

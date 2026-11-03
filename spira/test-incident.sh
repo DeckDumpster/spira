@@ -85,7 +85,7 @@ inc() {
             *) extra+=("$_a") ;;
         esac
     done
-    env -i HOME="$HOME" PATH="$PATH" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$HOME" PATH="$PATH" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/nonexistent.conf" \
         SPIRA_SPOOL="$SPOOL" \
@@ -192,7 +192,7 @@ _cross_ref="incident:cross-repo-dedup-test"
 _cross_env() {
     tl_config SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$REPO_MAP" \
         SPIRA_RUN="$RUN" SPIRA_MAIL="$TMP/mail"
-    env -i HOME="$HOME" PATH="$PATH" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$HOME" PATH="$PATH" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/nonexistent.conf" \
         SPIRA_SPOOL="$SPOOL" \

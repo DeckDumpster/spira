@@ -54,7 +54,7 @@ printf '# empty\n' > "$HARNESS/spira/watchers"
 # override of the same name (e.g. SPIRA_CONF=...) wins, matching `env`'s last-one-wins rule.
 conf_val() {
     local key="$1"; shift
-    env -i PATH="$PATH" HOME="$T/home" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$T/home" \
         SPIRA_CONF=/nonexistent\
         SPIRA_WATCHERS="$HARNESS/spira/watchers" \
         "$@" \
@@ -153,7 +153,7 @@ BOOT_HOME="$T/boot-home"
 mkdir -p "$BOOT_HOME/.cargo/bin"
 printf '#!/bin/sh\nexit 0\n' > "$BOOT_HOME/.cargo/bin/cargo"
 chmod +x "$BOOT_HOME/.cargo/bin/cargo"
-if env -i PATH=/usr/bin:/bin HOME="$BOOT_HOME" SPIRA_CONF=/nonexistent \
+if env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH=/usr/bin:/bin HOME="$BOOT_HOME" SPIRA_CONF=/nonexistent \
     bash -c ". '$HARNESS/spira/conf.sh'" >"$T/boot.out" 2>&1
 then
     bad "conf.sh refuses when spira-config is unresolvable, even with no config file" \
@@ -176,7 +176,7 @@ echo "is unresolvable:"
 # not a config file exists — the BOOTSTRAP case above hits the exact same guard; this one
 # just sets SPIRA_TOML explicitly, to show the guard does not depend on there being no
 # config to read.
-if env -i PATH="/usr/bin:/bin" HOME="$T/home" SPIRA_TOML="$HERE/testlib/complete.toml:$FIXTURE" \
+if env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="/usr/bin:/bin" HOME="$T/home" SPIRA_TOML="$HERE/testlib/complete.toml:$FIXTURE" \
     bash -c ". '$HARNESS/spira/conf.sh'" >"$T/unresolvable.out" 2>&1
 then
     bad "conf.sh refuses when spira-config is unresolvable and a config file exists" \

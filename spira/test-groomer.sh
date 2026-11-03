@@ -100,7 +100,7 @@ chmod +x "$T/lcshow/spira-lc"
 SPIRA_LC_BIN="$T/lcshow/spira-lc"; export SPIRA_LC_BIN
 run_groomer() {
     tl_config SPIRA_BD="$STUB_BD"
-    env -i SPIRA_TOML="$SPIRA_TOML" HOME="$T" PATH="$PATH" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_TOML="$SPIRA_TOML" HOME="$T" PATH="$PATH" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_CONF="$NONE" \
         SPIRA_HOME="$STUB_HOME" \
         BD_LOG_PATH="$BD_LOG" \

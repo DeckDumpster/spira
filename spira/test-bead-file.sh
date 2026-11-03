@@ -120,7 +120,7 @@ tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/db" SPIRA_REPO_MAP="$T/repo-map" \
 run_bead() { run_bead_raw "$@" 2>&1; }
 run_bead_raw() {
     : > "$BD_LOG"; : > "$LC_LOG"
-    env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
         BD_LOG_PATH="$BD_LOG" \

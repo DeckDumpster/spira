@@ -27,7 +27,7 @@ echo "test-gate-sweep.sh — gate-sweep.sh removes stale gate worktrees"
 
 run_sweep() {
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB_NONE"
-    env -i HOME="$HOMEDIR" PATH="$SH:$TOOLS:/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$HOMEDIR" PATH="$SH:$TOOLS:/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" \
         bash "$SH/gate-sweep.sh" "$REPO" "$@" 2>&1
 }
@@ -100,7 +100,7 @@ PS_LIVE="$TMP/ps-live.txt"
 
 run_sweep_batch() {
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB_NONE" SPIRA_SUITE_TIMEOUT="${1}"
-    env -i HOME="$HOMEDIR" PATH="$SH:$TOOLS:/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$HOMEDIR" PATH="$SH:$TOOLS:/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" \
         SPIRA_PODMAN_PS_FILE="${2}" \
         SPIRA_BATCH_HOME_GLOB="/tmp/spira-batch-sweeptest-*" \

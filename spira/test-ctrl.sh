@@ -41,7 +41,7 @@ CTRL_FILE="$TMP/control"
 # SPIRA_SYSTEMCTL is set to the stub for divergence tests.
 tl_config SPIRA_RUN="$TMP/run" SPIRA_CTRL="$CTRL_FILE" SPIRA_INSTANCE=prod
 ctrl() {
-    env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" \
         SPIRA_SYSTEMCTL="$TMP/sc" \

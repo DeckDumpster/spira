@@ -299,7 +299,7 @@ run_deploy() {
     done
     unset _a in_args
     > "$CALL_LOG" 2>/dev/null; > "$SC_LOG" 2>/dev/null; > "$DOCTOR_CNT" 2>/dev/null
-    env -i \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
         "PATH=$BIN:$PATH" \
         "HOME=$HOME" \
         "SPIRA_HOME=$HERE" \
@@ -1164,7 +1164,7 @@ chmod +x "$RDONLY_BIN_OLD/skew.sh"
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 > "$CALL_LOG"
     tl_config SPIRA_PATH="$RDONLY_BIN_OLD" SPIRA_DB="/nonexistent-spira-db" SPIRA_RUN="$RUN_DIR" SPIRA_RELEASES="$RELEASES" SPIRA_FORGE_REPO="testowner/testrepo" SPIRA_INSTANCE="prod"
-_ff_out="$(env -i \
+_ff_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
     "PATH=$RDONLY_BIN_OLD:$PATH" \
     "HOME=$HOME" \
     "SPIRA_HOME=$HERE" \
@@ -1201,7 +1201,7 @@ want "rdonly/fail-first: skew triggered rollback" "skew" "$_ff_out"
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 > "$CALL_LOG"
     tl_config SPIRA_PATH="$BIN" SPIRA_DB="/nonexistent-spira-db" SPIRA_RUN="$RUN_DIR" SPIRA_RELEASES="$RELEASES" SPIRA_FORGE_REPO="testowner/testrepo" SPIRA_INSTANCE="prod"
-_rdonly_out="$(env -i \
+_rdonly_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
     "PATH=$BIN:$PATH" \
     "HOME=$HOME" \
     "SPIRA_HOME=$HERE" \
@@ -1525,7 +1525,7 @@ rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 # "nothing configured" case has to clear it back by hand rather than simply omitting it.
 tl_config SPIRA_PATH="$BIN" SPIRA_DB="/nonexistent-spira-db" SPIRA_RUN="$RUN_DIR" \
     SPIRA_RELEASES="$RELEASES" SPIRA_INSTANCE="prod" SPIRA_FORGE_REPO=""
-_tb_out="$(env -i \
+_tb_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
     "PATH=$BIN:$PATH" \
     "HOME=$HOME" \
     "SPIRA_HOME=$HERE" \
@@ -1559,7 +1559,7 @@ want "tarball/no-forge-repo: mentions SPIRA_FORGE_REPO" "SPIRA_FORGE_REPO" "$_tb
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 _pub_json="[{\"tagName\":\"$NEW_TAG\",\"isDraft\":false}]"
     tl_config SPIRA_PATH="$BIN" SPIRA_DB="/nonexistent-spira-db" SPIRA_RUN="$RUN_DIR" SPIRA_RELEASES="$RELEASES" SPIRA_FORGE_REPO="testowner/testrepo" SPIRA_INSTANCE="prod"
-_tb_out="$(env -i \
+_tb_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
     "PATH=$BIN:$PATH" \
     "HOME=$HOME" \
     "SPIRA_HOME=$HERE" \
@@ -1594,7 +1594,7 @@ want "tarball/latest: says dry-run"        "dry-run"  "$_tb_out"
 # Explicit tag: SPIRA_FORGE_REPO set, SPIRA_REPO has no .git — asset must be found.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
     tl_config SPIRA_PATH="$BIN" SPIRA_DB="/nonexistent-spira-db" SPIRA_RUN="$RUN_DIR" SPIRA_RELEASES="$RELEASES" SPIRA_FORGE_REPO="testowner/testrepo" SPIRA_INSTANCE="prod"
-_tb_out="$(env -i \
+_tb_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
     "PATH=$BIN:$PATH" \
     "HOME=$HOME" \
     "SPIRA_HOME=$HERE" \
@@ -1688,7 +1688,7 @@ rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 > "$CALL_LOG"
 tl_config SPIRA_DB="/nonexistent-spira-db" SPIRA_RUN="$RUN_DIR" SPIRA_RELEASES="$RELEASES" \
     SPIRA_INSTANCE="prod" SPIRA_GH_REPO=""
-_out="$(env -i \
+_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
     "PATH=$ART_BIN:$PATH" \
     "HOME=$HOME" \
     "SPIRA_HOME=$HERE" \
@@ -1719,7 +1719,7 @@ rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 > "$CALL_LOG"
 tl_config SPIRA_PATH="$ART_BIN" SPIRA_DB="/nonexistent-spira-db" SPIRA_RUN="$RUN_DIR" \
     SPIRA_RELEASES="$RELEASES" SPIRA_GH_REPO="owner/spira" SPIRA_INSTANCE="prod"
-_out="$(env -i \
+_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
     "PATH=$ART_BIN:$PATH" \
     "HOME=$HOME" \
     "SPIRA_HOME=$HERE" \
@@ -1752,7 +1752,7 @@ rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 > "$CALL_LOG"
 tl_config SPIRA_PATH="$ART_BIN" SPIRA_DB="/nonexistent-spira-db" SPIRA_RUN="$RUN_DIR" \
     SPIRA_RELEASES="$RELEASES" SPIRA_GH_REPO="" SPIRA_INSTANCE="prod"
-_out="$(env -i \
+_out="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
     "PATH=$ART_BIN:$PATH" \
     "HOME=$HOME" \
     "SPIRA_HOME=$HERE" \

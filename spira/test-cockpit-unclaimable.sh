@@ -60,7 +60,7 @@ run_core() {
         SPIRA_RUNES="builder ops" SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci SPIRA_BD="$bd_path" \
         SPIRA_RUNES_DIR="$HERE/runes"
-    env -i PATH="$LC:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$LC:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         cockpit-collect probe core 2>/dev/null

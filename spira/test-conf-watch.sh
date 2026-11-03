@@ -59,7 +59,7 @@ run_loom() {      # run_loom <window> <marker>
     # captures and the later real touch can land in the same integer mtime second and the
     # change goes unnoticed.
     touch -d "3 seconds ago" "$_TL_CONF_OVERRIDE"
-    timeout "$1" env -i PATH="$FAKE_DIR:$BASE_PATH" HOME="$RUN" LC_ALL=C.UTF-8 \
+    timeout "$1" env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$FAKE_DIR:$BASE_PATH" HOME="$RUN" LC_ALL=C.UTF-8 \
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_GOAL=sp-test \
         ARMED_MARKER="${2:-}" \

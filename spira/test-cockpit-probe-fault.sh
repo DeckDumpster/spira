@@ -186,7 +186,7 @@ printf "SP_SELF_STARVED_W='2'\nSP_SELF_STARVED_LAST='7m ago'\n" >> "$FIXDIR/self
 # ---- Render every fixture in ONE health.sh process --------------------------------------
 
 tl_config SPIRA_RUN="$PD/repo/.runtime/spira" SPIRA_SNAP_STALE_S=60
-RENDER_ALL="$(env -i PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
+RENDER_ALL="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$PD/repo" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_SYSTEMCTL="$PD/bin/mock-systemctl" \
@@ -439,7 +439,7 @@ run_probe() {
     local sub="$1" bd_bin="$2"; shift 2
     tl_config SPIRA_RUN="$TMP/run" SPIRA_BD="$TMP/bin/$bd_bin" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map"
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         BD_TIMEOUT=1 \

@@ -46,7 +46,7 @@ lines() {  # lines <dir> <covered>
     printf '{"data":[{"totals":{"lines":{"count":10,"covered":%s}},"files":[{"filename":"/vm/work/src/x.rs","summary":{"lines":{"count":10,"covered":%s}}}]}]}' "$2" "$2" > "$1/coverage-lines.json"
     echo /vm/work > "$1/coverage-root"
 }
-run() { env -i PATH="$PATH" HOME="$TMP" SPIRA_METRICS_ENDPOINT= bash "$HERE/coverage-round.sh" "$TREE" "$@" 2>&1; }
+run() { env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP" SPIRA_METRICS_ENDPOINT= bash "$HERE/coverage-round.sh" "$TREE" "$@" 2>&1; }
 git -C "$TREE" config user.email t@t; git -C "$TREE" config user.name t
 
 suite "UC-dispatch-01"

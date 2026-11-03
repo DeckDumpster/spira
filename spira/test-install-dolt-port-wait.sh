@@ -170,7 +170,7 @@ mkdir -p "$FAKE_HOME" "$FAKE_UNITDIR" "$FAKE_RUN"
 tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$SPIRA_DIR/watchers" \
     SPIRA_DOLT_DATA="" SPIRA_RUN="$FAKE_RUN" \
     SPIRA_PROD="$SPIRA_DIR" SPIRA_COCKPIT="$COCKPIT_DIR" SPIRA_BD="$MOCK_BIN/bd"
-_rendered="$(env -i \
+_rendered="$(env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
     SPIRA_TOML="$SPIRA_TOML" \
     "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
     "HOME=$FAKE_HOME" \
@@ -221,7 +221,7 @@ run_install() {
         fi
     done
     unset _kv _k
-    env -i \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
         SPIRA_TOML="$SPIRA_TOML" \
         "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
         "HOME=$FAKE_HOME" \

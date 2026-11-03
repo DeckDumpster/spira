@@ -29,7 +29,7 @@ printf '#!/usr/bin/env bash\necho fixture\n' > "$TMP/bins/fixture-bin"
 chmod +x "$TMP/bins/fixture-bin"
 
 run_tarball() {
-    env -i PATH="$PATH" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null \
+    env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" PATH="$PATH" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null \
         GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
         bash "$HERE/build-tarball.sh" "$@" 2>&1
 }

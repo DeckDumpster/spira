@@ -19,7 +19,7 @@ gate_fixture_init() {
     MAP="$tmp/repo-map"; HOMEDIR="$tmp/home"; SPIRA_CONF_NONE="$tmp/nonexistent.conf"
     SPIRA_DB_NONE="$tmp/nonexistent-db"; GATELOG="$tmp/gate.log"; VDIR="$tmp/verdicts"
     mkdir -p "$RUN/worktree" "$HOMEDIR" "$SH"
-    # The gate is the Rust binary gate.sh execs by name (sp-0tpcs, sp-gypjk). env -i drops
+    # The gate is the Rust binary gate.sh execs by name (sp-0tpcs, sp-gypjk). env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" drops
     # the suite's PATH, so the run's PATH is rebuilt from it: the fixture's own spira/ copy
     # first (so a sibling the copied gate.sh names is the copy), then the directory the
     # suite's PATH resolves `gate` in — the tree under test's build.
@@ -59,7 +59,7 @@ gate_fixture_branch() {
 # gate_fixture_run <branch> <repo-name> [VAR=VAL ...] — the copied gate.sh, in the fixed env.
 # The fixed config (and any REGISTERED VAR=VAL override, spira/conf.d/<VAR>) is a layer for
 # THIS call only (tl_layer), so it never persists into the rest of the suite; anything else
-# rides the env -i prefix. SPIRA_DB names a store that cannot exist: a branch that cites a
+# rides the env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" prefix. SPIRA_DB names a store that cannot exist: a branch that cites a
 # bead is judged against an unreadable store unless the caller declares a real one.
 gate_fixture_run() {
     local br="$1" repo="$2"; shift 2

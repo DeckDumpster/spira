@@ -29,7 +29,7 @@ file_incident() {  # file_incident <ref> <title> <payload> [VAR=val ...]
     local ref="$1" title="$2" payload="$3"; shift 3
     tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_HOME_REPO="$HOME_REPO"
     printf '%s' "$payload" | \
-        env -i HOME="$HOME" PATH="$PATH" \
+        env -i SPIRA_RELEASE="${SPIRA_RELEASE:-}" HOME="$HOME" PATH="$PATH" \
         STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH" \
