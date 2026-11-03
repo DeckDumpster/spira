@@ -75,9 +75,15 @@ enum Fetch {
 
 /// Seconds since the remote-tracking ref last moved; refused when no reflog says.
 fn tip_age(repo: &Path, tracking: &str) -> Result<u64, String> {
-    let last = git_output(repo, &["log", "-g", "-1", "--date=unix", "--format=%gd", tracking]).ok_or("the forge fetch timed out and no earlier fetch left a tip")?;
-    let at: u64 = last.trim().rsplit_once('{').and_then(|(_, t)| t.strip_suffix('}')).and_then(|t| t.parse().ok()).ok_or("the forge fetch timed out and the last tip's age is unreadable")?;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_secs();
+    tip_age_of(git_output(repo, &["log", "-g", "-1", "--date=unix", "--format=%gd", tracking]), now)
+}
+
+/// `last` is the tracking ref's newest reflog entry (`%gd`, unix date), absent when no fetch
+/// ever moved it: a repo never fetched has no tip to be stale against, so it is refused.
+fn tip_age_of(last: Option<String>, now: u64) -> Result<u64, String> {
+    let last = last.ok_or("the forge fetch timed out and no earlier fetch left a tip")?;
+    let at: u64 = last.trim().rsplit_once('{').and_then(|(_, t)| t.strip_suffix('}')).and_then(|t| t.parse().ok()).ok_or("the forge fetch timed out and the last tip's age is unreadable")?;
     Ok(now.saturating_sub(at))
 }
 
@@ -119,4 +125,20 @@ fn arrival(repo: &Path, base: &str, forge_tip: &str, landing_tip: &str) -> Resul
     // The landing ref only advances, so containment is monotone along its reflog: bisect, one git call per step.
     let first = entries.partition_point(|(tip, _)| !is_ancestor(repo, &oldest, tip));
     entries.get(first).map(|(_, secs)| *secs).ok_or_else(|| "no reflog entry of the landing ref contains the oldest unpublished commit".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_timed_out_fetch_of_a_repo_never_fetched_is_refused_naming_that_cause() {
+        assert_eq!(tip_age_of(None, 1_000), Err("the forge fetch timed out and no earlier fetch left a tip".into()));
+    }
+
+    #[test]
+    fn a_timed_out_fetch_with_an_earlier_tip_is_measured_against_it_with_its_age() {
+        assert_eq!(tip_age_of(Some("refs/remotes/origin/main@{900}\n".into()), 1_000), Ok(100));
+        assert_eq!(tip_age_of(Some("garbage".into()), 1_000), Err("the forge fetch timed out and the last tip's age is unreadable".into()));
+    }
 }

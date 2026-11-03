@@ -677,18 +677,8 @@ impl World {
 
     /// `Err` carries the verb's own refusal; `Ok(None)` is a repo declared to publish nowhere.
     fn unpublished(&self, name: &str) -> Result<Option<Read>, String> {
-        let out = lc_call_within(&self.lc_socket, &["unpublished", name], UNPUBLISHED_WAIT).map_err(|e| e.0.split_whitespace().collect::<Vec<_>>().join(" "))?;
-        let v: Value = serde_json::from_str(&out).map_err(|e| format!("unreadable answer: {e}"))?;
-        if v["declared_unpublished"] == true {
-            return Ok(None);
-        }
-        let count = v["count"].as_u64().ok_or("the answer has no count")?;
-        let arrival = match (count, &v["oldest_arrival"]) {
-            (0, _) => None,
-            (_, a) => Some(a.as_u64().ok_or("the answer has no arrival for a nonzero count")?),
-        };
-        let forge_tip_age_secs = if v["stale"] == true { v["forge_tip_age_secs"].as_u64() } else { None };
-        Ok(Some(Read::Measured { count, arrival, forge_tip_age_secs }))
+        let out = lc_call_within(&self.lc_socket, &["unpublished", name], UNPUBLISHED_WAIT);
+        publish_backlog::read_of(out.as_deref().map_err(|e| e.0.as_str()))
     }
 
     pub fn view_snapshot(&self, input: &str) -> Result<String, String> {

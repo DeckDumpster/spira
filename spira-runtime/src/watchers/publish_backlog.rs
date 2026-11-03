@@ -108,6 +108,24 @@ impl PublishBacklog {
     }
 }
 
+/// What one repo's `spira-lc unpublished` call reads as, from the verb's answer or its refusal.
+/// `Err` carries the refusal's own cause, whitespace folded onto one line; `Ok(None)` is a repo
+/// declared to publish nowhere. A forge tip's age is kept only when the verb marked it stale.
+pub fn read_of(answer: Result<&str, &str>) -> Result<Option<Read>, String> {
+    let out = answer.map_err(|e| e.split_whitespace().collect::<Vec<_>>().join(" "))?;
+    let v: serde_json::Value = serde_json::from_str(out).map_err(|e| format!("unreadable answer: {e}"))?;
+    if v["declared_unpublished"] == true {
+        return Ok(None);
+    }
+    let count = v["count"].as_u64().ok_or("the answer has no count")?;
+    let arrival = match (count, &v["oldest_arrival"]) {
+        (0, _) => None,
+        (_, a) => Some(a.as_u64().ok_or("the answer has no arrival for a nonzero count")?),
+    };
+    let forge_tip_age_secs = if v["stale"] == true { v["forge_tip_age_secs"].as_u64() } else { None };
+    Ok(Some(Read::Measured { count, arrival, forge_tip_age_secs }))
+}
+
 impl Handler for PublishBacklog {
     fn interests(&self) -> &[EventKindTag] {
         &[TICK, EFFECT_SUCCEEDED]
@@ -215,5 +233,27 @@ mod tests {
         let (c, _) = w.decide(&Carry::default(), &snap(Read::Blind("fetch timed out".into())), NOW);
         let (_, say) = w.decide(&c, &snap(measured(0, 0)), NOW + 125);
         assert_eq!(say, ["SIGHTED r: the backlog watcher can measure again after 125s blind"]);
+    }
+
+    #[test]
+    fn a_stale_answer_carries_its_forge_tip_age_and_a_fresh_one_does_not() {
+        let stale = r#"{"forge_tip":"a","landing_tip":"b","count":2,"oldest_arrival":900,"stale":true,"forge_tip_age_secs":777}"#;
+        assert_eq!(read_of(Ok(stale)), Ok(Some(Read::Measured { count: 2, arrival: Some(900), forge_tip_age_secs: Some(777) })));
+        let fresh = r#"{"forge_tip":"a","landing_tip":"a","count":0,"oldest_arrival":null,"forge_tip_age_secs":777}"#;
+        assert_eq!(read_of(Ok(fresh)), Ok(Some(Read::Measured { count: 0, arrival: None, forge_tip_age_secs: None })));
+    }
+
+    #[test]
+    fn a_refusal_reads_as_its_own_cause_on_one_line() {
+        let refused = "unpublished remarkable-pipeline: the forge fetch timed out\n  and no earlier fetch left a tip\n";
+        assert_eq!(read_of(Err(refused)), Err("unpublished remarkable-pipeline: the forge fetch timed out and no earlier fetch left a tip".into()));
+    }
+
+    #[test]
+    fn an_answer_the_watcher_cannot_read_is_named_never_a_zero() {
+        assert_eq!(read_of(Ok(r#"{"declared_unpublished":true}"#)), Ok(None));
+        assert_eq!(read_of(Ok(r#"{"count":3,"oldest_arrival":null}"#)), Err("the answer has no arrival for a nonzero count".into()));
+        assert_eq!(read_of(Ok(r#"{"oldest_arrival":null}"#)), Err("the answer has no count".into()));
+        assert!(read_of(Ok("not json")).unwrap_err().starts_with("unreadable answer: "));
     }
 }
