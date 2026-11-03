@@ -308,7 +308,7 @@ fn notify_dwarves(notifier: &mut spira_world::notice::Notifier, what: &str, elap
     });
 }
 
-const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--until WHAT] [--owner O] [--owner-pid PID | --owner-unit UNIT] [--reboot] [--timeout SECS | --deadline SECS] | drain-check | resume | start [--work|--observability|--maintenance|--all] | pause --repo R [--lanes claims,rounds,publish] --reason WHY --until COND [--owner O] | pause --reserve BEADS --reason WHY [--owner O] | unpause --repo R [--lanes L] | unpause --reserve BEADS | status | guard}";
+const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--until WHAT] [--owner O] [--owner-pid PID | --owner-unit UNIT] [--reboot] [--timeout SECS | --deadline SECS] | drain-check | resume | start [--work|--observability|--maintenance|--all] | pause --repo R [--lanes claims,rounds,publish] --reason WHY --until COND [--owner O] | pause --reserve BEADS --reason WHY [--owner O] | unpause --repo R [--lanes L] | unpause --reserve BEADS | status | guard | freeze-store | thaw-store}";
 
 fn cmd_stop(args: &[String]) -> i32 {
     let mut why = String::new();
@@ -1106,6 +1106,29 @@ fn cmd_guard() -> i32 {
     }
 }
 
+type StoreVerb = fn(&spira_world::freeze::Store, &mut dyn spira_world::freeze::Units) -> Result<Vec<String>, String>;
+
+fn cmd_store(verb: StoreVerb) -> i32 {
+    if let Some(e) = sysctl::bus_unreachable() {
+        eprintln!("refused: {e}");
+        return 1;
+    }
+    let dir = spira_world::freeze::runtime_unit_dir(spira_config::resolve::current_uid());
+    let store = spira_world::freeze::Store::new(dir, &instance_or_die());
+    match verb(&store, &mut spira_world::freeze::Systemd) {
+        Ok(lines) => {
+            for l in lines {
+                println!("{l}");
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("refused: {e}");
+            1
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let cmd = args.first().cloned().unwrap_or_else(|| "status".to_string());
@@ -1121,6 +1144,8 @@ fn main() {
         "unpause" => cmd_unpause(rest),
         "status" => cmd_status(),
         "guard" => cmd_guard(),
+        "freeze-store" => cmd_store(spira_world::freeze::freeze),
+        "thaw-store" => cmd_store(spira_world::freeze::thaw),
         // `TIMER_PRIORITY`, one base name per line — the seam watchtower.sh's
         // disabled-timer-check reads instead of `WORLD_LIB=1 . world.sh`, which stopped
         // being possible the moment world.sh became a binary (sp-6onps).
