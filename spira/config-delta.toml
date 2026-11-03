@@ -50,6 +50,7 @@ forge_workflow = "Gate"
 forge_workflows = ""
 hypervisor_mem_mib = 0
 round_vm_mem_mib = 0
+round_vm_disk_need_gib = 40
 round_lease_ttl_secs = 300
 round_phase_deadline_secs_boot = 300
 round_phase_deadline_secs_build = 600
