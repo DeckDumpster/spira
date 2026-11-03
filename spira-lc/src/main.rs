@@ -572,7 +572,11 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     let cached = args.iter().any(|a| a == "--cached");
     let ids = flag(args, "--ids");
     let repo = flag(args, "--repo");
-    if let Some(mem) = conn.live() {
+    let page = match spira_lc::page(args) {
+        Ok(p) => p,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: list: {e}")),
+    };
+    if let Some(mem) = conn.live().filter(|_| page.is_none()) {
         let f = live::filter_from_flags(state.as_deref(), ids.as_deref(), hold.as_deref(), express, repo.as_deref());
         let beads = match (live, repo.is_some()) {
             (true, false) => mem.list(&f),
@@ -610,6 +614,9 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
         if let Some(r) = &repo {
             c.push(format!("{col}repo = '{}'", rows::escape(r)));
         }
+        if let Some((Some(after), _)) = &page {
+            c.push(format!("{col}bead_id > '{}'", rows::escape(after)));
+        }
         if live {
             c.push(format!("({col}state NOT IN ({TERMINAL_STATES}) OR {col}updated_at >= {})", db::now_epoch() - LIVE_WINDOW_SECS));
         }
@@ -617,11 +624,15 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     };
     let where_clause = filters("").replacen(" AND ", " WHERE ", 1);
     let waiting_where = filters("w.").replacen(" AND ", " WHERE ", 1);
+    let limit = match &page {
+        Some((_, Some(n))) => format!(" LIMIT {n}"),
+        _ => String::new(),
+    };
     // reason/updated_at: a bulk caller bucketing REWORK by cause or ageing a row needs both
     // without a second round trip per bead.
     let sql = format!(
         "SELECT bead_id, state, tip, holder, persona, lease_until, holds, reason, updated_at, version, stack, stack_depth, since, express, dwarf_phase, disposition, disposition_note, ejected_red_tip, sifted_tip, title, priority, repo, claim_verdict, claim_blocker, claim_runes, claim_at, blockers.blocked_by FROM bead \
-         LEFT JOIN {} ON blockers.waiting = bead.bead_id{where_clause} ORDER BY bead_id",
+         LEFT JOIN {} ON blockers.waiting = bead.bead_id{where_clause} ORDER BY bead_id{limit}",
         blockers_join(&waiting_where)
     );
     let mut beads = match conn.query(&sql) {
@@ -644,20 +655,28 @@ fn entered_at_join(machine: &str) -> String {
 
 const BATCHES_SHOWN: usize = 8;
 
-/// The newest batches with their members, ejections and last event time, for the ops pane.
+/// The newest batches with their members, ejections and last event time, for the ops pane;
+/// with `--after`/`--limit`, a page of every batch in id order.
 fn cmd_list_batches(args: &[String], conn: &Conn) -> (i32, String) {
     let q = |sql: String| conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"));
     let run = || -> Result<Vec<Value>, String> {
-        let scope = match (flag(args, "--batch"), flag(args, "--window").and_then(|w| w.parse::<u64>().ok())) {
-            (Some(id), _) => format!(" WHERE batch_id = '{}'", rows::escape(&id)),
+        let page = spira_lc::page(args).map_err(|e| format!("cannot tell: list --batches: {e}"))?;
+        let scope = match (&page, flag(args, "--batch"), flag(args, "--window").and_then(|w| w.parse::<u64>().ok())) {
+            (Some((Some(after), _)), _, _) => format!(" WHERE batch_id > '{}'", rows::escape(after)),
+            (Some(_), _, _) => String::new(),
+            (None, Some(id), _) => format!(" WHERE batch_id = '{}'", rows::escape(&id)),
             // UNIX_TIMESTAMP() is unsigned: `now - w` with a window reaching past the epoch is an
             // out-of-range error, so the window is added to opened_at instead.
-            (None, Some(w)) => format!(" WHERE opened_at + {w} >= UNIX_TIMESTAMP() OR state NOT IN ('LANDED','SETTLED','ABANDONED','DISCARDED')"),
-            (None, None) => String::new(),
+            (None, None, Some(w)) => format!(" WHERE opened_at + {w} >= UNIX_TIMESTAMP() OR state NOT IN ('LANDED','SETTLED','ABANDONED','DISCARDED')"),
+            (None, None, None) => String::new(),
         };
-        let limit = if scope.is_empty() { format!(" LIMIT {BATCHES_SHOWN}") } else { String::new() };
+        let (order, limit) = match &page {
+            Some((_, n)) => ("batch_id", n.map_or(String::new(), |n| format!(" LIMIT {n}"))),
+            None if scope.is_empty() => ("opened_at DESC, batch_id DESC", format!(" LIMIT {BATCHES_SHOWN}")),
+            None => ("opened_at DESC, batch_id DESC", String::new()),
+        };
         let mut batches = q(format!(
-            "SELECT batch_id, repo, state, parent, pr, reason, pass, phase, progress, opened_at, version, head, base, run FROM batch{scope} ORDER BY opened_at DESC, batch_id DESC{limit}"
+            "SELECT batch_id, repo, state, parent, pr, reason, pass, phase, progress, opened_at, version, head, base, run FROM batch{scope} ORDER BY {order}{limit}"
         ))?;
         let ids: Vec<String> = batches
             .iter()

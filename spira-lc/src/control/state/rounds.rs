@@ -521,8 +521,8 @@ fn delete_row<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i3
 /// How many rounds `list --batches` shows when no scope is given, newest first.
 const BATCHES_SHOWN: usize = 8;
 
-/// `list --batches [--batch ID | --window SECS]`: the rounds with their members, ejections,
-/// passes and last event, as the ops pane reads them. A member's title is the planning plane's,
+/// `list --batches [--batch ID | --window SECS | --after ID --limit N]`: the rounds with their
+/// members, ejections, passes and last event, as the ops pane reads them; a page in id order. A member's title is the planning plane's,
 /// joined by the planning reader (`plan::with_planning_fields`).
 pub(super) fn list_batches<B: Backend>(
     store: &Store<B>,
@@ -531,20 +531,33 @@ pub(super) fn list_batches<B: Backend>(
 ) -> (i32, String) {
     let only = flag(args, "--batch");
     let window = flag(args, "--window").and_then(|w| w.parse::<i64>().ok());
+    let page = match spira_lc::page(args) {
+        Ok(p) => p,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: list --batches: {e}")),
+    };
     let read = || -> state_store::Result<Vec<Value>> {
         let mut rounds: Vec<_> = store
             .batches()?
             .into_iter()
             .map(|(_, r)| r.value)
-            .filter(|r| match (&only, window) {
-                (Some(id), _) => &r.row.batch_id == id,
-                (None, Some(w)) => r.opened_at >= call.now - w || !r.row.state.is_terminal(),
-                (None, None) => true,
+            .filter(|r| match (&page, &only, window) {
+                (Some((after, _)), _, _) => after.as_ref().is_none_or(|a| r.row.batch_id > *a),
+                (None, Some(id), _) => &r.row.batch_id == id,
+                (None, None, Some(w)) => r.opened_at >= call.now - w || !r.row.state.is_terminal(),
+                (None, None, None) => true,
             })
             .collect();
-        rounds.sort_by(|a, b| (b.opened_at, &b.row.batch_id).cmp(&(a.opened_at, &a.row.batch_id)));
-        if only.is_none() && window.is_none() {
-            rounds.truncate(BATCHES_SHOWN);
+        match &page {
+            Some((_, limit)) => {
+                rounds.sort_by(|a, b| a.row.batch_id.cmp(&b.row.batch_id));
+                rounds.truncate(limit.unwrap_or(usize::MAX));
+            }
+            None => {
+                rounds.sort_by(|a, b| (b.opened_at, &b.row.batch_id).cmp(&(a.opened_at, &a.row.batch_id)));
+                if only.is_none() && window.is_none() {
+                    rounds.truncate(BATCHES_SHOWN);
+                }
+            }
         }
         let mut out = Vec::new();
         for r in rounds {

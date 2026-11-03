@@ -1,7 +1,9 @@
 //! `admin-parity --old-socket <a> --new-socket <b>`: every read verb the control store serves,
 //! with the same arguments, against the lc-serve on each socket, and the answers diffed.
 //!
-//! The ids come from the old store's own lists; a bead the planning plane types as never having a
+//! The ids come from the old store's own lists, walked in pages keyed by id so no call outgrows
+//! lc-serve's per-request deadline; every per-record verb is asked per id or per page of ids,
+//! and an id only the new store lists is reported. A bead the planning plane types as never having a
 //! record is left out of both sides and named, since the import does not carry it. Answers compare as values, not text: the dolt
 //! path renders every column as a string and a JSON column as JSON text, the control store
 //! renders typed JSON, and the two are the same answer. A difference that `ALLOWED` names is
@@ -36,9 +38,8 @@ pub const ALLOWED: &[Allowed] = &[
 const BEAD_STATES: &str = "OPEN,READY,WORKING,SUBMITTED,CERTIFIED,IN_DELIVERY,REWORK,LANDED,SUPERSEDED,DROPPED,DONE";
 const ASK_STATES: &[&str] = &["OPEN", "ANSWERED", "DEFAULT_TAKEN", "WITHDRAWN"];
 const HOLDS: &[&str] = &["poison", "ask", "wait", "manual"];
-/// Every round ever opened: the window reaches back past any store.
-const ALL_TIME_SECS: &str = "4000000000";
-const TIPS_CHUNK: usize = 200;
+/// Rows per call: a page of a store-wide list, or of ids asked about at once.
+pub const PAGE: usize = 100;
 
 fn argv(a: &[&str]) -> Vec<String> {
     a.iter().map(|s| s.to_string()).collect()
@@ -161,14 +162,36 @@ fn ids_in(out: &str, field: &str) -> Vec<String> {
     rows.iter().filter_map(|r| r.get(field).and_then(Value::as_str)).map(str::to_string).collect()
 }
 
-/// Every call parity makes, given the ids and the old store's event seq.
-fn calls(ids: &Ids, seq: &str) -> Vec<Vec<String>> {
+/// The ids of every row of a store-wide list, read in pages of `page` after the last id seen.
+fn walk(call: &mut dyn FnMut(&[String]) -> (i32, String), list: &[&str], field: &str, page: usize, side: &str) -> Result<Vec<String>, String> {
+    let mut ids: Vec<String> = Vec::new();
+    loop {
+        let mut a = argv(list);
+        a.extend(argv(&["--limit", &page.to_string()]));
+        if let Some(last) = ids.last() {
+            a.extend([String::from("--after"), last.clone()]);
+        }
+        let got = match call(&a) {
+            (0, out) => ids_in(&out, field),
+            (rc, out) => return Err(format!("{} on the {side} store: exit {rc}: {}", a.join(" "), out.trim())),
+        };
+        let ascending = got.windows(2).all(|w| w[0] < w[1]) && ids.last().zip(got.first()).is_none_or(|(last, first)| last < first);
+        if got.len() > page || !ascending {
+            return Err(format!("{} on the {side} store: it does not page by id", a.join(" ")));
+        }
+        let full = got.len() == page;
+        ids.extend(got);
+        if !full {
+            return Ok(ids);
+        }
+    }
+}
+
+/// Every call parity makes, given the ids, the old store's event seq and the page size.
+fn calls(ids: &Ids, seq: &str, page: usize) -> Vec<Vec<String>> {
     let mut out = vec![
-        argv(&["list"]),
         argv(&["list", "--live"]),
         argv(&["list", "--delivery"]),
-        argv(&["list", "--state", BEAD_STATES]),
-        argv(&["list", "--batches", "--window", ALL_TIME_SECS]),
         argv(&["mending", "list"]),
         argv(&["mending", "list", "--live"]),
         argv(&["event-seq", "--since", seq]),
@@ -180,8 +203,11 @@ fn calls(ids: &Ids, seq: &str) -> Vec<Vec<String>> {
         out.push(argv(&["history", id]));
         out.push(argv(&["batches-of", id]));
     }
-    for chunk in ids.beads.chunks(TIPS_CHUNK) {
-        out.push(argv(&["mending", "tips", "--beads", &chunk.join(",")]));
+    for chunk in ids.beads.chunks(page) {
+        let chunk = chunk.join(",");
+        out.push(argv(&["list", "--ids", &chunk]));
+        out.push(argv(&["list", "--state", BEAD_STATES, "--ids", &chunk]));
+        out.push(argv(&["mending", "tips", "--beads", &chunk]));
     }
     for id in &ids.batches {
         out.push(argv(&["show-batch", id]));
@@ -193,22 +219,22 @@ fn calls(ids: &Ids, seq: &str) -> Vec<Vec<String>> {
     out
 }
 
-fn enumerate(call: &mut dyn FnMut(&[String]) -> (i32, String)) -> Result<(Ids, String), String> {
+fn enumerate(call: &mut dyn FnMut(&[String]) -> (i32, String), page: usize) -> Result<(Ids, String), String> {
+    let beads = walk(call, &["list", "--state", BEAD_STATES], "bead_id", page, "old")?;
+    let batches = walk(call, &["list", "--batches"], "batch_id", page, "old")?;
     let mut ask = |a: &[&str]| -> Result<String, String> {
         match call(&argv(a)) {
             (0, out) => Ok(out),
             (rc, out) => Err(format!("{} on the old store: exit {rc}: {}", a.join(" "), out.trim())),
         }
     };
-    let beads = ids_in(&ask(&["list", "--state", BEAD_STATES])?, "bead_id");
-    let batches = ids_in(&ask(&["list", "--batches", "--window", ALL_TIME_SECS])?, "batch_id");
     let mut asks = Vec::new();
     for s in ASK_STATES {
         asks.extend(ids_in(&ask(&["list-asks", "--state", s])?, "ask_id"));
     }
     let seq = parsed(&ask(&["event-seq"])?)["seq"].to_string().trim_matches('"').to_string();
     let mut no_record = BTreeSet::new();
-    for chunk in beads.chunks(TIPS_CHUNK) {
+    for chunk in beads.chunks(page) {
         let rows = parsed(&ask(&["plan", "items", "--ids", &chunk.join(",")])?)["items"].take();
         no_record.extend(rows.as_array().into_iter().flatten().filter(|r| !spira_config::nonwork::is_work_type(r.get("issue_type").and_then(Value::as_str))).filter_map(|r| r.get("id").and_then(Value::as_str)).map(str::to_string));
     }
@@ -216,12 +242,21 @@ fn enumerate(call: &mut dyn FnMut(&[String]) -> (i32, String)) -> Result<(Ids, S
     Ok((Ids { beads, batches, asks, no_record }, seq))
 }
 
-/// Parity over two callers, one per store: the report and whether it found no difference.
-pub fn run(old: &mut dyn FnMut(&[String]) -> (i32, String), new: &mut dyn FnMut(&[String]) -> (i32, String)) -> Result<(bool, Value), String> {
-    let (ids, seq) = enumerate(old)?;
+/// Parity over two callers, one per store, asking at most `page` rows per call: the report and
+/// whether it found no difference.
+pub fn run(old: &mut dyn FnMut(&[String]) -> (i32, String), new: &mut dyn FnMut(&[String]) -> (i32, String), page: usize) -> Result<(bool, Value), String> {
+    let (ids, seq) = enumerate(old, page)?;
     let mut differences = Vec::new();
+    for (list, field, known) in [
+        (&["list", "--state", BEAD_STATES][..], "bead_id", ids.beads.iter().chain(&ids.no_record).collect::<BTreeSet<_>>()),
+        (&["list", "--batches"][..], "batch_id", ids.batches.iter().collect()),
+    ] {
+        for id in walk(new, list, field, page, "new")?.into_iter().filter(|id| !known.contains(id)) {
+            differences.push(json!({ "argv": argv(list), "at": format!(".{field}"), "old": null, "new": id }));
+        }
+    }
     let mut allowed: BTreeMap<&str, usize> = BTreeMap::new();
-    let all = calls(&ids, &seq);
+    let all = calls(&ids, &seq, page);
     for a in &all {
         let (o, n) = (old(a), new(a));
         let (o, n) = ((o.0, without(&o.1, &ids.no_record)), (n.0, without(&n.1, &ids.no_record)));
@@ -260,7 +295,7 @@ pub fn cmd_admin_parity(args: &[String]) -> (i32, String) {
     };
     let mut old = |x: &[String]| crate::client::forward(&a, x);
     let mut new = |x: &[String]| crate::client::forward(&b, x);
-    match run(&mut old, &mut new) {
+    match run(&mut old, &mut new, PAGE) {
         Ok((true, report)) => (0, serde_json::to_string_pretty(&report).unwrap_or_default()),
         Ok((false, report)) => (REFUSED, serde_json::to_string_pretty(&report).unwrap_or_default()),
         Err(e) => (CANNOT_TELL, format!("cannot tell: admin-parity: {e}")),

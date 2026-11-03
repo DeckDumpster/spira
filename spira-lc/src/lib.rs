@@ -12,3 +12,19 @@ pub const REFUSED: i32 = 3;
 pub fn flag(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
 }
+
+/// `--after <id> --limit <n>` on a list: the rows after `id` in id order, at most `n`.
+pub type Page = (Option<String>, Option<usize>);
+
+/// The page a list asks for, or `None` when neither flag is given.
+pub fn page(args: &[String]) -> Result<Option<Page>, String> {
+    let after = flag(args, "--after");
+    let limit = match flag(args, "--limit") {
+        None => None,
+        Some(n) => match n.parse::<usize>() {
+            Ok(n) if n > 0 => Some(n),
+            _ => return Err(format!("--limit must be a positive integer, not {n:?}")),
+        },
+    };
+    Ok((after.is_some() || limit.is_some()).then_some((after, limit)))
+}
