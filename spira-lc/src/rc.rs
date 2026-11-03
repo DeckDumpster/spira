@@ -35,6 +35,9 @@ pub fn run<B: Backend>(store: &Contract<B>, args: &[String]) -> (i32, String) {
     match verb {
         Verb::Get => with(&body, |c: wire::Get| wire::answer(&store.get(&c.key))),
         Verb::List => with(&body, |c: wire::List| {
+            if !c.states.is_empty() {
+                return list_in_states(store, &c);
+            }
             let prefixes: Vec<&str> = c.prefixes.iter().map(String::as_str).collect();
             wire::answer(
                 &store
@@ -66,6 +69,39 @@ pub fn run<B: Backend>(store: &Contract<B>, args: &[String]) -> (i32, String) {
     }
 }
 
+/// The most items a state-filtered list may answer with when the caller names no limit.
+pub const STATE_LIST_MAX: usize = 1_000;
+
+/// `list` with `states`: one range of the store's state index per prefix and state, all at one
+/// head, merged in key order. A set larger than the limit is refused rather than cut short.
+fn list_in_states<B: Backend>(store: &Contract<B>, c: &wire::List) -> (i32, String) {
+    let limit = c.limit.unwrap_or(STATE_LIST_MAX).min(STATE_LIST_MAX);
+    let read = || -> state_store::Result<Result<wire::Listed, String>> {
+        let at = store.head()?;
+        let mut items = Vec::new();
+        for prefix in &c.prefixes {
+            for state in &c.states {
+                items.extend(store.range_in_state(prefix, state, None, limit + 1, at)?);
+            }
+        }
+        items.sort_by(|a, b| a.key.cmp(&b.key));
+        items.dedup_by(|a, b| a.key == b.key);
+        if items.len() > limit {
+            return Ok(Err(format!(
+                "cannot tell: more than {limit} items under {} in {}",
+                c.prefixes.join(", "),
+                c.states.join(", ")
+            )));
+        }
+        Ok(Ok(wire::Listed { items, list_rev: at }))
+    };
+    match read() {
+        Ok(Ok(listed)) => wire::ok(&listed),
+        Ok(Err(why)) => wire::cannot_tell(&why),
+        Err(e) => wire::refused(&e),
+    }
+}
+
 fn with<T: serde::de::DeserializeOwned>(
     body: &str,
     f: impl FnOnce(T) -> (i32, String),
@@ -86,4 +122,48 @@ fn admitted(key: &str) -> Result<(), (i32, String)> {
         "rule": format!("rc writes only under {}: not {key}", WRITE_PREFIXES.join(", ")),
     });
     Err((wire::REFUSED, body.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use serde_json::json;
+    use state_store::{Config, MemBackend, MonotonicClock, Object, Ports, Request, Txn};
+
+    use super::*;
+
+    fn store() -> Contract<MemBackend> {
+        let ports = Ports { mono: Arc::new(MonotonicClock::new()), wall: Arc::new(MonotonicClock::new()) };
+        let s = Contract::open(MemBackend::new(), ports, Config { min_lock_ttl_ms: 1 }).unwrap();
+        let mut t = Txn::new();
+        for (k, state) in [("batches/r/a", "Open"), ("batches/r/b", "Landed"), ("batches/r/c", "CiRunning"), ("batches/q/d", "Open")] {
+            t = t.put(k, Object::new(json!({ "state": state })));
+        }
+        t = t.put("batches/r/a/progress", Object::new(json!({ "phase": "build" })));
+        assert!(s.txn(&t, &Request::new("seed", "test", "seed")).unwrap().succeeded);
+        s
+    }
+
+    fn list(s: &Contract<MemBackend>, states: &[&str], limit: Option<usize>) -> (i32, String) {
+        let body = json!({ "prefixes": ["batches/r/"], "selector": "everything", "states": states, "limit": limit });
+        run(s, &["rc".into(), "list".into(), "--json".into(), body.to_string()])
+    }
+
+    #[test]
+    fn a_state_filtered_list_answers_only_the_items_in_those_states_under_the_prefix() {
+        let s = store();
+        let (code, out) = list(&s, &["Open", "CiRunning"], Some(8));
+        let l: wire::Listed = wire::decode(code, &out).unwrap();
+        let keys: Vec<&str> = l.items.iter().map(|i| i.key.as_str()).collect();
+        assert_eq!(keys, ["batches/r/a", "batches/r/c"]);
+    }
+
+    #[test]
+    fn a_state_filtered_list_over_its_limit_is_cannot_tell_not_a_part() {
+        let s = store();
+        let (code, out) = list(&s, &["Open", "CiRunning"], Some(1));
+        assert_eq!(code, wire::CANNOT_TELL, "{out}");
+        assert!(out.contains("more than 1"), "{out}");
+    }
 }

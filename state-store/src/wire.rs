@@ -62,6 +62,14 @@ pub struct Get {
 pub struct List {
     pub prefixes: Vec<String>,
     pub selector: Selector,
+    /// When given, only the items whose `data.state` is one of these, read through the store's
+    /// state index (one bounded range per prefix and state), never the whole prefix.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub states: Vec<String>,
+    /// With `states`: the most items the answer may hold. More is refused, not cut short, so a
+    /// reader never takes part of a set for all of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -203,11 +211,24 @@ mod tests {
         round_trip(List {
             prefixes: vec!["batches/".into(), "verdicts/".into()],
             selector: Selector::Everything,
+            states: vec![],
+            limit: None,
         });
         round_trip(List {
             prefixes: vec![],
             selector: Selector::Eq("/state".into(), json!("OPEN")),
+            states: vec![],
+            limit: None,
         });
+        round_trip(List {
+            prefixes: vec!["batches/r/".into()],
+            selector: Selector::Everything,
+            states: vec!["Open".into(), "CiRunning".into()],
+            limit: Some(64),
+        });
+        // A caller built before `states` sends no such field: it reads the whole prefix.
+        let old: List = serde_json::from_str(r#"{"prefixes":["batches/"],"selector":"everything"}"#).unwrap();
+        assert!(old.states.is_empty() && old.limit.is_none());
         round_trip(TxnCall {
             txn,
             request: request(),

@@ -54,6 +54,8 @@ impl Store for LcStore {
         let body = wire::List {
             prefixes: prefixes.iter().map(|p| p.to_string()).collect(),
             selector: sel.clone(),
+            states: Vec::new(),
+            limit: None,
         };
         self.call(Verb::List, &body)
             .map(|l: wire::Listed| (l.items, l.list_rev))

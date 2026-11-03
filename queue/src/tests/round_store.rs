@@ -44,6 +44,37 @@ fn with_the_store_status_names_only_the_open_round_and_parses_unchanged() {
     assert!(!t.qfile("round").exists());
 }
 
+/// A store imported from an older one holds every round the repo ever had, ended, in the
+/// spelling spira-lc's `BatchRecord` writes (`Landed`, `Abandoned`). Status names the one open
+/// round, asks the lifecycle for its phase once, and reads O(1) round records — never the
+/// history (law-list-reads-run-on-indexed-tables, law-list-reads-paginate-in-the-database).
+#[test]
+fn with_a_thousand_ended_rounds_status_reads_only_the_open_one() {
+    let t = round_world();
+    let d = t.lc.store.get_or_init(MemDoor::default);
+    for n in 0..1000 {
+        let state = if n % 3 == 0 { "ABANDONED" } else { "LANDED" };
+        d.put_round("spira", &format!("r-auto-{n}"), state, &[("sp-old", "to")], n);
+    }
+    d.put_round("spira", "spira-open", "CI_RUNNING", &[("sp-a", "ta"), ("sp-b", "tb")], 5000);
+    let stored = d.store.get("batches/spira/r-auto-0").unwrap().unwrap().value.data["state"].clone();
+    assert_eq!(stored, "Abandoned", "the fixture writes what spira-lc writes");
+    d.items_read.set(0);
+    let shows_before = t.lc.calls.borrow().iter().filter(|c| c.starts_with("show-batch")).count();
+    let status = status(&t);
+    assert!(
+        status.starts_with("rounds=1\nopen_batches=spira-open\nround=open\nphase=certifying\n"),
+        "{}",
+        &status[..status.len().min(400)]
+    );
+    assert!(status.contains("\nmembers=sp-a:ta sp-b:tb\n"), "{status}");
+    assert!(!status.contains("r-auto-"), "an ended round is never listed as open");
+    let read = d.items_read.get();
+    assert!(read <= 4, "status read {read} round records for one open round");
+    let shows = t.lc.calls.borrow().iter().filter(|c| c.starts_with("show-batch")).count() - shows_before;
+    assert!(shows <= 1, "status asked the lifecycle {shows} times");
+}
+
 #[test]
 fn status_reads_the_same_from_the_store_as_from_the_round_file() {
     let record = "batch_id=spira-open\nrepo=spira\nhead=h1\nbase=b0\nmembers=sp-a:ta\nworktree=/wt/spira-open\nactor=overseer\nopened=900\nred=test-a.sh\n";
