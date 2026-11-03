@@ -23,9 +23,12 @@ mkdir -p "$TMP/releases" "$TMP/stubs" "$TMP/run" "$TMP/tmux"
 
 R="$TMP/releases/rel1"
 mkdir -p "$R/bin"
-for b in mail spira-lc spira-config watchd release health lc-view layout cockpit-collect inbox-triage bdq; do
+for b in mail spira-lc spira-config watchd release health lc-view layout cockpit-collect inbox-triage; do
     p="$(command -v "$b" 2>/dev/null)" && cp "$p" "$R/bin/$b"
 done
+# The release's bdq, which its binaries resolve from it: a stand-in that answers nothing
+# at once, never the real one waiting on a store this fixture does not run.
+printf '#!/bin/sh\nexit 1\n' > "$R/bin/bdq"; chmod +x "$R/bin/bdq"
 ln -s "$ROOT/spira" "$R/spira"
 ln -s "$R" "$TMP/releases/current"
 
@@ -99,7 +102,6 @@ out="$(printf '%s' "$hook_in" | client_env "$TMP/home" "$HOOK" 2>&1)"; rc=$?
 wantrc "the SessionStart command exits 0 as the client runs it" 0 "$rc"
 [ "$rc" = 0 ] || note "SessionStart said: $out; command: $HOOK"
 want "and prints the watcher summary" "probe" "$out"
-case "$out" in *probe*) ;; *) note "DBG watchd: $(client_env "$TMP/home" "${HOOK% *} watchd status" 2>&1)" ;; esac
 out="$(printf '%s' "$hook_in" | client_env "$TMP/home" "$(unconfigured "$HOOK")" 2>&1)"
 nowant "SEEN RED: the same command without SPIRA_TOML prints no summary" "probe" "$out"
 

@@ -483,8 +483,8 @@ git -C "$LREPO" update-ref refs/heads/local/main "$LHEAD2"
 echo
 echo "queue.local rollback-local — re-activates the previous release, resets by ref move:"
 lout3="$(run_lq rollback-local lfixq)"; lrc3=$?
-is   "rollback: exits 0"                       "0"           "$lrc3"
 [ "$lrc3" = 0 ] || note "rollback said: $lout3"
+is   "rollback: exits 0"                       "0"           "$lrc3"
 want "rollback: re-activates the first round's release" "activated release $LHEAD1" "$lout3"
 is   "rollback: local/main resets to the archived first-round head" \
      "$LHEAD1" "$(git -C "$LREPO" rev-parse local/main)"
