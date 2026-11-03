@@ -1564,6 +1564,42 @@ mod tests {
 
     use super::*;
 
+    fn commit(sha: &str, message: &str) -> (String, String, String) {
+        (sha.into(), message.lines().next().unwrap_or("").into(), message.into())
+    }
+
+    #[test]
+    fn a_branch_rebased_onto_a_submitted_siblings_commits_submits() {
+        let commits = [commit("aaa1", "sp-sib: the sibling's change\n"), commit("bbb2", "sp-own: my change\n")];
+        let in_flight = |id: &str| id == "sp-sib";
+        assert!(unnamed_commits(&commits, "sp-own", &in_flight).is_empty());
+    }
+
+    #[test]
+    fn a_commit_naming_a_bead_not_in_flight_still_refuses() {
+        let commits = [commit("aaa1", "sp-gone: a dropped bead's change\n"), commit("bbb2", "sp-own: my change\n")];
+        let in_flight = |id: &str| id == "sp-sib";
+        let refused = unnamed_commits(&commits, "sp-own", &in_flight);
+        assert_eq!(refused.len(), 1, "{refused:?}");
+        assert!(refused[0].contains("aaa1") && refused[0].contains("sp-gone"), "{refused:?}");
+    }
+
+    #[test]
+    fn a_commit_naming_no_bead_still_refuses() {
+        let commits = [commit("ccc3", "fix the thing\n"), commit("bbb2", "sp-own: my change\n")];
+        let in_flight = |_: &str| true;
+        let refused = unnamed_commits(&commits, "sp-own", &in_flight);
+        assert_eq!(refused.len(), 1, "{refused:?}");
+        assert!(refused[0].contains("ccc3"), "{refused:?}");
+    }
+
+    #[test]
+    fn a_sibling_id_is_named_whole_not_as_a_prefix() {
+        let commits = [commit("aaa1", "sp-sib2: a longer id\n")];
+        let in_flight = |id: &str| id == "sp-sib";
+        assert_eq!(unnamed_commits(&commits, "sp-own", &in_flight).len(), 1);
+    }
+
     #[test]
     fn done_on_a_dropped_or_done_bead_is_a_no_op_for_every_actor() {
         for st in [bead::BeadState::Dropped, bead::BeadState::Done] {
