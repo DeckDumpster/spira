@@ -965,12 +965,16 @@ impl Driver<'_> {
             s(TESTENV_LABEL),
             s("--volume"),
             format!("{checkout}:{CONTAINER_CHECKOUT}:z"),
+            // Test binaries run under bwrap here too (tools/test-sandbox/runner), and the kernel
+            // refuses bwrap a fresh /proc ("Can't mount proc on /newroot/proc: Operation not
+            // permitted") while any of podman's masks or read-only binds sits over the
+            // container's — /proc/sys's read-only bind alone is enough. So every one is lifted,
+            // rootless and rootful alike. Rootful is the round VMs' podman (the round runs as
+            // root there); under it this also hands the container's root a writable /proc/sys.
+            s("--security-opt"),
+            s("unmask=/proc/*"),
         ]
         .into_iter()
-        // Test binaries run under bwrap here too (tools/test-sandbox/runner), and the kernel
-        // refuses bwrap's fresh /proc while podman's masks sit over the container's. Lifted
-        // only rootless: under rootful podman they keep root off the host's /proc/sys.
-        .chain((network == ISOLATED_NETWORK).then(|| [s("--security-opt"), s("unmask=/proc/*")]).into_iter().flatten())
         .chain(self.conf.cpus.iter().flat_map(|c| [s("--cpus"), c.clone()]))
         .chain(memory.iter().flat_map(|m| [s("--memory"), m.clone()]))
         .chain(extra_mounts)

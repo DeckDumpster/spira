@@ -957,7 +957,7 @@ fn up_uses_the_bridge_when_podman_is_rootful() {
 }
 
 #[test]
-fn proc_is_unmasked_for_the_test_sandbox_only_under_rootless_podman() {
+fn proc_is_unmasked_for_the_test_sandbox_under_either_podman() {
     let unmasked = |rootless: &str| {
         let f = Fake::new();
         booting(&f);
@@ -966,7 +966,7 @@ fn proc_is_unmasked_for_the_test_sandbox_only_under_rootless_podman() {
         f.calls_with("run")[0].windows(2).any(|w| w[0] == "--security-opt" && w[1] == "unmask=/proc/*")
     };
     assert!(unmasked("true\n"), "rootless: bwrap needs its own /proc");
-    assert!(!unmasked("false\n"), "rootful: the masks keep the container's root off the host's /proc/sys");
+    assert!(unmasked("false\n"), "rootful (the round VMs): a masked /proc refused bwrap's in round spira-20261103T165709Z");
 }
 
 #[test]
