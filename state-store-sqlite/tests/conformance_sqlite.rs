@@ -275,7 +275,8 @@ impl runtime::ports::Clock for JumpAfter {
 }
 
 /// Every row a deleted key, so the statement scans thousands of rows and returns none: only the
-/// progress handler can see the deadline pass.
+/// progress handler can see the deadline pass. The read is below the head, where `versions` is
+/// read: at the head, `latest` holds no deleted key to scan.
 #[test]
 fn a_single_long_statement_is_ended_past_max_read_ms_by_the_progress_handler() {
     let dir = TempDir::new("sqlite-progress");
@@ -303,6 +304,7 @@ fn a_single_long_statement_is_ended_past_max_read_ms_by_the_progress_handler() {
         })
         .collect();
     b.commit(1, &dels).unwrap();
+    b.commit(2, &[put_write("u/after", b"{}", 3, None)]).unwrap();
     assert!(b.range("t/", None, 10, 2).unwrap().is_empty());
 
     clock.calls.store(0, Ordering::SeqCst);
