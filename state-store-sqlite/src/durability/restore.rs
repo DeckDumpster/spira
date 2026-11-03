@@ -51,7 +51,12 @@ pub fn plan(dir: &Path, after: u64) -> Result<Vec<PathBuf>, String> {
 
 /// Each txn of `run` after the store's head, as the backend's commit of that revision.
 pub fn replay(b: &SqliteBackend, run: &Run) -> Result<(), String> {
+    let mut jumps = run.jumps.iter().peekable();
     for (main, entries) in revlog::mains(run) {
+        while let Some(&&(a, z)) = jumps.peek().filter(|j| j.0 < main) {
+            jump(b, a, z)?;
+            jumps.next();
+        }
         let head = b.head().map_err(|e| e.to_string())?;
         if main <= head {
             continue;
@@ -80,7 +85,19 @@ pub fn replay(b: &SqliteBackend, run: &Run) -> Result<(), String> {
             return Err(format!("revision {main} committed as {got}"));
         }
     }
+    for &(a, z) in jumps {
+        jump(b, a, z)?;
+    }
     Ok(())
+}
+
+/// Re-records the original store's jump `a..=z`, unless the restored head is already past it.
+fn jump(b: &SqliteBackend, a: u64, z: u64) -> Result<(), String> {
+    let head = b.head().map_err(|e| e.to_string())?;
+    if z <= head {
+        return Ok(());
+    }
+    b.jump(a, z).map_err(|e| format!("the jump {a}..={z} does not follow the restored head {head}: {e}"))
 }
 
 /// `spira-lc admin-restore --snapshot <file> --revlog <dir> --out <path>`. Every run is read and
@@ -94,7 +111,7 @@ pub fn restore(snapshot: &Path, revlog_dir: &Path, out: &Path) -> Result<Restore
     }
     fs::copy(snapshot, out).map_err(|e| format!("{}: {e}", snapshot.display()))?;
     let res = (|| {
-        let b = SqliteBackend::open(out, Options::default()).map_err(|e| e.to_string())?;
+        let b = SqliteBackend::open(out, Options { jump_on_open: false, ..Options::default() }).map_err(|e| e.to_string())?;
         let snapshot_rev = b.head().map_err(|e| e.to_string())?;
         let mut runs = Vec::new();
         for p in plan(revlog_dir, snapshot_rev)? {

@@ -1,6 +1,7 @@
 //! One revision-log run: every key every txn in `from..=to` wrote, with full values, as one
 //! object. The first line is the header, and carries the body's SHA-256, so a run that changed
-//! after it was written is refused, not replayed.
+//! after it was written is refused, not replayed. A run may also carry the revisions the store
+//! recorded as never used (a jump on open, sp-r3yb7x): those are the only mains it may lack.
 
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -14,6 +15,8 @@ pub struct Run {
     pub from: u64,
     pub to: u64,
     pub entries: Vec<LogEntry>,
+    /// Recorded jumps `(first, last)` inside `from..=to`, in order: unused revisions, not lost ones.
+    pub jumps: Vec<(u64, u64)>,
 }
 
 /// Zero-padded, so the names sort as the revisions do.
@@ -92,8 +95,11 @@ pub fn encode(run: &Run) -> Vec<u8> {
         body.push('\n');
     }
     let sum = hex(&Sha256::digest(body.as_bytes()));
-    let header =
+    let mut header =
         json!({ "from": run.from, "to": run.to, "entries": run.entries.len(), "sha256": sum });
+    if !run.jumps.is_empty() {
+        header["jumps"] = json!(run.jumps.iter().map(|(a, b)| [*a, *b]).collect::<Vec<_>>());
+    }
     format!("{header}\n{body}").into_bytes()
 }
 
@@ -144,23 +150,64 @@ pub fn decode(bytes: &[u8]) -> Result<Run, String> {
     if h["entries"].as_u64() != Some(entries.len() as u64) {
         return Err("the header's entry count is not the body's".into());
     }
-    let mut want = (from, 0u32);
-    for e in &entries {
-        if e.rev.main == want.0 + 1 && want.1 > 0 {
-            want = (e.rev.main, 0);
+    let jumps: Vec<(u64, u64)> = match h.get("jumps") {
+        None => Vec::new(),
+        Some(j) => j
+            .as_array()
+            .ok_or("the header's jumps are not a list")?
+            .iter()
+            .map(|p| match p.as_array().map(|a| (a.first().and_then(Value::as_u64), a.get(1).and_then(Value::as_u64))) {
+                Some((Some(a), Some(b))) if a <= b => Ok((a, b)),
+                _ => Err("a jump is not [first, last]".to_string()),
+            })
+            .collect::<Result<_, _>>()?,
+    };
+    if from > to {
+        return Err(format!("its range {from}..={to} is empty"));
+    }
+    // The mains the run must hold: every one of from..=to outside a declared jump, in order.
+    let mut expect = Vec::new();
+    let mut m = from;
+    let mut js = jumps.iter().peekable();
+    let mut last_jump = from.saturating_sub(1);
+    while m <= to {
+        match js.peek() {
+            Some(&&(a, b)) if a <= m => {
+                if a != m || b < a || b > to || a <= last_jump {
+                    return Err(format!("the jump {a}..={b} is not inside {from}..={to} in order"));
+                }
+                last_jump = b;
+                m = b + 1;
+                js.next();
+            }
+            _ => {
+                expect.push(m);
+                m += 1;
+            }
         }
-        if (e.rev.main, e.rev.sub) != want {
+    }
+    if js.next().is_some() {
+        return Err(format!("a jump lies outside {from}..={to}"));
+    }
+    let mut want = expect.iter().copied();
+    let mut cur: Option<(u64, u32)> = None;
+    for e in &entries {
+        let next = match cur {
+            Some((main, sub)) if e.rev.main == main => (main, sub + 1),
+            _ => (want.next().ok_or_else(|| format!("entry {} at {}.{} is past the run's revisions", e.key, e.rev.main, e.rev.sub))?, 0),
+        };
+        if (e.rev.main, e.rev.sub) != next {
             return Err(format!(
                 "entry {} at {}.{} where {}.{} was next",
-                e.key, e.rev.main, e.rev.sub, want.0, want.1
+                e.key, e.rev.main, e.rev.sub, next.0, next.1
             ));
         }
-        want.1 += 1;
+        cur = Some(next);
     }
-    if from > to || want.0 != to || want.1 == 0 {
-        return Err(format!("its entries do not cover revisions {from}..={to}"));
+    if let Some(m) = want.next() {
+        return Err(format!("its entries do not cover revision {m} of {from}..={to}, which no jump declares"));
     }
-    Ok(Run { from, to, entries })
+    Ok(Run { from, to, entries, jumps })
 }
 
 /// The run's entries grouped by main, in order.
@@ -192,6 +239,7 @@ mod tests {
 
     fn run() -> Run {
         Run {
+            jumps: vec![],
             from: 4,
             to: 5,
             entries: vec![
@@ -237,12 +285,32 @@ mod tests {
         gap.entries[2].rev.main = 6;
         assert!(decode(&encode(&gap))
             .unwrap_err()
-            .contains("6.0 where 4.2 was next"));
+            .contains("6.0 where 5.0 was next"));
 
         let mut short = run();
         short.to = 7;
         assert!(decode(&encode(&short))
             .unwrap_err()
             .contains("do not cover"));
+    }
+
+    #[test]
+    fn a_declared_jump_is_the_only_gap_a_run_may_have() {
+        let mut run = Run {
+            from: 1,
+            to: 1_003,
+            entries: vec![entry("a", 1, 0, Some(b"1")), entry("b", 1_003, 0, Some(b"2"))],
+            jumps: vec![(2, 1_002)],
+        };
+        assert_eq!(decode(&encode(&run)).unwrap(), run);
+        run.jumps.clear();
+        let err = decode(&encode(&run)).unwrap_err();
+        assert!(err.contains("revision 2") || err.contains("1003.0 where 2.0"), "{err}");
+    }
+
+    #[test]
+    fn a_run_that_is_only_a_jump_decodes() {
+        let run = Run { from: 5, to: 1_004, entries: vec![], jumps: vec![(5, 1_004)] };
+        assert_eq!(decode(&encode(&run)).unwrap(), run);
     }
 }

@@ -276,13 +276,25 @@ impl Shipper {
             .backend
             .log(from, self.cfg.max_mains)
             .map_err(|e| e.to_string())?;
-        let Some(last) = entries.last() else {
+        // A run ends at its last entry, or past a recorded jump that follows it with no entry
+        // after: a jump at the head is shipped too, or shipped_through would never reach it.
+        let mut to = entries.last().map_or(from, |e| e.rev.main);
+        let mut jumps = Vec::new();
+        for (a, b) in self.backend.jumps(from, head).map_err(|e| e.to_string())? {
+            if a > to + 1 {
+                break;
+            }
+            jumps.push((a.max(from + 1), b));
+            to = to.max(b);
+        }
+        if to == from {
             return Ok(None);
-        };
+        }
         let run = Run {
             from: from + 1,
-            to: last.rev.main,
+            to,
             entries,
+            jumps,
         };
         let name = revlog::run_name(run.from, run.to);
         write_durably(&self.queue(REVLOG).join(&name), &revlog::encode(&run))?;

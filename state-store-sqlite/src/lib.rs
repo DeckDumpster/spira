@@ -1,6 +1,8 @@
-//! state-store-sqlite — the contract's [`Backend`] on SQLite: WAL with `synchronous=FULL`, one
+//! state-store-sqlite — the contract's [`Backend`] on SQLite: WAL with `synchronous=NORMAL`, one
 //! writer connection, a small pool of reader connections, and an exclusive opener, because the
-//! contract keeps TTLs and lock liveness in its own process's memory.
+//! contract keeps TTLs and lock liveness in its own process's memory. NORMAL may lose the last
+//! commits to a power cut, so every open jumps the head past anything it could have issued and
+//! records the jump.
 //!
 //! Every version of a key is a row of `versions` until compaction drops it, so a read at any
 //! revision since the compaction point is served from the table itself, and the rows above that
@@ -36,8 +38,16 @@ const SCHEMA: &[&str] = &[
         prev_sub INTEGER,
         PRIMARY KEY (key, main))",
     "CREATE INDEX IF NOT EXISTS versions_by_rev ON versions (main, sub)",
+    "CREATE TABLE IF NOT EXISTS jumps (from_main INTEGER PRIMARY KEY, to_main INTEGER NOT NULL)",
     "INSERT OR IGNORE INTO meta (name, value) VALUES ('head', 0), ('compacted', 0)",
 ];
+
+/// How far the head jumps each time an existing store is opened, and the WAL frames between
+/// automatic checkpoints. Commits run at `synchronous=NORMAL` (sp-r3yb7x): the WAL is synced at
+/// each checkpoint, so a host crash loses at most the commits since the last one, fewer than
+/// `JUMP` since each commit writes at least one frame. Opening past that many unused revisions
+/// means a rewound store never reissues a revision a client was already handed.
+pub const JUMP: u64 = 1_000;
 
 /// How often, in SQLite VM steps, a running read checks its deadline.
 const PROGRESS_STEPS: i32 = 1_000;
@@ -52,6 +62,9 @@ pub struct Options {
     /// Runs inside every read transaction once its snapshot is taken: the seam a test holds a
     /// reader open with.
     pub read_probe: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Jump an existing store's head by [`JUMP`] on open. Off only for a store being restored
+    /// or verified, whose revisions must stay exactly as the log has them.
+    pub jump_on_open: bool,
 }
 
 impl Default for Options {
@@ -61,6 +74,7 @@ impl Default for Options {
             readers: 4,
             clock: Arc::new(state_store::MonotonicClock::new()),
             read_probe: None,
+            jump_on_open: true,
         }
     }
 }
@@ -202,6 +216,29 @@ fn exec(conn: &Connection, sql: &str, p: impl rusqlite::Params) -> Result<usize>
         .map_err(db)
 }
 
+/// Records `(head+1)..=through` as revisions the store will never use, and moves the head to
+/// `through`, in one transaction synced in full whatever the connection's usual mode: a jump that
+/// a crash could lose would let the next open jump from the older head and reissue revisions.
+fn record_jump(conn: &mut Connection, head: u64, through: u64) -> Result<u64> {
+    if through <= head {
+        return Err(Error::Backend(format!("a jump to {through} does not pass the head {head}")));
+    }
+    let mode: i64 = conn.pragma_query_value(None, "synchronous", |r| r.get(0)).map_err(db)?;
+    conn.pragma_update(None, "synchronous", "FULL").map_err(db)?;
+    let done = (|| {
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db)?;
+        let at = meta(&tx, "head")?.unwrap_or(0);
+        if at != head {
+            return Err(Error::Backend(format!("a jump from {head} found the head at {at}")));
+        }
+        exec(&tx, "INSERT INTO jumps (from_main, to_main) VALUES (?1, ?2)", params![main_i64(head + 1)?, main_i64(through)?])?;
+        set_meta(&tx, "head", through)?;
+        tx.commit().map_err(db)
+    })();
+    conn.pragma_update(None, "synchronous", mode).map_err(db)?;
+    done.map(|()| through)
+}
+
 fn meta(conn: &Connection, name: &str) -> Result<Option<u64>> {
     conn.prepare_cached("SELECT value FROM meta WHERE name = ?1")
         .and_then(|mut s| s.query_row([name], |r| r.get::<_, i64>(0)).optional())
@@ -335,7 +372,9 @@ impl SqliteBackend {
                 path.display()
             )));
         }
-        conn.pragma_update(None, "synchronous", "FULL")
+        conn.pragma_update(None, "synchronous", "NORMAL")
+            .map_err(db)?;
+        conn.pragma_update(None, "wal_autocheckpoint", JUMP as i64)
             .map_err(db)?;
         conn.busy_timeout(Duration::ZERO).map_err(db)?;
         let tx = conn
@@ -345,7 +384,10 @@ impl SqliteBackend {
             exec(&tx, sql, [])?;
         }
         tx.commit().map_err(db)?;
-        let head = meta(&conn, "head")?.unwrap_or(0);
+        let mut head = meta(&conn, "head")?.unwrap_or(0);
+        if opts.jump_on_open && head > 0 {
+            head = record_jump(&mut conn, head, head + JUMP)?;
+        }
 
         let mut readers = Vec::new();
         for _ in 0..opts.readers.max(1) {
@@ -375,6 +417,37 @@ impl SqliteBackend {
             probe: opts.read_probe,
             _lock: lock_file,
         })))
+    }
+
+    /// The writer connection's `synchronous` setting: 1 is NORMAL, 2 is FULL.
+    pub fn synchronous(&self) -> Result<i64> {
+        lock(&self.0.writer).conn.pragma_query_value(None, "synchronous", |r| r.get(0)).map_err(db)
+    }
+
+    /// The recorded jumps that end after `after` and start at or before `through`, in order.
+    pub fn jumps(&self, after: u64, through: u64) -> Result<Vec<(u64, u64)>> {
+        let w = lock(&self.0.writer);
+        let mut st = w
+            .conn
+            .prepare_cached("SELECT from_main, to_main FROM jumps WHERE to_main > ?1 AND from_main <= ?2 ORDER BY from_main")
+            .map_err(db)?;
+        let rows = st
+            .query_map(params![main_i64(after)?, main_i64(through)?], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64)))
+            .map_err(db)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(db)
+    }
+
+    /// Records a jump from the current head to `through`: a restore replaying one the original
+    /// store took. Err when `from` is not the head plus one.
+    pub fn jump(&self, from: u64, through: u64) -> Result<()> {
+        let mut w = lock(&self.0.writer);
+        let head = self.0.head.load(Ordering::SeqCst);
+        if from != head + 1 {
+            return Err(Error::Backend(format!("a jump from {from} does not follow the head {head}")));
+        }
+        let at = record_jump(&mut w.conn, head, through)?;
+        self.0.head.store(at, Ordering::SeqCst);
+        Ok(())
     }
 
     pub fn path(&self) -> &Path {

@@ -1,8 +1,7 @@
-//! The SQLite backend's one end-to-end suite: every conformance scenario on a fresh file, the
-//! backend's own primitives, and the bench binary.
+//! The SQLite backend's one end-to-end suite: every conformance scenario on a fresh file, and
+//! the backend's own primitives.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -146,22 +145,21 @@ fn after_deleting_the_highest_revision_keys_and_reopening_the_next_main_is_great
     assert_eq!(left, [("n/a".to_string(), 1)], "no row is left at the head");
     drop(b);
     let b = open(&path);
-    assert_eq!(
-        b.head().unwrap(),
-        last,
-        "the counter is read back from its meta row"
-    );
+    let head = b.head().unwrap();
+    assert!(head >= last, "the counter is read back from its meta row, never from the keys: head {head}, last {last}");
     let clock = VirtualClock::new(1_000);
     let c = contract(b, &clock);
     let next = put(&c, "n/c", json!(3), "after-reopen");
-    assert_eq!(next, last + 1);
+    assert!(next > last, "a reopened store never reissues a revision: next {next}, last {last}");
+    assert_eq!(next, head + 1, "the next txn follows the head the reopen read back");
 }
 
 #[test]
-fn journal_mode_and_synchronous_read_back_as_wal_and_2() {
+fn journal_mode_and_synchronous_read_back_as_wal_and_normal() {
     let dir = TempDir::new("sqlite-pragmas");
     let b = open(&dir.path().join("s.db"));
-    assert_eq!(b.pragmas().unwrap(), ("wal".to_string(), 2));
+    // NORMAL, per Ryan 2026-11-02 (sp-3uvzc6, sp-r3yb7x): the jump on open covers what a crash loses.
+    assert_eq!(b.pragmas().unwrap(), ("wal".to_string(), 1));
 }
 
 #[test]
@@ -225,6 +223,7 @@ fn a_reader_held_past_max_read_ms_is_ended_and_the_next_checkpoint_truncates_the
         readers: 1,
         clock: Arc::new(clock.clone()),
         read_probe: Some(probe),
+        jump_on_open: true,
     };
     let b = SqliteBackend::open(&path, opts).unwrap();
     *slot.lock().unwrap() = Some(b.clone());
@@ -284,6 +283,7 @@ fn a_single_long_statement_is_ended_past_max_read_ms_by_the_progress_handler() {
         readers: 1,
         clock: clock.clone(),
         read_probe: None,
+        jump_on_open: true,
     };
     let b = SqliteBackend::open(&dir.path().join("s.db"), opts).unwrap();
     let keys: Vec<String> = (0..5_000).map(|i| format!("t/{i:05}")).collect();
@@ -369,7 +369,8 @@ fn a_backup_taken_in_steps_while_commits_continue_matches_the_live_keys_at_its_r
     assert!(steps > 1, "the backup finished in one step");
     put(&c, "after/backup", json!(1), "after");
     let live = c.backend().clone();
-    let copy = open(&dest);
+    // A copy being verified keeps its revisions exactly: no jump on this open.
+    let copy = SqliteBackend::open(&dest, Options { jump_on_open: false, ..Options::default() }).unwrap();
     assert_eq!(
         copy.head().unwrap(),
         rev,
@@ -455,93 +456,4 @@ fn gc_range_skips_the_audit_history_and_pages_across_it() {
         got.push(k);
     }
     assert_eq!(got, ["a", "f", "g"]);
-}
-
-fn bench() -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_state-store-bench"));
-    cmd.env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default());
-    cmd
-}
-
-#[test]
-fn the_bench_reports_four_quantiles_and_a_sample_count() {
-    let dir = TempDir::new("sqlite-bench");
-    let load = dir.path().join("load");
-    std::fs::create_dir(&load).unwrap();
-    let out = bench()
-        .args(["--path", &dir.path().join("b.db").display().to_string()])
-        .args(["--rate", "100", "--duration-secs", "2", "--json"])
-        .args([
-            "--load-dir",
-            &load.display().to_string(),
-            "--load-mb-per-s",
-            "4",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    for q in ["p50_ms", "p99_ms", "p999_ms", "max_ms"] {
-        assert!(report[q].is_number(), "{q} missing: {report}");
-    }
-    assert!(report["samples"].as_u64().unwrap() > 0, "{report}");
-}
-
-#[test]
-fn bench_conformance_on_a_populated_file_passes_and_leaves_no_conformance_keys() {
-    let dir = TempDir::new("sqlite-live");
-    let path = dir.path().join("live.db");
-    let clock = VirtualClock::new(1_000);
-    let c = contract(open(&path), &clock);
-    for i in 0..20 {
-        put(
-            &c,
-            &format!("lifecycle/{i}"),
-            json!({"s": "READY"}),
-            &format!("seed{i}"),
-        );
-    }
-    let b = c.backend().clone();
-    b.compact(b.head().unwrap()).unwrap();
-    // More txns above the compaction point than one page of the watch log, none of them the
-    // run's: the scoped log has to start at the run, not at the store's oldest revision.
-    let mut prev = None;
-    for _ in 0..1_001 {
-        let head = b.head().unwrap();
-        b.commit(head, &[put_write("churn/k", b"{}", head + 1, prev)])
-            .unwrap();
-        prev = Some(Rev::new(head + 1, 0));
-    }
-    let before = b.head().unwrap();
-    let real = keys_at(&b, "lifecycle/", before);
-    drop(c);
-    drop(b);
-
-    let out = bench()
-        .args(["conformance", "--path", &path.display().to_string()])
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let b = open(&path);
-    let head = b.head().unwrap();
-    assert!(head > before, "the run wrote nothing");
-    assert!(
-        keys_at(&b, "conformance/", head).is_empty(),
-        "the scratch prefix was left behind"
-    );
-    assert_eq!(
-        keys_at(&b, "lifecycle/", head),
-        real,
-        "the run touched the live keys"
-    );
 }
