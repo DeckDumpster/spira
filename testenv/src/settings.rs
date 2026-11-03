@@ -110,6 +110,25 @@ pub struct Settings {
     pub spira_db: Option<String>,
 }
 
+/// Every key [`Settings::load`] refuses to start without, each an absolute path. A config a
+/// testenv runs under must declare all of them — the test fixture included, since a round's
+/// testenv reads it as its base layer.
+pub const REQUIRED_PATHS: &[&str] = &[crate::worktree::SCRATCH_ROOT_KEY];
+
+/// `declared` as the absolute path `key` must hold: unset or relative is a refusal naming the key.
+pub fn required_path(key: &str, declared: &str) -> Result<PathBuf, String> {
+    debug_assert!(REQUIRED_PATHS.contains(&key), "{key} is read as a required path but not listed in REQUIRED_PATHS");
+    let v = declared.trim();
+    if v.is_empty() {
+        return Err(format!("{key} is not set: testenv refuses to start without it"));
+    }
+    let p = PathBuf::from(v);
+    if !p.is_absolute() {
+        return Err(format!("{key} = {v:?} is not an absolute path"));
+    }
+    Ok(p)
+}
+
 /// SPIRA_BATCH_MAXPAR: empty (the key carries no value anywhere) is `(None, None)` — the
 /// scheduler's own bounded, host-derived default applies (`schedule::maxpar`). A positive
 /// whole number is `(Some(n), None)` — a request, clamped to the hardware bound. Anything
@@ -286,6 +305,27 @@ mod tests {
         assert_eq!(optional_num::<u32>("SPIRA_BATCH_MAXPAR_CEILING", ""), Ok(None));
         assert_eq!(optional_num::<u32>("SPIRA_BATCH_MAXPAR_CEILING", "24"), Ok(Some(24)));
         assert!(optional_num::<u32>("SPIRA_BATCH_MAXPAR_CEILING", "nope").is_err());
+    }
+
+    /// A round VM's testenv reads `spira/testlib/complete.toml` as its base layer, so a required
+    /// key the fixture leaves empty refuses every round before any suite runs.
+    #[test]
+    fn the_complete_fixture_declares_every_required_path() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/testlib/complete.toml");
+        let doc: toml::Value = std::fs::read_to_string(&fixture).unwrap().parse().unwrap();
+        for key in REQUIRED_PATHS {
+            let bare = key.strip_prefix("SPIRA_").unwrap_or(key).to_ascii_lowercase();
+            let v = doc["spira"].get(&bare).and_then(toml::Value::as_str).unwrap_or_default();
+            assert!(required_path(key, v).is_ok(), "complete.toml: {bare} = {v:?} — {}", required_path(key, v).unwrap_err());
+        }
+    }
+
+    #[test]
+    fn a_required_path_refuses_empty_and_relative_naming_its_key() {
+        for v in ["", "  ", "rel/dir"] {
+            let e = required_path(crate::worktree::SCRATCH_ROOT_KEY, v).unwrap_err();
+            assert!(e.contains("SPIRA_TESTENV_SCRATCH_ROOT"), "{e}");
+        }
     }
 
     #[test]

@@ -15,15 +15,7 @@ pub const SCRATCH_ROOT_KEY: &str = "SPIRA_TESTENV_SCRATCH_ROOT";
 /// rewritten on every relink), so the key names a disk that can take build writes. Unset or
 /// relative is a refusal naming the key; no other place is guessed.
 pub fn scratch_root(declared: &str) -> Result<PathBuf, String> {
-    let v = declared.trim();
-    if v.is_empty() {
-        return Err(format!("{SCRATCH_ROOT_KEY} is not set: declare where testenv's scratch and warm slots live"));
-    }
-    let p = PathBuf::from(v);
-    if !p.is_absolute() {
-        return Err(format!("{SCRATCH_ROOT_KEY} = {v:?} is not an absolute path"));
-    }
-    Ok(p)
+    crate::settings::required_path(SCRATCH_ROOT_KEY, declared)
 }
 
 /// Space this user can still write under `p`: statvfs free or quota headroom, whichever is
