@@ -30,7 +30,13 @@ pub struct PublishBacklog {
 pub enum Read {
     Blind(String),
     /// `arrival` is when the oldest unpublished commit reached the landing ref; absent when nothing is unpublished.
-    Measured { count: u64, arrival: Option<u64> },
+    /// `forge_tip_age_secs` is set only when the forge did not answer and the count was taken against an older tip.
+    Measured {
+        count: u64,
+        arrival: Option<u64>,
+        #[serde(default)]
+        forge_tip_age_secs: Option<u64>,
+    },
 }
 
 /// One entry per queue.local repo, or per reason the map itself could not be read.
@@ -49,6 +55,8 @@ pub enum Standing {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Carry {
     pub standing: BTreeMap<String, Standing>,
+    #[serde(default)]
+    pub blind_since: BTreeMap<String, u64>,
 }
 
 impl PublishBacklog {
@@ -57,27 +65,30 @@ impl PublishBacklog {
         let mut say = vec![];
         for (name, read) in &snap.repos {
             let prev = c.standing.get(name).copied().unwrap_or(Standing::Ok);
-            let (count, arrival) = match read {
+            let (count, arrival, stale) = match read {
                 Read::Blind(why) => {
                     if prev != Standing::Blind {
                         say.push(format!("BLIND {name}: the backlog watcher cannot measure — {why}"));
                         c.standing.insert(name.clone(), Standing::Blind);
+                        c.blind_since.insert(name.clone(), now);
                     }
                     continue;
                 }
-                Read::Measured { count, arrival } => (*count, *arrival),
+                Read::Measured { count, arrival, forge_tip_age_secs } => (*count, *arrival, *forge_tip_age_secs),
             };
             if prev == Standing::Blind {
                 c.standing.remove(name);
-                say.push(format!("SIGHTED {name}: the backlog watcher can measure again"));
+                let spell = c.blind_since.remove(name).map_or(String::new(), |t| format!(" after {}s blind", now.saturating_sub(t)));
+                say.push(format!("SIGHTED {name}: the backlog watcher can measure again{spell}"));
             }
+            let tip = stale.map_or(String::new(), |a| format!("; forge unreachable, measured against a tip {a}s old"));
             let age = arrival.map_or(0, |t| now.saturating_sub(t));
             let over = count > self.max_count || age > self.max_age_secs;
             let was_over = prev == Standing::Over;
             if over && !was_over {
-                say.push(format!("OVER {name}: {count} unpublished commit(s), oldest {age}s old (threshold {} commits / {}s) — the publish queue is falling behind", self.max_count, self.max_age_secs));
+                say.push(format!("OVER {name}: {count} unpublished commit(s), oldest {age}s old (threshold {} commits / {}s) — the publish queue is falling behind{tip}", self.max_count, self.max_age_secs));
             } else if !over && was_over {
-                say.push(format!("CLEAR {name}: back under threshold ({count} unpublished, oldest {age}s)"));
+                say.push(format!("CLEAR {name}: back under threshold ({count} unpublished, oldest {age}s{tip})"));
             }
             c.standing.insert(name.clone(), if over { Standing::Over } else { Standing::Ok });
         }
@@ -95,6 +106,24 @@ impl PublishBacklog {
     fn carry(view: &Projection, stream: &StreamKey) -> Carry {
         super::carried(view, stream, STATE)
     }
+}
+
+/// What one repo's `spira-lc unpublished` call reads as, from the verb's answer or its refusal.
+/// `Err` carries the refusal's own cause, whitespace folded onto one line; `Ok(None)` is a repo
+/// declared to publish nowhere. A forge tip's age is kept only when the verb marked it stale.
+pub fn read_of(answer: Result<&str, &str>) -> Result<Option<Read>, String> {
+    let out = answer.map_err(|e| e.split_whitespace().collect::<Vec<_>>().join(" "))?;
+    let v: serde_json::Value = serde_json::from_str(out).map_err(|e| format!("unreadable answer: {e}"))?;
+    if v["declared_unpublished"] == true {
+        return Ok(None);
+    }
+    let count = v["count"].as_u64().ok_or("the answer has no count")?;
+    let arrival = match (count, &v["oldest_arrival"]) {
+        (0, _) => None,
+        (_, a) => Some(a.as_u64().ok_or("the answer has no arrival for a nonzero count")?),
+    };
+    let forge_tip_age_secs = if v["stale"] == true { v["forge_tip_age_secs"].as_u64() } else { None };
+    Ok(Some(Read::Measured { count, arrival, forge_tip_age_secs }))
 }
 
 impl Handler for PublishBacklog {
@@ -142,7 +171,7 @@ mod tests {
     }
 
     fn measured(count: u64, age: u64) -> Read {
-        Read::Measured { count, arrival: (count > 0).then_some(NOW - age) }
+        Read::Measured { count, arrival: (count > 0).then_some(NOW - age), forge_tip_age_secs: None }
     }
 
     #[test]
@@ -175,7 +204,56 @@ mod tests {
         assert!(w.decide(&c, &snap(Read::Blind("no reflog".into())), NOW).1.is_empty());
         let (_, say) = w.decide(&c, &snap(measured(99, 1)), NOW);
         assert_eq!(say.len(), 2, "{say:?}");
-        assert_eq!(say[0], "SIGHTED r: the backlog watcher can measure again");
+        assert_eq!(say[0], "SIGHTED r: the backlog watcher can measure again after 0s blind");
         assert!(say[1].starts_with("OVER r:"), "blindness resets the standing: {say:?}");
+    }
+
+    #[test]
+    fn a_stale_forge_tip_is_named_with_its_age_in_the_line_it_qualifies() {
+        let w = watcher();
+        let stale = Read::Measured { count: 51, arrival: Some(NOW - 5), forge_tip_age_secs: Some(777) };
+        let (c, say) = w.decide(&Carry::default(), &snap(stale), NOW);
+        assert_eq!(say.len(), 1);
+        assert!(say[0].ends_with("falling behind; forge unreachable, measured against a tip 777s old"), "{say:?}");
+        let clear = Read::Measured { count: 1, arrival: Some(NOW - 5), forge_tip_age_secs: Some(900) };
+        let (_, say) = w.decide(&c, &snap(clear), NOW);
+        assert_eq!(say, ["CLEAR r: back under threshold (1 unpublished, oldest 5s; forge unreachable, measured against a tip 900s old)"]);
+    }
+
+    #[test]
+    fn a_carry_from_before_blind_since_existed_still_decodes_and_sights_without_a_duration() {
+        let old: Carry = serde_json::from_str(r#"{"standing":{"r":"Blind"}}"#).unwrap();
+        let (_, say) = watcher().decide(&old, &snap(measured(0, 0)), NOW);
+        assert_eq!(say, ["SIGHTED r: the backlog watcher can measure again"]);
+    }
+
+    #[test]
+    fn a_sighted_line_says_how_long_the_watcher_was_blind() {
+        let w = watcher();
+        let (c, _) = w.decide(&Carry::default(), &snap(Read::Blind("fetch timed out".into())), NOW);
+        let (_, say) = w.decide(&c, &snap(measured(0, 0)), NOW + 125);
+        assert_eq!(say, ["SIGHTED r: the backlog watcher can measure again after 125s blind"]);
+    }
+
+    #[test]
+    fn a_stale_answer_carries_its_forge_tip_age_and_a_fresh_one_does_not() {
+        let stale = r#"{"forge_tip":"a","landing_tip":"b","count":2,"oldest_arrival":900,"stale":true,"forge_tip_age_secs":777}"#;
+        assert_eq!(read_of(Ok(stale)), Ok(Some(Read::Measured { count: 2, arrival: Some(900), forge_tip_age_secs: Some(777) })));
+        let fresh = r#"{"forge_tip":"a","landing_tip":"a","count":0,"oldest_arrival":null,"forge_tip_age_secs":777}"#;
+        assert_eq!(read_of(Ok(fresh)), Ok(Some(Read::Measured { count: 0, arrival: None, forge_tip_age_secs: None })));
+    }
+
+    #[test]
+    fn a_refusal_reads_as_its_own_cause_on_one_line() {
+        let refused = "unpublished remarkable-pipeline: the forge fetch timed out\n  and no earlier fetch left a tip\n";
+        assert_eq!(read_of(Err(refused)), Err("unpublished remarkable-pipeline: the forge fetch timed out and no earlier fetch left a tip".into()));
+    }
+
+    #[test]
+    fn an_answer_the_watcher_cannot_read_is_named_never_a_zero() {
+        assert_eq!(read_of(Ok(r#"{"declared_unpublished":true}"#)), Ok(None));
+        assert_eq!(read_of(Ok(r#"{"count":3,"oldest_arrival":null}"#)), Err("the answer has no arrival for a nonzero count".into()));
+        assert_eq!(read_of(Ok(r#"{"oldest_arrival":null}"#)), Err("the answer has no count".into()));
+        assert!(read_of(Ok("not json")).unwrap_err().starts_with("unreadable answer: "));
     }
 }
