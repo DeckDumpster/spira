@@ -58,7 +58,7 @@ pub fn locate_home(env_home: Option<&str>, env_release: Option<&str>) -> Result<
 
 /// S0 — the context probe, run with this process's own environment. [`resolve_repos`] reads the probe's own `@vars` section (already every `SPIRA_*`
 /// key, exported or not) to build a `spira_config::repos::Registry` in-process.
-pub fn probe(r: &dyn Runner, home: &Path) -> Result<Context, String> {
+pub fn probe(r: &dyn Runner, home: &Path, child_env: &[(String, String)]) -> Result<Context, String> {
     let mut s = Spec::args_owned(
         "bash",
         vec!["-c".into(), seams::PROBE.into(), "sentinel-probe".into()],
@@ -66,10 +66,8 @@ pub fn probe(r: &dyn Runner, home: &Path) -> Result<Context, String> {
     .env("SENTINEL_LIB", home.join("lib.sh").to_string_lossy())
     .out(Io::Capture)
     .err(Io::Inherit);
-    // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
-    // bin/+spira/ on the CHILD's PATH, never only inherited.
-    for (k, v) in spira_config::release_env::child_path_env_for_process()? {
-        s = s.env(&k, v);
+    for (k, v) in child_env {
+        s = s.env(k, v);
     }
     let o = r.run(&s);
     if !o.ok() {
@@ -200,7 +198,15 @@ fn main() {
             std::process::exit(code)
         }
     };
-    let ctx = match probe(&RealRunner { base_env: None }, &home) {
+    let child_env = match spira_config::release_env::child_path_env_for_process() {
+        Ok(e) => e,
+        Err(e) => {
+            let code = fatal(&e);
+            spira_otel::run::finish(code);
+            std::process::exit(code)
+        }
+    };
+    let ctx = match probe(&RealRunner { base_env: None }, &home, &child_env) {
         Ok(c) => c,
         Err(e) => { let code = fatal(&e); spira_otel::run::finish(code); std::process::exit(code) },
     };

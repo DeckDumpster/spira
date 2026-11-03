@@ -963,7 +963,7 @@ fn home_is_spira_home_or_the_declared_release_and_never_searched_for() {
 fn probe_failure_is_reported() {
     let r = FakeRunner::new();
     r.on(|_| fail(97));
-    let e = crate::probe(&r, Path::new("/h")).unwrap_err();
+    let e = crate::probe(&r, Path::new("/h"), &[("PATH".into(), "/usr/bin:/bin".into())]).unwrap_err();
     assert!(e.contains("rc=97"));
     let s = r.find(|_| true).unwrap();
     // repos (sp-k6lku, "wave 4.13") no longer widens the probe's own bash seam — it is
