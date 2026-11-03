@@ -182,3 +182,12 @@ fn a_trailing_citation_stays_out_of_the_shipped_section_and_a_midtext_parenthesi
     assert_eq!(tree["1-alpha/1.2-law-two.md"], "# §1.2 law-two\n\nDo two (per the spec) always.\n");
     assert_eq!(tree["2-beta/2.1-law-three.md"], "# §2.1 law-three\n\nDo three (per the spec) always. (spa-x: not a bead)\n");
 }
+
+#[test]
+fn law_submission_runs_queue_submit_with_no_call_timeout_so_the_gate_survives() {
+    let c = rule::code::queue_submit_command("spira/sp-x", "spira");
+    let program = std::path::Path::new(c.get_program());
+    assert_eq!(program.file_name().and_then(|n| n.to_str()), Some("queue"), "queue submit must not run under a call-timeout wrapper: it runs the gate");
+    let args: Vec<_> = c.get_args().collect();
+    assert_eq!(args, ["submit", "spira/sp-x", "spira"]);
+}
