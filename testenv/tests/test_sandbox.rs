@@ -26,17 +26,38 @@ fn cargo_runs_every_test_binary_through_the_sandbox_runner() {
     assert_ne!(mode & 0o111, 0, "the runner is executable");
 }
 
+/// The repository's own git directory, which both sandboxes bind back read-only so a test can
+/// run git against its checkout: a worktree's `.git` names `<common>/worktrees/<name>`.
+fn git_common_dir() -> Option<PathBuf> {
+    let dotgit = workspace().join(".git");
+    let text = fs::read_to_string(&dotgit).ok()?;
+    let gitdir = PathBuf::from(text.strip_prefix("gitdir:")?.trim());
+    let gitdir = if gitdir.is_absolute() { gitdir } else { workspace().join(gitdir) };
+    Some(match gitdir.parent() {
+        Some(p) if p.file_name().is_some_and(|n| n == "worktrees") => p.parent()?.to_path_buf(),
+        _ => gitdir,
+    })
+}
+
+/// Every path under `dir` a test can see, except the way down to `keep` and `keep` itself.
+fn visible_beyond(dir: &Path, keep: Option<&Path>, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for e in entries {
+        let p = e.unwrap().path();
+        match keep {
+            Some(k) if k == p => {}
+            Some(k) if k.starts_with(&p) => visible_beyond(&p, keep, out),
+            _ => out.push(p),
+        }
+    }
+}
+
 #[test]
 fn a_test_finds_no_installation_under_its_home() {
     let home = PathBuf::from(std::env::var_os("HOME").expect("the runner sets HOME"));
-    let held: Vec<_> = match fs::read_dir(home.join("spira")) {
-        Ok(d) => d.map(|e| e.unwrap().file_name()).collect(),
-        Err(e) => {
-            assert_eq!(e.kind(), std::io::ErrorKind::NotFound, "{e}");
-            Vec::new()
-        }
-    };
-    assert!(held.is_empty(), "$HOME/spira holds {held:?}; the sandbox shows it empty or not at all");
+    let mut seen = Vec::new();
+    visible_beyond(&home.join("spira"), git_common_dir().as_deref(), &mut seen);
+    assert!(seen.is_empty(), "under $HOME/spira a test sees {seen:?}; only the repository's own git directory is bound in");
     for p in [".config/spira", ".local/bin/work"] {
         assert!(!home.join(p).exists(), "$HOME/{p} is visible inside the sandbox");
     }
