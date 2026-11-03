@@ -560,3 +560,45 @@ fn a_written_section_is_one_published_line_carrying_its_levels() {
     assert_eq!(o[0].kind, Kind::Published);
     assert!(o[0].line().ends_with("published section repo=lane batch=- green_unlanded_minutes=10 repeat_identity_passes_24h=0"), "{}", o[0].line());
 }
+
+#[test]
+fn an_identity_whose_proven_member_is_held_at_its_tip_can_never_be_cut_again_and_is_not_open() {
+    let b = Bench::new();
+    lane(&b);
+    for hash in ["h1", "h2"] {
+        b.seed(
+            &format!("verdicts/lane/{hash}"),
+            json!({ "class": "red", "step": "unit", "attempts": 2, "last_attempt": EPOCH_MS }),
+        );
+        attempt(&b, hash, 1, "planner", EPOCH_MS - 20 * MIN);
+        attempt(&b, hash, 2, "planner", EPOCH_MS - 10 * MIN);
+    }
+    b.seed("verdicts/lane/by-member/sp-a/a1", json!({ "hash": "h1" }));
+    b.seed("verdicts/lane/by-member/sp-b/b1", json!({ "hash": "h2" }));
+    let hold = |id: &str, tip: &str| {
+        crate::knobs::hold_key(
+            "lane",
+            &crate::ports::Member {
+                id: id.into(),
+                tip: tip.into(),
+            },
+        )
+    };
+    b.seed(&hold("sp-a", "a1"), json!({ "lifted_by": "reconciler" }));
+    b.seed(&hold("sp-b", "b0"), json!({ "lifted_by": "reconciler" }));
+    let s = built(&b);
+    assert_eq!(
+        level_of(&s, "repeat_identity_open"),
+        1.0,
+        "h1's member is held at the tip it was proven at; h2's hold is at another tip"
+    );
+    assert_eq!(
+        reason(&s, REPEAT_IDENTITY).as_deref(),
+        Some("identity h2 run 2 times by the planner, still red")
+    );
+    assert_eq!(
+        s.fields[REPEAT_IDENTITY_HOLDS],
+        json!([{ "identity": "h2", "id": "sp-b", "tip": "b1" }]),
+        "a held identity offers no member to hold"
+    );
+}

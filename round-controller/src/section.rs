@@ -290,7 +290,11 @@ struct Repeats {
 
 /// The ledger's attempts per identity. A planner attempt after the identity's first planner
 /// attempt is a repeat (law-a-retry-must-change-an-input); the Judge's own sub-passes are not.
+/// An identity names its members at their tips, so once one member proven red under it is held
+/// at that tip the cut can never make it again: it is no longer open, which is the move
+/// `hold-member` declares on `repeat_identity_open`.
 fn repeats(p: &Ports, repo: &str, now: u64) -> Result<Repeats, Refusal> {
+    let held = crate::knobs::held(p, repo)?;
     let prefix = format!("verdicts/{repo}/");
     let (items, _) = p
         .store
@@ -349,8 +353,18 @@ fn repeats(p: &Ports, repo: &str, now: u64) -> Result<Repeats, Refusal> {
         let standing = summaries
             .get(hash)
             .filter(|s| s.class.retained_by_members());
+        let members = proven.get(hash).map_or(&[][..], Vec::as_slice);
+        let held_at_tip = members.iter().any(|(id, tip)| {
+            held.contains(&crate::ports::Member {
+                id: (*id).into(),
+                tip: (*tip).into(),
+            })
+        });
+        if held_at_tip {
+            continue;
+        }
         if let (true, Some(s)) = (planner.len() > 1, standing) {
-            for (id, tip) in proven.get(hash).into_iter().flatten() {
+            for (id, tip) in members {
                 r.holds.push(RepeatHold {
                     identity: hash.into(),
                     id: (*id).into(),
