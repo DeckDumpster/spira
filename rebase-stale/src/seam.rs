@@ -60,13 +60,8 @@ pub struct LibSeam {
 }
 
 impl LibSeam {
-    pub fn new(home: PathBuf, lc_bin: String, run: PathBuf) -> LibSeam {
-        LibSeam {
-            home,
-            lc_bin,
-            queue_bin: PathBuf::from(spira_config::release_env::tool("queue")),
-            run,
-        }
+    pub fn new(home: PathBuf, lc_bin: String, queue_bin: PathBuf, run: PathBuf) -> LibSeam {
+        LibSeam { home, lc_bin, queue_bin, run }
     }
 
     /// `. lib.sh && <func> <args…> [<payload from stdin>]`.
@@ -84,7 +79,7 @@ impl LibSeam {
             .args(args);
         // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
         // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-        c.envs(spira_config::release_env::child_path_env_for_process());
+        c.envs(spira_config::release_env::child_path_env_for_process()?);
         c.stdin(if payload.is_some() {
             Stdio::piped()
         } else {

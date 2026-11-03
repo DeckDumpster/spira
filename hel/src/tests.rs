@@ -151,16 +151,10 @@ fn flags_parse_as_the_shells_did() {
 }
 
 #[test]
-fn harness_home_is_env_first_then_the_release_layout() {
-    let t = testkit::TempDir::new("hel-home");
-    let rel = t.path().join("rel");
-    std::fs::create_dir_all(rel.join("bin")).unwrap();
-    std::fs::create_dir_all(rel.join("spira")).unwrap();
-    std::fs::write(rel.join("spira/lib.sh"), "").unwrap();
-    let exe = rel.join("bin/hel");
-    assert_eq!(crate::locate_home(Some("/h"), &exe), Some(PathBuf::from("/h")));
-    assert_eq!(crate::locate_home(None, &exe), Some(rel.join("spira").canonicalize().unwrap()));
-    assert_eq!(crate::locate_home(None, &t.path().join("x/y")), None);
+fn harness_home_is_spira_home_then_the_declared_release_never_the_executable() {
+    assert_eq!(crate::locate_home(Some("/h"), Some("/r")), Some(PathBuf::from("/h")));
+    assert_eq!(crate::locate_home(None, Some("/r")), Some(PathBuf::from("/r/spira")));
+    assert_eq!(crate::locate_home(None, None), None);
 }
 
 #[test]

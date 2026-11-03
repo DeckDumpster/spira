@@ -20,7 +20,7 @@ impl RealHttp {
     /// The forge's App installation token, from `broker token`.
     pub fn from_broker() -> Self {
         Self::new(Box::new(|| {
-            let bin = spira_config::release_env::tool("broker");
+            let bin = spira_config::release_env::tool("broker")?;
             let o = spira_config::bounded::bounded(&bin)
                 .arg("token")
                 .stdin(Stdio::null())
@@ -114,9 +114,9 @@ pub struct RealLifecycle {
     pub bin: String,
 }
 
-impl Default for RealLifecycle {
-    fn default() -> Self {
-        RealLifecycle { bin: spira_config::release_env::tool("spira-lc") }
+impl RealLifecycle {
+    pub fn new() -> Result<Self, String> {
+        Ok(RealLifecycle { bin: spira_config::lifecycle_row::lc_bin()? })
     }
 }
 

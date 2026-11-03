@@ -3,31 +3,12 @@
 //! from the config store and the `conf.d` registry. A caller never supplies a literal default.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
+/// The declared harness home (`SPIRA_HOME`, else `$SPIRA_RELEASE/spira`) when it holds `lib.sh`.
+/// Never `spira.prod` or a search beside this binary.
 pub fn harness_home() -> Option<PathBuf> {
-    let has_lib = |p: &Path| p.join("lib.sh").is_file();
-    if let Some(h) = std::env::var_os("SPIRA_HOME")
-        .map(PathBuf::from)
-        .filter(|p| has_lib(p))
-    {
-        return Some(h);
-    }
-    if let Some(doc) = spira_config::discover(None).and_then(|p| spira_config::load(&p).ok()) {
-        if let Some(p) = spira_config::get_path(&doc, "spira.prod")
-            .map(PathBuf::from)
-            .filter(|p| has_lib(p))
-        {
-            return Some(p);
-        }
-    }
-    let exe = std::env::current_exe().ok()?;
-    let exe = exe.canonicalize().unwrap_or(exe);
-    exe.ancestors()
-        .skip(1)
-        .take(4)
-        .map(|a| a.join("spira"))
-        .find(|p| has_lib(p))
+    spira_config::resolve::locate_home_for_process().ok().filter(|p| p.join("lib.sh").is_file())
 }
 
 pub fn value(key: &str) -> Result<String, String> {
@@ -35,7 +16,7 @@ pub fn value(key: &str) -> Result<String, String> {
         return Ok(v);
     }
     let home = harness_home().ok_or_else(|| {
-        format!("{key}: cannot find the harness (lib.sh): set SPIRA_HOME or spira.prod")
+        format!("{key}: cannot find the harness (lib.sh): set SPIRA_HOME or SPIRA_RELEASE")
     })?;
     let env: BTreeMap<String, String> = std::env::vars().collect();
     let repo = spira_config::resolve::derive_home_repo(&home, &env);

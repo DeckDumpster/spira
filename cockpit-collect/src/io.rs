@@ -52,17 +52,16 @@ pub fn now() -> i64 {
         .unwrap_or(0)
 }
 
-/// `SPIRA_HOME`, or — mirroring every other rewritten tool in this workspace (`gate-run`'s
-/// `default_home`) — `<release>/spira` derived from this binary's own install location
-/// (`<release>/bin/cockpit-collect`).
+/// The declared harness home: `SPIRA_HOME`, else `$SPIRA_RELEASE/spira`; neither set is a
+/// refusal naming them.
+pub fn try_home_dir() -> Result<PathBuf, String> {
+    spira_config::resolve::locate_home_for_process().map_err(|e| format!("cockpit-collect: {e}"))
+}
+
+/// Panics when [`try_home_dir`] fails; `main` calls [`try_run_dir`], which resolves the home,
+/// first and refuses, so only a caller that skipped that check reaches the panic.
 pub fn home_dir() -> PathBuf {
-    if let Some(h) = std::env::var_os("SPIRA_HOME").filter(|v| !v.is_empty()) {
-        return PathBuf::from(h);
-    }
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().and_then(|d| d.parent()).map(|r| r.join("spira")))
-        .unwrap_or_else(|| PathBuf::from("spira"))
+    try_home_dir().unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// `spira/cockpit.sh` sourced `lib.sh` unconditionally at its own top level, before
@@ -94,7 +93,7 @@ pub fn home_dir() -> PathBuf {
 /// exactly as it was (the same as every `lib_call` already tolerates a bash failure
 /// returning `None`).
 pub fn bootstrap_config() {
-    let home = home_dir();
+    let Ok(home) = try_home_dir() else { return };
     let env_map: BTreeMap<String, String> = std::env::vars().collect();
     let repo_derived = spira_config::resolve::derive_repo_filesystem(&home, &env_map);
     let repo = env_map
@@ -178,7 +177,7 @@ pub fn max_dwarves() -> String {
 
 pub fn try_run_dir() -> Result<PathBuf, String> {
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    spira_config::resolve::resolve_run_dir(&env, &home_dir()).map_err(|e| format!("cockpit-collect: {e}"))
+    spira_config::resolve::resolve_run_dir(&env, &try_home_dir()?).map_err(|e| format!("cockpit-collect: {e}"))
 }
 
 /// Panics when [`try_run_dir`] fails; `main` calls `try_run_dir` first and refuses, so only
@@ -199,7 +198,7 @@ fn env_or(key: &str, default: &str) -> String {
 pub fn content(args: &[&str]) -> Option<String> {
     if let Ok(fixture) = std::env::var("SPIRA_BDJSON_FIXTURE") {
         if !fixture.is_empty() {
-            let out = Command::new(spira_config::release_env::tool("bdsim"))
+            let out = Command::new(spira_config::release_env::tool("bdsim").ok()?)
                 .arg(&fixture)
                 .args(args)
                 .stdin(Stdio::null())
@@ -439,9 +438,7 @@ f="$2"; shift 2
         .arg(home)
         .arg(func)
         .args(args)
-        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
-        // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-        .envs(spira_config::release_env::child_path_env_for_process())
+        .envs(spira_config::release_env::child_path_env_for_process().ok()?)
         .stderr(Stdio::null());
     if let Some(input) = stdin {
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped());

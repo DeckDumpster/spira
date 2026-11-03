@@ -192,7 +192,7 @@ tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" SPIRA_AGENT="$SPIRA_AG
 dwarf_rc=0
 SPIRA_HOME="$SPIRA_HOME" SPIRA_CONF="" \
 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
-    dwarf --home "$SPIRA_HOME" builder >/dev/null 2>&1 || dwarf_rc=$?
+    SPIRA_RELEASE="$(tl_release)" dwarf --home "$SPIRA_HOME" builder >/dev/null 2>&1 || dwarf_rc=$?
 
 # The session finished through its submit (teardown's bd-close conversion to open +
 # spira-submitted is gone with sp-v62vn): the ledger records the submitted disposition.

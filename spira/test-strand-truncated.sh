@@ -174,7 +174,7 @@ _run2="$TMP/run2"; mkdir -p "$_run2"
 tl_config SPIRA_RUN="$_run2" SPIRA_DB="$TMP/no-db" SPIRA_RUNES="alpha beta" \
     SPIRA_NOTIFY="$TMP/stubs2/mock-notify" SPIRA_RUNES_DIR="$TMP/stubs2/runes" \
     SPIRA_BD="$TMP/mock-bd"
-out="$(env -i \
+out="$(env -i SPIRA_RELEASE="$(tl_release)" \
     PATH="$PATH" HOME="$HOME" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_HOME="$TMP/stubs2" PATH="$TMP/stubs2:$PATH" \

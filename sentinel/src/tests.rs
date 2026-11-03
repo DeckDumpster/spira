@@ -952,29 +952,18 @@ fn on_a_refused_ready_count_is_unknown_not_zero() {
 // §2.7
 
 #[test]
-fn home_is_found_from_the_executable() {
-    let w = World::new("home");
-    let rel = w.dir.join("rel");
-    std::fs::create_dir_all(rel.join("bin")).unwrap();
-    std::fs::create_dir_all(rel.join("spira")).unwrap();
-    std::fs::write(rel.join("spira/lib.sh"), "").unwrap();
-    let found = crate::locate_home(None, &rel.join("bin/sentinel")).unwrap();
-    assert_eq!(found, rel.join("spira").canonicalize().unwrap());
-    assert_eq!(
-        crate::locate_home(Some("/x"), &rel.join("bin/sentinel")),
-        Some(PathBuf::from("/x"))
-    );
-    assert_eq!(
-        crate::locate_home(None, Path::new("/nonexistent/bin/sentinel")),
-        None
-    );
+fn home_is_spira_home_or_the_declared_release_and_never_searched_for() {
+    assert_eq!(crate::locate_home(Some("/x"), Some("/r")).unwrap(), PathBuf::from("/x"));
+    assert_eq!(crate::locate_home(None, Some("/r/")).unwrap(), PathBuf::from("/r/spira"));
+    let e = crate::locate_home(None, None).unwrap_err();
+    assert!(e.contains("SPIRA_RELEASE is not set"), "{e}");
 }
 
 #[test]
 fn probe_failure_is_reported() {
     let r = FakeRunner::new();
     r.on(|_| fail(97));
-    let e = crate::probe(&r, Path::new("/h")).unwrap_err();
+    let e = crate::probe(&r, Path::new("/h"), &[("PATH".into(), "/usr/bin:/bin".into())]).unwrap_err();
     assert!(e.contains("rc=97"));
     let s = r.find(|_| true).unwrap();
     // repos (sp-k6lku, "wave 4.13") no longer widens the probe's own bash seam — it is

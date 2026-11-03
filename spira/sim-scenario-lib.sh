@@ -39,7 +39,7 @@ sim_scenario_shard() {  # sim_scenario_shard <scenario name>
     echo "# seeds: $seeds${fresh:+ and fresh $fresh}"
     repo="$t/repo"
     sim_fixture_repo "$repo"
-    local noloc=(-u SPIRA_RUN -u SPIRA_DB -u SPIRA_LC_PASSWORD_FILE -u SPIRA_LC_SOCKET -u SPIRA_LC_HOST -u SPIRA_LC_PORT -u SPIRA_LC_USER -u SPIRA_HOME -u SPIRA_WORK_BEAD_ID)
+    local noloc=(-u SPIRA_TOML -u SPIRA_RUN -u SPIRA_DB -u SPIRA_LC_PASSWORD_FILE -u SPIRA_LC_SOCKET -u SPIRA_LC_HOST -u SPIRA_LC_PORT -u SPIRA_LC_USER -u SPIRA_HOME -u SPIRA_WORK_BEAD_ID)
     # The seed repo of this tree is built once for every world of the container, here or in a sibling shard.
     export SPIRA_SIM_CACHE="${SPIRA_SIM_CACHE:-/tmp/sim-seed-cache}"
     start=$SECONDS
@@ -71,7 +71,7 @@ sim_controls_setup() {  # sim_controls_setup — T, REPO, SIM and NOLOC for a su
     trap sim_controls_cleanup EXIT
     REPO="$T/repo"
     sim_fixture_repo "$REPO"
-    NOLOC=(-u SPIRA_RUN -u SPIRA_DB -u SPIRA_LC_PASSWORD_FILE -u SPIRA_LC_SOCKET -u SPIRA_LC_HOST -u SPIRA_LC_PORT -u SPIRA_LC_USER -u SPIRA_HOME -u SPIRA_WORK_BEAD_ID)
+    NOLOC=(-u SPIRA_TOML -u SPIRA_RUN -u SPIRA_DB -u SPIRA_LC_PASSWORD_FILE -u SPIRA_LC_SOCKET -u SPIRA_LC_HOST -u SPIRA_LC_PORT -u SPIRA_LC_USER -u SPIRA_HOME -u SPIRA_WORK_BEAD_ID)
 }
 
 sim_controls_cleanup() {

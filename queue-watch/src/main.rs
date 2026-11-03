@@ -194,9 +194,13 @@ fn stall_incident(repo: &str, pr: &str, text: &str) -> (String, String) {
 /// stall anyway, but a restarted queue-watch process has no memory of that latch.
 fn file_stall_incident(incident_sh: &Path, db: Option<&Path>, repo: &str, pr: &str, text: &str) {
     let (ref_, subject) = stall_incident(repo, pr, text);
+    let envs = match spira_config::release_env::child_path_env_for_process() {
+        Ok(e) => e,
+        Err(e) => return eprintln!("queue-watch: not filing the stall incident: {e}"),
+    };
     let mut cmd = spira_config::bounded::bounded("bash");
     cmd.arg(incident_sh)
-        .envs(spira_config::release_env::child_path_env_for_process())
+        .envs(envs)
         .arg("file")
         .arg(&subject)
         .arg("-")

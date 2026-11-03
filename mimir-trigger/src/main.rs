@@ -19,25 +19,16 @@ extern "C" {
 const LOCK_EX: i32 = 2;
 const LOCK_NB: i32 = 4;
 
-/// `std::env::var`, trimmed to "set and non-empty" — no `spira_config` fallback. `SPIRA_HOME`
-/// is the one key this crate still reads this way: it is the input that LOCATES config, not a
-/// value config produces, so [`home_dir`] cannot resolve it through [`load_cfg`].
-fn raw_env(key: &str) -> Option<String> {
-    env::var(key).ok().filter(|v| !v.is_empty())
-}
-
 /// Set once, at the very top of `main`, from the `--home` argument `mimir-trigger.sh`
 /// now passes (wave 4.9, sp-k80sa — this replaces the shim's own `export
 /// SPIRA_HOME="$HERE"`). `SPIRA_HOME` is a per-copy fact `spira_config` deliberately never
 /// derives (it is the input that LOCATES config, not a value config produces), so it has to
 /// be told explicitly rather than read back out of a resolution that depends on it. Left
-/// unset, [`home_dir`] falls back to [`raw_env`]`("SPIRA_HOME")` — exercised by this crate's
-/// own tests, which never call `main` and so never set this.
+/// unset, [`home_dir`] reads the declared home (`SPIRA_HOME`, else `$SPIRA_RELEASE/spira`).
 static HOME_OVERRIDE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
 /// `--home <path>` from argv, if this invocation carries one. `mimir-trigger.sh` always
-/// passes it now; a direct invocation (a test, an operator debugging by hand) without the
-/// flag falls back to [`raw_env`] inside [`home_dir`], unchanged from before this bead.
+/// passes it now; a direct invocation without the flag reads the declared home in [`home_dir`].
 fn parse_home_flag() -> Option<PathBuf> {
     let mut it = env::args();
     while let Some(a) = it.next() {
@@ -48,13 +39,13 @@ fn parse_home_flag() -> Option<PathBuf> {
     None
 }
 
-/// `SPIRA_HOME`: [`HOME_OVERRIDE`] (the `--home` flag) if `main` set one, else
-/// [`raw_env`]`("SPIRA_HOME")`.
-fn home_dir() -> PathBuf {
-    HOME_OVERRIDE
-        .get()
-        .cloned()
-        .unwrap_or_else(|| PathBuf::from(raw_env("SPIRA_HOME").unwrap_or_else(|| ".".to_string())))
+/// The harness home: [`HOME_OVERRIDE`] (the `--home` flag) if `main` set one, else the
+/// declared home; neither is a refusal naming the keys.
+fn home_dir() -> Result<PathBuf, String> {
+    match HOME_OVERRIDE.get() {
+        Some(h) => Ok(h.clone()),
+        None => spira_config::resolve::locate_home_for_process(),
+    }
 }
 
 /// Every `SPIRA_*` key this crate needs, besides `SPIRA_HOME` (a per-copy fact, not config —
@@ -123,8 +114,17 @@ fn main() {
             { let code = 1; spira_otel::run::finish(code); std::process::exit(code) };
         }
     };
-    let spira_home = home_dir();
-    let world = Real::new(spira_home, cfg.spira_run.clone(), spira_config::release_env::tool("bdq"), cfg.repo_map.clone(), cfg.labels.clone());
+    let spira_home_and_bdq = home_dir().and_then(|h| Ok((h, spira_config::release_env::tool("bdq")?)));
+    let (spira_home, bdq) = match spira_home_and_bdq {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("mimir-trigger: {e}");
+            let code = 1;
+            spira_otel::run::finish(code);
+            std::process::exit(code)
+        }
+    };
+    let world = Real::new(spira_home, cfg.spira_run.clone(), bdq, cfg.repo_map.clone(), cfg.labels.clone());
 
     // THE THREE LIB.SH SHIM DOORS (wave 4.35, row V) — none of them touches the sweep's own
     // lock file below; `groom-trigger.sh` calling `lane-admitted` must never contend with, or

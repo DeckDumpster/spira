@@ -105,8 +105,8 @@ printf '#!/bin/sh\nexit 1\n' > "$FAILING_BD"; chmod +x "$FAILING_BD"
 _run_unreadable="$TMP/run-unreadable"; mkdir -p "$_run_unreadable"
 tl_config SPIRA_RUN="$_run_unreadable" SPIRA_DB="$TMP/irrelevant-db" SPIRA_BD="$FAILING_BD" \
     SPIRA_RUNES="" SPIRA_NOTIFY="$STUBS/mock-notify" SPIRA_RUNES_DIR="$STUBS/runes"
-out_unreadable="$(env -i \
-    PATH="$STUBS:$PATH" HOME="$HOME" \
+out_unreadable="$(env -i SPIRA_RELEASE="$(PATH="$STUBS:$PATH" tl_release)" \
+    PATH="$STUBS:$PATH" SPIRA_RELEASE="$(PATH="$STUBS:$PATH" tl_release)" HOME="$HOME" \
     SPIRA_HOME="$STUBS" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_LAND_STALE=999999 \
@@ -155,8 +155,8 @@ run_pass() {
     tl_config SPIRA_RUN="$run" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" SPIRA_PATH="$SPIRA_PATH" \
         SPIRA_NOTIFY="$STUBS/mock-notify" SPIRA_RUNES=builder SPIRA_SCOPE_LABEL= \
         SPIRA_MAX_DWARVES=3 SPIRA_RUNES_DIR="$STUBS/runes"
-    env -i \
-        PATH="$STUBS:$PATH" HOME="$TMP/home" \
+    env -i SPIRA_RELEASE="$(PATH="$STUBS:$PATH" tl_release)" \
+        PATH="$STUBS:$PATH" SPIRA_RELEASE="$(PATH="$STUBS:$PATH" tl_release)" HOME="$TMP/home" \
         SPIRA_HOME="$STUBS" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_SKIP_RECLAIM=1 \

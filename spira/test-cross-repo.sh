@@ -154,7 +154,7 @@ B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
 
 run_dwarf() { rm -rf "$SPIRA_RUN/worktree"; \
     SPIRA_REPO="$HOME_REPO" \
-    dwarf --home "$SPIRA_HOME" builder > "$TMP/dwarf.out" 2>&1; }
+    SPIRA_RELEASE="$(tl_release)" dwarf --home "$SPIRA_HOME" builder > "$TMP/dwarf.out" 2>&1; }
 
 seed() {
     testdb_reset

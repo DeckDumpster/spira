@@ -32,10 +32,10 @@ use std::time::{Duration, Instant};
 /// a literal `Cfg` directly (`test_support::StubBd::cfg`) instead.
 #[derive(Clone, Default)]
 pub struct Cfg {
-    /// Directories prepended to every child's PATH, from `SPIRA_PATH` in `spira.conf`. `bd`
-    /// and `gt` live in a different place on every box, and this panel is started by tmux,
-    /// whose global PATH has neither.
-    pub extra_path: Vec<String>,
+    /// Every child's PATH, in order: the launcher PATH built from `SPIRA_RELEASE`, `HOME` and
+    /// `SPIRA_PATH` (`release_env::launcher_path`). This panel is started by tmux, whose
+    /// global PATH is nobody's declaration, so nothing is inherited.
+    pub path: Vec<String>,
     /// THE beads database this panel raises, reads, answers and closes in.
     ///
     /// (the operator, verbatim: "let's just use the spira one for everything from here on
@@ -59,24 +59,26 @@ pub struct Cfg {
     /// wrote. A literal here would be one installation's name, and every other installation
     /// would see its own replies as somebody else's.
     pub operator_actor: String,
+    /// `SPIRA_ASK_LABEL`: the label that means "waiting on the operator".
+    pub ask_label: String,
 }
 
 impl Cfg {
-    /// Resolve every field through the one door. No hardcoded fallback on `db`: conf.sh
-    /// exports `COCKPIT_DB`, defaulting it to `SPIRA_DB`, and a panel that guessed a database
-    /// instead would read someone else's conversation. A config that cannot resolve at all
-    /// degrades to empty fields rather than panicking a TUI — `db` being empty already has a
-    /// defined, visible failure mode (every `bd` call errors, which `beads_err` surfaces).
-    pub fn load() -> Cfg {
-        let extra_path = spira_config::process::cfg("SPIRA_PATH")
-            .unwrap_or_default()
-            .split(':')
-            .filter(|d| !d.is_empty())
-            .map(str::to_string)
-            .collect();
-        let db = spira_config::process::cfg("COCKPIT_DB").unwrap_or_default();
-        let operator_actor = spira_config::process::cfg("SPIRA_OPERATOR_ACTOR").unwrap_or_else(|_| "operator".to_string());
-        Cfg { extra_path, db, operator_actor }
+    /// Resolve every field through the one door; a key that does not resolve, or resolves
+    /// empty, is a refusal naming it. A panel that guessed a database would read someone
+    /// else's conversation, and one that guessed the actor would mistake whose turn it is.
+    pub fn load() -> Result<Cfg, String> {
+        Cfg::from_values(&spira_config::process::cfg, std::env::var(spira_config::RELEASE_ENV).ok().as_deref(), std::env::var("HOME").ok().as_deref())
+    }
+
+    /// [`Cfg::load`] over an injected key reader and the declared release and home.
+    pub fn from_values(cfg: &dyn Fn(&str) -> Result<String, String>, release: Option<&str>, home: Option<&str>) -> Result<Cfg, String> {
+        let get = |k: &str| match cfg(k)? {
+            v if v.is_empty() => Err(format!("{k} resolved empty — the panel has no value to use")),
+            v => Ok(v),
+        };
+        let path = spira_config::release_env::launcher_path(release, home, &cfg("SPIRA_PATH")?)?.split(':').map(str::to_string).collect();
+        Ok(Cfg { path, db: get("COCKPIT_DB")?, operator_actor: get("SPIRA_OPERATOR_ACTOR")?, ask_label: get("SPIRA_ASK_LABEL")? })
     }
 }
 
@@ -85,11 +87,8 @@ impl Cfg {
 /// rather than a literal in five files, because five literals is how the panel and the
 /// predicates come to disagree about which beads are waiting on anyone, and the panel is the
 /// half nobody notices is wrong: it simply shows fewer.
-pub fn ask_label() -> String {
-    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    let exe = std::env::current_exe().unwrap_or_default();
-    let home = spira_config::release_env::own_release_root_for_process().map(|r| r.join("spira")).unwrap_or(exe);
-    spira_config::resolve::resolve_ask_label(&env, &home).unwrap_or_default()
+pub fn ask_label(cfg: &Cfg) -> String {
+    cfg.ask_label.clone()
 }
 
 /// Raw rows plus when they were fetched, and what went wrong if anything did.
@@ -154,59 +153,19 @@ pub fn settled(s: &Snapshot, id: &str, e: Expect) -> bool {
     }
 }
 
-/// Resolve a tool to an absolute path, because PATH cannot be trusted here.
-///
-/// WHY. The pane came up reading `bd: No such file or directory`. `bd` and `gt`
-/// live in ~/.local/bin, and tmux's GLOBAL environment carries a PATH without it — so the
-/// panel worked when launched from an interactive shell and broke the moment layout.sh
-/// respawned it. Same class as hunk needing node on a login-shell PATH, and as the
-/// gt-dashboard unit having to set PATH explicitly because systemd does not inherit one.
-///
-/// A tool that only works when started by hand is not installed, it is coincidental.
+/// A tool's absolute path on [`Cfg::path`], the one PATH this panel declares for its children:
+/// tmux's global PATH is nobody's declaration. Not found there, the bare name goes to exec
+/// against that same PATH, whose error names the tool.
 pub fn bin(cmd: &str, cfg: &Cfg) -> String {
     if cmd.contains('/') {
         return cmd.to_string();
     }
-    let home = std::env::var("HOME").unwrap_or_default();
-    // SPIRA_PATH comes FIRST, deliberately, and the operator decides what is in it: it may
-    // hold a shim directory whose tools are not duplicates of the real binaries. Resolving
-    // straight to ~/.local/bin looks tidier and would step around whatever the operator put
-    // in front of them.
-    let mut dirs = cfg.extra_path.clone();
-    dirs.extend([
-        format!("{home}/.local/bin"),
-        "/usr/local/bin".into(),
-        "/usr/bin".into(),
-    ]);
-    for dir in dirs {
-        let p = format!("{dir}/{cmd}");
-        if std::path::Path::new(&p).is_file() {
-            return p;
-        }
-    }
-    cmd.to_string() // let PATH try, and let the error say so
+    cfg.path.iter().map(|d| format!("{d}/{cmd}")).find(|p| std::path::Path::new(p).is_file()).unwrap_or_else(|| cmd.to_string())
 }
 
-/// The PATH our children get.
-///
-/// Resolving a tool absolutely is not enough on its own: a shim execs the real binary, and a
-/// tool may shell out to another BY NAME. So a child inherits our PATH and fails one level
-/// down, which is how NOTIFICATIONS once rendered `?` while DECISIONS worked. Hand them a
-/// PATH that has the tools.
+/// The PATH our children get: [`Cfg::path`], never this process's own.
 pub fn child_path(cfg: &Cfg) -> String {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let inherited = std::env::var("PATH").unwrap_or_default();
-    let mut dirs = cfg.extra_path.clone();
-    dirs.extend([
-        format!("{home}/.local/bin"),
-        "/usr/local/bin".into(),
-        "/usr/bin".into(),
-        "/bin".into(),
-    ]);
-    if !inherited.is_empty() {
-        dirs.push(inherited);
-    }
-    dirs.join(":")
+    cfg.path.join(":")
 }
 
 fn run(cmd: &str, args: &[&str], cfg: &Cfg) -> Result<String, String> {
@@ -269,7 +228,7 @@ pub const ALERT_TYPE: &str = "Alert";
 /// tells the operator something was said and then makes them go elsewhere to read it, which is the
 /// thing that pushed replies into the chat transcript in the first place.
 fn fetch_threads(beads: &[Value], cfg: &Cfg) -> std::collections::HashMap<String, Vec<Value>> {
-    let ask = ask_label();
+    let ask = ask_label(cfg);
     let wanted: Vec<String> = beads
         .iter()
         .filter(|r| r["comment_count"].as_u64().unwrap_or(0) > 0)
@@ -689,7 +648,7 @@ pub fn view_items(
         (_, Some(e)) => Err(e.clone()),
         (None, _) => Err("loading…".into()),
         (Some(all), _) => {
-            let ask = ask_label();
+            let ask = ask_label(cfg);
             let want_insight = view == View::Insights;
             let want_event = view == View::Notifications;
             let mut out: Vec<Item> = all
@@ -890,6 +849,39 @@ pub fn view_items(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn declared(k: &str) -> Result<String, String> {
+        match k {
+            "SPIRA_PATH" => Ok(String::new()),
+            "COCKPIT_DB" => Ok("/db".into()),
+            "SPIRA_OPERATOR_ACTOR" => Ok("op".into()),
+            "SPIRA_ASK_LABEL" => Ok("ask".into()),
+            _ => Err(format!("{k} is not declared")),
+        }
+    }
+
+    #[test]
+    fn cfg_refuses_a_missing_operator_actor_naming_it() {
+        let cfg = |k: &str| if k == "SPIRA_OPERATOR_ACTOR" { Err(format!("{k} is not declared")) } else { declared(k) };
+        let e = Cfg::from_values(&cfg, Some("/r"), Some("/h")).err().unwrap();
+        assert!(e.contains("SPIRA_OPERATOR_ACTOR"), "{e}");
+    }
+
+    #[test]
+    fn cfg_refuses_an_empty_database_naming_it() {
+        let cfg = |k: &str| if k == "COCKPIT_DB" { Ok(String::new()) } else { declared(k) };
+        let e = Cfg::from_values(&cfg, Some("/r"), Some("/h")).err().unwrap();
+        assert!(e.contains("COCKPIT_DB"), "{e}");
+    }
+
+    #[test]
+    fn cfg_refuses_without_spira_release_and_never_inherits_path() {
+        let e = Cfg::from_values(&declared, None, Some("/h")).err().unwrap();
+        assert!(e.contains("SPIRA_RELEASE is not set"), "{e}");
+        let c = Cfg::from_values(&declared, Some("/r"), Some("/h")).unwrap();
+        assert_eq!(child_path(&c), "/r/bin:/r/spira:/h/.local/lib/spira-env/bin:/usr/local/bin:/usr/bin:/bin");
+        assert_eq!((c.db.as_str(), c.operator_actor.as_str(), c.ask_label.as_str()), ("/db", "op", "ask"));
+    }
 
     /// The exact body `ask.sh` wrote for every insight before this change, verbatim from
     /// the long insight in `tests/fixture.json`. An insight that opens "what is blocked" and closes by

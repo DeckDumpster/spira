@@ -17,7 +17,7 @@ grep -q '^run = "/fixture/userhome/spira/run"$' "$CK/spira/testlib/complete.toml
     || bad "positive control: the fixture run dir is an unwritable fixture path"
 
 mkdir "$W/tmp"
-env -i PATH="$PATH" RUNNER_TEMP="$W/tmp" GITHUB_REPOSITORY="Some-Owner/repo" \
+env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" RUNNER_TEMP="$W/tmp" GITHUB_REPOSITORY="Some-Owner/repo" \
     bash "$HERE/ci-config.sh" "$CK"
 wantrc "ci-config exits 0" 0 "$?"
 
@@ -28,7 +28,7 @@ nowant "no fixture run path remains" '"/fixture/userhome/spira/run"' "$(grep '^r
 want "testenv's scratch root is declared in the runner's temp" "testenv_scratch_root = \"$W/tmp/testenv-scratch\"" "$(grep '^testenv_scratch_root = ' "$out")"
 want "registry is still layered" 'testenv_registry = "ghcr.io/some-owner"' "$(cat "$out")"
 
-env -i PATH="$PATH" RUNNER_TEMP="$W/tmp" GITHUB_REPOSITORY="Some-Owner/repo" GITHUB_BASE_REF="release-x" \
+env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" RUNNER_TEMP="$W/tmp" GITHUB_REPOSITORY="Some-Owner/repo" GITHUB_BASE_REF="release-x" \
     bash "$HERE/ci-config.sh" "$CK"
 wantrc "ci-config with a PR base exits 0" 0 "$?"
 want "the spira repo row names the PR base" 'base = "origin/release-x"' "$(cat "$out")"

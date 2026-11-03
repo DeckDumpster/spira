@@ -113,16 +113,15 @@ impl Real {
     }
 }
 
-/// `<release>/bin/<program>` for the active release (`$SPIRA_RELEASE`, else this exe's own
-/// root) — never `PATH`, so a SOP can only name what the release ships.
-fn release_bin_tool(program: &str) -> Option<std::path::PathBuf> {
-    let release = std::env::var("SPIRA_RELEASE")
-        .ok()
-        .filter(|r| !r.is_empty())
-        .map(std::path::PathBuf::from)
-        .or_else(spira_config::release_env::own_release_root_for_process)?;
-    let p = release.join("bin").join(program);
-    p.is_file().then_some(p)
+/// `<release>/bin/<program>` for the release `$SPIRA_RELEASE` names — never `PATH`, so a SOP
+/// can only name what the release ships.
+fn release_bin_tool(program: &str) -> Result<std::path::PathBuf, String> {
+    let p = spira_config::release_env::release_root_for_process()?.join("bin").join(program);
+    if p.is_file() {
+        Ok(p)
+    } else {
+        Err(format!("{program} is not in the active release's bin/ ({})", p.display()))
+    }
 }
 
 fn systemctl_cmd(systemctl: &str) -> Command {
@@ -261,7 +260,14 @@ impl Ops for Real {
 
     fn mail_health(&self) -> i32 {
         // A spawn failure was a silent 3 ("could not check") — name it (sp-xp0u2).
-        match spira_config::bounded::bounded("mail-health.sh").envs(spira_config::release_env::child_path_env_for_process()).stdin(Stdio::null()).status() {
+        let (mail_health, envs) = match spira_config::release_env::tool("mail-health.sh").and_then(|t| Ok((t, spira_config::release_env::child_path_env_for_process()?))) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("watchd: cannot run mail-health.sh: {e}");
+                return 3;
+            }
+        };
+        match spira_config::bounded::bounded(mail_health).envs(envs).stdin(Stdio::null()).status() {
             Ok(s) => s.code().unwrap_or(3),
             Err(e) => {
                 eprintln!("watchd: cannot run mail-health.sh: {e}");
@@ -308,8 +314,13 @@ impl Ops for Real {
     }
 
     fn run_tool(&self, program: &str, args: &[String], deadline_secs: u64) -> ToolRun {
-        let Some(path) = release_bin_tool(program) else {
-            return ToolRun::Unavailable(format!("{program} is not in the active release's bin/"));
+        let path = match release_bin_tool(program) {
+            Ok(p) => p,
+            Err(e) => return ToolRun::Unavailable(e),
+        };
+        let child_env = match spira_config::release_env::child_path_env_for_process() {
+            Ok(e) => e,
+            Err(e) => return ToolRun::Unavailable(e),
         };
         let spec = match spira_config::process::spec() {
             Ok(spec) => spec,
@@ -317,7 +328,7 @@ impl Ops for Real {
         };
         let mut cmd = Command::new(&self.systemd_run);
         cmd.args(["--user", "--collect", "--wait", "--pipe", "--quiet"]).arg(format!("--setenv=SPIRA_TOML={spec}"));
-        for (k, v) in spira_config::release_env::child_path_env_for_process() {
+        for (k, v) in child_env {
             cmd.arg(format!("--setenv={k}={v}"));
         }
         cmd.arg("--")
@@ -351,7 +362,7 @@ impl Ops for Real {
     fn inbox_append(&self, text: &str) -> Result<(), String> {
         let out = spira_config::bounded::bounded("inbox-append.sh")
             .arg(text)
-            .envs(spira_config::release_env::child_path_env_for_process())
+            .envs(spira_config::release_env::child_path_env_for_process()?)
             .stdin(Stdio::null())
             .output()
             .map_err(|e| format!("cannot run inbox-append.sh: {e}"))?;

@@ -27,7 +27,7 @@ struct RealDolt;
 impl RealDolt {
     /// SQL goes on stdin; the server's local-user secret in the environment, never argv.
     fn sql(&self, mut cmd: Command, sql: &str) -> Result<String, String> {
-        cmd.envs(spira_config::release_env::child_path_env_for_process());
+        cmd.envs(spira_config::release_env::child_path_env_for_process()?);
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = cmd.spawn().map_err(|e| format!("cannot run dolt: {e}"))?;
         child

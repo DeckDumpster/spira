@@ -181,7 +181,7 @@ b1="$(timeout 5 bd -C "$SPIRA_DB" create --title "test: own worktree dirty" --ty
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b1" ] || { bad "case 0 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
-dwarf --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
+SPIRA_RELEASE="$(tl_release)" dwarf --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 st0="$(lc_row_state "$b1")"
 nowant "own-dirty: the hand-on is refused (not SUBMITTED)" "SUBMITTED" "$st0"
 # When it is not refused, say why: the row's own history and the dwarf's last ledger lines.
@@ -200,7 +200,7 @@ b2="$(timeout 5 bd -C "$SPIRA_DB" create --title "test: repo dirty only" --type 
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b2" ] || { bad "case 1 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
-dwarf --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
+SPIRA_RELEASE="$(tl_release)" dwarf --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 not_reopened "repo-dirty" "$b2"
 # Restore HARNESS so it does not affect later cases.
 git -C "$HARNESS" checkout -q -- incident.sh 2>/dev/null || true

@@ -6,8 +6,11 @@ use std::process::{Command, Stdio};
 pub const LC_BIN_ENV: &str = "SPIRA_LC_BIN";
 const LC_TIMEOUT_SECS: &str = "15";
 
-pub fn lc_bin() -> String {
-    std::env::var(LC_BIN_ENV).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| crate::release_env::tool("spira-lc"))
+pub fn lc_bin() -> Result<String, String> {
+    match std::env::var(LC_BIN_ENV).ok().filter(|v| !v.is_empty()) {
+        Some(v) => Ok(v),
+        None => crate::release_env::tool("spira-lc"),
+    }
 }
 
 /// An ask is its own lifecycle machine, never a bead row: `spira-lc create-ask` opens it
@@ -21,7 +24,7 @@ pub fn create_ask_with(bin: &str, id: &str, work_bead: &str) -> Result<(), Strin
 }
 
 pub fn create_ask(id: &str, work_bead: &str) -> Result<(), String> {
-    create_ask_with(&lc_bin(), id, work_bead)
+    create_ask_with(&lc_bin()?, id, work_bead)
 }
 
 /// How an ask closes (`spira-lc close-ask --exit`).
@@ -60,7 +63,7 @@ pub fn close_ask_with(bin: &str, id: &str, exit: AskExit, quote: &str, actor: &s
 }
 
 pub fn close_ask(id: &str, exit: AskExit, quote: &str, actor: &str, channel: &str) -> Result<bool, String> {
-    close_ask_with(&lc_bin(), id, exit, quote, actor, channel)
+    close_ask_with(&lc_bin()?, id, exit, quote, actor, channel)
 }
 
 /// Whether `id` is an ask on the ask machine: the only authority on ask-ness (not a label).
@@ -73,7 +76,7 @@ pub fn is_ask_with(bin: &str, id: &str) -> Result<bool, String> {
 }
 
 pub fn is_ask(id: &str) -> Result<bool, String> {
-    is_ask_with(&lc_bin(), id)
+    is_ask_with(&lc_bin()?, id)
 }
 
 fn run_lc(bin: &str, args: &[&str]) -> Result<(i32, String), String> {
@@ -185,7 +188,7 @@ pub fn set_express_with(bin: &str, id: &str, on: bool) -> Result<(), String> {
 }
 
 pub fn set_express(id: &str, on: bool) -> Result<(), String> {
-    set_express_with(&lc_bin(), id, on)
+    set_express_with(&lc_bin()?, id, on)
 }
 
 /// Filing has finished: the row born OPEN before the bead's edges were written becomes READY.
@@ -208,11 +211,11 @@ pub fn promote_with(bin: &str, id: &str) -> Result<(), String> {
 }
 
 pub fn promote(id: &str) -> Result<(), String> {
-    promote_with(&lc_bin(), id)
+    promote_with(&lc_bin()?, id)
 }
 
 pub fn ensure_row(id: &str) -> Result<(), String> {
-    ensure_row_retrying(&lc_bin(), id, ROW_ATTEMPTS, 250)
+    ensure_row_retrying(&lc_bin()?, id, ROW_ATTEMPTS, 250)
 }
 
 const ROW_ATTEMPTS: u32 = 3;
@@ -276,7 +279,7 @@ pub fn terminalize_closed_with(bin: &str, id: &str) -> Result<(), String> {
 /// closed, so the caller must not retry the close.
 pub fn after_close(who: &str, args: &[String]) -> Result<(), String> {
     let Some(id) = closed_id(args) else { return Ok(()) };
-    terminalize_closed_with(&lc_bin(), id).map_err(|e| {
+    terminalize_closed_with(&lc_bin()?, id).map_err(|e| {
         eprintln!("{who}: LIFECYCLE: {id} was closed but its lifecycle row is not terminal and may read as claimable: {e}");
         e
     })
@@ -295,7 +298,7 @@ pub fn close_with(bin: &str, id: &str, reason: &str, actor: &str, superseded_by:
 /// row itself, so this writes no event; bd closes once the row reads LANDED, and spira-lc
 /// refuses it for a row not in delivery.
 pub fn close_landed(id: &str, reason: &str, actor: &str) -> Result<(), String> {
-    close_args(&lc_bin(), id, reason, actor, vec!["--landing"])
+    close_args(&lc_bin()?, id, reason, actor, vec!["--landing"])
 }
 
 fn close_args(bin: &str, id: &str, reason: &str, actor: &str, extra: Vec<&str>) -> Result<(), String> {
@@ -327,7 +330,7 @@ fn close_args(bin: &str, id: &str, reason: &str, actor: &str, extra: Vec<&str>) 
 
 /// [`close_with`] through the configured `spira-lc`.
 pub fn close(id: &str, reason: &str, actor: &str, superseded_by: Option<&str>) -> Result<(), String> {
-    close_with(&lc_bin(), id, reason, actor, superseded_by)
+    close_with(&lc_bin()?, id, reason, actor, superseded_by)
 }
 
 /// Return a bead to its builder through the lifecycle machine (`spira-lc reopen`, sp-swh8b8):
@@ -357,12 +360,12 @@ pub fn set_repo_with(bin: &str, id: &str, repo: &str) -> Result<(), String> {
 }
 
 pub fn set_repo(id: &str, repo: &str) -> Result<(), String> {
-    set_repo_with(&lc_bin(), id, repo)
+    set_repo_with(&lc_bin()?, id, repo)
 }
 
 /// [`reopen_with`] through the configured `spira-lc`.
 pub fn reopen(id: &str, cause: &str, actor: &str) -> Result<(), String> {
-    reopen_with(&lc_bin(), id, cause, actor)
+    reopen_with(&lc_bin()?, id, cause, actor)
 }
 
 /// `after_create` for a verb that may create many beads (`import`, `mol pour|wisp|bond`),

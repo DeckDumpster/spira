@@ -268,9 +268,32 @@ pub fn seed_when(fresh: bool, server_mode: bool, server_up: bool) -> SeedWhen {
     }
 }
 
+/// Install's launch requirement: `SPIRA_TOML` names the config and `SPIRA_RELEASE` the release
+/// it installs. Either missing is a refusal naming it — no default config path, no release
+/// found by searching upward from this binary.
+pub fn require_declared(spira_toml: Option<&str>, spira_release: Option<&str>) -> Result<std::path::PathBuf, String> {
+    if spira_toml.is_none_or(str::is_empty) {
+        return Err("SPIRA_TOML is not set — it names the one source of config; there is no default path".into());
+    }
+    spira_config::release_env::release_root(spira_release)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn install_without_spira_toml_refuses_naming_it() {
+        let e = require_declared(None, Some("/r")).unwrap_err();
+        assert!(e.contains("SPIRA_TOML is not set"), "{e}");
+    }
+
+    #[test]
+    fn install_without_spira_release_refuses_naming_it() {
+        let e = require_declared(Some("/c/one-source.toml"), None).unwrap_err();
+        assert!(e.contains("SPIRA_RELEASE is not set"), "{e}");
+        assert_eq!(require_declared(Some("/c/one-source.toml"), Some("/r/")).unwrap(), std::path::PathBuf::from("/r"));
+    }
 
     #[test]
     fn conf_key_parsing_strips_quotes_and_expands_home() {

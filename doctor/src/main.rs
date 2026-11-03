@@ -4,7 +4,6 @@ use doctor::real::Real;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    spira_config::locate::adopt_configure_default();
     let w = match Real::try_new() {
         Ok(w) => w,
         Err(e) => {

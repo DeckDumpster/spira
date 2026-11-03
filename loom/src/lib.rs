@@ -30,8 +30,8 @@ use tokio::sync::Mutex;
 pub struct Config {
     /// The `spira-lc` to run, from `SPIRA_LC_BIN`.
     pub lc: String,
-    /// Prepended to the child's PATH, from the harness's configured `SPIRA_PATH`.
-    pub extra_path: Vec<String>,
+    /// Every child's PATH: the launcher PATH built from `SPIRA_RELEASE`, `HOME` and `SPIRA_PATH`.
+    pub path: String,
     /// The deadline on one lifecycle read.
     pub budget: Duration,
     /// How long a parsed snapshot is held. Bounding the cost by TIME rather than by viewer is
@@ -64,13 +64,8 @@ impl Config {
         let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
         let home = spira_config::resolve::locate_home_for_process().map_err(|e| format!("loom: {e}"))?;
         Ok(Config {
-            lc: spira_config::lifecycle_row::lc_bin(),
-            extra_path: cfg("SPIRA_PATH")
-                .map_err(|e| format!("loom: {e}"))?
-                .split(':')
-                .filter(|d| !d.is_empty())
-                .map(str::to_string)
-                .collect(),
+            lc: spira_config::lifecycle_row::lc_bin()?,
+            path: spira_config::release_env::launcher_path(env.get(spira_config::RELEASE_ENV).map(String::as_str), env.get("HOME").map(String::as_str), &cfg("SPIRA_PATH").map_err(|e| format!("loom: {e}"))?).map_err(|e| format!("loom: {e}"))?,
             budget: Duration::from_millis(cfg_parse::<u64>("SPIRA_LOOM_BUDGET_MS").map_err(|e| format!("loom: {e}"))?),
             cache: Duration::from_secs(cfg_parse::<u64>("SPIRA_LOOM_CACHE_S").map_err(|e| format!("loom: {e}"))?),
             addr: cfg("SPIRA_LOOM_ADDR").map_err(|e| format!("loom: {e}"))?,
@@ -82,9 +77,15 @@ impl Config {
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "systemctl".to_string()),
             metrics_endpoint: cfg("SPIRA_METRICS_ENDPOINT").ok().filter(|e| !e.trim().is_empty()),
-            broker: std::env::var("SPIRA_BROKER").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| spira_config::release_env::tool("broker")),
+            broker: match std::env::var("SPIRA_BROKER").ok().filter(|s| !s.is_empty()) {
+                Some(b) => b,
+                None => spira_config::release_env::tool("broker")?,
+            },
             desired_dir: cfg("SPIRA_DESIRED_DIR").map_err(|e| format!("loom: {e}"))?,
-            units_install: std::env::var("SPIRA_UNITS_INSTALL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| spira_config::release_env::tool("units-install")),
+            units_install: match std::env::var("SPIRA_UNITS_INSTALL").ok().filter(|s| !s.is_empty()) {
+                Some(u) => u,
+                None => spira_config::release_env::tool("units-install")?,
+            },
         })
     }
 }
@@ -133,7 +134,7 @@ impl Loom {
             run: self.cfg.run.clone(),
             systemctl: self.cfg.systemctl.clone(),
             metrics_endpoint: self.cfg.metrics_endpoint.clone(),
-            extra_path: self.cfg.extra_path.join(":"),
+            path: self.cfg.path.clone(),
             budget: self.cfg.budget,
             desired_dir: self.cfg.desired_dir.clone(),
             units_install: self.cfg.units_install.clone(),
@@ -211,17 +212,6 @@ impl Loom {
         }
         let s = held.as_ref().expect("a snapshot was just stored");
         (StatusCode::OK, s.body.clone())
-    }
-}
-
-/// Directories prepended to the child's PATH: this process may be started by a service
-/// manager whose PATH has neither the lifecycle binary nor the tools behind it.
-fn child_path(extra: &[String]) -> String {
-    let inherited = std::env::var("PATH").unwrap_or_default();
-    if extra.is_empty() {
-        inherited
-    } else {
-        format!("{}:{}", extra.join(":"), inherited)
     }
 }
 
@@ -320,7 +310,7 @@ async fn lc_json(loom: &Loom, args: &[&str]) -> Result<Value, String> {
     let cfg = loom.config();
     let mut cmd = tokio::process::Command::new(&cfg.lc);
     cmd.args(args)
-        .env("PATH", child_path(&cfg.extra_path))
+        .env("PATH", &cfg.path)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -536,7 +526,7 @@ async fn broker_json(loom: &Loom, args: &[&str]) -> Result<Value, String> {
     let bin = cfg.broker.clone();
     let mut cmd = tokio::process::Command::new(&bin);
     cmd.args(args)
-        .env("PATH", child_path(&cfg.extra_path))
+        .env("PATH", &cfg.path)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

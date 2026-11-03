@@ -1221,10 +1221,12 @@ pub fn drift_value(code: Option<i32>, out: &str, dirty: &str, finding_prefix: &s
 pub fn drift_keys() -> Kv {
     let drift_sh = io::home_dir().join("drift.sh");
     let repo = std::env::var("SPIRA_REPO").ok().filter(|s| !s.is_empty());
+    let child_env = spira_config::release_env::child_path_env_for_process();
     let run_one = |args: &[&str]| {
+        let Ok(envs) = child_env.clone() else { return (None, String::new()) };
         // batch-job: runs a gate, build or forge script that takes as long as its work
         std::process::Command::new("bash")
-            .envs(spira_config::release_env::child_path_env_for_process())
+            .envs(envs)
             .arg(&drift_sh)
             .args(args)
             .stdin(std::process::Stdio::null())

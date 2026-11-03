@@ -170,9 +170,9 @@ fn now() -> u64 {
     spira_config::vtime::now_epoch()
 }
 
-/// `round-vm`, by name on the launcher's PATH (sp-gypjk), unless --round-vm names another.
-fn default_round_vm() -> PathBuf {
-    PathBuf::from(spira_config::release_env::tool("round-vm"))
+/// `round-vm` from the declared release, unless --round-vm names another.
+fn default_round_vm() -> Result<PathBuf, String> {
+    spira_config::release_env::tool("round-vm").map(PathBuf::from)
 }
 
 /// Every field sourced from a registered `spira/conf.d` key is read exactly once here, through
@@ -191,12 +191,15 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
         run: run.clone(),
         queue_dir: PathBuf::from(cfg("SPIRA_QUEUE_DIR")?),
         forge: PathBuf::from(cfg("SPIRA_FORGE")?),
-        // Every harness tool by name, on the launcher's PATH (sp-gypjk).
-        tsd_bin: Some(PathBuf::from(spira_config::release_env::tool("tsd-write"))),
-        round_vm: o.round_vm.clone().unwrap_or_else(default_round_vm),
-        queue_bin: PathBuf::from(spira_config::release_env::tool("queue")),
-        rebase_stale_bin: PathBuf::from(spira_config::release_env::tool("rebase-stale")),
-        testenv_bin: PathBuf::from(spira_config::release_env::tool("testenv")),
+        // Every harness tool from the declared release.
+        tsd_bin: Some(PathBuf::from(spira_config::release_env::tool("tsd-write")?)),
+        round_vm: match o.round_vm.clone() {
+            Some(r) => r,
+            None => default_round_vm()?,
+        },
+        queue_bin: PathBuf::from(spira_config::release_env::tool("queue")?),
+        rebase_stale_bin: PathBuf::from(spira_config::release_env::tool("rebase-stale")?),
+        testenv_bin: PathBuf::from(spira_config::release_env::tool("testenv")?),
         round_slots: env::var("SPIRA_BATCHER_ROUND_SLOTS").ok().and_then(|v| v.trim().parse().ok()).filter(|n: &u32| *n > 0),
         hypervisor: io::Hypervisor {
             host_mib: cfg_parse::<u64>("SPIRA_HYPERVISOR_MEM_MIB")?,
@@ -210,7 +213,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
         wall_secs: cfg_parse::<u64>("SPIRA_BATCHER_WALL_SECS")?,
         git_name: cfg("SPIRA_GIT_NAME")?,
         git_email: cfg("SPIRA_GIT_EMAIL")?,
-        lc_bin: Some(PathBuf::from(spira_config::release_env::tool("spira-lc"))),
+        lc_bin: Some(PathBuf::from(spira_config::lifecycle_row::lc_bin()?)),
         lc_timeout: cfg_parse::<u64>("SPIRA_LC_TIMEOUT")?,
         verdicts: gate::cert::verdicts_dir(env::var("SPIRA_VERDICTS").ok().as_deref(), &run),
         land_lock_attempts: env::var("SPIRA_BATCHER_LAND_LOCK_ATTEMPTS").ok().and_then(|v| v.parse().ok()).unwrap_or(10),
@@ -1583,7 +1586,10 @@ fn path_attribute(o: &Opts) -> Result<ExitCode, String> {
 }
 
 fn main() -> std::process::ExitCode {
-    spira_config::release_env::ensure_release_path();
+    if let Err(e) = spira_config::release_env::ensure_release_path() {
+        eprintln!("batcher-cut: {e}");
+        std::process::exit(2);
+    }
     let first = std::env::args().nth(1);
     spira_otel::exit::finish(telemetry::run(&telemetry::sink(), first.as_deref(), || dispatch().code()))
 }

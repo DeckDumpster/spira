@@ -193,6 +193,12 @@ pub fn check_hotfix(w: &dyn World) -> Vec<Line> {
 
 // ============================================================================ config files
 
+/// Doctor's startup requirement: `SPIRA_TOML` names the config. Unset or empty is a refusal
+/// naming the key — doctor never adopts a default path.
+pub fn require_spec(spec: Option<&str>) -> Result<String, String> {
+    spec.filter(|s| !s.is_empty()).map(str::to_string).ok_or_else(|| "doctor: SPIRA_TOML is not set — it names the one source of config; there is no default path".to_string())
+}
+
 /// Built from two pieces, not one literal word, only so this file's own text doesn't trip
 /// `config-fence`'s "name" check (a blunt whole-file scan for that word — spira-lint's own
 /// rule — with no way to tell a user-facing status line naming the config file it already

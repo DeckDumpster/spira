@@ -90,7 +90,7 @@ impl LibSeam {
             .args(args)
             // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
             // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-            .envs(spira_config::release_env::child_path_env_for_process())
+            .envs(spira_config::release_env::child_path_env_for_process()?)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -132,7 +132,7 @@ impl Seam for LibSeam {
             .arg("-c")
             .arg(script)
             .arg(&self.lib_sh)
-            .envs(spira_config::release_env::child_path_env_for_process())
+            .envs(spira_config::release_env::child_path_env_for_process()?)
             .stdin(Stdio::null())
             .output()
             .map_err(|e| format!("lib.sh conf {key}: {e}"))?;
@@ -183,19 +183,13 @@ impl Seam for LibSeam {
     }
 }
 
-/// `SPIRA_HOME` from the environment, else the first directory holding `lib.sh` among the
-/// release and cargo layouts around this executable — the same search `sentinel::locate_home`
-/// uses, duplicated rather than shared because it is fifteen lines and every Rust seam onto
-/// lib.sh has needed its own copy so far.
-pub fn locate_home(env_home: Option<&str>, exe: &Path) -> Option<PathBuf> {
-    if let Some(h) = env_home.filter(|h| !h.is_empty()) {
-        return Some(PathBuf::from(h));
+/// `SPIRA_HOME`, else `$SPIRA_RELEASE/spira` — declared, never searched for around this
+/// executable. `None` when neither is set.
+pub fn locate_home(env_home: Option<&str>, env_release: Option<&str>) -> Option<PathBuf> {
+    match env_home.filter(|h| !h.is_empty()) {
+        Some(h) => Some(PathBuf::from(h)),
+        None => spira_config::release_env::release_root(env_release).ok().map(|r| r.join("spira")),
     }
-    let dir = exe.parent()?;
-    [dir.join("../spira"), dir.join("../../spira"), dir.join("../../../spira")]
-        .into_iter()
-        .find(|c| c.join("lib.sh").is_file())
-        .map(|c| c.canonicalize().unwrap_or(c))
 }
 
 #[cfg(test)]

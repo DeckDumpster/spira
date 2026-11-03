@@ -15,9 +15,9 @@ pub struct Real {
     pub lc: String,
 }
 
-impl Default for Real {
-    fn default() -> Real {
-        Real { ssh: "ssh".into(), bead: "bead.sh".into(), lc: spira_config::lifecycle_row::lc_bin() }
+impl Real {
+    pub fn new() -> Result<Real, String> {
+        Ok(Real { ssh: "ssh".into(), bead: "bead.sh".into(), lc: spira_config::lifecycle_row::lc_bin()? })
     }
 }
 

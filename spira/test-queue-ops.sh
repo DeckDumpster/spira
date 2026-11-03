@@ -83,7 +83,7 @@ run() {
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="${SPIRA_DB:-/nonexistent}" SPIRA_BD="$SH/bd-stub.sh" \
         SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$QUEUEDIR" \
         SPIRA_FORGE="$SH/forge-fake.sh"
-    env -i ${LCENV:-$(lcfix_env)} PATH="$SH:$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(tl_release)" ${LCENV:-$(lcfix_env)} PATH="$SH:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$SH" \
         BD_LOG="$BD_LOG" \
@@ -180,7 +180,7 @@ real_run() {
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD:-bd}" \
         SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$QUEUEDIR" \
         SPIRA_FORGE="$SH/forge-fake.sh"
-    env -i $(lcfix_env) PATH="$SH:$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(tl_release)" $(lcfix_env) PATH="$SH:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" \
         FORGE_LOG="$FORGE_LOG" \
         SPIRA_TOML="$SPIRA_TOML" \

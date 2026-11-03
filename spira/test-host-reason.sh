@@ -57,7 +57,7 @@ git init -q -b main "$ROOT"
 git -C "$ROOT" config user.email t@t; git -C "$ROOT" config user.name t
 
 fence_at() {     # fence_at <root> [args...] -> host-check.sh output from that root
-    env -i PATH="$PATH" HOME="$TMP" TERM=dumb bash "$1/spira/host-check.sh" "${@:2}" 2>&1
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" TERM=dumb bash "$1/spira/host-check.sh" "${@:2}" 2>&1
 }
 
 fence() {        # fence [args...] -> host-check.sh from the scratch root

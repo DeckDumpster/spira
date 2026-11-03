@@ -91,7 +91,7 @@ landing() {
     # counts THEIR branches, so a suite asserting about one fixture branch is quietly
     # asserting about a box (law-gates-run-in-a-clean-environment).
     SPIRA_HOME="$SH" SPIRA_REPO="$REPO" \
-        PATH="$SH:$PATH" landing-pass land 2>&1
+        SPIRA_RELEASE="$(PATH="$SH:$PATH" tl_release)" PATH="$SH:$PATH" landing-pass land 2>&1
 }
 mailbox() { cat "$RUN/landing.progress" 2>/dev/null; }
 

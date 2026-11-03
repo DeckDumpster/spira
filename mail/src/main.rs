@@ -60,8 +60,8 @@ fn dispatch(cmd: &str, rest: &[String]) -> ExitCode {
     }
 }
 
-fn bd_cli(env: &Env) -> BdCli {
-    BdCli { bdq: spira_config::release_env::tool("bdq"), conn_retries: env.bd_conn_retries }
+fn bd_cli(env: &Env) -> Result<BdCli, String> {
+    Ok(BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: env.bd_conn_retries })
 }
 
 fn fail(msg: impl AsRef<str>) -> ExitCode {
@@ -146,7 +146,10 @@ fn run_send(args: &[String]) -> ExitCode {
         Err(e) => return fail(format!("send: {e}")),
     };
 
-    let bd = bd_cli(&env);
+    let bd = match bd_cli(&env) {
+        Ok(b) => b,
+        Err(e) => return fail(e),
+    };
     let send_args = SendArgs { mailbox: &mailbox, from: from.as_deref(), subject: &subject, kind: &kind, default: &default, class: &class, bead: &bead, urgent, digest, dry_run, requested_by: &requested_by };
     let result = cmds::send(&bd, &env, &send_args, body.clone());
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
@@ -309,7 +312,10 @@ fn run_reconcile(_args: &[String]) -> ExitCode {
         Ok(e) => e,
         Err(e) => return fail(e),
     };
-    let bd = bd_cli(&env);
+    let bd = match bd_cli(&env) {
+        Ok(b) => b,
+        Err(e) => return fail(e),
+    };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let r = reconcile::pass(&bd, &LcCli, !env.db.is_empty(), &env.mail_root, &env.run_dir.join("mail-reconcile"), now);
     println!("reconcile: converged {}, pending {}, refused {}", r.converged, r.pending, r.refused);
@@ -338,7 +344,10 @@ fn run_tidy(args: &[String]) -> ExitCode {
     if env.ask_label.is_empty() {
         return fail("tidy: ask label does not resolve — refusing to guess one");
     }
-    let bd = bd_cli(&env);
+    let bd = match bd_cli(&env) {
+        Ok(b) => b,
+        Err(e) => return fail(e),
+    };
     let db_configured = !env.db.is_empty();
     match tidy::tidy(&bd, db_configured, &env.mail_root, &mailbox, &env.ask_label, env.tidy_fresh_s, env.id_prefix_for_regex(), dry_run) {
         Ok(r) => {
@@ -374,7 +383,10 @@ fn run_sweep_dismissed(args: &[String]) -> ExitCode {
     if let Err(e) = mail::maildir::mailbox_valid(&mailbox) {
         return fail(format!("sweep-dismissed: {e}"));
     }
-    let bd = bd_cli(&env);
+    let bd = match bd_cli(&env) {
+        Ok(b) => b,
+        Err(e) => return fail(e),
+    };
     let db_configured = !env.db.is_empty();
     match cmds::sweep_dismissed(&bd, &LcCli, db_configured, &env.mail_root, &env.index_file, &mailbox, &env.operator_actor) {
         Ok(cmds::SweepOutcome::NothingToDismiss) => {

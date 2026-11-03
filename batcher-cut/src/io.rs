@@ -150,7 +150,7 @@ where
     cmd.arg("-c").arg(r#". "$1" && shift && "$0" "$@""#).arg(func).arg(env.home.join("lib.sh")).args(args);
     // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
     // bin/+spira/ on the CHILD's PATH, never only inherited — see inbox-triage's scar.
-    cmd.envs(spira_config::release_env::child_path_env_for_process());
+    cmd.envs(spira_config::release_env::child_path_env_for_process()?);
     run(&mut cmd, &format!("lib.sh {func}"))
 }
 
@@ -1326,14 +1326,18 @@ pub fn record_escape(
     evidence: &str,
     rerun_rc: Option<i32>,
 ) -> String {
+    let (classify, child_env) = match spira_config::release_env::tool("escape-classify.sh").and_then(|t| Ok((t, spira_config::release_env::child_path_env_for_process()?))) {
+        Ok(v) => v,
+        Err(e) => return format!("escape not recorded: {e}"),
+    };
     let common = |c: &mut Command| {
-        c.env("SPIRA_RUN", &env.run).envs(spira_config::release_env::child_path_env_for_process());
+        c.env("SPIRA_RUN", &env.run).envs(child_env.iter().cloned());
     };
     let record_args = |c: &mut Command| {
         c.args(["--member", &member.id, "--suite", suite, "--batch-id", batch_id, "--repo", &repo.name, "--paths", paths, "--evidence", evidence]);
     };
     if let Some(rc) = rerun_rc {
-        let mut c = Command::new("escape-classify.sh");
+        let mut c = Command::new(&classify);
         c.arg("rerun-verdict").args(["--rerun-rc", &rc.to_string()]);
         record_args(&mut c);
         common(&mut c);
@@ -1343,7 +1347,7 @@ pub fn record_escape(
             Err(e) => return format!("escape not recorded: {e}"),
         }
     }
-    let mut c = Command::new("escape-classify.sh");
+    let mut c = Command::new(&classify);
     c.arg("classify").args(["--repo".as_ref(), repo.path.as_os_str()]).args(["--base", base, "--tip", &member.tip]);
     c.arg("--suite-file").arg(wt.join("spira").join(suite));
     c.arg("--gate-log").arg(env.run.join("gate.log")).args(["--branch", &format!("spira/{}", member.id)]);
@@ -1352,7 +1356,7 @@ pub fn record_escape(
         Ok(out) => out.trim().to_string(),
         Err(e) => return format!("escape not recorded: {e}"),
     };
-    let mut c = Command::new("escape-classify.sh");
+    let mut c = Command::new(&classify);
     c.arg("record").args(["--class", &class]);
     record_args(&mut c);
     common(&mut c);
@@ -1599,42 +1603,38 @@ pub fn batch_shots_section(testenv_bin: &Path, run_dir: &Path, loom_addr: Option
 }
 
 pub fn forge_pr_create(repo: &Repo, head: &str, base: &str, title: &str, body: &str) -> Result<String, String> {
-    forge_pr_create_on(repo, head, base, title, body, None)
+    forge_pr_create_on(repo, head, base, title, body, std::env::var(spira_config::RELEASE_ENV).ok().as_deref())
 }
 
 const PR_CREATE_DEADLINE_SECS: &str = "300";
 
-fn forge_cmd(repo: &Repo, path: Option<&std::ffi::OsStr>) -> std::process::Command {
-    forge_cmd_for(repo, path, None)
+fn forge_cmd(repo: &Repo, release: Option<&str>) -> Result<std::process::Command, String> {
+    forge_cmd_for(repo, release, None)
 }
 
-fn forge_cmd_for(repo: &Repo, path: Option<&std::ffi::OsStr>, secs: Option<&str>) -> std::process::Command {
+fn forge_cmd_for(repo: &Repo, release: Option<&str>, secs: Option<&str>) -> Result<std::process::Command, String> {
     let bound = |p: &dyn AsRef<std::ffi::OsStr>| match secs {
         Some(s) => spira_config::bounded::bounded_for(p, s),
         None => spira_config::bounded::bounded(p),
     };
-    // A bare name (the default, `forge`, since sp-yv4b3) is the launcher-PATH program, run
-    // directly; a configured SPIRA_FORGE path is run with bash, as batch.sh did.
-    let mut cmd = if repo.forge.components().count() == 1 {
-        bound(&repo.forge)
+    // A bare name (the default, `forge`) is the release's own binary, from `release`
+    // (`$SPIRA_RELEASE`); a configured SPIRA_FORGE path is run with bash, as batch.sh did.
+    Ok(if repo.forge.components().count() == 1 {
+        bound(&spira_config::release_env::resolve_tool(&repo.forge.to_string_lossy(), release)?)
     } else {
         let mut c = bound(&"bash");
         c.arg(&repo.forge);
         c
-    };
-    if let Some(p) = path {
-        cmd.env("PATH", p);
-    }
-    cmd
+    })
 }
 
 /// Arms auto-merge on a batch PR and requires the forge to have read the request back.
 pub fn forge_pr_arm(repo: &Repo, pr: &str) -> Result<(), String> {
-    forge_pr_arm_on(repo, pr, None)
+    forge_pr_arm_on(repo, pr, std::env::var(spira_config::RELEASE_ENV).ok().as_deref())
 }
 
-fn forge_pr_arm_on(repo: &Repo, pr: &str, path: Option<&std::ffi::OsStr>) -> Result<(), String> {
-    let mut cmd = forge_cmd(repo, path);
+fn forge_pr_arm_on(repo: &Repo, pr: &str, release: Option<&str>) -> Result<(), String> {
+    let mut cmd = forge_cmd(repo, release)?;
     cmd.arg("pr-automerge").arg(&repo.path).arg(pr).arg("merge");
     let o = cmd.stdin(std::process::Stdio::null()).output().map_err(|e| format!("forge pr-automerge: {e}"))?;
     if o.status.success() {
@@ -1646,7 +1646,7 @@ fn forge_pr_arm_on(repo: &Repo, pr: &str, path: Option<&std::ffi::OsStr>) -> Res
 
 /// The reconciler: arms every open batch PR found without auto-merge.
 pub fn forge_arm_queue(repo: &Repo) -> Result<(), String> {
-    let mut cmd = forge_cmd(repo, None);
+    let mut cmd = forge_cmd(repo, std::env::var(spira_config::RELEASE_ENV).ok().as_deref())?;
     cmd.arg("pr-arm-queue").arg(&repo.path).arg("merge");
     let o = cmd.stdin(std::process::Stdio::null()).output().map_err(|e| format!("forge pr-arm-queue: {e}"))?;
     for l in String::from_utf8_lossy(&o.stdout).lines() {
@@ -1659,11 +1659,12 @@ pub fn forge_arm_queue(repo: &Repo) -> Result<(), String> {
     }
 }
 
-/// `path`, when given, is the child's PATH — the seam tests use instead of mutating the process PATH.
-fn forge_pr_create_on(repo: &Repo, head: &str, base: &str, title: &str, body: &str, path: Option<&std::ffi::OsStr>) -> Result<String, String> {
-    match forge_pr_create_once(repo, head, base, title, body, path) {
+/// `release` is the release a bare forge name resolves under — the seam tests use instead of
+/// mutating the process environment.
+fn forge_pr_create_on(repo: &Repo, head: &str, base: &str, title: &str, body: &str, release: Option<&str>) -> Result<String, String> {
+    match forge_pr_create_once(repo, head, base, title, body, release) {
         Ok(n) => Ok(n),
-        Err(e) => match forge_pr_number_on(repo, head, path) {
+        Err(e) => match forge_pr_number_on(repo, head, release) {
             Some(n) => {
                 eprintln!("batcher {}: {e}; adopting the existing PR {n} for {head}", repo.name);
                 Ok(n)
@@ -1675,16 +1676,16 @@ fn forge_pr_create_on(repo: &Repo, head: &str, base: &str, title: &str, body: &s
 
 /// The open PR GitHub already holds for `head`, if any — a pr-create that failed after the
 /// forge created the PR must be adopted, never retried into a second one.
-fn forge_pr_number_on(repo: &Repo, head: &str, path: Option<&std::ffi::OsStr>) -> Option<String> {
-    let mut cmd = forge_cmd_for(repo, path, Some(PR_CREATE_DEADLINE_SECS));
+fn forge_pr_number_on(repo: &Repo, head: &str, release: Option<&str>) -> Option<String> {
+    let mut cmd = forge_cmd_for(repo, release, Some(PR_CREATE_DEADLINE_SECS)).ok()?;
     cmd.arg("pr-number").arg(&repo.path).arg(head);
     let o = cmd.stdin(std::process::Stdio::null()).output().ok()?;
     let n = String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().to_string();
     (o.status.success() && !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())).then_some(n)
 }
 
-fn forge_pr_create_once(repo: &Repo, head: &str, base: &str, title: &str, body: &str, path: Option<&std::ffi::OsStr>) -> Result<String, String> {
-    let mut cmd = forge_cmd_for(repo, path, Some(PR_CREATE_DEADLINE_SECS));
+fn forge_pr_create_once(repo: &Repo, head: &str, base: &str, title: &str, body: &str, release: Option<&str>) -> Result<String, String> {
+    let mut cmd = forge_cmd_for(repo, release, Some(PR_CREATE_DEADLINE_SECS))?;
     cmd.arg("pr-create").arg(&repo.path).arg(head).arg(base).arg(title);
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
@@ -1957,7 +1958,7 @@ fn round_head_and_worktree(out: &str, batch: &str) -> Option<(String, String)> {
 
 /// `round-recert --batch <id> --repo <repo>`: starts the round's driver in its own unit and returns.
 pub fn redrive_round(repo: &Repo, batch: &str) -> Result<(), String> {
-    let out = run(spira_config::bounded::bounded_for(spira_config::release_env::tool("round-recert"), "60").args(["--batch", batch, "--repo", &repo.name]), "round-recert")?;
+    let out = run(spira_config::bounded::bounded_for(spira_config::release_env::tool("round-recert")?, "60").args(["--batch", batch, "--repo", &repo.name]), "round-recert")?;
     println!("{}", out.trim());
     Ok(())
 }
@@ -2927,5 +2928,19 @@ mod round_status_tests {
         assert_eq!(members_of_batch(STATUS, "new"), Some(vec!["c".to_string()]));
         assert_eq!(members_of_batch(STATUS, "old"), Some(vec!["a".to_string(), "b".to_string()]));
         assert_eq!(members_of_batch(STATUS, "gone"), None);
+    }
+}
+
+#[cfg(test)]
+mod forge_release_tests {
+    use super::*;
+
+    #[test]
+    fn a_bare_forge_without_spira_release_refuses_naming_the_key() {
+        let repo = Repo { name: "r".into(), path: PathBuf::from("/tmp/r"), base: "local/main".into(), forge: PathBuf::from("forge"), land: Land::Forge };
+        let e = forge_pr_arm_on(&repo, "1", None).unwrap_err();
+        assert!(e.contains("SPIRA_RELEASE is not set"), "{e}");
+        let e = forge_pr_arm_on(&repo, "1", Some("/nonexistent-release")).unwrap_err();
+        assert!(e.contains("forge is not in SPIRA_RELEASE"), "{e}");
     }
 }

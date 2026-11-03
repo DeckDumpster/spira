@@ -26,6 +26,9 @@ mkdir -p "$R/bin"
 for b in mail spira-lc spira-config watchd release health lc-view layout cockpit-collect inbox-triage; do
     p="$(command -v "$b" 2>/dev/null)" && cp "$p" "$R/bin/$b"
 done
+# The release's bdq, which its binaries resolve from it: a stand-in that answers nothing
+# at once, never the real one waiting on a store this fixture does not run.
+printf '#!/bin/sh\nexit 1\n' > "$R/bin/bdq"; chmod +x "$R/bin/bdq"
 ln -s "$ROOT/spira" "$R/spira"
 ln -s "$R" "$TMP/releases/current"
 
@@ -36,7 +39,7 @@ tl_config SPIRA_RELEASES="$TMP/releases" SPIRA_PROD="$R/spira" SPIRA_RUN="$TMP/r
     SPIRA_COCKPIT="$TMP/cockpit"
 
 note() { printf '# %s\n' "$*" >> "$TMP/notes"; }
-client_env() { env -i HOME="$1" PATH=/usr/bin:/bin bash -c "$2"; }
+client_env() { env -i SPIRA_RELEASE="$(tl_release)" HOME="$1" PATH=/usr/bin:/bin bash -c "$2"; }
 
 # --- UC-operator-channel-46: aerc's outgoing line -------------------------------------------
 for s in duckdb inotifywait; do printf '#!/bin/sh\nexit 0\n' > "$TMP/stubs/$s"; done
@@ -48,7 +51,7 @@ chmod +x "$TMP/stubs/"*
 AH="$TMP/aerc-home"
 mkdir -p "$AH/.config/aerc" "$TMP/mail/concierge/"{new,cur,tmp} "$TMP/mail/operator/"{new,cur,tmp}
 sed "s#maildir:///path/to/SPIRA_MAIL#maildir://$TMP/mail#" "$ROOT/aerc/accounts.conf" > "$AH/.config/aerc/accounts.conf"
-env -i HOME="$AH" PATH="$TMP/stubs:/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" SPIRA_RELEASES="$TMP/releases" \
+env -i HOME="$AH" PATH="$TMP/stubs:/usr/bin:/bin" SPIRA_RELEASE="$(PATH="$TMP/stubs:/usr/bin:/bin" tl_release)" SPIRA_TOML="$SPIRA_TOML" SPIRA_RELEASES="$TMP/releases" \
     SPIRA_INSTALL_AERC_CONSIDERED=1 "$(command -v spira-install)" >"$TMP/install.out" 2>&1
 OUTGOING="$(sed -n 's/^outgoing *= *//p' "$AH/.config/aerc/accounts.conf" | head -1)"
 case "$OUTGOING" in "$AH/.local/bin/spira-sendmail") ok "install repoints aerc's outgoing at spira-sendmail" ;;
@@ -118,7 +121,7 @@ pane() {  # pane <name> <toml-for-the-server-or-empty> — `layout up` in a fres
     local base=(HOME="$TMP/home" PATH="$R/bin:$TMP/stubs:/usr/bin:/bin" TMUX_TMPDIR="$sock" SPIRA_SYSTEMCTL="$TMP/stubs/systemctl")
     local srv=("${base[@]}")
     [ -n "$toml" ] && srv+=(SPIRA_TOML="$toml")
-    env -i "${srv[@]}" tmux new-session -d -s c -x 200 -y 60
+    env -i SPIRA_RELEASE="$(tl_release)" "${srv[@]}" tmux new-session -d -s c -x 200 -y 60
     env -i "${base[@]}" SPIRA_TOML="$SPIRA_TOML" SPIRA_RELEASE="$R" SPIRA_REPO="$TMP" "$R/bin/layout" up --window c:0 >"$TMP/layout-$1.out" 2>&1
     sleep 4
     TMUX_TMPDIR="$sock" tmux list-panes -t c:0 -F '#{pane_id} #{@cockpit}' | awk '$2=="health"{print $1}' \

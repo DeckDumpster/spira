@@ -71,7 +71,7 @@ git -C "$W/repo" -c user.name=t -c user.email=t@t commit -qm a
 run_step() {
     local script="$1" url="$2"
     : > "$W/out"
-    (cd "$W/repo" && env -i HOME="$W" PATH="$W/fake:/usr/bin:/bin" GITHUB_OUTPUT="$W/out" ARTIFACT_STORE_URL="$url" bash -c "$script" 2>&1)
+    (cd "$W/repo" && env -i SPIRA_RELEASE="$(tl_release)" HOME="$W" PATH="$W/fake:/usr/bin:/bin" GITHUB_OUTPUT="$W/out" ARTIFACT_STORE_URL="$url" bash -c "$script" 2>&1)
 }
 substitute() { printf '%s' "$1" | sed -e "s/\${{ steps.stored.outputs.id }}/$2/" -e "s/\${{ steps.stored.outputs.tree }}/$3/" -e "s/\${{ steps.stored.outputs.toolchain }}/$4/"; }
 

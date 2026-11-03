@@ -464,11 +464,9 @@ fn cmd_stop(args: &[String]) -> i32 {
             }
             println!("  slaying {bead} (pid {pid})");
             let why_text = if why.is_empty() { "the world was stopped".to_string() } else { why.clone() };
-            let ok = Command::new(spira_config::release_env::tool("slay"))
-                .args(["--bead", &bead, "--keep-work", "--why", &why_text])
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
+            let ok = spira_config::release_env::tool("slay").map_err(|e| eprintln!("    {e}")).is_ok_and(|slay| {
+                Command::new(slay).args(["--bead", &bead, "--keep-work", "--why", &why_text]).output().is_ok_and(|o| o.status.success())
+            });
             if !ok {
                 println!("    slay.sh could not stop {bead} — left running, say so rather than pretend");
             }
@@ -771,11 +769,9 @@ fn cmd_drain(args: &[String]) -> i32 {
                         continue;
                     }
                     println!("  slaying {bead} (pid {pid})");
-                    let ok = Command::new(spira_config::release_env::tool("slay"))
-                        .args(["--bead", &bead, "--keep-work", "--reopen", "--why", "drain deadline reached"])
-                        .output()
-                        .map(|o| o.status.success())
-                        .unwrap_or(false);
+                    let ok = spira_config::release_env::tool("slay").map_err(|e| eprintln!("    {e}")).is_ok_and(|slay| {
+                        Command::new(slay).args(["--bead", &bead, "--keep-work", "--reopen", "--why", "drain deadline reached"]).output().is_ok_and(|o| o.status.success())
+                    });
                     if !ok {
                         eprintln!("    slay.sh could not stop {bead} — left running");
                     }
@@ -1071,12 +1067,16 @@ fn cmd_status() -> i32 {
         println!("  {:<26} {}", svc, sysctl::run(&["is-active", svc]));
     }
 
-    let home = spira_world::locate_home(&env::current_exe().unwrap_or_default()).unwrap_or_default();
-    let prod = resolved_prod(&home);
-    let worker_paths = spira_world::live_worker_paths(&home, &prod);
-    let worker_refs: Vec<&str> = worker_paths.iter().map(String::as_str).collect();
-    let wcount = spira_world::proc::live_workers(std::path::Path::new("/proc"), &worker_refs).len();
-    println!("  {:<26} {}", "live workers (/proc)", wcount);
+    match spira_world::locate_home() {
+        Some(home) => {
+            let prod = resolved_prod(&home);
+            let worker_paths = spira_world::live_worker_paths(&home, &prod);
+            let worker_refs: Vec<&str> = worker_paths.iter().map(String::as_str).collect();
+            let wcount = spira_world::proc::live_workers(std::path::Path::new("/proc"), &worker_refs).len();
+            println!("  {:<26} {}", "live workers (/proc)", wcount);
+        }
+        None => println!("  {:<26} ? (neither SPIRA_HOME nor SPIRA_RELEASE names a harness home)", "live workers (/proc)"),
+    }
 
     let a = live_dwarf_pidfiles().len();
     let a = a.max(sysctl::live_dwarf_units().len());

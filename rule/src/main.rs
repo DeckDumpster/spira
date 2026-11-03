@@ -232,8 +232,15 @@ fn commit_common_law(home: &str, verb: &str, key: &str) -> CommitOutcome {
         }
     };
     let script = format!("{home}/wiki-commit.sh");
+    let envs = match spira_config::release_env::child_path_env_for_process() {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("rule: {e} — wiki page NOT committed.");
+            return CommitOutcome::Failed;
+        }
+    };
     // batch-job: runs a gate, build or forge script that takes as long as its work
-    let mut child = match Command::new("bash").envs(spira_config::release_env::child_path_env_for_process())
+    let mut child = match Command::new("bash").envs(envs)
         .arg(&script)
         .arg(&wiki)
         .arg(format!("law: {verb} {key}"))
@@ -1041,8 +1048,15 @@ fn memories_json_cached() -> Result<String, String> {
 fn fetch_memories_json() -> String {
     if let Ok(cmd) = std::env::var("SPIRA_MEMORIES_CMD") {
         if !cmd.is_empty() {
+            let envs = match spira_config::release_env::child_path_env_for_process() {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("rule: {e}");
+                    return String::new();
+                }
+            };
             // batch-job: runs a gate, build or forge script that takes as long as its work
-            return Command::new("bash").envs(spira_config::release_env::child_path_env_for_process())
+            return Command::new("bash").envs(envs)
                 .arg("-c")
                 .arg(&cmd)
                 .stdin(Stdio::null())

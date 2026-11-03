@@ -70,7 +70,7 @@ printf '_PROBE_AT=0\n_PROBE_STATUS=never\n_PROBE_KILLED=0\n' > "$FRAG_DIR/testpr
 
 log_out="$TMP/probe.log"
 tl_config SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map"
-env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     FRAG_DIR="$FRAG_DIR" COCK="$MOCK_COCK" \
@@ -92,14 +92,14 @@ echo
 echo "3. A probe that times out is recorded, counted, and cleared by the next success"
 
 run_probe() {   # run_probe <name> <timeout-s> <subcommand>
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         FRAG_DIR="$FRAG_DIR" COCK="$MOCK_COCK" \
         cockpit-collect _probe_body_test "$@" 2>&1 >/dev/null || true
 }
 run_merge() {
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         FRAG_DIR="$FRAG_DIR" cockpit-collect merge >/dev/null 2>&1

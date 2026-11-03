@@ -60,7 +60,7 @@ printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PATH = %s
 # "Permission denied".
 tl_config SPIRA_WATCHERS="$MAN" SPIRA_RUN="$RUN" SPIRA_COCKPIT="$ROOT/cockpit" \
     SPIRA_PROD="$PRODROOT/spira" SPIRA_MAIL="$RUN/mail"
-env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$TMP/install.conf" \
+env -i SPIRA_RELEASE="$(tl_release)" HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$TMP/install.conf" \
     SPIRA_INSTALL_FORCE=1 SPIRA_HOME="$HERE" \
     units-install > "$TMP/install.out" 2>&1
 ilog="$(cat "$TMP/systemctl.log")"
@@ -73,7 +73,7 @@ for pair in "spira-notify-prod" "spira-refresh-prod" \
 done
 
 period="$(sed -n 's/^OnUnitActiveSec=\([0-9]*\)min$/\1/p' "$ROOT/systemd/spira-notify.timer")"
-default_age="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$TMP/nonexistent" \
+default_age="$(env -i SPIRA_RELEASE="$(tl_release)" HOME="$TMP/home" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$TMP/nonexistent" \
     bash -c ". '$HERE/conf.sh'; printf '%s' \"\$SPIRA_NOTIFY_AGE\"")"
 is "the notify timer states a period in minutes" "yes" "$([ -n "$period" ] && echo yes || echo no)"
 is "the threshold has a default"                 "yes" "$([ -n "$default_age" ] && echo yes || echo no)"

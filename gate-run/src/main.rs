@@ -35,14 +35,12 @@ impl Paths {
     }
 }
 
+/// The declared harness home: `SPIRA_HOME`, else `$SPIRA_RELEASE/spira`; neither set exits 2 naming them.
 fn default_home() -> PathBuf {
-    if let Some(h) = std::env::var_os("SPIRA_HOME").filter(|v| !v.is_empty()) {
-        return PathBuf::from(h);
-    }
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().and_then(|d| d.parent()).map(|r| r.join("spira")))
-        .unwrap_or_else(|| PathBuf::from("spira"))
+    spira_config::resolve::locate_home_for_process().unwrap_or_else(|e| {
+        eprintln!("gate-run: {e}");
+        std::process::exit(2)
+    })
 }
 
 fn default_run(home: &Path) -> PathBuf {
@@ -56,15 +54,20 @@ fn default_run(home: &Path) -> PathBuf {
 /// `spira_home_repo` via the same `lib.sh` seam `Real` uses for the repository map, only reached
 /// when a caller omits `repo-name` (no production caller does — DESIGN.md "Intent").
 fn default_repo_name(home: &Path) -> String {
+    let envs = match spira_config::release_env::child_path_env_for_process() {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("gate-run: {e}");
+            return String::new();
+        }
+    };
     // batch-job: runs a gate, build or forge script that takes as long as its work
     let out = std::process::Command::new("bash")
         .arg("-c")
         .arg(". \"$1/lib.sh\" >/dev/null 2>&1 && spira_home_repo")
         .arg("gate-run-home-repo")
         .arg(home)
-        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
-        // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-        .envs(spira_config::release_env::child_path_env_for_process())
+        .envs(envs)
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .output();

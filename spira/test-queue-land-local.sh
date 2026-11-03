@@ -260,7 +260,7 @@ STUB6="$TMP/stub6"; mkdir -p "$STUB6"
 printf '#!/usr/bin/env bash\nprintf "gate %%s\\n" "$1" >> "%s"\nexit 0\n' "$TMP/gate6.log" > "$STUB6/gate.sh"
 chmod +x "$STUB6/gate.sh"
 
-out="$(PATH="$STUB6:$PATH" SPIRA_TESTENV_HARNESS="$TMP" SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" \
+out="$(PATH="$STUB6:$PATH" SPIRA_RELEASE="$(PATH="$STUB6:$PATH" tl_release)" SPIRA_TESTENV_HARNESS="$TMP" SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" \
     SPIRA_REPO="$REPO" \
     testenv suites quarantine test-q.sh sp-defect6 "flaky under load" --change-bead sp-ssland1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "6: the quarantine transition succeeds" || bad "6: the quarantine transition succeeds" "rc=$rc out=$out"

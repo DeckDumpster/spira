@@ -42,7 +42,8 @@ home_repo_base = origin/main
 
 ```sh
 target/release/release install-tarball spira-<ts>.tar.gz --answers answers.txt
-export SPIRA_TOML=<path the command printed>   # default: ${XDG_CONFIG_HOME:-~/.config}/spira/spira.toml
+export SPIRA_TOML=<path the command printed>   # required: install and doctor have no default path
+export SPIRA_RELEASE=<releases>/current        # required: the release install runs from
 <releases>/current/bin/spira-install --dry-run # what it would do
 <releases>/current/bin/spira-install           # then for real
 ```

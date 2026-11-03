@@ -281,35 +281,18 @@ pub fn persona_escalation_model(name: &str, spec: &str) -> Option<String> {
     doc.persona.get(name)?.escalation_model.clone().filter(|m| !m.is_empty())
 }
 
-/// Where the harness's `spira/` directory is (DESIGN.md §2.1).
-pub fn resolve_home(flag: Option<&str>, env: &BTreeMap<String, String>, exe: Option<&Path>) -> Option<PathBuf> {
-    let ok = |p: &Path| p.join("lib.sh").is_file() && p.join("runes").is_dir();
-    if let Some(f) = flag {
-        let p = PathBuf::from(f);
-        return ok(&p).then_some(p);
+/// Where the harness's `spira/` directory is: `--home`, else `SPIRA_HOME`, else
+/// `$SPIRA_RELEASE/spira` — declared, never searched for. A refusal names what is missing.
+pub fn resolve_home(flag: Option<&str>, env: &BTreeMap<String, String>) -> Result<PathBuf, String> {
+    let p = match flag {
+        Some(f) => PathBuf::from(f),
+        None => spira_config::resolve::locate_home(env, Path::new(""))?,
+    };
+    if p.join("lib.sh").is_file() && p.join("runes").is_dir() {
+        Ok(p)
+    } else {
+        Err(format!("{} is not the harness's spira/ directory (no lib.sh and runes/)", p.display()))
     }
-    let mut cands: Vec<PathBuf> = Vec::new();
-    if let Some(h) = env.get("SPIRA_HOME").filter(|s| !s.is_empty()) {
-        cands.push(PathBuf::from(h));
-    }
-    let cfg = env
-        .get("XDG_CONFIG_HOME")
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| env.get("HOME").map(|h| PathBuf::from(h).join(".config")));
-    if let Some(c) = cfg {
-        if let Ok(t) = std::fs::read_to_string(c.join("spira").join("harness")) {
-            let t = t.trim();
-            if !t.is_empty() {
-                cands.push(PathBuf::from(t).join("spira"));
-            }
-        }
-    }
-    if let Some(dir) = exe.and_then(|e| e.parent()) {
-        cands.push(dir.join("../spira"));
-        cands.push(dir.join("../../spira"));
-    }
-    cands.into_iter().find(|p| ok(p)).map(|p| p.canonicalize().unwrap_or(p))
 }
 
 /// Wave 4.8 ("retire conf re-import seams in Rust"): `_dwarf_snapshot`'s bash seam used to

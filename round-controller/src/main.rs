@@ -211,7 +211,7 @@ fn dispatch(args: &[String]) -> i32 {
 }
 
 fn sifts_verb() -> Result<(), String> {
-    spira_config::release_env::ensure_release_path();
+    spira_config::release_env::ensure_release_path()?;
     round_controller::sifts::for_process(&mut std::io::stdout().lock())
 }
 
@@ -254,7 +254,7 @@ fn run_pass(p: &Ports, a: &run::RunArgs) -> Result<run::RunEnd, String> {
         proc_: Arc::new(SysProc),
     };
     let env = VmEnv {
-        round_vm: spira_config::release_env::tool("round-vm").into(),
+        round_vm: spira_config::release_env::tool("round-vm")?.into(),
         run: run_dir,
         wall_secs: num("SPIRA_BATCHER_WALL_SECS")?,
         maxpar: u32::try_from(num("SPIRA_BATCH_MAXPAR")?).map_err(|e| e.to_string())?,
@@ -307,7 +307,7 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
     };
     let launcher = Systemd {
         programs,
-        exe: spira_config::release_env::tool("round-controller"),
+        exe: spira_config::release_env::tool("round-controller")?,
         toml: spira_config::process::spec()?,
         release: std::env::var(spira_config::RELEASE_ENV)
             .ok()
@@ -319,7 +319,7 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
     let queued = registry.clone();
     let installed = InstalledRelease::new(
         proc_.clone(),
-        spira_config::release_env::tool("round-vm"),
+        spira_config::release_env::tool("round-vm")?,
         std::env::var(spira_config::RELEASE_ENV)
             .ok()
             .filter(|r| !r.is_empty())
@@ -335,11 +335,11 @@ fn with_ports<T>(f: impl FnOnce(&Ports) -> Result<T, String>) -> Result<T, Strin
     );
     let lc = SpiraLc {
         proc_: proc_.clone(),
-        program: spira_config::release_env::tool("spira-lc"),
+        program: spira_config::lifecycle_row::lc_bin()?,
     };
     let store = LcStore {
         proc_: proc_.clone(),
-        program: spira_config::release_env::tool("spira-lc"),
+        program: spira_config::lifecycle_row::lc_bin()?,
     };
     let ledger = StoreLedger {
         policy: FaultPolicy::from_config()?,

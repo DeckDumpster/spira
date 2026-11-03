@@ -182,7 +182,7 @@ fn file_bead(title: &str, body: &str, priority: u64, run: &Path) -> Result<Strin
     let tmp = dir.join(format!("cert-sweep-{}-{}.txt", std::process::id(), now()));
     fs::write(&tmp, format!("{body}\n\n## Build\n\nFix the red the certification sweep reported above, in this repository, and land the fix.\n")).map_err(|e| format!("{}: {e}", tmp.display()))?;
     let out = spira_config::bounded::bounded("bead.sh")
-        .envs(spira_config::release_env::child_path_env_for_process())
+        .envs(spira_config::release_env::child_path_env_for_process()?)
         .args(["file", title, "--for", "builder", "--repo", "spira", "--priority", &priority.to_string(), "--json", "--body-file"])
         .arg(&tmp)
         .output();
@@ -397,7 +397,7 @@ impl Rt<'_> {
     }
 
     fn open_beads(&self) -> Result<Vec<(String, String)>, String> {
-        let bdq = spira_config::release_env::tool("bdq");
+        let bdq = spira_config::release_env::tool("bdq")?;
         let out = spira_config::bounded::bounded(&bdq)
             .args(["list", "--all", "--limit", "0", "--brief", "--json"])
             .stdin(Stdio::null())
@@ -548,7 +548,7 @@ fn run_on_vm(f: &Flags, run: &Path, repo: &str, tip: &str, picks: &[String], sta
     fs::create_dir_all(&rd).map_err(|e| format!("{}: {e}", rd.display()))?;
     let log = rd.with_extension("log");
     // batch-job: round-vm runs for as long as its work does
-    let mut child = Command::new(spira_config::release_env::tool("round-vm"))
+    let mut child = Command::new(spira_config::release_env::tool("round-vm")?)
         .args(["run", tree, "--maxpar", &num(f, "maxpar", 16)?.to_string(), "--suites", &picks.join(","), "--results-dir"])
         .arg(&rd)
         .env("SPIRA_ROUND_VM_ACQUIRE_DEADLINE", num(f, "start-deadline", 900)?.to_string())
@@ -567,7 +567,7 @@ fn run_on_vm(f: &Flags, run: &Path, repo: &str, tip: &str, picks: &[String], sta
         if now() - began >= start_wait && silent(&rd, &log) {
             let _ = child.kill();
             let _ = child.wait();
-            let admit = Command::new("timeout").args(["5", spira_config::release_env::tool("spira-admit").as_str(), "status"]).stdin(Stdio::null()).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_else(|e| format!("spira-admit status: {e}"));
+            let admit = Command::new("timeout").args(["5", spira_config::release_env::tool("spira-admit")?.as_str(), "status"]).stdin(Stdio::null()).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_else(|e| format!("spira-admit status: {e}"));
             let why = format!("VERDICT no-verdict: round-vm produced no output in {start_wait}s (likely queued in host-wide admission); spira-admit status: {}", admit.replace('\n', " | "));
             eprintln!("cert-sweep: {why}");
             return Ok((Vec::new(), why));
@@ -582,7 +582,7 @@ fn run_on_host(f: &Flags, repo: &str, tip: &str, picks: &[String]) -> Result<(Ve
     let branch = flag(f, "branch").unwrap_or("cert-sweep/tip");
     git(repo, &["branch", "-f", branch, tip])?;
     // batch-job: this runs whatever its caller names, as long as that takes
-    let mut cmd = Command::new(spira_config::release_env::tool("testenv"));
+    let mut cmd = Command::new(spira_config::release_env::tool("testenv")?);
     if let Some(d) = flag(f, "deadline") {
         cmd.args(["--deadline", d]);
     }

@@ -22,11 +22,11 @@ use crate::real::{RealGit, RealLc};
 /// `queue_certified_list <repo-path>`: every `spira/*` branch whose lifecycle row is
 /// CERTIFIED, as `(id, tip, epoch)` — the selection primitive any cutter (the batcher, the
 /// reconciler's mergeability check, cockpit-collect's "next up" pane) draws from.
-pub fn certified_list(repo: &Path) -> Vec<(String, String, u64)> {
+pub fn certified_list(repo: &Path) -> Result<Vec<(String, String, u64)>, String> {
     let lc = RealLc {
-        bin: Some(PathBuf::from(spira_config::release_env::tool("spira-lc"))),
+        bin: Some(PathBuf::from(spira_config::lifecycle_row::lc_bin()?)),
     };
-    certified_rows(&lc, &RealGit.branches(repo, "refs/heads/spira/"))
+    Ok(certified_rows(&lc, &RealGit.branches(repo, "refs/heads/spira/")))
 }
 
 /// The CERTIFIED rows whose bead has a `spira/<id>` branch among `branches`.

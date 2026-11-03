@@ -145,7 +145,7 @@ before="$(unread)"
 # SPIRA_TOML through env -i, which clears it.
 tl_config SPIRA_RUN="$SKEW_RUN" SPIRA_RELEASES="$SKEW_RELEASES" SPIRA_MAIL="$SPIRA_MAIL" \
     SPIRA_DOLT_DATA=""
-env -i PATH="$PATH" HOME="$TMP/home" \
+env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$HERE" SPIRA_REPO="$SKEW_REPO" \
     SPIRA_TOML="$SPIRA_TOML" \

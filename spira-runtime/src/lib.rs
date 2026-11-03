@@ -120,7 +120,10 @@ impl Effects {
         let min_age = r.values.get("SPIRA_STRANDED_RUNNER_MIN_AGE").and_then(|v| v.trim().parse().ok()).unwrap_or(0);
         let mut host = reconcile_host::RuntimeHost::new(self.world.clone(), self.forge.clone(), self.mail.clone(), r.home.clone().into(), r.values.get("SPIRA_RUNES").cloned().unwrap_or_default(), min_age, at, enabled, self.landrefs.clone());
         host.bus = self.bus.clone();
-        let mut cfg = reconciler::Config::from_lookup(&|k| r.values.get(k).cloned().ok_or_else(|| format!("{k} unknown")), self.seams.clone().unwrap_or_else(reconciler::Seams::production), run, r.home.clone(), at, reconciler_engine::clock::iso_of(at))?.with_desired_state().with_host(Arc::new(host));
+        let mut cfg = reconciler::Config::from_lookup(&|k| r.values.get(k).cloned().ok_or_else(|| format!("{k} unknown")), match self.seams.clone() {
+            Some(s) => s,
+            None => reconciler::Seams::production()?,
+        }, run, r.home.clone(), at, reconciler_engine::clock::iso_of(at))?.with_desired_state().with_host(Arc::new(host));
         cfg = cfg.with_memo(self.memo.clone());
         cfg.skip_units = vec![spira_config::unit::unit_name("spira-runtime", "service", &instance)];
         let observation = reconciler::observe(&cfg, &input.reminded);

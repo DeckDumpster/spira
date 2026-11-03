@@ -17,8 +17,8 @@ impl Real {
         Real { home, registry: OnceCell::new() }
     }
 
-    fn exe(&self) -> PathBuf {
-        std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("gate-run")))
+    fn exe(&self) -> Result<PathBuf, String> {
+        std::env::current_exe().map_err(|e| format!("cannot locate this binary: {e}"))
     }
 
     /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave
@@ -163,7 +163,10 @@ impl World for Real {
     }
 
     fn spawn_detached(&self, branch: &str, repo_name: &str) {
-        let exe = self.exe();
+        let exe = match self.exe() {
+            Ok(e) => e,
+            Err(e) => return eprintln!("gate-run: {e}"),
+        };
         let use_setsid = spira_config::bounded::bounded("sh").arg("-c").arg("command -v setsid").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
         let mut c = if use_setsid {
             // batch-job: setsid runs for as long as its work does

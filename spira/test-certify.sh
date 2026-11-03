@@ -106,7 +106,7 @@ landing() {
     tl_config SPIRA_BATCHER_ENABLE=1 SPIRA_GATE_WORKER=0 SPIRA_RUN="$RUN" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
         SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" SPIRA_DB="$SPIRA_DB"
     SPIRA_HOME="$SH" \
-    SPIRA_REPO="$REPO" PATH="$TMP/stubbin:$SH:$PATH" \
+    SPIRA_REPO="$REPO" PATH="$TMP/stubbin:$SH:$PATH" SPIRA_RELEASE="$(PATH="$TMP/stubbin:$SH:$PATH" tl_release)" \
         landing-pass land 2>&1
 }
 

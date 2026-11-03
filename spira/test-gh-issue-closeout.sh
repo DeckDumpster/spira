@@ -93,6 +93,7 @@ cat > "$TMP/bin/spira-lc" <<LCSTUB
 LC_MIRROR_CLOSED=SUBMITTED exec "$TMP/lcm/spira-lc" "\$@"
 LCSTUB
 chmod +x "$TMP/bin/spira-lc"
+tl_declare_release
 
 # --- spira environment: every var gh-intake resolves config from, set explicitly so no
 # in-process resolve ever needs a real conf.d (none exists in this fixture). ---

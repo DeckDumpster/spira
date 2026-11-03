@@ -220,7 +220,7 @@ HD="$(mktemp -d)"
 ID=11111111-2222-3333-4444-555555555555
 printf '%s\n' '#!/bin/sh' 'case "$(cat "$0.mode")" in fail) exit 3;; empty) exit 0;; *) echo "'$ID' R1 design";; esac' >"$HD/hunk"
 chmod +x "$HD/hunk"
-_want() { env -i PATH="$PATH" HOME="$HD" HUNK="$HD/hunk" COCKPIT_FORGET_SECS="${COCKPIT_FORGET_SECS:-}" COCKPIT_STATE="$HD/state" COCKPIT_SESSION=nosuch-$$ bash "${1:-$CR}" status 2>&1 | sed -n 's/^want: *//p'; }
+_want() { env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$HD" HUNK="$HD/hunk" COCKPIT_FORGET_SECS="${COCKPIT_FORGET_SECS:-}" COCKPIT_STATE="$HD/state" COCKPIT_SESSION=nosuch-$$ bash "${1:-$CR}" status 2>&1 | sed -n 's/^want: *//p'; }
 mkdir "$HD/state"; printf '%s\n' "$ID" >"$HD/state/dismissed"
 
 echo live >"$HD/hunk.mode"
@@ -256,7 +256,7 @@ printf '%s\n' "$ID" >"$HD/state/dismissed"
 sleep 600 & VICTIM=$!
 printf '%s\n' '#!/bin/sh' 'case "$1 $2" in "session get") echo "{\"pid\": '$VICTIM'}";; *) echo "'$ID' R1";; esac' >"$HD/hunk2"
 chmod +x "$HD/hunk2"
-env -i PATH="$PATH" HOME="$HD" HUNK="$HD/hunk2" COCKPIT_STATE="$HD/state" COCKPIT_SESSION=nosuch-$$ bash "$CR" finish >/dev/null 2>&1
+env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$HD" HUNK="$HD/hunk2" COCKPIT_STATE="$HD/state" COCKPIT_SESSION=nosuch-$$ bash "$CR" finish >/dev/null 2>&1
 sleep 0.3
 if kill -0 "$VICTIM" 2>/dev/null; then kill "$VICTIM"; is "finish ends the session's TUI" "gone" "alive"; else is "finish ends the session's TUI" "gone" "gone"; fi
 rm -rf "$HD"
@@ -266,7 +266,7 @@ echo "nothing here launches the view follower: spira-runtime hosts it"
 # `start` once detached a watch loop beside the service's own. It must now be an unknown verb, and
 # `status` must no longer claim a watcher of its own. The positive control is the verb that does exist.
 LD="$(mktemp -d)"
-_cr() { env -i PATH="$PATH" HOME="$LD" TMPDIR="$LD" COCKPIT_SELF=/bin/true COCKPIT_SESSION=nosuch-$$ bash "$CR" "$@" 2>&1; }
+_cr() { env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$LD" TMPDIR="$LD" COCKPIT_SELF=/bin/true COCKPIT_SESSION=nosuch-$$ bash "$CR" "$@" 2>&1; }
 _cr sync >/dev/null; is "positive control: a verb that exists exits 0 on a missing cockpit" "0" "$?"
 out="$(_cr start)"; rc=$?
 is "start is an unknown verb (non-zero)" "2" "$rc"

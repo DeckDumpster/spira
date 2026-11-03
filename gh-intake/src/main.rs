@@ -67,8 +67,20 @@ fn closeout_cmd(args: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let (bd, gh, git, repo, mail) = ports(home);
-    let lc = RealLifecycle::default();
+    let (bd, gh, git, repo, mail) = match ports(home) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("gh-intake: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    let lc = match RealLifecycle::new() {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("gh-intake: {e}");
+            return ExitCode::from(1);
+        }
+    };
     let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
     let log = closeout::gh_issue_closeout(&d, &ctx, &args[0], &args[1], Path::new(&args[2]));
     for l in log {
@@ -96,8 +108,20 @@ fn unlanded_scan_cmd(args: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let (bd, gh, git, repo, mail) = ports(home);
-    let lc = RealLifecycle::default();
+    let (bd, gh, git, repo, mail) = match ports(home) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("gh-intake: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    let lc = match RealLifecycle::new() {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("gh-intake: {e}");
+            return ExitCode::from(1);
+        }
+    };
     let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let log = closeout::gh_unlanded_scan(&d, &ctx, now);
@@ -136,8 +160,20 @@ fn backfill_cmd(args: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let (bd, gh, git, repo, mail) = ports(home);
-    let lc = RealLifecycle::default();
+    let (bd, gh, git, repo, mail) = match ports(home) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("gh-intake: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    let lc = match RealLifecycle::new() {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("gh-intake: {e}");
+            return ExitCode::from(1);
+        }
+    };
     let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
     let (log, _found, _closed, _skipped, _dry) = closeout::backfill(&d, &ctx, dry_run);
     for l in log {
@@ -160,8 +196,20 @@ fn provenance_cmd(args: &[String]) -> ExitCode {
         }
     };
     let seen = std::path::Path::new(&run).join("gh-provenance.seen");
-    let (bd, gh, git, repo, mail) = ports(home);
-    let lc = RealLifecycle::default();
+    let (bd, gh, git, repo, mail) = match ports(home) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("gh-intake: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    let lc = match RealLifecycle::new() {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("gh-intake: {e}");
+            return ExitCode::from(1);
+        }
+    };
     let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
     match mode {
         None | Some("--check") => match closeout::provenance_read(&d) {
@@ -228,19 +276,20 @@ fn provenance_cmd(args: &[String]) -> ExitCode {
 }
 
 #[allow(clippy::type_complexity)]
-fn ports(home: String) -> (RealBd, RealGh, RealGit, RealRepo, RealMail) {
-    let mail_bin = env_nonempty("SPIRA_MAIL_BIN").unwrap_or_else(|| spira_config::release_env::tool("mail"));
-    (
-        RealBd { bdq: spira_config::release_env::tool("bdq") },
-        RealGh { bdq_bin: "bdq".to_string() },
-        RealGit,
-        RealRepo { spira_home: home },
-        RealMail { mail_bin },
-    )
+fn ports(home: String) -> Result<(RealBd, RealGh, RealGit, RealRepo, RealMail), String> {
+    let mail_bin = match env_nonempty("SPIRA_MAIL_BIN") {
+        Some(m) => m,
+        None => spira_config::release_env::tool("mail")?,
+    };
+    let bdq = spira_config::release_env::tool("bdq")?;
+    Ok((RealBd { bdq: bdq.clone() }, RealGh { bdq_bin: bdq }, RealGit, RealRepo { spira_home: home }, RealMail { mail_bin }))
 }
 
 fn main() -> ExitCode {
-    spira_config::release_env::ensure_release_path();
+    if let Err(e) = spira_config::release_env::ensure_release_path() {
+        eprintln!("gh-intake: {e}");
+        std::process::exit(2);
+    }
     let op = match std::env::args().nth(1).as_deref() {
         Some("closeout") => "closeout",
         Some("unlanded-scan") => "unlanded-scan",
@@ -321,7 +370,13 @@ fn dispatch() -> ExitCode {
     };
 
     let http = RealHttp::from_broker();
-    let bd = RealBd { bdq: spira_config::release_env::tool("bdq") };
+    let bd = match spira_config::release_env::tool("bdq") {
+        Ok(bdq) => RealBd { bdq },
+        Err(e) => {
+            eprintln!("gh-intake: {e}");
+            return ExitCode::from(1);
+        }
+    };
     let repo_port = RealRepo { spira_home };
     let mail = RealMail { mail_bin };
 

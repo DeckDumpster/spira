@@ -49,6 +49,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # ======================================================================================
 TMP="$(mktemp -d)"
 lc_facts_stub "$TMP/lc"
+tl_declare_release
 export SPIRA_DB="${SPIRA_DB:-$TMP/no-such-db}"
 tl_config SPIRA_RUN="$TMP/run"
 # shellcheck disable=SC1090

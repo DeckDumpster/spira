@@ -70,11 +70,11 @@ file_incident() {  # file_incident <ref> <title> <payload> [VAR=val ...]
     # CONFIG): declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
     tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run"
     printf '%s' "$payload" | \
-        env -i HOME="$HOME" PATH="$PATH" \
+        env -i SPIRA_RELEASE="$(PATH="$PATH" tl_release)" HOME="$HOME" PATH="$PATH" \
         STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         MAIL_LOG="$MAIL_LOG" \
         SPIRA_CONF="$TMP/no-conf" \
-        SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH" \
+        SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH" SPIRA_RELEASE="$(PATH="$TMP/home:$PATH" tl_release)" \
         SPIRA_INCIDENT_REF="$ref" \
         SPIRA_INCIDENT_LOCK="$TMP/run/sinex-test.lock" \
         SPIRA_INCIDENT_REPO= \

@@ -10,8 +10,6 @@
 use std::env;
 use std::path::PathBuf;
 
-
-
 /// The result of searching for the operator's `spira.toml`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LocateOutcome {
@@ -31,28 +29,6 @@ impl LocateOutcome {
             LocateOutcome::Found(p) => Some(p),
             _ => None,
         }
-    }
-}
-
-/// Where `configure` writes the config when nothing names another path:
-/// `${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml`. `None` with neither variable set.
-pub fn configure_default_path() -> Option<PathBuf> {
-    let base = match env::var("XDG_CONFIG_HOME") {
-        Ok(x) if !x.is_empty() => PathBuf::from(x),
-        _ => PathBuf::from(env::var("HOME").ok().filter(|h| !h.is_empty())?).join(".config"),
-    };
-    Some(base.join("spira/spira.toml"))
-}
-
-/// Pins `$SPIRA_TOML` to [`configure_default_path`] when it is unset and a file is there — for
-/// the fresh-host entry points (install, doctor) that run before anything exports the pin.
-/// A set `SPIRA_TOML` is never touched, and a missing default leaves the refusal in force.
-pub fn adopt_configure_default() {
-    if env::var("SPIRA_TOML").is_ok_and(|v| !v.is_empty()) {
-        return;
-    }
-    if let Some(p) = configure_default_path().filter(|p| p.is_file()) {
-        env::set_var("SPIRA_TOML", p);
     }
 }
 
@@ -146,16 +122,6 @@ mod tests {
             || locate(None),
         );
         assert_eq!(got, LocateOutcome::NotFound { tried: Vec::new() });
-    }
-
-    #[test]
-    fn configure_default_path_follows_xdg_then_home() {
-        assert_eq!(
-            with_env(&[("XDG_CONFIG_HOME", Some("/x")), ("HOME", Some("/h"))], configure_default_path),
-            Some(PathBuf::from("/x/spira/spira.toml"))
-        );
-        assert_eq!(with_env(&[("HOME", Some("/h"))], configure_default_path), Some(PathBuf::from("/h/.config/spira/spira.toml")));
-        assert_eq!(with_env(&[], configure_default_path), None);
     }
 
     #[test]

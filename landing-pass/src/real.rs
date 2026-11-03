@@ -32,9 +32,13 @@ impl<'a> SeamRunner<'a> {
         let bytes = seam::stdin_bytes(op, &all);
         let mut c = command("bash");
         c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
-        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
-        // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-        c.envs(spira_config::release_env::child_path_env_for_process());
+        match spira_config::release_env::child_path_env_for_process() {
+            Ok(e) => c.envs(e),
+            Err(e) => {
+                self.out.log(&format!("landing: the lib.sh seam could not start ({e})"));
+                return (-1, String::new());
+            }
+        };
         let mut child = match c.spawn() {
             Ok(ch) => ch,
             Err(e) => {
@@ -177,10 +181,10 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         git_email: g("git_email"),
         incident: PathBuf::from(g("incident")),
         scope_label: g("scope_label"),
-        // Every harness tool by name, on the launcher's PATH (sp-gypjk).
-        queue_bin: Some(PathBuf::from(spira_config::release_env::tool("queue"))),
+        // Every harness tool from the declared release.
+        queue_bin: Some(PathBuf::from(spira_config::release_env::tool("queue")?)),
         queue_dir: path_opt("queue_dir").unwrap_or_else(|| PathBuf::from(&run).join("queue")),
-        lc_bin: Some(PathBuf::from(spira_config::release_env::tool("spira-lc"))),
+        lc_bin: Some(PathBuf::from(spira_config::lifecycle_row::lc_bin()?)),
         halt_grace: num("halt_grace", 30).max(0) as u64,
         path: kv.get("path").filter(|v| !v.is_empty()).cloned(),
         bdjson_fixture: path_opt("bdjson_fixture"),

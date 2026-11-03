@@ -23,7 +23,7 @@ fn write_target_for(conf: &Path, toml: &Path, home: &Path, repo_map: Option<&Pat
     if !conf.is_file() {
         return Some(toml.to_path_buf());
     }
-    match spira_config::convert_command(conf, home, toml, repo_map, rune).output() {
+    match spira_config::convert_command(conf, home, toml, repo_map, rune).and_then(|mut c| c.output().map_err(|e| e.to_string())) {
         Ok(o) if o.status.success() => Some(toml.to_path_buf()),
         Ok(o) => {
             eprintln!("install: auto-convert to the typed config failed: {}", String::from_utf8_lossy(&o.stderr).trim());

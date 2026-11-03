@@ -57,6 +57,7 @@ Spira runs as systemd **user units** on Linux. Prerequisites and the full proced
 make dist      # build the workspace and package ./spira-<UTC timestamp>.tar.gz
 target/release/release install-tarball spira-<ts>.tar.gz --answers answers.txt
 export SPIRA_TOML=<path the command printed>
+export SPIRA_RELEASE=<releases>/current          # the release install runs from; no default
 <releases>/current/bin/spira-install --dry-run   # what it would do
 <releases>/current/bin/spira-install             # then for real
 ```

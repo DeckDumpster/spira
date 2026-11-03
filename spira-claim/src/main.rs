@@ -174,7 +174,7 @@ fn read_source(path: &str, stdin: &mut dyn Read) -> Result<String, String> {
 
 fn store(a: &Args) -> Result<Store, String> {
     let t = a.num("--timeout-s", 15)?;
-    Ok(Store::new(t as u64))
+    Store::new(t as u64)
 }
 
 fn load_events(a: &Args, env: &mut Env, ids: &[String]) -> Result<Vec<EventRow>, Outcome> {
@@ -642,35 +642,11 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
 // rest of this file.
 // =========================================================================================
 
-/// `$SPIRA_HOME`, resolved IN-PROCESS — law-a-binary-resolves-the-config-it-reads
-/// (sp-hh599): `spira-sentinel.service`/`spira-call.service` carry `SPIRA_RELEASE`/
-/// `PATH` and nothing else (wave 4.25, sp-obhv6, stopped `conf.sh` from exporting
-/// `SPIRA_HOME` at all). Every `rune-ready`/`rune-exclude`/`bulk-ready-by-rune` call the
-/// sentinel makes is ITS OWN in-process child (never through `lib.sh`), so under that
-/// unit's real environment this used to refuse outright — and `call.rs`'s `rune_ready`
-/// read that refusal's rc 2 as "no rune", skipping every rune every pass, forever,
-/// silently (this bead's own repro). The environment is an OVERRIDE a caller may still set
-/// on purpose (a fixture pinning a different tree; a lib.sh shim that already resolved it
-/// and threads it through for free) — never the ONLY source. Absent, this falls back to
-/// this process's own release root (`spira_config::release_env::own_release_root_for_process`,
-/// sp-kgzql's identical ascending search `sentinel::locate_home`/`spira_world::locate_home`
-/// already run for the home THEIR OWN binary needs — reused rather than invented a fourth
-/// way) plus `/spira`, the directory `conf.sh` itself lives beside and where the runes
-/// lives too (exactly `SPIRA_HOME=<release>/spira`, matching this bead's own manual repro).
-/// `Err` only when NEITHER source answers — no ancestor of this executable holds a release
-/// at all (a bare `cargo test` binary, or a truly detached shell) — a genuine "cannot
-/// evaluate", and every caller below is careful never to let that read as "no rune" (see
-/// `cmd_rune_ready`'s own exit-code doc, just below).
+/// The harness home the runes live under: `SPIRA_HOME`, else `$SPIRA_RELEASE/spira` — the
+/// sentinel's units carry only `SPIRA_RELEASE`. Neither set is an error, which every caller
+/// keeps distinct from "no rune" (see `cmd_rune_ready`).
 fn rune_home() -> Result<std::path::PathBuf, String> {
-    if let Ok(h) = std::env::var("SPIRA_HOME") {
-        if !h.is_empty() {
-            return Ok(std::path::PathBuf::from(h));
-        }
-    }
-    match spira_config::release_env::own_release_root_for_process() {
-        Some(release) => Ok(release.join("spira")),
-        None => Err("cannot resolve SPIRA_HOME: no release found above this executable's own location (set SPIRA_HOME to override)".to_string()),
-    }
+    spira_config::resolve::locate_home_for_process()
 }
 
 /// `flag` (a CLI override, kept only for tests that want to pin a label without a toml
@@ -836,7 +812,10 @@ fn cmd_claim_retry(bd_args: &[String], cfg: &Config) -> Outcome {
     }
     let tries = cfg.claim_retries.max(1);
     let delay = std::time::Duration::from_secs(cfg.claim_retry_delay_s as u64);
-    let st = Store::new(60);
+    let st = match Store::new(60) {
+        Ok(s) => s,
+        Err(e) => return Outcome::error(e),
+    };
     let mut args: Vec<&str> = bd_args.iter().map(String::as_str).collect();
     args.push("--json");
     let mut last = String::new();

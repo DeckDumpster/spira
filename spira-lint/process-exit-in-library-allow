@@ -6,7 +6,6 @@
 dwarf/src/conf.rs
 dwarf/src/main.rs
 archivist/src/main.rs
-census/src/main.rs
 cockpit-collect/src/probes/mod.rs
 cockpit/ops/src/health_main.rs
 cockpit/ops/src/rebuild.rs

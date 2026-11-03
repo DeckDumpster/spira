@@ -17,13 +17,18 @@ use std::process::{Command, Stdio};
 /// lib.sh function returned nothing" from "lib.sh never sourced at all," so this is a
 /// dedicated, one-time check, not folded into `seam()`.
 pub fn lib_sh_sources(home: &Path) -> bool {
+    let envs = match spira_config::release_env::child_path_env_for_process() {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("skew: {e}");
+            return false;
+        }
+    };
     // batch-job: runs a gate, build or forge script that takes as long as its work
     Command::new("bash")
         .arg("-c")
         .arg(format!(". \"{}\" >/dev/null 2>&1", home.join("lib.sh").display()))
-        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
-        // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-        .envs(spira_config::release_env::child_path_env_for_process())
+        .envs(envs)
         .stdin(Stdio::null())
         .status()
         .map(|s| s.success())
@@ -223,8 +228,12 @@ impl World for Real {
     }
 
     fn release_verify_no_pre_activate(&self, name: &str, releases: Option<&Path>) -> (bool, String) {
+        let release = match spira_config::release_env::tool("release") {
+            Ok(r) => r,
+            Err(e) => return (false, e),
+        };
         // batch-job: release runs for as long as its work does
-        let mut c = Command::new(spira_config::release_env::tool("release"));
+        let mut c = Command::new(release);
         c.arg("verify").arg(name).arg("--no-pre-activate");
         if let Some(r) = releases {
             c.arg("--releases").arg(r);
@@ -236,8 +245,9 @@ impl World for Real {
         }
     }
     fn release_status(&self) -> String {
+        let Ok(release) = spira_config::release_env::tool("release") else { return String::new() };
         // batch-job: release runs for as long as its work does
-        Command::new(spira_config::release_env::tool("release"))
+        Command::new(release)
             .arg("status")
             .stdin(Stdio::null())
             .output()
@@ -248,7 +258,7 @@ impl World for Real {
     fn release_build_verify_activate(&self, sha: &str, repo: &Path, base: &str, releases: &Path) -> Result<(), String> {
         let run = |args: &[&str]| -> Result<(), String> {
             // batch-job: release runs for as long as its work does
-            let out = Command::new(spira_config::release_env::tool("release")).args(args).stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
+            let out = Command::new(spira_config::release_env::tool("release")?).args(args).stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
             if out.status.success() {
                 Ok(())
             } else {

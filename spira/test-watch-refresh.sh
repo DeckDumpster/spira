@@ -217,7 +217,7 @@ runpass() {
     [ "$(stat -c %Y "$_TL_CONF_OVERRIDE" 2>/dev/null || echo 0)" -gt "$UNIT_START" ] && _conf_file_was_stale=1
     tl_config SPIRA_WATCHERS="${WR_MAN:-$MAN}"
     [ "$_conf_file_was_stale" = 0 ] && touch -d "@$T0" "$_TL_CONF_OVERRIDE"
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF_FILE="$_TL_CONF_OVERRIDE" SPIRA_HOME="$CLONE/spira" \
+    env -i SPIRA_RELEASE="$(PATH="$SHIM:$PATH" tl_release)" HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF_FILE="$_TL_CONF_OVERRIDE" SPIRA_HOME="$CLONE/spira" \
         \
         WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" SHIM="$SHIM" \
         SYSTEMCTL_RC="${SYSTEMCTL_RC:-0}" RESTART_RC="${RESTART_RC:-0}" \
@@ -502,7 +502,7 @@ printf '0::/user.slice/user-1000.slice/user@1000.service/\n' \
 runreap() {
     : > "$REAP_ACT"
     tl_config SPIRA_WATCHERS="$MAN"
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF_FILE="$_TL_CONF_OVERRIDE" SPIRA_HOME="$CLONE/spira" \
+    env -i SPIRA_RELEASE="$(PATH="$PATH" tl_release)" HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF_FILE="$_TL_CONF_OVERRIDE" SPIRA_HOME="$CLONE/spira" \
         \
         WR_PROC_ROOT="$FAKEPROC" WR_REAP_ACT="$REAP_ACT" \
         bash -c '
@@ -580,7 +580,7 @@ entry_deadline=$((SECONDS + 60))
 while :; do
     : > "$ACT"
     tl_config SPIRA_WATCHERS="$MAN" SPIRA_PATH="$SHIM"
-    out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF_FILE="$_TL_CONF_OVERRIDE" \
+    out="$(env -i SPIRA_RELEASE="$(PATH="$SHIM:$PATH" tl_release)" HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF_FILE="$_TL_CONF_OVERRIDE" \
           SPIRA_HOME="$CLONE/spira" \
           WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" \
           WR_PROC_ROOT="$EMPTYPROC" \
@@ -593,7 +593,7 @@ is "it runs"                       "0" "$rc"
 has "and restarts the stale unit"  "$(acted)" "restart spira-watch-answers-prod.service"
 hasnt "and no raw manifest line leaked onto this process's own stdout" "$out" "|daemon|"
 tl_config SPIRA_WATCHERS="$MAN" SPIRA_PATH="$SHIM"
-out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF_FILE="$_TL_CONF_OVERRIDE" \
+out="$(env -i SPIRA_RELEASE="$(PATH="$SHIM:$PATH" tl_release)" HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF_FILE="$_TL_CONF_OVERRIDE" \
       SPIRA_HOME="$CLONE/spira" \
       WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" \
       WR_PROC_ROOT="$EMPTYPROC" \

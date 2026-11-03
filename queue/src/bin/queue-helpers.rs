@@ -28,10 +28,18 @@ fn run_certified_list(args: &[String]) -> ExitCode {
         eprintln!("queue-helpers certified-list: repo path required");
         return ExitCode::from(2);
     };
-    for (id, tip, epoch) in queue::ops::helpers::certified_list(Path::new(repo)) {
-        println!("{id} {tip} {epoch}");
+    match queue::ops::helpers::certified_list(Path::new(repo)) {
+        Ok(rows) => {
+            for (id, tip, epoch) in rows {
+                println!("{id} {tip} {epoch}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("queue-helpers certified-list: {e}");
+            ExitCode::from(2)
+        }
     }
-    ExitCode::SUCCESS
 }
 
 fn run_sort_rows(args: &[String]) -> ExitCode {

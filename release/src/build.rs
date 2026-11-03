@@ -241,7 +241,7 @@ pub fn regenerate_config(stage: &Path) -> Result<(), String> {
         return Ok(());
     }
     // batch-job: runs a gate, build or forge script that takes as long as its work
-    let out = Command::new("bash").envs(spira_config::release_env::child_path_env_for_process()).arg(&gen).current_dir(stage).output().map_err(|e| format!("cannot run {}: {e}", gen.display()))?;
+    let out = Command::new("bash").envs(spira_config::release_env::stage_child_path_env(stage)).arg(&gen).current_dir(stage).output().map_err(|e| format!("cannot run {}: {e}", gen.display()))?;
     if !out.status.success() {
         return Err(format!(
             "conf-gen.sh failed against the staged tree ({}) — refusing to build a release with no generated config: {}",
@@ -266,7 +266,7 @@ pub fn write_registry_index(stage: &Path) -> Result<(), String> {
     let mut tries = 0;
     let out = loop {
         // batch-job: reads and writes the staged registry once, as long as its files take
-        match Command::new(&bin).envs(spira_config::release_env::child_path_env_for_process()).arg("registry-index").arg(&home).output() {
+        match Command::new(&bin).envs(spira_config::release_env::stage_child_path_env(stage)).arg("registry-index").arg(&home).output() {
             Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && tries < 100 => {
                 tries += 1;
                 std::thread::sleep(std::time::Duration::from_millis(20)); // clock-safe: bounded ETXTBSY backoff

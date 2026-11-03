@@ -152,6 +152,7 @@ inst() {
     env -i \
         SPIRA_TOML="${INST_TOML:-$SPIRA_TOML}" \
         "PATH=$MOCK_BIN:$FIXTURE/bin:$FIXTURE/spira:$GIT_BIN:$PATH" \
+        "SPIRA_RELEASE=$(PATH="$MOCK_BIN:$FIXTURE/bin:$FIXTURE/spira:$GIT_BIN:$PATH" tl_release)" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
         "SPIRA_REPO=$repo" \

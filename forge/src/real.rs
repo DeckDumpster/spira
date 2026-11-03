@@ -101,8 +101,12 @@ pub struct RealProc;
 
 impl Proc for RealProc {
     fn run(&self, program: &str, args: &[&str], input: Option<&[u8]>) -> (i32, Vec<u8>) {
+        let envs = match spira_config::release_env::child_path_env_for_process() {
+            Ok(e) => e,
+            Err(e) => return (2, format!("forge: {e}").into_bytes()),
+        };
         let mut c = spira_config::bounded::bounded(program);
-        c.envs(spira_config::release_env::child_path_env_for_process());
+        c.envs(envs);
         c.args(args);
         c.stdin(if input.is_some() {
             Stdio::piped()

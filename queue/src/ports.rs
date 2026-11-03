@@ -332,6 +332,9 @@ pub trait Scripts {
     /// (`release verify`'s pre-activate store check reads it). Stdout and stderr are kept
     /// apart: `release build` answers the sha on stdout.
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut;
+    /// The declared release's own `release` binary (`$SPIRA_RELEASE/bin/release`), for a step with
+    /// no round bin-dir; a refusal naming `SPIRA_RELEASE` when it is not declared.
+    fn release_tool(&self) -> Result<PathBuf, String>;
     /// A user unit's `ActiveState` (`systemctl --user show -p ActiveState --value`); empty when unreadable.
     fn unit_active_state(&self, unit: &str) -> String;
     /// `round-vm run <tree> --results-dir <results> --base <base> --round-batch <batch> --round-repo <repo>` under `timeout <wall_secs>`: the full

@@ -38,7 +38,7 @@ minsago() { date -u -d "@$(( NOW - ($1 * 60) ))" +%Y-%m-%dT%H:%M:%SZ; }
 AGO15="$(minsago 15)"
 
 # Mock incident.sh: bakes absolute capture-file paths into the script so that the
-# env -i subprocess writes to them without inheriting any ambient variable.
+# env -i SPIRA_RELEASE="$(tl_release)" subprocess writes to them without inheriting any ambient variable.
 MOCK_INC="$TMP/mock-inc.sh"
 {
     printf '#!/usr/bin/env bash\n'
@@ -69,9 +69,9 @@ wt_co() {   # wt_co [VAR=val ...]
     done
     # SPIRA_DB/SPIRA_BD also passed literally: the spira-lc stub (lc_mirror_bd) is a plain
     # bash script that reads them straight from its own environment, never through
-    # spira-config — watchtower's own env -i child launch only forwards what is literally
+    # spira-config — watchtower's own env -i SPIRA_RELEASE="$(tl_release)" child launch only forwards what is literally
     # here (sfail round 3, pattern 8).
-    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(tl_release)" SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$PATH" HOME="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$WTCO_HOME" \
         SPIRA_CONF=/nonexistent \

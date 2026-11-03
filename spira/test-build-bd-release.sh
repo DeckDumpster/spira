@@ -30,14 +30,14 @@ mkdir -p "$FAKE_HOME/.local/bin"
 
 echo ""
 echo "1. POSITIVE CONTROL — an environment without bd is refused"
-none_out="$(env -i PATH="$PATH" HOME="$FAKE_HOME" BD_FLAKE_ENV="$TMP/empty-env" bash "$HERE/build-bd.sh" --from-flake 2>&1)"
+none_out="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$FAKE_HOME" BD_FLAKE_ENV="$TMP/empty-env" bash "$HERE/build-bd.sh" --from-flake 2>&1)"
 none_rc=$?
 [ "$none_rc" -ne 0 ] && ok "missing bd causes non-zero exit" || bad "missing bd causes non-zero exit" "exited 0"
 want "missing bd reported" "no bd in" "$none_out"
 
 echo ""
 echo "2. Environment with bd — verified and installed"
-rel_out="$(env -i PATH="$PATH" HOME="$FAKE_HOME" BD_FLAKE_ENV="$TMP/env" bash "$HERE/build-bd.sh" --from-flake 2>&1)"
+rel_out="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$FAKE_HOME" BD_FLAKE_ENV="$TMP/env" bash "$HERE/build-bd.sh" --from-flake 2>&1)"
 rel_rc=$?
 [ "$rel_rc" -eq 0 ] && ok "--from-flake exits 0" || bad "--from-flake exits 0" "exit $rel_rc: $(printf '%s' "$rel_out" | tail -3)"
 [ -x "$FAKE_HOME/.local/bin/bd" ] && ok "bd installed to fake home" || bad "bd installed to fake home" "not found"

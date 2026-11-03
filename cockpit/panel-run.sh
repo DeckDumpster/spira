@@ -22,6 +22,7 @@
 # invoked by bare name on the launcher's PATH (sp-gypjk); a release always carries it, so a
 # missing one fails here, naming itself.
 set -uo pipefail
+: "${SPIRA_RELEASE:?panel-run.sh: SPIRA_RELEASE is not set — it names the release the panel runs from}"
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/../spira" && pwd -P)/conf.sh"
 
 exec panel "$@"

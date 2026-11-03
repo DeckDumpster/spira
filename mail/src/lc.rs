@@ -22,7 +22,10 @@ pub struct LcCli;
 
 impl Lc for LcCli {
     fn call(&self, args: &[String]) -> (i32, String) {
-        let mut c = std::process::Command::new(spira_config::lc_call::lc_bin());
+        let mut c = match spira_config::lc_call::lc_bin() {
+            Ok(b) => std::process::Command::new(b),
+            Err(e) => return (2, e),
+        };
         c.args(args);
         spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT)
     }

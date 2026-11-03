@@ -431,9 +431,10 @@ impl RealLib {
         } else {
             Stdio::inherit()
         });
-        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
-        // bin/+spira/ on the CHILD's PATH, never only inherited — see inbox-triage's scar.
-        cmd.envs(spira_config::release_env::child_path_env_for_process());
+        match spira_config::release_env::child_path_env_for_process() {
+            Ok(e) => cmd.envs(e),
+            Err(e) => return (127, e),
+        };
         let Ok(mut child) = cmd.spawn() else {
             return (127, String::new());
         };
@@ -549,9 +550,9 @@ impl Lib for RealLib {
             forge: PathBuf::from(g("forge")),
             repo_map: pb(&g("repo_map")),
             // Every harness tool by name, on the launcher's PATH (sp-gypjk).
-            batcher_bin: Some(PathBuf::from(spira_config::release_env::tool("batcher"))),
+            batcher_bin: Some(PathBuf::from(spira_config::release_env::tool("batcher")?)),
             batcher_off: g("batcher_enable").trim() == "0",
-            lc_bin: Some(PathBuf::from(spira_config::release_env::tool("spira-lc"))),
+            lc_bin: Some(PathBuf::from(spira_config::lifecycle_row::lc_bin()?)),
             submitted_label: g("submitted_label"),
             home_repo: reg.home_repo().to_string(),
             db: g("db"),
@@ -828,8 +829,8 @@ pub const RESUBMIT_CHECK_REASON: &str = "resubmit check of a new tip, not a retr
 
 /// The first resubmit check of a tip is not a retry of the red that ejected the bead; a second
 /// check of the same tip is, and keeps testenv's repeat guard.
-fn suite_run_command(check: &str, tip: &str, repo: &str, first_check: bool) -> Command {
-    let mut c = Command::new(spira_config::release_env::tool("testenv"));
+fn suite_run_command(testenv: &str, check: &str, tip: &str, repo: &str, first_check: bool) -> Command {
+    let mut c = Command::new(testenv);
     if first_check {
         c.args(["--repeat-reason", RESUBMIT_CHECK_REASON]);
     }
@@ -843,7 +844,11 @@ pub struct RealScripts {
 
 impl Scripts for RealScripts {
     fn lint(&self, tip: &str, repo: &Path, verify: bool) -> (i32, String) {
-        let mut c = Command::new(spira_config::release_env::tool("testenv"));
+        let testenv = match spira_config::release_env::tool("testenv") {
+            Ok(t) => t,
+            Err(e) => return (2, e),
+        };
+        let mut c = Command::new(testenv);
         c.arg("lint");
         if verify {
             c.arg("--verify");
@@ -851,7 +856,10 @@ impl Scripts for RealScripts {
         run_combined(c.arg(tip).arg(repo))
     }
     fn suite_run(&self, check: &str, tip: &str, repo: &str, first_check: bool) -> (i32, String) {
-        run_combined(&mut suite_run_command(check, tip, repo, first_check))
+        match spira_config::release_env::tool("testenv") {
+            Ok(testenv) => run_combined(&mut suite_run_command(&testenv, check, tip, repo, first_check)),
+            Err(e) => (2, e),
+        }
     }
     fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String) {
         run_combined(
@@ -897,7 +905,8 @@ impl Scripts for RealScripts {
         }
     }
     fn observe_flake(&self, suite: &str, sha: &str) {
-        let _ = ok(Command::new(spira_config::release_env::tool("testenv"))
+        let Ok(testenv) = spira_config::release_env::tool("testenv") else { return };
+        let _ = ok(Command::new(testenv)
             .args(["suites", "observe-flake", suite, sha])
             .stdout(Stdio::null())
             .stderr(Stdio::null()));
@@ -952,6 +961,9 @@ impl Scripts for RealScripts {
     fn czar_fence(&self, class: &str) -> bool {
         ok(Command::new("czar-fence.sh").arg(class))
     }
+    fn release_tool(&self) -> Result<PathBuf, String> {
+        spira_config::release_env::tool("release").map(PathBuf::from)
+    }
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut {
         // batch-job: this runs whatever its caller names, as long as that takes
         match Command::new(bin)
@@ -1002,7 +1014,7 @@ impl Scripts for RealScripts {
         )
     }
     fn recipe_sha(&self, tree: Option<&Path>) -> Option<String> {
-        let mut cmd = Command::new(spira_config::release_env::tool("round-vm"));
+        let mut cmd = Command::new(spira_config::release_env::tool("round-vm").ok()?);
         cmd.arg("recipe-sha");
         if let Some(t) = tree {
             cmd.arg("--tree").arg(t);
@@ -1012,11 +1024,15 @@ impl Scripts for RealScripts {
             .filter(|t| !t.is_empty())
     }
     fn ami_for(&self, sha: &str) -> AmiLookup {
+        let round_vm = match spira_config::release_env::tool("round-vm") {
+            Ok(r) => r,
+            Err(e) => return AmiLookup::Unreadable(e),
+        };
         // batch-job: one AWS describe-images read, hang-guarded at 60 s
         match Command::new("timeout")
             .args([
                 "60",
-                spira_config::release_env::tool("round-vm").as_str(),
+                round_vm.as_str(),
                 "ami-for",
                 sha,
             ])
@@ -1059,6 +1075,10 @@ impl Scripts for RealScripts {
         unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
     }
     fn rebase_stale(&self, ids: &[String], repo: &str) -> Vec<(String, RunOut)> {
+        let rebase_stale = match spira_config::release_env::tool("rebase-stale") {
+            Ok(r) => r,
+            Err(e) => return ids.iter().map(|id| (id.clone(), RunOut { rc: 127, out: String::new(), err: e.clone() })).collect(),
+        };
         let width = ids.len().clamp(1, REBASE_WIDTH);
         let next = std::sync::atomic::AtomicUsize::new(0);
         let slots: Vec<std::sync::Mutex<Option<RunOut>>> =
@@ -1069,7 +1089,7 @@ impl Scripts for RealScripts {
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     let Some(id) = ids.get(i) else { break };
                     // batch-job: rebase-stale bounds itself by its own lock wait and gate
-                    let out = match Command::new(spira_config::release_env::tool("rebase-stale"))
+                    let out = match Command::new(&rebase_stale)
                         .arg(id)
                         .arg(repo)
                         .stdin(Stdio::null())
@@ -2184,7 +2204,7 @@ mod tests {
     #[test]
     fn a_resubmit_suite_check_passes_testenv_a_repeat_reason_flag() {
         let args = |first| -> Vec<String> {
-            suite_run_command("test-x.sh", "t", "r", first)
+            suite_run_command("testenv", "test-x.sh", "t", "r", first)
                 .get_args()
                 .map(|a| a.to_string_lossy().into_owned())
                 .collect()
