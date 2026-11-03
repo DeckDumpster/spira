@@ -67,7 +67,6 @@ echo "1. a key both registries declare and the config lacks reaches the config b
 fresh "$NEWKEY"
 want "planted offender: the new tree refuses the config as it stands" "$NEWKEY is not declared" "$(resolve_under "$NEW")"
 out="$(go_live "$NEW")"; rc=$?
-echo "# $out" >&2
 wantrc "activation succeeds" 0 "$rc"
 is "current moved to the new release" "$NEW" "$(readlink "$RELEASES/current")"
 want "the added key is in the live config at its declared default" "zz_added_secs = 600" "$(cat "$TMP/live.toml")"
@@ -91,6 +90,29 @@ out="$(go_live "$NEW")"; rc=$?
 [ "$rc" -ne 0 ] && ok "activation refuses" || bad "activation refuses" "rc=$rc: $out"
 is "current did not move" "$OLD" "$(readlink "$RELEASES/current")"
 is "the config is as found" "$before" "$(cat "$TMP/live.toml")"
-echo "# $out"
+want "the refusal names the unresolvable key" "NODEFAULT_SECS" "$out"
+
+echo
+echo "3. a key both registries declare, with no default to supply, refuses, naming it"
+fresh
+for r in "$OLD" "$NEW"; do
+    printf 'TYPE=u32\nDOC=nodefault\n' > "$RELEASES/$r/spira/conf.d/SPIRA_ZZ_NODEFAULT_SECS"
+    bash "$RELEASES/$r/spira/conf-gen.sh" >/dev/null 2>&1
+    seal "$r"
+done
+before="$(cat "$TMP/live.toml")"
+out="$(go_live "$NEW")"; rc=$?
+[ "$rc" -ne 0 ] && ok "activation refuses" || bad "activation refuses" "rc=$rc: $out"
+want "the refusal names the key" "zz_nodefault_secs" "$out"
+is "current did not move" "$OLD" "$(readlink "$RELEASES/current")"
+is "the config is as found" "$before" "$(cat "$TMP/live.toml")"
+
+echo
+echo "4. a release declaring no change activates"
+fresh
+cp -r "$RELEASES/$OLD/." "$RELEASES/$NEW/"
+printf 'commit %s\n' "$NEW" > "$RELEASES/$NEW/MANIFEST"; seal "$NEW"
+go_live "$NEW" >/dev/null
+is "current moved" "$NEW" "$(readlink "$RELEASES/current")"
 
 tl_summary
