@@ -266,8 +266,11 @@ fi
 cd ~/round-work
 disk_out="$HOME/round-work/.runtime/spira/batch-results/disk-usage"
 mkdir -p "$(dirname "$disk_out")"
+# Bytes used per directory, one line each, into the pass's results. A directory du cannot read
+# whole is counted as a lower bound and says so; one it cannot read at all is `unread`, never a
+# zero it did not measure, and the total then says it is incomplete. A measurement never ends the pass.
 disk_report() {
-    local phase="$1" label path bytes total=0 graph
+    local phase="$1" label path bytes total=0 whole=yes graph
     graph="$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null || true)"
     for label in round-work tmpdir podman-graphroot cargo-target; do
         case "$label" in
@@ -276,12 +279,25 @@ disk_report() {
             podman-graphroot) path="$graph" ;;
             cargo-target) path="$HOME/round-work/target" ;;
         esac
-        if [ -z "$path" ] || [ ! -d "$path" ]; then bytes=0; else bytes="$(du -sxB1 "$path" 2>/dev/null | cut -f1)"; fi
-        case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
-        [ "$label" = cargo-target ] || total=$(( total + bytes ))
+        if [ -z "$path" ]; then
+            bytes=unread path="(podman named no graph root)"
+        elif [ ! -d "$path" ]; then
+            bytes=0
+        elif ! bytes="$(du -sxB1 "$path" 2>/dev/null | cut -f1)"; then
+            path="$path (du could not read all of it: a lower bound)"
+        fi
+        case "$bytes" in ''|*[!0-9]*) bytes=unread ;; esac
+        if [ "$bytes" = unread ]; then whole=no; elif [ "$label" != cargo-target ]; then total=$(( total + bytes )); fi
         echo "round-vm: DISK $phase $label $bytes $path" | tee -a "$disk_out" >&2
     done
+    [ "$whole" = yes ] || total="$total+unread"
     echo "round-vm: DISK $phase total $total -" | tee -a "$disk_out" >&2
+}
+# The pass's last report; coverage profiles go once the line report has read them, or once a red
+# unit tier means none will.
+disk_report_last() {
+    disk_report "$1"
+    find "$HOME/round-work/target" \( -name '*.profraw' -o -name '*.profdata' \) -delete 2>/dev/null || true
 }
 disk_report start
 nix_bin=/nix/var/nix/profiles/default/bin
@@ -736,6 +752,7 @@ else
     grep -E -A3 '^(test .* FAILED|---- |error(\[|:))|panicked at' ~/round-unit-tests.log | head -120 >&2
     test_phase_red unit-tests ~/round-unit-tests.log "$unit_rc" "$unit_secs" "$unit_hung" "$rdir/unit-tests.out" "$rdir/unit.json" true
     echo "round-vm: UNIT-TESTS RED before the suites: no suite was run" >&2
+    disk_report_last unit-red
     kill "$sampler_pid" 2>/dev/null
     exit 1
 fi
@@ -883,8 +900,7 @@ if [ -n "$unit_cov_env" ]; then
         echo "round-vm: COVERAGE: lines unavailable (cargo llvm-cov report failed): $(printf '%s' "$unit_cargo_report" | tail -5)" >&2
     fi
 fi
-disk_report suites
-find "$HOME/round-work/target" \( -name '*.profraw' -o -name '*.profdata' \) -delete 2>/dev/null || true
+disk_report_last suites
 suites_secs=$suites_clock
 kill "$sampler_pid" 2>/dev/null; wait "$sampler_pid" 2>/dev/null
 echo "round-vm: setup ${setup_secs}s, suites ${suites_secs}s" >&2
@@ -2782,23 +2798,39 @@ mod tests {
         let start = REMOTE_SCRIPT.find("disk_report start").unwrap();
         let func = &REMOTE_SCRIPT[a..start];
         let build = REMOTE_SCRIPT.find("disk_report build").expect("reported after the build");
-        let suites = REMOTE_SCRIPT.find("disk_report suites").expect("reported after the suites");
+        let suites = REMOTE_SCRIPT.find("disk_report_last suites").expect("reported after the suites");
         let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         assert!(start < build && build < batch && batch < suites, "at start, after the build and after the suites");
+        let red = REMOTE_SCRIPT.find("UNIT-TESTS RED before the suites").unwrap();
+        let red_exit = red + REMOTE_SCRIPT[red..].find("exit 1").unwrap();
+        assert!(REMOTE_SCRIPT[red..red_exit].contains("disk_report_last unit-red"), "a pass that ends at a red unit tier still reports its last usage");
         for (label, path) in [("round-work", "\"$HOME/round-work\""), ("tmpdir", "\"${TMPDIR:-/tmp}\""), ("podman-graphroot", "\"$graph\""), ("cargo-target", "\"$HOME/round-work/target\"")] {
             assert!(func.contains(&format!("{label}) path={path}")), "{label} is measured at {path}: {func}");
         }
-        assert!(func.contains("[ ! -d \"$path\" ]; then bytes=0"), "an absent directory counts zero");
-        assert!(func.contains("[ \"$label\" = cargo-target ] || total=$(( total + bytes ))"), "cargo-target lies inside round-work and is not added twice");
+        assert!(func.contains("[ \"$label\" != cargo-target ]; then total=$(( total + bytes ))"), "cargo-target lies inside round-work and is not added twice");
         assert!(func.contains("| tee -a \"$disk_out\" >&2"), "the stderr log and the results file carry the same lines");
         assert!(REMOTE_SCRIPT.contains("disk_out=\"$HOME/round-work/.runtime/spira/batch-results/disk-usage\""), "the lines land in the pass's results");
     }
 
     #[test]
+    fn a_directory_du_cannot_read_is_never_a_zero_and_never_ends_the_pass() {
+        let a = REMOTE_SCRIPT.find("disk_report() {").unwrap();
+        let func = &REMOTE_SCRIPT[a..REMOTE_SCRIPT.find("disk_report start").unwrap()];
+        assert!(func.contains("elif ! bytes=\"$(du -sxB1 \"$path\" 2>/dev/null | cut -f1)\"; then"), "du's failure is tested, so errexit cannot end the pass: {func}");
+        assert!(func.contains("a lower bound"), "a partial read says it is partial");
+        assert!(func.contains("''|*[!0-9]*) bytes=unread"), "no number read is unread, not 0");
+        assert!(func.contains("bytes=unread path=\"(podman named no graph root)\""), "an unnamed graph root is unread, not 0");
+        assert!(func.contains("[ \"$whole\" = yes ] || total=\"$total+unread\""), "an incomplete total says so");
+        assert!(!func.contains("bytes=0 ;;"), "no fallback to zero");
+    }
+
+    #[test]
     fn coverage_profiles_are_deleted_only_after_the_line_report_has_read_them() {
         let report = REMOTE_SCRIPT.find("cargo llvm-cov report").expect("the line report");
-        let delete = REMOTE_SCRIPT.find("-name '*.profraw' -o -name '*.profdata' \\) -delete").expect("profiles deleted once reported");
-        assert!(report < delete);
+        let last = REMOTE_SCRIPT.find("disk_report_last suites").expect("the pass's last report");
+        assert!(report < last);
+        let f = REMOTE_SCRIPT.find("disk_report_last() {").unwrap();
+        assert!(REMOTE_SCRIPT[f..f + 300].contains("-name '*.profraw' -o -name '*.profdata' \\) -delete"), "profiles deleted with the last report");
     }
 
     #[test]
