@@ -961,6 +961,9 @@ impl Scripts for RealScripts {
     fn czar_fence(&self, class: &str) -> bool {
         ok(Command::new("czar-fence.sh").arg(class))
     }
+    fn release_tool(&self) -> Result<PathBuf, String> {
+        spira_config::release_env::tool("release").map(PathBuf::from)
+    }
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut {
         // batch-job: this runs whatever its caller names, as long as that takes
         match Command::new(bin)

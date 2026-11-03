@@ -82,7 +82,7 @@ fn args(v: &[&str]) -> Vec<String> {
 /// commit that is about to ship, so a fix to how releases are BUILT can deploy itself. A
 /// bin-dir without one is a refusal, never another release's binary. With no bin-dir, the
 /// declared release's own (`$SPIRA_RELEASE`).
-fn release_bin(bins: Option<&Path>) -> Result<PathBuf, String> {
+fn release_bin(bins: Option<&Path>, declared: impl FnOnce() -> Result<PathBuf, String>) -> Result<PathBuf, String> {
     match bins {
         Some(dir) => {
             let candidate = dir.join("release");
@@ -92,7 +92,7 @@ fn release_bin(bins: Option<&Path>) -> Result<PathBuf, String> {
                 Err(format!("no release binary at {} — the round's own build ships one; there is no fallback to another release", candidate.display()))
             }
         }
-        None => spira_config::release_env::tool("release").map(PathBuf::from),
+        None => declared(),
     }
 }
 
@@ -132,7 +132,7 @@ pub fn build_and_verify(w: &World, plan: &Plan, head: &str) -> Result<String, St
     let Some(bins) = &plan.bins else {
         return Err("no tested build to publish (--bin-dir)".into());
     };
-    let bin = release_bin(Some(bins))?;
+    let bin = release_bin(Some(bins), || w.scripts.release_tool())?;
     let out = step(
         w,
         plan,
@@ -165,7 +165,7 @@ pub fn build_and_verify(w: &World, plan: &Plan, head: &str) -> Result<String, St
 
 /// `release verify <sha>` alone (rollback-local: the release already exists; never rebuilt).
 pub fn verify(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
-    let bin = release_bin(plan.bins.as_deref())?;
+    let bin = release_bin(plan.bins.as_deref(), || w.scripts.release_tool())?;
     step(w, plan, &bin, "verify", args(&["verify", sha])).map(|_| ())
 }
 
@@ -228,7 +228,7 @@ fn settle_unit(w: &World, unit: &str) {
 }
 
 fn activate_once(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
-    let bin = release_bin(plan.bins.as_deref())?;
+    let bin = release_bin(plan.bins.as_deref(), || w.scripts.release_tool())?;
     let out = step(
         w,
         plan,
@@ -270,14 +270,13 @@ mod release_bin_tests {
 
     #[test]
     fn a_bin_dir_without_a_release_binary_refuses_naming_it() {
-        let e = release_bin(Some(Path::new("/nonexistent/bins"))).unwrap_err();
+        let e = release_bin(Some(Path::new("/nonexistent/bins")), || Ok(PathBuf::from("/unused"))).unwrap_err();
         assert!(e.contains("no release binary at /nonexistent/bins/release"), "{e}");
     }
 
     #[test]
-    fn no_bin_dir_and_no_spira_release_refuses_naming_the_key() {
-        let _env = testkit::env(&[("SPIRA_RELEASE", None)]);
-        let e = release_bin(None).unwrap_err();
-        assert!(e.contains("SPIRA_RELEASE is not set"), "{e}");
+    fn no_bin_dir_runs_the_declared_releases_own_binary() {
+        assert_eq!(release_bin(None, || Ok(PathBuf::from("/r/bin/release"))).unwrap(), PathBuf::from("/r/bin/release"));
+        assert!(release_bin(None, || Err("SPIRA_RELEASE is not set".into())).unwrap_err().contains("SPIRA_RELEASE"));
     }
 }

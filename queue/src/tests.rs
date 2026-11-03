@@ -706,6 +706,9 @@ impl Scripts for FScripts {
             q.front().cloned().unwrap_or_else(|| "active".into())
         }
     }
+    fn release_tool(&self) -> Result<PathBuf, String> {
+        Ok(PathBuf::from("release"))
+    }
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut {
         self.release_calls.borrow_mut().push((
             bin.display().to_string(),

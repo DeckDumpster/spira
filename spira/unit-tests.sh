@@ -36,4 +36,13 @@ if [ -f "$ROOT/target/unit-tests.filter" ]; then
   while IFS= read -r t; do [ -n "$t" ] && filters+=("$t"); done < "$ROOT/target/unit-tests.filter"
   echo "unit-tests: filtered to tests named ${filters[*]}"
 fi
-cargo test "${words[@]}" -j "$jobs" -- --test-threads="$jobs" "${filters[@]}"
+# The round runs this tier with no declared release, config or harness home and no release
+# on PATH (round-vm's unit_cargo: env -i); a test that passes only because the fixture's
+# launcher declared them must fail here too.
+unit_path=""
+IFS=: read -ra _dirs <<< "$PATH"
+for d in "${_dirs[@]}"; do
+  [ -x "$d/spira-config" ] || [ -f "$d/conf.sh" ] || unit_path="${unit_path:+$unit_path:}$d"
+done
+env -u SPIRA_RELEASE -u SPIRA_TOML -u SPIRA_HOME PATH="$unit_path" \
+    cargo test "${words[@]}" -j "$jobs" -- --test-threads="$jobs" "${filters[@]}"
