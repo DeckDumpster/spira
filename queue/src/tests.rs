@@ -1539,7 +1539,6 @@ impl Emit for Cap {
 }
 
 struct T {
-    _serial: crate::testutil::Serial,
     dir: testkit::TempDir,
     git: FGit,
     bd: FBd,
@@ -1557,7 +1556,6 @@ const REPO: &str = "/repo";
 
 impl T {
     fn new(mode: LandMode) -> T {
-        let serial = crate::testutil::serial();
         let dir = tmpdir("ops");
         let s = Settings {
             home: dir.join("home"),
@@ -1639,7 +1637,6 @@ impl T {
             ..lc
         };
         T {
-            _serial: serial,
             dir,
             git,
             bd: FBd::default(),
