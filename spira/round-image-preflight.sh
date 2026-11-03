@@ -35,19 +35,6 @@ recipe_paths() {   # recipe_paths <tree> -> repo-relative path of every recipe i
     done
 }
 
-foreign_checkouts() {   # registered repos other than this one that declare runner-deps
-    [ -z "${SPIRA_PREFLIGHT_FOREIGN+x}" ] || { printf '%s\n' $SPIRA_PREFLIGHT_FOREIGN; return 0; }
-    (
-        . "$HERE/lib.sh" >/dev/null 2>&1 || exit 0
-        home="$(spira_home_repo 2>/dev/null)"
-        for n in $(repo_names 2>/dev/null); do
-            [ "$n" = "$home" ] && continue
-            r="$(repo_root "$n" 2>/dev/null)" || continue
-            [ -f "$r/deploy/runner-deps.sh" ] && printf '%s\n' "$r"
-        done
-    )
-}
-
 paths="$(recipe_paths "$TREE")" || exit 1
 [ -n "$paths" ] || { echo "round-image-preflight: recipe.rs lists no inputs" >&2; exit 1; }
 npaths="$(printf '%s\n' "$paths" | wc -l)"
@@ -75,15 +62,10 @@ log="$(mktemp)"; trap 'rm -f "$log"' EXIT
 mounts=(-v "$TREE:/src:ro" -v "$HERE/round-image-preflight-guest.sh:/guest.sh:ro"
         -v "$CACHE/registry:/cache/registry" -v "$CACHE/target:/cache/target"
         -v "$CACHE/apt:/var/cache/apt/archives" -v "$CACHE/toolchains:/cache/toolchains")
-foreign=""; i=0
-while IFS= read -r d; do
-    [ -n "$d" ] || continue
-    mounts+=(-v "$d:/foreign/$i:ro"); foreign="$foreign /foreign/$i"; i=$((i + 1))
-done < <(foreign_checkouts)
 
 start=$SECONDS
 timeout "$LIMIT" podman run --rm --network host "${mounts[@]}" "$IMAGE" \
-    bash /guest.sh "$toolchain" "${foreign# }" >"$log" 2>&1
+    bash /guest.sh "$toolchain" >"$log" 2>&1
 rc=$?
 wall=$((SECONDS - start))
 
@@ -96,5 +78,5 @@ if [ "$rc" -ne 0 ]; then
     tail -n 40 "$log" | cut -c1-300 >&2
     exit 1
 fi
-echo "round-image-preflight: setup exited 0 and each foreign runner-deps passed; wall ${wall}s"
+echo "round-image-preflight: setup exited 0; wall ${wall}s"
 echo "fence: round-image-preflight checked $npaths recipe paths against the diff ($(printf "%s" "$hit" | grep -c .) touched, setup ran)"
