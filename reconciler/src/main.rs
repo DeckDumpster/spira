@@ -13,7 +13,7 @@ fn main() -> ExitCode {
     let sink = spira_otel::metrics::MetricsSink::for_component(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "spira-reconciler");
     let result = match args.get(1).map(String::as_str) {
         Some("--pass") => spira_otel::metrics::instrument_result(&sink, "reconciler", "pass", reconciler::run_pass),
-        Some(arm_check::VERB) => arm_check::main(&args[2..]),
+        Some(arm_check::VERB) => spira_otel::metrics::instrument_result(&sink, "reconciler", arm_check::VERB, || arm_check::main(&args[2..])),
         Some(goodput_pass::VERB) => spira_otel::metrics::instrument_result(&sink, "reconciler", goodput_pass::VERB, || goodput_pass::main(&sink)),
         _ => {
             eprintln!("usage: reconciler --pass | reconciler {} | reconciler {} <kind> [--disarm]", goodput_pass::VERB, arm_check::VERB);

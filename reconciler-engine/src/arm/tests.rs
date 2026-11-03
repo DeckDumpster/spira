@@ -27,9 +27,10 @@ fn current(fresh: bool, fields: serde_json::Value) -> Current {
 }
 
 fn alarms(fresh: bool, deadman: &str, heartbeat: Option<&str>) -> Current {
-    let mut f = json!({ "observedGeneration": 0, "deadman": deadman });
+    let mut f = json!({ "observedGeneration": 0, "deadman": deadman, "deadman_state": deadman });
     if let Some(h) = heartbeat {
-        f["heartbeat_last"] = json!(h);
+        f["heartbeat_state"] = json!(h);
+        f["heartbeat_last"] = json!(format!("said {h}"));
     }
     current(fresh, f)
 }
@@ -89,7 +90,7 @@ fn healthy() -> Assembled {
     assembled(vec![
         ("RoundController/lane", current(true, json!({ "observedGeneration": 0 }))),
         ("RoundController/other", current(true, json!({ "observedGeneration": 0 }))),
-        ("Alarms/all", alarms(true, alarms_kind::DEADMAN_FRESH, Some(alarms_kind::NO_HEARTBEAT_URL))),
+        ("Alarms/all", alarms(true, "fresh", Some("unconfigured"))),
     ])
 }
 
@@ -120,7 +121,11 @@ fn arming_a_kind_takes_it_off_the_list_and_puts_every_old_path_it_replaces_on_in
 #[test]
 fn disarming_is_the_reverse_write() {
     let armed = armed_list(&list(ALL), "RoundController").unwrap();
-    assert_eq!(disarmed_list(&armed, "RoundController").unwrap(), list("Lifecycle Alarms RoundController"));
+    assert_eq!(
+        disarmed_list(&armed, "RoundController").unwrap(),
+        list("Lifecycle Alarms queue-mergeable RoundController"),
+        "queue-mergeable stays shadowed: it is the cutover's, not the arm day's"
+    );
 }
 
 #[test]
@@ -157,8 +162,10 @@ fn a_stale_or_absent_section_of_the_kind_fails_its_precondition() {
 #[test]
 fn a_dead_man_that_is_waiting_stale_or_unpublished_fails() {
     for a in [
-        assembled(vec![("RoundController/lane", current(true, json!({ "observedGeneration": 0 }))), ("Alarms/all", alarms(true, "WAITING: the reconciler-goodput timer is not installed or not enabled", None))]),
-        assembled(vec![("RoundController/lane", current(true, json!({ "observedGeneration": 0 }))), ("Alarms/all", alarms(false, alarms_kind::DEADMAN_FRESH, None))]),
+        assembled(vec![("RoundController/lane", current(true, json!({ "observedGeneration": 0 }))), ("Alarms/all", alarms(true, "waiting", None))]),
+        assembled(vec![("RoundController/lane", current(true, json!({ "observedGeneration": 0 }))), ("Alarms/all", alarms(true, "stale", None))]),
+        assembled(vec![("RoundController/lane", current(true, json!({ "observedGeneration": 0 }))), ("Alarms/all", alarms(false, "fresh", None))]),
+        assembled(vec![("RoundController/lane", current(true, json!({ "observedGeneration": 0 }))), ("Alarms/all", current(true, json!({ "observedGeneration": 0, "deadman": "fresh" })))]),
         assembled(vec![("RoundController/lane", current(true, json!({ "observedGeneration": 0 })))]),
     ] {
         let c = arm_check("RoundController", &list(ALL), &a, &history()).unwrap();
@@ -168,15 +175,18 @@ fn a_dead_man_that_is_waiting_stale_or_unpublished_fails() {
 }
 
 #[test]
-fn a_heartbeat_whose_last_ping_failed_fails_and_one_that_reached_its_receiver_holds() {
-    let with = |h: &str| {
+fn a_heartbeat_whose_last_ping_failed_or_that_is_unrecorded_fails_and_one_delivered_holds() {
+    let with = |h: Option<&str>| {
         let mut a = healthy();
-        a.current.sections.insert("Alarms/all".into(), alarms(true, alarms_kind::DEADMAN_FRESH, Some(h)));
+        a.current.sections.insert("Alarms/all".into(), alarms(true, "fresh", h));
         arm_check("RoundController", &list(ALL), &a, &history()).unwrap()
     };
-    let failed = with(&format!("{}503", alarms_kind::HEARTBEAT_FAILED));
+    let failed = with(Some("failed"));
     assert_eq!((failed.checks[2].name, failed.checks[2].holds), ("heartbeat", false));
-    assert!(with("200").checks[2].holds);
+    assert!(failed.checks[2].detail.contains("said failed"), "{}", failed.checks[2].detail);
+    assert!(with(Some("delivered")).checks[2].holds);
+    assert!(!with(None).checks[2].holds, "no recorded state is not green");
+    assert!(!with(Some("fine")).checks[2].holds, "a state that is not one of the three does not decode");
 }
 
 #[test]

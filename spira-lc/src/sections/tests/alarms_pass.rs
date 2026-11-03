@@ -236,6 +236,7 @@ fn the_dead_man_pages_once_under_reconciler_and_reads_the_switch_first() {
     assert_eq!(rep.deadman, Some(DeadMan::Stale { age_secs: Some(181) }));
     assert_eq!(rep.sent, ["page:reconciler:ReconcilerPassStale"]);
     assert_eq!(condition(&alarms_section(&r), "ReconcilerPassStale"), "True");
+    assert_eq!(alarms_section(&r)["section"]["status"]["deadman_state"], "stale");
     r.clock.advance(MIN);
     assert!(w.pass(&r).sent.is_empty(), "once");
 
@@ -245,6 +246,7 @@ fn the_dead_man_pages_once_under_reconciler_and_reads_the_switch_first() {
     let rep = w.pass(&r);
     assert!(matches!(rep.deadman, Some(DeadMan::Waiting(_))) && rep.sent.is_empty(), "{rep:?}");
     assert!(alarms_section(&r)["section"]["status"]["deadman"].as_str().unwrap().starts_with("WAITING"));
+    assert_eq!(alarms_section(&r)["section"]["status"]["deadman_state"], "waiting");
 
     let w = World::new("alarms-deadman-off", Some("sp-ask"));
     let rep = w.pass(&r);
@@ -256,6 +258,8 @@ fn the_dead_man_pages_once_under_reconciler_and_reads_the_switch_first() {
     put_record(&r, &record(2, r.clock.now_ms()));
     let rep = w.pass(&r);
     assert_eq!((rep.deadman, rep.sent.len()), (Some(DeadMan::Fresh { age_secs: 0 }), 0), "a work-plane halt with a fresh pass trips nothing");
+    let status = &alarms_section(&r)["section"]["status"];
+    assert_eq!((status["deadman_state"].clone(), status["heartbeat_state"].clone()), (json!("fresh"), json!("delivered")), "typed beside the prose, for arm-check");
 }
 
 #[test]

@@ -8,16 +8,17 @@
 
 use serde_json::Value;
 use spira_desired_state::section::Freshness;
-use spira_desired_state::sections::alarms as alarms_kind;
+use spira_desired_state::sections::alarms::{self as alarms_kind, DeadManState, HeartbeatState};
 use spira_desired_state::sections::{lifecycle, round_controller};
 
 use crate::assemble::{Assembled, Current};
 use crate::effect::is_shadowed;
 use crate::pass_record::{PassRecord, Step};
 
-/// The one-for-one map: each section kind, and the old check kinds it replaces on its arm day.
-/// `Lifecycle` replaces reconciler-flow's `flow:*` alerts, which left with that binary's timer;
-/// the per-kind alerting `Alarms` replaces is shadowed with the kinds above it.
+/// The one-for-one map: each section kind, and the old check kinds whose remedies it replaces on
+/// its arm day. The key holds an old kind's remedy back; it does not silence the old kind's
+/// alerts, nor the `flow:*` alerts spira-runtime's flow watcher raises, which never read it. So
+/// `Lifecycle` and `Alarms`, which replace only alerting, swap in nothing here.
 pub const REPLACES: &[(&str, &[&str])] = &[
     (round_controller::NAME, &["batch-landed", "queue-mergeable", "lc-orphan-in-delivery", "queue-lock-age"]),
     (lifecycle::NAME, &[]),
@@ -49,13 +50,19 @@ pub fn armed_list(current: &[String], kind: &str) -> Result<Vec<String>, String>
     Ok(out)
 }
 
-/// The reverse write: `kind` back on the list and the paths it replaced off it.
+/// Old kinds shadowed from the round-controller cutover, not from an arm day (the design's D9):
+/// arming lists them if they are missing, and disarming never takes them off.
+pub const SHADOWED_FROM_CUTOVER: &[&str] = &["queue-mergeable"];
+
+/// The reverse write: `kind` back on the list and the paths it replaced off it, but for those
+/// shadowed from the cutover.
 pub fn disarmed_list(current: &[String], kind: &str) -> Result<Vec<String>, String> {
     let old = replaced_by(kind)?;
     if current.iter().any(|k| k == kind || k == "*") {
         return Err(format!("{kind} is not armed: the shadow list already shadows it"));
     }
-    let mut out: Vec<String> = current.iter().filter(|k| !old.contains(&k.as_str())).cloned().collect();
+    let lifted = |k: &String| old.contains(&k.as_str()) && !SHADOWED_FROM_CUTOVER.contains(&k.as_str());
+    let mut out: Vec<String> = current.iter().filter(|k| !lifted(k)).cloned().collect();
     out.push(kind.to_string());
     Ok(out)
 }
@@ -111,8 +118,14 @@ fn sections_fresh(kind: &str, a: &Assembled) -> Check {
     }
 }
 
-fn alarms_field<'a>(c: &'a Current, f: &str) -> Option<&'a str> {
-    c.status.fields.get(f).and_then(Value::as_str)
+/// A typed Alarms status field: `Err` names it when it is absent or not of its type.
+fn typed<T: serde::de::DeserializeOwned>(c: &Current, f: &str) -> Result<T, String> {
+    let v = c.status.fields.get(f).ok_or_else(|| format!("the Alarms section records no {f}"))?;
+    serde_json::from_value(v.clone()).map_err(|e| format!("the Alarms section's {f} {v} does not decode: {e}"))
+}
+
+fn said(c: &Current, f: &str) -> String {
+    c.status.fields.get(f).and_then(Value::as_str).unwrap_or("").to_string()
 }
 
 fn dead_man(alarms: Option<&Current>) -> Check {
@@ -123,20 +136,24 @@ fn dead_man(alarms: Option<&Current>) -> Check {
     if let Some(why) = stale(c) {
         return check("dead-man", false, format!("{r} is stale: {why}"));
     }
-    match alarms_field(c, "deadman") {
-        Some(d) if d == alarms_kind::DEADMAN_FRESH => check("dead-man", true, "the latest pass record is inside the dead-man".into()),
-        d => check("dead-man", false, format!("the dead-man reads {}", d.unwrap_or("nothing"))),
+    match typed::<DeadManState>(c, alarms_kind::DEADMAN_STATE) {
+        Ok(DeadManState::Fresh) => check("dead-man", true, "the latest pass record is inside the dead-man".into()),
+        Ok(_) => check("dead-man", false, format!("the dead-man reads {}", said(c, "deadman"))),
+        Err(e) => check("dead-man", false, e),
     }
 }
 
 /// The off-box receiver waits on a permission decision by Ryan, so a heartbeat with no URL is
 /// reported and is not a gate (the design's second-round D8); a ping that failed is.
 fn heartbeat(alarms: Option<&Current>) -> Check {
-    match alarms.and_then(|c| alarms_field(c, "heartbeat_last")) {
-        None => check("heartbeat", true, "no ping recorded yet; not a gate until an off-box receiver is approved".into()),
-        Some(h) if h == alarms_kind::NO_HEARTBEAT_URL => check("heartbeat", true, format!("{h}; not a gate until an off-box receiver is approved")),
-        Some(h) if h.starts_with(alarms_kind::HEARTBEAT_FAILED) => check("heartbeat", false, format!("the last ping {h}")),
-        Some(h) => check("heartbeat", true, format!("the last ping answered {h}")),
+    let Some(c) = alarms else {
+        return check("heartbeat", false, "the Alarms section is not published".into());
+    };
+    match typed::<HeartbeatState>(c, alarms_kind::HEARTBEAT_STATE) {
+        Ok(HeartbeatState::Unconfigured) => check("heartbeat", true, "no off-box receiver is configured; not a gate until one is approved".into()),
+        Ok(HeartbeatState::Delivered) => check("heartbeat", true, format!("the last ping answered {}", said(c, "heartbeat_last"))),
+        Ok(HeartbeatState::Failed) => check("heartbeat", false, format!("the last ping {}", said(c, "heartbeat_last"))),
+        Err(e) => check("heartbeat", false, e),
     }
 }
 

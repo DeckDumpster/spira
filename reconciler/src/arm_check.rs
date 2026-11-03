@@ -105,7 +105,7 @@ mod tests {
     }
 
     fn canned(deadman: &str) -> Canned {
-        let alarms = json!({ "observedGeneration": 0, "deadman": deadman });
+        let alarms = json!({ "observedGeneration": 0, "deadman": deadman, "deadman_state": deadman, "heartbeat_state": "unconfigured" });
         let pass = json!({ "n": 1, "list_rev": 1, "at": NOW, "holder": "inv", "mode": "shadow", "shadow_kinds": ["RoundController"] });
         Canned {
             snapshot: json!({
@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn an_unmet_precondition_refuses_naming_it_with_the_report() {
-        let lc = canned("WAITING: the reconciler-goodput timer is not installed or not enabled");
+        let lc = canned("waiting");
         let e = run(&lc, &clock(), &shadow(), &["RoundController".into()]).unwrap_err();
         assert!(e.contains("[FAIL] dead-man") && e.ends_with("RoundController is not ready to arm: dead-man"), "{e}");
     }
@@ -149,7 +149,7 @@ mod tests {
         let lc = canned("fresh");
         let armed: Vec<String> = ["Lifecycle", "Alarms", "batch-landed", "queue-mergeable", "lc-orphan-in-delivery", "queue-lock-age"].map(String::from).to_vec();
         let out = run(&lc, &clock(), &armed, &["RoundController".into(), "--disarm".into()]).unwrap();
-        assert_eq!(out, "disarm with: spira-config set spira.reconciler_shadow_kinds \"Lifecycle Alarms RoundController\" \"$SPIRA_TOML\"\n");
+        assert_eq!(out, "disarm with: spira-config set spira.reconciler_shadow_kinds \"Lifecycle Alarms queue-mergeable RoundController\" \"$SPIRA_TOML\"\n");
         assert!(lc.calls.borrow().is_empty());
         assert!(run(&lc, &clock(), &armed, &[]).unwrap_err().starts_with("usage:"));
     }
