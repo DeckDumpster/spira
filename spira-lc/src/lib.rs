@@ -13,9 +13,11 @@ pub fn flag(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
 }
 
-/// `--after <id> --limit <n>` on a list: the rows after `id` in id order, at most `n`, or
-/// `None` when neither flag is given.
-pub fn page(args: &[String]) -> Result<Option<(Option<String>, Option<usize>)>, String> {
+/// `--after <id> --limit <n>` on a list: the rows after `id` in id order, at most `n`.
+pub type Page = (Option<String>, Option<usize>);
+
+/// The page a list asks for, or `None` when neither flag is given.
+pub fn page(args: &[String]) -> Result<Option<Page>, String> {
     let after = flag(args, "--after");
     let limit = match flag(args, "--limit") {
         None => None,
