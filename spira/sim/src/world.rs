@@ -617,7 +617,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
             steps.release(repo, tree, &cache)?
         }
     };
-    link(&release, &dir.join("release"))?;
+    world_release(&release, &dir.join("release"), &std::env::current_exe().map_err(|e| e.to_string())?)?;
 
     let origin = dir.join("origin.git");
     let work = dir.join("work");
@@ -1108,6 +1108,30 @@ fn cache_dir(dir: &Path) -> PathBuf {
         Some(c) if !c.is_empty() => PathBuf::from(c),
         _ => dir.join("cache"),
     }
+}
+
+/// The world's release: the release under test linked file by file, with the world's stand-ins
+/// for the release tools it fakes (`round-vm`, [`INERT_TOOLS`]) laid over its `bin/`. A binary
+/// finds its tools only in the release it declares, so a stand-in must live there.
+fn world_release(release: &Path, at: &Path, sim_exe: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(at.join("bin")).map_err(|e| e.to_string())?;
+    let entries = |d: &Path| std::fs::read_dir(d).map_err(|e| format!("{}: {e}", d.display()));
+    for e in entries(release)? {
+        let e = e.map_err(|e| e.to_string())?;
+        if e.file_name() != "bin" {
+            link(&e.path(), &at.join(e.file_name()))?;
+        }
+    }
+    for e in entries(&release.join("bin"))? {
+        let e = e.map_err(|e| e.to_string())?;
+        link(&e.path(), &at.join("bin").join(e.file_name()))?;
+    }
+    for stub in std::iter::once(&"round-vm").chain(INERT_TOOLS) {
+        let p = at.join("bin").join(stub);
+        let _ = std::fs::remove_file(&p);
+        link(sim_exe, &p)?;
+    }
+    Ok(())
 }
 
 fn link(target: &Path, at: &Path) -> Result<(), String> {

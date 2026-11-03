@@ -83,6 +83,7 @@ exit 0
 MOCK
 chmod +x "$T/bin/mock-call"
 export SPIRA_CALL="$T/bin/mock-call"
+tl_declare_release   # after the stubs exist: the fake release links what $T/bin holds now
 export CALLED_FILE="$CALLED"
 
 # ======================================================================================

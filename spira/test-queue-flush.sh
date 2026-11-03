@@ -53,7 +53,7 @@ run() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_BATCH_WAIT=1800 \
         SPIRA_FORGE="$TMP/spira/forge-fake.sh" SPIRA_BATCHER_ENABLE=1 \
         SPIRA_QUEUE_DIR="$TMP/run/queue"
-    env -i SPIRA_RELEASE="$(tl_release)" SPIRA_TOML="$SPIRA_TOML" $(lcfix_env) PATH="$TMP/bin:$TMP/spira:$PATH" HOME="$TMP" \
+    env -i SPIRA_RELEASE="$(PATH="$TMP/bin:$TMP/spira:$PATH" tl_release)" SPIRA_TOML="$SPIRA_TOML" $(lcfix_env) PATH="$TMP/bin:$TMP/spira:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$TMP/spira" queue "$@" 2>&1
 }

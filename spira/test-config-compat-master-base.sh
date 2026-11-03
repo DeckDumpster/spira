@@ -29,7 +29,11 @@ testdb_up cfgcompatmaster || skip "testdb not available"
 lcfix_up || { echo "test-config-compat-master-base: could not build a lifecycle fixture"; exit 1; }
 # The batcher reads bead content through `spira-lc plan items` (sp-jf7spl); the lifecycle
 # fixture server holds no content store, so the shim answers it from this suite's bd fixture.
-lc_content_shim "$TMP/lcshim"; export PATH="$TMP/lcshim:$PATH"
+lc_content_shim "$TMP/lcshim"
+# The shim hands other verbs to the next spira-lc on PATH; a child's PATH is the declared
+# release, where this shim stands in for spira-lc, so it hands them to the staged one.
+sed -i "s|^exit 2\$|exec \"$_TL_STAGED_RELEASE/bin/spira-lc\" \"\$@\"|" "$TMP/lcshim/spira-lc"
+export PATH="$TMP/lcshim:$PATH"; tl_declare_release
 
 # The batcher is the tree's own build, by name on this suite's PATH (sp-gypjk).
 
@@ -126,7 +130,7 @@ lcfix_sql -q "UPDATE bead SET sifted_tip='$B_TIP' WHERE bead_id='sp-mbase'" >/de
 tl_config SPIRA_BATCHER_ENABLE=1 SPIRA_RUN="$B_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$B_SH/repo-map" SPIRA_QUEUE_DIR="$B_QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 \
     SPIRA_FORGE="$B_SH/forge-fixture.sh"
-out="$(SPIRA_HOME="$B_SH" PATH="$B_SH:$PATH" \
+out="$(SPIRA_HOME="$B_SH" PATH="$B_SH:$PATH" SPIRA_RELEASE="$(PATH="$B_SH:$PATH" tl_release)" \
         batcher cut "$B_REPONAME" --round-vm "$B_SH/round-vm-stub.sh" 2>&1)"
 
 want "batcher cut: a PR was opened for the master-based batch" "opened" "$out"
@@ -211,7 +215,7 @@ printf 'green\nhead-sha: %s\n' "$V_BATCH_HEAD" > "$V_FORGE_STATUS_FILE"
 tl_config SPIRA_BATCHER_ENABLE=1 SPIRA_RUN="$V_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$V_SH/repo-map" SPIRA_QUEUE_DIR="$V_QUEUEDIR" SPIRA_QUEUE_CI_MAXSEC=3600 \
     SPIRA_QUEUE_CI_IDLE_SEC=600 SPIRA_QUEUE_INFRA_RETRIES=2 SPIRA_FORGE="$V_SH/forge-fixture.sh"
-out="$(SPIRA_HOME="$V_SH" PATH="$V_SH:$PATH" \
+out="$(SPIRA_HOME="$V_SH" PATH="$V_SH:$PATH" SPIRA_RELEASE="$(PATH="$V_SH:$PATH" tl_release)" \
         queue verdict "$V_REPONAME" 2>&1)"
 
 is   "verdict: remote MASTER fast-forwards to the batch head" \

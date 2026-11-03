@@ -302,6 +302,9 @@ esac
 LCSTUB
 chmod +x "$SH/spira-lc-stub.sh"
 lc_content_shim "$SH/lcshim"; export SH_CONTENT_SHIM="$SH/lcshim" PATH="$SH/lcshim:$PATH"
+# The shim hands other verbs to the next spira-lc on PATH; a child's PATH is the declared
+# release, where this shim stands in for spira-lc, so it hands them to the staged one.
+sed -i "s|^exit 2\$|exec \"$_TL_STAGED_RELEASE/bin/spira-lc\" \"\$@\"|" "$SH/lcshim/spira-lc"
 # The stub, by name: a directory whose spira-lc is it, put first on PATH for a case (sp-gypjk).
 mkdir -p "$SH/lc-stub-bin" && ln -sf ../spira-lc-stub.sh "$SH/lc-stub-bin/spira-lc"
 
@@ -329,6 +332,7 @@ cut_repo() {
     # batcher as a child process, and it reads "${SPIRA_RUN:-/nonexistent}" as a raw shell
     # variable, never through spira-config — tl_config's declaration never reaches it.
     PATH="$SH/lc-stub-bin:$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" \
+    SPIRA_RELEASE="$(PATH="$SH/lc-stub-bin:$SH:$PATH" tl_release)" SPIRA_LC_BIN="$SH/lc-stub-bin/spira-lc" \
     STUB_RED_SUITES="${STUB_RED_SUITES:-}" \
     STUB_FLAKE_SUITE="${STUB_FLAKE_SUITE:-}" \
     STUB_FLAKE_COUNTER_FILE="${STUB_FLAKE_COUNTER_FILE:-}" \
@@ -405,7 +409,7 @@ RMAP
             SPIRA_QUEUE_DIR="$QUEUEDIR" \
             SPIRA_QUEUE_BATCH_WAIT="${SPIRA_QUEUE_BATCH_WAIT_OVERRIDE:-999999}" \
             SPIRA_RELEASES="$LRELEASES" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
-        PATH="$SH:$PATH" SPIRA_HOME="$SH" \
+        PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RELEASE="$(PATH="$SH:$PATH" tl_release)" \
         STUB_INSTALL_BINS="${STUB_INSTALL_BINS:-}" \
             batcher cut locland --round-vm "$SH/round-vm-stub.sh" 2>&1
     }
@@ -659,6 +663,7 @@ cut_other() {
         SPIRA_QUEUE_DIR="$QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 SPIRA_FORGE="$SH/forge-fixture.sh" \
         SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
     PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" \
+        SPIRA_RELEASE="$(PATH="$SH/lc-stub-bin:$PATH" tl_release)" SPIRA_LC_BIN="$SH/lc-stub-bin/spira-lc" \
         batcher cut "$1" --round-vm "$SH/round-vm-stub.sh" 2>&1
 }
 

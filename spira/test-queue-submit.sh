@@ -48,7 +48,7 @@ printf 'fixq | %s | queue | main | | |\n' "$REPO" > "$RMAP"
 run() {
     tl_config SPIRA_HOME_REPO=fixq SPIRA_RUN="$TMP/run" SPIRA_QUEUE_DIR="$TMP/run/queue" \
         SPIRA_REPO_MAP="$RMAP"
-    env -i SPIRA_RELEASE="$(tl_release)" $(lcfix_env) PATH="$TMP/spira:$PATH" \
+    env -i SPIRA_RELEASE="$(PATH="$TMP/spira:$PATH" tl_release)" $(lcfix_env) PATH="$TMP/spira:$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_REPO="$REPO" \
@@ -66,7 +66,7 @@ mkdir -p "$TMP/run/queue"
 git -C "$REPO" branch "spira/sp-cso01" main
 tl_config SPIRA_HOME_REPO=fixq SPIRA_RUN="$TMP/run" SPIRA_QUEUE_DIR="$TMP/run/queue" \
     SPIRA_REPO_MAP="$RMAP" SPIRA_CERTIFY_SUITES=off
-env -i SPIRA_RELEASE="$(tl_release)" $(lcfix_env) PATH="$TMP/spira:$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent \
+env -i SPIRA_RELEASE="$(PATH="$TMP/spira:$PATH" tl_release)" $(lcfix_env) PATH="$TMP/spira:$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent \
     SPIRA_REPO="$REPO" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_HOME="$TMP/spira" queue submit spira/sp-cso01 >/dev/null 2>&1
@@ -160,7 +160,7 @@ mkdir -p "$TMP/run2/queue"
 run2() {
     tl_config SPIRA_HOME_REPO=holdhome SPIRA_RUN="$TMP/run2" SPIRA_QUEUE_DIR="$TMP/run2/queue" \
         SPIRA_REPO_MAP="$RMAP2"
-    env -i SPIRA_RELEASE="$(tl_release)" $(lcfix_env) PATH="$TMP/spira2:$PATH" \
+    env -i SPIRA_RELEASE="$(PATH="$TMP/spira2:$PATH" tl_release)" $(lcfix_env) PATH="$TMP/spira2:$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_REPO="$REPO" \
@@ -187,7 +187,7 @@ printf 'fixq | %s | queue | main | | |\n' "$REPO" > "$RMAP3"
 run3() {
     tl_config SPIRA_HOME_REPO=fixq SPIRA_RUN="$TMP/run3" SPIRA_QUEUE_DIR="$TMP/run3/queue" \
         SPIRA_REPO_MAP="$RMAP3"
-    env -i SPIRA_RELEASE="$(tl_release)" $(lcfix_env) PATH="$TMP/spira2:$PATH" \
+    env -i SPIRA_RELEASE="$(PATH="$TMP/spira2:$PATH" tl_release)" $(lcfix_env) PATH="$TMP/spira2:$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_REPO="$REPO" \
@@ -240,7 +240,7 @@ timeout 5 git -C "$TREPO" fetch -q origin
 transition() {
     tl_config SPIRA_HOME_REPO=tfixq SPIRA_RUN="$TRUN" SPIRA_QUEUE_DIR="$TRUN/queue" \
         SPIRA_REPO_MAP="$TSH/repo-map"
-    env -i SPIRA_RELEASE="$(tl_release)" $(lcfix_env) PATH="$TSH:$PATH" \
+    env -i SPIRA_RELEASE="$(PATH="$TSH:$PATH" tl_release)" $(lcfix_env) PATH="$TSH:$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$TSH" \

@@ -90,7 +90,7 @@ openbatch() {
         SPIRA_QUEUE_DIR="$QUEUEDIR" SPIRA_FORGE="$SH/forge-fixture.sh" \
         SPIRA_PREFLIGHT_WALL_SECS=60 SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
     SPIRA_HOME="$SH" \
-        PATH="$SH:$PATH" queue open-batch "$@" 2>&1
+        PATH="$SH:$PATH" SPIRA_RELEASE="$(PATH="$SH:$PATH" tl_release)" queue open-batch "$@" 2>&1
 }
 
 seed() {
