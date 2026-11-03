@@ -392,6 +392,10 @@ fi
 # bwrap and refuses without it; an image built before the recipe carried bubblewrap has none,
 # so the round installs it here, as it does a toolchain the image lacks.
 command -v bwrap >/dev/null || { echo "round-vm: installing bubblewrap (the image has none)" >&2; DEBIAN_FRONTEND=noninteractive apt-get update -qq >&2 && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bubblewrap >&2; }
+# sp-7dmcls: the suites run that sandbox inside rootful podman's container, as spirauser, and
+# Ubuntu's restrict_unprivileged_userns moves an unprivileged userns creator into a profile
+# that strips mount, so bwrap could make none of its own. The VM is the round's alone.
+sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 >&2 || { echo "round-vm: cannot lift kernel.apparmor_restrict_unprivileged_userns; bwrap cannot sandbox a test in the container" >&2; exit 5; }
 export PATH="$CARGO_HOME/bin:$HOME/spira-env/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 rustc_id="$(rustc -vV | sed -n 's/^\(release\|commit-hash\): //p' | tr '\n' ' ')"
 echo "round-vm: round rustc $rustc_id" >&2
@@ -624,6 +628,15 @@ elif [ -n "$build_image" ]; then
     echo "round-vm: IMAGE-BUILD: built localhost/spira-testenv:$tag in $(( $(date +%s) - t_img ))s (counted as setup)" >&2
 else
     echo "round-vm: IMAGE-ABSENT: localhost/spira-testenv:$tag is not on this VM — refusing to cold-build it (law-unexpected-image-builds-are-killed-then-fixed); refresh the template with round-vm template and recycle the warm pool" >&2
+    exit 3
+fi
+# sp-7dmcls: the test sandbox (tools/test-sandbox/runner) runs bwrap inside this image under
+# rootful podman, as testenv starts it (unmasked /proc, AppArmor-unconfined). Proved here,
+# before any suite, in bwrap's own words: a refusal now names its cause instead of a red suite.
+if bwrap_probe="$(podman run --rm --security-opt 'unmask=/proc/*' --security-opt apparmor=unconfined "localhost/spira-testenv:$tag" runuser -u spirauser -- bwrap --unshare-user --unshare-pid --ro-bind / / --proc /proc true 2>&1)"; then
+    echo "round-vm: BWRAP-PROBE: ok — bwrap made its namespaces and /proc inside localhost/spira-testenv:$tag as spirauser" >&2
+else
+    echo "round-vm: BWRAP-PROBE-FAILED: bwrap cannot sandbox a test inside localhost/spira-testenv:$tag: $bwrap_probe" >&2
     exit 3
 fi
 setup_secs=$(( $(date +%s) - t_start - unit_build_secs ))
@@ -2874,6 +2887,24 @@ mod tests {
         assert!(step.contains("apt-get install -y -qq bubblewrap"), "{step}");
         assert!(install > REMOTE_SCRIPT.find("phase toolchain").unwrap(), "beside the toolchain install");
         assert!(install < REMOTE_SCRIPT.find("phase unit-tests").unwrap(), "before the unit stage");
+    }
+
+    #[test]
+    fn the_round_lets_bwrap_run_in_the_rootful_test_container_and_proves_it_before_any_suite() {
+        // sp-7dmcls: Ubuntu's restrict_unprivileged_userns strips mount from a bwrap the
+        // container's user starts, and only a probe in the round's own image shows the VM
+        // grants what the test sandbox needs.
+        let sysctl = REMOTE_SCRIPT.find("sysctl -w kernel.apparmor_restrict_unprivileged_userns=0").expect("the round lifts the userns restriction");
+        assert!(sysctl > REMOTE_SCRIPT.find("command -v bwrap >/dev/null || ").unwrap(), "beside the bubblewrap install");
+        let probe = REMOTE_SCRIPT
+            .find(r#"podman run --rm --security-opt 'unmask=/proc/*' --security-opt apparmor=unconfined "localhost/spira-testenv:$tag" runuser -u spirauser -- bwrap --unshare-user --unshare-pid --ro-bind / / --proc /proc true"#)
+            .expect("the round probes bwrap inside its image");
+        assert!(probe > REMOTE_SCRIPT.find("phase image").unwrap(), "after the image is present or built");
+        assert!(probe < REMOTE_SCRIPT.find("phase unit-tests").unwrap(), "before any suite");
+        let line = &REMOTE_SCRIPT[probe..probe + REMOTE_SCRIPT[probe..].find('\n').unwrap()];
+        let after = &REMOTE_SCRIPT[probe..probe + 600];
+        assert!(line.contains("2>&1"), "bwrap's stderr is captured: {line}");
+        assert!(after.contains("BWRAP-PROBE-FAILED") && after.contains("$bwrap_probe") && after.contains("exit 3"), "a refused probe fails the round naming bwrap's words: {after}");
     }
 
     #[test]

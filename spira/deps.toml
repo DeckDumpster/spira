@@ -214,6 +214,22 @@ version_probe = "podman --version"
 absent = "every suite that builds a container fixture cannot run; testenv.sh and the suites that use it fail rather than skip."
 
 [[dep]]
+name = "bwrap"
+tier = "dev"
+purpose = "the sandbox every Rust test binary runs in (bubblewrap; tools/test-sandbox/runner, cargo's target runner)"
+version_min = ""
+version_probe = "bwrap --version"
+absent = "cargo test runs nothing: the runner refuses every test binary rather than run one where it could reach the installed harness."
+
+[[dep]]
+name = "rustc"
+tier = "dev"
+purpose = "compiling test-test-sandbox.sh's probe, a real libtest binary started through cargo's runner"
+version_min = ""
+version_probe = "rustc --version"
+absent = "test-test-sandbox.sh bails: it cannot build its probe, so nothing proves the test sandbox holds."
+
+[[dep]]
 name = "inotifywait"
 tier = "operator"
 purpose = "delivering mail the moment it arrives (inotify-tools); without it mail waits for the next session start. install's phase -1 (sp-x6v17, law-install-installs-every-dependency) fetches this itself when it is not already on PATH: install carries no sudo, so `apt install inotify-tools` cannot be the provisioning path, but inotify-tools' own release workflow publishes a verified-static inotifywait binary (`file -L $bin | grep -q static`, checked at publish time) for x86_64/aarch64 linux, which install vendors straight into ~/.local/bin instead."

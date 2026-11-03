@@ -965,6 +965,19 @@ impl Driver<'_> {
             s(TESTENV_LABEL),
             s("--volume"),
             format!("{checkout}:{CONTAINER_CHECKOUT}:z"),
+            // Test binaries run under bwrap here too (tools/test-sandbox/runner), and the kernel
+            // refuses bwrap a fresh /proc ("Can't mount proc on /newroot/proc: Operation not
+            // permitted") while any of podman's masks or read-only binds sits over the
+            // container's — /proc/sys's read-only bind alone is enough. So every one is lifted,
+            // rootless and rootful alike. Rootful is the round VMs' podman (the round runs as
+            // root there); under it this also hands the container's root a writable /proc/sys.
+            s("--security-opt"),
+            s("unmask=/proc/*"),
+            // Rootful podman confines the container with AppArmor's containers-default, which
+            // denies mount and grants no userns, so bwrap could make neither its namespace nor
+            // its mounts. Rootless podman applies no profile; this names that for both.
+            s("--security-opt"),
+            s("apparmor=unconfined"),
         ]
         .into_iter()
         .chain(self.conf.cpus.iter().flat_map(|c| [s("--cpus"), c.clone()]))

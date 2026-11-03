@@ -1,2 +1,12 @@
 [env]
 SPIRA_HOME = { value = "spira", relative = true }
+
+# Every test binary runs inside bubblewrap (tools/test-sandbox/runner). Keyed by triple, not
+# cfg: cargo prefers a triple key, so a cfg key here would lose to one in ~/.cargo/config.toml.
+# The relative path resolves against the workspace root. Cargo finds this file from its cwd, so
+# `cargo test --manifest-path` run from outside the workspace does not see it.
+[target.x86_64-unknown-linux-gnu]
+runner = "tools/test-sandbox/runner"
+
+[target.aarch64-unknown-linux-gnu]
+runner = "tools/test-sandbox/runner"

@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+# runner — cargo's target runner (.cargo/config.toml): every test binary runs under bubblewrap,
+# where it cannot see the caller's installation.
+#
+#   runner BINARY [ARGS...]               what cargo calls
+#   runner --print-args BINARY [ARGS...]  the bwrap command line, one argument per line
+#
+# The policy is testenv's sandbox unit runner's (testenv/src/sandbox.rs, Profile::bwrap_args):
+# read-only root; tmpfs /tmp, /run and home; the toolchain bound back; the workspace and
+# CARGO_TARGET_DIR writable; the environment cleared to an allow-list; no network. Every directory the home already holds comes back
+# empty and writable, so a write to the install lands in tmpfs and never on disk. It differs in
+# hiding both $HOME and the passwd entry's home.
+#
+# No fallback: without an executable bwrap it refuses and runs nothing. The one binary run as
+# is, is a `cargo run` artifact, which cargo places beside .fingerprint (test harnesses live in
+# deps/).
+set -uo pipefail
+
+die() { echo "test-sandbox: $*" >&2; exit 2; }
+
+print=""
+if [ "${1:-}" = "--print-args" ]; then print=1; shift; fi
+[ $# -ge 1 ] || die "usage: runner [--print-args] BINARY [ARGS...]"
+bin="$1"
+[ -x "$bin" ] || die "$bin is not an executable file"
+bindir="$(cd "$(dirname "$bin")" && pwd -P)" || die "cannot resolve the directory of $bin"
+bin="$bindir/$(basename "$bin")"
+
+if [ -z "$print" ] && [ -d "$bindir/.fingerprint" ]; then
+    exec "$@"
+fi
+
+[ -n "${HOME:-}" ] && [ "${HOME#/}" != "$HOME" ] || die "HOME is not an absolute path; it names the tree to hide"
+home="$(cd "$HOME" && pwd -P)" || die "HOME=$HOME does not exist"
+[ "$home" != / ] || die "HOME is /; hiding it would hide the root"
+# The passwd entry's home is hidden too: a caller that sets HOME to a fixture still has a real
+# home a test could reach by its absolute path.
+trees=("$home")
+pw="$(getent passwd "$(id -u)" | cut -d: -f6)"
+if [ -n "$pw" ] && [ -d "$pw" ]; then
+    pw="$(cd "$pw" && pwd -P)"
+    [ "$pw" = "$home" ] || [ "$pw" = / ] || trees+=("$pw")
+fi
+
+# The toolchain is where rustup's proxy (and the testenv image) declare it; unset, none of it
+# is bound in and a test that needs it fails inside.
+ro=() rw=()
+[ -n "${RUSTUP_HOME:-}" ] && ro+=("$RUSTUP_HOME")
+[ -n "${CARGO_HOME:-}" ] && ro+=("$CARGO_HOME/bin") && rw+=("$CARGO_HOME/registry" "$CARGO_HOME/git")
+ro+=("$home/.local/lib/spira-env")
+path="$home/.local/lib/spira-env/bin:${CARGO_HOME:+$CARGO_HOME/bin:}/usr/local/bin:/usr/bin:/bin"
+[ -n "${CARGO:-}" ] && path="$(dirname "$CARGO"):$path"
+
+# bwrap comes from the system directories alone, never the caller's PATH or the toolchain's.
+bwrap=""
+for d in /usr/local/bin /usr/bin /bin; do
+    [ -f "$d/bwrap" ] && [ -x "$d/bwrap" ] && { bwrap="$d/bwrap"; break; }
+done
+[ -n "$bwrap" ] || [ -n "$print" ] || die "bwrap (bubblewrap) is not on /usr/local/bin:/usr/bin:/bin; refusing to run $bin outside a sandbox"
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+workspace="$(cd "$HERE/../.." && pwd -P)"
+
+# The target is the one CARGO_TARGET_DIR declares; unset, cargo's own is in the workspace.
+target="${CARGO_TARGET_DIR:-}"
+if [ -n "$target" ]; then
+    [ "${target#/}" != "$target" ] || die "CARGO_TARGET_DIR=$target is relative; cargo resolved it from a directory this runner is not in"
+    target="$(cd "$target" && pwd -P)" || die "CARGO_TARGET_DIR=$CARGO_TARGET_DIR does not exist"
+fi
+
+under() { [ "${1#"$2"/}" != "$1" ]; }
+under_tree() { local t; for t in "${trees[@]}"; do under "$1" "$t" && return 0; done; return 1; }
+
+a=(--die-with-parent --new-session --unshare-user --unshare-pid --unshare-ipc --unshare-uts
+   --unshare-net --unshare-cgroup-try
+   --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --tmpfs /run)
+# A binary outside the workspace and target (rustdoc's doctests, under TMPDIR) is bound in
+# read-only: before the home tmpfs when it holds a home, after the shadows when under one.
+late_bin=""
+if ! under "$bindir/" "$workspace" && ! { [ -n "$target" ] && under "$bindir" "$target"; }; then
+    if under_tree "$bindir"; then late_bin=1; else a+=(--ro-bind "$bindir" "$bindir"); fi
+fi
+# Each shadow goes on before what is bound back beneath it.
+shadows=()
+for t in "${trees[@]}"; do
+    a+=(--tmpfs "$t")
+    for d in "$t"/* "$t"/.[!.]* "$t"/..?*; do
+        [ -d "$d" ] && [ ! -L "$d" ] && [ "$d" != "$workspace" ] && [ "$d" != "$target" ] && shadows+=("$d")
+    done
+done
+for d in "${shadows[@]}"; do a+=(--tmpfs "$d"); done
+for r in "${ro[@]}"; do [ -e "$r" ] && a+=(--ro-bind "$r" "$r"); done
+for r in "${rw[@]}"; do [ -e "$r" ] && a+=(--bind "$r" "$r"); done
+nogit=""
+if [ -f "$workspace/.git" ]; then
+    gitdir="$(sed -n 's/^gitdir: *//p' "$workspace/.git")"
+    case "$gitdir" in /*) ;; *) gitdir="$workspace/$gitdir" ;; esac
+    case "$gitdir" in */worktrees/*) gitdir="${gitdir%/worktrees/*}" ;; esac
+    # Refused only where a sandbox is made: a held one has no mounts to make.
+    if [ -d "$gitdir" ]; then a+=(--ro-bind "$gitdir" "$gitdir"); else nogit="$workspace/.git names $gitdir, which does not exist"; fi
+fi
+a+=(--bind "$workspace" "$workspace")
+if [ -n "$target" ] && ! under "$target" "$workspace"; then a+=(--bind "$target" "$target"); fi
+if [ -n "$late_bin" ]; then a+=(--ro-bind "$bindir" "$bindir"); fi
+a+=(--chdir "$PWD")
+
+# testenv's system git identity (GIT_IDENTITY), lowest priority, on the sandbox's /run.
+gitconfig=/run/test-sandbox/gitconfig
+env=()
+setenv() { env+=("$1=$2"); }
+setenv PATH "$path"
+setenv HOME "$home"
+setenv USER "$(basename "$home")"
+setenv TMPDIR /tmp
+setenv LANG C.UTF-8
+setenv CARGO_NET_OFFLINE true
+setenv CARGO_TERM_COLOR never
+# .cargo/config.toml's [env] value, which cargo does not apply over a caller's exported one.
+setenv SPIRA_HOME "$workspace/spira"
+[ -n "$target" ] && setenv CARGO_TARGET_DIR "$target"
+setenv GIT_CONFIG_SYSTEM "$gitconfig"
+while IFS= read -r k; do
+    case "$k" in
+        CARGO_HOME | RUSTUP_HOME | RUSTUP_TOOLCHAIN | \
+            CARGO | CARGO_MANIFEST_DIR | CARGO_MANIFEST_PATH | CARGO_CRATE_NAME | CARGO_BIN_NAME | \
+            CARGO_PRIMARY_PACKAGE | CARGO_PKG_* | CARGO_BIN_EXE_* | \
+            RUST_TEST_* | RUST_BACKTRACE | RUST_LIB_BACKTRACE | RUST_MIN_STACK | RUST_LOG)
+            setenv "$k" "${!k}" ;;
+    esac
+done < <(compgen -e)
+
+identity='[user]\n\tname = spirauser\n\temail = spirauser@localhost\n'
+
+# Already inside a sandbox that holds the policy (testenv's runs cargo under bwrap, and a
+# kernel confining bwrap's children refuses a nested user namespace): read from the kernel,
+# not from a variable — root read-only, every hidden home and /run a tmpfs, only loopback.
+# Then no mounts are left to make; the environment is cleared and the binary runs in place.
+held() {
+    local root="" runfs="" mp opts rest fs if t
+    local -A fsat=()
+    while read -r _ _ _ _ mp opts rest; do
+        rest=" $rest" fs="${rest#* - }" fs="${fs%% *}"
+        fsat[$mp]="$fs"
+        [ "$mp" = / ] && case ",$opts," in *,ro,*) root=ro ;; *) root="" ;; esac
+    done < /proc/self/mountinfo
+    [ "$root" = ro ] && [ "${fsat[/run]:-}" = tmpfs ] || return 1
+    for t in "${trees[@]}"; do [ "${fsat[$t]:-}" = tmpfs ] || return 1; done
+    while IFS=: read -r if _; do
+        if="${if// /}"
+        case "$if" in Inter-* | face* | lo) ;; *) return 1 ;; esac
+    done < /proc/net/dev
+}
+
+if [ -n "$print" ]; then
+    printf '%s\n' bwrap "${a[@]}" --clearenv
+    for kv in "${env[@]}"; do printf -- '--setenv\n%s\n%s\n' "${kv%%=*}" "${kv#*=}"; done
+    printf '%s\n' -- "$@"
+    exit 0
+fi
+if held; then
+    # An enclosing runner's sandbox may have handed it in already, read-only.
+    if [ "$(cat "$gitconfig" 2>/dev/null)" != "$(printf "$identity")" ]; then
+        mkdir -p "${gitconfig%/*}" && printf "$identity" > "$gitconfig.$$" && mv -f "$gitconfig.$$" "$gitconfig" ||
+            die "cannot write $gitconfig"
+    fi
+    exec /usr/bin/env -i "${env[@]}" "$@"
+fi
+[ -z "$nogit" ] || die "$nogit"
+a+=(--clearenv)
+for kv in "${env[@]}"; do a+=(--setenv "${kv%%=*}" "${kv#*=}"); done
+exec "$bwrap" "${a[@]}" --ro-bind-data 3 "$gitconfig" -- "$@" 3< <(printf "$identity")

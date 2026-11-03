@@ -913,6 +913,10 @@ fn up_boots_with_the_label_limit_and_volumes_and_records_its_caller() {
             "spira.testenv=1",
             "--volume",
             "/wt:/workspace:z",
+            "--security-opt",
+            "unmask=/proc/*",
+            "--security-opt",
+            "apparmor=unconfined",
             "--volume",
             "n1-cargo-reg:/var/spira/cargo/registry",
             "--volume",
@@ -952,6 +956,21 @@ fn up_uses_the_bridge_when_podman_is_rootful() {
     booting(&f);
     f.when(&["info", "--format"], 0, "false\n");
     assert_eq!(network_of_run(&f), "bridge");
+}
+
+#[test]
+fn proc_is_unmasked_and_apparmor_lifted_for_the_test_sandbox_under_either_podman() {
+    let unmasked = |rootless: &str| {
+        let f = Fake::new();
+        booting(&f);
+        f.when(&["info", "--format"], 0, rootless);
+        network_of_run(&f);
+        let run = &f.calls_with("run")[0];
+        let opt = |v: &str| run.windows(2).any(|w| w[0] == "--security-opt" && w[1] == v);
+        opt("unmask=/proc/*") && opt("apparmor=unconfined")
+    };
+    assert!(unmasked("true\n"), "rootless: bwrap needs its own /proc, unconfined");
+    assert!(unmasked("false\n"), "rootful (the round VMs): a masked /proc refused bwrap's in round spira-20261103T165709Z, and containers-default denies its mounts");
 }
 
 #[test]
