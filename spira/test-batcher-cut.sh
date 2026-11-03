@@ -28,7 +28,7 @@
 #                       excluded from the round pool, not batched.
 #
 # tier: T2
-# covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* spira/conf.sh spira/lib.sh spira/bead.sh spira/runes/batcher.rune spira/runes/batcher.md spira/testlib/lc-fixture.sh UC-landing-merge-queue-48
+# covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* spira/conf.sh spira/lib.sh spira/bead.sh spira/runes/batcher.rune spira/runes/batcher.md spira/testlib/lc-fixture.sh spira/testlib/forge-batch.sh UC-landing-merge-queue-48
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # CUT_PART names the slice of cases this run owns; test-batcher-cut-<part>.sh sets it and
@@ -51,6 +51,7 @@ tl_config SPIRA_TEST_CASE_DEADLINE=180
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
 . "$HERE/testlib/lc-fixture.sh"
+. "$HERE/testlib/forge-batch.sh"
 # testdb.sh sources conf.sh for its own bookkeeping, which (one source of config, per Ryan
 # 2026-10-05) evals spira_config::resolve()'s FULL output into THIS shell — every registered
 # key, including ones with no default, as a plain shell variable. Before that eval existed, a
@@ -347,8 +348,10 @@ status_of() { B show "$1" --json 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(d[0].get("status",""))' 2>/dev/null; }
-open_batch_file() { printf '%s/%s/open' "$QUEUEDIR" "$REPONAME"; }
-open_field() { grep "^${1}=" "$(open_batch_file)" 2>/dev/null | head -1 | cut -d= -f2-; }
+# The open batch as the queue shows it: `queue batch show`, wherever the queue keeps the record.
+open_record() { queue batch show --repo "$REPONAME" 2>/dev/null; }
+open_field() { open_record | grep "^${1}=" | head -1 | cut -d= -f2-; }
+has_open() { [ -n "$(open_record)" ] && echo 1 || echo 0; }
 # A batch member is a bead WAITING FOR A ROUND: open and carrying the submitted label
 # (sp-1346p) — a CERTIFIED record of a closed bead is stale and never batched.
 plant() {   # plant <id> [express]
@@ -431,7 +434,7 @@ certify sp-caaa1 "$tip_a"
 out_a="$(STUB_RED_SUITES="" cut_repo)"
 want "A: names the express trigger" "express sp-caaa1" "$out_a"
 want "A: reports the PR opening"    "PR 1 opened"       "$out_a"
-is   "A: open-batch file exists" "1" "$([ -f "$(open_batch_file)" ] && echo 1 || echo 0)"
+is   "A: queue batch show prints the open batch" "1" "$(has_open)"
 is   "A: open-batch pr=1"        "1" "$(open_field pr)"
 is   "A: open-batch members carries sp-caaa1:tip" "sp-caaa1:$tip_a" "$(open_field members)"
 is   "A: open-batch branch is spira/queue/*" "1" "$(case "$(open_field branch)" in spira/queue/*) echo 1;; *) echo 0;; esac)"
@@ -450,8 +453,6 @@ fi
 # Captured for case D, which reuses this batch as its "already open" starting point.
 pr_case_a="$(open_field pr)"
 head_case_a="$(open_field head)"
-base_case_a="$(open_field base)"
-members_case_a="$(open_field members)"
 branch_case_a="$(open_field branch)"
 
 fi
@@ -466,7 +467,7 @@ if cut_runs Gf; then
 # =============================================================================
 echo
 echo "G. a flaky red is charged to nobody and the round proceeds:"
-rm -f "$(open_batch_file)"
+end_forge_batch "$REPONAME" "the case before is done" || bad "the case before's batch is ended" "abandon failed"
 plant sp-cgflk express
 git -C "$REPO" worktree add -q -b spira/sp-cgflk "$RUN/worktree/sp-cgflk" main
 printf 'g-flake\n' > "$RUN/worktree/sp-cgflk/g-flake.txt"
@@ -486,7 +487,7 @@ is     "G: forge pr-create called once more" "$((prcreate_before_g + 1))" "$(gre
 if command -v tsd-write >/dev/null 2>&1; then
     want "G: the flake is recorded" '"outcome":"flaky"' "$(tail -1 "$RUN/tsd/round-attribution.jsonl" 2>/dev/null)"
 fi
-rm -f "$(open_batch_file)"
+end_forge_batch "$REPONAME" "the case before is done" || bad "the case before's batch is ended" "abandon failed"
 
 fi
 
@@ -500,17 +501,9 @@ if cut_runs D; then
 # =============================================================================
 echo
 echo "D. an open batch waits: nothing is built or opened behind it; after it lands the next opens:"
-{
-    printf 'pr=%s\n'      "$pr_case_a"
-    printf 'head=%s\n'    "$head_case_a"
-    printf 'base=%s\n'    "$base_case_a"
-    printf 'members=%s\n' "$members_case_a"
-    printf 'opened=%s\n'  "$(date +%s)"
-    printf 'branch=%s\n'  "$branch_case_a"
-} > "$(open_batch_file)"
-
 pr_before="$pr_case_a"
-open_before="$(cat "$(open_batch_file)")"
+open_before="$(open_record)"
+is     "D: case A's batch is still the open one" "$pr_case_a" "$(open_field pr)"
 branch_ref_before="$(git -C "$REPO" rev-parse "$branch_case_a")"
 remote_ref_before="$(git -C "$REMOTE" rev-parse "$branch_case_a")"
 prcreate_before="$(grep -c '^pr-create' "$FORGE_LOG")"
@@ -528,17 +521,16 @@ D_ARGV="$TMP/d-argv"; : > "$D_ARGV"
 out_d="$(STUB_ARGV_LOG="$D_ARGV" cut_repo)"
 want   "D: reports the open batch it waits on" "batch PR $pr_before is open — the next round is cut once it lands" "$out_d"
 is     "D: no corpus run behind an open batch" "0" "$(grep -c '^argv:' "$D_ARGV")"
-is     "D: open-batch record untouched" "$open_before" "$(cat "$(open_batch_file)")"
+is     "D: open-batch record untouched" "$open_before" "$(open_record)"
 is     "D: open PR's local branch untouched" "$branch_ref_before" "$(git -C "$REPO" rev-parse "$branch_case_a")"
 is     "D: open PR's remote branch untouched (never force-pushed)" "$remote_ref_before" "$(git -C "$REMOTE" rev-parse "$branch_case_a")"
 is     "D: forge pr-create not called" "$prcreate_before" "$(grep -c '^pr-create' "$FORGE_LOG")"
 is     "D: express member not BATCHED while the PR is open" "CERTIFIED" "$(cut -d' ' -f1 < "$LCSTUB/sp-cddd4")"
-is     "D: no prepared record is written" "0" "$([ -f "$QUEUEDIR/$REPONAME/prepared" ] && echo 1 || echo 0)"
 
-# The open PR lands: the remote base moves to its head.
+# The open PR lands: the remote base moves to its head, and the batch is no longer open.
 git -C "$REMOTE" update-ref refs/heads/main "$head_case_a"
 timeout 5 git -C "$REPO" fetch -q origin
-rm -f "$(open_batch_file)"
+end_forge_batch "$REPONAME" "case A's PR landed" || bad "D: case A's batch is ended" "abandon failed"
 out_d3="$(cut_repo)"
 want   "D: after landing, the next batch opens a PR" "opened" "$out_d3"
 is     "D: exactly one new PR" "$((prcreate_before + 1))" "$(grep -c '^pr-create' "$FORGE_LOG")"
@@ -556,7 +548,7 @@ if cut_runs F; then
 # =============================================================================
 echo
 echo "F. spira-lc wiring: queue batch open cuts the batch before the PR; a refused cut opens no PR:"
-rm -f "$(open_batch_file)"
+end_forge_batch "$REPONAME" "the case before is done" || bad "the case before's batch is ended" "abandon failed"
 LC_LOG="$TMP/lc-log"; : > "$LC_LOG"
 
 plant sp-cfff6 express
@@ -578,7 +570,7 @@ is   "F: open-batch batch_id is <repo>-<stamp>" "1" "$(case "$batch_f" in "$REPO
 
 # POSITIVE CONTROL: spira-lc refusing the cut (rc=3, e.g. a member not CERTIFIED there) opens
 # no PR and writes no record: nothing reaches the forge that the lifecycle does not hold.
-rm -f "$(open_batch_file)"
+end_forge_batch "$REPONAME" "the case before is done" || bad "the case before's batch is ended" "abandon failed"
 : > "$LC_LOG"
 plant sp-chhh8 express
 git -C "$REPO" worktree add -q -b spira/sp-chhh8 "$RUN/worktree/sp-chhh8" main
@@ -593,7 +585,7 @@ prcreate_before_f="$(grep -c '^pr-create' "$FORGE_LOG")"
 out_f_refused="$(PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$LC_LOG" SPIRA_LC_STUB_RC=3 cut_repo)"
 want "F: PLANTED REFUSAL — the refusal is logged" "spira-lc cut refused for" "$out_f_refused"
 is   "F: PLANTED REFUSAL — forge pr-create not called" "$prcreate_before_f" "$(grep -c '^pr-create' "$FORGE_LOG")"
-is   "F: PLANTED REFUSAL — no open-batch record" "0" "$([ -f "$(open_batch_file)" ] && echo 1 || echo 0)"
+is   "F: PLANTED REFUSAL — queue batch show prints no open batch" "0" "$(has_open)"
 fi
 
 
@@ -653,7 +645,7 @@ if cut_runs I; then
 # =============================================================================
 echo
 echo "I. suite corpus tracks the round branch, not the checkout's working tree:"
-rm -f "$(open_batch_file)"
+end_forge_batch "$REPONAME" "the case before is done" || bad "the case before's batch is ended" "abandon failed"
 
 # POSITIVE CONTROL for the stray case: never committed, never on any branch.
 : > "$REPO/spira/test-stray.sh"
@@ -688,7 +680,7 @@ if cut_runs J; then
 # =============================================================================
 echo
 echo "J. batcher parity: a member whose tip is already in the round is set aside, never merged or marked:"
-rm -f "$(open_batch_file)"
+end_forge_batch "$REPONAME" "the case before is done" || bad "the case before's batch is ended" "abandon failed"
 plant sp-cjjjj express
 base_now="$(git -C "$REPO" rev-parse origin/main)"
 # THE BRANCH MUST EXIST for certified_pool to admit it (repo_branch_ids scopes the
@@ -785,7 +777,8 @@ echo "N. batcher parity: a bead whose lifecycle row is REWORK (ejected, back wit
 # sp-cjjjj (J), sp-cgcc3 (K3) and sp-cgdd4 (K4) all stay CERTIFIED by design in their own
 # cases and their branches persist in $REPO — retire them first so this round is only
 # sp-ciiii, the way case C already retires case G/H's own leftovers (line 548 above).
-rm -f "$(open_batch_file)" "$LCSTUB/sp-cjjjj" "$LCSTUB/sp-cgcc3" "$LCSTUB/sp-cgdd4"
+end_forge_batch "$REPONAME" "the case before is done" || bad "the case before's batch is ended" "abandon failed"
+rm -f "$LCSTUB/sp-cjjjj" "$LCSTUB/sp-cgcc3" "$LCSTUB/sp-cgdd4"
 plant_open sp-ciiii express
 git -C "$REPO" worktree add -q -b spira/sp-ciiii "$RUN/worktree/sp-ciiii" main
 printf 'i\n' > "$RUN/worktree/sp-ciiii/i.txt"
@@ -799,7 +792,7 @@ prcreate_before_n="$(grep -c '^pr-create' "$FORGE_LOG")"
 out_n="$(STUB_RED_SUITES="" cut_repo)"
 nowant "N: never reports a PR opening for the excluded-only round" "PR " "$out_n"
 is     "N: forge pr-create not called" "$prcreate_before_n" "$(grep -c '^pr-create' "$FORGE_LOG")"
-is     "N: no open-batch file" "0" "$([ -f "$(open_batch_file)" ] && echo 1 || echo 0)"
+is     "N: queue batch show prints no open batch" "0" "$(has_open)"
 is     "N: sp-ciiii stub row stays REWORK — untouched, not re-ejected" \
        "REWORK" "$(cut -d' ' -f1 < "$LCSTUB/sp-ciiii")"
 is     "N: sp-ciiii bead status stays open" "open" "$(status_of sp-ciiii)"
@@ -814,7 +807,8 @@ if cut_runs O; then
 # =============================================================================
 echo
 echo "O. a cut reads sift verdicts and screens nothing:"
-rm -f "$(open_batch_file)" "$LCSTUB/sp-ciiii"
+end_forge_batch "$REPONAME" "the case before is done" || bad "the case before's batch is ended" "abandon failed"
+rm -f "$LCSTUB/sp-ciiii"
 plant sp-coooo express
 git -C "$REPO" worktree add -q -b spira/sp-coooo "$RUN/worktree/sp-coooo" main
 printf 'o\n' > "$RUN/worktree/sp-coooo/o.txt"

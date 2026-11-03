@@ -34,6 +34,18 @@ _FB_DIR="$(mktemp -d "${_TL_CONF_DIR:-${TMPDIR:-/tmp}}/forge-batch.XXXXXX")" \
 
 _fb_dir() { printf '%s\n' "$_FB_DIR"; }
 
+# _fb_run <cmd> [args...] — <cmd> as the staged release runs it: its own queue and spira-lc,
+# whatever stub the suite has put ahead of them for its subject. Seeding is fixture setup, so
+# nothing the suite stubs may intercept it.
+_fb_run() {
+    local rel="${_TL_STAGED_RELEASE:-${SPIRA_RELEASE:-}}"
+    if [ -n "$rel" ] && [ -d "$rel/bin" ]; then
+        SPIRA_RELEASE="$rel" PATH="$rel/bin:$rel/spira:$PATH" "$@"
+    else
+        "$@"
+    fi
+}
+
 # The forge the seeding call opens its PR on: preflight passes, no PR is open, pr-create
 # answers the PR asked for, auto-merge arms, everything else succeeds silently.
 _fb_forge() {
@@ -92,19 +104,19 @@ _fb_certify() {
         lcfix_seed "$id" CERTIFIED "$tip"
         return
     fi
-    _fb_version() { spira-lc show "$1" 2>/dev/null | python3 -c '
+    _fb_version() { _fb_run spira-lc show "$1" 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin); d = d.get("bead", d) or {}
 print(d.get("version", ""))' 2>/dev/null; }
-    spira-lc create-bead "$id" --ready >/dev/null || return 1
+    _fb_run spira-lc create-bead "$id" --ready >/dev/null || return 1
     v="$(_fb_version "$id")"
-    spira-lc event bead "$id" --expect READY --version "$v" --actor fixture \
+    _fb_run spira-lc event bead "$id" --expect READY --version "$v" --actor fixture \
         --kind '{"Claim":{"holder":"fixture","lease_until":1}}' >/dev/null || return 1
     v="$(_fb_version "$id")"
-    spira-lc event bead "$id" --expect WORKING --version "$v" --actor fixture \
+    _fb_run spira-lc event bead "$id" --expect WORKING --version "$v" --actor fixture \
         --kind "{\"Submit\":{\"tip\":\"$tip\"}}" >/dev/null || return 1
     v="$(_fb_version "$id")"
-    spira-lc event bead "$id" --expect SUBMITTED --version "$v" --actor fixture \
+    _fb_run spira-lc event bead "$id" --expect SUBMITTED --version "$v" --actor fixture \
         --kind "{\"GatePass\":{\"tip\":\"$tip\",\"gate_key\":\"fixture-gate-key\"}}" >/dev/null
 }
 
@@ -152,22 +164,22 @@ seed_forge_batch() {
     done
     printf '%s\n' "${now:-$(date -u +%s)}" >> "$(_fb_dir)/stamps"
     printf 'Seeded batch for %s.\n' "$repo" > "$(_fb_dir)/body"
-    out="$(SPIRA_TOML="$(tl_layer SPIRA_FORGE="$forge")" env ${now:+SPIRA_NOW="$now"} queue batch open --repo "$repo" \
+    out="$(SPIRA_TOML="$(tl_layer SPIRA_FORGE="$forge")" _fb_run env ${now:+SPIRA_NOW="$now"} queue batch open --repo "$repo" \
         --members "$csv" --head "$head" --skip-pregate --body-file "$(_fb_dir)/body" \
         ${owner:+--owner "$owner"} 2>&1)"; rc=$?
     [ -n "${now:-}" ] || date -u +%s >> "$(_fb_dir)/stamps"
     [ "$rc" -eq 0 ] || { printf 'seed_forge_batch: queue batch open %s exited %s:\n%s\n' "$repo" "$rc" "$out" >&2; return 1; }
-    out="$(queue batch show --repo "$repo" 2>&1)" && [ -n "$out" ] \
+    out="$(_fb_run queue batch show --repo "$repo" 2>&1)" && [ -n "$out" ] \
         || { printf 'seed_forge_batch: queue batch show %s answers no batch after the open: %s\n' "$repo" "$out" >&2; return 1; }
     printf '%s\n' "$out"
 }
 
 end_forge_batch() {
     local repo="${1:?end_forge_batch: <repo> required}" reason="${2:-the suite ends this fixture batch}" forge out
-    out="$(queue batch show --repo "$repo" 2>&1)" || { printf 'end_forge_batch: queue batch show %s: %s\n' "$repo" "$out" >&2; return 1; }
+    out="$(_fb_run queue batch show --repo "$repo" 2>&1)" || { printf 'end_forge_batch: queue batch show %s: %s\n' "$repo" "$out" >&2; return 1; }
     [ -n "$out" ] || return 0
     forge="$(_fb_forge 0)" || return 1
-    out="$(SPIRA_TOML="$(tl_layer SPIRA_FORGE="$forge")" queue abandon "$repo" --reason "$reason" 2>&1)" \
+    out="$(SPIRA_TOML="$(tl_layer SPIRA_FORGE="$forge")" _fb_run queue abandon "$repo" --reason "$reason" 2>&1)" \
         || { printf 'end_forge_batch: queue abandon %s: %s\n' "$repo" "$out" >&2; return 1; }
 }
 
@@ -182,5 +194,5 @@ fb_store_up() {
     fi
     tl_config SPIRA_LC_STORE_PATH="$dir/control.db" SPIRA_LC_LIFECYCLE_ON_STORE=1 || return 1
     rm -f "$dir/control.db"
-    spira-lc admin-create-store >/dev/null || { echo "fb_store_up: cannot create the control store" >&2; return 1; }
+    _fb_run spira-lc admin-create-store >/dev/null || { echo "fb_store_up: cannot create the control store" >&2; return 1; }
 }
