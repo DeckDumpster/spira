@@ -490,12 +490,16 @@ test_phase_red() {
     } > "$json"
 }
 # The round's one source of config: the tree's complete fixture, with this VM's own paths
-# declared over it. Nothing here is searched for or defaulted.
-mkdir -p "$HOME/round-work/.runtime/spira"
+# declared over it. Nothing here is searched for or defaulted: a tree's binaries build every
+# child PATH from the declared release and `path`, never from this script's own PATH, so the
+# VM's dolt, bd and cargo (outside the release) are declared here.
+mkdir -p "$HOME/round-work/.runtime/spira" "$HOME/round-scratch"
 cat > "$HOME/round-config.toml" <<ROUNDCFG
 [spira]
 run = "$HOME/round-work/.runtime/spira"   # where REMOTE_RESULTS pulls batch-results from
 releases = "$HOME/round-releases"
+path = "$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin"
+testenv_scratch_root = "$HOME/round-scratch"
 home_repo = "spira"
 batch_maxpar = $maxpar
 $testenv_limits
@@ -3031,6 +3035,21 @@ mod tests {
         let sec = cfg.find("[repo.spira]").expect("the round config declares where spira is on the VM");
         assert!(cfg[sec..].contains("path = \"$HOME/round-work\""), "{cfg}");
         assert!(cfg[sec..].contains("base = \"origin/base\""), "{cfg}");
+    }
+
+    /// The VM's own tool directories, declared: every child PATH a tree's binary builds is
+    /// the declared release plus `spira.path`, never the script's inherited PATH, and the
+    /// VM's dolt, bd and cargo live outside the release. The scratch root is declared with it.
+    #[test]
+    fn the_round_config_declares_the_vms_toolchain_and_scratch_root() {
+        let start = REMOTE_SCRIPT.find("<<ROUNDCFG").unwrap();
+        let end = start + REMOTE_SCRIPT[start..].find("\nROUNDCFG\n").unwrap();
+        let cfg = &REMOTE_SCRIPT[start..end];
+        let spira = &cfg[..cfg.find("[repo.spira]").unwrap()];
+        assert!(spira.contains("\npath = \"$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin\"\n"), "{cfg}");
+        assert!(spira.contains("\ntestenv_scratch_root = \"$HOME/round-scratch\"\n"), "{cfg}");
+        let mk = REMOTE_SCRIPT.find("mkdir -p \"$HOME/round-work/.runtime/spira\" \"$HOME/round-scratch\"").expect("the scratch root is made before the config names it");
+        assert!(mk < start, "the scratch root exists before any tree binary reads the config");
     }
 
     #[test]
