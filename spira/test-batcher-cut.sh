@@ -109,6 +109,9 @@ tl_config SPIRA_RUNES_DIR="$SH/runes"
 cat > "$SH/repo-map" <<RMAP
 $REPONAME | $REPO | queue | origin/main | | |
 RMAP
+# Where the queue keeps this suite's batches, for every call that reads or ends one before a
+# case's own cut declares it again.
+tl_config SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$SH/repo-map" SPIRA_QUEUE_DIR="$QUEUEDIR"
 
 # ── stub round-vm: stands in for `round-vm run <tree-dir> --suites CSV --maxpar N --toolchain V
 # --results-dir DIR --attr-spool SPOOL` (round-vm DESIGN.md §2.2a), writing testenv's result

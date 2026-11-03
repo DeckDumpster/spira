@@ -198,5 +198,21 @@ ab01_assignee="$(field sp-ab01 assignee)"
 ab01_comments="$(B comments sp-ab01 2>/dev/null || true)"
 want "G7: abandon posted no comment to sp-ab01" "No comments" "$ab01_comments"
 
+# =============================================================================
+# THE SWITCH ON — last, since it moves the bead and batch machines for the rest of the suite:
+# with SPIRA_LC_LIFECYCLE_ON_STORE on, the same seeding opens the batch as its own record on
+# the control store, and no open file is written; an abandon ends that record.
+# =============================================================================
+echo
+echo "the batch machine on the control store: a seeded batch is its record, and abandon ends it:"
+fb_store_up || bad "store: the control store is up" "fb_store_up failed"
+rec="$(seed_forge_batch "$REPONAME" sp-st01 --pr 77)" || bad "store: the batch is seeded" "no batch opened"
+want "store: queue batch show prints the seeded PR" "pr=77" "$rec"
+want "store: the record is the store's own (only a store record carries forge.phase), past its PR" \
+    "forge.phase=armed" "$rec"
+out="$(real_run abandon $REPONAME --reason 'the store-era abandon')"; rc=$?
+[ "$rc" -eq 0 ] && ok "store: abandon exit 0" || bad "store: abandon exit 0" "rc=$rc out=$out"
+is   "store: queue batch show prints no batch once it is abandoned" "" "$(queue batch show --repo "$REPONAME" 2>&1)"
+
 echo
 tl_summary

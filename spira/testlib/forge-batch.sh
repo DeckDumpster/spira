@@ -90,8 +90,8 @@ _fb_remote() {
         git -C "$path" remote add "$remote" "$path.forge.git" || return 1
     fi
     case "$landref" in
-        */*) git -C "$path" push -q "$remote" "HEAD:refs/heads/$branch" >/dev/null 2>&1 \
-                 && git -C "$path" fetch -q "$remote" >/dev/null 2>&1 ;;
+        */*) timeout 5 git -C "$path" push -q "$remote" "HEAD:refs/heads/$branch" >/dev/null 2>&1 \
+                 && timeout 5 git -C "$path" fetch -q "$remote" >/dev/null 2>&1 ;;
     esac
     git -C "$path" rev-parse -q --verify "$landref^{commit}" >/dev/null 2>&1 \
         || { echo "seed_forge_batch: $path cannot resolve its landing ref $landref" >&2; return 1; }
