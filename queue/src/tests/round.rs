@@ -640,6 +640,75 @@ fn abandon_returns_the_members_and_closes_the_round() {
     assert_eq!(t.landed_ref().as_deref(), Some("b0"));
 }
 
+/// Opens a round of `members` and certifies it red on `test-b.sh`.
+fn red_round(t: &T, members: &str) -> String {
+    *t.scripts.round_vm_results.borrow_mut() = vec![
+        ("test-a.sh".into(), "ok".into()),
+        ("test-b.sh".into(), "red 1 2 fp p e 1".into()),
+    ];
+    assert_eq!(t.run(&["round", "open", "--members", members]), 0, "{}", t.err());
+    let batch = batch_of(t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    assert_eq!(kv_of(t, "round")["red"], "test-b.sh");
+    batch
+}
+
+#[test]
+fn abandoning_a_red_round_of_two_members_with_no_eject_is_refused_naming_eject() {
+    let t = round_world();
+    let batch = red_round(&t, "sp-a:ta,sp-b:tb");
+    let before = kv_of(&t, "round");
+    assert_eq!(t.run(&["round", "abandon", &batch, "--reason", "red"]), 1);
+    assert!(
+        t.err().contains(&format!("queue round eject {batch}")) && t.err().contains("QUEUE_ABANDON_CONSIDERED"),
+        "{}",
+        t.err()
+    );
+    assert!(!t.lc.has("abandon-batch"), "a refused abandon changes nothing");
+    assert_eq!(kv_of(&t, "round"), before);
+}
+
+#[test]
+fn a_red_round_abandons_once_its_culprit_is_ejected() {
+    let t = round_world();
+    let batch = red_round(&t, "sp-a:ta,sp-b:tb,sp-c:tc");
+    seed_suite(&t, "test-b.sh");
+    assert_eq!(
+        t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert_eq!(t.run(&["round", "abandon", &batch, "--reason", "base moved"]), 0, "{}", t.err());
+    assert!(t.lc.has(&format!("abandon-batch {batch}")), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
+fn a_red_round_of_one_member_abandons_as_before() {
+    let t = round_world();
+    let batch = red_round(&t, "sp-b:tb");
+    assert_eq!(t.run(&["round", "abandon", &batch, "--reason", "red"]), 0, "{}", t.err());
+    assert_eq!(result_lines(&t, &batch)[0].1, "abandoned:hand");
+}
+
+#[test]
+fn an_abandon_of_a_red_round_under_the_override_records_why_on_the_rounds_events() {
+    let t = round_world();
+    let batch = red_round(&t, "sp-a:ta,sp-b:tb");
+    t.env
+        .vars
+        .borrow_mut()
+        .insert("QUEUE_ABANDON_CONSIDERED".into(), "both members clash on one file".into());
+    assert_eq!(t.run(&["round", "abandon", &batch, "--reason", "red"]), 0, "{}", t.err());
+    let recorded = "red (QUEUE_ABANDON_CONSIDERED: both members clash on one file)";
+    assert!(
+        t.lc.calls.borrow().iter().any(|c| c.starts_with(&format!("abandon-batch {batch} ")) && c.ends_with(recorded)),
+        "{:?}",
+        t.lc.calls.borrow()
+    );
+    assert_eq!(result_lines(&t, &batch)[0].2, recorded);
+}
+
 #[test]
 fn ending_a_round_retires_the_mender_beads_filed_for_it() {
     let t = round_world();
