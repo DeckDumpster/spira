@@ -112,13 +112,12 @@ impl Drop for Beat {
 impl Drop for Guard {
     /// Unlocks before the descriptor closes: flock belongs to the open file description, which
     /// a child forked by any thread shares until its exec, so closing alone can leave the lock
-    /// held after its guard is gone.
+    /// held after its guard is gone. The unlock comes last: the beat is stopped and its file
+    /// removed first, so the next holder's beat is never deleted by this guard's.
     fn drop(&mut self) {
         if self.recorded {
             let _ = self.f.set_len(0);
         }
-        // SAFETY: flock on a descriptor we own; no memory is shared with the kernel call.
-        unsafe { libc::flock(self.f.as_raw_fd(), libc::LOCK_UN) };
         self.beat.take();
         if let Some(t) = self.hold.take() {
             note(Hold::Released {
@@ -127,6 +126,8 @@ impl Drop for Guard {
                 held: t.at.elapsed(),
             });
         }
+        // SAFETY: flock on a descriptor we own; no memory is shared with the kernel call.
+        unsafe { libc::flock(self.f.as_raw_fd(), libc::LOCK_UN) };
     }
 }
 
