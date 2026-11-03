@@ -965,11 +965,17 @@ impl<B: Backend> Store<B> {
 }
 
 /// `(repo, id)` of a round's own key; `None` for its progress key or anything else under it.
+/// A round id may itself hold a `/` (the queue's historical `spira/queue/<stamp>` ids), so the
+/// id is everything after the repo, and only the progress suffix (`keys::batch_progress`) sets
+/// a key apart from a round's own.
 pub(crate) fn batch_key(key: &str) -> Option<(&str, &str)> {
     let rest = key.strip_prefix(keys::BATCHES)?;
     let (repo, id) = rest.split_once('/')?;
-    (!repo.is_empty() && !id.is_empty() && !id.contains('/')).then_some((repo, id))
+    (!repo.is_empty() && !id.is_empty() && !id.ends_with(PROGRESS_SUFFIX)).then_some((repo, id))
 }
+
+/// What `keys::batch_progress` adds to a round's own key.
+const PROGRESS_SUFFIX: &str = "/progress";
 
 /// A listed delivery and when it entered its state, from its record: `None` when the record
 /// keeps no `entered`, `Some(None)` when no applied event entered that state.

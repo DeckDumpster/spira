@@ -31,6 +31,51 @@ fn a_difference_only_in_an_allowed_field_is_counted_and_any_other_is_reported_wi
     assert!(matches!(judge("show", (0, &seq(7)), (0, &seq(8))), Verdict::Differs { .. }), "seq is allowed on event-seq only");
 }
 
+#[test]
+fn the_cutovers_pass_times_and_sifted_tip_are_allowed_on_their_own_list_and_path_only() {
+    let round = |ended: Value, started: Value| {
+        json!([{"batch_id": "spira/queue/x", "state": "LANDED",
+            "last_pass": {"n": 1, "ended_at": ended, "started_at": started},
+            "passes": [{"n": 1, "ended_at": ended, "started_at": started}]}])
+        .to_string()
+    };
+    let (dolt, store) = (round(json!("0"), json!("0")), round(json!(1700), json!(1600)));
+    let batches = "list --batches --batch spira/queue/x";
+    let only_last = |v: &str| {
+        let mut v: Value = serde_json::from_str(v).unwrap();
+        v[0]["passes"] = json!([{"n": 1, "ended_at": "0", "started_at": "0"}]);
+        v.to_string()
+    };
+    assert_eq!(
+        judge(batches, (0, &only_last(&dolt)), (0, &only_last(&store))),
+        Verdict::Allowed(vec!["last_pass.ended_at", "last_pass.started_at"])
+    );
+    assert!(
+        matches!(judge(batches, (0, &dolt), (0, &store)), Verdict::Differs { at, .. } if at == ".out[0].passes[0].ended_at"),
+        "a pass's own times are not allowed, only last_pass's"
+    );
+    assert!(matches!(judge("show-batch spira/queue/x", (0, &only_last(&dolt)), (0, &only_last(&store))), Verdict::Differs { .. }));
+    assert!(matches!(judge("list --live", (0, &only_last(&dolt)), (0, &only_last(&store))), Verdict::Differs { .. }));
+
+    let live = |tip: Value| json!([{"bead_id": "sp-a", "state": "SUBMITTED", "sifted_tip": tip}]).to_string();
+    let (dolt, store) = (live(Value::Null), live(json!("abc")));
+    assert_eq!(judge("list --live", (0, &dolt), (0, &store)), Verdict::Allowed(vec!["sifted_tip"]));
+    assert_eq!(judge("list --live --hold poison", (0, &dolt), (0, &store)), Verdict::Allowed(vec!["sifted_tip"]));
+    assert!(matches!(judge("list --ids sp-a", (0, &dolt), (0, &store)), Verdict::Differs { .. }));
+    assert!(matches!(judge("show sp-a", (0, &dolt), (0, &store)), Verdict::Differs { .. }));
+    assert!(matches!(judge("list --livestock", (0, &dolt), (0, &store)), Verdict::Differs { .. }), "a verb covers whole words");
+}
+
+#[test]
+fn every_allowed_difference_says_why_and_names_a_call_parity_makes() {
+    let ids = Ids { beads: vec!["sp-a".into()], batches: vec!["b-1".into()], asks: vec!["q-1".into()], ..Ids::default() };
+    let made: Vec<String> = calls(&ids, "5", 100).iter().map(|a| a.join(" ")).collect();
+    for al in ALLOWED {
+        assert!(!al.why.trim().is_empty(), "{} {}", al.verb, al.field);
+        assert!(al.verb == "*" || made.iter().any(|c| covers(al, c)), "{} covers no call parity makes", al.verb);
+    }
+}
+
 /// A store answering from a table of argv to answer; anything else is exit 2.
 fn store(answers: &[(&[&str], Value)]) -> impl FnMut(&[String]) -> (i32, String) {
     let table: BTreeMap<Vec<String>, String> = answers.iter().map(|(a, v)| (a.iter().map(|s| s.to_string()).collect(), v.to_string())).collect();

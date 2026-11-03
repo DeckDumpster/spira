@@ -20,7 +20,9 @@ use crate::{flag, CANNOT_TELL, REFUSED};
 const USAGE: &str = "usage: spira-lc admin-parity --old-socket <path> --new-socket <path>";
 
 /// One difference the cutover allows: a field of a verb's answer (`*` for every verb), or
-/// for a tab-separated answer a column, by index.
+/// for a tab-separated answer a column, by index. The verb is the call's leading words
+/// (`list --batches` covers every `list --batches …` call and no other `list`); a dotted field
+/// (`last_pass.ended_at`) is that path under any object holding its first name, and nowhere else.
 pub struct Allowed {
     pub verb: &'static str,
     pub field: &'static str,
@@ -33,7 +35,15 @@ pub const ALLOWED: &[Allowed] = &[
     Allowed { verb: "*", field: "blocked_by", why: "the dependency edges are not imported: the readiness record stands in for them once a readiness pass publishes it" },
     Allowed { verb: "*", field: "lease_until", why: "not imported: a claim's lease is its lock, which does not survive the stop" },
     Allowed { verb: "event-seq", field: "seq", why: "the added rev: the new store's head starts at the import revision, max(seq) + 1" },
+    Allowed { verb: "list --batches", field: "last_pass.ended_at", why: "dolt stored 0 where it never wrote the time; the store derives it from the pass events — the store is right" },
+    Allowed { verb: "list --batches", field: "last_pass.started_at", why: "dolt stored 0 where it never wrote the time; the store derives it from the pass events — the store is right" },
+    Allowed { verb: "list --live", field: "sifted_tip", why: "the dolt list omits a field show carries; the store's row is the full record" },
 ];
+
+/// Whether `al` covers a call whose argv, joined by spaces, is `call`.
+fn covers(al: &Allowed, call: &str) -> bool {
+    al.verb == "*" || call.split(' ').take(al.verb.split(' ').count()).eq(al.verb.split(' '))
+}
 
 const BEAD_STATES: &str = "OPEN,READY,WORKING,SUBMITTED,CERTIFIED,IN_DELIVERY,REWORK,LANDED,SUPERSEDED,DROPPED,DONE";
 const ASK_STATES: &[&str] = &["OPEN", "ANSWERED", "DEFAULT_TAKEN", "WITHDRAWN"];
@@ -64,11 +74,36 @@ pub fn normalize(v: &Value) -> Value {
 fn strip(v: &mut Value, field: &str) {
     match v {
         Value::Object(o) => {
-            o.shift_remove(field);
+            match field.split_once('.') {
+                Some((head, rest)) => {
+                    if let Some(x) = o.get_mut(head) {
+                        strip_at(x, rest);
+                    }
+                }
+                None => {
+                    o.shift_remove(field);
+                }
+            }
             o.values_mut().for_each(|x| strip(x, field));
         }
         Value::Array(a) => a.iter_mut().for_each(|x| strip(x, field)),
         _ => {}
+    }
+}
+
+/// `path` (dotted) removed from `v` itself, not searched for below it.
+fn strip_at(v: &mut Value, path: &str) {
+    if let Value::Object(o) = v {
+        match path.split_once('.') {
+            Some((head, rest)) => {
+                if let Some(x) = o.get_mut(head) {
+                    strip_at(x, rest);
+                }
+            }
+            None => {
+                o.shift_remove(path);
+            }
+        }
     }
 }
 
@@ -122,13 +157,14 @@ pub enum Verdict {
     Differs { at: String, old: Value, new: Value },
 }
 
-pub fn judge(verb: &str, old: (i32, &str), new: (i32, &str)) -> Verdict {
+/// `call` is the call's argv joined by spaces; `ALLOWED` entries cover it by leading words.
+pub fn judge(call: &str, old: (i32, &str), new: (i32, &str)) -> Verdict {
     let a = json!({ "rc": old.0, "out": normalize(&parsed(old.1)) });
     let b = json!({ "rc": new.0, "out": normalize(&parsed(new.1)) });
     if a == b {
         return Verdict::Same;
     }
-    let fields: Vec<&'static str> = ALLOWED.iter().filter(|al| al.verb == "*" || al.verb == verb).map(|al| al.field).collect();
+    let fields: Vec<&'static str> = ALLOWED.iter().filter(|al| covers(al, call)).map(|al| al.field).collect();
     let without = |v: &Value, keep: Option<&str>| {
         let mut v = v.clone();
         fields.iter().filter(|f| Some(**f) != keep).for_each(|f| strip(&mut v, f));
@@ -260,7 +296,7 @@ pub fn run(old: &mut dyn FnMut(&[String]) -> (i32, String), new: &mut dyn FnMut(
     for a in &all {
         let (o, n) = (old(a), new(a));
         let (o, n) = ((o.0, without(&o.1, &ids.no_record)), (n.0, without(&n.1, &ids.no_record)));
-        match judge(&a[0], (o.0, &o.1), (n.0, &n.1)) {
+        match judge(&a.join(" "), (o.0, &o.1), (n.0, &n.1)) {
             Verdict::Same => {}
             Verdict::Allowed(fields) => fields.into_iter().for_each(|f| *allowed.entry(f).or_default() += 1),
             Verdict::Differs { at, old, new } => differences.push(json!({ "argv": a, "at": at, "old": old, "new": new })),
