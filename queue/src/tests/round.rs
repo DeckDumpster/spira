@@ -5937,6 +5937,11 @@ batch: SPIRA_NEW_KEY is not declared — every key is required; refusing
 VERDICT FAULT rc=2 ran=0 reason=settings-refused
 ";
 
+fn holds_key(t: &T, rev: &str, text: &str) {
+    t.git.greps.borrow_mut().insert(format!("{rev}:SPIRA_NEW_KEY"), vec!["spira/conf.d/new.toml".into()]);
+    t.git.files.borrow_mut().insert(format!("{rev}:spira/conf.d/new.toml"), text.into());
+}
+
 fn vm_names_the_fault(t: &T, file: &str) {
     *t.scripts.round_vm.borrow_mut() = RunOut { rc: 2, out: String::new(), err: String::new() };
     *t.scripts.round_vm_files.borrow_mut() = vec![("round-fault.out".into(), file.into())];
@@ -5961,7 +5966,8 @@ fn a_settings_refusal_ejects_the_member_whose_diff_adds_the_key_and_no_other() {
     let t = round_world();
     assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
     let batch = batch_of(&t);
-    t.git.greps.borrow_mut().insert("tb:SPIRA_NEW_KEY".into(), vec!["spira/conf.d/new.toml".into()]);
+    holds_key(&t, "tb", "SPIRA_NEW_KEY = 1\n");
+    holds_key(&t, "local/main", "SPIRA_NEW_KEY_ROOT = 1\n");
     vm_names_the_fault(&t, SETTINGS_FAULT);
     assert_eq!(t.run(&["round", "certify", &batch]), 4);
     assert!(t.out().contains("fault-owner=sp-b"), "{}", t.out());
@@ -5972,12 +5978,26 @@ fn a_settings_refusal_ejects_the_member_whose_diff_adds_the_key_and_no_other() {
 }
 
 #[test]
+fn a_member_stacked_on_the_one_that_adds_the_key_is_not_ejected_for_it() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    holds_key(&t, "ta", "SPIRA_NEW_KEY = 1\n");
+    holds_key(&t, "tb", "SPIRA_NEW_KEY = 1\n");
+    t.git.ancestor("ta", "tb");
+    vm_names_the_fault(&t, SETTINGS_FAULT);
+    assert_eq!(t.run(&["round", "certify", &batch]), 4);
+    assert!(t.lib.has("bead_reopen sp-a eject-red"), "{:?}", t.lib.calls.borrow());
+    assert!(!t.lib.has("bead_reopen sp-b"), "{:?}", t.lib.calls.borrow());
+}
+
+#[test]
 fn a_settings_refusal_no_member_adds_names_the_harness_and_counts_against_none() {
     let t = round_world();
     assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
     let batch = batch_of(&t);
-    t.git.greps.borrow_mut().insert("local/main:SPIRA_NEW_KEY".into(), vec!["spira/conf.d/new.toml".into()]);
-    t.git.greps.borrow_mut().insert("ta:SPIRA_NEW_KEY".into(), vec!["spira/conf.d/new.toml".into()]);
+    holds_key(&t, "local/main", "SPIRA_NEW_KEY = 1\n");
+    holds_key(&t, "ta", "SPIRA_NEW_KEY = 1\n");
     for _ in 0..3 {
         vm_names_the_fault(&t, SETTINGS_FAULT);
         assert_eq!(t.run(&["round", "certify", &batch]), 4);

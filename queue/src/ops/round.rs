@@ -2436,8 +2436,16 @@ fn settings_refused(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, f
             return FAULT;
         }
     };
-    let has = |rev: &str| !w.git.grep_files(path, rev, key, "**").is_empty();
-    let adders: Vec<Member> = if has(base) { Vec::new() } else { members.into_iter().filter(|m| has(&m.tip)).collect() };
+    let has = |rev: &str| {
+        w.git.grep_files(path, rev, key, "**").iter().any(|f| w.git.file_at(path, rev, f).is_some_and(|t| names_key(&t, key)))
+    };
+    let holders: Vec<Member> = if has(base) { Vec::new() } else { members.into_iter().filter(|m| has(&m.tip)).collect() };
+    // A member stacked on another carries that one's key at its tip without adding it.
+    let adders: Vec<Member> = holders
+        .iter()
+        .filter(|m| !holders.iter().any(|o| o.id != m.id && o.tip != m.tip && w.git.is_ancestor(path, &o.tip, &m.tip)))
+        .cloned()
+        .collect();
     if adders.is_empty() {
         w.err(format!("queue.sh {label}: {key} was refused on the round VM and no member's diff adds it: the harness is the cause (the round VM's script or config does not provide it); no member is counted against"));
         w.out("fault-owner=harness");
@@ -2454,6 +2462,14 @@ fn settings_refused(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, f
         }
     }
     FAULT
+}
+
+/// Whether `text` holds `key` as a whole word: `FOO_X` is not named by `FOO_X_ROOT`.
+fn names_key(text: &str, key: &str) -> bool {
+    let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    text.match_indices(key).any(|(i, _)| {
+        !text[..i].chars().next_back().is_some_and(word) && !text[i + key.len()..].chars().next().is_some_and(word)
+    })
 }
 
 fn vm_fault_cause(err: &str) -> Option<String> {

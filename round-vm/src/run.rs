@@ -2663,7 +2663,9 @@ fn after_batch(
     }
     keep_top_files(&pulled, &results_dir);
     keep_launcher_output(remote, cfg, &vm.addr, &scratch("launcher"), &results_dir);
-    settle_missing_verdict(&pulled, &results_dir, remote_rc);
+    if pulled_ok {
+        settle_missing_verdict(&pulled, &results_dir, remote_rc);
+    }
     if executables(&bins).is_empty() {
         show_setup_log(remote, cfg, &vm.addr, &scratch("setup-log"));
     }

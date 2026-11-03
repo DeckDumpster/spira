@@ -19,6 +19,7 @@ pub const ROUND_FAULT_FILE: &str = "round-fault.out";
 pub const FAULT_TAIL: usize = 40;
 
 const PHASE_FAILED: &str = "round-vm: PHASE-FAILED ";
+const PHASE_MARK: &str = "round-vm: PHASE ";
 const VERDICT_FAULT: &str = "VERDICT FAULT";
 const SETTINGS_REFUSED: &str = "settings-refused";
 
@@ -62,7 +63,7 @@ pub fn name(results: &Path) -> RoundFault {
         .iter()
         .rev()
         .map(|l| l.trim())
-        .find(|l| !l.is_empty() && !l.contains(VERDICT_FAULT) && !l.starts_with(PHASE_FAILED.trim_end()))
+        .find(|l| !l.is_empty() && !l.contains(VERDICT_FAULT) && !l.starts_with(PHASE_FAILED.trim_end()) && !l.starts_with(PHASE_MARK))
         .unwrap_or("the script wrote nothing");
     let settings_key = (reason == Some(SETTINGS_REFUSED)).then(|| refused_key(&window[..verdict.unwrap_or(0)])).flatten();
     let cause = match reason {
@@ -125,7 +126,7 @@ mod tests {
 
     #[test]
     fn a_script_that_left_no_marker_says_so_and_still_carries_its_log() {
-        let d = results(None, Some("round-vm: built the round in 9s\nkilled\n"));
+        let d = results(None, Some("round-vm: built the round in 9s\nkilled\nround-vm: PHASE release\n"));
         let f = name(d.path());
         assert!(f.cause.starts_with("FAULT with no phase marker"), "{}", f.cause);
         assert!(f.cause.ends_with(": killed"), "{}", f.cause);
