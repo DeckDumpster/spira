@@ -265,6 +265,50 @@ mod tests {
     }
 
     #[test]
+    fn admin_archive_put_lands_the_file_byte_identical_and_refuses_a_second_put_of_the_key() {
+        let dir = TempDir::new("lc-archive-put");
+        let url = format!("file://{}", dir.path().join("off").display());
+        let export = dir.path().join("export.jsonl");
+        let body: Vec<u8> = (0..=255u8).cycle().take(70_000).collect();
+        std::fs::write(&export, &body).unwrap();
+        let file = export.display().to_string();
+
+        let (rc, out) = admin_archive_put(&s(&["--file", &file, "--key", "lifecycle-export.jsonl"]), &url);
+        assert_eq!(rc, 0, "{out}");
+        assert_eq!(std::fs::read(dir.path().join("off/archive/lifecycle-export.jsonl")).unwrap(), body);
+
+        std::fs::write(&export, b"something else").unwrap();
+        let (rc, out) = admin_archive_put(&s(&["--file", &file, "--key", "lifecycle-export.jsonl"]), &url);
+        assert_eq!(rc, REFUSED, "{out}");
+        assert!(out.contains("archive/lifecycle-export.jsonl exists"), "{out}");
+        assert_eq!(std::fs::read(dir.path().join("off/archive/lifecycle-export.jsonl")).unwrap(), body, "never overwritten");
+    }
+
+    #[test]
+    fn admin_archive_put_refuses_by_name_what_one_put_cannot_carry() {
+        let dir = TempDir::new("lc-archive-refuse");
+        let url = format!("file://{}", dir.path().join("off").display());
+        let big = dir.path().join("big");
+        std::fs::File::create(&big).unwrap().set_len(MAX_PUT_BYTES + 1).unwrap();
+        let (rc, out) = admin_archive_put(&s(&["--file", &big.display().to_string(), "--key", "big"]), &url);
+        assert_eq!(rc, REFUSED, "{out}");
+        assert!(out.contains("over the single-PUT limit"), "{out}");
+        assert!(!dir.path().join("off").exists());
+
+        let small = dir.path().join("small");
+        std::fs::write(&small, b"x").unwrap();
+        let small = small.display().to_string();
+        for key in ["../escape", "a/b", ".hidden", ""] {
+            let (rc, out) = admin_archive_put(&s(&["--file", &small, "--key", key]), &url);
+            assert_eq!(rc, REFUSED, "{key}: {out}");
+        }
+        let (rc, out) = admin_archive_put(&s(&["--file", &small, "--key", "k"]), "");
+        assert_eq!(rc, CANNOT_TELL, "{out}");
+        assert!(out.contains("SPIRA_LC_BACKUP_URL is empty"), "{out}");
+        assert_eq!(admin_archive_put(&s(&["--file", &small]), &url).0, CANNOT_TELL);
+    }
+
+    #[test]
     fn the_ship_tick_writes_one_alarm_line_per_crossing() {
         let dir = TempDir::new("lc-ship-alarm");
         let clock = VirtualClock::new(1_000);

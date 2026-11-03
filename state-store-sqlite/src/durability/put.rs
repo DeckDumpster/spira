@@ -215,6 +215,55 @@ mod tests {
         assert!(Dest::parse("s3:///p").is_err());
     }
 
+    /// A fake curl that answers every PUT with `status`, as `--write-out` prints it, and
+    /// records the argv. No process is started.
+    struct Answering(u16, std::sync::Mutex<Vec<Vec<String>>>);
+
+    impl Proc for Answering {
+        fn run(&self, spec: &ProcSpec) -> Result<runtime::ports::ProcOutput, String> {
+            self.1.lock().unwrap().push(spec.args.clone());
+            let code = if self.0 < 400 { 0 } else { 22 };
+            Ok(runtime::ports::ProcOutput { code: Some(code), stdout: self.0.to_string().into_bytes(), stderr: Vec::new() })
+        }
+    }
+
+    fn s3(status: u16) -> (Uploader, Arc<Answering>) {
+        let curl = Arc::new(Answering(status, Default::default()));
+        let creds = S3Creds { access_key: "AK".into(), secret_key: "sk".into(), session_token: None, region: "r".into(), endpoint: Some("http://s3.test".into()) };
+        let up = Uploader { dest: Dest::parse("s3://b/p/").unwrap(), creds: Some(creds), proc: curl.clone(), deadline: Duration::from_secs(5) };
+        (up, curl)
+    }
+
+    #[test]
+    fn a_put_new_to_s3_is_conditional_on_no_object_and_a_412_reads_as_exists() {
+        let dir = testkit::TempDir::new("put-new-s3");
+        let f = dir.path().join("f");
+        std::fs::write(&f, b"x").unwrap();
+        let (up, curl) = s3(200);
+        assert_eq!(up.put_new(&f, "archive/k"), Ok(()));
+        let args = curl.1.lock().unwrap()[0].clone();
+        assert!(args.windows(2).any(|w| w == ["-H", "If-None-Match: *"]), "{args:?}");
+        assert_eq!(args.last().unwrap(), "http://s3.test/b/p/archive/k");
+        let (up, _) = s3(412);
+        assert_eq!(up.put_new(&f, "archive/k"), Err(PutNew::Exists));
+        let (up, _) = s3(403);
+        assert!(matches!(up.put_new(&f, "archive/k"), Err(PutNew::Failed(m)) if m.contains("PUT p/archive/k")));
+    }
+
+    #[test]
+    fn a_put_new_to_a_directory_never_replaces_what_is_there() {
+        let dir = testkit::TempDir::new("put-new-file");
+        let up = Uploader { dest: Dest::File(dir.path().join("off")), creds: None, proc: Arc::new(Answering(200, Default::default())), deadline: Duration::from_secs(5) };
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        std::fs::write(&a, b"first").unwrap();
+        std::fs::write(&b, b"second").unwrap();
+        assert_eq!(up.put_new(&a, "archive/k"), Ok(()));
+        assert_eq!(up.put_new(&b, "archive/k"), Err(PutNew::Exists));
+        assert_eq!(std::fs::read(dir.path().join("off/archive/k")).unwrap(), b"first");
+        let left: Vec<_> = std::fs::read_dir(dir.path().join("off/archive")).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(left, ["k"], "no temporary left beside it");
+    }
+
     #[test]
     fn a_quoted_config_value_escapes_quotes_and_backslashes() {
         assert_eq!(quoted(r#"a"b\c"#), r#""a\"b\\c""#);
