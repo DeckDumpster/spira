@@ -17,7 +17,13 @@ use std::process::{Command, Stdio};
 /// lib.sh function returned nothing" from "lib.sh never sourced at all," so this is a
 /// dedicated, one-time check, not folded into `seam()`.
 pub fn lib_sh_sources(home: &Path) -> bool {
-    let Ok(envs) = spira_config::release_env::child_path_env_for_process() else { return false };
+    let envs = match spira_config::release_env::child_path_env_for_process() {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("skew: {e}");
+            return false;
+        }
+    };
     // batch-job: runs a gate, build or forge script that takes as long as its work
     Command::new("bash")
         .arg("-c")
