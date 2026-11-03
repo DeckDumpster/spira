@@ -569,7 +569,6 @@ path = "$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin"
 testenv_scratch_root = "$HOME/round-scratch"
 home_repo = "spira"
 batch_maxpar = $maxpar
-testenv_scratch_root = "$HOME/round-scratch"
 $testenv_limits
 
 # home_repo names the repo; this section says where it is on the VM and what its base is
@@ -3239,6 +3238,22 @@ mod tests {
         assert!(spira.contains("\ntestenv_scratch_root = \"$HOME/round-scratch\"\n"), "{cfg}");
         let mk = REMOTE_SCRIPT.find("mkdir -p \"$HOME/round-work/.runtime/spira\" \"$HOME/round-scratch\"").expect("the scratch root is made before the config names it");
         assert!(mk < start, "the scratch root exists before any tree binary reads the config");
+    }
+
+    /// The rendered round config parses as strict TOML: release config-stage on the VM refuses
+    /// a duplicate key, so two writers landing the same line kill every round before its suites.
+    #[test]
+    fn the_rendered_round_config_parses_as_strict_toml_with_each_key_once() {
+        let start = REMOTE_SCRIPT.find("<<ROUNDCFG\n").unwrap() + "<<ROUNDCFG\n".len();
+        let end = start + REMOTE_SCRIPT[start..].find("\nROUNDCFG\n").unwrap();
+        let rendered = REMOTE_SCRIPT[start..end]
+            .replace("$maxpar", "16")
+            .replace("$testenv_limits", "testenv_suite_cap = 600")
+            .replace("$HOME", "/root")
+            .replace("$CARGO_HOME", "/opt/spira/cargo");
+        assert!(!rendered.contains('$'), "every heredoc variable is rendered: {rendered}");
+        let cfg: toml::Table = toml::from_str(&rendered).unwrap_or_else(|e| panic!("{e}\n{rendered}"));
+        assert_eq!(cfg["spira"]["testenv_scratch_root"].as_str(), Some("/root/round-scratch"));
     }
 
     #[test]
