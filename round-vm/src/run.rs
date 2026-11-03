@@ -3050,6 +3050,23 @@ mod tests {
         assert!(cfg[sec..].contains("base = \"origin/base\""), "{cfg}");
     }
 
+    /// The VM's own tool directories, declared: every child PATH a tree's binary builds is
+    /// the declared release plus `spira.path`, never the script's inherited PATH, and the
+    /// VM's dolt, bd and cargo live outside the release. The scratch root is declared with it.
+    #[test]
+    fn the_round_config_declares_the_vms_toolchain_and_scratch_root() {
+        let start = REMOTE_SCRIPT.find("<<ROUNDCFG").unwrap();
+        let end = start + REMOTE_SCRIPT[start..].find("\nROUNDCFG\n").unwrap();
+        let cfg = &REMOTE_SCRIPT[start..end];
+        let spira = &cfg[..cfg.find("[repo.spira]").unwrap()];
+        assert!(spira.contains("\npath = \"$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin\"\n"), "{cfg}");
+        assert!(spira.contains("\ntestenv_scratch_root = \"$HOME/round-scratch\"\n"), "{cfg}");
+        let mk = REMOTE_SCRIPT.find("mkdir -p \"$HOME/round-scratch\"").expect("the scratch root is made before the config names it");
+        assert!(mk < start, "the scratch root exists before any tree binary reads the config");
+        let template = include_str!("template.sh");
+        assert!(template.contains("\npath = \"$nix_bin:$CARGO_HOME/bin:$HOME/.cargo/bin\"\n"), "the template build declares the same toolchain");
+    }
+
     #[test]
     fn the_round_config_names_the_home_repo_not_its_path() {
         let scripts = [("run.rs", REMOTE_SCRIPT, "ROUNDCFG\nexport"), ("template.sh", include_str!("template.sh"), "TEMPLATECFG\nexport")];
