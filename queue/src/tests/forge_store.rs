@@ -321,3 +321,14 @@ fn a_settled_batch_the_machine_has_not_ended_is_ended_on_its_record_and_reads_as
     let (state, kv) = record(&t, "deck-1");
     assert_eq!((state.as_str(), kv.get("ended"), kv.get("owner")), ("OPEN", Some("settled"), Some("concierge")), "{kv:?}");
 }
+
+#[test]
+fn a_queue_local_verdict_never_reconciles_a_forge_batch_still_opening() {
+    let t = forge_world();
+    seed(&t, "left", "opening", 1, None);
+    t.lib.r.borrow_mut().mode = LandMode::QueueLocal;
+    t.clock.now.set(1_000_000);
+    t.run(&["verdict", "spira"]);
+    assert!(!t.lc.has("abandon-batch left"), "{:?}", t.lc.calls.borrow());
+    assert_eq!(record(&t, "left").0, "OPEN");
+}

@@ -881,7 +881,7 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
             w.out(format!("queue.sh open-batch: skip — {s}"));
         }
         if !skips.is_empty() || admitted.is_empty() {
-            w.err(format!("queue.sh open-batch: no cut — {given} is the head of every member named, and {} of them {} not admitted for {name}", skips.len(), if skips.len() == 1 { "was" } else { "were" }));
+            w.err(format!("queue.sh open-batch: no cut — {given} is the head of every member named, and {} of them {} not admitted for {name}", skips.len().max(1), if skips.len() > 1 { "were" } else { "was" }));
             return FAIL;
         }
         let Some(head) = w.git.rev_parse(&path, given) else {

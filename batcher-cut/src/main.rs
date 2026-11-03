@@ -250,7 +250,9 @@ fn cut(o: &Opts) -> Result<(), String> {
         ));
     }
 
-    if repo.land == Land::Local && (io::read_open_batch(&env_, &repo.name)?.is_some() || io::read_prepared(&env_, &repo.name).is_some()) {
+    // A forge batch the queue cannot read may still be open: the verdict settles it or says why.
+    let forge_left = || io::read_open_batch(&env_, &repo.name).map_or(true, |o| o.is_some());
+    if repo.land == Land::Local && (forge_left() || io::read_prepared(&env_, &repo.name).is_some()) {
         if let Err(e) = settle_batch(&env_, &repo.name) {
             eprintln!("batcher {}: forge batch left by a mode switch is unsettled: {e}", repo.name);
         }

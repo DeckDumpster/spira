@@ -13,6 +13,8 @@ use lifecycle::batch::BatchState;
 pub struct RoundFile {
     pub path: PathBuf,
     pub batch: String,
+    /// The batch PR a forge `open` file names; empty for every other file.
+    pub pr: String,
 }
 
 /// The forge batch's files: its open record, the batcher's prepared next round, and the verdict's
@@ -42,7 +44,8 @@ pub fn round_files(queue_dir: &Path) -> Vec<RoundFile> {
                 .unwrap_or("")
                 .trim()
                 .to_string();
-            RoundFile { path: f.path(), batch }
+            let pr = text.lines().find_map(|l| l.strip_prefix("pr=")).unwrap_or("").trim().to_string();
+            RoundFile { path: f.path(), batch, pr }
         })
         .collect();
     out.sort_by(|a, b| a.path.cmp(&b.path));
@@ -57,6 +60,10 @@ pub fn plan(
     state: impl Fn(&str) -> Result<Option<String>, String>,
 ) -> Result<Vec<PathBuf>, String> {
     let mut held = Vec::new();
+    // A batch PR the store holds no batch for is still open on the forge: its record is this file.
+    for f in files.iter().filter(|f| f.batch.is_empty() && !f.pr.is_empty()) {
+        held.push(format!("{} names batch PR {}, recorded by no batch on the store", f.path.display(), f.pr));
+    }
     for f in files.iter().filter(|f| !f.batch.is_empty()) {
         match state(&f.batch) {
             Ok(None) => {}
@@ -133,6 +140,10 @@ mod tests {
         assert!(e.contains("deck/open names round deck-open, which is OPEN") && e.contains("queue abandon"), "{e}");
         let landed = |_: &str| Ok(Some("LANDED".to_string()));
         assert_eq!(plan(&files, landed).unwrap().len(), 3);
+        std::fs::create_dir_all(d.join("poke")).unwrap();
+        std::fs::write(d.join("poke").join("open"), "pr=44\nbranch=spira/queue/y\n").unwrap();
+        let e = plan(&round_files(d.path()), landed).unwrap_err();
+        assert!(e.contains("poke/open names batch PR 44, recorded by no batch on the store"), "{e}");
     }
 
     #[test]
