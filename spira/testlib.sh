@@ -150,22 +150,25 @@ tl_release() {
     done
     unset IFS
     [ "${#stubs[@]}" -gt 0 ] || { printf '%s\n' "$rel"; return 0; }
-    key="$(printf '%s\n' "${stubs[@]}" | cksum | cut -d' ' -f1)"
+    # The overlay is keyed on what the stub directories HOLD (every program's name, size and
+    # mtime), so a stub rewritten after the first declaration is re-linked, not stale. Tools
+    # by their standard path: a suite's own PATH may be nothing but stubs by now.
+    key="$( { printf '%s\n' "${stubs[@]}"; for d in "${stubs[@]}"; do command -p ls -lL --time-style=+%s "$d" 2>/dev/null; done; } | command -p cksum | command -p cut -d' ' -f1)"
     ov="${TMPDIR:-/tmp}/tl-release-$$-$key"
     if [ ! -d "$ov" ]; then
-        mkdir -p "$ov.tmp/bin" "$ov.tmp/spira" || return 1
-        for f in "$rel"/bin/*; do ln -sf "$f" "$ov.tmp/bin/"; done
-        [ -e "$rel/model-bin" ] && ln -sfn "$rel/model-bin" "$ov.tmp/model-bin"
-        for f in "$rel"/spira/* "$rel"/spira/.[!.]*; do [ -e "$f" ] && ln -sfn "$f" "$ov.tmp/spira/"; done
-        for f in "$rel"/*; do n="${f##*/}"; [ "$n" = bin ] || [ "$n" = spira ] || [ "$n" = model-bin ] || ln -sfn "$f" "$ov.tmp/$n"; done
+        command -p mkdir -p "$ov.tmp/bin" "$ov.tmp/spira" || return 1
+        for f in "$rel"/bin/*; do command -p ln -sf "$f" "$ov.tmp/bin/"; done
+        [ -e "$rel/model-bin" ] && command -p ln -sfn "$rel/model-bin" "$ov.tmp/model-bin"
+        for f in "$rel"/spira/* "$rel"/spira/.[!.]*; do [ -e "$f" ] && command -p ln -sfn "$f" "$ov.tmp/spira/"; done
+        for f in "$rel"/*; do n="${f##*/}"; [ "$n" = bin ] || [ "$n" = spira ] || [ "$n" = model-bin ] || command -p ln -sfn "$f" "$ov.tmp/$n"; done
         for ((i=${#stubs[@]}-1; i>=0; i--)); do
             for f in "${stubs[$i]}"/*; do
                 [ -f "$f" ] && [ -x "$f" ] || continue
                 n="${f##*/}"
-                if [ -e "$rel/spira/$n" ] && [ ! -e "$rel/bin/$n" ]; then ln -sfn "$f" "$ov.tmp/spira/$n"; else ln -sfn "$f" "$ov.tmp/bin/$n"; fi
+                if [ -e "$rel/spira/$n" ] && [ ! -e "$rel/bin/$n" ]; then command -p ln -sfn "$f" "$ov.tmp/spira/$n"; else command -p ln -sfn "$f" "$ov.tmp/bin/$n"; fi
             done
         done
-        mv "$ov.tmp" "$ov" 2>/dev/null || rm -rf "$ov.tmp"
+        command -p mv "$ov.tmp" "$ov" 2>/dev/null || command -p rm -rf "$ov.tmp"
     fi
     printf '%s\n' "$ov"
 }
@@ -741,13 +744,14 @@ esac
 lc_facts_stub() {
     local dir="${1:?lc_facts_stub needs a directory}" real
     mkdir -p "$dir"
-    real="$(command -v spira-lc 2>/dev/null || true)"
+    real="$_TL_STAGED_RELEASE/bin/spira-lc"
     {
         printf '#!/usr/bin/env bash\n%s\n' "$_LC_FACTS_BODY"
-        if [ -n "$real" ]; then printf 'exec %q "$@"\n' "$real"; else printf 'exit 2\n'; fi
+        if [ -x "$real" ]; then printf 'exec %q "$@"\n' "$real"; else printf 'exit 2\n'; fi
     } > "$dir/spira-lc"
     chmod +x "$dir/spira-lc"
     export PATH="$dir:$PATH"
+    SPIRA_LC_BIN="$dir/spira-lc"; export SPIRA_LC_BIN
 }
 
 # lc_fact_count <dir> <id> <kind> — how many facts of that kind the stand-in in <dir> holds.
@@ -1007,9 +1011,10 @@ print(json.dumps({"watermark": 0, "items": [r for r in json.loads(sys.stdin.read
     printf '{"watermark":0,"items":%s}\n' "${out:-[]}"
     exit 0
 fi
-for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done
-exit 2
 STUB
+    # Every other verb goes to the staged release's spira-lc, named outright: a child's PATH
+    # is the declared release (where this shim sits), never a PATH search.
+    printf 'exec %q "$@"\n' "$_TL_STAGED_RELEASE/bin/spira-lc" >> "$dir/spira-lc"
     chmod +x "$dir/spira-lc"
 }
 
