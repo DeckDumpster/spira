@@ -250,7 +250,7 @@ fn cutover(p: &Ports, mode: &cutover_check::Mode) -> Result<i32, String> {
             ))
         }),
         queue_dir: spira_config::process::cfg("SPIRA_QUEUE_DIR")?.into(),
-        spira_lc: spira_config::release_env::tool("spira-lc"),
+        spira_lc: spira_config::release_env::tool("spira-lc")?,
     };
     match mode {
         cutover_check::Mode::Readiness => {
@@ -319,7 +319,7 @@ fn probe_base(
         proc_: Arc::new(SysProc),
     };
     let env = VmEnv {
-        round_vm: spira_config::release_env::tool("round-vm").into(),
+        round_vm: spira_config::release_env::tool("round-vm")?.into(),
         run: run_dir.clone(),
         wall_secs: num("SPIRA_BATCHER_WALL_SECS")?,
         maxpar: u32::try_from(num("SPIRA_BATCH_MAXPAR")?).map_err(|e| e.to_string())?,
