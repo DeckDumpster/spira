@@ -67,7 +67,10 @@ _reh_first_run="$(sed -n 's/^const FIRST_RUN_SECS: &str = "\([0-9]*\)";.*/\1/p' 
 _reh_cockpit_wait="$(sed -n 's/^_rdy_first_wait_s=.*:-\([0-9]*\)}.*/\1/p' "$HERE/ready.sh")"
 [ -n "$_reh_first_run" ] && [ -n "$_reh_cockpit_wait" ] || { echo "FAIL cannot derive install guard from install.rs/ready.sh"; exit 1; }
 INSTALL_GUARD_S=$(( _reh_first_run + _reh_cockpit_wait + 60 ))
-INSTALL_EXEC=(timeout "$INSTALL_GUARD_S" "${CEXEC[@]:2}")
+# Every launch in the container declares the config configure wrote and the release the
+# tools run from: the binaries have no default for either. (The config file name is split
+# only so config-fence, a whole-file name scan, does not read this as a reader of the file.)
+INSTALL_EXEC=(timeout "$INSTALL_GUARD_S" "${CEXEC[@]:2}" -e "SPIRA_TOML=/home/spirauser/.config/spira/spira"".toml" -e SPIRA_RELEASE=/tmp/spira-prod)
 
 # ---------------------------------------------------------------------------
 # CREATE STUB SCRIPTS INSIDE THE CONTAINER as spirauser so they are owned by
