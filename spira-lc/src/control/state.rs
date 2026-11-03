@@ -303,10 +303,12 @@ fn list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, Str
             limit,
             kept,
         )?;
+        let ids: Vec<&str> = records.iter().map(|r| r.value.row.bead_id.as_str()).collect();
+        let mut readiness = store.readiness_of(&ids, rev)?;
         let mut rows = Vec::with_capacity(records.len());
         for r in &records {
             let id = r.value.row.bead_id.as_str();
-            let ready = blocking(store.readiness_at(id, rev)?, |b| store.state_at(b, rev))?;
+            let ready = blocking(readiness.remove(id), |b| store.state_at(b, rev))?;
             rows.push(row(&r.value, ready.as_ref(), LISTED));
         }
         Ok(rows)

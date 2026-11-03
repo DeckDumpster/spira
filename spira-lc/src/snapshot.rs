@@ -91,17 +91,60 @@ pub fn without_flag(args: &[String]) -> Vec<String> {
     args.iter().filter(|a| *a != "--snapshot").cloned().collect()
 }
 
-/// One refresh: the live rows rendered and moved into place atomically. `Ok(false)` while the
-/// rows are not in memory.
+/// One refresh: the live rows rendered and moved into place atomically, read from wherever a
+/// plain `list --live` reads them — the control store once the lifecycle is on it, else dolt's
+/// in-memory rows. `Ok(false)` while dolt's rows are not in memory; an error leaves the old
+/// file to age out, so pollers go to the service rather than read rows the store has moved past.
 pub fn write(conn: &crate::db::Conn, path: &str) -> std::io::Result<bool> {
-    let Some(beads) = conn.live().and_then(|l| l.list_live_full(&ListFilter::default())) else { return Ok(false) };
-    let body = json!({ "at": crate::db::now_epoch(), "beads": beads }).to_string();
+    write_from(crate::control::served::lifecycle_store(), conn, path, crate::db::now_epoch())
+}
+
+/// [`write`] with the switch already read: `store` is the control store while the bead-state
+/// verbs answer from it, `None` while they answer from dolt.
+fn write_from<B: state_store::Backend, S: std::ops::Deref<Target = crate::control::store::Store<B>>>(
+    store: Option<Result<S, String>>,
+    conn: &crate::db::Conn,
+    path: &str,
+    now: i64,
+) -> std::io::Result<bool> {
+    let beads = match store {
+        Some(store) => store
+            .and_then(|s| store_rows(&s, now))
+            .and_then(|rows| with_planning(rows, conn))
+            .map_err(std::io::Error::other)?,
+        None => match conn.live().and_then(|l| l.list_live_full(&ListFilter::default())) {
+            Some(b) => b,
+            None => return Ok(false),
+        },
+    };
     let tmp = format!("{path}.tmp");
     let mut f = std::fs::File::create(&tmp)?;
-    f.write_all(body.as_bytes())?;
+    f.write_all(body(beads, now).as_bytes())?;
     f.sync_all()?;
     std::fs::rename(Path::new(&tmp), path)?;
     Ok(true)
+}
+
+fn body(beads: Vec<Value>, at: i64) -> String {
+    json!({ "at": at, "beads": beads }).to_string()
+}
+
+/// The control store's live rows at its head as of this call: the answer `list --live` gives.
+fn store_rows<B: state_store::Backend>(store: &crate::control::store::Store<B>, now: i64) -> Result<Vec<Value>, String> {
+    let request = crate::control::served::request_id();
+    let call = crate::control::state::Call { now, request: &request };
+    match crate::control::state::run(store, &[String::from("list"), String::from("--live")], &call) {
+        (0, out) => serde_json::from_str(&out).map_err(|e| format!("the store's live list: {e}")),
+        (_, out) => Err(out),
+    }
+}
+
+/// Titles and priorities from the planning plane, joined as the service joins them on a plain list.
+fn with_planning(rows: Vec<Value>, conn: &crate::db::Conn) -> Result<Vec<Value>, String> {
+    match crate::plan::with_planning_fields((0, Value::Array(rows).to_string()), conn) {
+        (0, out) => serde_json::from_str(&out).map_err(|e| format!("the planning join: {e}")),
+        (_, out) => Err(out),
+    }
 }
 
 #[cfg(test)]
@@ -213,6 +256,58 @@ mod tests {
     #[test]
     fn the_flag_is_not_forwarded() {
         assert_eq!(without_flag(&args(&["list", "--snapshot", "--live"])), ["list", "--live"]);
+    }
+
+    /// A control store on the in-memory backend, as lc-serve holds one once the lifecycle is on it.
+    fn store() -> crate::control::store::Store<state_store::MemBackend> {
+        let clock = runtime::ports::VirtualClock::new(100_000);
+        let c = state_store::Contract::open(state_store::MemBackend::new(), state_store::Ports::virtual_clock(&clock), state_store::Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        crate::control::store::Store::new(c, 1_000)
+    }
+
+    fn create(s: &crate::control::store::Store<state_store::MemBackend>, argv: &[&str]) {
+        let call = crate::control::state::Call { now: 100, request: &format!("t/{argv:?}") };
+        let (code, out) = crate::control::state::run(s, &args(argv), &call);
+        assert_eq!(code, 0, "{argv:?}: {out}");
+    }
+
+    /// The refresh lc-serve runs, with the lifecycle on the store: the file it renders holds a
+    /// row written after the store opened, the same rows a plain `list --live` answers.
+    #[test]
+    fn the_refresh_renders_a_row_written_after_the_store_opened() {
+        let dir = testkit::TempDir::new("lc-snapshot-store");
+        let path = dir.join("snap.json");
+        let p = path.to_str().unwrap();
+        let conn = crate::db::Conn::unreachable();
+        let s = store();
+        create(&s, &["create-bead", "sp-old", "--ready"]);
+        assert!(write_from(Some(Ok(&s)), &conn, p, 100).unwrap(), "the store's rows need no dolt");
+        create(&s, &["create-bead", "sp-new", "--submitted-tip", "0123456789abcdef0123456789abcdef01234567"]);
+        let a = |argv: &[&str]| ids(&answer_from(&args(argv), &std::fs::read_to_string(&path).unwrap(), 100, 2).unwrap());
+        assert_eq!(a(&["list", "--snapshot", "--state", "SUBMITTED"]), Vec::<String>::new(), "a file answers the store as it stood when rendered");
+        assert!(write_from(Some(Ok(&s)), &conn, p, 100).unwrap());
+        assert_eq!(a(&["list", "--snapshot", "--state", "SUBMITTED"]), ["sp-new"], "the next refresh carries the write");
+        assert_eq!(a(&["list", "--snapshot", "--live"]), ["sp-new", "sp-old"]);
+        let call = crate::control::state::Call { now: 100, request: "t/plain" };
+        let plain: Vec<Value> = serde_json::from_str(&crate::control::state::run(&s, &args(&["list", "--live"]), &call).1).unwrap();
+        let snap: Vec<Value> = serde_json::from_str(&answer_from(&args(&["list", "--snapshot", "--live"]), &std::fs::read_to_string(&path).unwrap(), 100, 2).unwrap()).unwrap();
+        assert_eq!(snap.len(), plain.len());
+        for (x, y) in snap.iter().zip(&plain) {
+            for k in ["bead_id", "state", "tip", "holds", "version", "express", "blocked_by"] {
+                assert_eq!(x[k], y[k], "{k}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_file_rendered_earlier_still_answers_its_own_rows_until_it_ages_out() {
+        let s = store();
+        create(&s, &["create-bead", "sp-a", "--ready"]);
+        let old = body(store_rows(&s, 100).unwrap(), 100);
+        create(&s, &["create-bead", "sp-b", "--ready"]);
+        let a = args(&["list", "--snapshot", "--live"]);
+        assert_eq!(ids(&answer_from(&a, &old, 106, 2).unwrap()), ["sp-a"]);
+        assert!(answer_from(&a, &old, 107, 2).is_none(), "past three refreshes the service answers instead");
     }
 
     #[test]

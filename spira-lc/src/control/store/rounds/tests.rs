@@ -8,6 +8,7 @@ use state_store::{Backend, Config, Contract, MemBackend, Ports, Request};
 use state_store_sqlite::SqliteBackend;
 
 use super::{Cut, Planned, Ran, Store};
+use crate::control::store::Verdict;
 use crate::control::keys;
 use crate::control::records::Audit;
 use crate::control::state::{self, Call};
@@ -901,6 +902,62 @@ fn a_state_filtered_page_is_one_bounded_read_of_the_state_index() {
     );
     let gets = reads.len() - ranges.len();
     assert!(gets <= 3 * ids.len(), "{gets} point reads for {} rows: {reads:?}", ids.len());
+}
+
+/// law-hot-reads-answer-in-500ms: an unfiltered `list` reads its rows' readiness by key range,
+/// not by one read per row. Every point read is a read transaction of its own; one per row was
+/// most of a whole-table list's time, so the list's reads stay a handful however many rows it
+/// answers, and the rows are the ones a read by key answers.
+#[test]
+fn a_whole_table_list_reads_readiness_by_range_not_once_per_row() {
+    const BEADS: usize = 600;
+    let r = Rig::on(Counting::default(), &clock());
+    for i in 0..BEADS {
+        r.ok(&["create-bead", &format!("sp-{i:04}"), "--repo", "spira", "--ready"]);
+    }
+    r.bead_event("sp-0002", "READY", "0", r#"{"Claim":{"holder":"dwarf-1","lease_until":1767229200}}"#);
+    let verdicts: Vec<Verdict> = (0..BEADS)
+        .step_by(7)
+        .map(|i| Verdict {
+            id: format!("sp-{i:04}"),
+            verdict: if i % 2 == 0 { "claimable" } else { "blocked" }.into(),
+            blocker: None,
+            runes: vec!["builder".into()],
+        })
+        .collect();
+    r.s.publish_verdicts(&verdicts, "2026-01-01T00:00:00Z", &r.req()).unwrap();
+    let blocked = crate::control::records::Readiness {
+        blocked_by: vec!["sp-0001".into(), "sp-0002".into(), "sp-gone".into()],
+        ..Default::default()
+    };
+    let seed = state_store::Txn::new().put(
+        &keys::readiness("sp-0500"),
+        state_store::Object::new(crate::control::records::encode(&blocked).unwrap()),
+    );
+    r.s.contract().txn(&seed, &r.req()).unwrap();
+
+    r.s.contract().backend().take();
+    let (rc, out) = r.lc(&["list"]);
+    assert_eq!(rc, 0, "{out}");
+    let reads = r.s.contract().backend().take();
+    let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let rows = rows.as_array().unwrap();
+    assert_eq!(rows.len(), BEADS);
+    let readiness_gets = reads.iter().filter(|(k, key, _)| *k == "get" && key.starts_with(keys::READINESS)).count();
+    assert!(readiness_gets <= 1, "{readiness_gets} readiness point reads for {BEADS} rows");
+    assert!(reads.len() <= 12, "{} reads for {BEADS} rows: {reads:?}", reads.len());
+
+    let probe = ["sp-0000", "sp-0002", "sp-0007", "sp-0014", "sp-0500", "sp-0599"];
+    let (rc, by_key) = r.lc(&["list", "--ids", &probe.join(",")]);
+    assert_eq!(rc, 0, "{by_key}");
+    let by_key: serde_json::Value = serde_json::from_str(&by_key).unwrap();
+    let ranged: Vec<&serde_json::Value> =
+        rows.iter().filter(|x| probe.contains(&x["bead_id"].as_str().unwrap())).collect();
+    assert_eq!(ranged, by_key.as_array().unwrap().iter().collect::<Vec<_>>());
+    assert_eq!(ranged[2]["claim_verdict"], "blocked");
+    assert_eq!(ranged[0]["claim_runes"], "builder");
+    assert_eq!(ranged[1]["claim_verdict"], serde_json::Value::Null);
+    assert_eq!(ranged[4]["blocked_by"], serde_json::json!(["sp-0001", "sp-0002"]), "a blocker with no record no longer blocks");
 }
 
 const DELIVERIES: usize = 3_000;

@@ -96,6 +96,20 @@ pub fn configured() -> Option<Result<Arc<Store<SqliteBackend>>, String>> {
     Some(store_path()?.and_then(|p| opened(&p)))
 }
 
+/// The control store while the bead-state verbs answer from it (`SPIRA_LC_LIFECYCLE_ON_STORE`),
+/// opened; `None` while they answer from dolt.
+pub fn lifecycle_store() -> Option<Result<Arc<Store<SqliteBackend>>, String>> {
+    let path = match store_path()? {
+        Ok(p) => p,
+        Err(e) => return Some(Err(e)),
+    };
+    match lifecycle_on_store() {
+        Ok(true) => Some(opened(&path)),
+        Ok(false) => None,
+        Err(e) => Some(Err(e)),
+    }
+}
+
 /// `admin-create-store`: a new, empty control store at `SPIRA_LC_STORE_PATH`, which no verb
 /// creates on open (an absent store opened empty would answer every read as nothing there).
 /// Refused on an empty key, a path outside the instance's workspaces, or a file already there.
