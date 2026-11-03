@@ -5,6 +5,10 @@
 //! - **Replay:** each bead, delivery and batch record equals the fold of its applied events
 //!   through the machine, on the fields events own: `claim_*`, `repo`, `progress` and the
 //!   dependency edges bypass events and are not compared, nor are the display-only stamps.
+//!   Every live record must replay exactly. A terminal record whose history was partly
+//!   written outside the event log is imported as stored and listed in the import report:
+//!   the import is a baseline at its revision, and it never rewrites a record or invents an
+//!   event to make the fold reach it.
 //! - **Cursors:** every persisted event-seq cursor is at or below the import revision, so
 //!   `event-seq --since N` keeps its meaning after it.
 
@@ -264,32 +268,82 @@ pub fn logs(a: &Archive) -> (Logs, Vec<String>) {
     (out, failures)
 }
 
-/// Every imported bead, delivery and batch record against the fold of its applied events.
-pub fn replay(a: &Archive, no_record: &BTreeSet<String>) -> Vec<String> {
-    let (logs, mut failures) = logs(a);
+/// A terminal record whose stored fields its event fold does not reach, because a write outside
+/// the event log moved them. It is imported as stored, never rewritten, and listed in the report.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct AsStored {
+    pub table: &'static str,
+    pub key: String,
+    pub state: String,
+    pub finding: String,
+}
+
+/// The replay's verdict. A live record must replay exactly; a terminal one that does not is
+/// imported as stored.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Replay {
+    /// What refuses the import: a live record that does not replay, or a row or event whose
+    /// state cannot be read, so whether it is live cannot be told.
+    pub refusals: Vec<String>,
+    pub as_stored: Vec<AsStored>,
+    /// Live records that replayed exactly, by table.
+    pub live: BTreeMap<&'static str, usize>,
+}
+
+/// Every imported bead, delivery and batch record against the fold of its applied events. Live
+/// is each machine's own non-terminal states, the set `list --live` returns for beads.
+pub fn replay(a: &Archive, no_record: &BTreeSet<String>) -> Replay {
+    let (logs, refusals) = logs(a);
+    let mut out = Replay {
+        refusals,
+        ..Replay::default()
+    };
     let empty = Vec::new();
     let log = |machine: &str, key: &str| logs.get(&(machine.to_string(), key.to_string())).unwrap_or(&empty);
-    let mut judge = |table: &str, key: &str, folded: Result<Map<String, Value>, String>, imported: Map<String, Value>| match folded {
-        Err(e) => failures.push(format!("{table} {key}: {e}")),
-        Ok(f) => {
-            let d = differences(&imported, &f);
-            if !d.is_empty() {
-                failures.push(format!("{table} {key}: does not replay: {}", d.join("; ")));
+    let mut judge = |table: &'static str, key: &str, state: (&str, bool), folded: Result<Map<String, Value>, String>, imported: Map<String, Value>| {
+        let (state, terminal) = state;
+        let finding = match folded {
+            Err(e) => e,
+            Ok(f) => {
+                let d = differences(&imported, &f);
+                if d.is_empty() {
+                    if !terminal {
+                        *out.live.entry(table).or_default() += 1;
+                    }
+                    return;
+                }
+                format!("does not replay: {}", d.join("; "))
             }
+        };
+        if terminal {
+            out.as_stored.push(AsStored {
+                table,
+                key: key.to_string(),
+                state: state.to_string(),
+                finding,
+            });
+        } else {
+            out.refusals.push(format!("{table} {key}: {finding}"));
         }
     };
+    let unreadable = |table: &str, key: &str, e: String| format!("{table} {key}: {e}");
+    let mut unread = Vec::new();
     for r in a.rows("bead").iter().filter(|r| !no_record.contains(&r.key)) {
         match record_of(&r.row) {
-            Ok(rec) => judge("bead", &r.key, fold_bead(&r.key, log("bead", &r.key)).map(|b| fields(&b, BEAD_UNEVENTED)), fields(&rec.row, BEAD_UNEVENTED)),
-            Err(e) => judge("bead", &r.key, Err(e), Map::new()),
+            Ok(rec) => {
+                let state = (rec.row.state.as_str(), rec.row.state.is_terminal());
+                judge("bead", &r.key, state, fold_bead(&r.key, log("bead", &r.key)).map(|b| fields(&b, BEAD_UNEVENTED)), fields(&rec.row, BEAD_UNEVENTED))
+            }
+            Err(e) => unread.push(unreadable("bead", &r.key, e)),
         }
     }
     for r in a.rows("delivery").iter().filter(|r| !no_record.contains(&r.key)) {
         match crate::rows::delivery_of(&r.key, &r.row) {
             Ok(d) => {
-                judge("delivery", &r.key, fold_delivery(&delivery_seed(&d), log("delivery", &r.key)).map(|x| fields(&x, DELIVERY_UNEVENTED)), fields(&d, DELIVERY_UNEVENTED))
+                let state = (d.state.as_str(), d.state.is_terminal());
+                judge("delivery", &r.key, state, fold_delivery(&delivery_seed(&d), log("delivery", &r.key)).map(|x| fields(&x, DELIVERY_UNEVENTED)), fields(&d, DELIVERY_UNEVENTED))
             }
-            Err(e) => judge("delivery", &r.key, Err(e), Map::new()),
+            Err(e) => unread.push(unreadable("delivery", &r.key, e)),
         }
     }
     for r in a.rows("batch") {
@@ -303,12 +357,14 @@ pub fn replay(a: &Archive, no_record: &BTreeSet<String>) -> Vec<String> {
                     version: 0,
                     ..b.clone()
                 };
-                judge("batch", &r.key, fold_batch(&seed, log("batch", &r.key)).map(|x| fields(&x, BATCH_UNEVENTED)), fields(&b, BATCH_UNEVENTED))
+                let state = (b.state.as_str(), b.state.is_terminal());
+                judge("batch", &r.key, state, fold_batch(&seed, log("batch", &r.key)).map(|x| fields(&x, BATCH_UNEVENTED)), fields(&b, BATCH_UNEVENTED))
             }
-            Err(e) => judge("batch", &r.key, Err(e), Map::new()),
+            Err(e) => unread.push(unreadable("batch", &r.key, e)),
         }
     }
-    failures
+    out.refusals.extend(unread);
+    out
 }
 
 /// Every persisted cursor under `run` at or below `rev`. A cursor file that cannot be read is

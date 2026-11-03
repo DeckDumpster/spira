@@ -395,3 +395,31 @@ pub fn project(a: &Archive, no_record: &BTreeSet<String>) -> Result<Projection, 
         Err(failures)
     }
 }
+
+/// What the import records on the store about itself: the files it came from and how many
+/// records it took as stored rather than replayed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Baseline {
+    pub archive: String,
+    pub report: String,
+    pub as_stored: usize,
+}
+
+/// Adds the baseline key to `p`: every record's stored state is the state at `p.rev`, one past
+/// the last dolt event seq, so history before it is the archived events and nothing else.
+pub fn record_baseline(p: &mut Projection, b: &Baseline) {
+    let value = json!({
+        "rev": p.rev,
+        "max_event_seq": p.rev - 1,
+        "archive": b.archive,
+        "report": b.report,
+        "as_stored": b.as_stored,
+    });
+    p.items.insert(
+        keys::IMPORT_BASELINE.to_string(),
+        Item {
+            table: "import",
+            value: Object::new(value).encode(),
+        },
+    );
+}

@@ -3,7 +3,10 @@
 //!
 //! It exports every table to the archive (or, with `--from-archive`, reads one already
 //! written), maps every row to its control-plane key, bulk-loads them at `R`, and runs the
-//! checks in `checks`. It refuses while lc-serve answers on the declared socket, since a
+//! checks in `checks`. The store is a baseline: every record's stored state at `R`, recorded
+//! under `import/baseline`. Live records replay exactly or the import refuses; terminal records
+//! whose history was written outside the event log are imported as stored, never rewritten,
+//! and listed in `<archive>.import-report.json`, beside the archive. It refuses while lc-serve answers on the declared socket, since a
 //! write after the export would be lost, and it never writes a store that fails a check: the
 //! file is removed, so nothing can swap it in.
 
@@ -63,12 +66,13 @@ fn read_back(b: &SqliteBackend, rev: u64) -> Result<BTreeMap<String, Vec<u8>>, S
     }
 }
 
-/// Loads `p` into a new store at `out` and reads it back; `Err` leaves no store behind.
-fn load(out: &Path, p: &map::Projection) -> Result<BTreeMap<String, Vec<u8>>, String> {
+/// Loads `p` into a new store at `out` and reads it back through the same handle.
+fn load(out: &Path, p: &map::Projection) -> Result<(SqliteBackend, BTreeMap<String, Vec<u8>>), String> {
     let b = SqliteBackend::open(out, Options::default()).map_err(|e| format!("{}: {e}", out.display()))?;
     b.bulk_load(p.rev, p.items.iter().map(|(k, i)| (k.clone(), i.value.clone())))
         .map_err(|e| format!("bulk load into {}: {e}", out.display()))?;
-    read_back(&b, p.rev)
+    let got = read_back(&b, p.rev)?;
+    Ok((b, got))
 }
 
 pub fn cmd_admin_import(args: &[String], conn: &Conn) -> (i32, String) {
@@ -96,38 +100,103 @@ pub fn cmd_admin_import(args: &[String], conn: &Conn) -> (i32, String) {
             return (CANNOT_TELL, format!("cannot tell: admin-import: export: {e}"));
         }
     }
-    let a = match archive::read(&archive_path) {
-        Ok(a) => a,
-        Err(f) => return refused(&f),
-    };
     let no_record: BTreeSet<String> = match crate::plan::no_record_ids(conn) {
         Ok(ids) => ids,
         Err(e) => return (CANNOT_TELL, format!("cannot tell: admin-import: the planning types: {e}")),
-    };
-    let p = match map::project(&a, &no_record) {
-        Ok(p) => p,
-        Err(f) => return refused(&f),
     };
     let run = match crate::lifecycle_run_dir() {
         Ok(r) => r,
         Err(e) => return (CANNOT_TELL, format!("cannot tell: admin-import: {e}")),
     };
-    let failures = checks::cursors(&run, p.rev);
-    if !failures.is_empty() {
-        return refused(&failures);
+    import(&archive_path, &no_record, &run, &out)
+}
+
+/// Where the import report goes: beside the archive, so it is archived with it.
+pub fn report_path(archive_path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.import-report.json", archive_path.display()))
+}
+
+fn file_name(p: &Path) -> String {
+    p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into_owned())
+}
+
+/// Writes the report whole or not at all: a reader never sees half of it.
+fn write_report(path: &Path, report: &serde_json::Value) -> Result<(), String> {
+    let partial = PathBuf::from(format!("{}.partial", path.display()));
+    let text = serde_json::to_vec_pretty(report).map_err(|e| e.to_string())?;
+    std::fs::write(&partial, text)
+        .and_then(|()| std::fs::rename(&partial, path))
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&partial);
+            format!("{}: {e}", path.display())
+        })
+}
+
+/// Imports the archive at `archive_path` into a new store at `out`, at the import revision.
+/// Every live record must replay exactly; a terminal record whose history was written outside
+/// the event log is imported as stored and listed in the report beside the archive. The store
+/// is written only when every check passes, and the report only with it.
+pub fn import(archive_path: &Path, no_record: &BTreeSet<String>, run: &Path, out: &Path) -> (i32, String) {
+    match import_store(archive_path, no_record, run, out) {
+        Ok((_, summary)) => (0, serde_json::to_string_pretty(&summary).unwrap_or_default()),
+        Err(refusal) => refusal,
     }
-    let got = match load(&out, &p) {
+}
+
+/// `import`, handing back the open store: a caller reads it through this one handle, since a
+/// second opener is refused while any handle lives.
+pub fn import_store(archive_path: &Path, no_record: &BTreeSet<String>, run: &Path, out: &Path) -> Result<(SqliteBackend, serde_json::Value), (i32, String)> {
+    let a = match archive::read(archive_path) {
+        Ok(a) => a,
+        Err(f) => return Err(refused(&f)),
+    };
+    let mut p = match map::project(&a, no_record) {
+        Ok(p) => p,
+        Err(f) => return Err(refused(&f)),
+    };
+    let failures = checks::cursors(run, p.rev);
+    if !failures.is_empty() {
+        return Err(refused(&failures));
+    }
+    let replay = checks::replay(&a, no_record);
+    if !replay.refusals.is_empty() {
+        return Err(refused(&replay.refusals));
+    }
+    let report = report_path(archive_path);
+    map::record_baseline(
+        &mut p,
+        &map::Baseline {
+            archive: file_name(archive_path),
+            report: file_name(&report),
+            as_stored: replay.as_stored.len(),
+        },
+    );
+    let (store, got) = match load(out, &p) {
         Ok(g) => g,
         Err(e) => {
-            remove_store(&out);
-            return (CANNOT_TELL, format!("cannot tell: admin-import: {e}"));
+            remove_store(out);
+            return Err((CANNOT_TELL, format!("cannot tell: admin-import: {e}")));
         }
     };
-    let mut failures = checks::loaded(&a, &p, &got);
-    failures.extend(checks::replay(&a, &no_record));
+    let failures = checks::loaded(&a, &p, &got);
     if !failures.is_empty() {
-        remove_store(&out);
-        return refused(&failures);
+        drop(store);
+        remove_store(out);
+        return Err(refused(&failures));
+    }
+    let written = write_report(
+        &report,
+        &json!({
+            "import_rev": p.rev,
+            "archive": file_name(archive_path),
+            "live_replayed_exactly": replay.live,
+            "as_stored": replay.as_stored,
+        }),
+    );
+    if let Err(e) = written {
+        drop(store);
+        remove_store(out);
+        return Err((CANNOT_TELL, format!("cannot tell: admin-import: the report: {e}")));
     }
     let tables: serde_json::Map<String, serde_json::Value> = archive::TABLES
         .iter()
@@ -140,11 +209,14 @@ pub fn cmd_admin_import(args: &[String], conn: &Conn) -> (i32, String) {
         "import_rev": p.rev,
         "out": out.display().to_string(),
         "archive": archive_path.display().to_string(),
+        "report": report.display().to_string(),
         "keys": p.items.len(),
         "tables": tables,
+        "live_replayed_exactly": replay.live,
+        "as_stored": replay.as_stored.len(),
         "checks": "passed",
     });
-    (0, serde_json::to_string_pretty(&summary).unwrap_or_default())
+    Ok((store, summary))
 }
 
 #[cfg(test)]
