@@ -552,11 +552,15 @@ fn forge_queue_dir(loom: &Loom) -> std::path::PathBuf {
 async fn forge_batches(loom: &Loom) -> Vec<forge_rounds::Batch> {
     let dir = forge_queue_dir(loom);
     let mut open = std::collections::BTreeMap::new();
+    let mut ended = std::collections::BTreeMap::new();
+    let shown_closed = forge_rounds::CLOSED_SHOWN.to_string();
     for repo in forge_rounds::repos(&dir) {
         let shown = queue_text(loom, &["batch", "show", "--repo", &repo]).await;
-        open.insert(repo, shown);
+        open.insert(repo.clone(), shown);
+        let closed = queue_text(loom, &["batch", "show", "--repo", &repo, "--ended", &shown_closed]).await;
+        ended.insert(repo, closed);
     }
-    forge_rounds::read_all(&dir, &open)
+    forge_rounds::read_all(&dir, &open, &ended)
 }
 
 async fn queue_text(loom: &Loom, args: &[&str]) -> Result<String, String> {

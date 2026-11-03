@@ -4,7 +4,6 @@
 #
 # SHRINK-ONLY. A line leaves when its file asks `queue batch show` instead; nothing is ever
 # added for a NEW reader.
-spira-lc/src/legacy_files.rs
 spira/test-batcher-cut.sh
 spira/test-cockpit-queue-section.sh
 spira/test-config-compat-master-base.sh

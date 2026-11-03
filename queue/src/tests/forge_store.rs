@@ -220,6 +220,41 @@ fn batch_show_prints_the_store_record_and_refuses_when_the_store_cannot_say() {
 }
 
 #[test]
+fn batch_show_ended_lists_the_closed_forge_batches_on_the_store_and_the_archives_newest_first() {
+    let t = forge_world();
+    seed(&t, "deck-1", "armed", 900, Some("12"));
+    let mut abandoned = Kv::default();
+    for (k, v) in [("batch_id", "deck-0"), ("pr", "11"), ("opened", "800"), ("members", "sp-a:ta"), ("forge.phase", "armed"), ("reason", "red")] {
+        abandoned.push(k, v);
+    }
+    door(&t).cut_round("spira", "deck-0", "ABANDONED", &[("sp-a", "ta")], 800, Some(&abandoned));
+    let mut ended = abandoned.clone();
+    ended.remove("batch_id");
+    ended.lines.insert(0, ("batch_id".into(), "deck-2".into()));
+    ended.remove("pr");
+    ended.push("pr", "13");
+    ended.remove("opened");
+    ended.push("opened", "950");
+    ended.push("ended", "abandoned");
+    door(&t).cut_round("spira", "deck-2", "OPEN", &[("sp-a", "ta")], 950, Some(&ended));
+    door(&t).cut_round("spira", "spira-9", "ABANDONED", &[("sp-a", "ta")], 990, None);
+    fs::write(t.qfile("closed-pr7-20260901T000000Z"), "pr=7\nopened=100\nbranch=spira/queue/old\nreason=gone\n").unwrap();
+
+    assert_eq!(t.run(&["batch", "show", "--repo", "spira", "--ended", "5"]), 0, "{}", t.err());
+    let out = t.out();
+    let records: Vec<Kv> = out.split("\n\n").filter(|r| !r.trim().is_empty()).map(Kv::parse).collect();
+    let prs: Vec<_> = records.iter().map(|r| r.get("pr").unwrap_or("")).collect();
+    assert_eq!(prs, ["13", "11", "7"], "ended forge batches newest first, the open one and a local round left out: {out}");
+    assert_eq!(records[1].get("reason"), Some("red"));
+    t.io.out.borrow_mut().clear();
+    assert_eq!(t.run(&["batch", "show", "--repo", "spira", "--ended", "1"]), 0);
+    assert_eq!(t.out().split("\n\n").filter(|r| !r.trim().is_empty()).count(), 1);
+    door(&t).down.set(true);
+    assert_eq!(t.run(&["batch", "show", "--repo", "spira", "--ended", "5"]), 1);
+    assert!(t.err().contains("cannot read spira's ended batches"), "{}", t.err());
+}
+
+#[test]
 fn batch_show_carries_the_forge_state_file_as_forge_fields_while_the_batch_is_the_file() {
     let t = T::new(LandMode::Queue);
     t.open_record("batch_id=deck-1\npr=12\nmembers=sp-a:ta\n");

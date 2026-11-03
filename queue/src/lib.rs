@@ -102,7 +102,8 @@ pub fn dispatch(w: &World, cmd: &Cmd) -> i32 {
             },
         ),
         Cmd::BatchSweep { repo } => batch::batch_sweep(w, repo.as_deref()),
-        Cmd::BatchShow { repo } => batch::batch_show(w, repo.as_deref()),
+        Cmd::BatchShow { repo, ended: None } => batch::batch_show(w, repo.as_deref()),
+        Cmd::BatchShow { repo, ended: Some(n) } => batch::batch_show_ended(w, repo.as_deref(), *n),
         Cmd::Claim {
             repo,
             reason,
