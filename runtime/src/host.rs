@@ -6,11 +6,12 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tokio::sync::{mpsc, Semaphore};
+use tokio::sync::{mpsc, OwnedSemaphorePermit};
 
 use crate::engine::{Engine, Executor, Outcome, PendingEffect};
 use crate::event::{EffectSpec, EventKind};
 use crate::offload::{self, Offloaded, Pool, Spill};
+use crate::pools::{ClassPools, Deferred, EffectClass, PoolCaps};
 use crate::ports::Clock;
 use crate::wide::{Fields, WideSink};
 use crate::{Result, RuntimeError};
@@ -23,6 +24,11 @@ const BACKOFF_MAX: Duration = Duration::from_secs(2);
 pub trait EffectRunner: Send + Sync {
     /// Must be idempotent under `key`: a restart re-issues every effect that has no outcome.
     fn run(&self, key: &str, spec: &EffectSpec) -> std::result::Result<String, String>;
+
+    /// The effector class whose cap `spec` runs under.
+    fn class(&self, _spec: &EffectSpec) -> EffectClass {
+        EffectClass::Host
+    }
 }
 
 pub struct Submit {
@@ -85,8 +91,8 @@ fn run_turn(mut t: Turn) -> TurnOut {
 }
 
 /// Runs until `submissions` closes and no effect is in flight.
-pub async fn serve(engine: Engine, clock: Arc<dyn Clock>, runner: Arc<dyn EffectRunner>, pool: usize, submissions: mpsc::Receiver<Submit>) -> Result<()> {
-    serve_with(engine, clock, runner, pool, submissions, ServeOpts::default()).await
+pub async fn serve(engine: Engine, clock: Arc<dyn Clock>, runner: Arc<dyn EffectRunner>, caps: impl Into<PoolCaps>, submissions: mpsc::Receiver<Submit>) -> Result<()> {
+    serve_with(engine, clock, runner, caps, submissions, ServeOpts::default()).await
 }
 
 fn spill_record(s: &Spill) -> Fields {
@@ -109,14 +115,14 @@ pub async fn serve_with(
     engine: Engine,
     clock: Arc<dyn Clock>,
     runner: Arc<dyn EffectRunner>,
-    pool: usize,
+    caps: impl Into<PoolCaps>,
     mut submissions: mpsc::Receiver<Submit>,
     opts: ServeOpts,
 ) -> Result<()> {
     let workers = opts.pool.clone().unwrap_or_else(Pool::global);
     let busy = engine.busy();
     let max_sleep = opts.max_sleep_ms.map(Duration::from_millis);
-    let permits = Arc::new(Semaphore::new(pool.max(1)));
+    let pools = ClassPools::new(caps.into());
     let (done_tx, mut done_rx) = mpsc::unbounded_channel::<Done>();
     let mut in_flight: BTreeSet<String> = BTreeSet::new();
     let mut engine = Some(engine);
@@ -131,10 +137,13 @@ pub async fn serve_with(
             s.emit(&f); // loop-safe: try_send, drops when full
         }
     };
-    let spilled = |s: &Spill, backoff: &mut Duration, retry_at: &mut Instant| {
-        emit(spill_record(s));
+    let back_off = |backoff: &mut Duration, retry_at: &mut Instant| {
         *retry_at = Instant::now() + *backoff;
         *backoff = (*backoff * 2).min(BACKOFF_MAX);
+    };
+    let spilled = |s: &Spill, backoff: &mut Duration, retry_at: &mut Instant| {
+        emit(spill_record(s));
+        back_off(backoff, retry_at);
     };
     loop {
         if let Some(k) = &opts.kick {
@@ -211,8 +220,17 @@ pub async fn serve_with(
                 }
                 out.result?;
                 for p in out.launch {
-                    in_flight.insert(p.key.clone());
-                    launch_effect(&workers, &permits, &runner, &done_tx, clock.now_ms(), p);
+                    match pools.try_take(runner.class(&p.spec)) {
+                        Ok(permit) => {
+                            in_flight.insert(p.key.clone());
+                            launch_effect(&workers, permit, &runner, &done_tx, clock.now_ms(), p);
+                        }
+                        Err(d) => {
+                            emit(deferred_record(&p, &d, pools.deferred_total(d.class)));
+                            back_off(&mut backoff, &mut retry_at);
+                            dirty = true;
+                        }
+                    }
                 }
                 next_timer = out.next_timer_at;
                 engine = Some(out.engine);
@@ -234,12 +252,24 @@ pub async fn serve_with(
     }
 }
 
-fn launch_effect(workers: &Arc<Pool>, permits: &Arc<Semaphore>, runner: &Arc<dyn EffectRunner>, tx: &mpsc::UnboundedSender<Done>, now: u64, p: PendingEffect) {
-    let (workers, permits, runner, tx) = (workers.clone(), permits.clone(), runner.clone(), tx.clone());
+/// A class at its cap refused `p`. It stays pending in the engine and is offered again after the backoff.
+fn deferred_record(p: &PendingEffect, d: &Deferred, total: u64) -> Fields {
+    let mut f = Fields::new();
+    f.insert("unit".into(), "effect.deferred".into());
+    f.insert("task".into(), p.stream.0.as_str().into());
+    f.insert("effect".into(), p.spec.name.as_str().into());
+    f.insert("class".into(), d.class.name().into());
+    f.insert("class.in_use".into(), d.in_use.into());
+    f.insert("class.cap".into(), d.cap.into());
+    f.insert("class.deferred_total".into(), total.into());
+    f
+}
+
+fn launch_effect(workers: &Arc<Pool>, permit: OwnedSemaphorePermit, runner: &Arc<dyn EffectRunner>, tx: &mpsc::UnboundedSender<Done>, now: u64, p: PendingEffect) {
+    let (workers, runner, tx) = (workers.clone(), runner.clone(), tx.clone());
     let until = tokio::time::Instant::now() + Duration::from_millis(p.deadline_at.saturating_sub(now));
     tokio::spawn(async move {
         let outcome = async {
-            let Ok(Ok(permit)) = tokio::time::timeout_at(until, permits.acquire_owned()).await else { return Some(Outcome::TimedOut) };
             let (r, k, spec) = (runner, p.key.clone(), p.spec.clone());
             let mut h = match workers.offload("effect", Some(permit), move || r.run(&k, &spec)) {
                 Ok(h) => h,

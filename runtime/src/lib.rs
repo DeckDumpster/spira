@@ -13,6 +13,7 @@ pub mod journal;
 pub mod lease;
 pub mod marker;
 pub mod offload;
+pub mod pools;
 pub mod ports;
 pub mod scheduler;
 pub mod socket;
