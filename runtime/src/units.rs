@@ -463,7 +463,7 @@ impl UnitCompletions for ScriptedUnits {
 // SystemdUnits: the user manager over D-Bus, with unit-run's connection and signal tracker.
 
 #[cfg(target_os = "linux")]
-pub use systemd::{encode_call_body, start_transient_args, Arg, Bus, SystemdUnits};
+pub use systemd::{encode_args, encode_call_body, start_transient_args, Arg, Bus, SystemdUnits};
 
 #[cfg(target_os = "linux")]
 mod systemd {
@@ -558,39 +558,19 @@ mod systemd {
         }
     }
 
-    fn put_field(buf: &mut Vec<u8>, code: u8, sig: &str, s: &str) {
-        align(buf, 8);
-        buf.push(code);
-        put_sig(buf, sig);
-        put(buf, &Arg::S(s.into()));
-    }
-
-    /// A METHOD_CALL carrying `args`: the general form of unit-run's one-string `encode_call`.
-    pub fn encode_call_body(serial: u32, dest: &str, path: &str, iface: &str, member: &str, args: &[Arg]) -> Vec<u8> {
+    /// `args` marshalled: their signature and their body bytes.
+    pub fn encode_args(args: &[Arg]) -> (String, Vec<u8>) {
         let mut body = Vec::new();
         for a in args {
             put(&mut body, a);
         }
-        let sig: String = args.iter().map(Arg::sig).collect();
-        let mut fields = Vec::new();
-        put_field(&mut fields, 1, "o", path);
-        put_field(&mut fields, 2, "s", iface);
-        put_field(&mut fields, 3, "s", member);
-        put_field(&mut fields, 6, "s", dest);
-        if !sig.is_empty() {
-            align(&mut fields, 8);
-            fields.push(8);
-            put_sig(&mut fields, "g");
-            put_sig(&mut fields, &sig);
-        }
-        let mut m = vec![b'l', unit_run::dbus::METHOD_CALL, 0, 1];
-        m.extend_from_slice(&(body.len() as u32).to_le_bytes());
-        m.extend_from_slice(&serial.to_le_bytes());
-        m.extend_from_slice(&(fields.len() as u32).to_le_bytes());
-        m.extend_from_slice(&fields);
-        align(&mut m, 8);
-        m.extend_from_slice(&body);
-        m
+        (args.iter().map(Arg::sig).collect(), body)
+    }
+
+    /// A METHOD_CALL carrying `args`: the general form of unit-run's one-string `encode_call`.
+    pub fn encode_call_body(serial: u32, dest: &str, path: &str, iface: &str, member: &str, args: &[Arg]) -> Vec<u8> {
+        let (sig, body) = encode_args(args);
+        unit_run::dbus::encode_call_with(serial, dest, path, iface, member, &sig, &body)
     }
 
     fn prop(name: &str, v: Arg) -> Arg {
@@ -627,11 +607,8 @@ mod systemd {
 
     impl Bus for Conn {
         fn call(&mut self, dest: &str, path: &str, iface: &str, member: &str, args: &[Arg]) -> std::result::Result<Vec<Val>, String> {
-            match args {
-                [] => Conn::call(self, dest, path, iface, member, None),
-                [Arg::S(s)] => Conn::call(self, dest, path, iface, member, Some(s)),
-                _ => Err(format!("{member}: unit-run's Conn sends at most one string argument; a {} body needs Conn::call_body", args.iter().map(Arg::sig).collect::<String>())),
-            }
+            let (sig, body) = encode_args(args);
+            Conn::call_body(self, dest, path, iface, member, &sig, &body)
         }
 
         fn next_signal(&mut self, timeout: Duration) -> std::result::Result<Option<Msg>, String> {
@@ -1039,6 +1016,65 @@ mod tests {
             let u = SystemdUnits::new(FakeBus { calls: Arc::new(Mutex::new(vec![])), signals }, Arc::new(crate::ports::VirtualClock::new(0))).unwrap();
             assert_eq!(u.ran().unwrap(), vec![UnitRan { handle: UnitHandle::of("t", "k").unwrap(), exit: Exit::Code(0), duration_ms: 3_500 }]);
             assert!(u.ran().unwrap().is_empty());
+        }
+
+        /// A bus on a socket: answers EXTERNAL auth, then each of `n` calls with an empty
+        /// METHOD_RETURN, and hands back every call it decoded.
+        fn fake_bus(n: usize) -> (testkit::TempDir, String, std::thread::JoinHandle<Vec<Msg>>) {
+            use std::io::{Read, Write};
+            let dir = testkit::TempDir::new("units-bus");
+            let path = dir.join("bus");
+            let l = std::os::unix::net::UnixListener::bind(&path).unwrap();
+            let peer = std::thread::spawn(move || {
+                let (mut s, _) = l.accept().unwrap();
+                let mut line = vec![];
+                let mut b = [0u8; 1];
+                while !line.ends_with(b"\r\n") {
+                    s.read_exact(&mut b).unwrap();
+                    line.push(b[0]);
+                }
+                s.write_all(b"OK 0123456789abcdef\r\n").unwrap();
+                let mut begin = [0u8; 7];
+                s.read_exact(&mut begin).unwrap();
+                assert_eq!(&begin, b"BEGIN\r\n");
+                let mut seen = vec![];
+                for _ in 0..n {
+                    let mut head = [0u8; 16];
+                    s.read_exact(&mut head).unwrap();
+                    let body = u32::from_le_bytes(head[4..8].try_into().unwrap()) as usize;
+                    let fields = u32::from_le_bytes(head[12..16].try_into().unwrap()) as usize;
+                    let mut rest = vec![0u8; (16 + fields).div_ceil(8) * 8 + body - 16];
+                    s.read_exact(&mut rest).unwrap();
+                    let m = decode(&[head.to_vec(), rest].concat()).unwrap();
+                    let mut reply = vec![b'l', unit_run::dbus::METHOD_RETURN, 0, 1];
+                    reply.extend_from_slice(&0u32.to_le_bytes());
+                    reply.extend_from_slice(&1u32.to_le_bytes());
+                    reply.extend_from_slice(&8u32.to_le_bytes());
+                    reply.extend_from_slice(&[5, 1, b'u', 0]);
+                    reply.extend_from_slice(&m.serial.to_le_bytes());
+                    s.write_all(&reply).unwrap();
+                    seen.push(m);
+                }
+                seen
+            });
+            let path = path.to_string_lossy().into_owned();
+            (dir, path, peer)
+        }
+
+        #[test]
+        fn the_connection_carries_start_transient_units_four_arguments_to_the_bus() {
+            let (_dir, path, peer) = fake_bus(2);
+            let mut c = unit_run::dbus::Conn::connect(&path).unwrap();
+            let args = start_transient_args(&spec("czar-pass", "r7", &["/bin/czar-pass", "--pass"])).unwrap();
+            Bus::call(&mut c, "org.freedesktop.systemd1", "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "StartTransientUnit", &args).unwrap();
+            let seen = peer.join().unwrap();
+            assert_eq!(seen[0].member.as_deref(), Some("Hello"));
+            let m = &seen[1];
+            assert_eq!((m.kind, m.member.as_deref(), m.path.as_deref()), (METHOD_CALL, Some("StartTransientUnit"), Some("/org/freedesktop/systemd1")));
+            assert_eq!(m.body.len(), 4, "name, mode, properties, aux");
+            assert_eq!(m.body[0].as_str(), Some("spira-run-czar_2dpass-r7.service"));
+            assert_eq!(m.body[1].as_str(), Some("fail"));
+            assert!(m.body[2].dict().iter().any(|(k, _)| k == "ExecStart"));
         }
     }
 }

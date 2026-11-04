@@ -1597,6 +1597,7 @@ dependencies = [
  "serde",
  "serde_json",
  "socket2",
+ "testkit",
  "tokio",
  "unit-run",
 ]

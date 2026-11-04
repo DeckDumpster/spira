@@ -13,3 +13,6 @@ tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 unit-run = { path = "../unit-run" }
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
