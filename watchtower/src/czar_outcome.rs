@@ -121,8 +121,8 @@ impl Default for Cfg {
     }
 }
 
-/// `bdq list --label <label> --all --json --limit 0 --brief` — a read failure (bad db, `bdq`
-/// missing) yields an empty list, matching the bash's `|| _co_raw=""` -> `'[]'`.
+/// The label's beads (`content list --label <label> --all --json --limit 0 --brief`) joined to
+/// their lifecycle states — a read failure yields an empty list, matching the bash's `|| _co_raw=""` -> `'[]'`.
 pub fn query_beads(lc: &LcClient, label: &str) -> Vec<TriggerBead> {
     let beads = query_bd(lc, label);
     match lc_state::list() {
