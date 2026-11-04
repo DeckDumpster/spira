@@ -1,4 +1,4 @@
-//! [`Settler`] against the host: `bd`, the lifecycle machine, `git` and `systemctl`.
+//! [`Settler`] against the host: `bd`, the lifecycle machine, `git` and the `Units` port.
 
 
 use crate::decide::Scope;
@@ -13,6 +13,30 @@ pub struct RealSettler<'a> {
     pub home_repo: String,
     pub registry: spira_config::repos::Registry,
     pub release_sha: Option<String>,
+    /// The unit port the detector reads; `Err` says why there is none.
+    pub units: Result<Box<dyn runtime::units::Units>, String>,
+}
+
+/// What a unit's facts say of its detector: failed is firing, anything else quiet (what
+/// `systemctl is-failed` exited 0 and 1 for); no facts is an error.
+pub fn detector_of(unit: &str, facts: Result<runtime::units::UnitFacts, String>) -> Result<Detector, String> {
+    match facts?.state {
+        runtime::units::UnitState::Failed => Ok(Detector::Firing(format!("{unit} is failed"))),
+        _ => Ok(Detector::Quiet),
+    }
+}
+
+/// The host's unit port: the user manager over D-Bus where there is one.
+pub fn host_units() -> Result<Box<dyn runtime::units::Units>, String> {
+    #[cfg(target_os = "linux")]
+    {
+        let clock: std::sync::Arc<dyn runtime::ports::Clock> = std::sync::Arc::new(runtime::ports::WallClock);
+        runtime::units::SystemdUnits::connect(clock).map(|u| Box::new(u) as Box<dyn runtime::units::Units>).map_err(|e| format!("the user manager: {e}"))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err("no unit manager on this platform".into())
+    }
 }
 
 fn show(bd: &RealBd, db: &str, id: &str) -> Result<serde_json::Value, String> {
@@ -104,12 +128,8 @@ impl Settler for RealSettler<'_> {
         if ![".service", ".timer", ".socket", ".scope"].iter().any(|s| unit.ends_with(s)) {
             return Ok(Detector::NoProbe);
         }
-        let out = spira_config::bounded::bounded("systemctl").args(["--user", "is-failed", unit]).output().map_err(|e| format!("systemctl: {e}"))?;
-        match out.status.code() {
-            Some(0) => Ok(Detector::Firing(format!("{unit} is failed"))),
-            Some(1) => Ok(Detector::Quiet),
-            rc => Err(format!("systemctl is-failed exited {rc:?}")),
-        }
+        let units = self.units.as_ref().map_err(|e| format!("units: {e}"))?;
+        detector_of(unit, units.facts(&runtime::units::UnitHandle::named(unit)).map_err(|e| format!("units: {e}")))
     }
 
     fn close(&self, id: &str, evidence: &str) -> Result<(), String> {
@@ -143,6 +163,19 @@ pub fn release_sha_of(release: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// sp-ipwlic: the detector reads the unit's state through the port: failed fires, every
+    /// other state (absent included) is quiet, and no facts is an error, never quiet.
+    #[test]
+    fn the_detector_reads_failed_from_the_unit_port() {
+        use runtime::units::{UnitFacts, UnitState};
+        let at = |state| Ok(UnitFacts { state, ..UnitFacts::absent() });
+        assert!(matches!(detector_of("u.service", at(UnitState::Failed)), Ok(Detector::Firing(m)) if m == "u.service is failed"));
+        for quiet in [UnitState::Active, UnitState::Inactive, UnitState::Absent, UnitState::Activating] {
+            assert!(matches!(detector_of("u.service", at(quiet)), Ok(Detector::Quiet)));
+        }
+        assert!(detector_of("u.service", Err("bus down".into())).is_err());
+    }
 
     #[test]
     fn blocks_of_keeps_only_this_beads_blocks_edges() {

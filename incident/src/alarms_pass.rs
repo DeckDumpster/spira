@@ -144,6 +144,18 @@ impl Primary for MailPrimary {
     }
 }
 
+/// One store call over `client`, its answer as JSON: a call with no answer is exit -1 and an
+/// answer that is not JSON is a `cannot_tell` naming what it said instead.
+pub fn lc_json(client: &spira_config::lc_call::LcClient, args: &[String]) -> (i32, Value) {
+    match client.call(args) {
+        Ok(r) => {
+            let v = serde_json::from_str(r.out.trim()).unwrap_or_else(|_| json!({ "cannot_tell": format!("spira-lc answered non-JSON: {}", r.err.trim()) }));
+            (r.code, v)
+        }
+        Err(e) => (-1, json!({ "cannot_tell": e.to_string() })),
+    }
+}
+
 pub struct Ports<'a> {
     pub lc: &'a dyn Lc,
     pub primary: &'a dyn Primary,
@@ -720,6 +732,31 @@ pub fn floor_proposal(causal_map: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Scripted(Result<spira_config::lc_call::Reply, String>, std::sync::Mutex<Vec<Vec<String>>>);
+
+    impl spira_config::lc_call::Transport for Scripted {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<spira_config::lc_call::Reply, String> {
+            self.1.lock().unwrap().push(argv.to_vec());
+            self.0.clone()
+        }
+    }
+
+    /// sp-ipwlic: the alarms pass reaches the store through the client, with the program's
+    /// answer shapes kept: JSON out, non-JSON as cannot_tell, no answer as -1.
+    #[test]
+    fn lc_json_carries_the_clients_answer_and_its_failures() {
+        let reply = |code, out: &str| Ok(spira_config::lc_call::Reply { code, out: out.into(), err: String::new() });
+        let t = std::sync::Arc::new(Scripted(reply(0, "{\"rev\":\"4\"}\n"), Default::default()));
+        let c = spira_config::lc_call::LcClient::over(t.clone(), true);
+        assert_eq!(lc_json(&c, &argv(&["section", "snapshot"])), (0, json!({"rev": "4"})));
+        assert_eq!(*t.1.lock().unwrap(), vec![argv(&["section", "snapshot"])]);
+        let bad = spira_config::lc_call::LcClient::over(std::sync::Arc::new(Scripted(reply(2, "cannot tell"), Default::default())), true);
+        assert!(lc_json(&bad, &argv(&["section", "get", "x"])).1["cannot_tell"].is_string());
+        let down = spira_config::lc_call::LcClient::over(std::sync::Arc::new(Scripted(Err("not answering".into()), Default::default())), true);
+        let (code, v) = lc_json(&down, &argv(&["lock", "acquire"]));
+        assert_eq!((code, v["cannot_tell"].as_str()), (-1, Some("not answering")));
+    }
 
     #[test]
     fn the_floor_proposal_is_read_from_the_causal_maps_floor_table_or_is_none() {
