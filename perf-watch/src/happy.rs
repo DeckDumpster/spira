@@ -52,25 +52,47 @@ pub fn slowest_phase(exec_log: &str) -> Option<(String, u64)> {
         .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
 }
 
+/// What a pass does before any run, from the round state: `None` runs the scenario.
+pub fn gate(round_open: Result<bool, String>) -> Option<Outcome> {
+    match round_open {
+        Ok(false) => None,
+        Ok(true) => Some(Outcome::Skipped),
+        Err(e) => Some(Outcome::Failed(format!("round state unknown, run withheld: {e}"))),
+    }
+}
+
+/// The next move after run number `attempt` ended with `result` in `millis`.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Step {
+    Done(Outcome),
+    /// The fixture did not start and attempts remain: back off, then run again.
+    Retry,
+}
+
+pub fn judge(result: Result<String, String>, millis: u64, attempt: usize) -> Step {
+    match result {
+        Ok(log) => Step::Done(Outcome::Measured { millis, slowest: slowest_phase(&log) }),
+        Err(e) if is_fixture_failure(&e) && attempt < FIXTURE_ATTEMPTS => Step::Retry,
+        Err(e) if is_fixture_failure(&e) => Step::Done(Outcome::FixtureDown(format!("{e} (after {attempt} attempts)"))),
+        Err(e) => Step::Done(Outcome::Failed(e)),
+    }
+}
+
 pub fn measure(clock: &dyn Clock, sim: &mut dyn Sim) -> Outcome {
-    match sim.round_open() {
-        Ok(false) => {}
-        Ok(true) => return Outcome::Skipped,
-        Err(e) => return Outcome::Failed(format!("round state unknown, run withheld: {e}")),
+    if let Some(o) = gate(sim.round_open()) {
+        return o;
     }
     let mut attempt = 1;
     loop {
         let t0 = clock.now_ms();
         let r = sim.run();
         let millis = clock.now_ms().saturating_sub(t0);
-        match r {
-            Ok(log) => return Outcome::Measured { millis, slowest: slowest_phase(&log) },
-            Err(e) if is_fixture_failure(&e) && attempt < FIXTURE_ATTEMPTS => {
+        match judge(r, millis, attempt) {
+            Step::Done(o) => return o,
+            Step::Retry => {
                 attempt += 1;
                 sim.backoff();
             }
-            Err(e) if is_fixture_failure(&e) => return Outcome::FixtureDown(format!("{e} (after {attempt} attempts)")),
-            Err(e) => return Outcome::Failed(e),
         }
     }
 }

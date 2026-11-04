@@ -35,12 +35,12 @@ macro_rules! stub {
 pub(crate) use stub;
 
 pub static TASKS: &[Task] = &[
+    Task { name: watch_perf_happy::NAME, boot: watch_perf_happy::WatchPerfHappy::boot, cadence_ms: |_| watch_perf_happy::CADENCE_MS, effects: watch_perf_happy::EFFECTS, runners: &[(watch_perf_happy::OBSERVE, watch_perf_happy::observe), (watch_perf_happy::CHECKOUT, watch_perf_happy::checkout), (watch_perf_happy::TEARDOWN, watch_perf_happy::teardown), (watch_perf_happy::LOG, watch_perf_happy::log), (watch_perf_happy::HISTORY, watch_perf_happy::history)], keys: &[watch_perf_happy::KEYS], build: |_| watch_perf_happy::WatchPerfHappy::pinned().registration() },
     Task { name: watch_perf::NAME, boot: watch_perf::WatchPerf::boot, cadence_ms: |_| watch_perf::CADENCE_MS, effects: watch_perf::EFFECTS, runners: &[(watch_perf::OBSERVE, watch_perf::observe), (watch_perf::LOG, watch_perf::log), (watch_perf::SLOW_SAMPLE, watch_perf::slow_sample), (watch_perf::METRICS, watch_perf::metrics)], keys: &[watch_perf::KEYS], build: |_| watch_perf::WatchPerf::pinned().registration() },
 ];
 
 /// The family's rows, written from their contracts and not yet ported; see `tasks`.
 pub static PENDING: &[Task] = &[
-    Task { name: watch_perf_happy::NAME, boot: watch_perf_happy::WatchPerfHappy::boot, cadence_ms: |_| watch_perf_happy::CADENCE_MS, effects: watch_perf_happy::EFFECTS, runners: &[stub!(watch_perf_happy::OBSERVE), stub!(watch_perf_happy::CHECKOUT), stub!(watch_perf_happy::TEARDOWN), stub!(watch_perf_happy::LOG), stub!(watch_perf_happy::HISTORY)], keys: &[watch_perf_happy::KEYS], build: |_| watch_perf_happy::WatchPerfHappy::pinned().registration() },
     Task { name: watch_skew::NAME, boot: watch_skew::WatchSkew::boot, cadence_ms: |_| watch_skew::CADENCE_MS, effects: watch_skew::EFFECTS, runners: &[stub!(watch_skew::OBSERVE), stub!(watch_skew::ESCALATE), stub!(watch_skew::LOG), stub!(watch_skew::REFRESH)], keys: &[watch_skew::KEYS], build: |_| watch_skew::WatchSkew::pinned().registration() },
     Task { name: watch_refusals::NAME, boot: watch_refusals::WatchRefusals::boot, cadence_ms: |_| watch_refusals::CADENCE_MS, effects: watch_refusals::EFFECTS, runners: &[stub!(watch_refusals::OBSERVE), stub!(watch_refusals::FILE)], keys: &[watch_refusals::KEYS], build: |_| watch_refusals::WatchRefusals::pinned().registration() },
     Task { name: watch_runtime::NAME, boot: watch_runtime::WatchRuntime::boot, cadence_ms: |_| watch_runtime::CADENCE_MS, effects: watch_runtime::EFFECTS, runners: &[stub!(watch_runtime::OBSERVE), stub!(watch_runtime::FILE_BUMP), stub!(watch_runtime::METRICS), stub!(watch_runtime::LOG)], keys: &[watch_runtime::KEYS], build: |_| watch_runtime::WatchRuntime::pinned().registration() },
