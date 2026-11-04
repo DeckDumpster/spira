@@ -5,8 +5,8 @@
 //! `tasks::d::pattern` and tested through `tasks::d::acceptance`.
 //!
 //! Every row's runners are stubs until the task is ported, so every row waits in [`PENDING`];
-//! porting one moves it to [`TASKS`]. `inbox.append` is served by
-//! `tasks::SHARED`, and `unit.start` by family F's row, so neither appears here.
+//! porting one moves it to [`TASKS`]. `inbox.append` and the `unit.*` effects are served by
+//! `tasks::SHARED`, so none appears on a row here.
 
 use super::d::stub;
 use super::Task;

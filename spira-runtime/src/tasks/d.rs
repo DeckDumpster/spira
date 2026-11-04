@@ -4,8 +4,8 @@
 //! task's contract (`wiki/projects/spira/designs/tasks/<task>.md`).
 //!
 //! Every row's runners are stubs until the task is ported, so every row waits in [`PENDING`];
-//! porting one moves it to [`TASKS`]. `inbox.append` is served by
-//! `tasks::SHARED`, and `unit.start` / `unit.stop` by family F's row, so neither appears here.
+//! porting one moves it to [`TASKS`]. `inbox.append` and the `unit.*` effects are served by
+//! `tasks::SHARED`, so none appears on a row here.
 //!
 //! A calendar row's `cadence_ms` is its first elapse on a clock that starts at 0, which is when
 //! its boot tick arms the next one; the row table has no calendar cadence of its own yet.

@@ -90,6 +90,9 @@ pub struct Effects {
     pub enabled: OnceLock<String>,
     pub reconciling: AtomicBool,
     pub concierge_mail: Option<Arc<mail::env::Env>>,
+    /// The unit manager every `unit.*` effect runs on: `SystemdUnits` on Linux, `ProcessUnits`
+    /// elsewhere (chosen in `main.rs`), `ScriptedUnits` in tests.
+    pub units: Option<Arc<dyn runtime::units::Units>>,
 }
 
 /// The mail environment operator notes are sent under: no bd (a note needs no tracking bead, and an empty db keeps the mailer from launching one), and the repeat guard overridden because consecutive merges normalise to one subject.
@@ -229,6 +232,13 @@ impl Effects {
 }
 
 impl Effects {
+    /// One `unit.*` effect (`spec.name`) on the configured unit manager, through
+    /// `runtime::units::effect`, so the host and the simulator answer it the same way.
+    fn unit(&self, spec: &EffectSpec) -> Result<String, String> {
+        let units = self.units.as_deref().ok_or("no unit manager configured")?;
+        runtime::units::effect(units, &spec.name, &spec.input)
+    }
+
     fn ping(&self, spec: &EffectSpec) -> Result<String, String> {
         if self.heartbeat_url.is_empty() {
             return Ok("no heartbeat url configured".into());

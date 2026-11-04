@@ -11,7 +11,6 @@
 use std::collections::BTreeMap;
 
 use runtime::event::*;
-use runtime::units::{UNIT_START, UNIT_STOP};
 use serde::{Deserialize, Serialize};
 use spira_config::process::{cfg, cfg_parse};
 
@@ -30,9 +29,8 @@ pub mod trigger_warden;
 
 pub static TASKS: &[Task] = &[];
 
-/// The rows of this family not yet ported, in the design's catalogue order. `inbox.append` is
-/// served by `tasks::SHARED`. `unit.start` and `unit.stop` are emitted by both persona rows and
-/// belong in `tasks::SHARED` once a units runner exists; until then `persona.ops` carries them.
+/// The rows of this family not yet ported, in the design's catalogue order. `inbox.append` and
+/// the `unit.*` effects both persona rows emit are served by `tasks::SHARED`.
 pub static PENDING: &[Task] = &[
     Task {
         name: intake_gh::NAME,
@@ -99,8 +97,6 @@ pub static PENDING: &[Task] = &[
             (persona_ops::BRIEF, |_, _, _| unimplemented!("persona.ops.brief: not ported yet")),
             (persona_ops::LEDGER, |_, _, _| unimplemented!("persona.ops.ledger: not ported yet")),
             (persona_ops::CLEANUP, |_, _, _| unimplemented!("persona.ops.cleanup: not ported yet")),
-            (UNIT_START, |_, _, _| unimplemented!("unit.start: no units runner in the service yet")),
-            (UNIT_STOP, |_, _, _| unimplemented!("unit.stop: no units runner in the service yet")),
         ],
         keys: &[persona_ops::KEYS],
         build: |_| refuse(persona_ops::NAME, persona_ops::PersonaOps::from_cfg()).registration(),

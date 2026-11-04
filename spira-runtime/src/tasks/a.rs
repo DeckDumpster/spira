@@ -165,9 +165,8 @@ mod tests {
 
     #[test]
     fn every_pending_row_declares_each_effect_once_and_has_a_runner_for_each_unshared_one() {
-        // `inbox.append` is in `SHARED`; the Units port's `unit.*` effects are every unit-starting
-        // task's, so their runner joins `SHARED` with the port, not a row.
-        let shared: Vec<&str> = crate::tasks::SHARED.iter().map(|(n, _)| *n).chain(runtime::units::EFFECTS).collect();
+        // `inbox.append` and the Units port's `unit.*` effects are in `SHARED`, not on a row.
+        let shared: Vec<&str> = crate::tasks::SHARED.iter().map(|(n, _)| *n).collect();
         for t in PENDING {
             let mut names = t.effects.to_vec();
             names.sort();

@@ -16,6 +16,7 @@
 
 use runtime::event::{EventKind, Registration};
 use runtime::heartbeat::{self, Heartbeat};
+use runtime::units;
 
 use crate::watchers::*;
 use crate::{wake, Runner, Settings};
@@ -111,8 +112,15 @@ pub fn clashes(families: &[&[Task]]) -> Vec<String> {
     out
 }
 
-/// Effects more than one task emits.
-pub static SHARED: &[(&str, Runner)] = &[(INBOX_APPEND, |e, _, s| e.world.inbox_append(&s.input))];
+/// Effects more than one task emits: the inbox line, and the unit manager's four verbs
+/// (`runtime::units::EFFECTS`), each run on `Effects::units`.
+pub static SHARED: &[(&str, Runner)] = &[
+    (INBOX_APPEND, |e, _, s| e.world.inbox_append(&s.input)),
+    (units::UNIT_START, |e, _, s| e.unit(s)),
+    (units::UNIT_STOP, |e, _, s| e.unit(s)),
+    (units::UNIT_RESTART, |e, _, s| e.unit(s)),
+    (units::UNIT_FACTS, |e, _, s| e.unit(s)),
+];
 
 /// Every runner by effect name. A name owned twice keeps the first; `owners` shows the clash.
 pub fn routes() -> std::collections::BTreeMap<&'static str, Runner> {
@@ -253,8 +261,48 @@ mod tests {
         assert!(missing.is_empty(), "declared effects with no runner: {missing:?}");
         let twice: Vec<_> = owners().into_iter().filter(|(_, n)| *n > 1).collect();
         assert!(twice.is_empty(), "effects with more than one runner: {twice:?}");
-        let orphan: Vec<&&str> = routes.keys().filter(|n| !declared.contains(n)).collect();
+        let orphan: Vec<&&str> = routes.keys().filter(|n| !declared.contains(n) && !units::EFFECTS.contains(n)).collect();
         assert!(orphan.is_empty(), "runners no task declares: {orphan:?}");
+    }
+
+    #[test]
+    fn every_pending_row_declares_each_effect_once_with_one_runner_for_each() {
+        let shared: Vec<&str> = SHARED.iter().map(|(n, _)| *n).collect();
+        for t in pending() {
+            let mut names = t.effects.to_vec();
+            names.sort();
+            names.dedup();
+            assert_eq!(names.len(), t.effects.len(), "{}: an effect is declared twice", t.name);
+            for e in t.effects.iter().filter(|e| !shared.contains(e)) {
+                assert_eq!(t.runners.iter().filter(|(n, _)| n == e).count(), 1, "{}: {e} needs exactly one runner on its row", t.name);
+            }
+            let stray: Vec<&str> = t.runners.iter().map(|(n, _)| *n).filter(|n| !t.effects.contains(n) || shared.contains(n)).collect();
+            assert!(stray.is_empty(), "{}: runners for undeclared or shared effects: {stray:?}", t.name);
+        }
+    }
+
+    #[test]
+    fn the_unit_effects_are_shared_and_run_on_the_configured_unit_manager() {
+        use runtime::host::EffectRunner;
+        use std::sync::Arc;
+        for e in units::EFFECTS {
+            assert_eq!(SHARED.iter().filter(|(n, _)| *n == e).count(), 1, "{e} is one shared runner");
+            assert!(pending().all(|t| t.runners.iter().all(|(n, _)| *n != e)), "{e} has a runner on a row as well");
+        }
+        let start = |input: &str| runtime::EffectSpec { name: units::UNIT_START.into(), input: input.into(), deadline_ms: 1 };
+        let spec = serde_json::to_string(&units::UnitSpec { task: "cert.full".into(), key: "k1".into(), argv: vec!["true".into()], env: vec![], cwd: None }).unwrap();
+        assert_eq!(crate::Effects::default().run("k", &start(&spec)), Err("no unit manager configured".into()), "no backend is refused, not guessed");
+        let scripted = Arc::new(units::ScriptedUnits::new(Arc::new(runtime::ports::VirtualClock::new(0))));
+        scripted.script("cert.full", 1_000, units::Exit::Code(0));
+        let fx = crate::Effects { units: Some(scripted.clone()), ..crate::Effects::default() };
+        let handle: units::UnitHandle = serde_json::from_str(&fx.run("k", &start(&spec)).unwrap()).unwrap();
+        assert_eq!(handle, units::UnitHandle::of("cert.full", "k1").unwrap());
+        let facts = runtime::EffectSpec { name: units::UNIT_FACTS.into(), input: serde_json::to_string(&handle).unwrap(), deadline_ms: 1 };
+        let facts: units::UnitFacts = serde_json::from_str(&fx.run("k", &facts).unwrap()).unwrap();
+        assert_eq!(facts.state, units::UnitState::Active);
+        let stop = runtime::EffectSpec { name: units::UNIT_STOP.into(), input: serde_json::to_string(&handle).unwrap(), deadline_ms: 1 };
+        assert_eq!(fx.run("k", &stop), Ok(String::new()));
+        assert!(scripted.calls().iter().any(|c| c.starts_with("start ")) && scripted.calls().iter().any(|c| c.starts_with("stop ")), "{:?}", scripted.calls());
     }
 
     #[test]
