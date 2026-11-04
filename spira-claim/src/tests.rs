@@ -55,8 +55,30 @@ fn rune_home_is_spira_home_then_the_declared_release_and_refuses_naming_both() {
 #[test]
 fn no_call_site_reads_the_unfiltered_store() {
     let src = include_str!("store.rs");
-    assert_eq!(src.matches("c.arg(\"list\")").count(), 1, "one spira-lc list site");
-    assert!(src.contains("c.arg(\"list\").args(filter)"));
+    assert_eq!(src.matches("once(\"list\")").count(), 1, "one spira-lc list site");
+    assert!(src.contains("once(\"list\").chain(filter.iter().copied())"));
+}
+
+/// An in-process caller's environment answers every read on the dispatch path; this
+/// process's own variables are never consulted.
+#[test]
+fn dispatch_in_reads_the_callers_environment_not_the_process() {
+    let mut stdin = std::io::empty();
+    let lookup = |k: &str| match k {
+        "SPIRA_POISON_AT" => Some("7".to_string()),
+        "SPIRA_DWARF" => Some("dwarf-x".to_string()),
+        "BEADS_ACTOR" => Some("  ".to_string()),
+        _ => None,
+    };
+    let env = Env { stdin: &mut stdin, config: Config::default(), lookup: &lookup };
+    let a = Args::parse(&["--bead".into(), "sp-a".into(), "--cause".into(), "c".into()]).unwrap();
+    assert_eq!(unpoison_opts(&a, &env).unwrap().poison_at, 7);
+    assert!(own_dwarf(&env));
+    assert_eq!(env_nonempty(&env, "BEADS_ACTOR"), None, "blank is unset");
+    let none = |_: &str| None;
+    let env = Env { stdin: &mut stdin, config: Config::default(), lookup: &none };
+    assert!(!own_dwarf(&env));
+    assert_eq!(unpoison_opts(&a, &env).unwrap().poison_at, Thresholds::default().poison_at);
 }
 
 #[test]
