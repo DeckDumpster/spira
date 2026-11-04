@@ -35,7 +35,17 @@ macro_rules! stubs {
     };
 }
 
-pub static TASKS: &[Task] = &[];
+pub static TASKS: &[Task] = &[
+    Task {
+        name: sweep_target::NAME,
+        boot: sweep_target::SweepTarget::boot,
+        cadence_ms: |_| sweep_target::CADENCE_MS,
+        effects: sweep_target::EFFECTS,
+        runners: &[(sweep_target::OBSERVE, |e, _, _| sweep_target::observe(&e.world.run_dir)), (sweep_target::REMOVE_TARGET, |_, _, s| sweep_target::remove_target(&s.input)), (sweep_target::REMOVE_FOREIGN_RUN, |_, _, s| sweep_target::remove_foreign_run(&s.input))],
+        keys: &[sweep_target::KEYS],
+        build: |_| sweep_target::SweepTarget::from_cfg().registration(),
+    },
+];
 
 /// Family A's rows, built from their contracts and waiting for their ports.
 pub static PENDING: &[Task] = &[
@@ -137,15 +147,6 @@ pub static PENDING: &[Task] = &[
         runners: stubs!(landing: OBSERVE, FETCH, DELIVER_PR_MERGED, DELIVER_PR_CLOSED, DELIVER_BY_CONTENT, REOPEN, EVENT, NOTE, BUMP_REQUEUE, ASK, REBASE, CONFINE, FORCE_PUSH, PR_CREATE, PR_AUTOMERGE),
         keys: &[landing::KEYS],
         build: |_| landing::Landing::from_cfg().registration(),
-    },
-    Task {
-        name: sweep_target::NAME,
-        boot: sweep_target::SweepTarget::boot,
-        cadence_ms: |_| sweep_target::CADENCE_MS,
-        effects: sweep_target::EFFECTS,
-        runners: stubs!(sweep_target: OBSERVE, REMOVE_TARGET, REMOVE_FOREIGN_RUN),
-        keys: &[sweep_target::KEYS],
-        build: |_| sweep_target::SweepTarget::from_cfg().registration(),
     },
     Task {
         name: submission_provision::NAME,

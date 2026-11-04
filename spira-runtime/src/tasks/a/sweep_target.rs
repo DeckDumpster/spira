@@ -164,9 +164,104 @@ pub struct Snapshot {
 pub struct Carry {}
 
 /// Stale foreign runs, then, below the floor only, idle targets oldest first until the deficit
-/// is covered (one target of overshoot allowed).
-pub fn decide(_carry: &Carry, _snap: &Snapshot) -> (Carry, Vec<Act>) {
-    crate::not_ported!(NAME)
+/// is covered (one target of overshoot allowed). The order and the cover are testenv's own
+/// `reap::pick_idle`; the staleness rule is `foreign::is_stale`.
+pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
+    let stale_age = std::time::Duration::from_secs(STALE_RUN_AGE_SECS);
+    let mut acts: Vec<Act> = snap
+        .foreign_stale
+        .iter()
+        .filter(|r| testenv::foreign::is_stale(Some(std::time::Duration::from_secs(r.age_secs)), stale_age, r.busy))
+        .map(|r| Act::new(REMOVE_FOREIGN_RUN, r.path.clone()).with_input(serde_json::to_string(r).unwrap_or_default()))
+        .collect();
+    let Some(free) = snap.free_bytes else { return (carry.clone(), acts) };
+    if free >= snap.floor_bytes {
+        return (carry.clone(), acts);
+    }
+    let items: Vec<testenv::reap::IdleTarget> = snap.candidates.iter().map(|c| testenv::reap::IdleTarget { id: c.id.clone(), idle_secs: c.idle_secs, busy: c.busy, bytes: c.bytes }).collect();
+    for i in testenv::reap::pick_idle(&items, snap.idle_secs_min, Some(snap.floor_bytes - free)) {
+        let c = &snap.candidates[i];
+        acts.push(Act::new(REMOVE_TARGET, c.target.clone()).with_input(serde_json::to_string(&Removal { candidate: c.clone(), idle_secs_min: snap.idle_secs_min }).unwrap_or_default()));
+    }
+    (carry.clone(), acts)
+}
+
+/// `remove_target`'s input: the candidate, and the idle threshold it is re-checked against.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Removal {
+    pub candidate: Candidate,
+    pub idle_secs_min: u64,
+}
+
+// ---------------------------------------------------------------------------------------------
+// Runners. Every read and removal is testenv's library, in this process: no `df`, no child.
+
+const GIB: u64 = 1 << 30;
+
+fn pinned_u64(key: &str) -> Result<u64, String> {
+    let v = spira_config::process::cfg(key)?;
+    v.trim().parse().map_err(|_| format!("{key} must be a non-negative integer, got {v:?}"))
+}
+
+/// The snapshot: free space under `$SPIRA_RUN/worktree` by `statvfs`, and, only when it is
+/// below the floor, the candidates with their idle age, busy-ness and size; the stale foreign
+/// runs every tick. An idle tick above the floor walks no target at all.
+pub fn observe(run: &std::path::Path) -> Result<String, String> {
+    let worktrees = run.join("worktree");
+    let floor_bytes = pinned_u64("SPIRA_REAP_DISK_FLOOR_GIB")? * GIB;
+    let idle_secs_min = pinned_u64("SPIRA_REAP_IDLE_SECS")?;
+    let free_bytes = testenv::reap::free_bytes(&worktrees);
+    let mut candidates = vec![];
+    if free_bytes.is_some_and(|f| f < floor_bytes) {
+        for (id, dir, t) in testenv::reap::candidates(&worktrees) {
+            let Some(idle_secs) = testenv::reap::idle_age_secs(&dir) else { continue };
+            let busy = idle_secs >= idle_secs_min && testenv::busy::worktree_busy(&dir);
+            candidates.push(Candidate { id, target: t.display().to_string(), idle_secs, busy, bytes: testenv::reap::size_of(&t) });
+        }
+    }
+    let stale_age = std::time::Duration::from_secs(STALE_RUN_AGE_SECS);
+    let foreign_stale = testenv::foreign::run_dirs(&run.join("foreign-cache"))
+        .into_iter()
+        .filter(|(_, age)| testenv::foreign::is_stale(*age, stale_age, false))
+        .map(|(path, age)| ForeignRun { busy: testenv::busy::worktree_busy(&path), bytes: testenv::reap::size_of(&path), age_secs: age.map_or(0, |a| a.as_secs()), path: path.display().to_string() })
+        .collect();
+    serde_json::to_string(&Snapshot { free_bytes, floor_bytes, idle_secs_min, candidates, foreign_stale }).map_err(|e| e.to_string())
+}
+
+/// Remove one idle target, re-checking at run time that it is neither busy nor younger than
+/// the threshold. Answers the bytes freed.
+pub fn remove_target(input: &str) -> Result<String, String> {
+    let r: Removal = serde_json::from_str(input).map_err(|e| format!("{REMOVE_TARGET}: bad input: {e}"))?;
+    let t = std::path::Path::new(&r.candidate.target);
+    let dir = t.parent().ok_or_else(|| format!("{REMOVE_TARGET}: {} has no worktree", t.display()))?;
+    match testenv::reap::idle_age_secs(dir) {
+        Some(a) if a >= r.idle_secs_min => {}
+        _ => return Err(format!("{REMOVE_TARGET}: {} is no longer idle — refused", dir.display())),
+    }
+    if testenv::busy::worktree_busy(dir) {
+        return Err(format!("{REMOVE_TARGET}: {} is busy — refused", dir.display()));
+    }
+    testenv::reap::remove_target(t).map(|n| n.to_string())
+}
+
+/// Remove one stale foreign run, re-checking that it is still stale and unbusy. Answers the
+/// bytes freed.
+pub fn remove_foreign_run(input: &str) -> Result<String, String> {
+    let r: ForeignRun = serde_json::from_str(input).map_err(|e| format!("{REMOVE_FOREIGN_RUN}: bad input: {e}"))?;
+    let path = std::path::Path::new(&r.path);
+    if !path.exists() {
+        return Ok("0".into());
+    }
+    let age = std::fs::metadata(path).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+    if !testenv::foreign::is_stale(age, std::time::Duration::from_secs(STALE_RUN_AGE_SECS), testenv::busy::worktree_busy(path)) {
+        return Err(format!("{REMOVE_FOREIGN_RUN}: {} is busy or young — refused", path.display()));
+    }
+    let bytes = testenv::reap::size_of(path);
+    if testenv::foreign::remove_run_dir(path) {
+        Ok(bytes.to_string())
+    } else {
+        Err(format!("{REMOVE_FOREIGN_RUN}: {} could not be removed", path.display()))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

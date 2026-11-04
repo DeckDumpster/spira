@@ -136,9 +136,10 @@ pub fn registered(name: &str) -> Option<&'static super::super::Task> {
     super::super::all().find(|t| t.name == name)
 }
 
-/// The row named `name` pending in family A until its port lands.
+/// The row named `name` in family A: in `PENDING` until its port lands, in `TASKS` after, so
+/// the contract checks on the row hold across the move.
 pub fn pending(name: &str) -> &'static super::super::Task {
-    super::PENDING.iter().find(|t| t.name == name).unwrap_or_else(|| panic!("{name} has no row in tasks::a::PENDING"))
+    super::PENDING.iter().chain(super::TASKS).find(|t| t.name == name).unwrap_or_else(|| panic!("{name} has no row in tasks::a::PENDING or tasks::a::TASKS"))
 }
 
 /// Panics with the quarantine message when a handler on `stream` panicked or was refused. A

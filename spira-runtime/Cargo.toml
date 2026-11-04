@@ -31,6 +31,7 @@ store-view = { path = "../store-view" }
 spira-otel = { path = "../spira-otel" }
 ring = "0.17"
 tsd = { path = "../tsd" }
+testenv = { path = "../testenv" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
