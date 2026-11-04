@@ -50,9 +50,9 @@ pub fn pr_preflight(gh: &dyn Gh, repo: &Path, head: &str, second_pr_why: &str) -
     );
     let Some(Value::Array(open)) = listed.ok().then(|| parse(&listed.stdout)).flatten() else {
         if listed.code == 127 {
-            eprintln!("forge pr-create: gh is not on PATH (or SPIRA_GH does not resolve) — cannot check this installation's open PRs on {}, refusing to open {head}", repo.display());
+            warn!("forge pr-create: gh is not on PATH (or SPIRA_GH does not resolve) — cannot check this installation's open PRs on {}, refusing to open {head}", repo.display());
         } else {
-            eprintln!("forge pr-create: cannot list this installation's open PRs on {} (gh exited {}) — refusing to open {head}", repo.display(), listed.code);
+            warn!("forge pr-create: cannot list this installation's open PRs on {} (gh exited {}) — refusing to open {head}", repo.display(), listed.code);
         }
         return fail(vec![String::new()]);
     };
@@ -70,14 +70,14 @@ pub fn pr_preflight(gh: &dyn Gh, repo: &Path, head: &str, second_pr_why: &str) -
     if !open.is_empty() {
         let why = second_pr_why.trim();
         if why.is_empty() {
-            eprintln!(
+            warn!(
                 "forge pr-create: refusing {head}: this installation already has open PR {} on {} — one open PR per repo; set QUEUE_SECOND_PR_CONSIDERED=\"<why>\" to open a second",
                 open.join(", "),
                 repo.display()
             );
             return fail(vec![String::new()]);
         }
-        eprintln!(
+        warn!(
             "forge pr-create: SECOND_PR_CONSIDERED opening {head} beside {}: {why}",
             open.join(", ")
         );
@@ -1641,7 +1641,7 @@ pub fn run_cancel(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
 /// be destroyed at once rather than by the reaper's age cutoff.
 pub fn force_cancel(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
     if run_id.is_empty() {
-        eprintln!("forge: force-cancel: run id required");
+        warn!("forge: force-cancel: run id required");
         return fail(vec![]);
     }
     let jobs = gh.call(
@@ -1668,9 +1668,9 @@ pub fn force_cancel(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
     labels.sort();
     labels.dedup();
     if labels.is_empty() {
-        eprintln!("forge: force-cancel: run {run_id} - no runner label found in its jobs");
+        warn!("forge: force-cancel: run {run_id} - no runner label found in its jobs");
     } else {
-        eprintln!("forge: force-cancel: run {run_id} provisioned runner(s) - destroy explicitly, do not wait for the reaper:\n{}", labels.join("\n"));
+        warn!("forge: force-cancel: run {run_id} provisioned runner(s) - destroy explicitly, do not wait for the reaper:\n{}", labels.join("\n"));
     }
     let r = gh.call(
         Some(repo),
@@ -1730,7 +1730,7 @@ pub fn rerun_refusal(gh: &dyn Gh, repo: &Path, run_id: &str) -> Option<String> {
 
 pub fn workflow_rerun(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
     if let Some(why) = rerun_refusal(gh, repo, run_id) {
-        eprintln!("forge: workflow-rerun refused: {why}");
+        warn!("forge: workflow-rerun refused: {why}");
         return Out {
             code: 3,
             lines: vec![],
@@ -1763,7 +1763,7 @@ pub fn pr_comment(gh: &dyn Gh, repo: &Path, pr_n: &str, body: &str) -> Out {
 
 pub fn dispatch(gh: &dyn Gh, repo: &Path, workflow: &str, ref_: &str, suites: &str) -> Out {
     if ref_.is_empty() {
-        eprintln!("forge: dispatch: ref required");
+        warn!("forge: dispatch: ref required");
         return fail(vec![]);
     }
     let r = gh.call(
@@ -1824,7 +1824,7 @@ pub fn ami_runs(gh: &dyn Gh, repo: &Path) -> Out {
 
 pub fn ami_dispatch(gh: &dyn Gh, repo: &Path, ref_: &str) -> Out {
     if ref_.is_empty() {
-        eprintln!("forge: ami-dispatch: ref required");
+        warn!("forge: ami-dispatch: ref required");
         return fail(vec![]);
     }
     let r = gh.call(
@@ -1842,7 +1842,7 @@ pub fn ami_dispatch(gh: &dyn Gh, repo: &Path, ref_: &str) -> Out {
 /// the forge cannot be read, so an unreadable forge is never taken for "no build".
 pub fn ami_result(gh: &dyn Gh, repo: &Path, branch: &str) -> Out {
     if branch.is_empty() {
-        eprintln!("forge: ami-result: branch required");
+        warn!("forge: ami-result: branch required");
         return fail(vec![]);
     }
     let r = gh.call(
@@ -1916,7 +1916,7 @@ pub fn fail_lines(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, run_id: &str, suite
 
 pub fn branch_protect(gh: &dyn Gh, repo: &Path, base: &str, app_id: &str) -> Out {
     if base.is_empty() {
-        eprintln!("forge: branch-protect: base branch required");
+        warn!("forge: branch-protect: base branch required");
         return fail(vec![]);
     }
     let body = format!(

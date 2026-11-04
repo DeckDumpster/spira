@@ -32,13 +32,14 @@ fn run(repo: Option<&Path>, args: &[&str], input: Option<&[u8]>, merge_stderr: b
     let gh = match spira_gh() {
         Ok(g) => g,
         Err(e) => {
-            eprintln!("forge: {e}");
+            warn!("forge: {e}");
             return GhOut {
                 code: -1,
                 stdout: Vec::new(),
             };
         }
     };
+    // EXTERNAL: gh, under timeout
     let mut c = Command::new("timeout");
     c.arg(gh_timeout()).arg(gh).args(args);
     if let Some(r) = repo {
@@ -105,6 +106,7 @@ impl Proc for RealProc {
             Ok(e) => e,
             Err(e) => return (2, format!("forge: {e}").into_bytes()),
         };
+        // EXTERNAL: python3 (the artifact-zip reader) and gh api
         let mut c = spira_config::bounded::bounded(program);
         c.envs(envs);
         c.args(args);
