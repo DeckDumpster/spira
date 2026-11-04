@@ -13,6 +13,7 @@ pub mod io;
 pub mod names;
 pub mod reach;
 pub mod select;
+pub mod shell;
 pub mod timing;
 
 /// Exit status of a refusal: the selector could not compute a selection (NO_VERDICT at the

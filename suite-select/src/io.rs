@@ -103,7 +103,7 @@ pub fn select_diff(
     let changes = diff_changes(g, repo, base, head)?;
     let mut fns = |file: &str| -> Vec<String> {
         match (g.diff_u0(repo, base, head, file), g.show(repo, head, file)) {
-            (Some(d), Some(t)) => select::changed_functions(&d, &t),
+            (Some(d), Some(t)) => select::changed_scope(&d, &t),
             _ => vec![],
         }
     };

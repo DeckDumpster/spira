@@ -150,6 +150,89 @@ pub fn words_of(text: &str) -> Vec<String> {
     set.into_iter().map(str::to_string).collect()
 }
 
+/// Words that run the word after them: a wrapper's own flags and numeric arguments are skipped
+/// and the next word is the command.
+const WRAPPERS: &[&str] = &[
+    "if", "then", "else", "elif", "do", "while", "until", "!", "time", "command", "exec", "run", "env", "nice",
+    "ionice", "sudo", "xargs", "timeout", "flock", "stdbuf", "setsid", "nohup", "builtin", "eval", "watch",
+];
+
+fn trim_word(w: &str) -> &str {
+    w.trim_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'))
+}
+
+fn is_assignment(w: &str) -> bool {
+    w.split_once('=').is_some_and(|(k, _)| {
+        !k.is_empty() && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') && !k.as_bytes()[0].is_ascii_digit()
+    })
+}
+
+/// What a suite can INVOKE (over-broad-scopes #6, sp-ipwlic): the command word of each
+/// pipeline segment, past assignments and wrappers (`timeout 5 bead`, `command -v mail`); the
+/// basename of every path-shaped word (`"$ROOT/target/debug/bead"`, `"$BIN/mail-x"`); the word
+/// after a bare variable in command position (`"$SPIRA" queue`); the words a `for` loop
+/// iterates; and `--bin <name>`. A binary name inside a string, a JSON key or an assertion's
+/// prose is not an invocation — matching those as words selected ~131 suites for a `bead/`
+/// change. The parse is deliberately loose toward selecting: segments split on every `|`,
+/// `&`, `;`, `(`, `)`, `{`, `}` and backtick, quoted or not.
+pub fn invocations_of(text: &str) -> Vec<String> {
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    for line in text.lines().filter(|l| !l.trim_start().starts_with('#')) {
+        for w in line.split_whitespace() {
+            if w.contains('/') {
+                let base = trim_word(w.rsplit('/').next().unwrap_or(""));
+                if !base.is_empty() {
+                    out.insert(base.to_string());
+                }
+            }
+        }
+        let toks: Vec<&str> = line.split_whitespace().collect();
+        for (i, t) in toks.iter().enumerate() {
+            if *t == "--bin" {
+                if let Some(n) = toks.get(i + 1) {
+                    out.insert(trim_word(n).to_string());
+                }
+            }
+        }
+        for seg in line.split(['|', '&', ';', '(', ')', '{', '}', '`']) {
+            let words: Vec<&str> = seg.split_whitespace().collect();
+            if words.first() == Some(&"for") {
+                if let Some(at) = words.iter().position(|w| *w == "in") {
+                    out.extend(words[at + 1..].iter().map(|w| trim_word(w).to_string()).filter(|w| !w.is_empty()));
+                }
+                continue;
+            }
+            let mut i = 0;
+            let mut after_wrapper = false;
+            while i < words.len() {
+                let w = words[i];
+                if is_assignment(w) || WRAPPERS.contains(&w) {
+                    after_wrapper = true;
+                    i += 1;
+                    continue;
+                }
+                if after_wrapper && (w.starts_with('-') || w.bytes().all(|b| b.is_ascii_digit() || b == b's' || b == b'.')) {
+                    i += 1;
+                    continue;
+                }
+                break;
+            }
+            let Some(cmd) = words.get(i) else { continue };
+            let name = trim_word(cmd.rsplit('/').next().unwrap_or(cmd));
+            if !name.is_empty() {
+                out.insert(name.to_string());
+            }
+            if cmd.trim_matches('"').starts_with('$') && !cmd.contains('/') {
+                if let Some(next) = words.get(i + 1) {
+                    out.insert(trim_word(next).to_string());
+                }
+            }
+        }
+    }
+    out.remove("");
+    out.into_iter().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

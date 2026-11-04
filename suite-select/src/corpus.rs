@@ -17,8 +17,12 @@ pub struct Suite {
     pub tier: Option<Tier>,
     /// `# selects-on:` events (`added`, `mode`).
     pub selects_on: Vec<String>,
-    /// Words of the non-comment lines: what the suite can invoke.
+    /// Words of the non-comment lines: the shell functions it can call.
     pub words: Vec<String>,
+    /// What it invokes ([`crate::reach::invocations_of`]): reach matches only these.
+    pub invokes: Vec<String>,
+    /// Tokens with `.` kept, so a script it runs (`queue.sh`) is one token.
+    pub tokens: Vec<String>,
 }
 
 impl Suite {
@@ -49,6 +53,8 @@ impl Suite {
             tier,
             selects_on: header::selects_on_of(text),
             words: crate::reach::words_of(text),
+            invokes: crate::reach::invocations_of(text),
+            tokens: crate::shell::tokens_of(text).into_iter().collect(),
         })
     }
 
@@ -67,13 +73,16 @@ pub fn is_suite_file(name: &str) -> bool {
 pub struct Corpus {
     /// Sorted by name (bytes).
     pub suites: Vec<Suite>,
+    /// The directory's shell scripts, for function-level reach into `lib.sh`/`conf.sh`; empty
+    /// (nothing narrows) for a corpus built in memory.
+    pub shell: crate::shell::ShellGraph,
 }
 
 impl Corpus {
     pub fn new(mut suites: Vec<Suite>) -> Corpus {
         suites.sort_by(|a, b| a.name.cmp(&b.name));
         suites.dedup_by(|a, b| a.name == b.name);
-        Corpus { suites }
+        Corpus { suites, shell: Default::default() }
     }
 
     pub fn names(&self) -> Vec<String> {
@@ -121,7 +130,9 @@ impl Corpus {
                 .map_err(|e| Refusal(format!("cannot read suite {}: {e}", p.display())))?;
             suites.push(Suite::parse(n, &String::from_utf8_lossy(&bytes))?);
         }
-        Ok(Corpus::new(suites))
+        let mut c = Corpus::new(suites);
+        c.shell = crate::shell::ShellGraph::load(dir);
+        Ok(c)
     }
 }
 

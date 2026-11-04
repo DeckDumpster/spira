@@ -108,10 +108,9 @@ fn changes(env: &GateEnv, g: &dyn Git, base: &str, head: &str) -> Result<Vec<Cha
 /// `SPIRA_GATE_SUITES=off`: only the suites whose `# covers:` (file part) names a changed
 /// file that matches `SPIRA_CERTIFY_ALWAYS_COVERS`.
 fn carve_out(env: &GateEnv, g: &dyn Git, base: &str, head: &str) -> Result<GateOut, Fail> {
-    let crit: Vec<String> = changes(env, g, base, head)?
+    let crit: Vec<Change> = changes(env, g, base, head)?
         .into_iter()
-        .map(|c| c.path)
-        .filter(|p| env.always_covers.iter().any(|pat| case_match(pat, p)))
+        .filter(|c| env.always_covers.iter().any(|pat| case_match(pat, &c.path)))
         .collect();
     if crit.is_empty() {
         return Ok(GateOut {
@@ -120,23 +119,36 @@ fn carve_out(env: &GateEnv, g: &dyn Git, base: &str, head: &str) -> Result<GateO
         });
     }
     let corpus = Corpus::load(&env.suite_dir)?;
+    // A change inside some of lib.sh's functions selects only the suites that reach them
+    // (over-broad-scopes #6); a file list has no diff to place, so it narrows nothing.
+    let fns: Vec<Vec<String>> = crit
+        .iter()
+        .map(|c| match (&env.files, g.diff_u0(&env.repo, base, head, &c.path), g.show(&env.repo, head, &c.path)) {
+            (None, Some(d), Some(t)) => select::changed_scope(&d, &t),
+            _ => vec![],
+        })
+        .collect();
     let mut suites: Vec<String> = corpus
         .suites
         .iter()
         .filter(|s| {
             s.covers.iter().flatten().any(|tok| {
-                let f = tok.split('#').next().unwrap_or("");
-                !f.is_empty() && crit.iter().any(|c| case_match(f, c))
+                let (f, func) = tok.split_once('#').map_or((tok.as_str(), None), |(f, n)| (f, Some(n)));
+                !f.is_empty()
+                    && crit.iter().zip(&fns).any(|(c, fns)| {
+                        case_match(f, &c.path) && (func.is_some() || select::whole_file_claim_reached(&corpus, s, c, fns))
+                    })
             })
         })
         .map(|s| s.name.clone())
         .collect();
     suites.sort();
+    let names: Vec<&str> = crit.iter().map(|c| c.path.as_str()).collect();
     Ok(GateOut {
         suites,
         log: vec![format!(
             "suite-select gate: SPIRA_GATE_SUITES=off but the diff touches {} — running its covering suite(s) anyway",
-            crit.join(" ")
+            names.join(" ")
         )],
     })
 }
@@ -221,12 +233,16 @@ pub fn run(env: &GateEnv, g: &dyn Git, base: &str, head: &str) -> Result<GateOut
         let cands: Vec<&corpus::Suite> = covered.iter().filter_map(|n| corpus.get(n)).collect();
         let cut = budget::fill(&budget::rank(&cands, &p90, &env.caps), suite_budget, env.width);
         log.extend(cut.log);
+        // law-a-budget-is-a-cutoff, law-a-local-green-names-what-it-missed (over-broad-scopes
+        // #6, sp-ipwlic): every suite here covers the change, so one that does not fit is never
+        // cut silently — a green over the rest would stand for suites nobody ran. Refuse, and
+        // name every suite that did not fit.
         if !cut.dropped.is_empty() {
-            log.push(format!(
-                "suite-select gate: TRUNCATED — {} selected suite(s) did not fit the budget and were not run here: {}",
+            return Err(Fail::Refused(Refusal(format!(
+                "suite-select gate: {} suite(s) covering this change do not fit the {suite_budget:.0}s suite budget and are not cut silently: {} — narrow the change, or run them where the budget allows",
                 cut.dropped.len(),
                 cut.dropped.join(" ")
-            ));
+            ))));
         }
         kept = cut.selected;
     }

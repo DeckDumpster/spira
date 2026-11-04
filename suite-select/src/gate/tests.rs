@@ -203,30 +203,41 @@ fn the_budget_cuts_most_specific_first_and_never_cuts_an_ejected_suite() {
     let refs: Vec<(&str, &str)> = suites.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
     let d = dir("budget", &refs);
     let g = git_changing("spira/lib.sh");
-    let o = run(&genv(&d.0, &[("SPIRA_GATE_BUDGET", "6")]), &g, "main", "br").unwrap();
-    assert_eq!(o.suites, ["test-s1.sh", "test-s2.sh", "test-s3.sh"]);
-    assert!(o.log.iter().any(|l| l.contains("dropped test-s5.sh")));
-    assert!(o.log.iter().any(|l| l.contains("TRUNCATED") && l.contains("test-s5.sh")));
-    let o = run(
-        &genv(&d.0, &[("SPIRA_GATE_BUDGET", "6"), ("SPIRA_GATE_EJECTED_SUITES", "test-s5.sh")]),
-        &g,
-        "main",
-        "br",
-    )
-    .unwrap();
-    assert_eq!(o.suites, ["test-s1.sh", "test-s2.sh", "test-s3.sh", "test-s5.sh"]);
-    // Width divides.
+    // Width divides: all five fit.
     let o = run(&genv(&d.0, &[("SPIRA_GATE_BUDGET", "6"), ("SPIRA_BATCH_MAXPAR", "2")]), &g, "main", "br").unwrap();
     assert_eq!(o.suites.len(), 5);
-    // A pinned tier cap is what an unmeasured suite costs.
     let o = run(
-        &genv(&d.0, &[("SPIRA_GATE_BUDGET", "6"), ("SPIRA_TIER_BUDGET_T1_MS", "1500")]),
+        &genv(&d.0, &[("SPIRA_GATE_BUDGET", "6"), ("SPIRA_BATCH_MAXPAR", "2"), ("SPIRA_GATE_EJECTED_SUITES", "test-s5.sh")]),
         &g,
         "main",
         "br",
     )
     .unwrap();
-    assert_eq!(o.suites, ["test-s1.sh", "test-s2.sh"]);
+    assert_eq!(o.suites.len(), 5, "an ejected suite is added, never ranked");
+}
+
+/// law-a-budget-is-a-cutoff, law-a-local-green-names-what-it-missed (over-broad-scopes #6,
+/// sp-ipwlic): a covering suite that does not fit the budget is never silently cut — the
+/// selection refuses and names every suite it would have dropped, so a green gate never stands
+/// for suites it did not run.
+#[test]
+fn law_a_budget_is_a_cutoff_and_law_a_local_green_names_what_it_missed_the_gate_refuses_rather_than_dropping_a_covering_suite() {
+    let mut suites: Vec<(String, String)> = Vec::new();
+    for i in 1..=5 {
+        let mut toks = vec!["spira/lib.sh".to_string()];
+        toks.extend((2..=i).map(|j| format!("spira/filler-{j}.sh")));
+        suites.push((format!("test-s{i}.sh"), format!("# covers: {}\n", toks.join(" "))));
+    }
+    let refs: Vec<(&str, &str)> = suites.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    let d = dir("budget-refuse", &refs);
+    let g = git_changing("spira/lib.sh");
+    let e = run(&genv(&d.0, &[("SPIRA_GATE_BUDGET", "6")]), &g, "main", "br").unwrap_err();
+    let Fail::Refused(Refusal(m)) = e else { panic!("{e:?}") };
+    assert!(m.contains("test-s4.sh") && m.contains("test-s5.sh"), "names every suite it could not fit: {m}");
+    assert!(!m.contains("test-s1.sh"), "names only the ones that did not fit: {m}");
+    // A pinned tier cap is what an unmeasured suite costs; still a refusal, never a cut.
+    let e = run(&genv(&d.0, &[("SPIRA_GATE_BUDGET", "6"), ("SPIRA_TIER_BUDGET_T1_MS", "1500")]), &g, "main", "br").unwrap_err();
+    assert!(matches!(e, Fail::Refused(_)), "{e:?}");
 }
 
 // ------------------------------------------------------------------ failing closed
@@ -320,17 +331,20 @@ fn the_selector_plans_against_the_suites_share_not_the_whole_budget() {
         std::fs::write(run_dir.join("tsd/suite-timing.jsonl"), rows(setup)).unwrap();
         let mut e = vec![("SPIRA_RUN", r.as_str()), ("SPIRA_GATE_BUDGET", "100")];
         e.extend_from_slice(extra);
-        run(&genv(&d.0, &e), &g, "main", "br").unwrap()
+        run(&genv(&d.0, &e), &g, "main", "br")
     };
     // measured setup 20s: the suites get 80s, a 70s suite fits
-    let o = sel(20, &[]);
+    let o = sel(20, &[]).unwrap();
     assert_eq!(o.suites, ["test-m.sh"]);
     assert!(o.log.iter().any(|l| l.contains("the suites get 80s of the 100s budget (setup P90 20s measured")), "{:?}", o.log);
-    // measured setup 40s: 60s left, it does not
-    assert!(sel(40, &[]).suites.is_empty());
+    // measured setup 40s: 60s left, it does not — a refusal naming it, never a silent cut
+    let refused = |r: Result<GateOut, Fail>| match r {
+        Err(Fail::Refused(Refusal(m))) => m,
+        other => panic!("{other:?}"),
+    };
+    assert!(refused(sel(40, &[])).contains("test-m.sh"));
     // a measured setup above the share is capped at it (testenv cuts setup there): 90% → 10s left
-    let o = sel(95, &[("SPIRA_TESTENV_SETUP_SHARE", "90")]);
-    assert!(o.log.iter().any(|l| l.contains("the suites get 10s")), "{:?}", o.log);
+    assert!(refused(sel(95, &[("SPIRA_TESTENV_SETUP_SHARE", "90")])).contains("10s suite budget"));
     // no measurement: the whole share is reserved
     let e = genv(&d.0, &[("SPIRA_GATE_BUDGET", "300")]);
     assert_eq!(suite_budget(&e, None).0, 150.0);

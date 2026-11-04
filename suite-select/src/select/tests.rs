@@ -294,3 +294,71 @@ fn a_change_to_a_crate_selects_the_suite_that_runs_a_binary_depending_on_it() {
     let with = run(&c, &m(&["a/src/lib.rs"]), &o).unwrap();
     assert_eq!(with.suites, ["test-s.sh"]);
 }
+
+/// Over-broad-scopes #6 (sp-ipwlic): reach selects a suite that INVOKES a reached binary, not
+/// one whose strings merely contain its name as a word. `bead`, `mail`, `queue` and `gate` are
+/// ordinary words; a change to `bead/` selected ~131 suites by word match.
+#[test]
+fn reach_matches_invocations_not_bare_words() {
+    let t = testkit::TempDir::new("suite-select-reach-inv");
+    let p = t.path();
+    std::fs::write(p.join("Cargo.toml"), "[workspace]\nmembers = [\"bead\"]\n").unwrap();
+    std::fs::create_dir_all(p.join("bead/src")).unwrap();
+    std::fs::write(p.join("bead/Cargo.toml"), "[package]\nname = \"bead\"\n").unwrap();
+    std::fs::write(p.join("bead/src/main.rs"), "").unwrap();
+    let c = Corpus::new(vec![
+        Suite::parse("test-cmd.sh", "# covers: spira/a.sh\nout=\"$(bead show sp-1)\"\n").unwrap(),
+        Suite::parse("test-pipe.sh", "# covers: spira/b.sh\nprintf x | timeout 5 bead list\n").unwrap(),
+        Suite::parse("test-path.sh", "# covers: spira/c.sh\nB=\"$ROOT/target/debug/bead\"\n\"$B\" x\n").unwrap(),
+        Suite::parse("test-for.sh", "# covers: spira/d.sh\nfor t in mail bead; do command -v \"$t\"; done\n").unwrap(),
+        Suite::parse("test-prose.sh", "# covers: spira/e.sh\necho \"the bead is closed\"\nis \"a bead row\" 1 1\n").unwrap(),
+        Suite::parse("test-json.sh", "# covers: spira/f.sh\nprintf '{\"bead\":\"%s\"}' x > f\n").unwrap(),
+    ]);
+    let o = Options { reach: crate::reach::Reach::load(p).unwrap(), ..nofallback() };
+    let s = run(&c, &m(&["bead/src/lib.rs"]), &o).unwrap();
+    let mut got = s.suites.clone();
+    got.sort();
+    assert_eq!(got, ["test-cmd.sh", "test-for.sh", "test-path.sh", "test-pipe.sh"], "prose and JSON keys are not invocations");
+}
+
+/// Over-broad-scopes #6 (sp-ipwlic): a change inside one function of `spira/lib.sh` selects
+/// only the suites that reach that function — directly, through another lib function that
+/// calls it, or through a script that calls it — not all 83 that name the file. A change to
+/// top-level code, or one the diff cannot place, still selects every suite that names it.
+#[test]
+fn a_lib_sh_function_change_selects_only_the_suites_that_reach_the_function() {
+    let t = testkit::TempDir::new("suite-select-libfn");
+    let d = t.path().join("spira");
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("lib.sh"), "x=1\nfoo() {\n  echo foo\n}\nbar() {\n  echo bar\n}\nbaz() {\n  foo; echo baz\n}\n").unwrap();
+    std::fs::write(d.join("helper.sh"), ". lib.sh\nfoo\n").unwrap();
+    for (n, body) in [
+        ("test-a.sh", "foo\n"),
+        ("test-b.sh", "bar\n"),
+        ("test-c.sh", "baz\n"),
+        ("test-d.sh", "\"$HERE/helper.sh\"\n"),
+        ("test-e.sh", "echo nothing of lib\n"),
+    ] {
+        std::fs::write(d.join(n), format!("# covers: spira/lib.sh\n{body}")).unwrap();
+    }
+    let c = Corpus::load(&d).unwrap();
+    let mut foo_changed = |f: &str| if f == "spira/lib.sh" { vec!["foo".to_string()] } else { vec![] };
+    let s = select(&c, &m(&["spira/lib.sh"]), &mut foo_changed, &Buckets::default(), &nofallback()).unwrap();
+    let mut got = s.suites.clone();
+    got.sort();
+    assert_eq!(got, ["test-a.sh", "test-c.sh", "test-d.sh"], "{:?}", s.log);
+    let mut top = |_: &str| vec!["foo".to_string(), TOP_LEVEL.to_string()];
+    let s = select(&c, &m(&["spira/lib.sh"]), &mut top, &Buckets::default(), &nofallback()).unwrap();
+    assert_eq!(s.suites.len(), 5, "a top-level change reaches every suite naming the file");
+    let s = select(&c, &m(&["spira/lib.sh"]), &mut no_fns, &Buckets::default(), &nofallback()).unwrap();
+    assert_eq!(s.suites.len(), 5, "an unplaceable diff narrows nothing");
+}
+
+#[test]
+fn changed_scope_names_top_level_and_deletions() {
+    let head = "#!/bin/bash\nfoo() {\n  echo a\n}\nglobal=1\nbar() {\n  echo b\n}\n";
+    assert_eq!(changed_scope("@@ -3 +3 @@\n", head), ["foo"]);
+    assert_eq!(changed_scope("@@ -5 +5 @@\n", head), [TOP_LEVEL]);
+    assert_eq!(changed_scope("@@ -4 +3,0 @@\n", head), ["foo"], "a line deleted inside foo");
+    assert_eq!(changed_scope("@@ -6 +5,0 @@\n", head), [TOP_LEVEL], "a deletion between functions");
+}
