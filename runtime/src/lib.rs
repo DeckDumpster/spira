@@ -18,6 +18,7 @@ pub mod ports;
 pub mod scheduler;
 pub mod socket;
 pub mod taskrig;
+pub mod units;
 pub mod wide;
 
 pub use engine::{Engine, Executor, Outcome, PendingEffect};
