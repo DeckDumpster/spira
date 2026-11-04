@@ -45,6 +45,7 @@ impl Programs {
 
 /// `systemctl --user is-active <unit>` through `ctl`.
 pub fn is_active(proc_: &dyn Proc, ctl: &str, unit: &str) -> UnitState {
+    // FORK-EDGE: needs Units start/facts carrying systemd-run properties; this seam is shared with the sim harness (LAUNCH_SEAM)
     let spec = ProcSpec {
         prog: ctl.into(),
         args: vec!["--user".into(), "is-active".into(), unit.into()],
@@ -131,6 +132,7 @@ pub fn start(
         Ok(u) => u,
         Err(text) => return Launched::Failed { text },
     };
+    // FORK-EDGE: needs Units start/facts carrying systemd-run properties; this seam is shared with the sim harness (LAUNCH_SEAM)
     let spec = ProcSpec {
         prog: l.programs.run.clone(),
         args: l.argv(&unit, repo, batch, lease_token, slot),

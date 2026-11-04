@@ -36,3 +36,4 @@ reconciler-engine = { path = "../reconciler-engine" }
 round-controller = { path = ".", features = ["sim"] }
 spira-lc = { path = "../spira-lc" }
 testkit = { path = "../testkit" }
+forge = { path = "../forge" }

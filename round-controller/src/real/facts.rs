@@ -102,6 +102,7 @@ impl Facts for RealFacts {
     }
 
     fn open_batch(&self, repo: &str) -> Result<Option<String>, String> {
+        // FORK-EDGE: needs the store projection in a crate round-controller can depend on (spira-runtime → install → release → round-controller is a cycle)
         let args = ["batch", "show", "--repo", repo].map(String::from).to_vec();
         match self.run(&self.queue, args, QUEUE_DEADLINE)? {
             (Some(0), out, _) if out.trim().is_empty() => Ok(None),
@@ -120,6 +121,7 @@ impl Facts for RealFacts {
         let args = ["list", "--state", "SUBMITTED", "--repo", repo]
             .map(String::from)
             .to_vec();
+        // FORK-EDGE: cutover-check reads spira-lc list through its Proc seam (the check's own test double); move it to LcClient with the check
         match self.run(&self.spira_lc, args, LC_DEADLINE)? {
             (Some(0), out, _) => serde_json::from_str::<Vec<serde_json::Value>>(out.trim())
                 .map(|v| v.len())

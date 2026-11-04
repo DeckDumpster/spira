@@ -184,6 +184,7 @@ impl Acts for Live<'_> {
     }
     fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
         let reason = format!("Sift: identical patch (patch-id) to {keeper}.");
+        // FORK-EDGE: unserved verb close (the spira-lc CLI answers it; the socket does not)
         spira_config::lifecycle_row::close_with(&self.env.lc_bin, id, &reason, "sift", Some(keeper))
     }
     fn pass(&mut self, id: &str, tip: &str) -> Result<(), String> {
@@ -236,11 +237,31 @@ fn run(cmd: &mut Command, what: &str) -> Result<String, String> {
 }
 
 fn lcq(env: &Env, args: &[&str]) -> Result<String, String> {
-    let mut cmd = Command::new("timeout");
-    cmd.arg(env.lc_timeout.to_string())
-        .arg(&env.lc_bin)
-        .args(args);
-    run(&mut cmd, "spira-lc")
+    let client = spira_config::lc_call::LcClient::for_bin(&env.lc_bin)?
+        .within(std::time::Duration::from_secs(env.lc_timeout));
+    lc_answer(client.call(args))
+}
+
+/// An answer as the `spira-lc` child's was read: its stdout when it applied; otherwise its
+/// exit and the last line it said.
+fn lc_answer(
+    r: Result<spira_config::lc_call::Reply, spira_config::lc_call::LcError>,
+) -> Result<String, String> {
+    let r = r.map_err(|e| format!("spira-lc: {e}"))?;
+    if r.code != 0 {
+        let said = if r.err.trim().is_empty() { &r.out } else { &r.err };
+        let last = said.lines().last().unwrap_or("").trim();
+        return Err(format!(
+            "spira-lc exited {}{}",
+            r.code,
+            if last.is_empty() {
+                String::new()
+            } else {
+                format!(": {last}")
+            }
+        ));
+    }
+    Ok(r.out)
 }
 
 fn parsed(text: &str, what: &str) -> Result<Value, String> {
@@ -515,6 +536,7 @@ fn bd_show_text(env: &Env, id: &str) -> Result<String, String> {
 /// `queue batch show --repo <repo>`: the repository's open forge batch record, as `key=value`
 /// lines; nothing when none is open.
 fn batch_show(env: &Env, repo: &str) -> Result<String, String> {
+    // FORK-EDGE: needs the store projection (spira_runtime::store) in a crate round-controller can depend on — spira-runtime → install → release → round-controller is a cycle
     let mut cmd = Command::new("timeout");
     cmd.arg(env.lc_timeout.to_string())
         .arg(&env.queue_bin)
@@ -663,6 +685,7 @@ fn lc_sifted(env: &Env, id: &str, tip: &str, out: &mut dyn Write) -> Result<(), 
 /// The evidence a send-back stands on, written on the bead before the GateRed.
 fn bead_note(env: &Env, id: &str, text: &str) -> Result<(), String> {
     // batch-job: bead.sh amend is a bead-store write that takes as long as the store does
+    // FORK-EDGE: bead.sh amend is the operator tool (it also mails the dwarf at work on the bead); no library entry does both
     let mut cmd = Command::new("bash");
     cmd.arg(env.home.join("bead.sh"))
         .args(["amend", id, "--note", text])

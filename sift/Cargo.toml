@@ -20,6 +20,7 @@ spira-otel = { path = "../spira-otel" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+forge = { path = "../forge" }
 
 [profile.release]
 opt-level = "z"

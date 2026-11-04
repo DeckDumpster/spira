@@ -50,6 +50,7 @@ impl Spawn for SysSpawn {
         let mut cmd = match &spec.scope {
             Some(unit) => {
                 // batch-job: a round pass runs as long as its VM does; the runner's deadlines end it
+                // FORK-EDGE: needs a Units scope start (a property-carrying scope whose process stays this one's child, piped stdout)
                 let mut c = Command::new("systemd-run");
                 c.args(["--user", "--scope", "--quiet", "--unit", unit]);
                 for prop in &spec.scope_props {
@@ -59,6 +60,7 @@ impl Spawn for SysSpawn {
                 c
             }
             // batch-job: a round pass runs as long as its VM does; the runner's deadlines end it
+            // FORK-EDGE: machine leg — the program the pass names (round-vm, testenv)
             None => Command::new(&spec.prog),
         };
         cmd.args(&spec.args)

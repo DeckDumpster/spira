@@ -282,3 +282,12 @@ pub fn parse_stacked_id(subject: &str, own: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod fork_fence {
+    #[test]
+    fn sift_starts_no_spira_child_that_is_not_a_named_fork_edge() {
+        let got = forge::fork_scan::scan(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
+        assert!(got.is_empty(), "unmarked children:\n{}", got.join("\n"));
+    }
+}
