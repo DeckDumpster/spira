@@ -40,6 +40,7 @@ pub struct RealBd {
 
 impl RealBd {
     fn cmd(&self) -> Command {
+        // FORK-EDGE: content store write (label/note/create/set-state/dep); its reads (label list, show) are unserved verb content
         Command::new(&self.bdq)
     }
 

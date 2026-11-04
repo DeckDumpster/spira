@@ -11,6 +11,9 @@ spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
 strand = { path = "../strand" }
 
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
 [[bin]]
 name = "groomer"
 path = "src/main.rs"

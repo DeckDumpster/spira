@@ -1,11 +1,11 @@
-//! The boundary to `all_partition_members` and the lifecycle hold verb (in-process, via the
-//! `strand` crate), and to `bump_poison_cleared`/`poison_asked_clear` and the repo lookups
-//! through the `bash -c '. "$LIB"; <func> "$@"'` seam, shared with callers this crate does
-//! not own. Production shells out for real; tests use a recording fake.
+//! The boundary to `all_partition_members` (in-process, via the `strand` crate), the repo
+//! lookups (`spira_config::repos`), config (`spira_config::process`, the one door), the
+//! poison bookkeeping lib.sh's `bump_poison_cleared`/`poison_asked_clear` did, and the
+//! lifecycle hold verbs. No shell is sourced; tests use a recording fake.
 
 use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// One persona's claim predicate: the labels a bead must carry and the labels that exclude it.
 #[derive(Clone, Debug, Default)]
@@ -27,7 +27,7 @@ pub trait Seam {
     fn bump_poison_cleared(&self, id: &str, cause: &str) -> Result<(), String>;
     /// `poison_asked_clear <id>`.
     fn poison_asked_clear(&self, id: &str) -> Result<(), String>;
-    /// A resolved `SPIRA_*` config key, read after sourcing conf.sh/lib.sh. Empty if unset.
+    /// A declared `SPIRA_*` config key; an undeclared one is an error, never empty.
     fn conf(&self, key: &str) -> Result<String, String>;
     /// `all_partition_members` — every open/in_progress bead id across every partition
     /// this roster covers, deduplicated, one per line.
@@ -45,15 +45,31 @@ pub trait Seam {
     fn lc_unhold(&self, id: &str, kind: &str) -> Result<(), String>;
 }
 
+/// A config read: the key's declared value, or why it has none.
+pub type CfgFn = Box<dyn Fn(&str) -> Result<String, String>>;
+/// One `spira-claim` verb (argv without the program name); its outcome is not read.
+pub type ClaimFn = Box<dyn Fn(&[String])>;
+
 pub struct LibSeam {
     pub lib_sh: PathBuf,
     registry: OnceCell<spira_config::repos::Registry>,
     strand_cfg: OnceCell<strand::config::Config>,
+    cfg: CfgFn,
+    claim: ClaimFn,
 }
 
 impl LibSeam {
     pub fn new(lib_sh: PathBuf) -> LibSeam {
-        LibSeam { lib_sh, registry: OnceCell::new(), strand_cfg: OnceCell::new() }
+        let claim: ClaimFn = Box::new(|argv: &[String]| {
+            // FORK-EDGE: needs spira-claim's write-event as a library call (spira_claim::cli::dispatch, owned elsewhere)
+            let _ = spira_config::bounded::bounded("spira-claim").args(argv).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        });
+        LibSeam::with(lib_sh, Box::new(spira_config::process::cfg), claim)
+    }
+
+    /// [`new`](Self::new) with the config door and the `spira-claim` verbs supplied.
+    pub fn with(lib_sh: PathBuf, cfg: CfgFn, claim: ClaimFn) -> LibSeam {
+        LibSeam { lib_sh, registry: OnceCell::new(), strand_cfg: OnceCell::new(), cfg, claim }
     }
 
     /// `strand::config::Config`, resolved once per process exactly as `strand`'s own
@@ -79,29 +95,6 @@ impl LibSeam {
             spira_config::repos::Registry::from_env(std::env::vars().collect(), &home)
         })
     }
-
-    fn run(&self, args: &[&str]) -> Result<String, String> {
-        let script = r#". "$0" >/dev/null 2>&1 || exit 97; "$@""#;
-        // batch-job: runs a gate, build or forge script that takes as long as its work
-        let o = Command::new("bash")
-            .arg("-c")
-            .arg(script)
-            .arg(&self.lib_sh)
-            .args(args)
-            // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
-            // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-            .envs(spira_config::release_env::child_path_env_for_process()?)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .output()
-            .map_err(|e| format!("lib.sh {}: {e}", args.join(" ")))?;
-        if !o.status.success() {
-            return Err(format!("lib.sh {} exited {}", args.join(" "), o.status.code().unwrap_or(-1)));
-        }
-        Ok(String::from_utf8_lossy(&o.stdout).into_owned())
-    }
-
 }
 
 impl Seam for LibSeam {
@@ -118,28 +111,29 @@ impl Seam for LibSeam {
     }
 
     fn bump_poison_cleared(&self, id: &str, cause: &str) -> Result<(), String> {
-        self.run(&["bump_poison_cleared", id, cause]).map(|_| ())
+        // lib.sh's `_bump_write_event`: an empty id writes nothing, and the write's own
+        // outcome is never the caller's failure; only an unresolvable store is.
+        if id.is_empty() {
+            return Ok(());
+        }
+        let db = (self.cfg)("SPIRA_DB")?;
+        let cause = if cause.is_empty() { "unrecorded" } else { cause };
+        (self.claim)(&["write-event", id, "poison.cleared", cause, "--db", &db].map(String::from));
+        Ok(())
     }
 
     fn poison_asked_clear(&self, id: &str) -> Result<(), String> {
-        self.run(&["poison_asked_clear", id]).map(|_| ())
+        // `spira-claim ask-clear`: the asked marker under $SPIRA_RUN/poison-asked, removed
+        // best-effort (a missing marker is already clear).
+        let run = (self.cfg)("SPIRA_RUN")?;
+        if !id.is_empty() {
+            let _ = std::fs::remove_file(Path::new(&run).join("poison-asked").join(id));
+        }
+        Ok(())
     }
 
     fn conf(&self, key: &str) -> Result<String, String> {
-        let script = format!(r#". "$0" >/dev/null 2>&1 || exit 97; printf '%s' "${{{key}:-}}""#);
-        // batch-job: runs a gate, build or forge script that takes as long as its work
-        let o = Command::new("bash")
-            .arg("-c")
-            .arg(script)
-            .arg(&self.lib_sh)
-            .envs(spira_config::release_env::child_path_env_for_process()?)
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| format!("lib.sh conf {key}: {e}"))?;
-        if !o.status.success() {
-            return Err(format!("lib.sh conf {key} exited {}", o.status.code().unwrap_or(-1)));
-        }
-        Ok(String::from_utf8_lossy(&o.stdout).into_owned())
+        (self.cfg)(key)
     }
 
     fn all_partition_members(&self) -> Result<String, String> {
@@ -152,6 +146,7 @@ impl Seam for LibSeam {
         // needs lib.sh sourced at all. `bdq state <id> repo` inherits this process's own
         // SPIRA_DB/SPIRA_BD exactly as the bash shim's `command bdq "$@"` did; `state` is
         // not a create, so it never touches the repo-label fence's registry build either.
+        // FORK-EDGE: unserved verb content (bdq state <id> repo is a content-store read)
         let out = spira_config::bounded::bounded("bdq").arg("state").arg(id).arg("repo").stdin(Stdio::null()).stderr(Stdio::null()).output();
         let name = match out {
             Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
@@ -174,10 +169,12 @@ impl Seam for LibSeam {
     }
 
     fn lc_held_poison(&self, id: &str) -> bool {
+        // FORK-EDGE: unserved verb held
         spira_config::bounded::bounded("spira-lc").args(["held", id, "poison"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
     }
 
     fn lc_unhold(&self, id: &str, kind: &str) -> Result<(), String> {
+        // FORK-EDGE: unserved verb unhold
         let st = spira_config::bounded::bounded("spira-lc").args(["unhold", id, kind, "groomer"]).stdin(Stdio::null()).stdout(Stdio::null()).status().map_err(|e| format!("spira-lc unhold: {e}"))?;
         if st.success() { Ok(()) } else { Err(format!("spira-lc unhold {id} {kind} exited {}", st.code().unwrap_or(-1))) }
     }
@@ -189,6 +186,59 @@ pub fn locate_home(env_home: Option<&str>, env_release: Option<&str>) -> Option<
     match env_home.filter(|h| !h.is_empty()) {
         Some(h) => Some(PathBuf::from(h)),
         None => spira_config::release_env::release_root(env_release).ok().map(|r| r.join("spira")),
+    }
+}
+
+#[cfg(test)]
+mod lib_seam_tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    fn seam(log: Rc<RefCell<Vec<Vec<String>>>>) -> LibSeam {
+        seam_in(log, PathBuf::from("/nonexistent/run"))
+    }
+
+    fn seam_in(log: Rc<RefCell<Vec<Vec<String>>>>, run: PathBuf) -> LibSeam {
+        let cfg: CfgFn = Box::new(move |k: &str| match k {
+            "SPIRA_GROOM_GATE_LABEL" => Ok("gate".into()),
+            "SPIRA_DB" => Ok("/fixture/db".into()),
+            "SPIRA_RUN" => Ok(run.to_string_lossy().into_owned()),
+            other => Err(format!("{other} is not declared")),
+        });
+        let claim: ClaimFn = Box::new(move |argv: &[String]| log.borrow_mut().push(argv.to_vec()));
+        // A lib.sh that does not exist: nothing below may source it.
+        LibSeam::with(PathBuf::from("/nonexistent/lib.sh"), cfg, claim)
+    }
+
+    #[test]
+    fn a_config_key_is_read_through_the_config_door_not_a_shell() {
+        let s = seam(Rc::default());
+        assert_eq!(s.conf("SPIRA_GROOM_GATE_LABEL").unwrap(), "gate");
+        assert!(s.conf("SPIRA_NOT_A_KEY").is_err());
+    }
+
+    #[test]
+    fn the_poison_cleared_event_is_spira_claims_write_event_with_no_shell() {
+        let log: Rc<RefCell<Vec<Vec<String>>>> = Rc::default();
+        let s = seam(Rc::clone(&log));
+        s.bump_poison_cleared("sp-1", "work-fault-triage").unwrap();
+        let want: Vec<Vec<String>> = vec![["write-event", "sp-1", "poison.cleared", "work-fault-triage", "--db", "/fixture/db"].map(String::from).to_vec()];
+        assert_eq!(*log.borrow(), want);
+    }
+
+    #[test]
+    fn the_ask_clear_removes_the_asked_marker_in_process() {
+        let dir = testkit::TempDir::new("groomer-ask-clear");
+        let run = dir.path().to_path_buf();
+        std::fs::create_dir_all(run.join("poison-asked")).unwrap();
+        std::fs::write(run.join("poison-asked").join("sp-1"), "").unwrap();
+        let log: Rc<RefCell<Vec<Vec<String>>>> = Rc::default();
+        let s = seam_in(Rc::clone(&log), run.clone());
+        s.poison_asked_clear("sp-1").unwrap();
+        assert!(!run.join("poison-asked").join("sp-1").exists());
+        assert!(log.borrow().is_empty(), "no spira-claim child for a file removal");
+        s.poison_asked_clear("sp-absent").unwrap();
     }
 }
 
