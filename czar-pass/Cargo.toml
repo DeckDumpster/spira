@@ -12,7 +12,7 @@ reconciler-engine = { path = "../reconciler-engine" }
 tsd = { path = "../tsd" }
 forge = { path = "../forge" }
 runtime = { path = "../runtime" }
-spira-runtime = { path = "../spira-runtime" }
+store-view = { path = "../store-view" }
 
 [profile.release]
 opt-level = "z"

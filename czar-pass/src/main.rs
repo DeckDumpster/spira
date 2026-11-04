@@ -522,17 +522,17 @@ fn repo_base(name: &str, repo_map: &Option<PathBuf>) -> Option<String> {
 // Queue / forge helpers
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// The open batch of each repo from the store's own projection, loaded once on the first ask
-/// (one pass is one process): what `queue batch show --repo` printed, with no queue process.
-/// A view the store cannot vouch for — not loaded, or stale — could not say; it is never read
-/// as "no batch".
+/// The open batch of each repo from the store's own projection, its batch records (and no
+/// lifecycle row) loaded once on the first ask (one pass is one process): what `queue batch
+/// show --repo` printed, with no queue process. A view the store cannot vouch for — not loaded,
+/// or stale — could not say; it is never read as "no batch".
 fn projection_batch_show() -> BatchShow {
-    let views: std::sync::OnceLock<Result<spira_runtime::store::Projection, String>> = std::sync::OnceLock::new();
+    let views: std::sync::OnceLock<Result<store_view::Projection, String>> = std::sync::OnceLock::new();
     std::sync::Arc::new(move |repo: &str| {
         let p = views
             .get_or_init(|| {
-                let p = spira_runtime::store::Projection::configured(spira_config::lc_call::LcClient::configured()?)?;
-                p.load().map_err(String::from)?;
+                let p = store_view::Projection::configured(spira_config::lc_call::LcClient::configured()?)?;
+                p.refresh_batches().map_err(String::from)?;
                 Ok(p)
             })
             .as_ref()
@@ -542,7 +542,7 @@ fn projection_batch_show() -> BatchShow {
 }
 
 /// `batch show`'s stdout from a view's answer; a refusal is "could not say".
-fn shown_of(read: Result<spira_runtime::store::BatchView, spira_config::lc_call::LcError>) -> Result<String, String> {
+fn shown_of(read: Result<store_view::BatchView, spira_config::lc_call::LcError>) -> Result<String, String> {
     read.map(|v| v.shown()).map_err(|e| format!("could not say: {e}"))
 }
 
@@ -1860,7 +1860,7 @@ mod tests {
     #[test]
     fn a_batch_view_the_store_cannot_vouch_for_could_not_say() {
         use spira_config::lc_call::LcError;
-        use spira_runtime::store::{BatchView, Record};
+        use store_view::{BatchView, Record};
         let err = shown_of(Err(LcError::Refused("stale past 3000ms".into()))).unwrap_err();
         assert!(err.starts_with("could not say") && err.contains("stale"), "{err}");
         assert_eq!(shown_of(Ok(BatchView { repo: "r".into(), open: None })), Ok(String::new()));

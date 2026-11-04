@@ -11,7 +11,7 @@ test = false
 
 [dependencies]
 spira-config = { path = "../spira-config" }
-spira-runtime = { path = "../spira-runtime" }
+store-view = { path = "../store-view" }
 runtime = { path = "../runtime" }
 spira-otel = { path = "../spira-otel" }
 spira-desired-state = { path = "../desired-state" }

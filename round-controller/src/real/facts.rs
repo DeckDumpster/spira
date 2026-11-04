@@ -1,5 +1,5 @@
 //! [`Facts`] on the installed harness: the registry's round repos, their landing refs read with
-//! `git`, each repo's open batch through `queue batch show`, and the SUBMITTED beads through `spira-lc list`.
+//! `git`, each repo's open batch from the store's views, and the SUBMITTED beads through `spira-lc list`.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,7 +12,6 @@ use crate::real::git::Locate;
 
 const GIT_DEADLINE: Duration = Duration::from_secs(5);
 const LC_DEADLINE: Duration = Duration::from_secs(5);
-const QUEUE_DEADLINE: Duration = Duration::from_secs(5);
 
 /// The registry's `queue.local` and `queue.forge` repos, in registry order.
 pub fn round_repos(reg: &Registry) -> Result<Vec<String>, String> {
@@ -27,7 +26,8 @@ pub struct RealFacts {
     pub repos: Result<Vec<String>, String>,
     /// Each repo's checkout and landing ref, as the registry resolves them.
     pub locate: Box<Locate>,
-    pub queue: String,
+    /// The store's round/batch views, or why there are none.
+    pub views: Result<store_view::Projection, String>,
     pub spira_lc: String,
 }
 
@@ -102,19 +102,10 @@ impl Facts for RealFacts {
     }
 
     fn open_batch(&self, repo: &str) -> Result<Option<String>, String> {
-        // FORK-EDGE: needs the store projection in a crate round-controller can depend on (spira-runtime → install → release → round-controller is a cycle)
-        let args = ["batch", "show", "--repo", repo].map(String::from).to_vec();
-        match self.run(&self.queue, args, QUEUE_DEADLINE)? {
-            (Some(0), out, _) if out.trim().is_empty() => Ok(None),
-            (Some(0), out, _) => Ok(Some(
-                out.lines()
-                    .find_map(|l| l.strip_prefix("batch_id="))
-                    .map(|id| id.trim().to_string())
-                    .filter(|id| !id.is_empty())
-                    .unwrap_or_else(|| "open".into()),
-            )),
-            (code, out, err) => Err(format!("queue batch show exited {code:?}: {} {err}", out.trim())),
-        }
+        let views = self.views.as_ref().map_err(|e| format!("could not say: {e}"))?;
+        views.refresh_batches().map_err(|e| format!("could not say: {e}"))?;
+        let read = views.batch_view(repo).map_err(|e| format!("could not say: {e}"))?;
+        Ok(read.value.open.map(|r| r.id))
     }
 
     fn submitted(&self, repo: &str) -> Result<usize, String> {
@@ -198,7 +189,7 @@ mod tests {
             proc_: script.clone(),
             repos: Ok(vec!["alpha".into()]),
             locate: Box::new(|r| (r == "alpha").then(|| ("/r/alpha".into(), "local/main".into()))),
-            queue: "queue".into(),
+            views: Err("this test holds no store views".into()),
             spira_lc: "spira-lc".into(),
         };
         Under { facts, script }
@@ -257,17 +248,33 @@ mod tests {
         assert!(f.names_at_landing("ghost", "spira").unwrap_err().contains("no checkout"));
     }
 
+    struct Store(Mutex<Vec<Result<spira_config::lc_call::Reply, String>>>);
+
+    impl spira_config::lc_call::Transport for Store {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<spira_config::lc_call::Reply, String> {
+            assert_eq!(argv[..2], ["rc", "list"], "only the batch records are read");
+            crate::lock(&self.0).remove(0)
+        }
+    }
+
+    fn listed(items: serde_json::Value) -> Result<spira_config::lc_call::Reply, String> {
+        let out = serde_json::json!({"ok": {"list_rev": 4, "items": items}}).to_string();
+        Ok(spira_config::lc_call::Reply { code: 0, out, err: String::new() })
+    }
+
     #[test]
-    fn the_open_batch_is_read_from_queue_batch_show_and_a_failed_answer_is_refused() {
-        assert_eq!(facts(&[("queue", out(0, "", ""))]).open_batch("alpha"), Ok(None));
-        let f = facts(&[("queue", out(0, "batch_id=deck-1\npr=12\nforge.phase=armed\n", ""))]);
-        assert_eq!(f.open_batch("alpha"), Ok(Some("deck-1".into())));
-        let spec = crate::lock(&f.script.seen).last().cloned().unwrap();
-        assert_eq!((spec.prog.as_str(), spec.args.join(" ")), ("queue", "batch show --repo alpha".into()));
-        let f = facts(&[("queue", out(0, "pr=12\n", ""))]);
-        assert_eq!(f.open_batch("alpha"), Ok(Some("open".into())));
-        let f = facts(&[("queue", out(1, "", "cannot tell whether alpha has an open batch"))]);
-        assert!(f.open_batch("alpha").unwrap_err().contains("cannot tell"));
+    fn the_open_batch_is_read_from_the_store_views_and_a_refused_read_could_not_say() {
+        let batch = serde_json::json!([{"key": "batches/alpha/deck-1", "create_rev": {"main": 2}, "value": {"data": {
+            "batch_id": "deck-1", "state": "OPEN", "repo": "alpha", "round": {"forge.phase": "armed", "pr": "12"}}}}]);
+        let answers = vec![listed(serde_json::json!([])), listed(batch), Err("the lifecycle service is not answering".into())];
+        let client = spira_config::lc_call::LcClient::over(Arc::new(Store(Mutex::new(answers))), true);
+        let mut f = facts(&[]);
+        f.facts.views = Ok(store_view::Projection::new(client, Duration::from_secs(60), Arc::new(std::time::Instant::now)));
+        assert_eq!(f.open_batch("alpha"), Ok(None));
+        assert_eq!(f.open_batch("alpha"), Ok(Some("deck-1".into())), "each ask reads the batch records afresh");
+        assert!(f.open_batch("alpha").unwrap_err().starts_with("could not say:"));
+        assert!(crate::lock(&f.script.seen).is_empty(), "no queue process");
+        assert!(facts(&[]).open_batch("alpha").unwrap_err().contains("could not say: this test holds no store views"));
     }
 
     #[test]

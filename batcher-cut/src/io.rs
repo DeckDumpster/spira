@@ -560,17 +560,18 @@ fn parse_members(s: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The repo's open batch from the store's projection, read afresh each time (this pass writes
-/// batches through the queue between reads); `None` when there is none. Err when the store
-/// could not say — a view it cannot vouch for is never read as no batch.
+/// The repo's open batch from the store's projection, its batch records read afresh each time
+/// (this pass writes batches through the queue between reads; no lifecycle row is reloaded for
+/// it); `None` when there is none. Err when the store could not say — a view it cannot vouch for
+/// is never read as no batch.
 pub fn read_open_batch(_env: &Env, repo: &str) -> Result<Option<OpenBatch>, String> {
-    let views = spira_runtime::store::Projection::configured(spira_config::lc_call::LcClient::configured()?)?;
-    views.load().map_err(|e| format!("could not say: {e}"))?;
+    let views = store_view::Projection::configured(spira_config::lc_call::LcClient::configured()?)?;
+    views.refresh_batches().map_err(|e| format!("could not say: {e}"))?;
     open_batch_of(views.batch_view(repo).map(|r| r.value))
 }
 
 /// The open batch a view's answer holds; a refused read could not say.
-fn open_batch_of(read: Result<spira_runtime::store::BatchView, spira_config::lc_call::LcError>) -> Result<Option<OpenBatch>, String> {
+fn open_batch_of(read: Result<store_view::BatchView, spira_config::lc_call::LcError>) -> Result<Option<OpenBatch>, String> {
     read.map(|v| open_batch_from(&v.shown())).map_err(|e| format!("could not say: {e}"))
 }
 
@@ -2812,7 +2813,7 @@ mod forge_release_tests {
     #[test]
     fn an_open_batch_the_store_cannot_vouch_for_could_not_say() {
         use spira_config::lc_call::LcError;
-        use spira_runtime::store::{BatchView, Record};
+        use store_view::{BatchView, Record};
         assert!(open_batch_of(Err(LcError::Refused("stale".into()))).unwrap_err().starts_with("could not say"));
         assert!(open_batch_of(Ok(BatchView { repo: "r".into(), open: None })).unwrap().is_none());
         let rec = Record { id: "b".into(), state: "OPEN".into(), fields: vec![("batch_id".into(), "b".into()), ("members".into(), "sp-a:t1".into()), ("pr".into(), "12".into())] };

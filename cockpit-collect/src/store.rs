@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use spira_config::lc_call::{LcClient, LcError};
-use spira_runtime::store::{Projection, Read};
+use store_view::{Projection, Read};
 
 /// The configured client, bounded at `SPIRA_LC_TIMEOUT` for a program route; `None` when the
 /// key is unset or the route does not resolve.

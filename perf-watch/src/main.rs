@@ -191,7 +191,7 @@ impl RealSim {
 
 impl Sim for RealSim {
     fn round_open(&mut self) -> Result<bool, String> {
-        let views = spira_runtime::store::Projection::configured(spira_config::lc_call::LcClient::configured()?)?;
+        let views = store_view::Projection::configured(spira_config::lc_call::LcClient::configured()?)?;
         views.load().map_err(|e| format!("the store views: {e}"))?;
         let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
         let home = spira_config::resolve::locate_home_for_process()?;

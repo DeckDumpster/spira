@@ -1,5 +1,5 @@
-//! The store's hot reads, held in memory (law-a-loops-hot-read-is-in-process): the rounds and
-//! the open forge batch of each repo, and the ready counts, built from the store's own reads over
+//! The store's hot reads, held in memory (law-a-loops-hot-read-is-in-process): the rounds, the
+//! open and the ended forge batches of each repo, and the ready counts, built from the store's own reads over
 //! [`LcClient`] and kept current by its `watch` long-poll from the last revision seen. Every read
 //! answers with the revision it reflects, and refuses once the store has not confirmed that
 //! revision within the configured staleness: an old picture is never passed off as the present.
@@ -123,7 +123,8 @@ struct State {
     rev: Option<u64>,
     confirmed: Option<Instant>,
     batches: BTreeMap<String, Batch>,
-    beads: BTreeMap<String, Bead>,
+    /// `None` after a batches-only refresh: no lifecycle row is held at the revision.
+    beads: Option<BTreeMap<String, Bead>>,
 }
 
 pub type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
@@ -176,7 +177,7 @@ fn decode(key: &str, d: &Value) -> Result<Record, LcError> {
             let rank = |k: &str| FIELD_ORDER.iter().position(|f| *f == k).unwrap_or(FIELD_ORDER.len());
             let mut own: Vec<(&String, &Value)> = own.iter().collect();
             own.sort_by(|a, b| (rank(a.0), a.0).cmp(&(rank(b.0), b.0)));
-            for (k, v) in own {
+            for (k, v) in own.into_iter().filter(|(k, _)| !matches!(k.as_str(), "batch_id" | "repo")) {
                 fields.push((k.clone(), v.as_str().ok_or_else(|| undecodable(&format!("text for {k}")))?.to_string()));
             }
         }
@@ -209,6 +210,14 @@ fn phase_of(state: &str) -> String {
         "CI_RUNNING" => "certifying".into(),
         other => other.to_lowercase(),
     }
+}
+
+/// The batch records `rc list` answered, by key.
+fn batches_of(items: Vec<Value>) -> BTreeMap<String, Batch> {
+    items
+        .into_iter()
+        .map(|i| (text(&i, "key").unwrap_or_default(), Batch { create_rev: main_rev(&i["create_rev"]).unwrap_or(0), data: i["value"]["data"].clone() }))
+        .collect()
 }
 
 /// The beads `list` answered, with the dispatcher's verdict on each.
@@ -262,21 +271,30 @@ impl Projection {
     pub fn load(&self) -> Result<(), LcError> {
         let (items, rev) = self.rc_list(BATCHES)?;
         let beads = beads_of(&self.client.answer(&["list"])?)?;
-        let mut batches = BTreeMap::new();
-        for i in items {
-            let key = text(&i, "key").unwrap_or_default();
-            let create_rev = main_rev(&i["create_rev"]).unwrap_or(0);
-            batches.insert(key, Batch { create_rev, data: i["value"]["data"].clone() });
-        }
+        let batches = batches_of(items);
         let mut s = self.lock();
-        *s = State { rev: Some(rev), confirmed: Some((self.clock)()), batches, beads: beads.into_iter().collect() };
+        *s = State { rev: Some(rev), confirmed: Some((self.clock)()), batches, beads: Some(beads.into_iter().collect()) };
+        Ok(())
+    }
+
+    /// Reads the batch records afresh and nothing else: the round and batch views answer at the
+    /// revision they were listed at, and the ready counts refuse until a full [`load`](Self::load),
+    /// since rows read earlier are not of that revision. A poll on such a picture loads every view.
+    pub fn refresh_batches(&self) -> Result<(), LcError> {
+        let (items, rev) = self.rc_list(BATCHES)?;
+        let batches = batches_of(items);
+        let mut s = self.lock();
+        *s = State { rev: Some(rev), confirmed: Some((self.clock)()), batches, beads: None };
         Ok(())
     }
 
     /// One step of keeping current: a load when nothing is held, else one watch from the held
     /// revision. Nothing moves unless the whole answer applied.
     pub fn poll(&self) -> Result<(), LcError> {
-        let held = self.lock().rev;
+        let held = {
+            let s = self.lock();
+            s.rev.filter(|_| s.beads.is_some())
+        };
         let Some(from) = held else { return self.load() };
         let (from_s, wait) = (from.to_string(), WATCH_WAIT_MS.to_string());
         let w = json_of(&self.client.answer(&["watch", "", "--from-rev", &from_s, "--wait-ms", &wait])?, "watch")?;
@@ -317,11 +335,13 @@ impl Projection {
                 }
             }
         }
-        for id in dirty {
-            match fresh.get(&id) {
-                Some(b) => s.beads.insert(id, b.clone()),
-                None => s.beads.remove(&id),
-            };
+        if let Some(beads) = s.beads.as_mut() {
+            for id in dirty {
+                match fresh.get(&id) {
+                    Some(b) => beads.insert(id, b.clone()),
+                    None => beads.remove(&id),
+                };
+            }
         }
         s.rev = Some(through.max(from));
         s.confirmed = Some((self.clock)());
@@ -375,6 +395,25 @@ impl Projection {
         })
     }
 
+    /// The repo's forge batches the machine or the queue has ended, newest opened first: what
+    /// `queue batch show --ended` reads from the store (the queue's closed-PR archives on disk are
+    /// not the store's, and are not here).
+    pub fn batch_view_ended(&self, repo: &str) -> Result<Read<Vec<Record>>, LcError> {
+        self.read(|s| {
+            let mut ended: Vec<(i64, u64, Record)> = Vec::new();
+            for (key, b) in s.batches.iter().filter(|(k, _)| round_id(repo, k).is_some()) {
+                let r = decode(key, &b.data)?;
+                if r.get(FORGE_PHASE).is_none() || !(r.terminal() || r.ended().is_some()) {
+                    continue;
+                }
+                let opened = r.get("opened").and_then(|o| o.parse().ok()).unwrap_or(0);
+                ended.push((opened, b.create_rev, r));
+            }
+            ended.sort_by(|a, b| (b.0, b.1, &b.2.id).cmp(&(a.0, a.1, &a.2.id)));
+            Ok(ended.into_iter().map(|(_, _, r)| r).collect())
+        })
+    }
+
     pub fn round_view(&self, repo: &str) -> Result<Read<RoundView>, LcError> {
         self.read(|s| {
             let rounds = Self::open_rounds(s, repo)?.into_iter().map(|record| Round { phase: phase_of(&record.state), record }).collect();
@@ -384,8 +423,9 @@ impl Projection {
 
     pub fn ready_counts(&self) -> Result<Read<ReadyCounts>, LcError> {
         self.read(|s| {
+            let beads = s.beads.as_ref().ok_or_else(|| LcError::Refused("the lifecycle rows are not loaded: the views hold the batch records only".into()))?;
             let mut c = ReadyCounts::default();
-            for b in s.beads.values() {
+            for b in beads.values() {
                 *c.by_state.entry(b.row.state.clone()).or_default() += 1;
                 if b.row.claimable() && b.row.holds.is_empty() {
                     c.claimable += 1;

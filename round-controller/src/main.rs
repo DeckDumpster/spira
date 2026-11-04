@@ -249,7 +249,8 @@ fn cutover(p: &Ports, mode: &cutover_check::Mode) -> Result<i32, String> {
                 spira_config::repos::landref(&located, repo)?,
             ))
         }),
-        queue: spira_config::release_env::tool("queue")?,
+        views: spira_config::lc_call::LcClient::for_bin(&spira_config::lifecycle_row::lc_bin()?)
+            .and_then(store_view::Projection::configured),
         spira_lc: spira_config::release_env::tool("spira-lc")?,
     };
     match mode {

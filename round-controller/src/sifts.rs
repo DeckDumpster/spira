@@ -20,7 +20,6 @@ const WHO: &str = "round-controller";
 pub struct Env {
     pub home: PathBuf,
     pub run: PathBuf,
-    pub queue_bin: String,
     pub lc_bin: String,
     pub lc_timeout: u64,
     pub wiki: String,
@@ -40,7 +39,6 @@ impl Env {
         Ok(Env {
             home,
             run: PathBuf::from(run),
-            queue_bin: spira_config::release_env::tool("queue")?,
             lc_bin: spira_config::lifecycle_row::lc_bin()?,
             lc_timeout: cfg_parse::<u64>("SPIRA_LC_TIMEOUT")?,
             wiki: cfg("SPIRA_WIKI").unwrap_or_default(),
@@ -533,15 +531,21 @@ fn bd_show_text(env: &Env, id: &str) -> Result<String, String> {
     ))
 }
 
-/// `queue batch show --repo <repo>`: the repository's open forge batch record, as `key=value`
-/// lines; nothing when none is open.
+/// The repository's open forge batch record from the store's views, as `queue batch show --repo
+/// <repo>` printed it: `key=value` lines; nothing when none is open.
 fn batch_show(env: &Env, repo: &str) -> Result<String, String> {
-    // FORK-EDGE: needs the store projection (spira_runtime::store) in a crate round-controller can depend on — spira-runtime → install → release → round-controller is a cycle
-    let mut cmd = Command::new("timeout");
-    cmd.arg(env.lc_timeout.to_string())
-        .arg(&env.queue_bin)
-        .args(["batch", "show", "--repo", repo]);
-    run(&mut cmd, "queue batch show")
+    let client = spira_config::lc_call::LcClient::for_bin(&env.lc_bin)
+        .map_err(|e| format!("could not say: {e}"))?
+        .within(std::time::Duration::from_secs(env.lc_timeout));
+    let views = store_view::Projection::configured(client).map_err(|e| format!("could not say: {e}"))?;
+    shown_in(&views, repo)
+}
+
+/// `repo`'s open batch record from `views`, its batch records read afresh. A read the store
+/// refused, or a view it cannot vouch for, could not say: it is never read as no batch.
+fn shown_in(views: &store_view::Projection, repo: &str) -> Result<String, String> {
+    views.refresh_batches().map_err(|e| format!("could not say: {e}"))?;
+    views.batch_view(repo).map(|r| r.value.shown()).map_err(|e| format!("could not say: {e}"))
 }
 
 /// The members of the repository's open round, whose patches a candidate may duplicate, read
@@ -712,6 +716,44 @@ mod tests {
         assert!(open_round(&opening, "deck").unwrap().is_empty(), "no PR yet: nothing to duplicate");
         assert!(open_round(&|_| Ok(String::new()), "deck").unwrap().is_empty());
         assert!(open_round(&|_| Err("queue batch show exited 1".into()), "deck").is_err(), "cannot tell is not no round");
+    }
+
+    struct Store(std::sync::Mutex<Vec<Result<spira_config::lc_call::Reply, String>>>);
+
+    impl spira_config::lc_call::Transport for Store {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+            assert_eq!(argv[..2], ["rc", "list"], "only the batch records are read");
+            crate::lock(&self.0).remove(0)
+        }
+    }
+
+    /// Views on `answers` whose clock moves a second at every look, so a zero staleness is stale
+    /// by the first read.
+    fn views(answers: Vec<Result<spira_config::lc_call::Reply, String>>, stale: std::time::Duration) -> store_view::Projection {
+        let client = spira_config::lc_call::LcClient::over(std::sync::Arc::new(Store(std::sync::Mutex::new(answers))), true);
+        let (t0, looks) = (std::time::Instant::now(), std::sync::atomic::AtomicU64::new(0));
+        let clock = move || t0 + std::time::Duration::from_secs(looks.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        store_view::Projection::new(client, stale, std::sync::Arc::new(clock))
+    }
+
+    #[test]
+    fn the_open_batch_is_read_from_the_store_views_and_a_refused_read_could_not_say() {
+        let listed = serde_json::json!({"ok": {"list_rev": 4, "items": [
+            {"key": "batches/deck/deck-1", "create_rev": {"main": 2}, "value": {"data": {
+                "batch_id": "deck-1", "state": "OPEN", "repo": "deck",
+                "round": {"members": "sp-a:ta sp-b:tb", "forge.phase": "armed", "pr": "12"}}}}]}});
+        let ok = Ok(spira_config::lc_call::Reply { code: 0, out: listed.to_string(), err: String::new() });
+        let v = views(vec![ok.clone(), ok.clone()], std::time::Duration::from_secs(60));
+        let open = open_round(&|r| shown_in(&v, r), "deck").unwrap();
+        assert_eq!(open.iter().map(|c| (c.id.as_str(), c.tip.as_str())).collect::<Vec<_>>(), [("sp-a", "ta"), ("sp-b", "tb")]);
+        assert!(open_round(&|r| shown_in(&v, r), "other").unwrap().is_empty(), "no batch open: nothing to duplicate");
+
+        let down = views(vec![Err("the lifecycle service is not answering".into())], std::time::Duration::from_secs(60));
+        let e = open_round(&|r| shown_in(&down, r), "deck").unwrap_err();
+        assert!(e.starts_with("could not say:"), "{e}");
+        let stale = views(vec![ok], std::time::Duration::ZERO);
+        let e = open_round(&|r| shown_in(&stale, r), "deck").unwrap_err();
+        assert!(e.starts_with("could not say:") && e.contains("stale past"), "{e}");
     }
 
     #[test]

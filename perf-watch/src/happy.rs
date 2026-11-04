@@ -8,7 +8,7 @@ use std::process::{Command, Stdio};
 
 /// Whether `repo` has a round open (`queue round status`'s `round=open`), from the store's
 /// round view in-process.
-pub fn round_open_in(views: &spira_runtime::store::Projection, repo: &str) -> Result<bool, String> {
+pub fn round_open_in(views: &store_view::Projection, repo: &str) -> Result<bool, String> {
     views.round_view(repo).map(|r| !r.value.rounds.is_empty()).map_err(|e| format!("the round view of {repo}: {e}"))
 }
 
@@ -227,7 +227,7 @@ mod tests {
             let store = serde_json::json!({"ok": {"list_rev": 2, "items": [{"key": "batches/spira/r1", "create_rev": {"main": 1},
                 "value": {"data": {"batch_id": "r1", "state": state, "repo": "spira", "round": {"head": "h", "members": "sp-a:t"}}}}]}});
             let client = spira_config::lc_call::LcClient::over(std::sync::Arc::new(Store(store.to_string())), true);
-            let p = spira_runtime::store::Projection::new(client, std::time::Duration::from_secs(60), std::sync::Arc::new(std::time::Instant::now));
+            let p = store_view::Projection::new(client, std::time::Duration::from_secs(60), std::sync::Arc::new(std::time::Instant::now));
             p.load().unwrap();
             p
         };

@@ -374,12 +374,12 @@ fn host_units() -> Option<&'static dyn runtime::units::Units> {
 
 /// The store's round/batch views, loaded once and kept current by their watch on a thread of
 /// their own; `Err` names why there are none.
-fn store_views(loom: &Loom) -> Result<&'static spira_runtime::store::Projection, String> {
-    static VIEWS: std::sync::OnceLock<Result<Arc<spira_runtime::store::Projection>, String>> = std::sync::OnceLock::new();
+fn store_views(loom: &Loom) -> Result<&'static store_view::Projection, String> {
+    static VIEWS: std::sync::OnceLock<Result<Arc<store_view::Projection>, String>> = std::sync::OnceLock::new();
     let lc = loom.config().lc.clone();
     VIEWS
         .get_or_init(|| {
-            let p = Arc::new(spira_runtime::store::Projection::configured(spira_config::lc_call::LcClient::for_bin(&lc)?)?);
+            let p = Arc::new(store_view::Projection::configured(spira_config::lc_call::LcClient::for_bin(&lc)?)?);
             let watcher = Arc::clone(&p);
             std::thread::spawn(move || watcher.run(&std::sync::atomic::AtomicBool::new(false)));
             Ok(p)
@@ -390,7 +390,7 @@ fn store_views(loom: &Loom) -> Result<&'static spira_runtime::store::Projection,
 }
 
 /// `queue batch show --repo <repo>`'s text from `views`.
-fn batch_shown(views: &spira_runtime::store::Projection, repo: &str) -> Result<String, String> {
+fn batch_shown(views: &store_view::Projection, repo: &str) -> Result<String, String> {
     views.batch_view(repo).map(|r| r.value.shown()).map_err(|e| format!("queue batch show --repo {repo}: {e}"))
 }
 
@@ -614,40 +614,43 @@ fn forge_queue_dir(loom: &Loom) -> std::path::PathBuf {
     std::path::Path::new(&loom.config().run).join("queue")
 }
 
-/// Every forge batch on record, each repo's open one as `queue batch show` gives it.
+/// Every forge batch on record, each repo's open one as `queue batch show` gives it and its ended
+/// ones as `queue batch show --ended` does, both from the store views.
 async fn forge_batches(loom: &Loom) -> Vec<forge_rounds::Batch> {
     let dir = forge_queue_dir(loom);
     let mut open = std::collections::BTreeMap::new();
     let mut ended = std::collections::BTreeMap::new();
-    let shown_closed = forge_rounds::CLOSED_SHOWN.to_string();
     for repo in forge_rounds::repos(&dir) {
-        let shown = store_views(loom).and_then(|v| batch_shown(v, &repo));
-        open.insert(repo.clone(), shown);
-        let closed = queue_text(loom, &["batch", "show", "--repo", &repo, "--ended", &shown_closed]).await;
+        let views = store_views(loom);
+        open.insert(repo.clone(), views.clone().and_then(|v| batch_shown(v, &repo)));
+        let closed = views.and_then(|v| ended_shown(v, &dir.join(&repo), &repo, forge_rounds::CLOSED_SHOWN));
         ended.insert(repo, closed);
     }
     forge_rounds::read_all(&dir, &open, &ended)
 }
 
-async fn queue_text(loom: &Loom, args: &[&str]) -> Result<String, String> {
-    let cfg = loom.config();
-    // FORK-EDGE: `queue batch show --ended` reads the closed forge archives; needs an
-    // ended-batches view on spira-runtime's Projection.
-    let mut cmd = tokio::process::Command::new(&cfg.queue);
-    cmd.args(args)
-        .env("PATH", &cfg.path)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true);
-    let out = tokio::time::timeout(cfg.budget, cmd.output())
-        .await
-        .map_err(|_| format!("queue {} over its {} ms budget", args.join(" "), cfg.budget.as_millis()))?
-        .map_err(|e| format!("could not run {}: {e}", cfg.queue))?;
-    if !out.status.success() {
-        return Err(format!("queue {} exited {}: {}", args.join(" "), out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim().chars().take(300).collect::<String>()));
+/// The queue's archive of a forge batch closed before the batch records were on the store.
+const CLOSED_ARCHIVE: &str = "closed-pr";
+
+/// `queue batch show --repo <repo> --ended <n>`'s text: the store's ended forge batches and the
+/// queue's closed-PR archives in `queue_dir`, newest opened first, `n` of them, each record
+/// followed by a blank line. A view the store cannot vouch for could not say.
+fn ended_shown(views: &store_view::Projection, queue_dir: &std::path::Path, repo: &str, n: usize) -> Result<String, String> {
+    let ended = views.batch_view_ended(repo).map_err(|e| format!("queue batch show --repo {repo} --ended: {e}"))?;
+    let mut records: Vec<String> = ended.value.iter().map(store_view::Record::render).collect();
+    match std::fs::read_dir(queue_dir) {
+        Ok(entries) => {
+            for e in entries.flatten().filter(|e| e.file_name().to_string_lossy().starts_with(CLOSED_ARCHIVE)) {
+                let text = std::fs::read_to_string(e.path()).map_err(|err| format!("{}: {err}", e.path().display()))?;
+                records.push(text.lines().filter(|l| l.contains('=')).map(|l| format!("{l}\n")).collect());
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("{}: {e}", queue_dir.display())),
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    let opened = |r: &str| r.lines().find_map(|l| l.strip_prefix("opened=")).and_then(|o| o.trim().parse::<i64>().ok()).unwrap_or(0);
+    records.sort_by_key(|r| std::cmp::Reverse(opened(r)));
+    Ok(records.into_iter().take(n).map(|r| format!("{r}\n")).collect())
 }
 
 async fn rounds_page_route(State(loom): State<Arc<Loom>>) -> Response {
@@ -913,12 +916,35 @@ mod in_process_tests {
     }
 
     #[test]
+    fn batch_show_ended_is_the_stores_ended_forge_batches_and_the_closed_archives_newest_first() {
+        let store = json!({"ok": {"list_rev": 4, "items": [
+            {"key": "batches/spira/b1", "create_rev": {"main": 2}, "value": {"data": {
+                "batch_id": "b1", "state": "OPEN", "repo": "spira",
+                "round": {"forge.phase": "pr-open", "pr": "12", "opened": "900"}}}},
+            {"key": "batches/spira/b0", "create_rev": {"main": 1}, "value": {"data": {
+                "batch_id": "b0", "state": "ABANDONED", "repo": "spira",
+                "round": {"forge.phase": "armed", "pr": "11", "opened": "800", "reason": "red"}}}}]}});
+        let views = store_view::Projection::new(client(vec![("rc list", 0, store.to_string())]), Duration::from_secs(60), Arc::new(std::time::Instant::now));
+        let t = testkit::TempDir::new("loom-ended-shown");
+        assert!(ended_shown(&views, t.path(), "spira", 5).unwrap_err().contains("not loaded"), "an unloaded view could not say");
+        views.refresh_batches().unwrap();
+        std::fs::write(t.path().join("closed-pr7-20260901T000000Z"), "pr=7\nopened=100\nbranch=spira/queue/old\n").unwrap();
+        std::fs::write(t.path().join("closed-pr9-20260902T000000Z"), "pr=9\nopened=850\nbranch=spira/queue/mid\n").unwrap();
+        let shown = ended_shown(&views, t.path(), "spira", 5).unwrap();
+        let prs: Vec<&str> = shown.split("\n\n").filter(|r| !r.trim().is_empty()).filter_map(|r| r.lines().find_map(|l| l.strip_prefix("pr="))).collect();
+        assert_eq!(prs, ["9", "11", "7"], "the open batch left out, store and archive ended batches newest first: {shown}");
+        assert!(shown.contains("batch_id=b0\nrepo=spira\nopened=800\nforge.phase=armed\npr=11\nreason=red\n\n"), "{shown}");
+        assert_eq!(ended_shown(&views, t.path(), "spira", 1).unwrap(), "pr=9\nopened=850\nbranch=spira/queue/mid\n\n");
+        assert_eq!(ended_shown(&views, &t.path().join("absent"), "spira", 5).unwrap(), "batch_id=b0\nrepo=spira\nopened=800\nforge.phase=armed\npr=11\nreason=red\n\n");
+    }
+
+    #[test]
     fn batch_show_is_the_open_forge_batch_from_the_store_views() {
         let store = json!({"ok": {"list_rev": 4, "items": [
             {"key": "batches/spira/b1", "create_rev": {"main": 2}, "value": {"data": {
                 "batch_id": "b1", "state": "OPEN", "repo": "spira",
                 "round": {"head": "h1", "members": "sp-a:t1", "forge.phase": "pr-open"}}}}]}});
-        let views = spira_runtime::store::Projection::new(
+        let views = store_view::Projection::new(
             client(vec![("rc list", 0, store.to_string()), ("list", 0, "[]".into())]),
             Duration::from_secs(60),
             Arc::new(std::time::Instant::now),

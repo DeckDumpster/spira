@@ -127,8 +127,8 @@ dependencies = [
  "sift",
  "spira-config",
  "spira-otel",
- "spira-runtime",
  "state-store",
+ "store-view",
  "suite-select",
  "testkit",
  "tsd",
@@ -230,7 +230,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
- "spira-runtime",
+ "store-view",
  "strand",
  "testkit",
  "tsd",
@@ -315,7 +315,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
- "spira-runtime",
+ "store-view",
  "testkit",
  "tsd",
 ]
@@ -993,7 +993,7 @@ dependencies = [
  "spira-config",
  "spira-desired-state",
  "spira-otel",
- "spira-runtime",
+ "store-view",
  "testkit",
  "tokio",
  "tsd",
@@ -1180,7 +1180,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
- "spira-runtime",
+ "store-view",
  "testkit",
 ]
 
@@ -1588,6 +1588,7 @@ dependencies = [
  "spira-lc",
  "spira-otel",
  "state-store",
+ "store-view",
  "testkit",
  "toml",
 ]
@@ -2115,6 +2116,7 @@ dependencies = [
  "sim",
  "spira-config",
  "spira-otel",
+ "store-view",
  "testkit",
  "tokio",
  "tsd",
@@ -2205,6 +2207,14 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "testkit",
+]
+
+[[package]]
+name = "store-view"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "spira-config",
 ]
 
 [[package]]

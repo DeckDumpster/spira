@@ -21,7 +21,7 @@ tsd = { path = "../tsd" }
 migration-numbers = { path = "../migration-numbers" }
 serde_json = "1"
 forge = { path = "../forge" }
-spira-runtime = { path = "../spira-runtime" }
+store-view = { path = "../store-view" }
 libc = "0.2"
 
 
