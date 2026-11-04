@@ -7,6 +7,9 @@ use std::env;
 
 /// `$SPIRA_SYSTEMCTL`, defaulting to `systemctl` — the same seam name world.sh and
 /// sentinel.sh both carry, so one stub covers every caller in a test.
+// FORK-EDGE (every runner below): needs Units list-by-glob, unit-file existence, cat, is-enabled,
+// show Result/MainPID and starting an installed unit, plus a config-selected test double — seven
+// shell suites stub SPIRA_SYSTEMCTL, and a D-Bus backend would act on the live user manager.
 pub fn systemctl_bin() -> String {
     env::var("SPIRA_SYSTEMCTL").unwrap_or_else(|_| "systemctl".to_string())
 }
@@ -16,6 +19,7 @@ pub fn systemctl_bin() -> String {
 pub fn run(args: &[&str]) -> String {
     let mut a = vec!["--user"];
     a.extend_from_slice(args);
+    // FORK-EDGE: systemctl, see systemctl_bin.
     spira_config::bounded::bounded(systemctl_bin())
         .args(&a)
         .output()
@@ -27,6 +31,7 @@ pub fn run(args: &[&str]) -> String {
 /// nonzero for a merely degraded manager, so only systemctl's own connect failure counts;
 /// without this check an unreachable bus reads as every unit being absent.
 pub fn bus_unreachable() -> Option<String> {
+    // FORK-EDGE: systemctl, see systemctl_bin.
     let o = spira_config::bounded::bounded(systemctl_bin()).args(["--user", "is-system-running"]).output().ok()?;
     let err = String::from_utf8_lossy(&o.stderr);
     err.contains("Failed to connect").then(|| format!("cannot reach the systemd user bus: {}", err.trim()))
@@ -38,6 +43,7 @@ pub fn bus_unreachable() -> Option<String> {
 pub fn run_ok(args: &[&str]) -> bool {
     let mut a = vec!["--user"];
     a.extend_from_slice(args);
+    // FORK-EDGE: systemctl, see systemctl_bin.
     spira_config::bounded::bounded(systemctl_bin())
         .args(&a)
         .output()
@@ -49,6 +55,7 @@ pub fn run_ok(args: &[&str]) -> bool {
 pub fn run_lines(args: &[&str]) -> Vec<String> {
     let mut a = vec!["--user"];
     a.extend_from_slice(args);
+    // FORK-EDGE: systemctl, see systemctl_bin.
     spira_config::bounded::bounded(systemctl_bin())
         .args(&a)
         .output()

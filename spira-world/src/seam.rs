@@ -38,6 +38,8 @@ pub fn run(lib_sh: &Path, name: &str, script: &str, envs: &[(&str, &str)], stdin
 /// code: `Some(124)` is the deadline, `None` is a seam that never started or has no code.
 pub fn run_for(lib_sh: &Path, name: &str, script: &str, envs: &[(&str, &str)], stdin: &str, secs: &str) -> (String, Option<i32>) {
     let full = format!("set -uo pipefail\n. \"$SPIRA_HOME_LIB\" >&2 || exit 97\n{script}\n");
+    // FORK-EDGE: lib.sh chokepoints, not a config bootstrap: rune files are sourced as bash, and
+    // SLAY_FINISH (~105 lines) drives salvage/spira_destroy_worktree/_branch; over the port bound.
     let mut cmd = spira_config::bounded::bounded_for("bash", secs);
     cmd.args(["-c", &full, name]);
     cmd.env("SPIRA_HOME_LIB", lib_sh);

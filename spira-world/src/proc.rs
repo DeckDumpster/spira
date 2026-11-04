@@ -104,3 +104,30 @@ mod tests {
         assert!(!is_excluded_work_service("spira-cockpit-prod.service", ""), "wrong instance suffix must not match");
     }
 }
+
+/// `kill -<sig> <pid>` without a `kill` child: `pid` as a pidfile holds it. Anything that is not
+/// a single process id above 1 is refused, never widened to a process group.
+pub fn signal(pid: &str, sig: i32) -> bool {
+    match pid.trim().parse::<libc::pid_t>() {
+        // SAFETY: kill(2) on one positive pid; no memory is passed.
+        Ok(p) if p > 1 => unsafe { libc::kill(p, sig) == 0 },
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod signal_tests {
+    use super::*;
+
+    #[test]
+    fn signal_reaches_a_live_child_and_refuses_groups_and_junk() {
+        let mut child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        assert!(signal(&format!("{}\n", child.id()), libc::SIGTERM));
+        let status = child.wait().unwrap();
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(status.signal(), Some(libc::SIGTERM));
+        for junk in ["", "0", "-1", "1", "abc", "12 13"] {
+            assert!(!signal(junk, 0), "{junk:?}");
+        }
+    }
+}

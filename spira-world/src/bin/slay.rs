@@ -195,6 +195,7 @@ fn main() {
     let mut fail = false;
 
     // ---- 1. the disposition: the row says why the session ends -------------------------
+    // FORK-EDGE: unserved verb disposition (a callers.rs verb the socket does not answer).
     let _ = spira_config::bounded::bounded("spira-lc").args(["disposition", id, "slain", &args.why, "slay"]).output();
 
     // ---- 2/3. the holder (dwarf OR manual hold) ------------------------------------------
@@ -212,10 +213,11 @@ fn main() {
             String::new()
         };
         if !hbpid.is_empty() {
-            let _ = spira_config::bounded::bounded("kill").arg(&hbpid).status();
+            let _ = spira_world::proc::signal(&hbpid, libc::SIGTERM);
         }
         let _ = std::fs::remove_file(&hold_pid_file);
         let _ = std::fs::remove_file(&hb_file);
+        // FORK-EDGE: unserved verb unhold (a callers.rs verb the socket does not answer).
         let _ = spira_config::bounded::bounded("spira-lc").args(["unhold", id, "manual", "slay"]).output();
         say(&format!(
             "hold: manual hold released for {id} (holder pid {}, heartbeat {})",
@@ -251,11 +253,11 @@ fn main() {
                 say(&format!("dwarf: {} pid {pid} is {unit} — stopping the unit", if name.is_empty() { "?" } else { &name }));
                 if !sysctl::run_ok(&["stop", &unit]) {
                     say(&format!("dwarf: systemctl stop failed — sending TERM to {pid}"));
-                    let _ = spira_config::bounded::bounded("kill").args(["-TERM", &pid]).status();
+                    let _ = spira_world::proc::signal(&pid, libc::SIGTERM);
                 }
             } else {
                 say(&format!("dwarf: {} pid {pid} has no unit — sending TERM", if name.is_empty() { "?" } else { &name }));
-                let _ = spira_config::bounded::bounded("kill").args(["-TERM", &pid]).status();
+                let _ = spira_world::proc::signal(&pid, libc::SIGTERM);
             }
             let t0 = epoch();
             loop {
@@ -267,7 +269,7 @@ fn main() {
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 if epoch() - t0 >= 60 {
                     say("dwarf: still alive after 60s — KILL");
-                    let _ = spira_config::bounded::bounded("kill").args(["-KILL", &pid]).status();
+                    let _ = spira_world::proc::signal(&pid, libc::SIGKILL);
                     std::thread::sleep(std::time::Duration::from_secs(1));
                     if let Some(pf) = &pf {
                         let _ = std::fs::remove_file(pf);

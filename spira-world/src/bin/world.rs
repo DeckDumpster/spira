@@ -99,12 +99,7 @@ fn resolved_prod(home: &std::path::Path) -> PathBuf {
 }
 
 fn now_iso() -> String {
-    spira_config::bounded::bounded("date")
-        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default()
+    spira_world::clock::utc_iso(spira_world::clock::now())
 }
 
 /// The planes a `stop`/`start` acts on: exactly the ones named by flag, or `default` when
@@ -290,12 +285,7 @@ fn live_beads() -> Vec<String> {
 }
 
 fn deadline_utc(secs_from_now: u64) -> String {
-    spira_config::bounded::bounded("date")
-        .args(["-u", "-d", &format!("+{secs_from_now} seconds"), "+%H:%M:%SZ"])
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default()
+    spira_world::clock::utc_hms(spira_world::clock::now() + secs_from_now as i64)
 }
 
 fn notify_dwarves(notifier: &mut spira_world::notice::Notifier, what: &str, elapsed: u64, limit: u64, live: &[String]) {
@@ -465,6 +455,7 @@ fn cmd_stop(args: &[String]) -> i32 {
             println!("  slaying {bead} (pid {pid})");
             let why_text = if why.is_empty() { "the world was stopped".to_string() } else { why.clone() };
             let ok = spira_config::release_env::tool("slay").map_err(|e| eprintln!("    {e}")).is_ok_and(|slay| {
+                // FORK-EDGE: sibling binary slay (bin/slay.rs holds its logic, not the library).
                 Command::new(slay).args(["--bead", &bead, "--keep-work", "--why", &why_text]).output().is_ok_and(|o| o.status.success())
             });
             if !ok {
@@ -718,7 +709,7 @@ fn cmd_drain(args: &[String]) -> i32 {
         drain_stamp_or_die(),
         format!(
             "{}\ncalls gated in call_rune; loop and landing still running. Lift with: {exe} resume\n{}\n{}",
-            Command::new("date").arg("+%Y-%m-%d %H:%M:%S %Z").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default(),
+            spira_world::clock::local_stamp(spira_world::clock::now()),
             spira_world::DRAIN_HOLDS_UNTIL_RESUME,
             drain.render()
         ),
@@ -770,6 +761,7 @@ fn cmd_drain(args: &[String]) -> i32 {
                     }
                     println!("  slaying {bead} (pid {pid})");
                     let ok = spira_config::release_env::tool("slay").map_err(|e| eprintln!("    {e}")).is_ok_and(|slay| {
+                        // FORK-EDGE: sibling binary slay (bin/slay.rs holds its logic, not the library).
                         Command::new(slay).args(["--bead", &bead, "--keep-work", "--reopen", "--why", "drain deadline reached"]).output().is_ok_and(|o| o.status.success())
                     });
                     if !ok {
@@ -805,21 +797,7 @@ fn owner_alive(d: &spira_world::drain::Drain) -> Option<bool> {
 }
 
 fn page_concierge(subject: &str, body: &str) -> bool {
-    use std::io::Write;
-    let Ok(mut child) = spira_config::bounded::bounded("mail")
-        .args(["send", "concierge", "--from", "world <world@spira>", "--subject", subject, "--kind", "alert"])
-        .env("SPIRA_MAIL_LINT_CONSIDERED", "1")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    else {
-        return false;
-    };
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(body.as_bytes());
-    }
-    child.wait().map(|s| s.success()).unwrap_or(false)
+    spira_world::mail_out::send_configured(&spira_world::mail_out::Letter { mailbox: "concierge", subject, kind: "alert", body })
 }
 
 fn drain_check_and_page() -> spira_world::drain::Outcome {
