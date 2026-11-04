@@ -228,19 +228,7 @@ impl World for Real {
     fn gh_fail_lines(&self, repo: &str, run_id: &str) -> String {
         let out = spira_config::bounded::bounded("gh").args(["run", "view", run_id, "--repo", repo, "--log-failed"]).stdin(Stdio::null()).stderr(Stdio::null()).output();
         let text = out.ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
-        let mut lines: Vec<String> = Vec::new();
-        for l in text.lines() {
-            if !l.contains("FAIL") {
-                continue;
-            }
-            // `sed 's/^[^\t]*\t[^\t]*\t//'` — strip the first two tab-separated fields.
-            let stripped = l.splitn(3, '\t').last().unwrap_or(l);
-            lines.push(stripped.to_string());
-            if lines.len() >= 10 {
-                break;
-            }
-        }
-        lines.join("\n")
+        crate::engine::fail_lines(&text).join("\n")
     }
 
     fn git_log_range(&self, repo_root: &Path, from: &str, to: &str) -> String {

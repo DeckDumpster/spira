@@ -45,6 +45,18 @@ pub static TASKS: &[Task] = &[
         keys: &[sweep_target::KEYS],
         build: |_| sweep_target::SweepTarget::from_cfg().registration(),
     },
+    Task {
+        name: gate_check::NAME,
+        boot: gate_check::GateCheck::boot,
+        cadence_ms: |_| gate_check::CADENCE_MS,
+        effects: gate_check::EFFECTS,
+        runners: {
+            use gate_check::*;
+            &[(OBSERVE, |e, _, _| observe(e)), (DISCOVER, |e, k, s| discover(e, k, &s.input)), (RESOLVE, |e, k, s| resolve(e, k, &s.input)), (CI_FAILED, |e, _, s| ci_failed(e, &s.input)), (FILE_BEAD, |e, k, s| file_bead(e, k, &s.input)), (RAISE_PRIORITY, |e, k, s| raise_priority(e, k, &s.input)), (NOTE, |e, _, s| note(e, &s.input)), (TSD_INGEST, |e, k, s| tsd_ingest(e, k, &s.input))]
+        },
+        keys: &[gate_check::KEYS],
+        build: |_| gate_check::GateCheck::from_cfg().registration(),
+    },
 ];
 
 /// Family A's rows, built from their contracts and waiting for their ports.
@@ -129,15 +141,6 @@ pub static PENDING: &[Task] = &[
         runners: stubs!(gate_worker: OBSERVE, TIP, CLAIM, DISCARD, RETAIN_OUTPUT, COMPLETE, RECOVER),
         keys: &[gate_worker::KEYS],
         build: |_| gate_worker::GateWorker::from_cfg().registration(),
-    },
-    Task {
-        name: gate_check::NAME,
-        boot: gate_check::GateCheck::boot,
-        cadence_ms: |_| gate_check::CADENCE_MS,
-        effects: gate_check::EFFECTS,
-        runners: stubs!(gate_check: OBSERVE, DISCOVER, RESOLVE, CI_FAILED, FILE_BEAD, RAISE_PRIORITY, NOTE, TSD_INGEST),
-        keys: &[gate_check::KEYS],
-        build: |_| gate_check::GateCheck::from_cfg().registration(),
     },
     Task {
         name: landing::NAME,

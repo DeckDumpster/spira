@@ -190,6 +190,26 @@ pub fn red_twice_suites(annotations_json: &str) -> Vec<String> {
         .collect()
 }
 
+/// The failing assertions of `gh run view --log-failed`: its first ten lines carrying `FAIL`,
+/// each with its first two tab-separated fields (job, step) stripped — the bash's
+/// `grep 'FAIL' | sed 's/^[^\t]*\t[^\t]*\t//' | head -10`.
+pub fn fail_lines(log: &str) -> Vec<String> {
+    log.lines().filter(|l| l.contains("FAIL")).map(|l| l.splitn(3, '\t').last().unwrap_or(l).to_string()).take(10).collect()
+}
+
+/// `.[].databaseId` and friends of a `gh run list --json …` answer: each row's field as text
+/// (a number or a string), rows missing it skipped.
+pub fn run_list_field(json: &str, field: &str) -> Vec<String> {
+    let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(json) else { return Vec::new() };
+    rows.iter()
+        .filter_map(|r| match r.get(field)? {
+            Value::String(s) if !s.is_empty() => Some(s.clone()),
+            Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
 pub fn flaky_title(suite: &str) -> String {
     format!("flaky suite: {suite}")
 }

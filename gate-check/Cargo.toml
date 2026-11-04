@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "gate-check — resolve open gh:run gates, file flaky/red-twice suite beads, ingest TSD (sp-ubw2o, replaces spira/gate-check.sh)."
 
+[lib]
+name = "gate_check"
+path = "src/lib.rs"
+
 [[bin]]
 name = "gate-check"
 path = "src/main.rs"
