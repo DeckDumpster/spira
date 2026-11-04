@@ -177,6 +177,29 @@ pub struct Snapshot {
     pub hotfix: Option<String>,
     /// Failed units whose incident is already filed: unit → bead.
     pub filed_incidents: BTreeMap<String, String>,
+    /// The lapsed count could not be read (`Count::Unknown`): never nominal.
+    #[serde(default)]
+    pub lapsed_unknown: bool,
+    /// `DiskMem::{disk_breach, mem_breach}` and `cpu_throttle_breach`, judged by the probe
+    /// against the sweep's own thresholds.
+    #[serde(default)]
+    pub disk_breach: bool,
+    #[serde(default)]
+    pub mem_breach: bool,
+    #[serde(default)]
+    pub cpu_breach: bool,
+    /// The probes that hit their deadline and rendered `?`.
+    #[serde(default)]
+    pub slow_probes: Vec<String>,
+    /// `lapsed_now`, the marker the prompt write advances.
+    #[serde(default)]
+    pub lapsed_now: Option<String>,
+    /// `render::render` of the gathered data: the prompt of a sweep that is not nominal.
+    #[serde(default)]
+    pub rendered: Option<String>,
+    /// The threshold escalations (`escalate::thresholds`) the gathered data raises.
+    #[serde(default)]
+    pub escalations: Vec<watchtower::incident::Finding>,
 }
 
 /// `{ lapsed_marker, failed_units rows, cpu_throttle samples, prompt }`; `prompt` is the last
@@ -187,11 +210,200 @@ pub struct Carry {
     pub failed_units: BTreeMap<String, u64>,
     pub cpu_throttle: BTreeMap<String, u64>,
     pub prompt: Option<String>,
+    /// The failed units already escalated (`failed-units.state`'s third column).
+    #[serde(default)]
+    pub escalated: std::collections::BTreeSet<String>,
+    /// Alarm reference → when it was last requested: `incident alarm`'s reminder interval, so a
+    /// standing condition is raised once a window, not every tick.
+    #[serde(default)]
+    pub alarmed: BTreeMap<String, u64>,
+}
+
+/// `SPIRA_FAILED_UNITS_WARN_MINS`'s default (`main.rs`): env-only, not yet registered.
+pub const FAILED_UNITS_WARN_MINS: i64 = 15;
+/// `incident::alarm::REMINDER_S`: a condition already noted is silent this long.
+pub const REMIND_S: u64 = 86_400;
+const ACT_DEADLINE_MS: u64 = 5_000;
+const STORE_DEADLINE_MS: u64 = 30_000;
+
+/// What `watch.tower.prompt` writes: the prompt file's text and the lapse marker it advances.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Prompt {
+    pub text: String,
+    pub lapsed_now: Option<String>,
+}
+
+/// `render::is_nominal` over the snapshot: nothing lapsed, a fresh snapshot, no no-verdict
+/// streak, not draining, not throttled, no disk/mem/CPU breach, no slow probe, and the failed
+/// units known and empty.
+pub fn is_nominal(s: &Snapshot, snap_stale_s: u64) -> bool {
+    !s.lapsed_unknown
+        && s.lapsed.is_empty()
+        && s.snap_age_s.is_some_and(|a| a < snap_stale_s)
+        && s.noverdict.values().all(|n| *n == 0)
+        && !s.draining
+        && !s.throttled
+        && !s.disk_breach
+        && !s.mem_breach
+        && !s.cpu_breach
+        && s.slow_probes.is_empty()
+        && s.failed_units.as_ref().is_some_and(|v| v.is_empty())
+}
+
+fn spec(name: &str, input: String, deadline_ms: u64) -> EffectSpec {
+    EffectSpec { name: name.into(), input, deadline_ms }
 }
 
 /// `is_nominal`, `render`, the 13 escalation predicates and the halt guard.
-pub fn decide(_carry: &Carry, _snap: &Snapshot, _now_ms: u64, _cfg: &Config) -> (Carry, Vec<EffectSpec>) {
-    unimplemented!("watch.tower: not ported yet")
+pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+    // A DELIBERATELY STOPPED WORLD MUST NOT FILE (`sweep/mod.rs:27-39`): nothing at all.
+    if snap.halted {
+        return (carry.clone(), vec![]);
+    }
+    let now = now_ms / 1000;
+    let mut next = carry.clone();
+    let mut acts = vec![];
+    if is_nominal(snap, cfg.snap_stale_s) {
+        let nv_worst = snap.noverdict.values().max().copied().unwrap_or(0);
+        let line = format!("SWEEP:NOMINAL lapsed={} snap_age={}s nv_worst={nv_worst}\n", snap.lapsed.len(), snap.snap_age_s.unwrap_or(0));
+        if carry.prompt.as_deref() != Some(line.as_str()) {
+            acts.push(spec(PROMPT, serde_json::to_string(&Prompt { text: line.clone(), lapsed_now: snap.lapsed_now.clone() }).unwrap_or_default(), ACT_DEADLINE_MS));
+            next.prompt = Some(line);
+        }
+        next.failed_units.clear();
+        next.escalated.clear();
+        next.alarmed.retain(|_, at| now.saturating_sub(*at) < REMIND_S);
+        return (next, acts);
+    }
+    let text = snap.rendered.clone().unwrap_or_else(|| format!("## Spira pipeline\n(sweep not rendered: {} failed unit(s), {} lapsed)\n", snap.failed_units.as_ref().map_or(0, Vec::len), snap.lapsed.len()));
+    acts.push(spec(PROMPT, serde_json::to_string(&Prompt { text, lapsed_now: snap.lapsed_now.clone() }).unwrap_or_default(), ACT_DEADLINE_MS));
+    next.prompt = None;
+    let slow = if snap.slow_probes.is_empty() { String::new() } else { format!(" (timed out: {})", snap.slow_probes.join("; ")) };
+    acts.push(spec(LOG, format!("watchtower: swept — {} lapsed, {} escalation(s){slow}", snap.lapsed.len(), snap.escalations.len()), ACT_DEADLINE_MS));
+    let mut raise = |next: &mut Carry, f: watchtower::incident::Finding| {
+        let reference = f.reference.clone().unwrap_or_else(|| f.title.clone());
+        if next.alarmed.get(&reference).is_some_and(|at| now.saturating_sub(*at) < REMIND_S) {
+            return;
+        }
+        next.alarmed.insert(reference, now);
+        acts.push(spec(ALARM, serde_json::to_string(&f).unwrap_or_default(), STORE_DEADLINE_MS));
+    };
+    // The failed-unit escalation (`escalate.rs:59-96`), its first-seen rows carried.
+    if let Some(units) = &snap.failed_units {
+        let (mut rows, mut escalated) = (BTreeMap::new(), std::collections::BTreeSet::new());
+        for unit in units {
+            let prev = carry.failed_units.get(unit).map(|t| watchtower::failed_units::StateRow { unit: unit.clone(), first_seen: *t as i64, escalated: carry.escalated.contains(unit) });
+            let (row, decided) = watchtower::failed_units::decide(now as i64, unit, prev.as_ref(), FAILED_UNITS_WARN_MINS);
+            if decided || (row.escalated && !snap.filed_incidents.contains_key(unit)) {
+                raise(&mut next, watchtower::sweep::escalate::failed_unit_finding(&cfg.db, &cfg.home_repo, unit, row.first_seen, now as i64));
+            }
+            if row.escalated {
+                escalated.insert(unit.clone());
+            }
+            rows.insert(unit.clone(), u64::try_from(row.first_seen).unwrap_or(0));
+        }
+        next.failed_units = rows;
+        next.escalated = escalated;
+    }
+    for f in &snap.escalations {
+        raise(&mut next, f.clone());
+    }
+    if snap.draining {
+        acts.push(spec(DRAIN_CHECK, String::new(), STORE_DEADLINE_MS));
+    }
+    next.alarmed.retain(|_, at| now.saturating_sub(*at) < REMIND_S);
+    (next, acts)
+}
+
+/// The probe: the sweep's own gather (`sweep::collect`) and its pure readings, in-process.
+/// The children the gather still forks (systemctl, bash seams, df) are the crate's fork edges.
+pub fn observe() -> Result<String, String> {
+    use watchtower::sweep::collect::Drain;
+    let cfg = watchtower::process::sweep_cfg()?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let d = watchtower::sweep::collect(now, &cfg);
+    let mut escalations = vec![];
+    watchtower::sweep::escalate::thresholds(&d, &cfg, &mut |f| {
+        escalations.push(f.clone());
+        watchtower::incident::AlarmOutcome::Noted
+    });
+    let (lapsed, lapsed_unknown) = match d.lapsed.count {
+        watchtower::lapsed::Count::Known(n) => ((0..n).map(|i| format!("lapsed#{i}")).collect(), false),
+        watchtower::lapsed::Count::Unknown => (vec![], true),
+    };
+    let pct = |s: &str| s.trim_end_matches('%').parse::<u8>().ok();
+    let snap = Snapshot {
+        halted: d.halt.is_some(),
+        draining: matches!(d.drain, Drain::Draining { .. }),
+        failed_units: d.failed_units.clone(),
+        gate_wait_s: d.gate_wait.oldest_wait.and_then(|w| u64::try_from(w).ok()),
+        gate_slow: d.gate_slow.is_some(),
+        noverdict: d.nv_worst_key.clone().map(|k| (k, u64::try_from(d.nv_worst).unwrap_or(0))).into_iter().collect(),
+        disk_pct: pct(&d.disk.disk_disp),
+        tmp_pct: pct(&d.tmp_pct),
+        throttled: d.throttle.since.is_some(),
+        lapsed,
+        snap_age_s: d.snap_age.and_then(|a| u64::try_from(a).ok()),
+        hotfix: d.release_status.clone(),
+        lapsed_unknown,
+        disk_breach: d.disk.disk_breach,
+        mem_breach: d.disk.mem_breach,
+        cpu_breach: d.cpu_throttle_breach,
+        slow_probes: d.slow_probes.clone(),
+        lapsed_now: Some(d.lapsed_now.clone()),
+        rendered: Some(watchtower::sweep::render::render(&d)),
+        escalations,
+        ..Snapshot::default()
+    };
+    serde_json::to_string(&snap).map_err(|e| e.to_string())
+}
+
+fn atomic_write(path: &std::path::Path, body: &str) -> Result<(), String> {
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, body).and_then(|_| std::fs::rename(&tmp, path)).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// `run/ops-sweep-prompt.txt`, atomically (`persona.ops` reads it as its stdin), then the
+/// lapse marker, as `run_sweep` wrote them.
+pub fn prompt(input: &str) -> Result<String, String> {
+    let p: Prompt = serde_json::from_str(input).map_err(|e| format!("{PROMPT}: {e}"))?;
+    let cfg = watchtower::process::sweep_cfg()?;
+    let path = cfg.prompt_file();
+    atomic_write(&path, &p.text)?;
+    if let Some(m) = &p.lapsed_now {
+        std::fs::write(cfg.lapsed_marker(), format!("{m}\n")).map_err(|e| format!("{}: {e}", cfg.lapsed_marker().display()))?;
+    }
+    Ok(path.display().to_string())
+}
+
+/// One escalation as `incident alarm`: a deduplicated Concierge-inbox note, never a bead. A
+/// cause the control plane suspends is refused there.
+pub fn alarm(input: &str) -> Result<String, String> {
+    let f: watchtower::incident::Finding = serde_json::from_str(input).map_err(|e| format!("{ALARM}: {e}"))?;
+    match watchtower::incident::alarm_outcome(&watchtower::process::resolved_incident_sh(), &f) {
+        watchtower::incident::AlarmOutcome::Noted => Ok(format!("noted {}", f.title)),
+        watchtower::incident::AlarmOutcome::Deduped => Ok(format!("deduped {}", f.title)),
+        watchtower::incident::AlarmOutcome::Failed => Err(format!("incident alarm failed for {}", f.title)),
+    }
+}
+
+/// `world drain-check`: the drain's own cap and owner checks.
+pub fn drain_check() -> Result<String, String> {
+    use runtime::ports::Proc;
+    let spec = runtime::ports::ProcSpec { prog: "world".into(), args: vec!["drain-check".into()], stdin: vec![], deadline: std::time::Duration::from_millis(STORE_DEADLINE_MS) };
+    match runtime::ports::SysProc.run(&spec)? {
+        o if o.code == Some(0) => Ok("drain checked".into()),
+        o => Err(format!("world drain-check exited {:?}: {}", o.code, String::from_utf8_lossy(&o.stderr).trim())),
+    }
+}
+
+/// `<ISO> spira: <msg>` appended to `run/watchtower.log` (`log.rs:1-7`).
+pub fn log(input: &str) -> Result<String, String> {
+    use std::io::Write;
+    let path = std::path::Path::new(&cfg("SPIRA_RUN")?).join("watchtower.log");
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    writeln!(f, "{} spira: {input}", watchtower::log::now_iso()).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(path.display().to_string())
 }
 
 pub struct WatchTower {

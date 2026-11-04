@@ -53,7 +53,7 @@ pub fn is_usable(path: &str) -> bool {
     mode & 0o111 != 0 || mode & 0o444 != 0
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Finding {
     pub db: String,
     pub incident_type: String,

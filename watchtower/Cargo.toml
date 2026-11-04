@@ -12,6 +12,10 @@ spira-config = { path = "../spira-config" }
 spira-ctrl = { path = "../spira-ctrl" }
 strand = { path = "../strand" }
 
+[lib]
+name = "watchtower"
+path = "src/lib.rs"
+
 [[bin]]
 name = "watchtower"
 path = "src/main.rs"
