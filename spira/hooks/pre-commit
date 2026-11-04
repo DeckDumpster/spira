@@ -68,4 +68,6 @@ if exclude.sh harness >/dev/null 2>&1; then
         "${_clean[@]}" spira-lint --root "$_lint_root" --only "$_r" || exit 1
     done
 fi
+# `exec` replaces this shell, so the EXIT trap would never run: drop the scratch tree first.
+rm -rf "$_lint_root"; trap - EXIT
 exec branch-guard.sh staged
