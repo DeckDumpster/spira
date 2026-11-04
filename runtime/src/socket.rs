@@ -77,6 +77,43 @@ pub fn lc_call_within(path: &std::path::Path, argv: &[&str], deadline: Duration)
     }
 }
 
+/// `lc_call`'s exit code for a reply: 0, `REFUSED`, or 1 for a fault.
+fn exit_code(r: &Result<String>) -> i64 {
+    match r {
+        Ok(_) => 0,
+        Err(e) if e.is_refused() => REFUSED,
+        Err(_) => 1,
+    }
+}
+
+/// Serves one connection in the protocol `lc_call` speaks: a JSON argv line in; a head line
+/// `{"exit_code","len"}` and `len` bytes of body out; reads and writes held to the client's deadline.
+pub fn answer_one(stream: UnixStream, respond: &dyn Fn(&[String]) -> Result<String>) -> std::io::Result<()> {
+    stream.set_read_timeout(Some(DEADLINE))?;
+    stream.set_write_timeout(Some(DEADLINE))?;
+    let mut line = String::new();
+    BufReader::new(&stream).take(64 * 1024).read_line(&mut line)?;
+    let reply = match serde_json::from_str::<Vec<String>>(line.trim()) {
+        Ok(argv) => respond(&argv),
+        Err(e) => Err(RuntimeError::refused(format!("request is not a JSON argv: {e}"))),
+    };
+    let code = exit_code(&reply);
+    let body = reply.unwrap_or_else(|e| e.0);
+    let mut out = &stream;
+    writeln!(out, "{}", serde_json::json!({ "exit_code": code, "len": body.len() }))?;
+    out.write_all(body.as_bytes())?;
+    out.flush()
+}
+
+/// Answers connections one at a time until `listener` fails. A client that stalls holds the
+/// next one for at most the deadline.
+pub fn answer(listener: &std::os::unix::net::UnixListener, respond: &dyn Fn(&[String]) -> Result<String>) -> std::io::Result<()> {
+    loop {
+        let (stream, _) = listener.accept()?;
+        let _ = answer_one(stream, respond);
+    }
+}
+
 fn enc<T: serde::Serialize>(v: &T) -> Result<String> {
     serde_json::to_string(v).map_err(|e| RuntimeError::new(e.to_string()))
 }
