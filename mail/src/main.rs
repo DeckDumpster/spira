@@ -151,13 +151,7 @@ fn run_send(args: &[String]) -> ExitCode {
         Err(e) => return fail(e),
     };
     let send_args = SendArgs { mailbox: &mailbox, from: from.as_deref(), subject: &subject, kind: &kind, default: &default, class: &class, bead: &bead, urgent, digest, dry_run, requested_by: &requested_by };
-    let result = cmds::send(&bd, &env, &send_args, body.clone());
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    if let Some(a) = cmds::attempt_of_send(&send_args, &body, &result, now) {
-        if let Err(e) = a.write(&env.run_dir, &tsd::default_host()) {
-            eprintln!("mail: send attempt not recorded: {e}");
-        }
-    }
+    let result = cmds::send_recorded(&bd, &env, &send_args, body);
     match result {
         Ok(out) => {
             if dry_run {

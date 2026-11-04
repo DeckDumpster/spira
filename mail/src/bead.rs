@@ -74,6 +74,7 @@ impl Bd for BdCli {
 
 impl BdCli {
     fn run_once(&self, args: &[String], stdin: Option<&str>) -> BdOut {
+        // FORK-EDGE: unserved verb content (show/list/history/dep list) and content store write (create/note/dep add)
         let mut cmd = spira_config::bounded::bounded(&self.bdq);
         cmd.args(args);
         cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });

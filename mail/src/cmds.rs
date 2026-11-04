@@ -166,6 +166,24 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
     send_with(bd, env, args, body, &deliver_to_maildir)
 }
 
+/// [`send`] as the `mail send` CLI runs it: the send, then its alarm attempt recorded in the
+/// run directory (said on stderr when the record cannot be written). An in-process sender
+/// calls this where it used to spawn `mail send`.
+pub fn send_recorded(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<SendOutcome, String> {
+    send_recorded_with(bd, env, args, body, &deliver_to_maildir, &tsd::default_host())
+}
+
+fn send_recorded_with(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String, deliver: DeliverFn, host: &str) -> Result<SendOutcome, String> {
+    let result = send_with(bd, env, args, body.clone(), deliver);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    if let Some(a) = attempt_of_send(args, &body, &result, now) {
+        if let Err(e) = a.write(&env.run_dir, host) {
+            eprintln!("mail: send attempt not recorded: {e}");
+        }
+    }
+    result
+}
+
 pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deliver: DeliverFn) -> Result<SendOutcome, String> {
     let mut mailbox = args.mailbox.to_string();
     maildir::mailbox_valid(&mailbox)?;
@@ -751,6 +769,22 @@ mod probe_tests {
     fn mailbox_entries(root: &Path) -> usize {
         let new = root.join("mail/operator/new");
         std::fs::read_dir(new).map(|d| d.count()).unwrap_or(0)
+    }
+
+    /// sp-ipwlic: an in-process sender records the send's alarm attempt exactly as the
+    /// `mail send` CLI it replaces did.
+    #[test]
+    fn a_recorded_send_writes_its_alarm_attempt_to_the_run_directory() {
+        let t = testkit::TempDir::new("mail-send-recorded");
+        let e = env(t.path());
+        let concierge = SendArgs { mailbox: "concierge", kind: "note", default: "", class: "", ..args("disk is filling", false) };
+        send_recorded_with(&FakeBd::new(vec![]), &e, &concierge, "## Note\nx\n".into(), &deliver_to_maildir, "h").unwrap();
+        let rows = tsd::alarm::read(&e.run_dir);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].reference, "mail:concierge:disk is filling", "{rows:?}");
+        let dry = SendArgs { dry_run: true, ..concierge };
+        send_recorded_with(&FakeBd::new(vec![]), &e, &dry, "x".into(), &deliver_to_maildir, "h").unwrap();
+        assert_eq!(tsd::alarm::read(&e.run_dir).len(), 1, "a dry run attempts nothing");
     }
 
     #[test]
