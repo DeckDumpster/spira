@@ -19,9 +19,10 @@ pub const CANNOT_TELL: i32 = 2;
 /// law-calls-have-deadlines: the service stops 3 s after receiving; a client waits 5 s.
 pub const DEADLINE: Duration = Duration::from_secs(5);
 
-/// Verbs the `spira-lc` CLI answers itself, writing the planning store alongside the machine;
-/// the socket does not serve them, so even a socket client runs them through the CLI.
-pub const CLI_VERBS: &[&str] = &["close", "reopen", "reconcile-closed", "close-ask"];
+/// The repair sweeps over every row, which the service bounds at its query deadline.
+const SWEEPS: &[&str] = &["reconcile-asks", "reconcile-epics", "reconcile-content", "drop-orphans", "facts-query"];
+/// How long a client waits for a sweep: the service's query deadline plus the reply.
+pub const SWEEP_DEADLINE: Duration = Duration::from_secs(12); // batch-job: a sweep the service bounds at its 10 s query deadline
 
 /// Why a call has no answer to act on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,22 +80,30 @@ pub struct Socket {
 
 impl Transport for Socket {
     fn exchange(&self, argv: &[String], stdin: Option<&str>, _deadline: Duration) -> Result<Reply, String> {
-        if stdin.is_some() {
-            return Err(format!("cannot tell: {} takes no stdin over the socket", argv.first().map_or("", String::as_str)));
-        }
         let down = |e: &dyn std::fmt::Display| format!("cannot tell: the lifecycle service is not answering on {}: {e} — nothing was read or written", self.path.display());
         let stream = UnixStream::connect(&self.path).map_err(|e| down(&e))?;
-        stream.set_read_timeout(Some(DEADLINE)).and_then(|_| stream.set_write_timeout(Some(DEADLINE))).map_err(|e| down(&e))?;
-        exchange(stream, argv).map(|(code, out)| Reply { code, out, err: String::new() })
+        let wait = if argv.first().is_some_and(|v| SWEEPS.contains(&v.as_str())) { SWEEP_DEADLINE } else { DEADLINE };
+        stream.set_read_timeout(Some(wait)).and_then(|_| stream.set_write_timeout(Some(wait))).map_err(|e| down(&e))?;
+        exchange(stream, argv, stdin)
     }
 }
 
+/// One request on `stream`: the argv as one JSON line, or, with `stdin`, a `{"argv", "len"}`
+/// line followed by exactly `len` bytes of it. The answer is a `{"exit_code", "len"[,
+/// "err_len"]}` line, then `len` bytes of stdout and `err_len` of stderr.
+///
 /// Once a request is on the wire the service may apply it whatever happens to the reply, so a
 /// lost reply is "cannot tell", never a retry.
-pub fn exchange(stream: UnixStream, argv: &[String]) -> Result<(i32, String), String> {
+pub fn exchange(stream: UnixStream, argv: &[String], stdin: Option<&str>) -> Result<Reply, String> {
     let lost = |why: &str| format!("cannot tell: the lifecycle service took the request but its reply was lost ({why})");
-    let request = serde_json::to_string(argv).map_err(|_| lost("unserialisable request"))?;
-    writeln!(&stream, "{request}").map_err(|_| lost("write"))?;
+    let request = match stdin {
+        None => serde_json::to_string(argv),
+        Some(body) => serde_json::to_string(&serde_json::json!({"argv": argv, "len": body.len()})),
+    }
+    .map_err(|_| lost("unserialisable request"))?;
+    let mut bytes = format!("{request}\n").into_bytes();
+    bytes.extend_from_slice(stdin.unwrap_or_default().as_bytes());
+    (&stream).write_all(&bytes).map_err(|_| lost("write"))?;
     let mut reader = BufReader::with_capacity(1 << 20, stream);
     let mut head = String::new();
     if !matches!(reader.read_line(&mut head), Ok(n) if n > 0) {
@@ -102,14 +111,16 @@ pub fn exchange(stream: UnixStream, argv: &[String]) -> Result<(i32, String), St
     }
     let head: serde_json::Value = serde_json::from_str(head.trim()).map_err(|_| lost("malformed reply"))?;
     let (Some(code), Some(len)) = (head["exit_code"].as_i64(), head["len"].as_u64()) else { return Err(lost("malformed reply")) };
-    let mut body = vec![0u8; len as usize];
+    let err_len = head["err_len"].as_u64().unwrap_or(0);
+    let mut body = vec![0u8; (len + err_len) as usize];
     reader.read_exact(&mut body).map_err(|_| lost("truncated reply"))?;
-    let body = String::from_utf8(body).map_err(|_| lost("non-utf8 reply"))?;
-    Ok((code as i32, body))
+    let err = body.split_off(len as usize);
+    let text = |b: Vec<u8>| String::from_utf8(b).map_err(|_| lost("non-utf8 reply"));
+    Ok(Reply { code: code as i32, out: text(body)?, err: text(err)? })
 }
 
-/// A `spira-lc` program, run once per call: the stand-in a fixture declares, the CLI in the
-/// declared direct mode, and the CLI's own verbs ([`CLI_VERBS`]).
+/// A `spira-lc` program, run once per call: the stand-in a fixture declares, or the CLI in the
+/// declared direct mode.
 pub struct Program {
     bin: String,
 }
@@ -170,34 +181,33 @@ pub fn route_of(stand_in: Option<&str>, socket: Result<String, String>, bin: &st
     }
 }
 
-/// The one store client: a route, a deadline, and the CLI that answers [`CLI_VERBS`].
+/// The one store client: a route and a deadline. Every verb goes the one route; a verb the
+/// service does not serve is its refusal, never a fall-through to a program (sp-6n7nuv).
 #[derive(Clone)]
 pub struct LcClient {
     transport: Arc<dyn Transport>,
     socket: bool,
-    cli: Option<Arc<dyn Transport>>,
     deadline: Duration,
 }
 
 impl LcClient {
-    /// The service on `path`, with no CLI behind it: a [`CLI_VERBS`] call is a fault.
+    /// The service on `path`.
     pub fn socket(path: impl Into<PathBuf>) -> Self {
-        LcClient { transport: Arc::new(Socket { path: path.into() }), socket: true, cli: None, deadline: DEADLINE }
+        LcClient { transport: Arc::new(Socket { path: path.into() }), socket: true, deadline: DEADLINE }
     }
 
     /// Every call through `transport` (a test's scripted double, typically).
     pub fn over(transport: Arc<dyn Transport>, socket: bool) -> Self {
-        LcClient { transport, socket, cli: None, deadline: DEADLINE }
+        LcClient { transport, socket, deadline: DEADLINE }
     }
 
     /// The route the configuration declares for a caller holding `bin`.
     pub fn for_bin(bin: &str) -> Result<Self, String> {
         let stand_in = std::env::var(crate::lifecycle_row::LC_BIN_ENV).ok();
         let route = route_of(stand_in.as_deref(), crate::process::cfg("SPIRA_LC_SOCKET"), bin)?;
-        let cli: Arc<dyn Transport> = Arc::new(Program { bin: bin.to_string() });
         Ok(match route {
-            Route::Socket(path) => LcClient { cli: Some(cli), ..LcClient::socket(path) },
-            Route::Program(_) => LcClient { transport: Arc::clone(&cli), socket: false, cli: Some(cli), deadline: DEADLINE },
+            Route::Socket(path) => LcClient::socket(path),
+            Route::Program(bin) => LcClient { transport: Arc::new(Program { bin }), socket: false, deadline: DEADLINE },
         })
     }
 
@@ -221,20 +231,15 @@ impl LcClient {
         self.send(argv, None)
     }
 
-    /// [`call`](Self::call) with `stdin` for the program.
+    /// [`call`](Self::call) with `stdin` as the request body: the program's stdin, or the
+    /// length-prefixed body of a socket request, which the service reads to exactly its length.
     pub fn call_stdin<S: AsRef<str>>(&self, argv: &[S], stdin: &str) -> Result<Reply, LcError> {
         self.send(argv, Some(stdin))
     }
 
     fn send<S: AsRef<str>>(&self, argv: &[S], stdin: Option<&str>) -> Result<Reply, LcError> {
         let argv: Vec<String> = argv.iter().map(|a| a.as_ref().to_string()).collect();
-        let verb = argv.first().map_or("", String::as_str);
-        let transport = match (&self.cli, self.socket && CLI_VERBS.contains(&verb)) {
-            (_, false) => &self.transport,
-            (Some(cli), true) => cli,
-            (None, true) => return Err(LcError::Fault(format!("cannot tell: {verb} is answered by the spira-lc CLI, not the socket, and this client has none"))),
-        };
-        transport.exchange(&argv, stdin, self.deadline).map_err(LcError::Fault)
+        self.transport.exchange(&argv, stdin, self.deadline).map_err(LcError::Fault)
     }
 
     /// The answer's stdout when it applied (exit 0); a refusal (3) or anything else is an error.
@@ -328,12 +333,20 @@ mod tests {
         let log = Arc::clone(&seen);
         std::thread::spawn(move || {
             for s in listener.incoming().flatten() {
+                let mut reader = BufReader::new(&s);
                 let mut line = String::new();
-                BufReader::new(&s).read_line(&mut line).unwrap();
-                let argv: Vec<String> = serde_json::from_str(line.trim()).unwrap();
+                reader.read_line(&mut line).unwrap();
+                let head: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+                let mut argv: Vec<String> = serde_json::from_value(if head.is_array() { head.clone() } else { head["argv"].clone() }).unwrap();
+                if let Some(n) = head["len"].as_u64() {
+                    let mut body = vec![0u8; n as usize];
+                    reader.read_exact(&mut body).unwrap();
+                    argv.push(format!("stdin={}", String::from_utf8(body).unwrap()));
+                }
                 let (code, body) = answer(&argv);
                 log.lock().unwrap().push(argv);
-                let _ = write!(&s, "{}\n{body}", serde_json::json!({"exit_code": code, "len": body.len()}));
+                let (out, err) = body.split_once("\x00").unwrap_or((&body, ""));
+                let _ = write!(&s, "{}\n{out}{err}", serde_json::json!({"exit_code": code, "len": out.len(), "err_len": err.len()}));
             }
         });
         (path, seen)
@@ -346,6 +359,8 @@ mod tests {
             "show" => (1, String::new()),
             "event" | "create-bead" | "promote-filed" | "set-repo" => (0, String::new()),
             "plan" => (3, "refused: no planning plane".into()),
+            "close" | "claim-verdicts" => (0, format!("{}\x00", argv.join(" "))),
+            "hold" => (3, "\x00lc: sp-a: refused\n".into()),
             _ => (2, "cannot tell: not served".into()),
         }
     }
@@ -375,9 +390,24 @@ mod tests {
         let c = LcClient::socket(&path);
         assert!(matches!(c.answer(&["plan", "stamp"]), Err(LcError::Refused(m)) if m.contains("no planning plane")));
         assert!(matches!(c.answer(&["nope"]), Err(LcError::Fault(m)) if m.starts_with("cannot tell")));
-        assert!(matches!(c.call(&["close", "sp-a"]), Err(LcError::Fault(m)) if m.contains("CLI")), "a CLI verb with no CLI behind the socket");
+        assert!(matches!(c.answer(&["hold", "sp-a", "wait"]), Err(LcError::Refused(m)) if m == "lc: sp-a: refused"), "a refusal's stderr is its text");
         let dead = LcClient::socket(dir.join("no-such.sock"));
         assert!(matches!(dead.call(&["list"]), Err(LcError::Fault(m)) if m.contains("not answering")));
+    }
+
+    /// The verbs the CLI once answered itself go to the service like any other, and a body
+    /// rides the socket to exactly its length.
+    #[test]
+    fn close_and_a_stdin_body_go_over_the_socket_and_launch_nothing() {
+        let dir = testkit::TempDir::new("lc-client-stdin");
+        let (path, seen) = serve(&dir, store);
+        let c = LcClient::socket(&path);
+        let before = launched();
+        assert_eq!(c.call(&["close", "sp-a", "--reason", "landed"]).unwrap().out, "close sp-a --reason landed");
+        let r = c.call_stdin(&["claim-verdicts"], "[{\"bead_id\":\"sp-a\"}]\nsecond line").unwrap();
+        assert_eq!((r.code, r.out.as_str()), (0, "claim-verdicts stdin=[{\"bead_id\":\"sp-a\"}]\nsecond line"));
+        assert_eq!(launched(), before, "no program ran");
+        assert_eq!(seen.lock().unwrap().len(), 2);
     }
 
     #[test]
