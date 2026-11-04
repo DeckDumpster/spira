@@ -45,9 +45,7 @@ fn main() -> ExitCode {
     let (bd, lc) = match queue::ports::Lib::context(&lib, None) {
         Ok((s, _)) => (
             RealBd { bdq },
-            RealLc {
-                bin: s.lc_bin.clone(),
-            },
+            RealLc::configured(s.lc_bin.clone()),
         ),
         Err(e) => {
             eprintln!("queue.sh: cannot resolve the harness configuration: {e}");

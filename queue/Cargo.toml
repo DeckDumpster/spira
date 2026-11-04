@@ -18,6 +18,8 @@ lifecycle = { path = "../lifecycle" }
 bead = { path = "../bead" }
 state-store = { path = "../state-store" }
 tsd = { path = "../tsd" }
+forge = { path = "../forge" }
+runtime = { path = "../runtime" }
 
 [[bin]]
 name = "queue"

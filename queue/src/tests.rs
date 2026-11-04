@@ -18,6 +18,7 @@ mod round;
 mod forge_store;
 mod round_store;
 mod verdict;
+mod transport;
 
 // ------------------------------------------------------------------------------- fakes
 
@@ -4636,4 +4637,10 @@ fn landing_an_integration_lands_its_members_and_closes_the_record() {
         fs::read_to_string(t.qfile("integrations")).unwrap(),
         "sp-other sp-c\n"
     );
+}
+
+#[test]
+fn queue_starts_no_spira_child_that_is_not_a_named_fork_edge() {
+    let got = forge::fork_scan::scan(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
+    assert!(got.is_empty(), "unmarked children:\n{}", got.join("\n"));
 }

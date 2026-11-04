@@ -12,8 +12,6 @@
 /// One seam operation. The first value of every call is `$SPIRA_HOME` (lib.sh's directory).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
-    Context,
-    TomlPath,
     BeadReopen,
     CauseEvent,
     ReleaseClaim,
@@ -44,47 +42,8 @@ unset __q __v
 . "$HERE/lib.sh" || exit 96
 "#;
 
-// family U (spira_home_repo/repo_root/repo_land/repo_field) and family W (spira_landref/
-// spira_publish_forge, dropped in sp-o88bx "wave 4.12") are no longer part of this script
-// (sp-k6lku, "wave 4.13"): real.rs's context() resolves the repo name through
-// spira_config::repos BEFORE calling this seam, passes the resolved name as `$1` (so the
-// SPIRA_QUEUE_CI_MAXSEC_<NAME>/_IDLE_SEC_<NAME> per-repo overrides below still key off it),
-// and fills in path/mode/map_land/map_base/remotes/landref/publish/home_repo in-process
-// afterward from the same registry.
-const CONTEXT: &str = r#"__n="${1:-}"
-__kv() { printf '%s=%s\0' "$1" "$2"; }
-printf '\036'
-__kv home "${SPIRA_HOME:-$HERE}"
-__kv run "${SPIRA_RUN:-}"
-__kv queue_dir "${SPIRA_QUEUE_DIR:-${SPIRA_RUN:-}/queue}"
-__kv releases "${SPIRA_RELEASES:-}"
-__kv forge "${SPIRA_FORGE:-forge}"
-__kv repo_map "${SPIRA_REPO_MAP:-}"
-__kv batcher_enable "${SPIRA_BATCHER_ENABLE:-1}"
-__kv submitted_label "${SPIRA_SUBMITTED_LABEL:-spira-submitted}"
-__kv pollsec "${SPIRA_QUEUE_TRANSITION_POLLSEC:-5}"
-__kv maxsec "${SPIRA_QUEUE_TRANSITION_MAXSEC:-1800}"
-__kv preflight "${SPIRA_PREFLIGHT_WALL_SECS:-240}"
-__kv db "${SPIRA_DB:-}"
-__K="$(printf '%s' "$__n" | tr 'a-z-' 'A-Z_')"
-case "$__K" in *[!A-Z0-9_]*) __K="" ;; esac
-__v="SPIRA_QUEUE_CI_MAXSEC_$__K"; __kv ci_maxsec "${!__v:-${SPIRA_QUEUE_CI_MAXSEC:-3600}}"
-__v="SPIRA_QUEUE_CI_IDLE_SEC_$__K"; __kv ci_idle "${!__v:-${SPIRA_QUEUE_CI_IDLE_SEC:-600}}"
-__kv infra_retries "${SPIRA_QUEUE_INFRA_RETRIES:-2}"
-__kv lock_wait "${SPIRA_QUEUE_LOCK_WAIT:-90}"
-__kv starve_max "${SPIRA_QUEUE_LOCK_STARVE_MAX:-5}"
-__kv capacity_backoff_min "${SPIRA_QUEUE_CAPACITY_BACKOFF_MIN:-300}"
-__kv capacity_backoff_max "${SPIRA_QUEUE_CAPACITY_BACKOFF_MAX:-3600}"
-__kv incident_priority "${SPIRA_INCIDENT_PRIORITY:-1}"
-__kv red_tracker_label "${SPIRA_RED_TRACKER_LABEL:-}"
-__kv mender_label "${SPIRA_MENDER_LABEL:-mender-failure}"
-exit 0
-"#;
-
 fn body(op: Op) -> &'static str {
     match op {
-        Op::Context => CONTEXT,
-        Op::TomlPath => "printf '\\036%s' \"$(spira_toml_resolve 2>/dev/null)\"\nexit 0\n",
         // spira_landref dropped (sp-o88bx, "wave 4.12") and repo_land with it (sp-k6lku,
         // "wave 4.13"): readback() resolves both in-process through spira_config::repos
         // now, so there is no Readback op left to call here.
@@ -199,7 +158,7 @@ pub fn split_answer(stdout: &str) -> (&str, &str) {
     }
 }
 
-/// Parse the Context answer: `key=value\0` records.
+/// Parse a `key=value\0` answer.
 pub fn parse_kv0(answer: &str) -> std::collections::BTreeMap<String, String> {
     answer
         .split('\0')
@@ -219,8 +178,6 @@ mod tests {
     #[test]
     fn every_script_is_one_braced_command_with_no_nul() {
         for op in [
-            Op::Context,
-            Op::TomlPath,
             Op::BeadReopen,
             Op::CauseEvent,
             Op::ReleaseClaim,
