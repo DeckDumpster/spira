@@ -1897,6 +1897,7 @@ dependencies = [
  "spira-desired-state",
  "spira-lc",
  "spira-otel",
+ "spira-runtime",
  "state-store",
  "testkit",
  "toml",
