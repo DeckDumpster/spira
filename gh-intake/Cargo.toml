@@ -15,6 +15,7 @@ test = false
 
 [dependencies]
 lifecycle = { path = "../lifecycle" }
+mail = { path = "../mail" }
 serde_json = "1"
 sha2 = "0.10"
 spira-config = { path = "../spira-config" }

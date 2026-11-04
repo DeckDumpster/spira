@@ -111,39 +111,34 @@ impl Seen for FileSeen {
 }
 
 pub struct RealLifecycle {
-    pub bin: String,
+    lc: spira_config::lc_call::LcClient,
 }
 
 impl RealLifecycle {
     pub fn new() -> Result<Self, String> {
-        Ok(RealLifecycle { bin: spira_config::lifecycle_row::lc_bin()? })
+        Ok(RealLifecycle { lc: spira_config::lc_call::LcClient::configured()? })
+    }
+
+    /// Every read through `lc`.
+    pub fn over(lc: spira_config::lc_call::LcClient) -> Self {
+        RealLifecycle { lc }
     }
 }
 
 impl Lifecycle for RealLifecycle {
     fn bead(&self, id: &str) -> Result<Option<LcBead>, String> {
-        let o = spira_config::bounded::bounded(&self.bin)
-            .args(["show", id])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .map_err(|e| format!("{}: {e}", self.bin))?;
-        parse_show(o.status.code(), &o.stdout)
+        let r = self.lc.call(&["show", id]).map_err(String::from)?;
+        parse_show(Some(r.code), r.out.as_bytes())
     }
 
     fn all(&self) -> Result<std::collections::BTreeMap<String, LcBead>, String> {
         let read = |extra: &[&str]| -> Result<serde_json::Value, String> {
-            let o = spira_config::bounded::bounded(&self.bin)
-                .arg("list")
-                .args(extra)
-                .stdin(Stdio::null())
-                .stderr(Stdio::null())
-                .output()
-                .map_err(|e| format!("{}: {e}", self.bin))?;
-            if o.status.code() != Some(0) {
-                return Err(format!("spira-lc list exited {:?}", o.status.code()));
+            let argv: Vec<&str> = std::iter::once("list").chain(extra.iter().copied()).collect();
+            let r = self.lc.call(&argv).map_err(String::from)?;
+            if r.code != 0 {
+                return Err(format!("spira-lc list exited {:?}", Some(r.code)));
             }
-            serde_json::from_slice(&o.stdout).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))
+            serde_json::from_str(&r.out).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))
         };
         parse_list(&read(&[])?, &read(&["--delivery"])?)
     }
@@ -187,6 +182,7 @@ pub struct RealBd {
 
 impl RealBd {
     fn cmd(&self) -> Command {
+        // FORK-EDGE: content store write (create/note/dep); its reads (list, show) are unserved verb content
         Command::new(&self.bdq)
     }
 }
@@ -351,33 +347,44 @@ impl Repo for RealRepo {
     }
 }
 
+/// One operator mail, sent in-process through the `mail` library.
+pub type SendFn = Box<dyn Fn(&mail::cmds::SendArgs, String) -> Result<(), String>>;
+
 pub struct RealMail {
-    pub mail_bin: String,
+    stand_in: Option<String>,
+    send: SendFn,
 }
 
-impl Mail for RealMail {
-    fn send_operator_note(&self, subject: &str, body: &[u8]) -> bool {
-        let mut child = match spira_config::bounded::bounded(&self.mail_bin)
-            .args(["send", "operator", "--from", "gh-intake <intake@spira>", "--subject", subject, "--kind", "note"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(_) => return false,
-        };
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(body);
-        }
-        matches!(child.wait(), Ok(status) if status.success())
+impl RealMail {
+    /// Production: `stand_in` (a fixture's `SPIRA_MAIL_BIN`) runs that program; with none, the
+    /// `mail` library sends in-process exactly as `mail send` would.
+    pub fn new(stand_in: Option<String>) -> Self {
+        Self::with(stand_in, Box::new(send_in_process))
     }
 
-    /// lib.sh `gh_issue_ask_unlanded`'s mail call (sp-j3fim): stdout discarded, stderr
-    /// captured as the error text exactly as `_err="$(... 2>&1 >/dev/null)"` did.
-    fn send_question(&self, from: &str, subject: &str, default: &str, bead_id: &str, body: &[u8]) -> Result<(), String> {
-        let mut child = spira_config::bounded::bounded(&self.mail_bin)
-            .args(["send", "operator", "--from", from, "--subject", subject, "--kind", "question", "--default", default, "--bead", bead_id])
+    pub fn with(stand_in: Option<String>, send: SendFn) -> Self {
+        RealMail { stand_in, send }
+    }
+}
+
+/// `mail send`'s own path: the config, the bead store's door, then the recorded send.
+fn send_in_process(args: &mail::cmds::SendArgs, body: String) -> Result<(), String> {
+    let env = mail::env::Env::load().map_err(|e| format!("mail: {e}"))?;
+    mail::maildir::mailbox_valid(args.mailbox).map_err(|e| format!("mail: send: {e}"))?;
+    let bdq = spira_config::release_env::tool("bdq").map_err(|e| format!("mail: {e}"))?;
+    let bd = mail::bead::BdCli { bdq, conn_retries: env.bd_conn_retries };
+    mail::cmds::send_recorded(&bd, &env, args, body).map(|_| ()).map_err(|e| format!("mail: send: {e}"))
+}
+
+impl RealMail {
+    /// `mail send operator <flags>` with `body` on stdin, through the fixture's stand-in
+    /// program: stdout discarded, stderr the error text.
+    fn stand_in_send(bin: &str, flags: &[&str], body: &[u8]) -> Result<(), String> {
+        // FORK-EDGE: a fixture's SPIRA_MAIL_BIN stand-in only; production sends in-process
+        let mut child = spira_config::bounded::bounded(bin)
+            .arg("send")
+            .arg("operator")
+            .args(flags)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -393,6 +400,44 @@ impl Mail for RealMail {
             Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
         }
     }
+
+    fn deliver(&self, args: &mail::cmds::SendArgs, flags: &[&str], body: &[u8]) -> Result<(), String> {
+        match &self.stand_in {
+            Some(bin) => Self::stand_in_send(bin, flags, body),
+            None => (self.send)(args, String::from_utf8_lossy(body).into_owned()),
+        }
+    }
+}
+
+fn operator_args<'a>(from: &'a str, subject: &'a str, kind: &'a str, default: &'a str, bead: &'a str) -> mail::cmds::SendArgs<'a> {
+    mail::cmds::SendArgs {
+        mailbox: "operator",
+        from: Some(from),
+        subject,
+        kind,
+        default,
+        class: "",
+        bead,
+        urgent: false,
+        digest: false,
+        dry_run: false,
+        requested_by: "",
+    }
+}
+
+impl Mail for RealMail {
+    fn send_operator_note(&self, subject: &str, body: &[u8]) -> bool {
+        let from = "gh-intake <intake@spira>";
+        let flags = ["--from", from, "--subject", subject, "--kind", "note"];
+        self.deliver(&operator_args(from, subject, "note", "", ""), &flags, body).is_ok()
+    }
+
+    /// lib.sh `gh_issue_ask_unlanded`'s mail call (sp-j3fim): the error text is what
+    /// `mail send` says on stderr when it refuses.
+    fn send_question(&self, from: &str, subject: &str, default: &str, bead_id: &str, body: &[u8]) -> Result<(), String> {
+        let flags = ["--from", from, "--subject", subject, "--kind", "question", "--default", default, "--bead", bead_id];
+        self.deliver(&operator_args(from, subject, "question", default, bead_id), &flags, body)
+    }
 }
 
 /// `ghq` is NOT its own binary — lib.sh's shim is `ghq() { command bdq __ghq "$@"; }`,
@@ -406,6 +451,7 @@ pub struct RealGh {
 
 impl RealGh {
     fn cmd(&self) -> Command {
+        // FORK-EDGE: needs bdq's __ghq (gh with the App token) as a library call; gh itself stays the child
         let mut c = Command::new(&self.bdq_bin);
         c.arg("__ghq");
         c
@@ -555,6 +601,64 @@ mod lifecycle_tests {
         assert!(parse_show(Some(2), b"").is_err());
         assert!(parse_show(None, b"").is_err());
         assert!(parse_show(Some(0), b"not json").is_err());
+    }
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+    use spira_config::lc_call::{LcClient, Reply, Transport};
+    use std::sync::{Arc, Mutex};
+
+    struct Scripted(Mutex<Vec<Vec<String>>>);
+
+    impl Transport for Scripted {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
+            self.0.lock().unwrap().push(argv.to_vec());
+            let out = match (argv[0].as_str(), argv.get(1).map(String::as_str)) {
+                ("show", Some("sp-1")) => r#"{"bead":{"state":"LANDED","tip":"tt"},"delivery":{"merge_sha":"mm"}}"#,
+                ("show", _) => return Ok(Reply { code: 1, out: "{}".into(), err: String::new() }),
+                ("list", Some("--delivery")) => r#"[{"bead_id":"a","merge_sha":"mm"}]"#,
+                ("list", _) => r#"[{"bead_id":"a","state":"LANDED","tip":"tt","reason":""}]"#,
+                _ => return Err("unscripted".into()),
+            };
+            Ok(Reply { code: 0, out: out.into(), err: String::new() })
+        }
+    }
+
+    #[test]
+    fn the_lifecycle_reads_go_through_the_store_client_not_a_program() {
+        let t = Arc::new(Scripted(Mutex::default()));
+        let lc = RealLifecycle::over(LcClient::over(t.clone(), true));
+        assert_eq!(lc.bead("sp-1").unwrap().unwrap().sha, "mm");
+        assert_eq!(lc.bead("sp-2").unwrap(), None);
+        assert_eq!(lc.all().unwrap()["a"].sha, "mm");
+        assert_eq!(t.0.lock().unwrap().len(), 4);
+    }
+
+    type Sent = Arc<Mutex<Vec<(String, String, String, String, String, String)>>>;
+
+    fn recording(fail: bool) -> (RealMail, Sent) {
+        let sent: Sent = Arc::default();
+        let s = sent.clone();
+        let send: SendFn = Box::new(move |a: &mail::cmds::SendArgs, body: String| {
+            s.lock().unwrap().push((a.mailbox.into(), a.from.unwrap_or("").into(), a.kind.into(), a.default.into(), a.bead.into(), body));
+            if fail { Err("mail: send: refused".into()) } else { Ok(()) }
+        });
+        (RealMail::with(None, send), sent)
+    }
+
+    #[test]
+    fn operator_mail_is_sent_in_process_with_the_cli_flags() {
+        let (m, sent) = recording(false);
+        assert!(m.send_operator_note("digest", b"new untrusted"));
+        assert_eq!(m.send_question("gh <g@s>", "unlanded?", "wait", "sp-9", b"why"), Ok(()));
+        let got = sent.lock().unwrap().clone();
+        assert_eq!(got[0], ("operator".into(), "gh-intake <intake@spira>".into(), "note".into(), "".into(), "".into(), "new untrusted".into()));
+        assert_eq!(got[1], ("operator".into(), "gh <g@s>".into(), "question".into(), "wait".into(), "sp-9".into(), "why".into()));
+        let (m, _) = recording(true);
+        assert!(!m.send_operator_note("digest", b"x"));
+        assert_eq!(m.send_question("f", "s", "d", "b", b"x"), Err("mail: send: refused".into()));
     }
 }
 

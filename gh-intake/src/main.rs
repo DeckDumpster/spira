@@ -277,12 +277,9 @@ fn provenance_cmd(args: &[String]) -> ExitCode {
 
 #[allow(clippy::type_complexity)]
 fn ports(home: String) -> Result<(RealBd, RealGh, RealGit, RealRepo, RealMail), String> {
-    let mail_bin = match env_nonempty("SPIRA_MAIL_BIN") {
-        Some(m) => m,
-        None => spira_config::release_env::tool("mail")?,
-    };
+    let mail = RealMail::new(env_nonempty("SPIRA_MAIL_BIN"));
     let bdq = spira_config::release_env::tool("bdq")?;
-    Ok((RealBd { bdq: bdq.clone() }, RealGh { bdq_bin: bdq }, RealGit, RealRepo { spira_home: home }, RealMail { mail_bin }))
+    Ok((RealBd { bdq: bdq.clone() }, RealGh { bdq_bin: bdq }, RealGit, RealRepo { spira_home: home }, mail))
 }
 
 fn main() -> ExitCode {
@@ -344,7 +341,7 @@ fn dispatch() -> ExitCode {
         };
     }
     // SPIRA_MAIL_BIN is not a registered config key (no spira/conf.d entry).
-    let mail_bin = std::env::var("SPIRA_MAIL_BIN").unwrap_or_else(|_| "mail".to_string());
+    let mail_stand_in = std::env::var("SPIRA_MAIL_BIN").ok().filter(|m| !m.is_empty());
 
     let repo = cfg_or_refuse!("SPIRA_GH_INTAKE_REPO");
     let scope = cfg_or_refuse!("SPIRA_SCOPE_LABEL");
@@ -378,7 +375,7 @@ fn dispatch() -> ExitCode {
         }
     };
     let repo_port = RealRepo { spira_home };
-    let mail = RealMail { mail_bin };
+    let mail = RealMail::new(mail_stand_in);
 
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
     let run_dir = match spira_config::resolve::locate_home_for_process().and_then(|h| spira_config::resolve::resolve_run_dir(&env, &h)) {
