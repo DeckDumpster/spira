@@ -7,10 +7,11 @@
 //! invocation calls directly — there is one implementation of show/list/history/event, not
 //! a daemon copy and a CLI copy that could drift apart.
 //!
-//! Deploys inert: nothing connects to this socket yet. The wire format (one JSON line in —
-//! an argv array, exactly what `env::args().skip(1)` would have produced — one JSON line
-//! out) is deliberately minimal; the dwarf-facing semantic layer (design §3.5, a separate
-//! bead) is the real client this exists for.
+//! The wire format: one JSON line in — an argv array, exactly what `env::args().skip(1)`
+//! would have produced, or `{"argv": [...], "len": N}` followed by exactly `N` bytes of the
+//! stdin the CLI would have read — then one `{"exit_code", "len"[, "err_len"]}` line out,
+//! followed by the stdout bytes and any stderr bytes. The composed verbs (composed.rs) are
+//! answered here too, their bd half included; a verb neither serves is refused, never handed on.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -18,6 +19,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant, SystemTime};
 
+use crate::callers::Answer;
 use crate::db::Conn;
 
 const SWEEP_EVERY: Duration = Duration::from_secs(5);
@@ -311,45 +313,130 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
     let started_work = Arc::new(std::sync::Mutex::new(None::<Instant>));
     let started = SystemTime::now();
     let mut reader = BufReader::new(stream.try_clone().expect("clone unix stream"));
-    let mut line = String::new();
-    if reader.read_line(&mut line).unwrap_or(0) == 0 {
-        return;
-    }
-    let argv: Vec<String> = match serde_json::from_str(line.trim()) {
-        Ok(v) => v,
-        Err(e) => {
-            let msg = format!("bad request: {e}");
-            let _ = write_response(&stream, 2, &msg);
-            record_span(spans, "-", "-", line.len(), msg.len(), 2, started, SystemTime::now(), Instant::now().saturating_duration_since(accepted));
+    let (req, size) = match read_request(&mut reader) {
+        Ok(None) => return,
+        Ok(Some(r)) => r,
+        Err((size, msg)) => {
+            let _ = write_response(&stream, 2, &msg, "");
+            record_span(spans, "-", "-", size, msg.len(), 2, started, SystemTime::now(), Instant::now().saturating_duration_since(accepted));
             return;
         }
     };
     let caller = peer_pid(&stream).map(crate::slow::caller_of_pid).unwrap_or_else(|| "-".to_string());
-    let verb = argv.first().cloned().unwrap_or_default();
+    let verb = req.argv.first().cloned().unwrap_or_default();
     let map = std::fs::read_to_string(personas_path()).map(|t| crate::work::parse_persona_uids(&t)).unwrap_or_default();
-    let (code, out) = match crate::work::bind_peer(&argv, peer_uid(&stream), &map) {
+    let argv_seen = req.argv.clone();
+    let ans = match crate::work::bind_peer(&req.argv, peer_uid(&stream), &map) {
         Ok(argv) => {
             let worker = Arc::clone(conn);
             let who = caller.clone();
             let began = Arc::clone(&started_work);
             let limit = request_deadline(&argv);
+            let req = Request { argv, stdin: req.stdin };
             within(limit.saturating_sub(received.elapsed()), move || {
                 *began.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                 crate::slow::set_caller(&who);
                 crate::db::set_request_deadline(Some(received + limit));
-                crate::dispatch(&argv, &worker)
+                let mut local = Local(&worker);
+                answer(req, &mut local, &mut crate::bd::LiveBd, &crate::composed::LiveContent, &crate::lifecycle_run_dir)
             })
-                .unwrap_or_else(|| (2, format!("cannot tell: {}", crate::db::DEADLINE_MESSAGE)))
+            .unwrap_or_else(|| Answer::out(2, format!("cannot tell: {}", crate::db::DEADLINE_MESSAGE)))
         }
-        Err(refusal) => refusal,
+        Err((code, out)) => Answer::out(code, out),
     };
-    let method = crate::slow::method_of(&argv);
+    let method = crate::slow::method_of(&argv_seen);
     crate::slow::request_done(&verb, &method, &caller, received.elapsed());
     crate::slow::sample(&method, received.elapsed());
-    let _ = write_response(&stream, code, &out);
+    let _ = write_response(&stream, ans.code, &ans.stdout, &ans.stderr);
     let began = *started_work.lock().unwrap_or_else(|e| e.into_inner());
     let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(accepted);
-    record_span(spans, &verb, &caller, line.len(), out.len(), code, started, SystemTime::now(), waited);
+    record_span(spans, &verb, &caller, size, ans.stdout.len() + ans.stderr.len(), ans.code, started, SystemTime::now(), waited);
+}
+
+/// One request: the argv `env::args().skip(1)` would have produced, and the bytes the CLI's
+/// stdin would have held, when the client sent any.
+#[derive(Debug)]
+pub(crate) struct Request {
+    pub argv: Vec<String>,
+    pub stdin: Option<String>,
+}
+
+/// Longest request body read: a claim-verdicts batch or a section spec, never a file transfer.
+const MAX_BODY: u64 = 16 << 20;
+
+/// The request on `reader`: a JSON argv array on one line, or `{"argv": [...], "len": N}` on
+/// one line followed by exactly `N` bytes of stdin. `Ok(None)` when the client sent nothing;
+/// `Err((bytes read, refusal))` for a request that cannot be read.
+fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (usize, String)> {
+    let mut line = String::new();
+    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+        return Ok(None);
+    }
+    let bad = |e: &dyn std::fmt::Display| (line.len(), format!("bad request: {e}"));
+    let head: serde_json::Value = serde_json::from_str(line.trim()).map_err(|e| bad(&e))?;
+    let (argv, len) = match head {
+        serde_json::Value::Array(_) => (head, None),
+        serde_json::Value::Object(mut o) => {
+            let len = o.get("len").and_then(serde_json::Value::as_u64).ok_or_else(|| bad(&"a request object needs a numeric len"))?;
+            if len > MAX_BODY {
+                return Err(bad(&format!("a {len}-byte body is over the {MAX_BODY}-byte bound")));
+            }
+            (o.remove("argv").unwrap_or_default(), Some(len))
+        }
+        _ => return Err(bad(&"a request is an argv array or an {argv, len} object")),
+    };
+    let argv: Vec<String> = serde_json::from_value(argv).map_err(|e| bad(&e))?;
+    let stdin = match len {
+        None => None,
+        Some(n) => {
+            let mut body = vec![0u8; n as usize];
+            std::io::Read::read_exact(reader, &mut body).map_err(|e| bad(&format!("the {n}-byte body: {e}")))?;
+            Some(String::from_utf8(body).map_err(|e| bad(&e))?)
+        }
+    };
+    let size = line.len() + stdin.as_ref().map_or(0, String::len);
+    Ok(Some((Request { argv, stdin }, size)))
+}
+
+/// The primitives, in this process against its own connection: a composed verb's reads and
+/// events never go back out through the socket.
+struct Local<'a>(&'a Conn);
+
+impl crate::callers::Machine for Local<'_> {
+    fn call(&mut self, args: &[String]) -> (i32, String) {
+        crate::dispatch(args, self.0)
+    }
+}
+
+/// The answer to one request. A composed verb (composed.rs) runs here with its bd half; any
+/// other verb is a primitive, its stdin body carried inline exactly as the CLI carries it. A
+/// verb neither serves is the primitives' own refusal — nothing falls through to a CLI.
+pub(crate) fn answer(
+    req: Request,
+    m: &mut dyn crate::callers::Machine,
+    bd: &mut dyn crate::callers::Bd,
+    content: &dyn crate::composed::Content,
+    run_dir: &dyn Fn() -> Result<std::path::PathBuf, String>,
+) -> Answer {
+    let Request { argv, stdin } = req;
+    if !argv.first().is_some_and(|v| crate::composed::is_served(v)) {
+        let argv = match stdin {
+            Some(body) => crate::cutover::inline_payload_from(argv, &mut body.as_bytes()),
+            None => argv,
+        };
+        let (code, out) = m.call(&argv);
+        return Answer::out(code, out);
+    }
+    let mut body = stdin;
+    let mut read_stdin = move || body.take().ok_or_else(|| "nothing was sent".to_string());
+    let now = crate::db::now_epoch();
+    let ports = crate::composed::Ports { m, bd, content, stdin: &mut read_stdin, run_dir, now };
+    let mut ans = crate::composed::run(&argv, ports);
+    let id = argv.get(1).map(String::as_str).unwrap_or("");
+    if let Some(e) = crate::composed::write_cert_log(id, &ans, run_dir(), now) {
+        ans.stderr.push_str(&format!("{e}\n"));
+    }
+    ans
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -387,6 +474,8 @@ fn request_deadline(argv: &[String]) -> Duration {
         Some("work") | Some("facts-query") => crate::db::QUERY_DEADLINE,
         // batch-job: bounded under the client's 5 s wait; the verb owns its own shorter budget.
         Some("unpublished") => crate::unpublished::DEADLINE,
+        // batch-job: a repair sweep over every row, bounded at the query deadline like census's.
+        Some(v) if crate::composed::SWEEPS.contains(&v) => crate::db::QUERY_DEADLINE,
         _ => REQUEST_DEADLINE,
     }
 }
@@ -433,10 +522,17 @@ fn peer_pid(stream: &UnixStream) -> Option<i32> {
     peer_cred(stream).map(|c| c.pid)
 }
 
-fn write_response(mut stream: &UnixStream, exit_code: i32, stdout: &str) -> std::io::Result<()> {
-    let mut buf = Vec::with_capacity(stdout.len() + 48);
-    writeln!(buf, "{}", serde_json::json!({"exit_code": exit_code, "len": stdout.len()}))?;
+/// A header line, then the stdout bytes; a non-empty stderr follows them, its length in the
+/// header's `err_len` (a client that predates it reads `len` bytes and stops).
+fn write_response(mut stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &str) -> std::io::Result<()> {
+    let mut buf = Vec::with_capacity(stdout.len() + stderr.len() + 64);
+    if stderr.is_empty() {
+        writeln!(buf, "{}", serde_json::json!({"exit_code": exit_code, "len": stdout.len()}))?;
+    } else {
+        writeln!(buf, "{}", serde_json::json!({"exit_code": exit_code, "len": stdout.len(), "err_len": stderr.len()}))?;
+    }
     buf.extend_from_slice(stdout.as_bytes());
+    buf.extend_from_slice(stderr.as_bytes());
     stream.write_all(&buf)
 }
 
@@ -523,7 +619,7 @@ mod tests {
         use std::io::Read;
         let (a, mut b) = std::os::unix::net::UnixStream::pair().unwrap();
         let body = "{\"q\": \"x\"}\nsecond line";
-        super::write_response(&a, 3, body).unwrap();
+        super::write_response(&a, 3, body, "").unwrap();
         drop(a);
         let mut got = String::new();
         b.read_to_string(&mut got).unwrap();
@@ -541,5 +637,164 @@ mod tests {
         let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
         let me = std::fs::metadata("/proc/self").unwrap();
         assert_eq!(super::peer_uid(&a), Some(std::os::unix::fs::MetadataExt::uid(&me)));
+    }
+
+    // ---- the composed verbs, served (sp-ipwlic) -------------------------------------------
+
+    use crate::callers::world::World;
+    use crate::callers::Machine;
+
+    /// bd's content half as a double: answers every read with its argv, records every write.
+    #[derive(Default)]
+    struct Content(std::cell::RefCell<Vec<String>>);
+
+    impl crate::composed::Content for Content {
+        fn read(&self, args: &[String]) -> Result<String, String> {
+            Ok(format!("read {}", args.join(" ")))
+        }
+        fn write(&self, args: &[&str]) -> Result<String, String> {
+            self.0.borrow_mut().push(args.join(" "));
+            Ok(String::new())
+        }
+        fn delete(&self, _: &[String]) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    /// One request through the server's own reader, answer and writer, with `w` as its store and
+    /// bd; the client half is spira-lc's own socket client.
+    fn over(w: &World, content: &Content, argv: &[&str], stdin: Option<&str>) -> (i32, String, String) {
+        let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+        let body = stdin.map(str::to_string);
+        let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
+        let asked = std::thread::spawn(move || crate::client::exchange(client, &argv, body.as_deref()));
+        let mut reader = std::io::BufReader::new(server.try_clone().unwrap());
+        let (req, _) = super::read_request(&mut reader).unwrap().unwrap();
+        let (mut m, mut b) = (w, w);
+        let ans = super::answer(req, &mut m, &mut b, content, &|| Err("no run dir here".to_string()));
+        super::write_response(&server, ans.code, &ans.stdout, &ans.stderr).unwrap();
+        drop(server);
+        asked.join().unwrap()
+    }
+
+    fn filed(w: &World, id: &str) {
+        w.file(id, "task", None, &[]);
+        w.ok(&["create-bead", id, "--ready"]);
+    }
+
+    #[test]
+    fn hold_held_and_unhold_are_answered_by_the_socket_with_the_clis_exit_codes() {
+        let (w, c) = (World::new(), Content::default());
+        filed(&w, "sp-a");
+        assert_eq!(over(&w, &c, &["held", "sp-a", "wait"], None).0, 1, "not held yet");
+        let (code, _, err) = over(&w, &c, &["hold", "sp-a", "wait", "snooze-until:9999999999", "groomer"], None);
+        assert_eq!(code, 0, "{err}");
+        assert_eq!(over(&w, &c, &["held", "sp-a", "wait"], None).0, 0);
+        assert_eq!(over(&w, &c, &["holds", "sp-a"], None).1.trim(), "wait");
+        assert_eq!(over(&w, &c, &["unhold", "sp-a", "wait", "groomer"], None).0, 0);
+        assert_eq!(over(&w, &c, &["held", "sp-a", "wait"], None).0, 1);
+        let (code, _, err) = over(&w, &c, &["hold", "sp-a", "nonsense"], None);
+        assert_ne!(code, 0);
+        assert!(!err.is_empty(), "a refusal keeps its text, on stderr: {err}");
+    }
+
+    #[test]
+    fn close_reads_its_reason_from_the_request_body_and_writes_bd_on_the_server() {
+        let (w, c) = (World::new(), Content::default());
+        filed(&w, "sp-a");
+        let (code, _, err) = over(&w, &c, &["close", "sp-a", "--reason-file", "-", "--dropped", "--actor", "queue"], None);
+        assert_eq!(code, 2, "no body sent: {err}");
+        assert!(err.contains("--reason-file: stdin: nothing was sent"), "{err}");
+        assert!(w.writes.borrow().is_empty());
+        let (code, _, err) = over(&w, &c, &["close", "sp-a", "--reason-file", "-", "--dropped", "--actor", "queue"], Some("not needed after all\n"));
+        assert_eq!(code, 0, "{err}");
+        assert_eq!(*w.writes.borrow(), ["close sp-a"], "the server wrote bd");
+        assert!(w.lc(&["show", "sp-a"]).1.contains("DROPPED"));
+    }
+
+    #[test]
+    fn close_ask_closes_the_ask_and_settles_its_decision_bead() {
+        let (w, c) = (World::new(), Content::default());
+        w.file("sp-k", "task", None, &[]);
+        w.ok(&["create-ask", "sp-k"]);
+        let (code, out, err) = over(&w, &c, &["close-ask", "sp-k", "--exit", "answered", "--quote", "yes", "--actor", "operator", "--channel", "mail"], None);
+        assert_eq!(code, 0, "{out}{err}");
+        assert_eq!(*w.writes.borrow(), ["close sp-k"], "the decision bead closed with it");
+    }
+
+    #[test]
+    fn content_is_served_and_keeps_its_refusal_text() {
+        let (w, c) = (World::new(), Content::default());
+        assert_eq!(over(&w, &c, &["content", "show", "sp-a", "--json"], None), (0, "read show sp-a --json".into(), String::new()));
+        assert_eq!(over(&w, &c, &["content", "config", "get", "issue_prefix"], None).1, "read config get issue_prefix");
+        let (code, _, err) = over(&w, &c, &["content", "delete", "sp-a"], None);
+        assert_eq!(code, 3);
+        assert_eq!(err, "spira-lc content: `delete sp-a` is not a content verb\n");
+        assert_eq!(over(&w, &c, &["bd-note", "sp-a", "hello"], None).0, 0);
+        assert_eq!(*c.0.borrow(), ["note sp-a hello"]);
+    }
+
+    /// A primitive's stdin body is carried inline, exactly as the CLI carries its own stdin.
+    #[test]
+    fn a_primitives_body_is_inlined_as_its_json() {
+        struct Rec(Vec<Vec<String>>);
+        impl Machine for Rec {
+            fn call(&mut self, args: &[String]) -> (i32, String) {
+                self.0.push(args.to_vec());
+                (0, String::new())
+            }
+        }
+        let w = World::new();
+        let (mut rec, mut bd) = (Rec(Vec::new()), &w);
+        let req = super::Request { argv: vec!["claim-verdicts".into()], stdin: Some("[{\"bead_id\":\"sp-a\"}]".into()) };
+        super::answer(req, &mut rec, &mut bd, &Content::default(), &|| Err(String::new()));
+        assert_eq!(rec.0, vec![vec!["claim-verdicts".to_string(), "--json".into(), "[{\"bead_id\":\"sp-a\"}]".into()]]);
+    }
+
+    /// sp-6n7nuv: a verb the socket does not serve is refused by the server itself — the
+    /// git-proved caller verbs included — and never falls through to anything.
+    #[test]
+    fn the_real_server_answers_a_composed_verb_and_refuses_an_unserved_one() {
+        let (reply, code) = ask(None, "[\"hold\"]\n");
+        assert_eq!(code, 2, "{reply}");
+        assert!(reply.contains("<poison|ask|wait|manual>"), "the composed verb answered its own usage: {reply}");
+        for verb in ["deliver", "content-on-base", "no-such-verb"] {
+            let (reply, code) = ask(None, &format!("[\"{verb}\", \"sp-a\"]\n"));
+            assert_eq!(code, 2, "{verb}: {reply}");
+            assert!(reply.contains("usage: spira-lc show"), "{verb} is refused, not run: {reply}");
+        }
+    }
+
+    #[test]
+    fn a_request_body_is_read_to_exactly_its_length() {
+        let mut r = std::io::Cursor::new(b"{\"argv\":[\"close\",\"sp-a\"],\"len\":5}\nhelloEXTRA".to_vec());
+        let (req, _) = super::read_request(&mut r).unwrap().unwrap();
+        assert_eq!((req.argv, req.stdin.as_deref()), (vec!["close".to_string(), "sp-a".into()], Some("hello")));
+        let mut short = std::io::Cursor::new(b"{\"argv\":[\"close\"],\"len\":9}\nhi".to_vec());
+        assert!(super::read_request(&mut short).unwrap_err().1.starts_with("bad request"));
+        let mut huge = std::io::Cursor::new(format!("{{\"argv\":[\"x\"],\"len\":{}}}\n", super::MAX_BODY + 1).into_bytes());
+        assert!(super::read_request(&mut huge).is_err(), "an oversized body is refused before it is read");
+    }
+
+    #[test]
+    fn a_composed_verb_keeps_the_three_second_bound_and_only_its_sweeps_are_batch_jobs() {
+        let d = |v: &str| super::request_deadline(&[v.to_string(), "x".to_string()]);
+        for verb in ["close", "reopen", "reconcile-closed", "close-ask", "hold", "unhold", "drop", "disposition", "held", "reply", "content"] {
+            assert_eq!(d(verb), std::time::Duration::from_secs(3), "{verb}");
+        }
+        for verb in crate::composed::SWEEPS {
+            assert_eq!(d(verb), crate::db::QUERY_DEADLINE, "{verb}");
+        }
+    }
+
+    #[test]
+    fn a_stderr_answer_rides_after_stdout_with_its_own_length() {
+        use std::io::Read;
+        let (a, mut b) = std::os::unix::net::UnixStream::pair().unwrap();
+        super::write_response(&a, 3, "out", "why\n").unwrap();
+        drop(a);
+        let mut got = String::new();
+        b.read_to_string(&mut got).unwrap();
+        assert_eq!(got, "{\"exit_code\":3,\"len\":3,\"err_len\":4}\noutwhy\n");
     }
 }

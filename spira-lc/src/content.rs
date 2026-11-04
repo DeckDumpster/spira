@@ -13,6 +13,8 @@ pub fn check(args: &[String]) -> Result<(), String> {
     match a.as_slice() {
         ["list" | "show" | "memories" | "state", ..] => Ok(()),
         ["gate", "list", ..] => Ok(()),
+        // The planning store's id prefix, which a caller filing beads stamps its ids with.
+        ["config", "get", key] if !key.starts_with('-') => Ok(()),
         ["comments", "add", id, _text] if !id.starts_with('-') => Ok(()),
         ["comments", sub, ..] if *sub != "add" => Ok(()),
         ["update", id, flags @ ..] if !id.starts_with('-') && !flags.is_empty() => labels_only(flags),
@@ -33,7 +35,7 @@ fn labels_only(flags: &[&str]) -> Result<(), String> {
 
 pub fn run(args: &[String], bd: &dyn Fn(&[String]) -> Result<String, String>) -> Answer {
     if args.is_empty() {
-        return Answer { code: CANNOT_TELL, stderr: "usage: spira-lc content <list|show|comments|gate list|memories|state|update|comments add> …\n".into(), ..Default::default() };
+        return Answer { code: CANNOT_TELL, stderr: "usage: spira-lc content <list|show|comments|gate list|memories|state|config get|update|comments add> …\n".into(), ..Default::default() };
     }
     if let Err(e) = check(args) {
         return Answer { code: REFUSED, stderr: format!("spira-lc content: {e}\n"), ..Default::default() };
