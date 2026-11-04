@@ -612,7 +612,7 @@ pub fn escalate(w: &dyn World, condition_key: &str, findings: &str) {
 /// there just re-escalates a standing condition once, the same documented, acceptable cost
 /// a versioned condition key already pays on any scheme change). FNV-1a, not POSIX `cksum`:
 /// no caller needs bit-for-bit parity with the bash tool that no longer exists.
-fn cksum(data: &str) -> u64 {
+pub fn cksum(data: &str) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for &b in data.as_bytes() {
         hash ^= b as u64;
@@ -829,14 +829,14 @@ fn decline_key(repo: &Path) -> String {
     format!("skew.refresh-declined-{}", cksum(&repo.to_string_lossy()))
 }
 
-fn decline_streak_clear(w: &dyn World, repo: &Path) {
+pub fn decline_streak_clear(w: &dyn World, repo: &Path) {
     let key = decline_key(repo);
     if w.stamp_read(&key).map(|v| v != "0").unwrap_or(false) {
         w.stamp_write(&key, "0");
     }
 }
 
-fn decline_streak_bump(w: &dyn World, repo: &Path, what: &str) {
+pub fn decline_streak_bump(w: &dyn World, repo: &Path, what: &str) {
     let key = decline_key(repo);
     let n = w.stamp_read(&key).and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(0) + 1;
     w.stamp_write(&key, &n.to_string());

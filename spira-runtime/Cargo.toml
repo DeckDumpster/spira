@@ -28,6 +28,7 @@ runtime = { path = "../runtime" }
 unit-run = { path = "../unit-run" }
 spira-config = { path = "../spira-config" }
 store-view = { path = "../store-view" }
+skew = { path = "../skew" }
 perf-watch = { path = "../perf-watch" }
 spira-otel = { path = "../spira-otel" }
 ring = "0.17"

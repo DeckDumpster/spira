@@ -88,10 +88,13 @@
 //! Release rollback restores the unit. Observe mode shadows `escalate`, `log` and `refresh`.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
 use spira_config::process::cfg;
+
+use skew::ports::{StatusRow, World};
 
 use super::pattern;
 
@@ -159,6 +162,13 @@ pub struct Snapshot {
     pub tag_sidecar: Option<String>,
     pub decline_streak: u32,
     pub stamps: BTreeMap<String, String>,
+    /// How many commits `tip` is ahead of the running commit, when it descends from it; `None`
+    /// when it does not (or nothing is running behind it).
+    #[serde(default)]
+    pub behind: Option<u64>,
+    /// Each release tag's commit, for the MANIFEST-MISMATCH check in release mode.
+    #[serde(default)]
+    pub tag_commits: BTreeMap<String, String>,
 }
 
 /// `{ escalated: {cksum(key)→condition}, declined: {repo→n} }`.
@@ -168,9 +178,363 @@ pub struct Carry {
     pub declined: BTreeMap<String, u32>,
 }
 
-/// The refresh judgement, then the check, then `escalate` once per condition key.
-pub fn decide(_carry: &Carry, _snap: &Snapshot, _now_ms: u64, _cfg: &Config) -> (Carry, Vec<EffectSpec>) {
-    unimplemented!("watch.skew: not ported yet")
+/// The name the snapshot world gives the home repo; the snapshot is of that repo alone.
+const HOME: &str = "home";
+const ESCALATED: &str = "skew.escalated-";
+const DECLINED: &str = "skew.refresh-declined-";
+const WRITE_DEADLINE_MS: u64 = 5_000;
+const ESCALATE_DEADLINE_MS: u64 = 30_000;
+const REFRESH_DEADLINE_MS: u64 = 300_000;
+
+/// The operator question `escalate` asks, as `watch.skew.escalate` carries it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Question {
+    pub from: String,
+    pub subject: String,
+    pub body: String,
+    pub default: String,
+}
+
+/// skew's `World` answered from one snapshot and the carry: every read the check and the refresh
+/// judgement make comes from the snapshot, every stamp from the carry, and the two writes they
+/// can make (the operator question and the refresh alarm line) are collected as acts.
+struct SnapWorld<'a> {
+    snap: &'a Snapshot,
+    cfg: &'a Config,
+    carry: std::cell::RefCell<Carry>,
+    acts: std::cell::RefCell<Vec<EffectSpec>>,
+}
+
+impl SnapWorld<'_> {
+    fn releases(&self) -> PathBuf {
+        PathBuf::from(&self.cfg.releases)
+    }
+
+    fn running(&self) -> Option<&String> {
+        self.snap.manifest_commit.as_ref()
+    }
+
+    fn act(&self, name: &str, input: String, deadline_ms: u64) {
+        self.acts.borrow_mut().push(EffectSpec { name: name.into(), input, deadline_ms });
+    }
+}
+
+impl World for SnapWorld<'_> {
+    fn repo_names(&self) -> Vec<String> {
+        vec![HOME.into()]
+    }
+    fn repo_root(&self, name: &str) -> Option<PathBuf> {
+        (name == HOME).then(|| PathBuf::from(&self.snap.repo))
+    }
+    fn repo_field(&self, _: &str, _: &str) -> Option<String> {
+        None
+    }
+    fn same_repo(&self, a: &Path, b: &Path) -> bool {
+        a == b
+    }
+    fn home_repo(&self) -> String {
+        HOME.into()
+    }
+    fn landref(&self, _: &Path) -> Option<String> {
+        self.snap.base.clone()
+    }
+    fn repo_land(&self, _: &str) -> String {
+        match self.snap.mode {
+            Mode::Local => "queue.local".into(),
+            Mode::Release | Mode::Checkout => "queue".into(),
+        }
+    }
+    fn ref_remote(&self, _: &str, _: &Path) -> Option<String> {
+        None
+    }
+    fn ref_branch(&self, base: &str) -> String {
+        base.rsplit('/').next().unwrap_or(base).into()
+    }
+    fn is_git_repo(&self, p: &Path) -> bool {
+        p == Path::new(&self.snap.repo) && self.snap.tip.is_some()
+    }
+    fn harness_in(&self, _: &Path) -> Vec<String> {
+        vec![]
+    }
+    fn harness_in_ref(&self, _: &Path, _: &str) -> Vec<String> {
+        vec![]
+    }
+    fn changed_files(&self, _: &Path, _: &str, _: &str) -> Vec<String> {
+        vec![]
+    }
+    fn tags_matching(&self, _: &Path, _: &str) -> Vec<String> {
+        vec![]
+    }
+    fn local_tag_sidecars(&self, _: &Path) -> Vec<String> {
+        self.snap.tags.clone()
+    }
+    fn rev_parse(&self, _: &Path, rev: &str, _: bool) -> Option<String> {
+        if Some(rev) == self.snap.base.as_deref() {
+            return self.snap.tip.clone();
+        }
+        if rev == "HEAD" {
+            return self.running().cloned();
+        }
+        let tag = rev.strip_suffix("^{commit}").unwrap_or(rev);
+        self.snap.tag_commits.get(tag).cloned()
+    }
+    fn rev_parse_short(&self, repo: &Path, rev: &str) -> Option<String> {
+        self.rev_parse(repo, rev, false).map(|s| s.chars().take(7).collect())
+    }
+    fn is_ancestor(&self, _: &Path, _: &str, _: &str) -> bool {
+        self.snap.behind.is_some()
+    }
+    fn rev_list_count(&self, _: &Path, _: &str) -> Option<u64> {
+        self.snap.behind
+    }
+    fn current_branch(&self, _: &Path) -> String {
+        String::new()
+    }
+    fn dirty_tracked(&self, _: &Path) -> String {
+        String::new()
+    }
+    fn stash_push(&self, _: &Path, _: &str) -> Result<(), String> {
+        Err("the snapshot world writes nothing".into())
+    }
+    fn restore_deleted(&self, _: &Path) -> Result<(), String> {
+        Err("the snapshot world writes nothing".into())
+    }
+    fn fetch(&self, _: &Path, _: &str) -> bool {
+        true
+    }
+    fn diff_status(&self, _: &Path, _: &str) -> Vec<StatusRow> {
+        vec![]
+    }
+    fn show_file(&self, _: &Path, _: &str, _: &str) -> Option<Vec<u8>> {
+        None
+    }
+    fn file_mode(&self, _: &Path, _: &str, _: &str) -> Option<String> {
+        None
+    }
+    fn reset_mixed(&self, _: &Path, _: &str) -> bool {
+        false
+    }
+    fn merge_ff_only(&self, _: &Path, _: &str) -> bool {
+        false
+    }
+    fn release_verify_no_pre_activate(&self, _: &str, _: Option<&Path>) -> (bool, String) {
+        (self.snap.verify.ok, self.snap.verify.out.clone())
+    }
+    fn release_status(&self) -> String {
+        self.snap.hotfix_line.clone().unwrap_or_default()
+    }
+    fn release_build_verify_activate(&self, _: &str, _: &Path, _: &str, _: &Path) -> Result<(), String> {
+        Err("the snapshot world writes nothing".into())
+    }
+    fn overrides_apply(&self, _: &Path) {}
+    fn install_diff(&self, _: &Path) -> (i32, String) {
+        (0, String::new())
+    }
+    fn which(&self, _: &str) -> Option<String> {
+        None
+    }
+    fn is_executable(&self, _: &Path) -> bool {
+        false
+    }
+    fn gh_release_list(&self, _: &str) -> Result<String, String> {
+        Err("the snapshot carries the release tags".into())
+    }
+    fn mail_send_question(&self, subject: &str, body: &str, default_action: &str) -> Result<(), String> {
+        let q = Question { from: FROM.into(), subject: subject.into(), body: body.into(), default: default_action.into() };
+        self.act(ESCALATE, serde_json::to_string(&q).unwrap_or_default(), ESCALATE_DEADLINE_MS);
+        Ok(())
+    }
+    fn now_stamp(&self) -> String {
+        String::new()
+    }
+    fn env(&self, k: &str) -> Result<Option<String>, String> {
+        Ok(match k {
+            "SPIRA_RELEASES" => Some(self.cfg.releases.clone()),
+            "SPIRA_RELEASE_REPO" => Some(self.cfg.release_repo.clone()),
+            "SPIRA_GH_INTAKE_REPO" => Some(self.cfg.gh_intake_repo.clone()),
+            "SPIRA_GH" => Some(self.cfg.gh.clone()),
+            "SPIRA_RUN" => Some(self.cfg.run.clone()),
+            "SPIRA_QUEUE_DIR" => Some(self.cfg.queue_dir.clone()),
+            "SPIRA_REPO" => Some(self.snap.repo.clone()),
+            _ => None,
+        })
+    }
+    fn is_symlink(&self, p: &Path) -> bool {
+        p == self.releases().join("current") && self.snap.activated.is_some() && self.snap.mode != Mode::Checkout
+    }
+    fn readlink(&self, p: &Path) -> Option<String> {
+        (p == self.releases().join("current")).then(|| self.snap.activated.clone()).flatten()
+    }
+    fn exists(&self, _: &Path) -> bool {
+        true
+    }
+    fn read_to_string(&self, p: &Path) -> Option<String> {
+        let name = self.snap.activated.as_deref()?;
+        if p == self.releases().join(name).join("MANIFEST") {
+            return self.snap.manifest_commit.as_ref().map(|c| format!("commit {c}\n"));
+        }
+        if p == self.releases().join(".tags").join(name) {
+            return self.snap.tag_sidecar.clone();
+        }
+        None
+    }
+    fn write_staged(&self, _: &Path, _: &[u8], _: bool) -> Result<(), String> {
+        Err("the snapshot world writes nothing".into())
+    }
+    fn remove_file(&self, _: &Path) {}
+    fn mkdir_p(&self, _: &Path) {}
+    fn queue_lock_held(&self, _: &str) -> bool {
+        self.snap.queue_lock_held
+    }
+    fn stamp_read(&self, key: &str) -> Option<String> {
+        let c = self.carry.borrow();
+        if let Some(k) = key.strip_prefix(ESCALATED) {
+            return c.escalated.get(k).cloned();
+        }
+        if key.starts_with(DECLINED) {
+            return c.declined.get(&self.snap.repo).map(u32::to_string);
+        }
+        None
+    }
+    fn stamp_write(&self, key: &str, val: &str) {
+        let mut c = self.carry.borrow_mut();
+        if let Some(k) = key.strip_prefix(ESCALATED) {
+            c.escalated.insert(k.into(), val.into());
+        } else if key.starts_with(DECLINED) {
+            match val.trim().parse::<u32>() {
+                Ok(0) | Err(_) => c.declined.remove(&self.snap.repo),
+                Ok(n) => c.declined.insert(self.snap.repo.clone(), n),
+            };
+        }
+    }
+    fn run_log_append(&self, name: &str, line: &str) {
+        if name == skew::REFRESH_ALARM_LOG {
+            self.act(LOG, line.into(), WRITE_DEADLINE_MS);
+        }
+    }
+    fn index_lock_age_secs(&self, _: &Path) -> Option<u64> {
+        None
+    }
+    fn remove_index_lock(&self, _: &Path) -> Result<(), String> {
+        Ok(())
+    }
+    fn git_running_in(&self, _: &Path) -> bool {
+        false
+    }
+    fn out(&self, _: &str) {}
+    fn err(&self, _: &str) {}
+}
+
+/// Who the question is from (`skew/src/real.rs`, `send_question`).
+pub const FROM: &str = "Skew check <skew@spira>";
+
+/// The refresh judgement, then the check, then `escalate` once per condition key, all skew's own
+/// functions run over the snapshot. Under `queue.local` the judgement is skew's check-only
+/// `refresh`. Elsewhere a running commit behind its base is refreshed by `watch.skew.refresh`
+/// (skew's `refresh` on the host) unless the queue lock is held: a land is in flight, so the pass
+/// declines and the decline streak (skew's own, alarming at 3 and every 180 after) counts it.
+pub fn decide(carry: &Carry, snap: &Snapshot, _now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+    let w = SnapWorld { snap, cfg, carry: std::cell::RefCell::new(carry.clone()), acts: std::cell::RefCell::new(vec![]) };
+    let repo = PathBuf::from(&snap.repo);
+    match snap.mode {
+        Mode::Local => {
+            skew::refresh(&w, None);
+        }
+        Mode::Release | Mode::Checkout => match (w.running(), snap.tip.as_ref()) {
+            (Some(running), Some(tip)) if running != tip => {
+                if snap.queue_lock_held {
+                    skew::decline_streak_bump(&w, &repo, "the queue lock is held; a land is in flight");
+                } else {
+                    w.act(REFRESH, snap.repo.clone(), REFRESH_DEADLINE_MS);
+                }
+            }
+            _ => skew::decline_streak_clear(&w, &repo),
+        },
+    }
+    skew::check(&w, true);
+    (w.carry.into_inner(), w.acts.into_inner())
+}
+
+/// The host's skew world, under the declared harness home.
+fn real() -> Result<skew::real::Real, String> {
+    Ok(skew::real::Real::new(spira_config::resolve::locate_home_for_process()?))
+}
+
+/// The snapshot from the host's skew world: the same reads `check` and `refresh` make there.
+pub fn snapshot(w: &dyn World, cfg: &Config) -> Snapshot {
+    let home = w.home_repo();
+    let repo = w.repo_root(&home).filter(|p| w.is_git_repo(p)).unwrap_or_else(|| PathBuf::from(w.env("SPIRA_REPO").ok().flatten().unwrap_or_default()));
+    let releases = PathBuf::from(&cfg.releases);
+    let current = releases.join("current");
+    let linked = w.is_symlink(&current);
+    let mode = match (w.repo_land(&home).as_str(), linked) {
+        ("queue.local", _) => Mode::Local,
+        (_, true) => Mode::Release,
+        (_, false) => Mode::Checkout,
+    };
+    let activated = linked.then(|| w.readlink(&current)).flatten();
+    let manifest_commit = match &activated {
+        Some(name) => w.read_to_string(&releases.join(name).join("MANIFEST")).and_then(|t| t.lines().find_map(|l| l.strip_prefix("commit ")).map(|c| c.trim().to_string())),
+        None => w.rev_parse(&repo, "HEAD", false),
+    };
+    let base = if mode == Mode::Local { w.landref(Path::new(&home)) } else { w.landref(&repo) };
+    let tip = base.as_ref().and_then(|b| w.rev_parse(&repo, b, false));
+    let behind = match (&manifest_commit, &tip) {
+        (Some(m), Some(t)) if m != t && w.is_ancestor(&repo, m, t) => w.rev_list_count(&repo, &format!("{m}..{t}")),
+        _ => None,
+    };
+    let verify = match (&activated, mode) {
+        (Some(name), Mode::Local) => {
+            let (ok, out) = w.release_verify_no_pre_activate(name, Some(&releases));
+            Verify { ok, out }
+        }
+        _ => Verify { ok: true, out: String::new() },
+    };
+    let hotfix_line = w.release_status().lines().find(|l| l.starts_with("RUNNING UNLANDED ")).map(str::to_string);
+    let tag_sidecar = activated.as_ref().and_then(|n| w.read_to_string(&releases.join(".tags").join(n)));
+    let (mut tags, mut tag_commits) = (vec![], BTreeMap::new());
+    if mode == Mode::Release {
+        tags = w.tags_matching(&repo, "spira-release-*");
+        tags.extend(w.tags_matching(&repo, "spira-[0-9]*.[0-9]*.[0-9]*"));
+        let dir = cfg.release_repo.strip_prefix("file://").unwrap_or(&cfg.release_repo);
+        if tags.is_empty() && dir.starts_with('/') {
+            tags = w.local_tag_sidecars(Path::new(dir));
+        }
+        for t in &tags {
+            if let Some(c) = w.rev_parse(&repo, &format!("{t}^{{commit}}"), false) {
+                tag_commits.insert(t.clone(), c);
+            }
+        }
+    }
+    let queue_lock_held = w.queue_lock_held(&home);
+    Snapshot { repo: repo.display().to_string(), mode, activated, manifest_commit, base, tip, hotfix_line, verify, queue_lock_held, tags, tag_sidecar, decline_streak: 0, stamps: BTreeMap::new(), behind, tag_commits }
+}
+
+/// `watch.skew.observe`: the snapshot, from the host.
+pub fn observe(_: &crate::Effects, _: &str, _: &EffectSpec) -> Result<String, String> {
+    let cfg = Config::pinned()?;
+    serde_json::to_string(&snapshot(&real()?, &cfg)).map_err(|e| e.to_string())
+}
+
+/// `watch.skew.escalate`: the operator question, through the mail library in-process.
+pub fn escalate(_: &crate::Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+    let q: Question = serde_json::from_str(&spec.input).map_err(|e| e.to_string())?;
+    real()?.mail_send_question(&q.subject, &q.body, &q.default).map(|_| q.subject)
+}
+
+/// `watch.skew.log`: one line to `run/skew-refresh.log`, the refresh alarm log row.
+pub fn log(_: &crate::Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+    real()?.run_log_append(skew::REFRESH_ALARM_LOG, &spec.input);
+    Ok(skew::REFRESH_ALARM_LOG.into())
+}
+
+/// `watch.skew.refresh`: skew's own refresh of the repo, on the host (fetch, stage-and-swap or
+/// release build/verify/activate, then overrides). Under `queue.local` it is never asked.
+pub fn refresh(_: &crate::Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+    match skew::refresh(&real()?, Some(&spec.input)) {
+        0 => Ok(format!("refreshed {}", spec.input)),
+        rc => Err(format!("skew refresh of {} exited {rc}", spec.input)),
+    }
 }
 
 pub struct WatchSkew {
