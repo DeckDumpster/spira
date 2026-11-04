@@ -44,13 +44,10 @@ fn usable_inc(cfg: &Cfg) -> Option<&str> {
 /// (sp-jgjvh: an incident bead is a work bead). A failed query — bd's or the machine's —
 /// counts as tracked: re-filing on a probe that did not answer is noise.
 fn tracked_by_open_bead(cfg: &Cfg, unit: &str) -> bool {
-    // FORK-EDGE: unserved verb content — bd external-ref query
-    let out = spira_config::bounded::bounded(&cfg.bdq)
-        .args(["list", "--external-ref", &format!("incident:failed-unit-{unit}")])
-        .args(["--all", "--json", "--limit", "0", "--brief"])
-        .output();
+    let reference = format!("incident:failed-unit-{unit}");
+    let out = crate::lc::content_list(&cfg.lc, &["--external-ref", &reference, "--all", "--json", "--limit", "0", "--brief"]);
     let ids: Vec<String> = match out {
-        Ok(o) if o.status.success() => match serde_json::from_slice::<Vec<serde_json::Value>>(&o.stdout) {
+        Some(o) => match serde_json::from_str::<Vec<serde_json::Value>>(&o) {
             Ok(v) => v.iter().filter_map(|r| r.get("id").and_then(|x| x.as_str()).map(String::from)).collect(),
             Err(_) => return true,
         },
@@ -441,7 +438,7 @@ mod tests {
             throttle_stamp: None,
             queue_throttle_override: String::new(),
             incident_sh,
-            bdq: "/does/not/exist/bdq".into(),
+            lc: spira_config::lc_call::LcClient::socket("/does/not/exist/lc.sock"),
             suites_sh: None,
             cockpit_db: None,
             moot_timeout_s: 30,
@@ -473,6 +470,18 @@ mod tests {
 
     fn captured(d: &std::path::Path) -> String {
         std::fs::read_to_string(d.join("captured.txt")).unwrap_or_default()
+    }
+
+    #[test]
+    fn a_failed_unit_is_tracked_only_when_the_content_door_names_a_live_bead() {
+        let d = testkit::TempDir::new("wt-escalate-lc");
+        let mut cfg = cfg_with(&d, "inc".into());
+        let (t, lc) = crate::lc::scripted::scripted(0, "[]");
+        cfg.lc = lc;
+        assert!(!tracked_by_open_bead(&cfg, "spira-x.service"), "no bead carries the reference");
+        assert_eq!(t.seen.lock().unwrap()[0][..4], ["content", "list", "--external-ref", "incident:failed-unit-spira-x.service"]);
+        cfg.lc = crate::lc::scripted::scripted(2, "cannot tell").1;
+        assert!(tracked_by_open_bead(&cfg, "spira-x.service"), "a store that did not answer counts as tracked");
     }
 
     fn drain(mins: Option<i64>) -> SweepData {

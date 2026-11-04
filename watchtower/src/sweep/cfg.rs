@@ -43,7 +43,8 @@ pub struct Cfg {
     pub queue_throttle_override: String,
 
     pub incident_sh: String,
-    pub bdq: String,
+    /// The store's client: bd's rows through its content door.
+    pub lc: spira_config::lc_call::LcClient,
     pub suites_sh: Option<String>,
     /// `COCKPIT_DB`; `None` when it does not resolve (the moot-sweep then checks nothing).
     pub cockpit_db: Option<String>,
@@ -86,7 +87,7 @@ impl Cfg {
     pub fn moot(&self) -> super::moot::MootCfg {
         super::moot::MootCfg {
             db: self.cockpit_db.clone(),
-            lc_bin: self.lc_bin.clone(),
+            lc: self.lc.clone(),
             ask_label: self.ask_label.clone(),
             timeout_s: self.moot_timeout_s,
             resolve: self.resolve_bin.clone(),

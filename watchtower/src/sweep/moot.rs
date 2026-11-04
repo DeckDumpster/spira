@@ -12,7 +12,7 @@ use std::process::{Command, Stdio};
 pub struct MootCfg {
     /// `COCKPIT_DB`: the beads database, verified to hold `.beads` before anything is read.
     pub db: Option<String>,
-    pub lc_bin: String,
+    pub lc: spira_config::lc_call::LcClient,
     pub ask_label: String,
     /// `SPIRA_MOOT_TIMEOUT`: each predicate's bound, seconds.
     pub timeout_s: u64,
@@ -92,15 +92,10 @@ fn check(cfg: &MootCfg, pred: &str) -> Option<(i32, Vec<u8>)> {
 
 /// The open asks' rows, or `None` when the store did not answer.
 fn rows(cfg: &MootCfg) -> Option<String> {
-    // FORK-EDGE: unserved verb content — the socket does not serve `content list`
-    let out = Command::new(&cfg.lc_bin)
-        .args(["content", "list", "--all", "--limit", "0", "--label-any", &format!("insight,{},overseer", cfg.ask_label), "--json"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    Some(text).filter(|t| t.lines().any(|l| l.starts_with('[') || l.starts_with('{')))
+    // db.sh read stdout whatever the exit code, so any answer carrying a payload is read.
+    let labels = format!("insight,{},overseer", cfg.ask_label);
+    let out = cfg.lc.call(&["content", "list", "--all", "--limit", "0", "--label-any", &labels, "--json"]).ok()?.out;
+    Some(out).filter(|t| t.lines().any(|l| l.starts_with('[') || l.starts_with('{')))
 }
 
 /// One pass; with `apply`, each cleared ask is resolved.
@@ -160,12 +155,11 @@ mod tests {
             ask("sp-l", "open", &["needs-ryan"], "MOOT-WHEN: false"),
             ask("sp-t", "open", &["needs-ryan"], "MOOT-WHEN: sleep 5"),
         ]);
-        std::fs::write(d.join("rows.json"), rows.to_string()).unwrap();
-        testkit::write_exe(d.join("lc"), &format!("#!/bin/sh\ncat {}\n", d.join("rows.json").display()));
+        let (t, lc) = crate::lc::scripted::scripted(0, &rows.to_string());
         testkit::write_exe(d.join("resolve"), &format!("#!/bin/sh\nprintf '%s|%s\\n' \"$1\" \"$2\" >> {}\n", d.join("resolved").display()));
         let cfg = MootCfg {
             db: Some(d.join("db").to_string_lossy().into_owned()),
-            lc_bin: d.join("lc").to_string_lossy().into_owned(),
+            lc,
             ask_label: "needs-ryan".into(),
             timeout_s: 1,
             resolve: d.join("resolve").to_string_lossy().into_owned(),
@@ -173,11 +167,12 @@ mod tests {
         assert_eq!(sweep(&cfg, true), Summary { found: 3, resolved: 1, errors: 1 });
         let resolved = std::fs::read_to_string(d.join("resolved")).unwrap();
         assert_eq!(resolved, "sp-c|auto-resolved: MOOT-WHEN predicate cleared — echo gone → exit 0. Evidence: gone\n");
+        assert_eq!(t.seen.lock().unwrap()[0], vec!["content", "list", "--all", "--limit", "0", "--label-any", "insight,needs-ryan,overseer", "--json"]);
     }
 
     #[test]
     fn no_database_checks_nothing() {
-        let cfg = MootCfg { db: Some("/does/not/exist".into()), lc_bin: "/bin/false".into(), ask_label: "a".into(), timeout_s: 1, resolve: "/bin/false".into() };
+        let cfg = MootCfg { db: Some("/does/not/exist".into()), lc: crate::lc::scripted::scripted(0, "[]").1, ask_label: "a".into(), timeout_s: 1, resolve: "/bin/false".into() };
         assert_eq!(sweep(&cfg, true), Summary::default());
     }
 }

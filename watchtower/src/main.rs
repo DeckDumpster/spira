@@ -216,7 +216,7 @@ fn build_sweep_cfg() -> sweep::Cfg {
         cockpit_db: spira_config::process::cfg("COCKPIT_DB").ok().filter(|d| !d.is_empty()),
         moot_timeout_s: getenv_i64("SPIRA_MOOT_TIMEOUT", 30).max(1) as u64,
         resolve_bin: getenv("SPIRA_RESOLVE_SH").unwrap_or_else(|| "resolve".to_string()),
-        bdq: required(spira_config::release_env::tool("bdq")),
+        lc: required_client(),
         branch_guard_sh: getenv("SPIRA_BRANCH_GUARD_SH"),
         lc_bin: required(spira_config::lifecycle_row::lc_bin()),
     }
@@ -276,7 +276,7 @@ fn main() {
             };
             czar_outcome::run(
                 n,
-                &required(spira_config::release_env::tool("bdq")),
+                &required_client(),
                 &reg("SPIRA_DB"),
                 &reg("SPIRA_HOME_REPO"),
                 &resolved_incident_sh(),
@@ -437,8 +437,8 @@ fn main() {
             let home_repo = reg("SPIRA_HOME_REPO");
             let inc = resolved_incident_sh();
             let lc_bin = required(spira_config::lifecycle_row::lc_bin());
-            let bdq = required(spira_config::release_env::tool("bdq"));
-            let ctx = conditions::Ctx { run: &run, db: &db, home_repo: &home_repo, incident_sh: &inc, bdq: &bdq, lc_bin: &lc_bin };
+            let lc = required_client();
+            let ctx = conditions::Ctx { run: &run, db: &db, home_repo: &home_repo, incident_sh: &inc, lc: &lc, lc_bin: &lc_bin };
             conditions::reconcile(n, &ctx, "release-currency", probes::release_currency(&cfg));
             conditions::reconcile(n, &ctx, "failing-units", probes::failing_units(&cfg, &run));
             conditions::reconcile(n, &ctx, "oom-restarts", probes::oom_restarts(&cfg, n, &run));
@@ -446,7 +446,6 @@ fn main() {
             conditions::reconcile(n, &ctx, "cold-overlap", probes::cold_overlap(&cfg, &run));
             conditions::reconcile(n, &ctx, "release-store", probes::release_store(&cfg));
             let rowless_cfg = probes::RowlessCfg {
-                bdq: required(spira_config::release_env::tool("bdq")),
                 lc: required_client(),
                 cap: getenv_i64("SPIRA_ROWLESS_CAP", 20).max(1) as usize,
                 sustain_secs: getenv_i64("SPIRA_ROWLESS_SUSTAIN_SECS", 300),
@@ -455,7 +454,7 @@ fn main() {
             };
             conditions::reconcile(n, &ctx, "rowless-beads", probes::rowless_beads(&rowless_cfg, n));
             let drift_cfg = probes::ContentDriftCfg {
-                lc_bin: required(spira_config::lifecycle_row::lc_bin()),
+                lc: required_client(),
                 slack: getenv_i64("SPIRA_CONTENT_DRIFT_SLACK", 10).max(0) as usize,
                 sustain_secs: getenv_i64("SPIRA_CONTENT_DRIFT_SUSTAIN_SECS", 1800),
                 state: run.join("conditions").join("content-drift.state"),

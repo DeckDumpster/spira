@@ -379,7 +379,6 @@ pub fn release_store(cfg: &Cfg) -> Reading {
 pub const ROWLESS_REFERENCE: &str = "incident:lifecycle-rowless-beads";
 
 pub struct RowlessCfg {
-    pub bdq: String,
     pub lc: spira_config::lc_call::LcClient,
     pub cap: usize,
     pub sustain_secs: i64,
@@ -435,16 +434,13 @@ fn ids_of(stdout: &[u8], key: &str) -> Option<Vec<String>> {
 pub fn rowless_beads(cfg: &RowlessCfg, now: i64) -> Reading {
     let prior = load_rowless_state(&cfg.state);
     let plan = rowless_plan(prior.as_ref(), now, cfg.full_secs);
-    let mut args: Vec<String> = ["list", "--status", "open,in_progress,blocked,deferred", "--exclude-type", &spira_config::nonwork::no_row_types_arg(), "--json", "--limit", "0", "--brief"]
+    let mut args: Vec<String> = ["--status", "open,in_progress,blocked,deferred", "--exclude-type", &spira_config::nonwork::no_row_types_arg(), "--json", "--limit", "0", "--brief"]
         .iter().map(|s| s.to_string()).collect();
     if let Some(since) = plan.created_after {
         args.extend(["--created-after".to_string(), crate::log::fmt_iso(since)]);
     }
-    // FORK-EDGE: unserved verb content — bd's open-bead list (the named rowless exception)
-    let open = crate::deadline::output("rowless open beads", Command::new(&cfg.bdq).args(&args))
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| ids_of(&o.stdout, "id"));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let open = crate::lc::content_list(&cfg.lc, &args).and_then(|o| ids_of(o.as_bytes(), "id"));
     let Some(mut candidates) = open else { return Reading::Unknown };
     candidates.extend(plan.carried);
     candidates.sort();
@@ -514,7 +510,7 @@ fn save_rowless_state(path: &Path, st: &RowlessState) {
 pub const CONTENT_DRIFT_REFERENCE: &str = "incident:lifecycle-content-drift";
 
 pub struct ContentDriftCfg {
-    pub lc_bin: String,
+    pub lc: spira_config::lc_call::LcClient,
     pub slack: usize,
     pub sustain_secs: i64,
     pub state: std::path::PathBuf,
@@ -577,13 +573,9 @@ fn save_drift_state(path: &Path, read: &DriftRead) {
 /// still drifted then; a pass over an unchanged store reads none.
 pub fn content_drift(cfg: &ContentDriftCfg) -> Reading {
     let (since, carried) = load_drift_state(&cfg.state).unwrap_or((0, Vec::new()));
-    // FORK-EDGE: unserved verb reconcile-content
-    let mut cmd = Command::new(&cfg.lc_bin);
-    cmd.args(["reconcile-content", "--since-seq", &since.to_string()]).args(&carried);
-    let read = crate::deadline::output("content drift (reconcile-content dry run)", &mut cmd)
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| drift_read(&o.stdout));
+    let since = since.to_string();
+    let argv: Vec<&str> = ["reconcile-content", "--since-seq", &since].into_iter().chain(carried.iter().map(String::as_str)).collect();
+    let read = cfg.lc.answer(&argv).ok().and_then(|o| drift_read(o.as_bytes()));
     let Some(read) = read else { return Reading::Unknown };
     save_drift_state(&cfg.state, &read);
     Reading::Standing(content_drift_cond(read.drifted.len(), cfg.slack, cfg.sustain_secs).into_iter().collect())
@@ -592,6 +584,37 @@ pub fn content_drift(cfg: &ContentDriftCfg) -> Reading {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rowless_reads_bd_through_the_content_door_and_finds_the_bead_with_no_row() {
+        let d = testkit::TempDir::new("wt-rowless-lc");
+        let (t, lc) = crate::lc::scripted::scripted_by(&[
+            ("content list", 0, r#"[{"id":"sp-a"},{"id":"sp-b"}]"#),
+            ("list", 0, r#"[{"bead_id":"sp-a"}]"#),
+        ]);
+        let cfg = RowlessCfg { lc, cap: 5, sustain_secs: 0, state: d.join("rowless.state"), full_secs: 3600 };
+        let conds = standing(rowless_beads(&cfg, 1_700_000_000));
+        assert_eq!(conds.len(), 1);
+        assert!(conds[0].body.contains("sp-b") && !conds[0].body.contains("sp-a,"), "{}", conds[0].body);
+        let seen = t.seen.lock().unwrap();
+        assert_eq!(&seen[0][..3], &["content", "list", "--status"]);
+        let (_, down) = crate::lc::scripted::scripted(2, "cannot tell");
+        let cfg = RowlessCfg { lc: down, cap: 5, sustain_secs: 0, state: d.join("rowless2.state"), full_secs: 3600 };
+        assert!(matches!(rowless_beads(&cfg, 1_700_000_000), Reading::Unknown), "no answer is unknown, never no rowless beads");
+    }
+
+    #[test]
+    fn content_drift_is_the_store_reconcile_content_dry_run() {
+        let d = testkit::TempDir::new("wt-drift-lc");
+        let out = "through-seq: 42\nwould close sp-x (closed in bd)\nwould close sp-y (closed in bd)\nreconcile-content: 2 would close\n";
+        let (t, lc) = crate::lc::scripted::scripted(0, out);
+        let cfg = ContentDriftCfg { lc, slack: 1, sustain_secs: 0, state: d.join("drift.state") };
+        assert_eq!(standing(content_drift(&cfg)).len(), 1, "two drifted is past a slack of one");
+        assert_eq!(t.seen.lock().unwrap()[0], vec!["reconcile-content", "--since-seq", "0"]);
+        assert!(std::fs::read_to_string(d.join("drift.state")).unwrap().starts_with("42\n"));
+        let cfg = ContentDriftCfg { lc: crate::lc::scripted::scripted(2, "cannot tell").1, slack: 1, sustain_secs: 0, state: d.join("drift2.state") };
+        assert!(matches!(content_drift(&cfg), Reading::Unknown));
+    }
 
     #[test]
     fn lifecycle_ids_come_from_the_store_client() {

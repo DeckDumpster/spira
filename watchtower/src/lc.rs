@@ -50,8 +50,17 @@ fn rows(args: &[&str]) -> Option<Vec<Value>> {
     rows_on(&client()?, args)
 }
 
+/// `content list <args>`'s JSON payload — bd's own rows, through the store's content door —
+/// any warning lines before it skipped; `None` when the store did not answer.
+pub fn content_list(client: &LcClient, args: &[&str]) -> Option<String> {
+    let argv: Vec<&str> = ["content", "list"].iter().copied().chain(args.iter().copied()).collect();
+    let out = run_on(client, &argv)?;
+    let start = out.lines().position(|l| l.starts_with('[') || l.starts_with('{'))?;
+    Some(out.lines().skip(start).collect::<Vec<_>>().join("\n"))
+}
+
 /// The declared route: the service's socket, or `$SPIRA_LC_BIN`'s stand-in in a fixture.
-fn client() -> Option<LcClient> {
+pub fn client() -> Option<LcClient> {
     LcClient::configured().ok()
 }
 
@@ -109,19 +118,28 @@ pub(crate) mod scripted {
 
     pub struct Scripted {
         pub seen: Mutex<Vec<Vec<String>>>,
-        answer: (i32, String),
+        /// `(argv prefix, code, stdout)`: the first whose prefix the request starts with answers.
+        answers: Vec<(String, i32, String)>,
     }
 
     impl Transport for Scripted {
         fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<Reply, String> {
             self.seen.lock().unwrap().push(argv.to_vec());
-            Ok(Reply { code: self.answer.0, out: self.answer.1.clone(), err: String::new() })
+            let line = argv.join(" ");
+            let (_, code, out) = self.answers.iter().find(|(p, _, _)| line.starts_with(p.as_str())).ok_or_else(|| format!("cannot tell: no script for {line}"))?;
+            Ok(Reply { code: *code, out: out.clone(), err: String::new() })
         }
     }
 
-    /// A socket client over the script.
+    /// A socket client answering every request with `code` and `out`.
     pub fn scripted(code: i32, out: &str) -> (Arc<Scripted>, LcClient) {
-        let t = Arc::new(Scripted { seen: Mutex::new(Vec::new()), answer: (code, out.into()) });
+        scripted_by(&[("", code, out)])
+    }
+
+    /// A socket client answering by argv prefix.
+    pub fn scripted_by(answers: &[(&str, i32, &str)]) -> (Arc<Scripted>, LcClient) {
+        let answers = answers.iter().map(|(p, c, o)| (p.to_string(), *c, o.to_string())).collect();
+        let t = Arc::new(Scripted { seen: Mutex::new(Vec::new()), answers });
         (t.clone(), LcClient::over(t, true))
     }
 }
@@ -137,6 +155,14 @@ mod tests {
         let rows = rows_on(&c, &["list", "--state", "CERTIFIED", "--snapshot"]).expect("the client's answer");
         assert_eq!(rows.len(), 1);
         assert_eq!(t.seen.lock().unwrap().as_slice(), &[vec!["list".to_string(), "--state".into(), "CERTIFIED".into(), "--snapshot".into()]]);
+    }
+
+    #[test]
+    fn content_list_is_the_content_door_with_warnings_skipped() {
+        let (t, c) = scripted(0, "warning: stale\n[{\"id\":\"sp-a\"}]\n");
+        assert_eq!(content_list(&c, &["--label", "x"]).as_deref(), Some("[{\"id\":\"sp-a\"}]"));
+        assert_eq!(t.seen.lock().unwrap()[0], vec!["content", "list", "--label", "x"]);
+        assert_eq!(content_list(&scripted(1, "bd failed").1, &[]), None);
     }
 
     #[test]
