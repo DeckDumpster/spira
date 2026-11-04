@@ -277,3 +277,19 @@ fn the_ended_view_is_each_forge_batch_the_machine_or_the_queue_ended_newest_firs
         assert!(w.p.batch_view_ended("nowhere").unwrap().value.is_empty());
     });
 }
+
+/// Over-broad-scopes #10 (sp-ipwlic): the view applies three prefixes, so it watches exactly
+/// those three, not `""` — a watch of the whole keyspace woke every holder on every event,
+/// telemetry and lock write.
+#[test]
+fn the_watch_names_only_the_prefixes_the_view_applies() {
+    within(|| {
+        let w = world(Script { list_rev: 4, ..Default::default() }, Duration::from_secs(10));
+        w.p.poll().unwrap();
+        w.watch(json!({ "progress_rev": 6 }));
+        w.p.poll().unwrap();
+        let watch = w.script.lock().unwrap().seen.iter().find(|a| a[0] == "watch").cloned().unwrap();
+        let prefixes: Vec<&str> = watch[1..].iter().take_while(|a| !a.starts_with("--")).map(String::as_str).collect();
+        assert_eq!(prefixes, ["batches/", "lifecycle/", "readiness/"], "{watch:?}");
+    });
+}

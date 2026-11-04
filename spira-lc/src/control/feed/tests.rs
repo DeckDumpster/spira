@@ -54,6 +54,7 @@ on_each_backend!(
     history_lists_a_beads_changes_in_order_with_its_refusals_and_lost_races,
     history_outlives_compaction,
     event_seq_names_only_the_beads_with_an_applied_event_after_the_revision,
+    a_watch_of_several_prefixes_delivers_each_and_nothing_else,
 );
 
 fn req(id: &str) -> Request {
@@ -305,4 +306,19 @@ fn event_seq_names_only_the_beads_with_an_applied_event_after_the_revision<B: Ba
         call(s, &["event-seq", "--since", &head_s])["keys"],
         serde_json::json!([])
     );
+}
+
+/// Over-broad-scopes #10 (sp-ipwlic): one watch names several prefixes, so a watcher of three
+/// keyspaces need not watch `""`; events under none of them never reach it.
+fn a_watch_of_several_prefixes_delivers_each_and_nothing_else<B: Backend>(s: &Store<B>) {
+    create(s, "sp-a");
+    let from = toggle(s, "sp-a", 1);
+    let later = toggle(s, "sp-a", 2);
+    let from_s = from.to_string();
+    let both = call(s, &["watch", keys::LIFECYCLE, "nothing/", "--from-rev", &from_s, "--wait-ms", "0"]);
+    let keys_seen: Vec<&str> = both["events"].as_array().unwrap().iter().map(|e| e["key"].as_str().unwrap()).collect();
+    assert_eq!(keys_seen, [keys::lifecycle("sp-a")], "{both}");
+    assert_eq!(both["through"], later);
+    let neither = call(s, &["watch", "nothing/", "elsewhere/", "--from-rev", &from_s, "--wait-ms", "0"]);
+    assert!(neither["progress_rev"].is_u64(), "no event under either prefix: {neither}");
 }

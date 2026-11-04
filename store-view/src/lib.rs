@@ -297,7 +297,9 @@ impl Projection {
         };
         let Some(from) = held else { return self.load() };
         let (from_s, wait) = (from.to_string(), WATCH_WAIT_MS.to_string());
-        let w = json_of(&self.client.answer(&["watch", "", "--from-rev", &from_s, "--wait-ms", &wait])?, "watch")?;
+        // The three prefixes this view applies, as one watch (over-broad-scopes #10): a watch of
+        // `""` woke every holder on every event, telemetry and lock write it then discarded.
+        let w = json_of(&self.client.answer(&["watch", BATCHES, LIFECYCLE, READINESS, "--from-rev", &from_s, "--wait-ms", &wait])?, "watch")?;
         if let Some(p) = w["progress_rev"].as_u64() {
             let mut s = self.lock();
             s.rev = Some(p.max(from));

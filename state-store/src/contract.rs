@@ -728,6 +728,13 @@ impl<B: Backend> Contract<B> {
     /// A bounded long-poll: the events under `prefix` after `from_rev`, whole txns at a time,
     /// or `Progress` once `wait_ms` of the injected clock has passed with none.
     pub fn watch(&self, prefix: &str, from_rev: u64, wait_ms: u64) -> Result<Watched> {
+        self.watch_any(&[prefix], from_rev, wait_ms)
+    }
+
+    /// [`watch`](Self::watch) over several prefixes at once: the events under any of them, so a
+    /// watcher of three keyspaces is not woken by every write to the others (a watch of `""`
+    /// for three prefixes woke on every event, telemetry and lock write).
+    pub fn watch_any(&self, prefixes: &[&str], from_rev: u64, wait_ms: u64) -> Result<Watched> {
         if wait_ms > MAX_WATCH_WAIT_MS {
             return Err(Error::WaitTooLong {
                 max_ms: MAX_WATCH_WAIT_MS,
@@ -751,7 +758,7 @@ impl<B: Backend> Contract<B> {
                 let through = last.rev.main;
                 let events: Vec<Event> = log
                     .into_iter()
-                    .filter(|e| e.key.starts_with(prefix))
+                    .filter(|e| prefixes.iter().any(|p| e.key.starts_with(p)))
                     .map(|e| {
                         let value = e.value.as_deref().map(Object::decode).transpose()?;
                         Ok(Event {

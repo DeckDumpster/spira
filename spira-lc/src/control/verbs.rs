@@ -58,21 +58,25 @@ fn item(i: &Item) -> Value {
     })
 }
 
-/// `watch <prefix> --from-rev N [--wait-ms M]`: the events after N, a progress revision, or,
-/// when N was compacted away, `too_old` with the prefix re-listed at the `list_rev` to resume
-/// from.
+/// `watch <prefix>... --from-rev N [--wait-ms M]`: the events under any named prefix after N,
+/// a progress revision, or, when N was compacted away, `too_old` with the prefixes re-listed at
+/// the `list_rev` to resume from. Several prefixes are one watch, not a watch of `""`.
 fn watch<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String> {
-    let prefix = args
-        .first()
-        .filter(|p| !p.starts_with("--"))
-        .ok_or("watch: missing <prefix>")?;
+    let prefixes: Vec<&str> = args
+        .iter()
+        .take_while(|p| !p.starts_with("--"))
+        .map(String::as_str)
+        .collect();
+    if prefixes.is_empty() {
+        return Err("watch: missing <prefix>".into());
+    }
     let from = flag(args, "--from-rev").ok_or("watch: --from-rev is required")?;
     let from: u64 = from
         .parse()
         .map_err(|_| format!("--from-rev must be a non-negative integer, not {from:?}"))?;
     let wait = number(args, "--wait-ms", MAX_WATCH_WAIT_MS)?;
     let out = match store
-        .watch(prefix, from, wait)
+        .watch(&prefixes, from, wait)
         .map_err(|e| format!("watch: {e}"))?
     {
         Feed::Events { events, through } => json!({
