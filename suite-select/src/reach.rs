@@ -10,6 +10,13 @@ use std::path::Path;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Reach {
     bins: BTreeMap<String, Vec<String>>,
+    /// Crate directory → the packages a change to it can break the compile of: its own and
+    /// every workspace package that depends on it, transitively (dev-dependencies included —
+    /// a check builds tests too).
+    dependents: BTreeMap<String, Vec<String>>,
+    /// Binary → the crate directories it is built from: its own crate and every crate that one
+    /// depends on (build dependencies included, dev-dependencies not).
+    sources: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Default)]
@@ -18,6 +25,7 @@ struct Krate {
     name: String,
     bins: BTreeSet<String>,
     deps: Vec<String>,
+    dev_deps: Vec<String>,
 }
 
 fn quoted(s: &str) -> Vec<String> {
@@ -71,10 +79,11 @@ fn parse_crate(root: &Path, dir: &str) -> Result<Krate, Refusal> {
             k.name = quoted(l).into_iter().next().unwrap_or_default();
         } else if section == "[[bin]]" && key == "name" {
             k.bins.extend(quoted(l).into_iter().next());
-        } else if section == "[dependencies]" || section == "[build-dependencies]" {
+        } else if section == "[dependencies]" || section == "[build-dependencies]" || section == "[dev-dependencies]" {
             if let Some(p) = l.find("path") {
                 if let Some(rel) = quoted(&l[p..]).into_iter().next() {
-                    k.deps.push(normalize(dir, &rel));
+                    let into = if section == "[dev-dependencies]" { &mut k.dev_deps } else { &mut k.deps };
+                    into.push(normalize(dir, &rel));
                 }
             }
         }
@@ -125,7 +134,74 @@ impl Reach {
                 .collect();
             bins.insert(k.dir.clone(), reached.into_iter().collect());
         }
-        Ok(Some(Reach { bins }))
+        let mut sources: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for k in &crates {
+            let mut seen: BTreeSet<&str> = BTreeSet::from([k.dir.as_str()]);
+            let mut todo = vec![k];
+            while let Some(c) = todo.pop() {
+                for d in &c.deps {
+                    if let Some(dep) = crates.iter().find(|x| &x.dir == d) {
+                        if seen.insert(dep.dir.as_str()) {
+                            todo.push(dep);
+                        }
+                    }
+                }
+            }
+            for b in &k.bins {
+                let e = sources.entry(b.clone()).or_default();
+                e.extend(seen.iter().map(|s| s.to_string()));
+                e.sort();
+                e.dedup();
+            }
+        }
+        let mut dependents: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for k in &crates {
+            let mut seen: BTreeSet<&str> = BTreeSet::from([k.dir.as_str()]);
+            let mut todo = vec![k.dir.as_str()];
+            while let Some(d) = todo.pop() {
+                for u in crates.iter().filter(|u| u.deps.iter().chain(&u.dev_deps).any(|x| x == d)) {
+                    if seen.insert(u.dir.as_str()) {
+                        todo.push(u.dir.as_str());
+                    }
+                }
+            }
+            let names: BTreeSet<String> = crates.iter().filter(|c| seen.contains(c.dir.as_str())).map(|c| c.name.clone()).collect();
+            dependents.insert(k.dir.clone(), names.into_iter().collect());
+        }
+        Ok(Some(Reach { bins, dependents, sources }))
+    }
+
+    /// The packages `cargo check -p` must cover for a change to `paths` (over-broad-scopes #7,
+    /// sp-ipwlic): each changed crate and every workspace package depending on it. `None` when
+    /// a path can change how the whole workspace builds — a manifest, the lockfile, the
+    /// toolchain pin, the Makefile, `.cargo/`, or a `src/` outside every crate — so the caller
+    /// checks the workspace.
+    pub fn check_closure<'a>(&self, paths: impl IntoIterator<Item = &'a str>) -> Option<Vec<String>> {
+        let mut out: BTreeSet<String> = BTreeSet::new();
+        for p in paths {
+            let base = p.rsplit('/').next().unwrap_or(p);
+            if matches!(base, "Cargo.toml" | "Cargo.lock" | "rust-toolchain" | "rust-toolchain.toml" | "Makefile" | "build.rs")
+                || p.starts_with(".cargo/")
+            {
+                return None;
+            }
+            let owner = self
+                .dependents
+                .iter()
+                .filter(|(d, _)| p.strip_prefix(d.as_str()).is_some_and(|r| r.starts_with('/')))
+                .max_by_key(|(d, _)| d.len());
+            match owner {
+                Some((_, names)) => out.extend(names.iter().cloned()),
+                None if p.contains("/src/") || p.starts_with("src/") => return None,
+                None => {}
+            }
+        }
+        Some(out.into_iter().collect())
+    }
+
+    /// The crate directories binary `bin` is built from; empty for a name no crate builds.
+    pub fn sources_of(&self, bin: &str) -> &[String] {
+        self.sources.get(bin).map(Vec::as_slice).unwrap_or(&[])
     }
 
     /// The binaries a change to `path` reaches; empty outside every crate.
@@ -264,6 +340,21 @@ mod tests {
         assert_eq!(r.bins_for("c/src/main.rs"), ["c"], "a dev-dependency does not reach c's binary");
         assert!(r.bins_for("spira/x.sh").is_empty());
         assert!(r.bins_for("ab/x.rs").is_empty(), "a prefix is not a directory");
+    }
+
+    /// Over-broad-scopes #7 (sp-ipwlic): a change to a library checks it and everything that
+    /// depends on it — tests included — not the workspace; a manifest, lockfile or toolchain
+    /// change still means the whole workspace.
+    #[test]
+    fn a_change_checks_its_crate_and_its_dependents_and_a_build_input_checks_everything() {
+        let t = ws();
+        let r = Reach::load(t.path()).unwrap().unwrap();
+        assert_eq!(r.check_closure(["a/src/lib.rs"]), Some(vec!["b".into(), "c".into(), "crate-a".into()]));
+        assert_eq!(r.check_closure(["b/src/main.rs", "docs/x.md"]), Some(vec!["b".into()]));
+        assert_eq!(r.check_closure(["docs/x.md"]), Some(vec![]));
+        for whole in ["Cargo.lock", "b/Cargo.toml", "rust-toolchain.toml", "b/build.rs", "stray/src/x.rs"] {
+            assert_eq!(r.check_closure(["b/src/main.rs", whole]), None, "{whole}");
+        }
     }
 
     #[test]

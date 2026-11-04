@@ -1,5 +1,9 @@
 //! Suite-level resume: a suite that passed for this exact tree and test environment is not
-//! run again when the same job is re-run on another instance. Records go through one
+//! run again when the same job is re-run on another instance. Nor is one that passed, in the
+//! same environment, on any tree where its INPUT CLOSURE was byte-identical
+//! (suite_select::closure; over-broad-scopes #1, sp-ipwlic): an eject, mend or re-cut re-runs
+//! only the suites whose inputs it changed. A suite with no computable closure has no inputs
+//! key and only ever resumes for its own tree. Records go through one
 //! [`Backend`] chosen by configuration; testenv knows nothing of any CI system. Any doubt
 //! about a record runs the suite, and a pass is written the moment it happens.
 
@@ -14,6 +18,10 @@ use std::thread::JoinHandle;
 use crate::verdict::KeyInputs;
 
 const MAGIC: &str = "testenv-resume-v2";
+/// The record of a suite's passes by input closure: a header, then `<inputs> <attempt>` lines,
+/// newest first, at most [`INPUTS_KEPT`].
+const MAGIC_INPUTS: &str = "testenv-resume-inputs-v1";
+const INPUTS_KEPT: usize = 8;
 
 /// Where records live. `key` is `<repo>/<tree>/<env key>/<suite>`; a lookup that fails for
 /// any reason is a miss. `get_all` answers every record under a key prefix in one call.
@@ -169,6 +177,9 @@ pub struct Store {
     attempt: String,
     prior_attempt: bool,
     records: Arc<OnceLock<(HashMap<String, String>, std::time::Duration)>>,
+    /// Suite → the digest of its input closure; a suite absent here resumes by tree alone.
+    inputs: Arc<HashMap<String, String>>,
+    by_inputs: Arc<OnceLock<HashMap<String, String>>>,
     pending: Arc<Pending>,
 }
 
@@ -196,8 +207,47 @@ impl Store {
             attempt: attempt.to_string(),
             prior_attempt,
             records: Arc::new(OnceLock::new()),
+            inputs: Arc::new(HashMap::new()),
+            by_inputs: Arc::new(OnceLock::new()),
             pending: Arc::new(Pending::default()),
         }
+    }
+
+    /// Keys each suite in `inputs` by the digest of its input closure as well as by the tree, so
+    /// its pass on another tree with identical inputs resumes here. Looked up on every attempt:
+    /// a first attempt has no pass of its own tree, but may have one of its inputs.
+    pub fn with_inputs(mut self, inputs: HashMap<String, String>) -> Store {
+        self.inputs = Arc::new(inputs.into_iter().filter(|(s, d)| safe(s) && safe(d)).collect());
+        self
+    }
+
+    fn inputs_prefix(&self) -> String {
+        format!("{}/inputs/{}", self.repo, self.env_key)
+    }
+
+    fn inputs_loaded(&self) -> &HashMap<String, String> {
+        self.by_inputs.get_or_init(|| {
+            if self.inputs.is_empty() || !safe(&self.repo) || !safe(&self.env_key) {
+                return HashMap::new();
+            }
+            self.backend.get_all(&self.inputs_prefix()).unwrap_or_default()
+        })
+    }
+
+    /// The `(inputs, attempt)` lines of `suite`'s inputs record, newest first; empty on any doubt.
+    fn inputs_lines(&self, suite: &str) -> Vec<(String, String)> {
+        let Some(text) = self.inputs_loaded().get(suite) else { return vec![] };
+        let mut lines = text.lines();
+        let header = format!("{MAGIC_INPUTS} {} {} {suite}", self.repo, self.env_key);
+        if lines.next() != Some(header.as_str()) {
+            return vec![];
+        }
+        lines
+            .filter_map(|l| {
+                let (d, a) = l.split_once(' ')?;
+                (safe(d) && !a.is_empty() && !a.contains(' ')).then(|| (d.to_string(), a.to_string()))
+            })
+            .collect()
     }
 
     fn loaded(&self) -> &(HashMap<String, String>, std::time::Duration) {
@@ -234,9 +284,17 @@ impl Store {
         format!("{MAGIC} {} {} {} {suite} {}\n", self.repo, self.tree, self.env_key, self.attempt)
     }
 
-    /// The run/attempt that passed `suite` for this tree and environment, or None on any doubt.
+    /// The run/attempt that passed `suite` for this tree and environment, or for a tree whose
+    /// input closure for it was identical, or None on any doubt.
     pub fn passed(&self, suite: &str) -> Option<String> {
         self.key(suite)?;
+        self.passed_tree(suite).or_else(|| {
+            let d = self.inputs.get(suite)?;
+            self.inputs_lines(suite).into_iter().find(|(x, _)| x == d).map(|(_, a)| a)
+        })
+    }
+
+    fn passed_tree(&self, suite: &str) -> Option<String> {
         let text = self.loaded().0.get(suite)?;
         let line = text.trim_end_matches('\n');
         let f: Vec<&str> = line.split(' ').collect();
@@ -262,6 +320,15 @@ impl Store {
         let body = self.body(suite);
         let handle = std::thread::spawn(move || backend.put(&key, &body));
         self.pending.0.lock().unwrap_or_else(|e| e.into_inner()).push(handle);
+        if let Some(d) = self.inputs.get(suite) {
+            let mut body = format!("{MAGIC_INPUTS} {} {} {suite}\n{d} {}\n", self.repo, self.env_key, self.attempt);
+            for (x, a) in self.inputs_lines(suite).into_iter().filter(|(x, _)| x != d).take(INPUTS_KEPT - 1) {
+                body.push_str(&format!("{x} {a}\n"));
+            }
+            let (backend, key) = (self.backend.clone(), format!("{}/{suite}", self.inputs_prefix()));
+            let handle = std::thread::spawn(move || backend.put(&key, &body));
+            self.pending.0.lock().unwrap_or_else(|e| e.into_inner()).push(handle);
+        }
     }
 }
 
@@ -341,6 +408,38 @@ mod tests {
         assert_eq!(s.passed("b"), None);
         assert_eq!(s.passed("c"), None, "a record filed under another suite's name");
         assert_eq!(s.passed("../a"), None);
+    }
+
+    /// Over-broad-scopes #1 (sp-ipwlic): a suite's pass on one tree resumes it on another tree
+    /// whose input closure for it is identical — even on a first attempt — and never on one
+    /// whose closure differs; a suite with no inputs key resumes only for its own tree.
+    #[test]
+    fn a_pass_resumes_on_another_tree_only_when_the_suites_input_closure_is_identical() {
+        let b = Shipped::dir("inputs");
+        let with = |tree: &str, attempt: &str, keys: &[(&str, &str)]| {
+            b.store(&inputs(tree, "img", &["a", "b", "c"]), attempt)
+                .with_inputs(keys.iter().map(|(s, d)| (s.to_string(), d.to_string())).collect())
+        };
+        let s = with("t1", "10/1", &[("a", "da"), ("b", "db")]);
+        for n in ["a", "b", "c"] {
+            s.record(n);
+        }
+        s.flush();
+        // An eject moved the tree: a's inputs are unchanged, b's changed, c has none.
+        let s = with("t2", "11/1", &[("a", "da"), ("b", "db2")]);
+        assert_eq!(s.passed("a").as_deref(), Some("10/1"), "identical closure on another tree");
+        assert_eq!(s.passed("b"), None, "its inputs changed: it runs");
+        assert_eq!(s.passed("c"), None, "no closure: it runs on any tree but its own");
+        // b passes on t2; a later tree with t1's closure for b still finds the older pass.
+        s.record("b");
+        s.flush();
+        let s = with("t3", "12/1", &[("a", "da"), ("b", "db")]);
+        assert_eq!(s.passed("b").as_deref(), Some("10/1"));
+        let s = with("t4", "13/1", &[("b", "db2")]);
+        assert_eq!(s.passed("b").as_deref(), Some("11/1"));
+        // Another environment never answers.
+        let s = b.store(&inputs("t5", "img2", &["a"]), "14/1").with_inputs([("a".to_string(), "da".to_string())].into());
+        assert_eq!(s.passed("a"), None, "another image is another environment");
     }
 
     #[test]

@@ -105,6 +105,16 @@ impl ShellGraph {
         self.scripts.insert(name.to_string(), tokens_of(&top));
     }
 
+    /// Every token script `name` can run: its top-level code and the bodies of the functions it
+    /// defines. Empty for a script the graph did not read.
+    pub fn tokens_of_script(&self, name: &str) -> Vec<&String> {
+        let mut out: Vec<&String> = self.scripts.get(name).into_iter().flatten().collect();
+        for f in self.defines.get(name).into_iter().flatten() {
+            out.extend(self.fns.get(f).into_iter().flatten());
+        }
+        out
+    }
+
     /// Whether `file` (`spira/lib.sh`) is a script this graph read and defines functions in.
     pub fn knows(&self, file: &str) -> bool {
         let base = file.rsplit('/').next().unwrap_or(file);

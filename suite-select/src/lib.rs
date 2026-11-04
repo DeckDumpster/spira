@@ -5,6 +5,7 @@
 //! empty or a whole-corpus selection by accident.
 
 pub mod budget;
+pub mod closure;
 pub mod corpus;
 pub mod gate;
 pub mod glob;
