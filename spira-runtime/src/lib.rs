@@ -17,7 +17,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use runtime::heartbeat::PING;
 use runtime::host::EffectRunner;
 use runtime::{Engine, EffectSpec, Journal, Marker, Registration, Value, WideSink};
 
@@ -198,41 +197,29 @@ impl Effects {
     }
 }
 
+impl Effects {
+    fn ping(&self, spec: &EffectSpec) -> Result<String, String> {
+        if self.heartbeat_url.is_empty() {
+            return Ok("no heartbeat url configured".into());
+        }
+        let r = ureq::AgentBuilder::new().timeout(Duration::from_millis(spec.deadline_ms)).build().get(&self.heartbeat_url).call().map_err(|e| e.to_string())?;
+        Ok(format!("status {}", r.status()))
+    }
+}
+
+/// Runs one named effect: `(effects, idempotency key, spec)`.
+pub type Runner = fn(&Effects, &str, &EffectSpec) -> Result<String, String>;
+
+fn routes() -> &'static std::collections::BTreeMap<&'static str, Runner> {
+    static ROUTES: OnceLock<std::collections::BTreeMap<&'static str, Runner>> = OnceLock::new();
+    ROUTES.get_or_init(tasks::routes)
+}
+
 impl EffectRunner for Effects {
     fn run(&self, key: &str, spec: &EffectSpec) -> Result<String, String> {
-        match spec.name.as_str() {
-            PING if self.heartbeat_url.is_empty() => Ok("no heartbeat url configured".into()),
-            PING => {
-                let r = ureq::AgentBuilder::new().timeout(Duration::from_millis(spec.deadline_ms)).build().get(&self.heartbeat_url).call().map_err(|e| e.to_string())?;
-                Ok(format!("status {}", r.status()))
-            }
-            watchers::round_duty::OBSERVE => self.world.round_snapshot(&spec.input),
-            watchers::inbox_keeper::OBSERVE => self.world.keeper_snapshot(),
-            watchers::CONCIERGE_WAKE => self.world.home_path().and_then(|home| wake::concierge_wake(&home.join("concierge.sh"), &spec.input)),
-            watchers::pr_notify::OBSERVE => self.world.pr_snapshot(&self.forge, &spec.input),
-            watchers::pr_notify::OPERATOR_NOTE => self.operator_note(&spec.input),
-            watchers::asks::OBSERVE => self.world.asks_snapshot(&spec.input),
-            watchers::design_asks::OBSERVE => self.world.design_asks_snapshot(),
-            watchers::brain_dirty::OBSERVE => self.world.brain_dirty_snapshot(),
-            watchers::supersede_duty::OBSERVE => self.world.supersede_snapshot(&spec.input),
-            watchers::supersede_duty::ACT => self.world.supersede_act(&spec.input),
-            watchers::bead_sweep::OBSERVE => self.world.sweep_snapshot(),
-            watchers::bead_sweep::REPAIR => self.world.sweep_repair(&spec.input),
-            watchers::publish_backlog::OBSERVE => self.world.publish_backlog_snapshot(),
-            watchers::repo_events::OBSERVE => self.world.repo_events_snapshot(&self.forge, &spec.input),
-            watchers::overrides::APPLY => self.world.overrides_apply(),
-            watchers::reconciler_flow::OBSERVE => self.world.flow_snapshot(&spec.input),
-            watchers::reconciler_flow::STATUS => self.world.flow_status(&spec.input),
-            watchers::reconciler_flow::MAIL => self.concierge_note(&spec.input),
-            watchers::view::OBSERVE => self.world.view_snapshot(&spec.input),
-            watchers::view::FLIP => self.world.view_flip(&spec.input),
-            watchers::view::FORGET => self.world.view_forget(&spec.input),
-            watchers::reconciler::OBSERVE => self.reconcile_observe(&spec.input),
-            watchers::reconciler::RECORD => self.reconcile_record(&spec.input),
-            watchers::reconciler::REMEDY => self.reconcile_remedy(key, &spec.input),
-            watchers::reconciler::MAIL => self.reconcile_mail(key, &spec.input),
-            watchers::INBOX_APPEND => self.world.inbox_append(&spec.input),
-            other => Err(format!("no runner for effect {other}")),
+        match routes().get(spec.name.as_str()) {
+            Some(runner) => runner(self, key, spec),
+            None => Err(format!("no runner for effect {}", spec.name)),
         }
     }
 }
