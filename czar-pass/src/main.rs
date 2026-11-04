@@ -70,6 +70,8 @@ struct Seams {
     systemctl: String,
     spira_lc: String,
     sentinel: String,
+    /// The unit manager's facts, through the `Units` port.
+    units: std::sync::Arc<dyn runtime::units::Units>,
 }
 
 impl Seams {
@@ -80,7 +82,45 @@ impl Seams {
             systemctl: "systemctl".to_string(),
             spira_lc: "spira-lc".to_string(),
             sentinel: "sentinel".to_string(),
+            units: std::sync::Arc::new(HostUnits(std::sync::OnceLock::new())),
         }
+    }
+}
+
+/// The host's unit manager, reached on the first ask (most passes ask nothing). One it cannot
+/// reach answers every call with that error, which a reader takes as it took a failed `systemctl`.
+struct HostUnits(std::sync::OnceLock<Result<Box<dyn runtime::units::Units>, String>>);
+
+impl HostUnits {
+    fn get(&self) -> runtime::Result<&dyn runtime::units::Units> {
+        self.0
+            .get_or_init(|| {
+                #[cfg(target_os = "linux")]
+                let u = runtime::units::SystemdUnits::connect(std::sync::Arc::new(runtime::ports::WallClock))
+                    .map(|u| Box::new(u) as Box<dyn runtime::units::Units>)
+                    .map_err(|e| e.to_string());
+                #[cfg(not(target_os = "linux"))]
+                let u = Err("no unit manager backend on this platform".to_string());
+                u
+            })
+            .as_ref()
+            .map(|b| b.as_ref())
+            .map_err(|e| runtime::RuntimeError::new(e.clone()))
+    }
+}
+
+impl runtime::units::Units for HostUnits {
+    fn start(&self, spec: &runtime::units::UnitSpec) -> runtime::Result<runtime::units::UnitHandle> {
+        self.get()?.start(spec)
+    }
+    fn stop(&self, h: &runtime::units::UnitHandle) -> runtime::Result<()> {
+        self.get()?.stop(h)
+    }
+    fn restart(&self, h: &runtime::units::UnitHandle) -> runtime::Result<()> {
+        self.get()?.restart(h)
+    }
+    fn facts(&self, h: &runtime::units::UnitHandle) -> runtime::Result<runtime::units::UnitFacts> {
+        self.get()?.facts(h)
     }
 }
 
@@ -142,17 +182,6 @@ fn must_cfg(key: &str) -> String {
     }
 }
 
-/// A release-shipped tool's program, or a named refusal: the pass never guesses a path.
-fn must_tool(name: &str) -> String {
-    match spira_config::release_env::tool(name) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("czar-pass: {e}");
-            std::process::exit(1);
-        }
-    }
-}
-
 fn must_cfg_parse<T: std::str::FromStr>(key: &str) -> T
 where
     T::Err: std::fmt::Display,
@@ -190,7 +219,7 @@ impl Config {
             qc_log: spira_run.join("landing.log"),
             marker: spira_run.join("czar-pass.swept"),
             seams,
-            batch_show: queue_batch_show(must_tool("queue"), must_cfg_parse("SPIRA_LC_TIMEOUT")),
+            batch_show: projection_batch_show(),
             stall_secs: must_cfg_parse("SPIRA_LOOP_STALL_SECS"),
             ci_queued_max: must_cfg_parse("SPIRA_CI_QUEUED_MAX_SECS"),
             ci_red_max: must_cfg_parse("SPIRA_CI_RED_MAX_SECS"),
@@ -245,13 +274,38 @@ fn unix_now() -> u64 {
 }
 
 fn compute_now_iso() -> String {
-    spira_config::bounded::bounded("date")
-        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
+    iso_of(unix_now())
+}
+
+/// Days since 1970-01-01 → (year, month, day), proleptic Gregorian (Howard Hinnant's civil_from_days).
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (yoe + era * 400 + i64::from(m <= 2), m, d)
+}
+
+/// (year, month, day) → days since 1970-01-01 (Hinnant's days_from_civil).
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = i64::from(if m > 2 { m - 3 } else { m + 9 });
+    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// `date -u +%Y-%m-%dT%H:%M:%SZ` of an epoch second.
+fn iso_of(epoch: u64) -> String {
+    let (days, rem) = ((epoch / 86_400) as i64, epoch % 86_400);
+    let (y, m, d) = civil_from_days(days);
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
 }
 
 fn log_print(msg: &str) {
@@ -329,6 +383,7 @@ fn infer(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str) {
                 format!("{},{}", cfg.scope_label, cfg.czar_label)
             };
             // batch-job: the incident binary's store write has no short bound
+            // FORK-EDGE: needs an incident library filing entry that takes the per-call SPIRA_INCIDENT_* fields (labels, type, express, actor, repo, ref, cause, fenrir-exempt); intake::file_payload reads them from the process environment only
             let mut child = Command::new(&cfg.seams.incident)
                 .arg("file")
                 .arg(subj)
@@ -375,6 +430,7 @@ fn infer_urgent(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str, r
                 labels = format!("{},{}", cfg.scope_label, labels);
             }
             // batch-job: the incident binary's store write has no short bound
+            // FORK-EDGE: needs an incident library filing entry that takes the per-call SPIRA_INCIDENT_* fields (labels, type, express, actor, repo, ref, cause, fenrir-exempt); intake::file_payload reads them from the process environment only
             let mut child = Command::new(&cfg.seams.incident)
                 .arg("file")
                 .arg(subj)
@@ -425,6 +481,7 @@ fn det_action(cfg: &Config, class: &str, desc: &str, action: impl FnOnce()) {
 /// hand-rolled check never did.
 fn call_rune_czar(cfg: &Config) {
     // batch-job: this runs whatever its caller names, as long as that takes
+    // FORK-EDGE: machine leg sentinel (--call czar)
     let _ = Command::new(&cfg.seams.sentinel)
         .arg("--call")
         .arg("czar")
@@ -465,27 +522,28 @@ fn repo_base(name: &str, repo_map: &Option<PathBuf>) -> Option<String> {
 // Queue / forge helpers
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// One pass is one process, so each repo's answer is asked once and every detector reads it.
-fn queue_batch_show(queue: String, timeout_secs: u64) -> BatchShow {
-    let asked = std::sync::Mutex::new(std::collections::BTreeMap::<String, Result<String, String>>::new());
+/// The open batch of each repo from the store's own projection, loaded once on the first ask
+/// (one pass is one process): what `queue batch show --repo` printed, with no queue process.
+/// A view the store cannot vouch for — not loaded, or stale — could not say; it is never read
+/// as "no batch".
+fn projection_batch_show() -> BatchShow {
+    let views: std::sync::OnceLock<Result<spira_runtime::store::Projection, String>> = std::sync::OnceLock::new();
     std::sync::Arc::new(move |repo: &str| {
-        let mut asked = asked.lock().unwrap_or_else(|e| e.into_inner());
-        asked.entry(repo.to_string()).or_insert_with(|| show_once(&queue, timeout_secs, repo)).clone()
+        let p = views
+            .get_or_init(|| {
+                let p = spira_runtime::store::Projection::configured(spira_config::lc_call::LcClient::configured()?)?;
+                p.load().map_err(String::from)?;
+                Ok(p)
+            })
+            .as_ref()
+            .map_err(|e| format!("could not say: {e}"))?;
+        shown_of(p.batch_view(repo).map(|r| r.value))
     })
 }
 
-fn show_once(queue: &str, timeout_secs: u64, repo: &str) -> Result<String, String> {
-    let out = Command::new("timeout")
-        .arg(timeout_secs.to_string())
-        .arg(queue)
-        .args(["batch", "show", "--repo", repo])
-        .stdin(std::process::Stdio::null())
-        .output()
-        .map_err(|e| format!("{queue}: {e}"))?;
-    if !out.status.success() {
-        return Err(format!("queue batch show --repo {repo} exited {}: {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+/// `batch show`'s stdout from a view's answer; a refusal is "could not say".
+fn shown_of(read: Result<spira_runtime::store::BatchView, spira_config::lc_call::LcError>) -> Result<String, String> {
+    read.map(|v| v.shown()).map_err(|e| format!("could not say: {e}"))
 }
 
 /// A forge repo's open batch as the queue shows it.
@@ -511,30 +569,30 @@ fn open_batches(cfg: &Config, repos: Vec<(String, PathBuf)>) -> Vec<(String, Pat
 // A failed forge call and "nothing going on" must stay distinguishable (sp-pu7v6): a
 // spawn failure, a non-zero exit or invalid UTF-8 all report Err, so a caller can report
 // its invariant unobservable instead of silently reading the failure as "satisfied".
-/// A harness script: a bare name (sp-gypjk: the release's `spira/`, on the launcher's PATH)
-/// is exec'd by name; a path (a test seam's mock) goes through `bash`, as before.
+/// One forge verb (`args`: verb, repo, the rest) through the forge library — `gh` is its only
+/// child — or a fixture's stand-in when the configured forge is one.
 fn run_forge(forge: &str, args: &[&str]) -> Result<String, String> {
-    run_forge_on(forge, args, None)
+    let r = forge_reply(forge, args);
+    if !r.ok() {
+        return Err(format!("forge exited {}", r.code));
+    }
+    Ok(r.out)
 }
 
-/// `path`, when given, is the child's PATH — the seam tests use instead of mutating the process PATH.
-fn run_forge_on(forge: &str, args: &[&str], path: Option<&std::ffi::OsStr>) -> Result<String, String> {
-    // batch-job: a forge query is bounded by the forge's own client timeouts
-    let mut cmd = Command::new(forge);
-    if let Some(p) = path {
-        cmd.env("PATH", p);
-    }
-    for a in args {
-        cmd.arg(a);
-    }
-    let output = cmd
-        .stderr(Stdio::null())
-        .output()
-        .map_err(|e| format!("forge spawn failed: {}", e))?;
-    if !output.status.success() {
-        return Err(format!("forge exited {}", output.status));
-    }
-    String::from_utf8(output.stdout).map_err(|e| format!("forge: non-utf8 output: {}", e))
+fn forge_reply(forge: &str, args: &[&str]) -> forge::client::Reply {
+    let (verb, repo, rest) = match args {
+        [] => ("", "", &[][..]),
+        [v] => (*v, "", &[][..]),
+        [v, r, rest @ ..] => (*v, *r, rest),
+    };
+    forge::client::run(&forge::client::route_of(Path::new(forge)), verb, Path::new(repo), rest, None)
+}
+
+/// A forge verb whose output went to this process's own stdout and stderr.
+fn forge_shown(forge: &str, args: &[&str]) {
+    let r = forge_reply(forge, args);
+    print!("{}", r.out);
+    eprint!("{}", r.err);
 }
 
 fn parse_field(output: &str, key: &str) -> Option<String> {
@@ -545,14 +603,25 @@ fn parse_field(output: &str, key: &str) -> Option<String> {
         .map(|l| l[prefix.len()..].trim().to_string())
 }
 
+/// A UTC `YYYY-MM-DDTHH:MM:SS[Z]` stamp (the landing log's own, `T` or a space between) as
+/// epoch seconds; `None` for anything else, which the caller reads as unobservable.
 fn parse_iso_to_epoch(ts: &str) -> Option<u64> {
-    spira_config::bounded::bounded("date")
-        .args(["-u", "-d", ts, "+%s"])
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .and_then(|s| s.trim().parse().ok())
+    let ts = ts.trim();
+    let ts = ts.strip_suffix('Z').unwrap_or(ts);
+    let b = ts.as_bytes();
+    if b.len() != 19 || b[4] != b'-' || b[7] != b'-' || !matches!(b[10], b'T' | b' ') || b[13] != b':' || b[16] != b':' {
+        return None;
+    }
+    let num = |r: std::ops::Range<usize>| -> Option<u32> { ts.get(r).filter(|s| s.bytes().all(|c| c.is_ascii_digit()))?.parse().ok() };
+    let (y, mo, d, h, mi, s) = (num(0..4)?, num(5..7)?, num(8..10)?, num(11..13)?, num(14..16)?, num(17..19)?);
+    if !(1..=12).contains(&mo) || d == 0 || d > 31 || h > 23 || mi > 59 || s > 60 {
+        return None;
+    }
+    let days = days_from_civil(i64::from(y), mo, d);
+    if civil_from_days(days) != (i64::from(y), mo, d) {
+        return None;
+    }
+    u64::try_from(days * 86_400 + i64::from(h * 3600 + mi * 60 + s)).ok()
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -720,8 +789,7 @@ fn detect_deadlock(cfg: &Config, state: &mut StateMap, new_lines: &str) -> (Verd
         let rid = run_id.clone();
         let rp = repo_path.clone();
         det_action(cfg, "deadlock", &desc, move || {
-            // batch-job: runs a gate, build or forge script that takes as long as its work
-            let _ = Command::new(&forge).args(["workflow-rerun", &rp, &rid]).status();
+            forge_shown(&forge, &["workflow-rerun", &rp, &rid]);
         });
         if let Some(st) = state.get_mut("deadlock") {
             record_remedy(st, cfg.now_secs, &desc);
@@ -883,20 +951,14 @@ fn detect_loop_stalled(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static
 
     let age = verdict.since.map(|s| cfg.now_secs.saturating_sub(s)).unwrap_or(0);
     let unit_service = format!("{}.service", cfg.land_unit);
-    let is_failed = spira_config::bounded::bounded(&cfg.seams.systemctl)
-        .args(["--user", "is-failed", &unit_service])
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim() == "failed")
-        .unwrap_or(false);
+    let is_failed = cfg.seams.units.facts(&runtime::units::UnitHandle::named(&unit_service)).is_ok_and(|f| f.state == runtime::units::UnitState::Failed);
 
     if is_failed && !verdict.remedy_failed {
         let sc = cfg.seams.systemctl.clone();
         let svc = unit_service.clone();
         let desc = format!("reset-failed + start {}", cfg.land_unit);
         det_action(cfg, "loop-stalled", &desc, move || {
+            // FORK-EDGE: needs Units::reset_failed and a start of an installed unit (the port starts transient units only)
             let _ = spira_config::bounded::bounded(&sc).args(["--user", "reset-failed", &svc]).status();
             let _ = spira_config::bounded::bounded(&sc).args(["--user", "start", &svc]).status();
         });
@@ -1013,8 +1075,7 @@ fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'st
                     let rp = repo_path_str.clone();
                     let rid = run_id.clone();
                     det_action(cfg, "ci-stalled", &desc, move || {
-                        // batch-job: runs a gate, build or forge script that takes as long as its work
-                        let _ = Command::new(&forge).args(["workflow-rerun", &rp, &rid]).status();
+                        forge_shown(&forge, &["workflow-rerun", &rp, &rid]);
                     });
                     if let Some(st) = state.get_mut(&cis_key) {
                         record_remedy(st, cfg.now_secs, &desc);
@@ -1238,14 +1299,16 @@ fn repo_branch_ids(repo_path: &Path) -> Vec<String> {
 /// or unparseable machine reads as depth 0, said on stderr: a stall detector must not invent a
 /// pool it could not see.
 fn certified_depth(cfg: &Config, repo_path: &Path) -> u32 {
-    let out = match spira_config::bounded::bounded(&cfg.seams.spira_lc).args(["list", "--state", "CERTIFIED", "--snapshot"]).output() {
-        Ok(o) if o.status.success() => o.stdout,
-        Ok(o) => {
-            eprintln!("czar-pass: spira-lc list --state CERTIFIED exited {}", o.status);
+    let what = "czar-pass: spira-lc list --state CERTIFIED";
+    let answer = spira_config::lc_call::LcClient::for_bin(&cfg.seams.spira_lc).map_err(spira_config::lc_call::LcError::Fault).and_then(|c| c.call(&["list", "--state", "CERTIFIED", "--snapshot"]));
+    let out = match answer {
+        Ok(r) if r.code == 0 => r.out.into_bytes(),
+        Ok(r) => {
+            eprintln!("{what} exited {}", r.code);
             return 0;
         }
         Err(e) => {
-            eprintln!("czar-pass: spira-lc list --state CERTIFIED: {e}");
+            eprintln!("{what}: {e}");
             return 0;
         }
     };
@@ -1380,6 +1443,7 @@ fn show_value<'a>(out: &'a str, key: &str) -> &'a str {
 }
 
 fn timer_state(systemctl: &str, unit: &str) -> String {
+    // FORK-EDGE: needs UnitFacts to carry LoadState and UnitFileState (enablement); the port reports the active state only
     let out = spira_config::bounded::bounded(systemctl)
         .args(["--user", "show", unit, "-p", "LoadState", "-p", "UnitFileState", "-p", "ActiveState"])
         .stderr(Stdio::null())
@@ -1619,6 +1683,7 @@ mod tests {
                 systemctl: dir.join("no-such-systemctl").to_string_lossy().to_string(),
                 spira_lc: dir.join("spira-lc").to_string_lossy().to_string(),
                 sentinel: dir.join("sentinel").to_string_lossy().to_string(),
+                units: std::sync::Arc::new(runtime::units::ScriptedUnits::new(std::sync::Arc::new(runtime::ports::VirtualClock::new(0)))),
             },
             batch_show: std::sync::Arc::new(|_| Ok(String::new())),
             stall_secs: 3000,
@@ -1777,5 +1842,54 @@ mod tests {
         let cfg = test_config(&dir, KNOWN_EPOCH);
         let (v, _, _) = detect_reconciler_stale(&cfg, &mut StateMap::new());
         assert!(matches!(v.status, RawStatus::Gap { .. }));
+    }
+
+    #[test]
+    fn the_clock_and_the_landing_log_stamp_read_without_date() {
+        assert_eq!(iso_of(KNOWN_EPOCH), "2021-01-01T00:00:00Z");
+        assert_eq!(iso_of(951_782_400 + 3_661), "2000-02-29T01:01:01Z");
+        assert_eq!(parse_iso_to_epoch("2021-01-01T00:00:00Z"), Some(KNOWN_EPOCH));
+        assert_eq!(parse_iso_to_epoch("2000-02-29 01:01:01"), Some(951_782_400 + 3_661));
+        for t in [1_700_000_000u64, 0, 4_102_444_800] {
+            assert_eq!(parse_iso_to_epoch(&iso_of(t)), Some(t));
+        }
+        assert_eq!(parse_iso_to_epoch("2021-02-30T00:00:00Z"), None);
+        assert_eq!(parse_iso_to_epoch("garbage-not-a-stamp!"), None);
+    }
+
+    #[test]
+    fn a_batch_view_the_store_cannot_vouch_for_could_not_say() {
+        use spira_config::lc_call::LcError;
+        use spira_runtime::store::{BatchView, Record};
+        let err = shown_of(Err(LcError::Refused("stale past 3000ms".into()))).unwrap_err();
+        assert!(err.starts_with("could not say") && err.contains("stale"), "{err}");
+        assert_eq!(shown_of(Ok(BatchView { repo: "r".into(), open: None })), Ok(String::new()));
+        let open = Record { id: "b1".into(), state: "OPEN".into(), fields: vec![("batch_id".into(), "b1".into()), ("branch".into(), "spira/queue/b1".into())] };
+        assert_eq!(shown_of(Ok(BatchView { repo: "r".into(), open: Some(open) })), Ok("batch_id=b1\nbranch=spira/queue/b1\n".into()));
+    }
+
+    #[test]
+    fn a_stalled_loop_restarts_only_a_unit_the_unit_manager_reports_failed() {
+        use runtime::units::{ScriptedUnits, UnitFacts, UnitState};
+        let dir = scratch_dir("loop-stalled-units");
+        fs::write(dir.join("landing.log"), "2021-01-01T00:00:00Z spira: landing: pass complete\n").unwrap();
+        let mut cfg = test_config(&dir, KNOWN_EPOCH + 10_000);
+        let units = ScriptedUnits::new(std::sync::Arc::new(runtime::ports::VirtualClock::new(0)));
+        units.install("spira-landing.service", UnitFacts { state: UnitState::Failed, main_pid: None, exit: None, since_ms: None });
+        cfg.seams.units = std::sync::Arc::new(units);
+        let (_, remedy, _) = detect_loop_stalled(&cfg, &mut StateMap::new());
+        assert_eq!(remedy, "det-restart");
+        let cfg = test_config(&dir, KNOWN_EPOCH + 10_000);
+        let (_, remedy, _) = detect_loop_stalled(&cfg, &mut StateMap::new());
+        assert_eq!(remedy, "inference");
+    }
+}
+
+#[cfg(test)]
+mod fork_fence {
+    #[test]
+    fn czar_pass_starts_no_spira_child_that_is_not_a_named_fork_edge() {
+        let got = forge::fork_scan::scan(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
+        assert!(got.is_empty(), "unmarked children:\n{}", got.join("\n"));
     }
 }
