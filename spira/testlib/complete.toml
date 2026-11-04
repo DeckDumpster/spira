@@ -431,6 +431,7 @@ rebase_stale_log = "/fixture/userhome/spira/run/rebase-stale.log"
 reclaim_grace_secs = "10800"
 reap_disk_floor_gib = 50
 reap_idle_secs = 21600
+pr_refresh_max = 5
 reconciler_effect_passes = "2"
 reconciler_grace_secs = "300"
 reconciler_pass_timeout_secs = 50

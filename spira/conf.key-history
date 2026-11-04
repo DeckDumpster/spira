@@ -686,3 +686,4 @@ watchdog_every_secs
 watchdog_unit
 runtime_cockpit_tier_5s_secs
 cockpit_tier_write
+pr_refresh_max

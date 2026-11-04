@@ -46,6 +46,34 @@ pub static TASKS: &[Task] = &[
         build: |_| sweep_target::SweepTarget::from_cfg().registration(),
     },
     Task {
+        name: landing::NAME,
+        boot: landing::Landing::boot,
+        cadence_ms: |_| landing::CADENCE_MS,
+        effects: landing::EFFECTS,
+        runners: {
+            use landing::*;
+            &[
+                (OBSERVE, |e, _, _| observe(e)),
+                (FETCH, |_, _, s| fetch(&s.input)),
+                (DELIVER_PR_MERGED, |_, _, s| deliver_pr_merged(&s.input)),
+                (DELIVER_PR_CLOSED, |_, _, s| deliver_pr_closed(&s.input)),
+                (DELIVER_BY_CONTENT, |_, _, s| deliver_by_content(&s.input)),
+                (REOPEN, |_, _, s| reopen(&s.input)),
+                (EVENT, |e, _, s| event(e, &s.input)),
+                (NOTE, |_, _, s| note(&s.input)),
+                (BUMP_REQUEUE, |_, _, s| bump_requeue(&s.input)),
+                (ASK, |e, _, s| ask(e, &s.input)),
+                (REBASE, |_, _, s| rebase_branch(&s.input)),
+                (CONFINE, |_, _, s| confine(&s.input)),
+                (FORCE_PUSH, |_, _, s| force_push(&s.input)),
+                (PR_CREATE, |_, _, s| pr_create(&s.input)),
+                (PR_AUTOMERGE, |_, _, s| pr_automerge(&s.input)),
+            ]
+        },
+        keys: &[landing::KEYS],
+        build: |_| landing::Landing::from_cfg().registration(),
+    },
+    Task {
         name: submission_provision::NAME,
         boot: submission_provision::SubmissionProvision::boot,
         // The daily calendar; its first tick is the boot tick's, two minutes after start.
@@ -157,15 +185,6 @@ pub static PENDING: &[Task] = &[
         runners: stubs!(publish: OBSERVE, PUSH_BRANCH, PUSH_FORGE, PR_CREATE, PR_CLOSE, CANCEL_RUNS, RERUN, RECORD, NOTIFY),
         keys: &[publish::KEYS],
         build: |_| publish::Publish::from_cfg().registration(),
-    },
-    Task {
-        name: landing::NAME,
-        boot: landing::Landing::boot,
-        cadence_ms: |_| landing::CADENCE_MS,
-        effects: landing::EFFECTS,
-        runners: stubs!(landing: OBSERVE, FETCH, DELIVER_PR_MERGED, DELIVER_PR_CLOSED, DELIVER_BY_CONTENT, REOPEN, EVENT, NOTE, BUMP_REQUEUE, ASK, REBASE, CONFINE, FORCE_PUSH, PR_CREATE, PR_AUTOMERGE),
-        keys: &[landing::KEYS],
-        build: |_| landing::Landing::from_cfg().registration(),
     },
 ];
 

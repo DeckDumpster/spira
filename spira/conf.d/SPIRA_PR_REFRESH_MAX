@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=landing
+DOC=HOW MANY TIMES THE PR PASS REFRESHES ONE PULL REQUEST before it asks instead. Each refresh rebases the branch onto a base that moved and re-pushes it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY TIMES THE PR PASS REFRESHES ONE PULL REQUEST before it asks instead. A pull
+    # request that keeps falling behind its base after this many rebases goes to the operator.
+    : "${SPIRA_PR_REFRESH_MAX:=5}"
+SPIRA_CONF_DEFAULT_EOF
