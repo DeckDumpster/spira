@@ -72,6 +72,21 @@ pub static CORE: &[Task] = &[
 pub static FAMILIES: &[&[Task]] = &[CORE, a::TASKS, b::TASKS, c::TASKS, d::TASKS, e::TASKS, f::TASKS, g::TASKS];
 
 /// Every family's rows not yet ported, in the same family order. A new family file joins here too.
+///
+/// Pending rows that declare a key in [`Settings::UNDECLARABLE`], which `from_lookup` refuses
+/// once the row is in `TASKS`. The port renames or drops each key before its row moves:
+///
+/// | Key | Declared in `KEYS` by | Also named (its `UNREGISTERED`) by |
+/// |---|---|---|
+/// | `BD_TIMEOUT` | `persona.ops` (f), `cockpit-tier-60s` (g) | `landing`, `queue.step` (a) |
+/// | `SPIRA_COCKPIT_TICK` | `cockpit-tier-5s` (g), as its `CADENCE_KEY` | |
+/// | `SPIRA_COCKPIT_FORCE` | `cockpit-tier-5s` (g) | |
+/// | `SPIRA_COCKPIT_WINDOW_HOURS` | `cockpit-tier-5s` (g) | |
+/// | `SPIRA_COCKPIT_SLOW_CONCURRENT` | `cockpit-tier-600s` (g) | |
+/// | `SPIRA_LC_BIN` | `cockpit-tier-60s` (g) | |
+///
+/// Dropping the last row's use of a key also drops it from `UNDECLARABLE`, or
+/// `every_key_a_pending_row_declares_is_registered_and_the_fixture_resolves_it` calls it stale.
 pub static PENDING_FAMILIES: &[&[Task]] = &[a::PENDING, b::PENDING, c::PENDING, d::PENDING, e::PENDING, f::PENDING, g::PENDING];
 
 /// Every task in every family, in `FAMILIES` order.
