@@ -36,6 +36,8 @@ testenv = { path = "../testenv" }
 # Family A's gate, landing, reap and provision tasks: their libraries.
 gate-check = { path = "../gate-check" }
 bead = { path = "../bead" }
+gate-worker = { path = "../gate-worker" }
+landing-pass = { path = "../landing-pass" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }

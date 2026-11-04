@@ -46,6 +46,18 @@ pub static TASKS: &[Task] = &[
         build: |_| sweep_target::SweepTarget::from_cfg().registration(),
     },
     Task {
+        name: gate_worker::NAME,
+        boot: gate_worker::GateWorker::boot,
+        cadence_ms: |_| gate_worker::CADENCE_MS,
+        effects: gate_worker::EFFECTS,
+        runners: {
+            use gate_worker::*;
+            &[(OBSERVE, |e, _, s| observe(e, &s.input)), (TIP, |_, _, s| tip(&s.input)), (CLAIM, |e, _, s| claim(e, &s.input)), (DISCARD, |e, _, s| discard(e, &s.input)), (RETAIN_OUTPUT, |e, _, s| retain_output(e, &s.input)), (COMPLETE, |e, _, s| complete(e, &s.input)), (RECOVER, |e, _, s| recover(e, &s.input))]
+        },
+        keys: &[gate_worker::KEYS],
+        build: |_| gate_worker::GateWorker::from_cfg().registration(),
+    },
+    Task {
         name: gate_check::NAME,
         boot: gate_check::GateCheck::boot,
         cadence_ms: |_| gate_check::CADENCE_MS,
@@ -132,15 +144,6 @@ pub static PENDING: &[Task] = &[
         runners: stubs!(publish: OBSERVE, PUSH_BRANCH, PUSH_FORGE, PR_CREATE, PR_CLOSE, CANCEL_RUNS, RERUN, RECORD, NOTIFY),
         keys: &[publish::KEYS],
         build: |_| publish::Publish::from_cfg().registration(),
-    },
-    Task {
-        name: gate_worker::NAME,
-        boot: gate_worker::GateWorker::boot,
-        cadence_ms: |_| gate_worker::CADENCE_MS,
-        effects: gate_worker::EFFECTS,
-        runners: stubs!(gate_worker: OBSERVE, TIP, CLAIM, DISCARD, RETAIN_OUTPUT, COMPLETE, RECOVER),
-        keys: &[gate_worker::KEYS],
-        build: |_| gate_worker::GateWorker::from_cfg().registration(),
     },
     Task {
         name: landing::NAME,
