@@ -6,6 +6,7 @@
 pub mod cfg;
 pub mod collect;
 pub mod escalate;
+pub mod moot;
 pub mod render;
 
 pub use cfg::Cfg;

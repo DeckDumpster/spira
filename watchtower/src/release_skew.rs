@@ -94,6 +94,7 @@ pub fn decide(releases: usize, since: Option<i64>, now: i64, max_secs: i64) -> V
 }
 
 pub fn run(now: i64, run_dir: &Path, db: &str, home_repo: &str, incident_sh: &str, cfg: &Cfg) {
+    // FORK-EDGE: needs a Units port listing (units by glob and state) with Environment and ActiveEnterTimestamp
     let out = spira_config::bounded::bounded(&cfg.systemctl)
         .args(["--user", "show", "spira-*", "--state=active", "--timestamp=unix", "-p", "Id", "-p", "Environment", "-p", "ActiveEnterTimestamp"])
         .output();

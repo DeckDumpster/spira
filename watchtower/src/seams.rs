@@ -28,57 +28,63 @@ pub struct PipelineProbe {
     pub ready_by_rune: Vec<(String, u32)>,
 }
 
-const PIPELINE_PROBE_SCRIPT: &str = r#"
-set -uo pipefail
-. "$1/lib.sh" >/dev/null 2>&1 || exit 97
-for f in $(spira_runes 2>/dev/null); do
-    printf 'F\t%s\t%s\n' "$f" "$(dwarf_count "$f" 2>/dev/null || echo 0)"
-done
-_ledger="${2:-}"
-if [ -n "$_ledger" ] && [ -r "$_ledger" ]; then
-    r="$(bulk_ready_by_rune 2>/dev/null)" || r=""
-    if [ -n "$r" ]; then
-        while IFS=' ' read -r f n; do
-            [ -n "$f" ] && printf 'R\t%s\t%s\n' "$f" "$n"
-        done <<< "$r"
-    fi
-fi
-"#;
+/// `None` means the probe itself failed (no home to read the runes from) — the caller
+/// reports dwarves-alive and idle-while-ready as `?`, never as zero.
+///
+/// In-process: the roster is `spira_config::runes::spira_runes` and each count is
+/// `strand::probe::dwarf_count` — the functions lib.sh's `spira_runes`/`dwarf_count` shims
+/// called through `spira-config rune roster` and `strand dwarf-count`. A count that cannot be
+/// read is 0, exactly as the shim's `|| echo 0` made it.
+pub fn pipeline_probe(_lib_sh_dir: &str, ledger_path: Option<&str>) -> Option<PipelineProbe> {
+    let home = spira_config::resolve::locate_home_for_process().ok()?;
+    let roster = spira_config::process::cfg("SPIRA_RUNES").map(|r| spira_config::runes::spira_runes(&home, Some(&r))).unwrap_or_default();
+    let strand_cfg = strand::config::Config::resolve(&strand::config::Live::load()).ok();
+    let count = |rune: &str| strand_cfg.as_ref().map_or(0, |c| strand::probe::dwarf_count(c, rune, None));
+    let ready = ledger_path.filter(|p| std::fs::File::open(p).is_ok()).and_then(|_| bulk_ready_by_rune());
+    Some(probe_from(&roster, &count, ready.as_deref()))
+}
 
-/// `None` means the seam itself failed (lib.sh could not be sourced) — the caller reports
-/// dwarves-alive and idle-while-ready as `?`, never as zero.
-pub fn pipeline_probe(spira_home: &str, ledger_path: Option<&str>) -> Option<PipelineProbe> {
+/// `spira-claim bulk-ready-by-rune`'s `<rune> <n>` lines; `None` when it did not answer.
+fn bulk_ready_by_rune() -> Option<String> {
+    let claim = spira_config::release_env::tool("spira-claim").ok()?;
     let out = crate::deadline::output(
         "dwarves alive / ready (bd)",
-        Command::new("bash")
-            .arg("-c")
-            .arg(PIPELINE_PROBE_SCRIPT)
-            .arg("_")
-            .arg(spira_home)
-            .arg(ledger_path.unwrap_or(""))
-            .envs(spira_config::release_env::child_path_env_for_process().ok()?),
+        // FORK-EDGE: needs spira_claim::bulk_ready_by_rune as a library fn (it lives in spira-claim's cli.rs)
+        Command::new(claim).arg("bulk-ready-by-rune").envs(spira_config::release_env::child_path_env_for_process().ok()?),
     )
     .ok()?;
-    if !out.status.success() {
-        return None;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// The probe from the roster (space separated, priority order), a per-rune count, and the
+/// ready lines when the ledger made them worth reading.
+pub fn probe_from(roster: &str, count: &dyn Fn(&str) -> u32, ready: Option<&str>) -> PipelineProbe {
+    let rune_counts = roster.split_whitespace().map(|f| (f.to_string(), count(f))).collect();
+    let ready_by_rune = ready
+        .unwrap_or("")
+        .lines()
+        .filter_map(|l| {
+            let mut it = l.splitn(2, ' ');
+            let f = it.next().filter(|f| !f.is_empty())?;
+            Some((f.to_string(), it.next().unwrap_or("").trim().parse().unwrap_or(0)))
+        })
+        .collect();
+    PipelineProbe { rune_counts, ready_by_rune }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_roster_is_counted_in_order_and_ready_lines_are_parsed() {
+        let p = probe_from(" builder ops", &|f| if f == "builder" { 2 } else { 0 }, Some("builder 5\nops 0\n"));
+        assert_eq!(p.rune_counts, vec![("builder".to_string(), 2), ("ops".to_string(), 0)]);
+        assert_eq!(p.ready_by_rune, vec![("builder".to_string(), 5), ("ops".to_string(), 0)]);
     }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let mut rune_counts = Vec::new();
-    let mut ready_by_rune = Vec::new();
-    for line in text.lines() {
-        let parts: Vec<&str> = line.splitn(3, '\t').collect();
-        if parts.len() != 3 {
-            continue;
-        }
-        let n: u32 = parts[2].parse().unwrap_or(0);
-        match parts[0] {
-            "F" => rune_counts.push((parts[1].to_string(), n)),
-            "R" => ready_by_rune.push((parts[1].to_string(), n)),
-            _ => {}
-        }
+
+    #[test]
+    fn no_ready_answer_is_no_ready_rows() {
+        assert!(probe_from("builder", &|_| 1, None).ready_by_rune.is_empty());
     }
-    Some(PipelineProbe {
-        rune_counts,
-        ready_by_rune,
-    })
 }

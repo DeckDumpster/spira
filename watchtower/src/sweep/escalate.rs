@@ -44,6 +44,7 @@ fn usable_inc(cfg: &Cfg) -> Option<&str> {
 /// (sp-jgjvh: an incident bead is a work bead). A failed query — bd's or the machine's —
 /// counts as tracked: re-filing on a probe that did not answer is noise.
 fn tracked_by_open_bead(cfg: &Cfg, unit: &str) -> bool {
+    // FORK-EDGE: unserved verb content — bd external-ref query
     let out = spira_config::bounded::bounded(&cfg.bdq)
         .args(["list", "--external-ref", &format!("incident:failed-unit-{unit}")])
         .args(["--all", "--json", "--limit", "0", "--brief"])
@@ -101,6 +102,7 @@ fn drain_check(d: &SweepData) {
     if !matches!(d.drain, super::collect::Drain::Draining { .. }) {
         return;
     }
+    // FORK-EDGE: needs spira_world::drain check-and-page as a library fn (world.rs drain_check_and_page is binary-private)
     match spira_config::bounded::bounded("world").arg("drain-check").output() {
         Ok(o) if o.status.success() => {}
         _ => log("watchtower: `world drain-check` failed — the drain's cap and owner were not checked"),
@@ -380,22 +382,8 @@ fn idle_while_ready(d: &SweepData, cfg: &Cfg) {
 }
 
 fn moot_sweep(cfg: &Cfg) {
-    let sh = cfg.moot_sh();
-    if !incident::is_usable(&sh) {
-        log(&format!("watchtower: moot-sweep skipped — {sh} is missing or unreadable"));
-        return;
-    }
-    let ok = spira_config::bounded::bounded("bash")
-        .arg(&sh)
-        .arg("--apply")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if ok {
-        log("watchtower: moot-sweep ran");
-    } else {
-        log(&format!("watchtower: moot-sweep exited non-zero — check {sh}"));
-    }
+    super::moot::sweep(&cfg.moot(), true);
+    log("watchtower: moot-sweep ran");
 }
 
 #[cfg(test)]
@@ -455,7 +443,9 @@ mod tests {
             incident_sh,
             bdq: "/does/not/exist/bdq".into(),
             suites_sh: None,
-            moot_sh: Some("/does/not/exist/moot-sweep.sh".into()),
+            cockpit_db: None,
+            moot_timeout_s: 30,
+            resolve_bin: "resolve".into(),
             branch_guard_sh: None,
             lc_bin: "/does/not/exist/spira-lc".into(),
         }

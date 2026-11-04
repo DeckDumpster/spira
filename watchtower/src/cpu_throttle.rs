@@ -102,6 +102,7 @@ pub fn render_state(m: &BTreeMap<String, Sample>) -> String {
 }
 
 fn unit_sample(cfg: &Cfg, unit: &str) -> Option<Sample> {
+    // FORK-EDGE: needs UnitFacts.control_group (systemctl show -p ControlGroup)
     let out = spira_config::bounded::bounded(&cfg.systemctl)
         .args(["--user", "show", "-p", "ControlGroup", "--value", unit])
         .output()

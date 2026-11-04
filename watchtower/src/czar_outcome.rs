@@ -143,6 +143,7 @@ pub fn join_states(mut beads: Vec<TriggerBead>, lc: &HashMap<String, lc_state::R
 }
 
 fn query_bd(bdq: &str, label: &str) -> Vec<TriggerBead> {
+    // FORK-EDGE: unserved verb content — bd label query
     let out = spira_config::bounded::bounded(bdq)
         .args(["list", "--label", label, "--all", "--json", "--limit", "0", "--brief"])
         .output();

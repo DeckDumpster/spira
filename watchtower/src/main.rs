@@ -13,6 +13,7 @@ mod drift;
 mod env;
 mod ctrl_gate;
 mod failed_units;
+mod fsstat;
 mod gate_wait;
 mod git;
 mod incident;
@@ -69,6 +70,14 @@ fn resolved_config() -> &'static spira_config::resolve::Resolved {
 }
 
 /// A release tool this pass cannot run without, or exit 2 naming the refusal.
+/// The store's client on the declared route; refuses the run when none resolves.
+fn required_client() -> spira_config::lc_call::LcClient {
+    spira_config::lc_call::LcClient::configured().unwrap_or_else(|e| {
+        log::log(&format!("watchtower: {e}"));
+        std::process::exit(2)
+    })
+}
+
 fn required(tool: Result<String, String>) -> String {
     tool.unwrap_or_else(|e| {
         log::log(&format!("watchtower: {e}"));
@@ -204,7 +213,9 @@ fn build_sweep_cfg() -> sweep::Cfg {
         queue_throttle_override: reg("SPIRA_QUEUE_THROTTLE_OVERRIDE"),
         incident_sh: resolved_incident_sh(),
         suites_sh: getenv("SPIRA_SUITES_SH"),
-        moot_sh: getenv("SPIRA_MOOT_SH"),
+        cockpit_db: spira_config::process::cfg("COCKPIT_DB").ok().filter(|d| !d.is_empty()),
+        moot_timeout_s: getenv_i64("SPIRA_MOOT_TIMEOUT", 30).max(1) as u64,
+        resolve_bin: getenv("SPIRA_RESOLVE_SH").unwrap_or_else(|| "resolve".to_string()),
         bdq: required(spira_config::release_env::tool("bdq")),
         branch_guard_sh: getenv("SPIRA_BRANCH_GUARD_SH"),
         lc_bin: required(spira_config::lifecycle_row::lc_bin()),
@@ -417,7 +428,6 @@ fn main() {
                 oom_hold_secs: getenv_i64("SPIRA_OOM_HOLD_SECS", 21600),
                 tmp_path: getenv("SPIRA_TMP_PROBE_PATH").unwrap_or_else(|| "/tmp".to_string()),
                 tmp_floor_mib: getenv_i64("SPIRA_TMPFS_SHED_FREE_MIB", 6144),
-                df_bin: getenv("SPIRA_DF").unwrap_or_else(|| "df".to_string()),
                 disk_floor_pct: reg_i64("SPIRA_DISK_FLOOR_PCT"),
                 psi_dir: getenv("SPIRA_PSI_DIR").unwrap_or_else(|| "/proc/pressure".to_string()),
                 psi_full_avg60: reg_parse::<f64>("SPIRA_PSI_FULL_AVG60"),
@@ -437,7 +447,7 @@ fn main() {
             conditions::reconcile(n, &ctx, "release-store", probes::release_store(&cfg));
             let rowless_cfg = probes::RowlessCfg {
                 bdq: required(spira_config::release_env::tool("bdq")),
-                lc_bin: required(spira_config::lifecycle_row::lc_bin()),
+                lc: required_client(),
                 cap: getenv_i64("SPIRA_ROWLESS_CAP", 20).max(1) as usize,
                 sustain_secs: getenv_i64("SPIRA_ROWLESS_SUSTAIN_SECS", 300),
                 state: run.join("conditions").join("rowless.state"),

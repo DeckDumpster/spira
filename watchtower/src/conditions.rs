@@ -56,6 +56,7 @@ fn names(d: &Path) -> BTreeSet<String> {
 fn open_beads(ctx: &Ctx, reference: &str) -> Option<Vec<String>> {
     let out = crate::deadline::output(
         "beads by ref",
+        // FORK-EDGE: unserved verb content — bd external-ref query
         Command::new(ctx.bdq).args(["list", "--external-ref", reference, "--all", "--json", "--limit", "0", "--brief"]),
     )
     .ok()

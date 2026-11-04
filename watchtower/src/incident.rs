@@ -130,6 +130,7 @@ fn run_verb(incident_sh: &str, verb: &str, f: &Finding) -> Option<String> {
         crate::log::log(&format!("watchtower: {cause} is suspended in the control plane — not filing {}", f.title));
         return None;
     }
+    // FORK-EDGE: needs incident::intake's alarm entry taking a Finding's fields explicitly (cmd_alarm is binary-private; file_payload has no alarm and reads type/priority/ref/cause from process env); bash only runs the incident.sh shim
     let mut cmd = spira_config::bounded::bounded("bash");
     cmd.envs(match spira_config::release_env::child_path_env_for_process() {
         Ok(e) => e,
