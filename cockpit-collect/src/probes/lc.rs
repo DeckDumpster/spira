@@ -6,7 +6,6 @@ use crate::quoting::parse_iso8601;
 use serde_json::Value;
 pub use spira_config::lc_state::{self, Row};
 use std::collections::HashMap;
-use std::process::{Command, Stdio};
 
 pub struct LcRow {
     pub id: String,
@@ -112,12 +111,10 @@ fn list_live(states: &str) -> Option<String> {
     parse_rows(&raw).map(|_| raw)
 }
 
-/// `spira-lc <args>` under the configured timeout; `None` when it failed.
+/// `spira-lc <args>` over the store's client (in-process on the socket), bounded at the
+/// configured timeout; `None` when it failed.
 pub fn verb(args: &[&str]) -> Option<String> {
-    let bin = std::env::var("SPIRA_LC_BIN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "spira-lc".into());
-    let timeout = spira_config::process::cfg("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty())?;
-    let o = Command::new("timeout").arg(timeout).arg(bin).args(args).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-    o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+    crate::store::answer_on(&crate::store::client()?, args)
 }
 
 /// Ids per `list --ids` read: keeps each answer far under the 64 KiB a probe may draw.

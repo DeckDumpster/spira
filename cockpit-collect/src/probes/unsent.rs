@@ -260,18 +260,10 @@ fn forge_batches(repos: &[String], show: &dyn Fn(&str) -> Option<String>) -> std
         .collect()
 }
 
-/// Every member the queue reports in flight for a repo: its open rounds and the staged one.
-/// A queue that cannot answer reports nothing, so the grace and the forge batches decide.
+/// Every member in flight for a repo: its open rounds and the staged one, from the store's
+/// round view. A store that cannot answer reports nothing, so the grace and the forge batches decide.
 fn round_status_members(repo: &str) -> HashSet<String> {
-    io::run_tool("queue", &["round", "status", repo], None).map(|o| members_in_status(&o)).unwrap_or_default()
-}
-
-fn members_in_status(out: &str) -> HashSet<String> {
-    out.lines()
-        .filter_map(|l| l.split_once('='))
-        .filter(|(k, _)| *k == "members" || *k == "staged_members" || (k.starts_with("round") && k.ends_with("_members")))
-        .flat_map(|(_, v)| v.split_whitespace().map(|m| m.split(':').next().unwrap_or(m).to_string()).collect::<Vec<_>>())
-        .collect()
+    crate::store::round_members(repo).unwrap_or_default()
 }
 
 /// A submitted bead's branch under queue.local waits for a round by design; only elsewhere
@@ -809,17 +801,6 @@ mod tests {
         assert!(batched_check_applies(&BeadStatus::Closed { submitted: true }, true));
         assert!(batched_check_applies(&BeadStatus::Open, true));
         assert!(!batched_check_applies(&BeadStatus::Open, false));
-    }
-
-    #[test]
-    fn every_open_and_staged_round_member_is_in_flight() {
-        let st = "rounds=2\nopen_batches=a b\nround=open\nbatch_id=a\nmembers=sp-1:t1 sp-2:t2\nround2=open\nround2_batch_id=b\nround2_members=sp-3:t3\nstaged_members=sp-4:t4\n";
-        let got = members_in_status(st);
-        for id in ["sp-1", "sp-2", "sp-3", "sp-4"] {
-            assert!(got.contains(id), "{id} in {got:?}");
-        }
-        assert!(!got.contains("sp-5"));
-        assert!(members_in_status("round=none\nrepo=x\n").is_empty());
     }
 
     #[test]

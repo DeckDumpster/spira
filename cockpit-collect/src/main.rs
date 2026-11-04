@@ -7,6 +7,7 @@
 mod io;
 mod metrics;
 mod probes;
+mod store;
 mod quoting;
 mod sparklines;
 mod supervisor;

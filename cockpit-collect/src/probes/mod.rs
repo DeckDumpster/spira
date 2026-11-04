@@ -1223,6 +1223,7 @@ pub fn drift_keys() -> Kv {
     let run_one = |args: &[&str]| {
         let Ok(envs) = child_env.clone() else { return (None, String::new()) };
         // batch-job: runs a gate, build or forge script that takes as long as its work
+        // FORK-EDGE: script drift.sh (179 lines), ported with the drift task.
         std::process::Command::new("bash")
             .envs(envs)
             .arg(&drift_sh)

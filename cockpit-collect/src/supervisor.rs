@@ -210,6 +210,8 @@ pub fn run_probe_body(cfg: &Config, name: &str, timeout_s: u64, subcommand: &str
     let now = io::now();
     let started = Instant::now();
 
+    // FORK-EDGE: machine leg (catalogue phase) — the probe's own re-exec under its deadline
+    // becomes a task state whose deadline is the effect deadline.
     let mut cmd = Command::new("timeout");
     cmd.arg(timeout_s.to_string()).arg(&cfg.probe_exe);
     for a in &cfg.probe_exe_args {
@@ -471,6 +473,7 @@ fn due_probes<'a>(
 /// tested directly via `Command::get_program`/`get_args` (no spawn), the same way
 /// `due_probes` is tested without a real tick loop.
 fn supervised_run_command(cfg: &Config, p: &Probe) -> Command {
+    // FORK-EDGE: machine leg (catalogue phase) — the supervisor's self re-exec per probe.
     let mut cmd = Command::new(&cfg.self_exe);
     cmd.arg("--supervised-run")
         .arg(p.name)
