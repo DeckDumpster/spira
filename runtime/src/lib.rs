@@ -3,6 +3,7 @@
 //! suite every executor must pass.
 
 pub mod bridge;
+pub mod calendar;
 pub mod conformance;
 pub mod engine;
 pub mod event;

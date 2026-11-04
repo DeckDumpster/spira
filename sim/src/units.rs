@@ -1,17 +1,10 @@
 //! Schedules read from systemd timer and service unit text. Virtual time is milliseconds.
 
 use crate::Rng;
+pub use runtime::calendar::Calendar;
 
 pub const SECOND: u64 = 1000;
 const DAY_S: u64 = 86_400;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Calendar {
-    dows: Option<Vec<u64>>,
-    hours: Vec<u64>,
-    minutes: Vec<u64>,
-    seconds: Vec<u64>,
-}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Schedule {
@@ -62,51 +55,6 @@ pub fn parse_span(v: &str) -> Result<u64, String> {
     if any { Ok(total) } else { Err(format!("empty time span {v:?}")) }
 }
 
-fn field(f: &str, max: u64, what: &str) -> Result<Vec<u64>, String> {
-    if f == "*" {
-        return Ok((0..max).collect());
-    }
-    f.split(',')
-        .map(|x| match x.parse::<u64>() {
-            Ok(n) if n < max => Ok(n),
-            _ => Err(format!("unsupported {what} field {f:?}")),
-        })
-        .collect()
-}
-
-fn parse_calendar(v: &str) -> Result<Calendar, String> {
-    let mut parts: Vec<&str> = v.split_whitespace().collect();
-    let mut dows = None;
-    if parts.len() == 3 {
-        let names = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-        let d: Result<Vec<u64>, String> = parts[0]
-            .split(',')
-            .map(|n| {
-                names
-                    .iter()
-                    .position(|x| n.to_ascii_lowercase() == *x)
-                    .map(|i| i as u64)
-                    .ok_or_else(|| format!("unsupported weekday {n:?} in OnCalendar={v:?}"))
-            })
-            .collect();
-        dows = Some(d?);
-        parts.remove(0);
-    }
-    if parts.len() != 2 || parts[0] != "*-*-*" {
-        return Err(format!("unsupported OnCalendar={v:?}"));
-    }
-    let t: Vec<&str> = parts[1].split(':').collect();
-    if !(2..=3).contains(&t.len()) {
-        return Err(format!("unsupported OnCalendar={v:?}"));
-    }
-    Ok(Calendar {
-        dows,
-        hours: field(t[0], 24, "hour")?,
-        minutes: field(t[1], 60, "minute")?,
-        seconds: field(t.get(2).copied().unwrap_or("0"), 60, "second")?,
-    })
-}
-
 /// Reads the `[Timer]` section. A timer that would never fire is an error.
 pub fn parse_timer(text: &str) -> Result<Schedule, String> {
     let mut s = Schedule::default();
@@ -122,7 +70,7 @@ pub fn parse_timer(text: &str) -> Result<Schedule, String> {
                 on_unit = true;
             }
             "OnUnitInactiveSec" => return Err("OnUnitInactiveSec is not modelled".into()),
-            "OnCalendar" => s.calendar.push(parse_calendar(v)?),
+            "OnCalendar" => s.calendar.push(Calendar::parse(v)?),
             "RandomizedDelaySec" => s.randomized = parse_span(v)?,
             "AccuracySec" => s.accuracy = parse_span(v)?,
             _ => {}
@@ -163,10 +111,6 @@ pub fn require_oneshot(service: &str, text: &str) -> Result<(), String> {
     }
 }
 
-fn weekday(day: u64) -> u64 {
-    (day + 3) % 7
-}
-
 impl Schedule {
     /// Virtual times (ms from sim start, which is `epoch_unix_s`) at which the timer
     /// elapses within `horizon`, each delayed by seeded randomized-delay and accuracy jitter.
@@ -182,22 +126,12 @@ impl Schedule {
                 }
             }
         }
+        let start = epoch_unix_s * SECOND;
         for cal in &self.calendar {
-            let mut day = epoch_unix_s / DAY_S;
-            while (day * DAY_S).saturating_sub(epoch_unix_s) * SECOND <= horizon {
-                if cal.dows.as_ref().is_none_or(|d| d.contains(&weekday(day))) {
-                    for h in &cal.hours {
-                        for m in &cal.minutes {
-                            for s in &cal.seconds {
-                                let abs = day * DAY_S + h * 3600 + m * 60 + s;
-                                if abs >= epoch_unix_s && (abs - epoch_unix_s) * SECOND <= horizon {
-                                    bases.push((abs - epoch_unix_s) * SECOND);
-                                }
-                            }
-                        }
-                    }
-                }
-                day += 1;
+            let mut t = cal.at_or_after(start);
+            while t - start <= horizon {
+                bases.push(t - start);
+                t = cal.next_after(t);
             }
         }
         bases.sort_unstable();
