@@ -28,22 +28,28 @@ pub struct Env {
 /// the configured meaning "no wiki configured", not a fallback this crate invents, so it
 /// becomes `None` rather than `Some(String::new())`.
 pub fn resolve() -> Result<Env, String> {
-    let wiki = spira_config::process::cfg("SPIRA_WIKI")?;
+    from_lookup(&|k| spira_config::process::cfg(k))
+}
+
+/// [`resolve`] over any lookup: the scheduler's task hands in the config it pinned at boot.
+pub fn from_lookup(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Env, String> {
+    let num = |k: &str| -> Result<u64, String> { get(k)?.trim().parse().map_err(|e| format!("{k}: {e}")) };
+    let wiki = get("SPIRA_WIKI")?;
     Ok(Env {
-        db: spira_config::process::cfg("SPIRA_DB")?,
-        run: spira_config::process::cfg("SPIRA_RUN")?,
-        runes: spira_config::process::cfg("SPIRA_RUNES_DIR")?,
-        token_projects: spira_config::process::cfg("SPIRA_TOKEN_PROJECTS")?,
+        db: get("SPIRA_DB")?,
+        run: get("SPIRA_RUN")?,
+        runes: get("SPIRA_RUNES_DIR")?,
+        token_projects: get("SPIRA_TOKEN_PROJECTS")?,
         wiki: if wiki.trim().is_empty() { None } else { Some(wiki) },
-        agent: spira_config::process::cfg("SPIRA_AGENT")?,
-        tz: spira_config::process::cfg("SPIRA_TZ")?,
-        every: spira_config::process::cfg_parse("SPIRA_ARCHIVIST_EVERY")?,
-        idle: spira_config::process::cfg_parse("SPIRA_ARCHIVIST_IDLE")?,
-        model: spira_config::process::cfg("SPIRA_ARCHIVIST_MODEL")?,
-        timeout: spira_config::process::cfg_parse("SPIRA_ARCHIVIST_TIMEOUT")?,
-        per_pass: spira_config::process::cfg_parse("SPIRA_ARCHIVIST_PER_PASS")?,
-        timeout_retries: spira_config::process::cfg_parse("SPIRA_ARCHIVIST_TIMEOUT_RETRIES")?,
-        fail_retries: spira_config::process::cfg_parse("SPIRA_ARCHIVIST_FAIL_RETRIES")?,
-        fail_backoff: spira_config::process::cfg_parse("SPIRA_ARCHIVIST_FAIL_BACKOFF")?,
+        agent: get("SPIRA_AGENT")?,
+        tz: get("SPIRA_TZ")?,
+        every: num("SPIRA_ARCHIVIST_EVERY")?,
+        idle: num("SPIRA_ARCHIVIST_IDLE")? as i64,
+        model: get("SPIRA_ARCHIVIST_MODEL")?,
+        timeout: num("SPIRA_ARCHIVIST_TIMEOUT")?,
+        per_pass: num("SPIRA_ARCHIVIST_PER_PASS")? as u32,
+        timeout_retries: num("SPIRA_ARCHIVIST_TIMEOUT_RETRIES")? as u32,
+        fail_retries: num("SPIRA_ARCHIVIST_FAIL_RETRIES")? as u32,
+        fail_backoff: num("SPIRA_ARCHIVIST_FAIL_BACKOFF")?,
     })
 }

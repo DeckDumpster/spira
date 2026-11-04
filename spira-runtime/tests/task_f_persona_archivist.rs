@@ -1,7 +1,6 @@
 //! Acceptance T1–T6 for `persona.archivist`, from its contract
-//! (`wiki/projects/spira/designs/tasks/persona-archivist.md`, Acceptance) on `TaskRig`. Red until
-//! the port lands: `decide` and `step` are `unimplemented!`, and the row waits in
-//! `tasks::f::PENDING`. T6 runs two virtual days (the contract asks three). The settle effect's
+//! (`wiki/projects/spira/designs/tasks/persona-archivist.md`, Acceptance) on `TaskRig`. The row is
+//! ported (in `tasks::f::TASKS`). T6 runs two virtual days (the contract asks three). The settle effect's
 //! input is taken to be a JSON object carrying its `outcome`; that shape is this test's, not the
 //! contract's.
 
@@ -122,7 +121,7 @@ fn t3_a_tick_in_idle_observes_and_the_carry_read_is_the_carry_recorded() {
 
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
-    let row = f::PENDING.iter().find(|t| t.name == NAME).expect("the row is pending");
+    let row = f::TASKS.iter().find(|t| t.name == NAME).expect("the row is ported");
     assert_eq!(row.effects, EFFECTS, "the row declares the module's effects");
     let real: Vec<&str> = tasks::routes().keys().copied().collect();
     let doubles = sim::doubles::service().names();

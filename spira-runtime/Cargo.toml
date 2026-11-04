@@ -52,6 +52,7 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 spira-submission = { path = "../spira-submission" }
 gh-intake = { path = "../gh-intake" }
 dwarf = { path = "../dwarf" }
+archivist = { path = "../archivist" }
 incident = { path = "../incident" }
 release = { path = "../release" }
 cockpit-collect = { path = "../cockpit-collect" }

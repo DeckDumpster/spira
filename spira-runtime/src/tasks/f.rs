@@ -136,29 +136,28 @@ pub static TASKS: &[Task] = &[
         keys: &[intake_kit_bump::KEYS],
         build: |_| refuse(intake_kit_bump::NAME, intake_kit_bump::IntakeKitBump::from_cfg()).registration(),
     },
-];
-
-/// The rows of this family not yet ported, in the design's catalogue order. `inbox.append` and
-/// the `unit.*` effects both persona rows emit are served by `tasks::SHARED`.
-pub static PENDING: &[Task] = &[
     Task {
         name: persona_archivist::NAME,
         boot: persona_archivist::PersonaArchivist::boot,
         cadence_ms: |_| cadence(persona_archivist::CADENCE_KEY),
         effects: persona_archivist::EFFECTS,
         runners: &[
-            (persona_archivist::OBSERVE, |_, _, _| unimplemented!("persona.archivist.observe: not ported yet")),
-            (persona_archivist::BRIEF, |_, _, _| unimplemented!("persona.archivist.brief: not ported yet")),
-            (persona_archivist::COMMIT, |_, _, _| unimplemented!("persona.archivist.commit: not ported yet")),
-            (persona_archivist::SETTLE, |_, _, _| unimplemented!("persona.archivist.settle: not ported yet")),
-            (persona_archivist::DIGEST_SEND, |_, _, _| unimplemented!("persona.archivist.digest_send: not ported yet")),
-            (persona_archivist::MARK, |_, _, _| unimplemented!("persona.archivist.mark: not ported yet")),
-            (persona_archivist::FORGET, |_, _, _| unimplemented!("persona.archivist.forget: not ported yet")),
+            (persona_archivist::OBSERVE, persona_archivist::run_observe),
+            (persona_archivist::BRIEF, persona_archivist::run_brief),
+            (persona_archivist::COMMIT, persona_archivist::run_commit),
+            (persona_archivist::SETTLE, persona_archivist::run_settle),
+            (persona_archivist::DIGEST_SEND, persona_archivist::run_digest_send),
+            (persona_archivist::MARK, persona_archivist::run_mark),
+            (persona_archivist::FORGET, persona_archivist::run_forget),
         ],
         keys: &[persona_archivist::KEYS],
         build: |_| refuse(persona_archivist::NAME, persona_archivist::PersonaArchivist::from_cfg()).registration(),
     },
 ];
+
+/// The rows of this family not yet ported, in the design's catalogue order. `inbox.append` and
+/// the `unit.*` effects both persona rows emit are served by `tasks::SHARED`.
+pub static PENDING: &[Task] = &[];
 
 /// The shared effect every family-F task that writes the Concierge inbox emits.
 pub const INBOX: &str = INBOX_APPEND;

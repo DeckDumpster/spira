@@ -228,17 +228,7 @@ impl Seam for RealSeam {
             Err(_) => return 1,
         };
         let mut c = Command::new("timeout");
-        c.arg(spec.timeout_secs.to_string())
-            .arg(spec.agent_bin)
-            .args(["-p", "--output-format", "stream-json", "--verbose", "--system-prompt-snapshot", "on"])
-            .arg(spec.system_flag)
-            .arg(spec.sysfile)
-            .args(["--model", spec.model])
-            .args(["--allowedTools", "Bash,Read,Grep,Glob,Write"])
-            .arg("--dangerously-skip-permissions");
-        if let Some(w) = spec.wiki_dir {
-            c.args(["--add-dir", w]);
-        }
+        c.arg(spec.timeout_secs.to_string()).arg(spec.agent_bin).args(crate::run::agent_args(spec.sysfile, spec.model, spec.wiki_dir));
         c.env_remove("SPIRA_WIKI");
         if let Some(w) = spec.wiki_dir {
             c.env("SPIRA_WIKI", w);
