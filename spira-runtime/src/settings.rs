@@ -320,6 +320,9 @@ mod tests {
 
     pub(crate) fn lookup(secs: &'static str) -> impl Fn(&str) -> Result<String, String> {
         move |k| {
+            if k == crate::modes::KEY {
+                return Ok(fixture_modes());
+            }
             Ok(match k {
                 "SPIRA_RUNTIME_HEARTBEAT_URL" => "http://127.0.0.1:9/ping",
                 "SPIRA_RUNTIME_HEARTBEAT_SECS" => secs,
@@ -344,7 +347,6 @@ mod tests {
                 "SPIRA_POOL_CAP_FORGE" => "44",
                 "SPIRA_POOL_CAP_HOST" => "45",
                 "SPIRA_POOL_CAP_CONTAINER" => "2",
-                "SPIRA_TASK_MODES" => "heartbeat=act round-duty=act inbox-keeper=act pr-notify=act asks=observe design-asks=act brain-dirty=act supersede-duty=act bead-sweep=act publish-backlog=act repo-events=act overrides=act view=observe reconciler=act reconciler-flow=act",
                 k if reconciler_fixture(k).is_some() => reconciler_fixture(k).unwrap_or_default(),
                 "BD_TIMEOUT" => "30",
                 "SPIRA_COCKPIT_TICK" => "5",
@@ -357,6 +359,13 @@ mod tests {
             }
             .to_string())
         }
+    }
+
+    /// The fixture's task modes: `asks` and `view` observe, and every other task, ported or
+    /// pending, acts, so a row moved from `PENDING` to `TASKS` is already named here.
+    fn fixture_modes() -> String {
+        let mode = |n: &str| if n == "asks" || n == "view" { "observe" } else { "act" };
+        crate::tasks::all().chain(crate::tasks::pending()).map(|t| format!("{}={}", t.name, mode(t.name))).collect::<Vec<_>>().join(" ")
     }
 
     /// `key`'s value under `[spira]` in the complete fixture (`spira/testlib/complete.toml`), its

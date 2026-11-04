@@ -1,6 +1,6 @@
 //! Which tasks act and which only observe: `SPIRA_TASK_MODES`, a `name=observe|act` list read
-//! once at boot. Every registered task must be named and every name must be registered; there
-//! is no default mode (law-a-config-value-has-no-fallback).
+//! once at boot. Every registered task must be named and every name must be registered or a
+//! pending row (`tasks::pending()`); there is no default mode (law-a-config-value-has-no-fallback).
 
 use std::collections::BTreeMap;
 
@@ -29,8 +29,12 @@ pub fn parse(value: &str) -> Result<BTreeMap<String, Mode>, String> {
 }
 
 /// Every registration with its configured mode, or the first way the table disagrees with them.
+/// A name may be a registration or a row in `tasks::pending()`: the table names every pending
+/// row ahead of its port, so moving a row into `TASKS` touches no config line. A pending name
+/// boots nothing; a name in neither is refused.
 pub fn apply(regs: Vec<Registration>, table: &BTreeMap<String, Mode>) -> Result<Vec<Registration>, String> {
-    if let Some(stray) = table.keys().find(|k| !regs.iter().any(|r| &r.name == *k)) {
+    let known = |k: &str| regs.iter().any(|r| r.name == k) || crate::tasks::pending().any(|t| t.name == k);
+    if let Some(stray) = table.keys().find(|k| !known(k)) {
         return Err(format!("{KEY} names {stray}, which no task registers"));
     }
     regs.into_iter()
@@ -80,6 +84,38 @@ mod tests {
         let table = parse("heartbeat=act,hearbeat=observe").unwrap();
         let err = apply(regs(&["heartbeat"]), &table).err().expect("a misspelt name is not ignored");
         assert!(err.contains("hearbeat"), "{err}");
+    }
+
+    #[test]
+    fn a_pending_row_may_be_named_before_it_is_ported_and_is_not_booted() {
+        let pending = crate::tasks::pending().next().expect("a pending row").name;
+        let table = parse(&format!("heartbeat=act {pending}=act")).unwrap();
+        let out = apply(regs(&["heartbeat"]), &table).expect("a pending name is known, not stray");
+        assert_eq!(out.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["heartbeat"], "a pending row is named, not registered");
+        let err = apply(regs(&["heartbeat"]), &parse(&format!("heartbeat=act {pending}x=act")).unwrap()).err().expect("a name in neither table is refused");
+        assert!(err.contains(&format!("{pending}x")), "{err}");
+    }
+
+    /// The `SPIRA_TASK_MODES` value in the shipped default (`spira/conf.d`) and in the complete
+    /// fixture (`spira/testlib/complete.toml`).
+    fn declared_tables() -> Vec<(&'static str, String)> {
+        let conf = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d").join(KEY)).unwrap();
+        let default = conf.split(&format!("${{{KEY}:=")).nth(1).and_then(|r| r.split("}\"").next()).expect("conf.d default").to_string();
+        let toml = spira_config::process::complete_fixture_text();
+        let fixture = toml.lines().find_map(|l| l.trim().strip_prefix("task_modes = \"")).and_then(|v| v.strip_suffix('"')).expect("complete.toml task_modes").to_string();
+        vec![("spira/conf.d", default), ("spira/testlib/complete.toml", fixture)]
+    }
+
+    #[test]
+    fn the_shipped_default_and_the_complete_fixture_name_every_core_and_pending_task_in_act() {
+        let mut want: Vec<&str> = crate::tasks::all().chain(crate::tasks::pending()).map(|t| t.name).collect();
+        want.sort();
+        for (place, value) in declared_tables() {
+            let table = parse(&value).unwrap_or_else(|e| panic!("{place}: {e}"));
+            assert_eq!(table.keys().map(String::as_str).collect::<Vec<_>>(), want, "{place} must name every CORE and PENDING task");
+            let observe: Vec<&String> = table.iter().filter(|(_, m)| **m != Mode::Act).map(|(n, _)| n).collect();
+            assert!(observe.is_empty(), "{place}: every task lands in Act mode (D4): {observe:?}");
+        }
     }
 
     #[test]
