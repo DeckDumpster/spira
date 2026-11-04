@@ -12,9 +12,8 @@ use crate::ports::{Beads, Git, Lib, Procs, Tools};
 use crate::pr_branch;
 use crate::records::Files;
 use crate::report::Reporter;
-use crate::util::{command, run_capture, unix_now};
+use crate::util::unix_now;
 use std::collections::HashMap;
-use std::process::Stdio;
 
 pub trait PrTools {
     /// Record pr mode's `merged` exit by content proof when the delivery row is PR_OPEN.
@@ -175,38 +174,32 @@ impl<'a> PrPass<'a> {
 pub struct RealPrTools<'a> {
     pub s: &'a Settings,
     pub out: &'a Reporter,
+    /// A pinned store client (tests); `None` resolves one from `s.lc_bin`.
+    pub lc: Option<spira_config::lc_call::LcClient>,
 }
 
 impl<'a> PrTools for RealPrTools<'a> {
     fn deliver_by_content(&self, repo: &std::path::Path, id: &str, merge_sha: &str) -> Result<(), String> {
-        let lc = self.s.lc_bin.as_ref().ok_or("no spira-lc program")?;
-        let mut c = command(lc);
-        c.arg("show").arg(id).stdin(Stdio::null());
-        let (rc, so, se) = run_capture(c);
+        let lc = crate::lifecycle::client(self.lc.as_ref(), self.s.lc_bin.as_deref())?;
+        let (rc, so, se) = crate::lifecycle::run(&lc, &["show", id]);
         if rc != 0 {
-            let e = String::from_utf8_lossy(&se);
-            return Err(format!("show exited {rc}: {}", e.lines().last().unwrap_or("").trim()));
+            return Err(format!("show exited {rc}: {}", se.lines().last().unwrap_or("").trim()));
         }
-        let v: serde_json::Value = serde_json::from_slice(&so).map_err(|e| format!("show: unparsed reply: {e}"))?;
+        let v: serde_json::Value = serde_json::from_str(&so).map_err(|e| format!("show: unparsed reply: {e}"))?;
         // No delivery row, or one not in PR_OPEN: the ordinary, quiet case.
         let Some((state, version)) = delivery_of(v.to_string().as_bytes()) else {
             // No delivery row: spira-lc lands the bead itself, on content proof, or declines.
-            let mut d = command(lc);
-            d.args(["deliver", "pr-merged"]).arg(repo).args([id, &format!("spira/{id}"), merge_sha]).stdin(Stdio::null());
-            let (rc, _, _) = run_capture(d);
+            let repo = repo.to_string_lossy();
+            let (rc, _, _) = crate::lifecycle::run(&lc, &["deliver", "pr-merged", &repo, id, &format!("spira/{id}"), merge_sha]);
             return if rc == 0 || rc == 1 { Ok(()) } else { Err(format!("deliver pr-merged exited {rc}")) };
         };
         if state != "PR_OPEN" {
             return Ok(());
         }
         let kind = serde_json::json!({"Delivered": {"merge_sha": merge_sha, "proof": "merge-tree"}}).to_string();
-        let mut e = command(lc);
-        e.args(["event", "delivery", id, "--expect", "PR_OPEN", "--version", &version, "--actor", "landing-pass", "--kind", &kind]);
-        e.stdin(Stdio::null());
-        let (rc, _, se) = run_capture(e);
+        let (rc, _, se) = crate::lifecycle::run(&lc, &["event", "delivery", id, "--expect", "PR_OPEN", "--version", &version, "--actor", "landing-pass", "--kind", &kind]);
         if rc != 0 {
-            let err = String::from_utf8_lossy(&se);
-            return Err(format!("event exited {rc}: {}", err.lines().last().unwrap_or("").trim()));
+            return Err(format!("event exited {rc}: {}", se.lines().last().unwrap_or("").trim()));
         }
         eprintln!("landing-pass: {id}: delivery PR_OPEN -> delivered by content proof");
         Ok(())

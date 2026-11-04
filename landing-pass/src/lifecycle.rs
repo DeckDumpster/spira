@@ -1,5 +1,8 @@
 //! The lifecycle machine is the only record: spira-lc is authoritative, and one that cannot
-//! be reached is a loud refusal of the step that needed it.
+//! be reached is a loud refusal of the step that needed it. Every call is in-process over
+//! [`LcClient`] (the lifecycle socket), never a `spira-lc` child.
+
+use spira_config::lc_call::LcClient;
 
 /// The lifecycle machine, as far as this pass needs it: is it there?
 pub trait Lc {
@@ -11,53 +14,61 @@ pub trait Lc {
     fn resubmit_submitted(&self, id: &str, tip: &str) -> Result<String, String>;
 }
 
+/// The store's client: `pinned` (a test's scripted one) when given, else the route the
+/// configuration declares for `bin` — the socket, in-process, in production.
+pub fn client(pinned: Option<&LcClient>, bin: Option<&std::path::Path>) -> Result<LcClient, String> {
+    if let Some(c) = pinned {
+        return Ok(c.clone());
+    }
+    let bin = bin.ok_or_else(|| "no spira-lc program".to_string())?;
+    LcClient::for_bin(&bin.to_string_lossy())
+}
+
+/// One store call as `(exit, stdout, stderr)`; a call with no answer is exit 2 ("cannot
+/// tell"), its reason on stderr. The socket has one stream, so a refusal's reason (its
+/// stdout there) stands in for the stderr a CLI child would have printed.
+pub fn run(c: &LcClient, argv: &[&str]) -> (i32, String, String) {
+    match c.call(argv) {
+        Ok(r) if r.code != 0 && r.err.trim().is_empty() => (r.code, r.out.clone(), r.out),
+        Ok(r) => (r.code, r.out, r.err),
+        Err(e) => (spira_config::lc_call::CANNOT_TELL, String::new(), e.to_string()),
+    }
+}
+
 pub struct RealLc {
     pub bin: Option<std::path::PathBuf>,
+    /// A pinned client (tests); `None` resolves one from `bin`.
+    pub client: Option<LcClient>,
 }
 
 impl Lc for RealLc {
     fn probe(&self) -> Result<(), String> {
-        let Some(bin) = self.bin.as_ref() else {
-            return Err("no spira-lc program".into());
-        };
-        let mut c = crate::util::command(bin);
-        c.args(["list", "--state", "IN_DELIVERY"]).stdin(std::process::Stdio::null());
-        let (rc, so, se) = crate::util::run_capture(c);
+        let c = client(self.client.as_ref(), self.bin.as_deref())?;
+        let (rc, so, se) = run(&c, &["list", "--state", "IN_DELIVERY"]);
         if rc != 0 {
-            let e = String::from_utf8_lossy(&se);
-            return Err(format!("spira-lc list exited {rc}: {}", e.lines().next().unwrap_or("")));
+            return Err(format!("spira-lc list exited {rc}: {}", se.lines().next().unwrap_or("")));
         }
-        serde_json::from_slice::<serde_json::Value>(&so).map(|_| ()).map_err(|e| format!("spira-lc list: {e}"))
+        serde_json::from_str::<serde_json::Value>(&so).map(|_| ()).map_err(|e| format!("spira-lc list: {e}"))
     }
 
     fn certify(&self, id: &str, tip: &str, outcome: &str, detail: &str) -> Result<String, String> {
-        let mut c = crate::util::command(self.bin()?);
-        c.args(["certify", id, tip, outcome, detail, "landing-pass"]).stdin(std::process::Stdio::null());
-        let (rc, so, se) = crate::util::run_capture(c);
-        let out = String::from_utf8_lossy(&so).trim().to_string();
+        let c = client(self.client.as_ref(), self.bin.as_deref())?;
+        let (rc, so, se) = run(&c, &["certify", id, tip, outcome, detail, "landing-pass"]);
+        let out = so.trim().to_string();
         if rc != 0 {
-            let e = String::from_utf8_lossy(&se);
-            return Err(format!("spira-lc certify exited {rc}: {out} {}", e.lines().next().unwrap_or("")));
+            return Err(format!("spira-lc certify exited {rc}: {out} {}", se.lines().next().unwrap_or("")));
         }
         Ok(out)
     }
 
     fn resubmit_submitted(&self, id: &str, tip: &str) -> Result<String, String> {
-        let mut c = crate::util::command(self.bin()?);
-        c.args(["resubmit-submitted", id, tip, "landing-pass"]).stdin(std::process::Stdio::null());
-        let (rc, so, se) = crate::util::run_capture(c);
-        let out = String::from_utf8_lossy(&so).trim().to_string();
+        let c = client(self.client.as_ref(), self.bin.as_deref())?;
+        let (rc, so, se) = run(&c, &["resubmit-submitted", id, tip, "landing-pass"]);
+        let out = so.trim().to_string();
         if rc != 0 {
-            let e = String::from_utf8_lossy(&se);
-            return Err(format!("spira-lc resubmit-submitted exited {rc}: {out} {}", e.lines().next().unwrap_or("")));
+            return Err(format!("spira-lc resubmit-submitted exited {rc}: {out} {}", se.lines().next().unwrap_or("")));
         }
         Ok(out)
-    }
-}
-
-impl RealLc {
-    fn bin(&self) -> Result<&std::path::PathBuf, String> {
-        self.bin.as_ref().ok_or_else(|| "no spira-lc program".to_string())
     }
 }
 

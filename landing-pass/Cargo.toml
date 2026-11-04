@@ -21,6 +21,7 @@ spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
 hel = { path = "../hel" }
 tsd = { path = "../tsd" }
+mail = { path = "../mail" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
