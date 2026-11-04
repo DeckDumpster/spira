@@ -71,11 +71,88 @@ struct RequestBody {
 #[derive(Serialize, Deserialize)]
 struct HeldBody {
     stream: StreamKey,
+    task: String,
     spec: EffectSpec,
 }
 
 /// The `applied` key under which a held write's release is recorded.
 const RELEASE: &str = "scheduler.release";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub enum LastOutcome {
+    Succeeded,
+    Failed,
+    TimedOut,
+    /// Its effector class was full; the effect is still waiting to run.
+    Deferred,
+}
+
+/// The newest event a task emitted or noted: what it carries forward.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct CarriedState {
+    pub stream: String,
+    pub tag: String,
+    pub body_len: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct TaskStatus {
+    pub name: String,
+    pub mode: Mode,
+    pub state: Option<CarriedState>,
+    /// Engine clock when the task last handled an event, and that event's own time.
+    pub last_fired_at: Option<u64>,
+    pub last_due_at: Option<u64>,
+    pub lag_ms: Option<u64>,
+    /// The earliest schedule row or timer waiting for a tag the task handles.
+    pub next_due_at: Option<u64>,
+    pub last_outcome: Option<LastOutcome>,
+    /// Idempotency keys of its effects and probes with no outcome yet.
+    pub in_flight: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ClassStatus {
+    pub class: String,
+    pub depth: usize,
+    pub refusals: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct SchedulerStatus {
+    pub at: u64,
+    pub halted: bool,
+    pub held: usize,
+    pub tasks: Vec<TaskStatus>,
+    pub classes: Vec<ClassStatus>,
+}
+
+/// The status as of the engine's last turn, for a reader on another thread.
+#[derive(Default)]
+pub struct StatusBoard(std::sync::Mutex<Option<SchedulerStatus>>);
+
+impl StatusBoard {
+    pub fn get(&self) -> Option<SchedulerStatus> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    fn put(&self, s: SchedulerStatus) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(s);
+    }
+}
+
+pub type Classifier = Arc<dyn Fn(&EffectSpec) -> String + Send + Sync>;
+
+/// The class an effect runs under when no classifier is given.
+pub const DEFAULT_CLASS: &str = "host";
+
+#[derive(Default)]
+struct Track {
+    state: Option<CarriedState>,
+    fired_at: Option<u64>,
+    due_at: Option<u64>,
+    outcome: Option<LastOutcome>,
+}
 
 pub trait Executor {
     fn submit(&mut self, id: &str, stream: &str, kind: EventKind) -> Result<()>;
@@ -116,6 +193,11 @@ pub struct Engine {
     poison_cleared_at: u64,
     halted: bool,
     held: usize,
+    tracks: BTreeMap<String, Track>,
+    owners: BTreeMap<String, String>,
+    refusals: BTreeMap<String, u64>,
+    classifier: Option<Classifier>,
+    board: Option<Arc<StatusBoard>>,
 }
 
 fn mix(seed: u64, parts: &[&str]) -> u64 {
@@ -171,6 +253,11 @@ impl Engine {
             poison_cleared_at: 0,
             halted: false,
             held: 0,
+            tracks: BTreeMap::new(),
+            owners: BTreeMap::new(),
+            refusals: BTreeMap::new(),
+            classifier: None,
+            board: None,
         };
         let cursor = e.journal.cursor()?;
         e.cursor = cursor;
@@ -190,6 +277,65 @@ impl Engine {
             e.scheduler.insert(row);
         }
         Ok(e)
+    }
+
+    /// Names the effector class of an effect, for `status`.
+    pub fn with_classifier(mut self, c: Classifier) -> Self {
+        self.classifier = Some(c);
+        self
+    }
+
+    /// Receives `status()` at the end of every `run_until_idle`.
+    pub fn with_status_board(mut self, board: Arc<StatusBoard>) -> Self {
+        self.board = Some(board);
+        self
+    }
+
+    fn class_of(&self, spec: &EffectSpec) -> String {
+        self.classifier.as_ref().map_or_else(|| DEFAULT_CLASS.to_string(), |c| c(spec))
+    }
+
+    /// The host's effector class `class` was full when it offered effect `key`.
+    pub fn note_deferred(&mut self, key: &str, class: &str) {
+        *self.refusals.entry(class.into()).or_insert(0) += 1;
+        if let Some(owner) = self.owners.get(key) {
+            self.tracks.entry(owner.clone()).or_default().outcome = Some(LastOutcome::Deferred);
+        }
+    }
+
+    pub fn status(&self) -> SchedulerStatus {
+        let rows: Vec<&ScheduleRow> = self.scheduler.rows().chain(self.timers.values()).collect();
+        let tasks = self
+            .regs
+            .iter()
+            .map(|r| {
+                let t = self.tracks.get(&r.name);
+                let interests = r.handler.interests();
+                TaskStatus {
+                    name: r.name.clone(),
+                    mode: r.mode,
+                    state: t.and_then(|t| t.state.clone()),
+                    last_fired_at: t.and_then(|t| t.fired_at),
+                    last_due_at: t.and_then(|t| t.due_at),
+                    lag_ms: t.and_then(|t| Some(t.fired_at?.saturating_sub(t.due_at?))),
+                    next_due_at: rows.iter().filter(|row| interests.contains(&row.kind.tag.as_str())).map(|row| row.at).min(),
+                    last_outcome: t.and_then(|t| t.outcome),
+                    in_flight: self.pending.keys().filter(|k| self.owners.get(*k) == Some(&r.name)).cloned().collect(),
+                }
+            })
+            .collect();
+        let mut classes: BTreeMap<String, ClassStatus> = self.refusals.iter().map(|(c, n)| (c.clone(), ClassStatus { class: c.clone(), depth: 0, refusals: *n })).collect();
+        for p in self.pending.values() {
+            let c = self.class_of(&p.spec);
+            classes.entry(c.clone()).or_insert_with(|| ClassStatus { class: c, depth: 0, refusals: 0 }).depth += 1;
+        }
+        SchedulerStatus { at: self.clock.now_ms(), halted: self.halted, held: self.held, tasks, classes: classes.into_values().collect() }
+    }
+
+    fn publish(&self) {
+        if let Some(b) = &self.board {
+            b.put(self.status());
+        }
     }
 
     pub fn with_sink(mut self, sink: Arc<dyn WideSink>) -> Self {
@@ -282,6 +428,8 @@ impl Engine {
     fn track_effect(&mut self, ev: &Event) -> Result<()> {
         if ev.kind.tag == EFFECT_REQUESTED {
             let b: RequestBody = serde_json::from_str(&ev.kind.body).map_err(|e| RuntimeError::new(format!("bad effect request {}: {e}", ev.id.0)))?;
+            let class = self.class_of(&b.spec);
+            self.refusals.entry(class).or_insert(0);
             self.pending.insert(
                 ev.id.0.clone(),
                 PendingEffect { key: ev.id.0.clone(), stream: ev.stream.clone(), spec: b.spec, deadline_at: b.deadline_at, requested_at: ev.at, correlation: ev.correlation.clone() },
@@ -332,7 +480,9 @@ impl Engine {
         let b: HeldBody = serde_json::from_str(&held.kind.body).map_err(|e| RuntimeError::new(format!("bad held effect {}: {e}", held.id.0)))?;
         let deadline_at = at.saturating_add(b.spec.deadline_ms);
         let body = serde_json::to_string(&RequestBody { spec: b.spec, deadline_at }).map_err(|e| RuntimeError::new(e.to_string()))?;
+        let task = b.task;
         let req = self.append_derived(derive_id(format!("{}/released", held.id.0)), &b.stream, EventKind::new(EFFECT_REQUESTED, &body), held, at)?;
+        self.owners.insert(req.id.0.clone(), task);
         self.track_effect(&req)?;
         self.journal.mark_applied(RELEASE, &held.id)?;
         self.held = self.held.saturating_sub(1);
@@ -406,10 +556,11 @@ impl Engine {
             let id = derive_id(format!("{}/{handler}/{i}", ev.id.0));
             match cmd {
                 Command::Emit(kind) => {
+                    self.carry(handler, &ev.stream, &kind);
                     self.append_derived(id, &ev.stream, kind, ev, ev.at)?;
                 }
                 Command::Effect(spec) if mode == Mode::Act && self.halted => {
-                    let body = serde_json::to_string(&HeldBody { stream: ev.stream.clone(), spec }).map_err(|e| RuntimeError::new(e.to_string()))?;
+                    let body = serde_json::to_string(&HeldBody { stream: ev.stream.clone(), task: handler.into(), spec }).map_err(|e| RuntimeError::new(e.to_string()))?;
                     self.append_derived(id, &StreamKey(HALT_STREAM.into()), EventKind::new(EFFECT_HELD, &body), ev, ev.at)?;
                 }
                 Command::Effect(spec) => {
@@ -417,6 +568,9 @@ impl Engine {
                     let body = serde_json::to_string(&RequestBody { spec, deadline_at }).map_err(|e| RuntimeError::new(e.to_string()))?;
                     let tag = if mode == Mode::Act { EFFECT_REQUESTED } else { EFFECT_SHADOWED };
                     let req = self.append_derived(id, &ev.stream, EventKind::new(tag, &body), ev, ev.at)?;
+                    if mode == Mode::Act {
+                        self.owners.insert(req.id.0.clone(), handler.into());
+                    }
                     self.track_effect(&req)?;
                 }
                 Command::Schedule { at, kind } => {
@@ -425,6 +579,7 @@ impl Engine {
                     self.scheduler.insert(row);
                 }
                 Command::Note(kind) => {
+                    self.carry(handler, &ev.stream, &kind);
                     let note = self.local_event(&ev.stream, kind, ev.at, Some(ev));
                     self.local.push_back(note);
                 }
@@ -434,6 +589,7 @@ impl Engine {
                     let req = self.local_event(&ev.stream, EventKind::new(EFFECT_REQUESTED, &body), ev.at, Some(ev));
                     self.projection.push_local(&req, LOCAL_KEEP, |id| self.pending.contains_key(&id.0) || self.local.iter().any(|q| q.cause.as_ref() == Some(id)));
                     self.memory_only.insert(req.id.0.clone());
+                    self.owners.insert(req.id.0.clone(), handler.into());
                     self.track_effect(&req)?;
                 }
                 Command::Timer { at, kind } => {
@@ -443,6 +599,10 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    fn carry(&mut self, handler: &str, stream: &StreamKey, kind: &EventKind) {
+        self.tracks.entry(handler.into()).or_default().state = Some(CarriedState { stream: stream.0.clone(), tag: kind.tag.clone(), body_len: kind.body.len() });
     }
 
     fn dispatch(&mut self, ev: &Event, at: Option<(Offset, Offset)>) -> Result<()> {
@@ -487,6 +647,9 @@ impl Engine {
                 wide.set("stall.count", stalls);
             }
             self.marker.set(&Mark { event: ev.id.clone(), handler: name.clone(), stream: ev.stream.clone(), stalls })?;
+            let now = self.clock.now_ms();
+            let track = self.tracks.entry(name.clone()).or_default();
+            (track.fired_at, track.due_at) = (Some(now), Some(ev.at));
             self.busy.enter();
             let ctx = Ctx::with(ev.at, mix(self.seed, &[&ev.id.0, &name]), at.map_or(0, |(off, _)| off), wide.clone());
             let began = Instant::now();
@@ -679,13 +842,15 @@ impl Executor for Engine {
     }
 
     fn run_until_idle(&mut self) -> Result<()> {
-        loop {
+        let run = (|| loop {
             let fired = self.tick()?;
             let dispatched = self.pump()?;
             if (fired == 0 && dispatched == 0) || self.next_timer_at().is_none_or(|t| t > self.clock.now_ms()) {
                 return Ok(());
             }
-        }
+        })();
+        self.publish();
+        run
     }
 
     fn pending_effects(&self) -> Vec<PendingEffect> {
@@ -709,6 +874,13 @@ impl Executor for Engine {
             self.appended = true;
         }
         self.pending.remove(key);
+        if let Some(owner) = self.owners.remove(key) {
+            self.tracks.entry(owner).or_default().outcome = Some(match outcome {
+                Outcome::Succeeded(_) => LastOutcome::Succeeded,
+                Outcome::Failed(_) => LastOutcome::Failed,
+                Outcome::TimedOut => LastOutcome::TimedOut,
+            });
+        }
         let w = self.unit("effect", Some(&ev), None);
         w.set("effect.kind", p.spec.name.as_str());
         w.set("effect.idempotency_key", key);
