@@ -1626,10 +1626,11 @@ mod systemd {
 // ---------------------------------------------------------------------------------------------
 // Selection by config: the double other crates' tests run against.
 
-/// The config key that picks the backend. It is declared in `spira/conf.d` by whoever wires a
-/// binary to [`from_env`]; until then a caller resolves it itself and hands it to
-/// [`from_value`]. Values: `scripted`, `process`, `systemd`; unset or empty is the platform's
-/// own (systemd on Linux, child processes elsewhere).
+/// The config key that picks the backend, registered in `spira/conf.d/SPIRA_UNITS` as required
+/// (the shipped default is `systemd`). A binary wired to [`from_env`] resolves it through the
+/// config door; a caller holding the value hands it to [`from_value`]. Values: `scripted`,
+/// `process`, `systemd`; any other is refused. A test that hands [`from_value`] no value gets the
+/// platform's own (systemd on Linux, child processes elsewhere).
 pub const UNITS_KEY: &str = "SPIRA_UNITS";
 
 /// The backend a process runs against, with both faces of it.
