@@ -14,6 +14,7 @@ mod next;
 mod notify;
 mod ops;
 mod paths;
+mod send;
 mod rows;
 mod sop_run;
 mod tail;

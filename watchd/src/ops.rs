@@ -124,6 +124,7 @@ fn release_bin_tool(program: &str) -> Result<std::path::PathBuf, String> {
     }
 }
 
+// FORK-EDGE: needs Units list-by-pattern, is-enabled, disable and NRestarts (only facts/start/stop/restart exist), and a config-selected test double: SPIRA_SYSTEMCTL stubs in test-heimdall.sh and test-launchers-as-launched.sh would be bypassed onto the live user manager.
 fn systemctl_cmd(systemctl: &str) -> Command {
     let mut c = Command::new(systemctl);
     c.arg("--user");
@@ -218,7 +219,7 @@ impl Ops for Real {
 
     fn orphan_lock(&self, target: &str) -> Option<String> {
         // `target` is the manifest row's whole target — "<program> <args...>" — but the
-        // cmdline match below (like the pgrep search) is against the PROGRAM alone, never
+        // cmdline match below (like the /proc scan) is against the PROGRAM alone, never
         // the row's full string with its arguments still attached. Scar: passing `target`
         // whole here meant no live orphan ever matched, because /proc/<pid>/cmdline's argv
         // is NUL-separated (argv[0] is the program, argv[1] a separate element) and never
@@ -227,13 +228,8 @@ impl Ops for Real {
         if prog.is_empty() {
             return None;
         }
-        let base = std::path::Path::new(prog).file_name()?.to_str()?.to_string();
-        let out = spira_config::bounded::bounded("pgrep").arg("-f").arg(&base).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-        for line in String::from_utf8_lossy(&out.stdout).lines() {
-            let Ok(pid) = line.trim().parse::<i32>() else { continue };
-            if !cmdline_has_arg(pid, prog) {
-                continue;
-            }
+        std::path::Path::new(prog).file_name()?.to_str()?;
+        for pid in pids_with_arg(std::path::Path::new("/proc"), prog, std::process::id() as i32) {
             let fd_dir = format!("/proc/{pid}/fd");
             let Ok(entries) = std::fs::read_dir(&fd_dir) else { continue };
             for entry in entries.flatten() {
@@ -251,13 +247,10 @@ impl Ops for Real {
 
     fn mail_ask(&self, subject: &str, default: &str, why: &str, evidence: &str) -> Result<(), String> {
         let body = format!("## Question\n{subject}\n\n## Default\n{default}\n\n{why}\n\n{evidence}\n");
-        run_with_stdin(
-            "mail",
-            &["send", "operator", "--from", "Watchd <watchd@spira>", "--subject", subject, "--kind", "question", "--default", default],
-            &body,
-        )
+        crate::send::send_configured(&crate::send::Letter { mailbox: "operator", subject, kind: "question", default, body: &body })
     }
 
+    // FORK-EDGE: mail-health.sh is 122 lines of shell (over the ~100-line port bound).
     fn mail_health(&self) -> i32 {
         // A spawn failure was a silent 3 ("could not check") — name it (sp-xp0u2).
         let (mail_health, envs) = match spira_config::release_env::tool("mail-health.sh").and_then(|t| Ok((t, spira_config::release_env::child_path_env_for_process()?))) {
@@ -298,6 +291,7 @@ impl Ops for Real {
     }
 
     fn sop_match(&self, payload: &str) -> Result<Vec<SopMatch>, String> {
+        // FORK-EDGE: sop match reads the shelf through bash lib.sh bdjson (needs a served content memories verb).
         let out = run_capture(spira_config::bounded::bounded_for("sop", "30").arg("match").arg("-"), payload)?;
         if out.0 != 0 {
             return Err(format!("sop match exited {}: {}", out.0, out.1.trim()));
@@ -306,6 +300,7 @@ impl Ops for Real {
     }
 
     fn sop_show(&self, slug: &str) -> Result<String, String> {
+        // FORK-EDGE: sop show reads the shelf through bash lib.sh bdjson (needs a served content memories verb).
         let out = run_capture(spira_config::bounded::bounded_for("sop", "30").arg("show").arg(slug), "")?;
         if out.0 != 0 {
             return Err(format!("sop show {slug} exited {}: {}", out.0, out.1.trim()));
@@ -326,6 +321,7 @@ impl Ops for Real {
             Ok(spec) => spec,
             Err(e) => return ToolRun::Unavailable(format!("{e}; {program} would run without config")),
         };
+        // FORK-EDGE: a release tool run in its own transient unit with --wait --pipe: needs a Units start that pipes output and waits (Units::start returns at once).
         let mut cmd = Command::new(&self.systemd_run);
         cmd.args(["--user", "--collect", "--wait", "--pipe", "--quiet"]).arg(format!("--setenv=SPIRA_TOML={spec}"));
         for (k, v) in child_env {
@@ -347,6 +343,7 @@ impl Ops for Real {
             Target::Bead(id) => ("--bead", id),
             Target::Pass(id) => ("--pass", id),
         };
+        // FORK-EDGE: sop applied writes its ledger and metric in the sop binary; its shelf reads fork bash lib.sh bdjson, so a library call would carry the same fork (needs a served content memories verb).
         let mut cmd = spira_config::bounded::bounded_for("sop", "60");
         cmd.args(["applied", slug, flag, id, "--check", check, "--held", "unknown", "--why", "-"]);
         match run_capture(&mut cmd, why)? {
@@ -356,10 +353,28 @@ impl Ops for Real {
     }
 
     fn mail_concierge(&self, kind: &str, subject: &str, body: &str) -> Result<(), String> {
-        run_with_stdin("mail", &["send", "concierge", "--from", "Watchd <watchd@spira>", "--subject", subject, "--kind", kind], body)
+        crate::send::send_configured(&crate::send::Letter { mailbox: "concierge", subject, kind, default: "", body })
     }
 
+    /// `inbox-append.sh`, in this process for every line it would not push. A line it pushes
+    /// still goes through the script, whose detached flusher must outlive this process.
     fn inbox_append(&self, text: &str) -> Result<(), String> {
+        let cfg = spira_config::process::cfg;
+        if !inbox_pushes(text, &cfg("SPIRA_CONCIERGE_PUSH_WAKE")?, &cfg("SPIRA_CONCIERGE_PUSH_PATTERN")?) {
+            let inbox = std::path::PathBuf::from(cfg("SPIRA_CONCIERGE_INBOX")?);
+            if let Some(dir) = inbox.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+            }
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+            use std::io::Write;
+            return std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&inbox)
+                .and_then(|mut f| writeln!(f, "{}", inbox_line(now, text)))
+                .map_err(|e| format!("cannot append to {}: {e}", inbox.display()));
+        }
+        // FORK-EDGE: the push leg's detached flusher (flock + quiet-window + concierge.sh wake) outlives this process.
         let out = spira_config::bounded::bounded("inbox-append.sh")
             .arg(text)
             .envs(spira_config::release_env::child_path_env_for_process()?)
@@ -389,8 +404,32 @@ fn run_capture(cmd: &mut Command, stdin_body: &str) -> Result<(i32, String), Str
     Ok((out.status.code().unwrap_or(-1), text))
 }
 
-fn cmdline_has_arg(pid: i32, target: &str) -> bool {
-    let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) else { return false };
+/// Every pid under `proc_root` (but `except`) whose first three argv elements include `prog`,
+/// ascending — `/proc` read directly, never a `pgrep` child.
+pub fn pids_with_arg(proc_root: &std::path::Path, prog: &str, except: i32) -> Vec<i32> {
+    let Ok(entries) = std::fs::read_dir(proc_root) else { return Vec::new() };
+    let mut pids: Vec<i32> = entries
+        .flatten()
+        .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
+        .filter(|&pid| pid != except && cmdline_has_arg(proc_root, pid, prog))
+        .collect();
+    pids.sort_unstable();
+    pids
+}
+
+/// Whether `inbox-append.sh` would push `text` (its `[ -n WAKE ] && grep -qE PATTERN` gate):
+/// only then does the detached flusher have work, and only then is the script run.
+pub fn inbox_pushes(text: &str, wake: &str, pattern: &str) -> bool {
+    !wake.is_empty() && regex::Regex::new(pattern).is_ok_and(|re| re.is_match(text))
+}
+
+/// `inbox-append.sh`'s own line: `<UTC %FT%TZ> <text>`.
+pub fn inbox_line(epoch: i64, text: &str) -> String {
+    format!("{} {text}", crate::iso8601::format_utc(epoch))
+}
+
+fn cmdline_has_arg(proc_root: &std::path::Path, pid: i32, target: &str) -> bool {
+    let Ok(raw) = std::fs::read(proc_root.join(pid.to_string()).join("cmdline")) else { return false };
     raw.split(|&b| b == 0)
         .take(3)
         .any(|arg| std::str::from_utf8(arg).map(|s| s == target).unwrap_or(false))
@@ -405,13 +444,6 @@ fn is_locked_by_someone(path: &std::path::Path) -> bool {
     let Ok(f) = std::fs::OpenOptions::new().append(true).open(path) else { return false };
     let rc = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     rc != 0
-}
-
-fn run_with_stdin(program: &str, args: &[&str], stdin_body: &str) -> Result<(), String> {
-    match run_capture(spira_config::bounded::bounded(program).args(args), stdin_body)? {
-        (0, _) => Ok(()),
-        (code, _) => Err(format!("{program} exited {code}")),
-    }
 }
 
 #[cfg(test)]
@@ -535,6 +567,31 @@ pub mod fake {
 #[cfg(test)]
 mod real_tests {
     use super::*;
+
+    #[test]
+    fn pids_with_arg_reads_proc_argv_exactly_and_skips_the_excluded_pid() {
+        let tmp = testkit::TempDir::new("watchd-proc");
+        let root = tmp.path().to_path_buf();
+        for (pid, argv) in [("10", &b"/usr/bin/foo\0--x\0"[..]), ("11", b"bash\0/usr/bin/foo\0"), ("12", b"/usr/bin/foobar\0"), ("13", b"/usr/bin/foo\0"), ("self", b"/usr/bin/foo\0")] {
+            std::fs::create_dir_all(root.join(pid)).unwrap();
+            std::fs::write(root.join(pid).join("cmdline"), argv).unwrap();
+        }
+        assert_eq!(pids_with_arg(&root, "/usr/bin/foo", 13), vec![10, 11]);
+    }
+
+    #[test]
+    fn inbox_pushes_only_with_a_wake_and_a_matching_pattern() {
+        let pat = r"\bP0\b|RED on|PAUSED";
+        assert!(inbox_pushes("watchd: P0 down", "concierge.sh wake", pat));
+        assert!(!inbox_pushes("watchd: P01 down", "concierge.sh wake", pat));
+        assert!(!inbox_pushes("watchd: P0 down", "", pat));
+        assert!(!inbox_pushes("watchd: P0 down", "concierge.sh wake", "("));
+    }
+
+    #[test]
+    fn inbox_line_is_the_scripts_utc_stamp_then_the_text() {
+        assert_eq!(inbox_line(0, "hello there"), "1970-01-01T00:00:00Z hello there");
+    }
 
     #[test]
     fn match_output_reads_the_run_column_and_treats_a_legacy_line_as_runnable() {
