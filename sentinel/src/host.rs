@@ -253,6 +253,8 @@ impl Runner for RealRunner {
 
 pub struct Host<'a> {
     pub runner: &'a dyn Runner,
+    /// The in-process doors (store, claim, hel, units, metrics, mail): never a child.
+    pub svc: &'a dyn crate::services::Services,
     pub clock: &'a dyn Clock,
     pub sink: &'a dyn Sink,
     /// Added to every child: the snapshot paths (SPIRA_LIST_SNAPSHOT …).
@@ -260,9 +262,10 @@ pub struct Host<'a> {
 }
 
 impl<'a> Host<'a> {
-    pub fn new(runner: &'a dyn Runner, clock: &'a dyn Clock, sink: &'a dyn Sink) -> Host<'a> {
+    pub fn new(runner: &'a dyn Runner, clock: &'a dyn Clock, sink: &'a dyn Sink, svc: &'a dyn crate::services::Services) -> Host<'a> {
         Host {
             runner,
+            svc,
             clock,
             sink,
             extra_env: RefCell::new(Vec::new()),
@@ -294,6 +297,15 @@ impl<'a> Host<'a> {
     }
     pub fn unset_env(&self, k: &str) {
         self.extra_env.borrow_mut().retain(|(x, _)| x != k);
+    }
+    /// One `spira-lc` verb over the store's socket.
+    pub fn lc(&self, bin: &str, args: &[String]) -> Out {
+        self.svc.lc(bin, args)
+    }
+    /// One spira-claim verb in-process, handed this pass's child environment additions.
+    pub fn claim(&self, args: &[String]) -> Out {
+        let env = self.extra_env.borrow().clone();
+        self.svc.claim(args, &env)
     }
     pub fn run(&self, spec: Spec) -> Out {
         let mut s = spec;

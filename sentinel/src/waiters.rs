@@ -17,7 +17,6 @@
 
 use std::collections::HashSet;
 
-use crate::host::{Io, Spec};
 use crate::model::{parse_beads, Bead, LcRow};
 use crate::pass::Sentinel;
 use crate::store;
@@ -86,32 +85,12 @@ impl<'a> Sentinel<'a> {
     /// CAS-based holds in lifecycle.rs, because `spira-lc hold` answers "cannot tell" on its
     /// own, the same `|| true` shape lib.sh used.
     pub fn lc_hold(&self, id: &str, kind: &str, reason: &str) {
-        self.h.run(
-            Spec::args_owned(
-                self.cfg.lc_bin.clone(),
-                vec![
-                    "hold".into(),
-                    id.into(),
-                    kind.into(),
-                    reason.into(),
-                    "sentinel".into(),
-                ],
-            )
-            .out(Io::Null)
-            .err(Io::Null),
-        );
+        self.h.lc(&self.cfg.lc_bin, &["hold".into(), id.into(), kind.into(), reason.into(), "sentinel".into()]);
     }
 
     /// `spira-lc unhold <id> <kind> sentinel`.
     pub fn lc_unhold(&self, id: &str, kind: &str) {
-        self.h.run(
-            Spec::args_owned(
-                self.cfg.lc_bin.clone(),
-                vec!["unhold".into(), id.into(), kind.into(), "sentinel".into()],
-            )
-            .out(Io::Null)
-            .err(Io::Null),
-        );
+        self.h.lc(&self.cfg.lc_bin, &["unhold".into(), id.into(), kind.into(), "sentinel".into()]);
     }
 
     /// lib.sh `mark_queue_waiters`. `broad_ready` is the pass's own unscoped ready

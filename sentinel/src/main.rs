@@ -33,6 +33,9 @@ mod open_children;
 mod red_trackers;
 mod pass;
 mod seams;
+mod services;
+#[cfg(test)]
+mod fork_edges;
 mod store;
 mod call;
 mod temps;
@@ -59,6 +62,8 @@ pub fn locate_home(env_home: Option<&str>, env_release: Option<&str>) -> Result<
 /// S0 — the context probe, run with this process's own environment. [`resolve_repos`] reads the probe's own `@vars` section (already every `SPIRA_*`
 /// key, exported or not) to build a `spira_config::repos::Registry` in-process.
 pub fn probe(r: &dyn Runner, home: &Path, child_env: &[(String, String)]) -> Result<Context, String> {
+    // FORK-EDGE: needs S10 Settings — the probe sources lib.sh for conf.sh's environment
+    // (`env -0`), which every child of the pass is handed as its base environment.
     let mut s = Spec::args_owned(
         "bash",
         vec!["-c".into(), seams::PROBE.into(), "sentinel-probe".into()],
@@ -227,7 +232,8 @@ fn main() {
         base_env: Some(ctx.env.clone()),
     };
     let (clock, sink) = (RealClock, RealSink);
-    let h = Host::new(&runner, &clock, &sink);
+    let svc = services::RealServices::new(ctx.env.clone());
+    let h = Host::new(&runner, &clock, &sink, &svc);
     let pass_id = format!("{}-{}-{}", hostname(), std::process::id(), RealClock.now());
     let s = Sentinel::new(
         &h,

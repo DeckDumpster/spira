@@ -15,6 +15,15 @@ pub struct Bd<'a> {
 }
 
 impl<'a> Bd<'a> {
+    /// The bd verbs the store's `content` door serves (spira-lc `content::check`'s reads):
+    /// these go over the socket; everything else is a write or a read it does not serve.
+    pub fn served(args: &[String]) -> bool {
+        matches!(args.first().map(String::as_str), Some("list" | "show"))
+    }
+
+    // FORK-EDGE: unserved content verbs — `content` serves list/show only, so bd's writes
+    // (label add/remove, note --stdin, recompute-blocked) and `ready`/`label list` reads stay
+    // a bd child until the store serves them; `bdsim` is the simulator's declared stand-in.
     pub fn spec(&self, args: &[String]) -> Spec {
         if let Some(fx) = &self.cfg.bd_fixture {
             let mut a = vec![fx.clone()];
@@ -38,6 +47,9 @@ impl<'a> Bd<'a> {
                 stdout: String::new(),
                 stderr: "bdq: refusing - SPIRA_DB is empty/unset (would fall through to bd auto-discovery)".into(),
             };
+        }
+        if self.cfg.bd_fixture.is_none() && Self::served(args) && stdin.is_none() {
+            return h.svc.content(&self.cfg.lc_bin, args);
         }
         let mut tries = 1;
         loop {

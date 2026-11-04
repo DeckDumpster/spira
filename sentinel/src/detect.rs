@@ -19,18 +19,6 @@ use spira_config::lc_state;
 // ---------------------------------------------------------------------------------------
 // CHECK 7c — unclaimable ready beads.
 
-/// A small bash seam, owned by this module alone (never touches `seams.rs`): every runes
-/// member's `RUNE_LABELS`/`RUNE_EXCLUDE_LABELS`, not just the active roster the context
-/// probe (S0) already carries in `ctx.runes`. `rune_names`/`rune_get` are themselves
-/// one-line shims onto `spira-config rune names|get` now (sp-r5zd2); this still goes
-/// through lib.sh rather than calling that binary directly so a runes with its own
-/// RUNE_LABELS override hook (none exist today, but lib.sh is the contract) keeps working.
-const ALL_RUNES: &str = r#"set -uo pipefail
-. "$SENTINEL_LIB" >&2 || exit 97
-for _f in $(rune_names); do
-    printf '%s\t%s\t%s\0' "$_f" "$(rune_get "$_f" RUNE_LABELS)" "$(rune_get "$_f" RUNE_EXCLUDE_LABELS)"
-done
-"#;
 
 /// `PARTS`/`ALL_PARTS`'s shared line shape: `<name>|<labels-csv>|<exclude-csv>\n`. A rune
 /// with no labels at all (a manual-call persona) is skipped — lib.sh's own `[ -n "$inc" ]`
@@ -56,25 +44,14 @@ impl<'a> Sentinel<'a> {
 
     /// `ALL_PARTS`: the full runes, including runes the active roster parks.
     fn all_parts_str(&self) -> String {
-        let o = self.h.run(
-            Spec::args_owned(
-                "bash".to_string(),
-                vec!["-c".into(), ALL_RUNES.into(), "sentinel-all-runes".into()],
-            )
-            .env("SENTINEL_LIB", self.lib.to_string_lossy().into_owned())
-            .out(Io::Capture)
-            .err(Io::Null),
-        );
+        // `rune_names` is the probe's own `@all_runes`; `rune_get` is the library lib.sh's
+        // shim called (`spira-config rune get`).
+        let home = &self.cfg.home;
         let mut s = String::new();
-        for rec in o.stdout.split('\0') {
-            if rec.is_empty() {
-                continue;
-            }
-            let mut f = rec.splitn(3, '\t');
-            let name = f.next().unwrap_or("");
-            let labels = f.next().unwrap_or("");
-            let exclude = f.next().unwrap_or("");
-            if let Some(l) = parts_line(name, labels, exclude) {
+        for name in &self.ctx.all_runes {
+            let labels = spira_config::runes::rune_get(home, name, "RUNE_LABELS", "");
+            let exclude = spira_config::runes::rune_get(home, name, "RUNE_EXCLUDE_LABELS", "");
+            if let Some(l) = parts_line(name, &labels, &exclude) {
                 s.push_str(&l);
             }
         }
@@ -147,6 +124,8 @@ impl<'a> Sentinel<'a> {
             if bid.is_empty() {
                 continue;
             }
+            // FORK-EDGE: needs incident library `file` — `cmd_file` and its SPIRA_INCIDENT_* config
+            // live in incident's main.rs, not its lib.
             self.h.run(
                 Spec::args_owned(
                     "bash".to_string(),
@@ -254,11 +233,11 @@ pub fn find_holder(list: &[(String, String)], branch: &str) -> Option<String> {
 
 impl<'a> Sentinel<'a> {
     fn repo_root_cmd(&self, name: &str) -> Option<String> {
-        let o = self.h.run(
-            Spec::args_owned("spira-config".to_string(), vec!["repo".into(), "root".into(), name.to_string()])
-                .err(Io::Null),
-        );
-        (o.ok() && !o.stdout.trim().is_empty()).then(|| o.stdout.trim().to_string())
+        // `spira-config repo root <name>`, asked of the registry the pass already resolved.
+        spira_config::repos::Registry::from_env(self.ctx.vars.clone(), &self.cfg.home)
+            .root(name)
+            .map(|r| r.trim().to_string())
+            .filter(|r| !r.is_empty())
     }
 
     fn worktree_prefix(&self) -> String {
@@ -343,21 +322,11 @@ impl<'a> Sentinel<'a> {
 
 
     pub(crate) fn holder_alive(&self, id: &str) -> bool {
-        self.h
-            .run(Spec::args_owned(self.cfg.hel_bin.clone(), vec!["holder-alive".into(), id.to_string()]).err(Io::Null))
-            .ok()
+        self.h.svc.holder_alive(id)
     }
 
     fn destroy_worktree(&self, id: &str, path: &str, repo_root: &str, why: &str) -> bool {
-        self.h
-            .run(
-                Spec::args_owned(
-                    self.cfg.hel_bin.clone(),
-                    vec!["destroy-worktree".into(), id.into(), path.into(), repo_root.into(), why.into()],
-                )
-                .err(Io::Null),
-            )
-            .ok()
+        self.h.svc.destroy_worktree(id, path, repo_root, why)
     }
 
     /// Commit subjects in `holder_path` naming `id` (lib.sh: `git log --grep="$id:" -F`,

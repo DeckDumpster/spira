@@ -78,6 +78,7 @@ impl<'a> Sentinel<'a> {
                     "STARVED — {n_open} open, 0 ready, 0 running. Dropping to inference."
                 ));
                 let log = self.cfg.run.join("reflect.log");
+                // FORK-EDGE: needs reflect.sh ported (a script; the inference drop it starts is its own task).
                 self.h.run(
                     Spec::args_owned(
                         self.script("reflect.sh").to_string_lossy().into_owned(),

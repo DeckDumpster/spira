@@ -42,8 +42,7 @@ impl<'a> Sentinel<'a> {
     /// SUBMITTED bead and its dependents. A machine that cannot answer writes no cache, so
     /// `rune_ready` asks again and fails closed.
     pub fn export_ready_cache(&self) {
-        let bin = self.cfg.claim_bin.clone();
-        let o = self.h.run(Spec::args_owned(bin, vec!["bulk-ready-by-rune".into()]));
+        let o = self.h.claim(&["bulk-ready-by-rune".into()]);
         if !o.ok() {
             return;
         }
@@ -209,6 +208,8 @@ impl<'a> Sentinel<'a> {
     /// does the same thing for its own caller; this crate's copy stays `Host`-driven so
     /// its own fixtures can fake it exactly as `live_total`'s already do).
     fn unit_count(&self, name: &str, exclude: Option<&str>) -> i64 {
+        // FORK-EDGE: needs Units list-by-prefix — the port reads one named unit, and this counts
+        // every live `spira-dwarf-<rune>-*`.
         if self.cfg.call == "systemd-run" {
             let prefix = format!("spira-dwarf-{name}-");
             let o = self.h.run(
@@ -315,8 +316,7 @@ impl<'a> Sentinel<'a> {
     /// (`_spira_claim rune-ready`, lib.sh:454 — kept external: spira-claim's own lib.rs
     /// deliberately exposes no more than `READY_ARGS_BASE` for another crate to link).
     fn rune_ready(&self, f: &str) -> ReadyAnswer {
-        let bin = self.cfg.claim_bin.clone();
-        let o = self.h.run(Spec::args_owned(bin, vec!["rune-ready".into(), f.to_string()]));
+        let o = self.h.claim(&["rune-ready".into(), f.to_string()]);
         match o.rc {
             0 => ReadyAnswer::Count(o.stdout.trim().parse().unwrap_or(0)),
             2 => ReadyAnswer::NoRune,
@@ -348,7 +348,6 @@ impl<'a> Sentinel<'a> {
     /// with the pool's own.
     fn express_ready_in_task_pool(&self, task_runes: &[String]) -> bool {
         let home = &self.cfg.home;
-        let bin = self.cfg.claim_bin.clone();
         for f in task_runes {
             let predicate = match spira_config::runes::rune_predicate(home, f) {
                 Ok(p) => p,
@@ -360,13 +359,9 @@ impl<'a> Sentinel<'a> {
             if predicate.labels.is_empty() {
                 continue;
             }
-            let ex = self
-                .h
-                .run(Spec::args_owned(bin.clone(), vec!["rune-exclude".into(), f.clone(), predicate.exclude_labels]));
+            let ex = self.h.claim(&["rune-exclude".into(), f.clone(), predicate.exclude_labels]);
             let exclude = ex.stdout.trim().to_string();
-            let rc = self
-                .h
-                .run(Spec::args_owned(bin.clone(), vec!["ready-count".into(), predicate.labels, exclude, "--express".into()]));
+            let rc = self.h.claim(&["ready-count".into(), predicate.labels, exclude, "--express".into()]);
             let n: i64 = rc.stdout.trim().parse().unwrap_or(0);
             if n > 0 {
                 return true;
@@ -383,8 +378,8 @@ impl<'a> Sentinel<'a> {
         if task_runes.is_empty() {
             return Some(Vec::new());
         }
-        let args = std::iter::once("urgent".to_string()).chain(task_runes.iter().cloned()).collect();
-        let o = self.h.run(Spec::args_owned(self.cfg.claim_bin.clone(), args));
+        let args: Vec<String> = std::iter::once("urgent".to_string()).chain(task_runes.iter().cloned()).collect();
+        let o = self.h.claim(&args);
         if o.rc != 0 {
             self.h.log_err(&format!("CHECK7 lanes: CLAIM-ERROR: urgent: {}", o.stderr.trim()));
             return None;
@@ -448,6 +443,8 @@ impl<'a> Sentinel<'a> {
             return;
         };
         let why = format!("preempted for P0 express {express}: lane yields its slot");
+        // FORK-EDGE: needs slay ported — it finds the bead's dwarf unit and records the kill; the
+        // stop itself becomes `Units::stop` once the unit is known (sentinel-call.preempt).
         let o = self.h.run(
             Spec::args_owned(self.cfg.slay_bin.clone(), vec!["--bead".into(), bead.clone(), "--why".into(), why]).err(Io::Null),
         );
@@ -695,6 +692,10 @@ impl<'a> Sentinel<'a> {
         args.push("--home".into());
         args.push(self.cfg.home.to_string_lossy().into_owned());
         args.push(f.to_string());
+        // FORK-EDGE: needs UnitSpec properties (TimeoutStartSec, IOSchedulingClass, IOWeight,
+        // ExecStopPost) and an installed unit name (`spira-dwarf-<rune>-<now>`, which unit_name's
+        // `spira-run-` prefix cannot carry). The ExecStopPost re-exec `sentinel --call-only` is a
+        // state the sentinel-call task will own (`unit.ran` of the dwarf unit).
         let o = self.h.run(
             Spec::args_owned(self.cfg.call.clone(), args)
                 .out(Io::Inherit)
@@ -899,6 +900,7 @@ impl<'a> Sentinel<'a> {
     /// NAME (lib.sh:1429). No match is not a failure — the run may already be finished. A
     /// stop that fails is.
     pub fn named_unit_stop(&self, glob: &str) -> (Vec<String>, i32) {
+        // FORK-EDGE: needs Units list-by-glob; each match is stopped through the port below.
         let o = self.h.run(
             Spec::args_owned(
                 self.cfg.systemctl.clone(),
@@ -915,11 +917,7 @@ impl<'a> Sentinel<'a> {
         let mut lines = Vec::new();
         let mut rc = 0;
         for u in &units {
-            let so = self.h.run(
-                Spec::args_owned(self.cfg.systemctl.clone(), vec!["--user".into(), "stop".into(), u.clone()])
-                    .err(Io::Null),
-            );
-            if so.ok() {
+            if self.h.svc.unit_stop(u) {
                 lines.push(format!("stopped {u}"));
             } else {
                 self.h.log_err(&format!("could not stop {u}"));

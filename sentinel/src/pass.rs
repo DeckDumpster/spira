@@ -181,29 +181,14 @@ impl<'a> Sentinel<'a> {
         let now = self.h.now();
         let prev = self.phase.borrow_mut().replace((name.to_string(), now));
         let (pname, t0) = prev.unwrap_or_else(|| ("setup".to_string(), self.started));
-        {
-            let bin = &self.cfg.tsd_bin;
-            let root = self.cfg.run.to_string_lossy().into_owned();
-            let _ = self.h.run(
-                Spec::args_owned(
-                    bin.clone(),
-                    vec![
-                        "--family".into(),
-                        "sentinel-phase".into(),
-                        "--root".into(),
-                        root,
-                        "--field-str".into(),
-                        format!("pass={}", self.pass_id),
-                        "--field-str".into(),
-                        format!("check={pname}"),
-                        "--field".into(),
-                        format!("secs={}", now - t0),
-                    ],
-                )
-                .out(Io::Null)
-                .err(Io::Null),
-            );
-        }
+        self.h.svc.tsd_row(
+            "sentinel-phase",
+            &[
+                ("pass".into(), self.pass_id.clone().into()),
+                ("check".into(), pname.into()),
+                ("secs".into(), (now - t0).into()),
+            ],
+        );
     }
 
     /// Run one lib.sh seam (DESIGN.md §6). `count` adds its act/progress tally to this
@@ -219,6 +204,8 @@ impl<'a> Sentinel<'a> {
         count: bool,
     ) -> Out {
         let _ = std::fs::write(&self.tally_file, "");
+        // FORK-EDGE: needs a spira_event library — the one seam left (`seams::EVENT`) runs
+        // lib.sh's `spira_event`.
         let mut s = Spec::args_owned(
             "bash",
             vec!["-c".into(), seams::script(body), format!("sentinel-{name}")],
@@ -264,32 +251,7 @@ impl<'a> Sentinel<'a> {
         bead: &str,
         own_dedup: bool,
     ) -> bool {
-        let mut s = Spec::args_owned(
-            "mail",
-            vec![
-                "send".into(),
-                "concierge".into(),
-                "--from".into(),
-                from.into(),
-                "--subject".into(),
-                subject.into(),
-                "--kind".into(),
-                "question".into(),
-                "--default".into(),
-                default.into(),
-            ],
-        )
-        .stdin(body.as_bytes().to_vec())
-        .out(Io::Null)
-        .err(Io::Null);
-        if !bead.is_empty() {
-            s.args.push("--bead".into());
-            s.args.push(bead.into());
-        }
-        if own_dedup {
-            s = s.env("SPIRA_MAIL_REPEAT_CONSIDERED", "sentinel-own-dedup");
-        }
-        self.h.run(s).ok()
+        self.h.svc.mail(&crate::services::Ask { from, subject, default, body, bead, own_dedup })
     }
 
     /// lib.sh `ask_already_open <subject>` — ported natively (sp-31hjr). True when an
@@ -552,6 +514,7 @@ impl<'a> Sentinel<'a> {
 
     /// CHECK 1 — completed pilgrimages.
     fn check1(&self) {
+        // FORK-EDGE: needs pilgrimage.sh check ported into the pilgrimage crate.
         let o = self.h.run(Spec::args_owned(
             self.script("pilgrimage.sh").to_string_lossy().into_owned(),
             vec!["check".into()],
@@ -572,6 +535,8 @@ impl<'a> Sentinel<'a> {
     /// CHECK 2b — stranded work (the strand crate).
     fn check2b(&self) {
         let bin = self.cfg.strand_bin.clone();
+        // FORK-EDGE: needs strand::check to return its report rather than print it, and strand's own
+        // children (lib.sh roster seam, systemctl list-units, bd) moved in first.
         let o = self.h.run(Spec::args_owned(bin, vec!["check".into()]));
         let text = format!("{}{}", o.stdout, o.stderr);
         if !text.is_empty() {
@@ -611,12 +576,9 @@ impl<'a> Sentinel<'a> {
     /// and a dwarf claims from — never `bd ready`, whose status and assignee no claim writes
     /// (sp-7g5q6). A refusal is `None` (unknown), never 0.
     pub fn plan_ready_live(&self) -> Option<usize> {
-        let o = self.h.run(Spec::args_owned(
-            self.cfg.claim_bin.clone(),
-            // No exclude labels: poison and ask are holds on the row, which the machine's own
-            // claimable set already leaves out (sp-psztcc).
-            vec!["ready-count".into(), self.cfg.plan_labels().join(",")],
-        ));
+        // No exclude labels: poison and ask are holds on the row, which the machine's own
+        // claimable set already leaves out (sp-psztcc).
+        let o = self.h.claim(&["ready-count".into(), self.cfg.plan_labels().join(",")]);
         if o.ok() { o.stdout.trim().parse().ok() } else { None }
     }
 
@@ -624,6 +586,7 @@ impl<'a> Sentinel<'a> {
     pub fn live_total(&self) -> usize {
         let names = self.ctx.rune_names();
         if self.cfg.call == "systemd-run" {
+            // FORK-EDGE: needs Units list-by-prefix (the fleet's `spira-dwarf-*` count).
             let o = self.h.run(
                 Spec::args_owned(
                     self.cfg.systemctl.clone(),

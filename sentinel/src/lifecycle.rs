@@ -7,7 +7,6 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
-use crate::host::{Io, Spec};
 use crate::model::{parse_lc_rows, LcRow};
 use crate::pass::Sentinel;
 use spira_config::lc_state;
@@ -170,8 +169,7 @@ impl<'a> Sentinel<'a> {
     }
 
     fn lc_rows_read(&self) -> Option<Vec<LcRow>> {
-        let bin = self.cfg.lc_bin.clone();
-        let o = self.h.run(Spec::args_owned(bin, vec!["list".into()]));
+        let o = self.h.lc(&self.cfg.lc_bin, &["list".into()]);
         if !o.ok() {
             let why = o
                 .stderr
@@ -222,11 +220,7 @@ impl<'a> Sentinel<'a> {
     /// write that a stale snapshot must not drive. None when the machine has no row or
     /// cannot answer.
     pub fn lc_live_state(&self, id: &str) -> Option<String> {
-        let o = self.h.run(
-            Spec::args_owned(self.cfg.lc_bin.clone(), vec!["show".into(), id.into()])
-                .err(Io::Null)
-                .timeout(5),
-        );
+        let o = self.h.lc(&self.cfg.lc_bin, &["show".into(), id.into()]);
         if !o.ok() {
             return None;
         }
@@ -238,10 +232,8 @@ impl<'a> Sentinel<'a> {
     /// `kind` under that CAS. Ok(()) applied; Err(rc) as the caller verbs (1 no row, 2 cannot
     /// tell).
     pub fn lc_event(&self, id: &str, kind: &str, actor: &str) -> Result<(), i32> {
-        let bin = self.cfg.lc_bin.clone();
-        let o = self
-            .h
-            .run(Spec::args_owned(bin.clone(), vec!["show".into(), id.into()]).err(Io::Null));
+        let bin = &self.cfg.lc_bin;
+        let o = self.h.lc(bin, &["show".into(), id.into()]);
         if !o.ok() {
             return Err(o.rc);
         }
@@ -257,25 +249,21 @@ impl<'a> Sentinel<'a> {
         if state.is_empty() || version.is_empty() {
             return Err(1);
         }
-        let e = self.h.run(
-            Spec::args_owned(
-                bin,
-                vec![
-                    "event".into(),
-                    "bead".into(),
-                    id.into(),
-                    "--expect".into(),
-                    state,
-                    "--version".into(),
-                    version,
-                    "--actor".into(),
-                    actor.into(),
-                    "--kind".into(),
-                    kind.into(),
-                ],
-            )
-            .out(Io::Null)
-            .err(Io::Null),
+        let e = self.h.lc(
+            bin,
+            &[
+                "event".into(),
+                "bead".into(),
+                id.into(),
+                "--expect".into(),
+                state,
+                "--version".into(),
+                version,
+                "--actor".into(),
+                actor.into(),
+                "--kind".into(),
+                kind.into(),
+            ],
         );
         if e.ok() {
             Ok(())
@@ -362,7 +350,7 @@ impl<'a> Sentinel<'a> {
 
     /// Stop whatever still works in the bead's worktree before the bead goes back to READY.
     fn stop_holder(&self, id: &str) -> bool {
-        self.h.run(Spec::args_owned(self.cfg.hel_bin.clone(), vec!["stop-holder".into(), id.to_string()]).err(Io::Null)).ok()
+        self.h.svc.stop_holder(id)
     }
 
     /// One attempt-history fact appended to the lifecycle event log, best-effort.
@@ -374,12 +362,7 @@ impl<'a> Sentinel<'a> {
             .unwrap_or("harness")
             .to_string();
         let args = ["fact", id, "--kind", etype, "--actor", &actor, "--cause", cause].map(String::from).to_vec();
-        let _ = self.h.run(
-            Spec::args_owned(self.cfg.lc_bin.clone(), args)
-                .out(Io::Null)
-                .err(Io::Null)
-                .timeout(self.cfg.bd_timeout),
-        );
+        let _ = self.h.lc(&self.cfg.lc_bin, &args);
     }
 
     /// CHECK 2c — detect, never repair.
