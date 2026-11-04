@@ -190,14 +190,7 @@ fn cmd_ghq(args: &[String]) -> i32 {
 // =========================================================================================
 
 fn date_now_utc_nanos() -> String {
-    spira_config::bounded::bounded("date")
-        .arg("-u")
-        .arg("+%Y-%m-%dT%H:%M:%S.%NZ")
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim_end().to_string())
-        .unwrap_or_default()
+    bead::bdq::utc_stamp_nanos(std::time::SystemTime::now())
 }
 
 /// One `timeout <secs> <bd> -C <db> <args>` attempt: stdout inherited straight through
@@ -217,6 +210,7 @@ fn writer_lock_for(args: &[String]) -> Option<(String, String)> {
 }
 
 fn run_bd_once(timeout_s: &str, bd_bin: &str, db: &str, args: &[String], capture_stdout: bool, writer_lock: Option<&(String, String)>) -> (i32, String, Vec<u8>) {
+    // FORK-EDGE: content store — this is the store's own edge: bdq runs bd, and the content store is out of scope.
     let mut cmd = match writer_lock {
         Some((file, wait_s)) => {
             let mut c = Command::new("flock");
@@ -360,14 +354,15 @@ fn cmd_bdq(args: &[String]) -> i32 {
 
     // The czar fence: a live SPIRA_RUNE=czar session with a class mutating the queue
     // (reopen always; update/close unless it is the trigger bead itself) must pass
-    // czar-fence.sh first. czar-fence.sh's own exit code is NOT propagated — bdq always
+    // czar-fence.sh first (ported: `bead::bdq::czar_fence`). Its own exit code is NOT propagated — bdq always
     // normalizes a refusal here to 1, matching the bash's bare `|| return 1`.
     let rune = env_or("SPIRA_RUNE", "");
     let czar_class = env_or("SPIRA_CZAR_CLASS", "");
     let czar_trigger = env_or("SPIRA_CZAR_TRIGGER_BEAD", "");
     if let Some(class) = czar_fence_class(&rune, &czar_class, &czar_trigger, args) {
-        let ok = Command::new("czar-fence.sh").arg(class).status().map(|s| s.success()).unwrap_or(false);
-        if !ok {
+        // The fence read the stage from the environment bdq hands every child, as the script did.
+        if let Err(why) = bead::bdq::czar_fence(class, &|var| std::env::var(var).ok()) {
+            eprintln!("{why}");
             return 1;
         }
     }
@@ -541,6 +536,7 @@ fn util_json_only(raw: &str) -> String {
 
 /// stdout of one bd call, stderr dropped; empty on any failure.
 fn bd_capture(timeout_s: &str, bd_bin: &str, db: &str, args: &[&str]) -> String {
+    // FORK-EDGE: content store — bdq's own bd call; the content store is out of scope.
     Command::new("timeout")
         .arg(timeout_s)
         .arg(bd_bin)

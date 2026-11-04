@@ -10,6 +10,7 @@ pub mod bdq;
 #[path = "../tests/fixtures/bdsim.rs"]
 pub mod bdsim;
 pub mod claimdesc;
+pub mod lc;
 pub mod event;
 pub mod identity;
 pub mod statute;
