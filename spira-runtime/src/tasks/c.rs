@@ -37,25 +37,22 @@ use sweep_nix_gc::SweepNixGc;
 use sweep_reclaim::SweepReclaim;
 use sweep_tsd::SweepTsd;
 
-pub static TASKS: &[Task] = &[];
-
-/// The family's rows, complete but not yet in `TASKS`.
-pub static PENDING: &[Task] = &[
+pub static TASKS: &[Task] = &[
     Task {
         name: hel_sweep::NAME,
         boot: HelSweep::boot,
         cadence_ms: cadence_ms::<HelSweep>,
         effects: hel_sweep::EFFECTS,
         runners: &[
-            (hel_sweep::OBSERVE, not_ported::<HelSweep>),
-            (hel_sweep::PR_TIP, not_ported::<HelSweep>),
-            (hel_sweep::SEND, not_ported::<HelSweep>),
-            (hel_sweep::CONTENT_ON_BASE, not_ported::<HelSweep>),
-            (hel_sweep::CLOSE_ON_LAND, not_ported::<HelSweep>),
-            (hel_sweep::ARCHIVE, not_ported::<HelSweep>),
-            (hel_sweep::FREE_WORKTREE, not_ported::<HelSweep>),
-            (hel_sweep::ORPHAN_WORKTREE, not_ported::<HelSweep>),
-            (hel_sweep::PRUNE, not_ported::<HelSweep>),
+            (hel_sweep::OBSERVE, |e, _, s| hel_sweep::observe(&sweep_world(e)?, &crate::tasks::b::lc(e), &hel_sweep::Pinned::read(&pinned)?, &s.input)),
+            (hel_sweep::PR_TIP, |e, _, s| hel_sweep::pr_tip(&sweep_world(e)?, &s.input)),
+            (hel_sweep::SEND, |e, _, s| hel_sweep::send(&sweep_world(e)?, &crate::tasks::b::lc(e), e.units.as_deref(), &s.input)),
+            (hel_sweep::CONTENT_ON_BASE, |e, _, s| hel_sweep::content_on_base(&sweep_world(e)?, &crate::tasks::b::lc(e), &s.input)),
+            (hel_sweep::CLOSE_ON_LAND, |e, _, s| hel_sweep::close_on_land(&sweep_world(e)?, &crate::tasks::b::lc(e), &s.input)),
+            (hel_sweep::ARCHIVE, |e, _, s| hel_sweep::archive(&sweep_world(e)?, &s.input)),
+            (hel_sweep::FREE_WORKTREE, |e, _, s| hel_sweep::destroy_worktree(&sweep_world(e)?, hel_sweep::FREE_WORKTREE, &s.input)),
+            (hel_sweep::ORPHAN_WORKTREE, |e, _, s| hel_sweep::destroy_worktree(&sweep_world(e)?, hel_sweep::ORPHAN_WORKTREE, &s.input)),
+            (hel_sweep::PRUNE, |e, _, s| hel_sweep::prune(&sweep_world(e)?, &s.input)),
         ],
         keys: &[hel_sweep::KEYS],
         build: build::<HelSweep>,
@@ -65,7 +62,12 @@ pub static PENDING: &[Task] = &[
         boot: HelReapTerminal::boot,
         cadence_ms: cadence_ms::<HelReapTerminal>,
         effects: hel_reap_terminal::EFFECTS,
-        runners: &[(hel_reap_terminal::OBSERVE, not_ported::<HelReapTerminal>), (hel_reap_terminal::DESTROY_WORKTREE, not_ported::<HelReapTerminal>), (hel_reap_terminal::REMOVE_SCRATCH, not_ported::<HelReapTerminal>), (hel_reap_terminal::PRUNE, not_ported::<HelReapTerminal>)],
+        runners: &[
+            (hel_reap_terminal::OBSERVE, |e, _, _| hel_reap_terminal::observe(&hel_world(e)?, &crate::tasks::b::lc(e))),
+            (hel_reap_terminal::DESTROY_WORKTREE, |e, _, s| hel_reap_terminal::destroy(&hel_world(e)?, &s.input)),
+            (hel_reap_terminal::REMOVE_SCRATCH, |e, _, s| hel_reap_terminal::remove_scratch(&hel_world(e)?, &s.input)),
+            (hel_reap_terminal::PRUNE, |e, _, s| hel_reap_terminal::prune(&hel_world(e)?, &s.input)),
+        ],
         keys: &[hel_reap_terminal::KEYS],
         build: build::<HelReapTerminal>,
     },
@@ -74,19 +76,59 @@ pub static PENDING: &[Task] = &[
         boot: HelReapStale::boot,
         cadence_ms: cadence_ms::<HelReapStale>,
         effects: hel_reap_stale::EFFECTS,
-        runners: &[(hel_reap_stale::OBSERVE, not_ported::<HelReapStale>), (hel_reap_stale::DESTROY_WORKTREE, not_ported::<HelReapStale>), (hel_reap_stale::PRUNE, not_ported::<HelReapStale>)],
+        runners: &[
+            (hel_reap_stale::OBSERVE, |e, _, _| hel_reap_stale::observe(&hel_world(e)?, &crate::tasks::b::lc(e), &e.world.proc_dir)),
+            (hel_reap_stale::DESTROY_WORKTREE, |e, _, s| hel_reap_stale::destroy(&hel_world(e)?, &s.input)),
+            (hel_reap_stale::PRUNE, |e, _, _| hel_reap_stale::prune(&hel_world(e)?)),
+        ],
         keys: &[hel_reap_stale::KEYS],
         build: build::<HelReapStale>,
     },
+    Task {
+        name: roundvm_ami_prune::NAME,
+        boot: RoundvmAmiPrune::boot,
+        cadence_ms: cadence_ms::<RoundvmAmiPrune>,
+        effects: roundvm_ami_prune::EFFECTS,
+        runners: &[(roundvm_ami_prune::OBSERVE, |e, _, _| roundvm_ami_prune::observe(&e.world.run_dir)), (roundvm_ami_prune::DEREGISTER, |_, _, s| roundvm_ami_prune::deregister(&s.input)), (roundvm_ami_prune::DELETE_SNAPSHOT, |_, _, s| roundvm_ami_prune::delete_snapshots(&s.input))],
+        keys: &[roundvm_ami_prune::KEYS],
+        build: build::<RoundvmAmiPrune>,
+    },
+    Task { name: roundvm_drain::NAME, boot: RoundvmDrain::boot, cadence_ms: cadence_ms::<RoundvmDrain>, effects: roundvm_drain::EFFECTS, runners: &[(roundvm_drain::OBSERVE, |e, _, _| roundvm_drain::observe(&e.world.run_dir, &pinned("SPIRA_ROUND_VM_SPILL")?, &pinned("SPIRA_ROUND_VM_WARM_IDLE_SECS")?)), (roundvm_drain::RELEASE, |_, _, s| roundvm_drain::release(&s.input))], keys: &[roundvm_drain::KEYS], build: build::<RoundvmDrain> },
     Task {
         name: sweep_reclaim::NAME,
         boot: SweepReclaim::boot,
         cadence_ms: cadence_ms::<SweepReclaim>,
         effects: sweep_reclaim::EFFECTS,
-        runners: &[(sweep_reclaim::OBSERVE, not_ported::<SweepReclaim>), (sweep_reclaim::REMOVE_TARGET, not_ported::<SweepReclaim>), (sweep_reclaim::PODMAN_PRUNE, not_ported::<SweepReclaim>), (sweep_reclaim::TRIM_CACHE, not_ported::<SweepReclaim>)],
+        runners: &[
+            (sweep_reclaim::OBSERVE, |e, _, _| sweep_reclaim::observe(&sweep_reclaim::Pinned::read(&pinned)?, &e.world.proc_dir)),
+            (sweep_reclaim::REMOVE_TARGET, |e, _, s| sweep_reclaim::remove_target(&sweep_reclaim::Pinned::read(&pinned)?, &e.world.proc_dir, &s.input)),
+            (sweep_reclaim::PODMAN_PRUNE, |_, _, s| sweep_reclaim::podman_prune(&sweep_reclaim::Pinned::read(&pinned)?, &runtime::ports::SysProc, &s.input)),
+            (sweep_reclaim::TRIM_CACHE, |_, _, s| sweep_reclaim::trim_cache(&sweep_reclaim::Pinned::read(&pinned)?, &s.input)),
+        ],
         keys: &[sweep_reclaim::KEYS],
         build: build::<SweepReclaim>,
     },
+    Task { name: sweep_tsd::NAME, boot: SweepTsd::boot, cadence_ms: cadence_ms::<SweepTsd>, effects: sweep_tsd::EFFECTS, runners: &[(sweep_tsd::OBSERVE, |e, _, _| sweep_tsd::observe(&e.world.run_dir, &pinned(sweep_tsd::KEEP_DAYS_KEY)?, &pinned(sweep_tsd::BY_FAMILY_KEY)?)), (sweep_tsd::PRUNE, |e, _, s| sweep_tsd::prune(&e.world.run_dir, &s.input))], keys: &[sweep_tsd::KEYS], build: build::<SweepTsd> },
+];
+
+/// The hel world the hel tasks act through: this run, the pinned release, the store's socket.
+pub fn hel_world(e: &crate::Effects) -> Result<hel::real::Real, String> {
+    hel_reap_stale::world(&e.world.run_dir, &pinned("SPIRA_RELEASE")?, &crate::tasks::b::lc(e))
+}
+
+/// The hel world `hel.sweep` acts through: [`hel_world`] with the pinned forge program.
+pub fn sweep_world(e: &crate::Effects) -> Result<hel::real::Real, String> {
+    hel_sweep::world(&e.world.run_dir, &pinned("SPIRA_RELEASE")?, &crate::tasks::b::lc(e), &hel_sweep::Pinned::read(&pinned)?)
+}
+
+/// A key's value from the process's pinned config, for a runner whose task reads it at the act.
+pub fn pinned(key: &str) -> Result<String, String> {
+    spira_config::process::cfg(key)
+}
+
+
+/// The family's rows, complete but not yet in `TASKS`.
+pub static PENDING: &[Task] = &[
     Task {
         name: asks_moot::NAME,
         boot: AsksMoot::boot,
@@ -97,17 +139,6 @@ pub static PENDING: &[Task] = &[
         build: build::<AsksMoot>,
     },
     Task { name: mail_tidy::NAME, boot: MailTidy::boot, cadence_ms: cadence_ms::<MailTidy>, effects: mail_tidy::EFFECTS, runners: &[(mail_tidy::OBSERVE, not_ported::<MailTidy>), (mail_tidy::ARCHIVE, not_ported::<MailTidy>)], keys: &[mail_tidy::KEYS], build: build::<MailTidy> },
-    Task { name: sweep_tsd::NAME, boot: SweepTsd::boot, cadence_ms: cadence_ms::<SweepTsd>, effects: sweep_tsd::EFFECTS, runners: &[(sweep_tsd::OBSERVE, not_ported::<SweepTsd>), (sweep_tsd::PRUNE, not_ported::<SweepTsd>)], keys: &[sweep_tsd::KEYS], build: build::<SweepTsd> },
-    Task { name: roundvm_drain::NAME, boot: RoundvmDrain::boot, cadence_ms: cadence_ms::<RoundvmDrain>, effects: roundvm_drain::EFFECTS, runners: &[(roundvm_drain::OBSERVE, not_ported::<RoundvmDrain>), (roundvm_drain::RELEASE, not_ported::<RoundvmDrain>)], keys: &[roundvm_drain::KEYS], build: build::<RoundvmDrain> },
-    Task {
-        name: roundvm_ami_prune::NAME,
-        boot: RoundvmAmiPrune::boot,
-        cadence_ms: cadence_ms::<RoundvmAmiPrune>,
-        effects: roundvm_ami_prune::EFFECTS,
-        runners: &[(roundvm_ami_prune::OBSERVE, not_ported::<RoundvmAmiPrune>), (roundvm_ami_prune::DEREGISTER, not_ported::<RoundvmAmiPrune>), (roundvm_ami_prune::DELETE_SNAPSHOT, not_ported::<RoundvmAmiPrune>)],
-        keys: &[roundvm_ami_prune::KEYS],
-        build: build::<RoundvmAmiPrune>,
-    },
     Task {
         name: sweep_archive::NAME,
         boot: SweepArchive::boot,

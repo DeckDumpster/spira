@@ -96,7 +96,7 @@ fn spill_wiring(cfg: &Config) -> Result<(Option<std::sync::Arc<dyn crate::provid
 }
 
 fn keeps_local_pool_cold() -> bool {
-    matches!(crate::config::declared("SPIRA_ROUND_VM_SPILL").as_deref(), Some("ec2-always" | "ec2-only"))
+    crate::pool::spill_only_ec2(crate::config::declared("SPIRA_ROUND_VM_SPILL").as_deref().unwrap_or_default())
 }
 
 fn status_after_reap(factory: &dyn Fn() -> Result<Attempt, String>, pool: &Pool, rest: &[String]) -> Result<String, String> {
@@ -141,7 +141,7 @@ impl Spawner for SelfSpawner {
     }
 }
 
-fn pool_for(cfg: &Config) -> Pool {
+pub fn pool_for(cfg: &Config) -> Pool {
     Pool {
         state_dir: cfg.state_dir.clone(),
         retry_interval: cfg.retry_interval,
@@ -154,38 +154,35 @@ fn pool_for(cfg: &Config) -> Pool {
 /// `round-vm template-check`: 0 when the configured local template exists and was built from the
 /// current recipe, 1 naming it (or both recipe hashes) when not, 3 when this box has no local pool configured.
 fn template_check() -> i32 {
+    let (rc, why) = template_check_answer();
+    if !why.is_empty() {
+        eprintln!("{why}");
+    }
+    rc
+}
+
+/// `round-vm template-check` as a library call: the exit code it would take and the line it
+/// would print to stderr (empty for 0).
+pub fn template_check_answer() -> (i32, String) {
     let cfg = match Config::load() {
         Ok(c) => c,
-        Err(e) => {
-            eprintln!("{e}");
-            return 1;
-        }
+        Err(e) => return (1, e.to_string()),
     };
     let env = match PveEnv::load(&cfg.pve_env_path, &|k| std::env::var(k).ok()) {
         Ok(e) => e,
-        Err(e) => {
-            eprintln!("round-vm template-check: no local pool configured: {e}");
-            return 3;
-        }
+        Err(e) => return (3, format!("round-vm template-check: no local pool configured: {e}")),
     };
     let transport = match HttpTransport::new(&env) {
         Ok(t) => t,
-        Err(e) => {
-            eprintln!("round-vm template-check: {e}");
-            return 1;
-        }
+        Err(e) => return (1, format!("round-vm template-check: {e}")),
     };
     let pve = Pve { t: transport, env, task_timeout: secs_env("PVE_TASK_TIMEOUT", 300), exec_timeout: secs_env("PVE_EXEC_TIMEOUT", 30), poll: Duration::from_secs(1), mem_mib: 0, vcpus: 0 };
     if let Err(e) = pve.check_template() {
-        eprintln!("{e}");
-        return 1;
+        return (1, e.to_string());
     }
     match crate::template::staleness(crate::template::Record::read(&cfg.state_dir).as_ref(), &crate::recipe::sha()) {
-        Some(why) => {
-            eprintln!("{why}");
-            1
-        }
-        None => 0,
+        Some(why) => (1, why),
+        None => (0, String::new()),
     }
 }
 
@@ -200,20 +197,26 @@ fn ec2_probe(args: &[String]) -> i32 {
             return 2;
         }
     };
+    let (rc, out) = ec2_probe_answer(dry);
+    if rc == 0 {
+        println!("{out}");
+    } else {
+        eprintln!("{out}");
+    }
+    rc
+}
+
+/// `round-vm ec2-probe [--dry-run]` as a library call: the exit code it would take and the one
+/// line it would print (stdout on 0, stderr otherwise).
+pub fn ec2_probe_answer(dry: bool) -> (i32, String) {
     let cfg = match Config::load() {
         Ok(c) => c,
-        Err(e) => {
-            eprintln!("{e}");
-            return 1;
-        }
+        Err(e) => return (1, e.to_string()),
     };
     let ec2cfg = Ec2Config::from_lookup(&crate::config::declared);
     let p = match Ec2::new(AwsCli::new(&ec2cfg, cfg.state_dir.join("ec2")), &ec2cfg) {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!("round-vm ec2-probe: FAILED at config: {e}");
-            return 1;
-        }
+        Err(e) => return (1, format!("round-vm ec2-probe: FAILED at config: {e}")),
     };
     let r = if dry {
         p.probe_dry()
@@ -222,29 +225,22 @@ fn ec2_probe(args: &[String]) -> i32 {
         p.probe(tries, cfg.boot_poll)
     };
     match r {
-        Ok(()) => {
-            println!("round-vm ec2-probe: ok{}", if dry { " (dry-run: DryRunOperation)" } else { "" });
-            0
-        }
-        Err(e) => {
-            eprintln!("round-vm ec2-probe: FAILED at {e}");
-            1
-        }
+        Ok(()) => (0, format!("round-vm ec2-probe: ok{}", if dry { " (dry-run: DryRunOperation)" } else { "" })),
+        Err(e) => (1, format!("round-vm ec2-probe: FAILED at {e}")),
     }
 }
 
 /// `round-vm ami-for <sha>`: prints the newest round image built from that recipe and exits 0;
 /// 1 when there is none yet, 2 when the images cannot be read.
 fn ami_for(sha: &str) -> i32 {
-    let cfg = match Config::load() {
-        Ok(c) => c,
+    let (api, ec2cfg) = match ec2_api() {
+        Ok(a) => a,
         Err(e) => {
             eprintln!("{e}");
             return 2;
         }
     };
-    let ec2cfg = Ec2Config::from_lookup(&crate::config::declared);
-    let p = match Ec2::new(AwsCli::new(&ec2cfg, cfg.state_dir.join("ec2")), &ec2cfg) {
+    let p = match Ec2::new(api, &ec2cfg) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("round-vm ami-for: {e}");
@@ -267,45 +263,52 @@ fn ami_for(sha: &str) -> i32 {
 /// `round-vm ami-check`: exit 0 when the newest round AMI carries this release's recipe hash,
 /// 1 printing the stale line when it does not, 2 when the images cannot be read.
 fn ami_check() -> i32 {
+    let (rc, out) = ami_check_answer();
+    match rc {
+        0 => {}
+        1 => println!("{out}"),
+        _ => eprintln!("{out}"),
+    }
+    rc
+}
+
+/// `round-vm ami-check` as a library call: the exit code it would take and what it would print
+/// (stdout for 1, the stale line; stderr for 2, why the images could not be read; nothing for 0).
+pub fn ami_check_answer() -> (i32, String) {
     let cfg = match Config::load() {
         Ok(c) => c,
-        Err(e) => {
-            eprintln!("{e}");
-            return 2;
-        }
+        Err(e) => return (2, e.to_string()),
     };
     let ec2cfg = Ec2Config::from_lookup(&crate::config::declared);
     let p = match Ec2::new(AwsCli::new(&ec2cfg, cfg.state_dir.join("ec2")), &ec2cfg) {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!("round-vm ami-check: {e}");
-            return 2;
-        }
+        Err(e) => return (2, format!("round-vm ami-check: {e}")),
     };
     match p.ami_check() {
-        Ok(None) => 0,
-        Ok(Some(stale)) => {
-            println!("{stale}");
-            1
-        }
-        Err(e) => {
-            eprintln!("round-vm ami-check: {e}");
-            2
-        }
+        Ok(None) => (0, String::new()),
+        Ok(Some(stale)) => (1, stale),
+        Err(e) => (2, format!("round-vm ami-check: {e}")),
     }
+}
+
+/// The account's EC2 API through the `aws` CLI, as the configuration declares it, with the
+/// EC2 configuration it was built from.
+pub fn ec2_api() -> Result<(AwsCli, Ec2Config), String> {
+    let cfg = Config::load()?;
+    let ec2cfg = Ec2Config::from_lookup(&crate::config::declared);
+    Ok((AwsCli::new(&ec2cfg, cfg.state_dir.join("ec2")), ec2cfg))
 }
 
 /// `round-vm ami-prune`: removes superseded, unreferenced round images and their snapshots.
 fn ami_prune() -> i32 {
-    let cfg = match Config::load() {
-        Ok(c) => c,
+    let (api, ec2cfg) = match ec2_api() {
+        Ok(a) => a,
         Err(e) => {
             eprintln!("{e}");
             return 2;
         }
     };
-    let ec2cfg = Ec2Config::from_lookup(&crate::config::declared);
-    let p = match Ec2::new(AwsCli::new(&ec2cfg, cfg.state_dir.join("ec2")), &ec2cfg) {
+    let p = match Ec2::new(api, &ec2cfg) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("round-vm ami-prune: {e}");

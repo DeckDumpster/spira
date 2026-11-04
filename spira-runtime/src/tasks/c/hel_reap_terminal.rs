@@ -1,7 +1,6 @@
 //! # hel.reap_terminal — contract
 //!
-//! Family C of the scheduler consolidation, red-first: `decide` is not ported yet. The
-//! sections below are the contract page `wiki/projects/spira/designs/tasks/hel-reap-terminal.md`;
+//! Family C of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/hel-reap-terminal.md`;
 //! its Acceptance section is the test file `tests/task_c_hel_reap_terminal.rs`.
 //!
 //! ## Tick
@@ -88,7 +87,7 @@ use std::collections::BTreeMap;
 use runtime::event::EventKindTag;
 use serde::{Deserialize, Serialize};
 
-use crate::tasks::b::kit::{Cadence, Cfg, Decision, Input, Spec};
+use crate::tasks::b::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
 
 pub const NAME: &str = "hel.reap_terminal";
 pub const STREAM: &str = "task.hel.reap_terminal";
@@ -161,6 +160,10 @@ pub struct Carry {
     pub last_fired: Option<u64>,
     /// Removals asked and not yet answered, by entry name.
     pub open: Vec<String>,
+    /// Each open checkout's repository, so a removal that succeeds prunes it.
+    pub roots: BTreeMap<String, String>,
+    /// Repositories that lost a worktree this pass: pruned once the last removal answers.
+    pub prune: Vec<String>,
 }
 
 pub struct HelReapTerminal {
@@ -168,9 +171,159 @@ pub struct HelReapTerminal {
     pub cfg: Cfg,
 }
 
+fn phase_name(p: Phase) -> &'static str {
+    match p {
+        Phase::Idle => "idle",
+        Phase::Observing => "observing",
+        Phase::Reaping => "reaping",
+        Phase::Refused => "refused",
+    }
+}
+
+fn max_age(cfg: &Cfg) -> Result<std::time::Duration, String> {
+    let k = "SPIRA_SCRATCH_MAX_AGE_HOURS";
+    let raw = cfg.get(k).ok_or_else(|| format!("{k} is read but not declared"))?;
+    raw.trim().parse::<u64>().map(|h| std::time::Duration::from_secs(h * 3_600)).map_err(|_| format!("{k} must be a whole number of hours, got {raw:?}"))
+}
+
+fn unsaved_of(u: Unsaved) -> hel::terminal::Unsaved {
+    match u {
+        Unsaved::No => hel::terminal::Unsaved::No,
+        Unsaved::Yes => hel::terminal::Unsaved::Yes,
+        Unsaved::Unknown => hel::terminal::Unsaved::Unknown,
+    }
+}
+
+fn act(name: &str, input: String, deadline_ms: u64) -> Act {
+    Act { name: name.into(), input, deadline_ms, probe: false }
+}
+
+/// One answered removal: the entry leaves `open`; a checkout that went marks its repository
+/// for the pass's prune; the last answer ends the pass and prunes.
+fn answered(carry: &Carry, body: &str, ok: bool) -> (Carry, Vec<Act>) {
+    let mut next = carry.clone();
+    let name = next.open.iter().position(|n| n == body.trim()).or(if next.open.is_empty() { None } else { Some(0) }).map(|i| next.open.remove(i));
+    if let Some(root) = name.and_then(|n| next.roots.remove(&n)) {
+        if ok && !next.prune.contains(&root) {
+            next.prune.push(root);
+        }
+    }
+    if !next.open.is_empty() {
+        return (next, vec![]);
+    }
+    let acts = next.prune.iter().map(|r| act(PRUNE, r.clone(), 30_000)).collect();
+    (Carry { last_fired: next.last_fired, ..Carry::default() }, acts)
+}
+
 /// `hel::terminal::decide` per entry, reused as is.
-pub fn decide(_cfg: &Cfg, _carry: &Carry, _input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
-    unimplemented!("hel.reap_terminal: not ported yet")
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
+    match input {
+        Input::Fire if carry.phase == Phase::Reaping => Err(format!("{NAME}: a tick in state reaping: {} removal(s) have not answered", carry.open.len())),
+        Input::Fire => Ok((Carry { phase: Phase::Observing, ..carry.clone() }, vec![])),
+        // A pass whose removals never all answered ends here: the next tick decides afresh.
+        Input::Observed(_) if carry.phase == Phase::Reaping => Ok((Carry { last_fired: carry.last_fired, ..Carry::default() }, vec![])),
+        Input::Observed(s) if s.halted => Ok((carry.clone(), vec![])),
+        Input::Observed(s) if !s.rows_ok => Ok((Carry { phase: Phase::Refused, last_fired: carry.last_fired, ..Carry::default() }, vec![])),
+        Input::Observed(s) => {
+            let max_age = max_age(cfg)?;
+            let mut next = Carry { last_fired: carry.last_fired, ..Carry::default() };
+            let mut acts = vec![];
+            for e in &s.entries {
+                let held = e.held.as_ref().map(|_| "held");
+                let d = hel::terminal::decide(&e.name, s.rows.get(&e.name).map(String::as_str), e.is_git, if e.is_git { unsaved_of(e.unsaved) } else { hel::terminal::Unsaved::No }, std::time::Duration::from_secs(e.age_secs), max_age, held);
+                let hel::terminal::Decision::Remove(why) = d else { continue };
+                let tag = if why == hel::terminal::Why::Terminal { "terminal" } else { "scratch" };
+                match &e.repo {
+                    Some(root) => {
+                        let d = super::hel_reap_stale::Destroy { id: e.name.clone(), path: String::new(), root: root.clone(), why: format!("reap-terminal: {tag}") };
+                        acts.push(act(DESTROY_WORKTREE, serde_json::to_string(&d).map_err(|e| e.to_string())?, 120_000));
+                        next.roots.insert(e.name.clone(), root.clone());
+                    }
+                    // A checkout whose repository does not resolve cannot go through the chokepoint.
+                    None if e.is_git => continue,
+                    None => acts.push(act(REMOVE_SCRATCH, e.name.clone(), 60_000)),
+                }
+                next.open.push(e.name.clone());
+            }
+            if acts.is_empty() {
+                return Ok((Carry { phase: Phase::Idle, ..next }, vec![]));
+            }
+            next.phase = Phase::Reaping;
+            next.last_fired = Some(now_ms);
+            Ok((next, acts))
+        }
+        Input::Outcome { effect, ok, body } if (effect == DESTROY_WORKTREE || effect == REMOVE_SCRATCH) && carry.phase == Phase::Reaping => Ok(answered(carry, body, *ok)),
+        // A prune answers after its pass ended, as does a removal that outlived its pass.
+        Input::Outcome { effect, .. } if effect == PRUNE || effect == DESTROY_WORKTREE || effect == REMOVE_SCRATCH => Ok((carry.clone(), vec![])),
+        Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} an outcome of {effect} is not expected", phase_name(carry.phase))),
+        Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase_name(carry.phase), r.handle)),
+    }
+}
+
+/// The runner of [`OBSERVE`]: one lifecycle `list` over the socket (an empty or failed list
+/// refuses the pass), `hel::terminal::entries` in-process, and the world's halt stamp.
+pub fn observe(real: &hel::real::Real, lc: &spira_config::lc_call::LcClient) -> Result<String, String> {
+    if real.run().join("world.halted").exists() {
+        return serde_json::to_string(&Snapshot { halted: true, ..Snapshot::default() }).map_err(|e| e.to_string());
+    }
+    let rows: BTreeMap<String, String> = spira_config::lc_state::list_on(lc).map(|rs| rs.into_iter().map(|r| (r.bead_id, r.state)).collect()).unwrap_or_default();
+    if rows.is_empty() {
+        return serde_json::to_string(&Snapshot { rows_ok: false, ..Snapshot::default() }).map_err(|e| e.to_string());
+    }
+    let entries = hel::terminal::entries(real)?
+        .into_iter()
+        .map(|e| Entry {
+            name: e.name,
+            is_dir: e.is_dir,
+            is_git: e.is_git,
+            repo: e.repo.map(|r| r.display().to_string()),
+            unsaved: match e.unsaved {
+                hel::terminal::Unsaved::No => Unsaved::No,
+                hel::terminal::Unsaved::Yes => Unsaved::Yes,
+                hel::terminal::Unsaved::Unknown => Unsaved::Unknown,
+            },
+            age_secs: e.age.as_secs(),
+            held: e.held.map(str::to_string),
+        })
+        .collect();
+    serde_json::to_string(&Snapshot { halted: false, rows_ok: true, rows, entries }).map_err(|e| e.to_string())
+}
+
+/// The runner of [`DESTROY_WORKTREE`]: `reap::destroy_worktree` on `<run>/worktree/<name>`.
+pub fn destroy(real: &hel::real::Real, input: &str) -> Result<String, String> {
+    use hel::ports::World;
+    let mut d: super::hel_reap_stale::Destroy = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    if d.id.is_empty() || d.id.contains('/') || d.id.starts_with('.') {
+        return Err(format!("{:?} is not an entry name — refusing", d.id));
+    }
+    d.path = real.worktrees().join(&d.id).display().to_string();
+    super::hel_reap_stale::destroy(real, &serde_json::to_string(&d).map_err(|e| e.to_string())?)
+}
+
+/// The runner of [`REMOVE_SCRATCH`]: a non-git entry directly under the worktree root.
+pub fn remove_scratch(real: &hel::real::Real, name: &str) -> Result<String, String> {
+    use hel::ports::World;
+    let name = name.trim();
+    if name.is_empty() || name.contains('/') || name.starts_with('.') {
+        return Err(format!("{name:?} is not an entry name — refusing"));
+    }
+    let root = real.worktrees();
+    let path = root.join(name);
+    if path.join(".git").exists() {
+        return Err(format!("{name} is a git checkout — refusing to remove it as scratch"));
+    }
+    if hel::terminal::remove_scratch(&root, &path) {
+        Ok(name.to_string())
+    } else {
+        Err(format!("{name}: scratch removal did not complete"))
+    }
+}
+
+/// The runner of [`PRUNE`]: `git worktree prune` on one repository.
+pub fn prune(real: &hel::real::Real, root: &str) -> Result<String, String> {
+    use hel::ports::World;
+    real.prune(std::path::Path::new(root.trim()));
+    Ok(format!("pruned {root}"))
 }
 
 crate::tasks::b::hosted!(HelReapTerminal);

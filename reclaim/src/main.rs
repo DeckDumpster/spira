@@ -74,8 +74,7 @@ fn pass() -> u8 {
     };
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let held = held_paths(Path::new("/proc"));
-    let probe = cfg.patterns.iter().find_map(|p| p.split('*').next().map(PathBuf::from)).unwrap_or_default();
-    let probe = probe.ancestors().find(|a| a.exists()).unwrap_or(Path::new("/")).to_path_buf();
+    let probe = reclaim::free_probe(&cfg.patterns);
     let free = || spira_config::room::statvfs_mib(&probe);
     match run(&cfg, now, &held, &free, &mut |l| println!("reclaim: {l}")) {
         Ok(b) => {

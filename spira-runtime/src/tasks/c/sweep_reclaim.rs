@@ -1,7 +1,6 @@
 //! # sweep.reclaim — contract
 //!
-//! Family C of the scheduler consolidation, red-first: `decide` is not ported yet. The
-//! sections below are the contract page `wiki/projects/spira/designs/tasks/sweep-reclaim.md`;
+//! Family C of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/sweep-reclaim.md`;
 //! its Acceptance section is the test file `tests/task_c_sweep_reclaim.rs`.
 //!
 //! ## Tick
@@ -98,7 +97,7 @@
 use runtime::event::EventKindTag;
 use serde::{Deserialize, Serialize};
 
-use crate::tasks::b::kit::{Cadence, Cfg, Decision, Input, Spec};
+use crate::tasks::b::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
 
 pub const NAME: &str = "sweep.reclaim";
 pub const STREAM: &str = "task.sweep.reclaim";
@@ -196,6 +195,8 @@ pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[(Phase::Idle, "tick", Phase::
 pub struct Carry {
     pub phase: Phase,
     pub refused_cause: Option<String>,
+    /// Effects of the current pass still without an outcome.
+    pub pending: u32,
 }
 
 pub struct SweepReclaim {
@@ -203,9 +204,190 @@ pub struct SweepReclaim {
     pub cfg: Cfg,
 }
 
+const GIB: u64 = 1 << 30;
+
+fn phase_name(p: Phase) -> &'static str {
+    match p {
+        Phase::Idle => "idle",
+        Phase::Observing => "observing",
+        Phase::Reclaiming => "reclaiming",
+        Phase::Refused => "refused",
+    }
+}
+
+fn gib(cfg: &Cfg, key: &str) -> Result<u64, String> {
+    let raw = cfg.get(key).ok_or_else(|| format!("{key} is read but not declared"))?;
+    raw.trim().parse::<u64>().map_err(|_| format!("{key} must be a whole number of GiB, got {raw:?}"))
+}
+
+fn act(name: &str, input: String, deadline_ms: u64) -> Act {
+    Act { name: name.into(), input, deadline_ms, probe: false }
+}
+
+/// The acts a snapshot calls for: `reclaim::run`'s branching, split from its IO, and
+/// `reclaim::trim_selection` for the cache.
+pub fn plan(cfg: &Cfg, snap: &Snapshot) -> Result<Vec<Act>, String> {
+    let (min_free, target_free) = (gib(cfg, MIN_FREE_KEY)? << 10, gib(cfg, TARGET_FREE_KEY)? << 10);
+    let (podman_cap, cache_cap) = (gib(cfg, PODMAN_CAP_KEY)? * GIB, gib(cfg, CACHE_CAP_KEY)? * GIB);
+    let mut acts = vec![];
+    if snap.free_mib < min_free {
+        acts.push(act(PODMAN_PRUNE, "root under the floor".into(), 600_000));
+        let mut projected = snap.free_mib;
+        for c in snap.candidates.iter().filter(|c| c.verdict == Verdict::Reclaim) {
+            if projected >= target_free {
+                break;
+            }
+            projected += c.bytes >> 20;
+            acts.push(act(REMOVE_TARGET, c.path.clone(), 300_000));
+        }
+    } else if snap.podman_bytes > podman_cap {
+        acts.push(act(PODMAN_PRUNE, format!("storage {} MiB over cap {} MiB", snap.podman_bytes >> 20, podman_cap >> 20), 600_000));
+    }
+    let files: Vec<(u64, u64, String)> = snap.cache.iter().map(|f| (f.mtime, f.bytes, f.path.clone())).collect();
+    let trim = reclaim::trim_selection(&files, cache_cap);
+    if !trim.is_empty() {
+        acts.push(act(TRIM_CACHE, serde_json::to_string(&trim).map_err(|e| e.to_string())?, 120_000));
+    }
+    Ok(acts)
+}
+
 /// `run`'s branching split from its IO, and `trim_cache`'s selection.
-pub fn decide(_cfg: &Cfg, _carry: &Carry, _input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
-    unimplemented!("sweep.reclaim: not ported yet")
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
+    match input {
+        Input::Fire if carry.phase == Phase::Reclaiming => Err(format!("{NAME}: a tick in state reclaiming: the pass in flight has {} effect(s) without an outcome", carry.pending)),
+        Input::Fire => Ok((Carry { phase: Phase::Observing, ..carry.clone() }, vec![])),
+        // Single-flight: an observation while a pass still reclaims changes nothing.
+        Input::Observed(_) if carry.phase == Phase::Reclaiming => Ok((carry.clone(), vec![])),
+        Input::Observed(snap) => {
+            if let Some((pattern, _)) = snap.require_ok.iter().find(|(_, ok)| !ok) {
+                let cause = format!("positive control failed: {pattern} matches nothing, so an empty sweep proves nothing");
+                return Ok((Carry { phase: Phase::Refused, refused_cause: Some(cause), pending: 0 }, vec![]));
+            }
+            let acts = plan(cfg, snap)?;
+            if acts.is_empty() {
+                return Ok((Carry::default(), vec![]));
+            }
+            Ok((Carry { phase: Phase::Reclaiming, refused_cause: None, pending: acts.len() as u32 }, acts))
+        }
+        Input::Outcome { effect, .. } if carry.phase == Phase::Reclaiming && [REMOVE_TARGET, PODMAN_PRUNE, TRIM_CACHE].contains(&effect.as_str()) => {
+            let pending = carry.pending.saturating_sub(1);
+            Ok((if pending == 0 { Carry::default() } else { Carry { pending, ..carry.clone() } }, vec![]))
+        }
+        Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} an outcome of {effect} is not expected", phase_name(carry.phase))),
+        Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase_name(carry.phase), r.handle)),
+    }
+}
+
+/// The pinned values the runners read, each a key of the row.
+pub struct Pinned {
+    pub globs: Vec<String>,
+    pub require: Vec<String>,
+    pub lease_dir: Option<std::path::PathBuf>,
+    pub idle_secs: u64,
+    pub target_free_mib: u64,
+    pub cache_dir: Option<std::path::PathBuf>,
+    pub podman: String,
+    pub podman_dir: Option<std::path::PathBuf>,
+}
+
+impl Pinned {
+    pub fn read(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Pinned, String> {
+        let words = |k: &str| get(k).map(|v| v.split_whitespace().map(str::to_string).collect::<Vec<_>>());
+        let dir = |k: &str| get(k).map(|v| Some(v.trim().to_string()).filter(|v| !v.is_empty()).map(std::path::PathBuf::from));
+        let num = |k: &str| get(k).and_then(|v| v.trim().parse::<u64>().map_err(|_| format!("{k} must be a whole number, got {v:?}")));
+        Ok(Pinned {
+            globs: words("SPIRA_RECLAIM_GLOBS")?,
+            require: words("SPIRA_RECLAIM_REQUIRE")?,
+            lease_dir: dir("SPIRA_RECLAIM_LEASE_DIR")?,
+            idle_secs: num("SPIRA_RECLAIM_IDLE_DAYS")? * 86_400,
+            target_free_mib: num(TARGET_FREE_KEY)? << 10,
+            cache_dir: dir("SPIRA_RECLAIM_CACHE_DIR")?,
+            podman: get("SPIRA_RECLAIM_PODMAN")?.trim().to_string(),
+            podman_dir: dir("SPIRA_RECLAIM_PODMAN_DIR")?,
+        })
+    }
+}
+
+fn epoch_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// The runner of [`OBSERVE`]: the host's facts, read in this process.
+pub fn observe(p: &Pinned, proc_root: &std::path::Path) -> Result<String, String> {
+    if p.globs.is_empty() {
+        return Err("SPIRA_RECLAIM_GLOBS names no pattern — refusing".into());
+    }
+    let now = epoch_now();
+    let require_ok = p.require.iter().map(|r| (r.clone(), !reclaim::glob(r).is_empty())).collect();
+    let free_mib = spira_config::room::statvfs_mib(&reclaim::free_probe(&p.globs)).ok_or("cannot read free space")?;
+    let held = reclaim::held_paths(proc_root);
+    let candidates = reclaim::plan(&p.globs, now, p.idle_secs, &held, p.lease_dir.as_deref())
+        .into_iter()
+        .map(|c| Candidate {
+            path: c.path.display().to_string(),
+            bytes: c.bytes,
+            age: c.age,
+            verdict: match c.verdict {
+                reclaim::Verdict::Reclaim => Verdict::Reclaim,
+                reclaim::Verdict::Skip(why) if why == "symlink" => Verdict::Symlink,
+                reclaim::Verdict::Skip(why) if why.starts_with("held") => Verdict::Held,
+                reclaim::Verdict::Skip(why) if why == "leased" => Verdict::Leased,
+                reclaim::Verdict::Skip(_) => Verdict::Fresh,
+            },
+        })
+        .collect();
+    let podman_bytes = p.podman_dir.as_deref().map_or(0, |d| reclaim::usage(d).bytes);
+    let cache = p.cache_dir.as_deref().map(|d| reclaim::cache_files(d, now)).unwrap_or_default().into_iter().map(|(mtime, bytes, path)| CacheFile { mtime, bytes, path: path.display().to_string() }).collect();
+    serde_json::to_string(&Snapshot { require_ok, free_mib, candidates, podman_bytes, cache }).map_err(|e| e.to_string())
+}
+
+/// The runner of [`REMOVE_TARGET`]: re-judges `path` at act time and removes it only when it
+/// is still reclaimable, is one of the globs' matches, and free space is still short.
+pub fn remove_target(p: &Pinned, proc_root: &std::path::Path, path: &str) -> Result<String, String> {
+    let path = std::path::Path::new(path);
+    if !p.globs.iter().flat_map(|g| reclaim::glob(g)).any(|m| m == path) {
+        return Err(format!("{} is not a match of SPIRA_RECLAIM_GLOBS — refusing", path.display()));
+    }
+    if spira_config::room::statvfs_mib(&reclaim::free_probe(&p.globs)).is_some_and(|f| f >= p.target_free_mib) {
+        return Ok(format!("kept {} (target free space reached)", path.display()));
+    }
+    let c = reclaim::judge(path, epoch_now(), p.idle_secs, &reclaim::held_paths(proc_root), p.lease_dir.as_deref());
+    if let reclaim::Verdict::Skip(why) = c.verdict {
+        return Err(format!("{} is not reclaimable at act time ({why}) — refusing", path.display()));
+    }
+    std::fs::remove_dir_all(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(format!("reclaimed {} {} MiB age {}s", path.display(), c.bytes >> 20, c.age))
+}
+
+/// The runner of [`PODMAN_PRUNE`]: `podman system prune -f`, the one allowed child, through
+/// the process port; no other flag is ever passed.
+pub fn podman_prune(p: &Pinned, proc: &dyn runtime::ports::Proc, why: &str) -> Result<String, String> {
+    if p.podman.is_empty() {
+        return Err("SPIRA_RECLAIM_PODMAN is empty — refusing".into());
+    }
+    let spec = runtime::ports::ProcSpec { prog: p.podman.clone(), args: reclaim::PODMAN_PRUNE_ARGS.iter().map(|a| a.to_string()).collect(), stdin: vec![], deadline: std::time::Duration::from_secs(600) };
+    let out = proc.run(&spec)?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    if out.code != Some(0) {
+        return Err(format!("podman system prune -f failed ({:?}): {}", out.code, String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(format!("podman: {why}: system prune -f: {}", text.lines().rev().find(|l| l.contains("reclaimed")).unwrap_or("reclaimed size not reported").trim()))
+}
+
+/// The runner of [`TRIM_CACHE`]: removes the chosen files, each still under the cache dir and
+/// not a `.tmp` younger than an hour.
+pub fn trim_cache(p: &Pinned, input: &str) -> Result<String, String> {
+    let dir = p.cache_dir.as_deref().ok_or("SPIRA_RECLAIM_CACHE_DIR is empty — refusing")?;
+    let chosen: Vec<String> = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    let live: std::collections::BTreeMap<String, u64> = reclaim::cache_files(dir, epoch_now()).into_iter().map(|(_, b, path)| (path.display().to_string(), b)).collect();
+    let (mut n, mut freed) = (0u64, 0u64);
+    for f in chosen.iter().filter_map(|f| live.get(f).map(|b| (f, *b))) {
+        if std::fs::remove_file(f.0).is_ok() {
+            n += 1;
+            freed += f.1;
+        }
+    }
+    Ok(format!("cache {}: trimmed {n} file(s), {} MiB", dir.display(), freed >> 20))
 }
 
 crate::tasks::b::hosted!(SweepReclaim);

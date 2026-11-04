@@ -62,16 +62,7 @@ impl Real {
         // spira_repos/repo_root/repo_land_queued (family U) in-process (sp-k6lku, "wave
         // 4.13"), not this seam's own loop — Registry::all() always puts the home repo
         // first, so (unlike the retired bash loop) this can no longer come back empty.
-        let reg = r.repo_registry();
-        let repos: Vec<Repo> = reg
-            .all()
-            .into_iter()
-            .map(|name| {
-                let root = reg.root(&name).map(PathBuf::from);
-                let forge_queued = reg.land_forge_queued(&name);
-                Repo { name, root, forge_queued }
-            })
-            .collect();
+        let repos = r.repos();
         // SPIRA_SUBMITTED_LABEL/SPIRA_GH are registered config keys (spira/conf.d) — the one
         // source of config, read here rather than through the lib.sh context seam's own
         // (now-removed) `${VAR:-default}` echoes.
@@ -94,6 +85,14 @@ impl Real {
             claims: RefCell::new(None),
             lc: None,
         }
+    }
+
+    /// The forge program and its per-call timeout in seconds, for `pr_merged_tip`, from a
+    /// caller that pinned them (the scheduler's `hel.sweep`).
+    pub fn with_gh(mut self, gh: &str, timeout_secs: &str) -> Real {
+        self.gh = gh.to_string();
+        self.settings.insert("gh_timeout".to_string(), timeout_secs.to_string());
+        self
     }
 
     /// Every store call through `c` instead of the configured client (a test's scripted one).
@@ -133,6 +132,19 @@ impl Real {
     /// `SPIRA_REPO`/`SPIRA_REPO_DERIVED`); `from_env` resolves them in-process instead.
     fn repo_registry(&self) -> spira_config::repos::Registry {
         spira_config::repos::Registry::from_env(std::env::vars().collect(), &self.home)
+    }
+
+    /// Every registered repository, the home repo first, from the registry in-process.
+    pub fn repos(&self) -> Vec<Repo> {
+        let reg = self.repo_registry();
+        reg.all()
+            .into_iter()
+            .map(|name| {
+                let root = reg.root(&name).map(PathBuf::from);
+                let forge_queued = reg.land_forge_queued(&name);
+                Repo { name, root, forge_queued }
+            })
+            .collect()
     }
 
     /// `SPIRA_RUN`, through [`run_dir`] — not through the context seam, so this works

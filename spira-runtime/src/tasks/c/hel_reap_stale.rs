@@ -1,7 +1,6 @@
 //! # hel.reap_stale — contract
 //!
-//! Family C of the scheduler consolidation, red-first: `decide` is not ported yet. The
-//! sections below are the contract page `wiki/projects/spira/designs/tasks/hel-reap-stale.md`;
+//! Family C of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/hel-reap-stale.md`;
 //! its Acceptance section is the test file `tests/task_c_hel_reap_stale.rs`.
 //!
 //! ## Tick
@@ -95,7 +94,7 @@
 use runtime::event::EventKindTag;
 use serde::{Deserialize, Serialize};
 
-use crate::tasks::b::kit::{Cadence, Cfg, Decision, Input, Spec};
+use crate::tasks::b::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
 
 pub const NAME: &str = "hel.reap_stale";
 pub const STREAM: &str = "task.hel.reap_stale";
@@ -173,9 +172,115 @@ pub struct HelReapStale {
     pub cfg: Cfg,
 }
 
+fn phase_name(p: Phase) -> &'static str {
+    match p {
+        Phase::Idle => "idle",
+        Phase::Observing => "observing",
+        Phase::Reaping => "reaping",
+        Phase::Halted => "halted",
+    }
+}
+
+/// The `destroy_worktree` effect's input.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Destroy {
+    pub id: String,
+    pub path: String,
+    pub root: String,
+    pub why: String,
+}
+
+/// A lifecycle state as `hel::stale::decide` reads it: every terminal row is finished.
+fn finished_as(state: &str) -> &str {
+    match state {
+        "SUPERSEDED" | "DONE" => "DROPPED",
+        s => s,
+    }
+}
+
+fn idle_secs(cfg: &Cfg) -> Result<u64, String> {
+    let raw = cfg.get(IDLE_HOURS_KEY).ok_or_else(|| format!("{IDLE_HOURS_KEY} is read but not declared"))?;
+    raw.trim().parse::<u64>().ok().filter(|h| *h > 0).map(|h| h * 3_600).ok_or_else(|| format!("{IDLE_HOURS_KEY} must be a positive whole number of hours, got {raw:?}"))
+}
+
 /// `hel::stale::decide` per worktree.
-pub fn decide(_cfg: &Cfg, _carry: &Carry, _input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
-    unimplemented!("hel.reap_stale: not ported yet")
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
+    match input {
+        Input::Fire if carry.phase == Phase::Reaping => Err(format!("{NAME}: a tick in state reaping: the pass in flight has not ended")),
+        Input::Fire => Ok((Carry { phase: Phase::Observing }, vec![])),
+        // A pass whose outcomes never all came back ends here: the next tick decides afresh.
+        Input::Observed(_) if carry.phase == Phase::Reaping => Ok((Carry::default(), vec![])),
+        Input::Observed(s) if s.halted => Ok((Carry { phase: Phase::Halted }, vec![])),
+        Input::Observed(s) => {
+            let window = idle_secs(cfg)?;
+            let mut acts = vec![];
+            for r in &s.repos {
+                for t in &r.worktrees {
+                    let state = t.bead_state.as_deref().map(finished_as);
+                    let Some(why) = hel::stale::reason(&hel::stale::verdict(state, t.merged_into.as_deref(), t.idle_secs, t.live_pid.is_some(), window)) else { continue };
+                    let d = Destroy { id: t.id.clone(), path: t.path.clone(), root: r.root.clone(), why: format!("reaper: {why}") };
+                    acts.push(Act { name: DESTROY_WORKTREE.into(), input: serde_json::to_string(&d).map_err(|e| e.to_string())?, deadline_ms: 120_000, probe: false });
+                }
+            }
+            Ok((Carry { phase: if acts.is_empty() { Phase::Idle } else { Phase::Reaping } }, acts))
+        }
+        // Prune only after a removal succeeded (today it runs every pass).
+        Input::Outcome { effect, ok: true, body } if effect == DESTROY_WORKTREE => Ok((carry.clone(), vec![Act { name: PRUNE.into(), input: body.clone(), deadline_ms: 30_000, probe: false }])),
+        Input::Outcome { effect, ok: false, .. } if effect == DESTROY_WORKTREE => Ok((carry.clone(), vec![])),
+        Input::Outcome { effect, .. } if effect == PRUNE => Ok((Carry::default(), vec![])),
+        Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} an outcome of {effect} is not expected", phase_name(carry.phase))),
+        Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase_name(carry.phase), r.handle)),
+    }
+}
+
+/// The hel world for this run, its store calls over `lc`.
+pub fn world(run: &std::path::Path, release: &str, lc: &spira_config::lc_call::LcClient) -> Result<hel::real::Real, String> {
+    let home = hel::locate_home(None, Some(release)).ok_or("SPIRA_RELEASE does not resolve to a release — refusing")?;
+    Ok(hel::real::Real::minimal(home, run.to_path_buf(), None).with_lc(lc.clone()))
+}
+
+/// The runner of [`OBSERVE`]: `hel::stale::scan` in-process, with each tree's lifecycle row
+/// (one `list` over the socket) as its state, and the world's halt stamp.
+pub fn observe(real: &hel::real::Real, lc: &spira_config::lc_call::LcClient, proc_root: &std::path::Path) -> Result<String, String> {
+    let run = real.run();
+    if run.join("world.halted").exists() {
+        return serde_json::to_string(&Snapshot { halted: true, repos: vec![] }).map_err(|e| e.to_string());
+    }
+    let rows = spira_config::lc_state::index(spira_config::lc_state::list_on(lc)?);
+    let state_of = |id: &str| rows.get(id).map(|r| r.state.clone());
+    let repos = hel::stale::scan(real, &real.repos(), proc_root, &state_of)
+        .into_iter()
+        .map(|r| Repo {
+            name: r.name,
+            root: r.root.display().to_string(),
+            landrefs: r.landrefs,
+            worktrees: r.trees.into_iter().map(|t| Worktree { id: t.id, path: t.path.display().to_string(), branch: t.branch.unwrap_or_default(), live_pid: t.live_pid, bead_state: t.state, merged_into: t.merged_into, idle_secs: t.idle_secs }).collect(),
+        })
+        .collect();
+    serde_json::to_string(&Snapshot { halted: false, repos }).map_err(|e| e.to_string())
+}
+
+/// The runner of [`DESTROY_WORKTREE`]: `reap::destroy_worktree` through the hel world (the
+/// path fence, the holder witnesses and the salvage apply); answers with the id.
+pub fn destroy(real: &hel::real::Real, input: &str) -> Result<String, String> {
+    use hel::ports::World;
+    let d: Destroy = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    if real.destroy_worktree(&d.id, std::path::Path::new(&d.path), std::path::Path::new(&d.root), &d.why) {
+        Ok(d.id)
+    } else {
+        Err(format!("{} not removed, see {}", d.id, real.reaplog_path().display()))
+    }
+}
+
+/// The runner of [`PRUNE`]: `git worktree prune` on every registered repository.
+pub fn prune(real: &hel::real::Real) -> Result<String, String> {
+    use hel::ports::World;
+    let roots: Vec<std::path::PathBuf> = real.repos().into_iter().filter_map(|r| r.root).collect();
+    for root in &roots {
+        real.prune(root);
+    }
+    Ok(format!("pruned {} repositor(ies)", roots.len()))
 }
 
 crate::tasks::b::hosted!(HelReapStale);

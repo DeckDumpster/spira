@@ -85,14 +85,39 @@ pub struct Tally {
     pub failed: u32,
 }
 
-pub fn run(w: &dyn World, repos: &[Repo], opts: Opts) -> Tally {
-    let mut t = Tally::default();
-    w.prefetch();
+/// One worktree as a pass sees it, before any verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeScan {
+    pub id: String,
+    pub path: PathBuf,
+    pub branch: Option<String>,
+    /// A live process with its cwd in the tree: it is never a candidate.
+    pub live_pid: Option<u32>,
+    pub state: Option<String>,
+    pub merged_into: Option<String>,
+    pub idle_secs: u64,
+}
+
+/// One repository's worktrees under the run's worktree directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoScan {
+    pub name: String,
+    pub root: PathBuf,
+    pub landrefs: Vec<String>,
+    pub trees: Vec<TreeScan>,
+}
+
+/// The reads of a pass, in-process: each configured repository's worktrees under
+/// `w.worktrees()` (dot-names skipped), with the live cwd under `proc_root`, the state
+/// `state_of` gives, the land ref the branch is merged into, and the idle age.
+pub fn scan(w: &dyn World, repos: &[Repo], proc_root: &Path, state_of: &dyn Fn(&str) -> Option<String>) -> Vec<RepoScan> {
     let root_dir = w.worktrees();
+    let mut out = vec![];
     for r in repos {
         let Some(root) = r.root.as_deref() else { continue };
         let g = Git(root);
         let landrefs = w.base(root).map(|b| b.landrefs).unwrap_or_default();
+        let mut trees = vec![];
         for (path, branch) in g.worktrees() {
             if !path.starts_with(&root_dir) || path == root_dir {
                 continue;
@@ -101,31 +126,66 @@ pub fn run(w: &dyn World, repos: &[Repo], opts: Opts) -> Tally {
             if id.starts_with('.') {
                 continue;
             }
-            if let Some(pid) = live_cwd(Path::new("/proc"), &path) {
-                w.emit(&format!("KEEP   {id}  process {pid} has its cwd in {}", path.display()));
+            let live_pid = live_cwd(proc_root, &path);
+            let (state, merged_into, idle_secs) = if live_pid.is_some() {
+                (None, None, 0)
+            } else {
+                let merged = branch.as_deref().and_then(|b| landrefs.iter().find(|lr| g.is_ancestor(b, lr)).cloned());
+                let idle = last_activity(&path).and_then(|m| SystemTime::now().duration_since(m).ok()).unwrap_or_default();
+                (state_of(&id), merged, idle.as_secs())
+            };
+            trees.push(TreeScan { id, path, branch, live_pid, state, merged_into, idle_secs });
+        }
+        out.push(RepoScan { name: r.name.clone(), root: root.to_path_buf(), landrefs, trees });
+    }
+    out
+}
+
+/// A scanned tree's verdict: a live cwd keeps it; a tree with no bead has the shorter
+/// window; otherwise [`decide`].
+pub fn verdict(state: Option<&str>, merged_into: Option<&str>, idle_secs: u64, live: bool, window_secs: u64) -> Verdict {
+    if live {
+        return Verdict::Keep;
+    }
+    let window = if state.is_none() { window_secs.min(UNBEADED_IDLE_SECS) } else { window_secs };
+    decide(state, merged_into, Duration::from_secs(idle_secs), window)
+}
+
+/// Why a verdict removes a tree, or None for Keep.
+pub fn reason(v: &Verdict) -> Option<String> {
+    match v {
+        Verdict::BeadFinished(s) => Some(format!("bead is {s}")),
+        Verdict::BranchMerged(r) => Some(format!("branch is merged into {r}")),
+        Verdict::Idle(s) => Some(format!("no activity for {}h", s / 3600)),
+        Verdict::Keep => None,
+    }
+}
+
+pub fn run(w: &dyn World, repos: &[Repo], opts: Opts) -> Tally {
+    let mut t = Tally::default();
+    w.prefetch();
+    let state_of = |id: &str| {
+        w.bead(id).map(|b| {
+            let s = b.get("status").and_then(|s| s.as_str()).unwrap_or_default().to_string();
+            crate::reap::lc_state(id).filter(|l| matches!(l.as_str(), "LANDED" | "DROPPED")).unwrap_or(s)
+        })
+    };
+    for rs in scan(w, repos, Path::new("/proc"), &state_of) {
+        for tr in &rs.trees {
+            let id = &tr.id;
+            if let Some(pid) = tr.live_pid {
+                w.emit(&format!("KEEP   {id}  process {pid} has its cwd in {}", tr.path.display()));
                 t.kept += 1;
                 continue;
             }
-            let state = w.bead(&id).map(|b| {
-                let s = b.get("status").and_then(|s| s.as_str()).unwrap_or_default().to_string();
-                crate::reap::lc_state(&id).filter(|l| matches!(l.as_str(), "LANDED" | "DROPPED")).unwrap_or(s)
-            });
-            let merged = branch.as_deref().and_then(|b| landrefs.iter().find(|lr| g.is_ancestor(b, lr)).cloned());
-            let idle = last_activity(&path).and_then(|m| SystemTime::now().duration_since(m).ok()).unwrap_or_default();
-            let window = if state.is_none() { opts.idle_secs.min(UNBEADED_IDLE_SECS) } else { opts.idle_secs };
-            let why = match decide(state.as_deref(), merged.as_deref(), idle, window) {
-                Verdict::BeadFinished(s) => format!("bead is {s}"),
-                Verdict::BranchMerged(r) => format!("branch is merged into {r}"),
-                Verdict::Idle(s) => format!("no activity for {}h", s / 3600),
-                Verdict::Keep => {
-                    t.kept += 1;
-                    continue;
-                }
+            let Some(why) = reason(&verdict(tr.state.as_deref(), tr.merged_into.as_deref(), tr.idle_secs, false, opts.idle_secs)) else {
+                t.kept += 1;
+                continue;
             };
             if opts.dry {
                 w.emit(&format!("WOULD  {id}  {why}"));
                 t.removed += 1;
-            } else if w.destroy_worktree(&id, &path, root, &format!("reaper: {why}")) {
+            } else if w.destroy_worktree(id, &tr.path, &rs.root, &format!("reaper: {why}")) {
                 w.emit(&format!("REAPED {id}  {why}"));
                 t.removed += 1;
             } else {
@@ -134,7 +194,7 @@ pub fn run(w: &dyn World, repos: &[Repo], opts: Opts) -> Tally {
             }
         }
         if !opts.dry {
-            w.prune(root);
+            w.prune(&rs.root);
         }
     }
     t
