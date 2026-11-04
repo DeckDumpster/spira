@@ -61,6 +61,9 @@ pub struct Plan {
 pub enum Outcome {
     Activated(String),
     Fault(String),
+    /// Not activated: a later landing moved the landing ref past this head, and its release
+    /// carries this one (over-broad-scopes #3).
+    Superseded(String),
 }
 
 impl Plan {

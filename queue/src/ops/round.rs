@@ -4103,7 +4103,7 @@ fn land_round(
     LeaseCheck::Check(token)
         .guard(w, label, &c, batch)
         .map_err(refused)?;
-    let _g = lock(w, label, &c).map_err(refused)?;
+    let g = lock(w, label, &c).map_err(refused)?;
     let mut kv = load(w, label, &c, batch).map_err(refused)?;
     let phase = phase_of(w, batch);
     if phase != "green" {
@@ -4178,6 +4178,8 @@ fn land_round(
         members.len()
     ));
     // Activation is the last step: the new release may retire keys the steps above still need.
+    // The landing is recorded, so the queue lock goes first (over-broad-scopes #3).
+    drop(g);
     let (rc, end) = match pending.map(|p| p.activate(w)) {
         Some(super::deploy::Outcome::Fault(_)) => (super::DEPLOY_FAULT, End::DeployFault),
         _ => (rc, End::Landed),
