@@ -7,7 +7,7 @@ use spira_runtime::tasks;
 
 #[test]
 fn every_declared_effect_has_a_real_runner_and_a_sim_double() {
-    let declared: Vec<&str> = tasks::TASKS.iter().flat_map(|t| t.effects.iter().copied()).collect();
+    let declared: Vec<&str> = tasks::all().flat_map(|t| t.effects.iter().copied()).collect();
     assert!(declared.len() >= 20, "the scan must see the task table: {declared:?}");
     let real: Vec<&str> = tasks::routes().keys().copied().collect();
     let doubles = sim::doubles::service().names();

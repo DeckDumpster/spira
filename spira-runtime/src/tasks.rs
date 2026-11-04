@@ -1,11 +1,21 @@
-//! The one table of tasks the service hosts. `registrations()` and the boot list in `main.rs`
-//! are both read from it, so a task registered is a task booted.
+//! The table of tasks the service hosts, split into one slice per family so each family's
+//! rows live in their own file under `tasks/`. `all()` walks every family in `FAMILIES` order;
+//! `registrations()` and the boot list in `main.rs` are both read from it, so a task registered
+//! is a task booted.
 
 use runtime::event::{EventKind, Registration};
 use runtime::heartbeat::{self, Heartbeat};
 
 use crate::watchers::*;
 use crate::{wake, Runner, Settings};
+
+pub mod a;
+pub mod b;
+pub mod c;
+pub mod d;
+pub mod e;
+pub mod f;
+pub mod g;
 
 pub struct Task {
     pub name: &'static str,
@@ -27,7 +37,8 @@ impl Task {
     }
 }
 
-pub static TASKS: &[Task] = &[
+/// The service's own tasks: the heartbeat and the watchers under `watchers/`.
+pub static CORE: &[Task] = &[
     Task { name: heartbeat::NAME, boot: Heartbeat::boot, cadence_ms: |s| s.heartbeat_secs * 1000, effects: &[heartbeat::PING], runners: &[(heartbeat::PING, |e, _, s| e.ping(s))], keys: &[&["SPIRA_RUNTIME_HEARTBEAT_URL", "SPIRA_RUNTIME_HEARTBEAT_SECS"]], build: |s| Heartbeat { interval_ms: s.heartbeat_secs * 1000, ping_deadline_ms: s.ping_deadline_ms() }.registration() },
     Task { name: round_duty::NAME, boot: round_duty::RoundDuty::boot, cadence_ms: |s| s.round_duty.interval_ms, effects: &[round_duty::OBSERVE, INBOX_APPEND], runners: &[(round_duty::OBSERVE, |e, _, s| e.world.round_snapshot(&s.input))], keys: &[&["SPIRA_RUNTIME_ROUND_DUTY_SECS", "SPIRA_ROUND_MIN", "SPIRA_ROUND_MAX_OPEN", "SPIRA_ROUND_DUE_REMIND", "SPIRA_ROUND_IDLE_CUT"]], build: |s| s.round_duty.clone().registration() },
     Task { name: inbox_keeper::NAME, boot: inbox_keeper::InboxKeeper::boot, cadence_ms: |s| s.inbox_keeper.interval_ms, effects: &[inbox_keeper::OBSERVE, CONCIERGE_WAKE], runners: &[(inbox_keeper::OBSERVE, |e, _, _| e.world.keeper_snapshot()), (CONCIERGE_WAKE, |e, _, s| e.world.home_path().and_then(|home| wake::concierge_wake(&home.join("concierge.sh"), &s.input)))], keys: &[&["SPIRA_RUNTIME_INBOX_KEEPER_SECS", "SPIRA_CONCIERGE_INBOX_STALL", "SPIRA_CONCIERGE_INBOX_BACKOFF"]], build: |s| s.inbox_keeper.clone().registration() },
@@ -45,13 +56,35 @@ pub static TASKS: &[Task] = &[
     Task { name: reconciler_flow::NAME, boot: reconciler_flow::ReconcilerFlow::boot, cadence_ms: |s| s.reconciler_flow.interval_ms, effects: &[reconciler_flow::OBSERVE, reconciler_flow::STATUS, reconciler_flow::MAIL], runners: &[(reconciler_flow::OBSERVE, |e, _, s| e.world.flow_snapshot(&s.input)), (reconciler_flow::STATUS, |e, _, s| e.world.flow_status(&s.input)), (reconciler_flow::MAIL, |e, _, s| e.concierge_note(&s.input))], keys: &[&["SPIRA_RUNTIME_RECONCILER_FLOW_SECS", "SPIRA_FLOW_WINDOW_HOURS", "SPIRA_FLOW_BASELINE_HOURS", "SPIRA_FLOW_GRACE_SECS", "SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS", "SPIRA_FLOW_REWORK_WINDOW_HOURS", "SPIRA_FLOW_SENTINEL_PERIOD_SECS"]], build: |s| s.reconciler_flow.clone().registration() },
 ];
 
+/// Every family's slice, in boot order. A new family file under `tasks/` joins here.
+pub static FAMILIES: &[&[Task]] = &[CORE, a::TASKS, b::TASKS, c::TASKS, d::TASKS, e::TASKS, f::TASKS, g::TASKS];
+
+/// Every task in every family, in `FAMILIES` order.
+pub fn all() -> impl Iterator<Item = &'static Task> {
+    FAMILIES.iter().flat_map(|f| f.iter())
+}
+
+/// Each task name and each stream claimed by more than one row across `families`.
+pub fn clashes(families: &[&[Task]]) -> Vec<String> {
+    let mut names = std::collections::BTreeMap::<&str, usize>::new();
+    let mut streams = std::collections::BTreeMap::<&str, usize>::new();
+    for t in families.iter().flat_map(|f| f.iter()) {
+        *names.entry(t.name).or_default() += 1;
+        *streams.entry(t.stream()).or_default() += 1;
+    }
+    let twice = |kind: &str, m: std::collections::BTreeMap<&str, usize>| m.into_iter().filter(|(_, n)| *n > 1).map(|(k, n)| format!("{kind} {k} x{n}")).collect::<Vec<_>>();
+    let mut out = twice("name", names);
+    out.extend(twice("stream", streams));
+    out
+}
+
 /// Effects more than one task emits.
 pub static SHARED: &[(&str, Runner)] = &[(INBOX_APPEND, |e, _, s| e.world.inbox_append(&s.input))];
 
 /// Every runner by effect name. A name owned twice keeps the first; `owners` shows the clash.
 pub fn routes() -> std::collections::BTreeMap<&'static str, Runner> {
     let mut out = std::collections::BTreeMap::new();
-    for (name, r) in TASKS.iter().flat_map(|t| t.runners.iter()).chain(SHARED) {
+    for (name, r) in all().flat_map(|t| t.runners.iter()).chain(SHARED) {
         out.entry(*name).or_insert(*r);
     }
     out
@@ -60,15 +93,15 @@ pub fn routes() -> std::collections::BTreeMap<&'static str, Runner> {
 /// Each effect name with how many places supply its runner.
 pub fn owners() -> std::collections::BTreeMap<&'static str, usize> {
     let mut out = std::collections::BTreeMap::new();
-    for (name, _) in TASKS.iter().flat_map(|t| t.runners.iter()).chain(SHARED) {
+    for (name, _) in all().flat_map(|t| t.runners.iter()).chain(SHARED) {
         *out.entry(*name).or_default() += 1;
     }
     out
 }
 
-/// The boot ticks of every task, in table order.
+/// The boot ticks of every task, in `all()` order.
 pub fn boots() -> Vec<(&'static str, &'static str, EventKind)> {
-    TASKS.iter().map(|t| (t.boot)()).collect()
+    all().map(|t| (t.boot)()).collect()
 }
 
 #[cfg(test)]
@@ -97,7 +130,7 @@ mod tests {
     fn every_watcher_module_and_the_heartbeat_have_a_row() {
         let names = watcher_names();
         assert!(names.len() >= 14 && names.contains(&"asks".to_string()), "the source scan must find the watchers: {names:?}");
-        let rows: Vec<&str> = TASKS.iter().map(|t| t.name).collect();
+        let rows: Vec<&str> = all().map(|t| t.name).collect();
         let missing: Vec<&String> = names.iter().filter(|n| !rows.contains(&n.as_str())).collect();
         assert!(missing.is_empty(), "watchers with no task row: {missing:?}");
         assert!(rows.contains(&heartbeat::NAME));
@@ -107,19 +140,53 @@ mod tests {
         assert_eq!(sorted.len(), rows.len(), "a task name appears twice");
     }
 
+    /// Every file under `tasks/`, by stem, that `tasks.rs` does not both declare as a module and
+    /// list in `FAMILIES`. `src` is the text of `tasks.rs`.
+    fn unreachable_families(src: &str, stems: &[String]) -> Vec<String> {
+        let families = src.split("pub static FAMILIES").nth(1).and_then(|r| r.split(';').next()).unwrap_or("");
+        stems.iter().filter(|s| !src.contains(&format!("pub mod {s};")) || !families.contains(&format!("{s}::TASKS"))).cloned().collect()
+    }
+
+    fn family_stems() -> Vec<String> {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tasks");
+        let mut out: Vec<String> = std::fs::read_dir(dir).unwrap().flatten().filter_map(|e| e.path().file_stem().map(|s| s.to_string_lossy().into_owned())).collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn every_family_file_is_in_the_families_list() {
+        let src = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tasks.rs")).unwrap();
+        let stems = family_stems();
+        assert_eq!(stems, ["a", "b", "c", "d", "e", "f", "g"], "the scan must find the family files");
+        let planted = [stems.clone(), vec!["planted".to_string()]].concat();
+        assert_eq!(unreachable_families(&src, &planted), ["planted"], "a family file left out of FAMILIES must be caught");
+        assert_eq!(unreachable_families(&src, &stems), Vec::<String>::new());
+        assert_eq!(FAMILIES.len(), 1 + stems.len(), "CORE plus one slice per family file");
+        assert_eq!(all().count(), FAMILIES.iter().map(|f| f.len()).sum::<usize>());
+    }
+
+    #[test]
+    fn no_two_tasks_across_families_share_a_name_or_a_stream() {
+        static PLANTED: &[Task] = &[Task { name: heartbeat::NAME, boot: Heartbeat::boot, cadence_ms: |_| 1, effects: &[], runners: &[], keys: &[], build: |s| (CORE[0].build)(s) }];
+        let caught = clashes(&[CORE, PLANTED]);
+        assert!(caught.iter().any(|c| c.starts_with("name ")) && caught.iter().any(|c| c.starts_with("stream ")), "a row planted in a second family must be caught: {caught:?}");
+        assert_eq!(clashes(FAMILIES), Vec::<String>::new());
+    }
+
     #[test]
     fn the_registrations_and_the_boot_list_are_the_table() {
         let s = crate::settings::fixture();
         let regs: Vec<String> = crate::registrations(&s).into_iter().map(|r| r.name).collect();
-        assert_eq!(regs, TASKS.iter().map(|t| t.name.to_string()).collect::<Vec<_>>());
-        assert_eq!(boots().iter().map(|b| b.1).collect::<Vec<_>>(), TASKS.iter().map(|t| t.stream()).collect::<Vec<_>>());
+        assert_eq!(regs, all().map(|t| t.name.to_string()).collect::<Vec<_>>());
+        assert_eq!(boots().iter().map(|b| b.1).collect::<Vec<_>>(), all().map(|t| t.stream()).collect::<Vec<_>>());
     }
 
     #[test]
     fn every_declared_effect_has_one_runner_and_every_runner_is_declared() {
         let routes = routes();
-        let declared: Vec<&str> = TASKS.iter().flat_map(|t| t.effects.iter().copied()).collect();
-        let missing: Vec<String> = TASKS.iter().flat_map(|t| t.effects.iter().filter(|n| !routes.contains_key(*n)).map(move |n| format!("{}: {n}", t.name))).collect();
+        let declared: Vec<&str> = all().flat_map(|t| t.effects.iter().copied()).collect();
+        let missing: Vec<String> = all().flat_map(|t| t.effects.iter().filter(|n| !routes.contains_key(*n)).map(move |n| format!("{}: {n}", t.name))).collect();
         assert!(missing.is_empty(), "declared effects with no runner: {missing:?}");
         let twice: Vec<_> = owners().into_iter().filter(|(_, n)| *n > 1).collect();
         assert!(twice.is_empty(), "effects with more than one runner: {twice:?}");
@@ -139,7 +206,7 @@ mod tests {
     #[test]
     fn every_row_boots_arms_its_cadence_and_asks_only_for_declared_effects() {
         let s = crate::settings::fixture();
-        for t in TASKS {
+        for t in all() {
             let mut rig = TaskRig::new(1, (t.build)(&s)).unwrap();
             let (_, stream, kind) = (t.boot)();
             rig.tick(stream, kind).unwrap();

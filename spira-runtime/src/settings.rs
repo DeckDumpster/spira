@@ -79,7 +79,7 @@ fn num<T: std::str::FromStr + PartialOrd + Default>(key: &str, raw: &str) -> Res
 
 impl Settings {
     /// The keys the service reads for itself and for what its tasks share (the journal, the
-    /// world, the forge). A task's own keys are on its row in `tasks::TASKS`.
+    /// world, the forge). A task's own keys are on its row in `tasks::all()`.
     pub const SERVICE_KEYS: &'static [&'static str] = &[
         "SPIRA_LC_SOCKET",
         "SPIRA_RUN",
@@ -113,7 +113,7 @@ impl Settings {
     /// registered in spira/conf.d.
     pub fn keys() -> Vec<&'static str> {
         let mut out: Vec<&'static str> = vec![];
-        for k in Self::SERVICE_KEYS.iter().chain(crate::tasks::TASKS.iter().flat_map(|t| t.keys.iter().flat_map(|ks| ks.iter()))) {
+        for k in Self::SERVICE_KEYS.iter().chain(crate::tasks::all().flat_map(|t| t.keys.iter().flat_map(|ks| ks.iter()))) {
             if !out.contains(k) {
                 out.push(k);
             }
@@ -263,7 +263,7 @@ impl Settings {
             run_dir,
             lc_socket: PathBuf::from(socket),
         };
-        crate::modes::apply(crate::tasks::TASKS.iter().map(|t| (t.build)(&settings)).collect(), &settings.task_modes)?;
+        crate::modes::apply(crate::tasks::all().map(|t| (t.build)(&settings)).collect(), &settings.task_modes)?;
         Ok(settings)
     }
 

@@ -29,10 +29,10 @@ pub use settings::Settings;
 /// this often rather than on every wake.
 const FOREIGN_POLL_MS: u64 = 30_000;
 
-/// Every task in `tasks::TASKS`, in table order, each in the mode `SPIRA_TASK_MODES` gives it.
+/// Every task in `tasks::all()`, in family order, each in the mode `SPIRA_TASK_MODES` gives it.
 /// `Settings::from_lookup` refuses a table that does not name every task exactly.
 pub fn registrations(s: &Settings) -> Vec<Registration> {
-    modes::apply(tasks::TASKS.iter().map(|t| (t.build)(s)).collect(), &s.task_modes).expect("Settings::from_lookup checked the task modes")
+    modes::apply(tasks::all().map(|t| (t.build)(s)).collect(), &s.task_modes).expect("Settings::from_lookup checked the task modes")
 }
 
 /// The control socket's submit: one `Submit` on the host's channel, answered once the host has
