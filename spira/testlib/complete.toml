@@ -106,6 +106,15 @@ batcher_orphan_redrive_secs = 600
 runtime_reconciler_secs = 60
 runtime_socket = "/fixture/userhome/spira/run/runtime-control.sock"
 task_modes = "heartbeat=act round-duty=act inbox-keeper=act pr-notify=act asks=act design-asks=act brain-dirty=act supersede-duty=act bead-sweep=act publish-backlog=act repo-events=act overrides=act view=act reconciler=act reconciler-flow=act"
+pool_cap_store = 4
+pool_cap_unit = 4
+pool_cap_git = 2
+pool_cap_forge = 2
+pool_cap_host = 4
+pool_cap_container = 2
+watchdog_bound_secs = 300
+watchdog_unit = "spira-runtime-prod.service"
+watchdog_every_secs = 60
 runes_overlay = "/fixture/userhome/.config/spira/runes"
 check5_max_file = "5"
 ci_label = "awaiting-ci"

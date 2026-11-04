@@ -17,6 +17,8 @@ pub const KEY_SOCKET: &str = "SPIRA_RUNTIME_SOCKET";
 pub const KEY_UNIT: &str = "SPIRA_WATCHDOG_UNIT";
 pub const KEY_RUN: &str = "SPIRA_RUN";
 pub const KEYS: [&str; 4] = [KEY_BOUND, KEY_SOCKET, KEY_UNIT, KEY_RUN];
+/// The seconds between passes: read by the installer that renders the timer, not by a pass.
+pub const KEY_EVERY: &str = "SPIRA_WATCHDOG_EVERY_SECS";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
@@ -257,6 +259,15 @@ mod tests {
     use std::sync::Arc;
 
     const UNIT: &str = "spira-runtime.service";
+
+    #[test]
+    fn every_key_the_watchdog_and_its_timer_read_is_registered_in_conf_d() {
+        let conf_d = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d");
+        let missing = |keys: &[&str]| keys.iter().filter(|k| !conf_d.join(k).is_file()).map(|k| k.to_string()).collect::<Vec<_>>();
+        assert_eq!(missing(&["SPIRA_WATCHDOG_PLANTED_UNREGISTERED"]).len(), 1, "positive control: an unregistered key is reported");
+        let all: Vec<&str> = KEYS.iter().copied().chain([KEY_EVERY]).collect();
+        assert!(missing(&all).is_empty(), "keys the watchdog reads but spira/conf.d does not register: {:?}", missing(&all));
+    }
 
     struct Fixed(RefCell<Reading>);
     impl StatusSource for Fixed {

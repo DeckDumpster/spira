@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=watchdog
+DOC=The scheduler's installed unit, which spira-watchdog reads the facts of and restarts.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # The scheduler's installed unit, which spira-watchdog reads the facts of and restarts.
+    : "${SPIRA_WATCHDOG_UNIT:=spira-runtime-prod.service}"
+SPIRA_CONF_DEFAULT_EOF

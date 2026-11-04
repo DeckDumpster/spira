@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Forge API or CLI calls spira-runtime runs at once (the forge effector class).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Forge API or CLI calls spira-runtime runs at once (the forge effector class).
+    : "${SPIRA_POOL_CAP_FORGE:=2}"
+SPIRA_CONF_DEFAULT_EOF

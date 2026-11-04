@@ -90,5 +90,5 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
     spira_runtime::spawn_control(&settings.control_socket, control)?;
     notifier.ready();
     let opts = ServeOpts { kick: Some(kick), max_sleep_ms: max_sleep.map(|d| d.as_millis() as u64), sink: Some(sink), pool: None };
-    serve_with(engine, clock, Arc::new(Effects { heartbeat_url: settings.heartbeat_url.clone(), world: settings.world.clone(), forge: settings.forge.clone(), mail: Some(Arc::new(mail_env)), reconciler: Some(settings.reconciler.clone()), concierge_mail: Some(Arc::new(concierge_mail)), ..Effects::default() }), 4, rx, opts).await.map_err(|e| e.to_string())
+    serve_with(engine, clock, Arc::new(Effects { heartbeat_url: settings.heartbeat_url.clone(), world: settings.world.clone(), forge: settings.forge.clone(), mail: Some(Arc::new(mail_env)), reconciler: Some(settings.reconciler.clone()), concierge_mail: Some(Arc::new(concierge_mail)), ..Effects::default() }), settings.pool_caps, rx, opts).await.map_err(|e| e.to_string())
 }

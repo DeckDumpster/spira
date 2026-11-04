@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=git processes on a local checkout spira-runtime runs at once (the git effector class).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # git processes on a local checkout spira-runtime runs at once (the git effector class).
+    : "${SPIRA_POOL_CAP_GIT:=2}"
+SPIRA_CONF_DEFAULT_EOF

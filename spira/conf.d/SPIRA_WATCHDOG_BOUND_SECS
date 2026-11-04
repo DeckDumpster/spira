@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=watchdog
+DOC=Seconds since the scheduler's last turn after which spira-watchdog calls it wedged, restarts it and pages.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Seconds since the scheduler's last turn after which spira-watchdog calls it wedged, restarts it and pages.
+    : "${SPIRA_WATCHDOG_BOUND_SECS:=300}"
+SPIRA_CONF_DEFAULT_EOF

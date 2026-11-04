@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=watchdog
+DOC=Seconds between spira-watchdog passes on the platform timer; on cron a whole number of minutes dividing an hour.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Seconds between spira-watchdog passes on the platform timer; on cron a whole number of minutes dividing an hour.
+    : "${SPIRA_WATCHDOG_EVERY_SECS:=60}"
+SPIRA_CONF_DEFAULT_EOF

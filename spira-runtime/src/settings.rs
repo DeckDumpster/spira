@@ -48,6 +48,27 @@ pub struct Settings {
     pub world: World,
     pub task_modes: std::collections::BTreeMap<String, runtime::Mode>,
     pub control_socket: PathBuf,
+    /// Effects of each class running at once (S3).
+    pub pool_caps: runtime::pools::PoolCaps,
+}
+
+/// Every class's cap, each a positive integer; a container cap over the host run ceiling refuses
+/// rather than being clamped, so the configured number is the one in force.
+fn pool_caps(get: &dyn Fn(&str) -> Result<String, String>) -> Result<runtime::pools::PoolCaps, String> {
+    use runtime::pools::HOST_RUN_CEILING;
+    let cap = |key: &str| -> Result<usize, String> { num::<usize>(key, &get(key)?) };
+    let caps = runtime::pools::PoolCaps {
+        store: cap("SPIRA_POOL_CAP_STORE")?,
+        unit: cap("SPIRA_POOL_CAP_UNIT")?,
+        git: cap("SPIRA_POOL_CAP_GIT")?,
+        forge: cap("SPIRA_POOL_CAP_FORGE")?,
+        host: cap("SPIRA_POOL_CAP_HOST")?,
+        container: cap("SPIRA_POOL_CAP_CONTAINER")?,
+    };
+    if caps.container > HOST_RUN_CEILING {
+        return Err(format!("SPIRA_POOL_CAP_CONTAINER is {}, over the host run ceiling of {HOST_RUN_CEILING} — refusing", caps.container));
+    }
+    Ok(caps)
 }
 
 const DEFAULT_FORGET_SECS: u64 = 86_400;
@@ -80,6 +101,12 @@ impl Settings {
         "SPIRA_GH",
         crate::modes::KEY,
         "SPIRA_RUNTIME_SOCKET",
+        "SPIRA_POOL_CAP_STORE",
+        "SPIRA_POOL_CAP_UNIT",
+        "SPIRA_POOL_CAP_GIT",
+        "SPIRA_POOL_CAP_FORGE",
+        "SPIRA_POOL_CAP_HOST",
+        "SPIRA_POOL_CAP_CONTAINER",
     ];
 
     /// Every key `from_lookup` may read, each once: the service's and every task's. Each must be
@@ -210,6 +237,7 @@ impl Settings {
             return Err("SPIRA_RUNTIME_SOCKET is empty — scheduler status|halt|resume has no door".into());
         }
         let settings = Settings {
+            pool_caps: pool_caps(&get)?,
             task_modes: crate::modes::parse(&get(crate::modes::KEY)?)?,
             control_socket: PathBuf::from(control_socket),
             round_duty,
@@ -254,7 +282,7 @@ impl Settings {
 
     /// FNV-1a over the pinned values, so two records with one hash ran on one configuration.
     pub fn hash(&self) -> String {
-        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.repo_events, self.overrides, self.view, self.reconciler, self.reconciler_flow, self.world, self.task_modes, self.control_socket.display());
+        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.repo_events, self.overrides, self.view, self.reconciler, self.reconciler_flow, self.world, self.task_modes, self.control_socket.display(), self.pool_caps);
         let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
         format!("{h:016x}")
     }
@@ -290,6 +318,12 @@ mod tests {
                 "SPIRA_VIEW" => "/bin/view",
                 "SPIRA_VIEW_SESSION" => "pit",
                 "SPIRA_RUNTIME_SOCKET" => "/d/control.sock",
+                "SPIRA_POOL_CAP_STORE" => "41",
+                "SPIRA_POOL_CAP_UNIT" => "42",
+                "SPIRA_POOL_CAP_GIT" => "43",
+                "SPIRA_POOL_CAP_FORGE" => "44",
+                "SPIRA_POOL_CAP_HOST" => "45",
+                "SPIRA_POOL_CAP_CONTAINER" => "2",
                 "SPIRA_TASK_MODES" => "heartbeat=act round-duty=act inbox-keeper=act pr-notify=act asks=observe design-asks=act brain-dirty=act supersede-duty=act bead-sweep=act publish-backlog=act repo-events=act overrides=act view=observe reconciler=act reconciler-flow=act",
                 k if reconciler_fixture(k).is_some() => reconciler_fixture(k).unwrap_or_default(),
                 _ => return Err(format!("{k} unknown")),
@@ -422,6 +456,21 @@ mod tests {
         let short = move |k: &str| if k == crate::modes::KEY { Ok("heartbeat=act".to_string()) } else { base(k) };
         let e = Settings::from_lookup(&short).unwrap_err();
         assert!(e.contains(crate::modes::KEY) && e.contains("round-duty"), "{e}");
+    }
+
+    #[test]
+    fn each_pool_cap_reaches_its_class_and_a_container_cap_over_the_ceiling_is_refused() {
+        let s = Settings::from_lookup(&lookup("7")).unwrap();
+        assert_eq!(s.pool_caps, runtime::pools::PoolCaps { store: 41, unit: 42, git: 43, forge: 44, host: 45, container: 2 });
+        let with = |key: &'static str, val: &'static str| {
+            let base = lookup("7");
+            move |k: &str| if k == key { Ok(val.to_string()) } else { base(k) }
+        };
+        let over = Settings::from_lookup(&with("SPIRA_POOL_CAP_CONTAINER", "3")).unwrap_err();
+        assert!(over.contains("SPIRA_POOL_CAP_CONTAINER") && over.contains('2'), "{over}");
+        let zero = Settings::from_lookup(&with("SPIRA_POOL_CAP_GIT", "0")).unwrap_err();
+        assert!(zero.contains("SPIRA_POOL_CAP_GIT"), "a class capped at nothing would wedge: {zero}");
+        assert_ne!(s.hash(), Settings::from_lookup(&with("SPIRA_POOL_CAP_HOST", "9")).unwrap().hash(), "the caps are part of the pinned configuration");
     }
 
     #[test]
