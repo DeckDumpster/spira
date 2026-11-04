@@ -1,13 +1,10 @@
-#[path = "../src/store.rs"]
-mod store;
-
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use spira_config::lc_call::{LcClient, LcError, Reply, Transport};
-use store::Projection;
+use spira_runtime::store::Projection;
 
 /// A scripted store: `rc list` and `list` answer from what it holds, each `watch` takes the next
 /// scripted answer, and every request is recorded.

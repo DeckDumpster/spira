@@ -9,6 +9,7 @@ pub mod reconcile_host;
 pub mod settings;
 pub mod sink;
 pub mod status;
+pub mod store;
 pub mod tasks;
 pub mod wake;
 pub mod watchers;
