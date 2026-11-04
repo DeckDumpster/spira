@@ -17,9 +17,16 @@ pub mod kit;
 pub mod batcher_forge;
 pub mod batcher_local;
 pub mod czar;
+pub mod gate_check;
+pub mod gate_worker;
+pub mod landing;
+pub mod publish;
+pub mod queue_step;
 pub mod sentinel_call;
 pub mod sentinel_pass;
 pub mod sift;
+pub mod submission_provision;
+pub mod sweep_target;
 
 /// Every effect of module `$m` listed, each with a runner that refuses until it is ported.
 macro_rules! stubs {
@@ -85,6 +92,70 @@ pub static STAGED: &[Task] = &[
         runners: stubs!(batcher_forge: OBSERVE, ARM, FETCH, ASSEMBLE, CORPUS, WITHDRAW, SHOTS, BATCH_OPEN, FILE, VERDICT_WRITE),
         keys: &[batcher_forge::KEYS],
         build: |_| batcher_forge::BatcherForge::from_cfg().registration(),
+    },
+    Task {
+        name: queue_step::NAME,
+        boot: queue_step::QueueStep::boot,
+        cadence_ms: |_| queue_step::CADENCE_MS,
+        effects: queue_step::EFFECTS,
+        runners: stubs!(queue_step: OBSERVE, PUSH, LAND, CLOSE_BEAD, GH_CLOSEOUT, PR_CLOSE, CANCEL_RUNS, RERUN, JUDGEMENT, OBSERVE_FLAKE, EJECT, RECONCILE, SWEEP, FILE_BUG, NOTIFY, RECORD),
+        keys: &[queue_step::KEYS],
+        build: |_| queue_step::QueueStep::from_cfg().registration(),
+    },
+    Task {
+        name: publish::NAME,
+        boot: publish::Publish::boot,
+        cadence_ms: |_| publish::CADENCE_MS,
+        effects: publish::EFFECTS,
+        runners: stubs!(publish: OBSERVE, PUSH_BRANCH, PUSH_FORGE, PR_CREATE, PR_CLOSE, CANCEL_RUNS, RERUN, RECORD, NOTIFY),
+        keys: &[publish::KEYS],
+        build: |_| publish::Publish::from_cfg().registration(),
+    },
+    Task {
+        name: gate_worker::NAME,
+        boot: gate_worker::GateWorker::boot,
+        cadence_ms: |_| gate_worker::CADENCE_MS,
+        effects: gate_worker::EFFECTS,
+        runners: stubs!(gate_worker: OBSERVE, TIP, CLAIM, DISCARD, RETAIN_OUTPUT, COMPLETE, RECOVER),
+        keys: &[gate_worker::KEYS],
+        build: |_| gate_worker::GateWorker::from_cfg().registration(),
+    },
+    Task {
+        name: gate_check::NAME,
+        boot: gate_check::GateCheck::boot,
+        cadence_ms: |_| gate_check::CADENCE_MS,
+        effects: gate_check::EFFECTS,
+        runners: stubs!(gate_check: OBSERVE, DISCOVER, RESOLVE, CI_FAILED, FILE_BEAD, RAISE_PRIORITY, NOTE, TSD_INGEST),
+        keys: &[gate_check::KEYS],
+        build: |_| gate_check::GateCheck::from_cfg().registration(),
+    },
+    Task {
+        name: landing::NAME,
+        boot: landing::Landing::boot,
+        cadence_ms: |_| landing::CADENCE_MS,
+        effects: landing::EFFECTS,
+        runners: stubs!(landing: OBSERVE, FETCH, DELIVER_PR_MERGED, DELIVER_PR_CLOSED, DELIVER_BY_CONTENT, REOPEN, EVENT, NOTE, BUMP_REQUEUE, ASK, REBASE, CONFINE, FORCE_PUSH, PR_CREATE, PR_AUTOMERGE),
+        keys: &[landing::KEYS],
+        build: |_| landing::Landing::from_cfg().registration(),
+    },
+    Task {
+        name: sweep_target::NAME,
+        boot: sweep_target::SweepTarget::boot,
+        cadence_ms: |_| sweep_target::CADENCE_MS,
+        effects: sweep_target::EFFECTS,
+        runners: stubs!(sweep_target: OBSERVE, REMOVE_TARGET, REMOVE_FOREIGN_RUN),
+        keys: &[sweep_target::KEYS],
+        build: |_| sweep_target::SweepTarget::from_cfg().registration(),
+    },
+    Task {
+        name: submission_provision::NAME,
+        boot: submission_provision::SubmissionProvision::boot,
+        // The daily calendar; its first tick is the boot tick's, two minutes after start.
+        cadence_ms: |_| runtime::taskrig::DAY_MS,
+        effects: submission_provision::EFFECTS,
+        runners: stubs!(submission_provision: OBSERVE, CERT_RENEW, CONFIG_SET, PASSWORD_WRITE, FIREWALL_OPEN, UNIT_RESTART),
+        keys: &[submission_provision::KEYS],
+        build: |_| submission_provision::SubmissionProvision::from_cfg().registration(),
     },
 ];
 
