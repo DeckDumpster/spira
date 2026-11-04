@@ -45,6 +45,22 @@ pub static TASKS: &[Task] = &[
         keys: &[intake_gh::KEYS],
         build: |_| refuse(intake_gh::NAME, intake_gh::IntakeGh::from_cfg()).registration(),
     },
+    Task {
+        name: persona_ops::NAME,
+        boot: persona_ops::PersonaOps::boot,
+        cadence_ms: |_| cadence(persona_ops::CADENCE_KEY),
+        effects: persona_ops::EFFECTS,
+        runners: &[
+            (persona_ops::OBSERVE, persona_ops::run_observe),
+            (persona_ops::INTAKE_INSTALL, persona_ops::run_intake_install),
+            (persona_ops::INCIDENT_DRAIN, persona_ops::run_incident_drain),
+            (persona_ops::BRIEF, persona_ops::run_brief),
+            (persona_ops::LEDGER, persona_ops::run_ledger),
+            (persona_ops::CLEANUP, persona_ops::run_cleanup),
+        ],
+        keys: &[persona_ops::KEYS],
+        build: |_| refuse(persona_ops::NAME, persona_ops::PersonaOps::from_cfg()).registration(),
+    },
 ];
 
 /// The rows of this family not yet ported, in the design's catalogue order. `inbox.append` and
@@ -85,22 +101,6 @@ pub static PENDING: &[Task] = &[
         ],
         keys: &[trigger_mimir::KEYS],
         build: |_| refuse(trigger_mimir::NAME, trigger_mimir::TriggerMimir::from_cfg()).registration(),
-    },
-    Task {
-        name: persona_ops::NAME,
-        boot: persona_ops::PersonaOps::boot,
-        cadence_ms: |_| cadence(persona_ops::CADENCE_KEY),
-        effects: persona_ops::EFFECTS,
-        runners: &[
-            (persona_ops::OBSERVE, |_, _, _| unimplemented!("persona.ops.observe: not ported yet")),
-            (persona_ops::INTAKE_INSTALL, |_, _, _| unimplemented!("persona.ops.intake_install: not ported yet")),
-            (persona_ops::INCIDENT_DRAIN, |_, _, _| unimplemented!("persona.ops.incident_drain: not ported yet")),
-            (persona_ops::BRIEF, |_, _, _| unimplemented!("persona.ops.brief: not ported yet")),
-            (persona_ops::LEDGER, |_, _, _| unimplemented!("persona.ops.ledger: not ported yet")),
-            (persona_ops::CLEANUP, |_, _, _| unimplemented!("persona.ops.cleanup: not ported yet")),
-        ],
-        keys: &[persona_ops::KEYS],
-        build: |_| refuse(persona_ops::NAME, persona_ops::PersonaOps::from_cfg()).registration(),
     },
     Task {
         name: persona_archivist::NAME,
