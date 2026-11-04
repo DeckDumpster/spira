@@ -169,6 +169,7 @@ pub fn child_path(cfg: &Cfg) -> String {
 }
 
 fn run(cmd: &str, args: &[&str], cfg: &Cfg) -> Result<String, String> {
+    // FORK-EDGE: unserved verb content — the runner for the bead-content reads only.
     let mut c = spira_config::bounded::bounded(bin(cmd, cfg));
     c.args(args).env("PATH", child_path(cfg));
     // NO `current_dir`. It existed so `gt` could resolve its town, and `gt` is gone from this
@@ -207,6 +208,7 @@ fn rows(text: &str, key: &str) -> Result<Vec<Value>, String> {
 /// there is no other database whose rows could stand in for these, so silently returning an
 /// empty list would render "nothing is waiting" over an unread queue.
 fn fetch_beads(cfg: &Cfg) -> Result<Vec<Value>, String> {
+    // FORK-EDGE: unserved verb content (the socket does not serve bead content).
     let out = run("spira-lc", &["content", "list", "--all", "--limit", "0", "--json"], cfg)?;
     rows(&out, "issues")
 }
@@ -214,7 +216,11 @@ fn fetch_beads(cfg: &Cfg) -> Result<Vec<Value>, String> {
 /// Every condition the watchdog keeps, the write probe included: its presence is the positive
 /// control that the store was read at all.
 fn fetch_conditions(cfg: &Cfg) -> Result<Vec<Value>, String> {
-    let out = run("spira-lc", &["condition", "list", "--owner", ALERT_OWNER], cfg)?;
+    fetch_conditions_with(&crate::lcio::client(cfg)?)
+}
+
+fn fetch_conditions_with(client: &spira_config::lc_call::LcClient) -> Result<Vec<Value>, String> {
+    let out = crate::lcio::read(client, &["condition", "list", "--owner", ALERT_OWNER])?;
     rows(&out, "conditions")
 }
 
@@ -268,6 +274,7 @@ fn fetch_threads(beads: &[Value], cfg: &Cfg) -> std::collections::HashMap<String
         .map(|id| {
             let cfg = cfg.clone();
             thread::spawn(move || {
+                // FORK-EDGE: unserved verb content (comment threads are bead content).
                 let out = run("spira-lc", &["content", "comments", &id, "--json"], &cfg).ok()?;
                 Some((id, rows(&out, "comments").ok()?))
             })
@@ -849,6 +856,13 @@ pub fn view_items(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_alert_conditions_are_read_in_process() {
+        let (t, client) = crate::lcio::tests::scripted(0, "{\"conditions\":[{\"type\":\"Alert\"}]}");
+        assert_eq!(fetch_conditions_with(&client).unwrap().len(), 1);
+        assert_eq!(*t.calls.lock().unwrap(), vec![vec!["condition", "list", "--owner", ALERT_OWNER]]);
+    }
 
     fn declared(k: &str) -> Result<String, String> {
         match k {

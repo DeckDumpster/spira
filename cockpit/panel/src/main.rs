@@ -40,6 +40,7 @@
 //! re-syncs behind it. Waiting a second for `bd` to confirm what you just asked for is the
 //! same latency by another name.
 
+mod lcio;
 mod model;
 mod render;
 mod store;

@@ -275,6 +275,7 @@ fn run(cmd: &str, args: &[&str], cfg: &Cfg) -> Result<(), String> {
 fn run_as(cmd: &str, args: &[&str], actor: Option<&str>, cfg: &Cfg) -> Result<(), String> {
     // Absolute path: tmux's global PATH has no ~/.local/bin, so a respawned pane cannot
     // find `bd` by name. See store::bin.
+    // FORK-EDGE: content store write — the runner for bead-content writes (comments, labels).
     let mut c = spira_config::bounded::bounded(crate::store::bin(cmd, cfg));
     c.args(args);
     c.env("PATH", crate::store::child_path(cfg));
@@ -327,6 +328,8 @@ fn close_decision(db: &str, item: &Item, reason: &str, cfg: &Cfg) -> Result<(), 
     let id = &item.id;
     // Through the lifecycle machine (sp-3fue0j), which forces the store close once the row
     // has ended — never a raw bd close.
+    // The CLI-answered close (LcClient::CLI_VERBS): the library runs it.
+    // FORK-EDGE: unserved verb close (the machine close also writes the planning store).
     let lc = crate::store::bin("spira-lc", cfg);
     let e = match spira_config::lifecycle_row::close_with(&lc, id, reason, actor, None) {
         Ok(()) => {
@@ -337,6 +340,7 @@ fn close_decision(db: &str, item: &Item, reason: &str, cfg: &Cfg) -> Result<(), 
         }
         Err(e) => e,
     };
+    // FORK-EDGE: content store write
     match run_as("spira-lc", &["content", "comments", "add", id, reason], Some(actor), cfg) {
         Ok(()) => Err(format!("{e} — still open; your answer is kept as a comment")),
         Err(_) => Err(format!("{e} — AND THE ANSWER WAS NOT SAVED: {reason}")),
@@ -348,11 +352,13 @@ fn close_decision(db: &str, item: &Item, reason: &str, cfg: &Cfg) -> Result<(), 
 /// 1 (a decision bead that is no ask) and 3 (already closed) are not failures; anything else is
 /// written to the bead, like a failed lift.
 fn record_answer(item: &Item, reason: &str, actor: &str, cfg: &Cfg) {
+    // FORK-EDGE: unserved verb close-ask (CLI-answered; keeps this PATH for its bd children).
     let mut c = Command::new(crate::store::bin("spira-lc", cfg));
     c.args(["close-ask", &item.id, "--exit", "answered", "--quote", reason, "--actor", actor, "--channel", "pane", "--message-id", &item.id])
         .env("PATH", crate::store::child_path(cfg));
     let (code, out) = spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT);
     if !matches!(code, 0 | 1 | 3) {
+        // FORK-EDGE: content store write
         let _ = run_as("spira-lc", &["content", "comments", "add", &item.id, &format!("[answer not recorded on the ask machine: exit {code}: {}]", out.trim())], Some(actor), cfg);
     }
 }
@@ -371,6 +377,7 @@ pub fn work_beads(item: &Item) -> Vec<&str> {
 /// else is written to the ask bead, like a failed mail, rather than swallowed.
 fn lift_work_holds(_db: &str, item: &Item, actor: &str, cfg: &Cfg) {
     for w in work_beads(item) {
+        // FORK-EDGE: unserved verb reply (a callers.rs verb the socket does not serve).
         let mut c = Command::new(crate::store::bin("spira-lc", cfg));
         c.args(["reply", w, &item.id, actor]).env("PATH", crate::store::child_path(cfg));
         let failed = match spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT) {
@@ -378,40 +385,10 @@ fn lift_work_holds(_db: &str, item: &Item, actor: &str, cfg: &Cfg) {
             (code, out) => Some(format!("exit {code}: {}", out.trim())),
         };
         if let Some(e) = failed {
+            // FORK-EDGE: content store write
             let _ = run_as("spira-lc", &["content", "comments", "add", &item.id, &format!("[ask hold on {w} not lifted: {e}]")], Some(actor), cfg);
         }
     }
-}
-
-/// Run a command for its exit status, feeding it stdin — the seam `mail sendmail` needs,
-/// since a message is a body on stdin and every other command here only ever needs argv.
-fn run_piped(cmd: &str, args: &[&str], stdin_body: &str, cfg: &Cfg) -> Result<(), String> {
-    use std::io::Write;
-    use std::process::Stdio;
-    let mut c = spira_config::bounded::bounded(cmd);
-    c.args(args)
-        .env("PATH", crate::store::child_path(cfg))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = c.spawn().map_err(|e| format!("{cmd}: {e}"))?;
-    child
-        .stdin
-        .take()
-        .expect("stdin was piped")
-        .write_all(stdin_body.as_bytes())
-        .map_err(|e| format!("{cmd}: {e}"))?;
-    let o = child.wait_with_output().map_err(|e| format!("{cmd}: {e}"))?;
-    if !o.status.success() {
-        return Err(format!(
-            "{cmd}: {}",
-            String::from_utf8_lossy(&o.stderr)
-                .lines()
-                .next()
-                .unwrap_or("failed")
-        ));
-    }
-    Ok(())
 }
 
 /// Deliver a pane answer to the concierge mailbox — the one route `spira-mail-deliver`
@@ -420,11 +397,11 @@ fn run_piped(cmd: &str, args: &[&str], stdin_body: &str, cfg: &Cfg) -> Result<()
 /// reply-closes-a-tracking-bead leg never engages here — this is pure delivery, replacing
 /// the bd-scanning readers that used to notice this write after the fact
 /// (law-answers-need-a-delivery-path).
-fn notify_concierge(id: &str, subject: &str, from: &str, body: &str, cfg: &Cfg) -> Result<(), String> {
-    // mail by name (sp-gypjk): the release's bin/ is on the launcher's PATH, which
-    // child_path() hands on.
+fn notify_concierge(id: &str, subject: &str, from: &str, body: &str, _cfg: &Cfg) -> Result<(), String> {
+    // Delivered in process by the mail library: the same spool, route and maildir write `mail
+    // sendmail` made, with no process between the pane and the mailbox.
     let msg = format!("From: {from} <{from}@spira>\nSubject: {subject}\nX-Spira-Bead: {id}\n\n{body}\n");
-    run_piped("mail", &["sendmail"], &msg, cfg)
+    crate::lcio::sendmail(&msg, None)
 }
 
 /// Forward an answer to the concierge, and if the mail itself fails to send, say so on the
@@ -463,6 +440,7 @@ pub fn act_all(view: View, ids: &[String], dismissed: bool, cfg: &Cfg) -> Result
                 args.push(id.as_str());
             }
             args.extend(&[flag, ARCHIVED]);
+            // FORK-EDGE: content store write
             run("spira-lc", &args, cfg)
         }
         View::Insights | View::Notifications => Ok(()),
@@ -548,10 +526,14 @@ pub fn act(
 
 /// `spira-lc condition <args> --owner <the watchdog>`: an alert is a control-plane condition.
 fn condition(args: &[&str], cfg: &Cfg) -> Result<(), String> {
+    condition_with(&crate::lcio::client(cfg)?, args)
+}
+
+fn condition_with(client: &spira_config::lc_call::LcClient, args: &[&str]) -> Result<(), String> {
     let mut argv = vec!["condition"];
     argv.extend_from_slice(args);
     argv.extend(["--owner", crate::store::ALERT_OWNER]);
-    run("spira-lc", &argv, cfg)
+    crate::lcio::write(client, &argv)
 }
 
 /// Close a decision as a premise rejection — not a verdict.
@@ -567,6 +549,7 @@ fn condition(args: &[&str], cfg: &Cfg) -> Result<(), String> {
 /// `why` is the training signal, not required — an empty string is fine: the `p` prompt
 /// says so, so pressing ⏎ immediately records `premise-rejected` with no trailing text.
 pub fn reject_premise(item: &Item, why: &str, cfg: &Cfg) -> Result<(), String> {
+    // FORK-EDGE: content store write
     run("spira-lc", &["content", "update", &item.id, "--add-label", PREMISE_REJECTED], cfg)?;
     let reason = if why.trim().is_empty() {
         PREMISE_REJECTED.to_string()
@@ -905,6 +888,13 @@ pub fn comment(view: View, item: &Item, text: &str, cfg: &Cfg) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_alert_condition_goes_to_the_store_in_process_naming_the_watchdog() {
+        let (t, client) = crate::lcio::tests::scripted(0, "");
+        condition_with(&client, &["ack", "db-down"]).unwrap();
+        assert_eq!(*t.calls.lock().unwrap(), vec![vec!["condition", "ack", "db-down", "--owner", crate::store::ALERT_OWNER]]);
+    }
 
     #[test]
     fn rule_sh_without_spira_release_refuses_naming_the_key() {
