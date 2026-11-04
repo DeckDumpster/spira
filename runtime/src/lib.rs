@@ -18,6 +18,7 @@ pub mod pools;
 pub mod ports;
 pub mod scheduler;
 pub mod socket;
+pub mod sources;
 pub mod taskrig;
 pub mod units;
 pub mod wide;

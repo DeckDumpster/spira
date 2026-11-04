@@ -65,7 +65,8 @@ fn count(j: &dyn Journal, tag: &str) -> usize {
 #[tokio::test]
 async fn a_full_class_defers_records_it_and_runs_the_effect_later() {
     let j: Arc<dyn Journal> = MemJournal::new();
-    let mut e = engine(j.clone());
+    let board = Arc::new(runtime::engine::StatusBoard::default());
+    let mut e = engine(j.clone()).with_status_board(board.clone());
     for i in 0..3 {
         e.submit(&format!("b{i}"), &format!("s{i}"), EventKind::new("build", &format!("b{i}"))).unwrap();
     }
@@ -92,6 +93,10 @@ async fn a_full_class_defers_records_it_and_runs_the_effect_later() {
     tokio::time::timeout(Duration::from_secs(20), serving).await.expect("the host drains").unwrap().unwrap();
     assert_eq!(count(&*j, "built"), 3, "every deferred effect runs: nothing is dropped");
     assert!(runner.ran.lock().unwrap().values().all(|n| *n == 1), "each effect runs once");
+    let status = board.get().expect("the engine published its status");
+    let container = status.classes.iter().find(|c| c.class == "container").unwrap_or_else(|| panic!("status names the runner's class: {:?}", status.classes));
+    assert!(container.refusals >= 1, "status counts the class's refusals: {container:?}");
+    assert!(status.classes.iter().all(|c| c.class != "host" || c.refusals == 0), "{:?}", status.classes);
 }
 
 #[tokio::test]
