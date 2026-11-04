@@ -18,7 +18,7 @@ const LOG_QUEUE: usize = 1024;
 const NO_WATCHDOG_BOOT: Duration = Duration::from_secs(20);
 
 fn check() -> Result<(), String> {
-    spira_config::process::check_config(Settings::KEYS)?;
+    spira_config::process::check_config(&Settings::keys())?;
     Ok(())
 }
 

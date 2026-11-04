@@ -55,88 +55,40 @@ fn num<T: std::str::FromStr + PartialOrd + Default>(key: &str, raw: &str) -> Res
 }
 
 impl Settings {
-    /// Every key `from_lookup` reads; each must be registered in spira/conf.d.
-    pub const KEYS: &'static [&'static str] = &[
+    /// The keys the service reads for itself and for what its tasks share (the journal, the
+    /// world, the forge). A task's own keys are on its row in `tasks::TASKS`.
+    pub const SERVICE_KEYS: &'static [&'static str] = &[
         "SPIRA_LC_SOCKET",
         "SPIRA_RUN",
-        "SPIRA_RUNTIME_ROUND_DUTY_SECS",
-        "SPIRA_ROUND_MIN",
-        "SPIRA_ROUND_MAX_OPEN",
-        "SPIRA_ROUND_DUE_REMIND",
-        "SPIRA_ROUND_IDLE_CUT",
+        "SPIRA_RUNTIME_STALL_LIMIT",
+        "SPIRA_METRICS_ENDPOINT",
         "SPIRA_QUEUE_DIR",
         "SPIRA_REPO_MAP",
         "SPIRA_HOME_REPO",
         "SPIRA_CONCIERGE_INBOX",
-        "SPIRA_RUNTIME_HEARTBEAT_URL",
-        "SPIRA_RUNTIME_HEARTBEAT_SECS",
-        "SPIRA_RUNTIME_STALL_LIMIT",
-        "SPIRA_METRICS_ENDPOINT",
-        "SPIRA_RUNTIME_DESIGN_ASKS_SECS",
-        "SPIRA_DESIGN_ASKS_REPEAT",
-        "SPIRA_RUNTIME_BRAIN_DIRTY_SECS",
-        "SPIRA_BRAIN_DIRTY_AGE",
+        "SPIRA_MAIL",
+        "SPIRA_ASK_LABEL",
         "SPIRA_WIKI",
-        "SPIRA_RUNTIME_SUPERSEDE_DUTY_SECS",
-        "SPIRA_CONCIERGE_INBOX_STALL",
-        "SPIRA_CONCIERGE_INBOX_BACKOFF",
-        "SPIRA_RUNTIME_PR_NOTIFY_SECS",
-        "SPIRA_PR_DEPLOY_GIVEUP",
+        "SPIRA_SCOPE_LABEL",
+        "SPIRA_DESIRED_DIR",
+        "SPIRA_VIEW_SESSION",
         "SPIRA_GH_API",
         "SPIRA_BROKER_GH_TOKEN",
         "SPIRA_BROKER_GH_CONFIG_DIR",
         "SPIRA_GH",
-        "SPIRA_RUNTIME_ASKS_SECS",
-        "SPIRA_RUNTIME_BEAD_SWEEP_SECS",
-        "SPIRA_BEAD_SWEEP_HOLD_MIN",
-        "SPIRA_BEAD_SWEEP_REWORK_MIN",
-        "SPIRA_BEAD_SWEEP_CERT_MIN",
-        "SPIRA_BEAD_SWEEP_WAIT_MIN",
-        "SPIRA_BEAD_SWEEP_BATCH_MIN",
-        "SPIRA_SCOPED_STOP_REVIEW_SECS",
-        "SPIRA_MAIL",
-        "SPIRA_ASK_LABEL",
-        "SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS",
-        "SPIRA_LOCAL_BACKLOG_COUNT",
-        "SPIRA_LOCAL_BACKLOG_AGE",
-        "SPIRA_RUNTIME_REPO_EVENTS_SECS",
-        "SPIRA_RUNTIME_OVERRIDES_SECS",
-        "SPIRA_VIEW",
-        "SPIRA_VIEW_SESSION",
-        "SPIRA_RUNTIME_VIEW_SECS",
-        "SPIRA_RUNTIME_RECONCILER_SECS",
-        "SPIRA_RUNES",
-        "SPIRA_STRANDED_RUNNER_MIN_AGE",
-        "SPIRA_LC_PASSWORD_FILE",
-        "COCKPIT_SESSIONS",
-        "COCKPIT_MAIL",
-        "SPIRA_RECONCILER_SHADOW_KINDS",
-        "SPIRA_RECONCILER_EFFECT_PASSES",
-        "SPIRA_RELEASES",
-        "SPIRA_DOLT_DATA",
-        "SPIRA_MAX_LIVE_DWARVES",
-        "SPIRA_LANES_MAX_LIVE",
-        "SPIRA_MAX_DWARVES",
-        "SPIRA_DISK_FLOOR_PCT",
-        "SPIRA_UNTAGGED_IMAGES_MAX",
-        "SPIRA_RECONCILER_GRACE_SECS",
-        "SPIRA_MAIN_HEALTH_ACTIVATION_GRACE_SECS",
-        "SPIRA_MAIN_HEALTH_FENCE_DEADLINE_SECS",
-        "SPIRA_PREFLIGHT_WALL_SECS",
-        "SPIRA_CTRL",
-        "SPIRA_INSTANCE",
-        "SPIRA_DESIRED_DIR",
-        "SPIRA_NO_PROGRESS_BREAKER_CLAIMS",
-        "SPIRA_NO_PROGRESS_BREAKER_WINDOW_MINUTES",
-        "SPIRA_RUNTIME_RECONCILER_FLOW_SECS",
-        "SPIRA_FLOW_WINDOW_HOURS",
-        "SPIRA_FLOW_BASELINE_HOURS",
-        "SPIRA_FLOW_GRACE_SECS",
-        "SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS",
-        "SPIRA_FLOW_REWORK_WINDOW_HOURS",
-        "SPIRA_FLOW_SENTINEL_PERIOD_SECS",
-        "SPIRA_SCOPE_LABEL",
     ];
+
+    /// Every key `from_lookup` may read, each once: the service's and every task's. Each must be
+    /// registered in spira/conf.d.
+    pub fn keys() -> Vec<&'static str> {
+        let mut out: Vec<&'static str> = vec![];
+        for k in Self::SERVICE_KEYS.iter().chain(crate::tasks::TASKS.iter().flat_map(|t| t.keys.iter().flat_map(|ks| ks.iter()))) {
+            if !out.contains(k) {
+                out.push(k);
+            }
+        }
+        out
+    }
 
     pub fn load() -> Result<Settings, String> {
         let mut settings = Self::from_lookup(&cfg)?.with_environment(&|k| std::env::var(k).ok().filter(|v| !v.is_empty()))?;
@@ -156,8 +108,12 @@ impl Settings {
         Ok(self)
     }
 
-    pub fn from_lookup(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Settings, String> {
-        let unresolved: Vec<&str> = Self::KEYS.iter().copied().filter(|k| get(k).is_err()).collect();
+    /// Reads only the keys `keys()` names: one read of any other is refused, so a key cannot be
+    /// read without `check-config` checking it.
+    pub fn from_lookup(lookup: &dyn Fn(&str) -> Result<String, String>) -> Result<Settings, String> {
+        let known = Self::keys();
+        let get = |k: &str| if known.contains(&k) { lookup(k) } else { Err(format!("{k} is read but neither the service nor any task declares it")) };
+        let unresolved: Vec<&str> = known.iter().copied().filter(|k| get(k).is_err()).collect();
         if !unresolved.is_empty() {
             return Err(format!("unregistered or unresolved config keys: {} — refusing", unresolved.join(", ")));
         }
@@ -351,14 +307,14 @@ mod tests {
         assert_eq!((s.interval_ms, s.rules.grace_secs, s.rules.effect_passes), (7000, 13, 3));
         assert_eq!(s.values.get("SPIRA_DISK_FLOOR_PCT").map(String::as_str), Some("11"));
         for k in reconciler::Config::KEYS {
-            assert!(Settings::KEYS.contains(k), "{k} is read by the reconciler but not checked at start");
+            assert!(Settings::keys().contains(k), "{k} is read by the reconciler but not checked at start");
         }
     }
 
     #[test]
     fn every_key_read_is_registered_in_conf_d() {
         let conf_d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d");
-        let missing: Vec<&str> = Settings::KEYS.iter().copied().filter(|k| !conf_d.join(k).is_file()).collect();
+        let missing: Vec<&str> = Settings::keys().into_iter().filter(|k| !conf_d.join(k).is_file()).collect();
         assert!(missing.is_empty(), "keys the runtime reads but spira/conf.d does not register: {missing:?}");
     }
 
