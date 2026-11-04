@@ -2,13 +2,12 @@
 //! set|clear|list`, one `conditions/heimdall/<key>` per cause. A trait so the reconciliation
 //! logic (`alerts.rs`) can be driven by an in-memory fake in tests.
 
-use std::collections::BTreeMap;
-use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::util::{self, Spec};
+use crate::util;
+use spira_config::lc_call::LcClient;
 
 /// The condition type every alert carries; the pane lists this type.
 pub const ALERT: &str = "Alert";
@@ -52,10 +51,9 @@ pub trait Conditions: Send + Sync {
 }
 
 /// The conditions through the release's own `spira-lc`, bounded by `timeout`.
-pub struct LcConditions<'a> {
-    pub bin: String,
-    pub env: &'a BTreeMap<String, String>,
-    pub timeout: Duration,
+/// The store's `condition` verb, in-process over the lifecycle socket.
+pub struct LcConditions {
+    pub client: LcClient,
 }
 
 fn fail_of(code: i32) -> Failure {
@@ -66,16 +64,25 @@ fn fail_of(code: i32) -> Failure {
     }
 }
 
-impl LcConditions<'_> {
+/// A call that got no answer in time is saturation: the socket's own deadline refusal, or a
+/// reply lost past it. A store that is not listening at all is not.
+fn fail_of_text(code: i32, text: &str) -> Failure {
+    if fail_of(code) == Failure::Saturated || text.contains("deadline") || text.contains("timed out") || text.contains("reply was lost") {
+        Failure::Saturated
+    } else {
+        Failure::Other
+    }
+}
+
+impl LcConditions {
     fn call(&self, args: &[&str]) -> R<String> {
         let mut argv = vec!["condition".to_string()];
         argv.extend(args.iter().map(|s| s.to_string()));
         argv.extend(["--owner".into(), "heimdall".into()]);
-        let o = util::run(Spec { prog: &self.bin, args: argv, env: Some(self.env), cwd: None, stdin: None, timeout: Some(self.timeout) });
-        if o.success() {
-            Ok(o.stdout)
-        } else {
-            Err(fail_of(o.code))
+        match self.client.call(&argv) {
+            Ok(r) if r.code == 0 => Ok(r.out),
+            Ok(r) => Err(fail_of_text(r.code, &r.text())),
+            Err(e) => Err(fail_of_text(-1, &e.to_string())),
         }
     }
 }
@@ -87,7 +94,7 @@ pub fn parse_list(text: &str) -> Option<Vec<Condition>> {
     Some(rows.iter().filter_map(|r| serde_json::from_value(r.clone()).ok()).collect())
 }
 
-impl Conditions for LcConditions<'_> {
+impl Conditions for LcConditions {
     fn list(&self) -> R<Vec<Condition>> {
         parse_list(&self.call(&["list"])?).ok_or(Failure::Other)
     }
@@ -119,5 +126,36 @@ mod tests {
     fn a_timeout_is_saturation() {
         assert_eq!(fail_of(124), Failure::Saturated);
         assert_eq!(fail_of(2), Failure::Other);
+    }
+
+    struct Store(std::sync::Mutex<Vec<Vec<String>>>, Result<(i32, &'static str), &'static str>);
+
+    impl spira_config::lc_call::Transport for Store {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+            self.0.lock().unwrap().push(argv.to_vec());
+            self.1.map(|(code, out)| spira_config::lc_call::Reply { code, out: out.into(), err: String::new() }).map_err(String::from)
+        }
+    }
+
+    fn ops(answer: Result<(i32, &'static str), &'static str>) -> (LcConditions, std::sync::Arc<Store>) {
+        let s = std::sync::Arc::new(Store(Default::default(), answer));
+        (LcConditions { client: LcClient::over(s.clone() as std::sync::Arc<dyn spira_config::lc_call::Transport>, true) }, s)
+    }
+
+    #[test]
+    fn conditions_are_read_and_set_over_the_store_client() {
+        let (o, s) = ops(Ok((0, r#"{"rev":1,"conditions":[]}"#)));
+        assert_eq!(o.list(), Ok(vec![]));
+        o.clear("db-down", "ok", "cleared").unwrap();
+        let asked = s.0.lock().unwrap();
+        assert_eq!(asked[0], ["condition", "list", "--owner", "heimdall"]);
+        assert_eq!(asked[1], ["condition", "clear", "db-down", "--reason", "ok", "--message", "cleared", "--owner", "heimdall"]);
+    }
+
+    #[test]
+    fn a_store_past_its_deadline_is_saturated_and_one_not_listening_is_not() {
+        assert_eq!(ops(Ok((2, "cannot tell: the request passed its deadline"))).0.list(), Err(Failure::Saturated));
+        assert_eq!(ops(Err("cannot tell: the lifecycle service took the request but its reply was lost (no reply)")).0.list(), Err(Failure::Saturated));
+        assert_eq!(ops(Err("cannot tell: the lifecycle service is not answering on /x: refused")).0.list(), Err(Failure::Other));
     }
 }
