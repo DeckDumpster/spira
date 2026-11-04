@@ -228,22 +228,18 @@ pub fn backlog_baseline(duckdb_bin: &str, root: &Path, baseline_hours: f64) -> R
     Ok(rows.first().map(|r| f64_field(r, "baseline")).unwrap_or(0.0))
 }
 
-/// Appends this pass's backlog count to the `backlog` family via `tsd-write`, the one writer
-/// every run/tsd/ producer shells out to (sp-sbc6o), by name on the launcher's PATH
-/// (sp-gypjk) — best-effort: a failed write leaves the family unwritten, never fails the
-/// pass that is trying to observe it. An empty program (a unit test's "no writer") skips.
-pub fn append_backlog_sample(tsd_bin: &str, root: &Path, count: u64) {
-    if tsd_bin.is_empty() {
+/// Appends this pass's backlog count to the `backlog` family in-process, through
+/// [`append_backlog_sample_in_process`] (the library `tsd-write` itself calls), stamped now —
+/// best-effort: a failed write leaves the family unwritten, never fails the pass that is
+/// trying to observe it. `write` false (a unit test's "no writer") skips.
+pub fn append_backlog_sample(write: bool, root: &Path, count: u64) {
+    if !write {
         return;
     }
-    let _ = spira_config::bounded::bounded(tsd_bin)
-        .args(["--family", "backlog", "--root"])
-        .arg(root)
-        .args(["--field", &format!("count={count}")])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    if let Err(e) = append_backlog_sample_in_process(root, now, count) {
+        eprintln!("reconciler-flow: backlog sample not written: {e}");
+    }
 }
 
 /// [`backlog_baseline`] read in-process: the mean of the `count` field over the window, `0.0`
@@ -428,5 +424,22 @@ mod backlog_tests {
             .collect();
         let ids: Vec<String> = (0..6).map(|i| format!("sp-{i}")).collect();
         assert_eq!(backlog_of(&ids, &lc), 3);
+    }
+}
+
+#[cfg(test)]
+mod backlog_sample_tests {
+    use super::*;
+
+    #[test]
+    fn a_backlog_sample_lands_in_the_family_and_is_read_back_by_the_baseline() {
+        let t = testkit::TempDir::new("flow-backlog-sample");
+        append_backlog_sample(false, t.path(), 99);
+        assert!(!tsd::family_path(t.path(), "backlog").exists());
+        append_backlog_sample_in_process(t.path(), 1_000_000, 12).unwrap();
+        append_backlog_sample_in_process(t.path(), 1_000_060, 4).unwrap();
+        let text = std::fs::read_to_string(tsd::family_path(t.path(), "backlog")).unwrap();
+        assert_eq!(text.lines().count(), 2, "{text}");
+        assert_eq!(backlog_baseline_in_process(t.path(), 1_000_100, 1.0).unwrap(), 8.0);
     }
 }

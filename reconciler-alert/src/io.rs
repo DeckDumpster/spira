@@ -1,6 +1,6 @@
 //! The alert path's IO seam: persists which streak each invariant last alerted for (one
 //! JSON file, keyed by invariant), asks whether the Concierge is running, and hands mail to
-//! `mail`. Every function here does exactly one read, one write or one subprocess call —
+//! the mail library in-process. Every function here does exactly one read, one write or one subprocess call —
 //! the dedup and classification logic lives in `reconciler_engine::alert`, not here.
 
 use std::process::Stdio;
@@ -13,6 +13,7 @@ pub use reconciler_engine::io::{load_alerted, save_alerted};
 /// (tmux missing, or the call itself failed): either way there is nobody to wake, and the
 /// alert waits in the Concierge's mailbox.
 pub fn session_is_running(tmux: &str, session: &str) -> bool {
+    // FORK-EDGE: needs a Units fact for the Concierge's tmux session (tmux is the system's)
     spira_config::bounded::bounded(tmux)
         .args(["has-session", "-t", &format!("={session}")])
         .stdin(Stdio::null())
@@ -23,4 +24,4 @@ pub fn session_is_running(tmux: &str, session: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub use reconciler_engine::mail::send as mail_send;
+pub use reconciler_engine::mail::{send as mail_send, Message as Mail};

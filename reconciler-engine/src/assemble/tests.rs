@@ -24,3 +24,38 @@ fn the_pass_numbers_from_one_and_follows_the_previous_record() {
     assert_eq!(after.prev.unwrap().mode, Mode::Shadow);
     assert_eq!(history_key(42), format!("{PASSES_PREFIX}42"));
 }
+
+mod verb {
+    use super::*;
+    use spira_config::lc_call::{LcClient, Reply, Transport};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    struct Store(Mutex<Vec<Vec<String>>>, i32, String);
+
+    impl Transport for Store {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
+            self.0.lock().unwrap().push(argv.to_vec());
+            Ok(Reply { code: self.1, out: self.2.clone(), err: String::new() })
+        }
+    }
+
+    fn verb(code: i32, out: &str) -> (Verb, Arc<Store>) {
+        let s = Arc::new(Store(Mutex::default(), code, out.into()));
+        (Verb::new(LcClient::over(Arc::clone(&s) as Arc<dyn Transport>, true)), s)
+    }
+
+    #[test]
+    fn the_snapshot_is_asked_of_the_store_in_process() {
+        let doc = json!({ "list_rev": 7, "sections": [], "intents": [], "pass": null, "knobs": {}, "undecodable": [] }).to_string();
+        let (v, store) = verb(0, &doc);
+        assert_eq!(v.snapshot().unwrap().list_rev, 7);
+        assert_eq!(store.0.lock().unwrap().as_slice(), &[vec!["section".to_string(), "snapshot".into()]]);
+    }
+
+    #[test]
+    fn a_store_that_cannot_tell_is_an_error() {
+        let (v, _) = verb(2, "cannot tell: down");
+        assert!(v.snapshot().unwrap_err().contains("cannot tell: down"));
+    }
+}

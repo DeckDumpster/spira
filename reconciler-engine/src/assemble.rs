@@ -90,28 +90,21 @@ impl Snapshot {
     }
 }
 
-/// [`SnapshotSource`] over the `spira-lc section snapshot` verb.
+/// [`SnapshotSource`] over the store's `section snapshot` verb, in-process through `lc`.
 pub struct Verb {
-    /// The program and any leading arguments; `section snapshot` is appended.
-    pub argv: Vec<String>,
+    pub lc: spira_config::lc_call::LcClient,
 }
 
 impl Verb {
-    pub fn new(program: impl Into<String>) -> Verb {
-        Verb { argv: vec![program.into()] }
+    pub fn new(lc: spira_config::lc_call::LcClient) -> Verb {
+        Verb { lc }
     }
 }
 
 impl SnapshotSource for Verb {
     fn snapshot(&self) -> Result<Snapshot, String> {
-        let (program, lead) = self.argv.split_first().ok_or("no program to ask for the snapshot")?;
-        let out = spira_config::bounded::bounded(program)
-            .args(lead)
-            .args(["section", "snapshot"])
-            .stdin(std::process::Stdio::null())
-            .output()
-            .map_err(|e| format!("{program}: {e}"))?;
-        answer(out.status.code(), &String::from_utf8_lossy(&out.stdout), &String::from_utf8_lossy(&out.stderr))
+        let r = self.lc.call(&["section", "snapshot"]).map_err(|e| format!("section snapshot: {e}"))?;
+        answer(Some(r.code), &r.out, &r.err)
     }
 }
 
