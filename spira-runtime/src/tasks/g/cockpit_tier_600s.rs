@@ -2,7 +2,7 @@
 //! registry rows of `cockpit-collect` and their re-exec and `timeout` chain. Pattern P1.
 //! Contract: `wiki/projects/spira/designs/tasks/cockpit-tier-600s.md`; siblings
 //! [`super::cockpit_tier_5s`] and [`super::cockpit_tier_60s`]. Not ported yet: [`decide`] and
-//! [`step`] are `unimplemented!`, and the row waits in `tasks::g::STAGED`.
+//! [`step`] are `unimplemented!`, and the row waits in `tasks::g::PENDING`.
 //!
 //! # Tick
 //!

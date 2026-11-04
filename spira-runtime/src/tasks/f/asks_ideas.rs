@@ -2,7 +2,7 @@
 //! Replaces `spira-idea-prompt-prod` (`bin/idea-prompt pass --state run/idea-prompt.state
 //! --idle-secs 1800 --wake-from 7 --wake-until 22 --tz America/Los_Angeles --min-gap-secs 86400`).
 //! Pattern P1. Contract: `wiki/projects/spira/designs/tasks/asks-ideas.md`. Not ported yet:
-//! [`decide`] and [`step`] are `unimplemented!`, and the row waits in `tasks::f::STAGED`.
+//! [`decide`] and [`step`] are `unimplemented!`, and the row waits in `tasks::f::PENDING`.
 //!
 //! # Tick
 //!

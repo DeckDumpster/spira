@@ -136,9 +136,9 @@ pub fn registered(name: &str) -> Option<&'static super::super::Task> {
     super::super::all().find(|t| t.name == name)
 }
 
-/// The row named `name` staged in family A until its port lands.
-pub fn staged(name: &str) -> &'static super::super::Task {
-    super::STAGED.iter().find(|t| t.name == name).unwrap_or_else(|| panic!("{name} has no row in tasks::a::STAGED"))
+/// The row named `name` pending in family A until its port lands.
+pub fn pending(name: &str) -> &'static super::super::Task {
+    super::PENDING.iter().find(|t| t.name == name).unwrap_or_else(|| panic!("{name} has no row in tasks::a::PENDING"))
 }
 
 /// Panics with the quarantine message when a handler on `stream` panicked or was refused. A
@@ -236,7 +236,7 @@ macro_rules! family_a_acceptance {
 
         #[test]
         fn t1_registered_boots_and_arms_its_tick() {
-            let row = kit::registered(NAME).unwrap_or_else(|| panic!("{} is not in tasks::all(): its row waits in tasks::a::STAGED until the port lands", NAME));
+            let row = kit::registered(NAME).unwrap_or_else(|| panic!("{} is not in tasks::all(): its row waits in tasks::a::PENDING until the port lands", NAME));
             let (_, stream, kind) = (row.boot)();
             assert_eq!(stream, STREAM);
             let mut r = TaskRig::new(1, registration()).unwrap();
@@ -245,14 +245,14 @@ macro_rules! family_a_acceptance {
         }
 
         #[test]
-        fn t1_the_staged_row_is_this_contract() {
-            let row = kit::staged(NAME);
+        fn t1_the_pending_row_is_this_contract() {
+            let row = kit::pending(NAME);
             assert_eq!(row.effects, EFFECTS);
             assert_eq!(row.stream(), STREAM);
             let mut r = TaskRig::new(1, registration()).unwrap();
             let (_, stream, kind) = (row.boot)();
             r.tick(stream, kind).unwrap();
-            assert_eq!(r.engine().next_timer_at(), Some($first), "the staged boot arms the next tick");
+            assert_eq!(r.engine().next_timer_at(), Some($first), "the pending boot arms the next tick");
             assert_eq!(kit::unregistered(KEYS), Vec::<String>::new(), "every pinned key is registered");
             assert_eq!(kit::unregistered(UNREGISTERED).len(), UNREGISTERED.len(), "a key listed as unregistered has since been registered: move it to KEYS");
             assert!(ACTS.iter().all(|(n, _)| EFFECTS.contains(n) || $crate::tasks::SHARED.iter().any(|(s, _)| s == n)), "every act is a declared effect");

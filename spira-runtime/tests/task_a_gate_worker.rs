@@ -1,7 +1,7 @@
 //! Acceptance T1–T6 for `gate.worker`, instantiated from its contract
 //! (`wiki/projects/spira/designs/tasks/gate-worker.md`, Acceptance) on `TaskRig`. Red until the
 //! port lands: `decide`, `step`, `pick`, `check_tip` and `classify` are `unimplemented!`, and the
-//! row waits in `tasks::a::STAGED`. The N slots are N entries of one carry on one stream: a
+//! row waits in `tasks::a::PENDING`. The N slots are N entries of one carry on one stream: a
 //! `Command::Timer` arms only its own event's stream. T6 runs two virtual days (the contract asks
 //! three, with gate legs finished by scripted `unit.ran`); its idle budget is "0 per idle hour".
 

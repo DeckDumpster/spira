@@ -3,7 +3,8 @@
 //! service through `tasks::FAMILIES`; each task is one module under `d/`, its doc comment the
 //! task's contract (`wiki/projects/spira/designs/tasks/<task>.md`).
 //!
-//! Every row's runners are stubs until the task is ported. `inbox.append` is served by
+//! Every row's runners are stubs until the task is ported, so every row waits in [`PENDING`];
+//! porting one moves it to [`TASKS`]. `inbox.append` is served by
 //! `tasks::SHARED`, and `unit.start` / `unit.stop` by family F's row, so neither appears here.
 //!
 //! A calendar row's `cadence_ms` is its first elapse on a clock that starts at 0, which is when
@@ -33,7 +34,10 @@ macro_rules! stub {
 }
 pub(crate) use stub;
 
-pub static TASKS: &[Task] = &[
+pub static TASKS: &[Task] = &[];
+
+/// The family's rows, written from their contracts and not yet ported; see `tasks`.
+pub static PENDING: &[Task] = &[
     Task { name: watch_perf::NAME, boot: watch_perf::WatchPerf::boot, cadence_ms: |_| watch_perf::CADENCE_MS, effects: watch_perf::EFFECTS, runners: &[stub!(watch_perf::OBSERVE), stub!(watch_perf::LOG), stub!(watch_perf::SLOW_SAMPLE), stub!(watch_perf::METRICS)], keys: &[watch_perf::KEYS], build: |_| watch_perf::WatchPerf::pinned().registration() },
     Task { name: watch_perf_happy::NAME, boot: watch_perf_happy::WatchPerfHappy::boot, cadence_ms: |_| watch_perf_happy::CADENCE_MS, effects: watch_perf_happy::EFFECTS, runners: &[stub!(watch_perf_happy::OBSERVE), stub!(watch_perf_happy::CHECKOUT), stub!(watch_perf_happy::TEARDOWN), stub!(watch_perf_happy::LOG), stub!(watch_perf_happy::HISTORY)], keys: &[watch_perf_happy::KEYS], build: |_| watch_perf_happy::WatchPerfHappy::pinned().registration() },
     Task { name: watch_skew::NAME, boot: watch_skew::WatchSkew::boot, cadence_ms: |_| watch_skew::CADENCE_MS, effects: watch_skew::EFFECTS, runners: &[stub!(watch_skew::OBSERVE), stub!(watch_skew::ESCALATE), stub!(watch_skew::LOG), stub!(watch_skew::REFRESH)], keys: &[watch_skew::KEYS], build: |_| watch_skew::WatchSkew::pinned().registration() },

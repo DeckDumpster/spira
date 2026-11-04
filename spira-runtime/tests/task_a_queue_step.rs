@@ -1,6 +1,6 @@
 //! Acceptance T1–T6 for `queue.step`, instantiated from its contract
 //! (`wiki/projects/spira/designs/tasks/queue-step.md`, Acceptance) on `TaskRig`. Red until the
-//! port lands: `decide` and `step` are `unimplemented!`, and the row waits in `tasks::a::STAGED`.
+//! port lands: `decide` and `step` are `unimplemented!`, and the row waits in `tasks::a::PENDING`.
 //! T4 checks the 16 effects; the contract's "18 names" counts `cut_wanted` and
 //! `publish_wanted`, which its own table makes Emits with no runner. T6 runs two virtual days
 //! (the contract asks seven, over a local and a forge repo).

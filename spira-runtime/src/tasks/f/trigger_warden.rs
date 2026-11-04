@@ -1,7 +1,7 @@
 //! `trigger.warden`: files the warden's scheduled sweep bead. Replaces `spira-warden-prod`
 //! (ExecStartPre `world guard`; ExecStart `spira/warden-trigger.sh`). Pattern P1, stateless.
 //! Contract: `wiki/projects/spira/designs/tasks/trigger-warden.md`. Not ported yet: [`decide`],
-//! [`may_file`] and [`step`] are `unimplemented!`, and the row waits in `tasks::f::STAGED`.
+//! [`may_file`] and [`step`] are `unimplemented!`, and the row waits in `tasks::f::PENDING`.
 //!
 //! # Tick
 //!

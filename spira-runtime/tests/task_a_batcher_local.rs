@@ -1,6 +1,6 @@
 //! Acceptance T1–T6 for `batcher.local`, instantiated from its contract
 //! (`wiki/projects/spira/designs/tasks/batcher-local.md`, Acceptance) on `TaskRig`. Red until the
-//! port lands: `decide` and `step` are `unimplemented!`, and the row waits in `tasks::a::STAGED`.
+//! port lands: `decide` and `step` are `unimplemented!`, and the row waits in `tasks::a::PENDING`.
 //! T6 runs two virtual days (the contract asks seven, with seeded arrivals and VM reds).
 
 use std::collections::BTreeMap;

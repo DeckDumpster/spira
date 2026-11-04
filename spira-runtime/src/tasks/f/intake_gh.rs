@@ -1,7 +1,7 @@
 //! `intake.gh`: GitHub issues become work beads or untrusted records. Replaces
 //! `spira-gh-intake-prod` (ExecStartPre `world guard`; ExecStart `bin/gh-intake`). Pattern P1.
 //! Contract: `wiki/projects/spira/designs/tasks/intake-gh.md`. Not ported yet: [`decide`] and
-//! [`step`] are `unimplemented!`, and the row waits in `tasks::f::STAGED`.
+//! [`step`] are `unimplemented!`, and the row waits in `tasks::f::PENDING`.
 //!
 //! # Tick
 //!

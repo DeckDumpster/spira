@@ -1,7 +1,7 @@
 //! Acceptance T1–T6 for `cockpit-tier-5s`, from its contract
 //! (`wiki/projects/spira/designs/tasks/cockpit-tier-5s.md`, Acceptance) on `TaskRig`. Red until
 //! the port lands: `decide` and `step` are `unimplemented!`, and the row waits in
-//! `tasks::g::STAGED`. The three sub-probes ride one observe, so T2's one-probe rule holds. T6 runs
+//! `tasks::g::PENDING`. The three sub-probes ride one observe, so T2's one-probe rule holds. T6 runs
 //! two virtual days (the contract asks one).
 
 use std::collections::BTreeMap;
@@ -51,7 +51,7 @@ fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> Ta
 
 #[test]
 fn t1_the_task_is_registered_boots_and_arms_its_cadence_with_its_three_probes() {
-    let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::g::STAGED"));
+    let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::g::PENDING"));
     assert_eq!(row.stream(), STREAM);
     assert!(row.keys.iter().flat_map(|k| k.iter()).any(|k| *k == CADENCE_KEY), "the cadence is pinned config");
     assert_eq!(PROBES.iter().map(|p| p.0).collect::<Vec<_>>(), ["cockpit.now", "cockpit.round", "cockpit.inflight"]);
@@ -89,7 +89,7 @@ fn t3_a_publish_from_an_unsupervised_instance_is_refused_naming_may_write() {
 
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
-    let row = g::STAGED.iter().find(|t| t.name == NAME).expect("the row is staged");
+    let row = g::PENDING.iter().find(|t| t.name == NAME).expect("the row is pending");
     assert_eq!(row.effects, EFFECTS, "the row declares the module's effects");
     let real: Vec<&str> = tasks::routes().keys().copied().collect();
     let doubles = sim::doubles::service().names();

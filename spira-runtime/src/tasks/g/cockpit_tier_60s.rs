@@ -3,7 +3,7 @@
 //! Contract: `wiki/projects/spira/designs/tasks/cockpit-tier-60s.md`; siblings
 //! [`super::cockpit_tier_5s`] (which lists the rows that become projections) and
 //! [`super::cockpit_tier_600s`]. Not ported yet: [`decide`] and [`step`] are `unimplemented!`, and
-//! the row waits in `tasks::g::STAGED`.
+//! the row waits in `tasks::g::PENDING`.
 //!
 //! # Tick
 //!

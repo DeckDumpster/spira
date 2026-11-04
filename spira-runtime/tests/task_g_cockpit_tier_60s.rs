@@ -1,7 +1,7 @@
 //! Acceptance T1–T6 for `cockpit-tier-60s`, from its contract
 //! (`wiki/projects/spira/designs/tasks/cockpit-tier-60s.md`, Acceptance) on `TaskRig`. Red until
 //! the port lands: `decide` and `step` are `unimplemented!`, and the row waits in
-//! `tasks::g::STAGED`. T6 runs two virtual days (the contract asks one).
+//! `tasks::g::PENDING`. T6 runs two virtual days (the contract asks one).
 //!
 //! T2 note: the contract has `slots_sample` fire on every tick and counts it as zero journal
 //! rows, but a `Command::Effect` is journaled, so `assert_silent_tick` would refuse it. T2 here
@@ -60,7 +60,7 @@ fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> Ta
 
 #[test]
 fn t1_the_task_is_registered_boots_and_arms_its_cadence_with_its_three_probes() {
-    let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::g::STAGED"));
+    let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::g::PENDING"));
     assert_eq!(row.stream(), STREAM);
     assert!(row.keys.iter().flat_map(|k| k.iter()).any(|k| *k == CADENCE_KEY), "the cadence is pinned config");
     assert_eq!(PROBES.iter().map(|p| p.0).collect::<Vec<_>>(), ["cockpit.slots", "cockpit.reachable", "cockpit.tsd"]);
@@ -99,7 +99,7 @@ fn t3_an_overrunning_reachable_probe_is_recorded_as_skipped_not_stacked() {
 
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
-    let row = g::STAGED.iter().find(|t| t.name == NAME).expect("the row is staged");
+    let row = g::PENDING.iter().find(|t| t.name == NAME).expect("the row is pending");
     assert_eq!(row.effects, EFFECTS, "the row declares the module's effects");
     let real: Vec<&str> = tasks::routes().keys().copied().collect();
     let doubles = sim::doubles::service().names();

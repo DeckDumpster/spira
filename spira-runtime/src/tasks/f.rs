@@ -2,10 +2,10 @@
 //! (`wiki/projects/spira/designs/scheduler-consolidation-2026-11-03.md`). Its rows join the
 //! service through `tasks::FAMILIES`.
 //!
-//! Every row of this family is written and waits in [`STAGED`] until its task is ported. A row
+//! Every row of this family is written and waits in [`PENDING`] until its task is ported. A row
 //! in [`TASKS`] is built at boot, so it must be named in `SPIRA_TASK_MODES` and its keys must be
 //! registered config, and both of those live outside this family's files. Moving a row from
-//! `STAGED` to `TASKS`, with its `decide` written, is the step that ports the task and turns its
+//! `PENDING` to `TASKS`, with its `decide` written, is the step that ports the task and turns its
 //! T1 green (`tests/task_f_<task>.rs`).
 
 use std::collections::BTreeMap;
@@ -33,7 +33,7 @@ pub static TASKS: &[Task] = &[];
 /// The rows of this family not yet ported, in the design's catalogue order. `inbox.append` is
 /// served by `tasks::SHARED`. `unit.start` and `unit.stop` are emitted by both persona rows and
 /// belong in `tasks::SHARED` once a units runner exists; until then `persona.ops` carries them.
-pub static STAGED: &[Task] = &[
+pub static PENDING: &[Task] = &[
     Task {
         name: intake_gh::NAME,
         boot: intake_gh::IntakeGh::boot,

@@ -2,7 +2,7 @@
 //! `spira-filings-collect-prod` (`bin/filings-collect pass --state run/filings-collect.state`).
 //! Pattern P1, with a three-step act per filing. Contract:
 //! `wiki/projects/spira/designs/tasks/intake-filings.md`. Not ported yet: [`decide`] and [`step`]
-//! are `unimplemented!`, and the row waits in `tasks::f::STAGED`.
+//! are `unimplemented!`, and the row waits in `tasks::f::PENDING`.
 //!
 //! # Tick
 //!

@@ -1,7 +1,7 @@
 //! Acceptance T1–T6 for `submission-provision`, instantiated from its contract
 //! (`wiki/projects/spira/designs/tasks/submission-provision.md`, Acceptance) on `TaskRig`. Red
 //! until the port lands: `decide`, `after_renewal` and `step` are `unimplemented!`, and the row
-//! waits in `tasks::a::STAGED`. The shared T6 runs two virtual days; the contract's own T6, thirty
+//! waits in `tasks::a::PENDING`. The shared T6 runs two virtual days; the contract's own T6, thirty
 //! days with the certificate due on day 10, is `t6_thirty_days_renew_once_and_restart_once`.
 
 use std::collections::BTreeMap;

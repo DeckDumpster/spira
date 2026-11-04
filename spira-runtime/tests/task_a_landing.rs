@@ -1,7 +1,7 @@
 //! Acceptance T1–T6 for `landing`, instantiated from its contract
 //! (`wiki/projects/spira/designs/tasks/landing.md`, Acceptance) on `TaskRig`. Red until the port
 //! lands: `decide`, `step` and `exit_code` are `unimplemented!`, and the row waits in
-//! `tasks::a::STAGED`. T6 runs two virtual days (the contract asks three, with scripted PR states).
+//! `tasks::a::PENDING`. T6 runs two virtual days (the contract asks three, with scripted PR states).
 
 use std::collections::BTreeMap;
 

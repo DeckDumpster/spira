@@ -4,7 +4,8 @@
 //! task's contract (`wiki/projects/spira/designs/tasks/<task>.md`), written in the shapes of
 //! `tasks::d::pattern` and tested through `tasks::d::acceptance`.
 //!
-//! Every row's runners are stubs until the task is ported. `inbox.append` is served by
+//! Every row's runners are stubs until the task is ported, so every row waits in [`PENDING`];
+//! porting one moves it to [`TASKS`]. `inbox.append` is served by
 //! `tasks::SHARED`, and `unit.start` by family F's row, so neither appears here.
 
 use super::d::stub;
@@ -20,7 +21,10 @@ pub mod watch_spill_key;
 pub mod watch_testenv_cap;
 pub mod watch_warm_full;
 
-pub static TASKS: &[Task] = &[
+pub static TASKS: &[Task] = &[];
+
+/// The family's rows, written from their contracts and not yet ported; see `tasks`.
+pub static PENDING: &[Task] = &[
     Task { name: inbox_notify::NAME, boot: inbox_notify::InboxNotify::boot, cadence_ms: |_| inbox_notify::CADENCE_MS, effects: inbox_notify::EFFECTS, runners: &[stub!(inbox_notify::OBSERVE), stub!(inbox_notify::ASK), stub!(inbox_notify::SOP_MATCH), stub!(inbox_notify::SOP_APPLIED), stub!(inbox_notify::CONCIERGE_NOTE), stub!(inbox_notify::MAIL_HEALTH)], keys: &[inbox_notify::KEYS], build: |_| inbox_notify::InboxNotify::pinned().registration() },
     Task { name: incident_probe::NAME, boot: incident_probe::IncidentProbe::boot, cadence_ms: |_| incident_probe::CADENCE_MS, effects: incident_probe::EFFECTS, runners: &[stub!(incident_probe::OBSERVE), stub!(incident_probe::SEND)], keys: &[incident_probe::KEYS], build: |_| incident_probe::IncidentProbe::pinned().registration() },
     Task { name: watch_ci_spill::NAME, boot: watch_ci_spill::WatchCiSpill::boot, cadence_ms: |_| watch_ci_spill::CADENCE_MS, effects: watch_ci_spill::EFFECTS, runners: &[stub!(watch_ci_spill::OBSERVE)], keys: &[watch_ci_spill::KEYS], build: |_| watch_ci_spill::WatchCiSpill::pinned().registration() },

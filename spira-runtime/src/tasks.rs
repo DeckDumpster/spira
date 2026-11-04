@@ -2,6 +2,17 @@
 //! rows live in their own file under `tasks/`. `all()` walks every family in `FAMILIES` order;
 //! `registrations()` and the boot list in `main.rs` are both read from it, so a task registered
 //! is a task booted.
+//!
+//! Every family file holds two slices. `TASKS` is the rows that are ported, and only those: a
+//! row there is booted, read by `Settings::from_lookup` and named in `SPIRA_TASK_MODES`.
+//! `PENDING` is the rows written from their contracts whose `decide` and runners are not ported
+//! yet; `pending()` walks them. Porting a task is moving its row from `PENDING` to `TASKS`. Every
+//! key a pending row declares is already registered config, and every effect it declares
+//! already has a sim double, so the move changes nothing else.
+//!
+//! Each pending row's name is the name of its contract page under the brain's
+//! `wiki/projects/spira/designs/tasks/`, by [`contract_page`]: `.` and `_` become `-`
+//! (`hel.reap_terminal` is `hel-reap-terminal.md`, `sentinel-call` is `sentinel-call.md`).
 
 use runtime::event::{EventKind, Registration};
 use runtime::heartbeat::{self, Heartbeat};
@@ -59,10 +70,32 @@ pub static CORE: &[Task] = &[
 /// Every family's slice, in boot order. A new family file under `tasks/` joins here.
 pub static FAMILIES: &[&[Task]] = &[CORE, a::TASKS, b::TASKS, c::TASKS, d::TASKS, e::TASKS, f::TASKS, g::TASKS];
 
+/// Every family's rows not yet ported, in the same family order. A new family file joins here too.
+pub static PENDING_FAMILIES: &[&[Task]] = &[a::PENDING, b::PENDING, c::PENDING, d::PENDING, e::PENDING, f::PENDING, g::PENDING];
+
 /// Every task in every family, in `FAMILIES` order.
 pub fn all() -> impl Iterator<Item = &'static Task> {
     FAMILIES.iter().flat_map(|f| f.iter())
 }
+
+/// Every row written but not ported, in `PENDING_FAMILIES` order. None of them is booted.
+pub fn pending() -> impl Iterator<Item = &'static Task> {
+    PENDING_FAMILIES.iter().flat_map(|f| f.iter())
+}
+
+/// The page for task `name` among [`CONTRACT_PAGES`]: `.` and `_` become `-`, so
+/// `intake.kit_bump` is `intake-kit-bump` (the file `intake-kit-bump.md`). Task names are
+/// otherwise already page names.
+pub fn contract_page(name: &str) -> String {
+    name.replace(['.', '_'], "-")
+}
+
+/// Every task contract page, by basename without `.md`: the listing of the brain's
+/// `wiki/projects/spira/designs/tasks/` at brain commit f0573d98, less its hub
+/// (`task-contracts`) and `retired`. Copied here because tests run in the test sandbox, which
+/// hides the home the brain lives in. A contract added there is added here in the commit that
+/// stubs its task. The three `source-*` pages are the sources in `tasks::g`, not rows.
+pub const CONTRACT_PAGES: &[&str] = &["asks-ideas", "asks-moot", "asks-verify", "batcher-forge", "batcher-local", "cert-full", "cert-sample", "cockpit-tier-5s", "cockpit-tier-600s", "cockpit-tier-60s", "czar", "gate-check", "gate-worker", "hel-reap-stale", "hel-reap-terminal", "hel-sweep", "inbox-notify", "incident-alarms", "incident-probe", "incident-settle", "intake-filings", "intake-gh", "intake-kit-bump", "landing", "mail-reconcile", "mail-tidy", "persona-archivist", "persona-ops", "publish", "queue-step", "reconcile-content", "reconcile-continuity", "reconcile-goodput", "reconcile-heimdall", "reconcile-section", "roundvm-ami-prune", "roundvm-drain", "sentinel-call", "sentinel-pass", "sift", "source-mail-arrived", "source-submission", "source-unit-ran", "submission-provision", "sweep-archive", "sweep-escape-census", "sweep-export-beads", "sweep-nix-gc", "sweep-reclaim", "sweep-target", "sweep-tsd", "trigger-groom", "trigger-mimir", "trigger-warden", "watch-ami-stale", "watch-backup-age", "watch-ci-spill", "watch-mend", "watch-pass-rate", "watch-perf-happy", "watch-perf", "watch-refusals", "watch-runtime", "watch-skew", "watch-sop-lint", "watch-spill-key", "watch-statute-audit", "watch-testenv-cap", "watch-tower", "watch-warm-full"];
 
 /// Each task name and each stream claimed by more than one row across `families`.
 pub fn clashes(families: &[&[Task]]) -> Vec<String> {
@@ -140,16 +173,19 @@ mod tests {
         assert_eq!(sorted.len(), rows.len(), "a task name appears twice");
     }
 
-    /// Every file under `tasks/`, by stem, that `tasks.rs` does not both declare as a module and
-    /// list in `FAMILIES`. `src` is the text of `tasks.rs`.
+    /// Every file under `tasks/`, by stem, that `tasks.rs` does not declare as a module and list
+    /// in both `FAMILIES` (its `TASKS`) and `PENDING_FAMILIES` (its `PENDING`). `src` is the text
+    /// of `tasks.rs`.
     fn unreachable_families(src: &str, stems: &[String]) -> Vec<String> {
-        let families = src.split("pub static FAMILIES").nth(1).and_then(|r| r.split(';').next()).unwrap_or("");
-        stems.iter().filter(|s| !src.contains(&format!("pub mod {s};")) || !families.contains(&format!("{s}::TASKS"))).cloned().collect()
+        let list = |name: &str| src.split(&format!("pub static {name}: ")).nth(1).and_then(|r| r.split(';').next()).unwrap_or("").to_string();
+        let (families, pending) = (list("FAMILIES"), list("PENDING_FAMILIES"));
+        stems.iter().filter(|s| !src.contains(&format!("pub mod {s};")) || !families.contains(&format!("{s}::TASKS")) || !pending.contains(&format!("{s}::PENDING"))).cloned().collect()
     }
 
     fn family_stems() -> Vec<String> {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tasks");
-        let mut out: Vec<String> = std::fs::read_dir(dir).unwrap().flatten().filter_map(|e| e.path().file_stem().map(|s| s.to_string_lossy().into_owned())).collect();
+        // Files only: each family also has a `tasks/<x>/` directory of task modules beside `<x>.rs`.
+        let mut out: Vec<String> = std::fs::read_dir(dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "rs")).filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())).collect();
         out.sort();
         out
     }
@@ -163,7 +199,34 @@ mod tests {
         assert_eq!(unreachable_families(&src, &planted), ["planted"], "a family file left out of FAMILIES must be caught");
         assert_eq!(unreachable_families(&src, &stems), Vec::<String>::new());
         assert_eq!(FAMILIES.len(), 1 + stems.len(), "CORE plus one slice per family file");
+        assert_eq!(PENDING_FAMILIES.len(), stems.len(), "one pending slice per family file");
         assert_eq!(all().count(), FAMILIES.iter().map(|f| f.len()).sum::<usize>());
+        assert_eq!(pending().count(), PENDING_FAMILIES.iter().map(|f| f.len()).sum::<usize>());
+    }
+
+    #[test]
+    fn a_task_name_maps_to_its_contract_page() {
+        assert_eq!(contract_page("hel.reap_terminal"), "hel-reap-terminal");
+        assert_eq!(contract_page("intake.kit_bump"), "intake-kit-bump");
+        assert_eq!(contract_page("sentinel-call"), "sentinel-call");
+        assert_eq!(contract_page("cockpit-tier-5s"), "cockpit-tier-5s");
+    }
+
+    #[test]
+    fn every_pending_row_has_a_contract_page_and_no_row_is_both_pending_and_ported() {
+        let pages = |names: &[&str]| names.iter().filter(|n| !CONTRACT_PAGES.contains(&contract_page(n).as_str())).map(|n| n.to_string()).collect::<Vec<_>>();
+        assert_eq!(pages(&["planted.no_such_task"]), ["planted.no_such_task"], "a name with no page must be caught");
+        let names: Vec<&str> = pending().map(|t| t.name).collect();
+        assert!(names.len() >= 60, "the scan must see every family's pending rows: {names:?}");
+        assert_eq!(pages(&names), Vec::<String>::new(), "pending rows with no contract page");
+        let rows: Vec<String> = pending().chain(all()).map(|t| contract_page(t.name)).collect();
+        let unstubbed: Vec<&&str> = CONTRACT_PAGES.iter().filter(|p| !p.starts_with("source-") && !rows.contains(&p.to_string())).collect();
+        assert!(unstubbed.is_empty(), "contract pages with no row, pending or ported: {unstubbed:?}");
+        let both: Vec<&str> = names.iter().copied().filter(|n| all().any(|t| t.name == *n)).collect();
+        assert_eq!(both, Vec::<&str>::new(), "rows both pending and in tasks::all()");
+        let mut every: Vec<&[Task]> = FAMILIES.to_vec();
+        every.extend(PENDING_FAMILIES);
+        assert_eq!(clashes(&every), Vec::<String>::new(), "a pending row shares a name or a stream");
     }
 
     #[test]

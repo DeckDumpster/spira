@@ -1,6 +1,6 @@
 //! Acceptance T1–T6 for `sweep.target`, instantiated from its contract
 //! (`wiki/projects/spira/designs/tasks/sweep-target.md`, Acceptance) on `TaskRig`. Red until the
-//! port lands: `decide` is `unimplemented!`, and the row waits in `tasks::a::STAGED`. T6 runs two
+//! port lands: `decide` is `unimplemented!`, and the row waits in `tasks::a::PENDING`. T6 runs two
 //! virtual days (the contract asks seven, with a seeded fill curve); its idle budget is the
 //! contract's "no journaled events while above the floor".
 

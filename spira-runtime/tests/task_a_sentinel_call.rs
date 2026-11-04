@@ -1,6 +1,6 @@
 //! Acceptance T1–T6 for `sentinel-call`, instantiated from its contract
 //! (`wiki/projects/spira/designs/tasks/sentinel-call.md`, Acceptance) on `TaskRig`. Red until the
-//! port lands: `decide` and `step` are `unimplemented!`, and the row waits in `tasks::a::STAGED`.
+//! port lands: `decide` and `step` are `unimplemented!`, and the row waits in `tasks::a::PENDING`.
 //! T6 runs two virtual days (the contract asks seven, with scripted dwarf `unit.ran`).
 
 use std::collections::BTreeMap;

@@ -2,7 +2,7 @@
 //! `spira-kit-bump-prod` (`bin/kit-bump pass --config run/kit-bump.conf --state
 //! run/kit-bump.state`). Pattern P1. Contract:
 //! `wiki/projects/spira/designs/tasks/intake-kit-bump.md`. Not ported yet: [`decide`] and
-//! [`step`] are `unimplemented!`, and the row waits in `tasks::f::STAGED`.
+//! [`step`] are `unimplemented!`, and the row waits in `tasks::f::PENDING`.
 //!
 //! # Tick
 //!

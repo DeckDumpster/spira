@@ -1,6 +1,6 @@
 //! Acceptance T1–T6 for `batcher.forge`, instantiated from its contract
 //! (`wiki/projects/spira/designs/tasks/batcher-forge.md`, Acceptance) on `TaskRig`. Red until the
-//! port lands: `decide` and `step` are `unimplemented!`, and the row waits in `tasks::a::STAGED`.
+//! port lands: `decide` and `step` are `unimplemented!`, and the row waits in `tasks::a::PENDING`.
 //! T6 runs two virtual days (the contract asks seven, with a sim `queue.step`).
 
 use std::collections::BTreeMap;

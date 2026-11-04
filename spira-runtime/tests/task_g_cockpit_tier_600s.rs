@@ -1,7 +1,7 @@
 //! Acceptance T1–T6 for `cockpit-tier-600s`, from its contract
 //! (`wiki/projects/spira/designs/tasks/cockpit-tier-600s.md`, Acceptance) on `TaskRig`. Red until
 //! the port lands: `decide` and `step` are `unimplemented!`, and the row waits in
-//! `tasks::g::STAGED`. T6 runs two virtual days with the dirty file on day 2 (the contract asks
+//! `tasks::g::PENDING`. T6 runs two virtual days with the dirty file on day 2 (the contract asks
 //! seven). T3's "second slow probe waits for the class permit" is a pool property (S3) once both
 //! probes ride one observe; it is not tested here.
 
@@ -56,7 +56,7 @@ fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> Ta
 
 #[test]
 fn t1_the_task_is_registered_boots_and_arms_its_cadence_with_its_two_probes() {
-    let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::g::STAGED"));
+    let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::g::PENDING"));
     assert_eq!(row.stream(), STREAM);
     assert!(row.keys.iter().flat_map(|k| k.iter()).any(|k| *k == CADENCE_KEY), "the cadence is pinned config");
     assert_eq!(PROBES.iter().map(|p| p.0).collect::<Vec<_>>(), ["cockpit.livelock", "cockpit.drift"]);
@@ -88,7 +88,7 @@ fn t3_fragment_states_move_as_the_5s_tier_and_stale_before_ok_is_refused_naming_
 
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
-    let row = g::STAGED.iter().find(|t| t.name == NAME).expect("the row is staged");
+    let row = g::PENDING.iter().find(|t| t.name == NAME).expect("the row is pending");
     assert_eq!(row.effects, EFFECTS, "the row declares the module's effects");
     let real: Vec<&str> = tasks::routes().keys().copied().collect();
     let doubles = sim::doubles::service().names();

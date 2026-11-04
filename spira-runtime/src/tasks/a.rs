@@ -5,7 +5,7 @@
 //! Each task's contract (`wiki/projects/spira/designs/tasks/<task>.md`) is its module under
 //! `a/`: the handler, its snapshot and carry, its act table and, for a P2 machine, its
 //! `state × event → state` table as data. `decide` and the runners are not ported yet, so the
-//! rows wait in `STAGED`: a row joins `TASKS` (and so `tasks::all()`, the boot list, the
+//! rows wait in `PENDING`: a row joins `TASKS` (and so `tasks::all()`, the boot list, the
 //! settings fixture and `SPIRA_TASK_MODES`) in the commit that ports it, with its effects named
 //! in `sim::doubles::SERVICE_EFFECTS` and its keys in the settings fixture. Until then its
 //! `tests/task_a_<task>.rs` T1 is red on exactly that.
@@ -38,7 +38,7 @@ macro_rules! stubs {
 pub static TASKS: &[Task] = &[];
 
 /// Family A's rows, built from their contracts and waiting for their ports.
-pub static STAGED: &[Task] = &[
+pub static PENDING: &[Task] = &[
     Task {
         name: sentinel_call::NAME,
         boot: sentinel_call::SentinelCall::boot,
@@ -164,11 +164,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_staged_row_declares_each_effect_once_and_has_a_runner_for_each_unshared_one() {
+    fn every_pending_row_declares_each_effect_once_and_has_a_runner_for_each_unshared_one() {
         // `inbox.append` is in `SHARED`; the Units port's `unit.*` effects are every unit-starting
         // task's, so their runner joins `SHARED` with the port, not a row.
         let shared: Vec<&str> = crate::tasks::SHARED.iter().map(|(n, _)| *n).chain(runtime::units::EFFECTS).collect();
-        for t in STAGED {
+        for t in PENDING {
             let mut names = t.effects.to_vec();
             names.sort();
             names.dedup();
@@ -181,9 +181,9 @@ mod tests {
     }
 
     #[test]
-    fn no_staged_row_shares_a_name_or_a_stream_with_the_service() {
+    fn no_pending_row_shares_a_name_or_a_stream_with_the_service() {
         let mut families: Vec<&[Task]> = crate::tasks::FAMILIES.to_vec();
-        families.push(STAGED);
+        families.push(PENDING);
         assert_eq!(crate::tasks::clashes(&families), Vec::<String>::new());
     }
 }

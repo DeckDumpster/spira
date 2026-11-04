@@ -1,6 +1,6 @@
 //! Acceptance T1–T6 for `intake.gh`, from its contract
 //! (`wiki/projects/spira/designs/tasks/intake-gh.md`, Acceptance) on `TaskRig`. Red until the port
-//! lands: `decide` and `step` are `unimplemented!`, and the row waits in `tasks::f::STAGED`. T6
+//! lands: `decide` and `step` are `unimplemented!`, and the row waits in `tasks::f::PENDING`. T6
 //! runs two virtual days (the contract asks seven).
 
 use std::collections::BTreeMap;
@@ -62,7 +62,7 @@ fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> Ta
 
 #[test]
 fn t1_the_task_is_registered_boots_and_arms_its_cadence() {
-    let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::f::STAGED"));
+    let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::f::PENDING"));
     assert_eq!(row.stream(), STREAM);
     assert!(row.keys.iter().flat_map(|k| k.iter()).any(|k| *k == CADENCE_KEY), "the cadence is pinned config");
     let mut r = TaskRig::new(1, handler().registration()).unwrap();
@@ -98,7 +98,7 @@ fn t3_the_carry_read_is_the_carry_recorded() {
 
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
-    let row = f::STAGED.iter().find(|t| t.name == NAME).expect("the row is staged");
+    let row = f::PENDING.iter().find(|t| t.name == NAME).expect("the row is pending");
     assert_eq!(row.effects, EFFECTS, "the row declares the module's effects");
     let real: Vec<&str> = tasks::routes().keys().copied().collect();
     let doubles = sim::doubles::service().names();

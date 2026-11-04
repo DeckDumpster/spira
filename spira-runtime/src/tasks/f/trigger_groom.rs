@@ -1,7 +1,7 @@
 //! `trigger.groom`: files the groomer's scheduled hygiene bead. Replaces `spira-groom-prod`
 //! (ExecStartPre `world guard`; ExecStart `spira/groom-trigger.sh`). Pattern P1, stateless.
 //! Contract: `wiki/projects/spira/designs/tasks/trigger-groom.md`. Not ported yet: [`decide`],
-//! [`may_file`] and [`step`] are `unimplemented!`, and the row waits in `tasks::f::STAGED`.
+//! [`may_file`] and [`step`] are `unimplemented!`, and the row waits in `tasks::f::PENDING`.
 //!
 //! # Tick
 //!

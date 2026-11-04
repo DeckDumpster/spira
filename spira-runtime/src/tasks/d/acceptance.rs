@@ -13,7 +13,7 @@ use crate::Settings;
 /// The row named `name` in `tasks::all()`; panics naming it when the row is missing, which is T1's
 /// failure when a registration is removed.
 pub fn row(name: &str) -> &'static Task {
-    tasks::all().find(|t| t.name == name).unwrap_or_else(|| panic!("no task row named {name} in tasks::all()"))
+    tasks::all().find(|t| t.name == name).unwrap_or_else(|| panic!("{name} is not in tasks::all(): its row waits in PENDING until it is ported"))
 }
 
 /// Settings loaded through the one config door from the complete fixture (`spira/testlib`), with

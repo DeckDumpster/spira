@@ -2,7 +2,7 @@
 //! (ExecStartPre `world guard`; ExecStart `spira/mimir-trigger.sh`, which execs `mimir-trigger`).
 //! Pattern P1, stateless. Contract: `wiki/projects/spira/designs/tasks/trigger-mimir.md`. Not
 //! ported yet: [`decide`], [`may_file`] and [`step`] are `unimplemented!`, and the row waits in
-//! `tasks::f::STAGED`.
+//! `tasks::f::PENDING`.
 //!
 //! # Tick
 //!

@@ -3,7 +3,7 @@
 //! 5 min. Pattern P2: a multi-state machine whose long leg, the Ops claude session, is a transient
 //! unit started by `unit.start` and finished by the `unit.ran` the units source submits.
 //! Contract: `wiki/projects/spira/designs/tasks/persona-ops.md`. Not ported yet: [`decide`] and
-//! [`step`] are `unimplemented!`, and the row waits in `tasks::f::STAGED`.
+//! [`step`] are `unimplemented!`, and the row waits in `tasks::f::PENDING`.
 //!
 //! # Tick
 //!

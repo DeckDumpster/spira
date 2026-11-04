@@ -1,7 +1,7 @@
 //! Acceptance T1–T6 for `publish`, instantiated from its contract
 //! (`wiki/projects/spira/designs/tasks/publish.md`, Acceptance) on `TaskRig`. Red until the port
 //! lands: `decide`, `settle` and `step` are `unimplemented!`, and the row waits in
-//! `tasks::a::STAGED`. T6 runs two virtual days (the contract asks fourteen); its idle budget is
+//! `tasks::a::PENDING`. T6 runs two virtual days (the contract asks fourteen); its idle budget is
 //! the contract's 4/h.
 
 use std::collections::BTreeMap;

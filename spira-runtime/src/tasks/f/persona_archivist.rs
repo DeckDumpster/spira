@@ -2,7 +2,7 @@
 //! `spira-archivist-prod.service` (`archivist sweep`, timer every 5 min). Pattern P2: each
 //! archivist claude session runs as a transient unit, started by `unit.start` and finished by
 //! `unit.ran`. Contract: `wiki/projects/spira/designs/tasks/persona-archivist.md`. Not ported yet:
-//! [`decide`] and [`step`] are `unimplemented!`, and the row waits in `tasks::f::STAGED`.
+//! [`decide`] and [`step`] are `unimplemented!`, and the row waits in `tasks::f::PENDING`.
 //!
 //! # Tick
 //!

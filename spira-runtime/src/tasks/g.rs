@@ -3,7 +3,7 @@
 //! service through `tasks::FAMILIES`.
 //!
 //! Two kinds of thing live here. The cockpit's three tier tasks are P1 rows; like family F's they
-//! wait in [`STAGED`] until each is ported (a row in [`TASKS`] must be named in
+//! wait in [`PENDING`] until each is ported (a row in [`TASKS`] must be named in
 //! `SPIRA_TASK_MODES` and its keys registered, both outside this family's files). The three
 //! sources (`mail.arrived`, `unit.ran`, `submission`) are not rows: each is a
 //! `runtime::sources::Source` the host registers, declared in its own module with the event it
@@ -22,7 +22,7 @@ pub mod unit_ran;
 pub static TASKS: &[Task] = &[];
 
 /// The cockpit tier rows not yet ported.
-pub static STAGED: &[Task] = &[
+pub static PENDING: &[Task] = &[
     Task {
         name: cockpit_tier_5s::NAME,
         boot: cockpit_tier_5s::CockpitTier5s::boot,
