@@ -4,6 +4,8 @@
 //! The contract:
 //!
 //! - `TaskRig::new(seed, reg)` boots the engine; nothing is handed to the handler until a tick.
+//!   The registration's mode holds: an `Observe` task's writes are journaled `effect.shadowed`,
+//!   never handed to a double, and listed by `shadowed()`; its probes run.
 //! - `double(name, f)` scripts the answer to effect `name`: `Ok` completes it `Succeeded`, `Err`
 //!   completes it `Failed`. An effect with no double is completed `Failed` with the production
 //!   refusal text, `no runner for effect {name}`, and listed in `refused()`.
@@ -137,6 +139,15 @@ impl TaskRig {
 
     pub fn requested(&self) -> &[Requested] {
         &self.requested
+    }
+
+    /// The specs of the writes the engine shadowed instead of requesting, in journal order.
+    pub fn shadowed(&self) -> Vec<EffectSpec> {
+        #[derive(serde::Deserialize)]
+        struct Body {
+            spec: EffectSpec,
+        }
+        self.journaled().into_iter().filter(|e| e.kind.tag == EFFECT_SHADOWED).filter_map(|e| serde_json::from_str::<Body>(&e.kind.body).ok()).map(|b| b.spec).collect()
     }
 
     /// Effect names the handler asked for that had no double.
@@ -298,6 +309,15 @@ mod tests {
         assert!(a.trace().len() > 1000, "a loud task journals every tick");
         assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| assert_journal_budget(&a, 10))).is_err(), "the budget must catch it");
         assert_journal_budget(&a, 1000);
+    }
+
+    #[test]
+    fn an_observe_task_runs_its_probes_and_its_writes_are_shadowed_not_run() {
+        let reg = Registration::new("toy", Toy { every: 60_000 }).with_mode(Mode::Observe);
+        let mut r = TaskRig::new(1, reg).unwrap().double("look", |_| Ok("loud".into())).double("say", |_| panic!("an observe task's write must not run"));
+        r.tick(S, EventKind::new(TICK, "")).unwrap();
+        assert_eq!(r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>(), ["look"]);
+        assert_eq!(r.shadowed(), [EffectSpec { name: "say".into(), input: "hi".into(), deadline_ms: 100 }]);
     }
 
     #[test]
