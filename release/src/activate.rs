@@ -487,18 +487,53 @@ fn ensure_new_units(cfg: &Config, sha: &str) -> Result<(), String> {
 /// `Restart=always` is the sanctioned way to cycle it.
 const KILL_RESTARTED: &str = "dolt-beads.service";
 
-/// Whether a rewritten service must be restarted. The store server is restarted only when its
-/// unit changed in something other than the release root every unit embeds: the server binary
-/// comes from the toolchain environment, and a restart is an outage for every caller.
+/// Whether a rewritten service must be restarted (over-broad-scopes #4, sp-ipwlic): when its
+/// unit text, with the release root collapsed, changed, or when a program one of its `Exec*=`
+/// lines runs out of the release differs in bytes between the two releases. Every unit names
+/// the release root, so comparing exec lines verbatim restarted 80 of 82 services on every
+/// release — a single changed binary cycled loom, watchd and the scheduler and drained every
+/// running oneshot. A program that cannot be read, or one that is a script (it reads siblings
+/// such as `lib.sh` that its bytes do not show), is a change.
+///
+/// The store server keeps its own reason: its binary comes from the toolchain environment, so
+/// only its unit text decides, and a restart is an outage for every caller.
 fn restart_needed(unit: &str, old: &str, new: &str, new_root: &Path) -> bool {
+    let text_changed = unrooted(&units::without_documentation(old), new_root) != unrooted(&units::without_documentation(new), new_root);
+    if text_changed {
+        return true;
+    }
     if unit != KILL_RESTARTED {
-        return units::exec_changed(old, new);
+        if let Some(why) = program_changed(old, new) {
+            eprintln!("release: {unit}: {why}");
+            return true;
+        }
     }
-    let changed = unrooted(&units::without_documentation(old), new_root) != unrooted(&units::without_documentation(new), new_root);
-    if !changed {
-        eprintln!("release: {unit} differs only in the release root; left running");
+    eprintln!("release: {unit} differs only in the release root and runs the same bytes; left running");
+    false
+}
+
+/// The first program an `Exec*=` line runs whose path moved between the renderings and whose
+/// content differs (or cannot be shown to match), as a reason; `None` when every one matches.
+fn program_changed(old: &str, new: &str) -> Option<String> {
+    let path_of = |w: &str| w.find('/').map(|i| w[i..].trim_end_matches(['"', '\'', ';']).to_string());
+    for (o, n) in units::exec_lines(old).iter().zip(units::exec_lines(new).iter()) {
+        let (ov, nv) = (o.split_once('=').map_or("", |x| x.1), n.split_once('=').map_or("", |x| x.1));
+        for (ow, nw) in ov.split_whitespace().zip(nv.split_whitespace()) {
+            if ow == nw {
+                continue;
+            }
+            let (Some(op), Some(np)) = (path_of(ow), path_of(nw)) else {
+                return Some(format!("{ow} became {nw}"));
+            };
+            match (std::fs::read(&op), std::fs::read(&np)) {
+                (Ok(a), Ok(b)) if a == b && !b.starts_with(b"#!") => {}
+                (Ok(_), Ok(b)) if b.starts_with(b"#!") => return Some(format!("{np} is a script; restarted")),
+                (Ok(_), Ok(_)) => return Some(format!("{np} differs from {op}")),
+                _ => return Some(format!("cannot compare {op} with {np}; restarted")),
+            }
+        }
     }
-    changed
+    None
 }
 
 /// The text with every `<releases>/<name>` prefix collapsed, whatever `<name>` is: an installed
@@ -662,4 +697,35 @@ pub fn status(cfg: &Config) -> Result<String, String> {
         }
     }
     Ok(s)
+}
+
+#[cfg(test)]
+mod restart_tests {
+    use super::restart_needed;
+    use std::fs;
+
+    /// Over-broad-scopes #4 (sp-ipwlic): a release that changed only another binary leaves a
+    /// service running; one that changed this service's binary, its unit text, or the script it
+    /// runs restarts it.
+    #[test]
+    fn a_service_restarts_only_when_its_program_bytes_or_unit_text_changed() {
+        let t = testkit::TempDir::new("release-restart-needed");
+        let rel = t.path().join("releases");
+        for (sha, loom, other, script) in [("a1", "LOOM1", "X1", "#!/bin/sh\n"), ("b2", "LOOM1", "X2", "#!/bin/sh\n"), ("c3", "LOOM2", "X2", "#!/bin/sh\n")] {
+            fs::create_dir_all(rel.join(sha).join("bin")).unwrap();
+            fs::write(rel.join(sha).join("bin/loom"), loom).unwrap();
+            fs::write(rel.join(sha).join("bin/other"), other).unwrap();
+            fs::write(rel.join(sha).join("job.sh"), script).unwrap();
+        }
+        let unit = |sha: &str, extra: &str| {
+            let r = rel.join(sha).display().to_string();
+            format!("[Service]\nEnvironment=SPIRA_RELEASE={r}\nExecStart={r}/bin/loom --serve{extra}\n")
+        };
+        let (b, c) = (rel.join("b2"), rel.join("c3"));
+        assert!(!restart_needed("spira-loom.service", &unit("a1", ""), &unit("b2", ""), &b), "only bin/other changed");
+        assert!(restart_needed("spira-loom.service", &unit("b2", ""), &unit("c3", ""), &c), "bin/loom changed");
+        assert!(restart_needed("spira-loom.service", &unit("a1", ""), &unit("b2", " --fast"), &b), "the unit text changed");
+        let job = |sha: &str| format!("[Service]\nType=oneshot\nExecStart={}/job.sh\n", rel.join(sha).display());
+        assert!(restart_needed("spira-job.service", &job("a1"), &job("b2"), &b), "a script reads siblings its bytes do not show");
+    }
 }
