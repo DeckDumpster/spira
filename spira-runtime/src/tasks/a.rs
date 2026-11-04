@@ -7,7 +7,7 @@
 //! `state × event → state` table as data. `decide` and the runners are not ported yet, so the
 //! rows wait in `PENDING`: a row joins `TASKS` (and so `tasks::all()`, the boot list, the
 //! settings fixture and `SPIRA_TASK_MODES`) in the commit that ports it, with its effects named
-//! in `sim::doubles::SERVICE_EFFECTS` and its keys in the settings fixture. Until then its
+//! in `sim::doubles::TASK_EFFECTS` and its keys in the settings fixture. Until then its
 //! `tests/task_a_<task>.rs` T1 is red on exactly that.
 
 use super::Task;

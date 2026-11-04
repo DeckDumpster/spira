@@ -281,6 +281,25 @@ mod tests {
         }
     }
 
+    /// `rows` as the Rust literal `sim::doubles::TASK_EFFECTS` holds, so a mismatch prints the fix.
+    fn task_effects_literal(rows: &[(&str, Vec<&str>)]) -> String {
+        rows.iter().map(|(n, es)| format!("    ({n:?}, &[{}]),\n", es.iter().map(|e| format!("{e:?}")).collect::<Vec<_>>().join(", "))).collect()
+    }
+
+    #[test]
+    fn the_sim_names_a_double_for_every_effect_of_every_row_ported_or_pending() {
+        let want: Vec<(&str, Vec<&str>)> = all().chain(pending()).map(|t| (t.name, t.effects.to_vec())).collect();
+        let have: Vec<(&str, Vec<&str>)> = sim::doubles::TASK_EFFECTS.iter().map(|(n, es)| (*n, es.to_vec())).collect();
+        assert!(have == want, "sim::doubles::TASK_EFFECTS must name every row's effects, in tasks::all() then tasks::pending() order:\n{}", task_effects_literal(&want));
+        assert!(sim::doubles::Doubles::for_tasks(&["planted.no_such_task"]).is_err(), "a task the sim does not know is refused");
+        let names: Vec<&str> = all().chain(pending()).map(|t| t.name).collect();
+        let doubles = sim::doubles::Doubles::for_tasks(&names).unwrap().names();
+        let missing: Vec<&str> = all().chain(pending()).flat_map(|t| t.effects.iter().copied()).filter(|e| !doubles.iter().any(|d| d == e)).collect();
+        assert!(missing.is_empty(), "declared effects with no sim double: {missing:?}");
+        let shared: Vec<&str> = SHARED.iter().map(|(n, _)| *n).collect();
+        assert!(shared.iter().all(|e| sim::doubles::service().names().iter().any(|d| d == e)), "every shared effect has a double");
+    }
+
     #[test]
     fn the_unit_effects_are_shared_and_run_on_the_configured_unit_manager() {
         use runtime::host::EffectRunner;

@@ -14,7 +14,7 @@ const DAY: u64 = 86_400_000;
 /// Every task acts, so its effects reach the doubles; the container cap is the host run
 /// ceiling; every other key is 300.
 fn settings() -> Settings {
-    let modes: Vec<String> = tasks::TASKS.iter().map(|t| format!("{}=act", t.name)).collect();
+    let modes: Vec<String> = tasks::all().map(|t| format!("{}=act", t.name)).collect();
     Settings::from_lookup(&|k| {
         Ok(match k {
             "SPIRA_TASK_MODES" => modes.join(","),
