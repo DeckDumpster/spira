@@ -359,6 +359,27 @@ is   "hook run: tmp-leak refuses temp_dir() in test code" "1" "$rc"
 want "hook run: refusal names tmp-leak" "tmp-leak" "$out"
 git -C "$HREPO" restore --staged leakcrate/src/lib.rs 2>/dev/null; rm -rf "$HREPO/leakcrate"
 
+echo "SCOPE (sp-ipwlic, over-broad-scopes #5): a defect already in HEAD does not refuse a commit that does not touch it; a staged defect still does:"
+mkdir -p "$HREPO/headleak/src"
+printf '#[cfg(test)]\nmod t {\n    fn d() { let _d = std::env::temp_dir(); }\n}\n' > "$HREPO/headleak/src/lib.rs"
+git -C "$HREPO" add headleak/src/lib.rs
+# --no-verify is the point: this is how HEAD goes red on a shared branch (a hand mend).
+GIT_AUTHOR_NAME=op GIT_AUTHOR_EMAIL=op@example.com GIT_COMMITTER_NAME=op GIT_COMMITTER_EMAIL=op@example.com \
+git -C "$HREPO" commit -q --no-verify -m "sp-test: a defect lands in HEAD unchecked"
+printf 'unrelated change\n' >> "$HREPO/gate.sh"
+git -C "$HREPO" add gate.sh
+out="$(commit_through_hook op@example.com op "sp-test: unrelated commit over a red HEAD")"; rc=$?
+is   "hook run: a HEAD defect in an untouched file does not refuse an unrelated commit" "0" "$rc"
+printf '#[cfg(test)]\nmod u {\n    fn e() { let _e = std::env::temp_dir(); }\n}\n' >> "$HREPO/headleak/src/lib.rs"
+git -C "$HREPO" add headleak/src/lib.rs
+out="$(commit_through_hook op@example.com op "sp-test: a new defect in the same file")"; rc=$?
+is   "hook run: a defect the staged diff adds is still refused" "1" "$rc"
+want "hook run: refusal names tmp-leak" "tmp-leak" "$out"
+git -C "$HREPO" restore --staged headleak/src/lib.rs 2>/dev/null; git -C "$HREPO" checkout -q -- headleak/src/lib.rs
+git -C "$HREPO" rm -q -r headleak
+GIT_AUTHOR_NAME=op GIT_AUTHOR_EMAIL=op@example.com GIT_COMMITTER_NAME=op GIT_COMMITTER_EMAIL=op@example.com \
+git -C "$HREPO" commit -q --no-verify -m "sp-test: drop the HEAD defect"
+
 echo "SEEN RED: with spira-lint missing from PATH the hook refuses, naming it (no silent skip):"
 NOLINT="$TMP/nolint-bin"; mkdir -p "$NOLINT"
 ln -sf "$HERE/exclude.sh" "$NOLINT/exclude.sh"; ln -sf "$HERE/branch-guard.sh" "$NOLINT/branch-guard.sh"
