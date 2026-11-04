@@ -64,6 +64,8 @@ use serde::{Deserialize, Serialize};
 use spira_config::process::{cfg, cfg_parse};
 
 use crate::tasks::d::pattern;
+use crate::tasks::e::alert::Alert;
+use crate::watchers::iso8601;
 
 pub const NAME: &str = "watch.pass_rate";
 pub const STREAM: &str = "watch.pass_rate";
@@ -78,6 +80,7 @@ pub const KEYS: &[&str] = &["SPIRA_BATCH_LEDGER", "SPIRA_PASS_RATE_WINDOW", "SPI
 /// `--interval 900`.
 pub const CADENCE_MS: u64 = 900_000;
 const OBSERVE_DEADLINE_MS: u64 = 10_000;
+const MAIL_DEADLINE_MS: u64 = 10_000;
 /// The mail as `pass-rate.sh:184-190` sent it.
 pub const MAILBOX: &str = "concierge";
 pub const FROM: &str = "Pass Rate <pass-rate@spira>";
@@ -115,8 +118,47 @@ pub struct Snapshot {
 pub type Carry = Rate;
 
 /// OVER on the crossing, CLEAR on the way back, BLIND on every unreadable tick (no latch).
-pub fn decide(_carry: &Carry, _snap: &Snapshot, _now_ms: u64, _cfg: &Config) -> (Carry, Vec<EffectSpec>) {
-    unimplemented!("watch.pass_rate: not ported yet")
+pub fn decide(carry: &Carry, snap: &Snapshot, _now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+    let say = |line: String| vec![Alert::of(MAILBOX, FROM, "pass-rate", "event", &line).effect(MAIL, MAIL_DEADLINE_MS)];
+    if !snap.readable {
+        return (*carry, say("BLIND: the pass-rate watcher cannot read the ledger window".into()));
+    }
+    let (p, g, m) = (snap.passes, snap.landed, cfg.max_pct);
+    let acts = match (snap.state, carry) {
+        (Rate::Over, Rate::Ok) => say(format!("OVER: {p} gate pass(es) for {g} landing(s) in {}s (limit {m}%) — rounds are not landing on their first green pass", cfg.window_s)),
+        (Rate::Ok, Rate::Over) => say(format!("CLEAR: {p} gate pass(es) for {g} landing(s), back under {m}%")),
+        _ => vec![],
+    };
+    (snap.state, acts)
+}
+
+/// `_pr_measure`'s awk over the ledger's rows: a pass is a row stamped (column 2, ISO, compared
+/// as text) at or after `since`, a landing a pass whose column 5 is `green`.
+pub fn measure(ledger: &str, since: &str, max_pct: u64) -> Snapshot {
+    let (mut passes, mut landed) = (0u64, 0u64);
+    for row in ledger.lines() {
+        let cols: Vec<&str> = row.split('\t').collect();
+        if cols.get(1).is_some_and(|t| *t >= since) {
+            passes += 1;
+            landed += u64::from(cols.get(4) == Some(&"green"));
+        }
+    }
+    let pct = (passes * 100).checked_div(landed).unwrap_or(if passes == 0 { 0 } else { 999_999 });
+    Snapshot { readable: true, passes, landed, pct, state: if passes > 0 && pct > max_pct { Rate::Over } else { Rate::Ok } }
+}
+
+/// The observe runner: the ledger's window ending now; a missing ledger reads as no passes.
+pub fn observe() -> Result<String, String> {
+    let cfg = Config::pinned()?;
+    let now_s = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let snap = match std::fs::read(&cfg.ledger) {
+        Err(_) => Snapshot { readable: true, state: Rate::Ok, ..Snapshot::default() },
+        Ok(bytes) => match now_s.checked_sub(cfg.window_s) {
+            Some(since) => measure(&String::from_utf8_lossy(&bytes), &iso8601(since), cfg.max_pct),
+            None => Snapshot::default(),
+        },
+    };
+    serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
 
 pub struct WatchPassRate {

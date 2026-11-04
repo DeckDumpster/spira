@@ -65,6 +65,11 @@
 //!
 //! Release rollback restores the unit and row. Per task: `Observe` mode (S4) shadows `reap` and `inbox.append` as `effect.shadowed` while the probe runs.
 
+use std::os::fd::AsRawFd;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
+use std::path::Path;
+
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
 use spira_config::process::{cfg, cfg_parse};
@@ -87,6 +92,8 @@ pub const LIMIT_PCT: u8 = 85;
 /// `--interval 120`.
 pub const CADENCE_MS: u64 = 120_000;
 const OBSERVE_DEADLINE_MS: u64 = 10_000;
+const REAP_DEADLINE_MS: u64 = 30_000;
+const INBOX_DEADLINE_MS: u64 = 10_000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
@@ -123,8 +130,120 @@ pub struct Carry {
 }
 
 /// The reap set, then the crossing (deferred a tick when anything was reaped).
-pub fn decide(_carry: &Carry, _snap: &Snapshot, _now_ms: u64, _cfg: &Config) -> (Carry, Vec<EffectSpec>) {
-    unimplemented!("watch.warm_full: not ported yet")
+pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+    let (Some(base), Some(pct)) = (&snap.base, snap.pct) else { return (carry.clone(), vec![]) };
+    let reap: Vec<EffectSpec> = snap
+        .slots
+        .iter()
+        .filter(|s| s.held_by.is_none() && s.mib > 0 && (pct >= LIMIT_PCT || cfg.cap_mib > 0 && s.mib > cfg.cap_mib))
+        .map(|s| EffectSpec { name: REAP.into(), input: serde_json::to_string(&Reap { base: base.clone(), slot: s.name.clone() }).unwrap_or_default(), deadline_ms: REAP_DEADLINE_MS })
+        .collect();
+    if !reap.is_empty() {
+        // The script re-measured after reaping; this pct is stale, so the crossing waits a tick.
+        return (carry.clone(), reap);
+    }
+    if pct < LIMIT_PCT {
+        return (Carry { said: false }, vec![]);
+    }
+    if carry.said {
+        return (carry.clone(), vec![]);
+    }
+    let sizes: String = snap.slots.iter().map(|s| format!("{}={}MiB ", s.name, s.mib)).collect();
+    let held: String = snap.slots.iter().filter_map(|s| s.held_by.as_ref().map(|w| format!(" {}={w}", s.name))).collect();
+    let held = if held.is_empty() { String::new() } else { format!(" (held by:{held})") };
+    let sizes = if sizes.is_empty() { "no slots".to_string() } else { sizes };
+    let line = format!("dwarf warm tmpfs {base} is {pct}% full (limit {LIMIT_PCT}%): {sizes}; the slots a session holds cannot be emptied{held}");
+    (Carry { said: true }, vec![EffectSpec { name: INBOX_APPEND.into(), input: pattern::inbox_line(now_ms, INBOX_TAG, &line), deadline_ms: INBOX_DEADLINE_MS }])
+}
+
+/// One `watch.warm_full.reap`: the slot `slot` under `base`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reap {
+    pub base: String,
+    pub slot: String,
+}
+
+/// `slot.<digits>`, the only names a reap may touch.
+fn is_slot(name: &str) -> bool {
+    name.strip_prefix("slot.").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// The slot lock at `lock`, taken without waiting; `None` when a session holds it. Dropping the
+/// file releases it.
+fn try_lock(lock: &Path) -> Option<std::fs::File> {
+    let f = std::fs::OpenOptions::new().append(true).create(true).open(lock).ok()?;
+    // SAFETY: flock on a descriptor this function owns; no memory is shared with the call.
+    (unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0).then_some(f)
+}
+
+/// `du -sm`: the blocks under `path`, symlinks not followed, rounded up to MiB.
+fn mib(path: &Path) -> u64 {
+    fn bytes(p: &Path) -> u64 {
+        let Ok(m) = std::fs::symlink_metadata(p) else { return 0 };
+        let own = m.blocks() * 512;
+        if !m.is_dir() {
+            return own;
+        }
+        own + std::fs::read_dir(p).into_iter().flatten().flatten().map(|e| bytes(&e.path())).sum::<u64>()
+    }
+    bytes(path).div_ceil(1 << 20)
+}
+
+/// `df --output=pcent`: used over used plus available, rounded up.
+fn pct_used(path: &Path) -> Option<u8> {
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    // SAFETY: statvfs writes only into the zeroed struct it is handed.
+    let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
+        return None;
+    }
+    let used = (s.f_blocks as u128).saturating_sub(s.f_bfree as u128);
+    let total = used + s.f_bavail as u128;
+    (total > 0).then(|| (used * 100).div_ceil(total).min(100) as u8)
+}
+
+/// The observe runner: the base's fill, and every locked slot's size and holder.
+pub fn observe() -> Result<String, String> {
+    let cfg = Config::pinned()?;
+    let base = Path::new(&cfg.base);
+    if cfg.base.is_empty() || !base.is_dir() {
+        return serde_json::to_string(&Snapshot::default()).map_err(|e| e.to_string());
+    }
+    let mut names: Vec<String> = std::fs::read_dir(base).into_iter().flatten().flatten().filter_map(|e| e.file_name().to_str().map(str::to_string)).filter(|n| is_slot(n) && base.join(n).is_dir() && base.join(format!("{n}.lock")).exists()).collect();
+    names.sort();
+    let slots = names
+        .into_iter()
+        .map(|name| {
+            let lock = base.join(format!("{name}.lock"));
+            let held_by = match try_lock(&lock) {
+                Some(_) => None,
+                None => {
+                    let who: String = std::fs::read_to_string(&lock).unwrap_or_default().chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')).collect();
+                    Some(if who.is_empty() { "unknown".into() } else { who })
+                }
+            };
+            Slot { mib: mib(&base.join(&name)), name, held_by }
+        })
+        .collect();
+    serde_json::to_string(&Snapshot { base: Some(cfg.base.clone()), pct: pct_used(base), slots }).map_err(|e| e.to_string())
+}
+
+/// The reap runner: empties the slot under its lock, or reports `held` and deletes nothing when a
+/// session took the lock after the observe.
+pub fn reap(input: &str) -> Result<String, String> {
+    let r: Reap = serde_json::from_str(input).map_err(|e| format!("reap: bad input: {e}"))?;
+    let cfg = Config::pinned()?;
+    if r.base != cfg.base || !is_slot(&r.slot) {
+        return Err(format!("reap: {}/{} is not a warm slot under {}", r.base, r.slot, cfg.base));
+    }
+    let slot = Path::new(&r.base).join(&r.slot);
+    let Some(_lock) = try_lock(&Path::new(&r.base).join(format!("{}.lock", r.slot))) else { return Ok(format!("{} held", r.slot)) };
+    let size = mib(&slot);
+    for e in std::fs::read_dir(&slot).map_err(|e| format!("{}: {e}", slot.display()))?.flatten() {
+        let p = e.path();
+        let _ = if e.file_type().is_ok_and(|t| t.is_dir()) { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) };
+    }
+    Ok(format!("idle {} emptied ({size}MiB)", r.slot))
 }
 
 pub struct WatchWarmFull {

@@ -60,6 +60,7 @@ use serde::{Deserialize, Serialize};
 use spira_config::process::{cfg, cfg_parse};
 
 use crate::tasks::d::pattern;
+use crate::tasks::e::alert::Alert;
 
 pub const NAME: &str = "watch.backup_age";
 pub const STREAM: &str = "watch.backup_age";
@@ -72,6 +73,7 @@ pub const KEYS: &[&str] = &["SPIRA_LC_BACKUP_URL", "SPIRA_LC_BACKUP_DB", "SPIRA_
 /// `--interval 900`.
 pub const CADENCE_MS: u64 = 900_000;
 const OBSERVE_DEADLINE_MS: u64 = 5_000;
+const MAIL_DEADLINE_MS: u64 = 10_000;
 /// The mail as `lc-backup.sh:330-336` sent it.
 pub const MAILBOX: &str = "operator";
 pub const FROM: &str = "LC Backup <lc-backup@spira>";
@@ -115,8 +117,65 @@ pub enum Carry {
 }
 
 /// `Ok` only when every store is; a crossing to `Red` mails RED, the way back mails CLEAR.
-pub fn decide(_carry: &Carry, _snap: &Snapshot, _now_ms: u64, _cfg: &Config) -> (Carry, Vec<EffectSpec>) {
-    unimplemented!("watch.backup_age: not ported yet")
+pub fn decide(carry: &Carry, snap: &Snapshot, _now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+    let state = if all_ok(snap) { Carry::Ok } else { Carry::Red };
+    let out = measured(snap);
+    let line = match (state, carry) {
+        (Carry::Red, Carry::Ok) => format!("RED: a store has no good backup within {}s ({out}) — losing its disk now loses its data and history", cfg.max_age_s),
+        (Carry::Ok, Carry::Red) => format!("CLEAR: every store has a fresh backup again ({out})"),
+        _ => return (state, vec![]),
+    };
+    (state, vec![Alert::of(MAILBOX, FROM, "lc-backup", "alert", &line).effect(MAIL, MAIL_DEADLINE_MS)])
+}
+
+/// `_lcb_all_ok`: every store measured, and every one `ok`.
+fn all_ok(snap: &Snapshot) -> bool {
+    matches!(snap, Snapshot::Dbs(dbs) if dbs.iter().all(|(_, d)| matches!(d, Db::Ok { .. })))
+}
+
+/// `_lcb_measure`'s lines joined by `;`, as `_lcb_tick` folded them; one unreadable stamp makes
+/// the whole measure `unreadable`, as its non-zero exit did.
+pub fn measured(snap: &Snapshot) -> String {
+    match snap {
+        Snapshot::NoDestination => "no-destination".into(),
+        Snapshot::NoDatabase => "no-database".into(),
+        Snapshot::Dbs(dbs) if dbs.iter().any(|(_, d)| *d == Db::Unreadable) => "unreadable".into(),
+        Snapshot::Dbs(dbs) => dbs
+            .iter()
+            .map(|(name, d)| match d {
+                Db::Ok { age } => format!("{name}: ok {age}"),
+                Db::Stale { age } => format!("{name}: stale {age}"),
+                Db::Never => format!("{name}: never"),
+                Db::Unreadable => format!("{name}: unreadable"),
+            })
+            .collect::<Vec<_>>()
+            .join(";"),
+    }
+}
+
+/// `_lcb_measure_db`: the stamp's first field against `now_s`.
+pub fn measure_db(stamp: Option<&str>, now_s: u64, max_age_s: u64) -> Db {
+    let Some(text) = stamp else { return Db::Never };
+    match text.split_whitespace().next().filter(|t| t.bytes().all(|b| b.is_ascii_digit())).and_then(|t| t.parse::<u64>().ok()) {
+        None => Db::Unreadable,
+        Some(t) if now_s.saturating_sub(t) > max_age_s => Db::Stale { age: now_s - t },
+        Some(t) => Db::Ok { age: now_s.saturating_sub(t) },
+    }
+}
+
+/// The observe runner: each configured store's `lc-backup.<db>.ok` stamp under the run dir.
+pub fn observe() -> Result<String, String> {
+    let cfg = Config::pinned()?;
+    let now_s = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let dbs: Vec<&str> = cfg.db.split_whitespace().collect();
+    let snap = if cfg.url.is_empty() {
+        Snapshot::NoDestination
+    } else if dbs.is_empty() {
+        Snapshot::NoDatabase
+    } else {
+        Snapshot::Dbs(dbs.iter().map(|db| (db.to_string(), measure_db(std::fs::read_to_string(std::path::Path::new(&cfg.run).join(format!("lc-backup.{db}.ok"))).ok().as_deref(), now_s, cfg.max_age_s))).collect())
+    };
+    serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
 
 pub struct WatchBackupAge {

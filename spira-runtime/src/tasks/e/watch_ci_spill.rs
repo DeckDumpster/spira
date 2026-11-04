@@ -63,13 +63,17 @@
 //! Release rollback restores unit and row; `Observe` mode shadows `inbox.append`. The `scan`/`--gate` subcommands stay in the script until the gate fence moves, so nothing else regresses.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 
 use runtime::event::*;
+use runtime::ports::{Proc, ProcSpec, SysProc};
 use serde::{Deserialize, Serialize};
 use spira_config::process::cfg;
+use spira_config::repos::Registry;
 
 use crate::tasks::d::pattern;
 use crate::watchers::{carried, INBOX_APPEND};
+use crate::Effects;
 
 pub const NAME: &str = "watch.ci_spill";
 pub const STREAM: &str = "watch.ci_spill";
@@ -83,6 +87,8 @@ pub const INBOX_TAG: &str = "ci-spill-guard";
 /// `--interval 900`.
 pub const CADENCE_MS: u64 = 900_000;
 const OBSERVE_DEADLINE_MS: u64 = 30_000;
+const INBOX_DEADLINE_MS: u64 = 10_000;
+const GIT_DEADLINE_MS: u64 = 10_000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
@@ -118,15 +124,158 @@ pub struct Carry {
     pub seen: BTreeMap<String, String>,
 }
 
+/// One line's indentation: its leading spaces, as the awk's `ind()`.
+fn ind(line: &str) -> usize {
+    line.len() - line.trim_start_matches(' ').len()
+}
+
+/// `/^[ ]*-[ ]/`: a list item.
+fn is_item(line: &str) -> bool {
+    line.trim_start_matches(' ').starts_with("- ")
+}
+
+/// `/uses:[ ]*[^ #]*\/provision@/`: some `uses:` whose value, up to a space or `#`, names a
+/// `provision` action at a ref.
+fn uses_provision(line: &str) -> bool {
+    line.match_indices("uses:").any(|(i, _)| {
+        let rest = line[i + 5..].trim_start_matches(' ');
+        rest.split([' ', '#']).next().is_some_and(|v| v.contains("/provision@"))
+    })
+}
+
+/// The value of a `spill:` line as the awk cleans it: the key, a trailing comment and one quote
+/// at either end removed.
+fn spill_value(line: &str) -> String {
+    let v = line.trim_start_matches(' ').trim_start_matches("spill:").trim_start_matches(' ');
+    // `sub(/[ ]+#.*$/, "")`: from the spaces before the first `#` that follows a space.
+    let v = match v.match_indices(" #").next() {
+        Some((i, _)) => v[..i].trim_end_matches(' '),
+        None => v,
+    };
+    let v = v.strip_prefix(['"', '\'']).unwrap_or(v);
+    v.strip_suffix(['"', '\'']).unwrap_or(v).to_string()
+}
+
 /// The awk of `_csg_file` as Rust: a `uses: …/provision@…` step whose `spill:` is absent or not
-/// `ec2-only`, one finding per step.
-pub fn violations(_path: &str, _text: &str) -> Vec<String> {
-    unimplemented!("watch.ci_spill: not ported yet")
+/// `ec2-only`, one finding per step, each `<path>:<line>: …` as the awk printed it.
+pub fn violations(path: &str, text: &str) -> Vec<String> {
+    #[derive(Default)]
+    struct Step {
+        line: usize,
+        indent: usize,
+        spill: Option<(usize, String)>,
+    }
+    fn flush(step: &mut Option<Step>, path: &str, out: &mut Vec<String>) {
+        match step.take() {
+            Some(Step { line, spill: None, .. }) => out.push(format!("{path}:{line}: provision has no spill: input; override: spill: ec2-only")),
+            Some(Step { spill: Some((at, v)), .. }) if v != "ec2-only" => out.push(format!("{path}:{at}: provision spill: {v}; override: spill: ec2-only")),
+            _ => {}
+        }
+    }
+    let (mut out, mut step, mut cur) = (vec![], None::<Step>, 0);
+    for (i, line) in text.lines().enumerate() {
+        let n = i + 1;
+        if is_item(line) && step.as_ref().is_some_and(|s| ind(line) <= s.indent) {
+            flush(&mut step, path, &mut out);
+        }
+        if is_item(line) {
+            cur = ind(line);
+        }
+        if line.chars().next().is_some_and(|c| c != ' ' && c != '#') {
+            flush(&mut step, path, &mut out);
+        }
+        if uses_provision(line) {
+            flush(&mut step, path, &mut out);
+            step = Some(Step { line: n, indent: cur, spill: None });
+            continue;
+        }
+        if let Some(s) = step.as_mut() {
+            if line.trim_start_matches(' ').starts_with("spill:") {
+                s.spill = Some((n, spill_value(line)));
+            }
+        }
+    }
+    flush(&mut step, path, &mut out);
+    out
+}
+
+/// The text `_csg_once` wrote after the stamp, and the key it marked said.
+fn said(carry: &mut Carry, acts: &mut Vec<EffectSpec>, now_ms: u64, key: String, message: String) {
+    if carry.said.insert(key) {
+        acts.push(EffectSpec { name: INBOX_APPEND.into(), input: pattern::inbox_line(now_ms, INBOX_TAG, &message), deadline_ms: INBOX_DEADLINE_MS });
+    }
 }
 
 /// For each repo with a new sha, every violation not yet said as one inbox line; then `seen`.
-pub fn decide(_carry: &Carry, _snap: &Snapshot, _now_ms: u64, _cfg: &Config) -> (Carry, Vec<EffectSpec>) {
-    unimplemented!("watch.ci_spill: not ported yet")
+/// A repo whose workflows were not read (the archive failed) keeps its old `seen`, as the
+/// script's stamp did.
+pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, _cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+    let (mut next, mut acts) = (carry.clone(), vec![]);
+    for repo in &snap.repos {
+        let Some(ref_) = &repo.ref_ else {
+            said(&mut next, &mut acts, now_ms, format!("noref-{}", repo.name), format!("CI SPILL: {} has no resolvable landing ref; its workflows are unchecked", repo.name));
+            continue;
+        };
+        if repo.sha.is_some() && repo.sha.as_ref() == carry.seen.get(&repo.name) {
+            continue;
+        }
+        let Some(workflows) = &repo.workflows else { continue };
+        for (path, text) in workflows {
+            for v in violations(&format!("{}:{path}", repo.name), text) {
+                let message = format!("CI SPILL: law-buy-capacity-rather-than-wait: {v} (at {ref_})");
+                said(&mut next, &mut acts, now_ms, v, message);
+            }
+        }
+        if let Some(sha) = &repo.sha {
+            next.seen.insert(repo.name.clone(), sha.clone());
+        }
+    }
+    (next, acts)
+}
+
+/// One git read in `root`, bounded; its stdout when git exited 0.
+fn git(root: &str, args: &[&str]) -> Option<String> {
+    let mut argv = vec!["-C".to_string(), root.to_string()];
+    argv.extend(args.iter().map(|a| a.to_string()));
+    let out = SysProc.run(&ProcSpec { prog: "git".into(), args: argv, stdin: vec![], deadline: Duration::from_millis(GIT_DEADLINE_MS) }).ok()?;
+    (out.code == Some(0)).then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// The `.github/workflows/*.yml` then `*.yaml` blobs at `ref_`, each glob sorted as bash expands
+/// it; `None` when the tree could not be read.
+fn workflows(root: &str, ref_: &str) -> Option<Vec<(String, String)>> {
+    let listing = git(root, &["ls-tree", "--name-only", ref_, ".github/workflows/"])?;
+    let mut names: Vec<&str> = listing.lines().filter(|l| !l.is_empty()).collect();
+    names.sort();
+    let mut out = vec![];
+    for ext in [".yml", ".yaml"] {
+        for path in names.iter().filter(|p| p.ends_with(ext)) {
+            out.push((path.to_string(), git(root, &["show", &format!("{ref_}:{path}")])?));
+        }
+    }
+    Some(out)
+}
+
+/// The observe runner: every registered repo whose checkout exists, its landing ref and sha, and
+/// its workflows when the sha differs from `input`'s carried `seen`.
+pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
+    let seen: BTreeMap<String, String> = serde_json::from_str(input).unwrap_or_default();
+    let home = spira_config::resolve::locate_home_for_process().unwrap_or_default();
+    let map = std::fs::read_to_string(&e.world.repo_map).ok();
+    let env = BTreeMap::from([("SPIRA_HOME_REPO".to_string(), e.world.home_repo.clone())]);
+    let reg = Registry::new(map.as_deref(), &env, &home);
+    let mut repos = vec![];
+    for name in reg.names() {
+        let Some(root) = reg.root(&name).filter(|r| std::path::Path::new(r).exists()) else { continue };
+        let Some(ref_) = spira_config::repos::landref(&reg, &name) else {
+            repos.push(Repo { name, ..Repo::default() });
+            continue;
+        };
+        let sha = git(&root, &["rev-parse", &ref_]).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        let workflows = if sha.is_some() && sha.as_ref() == seen.get(&name) { None } else { workflows(&root, &ref_) };
+        repos.push(Repo { name, ref_: Some(ref_), sha, workflows });
+    }
+    serde_json::to_string(&Snapshot { repos }).map_err(|e| e.to_string())
 }
 
 pub struct WatchCiSpill {
@@ -165,5 +314,37 @@ impl Handler for WatchCiSpill {
             return pattern::tick(ev, OBSERVE, seen, OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
         }
         pattern::on_answer(ctx, view, ev, OBSERVE, STATE, &self.config, decide)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const W: &str = ".github/workflows/ci.yml";
+
+    #[test]
+    fn the_scan_reads_each_provision_step_as_the_awk_did() {
+        let ok = "jobs:\n  a:\n    steps:\n      - uses: o/a/provision@v1\n        with:\n          spill: ec2-only # pinned\n";
+        assert!(violations(W, ok).is_empty(), "a trailing comment is not part of the value");
+        let quoted = "jobs:\n  a:\n    steps:\n      - uses: o/a/provision@v1\n        with:\n          spill: \"ec2-only\"\n";
+        assert!(violations(W, quoted).is_empty(), "quotes are stripped");
+        let wrong = "jobs:\n  a:\n    steps:\n      - uses: o/a/provision@v1\n        with:\n          spill: ec2\n";
+        assert_eq!(violations(W, wrong), [format!("{W}:6: provision spill: ec2; override: spill: ec2-only")]);
+        let named = "jobs:\n  a:\n    steps:\n      - name: boot\n        uses: o/a/provision@v1\n      - name: next\n        with:\n          spill: ec2-only\n";
+        assert_eq!(violations(W, named), [format!("{W}:5: provision has no spill: input; override: spill: ec2-only")], "a sibling step's spill: does not count");
+        let two = "jobs:\n  a:\n    steps:\n      - uses: o/a/provision@v1\njobs2:\n  - uses: o/a/provision@v2\n";
+        assert_eq!(violations(W, two).len(), 2, "a top-level key ends the step");
+        assert!(violations(W, "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n").is_empty());
+    }
+
+    #[test]
+    fn an_unreadable_tree_keeps_its_old_seen_and_a_missing_ref_is_said_once() {
+        let cfg = Config { repo_map: String::new(), inbox: String::new() };
+        let snap = Snapshot { repos: vec![Repo { name: "r".into(), ref_: Some("main".into()), sha: Some("b".into()), workflows: None }, Repo { name: "d".into(), ..Repo::default() }] };
+        let (next, acts) = decide(&Carry::default(), &snap, 0, &cfg);
+        assert!(next.seen.is_empty());
+        assert_eq!(acts.len(), 1);
+        assert!(decide(&next, &snap, 0, &cfg).1.is_empty());
     }
 }
