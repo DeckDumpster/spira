@@ -13,9 +13,12 @@
 
 use serde_json::Value;
 use std::collections::HashMap;
-use std::process::{Command, Stdio};
+use std::time::Duration;
 
+use crate::lc_call::LcClient;
 use crate::lifecycle_row::lc_bin;
+
+pub use lifecycle::batch::BatchState;
 
 /// The `wait` hold's reason that makes it a timed snooze: `snooze-until:<epoch seconds>`.
 pub const SNOOZE_PREFIX: &str = "snooze-until:";
@@ -166,28 +169,18 @@ pub fn parse_show(text: &str) -> Result<Option<Row>, String> {
     Ok(v.get("bead").filter(|b| b.is_object()).map(row_of).filter(|r| !r.bead_id.is_empty()))
 }
 
-fn run(bin: &str, args: &[&str]) -> Result<(i32, String), String> {
-    run_within(bin, args, 5)
+/// Exit 0 or 1 is an answer (1: no such row); anything else is an error naming the call.
+fn run_on(c: &LcClient, args: &[&str]) -> Result<(i32, String), String> {
+    let r = c.call(args)?;
+    if r.code != 0 && r.code != 1 {
+        return Err(format!("spira-lc {} exited {}: {}", args.join(" "), r.code, r.why()));
+    }
+    Ok((r.code, r.out))
 }
 
-fn run_within(bin: &str, args: &[&str], secs: u32) -> Result<(i32, String), String> {
+fn client(bin: &str, secs: u32) -> Result<LcClient, String> {
     // batch-job: the interactive default is 5 s (the call-deadline cap); a batch caller passes more.
-    let out = Command::new("timeout")
-        .arg(secs.to_string())
-        .arg(bin)
-        .args(args)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("cannot run {bin}: {e}"))?;
-    let code = out.status.code().unwrap_or(-1);
-    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-    if code != 0 && code != 1 {
-        let why = String::from_utf8_lossy(&out.stderr);
-        let why = why.lines().find(|l| !l.trim().is_empty()).unwrap_or("no message");
-        let why = if code == 124 { format!("timed out after {secs}s") } else { why.to_string() };
-        return Err(format!("{bin} {} exited {code}: {why}", args.join(" ")));
-    }
-    Ok((code, stdout))
+    Ok(LcClient::for_bin(bin)?.within(Duration::from_secs(u64::from(secs))))
 }
 
 /// Every lifecycle row (`spira-lc list`). Err when the machine cannot answer: a caller that
@@ -196,29 +189,38 @@ pub fn list_with(bin: &str) -> Result<Vec<Row>, String> {
     list_within(bin, 5)
 }
 
+/// [`list_with`] through `c`.
+pub fn list_on(c: &LcClient) -> Result<Vec<Row>, String> {
+    parse_rows(&list_raw_on(c)?)
+}
+
 /// The rows in one state (`spira-lc list --state <STATE>`): what a reader that wants only
 /// the WORKING dwarves asks, instead of every row.
 pub fn list_state_with(bin: &str, state: &str) -> Result<Vec<Row>, String> {
-    match run_within(bin, &["list", "--state", state], 5)? {
+    list_state_on(&client(bin, 5)?, state)
+}
+
+pub fn list_state_on(c: &LcClient, state: &str) -> Result<Vec<Row>, String> {
+    match run_on(c, &["list", "--state", state])? {
         (0, out) => parse_rows(&out),
-        (rc, _) => Err(format!("{bin} list --state {state} exited {rc}")),
+        (rc, _) => Err(format!("spira-lc list --state {state} exited {rc}")),
     }
 }
 
 /// `list_with` for a batch caller that can wait out a loaded store: `secs` bounds the read.
 pub fn list_within(bin: &str, secs: u32) -> Result<Vec<Row>, String> {
-    parse_rows(&list_raw_within(bin, secs)?)
+    list_on(&client(bin, secs)?)
 }
 
 /// `spira-lc list`'s stdout, unparsed, for a caller that keeps the last good answer.
 pub fn list_raw_with(bin: &str) -> Result<String, String> {
-    list_raw_within(bin, 5)
+    list_raw_on(&client(bin, 5)?)
 }
 
-fn list_raw_within(bin: &str, secs: u32) -> Result<String, String> {
-    match run_within(bin, &["list"], secs)? {
+pub fn list_raw_on(c: &LcClient) -> Result<String, String> {
+    match run_on(c, &["list"])? {
         (0, out) => Ok(out),
-        (rc, _) => Err(format!("{bin} list exited {rc}")),
+        (rc, _) => Err(format!("spira-lc list exited {rc}")),
     }
 }
 
@@ -232,7 +234,11 @@ pub fn list() -> Result<Vec<Row>, String> {
 
 /// One bead's row (`spira-lc show <id>`): Ok(None) when the machine has no row for it.
 pub fn row_with(bin: &str, id: &str) -> Result<Option<Row>, String> {
-    match run(bin, &["show", id])? {
+    row_on(&client(bin, 5)?, id)
+}
+
+pub fn row_on(c: &LcClient, id: &str) -> Result<Option<Row>, String> {
+    match run_on(c, &["show", id])? {
         (0, out) => parse_show(&out),
         _ => Ok(None),
     }

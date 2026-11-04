@@ -1,10 +1,11 @@
 //! Every path that creates a bead creates its lifecycle row too: a bead with no
 //! `spira_lifecycle` row can never be claimed.
 
-use std::process::{Command, Stdio};
+use lifecycle::bead::BeadEventKind;
+
+use crate::lc_call::{LcClient, LC_TIMEOUT};
 
 pub const LC_BIN_ENV: &str = "SPIRA_LC_BIN";
-const LC_TIMEOUT_SECS: &str = "15";
 
 pub fn lc_bin() -> Result<String, String> {
     match std::env::var(LC_BIN_ENV).ok().filter(|v| !v.is_empty()) {
@@ -79,23 +80,55 @@ pub fn is_ask(id: &str) -> Result<bool, String> {
     is_ask_with(&lc_bin()?, id)
 }
 
+fn client(bin: &str) -> Result<LcClient, String> {
+    // batch-job: a write through the CLI queues behind a loaded store; the socket keeps its 5 s.
+    Ok(LcClient::for_bin(bin)?.within(LC_TIMEOUT))
+}
+
 fn run_lc(bin: &str, args: &[&str]) -> Result<(i32, String), String> {
-    let out = Command::new("timeout")
-        .arg(LC_TIMEOUT_SECS)
-        .arg(bin)
-        .args(args)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("cannot run {bin}: {e}"))?;
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout).trim(), String::from_utf8_lossy(&out.stderr).trim());
-    Ok((out.status.code().unwrap_or(-1), msg))
+    run_on(&client(bin)?, args)
+}
+
+fn run_on(c: &LcClient, args: &[&str]) -> Result<(i32, String), String> {
+    let r = c.call(args)?;
+    Ok((r.code, r.text()))
 }
 
 fn lc_status(bin: &str, args: &[&str]) -> Result<(), String> {
-    match run_lc(bin, args)? {
+    status_on(&client(bin)?, args).map_err(|e| format!("{bin} {e}"))
+}
+
+fn status_on(c: &LcClient, args: &[&str]) -> Result<(), String> {
+    match run_on(c, args)? {
         (0, _) => Ok(()),
-        (code, msg) => Err(format!("{bin} {} exited {code}: {msg}", args.join(" "))),
+        (code, msg) => Err(format!("{} exited {code}: {msg}", args.join(" "))),
     }
+}
+
+/// `express`/`unexpress` is a caller verb of the CLI; the socket serves its primitives, so a
+/// socket client reads the row and sends the event itself, as the CLI does.
+pub fn set_express_on(c: &LcClient, id: &str, on: bool) -> Result<(), String> {
+    let verb = if on { "express" } else { "unexpress" };
+    if !c.is_socket() {
+        return status_on(c, &[verb, id]);
+    }
+    let shown = c.call(&["show", id])?;
+    if shown.code != 0 {
+        return Err(format!("{verb} {id}: no lifecycle row to mark: {}", shown.why()));
+    }
+    let v: serde_json::Value = serde_json::from_str(shown.out.trim()).map_err(|e| format!("{verb} {id}: show is not JSON: {e}"))?;
+    let field = |k: &str| match &v["bead"][k] {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        _ => String::new(),
+    };
+    let (state, version) = (field("state"), field("version"));
+    if state.is_empty() || version.is_empty() {
+        return Err(format!("{verb} {id}: no lifecycle row to mark"));
+    }
+    let kind = if on { BeadEventKind::Express } else { BeadEventKind::Unexpress };
+    let kind = serde_json::to_string(&kind).map_err(|e| e.to_string())?;
+    status_on(c, &["event", "bead", id, "--expect", &state, "--version", &version, "--actor", "bead", "--kind", &kind])
 }
 
 /// The id `bd create` printed: `--silent` prints the bare id, `--json` an object (or a
@@ -150,41 +183,12 @@ pub fn ensure_rows_with(bin: &str, ids: &[String]) -> Result<(), String> {
 
 /// `Ok(())`: the row exists now.
 pub fn ensure_row_with(bin: &str, id: &str) -> Result<(), String> {
-    let out = Command::new("timeout")
-        .args([LC_TIMEOUT_SECS, bin, "create-bead", id, "--ready"])
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("cannot run {bin}: {e}"))?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "{bin} create-bead {id} exited {}: {}{}",
-            out.status.code().map_or("signal".into(), |c| c.to_string()),
-            String::from_utf8_lossy(&out.stdout).trim(),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ))
-    }
+    lc_status(bin, &["create-bead", id, "--ready"])
 }
 
 /// Record `Express`/`Unexpress` on the bead's lifecycle row: express is lifecycle state.
 pub fn set_express_with(bin: &str, id: &str, on: bool) -> Result<(), String> {
-    let verb = if on { "express" } else { "unexpress" };
-    let out = Command::new("timeout")
-        .args([LC_TIMEOUT_SECS, bin, verb, id])
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("cannot run {bin}: {e}"))?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "{bin} {verb} {id} exited {}: {}{}",
-            out.status.code().map_or("signal".into(), |c| c.to_string()),
-            String::from_utf8_lossy(&out.stdout).trim(),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ))
-    }
+    set_express_on(&client(bin)?, id, on).map_err(|e| format!("{bin} {e}"))
 }
 
 pub fn set_express(id: &str, on: bool) -> Result<(), String> {
@@ -193,21 +197,7 @@ pub fn set_express(id: &str, on: bool) -> Result<(), String> {
 
 /// Filing has finished: the row born OPEN before the bead's edges were written becomes READY.
 pub fn promote_with(bin: &str, id: &str) -> Result<(), String> {
-    let out = Command::new("timeout")
-        .args([LC_TIMEOUT_SECS, bin, "promote-filed", id])
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("cannot run {bin}: {e}"))?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "{bin} promote-filed {id} exited {}: {}{}",
-            out.status.code().map_or("signal".into(), |c| c.to_string()),
-            String::from_utf8_lossy(&out.stdout).trim(),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ))
-    }
+    lc_status(bin, &["promote-filed", id])
 }
 
 pub fn promote(id: &str) -> Result<(), String> {
@@ -258,21 +248,7 @@ pub fn closed_id(args: &[String]) -> Option<&str> {
 /// Move the bead's lifecycle row to the terminal state its bd close earned
 /// (`spira-lc reconcile-closed`), so a closed bead never stays READY and claimable.
 pub fn terminalize_closed_with(bin: &str, id: &str) -> Result<(), String> {
-    let out = Command::new("timeout")
-        .args([LC_TIMEOUT_SECS, bin, "reconcile-closed", "--apply", id])
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("cannot run {bin}: {e}"))?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "{bin} reconcile-closed {id} exited {}: {}{}",
-            out.status.code().map_or("signal".into(), |c| c.to_string()),
-            String::from_utf8_lossy(&out.stdout).trim(),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ))
-    }
+    lc_status(bin, &["reconcile-closed", "--apply", id])
 }
 
 /// Call after a successful `bd close`. A failure is reported and returned; the bead is
@@ -302,29 +278,12 @@ pub fn close_landed(id: &str, reason: &str, actor: &str) -> Result<(), String> {
 }
 
 fn close_args(bin: &str, id: &str, reason: &str, actor: &str, extra: Vec<&str>) -> Result<(), String> {
-    use std::io::Write;
-    let mut cmd = Command::new("timeout");
-    cmd.args([LC_TIMEOUT_SECS, bin, "close", id, "--reason-file", "-", "--actor", actor]);
-    cmd.args(extra);
-    let mut child = cmd
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("cannot run {bin}: {e}"))?;
-    if let Some(mut si) = child.stdin.take() {
-        si.write_all(reason.as_bytes()).map_err(|e| format!("{bin} close {id}: writing the reason: {e}"))?;
-    }
-    let out = child.wait_with_output().map_err(|e| format!("{bin} close {id}: {e}"))?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "{bin} close {id} exited {}: {}{}",
-            out.status.code().map_or("signal".into(), |c| c.to_string()),
-            String::from_utf8_lossy(&out.stdout).trim(),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ))
+    let mut args = vec!["close", id, "--reason-file", "-", "--actor", actor];
+    args.extend(extra);
+    let r = client(bin)?.call_stdin(&args, reason).map_err(|e| format!("{bin} close {id}: {e}"))?;
+    match r.code {
+        0 => Ok(()),
+        code => Err(format!("{bin} close {id} exited {code}: {}", r.text())),
     }
 }
 
@@ -338,19 +297,9 @@ pub fn close(id: &str, reason: &str, actor: &str, superseded_by: Option<&str>) -
 /// `Ok`; a terminal row (3) or an unreachable machine (2) is an error. Every Rust reopener
 /// calls this rather than handing bd a `reopen` (lifecycle-guard's `bd-reopen-rust`).
 pub fn reopen_with(bin: &str, id: &str, cause: &str, actor: &str) -> Result<(), String> {
-    let out = Command::new("timeout")
-        .args([LC_TIMEOUT_SECS, bin, "reopen", id, cause, actor])
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("cannot run {bin}: {e}"))?;
-    match out.status.code() {
-        Some(0 | 1) => Ok(()),
-        code => Err(format!(
-            "{bin} reopen {id} exited {}: {}{}",
-            code.map_or("signal".into(), |c| c.to_string()),
-            String::from_utf8_lossy(&out.stdout).trim(),
-            String::from_utf8_lossy(&out.stderr).trim()
-        )),
+    match run_lc(bin, &["reopen", id, cause, actor])? {
+        (0 | 1, _) => Ok(()),
+        (code, msg) => Err(format!("{bin} reopen {id} exited {code}: {msg}")),
     }
 }
 
