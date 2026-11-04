@@ -44,12 +44,28 @@ for _t in exclude.sh spira-lint branch-guard.sh; do
     }
 done
 exclude.sh staged || exit 1
-spira-lint --only scratch-fence || exit 1
+# LINT THE TREE BEING COMMITTED, NOT THE WORKING TREE (sp-ipwlic). spira-lint walks
+# `git ls-files` plus untracked files, so run against the work tree it judged every
+# half-written file of every other session sharing the checkout: one agent's unstaged
+# defect refused everyone else's commits for twenty to forty minutes at a time, four times
+# in one night. The index is what this commit will contain, so export it (write-tree
+# honours GIT_INDEX_FILE, which `git commit -- <paths>` sets to its temporary index) into
+# a scratch repository and point the lint there. Same rules, same binary, exact scope.
+_lint_root="$(mktemp -d "${TMPDIR:-/tmp}/spira-precommit.XXXXXX")" || exit 1
+trap 'rm -rf "$_lint_root"' EXIT
+_tree="$(git write-tree)" || { echo "pre-commit: git write-tree failed; refusing to commit unchecked" >&2; exit 1; }
+git archive --format=tar "$_tree" | tar -x -C "$_lint_root" || { echo "pre-commit: could not export the index; refusing to commit unchecked" >&2; exit 1; }
+# git exports GIT_INDEX_FILE (and may export GIT_DIR) to this hook; the scratch repository
+# and the lint's own git calls must not inherit them.
+_clean=(env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE)
+"${_clean[@]}" git -C "$_lint_root" init -q && "${_clean[@]}" git -C "$_lint_root" add -A -f . || { echo "pre-commit: could not stage the exported index; refusing to commit unchecked" >&2; exit 1; }
+unset _tree
+"${_clean[@]}" spira-lint --root "$_lint_root" --only scratch-fence || exit 1
 # The other rules judge the harness's own sources; in a repository carrying none they would
 # refuse an empty scope and mask every later fence.
 if exclude.sh harness >/dev/null 2>&1; then
     for _r in tmp-leak chmod-exec-leak env-set-var-leak fence-scripts config-fence; do
-        spira-lint --only "$_r" || exit 1
+        "${_clean[@]}" spira-lint --root "$_lint_root" --only "$_r" || exit 1
     done
 fi
 exec branch-guard.sh staged
