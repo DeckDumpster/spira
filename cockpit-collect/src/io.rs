@@ -521,7 +521,7 @@ pub fn tsd_slots_sample(run: &Path, frag: &Path) {
 /// The `slots` row, appended in-process exactly as `tsd-write --family slots --root <run>
 /// --field k=v ...` appends it: each value typed as `--field` types it, under the family
 /// file's exclusive lock.
-fn slots_row(run: &Path, fields: &[(&str, String)], ts: &str, host: &str) -> Result<(), String> {
+pub fn slots_row(run: &Path, fields: &[(&str, String)], ts: &str, host: &str) -> Result<(), String> {
     let parsed = fields.iter().map(|(k, v)| tsd::parse_field(&format!("{k}={v}"))).collect::<Result<Vec<_>, _>>()?;
     let line = tsd::build_row(ts, host, "slots", &parsed)?;
     tsd::append_line(&tsd::family_path(run, "slots"), &line)
