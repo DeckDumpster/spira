@@ -5,6 +5,8 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 pub fn concierge_wake(concierge: &Path, line: &str) -> Result<String, String> {
+    // FORK-EDGE: concierge.sh wake (68-line case over the script's 684-line session preamble) types into
+    // the pane with tmux send-keys, which nothing built here may do; it stays the operator tool's.
     let out = Command::new(concierge) // batch-job: wake holds until the input line is empty, which can take minutes
         .arg("wake")
         .arg(line)

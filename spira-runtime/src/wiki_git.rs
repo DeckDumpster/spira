@@ -42,6 +42,7 @@ pub fn gh_auth_token(gh: &str, config_dir: &str, deadline: Duration) -> Result<(
 /// One `overrides.sh apply` pass under `timeout`; a failed override fails the pass, and its
 /// stdout and stderr together say which.
 pub fn overrides_apply() -> Result<String, String> {
+    // FORK-EDGE: overrides.sh is 223 lines of shell (over the ~100-line port bound).
     let out = spira_config::bounded::bounded("overrides.sh").arg("apply").stdin(Stdio::null()).output().map_err(|e| format!("overrides.sh: {e}"))?;
     let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     if out.status.success() { Ok(said.trim().to_string()) } else { Err(said.trim().to_string()) }
@@ -50,6 +51,7 @@ pub fn overrides_apply() -> Result<String, String> {
 /// One `<exporter> lifecycle` run under `timeout`, which brings the `bead-stage` family up to the
 /// lifecycle log; a failed run names its exit code and what it said on stderr.
 pub fn lifecycle_export(bin: &str) -> Result<(), String> {
+    // FORK-EDGE: sibling binary tsd-lifecycle-export (the bead-stage exporter).
     let out = spira_config::bounded::bounded(bin).arg("lifecycle").stdin(Stdio::null()).output().map_err(|e| format!("{bin}: {e}"))?;
     if out.status.success() {
         return Ok(());
