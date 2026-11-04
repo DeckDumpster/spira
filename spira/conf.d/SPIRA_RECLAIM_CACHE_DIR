@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=runtime
+DOC=The shared compilation cache directory sweep.reclaim trims.
+SCHEMA=REQUIRED: The shared compilation cache directory sweep.reclaim trims. Declared by a spira-runtime task row written from its contract (wiki/projects/spira/designs/tasks/); nothing defaults it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
+SPIRA_CONF_DEFAULT_EOF

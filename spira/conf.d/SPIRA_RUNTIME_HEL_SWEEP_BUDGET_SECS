@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds one hel.sweep pass may spend before it stops and leaves the rest for the next.
+SCHEMA=REQUIRED: Seconds one hel.sweep pass may spend before it stops and leaves the rest for the next. Declared by a spira-runtime task row written from its contract (wiki/projects/spira/designs/tasks/); nothing defaults it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
+SPIRA_CONF_DEFAULT_EOF

@@ -121,6 +121,26 @@ impl Settings {
         out
     }
 
+    /// Every key a row in `tasks::pending()` declares, each once. None is read until its row is
+    /// ported, but each is registered config already, so porting a row changes no registry.
+    pub fn pending_keys() -> Vec<&'static str> {
+        let mut out: Vec<&'static str> = vec![];
+        for k in crate::tasks::pending().flat_map(|t| t.keys.iter().flat_map(|ks| ks.iter())) {
+            if !out.contains(k) {
+                out.push(k);
+            }
+        }
+        out
+    }
+
+    /// Keys pending rows declare that the one config door cannot carry, so none is registered:
+    /// the config file spells a field `SPIRA_<FIELD>`, or `COCKPIT_<FIELD>` when the field starts
+    /// `cockpit_`, so `BD_TIMEOUT` and every `SPIRA_COCKPIT_*` key has no field that reads back
+    /// as it; `SPIRA_LC_BIN` is retired (sp-gypjk: tools are invoked by name) and the loader
+    /// drops it. Each row's contract names them; the port renames or drops each before its row
+    /// moves to `TASKS`, where `from_lookup` would refuse it.
+    pub const UNDECLARABLE: &'static [&'static str] = &["BD_TIMEOUT", "SPIRA_COCKPIT_TICK", "SPIRA_COCKPIT_FORCE", "SPIRA_COCKPIT_WINDOW_HOURS", "SPIRA_COCKPIT_SLOW_CONCURRENT", "SPIRA_LC_BIN"];
+
     pub fn load() -> Result<Settings, String> {
         let mut settings = Self::from_lookup(&cfg)?.with_environment(&|k| std::env::var(k).ok().filter(|v| !v.is_empty()))?;
         settings.reconciler.home = spira_config::resolve::locate_home_for_process()?.to_string_lossy().into_owned();
@@ -326,10 +346,52 @@ mod tests {
                 "SPIRA_POOL_CAP_CONTAINER" => "2",
                 "SPIRA_TASK_MODES" => "heartbeat=act round-duty=act inbox-keeper=act pr-notify=act asks=observe design-asks=act brain-dirty=act supersede-duty=act bead-sweep=act publish-backlog=act repo-events=act overrides=act view=observe reconciler=act reconciler-flow=act",
                 k if reconciler_fixture(k).is_some() => reconciler_fixture(k).unwrap_or_default(),
+                "BD_TIMEOUT" => "30",
+                "SPIRA_COCKPIT_TICK" => "5",
+                "SPIRA_COCKPIT_FORCE" => "",
+                "SPIRA_COCKPIT_WINDOW_HOURS" => "24",
+                "SPIRA_COCKPIT_SLOW_CONCURRENT" => "1",
+                "SPIRA_LC_BIN" => "spira-lc",
+                k if Settings::pending_keys().contains(&k) => return complete_fixture(k).ok_or_else(|| format!("{k} has no value in spira/testlib/complete.toml")),
                 _ => return Err(format!("{k} unknown")),
             }
             .to_string())
         }
+    }
+
+    /// `key`'s value under `[spira]` in the complete fixture (`spira/testlib/complete.toml`), its
+    /// quotes stripped: the fixture values of the keys pending rows declare live there, once.
+    pub(crate) fn complete_fixture(key: &str) -> Option<String> {
+        let field = spira_config::registry::field_of(key);
+        let text = spira_config::process::complete_fixture_text();
+        let mut in_spira = false;
+        for line in text.lines().map(str::trim) {
+            if line.starts_with('[') {
+                in_spira = line == "[spira]";
+            } else if let Some((k, v)) = line.split_once('=').filter(|_| in_spira) {
+                if k.trim() == field {
+                    let v = v.trim();
+                    return Some(v.strip_prefix('"').and_then(|v| v.strip_suffix('"')).unwrap_or(v).to_string());
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn every_key_a_pending_row_declares_is_registered_and_the_fixture_resolves_it() {
+        assert_eq!(complete_fixture("SPIRA_POOL_CAP_CONTAINER").as_deref(), Some("2"), "the fixture reader must find a known key");
+        assert_eq!(complete_fixture("SPIRA_PLANTED_NOT_A_KEY"), None);
+        let pending = Settings::pending_keys();
+        assert!(pending.len() >= 50, "the scan must see the pending rows' keys: {pending:?}");
+        let conf_d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d");
+        let unregistered: Vec<&str> = pending.iter().copied().filter(|k| !conf_d.join(k).is_file() && !Settings::UNDECLARABLE.contains(k)).collect();
+        assert!(unregistered.is_empty(), "keys pending rows declare that spira/conf.d does not register: {unregistered:?}");
+        let stale: Vec<&&str> = Settings::UNDECLARABLE.iter().filter(|k| conf_d.join(k).is_file() || !pending.contains(k)).collect();
+        assert!(stale.is_empty(), "an undeclarable key is now registered or no longer declared: {stale:?}");
+        let get = lookup("7");
+        let unresolved: Vec<&str> = Settings::keys().into_iter().chain(pending).filter(|k| get(k).is_err()).collect();
+        assert!(unresolved.is_empty(), "keys of CORE and the pending rows the settings fixture does not resolve: {unresolved:?}");
     }
 
     /// Values for the keys the reconciler reads; none is the shipped default.
