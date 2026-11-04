@@ -195,8 +195,10 @@ fn main() {
     let mut fail = false;
 
     // ---- 1. the disposition: the row says why the session ends -------------------------
-    // FORK-EDGE: unserved verb disposition (a callers.rs verb the socket does not answer).
-    let _ = spira_config::bounded::bounded("spira-lc").args(["disposition", id, "slain", &args.why, "slay"]).output();
+    let lc = spira_config::lc_call::LcClient::configured();
+    if let Ok(c) = &lc {
+        let _ = c.call(&["disposition", id, "slain", &args.why, "slay"]);
+    }
 
     // ---- 2/3. the holder (dwarf OR manual hold) ------------------------------------------
     let mut name = String::new();
@@ -217,8 +219,9 @@ fn main() {
         }
         let _ = std::fs::remove_file(&hold_pid_file);
         let _ = std::fs::remove_file(&hb_file);
-        // FORK-EDGE: unserved verb unhold (a callers.rs verb the socket does not answer).
-        let _ = spira_config::bounded::bounded("spira-lc").args(["unhold", id, "manual", "slay"]).output();
+        if let Ok(c) = &lc {
+            let _ = c.call(&["unhold", id, "manual", "slay"]);
+        }
         say(&format!(
             "hold: manual hold released for {id} (holder pid {}, heartbeat {})",
             if hpid.is_empty() { "?" } else { &hpid },

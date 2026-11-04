@@ -190,11 +190,11 @@ fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| default.to_string())
 }
 
-/// `content <args>`: bead content (title, labels, comments) through `spira-lc content`, the
-/// one door — never `bd` itself. `SPIRA_BDJSON_FIXTURE` set -> `bdsim <fixture> <args>`
-/// (the test seam the `test-cockpit-*.sh` suites drive). `timeout ${BD_TIMEOUT:-180}`, retried
-/// up to `SPIRA_BDQ_CONN_RETRIES` (default 2) times while stderr contains "invalid
-/// connection". `None` on any failure; the caller renders `?`, never 0.
+/// `content <args>`: bead content (title, labels, comments) through the store's `content`
+/// verb over its socket, the one door — never `bd` itself. `SPIRA_BDJSON_FIXTURE` set ->
+/// `bdsim <fixture> <args>` (the test seam the `test-cockpit-*.sh` suites drive). Retried up
+/// to `SPIRA_BDQ_CONN_RETRIES` (default 2) times while bd says "invalid connection". `None`
+/// on any failure; the caller renders `?`, never 0.
 pub fn content(args: &[&str]) -> Option<String> {
     if let Ok(fixture) = std::env::var("SPIRA_BDJSON_FIXTURE") {
         if !fixture.is_empty() {
@@ -211,31 +211,22 @@ pub fn content(args: &[&str]) -> Option<String> {
             return None;
         }
     }
-    let lc = env_or("SPIRA_LC_BIN", "spira-lc");
-    let timeout_s = env_or("BD_TIMEOUT", "180");
+    let lc = spira_config::lc_call::LcClient::configured().ok()?;
     let tries: u32 = env_or("SPIRA_BDQ_CONN_RETRIES", "2").parse().unwrap_or(2).max(1);
+    content_on(&lc, args, tries)
+}
 
+/// [`content`] through `lc`: the store's `content` verb, retried up to `tries` times while
+/// bd's answer says its connection was invalid.
+pub fn content_on(lc: &spira_config::lc_call::LcClient, args: &[&str], tries: u32) -> Option<String> {
+    let argv: Vec<&str> = std::iter::once("content").chain(args.iter().copied()).collect();
     let mut attempt: u32 = 1;
     loop {
-        // FORK-EDGE: unserved verb content — the socket does not serve `content`, so bead
-        // content still comes through the spira-lc CLI (and bd behind it).
-        let out = Command::new("timeout")
-            .arg(&timeout_s)
-            .arg(&lc)
-            .arg("content")
-            .args(args)
-            .stdin(Stdio::null())
-            .output();
-        let out = match out {
-            Ok(o) => o,
-            Err(_) => return None,
-        };
-        if out.status.success() {
-            return Some(String::from_utf8_lossy(&out.stdout).into_owned());
+        let r = lc.call(&argv).ok()?;
+        if r.code == 0 {
+            return Some(r.out);
         }
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        let rc = out.status.code().unwrap_or(1);
-        if !bead::bdq::should_retry(rc, attempt, tries, stderr.contains("invalid connection")) {
+        if !bead::bdq::should_retry(r.code, attempt, tries, r.err.contains("invalid connection")) {
             return None;
         }
         attempt += 1;

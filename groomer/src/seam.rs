@@ -54,6 +54,7 @@ pub struct LibSeam {
     pub lib_sh: PathBuf,
     registry: OnceCell<spira_config::repos::Registry>,
     strand_cfg: OnceCell<strand::config::Config>,
+    lc: OnceCell<Result<spira_config::lc_call::LcClient, String>>,
     cfg: CfgFn,
     claim: ClaimFn,
 }
@@ -69,12 +70,17 @@ impl LibSeam {
 
     /// [`new`](Self::new) with the config door and the `spira-claim` verbs supplied.
     pub fn with(lib_sh: PathBuf, cfg: CfgFn, claim: ClaimFn) -> LibSeam {
-        LibSeam { lib_sh, registry: OnceCell::new(), strand_cfg: OnceCell::new(), cfg, claim }
+        LibSeam { lib_sh, registry: OnceCell::new(), strand_cfg: OnceCell::new(), lc: OnceCell::new(), cfg, claim }
     }
 
     /// `strand::config::Config`, resolved once per process exactly as `strand`'s own
     /// binary resolves it (env, then the resolved toml config, then the conf.sh default) —
     /// never from this struct's own `lib_sh` path, since the detectors no longer source it.
+    /// The store's client, resolved once per process from the declared route.
+    fn lc(&self) -> Result<&spira_config::lc_call::LcClient, String> {
+        self.lc.get_or_init(spira_config::lc_call::LcClient::configured).as_ref().map_err(String::clone)
+    }
+
     fn strand_cfg(&self) -> &strand::config::Config {
         self.strand_cfg.get_or_init(|| strand::config::Config::resolve(&strand::config::Live::load()).unwrap_or_else(|e| {
             eprintln!("groomer: {e}");
@@ -141,15 +147,10 @@ impl Seam for LibSeam {
     }
 
     fn bead_repo(&self, id: &str) -> Result<String, String> {
-        // bdq (family A) is a compiled binary now (sp-w3h16, "wave 4.14", landed
-        // concurrently with this bead) — `bead_repo`'s only non-registry step no longer
-        // needs lib.sh sourced at all. `bdq state <id> repo` inherits this process's own
-        // SPIRA_DB/SPIRA_BD exactly as the bash shim's `command bdq "$@"` did; `state` is
-        // not a create, so it never touches the repo-label fence's registry build either.
-        // FORK-EDGE: unserved verb content (bdq state <id> repo is a content-store read)
-        let out = spira_config::bounded::bounded("bdq").arg("state").arg(id).arg("repo").stdin(Stdio::null()).stderr(Stdio::null()).output();
-        let name = match out {
-            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        // The bead's `repo` state dimension, through the store's content door (`bd state <id>
+        // repo`). An unanswered read is "no repo": the home repo, as before.
+        let name = match self.lc().and_then(|c| c.call(&["content", "state", id, "repo"]).map_err(String::from)) {
+            Ok(r) if r.code == 0 => r.out.trim().to_string(),
             _ => String::new(),
         };
         let name = if name.starts_with('(') { String::new() } else { name };
@@ -169,14 +170,12 @@ impl Seam for LibSeam {
     }
 
     fn lc_held_poison(&self, id: &str) -> bool {
-        // FORK-EDGE: unserved verb held
-        spira_config::bounded::bounded("spira-lc").args(["held", id, "poison"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
+        self.lc().is_ok_and(|c| c.call(&["held", id, "poison"]).is_ok_and(|r| r.code == 0))
     }
 
     fn lc_unhold(&self, id: &str, kind: &str) -> Result<(), String> {
-        // FORK-EDGE: unserved verb unhold
-        let st = spira_config::bounded::bounded("spira-lc").args(["unhold", id, kind, "groomer"]).stdin(Stdio::null()).stdout(Stdio::null()).status().map_err(|e| format!("spira-lc unhold: {e}"))?;
-        if st.success() { Ok(()) } else { Err(format!("spira-lc unhold {id} {kind} exited {}", st.code().unwrap_or(-1))) }
+        let r = self.lc()?.call(&["unhold", id, kind, "groomer"]).map_err(|e| format!("spira-lc unhold: {e}"))?;
+        if r.code == 0 { Ok(()) } else { Err(format!("spira-lc unhold {id} {kind} exited {}: {}", r.code, r.why())) }
     }
 }
 

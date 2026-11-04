@@ -384,10 +384,11 @@ pub fn cmd_restart(rows: &[Row], ops: &dyn Ops, ctx: &Context, only: Option<&str
 pub fn cmd_health_ids(ctx: &Context, file: &str) -> i32 {
     let mut prefix = String::new();
     if !ctx.bdq.is_empty() {
-        // FORK-EDGE: unserved verb content (bd config get issue_prefix has no socket verb).
-        if let Ok(out) = spira_config::bounded::bounded(&ctx.bdq).args(["config", "get", "issue_prefix"]).output() {
-            if out.status.success() {
-                prefix = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        // The planning store's own prefix, through the store's content door.
+        let asked = spira_config::lc_call::LcClient::configured().and_then(|c| c.call(&["content", "config", "get", "issue_prefix"]).map_err(String::from));
+        if let Ok(r) = asked.as_ref() {
+            if r.code == 0 {
+                prefix = r.out.trim().to_string();
             }
         }
     }

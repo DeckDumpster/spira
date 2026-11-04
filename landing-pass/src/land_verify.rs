@@ -157,8 +157,6 @@ fn label_value<'a>(labels: &'a [String], prefix: &str) -> Option<&'a str> {
 /// The close through the lifecycle machine (sp-3fue0j): the row is already LANDED here, so
 /// `spira-lc close` records nothing new and closes the store. `true` only on a clean exit.
 fn bdq_close(id: &str, reason: &str) -> bool {
-    // FORK-EDGE: unserved verb close — `close` is a CLI verb the socket does not serve, so
-    // `spira_config::lifecycle_row::close_landed` runs the spira-lc CLI inside the library.
     spira_config::lifecycle_row::close_landed(id, reason, "landing-pass").is_ok()
 }
 

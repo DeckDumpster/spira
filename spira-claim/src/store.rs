@@ -213,21 +213,15 @@ impl Store {
 
     /// Hands one pass's verdicts to the lifecycle store, which keeps them on the bead rows.
     pub fn lc_claim_verdicts(&self, file: &spira_claim::verdicts::VerdictFile) -> Result<(), String> {
-        // `claim-verdicts` reads its JSON on stdin, which the socket transport does not carry.
-        // FORK-EDGE: needs stdin over the socket (LcClient::call_stdin on the Socket transport)
-        let mut c = Command::new(&self.lc_bin);
-        c.arg("claim-verdicts");
-        let r = run_full(c, self.timeout, Some(file.payload().as_bytes()))
-            .map_err(|e| format!("spira-lc claim-verdicts: {e}"))?;
+        let r = self.lc.call_stdin(&["claim-verdicts"], &file.payload()).map_err(|e| format!("spira-lc claim-verdicts: {e}"))?;
         match r.code {
             0 => Ok(()),
-            c => Err(format!("spira-lc claim-verdicts: exit {c}: {}", r.stderr.lines().next().unwrap_or("no stderr"))),
+            c => Err(format!("spira-lc claim-verdicts: exit {c}: {}", r.why())),
         }
     }
 
     /// The machine's return-to-rework, through the one client of `spira-lc reopen`.
     pub fn lc_reopen(&self, id: &str, cause: &str, actor: &str) -> Result<(), String> {
-        // FORK-EDGE: unserved verb reopen — spira-lc's CLI answers it, not the socket.
         spira_config::lifecycle_row::reopen_with(&self.lc_bin, id, cause, actor)
     }
 
@@ -353,9 +347,11 @@ mod tests {
     }
 
     impl Transport for Scripted {
-        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
-            self.seen.lock().unwrap().push(argv.to_vec());
-            Ok((self.reply)(argv))
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
+            let mut argv = argv.to_vec();
+            argv.extend(stdin.map(|b| format!("stdin={b}")));
+            self.seen.lock().unwrap().push(argv.clone());
+            Ok((self.reply)(&argv))
         }
     }
 
@@ -381,6 +377,16 @@ mod tests {
         assert_eq!(seen[1], ["facts", "--ids", "sp-a"]);
         assert_eq!(seen[2], ["list-asks"]);
         assert_eq!(seen.last().unwrap(), &["release", "sp-a", "dwarf-x"]);
+    }
+
+    #[test]
+    fn claim_verdicts_rides_the_service_with_its_payload_as_the_body() {
+        let (st, t) = store_over(|_| Reply { code: 0, out: String::new(), err: String::new() });
+        let file = spira_claim::verdicts::VerdictFile { computed_at: "2026-11-03T00:00:00Z".into(), entries: Vec::new() };
+        st.lc_claim_verdicts(&file).unwrap();
+        assert_eq!(t.seen.lock().unwrap()[0], ["claim-verdicts".to_string(), format!("stdin={}", file.payload())]);
+        let (st, _) = store_over(|_| Reply { code: 2, out: String::new(), err: "cannot tell: down\n".into() });
+        assert_eq!(st.lc_claim_verdicts(&file).unwrap_err(), "spira-lc claim-verdicts: exit 2: cannot tell: down");
     }
 
     #[test]

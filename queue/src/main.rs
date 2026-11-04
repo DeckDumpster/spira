@@ -35,16 +35,9 @@ fn main() -> ExitCode {
     };
     let lib = RealLib { home: home.clone() };
     // spira-lc and the forge are configured by conf.sh; resolve once for them.
-    let bdq = match spira_config::release_env::tool("bdq") {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("queue.sh: {e}");
-            return ExitCode::from(1);
-        }
-    };
     let (bd, lc) = match queue::ports::Lib::context(&lib, None) {
         Ok((s, _)) => (
-            RealBd { bdq },
+            RealBd { lc: s.lc_bin.as_ref().ok_or_else(|| "no spira-lc program".to_string()).and_then(|b| spira_config::lc_call::LcClient::for_bin(&b.to_string_lossy())) },
             RealLc::configured(s.lc_bin.clone()),
         ),
         Err(e) => {

@@ -16,7 +16,7 @@ pub fn checkpointed(list_json: &str) -> Vec<String> {
 /// Lifts every checkpoint hold; returns the beads lifted and the beads that refused.
 pub fn lift_all() -> (Vec<String>, Vec<String>) {
     match LcClient::configured() {
-        Ok(client) => lift_all_over(&client, &unhold_wait),
+        Ok(client) => lift_all_over(&client, &|bead| unhold_wait(&client, bead)),
         Err(_) => (Vec::new(), vec!["(spira-lc list could not run)".into()]),
     }
 }
@@ -35,13 +35,9 @@ pub fn lift_all_over(client: &LcClient, unhold: &dyn Fn(&str) -> bool) -> (Vec<S
     (lifted, failed)
 }
 
-fn unhold_wait(bead: &str) -> bool {
-    // FORK-EDGE: unserved verb unhold (a callers.rs verb the socket does not answer).
-    spira_config::bounded::bounded("spira-lc")
-        .args(["unhold", bead, "wait", "world"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+/// `unhold <bead> wait world` through the store's socket: `true` only when it applied.
+pub fn unhold_wait(client: &LcClient, bead: &str) -> bool {
+    client.call(&["unhold", bead, "wait", "world"]).is_ok_and(|r| r.code == 0)
 }
 
 #[cfg(test)]
@@ -83,5 +79,16 @@ mod tests {
         assert_eq!(lift_all_over(&refused, &|_| true), (vec![], vec!["(spira-lc list refused)".to_string()]));
         let (_, down) = client(Err("cannot tell: down".into()));
         assert_eq!(lift_all_over(&down, &|_| true), (vec![], vec!["(spira-lc list could not run)".to_string()]));
+    }
+
+    #[test]
+    fn the_unhold_goes_over_the_client_and_only_an_applied_one_counts() {
+        let (t, ok) = client(Ok(Reply { code: 0, out: String::new(), err: String::new() }));
+        assert!(unhold_wait(&ok, "sp-a"));
+        assert_eq!(*t.asked.lock().unwrap(), vec![["unhold", "sp-a", "wait", "world"].map(String::from).to_vec()]);
+        let (_, refused) = client(Ok(Reply { code: 3, out: String::new(), err: "lc: refused".into() }));
+        assert!(!unhold_wait(&refused, "sp-a"));
+        let (_, down) = client(Err("cannot tell: down".into()));
+        assert!(!unhold_wait(&down, "sp-a"));
     }
 }

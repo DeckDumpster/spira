@@ -537,7 +537,6 @@ impl World for Live {
 
     fn close(&mut self, id: &str, reason: &str) -> Result<(), String> {
         // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
-        // FORK-EDGE: unserved verb close — spira-lc's CLI answers it, not the socket.
         spira_config::lifecycle_row::close_with(&self.store.lc_bin, id, reason, "spira-claim", None)
     }
 

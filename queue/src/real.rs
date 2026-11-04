@@ -347,33 +347,21 @@ impl Git for RealGit {
 // ------------------------------------------------------------------------------------- bd
 
 pub struct RealBd {
-    /// The sanctioned bd wrapper; it reads the store from the config itself.
-    pub bdq: String,
+    /// The store's door; bead content is its `content` verb.
+    pub lc: Result<LcClient, String>,
 }
 
 impl Bd for RealBd {
     fn show(&self, ids: &[String]) -> Result<Vec<BeadRow>, String> {
-        let timeout = std::env::var("BD_TIMEOUT")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "180".into());
+        let lc = self.lc.as_ref().map_err(Clone::clone)?;
         let mut out = Vec::new();
         for chunk in ids.chunks(100) {
-            // FORK-EDGE: needs the content verb over the socket (bd show through bdq)
-            let o = Command::new("timeout")
-                .arg(&timeout)
-                .arg(&self.bdq)
-                .arg("show")
-                .args(chunk)
-                .arg("--json")
-                .stdin(Stdio::null())
-                .stderr(Stdio::null())
-                .output()
-                .map_err(|e| e.to_string())?;
-            if !o.status.success() {
-                return Err(format!("bd show exited {:?}", o.status.code()));
+            let argv: Vec<&str> = ["content", "show"].into_iter().chain(chunk.iter().map(String::as_str)).chain(["--json"]).collect();
+            let r = lc.call(&argv).map_err(String::from)?;
+            if r.code != 0 {
+                return Err(format!("content show exited {}: {}", r.code, r.why()));
             }
-            out.extend(parse_bd_json(&String::from_utf8_lossy(&o.stdout))?);
+            out.extend(parse_bd_json(&r.out)?);
         }
         Ok(out)
     }
@@ -689,11 +677,9 @@ impl Lib for RealLib {
     }
     // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
     fn bead_close(&self, id: &str, reason: &str) -> bool {
-        // FORK-EDGE: unserved verb close (the spira-lc CLI answers it; the socket does not)
         spira_config::lifecycle_row::close_landed(id, reason, "queue").is_ok()
     }
     fn bead_retire(&self, id: &str, reason: &str) -> Result<(), String> {
-        // FORK-EDGE: unserved verb close (the spira-lc CLI answers it; the socket does not)
         spira_config::lifecycle_row::close(id, reason, "queue", None)
     }
     fn reap_landed_branch(

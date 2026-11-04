@@ -180,26 +180,26 @@ pub struct RealBd {
     pub bdq: String,
 }
 
+/// Every bead, through the store's `content` door; `None` when it does not answer.
+pub fn list_all_on(lc: &spira_config::lc_call::LcClient) -> Option<serde_json::Value> {
+    let r = lc.call(&["content", "list", "--all", "--limit", "0", "--json"]).ok()?;
+    if r.code != 0 {
+        return None;
+    }
+    serde_json::from_str(&r.out).ok()
+}
+
 impl RealBd {
     fn cmd(&self) -> Command {
-        // FORK-EDGE: content store write (create/note/dep); its reads (list, show) are unserved verb content
+        // FORK-EDGE: content store write (create/note/dep)
         Command::new(&self.bdq)
     }
 }
 
 impl Bd for RealBd {
     fn list_all_json(&self) -> Option<serde_json::Value> {
-        let out = self
-            .cmd()
-            .args(["list", "--all", "--limit", "0", "--json"])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        serde_json::from_slice(&out.stdout).ok()
+        let lc = spira_config::lc_call::LcClient::configured().ok()?;
+        list_all_on(&lc)
     }
 
     fn create(&self, title: &str, external_ref: &str, labels: &str, priority: &str, body: &[u8]) -> bool {
@@ -634,6 +634,23 @@ mod transport_tests {
         assert_eq!(lc.bead("sp-2").unwrap(), None);
         assert_eq!(lc.all().unwrap()["a"].sha, "mm");
         assert_eq!(t.0.lock().unwrap().len(), 4);
+    }
+
+    struct Content(Mutex<Vec<Vec<String>>>, i32);
+
+    impl Transport for Content {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<Reply, String> {
+            self.0.lock().unwrap().push(argv.to_vec());
+            Ok(Reply { code: self.1, out: r#"[{"id":"sp-1"}]"#.into(), err: String::new() })
+        }
+    }
+
+    #[test]
+    fn the_bead_list_is_the_stores_content_door() {
+        let t = Arc::new(Content(Mutex::default(), 0));
+        assert_eq!(list_all_on(&LcClient::over(t.clone(), true)).unwrap()[0]["id"], "sp-1");
+        assert_eq!(t.0.lock().unwrap()[0], ["content", "list", "--all", "--limit", "0", "--json"]);
+        assert_eq!(list_all_on(&LcClient::over(Arc::new(Content(Mutex::default(), 1)), true)), None, "a failed read is no list");
     }
 
     type Sent = Arc<Mutex<Vec<(String, String, String, String, String, String)>>>;

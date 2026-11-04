@@ -119,7 +119,6 @@ pub struct Seams {
     pub queue: String,
     pub spira_lc: String,
     pub bead: String,
-    pub bdq: String,
     pub target_reap: String,
     pub podman: String,
     pub rebuild: String,
@@ -156,11 +155,9 @@ impl Seams {
             queue_helpers: name("queue-helpers")?,
             // FORK-EDGE: remedy program (queue lock clear is a declared remedy command)
             queue: name("queue")?,
-            // FORK-EDGE: unserved verbs hold/unhold/drop run through the spira-lc CLI
+            // FORK-EDGE: fixture stand-in — LcClient::for_bin runs it only for a declared SPIRA_LC_BIN or direct mode; production calls go over the socket (Config::lc)
             spira_lc: name("spira-lc")?,
             bead: name("bead")?,
-            // FORK-EDGE: unserved verb content — the junk-row check lists bead ids from the content store
-            bdq: name("bdq")?,
             target_reap: name("target-reap")?,
             podman: name("podman")?,
             rebuild: name("rebuild")?,
@@ -432,23 +429,20 @@ impl Config {
     pub fn lc(&self, argv: &[&str]) -> Result<String, String> {
         match &self.host {
             Some(h) => h.lc(argv),
-            None if lc_served(argv) => {
-                let bin = &self.seams.spira_lc;
-                let client = match &self.lc_client {
-                    Some(c) => c.clone(),
-                    None => LcClient::for_bin(bin)?,
-                };
-                client.answer(argv).map_err(|e| format!("{bin} {}: {e}", argv.join(" ")))
-            }
             None => {
                 let bin = &self.seams.spira_lc;
-                // FORK-EDGE: unserved verb hold/unhold — the spira-lc CLI answers its caller verbs itself
-                let out = spira_config::bounded::bounded(bin).args(argv).stderr(Stdio::piped()).output().map_err(|e| format!("{bin}: {e}"))?;
-                if !out.status.success() {
-                    return Err(format!("{bin} {}: exit {}: {}", argv.join(" "), out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()));
+                if !lc_served(argv) {
+                    return Err(format!("{bin} {}: refused: the store does not serve this verb (it runs as its caller)", argv.join(" ")));
                 }
-                Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+                self.lc_client()?.answer(argv).map_err(|e| format!("{bin} {}: {e}", argv.join(" ")))
             }
+        }
+    }
+
+    fn lc_client(&self) -> Result<LcClient, String> {
+        match &self.lc_client {
+            Some(c) => Ok(c.clone()),
+            None => LcClient::for_bin(&self.seams.spira_lc),
         }
     }
 
@@ -536,16 +530,11 @@ pub fn free_pct(path: &str) -> Option<i64> {
     (total > 0).then(|| (avail * 100 / total) as i64)
 }
 
-/// Verbs the lifecycle socket does not serve: the `spira-lc` CLI answers them itself
-/// (spira-lc main.rs, before its socket forward), so they stay a CLI call.
-pub const LC_UNSERVED: &[&str] = &[
-    "hold", "unhold", "reply", "withdraw-ask", "release", "holder-dead", "drop", "returned", "content-on-base", "supersede", "state", "holds", "held",
-    "list-held", "list-state", "list-all", "deliver", "certify", "resubmit", "retip", "resubmit-submitted", "absolve", "renew", "phase", "disposition",
-    "express", "unexpress", "content", "close-epic", "drop-bead", "drop-row", "bd-supersede", "bd-note", "reconcile-content", "reconcile-asks", "reconcile-epics",
-    "drop-orphans", "close-on-land", "unclaim", "content-landed",
-];
+/// The verbs the lifecycle socket does not serve: they prove a landing from git in the
+/// caller's own checkout (spira-lc composed.rs), and the reconciler never sends them.
+pub const LC_UNSERVED: &[&str] = &["deliver", "content-on-base", "close-on-land", "content-landed"];
 
-/// Whether `argv` goes over the socket rather than through the CLI.
+/// Whether `argv` is a verb the store serves over its socket.
 pub fn lc_served(argv: &[&str]) -> bool {
     argv.first().is_some_and(|v| !LC_UNSERVED.contains(v) && !v.starts_with("admin-"))
 }
@@ -1657,20 +1646,8 @@ fn junk_row_ids(rows: &[spira_config::lc_state::Row], store_ids: &HashSet<String
 }
 
 fn store_bead_ids(cfg: &Config) -> Result<HashSet<String>, String> {
-    if cfg.seams.bdq.is_empty() {
-        return Err("no bdq to list the store with".into());
-    }
-    let out = spira_config::bounded::bounded(&cfg.seams.bdq)
-        .args(["list", "--all", "--brief", "--json", "--limit", "0"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .map_err(|e| format!("{}: {}", cfg.seams.bdq, e))?;
-    if !out.status.success() {
-        return Err(format!("{} list exited {}", cfg.seams.bdq, out.status.code().unwrap_or(-1)));
-    }
-    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout)
-        .map_err(|e| format!("{} list: unparsable json: {}", cfg.seams.bdq, e))?;
+    let out = cfg.lc(&["content", "list", "--all", "--brief", "--json", "--limit", "0"])?;
+    let rows: Vec<serde_json::Value> = serde_json::from_str(out.trim()).map_err(|e| format!("content list: unparsable json: {e}"))?;
     let ids: HashSet<String> = rows
         .iter()
         .filter_map(|r| r.get("id").and_then(|v| v.as_str()).map(String::from))
@@ -2106,7 +2083,7 @@ pub fn perform(cfg: &Config, alerted: &mut AlertedSinceMap, acts: Vec<Act>) {
                         let _ = cfg.lc(&argv);
                         continue;
                     }
-                    // FORK-EDGE: remedy program — declared remedies (systemctl enable/restart, forge, bead, queue, an unserved spira-lc verb) run as commands
+                    // FORK-EDGE: remedy program — declared remedies (systemctl enable/restart, forge, bead, queue) run as commands
                     let _ = run_cmd_ok(program, &argv);
                 }
             }
@@ -2603,11 +2580,13 @@ mod tests {
     }
 
     #[test]
-    fn an_unserved_lc_verb_never_reaches_the_socket() {
+    fn a_composed_verb_goes_over_the_client_and_an_unserved_one_is_refused_unsent() {
         let (cfg, store) = served_config();
-        let err = cfg.lc(&["hold", "sp-1", "ask", "q", "reconciler"]).unwrap_err();
-        assert!(err.contains("/nonexistent/spira-lc"), "{err}");
-        assert!(store.0.lock().unwrap().is_empty());
+        assert_eq!(cfg.lc(&["hold", "sp-1", "ask", "q", "reconciler"]), Ok("answered hold".to_string()));
+        assert_eq!(cfg.lc(&["content", "list", "--all"]), Ok("answered content".to_string()));
+        let err = cfg.lc(&["deliver", "pr-merged", "sp-1"]).unwrap_err();
+        assert!(err.contains("refused") && err.contains("/nonexistent/spira-lc"), "{err}");
+        assert_eq!(store.0.lock().unwrap().len(), 2, "the unserved verb was never sent");
     }
 
     #[test]
