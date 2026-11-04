@@ -20,7 +20,8 @@ use suite_select::{gate, timing, Refusal, EXIT_REFUSED, EXIT_UNCLAIMED, EXIT_USA
 const USAGE: &str = "usage: suite-select select (--all | --base <ref> --head <ref> | --files <path>) [--repo <path>] [--suite-dir <dir>] [--mode-file <path>] [--report-file <path>] [--no-all-fallback] [--no-nocov] [--tiers <csv>]
        suite-select gate <base> <head>
        suite-select budget --budget-secs <n> [--parallel-width <n>] [--runs <n>] [--suite-dir <dir>]
-       suite-select header (covers|tier|uc|requires|exclusive|selects-on|testenv-unmet) <file>";
+       suite-select header (covers|tier|uc|requires|exclusive|selects-on|testenv-unmet) <file>
+       suite-select check-crates [--repo <path>] < changed-paths";
 
 fn env(k: &str) -> Option<String> {
     std::env::var(k).ok()
@@ -46,6 +47,7 @@ fn main() {
         Some("gate") => cmd_gate(&args[1..]),
         Some("budget") => cmd_budget(&args[1..]),
         Some("header") => cmd_header(&args[1..]),
+        Some("check-crates") => cmd_check_crates(&args[1..]),
         Some("-h") | Some("--help") => {
             println!("{USAGE}");
             0
@@ -267,6 +269,37 @@ fn cmd_gate(args: &[String]) -> i32 {
         }
         Err(Fail::Refused(r)) => refused("suite-select gate", &r),
     }
+}
+
+/// `suite-select check-crates [--repo <path>]`: the changed paths on stdin (bare or
+/// `STATUS<TAB>PATH`), the packages `cargo check -p` must cover on stdout, one per line; the
+/// single line `--workspace` when the change can alter how the whole workspace builds
+/// (over-broad-scopes #7, build-fence.sh).
+fn cmd_check_crates(args: &[String]) -> i32 {
+    let mut repo = ".".to_string();
+    let mut i = 0;
+    while i < args.len() {
+        match take(args, &mut i, "--repo") {
+            Ok(Some(v)) => repo = v,
+            Ok(None) => return usage(&format!("check-crates: unknown argument {}", args[i])),
+            Err(e) => return usage(&e),
+        }
+    }
+    let mut text = String::new();
+    if std::io::Read::read_to_string(&mut std::io::stdin(), &mut text).is_err() {
+        return refused("suite-select check-crates", &Refusal("cannot read the changed paths on stdin".into()));
+    }
+    let reach = match suite_select::reach::Reach::load(std::path::Path::new(&repo)) {
+        Ok(Some(r)) => r,
+        Ok(None) => return refused("suite-select check-crates", &Refusal(format!("{repo} has no workspace manifest"))),
+        Err(r) => return refused("suite-select check-crates", &r),
+    };
+    let paths: Vec<&str> = text.lines().filter(|l| !l.is_empty()).map(|l| l.rsplit('\t').next().unwrap_or(l)).collect();
+    match reach.check_closure(paths) {
+        None => println!("--workspace"),
+        Some(names) => names.iter().for_each(|n| println!("{n}")),
+    }
+    0
 }
 
 fn cmd_budget(args: &[String]) -> i32 {
