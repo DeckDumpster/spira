@@ -1255,6 +1255,7 @@ fn page_held(env_: &Env, name: &str) {
 
 fn settle_batch(env_: &Env, name: &str) -> Result<(), String> {
     // batch-job: the verdict waits on CI and a red batch's replay; it ends when the batch settles
+    // FORK-EDGE: machine leg queue verdict
     let st = std::process::Command::new(&env_.queue_bin).args(["verdict", name]).status().map_err(|e| format!("queue verdict: {e}"))?;
     if st.success() {
         Ok(())
@@ -1661,5 +1662,14 @@ mod poll_tests {
         assert_eq!(poll_interval(Some("0")), Duration::from_millis(50), "never a busy loop");
         assert_eq!(poll_interval(Some("-3")), Duration::from_millis(50));
         assert_eq!(poll_interval(Some("NaN")), Duration::from_secs(2));
+    }
+}
+
+#[cfg(test)]
+mod fork_fence {
+    #[test]
+    fn batcher_cut_starts_no_spira_child_that_is_not_a_named_fork_edge() {
+        let got = forge::fork_scan::scan(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
+        assert!(got.is_empty(), "unmarked children:\n{}", got.join("\n"));
     }
 }
