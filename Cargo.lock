@@ -2070,6 +2070,7 @@ dependencies = [
  "runtime",
  "serde",
  "serde_json",
+ "sim",
  "spira-config",
  "spira-otel",
  "testkit",

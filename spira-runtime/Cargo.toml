@@ -37,6 +37,7 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 
 [dev-dependencies]
 forge = { path = "../forge" }
+sim = { path = "../sim" }
 testkit = { path = "../testkit" }
 release = { path = "../release" }
 

@@ -21,6 +21,11 @@ impl Doubles {
         self
     }
 
+    /// Every effect name this runner has a double for, sorted.
+    pub fn names(&self) -> Vec<String> {
+        self.by_name.keys().cloned().collect()
+    }
+
     /// Every effect name asked for, in the order it was run.
     pub fn asked(&self) -> Vec<String> {
         self.asked.lock().unwrap_or_else(|e| e.into_inner()).clone()
@@ -35,4 +40,44 @@ impl EffectRunner for Doubles {
             None => Err(format!("no runner for effect {}", spec.name)),
         }
     }
+}
+
+/// Every effect the service's task table (spira-runtime's `tasks::TASKS`) can ask for. Named
+/// here, not read from the table, so a task that gains an effect fails T4 until the simulator
+/// can answer it.
+pub const SERVICE_EFFECTS: &[&str] = &[
+    "heartbeat.ping",
+    "inbox.append",
+    "concierge.wake",
+    "operator.note",
+    "round-duty.observe",
+    "inbox-keeper.observe",
+    "pr-notify.observe",
+    "asks.observe",
+    "design-asks.observe",
+    "brain-dirty.observe",
+    "supersede-duty.observe",
+    "supersede-duty.act",
+    "bead-sweep.observe",
+    "bead-sweep.repair",
+    "publish-backlog.observe",
+    "repo-events.observe",
+    "overrides.apply",
+    "view.observe",
+    "view.flip",
+    "view.forget",
+    "reconciler.observe",
+    "reconciler.record",
+    "reconciler.remedy",
+    "reconciler.mail",
+    "reconciler-flow.observe",
+    "reconciler-flow.status",
+    "reconciler-flow.mail",
+];
+
+/// The service's task table in a quiet world: every effect succeeds with an empty object. An
+/// act does nothing; an observe whose snapshot needs fields reads as no answer, so the task
+/// stays idle. A scenario that needs a world replaces the doubles it cares about.
+pub fn service() -> Doubles {
+    SERVICE_EFFECTS.iter().fold(Doubles::default(), |d, name| d.double(name, |_| Ok("{}".to_string())))
 }

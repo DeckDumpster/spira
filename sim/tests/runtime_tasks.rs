@@ -1,12 +1,11 @@
 //! The service's own task table, booted as the service boots it, run for virtual days in the
-//! simulator with every effect answered by doubles: one seed gives one trace, and no process
-//! is spawned.
+//! simulator with every effect answered by the quiet world's doubles: one seed gives one trace,
+//! and no process is spawned.
 
 use std::sync::Arc;
 
 use runtime::ports::{CountingProc, Proc, ProcSpec};
 use runtime::{Command, Ctx, EffectSpec, Event, EventKindTag, Handler, Projection, Registration};
-use sim::doubles::Doubles;
 use sim::Sim;
 use spira_runtime::{registrations, tasks, Settings};
 
@@ -35,7 +34,7 @@ struct Run {
 fn run(seed: u64, days: u64, extra: Option<Registration>) -> Run {
     let proc = CountingProc::refusing();
     let forks = proc.clone();
-    let doubles = Arc::new(Doubles::default().double("fork", move |_| {
+    let doubles = Arc::new(sim::doubles::service().double("fork", move |_| {
         let spec = ProcSpec { prog: "planted".into(), args: vec![], stdin: vec![], deadline: std::time::Duration::from_secs(1) };
         forks.run(&spec).map(|_| String::new())
     }));
