@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 
 use crate::host::Submit;
 use crate::ports::Clock;
+use crate::units::{ScriptedUnits, UnitCompletions, UnitRan, UNIT_RAN};
 use crate::{Result, RuntimeError};
 
 pub trait Source: Send {
@@ -135,5 +136,90 @@ impl Scripted for ScriptedSource {
     fn take_due(&mut self, now_ms: u64) -> Vec<Submit> {
         let n = self.script.iter().take_while(|(at, _)| *at <= now_ms).count();
         self.script.drain(..n).map(|(_, s)| s).collect()
+    }
+}
+
+/// The stream every `unit.ran` is submitted on. A task recognises its own runs by the unit's
+/// name ([`UnitRan::key_for`]), not by the stream.
+pub const UNITS_STREAM: &str = "units";
+
+enum Face {
+    /// A backend that reads the world: drained every `every` on the source's thread.
+    Polled { every: Duration },
+    /// The simulator's units: drained when the virtual clock reaches the next end.
+    Scripted(Arc<ScriptedUnits>),
+}
+
+/// Completions as events (S6, S9): every run a [`UnitCompletions`] backend reports is submitted
+/// once as `unit.ran`, so a task that started a unit hears its end through the journal.
+pub struct UnitRanSource {
+    name: String,
+    completions: Arc<dyn UnitCompletions>,
+    clock: Arc<dyn Clock>,
+    face: Face,
+}
+
+impl UnitRanSource {
+    /// A real backend (systemd, child processes), drained every `every`.
+    pub fn polled(name: &str, completions: Arc<dyn UnitCompletions>, clock: Arc<dyn Clock>, every: Duration) -> Self {
+        UnitRanSource { name: name.into(), completions, clock, face: Face::Polled { every } }
+    }
+
+    /// The simulator's backend: runs under a virtual-time driver, delivering each end when due.
+    pub fn scripted(name: &str, units: Arc<ScriptedUnits>, clock: Arc<dyn Clock>) -> Self {
+        UnitRanSource { name: name.into(), completions: units.clone(), clock, face: Face::Scripted(units) }
+    }
+
+    fn submit_of(&self, r: &UnitRan, now_ms: u64) -> Submit {
+        Submit::new(&format!("{UNIT_RAN}/{}/{now_ms}", r.handle.name), UNITS_STREAM, r.event_kind())
+    }
+
+    /// Every run ended since the last drain, as submissions; a backend fault drains nothing and
+    /// is retried on the next drain.
+    fn drain(&self) -> Vec<Submit> {
+        let now = self.clock.now_ms();
+        self.completions.ran().unwrap_or_default().iter().map(|r| self.submit_of(r, now)).collect()
+    }
+}
+
+impl Source for UnitRanSource {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) {
+        let every = match self.face {
+            Face::Polled { every } => every,
+            Face::Scripted(_) => Duration::from_millis(WAIT_STEP_MS),
+        };
+        while !tx.is_closed() {
+            for s in self.drain() {
+                if tx.blocking_send(s).is_err() {
+                    return;
+                }
+            }
+            std::thread::sleep(every); // clock-safe: paces the drain on the source's own thread; the backend stamps each run
+        }
+    }
+
+    fn scripted(&mut self) -> Option<&mut dyn Scripted> {
+        match self.face {
+            Face::Scripted(_) => Some(self),
+            Face::Polled { .. } => None,
+        }
+    }
+}
+
+impl Scripted for UnitRanSource {
+    fn next_at(&self) -> Option<u64> {
+        match &self.face {
+            Face::Scripted(u) => u.next_end_at(),
+            Face::Polled { .. } => None,
+        }
+    }
+
+    /// Drained every turn the driver takes: whatever ended by now, each once.
+    fn take_due(&mut self, _now_ms: u64) -> Vec<Submit> {
+        self.drain()
     }
 }

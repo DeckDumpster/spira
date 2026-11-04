@@ -382,6 +382,12 @@ impl ScriptedUnits {
         lock(&self.s).calls.clone()
     }
 
+    /// When the earliest running unit ends on the virtual clock: the time a completion
+    /// source next has something to deliver.
+    pub fn next_end_at(&self) -> Option<u64> {
+        lock(&self.s).live.values().map(|(start, d, _)| start + d).min()
+    }
+
     fn settle(&self, s: &mut Script) {
         let now = self.clock.now_ms();
         let done: Vec<String> = s.live.iter().filter(|(_, (start, d, _))| start + d <= now).map(|(n, _)| n.clone()).collect();
