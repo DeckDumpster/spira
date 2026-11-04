@@ -126,15 +126,81 @@ pub struct Carry {
     pub filed: BTreeMap<String, u64>,
 }
 
+const FILE_DEADLINE_MS: u64 = 120_000;
+
+/// What `watch.refusals.file` is handed: the class key the carry records on success, and the
+/// incident's title and body as `refusal_watch::{title, body}` wrote them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Filing {
+    pub key: String,
+    pub title: String,
+    pub body: String,
+}
+
+fn lib_config(cfg: &Config) -> refusal_watch::Config {
+    refusal_watch::Config { window_secs: cfg.window_secs, baseline: cfg.baseline, repeat_secs: cfg.repeat_secs, max_files: cfg.max_files }
+}
+
+fn signed(n: u64) -> i64 {
+    i64::try_from(n).unwrap_or(i64::MAX)
+}
+
+impl Class {
+    fn lib(&self) -> refusal_watch::Class {
+        refusal_watch::Class { actor: self.actor.clone(), event: self.event.clone(), from_state: self.from_state.clone(), refusal: self.refusal.clone(), n: self.n, first_at: signed(self.first_at), last_at: signed(self.last_at), examples: self.examples.iter().map(|(b, at)| (b.clone(), signed(*at))).collect() }
+    }
+
+    fn of(c: refusal_watch::Class) -> Class {
+        let at = |t: i64| u64::try_from(t).unwrap_or(0);
+        Class { actor: c.actor, event: c.event, from_state: c.from_state, refusal: c.refusal, n: c.n, first_at: at(c.first_at), last_at: at(c.last_at), examples: c.examples.into_iter().map(|(b, t)| (b, at(t))).collect() }
+    }
+}
+
+/// The carry without keys older than 7 × repeat (`refusal-watch/src/lib.rs:310`).
+fn pruned(carry: &Carry, now: u64, cfg: &Config) -> Carry {
+    let keep = cfg.repeat_secs.saturating_mul(7);
+    Carry { filed: carry.filed.iter().filter(|(_, t)| now.saturating_sub(**t) < keep).map(|(k, t)| (k.clone(), *t)).collect() }
+}
+
 /// `due` plus the selection half of `pass`: the filings to request, worst first, at most
 /// `max_files`; the carry changes here only by pruning.
-pub fn decide(_carry: &Carry, _snap: &Snapshot, _now_ms: u64, _cfg: &Config) -> (Carry, Vec<EffectSpec>) {
-    unimplemented!("watch.refusals: not ported yet")
+pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+    let now = now_ms / 1000;
+    let lcfg = lib_config(cfg);
+    let classes: Vec<refusal_watch::Class> = snap.classes.iter().map(Class::lib).collect();
+    let state = carry.filed.iter().map(|(k, t)| (k.clone(), signed(*t))).collect();
+    let acts = refusal_watch::due(&classes, &lcfg, &state, signed(now))
+        .into_iter()
+        .take(cfg.max_files)
+        .map(|c| {
+            let f = Filing { key: c.key(), title: c.title(), body: refusal_watch::body(c, &lcfg) };
+            EffectSpec { name: FILE.into(), input: serde_json::to_string(&f).unwrap_or_default(), deadline_ms: FILE_DEADLINE_MS }
+        })
+        .collect();
+    (pruned(carry, now, cfg), acts)
 }
 
 /// The carry once the filing `spec` succeeded: a class is recorded only on success.
-pub fn filed(_carry: &Carry, _spec: &EffectSpec, _now_ms: u64) -> Carry {
-    unimplemented!("watch.refusals: not ported yet")
+pub fn filed(carry: &Carry, spec: &EffectSpec, now_ms: u64) -> Carry {
+    let mut next = carry.clone();
+    if let Ok(f) = serde_json::from_str::<Filing>(&spec.input) {
+        next.filed.insert(f.key, now_ms / 1000);
+    }
+    next
+}
+
+/// The probe: the store's `ops-refusals <window>` over `LcClient`, parsed by `refusal_watch::parse`.
+pub fn observe(cfg: &Config) -> Result<String, String> {
+    let lc = spira_config::lc_call::LcClient::configured()?;
+    let (now, classes) = refusal_watch::read_refusals(&lc, cfg.window_secs).and_then(|j| refusal_watch::parse(&j))?;
+    let snap = Snapshot { now: u64::try_from(now).unwrap_or(0), classes: classes.into_iter().map(Class::of).collect() };
+    serde_json::to_string(&snap).map_err(|e| e.to_string())
+}
+
+/// The filing: an incident, in-process, exactly as `incident file <title> -` files it.
+pub fn file(input: &str) -> Result<String, String> {
+    let f: Filing = serde_json::from_str(input).map_err(|e| format!("{FILE}: {e}"))?;
+    refusal_watch::file(&f.title, &f.body).map(|_| format!("filed {}", f.title))
 }
 
 pub struct WatchRefusals {
@@ -161,12 +227,16 @@ impl WatchRefusals {
 
 impl Handler for WatchRefusals {
     fn interests(&self) -> &[EventKindTag] {
-        &[TICK, EFFECT_SUCCEEDED]
+        &[TICK, EFFECT_SUCCEEDED, EFFECT_FAILED]
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
         if ev.stream.0 != STREAM {
             return vec![];
+        }
+        if ev.kind.tag == EFFECT_FAILED {
+            // An unreadable answer is "could not check", journaled, never a green pass.
+            return if crate::watchers::answers_observe(view, ev, OBSERVE) { vec![Command::Emit(EventKind::new(BLIND, &ev.kind.body))] } else { vec![] };
         }
         if ev.kind.tag == TICK {
             return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);

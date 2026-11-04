@@ -196,3 +196,9 @@ pub fn read_refusals(client: &spira_config::lc_call::LcClient, window: u64) -> R
     }
     Ok(r.out)
 }
+
+/// One filing: an incident with `title` and `body`, in-process, exactly as
+/// `incident file <title> -` files it.
+pub fn file(title: &str, body: &str) -> Result<(), String> {
+    incident::intake::file_payload(title, body.as_bytes())
+}

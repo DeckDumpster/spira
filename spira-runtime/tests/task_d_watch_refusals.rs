@@ -110,6 +110,8 @@ fn t5_the_filing_is_the_one_refusal_watch_made() {
 fn t6_seven_days_of_a_repeating_class_replay_identically_inside_the_budget() {
     let r = assert_deterministic(|seed| rig(seed, world(vec![class("claim", 9)]), filed_ok), 7, 7);
     acc::assert_healthy(&r, STREAM);
-    assert_eq!(r.requested().iter().filter(|q| q.name == FILE).count(), 7, "one filing per day");
+    // The rig fires the tick at exactly 7 days too, where `due`'s `now - filed >= repeat` files
+    // the eighth; one per day is counted over the seven days before it.
+    assert_eq!(r.requested().iter().filter(|q| q.name == FILE && q.at < 7 * DAY_MS).count(), 7, "one filing per day");
     assert_journal_budget(&r, 2);
 }

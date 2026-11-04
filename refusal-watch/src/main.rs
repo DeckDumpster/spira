@@ -61,7 +61,7 @@ fn main() -> ExitCode {
     };
     let state = parse_state(&std::fs::read_to_string(&state_path).unwrap_or_default());
     // The incident is filed in-process, exactly as `incident file <title> -` files it.
-    let out = pass(&classes, now, &cfg, state, &mut |t, b| incident::intake::file_payload(t, b.as_bytes()));
+    let out = pass(&classes, now, &cfg, state, &mut |t, b| refusal_watch::file(t, b));
     if let Err(e) = std::fs::write(&state_path, render_state(&out.state)) {
         eprintln!("refusal-watch: cannot record {}: {e}", state_path.display());
         return ExitCode::from(3);

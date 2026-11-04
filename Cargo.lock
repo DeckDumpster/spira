@@ -2111,6 +2111,7 @@ dependencies = [
  "reconciler",
  "reconciler-engine",
  "reconciler-flow",
+ "refusal-watch",
  "release",
  "ring",
  "round-vm",
