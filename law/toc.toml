@@ -47,4 +47,5 @@ slugs = [
   "law-a-hand-dispatched-p0-builder-runs-under-a-watcher",
   "law-a-blinded-operator-surface-is-p0",
   "law-a-loops-hot-read-is-in-process",
+  "law-landing-rounds-run-the-full-suite-on-a-vm",
 ]
