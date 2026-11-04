@@ -728,7 +728,10 @@ mod systemd {
         }
     }
 
-    fn changed(m: &Msg) -> Option<(String, String, Vec<(String, Val)>)> {
+    /// A PropertiesChanged signal's object path, interface and changed properties.
+    type Changed = (String, String, Vec<(String, Val)>);
+
+    fn changed(m: &Msg) -> Option<Changed> {
         if m.kind != SIGNAL || m.member.as_deref() != Some("PropertiesChanged") {
             return None;
         }

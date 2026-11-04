@@ -85,7 +85,7 @@ async fn a_full_class_defers_records_it_and_runs_the_effect_later() {
     let d = deferred(&sink);
     assert!(!d.is_empty(), "a container effect over the cap must be deferred and recorded");
     assert_eq!(d[0].get("class"), Some(&Value::from("container")));
-    assert!(d[0].get("task").is_some(), "the record names the task");
+    assert!(d[0].contains_key("task"), "the record names the task");
     assert_eq!(runner.ran.lock().unwrap().values().sum::<usize>(), 1, "the cap holds: one run at a time");
     for _ in 0..3 {
         let _ = release.send(());

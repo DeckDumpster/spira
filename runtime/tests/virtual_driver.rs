@@ -61,7 +61,10 @@ fn scripted(clock: &VirtualClock, script: Vec<(u64, Submit)>) -> Sources {
     s
 }
 
-fn run(seed: u64) -> (Vec<(String, String, String, String, u64)>, usize) {
+/// The journal's trace and how many effects the runner ran.
+type Run = (Vec<(String, String, String, String, u64)>, usize);
+
+fn run(seed: u64) -> Run {
     let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(0));
     let jobs = Arc::new(Jobs::default());
     let script = vec![(300, sub("c", "ping", "c")), (50, sub("a", "ping", "a")), (100, sub("w", "work", "w")), (100, sub("b", "ping", "b")), (0, sub("t", "tick", ""))];

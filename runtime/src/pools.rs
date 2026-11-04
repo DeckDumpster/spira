@@ -8,12 +8,13 @@ use std::sync::Arc;
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EffectClass {
     Store,
     Unit,
     Git,
     Forge,
+    #[default]
     Host,
     Container,
 }
@@ -34,12 +35,6 @@ impl EffectClass {
 
     pub fn parse(s: &str) -> Option<EffectClass> {
         EffectClass::ALL.into_iter().find(|c| c.name() == s)
-    }
-}
-
-impl Default for EffectClass {
-    fn default() -> Self {
-        EffectClass::Host
     }
 }
 
