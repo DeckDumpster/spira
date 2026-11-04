@@ -674,6 +674,9 @@ fn event_row(kind: &EventKind, coalesced: bool) -> (&'static str, Option<String>
         EventKind::Step(s) => ("step", Some(s.clone())),
         EventKind::Fault => ("fault", None),
         EventKind::Submit(_) => ("submit", None),
+        // A booted workflow event runs nothing, so it is not a "start" row: resume reads an
+        // exit code from every one of those.
+        EventKind::Start(_) => ("boot", None),
         EventKind::Tick => ("tick", None),
     }
 }
