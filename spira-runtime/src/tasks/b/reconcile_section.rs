@@ -1,7 +1,6 @@
 //! # reconcile.section — contract
 //!
-//! Family B of the scheduler consolidation, red-first: `decide` is not ported yet. The
-//! sections below are the contract page `wiki/projects/spira/designs/tasks/reconcile-section.md`;
+//! Family B of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/reconcile-section.md`;
 //! its Acceptance section is the test file `tests/task_b_reconcile_section.rs`.
 //!
 //! ## Tick
@@ -127,9 +126,30 @@ pub struct ReconcileSection {
     pub cfg: Cfg,
 }
 
-/// Always asks for one publish per tick; records `published:true` once.
-pub fn decide(_cfg: &Cfg, _carry: &Carry, _input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
-    unimplemented!("reconcile.section: not ported yet")
+/// Always asks for one publish per tick (the tick's probe); records the first `published:true`
+/// and nothing after it, so a steady store journals nothing. The publish time is the store's
+/// (the section record carries it); the carry keeps no clock, so a replay records the same state.
+pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
+    match input {
+        Input::Fire => Ok((carry.clone(), vec![])),
+        Input::Observed(s) if s.published && carry.phase == Phase::Idle => Ok((Carry { phase: Phase::Published, published_at: None }, vec![])),
+        Input::Observed(_) => Ok((carry.clone(), vec![])),
+        Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} no outcome of {effect} is expected; the publish is the tick's probe", phase_name(carry.phase))),
+        Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {r:?}", phase_name(carry.phase))),
+    }
+}
+
+fn phase_name(p: Phase) -> &'static str {
+    match p {
+        Phase::Idle => "idle",
+        Phase::Published => "published",
+    }
+}
+
+/// The runner of [`PUBLISH`]: the store verb `publish-section lifecycle` over the socket; its
+/// answer is the snapshot.
+pub fn publish(lc: &spira_config::lc_call::LcClient) -> Result<String, String> {
+    lc.answer(&["publish-section", "lifecycle"]).map_err(String::from)
 }
 
 super::hosted!(ReconcileSection);

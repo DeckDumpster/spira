@@ -89,11 +89,18 @@ use reconcile_goodput::ReconcileGoodput;
 use reconcile_heimdall::ReconcileHeimdall;
 use reconcile_section::ReconcileSection;
 
-pub static TASKS: &[Task] = &[];
+pub static TASKS: &[Task] = &[
+    Task { name: reconcile_section::NAME, boot: ReconcileSection::boot, cadence_ms: cadence_ms::<ReconcileSection>, effects: reconcile_section::EFFECTS, runners: &[(reconcile_section::PUBLISH, |e, _, _| reconcile_section::publish(&lc(e)))], keys: &[reconcile_section::KEYS], build: build::<ReconcileSection> },
+];
+
+/// The store client every family B runner reaches lc-serve through: the world's socket, with the
+/// socket client's 5 s deadline.
+pub fn lc(e: &crate::Effects) -> spira_config::lc_call::LcClient {
+    spira_config::lc_call::LcClient::socket(e.world.lc_socket.clone())
+}
 
 /// The family's rows, complete but not yet in `TASKS` (see the module doc).
 pub static PENDING: &[Task] = &[
-    Task { name: reconcile_section::NAME, boot: ReconcileSection::boot, cadence_ms: cadence_ms::<ReconcileSection>, effects: reconcile_section::EFFECTS, runners: &[(reconcile_section::PUBLISH, not_ported::<ReconcileSection>)], keys: &[reconcile_section::KEYS], build: build::<ReconcileSection> },
     Task {
         name: reconcile_goodput::NAME,
         boot: ReconcileGoodput::boot,
