@@ -47,6 +47,23 @@ impl Val {
         }
     }
 
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Val::B(b) => Some(*b),
+            Val::Var(v) => v.as_bool(),
+            _ => None,
+        }
+    }
+
+    /// A struct's fields; `None` for any other shape.
+    pub fn fields(&self) -> Option<&[Val]> {
+        match self {
+            Val::Struct(f) => Some(f),
+            Val::Var(v) => v.fields(),
+            _ => None,
+        }
+    }
+
     pub fn as_bytes(&self) -> Option<Vec<u8>> {
         match self {
             Val::Arr(a) => a.iter().map(|v| v.as_u64().and_then(|u| u8::try_from(u).ok())).collect(),
@@ -322,6 +339,20 @@ pub struct Conn {
     pending: VecDeque<Msg>,
 }
 
+/// `x.service` -> `/org/freedesktop/systemd1/unit/x_2eservice`: systemd's object path for a unit,
+/// every byte outside `[A-Za-z0-9]` written as `_xx`, the inverse of `watch::unit_name`.
+pub fn unit_object_path(name: &str) -> String {
+    let mut p = String::from("/org/freedesktop/systemd1/unit/");
+    for b in name.bytes() {
+        if b.is_ascii_alphanumeric() {
+            p.push(b as char);
+        } else {
+            p.push_str(&format!("_{b:02x}"));
+        }
+    }
+    p
+}
+
 pub fn bus_path() -> Result<String, String> {
     if let Ok(a) = std::env::var("DBUS_SESSION_BUS_ADDRESS") {
         if let Some(p) = a.strip_prefix("unix:path=") {
@@ -527,6 +558,29 @@ mod tests {
         assert_eq!(message_len(&raw).unwrap(), Some(raw.len()));
         let m = decode(&raw).unwrap();
         assert_eq!(m.body, vec![Val::S("a.service".into()), Val::S("fail".into()), Val::U(7)]);
+    }
+
+    #[test]
+    fn a_unit_name_escapes_to_its_object_path_and_back() {
+        for name in ["x.service", "spira-run-czar_2dpass-r7.service", "a@b:c.timer", "unit\u{e9}.scope"] {
+            let p = unit_object_path(name);
+            assert!(p.starts_with("/org/freedesktop/systemd1/unit/"), "{p}");
+            assert!(p["/org/freedesktop/systemd1/unit/".len()..].bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'), "{p}");
+            assert_eq!(crate::watch::unit_name(&p).as_deref(), Some(name));
+        }
+        assert_eq!(unit_object_path("x.service"), "/org/freedesktop/systemd1/unit/x_2eservice");
+        assert_eq!(unit_object_path("job-x.service"), "/org/freedesktop/systemd1/unit/job_2dx_2eservice");
+    }
+
+    #[test]
+    fn booleans_and_struct_fields_read_through_a_variant() {
+        assert_eq!(Val::Var(Box::new(Val::B(true))).as_bool(), Some(true));
+        assert_eq!(Val::B(false).as_bool(), Some(false));
+        assert_eq!(Val::S("true".into()).as_bool(), None);
+        let s = Val::Struct(vec![Val::S("a".into()), Val::U(1)]);
+        assert_eq!(s.fields().map(<[Val]>::len), Some(2));
+        assert_eq!(Val::Var(Box::new(s.clone())).fields(), s.fields());
+        assert_eq!(Val::U(1).fields(), None);
     }
 
     /// A connected pair already past auth: `call_body` writes one call and reads its reply.

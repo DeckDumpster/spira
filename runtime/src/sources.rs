@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 
 use crate::host::Submit;
 use crate::ports::Clock;
-use crate::units::{ScriptedUnits, UnitCompletions, UnitRan, UNIT_RAN};
+use crate::units::{RanOutput, ScriptedUnits, UnitCompletions, UnitRan, UNIT_RAN};
 use crate::{Result, RuntimeError};
 
 pub trait Source: Send {
@@ -151,7 +151,8 @@ enum Face {
 }
 
 /// Completions as events (S6, S9): every run a [`UnitCompletions`] backend reports is submitted
-/// once as `unit.ran`, so a task that started a unit hears its end through the journal.
+/// once as `unit.ran`, so a task that started a unit hears its end through the journal. A scope
+/// run's stdout and stderr tails ride the same event ([`RanOutput::from_event_kind`]).
 pub struct UnitRanSource {
     name: String,
     completions: Arc<dyn UnitCompletions>,
@@ -170,15 +171,15 @@ impl UnitRanSource {
         UnitRanSource { name: name.into(), completions: units.clone(), clock, face: Face::Scripted(units) }
     }
 
-    fn submit_of(&self, r: &UnitRan, now_ms: u64) -> Submit {
-        Submit::new(&format!("{UNIT_RAN}/{}/{now_ms}", r.handle.name), UNITS_STREAM, r.event_kind())
+    fn submit_of(&self, r: &UnitRan, out: &RanOutput, now_ms: u64) -> Submit {
+        Submit::new(&format!("{UNIT_RAN}/{}/{now_ms}", r.handle.name), UNITS_STREAM, r.event_kind_with(out))
     }
 
     /// Every run ended since the last drain, as submissions; a backend fault drains nothing and
     /// is retried on the next drain.
     fn drain(&self) -> Vec<Submit> {
         let now = self.clock.now_ms();
-        self.completions.ran().unwrap_or_default().iter().map(|r| self.submit_of(r, now)).collect()
+        self.completions.ended().unwrap_or_default().iter().map(|(r, out)| self.submit_of(r, out, now)).collect()
     }
 }
 

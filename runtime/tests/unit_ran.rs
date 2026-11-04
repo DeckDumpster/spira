@@ -108,3 +108,28 @@ fn a_polled_source_on_its_own_thread_submits_each_end_once() {
     drop(rx);
     handles.into_iter().for_each(|h| h.join().unwrap());
 }
+
+#[test]
+fn a_scope_runs_tails_ride_its_unit_ran_through_the_source() {
+    let clock = VirtualClock::new(0);
+    let c: Arc<dyn Clock> = Arc::new(clock.clone());
+    let scripted = Arc::new(ScriptedUnits::new(c.clone()));
+    scripted.script("build", 40, Exit::Code(1));
+    scripted.script_output("build", b"compiling", b"error[E0308]");
+    scripted.script("plain", 40, Exit::Code(0));
+    let mut sp = units::ScopeSpec::new(UnitSpec { task: "build".into(), key: "k".into(), argv: vec!["/bin/cargo".into()], env: vec![], cwd: None });
+    sp.cpu_quota_pct = Some(200);
+    units::effect(&*scripted, units::UNIT_RUN_SCOPE, &serde_json::to_string(&sp).unwrap()).unwrap();
+    units::effect(&*scripted, UNIT_START, r#"{"task":"plain","key":"k","argv":["/bin/p"],"env":[],"cwd":null}"#).unwrap();
+    let mut src = UnitRanSource::scripted("unit-ran", scripted.clone(), c);
+    let s = runtime::sources::Source::scripted(&mut src).unwrap();
+    assert_eq!(s.next_at(), Some(40));
+    clock.advance_to(40);
+    let due = s.take_due(40);
+    assert_eq!(due.len(), 2);
+    let out = units::RanOutput::from_event_kind(&due[0].kind).unwrap();
+    assert_eq!((out.stdout_tail.as_deref(), out.stderr_tail.as_deref()), (Some("compiling"), Some("error[E0308]")));
+    assert_eq!(UnitRan::from_event_kind(&due[0].kind).and_then(|r| r.key_for("build")).as_deref(), Some("k"), "a reader that knows nothing of tails still reads the run");
+    assert!(units::RanOutput::from_event_kind(&due[1].kind).unwrap().is_empty(), "a plain start carries no tails");
+    assert!(!due[1].kind.body.contains("tail"));
+}

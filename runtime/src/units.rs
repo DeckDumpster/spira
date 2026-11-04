@@ -6,8 +6,16 @@
 //!
 //! Every unit a task starts is named by [`unit_name`], so the task that started it recognises its
 //! own `unit.ran` by parsing the name back with [`parse_unit_name`].
+//!
+//! Past the four verbs the port reads a unit's [`UnitDetail`] (load, unit-file, active and sub
+//! state, result, main pid, restarts, invocation id, start time), lists units and timers by glob,
+//! starts, enables, disables and resets installed units, and runs a [`ScopeSpec`] under CPU and
+//! memory limits whose output tails come back on its `unit.ran` ([`RanOutput`]). Every one of
+//! them is a D-Bus method or property, never a child of the manager's command-line clients.
+//! [`from_env`] picks the backend by [`UNITS_KEY`], so another crate's tests run on the
+//! scripted one.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -57,7 +65,7 @@ impl UnitHandle {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UnitState {
     Activating,
     Active,
@@ -65,6 +73,7 @@ pub enum UnitState {
     Inactive,
     Failed,
     /// The backend knows no such unit.
+    #[default]
     Absent,
 }
 
@@ -113,28 +122,278 @@ impl UnitRan {
     }
 }
 
+/// Everything a backend can say about one unit: the [`UnitFacts`] summary plus the manager's own
+/// words for it. `None` is "this backend cannot answer", never a guess. A struct of its own, not
+/// new fields on `UnitFacts`, so every crate that builds a `UnitFacts` literal keeps compiling.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnitDetail {
+    pub name: String,
+    pub state: UnitState,
+    pub exit: Option<Exit>,
+    pub since_ms: Option<u64>,
+    /// `LoadState`: loaded, not-found, masked, ...
+    pub load_state: Option<String>,
+    /// `UnitFileState` (is-enabled): enabled, disabled, static, transient, ...
+    pub unit_file_state: Option<String>,
+    /// `ActiveState`, verbatim.
+    pub active_state: Option<String>,
+    /// `SubState`: running, exited, dead, failed, ...
+    pub sub_state: Option<String>,
+    /// The type's `Result`: success, exit-code, signal, timeout, ...
+    pub result: Option<String>,
+    pub main_pid: Option<u32>,
+    /// `NRestarts`: automatic restarts only, as systemd counts them.
+    pub n_restarts: Option<u32>,
+    /// `InvocationID` as 32 lowercase hex digits.
+    pub invocation_id: Option<String>,
+    /// `ExecMainStartTimestamp`, wall-clock milliseconds.
+    pub exec_main_start_ms: Option<u64>,
+}
+
+impl UnitDetail {
+    pub fn absent(name: &str) -> Self {
+        UnitDetail { name: name.into(), ..UnitDetail::default() }
+    }
+
+    /// The summary alone; every fact the summary does not hold is unanswered.
+    pub fn from_facts(name: &str, f: &UnitFacts) -> Self {
+        UnitDetail { name: name.into(), state: f.state, exit: f.exit, since_ms: f.since_ms, main_pid: f.main_pid, ..UnitDetail::default() }
+    }
+
+    pub fn facts(&self) -> UnitFacts {
+        UnitFacts { state: self.state, main_pid: self.main_pid, exit: self.exit, since_ms: self.since_ms }
+    }
+}
+
+/// One loaded timer and when it next fires.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimerFacts {
+    pub name: String,
+    /// The unit it activates.
+    pub unit: Option<String>,
+    pub active_state: Option<String>,
+    /// `NextElapseUSecRealtime`, wall-clock milliseconds; `None` when no calendar elapse is due.
+    pub next_elapse_ms: Option<u64>,
+    /// `NextElapseUSecMonotonic`, milliseconds since boot, for `OnBootSec=`-style timers.
+    pub next_elapse_monotonic_ms: Option<u64>,
+    /// `LastTriggerUSec`, wall-clock milliseconds.
+    pub last_trigger_ms: Option<u64>,
+}
+
+/// A unit run whose stdout and stderr come back to the caller when it ends (`--wait --pipe`),
+/// under resource limits.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScopeSpec {
+    pub unit: UnitSpec,
+    /// `CPUQuota=` as a percentage of one CPU: 200 is two CPUs.
+    #[serde(default)]
+    pub cpu_quota_pct: Option<u32>,
+    /// `MemoryMax=` in bytes.
+    #[serde(default)]
+    pub memory_max_bytes: Option<u64>,
+}
+
+impl ScopeSpec {
+    pub fn new(unit: UnitSpec) -> Self {
+        ScopeSpec { unit, cpu_quota_pct: None, memory_max_bytes: None }
+    }
+
+    /// The limits this spec sets, by their systemd names.
+    pub fn limits(&self) -> Vec<&'static str> {
+        [(self.cpu_quota_pct.is_some(), "CPUQuota"), (self.memory_max_bytes.is_some(), "MemoryMax")].into_iter().filter(|(on, _)| *on).map(|(_, n)| n).collect()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScopeHandle {
+    pub unit: UnitHandle,
+}
+
+/// The most of a stream a `unit.ran` carries.
+pub const TAIL_MAX: usize = 4096;
+
+/// What a run wrote, its last [`TAIL_MAX`] bytes per stream; `None` for a run nobody captured.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RanOutput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdout_tail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr_tail: Option<String>,
+}
+
+impl RanOutput {
+    pub fn captured(stdout: &[u8], stderr: &[u8]) -> Self {
+        RanOutput { stdout_tail: Some(tail(stdout)), stderr_tail: Some(tail(stderr)) }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.stdout_tail.is_none() && self.stderr_tail.is_none()
+    }
+
+    /// The tails a `unit.ran` event carries, if any.
+    pub fn from_event_kind(k: &EventKind) -> Option<RanOutput> {
+        (k.tag == UNIT_RAN).then(|| serde_json::from_str(&k.body).ok()).flatten()
+    }
+}
+
+/// The last [`TAIL_MAX`] bytes of `b` as text: lossy, starting on a character boundary, and never
+/// longer than the bound even after replacement characters.
+pub fn tail(b: &[u8]) -> String {
+    let mut from = b.len().saturating_sub(TAIL_MAX);
+    while from < b.len() && b[from] & 0xC0 == 0x80 {
+        from += 1;
+    }
+    let s = String::from_utf8_lossy(&b[from..]);
+    let mut cut = s.len().saturating_sub(TAIL_MAX);
+    while !s.is_char_boundary(cut) {
+        cut += 1;
+    }
+    s[cut..].to_string()
+}
+
+#[derive(Serialize)]
+struct RanBody<'a> {
+    #[serde(flatten)]
+    ran: &'a UnitRan,
+    #[serde(flatten)]
+    out: &'a RanOutput,
+}
+
+impl UnitRan {
+    /// The `unit.ran` event with `out`'s tails beside the run; without tails it is
+    /// [`UnitRan::event_kind`] exactly, and [`UnitRan::from_event_kind`] reads either.
+    pub fn event_kind_with(&self, out: &RanOutput) -> EventKind {
+        if out.is_empty() {
+            return self.event_kind();
+        }
+        EventKind::new(UNIT_RAN, &serde_json::to_string(&RanBody { ran: self, out }).unwrap_or_default())
+    }
+}
+
+fn unsupported(backend: &str, what: &str) -> RuntimeError {
+    RuntimeError::refused(format!("{backend} cannot {what}"))
+}
+
+/// The unit manager port. The methods past `facts` have refusing defaults so a backend written
+/// before them still compiles; each backend here answers what it honestly can.
 pub trait Units: Send + Sync {
     fn start(&self, spec: &UnitSpec) -> Result<UnitHandle>;
     fn stop(&self, h: &UnitHandle) -> Result<()>;
     fn restart(&self, h: &UnitHandle) -> Result<()>;
     fn facts(&self, h: &UnitHandle) -> Result<UnitFacts>;
+
+    /// `facts` with the manager's own states and counters.
+    fn detail(&self, h: &UnitHandle) -> Result<UnitDetail> {
+        Ok(UnitDetail::from_facts(&h.name, &self.facts(h)?))
+    }
+
+    /// Every unit, loaded or only installed, whose name matches the fnmatch `glob`, by name.
+    fn list(&self, glob: &str) -> Result<Vec<UnitDetail>> {
+        Err(unsupported("this backend", &format!("list units matching {glob}")))
+    }
+
+    /// Every loaded timer matching `glob`, by name, with its next elapse.
+    fn timers(&self, glob: &str) -> Result<Vec<TimerFacts>> {
+        Err(unsupported("this backend", &format!("list timers matching {glob}")))
+    }
+
+    /// Start an installed unit by its own name (`StartUnit`).
+    fn start_installed(&self, h: &UnitHandle) -> Result<()> {
+        Err(unsupported("this backend", &format!("start installed unit {}", h.name)))
+    }
+
+    /// Enable an installed unit's file, then reload the manager.
+    fn enable(&self, h: &UnitHandle) -> Result<()> {
+        Err(unsupported("this backend", &format!("enable {}", h.name)))
+    }
+
+    /// Disable an installed unit's file, then reload the manager.
+    fn disable(&self, h: &UnitHandle) -> Result<()> {
+        Err(unsupported("this backend", &format!("disable {}", h.name)))
+    }
+
+    /// Forget a unit's failed state (`ResetFailedUnit`); a unit that is not failed is left as is.
+    fn reset_failed(&self, h: &UnitHandle) -> Result<()> {
+        Err(unsupported("this backend", &format!("reset {}", h.name)))
+    }
+
+    /// Start a unit under `spec`'s limits whose stdout and stderr come back on its `unit.ran`
+    /// ([`UnitCompletions::ended`]), bounded to [`TAIL_MAX`] each.
+    fn run_scope(&self, spec: &ScopeSpec) -> Result<ScopeHandle> {
+        Err(unsupported("this backend", &format!("run a scope for task {}", spec.unit.task)))
+    }
 }
 
 /// The completion source: every run that ended since the last call, once each.
 pub trait UnitCompletions: Send + Sync {
     fn ran(&self) -> Result<Vec<UnitRan>>;
+
+    /// `ran` with each run's captured output; a backend that captures nothing reports none.
+    fn ended(&self) -> Result<Vec<(UnitRan, RanOutput)>> {
+        Ok(self.ran()?.into_iter().map(|r| (r, RanOutput::default())).collect())
+    }
+}
+
+/// fnmatch over a unit name: `*`, `?` and `[...]` classes (with `!` or `^` and ranges), as
+/// systemd's unit patterns read them.
+pub fn glob_match(pat: &str, name: &str) -> bool {
+    fn m(p: &[u8], n: &[u8]) -> bool {
+        match p.split_first() {
+            None => n.is_empty(),
+            Some((b'*', rest)) => (0..=n.len()).any(|i| m(rest, &n[i..])),
+            Some((b'?', rest)) => !n.is_empty() && m(rest, &n[1..]),
+            Some((b'[', rest)) => {
+                let Some(close) = rest.iter().skip(1).position(|c| *c == b']').map(|i| i + 1) else {
+                    return n.first() == Some(&b'[') && m(rest, &n[1..]);
+                };
+                let Some((&c, n_rest)) = n.split_first() else { return false };
+                let (neg, set) = match rest[..close].split_first() {
+                    Some((b'!' | b'^', s)) if !s.is_empty() => (true, s),
+                    _ => (false, &rest[..close]),
+                };
+                let mut hit = false;
+                let mut i = 0;
+                while i < set.len() {
+                    if i + 2 < set.len() && set[i + 1] == b'-' {
+                        hit |= set[i] <= c && c <= set[i + 2];
+                        i += 3;
+                    } else {
+                        hit |= set[i] == c;
+                        i += 1;
+                    }
+                }
+                hit != neg && m(&rest[close + 1..], n_rest)
+            }
+            Some((c, rest)) => n.first() == Some(c) && m(rest, &n[1..]),
+        }
+    }
+    m(pat.as_bytes(), name.as_bytes())
 }
 
 pub const UNIT_START: &str = "unit.start";
 pub const UNIT_STOP: &str = "unit.stop";
 pub const UNIT_RESTART: &str = "unit.restart";
 pub const UNIT_FACTS: &str = "unit.facts";
-/// The effect names a `Units` backend answers, each through [`effect`].
+pub const UNIT_DETAIL: &str = "unit.detail";
+pub const UNIT_LIST: &str = "unit.list";
+pub const UNIT_TIMERS: &str = "unit.timers";
+pub const UNIT_START_INSTALLED: &str = "unit.start_installed";
+pub const UNIT_ENABLE: &str = "unit.enable";
+pub const UNIT_DISABLE: &str = "unit.disable";
+pub const UNIT_RESET_FAILED: &str = "unit.reset_failed";
+pub const UNIT_RUN_SCOPE: &str = "unit.run_scope";
+/// The effect names a `Units` backend answers, each through [`effect`], that the simulator's
+/// shared doubles register.
 pub const EFFECTS: [&str; 4] = [UNIT_START, UNIT_STOP, UNIT_RESTART, UNIT_FACTS];
+/// The rest [`effect`] answers. Not in [`EFFECTS`] until a task needs one: the simulator's
+/// registry names a double for every effect it lists.
+pub const EXTENDED_EFFECTS: [&str; 8] = [UNIT_DETAIL, UNIT_LIST, UNIT_TIMERS, UNIT_START_INSTALLED, UNIT_ENABLE, UNIT_DISABLE, UNIT_RESET_FAILED, UNIT_RUN_SCOPE];
 
 /// One unit effect on `units`: `unit.start` takes a [`UnitSpec`] and answers its [`UnitHandle`];
 /// `unit.stop` and `unit.restart` take a handle and answer nothing; `unit.facts` takes a handle
 /// and answers its [`UnitFacts`]. All as JSON, so a host runner and a simulator double share it.
+/// Of the extended set, `unit.list` and `unit.timers` take the glob as a JSON string,
+/// `unit.run_scope` a [`ScopeSpec`], and the rest a handle.
 pub fn effect(units: &dyn Units, name: &str, input: &str) -> std::result::Result<String, String> {
     fn arg<T: serde::de::DeserializeOwned>(name: &str, input: &str) -> std::result::Result<T, String> {
         serde_json::from_str(input).map_err(|e| format!("{name}: bad input: {e}"))
@@ -147,6 +406,14 @@ pub fn effect(units: &dyn Units, name: &str, input: &str) -> std::result::Result
         UNIT_STOP => units.stop(&arg(name, input)?).map(|_| String::new()).map_err(|e| e.0),
         UNIT_RESTART => units.restart(&arg(name, input)?).map(|_| String::new()).map_err(|e| e.0),
         UNIT_FACTS => out(&units.facts(&arg(name, input)?).map_err(|e| e.0)?),
+        UNIT_DETAIL => out(&units.detail(&arg(name, input)?).map_err(|e| e.0)?),
+        UNIT_LIST => out(&units.list(&arg::<String>(name, input)?).map_err(|e| e.0)?),
+        UNIT_TIMERS => out(&units.timers(&arg::<String>(name, input)?).map_err(|e| e.0)?),
+        UNIT_START_INSTALLED => units.start_installed(&arg(name, input)?).map(|_| String::new()).map_err(|e| e.0),
+        UNIT_ENABLE => units.enable(&arg(name, input)?).map(|_| String::new()).map_err(|e| e.0),
+        UNIT_DISABLE => units.disable(&arg(name, input)?).map(|_| String::new()).map_err(|e| e.0),
+        UNIT_RESET_FAILED => units.reset_failed(&arg(name, input)?).map(|_| String::new()).map_err(|e| e.0),
+        UNIT_RUN_SCOPE => out(&units.run_scope(&arg::<ScopeSpec>(name, input)?).map_err(|e| e.0)?),
         _ => Err(format!("{name} is not a unit effect")),
     }
 }
@@ -213,7 +480,105 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// ProcessUnits: a child process per unit.
+// The words systemd uses for a run's state, shared by the two backends that are not systemd.
+
+fn result_word(exit: Option<Exit>) -> Option<String> {
+    match exit {
+        None | Some(Exit::Code(0)) => Some("success".into()),
+        Some(Exit::Code(_)) => Some("exit-code".into()),
+        Some(Exit::Signal(_)) => Some("signal".into()),
+        Some(Exit::Unknown) => None,
+    }
+}
+
+fn state_words(state: UnitState) -> (Option<String>, Option<String>) {
+    let (a, s) = match state {
+        UnitState::Active => ("active", "running"),
+        UnitState::Activating => ("activating", "start"),
+        UnitState::Deactivating => ("deactivating", "stop"),
+        UnitState::Inactive => ("inactive", "dead"),
+        UnitState::Failed => ("failed", "failed"),
+        UnitState::Absent => return (None, None),
+    };
+    (Some(a.into()), Some(s.into()))
+}
+
+fn ended_state(exit: Exit) -> UnitState {
+    if exit == Exit::Code(0) {
+        UnitState::Inactive
+    } else {
+        UnitState::Failed
+    }
+}
+
+/// A run this backend started: running since `started_ms`, or ended with `exit`.
+fn run_detail(name: &str, started_ms: u64, pid: Option<u32>, ended: Option<(Exit, u64)>) -> UnitDetail {
+    let state = ended.map_or(UnitState::Active, |(e, _)| ended_state(e));
+    let (active_state, sub_state) = state_words(state);
+    UnitDetail {
+        name: name.into(),
+        state,
+        exit: ended.map(|(e, _)| e),
+        since_ms: Some(ended.map_or(started_ms, |(_, at)| at)),
+        load_state: Some("loaded".into()),
+        unit_file_state: None,
+        active_state,
+        sub_state,
+        result: result_word(ended.map(|(e, _)| e)),
+        main_pid: if ended.is_none() { pid } else { None },
+        n_restarts: Some(0),
+        invocation_id: None,
+        exec_main_start_ms: Some(started_ms),
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// ProcessUnits: a child process per unit. It answers for its own children only: it has no unit
+// files, no installed units, no timers and no cgroup, so it refuses what needs any of those.
+
+const PROCESS: &str = "ProcessUnits";
+/// How long a scope's output readers may outlive its process before the tails are taken:
+/// a grandchild holding the pipe must not hold the run's end.
+const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_millis(200);
+
+#[derive(Default)]
+struct Pipe {
+    tail: Vec<u8>,
+    closed: bool,
+}
+
+type Captured = (Arc<Mutex<Pipe>>, Arc<Mutex<Pipe>>);
+
+fn pump(name: &str, mut r: impl std::io::Read + Send + 'static) -> Result<Arc<Mutex<Pipe>>> {
+    let p = Arc::new(Mutex::new(Pipe::default()));
+    let q = p.clone();
+    std::thread::Builder::new()
+        .name(format!("unit-out-{name}"))
+        .spawn(move || {
+            let mut chunk = [0u8; 8192];
+            while let Ok(n) = r.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                let mut g = lock(&q);
+                g.tail.extend_from_slice(&chunk[..n]);
+                let over = g.tail.len().saturating_sub(TAIL_MAX);
+                g.tail.drain(..over);
+            }
+            lock(&q).closed = true;
+        })
+        .map_err(|e| RuntimeError::new(format!("output reader for {name}: {e}")))?;
+    Ok(p)
+}
+
+/// The tails, once both readers have closed or the grace has passed.
+fn drain(c: &Captured) -> RanOutput {
+    let deadline = std::time::Instant::now() + DRAIN_GRACE;
+    while !(lock(&c.0).closed && lock(&c.1).closed) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(2)); // clock-safe: waits on the two readers' close, capped at DRAIN_GRACE
+    }
+    RanOutput::captured(&lock(&c.0).tail, &lock(&c.1).tail)
+}
 
 struct Running {
     spec: UnitSpec,
@@ -222,12 +587,15 @@ struct Running {
     exit: Option<Exit>,
     ended_ms: Option<u64>,
     pid: Option<u32>,
+    /// A scope run: its output is captured, and captured again on restart.
+    scope: bool,
+    captured: Option<Captured>,
 }
 
 pub struct ProcessUnits {
     clock: Arc<dyn Clock>,
     units: Mutex<BTreeMap<String, Running>>,
-    ended: Mutex<VecDeque<UnitRan>>,
+    ended: Mutex<VecDeque<(UnitRan, RanOutput)>>,
 }
 
 #[cfg(unix)]
@@ -250,14 +618,32 @@ impl ProcessUnits {
         ProcessUnits { clock, units: Mutex::new(BTreeMap::new()), ended: Mutex::new(VecDeque::new()) }
     }
 
-    fn spawn(spec: &UnitSpec) -> Result<Child> {
+    fn spawn(name: &str, spec: &UnitSpec, capture: bool) -> Result<(Child, Option<Captured>)> {
         let (prog, args) = spec.argv.split_first().ok_or_else(|| RuntimeError::refused(format!("unit for task {} has an empty argv", spec.task)))?;
         let mut c = Command::new(prog);
         c.args(args).envs(spec.env.iter().map(|(k, v)| (k, v))).stdin(Stdio::null());
+        if capture {
+            c.stdout(Stdio::piped()).stderr(Stdio::piped());
+        }
         if let Some(d) = &spec.cwd {
             c.current_dir(d);
         }
-        c.spawn().map_err(|e| RuntimeError::new(format!("spawn {prog}: {e}")))
+        let mut child = c.spawn().map_err(|e| RuntimeError::new(format!("spawn {prog}: {e}")))?;
+        if !capture {
+            return Ok((child, None));
+        }
+        let pipes = match (child.stdout.take(), child.stderr.take()) {
+            (Some(o), Some(e)) => pump(name, o).and_then(|o| Ok((o, pump(name, e)?))),
+            _ => Err(RuntimeError::new(format!("{name}: no output pipes"))),
+        };
+        match pipes {
+            Ok(p) => Ok((child, Some(p))),
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                Err(e)
+            }
+        }
     }
 
     fn end(&self, name: &str, r: &mut Running, exit: Exit) {
@@ -265,7 +651,8 @@ impl ProcessUnits {
         r.child = None;
         r.exit = Some(exit);
         r.ended_ms = Some(now);
-        lock(&self.ended).push_back(UnitRan { handle: UnitHandle::named(name), exit, duration_ms: now.saturating_sub(r.started_ms) });
+        let out = r.captured.take().map(|c| drain(&c)).unwrap_or_default();
+        lock(&self.ended).push_back((UnitRan { handle: UnitHandle::named(name), exit, duration_ms: now.saturating_sub(r.started_ms) }, out));
     }
 
     fn reap(&self) {
@@ -289,19 +676,28 @@ impl ProcessUnits {
             self.end(name, r, exit);
         }
     }
-}
 
-impl Units for ProcessUnits {
-    fn start(&self, spec: &UnitSpec) -> Result<UnitHandle> {
+    fn launch(&self, spec: &UnitSpec, scope: bool) -> Result<UnitHandle> {
         let h = UnitHandle::of(&spec.task, &spec.key)?;
         self.reap();
         let mut units = lock(&self.units);
         if units.get(&h.name).is_some_and(|r| r.child.is_some()) {
             return Err(RuntimeError::refused(format!("{} is already running", h.name)));
         }
-        let child = Self::spawn(spec)?;
-        units.insert(h.name.clone(), Running { spec: spec.clone(), pid: Some(child.id()), child: Some(child), started_ms: self.clock.now_ms(), exit: None, ended_ms: None });
+        let (child, captured) = Self::spawn(&h.name, spec, scope)?;
+        units.insert(h.name.clone(), Running { spec: spec.clone(), pid: Some(child.id()), child: Some(child), started_ms: self.clock.now_ms(), exit: None, ended_ms: None, scope, captured });
         Ok(h)
+    }
+
+    fn detail_of(name: &str, r: &Running) -> UnitDetail {
+        let ended = if r.child.is_some() { None } else { r.exit.map(|e| (e, r.ended_ms.unwrap_or(r.started_ms))) };
+        run_detail(name, r.started_ms, r.pid, ended)
+    }
+}
+
+impl Units for ProcessUnits {
+    fn start(&self, spec: &UnitSpec) -> Result<UnitHandle> {
+        self.launch(spec, false)
     }
 
     fn stop(&self, h: &UnitHandle) -> Result<()> {
@@ -315,29 +711,76 @@ impl Units for ProcessUnits {
         let mut units = lock(&self.units);
         let r = units.get_mut(&h.name).ok_or_else(|| RuntimeError::refused(format!("{} was not started by this backend", h.name)))?;
         self.kill(&h.name, r);
-        let child = Self::spawn(&r.spec)?;
+        let (child, captured) = Self::spawn(&h.name, &r.spec, r.scope)?;
         r.pid = Some(child.id());
         r.child = Some(child);
+        r.captured = captured;
         r.started_ms = self.clock.now_ms();
         r.ended_ms = None;
         Ok(())
     }
 
     fn facts(&self, h: &UnitHandle) -> Result<UnitFacts> {
+        self.detail(h).map(|d| d.facts())
+    }
+
+    /// No unit file and no invocation id: those two are always `None`. `n_restarts` is 0, since
+    /// a plain process is never restarted automatically.
+    fn detail(&self, h: &UnitHandle) -> Result<UnitDetail> {
         self.reap();
-        let units = lock(&self.units);
-        let Some(r) = units.get(&h.name) else { return Ok(UnitFacts::absent()) };
-        let state = match (&r.child, r.exit) {
-            (Some(_), _) => UnitState::Active,
-            (None, Some(Exit::Code(0))) => UnitState::Inactive,
-            (None, _) => UnitState::Failed,
-        };
-        Ok(UnitFacts { state, main_pid: r.child.as_ref().and(r.pid), exit: r.exit, since_ms: Some(r.ended_ms.unwrap_or(r.started_ms)) })
+        Ok(lock(&self.units).get(&h.name).map_or_else(|| UnitDetail::absent(&h.name), |r| Self::detail_of(&h.name, r)))
+    }
+
+    /// Its own children only: a plain process sees no other unit.
+    fn list(&self, glob: &str) -> Result<Vec<UnitDetail>> {
+        self.reap();
+        Ok(lock(&self.units).iter().filter(|(n, _)| glob_match(glob, n)).map(|(n, r)| Self::detail_of(n, r)).collect())
+    }
+
+    fn timers(&self, glob: &str) -> Result<Vec<TimerFacts>> {
+        Err(unsupported(PROCESS, &format!("list timers matching {glob}: a plain process has no timers")))
+    }
+
+    fn start_installed(&self, h: &UnitHandle) -> Result<()> {
+        Err(unsupported(PROCESS, &format!("start {}: a plain process has no installed units", h.name)))
+    }
+
+    fn enable(&self, h: &UnitHandle) -> Result<()> {
+        Err(unsupported(PROCESS, &format!("enable {}: a plain process has no unit files", h.name)))
+    }
+
+    fn disable(&self, h: &UnitHandle) -> Result<()> {
+        Err(unsupported(PROCESS, &format!("disable {}: a plain process has no unit files", h.name)))
+    }
+
+    /// A failed run of its own is forgotten, as systemd collects a reset transient unit.
+    fn reset_failed(&self, h: &UnitHandle) -> Result<()> {
+        self.reap();
+        let mut units = lock(&self.units);
+        let r = units.get(&h.name).ok_or_else(|| RuntimeError::refused(format!("{} was not started by this backend", h.name)))?;
+        if r.child.is_none() && r.exit.is_some_and(|e| ended_state(e) == UnitState::Failed) {
+            units.remove(&h.name);
+        }
+        Ok(())
+    }
+
+    /// Captures stdout and stderr through pipes; refuses `CPUQuota` and `MemoryMax`, which a plain
+    /// process cannot enforce.
+    fn run_scope(&self, spec: &ScopeSpec) -> Result<ScopeHandle> {
+        let limits = spec.limits();
+        if !limits.is_empty() {
+            return Err(unsupported(PROCESS, &format!("enforce {} for task {}: a plain process has no cgroup", limits.join(", "), spec.unit.task)));
+        }
+        Ok(ScopeHandle { unit: self.launch(&spec.unit, true)? })
     }
 }
 
 impl UnitCompletions for ProcessUnits {
     fn ran(&self) -> Result<Vec<UnitRan>> {
+        Ok(self.ended()?.into_iter().map(|(r, _)| r).collect())
+    }
+
+    fn ended(&self) -> Result<Vec<(UnitRan, RanOutput)>> {
         self.reap();
         Ok(lock(&self.ended).drain(..).collect())
     }
@@ -347,14 +790,25 @@ impl UnitCompletions for ProcessUnits {
 // ScriptedUnits: the simulator's backend. A task's unit runs for its scripted duration on the
 // virtual clock and ends with its scripted exit.
 
+struct Live {
+    start: u64,
+    duration: u64,
+    exit: Exit,
+    out: RanOutput,
+}
+
 #[derive(Default)]
 struct Script {
     runs: BTreeMap<String, (u64, Exit)>,
-    live: BTreeMap<String, (u64, u64, Exit)>,
-    installed: BTreeMap<String, UnitFacts>,
-    last: BTreeMap<String, (Exit, u64)>,
+    outputs: BTreeMap<String, RanOutput>,
+    live: BTreeMap<String, Live>,
+    installed: BTreeMap<String, UnitDetail>,
+    timers: BTreeMap<String, TimerFacts>,
+    scopes: Vec<ScopeSpec>,
+    /// A run's exit, its start and its end.
+    last: BTreeMap<String, (Exit, u64, u64)>,
     calls: Vec<String>,
-    ended: VecDeque<UnitRan>,
+    ended: VecDeque<(UnitRan, RanOutput)>,
 }
 
 pub struct ScriptedUnits {
@@ -374,10 +828,33 @@ impl ScriptedUnits {
 
     /// An installed unit (the scheduler's own, say) and the facts it reports until changed.
     pub fn install(&self, name: &str, facts: UnitFacts) {
-        lock(&self.s).installed.insert(name.into(), facts);
+        let mut d = UnitDetail::from_facts(name, &facts);
+        d.load_state = Some(if facts.state == UnitState::Absent { "not-found" } else { "loaded" }.into());
+        (d.active_state, d.sub_state) = state_words(facts.state);
+        self.install_detail(d);
     }
 
-    /// Every start, stop and restart, in order, as `<verb> <unit>`.
+    /// An installed unit with every fact the manager would state.
+    pub fn install_detail(&self, d: UnitDetail) {
+        lock(&self.s).installed.insert(d.name.clone(), d);
+    }
+
+    /// A loaded timer.
+    pub fn install_timer(&self, t: TimerFacts) {
+        lock(&self.s).timers.insert(t.name.clone(), t);
+    }
+
+    /// What every scope `task` runs writes, delivered with its `unit.ran`.
+    pub fn script_output(&self, task: &str, stdout: &[u8], stderr: &[u8]) {
+        lock(&self.s).outputs.insert(task.into(), RanOutput::captured(stdout, stderr));
+    }
+
+    /// Every scope started, with the limits it asked for.
+    pub fn scopes(&self) -> Vec<ScopeSpec> {
+        lock(&self.s).scopes.clone()
+    }
+
+    /// Every call that changes a unit, in order, as `<verb> <unit>`.
     pub fn calls(&self) -> Vec<String> {
         lock(&self.s).calls.clone()
     }
@@ -385,33 +862,62 @@ impl ScriptedUnits {
     /// When the earliest running unit ends on the virtual clock: the time a completion
     /// source next has something to deliver.
     pub fn next_end_at(&self) -> Option<u64> {
-        lock(&self.s).live.values().map(|(start, d, _)| start + d).min()
+        lock(&self.s).live.values().map(|l| l.start + l.duration).min()
     }
 
     fn settle(&self, s: &mut Script) {
         let now = self.clock.now_ms();
-        let done: Vec<String> = s.live.iter().filter(|(_, (start, d, _))| start + d <= now).map(|(n, _)| n.clone()).collect();
+        let done: Vec<String> = s.live.iter().filter(|(_, l)| l.start + l.duration <= now).map(|(n, _)| n.clone()).collect();
         for n in done {
-            if let Some((start, d, exit)) = s.live.remove(&n) {
-                s.last.insert(n.clone(), (exit, start + d));
-                s.ended.push_back(UnitRan { handle: UnitHandle::named(&n), exit, duration_ms: d });
+            if let Some(l) = s.live.remove(&n) {
+                s.last.insert(n.clone(), (l.exit, l.start, l.start + l.duration));
+                s.ended.push_back((UnitRan { handle: UnitHandle::named(&n), exit: l.exit, duration_ms: l.duration }, l.out));
             }
         }
     }
+
+    fn launch(&self, spec: &UnitSpec, verb: &str, out: impl FnOnce(&Script) -> RanOutput) -> Result<UnitHandle> {
+        let h = UnitHandle::of(&spec.task, &spec.key)?;
+        let mut s = lock(&self.s);
+        self.settle(&mut s);
+        let (duration, exit) = *s.runs.get(&spec.task).ok_or_else(|| RuntimeError::refused(format!("no script for task {}", spec.task)))?;
+        if s.live.contains_key(&h.name) {
+            return Err(RuntimeError::refused(format!("{} is already running", h.name)));
+        }
+        let out = out(&s);
+        s.calls.push(format!("{verb} {}", h.name));
+        s.live.insert(h.name.clone(), Live { start: self.clock.now_ms(), duration, exit, out });
+        Ok(h)
+    }
+
+    fn detail_in(s: &Script, name: &str) -> UnitDetail {
+        if let Some(d) = s.installed.get(name) {
+            return d.clone();
+        }
+        if let Some(l) = s.live.get(name) {
+            return UnitDetail { unit_file_state: Some("transient".into()), ..run_detail(name, l.start, None, None) };
+        }
+        match s.last.get(name) {
+            Some((exit, start, end)) => UnitDetail { unit_file_state: Some("transient".into()), ..run_detail(name, *start, None, Some((*exit, *end))) },
+            None => UnitDetail::absent(name),
+        }
+    }
+
+    /// An installed unit that is there (not scripted as absent), for `verb`.
+    fn installed_mut<'a>(s: &'a mut Script, h: &UnitHandle, verb: &str) -> Result<&'a mut UnitDetail> {
+        s.installed.get_mut(&h.name).filter(|d| d.state != UnitState::Absent).ok_or_else(|| RuntimeError::refused(format!("cannot {verb} {}: it is not installed in this script", h.name)))
+    }
+}
+
+fn set_state(d: &mut UnitDetail, state: UnitState, now: u64) {
+    d.state = state;
+    d.since_ms = Some(now);
+    (d.active_state, d.sub_state) = state_words(state);
 }
 
 impl Units for ScriptedUnits {
     fn start(&self, spec: &UnitSpec) -> Result<UnitHandle> {
-        let h = UnitHandle::of(&spec.task, &spec.key)?;
-        let mut s = lock(&self.s);
-        self.settle(&mut s);
-        let (d, exit) = *s.runs.get(&spec.task).ok_or_else(|| RuntimeError::refused(format!("no script for task {}", spec.task)))?;
-        if s.live.contains_key(&h.name) {
-            return Err(RuntimeError::refused(format!("{} is already running", h.name)));
-        }
-        s.calls.push(format!("start {}", h.name));
-        s.live.insert(h.name.clone(), (self.clock.now_ms(), d, exit));
-        Ok(h)
+        self.launch(spec, "start", |_| RanOutput::default())
     }
 
     fn stop(&self, h: &UnitHandle) -> Result<()> {
@@ -419,11 +925,13 @@ impl Units for ScriptedUnits {
         let mut s = lock(&self.s);
         self.settle(&mut s);
         s.calls.push(format!("stop {}", h.name));
-        if let Some(f) = s.installed.get_mut(&h.name) {
-            *f = UnitFacts { state: UnitState::Inactive, main_pid: None, exit: Some(Exit::Signal(15)), since_ms: Some(now) };
-        } else if let Some((start, _, _)) = s.live.remove(&h.name) {
-            s.last.insert(h.name.clone(), (Exit::Signal(15), now));
-            s.ended.push_back(UnitRan { handle: h.clone(), exit: Exit::Signal(15), duration_ms: now.saturating_sub(start) });
+        if let Some(d) = s.installed.get_mut(&h.name) {
+            set_state(d, UnitState::Inactive, now);
+            d.main_pid = None;
+            d.exit = Some(Exit::Signal(15));
+        } else if let Some(l) = s.live.remove(&h.name) {
+            s.last.insert(h.name.clone(), (Exit::Signal(15), l.start, now));
+            s.ended.push_back((UnitRan { handle: h.clone(), exit: Exit::Signal(15), duration_ms: now.saturating_sub(l.start) }, l.out));
         }
         Ok(())
     }
@@ -433,8 +941,8 @@ impl Units for ScriptedUnits {
         let mut s = lock(&self.s);
         s.calls.push(format!("restart {}", h.name));
         match s.installed.get_mut(&h.name) {
-            Some(f) => {
-                *f = UnitFacts { state: UnitState::Active, main_pid: f.main_pid, exit: f.exit, since_ms: Some(now) };
+            Some(d) => {
+                set_state(d, UnitState::Active, now);
                 Ok(())
             }
             None => Err(RuntimeError::refused(format!("{} is not installed in this script", h.name))),
@@ -442,23 +950,89 @@ impl Units for ScriptedUnits {
     }
 
     fn facts(&self, h: &UnitHandle) -> Result<UnitFacts> {
+        self.detail(h).map(|d| d.facts())
+    }
+
+    fn detail(&self, h: &UnitHandle) -> Result<UnitDetail> {
         let mut s = lock(&self.s);
         self.settle(&mut s);
-        if let Some(f) = s.installed.get(&h.name) {
-            return Ok(f.clone());
+        Ok(Self::detail_in(&s, &h.name))
+    }
+
+    fn list(&self, glob: &str) -> Result<Vec<UnitDetail>> {
+        let mut s = lock(&self.s);
+        self.settle(&mut s);
+        let names: BTreeSet<&String> = s.installed.keys().chain(s.live.keys()).chain(s.last.keys()).filter(|n| glob_match(glob, n)).collect();
+        Ok(names.into_iter().map(|n| Self::detail_in(&s, n)).filter(|d| d.state != UnitState::Absent).collect())
+    }
+
+    fn timers(&self, glob: &str) -> Result<Vec<TimerFacts>> {
+        Ok(lock(&self.s).timers.values().filter(|t| glob_match(glob, &t.name)).cloned().collect())
+    }
+
+    fn start_installed(&self, h: &UnitHandle) -> Result<()> {
+        let now = self.clock.now_ms();
+        let mut s = lock(&self.s);
+        let d = Self::installed_mut(&mut s, h, "start")?;
+        if d.state != UnitState::Active {
+            set_state(d, UnitState::Active, now);
         }
-        if let Some((start, _, _)) = s.live.get(&h.name) {
-            return Ok(UnitFacts { state: UnitState::Active, main_pid: None, exit: None, since_ms: Some(*start) });
+        s.calls.push(format!("start {}", h.name));
+        Ok(())
+    }
+
+    fn enable(&self, h: &UnitHandle) -> Result<()> {
+        let mut s = lock(&self.s);
+        Self::installed_mut(&mut s, h, "enable")?.unit_file_state = Some("enabled".into());
+        s.calls.push(format!("enable {}", h.name));
+        Ok(())
+    }
+
+    fn disable(&self, h: &UnitHandle) -> Result<()> {
+        let mut s = lock(&self.s);
+        Self::installed_mut(&mut s, h, "disable")?.unit_file_state = Some("disabled".into());
+        s.calls.push(format!("disable {}", h.name));
+        Ok(())
+    }
+
+    /// An installed failed unit goes inactive with its result and restart count reset; a
+    /// failed transient run is collected.
+    fn reset_failed(&self, h: &UnitHandle) -> Result<()> {
+        let now = self.clock.now_ms();
+        let mut s = lock(&self.s);
+        self.settle(&mut s);
+        if let Some(d) = s.installed.get_mut(&h.name).filter(|d| d.state != UnitState::Absent) {
+            if d.state == UnitState::Failed {
+                set_state(d, UnitState::Inactive, now);
+                d.result = Some("success".into());
+                d.n_restarts = Some(0);
+            }
+        } else if let Some((exit, _, _)) = s.last.get(&h.name) {
+            if ended_state(*exit) == UnitState::Failed {
+                s.last.remove(&h.name);
+            }
+        } else if !s.live.contains_key(&h.name) {
+            return Err(RuntimeError::refused(format!("cannot reset {}: this script knows no such unit", h.name)));
         }
-        Ok(match s.last.get(&h.name) {
-            Some((exit, at)) => UnitFacts { state: if *exit == Exit::Code(0) { UnitState::Inactive } else { UnitState::Failed }, main_pid: None, exit: Some(*exit), since_ms: Some(*at) },
-            None => UnitFacts::absent(),
-        })
+        s.calls.push(format!("reset-failed {}", h.name));
+        Ok(())
+    }
+
+    /// Any limits are accepted and recorded ([`ScriptedUnits::scopes`]); the run ends with the
+    /// output [`ScriptedUnits::script_output`] gave its task.
+    fn run_scope(&self, spec: &ScopeSpec) -> Result<ScopeHandle> {
+        let unit = self.launch(&spec.unit, "run-scope", |s| s.outputs.get(&spec.unit.task).cloned().unwrap_or_else(|| RanOutput::captured(b"", b"")))?;
+        lock(&self.s).scopes.push(spec.clone());
+        Ok(ScopeHandle { unit })
     }
 }
 
 impl UnitCompletions for ScriptedUnits {
     fn ran(&self) -> Result<Vec<UnitRan>> {
+        Ok(self.ended()?.into_iter().map(|(r, _)| r).collect())
+    }
+
+    fn ended(&self) -> Result<Vec<(UnitRan, RanOutput)>> {
         let mut s = lock(&self.s);
         self.settle(&mut s);
         Ok(s.ended.drain(..).collect())
@@ -469,7 +1043,7 @@ impl UnitCompletions for ScriptedUnits {
 // SystemdUnits: the user manager over D-Bus, with unit-run's connection and signal tracker.
 
 #[cfg(target_os = "linux")]
-pub use systemd::{encode_args, encode_call_body, start_transient_args, Arg, Bus, SystemdUnits};
+pub use systemd::{encode_args, encode_call_body, scope_args, start_transient_args, Arg, Bus, SystemdUnits};
 
 #[cfg(target_os = "linux")]
 mod systemd {
@@ -483,12 +1057,17 @@ mod systemd {
     const UNIT_IFACE: &str = "org.freedesktop.systemd1.Unit";
     const SERVICE_IFACE: &str = "org.freedesktop.systemd1.Service";
     const PROPS: &str = "org.freedesktop.DBus.Properties";
+    const TIMER_IFACE: &str = "org.freedesktop.systemd1.Timer";
+    /// The manager's job ends, which the user manager sends once subscribed.
+    pub const JOB_REMOVED_RULE: &str = "type='signal',sender='org.freedesktop.systemd1',interface='org.freedesktop.systemd1.Manager',member='JobRemoved',path='/org/freedesktop/systemd1'";
 
     /// A D-Bus argument, enough of the type system for StartTransientUnit.
     #[derive(Clone, Debug, PartialEq)]
     pub enum Arg {
         S(String),
         B(bool),
+        U32(u32),
+        T(u64),
         Arr(&'static str, Vec<Arg>),
         Struct(Vec<Arg>),
         Var(Box<Arg>),
@@ -499,6 +1078,8 @@ mod systemd {
             match self {
                 Arg::S(_) => "s".into(),
                 Arg::B(_) => "b".into(),
+                Arg::U32(_) => "u".into(),
+                Arg::T(_) => "t".into(),
                 Arg::Arr(elem, _) => format!("a{elem}"),
                 Arg::Struct(f) => format!("({})", f.iter().map(Arg::sig).collect::<String>()),
                 Arg::Var(_) => "v".into(),
@@ -540,6 +1121,11 @@ mod systemd {
                 buf.push(0);
             }
             Arg::B(b) => put_u32(buf, u32::from(*b)),
+            Arg::U32(v) => put_u32(buf, *v),
+            Arg::T(v) => {
+                align(buf, 8);
+                buf.extend_from_slice(&v.to_le_bytes());
+            }
             Arg::Arr(elem, items) => {
                 put_u32(buf, 0);
                 let at = buf.len() - 4;
@@ -606,6 +1192,23 @@ mod systemd {
         Ok(vec![Arg::S(name), Arg::S("fail".into()), Arg::Arr("(sv)", props), Arg::Arr("(sa(sv))", vec![])])
     }
 
+    /// `StartTransientUnit` for a scope run: [`start_transient_args`] plus its limits and the two
+    /// files its stdout and stderr are written to, read back when it ends.
+    pub fn scope_args(spec: &ScopeSpec, stdout: &std::path::Path, stderr: &std::path::Path) -> Result<Vec<Arg>> {
+        let mut args = start_transient_args(&spec.unit)?;
+        if let Some(Arg::Arr(_, props)) = args.get_mut(2) {
+            props.push(prop("StandardOutputFile", Arg::S(stdout.display().to_string())));
+            props.push(prop("StandardErrorFile", Arg::S(stderr.display().to_string())));
+            if let Some(pct) = spec.cpu_quota_pct {
+                props.push(prop("CPUQuotaPerSecUSec", Arg::T(u64::from(pct) * 10_000)));
+            }
+            if let Some(max) = spec.memory_max_bytes {
+                props.push(prop("MemoryMax", Arg::T(max)));
+            }
+        }
+        Ok(args)
+    }
+
     pub trait Bus: Send {
         fn call(&mut self, dest: &str, path: &str, iface: &str, member: &str, args: &[Arg]) -> std::result::Result<Vec<Val>, String>;
         fn next_signal(&mut self, timeout: Duration) -> std::result::Result<Option<Msg>, String>;
@@ -622,10 +1225,23 @@ mod systemd {
         }
     }
 
+    /// Units whose start job ends without a run: the job's end is the only end they will have.
+    const NEVER_RAN: [&str; 4] = ["dependency", "assert", "unsupported", "invalid"];
+    /// Job results that may or may not follow a run; a unit seen live or just closed has its end
+    /// from its properties already.
+    const MAYBE_RAN: [&str; 2] = ["failed", "timeout"];
+    /// How many just-closed units are remembered against a late `JobRemoved`.
+    const CLOSED_CAP: usize = 256;
+
     pub struct SystemdUnits<B: Bus> {
         bus: Mutex<B>,
         clock: Arc<dyn Clock>,
         tracker: Mutex<Tracker>,
+        capture_dir: Option<PathBuf>,
+        /// Unit object paths seen live and not yet closed, and those closed most recently.
+        seen: Mutex<(BTreeSet<String>, VecDeque<String>)>,
+        /// A scope run's capture files, by unit name.
+        scopes: Mutex<BTreeMap<String, (PathBuf, PathBuf)>>,
     }
 
     fn fault(e: String) -> RuntimeError {
@@ -634,6 +1250,29 @@ mod systemd {
 
     fn s(v: &str) -> Arg {
         Arg::S(v.into())
+    }
+
+    fn names(v: &[&str]) -> Arg {
+        Arg::Arr("s", v.iter().map(|x| s(x)).collect())
+    }
+
+    /// The interface a unit's type-specific properties live on: `x.service` -> `...Service`.
+    fn type_iface(name: &str) -> String {
+        let ty = name.rsplit_once('.').map_or("", |(_, t)| t);
+        let mut c = ty.chars();
+        let cap: String = c.next().map(|f| f.to_ascii_uppercase().to_string() + c.as_str()).unwrap_or_default();
+        format!("org.freedesktop.systemd1.{cap}")
+    }
+
+    /// The last [`TAIL_MAX`] bytes of a file as a tail; empty for a file that is not there.
+    fn read_tail(p: &std::path::Path) -> String {
+        use std::io::{Read, Seek, SeekFrom};
+        let Ok(mut f) = std::fs::File::open(p) else { return String::new() };
+        let len = f.metadata().map_or(0, |m| m.len());
+        let _ = f.seek(SeekFrom::Start(len.saturating_sub(TAIL_MAX as u64)));
+        let mut b = Vec::new();
+        let _ = f.take(TAIL_MAX as u64).read_to_end(&mut b);
+        tail(&b)
     }
 
     impl SystemdUnits<Conn> {
@@ -645,14 +1284,22 @@ mod systemd {
     }
 
     impl<B: Bus> SystemdUnits<B> {
-        /// Subscribes to unit signals, so a run ending after this is a `unit.ran`.
+        /// Subscribes to unit signals and job ends, so a run ending after this is a `unit.ran`.
         pub fn new(mut bus: B, clock: Arc<dyn Clock>) -> Result<Self> {
-            for rule in MATCH_RULES {
+            for rule in MATCH_RULES.iter().chain([JOB_REMOVED_RULE].iter()) {
                 bus.call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "AddMatch", &[s(rule)]).map_err(fault)?;
             }
             bus.call(MANAGER, ROOT, MANAGER_IFACE, "Subscribe", &[]).map_err(fault)?;
             let since_us = clock.now_ms().saturating_mul(1000);
-            Ok(SystemdUnits { bus: Mutex::new(bus), clock, tracker: Mutex::new(Tracker::new(since_us)) })
+            let capture_dir = std::env::var_os("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()).map(|d| PathBuf::from(d).join("spira-units"));
+            Ok(SystemdUnits { bus: Mutex::new(bus), clock, tracker: Mutex::new(Tracker::new(since_us)), capture_dir, seen: Mutex::default(), scopes: Mutex::default() })
+        }
+
+        /// Where a scope run's stdout and stderr files go; `$XDG_RUNTIME_DIR/spira-units` unless
+        /// set here. With none, `run_scope` is refused.
+        pub fn with_capture_dir(mut self, dir: Option<PathBuf>) -> Self {
+            self.capture_dir = dir;
+            self
         }
 
         fn unit_path(bus: &mut B, name: &str) -> Result<String> {
@@ -664,6 +1311,67 @@ mod systemd {
             let mut bus = lock(&self.bus);
             let path = Self::unit_path(&mut bus, &h.name)?;
             bus.call(MANAGER, &path, UNIT_IFACE, member, &[s("replace")]).map_err(fault).map(|_| ())
+        }
+
+        fn manager(&self, member: &str, args: &[Arg]) -> Result<Vec<Val>> {
+            lock(&self.bus).call(MANAGER, ROOT, MANAGER_IFACE, member, args).map_err(fault)
+        }
+
+        /// `ListUnitsByPatterns` rows matching `glob`: (name, active state, object path).
+        fn loaded(bus: &mut B, glob: &str) -> Result<Vec<(String, String, String)>> {
+            let r = bus.call(MANAGER, ROOT, MANAGER_IFACE, "ListUnitsByPatterns", &[names(&[]), names(&[glob])]).map_err(fault)?;
+            let Some(Val::Arr(rows)) = r.first() else { return Err(fault("ListUnitsByPatterns: unexpected reply".into())) };
+            Ok(rows
+                .iter()
+                .filter_map(|row| {
+                    let f = row.fields()?;
+                    Some((f.first()?.as_str()?.to_string(), f.get(3)?.as_str()?.to_string(), f.get(6)?.as_str()?.to_string()))
+                })
+                .collect())
+        }
+
+        /// The tails of a scope run's capture files, which go once read.
+        fn output_of(&self, name: &str) -> RanOutput {
+            let Some((o, e)) = lock(&self.scopes).remove(name) else { return RanOutput::default() };
+            let out = RanOutput { stdout_tail: Some(read_tail(&o)), stderr_tail: Some(read_tail(&e)) };
+            let _ = std::fs::remove_file(&o);
+            let _ = std::fs::remove_file(&e);
+            out
+        }
+
+        /// A `JobRemoved` that is a run's only end: a start that never ran, or a failure of a unit
+        /// not seen live and not just closed.
+        fn job_end(&self, m: &Msg) -> Option<UnitRan> {
+            let (unit, result) = (m.body.get(2)?.as_str()?, m.body.get(3)?.as_str()?);
+            if !NEVER_RAN.contains(&result) {
+                if !MAYBE_RAN.contains(&result) {
+                    return None;
+                }
+                let path = unit_run::dbus::unit_object_path(unit);
+                let mut seen = lock(&self.seen);
+                if seen.0.contains(&path) {
+                    return None;
+                }
+                if let Some(i) = seen.1.iter().position(|p| *p == path) {
+                    seen.1.remove(i);
+                    return None;
+                }
+            }
+            Some(UnitRan { handle: UnitHandle::named(unit), exit: Exit::Unknown, duration_ms: 0 })
+        }
+
+        fn mark(&self, path: &str, live: bool) {
+            let mut seen = lock(&self.seen);
+            if live {
+                seen.0.insert(path.into());
+                seen.1.retain(|p| p != path);
+            } else {
+                seen.0.remove(path);
+                seen.1.push_back(path.into());
+                while seen.1.len() > CLOSED_CAP {
+                    seen.1.pop_front();
+                }
+            }
         }
     }
 
@@ -700,6 +1408,31 @@ mod systemd {
         UnitFacts { state, main_pid, exit, since_ms }
     }
 
+    fn usec_ms(v: Option<&Val>) -> Option<u64> {
+        v.and_then(Val::as_u64).filter(|u| *u != 0 && *u != u64::MAX).map(|u| u / 1000)
+    }
+
+    /// The detail a unit's `Unit` and type-specific property sets state.
+    pub(super) fn detail_from(name: &str, unit: &[(String, Val)], ty: &[(String, Val)]) -> UnitDetail {
+        let f = facts_from(unit, ty);
+        let text = |d: &[(String, Val)], k: &str| find(d, k).and_then(Val::as_str).filter(|s| !s.is_empty()).map(String::from);
+        UnitDetail {
+            name: name.into(),
+            state: f.state,
+            exit: f.exit,
+            since_ms: f.since_ms,
+            load_state: text(unit, "LoadState"),
+            unit_file_state: text(unit, "UnitFileState"),
+            active_state: text(unit, "ActiveState"),
+            sub_state: text(unit, "SubState"),
+            result: text(ty, "Result"),
+            main_pid: f.main_pid,
+            n_restarts: find(ty, "NRestarts").and_then(Val::as_u64).and_then(|n| u32::try_from(n).ok()),
+            invocation_id: find(unit, "InvocationID").and_then(Val::as_bytes).filter(|b| b.iter().any(|x| *x != 0)).map(|b| b.iter().map(|x| format!("{x:02x}")).collect()),
+            exec_main_start_ms: usec_ms(find(ty, "ExecMainStartTimestamp")),
+        }
+    }
+
     fn live_invocation(d: &[(String, Val)]) -> bool {
         find(d, "InvocationID").and_then(Val::as_bytes).is_some_and(|b| b.iter().any(|x| *x != 0))
     }
@@ -707,7 +1440,7 @@ mod systemd {
     impl<B: Bus> Units for SystemdUnits<B> {
         fn start(&self, spec: &UnitSpec) -> Result<UnitHandle> {
             let args = start_transient_args(spec)?;
-            lock(&self.bus).call(MANAGER, ROOT, MANAGER_IFACE, "StartTransientUnit", &args).map_err(fault)?;
+            self.manager("StartTransientUnit", &args)?;
             UnitHandle::of(&spec.task, &spec.key)
         }
 
@@ -720,11 +1453,105 @@ mod systemd {
         }
 
         fn facts(&self, h: &UnitHandle) -> Result<UnitFacts> {
+            self.detail(h).map(|d| d.facts())
+        }
+
+        fn detail(&self, h: &UnitHandle) -> Result<UnitDetail> {
             let mut bus = lock(&self.bus);
             let path = Self::unit_path(&mut bus, &h.name)?;
             let unit = get_all(&mut *bus, &path, UNIT_IFACE);
-            let service = get_all(&mut *bus, &path, SERVICE_IFACE);
-            Ok(facts_from(&unit, &service))
+            let ty = get_all(&mut *bus, &path, &type_iface(&h.name));
+            Ok(detail_from(&h.name, &unit, &ty))
+        }
+
+        /// Loaded units read back one by one, then unit files the manager has not loaded, which
+        /// are inactive by definition.
+        fn list(&self, glob: &str) -> Result<Vec<UnitDetail>> {
+            let mut bus = lock(&self.bus);
+            let mut out = BTreeMap::new();
+            for (name, _, path) in Self::loaded(&mut bus, glob)? {
+                let unit = get_all(&mut *bus, &path, UNIT_IFACE);
+                let ty = get_all(&mut *bus, &path, &type_iface(&name));
+                out.insert(name.clone(), detail_from(&name, &unit, &ty));
+            }
+            let files = bus.call(MANAGER, ROOT, MANAGER_IFACE, "ListUnitFilesByPatterns", &[names(&[]), names(&[glob])]).map_err(fault)?;
+            let Some(Val::Arr(rows)) = files.first() else { return Err(fault("ListUnitFilesByPatterns: unexpected reply".into())) };
+            for row in rows {
+                let Some([path, state]) = row.fields() else { continue };
+                let (Some(path), Some(state)) = (path.as_str(), state.as_str()) else { continue };
+                let name = path.rsplit('/').next().unwrap_or(path).to_string();
+                out.entry(name.clone()).or_insert_with(|| UnitDetail {
+                    name,
+                    state: UnitState::Inactive,
+                    unit_file_state: Some(state.into()),
+                    active_state: Some("inactive".into()),
+                    sub_state: Some("dead".into()),
+                    ..UnitDetail::default()
+                });
+            }
+            Ok(out.into_values().collect())
+        }
+
+        /// Loaded timers only, as `list-timers --all` shows them.
+        fn timers(&self, glob: &str) -> Result<Vec<TimerFacts>> {
+            let mut bus = lock(&self.bus);
+            let mut out = Vec::new();
+            for (name, active, path) in Self::loaded(&mut bus, glob)? {
+                if !name.ends_with(".timer") {
+                    continue;
+                }
+                let t = get_all(&mut *bus, &path, TIMER_IFACE);
+                out.push(TimerFacts {
+                    unit: find(&t, "Unit").and_then(Val::as_str).filter(|u| !u.is_empty()).map(String::from),
+                    active_state: Some(active),
+                    next_elapse_ms: usec_ms(find(&t, "NextElapseUSecRealtime")),
+                    next_elapse_monotonic_ms: usec_ms(find(&t, "NextElapseUSecMonotonic")),
+                    last_trigger_ms: usec_ms(find(&t, "LastTriggerUSec")),
+                    name,
+                });
+            }
+            out.sort_by(|a, b| a.name.cmp(&b.name));
+            Ok(out)
+        }
+
+        fn start_installed(&self, h: &UnitHandle) -> Result<()> {
+            self.manager("StartUnit", &[s(&h.name), s("replace")]).map(|_| ())
+        }
+
+        fn enable(&self, h: &UnitHandle) -> Result<()> {
+            self.manager("EnableUnitFiles", &[names(&[&h.name]), Arg::B(false), Arg::B(false)])?;
+            self.manager("Reload", &[]).map(|_| ())
+        }
+
+        fn disable(&self, h: &UnitHandle) -> Result<()> {
+            self.manager("DisableUnitFiles", &[names(&[&h.name]), Arg::B(false)])?;
+            self.manager("Reload", &[]).map(|_| ())
+        }
+
+        fn reset_failed(&self, h: &UnitHandle) -> Result<()> {
+            self.manager("ResetFailedUnit", &[s(&h.name)]).map(|_| ())
+        }
+
+        /// A transient service whose stdout and stderr go to two fresh files in the capture
+        /// directory; its `unit.ran` carries their tails and removes them.
+        fn run_scope(&self, spec: &ScopeSpec) -> Result<ScopeHandle> {
+            let h = UnitHandle::of(&spec.unit.task, &spec.unit.key)?;
+            let dir = self.capture_dir.as_ref().ok_or_else(|| RuntimeError::refused(format!("cannot capture {}: neither XDG_RUNTIME_DIR nor a capture directory is set", h.name)))?;
+            std::fs::create_dir_all(dir).map_err(|e| RuntimeError::new(format!("{}: {e}", dir.display())))?;
+            let (o, e) = (dir.join(format!("{}.stdout", h.name)), dir.join(format!("{}.stderr", h.name)));
+            for p in [&o, &e] {
+                std::fs::File::create(p).map_err(|err| RuntimeError::new(format!("{}: {err}", p.display())))?;
+            }
+            // Registered before the start, so an end read on another thread finds its files.
+            lock(&self.scopes).insert(h.name.clone(), (o.clone(), e.clone()));
+            let started = scope_args(spec, &o, &e).and_then(|args| self.manager("StartTransientUnit", &args));
+            if let Err(err) = started {
+                lock(&self.scopes).remove(&h.name);
+                let _ = std::fs::remove_file(&o);
+                let _ = std::fs::remove_file(&e);
+                return Err(err);
+            }
+            Ok(ScopeHandle { unit: h })
         }
     }
 
@@ -740,13 +1567,29 @@ mod systemd {
 
     impl<B: Bus> UnitCompletions for SystemdUnits<B> {
         fn ran(&self) -> Result<Vec<UnitRan>> {
+            Ok(self.ended()?.into_iter().map(|(r, _)| r).collect())
+        }
+
+        /// Every unit's end, a task's or an installed one's: a run closed by its properties, or a
+        /// start job that ended without one.
+        fn ended(&self) -> Result<Vec<(UnitRan, RanOutput)>> {
             let mut bus = lock(&self.bus);
             let mut t = lock(&self.tracker);
             let mut out = Vec::new();
             while let Some(m) = bus.next_signal(Duration::ZERO).map_err(fault)? {
-                if m.member.as_deref() == Some("NameOwnerChanged") {
-                    bus.call(MANAGER, ROOT, MANAGER_IFACE, "Subscribe", &[]).map_err(fault)?;
-                    continue;
+                match m.member.as_deref() {
+                    Some("NameOwnerChanged") => {
+                        bus.call(MANAGER, ROOT, MANAGER_IFACE, "Subscribe", &[]).map_err(fault)?;
+                        continue;
+                    }
+                    Some("JobRemoved") => {
+                        if let Some(r) = self.job_end(&m) {
+                            let o = self.output_of(&r.handle.name);
+                            out.push((r, o));
+                        }
+                        continue;
+                    }
+                    _ => {}
                 }
                 let Some((path, iface, props)) = changed(&m) else { continue };
                 let close = match t.apply(&path, &iface, &props, true) {
@@ -754,18 +1597,17 @@ mod systemd {
                     Next::Snapshot(_) => false,
                     Next::Close(_) => true,
                 };
+                self.mark(&path, !close);
                 let unit = get_all(&mut *bus, &path, UNIT_IFACE);
                 if live_invocation(&unit) {
+                    let ty = unit_run::watch::unit_name(&path).map_or_else(|| SERVICE_IFACE.to_string(), |n| type_iface(&n));
                     t.apply(&path, UNIT_IFACE, &unit, false);
-                    t.apply(&path, SERVICE_IFACE, &get_all(&mut *bus, &path, SERVICE_IFACE), false);
+                    t.apply(&path, &ty, &get_all(&mut *bus, &path, &ty), false);
                 }
                 if !close {
                     continue;
                 }
                 let Some(r) = t.finish(&path, self.clock.now_ms().saturating_mul(1000)) else { continue };
-                if parse_unit_name(&r.unit).is_none() {
-                    continue;
-                }
                 let exit = match (r.exit_code.as_deref(), r.exit_status.and_then(|s| i32::try_from(s).ok())) {
                     (Some("exited"), Some(st)) => Exit::Code(st),
                     (Some("killed" | "dumped"), Some(st)) => Exit::Signal(st),
@@ -773,10 +1615,85 @@ mod systemd {
                     _ => Exit::Unknown,
                 };
                 let duration_ms = r.started_us.map_or(0, |s| r.ended_us.saturating_sub(s) / 1000);
-                out.push(UnitRan { handle: UnitHandle::named(&r.unit), exit, duration_ms });
+                let o = self.output_of(&r.unit);
+                out.push((UnitRan { handle: UnitHandle::named(&r.unit), exit, duration_ms }, o));
             }
             Ok(out)
         }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Selection by config: the double other crates' tests run against.
+
+/// The config key that picks the backend. It is declared in `spira/conf.d` by whoever wires a
+/// binary to [`from_env`]; until then a caller resolves it itself and hands it to
+/// [`from_value`]. Values: `scripted`, `process`, `systemd`; unset or empty is the platform's
+/// own (systemd on Linux, child processes elsewhere).
+pub const UNITS_KEY: &str = "SPIRA_UNITS";
+
+/// The backend a process runs against, with both faces of it.
+pub enum Backend {
+    Scripted(Arc<ScriptedUnits>),
+    Process(Arc<ProcessUnits>),
+    #[cfg(target_os = "linux")]
+    Systemd(Arc<SystemdUnits<unit_run::dbus::Conn>>),
+}
+
+impl Backend {
+    pub fn units(&self) -> Arc<dyn Units> {
+        match self {
+            Backend::Scripted(u) => u.clone(),
+            Backend::Process(u) => u.clone(),
+            #[cfg(target_os = "linux")]
+            Backend::Systemd(u) => u.clone(),
+        }
+    }
+
+    pub fn completions(&self) -> Arc<dyn UnitCompletions> {
+        match self {
+            Backend::Scripted(u) => u.clone(),
+            Backend::Process(u) => u.clone(),
+            #[cfg(target_os = "linux")]
+            Backend::Systemd(u) => u.clone(),
+        }
+    }
+
+    /// The scripted backend, for a test to script.
+    pub fn scripted(&self) -> Option<Arc<ScriptedUnits>> {
+        match self {
+            Backend::Scripted(u) => Some(u.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Backend::Scripted(_) => "scripted",
+            Backend::Process(_) => "process",
+            #[cfg(target_os = "linux")]
+            Backend::Systemd(_) => "systemd",
+        }
+    }
+}
+
+/// The backend [`UNITS_KEY`] names in this process's environment.
+pub fn from_env(clock: Arc<dyn Clock>) -> Result<Backend> {
+    from_value(clock, std::env::var(UNITS_KEY).ok().as_deref())
+}
+
+/// The backend `value` names; see [`UNITS_KEY`]. An unknown value is refused, naming it.
+pub fn from_value(clock: Arc<dyn Clock>, value: Option<&str>) -> Result<Backend> {
+    match value.map(str::trim).filter(|v| !v.is_empty()) {
+        Some("scripted") => Ok(Backend::Scripted(Arc::new(ScriptedUnits::new(clock)))),
+        Some("process") => Ok(Backend::Process(Arc::new(ProcessUnits::new(clock)))),
+        #[cfg(target_os = "linux")]
+        Some("systemd") | None => Ok(Backend::Systemd(Arc::new(SystemdUnits::connect(clock)?))),
+        #[cfg(not(target_os = "linux"))]
+        Some("systemd") => Err(RuntimeError::refused(format!("{UNITS_KEY}=systemd: systemd is Linux only"))),
+        #[cfg(not(target_os = "linux"))]
+        None => Ok(Backend::Process(Arc::new(ProcessUnits::new(clock)))),
+        Some(other) => Err(RuntimeError::refused(format!("{UNITS_KEY}={other}: not one of scripted, process, systemd"))),
     }
 }
 
@@ -890,7 +1807,7 @@ mod tests {
             if !got.is_empty() {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            std::thread::sleep(std::time::Duration::from_millis(5)); // clock-safe: polls a real child's exit, capped at 2.5 s
         }
         assert_eq!(got.len(), 1);
         assert_eq!((got[0].handle.clone(), got[0].exit), (h.clone(), Exit::Code(3)));
@@ -914,6 +1831,216 @@ mod tests {
         assert_eq!(u.facts(&h).unwrap().state, UnitState::Active);
         u.stop(&h).unwrap();
         assert!(u.stop(&UnitHandle::named("never.service")).unwrap_err().is_refused());
+    }
+
+    #[test]
+    fn a_glob_matches_as_fnmatch_does() {
+        for (p, n) in [("spira-*", "spira-runtime.service"), ("*.timer", "a.timer"), ("x?.service", "x1.service"), ("[ab]*", "b.service"), ("[!a]*", "b.service"), ("[a-c]x", "bx"), ("*", ""), ("a[", "a[")] {
+            assert!(glob_match(p, n), "{p} ~ {n}");
+        }
+        for (p, n) in [("spira-*", "other.service"), ("*.timer", "a.service"), ("x?.service", "x.service"), ("[!a]*", "a.service"), ("[a-c]x", "dx"), ("a", "ab")] {
+            assert!(!glob_match(p, n), "{p} !~ {n}");
+        }
+    }
+
+    #[test]
+    fn a_tail_is_the_last_four_kib_on_a_character_boundary() {
+        assert_eq!(tail(b"short"), "short");
+        let long: Vec<u8> = (0..10_000u32).map(|i| b'a' + (i % 26) as u8).collect();
+        let t = tail(&long);
+        assert_eq!(t.len(), TAIL_MAX);
+        assert!(long.ends_with(t.as_bytes()));
+        let mut multi = "é".repeat(3000).into_bytes();
+        multi.insert(0, b'x');
+        let t = tail(&multi);
+        assert!(t.len() <= TAIL_MAX && t.chars().all(|c| c == 'é'), "cut mid-character: {}", t.len());
+        let t = tail(&[0xff; 5000]);
+        assert!(t.len() <= TAIL_MAX, "replacement characters stay inside the bound: {}", t.len());
+    }
+
+    #[test]
+    fn a_unit_ran_with_tails_reads_back_both_ways_and_without_is_unchanged() {
+        let ran = UnitRan { handle: UnitHandle::of("t", "k").unwrap(), exit: Exit::Code(4), duration_ms: 9 };
+        assert_eq!(ran.event_kind_with(&RanOutput::default()), ran.event_kind());
+        let out = RanOutput::captured(b"out", b"err");
+        let k = ran.event_kind_with(&out);
+        assert_eq!(UnitRan::from_event_kind(&k), Some(ran.clone()));
+        assert_eq!(RanOutput::from_event_kind(&k), Some(out));
+        assert_eq!(RanOutput::from_event_kind(&ran.event_kind()), Some(RanOutput::default()));
+    }
+
+    #[test]
+    fn a_scripted_installed_unit_answers_every_verb_and_its_detail() {
+        let clock = VirtualClock::new(100);
+        let u = ScriptedUnits::new(Arc::new(clock.clone()));
+        let h = UnitHandle::named("spira-loom.service");
+        u.install_detail(UnitDetail { name: h.name.clone(), state: UnitState::Failed, exit: Some(Exit::Code(1)), load_state: Some("loaded".into()), unit_file_state: Some("disabled".into()), active_state: Some("failed".into()), sub_state: Some("failed".into()), result: Some("exit-code".into()), n_restarts: Some(3), invocation_id: Some("ab".repeat(16)), ..UnitDetail::default() });
+        let d = u.detail(&h).unwrap();
+        assert_eq!((d.load_state.as_deref(), d.unit_file_state.as_deref(), d.result.as_deref(), d.n_restarts), (Some("loaded"), Some("disabled"), Some("exit-code"), Some(3)));
+        assert_eq!(u.facts(&h).unwrap().state, UnitState::Failed, "facts is the detail's summary");
+        u.reset_failed(&h).unwrap();
+        let d = u.detail(&h).unwrap();
+        assert_eq!((d.state, d.active_state.as_deref(), d.result.as_deref(), d.n_restarts), (UnitState::Inactive, Some("inactive"), Some("success"), Some(0)));
+        u.enable(&h).unwrap();
+        assert_eq!(u.detail(&h).unwrap().unit_file_state.as_deref(), Some("enabled"));
+        clock.advance(5);
+        u.start_installed(&h).unwrap();
+        let d = u.detail(&h).unwrap();
+        assert_eq!((d.state, d.active_state.as_deref(), d.sub_state.as_deref(), d.since_ms), (UnitState::Active, Some("active"), Some("running"), Some(105)));
+        u.disable(&h).unwrap();
+        assert_eq!(u.detail(&h).unwrap().unit_file_state.as_deref(), Some("disabled"));
+        let other = UnitHandle::named("nope.service");
+        for r in [u.start_installed(&other), u.enable(&other), u.disable(&other), u.reset_failed(&other)] {
+            assert!(r.unwrap_err().is_refused());
+        }
+        assert_eq!(u.calls(), ["reset-failed spira-loom.service", "enable spira-loom.service", "start spira-loom.service", "disable spira-loom.service"]);
+    }
+
+    #[test]
+    fn a_scripted_list_and_timers_match_their_glob() {
+        let clock = VirtualClock::new(0);
+        let u = ScriptedUnits::new(Arc::new(clock.clone()));
+        u.install("spira-a.service", UnitFacts { state: UnitState::Active, main_pid: Some(7), exit: None, since_ms: Some(1) });
+        u.install_detail(UnitDetail { name: "spira-b.timer".into(), state: UnitState::Active, ..UnitDetail::default() });
+        u.install("other.service", UnitFacts::absent());
+        u.script("t", 10, Exit::Code(0));
+        u.start(&spec("t", "k", &["x"])).unwrap();
+        u.install_timer(TimerFacts { name: "spira-b.timer".into(), unit: Some("spira-b.service".into()), next_elapse_ms: Some(60_000), ..TimerFacts::default() });
+        u.install_timer(TimerFacts { name: "other.timer".into(), ..TimerFacts::default() });
+        let names: Vec<String> = u.list("spira-*").unwrap().into_iter().map(|d| d.name).collect();
+        assert_eq!(names, ["spira-a.service", "spira-b.timer", "spira-run-t-k.service"]);
+        assert_eq!(u.list("spira-a*").unwrap()[0].main_pid, Some(7));
+        assert!(u.list("other*").unwrap().is_empty(), "an absent unit is not listed");
+        let t = u.timers("spira-*").unwrap();
+        assert_eq!((t.len(), t[0].unit.as_deref(), t[0].next_elapse_ms), (1, Some("spira-b.service"), Some(60_000)));
+    }
+
+    #[test]
+    fn a_scripted_scope_ends_with_its_tails_and_records_its_limits() {
+        let clock = VirtualClock::new(0);
+        let u = ScriptedUnits::new(Arc::new(clock.clone()));
+        u.script("build", 50, Exit::Code(4));
+        u.script_output("build", b"compiled", b"warning: x");
+        let mut sp = ScopeSpec::new(spec("build", "k", &["cargo"]));
+        sp.cpu_quota_pct = Some(400);
+        sp.memory_max_bytes = Some(1 << 30);
+        let s = u.run_scope(&sp).unwrap();
+        assert_eq!(s.unit, UnitHandle::of("build", "k").unwrap());
+        assert_eq!(u.scopes(), [sp]);
+        assert_eq!(u.detail(&s.unit).unwrap().exec_main_start_ms, Some(0));
+        clock.advance(50);
+        let ended = u.ended().unwrap();
+        assert_eq!(ended.len(), 1);
+        assert_eq!((ended[0].0.exit, ended[0].1.stdout_tail.as_deref(), ended[0].1.stderr_tail.as_deref()), (Exit::Code(4), Some("compiled"), Some("warning: x")));
+        assert!(u.ended().unwrap().is_empty(), "once each");
+        let d = u.detail(&s.unit).unwrap();
+        assert_eq!((d.state, d.result.as_deref(), d.sub_state.as_deref()), (UnitState::Failed, Some("exit-code"), Some("failed")));
+        u.reset_failed(&s.unit).unwrap();
+        assert_eq!(u.detail(&s.unit).unwrap().state, UnitState::Absent, "a reset transient unit is collected");
+        assert_eq!(u.calls(), ["run-scope spira-run-build-k.service", "reset-failed spira-run-build-k.service"]);
+    }
+
+    #[test]
+    fn extended_effects_round_trip_as_json() {
+        let u = ScriptedUnits::new(Arc::new(VirtualClock::new(0)));
+        u.install("spira-a.service", UnitFacts { state: UnitState::Failed, main_pid: None, exit: None, since_ms: None });
+        let hj = serde_json::to_string(&UnitHandle::named("spira-a.service")).unwrap();
+        let d: UnitDetail = serde_json::from_str(&effect(&u, UNIT_DETAIL, &hj).unwrap()).unwrap();
+        assert_eq!(d.state, UnitState::Failed);
+        let l: Vec<UnitDetail> = serde_json::from_str(&effect(&u, UNIT_LIST, "\"spira-*\"").unwrap()).unwrap();
+        assert_eq!(l.len(), 1);
+        let t: Vec<TimerFacts> = serde_json::from_str(&effect(&u, UNIT_TIMERS, "\"*\"").unwrap()).unwrap();
+        assert!(t.is_empty());
+        for e in [UNIT_RESET_FAILED, UNIT_ENABLE, UNIT_DISABLE, UNIT_START_INSTALLED] {
+            assert_eq!(effect(&u, e, &hj), Ok(String::new()), "{e}");
+        }
+        u.script("t", 1, Exit::Code(0));
+        let sj = serde_json::to_string(&ScopeSpec::new(spec("t", "k", &["x"]))).unwrap();
+        let s: ScopeHandle = serde_json::from_str(&effect(&u, UNIT_RUN_SCOPE, &sj).unwrap()).unwrap();
+        assert_eq!(s.unit.name, "spira-run-t-k.service");
+        assert!(EXTENDED_EFFECTS.iter().all(|e| !EFFECTS.contains(e)));
+    }
+
+    #[test]
+    fn a_process_unit_answers_the_honest_subset_and_refuses_the_rest() {
+        let u = ProcessUnits::new(Arc::new(VirtualClock::new(7)));
+        let h = u.start(&spec("t", "k", &["sleep", "30"])).unwrap();
+        let d = u.detail(&h).unwrap();
+        assert_eq!((d.state, d.load_state.as_deref(), d.active_state.as_deref(), d.sub_state.as_deref(), d.exec_main_start_ms, d.n_restarts), (UnitState::Active, Some("loaded"), Some("active"), Some("running"), Some(7), Some(0)));
+        assert!(d.main_pid.is_some());
+        assert_eq!((d.unit_file_state, d.invocation_id), (None, None), "a plain process has no unit file and no invocation id");
+        assert_eq!(u.list("spira-run-t-*").unwrap().len(), 1);
+        assert!(u.list("other*").unwrap().is_empty());
+        let installed = UnitHandle::named("spira-loom.service");
+        for r in [u.start_installed(&installed), u.enable(&installed), u.disable(&installed)] {
+            assert!(r.unwrap_err().is_refused());
+        }
+        assert!(u.timers("*").unwrap_err().is_refused());
+        let mut limited = ScopeSpec::new(spec("t", "k2", &["true"]));
+        limited.cpu_quota_pct = Some(100);
+        let e = u.run_scope(&limited).unwrap_err();
+        assert!(e.is_refused() && e.0.contains("CPUQuota"), "{e}");
+        limited.cpu_quota_pct = None;
+        limited.memory_max_bytes = Some(1);
+        assert!(u.run_scope(&limited).unwrap_err().0.contains("MemoryMax"));
+        assert!(u.reset_failed(&installed).unwrap_err().is_refused());
+        u.stop(&h).unwrap();
+        assert_eq!(u.detail(&h).unwrap().result.as_deref(), Some("signal"));
+        u.reset_failed(&h).unwrap();
+        assert_eq!(u.detail(&h).unwrap().state, UnitState::Absent);
+    }
+
+    #[cfg(unix)]
+    fn ended_within(u: &ProcessUnits) -> Vec<(UnitRan, RanOutput)> {
+        for _ in 0..1000 {
+            let got = u.ended().unwrap();
+            if !got.is_empty() {
+                return got;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5)); // clock-safe: polls a real child's exit, capped at 5 s
+        }
+        vec![]
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_process_scope_returns_its_output_tails_when_it_ends() {
+        let u = ProcessUnits::new(Arc::new(VirtualClock::new(0)));
+        let mut sp = spec("t", "k", &["sh", "-c", "printf out; printf err >&2; printf %s \"$V\"; exit 4"]);
+        sp.env = vec![("V".into(), "-v".into())];
+        let s = u.run_scope(&ScopeSpec::new(sp)).unwrap();
+        let got = ended_within(&u);
+        assert_eq!(got.len(), 1);
+        assert_eq!((&got[0].0.handle, got[0].0.exit), (&s.unit, Exit::Code(4)));
+        assert_eq!((got[0].1.stdout_tail.as_deref(), got[0].1.stderr_tail.as_deref()), (Some("out-v"), Some("err")));
+        let big = u.run_scope(&ScopeSpec::new(spec("t", "big", &["seq", "1", "3000"]))).unwrap();
+        let got = ended_within(&u);
+        assert_eq!(got[0].0.handle, big.unit);
+        let out = got[0].1.stdout_tail.clone().unwrap();
+        assert_eq!(out.len(), TAIL_MAX);
+        assert!(out.ends_with("2999\n3000\n"));
+        let plain = u.start(&spec("t", "plain", &["true"])).unwrap();
+        let got = ended_within(&u);
+        assert_eq!((&got[0].0.handle, got[0].1.is_empty()), (&plain, true), "a plain start captures nothing");
+    }
+
+    #[test]
+    fn the_backend_is_chosen_by_its_config_value() {
+        let c: Arc<dyn Clock> = Arc::new(VirtualClock::new(0));
+        let b = from_value(c.clone(), Some("scripted")).unwrap();
+        assert_eq!(b.kind(), "scripted");
+        let s = b.scripted().expect("a scripted backend hands itself to the test");
+        s.install("x.service", UnitFacts { state: UnitState::Active, main_pid: None, exit: None, since_ms: None });
+        assert_eq!(b.units().facts(&UnitHandle::named("x.service")).unwrap().state, UnitState::Active, "the units face is the scripted one");
+        assert!(b.completions().ran().unwrap().is_empty());
+        assert_eq!(from_value(c.clone(), Some("process")).unwrap().kind(), "process");
+        let e = from_value(c.clone(), Some("bogus")).err().expect("refused");
+        assert!(e.is_refused() && e.0.contains("bogus") && e.0.contains(UNITS_KEY), "{e}");
+        #[cfg(not(target_os = "linux"))]
+        {
+            assert!(from_value(c.clone(), Some("systemd")).err().expect("refused").is_refused());
+            assert_eq!(from_value(c, None).unwrap().kind(), "process");
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -963,41 +2090,72 @@ mod tests {
             assert_eq!(facts_from(&d(&[("LoadState", Val::S("not-found".into()))]), &[]).state, UnitState::Absent);
         }
 
-        /// A bus that records calls and answers from a table.
-        struct FakeBus {
+        /// A call's member and its arguments.
+        type Sent = (String, Vec<Arg>);
+
+        /// A bus that records calls, answers from a table keyed `<member> <path> <first arg>`,
+        /// and hands out the signals pushed into it, oldest first.
+        #[derive(Clone, Default)]
+        struct Fake {
             calls: Arc<Mutex<Vec<String>>>,
-            signals: Vec<Msg>,
+            sent: Arc<Mutex<Vec<Sent>>>,
+            answers: Arc<Mutex<BTreeMap<String, Vec<Val>>>>,
+            signals: Arc<Mutex<VecDeque<Msg>>>,
         }
+
+        impl Fake {
+            fn answer(&self, key: &str, v: Vec<Val>) {
+                self.answers.lock().unwrap().insert(key.into(), v);
+            }
+            fn signal(&self, m: Msg) {
+                self.signals.lock().unwrap().push_back(m);
+            }
+            fn calls(&self) -> Vec<String> {
+                self.calls.lock().unwrap().clone()
+            }
+            fn units(&self) -> SystemdUnits<FakeBus> {
+                SystemdUnits::new(FakeBus(self.clone()), Arc::new(crate::ports::VirtualClock::new(0))).unwrap()
+            }
+        }
+
+        struct FakeBus(Fake);
 
         impl Bus for FakeBus {
             fn call(&mut self, _dest: &str, path: &str, _iface: &str, member: &str, args: &[Arg]) -> std::result::Result<Vec<Val>, String> {
                 let first = match args.first() {
                     Some(Arg::S(s)) => s.clone(),
+                    Some(Arg::Arr(_, a)) => a.iter().filter_map(|x| if let Arg::S(s) = x { Some(s.clone()) } else { None }).collect::<Vec<_>>().join(","),
                     _ => String::new(),
                 };
-                self.calls.lock().unwrap().push(format!("{member} {path} {first}"));
+                let key = format!("{member} {path} {first}");
+                self.0.calls.lock().unwrap().push(key.clone());
+                self.0.sent.lock().unwrap().push((member.into(), args.to_vec()));
+                if let Some(v) = self.0.answers.lock().unwrap().get(&key) {
+                    return Ok(v.clone());
+                }
                 Ok(match member {
                     "LoadUnit" => vec![Val::S("/org/freedesktop/systemd1/unit/x".into())],
                     _ => vec![],
                 })
             }
             fn next_signal(&mut self, _: Duration) -> std::result::Result<Option<Msg>, String> {
-                Ok(self.signals.pop())
+                Ok(self.0.signals.lock().unwrap().pop_front())
             }
         }
 
         #[test]
         fn restart_and_stop_go_to_the_unit_object_and_start_to_the_manager() {
-            let calls = Arc::new(Mutex::new(vec![]));
-            let u = SystemdUnits::new(FakeBus { calls: calls.clone(), signals: vec![] }, Arc::new(crate::ports::VirtualClock::new(0))).unwrap();
+            let f = Fake::default();
+            let u = f.units();
             let h = UnitHandle::named("spira-runtime.service");
             u.restart(&h).unwrap();
             u.stop(&h).unwrap();
             u.start(&spec("t", "k", &["/bin/true"])).unwrap();
-            let c = calls.lock().unwrap().clone();
-            assert_eq!(c.iter().filter(|l| l.starts_with("AddMatch")).count(), 2);
+            let c = f.calls();
+            assert_eq!(c.iter().filter(|l| l.starts_with("AddMatch")).count(), 3, "unit properties, the manager's owner, and JobRemoved");
+            assert!(c.iter().any(|l| l.starts_with("AddMatch") && l.contains("member='JobRemoved'")));
             assert!(c.contains(&"Subscribe /org/freedesktop/systemd1 ".to_string()));
-            let tail: Vec<&str> = c.iter().skip(3).map(String::as_str).collect();
+            let tail: Vec<&str> = c.iter().skip(4).map(String::as_str).collect();
             assert_eq!(tail, vec![
                 "LoadUnit /org/freedesktop/systemd1 spira-runtime.service",
                 "Restart /org/freedesktop/systemd1/unit/x replace",
@@ -1007,24 +2165,187 @@ mod tests {
             ]);
         }
 
+        #[test]
+        fn installed_unit_verbs_are_manager_methods_and_file_changes_reload() {
+            let f = Fake::default();
+            let u = f.units();
+            let h = UnitHandle::named("spira-loom.service");
+            u.start_installed(&h).unwrap();
+            u.enable(&h).unwrap();
+            u.disable(&h).unwrap();
+            u.reset_failed(&h).unwrap();
+            let c = f.calls();
+            let tail: Vec<&str> = c.iter().skip(4).map(String::as_str).collect();
+            assert_eq!(tail, vec![
+                "StartUnit /org/freedesktop/systemd1 spira-loom.service",
+                "EnableUnitFiles /org/freedesktop/systemd1 spira-loom.service",
+                "Reload /org/freedesktop/systemd1 ",
+                "DisableUnitFiles /org/freedesktop/systemd1 spira-loom.service",
+                "Reload /org/freedesktop/systemd1 ",
+                "ResetFailedUnit /org/freedesktop/systemd1 spira-loom.service",
+            ]);
+            let sent = f.sent.lock().unwrap().clone();
+            let sig = |m: &str| sent.iter().find(|(n, _)| n == m).map(|(_, a)| encode_args(a).0).unwrap();
+            assert_eq!((sig("StartUnit"), sig("EnableUnitFiles"), sig("DisableUnitFiles"), sig("ResetFailedUnit")), ("ss".into(), "asbb".into(), "asb".into(), "s".into()));
+        }
+
         fn changed(path: &str, props: Vec<(String, Val)>) -> Msg {
             let body = vec![Val::S("org.freedesktop.systemd1.Unit".into()), Val::Arr(props.into_iter().map(|(k, v)| Val::Struct(vec![Val::S(k), v])).collect()), Val::Arr(vec![])];
             Msg { kind: unit_run::dbus::SIGNAL, serial: 1, reply_serial: None, path: Some(path.into()), interface: Some("org.freedesktop.DBus.Properties".into()), member: Some("PropertiesChanged".into()), error: None, body }
         }
 
+        fn dict(pairs: &[(&str, Val)]) -> Val {
+            Val::Arr(d(pairs).into_iter().map(|(k, v)| Val::Struct(vec![Val::S(k), v])).collect())
+        }
+
+        const UNIT: &str = "org.freedesktop.systemd1.Unit";
+
         #[test]
-        fn a_task_units_end_is_one_unit_ran_and_a_foreign_units_is_none() {
+        fn detail_reads_the_unit_and_its_type_interface() {
+            let f = Fake::default();
+            let p = "/org/freedesktop/systemd1/unit/x";
+            f.answer(&format!("GetAll {p} {UNIT}"), vec![dict(&[("LoadState", Val::S("loaded".into())), ("UnitFileState", Val::S("enabled".into())), ("ActiveState", Val::S("active".into())), ("SubState", Val::S("running".into())), ("InvocationID", Val::Arr(vec![Val::U(0xab); 16]))])]);
+            f.answer(&format!("GetAll {p} org.freedesktop.systemd1.Service"), vec![dict(&[("Result", Val::S("success".into())), ("MainPID", Val::U(42)), ("NRestarts", Val::U(2)), ("ExecMainStartTimestamp", Val::U(9_000_000))])]);
+            let d = f.units().detail(&UnitHandle::named("spira-loom.service")).unwrap();
+            assert_eq!(d, UnitDetail {
+                name: "spira-loom.service".into(),
+                state: UnitState::Active,
+                exit: None,
+                since_ms: None,
+                load_state: Some("loaded".into()),
+                unit_file_state: Some("enabled".into()),
+                active_state: Some("active".into()),
+                sub_state: Some("running".into()),
+                result: Some("success".into()),
+                main_pid: Some(42),
+                n_restarts: Some(2),
+                invocation_id: Some("ab".repeat(16)),
+                exec_main_start_ms: Some(9_000),
+            });
+            assert_eq!(f.units().facts(&UnitHandle::named("spira-loom.service")).unwrap(), d.facts());
+        }
+
+        fn listed(name: &str, active: &str, path: &str) -> Val {
+            let s = |v: &str| Val::S(v.into());
+            Val::Struct(vec![s(name), s("d"), s("loaded"), s(active), s("running"), s(""), s(path), Val::U(0), s(""), s("/")])
+        }
+
+        #[test]
+        fn list_joins_loaded_units_with_unit_files_and_timers_carry_their_next_elapse() {
+            let f = Fake::default();
+            let (a, t) = ("/org/freedesktop/systemd1/unit/a", "/org/freedesktop/systemd1/unit/t");
+            f.answer("ListUnitsByPatterns /org/freedesktop/systemd1 ", vec![Val::Arr(vec![listed("spira-a.service", "active", a), listed("spira-t.timer", "active", t)])]);
+            f.answer("ListUnitFilesByPatterns /org/freedesktop/systemd1 ", vec![Val::Arr(vec![
+                Val::Struct(vec![Val::S("/home/u/.config/systemd/user/spira-a.service".into()), Val::S("enabled".into())]),
+                Val::Struct(vec![Val::S("/home/u/.config/systemd/user/spira-off.service".into()), Val::S("disabled".into())]),
+            ])]);
+            f.answer(&format!("GetAll {a} {UNIT}"), vec![dict(&[("LoadState", Val::S("loaded".into())), ("ActiveState", Val::S("active".into())), ("UnitFileState", Val::S("enabled".into()))])]);
+            f.answer(&format!("GetAll {t} {UNIT}"), vec![dict(&[("LoadState", Val::S("loaded".into())), ("ActiveState", Val::S("active".into()))])]);
+            f.answer(&format!("GetAll {t} org.freedesktop.systemd1.Timer"), vec![dict(&[("Unit", Val::S("spira-t.service".into())), ("NextElapseUSecRealtime", Val::U(60_000_000)), ("NextElapseUSecMonotonic", Val::U(0)), ("LastTriggerUSec", Val::U(1_000_000))])]);
+            let u = f.units();
+            let l = u.list("spira-*").unwrap();
+            let rows: Vec<(&str, UnitState, Option<&str>)> = l.iter().map(|d| (d.name.as_str(), d.state, d.unit_file_state.as_deref())).collect();
+            assert_eq!(rows, [("spira-a.service", UnitState::Active, Some("enabled")), ("spira-off.service", UnitState::Inactive, Some("disabled")), ("spira-t.timer", UnitState::Active, None)]);
+            let sent = f.sent.lock().unwrap().clone();
+            let (_, args) = sent.iter().find(|(m, _)| m == "ListUnitsByPatterns").unwrap();
+            assert_eq!(args[1], Arg::Arr("s", vec![Arg::S("spira-*".into())]), "the glob goes to the manager as its pattern");
+            let timers = u.timers("spira-*").unwrap();
+            assert_eq!(timers, [TimerFacts { name: "spira-t.timer".into(), unit: Some("spira-t.service".into()), active_state: Some("active".into()), next_elapse_ms: Some(60_000), next_elapse_monotonic_ms: None, last_trigger_ms: Some(1_000) }]);
+        }
+
+        #[test]
+        fn scope_args_carry_limits_and_the_capture_files() {
+            let mut sp = ScopeSpec::new(spec("build", "k", &["/bin/cargo", "build"]));
+            sp.unit.cwd = Some("/src".into());
+            sp.unit.env = vec![("A".into(), "1".into())];
+            sp.cpu_quota_pct = Some(250);
+            sp.memory_max_bytes = Some(2 << 30);
+            let raw = encode_call_body(1, "d", "/p", "i", "StartTransientUnit", &scope_args(&sp, std::path::Path::new("/run/o"), std::path::Path::new("/run/e")).unwrap());
+            let m = decode(&raw).unwrap();
+            let props = m.body[2].dict();
+            let get = |k: &str| props.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_else(|| panic!("no {k}"));
+            assert_eq!(get("CPUQuotaPerSecUSec").as_u64(), Some(2_500_000));
+            assert_eq!(get("MemoryMax").as_u64(), Some(2 << 30));
+            assert_eq!(get("StandardOutputFile").as_str(), Some("/run/o"));
+            assert_eq!(get("StandardErrorFile").as_str(), Some("/run/e"));
+            assert_eq!(get("WorkingDirectory").as_str(), Some("/src"));
+            assert_eq!(get("Environment"), Val::Var(Box::new(Val::Arr(vec![Val::S("A=1".into())]))));
+        }
+
+        fn run(f: &Fake, path: &str, inv: u8, start_us: u64, end_us: u64, end: &str) {
+            f.signal(changed(path, d(&[("ActiveState", Val::S("active".into())), ("InvocationID", Val::Arr(vec![Val::U(inv as u64); 16])), ("InactiveExitTimestamp", Val::U(start_us))])));
+            f.signal(changed(path, d(&[("ActiveState", Val::S(end.into())), ("InactiveEnterTimestamp", Val::U(end_us))])));
+        }
+
+        #[test]
+        fn a_scope_run_ends_with_the_tails_of_its_capture_files() {
+            let dir = testkit::TempDir::new("units-scope");
+            let f = Fake::default();
+            let u = f.units().with_capture_dir(Some(dir.path().to_path_buf()));
+            let s = u.run_scope(&ScopeSpec::new(spec("build", "k", &["/bin/cargo"]))).unwrap();
+            let sent = f.sent.lock().unwrap().clone();
+            let (_, args) = sent.iter().find(|(m, _)| m == "StartTransientUnit").unwrap();
+            let Arg::Arr(_, props) = &args[2] else { panic!("no properties") };
+            let file = |k: &str| props.iter().find_map(|p| match p { Arg::Struct(kv) if kv[0] == Arg::S(k.into()) => match &kv[1] { Arg::Var(v) => match &**v { Arg::S(s) => Some(std::path::PathBuf::from(s)), _ => None }, _ => None }, _ => None }).unwrap();
+            let (out, err) = (file("StandardOutputFile"), file("StandardErrorFile"));
+            assert!(out.starts_with(dir.path()) && err.starts_with(dir.path()));
+            assert_eq!(std::fs::read(&out).unwrap(), b"", "created empty, so a stale file is never read back");
+            std::fs::write(&out, "x".repeat(10_000) + "end").unwrap();
+            std::fs::write(&err, "oops").unwrap();
+            run(&f, &unit_run::dbus::unit_object_path(&s.unit.name), 3, 1_000_000, 2_000_000, "failed");
+            let ended = u.ended().unwrap();
+            assert_eq!(ended.len(), 1);
+            assert_eq!(ended[0].0.handle, s.unit);
+            let o = ended[0].1.stdout_tail.clone().unwrap();
+            assert_eq!((o.len(), o.ends_with("end")), (TAIL_MAX, true));
+            assert_eq!(ended[0].1.stderr_tail.as_deref(), Some("oops"));
+            assert!(!out.exists() && !err.exists(), "the capture files go once read");
+            let no_dir = Fake::default().units().with_capture_dir(None);
+            assert!(no_dir.run_scope(&ScopeSpec::new(spec("b", "k", &["/bin/x"]))).unwrap_err().is_refused());
+        }
+
+        #[test]
+        fn installed_and_task_units_both_end_as_unit_ran() {
+            let f = Fake::default();
             let ours = "/org/freedesktop/systemd1/unit/spira_2drun_2dt_2dk_2eservice";
-            let foreign = "/org/freedesktop/systemd1/unit/other_2eservice";
-            let mut signals = vec![];
-            for p in [ours, foreign] {
-                signals.push(changed(p, d(&[("ActiveState", Val::S("active".into())), ("InvocationID", Val::Arr(vec![Val::U(7); 16])), ("InactiveExitTimestamp", Val::U(1_000_000))])));
-                signals.push(changed(p, d(&[("ActiveState", Val::S("inactive".into())), ("InactiveEnterTimestamp", Val::U(4_500_000))])));
-            }
-            signals.reverse();
-            let u = SystemdUnits::new(FakeBus { calls: Arc::new(Mutex::new(vec![])), signals }, Arc::new(crate::ports::VirtualClock::new(0))).unwrap();
-            assert_eq!(u.ran().unwrap(), vec![UnitRan { handle: UnitHandle::of("t", "k").unwrap(), exit: Exit::Code(0), duration_ms: 3_500 }]);
+            let installed = "/org/freedesktop/systemd1/unit/spira_2dloom_2eservice";
+            run(&f, ours, 7, 1_000_000, 4_500_000, "inactive");
+            run(&f, installed, 8, 2_000_000, 3_000_000, "inactive");
+            let u = f.units();
+            let ran = u.ran().unwrap();
+            assert_eq!(ran, vec![
+                UnitRan { handle: UnitHandle::of("t", "k").unwrap(), exit: Exit::Code(0), duration_ms: 3_500 },
+                UnitRan { handle: UnitHandle::named("spira-loom.service"), exit: Exit::Code(0), duration_ms: 1_000 },
+            ]);
+            assert_eq!(ran[0].key_for("t").as_deref(), Some("k"));
+            assert_eq!(ran[1].handle.owner(), None, "an installed unit belongs to no task");
             assert!(u.ran().unwrap().is_empty());
+        }
+
+        fn job_removed(unit: &str, result: &str) -> Msg {
+            let body = vec![Val::U(5), Val::S("/org/freedesktop/systemd1/job/5".into()), Val::S(unit.into()), Val::S(result.into())];
+            Msg { kind: unit_run::dbus::SIGNAL, serial: 2, reply_serial: None, path: Some("/org/freedesktop/systemd1".into()), interface: Some("org.freedesktop.systemd1.Manager".into()), member: Some("JobRemoved".into()), error: None, body }
+        }
+
+        #[test]
+        fn a_start_job_that_never_ran_ends_once_and_a_run_that_did_is_not_doubled() {
+            let f = Fake::default();
+            let u = f.units();
+            f.signal(job_removed("spira-dep.service", "dependency"));
+            f.signal(job_removed("spira-ok.service", "done"));
+            f.signal(job_removed("spira-limit.service", "failed"));
+            let path = unit_run::dbus::unit_object_path("spira-ran.service");
+            run(&f, &path, 9, 1_000_000, 2_000_000, "failed");
+            f.signal(job_removed("spira-ran.service", "failed"));
+            let ran = u.ran().unwrap();
+            let names: Vec<(&str, Exit, u64)> = ran.iter().map(|r| (r.handle.name.as_str(), r.exit, r.duration_ms)).collect();
+            assert_eq!(names, [("spira-dep.service", Exit::Unknown, 0), ("spira-limit.service", Exit::Unknown, 0), ("spira-ran.service", Exit::Unknown, 1_000)]);
+            f.signal(job_removed("spira-pending.service", "timeout"));
+            let path = unit_run::dbus::unit_object_path("spira-pending.service");
+            f.signal(changed(&path, d(&[("ActiveState", Val::S("activating".into())), ("InvocationID", Val::Arr(vec![Val::U(4); 16])), ("InactiveExitTimestamp", Val::U(5_000_000))])));
+            f.signal(job_removed("spira-pending.service", "timeout"));
+            let ran = u.ran().unwrap();
+            assert_eq!(ran.len(), 1, "a job ending while its unit is live is the run's own end, not a second one: {ran:?}");
         }
 
         /// A bus on a socket: answers EXTERNAL auth, then each of `n` calls with an empty
