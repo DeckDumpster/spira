@@ -3,10 +3,12 @@
 
 pub mod forge;
 pub mod hunk;
+pub mod modes;
 pub mod notify;
 pub mod reconcile_host;
 pub mod settings;
 pub mod sink;
+pub mod status;
 pub mod tasks;
 pub mod wake;
 pub mod watchers;
@@ -26,9 +28,37 @@ pub use settings::Settings;
 /// this often rather than on every wake.
 const FOREIGN_POLL_MS: u64 = 30_000;
 
-/// Every task in `tasks::TASKS`, in table order.
+/// Every task in `tasks::TASKS`, in table order, each in the mode `SPIRA_TASK_MODES` gives it.
+/// `Settings::from_lookup` refuses a table that does not name every task exactly.
 pub fn registrations(s: &Settings) -> Vec<Registration> {
-    tasks::TASKS.iter().map(|t| (t.build)(s)).collect()
+    modes::apply(tasks::TASKS.iter().map(|t| (t.build)(s)).collect(), &s.task_modes).expect("Settings::from_lookup checked the task modes")
+}
+
+/// The control socket's submit: one `Submit` on the host's channel, answered once the host has
+/// journaled it or refused it.
+pub fn control_submit(tx: tokio::sync::mpsc::Sender<runtime::host::Submit>) -> status::SubmitFn {
+    Arc::new(move |id: &str, stream: &str, kind: runtime::EventKind| {
+        let (sub, reply) = runtime::host::Submit::with_reply(id, stream, kind);
+        tx.blocking_send(sub).map_err(|_| "the scheduler is not taking submissions".to_string())?;
+        reply.blocking_recv().map_err(|_| "the scheduler dropped the submission".to_string())?
+    })
+}
+
+/// Answers `scheduler status|halt|resume` on `path` from its own thread, replacing a socket a
+/// previous process left behind.
+pub fn spawn_control(path: &std::path::Path, control: status::Control) -> Result<std::thread::JoinHandle<()>, String> {
+    if path.exists() {
+        std::fs::remove_file(path).map_err(|e| format!("control socket {}: {e}", path.display()))?;
+    }
+    let listener = std::os::unix::net::UnixListener::bind(path).map_err(|e| format!("control socket {}: {e}", path.display()))?;
+    std::thread::Builder::new()
+        .name("control".into())
+        .spawn(move || {
+            if let Err(e) = runtime::socket::answer(&listener, &|argv| control.respond(argv)) {
+                eprintln!("spira-runtime: control socket stopped: {e}");
+            }
+        })
+        .map_err(|e| format!("control thread: {e}"))
 }
 
 pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, extra: Vec<Registration>) -> runtime::Result<Engine> {

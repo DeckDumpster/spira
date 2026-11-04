@@ -15,6 +15,7 @@ const USAGE: &str = "usage: spira-runtime serve|check-config";
 
 /// The OTLP log queue: a full queue drops and counts rather than blocking the loop.
 const LOG_QUEUE: usize = 1024;
+const SUBMIT_QUEUE: usize = 16;
 const NO_WATCHDOG_BOOT: Duration = Duration::from_secs(20);
 
 fn check() -> Result<(), String> {
@@ -70,10 +71,11 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
     let sink = Arc::new(OtlpSink::with_metrics(spira_otel::logs::LogSink::new(settings.otel_dir(), "spira-runtime"), LOG_QUEUE, metrics));
     let journal = Arc::new(SocketJournal::new(settings.lc_socket.clone()));
     let clock = Arc::new(WallClock);
+    let board = Arc::new(runtime::engine::StatusBoard::default());
     let boot = {
-        let (settings, clock, sink) = (settings.clone(), clock.clone(), sink.clone());
+        let (settings, clock, sink, board) = (settings.clone(), clock.clone(), sink.clone(), board.clone());
         move || -> Result<runtime::Engine, String> {
-            let mut engine = open_engine(&settings, journal, clock, Arc::new(FileMarker(settings.marker_path())), sink, vec![]).map_err(|e| e.to_string())?;
+            let mut engine = open_engine(&settings, journal, clock, Arc::new(FileMarker(settings.marker_path())), sink, vec![]).map_err(|e| e.to_string())?.with_status_board(board);
             for (_, stream, kind) in spira_runtime::tasks::boots() {
                 engine.start(stream, kind);
             }
@@ -83,7 +85,9 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
     let deadline = max_sleep.map_or(NO_WATCHDOG_BOOT, |m| m * 2);
     let mut starting = runtime::offload::offload("startup", None, boot).map_err(|e| e.to_string())?;
     let engine = tokio::time::timeout(deadline, &mut starting).await.map_err(|_| format!("startup did not finish within {deadline:?}"))?.map_err(|e| e.to_string())??;
-    let (_keep_open, rx) = mpsc::channel(1);
+    let (tx, rx) = mpsc::channel(SUBMIT_QUEUE);
+    let control = spira_runtime::status::Control::new(board, spira_runtime::control_submit(tx), clock.clone());
+    spira_runtime::spawn_control(&settings.control_socket, control)?;
     notifier.ready();
     let opts = ServeOpts { kick: Some(kick), max_sleep_ms: max_sleep.map(|d| d.as_millis() as u64), sink: Some(sink), pool: None };
     serve_with(engine, clock, Arc::new(Effects { heartbeat_url: settings.heartbeat_url.clone(), world: settings.world.clone(), forge: settings.forge.clone(), mail: Some(Arc::new(mail_env)), reconciler: Some(settings.reconciler.clone()), concierge_mail: Some(Arc::new(concierge_mail)), ..Effects::default() }), 4, rx, opts).await.map_err(|e| e.to_string())

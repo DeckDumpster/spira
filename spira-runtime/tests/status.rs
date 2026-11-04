@@ -1,7 +1,6 @@
 //! The control socket's `scheduler` verbs, over a real Unix socket.
 
-#[path = "../src/status.rs"]
-mod status;
+use spira_runtime::status;
 
 use std::sync::{Arc, Mutex};
 

@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=runtime
+DOC=Unix socket on which spira-runtime answers scheduler status|halt|resume.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Unix socket on which spira-runtime answers scheduler status|halt|resume.
+    : "${SPIRA_RUNTIME_SOCKET:=$SPIRA_RUN/runtime-control.sock}"
+SPIRA_CONF_DEFAULT_EOF

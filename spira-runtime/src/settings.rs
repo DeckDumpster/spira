@@ -46,6 +46,8 @@ pub struct Settings {
     pub view: View,
     pub reconciler: Reconciler,
     pub world: World,
+    pub task_modes: std::collections::BTreeMap<String, runtime::Mode>,
+    pub control_socket: PathBuf,
 }
 
 const DEFAULT_FORGET_SECS: u64 = 86_400;
@@ -76,6 +78,8 @@ impl Settings {
         "SPIRA_BROKER_GH_TOKEN",
         "SPIRA_BROKER_GH_CONFIG_DIR",
         "SPIRA_GH",
+        crate::modes::KEY,
+        "SPIRA_RUNTIME_SOCKET",
     ];
 
     /// Every key `from_lookup` may read, each once: the service's and every task's. Each must be
@@ -201,7 +205,13 @@ impl Settings {
             export_bin: "tsd-lifecycle-export".into(),
             ..World::default()
         };
-        Ok(Settings {
+        let control_socket = get("SPIRA_RUNTIME_SOCKET")?;
+        if control_socket.trim().is_empty() {
+            return Err("SPIRA_RUNTIME_SOCKET is empty — scheduler status|halt|resume has no door".into());
+        }
+        let settings = Settings {
+            task_modes: crate::modes::parse(&get(crate::modes::KEY)?)?,
+            control_socket: PathBuf::from(control_socket),
             round_duty,
             inbox_keeper,
             pr_notify,
@@ -224,7 +234,9 @@ impl Settings {
             metrics_endpoint: Some(get("SPIRA_METRICS_ENDPOINT")?).filter(|e| !e.trim().is_empty()),
             run_dir,
             lc_socket: PathBuf::from(socket),
-        })
+        };
+        crate::modes::apply(crate::tasks::TASKS.iter().map(|t| (t.build)(&settings)).collect(), &settings.task_modes)?;
+        Ok(settings)
     }
 
     /// A ping must finish well inside one beat.
@@ -242,7 +254,7 @@ impl Settings {
 
     /// FNV-1a over the pinned values, so two records with one hash ran on one configuration.
     pub fn hash(&self) -> String {
-        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.repo_events, self.overrides, self.view, self.reconciler, self.reconciler_flow, self.world);
+        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.repo_events, self.overrides, self.view, self.reconciler, self.reconciler_flow, self.world, self.task_modes, self.control_socket.display());
         let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
         format!("{h:016x}")
     }
@@ -277,6 +289,8 @@ mod tests {
                 "SPIRA_SCOPE_LABEL" => "/q",
                 "SPIRA_VIEW" => "/bin/view",
                 "SPIRA_VIEW_SESSION" => "pit",
+                "SPIRA_RUNTIME_SOCKET" => "/d/control.sock",
+                "SPIRA_TASK_MODES" => "heartbeat=act round-duty=act inbox-keeper=act pr-notify=act asks=observe design-asks=act brain-dirty=act supersede-duty=act bead-sweep=act publish-backlog=act repo-events=act overrides=act view=observe reconciler=act reconciler-flow=act",
                 k if reconciler_fixture(k).is_some() => reconciler_fixture(k).unwrap_or_default(),
                 _ => return Err(format!("{k} unknown")),
             }
@@ -396,6 +410,18 @@ mod tests {
         let base = lookup("7");
         let zero = move |k: &str| if k == "SPIRA_FLOW_WINDOW_HOURS" { Ok("0".to_string()) } else { base(k) };
         assert!(Settings::from_lookup(&zero).unwrap_err().contains("SPIRA_FLOW_WINDOW_HOURS"));
+    }
+
+    #[test]
+    fn each_task_takes_the_mode_the_table_gives_it_and_a_task_left_out_refuses_the_load() {
+        let s = Settings::from_lookup(&lookup("7")).unwrap();
+        let modes: Vec<(String, runtime::Mode)> = crate::registrations(&s).into_iter().map(|r| (r.name, r.mode)).filter(|(_, m)| *m == runtime::Mode::Observe).collect();
+        assert_eq!(modes, [("asks".to_string(), runtime::Mode::Observe), ("view".to_string(), runtime::Mode::Observe)]);
+        assert_eq!(s.control_socket, PathBuf::from("/d/control.sock"));
+        let base = lookup("7");
+        let short = move |k: &str| if k == crate::modes::KEY { Ok("heartbeat=act".to_string()) } else { base(k) };
+        let e = Settings::from_lookup(&short).unwrap_err();
+        assert!(e.contains(crate::modes::KEY) && e.contains("round-duty"), "{e}");
     }
 
     #[test]

@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=runtime
+DOC=Each spira-runtime task as name=observe|act. Observe runs a task's probes and records its writes without running them. Every task must be named.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Each spira-runtime task as name=observe|act; every task must be named, or the runtime refuses to start.
+    : "${SPIRA_TASK_MODES:=heartbeat=act round-duty=act inbox-keeper=act pr-notify=act asks=act design-asks=act brain-dirty=act supersede-duty=act bead-sweep=act publish-backlog=act repo-events=act overrides=act view=act reconciler=act reconciler-flow=act}"
+SPIRA_CONF_DEFAULT_EOF
