@@ -72,7 +72,9 @@ use std::collections::BTreeSet;
 
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
+use spira_config::lc_call::LcClient;
 use spira_config::process::cfg;
+use spira_config::scoped_stop;
 
 use super::pattern;
 
@@ -136,9 +138,141 @@ pub struct Carry {
     pub seen: BTreeSet<String>,
 }
 
-/// `overdue_breach`, `mends_breach`, `fresh`, then `bead_condition` / `entered_state` per stop.
-pub fn decide(_carry: &Carry, _snap: &Snapshot, _now_ms: u64, _cfg: &Config) -> (Carry, Vec<EffectSpec>) {
-    unimplemented!("watch.mend: not ported yet")
+/// One breach of the mender bounds: its `seen` key and its log line (`spira-lc/src/mend_watch.rs:14-31`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Breach {
+    pub key: String,
+    pub line: String,
+}
+
+/// `overdue_breach` (`mend_watch.rs:20-24`).
+pub fn overdue_breach(o: &Overdue, now: u64) -> Breach {
+    let (batch, pass, suite) = (&o.batch, o.pass, &o.suite);
+    Breach { key: format!("overdue:{batch}#{pass}#{suite}"), line: format!("MEND-WATCH OVERDUE {batch}#{pass}#{suite} is MENDING {}s past its deadline; the sweep did not return it", now.saturating_sub(o.deadline)) }
+}
+
+/// `mends_breach` (`mend_watch.rs:26-31`): more than [`MAX_MENDS_PER_DAY`] in a day is a loop.
+pub fn mends_breach(bead: &str, n: u64) -> Option<Breach> {
+    (n > MAX_MENDS_PER_DAY).then(|| Breach { key: format!("mends:{bead}"), line: format!("MEND-WATCH MENDS {bead} was mended {n} times in 24h (limit {MAX_MENDS_PER_DAY})") })
+}
+
+/// What the lift effect is handed: the stop's repo and when it was set, its idempotency.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Lift {
+    pub repo: String,
+    pub since: u64,
+}
+
+/// Every breach and stop finding of `snap`, in the order today's two jobs printed them, each
+/// as `(seen key, line, lift)`.
+fn findings(snap: &Snapshot) -> Vec<(String, String, Option<Lift>)> {
+    let mut out: Vec<(String, String, Option<Lift>)> = snap.overdue.iter().map(|o| overdue_breach(o, snap.now)).chain(snap.mends.iter().filter_map(|(b, n)| mends_breach(b, *n))).map(|b| (b.key, b.line, None)).collect();
+    for s in &snap.stops {
+        match &s.reached {
+            Ok(true) => out.push((format!("lift:{}:{}", s.repo, s.since), format!("pause-sweep: lifted the stop on {}: its bead condition was met", s.repo), Some(Lift { repo: s.repo.clone(), since: s.since }))),
+            Ok(false) => {}
+            Err(why) => out.push((format!("kept:{}:{}", s.repo, s.since), format!("pause-sweep: kept {}: {why}", s.repo), None)),
+        }
+    }
+    out
+}
+
+/// `overdue_breach`, `mends_breach`, `fresh`, then `bead_condition` / `entered_state` per stop:
+/// a line for each finding not in `seen`, a lift for every stop reached, and `seen := ` this
+/// snapshot's keys. A lift repeats each tick until the stop is gone; its line does not.
+pub fn decide(carry: &Carry, snap: &Snapshot, _now_ms: u64, _cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+    let found = findings(snap);
+    let mut acts = vec![];
+    for (key, line, lift) in &found {
+        if !carry.seen.contains(key) {
+            acts.push(EffectSpec { name: LOG_APPEND.into(), input: line.clone(), deadline_ms: ACT_DEADLINE_MS });
+        }
+        if let Some(l) = lift {
+            acts.push(EffectSpec { name: LIFT_STOP.into(), input: serde_json::to_string(l).unwrap_or_default(), deadline_ms: ACT_DEADLINE_MS });
+        }
+    }
+    (Carry { seeded: true, seen: found.into_iter().map(|(k, _, _)| k).collect() }, acts)
+}
+
+const ACT_DEADLINE_MS: u64 = 5_000;
+
+/// The `MEND-WATCH` lines the store's `mend-watch` verb printed, read back into the snapshot's
+/// rows: the verb owns the SQL and the bounds, this only reverses its two formats.
+pub fn parse_breaches(out: &str, now: u64) -> (Vec<Overdue>, Vec<(String, u64)>) {
+    let (mut overdue, mut mends) = (vec![], vec![]);
+    for line in out.lines() {
+        if let Some(rest) = line.strip_prefix("MEND-WATCH OVERDUE ") {
+            let Some((id, tail)) = rest.split_once(" is MENDING ") else { continue };
+            let late: u64 = tail.split('s').next().and_then(|n| n.parse().ok()).unwrap_or(0);
+            let mut parts = id.splitn(3, '#');
+            if let (Some(b), Some(p), Some(su)) = (parts.next(), parts.next(), parts.next()) {
+                overdue.push(Overdue { batch: b.into(), pass: p.parse().unwrap_or(0), suite: su.into(), deadline: now.saturating_sub(late) });
+            }
+        } else if let Some(rest) = line.strip_prefix("MEND-WATCH MENDS ") {
+            let Some((bead, tail)) = rest.split_once(" was mended ") else { continue };
+            mends.push((bead.into(), tail.split(' ').next().and_then(|n| n.parse().ok()).unwrap_or(0)));
+        }
+    }
+    (overdue, mends)
+}
+
+fn epoch_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// The probe: the store's `mend-watch` verb (no `--seen`; the carry is the seen set) and, per
+/// scoped stop with a `bead:ID=STATE` condition, the bead's `history` over [`LcClient`].
+pub fn observe(cfg: &Config) -> Result<Snapshot, String> {
+    let lc = LcClient::configured()?;
+    let now = epoch_now();
+    let out = lc.answer(&["mend-watch"]).map_err(|e| format!("cannot tell: {e}"))?;
+    let (overdue, mends) = parse_breaches(&out, now);
+    let run = std::path::Path::new(&cfg.run);
+    let mut stops = vec![];
+    for s in scoped_stop::repo_stops(run) {
+        let Some(cond) = scoped_stop::bead_condition(&s.until) else { continue };
+        let (bead, state, reached) = match cond {
+            Ok((bead, state)) => {
+                let reached = lc
+                    .answer(&["history", bead.as_str(), "--machine", "bead"])
+                    .map_err(|e| format!("cannot tell: {e}"))
+                    .and_then(|o| serde_json::from_str::<Vec<serde_json::Value>>(&o).map_err(|e| format!("cannot tell: history {bead}: {e}")))
+                    .map(|rows| scoped_stop::entered_state(&rows, &state, s.since));
+                (bead, state, reached)
+            }
+            Err(e) => (String::new(), String::new(), Err(e)),
+        };
+        stops.push(Stop { repo: s.repo, bead, state, since: s.since, reached });
+    }
+    Ok(Snapshot { now, overdue, mends, stops })
+}
+
+/// `run/mend-watch.log`, the `mend-watch|log` read contract: the line as is, no prefix.
+pub fn log_append(cfg: &Config, line: &str) -> Result<String, String> {
+    use std::io::Write;
+    if line.is_empty() {
+        return Err("watch.mend: an empty log line is refused".into());
+    }
+    let path = std::path::Path::new(&cfg.run).join("mend-watch.log");
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    writeln!(f, "{line}").map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(path.display().to_string())
+}
+
+/// `scoped_stop::unpause_repo` for the stop the decide found reached; a stop already gone or
+/// re-set since (a different `since`) is left alone.
+pub fn lift_stop(cfg: &Config, input: &str) -> Result<String, String> {
+    let lift: Lift = serde_json::from_str(input).map_err(|e| format!("watch.mend.lift_stop: {e}"))?;
+    let run = std::path::Path::new(&cfg.run);
+    if !scoped_stop::repo_stops(run).iter().any(|s| s.repo == lift.repo && s.since == lift.since) {
+        return Ok(format!("no stop on {} since {}", lift.repo, lift.since));
+    }
+    scoped_stop::unpause_repo(run, &lift.repo, &[]).map(|_| format!("lifted {}", lift.repo))
+}
+
+/// The row's runners: each reads the pinned config through the door.
+pub fn run_observe() -> Result<String, String> {
+    serde_json::to_string(&observe(&Config::pinned()?)?).map_err(|e| e.to_string())
 }
 
 pub struct WatchMend {
