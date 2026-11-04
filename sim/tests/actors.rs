@@ -5,7 +5,8 @@ use testkit::TempDir;
 fn unsupported_or_dead_timers_are_refused() {
     assert!(parse_timer("[Timer]\nOnUnitActiveSec=5min\n").is_err());
     assert!(parse_timer("[Timer]\nAccuracySec=1s\n").is_err());
-    assert!(parse_timer("[Timer]\nOnCalendar=daily\n").is_err());
+    assert!(parse_timer("[Timer]\nOnCalendar=monthly\n").is_err());
+    assert!(parse_timer("[Timer]\nOnCalendar=daily\n").is_ok(), "the catalogue runs daily and weekly timers");
 }
 
 #[test]

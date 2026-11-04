@@ -26,7 +26,7 @@ const SUFFIX: &str = ".service";
 /// systemd refuses a longer unit name.
 const NAME_MAX: usize = 255;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnitSpec {
     pub task: String,
     /// The idempotency key: the same (task, key) names the same unit.
@@ -123,6 +123,32 @@ pub trait Units: Send + Sync {
 /// The completion source: every run that ended since the last call, once each.
 pub trait UnitCompletions: Send + Sync {
     fn ran(&self) -> Result<Vec<UnitRan>>;
+}
+
+pub const UNIT_START: &str = "unit.start";
+pub const UNIT_STOP: &str = "unit.stop";
+pub const UNIT_RESTART: &str = "unit.restart";
+pub const UNIT_FACTS: &str = "unit.facts";
+/// The effect names a `Units` backend answers, each through [`effect`].
+pub const EFFECTS: [&str; 4] = [UNIT_START, UNIT_STOP, UNIT_RESTART, UNIT_FACTS];
+
+/// One unit effect on `units`: `unit.start` takes a [`UnitSpec`] and answers its [`UnitHandle`];
+/// `unit.stop` and `unit.restart` take a handle and answer nothing; `unit.facts` takes a handle
+/// and answers its [`UnitFacts`]. All as JSON, so a host runner and a simulator double share it.
+pub fn effect(units: &dyn Units, name: &str, input: &str) -> std::result::Result<String, String> {
+    fn arg<T: serde::de::DeserializeOwned>(name: &str, input: &str) -> std::result::Result<T, String> {
+        serde_json::from_str(input).map_err(|e| format!("{name}: bad input: {e}"))
+    }
+    fn out<T: Serialize>(v: &T) -> std::result::Result<String, String> {
+        serde_json::to_string(v).map_err(|e| e.to_string())
+    }
+    match name {
+        UNIT_START => out(&units.start(&arg::<UnitSpec>(name, input)?).map_err(|e| e.0)?),
+        UNIT_STOP => units.stop(&arg(name, input)?).map(|_| String::new()).map_err(|e| e.0),
+        UNIT_RESTART => units.restart(&arg(name, input)?).map(|_| String::new()).map_err(|e| e.0),
+        UNIT_FACTS => out(&units.facts(&arg(name, input)?).map_err(|e| e.0)?),
+        _ => Err(format!("{name} is not a unit effect")),
+    }
 }
 
 fn keep(b: u8) -> bool {
@@ -834,6 +860,23 @@ mod tests {
         assert!(u.ran().unwrap().is_empty(), "once each");
         assert_eq!(u.facts(&h).unwrap(), UnitFacts { state: UnitState::Failed, main_pid: None, exit: Some(Exit::Code(2)), since_ms: Some(31_000) });
         assert!(u.start(&spec("unscripted", "k", &["x"])).unwrap_err().is_refused());
+    }
+
+    #[test]
+    fn unit_effects_round_trip_as_json() {
+        let clock = VirtualClock::new(0);
+        let u = ScriptedUnits::new(Arc::new(clock.clone()));
+        u.script("sweep", 10, Exit::Code(0));
+        let h: UnitHandle = serde_json::from_str(&effect(&u, UNIT_START, &serde_json::to_string(&spec("sweep", "k", &["x"])).unwrap()).unwrap()).unwrap();
+        assert_eq!(h, UnitHandle::of("sweep", "k").unwrap());
+        let hj = serde_json::to_string(&h).unwrap();
+        let f: UnitFacts = serde_json::from_str(&effect(&u, UNIT_FACTS, &hj).unwrap()).unwrap();
+        assert_eq!(f.state, UnitState::Active);
+        assert_eq!(effect(&u, UNIT_STOP, &hj), Ok(String::new()));
+        assert!(effect(&u, UNIT_RESTART, &hj).unwrap_err().contains("not installed"));
+        assert!(effect(&u, UNIT_FACTS, "nope").unwrap_err().contains("bad input"));
+        assert!(effect(&u, "unit.other", &hj).is_err());
+        assert_eq!(u.calls(), vec!["start spira-run-sweep-k.service", "stop spira-run-sweep-k.service", "restart spira-run-sweep-k.service"]);
     }
 
     #[test]

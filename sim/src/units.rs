@@ -1,7 +1,20 @@
 //! Schedules read from systemd timer and service unit text. Virtual time is milliseconds.
 
+use std::sync::Arc;
+
+use crate::doubles::Doubles;
 use crate::Rng;
 pub use runtime::calendar::Calendar;
+use runtime::units::{ScriptedUnits, EFFECTS};
+
+/// `doubles` answering every unit effect (`unit.start`, `unit.stop`, ...) from `units`.
+pub fn with_units(mut doubles: Doubles, units: Arc<ScriptedUnits>) -> Doubles {
+    for name in EFFECTS {
+        let u = units.clone();
+        doubles = doubles.double(name, move |input| runtime::units::effect(&*u, name, input));
+    }
+    doubles
+}
 
 pub const SECOND: u64 = 1000;
 const DAY_S: u64 = 86_400;
@@ -139,5 +152,30 @@ impl Schedule {
             .into_iter()
             .map(|b| b + rng.range(0, self.randomized) + rng.range(0, self.accuracy))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod unit_double_tests {
+    use super::*;
+    use runtime::host::EffectRunner;
+    use runtime::ports::VirtualClock;
+    use runtime::units::{Exit, UnitFacts, UnitHandle, UnitState, UnitCompletions};
+    use runtime::EffectSpec;
+
+    #[test]
+    fn unit_effects_reach_the_scripted_units_by_name() {
+        let clock = VirtualClock::new(0);
+        let units = Arc::new(ScriptedUnits::new(Arc::new(clock.clone())));
+        units.script("sweep", 5_000, Exit::Code(0));
+        let d = with_units(Doubles::default(), units.clone());
+        let spec = r#"{"task":"sweep","key":"k1","argv":["sweep"],"env":[],"cwd":null}"#;
+        let h = d.run("e1", &EffectSpec { name: "unit.start".into(), input: spec.into(), deadline_ms: 1_000 }).unwrap();
+        assert_eq!(serde_json::from_str::<UnitHandle>(&h).unwrap(), UnitHandle::of("sweep", "k1").unwrap());
+        let f = d.run("e2", &EffectSpec { name: "unit.facts".into(), input: h.clone(), deadline_ms: 1_000 }).unwrap();
+        assert_eq!(serde_json::from_str::<UnitFacts>(&f).unwrap().state, UnitState::Active);
+        clock.advance(5_000);
+        assert_eq!(units.ran().unwrap().len(), 1);
+        assert_eq!(d.asked(), vec!["unit.start", "unit.facts"]);
     }
 }
