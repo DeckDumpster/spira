@@ -1,5 +1,6 @@
 use crate::{civil_date, names_bump, parse_node, parse_python, parse_rust_stable, EolSupport, Repo, Runtime, RustSupport, World, LABEL};
 use spira_config::bounded::{bounded, bounded_for};
+use spira_config::lc_call::LcClient;
 use spira_config::repos::{Column, Registry};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -17,6 +18,8 @@ pub struct Real {
     pub state: PathBuf,
     pub persona: String,
     bumps: RefCell<BTreeMap<String, String>>,
+    /// The lifecycle store, in-process over its socket.
+    lc: LcClient,
 }
 
 fn run(mut c: Command) -> Result<String, String> {
@@ -46,13 +49,13 @@ fn key(repo: &Repo, rt: Runtime) -> String {
 }
 
 impl Real {
-    pub fn new(registry: Registry, state: PathBuf, persona: String) -> Real {
+    pub fn new(registry: Registry, state: PathBuf, persona: String, lc: LcClient) -> Real {
         let bumps = std::fs::read_to_string(&state)
             .unwrap_or_default()
             .lines()
             .filter_map(|l| l.rsplit_once('\t').map(|(k, id)| (k.to_string(), id.to_string())))
             .collect();
-        Real { registry, state, persona, bumps: RefCell::new(bumps) }
+        Real { registry, state, persona, bumps: RefCell::new(bumps), lc }
     }
 
     fn record(&self, k: String, id: &str) -> Result<(), String> {
@@ -64,22 +67,21 @@ impl Real {
 
     fn ledger_bump(&self, repo: &Repo, rt: Runtime) -> Result<Option<String>, String> {
         let Some(id) = self.bumps.borrow().get(&key(repo, rt)).cloned() else { return Ok(None) };
-        let mut c = bounded(spira_config::lifecycle_row::lc_bin()?);
-        c.args(["show", &id]);
-        let out = c.output().map_err(|e| e.to_string())?;
-        match out.status.code() {
-            Some(1) => Ok(None),
-            Some(0) => {
-                let doc: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("{id}: not JSON: {e}"))?;
+        let out = self.lc.call(&["show", &id]).map_err(|e| format!("cannot tell whether {id} is open: {e}"))?;
+        match out.code {
+            1 => Ok(None),
+            0 => {
+                let doc: serde_json::Value = serde_json::from_str(&out.out).map_err(|e| format!("{id}: not JSON: {e}"))?;
                 let state = doc["bead"]["state"].as_str().ok_or_else(|| format!("{id}: no state"))?;
                 Ok((!TERMINAL.contains(&state)).then_some(id))
             }
-            _ => Err(format!("cannot tell whether {id} is open: {}", String::from_utf8_lossy(&out.stdout).trim())),
+            _ => Err(format!("cannot tell whether {id} is open: {}", out.out.trim())),
         }
     }
 
     fn bead(&self, args: &[&str]) -> Result<String, String> {
         // batch-job: bead.sh opens the store and runs as long as the filing takes
+        // FORK-EDGE: content store write (bead.sh file/label is the operator filing tool)
         let mut c = bounded_for("bead.sh", "120");
         c.args(args);
         run(c)
@@ -132,13 +134,11 @@ impl World for Real {
         if let Some(id) = self.ledger_bump(repo, rt)? {
             return Ok(Some(id));
         }
-        let mut c = bounded(spira_config::lifecycle_row::lc_bin()?);
-        c.args(["list", "--live", "--repo", &repo.name]);
-        let out = c.output().map_err(|e| e.to_string())?;
-        if out.status.code() != Some(0) {
-            return Err(format!("cannot list {}'s open beads: {}", repo.name, String::from_utf8_lossy(&out.stdout).trim()));
+        let out = self.lc.call(&["list", "--live", "--repo", &repo.name]).map_err(|e| format!("cannot list {}'s open beads: {e}", repo.name))?;
+        if out.code != 0 {
+            return Err(format!("cannot list {}'s open beads: {}", repo.name, out.out.trim()));
         }
-        let beads: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).map_err(|e| format!("{}: bead list not JSON: {e}", repo.name))?;
+        let beads: Vec<serde_json::Value> = serde_json::from_str(&out.out).map_err(|e| format!("{}: bead list not JSON: {e}", repo.name))?;
         Ok(beads
             .iter()
             .filter(|b| b["state"].as_str().is_some_and(|s| !TERMINAL.contains(&s)))
@@ -159,5 +159,64 @@ impl World for Real {
 
     fn today(&self) -> String {
         civil_date(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64))
+    }
+}
+
+#[cfg(test)]
+mod lc_tests {
+    use super::*;
+    use spira_config::lc_call::{Reply, Transport};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    /// The store's answers by verb, and every argv it was asked.
+    struct Store {
+        answers: Vec<(&'static str, i32, &'static str)>,
+        asked: Mutex<Vec<Vec<String>>>,
+    }
+
+    impl Transport for Store {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
+            self.asked.lock().unwrap().push(argv.to_vec());
+            let (_, code, out) = self.answers.iter().find(|(v, _, _)| argv[0] == *v).ok_or("unexpected verb")?;
+            Ok(Reply { code: *code, out: out.to_string(), err: String::new() })
+        }
+    }
+
+    fn real(dir: &std::path::Path, ledger: &str, answers: Vec<(&'static str, i32, &'static str)>) -> (Real, Arc<Store>) {
+        let state = dir.join("ledger");
+        std::fs::write(&state, ledger).unwrap();
+        let store = Arc::new(Store { answers, asked: Mutex::default() });
+        let lc = LcClient::over(Arc::clone(&store) as Arc<dyn Transport>, true);
+        (Real::new(Registry::new(None, &BTreeMap::new(), dir), state, "ops".into(), lc), store)
+    }
+
+    fn repo() -> Repo {
+        Repo { name: "deck".into(), path: "/r".into(), git_ref: "main".into() }
+    }
+
+    #[test]
+    fn an_open_ledger_bump_is_read_from_the_store_in_process() {
+        let d = testkit::TempDir::new("rw-ledger");
+        let (r, store) = real(d.path(), "deck\tnode\tsp-bump1\n", vec![("show", 0, r#"{"bead":{"state":"READY"}}"#)]);
+        assert_eq!(r.open_bump(&repo(), Runtime::Node), Ok(Some("sp-bump1".into())));
+        assert_eq!(store.asked.lock().unwrap().as_slice(), &[vec!["show".to_string(), "sp-bump1".into()]]);
+    }
+
+    #[test]
+    fn a_landed_ledger_bump_falls_through_to_the_live_list() {
+        let d = testkit::TempDir::new("rw-list");
+        let list = r#"[{"bead_id":"sp-other","state":"READY","title":"bump node to 24"},{"bead_id":"sp-old","state":"LANDED","title":"bump node to 22"}]"#;
+        let (r, store) = real(d.path(), "deck\tnode\tsp-bump1\n", vec![("show", 0, r#"{"bead":{"state":"LANDED"}}"#), ("list", 0, list)]);
+        let found = r.open_bump(&repo(), Runtime::Node).unwrap();
+        assert_eq!(store.asked.lock().unwrap()[1], ["list", "--live", "--repo", "deck"]);
+        assert_eq!(found, names_bump("bump node to 24", Runtime::Node).then(|| "sp-other".to_string()));
+    }
+
+    #[test]
+    fn a_store_that_cannot_tell_is_an_error_not_no_bump() {
+        let d = testkit::TempDir::new("rw-cannot");
+        let (r, _) = real(d.path(), "deck\tnode\tsp-bump1\n", vec![("show", 2, "cannot tell: down")]);
+        assert!(r.open_bump(&repo(), Runtime::Node).unwrap_err().contains("cannot tell whether sp-bump1 is open"));
     }
 }
