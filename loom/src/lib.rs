@@ -205,12 +205,7 @@ impl Loom {
             .map(|s| s.taken.elapsed() < OPS_CACHE)
             .unwrap_or(false);
         if !fresh {
-            let snap = OpsSnapshot::take(
-                &self.cfg.run,
-                &self.cfg.instance,
-                &self.cfg.systemctl,
-            )
-            .await;
+            let snap = OpsSnapshot::take(&self.cfg.run, &self.cfg.instance, host_units()).await;
             *held = Some(Arc::new(snap));
         }
         let s = held.as_ref().expect("a snapshot was just stored");
@@ -309,8 +304,39 @@ async fn lifecycle_api_route(State(loom): State<Arc<Loom>>) -> Response {
         .expect("a response with a valid status and headers")
 }
 
+/// The verbs the lifecycle socket does not serve: answered by the `spira-lc` CLI.
+const CLI_ONLY: [&str; 1] = ["content"];
+
+/// One lifecycle read as JSON within the page budget: in-process over the socket, or for a
+/// verb it does not serve, the CLI.
 async fn lc_json(loom: &Loom, args: &[&str]) -> Result<Value, String> {
+    if args.first().is_some_and(|v| CLI_ONLY.contains(v)) {
+        return lc_cli_json(loom, args).await;
+    }
     let cfg = loom.config();
+    let client = spira_config::lc_call::LcClient::for_bin(&cfg.lc)?;
+    lc_answer_json(client, args, cfg.budget).await
+}
+
+/// `args` on `client`, bounded at `budget`, parsed as JSON.
+async fn lc_answer_json(client: spira_config::lc_call::LcClient, args: &[&str], budget: Duration) -> Result<Value, String> {
+    let argv: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+    let shown = args.join(" ");
+    let call = tokio::task::spawn_blocking(move || client.within(budget).call(&argv));
+    let reply = tokio::time::timeout(budget, call)
+        .await
+        .map_err(|_| format!("spira-lc {shown} over its {} ms budget", budget.as_millis()))?
+        .map_err(|e| format!("spira-lc {shown}: {e}"))?
+        .map_err(|e| format!("spira-lc {shown}: {e}"))?;
+    if reply.code != 0 {
+        return Err(format!("spira-lc {shown} exited {}: {}", reply.code, reply.why().chars().take(300).collect::<String>()));
+    }
+    serde_json::from_str(&reply.out).map_err(|e| format!("spira-lc {shown}: {e}"))
+}
+
+async fn lc_cli_json(loom: &Loom, args: &[&str]) -> Result<Value, String> {
+    let cfg = loom.config();
+    // FORK-EDGE: unserved verb content — bead content comes through the spira-lc CLI.
     let mut cmd = tokio::process::Command::new(&cfg.lc);
     cmd.args(args)
         .env("PATH", &cfg.path)
@@ -326,6 +352,46 @@ async fn lc_json(loom: &Loom, args: &[&str]) -> Result<Value, String> {
         return Err(format!("spira-lc {} exited {}: {}", args.join(" "), out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim().chars().take(300).collect::<String>()));
     }
     serde_json::from_slice(&out.stdout).map_err(|e| format!("spira-lc {}: {e}", args.join(" ")))
+}
+
+/// This process's connection to the user manager, opened once; `None` when there is none.
+fn host_units() -> Option<&'static dyn runtime::units::Units> {
+    #[cfg(target_os = "linux")]
+    {
+        static UNITS: std::sync::OnceLock<Option<Box<dyn runtime::units::Units>>> = std::sync::OnceLock::new();
+        UNITS
+            .get_or_init(|| {
+                let units = runtime::units::SystemdUnits::connect(Arc::new(runtime::ports::WallClock)).ok()?;
+                Some(Box::new(units) as Box<dyn runtime::units::Units>)
+            })
+            .as_deref()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+/// The store's round/batch views, loaded once and kept current by their watch on a thread of
+/// their own; `Err` names why there are none.
+fn store_views(loom: &Loom) -> Result<&'static spira_runtime::store::Projection, String> {
+    static VIEWS: std::sync::OnceLock<Result<Arc<spira_runtime::store::Projection>, String>> = std::sync::OnceLock::new();
+    let lc = loom.config().lc.clone();
+    VIEWS
+        .get_or_init(|| {
+            let p = Arc::new(spira_runtime::store::Projection::configured(spira_config::lc_call::LcClient::for_bin(&lc)?)?);
+            let watcher = Arc::clone(&p);
+            std::thread::spawn(move || watcher.run(&std::sync::atomic::AtomicBool::new(false)));
+            Ok(p)
+        })
+        .as_ref()
+        .map(|p| &**p)
+        .map_err(Clone::clone)
+}
+
+/// `queue batch show --repo <repo>`'s text from `views`.
+fn batch_shown(views: &spira_runtime::store::Projection, repo: &str) -> Result<String, String> {
+    views.batch_view(repo).map(|r| r.value.shown()).map_err(|e| format!("queue batch show --repo {repo}: {e}"))
 }
 
 fn now_s() -> i64 {
@@ -555,7 +621,7 @@ async fn forge_batches(loom: &Loom) -> Vec<forge_rounds::Batch> {
     let mut ended = std::collections::BTreeMap::new();
     let shown_closed = forge_rounds::CLOSED_SHOWN.to_string();
     for repo in forge_rounds::repos(&dir) {
-        let shown = queue_text(loom, &["batch", "show", "--repo", &repo]).await;
+        let shown = store_views(loom).and_then(|v| batch_shown(v, &repo));
         open.insert(repo.clone(), shown);
         let closed = queue_text(loom, &["batch", "show", "--repo", &repo, "--ended", &shown_closed]).await;
         ended.insert(repo, closed);
@@ -565,6 +631,8 @@ async fn forge_batches(loom: &Loom) -> Vec<forge_rounds::Batch> {
 
 async fn queue_text(loom: &Loom, args: &[&str]) -> Result<String, String> {
     let cfg = loom.config();
+    // FORK-EDGE: `queue batch show --ended` reads the closed forge archives; needs an
+    // ended-batches view on spira-runtime's Projection.
     let mut cmd = tokio::process::Command::new(&cfg.queue);
     cmd.args(args)
         .env("PATH", &cfg.path)
@@ -798,5 +866,66 @@ mod shot_path_tests {
             assert!(shot_path("/r", b, t, f).is_none(), "{b} {t} {f}");
         }
         assert!(shot_path("", "sp-a", TIP, "a.png").is_none());
+    }
+}
+
+#[cfg(test)]
+mod in_process_tests {
+    use super::*;
+    use crate::ops::check_sentinel;
+    use runtime::units::{ScriptedUnits, UnitFacts, UnitState};
+    use spira_config::lc_call::{LcClient, Reply, Transport};
+
+    struct Scripted(Vec<(&'static str, i32, String)>);
+
+    impl Transport for Scripted {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+            let key = argv.iter().take(2).cloned().collect::<Vec<_>>().join(" ");
+            self.0
+                .iter()
+                .find(|(k, _, _)| key == *k || argv.first().map(String::as_str) == Some(*k))
+                .map(|(_, code, out)| Reply { code: *code, out: out.clone(), err: String::new() })
+                .ok_or_else(|| format!("unscripted {argv:?}"))
+        }
+    }
+
+    fn client(answers: Vec<(&'static str, i32, String)>) -> LcClient {
+        LcClient::over(Arc::new(Scripted(answers)), true)
+    }
+
+    #[tokio::test]
+    async fn a_served_read_is_answered_over_the_socket_and_a_refusal_is_an_error() {
+        let c = client(vec![("ops-gantt", 0, "{\"edges\":[]}".into()), ("show-ask", 3, "no such ask".into())]);
+        assert_eq!(lc_answer_json(c.clone(), &["ops-gantt"], Duration::from_secs(2)).await.unwrap(), json!({"edges": []}));
+        let e = lc_answer_json(c, &["show-ask", "sp-x"], Duration::from_secs(2)).await.unwrap_err();
+        assert!(e.contains("exited 3") && e.contains("no such ask"), "{e}");
+    }
+
+    #[test]
+    fn the_sentinel_timer_is_read_through_the_units_port() {
+        let units = ScriptedUnits::new(Arc::new(runtime::ports::VirtualClock::new(0)));
+        assert_eq!(check_sentinel(&units, "prod"), Some(false), "unknown timers read inactive");
+        let mut active = UnitFacts::absent();
+        active.state = UnitState::Active;
+        units.install("spira-sentinel.timer", active);
+        assert_eq!(check_sentinel(&units, "prod"), Some(true));
+        assert!(units.calls().is_empty());
+    }
+
+    #[test]
+    fn batch_show_is_the_open_forge_batch_from_the_store_views() {
+        let store = json!({"ok": {"list_rev": 4, "items": [
+            {"key": "batches/spira/b1", "create_rev": {"main": 2}, "value": {"data": {
+                "batch_id": "b1", "state": "OPEN", "repo": "spira",
+                "round": {"head": "h1", "members": "sp-a:t1", "forge.phase": "pr-open"}}}}]}});
+        let views = spira_runtime::store::Projection::new(
+            client(vec![("rc list", 0, store.to_string()), ("list", 0, "[]".into())]),
+            Duration::from_secs(60),
+            Arc::new(std::time::Instant::now),
+        );
+        views.load().unwrap();
+        let shown = batch_shown(&views, "spira").unwrap();
+        assert!(shown.starts_with("batch_id=b1\nrepo=spira\n") && shown.contains("forge.phase=pr-open\n"), "{shown}");
+        assert_eq!(batch_shown(&views, "other").unwrap(), "");
     }
 }
