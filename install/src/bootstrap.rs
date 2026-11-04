@@ -154,6 +154,7 @@ pub fn host_from(instance: &str, env_map: &std::collections::BTreeMap<String, St
         instance: instance.to_string(),
         snap_stale_s: cfg("SPIRA_SNAP_STALE_S")?,
         watchtower_start_timeout_s: cfg("SPIRA_WATCHTOWER_START_TIMEOUT_S")?,
+        watchdog_every_s: cfg(watchdog::KEY_EVERY)?,
         path_tail,
         env_bin,
         sccache_dav_addr: dav_addr,

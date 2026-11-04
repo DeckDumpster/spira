@@ -173,6 +173,10 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-perf-happy-path.timer", true));
     m.units.push(t("spira-exec-census.service", true));
     m.units.push(t("spira-runtime.service", true));
+    // The one timer outside the scheduler (S15): it restarts and pages when the scheduler is
+    // wedged or absent. Rendered from watchdog::render, not from a template file.
+    m.units.push(t("spira-watchdog.service", false));
+    m.units.push(t("spira-watchdog.timer", true));
     m.units.push(t("spira-reclaim.service", false));
     m.units.push(t("spira-reclaim.timer", true));
     m.units.push(t("spira-refusal-watch.service", false));

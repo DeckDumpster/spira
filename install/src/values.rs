@@ -42,6 +42,8 @@ pub struct HostValues {
     pub lc_password_file: String,
     /// The spec SPIRA_TOML names — the one source every rendered unit runs under.
     pub toml: String,
+    /// `SPIRA_WATCHDOG_EVERY_SECS`: seconds between the watchdog's passes on its timer.
+    pub watchdog_every_s: String,
 }
 
 impl HostValues {
@@ -152,6 +154,7 @@ mod tests {
             toml: "/h/cfg.toml".into(),
             sccache_dav_addr: "".into(),
             repo_map: "".into(),
+            watchdog_every_s: "60".into(),
         }
     }
 

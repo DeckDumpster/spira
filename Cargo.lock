@@ -821,6 +821,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "testkit",
+ "watchdog",
 ]
 
 [[package]]

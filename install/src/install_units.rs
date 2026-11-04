@@ -91,13 +91,43 @@ pub fn execstart_target_ok(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The manifest rows rendered from [`watchdog_files`] rather than from a template file.
+const WATCHDOG_ROWS: [&str; 2] = ["spira-watchdog.service", "spira-watchdog.timer"];
+
+/// The watchdog's timer files for `platform` (S15): one pass of `spira-watchdog` every
+/// `SPIRA_WATCHDOG_EVERY_SECS`, under the environment the runtime's own unit carries, named
+/// per instance like every other `spira-*` unit.
+pub fn watchdog_files(platform: watchdog::render::Platform, host: &HostValues) -> Result<Vec<(String, String)>, String> {
+    let every: u64 = host.watchdog_every_s.trim().parse().map_err(|_| format!("{} is {:?}, not a whole number of seconds — refusing to render the watchdog's timer", watchdog::KEY_EVERY, host.watchdog_every_s))?;
+    let v = host.to_map();
+    let (root, prod) = (&v["SPIRA_PROD_ROOT"], &v["SPIRA_PROD"]);
+    let env = vec![
+        ("SPIRA_RELEASE".to_string(), v["SPIRA_RELEASE"].clone()),
+        ("SPIRA_TOML".to_string(), host.toml.clone()),
+        ("SPIRA_HOME".to_string(), prod.clone()),
+        ("SPIRA_RUN".to_string(), host.run.clone()),
+        ("PATH".to_string(), format!("{root}/bin:{root}/spira:{}:/usr/local/bin:/usr/bin:/bin{}", host.env_bin, v["SPIRA_PATH_TAIL"])),
+    ];
+    let spec = watchdog::render::TimerSpec { label: format!("{}-{}", watchdog::render::LABEL, host.instance), ..watchdog::render::TimerSpec::watchdog(std::path::PathBuf::from(format!("{root}/bin/spira-watchdog")), every, env) };
+    watchdog::render::render(platform, &spec)
+}
+
+/// One watchdog row's file for this host's platform. This installer writes systemd units, so a
+/// platform whose files carry other names (a launchd plist, a crontab line) is refused here.
+fn render_watchdog_row(ctx: &Ctx, row: &str) -> Result<String, String> {
+    let platform = watchdog::render::Platform::for_os(std::env::consts::OS);
+    let inst = inst_name(row, &ctx.host.instance);
+    let files = watchdog_files(platform, ctx.host)?;
+    files.into_iter().find(|(n, _)| *n == inst).map(|(_, t)| t).ok_or_else(|| format!("{inst}: the watchdog renders {platform:?} files on {}, which this systemd installer does not install", std::env::consts::OS))
+}
+
 /// Render every template and watcher instance this manifest installs. Used by `--render` and
 /// `--diff`, and by [`run`] itself so both paths use the same set.
 pub fn render_all(ctx: &Ctx) -> Result<Vec<(String, String, String)>, String> {
     // (installed name, template basename, rendered text)
     let mut out = Vec::new();
     for name in ctx.manifest.template_names() {
-        let text = render_template(ctx, name, None)?;
+        let text = if WATCHDOG_ROWS.contains(&name) { render_watchdog_row(ctx, name)? } else { render_template(ctx, name, None)? };
         out.push((inst_name(name, &ctx.host.instance), name.to_string(), text));
     }
     for w in &ctx.manifest.watch_names {
@@ -618,7 +648,7 @@ mod tests {
     use std::fs;
 
     fn host() -> HostValues {
-        HostValues { toml: "/h/cfg.toml".into(), home: "/h".into(), repo: "/h".into(), run: "/run".into(), db: "/db".into(), cockpit: "/h/cockpit".into(), dolt_data: "".into(), dolt: "/usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), env_bin: "/h/.local/lib/spira-env/bin".into(), sccache_dav_addr: "".into(), repo_map: "".into(), lc_password_file: "/h/lc.credential".into() }
+        HostValues { toml: "/h/cfg.toml".into(), home: "/h".into(), repo: "/h".into(), run: "/run".into(), db: "/db".into(), cockpit: "/h/cockpit".into(), dolt_data: "".into(), dolt: "/usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), env_bin: "/h/.local/lib/spira-env/bin".into(), sccache_dav_addr: "".into(), repo_map: "".into(), lc_password_file: "/h/lc.credential".into(), watchdog_every_s: "60".into() }
     }
 
     fn tiny_manifest() -> Manifest {
@@ -838,6 +868,66 @@ mod tests {
         let ctx2 = Ctx { suspended: &only_runtime, ..ctx };
         let r = run(&ctx2);
         assert!(matches!(act(&r, "spira-runtime-prod.service"), Action::Suspended));
+    }
+
+    fn watchdog_host(prod: &str) -> HostValues {
+        HostValues { prod: prod.into(), watchdog_every_s: "60".into(), ..host() }
+    }
+
+    #[test]
+    fn the_watchdog_renders_a_service_and_timer_on_linux_and_a_plist_on_macos() {
+        let h = watchdog_host("/rel/current/spira");
+        let env = "Environment=SPIRA_RELEASE=/rel/current\nEnvironment=SPIRA_TOML=/h/cfg.toml\nEnvironment=SPIRA_HOME=/rel/current/spira\nEnvironment=SPIRA_RUN=/run\nEnvironment=PATH=/rel/current/bin:/rel/current/spira:/h/.local/lib/spira-env/bin:/usr/local/bin:/usr/bin:/bin\n";
+        assert_eq!(
+            watchdog_files(watchdog::render::Platform::Systemd, &h).unwrap(),
+            vec![
+                ("spira-watchdog-prod.service".to_string(), format!("[Unit]\nDescription=spira-watchdog-prod — one pass: restart and page when the scheduler is wedged or absent\n\n[Service]\nType=oneshot\n{env}ExecStart=/rel/current/bin/spira-watchdog pass\nTimeoutStartSec=60\n")),
+                ("spira-watchdog-prod.timer".to_string(), "[Unit]\nDescription=spira-watchdog-prod timer\n\n[Timer]\nOnBootSec=60s\nOnUnitActiveSec=60s\nAccuracySec=1s\nUnit=spira-watchdog-prod.service\n\n[Install]\nWantedBy=timers.target\n".to_string()),
+            ]
+        );
+        let plist = watchdog_files(watchdog::render::Platform::Launchd, &h).unwrap();
+        assert_eq!(plist.len(), 1);
+        assert_eq!(plist[0].0, "spira-watchdog-prod.plist");
+        assert_eq!(
+            plist[0].1,
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>spira-watchdog-prod</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>/rel/current/bin/spira-watchdog</string>\n    <string>pass</string>\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>SPIRA_RELEASE</key>\n    <string>/rel/current</string>\n    <key>SPIRA_TOML</key>\n    <string>/h/cfg.toml</string>\n    <key>SPIRA_HOME</key>\n    <string>/rel/current/spira</string>\n    <key>SPIRA_RUN</key>\n    <string>/run</string>\n    <key>PATH</key>\n    <string>/rel/current/bin:/rel/current/spira:/h/.local/lib/spira-env/bin:/usr/local/bin:/usr/bin:/bin</string>\n  </dict>\n  <key>StartInterval</key>\n  <integer>60</integer>\n  <key>RunAtLoad</key>\n  <true/>\n</dict>\n</plist>\n"
+        );
+        let unset = HostValues { watchdog_every_s: String::new(), ..h };
+        assert!(watchdog_files(watchdog::render::Platform::Systemd, &unset).unwrap_err().contains("SPIRA_WATCHDOG_EVERY_SECS"), "no interval is a refusal, never a default");
+    }
+
+    /// law-periodic-tool-needs-a-tested-timer: the watchdog's timer is in the manifest, enabled,
+    /// written beside the other units and enabled by the install; this fails if the
+    /// registration is removed.
+    #[test]
+    fn the_watchdog_timer_is_registered_written_and_enabled() {
+        let m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
+        assert!(m.units.iter().any(|u| u.name == "spira-watchdog.timer" && u.enable), "the watchdog timer is registered and enabled");
+        assert!(m.units.iter().any(|u| u.name == "spira-watchdog.service" && !u.enable), "its service is installed, started by the timer");
+        assert!(m.enable("prod").contains(&"spira-watchdog-prod.timer".to_string()));
+
+        let td = tempdir();
+        let unit_dir = td.join("units");
+        let tmpl_dir = td.join("templates");
+        fs::create_dir_all(&unit_dir).unwrap();
+        fs::create_dir_all(td.join("rel/bin")).unwrap();
+        fs::create_dir_all(&tmpl_dir).unwrap();
+        write_templates(&tmpl_dir);
+        testkit::write_exe(td.join("rel/bin/spira-watchdog"), "exit 0\n");
+        let mut manifest = m.clone();
+        manifest.units.retain(|u| u.name.starts_with("spira-sentinel.") || u.name.starts_with("spira-watchdog."));
+        let h = watchdog_host(&td.join("rel/spira").to_string_lossy());
+        let sc = FakeSystemctl::default();
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let r = run(&ctx);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        for (name, text) in watchdog_files(watchdog::render::Platform::Systemd, &h).unwrap() {
+            assert!(r.written.contains(&name), "{name} written: {:?}", r.written);
+            assert_eq!(fs::read_to_string(unit_dir.join(&name)).unwrap(), text);
+        }
+        assert!(r.enabled_actions.iter().any(|(u, a)| u == "spira-watchdog-prod.timer" && matches!(a, Action::EnableNow)), "{:?}", r.enabled_actions);
+        assert!(fs::read_to_string(unit_dir.join(LEDGER)).unwrap().contains("spira-watchdog-prod.timer"), "a later release that drops it retires it");
     }
 
     #[test]
