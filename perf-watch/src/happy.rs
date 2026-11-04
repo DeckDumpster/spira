@@ -6,6 +6,12 @@ use crate::Clock;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+/// Whether `repo` has a round open (`queue round status`'s `round=open`), from the store's
+/// round view in-process.
+pub fn round_open_in(views: &spira_runtime::store::Projection, repo: &str) -> Result<bool, String> {
+    views.round_view(repo).map(|r| !r.value.rounds.is_empty()).map_err(|e| format!("the round view of {repo}: {e}"))
+}
+
 pub trait Sim {
     /// Whether a round VM pass is certifying right now.
     fn round_open(&mut self) -> Result<bool, String>;
@@ -206,6 +212,29 @@ pub fn stderr_tail(text: &str) -> String {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    struct Store(String);
+    impl spira_config::lc_call::Transport for Store {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+            let out = if argv[0] == "rc" { self.0.clone() } else { "[]".to_string() };
+            Ok(spira_config::lc_call::Reply { code: 0, out, err: String::new() })
+        }
+    }
+
+    #[test]
+    fn a_round_is_open_when_the_store_view_holds_one_and_not_after_it_landed() {
+        let views = |state: &str| {
+            let store = serde_json::json!({"ok": {"list_rev": 2, "items": [{"key": "batches/spira/r1", "create_rev": {"main": 1},
+                "value": {"data": {"batch_id": "r1", "state": state, "repo": "spira", "round": {"head": "h", "members": "sp-a:t"}}}}]}});
+            let client = spira_config::lc_call::LcClient::over(std::sync::Arc::new(Store(store.to_string())), true);
+            let p = spira_runtime::store::Projection::new(client, std::time::Duration::from_secs(60), std::sync::Arc::new(std::time::Instant::now));
+            p.load().unwrap();
+            p
+        };
+        assert_eq!(round_open_in(&views("CI_RUNNING"), "spira"), Ok(true));
+        assert_eq!(round_open_in(&views("LANDED"), "spira"), Ok(false));
+        assert_eq!(round_open_in(&views("CI_RUNNING"), "other"), Ok(false));
+    }
 
     struct Stub(Cell<u64>);
     impl Clock for Stub {
