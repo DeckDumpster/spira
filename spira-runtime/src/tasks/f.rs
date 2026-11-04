@@ -61,19 +61,14 @@ pub static TASKS: &[Task] = &[
         keys: &[persona_ops::KEYS],
         build: |_| refuse(persona_ops::NAME, persona_ops::PersonaOps::from_cfg()).registration(),
     },
-];
-
-/// The rows of this family not yet ported, in the design's catalogue order. `inbox.append` and
-/// the `unit.*` effects both persona rows emit are served by `tasks::SHARED`.
-pub static PENDING: &[Task] = &[
     Task {
         name: trigger_groom::NAME,
         boot: trigger_groom::TriggerGroom::boot,
         cadence_ms: |_| cadence(trigger_groom::CADENCE_KEY),
         effects: trigger_groom::EFFECTS,
         runners: &[
-            (trigger_groom::OBSERVE, |_, _, _| unimplemented!("trigger.groom.observe: not ported yet")),
-            (trigger_groom::FILE, |_, _, _| unimplemented!("trigger.groom.file: not ported yet")),
+            (trigger_groom::OBSERVE, trigger_groom::run_observe),
+            (trigger_groom::FILE, trigger_groom::run_file),
         ],
         keys: &[trigger_groom::KEYS],
         build: |_| refuse(trigger_groom::NAME, trigger_groom::TriggerGroom::from_cfg()).registration(),
@@ -84,8 +79,8 @@ pub static PENDING: &[Task] = &[
         cadence_ms: |_| cadence(trigger_warden::CADENCE_KEY),
         effects: trigger_warden::EFFECTS,
         runners: &[
-            (trigger_warden::OBSERVE, |_, _, _| unimplemented!("trigger.warden.observe: not ported yet")),
-            (trigger_warden::FILE, |_, _, _| unimplemented!("trigger.warden.file: not ported yet")),
+            (trigger_warden::OBSERVE, trigger_warden::run_observe),
+            (trigger_warden::FILE, trigger_warden::run_file),
         ],
         keys: &[trigger_warden::KEYS],
         build: |_| refuse(trigger_warden::NAME, trigger_warden::TriggerWarden::from_cfg()).registration(),
@@ -96,12 +91,56 @@ pub static PENDING: &[Task] = &[
         cadence_ms: |_| cadence(trigger_mimir::CADENCE_KEY),
         effects: trigger_mimir::EFFECTS,
         runners: &[
-            (trigger_mimir::OBSERVE, |_, _, _| unimplemented!("trigger.mimir.observe: not ported yet")),
-            (trigger_mimir::FILE, |_, _, _| unimplemented!("trigger.mimir.file: not ported yet")),
+            (trigger_mimir::OBSERVE, trigger_mimir::run_observe),
+            (trigger_mimir::FILE, trigger_mimir::run_file),
         ],
         keys: &[trigger_mimir::KEYS],
         build: |_| refuse(trigger_mimir::NAME, trigger_mimir::TriggerMimir::from_cfg()).registration(),
     },
+    Task {
+        name: asks_ideas::NAME,
+        boot: asks_ideas::AsksIdeas::boot,
+        cadence_ms: |_| cadence(asks_ideas::CADENCE_KEY),
+        effects: asks_ideas::EFFECTS,
+        runners: &[
+            (asks_ideas::OBSERVE, asks_ideas::run_observe),
+            (asks_ideas::ASK, asks_ideas::run_ask),
+        ],
+        keys: &[asks_ideas::KEYS],
+        build: |_| refuse(asks_ideas::NAME, asks_ideas::AsksIdeas::from_cfg()).registration(),
+    },
+    Task {
+        name: intake_filings::NAME,
+        boot: intake_filings::IntakeFilings::boot,
+        cadence_ms: |_| cadence(intake_filings::CADENCE_KEY),
+        effects: intake_filings::EFFECTS,
+        runners: &[
+            (intake_filings::OBSERVE, intake_filings::run_observe),
+            (intake_filings::FILE, intake_filings::run_file),
+            (intake_filings::APPEND, intake_filings::run_append),
+            (intake_filings::ACK, intake_filings::run_ack),
+        ],
+        keys: &[intake_filings::KEYS],
+        build: |_| refuse(intake_filings::NAME, intake_filings::IntakeFilings::from_cfg()).registration(),
+    },
+    Task {
+        name: intake_kit_bump::NAME,
+        boot: intake_kit_bump::IntakeKitBump::boot,
+        cadence_ms: |_| cadence(intake_kit_bump::CADENCE_KEY),
+        effects: intake_kit_bump::EFFECTS,
+        runners: &[
+            (intake_kit_bump::OBSERVE, intake_kit_bump::run_observe),
+            (intake_kit_bump::FILE, intake_kit_bump::run_file),
+            (intake_kit_bump::AMEND, intake_kit_bump::run_amend),
+        ],
+        keys: &[intake_kit_bump::KEYS],
+        build: |_| refuse(intake_kit_bump::NAME, intake_kit_bump::IntakeKitBump::from_cfg()).registration(),
+    },
+];
+
+/// The rows of this family not yet ported, in the design's catalogue order. `inbox.append` and
+/// the `unit.*` effects both persona rows emit are served by `tasks::SHARED`.
+pub static PENDING: &[Task] = &[
     Task {
         name: persona_archivist::NAME,
         boot: persona_archivist::PersonaArchivist::boot,
@@ -118,45 +157,6 @@ pub static PENDING: &[Task] = &[
         ],
         keys: &[persona_archivist::KEYS],
         build: |_| refuse(persona_archivist::NAME, persona_archivist::PersonaArchivist::from_cfg()).registration(),
-    },
-    Task {
-        name: asks_ideas::NAME,
-        boot: asks_ideas::AsksIdeas::boot,
-        cadence_ms: |_| cadence(asks_ideas::CADENCE_KEY),
-        effects: asks_ideas::EFFECTS,
-        runners: &[
-            (asks_ideas::OBSERVE, |_, _, _| unimplemented!("asks.ideas.observe: not ported yet")),
-            (asks_ideas::ASK, |_, _, _| unimplemented!("asks.ideas.ask: not ported yet")),
-        ],
-        keys: &[asks_ideas::KEYS],
-        build: |_| refuse(asks_ideas::NAME, asks_ideas::AsksIdeas::from_cfg()).registration(),
-    },
-    Task {
-        name: intake_filings::NAME,
-        boot: intake_filings::IntakeFilings::boot,
-        cadence_ms: |_| cadence(intake_filings::CADENCE_KEY),
-        effects: intake_filings::EFFECTS,
-        runners: &[
-            (intake_filings::OBSERVE, |_, _, _| unimplemented!("intake.filings.observe: not ported yet")),
-            (intake_filings::FILE, |_, _, _| unimplemented!("intake.filings.file: not ported yet")),
-            (intake_filings::APPEND, |_, _, _| unimplemented!("intake.filings.append: not ported yet")),
-            (intake_filings::ACK, |_, _, _| unimplemented!("intake.filings.ack: not ported yet")),
-        ],
-        keys: &[intake_filings::KEYS],
-        build: |_| refuse(intake_filings::NAME, intake_filings::IntakeFilings::from_cfg()).registration(),
-    },
-    Task {
-        name: intake_kit_bump::NAME,
-        boot: intake_kit_bump::IntakeKitBump::boot,
-        cadence_ms: |_| cadence(intake_kit_bump::CADENCE_KEY),
-        effects: intake_kit_bump::EFFECTS,
-        runners: &[
-            (intake_kit_bump::OBSERVE, |_, _, _| unimplemented!("intake.kit_bump.observe: not ported yet")),
-            (intake_kit_bump::FILE, |_, _, _| unimplemented!("intake.kit_bump.file: not ported yet")),
-            (intake_kit_bump::AMEND, |_, _, _| unimplemented!("intake.kit_bump.amend: not ported yet")),
-        ],
-        keys: &[intake_kit_bump::KEYS],
-        build: |_| refuse(intake_kit_bump::NAME, intake_kit_bump::IntakeKitBump::from_cfg()).registration(),
     },
 ];
 

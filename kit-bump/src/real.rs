@@ -46,6 +46,38 @@ pub fn index_body<'a>(reply: &'a str, url: &str) -> Result<Option<&'a str>, Stri
     }
 }
 
+/// The newest release of `crate_name` in the sparse index at `registry`, read in-process over
+/// HTTP (`file://` registries are read from disk); `None` when nothing is published (404/410).
+pub fn fetch_release(registry: &str, crate_name: &str) -> Result<Option<String>, String> {
+    let url = format!("{}/{}", registry.trim_end_matches('/'), index_path(crate_name));
+    let index = if let Some(path) = url.strip_prefix("file://") {
+        match std::fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(format!("{url}: {e}")),
+        }
+    } else {
+        match ureq::get(&url).timeout(std::time::Duration::from_secs(25)).call() {
+            Ok(r) => r.into_string().map_err(|e| format!("{url}: {e}"))?,
+            Err(ureq::Error::Status(404 | 410, _)) => return Ok(None),
+            Err(ureq::Error::Status(s, _)) => return Err(format!("{url} answered HTTP {s}")),
+            Err(e) => return Err(format!("{url}: {e}")),
+        }
+    };
+    crate::newest_release(&index).map(Some).ok_or_else(|| format!("no release of `{crate_name}` in {url}"))
+}
+
+/// A site's checkout and base ref from the repo map, as `install::kit_bump` renders them.
+pub fn resolve_site(reg: &spira_config::repos::Registry, name: &str, file: &str) -> Result<Site, String> {
+    use spira_config::repos::Column;
+    let path = reg.field(name, Column::Path).unwrap_or_default();
+    let git_ref = reg.field(name, Column::Base).unwrap_or_default();
+    if path.is_empty() || git_ref.is_empty() {
+        return Err(format!("repo {name:?} needs a path and a base ref in the repo map"));
+    }
+    Ok(Site { name: name.into(), path, git_ref, file: file.into() })
+}
+
 fn git(path: &str, args: &[&str]) -> Result<String, String> {
     let mut c = bounded("git");
     c.arg("-C").arg(path).args(args);

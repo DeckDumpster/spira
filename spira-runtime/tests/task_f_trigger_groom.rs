@@ -1,7 +1,6 @@
 //! Acceptance T1–T6 for `trigger.groom`, from its contract
-//! (`wiki/projects/spira/designs/tasks/trigger-groom.md`, Acceptance) on `TaskRig`. Red until the
-//! port lands: `decide`, `may_file` and `step` are `unimplemented!`, and the row waits in
-//! `tasks::f::PENDING`. T6 runs two virtual days (the contract asks thirty). The task carries no
+//! (`wiki/projects/spira/designs/tasks/trigger-groom.md`, Acceptance) on `TaskRig`. The row is ported
+//! (in `tasks::f::TASKS`). T6 runs two virtual days (the contract asks thirty). The task carries no
 //! state, so T3's read-equals-recorded part does not apply.
 
 use std::collections::BTreeMap;
@@ -89,7 +88,7 @@ fn t3_every_legal_step_is_taken_and_filing_over_an_open_trigger_is_refused() {
 
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
-    let row = f::PENDING.iter().find(|t| t.name == NAME).expect("the row is pending");
+    let row = f::TASKS.iter().find(|t| t.name == NAME).expect("the row is ported");
     assert_eq!(row.effects, EFFECTS, "the row declares the module's effects");
     let real: Vec<&str> = tasks::routes().keys().copied().collect();
     let doubles = sim::doubles::service().names();

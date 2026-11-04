@@ -1,7 +1,6 @@
 //! `trigger.warden`: files the warden's scheduled sweep bead. Replaces `spira-warden-prod`
 //! (ExecStartPre `world guard`; ExecStart `spira/warden-trigger.sh`). Pattern P1, stateless.
-//! Contract: `wiki/projects/spira/designs/tasks/trigger-warden.md`. Not ported yet: [`decide`],
-//! [`may_file`] and [`step`] are `unimplemented!`, and the row waits in `tasks::f::PENDING`.
+//! Contract: `wiki/projects/spira/designs/tasks/trigger-warden.md`.
 //!
 //! # Tick
 //!
@@ -54,7 +53,10 @@ use std::collections::BTreeMap;
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
 
-use super::{Cycle, Decision, Transition};
+use spira_config::lc_call::LcClient;
+
+use super::trigger_groom::{config_input, config_of, dedup_labels, file_effect, guard, halted, run_file_with, walk};
+use super::{Bead, Cycle, Decision, Transition};
 
 pub const NAME: &str = "trigger.warden";
 pub const STREAM: &str = "task.trigger.warden";
@@ -89,18 +91,43 @@ pub const TRANSITIONS: &[Transition<Step>] = &[
 ];
 
 /// The tick's next step on `on`, or a refusal naming the step it is in.
-pub fn step(_from: Step, _on: &str) -> Result<Step, String> {
-    unimplemented!("trigger.warden: not ported yet")
+pub fn step(from: Step, on: &str) -> Result<Step, String> {
+    walk(TRANSITIONS, from, on)
 }
 
 /// The file effect's own guard: the open-sweep count it re-reads before writing.
-pub fn may_file(_recount: &Result<u64, String>) -> Result<(), String> {
-    unimplemented!("trigger.warden: not ported yet")
+pub fn may_file(recount: &Result<u64, String>) -> Result<(), String> {
+    guard(recount).map_err(|e| format!("a sweep is open or unreadable: {e}"))
 }
 
 /// The pure decision over one snapshot, with `config` the pinned [`KEYS`].
-pub fn decide(_snap: &Snapshot, _config: &BTreeMap<String, String>) -> Decision {
-    unimplemented!("trigger.warden: not ported yet")
+pub fn decide(snap: &Snapshot, config: &BTreeMap<String, String>) -> Decision {
+    if snap.halted {
+        return Decision::Skip("halted".into());
+    }
+    match snap.open_sweeps {
+        Err(_) => Decision::Skip("unreadable".into()),
+        Ok(n) if n > 0 => Decision::Skip("open".into()),
+        Ok(_) => {
+            let run = config.get("SPIRA_RUN").cloned().unwrap_or_default();
+            let mut labels: Vec<String> = dedup_labels(config, "SPIRA_WARDEN_LABEL").split(',').filter(|l| !l.is_empty()).map(str::to_string).collect();
+            labels.push(format!("delivers:note:{run}/warden.log"));
+            Decision::File(Bead { title: TITLE.into(), kind: "task".into(), priority: 3, labels, body: DESCRIPTION.into(), persona: None, repo: None })
+        }
+    }
+}
+
+/// `trigger.warden.observe`: whether the world is halted and how many sweeps are open.
+pub fn run_observe(e: &crate::Effects, _key: &str, s: &EffectSpec) -> Result<String, String> {
+    let config = config_of(s)?;
+    let lc = LcClient::socket(&e.world.lc_socket).within(std::time::Duration::from_millis(OBSERVE_DEADLINE_MS));
+    let snap = Snapshot { halted: halted(e), open_sweeps: mimir_trigger::observe::open_trigger_count_on(&lc, &dedup_labels(&config, "SPIRA_WARDEN_LABEL")) };
+    serde_json::to_string(&snap).map_err(|e| e.to_string())
+}
+
+/// `trigger.warden.file`.
+pub fn run_file(e: &crate::Effects, _key: &str, s: &EffectSpec) -> Result<String, String> {
+    run_file_with(e, s, may_file)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -129,14 +156,14 @@ impl Handler for TriggerWarden {
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        CYCLE.handle(self.interval_ms, view, ev, String::new, |body| {
+        CYCLE.handle(self.interval_ms, view, ev, || config_input(&self.config), |body| {
             let Ok(snap) = serde_json::from_str::<Snapshot>(body) else { return vec![] };
             match decide(&snap, &self.config) {
                 Decision::Skip(why) => {
                     ctx.event().set("warden.skip", why.as_str());
                     vec![]
                 }
-                Decision::File(bead) => vec![Command::Effect(EffectSpec { name: FILE.into(), input: serde_json::to_string(&bead).unwrap_or_default(), deadline_ms: FILE_DEADLINE_MS })],
+                Decision::File(bead) => vec![file_effect(FILE, bead, dedup_labels(&self.config, "SPIRA_WARDEN_LABEL"), FILE_DEADLINE_MS)],
             }
         })
     }

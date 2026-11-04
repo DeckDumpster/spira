@@ -1,7 +1,6 @@
 //! Acceptance T1–T6 for `intake.kit_bump`, from its contract
-//! (`wiki/projects/spira/designs/tasks/intake-kit-bump.md`, Acceptance) on `TaskRig`. Red until
-//! the port lands: `decide` and `step` are `unimplemented!`, and the row waits in
-//! `tasks::f::PENDING`. T6 runs two virtual days (the contract asks fourteen).
+//! (`wiki/projects/spira/designs/tasks/intake-kit-bump.md`, Acceptance) on `TaskRig`. The row is ported
+//! (in `tasks::f::TASKS`). T6 runs two virtual days (the contract asks fourteen).
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -94,7 +93,7 @@ fn t3_an_open_bump_at_an_older_target_is_amended_and_the_carry_reads_back_as_rec
 
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
-    let row = f::PENDING.iter().find(|t| t.name == NAME).expect("the row is pending");
+    let row = f::TASKS.iter().find(|t| t.name == NAME).expect("the row is ported");
     assert_eq!(row.effects, EFFECTS, "the row declares the module's effects");
     let real: Vec<&str> = tasks::routes().keys().copied().collect();
     let doubles = sim::doubles::service().names();

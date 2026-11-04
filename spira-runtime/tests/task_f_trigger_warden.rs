@@ -1,7 +1,6 @@
 //! Acceptance T1–T6 for `trigger.warden`, from its contract
-//! (`wiki/projects/spira/designs/tasks/trigger-warden.md`, Acceptance) on `TaskRig`. Red until the
-//! port lands: `decide`, `may_file` and `step` are `unimplemented!`, and the row waits in
-//! `tasks::f::PENDING`. T6 runs two virtual days (the contract asks thirty). T1 checks the 2 h
+//! (`wiki/projects/spira/designs/tasks/trigger-warden.md`, Acceptance) on `TaskRig`. The row is ported
+//! (in `tasks::f::TASKS`). T6 runs two virtual days (the contract asks thirty). T1 checks the 2 h
 //! cadence only: a `Task` row has no boot offset, so the contract's first tick at boot+20 min is
 //! not expressible (and `tasks.rs` requires the boot tick to arm one cadence on).
 
@@ -89,7 +88,7 @@ fn t3_every_legal_step_is_taken_and_filing_over_an_open_sweep_is_refused() {
 
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
-    let row = f::PENDING.iter().find(|t| t.name == NAME).expect("the row is pending");
+    let row = f::TASKS.iter().find(|t| t.name == NAME).expect("the row is ported");
     assert_eq!(row.effects, EFFECTS, "the row declares the module's effects");
     let real: Vec<&str> = tasks::routes().keys().copied().collect();
     let doubles = sim::doubles::service().names();

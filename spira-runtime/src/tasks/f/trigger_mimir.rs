@@ -1,8 +1,6 @@
 //! `trigger.mimir`: files the Mimir persona's retrospective bead. Replaces `spira-mimir-prod`
 //! (ExecStartPre `world guard`; ExecStart `spira/mimir-trigger.sh`, which execs `mimir-trigger`).
-//! Pattern P1, stateless. Contract: `wiki/projects/spira/designs/tasks/trigger-mimir.md`. Not
-//! ported yet: [`decide`], [`may_file`] and [`step`] are `unimplemented!`, and the row waits in
-//! `tasks::f::PENDING`.
+//! Pattern P1, stateless. Contract: `wiki/projects/spira/designs/tasks/trigger-mimir.md`.
 //!
 //! # Tick
 //!
@@ -57,7 +55,12 @@ use std::collections::BTreeMap;
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
 
-use super::{Cycle, Decision, Transition};
+use mimir_trigger::engine;
+use mimir_trigger::observe as obs;
+use spira_config::lc_call::LcClient;
+
+use super::trigger_groom::{config_input, config_of, dedup_labels, file_effect, guard, halted, run_file_with, walk};
+use super::{Bead, Cycle, Decision, Transition};
 
 pub const NAME: &str = "trigger.mimir";
 pub const STREAM: &str = "task.trigger.mimir";
@@ -107,24 +110,91 @@ pub const TRANSITIONS: &[Transition<Step>] = &[
     Transition { from: Step::Observe, on: "open", to: Step::Skip, effects: &[] },
     Transition { from: Step::Observe, on: "lane", to: Step::Skip, effects: &[] },
     Transition { from: Step::Observe, on: "no-trigger", to: Step::Skip, effects: &[] },
+    Transition { from: Step::Observe, on: "recent", to: Step::Skip, effects: &[] },
     Transition { from: Step::Observe, on: "time", to: Step::Filed, effects: &[FILE] },
     Transition { from: Step::Observe, on: "landing", to: Step::Filed, effects: &[FILE] },
     Transition { from: Step::Observe, on: "invalid-closed", to: Step::Filed, effects: &[FILE] },
 ];
 
 /// The tick's next step on `on`, or a refusal naming the step it is in.
-pub fn step(_from: Step, _on: &str) -> Result<Step, String> {
-    unimplemented!("trigger.mimir: not ported yet")
+pub fn step(from: Step, on: &str) -> Result<Step, String> {
+    walk(TRANSITIONS, from, on)
 }
 
 /// The file effect's own guard: the open-trigger count it re-reads before writing.
-pub fn may_file(_recount: &Result<u64, String>) -> Result<(), String> {
-    unimplemented!("trigger.mimir: not ported yet")
+pub fn may_file(recount: &Result<u64, String>) -> Result<(), String> {
+    guard(recount)
 }
 
 /// The pure decision over one snapshot, with `config` the pinned [`KEYS`].
-pub fn decide(_snap: &Snapshot, _config: &BTreeMap<String, String>) -> Decision {
-    unimplemented!("trigger.mimir: not ported yet")
+pub fn decide(snap: &Snapshot, config: &BTreeMap<String, String>) -> Decision {
+    if snap.halted {
+        return Decision::Skip("halted".into());
+    }
+    match snap.open_triggers {
+        Err(_) => return Decision::Skip("unreadable".into()),
+        Ok(n) if n > 0 => return Decision::Skip("open".into()),
+        Ok(_) => {}
+    }
+    if !snap.lane_admitted {
+        return Decision::Skip("lane".into());
+    }
+    let num = |k: &str| config.get(k).and_then(|v| v.trim().parse::<i64>().ok());
+    let (Some(max_gap), Some(interval), Some(max_beads)) = (num("SPIRA_MIMIR_MAX_GAP_SECONDS"), num("SPIRA_MIMIR_LANDING_INTERVAL"), num("SPIRA_MIMIR_MAX_BEADS")) else { return Decision::Skip("unreadable".into()) };
+    let elapsed = snap.now - snap.lastpass;
+    let rows = engine::invalid_closed_rows(&snap.invalid_closed_raw);
+    let reason = engine::TriggerReason { time: engine::time_trigger(elapsed, max_gap), landing: engine::landing_trigger(snap.landings_since_watermark, interval.max(0) as u64), invalid_closed: !rows.is_empty() };
+    if !reason.any() {
+        return Decision::Skip("no-trigger".into());
+    }
+    let text = engine::reason_text(&reason, elapsed, snap.landings_since_watermark, rows.len());
+    let joined = rows.join("\n");
+    let body = engine::description(max_beads.max(0) as u64, &text, snap.lastpass, snap.watermark, reason.invalid_closed.then_some(joined.as_str()));
+    let run = config.get("SPIRA_RUN").cloned().unwrap_or_default();
+    let mut labels: Vec<String> = dedup_labels(config, "SPIRA_MIMIR_LABEL").split(',').filter(|l| !l.is_empty()).map(str::to_string).collect();
+    labels.push(format!("delivers:note:{run}/mimir.log"));
+    Decision::File(Bead { title: format!("Mimir pass — {text}"), kind: "task".into(), priority: 3, labels, body, persona: None, repo: None })
+}
+
+/// When this stream last filed a trigger: the newest `trigger.mimir.file` that succeeded.
+pub fn last_filed_at(view: &Projection, stream: &StreamKey) -> Option<u64> {
+    view.events(stream).iter().rev().find(|e| e.kind.tag == EFFECT_SUCCEEDED && crate::watchers::answered_effect(view, e).as_deref() == Some(FILE)).map(|e| e.at)
+}
+
+/// Whether a trigger filed at `filed_at` still covers `now` (both ms): at most one Mimir pass is
+/// filed per `SPIRA_MIMIR_MAX_GAP_SECONDS`. The open-trigger count is the dedupe once the store
+/// shows the bead; this covers the bead the store does not show yet, or one closed before its
+/// pass ran, which the script would have filed again on the next quarter hour.
+pub fn recently_filed(filed_at: Option<u64>, now: u64, config: &BTreeMap<String, String>) -> bool {
+    let gap_ms = config.get("SPIRA_MIMIR_MAX_GAP_SECONDS").and_then(|g| g.trim().parse::<u64>().ok()).unwrap_or(0) * 1000;
+    filed_at.is_some_and(|at| now.saturating_sub(at) < gap_ms)
+}
+
+/// `trigger.mimir.observe`: the snapshot `decide` reads.
+pub fn run_observe(e: &crate::Effects, _key: &str, s: &EffectSpec) -> Result<String, String> {
+    let config = config_of(s)?;
+    let lc = LcClient::socket(&e.world.lc_socket);
+    let reg = obs::registry(&config)?;
+    let labels = obs::lane_labels(&config)?;
+    let run = std::path::PathBuf::from(obs::pinned(&config, "SPIRA_RUN")?);
+    let watermark = obs::read_epoch(&run.join("mimir.watermark"));
+    let map_text = std::fs::read_to_string(obs::pinned(&config, "SPIRA_REPO_MAP")?).unwrap_or_default();
+    let snap = Snapshot {
+        halted: halted(e),
+        open_triggers: obs::open_trigger_count_on(&lc, &dedup_labels(&config, "SPIRA_MIMIR_LABEL")),
+        lane_admitted: obs::lane_admitted(&reg, &labels.mimir, &labels),
+        now: spira_config::vtime::now_epoch() as i64,
+        lastpass: obs::read_epoch(&run.join("mimir.lastpass")),
+        watermark,
+        landings_since_watermark: obs::landings_everywhere(&reg, &map_text, watermark),
+        invalid_closed_raw: obs::invalid_closed_raw()?,
+    };
+    serde_json::to_string(&snap).map_err(|e| e.to_string())
+}
+
+/// `trigger.mimir.file`.
+pub fn run_file(e: &crate::Effects, _key: &str, s: &EffectSpec) -> Result<String, String> {
+    run_file_with(e, s, may_file)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -153,14 +223,18 @@ impl Handler for TriggerMimir {
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        CYCLE.handle(self.interval_ms, view, ev, String::new, |body| {
+        CYCLE.handle(self.interval_ms, view, ev, || config_input(&self.config), |body| {
             let Ok(snap) = serde_json::from_str::<Snapshot>(body) else { return vec![] };
             match decide(&snap, &self.config) {
                 Decision::Skip(why) => {
                     ctx.event().set("mimir.skip", why.as_str());
                     vec![]
                 }
-                Decision::File(bead) => vec![Command::Effect(EffectSpec { name: FILE.into(), input: serde_json::to_string(&bead).unwrap_or_default(), deadline_ms: DEADLINE_MS })],
+                Decision::File(_) if recently_filed(last_filed_at(view, &ev.stream), ev.at, &self.config) => {
+                    ctx.event().set("mimir.skip", "recent");
+                    vec![]
+                }
+                Decision::File(bead) => vec![file_effect(FILE, bead, dedup_labels(&self.config, "SPIRA_MIMIR_LABEL"), DEADLINE_MS)],
             }
         })
     }
