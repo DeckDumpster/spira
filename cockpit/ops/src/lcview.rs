@@ -314,6 +314,15 @@ pub struct LiveDwarf {
     pub phase: String,
 }
 
+/// The world plane from the halt stamp's text (`None`: no stamp): what `world status`'s
+/// first halt line said, as the view shows it — `HALTED since <first line>`, else running.
+pub fn world_line(stamp: Option<&str>) -> String {
+    match stamp {
+        Some(text) => format!("HALTED since {}", text.lines().next().unwrap_or("")),
+        None => "plane work: RUNNING".into(),
+    }
+}
+
 /// The pid a lifecycle holder names: `dwarf-<name>@<pid>.<start>`.
 pub fn holder_pid(holder: &str) -> Option<i64> {
     holder.split_once('@')?.1.split('.').next()?.parse().ok()
@@ -1755,6 +1764,12 @@ pub fn render_html(v: &View, stale: Option<i64>, poll_s: u64) -> String {
 mod tests {
     use super::*;
     use spira_claim::verdicts::{Entry, Kind, VerdictFile};
+
+    #[test]
+    fn the_world_line_reads_the_halt_stamp_as_world_status_printed_it() {
+        assert_eq!(world_line(None), "plane work: RUNNING");
+        assert_eq!(world_line(Some("2026-11-03T10:00:00Z\nwhy: drill\n")), "HALTED since 2026-11-03T10:00:00Z");
+    }
 
     /// The page's visible text: tags dropped, entities decoded.
     fn page_text(v: &View) -> String {

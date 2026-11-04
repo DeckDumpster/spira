@@ -1,7 +1,7 @@
 //! `reply <bead-id> "<text>"` — answer the operator inside a bead's own comment thread.
 //! See cockpit-ops's DESIGN.md and src/reply.rs.
 
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::Path;
 use std::process::{ExitCode, Stdio};
 
@@ -13,22 +13,9 @@ fn unique() -> String {
     format!("{}-{nanos}", std::process::id())
 }
 
+/// `mail sendmail [--to]`, delivered in process by the mail library.
 fn sendmail(raw: &str, to: Option<&str>) -> Result<(), String> {
-    let mut cmd = spira_config::bounded::bounded("mail");
-    cmd.arg("sendmail");
-    if let Some(t) = to {
-        cmd.args(["--to", t]);
-    }
-    let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().map_err(|e| format!("failed to run mail: {e}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(raw.as_bytes()).map_err(|e| format!("could not write to mail: {e}"))?;
-    }
-    let out = child.wait_with_output().map_err(|e| format!("mail did not finish: {e}"))?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
-    }
+    cockpit_ops::lcio::sendmail(raw, to)
 }
 
 struct RealBd;
@@ -39,6 +26,7 @@ impl Commenter for RealBd {
             Ok(b) => b,
             Err(e) => return BdResult { success: false, combined: e },
         };
+        // FORK-EDGE: content store write
         let out = spira_config::bounded::bounded(&bd)
             .args(["content", "comments", "add", id, text])
             .env("BEADS_ACTOR", "claude")
@@ -72,6 +60,7 @@ struct RealFollow;
 
 impl Follow for RealFollow {
     fn lift_hold(&self, id: &str, message_id: &str) -> Result<(), String> {
+        // FORK-EDGE: unserved verb reply (a callers.rs verb the socket does not serve).
         let out = spira_config::bounded::bounded("spira-lc")
             .args(["reply", id, message_id, "claude"])
             .output()

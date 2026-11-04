@@ -25,15 +25,6 @@ fn default_window(tmux: &Tmux) -> String {
     "cockpit:2".to_string()
 }
 
-/// `tmux-env.sh scrub`, unchanged bash — every pane this binary opens inherits the tmux
-/// SERVER's environment, which may still carry a session identity from whoever forked it.
-fn scrub_tmux_env(cock: &std::path::Path) {
-    let script = cock.join("tmux-env.sh");
-    if script.is_file() {
-        let _ = spira_config::bounded::bounded("bash").arg(&script).arg("scrub").output();
-    }
-}
-
 fn main() -> ExitCode {
     cockpit_ops::conf::self_source();
 
@@ -63,7 +54,7 @@ fn main() -> ExitCode {
     let tmux = Tmux::new();
 
     if matches!(action.as_str(), "up" | "ensure") {
-        scrub_tmux_env(&conf.cock);
+        cockpit_ops::tmux_env::scrub_here(&tmux);
     }
 
     let window = window.unwrap_or_else(|| default_window(&tmux));

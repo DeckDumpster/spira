@@ -9,6 +9,7 @@
 //! crate per script would recreate the five-copies-of-one-idea problem `cockpit/db.sh`'s own
 //! header names as the reason it is one function and not five.
 
+pub mod lcio;
 pub mod lcview;
 pub mod lctui;
 pub mod conf;
@@ -21,3 +22,4 @@ pub mod reply;
 pub mod resolve;
 pub mod sections;
 pub mod tmux;
+pub mod tmux_env;

@@ -9,6 +9,12 @@ use std::io::{Read, Seek, SeekFrom};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+/// The store's served reads, in process: no `spira-lc` per call.
+fn lc(args: &[&str]) -> Result<String, String> {
+    cockpit_ops::lcio::answer(&cockpit_ops::lcio::client()?, args)
+}
+
+/// A non-Spira child (git) or a sibling the library cannot yet answer, under a 5 s cap.
 fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
     let out = Command::new("timeout")
         .arg("5")
@@ -23,26 +29,12 @@ fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// Whether the world is halted, from the first line `world status` prints ("not halted by
-/// world.sh", or the halt it names), within half a second. Its per-plane lines take ~11 s
-/// (it queries every timer first), past the 5 s call cap, so they are not waited for.
-/// A running world reads as "plane work: RUNNING", the form the view already understands.
+/// Whether the world is halted, from the halt stamp `world status` reads (spira_world), in
+/// process: a running world reads as "plane work: RUNNING", the form the view understands.
 fn world_plane() -> Result<String, String> {
-    use std::io::BufRead;
-    let mut child = Command::new("timeout")
-        .args(["5", spira_config::release_env::tool("world")?.as_str(), "status"])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| format!("world status: {e}"))?;
-    let first = child.stdout.take().and_then(|o| std::io::BufReader::new(o).lines().map_while(Result::ok).find(|l| l.contains("halted")));
-    let _ = child.kill();
-    let _ = child.wait();
-    match first {
-        Some(l) if l.contains("not halted") => Ok("plane work: RUNNING".into()),
-        Some(l) => Ok(l.trim_start_matches("spira: ").to_string()),
-        None => Err("world status: printed no halt line within 5 s".into()),
-    }
+    let stamp = spira_world::halt_stamp()?;
+    let text = stamp.is_file().then(|| std::fs::read_to_string(&stamp).unwrap_or_default());
+    Ok(cockpit_ops::lcview::world_line(text.as_deref()))
 }
 
 fn read_tail(path: &std::path::Path) -> Option<Tail> {
@@ -58,7 +50,7 @@ fn read_tail(path: &std::path::Path) -> Option<Tail> {
 
 fn lc_json(args: &[&str]) -> Result<Vec<serde_json::Value>, String> {
     let name = format!("spira-lc {}", args.join(" "));
-    run("spira-lc", args)
+    lc(args)
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("{name}: {e}")))
         .map(|v| v.as_array().cloned().unwrap_or_default())
 }
@@ -66,7 +58,7 @@ fn lc_json(args: &[&str]) -> Result<Vec<serde_json::Value>, String> {
 /// The `items` of a `spira-lc plan items` answer.
 fn plan_items(args: &[&str]) -> Result<Vec<serde_json::Value>, String> {
     let name = format!("spira-lc {}", args.join(" "));
-    let v: serde_json::Value = run("spira-lc", args).and_then(|t| serde_json::from_str(&t).map_err(|e| format!("{name}: {e}")))?;
+    let v: serde_json::Value = lc(args).and_then(|t| serde_json::from_str(&t).map_err(|e| format!("{name}: {e}")))?;
     v["items"].as_array().cloned().ok_or_else(|| format!("{name}: no items in the answer"))
 }
 
@@ -164,6 +156,7 @@ fn gather_state_machine(s: &mut Snapshot) {
 }
 
 fn gather_vm_runs(s: &mut Snapshot) {
+    // FORK-EDGE: needs a round-vm library (lease status); round-vm is a sibling binary.
     let status = run("round-vm", &["status", "--json"]).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("round-vm status --json: {e}")));
     let v = match status {
         Ok(v) => v,
@@ -180,8 +173,18 @@ fn gather_vm_runs(s: &mut Snapshot) {
     }
 }
 
+/// `spira-config repo root|base <name>`, read from the registry in process.
+fn repo_root_and_base(name: &str) -> Result<(String, String), String> {
+    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    let home = spira_config::resolve::locate_home_for_process().unwrap_or_default();
+    let reg = spira_config::repos::Registry::from_env_checkout(env, &home);
+    let root = reg.root(name).ok_or_else(|| format!("spira-config repo root {name}: exit 1 "))?;
+    let base = reg.base(name).ok_or_else(|| format!("spira-config repo base {name}: exit 1 "))?;
+    Ok((root, base))
+}
+
 fn base_commits() -> Result<(String, HashMap<String, String>), String> {
-    let (root, base) = (run("spira-config", &["repo", "root", "spira"])?, run("spira-config", &["repo", "base", "spira"])?);
+    let (root, base) = repo_root_and_base("spira")?;
     let base = base.trim().to_string();
     on_base_cached(root.trim(), &base).map(|m| (base, m))
 }
@@ -215,6 +218,8 @@ fn on_base_cached(root: &str, base: &str) -> Result<HashMap<String, String>, Str
 /// The live dwarves: every `spira-dwarf-*` unit's main pid and start (one systemctl call), and its
 /// phase read from its process tree (status only, never its work).
 fn live_dwarves() -> Option<Vec<LiveDwarf>> {
+    // FORK-EDGE: needs Units::list(prefix) with MainPID and ActiveEnterTimestamp — the port
+    // reads one named unit, and the dwarves are found by their unit-name prefix.
     let units: Vec<String> = run("systemctl", &["--user", "list-units", "spira-dwarf-*", "--no-legend", "--plain"])
         .ok()?
         .lines()
@@ -226,6 +231,7 @@ fn live_dwarves() -> Option<Vec<LiveDwarf>> {
     }
     let mut args: Vec<&str> = vec!["--user", "show", "--timestamp=unix", "-p", "Id,MainPID,ActiveEnterTimestamp"];
     args.extend(units.iter().map(String::as_str));
+    // FORK-EDGE: needs Units::list(prefix) (as above).
     let shown = run("systemctl", &args).ok()?;
     let mut out = Vec::new();
     for block in shown.split("\n\n") {
@@ -299,7 +305,7 @@ fn gather() -> Snapshot {
     // `list --live` carries no terminal rows, so LANDED 24h is gathered from its own windowed view.
     // The same call carries the epic rollup (`--epics`), so EPICS costs the pane no store call; a
     // server without it answers with the bare array, and EPICS is then simply absent.
-    match run("spira-lc", &["ops-view", "ops_recent", "--epics"])
+    match lc(&["ops-view", "ops_recent", "--epics"])
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("spira-lc ops-view ops_recent: {e}")))
         .map(|v| match v {
             serde_json::Value::Array(rows) => rows,
