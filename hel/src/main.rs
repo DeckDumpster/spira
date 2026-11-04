@@ -70,14 +70,10 @@ fn fail(msg: &str) -> ExitCodeLike {
 
 type ExitCodeLike = i32;
 
-/// Builds the `Real` world the chokepoint subcommands that touch bd need (destroy-worktree,
-/// destroy-branch, witness): the same lib.sh-locating, context-reading path the sweep uses.
-/// `Real::minimal` — no context seam call, so a chokepoint subcommand given a repo PATH
-/// directly never depends on the repo-NAME registry resolving (the full sweep's own
-/// `Real::new` is a different, stricter, path — see its own doc comment).
+/// The chokepoint subcommands' `Real` (`verbs::real_world`): no context seam, so one given a
+/// repo PATH never depends on the repo-NAME registry resolving.
 fn real_world(status: Option<String>) -> Result<Real, String> {
-    let home = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), std::env::var(spira_config::RELEASE_ENV).ok().as_deref()).ok_or("cannot find lib.sh (set SPIRA_HOME or SPIRA_RELEASE)")?;
-    Ok(Real::minimal(home, real::run_dir()?, status))
+    hel::verbs::real_world(status.as_deref())
 }
 
 fn cmd_destroy_worktree(mut args: Vec<String>) -> ExitCodeLike {
@@ -85,12 +81,10 @@ fn cmd_destroy_worktree(mut args: Vec<String>) -> ExitCodeLike {
     if args.len() != 4 {
         return die("destroy-worktree [--status-from <f>] <id> <path> <repo> <why>");
     }
-    let w = match real_world(status) {
-        Ok(w) => w,
-        Err(e) => return die(&e),
-    };
-    let ok = w.destroy_worktree(&args[0], Path::new(&args[1]), Path::new(&args[2]), &args[3]);
-    i32::from(!ok)
+    match hel::verbs::destroy_worktree(status.as_deref(), &args[0], &args[1], &args[2], &args[3]) {
+        Ok(ok) => i32::from(!ok),
+        Err(e) => die(&e),
+    }
 }
 
 fn cmd_destroy_branch(mut args: Vec<String>) -> ExitCodeLike {
@@ -219,30 +213,23 @@ fn cmd_holder_alive(args: Vec<String>) -> ExitCodeLike {
     if args.len() != 1 {
         return die("holder-alive <id>");
     }
-    let run = match real::run_dir() {
-        Ok(r) => r,
-        Err(e) => return fail(&e),
-    };
-    i32::from(!reap::holder_alive(&run, &args[0]))
+    match hel::verbs::holder_alive(&args[0]) {
+        Ok(alive) => i32::from(!alive),
+        Err(e) => fail(&e),
+    }
 }
 
 fn cmd_stop_holder(args: Vec<String>) -> ExitCodeLike {
     if args.len() != 1 {
         return die("stop-holder <id>");
     }
-    let run = match real::run_dir() {
-        Ok(r) => r,
+    let units = match hel::verbs::default_units() {
+        Ok(u) => u,
         Err(e) => return fail(&e),
     };
-    let systemctl = std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".into());
-    let work = run.join("worktree").join(&args[0]);
-    let mut stop = |unit: &str| {
-        // batch-job: a unit stop lasts as long as the dwarf takes to exit
-        let _ = std::process::Command::new(&systemctl).args(["--user", "stop", unit]).status();
-    };
-    match reap::stop_occupants(Path::new("/proc"), &work, &mut stop, 20, &|| std::thread::sleep(std::time::Duration::from_millis(500)) /* waits-on: worktree occupants exiting; cap 20 polls */) {
+    match hel::verbs::stop_holder(&args[0], &*units) {
         Ok(()) => 0,
-        Err(pids) => fail(&format!("{} still has live process(es) {pids:?} in its worktree after the unit stop", args[0])),
+        Err(e) => fail(&e),
     }
 }
 
@@ -314,21 +301,14 @@ fn cmd_reap_landed_branch(mut args: Vec<String>) -> ExitCodeLike {
         Ok(w) => w,
         Err(e) => return die(&e),
     };
-    let repo = Path::new(&args[2]);
     let caller = args.get(4).map(String::as_str).unwrap_or("");
-    let base_info = w.base(repo);
-    let base_ref = base_info.as_ref().map(|b| b.landref.as_str());
-    let remote = base_info.as_ref().and_then(|b| b.remote.as_deref());
-    let (run, reaplog_path) = (w.run(), w.reaplog_path());
-    let log = |m: &str| eprintln!("{} spira: {m}", reap::utc_now());
-    let label_remove = |id: &str, label: &str| w.label_remove(id, label);
-    match reap::reap_landed_branch(&run, &reaplog_path, &args[0], &args[1], repo, &args[3], caller, base_ref, remote, &w, &log, &label_remove) {
-        reap::ReapOutcome::Done => 0,
-        reap::ReapOutcome::Queued => {
+    match hel::verbs::reap_landed_branch_on(&w, &args[0], &args[1], &args[2], &args[3], caller) {
+        hel::verbs::Reaped::Done => 0,
+        hel::verbs::Reaped::Queued => {
             print!("certified-queued");
             2
         }
-        reap::ReapOutcome::Failed(m) => {
+        hel::verbs::Reaped::Failed(m) => {
             print!("{m}");
             1
         }

@@ -5,14 +5,15 @@
 use std::path::PathBuf;
 
 pub mod telemetry;
+pub mod fork_scan;
 pub mod git;
 pub mod ports;
 pub mod reap;
 pub mod real;
-pub mod seam;
 pub mod stale;
 pub mod sweep;
 pub mod terminal;
+pub mod verbs;
 
 #[cfg(test)]
 mod tests;

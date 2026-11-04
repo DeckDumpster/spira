@@ -156,16 +156,17 @@ fn is_queued_state(state: &str) -> bool {
     matches!(state, "CERTIFIED" | "IN_DELIVERY")
 }
 
-/// `spira-lc state <id>` by bare name (an actual binary, not a bash function): `Some(state)`
-/// on exit 0, `None` otherwise (lifecycle off, no binary, DB down, not yet classified —
-/// every one of those must be able to make this call LESS restrictive, never more, so a
-/// failure here falls through to bd's own signal, exactly as lib.sh's `|| true` chain does).
+/// The store's `state <id>`, in-process over the lifecycle socket: `Some(state)` on an
+/// answer, `None` otherwise (lifecycle off, store down, not yet classified — every one of
+/// those must be able to make this call LESS restrictive, never more, so a failure here
+/// falls through to bd's own signal, exactly as lib.sh's `|| true` chain does).
 pub fn lc_state(id: &str) -> Option<String> {
-    let o = spira_config::bounded::bounded("spira-lc").args(["state", id]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-    if !o.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+    lc_state_on(&spira_config::lc_call::LcClient::configured().ok()?, id)
+}
+
+/// [`lc_state`] through `c`.
+pub fn lc_state_on(c: &spira_config::lc_call::LcClient, id: &str) -> Option<String> {
+    let s = c.within(std::time::Duration::from_secs(5)).answer(&["state", id]).ok()?.trim().to_string();
     (!s.is_empty()).then_some(s)
 }
 

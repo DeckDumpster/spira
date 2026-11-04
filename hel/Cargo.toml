@@ -8,6 +8,7 @@ description = "hel — the Hel: delete the branch and worktree of every bead who
 serde_json = "1"
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
+runtime = { path = "../runtime" }
 
 [lib]
 name = "hel"
