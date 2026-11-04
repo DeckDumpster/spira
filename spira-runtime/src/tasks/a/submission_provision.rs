@@ -225,19 +225,311 @@ pub struct Carry {
     pub last_note: Option<String>,
 }
 
-pub fn step(_state: State, _event: Trigger) -> Result<State, String> {
-    crate::not_ported!(NAME)
+pub fn step(state: State, event: Trigger) -> Result<State, String> {
+    TABLE.iter().find(|(s, e, _)| *s == state && *e == event).map(|(_, _, to)| *to).ok_or_else(|| format!("{NAME}: {event:?} is not legal in state {}", serde_json::to_string(&state).unwrap_or_default().trim_matches('"')))
 }
 
-/// Branches 1, 2, 4, 5 and 6 of `provision` over the snapshot.
-pub fn decide(_carry: &Carry, _snap: &Snapshot) -> (Carry, Vec<Act>) {
-    crate::not_ported!(NAME)
+/// The submission directory as the scheduler's `$HOME` places it; `~` is expanded by the
+/// `config_set` and `password_write` runners, so `decide` stays pure.
+const DIR: &str = "~/.config/spira/submission";
+
+/// `config_set`'s input: one `spira.<key> <value>` for the spec's last layer.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigSet {
+    pub key: String,
+    pub value: String,
+}
+
+/// `password_write`'s input.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PasswordWrite {
+    pub users_file: String,
+    pub user: String,
+    pub password_file: String,
+}
+
+/// `firewall_open`'s input.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FirewallOpen {
+    pub iface: String,
+    pub port: String,
+}
+
+fn note(carry: &mut Carry, acts: &mut Vec<Act>, line: String) {
+    if carry.last_note.as_deref() != Some(line.as_str()) {
+        acts.push(Act::new(INBOX_APPEND, line.clone()).with_input(format!("{NAME}: {line}")));
+        carry.last_note = Some(line);
+    }
+}
+
+/// The address submission listens on: the configured one, else the tailnet's.
+fn want_addr(snap: &Snapshot) -> String {
+    if snap.plan.addr.is_empty() { snap.tailnet_ip.clone().unwrap_or_default() } else { snap.plan.addr.clone() }
+}
+
+/// Branch 3: a `config_set` for each empty value, by `spira_submission::provision::defaults`.
+fn sets(snap: &Snapshot) -> Vec<Act> {
+    let p = &snap.plan;
+    let defaults = spira_submission::provision::defaults(std::path::Path::new(DIR), &p.cert, &p.key, &p.user, &p.rcpt_domain, &want_addr(snap));
+    [&p.cert, &p.key, &p.password_file, &p.from, &p.addr]
+        .into_iter()
+        .zip(defaults)
+        .filter(|(cur, _)| cur.is_empty())
+        .map(|(_, (k, v))| Act::new(CONFIG_SET, format!("spira.{k}={v}")).with_input(serde_json::to_string(&ConfigSet { key: format!("spira.{k}"), value: v }).unwrap_or_default()))
+        .collect()
+}
+
+/// Branches 4 and 5: the password file and the firewall rule.
+fn password_and_firewall(carry: &mut Carry, snap: &Snapshot, acts: &mut Vec<Act>) {
+    let p = &snap.plan;
+    let addr = want_addr(snap);
+    let password_file = if p.password_file.is_empty() { format!("{DIR}/password") } else { p.password_file.clone() };
+    if !p.users_file.is_empty() && !addr.is_empty() {
+        match snap.password {
+            Password::Ok => {}
+            Password::NoSource => note(carry, acts, format!("password source unusable: {} has no entry for {}", p.users_file, p.user)),
+            Password::Drifted | Password::Missing | Password::Mode => {
+                let w = PasswordWrite { users_file: p.users_file.clone(), user: p.user.clone(), password_file: password_file.clone() };
+                acts.push(Act::new(PASSWORD_WRITE, format!("password/{password_file}")).with_input(serde_json::to_string(&w).unwrap_or_default()));
+            }
+        }
+    }
+    if let (Firewall::Closed, Some(iface), false) = (snap.firewall, &snap.iface, addr.is_empty()) {
+        let f = FirewallOpen { iface: iface.clone(), port: p.port.clone() };
+        acts.push(Act::new(FIREWALL_OPEN, format!("{iface}/{}", p.port)).with_input(serde_json::to_string(&f).unwrap_or_default()));
+    }
+}
+
+fn restart(snap: &Snapshot) -> Act {
+    Act::new(UNIT_RESTART, format!("restart/{}", snap.day)).with_input(snap.plan.unit.clone())
+}
+
+/// Branches 1, 2, 4, 5 and 6 of `provision` over the snapshot. A due certificate is renewed
+/// first and the rest waits on its outcome (`after_renewal`); otherwise the empty values are
+/// set, the password and firewall mended, and a set restarts the unit once every set is done.
+pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
+    let mut next = Carry { state: State::Idle, last_note: carry.last_note.clone() };
+    let mut acts = vec![];
+    if snap.tailnet_ip.is_none() {
+        note(&mut next, &mut acts, "tailscale is not up: no tailnet address, certificate or firewall rule to provision".into());
+        return (next, acts);
+    }
+    if next.last_note.as_deref().is_some_and(|n| n.starts_with("tailscale is not up")) {
+        next.last_note = None;
+    }
+    if let Some(name) = &snap.dns_name {
+        if spira_submission::provision::renew_due(snap.cert_days.is_some(), snap.cert_days.map(i64::from)) {
+            next.state = State::Renewing;
+            acts.push(Act::new(CERT_RENEW, format!("cert/{name}/{}", snap.day)).with_input(serde_json::to_string(snap).unwrap_or_default()));
+            return (next, acts);
+        }
+    }
+    finish(next, snap, false, acts)
+}
+
+/// Sets (only once a certificate exists), the password and firewall, and the restart: now when
+/// nothing is set and `renewed`, after the sets otherwise.
+fn finish(mut next: Carry, snap: &Snapshot, renewed: bool, mut acts: Vec<Act>) -> (Carry, Vec<Act>) {
+    let sets = if snap.cert_days.is_some() { sets(snap) } else { vec![] };
+    password_and_firewall(&mut next, snap, &mut acts);
+    next.state = if !sets.is_empty() {
+        State::Setting
+    } else if renewed {
+        acts.push(restart(snap));
+        State::Restarting
+    } else {
+        State::Idle
+    };
+    acts.extend(sets);
+    (next, acts)
 }
 
 /// Branch 3, on `cert_renew`'s outcome: a `config_set` for each empty cert, key, password
 /// file, from and addr, now that the files exist.
-pub fn after_renewal(_carry: &Carry, _snap: &Snapshot) -> (Carry, Vec<Act>) {
-    crate::not_ported!(NAME)
+pub fn after_renewal(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
+    after_renewal_with(carry, snap, true)
+}
+
+/// [`after_renewal`] when the renewal may have left the certificate unchanged: then, with
+/// nothing to set, there is nothing to restart either.
+pub fn after_renewal_with(carry: &Carry, snap: &Snapshot, renewed: bool) -> (Carry, Vec<Act>) {
+    let renewed_snap = Snapshot { cert_days: snap.cert_days.or(Some(0)), ..snap.clone() };
+    finish(Carry { state: State::Setting, last_note: carry.last_note.clone() }, &renewed_snap, renewed, vec![])
+}
+
+/// What `cert_renew` answered: renewed, unchanged, or the operator note it needs.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Renewal {
+    #[serde(default)]
+    pub renewed: bool,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+fn renewal_of(body: &str) -> Renewal {
+    if body.trim() == "renewed" {
+        return Renewal { renewed: true, note: None };
+    }
+    serde_json::from_str(body).unwrap_or(Renewal { renewed: false, note: Some(body.to_string()) })
+}
+
+/// Whether every `config_set` asked since the carry was last recorded has an outcome.
+fn sets_done(view: &Projection, ev: &Event) -> bool {
+    let events = view.events(&ev.stream);
+    let from = events.iter().rposition(|e| e.kind.tag == STATE).map_or(0, |i| i + 1);
+    let asked: Vec<&EventId> = events[from..].iter().filter(|e| e.kind.tag == EFFECT_REQUESTED && serde_json::from_str::<serde_json::Value>(&e.kind.body).ok().is_some_and(|v| v["spec"]["name"] == CONFIG_SET)).map(|e| &e.id).collect();
+    let answered: Vec<&EventId> = events[from..].iter().filter(|e| [EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT].contains(&e.kind.tag.as_str())).filter_map(|e| e.cause.as_ref()).chain(ev.cause.as_ref()).collect();
+    asked.iter().all(|a| answered.contains(a))
+}
+
+// ---------------------------------------------------------------------------------------------
+// Runners. Host reads (`tailscale`, `ip`, `ufw`) go through the process port; the config write
+// is `spira_config` in this process and the restart is the Units port's.
+
+struct ProcHost;
+
+impl spira_submission::provision::Host for ProcHost {
+    fn run(&self, argv: &[&str]) -> Result<String, String> {
+        use runtime::ports::Proc;
+        let (prog, args) = argv.split_first().ok_or("empty command")?;
+        let spec = runtime::ports::ProcSpec { prog: prog.to_string(), args: args.iter().map(|a| a.to_string()).collect(), stdin: vec![], deadline: std::time::Duration::from_secs(110) };
+        let out = runtime::ports::SysProc.run(&spec)?;
+        match out.code {
+            Some(0) => Ok(String::from_utf8_lossy(&out.stdout).into_owned()),
+            code => Err(format!("{} exited {}: {}", argv.join(" "), code.map_or("signal".into(), |c| c.to_string()), String::from_utf8_lossy(&out.stderr).trim())),
+        }
+    }
+
+    fn now(&self) -> i64 {
+        spira_submission::clock::now()
+    }
+}
+
+fn home() -> Result<std::path::PathBuf, String> {
+    std::env::var_os("HOME").filter(|h| !h.is_empty()).map(Into::into).ok_or_else(|| "HOME is unset: the submission directory has no root".to_string())
+}
+
+fn expand(p: &str) -> Result<String, String> {
+    Ok(match p.strip_prefix("~/") {
+        Some(rest) => home()?.join(rest).display().to_string(),
+        None => p.to_string(),
+    })
+}
+
+fn the_day(now: i64) -> String {
+    let (y, m, d) = crate::watchers::civil(now.div_euclid(86_400));
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// The configured values, the tailnet, the certificate, the password file, the interface and
+/// the firewall, read on the host.
+pub fn observe() -> Result<String, String> {
+    use spira_submission::provision as p;
+    let get = |k: &str| spira_config::process::cfg(k).map(|v| v.trim().to_string());
+    let instance = get("SPIRA_INSTANCE")?;
+    let plan = Plan {
+        port: get("SPIRA_SUBMISSION_PORT")?,
+        addr: get("SPIRA_SUBMISSION_ADDR")?,
+        cert: get("SPIRA_SUBMISSION_CERT")?,
+        key: get("SPIRA_SUBMISSION_KEY")?,
+        password_file: get("SPIRA_SUBMISSION_PASSWORD_FILE")?,
+        from: get("SPIRA_SUBMISSION_FROM")?,
+        user: get("SPIRA_SUBMISSION_USER")?,
+        rcpt_domain: get("SPIRA_SUBMISSION_RCPT_DOMAIN")?,
+        users_file: get("SPIRA_SUBMISSION_USERS_FILE")?,
+        unit: spira_config::unit::unit_name("submission", "service", &instance),
+    };
+    let host = ProcHost;
+    let now = p::Host::now(&host);
+    let tailnet_ip = p::Host::run(&host, &["tailscale", "ip", "-4"]).ok().and_then(|o| p::tailnet_ip(&o));
+    let dns_name = p::Host::run(&host, &["tailscale", "status", "--json"]).ok().and_then(|o| p::dns_name(&o));
+    let dir = p::dir_under(&home()?);
+    let cert = if plan.cert.is_empty() { dir.join("cert.pem") } else { plan.cert.clone().into() };
+    let key = if plan.key.is_empty() { dir.join("key.pem") } else { plan.key.clone().into() };
+    let cert_days = if cert.is_file() && key.is_file() { p::cert_days(&cert, now).map(|d| d.clamp(0, i64::from(u32::MAX)) as u32) } else { None };
+    let password_file = if plan.password_file.is_empty() { dir.join("password").display().to_string() } else { plan.password_file.clone() };
+    let password = match p::password_state_of(&plan.users_file, &plan.user, &password_file) {
+        p::Password::Ok => Password::Ok,
+        p::Password::Missing => Password::Missing,
+        p::Password::Mode => Password::Mode,
+        p::Password::Drifted => Password::Drifted,
+        p::Password::NoSource(_) => Password::NoSource,
+    };
+    let iface = tailnet_ip.as_ref().and_then(|ip| p::Host::run(&host, &["ip", "-o", "-4", "addr", "show"]).ok().and_then(|o| p::iface_for(ip, &o)));
+    let firewall = match &iface {
+        None => Firewall::Absent,
+        Some(i) => {
+            let lib_plan = p::Plan { toml_spec: String::new(), addr: plan.addr.clone(), cert: String::new(), key: String::new(), password_file: String::new(), from: String::new(), user: plan.user.clone(), port: plan.port.parse().map_err(|e| format!("SPIRA_SUBMISSION_PORT does not parse: {e}"))?, rcpt_domain: String::new(), users_file: String::new(), dir: dir.clone(), ufw_conf: "/etc/ufw/ufw.conf".into(), unit: plan.unit.clone(), spira_config: String::new() };
+            match p::firewall_state(&host, &lib_plan, i) {
+                p::Firewall::Closed => Firewall::Closed,
+                p::Firewall::Open => Firewall::Open,
+                p::Firewall::Absent => Firewall::Absent,
+                p::Firewall::Unknown(e) => return Err(format!("cannot read the firewall: {e}")),
+            }
+        }
+    };
+    serde_json::to_string(&Snapshot { plan, tailnet_ip, dns_name, cert_days, password, iface, firewall, day: the_day(now) }).map_err(|e| e.to_string())
+}
+
+/// `tailscale cert` into the submission directory. Operator-needed is an answer, not an error.
+pub fn cert_renew(input: &str) -> Result<String, String> {
+    use spira_submission::provision as p;
+    let snap: Snapshot = serde_json::from_str(input).map_err(|e| format!("{CERT_RENEW}: bad input: {e}"))?;
+    let name = snap.dns_name.clone().ok_or_else(|| format!("{CERT_RENEW}: no tailnet name — refused"))?;
+    let dir = p::dir_under(&home()?);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let _ = std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700));
+    let cert = if snap.plan.cert.is_empty() { dir.join("cert.pem").display().to_string() } else { snap.plan.cert.clone() };
+    let key = if snap.plan.key.is_empty() { dir.join("key.pem").display().to_string() } else { snap.plan.key.clone() };
+    let before = (std::fs::read(&cert).ok(), std::fs::read(&key).ok());
+    let out = match p::Host::run(&ProcHost, &["tailscale", "cert", "--cert-file", &cert, "--key-file", &key, &name]) {
+        Err(e) if p::needs_operator(&e) => Renewal { renewed: false, note: Some(format!("{} (tailscale cert {name}: {e})", p::OPERATOR_NOTE)) },
+        Err(e) => return Err(format!("tailscale cert {name}: {e}")),
+        Ok(_) => {
+            let _ = std::fs::set_permissions(&key, std::os::unix::fs::PermissionsExt::from_mode(0o600));
+            Renewal { renewed: (std::fs::read(&cert).ok(), std::fs::read(&key).ok()) != before, note: None }
+        }
+    };
+    serde_json::to_string(&out).map_err(|e| e.to_string())
+}
+
+/// `spira-config set spira.<key> <value> <layer>`, as `spira_config::set_paths_in_file` on the
+/// spec's last layer. Only an empty value is set.
+pub fn config_set(input: &str) -> Result<String, String> {
+    let c: ConfigSet = serde_json::from_str(input).map_err(|e| format!("{CONFIG_SET}: bad input: {e}"))?;
+    let env_key = format!("SPIRA_{}", c.key.trim_start_matches("spira.").to_ascii_uppercase());
+    if spira_config::process::cfg(&env_key).is_ok_and(|v| !v.trim().is_empty()) {
+        return Err(format!("{CONFIG_SET}: {} is already set — refused", c.key));
+    }
+    let spec = spira_config::process::spec()?;
+    let layer = spec.rsplit(':').next().unwrap_or("").to_string();
+    let value = expand(&c.value)?;
+    spira_config::set_paths_in_file(std::path::Path::new(&layer), &[(&c.key, &value)])?;
+    Ok(format!("set {} = {value}", c.key))
+}
+
+/// The password file, mode 0600, derived from the users file.
+pub fn password_write(input: &str) -> Result<String, String> {
+    let w: PasswordWrite = serde_json::from_str(input).map_err(|e| format!("{PASSWORD_WRITE}: bad input: {e}"))?;
+    let file = expand(&w.password_file)?;
+    spira_submission::provision::write_password(&w.users_file, &w.user, &file)?;
+    Ok(format!("wrote {file} from {}", w.users_file))
+}
+
+/// `sudo -n ufw allow in on <iface> to any port <port> proto tcp`.
+pub fn firewall_open(input: &str) -> Result<String, String> {
+    let f: FirewallOpen = serde_json::from_str(input).map_err(|e| format!("{FIREWALL_OPEN}: bad input: {e}"))?;
+    let port: u16 = f.port.parse().map_err(|e| format!("{FIREWALL_OPEN}: port {}: {e}", f.port))?;
+    let cmd = spira_submission::provision::allow_command(&f.iface, port);
+    let argv: Vec<&str> = cmd.iter().map(String::as_str).collect();
+    spira_submission::provision::Host::run(&ProcHost, &argv).map(|_| format!("opened {port}/tcp on {}", f.iface))
+}
+
+/// Restart the submission unit through the Units port.
+pub fn unit_restart(e: &crate::Effects, input: &str) -> Result<String, String> {
+    let units = e.units.as_deref().ok_or("no unit manager configured")?;
+    units.restart(&runtime::units::UnitHandle::named(input.trim())).map_err(|e| e.0)?;
+    Ok(format!("restarted {}", input.trim()))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -268,7 +560,7 @@ impl SubmissionProvision {
 
 impl Handler for SubmissionProvision {
     fn interests(&self) -> &[EventKindTag] {
-        &[TICK, EFFECT_SUCCEEDED]
+        &[TICK, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
     }
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
@@ -282,8 +574,34 @@ impl Handler for SubmissionProvision {
         if ev.kind.tag == TICK {
             return kit::on_tick(&SHAPE, serde_json::to_string(&carry).unwrap_or_default(), self.cadence.next_after(ev.at));
         }
-        let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else { return vec![] };
-        let (next, acts) = decide(&carry, &snap);
+        let Some(spec) = crate::watchers::answered_spec(view, ev) else { return vec![] };
+        let ok = ev.kind.tag == EFFECT_SUCCEEDED;
+        let (next, acts) = match (carry.state, spec.name.as_str()) {
+            (_, OBSERVE) if ok => match serde_json::from_str::<Snapshot>(&ev.kind.body) {
+                Ok(snap) => decide(&carry, &snap),
+                Err(_) => return vec![],
+            },
+            (State::Renewing, CERT_RENEW) => {
+                let Ok(snap) = serde_json::from_str::<Snapshot>(&spec.input) else { return vec![] };
+                if !ok {
+                    (Carry { state: State::Idle, ..carry.clone() }, vec![])
+                } else {
+                    let r = renewal_of(&ev.kind.body);
+                    let (mut next, mut acts) = after_renewal_with(&carry, &snap, r.renewed);
+                    if let Some(n) = r.note {
+                        note(&mut next, &mut acts, n);
+                    }
+                    (next, acts)
+                }
+            }
+            (State::Setting, CONFIG_SET) if sets_done(view, ev) => {
+                // The restart names the unit as pinned at boot (`SPIRA_INSTANCE`).
+                let snap = Snapshot { plan: Plan { unit: self.pinned.get("SPIRA_INSTANCE").map(|i| spira_config::unit::unit_name("submission", "service", i)).unwrap_or_default(), ..Plan::default() }, day: the_day(ev.at as i64 / 1000), ..Snapshot::default() };
+                (Carry { state: State::Restarting, ..carry.clone() }, vec![restart(&snap)])
+            }
+            (State::Restarting, UNIT_RESTART) => (Carry { state: State::Idle, ..carry.clone() }, vec![]),
+            _ => return vec![],
+        };
         kit::commands(&SHAPE, ACTS, EMITS, &carry, &next, acts)
     }
 }

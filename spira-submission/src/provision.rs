@@ -10,6 +10,34 @@ use std::process::{Command, Stdio};
 pub const RENEW_DAYS: i64 = 30;
 pub const WARN_DAYS: i64 = 21;
 
+/// Where provisioning keeps the certificate, key and password file, under `$HOME`.
+pub const DIR: &str = ".config/spira/submission";
+
+/// [`DIR`] under `home`.
+pub fn dir_under(home: &Path) -> PathBuf {
+    home.join(DIR)
+}
+
+/// Whether the certificate is due: none obtained yet, its expiry unreadable, or under
+/// [`RENEW_DAYS`] left.
+pub fn renew_due(obtained: bool, days: Option<i64>) -> bool {
+    !obtained || days.is_none_or(|d| d < RENEW_DAYS)
+}
+
+/// The five values provisioning sets when they are empty, in the order it sets them, each with
+/// the value it would set: `(config key, default)`.
+pub fn defaults(dir: &Path, cert: &str, key: &str, user: &str, rcpt_domain: &str, addr: &str) -> [(&'static str, String); 5] {
+    let d = dir.display();
+    let pick = |cur: &str, default: String| if cur.is_empty() { default } else { cur.to_string() };
+    [
+        ("submission_cert", pick(cert, format!("{d}/cert.pem"))),
+        ("submission_key", pick(key, format!("{d}/key.pem"))),
+        ("submission_password_file", format!("{d}/password")),
+        ("submission_from", format!("{user}@{rcpt_domain}")),
+        ("submission_addr", addr.to_string()),
+    ]
+}
+
 pub const OPERATOR_NOTE: &str = "tailscale will not issue a certificate to this user; run once: sudo tailscale set --operator=$USER";
 
 pub fn needs_operator(err: &str) -> bool {
@@ -195,13 +223,31 @@ pub fn derive_line(users: &str, user: &str) -> Option<String> {
 }
 
 fn derived(plan: &Plan) -> Result<String, Password> {
-    let text = std::fs::read_to_string(&plan.users_file).map_err(|e| Password::NoSource(format!("{}: {e}", plan.users_file)))?;
-    derive_line(&text, &plan.user)
-        .ok_or_else(|| Password::NoSource(format!("{} has no entry for {}", plan.users_file, plan.user)))
+    derived_of(&plan.users_file, &plan.user)
+}
+
+fn derived_of(users_file: &str, user: &str) -> Result<String, Password> {
+    let text = std::fs::read_to_string(users_file).map_err(|e| Password::NoSource(format!("{users_file}: {e}")))?;
+    derive_line(&text, user).ok_or_else(|| Password::NoSource(format!("{users_file} has no entry for {user}")))
+}
+
+/// Write `password_file`, mode 0600, with `user`'s line derived from `users_file`. A users file
+/// that cannot give one is refused, naming why; nothing is written.
+pub fn write_password(users_file: &str, user: &str, password_file: &str) -> Result<(), String> {
+    let line = derived_of(users_file, user).map_err(|p| match p {
+        Password::NoSource(e) => format!("password source unusable: {e}"),
+        other => other.word().to_string(),
+    })?;
+    write_private(Path::new(password_file), format!("{line}\n").as_bytes())
 }
 
 pub fn password_state(plan: &Plan, password_file: &str) -> Password {
-    let want = match derived(plan) {
+    password_state_of(&plan.users_file, &plan.user, password_file)
+}
+
+/// [`password_state`] from the users file, the user and the password file alone.
+pub fn password_state_of(users_file: &str, user: &str, password_file: &str) -> Password {
+    let want = match derived_of(users_file, user) {
         Ok(l) => l,
         Err(p) => return p,
     };
@@ -269,10 +315,7 @@ pub fn provision(host: &dyn Host, plan: &Plan) -> Report {
     };
     let want_addr = if eff.addr.is_empty() { ip.clone().unwrap_or_default() } else { eff.addr.clone() };
     if !want_addr.is_empty() {
-        let d = plan.dir.display();
-        let pick = |cur: &str, default: String| if cur.is_empty() { default } else { cur.to_string() };
-        let cert = pick(&eff.cert, format!("{d}/cert.pem"));
-        let key = pick(&eff.key, format!("{d}/key.pem"));
+        let [(_, cert), (_, key), password, from, addr] = defaults(&plan.dir, &eff.cert, &eff.key, &plan.user, &plan.rcpt_domain, &want_addr);
         if let Err(e) = std::fs::create_dir_all(&plan.dir).and_then(|_| std::fs::set_permissions(&plan.dir, std::fs::Permissions::from_mode(0o700))) {
             r.errors.push(format!("{}: {e}", plan.dir.display()));
         }
@@ -281,7 +324,7 @@ pub fn provision(host: &dyn Host, plan: &Plan) -> Report {
         if let Some(name) = &name {
             let now = host.now();
             let days = cert_days(Path::new(&cert), now);
-            if !obtained || days.is_none_or(|d| d < RENEW_DAYS) {
+            if renew_due(obtained, days) {
                 let before = (std::fs::read(&cert).ok(), std::fs::read(&key).ok());
                 match host.run(&["tailscale", "cert", "--cert-file", &cert, "--key-file", &key, name]) {
                     Err(e) if needs_operator(&e) => r.notes.push(format!("{OPERATOR_NOTE} (tailscale cert {name}: {e})")),
@@ -304,13 +347,7 @@ pub fn provision(host: &dyn Host, plan: &Plan) -> Report {
         }
 
         if obtained {
-            for (k, cur, default) in [
-                ("submission_cert", &mut eff.cert, cert),
-                ("submission_key", &mut eff.key, key),
-                ("submission_password_file", &mut eff.password_file, format!("{d}/password")),
-                ("submission_from", &mut eff.from, format!("{}@{}", plan.user, plan.rcpt_domain)),
-                ("submission_addr", &mut eff.addr, want_addr),
-            ] {
+            for ((k, default), cur) in [("submission_cert", cert), ("submission_key", key), password, from, addr].into_iter().zip([&mut eff.cert, &mut eff.key, &mut eff.password_file, &mut eff.from, &mut eff.addr]) {
                 if cur.is_empty() && set(&mut r, k, &default, &mut restart) {
                     *cur = default;
                 }

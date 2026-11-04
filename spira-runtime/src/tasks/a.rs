@@ -46,6 +46,19 @@ pub static TASKS: &[Task] = &[
         build: |_| sweep_target::SweepTarget::from_cfg().registration(),
     },
     Task {
+        name: submission_provision::NAME,
+        boot: submission_provision::SubmissionProvision::boot,
+        // The daily calendar; its first tick is the boot tick's, two minutes after start.
+        cadence_ms: |_| runtime::taskrig::DAY_MS,
+        effects: submission_provision::EFFECTS,
+        runners: {
+            use submission_provision::*;
+            &[(OBSERVE, |_, _, _| observe()), (CERT_RENEW, |_, _, s| cert_renew(&s.input)), (CONFIG_SET, |_, _, s| config_set(&s.input)), (PASSWORD_WRITE, |_, _, s| password_write(&s.input)), (FIREWALL_OPEN, |_, _, s| firewall_open(&s.input)), (UNIT_RESTART, |e, _, s| unit_restart(e, &s.input))]
+        },
+        keys: &[submission_provision::KEYS],
+        build: |_| submission_provision::SubmissionProvision::from_cfg().registration(),
+    },
+    Task {
         name: gate_worker::NAME,
         boot: gate_worker::GateWorker::boot,
         cadence_ms: |_| gate_worker::CADENCE_MS,
@@ -153,16 +166,6 @@ pub static PENDING: &[Task] = &[
         runners: stubs!(landing: OBSERVE, FETCH, DELIVER_PR_MERGED, DELIVER_PR_CLOSED, DELIVER_BY_CONTENT, REOPEN, EVENT, NOTE, BUMP_REQUEUE, ASK, REBASE, CONFINE, FORCE_PUSH, PR_CREATE, PR_AUTOMERGE),
         keys: &[landing::KEYS],
         build: |_| landing::Landing::from_cfg().registration(),
-    },
-    Task {
-        name: submission_provision::NAME,
-        boot: submission_provision::SubmissionProvision::boot,
-        // The daily calendar; its first tick is the boot tick's, two minutes after start.
-        cadence_ms: |_| runtime::taskrig::DAY_MS,
-        effects: submission_provision::EFFECTS,
-        runners: stubs!(submission_provision: OBSERVE, CERT_RENEW, CONFIG_SET, PASSWORD_WRITE, FIREWALL_OPEN, UNIT_RESTART),
-        keys: &[submission_provision::KEYS],
-        build: |_| submission_provision::SubmissionProvision::from_cfg().registration(),
     },
 ];
 
