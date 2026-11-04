@@ -146,6 +146,25 @@ pub fn sendmail_to(home: &Path, mail_root: &Path, mute: bool, raw: &str, to: Opt
     Ok(SendmailOutcome { dest_mailbox, delivered_path })
 }
 
+/// The whole `mail sendmail` verb in-process, for a caller holding the message (the scheduler's
+/// `submission` source): spooled under `run_dir` first, so a failed delivery leaves the message on
+/// disk and says where, then delivered by [`sendmail_to`], then the spool dropped.
+pub fn deliver(run_dir: &Path, home: &Path, mail_root: &Path, mute: bool, raw: &str, to: Option<&str>) -> Result<SendmailOutcome, String> {
+    if raw.trim().is_empty() {
+        return Err("empty message — nothing to deliver".to_string());
+    }
+    let spool = spool_message(run_dir, raw);
+    match sendmail_to(home, mail_root, mute, raw, to) {
+        Ok(out) => {
+            if let Some(p) = spool {
+                let _ = fs::remove_file(p);
+            }
+            Ok(out)
+        }
+        Err(e) => Err(format!("{e}{}", spool.map(|p| format!(" (message kept at {})", p.display())).unwrap_or_default())),
+    }
+}
+
 const CHECK_SAMPLE: &str = "From: Operator <operator@spira>\nSubject: Re: probe\nIn-Reply-To: <probe@spira>\n\nNoted.\n\nIgnored.\n";
 
 /// The health probe: every step of the send path except delivery. Names the failing step.

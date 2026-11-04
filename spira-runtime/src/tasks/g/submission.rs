@@ -1,8 +1,8 @@
 //! Source `submission`: the operator's mail client submitted a message over SMTP. Replaces
 //! `spira-submission` (`spira-submission-prod.service`, `Type=simple`, ExecStartPre
 //! `world guard`). Pattern P3. Contract: `wiki/projects/spira/designs/tasks/source-submission.md`.
-//! Not ported yet: the real source's [`Source::run`] is `unimplemented!`; under virtual time a
-//! `ScriptedSource` stands in.
+//! The real listener is `tasks::g::sources::smtp`; under virtual time a `ScriptedSource` stands
+//! in, and this source is refused.
 //!
 //! # Tick
 //!
@@ -22,9 +22,9 @@
 //! `smtp::serve_session` is reused unchanged. A finished DATA phase maps to one event:
 //! delivered → [`ACCEPTED`] ([`Accepted`]); delivery failed (451), or auth, sender, relay or size
 //! refused → [`REFUSED`] ([`Refused`]). Delivery stays a synchronous library call into the `mail`
-//! crate's `sendmail` module on the connection thread, because the client's 250 or 451 depends on
-//! it. `Submit::with_reply` now exists, so the S9 alternative (deliver as an effect and answer the
-//! client from the reply) is open; the default stays the library call.
+//! crate's `sendmail` module on the connection thread (a message id already delivered is not
+//! delivered again), and the accepted event is submitted with `Submit::with_reply`: the client hears
+//! 250 once the event is journaled, 451 when delivery or the journal refused.
 //!
 //! # Act
 //!
@@ -123,7 +123,13 @@ impl Source for Submission {
         NAME
     }
 
-    fn run(self: Box<Self>, _tx: mpsc::Sender<Submit>) {
-        unimplemented!("submission: not ported yet")
+    /// Dormant, until `tx` closes, when no address is configured; otherwise the listener, with
+    /// the rest of its config (certificate, key, password, sender, recipient domain) and the mail
+    /// environment it delivers into read once as it starts.
+    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) {
+        let configured = !self.addr.is_empty() && self.port != 0;
+        let cfg = if configured { spira_submission::Config::from_spira().unwrap_or_else(|e| { eprintln!("spira-runtime: source {NAME}: {e}"); None }) } else { None };
+        let delivery = cfg.as_ref().and_then(|_| mail::env::Env::load().inspect_err(|e| eprintln!("spira-runtime: source {NAME}: mail: {e}")).ok()).map(|e| super::sources::smtp::Delivery::of(&e));
+        super::sources::smtp::run(cfg, delivery, tx)
     }
 }

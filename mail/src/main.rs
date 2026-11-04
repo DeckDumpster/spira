@@ -286,18 +286,9 @@ fn run_sendmail(args: &[String]) -> ExitCode {
     if raw.trim().is_empty() {
         return fail("sendmail: empty message — nothing to deliver");
     }
-    let spool = sendmail::spool_message(&env.run_dir, &raw);
-    match sendmail::sendmail_to(&env.home, &env.mail_root, env.mute, &raw, to.as_deref()) {
-        Ok(_) => {
-            if let Some(p) = spool {
-                let _ = std::fs::remove_file(p);
-            }
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            let kept = spool.map(|p| format!(" (message kept at {})", p.display())).unwrap_or_default();
-            fail(format!("sendmail: {e}{kept}"))
-        }
+    match sendmail::deliver(&env.run_dir, &env.home, &env.mail_root, env.mute, &raw, to.as_deref()) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(e) => fail(format!("sendmail: {e}")),
     }
 }
 

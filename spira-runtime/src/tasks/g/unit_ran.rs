@@ -1,9 +1,11 @@
 //! Source `unit.ran`: a unit's run ended. Replaces `unit-run watch`
 //! (`spira-unit-run-dbus-prod.service`, `Type=simple`). Pattern P3, and the completion channel
 //! for every P2 task: each `unit.start` is finished by the `unit.ran` this source submits.
-//! Contract: `wiki/projects/spira/designs/tasks/source-unit-ran.md`. Not ported yet: the real
-//! source's [`Source::run`] is `unimplemented!`; under virtual time a `ScriptedSource` (or
-//! `runtime::sources::UnitRanSource::scripted`) stands in.
+//! Contract: `wiki/projects/spira/designs/tasks/source-unit-ran.md`. The real read is
+//! `tasks::g::sources::units`: the host registers `sources::units::over` on the same unit manager
+//! its `unit.*` effects run on; [`UnitRanDbus`] is the standalone form with its own D-Bus
+//! connection. Under virtual time a `ScriptedSource` (or `runtime::sources::UnitRanSource::scripted`)
+//! stands in, and this source is refused.
 //!
 //! # Tick
 //!
@@ -69,7 +71,7 @@ impl Source for UnitRanDbus {
         NAME
     }
 
-    fn run(self: Box<Self>, _tx: mpsc::Sender<Submit>) {
-        unimplemented!("unit.ran: not ported yet")
+    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) {
+        super::sources::units::run_dbus(tx)
     }
 }

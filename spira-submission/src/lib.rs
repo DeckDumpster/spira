@@ -155,31 +155,36 @@ pub fn serve(listener: TcpListener, cfg: Config, sink: Arc<dyn Sink + Send + Syn
     for conn in listener.incoming() {
         let Ok(tcp) = conn else { continue };
         let (cfg, sink, metrics) = (cfg.clone(), sink.clone(), metrics.clone());
-        let peer = tcp.peer_addr().map_or("unknown".to_string(), |a| a.to_string());
         std::thread::spawn(move || {
-            spira_otel::metrics::instrument(&metrics, "spira-submission", "session", || {
-                let _ = tcp.set_read_timeout(Some(IO_TIMEOUT));
-                let _ = tcp.set_write_timeout(Some(IO_TIMEOUT));
-                let tls_cfg = match server_config(&cfg.cert, &cfg.key) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        smtp::attempt(sink.as_ref(), &peer, "", "", &format!("tls: refused: {e}"));
-                        return 1;
-                    }
-                };
-                let Ok(conn) = ServerConnection::new(tls_cfg) else { return 1 };
-                let mut tls = StreamOwned::new(conn, tcp);
-                while tls.conn.is_handshaking() {
-                    if let Err(e) = tls.conn.complete_io(&mut tls.sock) {
-                        smtp::attempt(sink.as_ref(), &peer, "", "", &format!("tls: refused: handshake failed: {e}"));
-                        return 1;
-                    }
-                }
-                smtp::serve_session(tls, &cfg.policy(peer), sink.as_ref());
-                0
-            });
+            spira_otel::metrics::instrument(&metrics, "spira-submission", "session", || session(tcp, &cfg, sink.as_ref()));
         });
     }
+}
+
+/// One accepted connection, start to finish: IO timeouts, the TLS handshake with the
+/// certificate read now, then the SMTP session against `sink`. 0 when the session ran, 1 when
+/// TLS refused it. Blocking; callers give each connection its own thread.
+pub fn session(tcp: TcpStream, cfg: &Config, sink: &dyn Sink) -> i32 {
+    let peer = tcp.peer_addr().map_or("unknown".to_string(), |a| a.to_string());
+    let _ = tcp.set_read_timeout(Some(IO_TIMEOUT));
+    let _ = tcp.set_write_timeout(Some(IO_TIMEOUT));
+    let tls_cfg = match server_config(&cfg.cert, &cfg.key) {
+        Ok(c) => c,
+        Err(e) => {
+            smtp::attempt(sink, &peer, "", "", &format!("tls: refused: {e}"));
+            return 1;
+        }
+    };
+    let Ok(conn) = ServerConnection::new(tls_cfg) else { return 1 };
+    let mut tls = StreamOwned::new(conn, tcp);
+    while tls.conn.is_handshaking() {
+        if let Err(e) = tls.conn.complete_io(&mut tls.sock) {
+            smtp::attempt(sink, &peer, "", "", &format!("tls: refused: handshake failed: {e}"));
+            return 1;
+        }
+    }
+    smtp::serve_session(tls, &cfg.policy(peer), sink);
+    0
 }
 
 #[derive(Debug)]

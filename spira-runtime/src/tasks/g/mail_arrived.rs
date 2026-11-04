@@ -1,7 +1,8 @@
 //! Source `mail.arrived`: a registered mailbox received mail. Replaces the watch half of
 //! `spira/spira-mail-deliver.sh` (`spira-mail-deliver-prod.service`, `Type=simple`). Pattern P3.
-//! Contract: `wiki/projects/spira/designs/tasks/source-mail-arrived.md`. Not ported yet: the real
-//! source's [`Source::run`] is `unimplemented!`; under virtual time a `ScriptedSource` stands in.
+//! Contract: `wiki/projects/spira/designs/tasks/source-mail-arrived.md`. The real read is
+//! `tasks::g::sources::mail` over `sources::watch::platform()`; under virtual time a
+//! `ScriptedSource` stands in, and this source is refused.
 //!
 //! # Tick
 //!
@@ -95,7 +96,13 @@ impl Source for MailArrived {
         NAME
     }
 
-    fn run(self: Box<Self>, _tx: mpsc::Sender<Submit>) {
-        unimplemented!("mail.arrived: not ported yet")
+    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) {
+        if tx.is_closed() {
+            return;
+        }
+        match super::sources::watch::platform() {
+            Ok(watch) => super::sources::mail::run(&self.mailboxes, watch, tx),
+            Err(e) => eprintln!("spira-runtime: source {NAME}: {e}"),
+        }
     }
 }

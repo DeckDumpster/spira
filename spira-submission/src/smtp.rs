@@ -17,16 +17,45 @@ pub struct Policy {
     pub peer: String,
 }
 
+/// The envelope of one finished DATA phase: who sent what to whom, as the session saw it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Envelope<'a> {
+    pub peer: &'a str,
+    pub user: &'a str,
+    pub from: &'a str,
+    pub to: &'a [String],
+    pub message_id: &'a str,
+    pub in_reply_to: &'a str,
+}
+
 pub trait Sink {
     fn deliver(&self, message: &[u8]) -> Result<(), String>;
+
+    /// One accepted message with its envelope: the client is answered `250` on `Ok` and `451`
+    /// on `Err`. A sink that records the session (the scheduler's `submission` source) overrides
+    /// this; the default delivers the message alone.
+    fn accept(&self, envelope: &Envelope, message: &[u8]) -> Result<(), String> {
+        let _ = envelope;
+        self.deliver(message)
+    }
+
+    /// A session outcome the client was refused (auth, sender, relay, size, TLS or delivery),
+    /// with the reason as the audit line names it. The default records nothing beyond the log.
+    fn refused(&self, peer: &str, user: &str, from: &str, reason: &str) {
+        let _ = (peer, user, from, reason);
+    }
 
     fn log(&self, line: &str) {
         eprintln!("spira-submission: {line}");
     }
 }
 
+/// The audit line for one session outcome, and, for a refusal, the sink's [`Sink::refused`].
 pub fn attempt(sink: &dyn Sink, peer: &str, user: &str, from: &str, outcome: &str) {
     sink.log(&format!("ts={} peer={peer} user={user:?} from={from:?} {outcome}", crate::clock::iso(crate::clock::now())));
+    if let Some((_, reason)) = outcome.split_once("refused: ") {
+        sink.refused(peer, user, from, reason);
+    }
 }
 
 struct Conn<S> {
@@ -292,7 +321,9 @@ pub fn serve_session<S: Read + Write>(stream: S, p: &Policy, sink: &dyn Sink) {
                         Ok(raw) => {
                             let text = String::from_utf8_lossy(&raw).into_owned();
                             let (mid, irt) = (header(&text, "message-id"), header(&text, "in-reply-to"));
-                            let outcome = sink.deliver(&raw);
+                            let sender_clean = clean(&sender);
+                            let envelope = Envelope { peer: &p.peer, user: &who, from: &sender_clean, to: &to, message_id: &mid, in_reply_to: &irt };
+                            let outcome = sink.accept(&envelope, &raw);
                             let state = match &outcome {
                                 Ok(()) => "accepted".to_string(),
                                 Err(e) => format!("refused: delivery failed: {}", clean(e)),
@@ -404,5 +435,47 @@ fn read_data<S: Read + Write>(c: &mut Conn<S>, max: usize) -> Result<Vec<u8>, Da
         Err(DataErr::TooBig)
     } else {
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    #[derive(Default)]
+    struct Recording {
+        delivered: RefCell<Vec<Vec<u8>>>,
+        refused: RefCell<Vec<String>>,
+    }
+
+    impl Sink for Recording {
+        fn deliver(&self, message: &[u8]) -> Result<(), String> {
+            self.delivered.borrow_mut().push(message.to_vec());
+            Ok(())
+        }
+
+        fn refused(&self, peer: &str, user: &str, from: &str, reason: &str) {
+            self.refused.borrow_mut().push(format!("{peer}|{user}|{from}|{reason}"));
+        }
+
+        fn log(&self, _: &str) {}
+    }
+
+    #[test]
+    fn a_refused_outcome_reaches_the_sink_with_its_reason_and_an_accepted_one_does_not() {
+        let s = Recording::default();
+        attempt(&s, "10.0.0.3:6666", "ryan", "x@y", "rcpt: refused: relay denied to \"a@b\"");
+        attempt(&s, "10.0.0.3:6666", "ryan", "", "auth: accepted");
+        assert_eq!(*s.refused.borrow(), ["10.0.0.3:6666|ryan|x@y|relay denied to \"a@b\""]);
+    }
+
+    #[test]
+    fn the_default_accept_delivers_the_message_alone() {
+        let s = Recording::default();
+        let to = vec!["c@spira".to_string()];
+        let env = Envelope { peer: "p", user: "u", from: "f", to: &to, message_id: "<m>", in_reply_to: "" };
+        assert_eq!(s.accept(&env, b"hello"), Ok(()));
+        assert_eq!(*s.delivered.borrow(), [b"hello".to_vec()]);
     }
 }
