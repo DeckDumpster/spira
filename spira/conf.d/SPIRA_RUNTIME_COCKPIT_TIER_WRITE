@@ -3,5 +3,5 @@ GROUP=runtime
 DOC=Whether this spira-runtime's cockpit tier tasks write run/cockpit.env (the collector's may_write).
 SCHEMA=Whether this spira-runtime's three cockpit tier tasks are the one writer of run/cockpit.env and its history row: the supervisor's may_write, which was the cockpit unit's INVOCATION_ID or SPIRA_COCKPIT_FORCE=1. Set it to 0 on a scheduler running alongside the old collector for parity, so only one side writes. On by default: the tiers replace the collector.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    : "${SPIRA_COCKPIT_TIER_WRITE:=1}"
+    : "${SPIRA_RUNTIME_COCKPIT_TIER_WRITE:=1}"
 SPIRA_CONF_DEFAULT_EOF

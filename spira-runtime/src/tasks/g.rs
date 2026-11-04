@@ -157,7 +157,7 @@ pub mod cockpit {
 
     /// The pinned key that makes this scheduler the cockpit snapshot's one writer: the
     /// supervisor's `may_write`, which was `INVOCATION_ID` or `SPIRA_COCKPIT_FORCE`.
-    pub const WRITE_KEY: &str = "SPIRA_COCKPIT_TIER_WRITE";
+    pub const WRITE_KEY: &str = "SPIRA_RUNTIME_COCKPIT_TIER_WRITE";
 
     /// Keys that move on every read and so never make a snapshot new on their own: the pass's
     /// own time, and each probe's read time.
@@ -299,7 +299,7 @@ pub mod cockpit {
             .zip(got)
             .map(|(p, f)| (p.name.clone(), Fragment { status: FragmentState::of_word(f.status).unwrap_or(FragmentState::Error), at: f.at.max(0) as u64, killed: f.killed, kv: f.kv.into_iter().collect() }))
             .collect();
-        let snap = Snapshot { supervised: input.config.get(WRITE_KEY).is_some_and(|v| v == "1"), fragments };
+        let snap = Snapshot { supervised: input.config.get(WRITE_KEY).is_some_and(|v| matches!(v.as_str(), "1" | "true")), fragments };
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
 

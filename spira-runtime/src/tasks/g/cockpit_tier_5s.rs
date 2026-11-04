@@ -51,7 +51,7 @@
 //! # Reverse
 //!
 //! Release rollback restores the service and supervisor; Observe mode shadows `publish`, and the
-//! old collector can run alongside for parity with `SPIRA_COCKPIT_TIER_WRITE=1` on one side only (`SPIRA_COCKPIT_FORCE` on the other).
+//! old collector can run alongside for parity with `SPIRA_RUNTIME_COCKPIT_TIER_WRITE=1` on one side only (`SPIRA_COCKPIT_FORCE` on the other).
 
 use std::collections::BTreeMap;
 
