@@ -2116,6 +2116,7 @@ dependencies = [
  "ring",
  "round-vm",
  "runtime",
+ "runtime-watch",
  "serde",
  "serde_json",
  "sim",

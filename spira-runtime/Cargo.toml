@@ -54,6 +54,7 @@ gh-intake = { path = "../gh-intake" }
 dwarf = { path = "../dwarf" }
 archivist = { path = "../archivist" }
 incident = { path = "../incident" }
+runtime-watch = { path = "../runtime-watch" }
 refusal-watch = { path = "../refusal-watch" }
 release = { path = "../release" }
 cockpit-collect = { path = "../cockpit-collect" }
