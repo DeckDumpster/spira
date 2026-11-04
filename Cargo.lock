@@ -2105,6 +2105,7 @@ dependencies = [
  "install",
  "libc",
  "mail",
+ "perf-watch",
  "reconciler",
  "reconciler-engine",
  "reconciler-flow",

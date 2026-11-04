@@ -140,10 +140,108 @@ pub struct Carry {
     pub record: Vec<Timing>,
 }
 
+/// The carry as the library's health: no pass yet is a default carry, and no stats sample yet
+/// is an empty one.
+fn health_of(carry: &Carry) -> perf_watch::Health {
+    perf_watch::Health {
+        last_pass: (carry != &Carry::default()).then_some(carry.last_pass),
+        alarms: carry.alarms.clone(),
+        sample_at: (!carry.sample.is_empty()).then_some(carry.sample_at),
+        sample: carry.sample.clone(),
+    }
+}
+
+fn to_lib(t: &Timing) -> perf_watch::Timing {
+    perf_watch::Timing { name: t.name.clone(), millis: t.millis, micros: t.micros, error: t.error.clone(), phases: t.phases.clone() }
+}
+
+fn spec(name: &str, input: String, deadline_ms: u64) -> EffectSpec {
+    EffectSpec { name: name.into(), input, deadline_ms }
+}
+
 /// `run_pass` with the probing lifted out: the next carry and the writes, among them each
-/// `inbox.append` line as `<UTC ISO> [watch:perf-watch] <alarm>`.
-pub fn decide(_carry: &Carry, _snap: &Snapshot, _now_ms: u64, _cfg: &Config) -> (Carry, Vec<EffectSpec>) {
-    unimplemented!("watch.perf: not ported yet")
+/// `inbox.append` line as `<UTC ISO> [watch:perf-watch] <alarm>`. The library's `settle` is the
+/// decision; the metrics push is last, and the handler sends it as a memory-only probe.
+pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+    let now = now_ms / 1000;
+    let settings = perf_watch::Settings { budget_ms: cfg.budget_ms, interval_secs: cfg.interval_secs, remind_secs: cfg.remind_secs };
+    let prior = health_of(carry);
+    if !perf_watch::due(&settings, &prior, now) {
+        return (carry.clone(), vec![]);
+    }
+    let cur = (!snap.callers.is_empty()).then(|| snap.callers.clone());
+    let pass = perf_watch::settle(&settings, &prior, now, snap.timings.iter().map(to_lib).collect(), cur);
+    let next = Carry { last_pass: now, alarms: pass.health.alarms, sample_at: pass.health.sample_at.unwrap_or(0), sample: pass.health.sample, record: snap.timings.clone() };
+    let mut acts = vec![];
+    for l in &pass.lines {
+        acts.push(spec(INBOX_APPEND, perf_watch::inbox_line(now, l).trim_end().to_string(), WRITE_DEADLINE_MS));
+        acts.push(spec(LOG, l.clone(), WRITE_DEADLINE_MS));
+    }
+    for s in &pass.slow {
+        acts.push(spec(SLOW_SAMPLE, s.trim_end().to_string(), WRITE_DEADLINE_MS));
+    }
+    acts.push(spec(METRICS, serde_json::to_string(&snap.timings).unwrap_or_default(), WRITE_DEADLINE_MS));
+    (next, acts)
+}
+
+const WRITE_DEADLINE_MS: u64 = 5_000;
+/// Each probe's own bound (`perf-watch/src/main.rs:10`).
+const PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The probe file the unit was started with, `spira/perf-probes` in the release.
+fn probes() -> Result<Vec<perf_watch::Probe>, String> {
+    let file = spira_config::resolve::locate_home_for_process()?.join("perf-probes");
+    std::fs::read_to_string(&file).map_err(|e| e.to_string()).and_then(|t| perf_watch::parse_probes(&t)).map_err(|e| format!("perf-watch: {}: {e}", file.display()))
+}
+
+/// One probe timed end to end: a `spira-lc` read goes over the in-process client (the path
+/// S7 left), any other probe is its program run through the `Proc` port.
+fn time_one(lc: &Result<spira_config::lc_call::LcClient, String>, argv: &[String]) -> Timing {
+    let t0 = std::time::Instant::now();
+    let r: Result<(), String> = match (argv[0].as_str(), lc) {
+        ("spira-lc", Ok(lc)) => lc.call(&argv[1..]).map(|_| ()).map_err(|e| format!("{}: {e}", argv[0])),
+        ("spira-lc", Err(e)) => Err(format!("{}: {e}", argv[0])),
+        _ => {
+            use runtime::ports::Proc;
+            let spec = runtime::ports::ProcSpec { prog: argv[0].clone(), args: argv[1..].to_vec(), stdin: vec![], deadline: PROBE_DEADLINE };
+            runtime::ports::SysProc.run(&spec).map(|_| ()).map_err(|e| format!("{}: {e}", argv[0]))
+        }
+    };
+    let micros = t0.elapsed().as_micros() as u64;
+    Timing { name: String::new(), micros, millis: micros / 1000, phases: None, error: r.err() }
+}
+
+/// `watch.perf.observe`: every probe timed, then the store's caller counts.
+pub fn observe(_: &crate::Effects, _: &str, _: &EffectSpec) -> Result<String, String> {
+    let lc = spira_config::lc_call::LcClient::configured();
+    let timings = probes()?.iter().map(|p| Timing { name: p.name.clone(), ..time_one(&lc, &p.argv) }).collect();
+    let callers = lc.as_ref().ok().and_then(|c| c.call(&["stats"]).ok()).map(|r| perf_watch::caller_counts(&r.out)).unwrap_or_default();
+    serde_json::to_string(&Snapshot { timings, callers }).map_err(|e| e.to_string())
+}
+
+fn append(file: &str, line: &str) -> Result<String, String> {
+    let run = Config::pinned()?.run;
+    let path = std::path::Path::new(&run).join(file);
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    std::io::Write::write_all(&mut f, format!("{line}\n").as_bytes()).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(path.display().to_string())
+}
+
+/// `watch.perf.log`: the bare alarm, to the `perf-watch` log row's file.
+pub fn log(_: &crate::Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+    append("perf-watch.log", &spec.input)
+}
+
+/// `watch.perf.slow_sample`: one row of `run/perf-slow.log`.
+pub fn slow_sample(_: &crate::Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+    append("perf-slow.log", &spec.input)
+}
+
+/// `watch.perf.metrics`: every answered probe's time, pushed; a lost push is a gap.
+pub fn metrics(_: &crate::Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+    let timings: Vec<Timing> = serde_json::from_str(&spec.input).map_err(|e| e.to_string())?;
+    perf_watch::push_timings(&spira_config::process::metrics_sink("perf-watch"), &timings.iter().map(to_lib).collect::<Vec<_>>());
+    Ok(format!("{} probe(s)", timings.len()))
 }
 
 pub struct WatchPerf {
@@ -180,6 +278,14 @@ impl Handler for WatchPerf {
         if ev.kind.tag == TICK {
             return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
         }
+        // The push rides as a memory-only probe: a lost one is a gap in the series, and journaling
+        // it would cost two events a pass on top of the state the pass must carry.
         pattern::on_answer(ctx, view, ev, OBSERVE, STATE, &self.config, decide)
+            .into_iter()
+            .map(|c| match c {
+                Command::Effect(s) if s.name == METRICS => Command::Probe(s),
+                c => c,
+            })
+            .collect()
     }
 }
