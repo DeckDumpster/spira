@@ -1,7 +1,6 @@
-//! The production [`crate::ports::World`]: git, `bd`-adjacent tools (`release`, `mail`,
-//! `overrides.sh`, `units-install`, `exclude.sh`), `gh`, and the `lib.sh` repository-map seam —
-//! the same one-shot context call `gate-check`/`queue` use rather than re-deriving the repository map
-//! resolution in Rust a second time (DESIGN.md §4: lib.sh stays the one authority).
+//! The production [`crate::ports::World`]: git, the sibling tools (`release`, `overrides.sh`,
+//! `units-install`, `exclude.sh`), `gh`, and in-process the mail library, the clock and the
+//! config resolution.
 
 use crate::ports::{StatusRow, World};
 use std::cell::OnceCell;
@@ -9,30 +8,52 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// Whether `lib.sh` (and whatever it sources — conf.sh, transitively) sources cleanly.
-/// Called once, before any subcommand dispatches — see `main.rs`'s doc comment: this is
-/// skew.sh's own `trap '[ "$_skew_init_done" = 0 ] && exit 3' EXIT` around its `. lib.sh`,
-/// which caught a `bd migrate schema` failure inside conf.sh the same way it would catch
-/// lib.sh itself being unreadable. A per-call `seam()` alone can't distinguish "this one
-/// lib.sh function returned nothing" from "lib.sh never sourced at all," so this is a
-/// dedicated, one-time check, not folded into `seam()`.
-pub fn lib_sh_sources(home: &Path) -> bool {
-    let envs = match spira_config::release_env::child_path_env_for_process() {
-        Ok(e) => e,
+/// Whether this process's configuration resolves — the in-process form of skew.sh's own
+/// `trap '[ "$_skew_init_done" = 0 ] && exit 3' EXIT` around its `. lib.sh`: a config that
+/// cannot resolve is "could not check", never an empty verdict. Called once, before any
+/// subcommand dispatches (see `main.rs`).
+pub fn config_resolves() -> bool {
+    match spira_config::process::config() {
+        Ok(_) => true,
         Err(e) => {
             eprintln!("skew: {e}");
-            return false;
+            false
         }
+    }
+}
+
+/// `YYYYMMDDTHHMMSSZ`, UTC, for `epoch` — what `date -u +%Y%m%dT%H%M%SZ` printed.
+pub fn stamp_of(epoch: u64) -> String {
+    tsd::iso_utc(epoch).replace(['-', ':'], "")
+}
+
+/// One question to the operator through the mail library, in-process, under the same
+/// environment and bead store `mail send` loads.
+fn send_question(subject: &str, body: &str, default_action: &str) -> Result<(), String> {
+    let env = mail::env::Env::load()?;
+    // FORK-EDGE: content store write — the mail library files the ask's bead through bdq
+    let bd = mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: env.bd_conn_retries };
+    let args = mail::cmds::SendArgs {
+        mailbox: "operator",
+        from: Some("Skew check <skew@spira>"),
+        subject,
+        kind: "question",
+        default: default_action,
+        class: "",
+        bead: "",
+        urgent: false,
+        digest: false,
+        dry_run: false,
+        requested_by: "",
     };
-    // batch-job: runs a gate, build or forge script that takes as long as its work
-    Command::new("bash")
-        .arg("-c")
-        .arg(format!(". \"{}\" >/dev/null 2>&1", home.join("lib.sh").display()))
-        .envs(envs)
-        .stdin(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    let result = mail::cmds::send(&bd, &env, &args, body.to_string());
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    if let Some(a) = mail::cmds::attempt_of_send(&args, body, &result, now) {
+        if let Err(e) = a.write(&env.run_dir, &tsd::default_host()) {
+            eprintln!("mail: send attempt not recorded: {e}");
+        }
+    }
+    result.map(|_| ())
 }
 
 // Registered config keys (spira/conf.d) this crate's generic `env()` seam also serves —
@@ -233,6 +254,7 @@ impl World for Real {
             Err(e) => return (false, e),
         };
         // batch-job: release runs for as long as its work does
+        // FORK-EDGE: release is a sibling binary (build/verify/activate), not a library
         let mut c = Command::new(release);
         c.arg("verify").arg(name).arg("--no-pre-activate");
         if let Some(r) = releases {
@@ -278,6 +300,7 @@ impl World for Real {
         // directly. Redirecting to Stdio::null() here discarded that line entirely; fixed
         // by inheriting stdout/stderr (Command's own default) instead of silencing them.
         // Caught live by testenv's test-overrides.sh (sp-yyk47).
+        // FORK-EDGE: overrides.sh (223 lines of shell, over the port-in-place bound)
         let _ = spira_config::bounded::bounded("overrides.sh").arg("apply").arg(repo).stdin(Stdio::null()).status();
     }
     fn install_diff(&self, installer: &Path) -> (i32, String) {
@@ -333,35 +356,11 @@ impl World for Real {
         }
     }
     fn mail_send_question(&self, subject: &str, body: &str, default_action: &str) -> Result<(), String> {
-        // mail.sh is the `mail` binary now (sp-ooh1k); deps.toml's compat table keeps a
-        // spira/mail.sh symlink but skew.sh's own fix called the real name directly
-        // rather than lean on that transitional shim -- matched here, sp-yyk47.
-        let mut child = spira_config::bounded::bounded("mail")
-            .args(["send", "operator", "--from", "Skew check <skew@spira>", "--subject", subject, "--kind", "question", "--default", default_action])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        if let Some(stdin) = child.stdin.as_mut() {
-            let _ = stdin.write_all(body.as_bytes());
-        }
-        let out = child.wait_with_output().map_err(|e| e.to_string())?;
-        if out.status.success() {
-            Ok(())
-        } else {
-            Err(format!(
-                "rc={} {}{}",
-                out.status.code().unwrap_or(-1),
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            ))
-        }
+        send_question(subject, body, default_action)
     }
 
     fn now_stamp(&self) -> String {
-        let out = spira_config::bounded::bounded("date").arg("-u").arg("+%Y%m%dT%H%M%SZ").output();
-        out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+        stamp_of(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()))
     }
     fn env(&self, k: &str) -> Result<Option<String>, String> {
         if RESOLVED_KEYS.contains(&k) {
@@ -494,6 +493,7 @@ impl World for Real {
 
 /// `exclude.sh harness-in`, fed `text` (raw, possibly multi-line `git` output) on stdin.
 fn pipe_through_exclude(home: &Path, text: &str) -> Vec<String> {
+    // FORK-EDGE: exclude.sh (345 lines of shell, over the port-in-place bound)
     let mut child = match spira_config::bounded::bounded(home.join("exclude.sh")).arg("harness-in").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
         Ok(c) => c,
         Err(_) => return Vec::new(),
