@@ -36,6 +36,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
 ureq = { version = "2", default-features = false, features = ["tls"] }
+gh-intake = { path = "../gh-intake" }
 
 [dev-dependencies]
 forge = { path = "../forge" }

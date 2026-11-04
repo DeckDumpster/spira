@@ -27,28 +27,29 @@ pub mod trigger_groom;
 pub mod trigger_mimir;
 pub mod trigger_warden;
 
-pub static TASKS: &[Task] = &[];
-
-/// The rows of this family not yet ported, in the design's catalogue order. `inbox.append` and
-/// the `unit.*` effects both persona rows emit are served by `tasks::SHARED`.
-pub static PENDING: &[Task] = &[
+pub static TASKS: &[Task] = &[
     Task {
         name: intake_gh::NAME,
         boot: intake_gh::IntakeGh::boot,
         cadence_ms: |_| cadence(intake_gh::CADENCE_KEY),
         effects: intake_gh::EFFECTS,
         runners: &[
-            (intake_gh::OBSERVE, |_, _, _| unimplemented!("intake.gh.observe: not ported yet")),
-            (intake_gh::FILE_WORK, |_, _, _| unimplemented!("intake.gh.file_work: not ported yet")),
-            (intake_gh::FILE_UNTRUSTED, |_, _, _| unimplemented!("intake.gh.file_untrusted: not ported yet")),
-            (intake_gh::NOTE_SEEN, |_, _, _| unimplemented!("intake.gh.note_seen: not ported yet")),
-            (intake_gh::CLOSE_PROMOTED, |_, _, _| unimplemented!("intake.gh.close_promoted: not ported yet")),
-            (intake_gh::DIGEST, |_, _, _| unimplemented!("intake.gh.digest: not ported yet")),
-            (intake_gh::UNVERIFIABLE, |_, _, _| unimplemented!("intake.gh.unverifiable: not ported yet")),
+            (intake_gh::OBSERVE, intake_gh::run_observe),
+            (intake_gh::FILE_WORK, intake_gh::run_file_work),
+            (intake_gh::FILE_UNTRUSTED, intake_gh::run_file_untrusted),
+            (intake_gh::NOTE_SEEN, intake_gh::run_note_seen),
+            (intake_gh::CLOSE_PROMOTED, intake_gh::run_close_promoted),
+            (intake_gh::DIGEST, intake_gh::run_digest),
+            (intake_gh::UNVERIFIABLE, intake_gh::run_unverifiable),
         ],
         keys: &[intake_gh::KEYS],
         build: |_| refuse(intake_gh::NAME, intake_gh::IntakeGh::from_cfg()).registration(),
     },
+];
+
+/// The rows of this family not yet ported, in the design's catalogue order. `inbox.append` and
+/// the `unit.*` effects both persona rows emit are served by `tasks::SHARED`.
+pub static PENDING: &[Task] = &[
     Task {
         name: trigger_groom::NAME,
         boot: trigger_groom::TriggerGroom::boot,

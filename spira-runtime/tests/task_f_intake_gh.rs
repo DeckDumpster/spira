@@ -1,7 +1,6 @@
 //! Acceptance T1–T6 for `intake.gh`, from its contract
-//! (`wiki/projects/spira/designs/tasks/intake-gh.md`, Acceptance) on `TaskRig`. Red until the port
-//! lands: `decide` and `step` are `unimplemented!`, and the row waits in `tasks::f::PENDING`. T6
-//! runs two virtual days (the contract asks seven).
+//! (`wiki/projects/spira/designs/tasks/intake-gh.md`, Acceptance) on `TaskRig`. The row is ported
+//! (in `tasks::f::TASKS`). T6 runs two virtual days (the contract asks seven).
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -98,7 +97,7 @@ fn t3_the_carry_read_is_the_carry_recorded() {
 
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
-    let row = f::PENDING.iter().find(|t| t.name == NAME).expect("the row is pending");
+    let row = f::TASKS.iter().find(|t| t.name == NAME).expect("the row is ported");
     assert_eq!(row.effects, EFFECTS, "the row declares the module's effects");
     let real: Vec<&str> = tasks::routes().keys().copied().collect();
     let doubles = sim::doubles::service().names();
