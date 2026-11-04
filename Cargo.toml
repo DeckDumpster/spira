@@ -93,6 +93,7 @@ members = [
     "state-store",
     "state-store-sqlite",
     "round-controller",
+    "watchdog",
 ]
 resolver = "2"
 

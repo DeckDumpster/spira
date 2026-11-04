@@ -2651,6 +2651,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "watchdog"
+version = "0.1.0"
+dependencies = [
+ "mail",
+ "runtime",
+ "serde",
+ "serde_json",
+ "spira-config",
+ "testkit",
+]
+
+[[package]]
 name = "watchtower"
 version = "1.0.0"
 dependencies = [
