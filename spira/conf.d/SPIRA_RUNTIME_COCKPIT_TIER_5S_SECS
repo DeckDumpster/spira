@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between the cockpit-tier-5s task's ticks in spira-runtime.
+SCHEMA=REQUIRED: Seconds between the cockpit-tier-5s task's ticks in spira-runtime: the pane's fast tier (probes now, round, inflight). The registry spelling of the collector's SPIRA_COCKPIT_TICK, which was never registry config. Declared by a spira-runtime task row written from its contract (wiki/projects/spira/designs/tasks/); nothing defaults it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
+SPIRA_CONF_DEFAULT_EOF

@@ -12,7 +12,7 @@ use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silen
 use runtime::StreamKey;
 use spira_runtime::tasks::g::cockpit::{Carry, Fragment, FragmentState, Snapshot};
 use spira_runtime::tasks::g::cockpit_tier_5s::*;
-use spira_runtime::tasks::{self, g};
+use spira_runtime::tasks;
 
 const CADENCE_MS: u64 = 5_000;
 const BOGUS: &str = "cockpit-tier-5s.bogus";
@@ -89,7 +89,7 @@ fn t3_a_publish_from_an_unsupervised_instance_is_refused_naming_may_write() {
 
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
-    let row = g::PENDING.iter().find(|t| t.name == NAME).expect("the row is pending");
+    let row = tasks::all().find(|t| t.name == NAME).expect("the row is ported");
     assert_eq!(row.effects, EFFECTS, "the row declares the module's effects");
     let real: Vec<&str> = tasks::routes().keys().copied().collect();
     let doubles = sim::doubles::service().names();

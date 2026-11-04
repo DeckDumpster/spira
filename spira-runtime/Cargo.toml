@@ -41,6 +41,7 @@ gh-intake = { path = "../gh-intake" }
 dwarf = { path = "../dwarf" }
 incident = { path = "../incident" }
 release = { path = "../release" }
+cockpit-collect = { path = "../cockpit-collect" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 inotify = { version = "0.11", default-features = false }

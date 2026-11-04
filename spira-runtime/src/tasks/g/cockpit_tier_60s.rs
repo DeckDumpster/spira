@@ -2,8 +2,8 @@
 //! those registry rows of `cockpit-collect` and their re-exec and `timeout` chain. Pattern P1.
 //! Contract: `wiki/projects/spira/designs/tasks/cockpit-tier-60s.md`; siblings
 //! [`super::cockpit_tier_5s`] (which lists the rows that become projections) and
-//! [`super::cockpit_tier_600s`]. Not ported yet: [`decide`] and [`step`] are `unimplemented!`, and
-//! the row waits in `tasks::g::PENDING`.
+//! [`super::cockpit_tier_600s`]. The decision, the merge and the runners are shared in
+//! [`super::cockpit`]; the probes run in-process (`cockpit_collect::tiers`).
 //!
 //! # Tick
 //!
@@ -56,7 +56,7 @@ use std::collections::BTreeMap;
 
 use runtime::event::*;
 
-use super::cockpit::{Carry, FragmentState, Snapshot, FRAGMENT_TRANSITIONS};
+use super::cockpit::{decide_tier, Carry, FragmentState, Snapshot, FRAGMENT_TRANSITIONS, WRITE_KEY};
 use super::Transition;
 use crate::tasks::f::Cycle;
 
@@ -74,7 +74,7 @@ pub const EFFECTS: &[&str] = &[OBSERVE, PUBLISH, SLOTS_SAMPLE];
 pub const PROBES: &[(&str, u64)] = &[("cockpit.slots", 20_000), ("cockpit.reachable", 120_000), ("cockpit.tsd", 30_000)];
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_COCKPIT_TIER_60S_SECS";
-pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_LC_BIN", "SPIRA_LC_TIMEOUT", "BD_TIMEOUT", "SPIRA_BDQ_CONN_RETRIES"];
+pub const KEYS: &[&str] = &[CADENCE_KEY, WRITE_KEY, "SPIRA_LC_TIMEOUT", "SPIRA_BDQ_CONN_RETRIES"];
 
 const OBSERVE_DEADLINE_MS: u64 = 120_000;
 const CYCLE: Cycle = Cycle { stream: STREAM, tick: TICK, observe: OBSERVE, deadline_ms: OBSERVE_DEADLINE_MS };
@@ -82,15 +82,32 @@ const CYCLE: Cycle = Cycle { stream: STREAM, tick: TICK, observe: OBSERVE, deadl
 pub const TRANSITIONS: &[Transition<FragmentState>] = FRAGMENT_TRANSITIONS;
 
 /// A fragment's next status on `on`, or a refusal naming the status it is in.
-pub fn step(_from: FragmentState, _on: &str) -> Result<FragmentState, String> {
-    unimplemented!("cockpit-tier-60s: not ported yet")
+pub fn step(from: FragmentState, on: &str) -> Result<FragmentState, String> {
+    super::cockpit::step(from, on)
 }
 
 /// The pure decision: the next carry and the acts (the publish when the merged `Kv` changed, the
 /// slots sample after an ok `slots` fragment); a refusal naming `may_write` when this is not the
 /// supervised instance.
-pub fn decide(_carry: &Carry, _snap: &Snapshot) -> Result<(Carry, Vec<EffectSpec>), String> {
-    unimplemented!("cockpit-tier-60s: not ported yet")
+pub fn decide(carry: &Carry, snap: &Snapshot) -> Result<(Carry, Vec<EffectSpec>), String> {
+    decide_with_sample(carry, snap)
+}
+
+/// The `slots` tsd fields an ok `slots` fragment carries, by the field names `tsd-write`
+/// wrote (`live`, `ceiling`, `lanes_live`, `ready`, `capacity_paused`).
+const SAMPLED: &[(&str, &str)] = &[("live", "SP_SLOTS_LIVE"), ("ceiling", "SP_SLOTS_CEILING"), ("lanes_live", "SP_SLOTS_LANES_LIVE"), ("ready", "SP_SLOTS_READY"), ("capacity_paused", "SP_SLOTS_CAPACITY_PAUSED")];
+
+/// The tier decision plus the supervisor's `slots` tsd sample after an ok `slots` read that moved
+/// the snapshot (an idle tick asks for nothing beyond its observe), run by `cockpit::answer` as a
+/// probe, off the journal. The series records each change, not each minute.
+fn decide_with_sample(carry: &Carry, snap: &Snapshot) -> Result<(Carry, Vec<EffectSpec>), String> {
+    let (next, mut acts) = decide_tier(carry, snap, PUBLISH)?;
+    let moved = carry.digest != next.digest;
+    if let Some(slots) = snap.fragments.get("cockpit.slots").filter(|f| moved && f.status == FragmentState::Ok) {
+        let input: String = SAMPLED.iter().map(|(field, key)| format!("{field}={}\n", slots.kv.get(*key).map_or("?", String::as_str))).collect();
+        acts.push(EffectSpec { name: SLOTS_SAMPLE.into(), input, deadline_ms: 5_000 });
+    }
+    Ok((next, acts))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -119,6 +136,6 @@ impl Handler for CockpitTier60s {
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        CYCLE.handle(self.interval_ms, view, ev, || super::cockpit::probe_input(PROBES), |body| super::cockpit::answer(ctx, view, ev, STATE, body, decide))
+        CYCLE.handle(self.interval_ms, view, ev, || super::cockpit::probe_input(PROBES, &self.config), |body| super::cockpit::answer(ctx, view, ev, STATE, body, decide))
     }
 }

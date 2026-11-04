@@ -199,6 +199,8 @@ pane_read_ttl = 2
 trace_mark = "=== spira attempt"
 runtime_cockpit_tier_60s_secs = 60
 runtime_cockpit_tier_600s_secs = 600
+runtime_cockpit_tier_5s_secs = 5
+cockpit_tier_write = true
 store_view_stale_ms = 10000
 runes_overlay = "/fixture/userhome/.config/spira/runes"
 check5_max_file = "5"

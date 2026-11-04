@@ -2,12 +2,12 @@
 //! three 5 s rows of `cockpit-collect`'s registry run by its supervisor
 //! (`spira-cockpit-prod.service`: `spira-supervise cockpit-collect collect`). Pattern P1.
 //! Contract: `wiki/projects/spira/designs/tasks/cockpit-tier-5s.md`; siblings
-//! [`super::cockpit_tier_60s`] and [`super::cockpit_tier_600s`]. Not ported yet: [`decide`] and
-//! [`step`] are `unimplemented!`, and the row waits in `tasks::g::PENDING`.
+//! [`super::cockpit_tier_60s`] and [`super::cockpit_tier_600s`]. The decision, the merge and the
+//! runners are shared in [`super::cockpit`]; the probes run in-process (`cockpit_collect::tiers`).
 //!
 //! # Tick
 //!
-//! Every 5 s (`SPIRA_COCKPIT_TICK`). Also woken by `unit.ran` for a gate, round or dwarf unit, so
+//! Every 5 s (`SPIRA_RUNTIME_COCKPIT_TIER_5S_SECS`; the collector's `SPIRA_COCKPIT_TICK` is not registry config). Also woken by `unit.ran` for a gate, round or dwarf unit, so
 //! WORK IN FLIGHT moves on the event. The three probes ride one observe ([`OBSERVE`], its input
 //! naming [`PROBES`]), so an idle tick asks for one probe; each sub-probe keeps its own timeout
 //! (`now` 30 s, `round` 60 s, `inflight` 60 s) and its skip-if-running inside the runner.
@@ -51,13 +51,13 @@
 //! # Reverse
 //!
 //! Release rollback restores the service and supervisor; Observe mode shadows `publish`, and the
-//! old collector can run alongside for parity with `SPIRA_COCKPIT_FORCE` set on one side only.
+//! old collector can run alongside for parity with `SPIRA_COCKPIT_TIER_WRITE=1` on one side only (`SPIRA_COCKPIT_FORCE` on the other).
 
 use std::collections::BTreeMap;
 
 use runtime::event::*;
 
-use super::cockpit::{Carry, FragmentState, Snapshot, FRAGMENT_TRANSITIONS};
+use super::cockpit::{decide_tier, Carry, FragmentState, Snapshot, FRAGMENT_TRANSITIONS, WRITE_KEY};
 use super::Transition;
 use crate::tasks::f::Cycle;
 
@@ -73,8 +73,8 @@ pub const EFFECTS: &[&str] = &[OBSERVE, PUBLISH];
 /// The sub-probes [`OBSERVE`] runs, each with its own timeout.
 pub const PROBES: &[(&str, u64)] = &[("cockpit.now", 30_000), ("cockpit.round", 60_000), ("cockpit.inflight", 60_000)];
 
-pub const CADENCE_KEY: &str = "SPIRA_COCKPIT_TICK";
-pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_SNAP_STALE_S", "SPIRA_COCKPIT_FORCE", "SPIRA_PANE_READ_TTL", "SPIRA_LC_TIMEOUT", "SPIRA_COCKPIT_WINDOW_HOURS", "SPIRA_TRACE_MARK"];
+pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_COCKPIT_TIER_5S_SECS";
+pub const KEYS: &[&str] = &[CADENCE_KEY, WRITE_KEY, "SPIRA_SNAP_STALE_S", "SPIRA_PANE_READ_TTL", "SPIRA_LC_TIMEOUT", "SPIRA_TRACE_MARK"];
 
 const OBSERVE_DEADLINE_MS: u64 = 60_000;
 const CYCLE: Cycle = Cycle { stream: STREAM, tick: TICK, observe: OBSERVE, deadline_ms: OBSERVE_DEADLINE_MS };
@@ -82,14 +82,14 @@ const CYCLE: Cycle = Cycle { stream: STREAM, tick: TICK, observe: OBSERVE, deadl
 pub const TRANSITIONS: &[Transition<FragmentState>] = FRAGMENT_TRANSITIONS;
 
 /// A fragment's next status on `on`, or a refusal naming the status it is in.
-pub fn step(_from: FragmentState, _on: &str) -> Result<FragmentState, String> {
-    unimplemented!("cockpit-tier-5s: not ported yet")
+pub fn step(from: FragmentState, on: &str) -> Result<FragmentState, String> {
+    super::cockpit::step(from, on)
 }
 
 /// The pure decision: the next carry and the acts (the publish, when the merged `Kv` changed); a refusal
 /// naming `may_write` when this is not the supervised instance.
-pub fn decide(_carry: &Carry, _snap: &Snapshot) -> Result<(Carry, Vec<EffectSpec>), String> {
-    unimplemented!("cockpit-tier-5s: not ported yet")
+pub fn decide(carry: &Carry, snap: &Snapshot) -> Result<(Carry, Vec<EffectSpec>), String> {
+    decide_tier(carry, snap, PUBLISH)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -118,6 +118,6 @@ impl Handler for CockpitTier5s {
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        CYCLE.handle(self.interval_ms, view, ev, || super::cockpit::probe_input(PROBES), |body| super::cockpit::answer(ctx, view, ev, STATE, body, decide))
+        CYCLE.handle(self.interval_ms, view, ev, || super::cockpit::probe_input(PROBES, &self.config), |body| super::cockpit::answer(ctx, view, ev, STATE, body, decide))
     }
 }
