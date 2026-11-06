@@ -1282,6 +1282,19 @@ def answer(args, body=None):
         elif kind in ("Release", "HolderDead"):
             moved[bid] = "READY"
         return 0, ""
+    if args[:1] == ["close"] and len(args) > 1:
+        # The composed close (sp-ipwlic: served, the CLI forwards it): the bead closes in bd,
+        # forced past blocks, and an open ask recorded for it is withdrawn.
+        bid, reason = args[1], flag(args, "--reason")
+        if flag(args, "--reason-file") == "-":
+            reason = body or ""
+        o = subprocess.run([os.environ.get("SPIRA_BD") or "bd", "-C", os.environ.get("SPIRA_DB") or ".", "close", bid, "--force", "--reason", reason],
+                           capture_output=True, text=True, env=dict(os.environ, BD_IGNORE_SCHEMA_SKEW="1"), timeout=30)
+        if o.returncode != 0:
+            return 1, o.stderr
+        if bid in asks and asks[bid]["state"] == "OPEN":
+            asks[bid].update(state="WITHDRAWN")
+        return 0, ""
     if args[:1] == ["content"] and len(args) > 1:
         # The store's content door (sp-ipwlic): the bd argv after `content`, run against this
         # suite's store, its request body on bd's stdin.
