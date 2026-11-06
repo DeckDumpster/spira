@@ -248,3 +248,19 @@ Left, and why:
 | test-guards | the PreToolUse fences bind the model's tool calls; a stub agent makes none |
 | test-timeout, test-thrash-teardown, test-dwarf-elastic-concurrency | their remaining case is a real signal to a live process group or the dwarf's concurrency count, which needs live dwarf units (G2) |
 | test-sentinel-pass, test-dispatch-open-children, test-strand-*, test-czar-partition, test-warden, test-lanes | a full sentinel pass, the strand and czar binaries, or lane concurrency, which `--call-only` does not run |
+
+# The loop's units became tasks (sp-ipwlic, ruling D6)
+
+sentinel-call, sentinel-landing, sift, rounds, gate-worker and publish are tasks of `spira-runtime
+serve`; `sim/actors.toml` keeps only sim-only actors, so a scenario naming one no longer loads
+(`tests/scenarios_load.rs` holds every shipped scenario to that). Each scenario that named one:
+
+| scenario | now |
+|---|---|
+| `resubmit-moved-tip` | world kept to SUBMITTED (the submit records the moved tip); the loop's half ported: `sim/tests/loop_ports.rs` `resubmit_moved_tip_…` |
+| `certify-twice` | ported: `loop_ports.rs` `certify_twice_…`; spira-lc's `certify_voids_a_stale_certification_first_and_leaves_a_current_one_alone` for the repeat |
+| `long-gate-interleaving` | ported: `loop_ports.rs` `long_gate_interleaving_…` |
+| `conflicting-siblings` | ported: `loop_ports.rs` `conflicting_siblings_…`; it found batcher.local cutting rounds in id order, not priority order (`task_a_batcher_local.rs` `t5_the_assemble_leg_lists_its_members_in_merge_order_priority_first`) |
+| `claim-vs-batch` | retired: lifecycle's `in_delivery_is_left_only_by_a_delivery_exit_event`, `stale_version_never_mutates`, `release_and_holder_dead_both_return_to_ready` |
+| `dwarf-brief`, `dwarf-slain`, `claim-rank`, `builder-excludes-qa-proposed`, `rc-cutover-readiness`, `submit-from-other-cwd`, `rebase-loop-note` | world kept: the `call` actor runs what sentinel-call's `unit_start` starts, through the `SPIRA_CALL` seam; the property is the dwarf's, spira-claim's or the CLI's, and the world stops at SUBMITTED |
+| `happy-path`, `cut-in-bare-env`, `publish-then-cut`, `push-lands`, `repo-modes`, `run-state-trail`, `rc-stale-round-pointer`, `rc-attributing-redrive`, `rc-fences-in-vm`, `supersede` | blocked: each needs a bead landed by the real `landing-pass land`, round VM or release tools, which only the tasks drive now; `scenarios_load.rs` `BLOCKED` names what each proves and its partial cover |

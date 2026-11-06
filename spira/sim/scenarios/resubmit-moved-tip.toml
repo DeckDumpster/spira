@@ -1,7 +1,23 @@
 epoch = 1800000000
 horizon = 1200000
-goal = "sp-rm01:LANDED"
-real_actors = ["sentinel-call", "sentinel-landing", "sift"]
+goal = "sp-rm01:SUBMITTED"
+
+# A second `work submit` at a moved tip records the moved tip on the SUBMITTED row. The property
+# is the submit's, so the world stops at SUBMITTED; that the loop then screens, cuts and lands the
+# moved tip (not the first) is the service's tasks' and is tested on them in
+# sim/tests/loop_ports.rs `resubmit_moved_tip_the_moved_tip_is_recorded_screened_cut_and_landed`
+# (ruling D6).
+#
+# The call: what sentinel-call's `unit_start` effect runs once it calls, `dwarf --home <home>
+# builder` under the properties `call_argv` gives, through the world's SPIRA_CALL seam
+# (`sim-call`, standing where systemd-run stands), on the call's minute.
+[[actor]]
+name = "call"
+command = '"$SPIRA_CALL" --property=TimeoutStartSec=3600 --property=IOSchedulingClass=idle --property=IOWeight=10 --setenv=SPIRA_RELEASE="$SPIRA_RELEASE" --setenv=PATH="$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:/usr/local/bin:/usr/bin:/bin" --setenv=HOME="$HOME" --setenv=SPIRA_TOML="$SPIRA_TOML" "$SPIRA_RELEASE/bin/dwarf" --home "$SPIRA_HOME" builder'
+first = 5000
+every = 60000
+duration_min = 1000
+duration_max = 2500
 
 [[step]]
 at = 0
