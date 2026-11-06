@@ -82,43 +82,31 @@
 # mailbox, so it is not asked here too.
 mail-deliver|extern|mail-deliver|spira-mail-deliver.sh health
 
-# INBOX-KEEPER has no row: spira-runtime hosts it as the inbox-keeper handler (spira-runtime/src/watchers).
+# THE DAEMON ROWS ARE GONE. Every watcher that looped here as a `daemon` row is a task of
+# `spira-runtime serve` or retired (scheduler-consolidation-2026-11-03 §1 E, §3 P5), and the
+# install that drops a row retires its `spira-watch-<name>` unit. The rows below name logs
+# that some other component writes. Hosted, with no row:
+#
+#   pr-notify, view, inbox-keeper, publish-backlog, round-duty, asks, supersede-duty,
+#   brain-dirty, design-asks           spira-runtime handlers (spira-runtime/src/watchers)
+#   lc-backup                          task watch.backup_age (lc-backup.timer still runs the backup)
+#   round-spill-key                    task watch.spill_key
+#   round-ami-stale                    task watch.ami_stale
+#   ci-spill-guard                     task watch.ci_spill
+#   pass-rate                          task watch.pass_rate
+#   warm-full                          task watch.warm_full
+#   testenv-cap                        task watch.testenv_cap
+#   alarms-probe                       task incident.probe
+#   notify (the timer)                 task inbox.notify
+#
+# Retired (P5): queue-watch (sp-kq4cll), stranded-runner (sp-eb13o2), dwarf-watch (sp-k4y7ax),
+# gh-provenance (sp-51hmmm), concierge-guard and its log row (it re-armed the inbox waiter
+# that is abolished), and the event-continuity log row (reconcile.continuity raises its
+# breaks as inbox lines, so nothing writes event-continuity.log).
 
-# PUBLISH-BACKLOG has no row: spira-runtime hosts it as the publish-backlog handler (spira-runtime/src/watchers).
-
-# LC-BACKUP is the age alarm for the lifecycle store's off-box backup (lc-backup.sh, run by
-# lc-backup.timer): it alerts the operator on the crossing into stale, or into no destination at all.
-lc-backup|daemon|@SPIRA_HOME@/lc-backup.sh watch --interval 900|@SPIRA_HOME@/lc-backup.sh health
-
-# STRANDED-RUNNER catches the gap GitHub itself does not: an ephemeral self-hosted job whose
-# runner registered, then vanished before taking it. Nothing re-assigns that job's per-run
-# label to a second runner, so without this it sits queued until GitHub's own 24h ceiling
-# closes it (`stranded-runner.sh`, `forge stranded-runners`). Latch on with
-# `watchd.sh tail stranded-runner`.
-stranded-runner|daemon|@SPIRA_HOME@/stranded-runner.sh watch --interval 120|@SPIRA_HOME@/stranded-runner.sh health
-
-# DWARF-WATCH is the standing look at the fleet: one line per live dwarf, and STALL, GATE,
-# TESTENV, CHURN, REOPENS flags. Status only — never a dwarf's transcript or a process argv.
-dwarf-watch|daemon|@SPIRA_HOME@/dwarf-watch.sh watch --interval 600|@SPIRA_HOME@/dwarf-watch.sh health
-
-# queue-watch — merge-queue transitions for every `mode = "queue"` repository: batch opened,
-# CI, ejected, re-pushed, landed (verified on base), closed without landing, forced cuts,
-# priority inversions and stalls. Derived from queue state and the forge, never from the
-# queue's log, which misses whole transitions. Latch on with `watchd tail queue-watch`.
-# The health probe fails when the last poll is stale or was blind, so silence is never
-# mistaken for a quiet queue.
-queue-watch|daemon|queue-watch watch --run @SPIRA_RUN@ --db @SPIRA_DB@ --home @SPIRA_HOME@|queue-watch health --run @SPIRA_RUN@
-
-# ROUND-DUTY has no row: spira-runtime hosts it as the round-duty handler (spira-runtime/src/watchers).
-
-# ASKS has no row: spira-runtime hosts it as the asks handler (spira-runtime/src/watchers).
-
-# SUPERSEDE-DUTY has no row: spira-runtime hosts it as the supersede-duty handler (spira-runtime/src/watchers).
-
-# PERF-WATCH times the hot read paths (spira/perf-probes) from a CPU-fenced timer and appends one
-# alarm line per path over the limit, with the top callers lc-serve counted, and appends the same
-# line to the Concierge inbox as "[watch:perf-watch] <line>". Nothing else writes its log, so a
-# quiet log means every path answered inside the limit.
+# PERF-WATCH is the alarm log of the hot read paths (spira/perf-probes): the watch.perf task
+# appends one line per path over the limit, with the top callers lc-serve counted. A quiet log
+# means every path answered inside the limit.
 perf-watch|log|@SPIRA_RUN@/perf-watch.log
 
 # UNIT-RUN-DBUS learns each user-unit run from the user manager's D-Bus signals and stores one
@@ -126,20 +114,10 @@ perf-watch|log|@SPIRA_RUN@/perf-watch.log
 # connection, a refused store), so any line is news.
 unit-run-dbus|log|@SPIRA_RUN@/unit-run-dbus.log
 
-# CONCIERGE-GUARD wakes the Concierge session when its inbox waiter has lapsed and mails the
-# operator when the wake does not take. Its log holds events only; health reads the state file
-# every check rewrites, so "not listening" and "no check lately" both show red.
-concierge-guard|log|@SPIRA_RUN@/concierge-guard.log|concierge-guard health --state @SPIRA_RUN@/concierge-guard.state --max-age 600
-
 # CONCIERGE-INBOX is the durable inbox the Concierge reads. `watchd next concierge-inbox` is how
 # it waits: it blocks until a line survives the drop and dedup rules, prints it and exits, with
 # the unread count and cursor kept here like any other row.
 concierge-inbox|log|@SPIRA_CONCIERGE_INBOX@
-gh-provenance|daemon|gh-intake provenance watch --interval 900|gh-intake provenance health
-
-# EVENT-CONTINUITY is the alarm for a break in the lifecycle event log: spira-event-continuity.timer
-# appends one JSON line per key whose first break it finds, and a clean log writes nothing.
-event-continuity|log|@SPIRA_RUN@/event-continuity.log
 
 # LC-LATENCY is the alarm for a spira-lc method whose p95 over five minutes is past the 500 ms
 # ceiling: lc-serve appends one line per breach (re-alarmed every 15 minutes) and nothing else
@@ -151,37 +129,25 @@ lc-latency|log|@SPIRA_RUN@/lc-latency.log
 # when it is back inside it. Nothing else writes the log.
 lc-ship|log|@SPIRA_RUN@/lc-ship.log
 
-# ROUND-SPILL-KEY warns SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS before the tailscale auth key spilled round
-# instances join the tailnet with expires (the expiry is recorded in <key file>.expires). It says
-# nothing while SPIRA_ROUND_VM_SPILL is unset.
-round-spill-key|daemon|@SPIRA_HOME@/round-spill-key.sh watch --interval 3600|@SPIRA_HOME@/round-spill-key.sh health
-round-ami-stale|daemon|@SPIRA_HOME@/round-ami-stale.sh watch --interval 300|@SPIRA_HOME@/round-ami-stale.sh health
-ci-spill-guard|daemon|@SPIRA_HOME@/ci-spill-guard.sh watch --interval 900|@SPIRA_HOME@/ci-spill-guard.sh health
-
-pass-rate|daemon|@SPIRA_HOME@/pass-rate.sh watch --interval 900|@SPIRA_HOME@/pass-rate.sh health
-
-# MEND-WATCH is the alarm for the mender bounds: spira-mend-watch.timer appends one line per
+# MEND-WATCH is the alarm for the mender bounds: the watch.mend task appends one line per
 # breach — a MENDING row past its deadline, or a bead mended more than twice in a day — and a
 # quiet log means every mender is inside its bounds.
 mend-watch|log|@SPIRA_RUN@/mend-watch.log
 
-# spira-submission is its own systemd unit; health TLS-connects to the configured address and
-# requires the SMTP banner. Unconfigured (SPIRA_SUBMISSION_ADDR empty) health exits 0 and serve idles.
-spira-submission|extern|spira-submission|spira-submission health
+# SPIRA-SUBMISSION is the SMTP submission listener, now the scheduler's `submission` source, so
+# the unit it rides is spira-runtime's. Health TLS-connects to the configured address and
+# requires the SMTP banner; unconfigured (SPIRA_SUBMISSION_ADDR empty) it exits 0 and the
+# source idles.
+spira-submission|extern|runtime|spira-submission health
 
-# WARM-FULL raises one inbox line, with per-slot sizes, when the dwarf warm tmpfs passes 85%.
-warm-full|daemon|@SPIRA_HOME@/warm-full.sh watch --interval 120|@SPIRA_HOME@/warm-full.sh health
-
-testenv-cap|daemon|testenv-cap watch --interval 15|testenv-cap health
-
-# BRAIN-DIRTY has no row: spira-runtime hosts it as the brain-dirty handler (spira-runtime/src/watchers).
+# RUNTIME-WATCH: the watch.runtime task appends its `cannot check` lines here, so a check that
+# cannot run never goes silent.
 runtime-watch|log|@SPIRA_RUN@/runtime-watch.log
 
-# DESIGN-ASKS has no row: spira-runtime hosts it as the design-asks handler (spira-runtime/src/watchers).
-
-# SKEW-REFRESH is the alarm for a checkout `skew refresh` keeps declining: skew appends one line
-# when the same repo has declined three passes running (naming the dirty tracked files and any stale
-# index.lock) and again every 180 passes while it persists. A quiet log means refreshes are landing.
+# SKEW-REFRESH is the alarm for a checkout `skew refresh` keeps declining: the watch.skew task
+# appends one line when the same repo has declined three passes running (naming the dirty tracked
+# files and any stale index.lock) and again every 180 passes while it persists. A quiet log means
+# refreshes are landing.
 skew-refresh|log|@SPIRA_RUN@/skew-refresh.log
 
 # ROUNDS-LOOP is where the round supervisor's pages are recorded. Nothing writes the Concierge inbox
@@ -189,8 +155,3 @@ skew-refresh|log|@SPIRA_RUN@/skew-refresh.log
 # verdict=.. red=..`, which offers the incident to a matching SOP's tool first and puts the page in the
 # inbox only when none handled it.
 rounds-loop|log|@SPIRA_RUN@/rounds-loop.log
-
-# ALARMS-PROBE proves the alarms component's primary delivery path every hour: one probe note to
-# its own test mailbox through `mail send` alone, never the fallback (law-a-fallback-has-a-forced-mode).
-# Health is red when the latest probe failed or is over two hours old.
-alarms-probe|daemon|incident page --no-fallback --probe alarms-probe --interval 3600|incident page --probe-health --max-age 7200

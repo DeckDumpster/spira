@@ -12,7 +12,7 @@ fn the_watchers_manifest_no_longer_carries_the_row() {
         fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/watchers"))
             .unwrap();
     assert!(
-        manifest.lines().any(|l| l.starts_with("dwarf-watch|")),
+        manifest.lines().any(|l| l.starts_with("concierge-inbox|")),
         "the scan must be able to see a row"
     );
     assert!(
