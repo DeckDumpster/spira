@@ -40,11 +40,13 @@ pub fn is_served(verb: &str) -> bool {
     OWN.contains(&verb) || (callers::is_verb(verb) && !CALLER_SIDE.contains(&verb))
 }
 
-/// The bead-content store (bd): reads, the narrow writes `bd-note`/`bd-supersede` make, and the
-/// alert purge's delete.
+/// The bead-content store (bd): reads, the narrow writes `bd-note`/`bd-supersede` and the
+/// `content` door make, and the alert purge's delete.
 pub trait Content {
     fn read(&self, args: &[String]) -> Result<String, String>;
     fn write(&self, args: &[&str]) -> Result<String, String>;
+    /// A `content` write: bd's own argv, and the request body as its stdin when there is one.
+    fn write_stdin(&self, args: &[String], stdin: Option<&str>) -> Result<String, String>;
     fn delete(&self, ids: &[String]) -> Result<(), String>;
 }
 
@@ -57,6 +59,9 @@ impl Content for LiveContent {
     }
     fn write(&self, args: &[&str]) -> Result<String, String> {
         crate::bd::write(args)
+    }
+    fn write_stdin(&self, args: &[String], stdin: Option<&str>) -> Result<String, String> {
+        crate::bd::write_stdin(args, stdin)
     }
     fn delete(&self, ids: &[String]) -> Result<(), String> {
         match crate::bd::tool("bdq", &[&["delete".to_string()][..], ids, &["--force".to_string()]].concat(), None, "purge-alerts", 120) {
@@ -125,7 +130,7 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
             Ok(dir) => crate::content::purge_alerts(&rest[1..], &|a| content.read(a), &|ids| content.delete(ids), &dir, now),
             Err(e) => Answer { code: callers::CANNOT_TELL, stderr: format!("spira-lc content purge-alerts: {e}\n"), ..Default::default() },
         },
-        "content" => crate::content::run(rest, &|a| content.read(a)),
+        "content" => crate::content::run(rest, stdin, &|a| content.read(a), &|a, body| content.write_stdin(a, body)),
         "close-epic" => callers::close_epic(rest, m, bd),
         "drop" => callers::drop_cmd(rest, m, bd),
         v if is_served(v) => callers::run(v, rest, m),
@@ -162,6 +167,10 @@ pub fn write_cert_log(id: &str, ans: &Answer, run_dir: Result<std::path::PathBuf
 /// is sent as named, so the service's answer is the refusal the verb has always given.
 pub fn client_request(argv: &[String], stdin: &mut dyn FnMut() -> Result<String, String>) -> (Vec<String>, Option<String>) {
     let mut argv = argv.to_vec();
+    if argv.first().map(String::as_str) == Some("content") && crate::content::takes_body(&argv[1..]) {
+        let body = stdin().ok();
+        return (argv, body);
+    }
     if argv.first().map(String::as_str) != Some("close") {
         return (argv, None);
     }
@@ -205,6 +214,19 @@ mod tests {
         assert_eq!(client_request(&v(&["close", "sp-a", "--reason-file", "-"]), &mut piped).1.as_deref(), Some("from stdin"));
         let missing = v(&["close", "sp-a", "--reason-file", "/no/such/file"]);
         assert_eq!(client_request(&missing, &mut none), (missing.clone(), None), "an unreadable file is sent as named; the service refuses it");
-        assert_eq!(client_request(&v(&["hold", "sp-a", "wait"]), &mut piped).1, None, "only close sends a body");
+        assert_eq!(client_request(&v(&["hold", "sp-a", "wait"]), &mut piped).1, None, "only close and a content write that takes one send a body");
+    }
+
+    #[test]
+    fn a_content_write_that_takes_a_body_sends_the_callers_stdin() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let mut piped = || Ok::<String, String>("the body".into());
+        for argv in [v(&["content", "note", "sp-a", "--stdin"]), v(&["content", "create", "T", "--type", "task", "--body-file", "-", "--silent"])] {
+            assert_eq!(client_request(&argv, &mut piped), (argv.clone(), Some("the body".into())), "{argv:?}");
+        }
+        let mut never = || -> Result<String, String> { panic!("stdin is not read for a write that takes no body") };
+        for argv in [v(&["content", "note", "sp-a", "text"]), v(&["content", "label", "add", "sp-a", "x"]), v(&["content", "show", "sp-a"])] {
+            assert_eq!(client_request(&argv, &mut never).1, None, "{argv:?}");
+        }
     }
 }

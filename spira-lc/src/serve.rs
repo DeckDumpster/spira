@@ -656,6 +656,11 @@ mod tests {
             self.0.borrow_mut().push(args.join(" "));
             Ok(String::new())
         }
+        fn write_stdin(&self, args: &[String], stdin: Option<&str>) -> Result<String, String> {
+            let body = stdin.map_or(String::new(), |b| format!(" <<{b}"));
+            self.0.borrow_mut().push(format!("{}{body}", args.join(" ")));
+            Ok(format!("wrote {}", args.join(" ")))
+        }
         fn delete(&self, _: &[String]) -> Result<(), String> {
             Ok(())
         }
@@ -732,6 +737,83 @@ mod tests {
         assert_eq!(err, "spira-lc content: `delete sp-a` is not a content verb\n");
         assert_eq!(over(&w, &c, &["bd-note", "sp-a", "hello"], None).0, 0);
         assert_eq!(*c.0.borrow(), ["note sp-a hello"]);
+    }
+
+    // ---- content writes over the socket: one test per sub-verb ------------------------------
+
+    /// `argv` (after `content`) over the socket: the answer, and what the server wrote to bd.
+    fn content_write(argv: &[&str], stdin: Option<&str>) -> ((i32, String, String), Vec<String>) {
+        let (w, c) = (World::new(), Content::default());
+        let full: Vec<&str> = std::iter::once("content").chain(argv.iter().copied()).collect();
+        let ans = over(&w, &c, &full, stdin);
+        let wrote = c.0.borrow().clone();
+        (ans, wrote)
+    }
+
+    fn written(argv: &[&str], stdin: Option<&str>, want: &str) {
+        let ((code, out, err), wrote) = content_write(argv, stdin);
+        assert_eq!(code, 0, "{argv:?}: {err}");
+        assert_eq!(out, format!("wrote {}", argv.join(" ")), "bd's stdout is the answer");
+        assert_eq!(wrote, [want], "the server wrote bd once, with bd's own argv");
+    }
+
+    #[test]
+    fn content_label_add_and_remove_are_written_by_the_server() {
+        written(&["label", "add", "sp-a", "spira:x"], None, "label add sp-a spira:x");
+        written(&["label", "remove", "sp-a", "spira:x"], None, "label remove sp-a spira:x");
+        written(&["update", "sp-a", "--add-label", "x", "--remove-label", "y"], None, "update sp-a --add-label x --remove-label y");
+    }
+
+    #[test]
+    fn content_close_is_written_by_the_server() {
+        written(&["close", "sp-a"], None, "close sp-a");
+        written(&["close", "sp-a", "--reason", "landed"], None, "close sp-a --reason landed");
+    }
+
+    #[test]
+    fn content_note_is_written_by_the_server_with_its_text_or_the_request_body() {
+        written(&["note", "sp-a", "a note"], None, "note sp-a a note");
+        written(&["note", "sp-a", "--stdin"], Some("line one\nline two\n"), "note sp-a --stdin <<line one\nline two\n");
+        let ((code, _, err), wrote) = content_write(&["note", "sp-a", "--stdin"], None);
+        assert_eq!((code, err.as_str()), (2, "spira-lc content: stdin: nothing was sent\n"), "no body, no write");
+        assert!(wrote.is_empty());
+    }
+
+    #[test]
+    fn content_update_set_metadata_is_written_by_the_server() {
+        written(&["update", "sp-a", "--set-metadata", "claimdesc_hash=abc", "--set-metadata", "n=1"], None, "update sp-a --set-metadata claimdesc_hash=abc --set-metadata n=1");
+    }
+
+    #[test]
+    fn content_create_is_written_by_the_server_with_the_request_body() {
+        written(&["create", "T", "--type", "task", "--label", "spira", "--silent", "--priority", "3", "--body-file", "-"], Some("## Outcome\n"), "create T --type task --label spira --silent --priority 3 --body-file - <<## Outcome\n");
+        written(&["create", "--parent", "sp-e", "--silent", "--title", "child"], None, "create --parent sp-e --silent --title child");
+    }
+
+    #[test]
+    fn content_sub_verbs_not_served_still_refuse_with_their_text_and_write_nothing() {
+        for (argv, why) in [
+            (&["delete", "sp-a"][..], "`delete sp-a` is not a content verb"),
+            (&["reopen", "sp-a"], "`reopen sp-a` is not a content verb"),
+            (&["set-state", "sp-a", "rune=x"], "`set-state sp-a rune=x` is not a content verb"),
+            (&["dep", "add", "sp-a", "sp-b"], "`dep add sp-a sp-b` is not a content verb"),
+            (&["close", "sp-a", "--reason", "r", "--force"], "`close sp-a --reason r --force` is not a content verb"),
+            (&["update", "sp-a", "--status", "open"], "update takes only --add-label/--remove-label <label> and --set-metadata <key=value>, not `--status`"),
+            (&["create", "T", "--body-file", "/etc/passwd"], "create takes its body only as --body-file - (the request body)"),
+        ] {
+            let ((code, out, err), wrote) = content_write(argv, None);
+            assert_eq!((code, out.as_str(), err), (3, "", format!("spira-lc content: {why}\n")), "{argv:?}");
+            assert!(wrote.is_empty(), "{argv:?} wrote {wrote:?}");
+        }
+    }
+
+    #[test]
+    fn content_writes_keep_the_three_second_bound_under_the_clients_five() {
+        for argv in [&["label", "add", "sp-a", "x"][..], &["close", "sp-a"], &["note", "sp-a", "--stdin"], &["update", "sp-a", "--set-metadata", "k=v"], &["create", "T"]] {
+            let full: Vec<String> = std::iter::once("content").chain(argv.iter().copied()).map(str::to_string).collect();
+            assert_eq!(super::request_deadline(&full), std::time::Duration::from_secs(3), "{argv:?}");
+        }
+        assert_eq!(crate::client::TIMEOUT, std::time::Duration::from_secs(5));
     }
 
     /// A primitive's stdin body is carried inline, exactly as the CLI carries its own stdin.

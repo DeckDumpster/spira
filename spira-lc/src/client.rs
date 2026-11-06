@@ -15,7 +15,7 @@ use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 /// law-calls-have-deadlines: a client waits at most 5 s; the service stops at 3 s.
-const TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const TIMEOUT: Duration = Duration::from_secs(5);
 /// census's aggregate over the whole fact history (`facts-query`), which the service bounds
 /// at the query deadline, not 3 s.
 // batch-job: census report, bounded by the service's query deadline plus the reply.
