@@ -93,14 +93,6 @@ fn drain_stamp_or_die() -> PathBuf {
     spira_world::drain_stamp().unwrap_or_else(|e| die(&e))
 }
 
-/// `SPIRA_CTRL`'s declared value — the operational control plane file's path. The declared
-/// default is itself `$SPIRA_RUN/control` (`spira/conf.d/SPIRA_CTRL`), so this is never a
-/// second, Rust-side fallback onto `run_or_die().join("control")` (per Ryan 2026-10-05: one
-/// source of config).
-fn ctrl_path_or_die() -> PathBuf {
-    spira_config::process::cfg("SPIRA_CTRL").map(PathBuf::from).unwrap_or_else(|e| die(&e))
-}
-
 /// `SPIRA_PROD`'s declared value, resolved once here and handed to [`spira_prod_or_home`] —
 /// never read from the environment inside that pure function.
 fn resolved_prod(home: &std::path::Path) -> PathBuf {
@@ -472,10 +464,6 @@ fn cmd_stop(args: &[String]) -> i32 {
 fn cmd_start(args: &[String]) -> i32 {
     let planes = selected_planes(args, &[Plane::Work, Plane::Observability]);
     println!("spira: starting {}", plane_names(&planes));
-    let ctrl_path = ctrl_path_or_die();
-    let ctrl_data = spira_ctrl::read(&ctrl_path).unwrap_or_default();
-    let suspended = spira_ctrl::load_suspended(&ctrl_data);
-    let instance = instance_or_die();
 
     // Lift before resuming: a reader not yet converted to `scheduler status` still gates on
     // the stamp, so the scheduler's first act after the resume must already find it gone.
@@ -524,42 +512,6 @@ fn cmd_start(args: &[String]) -> i32 {
             if sysctl::run_ok(&["start", &u]) {
                 println!("  started {u}");
             }
-        }
-    }
-
-    let mut mail_units = BTreeSet::new();
-    for l in sysctl::run_lines(&["list-unit-files", &format!("spira-mail-deliver{sfx}.service"), "--no-legend"]) {
-        if let Some(u) = sysctl::first_field(&l) {
-            mail_units.insert(u.to_string());
-        }
-    }
-    for l in sysctl::run_lines(&["list-unit-files", "spira-mail-deliver.service", "--no-legend"]) {
-        if let Some(u) = sysctl::first_field(&l) {
-            mail_units.insert(u.to_string());
-        }
-    }
-    for u in mail_units {
-        if !planes.contains(&sysctl::plane_of(&u)) {
-            continue;
-        }
-        let base = u.strip_suffix(".service").unwrap_or(&u);
-        let subj = sysctl::subject_of(&format!("{base}.timer"), &instance);
-        if let Some(reason) = suspended.get(&subj) {
-            if reason.is_empty() {
-                println!("  skipped {u} (suspended)");
-            } else {
-                println!("  skipped {u} (suspended: {reason})");
-            }
-            continue;
-        }
-        if sysctl::run(&["is-enabled", &u]) == "disabled" {
-            continue;
-        }
-        if sysctl::run(&["is-active", &u]) == "active" {
-            continue;
-        }
-        if sysctl::run_ok(&["start", &u]) {
-            println!("  started {u}");
         }
     }
 

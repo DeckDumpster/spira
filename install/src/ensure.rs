@@ -175,11 +175,11 @@ mod tests {
         let unit_dir = base.join("units");
         std::fs::create_dir_all(&unit_dir).unwrap();
         let tmpl_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
-        let dropped = ["spira-sentinel-prod.service", "spira-sentinel-prod.timer", "spira-refresh-prod.timer", "spira-watch-queue-watch-prod.service"];
+        let dropped = ["spira-sentinel-prod.service", "spira-sentinel-prod.timer", "spira-refresh-prod.timer", "spira-watch-queue-watch-prod.service", "spira-mail-deliver-prod.service"];
         for u in dropped {
             std::fs::write(unit_dir.join(u), "[Service]\nExecStart=/bin/true\n").unwrap();
         }
-        std::fs::write(unit_dir.join(".spira-installed-units"), "spira-sentinel-prod.service\nspira-sentinel-prod.timer\nspira-watch-queue-watch-prod.service\n").unwrap();
+        std::fs::write(unit_dir.join(".spira-installed-units"), "spira-sentinel-prod.service\nspira-sentinel-prod.timer\nspira-watch-queue-watch-prod.service\nspira-mail-deliver-prod.service\n").unwrap();
         let manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: true, dolt_durable_set: true, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
         let h = host();
         let sc = FakeSystemctl::default();

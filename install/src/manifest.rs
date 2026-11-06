@@ -25,7 +25,8 @@ pub struct Inputs {
     pub dolt_data_set: bool,
     /// `SPIRA_DOLT_DURABLE` is non-empty: the store is RAM-backed and store-persist keeps its copy.
     pub dolt_durable_set: bool,
-    /// `inotifywait` is on `PATH`.
+    /// `inotifywait` is on `PATH`. No unit depends on it since mail delivery moved into the
+    /// scheduler; kept so the callers that probe for it need no change.
     pub inotify_present: bool,
     /// `SPIRA_SCCACHE_DAV_ADDR` is non-empty (sp-xtdqi): this box names its own LAN address
     /// for the shared compilation cache.
@@ -123,17 +124,9 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
         m.units.push(t("lc-serve.service", false));
     }
 
-    // mail-deliver stays: the scheduler's `mail.arrived` source submits arrivals, but the
-    // `mail.wake` handler that would settle and wake the reader is not a task yet, so the
-    // daemon is still what wakes a registered reader.
-    if inputs.inotify_present {
-        m.units.push(t("spira-mail-deliver.service", true));
-    } else {
-        m.optional.push("spira-mail-deliver.service".into());
-        m.unbuilt.push("spira-mail-deliver.service".into());
-        m.notes.push("inotifywait not found — not installing spira-mail-deliver.service.".into());
-        m.notes.push("Install inotify-tools and re-run install to enable mail delivery.".into());
-    }
+    // Mail delivery is the scheduler's: the `mail.arrived` source watches each registered
+    // mailbox and the `mail.wake` task wakes its reader, so spira-mail-deliver is not shipped
+    // and the install that drops it retires it from a host that has it.
 
     if inputs.dolt_data_set {
         m.units.push(t("dolt-beads.service", true));
@@ -337,10 +330,10 @@ mod tests {
     /// timer a `spira-runtime serve` task replaces, the two retired timers (watch-refresh,
     /// concierge-guard) and the SMTP listener the `submission` source now owns. Activation runs
     /// the scheduler and not both, so none of them is in the manifest or on disk.
-    const RETIRED_BY_THE_SCHEDULER: [&str; 58] = [
+    const RETIRED_BY_THE_SCHEDULER: [&str; 59] = [
         "alarms", "archive", "archivist", "call", "cert-sweep-full", "cert-sweep-sample", "concierge-guard", "czar-pass", "escape-census", "event-continuity",
         "export-beads", "filings-collect", "gate-check", "gate-worker", "gh-intake", "groom", "heimdall", "idea-prompt", "incident-settle", "kit-bump",
-        "landing-pass", "lifecycle-section", "mail-reconcile", "mail-tidy", "mend-watch", "mimir", "moot-sweep", "nix-gc", "notify", "ops",
+        "landing-pass", "lifecycle-section", "mail-deliver", "mail-reconcile", "mail-tidy", "mend-watch", "mimir", "moot-sweep", "nix-gc", "notify", "ops",
         "perf-happy-path", "perf-watch", "publish", "reap-terminal", "reclaim", "reconcile-content", "reconciler-goodput", "refresh", "refusal-watch", "round-vm-ami-prune",
         "round-vm-drain", "rounds-forge", "rounds", "runtime-watch", "sentinel", "sift", "skew", "sop-lint", "statute-audit", "straggler-sweep",
         "submission-provision", "target-reap", "tsd-prune", "verdict", "verify-asks", "warden", "watchtower", "worktree-reaper",
@@ -356,7 +349,7 @@ mod tests {
             assert!(!union.contains(n), "{n} is still in the manifest");
             assert!(!dir.join(n).exists(), "{n} is still a template");
         }
-        for keep in ["spira-runtime.service", "spira-watchdog.timer", "spira-dolt-boot-check.timer", "spira-unit-run-dbus.service", "spira-mail-deliver.service", "spira-loom.service", "spira-cockpit.service", "spira-exec-census.service", "concierge.timer", "cockpit-ensure.timer"] {
+        for keep in ["spira-runtime.service", "spira-watchdog.timer", "spira-dolt-boot-check.timer", "spira-unit-run-dbus.service", "spira-loom.service", "spira-cockpit.service", "spira-exec-census.service", "concierge.timer", "cockpit-ensure.timer"] {
             assert!(union.iter().any(|n| n == keep), "positive control: {keep} is still shipped");
         }
     }
@@ -428,13 +421,14 @@ mod tests {
     }
 
     #[test]
-    fn mail_deliver_is_unbuilt_without_inotifywait() {
-        let mut i = inputs();
-        i.inotify_present = false;
-        let m = build(&i).unwrap();
-        assert!(!m.units.iter().any(|u| u.name == "spira-mail-deliver.service"));
-        assert!(m.optional.contains(&"spira-mail-deliver.service".to_string()));
-        assert!(m.unbuilt.contains(&"spira-mail-deliver.service".to_string()));
+    fn mail_delivery_ships_no_unit_whether_or_not_inotifywait_is_present() {
+        for present in [true, false] {
+            let mut i = inputs();
+            i.inotify_present = present;
+            let m = build(&i).unwrap();
+            assert!(!m.template_names().iter().any(|n| n.starts_with("spira-mail-deliver")), "inotify_present={present}");
+            assert!(!m.optional.iter().chain(&m.unbuilt).any(|n| n.starts_with("spira-mail-deliver")), "inotify_present={present}");
+        }
     }
 
     #[test]
@@ -489,14 +483,13 @@ mod tests {
     #[test]
     fn union_template_names_carries_a_conditionally_declined_template() {
         let names = union_template_names();
-        for n in ["spira-dolt-boot-check.service", "spira-dolt-boot-check.timer", "sccache-dav.service", "dolt-beads.service", "spira-mail-deliver.service", "lc-serve.service", "lc-serve.socket"] {
+        for n in ["spira-dolt-boot-check.service", "spira-dolt-boot-check.timer", "sccache-dav.service", "dolt-beads.service", "lc-serve.service", "lc-serve.socket"] {
             assert!(names.contains(&n.to_string()), "{n} missing from union: {names:?}");
         }
         assert!(!names.iter().any(|n| n == "spira-watch@.service"), "the watcher template itself must never appear");
 
         let installed = union_installed_names("test");
         assert!(installed.contains(&"spira-dolt-boot-check-test.service".to_string()));
-        assert!(installed.contains(&"spira-mail-deliver-test.service".to_string()));
         assert!(installed.contains(&"lc-serve.service".to_string()), "shared name, never instance-suffixed");
     }
 

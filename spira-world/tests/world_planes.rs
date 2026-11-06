@@ -60,3 +60,13 @@ fn the_scheduler_ships_and_is_on_the_keep_list() {
         assert!(is_kept(&u, "-prod"), "{u}");
     }
 }
+
+/// Mail delivery is the scheduler's (`mail.arrived` and `mail.wake`): world starts no
+/// `spira-mail-deliver` unit, and the template is not shipped.
+#[test]
+fn world_names_no_mail_delivery_unit() {
+    let src = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/bin/world.rs")).unwrap();
+    assert!(src.contains("fn cmd_start"), "positive control: the scan reads world's source");
+    assert!(!src.contains("spira-mail-deliver"), "world still starts the retired spira-mail-deliver unit");
+    assert!(!unit_dir().join("spira-mail-deliver.service").exists(), "spira-mail-deliver.service is still a template");
+}

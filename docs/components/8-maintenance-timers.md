@@ -17,4 +17,4 @@ not repeated here unless they have no other home.
 
 Long-running services with no timer: `spira-runtime`, `dolt-beads`, `dolt-persist`,
 `lc-serve` / `spira-lc` (+ sockets), `sccache-dav`, `spira-loom`, `spira-cockpit`,
-`spira-mail-deliver`, `spira-metrics-*`, `spira-unit-run-dbus`, `spira-watch@<name>`.
+`spira-metrics-*`, `spira-unit-run-dbus`, `spira-watch@<name>`.

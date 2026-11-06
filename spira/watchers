@@ -75,12 +75,7 @@
 
 # VIEW has no row: spira-runtime hosts the cockpit view follower as the view handler (spira-runtime/src/watchers).
 
-# MAIL-DELIVER monitors the delivery daemon that wakes registered readers on new mail.
-# It is not owned by watchd (it has its own unit), so the kind is `extern`. The health
-# command asks the daemon itself whether it is still watching every registered mailbox —
-# daemon liveness only. Aged unread mail is mail-health.sh's alarm, canonical over every
-# mailbox, so it is not asked here too.
-mail-deliver|extern|mail-deliver|spira-mail-deliver.sh health
+# MAIL-DELIVER has no row: the scheduler's mail.arrived source and mail.wake task deliver the wake.
 
 # THE DAEMON ROWS ARE GONE. Every watcher that looped here as a `daemon` row is a task of
 # `spira-runtime serve` or retired (scheduler-consolidation-2026-11-03 §1 E, §3 P5), and the
