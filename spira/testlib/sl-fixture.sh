@@ -18,11 +18,21 @@ testdb_up submittedlands || { echo "$SL_SUITE: could not build a fixture databas
 lcfix_up_on_testdb || { echo "$SL_SUITE: could not build a lifecycle fixture"; exit 1; }
 LC_SOCK="$TMP/lc.sock"
 tl_config SPIRA_LC_SOCKET="$LC_SOCK"
-spira-lc serve "$LC_SOCK" > "$TMP/serve.log" 2>&1 &
-SERVE_PID=$!
+# THE SERVICE FOLLOWS THE SERVER. A testdb_reset restarts the one server both stores live on
+# (and lcfix_up_on_testdb re-points SPIRA_LC_PORT at it), so a serve started before the reset
+# holds connections to a server that is gone: each reset restarts it.
+sl_serve() {
+    if [ -n "$SERVE_PID" ]; then kill "$SERVE_PID" >/dev/null 2>&1; wait "$SERVE_PID" 2>/dev/null; fi
+    rm -f "$LC_SOCK"
+    spira-lc serve "$LC_SOCK" > "$TMP/serve.log" 2>&1 &
+    SERVE_PID=$!
+    for _ in $(seq 1 50); do [ -S "$LC_SOCK" ] && break; sleep 0.1; done
+    [ -S "$LC_SOCK" ] || bail "spira-lc serve never opened its socket: $(cat "$TMP/serve.log")"
+}
+eval "$(declare -f testdb_reset | sed '1s/testdb_reset/_sl_testdb_reset_stores/')"
+testdb_reset() { _sl_testdb_reset_stores "$@" && sl_serve; }
+sl_serve
 lc_content_shim "$TMP/lcshim"; export PATH="$TMP/lcshim:$PATH"
-for _ in $(seq 1 50); do [ -S "$LC_SOCK" ] && break; sleep 0.1; done
-[ -S "$LC_SOCK" ] || bail "spira-lc serve never opened its socket: $(cat "$TMP/serve.log")"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
