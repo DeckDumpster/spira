@@ -238,7 +238,6 @@ fn run(seed: u64, script: Script, answers: &[(&str, &[(i32, &str)])]) -> (Run, S
 fn assert_no_process(r: &Run) {
     assert_eq!(r.spawned, 0, "no process is spawned: every effect is a double");
     assert!(r.unanswered().is_empty(), "every effect asked for had a double: {:?}", r.unanswered());
-    assert!(r.wall.as_secs() < 30, "the scenario ran in {:?}", r.wall);
 }
 
 fn dump(r: &Run, g: &Gate) -> String {

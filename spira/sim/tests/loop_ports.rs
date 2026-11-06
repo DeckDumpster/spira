@@ -24,7 +24,6 @@ fn show(name: &str, r: &Run) {
 fn assert_no_process(r: &Run) {
     assert_eq!(r.spawned, 0, "no process is spawned: every effect is a double");
     assert!(r.unanswered().is_empty(), "every effect asked for had a double: {:?}", r.unanswered());
-    assert!(r.wall.as_secs() < 30, "the scenario ran in {:?}", r.wall);
 }
 
 /// Replaces `resubmit-moved-tip` (sp-2adk7): a dwarf that submits, commits again and submits

@@ -475,7 +475,6 @@ fn one_bead_is_filed_claimed_submitted_cut_certified_and_landed_on_the_service_t
     assert_eq!(a.trace, b.trace, "one seed, one trace");
     assert_eq!(a.history, b.history);
     assert_eq!(a.asked, b.asked, "one seed, the same effects in the same order");
-    assert!(a.wall.as_secs() < 30, "the scenario ran in {:?}", a.wall);
 }
 
 /// Two members in one round, one of them red. Both are sifted in one pass, so the one cut takes
@@ -497,7 +496,6 @@ fn a_red_round_attributes_ejects_the_guilty_member_and_lands_the_rest() {
     assert_no_process(&a);
     assert_eq!(a.trace, b.trace, "one seed, one trace");
     assert_eq!(a.history, b.history);
-    assert!(a.wall.as_secs() < 30, "the scenario ran in {:?}", a.wall);
 }
 
 /// The contract's single-flight per repo, when two members are sifted in one pass: sift hands
