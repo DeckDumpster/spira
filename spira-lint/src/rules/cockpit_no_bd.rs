@@ -48,8 +48,11 @@ impl Rule for CockpitNoBd {
         NAME
     }
 
+    /// A crate's integration tests (`<crate>/tests/`) never run in a pane; a fork-edge test there
+    /// names `bd` as the program it bans.
     fn applies_to(&self, e: &Entry) -> bool {
         (pathspec_match("cockpit/*", &e.path) || pathspec_match("cockpit-collect/*", &e.path))
+            && !e.path.contains("/tests/")
             && (e.path.ends_with(".rs") || e.path.ends_with(".sh"))
     }
 
@@ -113,6 +116,16 @@ mod tests {
         t.write("cockpit/x.sh", "# bd list\n\"$LC\" content list --json\n");
         t.write("spira/y.sh", "bd list\n");
         assert_eq!(run(&t, &["cockpit/a.rs", "cockpit/x.sh", "spira/y.sh"]).unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_integration_test_that_bans_bd_is_out_of_scope() {
+        let t = TempDir::new("cnb-tests");
+        t.write("cockpit/ops/tests/no_fork_edges.rs", "const BANNED: [&str; 1] = [\"bd\"];\n");
+        t.write("cockpit/ops/src/a.rs", "let c = Command::new(\"bd\");\n");
+        let got = run(&t, &["cockpit/ops/tests/no_fork_edges.rs", "cockpit/ops/src/a.rs"]).unwrap();
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].contains("cockpit/ops/src/a.rs"), "{got:?}");
     }
 
     #[test]
