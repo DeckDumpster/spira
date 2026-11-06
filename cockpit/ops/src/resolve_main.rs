@@ -3,7 +3,7 @@
 
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{Command, ExitCode};
 
 use cockpit_ops::db;
 use cockpit_ops::resolve::{run, usage_error, BdResult, Closer, Outcome, USAGE};
@@ -21,17 +21,12 @@ impl Closer for RealBd {
         }
     }
 
+    /// Through the store's content door, in-process; empty when it does not answer.
     fn show_json(&self, _db: &Path, id: &str) -> String {
-        let Ok(lc) = db::lc_bin() else { return String::new() };
-        // FORK-EDGE: unserved verb content (bead content is not served over the socket).
-        Command::new("timeout")
-            .arg("5")
-            .arg(lc)
-            .args(["content", "show", id, "--json"])
-            .stdin(Stdio::null())
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-            .unwrap_or_default()
+        match cockpit_ops::lcio::client().map(|c| c.call(&["content", "show", id, "--json"])) {
+            Ok(Ok(r)) => r.out,
+            _ => String::new(),
+        }
     }
 
     fn has_lifecycle_row(&self, id: &str) -> Result<bool, String> {

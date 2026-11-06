@@ -3,7 +3,7 @@
 
 use std::io::Read;
 use std::path::Path;
-use std::process::{ExitCode, Stdio};
+use std::process::ExitCode;
 
 use cockpit_ops::db;
 use cockpit_ops::reply::{answer_message, find_open_ask, operator_copy, run, usage_error, AskMail, BdResult, Commenter, Follow, Outcome, USAGE};
@@ -21,37 +21,23 @@ fn sendmail(raw: &str, to: Option<&str>) -> Result<(), String> {
 struct RealBd;
 
 impl Commenter for RealBd {
+    /// Through the store's content door, in-process, which applies every protection bdq
+    /// applies. The comment's author is the store's: BEADS_ACTOR does not cross the socket, as
+    /// it did not when this ran the `spira-lc` CLI, which forwarded there.
     fn comment(&self, _db: &Path, id: &str, text: &str) -> BdResult {
-        let bd = match db::lc_bin() {
-            Ok(b) => b,
-            Err(e) => return BdResult { success: false, combined: e },
-        };
-        // FORK-EDGE: content store write
-        let out = spira_config::bounded::bounded(&bd)
-            .args(["content", "comments", "add", id, text])
-            .env("BEADS_ACTOR", "claude")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output();
-        match out {
-            Ok(o) => {
-                let mut combined = String::from_utf8_lossy(&o.stdout).into_owned();
-                let stderr = String::from_utf8_lossy(&o.stderr);
-                if !stderr.is_empty() {
+        match cockpit_ops::lcio::client().map(|c| c.call(&["content", "comments", "add", id, text])) {
+            Ok(Ok(r)) => {
+                let mut combined = r.out;
+                if !r.err.is_empty() {
                     if !combined.is_empty() && !combined.ends_with('\n') {
                         combined.push('\n');
                     }
-                    combined.push_str(&stderr);
+                    combined.push_str(&r.err);
                 }
-                BdResult {
-                    success: o.status.success(),
-                    combined,
-                }
+                BdResult { success: r.code == 0, combined }
             }
-            Err(e) => BdResult {
-                success: false,
-                combined: format!("failed to run {bd}: {e}"),
-            },
+            Ok(Err(e)) => BdResult { success: false, combined: e.to_string() },
+            Err(e) => BdResult { success: false, combined: e },
         }
     }
 }
