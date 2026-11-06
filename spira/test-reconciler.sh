@@ -48,11 +48,11 @@
 #      outside SPIRA_MAX_DWARVES and so is starved for a different reason.
 #  27. Disk, POSITIVE CONTROL: every path above its floor -> satisfied, no remedy run.
 #  28. Disk: a path below the floor -> gap -> the remedy sequence (target-reap, podman prunes).
-#  29. Disk: a Composite-named path df cannot read -> unobservable, never satisfied, no remedy run.
+#  29. Disk: a Composite-named path that cannot be read -> unobservable, never satisfied, no remedy.
 #  30. Disk: a materialised Composite's DiskSpec names the paths checked — the
 #      no-Composite default set is never consulted once one exists.
-#  31. Disk: a materialised Composite's DiskSpec.floor_pct replaces the bash/env default
-#      (SPIRA_DISK_FLOOR_PCT), so the same reading can gap under one and satisfy the other.
+#  31. Disk: a materialised Composite's DiskSpec.floor_pct is the floor the verdict follows:
+#      the box's same reading satisfies a floor at it and gaps under one a point above it.
 #
 # Unit tests in reconciler/src/lib.rs cover what config cannot express here: no Fleet ceiling
 # at all (SPIRA_MAX_LIVE_DWARVES is a u32 that always resolves) is unobservable, never satisfied,
@@ -248,20 +248,21 @@ for tool in rebuild layout; do
     chmod +x "$STUB_BIN/$tool"
 done
 
-DISK_LINES="$T/disk-lines"        # "<path>\t<free-pct>" per line; a path not listed is unreadable
-: > "$DISK_LINES"
-DISK_USAGE_CALLS="$T/disk-usage-calls.log"
-: > "$DISK_USAGE_CALLS"
-cat > "$STUB_BIN/df" <<'DUEOF'
-#!/usr/bin/env bash
-path="${!#}"
-printf '%s\n' "$path" >> "$DISK_USAGE_CALLS"
-pct="$(awk -F'\t' -v p="$path" '$1==p{print $2}' "$DISK_LINES")"
-[ -n "$pct" ] || { echo "df: $path: No such file or directory" >&2; exit 1; }
-printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfake 100 %s %s 0%% %s\n' "$((100 - pct))" "$pct" "$path"
-DUEOF
-chmod +x "$STUB_BIN/df"
-export DISK_LINES DISK_USAGE_CALLS
+# Free space is read in-process (statvfs, sp-ipwlic: no `df` child a stub could answer), so the
+# disk cases drive the verdict with the floor a Composite declares against the box's own free
+# space: free_of prints it the way the reconciler computes it.
+free_of() { python3 -c 'import os,sys; s=os.statvfs(sys.argv[1]); t=s.f_blocks*s.f_frsize//1024; print(s.f_bavail*s.f_frsize//1024*100//t)' "$1"; }
+disk_composite() {  # disk_composite <floor_pct> <path> — the Disk Composite this case declares
+    desired_state_write '[[resource]]
+apiVersion = "spira/v1"
+kind = "Disk"
+producer = "test"
+[resource.metadata]
+name = "disk"
+[resource.spec]
+floor_pct = '"$1"'
+paths = ["'"$2"'"]'
+}
 
 DISK_REMEDY_CALLS="$T/disk-remedy-calls.log"
 : > "$DISK_REMEDY_CALLS"
@@ -323,7 +324,7 @@ reset_state() {
           "$SPIRA_RUN/reconciler.log" "$SPIRA_RUN/cockpit.down"
     fresh_store
     : > "$SYSTEMCTL_CALLS"; : > "$COCKPIT_CALLS"; : > "$QUEUE_CALLS"; mail_clear
-    : > "$DISK_USAGE_CALLS"; : > "$DISK_REMEDY_CALLS"
+    : > "$DISK_REMEDY_CALLS"
     desired_state_clear
 }
 
@@ -746,7 +747,7 @@ printf '\n%s\n' "27. Disk, POSITIVE CONTROL: every path above its floor -> satis
 reset_state
 : > "$UNITS_LIST"          # 22 left "wrong.service" here, unread by any systemctl fixture since
 echo main > "$GIT_BRANCH_STATE"   # 24 left this on "feature-x" — a positive control must not inherit it
-printf '/\t40\n/var/lib/dolt\t62\n' > "$DISK_LINES"
+disk_composite 1 /                # a box with under 1% free has no healthy path to show
 rpass
 [ ! -s "$DISK_REMEDY_CALLS" ] && ok "no disk remedy when every path is above its floor" || bad "unexpected disk remedy: $(cat "$DISK_REMEDY_CALLS")"
 want "status jsonl reports / satisfied" '"key":"disk:/","status":"satisfied"' "$(status_jsonl)"
@@ -756,20 +757,19 @@ want "status jsonl reports / satisfied" '"key":"disk:/","status":"satisfied"' "$
 printf '\n%s\n' "28. Disk: a path below the floor -> gap -> the remedy sequence runs"
 # ==========================================================================================
 reset_state
-printf '/\t4\n' > "$DISK_LINES"
+disk_composite 100 /              # no mounted root is 100% free
 rpass
 _calls="$(cat "$DISK_REMEDY_CALLS")"
 want "the landed worktrees' build output is reaped" "target-reap" "$_calls"
 want "dangling podman images are pruned" "podman image prune -f" "$_calls"
 want "unattached podman volumes are pruned" "podman volume prune -f" "$_calls"
 is "the remedy sequence runs once for the breached path" "3" "$(wc -l < "$DISK_REMEDY_CALLS" | tr -d ' ')"
-want "status jsonl records the gap" '"key":"disk:/","status":"gap","desired":">= 15% free","observed":"4% free"' "$(status_jsonl)"
+want "status jsonl records the gap" '"key":"disk:/","status":"gap","desired":">= 100% free","observed":"' "$(status_jsonl)"
 
 # ==========================================================================================
-printf '\n%s\n' "29. Disk: a Composite-named path df cannot read -> unobservable, never satisfied, no remedy"
+printf '\n%s\n' "29. Disk: a Composite-named path that cannot be read -> unobservable, never satisfied, no remedy"
 # ==========================================================================================
 reset_state
-: > "$DISK_LINES"   # df cannot read /no/such/path
 desired_state_write \
 '[[resource]]
 apiVersion = "spira/v1"
@@ -789,38 +789,24 @@ lack "unobservable disk path is never reported satisfied" '"key":"disk:/no/such/
 printf '\n%s\n' "30. Disk: a materialised Composite's DiskSpec names the paths checked"
 # ==========================================================================================
 reset_state
-printf '/srv/custom\t40\n' > "$DISK_LINES"
-desired_state_write \
-'[[resource]]
-apiVersion = "spira/v1"
-kind = "Disk"
-producer = "test"
-[resource.metadata]
-name = "disk"
-[resource.spec]
-floor_pct = 15
-paths = ["/srv/custom"]'
+disk_composite 1 "$T"
 rpass
-want "df is asked about the Composite's own path" "/srv/custom" "$(cat "$DISK_USAGE_CALLS")"
-want "status jsonl reports the Composite's path satisfied" '"key":"disk:/srv/custom","status":"satisfied"' "$(status_jsonl)"
+want "status jsonl reports the Composite's own path satisfied" '"key":"disk:'"$T"'","status":"satisfied"' "$(status_jsonl)"
+lack "and no path the Composite did not name" '"key":"disk:/",' "$(status_jsonl)"
 
 # ==========================================================================================
-printf '\n%s\n' "31. Disk: a materialised Composite's floor_pct replaces the bash/env default"
+printf '\n%s\n' "31. Disk: a materialised Composite's floor_pct is the floor the verdict follows"
 # ==========================================================================================
+_free="$(free_of /)"
+[ "$_free" -ge 1 ] && [ "$_free" -le 99 ] || bail "31 needs a root between 1% and 99% free, not ${_free}%"
 reset_state
-printf '/\t20\n' > "$DISK_LINES"   # satisfies the default 15% floor
-desired_state_write \
-'[[resource]]
-apiVersion = "spira/v1"
-kind = "Disk"
-producer = "test"
-[resource.metadata]
-name = "disk"
-[resource.spec]
-floor_pct = 25
-paths = ["/"]'
+disk_composite "$_free" /
 rpass
-want "20% free gaps against a Composite floor of 25%, though it would satisfy the default 15%" '"key":"disk:/","status":"gap"' "$(status_jsonl)"
+want "${_free}% free satisfies a Composite floor of ${_free}%" '"key":"disk:/","status":"satisfied"' "$(status_jsonl)"
+reset_state
+disk_composite "$((_free + 1))" /
+rpass
+want "${_free}% free gaps against a Composite floor of $((_free + 1))%" '"key":"disk:/","status":"gap"' "$(status_jsonl)"
 
 # ==========================================================================================
 printf '\n%s\n' "33. Junk rows: a rowless READY id is dropped, a real bead's row is not"
