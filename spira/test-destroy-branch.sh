@@ -44,8 +44,9 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_REAPLOG="$SPIRA_RUN/reap.log"
-tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$TMP/no-such-repo-map"   # not in the map; landref falls to origin/HEAD
+# The reap log is registered config (the hel tasks read it): declared, never exported.
+SPIRA_REAPLOG="$SPIRA_RUN/reap.log"
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REAPLOG="$SPIRA_REAPLOG" SPIRA_REPO_MAP="$TMP/no-such-repo-map"   # not in the map; landref falls to origin/HEAD
 
 git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"

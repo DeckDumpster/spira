@@ -46,8 +46,9 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 
 export SPIRA_RUN="$T/run"; mkdir -p "$SPIRA_RUN/worktree"
 export SPIRA_CONF="$T/no-such.conf"
-export SPIRA_REAPLOG="$T/reap.log"
-tl_config SPIRA_RUN="$SPIRA_RUN"
+# The reap log is registered config (the hel tasks read it): declared, never exported.
+SPIRA_REAPLOG="$T/reap.log"
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REAPLOG="$SPIRA_REAPLOG"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
