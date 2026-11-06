@@ -114,10 +114,12 @@ pub fn pinned(keys: &[&str], get: &dyn Fn(&str) -> Result<String, String>) -> Re
     keys.iter().map(|k| get(k).map(|v| (k.to_string(), v))).collect()
 }
 
-/// The keys of `task`, pinned at boot through `spira_config::process::cfg`. A key that does not
-/// resolve refuses the build naming it: there is no default.
-pub fn pin(task: &str, keys: &[&str]) -> BTreeMap<String, String> {
-    pinned(keys, &spira_config::process::cfg).unwrap_or_else(|e| panic!("{task} refuses to build: {e}"))
+/// The keys of `task`, pinned at boot from the `Settings` its row's `build` is handed (each row
+/// key, as `Settings::from_lookup` read it). A key the settings do not hold refuses the build
+/// naming it: there is no default, and no read of the process's own config.
+pub fn pin(settings: &crate::Settings, task: &str, keys: &[&str]) -> BTreeMap<String, String> {
+    let get = |k: &str| settings.task_config.get(k).cloned().ok_or_else(|| format!("{k} is not in the settings (no row of tasks::all() declares it)"));
+    pinned(keys, &get).unwrap_or_else(|e| panic!("{task} refuses to build: {e}"))
 }
 
 /// The unported-handler signal every stub's `decide` raises.
@@ -322,6 +324,21 @@ mod tests {
         let get = |k: &str| if k == "A" { Ok("1".to_string()) } else { Err(format!("{k} unknown")) };
         assert_eq!(pinned(&["A"], &get).unwrap()["A"], "1");
         assert_eq!(pinned(&["A", "B"], &get), Err("B unknown".into()));
+    }
+
+    /// Every family-A row builds from the `Settings` it is handed: a planted value there is the
+    /// value pinned, with no config door resolved, and a key the settings lack refuses the build.
+    #[test]
+    fn pin_reads_the_settings_it_is_given_not_the_process_config() {
+        let mut s = crate::settings::fixture();
+        s.task_config.insert("SPIRA_RECLAIM_GRACE_SECS".into(), "4242".into());
+        assert_eq!(pin(&s, "t", &["SPIRA_RECLAIM_GRACE_SECS"])["SPIRA_RECLAIM_GRACE_SECS"], "4242");
+        let built = super::super::sentinel_pass::SentinelPass::from_settings(&s);
+        assert_eq!(built.pinned["SPIRA_RECLAIM_GRACE_SECS"], "4242", "the row pins what the settings hold");
+        for t in super::super::TASKS {
+            let _ = (t.build)(&s);
+        }
+        assert!(std::panic::catch_unwind(|| pin(&s, "t", &["SPIRA_PLANTED_NOT_A_KEY"])).is_err(), "a key the settings lack refuses");
     }
 
     #[test]

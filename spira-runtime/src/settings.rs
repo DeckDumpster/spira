@@ -50,6 +50,10 @@ pub struct Settings {
     pub control_socket: PathBuf,
     /// Effects of each class running at once (S3).
     pub pool_caps: runtime::pools::PoolCaps,
+    /// Every key a row of `tasks::all()` declares, with the value `from_lookup` read for it: what
+    /// a row's `build` pins, so a task is built from the `Settings` it is handed and never reaches
+    /// for the process's config itself.
+    pub task_config: std::collections::BTreeMap<String, String>,
 }
 
 /// Every class's cap, each a positive integer; a container cap over the host run ceiling refuses
@@ -257,7 +261,9 @@ impl Settings {
         if control_socket.trim().is_empty() {
             return Err("SPIRA_RUNTIME_SOCKET is empty — scheduler status|halt|resume has no door".into());
         }
+        let task_config = crate::tasks::all().flat_map(|t| t.keys.iter().flat_map(|ks| ks.iter())).map(|k| Ok((k.to_string(), get(k)?))).collect::<Result<_, String>>()?;
         let settings = Settings {
+            task_config,
             pool_caps: pool_caps(&get)?,
             task_modes: crate::modes::parse(&get(crate::modes::KEY)?)?,
             control_socket: PathBuf::from(control_socket),

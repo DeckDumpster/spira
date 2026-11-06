@@ -500,8 +500,8 @@ impl GateWorker {
         GateWorker { cadence: Cadence::Every(CADENCE_MS), slots, pinned }
     }
 
-    pub fn from_cfg() -> Self {
-        let pinned = kit::pin(NAME, KEYS);
+    pub fn from_settings(settings: &crate::Settings) -> Self {
+        let pinned = kit::pin(settings, NAME, KEYS);
         let slots = pinned["SPIRA_CERTIFY_PAR"].trim().parse().ok().filter(|n| *n > 0).unwrap_or_else(|| panic!("{NAME} refuses to build: SPIRA_CERTIFY_PAR must be a positive integer"));
         Self::new(slots, pinned)
     }

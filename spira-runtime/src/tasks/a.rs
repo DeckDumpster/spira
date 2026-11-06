@@ -36,7 +36,7 @@ pub static TASKS: &[Task] = &[
         effects: sentinel_call::EFFECTS,
         runners: &[(sentinel_call::OBSERVE, |e, _, s| sentinel_call::observe(e, &s.input)), (sentinel_call::UNIT_START, |e, _, s| sentinel_call::unit_start(e, s)), (sentinel_call::PREEMPT, |e, _, s| sentinel_call::preempt(e, &s.input)), (sentinel_call::PREEMPT_LOG, |e, _, s| sentinel_call::preempt_log(e, &s.input)), (sentinel_call::METRIC, |e, _, s| sentinel_call::metric(e, &s.input))],
         keys: &[sentinel_call::KEYS],
-        build: |_| sentinel_call::SentinelCall::from_cfg().registration(),
+        build: |s| sentinel_call::SentinelCall::from_settings(s).registration(),
     },
     Task {
         name: sentinel_pass::NAME,
@@ -65,7 +65,7 @@ pub static TASKS: &[Task] = &[
             (sentinel_pass::PHASE_METRIC, |e, _, s| sentinel_pass::phase_metric(e, &s.input)),
         ],
         keys: &[sentinel_pass::KEYS],
-        build: |_| sentinel_pass::SentinelPass::from_cfg().registration(),
+        build: |s| sentinel_pass::SentinelPass::from_settings(s).registration(),
     },
     Task {
         name: czar::NAME,
@@ -74,7 +74,7 @@ pub static TASKS: &[Task] = &[
         effects: czar::EFFECTS,
         runners: &[(czar::OBSERVE, |e, _, s| czar::observe(e, &s.input)), (czar::FILE_INCIDENT, |_, _, s| czar::file(&s.input)), (czar::FILE_BASE_RED, |_, _, s| czar::file(&s.input)), (czar::RERUN_WORKFLOW, |_, _, s| czar::rerun_workflow(&s.input)), (czar::RESTART_LANDING, |e, _, _| czar::restart_landing(e)), (czar::STATUS, |e, _, s| czar::status(e, &s.input))],
         keys: &[czar::KEYS],
-        build: |_| czar::Czar::from_cfg().registration(),
+        build: |s| czar::Czar::from_settings(s).registration(),
     },
     Task {
         name: sift::NAME,
@@ -83,7 +83,7 @@ pub static TASKS: &[Task] = &[
         effects: sift::EFFECTS,
         runners: &[(sift::OBSERVE, |e, _, s| sift::observe(e, &s.input)), (sift::FETCH_BASE, |_, _, s| sift::fetch_base(&s.input)), (sift::NOTE, |e, _, s| sift::note(e, s)), (sift::SEND_BACK, |e, _, s| sift::send_back(e, s)), (sift::RECORD_PASS, |e, _, s| sift::record_pass(e, s)), (sift::SUPERSEDE, |e, _, s| sift::supersede(e, s))],
         keys: &[sift::KEYS],
-        build: |_| sift::Sift::from_cfg().registration(),
+        build: |s| sift::Sift::from_settings(s).registration(),
     },
     Task {
         name: batcher_local::NAME,
@@ -95,7 +95,7 @@ pub static TASKS: &[Task] = &[
             &[(OBSERVE, x::observe), (FETCH, x::fetch), (ASSEMBLE, x::assemble), (ROUND_OPEN, x::round_open), (CORPUS, x::corpus), (STAGE, x::stage), (STAGE_TEST, x::stage_test), (EJECT, x::eject), (WITHDRAW, x::withdraw), (REBASE_STALE, x::rebase_stale), (CERTIFY, x::certify), (LC_CERTIFY, x::lc_certify), (LAND, x::land), (ABANDON, x::abandon), (PROMOTE, x::promote), (REDRIVE, x::redrive), (FILE, x::file), (PAUSE, x::pause)]
         },
         keys: &[batcher_local::KEYS],
-        build: |_| batcher_local::BatcherLocal::from_cfg().registration(),
+        build: |s| batcher_local::BatcherLocal::from_settings(s).registration(),
     },
     Task {
         name: batcher_forge::NAME,
@@ -107,7 +107,7 @@ pub static TASKS: &[Task] = &[
             &[(OBSERVE, x::observe), (ARM, x::arm), (FETCH, x::fetch), (ASSEMBLE, x::assemble), (CORPUS, x::corpus), (WITHDRAW, x::withdraw), (SHOTS, x::shots), (BATCH_OPEN, x::batch_open), (FILE, x::file), (VERDICT_WRITE, x::verdict_write)]
         },
         keys: &[batcher_forge::KEYS],
-        build: |_| batcher_forge::BatcherForge::from_cfg().registration(),
+        build: |s| batcher_forge::BatcherForge::from_settings(s).registration(),
     },
     Task {
         name: queue_step::NAME,
@@ -119,7 +119,7 @@ pub static TASKS: &[Task] = &[
             &[(OBSERVE, x::observe), (PUSH, x::push), (LAND, x::land), (CLOSE_BEAD, x::close_bead), (GH_CLOSEOUT, x::gh_closeout), (PR_CLOSE, x::pr_close), (CANCEL_RUNS, x::cancel_runs), (RERUN, x::rerun), (JUDGEMENT, x::judgement), (OBSERVE_FLAKE, x::observe_flake), (EJECT, x::eject), (RECONCILE, x::reconcile), (SWEEP, x::sweep), (FILE_BUG, x::file_bug), (NOTIFY, x::notify), (RECORD, x::record)]
         },
         keys: &[queue_step::KEYS],
-        build: |_| queue_step::QueueStep::from_cfg().registration(),
+        build: |s| queue_step::QueueStep::from_settings(s).registration(),
     },
     Task {
         name: publish::NAME,
@@ -131,7 +131,7 @@ pub static TASKS: &[Task] = &[
             &[(OBSERVE, x::observe), (PUSH_BRANCH, x::push_branch), (PUSH_FORGE, x::push_forge), (PR_CREATE, x::pr_create), (PR_CLOSE, x::pr_close), (CANCEL_RUNS, x::cancel_runs), (RERUN, x::rerun), (RECORD, x::record), (NOTIFY, x::notify)]
         },
         keys: &[publish::KEYS],
-        build: |_| publish::Publish::from_cfg().registration(),
+        build: |s| publish::Publish::from_settings(s).registration(),
     },
     Task {
         name: sweep_target::NAME,
@@ -140,7 +140,7 @@ pub static TASKS: &[Task] = &[
         effects: sweep_target::EFFECTS,
         runners: &[(sweep_target::OBSERVE, |e, _, _| sweep_target::observe(&e.world.run_dir)), (sweep_target::REMOVE_TARGET, |_, _, s| sweep_target::remove_target(&s.input)), (sweep_target::REMOVE_FOREIGN_RUN, |_, _, s| sweep_target::remove_foreign_run(&s.input))],
         keys: &[sweep_target::KEYS],
-        build: |_| sweep_target::SweepTarget::from_cfg().registration(),
+        build: |s| sweep_target::SweepTarget::from_settings(s).registration(),
     },
     Task {
         name: gate_worker::NAME,
@@ -152,7 +152,7 @@ pub static TASKS: &[Task] = &[
             &[(OBSERVE, |e, _, s| observe(e, &s.input)), (TIP, |_, _, s| tip(&s.input)), (CLAIM, |e, _, s| claim(e, &s.input)), (DISCARD, |e, _, s| discard(e, &s.input)), (RETAIN_OUTPUT, |e, _, s| retain_output(e, &s.input)), (COMPLETE, |e, _, s| complete(e, &s.input)), (RECOVER, |e, _, s| recover(e, &s.input))]
         },
         keys: &[gate_worker::KEYS],
-        build: |_| gate_worker::GateWorker::from_cfg().registration(),
+        build: |s| gate_worker::GateWorker::from_settings(s).registration(),
     },
     Task {
         name: gate_check::NAME,
@@ -164,7 +164,7 @@ pub static TASKS: &[Task] = &[
             &[(OBSERVE, |e, _, _| observe(e)), (DISCOVER, |e, k, s| discover(e, k, &s.input)), (RESOLVE, |e, k, s| resolve(e, k, &s.input)), (CI_FAILED, |e, _, s| ci_failed(e, &s.input)), (FILE_BEAD, |e, k, s| file_bead(e, k, &s.input)), (RAISE_PRIORITY, |e, k, s| raise_priority(e, k, &s.input)), (NOTE, |e, _, s| note(e, &s.input)), (TSD_INGEST, |e, k, s| tsd_ingest(e, k, &s.input))]
         },
         keys: &[gate_check::KEYS],
-        build: |_| gate_check::GateCheck::from_cfg().registration(),
+        build: |s| gate_check::GateCheck::from_settings(s).registration(),
     },
     Task {
         name: landing::NAME,
@@ -192,7 +192,7 @@ pub static TASKS: &[Task] = &[
             ]
         },
         keys: &[landing::KEYS],
-        build: |_| landing::Landing::from_cfg().registration(),
+        build: |s| landing::Landing::from_settings(s).registration(),
     },
     Task {
         name: submission_provision::NAME,
@@ -206,7 +206,7 @@ pub static TASKS: &[Task] = &[
             &[(OBSERVE, |_, _, _| observe()), (CERT_RENEW, |_, _, s| cert_renew(&s.input)), (CONFIG_SET, |_, _, s| config_set(&s.input)), (PASSWORD_WRITE, |_, _, s| password_write(&s.input)), (FIREWALL_OPEN, |_, _, s| firewall_open(&s.input)), (UNIT_RESTART, |e, _, s| unit_restart(e, &s.input))]
         },
         keys: &[submission_provision::KEYS],
-        build: |_| submission_provision::SubmissionProvision::from_cfg().registration(),
+        build: |s| submission_provision::SubmissionProvision::from_settings(s).registration(),
     },
 ];
 

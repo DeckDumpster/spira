@@ -970,8 +970,8 @@ impl BatcherLocal {
         BatcherLocal { cadence: Cadence::Every(CADENCE_MS), policy: Policy::pinned(&pinned), pinned, interests: interests(TICK) }
     }
 
-    pub fn from_cfg() -> Self {
-        Self::new(kit::pin(NAME, KEYS))
+    pub fn from_settings(settings: &crate::Settings) -> Self {
+        Self::new(kit::pin(settings, NAME, KEYS))
     }
 
     pub fn registration(self) -> Registration {
