@@ -403,8 +403,10 @@ do_escalate() {
 echo "land_escalate: positive control — reaches the concierge when no ask is open"
 testdb_reset
 rm -f "$SPIRA_RUN/landing.escalated"; before="$(landing_asks)"
-do_escalate >/dev/null 2>&1
-is "and one ask is delivered" "$((before + 1))" "$(landing_asks)"
+do_escalate >/dev/null 2>"$TMP/landesc.err"
+got="$(landing_asks)"
+[ "$got" = "$((before + 1))" ] && ok "and one ask is delivered" \
+    || bad "and one ask is delivered" "wanted [$((before + 1))] got [$got]; land_escalate said: $(cat "$TMP/landesc.err")"
 
 echo "land_escalate: open-ask suppression — does not ask again while one is already open"
 testdb_reset

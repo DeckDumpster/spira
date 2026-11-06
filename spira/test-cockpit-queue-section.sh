@@ -204,6 +204,10 @@ BEADS2_JSON="$TMP2/beads.json"
 } > "$BEADS2_JSON"
 git -C "$REPO2" checkout -q main
 
+# A fresh control store: section (a)'s open batch and CERTIFIED rows live on the store now,
+# and this case is 32 certified with no open batch.
+fb_store_up || bail "could not make a fresh control store for (e)"
+
 RUN2="$TMP2/run"
 mkdir -p "$RUN2" "$TMP2/queue"
 for i in $(seq 1 "$N_CERT"); do

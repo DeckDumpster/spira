@@ -304,6 +304,8 @@ cat > "$STUB_LC" <<'LEOF'
 #!/usr/bin/env bash
 case "$1" in
     list) cat "$LC_ROWS" ;;
+    # The store's content door (sp-ipwlic): the bead list the junk-row check reads is bd's.
+    content) shift; exec "$SPIRA_BD" "$@" ;;
     *) printf '%s\n' "$*" >> "$LC_CALLS" ;;
 esac
 LEOF
