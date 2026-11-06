@@ -392,6 +392,8 @@ command -v sentinel >/dev/null 2>&1 || bail "sentinel is not on PATH"
 # suite's own mail tree. SPIRA_HOME goes back to the real $HERE (sentinel's own probe needs a
 # real lib.sh/conf.sh to source, unlike the old direct-source test).
 export SPIRA_HOME="$HERE"
+# The ask is a question, which mail lints against its kinds: this tree's, not the fixture's.
+tl_config SPIRA_MAIL_KINDS="$HERE/mail/kinds"
 LAND_SUBJ="Spira is landing nothing"
 landing_asks() { grep -ls "$LAND_SUBJ" "$SPIRA_MAIL"/*/new/* "$SPIRA_MAIL"/*/cur/* 2>/dev/null | wc -l | tr -d ' '; }
 
