@@ -11,12 +11,25 @@
 //!   builder read the bead once, at claim, and the close-time `claim_desc_hash` comparison
 //!   would reopen its close.
 //!
-//! Both refuse with exit 1 and the text bdq printed. Each reads the caller's own context —
-//! its environment ([`Vars`]) and the lifecycle row of the bead it names — through a port,
-//! so the guard logic is one function whichever process holds the context.
+//! - **The create-time fences** (`create`/`create-form`/`q`): a `repo:` label the repo map
+//!   does not hold; destructive wording without an operator ask; an ask without a question, a
+//!   `Default:` and a `Class:`; and `DELETE FROM schema_migrations`, refused always.
+//! - **The ask-label write fence.** `label add <ask>` / `update --add-label|--set-labels <ask>`
+//!   is refused: an ask is created whole, through the create-time shape check.
+//! - **The state-verb fence.** `close`, `reopen`, `defer`, `undefer` and a status-moving
+//!   `update` are refused: a bead's state is its lifecycle row's. `SPIRA_BDQ_STATE_WRITE=<reason>`
+//!   overrides, and the override is logged.
+//!
+//! All refuse with exit 1 and the text bdq printed, in bdq's order ([`write`]). Each reads the
+//! caller's own context — its environment ([`Vars`]), the lifecycle row of the bead it names,
+//! the ask label and the repo map — through a port ([`Ctx`]), so the guard logic is one
+//! function whichever process holds the context. [`after`] is what a successful write owes
+//! the lifecycle machine: a row per created bead, a terminal row for a closed one.
 
+use crate::bdq;
 use crate::claimdesc::{self, LiveClaim};
 use spira_config::lc_state::Row;
+use spira_config::repos::Registry;
 
 /// The exit code both guards refuse with: bdq's `return 1`.
 pub const REFUSED: i32 = 1;
@@ -88,10 +101,117 @@ pub fn claim(args: &[String], rows: &Rows, now: i64) -> Result<Claim, Refusal> {
     }
 }
 
-/// Both guards in bdq's order (the czar fence first): the verdict bdq reaches on this write.
-pub fn write(args: &[String], vars: &Vars, rows: &Rows, now: i64) -> Result<Claim, Refusal> {
-    czar(args, vars)?;
-    claim(args, rows, now)
+/// Everything the guards read, as ports. `who` prefixes the guards' own failure lines (bdq
+/// prints `bdq: <error>`).
+pub struct Ctx<'a> {
+    pub who: &'a str,
+    pub vars: &'a Vars<'a>,
+    pub rows: &'a Rows<'a>,
+    pub now: i64,
+    /// `SPIRA_ASK_LABEL`, resolved only by a write that needs it.
+    pub ask_label: &'a dyn Fn() -> Result<String, String>,
+    /// The repo map in force, built only by a create.
+    pub registry: &'a dyn Fn() -> Registry,
+}
+
+fn refused(text: String) -> Refusal {
+    Refusal { code: REFUSED, text }
+}
+
+fn ask_label(ctx: &Ctx) -> Result<String, Refusal> {
+    (ctx.ask_label)().map_err(|e| refused(format!("{}: {e}\n", ctx.who)))
+}
+
+/// The create-time fences, short-circuiting on the first refusal as bdq does: repo label,
+/// destructive wording, ask shape, schema delete. `body` is the create's `--body-file` text: the
+/// ask-shape fence reads it as the description it is (unless `--description` is given); the
+/// destructive fence judges only `--description`, since a body carries quoted evidence.
+pub fn create(args: &[String], body: Option<&str>, ctx: &Ctx) -> Result<(), Refusal> {
+    if !bdq::is_create(args) {
+        return Ok(());
+    }
+    if let Some(msg) = bdq::check_repo_label(args, &(ctx.registry)()) {
+        return Err(refused(msg));
+    }
+    let ask = ask_label(ctx)?;
+    if let Some(msg) = bdq::check_destructive(args, &ask) {
+        return Err(refused(msg));
+    }
+    let judged: Vec<String> = match body {
+        Some(t) if !args.iter().any(|a| a == "--description" || a.starts_with("--description=")) => args.iter().cloned().chain(["--description".to_string(), t.to_string()]).collect(),
+        _ => args.to_vec(),
+    };
+    if let Some(msg) = bdq::check_ask_shape(&judged, &ask) {
+        return Err(refused(msg));
+    }
+    match bdq::check_schema_delete(args) {
+        Some(msg) => Err(refused(msg)),
+        None => Ok(()),
+    }
+}
+
+/// The ask-label write fence on `label` and `update`.
+pub fn ask_label_write(args: &[String], ctx: &Ctx) -> Result<(), Refusal> {
+    if !matches!(args.first().map(String::as_str), Some("label" | "update")) {
+        return Ok(());
+    }
+    match bdq::check_ask_label_write(args, &ask_label(ctx)?) {
+        Some(msg) => Err(refused(msg)),
+        None => Ok(()),
+    }
+}
+
+/// The state-verb fence. `Ok(Some(line))` is an overridden write: the line is logged.
+pub fn state_verb(args: &[String], vars: &Vars, who: &str) -> Result<Option<String>, Refusal> {
+    let Some(door) = bdq::check_state_verb(args) else { return Ok(None) };
+    match vars("SPIRA_BDQ_STATE_WRITE").filter(|v| !v.is_empty()) {
+        Some(why) => Ok(Some(format!("{who}: STATE WRITE OVERRIDE ({}) — bd's status moved outside the lifecycle machine: {why}\n", args.join(" ")))),
+        None => Err(refused(format!(
+            "spira: bdq refuses `{}` — a bead's state is its lifecycle row's, and bd's status follows it, never the reverse.\n\
+             Exit: {door}. To write bd's status anyway, set SPIRA_BDQ_STATE_WRITE=<reason> (logged).\n",
+            args.first().map(String::as_str).unwrap_or("")
+        ))),
+    }
+}
+
+/// A write every guard let through: what the claim check made of it, and the lines to log.
+#[derive(Debug, PartialEq)]
+pub struct Admit {
+    pub claim: Claim,
+    pub log: String,
+}
+
+/// Every guard in bdq's order: the create-time fences, the ask-label write fence, the
+/// state-verb fence, the czar fence, the claimed-description check. The verdict bdq reaches on
+/// this write.
+pub fn write(args: &[String], body: Option<&str>, ctx: &Ctx) -> Result<Admit, Refusal> {
+    create(args, body, ctx)?;
+    ask_label_write(args, ctx)?;
+    let log = state_verb(args, ctx.vars, ctx.who)?.unwrap_or_default();
+    czar(args, ctx.vars)?;
+    Ok(Admit { claim: claim(args, ctx.rows, ctx.now)?, log })
+}
+
+/// What a successful write owes the lifecycle machine.
+#[derive(Debug, PartialEq, Eq)]
+pub enum After {
+    Nothing,
+    /// A row (`create-bead <id> --ready`) for every bead the write's stdout names.
+    Rows,
+    /// The closed bead's row made terminal (`reconcile-closed --apply <id>`).
+    Terminal(String),
+}
+
+/// [`After`] for `args`: a bead-creating verb owes rows unless it files a closed bead or a
+/// rowless type; a `close <id>` owes a terminal row.
+pub fn after(args: &[String]) -> After {
+    if bdq::creates_beads(args) && !(bdq::is_create(args) && (bdq::creates_closed(args) || bdq::creates_rowless_type(args))) {
+        return After::Rows;
+    }
+    match spira_config::lifecycle_row::closed_id(args) {
+        Some(id) => After::Terminal(id.to_string()),
+        None => After::Nothing,
+    }
 }
 
 #[cfg(test)]
@@ -177,7 +297,76 @@ mod tests {
     fn write_runs_the_czar_fence_before_the_claim_check() {
         let e = env(CZAR);
         let held = |_: &str| Some(row("WORKING", "dwarf-sp-a", None));
-        let r = write(&a(&["update", "sp-a", "--title", "T"]), &|k| e.get(k).cloned(), &held, 0).unwrap_err();
+        let ctx = Ctx { who: "bdq", vars: &|k| e.get(k).cloned(), rows: &held, now: 0, ask_label: &|| Ok("needs-ryan".into()), registry: &registry };
+        let r = write(&a(&["update", "sp-a", "--title", "T"]), None, &ctx).unwrap_err();
         assert!(r.text.starts_with("czar-fence: "), "{r:?}");
+    }
+
+    fn registry() -> Registry {
+        let map = "# name|root|base|gate\nspira|/r/spira|main|gate.sh\ndeck|/r/deck|main|gate.sh\n";
+        Registry::new(Some(map), &BTreeMap::new(), std::path::Path::new("/r/spira"))
+    }
+
+    fn ctx<'a>(vars: &'a Vars<'a>, ask: &'a dyn Fn() -> Result<String, String>) -> Ctx<'a> {
+        Ctx { who: "bdq", vars, rows: &|_| None, now: 0, ask_label: ask, registry: &registry }
+    }
+
+    #[test]
+    fn the_create_fences_refuse_in_bdqs_order_with_bdqs_text() {
+        let none = |_: &str| None;
+        let ask = || Ok::<_, String>("needs-ryan".into());
+        let c = ctx(&none, &ask);
+        let refused = |w: &[&str], body: Option<&str>| create(&a(w), body, &c).map_err(|r| (r.code, r.text));
+        assert_eq!(refused(&["create", "T", "--labels", "repo:deck"], None), Ok(()));
+        let r = refused(&["create", "T", "--labels", "repo:nowhere"], None).unwrap_err();
+        assert_eq!((r.0, r.1.starts_with("spira: repo:nowhere is not in the repo map")), (1, true), "{r:?}");
+        let r = refused(&["create", "Stop the world", "--description", "run world.sh stop first"], None).unwrap_err();
+        assert!(r.1.contains("procedures that halt the harness require needs-ryan"), "{r:?}");
+        let r = refused(&["create", "Pick one", "--labels", "needs-ryan"], None).unwrap_err();
+        assert!(r.1.contains("needs-ryan"), "an ask without its shape: {r:?}");
+        let whole = "## Question\nWhich?\nDefault: a\nClass: policy\n";
+        assert_eq!(refused(&["create", "Pick one", "--labels", "needs-ryan", "--body-file", "-"], Some(whole)), Ok(()), "the body is the ask's description");
+        let r = refused(&["create", "Fix", "--description", "DELETE FROM schema_migrations"], None).unwrap_err();
+        assert!(r.1.contains("DELETE FROM schema_migrations"), "{r:?}");
+        assert_eq!(refused(&["note", "sp-a", "DELETE FROM schema_migrations"], None), Ok(()), "only a create");
+        let down = || Err::<String, String>("SPIRA_ASK_LABEL is not declared".into());
+        let c = ctx(&none, &down);
+        assert_eq!(create(&a(&["create", "T"]), None, &c), Err(Refusal { code: 1, text: "bdq: SPIRA_ASK_LABEL is not declared\n".into() }));
+    }
+
+    #[test]
+    fn the_ask_label_is_never_written_onto_an_existing_bead() {
+        let none = |_: &str| None;
+        let ask = || Ok::<_, String>("needs-ryan".into());
+        let c = ctx(&none, &ask);
+        for w in [&["label", "add", "sp-a", "needs-ryan"][..], &["update", "sp-a", "--add-label", "needs-ryan"], &["update", "sp-a", "--set-labels", "x,needs-ryan"]] {
+            let r = ask_label_write(&a(w), &c).unwrap_err();
+            assert!(r.code == 1 && r.text.starts_with("spira: refusing to add needs-ryan to an existing bead"), "{w:?}: {r:?}");
+        }
+        for w in [&["label", "add", "sp-a", "overseer"][..], &["label", "remove", "sp-a", "needs-ryan"], &["update", "sp-a", "--remove-label", "needs-ryan"]] {
+            assert_eq!(ask_label_write(&a(w), &c), Ok(()), "{w:?}");
+        }
+    }
+
+    #[test]
+    fn a_state_verb_is_refused_unless_overridden_and_the_override_is_logged() {
+        let none = |_: &str| None;
+        let r = state_verb(&a(&["close", "sp-a", "--reason", "r"]), &none, "bdq").unwrap_err();
+        assert!(r.code == 1 && r.text.starts_with("spira: bdq refuses `close`") && r.text.contains("spira-lc close <id>"), "{r:?}");
+        let why = |k: &str| (k == "SPIRA_BDQ_STATE_WRITE").then(|| "landing".to_string());
+        assert_eq!(
+            state_verb(&a(&["close", "sp-a"]), &why, "bdq"),
+            Ok(Some("bdq: STATE WRITE OVERRIDE (close sp-a) — bd's status moved outside the lifecycle machine: landing\n".into()))
+        );
+        assert_eq!(state_verb(&a(&["update", "sp-a", "--add-label", "x"]), &none, "bdq"), Ok(None));
+    }
+
+    #[test]
+    fn a_create_owes_rows_and_a_close_a_terminal_row() {
+        assert_eq!(after(&a(&["create", "T", "--silent"])), After::Rows);
+        assert_eq!(after(&a(&["create", "T", "--type", "event"])), After::Nothing, "a rowless type");
+        assert_eq!(after(&a(&["create", "T", "--status", "closed"])), After::Nothing, "filed closed");
+        assert_eq!(after(&a(&["close", "sp-a", "--reason", "r"])), After::Terminal("sp-a".into()));
+        assert_eq!(after(&a(&["note", "sp-a", "t"])), After::Nothing);
     }
 }
