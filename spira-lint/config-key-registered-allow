@@ -149,7 +149,6 @@ SPIRA_CONF_FILE install/src/bin/install.rs
 SPIRA_CONF_FILE install/src/checks.rs
 SPIRA_CONF_FILE spira/archive.sh
 SPIRA_CONF_FILE spira/seed.sh
-SPIRA_CONF_FILE spira/watch-refresh.sh
 SPIRA_CONF_FILE watchd/src/context.rs
 SPIRA_CONF_KEYS spira/conf.sh
 SPIRA_CONF_LOADED release/src/acceptance/phases.rs
@@ -203,7 +202,6 @@ SPIRA_DWARF spira/hooks/session.sh
 SPIRA_DWARF spira/lib.sh
 SPIRA_DWARF testenv/src/suites/ports.rs
 SPIRA_DWARF_CPU_QUOTA spira-config/src/convert.rs
-SPIRA_DWARF_LEDGER spira/dwarf-watch.sh
 SPIRA_DWARF_OVERRIDE dwarf/src/restrict.rs
 SPIRA_DWARF_OVERRIDE spira/hooks/dwarf-fence.sh
 SPIRA_ENV_PATH install/src/values.rs
@@ -720,7 +718,6 @@ SPIRA_REPO spira/inbox-keeper.sh
 SPIRA_REPO spira/lib.sh
 SPIRA_REPO spira/overrides.sh
 SPIRA_REPO spira/pre-activate.sh
-SPIRA_REPO spira/stranded-runner.sh
 SPIRA_REPO spira/verify-landed.sh
 SPIRA_REPO suite-select/src/main.rs
 SPIRA_REPO testenv/src/run.rs

@@ -134,7 +134,6 @@ spira/test-superseded.sh
 spira/test-thrash-teardown.sh
 spira/test-uninstall.sh
 spira/test-units-lint.sh
-spira/test-watch-refresh.sh
 spira/test-work-container.sh
 spira/tsd-ingest.sh
 
