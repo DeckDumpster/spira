@@ -17,6 +17,8 @@ spira-claim = { path = "../spira-claim" }
 runtime = { path = "../runtime" }
 tsd = { path = "../tsd" }
 mail = { path = "../mail" }
+strand = { path = "../strand" }
+watchtower = { path = "../watchtower" }
 
 [[bin]]
 name = "sentinel"

@@ -2,9 +2,15 @@
 //! `sentinel-pass` tasks: what the binary decides, without the binary's IO, and the
 //! in-process doors its reads go through.
 
+pub mod ask;
 pub mod checks;
+pub mod edge;
 pub mod model;
+pub mod pass_checks;
+pub mod pilgrimage;
 pub mod plan;
+pub mod reflect;
+pub mod tower;
 
 /// The lifecycle events the checks write.
 pub mod lifecycle_events {

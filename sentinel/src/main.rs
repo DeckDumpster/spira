@@ -2,6 +2,8 @@
 //!
 //!   sentinel                 one full pass                     (spira-sentinel.service)
 //!   sentinel --report        print the open plan beads, change nothing
+//!   sentinel --reflect <ids> CHECK 8's inference leg (reflect.sh, ported): the scheduler
+//!                            starts it as a unit; its output is the reflect log
 //!   sentinel --call-only   CHECK 7 alone                     (spira-call.service, and
 //!                            every dwarf unit's ExecStopPost)
 //!   sentinel --open-children [--dry-run]
@@ -189,6 +191,21 @@ fn main() {
     }
     if std::env::args().nth(1).as_deref() == Some("--classify-unclaimable") {
         std::process::exit(classify_unclaimable_main());
+    }
+    // CHECK 8's inference leg (`reflect.sh`, ported): the scheduler's sentinel-pass starts it
+    // as a unit, since one model call runs for minutes. Its output is the reflect log.
+    if std::env::args().nth(1).as_deref() == Some("--reflect") {
+        let ids: Vec<String> = std::env::args().skip(2).flat_map(|a| a.split_whitespace().map(str::to_string).collect::<Vec<_>>()).collect();
+        match sentinel::reflect::run(&ids) {
+            Ok(log) => {
+                print!("{log}");
+                std::process::exit(0)
+            }
+            Err(e) => {
+                eprintln!("sentinel --reflect: {e}");
+                std::process::exit(1)
+            }
+        }
     }
     spira_otel::run::begin("sentinel", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
     temps::install_handlers();
