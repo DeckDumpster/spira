@@ -31,8 +31,8 @@ pub fn stamp_of(epoch: u64) -> String {
 /// environment and bead store `mail send` loads.
 fn send_question(subject: &str, body: &str, default_action: &str) -> Result<(), String> {
     let env = mail::env::Env::load()?;
-    // FORK-EDGE: content store write — the mail library files the ask's bead through bdq
-    let bd = mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: env.bd_conn_retries };
+    // The ask's bead is filed through the store's content door (mail's BdCli).
+    let bd = mail::bead::BdCli::configured(env.bd_conn_retries)?;
     let args = mail::cmds::SendArgs {
         mailbox: "operator",
         from: Some("Skew check <skew@spira>"),
