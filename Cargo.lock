@@ -2194,12 +2194,16 @@ dependencies = [
 name = "spira-sim"
 version = "0.1.0"
 dependencies = [
+ "lifecycle",
+ "perf-watch",
  "queue",
+ "runtime",
  "serde",
  "serde_json",
  "sim",
  "spira-config",
  "spira-otel",
+ "spira-runtime",
  "testkit",
  "toml",
 ]

@@ -101,7 +101,7 @@ fn t5_an_unsifted_tip_is_set_aside() {
 /// `core.rs` `order_key`, as `batcher rounds` merged a round (`topo_order` of the full members):
 /// express first, then priority, so of two siblings that change one file the higher-priority one
 /// merges and the other conflicts (sim scenario `conflicting-siblings`, ported to
-/// `sim/tests/loop_ports.rs`). The assemble effect rebuilds its members from `(id, tip)` alone
+/// `spira/sim/tests/loop_ports.rs`). The assemble effect rebuilds its members from `(id, tip)` alone
 /// (`core_members`: no priority, no stack), so the merge order is the leg's own order.
 #[test]
 fn t5_the_assemble_leg_lists_its_members_in_merge_order_priority_first() {

@@ -25,8 +25,12 @@ serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 sim = { path = "../../sim" }
+spira-runtime = { path = "../../spira-runtime" }
+runtime = { path = "../../runtime" }
+lifecycle = { path = "../../lifecycle" }
 spira-config = { path = "../../spira-config" }
 
 [dev-dependencies]
 testkit = { path = "../../testkit" }
+perf-watch = { path = "../../perf-watch" }
 queue = { path = "../../queue" }

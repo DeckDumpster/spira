@@ -4,6 +4,7 @@ pub mod drive;
 pub mod gh;
 pub mod jq;
 pub mod launch;
+pub mod loopworld;
 pub mod probe;
 pub mod proctrace;
 pub mod roundvm;

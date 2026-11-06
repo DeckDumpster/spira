@@ -2,13 +2,14 @@
 //! name is a sim-only actor of the tree's `sim/actors.toml`. The loop's units (sentinel-call,
 //! sentinel-landing, sift, rounds, gate-worker, publish) are tasks of `spira-runtime serve` now
 //! and the simulator drives them in-process (ruling D6, `sim/tests/whole_loop.rs` and
-//! `sim/tests/loop_ports.rs`), so a scenario that still names one fails at load. The scenarios
+//! `spira/sim/tests/loop_ports.rs`), so a scenario that still names one fails at load. The scenarios
 //! that named one were ported (the loop's half to `loop_ports.rs`, the effect's half kept here
 //! with the call's effect as an actor) or retired with their cover; the ones in [`BLOCKED`] are
 //! neither yet, and say why.
 
 use spira_sim::call::{dwarf_command, rune_of};
 use spira_sim::drive::{parse_scenario, Scenario, SCENARIOS_DIR};
+use spira_sim::loopworld;
 use std::path::{Path, PathBuf};
 
 /// Scenarios that still name a migrated actor, each with what it proves and why it is not
@@ -16,7 +17,6 @@ use std::path::{Path, PathBuf};
 /// tools, which only the loop's tasks drive now, and a world does not run the service. Their
 /// property is reported, not dropped; the cover named is partial.
 const BLOCKED: &[(&str, &str)] = &[
-    ("happy-path", "filed to LANDED, published and release-tagged; loop half covered by whole_loop.rs, the publish PR and tag half by nothing end to end; watch.perf_happy runs it in production"),
     ("cut-in-bare-env", "gate.yml's cut job (steps/cut.sh) succeeds in a bare env after a landing; no cover"),
     ("publish-then-cut", "the cut job with the release on PATH after a landing; no cover"),
     ("push-lands", "a push-mode repo lands on its origin trunk; landing-pass tests cover it on fakes only"),
@@ -38,11 +38,15 @@ fn shipped() -> Vec<(String, Scenario)> {
         .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().is_some_and(|x| x == "toml"))
-        .map(|p| {
+        .filter_map(|p| {
             let name = p.file_stem().and_then(|s| s.to_str()).unwrap_or_default().to_string();
             let text = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+            if loopworld::is_loop(&text) {
+                loopworld::parse(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
+                return None;
+            }
             let sc = parse_scenario(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
-            (name, sc)
+            Some((name, sc))
         })
         .collect();
     out.sort_by(|a, b| a.0.cmp(&b.0));
@@ -94,5 +98,23 @@ fn the_ported_scenarios_call_through_the_seam_with_the_call_effects_argv() {
     assert_eq!(env, [("SPIRA_RELEASE", "/r"), ("PATH", "/r/bin:/r/spira:/usr/local/bin:/usr/bin:/bin"), ("HOME", "/home/u"), ("SPIRA_TOML", "/c/sim.toml")]);
     for p in ["--property=TimeoutStartSec=3600", "--property=IOSchedulingClass=idle", "--property=IOWeight=10"] {
         assert!(argv.iter().any(|a| a == p), "{p} (sentinel_call::dwarf_props): {argv:?}");
+    }
+}
+
+/// The loop worlds shipped beside the world scenarios: each parses as one (`driver = "loop"`).
+#[test]
+fn the_shipped_loop_worlds_parse() {
+    let dir = root().join(SCENARIOS_DIR);
+    let mut loops: Vec<String> = std::fs::read_dir(&dir)
+        .expect("scenarios")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| std::fs::read_to_string(p).is_ok_and(|t| loopworld::is_loop(&t)))
+        .map(|p| p.file_stem().and_then(|s| s.to_str()).unwrap_or_default().to_string())
+        .collect();
+    loops.sort();
+    assert!(loops.contains(&"happy-path".to_string()), "watch.perf_happy's scenario is a loop world: {loops:?}");
+    for name in loops {
+        let text = std::fs::read_to_string(dir.join(format!("{name}.toml"))).expect("readable");
+        loopworld::parse(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
     }
 }

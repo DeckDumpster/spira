@@ -1,77 +1,20 @@
-epoch = 1800000000
-horizon = 1200000
+# The happy path: one bead filed, called, claimed, submitted, sifted, cut into a round, its corpus
+# and certify legs green, landed on local main, and the landed head published by PR.
+#
+# A loop world (ruling D6 of the scheduler consolidation design): the service's own registrations
+# run in-process on the virtual clock and every effect is a double (spira/sim/src/loopworld.rs).
+# The dwarf session, the round VM's corpus pass and the certify leg are units on the scripted
+# manager; the landing is `queue round land`'s double; the forge is the publish task's doubles,
+# which open the PR. Merging that PR and tagging the release were GitHub's acts in the world
+# scenario this replaces (sim gh's `pr-merge` and `tag`), not the loop's.
+#
+# `watch.perf_happy` runs this hourly in production (`sim run happy-path --seed 7 --keep`) and
+# measures its wall time; the run directory's exec.log carries one line per effect.
+driver = "loop"
 goal = "sp-hp01:LANDED"
-goal_tag = "spira-release-"
-real_actors = ["sentinel-call", "sentinel-landing", "sift", "gate-worker", "publish"]
+publish = true
+until = 2400000
 
-[[step]]
-at = 0
-file = "sp-hp01"
-
-[[step]]
-at = 0
-claim = "sp-hp01"
-script = ["commit out/happy.txt", "submit"]
-
-# Real GitHub finishes the publish PR's checks, merges it, and the release workflow tags the
-# merge; here each is one explicit act, retried until the publish PR exists.
-
-[[step]]
-at = 340000
-command = """
-pr=$(gh pr list --state open --json number -q '.[0].number // ""'); [ -n "$pr" ] || exit 3
-sha=$(gh pr view "$pr" --json headRefOid -q .headRefOid)
-sim ghctl "$SIM_GH_DIR" check-run "$sha" gate completed success
-sim ghctl "$SIM_GH_DIR" pr-merge "$pr"
-sim ghctl "$SIM_GH_DIR" tag "spira-release-$(printf %.12s "$sha")" "$sha"
-"""
-
-[[step]]
-at = 420000
-command = """
-pr=$(gh pr list --state open --json number -q '.[0].number // ""'); [ -n "$pr" ] || exit 3
-sha=$(gh pr view "$pr" --json headRefOid -q .headRefOid)
-sim ghctl "$SIM_GH_DIR" check-run "$sha" gate completed success
-sim ghctl "$SIM_GH_DIR" pr-merge "$pr"
-sim ghctl "$SIM_GH_DIR" tag "spira-release-$(printf %.12s "$sha")" "$sha"
-"""
-
-[[step]]
-at = 520000
-command = """
-pr=$(gh pr list --state open --json number -q '.[0].number // ""'); [ -n "$pr" ] || exit 3
-sha=$(gh pr view "$pr" --json headRefOid -q .headRefOid)
-sim ghctl "$SIM_GH_DIR" check-run "$sha" gate completed success
-sim ghctl "$SIM_GH_DIR" pr-merge "$pr"
-sim ghctl "$SIM_GH_DIR" tag "spira-release-$(printf %.12s "$sha")" "$sha"
-"""
-
-[[step]]
-at = 640000
-command = """
-pr=$(gh pr list --state open --json number -q '.[0].number // ""'); [ -n "$pr" ] || exit 3
-sha=$(gh pr view "$pr" --json headRefOid -q .headRefOid)
-sim ghctl "$SIM_GH_DIR" check-run "$sha" gate completed success
-sim ghctl "$SIM_GH_DIR" pr-merge "$pr"
-sim ghctl "$SIM_GH_DIR" tag "spira-release-$(printf %.12s "$sha")" "$sha"
-"""
-
-[[step]]
-at = 800000
-command = """
-pr=$(gh pr list --state open --json number -q '.[0].number // ""'); [ -n "$pr" ] || exit 3
-sha=$(gh pr view "$pr" --json headRefOid -q .headRefOid)
-sim ghctl "$SIM_GH_DIR" check-run "$sha" gate completed success
-sim ghctl "$SIM_GH_DIR" pr-merge "$pr"
-sim ghctl "$SIM_GH_DIR" tag "spira-release-$(printf %.12s "$sha")" "$sha"
-"""
-
-[[step]]
-at = 1000000
-command = """
-pr=$(gh pr list --state open --json number -q '.[0].number // ""'); [ -n "$pr" ] || exit 3
-sha=$(gh pr view "$pr" --json headRefOid -q .headRefOid)
-sim ghctl "$SIM_GH_DIR" check-run "$sha" gate completed success
-sim ghctl "$SIM_GH_DIR" pr-merge "$pr"
-sim ghctl "$SIM_GH_DIR" tag "spira-release-$(printf %.12s "$sha")" "$sha"
-"""
+[[bead]]
+id = "sp-hp01"
+at = 30000
