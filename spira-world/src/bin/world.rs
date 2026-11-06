@@ -918,7 +918,8 @@ fn cmd_status() -> i32 {
     let sfx = sfx_or_die();
     for u in scheduler::keep_units(&sfx) {
         let state = sysctl::run(&["is-active", &u]);
-        println!("  {:<30} {}", u, if state.is_empty() { "inactive".to_string() } else { state });
+        let result = scheduler::timer_service(&u).map(|svc| sysctl::run(&["show", &svc, "-p", "Result", "--value"])).unwrap_or_default();
+        println!("{}", scheduler::keep_row(&u, &state, &result));
     }
     for line in sysctl::run_lines(&["list-units", "spira-*.service", "--state=active", "--no-legend"]) {
         let Some(svc) = sysctl::first_field(&line) else { continue };

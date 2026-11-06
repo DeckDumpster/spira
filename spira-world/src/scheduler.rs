@@ -23,6 +23,26 @@ pub fn keep_units(sfx: &str) -> Vec<String> {
     ]
 }
 
+/// One `status` row for a kept unit, given its `is-active` state and, for a timer, its paired
+/// service's last `Result` (sp-2z9y): a timer that fires faithfully into a service that always
+/// fails reads as healthy, so a result other than `success` (or none recorded) is shown beside
+/// it. The watchdog is the one timer left outside the scheduler (S15), and its failing pass is
+/// exactly the failure this row must not hide.
+pub fn keep_row(unit: &str, state: &str, svc_result: &str) -> String {
+    let state = if state.is_empty() { "inactive" } else { state };
+    if !svc_result.is_empty() && svc_result != "success" {
+        format!("  {unit:<30} {state} (svc: {svc_result})")
+    } else {
+        format!("  {unit:<30} {state}")
+    }
+}
+
+/// The service a timer unit fires (`x.timer` -> `x.service`); `None` for a unit that is not a
+/// timer.
+pub fn timer_service(unit: &str) -> Option<String> {
+    unit.strip_suffix(".timer").map(|b| format!("{b}.service"))
+}
+
 /// Whether `unit` is on the keep list, with or without the instance suffix `sfx` (`-prod`).
 pub fn is_kept(unit: &str, sfx: &str) -> bool {
     let base = [".service", ".socket", ".timer"].iter().find_map(|s| unit.strip_suffix(s)).unwrap_or(unit);
@@ -184,6 +204,16 @@ pub fn raw(c: &dyn Control) -> (i32, String) {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    #[test]
+    fn a_kept_timer_whose_service_failed_shows_the_result() {
+        assert_eq!(keep_row("spira-watchdog-prod.timer", "active", "timeout"), format!("  {:<30} active (svc: timeout)", "spira-watchdog-prod.timer"));
+        assert_eq!(keep_row("spira-watchdog-prod.timer", "active", "success"), format!("  {:<30} active", "spira-watchdog-prod.timer"));
+        assert_eq!(keep_row("spira-watchdog-prod.timer", "active", ""), format!("  {:<30} active", "spira-watchdog-prod.timer"));
+        assert_eq!(keep_row("lc-serve.socket", "", ""), format!("  {:<30} inactive", "lc-serve.socket"));
+        assert_eq!(timer_service("spira-watchdog-prod.timer").as_deref(), Some("spira-watchdog-prod.service"));
+        assert_eq!(timer_service("lc-serve.socket"), None);
+    }
 
     struct Fake {
         calls: RefCell<Vec<Vec<String>>>,
