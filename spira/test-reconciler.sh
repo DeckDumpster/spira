@@ -280,16 +280,14 @@ printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$QUEUE_CALLS" > "$
 chmod +x "$STUB_BIN/queue"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB_BIN/bead"; chmod +x "$STUB_BIN/bead"
 
-# Stub mail: an escalation is one `send concierge` whose body carries "invariant: <key>".
-MAIL_LOG="$T/mail-calls.log"
-: > "$MAIL_LOG"
-cat > "$STUB_BIN/mail" <<'IEOF'
-#!/usr/bin/env bash
-[ "$1" = "send" ] && [ "$2" = "concierge" ] || exit 1
-{ printf 'CALL %s\n' "$*"; cat; printf '\n---\n'; } >> "$MAIL_LOG"
-IEOF
-chmod +x "$STUB_BIN/mail"
-export MAIL_LOG
+# The mail is the mail library, in-process (sp-ipwlic: no `mail` child a PATH stub could stand
+# in for): an escalation is one message delivered to this suite's own concierge mailbox, whose
+# body carries "invariant: <key>". mail_log prints every message delivered there.
+MAIL_ROOT="$T/mail"; mkdir -p "$MAIL_ROOT"
+tl_config SPIRA_MAIL="$MAIL_ROOT" SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
+    SPIRA_MAIL_INDEX="$MAIL_ROOT/index" SPIRA_MAIL_MUTE=0
+mail_log() { cat "$MAIL_ROOT"/concierge/new/* "$MAIL_ROOT"/concierge/cur/* 2>/dev/null; }
+mail_clear() { rm -f "$MAIL_ROOT"/concierge/new/* "$MAIL_ROOT"/concierge/cur/* "$MAIL_ROOT/index"; }
 
 export SPIRA_REPO_MAP="$T/repo-map"
 tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_DOLT_DATA=/var/lib/dolt
@@ -322,7 +320,7 @@ reset_state() {
     rm -f "$SPIRA_RUN/reconciler-state.json" "$SPIRA_RUN/reconciler-alerted.json" \
           "$SPIRA_RUN/reconciler.log" "$SPIRA_RUN/cockpit.down"
     fresh_store
-    : > "$SYSTEMCTL_CALLS"; : > "$COCKPIT_CALLS"; : > "$QUEUE_CALLS"; : > "$MAIL_LOG"
+    : > "$SYSTEMCTL_CALLS"; : > "$COCKPIT_CALLS"; : > "$QUEUE_CALLS"; mail_clear
     : > "$DISK_USAGE_CALLS"; : > "$DISK_REMEDY_CALLS"
     desired_state_clear
 }
@@ -375,7 +373,7 @@ EOF
 rpass
 _calls="$(cat "$SYSTEMCTL_CALLS")"
 lack "no enable/restart calls when everything is healthy" "enable" "$(grep -v is- <<<"$_calls" || true)"
-[ ! -s "$MAIL_LOG" ] && ok "no incident filed when everything is healthy" || bad "unexpected incident: $(cat "$MAIL_LOG")"
+[ -z "$(mail_log)" ] && ok "no incident filed when everything is healthy" || bad "unexpected incident: $(mail_log)"
 
 # ==========================================================================================
 printf '\n%s\n' "4. Units: disabled timers each get enable --now"
@@ -423,7 +421,7 @@ _calls="$(cat "$SYSTEMCTL_CALLS")"
 lack "no restart of dolt-beads" "restart dolt-beads" "$_calls"
 lack "no enable of dolt-beads" "enable --now dolt-beads" "$_calls"
 lack "no plain enable of dolt-beads" "enable dolt-beads" "$_calls"
-want "dolt-beads down escalates" "invariant: store:dolt-beads.service" "$(cat "$MAIL_LOG")"
+want "dolt-beads down escalates" "invariant: store:dolt-beads.service" "$(mail_log)"
 
 # ==========================================================================================
 printf '\n%s\n' "8. Fleet: 3 live ceiling, 150 ready, 0 live -> gap, escalate, no remedy"
@@ -433,7 +431,7 @@ reset_state
 printf 'builder\t150\t0\n' > "$FLEET_LINES"
 tl_config SPIRA_MAX_LIVE_DWARVES=3 SPIRA_MAX_DWARVES=6
 rpass
-want "fleet gap escalates" "invariant: fleet:builder" "$(cat "$MAIL_LOG")"
+want "fleet gap escalates" "invariant: fleet:builder" "$(mail_log)"
 want "status jsonl records desired=3 observed=0" '"desired":"3","observed":"0"' "$(status_jsonl)"
 
 # ==========================================================================================
@@ -443,7 +441,7 @@ reset_state
 printf 'builder\t2\t2\n' > "$FLEET_LINES"
 rpass
 want "a fully staffed partition is satisfied" '"key":"fleet:builder","status":"satisfied"' "$(status_jsonl)"
-[ ! -s "$MAIL_LOG" ] && ok "no escalation for a staffed fleet" || bad "unexpected escalation: $(cat "$MAIL_LOG")"
+[ -z "$(mail_log)" ] && ok "no escalation for a staffed fleet" || bad "unexpected escalation: $(mail_log)"
 : > "$FLEET_LINES"
 
 # ==========================================================================================
@@ -489,7 +487,7 @@ printf '\n%s\n' "13. Release: non-main branch, no activated release -> gap, esca
 reset_state
 echo "feature-x" > "$GIT_BRANCH_STATE"
 rpass
-want "release gap escalates" "invariant: release" "$(cat "$MAIL_LOG")"
+want "release gap escalates" "invariant: release" "$(mail_log)"
 
 # ==========================================================================================
 printf '\n%s\n' "14. Release: checkout on main -> satisfied"
@@ -536,7 +534,7 @@ touch -d "@$(( $(date +%s) - 10 ))" "$_lockfile"
 _holder=$!
 sleep 0.3
 rpass
-want "a held, stale lock escalates" "invariant: queue-lock-age:testrepo" "$(cat "$MAIL_LOG")"
+want "a held, stale lock escalates" "invariant: queue-lock-age:testrepo" "$(mail_log)"
 wait "$_holder" 2>/dev/null || true
 
 reset_state
@@ -549,7 +547,7 @@ touch -d "@$(( $(date +%s) - 400 ))" "$_lockfile"
 _holder=$!
 sleep 0.3
 rpass
-lack "a held lock whose holder is beating does not escalate" "queue-lock-age:testrepo" "$(cat "$MAIL_LOG")"
+lack "a held lock whose holder is beating does not escalate" "queue-lock-age:testrepo" "$(mail_log)"
 wait "$_holder" 2>/dev/null || true
 
 reset_state
@@ -558,7 +556,7 @@ touch -d "@$(( $(date +%s) - 400 ))" "$SPIRA_RUN/queue/testrepo/lock.beat"
 _holder=$!
 sleep 0.3
 rpass
-want "a held lock whose beat went stale escalates" "invariant: queue-lock-age:testrepo" "$(cat "$MAIL_LOG")"
+want "a held lock whose beat went stale escalates" "invariant: queue-lock-age:testrepo" "$(mail_log)"
 wait "$_holder" 2>/dev/null || true
 rm -f "$_lockfile" "$SPIRA_RUN/queue/testrepo/lock.beat"
 unset SPIRA_PREFLIGHT_WALL_SECS
@@ -576,7 +574,7 @@ printf 'a.timer\n' > "$UNITS_LIST"
 printf 'a.timer disabled inactive\n' > "$SYSTEMCTL_STATE"
 rpass
 lack "no remedy run inside the grace period" "enable --now" "$(cat "$SYSTEMCTL_CALLS")"
-[ ! -s "$MAIL_LOG" ] && ok "no incident filed inside the grace period" || bad "unexpected incident: $(cat "$MAIL_LOG")"
+[ -z "$(mail_log)" ] && ok "no incident filed inside the grace period" || bad "unexpected incident: $(mail_log)"
 want "the gap is still recorded in the time series" '"key":"units-timer:a.timer","status":"gap"' "$(status_jsonl)"
 export SPIRA_RECONCILER_GRACE_SECS=0
 tl_config SPIRA_RECONCILER_GRACE_SECS=0
@@ -602,12 +600,12 @@ printf 'r.timer disabled inactive\n' > "$SYSTEMCTL_STATE"
 rpass   # pass 1: remedy attempted
 _n1="$(grep -c -- '--user enable --now r.timer' "$SYSTEMCTL_CALLS" || true)"
 is "pass 1 attempts the remedy once" "1" "$_n1"
-[ ! -s "$MAIL_LOG" ] && ok "pass 1 does not escalate yet" || bad "pass 1 escalated early: $(cat "$MAIL_LOG")"
+[ -z "$(mail_log)" ] && ok "pass 1 does not escalate yet" || bad "pass 1 escalated early: $(mail_log)"
 
 rpass   # pass 2: still a gap
 _n2="$(grep -c -- '--user enable --now r.timer' "$SYSTEMCTL_CALLS" || true)"
 is "pass 2 does not retry the remedy blind" "1" "$_n2"
-want "pass 2 escalates instead" "invariant: units-timer:r.timer" "$(cat "$MAIL_LOG")"
+want "pass 2 escalates instead" "invariant: units-timer:r.timer" "$(mail_log)"
 
 # ==========================================================================================
 printf '\n%s\n' "21. Fleet: a materialised Composite's ceiling is read instead of the configured SPIRA_MAX_LIVE_DWARVES"
@@ -628,7 +626,7 @@ lane_cap = 1'
 rpass
 lack "the Composite's ceiling makes this observable, not unobservable" '"key":"fleet:builder","status":"unobservable"' "$(status_jsonl)"
 want "the desired live count is bounded by the Composite's ceiling, not the configured one" '"desired":"3","observed":"0"' "$(status_jsonl)"
-want "fleet gap escalates against the Composite's ceiling" "invariant: fleet:builder" "$(cat "$MAIL_LOG")"
+want "fleet gap escalates against the Composite's ceiling" "invariant: fleet:builder" "$(mail_log)"
 
 # ==========================================================================================
 printf '\n%s\n' "22. Units: a materialised Composite's UnitsSpec names the unit set instead of the installer's ENABLE set"
@@ -702,7 +700,7 @@ name = "release"
 release = "v9"
 allow_override = false'
 rpass
-want "a non-main checkout not at the declared release still gaps and escalates" "invariant: release" "$(cat "$MAIL_LOG")"
+want "a non-main checkout not at the declared release still gaps and escalates" "invariant: release" "$(mail_log)"
 
 reset_state
 echo "feature-x" > "$GIT_BRANCH_STATE"
@@ -727,7 +725,7 @@ printf 'builder\t150\t0\t1\n' > "$FLEET_LINES"
 tl_config SPIRA_MAX_LIVE_DWARVES=3 SPIRA_MAX_DWARVES=0   # pool 0 == deliberately paused
 rpass
 want "a deliberately paused task pool satisfies the builder partition" '"key":"fleet:builder","status":"satisfied"' "$(status_jsonl)"
-lack "no escalation while the pool is deliberately paused" "invariant: fleet:builder" "$(cat "$MAIL_LOG")"
+lack "no escalation while the pool is deliberately paused" "invariant: fleet:builder" "$(mail_log)"
 
 # ==========================================================================================
 printf '\n%s\n' "26. Fleet: the pool-at-0 carve-out does not cover a lane partition"
@@ -736,7 +734,7 @@ reset_state
 printf 'ops\t5\t0\t0\n' > "$FLEET_LINES"   # is-task=0: ops draws outside SPIRA_MAX_DWARVES
 rpass
 want "a starved lane partition still gaps while the task pool is paused" '"key":"fleet:ops","status":"gap"' "$(status_jsonl)"
-want "a starved lane partition still escalates while the task pool is paused" "invariant: fleet:ops" "$(cat "$MAIL_LOG")"
+want "a starved lane partition still escalates while the task pool is paused" "invariant: fleet:ops" "$(mail_log)"
 : > "$FLEET_LINES"
 tl_config SPIRA_MAX_DWARVES=6
 
@@ -750,7 +748,7 @@ printf '/\t40\n/var/lib/dolt\t62\n' > "$DISK_LINES"
 rpass
 [ ! -s "$DISK_REMEDY_CALLS" ] && ok "no disk remedy when every path is above its floor" || bad "unexpected disk remedy: $(cat "$DISK_REMEDY_CALLS")"
 want "status jsonl reports / satisfied" '"key":"disk:/","status":"satisfied"' "$(status_jsonl)"
-[ ! -s "$MAIL_LOG" ] && ok "no incident filed when every path is healthy" || bad "unexpected incident: $(cat "$MAIL_LOG")"
+[ -z "$(mail_log)" ] && ok "no incident filed when every path is healthy" || bad "unexpected incident: $(mail_log)"
 
 # ==========================================================================================
 printf '\n%s\n' "28. Disk: a path below the floor -> gap -> the remedy sequence runs"
