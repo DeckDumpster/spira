@@ -14,8 +14,8 @@
 #
 # CHECKS (each names what it read):
 #
-#   sentinel    — timer active
-#   timers      — every active spira-*-<instance>.timer still has a next trigger
+#   scheduler   — the spira-runtime unit active; `scheduler status` running, sentinel.call registered
+#   timers      — every active spira-*-<instance>.timer (the watchdog's) still has a next trigger
 #   world       — not halted; stamp file named with its mtime when present
 #   database    — readable (bead count); statutes in force
 #   ready work  — sentinel.sh --report sees open work
@@ -29,7 +29,7 @@
 #
 # WORLD ROW — two kinds of halt. The stamp file at $SPIRA_RUN/world.halted survives
 # an uninstall: a reinstall keeps $SPIRA_RUN, so a brand-new install can carry a halt
-# that predates it. The check compares the stamp's mtime to the sentinel unit's mtime
+# that predates it. The check compares the stamp's mtime to the scheduler unit's mtime
 # to distinguish "you halted this" from "this halt predates the install".
 #
 # SEAMS (for test fixtures):
@@ -48,24 +48,50 @@ echo "spira ready"
 echo
 
 # =============================================================================
-echo "sentinel"
+echo "scheduler"
 # =============================================================================
-# Resolve the timer name for this instance. spira_unit returns '?' when neither the
+# The loop is the tasks inside `spira-runtime serve`; there is no sentinel timer. Resolve
+# the scheduler unit for this instance. spira_unit returns '?' when neither the
 # instance-qualified nor the plain form is known to systemd — treat that as unknown
 # state; the harness must not raise or clear an alarm from a unit it cannot identify
 # (law-a-pattern-match-is-not-an-identity-check).
-_sent_timer="$(spira_unit sentinel timer)"
-if [ "$_sent_timer" = "?" ]; then
-    UNKN "sentinel timer — unit not found (SPIRA_INSTANCE=${SPIRA_INSTANCE:-prod})" \
+_sched_unit="$(spira_unit runtime service)"
+if [ "$_sched_unit" = "?" ]; then
+    UNKN "scheduler — unit not found (SPIRA_INSTANCE=${SPIRA_INSTANCE:-prod})" \
          "install.sh may not have run, or SPIRA_INSTANCE does not match what was installed."
-elif "$SC" --user is-active --quiet "$_sent_timer" 2>/dev/null; then
-    PASS "sentinel timer active — $_sent_timer"
+elif "$SC" --user is-active --quiet "$_sched_unit" 2>/dev/null; then
+    PASS "scheduler unit active — $_sched_unit"
 else
-    _sent_state="$("$SC" --user is-active "$_sent_timer" 2>/dev/null || true)"
-    FAIL "sentinel timer not active — $_sent_timer is ${_sent_state:-inactive}" \
-         "Start it: systemctl --user start $_sent_timer
-    Or re-run install.sh to enable and start all timers."
+    _sched_state="$("$SC" --user is-active "$_sched_unit" 2>/dev/null || true)"
+    FAIL "scheduler unit not active — $_sched_unit is ${_sched_state:-inactive}" \
+         "Start it: systemctl --user start $_sched_unit
+    Or re-run install.sh to enable and start the scheduler."
 fi
+
+# `world scheduler-status` reads `scheduler status` on SPIRA_RUNTIME_SOCKET: exit 0 running,
+# 2 halted, 1 not answering. The call path is the sentinel.call task; a scheduler without it
+# can never call work.
+_sched_out="$(timeout 10 world scheduler-status 2>&1)"
+_sched_rc=$?
+case "$_sched_rc" in
+    0)
+        _n_tasks="$(printf '%s\n' "$_sched_out" | grep -c '^  ')"
+        if printf '%s\n' "$_sched_out" | grep -qE '^  sentinel\.call '; then
+            PASS "scheduler status — running, $_n_tasks task(s), sentinel.call registered"
+        else
+            FAIL "scheduler status — running but sentinel.call is not registered ($_n_tasks task(s))" \
+                 "The call path is missing; nothing will be called. Check: world scheduler-status"
+        fi
+        ;;
+    2)
+        FAIL "scheduler status — HALTED (effects held)" \
+             "The scheduler holds every task's effects. Resume: world.sh start"
+        ;;
+    *)
+        UNKN "scheduler status — not answering: $(printf '%s' "$_sched_out" | head -1)" \
+             "Check: systemctl --user status ${_sched_unit:-spira-runtime-${SPIRA_INSTANCE:-prod}.service}"
+        ;;
+esac
 
 # =============================================================================
 echo ""
@@ -79,7 +105,8 @@ echo "world"
 # =============================================================================
 # $SPIRA_RUN/world.halted is the stamp file world.sh stop writes. uninstall KEEPS
 # $SPIRA_RUN, so a reinstall can carry a halt that predates it: compare the stamp's
-# mtime to the sentinel unit file's to distinguish the two cases.
+# mtime to the scheduler unit file's to distinguish the two cases. The scheduler's own halt
+# is the scheduler row above.
 STAMP="$SPIRA_RUN/world.halted"
 if [ ! -f "$STAMP" ]; then
     PASS "world not halted — no stamp at $STAMP"
@@ -87,8 +114,8 @@ else
     _halt_h="$(stat --format='%y' "$STAMP" 2>/dev/null | cut -d'.' -f1 || echo '?')"
     _halt_e="$(stat --format='%Y' "$STAMP" 2>/dev/null || echo 0)"
     _predates=""
-    if [ "${_sent_timer:-?}" != "?" ]; then
-        _unit_f="$HOME/.config/systemd/user/$_sent_timer"
+    if [ "${_sched_unit:-?}" != "?" ]; then
+        _unit_f="$HOME/.config/systemd/user/$_sched_unit"
         if [ -f "$_unit_f" ]; then
             _unit_e="$(stat --format='%Y' "$_unit_f" 2>/dev/null || echo 0)"
             [ "$_halt_e" -lt "$_unit_e" ] 2>/dev/null && _predates=1

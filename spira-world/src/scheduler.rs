@@ -150,6 +150,24 @@ pub fn mismatch(stamp_present: bool, s: &Status) -> Option<String> {
     }
 }
 
+/// Exit codes of `world scheduler-status`, for a shell caller that must not parse prose.
+pub const RC_RUNNING: i32 = 0;
+pub const RC_UNANSWERED: i32 = 1;
+pub const RC_HALTED: i32 = 2;
+
+/// `world scheduler-status`: the headline and one line per task, and the exit code that says
+/// running ([`RC_RUNNING`]), halted ([`RC_HALTED`]) or not answering ([`RC_UNANSWERED`]).
+pub fn report(c: &dyn Control) -> (i32, Vec<String>) {
+    match c.call(&["scheduler", "status"]).and_then(|d| parse_status(&d)) {
+        Ok(s) => {
+            let mut lines = vec![headline(&s)];
+            lines.extend(s.tasks.iter().map(|t| task_line(t, s.at)));
+            (if s.halted { RC_HALTED } else { RC_RUNNING }, lines)
+        }
+        Err(e) => (RC_UNANSWERED, vec![format!("spira: scheduler UNKNOWN — {e}")]),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,6 +276,21 @@ mod tests {
         let r = Status { halted: false, ..s };
         assert!(mismatch(true, &r).unwrap().contains("scheduler is RUNNING"));
         assert_eq!(mismatch(false, &r), None);
+    }
+
+    #[test]
+    fn report_says_running_halted_or_unanswered_by_exit_code() {
+        let (rc, lines) = report(&Fake::ok(DOC));
+        assert_eq!(rc, RC_HALTED);
+        assert!(lines[0].contains("HALTED"), "{lines:?}");
+        assert!(lines.iter().any(|l| l.contains("sentinel.call")), "{lines:?}");
+        let running = DOC.replace(r#""halted":true"#, r#""halted":false"#);
+        assert_eq!(report(&Fake::ok(&running)).0, RC_RUNNING);
+        let down = Fake { calls: RefCell::new(Vec::new()), reply: Err("not answering".into()) };
+        let (rc, lines) = report(&down);
+        assert_eq!(rc, RC_UNANSWERED);
+        assert!(lines[0].contains("UNKNOWN") && lines[0].contains("not answering"), "{lines:?}");
+        assert_eq!(report(&Fake::ok("garbage")).0, RC_UNANSWERED);
     }
 
     #[test]
