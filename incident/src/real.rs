@@ -338,10 +338,16 @@ pub fn question<'a>(subject: &'a str, default: &'a str, body: &str) -> (mail::cm
 impl Mailer for RealMailer {
     fn send_operator_question(&self, subject: &str, default: &str, body: &str) -> bool {
         let (args, full_body) = question(subject, default, body);
-        let Ok(env) = mail::env::Env::load() else { return false };
-        let Ok(bdq) = spira_config::release_env::tool("bdq") else { return false };
-        let bd = mail::bead::BdCli { bdq, conn_retries: env.bd_conn_retries };
-        mail::cmds::send_recorded(&bd, &env, &args, full_body).is_ok()
+        // A refusal is said on stderr, as the `mail send` this replaces said it: an escalation
+        // that silently did not happen reads as one that did.
+        let sent = mail::env::Env::load().and_then(|env| {
+            let bd = mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: env.bd_conn_retries };
+            mail::cmds::send_recorded(&bd, &env, &args, full_body).map(drop)
+        });
+        if let Err(e) = &sent {
+            eprintln!("incident: the operator question was not sent: {e}");
+        }
+        sent.is_ok()
     }
 }
 
