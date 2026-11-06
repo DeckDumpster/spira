@@ -52,6 +52,7 @@ pub static TASKS: &[Task] = &[
         keys: &[cockpit_tier_600s::KEYS],
         build: |s| refuse(cockpit_tier_600s::NAME, cockpit_tier_600s::CockpitTier600s::from_settings(s)).registration(),
     },
+    mail_wake::ROW,
 ];
 
 /// Every cockpit tier is ported; the sources are not rows.

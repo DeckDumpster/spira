@@ -9,6 +9,11 @@
 //! `SPIRA_MAIL_SETTLE_EVENT` when the newest mail is a machine `--kind event` — so a burst is one
 //! wake: arming the timer again replaces the one waiting.
 //!
+//! Its own [`BOOT`] tick, every last `SPIRA_MAIL_WAKE_BACKOFF` step, is the sweep: it sends a
+//! [`DUE`] at the last attempt to every registered mailbox, so a retry chain a restart forgot
+//! (timers live in memory) resumes at the slowest step. One chain per mailbox survives: the
+//! in-flight check, and the timer an outcome arms replacing the one waiting.
+//!
 //! # Observe
 //!
 //! On [`DUE`], the memory-only probe [`OBSERVE`] reads `<SPIRA_MAIL>/<mailbox>/new`: how many
@@ -159,6 +164,11 @@ impl MailWake {
         ("mail.wake/boot", STREAM, EventKind::new(BOOT, ""))
     }
 
+    /// The sweep's period: the last backoff step.
+    pub fn cadence_ms(&self) -> u64 {
+        self.backoff(usize::MAX)
+    }
+
     /// The wait before attempt `attempt + 1`, the last step repeating.
     pub fn backoff(&self, attempt: usize) -> u64 {
         self.backoff_ms[attempt.min(self.backoff_ms.len() - 1)]
@@ -187,11 +197,17 @@ impl MailWake {
 
 impl Handler for MailWake {
     fn interests(&self) -> &[EventKindTag] {
-        &[mail_arrived::ARRIVED, DUE, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
+        &[BOOT, mail_arrived::ARRIVED, DUE, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
     }
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
         match ev.kind.tag.as_str() {
+            BOOT if ev.stream.0 == STREAM => {
+                let last = self.backoff_ms.len() - 1;
+                let mut cmds: Vec<Command> = self.readers.keys().map(|m| Command::EmitTo { stream: StreamKey(mail_arrived::stream(m)), kind: Self::due(m, last) }).collect();
+                cmds.push(Command::Timer { at: ev.at + self.cadence_ms(), kind: EventKind::new(BOOT, "") });
+                cmds
+            }
             mail_arrived::ARRIVED => {
                 let Some(a) = Arrived::from_event_kind(&ev.kind) else { return vec![] };
                 if ev.stream.0 != mail_arrived::stream(&a.mailbox) || !self.readers.contains_key(&a.mailbox) {
@@ -271,7 +287,7 @@ pub fn wake(proc: &dyn runtime::ports::Proc, input: &str) -> Result<String, Stri
 pub const ROW: Task = Task {
     name: NAME,
     boot: MailWake::boot,
-    cadence_ms: |_| 0,
+    cadence_ms: |s| super::refuse(NAME, MailWake::from_settings(s)).cadence_ms(),
     effects: EFFECTS,
     runners: &[(OBSERVE, |_, _, s| observe(&s.input)), (WAKE, |_, _, s| wake(&runtime::ports::SysProc, &s.input))],
     keys: &[KEYS],
@@ -359,6 +375,21 @@ mod tests {
         view.push(&failed);
         let cmds = c.handle(&ctx, &view, &failed);
         assert!(matches!(&cmds[..], [Command::Timer { at: 20_000, kind }] if serde_json::from_str::<Due>(&kind.body).unwrap() == Due { mailbox: "concierge".into(), attempt: 1 }), "a failed wake retries after the first step");
+    }
+
+    #[test]
+    fn the_sweep_looks_at_every_registered_mailbox_at_the_slowest_step_and_rearms() {
+        let c = cfg();
+        let boot = event(STREAM, "b", 1_000, EventKind::new(BOOT, ""), None);
+        let mut view = Projection::default();
+        view.push(&boot);
+        let cmds = c.handle(&Ctx::new(0, 0), &view, &boot);
+        let sent: Vec<(String, Due)> = cmds.iter().filter_map(|c| match c {
+            Command::EmitTo { stream, kind } if kind.tag == DUE => Some((stream.0.clone(), serde_json::from_str(&kind.body).unwrap())),
+            _ => None,
+        }).collect();
+        assert_eq!(sent, vec![("mail/concierge".to_string(), Due { mailbox: "concierge".into(), attempt: 3 }), ("mail/ops".to_string(), Due { mailbox: "ops".into(), attempt: 3 })]);
+        assert!(cmds.iter().any(|c| matches!(c, Command::Timer { at: 901_000, kind } if kind.tag == BOOT)), "the sweep re-arms one last step later");
     }
 
     #[test]
