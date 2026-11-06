@@ -18,7 +18,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-/// One message for `mail send`.
+/// One message for the mail library.
 #[derive(Debug, Clone, PartialEq)]
 struct Message {
     mailbox: &'static str,
@@ -37,21 +37,21 @@ trait Wake {
     fn concierge_running(&self) -> bool;
 }
 
-/// Every program the alert path runs, by name on the launcher's PATH.
+/// The one program the alert path still runs, by name on the launcher's PATH; mail goes
+/// through the mail library in-process.
 struct Seams {
-    mail: String,
     tmux: String,
 }
 
 impl Seams {
     fn production() -> Seams {
-        Seams { mail: "mail".into(), tmux: "tmux".into() }
+        Seams { tmux: "tmux".into() }
     }
 }
 
 impl Wake for Seams {
     fn mail(&self, m: &Message) -> Result<(), String> {
-        io::mail_send(&self.mail, m.mailbox, &m.from, &m.subject, m.kind, m.default.as_deref(), m.class.as_deref(), &m.body)
+        io::mail_send(&io::Mail { mailbox: m.mailbox, from: &m.from, subject: &m.subject, kind: m.kind, default: m.default.as_deref(), class: m.class.as_deref(), bead: None, body: &m.body })
     }
 
     fn concierge_running(&self) -> bool {

@@ -50,22 +50,40 @@ pub trait Systemctl: Send + Sync {
     fn nrestarts(&self, units: &[String]) -> BTreeMap<String, i64>;
 }
 
+/// Unit state through the `Units` port; what the port cannot answer yet still asks systemctl.
 pub struct RealSystemctl {
     pub bin: String,
     pub timeout: Duration,
+    /// `None` when the port could not be reached: every state read is then "cannot tell".
+    pub units: Option<std::sync::Arc<dyn runtime::units::Units>>,
+}
+
+/// The word `systemctl --user is-active <unit>` prints for `unit`'s facts, or `None` when the
+/// port cannot tell. A unit the backend does not know is `inactive`, as systemctl says.
+pub fn active_word(units: &dyn runtime::units::Units, unit: &str) -> Option<&'static str> {
+    use runtime::units::{UnitHandle, UnitState};
+    Some(match units.facts(&UnitHandle::named(unit)).ok()?.state {
+        UnitState::Activating => "activating",
+        UnitState::Active => "active",
+        UnitState::Deactivating => "deactivating",
+        UnitState::Inactive | UnitState::Absent => "inactive",
+        UnitState::Failed => "failed",
+    })
 }
 
 impl Systemctl for RealSystemctl {
     fn is_enabled(&self, unit: &str) -> bool {
+        // FORK-EDGE: needs Units unit-file state (is-enabled)
         util::run(Spec { prog: &self.bin, args: vec!["--user".into(), "is-enabled".into(), unit.into()], env: None, cwd: None, stdin: None, timeout: Some(self.timeout) }).success()
     }
     fn is_active(&self, unit: &str) -> bool {
-        util::run(Spec { prog: &self.bin, args: vec!["--user".into(), "is-active".into(), unit.into()], env: None, cwd: None, stdin: None, timeout: Some(self.timeout) }).success()
+        self.active_text(unit) == "active"
     }
     fn active_text(&self, unit: &str) -> String {
-        util::run(Spec { prog: &self.bin, args: vec!["--user".into(), "is-active".into(), unit.into()], env: None, cwd: None, stdin: None, timeout: Some(self.timeout) }).text()
+        self.units.as_deref().and_then(|u| active_word(u, unit)).unwrap_or_default().to_string()
     }
     fn spira_services(&self) -> Vec<String> {
+        // FORK-EDGE: needs a Units listing of loaded units
         let o = util::run(Spec { prog: &self.bin, args: vec!["--user".into(), "list-units".into(), "--type=service".into(), "--all".into(), "--plain".into(), "--no-legend".into()], env: None, cwd: None, stdin: None, timeout: Some(self.timeout) });
         if !o.success() {
             return Vec::new();
@@ -84,6 +102,7 @@ impl Systemctl for RealSystemctl {
         }
         let mut args = vec!["--user".to_string(), "show".to_string(), "--property=Id,NRestarts".to_string(), "--".to_string()];
         args.extend(units.iter().cloned());
+        // FORK-EDGE: needs NRestarts in UnitFacts
         let o = util::run(Spec { prog: &self.bin, args, env: None, cwd: None, stdin: None, timeout: Some(self.timeout) });
         if !o.success() {
             return out;
@@ -180,6 +199,7 @@ pub struct WorldState {
 fn parse_stamp_first_line(path: &Path) -> i64 {
     let Ok(text) = std::fs::read_to_string(path) else { return 0 };
     let Some(first) = text.lines().next() else { return 0 };
+    // FORK-EDGE: date — parsing an arbitrary human date string needs a date library
     let o = util::run(Spec { prog: "date", args: vec!["-d".into(), first.to_string(), "+%s".into()], env: None, cwd: None, stdin: None, timeout: Some(Duration::from_secs(5)) });
     if o.success() {
         o.text().parse().unwrap_or(0)
@@ -206,6 +226,24 @@ pub fn world_state(run_dir: &Path) -> WorldState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn active_text_is_the_ports_state_word() {
+        use runtime::units::{ScriptedUnits, UnitFacts, UnitState, Units};
+        let units = ScriptedUnits::new(std::sync::Arc::new(runtime::ports::VirtualClock::new(0)));
+        let facts = |state| UnitFacts { state, main_pid: None, exit: None, since_ms: None };
+        units.install("spira-sentinel-prod.timer", facts(UnitState::Active));
+        units.install("spira-groom.service", facts(UnitState::Failed));
+        let units: std::sync::Arc<dyn Units> = std::sync::Arc::new(units);
+        let sc = RealSystemctl { bin: "/nonexistent/systemctl".into(), timeout: Duration::from_secs(1), units: Some(units) };
+        assert_eq!(sc.active_text("spira-sentinel-prod.timer"), "active");
+        assert!(sc.is_active("spira-sentinel-prod.timer"));
+        assert_eq!(sc.active_text("spira-groom.service"), "failed");
+        assert!(!sc.is_active("spira-groom.service"));
+        assert_eq!(sc.active_text("spira-none.timer"), "inactive");
+        let blind = RealSystemctl { bin: "/nonexistent/systemctl".into(), timeout: Duration::from_secs(1), units: None };
+        assert_eq!(blind.active_text("spira-sentinel-prod.timer"), "");
+    }
 
     #[test]
     fn log_tail_missing_file_is_unreadable_not_empty_text() {

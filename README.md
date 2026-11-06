@@ -4,18 +4,19 @@ Spira is an agent harness for software work. You file work items (**beads**) int
 Spira calls AI agent sessions (**dwarves**) to do them, each in its own git worktree and
 branch; and it lands the results onto a repository's landing ref through gated **rounds** that
 run the full test corpus before anything merges. Every step between "filed" and "released" is
-driven by small timer-activated programs reading and writing explicit state machines, so the
+driven by small programs, run on a cadence by one scheduler process, reading and writing explicit state machines, so the
 loop keeps going with nobody watching. Humans decide only escalations: the few questions the
 loop cannot answer for itself (permissions, policy, destructive actions) are routed to the
 operator, and everything else is retried, reworked, held or dropped by rule.
 
-It is a Cargo workspace of single-purpose binaries plus a shell layer in `spira/`, run as
-systemd units (`systemd/*.service|timer`) on one Linux box and backed by a Dolt SQL server.
+It is a Cargo workspace of single-purpose binaries plus a shell layer in `spira/`, run by
+the scheduler (`spira-runtime serve`) and a few systemd units (`systemd/*.service|timer`) on
+one Linux box and backed by a Dolt SQL server.
 
 ## Why it is shaped this way
 
 - **State machines, not scripts.** A bead, a round, an ask and a release each have an explicit
-  lifecycle. A timer-driven program moves one step and exits, so a crash costs one step, not the
+  lifecycle. A scheduled pass moves one step and exits, so a crash costs one step, not the
   loop.
 - **Nothing lands unproven.** Work reaches the landing ref only through a round that has run
   the repository's tests in a clean environment against the exact commit it merges.

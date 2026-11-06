@@ -26,6 +26,9 @@
 # fb_store_up — put the batch machine on the control store for the rest of the suite: a fresh
 #   SQLite store, SPIRA_LC_STORE_PATH and SPIRA_LC_LIFECYCLE_ON_STORE=1 declared. Members are
 #   then made CERTIFIED by the bead machine's own walk on the store.
+#
+# fb_certify <id> <tip> — a bead CERTIFIED at <tip> outside any batch, where the batch machine
+#   keeps its rows (the control store once fb_store_up ran, else the dolt fixture).
 
 # Made once, when sourced: a seeding call usually runs in a command substitution, whose own
 # assignments never reach the suite.
@@ -182,6 +185,8 @@ end_forge_batch() {
     out="$(SPIRA_TOML="$(tl_layer SPIRA_FORGE="$forge")" _fb_run queue abandon "$repo" --reason "$reason" 2>&1)" \
         || { printf 'end_forge_batch: queue abandon %s: %s\n' "$repo" "$out" >&2; return 1; }
 }
+
+fb_certify() { _fb_certify "$@"; }
 
 fb_store_up() {
     local dir

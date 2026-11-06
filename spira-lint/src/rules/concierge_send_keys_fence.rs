@@ -15,14 +15,14 @@ const OWN_SOURCE: &str = "spira-lint/src/rules/concierge_send_keys_fence.rs";
 
 /// May name `send-keys`: the wake verb itself and the cockpit tools that drive their own panes.
 const KEYS_ALLOWED: &[&str] = &["concierge.sh", "cockpit/", "spira-lint/src/rules/tmux_scope_fence.rs"];
-/// May call the wake verb: the inbox-keeper, the push flusher, the mail deliverer, and the
-/// config that names the verb.
+/// May call the wake verb: the inbox-keeper, the push flusher, the runtime's waker, the mail
+/// deliverer's `mail.wake` task, and the config that names the verb.
 const WAKE_ALLOWED: &[&str] = &[
     "concierge.sh",
     "spira/inbox-keeper.sh",
     "spira-runtime/src/wake.rs",
+    "spira-runtime/src/tasks/g/mail_wake.rs",
     "spira/inbox-append.sh",
-    "spira/spira-mail-deliver.sh",
     "spira/conf.sh",
     "spira/conf.d.defaults.generated.sh",
     "spira/conf.d/",
@@ -132,11 +132,11 @@ mod tests {
     fn comments_and_tests_are_silent() {
         assert!(scan("spira/x.sh", b"# tmux send-keys is forbidden\n").is_empty());
         assert!(!in_scope("spira/test-x.sh"));
-        assert!(in_scope("concierge-guard/src/main.rs"));
+        assert!(in_scope("heimdall/src/main.rs"));
     }
 
     #[test]
-    fn the_guard_is_in_scope_so_a_send_keys_there_is_caught() {
-        assert_eq!(scan("concierge-guard/src/main.rs", b"Command::new(\"tmux\").arg(\"send-keys\");\n").len(), 1);
+    fn a_component_outside_the_allowed_set_is_in_scope_so_a_send_keys_there_is_caught() {
+        assert_eq!(scan("heimdall/src/main.rs", b"Command::new(\"tmux\").arg(\"send-keys\");\n").len(), 1);
     }
 }

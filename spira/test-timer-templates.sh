@@ -10,8 +10,8 @@
 # WHAT THIS GUARDS. Defect sp-7gklu: a timer template existed in systemd/ but was absent from
 # units.sh's UNITS array, so install.sh never wrote it to disk. Defect sp-mplcb: WatchdogSec
 # was wired onto a bash ExecStart target, which cannot deliver the heartbeat systemd needs.
-# Defect sp-vhvyi: spira-verdict.service's TimeoutStartSec was too short for a full replay.
-# Defect sp-tv7ue: nothing proved the verdict timer's service actually called queue.sh step.
+# (The verdict service's checks, sp-vhvyi and sp-tv7ue, left with the unit: `queue step --all`
+# is the scheduler's queue.step task now, and its T1-T6 live in spira-runtime/tests.)
 # Split-checkout deploys: an ExecStart pointing at @SPIRA_REPO@ resolves into the git checkout
 # instead of the release tree.
 #
@@ -48,11 +48,12 @@ ok "UNITS list non-empty (${#units_block} bytes)"
 ok "ENABLE list non-empty (${#enable_block} bytes)"
 is_optional() { case "$optional_block" in *"$1"*) return 0 ;; *) return 1 ;; esac; }
 
-# POSITIVE CONTROL: spira-sentinel.timer is the canary. If the parsers are broken or the
+# POSITIVE CONTROL: spira-dolt-boot-check.timer is the canary (the loop's own timers are
+# scheduler tasks now; this is one of the few timers left). If the parsers are broken or the
 # blocks misidentified, it fails loudly here rather than making every absence verdict below
 # a silent all-clear.
-want "positive control: spira-sentinel.timer is in UNITS" "spira-sentinel.timer" "$units_block"
-want "positive control: spira-sentinel.timer is in _ENABLE_TMPL" "spira-sentinel.timer" "$enable_block"
+want "positive control: spira-dolt-boot-check.timer is in UNITS" "spira-dolt-boot-check.timer" "$units_block"
+want "positive control: spira-dolt-boot-check.timer is in _ENABLE_TMPL" "spira-dolt-boot-check.timer" "$enable_block"
 
 # ============================================================================
 echo
@@ -261,60 +262,6 @@ fi
 
 # ============================================================================
 echo
-echo "The verdict service: driver wiring, TimeoutStartSec>=3600, no CPUQuota:"
-# ============================================================================
-# defect sp-tv7ue: nothing proved the service called queue step (which settles the open
-# batch then opens the next) rather than verdict.sh alone (which would skip batch.sh and
-# leave no new batch after a landing). defect sp-vhvyi: TimeoutStartSec was too short for a
-# full red-batch replay, and CPUQuota would throttle one if it were ever added.
-_vd_svc="$UNIT_DIR/spira-verdict.service"
-
-if [ -r "$_vd_svc" ]; then
-    _vd_execstart="$(grep '^ExecStart=' "$_vd_svc" 2>/dev/null | head -1)"
-    if [ -n "$_vd_execstart" ]; then
-        want "spira-verdict.service ExecStart runs the queue binary's step --all" \
-             "ExecStart=@SPIRA_PROD_ROOT@/bin/queue step --all" "$_vd_execstart"
-        want "spira-verdict.service hands the binary its harness (SPIRA_HOME)" \
-             "Environment=SPIRA_HOME=" "$(grep '^Environment=' "$_vd_svc" 2>/dev/null)"
-    else
-        bad "spira-verdict.service has an ExecStart line" "none found"
-    fi
-
-    # POSITIVE CONTROL for the Timeout/CPUQuota checks below: a readable Type= line proves
-    # the file is non-empty before any absence verdict about CPUQuota is trusted.
-    if grep -q '^Type=' "$_vd_svc" 2>/dev/null; then
-        ok "positive control: spira-verdict.service Type= is present (file is readable)"
-    else
-        bad "positive control: spira-verdict.service Type= is present" "not found — file may be empty or unparseable"
-    fi
-
-    _vd_timeout="$(grep '^TimeoutStartSec=' "$_vd_svc" 2>/dev/null | head -1)"
-    if [ -n "$_vd_timeout" ]; then
-        _vd_timeout_val="${_vd_timeout#TimeoutStartSec=}"
-        if [ "${_vd_timeout_val}" -ge 3600 ] 2>/dev/null; then
-            ok "spira-verdict.service TimeoutStartSec >= 3600s (covers red-batch replay per member)"
-        else
-            bad "spira-verdict.service TimeoutStartSec >= 3600s" "${_vd_timeout_val}s < 3600s — systemd kills every replay at two minutes (sp-vhvyi)"
-        fi
-    else
-        bad "spira-verdict.service has TimeoutStartSec" "directive absent"
-    fi
-
-    if grep -q '^CPUQuota=' "$_vd_svc" 2>/dev/null; then
-        bad "spira-verdict.service has no CPUQuota (replay runs at full CPU)" \
-            "found CPUQuota — throttles containers during red-batch replay (sp-vhvyi)"
-    else
-        ok "spira-verdict.service has no CPUQuota (replay runs at full CPU)"
-    fi
-else
-    bad "spira-verdict.service is readable" "not found at $_vd_svc"
-fi
-
-# The step-every-queued-repository behaviour spira-verdict.sh carried is `queue step --all`
-# now; its per-repository order, lock and failure rules are `cargo test -p queue step_all_`.
-
-# ============================================================================
-echo
 echo "render.py renders shared units against the release root, not the git checkout:"
 # ============================================================================
 # In a split-checkout deployment SPIRA_REPO is the git checkout and SPIRA_PROD is the
@@ -360,7 +307,7 @@ echo
 echo "ExecStart release binaries, @SPIRA_PROD_ROOT@/bin/<name> (OPTIONAL derived from units.sh, not a hand-copied list):"
 # ============================================================================
 # The old test-tarball-bins.sh hand-copied its list of OPTIONAL unit names; it silently fell
-# out of sync with units.sh (missing spira-landing-pass.service/.timer). Reusing is_optional
+# out of sync with units.sh (missing a landing-pass unit pair, since retired). Reusing is_optional
 # from the units.sh parse above means this scan and the UNITS/_ENABLE_TMPL checks above can
 # never disagree about which units are conditional.
 

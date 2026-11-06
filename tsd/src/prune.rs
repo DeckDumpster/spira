@@ -134,6 +134,41 @@ pub fn prune_file(path: &Path, cutoff: u64) -> Result<Pruned, String> {
     result
 }
 
+/// Every valid family under `<root>/tsd/`, sorted, with its file's size in bytes.
+pub fn families(root: &Path) -> Vec<(String, u64)> {
+    let dir = root.join("tsd");
+    let mut out: Vec<(String, u64)> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            let fam = name.strip_suffix(".jsonl")?.to_string();
+            crate::valid_family(&fam).then(|| (fam, e.metadata().map_or(0, |m| m.len())))
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// The `ts` (epoch seconds) of the first row of `path` whose `ts` reads: rows are appended in
+/// time order, so this is the oldest. `None` for a missing, empty or unreadable file.
+pub fn oldest_ts(path: &Path) -> Option<u64> {
+    let f = File::open(path).ok()?;
+    let mut rd = BufReader::new(f);
+    let mut line = Vec::new();
+    for _ in 0..64 {
+        line.clear();
+        if rd.read_until(b'\n', &mut line).ok()? == 0 {
+            return None;
+        }
+        if let Some(t) = row_epoch(&line) {
+            return Some(t);
+        }
+    }
+    None
+}
+
 /// Prune every `<family>.jsonl` under `<root>/tsd/` to its bound as of `now` (epoch seconds).
 /// Returns each family's days kept and what the prune did; a family that fails is reported
 /// and the others still run.
@@ -143,19 +178,9 @@ pub fn prune_root(
     overrides: &BTreeMap<String, u32>,
     now: u64,
 ) -> Vec<(String, u32, Result<Pruned, String>)> {
-    let dir = root.join("tsd");
-    let mut families: Vec<String> = std::fs::read_dir(&dir)
+    families(root)
         .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|e| e.file_name().into_string().ok())
-        .filter_map(|n| n.strip_suffix(".jsonl").map(str::to_string))
-        .filter(|f| crate::valid_family(f))
-        .collect();
-    families.sort();
-    families
-        .into_iter()
-        .map(|f| {
+        .map(|(f, _)| {
             let days = keep_days(&f, default_days, overrides);
             let cutoff = now.saturating_sub(u64::from(days) * 86_400);
             let r = prune_file(&crate::family_path(root, &f), cutoff);

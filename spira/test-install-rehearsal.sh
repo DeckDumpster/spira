@@ -3,7 +3,7 @@
 #
 # REAL SYSTEMD vs STUBS:
 #   Real systemd  — unit files installed to ~/.config/systemd/user/ (real systemctl --user),
-#                   sentinel timer started (real user session manager)
+#                   units installed under a real user session manager
 #   Stub          — bd (container has no bd; stub created as spirauser inside the container
 #                   at /tmp/spira-stubs/bd satisfies conf.sh schema check, doctor
 #                   fatal-binary check, and ready.sh database query)
@@ -88,18 +88,10 @@ unit_count="$("${CEXEC[@]}" "$CNAME" bash -c \
     && ok "unit files installed (${unit_count} spira-*-prod.* found)" \
     || bad "unit files installed" "no spira-*-prod.* in ~/.config/systemd/user/"
 
-# Remove world.halted and start the sentinel timer so ready.sh sees it as active.
+# Remove world.halted. (The sentinel timer this once started is a scheduler task now.)
 "${CEXEC[@]}" "$CNAME" bash -c \
     "rm -f '${REH_RUN_CTR}/world.halted'" >&2
 iszero "world.halted removed" "$?"
-
-"${CEXEC[@]}" "$CNAME" bash -c \
-    'systemctl --user start spira-sentinel-prod.timer' >&2
-iszero "sentinel timer started" "$?"
-
-active_out="$("${CEXEC[@]}" "$CNAME" \
-    bash -c 'systemctl --user is-active spira-sentinel-prod.timer 2>&1')"
-want "sentinel timer active" "active" "$active_out"
 
 # 3. World not halted — stamp file is gone.
 "${CEXEC[@]}" "$CNAME" bash -c \
@@ -127,7 +119,6 @@ ready_out="$("${INSTALL_EXEC[@]}" \
     -e "SPIRA_LOOM_PROBE=${STUBS_CTR}/loom-probe" \
     -e "SPIRA_COCKPIT_FIRST_WRITE_WAIT_S=1" \
     "$CNAME" bash /workspace/spira/ready.sh 2>&1)"
-want "ready.sh: sentinel timer active" "pass  sentinel timer active" "$ready_out"
 want "ready.sh: world not halted"     "pass  world not halted"       "$ready_out"
 want "ready.sh: database readable"    "pass  database readable"      "$ready_out"
 want "ready.sh: loom probe passes"    "loom answers 200"              "$ready_out"

@@ -40,8 +40,9 @@ pub struct Inputs<'a> {
     pub token: &'a str,
 }
 
-/// A step the selector chose, with the intent that takes it.
-#[derive(Clone, Debug, PartialEq)]
+/// A step the selector chose, with the intent that takes it. Serialisable so a scheduler can
+/// carry it from the judge leg to the step leg of a pass (`goodput_pass::legs`).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Planned {
     pub section: String,
     pub action: String,

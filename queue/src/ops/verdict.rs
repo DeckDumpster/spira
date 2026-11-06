@@ -227,6 +227,17 @@ fn publish_status(w: &World, c: &Ctx, path: &Path, kv: &Kv) -> String {
         .unwrap_or_default()
 }
 
+/// The fields [`settle_publish`] refuses a publish record without.
+pub const PUBLISH_RECORD_FIELDS: &[&str] = &["pr", "branch", "remote", "forge_branch", "head"];
+
+/// The first of [`PUBLISH_RECORD_FIELDS`] absent or empty in `kv`; None when the record is whole.
+pub fn publish_record_missing(kv: &Kv) -> Option<&'static str> {
+    PUBLISH_RECORD_FIELDS
+        .iter()
+        .copied()
+        .find(|k| kv.get(k).unwrap_or("").is_empty())
+}
+
 /// The locked half: 0 settled or waiting, 1 a fault left for a hand look, 3 red (the
 /// caller holds the queue lock; `to-forge` polls this while it holds it for the move).
 pub fn settle_publish(w: &World, c: &Ctx, path: &Path) -> i32 {
@@ -247,10 +258,7 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
         field("forge_branch"),
         field("head"),
     );
-    if [&pr, &field("branch"), &remote, &forge_branch, &head]
-        .iter()
-        .any(|v| v.is_empty())
-    {
+    if publish_record_missing(&kv).is_some() {
         w.err(format!(
             "verdict {name}: publish record is missing a field — leaving it for a hand look: {}",
             pfile.display()

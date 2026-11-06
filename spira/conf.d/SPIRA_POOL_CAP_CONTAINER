@@ -1,0 +1,8 @@
+TYPE=u64
+MAX=2
+GROUP=runtime
+DOC=Container and VM runs spira-runtime holds at once; at most 2, the host run ceiling.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Container and VM runs spira-runtime holds at once; at most 2, the host run ceiling.
+    : "${SPIRA_POOL_CAP_CONTAINER:=2}"
+SPIRA_CONF_DEFAULT_EOF

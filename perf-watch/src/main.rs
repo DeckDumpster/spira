@@ -34,6 +34,8 @@ struct Spawn {
 
 impl Spawn {
     fn new() -> Spawn {
+        // FORK-EDGE: needs a scope run on the Units port that hands back the child's stdout and
+        // stderr (the probe is timed outside this unit's CPU quota); this checks one exists.
         let scoped = Command::new("timeout").args(["5", "systemd-run", "--version"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
         Spawn { scoped, measured: None, phases: None }
     }
@@ -52,6 +54,7 @@ impl Runner for Spawn {
         self.measured = None;
         self.phases = None;
         let mut cmd = if self.scoped {
+            // FORK-EDGE: needs a scope run on the Units port with captured output (as above).
             let mut c = Command::new("systemd-run");
             c.args(["--user", "--scope", "--quiet", "--collect", "--", "bash", "-c", SCOPED, "perf-probe"]).args(argv);
             c
@@ -179,7 +182,7 @@ impl RealSim {
         for k in PRODUCTION_LOCATORS {
             c.env_remove(k);
         }
-        if let Ok(r) = std::env::var("SPIRA_RELEASE") {
+        if let Ok(r) = spira_config::release_env::release_root_for_process() {
             c.env("SPIRA_SIM_RELEASE", r);
         }
         c
@@ -188,16 +191,11 @@ impl RealSim {
 
 impl Sim for RealSim {
     fn round_open(&mut self) -> Result<bool, String> {
-        let out = Command::new("timeout").args(["5", spira_config::release_env::tool("queue")?.as_str(), "round", "status"]).stdin(Stdio::null()).stderr(Stdio::null()).output().map_err(|e| format!("queue: {e}"))?;
-        if !out.status.success() {
-            return Err(format!("queue round status exited {}", out.status));
-        }
-        let text = String::from_utf8_lossy(&out.stdout);
-        match text.lines().find_map(|l| l.strip_prefix("round=")) {
-            Some("open") => Ok(true),
-            Some("none") => Ok(false),
-            other => Err(format!("queue round status said {other:?}")),
-        }
+        let views = store_view::Projection::configured(spira_config::lc_call::LcClient::configured()?)?;
+        views.load().map_err(|e| format!("the store views: {e}"))?;
+        let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let home = spira_config::resolve::locate_home_for_process()?;
+        perf_watch::happy::round_open_in(&views, &spira_config::repos::home_repo(&env, &home))
     }
 
     fn backoff(&mut self) {

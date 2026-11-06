@@ -10,4 +10,5 @@ pub mod cmds;
 pub mod deadlocked;
 pub mod litter;
 pub mod seam;
+pub mod trigger;
 pub mod unpoison;

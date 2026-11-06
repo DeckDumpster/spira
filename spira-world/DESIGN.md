@@ -44,21 +44,27 @@ crate.
 
 ## Contract
 
-- `world stop [--why TEXT] [--hard]`: halts timers (priority order, then everything else
-  systemd reports), work services (excluding cockpit/loom/watch@), and every live dwarf
+- `world stop [--why TEXT] [--hard]`: writes the halt stamp, then `scheduler halt <why>` on
+  `SPIRA_RUNTIME_SOCKET` (every task's effects held, observation continues: the loop is the
+  scheduler's tasks, so there is no timer to stop), then stops work services (excluding cockpit/loom/watch@), and every live dwarf
   (through `slay`, never a bare kill). Exits non-zero, without printing STOPPED, if any
-  work service could not be stopped.
-- `world start`: reads every suspension once (`spira_ctrl::load_suspended`, in-process — no
-  subprocess at all, where the bash version still spawned `ctrl.sh check`/`reason` per
-  timer), starts what is due, revives non-oneshot watchers `--hard` stopped, and reports
-  DEGRADED if an essential timer is disabled with no recorded suspension.
+  work service could not be stopped or the scheduler did not take the halt. The keep list
+  (`scheduler::KEEP`: spira-runtime, lc-serve's socket, dolt-beads, the watchdog) is never
+  stopped.
+- `world start`: lifts the stamps, then `scheduler resume`; revives non-oneshot watchers
+  `--hard` stopped and work daemons; reports DEGRADED when the scheduler does not take the
+  resume.
 - `world drain [--timeout N | --for N | --deadline N]` / `world resume`: the stamp-file
-  contract is unchanged — `drain` gates new calls without stopping anything already
-  running; `--deadline` slays what remains at the deadline; `resume` lifts the gate.
-- `world status`: every timer's state, the two stamps, live workers and live dwarves from
+  contract is unchanged — `drain` gates new calls without stopping the dwarves already
+  running, and halts the scheduler (`scheduler halt "world drain: <until>"`);
+  `--deadline` slays what remains at the deadline; `resume` lifts the gate and resumes the
+  scheduler, unless the world is stopped, which only `start` lifts.
+- `world status`: the stamps, `scheduler status` (halt state, held effects, each task's last
+  fired, next due, lag and last outcome; DEGRADED when stamp and scheduler disagree), the keep
+  list's units, live workers and live dwarves from
   `/proc`, in the same shape `world.sh status` printed.
-- `world timer-priority`: `TIMER_PRIORITY`, one name per line — the seam a caller that used
-  to source `world.sh` (`WORLD_LIB=1`) now reads instead (see Decisions).
+- `world keep-units`: the keep list, one unit per line. (`world timer-priority` is retired with
+  the timers it listed.)
 - `dwarves [status]` / `dwarves set <n>` / `dwarves unset` / `dwarves pool <n>`: unchanged CLI and
   output shape; config reads and writes go through `spira-config` directly, never conf.sh.
 - `slay --bead <id> [--why TEXT] [--keep-work] [--close TEXT | --reopen]`: unchanged CLI,
@@ -78,8 +84,7 @@ No new persisted schema — this crate reads and writes the same stamp files (`w
   them would be the exact drift lib.sh's own comment on `dwarves_live_total` warns against.
   Both are native Rust now (`proc::live_dwarves`, `fleet::live_total_systemd`/`dwarf_alive`),
   each with its own unit tests, so there is no shared implementation to drift apart from a
-  hand-written `.rune` parser. `_start_action`, `_is_essential_timer`, `work_services`'s
-  exclusion and `_status_timer_row` — world.sh's own `WORLD_LIB=1` pure functions — are
+  hand-written `.rune` parser. `work_services`'s exclusion — world.sh's own `WORLD_LIB=1` pure functions — are
   ordinary Rust functions in `sysctl.rs`/`proc.rs` now, tested directly with no process
   spawn, exactly the property `WORLD_LIB=1` existed to give bash.
 
@@ -126,7 +131,7 @@ No new persisted schema — this crate reads and writes the same stamp files (`w
   source both `world.sh` (for `TIMER_PRIORITY`) and `ctrl.sh` (for `ctrl_load_suspended`);
   `systemd/install.sh`'s unit-apply loop sourced `ctrl.sh` the same way. Sourcing a compiled
   binary is not a thing, so both now read one seam call each instead: `world timer-priority`
-  and `ctrl suspended` (a new subcommand — `ctrl.sh list`'s own `load_suspended` data,
+  (retired since: the loop's timers are scheduler tasks) and `ctrl suspended` (a new subcommand — `ctrl.sh list`'s own `load_suspended` data,
   machine-readable). `ctrl_is_suspended` itself — a three-line pure array lookup — is
   unchanged, just defined locally in each caller instead of sourced. No new logic; the same
   functions, read differently.

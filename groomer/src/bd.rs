@@ -40,6 +40,7 @@ pub struct RealBd {
 
 impl RealBd {
     fn cmd(&self) -> Command {
+        // FORK-EDGE: label list, set-state and dep add — the content door serves none of them
         Command::new(&self.bdq)
     }
 
@@ -69,6 +70,22 @@ impl RealBd {
             .map_err(|e| format!("{} {}: {e}", self.bdq, args.join(" ")))
     }
 
+    /// One call through the store's content door, which applies every protection bdq applies
+    /// and writes a created bead's lifecycle row in the same request: its stdout when it applied.
+    fn content(&self, argv: &[&str], body: Option<&str>) -> Result<String, String> {
+        let lc = spira_config::lc_call::LcClient::configured()?;
+        let argv: Vec<&str> = std::iter::once("content").chain(argv.iter().copied()).collect();
+        let r = match body {
+            Some(b) => lc.call_stdin(&argv, b),
+            None => lc.call(&argv),
+        }
+        .map_err(|e| format!("{}: {e}", argv.join(" ")))?;
+        if r.code != 0 {
+            return Err(format!("{} exited {}: {}", argv[1], r.code, r.why()));
+        }
+        Ok(r.out)
+    }
+
     fn ok(status: std::process::ExitStatus, what: &str) -> Result<(), String> {
         if status.success() {
             Ok(())
@@ -78,13 +95,36 @@ impl RealBd {
     }
 }
 
+/// `create [<title>] --parent <parent> --silent <flags>`: a split piece's create, its positional
+/// title first, where the content door reads a title.
+pub fn create_child_argv<'a>(parent: &'a str, extra: &'a [String]) -> Vec<&'a str> {
+    const VALUES: &[&str] = &["--title", "-d", "--description", "-p", "--priority", "-t", "--type", "-l", "--label", "--labels"];
+    let (mut title, mut flags) = (None, Vec::new());
+    let mut it = extra.iter().map(String::as_str);
+    while let Some(a) = it.next() {
+        if VALUES.contains(&a) {
+            flags.push(a);
+            flags.extend(it.next());
+        } else if !a.starts_with('-') && title.is_none() {
+            title = Some(a);
+        } else {
+            flags.push(a);
+        }
+    }
+    let mut argv = vec!["create"];
+    argv.extend(title);
+    argv.extend(["--parent", parent, "--silent"]);
+    argv.extend(flags);
+    argv
+}
+
 impl Bd for RealBd {
     fn label_add(&self, id: &str, label: &str) -> Result<(), String> {
-        Self::ok(self.run_inherit(&["label", "add", id, label])?, "label add")
+        self.content(&["label", "add", id, label], None).map(drop)
     }
 
     fn label_remove(&self, id: &str, label: &str) -> Result<(), String> {
-        Self::ok(self.run_inherit(&["label", "remove", id, label])?, "label remove")
+        self.content(&["label", "remove", id, label], None).map(drop)
     }
 
     fn label_list(&self, id: &str) -> Result<String, String> {
@@ -98,17 +138,12 @@ impl Bd for RealBd {
     }
 
     fn note(&self, id: &str, text: &str) -> Result<(), String> {
-        Self::ok(self.run_inherit(&["note", id, text])?, "note")
+        self.content(&["note", id, "--stdin"], Some(text)).map(drop)
     }
 
     fn create_child(&self, parent: &str, extra: &[String]) -> Result<String, String> {
-        let mut args: Vec<&str> = vec!["create", "--parent", parent, "--silent"];
-        args.extend(extra.iter().map(|s| s.as_str()));
-        let o = self.run(&args)?;
-        if !o.status.success() {
-            return Err(format!("bd create failed: {}", String::from_utf8_lossy(&o.stderr)));
-        }
-        let id = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        let out = self.content(&create_child_argv(parent, extra), None).map_err(|e| format!("bd create failed: {e}"))?;
+        let id = out.trim().to_string();
         if id.is_empty() {
             return Err("bd create returned no id".into());
         }
@@ -116,11 +151,8 @@ impl Bd for RealBd {
     }
 
     fn show_json(&self, id: &str) -> Result<serde_json::Value, String> {
-        let o = self.run(&["show", id, "--json"])?;
-        if !o.status.success() {
-            return Err(format!("show {id} failed: {}", String::from_utf8_lossy(&o.stderr)));
-        }
-        serde_json::from_slice(&o.stdout).map_err(|e| format!("show {id}: {e}"))
+        let out = self.content(&["show", id, "--json"], None).map_err(|e| format!("show {id} failed: {e}"))?;
+        serde_json::from_str(&out).map_err(|e| format!("show {id}: {e}"))
     }
 
     fn set_state(&self, id: &str, kv: &str) -> Result<(), String> {
@@ -140,6 +172,17 @@ impl Bd for RealBd {
 
     fn dep_add(&self, bug_id: &str, fix_id: &str) -> Result<(), String> {
         Self::ok(self.run_inherit(&["dep", "add", bug_id, fix_id])?, "dep add")
+    }
+}
+
+#[cfg(test)]
+mod argv_tests {
+    #[test]
+    fn a_split_pieces_title_comes_first_whatever_its_place_among_the_flags() {
+        let extra: Vec<String> = ["-p", "2", "Piece two", "-l", "a,b", "--description", "-- not a flag"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(super::create_child_argv("sp-o", &extra), ["create", "Piece two", "--parent", "sp-o", "--silent", "-p", "2", "-l", "a,b", "--description", "-- not a flag"]);
+        let flags: Vec<String> = ["--title", "T"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(super::create_child_argv("sp-o", &flags), ["create", "--parent", "sp-o", "--silent", "--title", "T"]);
     }
 }
 

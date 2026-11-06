@@ -1,6 +1,5 @@
 # release-spawn-env: files that still spawn bash or a *.sh script without child_path_env.
 # Shrink-only: a line leaves when its file routes the spawn through spira_config::release_env.
-bead/src/bin/bdq.rs
 gate-run/src/real.rs
 spira-lint/src/rules/conf_key_registry.rs
 watchtower/src/sweep/collect.rs

@@ -4,6 +4,7 @@
 //! be read — never treated as in support.
 
 use runtime_watch::{pass, real::Real};
+use spira_config::lc_call::LcClient;
 use spira_config::repos::Registry;
 use spira_otel::metrics::{MetricsSink, Point};
 use std::path::PathBuf;
@@ -53,9 +54,16 @@ fn main() -> ExitCode {
         }
     };
     let registry = Registry::from_env(std::env::vars().collect(), &home);
+    let lc = match LcClient::configured() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("runtime-watch: the lifecycle store: {e}");
+            return ExitCode::from(2);
+        }
+    };
     let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
     spira_otel::oneshot::begin(endpoint.as_deref(), COMPONENT, "pass");
-    let o = pass(&Real::new(registry, state, persona), max_files);
+    let o = pass(&Real::new(registry, state, persona, lc), max_files);
     let sink = MetricsSink::for_component(endpoint.as_deref(), COMPONENT);
     sink.push(&[Point::Gauge { name: "spira_runtime_watch_cannot_check", value: o.cannot_check.len() as f64 }], &[]);
     sink.push(&[Point::Count { name: "spira_runtime_bumps_filed", value: o.filed.len() as u64 }], &[]);

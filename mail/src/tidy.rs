@@ -16,12 +16,122 @@ use crate::lint::bead_id_regex;
 use crate::maildir;
 use crate::message;
 
-const URGENT_MAX_S: u64 = 604_800; // 7 days — fixed, not configurable (mail.sh's own constant)
+/// 7 days — fixed, not configurable (mail.sh's own constant).
+pub const URGENT_MAX_S: u64 = 604_800;
 
 #[derive(Debug, Default)]
 pub struct TidyReport {
     pub archived: usize,
     pub kept: usize,
+}
+
+/// One message as the keep rule reads it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Seen {
+    pub path: std::path::PathBuf,
+    pub mtime: u64,
+    pub subject: String,
+    /// `X-Spira-Bead`, else the first bead id in the body; empty when neither.
+    pub bead: String,
+    pub unread: bool,
+    pub urgent: bool,
+}
+
+impl Seen {
+    /// Whether rule (2) or (3) would keep it, before the closed-bead exception.
+    pub fn fresh(&self, now: u64, fresh_s: u64) -> bool {
+        let age = now.saturating_sub(self.mtime);
+        (self.unread && age < fresh_s) || (self.urgent && age < URGENT_MAX_S)
+    }
+}
+
+/// `<mail_root>/<mailbox>/{new,cur}`, newest first. Refuses a mailbox that was never created.
+pub fn scan(mail_root: &Path, mailbox: &str, id_prefix: &str) -> Result<Vec<Seen>, String> {
+    let inbox_dir = mail_root.join(mailbox);
+    if !(inbox_dir.join("cur").is_dir() && inbox_dir.join("new").is_dir()) {
+        return Err(format!("{mailbox}: mailbox not found"));
+    }
+    let mut files: Vec<(u64, std::path::PathBuf)> = Vec::new();
+    for sub in ["new", "cur"] {
+        for p in maildir::sorted_entries(&inbox_dir.join(sub)) {
+            files.push((maildir::mtime_secs(&p), p));
+        }
+    }
+    // `sort -rn` on "<mtime>\t<path>" lines: newest first. Rust's sort_by is stable, so
+    // same-mtime files keep the new/-then-cur, filename-sorted order collected above.
+    files.sort_by_key(|f| std::cmp::Reverse(f.0));
+    let bead_re = bead_id_regex(id_prefix);
+    Ok(files
+        .into_iter()
+        .map(|(mtime, path)| {
+            let text = fs::read_to_string(&path).unwrap_or_default();
+            let mut bead = message::header_line_sed(&text, "X-Spira-Bead");
+            if bead.is_empty() {
+                let (_, body) = message::split_headers_body(&text);
+                bead = bead_re.find(body).map(|m| m.as_str().to_string()).unwrap_or_default();
+            }
+            let urgent = !message::header_line_sed(&text, "X-Spira-Urgent").is_empty();
+            Seen { unread: maildir::is_unread(&path), subject: message::header_line_sed(&text, "Subject"), bead, urgent, mtime, path }
+        })
+        .collect())
+}
+
+/// The keep rule over `seen` (newest first), one verdict per message: kept iff it is the first
+/// copy of its subject AND (its bead is an open ask OR (it is fresh AND its bead is not known
+/// closed)). `closed` is asked only for a fresh first copy that names a bead.
+pub fn keeps(seen: &[Seen], open_asks: &dyn Fn(&str) -> bool, now: u64, fresh_s: u64, closed: &mut dyn FnMut(&str) -> bool) -> Vec<bool> {
+    let mut subjects: HashSet<&str> = HashSet::new();
+    seen.iter()
+        .map(|m| {
+            if !subjects.insert(m.subject.as_str()) {
+                return false;
+            }
+            let open_ask = !m.bead.is_empty() && open_asks(&m.bead);
+            open_ask || (m.fresh(now, fresh_s) && !(!m.bead.is_empty() && closed(&m.bead)))
+        })
+        .collect()
+}
+
+/// Moves each of `paths` into `<mail_root>/archive/cur`, creating the archive mailbox first. A
+/// source already gone is a no-op; a path outside `mail_root` is refused. Returns how many moved.
+pub fn archive(mail_root: &Path, paths: &[std::path::PathBuf]) -> Result<usize, String> {
+    let archive_dir = mail_root.join("archive");
+    maildir::mail_ensure(&archive_dir).map_err(|e| format!("cannot create archive mailbox: {e}"))?;
+    let mut moved = 0;
+    let mut failed = vec![];
+    for path in paths {
+        if !path.starts_with(mail_root) || path.starts_with(&archive_dir) {
+            return Err(format!("{} is not a message under {} — refusing", path.display(), mail_root.display()));
+        }
+        let Some(name) = path.file_name() else { continue };
+        if !path.exists() {
+            continue;
+        }
+        match fs::rename(path, archive_dir.join("cur").join(name)) {
+            Ok(()) => moved += 1,
+            Err(e) => failed.push(format!("{}: {e}", path.display())),
+        }
+    }
+    if failed.is_empty() {
+        Ok(moved)
+    } else {
+        Err(format!("archived {moved}, failed {}: {}", failed.len(), failed.join("; ")))
+    }
+}
+
+/// The open ask ids, with the positive control an empty answer needs: `Err` when the store is
+/// not configured, the query fails, or an empty answer fails the control.
+pub fn open_asks(bd: &dyn Bd, db_configured: bool, ask_label: &str) -> Result<HashSet<String>, String> {
+    if !db_configured {
+        return Err("bead store not configured — refusing to move any mail".to_string());
+    }
+    let ask_ids: HashSet<String> = bead::open_ask_ids(bd, ask_label)?.into_iter().collect();
+    if ask_ids.is_empty() {
+        if let Err(out) = bead::probe_store(bd) {
+            return Err(format!("positive control failed {} — bead store unreadable; refusing to move any mail", bead::bd_failure_detail(&out)));
+        }
+    }
+    Ok(ask_ids)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -35,75 +145,25 @@ pub fn tidy(
     id_prefix: &str,
     dry_run: bool,
 ) -> Result<TidyReport, String> {
-    if !db_configured {
-        return Err("bead store not configured — refusing to move any mail".to_string());
-    }
-
-    let ask_ids: HashSet<String> = bead::open_ask_ids(bd, ask_label)?.into_iter().collect();
-    if ask_ids.is_empty() {
-        if let Err(out) = bead::probe_store(bd) {
-            return Err(format!("positive control failed {} — bead store unreadable; refusing to move any mail", bead::bd_failure_detail(&out)));
-        }
-    }
-
-    let inbox_dir = mail_root.join(mailbox);
-    if !(inbox_dir.join("cur").is_dir() && inbox_dir.join("new").is_dir()) {
-        return Err(format!("{mailbox}: mailbox not found"));
-    }
-
+    let ask_ids = open_asks(bd, db_configured, ask_label)?;
+    let seen = scan(mail_root, mailbox, id_prefix)?;
     let archive_dir = mail_root.join("archive");
     maildir::mail_ensure(&archive_dir).map_err(|e| format!("cannot create archive mailbox: {e}"))?;
-
-    let mut files: Vec<(u64, std::path::PathBuf)> = Vec::new();
-    for sub in ["new", "cur"] {
-        for p in maildir::sorted_entries(&inbox_dir.join(sub)) {
-            files.push((maildir::mtime_secs(&p), p));
-        }
-    }
-    // `sort -rn` on "<mtime>\t<path>" lines: newest first. Rust's sort_by is stable, so
-    // same-mtime files keep the new/-then-cur, filename-sorted order collected above.
-    files.sort_by_key(|f| std::cmp::Reverse(f.0));
-
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-    let bead_re = bead_id_regex(id_prefix);
-
-    let mut seen_subjects: HashSet<String> = HashSet::new();
+    let verdicts = keeps(&seen, &|id| ask_ids.contains(id), now, fresh_s, &mut |id| bead::bead_is_closed(bd, id));
     let mut report = TidyReport::default();
-
-    for (mtime, path) in files {
-        let text = fs::read_to_string(&path).unwrap_or_default();
-        let subj = message::header_line_sed(&text, "Subject");
-
-        let keep = if seen_subjects.contains(&subj) {
-            false
-        } else {
-            seen_subjects.insert(subj);
-
-            let mut bead_id = message::header_line_sed(&text, "X-Spira-Bead");
-            if bead_id.is_empty() {
-                let (_, body) = message::split_headers_body(&text);
-                bead_id = bead_re.find(body).map(|m| m.as_str().to_string()).unwrap_or_default();
-            }
-            let age = now.saturating_sub(mtime);
-            let urgent_hdr = message::header_line_sed(&text, "X-Spira-Urgent");
-
-            let open_ask = !bead_id.is_empty() && ask_ids.contains(&bead_id);
-            let fresh = (maildir::is_unread(&path) && age < fresh_s) || (!urgent_hdr.is_empty() && age < URGENT_MAX_S);
-            open_ask || (fresh && !(!bead_id.is_empty() && bead::bead_is_closed(bd, &bead_id)))
-        };
-
+    for (m, keep) in seen.iter().zip(verdicts) {
         if keep {
             report.kept += 1;
         } else {
             report.archived += 1;
             if !dry_run {
-                if let Some(name) = path.file_name() {
-                    let _ = fs::rename(&path, archive_dir.join("cur").join(name));
+                if let Some(name) = m.path.file_name() {
+                    let _ = fs::rename(&m.path, archive_dir.join("cur").join(name));
                 }
             }
         }
     }
-
     Ok(report)
 }
 

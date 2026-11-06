@@ -15,6 +15,10 @@ serde_json = "1"
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
 strand = { path = "../strand" }
+store-view = { path = "../store-view" }
+runtime = { path = "../runtime" }
+tsd = { path = "../tsd" }
+libc = "0.2"
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

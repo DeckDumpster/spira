@@ -2,7 +2,7 @@
 # nix-gc.sh — collects unreferenced Nix store paths, keeping the current and the previous
 # spira-env: install roots the current one with `nix build -o` and the replaced one at
 # spira-env.prev, so everything else unreferenced is collectable.
-# covers: systemd/spira-nix-gc.service systemd/spira-nix-gc.timer install/src/bin/install.rs
+# covers: spira-runtime/src/tasks/c/sweep_nix_gc.rs install/src/bin/install.rs
 set -uo pipefail
 
 nix_gc_main() {

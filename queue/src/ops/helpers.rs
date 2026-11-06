@@ -23,9 +23,7 @@ use crate::real::{RealGit, RealLc};
 /// CERTIFIED, as `(id, tip, epoch)` — the selection primitive any cutter (the batcher, the
 /// reconciler's mergeability check, cockpit-collect's "next up" pane) draws from.
 pub fn certified_list(repo: &Path) -> Result<Vec<(String, String, u64)>, String> {
-    let lc = RealLc {
-        bin: Some(PathBuf::from(spira_config::lifecycle_row::lc_bin()?)),
-    };
+    let lc = RealLc::configured(Some(PathBuf::from(spira_config::lifecycle_row::lc_bin()?)));
     Ok(certified_rows(&lc, &RealGit.branches(repo, "refs/heads/spira/")))
 }
 
@@ -235,16 +233,8 @@ pub fn cancel_branch_runs(forge: &Path, repo: &Path, branch: &str, tag: &str) ->
             return false;
         }
     };
-    let listing = spira_config::bounded::bounded(forge)
-        .arg("runs-for-branch")
-        .arg(repo)
-        .arg(branch)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default();
+    let route = forge::client::route_of(forge);
+    let listing = forge::client::run(&route, "runs-for-branch", repo, &[branch], None).out;
     let mut all_ok = true;
     for line in listing.lines() {
         let mut it = line.split_whitespace();
@@ -257,16 +247,7 @@ pub fn cancel_branch_runs(forge: &Path, repo: &Path, branch: &str, tag: &str) ->
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let cancelled = spira_config::bounded::bounded(forge)
-            .arg("run-cancel")
-            .arg(repo)
-            .arg(run_id)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        let cancelled = forge::client::run(&route, "run-cancel", repo, &[run_id], None).ok();
         if cancelled {
             append_log(
                 &run_dir,
@@ -300,6 +281,7 @@ pub fn notify(mailbox: &str, name: &str, subject: &str, body: &str) {
     refuse_unless_mail_is_test_owned();
     let full_subject = format!("Merge queue: {name} {subject}");
     let full_body = format!("## Alert\n{body}\n");
+    // FORK-EDGE: needs a mail library entry that is `mail send` (kind routing, the attempt record); the suites stub `mail` on PATH
     if let Ok(mut child) = spira_config::bounded::bounded("mail")
         .args([
             "send",

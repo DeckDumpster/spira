@@ -57,7 +57,7 @@ pub fn which(prog: &str) -> Option<String> {
 /// every single unit with this bogus home baked in and reported DIFFERS across the board.
 /// Falls back to the same release-relative resolution `templates_dir()` uses — `<release>/
 /// spira` beside the binary's own `bin/`, verified by requiring `conf.sh` there, exactly as
-/// `templates_dir`'s own fallback requires `spira-sentinel.service` under its `systemd/`
+/// `templates_dir`'s own fallback requires `spira-runtime.service` under its `systemd/`
 /// candidate — and refuses outright when even that fails, rather than ever rendering
 /// "/spira" again.
 ///
@@ -154,6 +154,7 @@ pub fn host_from(instance: &str, env_map: &std::collections::BTreeMap<String, St
         instance: instance.to_string(),
         snap_stale_s: cfg("SPIRA_SNAP_STALE_S")?,
         watchtower_start_timeout_s: cfg("SPIRA_WATCHTOWER_START_TIMEOUT_S")?,
+        watchdog_every_s: cfg(watchdog::KEY_EVERY)?,
         path_tail,
         env_bin,
         sccache_dav_addr: dav_addr,
@@ -260,7 +261,7 @@ pub fn templates_dir_from(home: Option<String>, repo: Option<String>, exe: Optio
 }
 
 fn systemd_above(exe: &Path) -> Option<PathBuf> {
-    exe.ancestors().skip(1).map(|a| a.join("systemd")).find(|d| d.join("spira-sentinel.service").is_file())
+    exe.ancestors().skip(1).map(|a| a.join("systemd")).find(|d| d.join("spira-runtime.service").is_file())
 }
 
 /// `argv[0]`, resolved to where it actually sits, but with every symlink component left
@@ -318,7 +319,6 @@ fn is_exec(p: &Path) -> bool {
 /// Build this box's manifest from the environment, printing units.sh's own informational
 /// notes to stderr.
 pub fn manifest_from_env(instance: &str) -> Result<Manifest, String> {
-    let inotify_present = which("inotifywait").is_some();
     // Same resolution host_from_env gives `--repo` (the repo map's home-repo root when it is
     // a git checkout, else the release dir): a failure to resolve it at all means the rest of
     // the install fails too, so treating it as "not a checkout" here costs nothing extra.
@@ -327,7 +327,6 @@ pub fn manifest_from_env(instance: &str) -> Result<Manifest, String> {
         instance: instance.to_string(),
         dolt_data_set: declared("SPIRA_DOLT_DATA").is_some(),
         dolt_durable_set: declared("SPIRA_DOLT_DURABLE").is_some(),
-        inotify_present,
         sccache_dav_addr_set: !sccache_dav_addr()?.is_empty(),
         repo_is_git_checkout,
         lc_system_mode: spira_config::resolve::lc_system_mode(),
@@ -353,7 +352,7 @@ mod templates_dir_tests {
         let rel = t.path().join("rel");
         std::fs::create_dir_all(rel.join("bin")).unwrap();
         std::fs::create_dir_all(rel.join("systemd")).unwrap();
-        std::fs::write(rel.join("systemd/spira-sentinel.service"), "[Unit]\n").unwrap();
+        std::fs::write(rel.join("systemd/spira-runtime.service"), "[Unit]\n").unwrap();
         let got = templates_dir_from(None, None, Some(&rel.join("bin/units-install")));
         assert_eq!(got, rel.join("systemd").canonicalize().unwrap());
     }

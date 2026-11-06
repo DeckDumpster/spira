@@ -30,6 +30,7 @@ fn list_args() -> Vec<&'static str> {
 pub fn gather(systemctl: &str) -> Option<Vec<String>> {
     let out = crate::deadline::output(
         "failed units",
+        // FORK-EDGE: needs a Units port listing (units by glob and state); systemctl list-units --state=failed
         std::process::Command::new(systemctl).args(list_args()),
     )
     .ok()?;

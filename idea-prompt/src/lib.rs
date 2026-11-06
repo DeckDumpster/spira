@@ -1,6 +1,8 @@
 //! The idle detector behind the parked-ideas prompt. Pure decision over injected ports: the
 //! clock, the busy probe, the idea list and the mail door come in through [`Ports`].
 
+pub mod real;
+
 pub struct Idea {
     pub id: String,
     pub title: String,

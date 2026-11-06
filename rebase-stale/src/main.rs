@@ -36,7 +36,7 @@ fn die2(msg: &str) -> ExitCode {
 /// `spira/conf.d/` entry) — they stay ambient env reads with their own defaults.
 fn branch_config() -> Result<BranchConfig, String> {
     let run = PathBuf::from(cfg("SPIRA_RUN")?);
-    let reaplog = env::var("SPIRA_REAPLOG").ok().filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or_else(|| run.join("reap.log"));
+    let reaplog = cfg("SPIRA_REAPLOG").ok().filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or_else(|| run.join("reap.log"));
     let format_timeout = env::var("SPIRA_FORMAT_TIMEOUT").ok().and_then(|s| s.parse().ok()).unwrap_or(300);
     Ok(BranchConfig {
         run,

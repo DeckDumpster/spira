@@ -282,7 +282,7 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
             let lease = dwarf::trace::dwarf_lease_minutes(bead, &run, io::now());
             push(&mut out, &format!("SP_DWARF{i}_LEASE"), lease);
 
-            let mark = std::env::var("SPIRA_TRACE_MARK").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "=== spira attempt".to_string());
+            let mark = spira_config::process::cfg("SPIRA_TRACE_MARK").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "=== spira attempt".to_string());
             let log_path = run.join(format!("{bead}.log"));
             let stats = dwarf::trace::trace_stats(&log_path, &mark, io::now());
             for line in stats.lines() {
@@ -1218,11 +1218,12 @@ pub fn drift_value(code: Option<i32>, out: &str, dirty: &str, finding_prefix: &s
 
 pub fn drift_keys() -> Kv {
     let drift_sh = io::home_dir().join("drift.sh");
-    let repo = std::env::var("SPIRA_REPO").ok().filter(|s| !s.is_empty());
+    let repo = spira_config::process::cfg("SPIRA_REPO").ok().filter(|s| !s.is_empty());
     let child_env = spira_config::release_env::child_path_env_for_process();
     let run_one = |args: &[&str]| {
         let Ok(envs) = child_env.clone() else { return (None, String::new()) };
         // batch-job: runs a gate, build or forge script that takes as long as its work
+        // FORK-EDGE: script drift.sh (179 lines), ported with the drift task.
         std::process::Command::new("bash")
             .envs(envs)
             .arg(&drift_sh)

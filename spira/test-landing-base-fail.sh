@@ -87,8 +87,10 @@ d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(d[0].get("status") or "")'; }
 notes_of() { B show "$1" 2>/dev/null; }
 
+# SPIRA_INCIDENT_LOG is registered config (62ace654f), no longer derived from SPIRA_RUN: the
+# recurrence row lands where it is declared.
 tl_config SPIRA_BATCHER_ENABLE=1 SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-    SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
+    SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp SPIRA_INCIDENT_LOG="$RUN/incident.log" \
     SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh"
 landing() {
     rm -f "$RUN/landing.progress"

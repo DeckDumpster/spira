@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 
 use bead::claimdesc;
 use bead::bdq::{
-    check_destructive, check_repo_label, check_schema_delete, creates_beads, creates_closed, creates_rowless_type, id_bearing_args, czar_fence_class, is_create, json_count, json_only,
+    check_destructive, check_repo_label, check_schema_delete, id_bearing_args, is_create, json_count, json_only,
     should_retry, retryable, backoff_ms, is_write, WRITER_LOCK_BUSY,
 };
 use spira_config::repos::Registry;
@@ -190,14 +190,7 @@ fn cmd_ghq(args: &[String]) -> i32 {
 // =========================================================================================
 
 fn date_now_utc_nanos() -> String {
-    spira_config::bounded::bounded("date")
-        .arg("-u")
-        .arg("+%Y-%m-%dT%H:%M:%S.%NZ")
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim_end().to_string())
-        .unwrap_or_default()
+    bead::bdq::utc_stamp_nanos(std::time::SystemTime::now())
 }
 
 /// One `timeout <secs> <bd> -C <db> <args>` attempt: stdout inherited straight through
@@ -217,6 +210,7 @@ fn writer_lock_for(args: &[String]) -> Option<(String, String)> {
 }
 
 fn run_bd_once(timeout_s: &str, bd_bin: &str, db: &str, args: &[String], capture_stdout: bool, writer_lock: Option<&(String, String)>) -> (i32, String, Vec<u8>) {
+    // FORK-EDGE: content store — this is the store's own edge: bdq runs bd, and the content store is out of scope.
     let mut cmd = match writer_lock {
         Some((file, wait_s)) => {
             let mut c = Command::new("flock");
@@ -291,85 +285,34 @@ fn cmd_bdq(args: &[String]) -> i32 {
         }
     };
     let args = &body.args[..];
-    // The ask fence reads a body file's text as the description it is. The destructive fence
-    // judges only `--description`: a body file carries quoted evidence, not instructions.
-    let judged: Vec<String> = match &body.text {
-        Some(t) if !args.iter().any(|a| a == "--description" || a.starts_with("--description=")) => args.iter().cloned().chain(["--description".to_string(), t.clone()]).collect(),
-        _ => args.to_vec(),
-    };
-    // The three create-time fences — short-circuit on the first refusal, exactly like the
-    // bash `_bdq_check_x "$@" || return 1` chain (a later check never runs once an earlier
-    // one refuses).
-    if is_create(args) {
-        let reg = build_registry();
-        if let Some(msg) = check_repo_label(args, &reg) {
-            eprint!("{msg}");
-            return 1;
-        }
-        let ask_label = match spira_config::process::cfg("SPIRA_ASK_LABEL") {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("bdq: {e}");
-                return 1;
-            }
-        };
-        if let Some(msg) = check_destructive(args, &ask_label) {
-            eprint!("{msg}");
-            return 1;
-        }
-        if let Some(msg) = bead::bdq::check_ask_shape(&judged, &ask_label) {
-            eprint!("{msg}");
-            return 1;
-        }
-        if let Some(msg) = check_schema_delete(args) {
-            eprint!("{msg}");
-            return 1;
-        }
-    }
-
-    if matches!(args.first().map(String::as_str), Some("label" | "update")) {
-        match spira_config::process::cfg("SPIRA_ASK_LABEL") {
-            Ok(ask) => {
-                if let Some(msg) = bead::bdq::check_ask_label_write(args, &ask) {
-                    eprint!("{msg}");
-                    return 1;
-                }
-            }
-            Err(e) => {
-                eprintln!("bdq: {e}");
-                return 1;
-            }
-        }
-    }
-
-    // A bead's state is the lifecycle row's (sp-6oimlm): no caller moves bd's status through
-    // bdq. The override is named and logged, never silent.
-    if let Some(door) = bead::bdq::check_state_verb(args) {
-        match env_nonempty("SPIRA_BDQ_STATE_WRITE") {
-            Some(why) => eprintln!("bdq: STATE WRITE OVERRIDE ({}) — bd's status moved outside the lifecycle machine: {why}", args.join(" ")),
-            None => {
-                eprintln!(
-                    "spira: bdq refuses `{}` — a bead's state is its lifecycle row's, and bd's status follows it, never the reverse.\n\
-                     Exit: {door}. To write bd's status anyway, set SPIRA_BDQ_STATE_WRITE=<reason> (logged).",
-                    args.first().map(String::as_str).unwrap_or("")
-                );
-                return 1;
-            }
+    // The create-time fences (repo label, destructive wording, ask shape, schema delete), the
+    // ask-label write fence and the state-verb fence, in that order, short-circuiting on the
+    // first refusal as the bash `_bdq_check_x "$@" || return 1` chain did. `bead::guard` is the
+    // one implementation, shared with the content door. The ask fence reads a body file's text
+    // as the description it is.
+    let env_var = |var: &str| std::env::var(var).ok();
+    let ask_label = || spira_config::process::cfg("SPIRA_ASK_LABEL");
+    let no_rows = |_: &str| None;
+    let ctx = bead::guard::Ctx { who: "bdq", vars: &env_var, rows: &no_rows, now: 0, ask_label: &ask_label, registry: &build_registry };
+    let fenced = bead::guard::create(args, body.text.as_deref(), &ctx)
+        .and_then(|()| bead::guard::ask_label_write(args, &ctx))
+        .and_then(|()| bead::guard::state_verb(args, &env_var, "bdq"));
+    match fenced {
+        Ok(log) => eprint!("{}", log.unwrap_or_default()),
+        Err(r) => {
+            eprint!("{}", r.text);
+            return r.code;
         }
     }
 
     // The czar fence: a live SPIRA_RUNE=czar session with a class mutating the queue
-    // (reopen always; update/close unless it is the trigger bead itself) must pass
-    // czar-fence.sh first. czar-fence.sh's own exit code is NOT propagated — bdq always
-    // normalizes a refusal here to 1, matching the bash's bare `|| return 1`.
-    let rune = env_or("SPIRA_RUNE", "");
-    let czar_class = env_or("SPIRA_CZAR_CLASS", "");
-    let czar_trigger = env_or("SPIRA_CZAR_TRIGGER_BEAD", "");
-    if let Some(class) = czar_fence_class(&rune, &czar_class, &czar_trigger, args) {
-        let ok = Command::new("czar-fence.sh").arg(class).status().map(|s| s.success()).unwrap_or(false);
-        if !ok {
-            return 1;
-        }
+    // (reopen always; update/close unless it is the trigger bead itself) passes only in the
+    // class's act stage. `bead::guard::czar` is the one implementation, shared with the content
+    // door; its refusal is exit 1, matching the bash's bare `|| return 1`. The stage is read
+    // from the environment bdq hands every child, as the script did.
+    if let Err(r) = bead::guard::czar(args, &|var| std::env::var(var).ok()) {
+        eprint!("{}", r.text);
+        return r.code;
     }
 
     // SPIRA_BDJSON_FIXTURE routes every call to the fixture engine instead of the real bd.
@@ -441,25 +384,25 @@ fn cmd_bdq(args: &[String]) -> i32 {
     let mut call_args: Vec<String> = args.to_vec();
     let mut forced: Option<(String, claimdesc::LiveClaim, String)> = None;
     if args.first().map(String::as_str) == Some("update") {
-        let u = claimdesc::parse_update_args(&args[1..]);
-        call_args = std::iter::once("update".to_string()).chain(u.passthrough.iter().cloned()).collect();
-        if let (true, Some(id)) = (u.touches_description, u.id.as_ref()) {
-            // The claim is the lifecycle row's (sp-mve9i). A machine that cannot answer refuses
-            // nothing, as a failed bd show refused nothing before it.
-            let row = spira_config::lc_state::row(id).unwrap_or_else(|e| {
-                eprintln!("bdq: lifecycle state unreadable for {id} ({e}); not checking for a live claim");
-                None
-            });
-            if let Some(claim) = claimdesc::live_claim(row.as_ref(), now_epoch()) {
-                match u.force {
-                    None => {
-                        eprint!("{}", claimdesc::refusal(id, &claim));
-                        return 1;
-                    }
-                    Some(reason) => forced = Some((id.clone(), claim, reason)),
-                }
-            }
+        // bd has no --force-claimed: spira's own flag never reaches it.
+        call_args = std::iter::once("update".to_string()).chain(claimdesc::parse_update_args(&args[1..]).passthrough).collect();
+    }
+    // The claim is the lifecycle row's (sp-mve9i). A machine that cannot answer refuses
+    // nothing, as a failed bd show refused nothing before it. `bead::guard::claim` is the one
+    // implementation, shared with the content door.
+    let rows = |id: &str| {
+        spira_config::lc_state::row(id).unwrap_or_else(|e| {
+            eprintln!("bdq: lifecycle state unreadable for {id} ({e}); not checking for a live claim");
+            None
+        })
+    };
+    match bead::guard::claim(args, &rows, now_epoch()) {
+        Err(r) => {
+            eprint!("{}", r.text);
+            return r.code;
         }
+        Ok(bead::guard::Claim::Forced { id, claim, reason }) => forced = Some((id, claim, reason)),
+        Ok(bead::guard::Claim::Free) => {}
     }
     let id_args = id_bearing_args(&call_args);
     let args = &id_args[..];
@@ -467,7 +410,8 @@ fn cmd_bdq(args: &[String]) -> i32 {
     let backoff_base: u64 = env_nonempty("SPIRA_BDQ_CONN_BACKOFF_MS").and_then(|s| s.parse().ok()).unwrap_or(1000);
     let t_start = std::time::Instant::now();
 
-    let lc_row = creates_beads(args) && !(is_create(args) && (creates_closed(args) || creates_rowless_type(args)));
+    let after = bead::guard::after(args);
+    let lc_row = after == bead::guard::After::Rows;
     let writer_lock = writer_lock_for(args);
     let mut try_n: u32 = 1;
     let (rc, stderr_buf, created_out) = loop {
@@ -495,7 +439,9 @@ fn cmd_bdq(args: &[String]) -> i32 {
         }
     }
     if rc == 0 {
-        let _ = spira_config::lifecycle_row::after_close("bdq", args);
+        if matches!(after, bead::guard::After::Terminal(_)) {
+            let _ = spira_config::lifecycle_row::after_close("bdq", args);
+        }
         if spira_config::planning::is_planning_write(args) {
             spira_config::planning::stamp_after("bdq");
         }
@@ -541,6 +487,7 @@ fn util_json_only(raw: &str) -> String {
 
 /// stdout of one bd call, stderr dropped; empty on any failure.
 fn bd_capture(timeout_s: &str, bd_bin: &str, db: &str, args: &[&str]) -> String {
+    // FORK-EDGE: content store — bdq's own bd call; the content store is out of scope.
     Command::new("timeout")
         .arg(timeout_s)
         .arg(bd_bin)

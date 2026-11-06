@@ -16,6 +16,16 @@
 //! the same shape as `bd_status.rs`. A line that also names `"pr"`/`"issue"`/`"run"` is gh's
 //! close, not bd's. Test code is out of scope (a `tests/` directory, `tests.rs`, or what
 //! follows a `#[cfg(test)] mod`).
+//!
+//! An argument vector handed to the lifecycle machine itself is not bd's, and is not a
+//! finding ([`machine_door`]): the argv of `LcClient::call_stdin` (spira-config's
+//! `lc_call.rs`, the only `call_stdin` in the tree — the in-process client of lc-serve, or
+//! the `spira-lc` program in direct mode), the store's content door
+//! (`["content", "close", …]`, which runs bdq's write guards and writes the terminal row
+//! after bd's close: `spira-lc/src/content.rs`), and a vector handed to the `spira-lc` or
+//! `spira-claim` program by name (`spira-claim reopen` is `spira-lc reopen` plus its
+//! bookkeeping: `spira-claim/src/reopen.rs`). Only the door's own span is passed over, so a
+//! line that also hands bd a close is still a finding.
 
 use crate::bd_status::{is_test_file, restore_short_literals};
 use crate::finding::{Class, Finding};
@@ -31,6 +41,21 @@ fn close_arg() -> &'static Regex {
         // opening `[`/`(`, then any run of earlier elements, then the literal.
         Regex::new(r#"(?:\[|\.args?\()\s*(?:[^\[\]();]*,\s*)?"close"(?:\.into\(\)|\.to_string\(\))?\s*[,\])]"#).unwrap()
     })
+}
+
+/// The lifecycle machine's doors a `close`/`reopen` vector may be handed to (module doc):
+/// `.call_stdin(&["close"…` / `["reopen"…`, `["content", "close"…`, and
+/// `"spira-lc"`/`"spira-claim"` named as the program just before the vector.
+pub(crate) fn machine_door() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| {
+        Regex::new(r#"(?:\.call_stdin\(\s*&?\s*\[\s*"(?:close|reopen)"|"spira-(?:lc|claim)"\s*,\s*&?\s*(?:vec!)?\[\s*"(?:close|reopen)"|\[\s*"content"\s*,\s*"close")"#).unwrap()
+    })
+}
+
+/// `line` with every [`machine_door`] span blanked, so what remains is judged as bd's.
+pub(crate) fn without_doors(line: &str) -> String {
+    machine_door().replace_all(line, "").into_owned()
 }
 
 pub(crate) fn gh_close() -> &'static Regex {
@@ -86,7 +111,7 @@ pub fn scan_text(rel: &str, text: &str) -> Vec<Finding> {
         if is_slice_pattern_arm(n) {
             continue;
         }
-        if close_arg().is_match(n) && !gh_close().is_match(n) {
+        if close_arg().is_match(&without_doors(n)) && !gh_close().is_match(n) {
             out.push(Finding {
                 class: Class::BdCloseRust,
                 file: rel.to_string(),
@@ -98,4 +123,32 @@ pub fn scan_text(rel: &str, text: &str) -> Vec<Finding> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lines(src: &str) -> Vec<usize> {
+        scan_text("x/src/a.rs", src).into_iter().map(|f| f.line).collect()
+    }
+
+    /// A bd close is still refused in every shape; the lifecycle machine's own doors — the
+    /// lc-serve client's `call_stdin`, the content door, the spira-lc program — are not bd.
+    #[test]
+    fn a_bd_close_is_refused_and_the_lifecycle_machine_is_not() {
+        let bd = r#"fn a() { bdq(seam, &["close", id, "--reason", r]); }
+fn b() { Command::new("bd").args(["-C", db, "close", id]); }
+fn c() { cmd.arg("close"); }
+fn d(lc: &LcClient) { lc.call_stdin(&["show", id], ""); bd(&["close", id]); }
+"#;
+        assert_eq!(lines(bd), vec![1, 2, 3, 4]);
+        let machine = r#"fn a(lc: &LcClient) { let r = lc.call_stdin(&["close", id, "--reason-file", "-", "--actor", "sift"], &reason)?; }
+fn b(e: &Effects) { let r = super::lc(e).call_stdin(&["close", j.id.as_str(), "--reason-file", "-"], &j.text); }
+fn c(e: &Effects) { answer(&client(e, ms), &["content", "close", &w.id, "--reason", &w.text]) }
+fn d() { run("spira-lc", &["close", id, "--reason-file", "-"]); }
+"#;
+        assert_eq!(lines(machine), Vec::<usize>::new(), "{:?}", scan_text("x/src/a.rs", machine));
+        assert!(without_doors(r#"x.call(&["close", id])"#).contains("close"), "only call_stdin is the client's");
+    }
 }

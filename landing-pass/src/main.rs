@@ -137,8 +137,9 @@ fn pr() -> i32 {
         home_repo: s.home_repo.clone(),
         fixture: s.bdjson_fixture.clone(),
         lc_bin: s.lc_bin.clone(),
+        client: None,
     };
-    let tools = RealPrTools { s: &s, out: &out };
+    let tools = RealPrTools { s: &s, out: &out, lc: None };
     let procs = RealProcs { run: s.run.clone() };
     let files = Files::new(&s.run);
     let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, incident: s.incident.clone(), s: s.clone(), beads: beads.clone() };
@@ -213,11 +214,12 @@ fn land() -> i32 {
         home_repo: s.home_repo.clone(),
         fixture: s.bdjson_fixture.clone(),
         lc_bin: s.lc_bin.clone(),
+        client: None,
     };
     let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, incident: s.incident.clone(), s: s.clone(), beads: beads.clone() };
     let tools = RealTools::new(s.home.clone(), s.queue_bin.clone(), Some(files.containers()), Some(s.run.join("gate-admission")));
     let procs = RealProcs { run: s.run.clone() };
-    let lc = RealLc { bin: s.lc_bin.clone() };
+    let lc = RealLc { bin: s.lc_bin.clone(), client: None };
     let p = Pass {
         s: &s,
         repos: &repos,
@@ -348,6 +350,7 @@ fn noverdict_cmd(id: &str, branch: &str, repo: &str, reason: &str, outcome: &str
         home_repo: s.home_repo.clone(),
         fixture: s.bdjson_fixture.clone(),
         lc_bin: s.lc_bin.clone(),
+        client: None,
     };
     let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, incident: s.incident.clone(), s: s.clone(), beads };
     let mut gate_out = String::new();
@@ -386,6 +389,7 @@ fn ask_rebase_loop_cmd(args: &[String]) -> i32 {
         home_repo: s.home_repo.clone(),
         fixture: s.bdjson_fixture.clone(),
         lc_bin: s.lc_bin.clone(),
+        client: None,
     };
     let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, incident: s.incident.clone(), s: s.clone(), beads };
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -443,6 +447,7 @@ fn resolve_beads(home: &Path) -> Result<RealBeads, String> {
         fixture: env.get("SPIRA_BDJSON_FIXTURE").filter(|s| !s.is_empty()).map(PathBuf::from),
         // Content only (titles): nothing here decides on a bead's state.
         lc_bin: None,
+        client: None,
     })
 }
 

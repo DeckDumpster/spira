@@ -19,6 +19,7 @@ mod callers;
 mod churn;
 mod claim_verdicts;
 mod classify_cmd;
+mod composed;
 mod content;
 // Reached only with SPIRA_LC_STORE_PATH set; parts of it are used only by later verbs yet.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -109,32 +110,6 @@ fn main() {
             };
             std::process::exit(close_on_land::run(&args[1..], &mut state, &mut record, &mut close_on_land::show_row))
         }
-        // An epic's close is bd's: an epic is a grouping, never a lifecycle bead.
-        Some("unclaim") => {
-            let ans = callers::unclaim(&args[1..], &mut Live { conn: None });
-            std::process::exit(emit(&args[1..], ans))
-        }
-        Some("reconcile-closed") => {
-            std::process::exit(emit(&[], callers::reconcile_closed(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd)))
-        }
-        // The ask's state is written first; its decision bead then follows through reconcile-content.
-        Some("close-ask") => {
-            let mut lc = Live { conn: None };
-            let (code, out) = callers::Machine::call(&mut lc, &args);
-            spira_config::lc_call::print_answer(code, &out);
-            if code == 0 {
-                if let Some(id) = args.get(1) {
-                    if let Err(e) = reconcile_content::settle_ask(&mut lc, &mut bd::LiveBd, id) {
-                        eprintln!("spira-lc close-ask: {id} is closed; its decision bead waits for reconcile-content: {}", e.trim());
-                    }
-                }
-            }
-            std::process::exit(code)
-        }
-        Some("reconcile-asks") => std::process::exit(emit(&[], reconcile_content::reconcile_asks(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd))),
-        Some("reconcile-epics") => {
-            std::process::exit(emit(&[], callers::reconcile_epics(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd)))
-        }
         // The operator's restore and the drill read local files only, never the live store.
         Some("admin-restore") => {
             let (code, out) = durability::admin_restore(&args[1..]);
@@ -160,45 +135,6 @@ fn main() {
             if code == 0 { println!("{out}") } else { eprintln!("{out}") }
             std::process::exit(code)
         }
-        Some("reconcile-content") => {
-            std::process::exit(emit(&[], callers::reconcile_content(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd)))
-        }
-        Some("drop-orphans") => {
-            std::process::exit(emit(&[], callers::drop_orphans(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd)))
-        }
-        Some("close") => {
-            let mut read = |f: &str| -> Result<String, String> {
-                if f == "-" {
-                    let mut t = String::new();
-                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut t).map_err(|e| format!("stdin: {e}"))?;
-                    Ok(t)
-                } else {
-                    std::fs::read_to_string(f).map_err(|e| format!("{f}: {e}"))
-                }
-            };
-            std::process::exit(emit(&args[1..], callers::close(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd, &mut read)))
-        }
-        Some("drop-bead") => std::process::exit(emit(&args[1..], callers::drop_bead(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd))),
-        Some("drop-row") => std::process::exit(emit(&args[1..], callers::drop_row(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd))),
-        Some("reopen") => std::process::exit(emit(&args[1..], callers::reopen_cmd(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd))),
-        Some("bd-supersede") => std::process::exit(emit(&args[1..], store_write::supersede(&args[1..], &bd::write))),
-        Some("bd-note") => std::process::exit(emit(&args[1..], store_write::note(&args[1..], &bd::write))),
-        Some("content") if args.get(1).map(String::as_str) == Some("purge-alerts") => {
-            let delete = |ids: &[String]| match bd::tool("bdq", &[&["delete".to_string()][..], ids, &["--force".to_string()]].concat(), None, "purge-alerts", 120) {
-                (0, _) => Ok(()),
-                (rc, out) => Err(format!("bdq delete exited {rc}: {out}")),
-            };
-            let ans = match lifecycle_run_dir() {
-                Ok(run) => content::purge_alerts(&args[2..], &|a| bd::run_stdin(a, None), &delete, &run, db::now_epoch()),
-                Err(e) => callers::Answer { code: CANNOT_TELL, stderr: format!("spira-lc content purge-alerts: {e}\n"), ..Default::default() },
-            };
-            std::process::exit(emit(&args[1..], ans))
-        }
-        Some("content") => {
-            let ans = content::run(&args[1..], &|a| bd::run_stdin(a, None));
-            std::process::exit(emit(&args[1..], ans))
-        }
-        Some("close-epic") => std::process::exit(emit(&args[1..], callers::close_epic(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd))),
         Some("unpublished") => {
             let (code, out) = unpublished::run(&args[1..]);
             spira_config::lc_call::print_answer(code, &out);
@@ -219,14 +155,43 @@ fn main() {
         _ => {}
     }
 
-    // The caller verbs (callers.rs; DESIGN.md §2).
-    if let Some(verb) = args.first().filter(|v| callers::is_verb(v)) {
-        let rest = &args[1..];
-        if verb == "drop" {
-            std::process::exit(emit(rest, callers::drop_cmd(rest, &mut Live { conn: None }, &mut bd::LiveBd)));
+    // The composed verbs (composed.rs) are the service's: this CLI is their client, and runs
+    // them itself only in declared direct mode, where no service runs.
+    if args.first().is_some_and(|v| composed::is_served(v)) {
+        let mut stdin = || {
+            let mut t = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut t).map(|_| t).map_err(|e| e.to_string())
+        };
+        match client::route() {
+            Ok(client::Route::Service(socket)) => {
+                let (argv, body) = composed::client_request(&args, &mut stdin);
+                let (code, out, err) = client::forward_with(&socket, &argv, body.as_deref());
+                std::process::exit(emit(&[], callers::Answer { code, stdout: out, stderr: err, cert_log: None }));
+            }
+            Ok(client::Route::Direct) => {
+                let ports = composed::Ports {
+                    m: &mut Live { conn: None },
+                    bd: &mut bd::LiveBd,
+                    content: &composed::LiveContent,
+                    stdin: &mut stdin,
+                    run_dir: &lifecycle_run_dir,
+                    now: db::now_epoch(),
+                    caller: &spira_config::lc_call::guard_vars(std::env::vars()),
+                };
+                let ans = composed::run(&args, ports);
+                std::process::exit(emit(&args[1..], ans));
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(CANNOT_TELL);
+            }
         }
-        let ans = callers::run(verb, rest, &mut Live { conn: None });
-        std::process::exit(emit(rest, ans));
+    }
+
+    // The caller verbs proved from the caller's own git checkout (callers.rs; DESIGN.md §2).
+    if let Some(verb) = args.first().filter(|v| callers::is_verb(v)) {
+        let ans = callers::run(verb, &args[1..], &mut Live { conn: None });
+        std::process::exit(emit(&args[1..], ans));
     }
 
     // Every store call goes through the service that owns the store's connections; when it is
@@ -275,7 +240,6 @@ impl callers::Machine for Live {
 
 /// Print a caller verb's answer and write its certification log line; returns the exit code.
 fn emit(args: &[String], ans: callers::Answer) -> i32 {
-    use std::io::Write;
     if !ans.stdout.is_empty() {
         print!("{}", ans.stdout);
         if !ans.stdout.ends_with('\n') {
@@ -285,19 +249,9 @@ fn emit(args: &[String], ans: callers::Answer) -> i32 {
     if !ans.stderr.is_empty() {
         eprint!("{}", ans.stderr);
     }
-    if let Some((what, detail)) = ans.cert_log {
-        // lifecycle-cert.sh's log, same path and line shape: `<epoch> <verb> bead=<id> <detail>`.
-        let id = args.first().map(String::as_str).unwrap_or("");
-        match lifecycle_run_dir() {
-            Ok(dir) => {
-                let _ = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(dir.join("lifecycle-cert.log"))
-                    .and_then(|mut f| writeln!(f, "{} {what} bead={id} {detail}", db::now_epoch()));
-            }
-            Err(e) => eprintln!("spira-lc: {e} — lifecycle-cert.log not written"),
-        }
+    let id = args.first().map(String::as_str).unwrap_or("");
+    if let Some(e) = composed::write_cert_log(id, &ans, lifecycle_run_dir(), db::now_epoch()) {
+        eprintln!("{e}");
     }
     ans.code
 }

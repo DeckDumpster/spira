@@ -128,7 +128,9 @@ pub fn plan(patterns: &[String], now: u64, idle_secs: u64, held: &[PathBuf], lea
     v
 }
 
-pub fn trim_cache(root: &Path, cap_bytes: u64, now: u64, dry: bool) -> (u64, u64) {
+/// Every file under `root` as `(mtime, bytes, path)`, oldest first, leaving out a `.tmp` file
+/// younger than an hour (a write still in progress).
+pub fn cache_files(root: &Path, now: u64) -> Vec<(u64, u64, PathBuf)> {
     let mut files: Vec<(u64, u64, PathBuf)> = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(d) = stack.pop() {
@@ -146,8 +148,28 @@ pub fn trim_cache(root: &Path, cap_bytes: u64, now: u64, dry: bool) -> (u64, u64
             }
         }
     }
-    let mut total: u64 = files.iter().map(|f| f.1).sum();
     files.sort();
+    files
+}
+
+/// The files to remove, oldest first, until the total of `files` (oldest first) is at or under
+/// `cap_bytes`. Pure: `trim_cache` and the scheduler's `sweep.reclaim` both choose with it.
+pub fn trim_selection<P: Clone>(files: &[(u64, u64, P)], cap_bytes: u64) -> Vec<P> {
+    let mut total: u64 = files.iter().map(|f| f.1).sum();
+    let mut out = vec![];
+    for (_, sz, p) in files {
+        if total <= cap_bytes {
+            break;
+        }
+        total -= sz;
+        out.push(p.clone());
+    }
+    out
+}
+
+pub fn trim_cache(root: &Path, cap_bytes: u64, now: u64, dry: bool) -> (u64, u64) {
+    let files = cache_files(root, now);
+    let mut total: u64 = files.iter().map(|f| f.1).sum();
     let (mut n, mut freed) = (0, 0);
     for (_, sz, p) in files {
         if total <= cap_bytes {
@@ -160,6 +182,21 @@ pub fn trim_cache(root: &Path, cap_bytes: u64, now: u64, dry: bool) -> (u64, u64
         }
     }
     (n, freed)
+}
+
+/// The only podman arguments a prune may carry: lossless, never `-a` or `--volumes`.
+pub const PODMAN_PRUNE_ARGS: [&str; 3] = ["system", "prune", "-f"];
+
+/// The directory whose filesystem's free space decides a pass: the first existing ancestor of
+/// the first pattern's fixed prefix.
+pub fn free_probe(patterns: &[String]) -> PathBuf {
+    let probe = patterns.iter().find_map(|p| p.split('*').next().map(PathBuf::from)).unwrap_or_default();
+    probe.ancestors().find(|a| a.exists()).unwrap_or(Path::new("/")).to_path_buf()
+}
+
+/// The first `require` pattern that matches nothing: the failed positive control.
+pub fn unmatched_require(require: &[String]) -> Option<&String> {
+    require.iter().find(|r| glob(r).is_empty())
 }
 
 pub struct Config {
@@ -184,7 +221,7 @@ fn prune_podman(bin: &Path, why: &str, dry: bool, say: &mut dyn FnMut(String)) {
         return;
     }
     // batch-job: a prune of tens of GB of images runs as long as its work, under the unit's CPUQuota
-    match std::process::Command::new(bin).args(["system", "prune", "-f"]).output() {
+    match std::process::Command::new(bin).args(PODMAN_PRUNE_ARGS).output() {
         Ok(o) if o.status.success() => {
             let out = String::from_utf8_lossy(&o.stdout);
             let line = out.lines().rev().find(|l| l.contains("reclaimed")).unwrap_or("reclaimed size not reported");
@@ -197,10 +234,8 @@ fn prune_podman(bin: &Path, why: &str, dry: bool, say: &mut dyn FnMut(String)) {
 
 /// Err is the failed positive control: nothing has been removed.
 pub fn run(cfg: &Config, now: u64, held: &[PathBuf], free_mib: &dyn Fn() -> Option<u64>, say: &mut dyn FnMut(String)) -> Result<u64, String> {
-    for r in &cfg.require {
-        if glob(r).is_empty() {
-            return Err(format!("positive control failed: {r} matches nothing, so an empty sweep proves nothing"));
-        }
+    if let Some(r) = unmatched_require(&cfg.require) {
+        return Err(format!("positive control failed: {r} matches nothing, so an empty sweep proves nothing"));
     }
     let mut freed = 0u64;
     let free = free_mib().ok_or("cannot read free space")?;

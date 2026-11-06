@@ -164,6 +164,9 @@ pub struct PendingActivation {
     base: String,
     marker: PathBuf,
     pin: Option<PathBuf>,
+    /// The queue directory and repository the activation lock is taken under.
+    queue_dir: PathBuf,
+    repo: String,
 }
 
 impl PendingActivation {
@@ -176,7 +179,24 @@ impl PendingActivation {
 
     /// Switch the running system onto the release. A landing's last step: the new release may
     /// retire keys the running release's tools require, so nothing after it can rely on them.
+    ///
+    /// Runs with the queue lock RELEASED (over-broad-scopes #3, sp-ipwlic): the landing is
+    /// recorded, and an activation restarts services and drains oneshots for minutes, so a claim
+    /// or a round verb held behind it timed out and failed. Activations serialise on their own
+    /// lock instead, and one whose head a later landing has already moved past is not run: that
+    /// landing's release carries this one, and activating this one after it would roll back.
     pub fn activate(self, w: &World) -> super::deploy::Outcome {
+        let _serial = crate::lock::activation_lock(&self.queue_dir, &self.repo);
+        if let Some(tip) = w.git.rev_parse(&self.plan.repo, &self.base) {
+            if tip != self.head && w.git.is_ancestor(&self.plan.repo, &self.head, &tip) {
+                let why = format!("{} already moved past {} to {tip}; that landing's release carries this one", self.base, self.head);
+                w.out(format!("queue.sh land-local: release {} not activated: {why}", self.sha));
+                if let Some(pin) = &self.pin {
+                    let _ = fs::remove_file(pin);
+                }
+                return super::deploy::Outcome::Superseded(why);
+            }
+        }
         let outcome = match super::deploy::activate(w, &self.plan, &self.sha) {
             Ok(()) => super::deploy::Outcome::Activated(self.sha.clone()),
             Err(why) => super::deploy::Outcome::Fault(why),
@@ -186,6 +206,7 @@ impl PendingActivation {
                 let _ = fs::remove_file(&self.marker);
                 w.out(format!("queue.sh land-local: activated release {sha}"));
             }
+            super::deploy::Outcome::Superseded(_) => {}
             super::deploy::Outcome::Fault(why) => {
                 w.err(format!(
                     "LAND DEPLOY FAILED for {}: {why} — current is untouched (still {}); {} is at {} and the landing stays recorded",
@@ -279,7 +300,7 @@ pub fn land_local_deferring(
             return rc(FAIL);
         }
     }
-    let _g = if lock_held {
+    let g = if lock_held {
         None
     } else {
         match take_lock(w, "land-local", &c, "") {
@@ -455,10 +476,14 @@ pub fn land_local_deferring(
             base: base.clone(),
             marker: c.queue_file("deploy-fault"),
             pin: pin.clone(),
+            queue_dir: c.s.queue_dir.clone(),
+            repo: c.r.name.clone(),
         });
     let (pending, outcome) = if defer {
         (pending, None)
     } else {
+        // The landing is recorded: the queue lock goes before the activation, not after it.
+        drop(g);
         (None, pending.map(|p| p.activate(w)))
     };
     if pending.is_none() {
@@ -468,6 +493,7 @@ pub fn land_local_deferring(
     }
     let deploy_note = match &outcome {
         Some(super::deploy::Outcome::Activated(sha)) => format!(" Release {sha} activated."),
+        Some(super::deploy::Outcome::Superseded(why)) => format!(" Release not activated: {why}."),
         Some(super::deploy::Outcome::Fault(why)) => {
             format!(" DEPLOY FAULT: {head} landed but its release was not activated: {why}.")
         }

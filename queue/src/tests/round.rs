@@ -159,6 +159,11 @@ fn open_certify_land_is_one_round_the_whole_way() {
         result_lines(&t, &batch),
         [("1970-01-01T00:16:40Z".to_string(), "landed".to_string(), "merged-tb members=sp-a:ta,sp-b:tb".to_string())]
     );
+    let log = t.landing_log();
+    assert!(
+        log.lines().any(|l| l.starts_with("QUEUE ROUND-LAND ") && l.ends_with(&format!(" repo=spira batch={batch} head=merged-tb members=sp-a:ta,sp-b:tb"))),
+        "the landing log names the round's members (run-state-trail): {log}"
+    );
 }
 
 #[test]

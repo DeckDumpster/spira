@@ -131,9 +131,9 @@ done <<< "$rendered"
 n="$(ls "$DEST" | wc -l)"
 [ "$n" -gt 0 ] && ok "installed $n unit(s) for fixture" \
     || bad "fixture install" "no files in $DEST: ${rendered:0:600}"
-[ -f "$DEST/spira-czar-pass-prod.timer" ] \
-    && ok "fixture: czar-pass timer present" \
-    || bad "fixture: czar-pass timer present" "spira-czar-pass-prod.timer missing"
+[ -f "$DEST/cockpit-ensure.timer" ] \
+    && ok "fixture: cockpit-ensure timer present" \
+    || bad "fixture: cockpit-ensure timer present" "cockpit-ensure.timer missing"
 
 # ==========================================================================
 echo
@@ -172,37 +172,37 @@ fi
 echo
 echo "missing unit — installed when absent:"
 # ==========================================================================
-# Remove the czar-pass service (not the timer — keep the timer for the enable test).
-czar_svc="$DEST/spira-czar-pass-prod.service"
-if [ -f "$czar_svc" ]; then
-    rm -f "$czar_svc"
+# Remove the cockpit-ensure service (not the timer — keep the timer for the enable test).
+ce_svc="$DEST/cockpit-ensure.service"
+if [ -f "$ce_svc" ]; then
+    rm -f "$ce_svc"
     : > "$SC_LOG"
     miss_out="$(ensure)"
-    want "missing: installed line present"       "installed  spira-czar-pass-prod.service" "$miss_out"
+    want "missing: installed line present"       "installed  cockpit-ensure.service" "$miss_out"
     want "missing: daemon-reload called"         "daemon-reload" "$miss_out"
-    [ -f "$czar_svc" ] && ok "missing: file was created" \
-        || bad "missing: file was created" "$czar_svc not found after ensure"
+    [ -f "$ce_svc" ] && ok "missing: file was created" \
+        || bad "missing: file was created" "$ce_svc not found after ensure"
 else
-    bad "missing unit setup" "spira-czar-pass-prod.service not in fixture"
+    bad "missing unit setup" "cockpit-ensure.service not in fixture"
 fi
 
 # ==========================================================================
 echo
 echo "content change — updated unit triggers daemon-reload:"
 # ==========================================================================
-czar_timer="$DEST/spira-czar-pass-prod.timer"
-if [ -f "$czar_timer" ]; then
-    printf '\n# stale modification by test\n' >> "$czar_timer"
+ce_timer="$DEST/cockpit-ensure.timer"
+if [ -f "$ce_timer" ]; then
+    printf '\n# stale modification by test\n' >> "$ce_timer"
     : > "$SC_LOG"
     diff_out="$(ensure)"
-    want "differs: updated line present"  "updated    spira-czar-pass-prod.timer" "$diff_out"
+    want "differs: updated line present"  "updated    cockpit-ensure.timer" "$diff_out"
     want "differs: daemon-reload called"  "daemon-reload" "$diff_out"
     # The updated unit should match the template now.
     : > "$SC_LOG"
     again_out="$(ensure)"
     want "differs: second run is no-op" "no changes" "$again_out"
 else
-    bad "content change setup" "spira-czar-pass-prod.timer not in fixture"
+    bad "content change setup" "cockpit-ensure.timer not in fixture"
 fi
 
 # ==========================================================================

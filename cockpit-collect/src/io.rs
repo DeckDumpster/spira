@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -190,15 +190,15 @@ fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| default.to_string())
 }
 
-/// `content <args>`: bead content (title, labels, comments) through `spira-lc content`, the
-/// one door — never `bd` itself. `SPIRA_BDJSON_FIXTURE` set -> `bdsim <fixture> <args>`
-/// (the test seam the `test-cockpit-*.sh` suites drive). `timeout ${BD_TIMEOUT:-180}`, retried
-/// up to `SPIRA_BDQ_CONN_RETRIES` (default 2) times while stderr contains "invalid
-/// connection". `None` on any failure; the caller renders `?`, never 0.
+/// `content <args>`: bead content (title, labels, comments) through the store's `content`
+/// verb over its socket, the one door — never `bd` itself. `SPIRA_BDJSON_FIXTURE` set ->
+/// `bdsim <fixture> <args>` (the test seam the `test-cockpit-*.sh` suites drive). Retried up
+/// to `SPIRA_BDQ_CONN_RETRIES` (default 2) times while bd says "invalid connection". `None`
+/// on any failure; the caller renders `?`, never 0.
 pub fn content(args: &[&str]) -> Option<String> {
     if let Ok(fixture) = std::env::var("SPIRA_BDJSON_FIXTURE") {
         if !fixture.is_empty() {
-            let out = Command::new(spira_config::release_env::tool("bdsim").ok()?)
+            let out = spira_config::bounded::bounded(spira_config::release_env::tool("bdsim").ok()?)
                 .arg(&fixture)
                 .args(args)
                 .stdin(Stdio::null())
@@ -211,29 +211,22 @@ pub fn content(args: &[&str]) -> Option<String> {
             return None;
         }
     }
-    let lc = env_or("SPIRA_LC_BIN", "spira-lc");
-    let timeout_s = env_or("BD_TIMEOUT", "180");
+    let lc = spira_config::lc_call::LcClient::configured().ok()?;
     let tries: u32 = env_or("SPIRA_BDQ_CONN_RETRIES", "2").parse().unwrap_or(2).max(1);
+    content_on(&lc, args, tries)
+}
 
+/// [`content`] through `lc`: the store's `content` verb, retried up to `tries` times while
+/// bd's answer says its connection was invalid.
+pub fn content_on(lc: &spira_config::lc_call::LcClient, args: &[&str], tries: u32) -> Option<String> {
+    let argv: Vec<&str> = std::iter::once("content").chain(args.iter().copied()).collect();
     let mut attempt: u32 = 1;
     loop {
-        let out = Command::new("timeout")
-            .arg(&timeout_s)
-            .arg(&lc)
-            .arg("content")
-            .args(args)
-            .stdin(Stdio::null())
-            .output();
-        let out = match out {
-            Ok(o) => o,
-            Err(_) => return None,
-        };
-        if out.status.success() {
-            return Some(String::from_utf8_lossy(&out.stdout).into_owned());
+        let r = lc.call(&argv).ok()?;
+        if r.code == 0 {
+            return Some(r.out);
         }
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        let rc = out.status.code().unwrap_or(1);
-        if !bead::bdq::should_retry(rc, attempt, tries, stderr.contains("invalid connection")) {
+        if !bead::bdq::should_retry(r.code, attempt, tries, r.err.contains("invalid connection")) {
             return None;
         }
         attempt += 1;
@@ -420,17 +413,44 @@ pub fn lib_call(home: &Path, func: &str, args: &[&str]) -> Option<String> {
     lib_call_with_stdin(home, func, args, None)
 }
 
+/// The lib.sh names whose bodies are one-line shims onto a library this crate links: the runes
+/// registry (`spira-config rune`), `dwarf dwarf-named` and `strand dwarves-live-*`. Answered
+/// here with what the shim printed; `None` for a name this does not answer.
+fn lib_inproc(home: &Path, func: &str, args: &[&str]) -> Option<Option<String>> {
+    let arg = |i: usize| args.get(i).copied().unwrap_or("");
+    let roster = || spira_config::process::cfg("SPIRA_RUNES").ok();
+    Some(match func {
+        "spira_runes" => roster().map(|r| spira_config::runes::spira_runes(home, Some(&r))),
+        "rune_get" => roster().map(|_| spira_config::runes::rune_get(home, arg(0), arg(1), arg(2))),
+        "persona_model" => roster().map(|_| spira_config::runes::persona_model(arg(0), Some(arg(1)))),
+        "dwarf_named" => Some(dwarf::naming::dwarf_named(Path::new(arg(0)))),
+        "dwarves_live_total" | "dwarves_live_lanes" => {
+            let cfg = strand::config::Config::resolve(&strand::config::Live::load()).ok()?;
+            let n = if func == "dwarves_live_total" { strand::probe::dwarves_live_total(&cfg) } else { strand::probe::dwarves_live_lanes(&cfg) };
+            Some(n.to_string())
+        }
+        _ => return None,
+    })
+}
+
 pub fn lib_call_with_stdin(
     home: &Path,
     func: &str,
     args: &[&str],
     stdin: Option<&str>,
 ) -> Option<String> {
+    // FORK-EDGE: queue_certified_list and queue_sort_rows are shims onto `queue-helpers`;
+    // needs a queue library entry for them. Every other lib.sh name is answered in-process
+    // by [`lib_inproc`] before this bridge is reached.
+    if let Some(answer) = lib_inproc(home, func, args) {
+        return answer;
+    }
     const SNIPPET: &str = r#"set -uo pipefail
 . "$1/lib.sh" >/dev/null 2>&1 || exit 96
 f="$2"; shift 2
 "$f" "$@"
 "#;
+    // FORK-EDGE: the queue-helpers lib.sh bridge above; nothing else reaches it.
     let mut cmd = spira_config::bounded::bounded("bash");
     cmd.arg("-c")
         .arg(SNIPPET)
@@ -494,20 +514,17 @@ pub fn tsd_slots_sample(run: &Path, frag: &Path) {
     let lanes_live = field("SP_SLOTS_LANES_LIVE");
     let ready = field("SP_SLOTS_READY");
     let paused = field("SP_SLOTS_CAPACITY_PAUSED");
-    let _ = spira_config::bounded::bounded("tsd-write")
-        .arg("--family")
-        .arg("slots")
-        .arg("--root")
-        .arg(run)
-        .args(["--field", &format!("live={live}")])
-        .args(["--field", &format!("ceiling={ceiling}")])
-        .args(["--field", &format!("lanes_live={lanes_live}")])
-        .args(["--field", &format!("ready={ready}")])
-        .args(["--field", &format!("capacity_paused={paused}")])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    let fields = [("live", live), ("ceiling", ceiling), ("lanes_live", lanes_live), ("ready", ready), ("capacity_paused", paused)];
+    let _ = slots_row(run, &fields, &tsd::iso_utc(now() as u64), &tsd::default_host());
+}
+
+/// The `slots` row, appended in-process exactly as `tsd-write --family slots --root <run>
+/// --field k=v ...` appends it: each value typed as `--field` types it, under the family
+/// file's exclusive lock.
+pub fn slots_row(run: &Path, fields: &[(&str, String)], ts: &str, host: &str) -> Result<(), String> {
+    let parsed = fields.iter().map(|(k, v)| tsd::parse_field(&format!("{k}={v}"))).collect::<Result<Vec<_>, _>>()?;
+    let line = tsd::build_row(ts, host, "slots", &parsed)?;
+    tsd::append_line(&tsd::family_path(run, "slots"), &line)
 }
 
 /// `git -C <repo> <args>`, stdout on success, `None` on any non-zero exit or spawn failure.
@@ -529,25 +546,43 @@ pub fn git(repo: &Path, args: &[&str]) -> Option<String> {
 
 /// `systemctl --user is-active <unit>` -> `Some(true/false)`, or `None` when the unit is
 /// unknown to systemd. A unit that cannot be found must never render as "not active"
-/// (law-absence-needs-a-positive-control): the caller renders `?`, not `0`.
+/// (law-absence-needs-a-positive-control): the caller renders `?`, not `0`. Read through the
+/// `Units` port (the user manager over D-Bus), never a `systemctl` child.
 pub fn unit_active(unit: &str) -> Option<bool> {
+    unit_active_on(units()?, unit)
+}
+
+/// `unit`'s activity as `units` states it: an unknown unit is not active, as `systemctl
+/// is-active` printed `inactive` for one; a port that cannot answer is `None`.
+pub fn unit_active_on(units: &dyn runtime::units::Units, unit: &str) -> Option<bool> {
     if unit == "?" {
         return None;
     }
-    let out = spira_config::bounded::bounded("systemctl")
-        .args(["--user", "is-active", unit])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() && !out.status.success() {
-        return None;
+    let facts = units.facts(&runtime::units::UnitHandle::named(unit)).ok()?;
+    Some(facts.state == runtime::units::UnitState::Active)
+}
+
+/// This process's connection to the user manager, opened once; `None` when there is none.
+fn units() -> Option<&'static dyn runtime::units::Units> {
+    #[cfg(target_os = "linux")]
+    {
+        static UNITS: OnceLock<Option<Box<dyn runtime::units::Units>>> = OnceLock::new();
+        UNITS
+            .get_or_init(|| {
+                let units = runtime::units::SystemdUnits::connect(std::sync::Arc::new(runtime::ports::WallClock)).ok()?;
+                Some(Box::new(units) as Box<dyn runtime::units::Units>)
+            })
+            .as_deref()
     }
-    Some(s == "active")
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
 }
 
 pub fn unit_show_invocation_id(unit: &str) -> Option<String> {
+    // FORK-EDGE: needs UnitFacts.invocation_id from the Units port (the D-Bus backend reads
+    // InvocationID already but does not expose it).
     let out = spira_config::bounded::bounded("systemctl")
         .args(["--user", "show", unit, "-p", "InvocationID", "--value"])
         .stdin(Stdio::null())
@@ -571,6 +606,8 @@ pub fn unit_show_invocation_id(unit: &str) -> Option<String> {
 /// same way `spira/cockpit.sh` invoked it (law-units-build-what-they-exec: never construct
 /// a path to it, resolve it off `PATH` like every other caller in the release).
 pub fn run_tool(name: &str, args: &[&str], stdin: Option<&str>) -> Option<String> {
+    // FORK-EDGE: generic runner for operator scripts and sibling tools (release, overrides.sh,
+    // tokens.sh, yield.sh, tsd-query.sh, spira-claim, date); each is ported with its task.
     let mut cmd = spira_config::bounded::bounded(name);
     cmd.args(args).stderr(Stdio::null());
     if let Some(input) = stdin {
@@ -621,19 +658,28 @@ pub fn proc_cmdline(pid: i64) -> Option<String> {
     Some(parts.join(" "))
 }
 
-/// `ps -o etimes= -p <pid>` — elapsed seconds since the process started. `None` when the
-/// pid is gone or `ps` cannot be read.
+/// Elapsed seconds since `pid` started, from procfs (`ps -o etimes=` without the `ps`). `None`
+/// when the pid is gone or procfs cannot be read.
 pub fn proc_etimes(pid: i64) -> Option<i64> {
-    let out = spira_config::bounded::bounded("ps")
-        .args(["-o", "etimes=", "-p", &pid.to_string()])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let uptime = std::fs::read_to_string("/proc/uptime").ok()?;
+    etimes_from(&stat, &uptime, clock_ticks()?)
+}
+
+/// `ps`'s etimes: system uptime less the process's start time (field 22 of `stat`, in clock
+/// ticks since boot). The command name in field 2 may hold spaces and parentheses, so fields
+/// are counted after its last `)`.
+fn etimes_from(stat: &str, uptime: &str, ticks: i64) -> Option<i64> {
+    let after = &stat[stat.rfind(')')? + 1..];
+    let start: i64 = after.split_whitespace().nth(19)?.parse().ok()?;
+    let up: f64 = uptime.split_whitespace().next()?.parse().ok()?;
+    Some((up as i64 - start / ticks.max(1)).max(0))
+}
+
+fn clock_ticks() -> Option<i64> {
+    // SAFETY: sysconf reads a constant and has no preconditions.
+    let t = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    (t > 0).then_some(t as i64)
 }
 
 pub fn sleep(d: Duration) {
@@ -643,6 +689,55 @@ pub fn sleep(d: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unit_activity_is_read_through_the_units_port() {
+        use runtime::units::{ScriptedUnits, UnitFacts, UnitState};
+        let units = ScriptedUnits::new(std::sync::Arc::new(runtime::ports::VirtualClock::new(0)));
+        let mut active = UnitFacts::absent();
+        active.state = UnitState::Active;
+        units.install("spira-sentinel.timer", active);
+        let mut failed = UnitFacts::absent();
+        failed.state = UnitState::Failed;
+        units.install("spira-ops.timer", failed);
+        assert_eq!(unit_active_on(&units, "spira-sentinel.timer"), Some(true));
+        assert_eq!(unit_active_on(&units, "spira-ops.timer"), Some(false));
+        assert_eq!(unit_active_on(&units, "spira-nothing.timer"), Some(false), "an unknown unit is inactive, as is-active said");
+        assert_eq!(unit_active_on(&units, "?"), None);
+        assert!(units.calls().is_empty(), "a read starts and stops nothing");
+    }
+
+    #[test]
+    fn etimes_is_uptime_less_the_start_tick_and_survives_a_spaced_command_name() {
+        let stat = "4242 (a (weird) name) S 1 4242 4242 0 -1 4194560 100 0 0 0 5 3 0 0 20 0 1 0 50000 1000 200";
+        assert_eq!(etimes_from(stat, "1000.42 3999.10\n", 100), Some(500));
+        assert_eq!(etimes_from("garbage", "1000.0 1", 100), None);
+        assert!(proc_etimes(std::process::id() as i64).is_some(), "this process has an age");
+        assert_eq!(proc_etimes(i32::MAX as i64), None);
+    }
+
+    #[test]
+    fn the_slots_row_is_appended_in_process_as_tsd_write_wrote_it() {
+        let dir = testkit::TempDir::new("cockpit-collect-slots-row");
+        let fields = [("live", "3".to_string()), ("ceiling", "4".to_string()), ("capacity_paused", "?".to_string())];
+        slots_row(dir.path(), &fields, "2026-11-03T12:00:00Z", "h1").unwrap();
+        let text = std::fs::read_to_string(tsd::family_path(dir.path(), "slots")).unwrap();
+        let row: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
+        assert_eq!(row["family"], "slots");
+        assert_eq!(row["ts"], "2026-11-03T12:00:00Z");
+        assert_eq!(row["live"], 3);
+        assert_eq!(row["capacity_paused"], "?");
+    }
+
+    #[test]
+    fn dwarf_named_is_answered_in_process_and_the_queue_shims_are_not() {
+        let dir = testkit::TempDir::new("cockpit-collect-dwarf-named");
+        let pid = dir.path().join("dwarf-builder-1.pid");
+        std::fs::write(dir.path().join("dwarf-builder-1.name"), "Brokk").unwrap();
+        assert_eq!(lib_inproc(dir.path(), "dwarf_named", &[pid.to_str().unwrap()]), Some(Some("Brokk".to_string())));
+        assert_eq!(lib_inproc(dir.path(), "dwarf_named", &["/nonexistent/x.pid"]), Some(Some("?".to_string())));
+        assert_eq!(lib_inproc(dir.path(), "queue_certified_list", &["/r"]), None);
+    }
 
     #[test]
     fn json_only_drops_banner_lines() {

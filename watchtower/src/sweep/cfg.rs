@@ -1,7 +1,7 @@
 //! Every threshold and path the sweep reads, with the bash's own defaults. `main.rs`
 //! builds this from the environment once; everything downstream takes it by reference.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub struct Cfg {
     pub spira_run: PathBuf,
@@ -43,9 +43,15 @@ pub struct Cfg {
     pub queue_throttle_override: String,
 
     pub incident_sh: String,
-    pub bdq: String,
+    /// The store's client: bd's rows through its content door.
+    pub lc: spira_config::lc_call::LcClient,
     pub suites_sh: Option<String>,
-    pub moot_sh: Option<String>,
+    /// `COCKPIT_DB`; `None` when it does not resolve (the moot-sweep then checks nothing).
+    pub cockpit_db: Option<String>,
+    /// `SPIRA_MOOT_TIMEOUT`.
+    pub moot_timeout_s: u64,
+    /// `SPIRA_RESOLVE_SH`, else `resolve`.
+    pub resolve_bin: String,
     pub branch_guard_sh: Option<String>,
     /// `spira-lc`: whether an incident bead is unfinished is its lifecycle row's answer.
     pub lc_bin: String,
@@ -78,12 +84,13 @@ impl Cfg {
     pub fn gate_log(&self) -> PathBuf {
         self.gate_log.clone().unwrap_or_else(|| self.spira_run.join("gate.log"))
     }
-    pub fn moot_sh(&self) -> String {
-        self.moot_sh.clone().unwrap_or_else(|| {
-            Path::new(&self.lib_sh_dir)
-                .parent()
-                .map(|p| p.join("cockpit/moot-sweep.sh").to_string_lossy().into_owned())
-                .unwrap_or_else(|| "cockpit/moot-sweep.sh".to_string())
-        })
+    pub fn moot(&self) -> super::moot::MootCfg {
+        super::moot::MootCfg {
+            db: self.cockpit_db.clone(),
+            lc: self.lc.clone(),
+            ask_label: self.ask_label.clone(),
+            timeout_s: self.moot_timeout_s,
+            resolve: self.resolve_bin.clone(),
+        }
     }
 }

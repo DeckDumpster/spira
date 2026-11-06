@@ -245,6 +245,9 @@ fn run_main(cwd: &std::path::Path, args: &[String], env: &dyn Fn(&str) -> Option
     let [scenario] = pos.as_slice() else { return Err(USAGE.to_string()) };
     let path = spira_sim::drive::scenario_path(cwd, scenario);
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if spira_sim::loopworld::is_loop(&text) {
+        return loop_main(&text, &set, &cli_repos, env);
+    }
     let sc = parse_scenario(&text)?;
     let repos = spira_sim::drive::scenario_repos(&sc, &cli_repos)?;
     let seed = match seed_of(&set)? {
@@ -288,6 +291,45 @@ fn run_main(cwd: &std::path::Path, args: &[String], env: &dyn Fn(&str) -> Option
         eprintln!("sim: world kept at {}", dir.display());
     }
     outcome
+}
+
+/// `sim run` of a loop world (`driver = "loop"`): the service's registrations in-process on
+/// doubles (ruling D6). Its run directory, `$TMPDIR/sim-run-<pid>-<seed>` as a world's, holds the
+/// scenario and the `exec.log` of its effects; `--keep` keeps it for `sim world down`.
+fn loop_main(text: &str, set: &std::collections::BTreeMap<String, String>, cli_repos: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
+    use spira_sim::loopworld;
+    if set.contains_key("--world") || !cli_repos.is_empty() {
+        return Err("a loop scenario runs in-process: --world and --repo do not apply".into());
+    }
+    let script = loopworld::parse(text)?;
+    let seed = match seed_of(set)? {
+        Some(s) => s,
+        None => std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_nanos() as u64,
+    };
+    world::refuse_production(env)?;
+    println!("sim seed: {seed}");
+    let dir = std::env::temp_dir().join(format!("sim-run-{}-{seed}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    std::fs::write(dir.join(world::MARKER), "").map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("scenario.toml"), text).map_err(|e| e.to_string())?;
+    let run = loopworld::run(seed, script.clone())?;
+    let mut log = run.exec_log.join("\n");
+    log.push('\n');
+    std::fs::write(dir.join(spira_sim::drive::EXEC_LOG), log).map_err(|e| e.to_string())?;
+    let missed = run.missed(&script);
+    if missed.is_none() && !set.contains_key("--keep") {
+        world::down(&dir, &ProcessSteps)?;
+    } else {
+        eprintln!("sim: world kept at {}", dir.display());
+    }
+    eprintln!("sim: profile loop wall={}ms effects={}", run.wall.as_millis(), run.exec_log.len());
+    match missed {
+        None => {
+            println!("sim: ok seed {seed}");
+            Ok(())
+        }
+        Some(why) => Err(format!("seed {seed}: {why}")),
+    }
 }
 
 fn step_main(args: &[String]) -> Result<(), String> {

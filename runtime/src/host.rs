@@ -6,12 +6,14 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tokio::sync::{mpsc, Semaphore};
+use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit};
 
 use crate::engine::{Engine, Executor, Outcome, PendingEffect};
 use crate::event::{EffectSpec, EventKind};
 use crate::offload::{self, Offloaded, Pool, Spill};
-use crate::ports::Clock;
+use crate::pools::{ClassPools, Deferred, EffectClass, PoolCaps};
+use crate::ports::{Clock, VirtualClock};
+use crate::sources::{self, Source, Sources};
 use crate::wide::{Fields, WideSink};
 use crate::{Result, RuntimeError};
 
@@ -23,12 +25,53 @@ const BACKOFF_MAX: Duration = Duration::from_secs(2);
 pub trait EffectRunner: Send + Sync {
     /// Must be idempotent under `key`: a restart re-issues every effect that has no outcome.
     fn run(&self, key: &str, spec: &EffectSpec) -> std::result::Result<String, String>;
+
+    /// The effector class whose cap `spec` runs under.
+    fn class(&self, _spec: &EffectSpec) -> EffectClass {
+        EffectClass::Host
+    }
 }
 
+/// An event from outside the engine. `reply`, when set, hears whether it was journaled: `Ok`
+/// once it is durable, `Err` when the journal refused or failed it. A dropped reply means the
+/// host stopped before the event was offered.
 pub struct Submit {
     pub id: String,
     pub stream: String,
     pub kind: EventKind,
+    pub reply: Option<oneshot::Sender<std::result::Result<(), String>>>,
+}
+
+impl Submit {
+    pub fn new(id: &str, stream: &str, kind: EventKind) -> Self {
+        Submit { id: id.into(), stream: stream.into(), kind, reply: None }
+    }
+
+    /// The submission and the receiver that hears whether it was accepted.
+    pub fn with_reply(id: &str, stream: &str, kind: EventKind) -> (Self, oneshot::Receiver<std::result::Result<(), String>>) {
+        let (tx, rx) = oneshot::channel();
+        (Submit { reply: Some(tx), ..Submit::new(id, stream, kind) }, rx)
+    }
+}
+
+impl std::fmt::Debug for Submit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Submit").field("id", &self.id).field("stream", &self.stream).field("kind", &self.kind).field("reply", &self.reply.is_some()).finish()
+    }
+}
+
+/// Journals `s` and answers its reply. A refusal is answered and absorbed; a fault is answered
+/// and returned, since it may clear on restart.
+fn accept(engine: &mut Engine, s: Submit) -> Result<()> {
+    // loop-safe: accept runs on the offload pool (Host) or under virtual time (VirtualDriver), never on the loop thread
+    let r = engine.submit(&s.id, &s.stream, s.kind);
+    if let Some(reply) = s.reply {
+        let _ = reply.send(r.as_ref().map(|_| ()).map_err(|e| e.to_string()));
+    }
+    match r {
+        Err(e) if e.is_refused() => Ok(()),
+        r => r,
+    }
 }
 
 #[derive(Default)]
@@ -45,6 +88,7 @@ pub struct ServeOpts {
 
 enum Done {
     Started(String),
+    Deferred(String, EffectClass),
     Outcome(String, Outcome),
     Spilled(String, Spill),
 }
@@ -66,7 +110,7 @@ struct TurnOut {
 fn run_turn(mut t: Turn) -> TurnOut {
     let result = (|| {
         for s in t.subs.drain(..) {
-            t.engine.submit(&s.id, &s.stream, s.kind)?; // loop-safe: runs on the offload pool
+            accept(&mut t.engine, s)?; // loop-safe: runs on the offload pool
         }
         for d in t.done.drain(..) {
             match d {
@@ -74,6 +118,7 @@ fn run_turn(mut t: Turn) -> TurnOut {
                 Done::Outcome(key, o) => {
                     t.engine.complete(&key, o)?; // loop-safe: runs on the offload pool
                 }
+                Done::Deferred(key, class) => t.engine.note_deferred(&key, class.name()),
                 Done::Spilled(..) => {}
             }
         }
@@ -85,8 +130,8 @@ fn run_turn(mut t: Turn) -> TurnOut {
 }
 
 /// Runs until `submissions` closes and no effect is in flight.
-pub async fn serve(engine: Engine, clock: Arc<dyn Clock>, runner: Arc<dyn EffectRunner>, pool: usize, submissions: mpsc::Receiver<Submit>) -> Result<()> {
-    serve_with(engine, clock, runner, pool, submissions, ServeOpts::default()).await
+pub async fn serve(engine: Engine, clock: Arc<dyn Clock>, runner: Arc<dyn EffectRunner>, caps: impl Into<PoolCaps>, submissions: mpsc::Receiver<Submit>) -> Result<()> {
+    serve_with(engine, clock, runner, caps, submissions, ServeOpts::default()).await
 }
 
 fn spill_record(s: &Spill) -> Fields {
@@ -109,14 +154,15 @@ pub async fn serve_with(
     engine: Engine,
     clock: Arc<dyn Clock>,
     runner: Arc<dyn EffectRunner>,
-    pool: usize,
+    caps: impl Into<PoolCaps>,
     mut submissions: mpsc::Receiver<Submit>,
     opts: ServeOpts,
 ) -> Result<()> {
     let workers = opts.pool.clone().unwrap_or_else(Pool::global);
+    let engine = classified(engine, &runner);
     let busy = engine.busy();
     let max_sleep = opts.max_sleep_ms.map(Duration::from_millis);
-    let permits = Arc::new(Semaphore::new(pool.max(1)));
+    let pools = ClassPools::new(caps.into());
     let (done_tx, mut done_rx) = mpsc::unbounded_channel::<Done>();
     let mut in_flight: BTreeSet<String> = BTreeSet::new();
     let mut engine = Some(engine);
@@ -131,10 +177,13 @@ pub async fn serve_with(
             s.emit(&f); // loop-safe: try_send, drops when full
         }
     };
-    let spilled = |s: &Spill, backoff: &mut Duration, retry_at: &mut Instant| {
-        emit(spill_record(s));
+    let back_off = |backoff: &mut Duration, retry_at: &mut Instant| {
         *retry_at = Instant::now() + *backoff;
         *backoff = (*backoff * 2).min(BACKOFF_MAX);
+    };
+    let spilled = |s: &Spill, backoff: &mut Duration, retry_at: &mut Instant| {
+        emit(spill_record(s));
+        back_off(backoff, retry_at);
     };
     loop {
         if let Some(k) = &opts.kick {
@@ -186,6 +235,7 @@ pub async fn serve_with(
             Some(d) = done_rx.recv() => {
                 match &d {
                     Done::Started(_) => backoff = BACKOFF_FIRST,
+                    Done::Deferred(..) => {}
                     Done::Outcome(key, _) => {
                         in_flight.remove(key);
                     }
@@ -211,8 +261,18 @@ pub async fn serve_with(
                 }
                 out.result?;
                 for p in out.launch {
-                    in_flight.insert(p.key.clone());
-                    launch_effect(&workers, &permits, &runner, &done_tx, clock.now_ms(), p);
+                    match pools.try_take(runner.class(&p.spec)) {
+                        Ok(permit) => {
+                            in_flight.insert(p.key.clone());
+                            launch_effect(&workers, permit, &runner, &done_tx, clock.now_ms(), p);
+                        }
+                        Err(d) => {
+                            emit(deferred_record(&p, &d, pools.deferred_total(d.class)));
+                            back_off(&mut backoff, &mut retry_at);
+                            dirty = true;
+                            done.push(Done::Deferred(p.key.clone(), d.class));
+                        }
+                    }
                 }
                 next_timer = out.next_timer_at;
                 engine = Some(out.engine);
@@ -234,12 +294,30 @@ pub async fn serve_with(
     }
 }
 
-fn launch_effect(workers: &Arc<Pool>, permits: &Arc<Semaphore>, runner: &Arc<dyn EffectRunner>, tx: &mpsc::UnboundedSender<Done>, now: u64, p: PendingEffect) {
-    let (workers, permits, runner, tx) = (workers.clone(), permits.clone(), runner.clone(), tx.clone());
+/// The engine reports each effect under the class the runner gives it.
+fn classified(engine: Engine, runner: &Arc<dyn EffectRunner>) -> Engine {
+    let r = runner.clone();
+    engine.with_classifier(Arc::new(move |spec: &EffectSpec| r.class(spec).name().to_string()))
+}
+
+/// A class at its cap refused `p`. It stays pending in the engine and is offered again after the backoff.
+fn deferred_record(p: &PendingEffect, d: &Deferred, total: u64) -> Fields {
+    let mut f = Fields::new();
+    f.insert("unit".into(), "effect.deferred".into());
+    f.insert("task".into(), p.stream.0.as_str().into());
+    f.insert("effect".into(), p.spec.name.as_str().into());
+    f.insert("class".into(), d.class.name().into());
+    f.insert("class.in_use".into(), d.in_use.into());
+    f.insert("class.cap".into(), d.cap.into());
+    f.insert("class.deferred_total".into(), total.into());
+    f
+}
+
+fn launch_effect(workers: &Arc<Pool>, permit: OwnedSemaphorePermit, runner: &Arc<dyn EffectRunner>, tx: &mpsc::UnboundedSender<Done>, now: u64, p: PendingEffect) {
+    let (workers, runner, tx) = (workers.clone(), runner.clone(), tx.clone());
     let until = tokio::time::Instant::now() + Duration::from_millis(p.deadline_at.saturating_sub(now));
     tokio::spawn(async move {
         let outcome = async {
-            let Ok(Ok(permit)) = tokio::time::timeout_at(until, permits.acquire_owned()).await else { return Some(Outcome::TimedOut) };
             let (r, k, spec) = (runner, p.key.clone(), p.spec.clone());
             let mut h = match workers.offload("effect", Some(permit), move || r.run(&k, &spec)) {
                 Ok(h) => h,
@@ -261,4 +339,168 @@ fn launch_effect(workers: &Arc<Pool>, permits: &Arc<Semaphore>, runner: &Arc<dyn
             let _ = tx.send(Done::Outcome(p.key, outcome));
         }
     });
+}
+
+/// Which timeline the host runs on. `Wall` is the tokio loop above. `Virtual` jumps the clock
+/// to the next timer or source time and answers every effect synchronously through the runner,
+/// so the same registrations and the same runner (with doubles in it) run under either.
+pub enum Driver {
+    Wall(Arc<dyn Clock>),
+    Virtual { clock: VirtualClock, until_ms: u64 },
+}
+
+/// Runs `engine` on `driver`. Under `Wall`, `sources` are started on their own threads and
+/// submit beside `submissions`; it returns once both are closed and nothing is in flight.
+/// Under `Virtual` it returns at `until_ms`, having taken whatever `submissions` held at each
+/// step: virtual time does not wait for the wall.
+pub async fn drive(driver: Driver, engine: Engine, runner: Arc<dyn EffectRunner>, caps: impl Into<PoolCaps>, mut submissions: mpsc::Receiver<Submit>, sources: Sources, opts: ServeOpts) -> Result<()> {
+    match driver {
+        Driver::Wall(clock) => {
+            if sources.is_empty() {
+                return serve_with(engine, clock, runner, caps, submissions, opts).await;
+            }
+            let (tx, rx) = mpsc::channel(SOURCE_QUEUE);
+            let _threads = sources.start(tx.clone())?;
+            tokio::spawn(async move {
+                while let Some(s) = submissions.recv().await {
+                    if tx.send(s).await.is_err() {
+                        return;
+                    }
+                }
+            });
+            serve_with(engine, clock, runner, caps, rx, opts).await
+        }
+        Driver::Virtual { clock, until_ms } => {
+            let mut v = VirtualDriver::new(engine, clock, runner).with_sources(sources)?;
+            loop {
+                while let Ok(s) = submissions.try_recv() {
+                    v.submit(s)?;
+                }
+                if !v.step(until_ms)? {
+                    return Ok(());
+                }
+            }
+        }
+    }
+}
+
+/// The bound on submissions queued between the sources and the wall-clock loop.
+pub const SOURCE_QUEUE: usize = 256;
+
+/// One virtual instant's work is refused past this many effect rounds: a handler answering
+/// every outcome with a new effect never lets virtual time move.
+pub const SETTLE_LIMIT: usize = 10_000;
+
+/// The virtual-time host: no threads, no sleeps, no pool. Effects run in key order on the
+/// caller's thread, so one seed and one script give one trace.
+pub struct VirtualDriver {
+    engine: Engine,
+    clock: VirtualClock,
+    runner: Arc<dyn EffectRunner>,
+    sources: Vec<Box<dyn Source>>,
+    held: BTreeSet<String>,
+    effects_run: u64,
+}
+
+impl VirtualDriver {
+    pub fn new(engine: Engine, clock: VirtualClock, runner: Arc<dyn EffectRunner>) -> Self {
+        let engine = classified(engine, &runner);
+        VirtualDriver { engine, clock, runner, sources: Vec::new(), held: BTreeSet::new(), effects_run: 0 }
+    }
+
+    /// Refuses a set holding any source that reads the real world.
+    pub fn with_sources(mut self, sources: Sources) -> Result<Self> {
+        self.sources.extend(sources.into_scripted()?);
+        Ok(self)
+    }
+
+    /// Effects with these names are left pending for the caller to complete; the runner never sees them.
+    pub fn with_held(mut self, names: impl IntoIterator<Item = String>) -> Self {
+        self.held.extend(names);
+        self
+    }
+
+    pub fn engine(&self) -> &Engine {
+        &self.engine
+    }
+
+    pub fn engine_mut(&mut self) -> &mut Engine {
+        &mut self.engine
+    }
+
+    pub fn into_engine(self) -> Engine {
+        self.engine
+    }
+
+    pub fn clock(&self) -> &VirtualClock {
+        &self.clock
+    }
+
+    /// Effects and probes answered by the runner so far.
+    pub fn effects_run(&self) -> u64 {
+        self.effects_run
+    }
+
+    pub fn submit(&mut self, s: Submit) -> Result<()> {
+        accept(&mut self.engine, s)
+    }
+
+    /// Runs the engine and answers every pending effect until none is left at this instant.
+    pub fn settle(&mut self) -> Result<()> {
+        for _ in 0..SETTLE_LIMIT {
+            // loop-safe: VirtualDriver runs under virtual time (sim and tests); it has no event loop
+            self.engine.run_until_idle()?;
+            let pending: Vec<PendingEffect> = self.engine.pending_effects().into_iter().filter(|p| !self.held.contains(&p.spec.name)).collect();
+            if pending.is_empty() {
+                return Ok(());
+            }
+            for p in pending {
+                self.engine.note_attempt(&p.key);
+                let outcome = match self.runner.run(&p.key, &p.spec) {
+                    Ok(d) => Outcome::Succeeded(d),
+                    Err(e) => Outcome::Failed(e),
+                };
+                self.effects_run += 1;
+                // loop-safe: VirtualDriver runs under virtual time (sim and tests); it has no event loop
+                self.engine.complete(&p.key, outcome)?;
+            }
+        }
+        Err(RuntimeError::new(format!("virtual time {} did not settle within {SETTLE_LIMIT} effect rounds", self.clock.now_ms())))
+    }
+
+    fn deliver_due(&mut self) -> Result<()> {
+        let now = self.clock.now_ms();
+        let mut due = Vec::new();
+        for s in self.sources.iter_mut() {
+            if let Some(x) = s.scripted() {
+                due.extend(x.take_due(now));
+            }
+        }
+        for s in due {
+            accept(&mut self.engine, s)?;
+        }
+        Ok(())
+    }
+
+    /// Settles now, moves the clock to the next timer or source time at or before `limit_ms`
+    /// and settles there. `false` once nothing is due by then; the clock is left at `limit_ms`.
+    pub fn step(&mut self, limit_ms: u64) -> Result<bool> {
+        self.deliver_due()?;
+        self.settle()?;
+        let now = self.clock.now_ms();
+        let next = [self.engine.next_timer_at(), sources::next_at(&mut self.sources)].into_iter().flatten().min();
+        let more = matches!(next, Some(t) if t <= limit_ms && now < limit_ms);
+        self.clock.advance_to(match next {
+            Some(t) if more => t.max(now + 1),
+            _ => limit_ms,
+        });
+        self.deliver_due()?;
+        self.settle()?;
+        Ok(more)
+    }
+
+    pub fn run_until(&mut self, limit_ms: u64) -> Result<()> {
+        while self.step(limit_ms)? {}
+        Ok(())
+    }
 }

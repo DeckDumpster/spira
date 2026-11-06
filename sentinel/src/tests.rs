@@ -76,6 +76,72 @@ impl Runner for FakeRunner {
     }
 }
 
+/// The in-process doors, re-expressed as the command lines they replaced and answered by the
+/// same scripted [`FakeRunner`], so each fixture keeps describing the store, the claim, hel and
+/// the units the way it always did. Production never builds this.
+pub struct RunnerServices<'a>(pub &'a dyn Runner);
+
+impl<'a> RunnerServices<'a> {
+    fn ask(&self, prog: &str, args: Vec<String>) -> Out {
+        self.0.run(&Spec::args_owned(prog, args))
+    }
+}
+
+impl<'a> crate::services::Services for RunnerServices<'a> {
+    fn lc(&self, bin: &str, args: &[String]) -> Out {
+        self.ask(bin, args.to_vec())
+    }
+    fn content(&self, _bin: &str, args: &[String]) -> Out {
+        self.ask("bd", ["-C".to_string(), "/db".to_string()].into_iter().chain(args.iter().cloned()).collect())
+    }
+    fn claim(&self, args: &[String], env: &[(String, String)]) -> Out {
+        let mut s = Spec::args_owned("spira-claim", args.to_vec());
+        s.env = env.to_vec();
+        self.0.run(&s)
+    }
+    fn holder_alive(&self, id: &str) -> bool {
+        self.ask("hel", vec!["holder-alive".into(), id.into()]).ok()
+    }
+    fn stop_holder(&self, id: &str) -> bool {
+        self.ask("hel", vec!["stop-holder".into(), id.into()]).ok()
+    }
+    fn destroy_worktree(&self, id: &str, path: &str, repo: &str, why: &str) -> bool {
+        self.ask("hel", vec!["destroy-worktree".into(), id.into(), path.into(), repo.into(), why.into()]).ok()
+    }
+    fn unit_active(&self, unit: &str) -> bool {
+        self.ask("systemctl", vec!["--user".into(), "is-active".into(), unit.into()]).stdout.trim() == "active"
+    }
+    fn unit_stop(&self, unit: &str) -> bool {
+        self.ask("systemctl", vec!["--user".into(), "stop".into(), unit.into()]).ok()
+    }
+    fn tsd_row(&self, family: &str, fields: &[(String, serde_json::Value)]) {
+        let mut a = vec!["--family".to_string(), family.to_string()];
+        for (k, v) in fields {
+            match v {
+                serde_json::Value::String(t) => a.extend(["--field-str".to_string(), format!("{k}={t}")]),
+                other => a.extend(["--field".to_string(), format!("{k}={other}")]),
+            }
+        }
+        self.ask("tsd-write", a);
+    }
+    fn mail(&self, m: &crate::services::Ask) -> bool {
+        let mut a: Vec<String> = ["send", "concierge", "--from", m.from, "--subject", m.subject, "--kind", "question", "--default", m.default].map(String::from).to_vec();
+        if !m.bead.is_empty() {
+            a.extend(["--bead".to_string(), m.bead.to_string()]);
+        }
+        let mut s = Spec::args_owned("mail", a).stdin(m.body.as_bytes().to_vec());
+        if m.own_dedup {
+            s = s.env("SPIRA_MAIL_REPEAT_CONSIDERED", "sentinel-own-dedup");
+        }
+        self.0.run(&s).ok()
+    }
+}
+
+/// A host over the fake ports, its doors answered by the same runner.
+pub fn test_host<'a>(r: &'a dyn Runner, clock: &'a dyn Clock, sink: &'a dyn Sink) -> Host<'a> {
+    Host::new(r, clock, sink, Box::leak(Box::new(RunnerServices(r))))
+}
+
 pub fn ok(s: &str) -> Option<Out> {
     Some(Out {
         rc: 0,
@@ -344,7 +410,7 @@ pub fn run_mode<'a>(
 ) -> i32 {
     let runes = w.home.join("runes");
     let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_RUNES_DIR", runes.to_str())]);
-    let h: &'a Host<'a> = Box::leak(Box::new(Host::new(r, clock, sink)));
+    let h: &'a Host<'a> = Box::leak(Box::new(test_host(r, clock, sink)));
     let s = Sentinel::new(
         h,
         w.ctx(extra, repos),
@@ -551,7 +617,7 @@ fn ask_already_open_queries_open_asks_by_label_and_matches_the_subject_substring
         assert_eq!(arg_after("--label"), Some("needs-operator")); // literal-ok: asserts argv built from the fixture
         ok(r#"[{"id":"sp-ask1","title":"Spira is landing nothing — its last run exited 1","status":"open"}]"#)
     });
-    let h: &Host = Box::leak(Box::new(Host::new(&r, &clock, &sink)));
+    let h: &Host = Box::leak(Box::new(test_host(&r, &clock, &sink)));
     let s = Sentinel::new(h, w.ctx(&[], None), w.declared(&[]), &w.home, Mode::Report, "p".into());
     assert!(s.ask_already_open("Spira is landing nothing"), "{}", sink.text());
     assert!(!s.ask_already_open("no bead carries this subject"));
@@ -996,7 +1062,7 @@ fn roster_warnings_name_each_left_out_persona_once() {
     // registered-key values from `Declared` only, so this test's own roster-stamp
     // assertion (`w.run.join(...)`) needs `d.run` set to match.
     let declared = || Declared { run: w.run.clone(), db: "/db".into(), ..Declared::test_default() };
-    let h = Host::new(&r, &clock, &sink);
+    let h = test_host(&r, &clock, &sink);
     Sentinel::new(
         &h,
         ctx(),
@@ -1013,7 +1079,7 @@ fn roster_warnings_name_each_left_out_persona_once() {
         "ops spike "
     );
     let sink2 = FakeSink::default();
-    let h2 = Host::new(&r, &clock, &sink2);
+    let h2 = test_host(&r, &clock, &sink2);
     Sentinel::new(
         &h2,
         ctx(),
@@ -1054,12 +1120,10 @@ fn phases_are_tsd_rows_for_the_full_pass_only() {
     );
     let row = r.find(|s| s.prog == t).unwrap();
     assert_eq!(
-        row.args[..6],
+        row.args[..4],
         [
             "--family",
             "sentinel-phase",
-            "--root",
-            &w.run.to_string_lossy(),
             "--field-str",
             "pass=host-1-1"
         ]
@@ -1212,7 +1276,7 @@ fn spawned_units_are_pinned_to_current_not_the_callers_release() {
     let (w, r, sink, clock) = setup("skew-argv");
     let (_t, old, new) = two_releases("argv");
     let path = format!("{old}/bin:{old}/spira:/usr/bin");
-    let h: &Host = Box::leak(Box::new(Host::new(&r, &clock, &sink)));
+    let h: &Host = Box::leak(Box::new(test_host(&r, &clock, &sink)));
     let extra = [("SPIRA_RELEASE", old.as_str()), ("PATH", path.as_str())];
     let s = Sentinel::new(
         h,
@@ -1228,6 +1292,8 @@ fn spawned_units_are_pinned_to_current_not_the_callers_release() {
     assert!(!argv.contains(&old), "no token may name the caller's release: {argv}");
     assert!(argv.contains("--property=IOSchedulingClass=idle"), "{argv}");
     assert!(argv.contains("--property=IOWeight=10"), "{argv}");
+    // The `--call-only` re-exec on the dwarf's stop is retired: its end is an event now.
+    assert!(!argv.contains("ExecStopPost") && !argv.contains("--call-only"), "no stop-post re-exec: {argv}");
 }
 
 /// sp-mve9i: close_landed_queue_waiters finds the labeled beads as content (`list --all
@@ -1308,3 +1374,105 @@ fn on_check2d_an_unresolved_repo_map_hold_stands() {
 
 // ---------------------------------------------------------------------------------------
 // P0 express preempts a running lane dwarf; only a P0 or express bead makes lanes yield
+
+// ---------------------------------------------------------------------------------------
+// Scheduler consolidation §2: the store, the claim, hel, the unit stops, the metrics row and
+// mail are in-process doors, never children of this pass.
+
+/// Records every door a pass opens and answers each as the healthy service would.
+#[derive(Default)]
+pub struct RecordingServices {
+    pub calls: RefCell<Vec<String>>,
+}
+
+impl RecordingServices {
+    fn note(&self, s: String) {
+        self.calls.borrow_mut().push(s);
+    }
+    pub fn has(&self, s: &str) -> bool {
+        self.calls.borrow().iter().any(|c| c == s)
+    }
+}
+
+impl crate::services::Services for RecordingServices {
+    fn lc(&self, _bin: &str, args: &[String]) -> Out {
+        self.note(format!("lc {}", args.join(" ")));
+        let out = if args.first().map(String::as_str) == Some("show") { r#"{"bead":{"state":"READY","version":"3"}}"# } else { "" };
+        Out { rc: 0, stdout: out.into(), stderr: String::new() }
+    }
+    fn content(&self, _bin: &str, args: &[String]) -> Out {
+        self.note(format!("content {}", args.join(" ")));
+        Out { rc: 0, stdout: "[]".into(), stderr: String::new() }
+    }
+    fn claim(&self, args: &[String], _env: &[(String, String)]) -> Out {
+        self.note(format!("claim {}", args.join(" ")));
+        Out { rc: 0, stdout: "4".into(), stderr: String::new() }
+    }
+    fn holder_alive(&self, id: &str) -> bool {
+        self.note(format!("holder_alive {id}"));
+        true
+    }
+    fn stop_holder(&self, id: &str) -> bool {
+        self.note(format!("stop_holder {id}"));
+        true
+    }
+    fn destroy_worktree(&self, id: &str, _p: &str, _r: &str, _w: &str) -> bool {
+        self.note(format!("destroy_worktree {id}"));
+        true
+    }
+    fn unit_active(&self, unit: &str) -> bool {
+        self.note(format!("unit_active {unit}"));
+        false
+    }
+    fn unit_stop(&self, unit: &str) -> bool {
+        self.note(format!("unit_stop {unit}"));
+        true
+    }
+    fn tsd_row(&self, family: &str, _fields: &[(String, serde_json::Value)]) {
+        self.note(format!("tsd {family}"));
+    }
+    fn mail(&self, m: &crate::services::Ask) -> bool {
+        self.note(format!("mail {}", m.subject));
+        true
+    }
+}
+
+#[test]
+fn the_store_claim_hel_units_and_mail_are_doors_not_children() {
+    let w = World::new("doors");
+    let r = FakeRunner::new();
+    // The unit listing is still a child (FORK-EDGE: Units has no list); its stops are not.
+    r.on(|s| (s.args.get(1).map(String::as_str) == Some("list-units")).then(|| Out { rc: 0, stdout: "spira-x-1.service loaded active running x\n".into(), stderr: String::new() }));
+    let (sink, clock) = (FakeSink::default(), FakeClock(Cell::new(NOW)));
+    let rec = RecordingServices::default();
+    let h = Host::new(&r, &clock, &sink, &rec);
+    let s = Sentinel::new(&h, w.ctx(&[], None), w.declared(&[]), &w.home, Mode::Report, "p".into());
+
+    s.lc_hold("sp-1", "wait", "asked");
+    assert_eq!(s.lc_event("sp-1", "claim", "sentinel"), Ok(()));
+    assert!(s.holder_alive("sp-1"));
+    assert_eq!(s.plan_ready_live(), Some(4));
+    s.export_ready_cache();
+    assert_eq!(s.named_unit_stop("spira-x-*").1, 0);
+    assert!(s.mail("sentinel", "subject-1", "", "body", "", false));
+    assert!(s.bd().call(&h, &["list", "--json"], None).ok());
+
+    for want in [
+        "lc hold sp-1 wait asked sentinel",
+        "lc show sp-1",
+        "lc event bead sp-1 --expect READY --version 3 --actor sentinel --kind claim",
+        "holder_alive sp-1",
+        "claim bulk-ready-by-rune",
+        "unit_stop spira-x-1.service",
+        "mail subject-1",
+        "content list --json",
+    ] {
+        assert!(rec.has(want), "{want} went through the door: {:?}", rec.calls.borrow());
+    }
+    let children: Vec<String> = r
+        .lines()
+        .into_iter()
+        .filter(|l| ["spira-lc", "spira-claim", "hel", "mail", "tsd-write", "bd"].contains(&l.split(' ').next().unwrap_or("")) || l.contains(" stop ") || l.contains("is-active"))
+        .collect();
+    assert!(children.is_empty(), "no child for an in-process door: {children:?}");
+}

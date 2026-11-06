@@ -228,7 +228,7 @@ printf '\n%s\n' "5. no harness transition site writes to run/tsd/'s bead-stage f
 # ============================================================================================
 offenders="$(grep -rl -- "--family bead-stage\|family=bead-stage\|family bead-stage" \
     "$REPO"/spira/*.sh "$REPO"/lifecycle*/src/*.rs "$REPO"/spira-lc/src/*.rs \
-    "$REPO"/batcher/src/*.rs "$REPO"/batcher-cut/src/*.rs "$REPO"/queue-watch/src/*.rs 2>/dev/null \
+    "$REPO"/batcher/src/*.rs "$REPO"/batcher-cut/src/*.rs 2>/dev/null \
     | grep -v '/tsd-lifecycle-export/' | grep -v '/test-tsd-lifecycle-export\.sh$' || true)"
 is "no transition site writes bead-stage directly — only tsd-lifecycle-export does" "" "$offenders"
 

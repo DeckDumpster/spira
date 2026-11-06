@@ -84,24 +84,40 @@ pub struct Ctx<'a> {
     pub submitted_label: &'a str,
 }
 
-/// send_disposition. The bead is read once; the forge is asked only after every local
-/// check has said no.
-pub fn disposition(c: &Ctx, id: &str, br: &str) -> Disp {
-    let g = Git(c.repo);
-    let lr = c.base.landref.as_str();
-    if g.content_on_base(br, lr) {
+/// The facts a disposition reads, each asked only when the rules reach it: the forge is asked
+/// after every local check has said no. The live sweep answers from git and the world; the
+/// scheduler's `hel.sweep` answers from its snapshot.
+pub trait Facts {
+    fn content_on_base(&self) -> bool;
+    fn has_bead(&self) -> bool;
+    fn superseded(&self) -> bool;
+    fn ahead(&self) -> Option<u64>;
+    fn merges_clean(&self) -> bool;
+    fn terminal(&self) -> bool;
+    /// The bead carries the submitted label, or its lifecycle row is past the builder.
+    fn submitted(&self) -> bool;
+    fn tip(&self) -> Option<String>;
+    /// The merged PR's head for the branch (the network call).
+    fn pr_merged_tip(&self) -> Option<String>;
+    fn landed(&self) -> bool;
+    fn cherry_unapplied(&self) -> bool;
+    fn landed_by_subject(&self) -> bool;
+}
+
+/// The rules of send_disposition, in order, over [`Facts`].
+pub fn judge(f: &dyn Facts) -> Disp {
+    if f.content_on_base() {
         return Disp::SendContentLanded;
     }
-    let bead = c.w.bead(id);
-    let b = bead.as_ref();
+    let has_bead = f.has_bead();
 
     // A SUPERSEDED BEAD'S BRANCH: its work landed under the successor's id. The edge is a
     // claim, not a proof — reap only when merging it would conflict (nothing of its own is
     // missing from the base), or when it carries nothing at all.
-    if b.is_some_and(superseded) {
-        let n = g.ahead(lr, br);
-        if n != Some(0) && g.merges_clean(lr, br) {
-            if c.w.lc_terminal(id) {
+    if has_bead && f.superseded() {
+        let n = f.ahead();
+        if n != Some(0) && f.merges_clean() {
+            if f.terminal() {
                 return Disp::ArchiveTerminal;
             }
             return Disp::KeepSupersededUnsafe;
@@ -111,9 +127,9 @@ pub fn disposition(c: &Ctx, id: &str, br: &str) -> Disp {
 
     // SQUASH-MERGED: a merged PR whose head is still the branch tip captured every commit.
     // The network call, reached only here.
-    if b.is_some_and(|b| labels(b).iter().any(|l| l == c.submitted_label)) || (b.is_some() && c.w.lc_past_builder(id)) {
-        let tip = g.rev_parse(br);
-        if let Some(pr) = c.w.pr_merged_tip(c.repo, br) {
+    if has_bead && f.submitted() {
+        let tip = f.tip();
+        if let Some(pr) = f.pr_merged_tip() {
             if !pr.is_empty() && tip.as_deref() == Some(pr.as_str()) {
                 return Disp::ReapSquashMerged;
             }
@@ -125,15 +141,15 @@ pub fn disposition(c: &Ctx, id: &str, br: &str) -> Disp {
     // this branch, so every commit unique to it must already be on the base (git cherry), or
     // this would delete work under a LANDED that is true about the past. A branch whose proof
     // fails is archived, not kept: the commits stay reachable at refs/archive.
-    if b.is_some() && c.w.lc_landed(id) {
-        if g.cherry_unapplied(lr, br) && !g.landed_by_subject(lr, br, id, 2000) {
+    if has_bead && f.landed() {
+        if f.cherry_unapplied() && !f.landed_by_subject() {
             return Disp::ArchiveTerminal;
         }
         return Disp::SendOtherPr;
     }
 
-    if b.is_some() {
-        if c.w.lc_terminal(id) {
+    if has_bead {
+        if f.terminal() {
             return Disp::ArchiveTerminal;
         }
         return Disp::KeepUnlanded;
@@ -141,6 +157,195 @@ pub fn disposition(c: &Ctx, id: &str, br: &str) -> Disp {
     // No bead, and not an ancestor (that one was sent at the first check): real commits
     // with no owner to land them — archived, never plain-deleted.
     Disp::OrphanNoBead
+}
+
+/// A content-landed branch with commits, none of which names the bead, is kept: an empty
+/// diff is not evidence of landing.
+/// Each fact is asked only when the ones before it have not settled the answer.
+pub fn needs_evidence(ahead: u64, has_own_commit: impl FnOnce() -> bool, only_stacked_base: impl FnOnce() -> bool, base_names: impl FnOnce() -> bool) -> bool {
+    ahead > 0 && !has_own_commit() && !only_stacked_base() && !base_names()
+}
+
+/// The live facts of one branch: git on the checkout, the bead read once, the world.
+struct Live<'a, 'b> {
+    c: &'a Ctx<'b>,
+    id: &'a str,
+    br: &'a str,
+    bead: std::cell::OnceCell<Option<Value>>,
+}
+
+impl Live<'_, '_> {
+    fn g(&self) -> Git<'_> {
+        Git(self.c.repo)
+    }
+    fn bead(&self) -> Option<&Value> {
+        self.bead.get_or_init(|| self.c.w.bead(self.id)).as_ref()
+    }
+}
+
+impl Facts for Live<'_, '_> {
+    fn content_on_base(&self) -> bool {
+        self.g().content_on_base(self.br, &self.c.base.landref)
+    }
+    fn has_bead(&self) -> bool {
+        self.bead().is_some()
+    }
+    fn superseded(&self) -> bool {
+        self.bead().is_some_and(superseded)
+    }
+    fn ahead(&self) -> Option<u64> {
+        self.g().ahead(&self.c.base.landref, self.br)
+    }
+    fn merges_clean(&self) -> bool {
+        self.g().merges_clean(&self.c.base.landref, self.br)
+    }
+    fn terminal(&self) -> bool {
+        self.c.w.lc_terminal(self.id)
+    }
+    fn submitted(&self) -> bool {
+        self.bead().is_some_and(|b| labels(b).iter().any(|l| l == self.c.submitted_label)) || self.c.w.lc_past_builder(self.id)
+    }
+    fn tip(&self) -> Option<String> {
+        self.g().rev_parse(self.br)
+    }
+    fn pr_merged_tip(&self) -> Option<String> {
+        self.c.w.pr_merged_tip(self.c.repo, self.br)
+    }
+    fn landed(&self) -> bool {
+        self.c.w.lc_landed(self.id)
+    }
+    fn cherry_unapplied(&self) -> bool {
+        self.g().cherry_unapplied(&self.c.base.landref, self.br)
+    }
+    fn landed_by_subject(&self) -> bool {
+        self.g().landed_by_subject(&self.c.base.landref, self.br, self.id, 2000)
+    }
+}
+
+/// send_disposition. The bead is read once; the forge is asked only after every local
+/// check has said no.
+pub fn disposition(c: &Ctx, id: &str, br: &str) -> Disp {
+    judge(&Live { c, id, br, bead: std::cell::OnceCell::new() })
+}
+
+/// One branch's facts as a pass reads them, all of them, in-process: what the scheduler's
+/// `hel.sweep` observes so it can judge without the world.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BranchScan {
+    pub id: String,
+    pub br: String,
+    pub tip: String,
+    pub ahead: Option<u64>,
+    pub content_on_base: bool,
+    pub merges_clean: bool,
+    pub cherry_unapplied: bool,
+    pub landed_by_subject: bool,
+    pub has_own_commit: bool,
+    pub only_stacked_base: bool,
+    pub base_names: bool,
+    pub worktree: Option<std::path::PathBuf>,
+    pub labels: Vec<String>,
+    pub superseded: bool,
+    /// Asked only when the rules would reach the forge (a submitted bead not otherwise settled).
+    pub pr_merged_tip: Option<String>,
+    /// Why somebody may be home, from the holder witnesses.
+    pub held: Option<String>,
+}
+
+/// One orphaned worktree: registered under the run's worktree directory, its branch gone.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OrphanScan {
+    pub id: String,
+    pub path: std::path::PathBuf,
+    pub br: String,
+    pub held: Option<String>,
+}
+
+/// One repository's reads for a pass: its base, every `spira/*` branch's facts (after the
+/// fetch of the base's own remote, only when there is a branch), and its orphaned worktrees.
+/// `Err` names why the repository is skipped.
+pub fn scan_repo(w: &dyn World, root: &Path, submitted_label: &str, fetch: bool) -> Result<(Base, Vec<BranchScan>, Vec<OrphanScan>), String> {
+    if !root.join(".git").exists() {
+        return Err(format!("{} is not a git checkout", root.display()));
+    }
+    let g = Git(root);
+    let brs = g.spira_branches();
+    let base = w.base(root).ok_or("cannot resolve the ref it lands on — configure its `base`")?;
+    if let Some(rem) = base.remote.as_deref() {
+        if fetch && !brs.is_empty() {
+            g.fetch(rem);
+        }
+    }
+    if !brs.is_empty() {
+        w.prefetch();
+    }
+    let lr = base.landref.as_str();
+    let mut branches = vec![];
+    for br in &brs {
+        let id = br.strip_prefix("spira/").unwrap_or(br).to_string();
+        let held = if id.starts_with("round-") { None } else { w.witness(&id) };
+        let bead = w.bead(&id);
+        let content = g.content_on_base(br, lr);
+        let superseded_ = bead.as_ref().is_some_and(superseded);
+        let labels_ = bead.as_ref().map(labels).unwrap_or_default();
+        let submitted = bead.is_some() && (labels_.iter().any(|l| l == submitted_label) || w.lc_past_builder(&id));
+        let pr_merged_tip = if held.is_none() && !content && !superseded_ && submitted { w.pr_merged_tip(root, br) } else { None };
+        branches.push(BranchScan {
+            tip: g.rev_parse(br).unwrap_or_default(),
+            ahead: g.ahead(lr, br),
+            content_on_base: content,
+            merges_clean: g.merges_clean(lr, br),
+            cherry_unapplied: g.cherry_unapplied(lr, br),
+            landed_by_subject: g.landed_by_subject(lr, br, &id, 2000),
+            has_own_commit: g.has_own_commit(lr, br, &id),
+            only_stacked_base: g.only_stacked_base(lr, br),
+            base_names: g.base_names(lr, &id, 2000),
+            worktree: g.worktree_of(br),
+            labels: labels_,
+            superseded: superseded_,
+            pr_merged_tip,
+            held,
+            br: br.clone(),
+            id,
+        });
+    }
+    let wts = w.worktrees();
+    let mut orphans = vec![];
+    for (path, br) in g.worktrees() {
+        if !path.starts_with(&wts) || path == wts {
+            continue;
+        }
+        let Some(id) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else { continue };
+        if id.starts_with('.') {
+            continue;
+        }
+        let Some(br) = br else { continue };
+        if g.branch_exists(&br) {
+            continue;
+        }
+        let held = w.witness(&id);
+        orphans.push(OrphanScan { id, path, br, held });
+    }
+    Ok((base, branches, orphans))
+}
+
+/// send_orphan's first half: park `br`'s tip at refs/archive/<br> and read it back. `Ok` is
+/// the tip parked; the branch may then be reaped with caller `archived`.
+pub fn archive_tip(root: &Path, br: &str, expect_tip: &str) -> Result<String, String> {
+    let g = Git(root);
+    let tip = g.rev_parse(br).ok_or_else(|| format!("cannot resolve tip of {br}"))?;
+    if !expect_tip.is_empty() && tip != expect_tip {
+        return Err(format!("{br} moved from {expect_tip} to {tip} since it was judged — left for the next pass"));
+    }
+    let archive = format!("refs/archive/{br}");
+    if !g.update_ref(&archive, &tip) {
+        return Err(format!("update-ref {archive} failed"));
+    }
+    let back = g.verify(&archive);
+    if back.as_deref() != Some(tip.as_str()) {
+        return Err(format!("{archive} reads back as {}, expected {tip}", back.as_deref().unwrap_or("nothing")));
+    }
+    Ok(tip)
 }
 
 /// One invocation's tally.
@@ -333,7 +538,7 @@ impl<'a> Sweep<'a> {
                 // empty work; only a branch with commits whose diff is nonetheless on the
                 // base is the case this records: a ContentOnBase event.
                 let ahead = g.ahead(lr, br).unwrap_or(0);
-                if ahead > 0 && !g.has_own_commit(lr, br, id) && !g.only_stacked_base(lr, br) && !g.base_names(lr, id, 2000) {
+                if needs_evidence(ahead, || g.has_own_commit(lr, br, id), || g.only_stacked_base(lr, br), || g.base_names(lr, id, 2000)) {
                     self.say(&format!("KEEP   {id}  {ahead} commit(s) not in {lr}, none naming the bead — an empty diff is not evidence of landing"));
                     return;
                 }

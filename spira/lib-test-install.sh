@@ -116,11 +116,17 @@ EOF
 # DERIVED, never hand-listed: every @SPIRA_PROD_ROOT@/bin/<name> a unit template in this tree
 # execs (ExecStart, ExecStartPre, ExecCondition, ...). A hand list went stale the day heimdall moved
 # into bin/ and turned three install suites red on the base.
+# Units the installer renders from code rather than from a template (sp-ipwlic: the watchdog's
+# service/timer come from watchdog::render via install_units.rs) name their target as
+# `{root}/bin/<tool>` in install/src; those are derived the same way, so a code-rendered unit
+# is staged too.
 _install_fixture_unit_bins() {
-    local sysd
+    local sysd inst
     sysd="$(cd "$(dirname "${BASH_SOURCE[0]}")/../systemd" 2>/dev/null && pwd)" || return 1
-    grep -ho '@SPIRA_PROD_ROOT@/bin/[A-Za-z0-9_.-]*' "$sysd"/*.service "$sysd"/*.timer 2>/dev/null \
-        | sed 's|.*/bin/||' | sort -u | tr '\n' ' '
+    inst="$(cd "$sysd/../install/src" 2>/dev/null && pwd)"
+    { grep -ho '@SPIRA_PROD_ROOT@/bin/[A-Za-z0-9_.-]*' "$sysd"/*.service "$sysd"/*.timer 2>/dev/null
+      [ -n "$inst" ] && grep -rho '{root}/bin/[A-Za-z0-9_.-]*' "$inst" 2>/dev/null
+    } | sed 's|.*/bin/||' | sort -u | tr '\n' ' '
 }
 INSTALL_FIXTURE_UNIT_BINS="$(_install_fixture_unit_bins)"
 

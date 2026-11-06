@@ -2,8 +2,21 @@ epoch = 1800000000
 horizon = 900000
 settle = 240000
 goal = "sp-sl01:SUBMITTED"
-real_actors = ["sentinel-call"]
 real_dwarf = true
+
+# The call. sentinel-call is a task of `spira-runtime serve` now (ruling D6): when to call is
+# decided in-process and tested in sim/tests (`whole_loop.rs`, `loop_ports.rs`). This world keeps
+# what its `unit_start` effect runs once it calls: `dwarf --home <home> builder` under the
+# properties `call_argv` gives, through the world's SPIRA_CALL seam (`sim-call`, standing where
+# systemd-run stands), on the call's minute. The slain session ends before the second minute,
+# so the gap steps read the attempt count between the two sessions.
+[[actor]]
+name = "call"
+command = '"$SPIRA_CALL" --property=TimeoutStartSec=3600 --property=IOSchedulingClass=idle --property=IOWeight=10 --setenv=SPIRA_RELEASE="$SPIRA_RELEASE" --setenv=PATH="$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:/usr/local/bin:/usr/bin:/bin" --setenv=HOME="$HOME" --setenv=SPIRA_TOML="$SPIRA_TOML" "$SPIRA_RELEASE/bin/dwarf" --home "$SPIRA_HOME" builder'
+first = 5000
+every = 60000
+duration_min = 1000
+duration_max = 2500
 
 [[step]]
 at = 0

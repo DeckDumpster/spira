@@ -15,8 +15,8 @@
 //! this bead) needs for the reconciler's Units invariant.
 //!
 //! `--list-optional` prints, as bare template names, the UNION of every template any
-//! combination of this box's two conditional inputs (dolt data,
-//! `inotifywait`) can ever push into `OPTIONAL` — not just this box's own current
+//! combination of this box's conditional inputs (dolt data, `SPIRA_SCCACHE_DAV_ADDR`,
+//! `--system-user`, `repo_is_git_checkout`) can ever push into `OPTIONAL` — not just this box's own current
 //! resolution. `test-tarball-bins.sh` (still bash) reads this instead of grepping
 //! `OPTIONAL+=` lines out of the retired `systemd/units.sh`.
 //!
@@ -27,15 +27,15 @@
 //!
 //! `--list-union` prints `UNITS <template>`, `ENABLE <template>` (bare, unsuffixed — which
 //! templates get enabled, not their per-instance names) and `OPTIONAL <template>` as the
-//! UNION across every combination of this box's three conditional inputs (dolt data,
-//! `inotifywait`, `SPIRA_BROKER_ENABLE`) — the "is this template listed ANYWHERE,
+//! UNION across every combination of this box's conditional inputs (dolt data,
+//! `SPIRA_SCCACHE_DAV_ADDR`, `--system-user`, `repo_is_git_checkout`) — the "is this template listed ANYWHERE,
 //! regardless of which branch a given box takes" completeness check
 //! `test-timer-templates.sh` (still bash) used static text parsing of `systemd/units.sh`
 //! for.
 //!
 //! `--list-manifest-union` prints `unit <installed-name>` for every template any
-//! combination of this box's FIVE conditional inputs (dolt data,
-//! `inotifywait`, `SPIRA_SCCACHE_DAV_ADDR`, `--system-user`, `repo_is_git_checkout`) could
+//! combination of this box's FOUR conditional inputs (dolt data,
+//! `SPIRA_SCCACHE_DAV_ADDR`, `--system-user`, `repo_is_git_checkout`) could
 //! EVER install, resolved to this instance's installed name — not just this box's current
 //! resolution, which `--list-manifest` probes fresh on every call. `owned.sh` unions this
 //! into its removal manifest (sp-da4y0): a unit installed under yesterday's resolution
@@ -108,13 +108,11 @@ fn run_main() -> ExitCode {
     if mode == Some("--list-optional") {
         let mut union: std::collections::BTreeSet<String> = Default::default();
         for dolt in [false, true] {
-            for inotify in [false, true] {
-                for sccache in [false, true] {
-                    for lc_system in [false, true] {
-                        for repo_git in [false, true] {
-                            if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, dolt_durable_set: dolt, inotify_present: inotify, sccache_dav_addr_set: sccache, repo_is_git_checkout: repo_git, lc_system_mode: lc_system, watch_names: Ok(Vec::new()) }) {
-                                union.extend(m.optional);
-                            }
+            for sccache in [false, true] {
+                for lc_system in [false, true] {
+                    for repo_git in [false, true] {
+                        if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, dolt_durable_set: dolt, sccache_dav_addr_set: sccache, repo_is_git_checkout: repo_git, lc_system_mode: lc_system, watch_names: Ok(Vec::new()) }) {
+                            union.extend(m.optional);
                         }
                     }
                 }
@@ -131,18 +129,16 @@ fn run_main() -> ExitCode {
         let mut enable: std::collections::BTreeSet<String> = Default::default();
         let mut optional: std::collections::BTreeSet<String> = Default::default();
         for dolt in [false, true] {
-            for inotify in [false, true] {
-                for (sccache, lc_system) in [(false, false), (false, true), (true, false), (true, true)] {
-                    for repo_git in [false, true] {
-                        if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, dolt_durable_set: dolt, inotify_present: inotify, sccache_dav_addr_set: sccache, repo_is_git_checkout: repo_git, lc_system_mode: lc_system, watch_names: Ok(Vec::new()) }) {
-                            for u in &m.units {
-                                units.insert(u.name.clone());
-                                if u.enable {
-                                    enable.insert(u.name.clone());
-                                }
+            for (sccache, lc_system) in [(false, false), (false, true), (true, false), (true, true)] {
+                for repo_git in [false, true] {
+                    if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, dolt_durable_set: dolt, sccache_dav_addr_set: sccache, repo_is_git_checkout: repo_git, lc_system_mode: lc_system, watch_names: Ok(Vec::new()) }) {
+                        for u in &m.units {
+                            units.insert(u.name.clone());
+                            if u.enable {
+                                enable.insert(u.name.clone());
                             }
-                            optional.extend(m.optional);
                         }
+                        optional.extend(m.optional);
                     }
                 }
             }

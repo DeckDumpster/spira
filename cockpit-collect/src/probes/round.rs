@@ -4,7 +4,6 @@
 use super::{push, Kv};
 use crate::quoting::sanitize;
 use serde_json::Value;
-use std::process::{Command, Stdio};
 
 const MAX_ROWS: usize = 12;
 const MAX_ROUNDS: usize = 4;
@@ -34,20 +33,10 @@ fn forge_state(show: &dyn Fn(&str) -> Option<String>, repo: &str, batch: &str) -
     Some(out)
 }
 
-/// `queue batch show --repo <repo>`, shared across panes like the lifecycle reads; `None` when it failed.
+/// `queue batch show --repo <repo>`, read from the store's views in-process and shared across
+/// panes like the lifecycle reads; `None` when the views cannot tell.
 pub(super) fn batch_show(repo: &str) -> Option<String> {
-    super::lc::shared_live(&format!("batch-show-{repo}"), || {
-        let timeout = spira_config::process::cfg("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty())?;
-        let o = Command::new("timeout")
-            .arg(timeout)
-            .arg(spira_config::release_env::tool("queue").ok()?)
-            .args(["batch", "show", "--repo", repo])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
-    })
+    super::lc::shared_live(&format!("batch-show-{repo}"), || crate::store::batch_show(repo))
 }
 
 pub(super) fn list_batches() -> Option<String> {
@@ -55,9 +44,8 @@ pub(super) fn list_batches() -> Option<String> {
 }
 
 fn list_batches_live() -> Option<String> {
-    let bin = spira_config::lifecycle_row::lc_bin().ok()?;
-    let o = Command::new("timeout").arg("5").arg(bin).args(["list", "--batches"]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-    o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+    let client = spira_config::lc_call::LcClient::configured().ok()?;
+    crate::store::answer_on(&client, &["list", "--batches"])
 }
 
 pub struct Progress {

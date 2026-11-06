@@ -105,7 +105,10 @@ stopped="$(cat "$STOPPED")"
 
 nowant "cockpit-prod not stopped"       "spira-cockpit-prod.service" "$stopped"
 nowant "loom-prod not stopped"          "spira-loom-prod.service"    "$stopped"
-want   "sentinel timer was stopped"     "spira-sentinel-prod.timer"  "$stopped"
+# The positive control: stop does stop a work unit. Every loop timer is now a task inside the
+# scheduler (world stop halts it on the control socket), so the unit that proves stop acts is
+# the running work service, not a timer.
+want   "a work service was stopped"     "spira-sentinel-prod.service" "$stopped"
 
 # ---------------------------------------------------------------------------
 # 3. stop/start CYCLE: cockpit and Loom survive. After world.sh stop followed

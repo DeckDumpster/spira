@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Other host effects (files, mail, local sockets) spira-runtime runs at once (the host effector class).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Other host effects (files, mail, local sockets) spira-runtime runs at once (the host effector class).
+    : "${SPIRA_POOL_CAP_HOST:=4}"
+SPIRA_CONF_DEFAULT_EOF

@@ -109,6 +109,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 name = "batcher"
 version = "0.1.0"
 dependencies = [
+ "forge",
  "suite-select",
 ]
 
@@ -117,7 +118,9 @@ name = "batcher-cut"
 version = "0.1.0"
 dependencies = [
  "batcher",
+ "forge",
  "gate",
+ "libc",
  "lifecycle",
  "migration-numbers",
  "serde_json",
@@ -125,6 +128,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "state-store",
+ "store-view",
  "suite-select",
  "testkit",
  "tsd",
@@ -203,6 +207,7 @@ dependencies = [
 name = "cert-sweep"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "serde_json",
  "spira-config",
  "spira-otel",
@@ -221,11 +226,15 @@ version = "1.0.0"
 dependencies = [
  "bead",
  "dwarf",
+ "libc",
+ "runtime",
  "serde_json",
  "spira-config",
  "spira-otel",
+ "store-view",
  "strand",
  "testkit",
+ "tsd",
 ]
 
 [[package]]
@@ -236,19 +245,14 @@ dependencies = [
  "crossterm",
  "hel",
  "libc",
+ "mail",
  "regex",
  "serde",
  "serde_json",
  "spira-claim",
  "spira-config",
+ "spira-world",
  "testkit",
-]
-
-[[package]]
-name = "concierge-guard"
-version = "1.0.0"
-dependencies = [
- "spira-config",
 ]
 
 [[package]]
@@ -299,10 +303,15 @@ dependencies = [
 name = "czar-pass"
 version = "1.0.0"
 dependencies = [
+ "forge",
+ "incident",
  "reconciler-engine",
+ "runtime",
+ "serde",
  "serde_json",
  "spira-config",
  "spira-otel",
+ "store-view",
  "testkit",
  "tsd",
 ]
@@ -419,6 +428,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "testkit",
 ]
 
 [[package]]
@@ -585,6 +595,7 @@ name = "gh-intake"
 version = "1.0.0"
 dependencies = [
  "lifecycle",
+ "mail",
  "serde_json",
  "sha2",
  "spira-config",
@@ -602,6 +613,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "strand",
+ "testkit",
 ]
 
 [[package]]
@@ -641,6 +653,7 @@ name = "heimdall"
 version = "1.0.0"
 dependencies = [
  "regex",
+ "runtime",
  "serde",
  "serde_json",
  "spira-config",
@@ -652,6 +665,7 @@ dependencies = [
 name = "hel"
 version = "1.0.0"
 dependencies = [
+ "runtime",
  "serde_json",
  "spira-config",
  "spira-otel",
@@ -748,9 +762,11 @@ dependencies = [
 name = "idea-prompt"
 version = "0.1.0"
 dependencies = [
+ "mail",
  "serde_json",
  "spira-config",
  "spira-otel",
+ "testkit",
 ]
 
 [[package]]
@@ -812,6 +828,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "inotify"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cc00ea907cab49550b7da656f80ebb97be1b997d931fbcd28d39734e17ce592"
+dependencies = [
+ "bitflags",
+ "inotify-sys",
+ "libc",
+]
+
+[[package]]
+name = "inotify-sys"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c033f80b2c113cdf91ab7a33faa9cbc014726dcad99880c8609af2a370edf37d"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "install"
 version = "0.1.0"
 dependencies = [
@@ -821,6 +857,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "testkit",
+ "watchdog",
 ]
 
 [[package]]
@@ -868,6 +905,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "testkit",
+ "ureq",
 ]
 
 [[package]]
@@ -876,6 +914,7 @@ version = "2.0.0"
 dependencies = [
  "hel",
  "libc",
+ "mail",
  "regex",
  "serde",
  "serde_json",
@@ -965,11 +1004,13 @@ version = "1.0.0"
 dependencies = [
  "axum",
  "cockpit-ops",
+ "runtime",
  "serde_json",
  "spira-claim",
  "spira-config",
  "spira-desired-state",
  "spira-otel",
+ "store-view",
  "testkit",
  "tokio",
  "tsd",
@@ -1113,9 +1154,11 @@ name = "panel"
 version = "1.0.0"
 dependencies = [
  "crossterm",
+ "mail",
  "serde_json",
  "spira-config",
  "spira-otel",
+ "testkit",
 ]
 
 [[package]]
@@ -1154,6 +1197,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "store-view",
  "testkit",
 ]
 
@@ -1272,12 +1316,14 @@ name = "queue"
 version = "1.0.0"
 dependencies = [
  "bead",
+ "forge",
  "gate",
  "landing-pass",
  "libc",
  "lifecycle",
  "migration-numbers",
  "release",
+ "runtime",
  "serde",
  "serde_json",
  "spira-config",
@@ -1285,16 +1331,6 @@ dependencies = [
  "state-store",
  "testkit",
  "tsd",
-]
-
-[[package]]
-name = "queue-watch"
-version = "1.0.0"
-dependencies = [
- "serde",
- "serde_json",
- "spira-config",
- "testkit",
 ]
 
 [[package]]
@@ -1405,6 +1441,7 @@ dependencies = [
 name = "reconciler"
 version = "1.0.0"
 dependencies = [
+ "libc",
  "mail",
  "reconciler-engine",
  "runtime",
@@ -1435,6 +1472,7 @@ dependencies = [
 name = "reconciler-engine"
 version = "1.0.0"
 dependencies = [
+ "mail",
  "runtime",
  "serde",
  "serde_json",
@@ -1454,6 +1492,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "testkit",
  "toml",
  "tsd",
 ]
@@ -1471,6 +1510,7 @@ dependencies = [
 name = "refusal-watch"
 version = "0.1.0"
 dependencies = [
+ "incident",
  "serde_json",
  "spira-config",
 ]
@@ -1539,6 +1579,7 @@ name = "round-controller"
 version = "0.1.0"
 dependencies = [
  "batcher",
+ "forge",
  "lifecycle",
  "migration-numbers",
  "reconciler-engine",
@@ -1554,6 +1595,7 @@ dependencies = [
  "spira-lc",
  "spira-otel",
  "state-store",
+ "store-view",
  "testkit",
  "toml",
 ]
@@ -1597,7 +1639,9 @@ dependencies = [
  "serde",
  "serde_json",
  "socket2",
+ "testkit",
  "tokio",
+ "unit-run",
 ]
 
 [[package]]
@@ -1607,6 +1651,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "testkit",
 ]
 
 [[package]]
@@ -1744,12 +1789,18 @@ dependencies = [
  "dwarf",
  "hel",
  "libc",
+ "mail",
+ "runtime",
  "serde",
  "serde_json",
  "sha2",
+ "spira-claim",
  "spira-config",
  "spira-otel",
+ "strand",
  "testkit",
+ "tsd",
+ "watchtower",
 ]
 
 [[package]]
@@ -1848,6 +1899,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 name = "sift"
 version = "0.1.0"
 dependencies = [
+ "forge",
  "serde_json",
  "spira-config",
  "spira-otel",
@@ -1889,6 +1941,7 @@ dependencies = [
 name = "sim"
 version = "0.1.0"
 dependencies = [
+ "lifecycle",
  "runtime",
  "serde",
  "serde_json",
@@ -1896,6 +1949,7 @@ dependencies = [
  "spira-desired-state",
  "spira-lc",
  "spira-otel",
+ "spira-runtime",
  "state-store",
  "testkit",
  "toml",
@@ -1906,8 +1960,10 @@ name = "skew"
 version = "1.0.0"
 dependencies = [
  "libc",
+ "mail",
  "spira-config",
  "spira-otel",
+ "tsd",
 ]
 
 [[package]]
@@ -1951,6 +2007,7 @@ dependencies = [
  "bead",
  "hel",
  "lifecycle",
+ "runtime",
  "serde",
  "serde_json",
  "spira-config",
@@ -2005,6 +2062,7 @@ dependencies = [
 name = "spira-lc"
 version = "1.0.0"
 dependencies = [
+ "bead",
  "incident",
  "lifecycle",
  "opentelemetry-proto",
@@ -2053,38 +2111,82 @@ dependencies = [
 name = "spira-runtime"
 version = "1.0.0"
 dependencies = [
+ "archivist",
  "base64",
+ "batcher",
+ "batcher-cut",
+ "bead",
+ "cert-sweep",
+ "cockpit-collect",
+ "cockpit-ops",
+ "czar-pass",
+ "dwarf",
+ "filings-collect",
  "forge",
+ "gate-check",
+ "gate-worker",
+ "gh-intake",
+ "groomer",
+ "heimdall",
+ "hel",
+ "idea-prompt",
+ "incident",
+ "inotify",
  "install",
+ "kit-bump",
+ "landing-pass",
  "libc",
  "mail",
+ "mimir-trigger",
+ "perf-watch",
+ "queue",
+ "reclaim",
  "reconciler",
  "reconciler-engine",
  "reconciler-flow",
+ "refusal-watch",
  "release",
  "ring",
+ "round-controller",
+ "round-vm",
+ "rule",
  "runtime",
+ "runtime-watch",
+ "sentinel",
  "serde",
  "serde_json",
+ "sift",
+ "sim",
+ "skew",
+ "sop",
  "spira-config",
  "spira-otel",
+ "spira-submission",
+ "store-view",
+ "testenv",
  "testkit",
  "tokio",
  "tsd",
  "unit-run",
  "ureq",
+ "watchd",
+ "watchtower",
 ]
 
 [[package]]
 name = "spira-sim"
 version = "0.1.0"
 dependencies = [
+ "lifecycle",
+ "perf-watch",
  "queue",
+ "runtime",
  "serde",
  "serde_json",
  "sim",
  "spira-config",
  "spira-otel",
+ "spira-runtime",
  "testkit",
  "toml",
 ]
@@ -2117,11 +2219,15 @@ name = "spira-world"
 version = "1.0.0"
 dependencies = [
  "hel",
+ "libc",
+ "mail",
+ "runtime",
  "serde_json",
  "spira-config",
  "spira-ctrl",
  "spira-otel",
  "testkit",
+ "tsd",
 ]
 
 [[package]]
@@ -2155,6 +2261,14 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "testkit",
+]
+
+[[package]]
+name = "store-view"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "spira-config",
 ]
 
 [[package]]
@@ -2642,9 +2756,24 @@ version = "1.0.0"
 dependencies = [
  "inbox-rules",
  "libc",
+ "mail",
  "regex",
  "sop",
  "spira-config",
+ "testkit",
+ "tsd",
+]
+
+[[package]]
+name = "watchdog"
+version = "0.1.0"
+dependencies = [
+ "mail",
+ "runtime",
+ "serde",
+ "serde_json",
+ "spira-config",
+ "spira-otel",
  "testkit",
 ]
 
@@ -2657,6 +2786,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-ctrl",
+ "strand",
  "testkit",
 ]
 

@@ -27,8 +27,12 @@ test = false
 spira-otel = { path = "../spira-otel" }
 spira-ctrl = { path = "../spira-ctrl" }
 spira-config = { path = "../spira-config" }
+libc = "0.2"
+mail = { path = "../mail" }
+tsd = { path = "../tsd" }
 hel = { path = "../hel" }
 serde_json = "1"
+runtime = { path = "../runtime" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Lifecycle-store calls spira-runtime runs at once (the store effector class); a full class defers, never drops.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Lifecycle-store calls spira-runtime runs at once (the store effector class); a full class defers, never drops.
+    : "${SPIRA_POOL_CAP_STORE:=4}"
+SPIRA_CONF_DEFAULT_EOF

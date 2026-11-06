@@ -25,6 +25,11 @@ mod conformance {
         out_of_order_effect_outcomes,
         effect_deadline_times_out,
         determinism_under_replay,
-        schedule_rows_survive_restart_and_fire_once
+        schedule_rows_survive_restart_and_fire_once,
+        observe_shadows_writes_runs_probes_and_never_replays_them,
+        halt_holds_writes_runs_probes_and_resume_releases_once_in_order,
+        a_handlers_writes_are_seen_before_its_streams_next_event,
+        an_outcome_is_offered_only_to_the_task_that_asked,
+        a_halt_holds_work_and_lets_signals_through
     );
 }

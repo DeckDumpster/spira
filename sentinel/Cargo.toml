@@ -13,6 +13,12 @@ libc = "0.2"
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
 hel = { path = "../hel" }
+spira-claim = { path = "../spira-claim" }
+runtime = { path = "../runtime" }
+tsd = { path = "../tsd" }
+mail = { path = "../mail" }
+strand = { path = "../strand" }
+watchtower = { path = "../watchtower" }
 
 [[bin]]
 name = "sentinel"

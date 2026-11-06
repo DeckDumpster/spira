@@ -1,12 +1,12 @@
-//! [`LcStore`]: the control-plane store through `spira-lc rc <verb> --json -`, the only door to it
-//! (law-only-spira-lc-talks-to-the-stores). Calls and answers are `state_store::wire`'s.
+//! [`LcStore`]: the control-plane store through `spira-lc rc <verb> --json <body>` over the one
+//! door, [`LcClient`] (law-only-spira-lc-talks-to-the-stores). Calls and answers are
+//! `state_store::wire`'s. The body rides on argv: the socket takes no stdin.
 
-use std::sync::Arc;
 use std::time::Duration;
 
-use runtime::ports::{Proc, ProcSpec};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use spira_config::lc_call::LcClient;
 use state_store::wire::{self, Verb};
 use state_store::{Error, Fence, Item, Request, Selector, Txn, TxnResult};
 
@@ -16,30 +16,22 @@ use crate::ports::Store;
 pub const RC_DEADLINE: Duration = Duration::from_secs(5);
 
 pub struct LcStore {
-    pub proc_: Arc<dyn Proc>,
-    pub program: String,
+    pub client: LcClient,
 }
 
 impl LcStore {
     fn call<T: DeserializeOwned>(&self, verb: Verb, body: &impl Serialize) -> state_store::Result<T> {
-        let what = format!("{} rc {}", self.program, verb.word());
-        let stdin = serde_json::to_vec(body).map_err(|e| Error::Backend(format!("{what}: {e}")))?;
+        let what = format!("spira-lc rc {}", verb.word());
+        let body = serde_json::to_string(body).map_err(|e| Error::Backend(format!("{what}: {e}")))?;
         let out = self
-            .proc_
-            .run(&ProcSpec {
-                prog: self.program.clone(),
-                args: vec!["rc".into(), verb.word().into(), "--json".into(), "-".into()],
-                stdin,
-                deadline: RC_DEADLINE,
-            })
+            .client
+            .within(RC_DEADLINE)
+            .call(&["rc", verb.word(), "--json", &body])
             .map_err(|e| Error::Backend(format!("{what}: {e}")))?;
-        let Some(code) = out.code else {
-            return Err(Error::Backend(format!(
-                "{what} was killed: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            )));
-        };
-        wire::decode(code, &String::from_utf8_lossy(&out.stdout)).map_err(|e| match e {
+        if out.code < 0 {
+            return Err(Error::Backend(format!("{what} was killed: {}", out.err.trim())));
+        }
+        wire::decode(out.code, &out.out).map_err(|e| match e {
             Error::Backend(why) => Error::Backend(format!("{what}: {why}")),
             refusal => refusal,
         })
@@ -93,9 +85,9 @@ impl Store for LcStore {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
-    use runtime::ports::ProcOutput;
+    use spira_config::lc_call::{Reply, Transport};
     use state_store::{Contract, MemBackend, Object, Rev};
 
     use super::*;
@@ -104,25 +96,18 @@ mod tests {
     use crate::ports::{Attempt, Class, InitiatedBy, Ledger, Member, PassIdentity, Ports};
     use crate::sim::bench::Bench;
 
-    /// spira-lc in-process: the argv and stdin `LcStore` sends, answered by `spira_lc::rc::run` on
-    /// the bench's own contract.
+    /// spira-lc in-process: the argv `LcStore` sends, answered by `spira_lc::rc::run` on the
+    /// bench's own contract.
     struct Loopback {
         store: Arc<Contract<MemBackend>>,
-        seen: Mutex<Vec<ProcSpec>>,
+        seen: Mutex<Vec<(Vec<String>, Option<String>)>>,
     }
 
-    impl Proc for Loopback {
-        fn run(&self, spec: &ProcSpec) -> Result<ProcOutput, String> {
-            crate::lock(&self.seen).push(spec.clone());
-            let mut args = spec.args.clone();
-            assert_eq!(args.last().map(String::as_str), Some("-"), "{args:?}");
-            *args.last_mut().unwrap() = String::from_utf8(spec.stdin.clone()).unwrap();
-            let (code, out) = spira_lc::rc::run(self.store.as_ref(), &args);
-            Ok(ProcOutput {
-                code: Some(code),
-                stdout: out.into_bytes(),
-                stderr: Vec::new(),
-            })
+    impl Transport for Loopback {
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
+            crate::lock(&self.seen).push((argv.to_vec(), stdin.map(str::to_string)));
+            let (code, out) = spira_lc::rc::run(self.store.as_ref(), argv);
+            Ok(Reply { code, out, err: String::new() })
         }
     }
 
@@ -131,10 +116,7 @@ mod tests {
             store: b.store.clone(),
             seen: Mutex::default(),
         });
-        let lc = LcStore {
-            proc_: lb.clone(),
-            program: "spira-lc".into(),
-        };
+        let lc = LcStore { client: LcClient::over(lb.clone(), true) };
         (lc, lb)
     }
 
@@ -201,10 +183,10 @@ mod tests {
         assert_eq!(script(&p), bare_answers);
         assert_eq!(everything(&b), bare_state);
         let seen = crate::lock(&lb.seen);
-        assert!(seen.iter().all(|s| s.prog == "spira-lc" && s.deadline == RC_DEADLINE));
-        assert!(seen.iter().any(|s| s.args[..2] == ["rc", "txn"]));
-        assert!(seen.iter().any(|s| s.args[..2] == ["rc", "renew"]));
-        assert!(seen.iter().any(|s| s.args[..2] == ["rc", "release"]));
+        assert!(seen.iter().all(|(a, stdin)| stdin.is_none() && a[2] == "--json" && a[3].starts_with('{')), "the body rides on argv: {seen:?}");
+        assert!(seen.iter().any(|(a, _)| a[..2] == ["rc", "txn"]));
+        assert!(seen.iter().any(|(a, _)| a[..2] == ["rc", "renew"]));
+        assert!(seen.iter().any(|(a, _)| a[..2] == ["rc", "release"]));
     }
 
     #[test]
@@ -239,31 +221,27 @@ mod tests {
         assert!(matches!(lc.renew(&lost, &req("n")), Err(Error::LockLost { .. })));
     }
 
-    struct Answers(Mutex<Vec<Result<ProcOutput, String>>>);
+    struct Answers(Mutex<Vec<Result<Reply, String>>>);
 
-    impl Proc for Answers {
-        fn run(&self, _: &ProcSpec) -> Result<ProcOutput, String> {
+    impl Transport for Answers {
+        fn exchange(&self, _: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
             crate::lock(&self.0).remove(0)
         }
     }
 
     #[test]
     fn a_timeout_a_kill_and_cannot_tell_are_backend_carrying_the_text() {
-        let out = |code: Option<i32>, stdout: &str, stderr: &str| {
-            Ok(ProcOutput {
-                code,
-                stdout: stdout.into(),
-                stderr: stderr.into(),
-            })
-        };
+        let out = |code: i32, stdout: &str, stderr: &str| Ok(Reply { code, out: stdout.into(), err: stderr.into() });
         let lc = LcStore {
-            proc_: Arc::new(Answers(Mutex::new(vec![
-                Err("spira-lc exceeded its 5s deadline".into()),
-                out(None, "", "killed by signal 9"),
-                out(Some(2), "{\"cannot_tell\":\"cannot tell: SPIRA_LC_STORE_PATH is unset\"}", ""),
-                out(Some(0), "garbage", ""),
-            ]))),
-            program: "spira-lc".into(),
+            client: LcClient::over(
+                Arc::new(Answers(Mutex::new(vec![
+                    Err("spira-lc exceeded its 5s deadline".into()),
+                    out(-1, "", "killed by signal 9"),
+                    out(2, "{\"cannot_tell\":\"cannot tell: SPIRA_LC_STORE_PATH is unset\"}", ""),
+                    out(0, "garbage", ""),
+                ]))),
+                true,
+            ),
         };
         for want in ["exceeded its 5s deadline", "killed by signal 9", "SPIRA_LC_STORE_PATH", "garbage"] {
             match lc.get("batches/r/b1") {

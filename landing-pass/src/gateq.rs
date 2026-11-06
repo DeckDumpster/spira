@@ -64,7 +64,13 @@ fn nanos() -> u128 {
 }
 
 fn pick_key(j: &Job, running: &std::collections::HashMap<String, usize>) -> (bool, usize, i64, u128) {
-    (!j.fix, running.get(&j.repo).copied().unwrap_or(0), j.priority, j.queued)
+    order_key(j.fix, running.get(&j.repo).copied().unwrap_or(0), j.priority, j.queued)
+}
+
+/// The order jobs are taken in, smallest first: base fixes, then the repository running the
+/// fewest, then the lowest priority number, then the oldest.
+pub fn order_key(fix: bool, running_in_repo: usize, priority: i64, queued: u128) -> (bool, usize, i64, u128) {
+    (!fix, running_in_repo, priority, queued)
 }
 
 impl Job {
@@ -251,6 +257,36 @@ impl GateQueue {
             }
         }
         None
+    }
+
+    /// Claim one chosen job for this slot: the same single `rename(2)` as [`GateQueue::claim`],
+    /// so a job already claimed (or gone) is refused. Returns the job as queued.
+    pub fn claim_job(&self, slot: usize, repo: &str, branch: &str, tip: &str) -> Option<Job> {
+        let file = Job::new(repo, branch, "", tip, false).file();
+        let dest = self.claimed_slot(slot);
+        let _ = fs::create_dir_all(&dest);
+        fs::rename(self.dir(Where::Inbox).join(&file), dest.join(&file)).ok()?;
+        serde_json::from_str(&fs::read_to_string(dest.join(&file)).ok()?).ok()
+    }
+
+    /// The job this slot holds for this branch at this tip, if it holds it.
+    pub fn claimed_job(&self, slot: usize, repo: &str, branch: &str, tip: &str) -> Option<Job> {
+        let p = self.claimed_slot(slot).join(Job::new(repo, branch, "", tip, false).file());
+        serde_json::from_str(&fs::read_to_string(p).ok()?).ok()
+    }
+
+    /// Every job this slot holds.
+    pub fn claimed(&self, slot: usize) -> Vec<Job> {
+        let mut v: Vec<Job> = self.read_dir_jobs(&self.claimed_slot(slot)).into_iter().map(|(_, j)| j).collect();
+        v.sort_by_key(Job::file);
+        v
+    }
+
+    /// The slots that hold a claimed directory, by number.
+    pub fn claimed_slots(&self) -> Vec<usize> {
+        let mut v: Vec<usize> = self.claimed_dirs().iter().filter_map(|d| d.file_name()?.to_str()?.parse().ok()).collect();
+        v.sort();
+        v
     }
 
     /// Drop a job this slot claimed that will not be gated.

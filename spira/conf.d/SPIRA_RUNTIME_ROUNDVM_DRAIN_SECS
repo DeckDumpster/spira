@@ -1,0 +1,9 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between the roundvm.drain task's ticks in spira-runtime.
+SCHEMA=REQUIRED: Seconds between the roundvm.drain task's ticks in spira-runtime. Declared by a spira-runtime task row written from its contract (wiki/projects/spira/designs/tasks/); its default is the contract's pin, which spira-config init writes on a fresh install and activation's config delta declares on an upgrade.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # The task contract's pin (wiki/projects/spira/designs/tasks/): spira-config init has no
+    # answer to invent for a typed key, so a fresh install could not configure without it.
+    : "${SPIRA_RUNTIME_ROUNDVM_DRAIN_SECS:=300}"
+SPIRA_CONF_DEFAULT_EOF

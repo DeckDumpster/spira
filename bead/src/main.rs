@@ -44,6 +44,15 @@ fn main() {
         "lint" => cmd_lint(&home, &rest),
         "judge-create" => cmd_judge_create(&home, &rest),
         "event" => cmd_event(&rest),
+        // `czar-fence.sh <class>`'s answer: 0 act, 1 shadow (the default), 2 otherwise, read
+        // from this process's environment as the script read it (bead::guard::czar_stage).
+        "czar-fence" => match bead::guard::czar_stage(rest.first().map(String::as_str).unwrap_or(""), &|k| env::var(k).ok()) {
+            Ok(()) => 0,
+            Err(r) => {
+                eprint!("{}", r.text);
+                r.code
+            }
+        },
         "dep" => match rest.first().map(String::as_str) {
             Some("add") => cmd_dep_add(&home, &rest[1..]),
             Some("remove") => cmd_dep_remove(&home, &rest[1..]),
@@ -69,26 +78,27 @@ fn main() {
 // bead.sh's. See DESIGN.md "What ported vs what stayed bash".
 // =========================================================================================
 
-/// `. "$home/lib.sh"; bdq "$@"` — the ONE subprocess boundary this crate crosses into bash
-/// logic (the create-time safety fences, the connection retry loop). `$1` carries `home`
-/// so the script needs no string-interpolation of an untrusted path.
-///
-/// NOT COLLAPSED onto a direct `bdq`-binary call (sp-pwmlj, wave 4.15 — considered and
-/// rejected). `lib.sh`'s own `bdq()` is already a one-line shim onto `bead::bdq`
-/// (sp-w3h16), so this bridge has no competing Rust logic to retire — every `bdq_status`/
-/// `bdq_capture` call already reaches the one real implementation, just by way of a bash
-/// hop. That hop is still load-bearing for `cmd_file`'s `bd create`: `bead.sh` (the shim
-/// that execs into this binary) re-exports only `SPIRA_HOME`/`SPIRA_REPO_MAP` of the five
-/// vars the repo-label fence needs — `SPIRA_HOME_REPO`/`SPIRA_REPO_DERIVED` are not, because
-/// `bead.sh` only patches up the two every fixture's repository map already depends on. This
-/// script sources `lib.sh` (hence `conf.sh`) fresh inside the bash subprocess, which
-/// re-derives all five correctly before its own `bdq()` shim threads them across the exec
-/// boundary to the binary — the same exec-boundary trap this wave's rules name, worked
-/// around here by re-resolving in bash rather than in this process. Collapsing it for real
-/// needs `spira-config resolve` in-process first (wave4-decomposition.md rows 4–6, not yet
-/// landed) so this binary can build the registry itself, the way `dwarf`/`cockpit-collect`
-/// already do.
-const BDQ_SCRIPT: &str = r#"home="$1"; shift; . "$home/lib.sh" || exit 90; bdq "$@""#;
+/// `bdq` — the ONE boundary this crate crosses into the content store (the create-time safety
+/// fences, the connection retry loop). It was `bash -c '. "$home/lib.sh"; bdq "$@"'`, sourced
+/// only so `conf.sh` re-derived the five vars the repo-label fence reads before `lib.sh`'s
+/// `bdq()` shim threaded them across the exec; [`bead::bdq::fence_env`] derives them here, so
+/// the release's `bdq` binary is run directly.
+fn bdq_command(home: &str) -> Result<Command, String> {
+    let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
+    let resolved = |h: &Path, r: &Path| {
+        spira_config::resolve::resolve_for_process(h, r, &env_map).map(|v| (v.get("SPIRA_HOME_REPO").to_string(), v.get("SPIRA_REPO_MAP").to_string()))
+    };
+    let fence = bead::bdq::fence_env(Path::new(home), &env_map, &resolved)?;
+    // FORK-EDGE: content store — bdq is the store's one chokepoint; the content store is out of scope.
+    let mut cmd = Command::new(spira_config::release_env::tool("bdq")?);
+    // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
+    // release's bin/+spira/ on the CHILD's PATH, never only inherited.
+    cmd.envs(spira_config::release_env::child_path_env_for_process()?).envs(fence);
+    Ok(cmd)
+}
+
+/// What `lib.sh` failing to load exited with: the bridge could not reach `bdq` at all.
+const BRIDGE_FAILED: i32 = 90;
 
 /// Runs `bdq` with inherited stdio (the shape every state-changing call needs: `bd`'s own
 /// stdout/stderr must reach the original caller exactly as it would running the bash).
@@ -96,19 +106,15 @@ const BDQ_SCRIPT: &str = r#"home="$1"; shift; . "$home/lib.sh" || exit 90; bdq "
 const DEFAULT_KIND: &str = "work";
 
 fn bdq_status(home: &str, args: &[String]) -> i32 {
+    let mut cmd = match bdq_command(home) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("bead: {e}");
+            return BRIDGE_FAILED;
+        }
+    };
     // batch-job: runs a gate, build or forge script that takes as long as its work
-    Command::new("bash")
-        .arg("-c")
-        .arg(BDQ_SCRIPT)
-        .arg("bdq")
-        .arg(home)
-        .args(args)
-        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
-        // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-        .envs(match spira_config::release_env::child_path_env_for_process() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return 127; } })
-        .status()
-        .map(|s| s.code().unwrap_or(1))
-        .unwrap_or(127)
+    cmd.args(args).status().map(|s| s.code().unwrap_or(1)).unwrap_or(127)
 }
 
 /// Runs `bdq` capturing stdout, discarding stderr (`2>/dev/null`, matching every read call
@@ -118,20 +124,15 @@ fn bdq_capture(home: &str, args: &[String]) -> (i32, String) {
 }
 
 fn bdq_capture_with(home: &str, args: &[String], stderr: Stdio) -> (i32, String) {
+    let mut cmd = match bdq_command(home) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("bead: {e}");
+            return (BRIDGE_FAILED, String::new());
+        }
+    };
     // batch-job: runs a gate, build or forge script that takes as long as its work
-    let out = Command::new("bash")
-        .arg("-c")
-        .arg(BDQ_SCRIPT)
-        .arg("bdq")
-        .arg(home)
-        .args(args)
-        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
-        // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-        .envs(match spira_config::release_env::child_path_env_for_process() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return (127, String::new()); } })
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::piped())
-        .stderr(stderr)
-        .output();
+    let out = cmd.args(args).stdin(Stdio::inherit()).stdout(Stdio::piped()).stderr(stderr).output();
     match out {
         Ok(o) => (
             o.status.code().unwrap_or(1),
@@ -242,26 +243,17 @@ fn bdq_create(home: &str, args: &[String], incident: Option<&str>, stack_after: 
 /// bd's priority when `-p` is not given.
 const BD_DEFAULT_PRIORITY: i64 = 2;
 
+/// The lifecycle store's client: its socket in production, the declared stand-in in a fixture.
+fn lc() -> Result<spira_config::lc_call::LcClient, String> {
+    spira_config::lc_call::LcClient::configured()
+}
+
 /// Write the bead's title and priority into its lifecycle row, which the ops views read
-/// instead of bd. Detached: filing has a server deadline and a second connect inside it
-/// overran it. A write that fails is repaired by `spira-lc backfill-titles`.
+/// instead of bd. One point write over the socket, which pays no connect (the detached child
+/// it replaces existed because a second connect overran filing's server deadline). A write
+/// that fails is repaired by `spira-lc backfill-titles`.
 fn mirror_to_lifecycle(id: &str, title: Option<&str>, priority: i64, repo: Option<&str>) {
-    let mut args = vec!["30".to_string(), match spira_config::lifecycle_row::lc_bin() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return; } }, "create-bead".into(), id.to_string(), "--priority".into(), priority.to_string()];
-    if let Some(t) = title {
-        args.extend(["--title".to_string(), t.to_string()]);
-    }
-    if let Some(r) = repo {
-        args.extend(["--repo".to_string(), r.to_string()]);
-    }
-    // batch-job: detached, bounded by timeout(1), one point write
-    let spawned = Command::new("timeout")
-        .args(&args)
-        .envs(match spira_config::release_env::child_path_env_for_process() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return; } })
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn();
-    if spawned.is_err() {
+    if lc().and_then(|c| bead::lc::create_row(&c, id, title, priority, None, repo)).is_err() {
         eprintln!("bead: {id} filed, but its title and priority were not mirrored to the lifecycle store; `spira-lc backfill-titles` fills them");
     }
 }
@@ -270,43 +262,18 @@ const ROW_ATTEMPTS: u32 = 3;
 
 /// Filing is two writes; a transient store error on the second must not strand the first.
 fn create_row_retrying(id: &str, title: Option<&str>, priority: i64, tip: Option<&str>, repo: Option<&str>) -> Result<(), String> {
+    let client = lc()?;
     let mut last = String::new();
     for attempt in 0..ROW_ATTEMPTS {
         if attempt > 0 {
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
-        match create_row(id, title, priority, tip, repo) {
+        match bead::lc::create_row(&client, id, title, priority, tip, repo) {
             Ok(()) => return Ok(()),
             Err(e) => last = e,
         }
     }
     Err(last)
-}
-
-fn create_row(id: &str, title: Option<&str>, priority: i64, tip: Option<&str>, repo: Option<&str>) -> Result<(), String> {
-    let bin = spira_config::lifecycle_row::lc_bin()?;
-    let priority = priority.to_string();
-    let mut args = vec!["5", &bin, "create-bead", id, "--priority", &priority];
-    if let Some(t) = title {
-        args.extend(["--title", t]);
-    }
-    if let Some(tip) = tip {
-        args.extend(["--submitted-tip", tip]);
-    }
-    if let Some(r) = repo {
-        args.extend(["--repo", r]);
-    }
-    let out = Command::new("timeout")
-        .args(&args)
-        .envs(spira_config::release_env::child_path_env_for_process()?)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("cannot run {bin}: {e}"))?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(format!("{bin} create-bead exited {}: {}{}", out.status.code().map_or("signal".into(), |c| c.to_string()), String::from_utf8_lossy(&out.stdout).trim(), String::from_utf8_lossy(&out.stderr).trim()))
-    }
 }
 
 fn s(strs: &[&str]) -> Vec<String> {
@@ -386,6 +353,8 @@ fn rune_names(home: &str) -> Vec<String> {
     names
 }
 
+// FORK-EDGE: script schema.sh (291 lines of shell; over the in-crate port bound) — its three
+// callers below (type-of, kinds, name) are this one edge.
 fn schema_sh(home: &str) -> String {
     format!("{home}/schema.sh")
 }
@@ -1000,6 +969,7 @@ fn cmd_pilgrimage(home: &str, args: &[String]) -> i32 {
         file.push(p);
     }
     // batch-job: re-enters bead file, which bounds its own store calls
+    // FORK-EDGE: machine leg (catalogue phase) — the self re-exec becomes a task state
     let out = std::process::Command::new(exe).args(&file).stderr(Stdio::inherit()).output();
     let _ = std::fs::remove_file(&body_path);
     let out = match out {
@@ -1266,9 +1236,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
                     return 1;
                 }
             };
-            let date = Command::new("timeout").args(["5", "date", "-u", "+%F"]).output().ok()
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                .unwrap_or_default();
+            let date = spira_otel::utc_date(std::time::SystemTime::now());
             let tmp = env::temp_dir().join(format!("bead-amend-{}-{}", std::process::id(), id));
             if let Err(e) = std::fs::write(&tmp, bead::appended_body(&old, &addition, &date)) {
                 eprintln!("bead: amend: cannot stage the appended body: {e}");
@@ -1327,9 +1295,7 @@ fn merge_into_body(home: &str, id: &str, addition: &str) -> i32 {
         eprintln!("bead: amend: cannot read the current description of {id}; refusing");
         return 1;
     };
-    let date = Command::new("timeout").args(["5", "date", "-u", "+%F"]).output().ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default();
+    let date = spira_otel::utc_date(std::time::SystemTime::now());
     let tmp = env::temp_dir().join(format!("bead-amend-{}-{}", std::process::id(), id));
     if let Err(e) = std::fs::write(&tmp, bead::appended_body(&old, addition, &date)) {
         eprintln!("bead: amend: cannot stage the merged body: {e}");
@@ -1469,6 +1435,7 @@ fn amend_enforce(home: &str, aid: &str) -> i32 {
     let reason = format!("amendment {aid} {why}; slain and requeued with the amendment merged into the body");
     rc |= bdq_status(home, &s(&["note", &id, &format!("Enforced {aid}: {reason}")]));
     // batch-job: slay waits out the holder's shutdown and salvages its work
+    // FORK-EDGE: needs a hel/Units library for slay (stop the holder, salvage, reopen); slay is another crate's binary
     let slay = Command::new(match spira_config::release_env::tool("slay") { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return 1; } })
         .args(["--bead", &id, "--why", &reason, "--reopen"])
         .envs(match spira_config::release_env::child_path_env_for_process() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return 1; } })
@@ -1912,19 +1879,14 @@ fn dep_type_name(t: &str) -> &str {
 /// and `blocker`. bd already holds the edge, so a failed mirror is reported and repaired by
 /// `spira-lc backfill-deps --force`, never turned into a failed `dep`.
 fn mirror_dep(verb: &str, id: &str, depid: &str, dep_type: Option<&str>) {
-    let mut args = vec!["30".to_string(), match spira_config::lifecycle_row::lc_bin() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return; } }, verb.into(), id.into(), depid.into()];
-    if let Some(t) = dep_type {
-        args.extend(["--type".to_string(), t.to_string()]);
-    }
-    // batch-job: one point write, bounded by timeout(1)
-    let done = Command::new("timeout")
-        .args(&args)
-        .envs(match spira_config::release_env::child_path_env_for_process() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return; } })
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    if !done.is_ok_and(|s| s.success()) {
+    let client = match lc() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("bead: {e}");
+            return;
+        }
+    };
+    if !bead::lc::mirror_dep(&client, verb, id, depid, dep_type) {
         eprintln!("bead: {verb}: {id} -> {depid} is in bd but was not mirrored to the lifecycle store; `spira-lc backfill-deps --force` repairs it");
     }
 }
@@ -1983,15 +1945,14 @@ fn cmd_dep_convert(home: &str, args: &[String]) -> i32 {
 fn bdq_status_stdin(home: &str, args: &[String], input: &str) -> i32 {
     use std::io::Write;
     // batch-job: one bd batch, bounded by bdq's own deadline
-    let child = Command::new("bash")
-        .arg("-c")
-        .arg(BDQ_SCRIPT)
-        .arg("bdq")
-        .arg(home)
-        .args(args)
-        .envs(match spira_config::release_env::child_path_env_for_process() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return 127; } })
-        .stdin(Stdio::piped())
-        .spawn();
+    let mut cmd = match bdq_command(home) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("bead: {e}");
+            return BRIDGE_FAILED;
+        }
+    };
+    let child = cmd.args(args).stdin(Stdio::piped()).spawn();
     let Ok(mut child) = child else { return 127 };
     if let Some(mut w) = child.stdin.take() {
         if w.write_all(input.as_bytes()).is_err() {
@@ -2055,25 +2016,20 @@ fn cmd_label(home: &str, args: &[String]) -> i32 {
 /// Point the lifecycle row at the repo a `repo:` label names, before the label moves: claims,
 /// worktrees and rounds read the row, and a WORKING bead is refused by it.
 fn mirror_repo(verb: &str, id: &str, repo: &str) -> Result<(), i32> {
-    let mut args = vec!["30".to_string(), match spira_config::lifecycle_row::lc_bin() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return Err(1); } }, "set-repo".into(), id.to_string()];
-    if verb == "add" {
-        args.push(repo.to_string());
-    } else {
-        args.extend(["--clear".to_string(), "--only-if".into(), repo.to_string()]);
-    }
-    // batch-job: one point write, bounded by timeout(1)
-    let out = Command::new("timeout")
-        .args(&args)
-        .envs(match spira_config::release_env::child_path_env_for_process() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return Err(1); } })
-        .stdin(Stdio::null())
-        .output();
-    match out {
-        Ok(o) if o.status.success() => Ok(()),
-        Ok(o) if o.status.code() == Some(1) => {
-            eprint!("bead: label {verb}: refusing — {}", String::from_utf8_lossy(&o.stdout));
+    let client = match lc() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("bead: {e}");
+            return Err(1);
+        }
+    };
+    match bead::lc::set_repo(&client, verb, id, repo) {
+        bead::lc::SetRepo::Applied => Ok(()),
+        bead::lc::SetRepo::Refused(why) => {
+            eprint!("bead: label {verb}: refusing — {why}");
             Err(1)
         }
-        _ => {
+        bead::lc::SetRepo::Failed => {
             eprintln!("bead: label {verb}: the lifecycle row of {id} could not be updated; nothing changed. Retry, or `spira-lc set-repo {id} <repo>`");
             Err(1)
         }
@@ -2110,6 +2066,7 @@ fn cmd_drop(home: &str, args: &[String]) -> i32 {
     }
 
     // batch-job: ejects from batches and closes the store, bounded by timeout(1)
+    // FORK-EDGE: unserved verb drop-bead (the spira-lc CLI composes it; the socket does not serve it)
     let status = Command::new("timeout")
         .args(["120", match spira_config::lifecycle_row::lc_bin() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return 1; } }.as_str(), "drop-bead", &id, "--reason", &reason, "--actor", "bead"])
         .envs(match spira_config::release_env::child_path_env_for_process() { Ok(v) => v, Err(e) => { eprintln!("bead: {e}"); return 1; } })

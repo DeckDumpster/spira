@@ -7,7 +7,6 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
-use crate::host::{Io, Spec};
 use crate::model::{parse_lc_rows, LcRow};
 use crate::pass::Sentinel;
 use spira_config::lc_state;
@@ -38,7 +37,7 @@ pub fn unhold_event(kind: &str) -> Option<String> {
     Some(format!("{{\"Unhold\":{{\"kind\":\"{tag}\"}}}}"))
 }
 
-pub const HOLDER_DEAD: &str = "\"HolderDead\"";
+pub use sentinel::lifecycle_events::HOLDER_DEAD;
 
 /// CHECK 2 (protect-waiting half): which WORKING beads to wait-hold or release. `held` is
 /// the wait-held set; each bead's dependency facts come from the snapshot join.
@@ -108,46 +107,7 @@ pub fn wait_decisions(
     out
 }
 
-/// CHECK 2 (reaper half): WORKING rows, not wait-held, whose lease expired more than `grace`
-/// ago, or has expired at all with no live holder → (id, seconds since expiry).
-/// A holder whose session is provably gone (`gone`) is reaped at once, lease or no lease.
-pub fn stale_leases(rows: &[LcRow], now: i64, grace: i64, alive: impl Fn(&str) -> bool, gone: impl Fn(&str) -> bool) -> Vec<(String, i64)> {
-    rows.iter()
-        .filter(|r| r.state == "WORKING" && !r.holds.iter().any(|h| h == "wait"))
-        .filter_map(|r| {
-            let past = now - r.lease_until.unwrap_or(now);
-            let session_gone = r.holder.as_deref().is_some_and(&gone);
-            (session_gone || (r.lease_until.is_some() && (past > grace || (past > 0 && !alive(&r.bead_id))))).then(|| (r.bead_id.clone(), past))
-        })
-        .collect()
-}
-
-/// SUBMITTED, CERTIFIED and IN_DELIVERY keep the holder on purpose (branch affinity); only
-/// the states the lifecycle machine clears it on are a violation.
-fn holder_forbidden(state: &str) -> bool {
-    matches!(state, "OPEN" | "READY" | "REWORK" | "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE")
-}
-
-/// CHECK 2c: rows whose holder and state disagree.
-pub fn inconsistent(rows: &[LcRow]) -> Vec<String> {
-    rows.iter()
-        .filter_map(|r| {
-            if r.state == "WORKING" && r.holder.is_none() {
-                Some(format!(
-                    "INCONSISTENT\t{}\tWORKING with no holder",
-                    r.bead_id
-                ))
-            } else if holder_forbidden(&r.state) && r.holder.is_some() {
-                Some(format!(
-                    "INCONSISTENT\t{}\t{} with a holder still set",
-                    r.bead_id, r.state
-                ))
-            } else {
-                None
-            }
-        })
-        .collect()
-}
+pub use sentinel::checks::{inconsistent, stale_leases};
 
 impl<'a> Sentinel<'a> {
     /// The pass's one lifecycle read. The machine is authoritative, so an absent binary or a
@@ -170,8 +130,7 @@ impl<'a> Sentinel<'a> {
     }
 
     fn lc_rows_read(&self) -> Option<Vec<LcRow>> {
-        let bin = self.cfg.lc_bin.clone();
-        let o = self.h.run(Spec::args_owned(bin, vec!["list".into()]));
+        let o = self.h.lc(&self.cfg.lc_bin, &["list".into()]);
         if !o.ok() {
             let why = o
                 .stderr
@@ -222,11 +181,7 @@ impl<'a> Sentinel<'a> {
     /// write that a stale snapshot must not drive. None when the machine has no row or
     /// cannot answer.
     pub fn lc_live_state(&self, id: &str) -> Option<String> {
-        let o = self.h.run(
-            Spec::args_owned(self.cfg.lc_bin.clone(), vec!["show".into(), id.into()])
-                .err(Io::Null)
-                .timeout(5),
-        );
+        let o = self.h.lc(&self.cfg.lc_bin, &["show".into(), id.into()]);
         if !o.ok() {
             return None;
         }
@@ -238,10 +193,8 @@ impl<'a> Sentinel<'a> {
     /// `kind` under that CAS. Ok(()) applied; Err(rc) as the caller verbs (1 no row, 2 cannot
     /// tell).
     pub fn lc_event(&self, id: &str, kind: &str, actor: &str) -> Result<(), i32> {
-        let bin = self.cfg.lc_bin.clone();
-        let o = self
-            .h
-            .run(Spec::args_owned(bin.clone(), vec!["show".into(), id.into()]).err(Io::Null));
+        let bin = &self.cfg.lc_bin;
+        let o = self.h.lc(bin, &["show".into(), id.into()]);
         if !o.ok() {
             return Err(o.rc);
         }
@@ -257,25 +210,21 @@ impl<'a> Sentinel<'a> {
         if state.is_empty() || version.is_empty() {
             return Err(1);
         }
-        let e = self.h.run(
-            Spec::args_owned(
-                bin,
-                vec![
-                    "event".into(),
-                    "bead".into(),
-                    id.into(),
-                    "--expect".into(),
-                    state,
-                    "--version".into(),
-                    version,
-                    "--actor".into(),
-                    actor.into(),
-                    "--kind".into(),
-                    kind.into(),
-                ],
-            )
-            .out(Io::Null)
-            .err(Io::Null),
+        let e = self.h.lc(
+            bin,
+            &[
+                "event".into(),
+                "bead".into(),
+                id.into(),
+                "--expect".into(),
+                state,
+                "--version".into(),
+                version,
+                "--actor".into(),
+                actor.into(),
+                "--kind".into(),
+                kind.into(),
+            ],
         );
         if e.ok() {
             Ok(())
@@ -362,7 +311,7 @@ impl<'a> Sentinel<'a> {
 
     /// Stop whatever still works in the bead's worktree before the bead goes back to READY.
     fn stop_holder(&self, id: &str) -> bool {
-        self.h.run(Spec::args_owned(self.cfg.hel_bin.clone(), vec!["stop-holder".into(), id.to_string()]).err(Io::Null)).ok()
+        self.h.svc.stop_holder(id)
     }
 
     /// One attempt-history fact appended to the lifecycle event log, best-effort.
@@ -374,12 +323,7 @@ impl<'a> Sentinel<'a> {
             .unwrap_or("harness")
             .to_string();
         let args = ["fact", id, "--kind", etype, "--actor", &actor, "--cause", cause].map(String::from).to_vec();
-        let _ = self.h.run(
-            Spec::args_owned(self.cfg.lc_bin.clone(), args)
-                .out(Io::Null)
-                .err(Io::Null)
-                .timeout(self.cfg.bd_timeout),
-        );
+        let _ = self.h.lc(&self.cfg.lc_bin, &args);
     }
 
     /// CHECK 2c — detect, never repair.

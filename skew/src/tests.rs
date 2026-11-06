@@ -1005,3 +1005,9 @@ fn refresh_escalates_again_for_a_new_uncleared_lock_after_the_old_one_vanished()
     let rows = f.run_log.borrow().iter().filter(|r| r.1.contains("cannot remove stale index.lock")).count();
     assert_eq!(rows, 2);
 }
+
+#[test]
+fn the_refresh_stamp_is_read_from_the_clock_in_process() {
+    assert_eq!(crate::real::stamp_of(1_793_166_343), "20261028T054543Z");
+    assert_eq!(crate::real::stamp_of(0), "19700101T000000Z");
+}

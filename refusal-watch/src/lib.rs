@@ -187,3 +187,18 @@ pub fn pass(
         state,
     }
 }
+
+/// The refused events of the last `window` seconds, from the store over `client`.
+pub fn read_refusals(client: &spira_config::lc_call::LcClient, window: u64) -> Result<String, String> {
+    let r = client.call(&["ops-refusals".to_string(), window.to_string()]).map_err(String::from)?;
+    if r.code != 0 {
+        return Err(format!("spira-lc ops-refusals exited {}: {}", r.code, r.out));
+    }
+    Ok(r.out)
+}
+
+/// One filing: an incident with `title` and `body`, in-process, exactly as
+/// `incident file <title> -` files it.
+pub fn file(title: &str, body: &str) -> Result<(), String> {
+    incident::intake::file_payload(title, body.as_bytes())
+}

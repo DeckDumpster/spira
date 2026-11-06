@@ -6,11 +6,9 @@
 //! (`spira-lc state`), never a search of the base's history. Content-on-base is
 //! `Git::content_on_base` (`RealGit`).
 //!
-//! The pr/ask/reap-adjacent pieces (`conflict_reopen_note`'s git plumbing, `close_on_land`'s
-//! bd close + reap) run real subprocesses (`bdq`, `hel`) by bare name on PATH
-//! (sp-gypjk), the same convention every other direct-subprocess call in this crate and in
-//! `groomer`/`rebase-stale` already follows — never through the lib.sh seam, which this
-//! family retires for these names.
+//! The close goes through the lifecycle library (whose `close` still runs the CLI: the socket
+//! does not serve it) and the branch reap through `hel::verbs`, in-process; `pr_merged` asks
+//! GitHub through `bdq __ghq`, the one child left here.
 
 use crate::model::BeadRow;
 use crate::ports::Git;
@@ -162,28 +160,11 @@ fn bdq_close(id: &str, reason: &str) -> bool {
     spira_config::lifecycle_row::close_landed(id, reason, "landing-pass").is_ok()
 }
 
-/// `hel reap-landed-branch [--status-from <f>] <id> <branch> <repo> <why>` — the same
-/// shim `spira_reap_landed_branch` execs. `Ok(())` sent, `Err(its output)` otherwise
-/// (failed or refused — both are "left for the Hel" from here).
+/// hel's `reap-landed-branch` (`[--status-from <f>] <id> <branch> <repo> <why>`), in-process
+/// through `hel::verbs`: `Ok(())` sent, `Err(why)` otherwise (failed, refused or
+/// certified-queued — each "left for the Hel" from here).
 fn hel_reap(status_file: Option<&str>, id: &str, branch: &str, repo: &str, why: &str) -> Result<(), String> {
-    let mut c = spira_config::bounded::bounded("hel");
-    c.arg("reap-landed-branch");
-    if let Some(f) = status_file {
-        c.arg("--status-from").arg(f);
-    }
-    c.args([id, branch, repo, why]);
-    c.stdin(Stdio::null()).stderr(Stdio::null());
-    match c.output() {
-        Ok(o) => {
-            let text = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if o.status.success() {
-                Ok(())
-            } else {
-                Err(if text.is_empty() { "unknown".to_string() } else { text })
-            }
-        }
-        Err(e) => Err(e.to_string()),
-    }
+    hel::verbs::reap_landed_branch(status_file, id, branch, repo, why)
 }
 
 /// The push pass's close-on-land `<id> <sha>` — the only place a work bead is closed for a

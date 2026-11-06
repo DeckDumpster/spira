@@ -37,10 +37,14 @@
 # `1 tree` for a verified-empty one — either way `n > 0`, so a genuine skip is never mistaken
 # for a silent fence (gate/src/fence.rs, DESIGN.md "Every fence proves it checked").
 #
-# It runs `cargo check --workspace --locked` — no codegen, no link, yet it resolves the same
-# dependencies and lockfile a release build does; the round VM's release build is the real
-# proof. Check artifacts go to one shared warm target dir (CARGO_TARGET_DIR, else
-# SPIRA_FENCE_TARGET_DIR, else a cache dir), not each worktree's own.
+# It runs `cargo check --locked` — no codegen, no link, yet it resolves the same dependencies
+# and lockfile a release build does; the round VM's release build is the real proof. ONLY
+# OVER WHAT THE CHANGE CAN BREAK (sp-ipwlic, over-broad-scopes #7): `suite-select
+# check-crates` names the changed crates and every workspace package depending on them, and
+# the check is `-p` over those. A manifest, the lockfile, the toolchain pin, the Makefile,
+# `.cargo/` or a `src/` outside every crate checks `--workspace`, as does a missing or failing
+# suite-select — the fallback is the broader check, never a skipped one. Check artifacts go
+# to CARGO_TARGET_DIR, else SPIRA_FENCE_TARGET_DIR, else this worktree's target/fence-check.
 #
 # It fails CLOSED: cargo runs under the pinned toolchain, and a non-zero exit is a RED
 # certification naming the command's own output, not a suite failure.
@@ -119,7 +123,22 @@ command -v "$CARGO_BIN" >/dev/null 2>&1 || { printf 'build-fence: %s not found o
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${SPIRA_FENCE_TARGET_DIR:-$PWD/target/fence-check}}"
 mkdir -p "$CARGO_TARGET_DIR" 2>/dev/null || { printf 'build-fence: cannot create target dir %s — refusing\n' "$CARGO_TARGET_DIR" >&2; exit 2; }
 
-out="$("$CARGO_BIN" check --workspace --locked 2>&1)"; rc=$?
+scope=(--workspace)
+if command -v suite-select >/dev/null 2>&1; then
+    if crates="$(printf '%s\n' "$changed" | suite-select check-crates --repo . 2>/dev/null)" && [ "$crates" != "--workspace" ]; then
+        scope=()
+        while IFS= read -r c; do [ -n "$c" ] && scope+=(-p "$c"); done <<< "$crates"
+    fi
+else
+    printf 'build-fence: suite-select is not on PATH — checking the whole workspace\n' >&2
+fi
+if [ "${#scope[@]}" -eq 0 ]; then
+    printf 'build-fence: the build-surface change is in no workspace crate — nothing to check\n' >&2
+    printf 'fence: build-fence checked %d changed-files\n' "$n" >&2
+    exit 0
+fi
+printf 'build-fence: cargo check %s\n' "${scope[*]}" >&2
+out="$("$CARGO_BIN" check "${scope[@]}" --locked 2>&1)"; rc=$?
 if [ "$rc" -ne 0 ]; then
     printf 'build-fence: cargo check FAILED (rc=%s) — RED certification, not a suite failure\n' "$rc" >&2
     printf '%s\n' "$out" >&2

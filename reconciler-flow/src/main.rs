@@ -69,14 +69,13 @@ struct Config {
     alerted_path: PathBuf,
     store: tsd::store::Pusher,
     metrics_endpoint: Option<String>,
-    tsd_bin: String,
+    /// Whether this pass appends the backlog sample (a unit test's "no writer" is false).
+    write_backlog: bool,
     export_bin: String,
     duckdb_bin: String,
     bdq_bin: String,
     scope_label: String,
     desired_dir: PathBuf,
-    mail_bin: String,
-    date_bin: String,
     window_hours: f64,
     baseline_hours: f64,
     grace_secs: u64,
@@ -87,20 +86,22 @@ struct Config {
     now_iso: String,
 }
 
-/// Every program the pass runs, by name on the launcher's PATH; a test injects its own.
+/// Every program the pass still runs, by name on the launcher's PATH; a test injects its own.
+/// The backlog sample, the clock and the Concierge alert are in-process.
 struct Seams {
-    tsd: String,
     duckdb: String,
     export: String,
-    mail: String,
-    date: String,
     bdq: String,
 }
 
 impl Seams {
     fn production() -> Result<Seams, String> {
         let tool = spira_config::release_env::tool;
-        Ok(Seams { tsd: tool("tsd-write")?, duckdb: "duckdb".into(), export: tool("tsd-lifecycle-export")?, mail: tool("mail")?, date: "date".into(), bdq: tool("bdq")? })
+        // FORK-EDGE: needs tsd-lifecycle-export as a library (its lifecycle export holds a dolt connection in main.rs)
+        let export = tool("tsd-lifecycle-export")?;
+        // FORK-EDGE: unserved verb content — which beads the scope holds is a content-store read
+        let bdq = tool("bdq")?;
+        Ok(Seams { duckdb: "duckdb".into(), export, bdq })
     }
 }
 
@@ -114,13 +115,12 @@ impl Config {
             alerted_path: paths::flow_alerted(&spira_run),
             store: tsd::store::Pusher::new(cfg("SPIRA_METRICS_ENDPOINT").ok().filter(|e| !e.trim().is_empty())),
             metrics_endpoint: cfg("SPIRA_METRICS_ENDPOINT").ok(),
-            tsd_bin: seams.tsd,
+            write_backlog: true,
             duckdb_bin: seams.duckdb,
             export_bin: seams.export,
             bdq_bin: seams.bdq,
             scope_label: cfg("SPIRA_SCOPE_LABEL")?,
             desired_dir: PathBuf::from(cfg("SPIRA_DESIRED_DIR")?),
-            mail_bin: seams.mail,
             window_hours: cfg_parse::<f64>("SPIRA_FLOW_WINDOW_HOURS")?,
             baseline_hours: cfg_parse::<f64>("SPIRA_FLOW_BASELINE_HOURS")?,
             grace_secs: cfg_parse::<u64>("SPIRA_FLOW_GRACE_SECS")?,
@@ -136,16 +136,15 @@ impl Config {
             // Must match systemd/spira-sentinel.timer's OnUnitActiveSec — two independent
             // literals of the same fact is exactly how they drift.
             sentinel_timer_secs: cfg_parse::<u64>("SPIRA_FLOW_SENTINEL_PERIOD_SECS")?,
-            now_secs: clock::now_secs(&seams.date),
-            now_iso: clock::now_iso(&seams.date),
-            date_bin: seams.date,
+            now_secs: clock::now_secs(),
+            now_iso: clock::now_iso(),
             spira_run,
         })
     }
 }
 
-fn log_print(cfg: &Config, msg: &str) {
-    println!("{} spira: {}", clock::now_iso(&cfg.date_bin), msg);
+fn log_print(_cfg: &Config, msg: &str) {
+    println!("{} spira: {}", clock::now_iso(), msg);
 }
 
 fn unobservable(reason: String) -> RawStatus {
@@ -204,7 +203,7 @@ fn maybe_alert(cfg: &Config, alerted: &mut AlertedSinceMap, key: &str, verdict: 
     let subject = format!("RECONCILER: flow gap — {key}");
     let evidence = compose_alert(key, cfg.now_secs, verdict, None);
     let body = format!("{evidence}\nThis has no deterministic remedy — it needs judgement, not a retry.\n");
-    if let Err(e) = mail::note_concierge(&cfg.mail_bin, &subject, &body) {
+    if let Err(e) = mail::note_concierge(&subject, &body) {
         eprintln!("reconciler-flow: {key}: concierge alert failed: {e}");
     } else {
         log_print(cfg, &format!("reconciler-flow: {key} → gap, alerted concierge"));
@@ -277,7 +276,7 @@ fn run_pass() -> Result<(), String> {
     maybe_alert(&cfg, &mut alerted, "flow:backlog", &v);
     log_print(&cfg, &format!("reconciler-flow: flow:backlog → {}", status_word(&v)));
     if let Ok(cur) = current {
-        append_backlog_sample(&cfg.tsd_bin, &cfg.spira_run, cur);
+        append_backlog_sample(cfg.write_backlog, &cfg.spira_run, cur);
     }
 
     // ── stage velocity ("queue") ─────────────────────────────────────────────────────────
@@ -403,7 +402,7 @@ fn run_pass() -> Result<(), String> {
 
     let _ = save_state(&cfg.state_path, &state);
     let _ = save_alerted(&cfg.alerted_path, &alerted);
-    let elapsed = clock::now_secs(&cfg.date_bin).saturating_sub(cfg.now_secs);
+    let elapsed = clock::now_secs().saturating_sub(cfg.now_secs);
     log_print(&cfg, &format!("reconciler-flow: pass complete ({elapsed}s)"));
 
     drop(lock_file);

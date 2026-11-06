@@ -7,9 +7,11 @@ description = "watchd — the watcher manifest, and the face over the logs and c
 [dependencies]
 inbox-rules = { path = "../inbox-rules" }
 libc = "0.2"
+mail = { path = "../mail" }
 regex = "1"
 sop = { path = "../sop" }
 spira-config = { path = "../spira-config" }
+tsd = { path = "../tsd" }
 
 [profile.release]
 opt-level = "z"

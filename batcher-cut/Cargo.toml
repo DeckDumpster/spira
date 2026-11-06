@@ -20,6 +20,9 @@ state-store = { path = "../state-store" }
 tsd = { path = "../tsd" }
 migration-numbers = { path = "../migration-numbers" }
 serde_json = "1"
+forge = { path = "../forge" }
+store-view = { path = "../store-view" }
+libc = "0.2"
 
 
 [dev-dependencies]

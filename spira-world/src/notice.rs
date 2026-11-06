@@ -4,9 +4,7 @@
 //! mailbox, which its PostToolUse hook hands to the working session.
 
 use std::collections::BTreeSet;
-use std::io::Write;
 use std::path::Path;
-use std::process::Stdio;
 
 /// The second notice goes out once this many seconds remain.
 pub const SECOND_AT_SECS: u64 = 300;
@@ -63,20 +61,7 @@ pub fn send(mail_root: &Path, bead: &str, body: &str) -> bool {
     if !mail_root.join(format!("dwarf-{bead}")).join("new").is_dir() {
         return false;
     }
-    let Ok(mut child) = spira_config::bounded::bounded("mail")
-        .args(["send", &format!("dwarf-{bead}"), "--from", "world <world@spira>", "--subject", "Deadline: wrap up or checkpoint"])
-        .env("SPIRA_MAIL_LINT_CONSIDERED", "1")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
-        return false;
-    };
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(body.as_bytes());
-    }
-    child.wait().map(|s| s.success()).unwrap_or(false)
+    crate::mail_out::send_configured(&crate::mail_out::Letter { mailbox: &format!("dwarf-{bead}"), subject: "Deadline: wrap up or checkpoint", kind: "", body })
 }
 
 #[cfg(test)]

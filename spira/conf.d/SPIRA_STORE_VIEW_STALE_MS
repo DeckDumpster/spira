@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Milliseconds the spira-runtime store views (rounds, open batch, ready counts) may go without the control store confirming their revision before every read refuses as stale; above the watch long-poll's 2000 ms wait and its 1 s retry.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Milliseconds the spira-runtime store views may go unconfirmed by the control store before their reads refuse as stale.
+    : "${SPIRA_STORE_VIEW_STALE_MS:=10000}"
+SPIRA_CONF_DEFAULT_EOF

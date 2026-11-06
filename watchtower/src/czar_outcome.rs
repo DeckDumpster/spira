@@ -7,6 +7,7 @@
 //! caller itself moved to Rust. The logic is unchanged line-for-line from the python.
 
 use crate::incident::{self, Finding};
+use spira_config::lc_call::LcClient;
 use crate::log::{log, parse_iso_utc};
 use serde::Deserialize;
 use spira_config::lc_state;
@@ -120,10 +121,10 @@ impl Default for Cfg {
     }
 }
 
-/// `bdq list --label <label> --all --json --limit 0 --brief` — a read failure (bad db, `bdq`
-/// missing) yields an empty list, matching the bash's `|| _co_raw=""` -> `'[]'`.
-pub fn query_beads(bdq: &str, label: &str) -> Vec<TriggerBead> {
-    let beads = query_bd(bdq, label);
+/// The label's beads (`content list --label <label> --all --json --limit 0 --brief`) joined to
+/// their lifecycle states — a read failure yields an empty list, matching the bash's `|| _co_raw=""` -> `'[]'`.
+pub fn query_beads(lc: &LcClient, label: &str) -> Vec<TriggerBead> {
+    let beads = query_bd(lc, label);
     match lc_state::list() {
         Ok(rows) => join_states(beads, &lc_state::index(rows)),
         Err(e) => {
@@ -142,19 +143,15 @@ pub fn join_states(mut beads: Vec<TriggerBead>, lc: &HashMap<String, lc_state::R
     beads
 }
 
-fn query_bd(bdq: &str, label: &str) -> Vec<TriggerBead> {
-    let out = spira_config::bounded::bounded(bdq)
-        .args(["list", "--label", label, "--all", "--json", "--limit", "0", "--brief"])
-        .output();
-    let out = match out {
-        Ok(o) if o.status.success() => o.stdout,
-        _ => return Vec::new(),
-    };
-    let text = String::from_utf8_lossy(&out);
-    serde_json::from_str(&text).unwrap_or_default()
+/// The label's beads through the store's content door; no answer is an empty list, as the
+/// bash's `|| _co_raw=""` made it.
+fn query_bd(lc: &LcClient, label: &str) -> Vec<TriggerBead> {
+    crate::lc::content_list(lc, &["--label", label, "--all", "--json", "--limit", "0", "--brief"])
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
 }
 
-pub fn run(now: i64, bd_bin: &str, db: &str, home_repo: &str, incident_sh: &str, cfg: &Cfg) {
+pub fn run(now: i64, lc: &LcClient, db: &str, home_repo: &str, incident_sh: &str, cfg: &Cfg) {
     if !incident::is_usable(incident_sh) {
         log(&format!(
             "watchtower: czar-outcome-check skipped — {} not readable",
@@ -162,7 +159,7 @@ pub fn run(now: i64, bd_bin: &str, db: &str, home_repo: &str, incident_sh: &str,
         ));
         return;
     }
-    let beads = query_beads(bd_bin, &cfg.label);
+    let beads = query_beads(lc, &cfg.label);
     for finding in classify(now, cfg.outcome_mins, cfg.unclaimed_mins, &beads) {
         match finding {
             Outcome::Unclaimed { id, external_ref } => {
@@ -211,6 +208,15 @@ pub fn run(now: i64, bd_bin: &str, db: &str, home_repo: &str, incident_sh: &str,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trigger_beads_are_read_through_the_content_door() {
+        let (t, lc) = crate::lc::scripted::scripted(0, r#"[{"id":"sp-a","external_ref":"czar:deadlock"}]"#);
+        let beads = query_bd(&lc, "czar-trigger");
+        assert_eq!(beads.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), vec!["sp-a"]);
+        assert_eq!(t.seen.lock().unwrap()[0], vec!["content", "list", "--label", "czar-trigger", "--all", "--json", "--limit", "0", "--brief"]);
+        assert!(query_bd(&crate::lc::scripted::scripted(2, "cannot tell").1, "x").is_empty());
+    }
 
     /// The fixtures name the old bd words; each stands for the lifecycle state it meant.
     fn bead(id: &str, status: &str, reference: &str, created: &str, closed: &str) -> TriggerBead {

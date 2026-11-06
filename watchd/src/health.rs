@@ -30,6 +30,7 @@ pub fn probe(command: &str, timeout: Duration) -> Health {
         Ok(e) => e,
         Err(e) => return Health::Degraded(e),
     };
+    // FORK-EDGE: the manifest row's health assertion is an operator shell predicate (W1 allow-list: bash).
     let mut child = match Command::new("bash").envs(envs)
         .arg("-c")
         .arg(command)

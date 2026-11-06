@@ -177,10 +177,10 @@ echo
 echo "PRUNE — manifest unit is NOT pruned (positive guard):"
 # ==========================================================================
 
-if [ -f "$DEST/spira-sentinel-test.service" ]; then
-    ok "guard: spira-sentinel-test.service present after install (not pruned)"
+if [ -f "$DEST/spira-runtime-test.service" ]; then
+    ok "guard: spira-runtime-test.service present after install (not pruned)"
 else
-    bad "guard: spira-sentinel-test.service present after install" "file missing"
+    bad "guard: spira-runtime-test.service present after install" "file missing"
 fi
 
 # ==========================================================================

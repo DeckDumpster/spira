@@ -21,22 +21,73 @@ base64 = "0.22"
 install = { path = "../install" }
 libc = "0.2"
 mail = { path = "../mail" }
+cockpit-ops = { path = "../cockpit/ops" }
+# Family A's landing tasks (batcher.local/forge, queue.step, publish): their libraries.
+batcher = { path = "../batcher" }
+batcher-cut = { path = "../batcher-cut" }
+queue = { path = "../queue" }
 reconciler = { path = "../reconciler" }
 reconciler-engine = { path = "../reconciler-engine" }
 reconciler-flow = { path = "../reconciler-flow" }
+# Family B reconcilers: heimdall's in-scheduler checks as a library.
+heimdall = { path = "../heimdall" }
+# Family A's loop core (sentinel, czar, sift): the crates its tasks call as libraries.
+sentinel = { path = "../sentinel" }
+czar-pass = { path = "../czar-pass" }
+round-controller = { path = "../round-controller" }
+sift = { path = "../sift" }
 runtime = { path = "../runtime" }
 unit-run = { path = "../unit-run" }
 spira-config = { path = "../spira-config" }
+store-view = { path = "../store-view" }
+skew = { path = "../skew" }
+perf-watch = { path = "../perf-watch" }
 spira-otel = { path = "../spira-otel" }
 ring = "0.17"
 tsd = { path = "../tsd" }
+# Family C sweeps (hel, reclaim, round-vm): the crates their tasks call as libraries.
+hel = { path = "../hel" }
+reclaim = { path = "../reclaim" }
+round-vm = { path = "../round-vm" }
+testenv = { path = "../testenv" }
+watchd = { path = "../watchd" }
+# Family A's gate, landing, reap and provision tasks: their libraries.
+gate-check = { path = "../gate-check" }
+bead = { path = "../bead" }
+gate-worker = { path = "../gate-worker" }
+landing-pass = { path = "../landing-pass" }
+# The landing task's pull-request verbs, in-process (its one child is gh).
+forge = { path = "../forge" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
 ureq = { version = "2", default-features = false, features = ["tls"] }
+spira-submission = { path = "../spira-submission" }
+gh-intake = { path = "../gh-intake" }
+dwarf = { path = "../dwarf" }
+archivist = { path = "../archivist" }
+incident = { path = "../incident" }
+watchtower = { path = "../watchtower" }
+runtime-watch = { path = "../runtime-watch" }
+refusal-watch = { path = "../refusal-watch" }
+# Family D watchers (sop-lint, statute-audit, the cert sweeps): their libraries.
+sop = { path = "../sop" }
+rule = { path = "../rule" }
+cert-sweep = { path = "../cert-sweep" }
+release = { path = "../release" }
+cockpit-collect = { path = "../cockpit-collect" }
+groomer = { path = "../groomer" }
+idea-prompt = { path = "../idea-prompt" }
+filings-collect = { path = "../filings-collect" }
+kit-bump = { path = "../kit-bump" }
+mimir-trigger = { path = "../mimir-trigger" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+inotify = { version = "0.11", default-features = false }
 
 [dev-dependencies]
 forge = { path = "../forge" }
+sim = { path = "../sim" }
 testkit = { path = "../testkit" }
 release = { path = "../release" }
 

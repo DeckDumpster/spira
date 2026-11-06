@@ -38,12 +38,33 @@ pub fn derive_id(plain: String) -> String {
     format!("{head}#{:016x}", fnv1a(&plain))
 }
 
+/// Whether `id` is one a handler wrote while handling `parent`: an id derived from the parent's
+/// (`{parent}/{handler}/{i}`, kept to its first `KEPT` chars when long) and not its outcome's.
+pub(crate) fn written_by_handler_of(parent: &EventId, id: &EventId) -> bool {
+    let p = &parent.0;
+    let head = if p.chars().count() < KEPT { format!("{p}/") } else { p.chars().take(KEPT).collect() };
+    id.0.starts_with(&head) && id.0 != derive_id(format!("{p}/outcome"))
+}
+
 pub type EventKindTag = &'static str;
 
 pub const EFFECT_REQUESTED: EventKindTag = "effect.requested";
 pub const EFFECT_SUCCEEDED: EventKindTag = "effect.succeeded";
 pub const EFFECT_FAILED: EventKindTag = "effect.failed";
 pub const EFFECT_TIMED_OUT: EventKindTag = "effect.timed_out";
+/// A write an `Observe` task asked for and the engine recorded instead of running. It is never
+/// an open effect: no restart, and no later switch to `Act`, runs it.
+pub const EFFECT_SHADOWED: EventKindTag = "effect.shadowed";
+/// A cross-stream emit an `Observe` task asked for, recorded on its own stream instead of
+/// landing on the target; its body is a [`ShadowedEmit`]. Nothing ever delivers it.
+pub const EMIT_SHADOWED: EventKindTag = "emit.shadowed";
+/// A write an `Act` task asked for while the scheduler was halted; resuming requests it.
+pub const EFFECT_HELD: EventKindTag = "effect.held";
+
+/// The stream that carries the scheduler's halt state and the writes held under it.
+pub const HALT_STREAM: &str = "scheduler.halt";
+pub const SCHEDULER_HALTED: EventKindTag = "scheduler.halted";
+pub const SCHEDULER_RESUMED: EventKindTag = "scheduler.resumed";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventKind {
@@ -76,11 +97,23 @@ pub struct EffectSpec {
     pub deadline_ms: u64,
 }
 
-/// `Emit`, `Effect` and `Schedule` are journaled and survive a restart. `Note`, `Probe` and
+/// The body of an [`EMIT_SHADOWED`] event: where the emit would have gone, and what.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowedEmit {
+    pub stream: StreamKey,
+    pub kind: EventKind,
+}
+
+/// `Emit`, `EmitTo`, `Effect` and `Schedule` are journaled and survive a restart. `Note`, `Probe` and
 /// `Timer` live in the engine's memory only: a restart forgets them, so they are for work the
 /// next poll repeats anyway, and a handler that must not lose a fact emits it.
 pub enum Command {
     Emit(EventKind),
+    /// An event on another stream: how one task wakes another. Its id is the causing event's,
+    /// the handler, the command's index and the target stream, so a replayed handler appends
+    /// nothing twice. A halt does not hold it (it is not an effect); under `Observe` it is
+    /// journaled as [`EMIT_SHADOWED`] on the handler's own stream and never delivered.
+    EmitTo { stream: StreamKey, kind: EventKind },
     Effect(EffectSpec),
     Schedule { at: u64, kind: EventKind },
     Note(EventKind),
@@ -115,6 +148,10 @@ impl Ctx {
     /// The wide event of this unit of work: add a field with `set`, nothing else.
     pub fn event(&self) -> &Wide {
         &self.wide
+    }
+
+    pub(crate) fn into_event(self) -> Wide {
+        self.wide
     }
 
     pub fn now(&self) -> u64 {
@@ -196,15 +233,104 @@ impl Projection {
 pub trait Handler: Send + Sync {
     fn interests(&self) -> &[EventKindTag];
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command>;
+
+    /// An effect's outcome is offered to the handler that requested it and to no other, unless
+    /// this says `true`: then every outcome it is interested in is offered to it, whoever asked.
+    fn watches_foreign_outcomes(&self) -> bool {
+        false
+    }
+}
+
+/// `Observe` runs a task's probes and records its writes as `effect.shadowed` without running
+/// them; `Act` runs both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    Observe,
+    Act,
+}
+
+impl Mode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Mode::Observe => "observe",
+            Mode::Act => "act",
+        }
+    }
+}
+
+/// What a halt does to a task's effects. `Work` (claim, round, land, sweeps) is held while the
+/// scheduler is halted; `Signal` (waking a reader, paging, mailing the operator) keeps running,
+/// so a stopped world can still reach the operator.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Plane {
+    #[default]
+    Work,
+    Signal,
+}
+
+impl Plane {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Plane::Work => "work",
+            Plane::Signal => "signal",
+        }
+    }
 }
 
 pub struct Registration {
     pub name: String,
     pub handler: Box<dyn Handler>,
+    pub mode: Mode,
+    /// The task's plane: `Signal` is shorthand for every one of its effects on the signal plane.
+    pub plane: Plane,
+    /// The effects on the signal plane whatever the task's plane: those whose only act is to
+    /// page, send mail or append to the inbox.
+    pub signal_effects: Vec<&'static str>,
+    /// Every effect the task declares, for `status`; the plane of each is [`Self::plane_of`].
+    pub effects: Vec<&'static str>,
 }
 
 impl Registration {
+    /// In `Act` on the `Work` plane; a service takes the mode of every task from its configured
+    /// table and the plane from its task row.
     pub fn new(name: &str, handler: impl Handler + 'static) -> Self {
-        Registration { name: name.into(), handler: Box::new(handler) }
+        Registration { name: name.into(), handler: Box::new(handler), mode: Mode::Act, plane: Plane::Work, signal_effects: vec![], effects: vec![] }
+    }
+
+    pub fn with_mode(mut self, mode: Mode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    pub fn with_plane(mut self, plane: Plane) -> Self {
+        self.plane = plane;
+        self
+    }
+
+    /// Adds `names` to the effects on the signal plane.
+    pub fn with_signal_effects(mut self, names: &[&'static str]) -> Self {
+        for n in names {
+            if !self.signal_effects.contains(n) {
+                self.signal_effects.push(n);
+            }
+        }
+        self
+    }
+
+    /// The effects the task declares, listed in `status` with their planes.
+    pub fn with_effects(mut self, names: &[&'static str]) -> Self {
+        self.effects = names.to_vec();
+        self
+    }
+
+    /// The plane of this task's effect `name`: a halt holds it only on `Work`.
+    pub fn plane_of(&self, name: &str) -> Plane {
+        if self.plane == Plane::Signal || self.signal_effects.contains(&name) {
+            Plane::Signal
+        } else {
+            Plane::Work
+        }
     }
 }

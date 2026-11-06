@@ -12,29 +12,31 @@ use spira_otel::metrics::{MetricsSink, Point};
 
 pub const VERB: &str = "goodput-pass";
 
-/// `spira-lc` as a program on the launcher's PATH.
+/// The lifecycle store, in-process over its socket: every verb the pass speaks (`intent`,
+/// `lock`, `pass`, `section`) is served there.
 pub struct SpiraLc {
-    program: String,
+    client: spira_config::lc_call::LcClient,
 }
 
 impl SpiraLc {
     pub fn installed() -> Result<SpiraLc, String> {
-        Ok(SpiraLc { program: spira_config::lifecycle_row::lc_bin()? })
+        Ok(SpiraLc { client: spira_config::lc_call::LcClient::configured()? })
+    }
+
+    #[cfg(test)]
+    pub fn over(client: spira_config::lc_call::LcClient) -> SpiraLc {
+        SpiraLc { client }
     }
 }
 
 impl Lc for SpiraLc {
     fn call(&self, args: &[String]) -> (i32, Value) {
-        let out = spira_config::bounded::bounded(&self.program).args(args).stdin(std::process::Stdio::null()).output();
-        match out {
-            Ok(o) => {
-                let code = o.status.code().unwrap_or(-1);
-                let stdout = String::from_utf8_lossy(&o.stdout);
-                let v = serde_json::from_str(stdout.trim())
-                    .unwrap_or_else(|_| json!({ "cannot_tell": format!("{} answered non-JSON: {}", self.program, String::from_utf8_lossy(&o.stderr).trim()) }));
-                (code, v)
+        match self.client.call(args) {
+            Ok(r) => {
+                let v = serde_json::from_str(r.out.trim()).unwrap_or_else(|_| json!({ "cannot_tell": format!("the lifecycle store answered non-JSON: {}", r.why()) }));
+                (r.code, v)
             }
-            Err(e) => (-1, json!({ "cannot_tell": format!("{}: {e}", self.program) })),
+            Err(e) => (-1, json!({ "cannot_tell": e.to_string() })),
         }
     }
 }
@@ -105,4 +107,41 @@ pub fn main(sink: &MetricsSink) -> Result<(), String> {
         ),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spira_config::lc_call::{LcClient, Reply, Transport};
+    use std::sync::{Arc, Mutex};
+
+    struct Store(Mutex<Vec<Vec<String>>>, i32, &'static str);
+
+    impl Transport for Store {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<Reply, String> {
+            self.0.lock().unwrap().push(argv.to_vec());
+            Ok(Reply { code: self.1, out: self.2.into(), err: String::new() })
+        }
+    }
+
+    fn lc(code: i32, out: &'static str) -> (SpiraLc, Arc<Store>) {
+        let s = Arc::new(Store(Mutex::default(), code, out));
+        (SpiraLc::over(LcClient::over(Arc::clone(&s) as Arc<dyn Transport>, true)), s)
+    }
+
+    #[test]
+    fn a_pass_verb_is_answered_by_the_store_in_process() {
+        let (lc, store) = lc(0, r#"{"held":true}"#);
+        let argv: Vec<String> = ["lock", "acquire", "reconciler", "--ttl", "60", "--holder", "h"].map(String::from).to_vec();
+        assert_eq!(lc.call(&argv), (0, json!({ "held": true })));
+        assert_eq!(store.0.lock().unwrap().as_slice(), &[argv]);
+    }
+
+    #[test]
+    fn a_non_json_answer_is_cannot_tell_with_its_exit_code() {
+        let (lc, _) = lc(2, "cannot tell: down");
+        let (code, v) = lc.call(&["section".to_string(), "snapshot".into()]);
+        assert_eq!(code, 2);
+        assert!(v["cannot_tell"].as_str().unwrap().contains("cannot tell: down"), "{v}");
+    }
 }

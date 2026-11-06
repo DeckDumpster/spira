@@ -1660,13 +1660,13 @@ fn conflicts(instance: &str) -> Result<(), install::guards::Conflict> {
     let unit_dir = bootstrap::unit_dir();
     let our_dir = Path::new(&home).canonicalize().map(|p| p.to_string_lossy().to_string()).unwrap_or(home.clone());
 
-    // Conflict 1: a foreign harness copy. Tried against SPIRA_HOME first, then against
-    // dirname(SPIRA_PROD or SPIRA_HOME)/bin — an older, cutover-era unit ExecStarts
-    // $SPIRA_HOME/sentinel.sh directly, while a current one ExecStarts the release's
-    // bin/sentinel; comparing only SPIRA_HOME refused every reinstall of a cutover install
-    // as foreign (install.sh's own comment, preserved here: either match clears it).
-    let sentinel_file = unit_dir.join(format!("spira-sentinel-{instance}.service"));
-    let installed_exec_dir = std::fs::read_to_string(&sentinel_file).ok().and_then(|t| {
+    // Conflict 1: a foreign harness copy, read from the installed scheduler unit (the loop's one
+    // process since the scheduler consolidation; the sentinel timer it replaced is retired).
+    // Tried against SPIRA_HOME first, then against dirname(SPIRA_PROD or SPIRA_HOME)/bin — the
+    // unit ExecStarts the release's bin/spira-runtime, and comparing only SPIRA_HOME refused
+    // every reinstall of a cutover install as foreign: either match clears it.
+    let runtime_file = unit_dir.join(format!("spira-runtime-{instance}.service"));
+    let installed_exec_dir = std::fs::read_to_string(&runtime_file).ok().and_then(|t| {
         t.lines().find_map(|l| l.strip_prefix("ExecStart=")).map(|v| v.split_whitespace().next().unwrap_or("").to_string()).and_then(|exe| Path::new(&exe).parent().map(|p| p.to_string_lossy().to_string())).and_then(|d| Path::new(&d).canonicalize().ok()).map(|p| p.to_string_lossy().to_string())
     });
     let prod = nonempty_env("SPIRA_PROD").unwrap_or_else(|| home.clone());
@@ -1690,12 +1690,12 @@ fn conflicts(instance: &str) -> Result<(), install::guards::Conflict> {
     let conf_file = nonempty_env("SPIRA_CONF_FILE").unwrap_or_default();
     let conf_instance = std::fs::read_to_string(&conf_file).ok().and_then(|t| t.lines().find_map(|l| l.trim_start().strip_prefix("SPIRA_INSTANCE").map(str::to_string))).and_then(|l| l.split('=').nth(1).map(|v| v.trim().trim_matches('"').trim_matches('\'').to_string()));
     conflict_instance_arg(instance, conf_instance.as_deref(), &conf_file)?;
-    let our_unit = format!("spira-sentinel-{instance}.service");
+    let our_unit = format!("spira-runtime-{instance}.service");
     let mut others = Vec::new();
     if let Ok(rd) = std::fs::read_dir(&unit_dir) {
         for e in rd.flatten() {
             let n = e.file_name().to_string_lossy().to_string();
-            if n.starts_with("spira-sentinel-") && n.ends_with(".service") && n != our_unit {
+            if n.starts_with("spira-runtime-") && n.ends_with(".service") && n != our_unit {
                 if let Ok(t) = std::fs::read_to_string(e.path()) {
                     if let Some(rd_line) = t.lines().find_map(|l| l.strip_prefix("StandardOutput=append:").or_else(|| l.strip_prefix("StandardError=append:"))) {
                         if let Some(dir) = Path::new(rd_line).parent() {

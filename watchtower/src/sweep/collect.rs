@@ -236,6 +236,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     if let Some(ysh) = &yield_sh {
         if let Ok(out) = crate::deadline::output(
             "yield",
+            // FORK-EDGE: yield.sh is 536 lines of shell
             Command::new("bash")
                 .arg(ysh)
                 .arg("report")
@@ -308,9 +309,8 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     let disk_cfg = disk_mem::Cfg {
         disk_warn_pct: cfg.disk_warn_pct,
         mem_warn_mb: cfg.mem_warn_mb,
-        df_bin: "df".to_string(),
     };
-    let disk_pct = disk_mem::disk_root_pct(&disk_cfg.df_bin);
+    let disk_pct = disk_mem::disk_root_pct();
     let mem_mb = disk_mem::mem_available_mb(&cfg.meminfo_path);
     let disk = disk_mem::render(disk_pct, mem_mb, &disk_cfg);
 
@@ -409,19 +409,9 @@ fn extract_kv(line: &str, key: &str) -> Option<String> {
     }
 }
 
+/// `/tmp`'s Use% as `df /tmp` printed it (`83%`), `?` when it cannot be read.
 fn tmp_pct() -> String {
-    let out = crate::deadline::output("df /tmp", Command::new("df").arg("/tmp"));
-    match out {
-        Ok(o) if o.status.success() => {
-            let text = String::from_utf8_lossy(&o.stdout);
-            text.lines()
-                .nth(1)
-                .and_then(|l| l.split_whitespace().nth(4))
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "?".to_string())
-        }
-        _ => "?".to_string(),
-    }
+    crate::fsstat::usage("/tmp").map_or_else(|| "?".to_string(), |u| format!("{}%", u.used_pct))
 }
 
 fn czar_row(env: &Env, label: &str, tag: &str) -> String {
@@ -451,6 +441,7 @@ pub(super) fn czar_block(env: &Env) -> String {
 
 fn suites_block(cfg: &Cfg) -> String {
     let out = if let Some(sh) = &cfg.suites_sh {
+        // FORK-EDGE: SPIRA_SUITES_SH test seam; production runs testenv
         crate::deadline::output("suites status", Command::new("bash").arg(sh).arg("status"))
     } else {
         match spira_config::release_env::tool("testenv") {
@@ -469,6 +460,7 @@ fn guard_block(cfg: &Cfg) -> String {
     let Some(sh) = guard_sh.filter(|p| incident::is_usable(p)) else {
         return "  (unavailable — branch-guard.sh is missing or unreadable)".to_string();
     };
+    // FORK-EDGE: branch-guard.sh is 211 lines of shell
     match crate::deadline::output("branch guard", Command::new("bash").arg(&sh).arg("check")) {
         Ok(o) => {
             let text = String::from_utf8_lossy(&o.stdout).into_owned()

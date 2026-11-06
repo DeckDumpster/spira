@@ -1,13 +1,12 @@
 //! Root disk and memory. A full root disk kills every process on the box, not only
 //! Spira's; `SPIRA_MEMINFO_PATH` is a seam for tests the same way `SPIRA_INCIDENT_SH` and
-//! `SPIRA_SUITES_SH` are — `/proc/meminfo` cannot be stubbed by PATH the way `df` can.
+//! `SPIRA_SUITES_SH` are. The disk reads `statvfs(3)` in-process (was `df`).
 
 use std::path::Path;
 
 pub struct Cfg {
     pub disk_warn_pct: i64,
     pub mem_warn_mb: i64,
-    pub df_bin: String,
 }
 
 impl Default for Cfg {
@@ -15,7 +14,6 @@ impl Default for Cfg {
         Cfg {
             disk_warn_pct: 90,
             mem_warn_mb: 1500,
-            df_bin: "df".to_string(),
         }
     }
 }
@@ -40,23 +38,9 @@ pub fn mem_available_mb(meminfo_path: &Path) -> Option<i64> {
     None
 }
 
-/// `df --output=pcent /`, digits only — matches the bash's `tail -1 | tr -dc '0-9'`.
-pub fn disk_root_pct(df_bin: &str) -> Option<i64> {
-    let out = spira_config::bounded::bounded(df_bin)
-        .args(["--output=pcent", "/"])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let last = text.lines().last()?;
-    let digits: String = last.chars().filter(|c| c.is_ascii_digit()).collect();
-    if digits.is_empty() {
-        None
-    } else {
-        digits.parse().ok()
-    }
+/// The root filesystem's Use%, as `df --output=pcent /` printed it.
+pub fn disk_root_pct() -> Option<i64> {
+    crate::fsstat::usage("/").map(|u| u.used_pct)
 }
 
 pub fn render(disk_pct: Option<i64>, mem_mb: Option<i64>, cfg: &Cfg) -> DiskMem {

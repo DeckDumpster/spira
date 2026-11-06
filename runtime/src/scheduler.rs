@@ -36,6 +36,11 @@ impl Scheduler {
         self.rows.insert(row.id.clone(), row);
     }
 
+    /// The rows waiting to fire, in no particular order.
+    pub fn rows(&self) -> impl Iterator<Item = &ScheduleRow> {
+        self.rows.values()
+    }
+
     pub fn next_at(&self) -> Option<u64> {
         self.heap.peek().map(|Reverse((at, _, _))| *at)
     }

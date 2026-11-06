@@ -1,5 +1,5 @@
 //! The slice of the D-Bus wire protocol a systemd listener needs: EXTERNAL auth, method calls with
-//! a string argument, and little-endian message decoding into [`Val`]. No dependency, so the
+//! a marshalled body of any arity, and little-endian message decoding into [`Val`]. No dependency, so the
 //! listener builds wherever the workspace does.
 
 use std::collections::VecDeque;
@@ -43,6 +43,23 @@ impl Val {
             Val::I(i) => Some(*i),
             Val::U(u) => i64::try_from(*u).ok(),
             Val::Var(v) => v.as_i64(),
+            _ => None,
+        }
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Val::B(b) => Some(*b),
+            Val::Var(v) => v.as_bool(),
+            _ => None,
+        }
+    }
+
+    /// A struct's fields; `None` for any other shape.
+    pub fn fields(&self) -> Option<&[Val]> {
+        match self {
+            Val::Struct(f) => Some(f),
+            Val::Var(v) => v.fields(),
             _ => None,
         }
     }
@@ -120,14 +137,22 @@ pub fn encode_call(serial: u32, dest: &str, path: &str, iface: &str, member: &st
     if let Some(a) = arg {
         put_str(&mut body, a);
     }
+    encode_call_with(serial, dest, path, iface, member, if arg.is_some() { "s" } else { "" }, &body)
+}
+
+/// A METHOD_CALL whose body is already marshalled: `sig` is its D-Bus signature (empty for no
+/// arguments) and `body` its little-endian bytes, aligned from offset 0.
+pub fn encode_call_with(serial: u32, dest: &str, path: &str, iface: &str, member: &str, sig: &str, body: &[u8]) -> Vec<u8> {
     let mut fields = Vec::new();
     put_field(&mut fields, 1, "o", path);
     put_field(&mut fields, 2, "s", iface);
     put_field(&mut fields, 3, "s", member);
     put_field(&mut fields, 6, "s", dest);
-    if arg.is_some() {
+    if !sig.is_empty() {
         align(&mut fields, 8);
-        fields.extend_from_slice(&[8, 1, b'g', 0, 1, b's', 0]);
+        fields.extend_from_slice(&[8, 1, b'g', 0, sig.len() as u8]);
+        fields.extend_from_slice(sig.as_bytes());
+        fields.push(0);
     }
     let mut m = vec![b'l', METHOD_CALL, 0, 1];
     m.extend_from_slice(&(body.len() as u32).to_le_bytes());
@@ -135,7 +160,7 @@ pub fn encode_call(serial: u32, dest: &str, path: &str, iface: &str, member: &st
     m.extend_from_slice(&(fields.len() as u32).to_le_bytes());
     m.extend_from_slice(&fields);
     align(&mut m, 8);
-    m.extend_from_slice(&body);
+    m.extend_from_slice(body);
     m
 }
 
@@ -314,6 +339,20 @@ pub struct Conn {
     pending: VecDeque<Msg>,
 }
 
+/// `x.service` -> `/org/freedesktop/systemd1/unit/x_2eservice`: systemd's object path for a unit,
+/// every byte outside `[A-Za-z0-9]` written as `_xx`, the inverse of `watch::unit_name`.
+pub fn unit_object_path(name: &str) -> String {
+    let mut p = String::from("/org/freedesktop/systemd1/unit/");
+    for b in name.bytes() {
+        if b.is_ascii_alphanumeric() {
+            p.push(b as char);
+        } else {
+            p.push_str(&format!("_{b:02x}"));
+        }
+    }
+    p
+}
+
 pub fn bus_path() -> Result<String, String> {
     if let Ok(a) = std::env::var("DBUS_SESSION_BUS_ADDRESS") {
         if let Some(p) = a.strip_prefix("unix:path=") {
@@ -359,9 +398,22 @@ impl Conn {
     }
 
     pub fn call(&mut self, dest: &str, path: &str, iface: &str, member: &str, arg: Option<&str>) -> Result<Vec<Val>, String> {
+        let mut body = Vec::new();
+        if let Some(a) = arg {
+            put_str(&mut body, a);
+        }
+        self.call_body(dest, path, iface, member, if arg.is_some() { "s" } else { "" }, &body)
+    }
+
+    /// A call of any arity: `sig` and `body` are the marshalled arguments (see [`encode_call_with`]).
+    /// The signature is refused before anything is sent when it is longer than D-Bus allows.
+    pub fn call_body(&mut self, dest: &str, path: &str, iface: &str, member: &str, sig: &str, body: &[u8]) -> Result<Vec<Val>, String> {
+        if sig.len() > 255 {
+            return Err(format!("{member}: a signature of {} bytes is over D-Bus's 255", sig.len()));
+        }
         self.serial += 1;
         let serial = self.serial;
-        self.sock.write_all(&encode_call(serial, dest, path, iface, member, arg)).map_err(|e| format!("{member}: {e}"))?;
+        self.sock.write_all(&encode_call_with(serial, dest, path, iface, member, sig, body)).map_err(|e| format!("{member}: {e}"))?;
         let deadline = Instant::now() + CALL_DEADLINE;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
@@ -486,5 +538,87 @@ mod tests {
         let m = decode(&raw).unwrap();
         assert_eq!((m.kind, m.serial, m.member.as_deref()), (METHOD_CALL, 3, Some("AddMatch")));
         assert_eq!(m.body[0].as_str(), Some("type='signal'"));
+    }
+
+    #[test]
+    fn a_one_string_call_is_the_general_encoder_with_signature_s() {
+        let mut body = Vec::new();
+        put_str(&mut body, "x");
+        assert_eq!(encode_call(4, "d", "/p", "i", "M", Some("x")), encode_call_with(4, "d", "/p", "i", "M", "s", &body));
+        assert_eq!(encode_call(4, "d", "/p", "i", "M", None), encode_call_with(4, "d", "/p", "i", "M", "", &[]));
+    }
+
+    #[test]
+    fn a_marshalled_body_of_several_arguments_decodes_under_its_signature() {
+        let mut body = Vec::new();
+        put_str(&mut body, "a.service");
+        put_str(&mut body, "fail");
+        put_u32(&mut body, 7);
+        let raw = encode_call_with(5, "org.freedesktop.systemd1", "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "M", "ssu", &body);
+        assert_eq!(message_len(&raw).unwrap(), Some(raw.len()));
+        let m = decode(&raw).unwrap();
+        assert_eq!(m.body, vec![Val::S("a.service".into()), Val::S("fail".into()), Val::U(7)]);
+    }
+
+    #[test]
+    fn a_unit_name_escapes_to_its_object_path_and_back() {
+        for name in ["x.service", "spira-run-czar_2dpass-r7.service", "a@b:c.timer", "unit\u{e9}.scope"] {
+            let p = unit_object_path(name);
+            assert!(p.starts_with("/org/freedesktop/systemd1/unit/"), "{p}");
+            assert!(p["/org/freedesktop/systemd1/unit/".len()..].bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'), "{p}");
+            assert_eq!(crate::watch::unit_name(&p).as_deref(), Some(name));
+        }
+        assert_eq!(unit_object_path("x.service"), "/org/freedesktop/systemd1/unit/x_2eservice");
+        assert_eq!(unit_object_path("job-x.service"), "/org/freedesktop/systemd1/unit/job_2dx_2eservice");
+    }
+
+    #[test]
+    fn booleans_and_struct_fields_read_through_a_variant() {
+        assert_eq!(Val::Var(Box::new(Val::B(true))).as_bool(), Some(true));
+        assert_eq!(Val::B(false).as_bool(), Some(false));
+        assert_eq!(Val::S("true".into()).as_bool(), None);
+        let s = Val::Struct(vec![Val::S("a".into()), Val::U(1)]);
+        assert_eq!(s.fields().map(<[Val]>::len), Some(2));
+        assert_eq!(Val::Var(Box::new(s.clone())).fields(), s.fields());
+        assert_eq!(Val::U(1).fields(), None);
+    }
+
+    /// A connected pair already past auth: `call_body` writes one call and reads its reply.
+    #[test]
+    fn call_body_sends_the_body_and_returns_the_matching_reply() {
+        let (a, mut b) = UnixStream::pair().unwrap();
+        let mut c = Conn { sock: a, buf: Vec::new(), serial: 0, pending: VecDeque::new() };
+        let peer = std::thread::spawn(move || {
+            let mut head = [0u8; 16];
+            b.read_exact(&mut head).unwrap();
+            let total = message_len(&head).unwrap().unwrap();
+            let mut rest = vec![0u8; total - 16];
+            b.read_exact(&mut rest).unwrap();
+            let m = decode(&[head.to_vec(), rest].concat()).unwrap();
+            let mut reply_body = Vec::new();
+            put_str(&mut reply_body, "/job/1");
+            let mut fields = Vec::new();
+            align(&mut fields, 8);
+            fields.extend_from_slice(&[5, 1, b'u', 0]);
+            fields.extend_from_slice(&m.serial.to_le_bytes());
+            align(&mut fields, 8);
+            fields.extend_from_slice(&[8, 1, b'g', 0, 1, b'o', 0]);
+            let mut r = vec![b'l', METHOD_RETURN, 0, 1];
+            r.extend_from_slice(&(reply_body.len() as u32).to_le_bytes());
+            r.extend_from_slice(&9u32.to_le_bytes());
+            r.extend_from_slice(&(fields.len() as u32).to_le_bytes());
+            r.extend_from_slice(&fields);
+            align(&mut r, 8);
+            r.extend_from_slice(&reply_body);
+            b.write_all(&r).unwrap();
+            m
+        });
+        let mut body = Vec::new();
+        put_str(&mut body, "a");
+        put_str(&mut body, "b");
+        assert_eq!(c.call_body("d", "/p", "i", "Two", "ss", &body).unwrap(), vec![Val::S("/job/1".into())]);
+        let sent = peer.join().unwrap();
+        assert_eq!((sent.member.as_deref(), sent.body.clone()), (Some("Two"), vec![Val::S("a".into()), Val::S("b".into())]));
+        assert!(c.call_body("d", "/p", "i", "Long", &"s".repeat(256), &[]).unwrap_err().contains("255"), "refused before anything is sent");
     }
 }

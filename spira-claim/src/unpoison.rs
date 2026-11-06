@@ -4,7 +4,9 @@
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::process::Command;
+use std::sync::Arc;
+
+use runtime::units::{UnitHandle, Units};
 
 use lifecycle::bead::{BeadState, HoldKind};
 use serde_json::Value;
@@ -418,6 +420,9 @@ pub struct Live {
     pub run_dir: PathBuf,
     pub asked_dir: PathBuf,
     pub beads_actor: String,
+    /// This call runs inside a dwarf (`SPIRA_DWARF`), whose own unit it must not stop.
+    pub own_dwarf: bool,
+    pub units: UnitsPort,
 }
 
 impl Live {
@@ -434,9 +439,7 @@ impl Live {
     }
 
     fn lc(&self, args: &[&str]) -> Result<store::Ran, String> {
-        let mut c = Command::new(&self.store.lc);
-        c.args(args);
-        store::run_full(c, self.store.timeout, None)
+        self.store.lc_full(args)
     }
 
     /// `$SPIRA_RUN/ejected` — the withdrawn-suites sidecars' own directory (sp-2c1n0: no
@@ -459,13 +462,13 @@ fn first_line(r: &store::Ran) -> String {
 
 impl World for Live {
     fn bead(&mut self, id: &str) -> Result<Option<BeadRecord>, String> {
-        let r = self.bd(&["show", id, "--json"], None)?;
+        let r = self.lc(&["content", "show", id, "--json"])?;
         if r.code != 0 {
             let said = format!("{}\n{}", r.stdout, r.stderr);
             if said.contains("no issue found") || said.contains("no issues found") {
                 return Ok(None);
             }
-            return Err(format!("exit {}: {}", r.code, r.stderr.lines().next().unwrap_or("no stderr")));
+            return Err(format!("exit {}: {}", r.code, first_line(&r)));
         }
         parse_bead(&r.stdout)
     }
@@ -516,7 +519,11 @@ impl World for Live {
     }
 
     fn remove_label(&mut self, id: &str, label: &str) -> Result<(), String> {
-        self.bd_ok(&["label", "remove", id, label], None).map(|_| ())
+        let r = self.lc(&["content", "update", id, "--remove-label", label])?;
+        if r.code != 0 {
+            return Err(format!("content update exit {}: {}", r.code, first_line(&r)));
+        }
+        Ok(())
     }
 
     fn note(&mut self, id: &str, text: &str) -> Result<(), String> {
@@ -530,7 +537,7 @@ impl World for Live {
 
     fn close(&mut self, id: &str, reason: &str) -> Result<(), String> {
         // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
-        spira_config::lifecycle_row::close_with(&self.store.lc, id, reason, "spira-claim", None)
+        spira_config::lifecycle_row::close_with(&self.store.lc_bin, id, reason, "spira-claim", None)
     }
 
     fn mark_poison_lifted(&mut self, id: &str, attempts: u32) -> Result<(), String> {
@@ -575,7 +582,7 @@ impl crate::reopen::World for Live {
     }
 
     fn stop_holder(&mut self, id: &str, cause: &str) -> Result<(), String> {
-        live_stop_holder(&self.run_dir, id, cause)
+        live_stop_holder(&self.run_dir, id, cause, self.own_dwarf, &self.units)
     }
 
     fn write_reopen_event(&mut self, id: &str, cause: &str) {
@@ -587,9 +594,43 @@ impl crate::reopen::World for Live {
     }
 }
 
-pub fn live_stop_holder(run: &std::path::Path, id: &str, why: &str) -> Result<(), String> {
+/// The unit port a stop goes through: the host's own manager, connected on the first stop
+/// (most calls stop nothing), or the one a caller hands in (a test's `ScriptedUnits`).
+pub enum UnitsPort {
+    Host(std::sync::OnceLock<Option<Arc<dyn Units>>>),
+    #[cfg_attr(not(test), allow(dead_code))] // a caller's own port: the tests' ScriptedUnits
+    Given(Arc<dyn Units>),
+}
+
+impl UnitsPort {
+    pub fn host() -> Self {
+        UnitsPort::Host(std::sync::OnceLock::new())
+    }
+
+    /// `None` when the host's manager cannot be reached; a stop then does nothing, as a
+    /// failed `systemctl --user stop` did.
+    pub fn get(&self) -> Option<Arc<dyn Units>> {
+        match self {
+            UnitsPort::Given(u) => Some(Arc::clone(u)),
+            UnitsPort::Host(cell) => cell.get_or_init(host_units).clone(),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn host_units() -> Option<Arc<dyn Units>> {
+    runtime::units::SystemdUnits::connect(Arc::new(runtime::ports::WallClock)).ok().map(|u| Arc::new(u) as Arc<dyn Units>)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn host_units() -> Option<Arc<dyn Units>> {
+    Some(Arc::new(runtime::units::ProcessUnits::new(Arc::new(runtime::ports::WallClock))))
+}
+
+/// Stop whatever still works in `id`'s worktree: the claim's holder file first, then every
+/// unit an occupant runs under, through `units` — never by pid.
+pub fn live_stop_holder(run: &std::path::Path, id: &str, why: &str, own_dwarf: bool, units: &UnitsPort) -> Result<(), String> {
     let epoch = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-    let own_dwarf = std::env::var("SPIRA_DWARF").is_ok_and(|v| !v.is_empty());
     crate::reopen::stop_holder_in(
         run,
         id,
@@ -602,16 +643,23 @@ pub fn live_stop_holder(run: &std::path::Path, id: &str, why: &str) -> Result<()
     if own_dwarf {
         return Ok(());
     }
-    let systemctl = std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".into());
-    let mut stop = |unit: &str| {
-        // batch-job: a unit stop lasts as long as the dwarf takes to exit
-        let _ = std::process::Command::new(&systemctl).args(["--user", "stop", unit]).status();
-    };
-    hel::reap::stop_occupants(std::path::Path::new("/proc"), &run.join("worktree").join(id), &mut stop, 20, &|| {
+    stop_occupants_via(std::path::Path::new("/proc"), &run.join("worktree").join(id), units, &|| {
         // waits-on: worktree occupants exiting; cap 20 polls
         std::thread::sleep(std::time::Duration::from_millis(500))
     })
     .map_err(|pids| format!("process(es) {pids:?} still work in {id}'s worktree after their unit was stopped"))
+}
+
+/// hel's occupant stop with each unit stopped through the port (a unit stop lasts as long as
+/// the dwarf takes to exit).
+pub fn stop_occupants_via(proc_root: &std::path::Path, work: &std::path::Path, units: &UnitsPort, sleep: &dyn Fn()) -> Result<(), Vec<u32>> {
+    let port = units.get();
+    let mut stop = |unit: &str| {
+        if let Some(u) = &port {
+            let _ = u.stop(&UnitHandle::named(unit));
+        }
+    };
+    hel::reap::stop_occupants(proc_root, work, &mut stop, 20, sleep)
 }
 
 #[cfg(test)]

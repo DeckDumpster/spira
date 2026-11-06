@@ -146,6 +146,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    // FORK-EDGE: needs Rust homes for the lib.sh functions called here (land_subject; bead_reopen: release_claim, the requeue event, the TSD dual-write)
     let mut cmd = Command::new("bash");
     cmd.arg("-c").arg(r#". "$1" && shift && "$0" "$@""#).arg(func).arg(env.home.join("lib.sh")).args(args);
     // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
@@ -177,6 +178,7 @@ pub fn bead_reopen(env: &Env, id: &str, cause: &str, note: &str) {
 /// dwarf still sees this", never to "nobody did anything and the round moved on".
 pub fn rebase_stale(env: &Env, repo_name: &str, id: &str) -> i32 {
     // batch-job: this runs whatever its caller names, as long as that takes
+    // FORK-EDGE: machine leg rebase-stale
     let mut cmd = Command::new(&env.rebase_stale_bin);
     // rebase-stale finds lib.sh through SPIRA_HOME and refuses without it; this pass may have
     // been given --home rather than an exported SPIRA_HOME (conf.sh sets it unexported).
@@ -196,9 +198,20 @@ pub fn rebase_stale(env: &Env, repo_name: &str, id: &str) -> i32 {
 
 pub fn lcq(env: &Env, args: &[&str]) -> Result<String, String> {
     let bin = env.lc_bin.as_ref().ok_or_else(|| "no spira-lc program".to_string())?;
-    let mut cmd = Command::new("timeout");
-    cmd.arg(env.lc_timeout.to_string()).arg(bin).args(args);
-    run(&mut cmd, "spira-lc")
+    let client = spira_config::lc_call::LcClient::for_bin(&bin.to_string_lossy())?.within(std::time::Duration::from_secs(env.lc_timeout));
+    lc_answer(client.call(args))
+}
+
+/// An answer as the `spira-lc` child's was read: its stdout when it applied; otherwise its exit
+/// and the last line it said.
+fn lc_answer(r: Result<spira_config::lc_call::Reply, spira_config::lc_call::LcError>) -> Result<String, String> {
+    let r = r.map_err(|e| format!("spira-lc: {e}"))?;
+    if r.code != 0 {
+        let said = if r.err.trim().is_empty() { &r.out } else { &r.err };
+        let last = said.lines().last().unwrap_or("").trim();
+        return Err(format!("spira-lc exited {}{}", r.code, if last.is_empty() { String::new() } else { format!(": {last}") }));
+    }
+    Ok(r.out)
 }
 
 /// The SUBMITTED and CERTIFIED lifecycle rows, from one `spira-lc list --state` per repo step: the
@@ -278,8 +291,7 @@ fn prereq_is_finished(env: &Env, id: &str) -> bool {
 
 // ---------------------------------------------------------------------------------------
 // The round pool: the lifecycle machine's unheld SUBMITTED and CERTIFIED beads, narrowed to this repo, with
-// title/priority from the bead store and express from the lifecycle row. Same construction as queue-watch's
-// snapshot(), which this borrows from directly.
+// title/priority from the bead store and express from the lifecycle row.
 // ---------------------------------------------------------------------------------------
 
 fn holds_empty(r: &serde_json::Value) -> bool {
@@ -547,14 +559,28 @@ fn parse_members(s: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The repo's open batch, as `queue batch show` reads it from wherever the queue keeps it; `None`
-/// when there is none. Err when the queue cannot tell.
+/// The repo's open batch from the store's projection, its batch records read afresh each time
+/// (this pass writes batches through the queue between reads; no lifecycle row is reloaded for
+/// it); `None` when there is none. Err when the store could not say — a view it cannot vouch for
+/// is never read as no batch. Before the cutover (`SPIRA_LC_LIFECYCLE_ON_STORE=0`, the default)
+/// the store views refuse, and the record is the queue's: `queue batch show` reads it wherever
+/// the queue keeps it.
 pub fn read_open_batch(env: &Env, repo: &str) -> Result<Option<OpenBatch>, String> {
-    let run = queue_verb(env, &["batch", "show", "--repo", repo], "", &[])?;
-    if run.code != Some(0) {
-        return Err(verb_failed("queue batch show", &run));
+    if spira_config::process::cfg_parse::<u8>("SPIRA_LC_LIFECYCLE_ON_STORE")? == 0 {
+        let run = queue_verb(env, &["batch", "show", "--repo", repo], "", &[])?;
+        if run.code != Some(0) {
+            return Err(verb_failed("queue batch show", &run));
+        }
+        return Ok(open_batch_from(&run.out));
     }
-    Ok(open_batch_from(&run.out))
+    let views = store_view::Projection::configured(spira_config::lc_call::LcClient::configured()?)?;
+    views.refresh_batches().map_err(|e| format!("could not say: {e}"))?;
+    open_batch_of(views.batch_view(repo).map(|r| r.value))
+}
+
+/// The open batch a view's answer holds; a refused read could not say.
+fn open_batch_of(read: Result<store_view::BatchView, spira_config::lc_call::LcError>) -> Result<Option<OpenBatch>, String> {
+    read.map(|v| open_batch_from(&v.shown())).map_err(|e| format!("could not say: {e}"))
 }
 
 /// `queue batch show`'s answer: `None` when it printed no record. A record whose PR is not yet
@@ -692,6 +718,7 @@ pub fn confirm_base(repo: &Repo, head: &str) -> Result<String, String> {
 /// `round-vm refresh` of the template to the tree at `tree`: a no-op when it already holds that
 /// tree's recipe, and synchronous otherwise, so the next lease finds the landed recipe's image.
 pub fn template_refresh(env: &Env, tree: &Path) -> Result<(), String> {
+    // FORK-EDGE: machine leg round-vm (refresh)
     run(Command::new(&env.round_vm).arg("refresh").arg(tree), "round-vm refresh").map(|_| ())
 }
 
@@ -939,12 +966,14 @@ pub fn sifted_tips(env: &Env) -> Result<BTreeMap<String, String>, String> {
 pub fn lc_supersede(env: &Env, id: &str, keeper: &str) -> Result<(), String> {
     let reason = format!("Sift: identical patch (patch-id) to {keeper}.");
     let bin = env.lc_bin.as_ref().ok_or_else(|| "no spira-lc program".to_string())?;
+    // FORK-EDGE: unserved verb close (the spira-lc CLI answers it; the socket does not)
     spira_config::lifecycle_row::close_with(&bin.to_string_lossy(), id, &reason, "sift", Some(keeper))
 }
 
 /// The evidence a send-back stands on, written on the bead before the GateRed.
 pub fn bead_note(env: &Env, id: &str, text: &str) -> Result<(), String> {
     // batch-job: bead.sh amend is a bead-store write that takes as long as the store does
+    // FORK-EDGE: bead.sh amend is the operator tool (it also mails the dwarf at work on the bead); no library entry does both
     let mut cmd = Command::new("bash");
     cmd.arg(env.home.join("bead.sh")).args(["amend", id, "--note", text]).env("SPIRA_HOME", &env.home);
     run(&mut cmd, "bead.sh amend").map(|_| ())
@@ -1220,6 +1249,7 @@ pub fn record_escape(
         c.args(["--member", &member.id, "--suite", suite, "--batch-id", batch_id, "--repo", &repo.name, "--paths", paths, "--evidence", evidence]);
     };
     if let Some(rc) = rerun_rc {
+        // FORK-EDGE: escape-classify.sh is a 195-line classifier with its own suite; porting it is its own task, not a transport change
         let mut c = Command::new(&classify);
         c.arg("rerun-verdict").args(["--rerun-rc", &rc.to_string()]);
         record_args(&mut c);
@@ -1230,6 +1260,7 @@ pub fn record_escape(
             Err(e) => return format!("escape not recorded: {e}"),
         }
     }
+    // FORK-EDGE: escape-classify.sh is a 195-line classifier with its own suite; porting it is its own task, not a transport change
     let mut c = Command::new(&classify);
     c.arg("classify").args(["--repo".as_ref(), repo.path.as_os_str()]).args(["--base", base, "--tip", &member.tip]);
     c.arg("--suite-file").arg(wt.join("spira").join(suite));
@@ -1239,6 +1270,7 @@ pub fn record_escape(
         Ok(out) => out.trim().to_string(),
         Err(e) => return format!("escape not recorded: {e}"),
     };
+    // FORK-EDGE: escape-classify.sh is a 195-line classifier with its own suite; porting it is its own task, not a transport change
     let mut c = Command::new(&classify);
     c.arg("record").args(["--class", &class]);
     record_args(&mut c);
@@ -1304,6 +1336,7 @@ pub fn file_local_red_incident(
     let tmp = tmp_dir.join(format!("local-red-{}-{}.txt", repo.name, now()));
     fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
     let out = run(
+        // FORK-EDGE: needs an incident library filing entry that takes the per-call SPIRA_INCIDENT_* fields; intake::file_payload reads them from the process environment only
         Command::new("incident.sh").arg("file").arg(&title).arg(&tmp).env("SPIRA_INCIDENT_TYPE", "bug").env(
             "SPIRA_INCIDENT_PRIORITY",
             "1",
@@ -1336,6 +1369,7 @@ pub fn file_deploy_fault_incident(env: &Env, repo: &Repo, head: &str) -> Result<
     let tmp = tmp_dir.join(format!("deploy-fault-{}-{}.txt", repo.name, now()));
     fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
     let out = run(
+        // FORK-EDGE: needs an incident library filing entry that takes the per-call SPIRA_INCIDENT_* fields; intake::file_payload reads them from the process environment only
         Command::new("incident.sh")
             .arg("file")
             .arg(&title)
@@ -1404,6 +1438,7 @@ pub fn integration_fix(env: &Env, wt: &Path, base_sha: &str, members: &[Member])
 
     if wt.join("spira/plan-matrix.sh").is_file() {
         // batch-job: runs a gate, build or forge script that takes as long as its work
+        // FORK-EDGE: the round tree's own plan-matrix.sh (that tree's version, not the release's)
         run(Command::new("bash").arg(wt.join("spira/plan-matrix.sh")).current_dir(wt), "plan-matrix.sh")?;
         if !git(&["status", "--porcelain", "--", "docs/test-plan"])?.trim().is_empty() {
             git(&["add", "--", "docs/test-plan"])?;
@@ -1474,6 +1509,7 @@ pub fn shots_section(run: &Path, loom_addr: Option<&str>, members: &[(String, St
 /// frontend changes name, before and after, and the section links them. A failed capture is logged
 /// and becomes a `capture failed: <reason>` line; nothing here can fail the batch.
 pub fn batch_shots_section(testenv_bin: &Path, run_dir: &Path, loom_addr: Option<&str>, repo: &str, base: &str, head: &str) -> String {
+    // FORK-EDGE: machine leg testenv (shots)
     let mut cmd = Command::new("timeout");
     cmd.arg("1500").arg(testenv_bin).args(["shots", "--batch", repo, base, head]);
     if let Err(e) = run(&mut cmd, "testenv shots --batch") {
@@ -1485,30 +1521,39 @@ pub fn batch_shots_section(testenv_bin: &Path, run_dir: &Path, loom_addr: Option
     shots_section(run_dir, loom_addr, &pairs)
 }
 
-fn forge_cmd(repo: &Repo, release: Option<&str>) -> Result<std::process::Command, String> {
-    // A bare name (the default, `forge`) is the release's own binary, from `release`
-    // (`$SPIRA_RELEASE`); a configured SPIRA_FORGE path is run with bash, as batch.sh did.
-    Ok(if repo.forge.components().count() == 1 {
-        spira_config::bounded::bounded(&spira_config::release_env::resolve_tool(&repo.forge.to_string_lossy(), release)?)
-    } else {
-        let mut c = spira_config::bounded::bounded("bash");
-        c.arg(&repo.forge);
-        c
-    })
+/// One forge verb: the default forge (`forge`) through its library in this process, `gh` its only
+/// child; a configured SPIRA_FORGE path is a fixture's stand-in, run with bash as batch.sh did.
+fn forge_run(repo: &Repo, verb: &str, args: &[&str]) -> Result<forge::client::Reply, String> {
+    match forge::client::route_of(&repo.forge) {
+        forge::client::Route::InProcess => Ok(forge::client::call(verb, &repo.path, args, None)),
+        forge::client::Route::Program(script) => {
+            // FORK-EDGE: fixture stand-in — a declared SPIRA_FORGE script (suites only; production holds `forge`)
+            let o = spira_config::bounded::bounded("bash")
+                .arg(&script)
+                .arg(verb)
+                .arg(&repo.path)
+                .args(args)
+                .stdin(std::process::Stdio::null())
+                .output()
+                .map_err(|e| format!("forge {verb}: {e}"))?;
+            Ok(forge::client::Reply { code: o.status.code().unwrap_or(-1), out: String::from_utf8_lossy(&o.stdout).into_owned(), err: String::from_utf8_lossy(&o.stderr).into_owned() })
+        }
+    }
 }
 
 /// The reconciler: arms every open batch PR found without auto-merge.
 pub fn forge_arm_queue(repo: &Repo) -> Result<(), String> {
-    let mut cmd = forge_cmd(repo, std::env::var(spira_config::RELEASE_ENV).ok().as_deref())?;
-    cmd.arg("pr-arm-queue").arg(&repo.path).arg("merge");
-    let o = cmd.stdin(std::process::Stdio::null()).output().map_err(|e| format!("forge pr-arm-queue: {e}"))?;
-    for l in String::from_utf8_lossy(&o.stdout).lines() {
-        println!("batcher {}: forge {l}", repo.name);
+    armed(&repo.name, forge_run(repo, "pr-arm-queue", &["merge"])?)
+}
+
+fn armed(repo: &str, r: forge::client::Reply) -> Result<(), String> {
+    for l in r.out.lines() {
+        println!("batcher {repo}: forge {l}");
     }
-    if o.status.success() {
+    if r.ok() {
         Ok(())
     } else {
-        Err(format!("forge pr-arm-queue exited {}", o.status.code().unwrap_or(-1)))
+        Err(format!("forge pr-arm-queue exited {}", r.code))
     }
 }
 
@@ -1531,6 +1576,7 @@ pub struct VerbRun {
 fn queue_verb(env: &Env, args: &[&str], stdin: &str, vars: &[(&str, &str)]) -> Result<VerbRun, String> {
     use std::io::Write;
     // batch-job: this runs whatever its caller names, as long as that takes
+    // FORK-EDGE: machine leg queue (batch open/round verbs — the batcher's writes through the queue)
     let mut cmd = Command::new(&env.queue_bin);
     cmd.args(args).envs(vars.iter().copied());
     cmd.env("SPIRA_QUEUE_LOCK_HELD", "1");
@@ -1770,6 +1816,7 @@ fn round_head_and_worktree(out: &str, batch: &str) -> Option<(String, String)> {
 
 /// `round-recert --batch <id> --repo <repo>`: starts the round's driver in its own unit and returns.
 pub fn redrive_round(repo: &Repo, batch: &str) -> Result<(), String> {
+    // FORK-EDGE: machine leg round-recert
     let out = run(spira_config::bounded::bounded_for(spira_config::release_env::tool("round-recert")?, "60").args(["--batch", batch, "--repo", &repo.name]), "round-recert")?;
     println!("{}", out.trim());
     Ok(())
@@ -1790,6 +1837,7 @@ pub fn file_orphan_round_incident(env: &Env, repo: &Repo, batch: &str, why: &str
     let tmp = tmp_dir.join(format!("round-orphan-{}-{}.txt", repo.name, now()));
     fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
     let out = run(
+        // FORK-EDGE: needs an incident library filing entry that takes the per-call SPIRA_INCIDENT_* fields; intake::file_payload reads them from the process environment only
         Command::new("incident.sh")
             .arg("file")
             .arg(&title)
@@ -1847,6 +1895,7 @@ fn round_verb_bg(env: &Env, args: &[&str], stdin: &str) -> Result<BgVerb, String
     let (out, err) = (stem.with_extension("out"), stem.with_extension("err"));
     let file = |p: &Path| fs::File::create(p).map_err(|e| format!("{what}: {}: {e}", p.display()));
     // batch-job: this runs whatever its caller names, as long as that takes
+    // FORK-EDGE: machine leg queue (batch open/round verbs — the batcher's writes through the queue)
     let mut cmd = Command::new(&env.queue_bin);
     cmd.arg("round").args(args);
     cmd.env("SPIRA_QUEUE_LOCK_HELD", "1");
@@ -2074,6 +2123,7 @@ pub fn file_land_unverified_incident(env: &Env, repo: &Repo, head: &str, detail:
     let tmp = tmp_dir.join(format!("land-unverified-{}-{}.txt", repo.name, now()));
     fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
     let out = run(
+        // FORK-EDGE: needs an incident library filing entry that takes the per-call SPIRA_INCIDENT_* fields; intake::file_payload reads them from the process environment only
         Command::new("incident.sh")
             .arg("file")
             .arg(&title)
@@ -2108,6 +2158,7 @@ pub fn tsd_append_round(env: &Env, fields: &[(&str, String)]) {
 /// One row of `family` through tsd-write; best-effort, like every TSD write here.
 pub fn tsd_append(env: &Env, family: &str, fields: &[(&str, String)]) {
     let Some(bin) = &env.tsd_bin else { return };
+    // FORK-EDGE: needs tsd-write's family append as a tsd library call
     let mut cmd = spira_config::bounded::bounded(bin);
     cmd.arg("--family").arg(family).arg("--root").arg(&env.run);
     for (k, v) in fields {
@@ -2143,6 +2194,7 @@ pub fn file_judgement(env: &Env, repo: &Repo, j: &batcher::core::Judgement, memb
     let tmp = tmp_dir.join(format!("judgement-{}-{}.txt", repo.name, now()));
     fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
     let out = run(
+        // FORK-EDGE: bead.sh is the operator tool for filing; it stays
         Command::new("bead.sh")
             .arg("file")
             .arg(&title)
@@ -2185,6 +2237,7 @@ pub fn file_flip_bead(env: &Env, repo: &Repo, suite: &str, round_branch: &str) -
     let tmp = tmp_dir.join(format!("flip-{}-{}.txt", repo.name, now()));
     fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
     let out = run(
+        // FORK-EDGE: bead.sh is the operator tool for filing; it stays
         Command::new("bead.sh").args(["file", &title, "--for", "batcher", "--repo", &repo.name, "--harness-title", "--body-file"]).arg(&tmp).arg("--json"),
         "bead.sh file",
     );
@@ -2195,6 +2248,7 @@ pub fn file_flip_bead(env: &Env, repo: &Repo, suite: &str, round_branch: &str) -
 /// Commit the deletion of `flips` (suite, follow-up bead) into the round worktree, naming
 /// the follow-up beads in the message.
 pub fn commit_flip_deletion(env: &Env, wt: &Path, flips: &[(String, String)]) -> Result<(), String> {
+    // EXTERNAL: date — the local calendar date; std has no local time zone
     let date = run(Command::new("date").arg("+%F"), "date")?;
     crate::flip::apply(wt, flips, date.trim())?;
     run(Command::new("git").arg("-C").arg(wt).args(["add", "-A"]), "git add")?;
@@ -2219,6 +2273,7 @@ pub fn recheck_after_deletion(wt: &Path, base_sha: &str) -> Result<(), String> {
         if !path.exists() {
             continue;
         }
+        // FORK-EDGE: the round tree's own plan scripts (that tree's version, not the release's)
         run(Command::new("bash").arg(&path).args(&args).current_dir(wt), script)?;
     }
     Ok(())
@@ -2648,14 +2703,14 @@ mod wait_lock_tests {
     }
 }
 
-/// A scratch Env for the unit tests: nothing points anywhere real.
-#[cfg(test)]
-pub(crate) fn lifecycle_tests_env(dir: &Path) -> Env {
+/// A scratch Env for unit tests, this crate's and its binary's: nothing points anywhere real.
+#[doc(hidden)]
+pub fn lifecycle_tests_env(dir: &Path) -> Env {
     Env {
         home: dir.to_path_buf(),
         run: dir.to_path_buf(),
         queue_dir: dir.join("queue"),
-        forge: PathBuf::from("forge"),
+        forge: dir.join("forge"),
         tsd_bin: None,
         round_vm: dir.join("round-vm"),
         queue_bin: dir.join("queue"),
@@ -2738,11 +2793,39 @@ mod forge_release_tests {
     use super::*;
 
     #[test]
-    fn a_bare_forge_without_spira_release_refuses_naming_the_key() {
-        let repo = Repo { name: "r".into(), path: PathBuf::from("/tmp/r"), base: "local/main".into(), forge: PathBuf::from("forge"), land: Land::Forge };
-        let e = forge_cmd(&repo, None).err().unwrap_or_default();
-        assert!(e.contains("SPIRA_RELEASE is not set"), "{e}");
-        let e = forge_cmd(&repo, Some("/nonexistent-release")).err().unwrap_or_default();
-        assert!(e.contains("forge is not in SPIRA_RELEASE"), "{e}");
+    fn a_declared_forge_script_is_a_stand_in_run_with_bash_and_the_default_runs_in_process() {
+        let dir = testkit::TempDir::new("batcher-forge-stand-in");
+        let script = dir.path().join("forge-fixture.sh");
+        std::fs::write(&script, "echo \"$1 $2 $3\"\nexit 0\n").unwrap();
+        let repo = Repo { name: "r".into(), path: PathBuf::from("/tmp/r"), base: "local/main".into(), forge: script, land: Land::Forge };
+        let r = forge_run(&repo, "pr-arm-queue", &["merge"]).unwrap();
+        assert_eq!((r.code, r.out.as_str()), (0, "pr-arm-queue /tmp/r merge\n"));
+        assert_eq!(forge::client::route_of(Path::new("forge")), forge::client::Route::InProcess);
+    }
+
+    #[test]
+    fn arming_reports_the_forges_lines_and_its_failure() {
+        let r = |code| forge::client::Reply { code, out: "armed #12\n".into(), err: String::new() };
+        assert_eq!(armed("r", r(0)), Ok(()));
+        assert_eq!(armed("r", r(1)), Err("forge pr-arm-queue exited 1".into()));
+    }
+
+    #[test]
+    fn a_lifecycle_answer_reads_as_the_childs_did() {
+        use spira_config::lc_call::{LcError, Reply};
+        assert_eq!(lc_answer(Ok(Reply { code: 0, out: "[]".into(), err: String::new() })), Ok("[]".into()));
+        assert_eq!(lc_answer(Ok(Reply { code: 3, out: "x\nrefused: held\n".into(), err: String::new() })), Err("spira-lc exited 3: refused: held".into()));
+        assert!(lc_answer(Err(LcError::Fault("cannot tell: down".into()))).unwrap_err().contains("cannot tell"));
+    }
+
+    #[test]
+    fn an_open_batch_the_store_cannot_vouch_for_could_not_say() {
+        use spira_config::lc_call::LcError;
+        use store_view::{BatchView, Record};
+        assert!(open_batch_of(Err(LcError::Refused("stale".into()))).unwrap_err().starts_with("could not say"));
+        assert!(open_batch_of(Ok(BatchView { repo: "r".into(), open: None })).unwrap().is_none());
+        let rec = Record { id: "b".into(), state: "OPEN".into(), fields: vec![("batch_id".into(), "b".into()), ("members".into(), "sp-a:t1".into()), ("pr".into(), "12".into())] };
+        let ob = open_batch_of(Ok(BatchView { repo: "r".into(), open: Some(rec) })).unwrap().unwrap();
+        assert_eq!((ob.pr.as_str(), ob.members), ("12", vec![("sp-a".to_string(), "t1".to_string())]));
     }
 }

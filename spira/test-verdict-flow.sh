@@ -383,51 +383,48 @@ is "original is flagged replied" "1" \
 # UC-24 — land_escalate (sp-31hjr: ported natively into sentinel; was lib.sh via a seam).
 # ==========================================================================
 echo
-echo "UC-24: land_escalate reaches the operator unless an OPEN ask with the subject exists"
+echo "UC-24: land_escalate asks (the concierge) unless an OPEN ask with the subject exists"
 
 command -v sentinel >/dev/null 2>&1 || bail "sentinel is not on PATH"
 
-# land_escalate shells out to `mail` by name (sp-gypjk), so this section puts a scratch
-# dir carrying a logging stub first on PATH rather than the real mail under test above —
-# the other sections here are about mail itself, this one is about sentinel's caller
-# contract. SPIRA_HOME goes back to the real $HERE (sentinel's own probe needs a real
-# lib.sh/conf.sh to source, unlike the old direct-source test).
-LESC_HOME="$TMP/landesc-home"; mkdir -p "$LESC_HOME"
-MAIL_LOG="$TMP/mail.log"
-cat > "$LESC_HOME/mail" <<MAILSH
-#!/usr/bin/env bash
-printf '%s\n' "\$*" >> "$MAIL_LOG"
-cat >/dev/null
-MAILSH
-chmod +x "$LESC_HOME/mail"
+# land_escalate sends through the mail library in-process (sp-ipwlic: no `mail` program a
+# PATH stub could stand in for), so this section reads what the real send delivered into this
+# suite's own mail tree. SPIRA_HOME goes back to the real $HERE (sentinel's own probe needs a
+# real lib.sh/conf.sh to source, unlike the old direct-source test).
 export SPIRA_HOME="$HERE"
+# The ask is a question, which mail lints against its kinds: this tree's, not the fixture's.
+tl_config SPIRA_MAIL_KINDS="$HERE/mail/kinds"
+LAND_SUBJ="Spira is landing nothing"
+landing_asks() { grep -ls "$LAND_SUBJ" "$SPIRA_MAIL"/*/new/* "$SPIRA_MAIL"/*/cur/* 2>/dev/null | wc -l | tr -d ' '; }
 
 do_escalate() {
     printf 'the landing worker will not start\nevidence\n' | \
-        SPIRA_RELEASE="$(PATH="$LESC_HOME:$PATH" tl_release)" PATH="$LESC_HOME:$PATH" SPIRA_LAND_ESCALATE_EVERY=0 sentinel --land-escalate
+        SPIRA_RELEASE="$(tl_release)" SPIRA_LAND_ESCALATE_EVERY=0 sentinel --land-escalate
 }
 
-echo "land_escalate: positive control — reaches the operator when no ask is open"
+echo "land_escalate: positive control — reaches the concierge when no ask is open"
 testdb_reset
-: > "$MAIL_LOG"; rm -f "$SPIRA_RUN/landing.escalated"
-do_escalate >/dev/null 2>&1
-want "and reaches the operator" "Spira is landing nothing" "$(cat "$MAIL_LOG")"
+rm -f "$SPIRA_RUN/landing.escalated"; before="$(landing_asks)"
+do_escalate >/dev/null 2>"$TMP/landesc.err"
+got="$(landing_asks)"
+[ "$got" = "$((before + 1))" ] && ok "and one ask is delivered" \
+    || bad "and one ask is delivered" "wanted [$((before + 1))] got [$got]; land_escalate said: $(cat "$TMP/landesc.err")"
 
 echo "land_escalate: open-ask suppression — does not ask again while one is already open"
 testdb_reset
 printf '{"id":"sp-vf-ask1","title":"Spira is landing nothing — its last run exited 1","status":"open","issue_type":"decision","labels":["%s"],"updated_at":"2026-09-07T00:00:00Z"}\n' \
     "${SPIRA_ASK_LABEL:-needs-operator}" | testdb_seed
-: > "$MAIL_LOG"; rm -f "$SPIRA_RUN/landing.escalated"
+rm -f "$SPIRA_RUN/landing.escalated"; before="$(landing_asks)"
 do_escalate >/dev/null 2>&1
-is "and does not ask again while one is still open" "" "$(cat "$MAIL_LOG")"
+is "and does not ask again while one is still open" "$before" "$(landing_asks)"
 
 echo "land_escalate: closed-ask pass-through — a closed ask does NOT suppress a new escalation"
 testdb_reset
 printf '{"id":"sp-vf-ask1","title":"Spira is landing nothing — its last run exited 1","status":"closed","issue_type":"decision","labels":["%s"],"updated_at":"2026-09-07T00:00:00Z"}\n' \
     "${SPIRA_ASK_LABEL:-needs-operator}" | testdb_seed
-: > "$MAIL_LOG"; rm -f "$SPIRA_RUN/landing.escalated"
+rm -f "$SPIRA_RUN/landing.escalated"; before="$(landing_asks)"
 do_escalate >/dev/null 2>&1
-want "a closed ask does not suppress a new escalation" "Spira is landing nothing" "$(cat "$MAIL_LOG")"
+is "a closed ask does not suppress a new escalation" "$((before + 1))" "$(landing_asks)"
 
 export SPIRA_HOME="$TMP/home"   # restore, in case anything is ever appended below
 

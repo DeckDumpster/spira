@@ -139,6 +139,18 @@ pub enum Acquire {
     Unopenable,
 }
 
+/// The lock that serialises release activations of `repo`'s landings
+/// (`<queue dir>/<repo>/lock.activate`), waited on without a bound: an activation is bounded
+/// by its own timeouts, and it is held apart from the queue lock so a claim or a round verb never
+/// waits behind one (over-broad-scopes #3, sp-ipwlic). `None` when the file cannot be opened.
+pub fn activation_lock(queue_dir: &Path, repo: &str) -> Option<File> {
+    let dir = queue_dir.join(repo);
+    let _ = fs::create_dir_all(&dir);
+    let f = OpenOptions::new().create(true).write(true).truncate(false).open(dir.join("lock.activate")).ok()?;
+    // SAFETY: flock on a descriptor we own; no memory is shared with the kernel call.
+    (unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } == 0).then_some(f)
+}
+
 pub fn try_lock(queue_dir: &Path, repo: &str) -> Acquire {
     try_lock_file(queue_dir, repo, "lock", None)
 }

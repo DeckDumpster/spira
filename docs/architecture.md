@@ -4,8 +4,9 @@
 
 ```
                   +------------------- systemd (user + system) -------------------+
-                  |  timers: sentinel, call, sift, rounds(-forge), gate-worker,   |
-                  |  landing-pass, verdict, czar-pass, watchtower, skew, hel... |
+                  |  spira-runtime serve (the scheduler) tasks: sentinel-pass,    |
+                  |  sentinel-call, sift, batcher.*, gate.worker, landing,        |
+                  |  queue.step, czar, watch.tower, watch.skew, hel.*...          |
                   +---+-----------------------------------------------------------+
                       |
  operator / Concierge |                                       dwarf unit (transient)
@@ -54,16 +55,16 @@ and the one-shot CLI, so they cannot drift. `spira-lc` exit codes: 0 applied, 1 
 
 ## A bead from filing to released
 
-This follows the `queue.local` path with default timer cadences; each step names the binary
-and unit that does it.
+This follows the `queue.local` path with default task cadences; each step names the binary
+and the `spira-runtime serve` task that does it.
 
 1. **File.** A bead is created: `bead.sh file`, `work file` / `file-followup` / `split` from a
-   session, `gh-intake` from GitHub issues, or a trigger unit (`spira-groom`, `spira-warden`,
-   `spira-mimir`, `watchtower`, `incident`). `bead` also writes its lifecycle row in `READY`.
+   session, `gh-intake` from GitHub issues, or a trigger task (`trigger.groom`, `trigger.warden`,
+   `trigger.mimir`, `watch.tower`, `incident`). `bead` also writes its lifecycle row in `READY`.
    A label places it in a persona's partition (the plan label, for builders).
 
-2. **Sentinel and call.** `spira-sentinel.timer` (every 2 min) runs `sentinel`;
-   `spira-call.timer` (every minute) runs `sentinel --call-only`. The pass counts ready
+2. **Sentinel and call.** The `sentinel-pass` task (every 2 min) runs `sentinel`; the
+   `sentinel-call` task (every minute) runs `sentinel --call-only`. The pass counts ready
    beads per partition and calls dwarves: lane personas against their own caps, then task
    personas from the shared `SPIRA_MAX_DWARVES` pool, builders last as the elastic persona. The
    same pass reaps `WORKING` rows whose lease expired (`HolderDead`), applies the poison hold
@@ -90,13 +91,13 @@ and unit that does it.
    teardown decides whether the attempt is charged, and the unit's stop hook runs
    `sentinel --call-only` to refill the slot.
 
-6. **Screen.** `spira-sift.timer` (every minute) runs `round-controller sifts`, which screens each queue
+6. **Screen.** The `sift` task (every minute) runs `round-controller sifts`, which screens each queue
    repository's proto-round (all `SUBMITTED` and `CERTIFIED` rows). A pass is recorded as
    `Sifted {tip}`; a conflict, duplicate or policy gap sends the bead back, supersedes it, or
    files a mend. The batcher cuts only beads whose current tip has a screen pass.
 
 7. **Per-branch gate (optional certification).** `landing-pass land` (dispatched by the
-   sentinel) queues each done branch for `gate-worker` (`spira-gate-worker.timer`, every 30 s),
+   sentinel) queues each done branch for `gate-worker` (the `gate.worker` task, every 30 s),
    which runs up to `certify_par` gates at once under host admission control and files each
    verdict. `landing-pass` applies it: `PASS` → `GatePass` (`CERTIFIED`), `FAIL` → `GateRed`
    (`REWORK`, charged), `NO_VERDICT` → `GateInfra`, `BASE_FAIL` → one incident per repository. A gate that dies twice
@@ -104,15 +105,15 @@ and unit that does it.
    (`REWORK`) carrying the dead gate's output tail.
    A round does not require a gate verdict: its full corpus is the stronger trial.
 
-8. **Cut.** `spira-rounds.timer` (every 30 s) runs `batcher rounds-local`, cutting one
-   `queue.local` repository at a time; `spira-rounds-forge.timer` runs `batcher rounds-forge`
+8. **Cut.** The `batcher.local` task (every 30 s) runs `batcher rounds-local`, cutting one
+   `queue.local` repository at a time; the `batcher.forge` task runs `batcher rounds-forge`
    for `queue.forge` repositories. A cut picks the round (feature-first: the epic with the most
    pool members, plus what they stack on and every express bead; else the whole pool), merges
    the members, and creates the batch row and, per member, a delivery row. Members move to
    `IN_DELIVERY` (`Deliver`). While one round's suites run, the next may be staged behind it.
 
 9. **Gate on the round.** The round's full corpus runs through `testenv` on a round VM
-   (`round-vm`, a pooled warm VM; `spira-round-vm-drain.timer` releases an idle one). Each pass
+   (`round-vm`, a pooled warm VM; the `roundvm.drain` task releases an idle one). Each pass
    is recorded on the batch row. A red is attributed first by path (reds intersected with each
    member's diff), then by a mender, then by the batcher judge. Members at fault are ejected
    (`Returned` → `REWORK`, with quoted evidence) and the rest re-run. A member aboard two consecutive passes that ended without a verdict (no
@@ -120,9 +121,9 @@ and unit that does it.
    re-certified a third time. A green writes a round
    certificate for the exact tree under `verdicts/trees/<repo>/<tree>`.
 
-10. **Settle.** `spira-verdict.timer` (every 2 min) runs `queue step --all`, which settles open
+10. **Settle.** The `queue.step` task (every 2 min) runs `queue step --all`, which settles open
     batches of queue repositories; `pr`-mode repositories are walked by
-    `spira-landing-pass.timer` (every 90 s).
+    the `landing` task (every 90 s).
 
 11. **Land.** `queue land-local` refuses unless a round `GREEN` certifies the head's tree. For
     the harness repository it first builds and verifies the release from the round's own
@@ -133,8 +134,8 @@ and unit that does it.
     `Delivered` is reported and the ref stays. Waiting beads are rebased onto the new base.
 
 12. **Cleanup.** `hel` deletes the branch and worktree of every bead whose work has landed,
-    and nothing else; the sentinel runs it each pass, `spira-straggler-sweep` covers queue
-    repositories hourly, and `spira-worktree-reaper` removes stale worktrees. Content found
+    and nothing else; the sentinel runs it each pass, the `hel.sweep` task covers queue
+    repositories hourly, and the `hel.reap_stale` task removes stale worktrees. Content found
     already on the base is closed by `ContentOnBase`.
 
 13. **Release.** After the ref moves, `release activate <sha>` switches `current` onto the
@@ -148,7 +149,7 @@ and unit that does it.
 
 ## Watching the loop
 
-Several units exist only to notice the loop failing and turn that into work or mail rather than
+Several programs exist only to notice the loop failing and turn that into work or mail rather than
 silence: `watchtower` (hands `ops` the pipeline's vital signs), `czar-pass` (30 s queue-stall
 detection with deterministic remedies), `reconciler` (declared structural invariants: remedy or
 escalate), `heimdall` (escalates a stalled loop and does nothing else), `strand` (stranded-work

@@ -6,8 +6,18 @@
 epoch = 1800000000
 horizon = 300000
 repos = ["other:queue.local"]
-# The call claims the bead and plays its script; nothing lands or certifies it.
-real_actors = ["sentinel-call"]
+
+# The call claims the bead and plays its script; nothing lands or certifies it. sentinel-call is
+# a task of `spira-runtime serve` now (ruling D6), tested in sim/tests; this world keeps what its
+# `unit_start` effect runs once it calls: `dwarf --home <home> builder` under the properties
+# `call_argv` gives, through the world's SPIRA_CALL seam (`sim-call`), on the call's minute.
+[[actor]]
+name = "call"
+command = '"$SPIRA_CALL" --property=TimeoutStartSec=3600 --property=IOSchedulingClass=idle --property=IOWeight=10 --setenv=SPIRA_RELEASE="$SPIRA_RELEASE" --setenv=PATH="$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:/usr/local/bin:/usr/bin:/bin" --setenv=HOME="$HOME" --setenv=SPIRA_TOML="$SPIRA_TOML" "$SPIRA_RELEASE/bin/dwarf" --home "$SPIRA_HOME" builder'
+first = 5000
+every = 60000
+duration_min = 1000
+duration_max = 2500
 
 # Filed naming its repo, so the lifecycle row carries the repo readiness counts SUBMITTED beads by.
 [[step]]

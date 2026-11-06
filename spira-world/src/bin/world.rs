@@ -1,5 +1,13 @@
 //! world.sh — stop and start Spira as a whole. Replaces spira/world.sh (bash).
 //!
+//! THE LOOP IS THE SCHEDULER. Every loop unit is a task inside `spira-runtime serve`, so
+//! `stop` and `drain` are `scheduler halt <reason>` (every task's effects held, observation
+//! continues) and `start` and `resume` are `scheduler resume`, on the control socket
+//! `SPIRA_RUNTIME_SOCKET`; `status` reads `scheduler status`. The `world.halted` stamps are
+//! still written by the same action for every reader not yet converted. The keep list
+//! (`spira_world::scheduler::KEEP`: the scheduler, lc-serve's socket, dolt, the watchdog) is
+//! never stopped. `resume` never lifts a stopped world; `start` does.
+//!
 //!   world.sh stop [--why "..."] [--work] [--observability] [--maintenance] [--all]
 //!                 [--hard] [--round-drain] [--round-drain-timeout SECS]
 //!   world.sh start [--work] [--observability] [--maintenance] [--all]
@@ -11,6 +19,7 @@
 //!   world.sh pause --reserve BEAD[,BEAD...] --reason WHY [--until CONDITION] [--owner O]
 //!   world.sh unpause --repo R [--lanes ...] | --reserve BEAD[,BEAD...]
 //!   world.sh status
+//!   world.sh scheduler-status [--json]   (exit 0 running, 1 not answering, 2 halted)
 //!   world.sh guard        (every work unit's ExecStartPre: refuses while the work plane is halted)
 //!
 //! SCOPED PAUSES are recorded state (`spira_config::scoped_stop`), never halts: one repo's
@@ -49,7 +58,8 @@ use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 
-use spira_world::sysctl::{self, Plane, StartAction, PLANES};
+use spira_world::scheduler::{self, Control};
+use spira_world::sysctl::{self, Plane, PLANES};
 use spira_world::spira_prod_or_home;
 
 /// sp-ivfu3: `spira.run`/`spira.instance` are resolved in-process through `spira_config`
@@ -83,14 +93,6 @@ fn drain_stamp_or_die() -> PathBuf {
     spira_world::drain_stamp().unwrap_or_else(|e| die(&e))
 }
 
-/// `SPIRA_CTRL`'s declared value — the operational control plane file's path. The declared
-/// default is itself `$SPIRA_RUN/control` (`spira/conf.d/SPIRA_CTRL`), so this is never a
-/// second, Rust-side fallback onto `run_or_die().join("control")` (per Ryan 2026-10-05: one
-/// source of config).
-fn ctrl_path_or_die() -> PathBuf {
-    spira_config::process::cfg("SPIRA_CTRL").map(PathBuf::from).unwrap_or_else(|e| die(&e))
-}
-
 /// `SPIRA_PROD`'s declared value, resolved once here and handed to [`spira_prod_or_home`] —
 /// never read from the environment inside that pure function.
 fn resolved_prod(home: &std::path::Path) -> PathBuf {
@@ -99,12 +101,7 @@ fn resolved_prod(home: &std::path::Path) -> PathBuf {
 }
 
 fn now_iso() -> String {
-    spira_config::bounded::bounded("date")
-        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default()
+    spira_world::clock::utc_iso(spira_world::clock::now())
 }
 
 /// The planes a `stop`/`start` acts on: exactly the ones named by flag, or `default` when
@@ -153,71 +150,49 @@ fn plane_names(planes: &BTreeSet<Plane>) -> String {
     planes.iter().map(|p| p.name()).collect::<Vec<_>>().join("+")
 }
 
-/// One `TIMER_PRIORITY` slot, resolved or not: `enumerate_timers`'s own per-base answer.
-/// sp-ivfu3-2: a base that resolves to NEITHER unit must never be silently treated as the
-/// plain name — `status`/`start`/`stop` all handle `Missing` explicitly, never acting on
-/// a name systemd has never heard of.
-enum TimerSlot {
-    Resolved(String),
-    Missing { base: &'static str, reason: String },
+/// `SPIRA_RUNTIME_SOCKET`'s declared value: the door `scheduler status|halt|resume` answers on.
+fn runtime_socket_or_die() -> PathBuf {
+    spira_config::process::cfg("SPIRA_RUNTIME_SOCKET").map(PathBuf::from).unwrap_or_else(|e| die(&e))
 }
 
-/// Every timer world.sh acts on: TIMER_PRIORITY first (instance-qualified if that form is
-/// known to systemd AT ALL, else plain if THAT is known, else `Missing` — see
-/// `sysctl::choose_timer`'s own doc for why this is existence, not enabled/active state),
-/// then every other `spira-*.timer` systemd reports — loaded or not — deduplicated in the
-/// order first seen.
-fn enumerate_timers() -> Vec<TimerSlot> {
-    if let Some(e) = sysctl::bus_unreachable() {
-        die(&e);
-    }
-    let sfx = sfx_or_die();
-    let mut seen = BTreeSet::new();
-    let mut out = Vec::new();
-    let mut add_resolved = |t: String, out: &mut Vec<TimerSlot>| {
-        if seen.insert(t.clone()) {
-            out.push(TimerSlot::Resolved(t));
+/// `scheduler halt <why>` on the runtime's control socket, said in one line either way.
+fn halt_scheduler(why: &str) -> bool {
+    let sock = runtime_socket_or_die();
+    match scheduler::halt(&scheduler::Socket(&sock), why) {
+        Ok(reply) => {
+            println!("  scheduler halted ({reply}) — effects held, observation continues");
+            true
         }
-    };
-    for base in sysctl::TIMER_PRIORITY {
-        match sysctl::resolve_timer(base, &sfx) {
-            Ok(name) => add_resolved(name, &mut out),
-            Err(reason) => out.push(TimerSlot::Missing { base, reason }),
+        Err(e) => {
+            eprintln!("  WARNING: scheduler halt not journaled — {e}");
+            false
         }
     }
-    for line in sysctl::run_lines(&["list-unit-files", "spira-*.timer", "--no-legend"]) {
-        if let Some(u) = sysctl::first_field(&line) {
-            add_resolved(u.to_string(), &mut out);
-        }
-    }
-    for line in sysctl::run_lines(&["list-units", "spira-*.timer", "--all", "--no-legend"]) {
-        if let Some(u) = sysctl::first_field(&line) {
-            add_resolved(u.to_string(), &mut out);
-        }
-    }
-    out
 }
 
-/// Every `Missing` base in `timers`, formatted `"<base>: <reason>"` — the named refusal
-/// `cmd_start`/`cmd_stop` print and abort on, never silently acting on a phantom unit.
-fn missing_timers(timers: &[TimerSlot]) -> Vec<String> {
-    timers
-        .iter()
-        .filter_map(|s| match s {
-            TimerSlot::Missing { base, reason } => Some(format!("{base}: {reason}")),
-            TimerSlot::Resolved(_) => None,
-        })
-        .collect()
+/// `scheduler resume` on the runtime's control socket, said in one line either way.
+fn resume_scheduler() -> bool {
+    let sock = runtime_socket_or_die();
+    match scheduler::resume(&scheduler::Socket(&sock)) {
+        Ok(reply) => {
+            println!("  scheduler resumed ({reply})");
+            true
+        }
+        Err(e) => {
+            eprintln!("  WARNING: scheduler resume not journaled — {e}");
+            false
+        }
+    }
 }
 
 fn work_services(planes: &BTreeSet<Plane>) -> Vec<String> {
     let sfx = sfx_or_die();
-    // A oneshot is `activating` for as long as its ExecStart runs, which for the rounds loop
-    // and the gate worker is minutes to hours; `--state=active` alone skips exactly those.
+    // A oneshot is `activating` for as long as its ExecStart runs; `--state=active` alone
+    // skips exactly those. The keep list is never stopped, whatever plane it declares.
     sysctl::run_lines(&["list-units", "spira-*.service", "--state=active,activating,reloading", "--no-legend"])
         .into_iter()
         .filter_map(|l| sysctl::first_field(&l).map(str::to_string))
-        .filter(|u| !spira_world::proc::is_excluded_work_service(u, &sfx))
+        .filter(|u| !spira_world::proc::is_excluded_work_service(u, &sfx) && !scheduler::is_kept(u, &sfx))
         .filter(|u| planes.contains(&sysctl::plane_of(u)))
         .collect()
 }
@@ -290,12 +265,7 @@ fn live_beads() -> Vec<String> {
 }
 
 fn deadline_utc(secs_from_now: u64) -> String {
-    spira_config::bounded::bounded("date")
-        .args(["-u", "-d", &format!("+{secs_from_now} seconds"), "+%H:%M:%SZ"])
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default()
+    spira_world::clock::utc_hms(spira_world::clock::now() + secs_from_now as i64)
 }
 
 fn notify_dwarves(notifier: &mut spira_world::notice::Notifier, what: &str, elapsed: u64, limit: u64, live: &[String]) {
@@ -308,7 +278,7 @@ fn notify_dwarves(notifier: &mut spira_world::notice::Notifier, what: &str, elap
     });
 }
 
-const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--until WHAT] [--owner O] [--owner-pid PID | --owner-unit UNIT] [--reboot] [--timeout SECS | --deadline SECS] | drain-check | resume | start [--work|--observability|--maintenance|--all] | pause --repo R [--lanes claims,rounds,publish] --reason WHY --until COND [--owner O] | pause --reserve BEADS --reason WHY [--owner O] | unpause --repo R [--lanes L] | unpause --reserve BEADS | status | guard | freeze-store | thaw-store}";
+const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--until WHAT] [--owner O] [--owner-pid PID | --owner-unit UNIT] [--reboot] [--timeout SECS | --deadline SECS] | drain-check | resume | start [--work|--observability|--maintenance|--all] | pause --repo R [--lanes claims,rounds,publish] --reason WHY --until COND [--owner O] | pause --reserve BEADS --reason WHY [--owner O] | unpause --repo R [--lanes L] | unpause --reserve BEADS | status | scheduler-status [--json] | guard | keep-units | freeze-store | thaw-store}";
 
 fn cmd_stop(args: &[String]) -> i32 {
     let mut why = String::new();
@@ -375,22 +345,17 @@ fn cmd_stop(args: &[String]) -> i32 {
     }
 
     println!("spira: halting {}", plane_names(&planes));
-    let timers = enumerate_timers();
-    let missing = missing_timers(&timers);
-    if !missing.is_empty() {
-        eprintln!("spira: REFUSING to stop — {} essential timer(s) resolve to no systemd unit at all:", missing.len());
-        for m in &missing {
-            eprintln!("  {m}");
-        }
-        return 1;
-    }
     // Stamp before stopping anything: a dwarf exiting under the slay calls its successor
-    // from ExecStopPost, and only a stamp already in place gates that.
+    // from ExecStopPost, and only a stamp already in place gates that. The stamp stays for
+    // every reader not yet converted to `scheduler status`.
     let run = run_or_die();
     let _ = std::fs::create_dir_all(&run);
     for plane in &planes {
         let _ = std::fs::write(plane_stamp(*plane), format!("{}\nwhy: {}\n", now_iso(), if why.is_empty() { "unstated" } else { &why }));
     }
+    // The loop is the scheduler's tasks: a work halt is one `scheduler halt`, which holds
+    // every task's effects and keeps observing. The scheduler has no per-plane halt.
+    let halt_failed = halts_work && !halt_scheduler(if why.is_empty() { "world stop" } else { &why });
 
     if halts_work && grace > 0 {
         let mut notifier = spira_world::notice::Notifier::default();
@@ -411,15 +376,6 @@ fn cmd_stop(args: &[String]) -> i32 {
         }
     }
 
-    for t in &timers {
-        let TimerSlot::Resolved(t) = t else { continue };
-        if !planes.contains(&sysctl::plane_of(t)) {
-            continue;
-        }
-        if sysctl::run_ok(&["stop", t]) {
-            println!("  stopped {t}");
-        }
-    }
     if planes.contains(&Plane::Observability) {
         let mut units = BTreeSet::new();
         for l in sysctl::run_lines(&["list-units", "spira-watch@*", "--no-legend"]) {
@@ -465,6 +421,7 @@ fn cmd_stop(args: &[String]) -> i32 {
             println!("  slaying {bead} (pid {pid})");
             let why_text = if why.is_empty() { "the world was stopped".to_string() } else { why.clone() };
             let ok = spira_config::release_env::tool("slay").map_err(|e| eprintln!("    {e}")).is_ok_and(|slay| {
+                // FORK-EDGE: sibling binary slay (bin/slay.rs holds its logic, not the library).
                 Command::new(slay).args(["--bead", &bead, "--keep-work", "--why", &why_text]).output().is_ok_and(|o| o.status.success())
             });
             if !ok {
@@ -495,6 +452,10 @@ fn cmd_stop(args: &[String]) -> i32 {
         eprintln!("spira: stop INCOMPLETE — work service(s) could not be stopped (see warnings above)");
         return 1;
     }
+    if halt_failed {
+        eprintln!("spira: stop INCOMPLETE — the scheduler did not take the halt (see the warning above); the stamp is written, rerun: world.sh stop");
+        return 1;
+    }
     let left: Vec<&str> = PLANES.iter().filter(|p| !planes.contains(p)).map(|p| p.name()).collect();
     println!("spira: STOPPED ({}). Dolt and the cockpit are untouched.{} Restart with: world.sh start", plane_names(&planes), if left.is_empty() { String::new() } else { format!(" Still running: {}.", left.join(", ")) });
     0
@@ -503,54 +464,15 @@ fn cmd_stop(args: &[String]) -> i32 {
 fn cmd_start(args: &[String]) -> i32 {
     let planes = selected_planes(args, &[Plane::Work, Plane::Observability]);
     println!("spira: starting {}", plane_names(&planes));
-    let ctrl_path = ctrl_path_or_die();
-    let ctrl_data = spira_ctrl::read(&ctrl_path).unwrap_or_default();
-    let suspended = spira_ctrl::load_suspended(&ctrl_data);
-    let instance = instance_or_die();
 
-    let timers = enumerate_timers();
-    let missing = missing_timers(&timers);
-    if !missing.is_empty() {
-        eprintln!("spira: REFUSING to start — {} essential timer(s) resolve to no systemd unit at all:", missing.len());
-        for m in &missing {
-            eprintln!("  {m}");
-        }
-        return 1;
-    }
-    // Lift before starting anything: every work unit's ExecStartPre refuses while the stamp
-    // is present, so a timer that fires the moment it starts must already find it gone.
+    // Lift before resuming: a reader not yet converted to `scheduler status` still gates on
+    // the stamp, so the scheduler's first act after the resume must already find it gone.
     for plane in &planes {
         let _ = std::fs::remove_file(plane_stamp(*plane));
     }
     let mut degraded = Vec::new();
-    for t in &timers {
-        let TimerSlot::Resolved(t) = t else { continue };
-        if !planes.contains(&sysctl::plane_of(t)) {
-            continue;
-        }
-        let is_enabled_disabled = sysctl::run(&["is-enabled", t]) == "disabled";
-        let subj = sysctl::subject_of(t, &instance);
-        let action = sysctl::start_action(is_enabled_disabled, suspended.get(&subj).map(String::as_str));
-        match action {
-            StartAction::SkipSuspended(reason) => {
-                if reason.is_empty() {
-                    println!("  skipped {t} (suspended)");
-                } else {
-                    println!("  skipped {t} (suspended: {reason})");
-                }
-            }
-            StartAction::SkipDisabled => {
-                println!("  skipped {t} (disabled)");
-                if sysctl::is_essential_timer(t, &instance, sysctl::TIMER_PRIORITY) {
-                    degraded.push(t.clone());
-                }
-            }
-            StartAction::Start => {
-                if sysctl::run_ok(&["start", t]) {
-                    println!("  started {t}");
-                }
-            }
-        }
+    if planes.contains(&Plane::Work) && !resume_scheduler() {
+        degraded.push(format!("the scheduler did not take the resume; check: systemctl --user status spira-runtime{}.service", sfx_or_die()));
     }
 
     let sfx = sfx_or_die();
@@ -593,42 +515,6 @@ fn cmd_start(args: &[String]) -> i32 {
         }
     }
 
-    let mut mail_units = BTreeSet::new();
-    for l in sysctl::run_lines(&["list-unit-files", &format!("spira-mail-deliver{sfx}.service"), "--no-legend"]) {
-        if let Some(u) = sysctl::first_field(&l) {
-            mail_units.insert(u.to_string());
-        }
-    }
-    for l in sysctl::run_lines(&["list-unit-files", "spira-mail-deliver.service", "--no-legend"]) {
-        if let Some(u) = sysctl::first_field(&l) {
-            mail_units.insert(u.to_string());
-        }
-    }
-    for u in mail_units {
-        if !planes.contains(&sysctl::plane_of(&u)) {
-            continue;
-        }
-        let base = u.strip_suffix(".service").unwrap_or(&u);
-        let subj = sysctl::subject_of(&format!("{base}.timer"), &instance);
-        if let Some(reason) = suspended.get(&subj) {
-            if reason.is_empty() {
-                println!("  skipped {u} (suspended)");
-            } else {
-                println!("  skipped {u} (suspended: {reason})");
-            }
-            continue;
-        }
-        if sysctl::run(&["is-enabled", &u]) == "disabled" {
-            continue;
-        }
-        if sysctl::run(&["is-active", &u]) == "active" {
-            continue;
-        }
-        if sysctl::run_ok(&["start", &u]) {
-            println!("  started {u}");
-        }
-    }
-
     if planes.contains(&Plane::Work) {
         let (lifted, failed) = spira_world::checkpoint::lift_all();
         for b in &lifted {
@@ -639,11 +525,7 @@ fn cmd_start(args: &[String]) -> i32 {
         }
     }
     if !degraded.is_empty() {
-        eprintln!(
-            "spira: RUNNING (DEGRADED: {} essential timer(s) disabled with no recorded suspension: {})",
-            degraded.len(),
-            degraded.join(" ")
-        );
+        eprintln!("spira: RUNNING (DEGRADED: {})", degraded.join("; "));
         return 1;
     }
     println!("spira: RUNNING");
@@ -717,8 +599,8 @@ fn cmd_drain(args: &[String]) -> i32 {
     let _ = std::fs::write(
         drain_stamp_or_die(),
         format!(
-            "{}\ncalls gated in call_rune; loop and landing still running. Lift with: {exe} resume\n{}\n{}",
-            Command::new("date").arg("+%Y-%m-%d %H:%M:%S %Z").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default(),
+            "{}\ncalls gated; the scheduler observes and holds its effects. Lift with: {exe} resume\n{}\n{}",
+            spira_world::clock::local_stamp(spira_world::clock::now()),
             spira_world::DRAIN_HOLDS_UNTIL_RESUME,
             drain.render()
         ),
@@ -727,7 +609,11 @@ fn cmd_drain(args: &[String]) -> i32 {
         let marker = spira_world::reboot_marker().unwrap_or_else(|e| die(&e));
         let _ = std::fs::write(&marker, format!("{}\nplanned reboot; lift with: cockpit.sh resume\n", now_iso()));
     }
-    println!("spira: draining — no new dwarves; loop, landing and reaping continue");
+    println!("spira: draining — no new dwarves; live dwarves finish, the scheduler observes but holds its effects");
+    let drain_why = format!("world drain: {}", drain.until);
+    if !halt_scheduler(&drain_why) {
+        eprintln!("spira: the drain stamp is written but the scheduler did not take the halt; rerun: {exe} drain");
+    }
 
     let limit = if dslay { dtimeout } else { dfor };
     let mut notifier = spira_world::notice::Notifier::default();
@@ -770,6 +656,7 @@ fn cmd_drain(args: &[String]) -> i32 {
                     }
                     println!("  slaying {bead} (pid {pid})");
                     let ok = spira_config::release_env::tool("slay").map_err(|e| eprintln!("    {e}")).is_ok_and(|slay| {
+                        // FORK-EDGE: sibling binary slay (bin/slay.rs holds its logic, not the library).
                         Command::new(slay).args(["--bead", &bead, "--keep-work", "--reopen", "--why", "drain deadline reached"]).output().is_ok_and(|o| o.status.success())
                     });
                     if !ok {
@@ -805,21 +692,7 @@ fn owner_alive(d: &spira_world::drain::Drain) -> Option<bool> {
 }
 
 fn page_concierge(subject: &str, body: &str) -> bool {
-    use std::io::Write;
-    let Ok(mut child) = spira_config::bounded::bounded("mail")
-        .args(["send", "concierge", "--from", "world <world@spira>", "--subject", subject, "--kind", "alert"])
-        .env("SPIRA_MAIL_LINT_CONSIDERED", "1")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    else {
-        return false;
-    };
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(body.as_bytes());
-    }
-    child.wait().map(|s| s.success()).unwrap_or(false)
+    spira_world::mail_out::send_configured(&spira_world::mail_out::Letter { mailbox: "concierge", subject, kind: "alert", body })
 }
 
 fn drain_check_and_page() -> spira_world::drain::Outcome {
@@ -849,13 +722,27 @@ fn cmd_drain_check() -> i32 {
 fn cmd_resume() -> i32 {
     let _ = std::fs::remove_file(spira_world::reboot_marker().unwrap_or_else(|e| die(&e)));
     let _ = std::fs::remove_file(spira_world::drain::paged_marker(&drain_stamp_or_die()));
-    if drain_stamp_or_die().is_file() {
+    let was_draining = drain_stamp_or_die().is_file();
+    if was_draining {
         let _ = std::fs::remove_file(drain_stamp_or_die());
+    }
+    // A stopped world is lifted by `start`, never by `resume`: the scheduler stays halted
+    // while the work plane's stamp is present.
+    if halt_stamp_or_die().is_file() {
+        println!("spira: {} — the world is stopped; the scheduler stays halted until: world.sh start", if was_draining { "drain lifted" } else { "was not draining" });
+        return 0;
+    }
+    let resumed = resume_scheduler();
+    if was_draining {
         println!("spira: calls resumed");
     } else {
         println!("spira: was not draining — nothing to resume");
     }
-    0
+    if resumed {
+        0
+    } else {
+        1
+    }
 }
 
 fn now_epoch() -> u64 {
@@ -995,8 +882,8 @@ fn cmd_status() -> i32 {
     if spira_world::reboot_marker().unwrap_or_else(|e| die(&e)).is_file() {
         println!("spira: REBOOT-DRAIN — drained for a planned reboot; lift with: cockpit.sh resume");
     }
-    let instance = instance_or_die();
-    if halt_stamp_or_die().is_file() {
+    let halted = halt_stamp_or_die().is_file();
+    if halted {
         let text = std::fs::read_to_string(halt_stamp_or_die()).unwrap_or_default();
         let mut lines = text.lines();
         println!("spira: HALTED since {}", lines.next().unwrap_or(""));
@@ -1005,66 +892,41 @@ fn cmd_status() -> i32 {
         }
     } else {
         println!("spira: not halted by world.sh");
-        let ctrl_path = ctrl_path_or_die();
-        let ctrl_data = spira_ctrl::read(&ctrl_path).unwrap_or_default();
-        let suspended = spira_ctrl::load_suspended(&ctrl_data);
-        let mut degraded = Vec::new();
-        for slot in enumerate_timers() {
-            let TimerSlot::Resolved(t) = slot else { continue };
-            if !sysctl::is_essential_timer(&t, &instance, sysctl::TIMER_PRIORITY) {
-                continue;
-            }
-            let subj = sysctl::subject_of(&t, &instance);
-            if suspended.contains_key(&subj) {
-                continue;
-            }
-            if sysctl::run(&["is-enabled", &t]) == "disabled" {
-                degraded.push(t);
-            }
-        }
-        if !degraded.is_empty() {
-            println!(
-                "spira: DEGRADED — {} essential timer(s) disabled with no recorded suspension: {}",
-                degraded.len(),
-                degraded.join(" ")
-            );
-        }
     }
-
-    let slots = enumerate_timers();
-    for slot in &slots {
-        if let TimerSlot::Missing { base, reason } = slot {
-            println!("  {:<26} MISSING ({reason})", format!("{base}.timer"));
-        }
-    }
-    let by_plane: Vec<(Plane, String)> = slots
-        .iter()
-        .filter_map(|s| match s {
-            TimerSlot::Resolved(t) => Some((sysctl::plane_of(t), t.clone())),
-            TimerSlot::Missing { .. } => None,
-        })
-        .collect();
     for plane in PLANES {
-        let stamp = plane_stamp(plane);
-        let state = if stamp.is_file() { "STOPPED" } else { "RUNNING" };
+        let state = if plane_stamp(plane).is_file() { "STOPPED" } else { "RUNNING" };
         println!("spira: plane {}: {state}", plane.name());
-        for (_, t) in by_plane.iter().filter(|(p, _)| *p == plane) {
-            let unit_state = sysctl::run(&["is-active", t]);
-            let svc = format!("{}.service", t.strip_suffix(".timer").unwrap_or(t));
-            let svc_result = sysctl::run(&["show", &svc, "-p", "Result", "--value"]);
-            print!("{}", sysctl::status_timer_row(t, &unit_state, &svc_result));
+    }
+
+    // The loop is the scheduler's tasks: their halt state and per-task last fired, next due
+    // and lag come from `scheduler status`, not from a timer list.
+    let sock = runtime_socket_or_die();
+    match scheduler::Socket(&sock).call(&["scheduler", "status"]).and_then(|d| scheduler::parse_status(&d)) {
+        Ok(s) => {
+            println!("{}", scheduler::headline(&s));
+            if let Some(m) = scheduler::mismatch(halted, &s) {
+                println!("{m}");
+            }
+            for t in &s.tasks {
+                println!("{}", scheduler::task_line(t, s.at));
+            }
+        }
+        Err(e) => {
+            println!("spira: scheduler UNKNOWN — {e}");
         }
     }
-    println!("  {:<26} {}", "dolt-beads.service", sysctl::run(&["is-active", "dolt-beads.service"]));
-
-    let landing = sysctl::run(&["is-active", "spira-landing.service"]);
-    println!("  {:<26} {}", "spira-landing.service", if landing.is_empty() { "inactive".to_string() } else { landing });
+    let sfx = sfx_or_die();
+    for u in scheduler::keep_units(&sfx) {
+        let state = sysctl::run(&["is-active", &u]);
+        let result = scheduler::timer_service(&u).map(|svc| sysctl::run(&["show", &svc, "-p", "Result", "--value"])).unwrap_or_default();
+        println!("{}", scheduler::keep_row(&u, &state, &result));
+    }
     for line in sysctl::run_lines(&["list-units", "spira-*.service", "--state=active", "--no-legend"]) {
         let Some(svc) = sysctl::first_field(&line) else { continue };
-        if svc == "spira-landing.service" || svc.starts_with("spira-cockpit") || svc.starts_with("spira-loom") || svc.starts_with("spira-watch@") {
+        if scheduler::is_kept(svc, &sfx) || svc.starts_with("spira-cockpit") || svc.starts_with("spira-loom") || svc.starts_with("spira-watch@") {
             continue;
         }
-        println!("  {:<26} {}", svc, sysctl::run(&["is-active", svc]));
+        println!("  {:<30} {}", svc, sysctl::run(&["is-active", svc]));
     }
 
     match spira_world::locate_home() {
@@ -1146,11 +1008,29 @@ fn main() {
         "guard" => cmd_guard(),
         "freeze-store" => cmd_store(spira_world::freeze::freeze),
         "thaw-store" => cmd_store(spira_world::freeze::thaw),
-        // `TIMER_PRIORITY`, one base name per line — the seam watchtower.sh's
-        // disabled-timer-check reads instead of `WORLD_LIB=1 . world.sh`, which stopped
-        // being possible the moment world.sh became a binary (sp-6onps).
-        "timer-priority" => {
-            for t in sysctl::TIMER_PRIORITY {
+        // `scheduler status` for a shell caller: the headline and task lines, and an exit code
+        // that says running (0), not answering (1) or halted (2).
+        "scheduler-status" => {
+            let sock = runtime_socket_or_die();
+            if rest.iter().any(|a| a == "--json") {
+                let (rc, doc) = scheduler::raw(&scheduler::Socket(&sock));
+                if rc == scheduler::RC_UNANSWERED {
+                    eprintln!("{doc}");
+                } else {
+                    println!("{doc}");
+                }
+                rc
+            } else {
+                let (rc, lines) = scheduler::report(&scheduler::Socket(&sock));
+                for l in lines {
+                    println!("{l}");
+                }
+                rc
+            }
+        }
+        // The keep list, one unit per line: what a world stop never stops.
+        "keep-units" => {
+            for t in scheduler::keep_units(&sfx_or_die()) {
                 println!("{t}");
             }
             0

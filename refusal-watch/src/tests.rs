@@ -133,3 +133,23 @@ fn iso_formats_epochs() {
     assert_eq!(iso(0), "1970-01-01T00:00:00Z");
     assert_eq!(iso(1_791_576_000), "2026-10-09T20:00:00Z");
 }
+
+struct Scripted(std::sync::Mutex<Vec<Vec<String>>>, i32);
+
+impl spira_config::lc_call::Transport for Scripted {
+    fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+        self.0.lock().unwrap().push(argv.to_vec());
+        Ok(spira_config::lc_call::Reply { code: self.1, out: "{\"now\":1}".into(), err: String::new() })
+    }
+}
+
+/// sp-ipwlic: the refusals are read over the store client; a non-zero answer is an error.
+#[test]
+fn refusals_are_read_through_the_store_client() {
+    let t = std::sync::Arc::new(Scripted(Default::default(), 0));
+    let c = spira_config::lc_call::LcClient::over(t.clone(), true);
+    assert_eq!(read_refusals(&c, 86400).unwrap(), "{\"now\":1}");
+    assert_eq!(*t.0.lock().unwrap(), vec![vec!["ops-refusals".to_string(), "86400".to_string()]]);
+    let refused = spira_config::lc_call::LcClient::over(std::sync::Arc::new(Scripted(Default::default(), 2)), true);
+    assert!(read_refusals(&refused, 60).unwrap_err().contains("exited 2"));
+}

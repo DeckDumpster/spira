@@ -780,6 +780,8 @@ impl Layout {
                 // The heal unit's PATH need not include the release, so `rebuild` is resolved
                 // under the active release's `bin/`, falling back to PATH.
                 // batch-job: this runs whatever its caller names, as long as that takes
+                // FORK-EDGE: sibling binary `rebuild` of this crate; in process its from_env exits
+                // on a config refusal and would take the heal down — needs a fallible from_env.
                 match std::process::Command::new(self.release_tool("rebuild")).output() {
                     Ok(out) if out.status.success() => {
                         let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -992,20 +994,17 @@ impl Conf {
 }
 
 fn chrono_like_timestamp() -> String {
-    // `date '+%Y-%m-%dT%H:%M:%S'` in the box's configured TZ (SPIRA_TZ, else TZ). Formatted
-    // by hand rather than pulling in a datetime crate for one log line; `date` is always on
-    // PATH in this harness's environment and the exact format matches the bash original's.
-    // SPIRA_TZ's own toml default is empty ("Empty means the host's own") — a sentinel,
-    // not an absent value, so this falls through to the OS's own TZ, never a Spira default.
-    let tz = spira_config::process::cfg("SPIRA_TZ")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .or_else(|| std::env::var("TZ").ok());
+    // `date '+%Y-%m-%dT%H:%M:%S'` in the box's configured TZ (SPIRA_TZ, else TZ). SPIRA_TZ's
+    // own toml default is empty ("Empty means the host's own") — a sentinel, not an absent
+    // value — and then this process's own zone answers, read in process by localtime_r.
+    let tz = spira_config::process::cfg("SPIRA_TZ").ok().filter(|s| !s.is_empty());
+    let Some(tz) = tz else {
+        return local_time(now_epoch()).map(|t| t.iso()).unwrap_or_default();
+    };
+    // FORK-EDGE: needs a zone-aware clock (a named zone other than this process's own); date
+    // is not a Spira binary.
     let mut cmd = spira_config::bounded::bounded("date");
-    cmd.arg("+%Y-%m-%dT%H:%M:%S");
-    if let Some(tz) = tz {
-        cmd.env("TZ", tz);
-    }
+    cmd.arg("+%Y-%m-%dT%H:%M:%S").env("TZ", tz);
     cmd.output()
         .ok()
         .filter(|o| o.status.success())
@@ -1013,9 +1012,59 @@ fn chrono_like_timestamp() -> String {
         .unwrap_or_default()
 }
 
+/// A wall-clock instant in this process's own zone (`TZ`, else the host's).
+pub struct LocalTime {
+    pub year: i32,
+    pub month: u32,
+    pub day: u32,
+    pub hour: u32,
+    pub minute: u32,
+    pub second: u32,
+}
+
+impl LocalTime {
+    /// `date +%H:%M`.
+    pub fn hhmm(&self) -> String {
+        format!("{:02}:{:02}", self.hour, self.minute)
+    }
+
+    /// `date +%Y-%m-%dT%H:%M:%S`.
+    pub fn iso(&self) -> String {
+        format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}", self.year, self.month, self.day, self.hour, self.minute, self.second)
+    }
+}
+
+/// `t` (epoch seconds) in this process's own zone, by `localtime_r`: no `date` child.
+pub fn local_time(t: i64) -> Option<LocalTime> {
+    let tt = t as libc::time_t;
+    // SAFETY: localtime_r writes only into the tm we own; a zeroed tm is a valid initial value.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_r(&tt, &mut tm) }.is_null() {
+        return None;
+    }
+    Some(LocalTime {
+        year: tm.tm_year + 1900,
+        month: (tm.tm_mon + 1) as u32,
+        day: tm.tm_mday as u32,
+        hour: tm.tm_hour as u32,
+        minute: tm.tm_min as u32,
+        second: tm.tm_sec as u32,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_time_formats_as_date_did() {
+        let t = local_time(1_762_171_200).expect("localtime_r answers");
+        let (hhmm, iso) = (t.hhmm(), t.iso());
+        assert_eq!(hhmm.len(), 5, "{hhmm}");
+        assert_eq!(iso.len(), 19, "{iso}");
+        assert_eq!(&iso[11..16], hhmm);
+        assert!(iso.starts_with("2025-11-0"), "{iso}");
+    }
 
     #[test]
     fn classify_argv_matches_health_by_script_suffix_never_substring() {

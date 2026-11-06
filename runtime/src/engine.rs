@@ -15,10 +15,12 @@ use crate::marker::{Mark, Marker, NullMarker};
 use crate::offload::Busy;
 use crate::ports::Clock;
 use crate::scheduler::Scheduler;
-use crate::wide::{rss_kb, Fields, NullSink, Value, Wide, WideSink};
+use crate::wide::{Fields, NullSink, TurnRss, Value, Wide, WideSink};
 use crate::{Result, RuntimeError};
 
 const BATCH: usize = 256;
+
+type Rows = Vec<(Offset, Event)>;
 
 /// A stream's poison state is asked again after this long, or when the journal brings events.
 const POISON_RECHECK_MS: u64 = 300_000;
@@ -66,6 +68,90 @@ pub struct PendingEffect {
 struct RequestBody {
     spec: EffectSpec,
     deadline_at: u64,
+    /// The task that asked: the one handler its outcome is offered to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    task: Option<String>,
+}
+
+fn is_outcome(tag: &str) -> bool {
+    matches!(tag, EFFECT_SUCCEEDED | EFFECT_FAILED | EFFECT_TIMED_OUT)
+}
+
+#[derive(Serialize, Deserialize)]
+struct HeldBody {
+    stream: StreamKey,
+    task: String,
+    spec: EffectSpec,
+}
+
+/// The `applied` key under which a held write's release is recorded.
+const RELEASE: &str = "scheduler.release";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub enum LastOutcome {
+    Succeeded,
+    Failed,
+    TimedOut,
+    /// Its effector class was full; the effect is still waiting to run.
+    Deferred,
+}
+
+/// The newest event a task emitted or noted: what it carries forward.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct CarriedState {
+    pub stream: String,
+    pub tag: String,
+    pub body_len: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct TaskStatus {
+    pub name: String,
+    pub mode: Mode,
+    pub plane: Plane,
+    /// Each declared effect and the plane a halt reads for it.
+    pub effects: Vec<(String, Plane)>,
+    pub state: Option<CarriedState>,
+    /// Engine clock when the task last handled an event, and that event's own time.
+    pub last_fired_at: Option<u64>,
+    pub last_due_at: Option<u64>,
+    pub lag_ms: Option<u64>,
+    /// The earliest schedule row or timer waiting for a tag the task handles.
+    pub next_due_at: Option<u64>,
+    pub last_outcome: Option<LastOutcome>,
+    /// Idempotency keys of its effects and probes with no outcome yet.
+    pub in_flight: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ClassStatus {
+    pub class: String,
+    pub depth: usize,
+    pub refusals: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct SchedulerStatus {
+    pub at: u64,
+    pub halted: bool,
+    pub held: usize,
+    pub tasks: Vec<TaskStatus>,
+    pub classes: Vec<ClassStatus>,
+}
+
+pub use crate::status_board::StatusBoard;
+
+pub type Classifier = Arc<dyn Fn(&EffectSpec) -> String + Send + Sync>;
+
+/// The class an effect runs under when no classifier is given.
+pub const DEFAULT_CLASS: &str = "host";
+
+#[derive(Default)]
+struct Track {
+    state: Option<CarriedState>,
+    fired_at: Option<u64>,
+    due_at: Option<u64>,
+    outcome: Option<LastOutcome>,
 }
 
 pub trait Executor {
@@ -105,6 +191,23 @@ pub struct Engine {
     foreign_poll_ms: u64,
     next_read_at: u64,
     poison_cleared_at: u64,
+    halted: bool,
+    held: usize,
+    tracks: BTreeMap<String, Track>,
+    owners: BTreeMap<String, String>,
+    refusals: BTreeMap<String, u64>,
+    classifier: Option<Classifier>,
+    board: Option<Arc<StatusBoard>>,
+    /// Events in the projection ahead of their own dispatch: what a handler wrote on its own
+    /// stream, placed right after the event that caused it.
+    early: BTreeSet<EventId>,
+    /// What the event being dispatched has had written on its stream so far; `true` is local.
+    written: Vec<(Event, bool)>,
+    /// On a replay, what each event still to be dispatched had written on its stream before.
+    rewritten: BTreeMap<EventId, Vec<Event>>,
+    /// The task that requested each effect not yet answered, as far as this run has seen.
+    requesters: BTreeMap<String, String>,
+    rss: TurnRss,
 }
 
 fn mix(seed: u64, parts: &[&str]) -> u64 {
@@ -158,10 +261,29 @@ impl Engine {
             foreign_poll_ms: 0,
             next_read_at: 0,
             poison_cleared_at: 0,
+            halted: false,
+            held: 0,
+            tracks: BTreeMap::new(),
+            owners: BTreeMap::new(),
+            refusals: BTreeMap::new(),
+            classifier: None,
+            board: None,
+            early: BTreeSet::new(),
+            written: vec![],
+            rewritten: BTreeMap::new(),
+            requesters: BTreeMap::new(),
+            rss: TurnRss::default(),
         };
         let cursor = e.journal.cursor()?;
         e.cursor = cursor;
         e.saved_cursor = cursor;
+        let (halted, held) = e.halt_state(cursor)?;
+        e.halted = halted;
+        for h in held {
+            if !e.journal.applied(RELEASE, &h.id)? {
+                e.held += 1;
+            }
+        }
         for (_, ev) in e.journal.unresolved_effects()? {
             e.track_effect(&ev)?;
         }
@@ -170,6 +292,67 @@ impl Engine {
             e.scheduler.insert(row);
         }
         Ok(e)
+    }
+
+    /// Names the effector class of an effect, for `status`.
+    pub fn with_classifier(mut self, c: Classifier) -> Self {
+        self.classifier = Some(c);
+        self
+    }
+
+    /// Receives `status()` at the end of every `run_until_idle`.
+    pub fn with_status_board(mut self, board: Arc<StatusBoard>) -> Self {
+        self.board = Some(board);
+        self
+    }
+
+    fn class_of(&self, spec: &EffectSpec) -> String {
+        self.classifier.as_ref().map_or_else(|| DEFAULT_CLASS.to_string(), |c| c(spec))
+    }
+
+    /// The host's effector class `class` was full when it offered effect `key`.
+    pub fn note_deferred(&mut self, key: &str, class: &str) {
+        *self.refusals.entry(class.into()).or_insert(0) += 1;
+        if let Some(owner) = self.owners.get(key) {
+            self.tracks.entry(owner.clone()).or_default().outcome = Some(LastOutcome::Deferred);
+        }
+    }
+
+    pub fn status(&self) -> SchedulerStatus {
+        let rows: Vec<&ScheduleRow> = self.scheduler.rows().chain(self.timers.values()).collect();
+        let tasks = self
+            .regs
+            .iter()
+            .map(|r| {
+                let t = self.tracks.get(&r.name);
+                let interests = r.handler.interests();
+                TaskStatus {
+                    name: r.name.clone(),
+                    mode: r.mode,
+                    plane: r.plane,
+                    effects: r.effects.iter().map(|e| (e.to_string(), r.plane_of(e))).collect(),
+                    state: t.and_then(|t| t.state.clone()),
+                    last_fired_at: t.and_then(|t| t.fired_at),
+                    last_due_at: t.and_then(|t| t.due_at),
+                    lag_ms: t.and_then(|t| Some(t.fired_at?.saturating_sub(t.due_at?))),
+                    next_due_at: rows.iter().filter(|row| interests.contains(&row.kind.tag.as_str())).map(|row| row.at).min(),
+                    last_outcome: t.and_then(|t| t.outcome),
+                    in_flight: self.pending.keys().filter(|k| self.owners.get(*k) == Some(&r.name)).cloned().collect(),
+                }
+            })
+            .collect();
+        let mut classes: BTreeMap<String, ClassStatus> = self.refusals.iter().map(|(c, n)| (c.clone(), ClassStatus { class: c.clone(), depth: 0, refusals: *n })).collect();
+        for p in self.pending.values() {
+            let c = self.class_of(&p.spec);
+            classes.entry(c.clone()).or_insert_with(|| ClassStatus { class: c, depth: 0, refusals: 0 }).depth += 1;
+        }
+        SchedulerStatus { at: self.clock.now_ms(), halted: self.halted, held: self.held, tasks, classes: classes.into_values().collect() }
+    }
+
+    fn publish(&self) {
+        if let Some(b) = &self.board {
+            b.put(self.status());
+        }
     }
 
     pub fn with_sink(mut self, sink: Arc<dyn WideSink>) -> Self {
@@ -235,7 +418,7 @@ impl Engine {
         for (k, v) in &self.baseline {
             w.set(k, v.clone());
         }
-        w.set("process.rss_kb", rss_kb());
+        w.set("process.rss_kb", self.rss.get());
         w.set("process.uptime_ms", self.started.elapsed().as_millis() as u64);
         if let Some(e) = ev {
             w.set("event.id", e.id.0.as_str());
@@ -262,6 +445,8 @@ impl Engine {
     fn track_effect(&mut self, ev: &Event) -> Result<()> {
         if ev.kind.tag == EFFECT_REQUESTED {
             let b: RequestBody = serde_json::from_str(&ev.kind.body).map_err(|e| RuntimeError::new(format!("bad effect request {}: {e}", ev.id.0)))?;
+            let class = self.class_of(&b.spec);
+            self.refusals.entry(class).or_insert(0);
             self.pending.insert(
                 ev.id.0.clone(),
                 PendingEffect { key: ev.id.0.clone(), stream: ev.stream.clone(), spec: b.spec, deadline_at: b.deadline_at, requested_at: ev.at, correlation: ev.correlation.clone() },
@@ -272,6 +457,78 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    /// Whether the scheduler stood halted at `below`, and the writes held since the last resume.
+    fn halt_state(&self, mut below: Offset) -> Result<(bool, Vec<Event>)> {
+        let stream = StreamKey(HALT_STREAM.into());
+        let (mut halted, mut held) = (None, vec![]);
+        loop {
+            let page = self.journal.read_stream(&stream, below, WINDOW)?;
+            let Some(&(first, _)) = page.first() else { break };
+            let full = page.len() == WINDOW;
+            for (_, e) in page.into_iter().rev() {
+                match e.kind.tag.as_str() {
+                    SCHEDULER_RESUMED => {
+                        held.reverse();
+                        return Ok((halted.unwrap_or(false), held));
+                    }
+                    SCHEDULER_HALTED => {
+                        halted.get_or_insert(true);
+                    }
+                    EFFECT_HELD => held.push(e),
+                    _ => {}
+                }
+            }
+            if !full {
+                break;
+            }
+            below = first;
+        }
+        held.reverse();
+        Ok((halted.unwrap_or(false), held))
+    }
+
+    /// Requests a held write once: a replay finds its release applied.
+    fn release(&mut self, held: &Event, at: u64) -> Result<()> {
+        if self.journal.applied(RELEASE, &held.id)? {
+            return Ok(());
+        }
+        let b: HeldBody = serde_json::from_str(&held.kind.body).map_err(|e| RuntimeError::new(format!("bad held effect {}: {e}", held.id.0)))?;
+        let deadline_at = at.saturating_add(b.spec.deadline_ms);
+        let body = serde_json::to_string(&RequestBody { spec: b.spec, deadline_at, task: Some(b.task.clone()) }).map_err(|e| RuntimeError::new(e.to_string()))?;
+        let task = b.task;
+        let req = self.append_derived(derive_id(format!("{}/released", held.id.0)), &b.stream, EventKind::new(EFFECT_REQUESTED, &body), held, at)?;
+        self.requesters.insert(req.id.0.clone(), task.clone());
+        self.owners.insert(req.id.0.clone(), task);
+        self.track_effect(&req)?;
+        self.journal.mark_applied(RELEASE, &held.id)?;
+        self.held = self.held.saturating_sub(1);
+        Ok(())
+    }
+
+    /// The halt stream is the engine's own: a halt holds every `Act` write from then on, a
+    /// resume releases what was held in the order it was held, and a write held after the
+    /// resume that ended its halt is released when it is read.
+    fn gate(&mut self, ev: &Event, off: Offset) -> Result<()> {
+        match ev.kind.tag.as_str() {
+            SCHEDULER_HALTED => self.halted = true,
+            SCHEDULER_RESUMED => {
+                self.halted = false;
+                for h in self.halt_state(off)?.1 {
+                    self.release(&h, ev.at)?;
+                }
+                self.held = 0;
+            }
+            EFFECT_HELD if self.halted => self.held += 1,
+            EFFECT_HELD => self.release(ev, ev.at)?,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub fn is_halted(&self) -> bool {
+        self.halted
     }
 
     pub fn into_registrations(self) -> Vec<Registration> {
@@ -312,18 +569,45 @@ impl Engine {
         Ok(ev)
     }
 
-    fn apply(&mut self, cmds: Vec<Command>, ev: &Event, handler: &str) -> Result<()> {
+    /// Run a handler's commands for `ev`. What lands on `ev`'s own stream is also recorded in
+    /// `written`, so the projection holds it before `ev`'s stream is dispatched again.
+    fn apply(&mut self, cmds: Vec<Command>, ev: &Event, reg: &Registration) -> Result<()> {
+        let (handler, mode) = (reg.name.as_str(), reg.mode);
+        let own = ev.stream.0 != HALT_STREAM;
         for (i, cmd) in cmds.into_iter().enumerate() {
             let id = derive_id(format!("{}/{handler}/{i}", ev.id.0));
             match cmd {
                 Command::Emit(kind) => {
-                    self.append_derived(id, &ev.stream, kind, ev, ev.at)?;
+                    self.carry(handler, &ev.stream, &kind);
+                    let e = self.append_derived(id, &ev.stream, kind, ev, ev.at)?;
+                    self.wrote(own, e, false);
+                }
+                Command::EmitTo { stream, kind } => {
+                    let id = derive_id(format!("{}/{handler}/{i}>{}", ev.id.0, stream.0));
+                    let e = if mode == Mode::Act {
+                        self.append_derived(id, &stream, kind, ev, ev.at)?
+                    } else {
+                        let body = serde_json::to_string(&ShadowedEmit { stream, kind }).map_err(|e| RuntimeError::new(e.to_string()))?;
+                        self.append_derived(id, &ev.stream, EventKind::new(EMIT_SHADOWED, &body), ev, ev.at)?
+                    };
+                    let mine = own && e.stream == ev.stream;
+                    self.wrote(mine, e, false);
+                }
+                Command::Effect(spec) if mode == Mode::Act && self.halted && reg.plane_of(&spec.name) == Plane::Work => {
+                    let body = serde_json::to_string(&HeldBody { stream: ev.stream.clone(), task: handler.into(), spec }).map_err(|e| RuntimeError::new(e.to_string()))?;
+                    self.append_derived(id, &StreamKey(HALT_STREAM.into()), EventKind::new(EFFECT_HELD, &body), ev, ev.at)?;
                 }
                 Command::Effect(spec) => {
                     let deadline_at = ev.at.saturating_add(spec.deadline_ms);
-                    let body = serde_json::to_string(&RequestBody { spec, deadline_at }).map_err(|e| RuntimeError::new(e.to_string()))?;
-                    let req = self.append_derived(id, &ev.stream, EventKind::new(EFFECT_REQUESTED, &body), ev, ev.at)?;
+                    let body = serde_json::to_string(&RequestBody { spec, deadline_at, task: Some(handler.into()) }).map_err(|e| RuntimeError::new(e.to_string()))?;
+                    let tag = if mode == Mode::Act { EFFECT_REQUESTED } else { EFFECT_SHADOWED };
+                    let req = self.append_derived(id, &ev.stream, EventKind::new(tag, &body), ev, ev.at)?;
+                    if mode == Mode::Act {
+                        self.owners.insert(req.id.0.clone(), handler.into());
+                        self.requesters.insert(req.id.0.clone(), handler.into());
+                    }
                     self.track_effect(&req)?;
+                    self.wrote(own, req, false);
                 }
                 Command::Schedule { at, kind } => {
                     let row = ScheduleRow { id, at, stream: ev.stream.clone(), kind, cause: Some(ev.id.clone()), correlation: ev.correlation.clone() };
@@ -331,15 +615,19 @@ impl Engine {
                     self.scheduler.insert(row);
                 }
                 Command::Note(kind) => {
+                    self.carry(handler, &ev.stream, &kind);
                     let note = self.local_event(&ev.stream, kind, ev.at, Some(ev));
-                    self.local.push_back(note);
+                    self.local.push_back(note.clone());
+                    self.wrote(own, note, true);
                 }
                 Command::Probe(spec) => {
                     let deadline_at = ev.at.saturating_add(spec.deadline_ms);
-                    let body = serde_json::to_string(&RequestBody { spec, deadline_at }).map_err(|e| RuntimeError::new(e.to_string()))?;
+                    let body = serde_json::to_string(&RequestBody { spec, deadline_at, task: Some(handler.into()) }).map_err(|e| RuntimeError::new(e.to_string()))?;
                     let req = self.local_event(&ev.stream, EventKind::new(EFFECT_REQUESTED, &body), ev.at, Some(ev));
                     self.projection.push_local(&req, LOCAL_KEEP, |id| self.pending.contains_key(&id.0) || self.local.iter().any(|q| q.cause.as_ref() == Some(id)));
                     self.memory_only.insert(req.id.0.clone());
+                    self.owners.insert(req.id.0.clone(), handler.into());
+                    self.requesters.insert(req.id.0.clone(), handler.into());
                     self.track_effect(&req)?;
                 }
                 Command::Timer { at, kind } => {
@@ -351,83 +639,236 @@ impl Engine {
         Ok(())
     }
 
+    fn wrote(&mut self, own: bool, e: Event, local: bool) {
+        if own {
+            self.written.push((e, local));
+        }
+    }
+
+    fn carry(&mut self, handler: &str, stream: &StreamKey, kind: &EventKind) {
+        self.tracks.entry(handler.into()).or_default().state = Some(CarriedState { stream: stream.0.clone(), tag: kind.tag.clone(), body_len: kind.body.len() });
+    }
+
+    /// Push `ev` into the projection unless it is there already, offer it, then place what its
+    /// handlers wrote on its stream right after it: per stream, a handler sees every event its
+    /// stream's handlers wrote for an earlier event before it sees a later one, whatever the
+    /// journal offsets. Nothing reorders appends; only the view is ordered by cause.
     fn dispatch(&mut self, ev: &Event, at: Option<(Offset, Offset)>) -> Result<()> {
         if let Some(at) = at {
             if !self.loaded.contains(&ev.stream) {
-                for (_, past) in self.journal.read_stream(&ev.stream, at.0, WINDOW)? {
-                    self.projection.push(&past);
-                }
-                self.loaded.insert(ev.stream.clone());
+                self.load(&ev.stream, at.0)?;
             }
         }
-        if at.is_some() {
-            self.projection.push(ev);
-        } else {
-            self.projection.push_local(ev, LOCAL_KEEP, |id| ev.cause.as_ref() == Some(id) || self.pending.contains_key(&id.0) || self.local.iter().any(|q| q.cause.as_ref() == Some(id)));
+        if !self.early.remove(&ev.id) {
+            if at.is_some() {
+                self.projection.push(ev);
+            } else {
+                self.push_local(ev);
+            }
         }
-        if self.is_poisoned(&ev.stream)? {
-            return Ok(());
+        if let (Some((off, _)), true) = (at, ev.stream.0 == HALT_STREAM) {
+            self.gate(ev, off)?;
         }
-        for i in 0..self.regs.len() {
-            let name = self.regs[i].name.clone();
-            if !self.regs[i].handler.interests().contains(&ev.kind.tag.as_str()) || (at.is_some_and(|(off, _)| off < self.check_applied_below) && self.journal.applied(&name, &ev.id)?) {
+        let offered = if self.is_poisoned(&ev.stream)? { Ok(()) } else { self.offer(ev, at) };
+        self.place(ev);
+        offered
+    }
+
+    fn push_local(&mut self, ev: &Event) {
+        let (pending, local) = (&self.pending, &self.local);
+        self.projection.push_local(ev, LOCAL_KEEP, |id| ev.cause.as_ref() == Some(id) || pending.contains_key(&id.0) || local.iter().any(|q| q.cause.as_ref() == Some(id)));
+    }
+
+    /// What `ev`'s handlers wrote on its stream, this run or (on a replay) the run before, into
+    /// the projection in the order it was written.
+    fn place(&mut self, ev: &Event) {
+        let mut writes: Vec<(Event, bool)> = self.rewritten.remove(&ev.id).unwrap_or_default().into_iter().map(|e| (e, false)).collect();
+        for w in std::mem::take(&mut self.written) {
+            if !writes.iter().any(|(e, _)| e.id == w.0.id) {
+                writes.push(w);
+            }
+        }
+        for (e, local) in writes {
+            if !self.early.insert(e.id.clone()) {
                 continue;
             }
-            let key = (ev.id.clone(), name.clone());
-            let stalls = self.suspects.get(&key).copied().unwrap_or(0);
-            let wide = self.unit("dispatch", Some(ev), at);
-            wide.set("handler", name.as_str());
+            if local {
+                self.push_local(&e);
+            } else {
+                self.projection.push(&e);
+            }
+        }
+    }
+
+    /// A stream's newest `WINDOW` events below `below`, in the order a run that dispatched them
+    /// placed them: each event, then what its handlers wrote on the stream. On a replay the
+    /// events still to be dispatched are read too, so a handler's writes for an event before
+    /// the crash are placed where that run placed them.
+    fn load(&mut self, stream: &StreamKey, below: Offset) -> Result<()> {
+        self.loaded.insert(stream.clone());
+        let (past, ahead) = self.read_window(stream, below)?;
+        if stream.0 == HALT_STREAM {
+            for (_, e) in &past {
+                self.projection.push(e);
+            }
+            return Ok(());
+        }
+        let ids: BTreeSet<&EventId> = past.iter().chain(&ahead).map(|(_, e)| &e.id).collect();
+        let mut writes: BTreeMap<EventId, Vec<(Offset, Event)>> = BTreeMap::new();
+        for (o, e) in past.iter().chain(&ahead) {
+            if let Some(c) = e.cause.as_ref().filter(|c| ids.contains(c) && written_by_handler_of(c, &e.id)) {
+                writes.entry(c.clone()).or_default().push((*o, e.clone()));
+            }
+        }
+        let mut placed: BTreeSet<EventId> = BTreeSet::new();
+        for (_, e) in &past {
+            if placed.insert(e.id.clone()) {
+                self.projection.push(e);
+            }
+            for (o, w) in writes.remove(&e.id).unwrap_or_default() {
+                if placed.insert(w.id.clone()) {
+                    self.projection.push(&w);
+                    if o >= below {
+                        self.early.insert(w.id.clone());
+                    }
+                }
+            }
+        }
+        for (c, ws) in writes {
+            self.rewritten.insert(c, ws.into_iter().map(|(_, w)| w).collect());
+        }
+        Ok(())
+    }
+
+    /// `stream`'s newest `WINDOW` events below `from`, and on a replay its events from `from`
+    /// to the end the journal had at open, in one read: that stretch holds at most as many of
+    /// the stream's events as it has offsets.
+    fn read_window(&self, stream: &StreamKey, from: Offset) -> Result<(Rows, Rows)> {
+        if from >= self.check_applied_below {
+            return Ok((self.journal.read_stream(stream, from, WINDOW)?, vec![]));
+        }
+        let stretch = usize::try_from(self.check_applied_below - from).unwrap_or(usize::MAX);
+        let mut past = self.journal.read_stream(stream, self.check_applied_below, WINDOW.saturating_add(stretch))?;
+        let ahead = past.split_off(past.partition_point(|(o, _)| *o < from));
+        let skip = past.len().saturating_sub(WINDOW);
+        Ok((past.split_off(skip), ahead))
+    }
+
+    /// The task that requested the effect `ev` is the outcome of, when it is one and the
+    /// request named its task.
+    fn requester(&mut self, ev: &Event) -> Option<String> {
+        if !is_outcome(&ev.kind.tag) {
+            return None;
+        }
+        let cause = ev.cause.as_ref()?;
+        if let Some(t) = self.requesters.remove(&cause.0) {
+            return Some(t);
+        }
+        let req = self.projection.events(&ev.stream).iter().rev().find(|e| &e.id == cause && e.kind.tag == EFFECT_REQUESTED)?;
+        serde_json::from_str::<RequestBody>(&req.kind.body).ok()?.task
+    }
+
+    /// Offer `ev` to every handler interested in it, an outcome only to the task that asked
+    /// for it (and those that watch every outcome).
+    fn offer(&mut self, ev: &Event, at: Option<(Offset, Offset)>) -> Result<()> {
+        let regs = std::mem::take(&mut self.regs);
+        let r = self.offer_to(&regs, ev, at);
+        self.regs = regs;
+        r
+    }
+
+    fn offer_to(&mut self, regs: &[Registration], ev: &Event, at: Option<(Offset, Offset)>) -> Result<()> {
+        let requester = self.requester(ev);
+        for reg in regs {
+            let (name, mode, handler) = (reg.name.as_str(), reg.mode, &reg.handler);
+            if !handler.interests().contains(&ev.kind.tag.as_str()) {
+                continue;
+            }
+            if requester.as_deref().is_some_and(|r| r != name) && !handler.watches_foreign_outcomes() {
+                continue;
+            }
+            if at.is_some_and(|(off, _)| off < self.check_applied_below) && self.journal.applied(name, &ev.id)? {
+                continue;
+            }
+            let stalls = if self.suspects.is_empty() { 0 } else { self.suspects.get(&(ev.id.clone(), name.to_string())).copied().unwrap_or(0) };
             if stalls >= self.stall_limit {
                 let message = format!("stalled {stalls} times in {name}");
-                self.quarantine(ev, &name, &message)?;
-                wide.set("stall.count", stalls);
+                self.quarantine(ev, name, &message)?;
+                let wide = self.dispatch_unit(ev, at, name, mode, stalls);
                 wide.set("outcome", "quarantined");
                 self.finish(&wide);
                 return Ok(());
             }
-            if stalls > 0 {
-                wide.set("stall.count", stalls);
+            self.marker.set(&Mark { event: ev.id.clone(), handler: name.to_string(), stream: ev.stream.clone(), stalls })?;
+            let now = self.clock.now_ms();
+            match self.tracks.get_mut(name) {
+                Some(t) => (t.fired_at, t.due_at) = (Some(now), Some(ev.at)),
+                None => {
+                    self.tracks.insert(name.to_string(), Track { fired_at: Some(now), due_at: Some(ev.at), ..Track::default() });
+                }
             }
-            self.marker.set(&Mark { event: ev.id.clone(), handler: name.clone(), stream: ev.stream.clone(), stalls })?;
             self.busy.enter();
-            let ctx = Ctx::with(ev.at, mix(self.seed, &[&ev.id.0, &name]), at.map_or(0, |(off, _)| off), wide.clone());
+            let ctx = Ctx::with(ev.at, mix(self.seed, &[&ev.id.0, name]), at.map_or(0, |(off, _)| off), Wide::default());
             let began = Instant::now();
-            let handler = &self.regs[i].handler;
             let view = &self.projection;
             let called = catch_unwind(AssertUnwindSafe(|| handler.handle(&ctx, view, ev)));
             self.busy.exit();
             self.marker.clear()?;
-            wide.set("duration_us", began.elapsed().as_micros() as u64);
+            let elapsed = began.elapsed();
+            let set = ctx.into_event();
+            if stalls == 0 && set.is_empty() && matches!(&called, Ok(c) if c.is_empty()) {
+                if at.is_some() {
+                    self.journal.mark_applied(name, &ev.id)?;
+                }
+                continue;
+            }
+            let wide = self.dispatch_unit(ev, at, name, mode, stalls);
+            wide.merge(set.take());
+            wide.set("duration_us", elapsed.as_micros() as u64);
             match called {
                 Ok(cmds) => {
                     let count = |f: fn(&Command) -> bool| cmds.iter().filter(|c| f(c)).count();
                     wide.set("commands.emit", count(|c| matches!(c, Command::Emit(_))));
+                    wide.set("commands.emit_to", count(|c| matches!(c, Command::EmitTo { .. })));
                     wide.set("commands.effect", count(|c| matches!(c, Command::Effect(_))));
                     wide.set("commands.schedule", count(|c| matches!(c, Command::Schedule { .. })));
-                    let done = self.apply(cmds, ev, &name).and_then(|()| if at.is_some() { self.journal.mark_applied(&name, &ev.id) } else { Ok(()) });
+                    let done = self.apply(cmds, ev, reg).and_then(|()| if at.is_some() { self.journal.mark_applied(name, &ev.id) } else { Ok(()) });
                     if matches!(&done, Err(e) if e.is_refused()) {
                         let message = done.unwrap_err().0;
                         wide.set("outcome", "refused");
                         self.finish(&wide);
-                        self.quarantine(ev, &name, &message)?;
+                        self.quarantine(ev, name, &message)?;
                         return Ok(());
                     }
                     wide.set("outcome", if done.is_ok() { "ok" } else { "error" });
                     self.finish(&wide);
                     done?;
-                    self.suspects.remove(&key);
+                    if stalls > 0 {
+                        self.suspects.remove(&(ev.id.clone(), name.to_string()));
+                    }
                 }
                 Err(p) => {
                     let message = panic_message(&*p);
                     wide.set("outcome", "panic");
                     wide.set("panic.message", message.as_str());
                     self.finish(&wide);
-                    self.quarantine(ev, &name, &message)?;
+                    self.quarantine(ev, name, &message)?;
                     return Ok(());
                 }
             }
         }
         Ok(())
+    }
+
+    /// The wide event of one handler call that did something.
+    fn dispatch_unit(&self, ev: &Event, at: Option<(Offset, Offset)>, name: &str, mode: Mode, stalls: u32) -> Wide {
+        let wide = self.unit("dispatch", Some(ev), at);
+        wide.set("handler", name);
+        wide.set("task.mode", mode.as_str());
+        if stalls > 0 {
+            wide.set("stall.count", stalls);
+        }
+        wide
     }
 
     fn is_poisoned(&mut self, stream: &StreamKey) -> Result<bool> {
@@ -581,13 +1022,16 @@ impl Executor for Engine {
     }
 
     fn run_until_idle(&mut self) -> Result<()> {
-        loop {
+        self.rss.reset();
+        let run = (|| loop {
             let fired = self.tick()?;
             let dispatched = self.pump()?;
             if (fired == 0 && dispatched == 0) || self.next_timer_at().is_none_or(|t| t > self.clock.now_ms()) {
                 return Ok(());
             }
-        }
+        })();
+        self.publish();
+        run
     }
 
     fn pending_effects(&self) -> Vec<PendingEffect> {
@@ -611,6 +1055,13 @@ impl Executor for Engine {
             self.appended = true;
         }
         self.pending.remove(key);
+        if let Some(owner) = self.owners.remove(key) {
+            self.tracks.entry(owner).or_default().outcome = Some(match outcome {
+                Outcome::Succeeded(_) => LastOutcome::Succeeded,
+                Outcome::Failed(_) => LastOutcome::Failed,
+                Outcome::TimedOut => LastOutcome::TimedOut,
+            });
+        }
         let w = self.unit("effect", Some(&ev), None);
         w.set("effect.kind", p.spec.name.as_str());
         w.set("effect.idempotency_key", key);

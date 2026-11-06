@@ -26,15 +26,16 @@ fn the_unit_command_runs_under_a_real_cargo_llvm_cov_and_yields_line_coverage() 
     );
     // A clean environment: when this runs inside a coverage-instrumented unit run, the outer
     // run's CARGO_TARGET_DIR / LLVM_PROFILE_FILE / CARGO_LLVM_COV_* must not leak in.
-    let out = Command::new("bash")
-        .arg("-c")
-        .arg(&script)
-        .current_dir(&dir)
-        .env_clear()
-        .env("HOME", std::env::var("HOME").unwrap())
-        .env("PATH", format!("{cargo_home}/bin:/usr/local/bin:/usr/bin:/bin"))
-        .output()
-        .unwrap();
+    // The toolchain this test runs under, by name: the scratch crate has no rust-toolchain.toml,
+    // and a host whose rustup has no default (the round VM) otherwise cannot choose a cargo.
+    let mut cmd = Command::new("bash");
+    cmd.arg("-c").arg(&script).current_dir(&dir).env_clear().env("HOME", std::env::var("HOME").unwrap()).env("PATH", format!("{cargo_home}/bin:/usr/local/bin:/usr/bin:/bin"));
+    for k in ["RUSTUP_TOOLCHAIN", "RUSTUP_HOME"] {
+        if let Some(v) = std::env::var_os(k) {
+            cmd.env(k, v);
+        }
+    }
+    let out = cmd.output().unwrap();
     assert!(out.status.success(), "{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     let j: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join("out.json")).unwrap()).unwrap();
     assert!(j["data"][0]["totals"]["lines"]["count"].as_u64().unwrap() > 0, "{j}");

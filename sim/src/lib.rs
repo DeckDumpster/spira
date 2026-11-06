@@ -2,10 +2,12 @@
 //! (tie order, run durations, jitter) comes from one seeded PRNG.
 
 pub mod actors;
+pub mod doubles;
 pub mod fit;
 pub mod replay;
 pub mod units;
 
+use runtime::host::{EffectRunner, VirtualDriver};
 use runtime::ports::{Clock, VirtualClock};
 use runtime::scheduler::Scheduler;
 use runtime::{
@@ -66,6 +68,7 @@ pub enum EventKind {
     Step(String),
     Fault,
     Submit(String),
+    Start(String),
     Tick,
 }
 
@@ -77,6 +80,7 @@ impl EventKind {
             EventKind::Step(n) => RtKind::new("step", n),
             EventKind::Fault => RtKind::new("fault", ""),
             EventKind::Submit(p) => RtKind::new("submit", p),
+            EventKind::Start(p) => RtKind::new("start", p),
             EventKind::Tick => RtKind::new("tick", ""),
         }
     }
@@ -89,6 +93,7 @@ impl EventKind {
             "step" => EventKind::Step(b),
             "fault" => EventKind::Fault,
             "submit" => EventKind::Submit(b),
+            "start" => EventKind::Start(b),
             "tick" => EventKind::Tick,
             t => panic!("unknown sim event {t}"),
         }
@@ -122,8 +127,10 @@ struct Actor {
 
 struct Workflows {
     clock: VirtualClock,
-    engine: Option<Engine>,
+    journal: Arc<MemJournal>,
+    driver: Option<VirtualDriver>,
     regs: Vec<Registration>,
+    effects: Arc<dyn EffectRunner>,
     launched: BTreeMap<String, String>,
     ticks: BTreeSet<u64>,
 }
@@ -160,8 +167,10 @@ impl Sim {
             scenarios: BTreeMap::new(),
             wf: Workflows {
                 clock: VirtualClock::new(0),
-                engine: None,
+                journal: MemJournal::new(),
+                driver: None,
                 regs: Vec::new(),
+                effects: Arc::new(doubles::Doubles::default()),
                 launched: BTreeMap::new(),
                 ticks: BTreeSet::new(),
             },
@@ -177,11 +186,35 @@ impl Sim {
         self.scenarios.insert(name.to_string(), f);
     }
 
-    /// A handler-based workflow runs in-process on the same virtual clock; only the effects it
-    /// requests launch anything, and only as the process actor of the effect's name.
+    /// A handler-based workflow runs in-process on the same virtual clock. An effect named
+    /// after an actor (registered before the first workflow event) runs as that actor; every
+    /// other effect is answered at once by the runner from `set_effects`.
     pub fn add_workflow(&mut self, reg: Registration) {
-        assert!(self.wf.engine.is_none(), "workflow added after the first submission");
+        assert!(self.wf.driver.is_none(), "workflow added after the first workflow event");
         self.wf.regs.push(reg);
+    }
+
+    /// The runner in-process effects are answered by: doubles, so nothing is spawned. Without
+    /// one, every such effect is refused as the production runner refuses an unknown name.
+    pub fn set_effects(&mut self, runner: Arc<dyn EffectRunner>) {
+        assert!(self.wf.driver.is_none(), "effects set after the first workflow event");
+        self.wf.effects = runner;
+    }
+
+    /// Hands `tag` to `stream`'s handlers at `at` without journaling it, the way the service
+    /// boots its timers.
+    pub fn boot_workflow(&mut self, at: u64, stream: &str, tag: &str, body: &str) {
+        self.schedule(at, EventKind::Start([stream, tag, body].join(&SEP.to_string())));
+    }
+
+    /// Every event the workflow journal holds, in order.
+    pub fn workflow_trace(&self) -> Vec<(String, String, String, String, u64)> {
+        runtime::conformance::trace(&*self.wf.journal)
+    }
+
+    /// Effects and probes the runner answered.
+    pub fn effects_run(&self) -> u64 {
+        self.wf.driver.as_ref().map_or(0, VirtualDriver::effects_run)
     }
 
     pub fn submit(&mut self, at: u64, id: &str, stream: &str, tag: &str, body: &str) {
@@ -189,7 +222,7 @@ impl Sim {
     }
 
     pub fn workflow_projection(&self) -> Option<&Projection> {
-        self.wf.engine.as_ref().map(Engine::projection)
+        self.wf.driver.as_ref().map(|d| d.engine().projection())
     }
 
     pub fn is_running(&self, actor: &str) -> bool {
@@ -252,9 +285,10 @@ impl Sim {
             }
             EventKind::Fault => {}
             EventKind::Submit(p) => self.workflow_submit(p),
+            EventKind::Start(p) => self.workflow_start(p),
             EventKind::Tick => {}
         }
-        if matches!(kind, EventKind::Submit(_) | EventKind::Tick | EventKind::Complete(_)) {
+        if matches!(kind, EventKind::Submit(_) | EventKind::Start(_) | EventKind::Tick | EventKind::Complete(_)) {
             self.pump_workflows();
         }
         self.trace.push(Traced { time: row.at, kind, coalesced });
@@ -298,19 +332,26 @@ impl Sim {
         let keys: Vec<String> = self.wf.launched.iter().filter(|(_, a)| a.as_str() == name).map(|(k, _)| k.clone()).collect();
         for k in keys {
             self.wf.launched.remove(&k);
-            if let Some(e) = self.wf.engine.as_mut() {
-                e.complete(&k, WfOutcome::Succeeded(String::new())).expect("workflow journal");
+            if let Some(d) = self.wf.driver.as_mut() {
+                d.engine_mut().complete(&k, WfOutcome::Succeeded(String::new())).expect("workflow journal");
             }
         }
     }
 
     fn engine(&mut self) -> &mut Engine {
-        if self.wf.engine.is_none() {
+        if self.wf.driver.is_none() {
             let regs = std::mem::take(&mut self.wf.regs);
             let clock: Arc<dyn Clock> = Arc::new(self.wf.clock.clone());
-            self.wf.engine = Some(Engine::open(MemJournal::new(), clock, regs, self.seed).expect("workflow journal"));
+            let engine = Engine::open(self.wf.journal.clone(), clock, regs, self.seed).expect("workflow journal");
+            let held: Vec<String> = self.actors.keys().cloned().collect();
+            self.wf.driver = Some(VirtualDriver::new(engine, self.wf.clock.clone(), self.wf.effects.clone()).with_held(held));
         }
-        self.wf.engine.as_mut().expect("engine just opened")
+        self.wf.driver.as_mut().expect("driver just opened").engine_mut()
+    }
+
+    fn workflow_start(&mut self, payload: &str) {
+        let p: Vec<&str> = payload.splitn(3, SEP).collect();
+        self.engine().start(p[0], RtKind::new(p[1], p[2]));
     }
 
     fn workflow_submit(&mut self, payload: &str) {
@@ -319,8 +360,9 @@ impl Sim {
     }
 
     fn pump_workflows(&mut self) {
-        let Some(e) = self.wf.engine.as_mut() else { return };
-        e.run_until_idle().expect("workflow journal");
+        let Some(d) = self.wf.driver.as_mut() else { return };
+        d.settle().expect("workflow journal");
+        let e = d.engine();
         let fresh: Vec<_> = e
             .pending_effects()
             .into_iter()

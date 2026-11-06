@@ -15,8 +15,6 @@ broker/src/execute.rs
 broker/src/read.rs
 broker/src/repo_map.rs
 czar-pass/src/main.rs
-queue-watch/src/io.rs
-queue-watch/src/main.rs
 spira/acceptance-ci.sh
 spira/acceptance-local.sh
 spira/dwarves.sh
@@ -118,7 +116,6 @@ spira/test-queue-open-batch.sh
 spira/test-queue-ops.sh
 spira/test-queue-protect.sh
 spira/test-queue-submit.sh
-spira/test-queue-watch.sh
 spira/test-rebase-branch.sh
 spira/test-reconciler.sh
 spira/test-release.sh
@@ -134,7 +131,6 @@ spira/test-superseded.sh
 spira/test-thrash-teardown.sh
 spira/test-uninstall.sh
 spira/test-units-lint.sh
-spira/test-watch-refresh.sh
 spira/test-work-container.sh
 spira/tsd-ingest.sh
 

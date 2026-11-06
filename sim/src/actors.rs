@@ -1,8 +1,8 @@
-//! Actors from `actors.toml`, scheduled by the real timer units and run for fitted durations.
+//! Actors from `actors.toml`: processes a world scenario runs on their own timer units (under
+//! [`SIM_UNITS`]) for fitted durations. Only sim-only actors remain: every unit the loop ran on a
+//! shipped timer is a task of `spira-runtime serve`, which the simulator drives in-process
+//! (ruling D6), so a shipped actor is refused.
 
-use crate::fit::Durations;
-use crate::units::{parse_timer, require_oneshot, timer_target};
-use crate::{Outcome, Sim};
 use serde::Deserialize;
 use std::path::Path;
 
@@ -15,19 +15,17 @@ pub struct ActorSpec {
     #[serde(default)]
     pub staged: bool,
     /// Its units live under [`SIM_UNITS`], which nothing installs: an actor only a world
-    /// scenario runs.
+    /// scenario runs. Every actor must be one.
     #[serde(default)]
     pub sim_only: bool,
 }
 
-/// Where a sim-only actor's timer and service live, relative to the tree.
+/// Where an actor's timer and service live, relative to the tree.
 pub const SIM_UNITS: &str = "sim/units";
-/// Where every installed actor's units live, relative to the tree.
-pub const SHIPPED_UNITS: &str = "systemd";
 
 impl ActorSpec {
     pub fn units_in(&self, tree: &Path) -> std::path::PathBuf {
-        tree.join(if self.sim_only { SIM_UNITS } else { SHIPPED_UNITS })
+        tree.join(SIM_UNITS)
     }
 }
 
@@ -36,47 +34,15 @@ struct Actors {
     actor: Vec<ActorSpec>,
 }
 
+/// Every actor in `text`. One that is not `sim_only` is refused: its units would be shipped
+/// ones, and a shipped unit of the loop is a task of the service now (ruling D6).
 pub fn parse_specs(text: &str) -> Result<Vec<ActorSpec>, String> {
     let a: Actors = toml::from_str(text).map_err(|e| format!("actors: {e}"))?;
     if a.actor.is_empty() {
         return Err("actors: no [[actor]] entries".into());
     }
-    Ok(a.actor)
-}
-
-fn read_unit(dir: &Path, name: &str) -> Result<String, String> {
-    std::fs::read_to_string(dir.join(name)).map_err(|e| format!("{}: {e}", dir.join(name).display()))
-}
-
-/// Registers each actor and schedules its Due events from its timer unit, read from the tree's
-/// [`ActorSpec::units_in`], over `horizon` ms.
-pub fn install(
-    sim: &mut Sim,
-    specs: &[ActorSpec],
-    tree: &Path,
-    durations: &Durations,
-    epoch_unix_s: u64,
-    horizon: u64,
-) -> Result<(), String> {
-    for spec in specs {
-        let units_dir = spec.units_in(tree);
-        let timer = read_unit(&units_dir, &spec.timer)?;
-        let service = timer_target(&spec.timer, &timer);
-        require_oneshot(&service, &read_unit(&units_dir, &service)?)?;
-        let schedule = parse_timer(&timer).map_err(|e| format!("{}: {e}", spec.timer))?;
-        let model = durations
-            .series
-            .get(&spec.duration)
-            .ok_or_else(|| format!("{}: no fitted series {:?}", spec.name, spec.duration))?
-            .clone();
-        sim.add_actor(
-            &spec.name,
-            spec.staged,
-            Box::new(move |_, rng| Outcome { writes: Vec::new(), duration: model.sample_ms(rng) }),
-        );
-        for at in schedule.fire_times(epoch_unix_s, horizon, &mut sim.rng) {
-            sim.schedule_due(at, &spec.name);
-        }
+    if let Some(s) = a.actor.iter().find(|s| !s.sim_only) {
+        return Err(format!("actors: {} is not sim_only — a unit the loop ran on a shipped timer is a task of spira-runtime serve, driven in-process by the simulator (ruling D6), never an actor process", s.name));
     }
-    Ok(())
+    Ok(a.actor)
 }

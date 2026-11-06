@@ -86,6 +86,7 @@ fn parse(argv: &[String]) -> Result<(Real, Vec<Site>), String> {
         need(krate, "--crate")?,
         state.ok_or("--state is required")?,
         persona,
+        spira_config::lc_call::LcClient::configured()?,
     );
     Ok((real, sites))
 }

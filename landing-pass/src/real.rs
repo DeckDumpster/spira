@@ -30,6 +30,11 @@ impl<'a> SeamRunner<'a> {
         let mut all: Vec<&str> = vec![&home];
         all.extend_from_slice(values);
         let bytes = seam::stdin_bytes(op, &all);
+        // FORK-EDGE: needs Rust ports of what the remaining seam ops run — the conf.sh context
+        // (SPIRA_REPO_DERIVED, spira_toml_file, the unregistered keys), rebase_branch/recut_onto
+        // (a rebase-stale library), spira_git_push (a queue-helpers library), bead_reopen/
+        // bump_requeue/requeues_of (spira-claim's library), spira_event (bead's library) and
+        // incident.sh file (the incident library).
         let mut c = command("bash");
         c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
         match spira_config::release_env::child_path_env_for_process() {
@@ -229,9 +234,25 @@ fn p(p: &Path) -> String {
 }
 
 impl<'a> RealLib<'a> {
-    /// A refused delivery event is a loud line, never a swallowed status.
-    fn deliver_checked(&self, op: Op, values: &[&str], verb: &str, id: &str) -> bool {
-        let (rc, _) = self.seam.call(op, values);
+    /// The store, in-process: the beads reader's client.
+    fn lc(&self) -> Result<spira_config::lc_call::LcClient, String> {
+        self.beads.lc()
+    }
+
+    /// `deliver <verb> <values…>` on the store. A refused delivery event is a loud line,
+    /// never a swallowed status.
+    fn deliver_checked(&self, values: &[&str], verb: &str, id: &str) -> bool {
+        let rc = match self.lc() {
+            Ok(c) => {
+                let mut argv = vec!["deliver", verb];
+                argv.extend_from_slice(values);
+                crate::lifecycle::run(&c, &argv).0
+            }
+            Err(e) => {
+                self.seam.out.log(&format!("landing-pass: {id}: the lifecycle store: {e}"));
+                spira_config::lc_call::CANNOT_TELL
+            }
+        };
         if rc != 0 {
             let line = format!("landing-pass: {id}: LIFECYCLE: spira-lc deliver {verb} did not happen (exit {rc})");
             self.seam.out.log(&line);
@@ -251,7 +272,7 @@ impl<'a> RealLib<'a> {
     /// up here, not three times over.
     #[allow(clippy::too_many_arguments)]
     fn send_mail(&self, to: &str, from: &str, subject: &str, kind: &str, default: Option<&str>, bead: &str, body: &str) -> bool {
-        match mail_send("mail", to, from, subject, kind, default, bead, body) {
+        match mail_send(to, from, subject, kind, default, bead, body) {
             Ok(()) => true,
             Err(why) => {
                 self.seam.out.progress(&format!("mail send {to} refused: {why}"));
@@ -269,7 +290,7 @@ impl<'a> RealLib<'a> {
         }
         let ev = crate::util::tail_lines(out, 20);
         let (subj, dflt, body) = crate::ask::machinery_mail(id, branch, repo, outcome, reason, n, &ev);
-        mail_send("mail", "operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), id, &body)
+        mail_send("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), id, &body)
     }
 
     /// lib.sh `spira_ask_machinery_class` — one ask per (repo, reason) class, naming every
@@ -281,32 +302,19 @@ impl<'a> RealLib<'a> {
         let ev = crate::util::tail_lines(out, 20);
         let lead_bead = branches.split(',').next().unwrap_or("").rsplit('/').next().unwrap_or("");
         let (subj, dflt, body) = crate::ask::machinery_class_mail(repo, reason, branches, outcome, n, &ev);
-        mail_send("mail", "operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), lead_bead, &body)
+        mail_send("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), lead_bead, &body)
     }
 }
 
+/// `mail send <to> --from … --subject … --kind … [--default …] [--bead …]`, in-process through
+/// the mail library: the same validation, body and recorded send the `mail` CLI runs.
 #[allow(clippy::too_many_arguments)]
-fn mail_send(program: &str, to: &str, from: &str, subject: &str, kind: &str, default: Option<&str>, bead: &str, body: &str) -> Result<(), String> {
-    let mut c = command(program);
-    c.arg("send").arg(to).arg("--from").arg(from).arg("--subject").arg(subject).arg("--kind").arg(kind);
-    if let Some(d) = default {
-        c.arg("--default").arg(d);
-    }
-    if !bead.is_empty() {
-        c.arg("--bead").arg(bead);
-    }
-    c.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped());
-    let mut child = c.spawn().map_err(|e| format!("cannot run {program}: {e}"))?;
-    if let Some(mut si) = child.stdin.take() {
-        let _ = si.write_all(body.as_bytes());
-    }
-    let o = child.wait_with_output().map_err(|e| format!("wait on {program}: {e}"))?;
-    if o.status.success() {
-        return Ok(());
-    }
-    let err = String::from_utf8_lossy(&o.stderr);
-    let err = err.trim().replace('\n', " | ");
-    Err(format!("exit {} — {}", o.status.code().map_or("signal".into(), |c| c.to_string()), if err.is_empty() { "no stderr" } else { &err }))
+fn mail_send(to: &str, from: &str, subject: &str, kind: &str, default: Option<&str>, bead: &str, body: &str) -> Result<(), String> {
+    let env = mail::env::Env::load()?;
+    mail::maildir::mailbox_valid(to).map_err(|e| format!("send: {e}"))?;
+    let bd = mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: env.bd_conn_retries };
+    let args = mail::cmds::SendArgs { mailbox: to, from: Some(from), subject, kind, default: default.unwrap_or(""), class: "", bead, urgent: false, digest: false, dry_run: false, requested_by: "" };
+    mail::cmds::send_recorded(&bd, &env, &args, body.to_string()).map(|_| ()).map_err(|e| format!("send: {e}"))
 }
 
 fn class_window_closed(anchor: &Path, window: i64, now: u64) -> bool {
@@ -512,8 +520,11 @@ impl<'a> Lib for RealLib<'a> {
     fn pr_merged(&self, repo: &Path, branch: &str) -> bool {
         crate::land_verify::pr_merged(repo, branch)
     }
+    /// The store's `bd-note`, in-process; best-effort, as the bdq note it replaces was.
     fn note(&self, id: &str, text: &str) {
-        self.seam.call(Op::Note, &[id, text]);
+        if let Ok(c) = self.lc() {
+            let _ = crate::lifecycle::run(&c, &["bd-note", id, text]);
+        }
     }
     fn push(&self, tree: &Path, remote: &str, refspec: &str) -> Result<(), String> {
         let (rc, err) = self.seam.call(Op::Push, &[&p(tree), remote, refspec]);
@@ -533,13 +544,13 @@ impl<'a> Lib for RealLib<'a> {
         crate::land_verify::land_subject(id, &title)
     }
     fn deliver_delivered(&self, id: &str, sha: &str) {
-        self.deliver_checked(Op::DeliverDelivered, &[id, sha], "push-delivered", id);
+        self.deliver_checked(&[id, sha], "push-delivered", id);
     }
     fn deliver_requeued(&self, id: &str, tip: &str) {
-        self.deliver_checked(Op::DeliverRequeued, &[id, tip], "push-requeued", id);
+        self.deliver_checked(&[id, tip], "push-requeued", id);
     }
     fn deliver_returned(&self, id: &str, reason: &str) {
-        self.deliver_checked(Op::DeliverReturned, &[id, reason], "push-returned", id);
+        self.deliver_checked(&[id, reason], "push-returned", id);
     }
     /// `gh-intake closeout <id> <sha> <repo>` (sp-j3fim, "wave 4.31"): gh_issue_closeout
     /// moved natively into gh-intake; this crate shells to the compiled binary by bare
@@ -554,8 +565,9 @@ impl<'a> Lib for RealLib<'a> {
         let row = self.beads.show(&[id.to_string()]).ok().and_then(|rows| rows.into_iter().next());
         crate::land_verify::close_on_land(&RealGit, self.seam.out, &self.s.home, row.as_ref(), id, sha);
     }
+    /// `hel prune <repo>`, in-process: hel's own worktree prune, logged to its reap log.
     fn prune_worktrees(&self, repo: &Path) {
-        self.seam.call(Op::PruneWorktrees, &[&p(repo)]);
+        let _ = hel::reap::prune_worktrees(&hel::real::reaplog_path_in(&self.s.run), repo);
     }
     /// `gh-intake unlanded-scan` (sp-j3fim, "wave 4.31"): `_gh_unlanded_scan` moved
     /// natively into gh-intake; no lib.sh snippet backs this any more.
@@ -576,10 +588,10 @@ impl<'a> Lib for RealLib<'a> {
         self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), id, &body);
     }
     fn deliver_pr_merged(&self, repo: &Path, id: &str, branch: &str, merge_sha: &str) -> bool {
-        self.deliver_checked(Op::DeliverPrMerged, &[&p(repo), id, branch, merge_sha], "pr-merged", id)
+        self.deliver_checked(&[&p(repo), id, branch, merge_sha], "pr-merged", id)
     }
     fn deliver_pr_closed(&self, id: &str, reason: &str) {
-        self.deliver_checked(Op::DeliverPrClosed, &[id, reason], "pr-closed", id);
+        self.deliver_checked(&[id, reason], "pr-closed", id);
     }
     fn force_push(&self, repo: &Path, remote: &str, branch: &str) -> Result<(), String> {
         let (rc, err) = self.seam.call(Op::ForcePush, &[&p(repo), remote, branch]);
@@ -601,6 +613,8 @@ pub struct RealBeads {
     /// The lifecycle machine every row's state is read from (sp-mve9i). None for a
     /// content-only reader (a title): every row's state is then `-`, never handed on.
     pub lc_bin: Option<PathBuf>,
+    /// A pinned store client (tests); `None` resolves one from `lc_bin`.
+    pub client: Option<spira_config::lc_call::LcClient>,
 }
 
 /// `json_only`: bd can print warnings on stdout before the payload.
@@ -616,22 +630,27 @@ pub fn json_only(s: &str) -> &str {
 }
 
 impl RealBeads {
-    fn lc(&self) -> Result<String, String> {
-        self.lc_bin.as_ref().map(|b| b.display().to_string()).ok_or_else(|| "no spira-lc program".to_string())
+    /// The store, in-process over the lifecycle socket. Bead content is its `content` verb
+    /// whether or not this reader joins lifecycle states (`lc_bin`).
+    fn lc(&self) -> Result<spira_config::lc_call::LcClient, String> {
+        if self.client.is_some() || self.lc_bin.is_some() {
+            return crate::lifecycle::client(self.client.as_ref(), self.lc_bin.as_deref());
+        }
+        spira_config::lc_call::LcClient::configured()
     }
 
     /// Each row's state, from the lifecycle machine (sp-mve9i): one `spira-lc show` for a
     /// single row, one `spira-lc list` for a scan. A machine that cannot answer is an Err —
     /// the pass must not land on a state it could not read.
     fn join_states(&self, rows: &mut [BeadRow]) -> Result<(), String> {
-        if rows.is_empty() || self.lc_bin.is_none() {
+        if rows.is_empty() || (self.lc_bin.is_none() && self.client.is_none()) {
             return Ok(());
         }
-        let bin = self.lc()?;
+        let c = self.lc()?;
         let lc = if rows.len() == 1 {
-            spira_config::lc_state::row_with(&bin, &rows[0].id)?.into_iter().collect()
+            spira_config::lc_state::row_on(&c, &rows[0].id)?.into_iter().collect()
         } else {
-            spira_config::lc_state::list_with(&bin)?
+            spira_config::lc_state::list_on(&c)?
         };
         let lc = spira_config::lc_state::index(lc);
         for r in rows.iter_mut() {
@@ -648,16 +667,18 @@ impl RealBeads {
             let (rc, so, _) = run_capture(c);
             return if rc == 0 { Ok(String::from_utf8_lossy(&so).into_owned()) } else { Err(format!("bdsim exited {rc}")) };
         }
+        // The store's `content show`, in-process over the lifecycle socket (no `bdq` child).
+        let lc = self.lc()?.within(std::time::Duration::from_secs(self.timeout));
+        let mut argv: Vec<&str> = vec!["content", "show"];
+        argv.extend(ids.iter().map(String::as_str));
+        argv.push("--json");
         let mut last = String::new();
         for _try in 0..2 {
-            let mut c = command("timeout");
-            c.arg(self.timeout.to_string()).arg(&self.bdq).arg("show").args(ids).arg("--json");
-            c.stdin(Stdio::null());
-            let (rc, so, se) = run_capture(c);
+            let (rc, so, se) = crate::lifecycle::run(&lc, &argv);
             if rc == 0 {
-                return Ok(String::from_utf8_lossy(&so).into_owned());
+                return Ok(so);
             }
-            last = String::from_utf8_lossy(&se).into_owned();
+            last = se;
             // A pooled connection the server already dropped: the query never ran, retrying
             // is as safe as the first attempt.
             if !last.contains("invalid connection") {
@@ -670,25 +691,24 @@ impl RealBeads {
     /// The open asks: their control-plane records (`spira-lc list-asks`), each titled from its
     /// decision bead; under a fixture, bdsim's open beads carrying `label`.
     fn open_asks(&self, label: &str) -> Result<Vec<serde_json::Value>, String> {
-        let mut c = match &self.fixture {
+        let (rc, raw) = match &self.fixture {
             Some(fx) => {
                 let [flag, open] = spira_config::nonwork::status_args(spira_config::nonwork::Kind::Ask, spira_config::nonwork::Which::Open);
                 let mut c = command("bdsim");
                 c.arg(fx).args(["list", &flag, &open, "--label", label, "--limit", "0", "--json"]);
-                c
+                c.stdin(Stdio::null());
+                let (rc, so, _) = run_capture(c);
+                (rc, String::from_utf8_lossy(&so).into_owned())
             }
             None => {
-                let mut c = command("timeout");
-                c.arg(self.timeout.to_string()).arg(self.lc()?).arg("list-asks");
-                c
+                let lc = self.lc()?.within(std::time::Duration::from_secs(self.timeout));
+                let (rc, so, _) = crate::lifecycle::run(&lc, &["list-asks"]);
+                (rc, so)
             }
         };
-        c.stdin(Stdio::null());
-        let (rc, so, _) = run_capture(c);
         if rc != 0 {
             return Err(format!("open asks: exited {rc}"));
         }
-        let raw = String::from_utf8_lossy(&so).into_owned();
         let v: serde_json::Value = serde_json::from_str(json_only(&raw)).map_err(|e| format!("open asks: not JSON ({e})"))?;
         Ok(match v {
             serde_json::Value::Object(mut o) if o.contains_key("items") => match o.remove("items") {
@@ -723,8 +743,11 @@ impl Beads for RealBeads {
         Ok(out)
     }
     fn bead_lc_state(&self, id: &str) -> String {
-        let Ok(bin) = self.lc() else { return "-".into() };
-        match spira_config::lc_state::row_with(&bin, id) {
+        if self.lc_bin.is_none() && self.client.is_none() {
+            return "-".into();
+        }
+        let Ok(c) = self.lc() else { return "-".into() };
+        match spira_config::lc_state::row_on(&c, id) {
             Ok(Some(r)) if !r.state.is_empty() => r.state,
             _ => "-".into(),
         }
@@ -1164,6 +1187,8 @@ impl Tools for RealTools {
             if !executable(script) {
                 return Vec::new();
             }
+            // FORK-EDGE: an installed ensure script (systemd/), run as itself; needs the
+            // install crate's unit ensure as a library to become in-process.
             let mut c = command("bash");
             c.arg(script);
             c
@@ -1323,5 +1348,79 @@ mod mail_refusal_tests {
         let mtime = std::fs::metadata(&f).unwrap().modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
         assert!(!class_window_closed(&f, 3600, mtime + 10));
         assert!(class_window_closed(&f, 3600, mtime + 3600));
+    }
+}
+
+#[cfg(test)]
+mod store_tests {
+    use super::*;
+    use crate::lifecycle::{Lc, RealLc};
+    use crate::ports::{Beads, Lib};
+    use spira_config::lc_call::{LcClient, Reply, Transport};
+    use std::sync::{Arc, Mutex};
+
+    /// The store as a scripted socket: every argv recorded, each answered by `reply`.
+    struct Store {
+        seen: Mutex<Vec<String>>,
+        reply: fn(&[String]) -> (i32, String),
+    }
+
+    impl Transport for Store {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<Reply, String> {
+            self.seen.lock().unwrap().push(argv.join(" "));
+            let (code, out) = (self.reply)(argv);
+            Ok(Reply { code, out, err: String::new() })
+        }
+    }
+
+    fn store(reply: fn(&[String]) -> (i32, String)) -> (Arc<Store>, LcClient) {
+        let s = Arc::new(Store { seen: Mutex::new(Vec::new()), reply });
+        (s.clone(), LcClient::over(s, true))
+    }
+
+    fn beads(c: &LcClient) -> RealBeads {
+        RealBeads { home: PathBuf::from("/nonexistent"), bdq: String::new(), timeout: 5, home_repo: "spira".into(), fixture: None, lc_bin: None, client: Some(c.clone()) }
+    }
+
+    #[test]
+    fn the_bead_read_and_its_state_are_the_stores_verbs_in_process() {
+        let (s, c) = store(|a| match a.join(" ").as_str() {
+            "content show sp-a --json" => (0, "[{\"id\":\"sp-a\",\"title\":\"t\",\"status\":\"open\",\"labels\":[]}]".into()),
+            "show sp-a" => (0, "{\"bead\":{\"bead_id\":\"sp-a\",\"state\":\"SUBMITTED\"}}".into()),
+            _ => (1, String::new()),
+        });
+        let rows = beads(&c).show(&["sp-a".into()]).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].state, "SUBMITTED");
+        assert_eq!(*s.seen.lock().unwrap(), vec!["content show sp-a --json", "show sp-a"]);
+    }
+
+    #[test]
+    fn a_delivery_goes_to_the_store_and_a_refusal_is_reported_not_swallowed() {
+        let (s, c) = store(|a| if a[1] == "push-delivered" { (0, String::new()) } else { (3, "refused: not in delivery".into()) });
+        let t = testkit::TempDir::new("landing-pass-deliver");
+        let out = Reporter::capture(None);
+        let st = Settings::for_run(t.path().to_path_buf());
+        let lib = RealLib { seam: SeamRunner { home: t.path().to_path_buf(), out: &out }, incident: PathBuf::new(), s: st, beads: beads(&c) };
+        lib.deliver_delivered("sp-a", "abc");
+        assert!(!lib.deliver_pr_merged(Path::new("/r"), "sp-b", "spira/sp-b", "def"));
+        lib.note("sp-a", "a note");
+        assert_eq!(*s.seen.lock().unwrap(), vec!["deliver push-delivered sp-a abc", "deliver pr-merged /r sp-b spira/sp-b def", "bd-note sp-a a note"]);
+        assert!(out.lines().iter().any(|l| l.contains("sp-b: LIFECYCLE: spira-lc deliver pr-merged did not happen (exit 3)")), "{:?}", out.lines());
+    }
+
+    #[test]
+    fn the_lifecycle_probe_and_certify_are_store_calls() {
+        let (s, c) = store(|a| match a[0].as_str() {
+            "list" => (0, "[]".into()),
+            "certify" => (0, "certified\n".into()),
+            _ => (2, "cannot tell".into()),
+        });
+        let lc = RealLc { bin: None, client: Some(c) };
+        assert_eq!(lc.probe(), Ok(()));
+        assert_eq!(lc.certify("sp-a", "t", "pass", "d").as_deref(), Ok("certified"));
+        let e = lc.resubmit_submitted("sp-a", "t").unwrap_err();
+        assert!(e.contains("exited 2: cannot tell"), "{e}");
+        assert_eq!(s.seen.lock().unwrap()[0], "list --state IN_DELIVERY");
     }
 }

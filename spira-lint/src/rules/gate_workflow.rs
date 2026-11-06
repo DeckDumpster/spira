@@ -265,6 +265,8 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
             j.want(IMAGE, "it publishes through testenv's container driver", "testenv container publish", i);
             j.want(IMAGE, "an already-published tag is skipped", "manifest inspect", i);
             j.want(IMAGE, "the registry path is lowercased", "tr '[:upper:]' '[:lower:]'", i);
+            j.want(IMAGE, "the publish is grouped by its tag (over-broad-scopes #15)", "group: testenv-image-${{ needs.tag.outputs.tag }}", i);
+            j.want(IMAGE, "the driver is built only on a cache miss", "if: steps.driver.outputs.cache-hit != 'true'", i);
         }
         None => j.fail(IMAGE, "missing".into()),
     }
@@ -583,6 +585,19 @@ mod tests {
     }
     fn acc(w: &mut Workflows) -> &mut Option<String> {
         &mut w.acceptance
+    }
+    fn image(w: &mut Workflows) -> &mut Option<String> {
+        &mut w.image
+    }
+
+    /// Over-broad-scopes #15 (sp-ipwlic): one global group queued every PR's image check behind
+    /// every other's, and every run cold-built testenv to name a tag.
+    #[test]
+    fn the_image_publish_is_grouped_by_tag_and_names_it_without_a_cold_build() {
+        let got = planted(image, "group: testenv-image-${{ needs.tag.outputs.tag }}", "group: testenv-image");
+        assert!(got.iter().any(|m| m.contains("grouped by its tag")), "{got:?}");
+        let got = planted(image, "if: steps.driver.outputs.cache-hit != 'true'", "if: true");
+        assert!(got.iter().any(|m| m.contains("only on a cache miss")), "{got:?}");
     }
 
     #[test]

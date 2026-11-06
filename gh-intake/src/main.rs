@@ -26,10 +26,6 @@ fn usage() -> ExitCode {
     ExitCode::from(0)
 }
 
-fn env_nonempty(key: &str) -> Option<String> {
-    std::env::var(key).ok().filter(|v| !v.is_empty())
-}
-
 /// SPIRA_HOME/SPIRA_RUN, neither a registered key: SPIRA_HOME names where to find
 /// `$SPIRA_TOML` in the first place, and SPIRA_RUN's resolution (`resolve_run_dir`) also
 /// judges the result against the instance's containment.
@@ -275,14 +271,18 @@ fn provenance_cmd(args: &[String]) -> ExitCode {
     }
 }
 
+/// The fixture's stand-in mail program (`SPIRA_MAIL_BIN`, registered config); none (empty)
+/// sends in-process.
+fn mail_stand_in() -> Option<String> {
+    spira_config::process::cfg("SPIRA_MAIL_BIN").ok().filter(|m| !m.is_empty())
+}
+
 #[allow(clippy::type_complexity)]
 fn ports(home: String) -> Result<(RealBd, RealGh, RealGit, RealRepo, RealMail), String> {
-    let mail_bin = match env_nonempty("SPIRA_MAIL_BIN") {
-        Some(m) => m,
-        None => spira_config::release_env::tool("mail")?,
-    };
+    // SPIRA_MAIL_BIN is registered config, read where the intake pass reads it: one source.
+    let mail = RealMail::new(mail_stand_in());
     let bdq = spira_config::release_env::tool("bdq")?;
-    Ok((RealBd { bdq: bdq.clone() }, RealGh { bdq_bin: bdq }, RealGit, RealRepo { spira_home: home }, RealMail { mail_bin }))
+    Ok((RealBd { bdq: bdq.clone() }, RealGh { bdq_bin: bdq }, RealGit, RealRepo { spira_home: home }, mail))
 }
 
 fn main() -> ExitCode {
@@ -343,8 +343,7 @@ fn dispatch() -> ExitCode {
             }
         };
     }
-    // SPIRA_MAIL_BIN is not a registered config key (no spira/conf.d entry).
-    let mail_bin = std::env::var("SPIRA_MAIL_BIN").unwrap_or_else(|_| "mail".to_string());
+    let stand_in = mail_stand_in();
 
     let repo = cfg_or_refuse!("SPIRA_GH_INTAKE_REPO");
     let scope = cfg_or_refuse!("SPIRA_SCOPE_LABEL");
@@ -355,8 +354,7 @@ fn dispatch() -> ExitCode {
         eprintln!("gh-intake: SPIRA_GH_INTAKE_PRIORITY is {priority} — it must be 0-4");
         return ExitCode::from(2);
     }
-    // SPIRA_GH_INTAKE_API is not a registered config key (no spira/conf.d entry).
-    let api = std::env::var("SPIRA_GH_INTAKE_API").unwrap_or_else(|_| logic::GITHUB_API.to_string());
+    let api = spira_config::process::cfg("SPIRA_GH_INTAKE_API").ok().filter(|a| !a.is_empty()).unwrap_or_else(|| logic::GITHUB_API.to_string());
 
     let cfg = Config {
         repo,
@@ -378,7 +376,7 @@ fn dispatch() -> ExitCode {
         }
     };
     let repo_port = RealRepo { spira_home };
-    let mail = RealMail { mail_bin };
+    let mail = RealMail::new(stand_in);
 
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
     let run_dir = match spira_config::resolve::locate_home_for_process().and_then(|h| spira_config::resolve::resolve_run_dir(&env, &h)) {

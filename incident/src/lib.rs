@@ -6,6 +6,7 @@ pub mod alarm;
 pub mod alarms_pass;
 pub mod attempts;
 pub mod decide;
+pub mod intake;
 pub mod page;
 pub mod ports;
 pub mod real;

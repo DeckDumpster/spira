@@ -11,23 +11,17 @@
 
 use cert_sweep::runner_declined;
 use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::{Read, Write};
-use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cert_sweep::{
-    bead_body, bead_title, bisect, culprit_body, culprit_title, filing_kind, first_fail_line, judge, open_duplicate, still_open, parse_members, parse_result_file,
+    bead_body, bead_title, bisect, culprit_body, culprit_title, filing_kind, first_fail_line, judge, open_duplicate, still_open, parse_members,
     parse_testenv_stdout, certified, live_leases, pick_subset, runner_verdict, record, red_body, Culprit, Event, Judgement, Member, Outcome, Row, Verdict, EVENT_FAMILY, FAMILY,
 };
 use serde_json::Value;
-
-extern "C" {
-    fn flock(fd: i32, operation: i32) -> i32;
-}
-const LOCK_EX: i32 = 2;
 
 extern "C" {
     fn kill(pid: i32, sig: i32) -> i32;
@@ -144,33 +138,20 @@ fn git(repo: &str, args: &[&str]) -> Result<String, String> {
 }
 
 fn read_history(run: &Path) -> Vec<Row> {
-    fs::read_to_string(tsd::family_path(run, FAMILY)).map(|t| t.lines().filter_map(Row::from_json).collect()).unwrap_or_default()
+    cert_sweep::store::read_history(run)
 }
 
 fn append(run: &Path, family: &str, fields: &[(String, Value)]) -> Result<(), String> {
-    let path = tsd::family_path(run, family);
-    fs::create_dir_all(path.parent().unwrap()).map_err(|e| format!("{}: {e}", path.display()))?;
-    let line = tsd::build_row(&tsd::iso_utc(now()), &host(), family, fields)?;
-    let mut f = OpenOptions::new().create(true).append(true).open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    unsafe { flock(f.as_raw_fd(), LOCK_EX) };
-    f.write_all(format!("{line}\n").as_bytes()).map_err(|e| format!("{}: {e}", path.display()))
+    cert_sweep::store::append(run, family, &tsd::iso_utc(now()), &host(), fields)
 }
 
 fn lock_history(run: &Path) -> Result<fs::File, String> {
-    let p = tsd::family_path(run, FAMILY).with_extension("lock");
-    fs::create_dir_all(p.parent().unwrap()).map_err(|e| e.to_string())?;
-    let f = OpenOptions::new().create(true).append(true).open(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-    unsafe { flock(f.as_raw_fd(), LOCK_EX) };
-    Ok(f)
+    cert_sweep::store::lock_history(run)
 }
 
 fn emit(run: &Path, e: &Event) {
     println!("{}", e.render());
-    let mut f = vec![("kind".to_string(), Value::String(e.kind().into())), ("text".to_string(), Value::String(e.render()))];
-    if let Some(s) = e.suite() {
-        f.push(("suite".to_string(), Value::String(s.into())));
-    }
-    if let Err(err) = append(run, EVENT_FAMILY, &f) {
+    if let Err(err) = append(run, EVENT_FAMILY, &cert_sweep::event_fields(e)) {
         eprintln!("cert-sweep: event row not written: {err}");
     }
 }
@@ -180,7 +161,7 @@ fn file_bead(title: &str, body: &str, priority: u64, run: &Path) -> Result<Strin
     let dir = run.join("tmp");
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let tmp = dir.join(format!("cert-sweep-{}-{}.txt", std::process::id(), now()));
-    fs::write(&tmp, format!("{body}\n\n## Build\n\nFix the red the certification sweep reported above, in this repository, and land the fix.\n")).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    fs::write(&tmp, cert_sweep::filing_text(body)).map_err(|e| format!("{}: {e}", tmp.display()))?;
     let out = spira_config::bounded::bounded("bead.sh")
         .envs(spira_config::release_env::child_path_env_for_process()?)
         .args(["file", title, "--for", "builder", "--repo", "spira", "--priority", &priority.to_string(), "--json", "--body-file"])
@@ -192,25 +173,11 @@ fn file_bead(title: &str, body: &str, priority: u64, run: &Path) -> Result<Strin
     if !out.status.success() {
         return Err(format!("bead.sh file: {}", String::from_utf8_lossy(&out.stderr).trim()));
     }
-    let start = text.find(['{', '[']).ok_or("bead.sh file: no JSON in output")?;
-    let v: Value = serde_json::from_str(&text[start..]).map_err(|e| format!("bead.sh file: {e}"))?;
-    let v = if let Value::Array(a) = v { a.into_iter().next().unwrap_or(Value::Null) } else { v };
-    v.get("id").and_then(Value::as_str).map(str::to_string).ok_or_else(|| "bead.sh file: no id in output".into())
+    cert_sweep::filed_id(&text)
 }
 
 fn results_in(dir: &Path) -> Vec<Outcome> {
-    let mut v: Vec<Outcome> = fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
-            let suite = name.strip_suffix(".result")?.to_string();
-            parse_result_file(&suite, &fs::read_to_string(e.path()).ok()?)
-        })
-        .collect();
-    v.sort_by(|a, b| a.suite.cmp(&b.suite));
-    v
+    cert_sweep::store::results_in(dir)
 }
 
 fn seed(f: &Flags) -> Result<ExitCode, String> {
@@ -234,7 +201,7 @@ fn pass(f: &Flags) -> Result<ExitCode, String> {
     if mode != "full" && mode != "subset" {
         return Err("--mode must be full or subset".into());
     }
-    let repo = flag(f, "repo").map(str::to_string).or_else(|| std::env::var("SPIRA_REPO").ok()).ok_or("--repo or SPIRA_REPO is required")?;
+    let repo = flag(f, "repo").map(str::to_string).or_else(|| spira_config::process::cfg("SPIRA_REPO").ok().filter(|r| !r.is_empty())).ok_or("--repo or SPIRA_REPO is required")?;
     let base = match flag(f, "base") {
         Some(b) => b.to_string(),
         None => landing_ref(&repo),

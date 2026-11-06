@@ -128,12 +128,12 @@ impl<B: Backend> Store<B> {
     }
 
     /// The contract's watch, with `TooOld` answered by the re-list a watcher resumes from.
-    pub fn watch(&self, prefix: &str, from_rev: u64, wait_ms: u64) -> Result<Feed> {
-        match self.contract().watch(prefix, from_rev, wait_ms) {
+    pub fn watch(&self, prefixes: &[&str], from_rev: u64, wait_ms: u64) -> Result<Feed> {
+        match self.contract().watch_any(prefixes, from_rev, wait_ms) {
             Ok(Watched::Events { events, through }) => Ok(Feed::Events { events, through }),
             Ok(Watched::Progress { progress_rev }) => Ok(Feed::Progress { progress_rev }),
             Err(Error::TooOld { compacted }) => {
-                let (items, list_rev) = self.contract().list(&[prefix], &Selector::Everything)?;
+                let (items, list_rev) = self.contract().list(prefixes, &Selector::Everything)?;
                 Ok(Feed::Relist {
                     compacted,
                     items,

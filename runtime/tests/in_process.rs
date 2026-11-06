@@ -22,7 +22,12 @@ mod conformance {
         out_of_order_effect_outcomes,
         effect_deadline_times_out,
         handler_panic_quarantines_its_stream_only,
-        schedule_rows_survive_restart_and_fire_once
+        schedule_rows_survive_restart_and_fire_once,
+        observe_shadows_writes_runs_probes_and_never_replays_them,
+        halt_holds_writes_runs_probes_and_resume_releases_once_in_order,
+        a_handlers_writes_are_seen_before_its_streams_next_event,
+        an_outcome_is_offered_only_to_the_task_that_asked,
+        a_halt_holds_work_and_lets_signals_through
     );
 }
 
@@ -134,5 +139,45 @@ mod cursor {
         again.run_until_idle().unwrap();
         assert_eq!(runs.load(Ordering::SeqCst), 1);
         assert_eq!(mem.cursor().unwrap(), 1);
+    }
+}
+
+mod wide {
+    use runtime::ports::VirtualClock;
+    use runtime::*;
+    use std::sync::Arc;
+
+    /// Hears every `q`; does something only when its body says so.
+    struct Maybe;
+    impl Handler for Maybe {
+        fn interests(&self) -> &[EventKindTag] {
+            &["q"]
+        }
+        fn handle(&self, ctx: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+            match ev.kind.body.as_str() {
+                "field" => {
+                    ctx.event().set("maybe.saw", "field");
+                    vec![]
+                }
+                "emit" => vec![Command::Emit(EventKind::new("did", ""))],
+                _ => vec![],
+            }
+        }
+    }
+
+    #[test]
+    fn a_call_that_does_nothing_leaves_no_wide_event_and_one_that_does_leaves_its_fields() {
+        let sink = MemSink::new();
+        let mut e = Engine::open(MemJournal::new(), Arc::new(VirtualClock::new(1)), vec![Registration::new("maybe", Maybe)], 0).unwrap().with_sink(sink.clone());
+        for (id, body) in [("q1", ""), ("q2", "field"), ("q3", "emit"), ("q4", "")] {
+            e.submit(id, "s", EventKind::new("q", body)).unwrap();
+        }
+        e.run_until_idle().unwrap();
+        let dispatched: Vec<_> = sink.records().into_iter().filter(|r| r.get("unit") == Some(&Value::from("dispatch"))).collect();
+        let ids: Vec<_> = dispatched.iter().map(|r| r.get("event.id").cloned()).collect();
+        assert_eq!(ids, vec![Some(Value::from("q2")), Some(Value::from("q3"))], "only the calls that set a field or returned a command: {dispatched:?}");
+        assert_eq!(dispatched[0].get("maybe.saw"), Some(&Value::from("field")), "the handler's field is on its record");
+        assert_eq!(dispatched[1].get("commands.emit"), Some(&Value::from(1usize)));
+        assert!(dispatched.iter().all(|r| r.get("process.rss_kb").is_some() && r.get("handler") == Some(&Value::from("maybe"))));
     }
 }

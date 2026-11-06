@@ -1,5 +1,5 @@
 use crate::{Filing, Host, World};
-use spira_config::bounded::{bounded, bounded_for};
+use spira_config::bounded::bounded_for;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -12,12 +12,17 @@ const PERSONA: &str = "builder";
 pub struct Real {
     pub ssh: String,
     pub bead: String,
-    pub lc: String,
+    client: spira_config::lc_call::LcClient,
 }
 
 impl Real {
     pub fn new() -> Result<Real, String> {
-        Ok(Real { ssh: "ssh".into(), bead: "bead.sh".into(), lc: spira_config::lifecycle_row::lc_bin()? })
+        Ok(Self::over(spira_config::lc_call::LcClient::configured()?))
+    }
+
+    /// Store reads through `client`.
+    pub fn over(client: spira_config::lc_call::LcClient) -> Real {
+        Real { ssh: "ssh".into(), bead: "bead.sh".into(), client }
     }
 }
 
@@ -43,6 +48,7 @@ impl Real {
 
     fn bead(&self, args: &[&str]) -> Result<String, String> {
         // batch-job: bead.sh opens the store and runs as long as the filing takes
+        // FORK-EDGE: content store write (bead.sh file/amend, the operator filing tool)
         let mut c = bounded_for(&self.bead, "120");
         c.args(args);
         run(c)
@@ -74,17 +80,15 @@ impl World for Real {
     }
 
     fn is_open(&self, id: &str) -> Result<bool, String> {
-        let mut c = bounded(&self.lc);
-        c.args(["show", id]);
-        let out = c.output().map_err(|e| e.to_string())?;
-        match out.status.code() {
-            Some(1) => Ok(false),
-            Some(0) => {
-                let doc: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("{id}: not JSON: {e}"))?;
+        let out = self.client.call(&["show", id]).map_err(String::from)?;
+        match out.code {
+            1 => Ok(false),
+            0 => {
+                let doc: serde_json::Value = serde_json::from_str(&out.out).map_err(|e| format!("{id}: not JSON: {e}"))?;
                 let state = doc["bead"]["state"].as_str().ok_or_else(|| format!("{id}: no state"))?;
                 Ok(!TERMINAL.contains(&state))
             }
-            _ => Err(format!("cannot tell whether {id} is open: {}", String::from_utf8_lossy(&out.stdout).trim())),
+            _ => Err(format!("cannot tell whether {id} is open: {}", out.out.trim())),
         }
     }
 
@@ -95,5 +99,44 @@ impl World for Real {
 
     fn append(&self, id: &str, body: &str, note: &str) -> Result<(), String> {
         self.with_body(body, |p| self.bead(&["amend", id, "--append-body", p, "--note", note])).map(|_| ())
+    }
+}
+
+#[cfg(test)]
+mod store_client_tests {
+    use super::*;
+    use spira_config::lc_call::{LcClient, Reply, Transport};
+    use std::sync::{Arc, Mutex};
+
+    /// `show` answered as the store answers it: a row with its state, or exit 1 for none.
+    pub struct Scripted(pub Mutex<Vec<String>>);
+
+    impl Transport for Scripted {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<Reply, String> {
+            self.0.lock().unwrap().push(argv.join(" "));
+            let reply = |code, out: &str| Ok(Reply { code, out: out.into(), err: String::new() });
+            match argv.get(1).map(String::as_str) {
+                Some("sp-open") => reply(0, r#"{"bead":{"state":"READY"}}"#),
+                Some("sp-done") => reply(0, r#"{"bead":{"state":"LANDED"}}"#),
+                Some("sp-gone") => reply(1, "{}"),
+                _ => reply(2, "cannot tell: down"),
+            }
+        }
+    }
+
+    pub fn client() -> (LcClient, Arc<Scripted>) {
+        let t = Arc::new(Scripted(Mutex::default()));
+        (LcClient::over(t.clone(), true), t)
+    }
+
+    #[test]
+    fn whether_a_filing_is_open_is_read_through_the_store_client() {
+        let (lc, t) = client();
+        let real = Real::over(lc);
+        assert_eq!(real.is_open("sp-open"), Ok(true));
+        assert_eq!(real.is_open("sp-done"), Ok(false));
+        assert_eq!(real.is_open("sp-gone"), Ok(false));
+        assert!(real.is_open("sp-down").is_err());
+        assert_eq!(t.0.lock().unwrap().len(), 4);
     }
 }

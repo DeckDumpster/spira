@@ -56,18 +56,7 @@ pub fn status_get<'s>(fields: &'s [(String, String)], key: &str) -> Option<&'s s
 
 impl<'a> Sentinel<'a> {
     fn unit_active(&self, unit: &str) -> bool {
-        let o = self.h.run(
-            Spec::args_owned(
-                self.cfg.systemctl.clone(),
-                vec![
-                    "--user".into(),
-                    "is-active".into(),
-                    format!("{unit}.service"),
-                ],
-            )
-            .err(Io::Null),
-        );
-        o.stdout.trim() == "active"
+        self.h.svc.unit_active(&format!("{unit}.service"))
     }
 
     fn setenv(&self, keys: &[&str]) -> Vec<String> {
@@ -196,6 +185,7 @@ impl<'a> Sentinel<'a> {
             "--dolt-drop-check",
             "--drift-check",
         ] {
+            // FORK-EDGE: needs watchtower's checks as a library (watchtower is another crate's owner).
             self.h.run(
                 Spec::args_owned("watchtower", vec![flag.into()])
                     .out(Io::Inherit)
@@ -287,6 +277,8 @@ impl<'a> Sentinel<'a> {
             // program (the release's), or the bare name for systemd to refuse, naming it.
             a.push(crate::pass::on_path(&self.cfg.landing_bin, self.cfg.raw("PATH")));
             a.push("land".into());
+            // FORK-EDGE: the CLI pass's own dispatch. The machine leg is the scheduler's
+            // `sentinel-pass` task (`unit.start` of its `landing` unit, matched back by `unit.ran`).
             let o = self.h.run(
                 Spec::args_owned(self.cfg.launch.clone(), a)
                     .out(Io::Inherit)

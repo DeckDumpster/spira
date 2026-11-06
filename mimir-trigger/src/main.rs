@@ -1,13 +1,9 @@
 //! `mimir-trigger` — DESIGN.md. Rust port of `spira/mimir-trigger.sh` (sp-0ekp7).
 
-mod engine;
-mod lanes;
-mod ports;
-mod real;
-
-use lanes::LaneLabels;
-use ports::World;
-use real::Real;
+use mimir_trigger::lanes::LaneLabels;
+use mimir_trigger::ports::World;
+use mimir_trigger::real::Real;
+use mimir_trigger::engine;
 use std::env;
 use std::fs::OpenOptions;
 use std::os::unix::io::AsRawFd;

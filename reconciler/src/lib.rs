@@ -35,6 +35,7 @@ use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
+use spira_config::lc_call::LcClient;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -100,7 +101,7 @@ const LOCK_NB: i32 = 4;
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// The programs a pass runs that the system, not the release, provides.
-const SYSTEM_PROGRAMS: [&str; 6] = ["systemctl", "tmux", "git", "podman", "df", "date"];
+const SYSTEM_PROGRAMS: [&str; 4] = ["systemctl", "tmux", "git", "podman"];
 
 /// Every program the pass runs, by name on the launcher's PATH, and the one unit it will
 /// never remedy. A test injects its own; nothing here is read from the environment.
@@ -110,7 +111,6 @@ pub struct Seams {
     pub tmux: String,
     pub git: String,
     pub forge: String,
-    pub mail: String,
     pub units_install: String,
     pub spira_config: String,
     pub spira_claim: String,
@@ -119,13 +119,10 @@ pub struct Seams {
     pub queue: String,
     pub spira_lc: String,
     pub bead: String,
-    pub bdq: String,
     pub target_reap: String,
     pub podman: String,
-    pub df: String,
     pub rebuild: String,
     pub layout: String,
-    pub date: String,
     pub store_unit: String,
     pub lint: String,
     pub guard: String,
@@ -146,26 +143,25 @@ impl Seams {
     /// Every program through `name`.
     pub fn resolving(name: impl Fn(&str) -> Result<String, String>) -> Result<Seams, String> {
         Ok(Seams {
+            // FORK-EDGE: needs Units unit-file state (is-enabled) and enable; remedies run these as commands
             systemctl: name("systemctl")?,
             tmux: name("tmux")?,
             git: name("git")?,
             forge: name("forge")?,
-            mail: name("mail")?,
             units_install: name("units-install")?,
             spira_config: name("spira-config")?,
             spira_claim: name("spira-claim")?,
             strand: name("strand")?,
             queue_helpers: name("queue-helpers")?,
+            // FORK-EDGE: remedy program (queue lock clear is a declared remedy command)
             queue: name("queue")?,
+            // FORK-EDGE: fixture stand-in — LcClient::for_bin runs it only for a declared SPIRA_LC_BIN or direct mode; production calls go over the socket (Config::lc)
             spira_lc: name("spira-lc")?,
             bead: name("bead")?,
-            bdq: name("bdq")?,
             target_reap: name("target-reap")?,
             podman: name("podman")?,
-            df: name("df")?,
             rebuild: name("rebuild")?,
             layout: name("layout")?,
-            date: name("date")?,
             store_unit: name("dolt-beads.service")?,
             lint: name("spira-lint")?,
             guard: name("lifecycle-guard")?,
@@ -219,6 +215,9 @@ pub struct Config {
     pub breaker: Result<(u32, u32), String>,
     /// Reads with an in-process form; `None` launches the programs `seams` names.
     pub host: Option<Arc<dyn Host>>,
+    /// The lifecycle store's client for a pass with no host; `None` resolves the configured one
+    /// at the call.
+    pub lc_client: Option<LcClient>,
     /// Units the Units invariant does not judge: a unit whose liveness something else owns.
     pub skip_units: Vec<String>,
     /// Answers to git questions, keyed by the shas that decide them, so a ref that did not move is not asked about twice.
@@ -325,7 +324,7 @@ impl Config {
         // a config that fails to resolve is a named refusal, never a literal `/tmp/spira`.
         let spira_run = spira_config::resolve::run_dir_for_process()?;
         let spira_home = spira_config::resolve::locate_home_for_process()?.to_string_lossy().into_owned();
-        let (now_secs, now_iso) = (clock::now_secs(&seams.date), clock::now_iso(&seams.date));
+        let (now_secs, now_iso) = (clock::now_secs(), clock::now_iso());
         Config::from_lookup(&spira_config::process::cfg, seams, spira_run, spira_home, now_secs, now_iso)
     }
 
@@ -377,6 +376,7 @@ impl Config {
             reminders_path: paths::reminders(&spira_run),
             breaker,
             host: None,
+            lc_client: None,
             skip_units: Vec::new(),
             memo: Arc::default(),
             seams,
@@ -422,7 +422,7 @@ impl Config {
     fn free_pct(&self, path: &str) -> Option<i64> {
         match &self.host {
             Some(h) => h.free_pct(path),
-            None => parse_df_free_pct(&run_cmd(&self.seams.df, &["-kP", path])),
+            None => free_pct(path),
         }
     }
 
@@ -431,12 +431,18 @@ impl Config {
             Some(h) => h.lc(argv),
             None => {
                 let bin = &self.seams.spira_lc;
-                let out = spira_config::bounded::bounded(bin).args(argv).stderr(Stdio::piped()).output().map_err(|e| format!("{bin}: {e}"))?;
-                if !out.status.success() {
-                    return Err(format!("{bin} {}: exit {}: {}", argv.join(" "), out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()));
+                if !lc_served(argv) {
+                    return Err(format!("{bin} {}: refused: the store does not serve this verb (it runs as its caller)", argv.join(" ")));
                 }
-                Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+                self.lc_client()?.answer(argv).map_err(|e| format!("{bin} {}: {e}", argv.join(" ")))
             }
+        }
+    }
+
+    fn lc_client(&self) -> Result<LcClient, String> {
+        match &self.lc_client {
+            Some(c) => Ok(c.clone()),
+            None => LcClient::for_bin(&self.seams.spira_lc),
         }
     }
 
@@ -491,33 +497,46 @@ impl Config {
     pub fn send_mail(&self, mail: &Mail) -> Result<(), String> {
         match &self.host {
             Some(h) => h.send_mail(mail),
-            None => send_mail_by(&self.seams.mail, mail),
+            None => send_mail_in_process(mail),
         }
     }
 }
 
-fn send_mail_by(mail_bin: &str, m: &Mail) -> Result<(), String> {
-    let mut cmd = spira_config::bounded::bounded(mail_bin);
-    cmd.arg("send").arg(&m.mailbox).arg("--from").arg(mail::FROM).arg("--subject").arg(&m.subject).arg("--kind").arg(&m.kind);
-    for (flag, value) in [("--default", &m.default), ("--class", &m.class), ("--bead", &m.bead)] {
-        if let Some(v) = value {
-            cmd.arg(flag).arg(v);
-        }
+fn send_mail_in_process(m: &Mail) -> Result<(), String> {
+    mail::send(&mail::Message {
+        mailbox: &m.mailbox,
+        from: mail::FROM,
+        subject: &m.subject,
+        kind: &m.kind,
+        default: m.default.as_deref(),
+        class: m.class.as_deref(),
+        bead: m.bead.as_deref(),
+        body: &m.body,
+    })
+}
+
+/// Free percent of a filesystem the way `df -kP` reports it: available over total, in 1 KiB
+/// blocks, read in-process.
+pub fn free_pct(path: &str) -> Option<i64> {
+    let c = std::ffi::CString::new(path).ok()?;
+    // SAFETY: a zeroed statvfs is a valid out-parameter, and `c` is a NUL-terminated path.
+    let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
+        return None;
     }
-    let err_path = std::env::temp_dir().join(format!("mail-send-{}-{}.err", std::process::id(), m.mailbox));
-    let err_file = fs::File::create(&err_path).map_err(|e| format!("{}: {e}", err_path.display()))?;
-    let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(err_file).spawn().map_err(|e| format!("{mail_bin}: {e}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(m.body.as_bytes());
-    }
-    let status = child.wait().map_err(|e| format!("{mail_bin}: {e}"));
-    let stderr = fs::read_to_string(&err_path).unwrap_or_default();
-    let _ = fs::remove_file(&err_path);
-    let status = status?;
-    if !status.success() {
-        return Err(format!("{mail_bin} send {}: exit {}: {}", m.mailbox, status.code().unwrap_or(-1), stderr.trim()));
-    }
-    Ok(())
+    let frsize = s.f_frsize as u128;
+    let total = s.f_blocks as u128 * frsize / 1024;
+    let avail = s.f_bavail as u128 * frsize / 1024;
+    (total > 0).then(|| (avail * 100 / total) as i64)
+}
+
+/// The verbs the lifecycle socket does not serve: they prove a landing from git in the
+/// caller's own checkout (spira-lc composed.rs), and the reconciler never sends them.
+pub const LC_UNSERVED: &[&str] = &["deliver", "content-on-base", "close-on-land", "content-landed"];
+
+/// Whether `argv` is a verb the store serves over its socket.
+pub fn lc_served(argv: &[&str]) -> bool {
+    argv.first().is_some_and(|v| !LC_UNSERVED.contains(v) && !v.starts_with("admin-"))
 }
 
 pub fn log_print(cfg: &Config, msg: &str) {
@@ -1236,15 +1255,6 @@ fn observe_release(cfg: &Config) -> Check {
 // floor, the streak escalates to the Concierge exactly like any other remedy that did not hold.
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// Free percentage from `df -kP <path>` output: the last row's total and available columns.
-fn parse_df_free_pct(out: &str) -> Option<i64> {
-    let row = out.lines().rfind(|l| !l.trim().is_empty())?;
-    let cols: Vec<&str> = row.split_whitespace().collect();
-    let total: i64 = cols.get(1)?.parse().ok()?;
-    let avail: i64 = cols.get(3)?.parse().ok()?;
-    (total > 0).then(|| avail * 100 / total)
-}
-
 /// Without a Composite DiskSpec: the root filesystem, the store's data directory, and
 /// podman's storage root. A default-set path that cannot be read (podman not installed, the
 /// store in server mode elsewhere) is simply omitted — there is no declared expectation it exist.
@@ -1636,20 +1646,8 @@ fn junk_row_ids(rows: &[spira_config::lc_state::Row], store_ids: &HashSet<String
 }
 
 fn store_bead_ids(cfg: &Config) -> Result<HashSet<String>, String> {
-    if cfg.seams.bdq.is_empty() {
-        return Err("no bdq to list the store with".into());
-    }
-    let out = spira_config::bounded::bounded(&cfg.seams.bdq)
-        .args(["list", "--all", "--brief", "--json", "--limit", "0"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .map_err(|e| format!("{}: {}", cfg.seams.bdq, e))?;
-    if !out.status.success() {
-        return Err(format!("{} list exited {}", cfg.seams.bdq, out.status.code().unwrap_or(-1)));
-    }
-    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout)
-        .map_err(|e| format!("{} list: unparsable json: {}", cfg.seams.bdq, e))?;
+    let out = cfg.lc(&["content", "list", "--all", "--brief", "--json", "--limit", "0"])?;
+    let rows: Vec<serde_json::Value> = serde_json::from_str(out.trim()).map_err(|e| format!("content list: unparsable json: {e}"))?;
     let ids: HashSet<String> = rows
         .iter()
         .filter_map(|r| r.get("id").and_then(|v| v.as_str()).map(String::from))
@@ -2080,7 +2078,13 @@ pub fn perform(cfg: &Config, alerted: &mut AlertedSinceMap, acts: Vec<Act>) {
             ),
             Act::Remedy { steps, .. } => {
                 for (program, args) in &steps {
-                    let _ = run_cmd_ok(program, &args.iter().map(String::as_str).collect::<Vec<_>>());
+                    let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+                    if *program == cfg.seams.spira_lc && lc_served(&argv) {
+                        let _ = cfg.lc(&argv);
+                        continue;
+                    }
+                    // FORK-EDGE: remedy program — declared remedies (systemctl enable/restart, forge, bead, queue) run as commands
+                    let _ = run_cmd_ok(program, &argv);
                 }
             }
             Act::Mail { mail, unalert, what } => {
@@ -2550,6 +2554,55 @@ mod tests {
         assert!(suspension_of(&d, "prod", "spira-other-prod.timer").is_none());
     }
 
+    /// The lifecycle store's answers, and every argv it was asked.
+    struct Store(std::sync::Mutex<Vec<Vec<String>>>);
+
+    impl spira_config::lc_call::Transport for Store {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+            self.0.lock().unwrap().push(argv.to_vec());
+            Ok(spira_config::lc_call::Reply { code: 0, out: format!("answered {}", argv[0]), err: String::new() })
+        }
+    }
+
+    fn served_config() -> (Config, Arc<Store>) {
+        let store = Arc::new(Store(std::sync::Mutex::default()));
+        let mut cfg = test_config();
+        cfg.seams.spira_lc = "/nonexistent/spira-lc".into();
+        cfg.lc_client = Some(LcClient::over(Arc::clone(&store) as Arc<dyn spira_config::lc_call::Transport>, true));
+        (cfg, store)
+    }
+
+    #[test]
+    fn a_served_lc_read_goes_over_the_client_without_a_program() {
+        let (cfg, store) = served_config();
+        assert_eq!(cfg.lc(&["show", "sp-1"]), Ok("answered show".to_string()));
+        assert_eq!(store.0.lock().unwrap().as_slice(), &[vec!["show".to_string(), "sp-1".into()]]);
+    }
+
+    #[test]
+    fn a_composed_verb_goes_over_the_client_and_an_unserved_one_is_refused_unsent() {
+        let (cfg, store) = served_config();
+        assert_eq!(cfg.lc(&["hold", "sp-1", "ask", "q", "reconciler"]), Ok("answered hold".to_string()));
+        assert_eq!(cfg.lc(&["content", "list", "--all"]), Ok("answered content".to_string()));
+        let err = cfg.lc(&["deliver", "pr-merged", "sp-1"]).unwrap_err();
+        assert!(err.contains("refused") && err.contains("/nonexistent/spira-lc"), "{err}");
+        assert_eq!(store.0.lock().unwrap().len(), 2, "the unserved verb was never sent");
+    }
+
+    #[test]
+    fn a_served_lc_remedy_step_goes_over_the_client() {
+        let (cfg, store) = served_config();
+        let program = cfg.seams.spira_lc.clone();
+        perform(&cfg, &mut AlertedSinceMap::new(), vec![Act::Remedy { key: "k".into(), steps: vec![(program, vec!["requeue-orphans".into(), "--actor".into(), "reconciler".into(), "--apply".into()])] }]);
+        assert_eq!(store.0.lock().unwrap().as_slice(), &[vec!["requeue-orphans".to_string(), "--actor".into(), "reconciler".into(), "--apply".into()]]);
+    }
+
+    #[test]
+    fn free_space_is_read_without_df() {
+        assert!(free_pct("/").is_some_and(|p| (0..=100).contains(&p)));
+        assert_eq!(free_pct("/no/such/path/at/all"), None);
+    }
+
     fn test_config() -> Config {
         Config {
             seams: Seams::bare(),
@@ -2589,22 +2642,10 @@ mod tests {
             reminders_path: PathBuf::from("/dev/null"),
             breaker: Err("not configured".into()),
             host: None,
+            lc_client: None,
             skip_units: Vec::new(),
             memo: Arc::default(),
         }
-    }
-
-    #[test]
-    fn parse_df_free_pct_reads_the_last_rows_total_and_available() {
-        let out = "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 1000 800 200 80% /\n";
-        assert_eq!(parse_df_free_pct(out), Some(20));
-    }
-
-    #[test]
-    fn parse_df_free_pct_refuses_what_it_cannot_read() {
-        assert_eq!(parse_df_free_pct(""), None);
-        assert_eq!(parse_df_free_pct("Filesystem 1024-blocks\n/dev/x 0 0 0 0% /\n"), None);
-        assert_eq!(parse_df_free_pct("df: no such file\n"), None);
     }
 
     #[test]

@@ -177,7 +177,6 @@ test-install-conflicts.sh	T1	9.0
 test-install-dolt-port-wait.sh	T1	1.5
 test-install-landref.sh	T1	15.0
 test-install-loom-broker.sh	T1	2.5
-test-install-mail-deliver.sh	T1	3.5
 test-install-prod-checkout.sh	T1	9.5
 test-install-rehearsal.sh	T1	1.5
 test-install-unit-directive.sh	T1	2.0
@@ -215,7 +214,6 @@ test-queue-ops.sh	T1	12.5
 test-queue-protect.sh	T1	2.0
 test-queue-sort-large.sh	T1	2.5
 test-queue-submit.sh	T1	5.0
-test-queue-watch.sh	T1	61.5
 # literal-ok: a real suite filename, not a use of the configured label it happens to contain
 test-reclaim-needs-ryan.sh	T1	2.0
 test-ref-guard.sh	T1	3.0

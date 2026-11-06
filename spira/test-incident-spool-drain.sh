@@ -36,7 +36,8 @@ ln -s "$HERE/conf.d" "$TMP/home/conf.d"
 ln -s "$HERE/conf.toml.d" "$TMP/home/conf.toml.d"
 SPOOL="$TMP/run/incident-spool"
 ILOG="$TMP/run/incident.log"
-tl_config SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run"
+# SPIRA_INCIDENT_LOG is registered config (sp-ipwlic): declared here, never derived from SPIRA_RUN.
+tl_config SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_INCIDENT_LOG="$ILOG"
 
 # spool_entry <ref-or-empty> <title> <cause-or-empty> <body> -> writes a spool file by hand,
 # in incident.sh's own spool_write format, so entries missing a field (an older-format

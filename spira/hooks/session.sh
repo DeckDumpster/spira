@@ -159,9 +159,11 @@ for _try in 1 2 3; do
     sleep 0.3
 done
 _manifest_fault=0; grep -q 'manifest' "$_werr" 2>/dev/null && _manifest_fault=1
+# The reason watchd gave, one line: "status failed" alone sends the reader to re-run it blind.
+_wwhy="$(head -1 "$_werr" 2>/dev/null)"
 [ "$_werr" != /dev/null ] && rm -f "$_werr"
 if [ "$_wrc" -ne 0 ] && [ "$_manifest_fault" -eq 0 ]; then
-    echo "## Spira watchers — status unavailable (watchd status failed); re-run: $WATCHD status"
+    echo "## Spira watchers — status unavailable (watchd status failed${_wwhy:+: $_wwhy}); re-run: $WATCHD status"
     exit 0
 fi
 

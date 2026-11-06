@@ -43,6 +43,7 @@ impl<'a> Sentinel<'a> {
                 self.h.print(&format!("would close {id}: {reason}"));
                 continue;
             }
+            // FORK-EDGE: unserved verb close (spira_config::lifecycle_row::close_with runs the CLI).
             match lifecycle_row::close_with(&self.cfg.lc_bin, id, &reason, "sentinel", None) {
                 Ok(()) => self.log(&format!("close_landed_red_trackers: {id} — closed ({})", fixes.join(", "))),
                 Err(e) => self.log(&format!("close_landed_red_trackers: {id} — close failed: {e}")),

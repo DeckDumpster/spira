@@ -93,15 +93,14 @@ fn pass() -> i32 {
     // THE STORE GETS TEN SECONDS: a store that has not answered in ten seconds IS
     // "unreachable" as far as a watchdog is concerned.
     let store_timeout = env_n(&original, "SPIRA_HEIMDALL_BD_TIMEOUT", 10).max(1);
-    let mut lc_env = original.clone();
-    let (child_env, lc_bin) = match spira_config::release_env::child_path_env_for_process().and_then(|e| Ok((e, spira_config::lifecycle_row::lc_bin()?))) {
-        Ok(v) => v,
+    // The store's door, in-process over its socket; nothing is launched to reach it.
+    let lc = match spira_config::lc_call::LcClient::configured() {
+        Ok(c) => c,
         Err(e) => {
             eprintln!("heimdall: {e}");
             return 1;
         }
     };
-    lc_env.extend(child_env);
 
     // `SPIRA_REPO` (the home repo path), derived in-process the same way `cfg()` itself
     // derives it internally — not a config-key read, so it stays this direct call.
@@ -183,7 +182,7 @@ fn pass() -> i32 {
 
     // ---- gather ------------------------------------------------------------------------
     let log_tail = gather::read_log_tail(&sentinel_log_path, tail_bytes);
-    let sc = RealSystemctl { bin: systemctl_bin.clone(), timeout: Duration::from_secs(5) };
+    let sc = RealSystemctl { bin: systemctl_bin.clone(), timeout: Duration::from_secs(5), units: host_units() };
     let sentinel_timer = gather::sentinel_timer_status(&sc, &instance);
     let mirror = gather::check_mirror(&exporter, &mirror_path);
     let world = gather::world_state(&run_dir);
@@ -204,7 +203,7 @@ fn pass() -> i32 {
 
     // THE ALERT QUERY IS ALSO THE READ PROBE: asking a second, separate "is the store
     // readable" question would be a second thing to get out of step with the first.
-    let ops = LcConditions { bin: lc_bin, env: &lc_env, timeout: Duration::from_secs(store_timeout as u64) };
+    let ops = LcConditions { client: lc.within(Duration::from_secs(store_timeout as u64)) };
     let mut db_saturated = false;
     let (db_reachable, db_error, alert_rows) = match ops.list() {
         Ok(rows) => (true, String::new(), rows),
@@ -375,6 +374,19 @@ fn pass() -> i32 {
         ),
     ));
     0
+}
+
+/// The user manager through the `Units` port; `None` (every state read "cannot tell") when it
+/// cannot be reached, or on a platform with no systemd backend.
+fn host_units() -> Option<std::sync::Arc<dyn runtime::units::Units>> {
+    #[cfg(target_os = "linux")]
+    {
+        match runtime::units::SystemdUnits::connect(std::sync::Arc::new(runtime::ports::WallClock)) {
+            Ok(u) => return Some(std::sync::Arc::new(u)),
+            Err(e) => eprintln!("heimdall: the unit manager: {}", e.0),
+        }
+    }
+    None
 }
 
 #[cfg(test)]

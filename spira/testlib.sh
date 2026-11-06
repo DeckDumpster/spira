@@ -647,18 +647,25 @@ STUB
 lc_path_stub() {   # lc_path_stub <bindir> <fixdir>
     local bindir="${1:?lc_path_stub needs a bin dir}" fix="${2:?lc_path_stub needs a fixture dir}"
     LC_FIX="$fix"; mkdir -p "$bindir" "$fix/bead" "$fix/delivery" "$fix/show"; : > "$fix/calls.log"
-    # The two verbs that never touch the lifecycle machine's rows through this stub's
-    # fixture — close-on-land (bd close + reap, sp-2c1n0) and content-landed (git only) —
-    # go to the real spira-lc, the first one on PATH that is not this stub.
+    # The verbs that never touch the lifecycle machine's rows through this stub's fixture —
+    # close-on-land (bd close + reap, sp-2c1n0), content-landed (git only) and content (the
+    # planning store's reads and writes, bd underneath: what bdq answered before the callers
+    # moved onto spira-lc) — go to the real spira-lc: the staged release's, else the first one on
+    # PATH that is not this stub. Never another stand-in ahead on PATH: a mirror that hands its own
+    # unknown verbs to the next spira-lc on PATH would hand them back here, forever.
     local real="" c
-    while IFS= read -r c; do [ "$c" -ef "$bindir/spira-lc" ] || { real="$c"; break; }; done < <(type -ap spira-lc 2>/dev/null)
+    if [ -n "${_TL_STAGED_RELEASE:-}" ] && [ -x "$_TL_STAGED_RELEASE/bin/spira-lc" ]; then
+        real="$_TL_STAGED_RELEASE/bin/spira-lc"
+    else
+        while IFS= read -r c; do [ "$c" -ef "$bindir/spira-lc" ] || { real="$c"; break; }; done < <(type -ap spira-lc 2>/dev/null)
+    fi
     printf '#!/usr/bin/env bash\n%s\nexit 2\n' "$_LC_FACTS_BODY" > "$fix/facts-lc"; chmod +x "$fix/facts-lc"
     cat > "$bindir/spira-lc" <<STUB
 #!/usr/bin/env bash
 LC_FIX="$fix"
 printf '%s\\n' "\$*" >> "\$LC_FIX/calls.log"
 case "\$1" in fact|facts|facts-query) exec "$fix/facts-lc" "\$@" ;; esac
-case "\$1" in close-on-land|content-landed) [ -n "$real" ] && exec "$real" "\$@" ;; esac
+case "\$1" in close-on-land|content-landed|content) [ -n "$real" ] && exec "$real" "\$@" ;; esac
 # reopen (sp-swh8b8): the door reopens the store after the row; here the row is the fixture's,
 # so only the store half runs.
 if [ "\$1" = reopen ]; then
@@ -1248,7 +1255,7 @@ def shown(bid):
     return [b for b in bd(["show", bid]) if isinstance(b, dict) and b.get("id") == bid]
 def flag(args, name):
     return args[args.index(name) + 1] if name in args[:-1] else ""
-def answer(args):
+def answer(args, body=None):
     if args[:1] == ["show"] and len(args) > 1:
         hit = [b for b in shown(args[1]) if b.get("issue_type") not in NO_ROW]
         return (0, json.dumps({"bead": row(hit[0]), "delivery": None})) if hit else (1, "{}")
@@ -1281,6 +1288,26 @@ def answer(args):
         elif kind in ("Release", "HolderDead"):
             moved[bid] = "READY"
         return 0, ""
+    if args[:1] == ["close"] and len(args) > 1:
+        # The composed close (sp-ipwlic: served, the CLI forwards it): the bead closes in bd,
+        # forced past blocks, and an open ask recorded for it is withdrawn.
+        bid, reason = args[1], flag(args, "--reason")
+        if flag(args, "--reason-file") == "-":
+            reason = body or ""
+        o = subprocess.run([os.environ.get("SPIRA_BD") or "bd", "-C", os.environ.get("SPIRA_DB") or ".", "close", bid, "--force", "--reason", reason],
+                           capture_output=True, text=True, env=dict(os.environ, BD_IGNORE_SCHEMA_SKEW="1"), timeout=30)
+        if o.returncode != 0:
+            return 1, o.stderr
+        if bid in asks and asks[bid]["state"] == "OPEN":
+            asks[bid].update(state="WITHDRAWN")
+        return 0, ""
+    if args[:1] == ["content"] and len(args) > 1:
+        # The store's content door (sp-ipwlic): the bd argv after `content`, run against this
+        # suite's store, its request body on bd's stdin.
+        env = dict(os.environ, BD_IGNORE_SCHEMA_SKEW="1")
+        o = subprocess.run([os.environ.get("SPIRA_BD") or "bd", "-C", os.environ.get("SPIRA_DB") or ".", *args[1:]],
+                           input=body, capture_output=True, text=True, env=env, timeout=30)
+        return o.returncode, o.stdout
     return 2, "cannot tell: stand-in lifecycle service"
 srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 srv.bind(path)
@@ -1288,8 +1315,11 @@ srv.listen(16)
 while True:
     c, _ = srv.accept()
     try:
-        f = c.makefile("rw")
-        code, out = answer(json.loads(f.readline() or "[]"))
+        f = c.makefile("rb")
+        head = json.loads(f.readline().decode() or "[]")
+        # A request with a body is {"argv", "len"[, "caller"]} and then len bytes of it.
+        body = f.read(head.get("len") or 0).decode() if isinstance(head, dict) else None
+        code, out = answer(head.get("argv", []) if isinstance(head, dict) else head, body)
         body = out.encode()
         c.sendall(json.dumps({"exit_code": code, "len": len(body)}).encode() + b"\n" + body)
     except Exception as e:
@@ -1330,7 +1360,10 @@ case " \$* " in
 esac
 exit 0
 STUB
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$d/lc-ask-stub"
+    # The store's content door (sp-ipwlic): mail's reads and creates reach the store as
+    # `content <bd argv>` on the lifecycle machine, so the stand-in machine answers them
+    # from the same stub store bd would have.
+    printf '#!/usr/bin/env bash\n[ "${1:-}" = content ] && { shift; exec "%s/bd-ask-stub" "$@"; }\nexit 0\n' "$d" > "$d/lc-ask-stub"
     chmod +x "$d/bd-ask-stub" "$d/lc-ask-stub"
     export SPIRA_BD="$d/bd-ask-stub" SPIRA_LC_BIN="$d/lc-ask-stub"
     tl_config SPIRA_BD="$SPIRA_BD"

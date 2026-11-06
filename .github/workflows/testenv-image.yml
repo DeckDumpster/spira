@@ -38,19 +38,88 @@ on:
   pull_request:
   workflow_dispatch:
 
-# One publish at a time. Two runs racing on the same tag would push identical
-# bytes twice; harmless, but it buys nothing and both pay the build.
-concurrency:
-  group: testenv-image
-  cancel-in-progress: false
+# ONE PUBLISH PER TAG, NOT ONE PER REPOSITORY (sp-ipwlic, over-broad-scopes #15). Two runs
+# racing on the same tag would push identical bytes twice, so runs of one tag queue; runs
+# whose closures differ publish different images and never wait on each other. The group
+# is a job's, keyed by the tag the first job computes.
+#
+# THE TAG COSTS NO BUILD WHEN THE DRIVER IS UNCHANGED. `testenv container tag` is still the
+# one function that names the image, but its binary is cached keyed by the sources it is
+# built from (testenv's path-dependency closure, the lockfile and the toolchain pin), so a
+# push or PR that touches none of them restores it instead of cold-building testenv. The
+# closure list is checked against `cargo metadata` on every run: a crate testenv starts
+# depending on fails this job, naming the list, rather than serving a stale binary.
 
 permissions:
   contents: read
   packages: write
 
+env:
+  TESTENV_CLOSURE: "gate lifecycle spira-config spira-otel suite-select testenv tsd"
+
 jobs:
-  publish:
+  tag:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      key: ${{ steps.key.outputs.key }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: The cached closure is testenv's path-dependency closure
+        run: |
+          set -euo pipefail
+          got="$(cargo metadata --no-deps --format-version 1 --locked | jq -r --arg ws "$GITHUB_WORKSPACE" '
+            (.packages | map({key: .name, value: .}) | from_entries) as $p
+            | def walk_deps($n): [$n] + ([$p[$n].dependencies[] | select(.path != null and .kind != "dev") | .name] | map(walk_deps(.)) | add // []);
+            [walk_deps("testenv")[] | $p[.].manifest_path | sub("/Cargo.toml$"; "") | sub("^" + $ws + "/"; "")] | unique | join(" ")')"
+          [ "$got" = "$TESTENV_CLOSURE" ] || {
+            printf 'tag: testenv now builds from [%s], but TESTENV_CLOSURE lists [%s] — update it in this workflow\n' "$got" "$TESTENV_CLOSURE" >&2
+            exit 1; }
+
+      - name: Key the driver by its sources
+        id: key
+        run: |
+          set -euo pipefail
+          sum="$( { for d in $TESTENV_CLOSURE; do git ls-files -s -- "$d"; done; git ls-files -s -- Cargo.lock rust-toolchain.toml; } | sha256sum | cut -c1-32)"
+          printf 'key=testenv-driver-%s-%s\n' "${{ runner.os }}" "$sum" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the driver
+        id: driver
+        uses: actions/cache@v4
+        with:
+          path: target/release/testenv
+          key: ${{ steps.key.outputs.key }}
+
+      - name: Build the container driver
+        # `testenv container` (sp-s0e1k) replaced spira/testenv.sh. This runner has no
+        # release to take it from, so it builds the tree's own; rustup reads the pinned
+        # toolchain from rust-toolchain.toml. Only on a cache miss.
+        if: steps.driver.outputs.cache-hit != 'true'
+        run: cargo build -q --locked --release -p testenv
+
+      - name: Resolvable config for the release binaries
+        run: bash spira/ci-config.sh "$GITHUB_WORKSPACE"
+
+      - name: Compute the tag
+        id: tag
+        env:
+          SPIRA_TOML: ${{ runner.temp }}/ci-config.toml
+          SPIRA_HOME: ${{ github.workspace }}/spira
+        run: |
+          set -uo pipefail
+          tag="$(target/release/testenv container tag)" || {
+            printf 'publish: could not compute the build closure hash\n' >&2; exit 1; }
+          [ -n "$tag" ] || { printf 'publish: empty closure hash\n' >&2; exit 1; }
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: tag
+    runs-on: ubuntu-latest
+    concurrency:
+      group: testenv-image-${{ needs.tag.outputs.tag }}
+      cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -69,11 +138,12 @@ jobs:
           printf '%s' "${{ secrets.GITHUB_TOKEN }}" \
             | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Build the container driver
-        # `testenv container` (sp-s0e1k) replaced spira/testenv.sh. This runner has no
-        # release to take it from, so it builds the tree's own; rustup reads the pinned
-        # toolchain from rust-toolchain.toml.
-        run: cargo build -q --locked --release -p testenv
+      - name: Restore the driver the tag job built or restored
+        uses: actions/cache/restore@v4
+        with:
+          path: target/release/testenv
+          key: ${{ needs.tag.outputs.key }}
+          fail-on-cache-miss: true
 
       - name: Publish the image if this closure has not been published
         env:
@@ -82,9 +152,7 @@ jobs:
           SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
         run: |
           set -uo pipefail
-          tag="$(target/release/testenv container tag)" || {
-            printf 'publish: could not compute the build closure hash\n' >&2; exit 1; }
-          [ -n "$tag" ] || { printf 'publish: empty closure hash\n' >&2; exit 1; }
+          tag="${{ needs.tag.outputs.tag }}"
           ref="${SPIRA_TESTENV_REGISTRY}/spira-testenv:${tag}"
 
           # ASK THE REGISTRY, DO NOT PULL. `manifest inspect` reads the manifest

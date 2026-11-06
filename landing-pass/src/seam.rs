@@ -20,6 +20,8 @@
 /// `Closeout` and `GhUnlandedScan` are retired too (sp-j3fim, "wave 4.31": family AB,
 /// GitHub closeout) — `gh_issue_closeout`/`_gh_unlanded_scan` moved into gh-intake;
 /// `RealLib` shells to the compiled `gh-intake closeout`/`unlanded-scan` binary instead.
+/// `Note`, the five `Deliver*` and `PruneWorktrees` are retired too (sp-ipwlic): the store's
+/// `bd-note` and `deliver` verbs over `LcClient`, and `hel::reap::prune_worktrees`, in-process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     Context,
@@ -30,16 +32,7 @@ pub enum Op {
     Recut,
     BumpRequeue,
     RequeuesOf,
-    Note,
     Push,
-    DeliverDelivered,
-    DeliverRequeued,
-    DeliverReturned,
-    PruneWorktrees,
-    /// `spira-lc deliver pr-merged <repo> <id> <br> <merge-sha>` (lc-delivery.sh until sp-arpjt).
-    DeliverPrMerged,
-    /// `spira-lc deliver pr-closed <id>`.
-    DeliverPrClosed,
     /// `spira_git_push <repo> -q --force-with-lease -u <remote> <branch>` — `land_pr`'s push,
     /// distinct from `Push`'s plain `-q <remote> <refspec>`.
     ForcePush,
@@ -54,14 +47,7 @@ pub const ALL: &[Op] = &[
     Op::Recut,
     Op::BumpRequeue,
     Op::RequeuesOf,
-    Op::Note,
     Op::Push,
-    Op::DeliverDelivered,
-    Op::DeliverRequeued,
-    Op::DeliverReturned,
-    Op::PruneWorktrees,
-    Op::DeliverPrMerged,
-    Op::DeliverPrClosed,
     Op::ForcePush,
 ];
 
@@ -156,16 +142,7 @@ fn body(op: Op) -> &'static str {
         Op::Recut => "recut_onto \"$1\" \"$2\" \"$3\" \"$4\"; __rc=$?\nprintf '\\036%s\\035%s' \"${RECUT_APPLIED_COUNT:-0}\" \"${RECUT_CONFLICTS:-}\"\nexit $__rc\n",
         Op::BumpRequeue => "bump_requeue \"$1\" \"$2\" >/dev/null 2>&1\nexit 0\n",
         Op::RequeuesOf => "printf '\\036%s' \"$(requeues_of \"$1\")\"\nexit 0\n",
-        Op::Note => "bdq note \"$1\" \"$2\" >/dev/null 2>&1\nexit 0\n",
         Op::Push => "__e=\"$(spira_git_push \"$1\" -q \"$2\" \"$3\" 2>&1 >/dev/null)\"; __rc=$?\nprintf '\\036%s' \"$__e\"\nexit $__rc\n",
-        // spira-lc's caller verbs (sp-arpjt; lc-delivery.sh before): their log lines are
-        // lib.sh `log` lines, passed through like any other.
-        Op::DeliverDelivered => "spira-lc deliver push-delivered \"$1\" \"$2\"; exit $?\n",
-        Op::DeliverRequeued => "spira-lc deliver push-requeued \"$1\" \"$2\"; exit $?\n",
-        Op::DeliverReturned => "spira-lc deliver push-returned \"$1\" \"$2\"; exit $?\n",
-        Op::PruneWorktrees => "spira_prune_worktrees \"$1\" >/dev/null 2>&1\nexit 0\n",
-        Op::DeliverPrMerged => "spira-lc deliver pr-merged \"$1\" \"$2\" \"$3\" \"$4\"; exit $?\n",
-        Op::DeliverPrClosed => "spira-lc deliver pr-closed \"$1\" \"$2\"; exit $?\n",
         Op::ForcePush => "__e=\"$(spira_git_push \"$1\" -q --force-with-lease -u \"$2\" \"$3\" 2>&1 >/dev/null)\"; __rc=$?\nprintf '\\036%s' \"$__e\"\nexit $__rc\n",
     }
 }
@@ -227,15 +204,6 @@ mod tests {
             assert!(s.starts_with("{\n") && s.ends_with("}\n"), "{op:?}");
             assert!(!s.contains('\0'), "{op:?}");
             assert!(s.contains("exit"), "{op:?} must exit inside the braces");
-        }
-    }
-
-    #[test]
-    fn a_delivery_script_exits_with_the_machines_own_status() {
-        for op in [Op::DeliverDelivered, Op::DeliverRequeued, Op::DeliverReturned, Op::DeliverPrMerged, Op::DeliverPrClosed] {
-            let s = script(op);
-            assert!(!s.contains("|| true"), "{op:?} swallows a refusal");
-            assert!(s.contains("exit $?"), "{op:?} must hand the status back");
         }
     }
 }

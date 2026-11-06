@@ -41,12 +41,42 @@ pub trait Bd {
     fn ensure_ask(&self, id: &str, work_bead: &str) -> Result<(), String>;
 }
 
-/// The store through `bdq`, which locates the database itself. `conn_retries` (>= 1) retries
-/// only a call whose stderr names a dropped pooled connection (`bead::bdq::should_retry`);
-/// every other failure surfaces on the first try.
+/// The store: its `content` door for every verb the door serves ([`door`]), `bdq` for the rest
+/// (`dep add`, `dep list`, `history`), which locates the database itself. `conn_retries` (>= 1)
+/// retries only a call whose stderr names a dropped pooled connection
+/// (`bead::bdq::should_retry`); every other failure surfaces on the first try.
 pub struct BdCli {
     pub bdq: String,
     pub conn_retries: u32,
+}
+
+impl BdCli {
+    /// The store as this release declares it: its `bdq`, and `conn_retries`.
+    pub fn configured(conn_retries: u32) -> Result<BdCli, String> {
+        Ok(BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries })
+    }
+}
+
+/// Where one bd argv goes.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Door {
+    /// The store's content door: the argv after `content`, and the request body. The server
+    /// applies every protection bdq applies, and writes a create's lifecycle row itself.
+    Content(Vec<String>, Option<String>),
+    /// `bdq`: a verb the door does not serve.
+    Bdq,
+}
+
+/// The door for `args` (with `stdin`): reads (`show`, `list`), a `create` (its body as the
+/// request body), and a `note`, whose text goes as the request body (`note <id> --stdin`) so no
+/// text is mistaken for a flag. Everything else is bdq's.
+pub fn door(args: &[String], stdin: Option<&str>) -> Door {
+    match (args.iter().map(String::as_str).collect::<Vec<_>>().as_slice(), stdin) {
+        (["show" | "list", ..], None) => Door::Content(args.to_vec(), None),
+        (["create", ..], body) => Door::Content(args.to_vec(), body.map(str::to_string)),
+        (["note", id, text], None) if !id.starts_with('-') => Door::Content(vec!["note".into(), id.to_string(), "--stdin".into()], Some(text.to_string())),
+        _ => Door::Bdq,
+    }
 }
 
 impl Bd for BdCli {
@@ -74,6 +104,24 @@ impl Bd for BdCli {
 
 impl BdCli {
     fn run_once(&self, args: &[String], stdin: Option<&str>) -> BdOut {
+        let Door::Content(argv, body) = door(args, stdin) else { return self.run_bdq(args, stdin) };
+        let lc = match spira_config::lc_call::LcClient::configured() {
+            Ok(c) => c,
+            Err(e) => return BdOut::fail(2, e),
+        };
+        let argv: Vec<String> = std::iter::once("content".to_string()).chain(argv).collect();
+        let reply = match body {
+            Some(b) => lc.call_stdin(&argv, &b),
+            None => lc.call(&argv),
+        };
+        match reply {
+            Ok(r) => BdOut { code: r.code, stdout: r.out, stderr: r.err },
+            Err(e) => BdOut::fail(2, e.to_string()),
+        }
+    }
+
+    fn run_bdq(&self, args: &[String], stdin: Option<&str>) -> BdOut {
+        // FORK-EDGE: unserved verb content (history, dep list) and dep add — the content door serves neither
         let mut cmd = spira_config::bounded::bounded(&self.bdq);
         cmd.args(args);
         cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
@@ -710,6 +758,26 @@ mod after_create_not_discarded {
                     panic!("{name}: discards after_create failure: {l}");
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod door_tests {
+    use super::*;
+
+    #[test]
+    fn the_content_door_takes_every_verb_it_serves_and_bdq_keeps_the_rest() {
+        let v = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(door(&v(&["show", "sp-a", "--json"]), None), Door::Content(v(&["show", "sp-a", "--json"]), None));
+        // literal-ok: test fixture label
+        assert_eq!(door(&v(&["list", "--all", "--label", "needs-ryan", "--json"]), None), Door::Content(v(&["list", "--all", "--label", "needs-ryan", "--json"]), None));
+        // literal-ok: test fixture label
+        let create = v(&["create", "Q?", "-l", "needs-ryan", "--type", "decision", "--body-file", "-", "--silent"]);
+        assert_eq!(door(&create, Some("body")), Door::Content(create.clone(), Some("body".into())));
+        assert_eq!(door(&v(&["note", "sp-a", "-- a note that looks like a flag"]), None), Door::Content(v(&["note", "sp-a", "--stdin"]), Some("-- a note that looks like a flag".into())));
+        for bdq in [&["dep", "add", "sp-a", "sp-b", "--type", "related"][..], &["dep", "list", "sp-a", "--direction=up", "--json"], &["history", "sp-a", "--events", "--json"]] {
+            assert_eq!(door(&v(bdq), None), Door::Bdq, "{bdq:?}");
         }
     }
 }

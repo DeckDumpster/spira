@@ -1,0 +1,192 @@
+//! Completions as a source: a task that starts a unit hears its own `unit.ran` through the
+//! journal, on the virtual clock, and recognises it by the unit's name, never another task's.
+
+use std::sync::Arc;
+
+use runtime::conformance::trace;
+use runtime::host::{EffectRunner, Submit, VirtualDriver};
+use runtime::journal::Journal;
+use runtime::pools::EffectClass;
+use runtime::ports::{Clock, VirtualClock};
+use runtime::sources::{ScriptedSource, Sources, UnitRanSource, UNITS_STREAM};
+use runtime::units::{self, Exit, ScriptedUnits, UnitRan, UnitSpec, UNIT_RAN, UNIT_START};
+use runtime::{Command, Ctx, EffectSpec, Engine, Event, EventKind, EventKindTag, Handler, MemJournal, Projection, Registration, EFFECT_SUCCEEDED};
+
+/// A P2-shaped stub: `go <task>` starts one unit under the naming rule; its `unit.ran` ends it.
+struct Machine {
+    task: &'static str,
+    key: &'static str,
+}
+
+impl Handler for Machine {
+    fn interests(&self) -> &[EventKindTag] {
+        &["go", UNIT_RAN, EFFECT_SUCCEEDED]
+    }
+
+    fn handle(&self, ctx: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+        match ev.kind.tag.as_str() {
+            "go" if ev.kind.body == self.task => {
+                let spec = UnitSpec { task: self.task.into(), key: self.key.into(), argv: vec![format!("/bin/{}", self.task)], env: vec![], cwd: None };
+                vec![Command::Effect(EffectSpec { name: UNIT_START.into(), input: serde_json::to_string(&spec).unwrap(), deadline_ms: 5_000 })]
+            }
+            UNIT_RAN => match UnitRan::from_event_kind(&ev.kind).and_then(|r| r.key_for(self.task).map(|k| (k, r.exit))) {
+                Some((k, exit)) => vec![Command::Emit(EventKind::new("done", &format!("{}:{k}:{exit:?}@{}", self.task, ctx.now())))],
+                None => vec![],
+            },
+            _ => vec![],
+        }
+    }
+}
+
+struct UnitRunner(Arc<ScriptedUnits>);
+
+impl EffectRunner for UnitRunner {
+    fn run(&self, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        units::effect(&*self.0, &spec.name, &spec.input)
+    }
+
+    fn class(&self, _: &EffectSpec) -> EffectClass {
+        EffectClass::Unit
+    }
+}
+
+fn tags(j: &dyn Journal, tag: &str) -> Vec<(String, String, u64)> {
+    trace(j).into_iter().filter(|t| t.2 == tag).map(|t| (t.1, t.3, t.4)).collect()
+}
+
+#[test]
+fn each_task_hears_its_own_units_end_and_not_another_tasks() {
+    let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(0));
+    let c: Arc<dyn Clock> = Arc::new(clock.clone());
+    let scripted = Arc::new(ScriptedUnits::new(c.clone()));
+    scripted.script("alpha", 5_000, Exit::Code(0));
+    scripted.script("beta", 9_000, Exit::Code(3));
+    let regs = vec![Registration::new("alpha", Machine { task: "alpha", key: "a1" }), Registration::new("beta", Machine { task: "beta", key: "b1" })];
+    let engine = Engine::open(j.clone(), c.clone(), regs, 1).unwrap();
+    let mut sources = Sources::default();
+    let go = |at: u64, task: &str| (at, Submit::new(&format!("go-{task}"), "s", EventKind::new("go", task)));
+    sources.register(Box::new(ScriptedSource::new("go", c.clone(), vec![go(100, "alpha"), go(200, "beta")]))).unwrap();
+    sources.register(Box::new(UnitRanSource::scripted("unit-ran", scripted.clone(), c.clone()))).unwrap();
+    let mut v = VirtualDriver::new(engine, clock.clone(), Arc::new(UnitRunner(scripted.clone()))).with_sources(sources).unwrap();
+    v.run_until(60_000).unwrap();
+
+    assert_eq!(scripted.calls(), ["start spira-run-alpha-a1.service", "start spira-run-beta-b1.service"]);
+    let ran = tags(&*j, UNIT_RAN);
+    assert_eq!(ran.iter().map(|(s, _, at)| (s.as_str(), *at)).collect::<Vec<_>>(), [(UNITS_STREAM, 5_100), (UNITS_STREAM, 9_200)], "each end submitted once, when the virtual clock reaches it");
+    let done: Vec<String> = tags(&*j, "done").into_iter().map(|(_, b, _)| b).collect();
+    assert_eq!(done, ["alpha:a1:Code(0)@5100", "beta:b1:Code(3)@9200"], "both handlers saw both ends; each acted only on its own");
+}
+
+#[test]
+fn a_polled_source_does_not_run_under_virtual_time() {
+    let clock = VirtualClock::new(0);
+    let c: Arc<dyn Clock> = Arc::new(clock.clone());
+    let mut sources = Sources::default();
+    sources.register(Box::new(UnitRanSource::polled("unit-ran", Arc::new(ScriptedUnits::new(c.clone())), c.clone(), std::time::Duration::from_millis(5)))).unwrap();
+    let engine = Engine::open(MemJournal::new(), c.clone(), vec![], 1).unwrap();
+    let err = VirtualDriver::new(engine, clock, Arc::new(UnitRunner(Arc::new(ScriptedUnits::new(c))))).with_sources(sources).err().expect("refused");
+    assert!(err.0.contains("unit-ran"), "{err}");
+}
+
+#[test]
+fn a_polled_source_on_its_own_thread_submits_each_end_once() {
+    let clock = VirtualClock::new(0);
+    let c: Arc<dyn Clock> = Arc::new(clock.clone());
+    let scripted = Arc::new(ScriptedUnits::new(c.clone()));
+    scripted.script("alpha", 10, Exit::Code(0));
+    units::effect(&*scripted, UNIT_START, r#"{"task":"alpha","key":"k","argv":["/bin/a"],"env":[],"cwd":null}"#).unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    let mut sources = Sources::default();
+    sources.register(Box::new(UnitRanSource::polled("unit-ran", scripted, c, std::time::Duration::from_millis(5)))).unwrap();
+    let handles = sources.start(tx).unwrap();
+    clock.advance_to(10);
+    let s = rx.blocking_recv().expect("the end arrives");
+    assert_eq!((s.id.as_str(), s.stream.as_str()), ("unit.ran/spira-run-alpha-k.service/10", UNITS_STREAM));
+    assert_eq!(UnitRan::from_event_kind(&s.kind).and_then(|r| r.key_for("alpha")).as_deref(), Some("k"));
+    std::thread::sleep(std::time::Duration::from_millis(30)); // clock-safe: a second drain must find nothing new
+    assert!(rx.try_recv().is_err(), "an end is submitted once");
+    drop(rx);
+    handles.into_iter().for_each(|h| h.join().unwrap());
+}
+
+#[test]
+fn a_scope_runs_tails_ride_its_unit_ran_through_the_source() {
+    let clock = VirtualClock::new(0);
+    let c: Arc<dyn Clock> = Arc::new(clock.clone());
+    let scripted = Arc::new(ScriptedUnits::new(c.clone()));
+    scripted.script("build", 40, Exit::Code(1));
+    scripted.script_output("build", b"compiling", b"error[E0308]");
+    scripted.script("plain", 40, Exit::Code(0));
+    let mut sp = units::ScopeSpec::new(UnitSpec { task: "build".into(), key: "k".into(), argv: vec!["/bin/cargo".into()], env: vec![], cwd: None });
+    sp.cpu_quota_pct = Some(200);
+    units::effect(&*scripted, units::UNIT_RUN_SCOPE, &serde_json::to_string(&sp).unwrap()).unwrap();
+    units::effect(&*scripted, UNIT_START, r#"{"task":"plain","key":"k","argv":["/bin/p"],"env":[],"cwd":null}"#).unwrap();
+    let mut src = UnitRanSource::scripted("unit-ran", scripted.clone(), c);
+    let s = runtime::sources::Source::scripted(&mut src).unwrap();
+    assert_eq!(s.next_at(), Some(40));
+    clock.advance_to(40);
+    let due = s.take_due(40);
+    assert_eq!(due.len(), 2);
+    let out = units::RanOutput::from_event_kind(&due[0].kind).unwrap();
+    assert_eq!((out.stdout_tail.as_deref(), out.stderr_tail.as_deref()), (Some("compiling"), Some("error[E0308]")));
+    assert_eq!(UnitRan::from_event_kind(&due[0].kind).and_then(|r| r.key_for("build")).as_deref(), Some("k"), "a reader that knows nothing of tails still reads the run");
+    assert!(units::RanOutput::from_event_kind(&due[1].kind).unwrap().is_empty(), "a plain start carries no tails");
+    assert!(!due[1].kind.body.contains("tail"));
+}
+
+/// A P2-shaped stub that owns one stream and answers only what arrives on it: `go` starts its
+/// unit, and its own `unit.ran` moves it to `done`, journaled on that same stream.
+struct Owned {
+    task: &'static str,
+    stream: &'static str,
+}
+
+impl Handler for Owned {
+    fn interests(&self) -> &[EventKindTag] {
+        &["go", UNIT_RAN]
+    }
+
+    fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+        if ev.stream.0 != self.stream {
+            return vec![];
+        }
+        match ev.kind.tag.as_str() {
+            "go" => {
+                let spec = UnitSpec { task: self.task.into(), key: "k".into(), argv: vec![format!("/bin/{}", self.task)], env: vec![], cwd: None };
+                vec![Command::Effect(EffectSpec { name: UNIT_START.into(), input: serde_json::to_string(&spec).unwrap(), deadline_ms: 5_000 })]
+            }
+            UNIT_RAN => match UnitRan::from_event_kind(&ev.kind).and_then(|r| r.key_for(self.task)) {
+                Some(k) => vec![Command::Emit(EventKind::new("done", &format!("{}:{k}", self.task)))],
+                None => vec![],
+            },
+            _ => vec![],
+        }
+    }
+}
+
+#[test]
+fn a_routed_unit_ran_lands_on_its_tasks_own_stream_and_moves_only_that_task() {
+    let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(0));
+    let c: Arc<dyn Clock> = Arc::new(clock.clone());
+    let scripted = Arc::new(ScriptedUnits::new(c.clone()));
+    scripted.script("alpha", 5_000, Exit::Code(0));
+    scripted.script("gamma", 6_000, Exit::Code(0));
+    let regs = vec![Registration::new("alpha", Owned { task: "alpha", stream: "alpha-s" }), Registration::new("beta", Owned { task: "beta", stream: "beta-s" })];
+    let engine = Engine::open(j.clone(), c.clone(), regs, 1).unwrap();
+    units::effect(&*scripted, UNIT_START, r#"{"task":"gamma","key":"g","argv":["/bin/g"],"env":[],"cwd":null}"#).unwrap();
+    let mut sources = Sources::default();
+    sources.register(Box::new(ScriptedSource::new("go", c.clone(), vec![(100, Submit::new("go-alpha", "alpha-s", EventKind::new("go", "")))]))).unwrap();
+    let streams = |task: &str| match task {
+        "alpha" => Some("alpha-s".to_string()),
+        "beta" => Some("beta-s".to_string()),
+        _ => None,
+    };
+    sources.register(Box::new(UnitRanSource::scripted("unit-ran", scripted.clone(), c.clone()).routed(streams))).unwrap();
+    let mut v = VirtualDriver::new(engine, clock.clone(), Arc::new(UnitRunner(scripted.clone()))).with_sources(sources).unwrap();
+    v.run_until(60_000).unwrap();
+
+    let ran: Vec<String> = tags(&*j, UNIT_RAN).into_iter().map(|(s, _, _)| s).collect();
+    assert_eq!(ran, ["alpha-s", UNITS_STREAM], "alpha's run on alpha's stream; gamma, no task the resolver knows, on units");
+    let done: Vec<(String, String)> = tags(&*j, "done").into_iter().map(|(s, b, _)| (s, b)).collect();
+    assert_eq!(done, [("alpha-s".to_string(), "alpha:k".to_string())], "alpha moved on its own stream; beta, owning another stream, did not");
+}

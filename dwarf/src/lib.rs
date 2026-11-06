@@ -14,6 +14,7 @@ pub mod fast_tier;
 pub mod rune_keys;
 pub mod ledger;
 pub mod naming;
+pub mod ops_sweep;
 pub mod ports;
 pub mod restrict;
 pub mod run;

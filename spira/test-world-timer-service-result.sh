@@ -8,6 +8,8 @@
 # ----------------------
 # sp-2z9y: world.sh status reported a timer as active while its service had failed 12/12
 # times. A timer that fires faithfully into a service that always fails reads as healthy.
+# Since the loop became scheduler tasks (sp-ipwlic), the one timer left is the watchdog's
+# (S15), which status prints on its keep list; its row carries the annotation.
 #
 # TWO PROPERTIES (law-absence-needs-a-positive-control):
 #
@@ -98,20 +100,20 @@ world_status() {
 echo
 echo "timer with last service result = timeout:"
 
-write_sc "spira-watchtower-prod.timer" "timeout"
+write_sc "spira-watchdog-prod.timer" "timeout"
 out="$(world_status)"
-want "timer row shows the timer name"        "spira-watchtower-prod.timer" "$out"
+want "timer row shows the timer name"        "spira-watchdog-prod.timer" "$out"
 want "timer row shows 'active'"              "active"                       "$out"
 want "timer row annotates the svc result"    "svc: timeout"                 "$out"
-want "show was called for the service"       "show spira-watchtower-prod.service" "$(cat "$CALLS")"
+want "show was called for the service"       "show spira-watchdog-prod.service" "$(cat "$CALLS")"
 
 echo
 echo "timer with last service result = exit-code:"
 
-write_sc "spira-sentinel-prod.timer" "exit-code"
+write_sc "spira-watchdog-prod.timer" "exit-code"
 out="$(world_status)"
-want "exit-code result annotated"    "svc: exit-code"                "$(printf '%s' "$out" | grep spira-sentinel-prod)"
-want "show called for sentinel svc"  "show spira-sentinel-prod.service" "$(cat "$CALLS")"
+want "exit-code result annotated"    "svc: exit-code"                "$(printf '%s' "$out" | grep spira-watchdog-prod)"
+want "show called for the watchdog svc" "show spira-watchdog-prod.service" "$(cat "$CALLS")"
 
 # --------------------------------------------------------------------------------------
 # 2. TIMER WITH A SUCCESSFUL SERVICE RESULT — no annotation
@@ -122,7 +124,7 @@ want "show called for sentinel svc"  "show spira-sentinel-prod.service" "$(cat "
 echo
 echo "timer with last service result = success (no annotation):"
 
-write_sc "spira-watchtower-prod.timer" "success"
+write_sc "spira-watchdog-prod.timer" "success"
 out="$(world_status)"
 want   "timer row still shows 'active'"          "active"     "$out"
 nowant "no annotation on a successful service"   "svc:"       "$out"
@@ -130,9 +132,9 @@ nowant "no annotation on a successful service"   "svc:"       "$out"
 echo
 echo "timer with no recorded service result (no annotation):"
 
-write_sc "spira-watchtower-prod.timer" ""
+write_sc "spira-watchdog-prod.timer" ""
 out="$(world_status)"
-want   "timer still appears"                     "spira-watchtower-prod.timer" "$out"
+want   "timer still appears"                     "spira-watchdog-prod.timer" "$out"
 nowant "no annotation when result is empty"      "svc:"                        "$out"
 
 echo

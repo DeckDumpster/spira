@@ -61,6 +61,8 @@ fn read_snapshot(path: &Path) -> (String, bool) {
 
 fn sentinel_active() -> Option<bool> {
     let instance = spira_config::process::cfg("SPIRA_INSTANCE").unwrap_or_default();
+    // FORK-EDGE: needs UnitFacts to carry the unit-file state (is-enabled): an enabled timer
+    // that is inactive means the sentinel is stopped, and the Units port reads only ActiveState.
     let systemctl = env_nonempty("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string());
     let run = |verb: &str, unit: &str| {
         spira_config::bounded::bounded(&systemctl).args(["--user", verb, unit]).output().ok()
@@ -153,12 +155,7 @@ fn build_inputs(run: &str) -> (FrameInputs<'static>, String) {
     let snap = Snapshot::parse(&content);
     let now = now_epoch();
     let age_secs = snap.get("SP_AT").and_then(|v| v.parse::<i64>().ok()).map(|at| now - at);
-    let hhmm = {
-        let out = spira_config::bounded::bounded("date").arg("+%H:%M").output().ok();
-        out.filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_default()
-    };
+    let hhmm = cockpit_ops::layout::local_time(now).map(|t| t.hhmm()).unwrap_or_default();
     let snap_stale_s = spira_config::process::cfg_parse::<i64>("SPIRA_SNAP_STALE_S").unwrap_or(60);
     let trace_lines = spira_config::process::cfg_parse::<i64>("COCKPIT_TRACE_LINES").unwrap_or(2);
 
@@ -327,6 +324,7 @@ fn main() {
                 }
                 if config_failed || (!conf_file.is_empty() && conf_mtime(&conf_file) != conf_mtime_0) {
                     eprintln!("health: config changed or unresolved — restarting");
+                    // FORK-EDGE: machine leg (catalogue phase) — the pane re-execs itself in place.
                     let exe = std::env::current_exe().unwrap_or_else(|_| "health".into());
                     let _ = Command::new(exe).arg("loop").exec_replace();
                 }

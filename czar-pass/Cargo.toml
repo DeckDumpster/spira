@@ -10,6 +10,11 @@ serde_json = "1"
 spira-otel = { path = "../spira-otel" }
 reconciler-engine = { path = "../reconciler-engine" }
 tsd = { path = "../tsd" }
+forge = { path = "../forge" }
+runtime = { path = "../runtime" }
+store-view = { path = "../store-view" }
+incident = { path = "../incident" }
+serde = { version = "1", features = ["derive"] }
 
 [profile.release]
 opt-level = "z"

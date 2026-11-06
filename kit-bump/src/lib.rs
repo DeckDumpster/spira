@@ -84,6 +84,18 @@ pub fn newest_release(index: &str) -> Option<String> {
         .map(|(_, v)| v)
 }
 
+/// `SPIRA_KIT_SITES`: space-separated `name:manifest-file` pairs; a bare `name` reads its
+/// workspace manifest, `Cargo.toml`.
+pub fn site_specs(spec: &str) -> Vec<(String, String)> {
+    spec.split_whitespace()
+        .filter_map(|pair| match pair.split_once(':') {
+            Some((n, f)) if !n.is_empty() && !f.is_empty() => Some((n.to_string(), f.to_string())),
+            Some(_) => None,
+            None => Some((pair.to_string(), "Cargo.toml".to_string())),
+        })
+        .collect()
+}
+
 pub fn title(site: &Site, crate_name: &str, release: &str, breaking: bool) -> String {
     if breaking {
         format!("upgrade {crate_name} to {release} (breaking) in {}", site.name)

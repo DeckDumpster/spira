@@ -6,6 +6,12 @@ use crate::Clock;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+/// Whether `repo` has a round open (`queue round status`'s `round=open`), from the store's
+/// round view in-process.
+pub fn round_open_in(views: &store_view::Projection, repo: &str) -> Result<bool, String> {
+    views.round_view(repo).map(|r| !r.value.rounds.is_empty()).map_err(|e| format!("the round view of {repo}: {e}"))
+}
+
 pub trait Sim {
     /// Whether a round VM pass is certifying right now.
     fn round_open(&mut self) -> Result<bool, String>;
@@ -46,25 +52,47 @@ pub fn slowest_phase(exec_log: &str) -> Option<(String, u64)> {
         .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
 }
 
+/// What a pass does before any run, from the round state: `None` runs the scenario.
+pub fn gate(round_open: Result<bool, String>) -> Option<Outcome> {
+    match round_open {
+        Ok(false) => None,
+        Ok(true) => Some(Outcome::Skipped),
+        Err(e) => Some(Outcome::Failed(format!("round state unknown, run withheld: {e}"))),
+    }
+}
+
+/// The next move after run number `attempt` ended with `result` in `millis`.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Step {
+    Done(Outcome),
+    /// The fixture did not start and attempts remain: back off, then run again.
+    Retry,
+}
+
+pub fn judge(result: Result<String, String>, millis: u64, attempt: usize) -> Step {
+    match result {
+        Ok(log) => Step::Done(Outcome::Measured { millis, slowest: slowest_phase(&log) }),
+        Err(e) if is_fixture_failure(&e) && attempt < FIXTURE_ATTEMPTS => Step::Retry,
+        Err(e) if is_fixture_failure(&e) => Step::Done(Outcome::FixtureDown(format!("{e} (after {attempt} attempts)"))),
+        Err(e) => Step::Done(Outcome::Failed(e)),
+    }
+}
+
 pub fn measure(clock: &dyn Clock, sim: &mut dyn Sim) -> Outcome {
-    match sim.round_open() {
-        Ok(false) => {}
-        Ok(true) => return Outcome::Skipped,
-        Err(e) => return Outcome::Failed(format!("round state unknown, run withheld: {e}")),
+    if let Some(o) = gate(sim.round_open()) {
+        return o;
     }
     let mut attempt = 1;
     loop {
         let t0 = clock.now_ms();
         let r = sim.run();
         let millis = clock.now_ms().saturating_sub(t0);
-        match r {
-            Ok(log) => return Outcome::Measured { millis, slowest: slowest_phase(&log) },
-            Err(e) if is_fixture_failure(&e) && attempt < FIXTURE_ATTEMPTS => {
+        match judge(r, millis, attempt) {
+            Step::Done(o) => return o,
+            Step::Retry => {
                 attempt += 1;
                 sim.backoff();
             }
-            Err(e) if is_fixture_failure(&e) => return Outcome::FixtureDown(format!("{e} (after {attempt} attempts)")),
-            Err(e) => return Outcome::Failed(e),
         }
     }
 }
@@ -206,6 +234,29 @@ pub fn stderr_tail(text: &str) -> String {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    struct Store(String);
+    impl spira_config::lc_call::Transport for Store {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+            let out = if argv[0] == "rc" { self.0.clone() } else { "[]".to_string() };
+            Ok(spira_config::lc_call::Reply { code: 0, out, err: String::new() })
+        }
+    }
+
+    #[test]
+    fn a_round_is_open_when_the_store_view_holds_one_and_not_after_it_landed() {
+        let views = |state: &str| {
+            let store = serde_json::json!({"ok": {"list_rev": 2, "items": [{"key": "batches/spira/r1", "create_rev": {"main": 1},
+                "value": {"data": {"batch_id": "r1", "state": state, "repo": "spira", "round": {"head": "h", "members": "sp-a:t"}}}}]}});
+            let client = spira_config::lc_call::LcClient::over(std::sync::Arc::new(Store(store.to_string())), true);
+            let p = store_view::Projection::new(client, std::time::Duration::from_secs(60), std::sync::Arc::new(std::time::Instant::now));
+            p.load().unwrap();
+            p
+        };
+        assert_eq!(round_open_in(&views("CI_RUNNING"), "spira"), Ok(true));
+        assert_eq!(round_open_in(&views("LANDED"), "spira"), Ok(false));
+        assert_eq!(round_open_in(&views("CI_RUNNING"), "other"), Ok(false));
+    }
 
     struct Stub(Cell<u64>);
     impl Clock for Stub {

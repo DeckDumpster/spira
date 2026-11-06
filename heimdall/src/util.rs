@@ -144,6 +144,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 pub fn iso_display(epoch: i64, tz: &str) -> String {
     let mut env = BTreeMap::new();
     env.insert("TZ".to_string(), tz.to_string());
+    // FORK-EDGE: date — an IANA zone needs a tz library to render in-process
     let o = run(Spec { prog: "date", args: vec!["-d".into(), format!("@{epoch}"), "+%Y-%m-%d %H:%M %Z".into()], env: Some(&env), cwd: None, stdin: None, timeout: Some(Duration::from_secs(5)) });
     if o.success() && !o.stdout.trim().is_empty() {
         o.text()

@@ -4,6 +4,7 @@
 use crate::corpus::{Corpus, Suite};
 use crate::glob::case_match;
 use crate::Refusal;
+use std::collections::BTreeSet;
 
 /// One changed path.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -272,10 +273,17 @@ pub fn select(
     // 2. Covers match.
     let mut selected: Vec<String> = Vec::new();
     let mut unmapped: Vec<&Change> = Vec::new();
+    let mut log: Vec<String> = Vec::new();
     for c in &live {
         let f = c.path.as_str();
         let mut hit = false;
         let mut fn_pairs: Vec<(&str, &str)> = Vec::new();
+        let mut fns_cache: Option<Vec<String>> = None;
+        let mut fns_of = |fns_cache: &mut Option<Vec<String>>| fns_cache.get_or_insert_with(|| fn_changed(f)).clone();
+        let narrow = function_scoped(corpus, c);
+        let narrowed = narrow.then(|| corpus.shell.affected(&fns_of(&mut fns_cache)).into_iter().collect::<BTreeSet<String>>())
+            .filter(|_| fns_cache.as_ref().is_some_and(|v| !v.is_empty() && !v.iter().any(|x| x == TOP_LEVEL)));
+        let mut cut = 0usize;
         for s in &corpus.suites {
             let Some(cov) = &s.covers else { continue };
             for pat in cov {
@@ -289,13 +297,22 @@ pub fn select(
                     // A selects-on suite's covers claims the file but selects only on its
                     // events (step 5).
                     if s.selects_on.is_empty() {
-                        push_once(&mut selected, &s.name);
+                        match &narrowed {
+                            Some(a) if !reaches(s, a) => cut += 1,
+                            _ => push_once(&mut selected, &s.name),
+                        }
                     }
                 }
             }
         }
+        if cut > 0 {
+            log.push(format!(
+                "select: {f} → function-level: {cut} suite(s) naming the file reach none of {} (over-broad-scopes #6)",
+                fns_cache.as_deref().unwrap_or_default().join(" ")
+            ));
+        }
         if !fn_pairs.is_empty() {
-            let fns = fn_changed(f);
+            let fns = fns_of(&mut fns_cache);
             let mut any = false;
             for (s, fname) in &fn_pairs {
                 if fns.iter().any(|x| x == fname) {
@@ -312,7 +329,7 @@ pub fn select(
         if let Some(reach) = &opts.reach {
             let bins = reach.bins_for(f);
             for s in &corpus.suites {
-                if s.selects_on.is_empty() && s.words.iter().any(|w| bins.contains(w)) {
+                if s.selects_on.is_empty() && s.invokes.iter().any(|w| bins.contains(w)) {
                     push_once(&mut selected, &s.name);
                 }
             }
@@ -385,7 +402,7 @@ pub fn select(
         push_once(&mut selected, &n);
     }
     let suites = tier_filter(selected);
-    let log = vec![format!("select: {} suite(s) selected", suites.len())];
+    log.push(format!("select: {} suite(s) selected", suites.len()));
     Ok(Selection {
         suites,
         mode: Mode::Diff,
@@ -424,6 +441,75 @@ pub fn report_text(unplaced: &[String], unclaimed: &[String]) -> String {
         s.push_str(&format!("unclaimed:{f}\n"));
     }
     s
+}
+
+/// The marker [`changed_scope`] names when a changed or deleted line lies outside every
+/// function: top-level code runs on every source of the file, so nothing narrows.
+pub const TOP_LEVEL: &str = "<top-level>";
+
+/// Whether a change's whole-file claims narrow to the functions it touches: a modified
+/// [`crate::shell::FUNCTION_SCOPED`] file the corpus's script graph read (over-broad-scopes #6).
+fn function_scoped(corpus: &Corpus, c: &Change) -> bool {
+    !c.added && !c.deleted && crate::shell::FUNCTION_SCOPED.contains(&c.path.as_str()) && corpus.shell.knows(&c.path)
+}
+
+/// Whether suite `s`, which names `c`'s file as a whole, is reached by the change once its
+/// claim narrows to the functions `fns` names; true whenever nothing narrows (not a
+/// function-scoped file, a diff that could not be placed, or a top-level change).
+pub fn whole_file_claim_reached(corpus: &Corpus, s: &Suite, c: &Change, fns: &[String]) -> bool {
+    if !function_scoped(corpus, c) || fns.is_empty() || fns.iter().any(|f| f == TOP_LEVEL) {
+        return true;
+    }
+    reaches(s, &corpus.shell.affected(fns))
+}
+
+/// Whether a suite calls one of `affected` (a function, or a script that reaches one).
+fn reaches(s: &Suite, affected: &BTreeSet<String>) -> bool {
+    s.words.iter().chain(s.tokens.iter()).any(|w| affected.contains(w))
+}
+
+/// [`changed_functions`] for narrowing a whole-file claim: also places pure deletions (the
+/// function holding the line before or after the cut), and names [`TOP_LEVEL`] when any change
+/// lies outside every function — so a caller never narrows past code that runs on every source.
+pub fn changed_scope(diff_u0: &str, head_text: &str) -> Vec<String> {
+    let mut owner: Vec<Option<String>> = vec![None];
+    let mut cur: Option<String> = None;
+    for line in head_text.lines() {
+        if let Some(name) = fn_def(line) {
+            cur = Some(name);
+        }
+        owner.push(cur.clone());
+        if line.starts_with('}') {
+            cur = None;
+        }
+    }
+    let at = |n: usize| owner.get(n).cloned().flatten();
+    let mut out: Vec<String> = Vec::new();
+    let mut any = false;
+    for l in diff_u0.lines().filter(|l| l.starts_with("@@")) {
+        let Some(i) = l.find('+') else { continue };
+        let spec: String = l[i + 1..].chars().take_while(|c| c.is_ascii_digit() || *c == ',').collect();
+        let mut p = spec.split(',');
+        let Some(Ok(start)) = p.next().map(|s| s.parse::<usize>()) else { continue };
+        let count = p.next().map_or(1, |c| c.parse::<usize>().unwrap_or(0));
+        any = true;
+        let lines: Vec<Option<String>> = if count == 0 {
+            // A deletion after line `start`: inside a function only when both neighbours are.
+            match (at(start), at(start + 1)) {
+                (Some(a), Some(b)) if a == b => vec![Some(a)],
+                _ => vec![None],
+            }
+        } else {
+            (start..start + count).map(at).collect()
+        };
+        for o in lines {
+            push_once(&mut out, o.as_deref().unwrap_or(TOP_LEVEL));
+        }
+    }
+    if !any {
+        return vec![];
+    }
+    out
 }
 
 /// `_fn_changed_in`: the shell functions (`name()` … `}` blocks of `head_text`) that hold a
@@ -487,3 +573,4 @@ fn fn_def(line: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests;
+

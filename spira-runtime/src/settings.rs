@@ -46,6 +46,33 @@ pub struct Settings {
     pub view: View,
     pub reconciler: Reconciler,
     pub world: World,
+    pub task_modes: std::collections::BTreeMap<String, runtime::Mode>,
+    pub control_socket: PathBuf,
+    /// Effects of each class running at once (S3).
+    pub pool_caps: runtime::pools::PoolCaps,
+    /// Every key a row of `tasks::all()` declares, with the value `from_lookup` read for it: what
+    /// a row's `build` pins, so a task is built from the `Settings` it is handed and never reaches
+    /// for the process's config itself.
+    pub task_config: std::collections::BTreeMap<String, String>,
+}
+
+/// Every class's cap, each a positive integer; a container cap over the host run ceiling refuses
+/// rather than being clamped, so the configured number is the one in force.
+fn pool_caps(get: &dyn Fn(&str) -> Result<String, String>) -> Result<runtime::pools::PoolCaps, String> {
+    use runtime::pools::HOST_RUN_CEILING;
+    let cap = |key: &str| -> Result<usize, String> { num::<usize>(key, &get(key)?) };
+    let caps = runtime::pools::PoolCaps {
+        store: cap("SPIRA_POOL_CAP_STORE")?,
+        unit: cap("SPIRA_POOL_CAP_UNIT")?,
+        git: cap("SPIRA_POOL_CAP_GIT")?,
+        forge: cap("SPIRA_POOL_CAP_FORGE")?,
+        host: cap("SPIRA_POOL_CAP_HOST")?,
+        container: cap("SPIRA_POOL_CAP_CONTAINER")?,
+    };
+    if caps.container > HOST_RUN_CEILING {
+        return Err(format!("SPIRA_POOL_CAP_CONTAINER is {}, over the host run ceiling of {HOST_RUN_CEILING} — refusing", caps.container));
+    }
+    Ok(caps)
 }
 
 const DEFAULT_FORGET_SECS: u64 = 86_400;
@@ -55,88 +82,69 @@ fn num<T: std::str::FromStr + PartialOrd + Default>(key: &str, raw: &str) -> Res
 }
 
 impl Settings {
-    /// Every key `from_lookup` reads; each must be registered in spira/conf.d.
-    pub const KEYS: &'static [&'static str] = &[
+    /// The keys the service reads for itself and for what its tasks share (the journal, the
+    /// world, the forge). A task's own keys are on its row in `tasks::all()`.
+    pub const SERVICE_KEYS: &'static [&'static str] = &[
         "SPIRA_LC_SOCKET",
         "SPIRA_RUN",
-        "SPIRA_RUNTIME_ROUND_DUTY_SECS",
-        "SPIRA_ROUND_MIN",
-        "SPIRA_ROUND_MAX_OPEN",
-        "SPIRA_ROUND_DUE_REMIND",
-        "SPIRA_ROUND_IDLE_CUT",
+        "SPIRA_RUNTIME_STALL_LIMIT",
+        "SPIRA_METRICS_ENDPOINT",
         "SPIRA_QUEUE_DIR",
         "SPIRA_REPO_MAP",
         "SPIRA_HOME_REPO",
         "SPIRA_CONCIERGE_INBOX",
-        "SPIRA_RUNTIME_HEARTBEAT_URL",
-        "SPIRA_RUNTIME_HEARTBEAT_SECS",
-        "SPIRA_RUNTIME_STALL_LIMIT",
-        "SPIRA_METRICS_ENDPOINT",
-        "SPIRA_RUNTIME_DESIGN_ASKS_SECS",
-        "SPIRA_DESIGN_ASKS_REPEAT",
-        "SPIRA_RUNTIME_BRAIN_DIRTY_SECS",
-        "SPIRA_BRAIN_DIRTY_AGE",
+        "SPIRA_MAIL",
+        "SPIRA_ASK_LABEL",
         "SPIRA_WIKI",
-        "SPIRA_RUNTIME_SUPERSEDE_DUTY_SECS",
-        "SPIRA_CONCIERGE_INBOX_STALL",
-        "SPIRA_CONCIERGE_INBOX_BACKOFF",
-        "SPIRA_RUNTIME_PR_NOTIFY_SECS",
-        "SPIRA_PR_DEPLOY_GIVEUP",
+        "SPIRA_SCOPE_LABEL",
+        "SPIRA_DESIRED_DIR",
+        "SPIRA_VIEW_SESSION",
         "SPIRA_GH_API",
         "SPIRA_BROKER_GH_TOKEN",
         "SPIRA_BROKER_GH_CONFIG_DIR",
         "SPIRA_GH",
-        "SPIRA_RUNTIME_ASKS_SECS",
-        "SPIRA_RUNTIME_BEAD_SWEEP_SECS",
-        "SPIRA_BEAD_SWEEP_HOLD_MIN",
-        "SPIRA_BEAD_SWEEP_REWORK_MIN",
-        "SPIRA_BEAD_SWEEP_CERT_MIN",
-        "SPIRA_BEAD_SWEEP_WAIT_MIN",
-        "SPIRA_BEAD_SWEEP_BATCH_MIN",
-        "SPIRA_SCOPED_STOP_REVIEW_SECS",
-        "SPIRA_MAIL",
-        "SPIRA_ASK_LABEL",
-        "SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS",
-        "SPIRA_LOCAL_BACKLOG_COUNT",
-        "SPIRA_LOCAL_BACKLOG_AGE",
-        "SPIRA_RUNTIME_REPO_EVENTS_SECS",
-        "SPIRA_RUNTIME_OVERRIDES_SECS",
-        "SPIRA_VIEW",
-        "SPIRA_VIEW_SESSION",
-        "SPIRA_RUNTIME_VIEW_SECS",
-        "SPIRA_RUNTIME_RECONCILER_SECS",
-        "SPIRA_RUNES",
-        "SPIRA_STRANDED_RUNNER_MIN_AGE",
-        "SPIRA_LC_PASSWORD_FILE",
-        "COCKPIT_SESSIONS",
-        "COCKPIT_MAIL",
-        "SPIRA_RECONCILER_SHADOW_KINDS",
-        "SPIRA_RECONCILER_EFFECT_PASSES",
-        "SPIRA_RELEASES",
-        "SPIRA_DOLT_DATA",
-        "SPIRA_MAX_LIVE_DWARVES",
-        "SPIRA_LANES_MAX_LIVE",
-        "SPIRA_MAX_DWARVES",
-        "SPIRA_DISK_FLOOR_PCT",
-        "SPIRA_UNTAGGED_IMAGES_MAX",
-        "SPIRA_RECONCILER_GRACE_SECS",
-        "SPIRA_MAIN_HEALTH_ACTIVATION_GRACE_SECS",
-        "SPIRA_MAIN_HEALTH_FENCE_DEADLINE_SECS",
-        "SPIRA_PREFLIGHT_WALL_SECS",
-        "SPIRA_CTRL",
-        "SPIRA_INSTANCE",
-        "SPIRA_DESIRED_DIR",
-        "SPIRA_NO_PROGRESS_BREAKER_CLAIMS",
-        "SPIRA_NO_PROGRESS_BREAKER_WINDOW_MINUTES",
-        "SPIRA_RUNTIME_RECONCILER_FLOW_SECS",
-        "SPIRA_FLOW_WINDOW_HOURS",
-        "SPIRA_FLOW_BASELINE_HOURS",
-        "SPIRA_FLOW_GRACE_SECS",
-        "SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS",
-        "SPIRA_FLOW_REWORK_WINDOW_HOURS",
-        "SPIRA_FLOW_SENTINEL_PERIOD_SECS",
-        "SPIRA_SCOPE_LABEL",
+        crate::modes::KEY,
+        "SPIRA_RUNTIME_SOCKET",
+        "SPIRA_POOL_CAP_STORE",
+        "SPIRA_POOL_CAP_UNIT",
+        "SPIRA_POOL_CAP_GIT",
+        "SPIRA_POOL_CAP_FORGE",
+        "SPIRA_POOL_CAP_HOST",
+        "SPIRA_POOL_CAP_CONTAINER",
     ];
+
+    /// Every key `from_lookup` may read, each once: the service's, its real sources'
+    /// (`sources::KEYS`, read by `sources::real`, not by `from_lookup`) and every task's. Each must be
+    /// registered in spira/conf.d.
+    pub fn keys() -> Vec<&'static str> {
+        let mut out: Vec<&'static str> = vec![];
+        for k in Self::SERVICE_KEYS.iter().chain(crate::sources::KEYS).chain(crate::tasks::all().flat_map(|t| t.keys.iter().flat_map(|ks| ks.iter()))) {
+            if !out.contains(k) {
+                out.push(k);
+            }
+        }
+        out
+    }
+
+    /// Every key a row in `tasks::pending()` declares, each once. None is read until its row is
+    /// ported, but each is registered config already, so porting a row changes no registry.
+    pub fn pending_keys() -> Vec<&'static str> {
+        let mut out: Vec<&'static str> = vec![];
+        for k in crate::tasks::pending().flat_map(|t| t.keys.iter().flat_map(|ks| ks.iter())) {
+            if !out.contains(k) {
+                out.push(k);
+            }
+        }
+        out
+    }
+
+    /// Keys a pending row may declare that the one config door cannot carry, so none is
+    /// registered: the config file spells a field `SPIRA_<FIELD>`, or `COCKPIT_<FIELD>` when the
+    /// field starts `cockpit_`, so a key such as `BD_TIMEOUT` or `SPIRA_COCKPIT_TICK` has no
+    /// field that reads back as it. A row's port renames or drops each before the row moves to
+    /// `TASKS`, where `from_lookup` would refuse it. Empty since every row that declared one
+    /// (`BD_TIMEOUT`, the `SPIRA_COCKPIT_*` keys, the retired `SPIRA_LC_BIN`) dropped it.
+    pub const UNDECLARABLE: &'static [&'static str] = &[];
 
     pub fn load() -> Result<Settings, String> {
         let mut settings = Self::from_lookup(&cfg)?.with_environment(&|k| std::env::var(k).ok().filter(|v| !v.is_empty()))?;
@@ -156,8 +164,12 @@ impl Settings {
         Ok(self)
     }
 
-    pub fn from_lookup(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Settings, String> {
-        let unresolved: Vec<&str> = Self::KEYS.iter().copied().filter(|k| get(k).is_err()).collect();
+    /// Reads only the keys `keys()` names: one read of any other is refused, so a key cannot be
+    /// read without `check-config` checking it.
+    pub fn from_lookup(lookup: &dyn Fn(&str) -> Result<String, String>) -> Result<Settings, String> {
+        let known = Self::keys();
+        let get = |k: &str| if known.contains(&k) { lookup(k) } else { Err(format!("{k} is read but neither the service nor any task declares it")) };
+        let unresolved: Vec<&str> = known.iter().copied().filter(|k| get(k).is_err()).collect();
         if !unresolved.is_empty() {
             return Err(format!("unregistered or unresolved config keys: {} — refusing", unresolved.join(", ")));
         }
@@ -245,7 +257,16 @@ impl Settings {
             export_bin: "tsd-lifecycle-export".into(),
             ..World::default()
         };
-        Ok(Settings {
+        let control_socket = get("SPIRA_RUNTIME_SOCKET")?;
+        if control_socket.trim().is_empty() {
+            return Err("SPIRA_RUNTIME_SOCKET is empty — scheduler status|halt|resume has no door".into());
+        }
+        let task_config = crate::tasks::all().flat_map(|t| t.keys.iter().flat_map(|ks| ks.iter())).map(|k| Ok((k.to_string(), get(k)?))).collect::<Result<_, String>>()?;
+        let settings = Settings {
+            task_config,
+            pool_caps: pool_caps(&get)?,
+            task_modes: crate::modes::parse(&get(crate::modes::KEY)?)?,
+            control_socket: PathBuf::from(control_socket),
             round_duty,
             inbox_keeper,
             pr_notify,
@@ -268,7 +289,9 @@ impl Settings {
             metrics_endpoint: Some(get("SPIRA_METRICS_ENDPOINT")?).filter(|e| !e.trim().is_empty()),
             run_dir,
             lc_socket: PathBuf::from(socket),
-        })
+        };
+        crate::modes::apply(crate::tasks::all().map(|t| (t.build)(&settings)).collect(), &settings.task_modes)?;
+        Ok(settings)
     }
 
     /// A ping must finish well inside one beat.
@@ -286,18 +309,47 @@ impl Settings {
 
     /// FNV-1a over the pinned values, so two records with one hash ran on one configuration.
     pub fn hash(&self) -> String {
-        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.repo_events, self.overrides, self.view, self.reconciler, self.reconciler_flow, self.world);
+        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.repo_events, self.overrides, self.view, self.reconciler, self.reconciler_flow, self.world, self.task_modes, self.control_socket.display(), self.pool_caps);
         let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
         format!("{h:016x}")
     }
+}
+
+/// A complete `Settings` from test values, none of them a shipped default.
+#[cfg(test)]
+pub(crate) fn fixture() -> Settings {
+    Settings::from_lookup(&tests::lookup("7")).expect("fixture settings")
+}
+
+/// Resolves this test process's config door (`$SPIRA_TOML`, `$SPIRA_HOME`) over the complete
+/// fixture, once, before anything reads it: a ported row whose `build` pins its keys through
+/// `spira_config::process::cfg` (family A's `kit::pin`) then builds under `from_lookup` in a
+/// test as it does in the service.
+#[cfg(test)]
+pub(crate) fn fixture_config_door() {
+    static DOOR: std::sync::OnceLock<testkit::TempDir> = std::sync::OnceLock::new();
+    DOOR.get_or_init(|| {
+        let dir = testkit::TempDir::new("runtime-settings-door");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_LC_SOCKET", "/d/sock")]);
+        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        // The door resolves once per process and keeps what it read, so the environment
+        // needs to name the fixture only while it does.
+        let _env = testkit::env(&[("SPIRA_TOML", Some(&toml.to_string_lossy())), ("SPIRA_HOME", Some(&home.to_string_lossy()))]);
+        spira_config::process::config().expect("the complete fixture resolves");
+        dir
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn lookup(secs: &'static str) -> impl Fn(&str) -> Result<String, String> {
+    pub(crate) fn lookup(secs: &'static str) -> impl Fn(&str) -> Result<String, String> {
+        super::fixture_config_door();
         move |k| {
+            if k == crate::modes::KEY {
+                return Ok(fixture_modes());
+            }
             Ok(match k {
                 "SPIRA_RUNTIME_HEARTBEAT_URL" => "http://127.0.0.1:9/ping",
                 "SPIRA_RUNTIME_HEARTBEAT_SECS" => secs,
@@ -315,11 +367,81 @@ mod tests {
                 "SPIRA_SCOPE_LABEL" => "/q",
                 "SPIRA_VIEW" => "/bin/view",
                 "SPIRA_VIEW_SESSION" => "pit",
+                "SPIRA_RUNTIME_SOCKET" => "/d/control.sock",
+                "SPIRA_POOL_CAP_STORE" => "41",
+                "SPIRA_POOL_CAP_UNIT" => "42",
+                "SPIRA_POOL_CAP_GIT" => "43",
+                "SPIRA_POOL_CAP_FORGE" => "44",
+                "SPIRA_POOL_CAP_HOST" => "45",
+                "SPIRA_POOL_CAP_CONTAINER" => "2",
                 k if reconciler_fixture(k).is_some() => reconciler_fixture(k).unwrap_or_default(),
+                "BD_TIMEOUT" => "30",
+                "SPIRA_COCKPIT_TICK" => "5",
+                "SPIRA_COCKPIT_FORCE" => "",
+                "SPIRA_COCKPIT_WINDOW_HOURS" => "24",
+                "SPIRA_COCKPIT_SLOW_CONCURRENT" => "1",
+                "SPIRA_LC_BIN" => "spira-lc",
+                k if row_declares(k) => return complete_fixture(k).ok_or_else(|| format!("{k} has no value in spira/testlib/complete.toml")),
                 _ => return Err(format!("{k} unknown")),
             }
             .to_string())
         }
+    }
+
+    /// Whether a row in `tasks::all()` or `tasks::pending()` declares `k`: the keys whose value is
+    /// the complete fixture's, so moving a row from `PENDING` to `TASKS` keeps its keys resolved.
+    fn row_declares(k: &str) -> bool {
+        crate::sources::KEYS.contains(&k) || crate::tasks::all().chain(crate::tasks::pending()).any(|t| t.keys.iter().any(|ks| ks.contains(&k)))
+    }
+
+    /// The fixture's task modes: `asks` and `view` observe, and every other task, ported or
+    /// pending, acts, so a row moved from `PENDING` to `TASKS` is already named here.
+    fn fixture_modes() -> String {
+        let mode = |n: &str| if n == "asks" || n == "view" { "observe" } else { "act" };
+        crate::tasks::all().chain(crate::tasks::pending()).map(|t| format!("{}={}", t.name, mode(t.name))).collect::<Vec<_>>().join(" ")
+    }
+
+    /// `key`'s value under `[spira]` in the complete fixture (`spira/testlib/complete.toml`), its
+    /// quotes stripped: the fixture values of the keys pending rows declare live there, once.
+    pub(crate) fn complete_fixture(key: &str) -> Option<String> {
+        let field = spira_config::registry::field_of(key);
+        let text = spira_config::process::complete_fixture_text();
+        let mut in_spira = false;
+        for line in text.lines().map(str::trim) {
+            if line.starts_with('[') {
+                in_spira = line == "[spira]";
+            } else if let Some((k, v)) = line.split_once('=').filter(|_| in_spira) {
+                if k.trim() == field {
+                    let v = v.trim();
+                    return Some(v.strip_prefix('"').and_then(|v| v.strip_suffix('"')).unwrap_or(v).to_string());
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn every_key_a_pending_row_declares_is_registered_and_the_fixture_resolves_it() {
+        assert_eq!(complete_fixture("SPIRA_POOL_CAP_CONTAINER").as_deref(), Some("2"), "the fixture reader must find a known key");
+        assert_eq!(complete_fixture("SPIRA_PLANTED_NOT_A_KEY"), None);
+        let pending = Settings::pending_keys();
+        let conf_d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d");
+        let unregistered: Vec<&str> = pending.iter().copied().filter(|k| !conf_d.join(k).is_file() && !Settings::UNDECLARABLE.contains(k)).collect();
+        assert!(unregistered.is_empty(), "keys pending rows declare that spira/conf.d does not register: {unregistered:?}");
+        let stale: Vec<&&str> = Settings::UNDECLARABLE.iter().filter(|k| conf_d.join(k).is_file() || !pending.contains(k)).collect();
+        assert!(stale.is_empty(), "an undeclarable key is now registered or no longer declared: {stale:?}");
+        let get = lookup("7");
+        let unresolved: Vec<&str> = Settings::keys().into_iter().chain(pending).filter(|k| get(k).is_err()).collect();
+        assert!(unresolved.is_empty(), "keys of CORE and the pending rows the settings fixture does not resolve: {unresolved:?}");
+    }
+
+    #[test]
+    fn every_key_a_ported_or_pending_row_declares_resolves_in_the_fixture() {
+        let get = lookup("7");
+        let rows: Vec<&str> = crate::tasks::all().chain(crate::tasks::pending()).flat_map(|t| t.keys.iter().flat_map(|ks| ks.iter().copied())).collect();
+        assert!(rows.len() > Settings::pending_keys().len(), "the scan must see the ported rows' keys as well as the pending ones");
+        let unresolved: Vec<&str> = rows.into_iter().filter(|k| get(k).is_err()).collect();
+        assert!(unresolved.is_empty(), "keys of rows in tasks::all() or tasks::pending() the settings fixture does not resolve: {unresolved:?}");
     }
 
     /// Values for the keys the reconciler reads; none is the shipped default.
@@ -345,14 +467,14 @@ mod tests {
         assert_eq!((s.interval_ms, s.rules.grace_secs, s.rules.effect_passes), (7000, 13, 3));
         assert_eq!(s.values.get("SPIRA_DISK_FLOOR_PCT").map(String::as_str), Some("11"));
         for k in reconciler::Config::KEYS {
-            assert!(Settings::KEYS.contains(k), "{k} is read by the reconciler but not checked at start");
+            assert!(Settings::keys().contains(k), "{k} is read by the reconciler but not checked at start");
         }
     }
 
     #[test]
     fn every_key_read_is_registered_in_conf_d() {
         let conf_d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d");
-        let missing: Vec<&str> = Settings::KEYS.iter().copied().filter(|k| !conf_d.join(k).is_file()).collect();
+        let missing: Vec<&str> = Settings::keys().into_iter().filter(|k| !conf_d.join(k).is_file()).collect();
         assert!(missing.is_empty(), "keys the runtime reads but spira/conf.d does not register: {missing:?}");
     }
 
@@ -434,6 +556,33 @@ mod tests {
         let base = lookup("7");
         let zero = move |k: &str| if k == "SPIRA_FLOW_WINDOW_HOURS" { Ok("0".to_string()) } else { base(k) };
         assert!(Settings::from_lookup(&zero).unwrap_err().contains("SPIRA_FLOW_WINDOW_HOURS"));
+    }
+
+    #[test]
+    fn each_task_takes_the_mode_the_table_gives_it_and_a_task_left_out_refuses_the_load() {
+        let s = Settings::from_lookup(&lookup("7")).unwrap();
+        let modes: Vec<(String, runtime::Mode)> = crate::registrations(&s).into_iter().map(|r| (r.name, r.mode)).filter(|(_, m)| *m == runtime::Mode::Observe).collect();
+        assert_eq!(modes, [("asks".to_string(), runtime::Mode::Observe), ("view".to_string(), runtime::Mode::Observe)]);
+        assert_eq!(s.control_socket, PathBuf::from("/d/control.sock"));
+        let base = lookup("7");
+        let short = move |k: &str| if k == crate::modes::KEY { Ok("heartbeat=act".to_string()) } else { base(k) };
+        let e = Settings::from_lookup(&short).unwrap_err();
+        assert!(e.contains(crate::modes::KEY) && e.contains("round-duty"), "{e}");
+    }
+
+    #[test]
+    fn each_pool_cap_reaches_its_class_and_a_container_cap_over_the_ceiling_is_refused() {
+        let s = Settings::from_lookup(&lookup("7")).unwrap();
+        assert_eq!(s.pool_caps, runtime::pools::PoolCaps { store: 41, unit: 42, git: 43, forge: 44, host: 45, container: 2 });
+        let with = |key: &'static str, val: &'static str| {
+            let base = lookup("7");
+            move |k: &str| if k == key { Ok(val.to_string()) } else { base(k) }
+        };
+        let over = Settings::from_lookup(&with("SPIRA_POOL_CAP_CONTAINER", "3")).unwrap_err();
+        assert!(over.contains("SPIRA_POOL_CAP_CONTAINER") && over.contains('2'), "{over}");
+        let zero = Settings::from_lookup(&with("SPIRA_POOL_CAP_GIT", "0")).unwrap_err();
+        assert!(zero.contains("SPIRA_POOL_CAP_GIT"), "a class capped at nothing would wedge: {zero}");
+        assert_ne!(s.hash(), Settings::from_lookup(&with("SPIRA_POOL_CAP_HOST", "9")).unwrap().hash(), "the caps are part of the pinned configuration");
     }
 
     #[test]

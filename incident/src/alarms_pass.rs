@@ -144,6 +144,18 @@ impl Primary for MailPrimary {
     }
 }
 
+/// One store call over `client`, its answer as JSON: a call with no answer is exit -1 and an
+/// answer that is not JSON is a `cannot_tell` naming what it said instead.
+pub fn lc_json(client: &spira_config::lc_call::LcClient, args: &[String]) -> (i32, Value) {
+    match client.call(args) {
+        Ok(r) => {
+            let v = serde_json::from_str(r.out.trim()).unwrap_or_else(|_| json!({ "cannot_tell": format!("spira-lc answered non-JSON: {}", r.err.trim()) }));
+            (r.code, v)
+        }
+        Err(e) => (-1, json!({ "cannot_tell": e.to_string() })),
+    }
+}
+
 pub struct Ports<'a> {
     pub lc: &'a dyn Lc,
     pub primary: &'a dyn Primary,
@@ -233,9 +245,9 @@ pub fn deliver(p: &Ports, cfg: &Config, caller: &str, kind: &str, reference: &st
 }
 
 /// A section as the snapshot shows it, and its freshness.
-struct Seen {
-    section: Section,
-    fresh: bool,
+pub struct Seen {
+    pub section: Section,
+    pub fresh: bool,
 }
 
 impl Seen {
@@ -248,7 +260,8 @@ impl Seen {
     }
 }
 
-fn seen(snap: &Value) -> Vec<Seen> {
+/// Every section the snapshot lists, parsed, with its freshness.
+pub fn seen(snap: &Value) -> Vec<Seen> {
     let items = snap.get("sections").and_then(Value::as_array).cloned().unwrap_or_default();
     items
         .iter()
@@ -315,7 +328,8 @@ fn record_facts(rec: &PassRecord, section: &str) -> Vec<String> {
     out
 }
 
-fn from_pass(rec: &PassRecord, seen: &[Seen], now: u64) -> Vec<Candidate> {
+/// The pages the goodput pass record asks for: no lever, and every action exhausted.
+pub fn from_pass(rec: &PassRecord, seen: &[Seen], now: u64) -> Vec<Candidate> {
     let find = |r: &str| seen.iter().find(|s| s.reference() == r);
     let mut out = Vec::new();
     for nl in &rec.no_lever {
@@ -347,7 +361,8 @@ fn with_evidence(mut c: Candidate, rec: &PassRecord, s: Option<&Seen>, now: u64)
     c
 }
 
-fn raised(seen: &[Seen], now: u64) -> Vec<Candidate> {
+/// The pages for conditions declared page-on-raise.
+pub fn raised(seen: &[Seen], now: u64) -> Vec<Candidate> {
     let mut out = Vec::new();
     for s in seen.iter().filter(|s| s.section.kind != alarms::NAME) {
         let Some(kind) = sections::lookup(&s.section.kind) else { continue };
@@ -382,7 +397,24 @@ pub fn deadman(switch: &dyn Switch, pass: Option<&PassRecord>, now: u64, deadman
     }
 }
 
-fn deadman_candidate(pass: Option<&PassRecord>, age: Option<u64>, deadman_secs: u64) -> Candidate {
+/// The dead-man as a scheduler hosts it: the goodput task's last fired time from `scheduler
+/// status`, not a timer unit, and `armed` false (the task absent or not acting) as the switch
+/// turned off.
+pub fn deadman_of(observability_halted: bool, armed: bool, last_fired_secs: Option<u64>, now: u64, deadman_secs: u64) -> DeadMan {
+    if observability_halted {
+        return DeadMan::Waiting(format!("{OBSERVABILITY_HALT}: the observability plane is stopped"));
+    }
+    if !armed {
+        return DeadMan::Waiting("the reconcile.goodput task is not armed in the scheduler".into());
+    }
+    match last_fired_secs.map(|at| now.saturating_sub(at)) {
+        Some(age_secs) if age_secs <= deadman_secs => DeadMan::Fresh { age_secs },
+        age_secs => DeadMan::Stale { age_secs },
+    }
+}
+
+/// The page a stale dead-man sends.
+pub fn deadman_candidate(pass: Option<&PassRecord>, age: Option<u64>, deadman_secs: u64) -> Candidate {
     let decision = Decision {
         question: "The goodput pass has stopped recording passes: restart it, or stop its timer if it is meant to be off?".into(),
         default: "The Concierge restarts the goodput pass and reads its log.".into(),
@@ -408,7 +440,8 @@ fn write_rows(path: &Path, rows: &[Row]) {
     }
 }
 
-fn message_of(c: &Candidate) -> Message {
+/// What a page sends.
+pub fn message_of(c: &Candidate) -> Message {
     Message {
         mailbox: if c.class.is_some() { "operator" } else { "concierge" }.into(),
         subject: c.subject(),
@@ -453,19 +486,29 @@ fn numeric(s: &Section, field: &str) -> Option<f64> {
 
 fn floor(p: &Ports, cfg: &Config, seen: &[Seen], pass: Option<&PassRecord>, pass_raw: &Value, now: u64, report: &mut Report) {
     let path = cfg.run_dir.join(FLOOR_STATE);
-    let lc = seen.iter().find(|s| s.section.kind == lifecycle::NAME && s.section.metadata.name == lifecycle::SECTION);
-    let below = lc.is_some_and(|s| s.open().any(|c| c.type_ == lifecycle::BELOW_FLOOR));
     let rows = read_rows(&path);
-    let Some(lc) = lc.filter(|_| below) else {
+    let Some((binding, m)) = floor_ask(seen, pass, pass_raw, cfg.floor_proposal.as_deref()) else {
         if !rows.is_empty() {
             write_rows(&path, &[]);
         }
         return;
     };
-    let binding = pass.and_then(|r| r.binding.clone()).unwrap_or_else(|| "none recorded".into());
     if rows.iter().any(|r| r.condition == binding) {
         return;
     }
+    let ask = deliver(p, cfg, CALLER, FLOOR, &format!("floor:{binding}"), &m, cfg.fallback);
+    let row = Row { section: FLOOR.into(), condition: binding.clone(), identity: String::new(), evidence: String::new(), ask: ask.unwrap_or_default(), sent: now as i64 };
+    write_rows(&path, &[row]);
+    report.floor = Some(binding);
+}
+
+/// The floor's standing ask while the Lifecycle section is below its floor: the binding
+/// condition it is filed under, and what it sends. `None` when the floor holds.
+pub fn floor_ask(seen: &[Seen], pass: Option<&PassRecord>, pass_raw: &Value, proposal: Option<&str>) -> Option<(String, Message)> {
+    let lc = seen.iter().find(|s| s.section.kind == lifecycle::NAME && s.section.metadata.name == lifecycle::SECTION);
+    let below = lc.is_some_and(|s| s.open().any(|c| c.type_ == lifecycle::BELOW_FLOOR));
+    let lc = lc.filter(|_| below)?;
+    let binding = pass.and_then(|r| r.binding.clone()).unwrap_or_else(|| "none recorded".into());
     let rate = numeric(&lc.section, "goodput_rate_24h").map_or("unmeasured".into(), |v| format!("{v:.1}/day"));
     let floor = lc.section.spec.get("goodput_rate_floor").map_or("undeclared".into(), |t| t.value.to_string());
     let mut evidence = format!("goodput rate (24 h, unhalted): {rate}, floor {floor}\nbinding condition: {binding}\n");
@@ -479,16 +522,13 @@ fn floor(p: &Ports, cfg: &Config, seen: &[Seen], pass: Option<&PassRecord>, pass
     for g in pass.map(|r| r.gaps.as_slice()).unwrap_or_default() {
         evidence.push_str(&format!("- {}: {}\n", g.section, g.distance));
     }
-    let proposal = cfg.floor_proposal.clone().unwrap_or_else(|| "no proposal recorded".into());
+    let proposal = proposal.map(String::from).unwrap_or_else(|| "no proposal recorded".into());
     let default = "The world runs below the floor while the binding constraint is structural, and law-throughput-floor is amended to say so.";
     let body = format!(
         "## Question\nThe 24 h goodput rate is below the floor (law-throughput-floor). Does the world run below the floor while {binding} binds?\n\n## Default\n{default}\n\n## Evidence\n{evidence}\n## Proposal\n{proposal}\n\n## Class basis\nWhether the world runs below a statute's floor is policy (law-throughput-floor).\n\nMOOT-WHEN: {FLOOR_MOOT}\n"
     );
     let m = Message { mailbox: "operator".into(), subject: format!("goodput below the floor: {binding} binds"), kind: "question".into(), class: Some("policy".into()), default: default.into(), body };
-    let ask = deliver(p, cfg, CALLER, FLOOR, &format!("floor:{binding}"), &m, cfg.fallback);
-    let row = Row { section: FLOOR.into(), condition: binding.clone(), identity: String::new(), evidence: String::new(), ask: ask.unwrap_or_default(), sent: now as i64 };
-    write_rows(&path, &[row]);
-    report.floor = Some(binding);
+    Some((binding, m))
 }
 
 fn ping(p: &Ports, cfg: &Config) -> (String, alarms::HeartbeatState) {
@@ -503,7 +543,16 @@ fn ping(p: &Ports, cfg: &Config) -> (String, alarms::HeartbeatState) {
 }
 
 fn retry(p: &Ports, cfg: &Config, snap: &Value, report: &mut Report) {
+    for (key, target) in retry_intents(snap) {
+        let word = retry_one(p, cfg, &key, &target);
+        report.retried.push((key, word));
+    }
+}
+
+/// Every unacknowledged retry-delivery intent the snapshot lists: (intent key, knob target).
+pub fn retry_intents(snap: &Value) -> Vec<(String, String)> {
     let intents = snap.get("intents").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut out = Vec::new();
     for item in intents {
         let Some(key) = item.get("key").and_then(Value::as_str) else { continue };
         if parse_key(key).is_none_or(|(k, _, _)| k != alarms::NAME) {
@@ -513,29 +562,34 @@ fn retry(p: &Ports, cfg: &Config, snap: &Value, report: &mut Report) {
         if i.ack.is_some() || i.action != alarms::RETRY_DELIVERY {
             continue;
         }
-        let all = tsd::alarm::read(&cfg.run_dir);
-        let open = attempts::undelivered(&all, now_secs(p));
-        let ack = |extra: &[&str]| {
-            let mut args = argv(&["intent", "ack", key, "--actor", alarms::OWNER]);
-            args.extend(extra.iter().map(|s| s.to_string()));
-            args
-        };
-        let (args, word) = match open.iter().find_map(|a| Some((a, a.message.as_ref()?))) {
-            None if open.is_empty() => (ack(&["--result", "already-applied"]), "already-applied".to_string()),
-            None => (ack(&["--result", "refused", "--reason", "no undelivered alarm recorded what to re-send"]), "refused".into()),
-            Some((a, m)) => {
-                match deliver(p, cfg, RETRY_CALLER, &a.kind, &a.reference, m, false) {
-                    Ok(_) => (argv(&["intent", "apply", key, "--knob", &i.target, "--actor", alarms::OWNER]), "applied".into()),
-                    Err(e) => (ack(&["--result", "refused", "--reason", &e]), "refused".into()),
-                }
-            }
-        };
-        let (code, v) = p.lc.call(&args);
-        if code != 0 {
-            eprintln!("incident: ack of {key} not written: exit {code}: {v}");
-        }
-        report.retried.push((key.to_string(), word));
+        out.push((key.to_string(), i.target.clone()));
     }
+    out
+}
+
+/// One retry-delivery intent: re-send the first undelivered alarm that recorded its message,
+/// then apply or acknowledge the intent. The word it was acknowledged with.
+pub fn retry_one(p: &Ports, cfg: &Config, key: &str, target: &str) -> String {
+    let all = tsd::alarm::read(&cfg.run_dir);
+    let open = attempts::undelivered(&all, now_secs(p));
+    let ack = |extra: &[&str]| {
+        let mut args = argv(&["intent", "ack", key, "--actor", alarms::OWNER]);
+        args.extend(extra.iter().map(|s| s.to_string()));
+        args
+    };
+    let (args, word) = match open.iter().find_map(|a| Some((a, a.message.as_ref()?))) {
+        None if open.is_empty() => (ack(&["--result", "already-applied"]), "already-applied".to_string()),
+        None => (ack(&["--result", "refused", "--reason", "no undelivered alarm recorded what to re-send"]), "refused".into()),
+        Some((a, m)) => match deliver(p, cfg, RETRY_CALLER, &a.kind, &a.reference, m, false) {
+            Ok(_) => (argv(&["intent", "apply", key, "--knob", target, "--actor", alarms::OWNER]), "applied".into()),
+            Err(e) => (ack(&["--result", "refused", "--reason", &e]), "refused".into()),
+        },
+    };
+    let (code, v) = p.lc.call(&args);
+    if code != 0 {
+        eprintln!("incident: ack of {key} not written: exit {code}: {v}");
+    }
+    word
 }
 
 fn level(v: f64) -> Value {
@@ -555,17 +609,50 @@ fn condition(prev: Option<&Section>, type_: &str, on: bool, reason: &str, now: u
     json!({ "type": type_, "status": status, "reason": reason, "lastTransitionTime": since })
 }
 
-fn publish(p: &Ports, cfg: &Config, seen: &[Seen], pass: Option<&PassRecord>, dm: &DeadMan, report: &mut Report, now: u64) -> Result<(), String> {
-    let knob = reconciler_engine::select::knob_key(&format!("{}/{}", alarms::NAME, alarms::SECTION), alarms::RETRY_DELIVERY);
-    let (code, v) = p.lc.call(&argv(&["intent", "knob-init", &knob, "--actor", alarms::OWNER, "--json", "0"]));
-    if code != 0 {
-        eprintln!("incident: {knob} not initialized: exit {code}: {v}");
+/// One undelivered alarm as the Alarms section lists it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Undelivered {
+    pub reference: String,
+    pub kind: String,
+    pub at: u64,
+}
+
+/// The attempt record's reading at `now`: what reached no one, and the 24 h counts.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AttemptReading {
+    pub undelivered: Vec<Undelivered>,
+    pub attempts: u64,
+    pub delivered: u64,
+    pub failed: u64,
+    pub pages: u64,
+}
+
+impl AttemptReading {
+    pub fn of(all: &[Attempt], now: u64) -> AttemptReading {
+        let open = attempts::undelivered(all, now);
+        let n = attempts::counts(all, now, PAGE);
+        AttemptReading { undelivered: open.iter().map(|a| Undelivered { reference: a.reference.clone(), kind: a.kind.clone(), at: a.at }).collect(), attempts: n.attempts, delivered: n.delivered, failed: n.failed, pages: n.pages }
     }
-    let all = tsd::alarm::read(&cfg.run_dir);
-    let open = attempts::undelivered(&all, now);
-    let n = attempts::counts(&all, now, PAGE);
-    report.undelivered_open = open.len();
-    let prev = seen.iter().find(|s| s.section.kind == alarms::NAME && s.section.metadata.name == alarms::SECTION).map(|s| &s.section);
+}
+
+/// The knob the retry-delivery action moves, initialised before the section names it.
+pub fn knob_init(lc: &dyn Lc) -> Result<(), String> {
+    let knob = reconciler_engine::select::knob_key(&format!("{}/{}", alarms::NAME, alarms::SECTION), alarms::RETRY_DELIVERY);
+    let (code, v) = lc.call(&argv(&["intent", "knob-init", &knob, "--actor", alarms::OWNER, "--json", "0"]));
+    if code != 0 {
+        return Err(format!("{knob} not initialized: exit {code}: {v}"));
+    }
+    Ok(())
+}
+
+/// The Alarms section as the snapshot shows it.
+pub fn previous(seen: &[Seen]) -> Option<&Section> {
+    seen.iter().find(|s| s.section.kind == alarms::NAME && s.section.metadata.name == alarms::SECTION).map(|s| &s.section)
+}
+
+/// The Alarms section's status for this pass, and whether it is unchanged from `prev` and
+/// observed inside the target latency (so it is not published).
+pub fn status_of(prev: Option<&Section>, pass: Option<&PassRecord>, dm: &DeadMan, reading: &AttemptReading, heartbeat: Option<(&str, &alarms::HeartbeatState)>, now: u64) -> (Value, bool) {
     let stale = matches!(dm, DeadMan::Stale { .. });
     let deadman = match dm {
         DeadMan::Waiting(why) => format!("WAITING: {why}"),
@@ -578,6 +665,7 @@ fn publish(p: &Ports, cfg: &Config, seen: &[Seen], pass: Option<&PassRecord>, dm
         DeadMan::Fresh { .. } => alarms::DeadManState::Fresh,
         DeadMan::Stale { .. } => alarms::DeadManState::Stale,
     };
+    let open = &reading.undelivered;
     let mut status = json!({
         "observedGeneration": prev.and_then(|s| s.metadata.generation).unwrap_or(0),
         "conditions": [
@@ -585,20 +673,20 @@ fn publish(p: &Ports, cfg: &Config, seen: &[Seen], pass: Option<&PassRecord>, dm
             condition(prev, alarms::RECONCILER_PASS_STALE, stale, &deadman, now),
         ],
         alarms::UNDELIVERED_OPEN: level(open.len() as f64),
-        "attempts_24h": day(n.attempts),
-        "delivered_24h": day(n.delivered),
-        "failed_24h": day(n.failed),
-        "pages_sent_24h": day(n.pages),
+        "attempts_24h": day(reading.attempts),
+        "delivered_24h": day(reading.delivered),
+        "failed_24h": day(reading.failed),
+        "pages_sent_24h": day(reading.pages),
         "deadman": deadman,
         alarms::DEADMAN_STATE: deadman_state,
         "undelivered": open.iter().map(|a| json!({ "reference": a.reference, "kind": a.kind, "at": format_rfc3339(a.at) })).collect::<Vec<_>>(),
     });
-    if let Some(h) = &report.heartbeat {
+    if let Some((h, _)) = heartbeat {
         status["heartbeat_last"] = json!(h);
     } else if let Some(h) = prev.and_then(|s| s.status.fields.get("heartbeat_last")) {
         status["heartbeat_last"] = h.clone();
     }
-    if let Some(h) = &report.heartbeat_state {
+    if let Some((_, h)) = heartbeat {
         status[alarms::HEARTBEAT_STATE] = json!(h);
     } else if let Some(h) = prev.and_then(|s| s.status.fields.get(alarms::HEARTBEAT_STATE)) {
         status[alarms::HEARTBEAT_STATE] = h.clone();
@@ -614,10 +702,12 @@ fn publish(p: &Ports, cfg: &Config, seen: &[Seen], pass: Option<&PassRecord>, dm
     if let Some(r) = pass.and_then(|r| parse_rfc3339(&r.at)) {
         status["pass_age_secs"] = level(now.saturating_sub(r) as f64);
     }
-    if unchanged {
-        return Ok(());
-    }
-    let body = json!({
+    (status, unchanged)
+}
+
+/// The Alarms section document for `status`, observed at `now`.
+pub fn section_body(status: &Value, now: u64) -> Value {
+    json!({
         "apiVersion": "spira/v1",
         "kind": alarms::NAME,
         "metadata": { "name": alarms::SECTION, "owner": alarms::OWNER, "observedAt": format_rfc3339(now), "target_latency": "5m", "max_age": "15m" },
@@ -627,12 +717,32 @@ fn publish(p: &Ports, cfg: &Config, seen: &[Seen], pass: Option<&PassRecord>, dm
             "name": alarms::RETRY_DELIVERY, "class": "local", "step": "one failed alarm", "moves": alarms::UNDELIVERED_OPEN,
             "addresses": [alarms::UNDELIVERED], "expected_effect": -1.0, "horizon": "10m",
         }],
-    });
-    let rev = prev.and_then(|s| s.metadata.resource_version.clone()).unwrap_or_else(|| "0".into());
-    let (code, v) = p.lc.call(&argv(&["section", "publish-status", "--actor", alarms::OWNER, "--expect-rev", &rev, "--json", &body.to_string()]));
+    })
+}
+
+/// `section publish-status` of `body` against revision `rev`.
+pub fn publish_section(lc: &dyn Lc, body: &Value, rev: &str) -> Result<(), String> {
+    let (code, v) = lc.call(&argv(&["section", "publish-status", "--actor", alarms::OWNER, "--expect-rev", rev, "--json", &body.to_string()]));
     if code != 0 {
         return Err(format!("publish Alarms/{}: exit {code}: {v}", alarms::SECTION));
     }
+    Ok(())
+}
+
+fn publish(p: &Ports, cfg: &Config, seen: &[Seen], pass: Option<&PassRecord>, dm: &DeadMan, report: &mut Report, now: u64) -> Result<(), String> {
+    if let Err(e) = knob_init(p.lc) {
+        eprintln!("incident: {e}");
+    }
+    let reading = AttemptReading::of(&tsd::alarm::read(&cfg.run_dir), now);
+    report.undelivered_open = reading.undelivered.len();
+    let prev = previous(seen);
+    let heartbeat = report.heartbeat.as_deref().zip(report.heartbeat_state.as_ref());
+    let (status, unchanged) = status_of(prev, pass, dm, &reading, heartbeat, now);
+    if unchanged {
+        return Ok(());
+    }
+    let rev = prev.and_then(|s| s.metadata.resource_version.clone()).unwrap_or_else(|| "0".into());
+    publish_section(p.lc, &section_body(&status, now), &rev)?;
     report.published = true;
     Ok(())
 }
@@ -698,6 +808,43 @@ pub fn probe(p: &Ports, cfg: &Config, mailbox: &str) -> Result<String, String> {
     deliver(p, cfg, PROBE_CALLER, PROBE, &format!("probe:{mailbox}"), &m, false)
 }
 
+/// [`probe`] with only the ports it uses, the primary path and the clock: the scheduler's
+/// `incident.probe.send`. Every other port refuses, so a probe that reached for one fails loudly.
+pub fn probe_primary(primary: &dyn Primary, clock: &dyn Clock, run_dir: &Path, host: &str, mailbox: &str) -> Result<String, String> {
+    struct Unused;
+    impl Lc for Unused {
+        fn call(&self, _: &[String]) -> (i32, Value) {
+            (-1, json!({ "cannot_tell": "the probe reads no store" }))
+        }
+    }
+    impl Fallback for Unused {
+        fn deliver(&self, _: &Message) -> Result<String, String> {
+            Err("the probe has no fallback".into())
+        }
+    }
+    impl Http for Unused {
+        fn get(&self, url: &str, _: Duration) -> Result<String, String> {
+            Err(format!("the probe makes no HTTP call ({url})"))
+        }
+    }
+    impl Switch for Unused {
+        fn observability_halted(&self) -> bool {
+            false
+        }
+        fn goodput_timer_on(&self) -> bool {
+            false
+        }
+    }
+    let ports = Ports { lc: &Unused, primary, fallback: &Unused, http: &Unused, switch: &Unused, clock };
+    let cfg = Config { run_dir: run_dir.into(), host: host.into(), deadman_secs: 0, heartbeat_url: String::new(), fallback: false, floor_proposal: None };
+    probe(&ports, &cfg, mailbox)
+}
+
+/// The latest attempt the probe recorded in `run_dir`, the record [`probe_health`] reads.
+pub fn last_probe(run_dir: &Path) -> Option<Attempt> {
+    tsd::alarm::read(run_dir).into_iter().rev().find(|a| a.caller == PROBE_CALLER)
+}
+
 /// Whether the latest probe in `run_dir` delivered within `max_age_secs` of `now`.
 pub fn probe_health(run_dir: &Path, now: u64, max_age_secs: u64) -> Result<(), String> {
     let all = tsd::alarm::read(run_dir);
@@ -720,6 +867,31 @@ pub fn floor_proposal(causal_map: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Scripted(Result<spira_config::lc_call::Reply, String>, std::sync::Mutex<Vec<Vec<String>>>);
+
+    impl spira_config::lc_call::Transport for Scripted {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<spira_config::lc_call::Reply, String> {
+            self.1.lock().unwrap().push(argv.to_vec());
+            self.0.clone()
+        }
+    }
+
+    /// sp-ipwlic: the alarms pass reaches the store through the client, with the program's
+    /// answer shapes kept: JSON out, non-JSON as cannot_tell, no answer as -1.
+    #[test]
+    fn lc_json_carries_the_clients_answer_and_its_failures() {
+        let reply = |code, out: &str| Ok(spira_config::lc_call::Reply { code, out: out.into(), err: String::new() });
+        let t = std::sync::Arc::new(Scripted(reply(0, "{\"rev\":\"4\"}\n"), Default::default()));
+        let c = spira_config::lc_call::LcClient::over(t.clone(), true);
+        assert_eq!(lc_json(&c, &argv(&["section", "snapshot"])), (0, json!({"rev": "4"})));
+        assert_eq!(*t.1.lock().unwrap(), vec![argv(&["section", "snapshot"])]);
+        let bad = spira_config::lc_call::LcClient::over(std::sync::Arc::new(Scripted(reply(2, "cannot tell"), Default::default())), true);
+        assert!(lc_json(&bad, &argv(&["section", "get", "x"])).1["cannot_tell"].is_string());
+        let down = spira_config::lc_call::LcClient::over(std::sync::Arc::new(Scripted(Err("not answering".into()), Default::default())), true);
+        let (code, v) = lc_json(&down, &argv(&["lock", "acquire"]));
+        assert_eq!((code, v["cannot_tell"].as_str()), (-1, Some("not answering")));
+    }
 
     #[test]
     fn the_floor_proposal_is_read_from_the_causal_maps_floor_table_or_is_none() {

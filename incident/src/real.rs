@@ -1,6 +1,6 @@
-//! The ports against the host: the store through `bdq`, `mail` on PATH, and the wall clock.
-//! Each call is `timeout $BD_TIMEOUT bdq "$@"`, retried on a dead pooled connection
-//! ("invalid connection").
+//! The ports against the host: content through `bdq`, the lifecycle machine over `LcClient`,
+//! mail in-process, and the wall clock. Each content call is `timeout $BD_TIMEOUT bdq "$@"`,
+//! retried on a dead pooled connection ("invalid connection").
 
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -12,16 +12,19 @@ pub struct RealBd {
     pub bdq: String,
     pub timeout_secs: u64,
     pub retries: u32,
+    /// The store client; `None` builds the configured one at each call.
+    pub lc: Option<spira_config::lc_call::LcClient>,
 }
 
 impl RealBd {
-    /// `BD_TIMEOUT`/`SPIRA_BDQ_CONN_RETRIES` carry no `spira/conf.d/<KEY>` entry, so they
-    /// stay ad hoc environment reads.
+    /// `BD_TIMEOUT` carries no `spira/conf.d/<KEY>` entry, so it stays an ad hoc environment
+    /// read; `SPIRA_BDQ_CONN_RETRIES` is registered config.
     pub fn from_env() -> Result<RealBd, String> {
         Ok(RealBd {
             bdq: spira_config::release_env::tool("bdq")?,
             timeout_secs: std::env::var("BD_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(180),
-            retries: std::env::var("SPIRA_BDQ_CONN_RETRIES").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
+            retries: spira_config::process::cfg("SPIRA_BDQ_CONN_RETRIES").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
+            lc: None,
         })
     }
 
@@ -30,6 +33,7 @@ impl RealBd {
         let mut attempt = 0u32;
         loop {
             attempt += 1;
+            // FORK-EDGE: unserved verb content (bd reads) and content store write (label/set-state/dep/duplicate)
             let mut cmd = Command::new("timeout");
             cmd.arg(self.timeout_secs.to_string()).arg(&self.bdq).args(args);
             let out = cmd.output().map_err(|e| format!("{}: {e}", self.bdq))?;
@@ -43,17 +47,20 @@ impl RealBd {
     }
 
     fn run_lc(&self, args: &[&str]) -> Result<(i32, String, String), String> {
-        let mut cmd = Command::new("timeout");
-        cmd.arg(self.timeout_secs.to_string()).arg(spira_config::lifecycle_row::lc_bin()?).args(args);
-        let out = cmd.output().map_err(|e| format!("spira-lc: {e}"))?;
-        Ok((
-            out.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&out.stdout).into_owned(),
-            String::from_utf8_lossy(&out.stderr).into_owned(),
-        ))
+        let configured;
+        let client = match &self.lc {
+            Some(c) => c,
+            None => {
+                configured = spira_config::lc_call::LcClient::configured()?;
+                &configured
+            }
+        };
+        let r = client.call(args).map_err(String::from)?;
+        Ok((r.code, r.out, r.err))
     }
 
     fn run_stdin(&self, args: &[&str], stdin_body: &str) -> Result<(i32, String, String), String> {
+        // FORK-EDGE: content store write (bd note)
         let mut cmd = Command::new("timeout");
         cmd.arg(self.timeout_secs.to_string())
             .arg(&self.bdq)
@@ -188,6 +195,7 @@ impl Bd for RealBd {
             "create", title, "--type", kind, "--priority", priority, "--labels", labels, "--external-ref", external_ref, "--body-file", "-",
             "--silent",
         ];
+        // FORK-EDGE: content store write (bd create)
         let mut cmd = Command::new("timeout");
         cmd.arg(self.timeout_secs.to_string())
             .arg(&self.bdq)
@@ -308,21 +316,38 @@ impl Bd for RealBd {
 
 pub struct RealMailer;
 
+/// The operator question an incident raises, as the `mail send` it used to spawn would have
+/// read it.
+pub fn question<'a>(subject: &'a str, default: &'a str, body: &str) -> (mail::cmds::SendArgs<'a>, String) {
+    let args = mail::cmds::SendArgs {
+        mailbox: "operator",
+        from: Some("Incident <incident@spira>"),
+        subject,
+        kind: "question",
+        default,
+        class: "",
+        bead: "",
+        urgent: false,
+        digest: false,
+        dry_run: false,
+        requested_by: "",
+    };
+    (args, format!("## Question\n{subject}\n\n## Default\n{default}\n\n{body}\n"))
+}
+
 impl Mailer for RealMailer {
     fn send_operator_question(&self, subject: &str, default: &str, body: &str) -> bool {
-        let full_body = format!("## Question\n{subject}\n\n## Default\n{default}\n\n{body}\n");
-        let Ok((mail, envs)) = spira_config::release_env::tool("mail").and_then(|m| Ok((m, spira_config::release_env::child_path_env_for_process()?))) else { return false };
-        let mut cmd = spira_config::bounded::bounded(mail);
-        cmd.envs(envs);
-        cmd.args(["send", "operator", "--from", "Incident <incident@spira>", "--subject", subject, "--kind", "question", "--default", default])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        let Ok(mut child) = cmd.spawn() else { return false };
-        if let Some(mut si) = child.stdin.take() {
-            let _ = si.write_all(full_body.as_bytes());
+        let (args, full_body) = question(subject, default, body);
+        // A refusal is said on stderr, as the `mail send` this replaces said it: an escalation
+        // that silently did not happen reads as one that did.
+        let sent = mail::env::Env::load().and_then(|env| {
+            let bd = mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: env.bd_conn_retries };
+            mail::cmds::send_recorded(&bd, &env, &args, full_body).map(drop)
+        });
+        if let Err(e) = &sent {
+            eprintln!("incident: the operator question was not sent: {e}");
         }
-        child.wait().map(|s| s.success()).unwrap_or(false)
+        sent.is_ok()
     }
 }
 
@@ -354,6 +379,35 @@ mod tests {
         let ids = |v: Vec<BeadRow>| v.into_iter().map(|r| r.id).collect::<Vec<_>>();
         assert_eq!(ids(join_lc(rows.clone(), &lc, Scope::Unfinished)), vec!["a", "c"]);
         assert_eq!(ids(join_lc(rows, &lc, Scope::HandedOn)), vec!["b"]);
+    }
+
+    struct Scripted(std::sync::Mutex<Vec<Vec<String>>>, String);
+
+    impl spira_config::lc_call::Transport for Scripted {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+            self.0.lock().unwrap().push(argv.to_vec());
+            Ok(spira_config::lc_call::Reply { code: 0, out: self.1.clone(), err: String::new() })
+        }
+    }
+
+    /// sp-ipwlic: facts are written and counted through the store client, never a program.
+    #[test]
+    fn facts_go_through_the_store_client() {
+        let t = std::sync::Arc::new(Scripted(Default::default(), "[{\"kind\":\"k\"},{\"kind\":\"k\"}]".into()));
+        let bd = RealBd { bdq: "/nonexistent/bdq".into(), timeout_secs: 1, retries: 1, lc: Some(spira_config::lc_call::LcClient::over(t.clone(), true)) };
+        assert!(bd.fact("sp-1", "k", "why"));
+        assert_eq!(bd.fact_count("sp-1", "k"), Some(2));
+        let verbs: Vec<String> = t.0.lock().unwrap().iter().map(|a| a[0].clone()).collect();
+        assert_eq!(verbs, vec!["fact", "facts"]);
+    }
+
+    /// The question carries what the `mail send` argv did: operator, the incident sender, a
+    /// question with its default, the body framed under Question and Default.
+    #[test]
+    fn an_operator_question_keeps_the_cli_sends_fields() {
+        let (a, body) = question("disk full", "prune", "detail");
+        assert_eq!((a.mailbox, a.from, a.kind, a.default, a.subject), ("operator", Some("Incident <incident@spira>"), "question", "prune", "disk full"));
+        assert_eq!(body, "## Question\ndisk full\n\n## Default\nprune\n\ndetail\n");
     }
 
     #[test]

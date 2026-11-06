@@ -52,11 +52,13 @@ sim_scenario_shard() {  # sim_scenario_shard <scenario name>
         # batch-job: a whole simulated run, world up included; 280 s is a hang guard, not a budget
         (cd "$repo" && timeout 280 env "${noloc[@]}" TMPDIR="$t" SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 "$sim" run "$name" --seed "$seed" >"$t/res.out" 2>&1)
         rc=$?
-        wantrc "$label exits 0 in $((SECONDS - start))s" 0 "$rc"
+        # Said before the assertion: the first failing case ends the suite, so a line after it never prints.
         grep -h '^sim: profile' "$t/res.out" | sed "s/^/# $label /"
         [ "$rc" = 0 ] || grep -E '^sim' "$t/res.out" | cut -c1-300 | head -5 | sed 's/^/# /'
         [ "$rc" = 0 ] || sim_failed_commands "$t/res.out" | sed "s/^/# $label /"
         [ "$rc" = 0 ] || sim_call_lines "$t/res.out" | sed "s/^/# $label /"
+        [ "$rc" = 0 ] || tail -8 "$t/res.out" | cut -c1-300 | sed "s/^/# $label run: /"
+        wantrc "$label exits 0 in $((SECONDS - start))s" 0 "$rc"
     done
     for w in "$t"/sim-run-*; do [ -d "$w" ] && timeout 60 "$sim" world down "$w" >/dev/null 2>&1; done # batch-job: world teardown stops a whole scratch world
     is "no world serve outlives its run" 0 "$(pgrep -fc "$t/sim-run-" || true)"

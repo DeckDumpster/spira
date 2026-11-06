@@ -76,9 +76,7 @@ fn run_sort_rows(args: &[String]) -> ExitCode {
             (id, tip, epoch, is_trans)
         })
         .collect();
-    let express: std::collections::HashSet<String> = match (queue::real::RealLc {
-        bin: Some("spira-lc".into()),
-    })
+    let express: std::collections::HashSet<String> = match queue::real::RealLc::configured(Some("spira-lc".into()))
     .express_ids()
     {
         Ok(ids) => ids.into_iter().collect(),

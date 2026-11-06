@@ -8,6 +8,9 @@ pub mod real;
 mod tests;
 
 pub const LABEL: &str = "runtime-bump";
+/// Every file `rust_pins`, `node_pins` and `python_pins` read, so a caller that fetches the
+/// files ahead of the parse (the scheduler's probe) reads the same set.
+pub const PIN_FILES: [&str; 8] = ["rust-toolchain.toml", "rust-toolchain", ".nvmrc", "package.json", "flake.nix", "pyproject.toml", ".python-version", "Dockerfile"];
 /// Releases a Rust pin may trail current stable before a bump is owed.
 pub const RUST_GRACE: u32 = 1;
 

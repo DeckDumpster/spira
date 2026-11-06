@@ -94,7 +94,7 @@ else
 fi
 
 # Also verify that a non-dolt template (no @DOLT@) succeeds even with empty DOLT.
-NODOLT_TEMPLATE="$HERE/../systemd/spira-sentinel.service"
+NODOLT_TEMPLATE="$HERE/../systemd/spira-runtime.service"
 if [ -f "$NODOLT_TEMPLATE" ]; then
     nodolt_rc=0
     run_renderer "" "$NODOLT_TEMPLATE" >/dev/null 2>&1 || nodolt_rc=$?

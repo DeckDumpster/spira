@@ -1519,7 +1519,10 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             (deps.env)("GITHUB_RUN_ATTEMPT").as_deref(),
         );
         let first_attempt = (deps.env)("GITHUB_RUN_ATTEMPT").as_deref() == Some("1");
-        crate::resume::Store::new(backend, &key_inputs, &label, !first_attempt)
+        let always = (deps.env)("SPIRA_CERTIFY_ALWAYS_COVERS").filter(|v| !v.trim().is_empty()).unwrap_or_else(|| "spira/lib.sh".into());
+        let digests = suite_input_digests(&repo.path, &wt.path, &suite_dir, &tree, &always);
+        deps.log(&format!("resume: {} suite(s) keyed by their input closure as well as the tree", digests.len()));
+        crate::resume::Store::new(backend, &key_inputs, &label, !first_attempt).with_inputs(digests)
     });
     if let Some(store) = &resume {
         deps.log(&format!("resume: lookup took {} ms", store.lookup_time().as_millis()));
@@ -1527,7 +1530,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         for n in std::mem::take(&mut active) {
             match store.passed(&n).filter(|_| !quarantined.contains(&n)) {
                 Some(from) => {
-                    deps.log(&format!("resumed: {n} passed in run/attempt {from} for this tree — not run again"));
+                    deps.log(&format!("resumed: {n} passed in run/attempt {from} for this tree or one with its identical input closure — not run again"));
                     let rec = ResultRecord {
                         status: Status::Ok,
                         epoch: now_epoch(),
@@ -2647,6 +2650,22 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
 
 /// A green, undeferred run whose selection is every suite in the tree is the full-suite round
 /// that publish looks for (law-nothing-runs-on-ci-until-it-passes-locally).
+/// Each suite's input-closure digest for `tree` (over-broad-scopes #1, sp-ipwlic): the paths
+/// the test plan maps to it, its own files, the always-covered harness files, the scripts it
+/// runs and the crates its binaries are built from, by blob id (suite_select::closure). A
+/// suite whose closure cannot be computed is left out, so it resumes by its own tree alone and
+/// is otherwise run, never skipped; a tree or corpus that cannot be read keys nothing.
+fn suite_input_digests(repo: &Path, wt: &Path, suite_dir: &Path, tree: &str, always: &str) -> std::collections::HashMap<String, String> {
+    let Ok(corpus) = suite_select::corpus::Corpus::load(suite_dir) else { return Default::default() };
+    let Ok(reach) = suite_select::reach::Reach::load(wt) else { return Default::default() };
+    let files = git(repo, &["ls-tree", "-r", "--full-tree", tree]).ok().map(|t| suite_select::closure::parse_ls_tree(&t));
+    let always: Vec<String> = always.split_whitespace().map(str::to_string).collect();
+    suite_select::closure::suite_inputs(&corpus, reach.as_ref(), files.as_ref(), &always)
+        .into_iter()
+        .filter_map(|(s, text)| Some((s, verdict::sha256_hex(text?.as_bytes()))))
+        .collect()
+}
+
 pub(crate) fn record_full_suite_pass(run: &Path, commit: &str, selected: &[String], suite_dir: &Path, log: &dyn Fn(&str)) {
     let mut got: Vec<&str> = selected.iter().map(String::as_str).collect();
     got.sort_unstable();

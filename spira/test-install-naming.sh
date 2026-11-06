@@ -37,12 +37,15 @@ bad_rendered="$(printf '%s\n' "$rendered" \
     | grep -v '^spira-.*-test\.' || true)"
 is "naming: all rendered spira-* units have -test suffix" "" "$bad_rendered"
 
-n="$(printf '%s\n' "$rendered" | grep -c '^===== spira-.*-test\.' || true)"
-if [ "${n:-0}" -ge 14 ]; then
-    ok "naming: at least 14 spira-*-test units rendered ($n)"
-else
-    bad "naming: at least 14 spira-*-test units rendered" "got ${n:-0}"
-fi
+# NON-VACUOUS: the suffix check above passes on an empty render, so every spira-* unit the
+# manifest pushes unconditionally must be present under its -test name. A count floor ("at
+# least 14") stood here while the loop shipped a timer per task; the consolidation
+# (scheduler-consolidation-2026-11-03 §1) left the scheduler, its watchdog and the clients,
+# so the units are named instead (install/src/manifest.rs build()).
+for u in spira-runtime-test.service spira-watchdog-test.service spira-watchdog-test.timer \
+         spira-cockpit-test.service spira-exec-census-test.service; do
+    want "naming: $u rendered" "===== $u =====" "$rendered"
+done
 
 want "naming: cockpit-ensure.service present (shared, plain name)" \
      "===== cockpit-ensure.service =====" "$rendered"
@@ -62,7 +65,7 @@ tl_config SPIRA_INSTANCE=test SPIRA_DOLT_DATA="" SPIRA_RUN="$TMP/run" \
 enable_arr="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$HOME" SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
     SPIRA_CONF=/nonexistent SPIRA_INSTANCE=test \
     units-install --list-enable 2>/dev/null | tr '\n' ' ')"
-want   "naming: ENABLE includes spira-sentinel-test.timer" "spira-sentinel-test.timer" "$enable_arr"
-nowant "naming: ENABLE does not include plain spira-sentinel.timer" "spira-sentinel.timer" "$enable_arr"
+want   "naming: ENABLE includes spira-watchdog-test.timer" "spira-watchdog-test.timer" "$enable_arr"
+nowant "naming: ENABLE does not include plain spira-watchdog.timer" "spira-watchdog.timer" "$enable_arr"
 
 tl_summary

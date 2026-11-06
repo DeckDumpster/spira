@@ -1,7 +1,23 @@
 epoch = 1800000000
 horizon = 1200000
-goal = "sp-oc01:LANDED"
-real_actors = ["sentinel-call", "sentinel-landing", "sift"]
+goal = "sp-oc01:SUBMITTED"
+
+# `work submit` run from the main checkout, not the bead's worktree, still records the branch
+# tip (sp-2adk7: HEAD read from the wrong directory recorded local/main, which never certifies).
+# The property is the submit's, so the world stops at SUBMITTED: the landing that followed was
+# the loop's, and the loop's tasks are `spira-runtime serve`'s now (ruling D6), tested in
+# sim/tests (`whole_loop.rs`).
+#
+# The call: what sentinel-call's `unit_start` effect runs once it calls, `dwarf --home <home>
+# builder` under the properties `call_argv` gives, through the world's SPIRA_CALL seam
+# (`sim-call`, standing where systemd-run stands), on the call's minute.
+[[actor]]
+name = "call"
+command = '"$SPIRA_CALL" --property=TimeoutStartSec=3600 --property=IOSchedulingClass=idle --property=IOWeight=10 --setenv=SPIRA_RELEASE="$SPIRA_RELEASE" --setenv=PATH="$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:/usr/local/bin:/usr/bin:/bin" --setenv=HOME="$HOME" --setenv=SPIRA_TOML="$SPIRA_TOML" "$SPIRA_RELEASE/bin/dwarf" --home "$SPIRA_HOME" builder'
+first = 5000
+every = 60000
+duration_min = 1000
+duration_max = 2500
 
 [[step]]
 at = 0

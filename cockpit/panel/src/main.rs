@@ -40,6 +40,7 @@
 //! re-syncs behind it. Waiting a second for `bd` to confirm what you just asked for is the
 //! same latency by another name.
 
+mod lcio;
 mod model;
 mod render;
 mod store;
@@ -405,7 +406,7 @@ impl App {
         );
         *inflight.lock().unwrap() += 1;
         thread::spawn(move || {
-            if let Err(e) = model::act_all(view, &ids, dismissed, &cfg) {
+            if let Err(e) = model::act_all(view, &ids, dismissed) {
                 errors.lock().unwrap().push(e);
             }
             *inflight.lock().unwrap() -= 1;

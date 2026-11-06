@@ -39,6 +39,14 @@ fn limit() -> Duration {
 /// `Command::output` bounded by the probe deadline. On expiry the child's whole process
 /// group is killed, the probe is recorded as slow, and the caller gets `TimedOut` — which
 /// every caller already renders as `?`.
+/// SIGKILL to the probe's own process group (it was spawned as the group's leader).
+fn kill_group(leader: u32) {
+    // SAFETY: kill(2) on a negative pid signals that process group; no memory is touched.
+    unsafe {
+        libc::kill(-(leader as i32), libc::SIGKILL);
+    }
+}
+
 pub fn output(label: &str, cmd: &mut Command) -> io::Result<Output> {
     output_within(label, cmd, limit())
 }
@@ -75,12 +83,37 @@ pub fn output_within(label: &str, cmd: &mut Command, within: Duration) -> io::Re
     match status {
         Some(status) => Ok(Output { status, stdout: t_out.join().unwrap_or_default(), stderr: t_err.join().unwrap_or_default() }),
         None => {
-            let _ = spira_config::bounded::bounded("kill").args(["-KILL", "--", &format!("-{}", child.id())]).status();
+            kill_group(child.id());
             let _ = child.kill();
             let _ = child.wait();
             drop((t_out, t_err));
             STATE.lock().unwrap().slow.push(format!("{label} (>{}s)", within.as_secs()));
             Err(io::Error::new(io::ErrorKind::TimedOut, format!("{label} exceeded its deadline")))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_probe_past_its_deadline_takes_its_whole_group_with_it() {
+        let d = testkit::TempDir::new("wt-deadline");
+        let pidfile = d.join("grandchild.pid");
+        let script = format!("sleep 30 & echo $! > {}; wait", pidfile.display());
+        let r = output_within("test", Command::new("sh").arg("-c").arg(&script), Duration::from_millis(500));
+        assert_eq!(r.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        let pid = std::fs::read_to_string(&pidfile).unwrap().trim().to_string();
+        let gone = (0..50).any(|_| {
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+            let dead = stat.is_empty() || stat.rsplit(')').next().is_some_and(|r| r.trim_start().starts_with('Z'));
+            if !dead {
+                // clock-safe: a 1 s cap on the wait for the named signal, the grandchild's exit
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            dead
+        });
+        assert!(gone, "the grandchild {pid} outlived its probe");
     }
 }

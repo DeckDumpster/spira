@@ -1,6 +1,6 @@
 //! `gate-check [--home <spira-dir>]` — see DESIGN.md.
 
-mod engine;
+use gate_check::engine;
 mod ports;
 mod real;
 

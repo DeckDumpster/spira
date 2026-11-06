@@ -15,7 +15,7 @@ use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 /// law-calls-have-deadlines: a client waits at most 5 s; the service stops at 3 s.
-const TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const TIMEOUT: Duration = Duration::from_secs(5);
 /// census's aggregate over the whole fact history (`facts-query`), which the service bounds
 /// at the query deadline, not 3 s.
 // batch-job: census report, bounded by the service's query deadline plus the reply.
@@ -80,25 +80,40 @@ pub fn try_socket(args: &[String]) -> Option<(i32, String)> {
 
 /// One request to the service on `socket_path`.
 pub(crate) fn forward(socket_path: &str, args: &[String]) -> (i32, String) {
+    let (code, out, err) = forward_with(socket_path, args, None);
+    (code, format!("{out}{err}"))
+}
+
+/// One request with `stdin` as its body; the answer's stdout and stderr apart.
+pub(crate) fn forward_with(socket_path: &str, args: &[String], stdin: Option<&str>) -> (i32, String, String) {
     let stream = match UnixStream::connect(socket_path) {
         Ok(s) => s,
-        Err(e) => return down(socket_path, &e),
+        Err(e) => return split(down(socket_path, &e)),
     };
-    let limit = if args.first().map(String::as_str) == Some("facts-query") { BATCH_TIMEOUT } else { TIMEOUT };
+    let batch = args.first().is_some_and(|v| v == "facts-query" || crate::composed::SWEEPS.contains(&v.as_str()));
+    let limit = if batch { BATCH_TIMEOUT } else { TIMEOUT };
     if let Err(e) = stream.set_read_timeout(Some(limit)).and_then(|_| stream.set_write_timeout(Some(limit))) {
-        return down(socket_path, &e);
+        return split(down(socket_path, &e));
     }
-    exchange(stream, args)
+    exchange(stream, args, stdin)
+}
+
+fn split((code, out): (i32, String)) -> (i32, String, String) {
+    (code, out, String::new())
 }
 
 /// Once the request is on the wire the service may apply it whatever happens to the reply, so a
 /// lost reply is "cannot tell" and never a fallback: a direct run would repeat the write and
 /// bypass the service's live rows.
-fn exchange(stream: UnixStream, args: &[String]) -> (i32, String) {
-    let lost = |why: &str| (2, format!("cannot tell: the service took the request but its reply was lost ({why})"));
-    let Ok(request) = serde_json::to_string(args) else { return lost("unserialisable request") };
+pub(crate) fn exchange(stream: UnixStream, args: &[String], stdin: Option<&str>) -> (i32, String, String) {
+    let lost = |why: &str| split((2, format!("cannot tell: the service took the request but its reply was lost ({why})")));
+    // A content write carries the guard variables bdq would have read here (bead::guard).
+    let request = spira_config::lc_call::request_head(args, stdin.map(str::len), &spira_config::lc_call::caller_of(args));
+    let Ok(request) = request else { return lost("unserialisable request") };
     let Ok(mut writer) = stream.try_clone() else { return lost("clone") };
-    if writeln!(writer, "{request}").is_err() {
+    let mut bytes = format!("{request}\n").into_bytes();
+    bytes.extend_from_slice(stdin.unwrap_or_default().as_bytes());
+    if writer.write_all(&bytes).is_err() {
         return lost("write");
     }
 
@@ -111,13 +126,15 @@ fn exchange(stream: UnixStream, args: &[String]) -> (i32, String) {
     let (Some(code), Some(len)) = (resp.get("exit_code").and_then(|v| v.as_i64()), resp.get("len").and_then(|v| v.as_u64())) else {
         return lost("malformed reply");
     };
-    let mut body = vec![0u8; len as usize];
+    let err_len = resp.get("err_len").and_then(|v| v.as_u64()).unwrap_or(0);
+    let mut body = vec![0u8; (len + err_len) as usize];
     if reader.read_exact(&mut body).is_err() {
         return lost("truncated reply");
     }
-    match String::from_utf8(body) {
-        Ok(out) => (code as i32, out),
-        Err(_) => lost("non-utf8 reply"),
+    let err = body.split_off(len as usize);
+    match (String::from_utf8(body), String::from_utf8(err)) {
+        (Ok(out), Ok(err)) => (code as i32, out, err),
+        _ => lost("non-utf8 reply"),
     }
 }
 
@@ -169,7 +186,7 @@ mod tests {
     fn a_lost_reply_is_cannot_tell_never_a_fallback() {
         for reply in [&b""[..], b"not json\n", b"{\"exit_code\":0}\n", b"{\"exit_code\":0,\"len\":9}\nshort"] {
             let (client, h) = serve_once(reply);
-            let (code, out) = super::exchange(client, &["close".to_string()]);
+            let (code, out, _) = super::exchange(client, &["close".to_string()], None);
             h.join().unwrap();
             assert_eq!(code, 2, "{reply:?}");
             assert!(out.starts_with("cannot tell"), "{out}");
@@ -179,7 +196,7 @@ mod tests {
     #[test]
     fn a_whole_reply_is_passed_through() {
         let (client, h) = serve_once(b"{\"exit_code\":3,\"len\":2}\nhi");
-        assert_eq!(super::exchange(client, &["x".to_string()]), (3, "hi".to_string()));
+        assert_eq!(super::exchange(client, &["x".to_string()], None), (3, "hi".to_string(), String::new()));
         h.join().unwrap();
     }
 }

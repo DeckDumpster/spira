@@ -48,11 +48,11 @@
 #      outside SPIRA_MAX_DWARVES and so is starved for a different reason.
 #  27. Disk, POSITIVE CONTROL: every path above its floor -> satisfied, no remedy run.
 #  28. Disk: a path below the floor -> gap -> the remedy sequence (target-reap, podman prunes).
-#  29. Disk: a Composite-named path df cannot read -> unobservable, never satisfied, no remedy run.
+#  29. Disk: a Composite-named path that cannot be read -> unobservable, never satisfied, no remedy.
 #  30. Disk: a materialised Composite's DiskSpec names the paths checked — the
 #      no-Composite default set is never consulted once one exists.
-#  31. Disk: a materialised Composite's DiskSpec.floor_pct replaces the bash/env default
-#      (SPIRA_DISK_FLOOR_PCT), so the same reading can gap under one and satisfy the other.
+#  31. Disk: a materialised Composite's DiskSpec.floor_pct is the floor the verdict follows:
+#      the box's same reading satisfies a floor at it and gaps under one a point above it.
 #
 # Unit tests in reconciler/src/lib.rs cover what config cannot express here: no Fleet ceiling
 # at all (SPIRA_MAX_LIVE_DWARVES is a u32 that always resolves) is unobservable, never satisfied,
@@ -248,20 +248,21 @@ for tool in rebuild layout; do
     chmod +x "$STUB_BIN/$tool"
 done
 
-DISK_LINES="$T/disk-lines"        # "<path>\t<free-pct>" per line; a path not listed is unreadable
-: > "$DISK_LINES"
-DISK_USAGE_CALLS="$T/disk-usage-calls.log"
-: > "$DISK_USAGE_CALLS"
-cat > "$STUB_BIN/df" <<'DUEOF'
-#!/usr/bin/env bash
-path="${!#}"
-printf '%s\n' "$path" >> "$DISK_USAGE_CALLS"
-pct="$(awk -F'\t' -v p="$path" '$1==p{print $2}' "$DISK_LINES")"
-[ -n "$pct" ] || { echo "df: $path: No such file or directory" >&2; exit 1; }
-printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfake 100 %s %s 0%% %s\n' "$((100 - pct))" "$pct" "$path"
-DUEOF
-chmod +x "$STUB_BIN/df"
-export DISK_LINES DISK_USAGE_CALLS
+# Free space is read in-process (statvfs, sp-ipwlic: no `df` child a stub could answer), so the
+# disk cases drive the verdict with the floor a Composite declares against the box's own free
+# space: free_of prints it the way the reconciler computes it.
+free_of() { python3 -c 'import os,sys; s=os.statvfs(sys.argv[1]); t=s.f_blocks*s.f_frsize//1024; print(s.f_bavail*s.f_frsize//1024*100//t)' "$1"; }
+disk_composite() {  # disk_composite <floor_pct> <path> — the Disk Composite this case declares
+    desired_state_write '[[resource]]
+apiVersion = "spira/v1"
+kind = "Disk"
+producer = "test"
+[resource.metadata]
+name = "disk"
+[resource.spec]
+floor_pct = '"$1"'
+paths = ["'"$2"'"]'
+}
 
 DISK_REMEDY_CALLS="$T/disk-remedy-calls.log"
 : > "$DISK_REMEDY_CALLS"
@@ -280,16 +281,14 @@ printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$QUEUE_CALLS" > "$
 chmod +x "$STUB_BIN/queue"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB_BIN/bead"; chmod +x "$STUB_BIN/bead"
 
-# Stub mail: an escalation is one `send concierge` whose body carries "invariant: <key>".
-MAIL_LOG="$T/mail-calls.log"
-: > "$MAIL_LOG"
-cat > "$STUB_BIN/mail" <<'IEOF'
-#!/usr/bin/env bash
-[ "$1" = "send" ] && [ "$2" = "concierge" ] || exit 1
-{ printf 'CALL %s\n' "$*"; cat; printf '\n---\n'; } >> "$MAIL_LOG"
-IEOF
-chmod +x "$STUB_BIN/mail"
-export MAIL_LOG
+# The mail is the mail library, in-process (sp-ipwlic: no `mail` child a PATH stub could stand
+# in for): an escalation is one message delivered to this suite's own concierge mailbox, whose
+# body carries "invariant: <key>". mail_log prints every message delivered there.
+MAIL_ROOT="$T/mail"; mkdir -p "$MAIL_ROOT"
+tl_config SPIRA_MAIL="$MAIL_ROOT" SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
+    SPIRA_MAIL_INDEX="$MAIL_ROOT/index" SPIRA_MAIL_MUTE=0
+mail_log() { cat "$MAIL_ROOT"/concierge/new/* "$MAIL_ROOT"/concierge/cur/* 2>/dev/null; }
+mail_clear() { rm -f "$MAIL_ROOT"/concierge/new/* "$MAIL_ROOT"/concierge/cur/* "$MAIL_ROOT/index"; }
 
 export SPIRA_REPO_MAP="$T/repo-map"
 tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_DOLT_DATA=/var/lib/dolt
@@ -306,6 +305,8 @@ cat > "$STUB_LC" <<'LEOF'
 #!/usr/bin/env bash
 case "$1" in
     list) cat "$LC_ROWS" ;;
+    # The store's content door (sp-ipwlic): the bead list the junk-row check reads is bd's.
+    content) shift; exec "$SPIRA_BD" "$@" ;;
     *) printf '%s\n' "$*" >> "$LC_CALLS" ;;
 esac
 LEOF
@@ -322,8 +323,8 @@ reset_state() {
     rm -f "$SPIRA_RUN/reconciler-state.json" "$SPIRA_RUN/reconciler-alerted.json" \
           "$SPIRA_RUN/reconciler.log" "$SPIRA_RUN/cockpit.down"
     fresh_store
-    : > "$SYSTEMCTL_CALLS"; : > "$COCKPIT_CALLS"; : > "$QUEUE_CALLS"; : > "$MAIL_LOG"
-    : > "$DISK_USAGE_CALLS"; : > "$DISK_REMEDY_CALLS"
+    : > "$SYSTEMCTL_CALLS"; : > "$COCKPIT_CALLS"; : > "$QUEUE_CALLS"; mail_clear
+    : > "$DISK_REMEDY_CALLS"
     desired_state_clear
 }
 
@@ -375,7 +376,7 @@ EOF
 rpass
 _calls="$(cat "$SYSTEMCTL_CALLS")"
 lack "no enable/restart calls when everything is healthy" "enable" "$(grep -v is- <<<"$_calls" || true)"
-[ ! -s "$MAIL_LOG" ] && ok "no incident filed when everything is healthy" || bad "unexpected incident: $(cat "$MAIL_LOG")"
+[ -z "$(mail_log)" ] && ok "no incident filed when everything is healthy" || bad "unexpected incident: $(mail_log)"
 
 # ==========================================================================================
 printf '\n%s\n' "4. Units: disabled timers each get enable --now"
@@ -423,7 +424,7 @@ _calls="$(cat "$SYSTEMCTL_CALLS")"
 lack "no restart of dolt-beads" "restart dolt-beads" "$_calls"
 lack "no enable of dolt-beads" "enable --now dolt-beads" "$_calls"
 lack "no plain enable of dolt-beads" "enable dolt-beads" "$_calls"
-want "dolt-beads down escalates" "invariant: store:dolt-beads.service" "$(cat "$MAIL_LOG")"
+want "dolt-beads down escalates" "invariant: store:dolt-beads.service" "$(mail_log)"
 
 # ==========================================================================================
 printf '\n%s\n' "8. Fleet: 3 live ceiling, 150 ready, 0 live -> gap, escalate, no remedy"
@@ -433,7 +434,7 @@ reset_state
 printf 'builder\t150\t0\n' > "$FLEET_LINES"
 tl_config SPIRA_MAX_LIVE_DWARVES=3 SPIRA_MAX_DWARVES=6
 rpass
-want "fleet gap escalates" "invariant: fleet:builder" "$(cat "$MAIL_LOG")"
+want "fleet gap escalates" "invariant: fleet:builder" "$(mail_log)"
 want "status jsonl records desired=3 observed=0" '"desired":"3","observed":"0"' "$(status_jsonl)"
 
 # ==========================================================================================
@@ -443,7 +444,7 @@ reset_state
 printf 'builder\t2\t2\n' > "$FLEET_LINES"
 rpass
 want "a fully staffed partition is satisfied" '"key":"fleet:builder","status":"satisfied"' "$(status_jsonl)"
-[ ! -s "$MAIL_LOG" ] && ok "no escalation for a staffed fleet" || bad "unexpected escalation: $(cat "$MAIL_LOG")"
+[ -z "$(mail_log)" ] && ok "no escalation for a staffed fleet" || bad "unexpected escalation: $(mail_log)"
 : > "$FLEET_LINES"
 
 # ==========================================================================================
@@ -489,7 +490,7 @@ printf '\n%s\n' "13. Release: non-main branch, no activated release -> gap, esca
 reset_state
 echo "feature-x" > "$GIT_BRANCH_STATE"
 rpass
-want "release gap escalates" "invariant: release" "$(cat "$MAIL_LOG")"
+want "release gap escalates" "invariant: release" "$(mail_log)"
 
 # ==========================================================================================
 printf '\n%s\n' "14. Release: checkout on main -> satisfied"
@@ -536,7 +537,7 @@ touch -d "@$(( $(date +%s) - 10 ))" "$_lockfile"
 _holder=$!
 sleep 0.3
 rpass
-want "a held, stale lock escalates" "invariant: queue-lock-age:testrepo" "$(cat "$MAIL_LOG")"
+want "a held, stale lock escalates" "invariant: queue-lock-age:testrepo" "$(mail_log)"
 wait "$_holder" 2>/dev/null || true
 
 reset_state
@@ -549,7 +550,7 @@ touch -d "@$(( $(date +%s) - 400 ))" "$_lockfile"
 _holder=$!
 sleep 0.3
 rpass
-lack "a held lock whose holder is beating does not escalate" "queue-lock-age:testrepo" "$(cat "$MAIL_LOG")"
+lack "a held lock whose holder is beating does not escalate" "queue-lock-age:testrepo" "$(mail_log)"
 wait "$_holder" 2>/dev/null || true
 
 reset_state
@@ -558,7 +559,7 @@ touch -d "@$(( $(date +%s) - 400 ))" "$SPIRA_RUN/queue/testrepo/lock.beat"
 _holder=$!
 sleep 0.3
 rpass
-want "a held lock whose beat went stale escalates" "invariant: queue-lock-age:testrepo" "$(cat "$MAIL_LOG")"
+want "a held lock whose beat went stale escalates" "invariant: queue-lock-age:testrepo" "$(mail_log)"
 wait "$_holder" 2>/dev/null || true
 rm -f "$_lockfile" "$SPIRA_RUN/queue/testrepo/lock.beat"
 unset SPIRA_PREFLIGHT_WALL_SECS
@@ -576,7 +577,7 @@ printf 'a.timer\n' > "$UNITS_LIST"
 printf 'a.timer disabled inactive\n' > "$SYSTEMCTL_STATE"
 rpass
 lack "no remedy run inside the grace period" "enable --now" "$(cat "$SYSTEMCTL_CALLS")"
-[ ! -s "$MAIL_LOG" ] && ok "no incident filed inside the grace period" || bad "unexpected incident: $(cat "$MAIL_LOG")"
+[ -z "$(mail_log)" ] && ok "no incident filed inside the grace period" || bad "unexpected incident: $(mail_log)"
 want "the gap is still recorded in the time series" '"key":"units-timer:a.timer","status":"gap"' "$(status_jsonl)"
 export SPIRA_RECONCILER_GRACE_SECS=0
 tl_config SPIRA_RECONCILER_GRACE_SECS=0
@@ -602,12 +603,12 @@ printf 'r.timer disabled inactive\n' > "$SYSTEMCTL_STATE"
 rpass   # pass 1: remedy attempted
 _n1="$(grep -c -- '--user enable --now r.timer' "$SYSTEMCTL_CALLS" || true)"
 is "pass 1 attempts the remedy once" "1" "$_n1"
-[ ! -s "$MAIL_LOG" ] && ok "pass 1 does not escalate yet" || bad "pass 1 escalated early: $(cat "$MAIL_LOG")"
+[ -z "$(mail_log)" ] && ok "pass 1 does not escalate yet" || bad "pass 1 escalated early: $(mail_log)"
 
 rpass   # pass 2: still a gap
 _n2="$(grep -c -- '--user enable --now r.timer' "$SYSTEMCTL_CALLS" || true)"
 is "pass 2 does not retry the remedy blind" "1" "$_n2"
-want "pass 2 escalates instead" "invariant: units-timer:r.timer" "$(cat "$MAIL_LOG")"
+want "pass 2 escalates instead" "invariant: units-timer:r.timer" "$(mail_log)"
 
 # ==========================================================================================
 printf '\n%s\n' "21. Fleet: a materialised Composite's ceiling is read instead of the configured SPIRA_MAX_LIVE_DWARVES"
@@ -628,7 +629,7 @@ lane_cap = 1'
 rpass
 lack "the Composite's ceiling makes this observable, not unobservable" '"key":"fleet:builder","status":"unobservable"' "$(status_jsonl)"
 want "the desired live count is bounded by the Composite's ceiling, not the configured one" '"desired":"3","observed":"0"' "$(status_jsonl)"
-want "fleet gap escalates against the Composite's ceiling" "invariant: fleet:builder" "$(cat "$MAIL_LOG")"
+want "fleet gap escalates against the Composite's ceiling" "invariant: fleet:builder" "$(mail_log)"
 
 # ==========================================================================================
 printf '\n%s\n' "22. Units: a materialised Composite's UnitsSpec names the unit set instead of the installer's ENABLE set"
@@ -702,7 +703,7 @@ name = "release"
 release = "v9"
 allow_override = false'
 rpass
-want "a non-main checkout not at the declared release still gaps and escalates" "invariant: release" "$(cat "$MAIL_LOG")"
+want "a non-main checkout not at the declared release still gaps and escalates" "invariant: release" "$(mail_log)"
 
 reset_state
 echo "feature-x" > "$GIT_BRANCH_STATE"
@@ -727,7 +728,7 @@ printf 'builder\t150\t0\t1\n' > "$FLEET_LINES"
 tl_config SPIRA_MAX_LIVE_DWARVES=3 SPIRA_MAX_DWARVES=0   # pool 0 == deliberately paused
 rpass
 want "a deliberately paused task pool satisfies the builder partition" '"key":"fleet:builder","status":"satisfied"' "$(status_jsonl)"
-lack "no escalation while the pool is deliberately paused" "invariant: fleet:builder" "$(cat "$MAIL_LOG")"
+lack "no escalation while the pool is deliberately paused" "invariant: fleet:builder" "$(mail_log)"
 
 # ==========================================================================================
 printf '\n%s\n' "26. Fleet: the pool-at-0 carve-out does not cover a lane partition"
@@ -736,7 +737,7 @@ reset_state
 printf 'ops\t5\t0\t0\n' > "$FLEET_LINES"   # is-task=0: ops draws outside SPIRA_MAX_DWARVES
 rpass
 want "a starved lane partition still gaps while the task pool is paused" '"key":"fleet:ops","status":"gap"' "$(status_jsonl)"
-want "a starved lane partition still escalates while the task pool is paused" "invariant: fleet:ops" "$(cat "$MAIL_LOG")"
+want "a starved lane partition still escalates while the task pool is paused" "invariant: fleet:ops" "$(mail_log)"
 : > "$FLEET_LINES"
 tl_config SPIRA_MAX_DWARVES=6
 
@@ -746,30 +747,29 @@ printf '\n%s\n' "27. Disk, POSITIVE CONTROL: every path above its floor -> satis
 reset_state
 : > "$UNITS_LIST"          # 22 left "wrong.service" here, unread by any systemctl fixture since
 echo main > "$GIT_BRANCH_STATE"   # 24 left this on "feature-x" — a positive control must not inherit it
-printf '/\t40\n/var/lib/dolt\t62\n' > "$DISK_LINES"
+disk_composite 1 /                # a box with under 1% free has no healthy path to show
 rpass
 [ ! -s "$DISK_REMEDY_CALLS" ] && ok "no disk remedy when every path is above its floor" || bad "unexpected disk remedy: $(cat "$DISK_REMEDY_CALLS")"
 want "status jsonl reports / satisfied" '"key":"disk:/","status":"satisfied"' "$(status_jsonl)"
-[ ! -s "$MAIL_LOG" ] && ok "no incident filed when every path is healthy" || bad "unexpected incident: $(cat "$MAIL_LOG")"
+[ -z "$(mail_log)" ] && ok "no incident filed when every path is healthy" || bad "unexpected incident: $(mail_log)"
 
 # ==========================================================================================
 printf '\n%s\n' "28. Disk: a path below the floor -> gap -> the remedy sequence runs"
 # ==========================================================================================
 reset_state
-printf '/\t4\n' > "$DISK_LINES"
+disk_composite 100 /              # no mounted root is 100% free
 rpass
 _calls="$(cat "$DISK_REMEDY_CALLS")"
 want "the landed worktrees' build output is reaped" "target-reap" "$_calls"
 want "dangling podman images are pruned" "podman image prune -f" "$_calls"
 want "unattached podman volumes are pruned" "podman volume prune -f" "$_calls"
 is "the remedy sequence runs once for the breached path" "3" "$(wc -l < "$DISK_REMEDY_CALLS" | tr -d ' ')"
-want "status jsonl records the gap" '"key":"disk:/","status":"gap","desired":">= 15% free","observed":"4% free"' "$(status_jsonl)"
+want "status jsonl records the gap" '"key":"disk:/","status":"gap","desired":">= 100% free","observed":"' "$(status_jsonl)"
 
 # ==========================================================================================
-printf '\n%s\n' "29. Disk: a Composite-named path df cannot read -> unobservable, never satisfied, no remedy"
+printf '\n%s\n' "29. Disk: a Composite-named path that cannot be read -> unobservable, never satisfied, no remedy"
 # ==========================================================================================
 reset_state
-: > "$DISK_LINES"   # df cannot read /no/such/path
 desired_state_write \
 '[[resource]]
 apiVersion = "spira/v1"
@@ -789,38 +789,24 @@ lack "unobservable disk path is never reported satisfied" '"key":"disk:/no/such/
 printf '\n%s\n' "30. Disk: a materialised Composite's DiskSpec names the paths checked"
 # ==========================================================================================
 reset_state
-printf '/srv/custom\t40\n' > "$DISK_LINES"
-desired_state_write \
-'[[resource]]
-apiVersion = "spira/v1"
-kind = "Disk"
-producer = "test"
-[resource.metadata]
-name = "disk"
-[resource.spec]
-floor_pct = 15
-paths = ["/srv/custom"]'
+disk_composite 1 "$T"
 rpass
-want "df is asked about the Composite's own path" "/srv/custom" "$(cat "$DISK_USAGE_CALLS")"
-want "status jsonl reports the Composite's path satisfied" '"key":"disk:/srv/custom","status":"satisfied"' "$(status_jsonl)"
+want "status jsonl reports the Composite's own path satisfied" '"key":"disk:'"$T"'","status":"satisfied"' "$(status_jsonl)"
+lack "and no path the Composite did not name" '"key":"disk:/",' "$(status_jsonl)"
 
 # ==========================================================================================
-printf '\n%s\n' "31. Disk: a materialised Composite's floor_pct replaces the bash/env default"
+printf '\n%s\n' "31. Disk: a materialised Composite's floor_pct is the floor the verdict follows"
 # ==========================================================================================
+_free="$(free_of /)"
+[ "$_free" -ge 1 ] && [ "$_free" -le 99 ] || bail "31 needs a root between 1% and 99% free, not ${_free}%"
 reset_state
-printf '/\t20\n' > "$DISK_LINES"   # satisfies the default 15% floor
-desired_state_write \
-'[[resource]]
-apiVersion = "spira/v1"
-kind = "Disk"
-producer = "test"
-[resource.metadata]
-name = "disk"
-[resource.spec]
-floor_pct = 25
-paths = ["/"]'
+disk_composite "$_free" /
 rpass
-want "20% free gaps against a Composite floor of 25%, though it would satisfy the default 15%" '"key":"disk:/","status":"gap"' "$(status_jsonl)"
+want "${_free}% free satisfies a Composite floor of ${_free}%" '"key":"disk:/","status":"satisfied"' "$(status_jsonl)"
+reset_state
+disk_composite "$((_free + 1))" /
+rpass
+want "${_free}% free gaps against a Composite floor of $((_free + 1))%" '"key":"disk:/","status":"gap"' "$(status_jsonl)"
 
 # ==========================================================================================
 printf '\n%s\n' "33. Junk rows: a rowless READY id is dropped, a real bead's row is not"

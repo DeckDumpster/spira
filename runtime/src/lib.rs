@@ -3,6 +3,7 @@
 //! suite every executor must pass.
 
 pub mod bridge;
+pub mod calendar;
 pub mod conformance;
 pub mod engine;
 pub mod event;
@@ -13,9 +14,14 @@ pub mod journal;
 pub mod lease;
 pub mod marker;
 pub mod offload;
+pub mod pools;
 pub mod ports;
 pub mod scheduler;
 pub mod socket;
+pub mod sources;
+pub mod status_board;
+pub mod taskrig;
+pub mod units;
 pub mod wide;
 
 pub use engine::{Engine, Executor, Outcome, PendingEffect};

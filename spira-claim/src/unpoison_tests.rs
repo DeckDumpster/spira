@@ -444,3 +444,24 @@ fn an_unreachable_machine_is_a_loud_fail() {
     assert!(out.contains("the machine must answer"), "{out}");
     assert_eq!(f.writes(), 0);
 }
+
+/// A worktree occupant's unit is stopped through the `Units` port by name, never by pid or
+/// a `systemctl` child.
+#[test]
+fn stop_occupants_stops_the_occupants_unit_through_the_port() {
+    use runtime::units::ScriptedUnits;
+    use std::sync::Arc;
+    let t = testkit::TempDir::new("spira-claim-stop-port");
+    let proc = t.path().join("proc");
+    let work = t.path().join("worktree/sp-a");
+    std::fs::create_dir_all(&work).unwrap();
+    std::fs::create_dir_all(proc.join("100")).unwrap();
+    std::os::unix::fs::symlink(&work, proc.join("100/cwd")).unwrap();
+    std::fs::write(proc.join("100/cgroup"), "0::/user.slice/user-1000.slice/user@1000.service/app.slice/spira-dwarf-andvari-sp-a-1.service\n").unwrap();
+    let units = Arc::new(ScriptedUnits::new(Arc::new(runtime::ports::VirtualClock::new(0))));
+    let port = UnitsPort::Given(units.clone());
+    let p = proc.clone();
+    let r = stop_occupants_via(&proc, &work, &port, &|| { let _ = std::fs::remove_dir_all(p.join("100")); });
+    assert_eq!(r, Ok(()));
+    assert_eq!(units.calls(), ["stop spira-dwarf-andvari-sp-a-1.service"]);
+}

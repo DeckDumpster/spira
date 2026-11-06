@@ -6,11 +6,12 @@
 # UNITS/OPTIONAL/ENABLE shape — present -> unit in UNITS and ENABLE; absent -> unit in
 # OPTIONAL, absent from UNITS/ENABLE, note on stderr — over a different prerequisite each
 # time. Since sp-gypjk the compiled binaries are no longer a gate — every release carries
-# loom and broker in bin/ — so A/C assert they are installed unconditionally, and only
-# inotifywait (an external program) still gates a unit.
+# loom and broker in bin/ — so A/C assert they are installed unconditionally. inotifywait
+# gated spira-mail-deliver.service until mail delivery moved into the scheduler; no unit
+# depends on it now, so nothing here varies it.
 #
 # tier: T1
-# covers: install/src/manifest.rs install/src/bin/units_install.rs systemd/spira-mail-deliver.service systemd/spira-loom.service UC-instance-lifecycle-25
+# covers: install/src/manifest.rs install/src/bin/units_install.rs systemd/spira-loom.service UC-instance-lifecycle-25
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -19,47 +20,18 @@ tl_config SPIRA_TEST_CASE_DEADLINE=90
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/run"
 
-# _units <inotify-mode> — units-install --list-templates (sp-31dm0: systemd/units.sh is
-# retired; the manifest is install/src/manifest.rs now) in a subprocess with that gate set,
-# reshaped into the UNITS:/OPTIONAL:/ENABLE: lines this suite's assertions read.
-# inotify-mode "without": units-install resolves `inotifywait` with its own raw PATH scan
-# (install::bootstrap::which), not `command -v` — so unlike the old bash (which needed a
-# `command` shadow because conf.sh unconditionally re-added /usr/bin to PATH), a PATH that
-# genuinely excludes inotifywait's directory is enough here. env -i SPIRA_RELEASE="$(tl_release)" prevents any of the
-# three from leaking in from this suite's own environment.
+# _units — units-install --list-templates (sp-31dm0: systemd/units.sh is retired; the
+# manifest is install/src/manifest.rs now) in a subprocess, reshaped into the
+# UNITS:/OPTIONAL:/ENABLE: lines this suite's assertions read. env -i
+# SPIRA_RELEASE="$(tl_release)" keeps this suite's own environment out of it.
 _units() {
-    local inotify_mode="$1" path="$PATH"
-    if [ "$inotify_mode" = without ]; then
-        # DROPPING WHOLE DIRECTORIES IS NOT ENOUGH, AND BREAKS OTHER THINGS: on a box
-        # where /bin is its own PATH entry alongside /usr/bin (not merely a symlink
-        # collapsed by the shell), inotifywait resolves from both — but /bin and /usr/bin
-        # also carry bash, awk, grep and everything else watchd.sh itself needs, so
-        # removing either directory wholesale breaks the subprocess chain
-        # install::bootstrap::watch_names() depends on, not just inotify detection. Build
-        # a shadow directory of symlinks to everything reachable on the real PATH, minus
-        # the one program, preserving first-match-wins order; use that as the entire PATH
-        # instead of removing real directories.
-        local shadow="$TMP/path-without-inotify" d f b
-        mkdir -p "$shadow"
-        while IFS= read -r d; do
-            [ -n "$d" ] && [ -d "$d" ] || continue
-            for f in "$d"/*; do
-                [ -e "$f" ] || continue
-                b="$(basename "$f")"
-                [ "$b" = inotifywait ] && continue
-                [ -e "$shadow/$b" ] && continue
-                ln -s "$f" "$shadow/$b" 2>/dev/null || true
-            done
-        done <<< "$(printf '%s' "$PATH" | tr ':' '\n')"
-        path="$shadow"
-    fi
     # SPIRA_WATCHERS no longer derives from SPIRA_HOME (one source of config, per Ryan
     # 2026-10-05): point it at the real manifest beside this suite, or units-install
     # refuses outright ("no watcher manifest at /fixture/userhome/...").
     tl_config SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_RUN="$TMP/run" \
         SPIRA_WATCHERS="$HERE/watchers"
     env -i SPIRA_RELEASE="$(tl_release)" \
-        PATH="$path" \
+        PATH="$PATH" \
         HOME="$HOME" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$HERE" \
@@ -77,16 +49,10 @@ _units() {
             }'
 }
 
-DEF_INOTIFY=with
-
-# POSITIVE CONTROL FOR THE SUITE ITSELF: without inotifywait on this box, case E's
-# "present" assertions could never fire — skip rather than report a false pass.
-command -v inotifywait >/dev/null 2>&1 || skip "inotifywait not on PATH — cannot verify the present case"
-
 # ==========================================================================
 echo "A: loom is installed unconditionally (a release always carries it)"
 # ==========================================================================
-a_out="$(_units "$DEF_INOTIFY")"; a_rc=$?
+a_out="$(_units)"; a_rc=$?
 is     "A: units.sh exits 0" "0" "$a_rc"
 want   "A: UNITS includes spira-loom.service" "spira-loom.service" \
        "$(printf '%s\n' "$a_out" | grep '^UNITS:')"
@@ -108,26 +74,5 @@ SHIPPED_BROKER_UNITS="$(ls "$HERE/../systemd" 2>/dev/null | grep '^spira-broker'
 is "C: the release ships no spira-broker template" "" "$SHIPPED_BROKER_UNITS"
 BROKER_ENABLE_KEY="$(ls "$HERE/conf.d" 2>/dev/null | grep -x 'SPIRA_BROKER_ENABLE' || true)"
 is "C: the config registry has no SPIRA_BROKER_ENABLE key" "" "$BROKER_ENABLE_KEY"
-
-# ==========================================================================
-echo "E/F: inotifywait present/absent (spira-mail-deliver.service)"
-# ==========================================================================
-e_out="$(_units "$DEF_INOTIFY")"; e_rc=$?
-is     "E: units.sh exits 0 with inotifywait present" "0" "$e_rc"
-want   "E: UNITS includes spira-mail-deliver.service" "spira-mail-deliver.service" \
-       "$(printf '%s\n' "$e_out" | grep '^UNITS:')"
-want   "E: ENABLE includes spira-mail-deliver-prod.service" "spira-mail-deliver-prod.service" \
-       "$(printf '%s\n' "$e_out" | grep '^ENABLE:')"
-nowant "E: OPTIONAL does not include spira-mail-deliver" "spira-mail-deliver" \
-       "$(printf '%s\n' "$e_out" | grep '^OPTIONAL:')"
-
-f_out="$(_units without)"; f_rc=$?
-is     "F: units.sh exits 0 with inotifywait absent" "0" "$f_rc"
-nowant "F: UNITS does not include spira-mail-deliver.service" "spira-mail-deliver.service" \
-       "$(printf '%s\n' "$f_out" | grep '^UNITS:')"
-nowant "F: ENABLE does not include spira-mail-deliver-prod.service" "spira-mail-deliver-prod.service" \
-       "$(printf '%s\n' "$f_out" | grep '^ENABLE:')"
-want   "F: OPTIONAL includes spira-mail-deliver.service" "spira-mail-deliver.service" \
-       "$(printf '%s\n' "$f_out" | grep '^OPTIONAL:')"
 
 tl_summary

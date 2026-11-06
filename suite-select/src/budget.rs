@@ -185,6 +185,8 @@ mod tests {
             tier,
             selects_on: vec![],
             words: vec![],
+            invokes: vec![],
+            tokens: vec![],
         }
     }
 

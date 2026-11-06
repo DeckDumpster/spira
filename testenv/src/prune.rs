@@ -214,6 +214,16 @@ impl Store<'_> {
     /// recreates an absent named volume, empty, on the next mount). 0 disables the cap.
     /// Returns the bytes removed.
     pub fn sweep_target_volumes(&self, cap: u64) -> u64 {
+        self.sweep_target_volumes_with(cap, &fs_used, &measure)
+    }
+
+    /// [`sweep_target_volumes`](Self::sweep_target_volumes) with the filesystem probe and the
+    /// walk injected. MEASURED ONLY WHEN IT COULD MATTER (sp-ipwlic, over-broad-scopes #13):
+    /// the volumes cannot hold more than the filesystems they live on use, so when that
+    /// `statvfs` bound is within the cap nothing is walked — the walk read every file of
+    /// gigabytes of cargo targets on every unit-tier start. A filesystem that cannot be probed
+    /// leaves no bound, and every volume is measured as before.
+    pub fn sweep_target_volumes_with(&self, cap: u64, fs_used: &dyn Fn(&Path) -> Option<(u64, u64)>, measure: &dyn Fn(&Path) -> (u64, u64)) -> u64 {
         if cap == 0 {
             return 0;
         }
@@ -221,9 +231,20 @@ impl Store<'_> {
             (self.log)("testenv: sweep: podman cannot list volumes — sweeping none");
             return 0;
         };
+        let all: Vec<Volume> = all.into_iter().filter(|v| is_unit_target_volume(&v.name)).collect();
+        let mut used: std::collections::BTreeMap<u64, u64> = std::collections::BTreeMap::new();
+        let bounded = all.iter().all(|v| match fs_used(Path::new(&v.mountpoint)) {
+            Some((dev, bytes)) => {
+                used.insert(dev, bytes);
+                true
+            }
+            None => false,
+        });
+        if bounded && used.values().sum::<u64>() <= cap {
+            return 0;
+        }
         let mut vols: Vec<(Volume, u64, u64)> = all
             .into_iter()
-            .filter(|v| is_unit_target_volume(&v.name))
             .map(|v| {
                 let (bytes, last) = measure(Path::new(&v.mountpoint));
                 (v, bytes, last)
@@ -290,6 +311,22 @@ impl Store<'_> {
     }
 }
 
+/// The filesystem holding `path` (its device) and the bytes in use on it, from `statvfs`;
+/// `None` when either cannot be read.
+pub fn fs_used(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::MetadataExt;
+    let dev = fs::metadata(path).ok()?.dev();
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    // SAFETY: statvfs writes into the zeroed struct we own; `c` outlives the call.
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+        return None;
+    }
+    let frsize = st.f_frsize as u64;
+    Some((dev, (st.f_blocks as u64).saturating_sub(st.f_bfree as u64).saturating_mul(frsize)))
+}
+
 /// The disk `dir` takes (allocated blocks, a hard-linked file counted once: cargo links
 /// each binary from `deps/` to the profile root) and the newest modification time in it
 /// (seconds since the epoch), not following symlinks. A missing directory is empty.
@@ -324,6 +361,33 @@ pub fn measure(dir: &Path) -> (u64, u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Over-broad-scopes #13 (sp-ipwlic): the target volumes are walked only when the
+    /// filesystems they live on use more than the cap; under it, or with the cap off, nothing
+    /// is walked; a filesystem that cannot be probed is walked as before.
+    #[test]
+    fn target_volumes_are_measured_only_when_their_filesystem_could_exceed_the_cap() {
+        let listing = format!(
+            "[{{\"Name\":\"{UNIT_TARGET_VOLUME}-a\",\"Mountpoint\":\"/v/a\",\"MountCount\":1}},{{\"Name\":\"{UNIT_TARGET_VOLUME}-b\",\"Mountpoint\":\"/v/b\",\"MountCount\":1}},{{\"Name\":\"other\",\"Mountpoint\":\"/v/o\"}}]"
+        );
+        let podman = |a: &[String]| if a[0] == "volume" && a[1] == "ls" { (0, listing.clone()) } else { (0, String::new()) };
+        let log = |_: &str| {};
+        let st = Store { podman: &podman, log: &log };
+        let walked = std::cell::RefCell::new(Vec::<String>::new());
+        let walk = |p: &Path| {
+            walked.borrow_mut().push(p.display().to_string());
+            (10, 0)
+        };
+        assert_eq!(st.sweep_target_volumes_with(100, &|_| Some((1, 50)), &walk), 0);
+        assert!(walked.borrow().is_empty(), "the filesystem uses 50 of a 100 cap: nothing walked");
+        st.sweep_target_volumes_with(0, &|_| None, &walk);
+        assert!(walked.borrow().is_empty(), "the cap is off");
+        st.sweep_target_volumes_with(100, &|_| Some((1, 500)), &walk);
+        assert_eq!(*walked.borrow(), ["/v/a", "/v/b"], "over the bound: each unit volume is measured");
+        walked.borrow_mut().clear();
+        st.sweep_target_volumes_with(100, &|p| (p != Path::new("/v/b")).then_some((1, 5)), &walk);
+        assert_eq!(walked.borrow().len(), 2, "an unprobed filesystem leaves no bound");
+    }
 
     #[test]
     fn the_unit_target_volume_and_its_keyed_variants_are_swept_and_nothing_else() {

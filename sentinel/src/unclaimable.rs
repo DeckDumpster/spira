@@ -17,13 +17,17 @@ pub struct Labels {
     pub work_types: Vec<String>,
 }
 
+/// `schema.sh work-types`: the literal `SCHEMA_WORK_TYPES="…"` assignment in `schema.sh`,
+/// read the way `schema-apply.sh` reads it (no shell is run). Empty when it cannot be read.
 pub fn schema_work_types(home: &std::path::Path) -> Vec<String> {
-    spira_config::bounded::bounded(home.join("schema.sh"))
-        .arg("work-types")
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().map(str::to_string).collect())
+    let text = std::fs::read_to_string(home.join("schema.sh")).unwrap_or_default();
+    parse_work_types(&text)
+}
+
+pub fn parse_work_types(text: &str) -> Vec<String> {
+    text.lines()
+        .find_map(|l| l.strip_prefix("SCHEMA_WORK_TYPES="))
+        .map(|v| v.split('"').nth(1).unwrap_or("").split_whitespace().map(str::to_string).collect())
         .unwrap_or_default()
 }
 
@@ -189,5 +193,15 @@ mod tests {
         let all = format!("{PARTS}spike|myscope,spike|\n");
         let got = classify(r#"[{"id":"s","labels":["myscope","spike"]}]"#, PARTS, &all, "", &labels());
         assert_eq!(got, "");
+    }
+
+    #[test]
+    fn work_types_are_read_from_the_schema_literal_without_a_shell() {
+        let text = "#!/usr/bin/env bash\nSCHEMA_KINDS=\"x\"\nSCHEMA_WORK_TYPES=\"task bug feature\"\n";
+        assert_eq!(parse_work_types(text), vec!["task", "bug", "feature"]);
+        assert!(parse_work_types("nothing here").is_empty());
+        let dir = testkit::TempDir::new("sentinel-schema-wt");
+        std::fs::write(dir.join("schema.sh"), text).unwrap();
+        assert_eq!(schema_work_types(&dir), vec!["task", "bug", "feature"]);
     }
 }

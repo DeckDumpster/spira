@@ -238,8 +238,8 @@ pub struct Scenario {
     pub settle: u64,
     #[serde(default, rename = "actor")]
     pub actors: Vec<ActorDef>,
-    /// Actors taken by name from the tree's `sim/actors.toml`: cadence from its real timer
-    /// units, durations from its fitted series.
+    /// Actors taken by name from the tree's `sim/actors.toml` (sim-only ones: their timer units
+    /// under `sim/units`), durations from its fitted series.
     #[serde(default)]
     pub real_actors: Vec<String>,
     #[serde(default, rename = "seed")]
@@ -364,7 +364,7 @@ fn load_specs(release: &Path, names: &[String]) -> Result<Vec<sim::actors::Actor
         .iter()
         .map(|n| match all.iter().position(|a| &a.name == n) {
             Some(i) => Ok(all.remove(i)),
-            None => Err(format!("scenario: no actor {n:?} in the tree's sim/actors.toml")),
+            None => Err(format!("scenario: no actor {n:?} in the tree's sim/actors.toml — every unit the loop ran on a shipped timer is a task of spira-runtime serve now, which the simulator drives in-process (ruling D6, sim/tests/whole_loop.rs), never as an actor process")),
         })
         .collect()
 }
@@ -674,6 +674,9 @@ fn event_row(kind: &EventKind, coalesced: bool) -> (&'static str, Option<String>
         EventKind::Step(s) => ("step", Some(s.clone())),
         EventKind::Fault => ("fault", None),
         EventKind::Submit(_) => ("submit", None),
+        // A booted workflow event runs nothing, so it is not a "start" row: resume reads an
+        // exit code from every one of those.
+        EventKind::Start(_) => ("boot", None),
         EventKind::Tick => ("tick", None),
     }
 }

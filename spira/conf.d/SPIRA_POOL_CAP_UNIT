@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Unit starts, stops and reads spira-runtime runs at once (the unit effector class).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Unit starts, stops and reads spira-runtime runs at once (the unit effector class).
+    : "${SPIRA_POOL_CAP_UNIT:=4}"
+SPIRA_CONF_DEFAULT_EOF

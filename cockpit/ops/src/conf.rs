@@ -15,7 +15,6 @@
 //! conf.sh" caller left to preserve.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 /// Keys `resolve()` computes but this process never sets into its own environment —
 /// `Command::new()` inherits env into every child this crate spawns, and these are the
@@ -35,8 +34,8 @@ const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVE
 /// running a binary by hand from an already-`. conf.sh`'d shell — must not be blocked by
 /// this, matching `layout.sh`'s own `{ set +u; . conf.sh 2>/dev/null; set -u; } || true`.
 pub fn self_source() {
-    let Some(release) = std::env::var("SPIRA_RELEASE").ok().filter(|s| !s.is_empty()) else { return };
-    let home = PathBuf::from(release).join("spira");
+    let Ok(release) = spira_config::release_env::release_root_for_process() else { return };
+    let home = release.join("spira");
     let env_map: BTreeMap<String, String> = std::env::vars().collect();
     let repo = spira_config::resolve::derive_home_repo(&home, &env_map);
     let resolved = spira_config::resolve::resolve_or_say("cockpit-ops", &home, &repo, &env_map);

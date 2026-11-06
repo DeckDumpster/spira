@@ -379,9 +379,16 @@ impl Resolved {
     /// do reach a bash reader. `conf.sh` itself decides, separately and explicitly, which of
     /// these it then re-exports to its OWN children — that decision is `EXPORT_KEYS`, applied
     /// in bash after this `eval`, not here.
+    ///
+    /// NEVER [`crate::RELEASE_ENV`]. `SPIRA_RELEASE` is registered config only for the
+    /// spira-runtime tasks that read it in-process; to a shell it is the launcher's
+    /// declaration of the release this process runs from, which every tool it execs resolves
+    /// against. Assigning the config's value over it would point a staged tree under test
+    /// (the gate's, a suite's stub-overlaid release) back at the installed release — the same
+    /// fence `SPIRA_HOME`/`SPIRA_REPO` keep by never entering `values` at all.
     pub fn to_sh_all(&self) -> String {
         let mut out = String::new();
-        for (key, v) in &self.values {
+        for (key, v) in self.values.iter().filter(|(k, _)| k.as_str() != crate::RELEASE_ENV) {
             out.push_str(key);
             out.push('=');
             out.push_str(&crate::shell_quote(v));
@@ -1104,6 +1111,20 @@ mod tests {
         let declared = crate::fixture_doc(&env(&[("SPIRA_RUNES_DIR", "/elsewhere/runes")]));
         let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&declared), conf_d: &home.join("conf.d") }).unwrap();
         assert_eq!(r.get("SPIRA_RUNES_DIR"), "/elsewhere/runes");
+    }
+
+    #[test]
+    fn sh_all_never_assigns_the_launchers_release_over_the_environment() {
+        let ws = testkit::TempDir::new("spira-config-resolve-release");
+        let (home, repo) = fixture_home_repo(&ws);
+        std::fs::write(home.join("conf.d/SPIRA_RELEASE"), "TYPE=string\nGROUP=runtime\nDOC=the release a task resolves tools from\n").unwrap();
+        let e = env(&[("HOME", "/h"), ("SPIRA_RELEASE", "/staged/release")]);
+        let doc = crate::fixture_doc(&env(&[("SPIRA_RELEASE", "/installed/current")]));
+        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&doc), conf_d: &home.join("conf.d") }).unwrap();
+        assert_eq!(r.get("SPIRA_RELEASE"), "/installed/current", "the in-process reader still sees the declared key");
+        let sh = r.to_sh_all();
+        assert!(sh.contains("SPIRA_RUN="), "positive control: sh-all carries the other keys: {sh}");
+        assert!(!sh.lines().any(|l| l.starts_with("SPIRA_RELEASE=")), "{sh}");
     }
 
     fn fixture_home_repo(workspaces: &Path) -> (std::path::PathBuf, std::path::PathBuf) {

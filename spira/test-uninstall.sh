@@ -300,7 +300,7 @@ want "default: disable called on units" "disable" "$(cat "$MOCK_LOG")"
 # A unit stopped mid-run or already failed stays in `list-units --state=failed` as
 # "not-found failed" after its file is deleted, and the next install's doctor fails on it
 # (acceptance phase B: spira-archive/-mail-tidy/-sentinel left by phase A's uninstall).
-want "default: failed state cleared for removed units" "reset-failed spira-sentinel-test.service" "$(cat "$MOCK_LOG")"
+want "default: failed state cleared for removed units" "reset-failed spira-runtime-test.service" "$(cat "$MOCK_LOG")"
 
 # Linger must have been disabled, and the stamp consumed.
 want   "default: loginctl disable-linger called" "disable-linger" "$(cat "$LINGER_LOG")"
@@ -334,9 +334,9 @@ echo
 echo "INSTANCE AWARENESS — refuses multiple instances; accepts explicit:"
 # ==========================================================================
 
-# Plant two sentinel files for two instances to trigger the refusal.
-> "$DEST/spira-sentinel-prod.service"
-> "$DEST/spira-sentinel-test.service"
+# Plant two scheduler units for two instances to trigger the refusal.
+> "$DEST/spira-runtime-prod.service"
+> "$DEST/spira-runtime-test.service"
 
 # SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_DOLT_DATA are
 # registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and
@@ -363,7 +363,7 @@ nonzero "instance: refuses when multiple instances, no argument" "$multi_rc"
 want    "instance: names the instances found" "prod" "$multi_out"
 want    "instance: names the instances found" "test" "$multi_out"
 
-# Explicit argument should be accepted even with multiple sentinels.
+# Explicit argument should be accepted even with multiple instances installed.
 # SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_INSTANCE/SPIRA_DOLT_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
 # declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
 tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
@@ -383,8 +383,8 @@ explicit_out="$(env -i SPIRA_RELEASE="$(tl_release)" \
 explicit_rc=$?
 iszero "instance: explicit 'test' arg accepted" "$explicit_rc"
 
-# Clean up planted sentinels.
-rm -f "$DEST/spira-sentinel-prod.service" "$DEST/spira-sentinel-test.service"
+# Clean up the planted units.
+rm -f "$DEST/spira-runtime-prod.service" "$DEST/spira-runtime-test.service"
 
 # ==========================================================================
 echo
@@ -651,8 +651,8 @@ echo "TIMER RACE (T2, sp-6k3pr) — a timer firing mid-uninstall does not resurr
 # ==========================================================================
 # inst_name() (systemd/units.sh) suffixes a unit with the instance name below
 # (SPIRA_INSTANCE=test) — the mock must match what uninstall.sh actually calls.
-RACE_UNIT_SVC="spira-landing-pass-test.service"
-RACE_UNIT_TMR="spira-landing-pass-test.timer"
+RACE_UNIT_SVC="spira-watchdog-test.service"
+RACE_UNIT_TMR="spira-watchdog-test.timer"
 RACE_STATE="$TMP/race-state"
 RACE_BIN="$TMP/race-bin"
 mkdir -p "$RACE_STATE" "$RACE_BIN"
@@ -721,68 +721,29 @@ echo
 echo "BINARY-BACKED UNITS ARE ALWAYS OWNED — a release carries every binary, so uninstall removes them:"
 # ==========================================================================
 # THE ACCEPTANCE FAILURE. Uninstall once ran from a source checkout with no bin/, and units.sh
-# left a unit out of UNITS when its binary was not built HERE, so spira-landing-pass/-loom units a
-# tarball install put there were left behind as strays. Since sp-gypjk there is no "not built"
+# left a unit out of UNITS when its binary was not built HERE, so binary-backed units (then
+# landing-pass and loom; now the scheduler and loom) a tarball install put there were left
+# behind as strays. Since sp-gypjk there is no "not built"
 # state: units.sh lists these units unconditionally, so owned.sh's manifest always has them.
-for _ub in spira-landing-pass-test.service spira-landing-pass-test.timer spira-loom-test.service; do
+for _ub in spira-runtime-test.service spira-watchdog-test.timer spira-loom-test.service; do
     printf '[Unit]\nDescription=left by a tarball install\n' > "$DEST/$_ub"
 done
 unbuilt_out="$(un)"
 unbuilt_rc=$?
 iszero "unbuilt: uninstall exits 0" "$unbuilt_rc"
-for _ub in spira-landing-pass-test.service spira-landing-pass-test.timer spira-loom-test.service; do
+for _ub in spira-runtime-test.service spira-watchdog-test.timer spira-loom-test.service; do
     [ -e "$DEST/$_ub" ] \
         && bad "unbuilt: $_ub is removed" "still in $DEST" \
         || ok  "unbuilt: $_ub is removed"
 done
-nowant "unbuilt: none of them is left as a stray" "STRAY  spira-landing-pass-test" "$unbuilt_out"
-want   "unbuilt: the landing-pass service was stopped" "stop spira-landing-pass-test.service" "$(cat "$MOCK_LOG")"
+nowant "unbuilt: none of them is left as a stray" "STRAY  spira-runtime-test" "$unbuilt_out"
+want   "unbuilt: the scheduler service was stopped" "stop spira-runtime-test.service" "$(cat "$MOCK_LOG")"
 unset _ub
 
-# ==========================================================================
-echo
-echo "RESOLUTION DRIFT (sp-da4y0) — a unit installed under one resolution of a conditional input is removed even when uninstall's own re-resolution of it says otherwise:"
-# spira-cert-sweep-{full,sample} (sp-8lztt) are installed only when
-# Inputs::repo_is_git_checkout is true — probed FRESH by manifest_from_env on every
-# units-install call, never frozen at install time. owned.sh's removal list comes from
-# `units-install --list-manifest` recomputed NOW, so a repo that was a git checkout at
-# install time but is not seen as one by uninstall time (a different SPIRA_REPO, a
-# scratch-repo cleanup, a release directory with no .git) drops these four units from the
-# manifest silently; the stop/disable/remove pass, driven solely by that list, never
-# touches the unit files still on disk. The stray sweep only REPORTS what it finds
-# unlisted — it does not remove. Acceptance hit exactly this (run 37222619835): install
-# resolved the repo as a git checkout and installed all four; uninstall.sh's own
-# re-resolution saw it as not one and left all four behind.
-# ==========================================================================
-
-git -C "$FAKE_REPO" init -q 2>/dev/null || { printf 'fixture: git init FAKE_REPO failed\n'; exit 1; }
-_seed_units || { printf 'fixture: re-seed for resolution-drift failed\n'; exit 1; }
-
-for _cs in spira-cert-sweep-full-test.service spira-cert-sweep-full-test.timer \
-           spira-cert-sweep-sample-test.service spira-cert-sweep-sample-test.timer; do
-    isfile "resolution-drift: $_cs is seeded while the repo is a git checkout" "$DEST/$_cs"
-done
-
-# Flip the resolution uninstall.sh's own owned.sh call will see: the repo is no longer a
-# git checkout by the time uninstall runs.
-rm -rf "$FAKE_REPO/.git"
-
-drift_out="$(un)"
-drift_rc=$?
-iszero "resolution-drift: uninstall exits 0" "$drift_rc"
-
-for _cs in spira-cert-sweep-full-test.service spira-cert-sweep-full-test.timer \
-           spira-cert-sweep-sample-test.service spira-cert-sweep-sample-test.timer; do
-    [ -e "$DEST/$_cs" ] \
-        && bad "resolution-drift: $_cs is removed" "still in $DEST" \
-        || ok  "resolution-drift: $_cs is removed"
-done
-want   "resolution-drift: the full-sweep service was stopped" \
-    "stop spira-cert-sweep-full-test.service" "$(cat "$MOCK_LOG")"
-want   "resolution-drift: the sample-sweep service was stopped" \
-    "stop spira-cert-sweep-sample-test.service" "$(cat "$MOCK_LOG")"
-nowant "resolution-drift: none of them is left as a stray" "STRAY  spira-cert-sweep" "$drift_out"
-unset _cs
+# (RESOLUTION DRIFT, sp-da4y0, is gone: its subject was the cert-sweep units, gated on
+# repo_is_git_checkout. They are the scheduler's cert.full and cert.sample tasks now, and no
+# unit is gated on that input; the union the removal list is built from is
+# `cargo test -p install union_template_names_`.)
 
 # ==========================================================================
 echo

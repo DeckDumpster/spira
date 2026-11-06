@@ -18,6 +18,7 @@ mod round;
 mod forge_store;
 mod round_store;
 mod verdict;
+mod transport;
 
 // ------------------------------------------------------------------------------- fakes
 
@@ -446,6 +447,9 @@ struct FScripts {
     release_rc: RefCell<BTreeMap<String, (i32, String)>>,
     /// What `release build` answers on stdout (absent = the commit it was asked for).
     build_answers: RefCell<Option<String>>,
+    /// When set, `release activate` records whether `spira`'s queue lock was free under it.
+    lock_probe: RefCell<Option<PathBuf>>,
+    lock_free_at_activate: RefCell<Vec<bool>>,
     /// `release activate` answers consumed in order before `release_rc` applies.
     activate_seq: RefCell<std::collections::VecDeque<(i32, String)>>,
     /// `ActiveState` answers in order (the last repeats; empty reads `active`), and the units asked about.
@@ -719,6 +723,10 @@ impl Scripts for FScripts {
         self.calls.borrow_mut().push(format!("release {}", args[0]));
         if args[0] == "activate" {
             self.activated.set(true);
+            if let Some(dir) = self.lock_probe.borrow().as_ref() {
+                let free = matches!(crate::lock::try_lock(dir, "spira"), crate::lock::Acquire::Held(_));
+                self.lock_free_at_activate.borrow_mut().push(free);
+            }
         }
         let seq = if args[0] == "activate" {
             self.activate_seq.borrow_mut().pop_front()
@@ -3277,6 +3285,32 @@ fn release_in_force(t: &T) {
     std::os::unix::fs::symlink(rel.join("r1"), rel.join("current")).unwrap();
 }
 
+/// Over-broad-scopes #3 (sp-ipwlic): land-local releases the queue lock before it activates the
+/// release, so a claim or a round verb does not wait behind the activation; and an activation
+/// whose head a later landing has moved past is not run.
+#[test]
+fn land_local_activates_its_release_with_the_queue_lock_released() {
+    let mut t = T::new(LandMode::QueueLocal);
+    t.lib.s.home_repo = "spira".into();
+    local_repo(&t);
+    release_in_force(&t);
+    let bins = testkit::TempDir::new("queue-land-bins");
+    *t.scripts.lock_probe.borrow_mut() = Some(t.s().queue_dir.clone());
+    // The round worktree is at h1's tree (the fake answers HEAD for any repository path).
+    t.git.set("HEAD", "h1");
+    std::fs::create_dir_all(bins.path().join("target/release")).unwrap();
+    testkit::write_exe(bins.path().join("target/release/release"), "#!/bin/sh\n");
+    let wt = bins.path().display().to_string();
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta", "--worktree", &wt]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(release_argv(&t).iter().any(|a| a.starts_with("activate ")), "{:?}", release_argv(&t));
+    assert_eq!(*t.scripts.lock_free_at_activate.borrow(), [true], "the queue lock is free while the release activates");
+}
+
 #[test]
 fn land_local_of_another_repository_publishes_no_release() {
     // The fixture's harness is "harness"; landing "spira" is some other queue.local repo.
@@ -4636,4 +4670,10 @@ fn landing_an_integration_lands_its_members_and_closes_the_record() {
         fs::read_to_string(t.qfile("integrations")).unwrap(),
         "sp-other sp-c\n"
     );
+}
+
+#[test]
+fn queue_starts_no_spira_child_that_is_not_a_named_fork_edge() {
+    let got = forge::fork_scan::scan(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
+    assert!(got.is_empty(), "unmarked children:\n{}", got.join("\n"));
 }

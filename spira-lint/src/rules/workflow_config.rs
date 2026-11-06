@@ -48,6 +48,8 @@ fn jobs(text: &str) -> Vec<Job> {
     let ls: Vec<(usize, &str)> = text.lines().enumerate().map(|(i, l)| (i + 1, l)).collect();
     let Some(start) = ls.iter().position(|(_, l)| *l == "jobs:") else { return Vec::new() };
     let mut out: Vec<Job> = Vec::new();
+    // Only a step's `run:` is a command; an action's `with:` inputs (a cache `path:`) run nothing.
+    let mut in_run = false;
     let mut i = start + 1;
     while i < ls.len() {
         let (n, l) = ls[i];
@@ -67,6 +69,7 @@ fn jobs(text: &str) -> Vec<Job> {
             if indent(l) == 6 && l.trim_start().starts_with("- ") {
                 let title = l.trim_start().trim_start_matches("- ").trim_start_matches("name:").trim().to_string();
                 job.steps.push(Step { title, line: n, run: String::new(), has_key: false });
+                in_run = false;
             } else if let Some(step) = job.steps.last_mut() {
                 let t = l.trim_start();
                 if indent(l) == 8 && t == "env:" && env_has_key(&ls, i) {
@@ -75,7 +78,10 @@ fn jobs(text: &str) -> Vec<Job> {
                 if indent(l) == 8 && t.starts_with("name:") && step.title.is_empty() {
                     step.title = t.trim_start_matches("name:").trim().to_string();
                 }
-                if indent(l) >= 8 && !t.starts_with('#') {
+                if indent(l) == 8 && !t.starts_with('#') {
+                    in_run = t.starts_with("run:");
+                }
+                if in_run && indent(l) >= 8 && !t.starts_with('#') {
                     step.run.push_str(t.strip_prefix("run:").map_or(l, |r| r.trim_start_matches(['|', '>', '-', ' '])));
                     step.run.push('\n');
                 }
@@ -222,6 +228,14 @@ mod tests {
         let got = judge("w.yml", wf, &bins());
         assert_eq!(got.len(), 1, "{got:?}");
         assert!(got[0].message.contains("after"));
+    }
+
+    #[test]
+    fn an_action_that_restores_a_release_binary_runs_nothing() {
+        let wf = "jobs:\n  a:\n    steps:\n      - name: Restore the driver\n        uses: actions/cache@v4\n        with:\n          path: target/release/testenv\n          key: k\n      - name: Run it\n        run: target/release/testenv container tag\n";
+        let got = judge("w.yml", wf, &bins());
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].message.contains("Run it"), "{got:?}");
     }
 
     #[test]

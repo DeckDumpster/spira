@@ -110,7 +110,8 @@ lc_row_state() { lc_root_sql --use-db spira_lifecycle sql -q "SELECT state FROM 
 
 # --------------------------------------------------------------------------------------
 # THE STUB BD. hel.sh's remaining bd seams are `bdjson show <id>` (read) and
-# `bdq label add/remove <id> <label>` (write, for branch: affinity only now — content-landed
+# `bdq label add/remove <id> <label>` or the content door's `update <id> --remove-label <l>`
+# (write, for branch: affinity only now — content-landed
 # is a real spira-lc event, above). One JSON object per id, under $STUB_BEADS_DIR/<id>.json;
 # label add/remove mutate it in place, so the branch: label assertions read back what
 # hel.sh actually wrote — a real seam contract, not a canned answer
@@ -128,7 +129,7 @@ for a in "$@"; do
     case "$a" in
         -C)          skip_next=1 ;;
         --json)      ;;
-        show|label|list)  cmd="$a" ;;
+        show|label|list|update)  cmd="$a" ;;
         *)           argv+=("$a") ;;
     esac
 done
@@ -150,6 +151,21 @@ d = json.load(open(f))
 labs = d.get("labels") or []
 if sub == "add" and lbl not in labs: labs.append(lbl)
 if sub == "remove" and lbl in labs: labs.remove(lbl)
+d["labels"] = labs
+json.dump(d, open(f, "w"))
+PY
+        ;;
+    update) # the content door's form of a label write: update <id> --add-label/--remove-label <l>
+        f="$dir/${argv[0]:-}.json"
+        [ -f "$f" ] || exit 0
+        python3 - "$f" "${argv[@]:1}" <<'PY'
+import json, sys
+f, rest = sys.argv[1], sys.argv[2:]
+d = json.load(open(f))
+labs = d.get("labels") or []
+for flag, lbl in zip(rest[::2], rest[1::2]):
+    if flag == "--add-label" and lbl not in labs: labs.append(lbl)
+    if flag == "--remove-label" and lbl in labs: labs.remove(lbl)
 d["labels"] = labs
 json.dump(d, open(f, "w"))
 PY
@@ -185,8 +201,9 @@ git -C "$REPO" remote add origin "$REMOTE"
 timeout 5 git -C "$REPO" push -q origin main
 git -C "$REPO" remote set-head origin main
 mkdir -p "$RUN/worktree" "$RUN/landstate"
-export SPIRA_REAPLOG="$RUN/reap.log"
-tl_config SPIRA_RUN="$RUN"
+# The reap log is registered config (the hel tasks read it): declared, never exported.
+SPIRA_REAPLOG="$RUN/reap.log"
+tl_config SPIRA_RUN="$RUN" SPIRA_REAPLOG="$SPIRA_REAPLOG"
 
 OTHER="$TMP/other"; git init -q -b main "$OTHER"   # no remote, no commit: base unresolvable
 
@@ -556,9 +573,9 @@ DHOME="$(basename "$DREPO")"
 printf '%s | %s | push | main | |\n' "$DHOME" "$DREPO" > "$TMP/dry-repo-map"
 
 tl_config SPIRA_RUN="$DRUN" SPIRA_BD="$STUB_BD" SPIRA_HOME_REPO="$DHOME" \
-    SPIRA_REPO_MAP="$TMP/dry-repo-map"
+    SPIRA_REPO_MAP="$TMP/dry-repo-map" SPIRA_REAPLOG="$DRUN/reap.log"
 dry_out="$(SPIRA_HOME="$HERE" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_REPO="$DREPO" SPIRA_REAPLOG="$DRUN/reap.log" \
+    SPIRA_REPO="$DREPO" \
         command hel --dry-run --no-fetch 2>&1)"
 want "dry-run reports WOULD, not SENT"  "WOULD  sp-dry  send branch" "$dry_out"
 nowant "dry-run never reports SENT"     "SENT sp-dry"                "$dry_out"
@@ -596,9 +613,9 @@ FHOME="$(basename "$FREPO")"
 printf '%s | %s | push | main | |\n' "$FHOME" "$FREPO" > "$TMP/fail-repo-map"
 
 tl_config SPIRA_RUN="$FRUN" SPIRA_BD="$STUB_BD" SPIRA_HOME_REPO="$FHOME" \
-    SPIRA_REPO_MAP="$TMP/fail-repo-map"
+    SPIRA_REPO_MAP="$TMP/fail-repo-map" SPIRA_REAPLOG="$FRUN/reap.log"
 fail_out="$(SPIRA_HOME="$HERE" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_REPO="$FREPO" SPIRA_REAPLOG="$FRUN/reap.log" \
+    SPIRA_REPO="$FREPO" \
         command hel --no-fetch 2>&1)"
 fail_rc=$?
 want "sp-fail is reported FAILED" "FAILED sp-fail" "$fail_out"

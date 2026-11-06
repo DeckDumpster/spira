@@ -55,8 +55,10 @@ impl Rule for LivenessReaders {
         Some(ALLOW_FILE)
     }
 
+    /// A crate's integration tests (`<crate>/tests/`) read no liveness; a fork-edge test there
+    /// names `pgrep` as the program it bans.
     fn applies_to(&self, e: &Entry) -> bool {
-        SCOPE.iter().any(|s| pathspec_match(s, &e.path)) && (e.path.ends_with(".rs") || e.path.ends_with(".sh"))
+        SCOPE.iter().any(|s| pathspec_match(s, &e.path)) && !e.path.contains("/tests/") && (e.path.ends_with(".rs") || e.path.ends_with(".sh"))
     }
 
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
@@ -152,6 +154,16 @@ mod tests {
         t.write("cockpit/a.rs", "let s = 1;\n");
         t.write(ALLOW_FILE, "cockpit/a.rs\n");
         assert_eq!(run(&t, &["cockpit/a.rs", ALLOW_FILE]).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn an_integration_test_that_bans_pgrep_is_out_of_scope() {
+        let t = TempDir::new("lr-tests");
+        t.write("spira-world/tests/no_fork_edges.rs", "const BANNED: &[&str] = &[\"pgrep\"];\n");
+        t.write("cockpit/a.rs", "let c = fs::read(format!(\"/proc/{pid}/cmdline\"));\n");
+        let got = run(&t, &["spira-world/tests/no_fork_edges.rs", "cockpit/a.rs"]).unwrap();
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].contains("cockpit/a.rs"), "{got:?}");
     }
 
     #[test]

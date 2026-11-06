@@ -257,6 +257,11 @@ pub struct Pass {
     pub health: Health,
 }
 
+/// Whether a pass is due: none ran yet, or the last is at least the interval old.
+pub fn due(cfg: &Settings, prior: &Health, now: u64) -> bool {
+    prior.last_pass.is_none_or(|last| now.saturating_sub(last) >= cfg.interval_secs)
+}
+
 /// A pass younger than the interval is skipped (`None`). Otherwise the alarms to print — a
 /// standing one only once per remind interval — and the health to write back.
 pub fn run_pass(
@@ -268,12 +273,23 @@ pub fn run_pass(
     runner: &mut dyn Runner,
 ) -> Option<Pass> {
     let now = clock.epoch_secs();
-    if let Some(last) = prior.last_pass {
-        if now.saturating_sub(last) < cfg.interval_secs {
-            return None;
-        }
+    if !due(cfg, prior, now) {
+        return None;
     }
-    let (timings, all, cur, callers) = pass(probes, cfg.budget_ms, stats_argv, prior, clock, runner);
+    let timings = time_probes(probes, clock, runner);
+    let cur = caller_counts(&runner.run(stats_argv).unwrap_or_default());
+    Some(settle(cfg, prior, now, timings, (!cur.is_empty()).then_some(cur)))
+}
+
+/// The pure half of a pass, once the probes are timed and the stats read: the alarms to print
+/// (a standing one only once per remind interval), the slow samples, and the health to write
+/// back. `cur` is the stats sample, `None` when it was unreadable so the older baseline stays.
+pub fn settle(cfg: &Settings, prior: &Health, now: u64, timings: Vec<Timing>, cur: Option<BTreeMap<String, u64>>) -> Pass {
+    let callers = match (&cur, prior.sample_at) {
+        (Some(c), Some(at)) => top_callers(&prior.sample, at, c, now, 3),
+        _ => vec![],
+    };
+    let all = alarms(&timings, cfg.budget_ms, &callers);
     let mut health = Health { last_pass: Some(now), ..Health::default() };
     match cur {
         Some(c) => (health.sample_at, health.sample) = (Some(now), c),
@@ -292,7 +308,7 @@ pub fn run_pass(
         health.alarms.insert(key, printed);
     }
     let slow = slow_samples(now, &timings, cfg.budget_ms, &callers);
-    Some(Pass { lines, slow, timings, health })
+    Pass { lines, slow, timings, health }
 }
 
 #[cfg(test)]

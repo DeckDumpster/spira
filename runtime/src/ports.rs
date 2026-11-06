@@ -122,9 +122,64 @@ impl Proc for SysProc {
     }
 }
 
+/// A `Proc` that counts every program it is asked to run, then refuses it or hands it on.
+/// A simulation that must spawn nothing reads `spawned()` as zero.
+pub struct CountingProc {
+    inner: Option<Arc<dyn Proc>>,
+    spawned: AtomicU64,
+    seen: std::sync::Mutex<Vec<String>>,
+}
+
+impl CountingProc {
+    pub fn refusing() -> Arc<Self> {
+        Arc::new(CountingProc { inner: None, spawned: AtomicU64::new(0), seen: Default::default() })
+    }
+
+    pub fn over(inner: Arc<dyn Proc>) -> Arc<Self> {
+        Arc::new(CountingProc { inner: Some(inner), spawned: AtomicU64::new(0), seen: Default::default() })
+    }
+
+    pub fn spawned(&self) -> u64 {
+        self.spawned.load(Ordering::SeqCst)
+    }
+
+    /// The programs asked for, in order.
+    pub fn programs(&self) -> Vec<String> {
+        self.seen.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+}
+
+impl Proc for CountingProc {
+    fn run(&self, spec: &ProcSpec) -> Result<ProcOutput, String> {
+        self.spawned.fetch_add(1, Ordering::SeqCst);
+        self.seen.lock().unwrap_or_else(|e| e.into_inner()).push(spec.prog.clone());
+        match &self.inner {
+            Some(p) => p.run(spec),
+            None => Err(format!("{}: no process may be spawned here", spec.prog)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn counting_proc_counts_what_it_refuses_and_what_it_passes_on() {
+        struct Echo;
+        impl Proc for Echo {
+            fn run(&self, _: &ProcSpec) -> Result<ProcOutput, String> {
+                Ok(ProcOutput { code: Some(0), stdout: b"hi".to_vec(), stderr: vec![] })
+            }
+        }
+        let spec = ProcSpec { prog: "git".into(), args: vec![], stdin: vec![], deadline: Duration::from_secs(1) };
+        let refusing = CountingProc::refusing();
+        assert!(refusing.run(&spec).is_err());
+        assert_eq!((refusing.spawned(), refusing.programs()), (1, vec!["git".to_string()]));
+        let over = CountingProc::over(Arc::new(Echo));
+        assert_eq!(over.run(&spec).unwrap().stdout, b"hi");
+        assert_eq!(over.spawned(), 1);
+    }
 
     #[test]
     fn virtual_clock_only_moves_forward() {

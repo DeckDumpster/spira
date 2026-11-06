@@ -452,13 +452,6 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v queue)\""
 
 [[dep]]
-name = "queue-watch"
-tier = "release"
-purpose = "Spira's queue-watch binary, from the release's bin/"
-version_min = ""
-version_probe = "readlink -f \"$(command -v queue-watch)\""
-
-[[dep]]
 name = "rebase-stale"
 tier = "release"
 purpose = "Spira's rebase-stale binary, from the release's bin/"

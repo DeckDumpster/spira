@@ -18,21 +18,40 @@ fn num(env_val: &str) -> Option<i64> {
     }
 }
 
+/// What a threshold escalation does with its finding: today `incident alarm`, in a host that
+/// acts later (the scheduler's `watch.tower`) a collector of the alarms to request.
+pub type Raise<'a> = &'a mut dyn FnMut(&Finding) -> incident::AlarmOutcome;
+
 pub fn run(d: &SweepData, cfg: &Cfg) {
     failed_units_escalation(d, cfg);
-    drain_escalation(d, cfg);
     drain_check(d);
-    hel_oldest_unsent(d, cfg);
-    unadopted_refs(d, cfg);
-    hotfix(d, cfg);
-    batched_stranded(d, cfg);
-    batched_too_long(d, cfg);
-    closed_stranded(d, cfg);
-    dedup_meter(d, cfg);
-    gate_silent(d, cfg);
-    gate_slow(d, cfg);
-    idle_while_ready(d, cfg);
+    let inc = cfg.incident_sh.clone();
+    thresholds(d, cfg, &mut |f| incident::alarm_outcome(&inc, f));
     moot_sweep(cfg);
+}
+
+/// The threshold escalations over one sweep's data, each finding handed to `raise`: every one
+/// but the failed-unit escalation (whose first-seen rows are state) and the drain check (an act).
+pub fn thresholds(d: &SweepData, cfg: &Cfg, raise: Raise) {
+    drain_escalation(d, cfg, raise);
+    hel_oldest_unsent(d, cfg, raise);
+    unadopted_refs(d, cfg, raise);
+    hotfix(d, cfg, raise);
+    batched_stranded(d, cfg, raise);
+    batched_too_long(d, cfg, raise);
+    closed_stranded(d, cfg, raise);
+    dedup_meter(d, cfg, raise);
+    gate_silent(d, cfg, raise);
+    gate_slow(d, cfg, raise);
+    idle_while_ready(d, cfg, raise);
+}
+
+/// The failed-unit alarm for `unit`, failing since `first_seen` (epoch seconds) at `now`.
+pub fn failed_unit_finding(db: &str, home_repo: &str, unit: &str, first_seen: i64, now: i64) -> Finding {
+    let first_disp = crate::log::fmt_iso(first_seen);
+    let age_mins = (now - first_seen) / 60;
+    let body = format!("{unit} has been failing for {age_mins}m (first seen failing {first_disp})\n\nCheck: systemctl --user status {unit}\n");
+    Finding::new(db, home_repo, &format!("FAILED UNIT: {unit} failing for {age_mins}m"), &body).priority(1).reference(format!("incident:failed-unit-{unit}")).cause("failed-unit")
 }
 
 fn usable_inc(cfg: &Cfg) -> Option<&str> {
@@ -44,12 +63,10 @@ fn usable_inc(cfg: &Cfg) -> Option<&str> {
 /// (sp-jgjvh: an incident bead is a work bead). A failed query — bd's or the machine's —
 /// counts as tracked: re-filing on a probe that did not answer is noise.
 fn tracked_by_open_bead(cfg: &Cfg, unit: &str) -> bool {
-    let out = spira_config::bounded::bounded(&cfg.bdq)
-        .args(["list", "--external-ref", &format!("incident:failed-unit-{unit}")])
-        .args(["--all", "--json", "--limit", "0", "--brief"])
-        .output();
+    let reference = format!("incident:failed-unit-{unit}");
+    let out = crate::lc::content_list(&cfg.lc, &["--external-ref", &reference, "--all", "--json", "--limit", "0", "--brief"]);
     let ids: Vec<String> = match out {
-        Ok(o) if o.status.success() => match serde_json::from_slice::<Vec<serde_json::Value>>(&o.stdout) {
+        Some(o) => match serde_json::from_str::<Vec<serde_json::Value>>(&o) {
             Ok(v) => v.iter().filter_map(|r| r.get("id").and_then(|x| x.as_str()).map(String::from)).collect(),
             Err(_) => return true,
         },
@@ -70,21 +87,8 @@ fn failed_units_escalation(d: &SweepData, cfg: &Cfg) {
         let should_escalate = decided || (row.escalated && !tracked_by_open_bead(cfg, unit));
         if should_escalate {
             if let Some(inc) = inc {
-                let first_disp = crate::log::fmt_iso(row.first_seen);
                 let age_mins = (d.now - row.first_seen) / 60;
-                let body = format!(
-                    "{unit} has been failing for {age_mins}m (first seen failing {first_disp})\n\nCheck: systemctl --user status {unit}\n"
-                );
-                let f = Finding::new(
-                    &cfg.db,
-                    &cfg.home_repo,
-                    &format!("FAILED UNIT: {unit} failing for {age_mins}m"),
-                    &body,
-                )
-                .priority(1)
-                .reference(format!("incident:failed-unit-{unit}"))
-                .cause("failed-unit");
-                incident::alarm(inc, &f);
+                incident::alarm(inc, &failed_unit_finding(&cfg.db, &cfg.home_repo, unit, row.first_seen, d.now));
                 log(&format!("watchtower: failed-unit escalation filed ({unit}, {age_mins}m)"));
             } else {
                 log(&format!("watchtower: {} is missing — failed-unit escalation not filed", cfg.incident_sh));
@@ -101,13 +105,14 @@ fn drain_check(d: &SweepData) {
     if !matches!(d.drain, super::collect::Drain::Draining { .. }) {
         return;
     }
+    // FORK-EDGE: needs spira_world::drain check-and-page as a library fn (world.rs drain_check_and_page is binary-private)
     match spira_config::bounded::bounded("world").arg("drain-check").output() {
         Ok(o) if o.status.success() => {}
         _ => log("watchtower: `world drain-check` failed — the drain's cap and owner were not checked"),
     }
 }
 
-fn drain_escalation(d: &SweepData, cfg: &Cfg) {
+fn drain_escalation(d: &SweepData, cfg: &Cfg, raise: Raise) {
     let super::collect::Drain::Draining { since, mins } = &d.drain else {
         return;
     };
@@ -115,7 +120,7 @@ fn drain_escalation(d: &SweepData, cfg: &Cfg) {
     if *mins < cfg.drain_warn_mins {
         return;
     }
-    let Some(inc) = usable_inc(cfg) else {
+    let Some(_) = usable_inc(cfg) else {
         log(&format!("watchtower: {} is missing — drain escalation not filed", cfg.incident_sh));
         return;
     };
@@ -123,16 +128,16 @@ fn drain_escalation(d: &SweepData, cfg: &Cfg) {
         "DRAINING for {mins}m — calls gated since {since}\n\nNew dwarves cannot be called while world.draining exists. Loop, landing and reaping continue.\n\nLift with: world.sh resume\n"
     );
     let f = Finding::new(&cfg.db, &cfg.home_repo, "DRAINING: world.sh calls gated", &body).priority(1);
-    incident::alarm(inc, &f);
+    raise(&f);
     log(&format!("watchtower: drain escalation filed ({mins}m >= {}m threshold)", cfg.drain_warn_mins));
 }
 
-fn hel_oldest_unsent(d: &SweepData, cfg: &Cfg) {
+fn hel_oldest_unsent(d: &SweepData, cfg: &Cfg, raise: Raise) {
     let Some(oldest) = num(d.env.g("SP_UNSENT_OLDEST_H")) else { return };
     if oldest < cfg.unsent_warn_h {
         return;
     }
-    let Some(inc) = usable_inc(cfg) else {
+    let Some(_) = usable_inc(cfg) else {
         log(&format!("watchtower: {} is missing — sending escalation not filed", cfg.incident_sh));
         return;
     };
@@ -144,16 +149,16 @@ fn hel_oldest_unsent(d: &SweepData, cfg: &Cfg) {
         .priority(1)
         .reference("incident:hel-oldest-unsent")
         .cause("oldest-unsent");
-    incident::alarm(inc, &f);
+    raise(&f);
     log(&format!("watchtower: sending escalation filed (oldest unsent {oldest}h >= {}h threshold)", cfg.unsent_warn_h));
 }
 
-fn unadopted_refs(d: &SweepData, cfg: &Cfg) {
+fn unadopted_refs(d: &SweepData, cfg: &Cfg, raise: Raise) {
     let Some(n) = num(d.env.g("SP_UNADOPTED")) else { return };
     if n <= 0 {
         return;
     }
-    let Some(inc) = usable_inc(cfg) else {
+    let Some(_) = usable_inc(cfg) else {
         log(&format!("watchtower: {} is missing — unadopted escalation not filed", cfg.incident_sh));
         return;
     };
@@ -167,11 +172,11 @@ fn unadopted_refs(d: &SweepData, cfg: &Cfg) {
         .reference("incident:hel-unadopted-refs")
         .cause("unadopted-refs")
         .delivers_action();
-    incident::alarm(inc, &f);
+    raise(&f);
     log(&format!("watchtower: unadopted escalation filed ({n} unadopted refs)"));
 }
 
-fn hotfix(d: &SweepData, cfg: &Cfg) {
+fn hotfix(d: &SweepData, cfg: &Cfg, raise: Raise) {
     let Some(out) = &d.release_status else { return };
     let Some(alert) = out.lines().find(|l| l.starts_with("ALERT ")) else {
         return;
@@ -189,7 +194,7 @@ fn hotfix(d: &SweepData, cfg: &Cfg) {
     if sha.len() != 40 || rest.as_bytes().get(40) != Some(&b':') {
         return;
     }
-    let Some(inc) = usable_inc(cfg) else {
+    let Some(_) = usable_inc(cfg) else {
         log(&format!("watchtower: {} is missing — hotfix escalation not filed", cfg.incident_sh));
         return;
     };
@@ -205,16 +210,16 @@ fn hotfix(d: &SweepData, cfg: &Cfg) {
     .priority(1)
     .reference(format!("incident:hotfix-{sha}"))
     .cause("hotfix-standing");
-    incident::alarm(inc, &f);
+    raise(&f);
     log(&format!("watchtower: hotfix escalation filed ({sha} past threshold)"));
 }
 
-fn batched_stranded(d: &SweepData, cfg: &Cfg) {
+fn batched_stranded(d: &SweepData, cfg: &Cfg, raise: Raise) {
     let Some(n) = num(d.env.g("SP_BATCHED_STRANDED")) else { return };
     if n <= 0 {
         return;
     }
-    let Some(inc) = usable_inc(cfg) else {
+    let Some(_) = usable_inc(cfg) else {
         log(&format!("watchtower: {} is missing — batched-stranded escalation not filed", cfg.incident_sh));
         return;
     };
@@ -226,7 +231,7 @@ fn batched_stranded(d: &SweepData, cfg: &Cfg) {
         .priority(1)
         .reference("incident:hel-batched-stranded")
         .cause("batched-stranded");
-    let outcome = match incident::alarm_outcome(inc, &f) {
+    let outcome = match raise(&f) {
         incident::AlarmOutcome::Noted => "noted in the Concierge inbox",
         incident::AlarmOutcome::Deduped => "deduped (already noted within the reminder interval)",
         incident::AlarmOutcome::Failed => "NOT filed (incident alarm failed)",
@@ -234,12 +239,12 @@ fn batched_stranded(d: &SweepData, cfg: &Cfg) {
     log(&format!("watchtower: batched-stranded escalation {outcome} ({n} stranded: {names})"));
 }
 
-fn batched_too_long(d: &SweepData, cfg: &Cfg) {
+fn batched_too_long(d: &SweepData, cfg: &Cfg, raise: Raise) {
     let Some(n) = num(d.env.g("SP_BATCHED_TOO_LONG")) else { return };
     if n <= 0 {
         return;
     }
-    let Some(inc) = usable_inc(cfg) else {
+    let Some(_) = usable_inc(cfg) else {
         log(&format!("watchtower: {} is missing — batched-too-long escalation not filed", cfg.incident_sh));
         return;
     };
@@ -251,16 +256,16 @@ fn batched_too_long(d: &SweepData, cfg: &Cfg) {
         .priority(1)
         .reference("incident:queue-batched-too-long")
         .cause("batched-too-long");
-    incident::alarm(inc, &f);
+    raise(&f);
     log(&format!("watchtower: batched-too-long escalation filed ({n} branches)"));
 }
 
-fn closed_stranded(d: &SweepData, cfg: &Cfg) {
+fn closed_stranded(d: &SweepData, cfg: &Cfg, raise: Raise) {
     let Some(oldest) = num(d.env.g("SP_CLOSED_STRANDED_OLDEST_H")) else { return };
     if oldest < cfg.closed_stranded_warn_h {
         return;
     }
-    let Some(inc) = usable_inc(cfg) else {
+    let Some(_) = usable_inc(cfg) else {
         log(&format!("watchtower: {} is missing — closed-stranded escalation not filed", cfg.incident_sh));
         return;
     };
@@ -273,17 +278,17 @@ fn closed_stranded(d: &SweepData, cfg: &Cfg) {
         .reference("incident:hel-closed-stranded")
         .cause("closed-stranded")
         .delivers_action();
-    incident::alarm(inc, &f);
+    raise(&f);
     log(&format!("watchtower: closed-stranded escalation filed (oldest {oldest}h >= {}h)", cfg.closed_stranded_warn_h));
 }
 
-fn dedup_meter(d: &SweepData, cfg: &Cfg) {
+fn dedup_meter(d: &SweepData, cfg: &Cfg, raise: Raise) {
     let Some(refs) = num(d.env.g("SP_DUP_REFS")) else { return };
     if refs <= 0 {
         return;
     }
     let beads = d.env.g("SP_DUP_BEADS");
-    let Some(inc) = usable_inc(cfg) else {
+    let Some(_) = usable_inc(cfg) else {
         log(&format!("watchtower: {} is missing — dedup escalation not filed", cfg.incident_sh));
         return;
     };
@@ -306,13 +311,13 @@ fn dedup_meter(d: &SweepData, cfg: &Cfg) {
     .priority(1)
     .reference("incident:dedup-meter-nonzero")
     .cause("dedup-meter");
-    incident::alarm(inc, &f);
+    raise(&f);
     log(&format!("watchtower: dedup escalation filed ({refs} dup refs, {beads} surplus beads)"));
 }
 
-fn gate_silent(d: &SweepData, cfg: &Cfg) {
+fn gate_silent(d: &SweepData, cfg: &Cfg, raise: Raise) {
     let Some(s) = &d.gate_silence else { return };
-    let Some(inc) = usable_inc(cfg) else {
+    let Some(_) = usable_inc(cfg) else {
         log(&format!("watchtower: {} is missing — gate-silent escalation not filed", cfg.incident_sh));
         return;
     };
@@ -327,13 +332,13 @@ fn gate_silent(d: &SweepData, cfg: &Cfg) {
         .priority(1)
         .reference("incident:gate-silent")
         .cause("gate-silent");
-    incident::alarm(inc, &f);
+    raise(&f);
     log(&format!("watchtower: gate-silent escalation filed (last gate {last})"));
 }
 
-fn gate_slow(d: &SweepData, cfg: &Cfg) {
+fn gate_slow(d: &SweepData, cfg: &Cfg, raise: Raise) {
     let Some(s) = &d.gate_slow else { return };
-    let Some(inc) = usable_inc(cfg) else {
+    let Some(_) = usable_inc(cfg) else {
         log(&format!("watchtower: {} is missing — gate-slow escalation not filed", cfg.incident_sh));
         return;
     };
@@ -345,15 +350,15 @@ fn gate_slow(d: &SweepData, cfg: &Cfg) {
         .priority(1)
         .reference("incident:gate-slow")
         .cause("gate-slow");
-    incident::alarm(inc, &f);
+    raise(&f);
     log(&format!("watchtower: gate-slow escalation filed (p90 {}s)", s.p90));
 }
 
-fn idle_while_ready(d: &SweepData, cfg: &Cfg) {
+fn idle_while_ready(d: &SweepData, cfg: &Cfg, raise: Raise) {
     if d.idle_while_ready.is_empty() {
         return;
     }
-    let Some(inc) = usable_inc(cfg) else {
+    let Some(_) = usable_inc(cfg) else {
         log(&format!("watchtower: {} is missing — idle-while-ready escalation not filed", cfg.incident_sh));
         return;
     };
@@ -371,7 +376,7 @@ fn idle_while_ready(d: &SweepData, cfg: &Cfg) {
         .priority(1)
         .reference(format!("incident:idle-while-ready:{rune}"))
         .cause("idle-while-ready");
-        incident::alarm(inc, &f);
+        raise(&f);
         log(&format!(
             "watchtower: idle-while-ready escalation filed for {rune} (ready={ready}, last {} calls idle)",
             cfg.idle_while_ready_n
@@ -380,22 +385,8 @@ fn idle_while_ready(d: &SweepData, cfg: &Cfg) {
 }
 
 fn moot_sweep(cfg: &Cfg) {
-    let sh = cfg.moot_sh();
-    if !incident::is_usable(&sh) {
-        log(&format!("watchtower: moot-sweep skipped — {sh} is missing or unreadable"));
-        return;
-    }
-    let ok = spira_config::bounded::bounded("bash")
-        .arg(&sh)
-        .arg("--apply")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if ok {
-        log("watchtower: moot-sweep ran");
-    } else {
-        log(&format!("watchtower: moot-sweep exited non-zero — check {sh}"));
-    }
+    super::moot::sweep(&cfg.moot(), true);
+    log("watchtower: moot-sweep ran");
 }
 
 #[cfg(test)]
@@ -404,6 +395,11 @@ mod tests {
     use super::super::collect::SweepData;
     use crate::sweep::cfg::Cfg;
     use std::path::PathBuf;
+
+    /// The raise `run` gives the escalations: `incident alarm` on the cfg's incident.sh.
+    fn alarm(cfg: &Cfg) -> impl FnMut(&Finding) -> incident::AlarmOutcome + '_ {
+        move |f| incident::alarm_outcome(&cfg.incident_sh, f)
+    }
 
     fn fake_incident(d: &std::path::Path) -> String {
         let inc = d.join("inc.sh");
@@ -453,9 +449,11 @@ mod tests {
             throttle_stamp: None,
             queue_throttle_override: String::new(),
             incident_sh,
-            bdq: "/does/not/exist/bdq".into(),
+            lc: spira_config::lc_call::LcClient::socket("/does/not/exist/lc.sock"),
             suites_sh: None,
-            moot_sh: Some("/does/not/exist/moot-sweep.sh".into()),
+            cockpit_db: None,
+            moot_timeout_s: 30,
+            resolve_bin: "resolve".into(),
             branch_guard_sh: None,
             lc_bin: "/does/not/exist/spira-lc".into(),
         }
@@ -467,7 +465,7 @@ mod tests {
         let inc = fake_incident(&d);
         let cfg = cfg_with(&d, inc);
         let data = SweepData::fixture_nominal(1_700_000_000); // SP_UNSENT_OLDEST_H unset -> "?"
-        hel_oldest_unsent(&data, &cfg);
+        hel_oldest_unsent(&data, &cfg, &mut alarm(&cfg));
         assert!(!d.join("captured.txt").exists());
     }
 
@@ -477,12 +475,24 @@ mod tests {
         let cfg = cfg_with(&d, "/does/not/exist/incident.sh".into());
         let mut data = SweepData::fixture_nominal(1_700_000_000);
         data.env.set("SP_UNADOPTED", "5");
-        unadopted_refs(&data, &cfg); // must not panic, and files nothing
+        unadopted_refs(&data, &cfg, &mut alarm(&cfg)); // must not panic, and files nothing
         assert!(!d.join("captured.txt").exists());
     }
 
     fn captured(d: &std::path::Path) -> String {
         std::fs::read_to_string(d.join("captured.txt")).unwrap_or_default()
+    }
+
+    #[test]
+    fn a_failed_unit_is_tracked_only_when_the_content_door_names_a_live_bead() {
+        let d = testkit::TempDir::new("wt-escalate-lc");
+        let mut cfg = cfg_with(&d, "inc".into());
+        let (t, lc) = crate::lc::scripted::scripted(0, "[]");
+        cfg.lc = lc;
+        assert!(!tracked_by_open_bead(&cfg, "spira-x.service"), "no bead carries the reference");
+        assert_eq!(t.seen.lock().unwrap()[0][..4], ["content", "list", "--external-ref", "incident:failed-unit-spira-x.service"]);
+        cfg.lc = crate::lc::scripted::scripted(2, "cannot tell").1;
+        assert!(tracked_by_open_bead(&cfg, "spira-x.service"), "a store that did not answer counts as tracked");
     }
 
     fn drain(mins: Option<i64>) -> SweepData {
@@ -496,19 +506,19 @@ mod tests {
         let d = testkit::TempDir::new("wt-esc-drain-quiet");
         let mut cfg = cfg_with(&d, fake_incident(&d));
         cfg.drain_warn_mins = 0;
-        drain_escalation(&SweepData::fixture_nominal(1_700_000_000), &cfg);
-        drain_escalation(&drain(None), &cfg);
+        drain_escalation(&SweepData::fixture_nominal(1_700_000_000), &cfg, &mut alarm(&cfg));
+        drain_escalation(&drain(None), &cfg, &mut alarm(&cfg));
         assert!(captured(&d).is_empty());
     }
 
-    fn file_one(tag: &str, f: fn(&SweepData, &Cfg), pairs: &[(&str, &str)]) -> String {
+    fn file_one(tag: &str, f: fn(&SweepData, &Cfg, Raise), pairs: &[(&str, &str)]) -> String {
         let d = testkit::TempDir::new(tag);
         let cfg = cfg_with(&d, fake_incident(&d));
         let mut data = SweepData::fixture_nominal(1_700_000_000);
         for (k, v) in pairs {
             data.env.set(*k, *v);
         }
-        f(&data, &cfg);
+        f(&data, &cfg, &mut alarm(&cfg));
         captured(&d)
     }
 
@@ -537,7 +547,7 @@ mod tests {
         cfg.unsent_warn_h = 0;
         let mut data = SweepData::fixture_nominal(1_700_000_000);
         data.env.set("SP_UNSENT_OLDEST_H", "?");
-        hel_oldest_unsent(&data, &cfg);
+        hel_oldest_unsent(&data, &cfg, &mut alarm(&cfg));
         assert!(captured(&d).is_empty());
     }
 }

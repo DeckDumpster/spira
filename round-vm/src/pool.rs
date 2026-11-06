@@ -867,6 +867,17 @@ impl Pool {
         Ok(released)
     }
 
+    /// What a drain decides on, read under the pool's lock.
+    pub fn drain_view(&self) -> Result<DrainView, String> {
+        self.with_state(|s| drain_view_of(s))
+    }
+
+    /// Releases `handle` as a drain does: refused while any lease holds it (re-checked under
+    /// the lock), then destroyed and verified.
+    pub fn release_idle(&self, handle: &str, factory: &dyn Fn() -> Result<Attempt, String>) -> Result<(), String> {
+        self.release_inner(handle, ProcId::current(), true, factory)
+    }
+
     /// Releases the warm VM when the pool no longer needs it: always under `ec2-always`/`ec2-only`
     /// (no pass takes a local VM there, bar the fallback, which provisions cold), otherwise once
     /// it has sat ready for `idle`. A leased VM is never touched. Returns how many it released.
@@ -876,33 +887,7 @@ impl Pool {
         spill_only_ec2: bool,
         factory: &dyn Fn() -> Result<Attempt, String>,
     ) -> Result<usize, String> {
-        let Some((handle, why)) = self.with_state(|s| {
-            let v = s.ready.as_ref()?;
-            if s.leases.iter().any(|l| l.vm.handle == v.handle)
-                || s.refreshing.is_some_and(|r| r.alive())
-            {
-                return None;
-            }
-            if spill_only_ec2 {
-                return Some((
-                    v.handle.clone(),
-                    "placement keeps rounds off the local pool".to_string(),
-                ));
-            }
-            let since = s
-                .vms()
-                .into_iter()
-                .find(|(h, st, _, _)| *h == v.handle && *st == VmState::Ready)
-                .map_or(now(), |(_, _, at, _)| at);
-            let age = now().saturating_sub(since);
-            (age >= idle.as_secs()).then(|| {
-                (
-                    v.handle.clone(),
-                    format!("idle {age}s past the {}s bound", idle.as_secs()),
-                )
-            })
-        })?
-        else {
+        let Some((handle, why)) = self.with_state(|s| drain_choice(&drain_view_of(s), spill_only_ec2, idle.as_secs(), now()))? else {
             return Ok(0);
         };
         eprintln!("round-vm: releasing warm VM {handle}: {why}");
@@ -1095,6 +1080,43 @@ fn owner_cmd(pid: u32) -> Vec<String> {
         .filter(|a| !a.is_empty())
         .map(|a| String::from_utf8_lossy(a).into_owned())
         .collect()
+}
+
+/// The facts a drain decides on: the ready VM and the epoch seconds it became ready, the
+/// handles a lease holds, and whether a template refresh is alive.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DrainView {
+    pub ready: Option<(String, u64)>,
+    pub leased: Vec<String>,
+    pub refreshing_alive: bool,
+}
+
+fn drain_view_of(s: &PoolState) -> DrainView {
+    let ready = s.ready.as_ref().map(|v| {
+        let since = s.vms().into_iter().find(|(h, st, _, _)| *h == v.handle && *st == VmState::Ready).map_or(now(), |(_, _, at, _)| at);
+        (v.handle.clone(), since)
+    });
+    DrainView { ready, leased: s.leases.iter().map(|l| l.vm.handle.clone()).collect(), refreshing_alive: s.refreshing.is_some_and(|r| r.alive()) }
+}
+
+/// The drain's decision, pure: the handle to release and why, or nothing. Nothing when no VM
+/// is ready, a lease holds it, or a refresh is alive; at once under a placement that keeps
+/// rounds off the local pool; otherwise once it has sat ready `idle_secs`.
+pub fn drain_choice(v: &DrainView, spill_only_ec2: bool, idle_secs: u64, now_secs: u64) -> Option<(String, String)> {
+    let (handle, since) = v.ready.as_ref()?;
+    if v.leased.iter().any(|l| l == handle) || v.refreshing_alive {
+        return None;
+    }
+    if spill_only_ec2 {
+        return Some((handle.clone(), "placement keeps rounds off the local pool".to_string()));
+    }
+    let age = now_secs.saturating_sub(*since);
+    (age >= idle_secs).then(|| (handle.clone(), format!("idle {age}s past the {idle_secs}s bound")))
+}
+
+/// Whether a `SPIRA_ROUND_VM_SPILL` mode keeps rounds off the local pool.
+pub fn spill_only_ec2(mode: &str) -> bool {
+    matches!(mode, "ec2-always" | "ec2-only")
 }
 
 #[cfg(test)]

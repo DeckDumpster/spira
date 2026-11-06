@@ -118,29 +118,60 @@ fn held_by(p: &Path) -> Option<&'static str> {
     }
 }
 
+/// One entry directly under the worktree root, as a pass reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntryScan {
+    pub name: String,
+    pub path: PathBuf,
+    pub is_dir: bool,
+    pub is_git: bool,
+    /// The repository a linked worktree belongs to.
+    pub repo: Option<PathBuf>,
+    pub unsaved: Unsaved,
+    pub age: Duration,
+    pub held: Option<&'static str>,
+}
+
+/// Every entry under `w.worktrees()`, sorted by name, with what [`decide`] needs; `Err` when
+/// the root cannot be read.
+pub fn entries(w: &dyn World) -> Result<Vec<EntryScan>, String> {
+    let root = w.worktrees();
+    let rd = std::fs::read_dir(&root).map_err(|e| format!("cannot read {}: {e}", root.display()))?;
+    let mut names: Vec<String> = rd.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    names.sort();
+    Ok(names
+        .into_iter()
+        .map(|name| {
+            let path = root.join(&name);
+            let is_dir = std::fs::symlink_metadata(&path).map(|m| m.is_dir()).unwrap_or(false);
+            let repo = if is_dir && path.join(".git").exists() { repo_of(&path) } else { None };
+            let is_git = path.join(".git").exists();
+            let uns = match &repo {
+                Some(r) => w.base(r).map_or(Unsaved::Unknown, |b| unsaved(&path, &b.landrefs)),
+                None => Unsaved::Unknown,
+            };
+            let unsaved = if is_git { uns } else { Unsaved::No };
+            EntryScan { age: age_of(&path), held: held_by(&path), name, path, is_dir, is_git, repo, unsaved }
+        })
+        .collect())
+}
+
 /// One pass. `states`: bead id -> lifecycle state, from one `spira-lc list`. Exit 1 when a
 /// removal failed.
 pub fn run(w: &dyn World, states: &HashMap<String, String>, max_age: Duration, dry: bool) -> i32 {
     let root = w.worktrees();
-    let Ok(rd) = std::fs::read_dir(&root) else {
-        w.log(&format!("hel: reap-terminal: cannot read {}", root.display()));
-        return 1;
+    let scanned = match entries(w) {
+        Ok(e) => e,
+        Err(e) => {
+            w.log(&format!("hel: reap-terminal: {e}"));
+            return 1;
+        }
     };
-    let mut names: Vec<String> = rd.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
-    names.sort();
     let (mut removed, mut failed) = (0u32, 0u32);
     let mut repos: Vec<PathBuf> = Vec::new();
-    for name in names {
-        let path = root.join(&name);
-        let is_dir = std::fs::symlink_metadata(&path).map(|m| m.is_dir()).unwrap_or(false);
-        let repo = if is_dir && path.join(".git").exists() { repo_of(&path) } else { None };
+    for EntryScan { name, path, is_git, repo, unsaved, age, held, .. } in scanned {
         let state = states.get(&name).map(String::as_str);
-        let uns = match &repo {
-            Some(r) => w.base(r).map_or(Unsaved::Unknown, |b| unsaved(&path, &b.landrefs)),
-            None => Unsaved::Unknown,
-        };
-        let is_git = path.join(".git").exists();
-        let decision = decide(&name, state, is_git, if is_git { uns } else { Unsaved::No }, age_of(&path), max_age, held_by(&path));
+        let decision = decide(&name, state, is_git, unsaved, age, max_age, held);
         match decision {
             Decision::Keep(why) => w.emit(&format!("KEEP    {name}  {why}")),
             Decision::Remove(why) => {
@@ -181,7 +212,7 @@ pub fn run(w: &dyn World, states: &HashMap<String, String>, max_age: Duration, d
 
 /// A non-git entry, removed only when it sits directly under the worktree root; a symlink is
 /// unlinked, never followed.
-fn remove_scratch(root: &Path, path: &Path) -> bool {
+pub fn remove_scratch(root: &Path, path: &Path) -> bool {
     if path.parent() != Some(root) {
         return false;
     }

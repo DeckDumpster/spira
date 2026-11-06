@@ -14,7 +14,7 @@
 #   7. Act mode: deterministic remedy executed; inference bead filed.
 #   8. World halted: pass exits 0 without acting.
 #   9. SPIRA_LOOP_STALL_SECS and SPIRA_CI_RED_MAX_SECS are in conf.sh allowlist.
-#  10. spira-czar-pass.timer and .service exist in systemd/.
+#  10. the czar pass has no unit of its own (it is the scheduler's czar task).
 #  11. watchtower --queue-checks is deleted (not even a stub; sp-lnmbq).
 #  12. sentinel no longer calls watchtower --queue-checks.
 #  16-21. base-red: the base ref's OWN gate run, not a batch's. Positive control
@@ -49,7 +49,7 @@
 # verifies detection. A detector that fires on empty data is not a detector.
 #
 # tier: T1
-# covers: czar-pass/src/main.rs reconciler-engine/src/**.rs spira/conf.sh spira/testlib/lc-fixture.sh spira/testlib/forge-batch.sh sentinel/src/* watchtower/src/* systemd/spira-czar-pass.service systemd/spira-czar-pass.timer UC-ops-detection-remediation-23 UC-ops-detection-remediation-24
+# covers: czar-pass/src/main.rs reconciler-engine/src/**.rs spira/conf.sh spira/testlib/lc-fixture.sh spira/testlib/forge-batch.sh sentinel/src/* watchtower/src/* UC-ops-detection-remediation-23 UC-ops-detection-remediation-24
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
@@ -70,6 +70,9 @@ T="$(mktemp -d)"; trap 'lcfix_down; rm -rf "$T"' EXIT INT TERM
 . "$HERE/testlib/lc-fixture.sh"
 . "$HERE/testlib/forge-batch.sh"
 lcfix_up || { printf 'test-czar-pass: could not build a lifecycle fixture\n' >&2; exit 2; }
+# czar-pass reads each repo's open batch from the store's own projection, which watches the
+# control store and refuses (unobservable) when the lifecycle is not on it — as production runs.
+fb_store_up || { printf 'test-czar-pass: could not put the batch machine on the control store\n' >&2; exit 2; }
 
 # czar-pass is found directly on this suite's PATH (sp-gypjk).
 
@@ -201,7 +204,7 @@ printf 'testrepo | %s | push | origin/main | |\n' "$T/testrepo" > "$SPIRA_REPO_M
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
 "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
-want "ci-stalled: DETECTED=yes in czar.log" "CLASS=ci-stalled DETECTED=yes" "$_log"
+want "ci-stalled: DETECTED=yes in czar.log" "CLASS=ci-stalled DETECTED=yes STATUS=gap" "$_log"
 
 # ==========================================================================================
 printf '\n%s\n' "6. shadow mode: CZAR-WOULD written, no bead filed"
@@ -265,17 +268,14 @@ for key in SPIRA_LOOP_STALL_SECS SPIRA_CI_RED_MAX_SECS; do
 done
 
 # ==========================================================================================
-printf '\n%s\n' "10. systemd unit files exist"
+printf '\n%s\n' "10. the czar pass has no unit of its own"
 # ==========================================================================================
+# It is the scheduler's `czar` task (spira-runtime); its 30 s cadence is T1 there.
 _sd="$HERE/../systemd"
-[ -f "$_sd/spira-czar-pass.timer" ] \
-    && ok "spira-czar-pass.timer exists" \
-    || bad "spira-czar-pass.timer not found"
-[ -f "$_sd/spira-czar-pass.service" ] \
-    && ok "spira-czar-pass.service exists" \
-    || bad "spira-czar-pass.service not found"
-_timer="$(cat "$_sd/spira-czar-pass.timer" 2>/dev/null)"
-want "timer: OnUnitActiveSec=30s" "OnUnitActiveSec=30s" "$_timer"
+[ -f "$_sd/spira-runtime.service" ] && ok "positive control: the systemd/ templates are readable" || bad "systemd/spira-runtime.service is readable" "not found in $_sd"
+[ ! -e "$_sd/spira-czar-pass.timer" ] && [ ! -e "$_sd/spira-czar-pass.service" ] \
+    && ok "spira-czar-pass.timer and .service are retired" \
+    || bad "spira-czar-pass.timer and .service are retired" "still in $_sd"
 
 # ==========================================================================================
 printf '\n%s\n' "11. watchtower --queue-checks is deleted, not retired (sp-lnmbq)"
@@ -353,7 +353,7 @@ chmod +x "$STUB_FORGE"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
 "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
-want "ci-red: DETECTED=yes when run red >threshold" "CLASS=ci-red DETECTED=yes" "$_log"
+want "ci-red: DETECTED=yes when run red >threshold" "CLASS=ci-red DETECTED=yes STATUS=gap" "$_log"
 lack "ci-red: interval is not ~1800s (batch-open age)" "not acting for 1" "$_log"
 want "ci-red: czar.log shows 'not acting for 7'" "not acting for 7" "$_log"
 
@@ -381,7 +381,7 @@ chmod +x "$STUB_FORGE"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
 "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
-want "coexistence: ci-stalled still DETECTED=yes" "CLASS=ci-stalled DETECTED=yes" "$_log"
+want "coexistence: ci-stalled still DETECTED=yes" "CLASS=ci-stalled DETECTED=yes STATUS=gap" "$_log"
 want "coexistence: ci-red stays DETECTED=no (run only 60s red)" "CLASS=ci-red DETECTED=no" "$_log"
 
 # ==========================================================================================
@@ -447,7 +447,7 @@ tl_config SPIRA_CZAR_STAGE_BASE_RED=act
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
 want "base-red: the fire calls the czar (sentinel --call czar)" "--call czar" "$(cat "$CALL_LOG" 2>/dev/null || true)"
-want "base-red: DETECTED=yes when base's own run is red" "CLASS=base-red DETECTED=yes" "$_log"
+want "base-red: DETECTED=yes when base's own run is red" "CLASS=base-red DETECTED=yes STATUS=gap" "$_log"
 want "base-red: bead filed with cause=base-red" "cause=base-red" "$_inc_log"
 want "base-red: filed at priority 0 (P0)" "priority=0" "$_inc_log"
 want "base-red: filed express, as lifecycle state" "express=1" "$_inc_log"

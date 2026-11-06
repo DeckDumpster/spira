@@ -20,7 +20,6 @@ pub struct Cfg {
     pub oom_hold_secs: i64,
     pub tmp_path: String,
     pub tmp_floor_mib: i64,
-    pub df_bin: String,
     pub disk_floor_pct: i64,
     pub psi_dir: String,
     pub psi_full_avg60: f64,
@@ -28,6 +27,7 @@ pub struct Cfg {
 }
 
 fn systemctl_show(cfg: &Cfg, args: &[&str]) -> Option<String> {
+    // FORK-EDGE: needs a Units port listing (units by glob and state) with arbitrary properties (NRestarts, Result, Environment)
     let out = crate::deadline::output("conditions systemctl", Command::new(&cfg.systemctl).arg("--user").arg("show").args(args)).ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
@@ -257,26 +257,9 @@ pub fn oom_restarts(cfg: &Cfg, now: i64, run_dir: &Path) -> Reading {
 
 // ---- (c) room and pressure ----------------------------------------------------------
 
-pub fn df_avail_mib_and_used_pct(df_out: &str) -> Option<(i64, i64)> {
-    let line = df_out.lines().last()?;
-    let mut f = line.split_whitespace();
-    let avail: i64 = f.next()?.trim_end_matches('M').parse().ok()?;
-    let pct: i64 = f.next()?.trim_end_matches('%').parse().ok()?;
-    Some((avail, pct))
-}
-
-pub fn df_size_mib(df_out: &str) -> Option<i64> {
-    df_out.lines().last()?.split_whitespace().nth(2)?.trim_end_matches('M').parse().ok()
-}
-
-fn df(cfg: &Cfg, path: &str) -> Option<(i64, i64, Option<i64>)> {
-    let out = crate::deadline::output("conditions df", Command::new(&cfg.df_bin).args(["--output=avail,pcent,size", "-BM", path])).ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let (avail, pct) = df_avail_mib_and_used_pct(&text)?;
-    Some((avail, pct, df_size_mib(&text)))
+/// `(available MiB, Use%, size MiB)` of the filesystem holding `path`.
+fn df(path: &str) -> Option<(i64, i64, Option<i64>)> {
+    crate::fsstat::usage(path).map(|u| (u.avail_mib, u.used_pct, Some(u.size_mib)))
 }
 
 /// The `full avg60` of a `/proc/pressure/<resource>` file.
@@ -292,7 +275,7 @@ fn cond(key: &str, title: String, body: String, sustain: i64) -> Cond {
 pub fn pressure(cfg: &Cfg) -> Reading {
     let mut standing = Vec::new();
     let mut readable = false;
-    if let Some((avail, _, size)) = df(cfg, &cfg.tmp_path) {
+    if let Some((avail, _, size)) = df(&cfg.tmp_path) {
         readable = true;
         // A filesystem smaller than the floor can never satisfy it: that is a prerequisite
         // for install-time checking, not a condition a tick can clear.
@@ -306,7 +289,7 @@ pub fn pressure(cfg: &Cfg) -> Reading {
             ));
         }
     }
-    if let Some((_, used, _)) = df(cfg, "/") {
+    if let Some((_, used, _)) = df("/") {
         readable = true;
         let free = 100 - used;
         if free < cfg.disk_floor_pct {
@@ -396,8 +379,7 @@ pub fn release_store(cfg: &Cfg) -> Reading {
 pub const ROWLESS_REFERENCE: &str = "incident:lifecycle-rowless-beads";
 
 pub struct RowlessCfg {
-    pub bdq: String,
-    pub lc_bin: String,
+    pub lc: spira_config::lc_call::LcClient,
     pub cap: usize,
     pub sustain_secs: i64,
     pub state: std::path::PathBuf,
@@ -433,6 +415,11 @@ pub fn rowless_cond(missing: &[String], cap: usize, sustain_secs: i64) -> Option
     })
 }
 
+/// Every lifecycle row's bead id, from the store's `list`; `None` when it did not answer.
+pub fn lifecycle_ids(lc: &spira_config::lc_call::LcClient) -> Option<Vec<String>> {
+    ids_of(lc.answer(&["list"]).ok()?.as_bytes(), "bead_id")
+}
+
 fn ids_of(stdout: &[u8], key: &str) -> Option<Vec<String>> {
     let rows: Vec<serde_json::Value> = serde_json::from_slice(stdout).ok()?;
     Some(rows.iter().filter_map(|r| r.get(key).and_then(|v| v.as_str()).map(String::from)).collect())
@@ -447,15 +434,13 @@ fn ids_of(stdout: &[u8], key: &str) -> Option<Vec<String>> {
 pub fn rowless_beads(cfg: &RowlessCfg, now: i64) -> Reading {
     let prior = load_rowless_state(&cfg.state);
     let plan = rowless_plan(prior.as_ref(), now, cfg.full_secs);
-    let mut args: Vec<String> = ["list", "--status", "open,in_progress,blocked,deferred", "--exclude-type", &spira_config::nonwork::no_row_types_arg(), "--json", "--limit", "0", "--brief"]
+    let mut args: Vec<String> = ["--status", "open,in_progress,blocked,deferred", "--exclude-type", &spira_config::nonwork::no_row_types_arg(), "--json", "--limit", "0", "--brief"]
         .iter().map(|s| s.to_string()).collect();
     if let Some(since) = plan.created_after {
         args.extend(["--created-after".to_string(), crate::log::fmt_iso(since)]);
     }
-    let open = crate::deadline::output("rowless open beads", Command::new(&cfg.bdq).args(&args))
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| ids_of(&o.stdout, "id"));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let open = crate::lc::content_list(&cfg.lc, &args).and_then(|o| ids_of(o.as_bytes(), "id"));
     let Some(mut candidates) = open else { return Reading::Unknown };
     candidates.extend(plan.carried);
     candidates.sort();
@@ -463,11 +448,7 @@ pub fn rowless_beads(cfg: &RowlessCfg, now: i64) -> Reading {
     let missing = if candidates.is_empty() {
         Vec::new()
     } else {
-        let rows = crate::deadline::output("rowless lifecycle rows", Command::new(&cfg.lc_bin).arg("list"))
-            .ok()
-            .filter(|o| o.status.success())
-            .and_then(|o| ids_of(&o.stdout, "bead_id"));
-        let Some(rows) = rows else { return Reading::Unknown };
+        let Some(rows) = lifecycle_ids(&cfg.lc) else { return Reading::Unknown };
         rowless(&candidates, &rows)
     };
     save_rowless_state(&cfg.state, &RowlessState { last_full: if plan.created_after.is_none() { now } else { prior.map_or(now, |p| p.last_full) }, last_check: now, missing: missing.clone() });
@@ -529,7 +510,7 @@ fn save_rowless_state(path: &Path, st: &RowlessState) {
 pub const CONTENT_DRIFT_REFERENCE: &str = "incident:lifecycle-content-drift";
 
 pub struct ContentDriftCfg {
-    pub lc_bin: String,
+    pub lc: spira_config::lc_call::LcClient,
     pub slack: usize,
     pub sustain_secs: i64,
     pub state: std::path::PathBuf,
@@ -592,12 +573,9 @@ fn save_drift_state(path: &Path, read: &DriftRead) {
 /// still drifted then; a pass over an unchanged store reads none.
 pub fn content_drift(cfg: &ContentDriftCfg) -> Reading {
     let (since, carried) = load_drift_state(&cfg.state).unwrap_or((0, Vec::new()));
-    let mut cmd = Command::new(&cfg.lc_bin);
-    cmd.args(["reconcile-content", "--since-seq", &since.to_string()]).args(&carried);
-    let read = crate::deadline::output("content drift (reconcile-content dry run)", &mut cmd)
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| drift_read(&o.stdout));
+    let since = since.to_string();
+    let argv: Vec<&str> = ["reconcile-content", "--since-seq", &since].into_iter().chain(carried.iter().map(String::as_str)).collect();
+    let read = cfg.lc.answer(&argv).ok().and_then(|o| drift_read(o.as_bytes()));
     let Some(read) = read else { return Reading::Unknown };
     save_drift_state(&cfg.state, &read);
     Reading::Standing(content_drift_cond(read.drifted.len(), cfg.slack, cfg.sustain_secs).into_iter().collect())
@@ -606,6 +584,45 @@ pub fn content_drift(cfg: &ContentDriftCfg) -> Reading {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rowless_reads_bd_through_the_content_door_and_finds_the_bead_with_no_row() {
+        let d = testkit::TempDir::new("wt-rowless-lc");
+        let (t, lc) = crate::lc::scripted::scripted_by(&[
+            ("content list", 0, r#"[{"id":"sp-a"},{"id":"sp-b"}]"#),
+            ("list", 0, r#"[{"bead_id":"sp-a"}]"#),
+        ]);
+        let cfg = RowlessCfg { lc, cap: 5, sustain_secs: 0, state: d.join("rowless.state"), full_secs: 3600 };
+        let conds = standing(rowless_beads(&cfg, 1_700_000_000));
+        assert_eq!(conds.len(), 1);
+        assert!(conds[0].body.contains("sp-b") && !conds[0].body.contains("sp-a,"), "{}", conds[0].body);
+        let seen = t.seen.lock().unwrap();
+        assert_eq!(&seen[0][..3], &["content", "list", "--status"]);
+        let (_, down) = crate::lc::scripted::scripted(2, "cannot tell");
+        let cfg = RowlessCfg { lc: down, cap: 5, sustain_secs: 0, state: d.join("rowless2.state"), full_secs: 3600 };
+        assert!(matches!(rowless_beads(&cfg, 1_700_000_000), Reading::Unknown), "no answer is unknown, never no rowless beads");
+    }
+
+    #[test]
+    fn content_drift_is_the_store_reconcile_content_dry_run() {
+        let d = testkit::TempDir::new("wt-drift-lc");
+        let out = "through-seq: 42\nwould close sp-x (closed in bd)\nwould close sp-y (closed in bd)\nreconcile-content: 2 would close\n";
+        let (t, lc) = crate::lc::scripted::scripted(0, out);
+        let cfg = ContentDriftCfg { lc, slack: 1, sustain_secs: 0, state: d.join("drift.state") };
+        assert_eq!(standing(content_drift(&cfg)).len(), 1, "two drifted is past a slack of one");
+        assert_eq!(t.seen.lock().unwrap()[0], vec!["reconcile-content", "--since-seq", "0"]);
+        assert!(std::fs::read_to_string(d.join("drift.state")).unwrap().starts_with("42\n"));
+        let cfg = ContentDriftCfg { lc: crate::lc::scripted::scripted(2, "cannot tell").1, slack: 1, sustain_secs: 0, state: d.join("drift2.state") };
+        assert!(matches!(content_drift(&cfg), Reading::Unknown));
+    }
+
+    #[test]
+    fn lifecycle_ids_come_from_the_store_client() {
+        let (t, c) = crate::lc::scripted::scripted(0, r#"[{"bead_id":"sp-a"},{"bead_id":"sp-b"}]"#);
+        assert_eq!(lifecycle_ids(&c), Some(vec!["sp-a".to_string(), "sp-b".to_string()]));
+        assert_eq!(t.seen.lock().unwrap().as_slice(), &[vec!["list".to_string()]]);
+        assert_eq!(lifecycle_ids(&crate::lc::scripted::scripted(2, "cannot tell").1), None, "no answer is unknown, never no rows");
+    }
 
     #[test]
     fn an_oom_kill_is_read_from_the_unit_result_and_held() {
@@ -714,8 +731,6 @@ mod tests {
 
     #[test]
     fn df_and_psi_parse_the_real_shapes() {
-        assert_eq!(df_avail_mib_and_used_pct("Avail Use%\n 5000M  83%\n"), Some((5000, 83)));
-        assert_eq!(df_avail_mib_and_used_pct("Avail Use%\n"), None);
         let psi = "some avg10=1.00 avg60=2.00 avg300=0.50 total=1\nfull avg10=0.00 avg60=12.34 avg300=1.00 total=1\n";
         assert_eq!(psi_full_avg60(psi), Some(12.34));
         assert_eq!(psi_full_avg60("some avg60=9.0\n"), None);
@@ -734,7 +749,6 @@ mod tests {
             oom_hold_secs: 21600,
             tmp_path: "/tmp".into(),
             tmp_floor_mib: 100,
-            df_bin: "/nonexistent/df".into(),
             disk_floor_pct: 15,
             psi_dir: dir.join("psi").to_string_lossy().into_owned(),
             psi_full_avg60: 10.0,
@@ -781,9 +795,4 @@ mod tests {
         assert!(matches!(cold_overlap_reading(None, Some(2), &c), Reading::Unknown));
     }
 
-    #[test]
-    fn df_size_is_the_third_column() {
-        assert_eq!(df_size_mib("Avail Use% 1M-blocks\n 5000M  83% 8000M\n"), Some(8000));
-        assert_eq!(df_size_mib("Avail Use%\n 5000M  83%\n"), None);
-    }
 }

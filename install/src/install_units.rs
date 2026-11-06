@@ -91,13 +91,43 @@ pub fn execstart_target_ok(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The manifest rows rendered from [`watchdog_files`] rather than from a template file.
+const WATCHDOG_ROWS: [&str; 2] = ["spira-watchdog.service", "spira-watchdog.timer"];
+
+/// The watchdog's timer files for `platform` (S15): one pass of `spira-watchdog` every
+/// `SPIRA_WATCHDOG_EVERY_SECS`, under the environment the runtime's own unit carries, named
+/// per instance like every other `spira-*` unit.
+pub fn watchdog_files(platform: watchdog::render::Platform, host: &HostValues) -> Result<Vec<(String, String)>, String> {
+    let every: u64 = host.watchdog_every_s.trim().parse().map_err(|_| format!("{} is {:?}, not a whole number of seconds — refusing to render the watchdog's timer", watchdog::KEY_EVERY, host.watchdog_every_s))?;
+    let v = host.to_map();
+    let (root, prod) = (&v["SPIRA_PROD_ROOT"], &v["SPIRA_PROD"]);
+    let env = vec![
+        ("SPIRA_RELEASE".to_string(), v["SPIRA_RELEASE"].clone()),
+        ("SPIRA_TOML".to_string(), host.toml.clone()),
+        ("SPIRA_HOME".to_string(), prod.clone()),
+        ("SPIRA_RUN".to_string(), host.run.clone()),
+        ("PATH".to_string(), format!("{root}/bin:{root}/spira:{}:/usr/local/bin:/usr/bin:/bin{}", host.env_bin, v["SPIRA_PATH_TAIL"])),
+    ];
+    let spec = watchdog::render::TimerSpec { label: format!("{}-{}", watchdog::render::LABEL, host.instance), ..watchdog::render::TimerSpec::watchdog(std::path::PathBuf::from(format!("{root}/bin/spira-watchdog")), every, env) };
+    watchdog::render::render(platform, &spec)
+}
+
+/// One watchdog row's file for this host's platform. This installer writes systemd units, so a
+/// platform whose files carry other names (a launchd plist, a crontab line) is refused here.
+fn render_watchdog_row(ctx: &Ctx, row: &str) -> Result<String, String> {
+    let platform = watchdog::render::Platform::for_os(std::env::consts::OS);
+    let inst = inst_name(row, &ctx.host.instance);
+    let files = watchdog_files(platform, ctx.host)?;
+    files.into_iter().find(|(n, _)| *n == inst).map(|(_, t)| t).ok_or_else(|| format!("{inst}: the watchdog renders {platform:?} files on {}, which this systemd installer does not install", std::env::consts::OS))
+}
+
 /// Render every template and watcher instance this manifest installs. Used by `--render` and
 /// `--diff`, and by [`run`] itself so both paths use the same set.
 pub fn render_all(ctx: &Ctx) -> Result<Vec<(String, String, String)>, String> {
     // (installed name, template basename, rendered text)
     let mut out = Vec::new();
     for name in ctx.manifest.template_names() {
-        let text = render_template(ctx, name, None)?;
+        let text = if WATCHDOG_ROWS.contains(&name) { render_watchdog_row(ctx, name)? } else { render_template(ctx, name, None)? };
         out.push((inst_name(name, &ctx.host.instance), name.to_string(), text));
     }
     for w in &ctx.manifest.watch_names {
@@ -226,11 +256,6 @@ pub fn run(ctx: &Ctx) -> Report {
 
     let mut ordered: Vec<String> = ctx.manifest.enable(&ctx.host.instance);
     ordered.sort_by_key(|u| if u == "dolt-beads.service" { 0 } else { 1 });
-
-    let provision = inst_name("spira-submission-provision.service", &ctx.host.instance);
-    if !ctx.world_halted && ordered.contains(&inst_name("spira-submission-provision.timer", &ctx.host.instance)) {
-        let _ = ctx.systemctl.start(&provision);
-    }
 
     let new_by_inst: std::collections::BTreeSet<&String> = new_units.iter().collect();
     for u in &ordered {
@@ -618,18 +643,16 @@ mod tests {
     use std::fs;
 
     fn host() -> HostValues {
-        HostValues { toml: "/h/cfg.toml".into(), home: "/h".into(), repo: "/h".into(), run: "/run".into(), db: "/db".into(), cockpit: "/h/cockpit".into(), dolt_data: "".into(), dolt: "/usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), env_bin: "/h/.local/lib/spira-env/bin".into(), sccache_dav_addr: "".into(), repo_map: "".into(), lc_password_file: "/h/lc.credential".into() }
+        HostValues { toml: "/h/cfg.toml".into(), home: "/h".into(), repo: "/h".into(), run: "/run".into(), db: "/db".into(), cockpit: "/h/cockpit".into(), dolt_data: "".into(), dolt: "/usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), env_bin: "/h/.local/lib/spira-env/bin".into(), sccache_dav_addr: "".into(), repo_map: "".into(), lc_password_file: "/h/lc.credential".into(), watchdog_every_s: "60".into() }
     }
 
     fn tiny_manifest() -> Manifest {
-        let mut m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
-        m.units.retain(|u| u.name == "spira-sentinel.service" || u.name == "spira-sentinel.timer");
-        m
+        crate::manifest::Manifest { units: vec![crate::manifest::Template { name: "spira-example.service".into(), enable: false }, crate::manifest::Template { name: "spira-example.timer".into(), enable: true }], ..Default::default() }
     }
 
     fn write_templates(dir: &Path) {
-        fs::write(dir.join("spira-sentinel.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
-        fs::write(dir.join("spira-sentinel.timer"), "[Unit]\nUnit=spira-sentinel.service\n[Timer]\nOnCalendar=*:0/5\n").unwrap();
+        fs::write(dir.join("spira-example.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
+        fs::write(dir.join("spira-example.timer"), "[Unit]\nUnit=spira-example.service\n[Timer]\nOnCalendar=*:0/5\n").unwrap();
     }
 
     #[test]
@@ -666,7 +689,7 @@ mod tests {
         assert!(unit_dir.join("unrelated.service").exists());
         assert!(!sc.disabled_now.borrow().contains(&"unrelated.service".to_string()));
         let ledger = fs::read_to_string(unit_dir.join(LEDGER)).unwrap();
-        assert!(ledger.contains("spira-sentinel-prod.timer") && !ledger.contains("beads-push"));
+        assert!(ledger.contains("spira-example-prod.timer") && !ledger.contains("beads-push"));
         assert!(run(&ctx).retired.is_empty());
     }
 
@@ -694,34 +717,6 @@ mod tests {
         assert!(!unit_dir.join("spira-round-template-prod.timer").exists());
         assert!(!unit_dir.join("spira-round-template-prod.service.d").exists());
         assert!(sc.disabled_now.borrow().contains(&"spira-round-template-prod.timer".to_string()));
-    }
-
-    #[test]
-    fn submission_provisioning_runs_before_loom_starts() {
-        let td = tempdir();
-        let unit_dir = td.join("units");
-        let tmpl_dir = td.join("templates");
-        fs::create_dir_all(&unit_dir).unwrap();
-        fs::create_dir_all(&tmpl_dir).unwrap();
-        for n in ["spira-loom.service", "spira-submission-provision.service"] {
-            fs::write(tmpl_dir.join(n), "[Service]\nExecStart=/bin/true\n").unwrap();
-        }
-        fs::write(tmpl_dir.join("spira-submission-provision.timer"), "[Unit]\nUnit=spira-submission-provision.service\n[Timer]\nOnCalendar=daily\n").unwrap();
-        let mut manifest = tiny_manifest();
-        manifest.units = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) })
-            .unwrap()
-            .units
-            .into_iter()
-            .filter(|u| u.name == "spira-loom.service" || u.name.starts_with("spira-submission-provision"))
-            .collect();
-        let h = host();
-        let sc = FakeSystemctl::default();
-        let no_suspend = |_: &str| false;
-        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
-        run(&ctx);
-        let order = sc.order.borrow().clone();
-        let at = |what: &str| order.iter().position(|o| o == what).unwrap_or_else(|| panic!("{what} not in {order:?}"));
-        assert!(at("start spira-submission-provision-prod.service") < at("enable_now spira-loom-prod.service"), "{order:?}");
     }
 
     #[test]
@@ -797,15 +792,15 @@ mod tests {
         let r1 = run(&ctx);
         assert!(r1.errors.is_empty(), "{:?}", r1.errors);
         assert_eq!(r1.written.len(), 2);
-        assert!(unit_dir.join("spira-sentinel-prod.service").exists());
-        assert!(sc.enabled_now.borrow().contains(&"spira-sentinel-prod.timer".to_string()));
+        assert!(unit_dir.join("spira-example-prod.service").exists());
+        assert!(sc.enabled_now.borrow().contains(&"spira-example-prod.timer".to_string()));
 
         let r2 = run(&ctx);
         assert!(r2.errors.is_empty());
         assert_eq!(r2.written.len(), 0);
         assert_eq!(r2.unchanged, 2);
         // Already active and unchanged: Skip, no second enable/restart call recorded.
-        assert!(matches!(r2.enabled_actions.iter().find(|(u, _)| u == "spira-sentinel-prod.timer").unwrap().1, Action::Skip));
+        assert!(matches!(r2.enabled_actions.iter().find(|(u, _)| u == "spira-example-prod.timer").unwrap().1, Action::Skip));
     }
 
     #[test]
@@ -818,21 +813,22 @@ mod tests {
         write_templates(&tmpl_dir);
         fs::write(tmpl_dir.join("spira-runtime.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
 
-        let mut manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
-        manifest.units.retain(|u| u.name.starts_with("spira-sentinel.") || u.name == "spira-runtime.service");
+        let mut manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
+        manifest.units.retain(|u| u.name == "spira-runtime.service");
+        manifest.units.extend(tiny_manifest().units);
         let h = host();
         let sc = FakeSystemctl::default();
         let no_suspend = |_: &str| false;
         let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
         assert!(run(&ctx).errors.is_empty());
 
-        for (t, kind) in [("spira-sentinel-prod.timer", "oneshot"), ("spira-runtime-prod.service", "notify")] {
+        for (t, kind) in [("spira-example-prod.timer", "oneshot"), ("spira-runtime-prod.service", "notify")] {
             sc.set(t, FakeUnit { active: false, enabled: Some("disabled".into()), kind: kind.into(), file_listed: true });
         }
         let r = run(&ctx);
         let act = |r: &Report, u: &str| r.enabled_actions.iter().find(|(n, _)| n == u).unwrap().1;
         assert!(matches!(act(&r, "spira-runtime-prod.service"), Action::EnableNow), "{:?}", act(&r, "spira-runtime-prod.service"));
-        assert!(matches!(act(&r, "spira-sentinel-prod.timer"), Action::OperatorDisabled));
+        assert!(matches!(act(&r, "spira-example-prod.timer"), Action::OperatorDisabled));
 
         let only_runtime = |s: &str| s == "spira-runtime";
         let ctx2 = Ctx { suspended: &only_runtime, ..ctx };
@@ -840,11 +836,112 @@ mod tests {
         assert!(matches!(act(&r, "spira-runtime-prod.service"), Action::Suspended));
     }
 
+    fn watchdog_host(prod: &str) -> HostValues {
+        HostValues { prod: prod.into(), watchdog_every_s: "60".into(), ..host() }
+    }
+
+    #[test]
+    fn the_watchdog_renders_a_service_and_timer_on_linux_and_a_plist_on_macos() {
+        let h = watchdog_host("/rel/current/spira");
+        let env = "Environment=SPIRA_RELEASE=/rel/current\nEnvironment=SPIRA_TOML=/h/cfg.toml\nEnvironment=SPIRA_HOME=/rel/current/spira\nEnvironment=SPIRA_RUN=/run\nEnvironment=PATH=/rel/current/bin:/rel/current/spira:/h/.local/lib/spira-env/bin:/usr/local/bin:/usr/bin:/bin\n";
+        assert_eq!(
+            watchdog_files(watchdog::render::Platform::Systemd, &h).unwrap(),
+            vec![
+                ("spira-watchdog-prod.service".to_string(), format!("[Unit]\nDescription=spira-watchdog-prod — one pass: restart and page when the scheduler is wedged or absent\n\n[Service]\nType=oneshot\n{env}ExecStart=/rel/current/bin/spira-watchdog pass\nTimeoutStartSec=60\n")),
+                ("spira-watchdog-prod.timer".to_string(), "[Unit]\nDescription=spira-watchdog-prod timer\n\n[Timer]\nOnBootSec=60s\nOnUnitActiveSec=60s\nAccuracySec=1s\nUnit=spira-watchdog-prod.service\n\n[Install]\nWantedBy=timers.target\n".to_string()),
+            ]
+        );
+        let plist = watchdog_files(watchdog::render::Platform::Launchd, &h).unwrap();
+        assert_eq!(plist.len(), 1);
+        assert_eq!(plist[0].0, "spira-watchdog-prod.plist");
+        assert_eq!(
+            plist[0].1,
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>spira-watchdog-prod</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>/rel/current/bin/spira-watchdog</string>\n    <string>pass</string>\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>SPIRA_RELEASE</key>\n    <string>/rel/current</string>\n    <key>SPIRA_TOML</key>\n    <string>/h/cfg.toml</string>\n    <key>SPIRA_HOME</key>\n    <string>/rel/current/spira</string>\n    <key>SPIRA_RUN</key>\n    <string>/run</string>\n    <key>PATH</key>\n    <string>/rel/current/bin:/rel/current/spira:/h/.local/lib/spira-env/bin:/usr/local/bin:/usr/bin:/bin</string>\n  </dict>\n  <key>StartInterval</key>\n  <integer>60</integer>\n  <key>RunAtLoad</key>\n  <true/>\n</dict>\n</plist>\n"
+        );
+        let unset = HostValues { watchdog_every_s: String::new(), ..h };
+        assert!(watchdog_files(watchdog::render::Platform::Systemd, &unset).unwrap_err().contains("SPIRA_WATCHDOG_EVERY_SECS"), "no interval is a refusal, never a default");
+    }
+
+    /// law-periodic-tool-needs-a-tested-timer: the watchdog's timer is in the manifest, enabled,
+    /// written beside the other units and enabled by the install; this fails if the
+    /// registration is removed.
+    #[test]
+    fn the_watchdog_timer_is_registered_written_and_enabled() {
+        let m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
+        assert!(m.units.iter().any(|u| u.name == "spira-watchdog.timer" && u.enable), "the watchdog timer is registered and enabled");
+        assert!(m.units.iter().any(|u| u.name == "spira-watchdog.service" && !u.enable), "its service is installed, started by the timer");
+        assert!(m.enable("prod").contains(&"spira-watchdog-prod.timer".to_string()));
+
+        let td = tempdir();
+        let unit_dir = td.join("units");
+        let tmpl_dir = td.join("templates");
+        fs::create_dir_all(&unit_dir).unwrap();
+        fs::create_dir_all(td.join("rel/bin")).unwrap();
+        fs::create_dir_all(&tmpl_dir).unwrap();
+        write_templates(&tmpl_dir);
+        testkit::write_exe(td.join("rel/bin/spira-watchdog"), "exit 0\n");
+        let mut manifest = m.clone();
+        manifest.units.retain(|u| u.name.starts_with("spira-watchdog."));
+        manifest.units.extend(tiny_manifest().units);
+        let h = watchdog_host(&td.join("rel/spira").to_string_lossy());
+        let sc = FakeSystemctl::default();
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let r = run(&ctx);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        for (name, text) in watchdog_files(watchdog::render::Platform::Systemd, &h).unwrap() {
+            assert!(r.written.contains(&name), "{name} written: {:?}", r.written);
+            assert_eq!(fs::read_to_string(unit_dir.join(&name)).unwrap(), text);
+        }
+        assert!(r.enabled_actions.iter().any(|(u, a)| u == "spira-watchdog-prod.timer" && matches!(a, Action::EnableNow)), "{:?}", r.enabled_actions);
+        assert!(fs::read_to_string(unit_dir.join(LEDGER)).unwrap().contains("spira-watchdog-prod.timer"), "a later release that drops it retires it");
+    }
+
+    /// The watcher names a box installs from the shipped manifest's `daemon` rows plus `overlay`.
+    fn shipped_daemon_rows(overlay: &[&str]) -> Vec<String> {
+        let text = fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/watchers")).unwrap();
+        let mut names: Vec<String> = text.lines().filter(|l| !l.trim_start().starts_with('#')).filter_map(|l| l.split('|').collect::<Vec<_>>().get(..2).filter(|f| f[1].trim() == "daemon").map(|f| f[0].trim().trim_start_matches('?').to_string())).collect();
+        names.extend(overlay.iter().map(|s| s.to_string()));
+        names
+    }
+
+    /// The `spira-*-<instance>.timer` and `spira-watch-*` units `rendered` holds outside the
+    /// scheduler's keep list (design W2): its watchdog, the store's boot check, and the
+    /// operator's repo-events overlay row.
+    fn outside_the_keep_list(rendered: &[(String, String, String)]) -> Vec<String> {
+        const KEEP: [&str; 3] = ["spira-watchdog-prod.timer", "spira-dolt-boot-check-prod.timer", "spira-watch-repo-events-prod.service"];
+        rendered.iter().map(|(u, _, _)| u.as_str()).filter(|u| (u.starts_with("spira-") && u.ends_with("-prod.timer")) || u.starts_with("spira-watch-")).filter(|u| !KEEP.contains(u)).map(str::to_string).collect()
+    }
+
+    /// W2 of the scheduler consolidation: rendering the manifest, with every conditional input
+    /// on, the shipped watchers and the operator's one overlay row, yields no loop timer and no
+    /// watcher unit outside the keep list. The loop runs in `spira-runtime serve`.
+    #[test]
+    fn rendering_the_manifest_yields_no_loop_timer_and_no_watcher_outside_the_keep_list() {
+        let tmpl_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
+        let td = tempdir();
+        let unit_dir = td.join("units");
+        let manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: true, dolt_durable_set: true, sccache_dav_addr_set: true, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(shipped_daemon_rows(&["repo-events"])) }).unwrap();
+        let h = host();
+        let sc = FakeSystemctl::default();
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let rendered = render_all(&ctx).unwrap();
+        assert!(rendered.iter().any(|(u, _, _)| u == "spira-runtime-prod.service"), "positive control: the scheduler renders");
+        assert!(rendered.iter().any(|(u, _, _)| u == "spira-watchdog-prod.timer"), "positive control: a kept timer renders");
+        let mut planted = rendered.clone();
+        planted.push(("spira-sentinel-prod.timer".into(), "spira-sentinel.timer".into(), String::new()));
+        planted.push(("spira-watch-queue-watch-prod.service".into(), "spira-watch@.service".into(), String::new()));
+        assert_eq!(outside_the_keep_list(&planted).len(), outside_the_keep_list(&rendered).len() + 2, "positive control: the check sees a loop timer and a watcher");
+        let strays = outside_the_keep_list(&rendered);
+        assert!(strays.is_empty(), "units the scheduler replaces are still rendered: {strays:?}");
+    }
+
     #[test]
     fn the_reconciler_has_no_timer_in_the_manifest() {
-        let m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
+        let m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
         assert!(!m.units.iter().any(|u| u.name.starts_with("spira-reconciler.")), "the runtime hosts the pass; its timer and service are retired");
-        assert!(m.units.iter().any(|u| u.name == "spira-czar-pass.timer"), "positive control: the manifest still ships timers");
+        assert!(m.units.iter().any(|u| u.name == "spira-watchdog.timer"), "positive control: the manifest still ships timers");
         assert!(!m.enable("prod").iter().any(|u| u == "spira-reconciler-prod.timer"));
     }
 
@@ -904,7 +1001,7 @@ mod tests {
         fs::create_dir_all(&unit_dir).unwrap();
         fs::create_dir_all(&tmpl_dir).unwrap();
         write_templates(&tmpl_dir);
-        std::os::unix::fs::symlink("/dev/null", unit_dir.join("spira-sentinel-prod.service")).unwrap();
+        std::os::unix::fs::symlink("/dev/null", unit_dir.join("spira-example-prod.service")).unwrap();
 
         let manifest = tiny_manifest();
         let h = host();
@@ -913,8 +1010,8 @@ mod tests {
         let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
         let r = run(&ctx);
         assert!(r.errors.is_empty());
-        assert!(r.masked.contains(&"spira-sentinel-prod.service".to_string()));
-        assert!(!r.written.contains(&"spira-sentinel-prod.service".to_string()));
+        assert!(r.masked.contains(&"spira-example-prod.service".to_string()));
+        assert!(!r.written.contains(&"spira-example-prod.service".to_string()));
     }
 
     #[test]
@@ -932,19 +1029,19 @@ mod tests {
         // never match a per-instance name, which never contains '@' — a dead check the
         // original bash carried after the per-instance naming migration; this port drops it
         // rather than preserving a check that can no longer fire).
-        fs::write(unit_dir.join("spira-sentinel-prod.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
-        fs::write(unit_dir.join("spira-sentinel-prod.timer"), "[Unit]\nUnit=spira-sentinel-prod.service\n[Timer]\nOnCalendar=*:0/1\n").unwrap();
+        fs::write(unit_dir.join("spira-example-prod.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
+        fs::write(unit_dir.join("spira-example-prod.timer"), "[Unit]\nUnit=spira-example-prod.service\n[Timer]\nOnCalendar=*:0/1\n").unwrap();
 
         let manifest = tiny_manifest();
         let h = host();
         let sc = FakeSystemctl::default();
-        sc.set("spira-sentinel-prod.timer", FakeUnit { active: true, enabled: Some("enabled".into()), kind: "oneshot".into(), file_listed: true });
+        sc.set("spira-example-prod.timer", FakeUnit { active: true, enabled: Some("enabled".into()), kind: "oneshot".into(), file_listed: true });
         let no_suspend = |_: &str| false;
         let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
         let r = run(&ctx);
         assert!(r.errors.is_empty(), "{:?}", r.errors);
-        assert!(sc.restarts.borrow().contains(&"spira-sentinel-prod.timer".to_string()));
-        assert!(matches!(r.enabled_actions.iter().find(|(u, _)| u == "spira-sentinel-prod.timer").unwrap().1, Action::Restart));
+        assert!(sc.restarts.borrow().contains(&"spira-example-prod.timer".to_string()));
+        assert!(matches!(r.enabled_actions.iter().find(|(u, _)| u == "spira-example-prod.timer").unwrap().1, Action::Restart));
     }
 
     fn tempdir() -> testkit::TempDir {
@@ -975,11 +1072,11 @@ mod tests {
     fn inside_a_test_fixture_a_non_watcher_unit_still_faults() {
         let not_active = vec![
             "spira-watch-pr-notify-abc123.service".to_string(),
-            "spira-sentinel-abc123.service".to_string(),
+            "spira-example-abc123.service".to_string(),
         ];
         let split = split_not_active(&not_active, true, "t");
         assert_eq!(split.warn_only, vec!["spira-watch-pr-notify-abc123.service".to_string()]);
-        assert_eq!(split.fatal, vec!["spira-sentinel-abc123.service".to_string()]);
+        assert_eq!(split.fatal, vec!["spira-example-abc123.service".to_string()]);
     }
 
     #[test]

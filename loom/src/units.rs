@@ -651,6 +651,8 @@ fn row_html(now: i64, r: &Row) -> String {
 }
 
 async fn run_cmd(program: &str, args: &[String], path: &str, budget: Duration) -> Result<String, String> {
+    // FORK-EDGE: systemctl list-unit-files / show / list-timers and units-install --list-enable;
+    // needs a listing on the Units port (every unit file, every timer, many units' properties).
     let mut cmd = Command::new(program);
     cmd.args(args).env("PATH", path).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     let out = tokio::time::timeout(budget, cmd.output())

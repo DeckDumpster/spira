@@ -4,13 +4,7 @@
 //! (systemd, `sop.sh`'s METRIC seam, the `test-cockpit-*.sh` suites) needs only its
 //! invocation repointed, never its assertions rewritten.
 
-mod io;
-mod metrics;
-mod probes;
-mod quoting;
-mod sparklines;
-mod supervisor;
-mod timeutil;
+use cockpit_collect::{io, metrics, probes, quoting, sparklines, supervisor, tiers, timeutil};
 
 fn usage() -> i32 {
     eprintln!(
@@ -141,59 +135,8 @@ fn write_snapshot_and_history(kv: &probes::Kv, run_dir: &std::path::Path) {
     append_history(run_dir);
 }
 
-/// `append_history`: read the snapshot back (never the probe's own in-memory output — the
-/// snapshot is what every other reader sees) and append one row, rotating the file on a
-/// column-set change rather than overwriting it.
 fn append_history(run_dir: &std::path::Path) {
-    let snap_path = run_dir.join("cockpit.env");
-    let snap: std::collections::HashMap<String, String> = std::fs::read_to_string(&snap_path)
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|l| l.split_once('='))
-        .map(|(k, v)| (k.to_string(), v.trim_matches('\'').to_string()))
-        .collect();
-    let get = |k: &str| snap.get(k).cloned().unwrap_or_else(|| "?".to_string());
-    let at = snap.get("SP_AT").cloned().unwrap_or_else(|| io::now().to_string());
-    let row = format!(
-        "{at},{},{},{},{},{},{},{},{}",
-        get("SP_TOK_WIN"), get("SP_TOK_DWARF_WIN"), get("SP_TOK_SESS_WIN"),
-        get("SP_TOK_DWARF_TURNS"), get("SP_TOK_SESS_TURNS"),
-        get("SP_CTX_NOW"), get("SP_RATELIM_5H"), get("SP_RATELIM_7D"),
-    );
-    const HIST_COLS: &str = "ts,tok_win,tok_dwarf_win,tok_sess_win,tok_dwarf_turns,tok_sess_turns,ctx_now,ratelim_5h,ratelim_7d";
-    let hist_path = run_dir.join("cockpit-history.csv");
-    let existing = std::fs::read_to_string(&hist_path).ok();
-    let needs_header = match &existing {
-        None => true,
-        Some(c) => c.lines().next() != Some(HIST_COLS),
-    };
-    if needs_header {
-        if let Some(c) = &existing {
-            if !c.is_empty() {
-                let _ = std::fs::rename(&hist_path, run_dir.join(format!("cockpit-history.csv.{}", io::now())));
-            }
-        }
-        let _ = std::fs::write(&hist_path, format!("{HIST_COLS}\n"));
-    }
-    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&hist_path) {
-        use std::io::Write;
-        let _ = writeln!(f, "{row}");
-    }
-
-    let max: usize = std::env::var("SPIRA_COCKPIT_HISTORY_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(20160);
-    if let Ok(content) = std::fs::read_to_string(&hist_path) {
-        let lines: Vec<&str> = content.lines().collect();
-        if lines.len() > max + 1 {
-            let mut kept = String::new();
-            kept.push_str(lines[0]);
-            kept.push('\n');
-            for l in &lines[lines.len() - max..] {
-                kept.push_str(l);
-                kept.push('\n');
-            }
-            let _ = std::fs::write(&hist_path, kept);
-        }
-    }
+    tiers::append_history(run_dir);
 }
 
 fn cmd_history() -> i32 {

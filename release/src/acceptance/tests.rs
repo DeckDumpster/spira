@@ -84,6 +84,15 @@ fn the_override_key_is_one_conf_sh_honours() {
 }
 
 #[test]
+fn fired_at_reads_one_tasks_last_fired_time_from_scheduler_status() {
+    let doc = r#"{"schema":1,"at":9,"halted":false,"held":0,"tasks":[{"name":"sentinel-call","last_fired_at":7},{"name":"landing","last_fired_at":null}],"classes":[]}"#;
+    assert_eq!(fired_at(doc, "sentinel-call"), Some(7));
+    assert_eq!(fired_at(doc, "landing"), None, "not fired yet");
+    assert_eq!(fired_at(doc, "nope"), None, "not registered");
+    assert_eq!(fired_at("not json", "sentinel-call"), None);
+}
+
+#[test]
 fn lifecycle_states_keep_applied_events_in_order_without_repeats() {
     let h = r#"[{"to_state":"READY","applied":1},{"to_state":"READY","applied":1},{"to_state":"WORKING","applied":0},{"to_state":"WORKING","applied":true},{"to_state":"LANDED","applied":1}]"#;
     assert_eq!(lifecycle_states(h), s(&["READY", "WORKING", "LANDED"]));
@@ -158,6 +167,10 @@ struct Fake {
     bare_lint_rc: i32,
     tag_notes: Vec<(&'static str, &'static str)>,
     tag_commit: &'static str,
+    /// The release under test ships no sentinel unit: the loop is the scheduler's tasks.
+    no_sentinel_unit: bool,
+    /// Each `world scheduler-status --json` read advances every task's last fired time.
+    fired: Cell<u64>,
 }
 
 impl Fake {
@@ -186,6 +199,8 @@ impl Fake {
             bare_lint_rc: 3,
             tag_notes: Vec::new(),
             tag_commit: "",
+            no_sentinel_unit: false,
+            fired: Cell::new(0),
         }
     }
 
@@ -218,7 +233,8 @@ impl Fake {
         let prog = c.prog.rsplit('/').next().unwrap_or("");
         match (prog, a.as_slice()) {
             ("systemctl", ["--user", "is-system-running"]) => ok("running\n"),
-            ("systemctl", ["--user", "list-unit-files", "spira-sentinel*.service", ..]) => ok("spira-sentinel-t.service static\n"),
+            ("systemctl", ["--user", "list-unit-files", "spira-sentinel*.service", ..]) => ok(if self.no_sentinel_unit { "" } else { "spira-sentinel-t.service static\n" }),
+            ("systemctl", ["--user", "list-unit-files", "spira-runtime*.service", ..]) => ok("spira-runtime-t.service enabled\n"),
             ("systemctl", ["--user", "list-unit-files", "--no-legend", "--plain", "spira-*.service"]) => ok("spira-archive-t.service static\nspira-loom-t.service enabled\n"),
             ("systemctl", ["--user", "list-unit-files", "--no-legend", "--plain"]) => ok("dolt.service enabled\n"),
             ("systemctl", ["--user", "list-unit-files", "--no-legend"]) => ok("spira-a.service enabled\nspira-b.timer enabled\n"),
@@ -286,6 +302,11 @@ impl Fake {
             }
             ("cutover-deploy.sh", _) => Out { rc: self.cutover_rc, text: if self.cutover_rc == 0 { "cutover-deploy: done\n".into() } else { "cutover-deploy: refusing\n".into() }, out: String::new() },
             ("world.sh", ["status"]) => ok("world: RUNNING\n"),
+            ("world", ["scheduler-status", "--json"]) => {
+                self.fired.set(self.fired.get() + 1);
+                let n = self.fired.get();
+                ok(&format!(r#"{{"schema":1,"at":{n},"halted":false,"held":0,"tasks":[{{"name":"sentinel-call","last_fired_at":{n}}},{{"name":"landing","last_fired_at":{n}}}],"classes":[]}}"#))
+            }
             ("uninstall.sh" | "world.sh" | "doctor", _) => ok(""),
             ("bd", ["-C", _, "create", "--title", _, "--description", _, "--label", l, ..]) if l.starts_with("acceptance,") => {
                 self.next_id.set(self.next_id.get() + 1);
@@ -492,4 +513,38 @@ fn skipped_upgrade_phases_without_a_waiver_are_partial() {
     assert_eq!(verdict_for(0, false, false), "PARTIAL");
     assert_eq!(verdict_for(2, false, false), "FAIL");
     assert_eq!(verdict_for(1, true, false), "FAIL");
+}
+
+// ---- the loop is the scheduler's tasks ---------------------------------------------------
+
+fn lines(f: &Fake) -> Vec<String> {
+    f.log.borrow().iter().map(Cmd::line).collect()
+}
+
+/// The release under test has no sentinel unit: a kick starts the scheduler and waits on
+/// `scheduler status` until the task has fired since the kick.
+#[test]
+fn a_kick_starts_the_scheduler_and_waits_for_the_task_to_fire() {
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.no_sentinel_unit = true;
+    let r = Run::new(&f, b.opts(&[]));
+    r.kick("sentinel-call");
+    let log = lines(&f);
+    assert!(log.iter().any(|l| l == "systemctl --user start spira-runtime-t.service"), "{log:?}");
+    assert!(!log.iter().any(|l| l.contains("start spira-sentinel") || l == "systemctl --user start "), "no sentinel unit is started: {log:?}");
+    let reads = log.iter().filter(|l| l.ends_with("world scheduler-status --json")).count();
+    assert!(reads >= 2, "a baseline read, then the read that saw it fire: {log:?}");
+}
+
+/// A predecessor release still ships the sentinel unit; its kick starts that unit as before.
+#[test]
+fn a_predecessor_with_the_sentinel_unit_is_kicked_as_before() {
+    let b = Box_::new();
+    let f = b.fake();
+    let r = Run::new(&f, b.opts(&[]));
+    r.kick("sentinel-call");
+    let log = lines(&f);
+    assert!(log.iter().any(|l| l == "systemctl --user start spira-sentinel-t.service"), "{log:?}");
+    assert!(!log.iter().any(|l| l.contains("scheduler-status")), "{log:?}");
 }

@@ -151,13 +151,7 @@ fn run_send(args: &[String]) -> ExitCode {
         Err(e) => return fail(e),
     };
     let send_args = SendArgs { mailbox: &mailbox, from: from.as_deref(), subject: &subject, kind: &kind, default: &default, class: &class, bead: &bead, urgent, digest, dry_run, requested_by: &requested_by };
-    let result = cmds::send(&bd, &env, &send_args, body.clone());
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    if let Some(a) = cmds::attempt_of_send(&send_args, &body, &result, now) {
-        if let Err(e) = a.write(&env.run_dir, &tsd::default_host()) {
-            eprintln!("mail: send attempt not recorded: {e}");
-        }
-    }
+    let result = cmds::send_recorded(&bd, &env, &send_args, body);
     match result {
         Ok(out) => {
             if dry_run {
@@ -292,18 +286,9 @@ fn run_sendmail(args: &[String]) -> ExitCode {
     if raw.trim().is_empty() {
         return fail("sendmail: empty message — nothing to deliver");
     }
-    let spool = sendmail::spool_message(&env.run_dir, &raw);
-    match sendmail::sendmail_to(&env.home, &env.mail_root, env.mute, &raw, to.as_deref()) {
-        Ok(_) => {
-            if let Some(p) = spool {
-                let _ = std::fs::remove_file(p);
-            }
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            let kept = spool.map(|p| format!(" (message kept at {})", p.display())).unwrap_or_default();
-            fail(format!("sendmail: {e}{kept}"))
-        }
+    match sendmail::deliver(&env.run_dir, &env.home, &env.mail_root, env.mute, &raw, to.as_deref()) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(e) => fail(format!("sendmail: {e}")),
     }
 }
 

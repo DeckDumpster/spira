@@ -1,5 +1,6 @@
-//! The only I/O: reading the store through bdq and spira-lc, and config through
-//! spira-config. Every read is bounded in time and in argv size. DESIGN.md §2 "Data in".
+//! The only I/O: reading the store through bdq and the lifecycle service ([`LcClient`],
+//! in-process over its socket), and config through spira-config. Every read is bounded in
+//! time and in argv size. DESIGN.md §2 "Data in".
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -8,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use crate::events::{self, EventRow};
 use lifecycle::bead::BeadState;
+use spira_config::lc_call::{LcClient, LcError};
 
 use crate::rank::{self, LifecycleRow, ReadyRow};
 
@@ -15,11 +17,21 @@ use crate::rank::{self, LifecycleRow, ReadyRow};
 pub const EVENT_CHUNK: usize = 200;
 pub const LIST_CHUNK: usize = 100;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Store {
     pub bdq: String,
-    pub lc: String,
+    /// The lifecycle service: every verb it serves goes here, no process launched.
+    pub lc: LcClient,
+    /// The `spira-lc` CLI, for the verbs the socket does not serve (`close`, `reopen`) and
+    /// the one that takes stdin (`claim-verdicts`).
+    pub lc_bin: String,
     pub timeout: Duration,
+}
+
+impl std::fmt::Debug for Store {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Store").field("bdq", &self.bdq).field("lc_socket", &self.lc.is_socket()).field("lc_bin", &self.lc_bin).field("timeout", &self.timeout).finish()
+    }
 }
 
 /// Values from spira.toml through spira-config's ONE DOOR (per Ryan 2026-10-05, one source
@@ -87,21 +99,33 @@ pub fn load_config() -> Result<Config, String> {
 
 impl Store {
     pub fn new(timeout_s: u64) -> Result<Store, String> {
-        Ok(Store {
-            bdq: spira_config::release_env::tool("bdq")?,
-            lc: spira_config::lifecycle_row::lc_bin()?,
-            timeout: Duration::from_secs(timeout_s.max(1)),
-        })
+        let lc_bin = spira_config::lifecycle_row::lc_bin()?;
+        let timeout = Duration::from_secs(timeout_s.max(1));
+        Ok(Store { bdq: spira_config::release_env::tool("bdq")?, lc: LcClient::for_bin(&lc_bin)?.within(timeout), lc_bin, timeout })
     }
 
+    /// One lifecycle request; any exit code is an answer. `Err` only when there is none.
+    pub fn lc_full<S: AsRef<str>>(&self, args: &[S]) -> Result<Ran, String> {
+        match self.lc.call(args) {
+            Ok(r) => Ok(Ran { code: r.code, stdout: r.out, stderr: r.err }),
+            Err(LcError::Refused(m) | LcError::Fault(m)) => Err(m),
+        }
+    }
+
+    /// One lifecycle request's stdout on exit 0, else an error naming its first line of reason.
+    pub fn lc_run<S: AsRef<str>>(&self, args: &[S]) -> Result<String, String> {
+        let r = self.lc_full(args)?;
+        if r.code != 0 {
+            return Err(format!("exit {}: {}", r.code, first_reason(&r)));
+        }
+        Ok(r.stdout)
+    }
+
+    /// bdq for what the lifecycle service's `content` verb does not serve: `sql` (the events
+    /// query), `note --stdin`, `update --set-metadata` and `claim-retry`'s arbitrary ready
+    /// queries. Content reads and label writes go through [`Store::lc`].
     pub fn bdq_cmd(&self, args: &[&str]) -> Command {
         let mut c = Command::new(&self.bdq);
-        c.args(args);
-        c
-    }
-
-    pub fn lc_cmd(&self, args: &[String]) -> Command {
-        let mut c = Command::new(&self.lc);
         c.args(args);
         c
     }
@@ -128,7 +152,7 @@ impl Store {
 
     pub fn facts(&self, ids: &[String]) -> Result<Vec<EventRow>, String> {
         let args = ["facts".to_string(), "--ids".into(), ids.join(",")];
-        let text = run(self.lc_cmd(&args), self.timeout).map_err(|e| format!("spira-lc facts: {e}"))?;
+        let text = self.lc_run(&args).map_err(|e| format!("spira-lc facts: {e}"))?;
         events::parse_rows(&text)
     }
 
@@ -137,7 +161,7 @@ impl Store {
     pub fn plan(&self, args: &[&str]) -> Result<String, String> {
         let what = format!("spira-lc plan {}", args.first().unwrap_or(&""));
         let argv: Vec<String> = std::iter::once("plan").chain(args.iter().copied()).map(str::to_string).collect();
-        let text = run(self.lc_cmd(&argv), self.timeout).map_err(|e| format!("{what}: {e}"))?;
+        let text = self.lc_run(&argv).map_err(|e| format!("{what}: {e}"))?;
         let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| format!("{what}: not JSON: {e}"))?;
         match v.get("items") {
             Some(items @ serde_json::Value::Array(_)) => Ok(items.to_string()),
@@ -147,7 +171,7 @@ impl Store {
 
     /// `spira-lc list-asks`: the open asks, from their control-plane records.
     pub fn open_asks(&self) -> Result<String, String> {
-        run(self.lc_cmd(&["list-asks".to_string()]), self.timeout).map_err(|e| format!("spira-lc list-asks: {e}"))
+        self.lc_run(&["list-asks"]).map_err(|e| format!("spira-lc list-asks: {e}"))
     }
 
     /// The plan rows of `ids`, every status, chunked.
@@ -182,25 +206,23 @@ impl Store {
     }
 
     fn lc_list(&self, filter: &[&str]) -> Result<HashMap<String, LifecycleRow>, String> {
-        let mut c = Command::new(&self.lc);
-        c.arg("list").args(filter);
-        let text = run(c, self.timeout).map_err(|e| format!("spira-lc list: {e}"))?;
+        let argv: Vec<&str> = std::iter::once("list").chain(filter.iter().copied()).collect();
+        let text = self.lc_run(&argv).map_err(|e| format!("spira-lc list: {e}"))?;
         crate::rank::parse_lifecycle(&text)
     }
 
     /// Hands one pass's verdicts to the lifecycle store, which keeps them on the bead rows.
     pub fn lc_claim_verdicts(&self, file: &spira_claim::verdicts::VerdictFile) -> Result<(), String> {
-        let r = run_full(self.lc_cmd(&["claim-verdicts".to_string()]), self.timeout, Some(file.payload().as_bytes()))
-            .map_err(|e| format!("spira-lc claim-verdicts: {e}"))?;
+        let r = self.lc.call_stdin(&["claim-verdicts"], &file.payload()).map_err(|e| format!("spira-lc claim-verdicts: {e}"))?;
         match r.code {
             0 => Ok(()),
-            c => Err(format!("spira-lc claim-verdicts: exit {c}: {}", r.stderr.lines().next().unwrap_or("no stderr"))),
+            c => Err(format!("spira-lc claim-verdicts: exit {c}: {}", r.why())),
         }
     }
 
     /// The machine's return-to-rework, through the one client of `spira-lc reopen`.
     pub fn lc_reopen(&self, id: &str, cause: &str, actor: &str) -> Result<(), String> {
-        spira_config::lifecycle_row::reopen_with(&self.lc, id, cause, actor)
+        spira_config::lifecycle_row::reopen_with(&self.lc_bin, id, cause, actor)
     }
 
     /// `spira-lc release <id> <actor>`: hand back a claim this caller holds. Only a WORKING
@@ -215,15 +237,17 @@ impl Store {
     }
 
     fn lc_verb(&self, args: &[&str], ok: &[i32]) -> Result<(), String> {
-        let mut c = Command::new(&self.lc);
-        c.args(args);
-        let r = run_full(c, self.timeout, None)?;
+        let r = self.lc_full(args)?;
         if ok.contains(&r.code) {
             return Ok(());
         }
-        let said = r.stderr.lines().chain(r.stdout.lines()).find(|l| !l.trim().is_empty()).unwrap_or("no output");
-        Err(format!("spira-lc {} exit {}: {said}", args[0], r.code))
+        Err(format!("spira-lc {} exit {}: {}", args[0], r.code, first_reason(&r)))
     }
+}
+
+/// The first non-empty line a failed answer gave, stderr first (a socket answer has only stdout).
+fn first_reason(r: &Ran) -> &str {
+    r.stderr.lines().chain(r.stdout.lines()).find(|l| !l.trim().is_empty()).unwrap_or("no output")
 }
 
 pub fn sql_quote(s: &str) -> String {
@@ -313,6 +337,71 @@ pub fn run_full(mut cmd: Command, timeout: Duration, input: Option<&[u8]>) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    use spira_config::lc_call::{Reply, Transport};
+    use std::sync::{Arc, Mutex};
+
+    /// The lifecycle service as a test double: every request recorded, each answered by `reply`.
+    struct Scripted {
+        seen: Mutex<Vec<Vec<String>>>,
+        reply: fn(&[String]) -> Reply,
+    }
+
+    impl Transport for Scripted {
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
+            let mut argv = argv.to_vec();
+            argv.extend(stdin.map(|b| format!("stdin={b}")));
+            self.seen.lock().unwrap().push(argv.clone());
+            Ok((self.reply)(&argv))
+        }
+    }
+
+    fn store_over(reply: fn(&[String]) -> Reply) -> (Store, Arc<Scripted>) {
+        let t = Arc::new(Scripted { seen: Mutex::new(Vec::new()), reply });
+        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(t.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1) };
+        (st, t)
+    }
+
+    #[test]
+    fn lifecycle_reads_and_writes_go_through_the_service_not_a_program() {
+        let (st, t) = store_over(|argv| match argv[0].as_str() {
+            "list" => Reply { code: 0, out: r#"[{"bead_id":"sp-a","state":"WORKING","version":1,"holds":[]}]"#.into(), err: String::new() },
+            "facts" | "list-asks" => Reply { code: 0, out: "[]".into(), err: String::new() },
+            _ => Reply { code: 0, out: String::new(), err: String::new() },
+        });
+        assert!(st.lifecycle_of(&["sp-a".into()]).unwrap().contains_key("sp-a"));
+        assert!(st.facts(&["sp-a".into()]).unwrap().is_empty());
+        assert_eq!(st.open_asks().unwrap(), "[]");
+        st.release_claim("sp-a", "dwarf-x").unwrap();
+        let seen = t.seen.lock().unwrap().clone();
+        assert_eq!(seen[0], ["list", "--ids", "sp-a"]);
+        assert_eq!(seen[1], ["facts", "--ids", "sp-a"]);
+        assert_eq!(seen[2], ["list-asks"]);
+        assert_eq!(seen.last().unwrap(), &["release", "sp-a", "dwarf-x"]);
+    }
+
+    #[test]
+    fn claim_verdicts_rides_the_service_with_its_payload_as_the_body() {
+        let (st, t) = store_over(|_| Reply { code: 0, out: String::new(), err: String::new() });
+        let file = spira_claim::verdicts::VerdictFile { computed_at: "2026-11-03T00:00:00Z".into(), entries: Vec::new() };
+        st.lc_claim_verdicts(&file).unwrap();
+        assert_eq!(t.seen.lock().unwrap()[0], ["claim-verdicts".to_string(), format!("stdin={}", file.payload())]);
+        let (st, _) = store_over(|_| Reply { code: 2, out: String::new(), err: "cannot tell: down\n".into() });
+        assert_eq!(st.lc_claim_verdicts(&file).unwrap_err(), "spira-lc claim-verdicts: exit 2: cannot tell: down");
+    }
+
+    #[test]
+    fn a_socket_refusal_names_its_reason_from_stdout() {
+        let (st, _) = store_over(|_| Reply { code: 3, out: "refused: no such bead\n".into(), err: String::new() });
+        let e = st.lc_run(&["list-asks"]).unwrap_err();
+        assert_eq!(e, "exit 3: refused: no such bead");
+    }
+
+    #[test]
+    fn bead_metadata_reads_content_through_the_service() {
+        let (st, t) = store_over(|_| Reply { code: 0, out: r#"[{"id":"sp-a","metadata":{"thrash_tip":"abc"}}]"#.into(), err: String::new() });
+        assert_eq!(crate::counters::bead_metadata(&st, "sp-a", "thrash_tip"), "abc");
+        assert_eq!(t.seen.lock().unwrap()[0], ["content", "show", "sp-a", "--long", "--json"]);
+    }
 
     #[test]
     fn events_sql_quotes_and_bounds() {

@@ -25,7 +25,7 @@ printf 'alpha|daemon|/usr/bin/true|\n' > "$MAN"
 printf 'test-units-lint.sh\n'
 
 # =======================================================================================
-# THE INSTALL PASS. One run, stubbed systemctl, checked for all four timers at once: install
+# THE INSTALL PASS. One run, stubbed systemctl, checked for every timer at once: install
 # enables the TIMER, never the SERVICE behind it — enabling the service as well would also
 # run it once at boot, outside the schedule (law-fence-loops-on-shared-hardware).
 # =======================================================================================
@@ -43,7 +43,8 @@ chmod +x "$STUB/systemctl" "$STUB/loginctl"
 # top-level entries and adds a bin/ of no-op stubs, one per binary any unit names.
 PRODROOT="$TMP/prodroot"; mkdir -p "$PRODROOT/bin"
 for _e in "$ROOT"/*; do ln -s "$_e" "$PRODROOT/"; done
-for _b in $(grep -oh '@SPIRA_PROD_ROOT@/bin/[a-z0-9-]*' "$ROOT"/systemd/*.service | sed 's#.*/bin/##' | sort -u); do
+# spira-watchdog's unit is rendered from the watchdog crate, not a template file, so it is named here.
+for _b in spira-watchdog $(grep -oh '@SPIRA_PROD_ROOT@/bin/[a-z0-9-]*' "$ROOT"/systemd/*.service | sed 's#.*/bin/##' | sort -u); do
     printf '#!/usr/bin/env bash\nexit 0\n' > "$PRODROOT/bin/$_b"; chmod +x "$PRODROOT/bin/$_b"
 done; unset _b _e
 IHOME="$TMP/ihome"; mkdir -p "$IHOME"
@@ -66,18 +67,10 @@ env -i SPIRA_RELEASE="$(tl_release)" HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_TOML
 ilog="$(cat "$TMP/systemctl.log")"
 has "the install ran" "$ilog" "daemon-reload"
 case "$ilog" in *daemon-reload*) ;; *) tail -20 "$TMP/install.out" | sed 's/^/# install: /' ;; esac
-for pair in "spira-notify-prod" "spira-refresh-prod" \
-            "spira-mail-tidy-prod"; do
+# The loop's own timers are scheduler tasks now; these are timers every install still ships.
+for pair in "spira-watchdog-prod" "cockpit-ensure" "concierge" "lc-backup"; do
     has   "$pair: install enabled its timer"        "$ilog" "enable --now $pair.timer"
     hasnt "$pair: but not the service behind it"    "$ilog" "enable --now $pair.service"
 done
-
-period="$(sed -n 's/^OnUnitActiveSec=\([0-9]*\)min$/\1/p' "$ROOT/systemd/spira-notify.timer")"
-default_age="$(env -i SPIRA_RELEASE="$(tl_release)" HOME="$TMP/home" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$TMP/nonexistent" \
-    bash -c ". '$HERE/conf.sh'; printf '%s' \"\$SPIRA_NOTIFY_AGE\"")"
-is "the notify timer states a period in minutes" "yes" "$([ -n "$period" ] && echo yes || echo no)"
-is "the threshold has a default"                 "yes" "$([ -n "$default_age" ] && echo yes || echo no)"
-is "and a pass happens several times inside it"  "yes" \
-   "$([ "$(( period * 60 * 3 ))" -le "$default_age" ] && echo yes || echo no)"
 
 tl_summary

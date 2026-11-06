@@ -39,7 +39,7 @@ pub fn fact_args(actor: &str, id: &str, etype: &str, cause: &str) -> Vec<String>
 /// return on an empty `id`/`etype` before ever reaching this — this function always writes.
 pub fn write_event(store: &Store, actor: &str, id: &str, etype: &str, cause: &str) -> Result<(), String> {
     let args = fact_args(actor, id, etype, cause);
-    store::run(store.lc_cmd(&args), store.timeout).map(|_| ())
+    store.lc_run(&args).map(|_| ())
 }
 
 // =========================================================================================
@@ -50,7 +50,7 @@ pub fn write_event(store: &Store, actor: &str, id: &str, etype: &str, cause: &st
 
 pub fn count_events(store: &Store, id: &str, etype: &str) -> Result<u64, String> {
     let args = ["facts".to_string(), "--ids".into(), id.to_string(), "--kinds".into(), etype.to_string()];
-    let out = store::run(store.lc_cmd(&args), store.timeout)?;
+    let out = store.lc_run(&args)?;
     Ok(crate::events::parse_rows(&out)?.len() as u64)
 }
 
@@ -116,7 +116,8 @@ pub fn bead_metadata(store: &Store, id: &str, key: &str) -> String {
     if id.is_empty() || key.is_empty() {
         return String::new();
     }
-    let Ok(text) = store::run(store.bdq_cmd(&["show", id, "--long", "--json"]), store.timeout) else {
+    // The content read goes through the lifecycle service's `content` verb, never a bdq child.
+    let Ok(text) = store.lc_run(&["content", "show", id, "--long", "--json"]) else {
         return String::new();
     };
     parse_metadata(&text).get(key).and_then(Value::as_str).map(str::to_string).unwrap_or_default()
@@ -167,7 +168,7 @@ const NO_PROGRESS_KIND: &str = "no-progress";
 
 fn count_events_at(store: &Store, id: &str, etype: &str, cause: &str) -> Result<u32, String> {
     let args = ["facts".to_string(), "--ids".into(), id.to_string(), "--kinds".into(), etype.to_string()];
-    let out = store::run(store.lc_cmd(&args), store.timeout)?;
+    let out = store.lc_run(&args)?;
     let rows = crate::events::parse_rows(&out)?;
     Ok(rows.iter().filter(|r| r.new_value.as_deref() == Some(bounded_cause(cause).as_str())).count() as u32)
 }

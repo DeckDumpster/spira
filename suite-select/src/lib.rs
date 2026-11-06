@@ -5,6 +5,7 @@
 //! empty or a whole-corpus selection by accident.
 
 pub mod budget;
+pub mod closure;
 pub mod corpus;
 pub mod gate;
 pub mod glob;
@@ -13,6 +14,7 @@ pub mod io;
 pub mod names;
 pub mod reach;
 pub mod select;
+pub mod shell;
 pub mod timing;
 
 /// Exit status of a refusal: the selector could not compute a selection (NO_VERDICT at the

@@ -303,6 +303,7 @@ impl<'a> VmRunner<'a> {
             Ok(()) => {
                 let results = wt.join(".install-probe-results");
                 // batch-job: the install probe is a VM wall-clock job
+                // FORK-EDGE: machine leg round-vm (install probe run)
                 let status = Command::new("timeout")
                     .arg("-k")
                     .arg("10")
@@ -378,6 +379,7 @@ impl RoundRunner for VmRunner<'_> {
                 self.corpus_runs += 1;
                 let err = fs::File::create(&self.stderr_path).map_err(|e| format!("{}: {e}", self.stderr_path.display()))?;
                 // batch-job: this runs whatever its caller names, as long as that takes
+                // FORK-EDGE: needs a Units scope start (a CPU-quota scope whose process stays this one's child, stderr to a file); round-vm inside it is the machine leg
                 let mut cmd = Command::new("systemd-run");
                 cmd.args(scope_args(std::env::var("ROUND_CPU_QUOTA").ok().as_deref()));
                 cmd.arg("timeout");
@@ -407,7 +409,8 @@ impl RoundRunner for VmRunner<'_> {
 
     fn stop_main(&mut self) -> Result<(), String> {
         let Some(mut child) = self.child.take() else { return Ok(()) };
-        let _ = spira_config::bounded::bounded("kill").arg("-TERM").arg(child.id().to_string()).status();
+        // SAFETY: kill(2) on our own child's pid, which we have not reaped yet.
+        let _ = unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
         let mut waited = 0;
         while child.try_wait().map_err(|e| format!("round-vm: {e}"))?.is_none() {
             if waited >= STOP_SECS {

@@ -1782,6 +1782,20 @@ fn push_mode_records_deliveries_through_the_machine() {
     assert_eq!(h.lc.probes.get(), 1, "probed once per pass");
 }
 
+/// The sim scenario `repo-modes` (sp-gqrlv6), ported: a push repository whose trunk is `master`
+/// lands its branch on `master` and never pushes a `main` (`main` is never assumed:
+/// `spira_config::repos::ref_branch`). The hold half is `hold_gates_notes_and_does_not_advance_the_base`.
+#[test]
+fn a_push_repo_with_a_master_trunk_lands_on_its_master_and_never_on_a_main() {
+    let mut h = push_fixture();
+    let r = &mut h.repos[0];
+    (r.landref, r.base_fq, r.base_branch, r.forge_ref) = (Some("origin/master".into()), Some("refs/remotes/origin/master".into()), "master".into(), Some("refs/remotes/origin/master".into()));
+    h.run();
+    assert_eq!(h.lib.count("push origin landing:master"), 1, "{:?}", h.lib.calls.borrow());
+    assert!(!h.lib.calls.borrow().iter().any(|c| c.contains("landing:main")), "no main is pushed: {:?}", h.lib.calls.borrow());
+    assert!(h.lib.has("deliver_delivered sp-a head1"), "the landing is delivered through the machine");
+}
+
 #[test]
 fn with_the_machine_unreachable_a_push_landing_is_refused_loudly() {
     let h = push_fixture();

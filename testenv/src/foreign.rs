@@ -256,6 +256,31 @@ impl Drop for RunDirGuard {
     }
 }
 
+/// Every run directory under `<root>/<repo>/runs`, with its age (`None` when its mtime cannot
+/// be read, which is never stale).
+pub fn run_dirs(root: &Path) -> Vec<(PathBuf, Option<Duration>)> {
+    let mut out = Vec::new();
+    let Ok(repos) = std::fs::read_dir(root) else { return out };
+    for repo in repos.flatten() {
+        let Ok(runs) = std::fs::read_dir(repo.path().join("runs")) else { continue };
+        for run in runs.flatten() {
+            let path = run.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let age = std::fs::metadata(&path).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+            out.push((path, age));
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Whether a run directory this old, busy or not, is the reaper's to take.
+pub fn is_stale(age: Option<Duration>, min_age: Duration, busy: bool) -> bool {
+    !busy && age.is_some_and(|a| a >= min_age)
+}
+
 /// Run directories under `<root>/<repo>/runs` that nothing references and that are older than
 /// `min_age`: the leftovers of a run killed before it could clean up. Returns `(path, bytes)`
 /// for each one removed (or that would be, when `dry`).
@@ -266,19 +291,13 @@ pub fn reap_stale_runs(
     busy: &dyn Fn(&Path) -> bool,
 ) -> Vec<(PathBuf, u64)> {
     let mut out = Vec::new();
-    let Ok(repos) = std::fs::read_dir(root) else { return out };
-    for repo in repos.flatten() {
-        let Ok(runs) = std::fs::read_dir(repo.path().join("runs")) else { continue };
-        for run in runs.flatten() {
-            let path = run.path();
-            let age = std::fs::metadata(&path).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
-            if !path.is_dir() || age.is_none_or(|a| a < min_age) || busy(&path) {
-                continue;
-            }
-            let bytes = crate::reap::size_of(&path);
-            if dry || remove_run_dir(&path) {
-                out.push((path, bytes));
-            }
+    for (path, age) in run_dirs(root) {
+        if !is_stale(age, min_age, false) || busy(&path) {
+            continue;
+        }
+        let bytes = crate::reap::size_of(&path);
+        if dry || remove_run_dir(&path) {
+            out.push((path, bytes));
         }
     }
     out

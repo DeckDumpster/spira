@@ -643,22 +643,6 @@ fn tool_line(tool: &ToolDecl) -> String {
     }
 }
 
-fn release_lookup(home: &str) -> impl Fn(&str) -> Option<String> {
-    let root = Path::new(home).parent().map(Path::to_path_buf).unwrap_or_default();
-    let dirs = [
-        Path::new(home).to_path_buf(),
-        root.clone(),
-        root.join("bin"),
-        root.join("model-bin"),
-    ];
-    move |name: &str| {
-        dirs.iter()
-            .map(|d| d.join(name))
-            .find(|p| p.is_file())
-            .map(|p| String::from_utf8_lossy(&std::fs::read(p).unwrap_or_default()).into_owned())
-    }
-}
-
 fn open_bead_titles(db: &str) -> Vec<String> {
     let (code, out, _) = run_bd(db, &["list", "--json", "--limit", "0"]);
     if code != 0 {
@@ -708,7 +692,7 @@ fn cmd_audit(db: &str, home: &str, rest: &[String]) -> i32 {
             return 1;
         }
     };
-    let findings = audit(&memories, &release_lookup(home));
+    let findings = audit(&memories, &rule::audit::release_lookup(home));
     for f in &findings {
         println!("{}: {}", f.slug, f.missing.join(", "));
     }
@@ -717,20 +701,10 @@ fn cmd_audit(db: &str, home: &str, rest: &[String]) -> i32 {
         return 0;
     }
     let open = open_bead_titles(db);
-    let mut filed = 0;
-    for f in &findings {
-        if open.iter().any(|t| t.contains(&f.slug)) {
-            continue;
-        }
-        if filed == max {
-            println!("rule: audit filed {max}, the batch bound; the rest wait for the next run.");
-            break;
-        }
+    let (batch, bounded) = rule::audit::to_file(&findings, &open, max);
+    for f in batch {
         let title = finding_title(f);
-        let body = format!(
-            "{}\n\nThe statute names the above and the activated release has no such tool or verb. Build it, or amend the statute to name what exists (rule.sh enact with --tool).\n",
-            title
-        );
+        let body = rule::audit::bead_body(&title);
         let bead_sh = Path::new(home).join("bead.sh");
         let child = Command::new(&bead_sh) // batch-job: bead.sh file writes the store under its lock
             .args(["file", &title, "--for", persona.as_deref().unwrap_or(""), "--repo", repo.as_deref().unwrap_or(""), "--body-file", "-"])
@@ -744,9 +718,12 @@ fn cmd_audit(db: &str, home: &str, rest: &[String]) -> i32 {
             let _ = stdin.write_all(body.as_bytes());
         }
         match child.wait() {
-            Ok(s) if s.success() => filed += 1,
+            Ok(s) if s.success() => {}
             _ => eprintln!("rule: audit: filing for {} failed", f.slug),
         }
+    }
+    if bounded {
+        println!("rule: audit filed {max}, the batch bound; the rest wait for the next run.");
     }
     0
 }

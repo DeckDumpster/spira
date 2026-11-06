@@ -15,7 +15,6 @@
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::time::{Instant, SystemTime};
-use tokio::process::Command;
 
 /// Parse a shell single-quoted value of the form `'VALUE'`, where embedded apostrophes
 /// are encoded as `'\''` (close-quote, backslash-apostrophe, open-quote).
@@ -104,7 +103,7 @@ pub struct WorldState {
     pub sentinel_active: Option<bool>,
 }
 
-pub async fn read_world_state(run: &str, instance: &str, systemctl: &str) -> WorldState {
+pub async fn read_world_state(run: &str, instance: &str, units: Option<&dyn runtime::units::Units>) -> WorldState {
     let halted_path = format!("{run}/world.halted");
     let halted = std::path::Path::new(&halted_path).exists();
     let (halted_since, halted_why) = if halted {
@@ -133,7 +132,7 @@ pub async fn read_world_state(run: &str, instance: &str, systemctl: &str) -> Wor
         .map(|d| d.as_secs());
 
     // Try the instance-suffixed timer name first, then the plain one — same order health.sh uses.
-    let sentinel_active = check_sentinel(instance, systemctl).await;
+    let sentinel_active = units.and_then(|u| check_sentinel(u, instance));
 
     WorldState {
         halted,
@@ -145,32 +144,21 @@ pub async fn read_world_state(run: &str, instance: &str, systemctl: &str) -> Wor
     }
 }
 
-async fn check_sentinel(instance: &str, systemctl: &str) -> Option<bool> {
-    let names = [
-        format!("spira-sentinel-{instance}.timer"),
-        "spira-sentinel.timer".to_string(),
-    ];
+/// Whether the sentinel's timer (the instance's, else the plain one) is active, through the
+/// `Units` port. A unit the manager knows nothing of reads inactive, as `is-active` said;
+/// `None` when neither could be read at all.
+pub fn check_sentinel(units: &dyn runtime::units::Units, instance: &str) -> Option<bool> {
+    let names = [format!("spira-sentinel-{instance}.timer"), "spira-sentinel.timer".to_string()];
     let mut found_inactive = false;
     for name in &names {
-        if let Ok(out) = Command::new("timeout").arg("5").arg(systemctl)
-            .args(["--user", "is-active", name])
-            .output()
-            .await {
-            let state = String::from_utf8_lossy(&out.stdout);
-            let state = state.trim();
-            if state == "active" {
+        if let Ok(f) = units.facts(&runtime::units::UnitHandle::named(name)) {
+            if f.state == runtime::units::UnitState::Active {
                 return Some(true);
             }
-            if !state.is_empty() {
-                found_inactive = true;
-            }
+            found_inactive = true;
         }
     }
-    if found_inactive {
-        Some(false)
-    } else {
-        None // systemctl not available or returned nothing
-    }
+    found_inactive.then_some(false)
 }
 
 /// One cached read of the ops endpoint.
@@ -180,10 +168,10 @@ pub struct OpsSnapshot {
 }
 
 impl OpsSnapshot {
-    pub async fn take(run: &str, instance: &str, systemctl: &str) -> OpsSnapshot {
+    pub async fn take(run: &str, instance: &str, units: Option<&dyn runtime::units::Units>) -> OpsSnapshot {
         let (data, cockpit_age_s, cockpit_error) =
             parse_env_file(&format!("{run}/cockpit.env"));
-        let world = read_world_state(run, instance, systemctl).await;
+        let world = read_world_state(run, instance, units).await;
 
         let mut obj = Map::new();
         for (k, v) in &data {

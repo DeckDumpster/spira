@@ -9,7 +9,6 @@ use crate::incident::{self, Finding};
 use crate::log::log;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cond {
@@ -31,8 +30,8 @@ pub struct Ctx<'a> {
     pub db: &'a str,
     pub home_repo: &'a str,
     pub incident_sh: &'a str,
-    /// The sanctioned bd wrapper, which reads the store from the config.
-    pub bdq: &'a str,
+    /// The store's client: bd's rows through its content door.
+    pub lc: &'a spira_config::lc_call::LcClient,
     /// The lifecycle machine (`spira-lc`): an incident bead is a work bead, so whether it is
     /// still unfinished is its lifecycle row's answer, never bd's status (sp-jgjvh).
     pub lc_bin: &'a str,
@@ -54,13 +53,8 @@ fn names(d: &Path) -> BTreeSet<String> {
 /// machine did not answer. bd supplies only which beads carry the reference (content); whether
 /// each is unfinished is its lifecycle row's (sp-jgjvh: incident beads are work beads).
 fn open_beads(ctx: &Ctx, reference: &str) -> Option<Vec<String>> {
-    let out = crate::deadline::output(
-        "beads by ref",
-        Command::new(ctx.bdq).args(["list", "--external-ref", reference, "--all", "--json", "--limit", "0", "--brief"]),
-    )
-    .ok()
-    .filter(|o| o.status.success())?;
-    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).ok()?;
+    let out = crate::lc::content_list(ctx.lc, &["--external-ref", reference, "--all", "--json", "--limit", "0", "--brief"])?;
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&out).ok()?;
     let ids = rows.iter().filter_map(|r| r.get("id").and_then(|v| v.as_str()).map(String::from)).collect();
     unfinished(ctx.lc_bin, ids)
 }
@@ -135,5 +129,22 @@ pub fn reconcile(now: i64, ctx: &Ctx, probe: &str, reading: Reading) {
             let _ = std::fs::remove_file(&marker);
             log(&format!("watchtower: conditions: cleared {} ({probe})", reference.trim()));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn beads_by_reference_come_through_the_content_door() {
+        let d = testkit::TempDir::new("wt-cond-lc");
+        let (t, lc) = crate::lc::scripted::scripted(0, "[]");
+        let ctx = Ctx { run: d.path(), db: "db", home_repo: "spira", incident_sh: "inc", lc: &lc, lc_bin: "/does/not/exist" };
+        assert_eq!(open_beads(&ctx, "incident:x"), Some(Vec::new()));
+        assert_eq!(t.seen.lock().unwrap()[0], vec!["content", "list", "--external-ref", "incident:x", "--all", "--json", "--limit", "0", "--brief"]);
+        let down = crate::lc::scripted::scripted(2, "cannot tell").1;
+        let ctx = Ctx { lc: &down, ..ctx };
+        assert_eq!(open_beads(&ctx, "incident:x"), None, "no answer is unknown, never no beads");
     }
 }

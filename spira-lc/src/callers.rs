@@ -2,13 +2,13 @@
 //! from three sourced shell libraries — `lc.sh` (holds, releases, drops, the bulk lists),
 //! `lc-delivery.sh` (the pr/push delivery exits) and `lifecycle-cert.sh` (a gate verdict
 //! onto the bead machine). Each verb is a composition of the primitive `show` / `list` /
-//! `event` verbs, run CLIENT-SIDE: it reads the row, reasons from that one read, and applies
+//! `event` verbs: it reads the row, reasons from that one read, and applies
 //! one event under the row's own compare-and-swap, exactly as the shell did.
 //!
-//! Client-side on purpose. The primitives are what the `serve` daemon speaks; composing here
-//! means a daemon from an older release still answers a newer client, and the one verb that
-//! needs git (`deliver pr-merged`'s merge-tree proof) runs as the caller, in the caller's
-//! checkout — never as the service user.
+//! lc-serve answers them (composed.rs), with their bd half, against its own connection; the
+//! CLI is their client. The one verb that needs git (`deliver pr-merged`'s merge-tree proof,
+//! and `content-on-base`) stays with the caller, in the caller's checkout — never the service
+//! user.
 //!
 //! There is no off mode (sp-v62vn): every verb reaches the machine.
 
@@ -55,7 +55,7 @@ impl Answer {
     }
 }
 
-/// Every caller verb. `main` routes these here, never to `dispatch`.
+/// Every caller verb. These are composed verbs (composed.rs), never `dispatch`'s.
 pub const VERBS: &[&str] = &[
     "hold",
     "unhold",

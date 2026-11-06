@@ -20,7 +20,7 @@
 #      the ambient GITHUB_TOKEN canary never reaches the wire — a behavioural check.
 #
 # tier: T1
-# covers: gh-intake/src/*.rs systemd/spira-gh-intake.service systemd/spira-gh-intake.timer UC-dispatch-06
+# covers: gh-intake/src/*.rs UC-dispatch-06
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -149,13 +149,12 @@ printf '#!/usr/bin/env bash\n[ "$1" = token ] && echo stub-app-token\n' > "$T/br
 run_intake() {
     tl_config SPIRA_DB=fixture SPIRA_BD="$T/bin_bd" SPIRA_REPO_MAP="$REPOMAP" \
         SPIRA_GH_INTAKE_REPO="acme/widgets" SPIRA_GH_INTAKE_BEAD_REPO="widgets" \
-        SPIRA_GH_INTAKE_PRIORITY="2" SPIRA_SCOPE_LABEL="spira" SPIRA_PLAN_LABEL="plan"
+        SPIRA_GH_INTAKE_PRIORITY="2" SPIRA_SCOPE_LABEL="spira" SPIRA_PLAN_LABEL="plan" \
+        SPIRA_MAIL_BIN="$T/bin_mail.sh" SPIRA_GH_INTAKE_API="$API"
     env -i SPIRA_RELEASE="$(PATH="$T:$(dirname "$BIN"):/usr/bin:/bin" tl_release)" PATH="$T:$(dirname "$BIN"):/usr/bin:/bin" HOME="$HOME" \
         SPIRA_TOML="$SPIRA_TOML" \
         BDLOG="$BDLOG" CREATED="$CREATED" MAILLOG="$MAILLOG" \
-        SPIRA_MAIL_BIN="$T/bin_mail.sh" \
         SPIRA_HOME="$T/spira-home" \
-        SPIRA_GH_INTAKE_API="$API" \
         GITHUB_TOKEN="canary-token-must-never-be-sent" \
         "$BIN" "$@" 2>&1
 }
@@ -198,33 +197,20 @@ fi
 echo
 echo "4. an unresolvable bead repo is refused, not silently skipped"
 tl_config SPIRA_DB=fixture SPIRA_BD="$T/bin_bd" SPIRA_REPO_MAP="$REPOMAP" \
-    SPIRA_GH_INTAKE_REPO="acme/widgets" SPIRA_GH_INTAKE_BEAD_REPO="no-such-repo"
+    SPIRA_GH_INTAKE_REPO="acme/widgets" SPIRA_GH_INTAKE_BEAD_REPO="no-such-repo" \
+    SPIRA_MAIL_BIN="$T/bin_mail.sh" SPIRA_GH_INTAKE_API="$API"
 out="$(env -i SPIRA_RELEASE="$(PATH="$T:$(dirname "$BIN"):/usr/bin:/bin" tl_release)" PATH="$T:$(dirname "$BIN"):/usr/bin:/bin" HOME="$HOME" \
     SPIRA_TOML="$SPIRA_TOML" \
-    SPIRA_MAIL_BIN="$T/bin_mail.sh" \
-    SPIRA_HOME="$T/spira-home" \
-    SPIRA_GH_INTAKE_API="$API" "$BIN" 2>&1)"; rc=$?
+    SPIRA_HOME="$T/spira-home" "$BIN" 2>&1)"; rc=$?
 is "exits 1" "1" "$rc"
 want "names the unresolved repo" "no-such-repo" "$out"
 
 echo
-echo "5. systemd unit points at the built binary, not a deleted script"
-SERVICE="$HERE/../systemd/spira-gh-intake.service"
-if [ -f "$SERVICE" ] && grep -q '@SPIRA_PROD_ROOT@/bin/gh-intake' "$SERVICE"; then
-    ok "spira-gh-intake.service ExecStarts @SPIRA_PROD_ROOT@/bin/gh-intake"
-else
-    bad "spira-gh-intake.service ExecStarts @SPIRA_PROD_ROOT@/bin/gh-intake" "not found in $SERVICE"
-fi
+echo "5. the script is gone (the pass is the scheduler's intake.gh task, with no unit of its own)"
 if [ -e "$HERE/gh-intake.sh" ]; then
     bad "gh-intake.sh is deleted" "still present at $HERE/gh-intake.sh"
 else
     ok "gh-intake.sh is deleted"
-fi
-
-if grep -q '^Environment=SPIRA_DB=@SPIRA_DB@$' "$SERVICE"; then
-    ok "spira-gh-intake.service sets SPIRA_DB (binary exits without it)"
-else
-    bad "spira-gh-intake.service sets SPIRA_DB (binary exits without it)" "Environment=SPIRA_DB=@SPIRA_DB@ missing from $SERVICE"
 fi
 
 tl_summary

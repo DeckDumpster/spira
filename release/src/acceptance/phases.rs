@@ -5,6 +5,9 @@ use super::*;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// How long a kick waits for its task to fire before the stage that follows judges anyway.
+const KICK_SECS: u64 = 120;
+
 /// One place builds each kind of call, so no call site can be written without its
 /// environment (the invariants the `acceptance-run` lint rule used to grep for).
 impl Run<'_> {
@@ -196,11 +199,35 @@ impl Run<'_> {
         self.h.run(&Cmd::new("systemctl").arg("--user").args(args.iter().copied()))
     }
 
-    /// Start the sentinel by its installed (instance-suffixed) unit name. Best-effort: the
-    /// stage that follows is what judges it.
-    fn start_sentinel(&self) {
-        let unit = first_fields(&self.systemctl(&["list-unit-files", "spira-sentinel*.service", "--no-legend", "--plain"]).out).into_iter().next().unwrap_or_default();
-        self.systemctl(&["start", &unit]);
+    /// `scheduler status` of the installed release, through `world scheduler-status --json`.
+    fn scheduler_status(&self) -> String {
+        self.h.run(&self.tool("world").args(["scheduler-status", "--json"])).out
+    }
+
+    /// Make the loop take its next step. The loop is the scheduler's tasks: start the
+    /// release's scheduler (a no-op when it runs) and wait, bounded, until `scheduler status`
+    /// shows `task` fired since the kick. A predecessor that still ships the sentinel unit has
+    /// that unit started, as it was. Best-effort either way: the stage that follows judges it.
+    pub(super) fn kick(&self, task: &str) {
+        if let Some(unit) = first_fields(&self.systemctl(&["list-unit-files", "spira-sentinel*.service", "--no-legend", "--plain"]).out).into_iter().next() {
+            self.systemctl(&["start", &unit]);
+            return;
+        }
+        let before = fired_at(&self.scheduler_status(), task);
+        let units = first_fields(&self.systemctl(&["list-unit-files", "spira-runtime*.service", "--no-legend", "--plain"]).out);
+        match units.into_iter().find(|u| !u.contains("-watch")) {
+            Some(unit) => {
+                self.systemctl(&["start", &unit]);
+            }
+            None => eprintln!("acceptance: no spira-runtime unit installed — the scheduler cannot be started"),
+        }
+        let (fired, t) = self.poll(KICK_SECS, 2, || {
+            let now = fired_at(&self.scheduler_status(), task);
+            now.is_some() && now != before
+        });
+        if !fired {
+            eprintln!("acceptance: {task} did not fire within {t}s of the kick (scheduler status unchanged)");
+        }
     }
 
     /// A predecessor installs the round-template refresh on any box with a git home repo, and
@@ -348,7 +375,7 @@ impl Run<'_> {
     /// Stages 2-5 for a filed bead: called (branch), committed, closed, landed by ancestry
     /// on `origin/<land_ref>` past `base`.
     fn follow(&mut self, p: &str, id: &str, land_ref: &str, base: &str, landed_name: &str) {
-        self.start_sentinel();
+        self.kick("sentinel-call");
         let branch = format!("refs/heads/spira/{id}");
         let (ok, t) = self.poll(self.o.call_secs, 2, || self.h.run(&self.git(&["show-ref", "--verify", "-q", &branch])).rc == 0);
         if ok {
@@ -378,8 +405,8 @@ impl Run<'_> {
             self.bad(&format!("{p} stage 4: bead {id} closed"), &format!("not closed after {t}s"));
         }
 
-        // Kick the sentinel: its landing check dispatches the landing pass on the closed branch.
-        self.start_sentinel();
+        // Kick the loop: the landing task dispatches the landing pass on the closed branch.
+        self.kick("landing");
         let origin = format!("origin/{land_ref}");
         let (ok, t) = self.poll(120, 5, || {
             self.h.run(&self.git(&["fetch", "origin"]));
@@ -929,7 +956,10 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
 
     h.show(&r.tool("world.sh").arg("start"));
     let active = first_fields(&r.systemctl(&["list-units", "--state=active", "--no-legend", "--plain"]).out);
-    r.check("phase D: sentinel timer active (world live before upgrade)", active.iter().any(|u| u.contains("spira-sentinel")), || "no spira-sentinel* in active units".into());
+    // The loop is the scheduler's tasks (spira-runtime); an older predecessor still runs it on
+    // the sentinel timer.
+    let live = |u: &&String| u.contains("spira-sentinel") || (u.starts_with("spira-runtime") && !u.contains("-watch"));
+    r.check("phase D: loop active (world live before upgrade)", active.iter().any(|u| live(&u)), || "neither spira-runtime* nor spira-sentinel* in active units".into());
     r.wait_units_settled(30);
 
     let drc = h.show(&r.deploy_tag());

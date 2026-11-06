@@ -26,3 +26,4 @@ strip = true
 
 [dev-dependencies]
 spira-otel = { path = "../spira-otel" }
+testkit = { path = "../testkit" }

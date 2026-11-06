@@ -213,3 +213,20 @@ fn red_twice_body_fills_real_values() {
     assert!(b.contains("FAIL: boom"));
     assert!(b.contains("abc123 fix stuff"));
 }
+
+#[test]
+fn fail_lines_keep_ten_fail_lines_without_their_job_and_step() {
+    let log: String = (0..12).map(|i| format!("job\tstep\tFAIL: t{i}\n")).chain(["job\tstep\tok\n".to_string()]).collect();
+    let got = fail_lines(&log);
+    assert_eq!(got.len(), 10);
+    assert_eq!(got[0], "FAIL: t0");
+    assert_eq!(fail_lines("FAIL bare"), ["FAIL bare"], "a line with no tabs is kept whole");
+}
+
+#[test]
+fn run_list_field_reads_numbers_and_strings_and_skips_the_rest() {
+    let json = r#"[{"databaseId":101,"headSha":"a"},{"databaseId":"102"},{"headSha":""}]"#;
+    assert_eq!(run_list_field(json, "databaseId"), ["101", "102"]);
+    assert_eq!(run_list_field(json, "headSha"), ["a"]);
+    assert_eq!(run_list_field("not json", "x"), Vec::<String>::new());
+}

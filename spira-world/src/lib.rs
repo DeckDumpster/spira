@@ -7,13 +7,16 @@
 //! in Rust they are one function each, called from three binaries.
 
 pub mod checkpoint;
+pub mod clock;
 pub mod drain;
 pub mod fleet;
 pub mod freeze;
 pub mod guard;
+pub mod mail_out;
 pub mod notice;
 pub mod proc;
 pub mod round;
+pub mod scheduler;
 pub mod seam;
 pub mod sysctl;
 

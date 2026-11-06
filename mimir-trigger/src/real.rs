@@ -178,7 +178,7 @@ impl World for Real {
 }
 
 /// The ids in `bd list --json`'s array; `None` for anything that is not an array.
-fn json_ids(input: &str) -> Option<Vec<String>> {
+pub fn json_ids(input: &str) -> Option<Vec<String>> {
     match serde_json::from_str::<serde_json::Value>(input) {
         Ok(serde_json::Value::Array(a)) => Some(a.iter().filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string)).collect()),
         _ => None,
@@ -189,7 +189,7 @@ fn json_ids(input: &str) -> Option<Vec<String>> {
 /// row READY, WORKING or REWORK (what bd's `open,in_progress` meant). A bead with no row can
 /// never be worked, and a poisoned one is not claimable again: neither is open, or one dead
 /// trigger would suppress every later one.
-fn unfinished_count(ids: &[String], lc: &std::collections::HashMap<String, spira_config::lc_state::Row>) -> u64 {
+pub fn unfinished_count(ids: &[String], lc: &std::collections::HashMap<String, spira_config::lc_state::Row>) -> u64 {
     ids.iter().filter(|id| lc.get(*id).is_some_and(|r| !r.past_builder() && !r.held("poison"))).count() as u64
 }
 

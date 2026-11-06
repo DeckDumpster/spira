@@ -94,6 +94,30 @@ pub fn write(args: &[&str]) -> Result<String, String> {
     run_write(args)
 }
 
+/// A write with `stdin` as bd's stdin (`note --stdin`, `create --body-file -`), under the
+/// write bound and stamped like every planning write.
+pub fn write_stdin(args: &[String], stdin: Option<&str>) -> Result<String, String> {
+    let started = std::time::Instant::now();
+    let res = write_stdin_unrecorded(args, stdin);
+    let words: Vec<&str> = args.iter().map(String::as_str).collect();
+    record_call(&words, started, res.is_ok());
+    stamped(args, res)
+}
+
+fn write_stdin_unrecorded(args: &[String], stdin: Option<&str>) -> Result<String, String> {
+    let mut cmd = Command::new("timeout");
+    cmd.arg(WRITE_SECS.to_string()).arg(bd_bin()?);
+    let db = spira_config::process::cfg("SPIRA_DB")?;
+    if !db.is_empty() {
+        cmd.args(["-C", &db]);
+    }
+    cmd.args(args);
+    match spawn(cmd, stdin, "bd") {
+        (0, out) => Ok(out),
+        (_, out) => Err(out),
+    }
+}
+
 /// A close whose bd call failed is still done when the bead reads closed afterwards: bd can
 /// exit non-zero after the write committed.
 fn settled(res: Result<(), String>, id: &str, still_open: impl FnOnce() -> Result<Vec<String>, String>) -> Result<(), String> {

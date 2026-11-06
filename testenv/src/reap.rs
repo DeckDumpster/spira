@@ -267,15 +267,54 @@ pub fn reap_tmp_targets(
     Ok(out)
 }
 
-/// Bytes available to this user on the filesystem holding `p`.
+/// Bytes available to this user on the filesystem holding `p`, by `statvfs` in-process.
 pub fn free_bytes(p: &Path) -> Option<u64> {
-    let o = spira_config::bounded::bounded("df").args(["-Pk"]).arg(p).output().ok()?;
-    if !o.status.success() {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(p.as_os_str().as_bytes()).ok()?;
+    // SAFETY: a zeroed statvfs is a valid out-parameter, and `c` is a NUL-terminated path.
+    let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
         return None;
     }
-    let text = String::from_utf8_lossy(&o.stdout);
-    let kb: u64 = text.lines().nth(1)?.split_whitespace().nth(3)?.parse().ok()?;
-    Some(kb * 1024)
+    Some(s.f_bavail as u64 * s.f_frsize as u64)
+}
+
+/// One worktree's build output as the idle reaper weighs it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct IdleTarget {
+    pub id: String,
+    pub idle_secs: u64,
+    pub busy: bool,
+    pub bytes: u64,
+}
+
+/// `reap_idle`'s choice made pure: the idle (`idle_secs >= min`), non-busy targets, oldest
+/// first and then by id, taken until their summed bytes cover `deficit` (every one of them
+/// when `deficit` is `None`). The last one taken may overshoot. Returns indexes into `items`.
+pub fn pick_idle(items: &[IdleTarget], min: u64, deficit: Option<u64>) -> Vec<usize> {
+    let mut idle: Vec<usize> = (0..items.len()).filter(|&i| items[i].idle_secs >= min && !items[i].busy).collect();
+    idle.sort_by(|&a, &b| items[b].idle_secs.cmp(&items[a].idle_secs).then_with(|| items[a].id.cmp(&items[b].id)));
+    let Some(deficit) = deficit else { return idle };
+    let mut freed = 0u64;
+    idle.into_iter()
+        .take_while(|&i| {
+            let more = freed < deficit;
+            freed = freed.saturating_add(items[i].bytes);
+            more
+        })
+        .collect()
+}
+
+/// Remove one `target`: the link itself when it is a symlink, else the whole tree. Returns
+/// the bytes it held.
+pub fn remove_target(t: &Path) -> Result<u64, String> {
+    let n = size_of(t);
+    let r = if fs::symlink_metadata(t).map(|m| m.file_type().is_symlink()).unwrap_or(false) { fs::remove_file(t) } else { fs::remove_dir_all(t) };
+    match r {
+        Ok(()) => Ok(n),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
+        Err(e) => Err(format!("cannot remove {}: {e}", t.display())),
+    }
 }
 
 /// The report line.
@@ -532,5 +571,20 @@ mod tests {
         assert!(idle_age_secs(&d).unwrap() >= 10 * 3600, "fresh target/ files do not count");
         fs::write(d.join("src.rs"), "edit").unwrap();
         assert!(idle_age_secs(&d).unwrap() < 60, "an edit outside target/ does");
+    }
+
+    #[test]
+    fn pick_idle_takes_the_oldest_idle_unbusy_until_the_deficit_is_covered() {
+        let t = |id: &str, idle_secs: u64, busy: bool, bytes: u64| IdleTarget { id: id.into(), idle_secs, busy, bytes };
+        let items = [t("young", 10, false, 30), t("older", 90, false, 12), t("busy", 99, true, 30), t("oldest", 95, false, 10), t("spare", 50, false, 10)];
+        assert_eq!(pick_idle(&items, 50, Some(20)), [3, 1], "oldest then older covers 20; one of overshoot");
+        assert_eq!(pick_idle(&items, 50, None), [3, 1, 4], "no deficit takes every idle one");
+        assert_eq!(pick_idle(&items, 50, Some(0)), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn free_bytes_reads_the_filesystem_in_process() {
+        assert!(free_bytes(Path::new("/")).is_some_and(|b| b > 0));
+        assert_eq!(free_bytes(Path::new("/no/such/dir/at/all")), None);
     }
 }

@@ -147,43 +147,88 @@ fn lineage_brief(seam: &dyn Seam, sid: &str, tp: &str) -> String {
 
 /// One archive run, mirroring `archivist.sh archive()`. `wait`: the archivist-wide lock
 /// blocks rather than skips (the manual `now` path; an operator told "busy" would just
-/// run it again in a loop).
+/// run it again in a loop). [`prepare`], the session, [`commit_after`] and [`settle`] in turn;
+/// the scheduler's `persona.archivist` task runs the same four as separate steps.
 #[allow(clippy::too_many_arguments)]
 pub fn archive(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at: u64, ctx: &str, why: &str, wait: bool) -> i32 {
+    let p = match prepare(seam, cfg, arc, sid, tp, at, ctx, why, wait) {
+        Ok(p) => p,
+        Err(rc) => return rc,
+    };
+    let spec = AgentSpec {
+        agent_bin: &cfg.agent,
+        timeout_secs: p.timeout_secs,
+        system_flag: "--system-prompt-file",
+        sysfile: &p.sysfile,
+        model: &cfg.model,
+        wiki_dir: cfg.wiki.as_deref(),
+        task_stdin: &p.task,
+        logfile: &p.logf,
+        cwd: &arc.join("cwd"),
+        mail_from: MAIL_FROM,
+    };
+    let rc = seam.run_agent(&spec);
+    let committed = commit_after(cfg, sid, p.before);
+    let outcome = Outcome::of(rc, &committed);
+    settle(seam, cfg, arc, sid, at, outcome, &p.logf, true)
+}
+
+/// The `SPIRA_MAIL_FROM` an archivist session sends as.
+pub const MAIL_FROM: &str = "Archivist <archivist@spira>";
+
+/// What [`prepare`] leaves for the session: its two brief files, its log, its task text, its
+/// timeout, the wiki as it stood before, and the locks it holds while they are held.
+pub struct Prepared {
+    pub sysfile: PathBuf,
+    pub taskfile: PathBuf,
+    pub task: String,
+    pub logf: PathBuf,
+    pub timeout_secs: u64,
+    pub timeout_count: u32,
+    pub before: Option<Result<brain::Snapshot, String>>,
+    pub guards: Vec<lock::Guard>,
+    pub live: Option<state::LiveMarker>,
+}
+
+/// Everything before the session: both locks (Err 75 when either is held), the state
+/// `sweeping`, the prompt from `runes/archivist.md` (Err 1 when it is missing), the two brief
+/// files and the wiki's snapshot.
+#[allow(clippy::too_many_arguments)]
+pub fn prepare(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at: u64, ctx: &str, why: &str, wait: bool) -> Result<Prepared, i32> {
     let from = numeric_logged(covered_raw(arc, sid).as_deref(), &format!("session {sid} prior cursor"));
     let tc_file = arc.join(format!("{sid}.timeout_count"));
-    let mut tc: u32 = std::fs::read_to_string(&tc_file).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
+    let tc: u32 = std::fs::read_to_string(&tc_file).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
     let effective_timeout = cfg.timeout * (tc as u64 + 1);
 
     let prompt_file = Path::new(&cfg.runes).join("archivist.md");
     let Ok(template) = std::fs::read_to_string(&prompt_file) else {
         log(&format!("archivist: no prompt at {}", prompt_file.display()));
-        return 1;
+        return Err(1);
     };
     let _ = std::fs::create_dir_all(arc.join("cwd"));
 
     let wide_path = arc.join("archivist.lock");
-    let _wide = match if wait { lock::wait_lock(&wide_path) } else { lock::try_lock(&wide_path) } {
+    let wide = match if wait { lock::wait_lock(&wide_path) } else { lock::try_lock(&wide_path) } {
         Acquire::Held(g) => g,
         _ => {
             log(&format!(
                 "archivist: {sid} {}",
                 if wait { "could not take the archivist-wide lock" } else { "skipped — another archive is already running" }
             ));
-            return 75;
+            return Err(75);
         }
     };
     let session_path = arc.join(format!("{sid}.lock"));
-    let _session = match lock::try_lock(&session_path) {
+    let session = match lock::try_lock(&session_path) {
         Acquire::Held(g) => g,
         _ => {
             log(&format!("archivist: {sid} is already being archived"));
-            return 75;
+            return Err(75);
         }
     };
 
     let _ = state::write_state(arc, sid, State::Sweeping, at, 0);
-    let _live = transcripts::is_live(tp, cfg.idle, now_epoch()).then(|| state::LiveMarker::set(arc, sid));
+    let live = transcripts::is_live(tp, cfg.idle, now_epoch()).then(|| state::LiveMarker::set(arc, sid));
 
     let lineage = lineage_brief(seam, sid, &tp.to_string_lossy());
     let wiki_text = match cfg.wiki.as_deref().filter(|w| !w.is_empty()) {
@@ -229,71 +274,118 @@ pub fn archive(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at:
     let taskfile = Path::new(&cfg.run).join(format!("archivist-{sid}.task.md"));
     let _ = std::fs::write(&sysfile, &sysfile_contents);
     let _ = std::fs::write(&taskfile, &taskfile_contents);
+    let before = cfg.wiki.as_deref().filter(|w| !w.is_empty()).map(|w| brain::snapshot(Path::new(w)));
+    Ok(Prepared { sysfile, taskfile, task: taskfile_contents, logf, timeout_secs: effective_timeout, timeout_count: tc, before, guards: vec![wide, session], live })
+}
 
-    let spec = AgentSpec {
-        agent_bin: &cfg.agent,
-        timeout_secs: effective_timeout,
-        system_flag: "--system-prompt-file",
-        sysfile: &sysfile,
-        model: &cfg.model,
-        wiki_dir: cfg.wiki.as_deref(),
-        task_stdin: &taskfile_contents,
-        logfile: &logf,
-        cwd: &arc.join("cwd"),
-        mail_from: "Archivist <archivist@spira>",
-    };
-    let wiki_dir = cfg.wiki.as_deref().filter(|w| !w.is_empty()).map(Path::new);
-    let before = wiki_dir.map(brain::snapshot);
-    let rc = seam.run_agent(&spec);
-    let committed = match (wiki_dir, before) {
-        (Some(dir), Some(before)) => Some(before.and_then(|b| {
-            let touched = brain::touched(&b, &brain::snapshot(dir)?);
-            brain::commit_paths(dir, &touched, &format!("archivist: {} page(s) from session {sid}\n", touched.len()))
-        })),
-        _ => None,
-    };
-    if let Some(Err(e)) = &committed {
+/// The agent's arguments for a session, without the program: what `RealSeam::run_agent`
+/// passes after `timeout <secs> <agent>`.
+pub fn agent_args(sysfile: &Path, model: &str, wiki_dir: Option<&str>) -> Vec<String> {
+    let mut a: Vec<String> = ["-p", "--output-format", "stream-json", "--verbose", "--system-prompt-snapshot", "on", "--system-prompt-file"].iter().map(|s| s.to_string()).collect();
+    a.push(sysfile.display().to_string());
+    a.extend(["--model", model, "--allowedTools", "Bash,Read,Grep,Glob,Write", "--dangerously-skip-permissions"].iter().map(|s| s.to_string()));
+    if let Some(w) = wiki_dir {
+        a.extend(["--add-dir".to_string(), w.to_string()]);
+    }
+    a
+}
+
+/// The wiki pages the session touched, committed: `None` with no wiki configured.
+pub fn commit_after(cfg: &Env, sid: &str, before: Option<Result<brain::Snapshot, String>>) -> Option<Result<usize, String>> {
+    let dir = Path::new(cfg.wiki.as_deref().filter(|w| !w.is_empty())?);
+    let committed = before?.and_then(|b| {
+        let touched = brain::touched(&b, &brain::snapshot(dir)?);
+        brain::commit_paths(dir, &touched, &format!("archivist: {} page(s) from session {sid}\n", touched.len()))
+    });
+    if let Err(e) = &committed {
         log(&format!("archivist: {sid} could not commit the wiki pages it wrote — {e}"));
     }
+    Some(committed)
+}
 
-    let items: u64 = state::read_state_key(arc, sid, "items_filed").and_then(|s| s.parse().ok()).unwrap_or(0);
+/// How a session's run ended, as [`settle`] records it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Outcome {
+    /// It ran clean and its pages (if any) are committed.
+    Safe,
+    /// It ran clean but the wiki checkout holds another writer's changes.
+    Retry,
+    /// It ran clean but its pages could not be committed.
+    CommitFailed,
+    /// It ran out of time (`timeout`'s 124, or stopped at the deadline).
+    Timeout,
+    /// It ended with this rc: a capacity refusal if its log says so, else a failure.
+    Ran(i32),
+}
 
-    if rc == 0 && matches!(&committed, Some(Err(e)) if brain::is_dirty_checkout_refusal(e)) {
-        let retry_at = now_epoch() + candidates::backoff_secs(cfg.fail_backoff, 1);
-        let _ = state::write_state_retry(arc, sid, State::Retry, at, items, Some(retry_at));
-        log(&format!("archivist: {sid} could not commit — the wiki checkout has another writer's changes; will retry"));
-        1
-    } else if rc == 0 && matches!(committed, Some(Err(_))) {
-        record_failure(cfg, arc, sid, at, items, "its wiki pages are written but not committed", &logf);
-        1
-    } else if rc == 0 {
-        let _ = state::write_state(arc, sid, State::Safe, at, items);
-        let _ = set_covered(arc, sid, at);
-        let _ = std::fs::remove_file(&tc_file);
-        let _ = std::fs::remove_file(arc.join(format!("{sid}.fail_count")));
-        log(&format!("archivist: {sid} safe to clear — {items} item(s) filed"));
-        let _ = digest_send(seam, arc, &cfg.tz);
-        0
-    } else if rc == 124 {
-        let budget = cfg.timeout_retries;
-        tc += 1;
-        if tc >= budget {
-            let _ = std::fs::remove_file(&tc_file);
-            record_failure(cfg, arc, sid, at, items, &format!("timeout budget {budget} exhausted"), &logf);
-        } else {
-            let _ = std::fs::write(&tc_file, tc.to_string());
-            let _ = state::write_state(arc, sid, State::Timeout, at, items);
-            log(&format!("archivist: {sid} timed out (attempt {tc}/{budget}, timeout was {effective_timeout}s) — will retry"));
+impl Outcome {
+    pub fn of(rc: i32, committed: &Option<Result<usize, String>>) -> Outcome {
+        match (rc, committed) {
+            (0, Some(Err(e))) if brain::is_dirty_checkout_refusal(e) => Outcome::Retry,
+            (0, Some(Err(_))) => Outcome::CommitFailed,
+            (0, _) => Outcome::Safe,
+            (124, _) => Outcome::Timeout,
+            (rc, _) => Outcome::Ran(rc),
         }
-        rc
-    } else if let Some(reset_at) = seam.capacity_reset_at(&logf) {
-        seam.capacity_pause_set(reset_at, &format!("archivist/{sid}"));
-        let _ = state::write_state(arc, sid, State::Capacity, at, items);
-        log(&format!("archivist: {sid} deferred — the account refused the session, retrying when the window reopens"));
-        ARC_RC_CAPACITY
-    } else {
-        record_failure(cfg, arc, sid, at, items, &format!("rc={rc} after {items} item(s)"), &logf);
-        rc
+    }
+}
+
+/// Everything after the session: the state, cursor, timeout and failure counts, the capacity
+/// pause when the account refused it, and (with `digest`) the day's digest. Returns the rc
+/// `archive` always returned: 0 safe, 1 retry or commit failure, 124 timeout,
+/// `ARC_RC_CAPACITY`, else the session's own.
+#[allow(clippy::too_many_arguments)]
+pub fn settle(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, at: u64, outcome: Outcome, logf: &Path, digest: bool) -> i32 {
+    let tc_file = arc.join(format!("{sid}.timeout_count"));
+    let mut tc: u32 = std::fs::read_to_string(&tc_file).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
+    let effective_timeout = cfg.timeout * (tc as u64 + 1);
+    let items: u64 = state::read_state_key(arc, sid, "items_filed").and_then(|s| s.parse().ok()).unwrap_or(0);
+    match outcome {
+        Outcome::Retry => {
+            let retry_at = now_epoch() + candidates::backoff_secs(cfg.fail_backoff, 1);
+            let _ = state::write_state_retry(arc, sid, State::Retry, at, items, Some(retry_at));
+            log(&format!("archivist: {sid} could not commit — the wiki checkout has another writer's changes; will retry"));
+            1
+        }
+        Outcome::CommitFailed => {
+            record_failure(cfg, arc, sid, at, items, "its wiki pages are written but not committed", logf);
+            1
+        }
+        Outcome::Safe => {
+            let _ = state::write_state(arc, sid, State::Safe, at, items);
+            let _ = set_covered(arc, sid, at);
+            let _ = std::fs::remove_file(&tc_file);
+            let _ = std::fs::remove_file(arc.join(format!("{sid}.fail_count")));
+            log(&format!("archivist: {sid} safe to clear — {items} item(s) filed"));
+            if digest {
+                let _ = digest_send(seam, arc, &cfg.tz);
+            }
+            0
+        }
+        Outcome::Timeout => {
+            let budget = cfg.timeout_retries;
+            tc += 1;
+            if tc >= budget {
+                let _ = std::fs::remove_file(&tc_file);
+                record_failure(cfg, arc, sid, at, items, &format!("timeout budget {budget} exhausted"), logf);
+            } else {
+                let _ = std::fs::write(&tc_file, tc.to_string());
+                let _ = state::write_state(arc, sid, State::Timeout, at, items);
+                log(&format!("archivist: {sid} timed out (attempt {tc}/{budget}, timeout was {effective_timeout}s) — will retry"));
+            }
+            124
+        }
+        Outcome::Ran(rc) => {
+            if let Some(reset_at) = seam.capacity_reset_at(logf) {
+                seam.capacity_pause_set(reset_at, &format!("archivist/{sid}"));
+                let _ = state::write_state(arc, sid, State::Capacity, at, items);
+                log(&format!("archivist: {sid} deferred — the account refused the session, retrying when the window reopens"));
+                ARC_RC_CAPACITY
+            } else {
+                record_failure(cfg, arc, sid, at, items, &format!("rc={rc} after {items} item(s)"), logf);
+                rc
+            }
+        }
     }
 }
 
@@ -313,7 +405,7 @@ fn record_failure(cfg: &Env, arc: &Path, sid: &str, at: u64, items: u64, what: &
     }
 }
 
-fn build_candidates(seam: &dyn Seam, cfg: &Env, arc: &Path, now: i64) -> Vec<Candidate> {
+pub fn build_candidates(seam: &dyn Seam, cfg: &Env, arc: &Path, now: i64) -> Vec<Candidate> {
     let projects = Path::new(&cfg.token_projects);
     let run_dir = Path::new(&cfg.run);
     let live = transcripts::live_transcripts(projects, run_dir, cfg.idle, now);
@@ -358,8 +450,7 @@ pub fn sweep(seam: &dyn Seam, cfg: &Env, arc: &Path) -> Vec<String> {
     let mut lines = Vec::new();
     if let Some(left) = seam.capacity_paused() {
         lines.push(log(&format!("archivist: skipped — account capacity paused for another {left}s")));
-        let _ = std::fs::create_dir_all(arc);
-        let _ = std::fs::write(arc.join("sweep.state"), format!("sweep_state=skipped\nreason=capacity\nat={}\n", now_epoch()));
+        mark_skipped(arc);
         return lines;
     }
 
@@ -391,7 +482,32 @@ pub fn sweep(seam: &dyn Seam, cfg: &Env, arc: &Path) -> Vec<String> {
     lines
 }
 
-fn forget_stale_sessions(cfg: &Env, arc: &Path, lines: &mut Vec<String>) {
+/// `sweep.state`: this pass was skipped for the account's capacity.
+pub fn mark_skipped(arc: &Path) {
+    let _ = std::fs::create_dir_all(arc);
+    let _ = std::fs::write(arc.join("sweep.state"), format!("sweep_state=skipped\nreason=capacity\nat={}\n", now_epoch()));
+}
+
+/// Every session with bookkeeping under `arc` whose transcript is gone.
+pub fn stale_sessions(cfg: &Env, arc: &Path) -> Vec<String> {
+    let projects = Path::new(&cfg.token_projects);
+    let Ok(rd) = std::fs::read_dir(arc) else { return vec![] };
+    let mut sessions: Vec<String> = rd
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            (p.extension().map(|x| x == "state").unwrap_or(false)).then(|| p.file_stem().map(|s| s.to_string_lossy().into_owned()))?
+        })
+        .filter(|s| s != "sweep")
+        .collect();
+    sessions.sort();
+    sessions.dedup();
+    sessions.retain(|sid| !transcript_exists(projects, sid));
+    sessions
+}
+
+/// Forgets every stale session: its nine bookkeeping files and its log.
+pub fn forget_stale_sessions(cfg: &Env, arc: &Path, lines: &mut Vec<String>) {
     let projects = Path::new(&cfg.token_projects);
     let Ok(rd) = std::fs::read_dir(arc) else { return };
     let mut sessions: Vec<String> = rd

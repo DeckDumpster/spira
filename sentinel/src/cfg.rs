@@ -313,16 +313,12 @@ pub struct Cfg {
     pub skip_reclaim: bool,
     /// Spira tools, invoked by bare name on the launcher's PATH (sp-gypjk). Plain fields so a
     /// unit test can point one at a fixture; nothing reads them from the environment.
-    pub tsd_bin: String,
     pub lc_bin: String,
     /// The landing worker CHECK 6 dispatches (`landing-pass land`, landing-pass/DESIGN.md §7.1).
     pub landing_bin: String,
-    pub claim_bin: String,
     pub slay_bin: String,
     pub lane_preemptions: PathBuf,
     pub strand_bin: String,
-    /// The Hel CHECK 6b runs (`hel --skip-queue`, hel/DESIGN.md).
-    pub hel_bin: String,
     pub incident_sh: PathBuf,
     pub home_repo: String,
     pub runes_str: String,
@@ -443,14 +439,11 @@ impl Cfg {
             systemctl: or("SPIRA_SYSTEMCTL", "systemctl"),
             call: or("SPIRA_CALL", "systemd-run"),
             skip_reclaim: c.get("SPIRA_SKIP_RECLAIM") == Some("1"),
-            tsd_bin: "tsd-write".into(),
             lc_bin: "spira-lc".into(),
             landing_bin: "landing-pass".into(),
-            claim_bin: "spira-claim".into(),
             slay_bin: "slay.sh".into(),
             lane_preemptions: run.join("lane-preemptions"),
             strand_bin: "strand".into(),
-            hel_bin: "hel".into(),
             // SPIRA_INCIDENT_SH stays a test seam (a mock incident.sh); unset, the release's
             // incident.sh by name — `bash incident.sh` finds a slashless script on PATH.
             incident_sh: c

@@ -7,6 +7,7 @@
 // record, the lifecycle machine (spira-lc), and at most 2 gh API calls (forge.sh batch-ci-status) for the
 // open batch's run.
 
+use czar_pass::{iso_of, parse_field, parse_iso_to_epoch};
 use reconciler_engine::core::{last_remedy, record_remedy, step, HysteresisState, RawStatus, Verdict};
 use reconciler_engine::io::{append_status, load_state, save_state, StateMap};
 use reconciler_engine::paths;
@@ -70,6 +71,8 @@ struct Seams {
     systemctl: String,
     spira_lc: String,
     sentinel: String,
+    /// The unit manager's facts, through the `Units` port.
+    units: std::sync::Arc<dyn runtime::units::Units>,
 }
 
 impl Seams {
@@ -80,7 +83,45 @@ impl Seams {
             systemctl: "systemctl".to_string(),
             spira_lc: "spira-lc".to_string(),
             sentinel: "sentinel".to_string(),
+            units: std::sync::Arc::new(HostUnits(std::sync::OnceLock::new())),
         }
+    }
+}
+
+/// The host's unit manager, reached on the first ask (most passes ask nothing). One it cannot
+/// reach answers every call with that error, which a reader takes as it took a failed `systemctl`.
+struct HostUnits(std::sync::OnceLock<Result<Box<dyn runtime::units::Units>, String>>);
+
+impl HostUnits {
+    fn get(&self) -> runtime::Result<&dyn runtime::units::Units> {
+        self.0
+            .get_or_init(|| {
+                #[cfg(target_os = "linux")]
+                let u = runtime::units::SystemdUnits::connect(std::sync::Arc::new(runtime::ports::WallClock))
+                    .map(|u| Box::new(u) as Box<dyn runtime::units::Units>)
+                    .map_err(|e| e.to_string());
+                #[cfg(not(target_os = "linux"))]
+                let u = Err("no unit manager backend on this platform".to_string());
+                u
+            })
+            .as_ref()
+            .map(|b| b.as_ref())
+            .map_err(|e| runtime::RuntimeError::new(e.clone()))
+    }
+}
+
+impl runtime::units::Units for HostUnits {
+    fn start(&self, spec: &runtime::units::UnitSpec) -> runtime::Result<runtime::units::UnitHandle> {
+        self.get()?.start(spec)
+    }
+    fn stop(&self, h: &runtime::units::UnitHandle) -> runtime::Result<()> {
+        self.get()?.stop(h)
+    }
+    fn restart(&self, h: &runtime::units::UnitHandle) -> runtime::Result<()> {
+        self.get()?.restart(h)
+    }
+    fn facts(&self, h: &runtime::units::UnitHandle) -> runtime::Result<runtime::units::UnitFacts> {
+        self.get()?.facts(h)
     }
 }
 
@@ -142,17 +183,6 @@ fn must_cfg(key: &str) -> String {
     }
 }
 
-/// A release-shipped tool's program, or a named refusal: the pass never guesses a path.
-fn must_tool(name: &str) -> String {
-    match spira_config::release_env::tool(name) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("czar-pass: {e}");
-            std::process::exit(1);
-        }
-    }
-}
-
 fn must_cfg_parse<T: std::str::FromStr>(key: &str) -> T
 where
     T::Err: std::fmt::Display,
@@ -190,7 +220,7 @@ impl Config {
             qc_log: spira_run.join("landing.log"),
             marker: spira_run.join("czar-pass.swept"),
             seams,
-            batch_show: queue_batch_show(must_tool("queue"), must_cfg_parse("SPIRA_LC_TIMEOUT")),
+            batch_show: projection_batch_show(),
             stall_secs: must_cfg_parse("SPIRA_LOOP_STALL_SECS"),
             ci_queued_max: must_cfg_parse("SPIRA_CI_QUEUED_MAX_SECS"),
             ci_red_max: must_cfg_parse("SPIRA_CI_RED_MAX_SECS"),
@@ -245,13 +275,7 @@ fn unix_now() -> u64 {
 }
 
 fn compute_now_iso() -> String {
-    spira_config::bounded::bounded("date")
-        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
+    iso_of(unix_now())
 }
 
 fn log_print(msg: &str) {
@@ -329,6 +353,7 @@ fn infer(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str) {
                 format!("{},{}", cfg.scope_label, cfg.czar_label)
             };
             // batch-job: the incident binary's store write has no short bound
+            // FORK-EDGE: needs an incident library filing entry that takes the per-call SPIRA_INCIDENT_* fields (labels, type, express, actor, repo, ref, cause, fenrir-exempt); intake::file_payload reads them from the process environment only
             let mut child = Command::new(&cfg.seams.incident)
                 .arg("file")
                 .arg(subj)
@@ -375,6 +400,7 @@ fn infer_urgent(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str, r
                 labels = format!("{},{}", cfg.scope_label, labels);
             }
             // batch-job: the incident binary's store write has no short bound
+            // FORK-EDGE: needs an incident library filing entry that takes the per-call SPIRA_INCIDENT_* fields (labels, type, express, actor, repo, ref, cause, fenrir-exempt); intake::file_payload reads them from the process environment only
             let mut child = Command::new(&cfg.seams.incident)
                 .arg("file")
                 .arg(subj)
@@ -425,6 +451,7 @@ fn det_action(cfg: &Config, class: &str, desc: &str, action: impl FnOnce()) {
 /// hand-rolled check never did.
 fn call_rune_czar(cfg: &Config) {
     // batch-job: this runs whatever its caller names, as long as that takes
+    // FORK-EDGE: machine leg sentinel (--call czar)
     let _ = Command::new(&cfg.seams.sentinel)
         .arg("--call")
         .arg("czar")
@@ -465,27 +492,28 @@ fn repo_base(name: &str, repo_map: &Option<PathBuf>) -> Option<String> {
 // Queue / forge helpers
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// One pass is one process, so each repo's answer is asked once and every detector reads it.
-fn queue_batch_show(queue: String, timeout_secs: u64) -> BatchShow {
-    let asked = std::sync::Mutex::new(std::collections::BTreeMap::<String, Result<String, String>>::new());
+/// The open batch of each repo from the store's own projection, its batch records (and no
+/// lifecycle row) loaded once on the first ask (one pass is one process): what `queue batch
+/// show --repo` printed, with no queue process. A view the store cannot vouch for — not loaded,
+/// or stale — could not say; it is never read as "no batch".
+fn projection_batch_show() -> BatchShow {
+    let views: std::sync::OnceLock<Result<store_view::Projection, String>> = std::sync::OnceLock::new();
     std::sync::Arc::new(move |repo: &str| {
-        let mut asked = asked.lock().unwrap_or_else(|e| e.into_inner());
-        asked.entry(repo.to_string()).or_insert_with(|| show_once(&queue, timeout_secs, repo)).clone()
+        let p = views
+            .get_or_init(|| {
+                let p = store_view::Projection::configured(spira_config::lc_call::LcClient::configured()?)?;
+                p.refresh_batches().map_err(String::from)?;
+                Ok(p)
+            })
+            .as_ref()
+            .map_err(|e| format!("could not say: {e}"))?;
+        shown_of(p.batch_view(repo).map(|r| r.value))
     })
 }
 
-fn show_once(queue: &str, timeout_secs: u64, repo: &str) -> Result<String, String> {
-    let out = Command::new("timeout")
-        .arg(timeout_secs.to_string())
-        .arg(queue)
-        .args(["batch", "show", "--repo", repo])
-        .stdin(std::process::Stdio::null())
-        .output()
-        .map_err(|e| format!("{queue}: {e}"))?;
-    if !out.status.success() {
-        return Err(format!("queue batch show --repo {repo} exited {}: {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+/// `batch show`'s stdout from a view's answer; a refusal is "could not say".
+fn shown_of(read: Result<store_view::BatchView, spira_config::lc_call::LcError>) -> Result<String, String> {
+    read.map(|v| v.shown()).map_err(|e| format!("could not say: {e}"))
 }
 
 /// A forge repo's open batch as the queue shows it.
@@ -511,48 +539,30 @@ fn open_batches(cfg: &Config, repos: Vec<(String, PathBuf)>) -> Vec<(String, Pat
 // A failed forge call and "nothing going on" must stay distinguishable (sp-pu7v6): a
 // spawn failure, a non-zero exit or invalid UTF-8 all report Err, so a caller can report
 // its invariant unobservable instead of silently reading the failure as "satisfied".
-/// A harness script: a bare name (sp-gypjk: the release's `spira/`, on the launcher's PATH)
-/// is exec'd by name; a path (a test seam's mock) goes through `bash`, as before.
+/// One forge verb (`args`: verb, repo, the rest) through the forge library — `gh` is its only
+/// child — or a fixture's stand-in when the configured forge is one.
 fn run_forge(forge: &str, args: &[&str]) -> Result<String, String> {
-    run_forge_on(forge, args, None)
+    let r = forge_reply(forge, args);
+    if !r.ok() {
+        return Err(format!("forge exited {}", r.code));
+    }
+    Ok(r.out)
 }
 
-/// `path`, when given, is the child's PATH — the seam tests use instead of mutating the process PATH.
-fn run_forge_on(forge: &str, args: &[&str], path: Option<&std::ffi::OsStr>) -> Result<String, String> {
-    // batch-job: a forge query is bounded by the forge's own client timeouts
-    let mut cmd = Command::new(forge);
-    if let Some(p) = path {
-        cmd.env("PATH", p);
-    }
-    for a in args {
-        cmd.arg(a);
-    }
-    let output = cmd
-        .stderr(Stdio::null())
-        .output()
-        .map_err(|e| format!("forge spawn failed: {}", e))?;
-    if !output.status.success() {
-        return Err(format!("forge exited {}", output.status));
-    }
-    String::from_utf8(output.stdout).map_err(|e| format!("forge: non-utf8 output: {}", e))
+fn forge_reply(forge: &str, args: &[&str]) -> forge::client::Reply {
+    let (verb, repo, rest) = match args {
+        [] => ("", "", &[][..]),
+        [v] => (*v, "", &[][..]),
+        [v, r, rest @ ..] => (*v, *r, rest),
+    };
+    forge::client::run(&forge::client::route_of(Path::new(forge)), verb, Path::new(repo), rest, None)
 }
 
-fn parse_field(output: &str, key: &str) -> Option<String> {
-    let prefix = format!("{}: ", key);
-    output
-        .lines()
-        .find(|l| l.starts_with(&prefix))
-        .map(|l| l[prefix.len()..].trim().to_string())
-}
-
-fn parse_iso_to_epoch(ts: &str) -> Option<u64> {
-    spira_config::bounded::bounded("date")
-        .args(["-u", "-d", ts, "+%s"])
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .and_then(|s| s.trim().parse().ok())
+/// A forge verb whose output went to this process's own stdout and stderr.
+fn forge_shown(forge: &str, args: &[&str]) {
+    let r = forge_reply(forge, args);
+    print!("{}", r.out);
+    eprint!("{}", r.err);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -670,16 +680,8 @@ fn read_new_lines(qc_log: &Path, prev: &str) -> String {
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn detect_deadlock(cfg: &Config, state: &mut StateMap, new_lines: &str) -> (Verdict, &'static str, &'static str) {
-    let trigger = "no suites identified; leaving batch open";
-    let raw = if new_lines.contains(trigger) {
-        RawStatus::Gap {
-            desired: "batch closed or requeued".into(),
-            observed: trigger.into(),
-            since_hint: None,
-        }
-    } else {
-        RawStatus::Satisfied
-    };
+    let trigger = czar_pass::DEADLOCK_LINE;
+    let raw = czar_pass::deadlock(new_lines.contains(trigger));
     let verdict = evaluate(cfg, state, "deadlock", raw, 0);
     if !verdict.is_gap {
         return (verdict, "none", "det");
@@ -720,8 +722,7 @@ fn detect_deadlock(cfg: &Config, state: &mut StateMap, new_lines: &str) -> (Verd
         let rid = run_id.clone();
         let rp = repo_path.clone();
         det_action(cfg, "deadlock", &desc, move || {
-            // batch-job: runs a gate, build or forge script that takes as long as its work
-            let _ = Command::new(&forge).args(["workflow-rerun", &rp, &rid]).status();
+            forge_shown(&forge, &["workflow-rerun", &rp, &rid]);
         });
         if let Some(st) = state.get_mut("deadlock") {
             record_remedy(st, cfg.now_secs, &desc);
@@ -750,23 +751,7 @@ fn detect_deadlock(cfg: &Config, state: &mut StateMap, new_lines: &str) -> (Verd
 
 fn detect_attribution_failed(cfg: &Config, state: &mut StateMap, new_lines: &str) -> (Verdict, &'static str, &'static str) {
     // grep -qE 'ejected 0, requeued [1-9]'
-    let detected = new_lines.lines().any(|l| {
-        if let Some(pos) = l.find("ejected 0, requeued ") {
-            let rest = &l[pos + "ejected 0, requeued ".len()..];
-            rest.chars().next().map(|c| c.is_ascii_digit() && c != '0').unwrap_or(false)
-        } else {
-            false
-        }
-    });
-    let raw = if detected {
-        RawStatus::Gap {
-            desired: "attribution ejects the offender".into(),
-            observed: "ejected 0, requeued the whole batch".into(),
-            since_hint: None,
-        }
-    } else {
-        RawStatus::Satisfied
-    };
+    let raw = czar_pass::attribution_failed(czar_pass::requeued_all(new_lines));
     let verdict = evaluate(cfg, state, "attribution-failed", raw, 0);
     if !verdict.is_gap {
         return (verdict, "none", "det");
@@ -798,15 +783,7 @@ fn detect_attribution_failed(cfg: &Config, state: &mut StateMap, new_lines: &str
 }
 
 fn detect_sort_failed(cfg: &Config, state: &mut StateMap, new_lines: &str) -> (Verdict, &'static str, &'static str) {
-    let raw = if new_lines.contains("queue_sort_rows: ranking failed") {
-        RawStatus::Gap {
-            desired: "queue sorted by priority".into(),
-            observed: "queue_sort_rows: ranking failed".into(),
-            since_hint: None,
-        }
-    } else {
-        RawStatus::Satisfied
-    };
+    let raw = czar_pass::sort_failed(new_lines.contains(czar_pass::SORT_FAILED_LINE));
     let verdict = evaluate(cfg, state, "sort-failed", raw, 0);
     if !verdict.is_gap {
         return (verdict, "none", "det");
@@ -858,18 +835,7 @@ fn detect_loop_stalled(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static
         None => RawStatus::Satisfied,
         Some(ts) => match parse_iso_to_epoch(ts) {
             None => RawStatus::Unobservable { reason: format!("landing.log timestamp unparseable: {:?}", ts) },
-            Some(ts_epoch) => {
-                let age = cfg.now_secs.saturating_sub(ts_epoch);
-                if age > cfg.stall_secs {
-                    RawStatus::Gap {
-                        desired: format!("a landing pass within {}s", cfg.stall_secs),
-                        observed: format!("last pass {}s ago ({})", age, ts),
-                        since_hint: Some(ts_epoch),
-                    }
-                } else {
-                    RawStatus::Satisfied
-                }
-            }
+            Some(ts_epoch) => czar_pass::loop_stalled(cfg.now_secs, Some(ts_epoch), cfg.stall_secs),
         },
     };
 
@@ -883,20 +849,14 @@ fn detect_loop_stalled(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static
 
     let age = verdict.since.map(|s| cfg.now_secs.saturating_sub(s)).unwrap_or(0);
     let unit_service = format!("{}.service", cfg.land_unit);
-    let is_failed = spira_config::bounded::bounded(&cfg.seams.systemctl)
-        .args(["--user", "is-failed", &unit_service])
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim() == "failed")
-        .unwrap_or(false);
+    let is_failed = cfg.seams.units.facts(&runtime::units::UnitHandle::named(&unit_service)).is_ok_and(|f| f.state == runtime::units::UnitState::Failed);
 
     if is_failed && !verdict.remedy_failed {
         let sc = cfg.seams.systemctl.clone();
         let svc = unit_service.clone();
         let desc = format!("reset-failed + start {}", cfg.land_unit);
         det_action(cfg, "loop-stalled", &desc, move || {
+            // FORK-EDGE: needs Units::reset_failed and a start of an installed unit (the port starts transient units only)
             let _ = spira_config::bounded::bounded(&sc).args(["--user", "reset-failed", &svc]).status();
             let _ = spira_config::bounded::bounded(&sc).args(["--user", "start", &svc]).status();
         });
@@ -922,29 +882,7 @@ fn detect_loop_stalled(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static
     }
 }
 
-/// Rolls per-repo verdicts up into the one CLASS= line czar.log has always printed per
-/// invariant. Each repo's own verdict — its own since-when, its own grace period, its own
-/// remedy history — is tracked and recorded separately; this never re-derives is_gap from a
-/// fresh grace check (that already bypassed a per-repo grace period once — sp-pu7v6 — by
-/// re-running the worst raw reading through the engine at grace_secs=0 regardless of what
-/// grace the per-repo verdict itself was actually judged against). A gap already past its
-/// own grace outranks one still inside it, which outranks "could not tell", which outranks
-/// satisfied.
-fn rollup(verdicts: &[Verdict]) -> Verdict {
-    if let Some(v) = verdicts.iter().find(|v| v.is_gap) {
-        return v.clone();
-    }
-    if let Some(v) = verdicts.iter().find(|v| !matches!(v.status, RawStatus::Satisfied)) {
-        return v.clone();
-    }
-    Verdict {
-        status: RawStatus::Satisfied,
-        since: None,
-        is_gap: false,
-        just_closed: verdicts.iter().any(|v| v.just_closed),
-        remedy_failed: false,
-    }
-}
+use czar_pass::rollup;
 
 fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'static str, Verdict, &'static str, &'static str) {
     let mut cis_remedy: &'static str = "none";
@@ -988,21 +926,7 @@ fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'st
             let queued_since = parse_field(&ci_out, "queued-since").and_then(|s| s.parse::<u64>().ok());
 
             // ci-stalled: job queued with no runner > threshold
-            let cis_raw = match queued_since {
-                Some(qs) => {
-                    let stalled_s = cfg.now_secs.saturating_sub(qs);
-                    if stalled_s > cfg.ci_queued_max {
-                        RawStatus::Gap {
-                            desired: format!("CI job picked up within {}s", cfg.ci_queued_max),
-                            observed: format!("{}: queued {}s", repo_name, stalled_s),
-                            since_hint: Some(qs),
-                        }
-                    } else {
-                        RawStatus::Satisfied
-                    }
-                }
-                None => RawStatus::Satisfied,
-            };
+            let cis_raw = czar_pass::ci_stalled(cfg.now_secs, &repo_name, queued_since, cfg.ci_queued_max);
             let cis_v = evaluate(cfg, state, &cis_key, cis_raw, 0);
             cis_verdicts.push(cis_v.clone());
             if cis_v.is_gap {
@@ -1013,8 +937,7 @@ fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'st
                     let rp = repo_path_str.clone();
                     let rid = run_id.clone();
                     det_action(cfg, "ci-stalled", &desc, move || {
-                        // batch-job: runs a gate, build or forge script that takes as long as its work
-                        let _ = Command::new(&forge).args(["workflow-rerun", &rp, &rid]).status();
+                        forge_shown(&forge, &["workflow-rerun", &rp, &rid]);
                     });
                     if let Some(st) = state.get_mut(&cis_key) {
                         record_remedy(st, cfg.now_secs, &desc);
@@ -1047,21 +970,7 @@ fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'st
             // below, which is a repo's base ref, not a batch's PR, and unobservable there.
             let conclusion = parse_field(&ci_out, "run-conclusion");
             let completed_secs = parse_field(&ci_out, "run-completed-at").and_then(|s| s.trim().parse::<u64>().ok());
-            let cir_raw = match (conclusion.as_deref(), completed_secs) {
-                (Some("failure"), Some(completed_secs)) => {
-                    let red_age = cfg.now_secs.saturating_sub(completed_secs);
-                    if red_age > cfg.ci_red_max {
-                        RawStatus::Gap {
-                            desired: "verdict acts on a red run".into(),
-                            observed: format!("{}: red for {}s", repo_name, red_age),
-                            since_hint: Some(completed_secs),
-                        }
-                    } else {
-                        RawStatus::Satisfied
-                    }
-                }
-                _ => RawStatus::Satisfied,
-            };
+            let cir_raw = czar_pass::ci_red(cfg.now_secs, &repo_name, conclusion.as_deref(), completed_secs, cfg.ci_red_max);
             let cir_v = evaluate(cfg, state, &cir_key, cir_raw, 0);
             cir_verdicts.push(cir_v.clone());
             if cir_v.is_gap {
@@ -1161,15 +1070,7 @@ fn detect_base_red(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str
             let ci_out = ci_out.expect("run_id.is_some() implies ci_out was Ok");
 
             let conclusion = parse_field(&ci_out, "run-conclusion");
-            let raw = if conclusion.as_deref() == Some("failure") {
-                RawStatus::Gap {
-                    desired: format!("{}'s base gate is green", repo_name),
-                    observed: format!("{}'s base ({}) gate run completed red", repo_name, base_branch),
-                    since_hint: None,
-                }
-            } else {
-                RawStatus::Satisfied
-            };
+            let raw = czar_pass::base_red(&repo_name, &base_branch, conclusion.as_deref());
             let v = evaluate(cfg, state, &key, raw, 0);
             verdicts.push(v.clone());
             if v.is_gap {
@@ -1179,9 +1080,9 @@ fn detect_base_red(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str
                     .lines()
                     .filter_map(|l| l.strip_prefix("red-suite: ").map(|s| s.to_string()))
                     .collect();
+                let suite_key = czar_pass::suite_key(&suites);
                 suites.sort();
                 suites.dedup();
-                let suite_key = if suites.is_empty() { "unknown".to_string() } else { suites.join(",") };
                 let suite_list = if suites.is_empty() { "(suite names unavailable)".to_string() } else { suites.join(", ") };
 
                 let body = format!(
@@ -1238,14 +1139,16 @@ fn repo_branch_ids(repo_path: &Path) -> Vec<String> {
 /// or unparseable machine reads as depth 0, said on stderr: a stall detector must not invent a
 /// pool it could not see.
 fn certified_depth(cfg: &Config, repo_path: &Path) -> u32 {
-    let out = match spira_config::bounded::bounded(&cfg.seams.spira_lc).args(["list", "--state", "CERTIFIED", "--snapshot"]).output() {
-        Ok(o) if o.status.success() => o.stdout,
-        Ok(o) => {
-            eprintln!("czar-pass: spira-lc list --state CERTIFIED exited {}", o.status);
+    let what = "czar-pass: spira-lc list --state CERTIFIED";
+    let answer = spira_config::lc_call::LcClient::for_bin(&cfg.seams.spira_lc).map_err(spira_config::lc_call::LcError::Fault).and_then(|c| c.call(&["list", "--state", "CERTIFIED", "--snapshot"]));
+    let out = match answer {
+        Ok(r) if r.code == 0 => r.out.into_bytes(),
+        Ok(r) => {
+            eprintln!("{what} exited {}", r.code);
             return 0;
         }
         Err(e) => {
-            eprintln!("czar-pass: spira-lc list --state CERTIFIED: {e}");
+            eprintln!("{what}: {e}");
             return 0;
         }
     };
@@ -1380,6 +1283,7 @@ fn show_value<'a>(out: &'a str, key: &str) -> &'a str {
 }
 
 fn timer_state(systemctl: &str, unit: &str) -> String {
+    // FORK-EDGE: needs UnitFacts to carry LoadState and UnitFileState (enablement); the port reports the active state only
     let out = spira_config::bounded::bounded(systemctl)
         .args(["--user", "show", unit, "-p", "LoadState", "-p", "UnitFileState", "-p", "ActiveState"])
         .stderr(Stdio::null())
@@ -1415,15 +1319,7 @@ fn detect_pool_idle(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static st
         };
         let depth = certified_depth(cfg, &repo_path);
 
-        let raw = if !batch_open && depth >= cfg.round_min_n {
-            RawStatus::Gap {
-                desired: format!("{}'s certified pool cuts a round at {}", repo_name, cfg.round_min_n),
-                observed: format!("{}'s certified pool sits at {} with no batch open", repo_name, depth),
-                since_hint: None,
-            }
-        } else {
-            RawStatus::Satisfied
-        };
+        let raw = czar_pass::pool_idle(&repo_name, batch_open, u64::from(depth), u64::from(cfg.round_min_n));
         let v = evaluate(cfg, state, &key, raw, cfg.round_stall_secs);
         verdicts.push(v.clone());
         if v.is_gap {
@@ -1619,6 +1515,7 @@ mod tests {
                 systemctl: dir.join("no-such-systemctl").to_string_lossy().to_string(),
                 spira_lc: dir.join("spira-lc").to_string_lossy().to_string(),
                 sentinel: dir.join("sentinel").to_string_lossy().to_string(),
+                units: std::sync::Arc::new(runtime::units::ScriptedUnits::new(std::sync::Arc::new(runtime::ports::VirtualClock::new(0)))),
             },
             batch_show: std::sync::Arc::new(|_| Ok(String::new())),
             stall_secs: 3000,
@@ -1777,5 +1674,54 @@ mod tests {
         let cfg = test_config(&dir, KNOWN_EPOCH);
         let (v, _, _) = detect_reconciler_stale(&cfg, &mut StateMap::new());
         assert!(matches!(v.status, RawStatus::Gap { .. }));
+    }
+
+    #[test]
+    fn the_clock_and_the_landing_log_stamp_read_without_date() {
+        assert_eq!(iso_of(KNOWN_EPOCH), "2021-01-01T00:00:00Z");
+        assert_eq!(iso_of(951_782_400 + 3_661), "2000-02-29T01:01:01Z");
+        assert_eq!(parse_iso_to_epoch("2021-01-01T00:00:00Z"), Some(KNOWN_EPOCH));
+        assert_eq!(parse_iso_to_epoch("2000-02-29 01:01:01"), Some(951_782_400 + 3_661));
+        for t in [1_700_000_000u64, 0, 4_102_444_800] {
+            assert_eq!(parse_iso_to_epoch(&iso_of(t)), Some(t));
+        }
+        assert_eq!(parse_iso_to_epoch("2021-02-30T00:00:00Z"), None);
+        assert_eq!(parse_iso_to_epoch("garbage-not-a-stamp!"), None);
+    }
+
+    #[test]
+    fn a_batch_view_the_store_cannot_vouch_for_could_not_say() {
+        use spira_config::lc_call::LcError;
+        use store_view::{BatchView, Record};
+        let err = shown_of(Err(LcError::Refused("stale past 3000ms".into()))).unwrap_err();
+        assert!(err.starts_with("could not say") && err.contains("stale"), "{err}");
+        assert_eq!(shown_of(Ok(BatchView { repo: "r".into(), open: None })), Ok(String::new()));
+        let open = Record { id: "b1".into(), state: "OPEN".into(), fields: vec![("batch_id".into(), "b1".into()), ("branch".into(), "spira/queue/b1".into())] };
+        assert_eq!(shown_of(Ok(BatchView { repo: "r".into(), open: Some(open) })), Ok("batch_id=b1\nbranch=spira/queue/b1\n".into()));
+    }
+
+    #[test]
+    fn a_stalled_loop_restarts_only_a_unit_the_unit_manager_reports_failed() {
+        use runtime::units::{ScriptedUnits, UnitFacts, UnitState};
+        let dir = scratch_dir("loop-stalled-units");
+        fs::write(dir.join("landing.log"), "2021-01-01T00:00:00Z spira: landing: pass complete\n").unwrap();
+        let mut cfg = test_config(&dir, KNOWN_EPOCH + 10_000);
+        let units = ScriptedUnits::new(std::sync::Arc::new(runtime::ports::VirtualClock::new(0)));
+        units.install("spira-landing.service", UnitFacts { state: UnitState::Failed, main_pid: None, exit: None, since_ms: None });
+        cfg.seams.units = std::sync::Arc::new(units);
+        let (_, remedy, _) = detect_loop_stalled(&cfg, &mut StateMap::new());
+        assert_eq!(remedy, "det-restart");
+        let cfg = test_config(&dir, KNOWN_EPOCH + 10_000);
+        let (_, remedy, _) = detect_loop_stalled(&cfg, &mut StateMap::new());
+        assert_eq!(remedy, "inference");
+    }
+}
+
+#[cfg(test)]
+mod fork_fence {
+    #[test]
+    fn czar_pass_starts_no_spira_child_that_is_not_a_named_fork_edge() {
+        let got = forge::fork_scan::scan(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
+        assert!(got.is_empty(), "unmarked children:\n{}", got.join("\n"));
     }
 }

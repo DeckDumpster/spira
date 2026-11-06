@@ -90,7 +90,6 @@ fn plan(configured: bool) -> Box {
         users_file: users.display().to_string(),
         dir,
         ufw_conf,
-        unit: "spira-submission-prod.service".into(),
         spira_config: "spira-config".into(),
     };
     Box { _d: d, plan }
@@ -154,7 +153,8 @@ fn an_unconfigured_install_gets_the_tailnet_address_and_its_files_configured() {
         let want = format!("spira-config set spira.{k} {v} {over}");
         assert!(f.calls.borrow().contains(&want), "missing {want}: {:?}", f.calls);
     }
-    assert_eq!(count(&f, "systemctl --user restart"), 1);
+    assert_eq!(count(&f, "systemctl"), 0, "the submission unit is retired; the scheduler's source picks the values up: {:?}", f.calls);
+    assert!(r.notes.iter().any(|n| n.contains("submission source")), "{r:?}");
     assert_eq!(std::fs::read_to_string(format!("{d}/password")).unwrap(), format!("operator:{HASH}\n"));
 }
 

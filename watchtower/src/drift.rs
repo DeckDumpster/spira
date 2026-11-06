@@ -24,6 +24,7 @@ pub fn classify(code: Option<i32>, out: &str) -> Probe {
 fn drift(drift_sh: &str, args: &[&str]) -> Probe {
     let Ok(envs) = spira_config::release_env::child_path_env_for_process() else { return Probe::Unreadable };
     // batch-job: runs a gate, build or forge script that takes as long as its work
+    // FORK-EDGE: drift.sh is 179 lines of shell — port with the watch-mend/drift task
     match Command::new("bash").envs(envs).arg(drift_sh).args(args).output() {
         Ok(o) => classify(o.status.code(), &String::from_utf8_lossy(&o.stdout)),
         Err(_) => Probe::Unreadable,

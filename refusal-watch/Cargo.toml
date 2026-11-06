@@ -16,6 +16,7 @@ test = false
 [dependencies]
 serde_json = "1"
 spira-config = { path = "../spira-config" }
+incident = { path = "../incident" }
 
 [profile.release]
 opt-level = "z"

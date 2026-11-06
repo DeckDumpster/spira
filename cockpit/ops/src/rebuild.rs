@@ -264,18 +264,15 @@ impl Rebuild {
         }
 
         // 2b. Scrub the server's own environment, in case it was already up when this ran
-        // and is carrying a session identity from whoever started it. `tmux-env.sh` stays
-        // bash — it is a peer script `layout` also shells out to, not part of this bead.
-        if let Some(scrub) = find_sibling_script("tmux-env.sh") {
-            if let Ok(o) = spira_config::bounded::bounded("bash").arg(&scrub).arg("scrub").output() {
-                for line in String::from_utf8_lossy(&o.stdout).lines() {
-                    out.push(format!("  {line}"));
-                }
-            }
+        // and is carrying a session identity from whoever started it (tmux_env, in process).
+        for line in crate::tmux_env::scrub_here(&self.tmux) {
+            out.push(format!("  {line}"));
         }
 
         out.push("\n== dashboards".to_string());
         // batch-job: this runs whatever its caller names, as long as that takes
+        // FORK-EDGE: sibling binary `layout` of this crate (LAYOUT_BIN may name another); the
+        // in-process `Layout::up` call lands with the catalogue phase.
         let layout_ok = Command::new(&self.layout_bin)
             .args(["up", "--window", "brain:0"])
             .status()
@@ -314,6 +311,7 @@ impl Rebuild {
         if self.view.is_file() {
             for sub in ["build", "sync"] {
                 // batch-job: this runs whatever its caller names, as long as that takes
+                // FORK-EDGE: cockpit-remote is 358 lines of shell (past the ~100-line port bound).
                 if let Ok(o) = Command::new(&self.view).arg(sub).output() {
                     for line in String::from_utf8_lossy(&o.stdout).lines() {
                         out.push(format!("  {line}"));
@@ -397,6 +395,7 @@ impl Rebuild {
         }
 
         out.push("\n== watchers".to_string());
+        // FORK-EDGE: needs a watchd library (`commands::cmd_status` is in its binary, no [lib]).
         if let Ok(o) = spira_config::bounded::bounded("watchd").arg("status").output() {
             for line in String::from_utf8_lossy(&o.stdout).lines() {
                 out.push(format!("  {line}"));
@@ -462,14 +461,6 @@ fn pane_pid(tmux: &Tmux, window: &str, pane: &str) -> Option<i32> {
         let (Some(id), Some(pid)) = (it.next(), it.next()) else { return None };
         (id == pane).then(|| pid.parse().ok()).flatten()
     })
-}
-
-/// A script that ships beside this binary's release (`$SPIRA_COCKPIT/<name>` via the same
-/// `Conf` resolution `layout` uses) — used for `tmux-env.sh`, which stays bash.
-fn find_sibling_script(name: &str) -> Option<PathBuf> {
-    let conf = LayoutConf::from_env().ok()?;
-    let p = conf.cock.join(name);
-    p.is_file().then_some(p)
 }
 
 /// Build a `Rebuild` from the process environment, matching `rebuild.sh`'s own resolution of

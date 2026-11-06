@@ -16,6 +16,8 @@ test = false
 [dependencies]
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
+mail = { path = "../mail" }
+tsd = { path = "../tsd" }
 libc = "0.2"
 
 [profile.release]

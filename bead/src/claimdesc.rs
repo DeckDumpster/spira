@@ -183,6 +183,7 @@ fn mail_send(dwarf_id: &str, body: &str) {
 
 /// Best-effort mail; a mailbox that will not take it loses the message, never the caller.
 pub fn mail_to(mailbox: &str, from: &str, subject: &str, body: &str) {
+    // FORK-EDGE: needs the mail library's send without its dependency on this crate (mail → bead; a bead → mail call is a cycle)
     let Ok(mut child) = spira_config::bounded::bounded("mail")
         .args(["send", mailbox, "--from", from, "--subject", subject])
         .env("SPIRA_MAIL_LINT_CONSIDERED", "1")

@@ -280,6 +280,9 @@ printf '%s\n' "$*" >> "$log"
 case "${1:-}" in
     create-bead) exit 0 ;;
     plan) [ "${2:-}" = items ] && exec "${SH_CONTENT_SHIM:?}/spira-lc" "$@"; exit 0 ;;
+    # The planning store's content (a land subject's bead title, sp-ipwlic: was bdq show) is bd
+    # underneath, never this fixture's rows: the shim hands it to the real binary.
+    content) exec "${SH_CONTENT_SHIM:?}/spira-lc" "$@" ;;
     cut)
         members=""; while [ $# -gt 0 ]; do [ "$1" = --members ] && members="$2"; shift; done
         for m in $(printf '%s' "$members" | tr ',' ' '); do printf '%s\n' "${m%%:*}" >> "${SPIRA_RUN:?}/lc-taken"; done
