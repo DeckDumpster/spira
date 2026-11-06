@@ -39,25 +39,43 @@ fn git_common_dir() -> Option<PathBuf> {
     })
 }
 
-/// Every path under `dir` a test can see, except the way down to `keep` and `keep` itself.
-fn visible_beyond(dir: &Path, keep: Option<&Path>, out: &mut Vec<PathBuf>) {
+/// Every path under `dir` a test can see, except the way down to each of `keep` and the kept
+/// paths themselves.
+fn visible_beyond(dir: &Path, keep: &[PathBuf], out: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else { return };
     for e in entries {
         let p = e.unwrap().path();
-        match keep {
-            Some(k) if k == p => {}
-            Some(k) if k.starts_with(&p) => visible_beyond(&p, keep, out),
-            _ => out.push(p),
+        if keep.iter().any(|k| *k == p) {
+            continue;
+        }
+        if keep.iter().any(|k| k.starts_with(&p)) {
+            visible_beyond(&p, keep, out);
+        } else {
+            out.push(p);
         }
     }
+}
+
+/// What the runner binds back on purpose: the git common dir (read-only), the workspace and
+/// CARGO_TARGET_DIR. When a checkout or its target lives under $HOME/spira (a worktree under
+/// run/worktree/, a gate's own target under run/), the way down to it is mount scaffolding,
+/// not the installation.
+fn bound_back() -> Vec<PathBuf> {
+    let canon = |p: PathBuf| fs::canonicalize(&p).unwrap_or(p);
+    let mut keep: Vec<PathBuf> = git_common_dir().into_iter().map(canon).collect();
+    keep.push(canon(workspace()));
+    if let Some(t) = std::env::var_os("CARGO_TARGET_DIR") {
+        keep.push(canon(PathBuf::from(t)));
+    }
+    keep
 }
 
 #[test]
 fn a_test_finds_no_installation_under_its_home() {
     let home = PathBuf::from(std::env::var_os("HOME").expect("the runner sets HOME"));
     let mut seen = Vec::new();
-    visible_beyond(&home.join("spira"), git_common_dir().as_deref(), &mut seen);
-    assert!(seen.is_empty(), "under $HOME/spira a test sees {seen:?}; only the repository's own git directory is bound in");
+    visible_beyond(&home.join("spira"), &bound_back(), &mut seen);
+    assert!(seen.is_empty(), "under $HOME/spira a test sees {seen:?}; only the repository's git directory, workspace and target are bound in");
     for p in [".config/spira", ".local/bin/work"] {
         assert!(!home.join(p).exists(), "$HOME/{p} is visible inside the sandbox");
     }
