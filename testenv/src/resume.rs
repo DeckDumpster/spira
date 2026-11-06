@@ -217,7 +217,7 @@ impl Store {
     /// its pass on another tree with identical inputs resumes here. Looked up on every attempt:
     /// a first attempt has no pass of its own tree, but may have one of its inputs.
     pub fn with_inputs(mut self, inputs: HashMap<String, String>) -> Store {
-        self.inputs = Arc::new(inputs.into_iter().filter(|(s, d)| safe(s) && safe(d)).collect());
+        self.inputs = Arc::new(inputs.into_iter().filter(|(s, d)| safe(s) && safe(d)).collect::<HashMap<_, _>>());
         self
     }
 

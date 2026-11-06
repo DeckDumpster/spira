@@ -62,7 +62,7 @@ pub fn active_blockers_lc(rows: &[LcRow]) -> HashSet<String> {
 /// labeled-only bead gets no dep check — removing the label is safe since the bead is not
 /// claimable"). `true` = add, `false` = remove.
 pub fn decide(active: &HashSet<String>, labeled: &HashSet<String>, ready: &[Bead]) -> Vec<(bool, String)> {
-    let mut by_id: std::collections::HashMap<&str, &Bead> = std::collections::HashMap::new();
+    let mut by_id: std::collections::BTreeMap<&str, &Bead> = std::collections::BTreeMap::new();
     for b in ready {
         by_id.insert(b.id.as_str(), b);
     }
@@ -80,11 +80,9 @@ pub fn decide(active: &HashSet<String>, labeled: &HashSet<String>, ready: &[Bead
             out.push((false, id.to_string()));
         }
     }
-    for id in labeled {
-        if !by_id.contains_key(id.as_str()) {
-            out.push((false, id.clone()));
-        }
-    }
+    let mut gone: Vec<&String> = labeled.iter().filter(|id| !by_id.contains_key(id.as_str())).collect();
+    gone.sort();
+    out.extend(gone.into_iter().map(|id| (false, id.clone())));
     out
 }
 
