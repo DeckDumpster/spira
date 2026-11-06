@@ -31,4 +31,5 @@ state-store = { path = "../state-store" }
 
 [dev-dependencies]
 spira-runtime = { path = "../spira-runtime" }
+lifecycle = { path = "../lifecycle" }
 testkit = { path = "../testkit" }
