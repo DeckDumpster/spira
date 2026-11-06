@@ -30,8 +30,9 @@ const ALLOW_FILE: &str = "spira-lint/forge-batch-readers-allow";
 
 /// The queue reads and writes the files until the store holds the batch; install removes them,
 /// and the migration classifier imports the open one from whichever queue directory install
-/// names, which no queue verb can be pointed at.
-const OWNERS: [&str; 3] = ["queue/", "install/src/round_records.rs", "spira-lc/src/legacy_files.rs"];
+/// names, which no queue verb can be pointed at. `queue.step` is the queue's own verdict step
+/// run by the scheduler; it records the forge state as the queue did.
+const OWNERS: [&str; 4] = ["queue/", "install/src/round_records.rs", "spira-lc/src/legacy_files.rs", "spira-runtime/src/tasks/a/queue_step.rs"];
 
 fn owns(path: &str) -> bool {
     OWNERS.iter().any(|o| path.starts_with(o))
@@ -47,6 +48,13 @@ fn pattern() -> &'static Regex {
     })
 }
 
+/// A state machine's `"prepared"` event, not the file: a transition's `on:`, a `go(..)` call, or
+/// the event column of a `(Phase::X, "prepared", ..)` table row.
+fn event_label() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"(on:\s*|\bgo\((?:[a-z_]+,\s*)?|Phase::\w+,\s*)"prepared""#).expect("static regex"))
+}
+
 fn scan(text: &str) -> Vec<(usize, String)> {
     text.lines()
         .enumerate()
@@ -54,7 +62,7 @@ fn scan(text: &str) -> Vec<(usize, String)> {
             let t = l.trim_start();
             !(t.starts_with('#') || t.starts_with("//"))
         })
-        .filter(|(_, l)| pattern().is_match(l))
+        .filter(|(_, l)| pattern().is_match(&event_label().replace_all(l, "")))
         .map(|(i, l)| (i + 1, l.trim_start().to_string()))
         .collect()
 }
@@ -159,6 +167,15 @@ mod tests {
         t.write(ALLOW_FILE, "czar-pass/src/old.rs\n");
         let files = ["loom/src/a.rs", "spira/y.sh", "queue/src/ops/forge_batch.rs", "install/src/round_records.rs", "czar-pass/src/old.rs", ALLOW_FILE];
         assert_eq!(run(&t, &files).unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_prepared_event_in_a_state_machine_is_not_the_file() {
+        let t = TempDir::new("fbr-event");
+        t.write("spira-runtime/src/tasks/d/x.rs", "(Phase::Running, \"prepared\", Phase::Running),\nself.go(c, \"prepared\")?;\nTransition { from: S::A, on: \"prepared\", to: S::B },\nwith(carry, go(\"prepared\")?)\nlet f = c.queue_file(\"prepared\");\n");
+        let got = run(&t, &["spira-runtime/src/tasks/d/x.rs"]).unwrap();
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].contains(":5:"), "{got:?}");
     }
 
     #[test]
