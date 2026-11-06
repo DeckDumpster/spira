@@ -565,6 +565,47 @@ pub fn parse_unit_name(name: &str) -> Option<(String, String)> {
     (!task.is_empty() && !key.is_empty()).then_some((task, key))
 }
 
+/// Every unit `task` starts under the naming rule, as a [`Units::list`] glob, the task escaped
+/// as [`unit_name`] escapes it: `sentinel-call` lists as `spira-run-sentinel_2dcall-*`.
+pub fn task_glob(task: &str) -> String {
+    format!("{PREFIX}{}-*", escape(task))
+}
+
+/// The task whose units under the naming rule are dwarves: spira-runtime's `sentinel-call`.
+pub const DWARF_TASK: &str = "sentinel-call";
+/// The prefix of a dwarf unit started by its own name, outside the naming rule
+/// (`systemd-run --unit=spira-dwarf-<rune>-…`, `dwarf --escape`).
+pub const DWARF_PREFIX: &str = "spira-dwarf-";
+
+/// The globs that together list every dwarf unit, by either name.
+pub fn dwarf_globs() -> [String; 2] {
+    [format!("{DWARF_PREFIX}*{SUFFIX}"), task_glob(DWARF_TASK)]
+}
+
+/// Whether `name` is a dwarf unit: started by name under [`DWARF_PREFIX`], or by
+/// [`DWARF_TASK`] under the naming rule.
+pub fn is_dwarf_unit(name: &str) -> bool {
+    (name.starts_with(DWARF_PREFIX) && name.ends_with(SUFFIX)) || parse_unit_name(name).is_some_and(|(t, _)| t == DWARF_TASK)
+}
+
+/// Whether a unit in `state` is a live dwarf: the one rule the fleet ceiling
+/// (`SPIRA_MAX_LIVE_DWARVES`), dwarves.sh and world.sh's drain count by. A dwarf still
+/// deactivating holds its slot until it is gone.
+pub fn is_live_dwarf(name: &str, state: UnitState) -> bool {
+    is_dwarf_unit(name) && matches!(state, UnitState::Active | UnitState::Activating | UnitState::Deactivating)
+}
+
+/// The state systemd's `ActiveState` word names, as the systemd backend reads it.
+pub fn state_of_word(word: &str) -> UnitState {
+    match word {
+        "active" | "reloading" | "refreshing" => UnitState::Active,
+        "activating" => UnitState::Activating,
+        "deactivating" => UnitState::Deactivating,
+        "failed" => UnitState::Failed,
+        _ => UnitState::Inactive,
+    }
+}
+
 pub fn description(task: &str, key: &str) -> String {
     format!("spira task {task} key {key}")
 }
@@ -1584,13 +1625,7 @@ mod systemd {
         if find(unit, "LoadState").and_then(Val::as_str).is_none_or(|l| l == "not-found") {
             return UnitFacts::absent();
         }
-        let state = match find(unit, "ActiveState").and_then(Val::as_str) {
-            Some("active" | "reloading" | "refreshing") => UnitState::Active,
-            Some("activating") => UnitState::Activating,
-            Some("deactivating") => UnitState::Deactivating,
-            Some("failed") => UnitState::Failed,
-            _ => UnitState::Inactive,
-        };
+        let state = find(unit, "ActiveState").and_then(Val::as_str).map_or(UnitState::Inactive, super::state_of_word);
         let code = find(service, "ExecMainCode").and_then(Val::as_i64);
         let status = find(service, "ExecMainStatus").and_then(Val::as_i64).and_then(|v| i32::try_from(v).ok());
         let exit = match (code, status) {
@@ -1917,6 +1952,27 @@ mod tests {
             assert_eq!(parse_unit_name(&name), Some((task.to_string(), key.to_string())), "{name}");
         }
         assert_eq!(unit_name("czar-pass", "r7").unwrap(), "spira-run-czar_2dpass-r7.service");
+    }
+
+    #[test]
+    fn a_task_glob_lists_exactly_the_units_the_task_starts() {
+        let g = task_glob("sentinel-call");
+        assert_eq!(g, "spira-run-sentinel_2dcall-*");
+        assert!(glob_match(&g, &unit_name("sentinel-call", "builder-1-0").unwrap()));
+        assert!(!glob_match(&g, &unit_name("sentinel-pass", "k").unwrap()));
+    }
+
+    #[test]
+    fn a_dwarf_is_a_unit_of_either_name_and_live_while_it_holds_a_slot() {
+        let own = unit_name(DWARF_TASK, "builder-1-0").unwrap();
+        for n in [own.as_str(), "spira-dwarf-builder-17.service", "spira-dwarf-czar-escape-1-prod.service"] {
+            assert!(is_dwarf_unit(n) && dwarf_globs().iter().any(|g| glob_match(g, n)), "{n}");
+        }
+        for n in ["spira-dwarf-x.scope", "spira-run-czar_2dpass-r7.service", "spira-runtime.service"] {
+            assert!(!is_dwarf_unit(n), "{n}");
+        }
+        let live: Vec<_> = ["active", "reloading", "activating", "deactivating", "failed", "inactive"].iter().map(|w| is_live_dwarf(&own, state_of_word(w))).collect();
+        assert_eq!(live, [true, true, true, true, false, false]);
     }
 
     #[test]

@@ -2162,6 +2162,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-submission",
+ "spira-world",
  "store-view",
  "testenv",
  "testkit",

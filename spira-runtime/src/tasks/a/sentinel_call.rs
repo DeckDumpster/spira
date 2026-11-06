@@ -95,7 +95,7 @@
 //!
 //! `decide` is `sentinel::plan::plan` (the sentinel library's pure CHECK 7) over the snapshot.
 //! Each call is a `unit.start` through the Units port under the naming rule
-//! `spira-run-sentinel-call-<rune>-<at>-<n>` (`runtime::units::unit_name`), carried in
+//! `spira-run-sentinel_2dcall-<rune>_2d<at>_2d<n>` (`runtime::units::unit_name`), carried in
 //! `in_flight` until its `unit.ran` (matched by `UnitRan::key_for`) or until the observe no
 //! longer lists it live. The dwarf starts under the properties `call_argv` gave it
 //! (`dwarf_props`: `TimeoutStartSec` from `RUNE_TIMEOUT_SECONDS`, the idle IO class, IO weight
@@ -116,7 +116,7 @@ use std::path::{Path, PathBuf};
 
 use runtime::calendar::Calendar;
 use runtime::event::*;
-use runtime::units::{self, UnitRan, UnitSpec, UnitState, UNIT_RAN};
+use runtime::units::{self, UnitRan, UnitSpec, UNIT_RAN};
 use sentinel::plan;
 use serde::{Deserialize, Serialize};
 
@@ -137,7 +137,7 @@ pub const PREEMPT: &str = "sentinel-call.preempt";
 pub const PREEMPT_LOG: &str = "sentinel-call.preempt_log";
 pub const METRIC: &str = "sentinel-call.metric";
 /// The prefix every dwarf unit the binary started carries; still counted while any is live.
-pub const DWARF_PREFIX: &str = "spira-dwarf-";
+pub const DWARF_PREFIX: &str = units::DWARF_PREFIX;
 pub const CALENDAR: &str = "*-*-* *:*:00";
 pub const OBSERVE_DEADLINE_MS: u64 = 5_000;
 
@@ -548,6 +548,57 @@ fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
 }
 
+/// The live dwarf fleet as the fleet ceiling counts it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Fleet {
+    pub live_by_rune: BTreeMap<String, u32>,
+    /// Live dwarves of no rune on the roster.
+    pub other_live: u32,
+    /// The live units this task started, by name.
+    pub live_units: Vec<String>,
+}
+
+impl Fleet {
+    /// Every live dwarf, on the roster or not: what `SPIRA_MAX_LIVE_DWARVES` bounds.
+    pub fn total(&self) -> u32 {
+        self.live_by_rune.values().sum::<u32>() + self.other_live
+    }
+}
+
+/// The live dwarves the unit manager lists, by rune: the units this task started (their key
+/// names the rune) and the `spira-dwarf-*` units started by name (`rune_name` gives each rune's
+/// `RUNE_NAME`, the name their units carry). The set and the liveness rule are
+/// `runtime::units::{dwarf_globs, is_live_dwarf}`, the ones dwarves.sh counts by (sp-bpnmzg:
+/// listing `spira-run-sentinel-call-*` unescaped matched none of this task's own units, so
+/// the ceiling never bound on them).
+pub fn fleet(unitp: &dyn units::Units, roster: &[String], rune_name: &dyn Fn(&str) -> String) -> Result<Fleet, String> {
+    let mut fleet = Fleet::default();
+    let mut seen = std::collections::BTreeSet::new();
+    for glob in units::dwarf_globs() {
+        for d in unitp.list(&glob).map_err(|e| e.to_string())? {
+            if !units::is_live_dwarf(&d.name, d.state) || !seen.insert(d.name.clone()) {
+                continue;
+            }
+            let ran = UnitRan { handle: units::UnitHandle::named(&d.name), exit: units::Exit::Unknown, duration_ms: 0 };
+            let rune = match ran.key_for(NAME) {
+                Some(key) => {
+                    fleet.live_units.push(d.name.clone());
+                    rune_of_key(&key).filter(|r| roster.contains(r))
+                }
+                None => {
+                    let rest = d.name.trim_start_matches(DWARF_PREFIX);
+                    roster.iter().find(|f| rest.starts_with(&format!("{}-", rune_name(f)))).cloned()
+                }
+            };
+            match rune {
+                Some(r) => *fleet.live_by_rune.entry(r).or_default() += 1,
+                None => fleet.other_live += 1,
+            }
+        }
+    }
+    Ok(fleet)
+}
+
 /// `sentinel-call.observe`: the world, the fleet, the runes and the machine's ready counts.
 pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     let req: ObserveIn = serde_json::from_str(input).unwrap_or_default();
@@ -566,22 +617,9 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     snap.max_dwarves = pinned_num(pinned, "SPIRA_MAX_DWARVES");
     snap.max_live = pinned_num(pinned, "SPIRA_MAX_LIVE_DWARVES");
     snap.lanes_max_live = pinned_num(pinned, "SPIRA_LANES_MAX_LIVE");
-    let live = |d: &units::UnitDetail| matches!(d.state, UnitState::Active | UnitState::Activating);
-    for d in unitp.list(&format!("{}{NAME}-*", units::PREFIX)).map_err(|e| e.to_string())?.into_iter().filter(live) {
-        let ran = UnitRan { handle: units::UnitHandle::named(&d.name), exit: units::Exit::Unknown, duration_ms: 0 };
-        match ran.key_for(NAME).and_then(|k| rune_of_key(&k)).filter(|r| roster.contains(r)) {
-            Some(r) => *snap.live_by_rune.entry(r).or_default() += 1,
-            None => snap.other_live += 1,
-        }
-        snap.live_units.push(d.name);
-    }
-    for d in unitp.list(&format!("{DWARF_PREFIX}*")).map_err(|e| e.to_string())?.into_iter().filter(live) {
-        let rest = d.name.trim_start_matches(DWARF_PREFIX);
-        match roster.iter().find(|f| rest.starts_with(&format!("{}-", get(f, "RUNE_NAME", f)))) {
-            Some(r) => *snap.live_by_rune.entry(r.clone()).or_default() += 1,
-            None => snap.other_live += 1,
-        }
-    }
+    let rune_name = |f: &str| get(f, "RUNE_NAME", f);
+    let fleet = fleet(unitp, &roster, &rune_name)?;
+    (snap.live_by_rune, snap.other_live, snap.live_units) = (fleet.live_by_rune, fleet.other_live, fleet.live_units);
     let bulk = claim(pinned, &["bulk-ready-by-rune".into()]);
     let counts: BTreeMap<String, usize> = if bulk.code == 0 { plan::parse_cache(&bulk.out).into_iter().collect() } else { BTreeMap::new() };
     for f in &roster {
@@ -694,8 +732,10 @@ pub fn preempt(e: &Effects, input: &str) -> Result<String, String> {
     let unit_name = spira_config::runes::rune_get(&home, &p.lane, "RUNE_NAME", &p.lane);
     let pidfile = e.world.run_dir.join(format!("dwarf-{unit_name}-{}.pid", p.bead));
     let pid: u32 = std::fs::read_to_string(&pidfile).map_err(|err| format!("{PREEMPT}: {}: {err}", pidfile.display()))?.split_whitespace().next().and_then(|s| s.parse().ok()).ok_or_else(|| format!("{PREEMPT}: {} names no pid", pidfile.display()))?;
-    let mut found = unitp.list(&format!("{}{NAME}-*", units::PREFIX)).map_err(|e| e.to_string())?;
-    found.extend(unitp.list(&format!("{DWARF_PREFIX}*")).map_err(|e| e.to_string())?);
+    let mut found = vec![];
+    for glob in units::dwarf_globs() {
+        found.extend(unitp.list(&glob).map_err(|e| e.to_string())?);
+    }
     let unit = found.into_iter().find(|d| d.main_pid == Some(pid)).ok_or_else(|| format!("{PREEMPT}: no live unit runs pid {pid} for {}", p.bead))?;
     unitp.stop(&units::UnitHandle::named(&unit.name)).map_err(|e| e.to_string())?;
     Ok(format!("preempted a {} lane dwarf on {} for P0 express {}", p.lane, p.bead, p.express))

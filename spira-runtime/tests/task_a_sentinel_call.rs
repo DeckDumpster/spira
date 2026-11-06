@@ -89,3 +89,105 @@ fn t5_a_dwarf_call_carries_call_argvs_properties() {
     assert!(p.exec_stop_post.is_empty(), "the --call-only re-exec is retired");
     assert!(dwarf_props("soon").is_err(), "a timeout that is not seconds refuses");
 }
+
+// ---------------------------------------------------------------------------------------------
+// sp-bpnmzg: the fleet ceiling counts every dwarf the scheduler starts.
+
+use std::sync::Arc;
+
+use runtime::ports::{Clock, VirtualClock};
+use runtime::units::{self, Exit, ScriptedUnits, StartSpec, UnitFacts, UnitSpec, UnitState, Units};
+
+/// A unit manager whose `sentinel-call` units run an hour, on a virtual clock at `now`.
+fn manager(now: u64) -> (Arc<VirtualClock>, ScriptedUnits) {
+    let clock = Arc::new(VirtualClock::new(now));
+    let u = ScriptedUnits::new(clock.clone());
+    u.script(NAME, 3_600_000, Exit::Code(0));
+    (clock, u)
+}
+
+/// Each `unit_start` act started as `unit_start` starts it: a `unit.start` of the act's key
+/// under this task, with the dwarf's properties.
+fn start_all(u: &ScriptedUnits, acts: &[Act]) -> usize {
+    let mut n = 0;
+    for a in acts.iter().filter(|a| a.effect == UNIT_START) {
+        let start: Start = serde_json::from_str(&a.input).unwrap();
+        let unit = UnitSpec { task: NAME.into(), key: start.key, argv: vec!["/rel/bin/dwarf".into(), start.rune], env: vec![], cwd: None };
+        let spec = StartSpec { unit, props: dwarf_props("3600").unwrap() };
+        units::effect(u, units::UNIT_START, &serde_json::to_string(&spec).unwrap()).unwrap();
+        n += 1;
+    }
+    n
+}
+
+/// Ten builder beads ready, a builder may run ten at once, and the fleet ceiling is 4.
+fn crowded(f: &Fleet, now_ms: u64) -> Snapshot {
+    Snapshot {
+        ready_by_rune: [("builder".to_string(), Some(10))].into(),
+        runes: [("builder".to_string(), RuneCfg { max_concurrent: 10, ..RuneCfg::default() })].into(),
+        roster: vec!["builder".into()],
+        max_live: Some(4),
+        live_by_rune: f.live_by_rune.clone(),
+        other_live: f.other_live,
+        live_units: f.live_units.clone(),
+        now_ms,
+        ..idle()
+    }
+}
+
+/// The bead's first acceptance: with 4 dwarves started by `unit_start` live, the next tick
+/// launches none. Ticks a minute apart, each reading the fleet back from the unit manager.
+#[test]
+fn sp_bpnmzg_four_live_dwarves_started_by_unit_start_hold_the_next_tick_at_none() {
+    let (clock, u) = manager(1_000_000);
+    let roster = vec!["builder".to_string()];
+    let (mut carry, mut started, mut last) = (Carry::default(), 0, usize::MAX);
+    for _ in 0..4 {
+        clock.advance(60_000);
+        let f = fleet(&u, &roster, &|r: &str| r.to_string()).unwrap();
+        let (next, acts) = decide(&carry, &crowded(&f, clock.now_ms()));
+        last = start_all(&u, &acts);
+        started += last;
+        carry = next;
+    }
+    let f = fleet(&u, &roster, &|r: &str| r.to_string()).unwrap();
+    assert_eq!(f.total(), 4, "the fleet read back counts the dwarves unit_start started: {f:?}; names {:?}", u.list("*").unwrap().iter().map(|d| d.name.clone()).collect::<Vec<_>>());
+    assert_eq!((started, last), (4, 0), "4 started under a ceiling of 4, and the tick after launches none");
+}
+
+/// The bead's second acceptance: dwarves.sh's count and sentinel-call's count agree on the
+/// same unit list — dwarves started by the scheduler and by name, live and ended, beside units
+/// that are no dwarf at all.
+#[test]
+fn sp_bpnmzg_dwarves_sh_and_sentinel_call_count_the_same_units() {
+    let (_clock, u) = manager(1_000_000);
+    for key in ["builder-1000-0", "builder-1000-1", "ops-1000-0"] {
+        let unit = UnitSpec { task: NAME.into(), key: key.into(), argv: vec!["/rel/bin/dwarf".into()], env: vec![], cwd: None };
+        u.start(&unit).unwrap();
+    }
+    let facts = |state| UnitFacts { state, main_pid: Some(7), exit: None, since_ms: Some(1) };
+    u.install("spira-dwarf-builder-1794006550.service", facts(UnitState::Active));
+    u.install("spira-dwarf-czar-escape-1794006551.service", facts(UnitState::Activating));
+    u.install("spira-dwarf-builder-1794000000.service", facts(UnitState::Failed));
+    u.install(&units::unit_name(NAME, "builder-900-0").unwrap(), facts(UnitState::Inactive));
+    u.install(&units::unit_name("czar-pass", "r7").unwrap(), facts(UnitState::Active));
+    u.install("spira-runtime.service", facts(UnitState::Active));
+
+    assert_eq!(NAME, units::DWARF_TASK, "the dwarf set names this task's units");
+    let roster = vec!["builder".to_string(), "ops".to_string()];
+    let call = fleet(&u, &roster, &|r: &str| r.to_string()).unwrap().total() as usize;
+
+    // What `systemctl --user list-units <globs> --no-legend` prints for the same units.
+    let word = |s: UnitState| match s {
+        UnitState::Active => "active running",
+        UnitState::Activating => "activating start",
+        UnitState::Deactivating => "deactivating stop",
+        UnitState::Failed => "failed failed",
+        _ => "inactive dead",
+    };
+    let globs = spira_world::sysctl::dwarf_globs();
+    let lines: Vec<String> = u.list("*").unwrap().into_iter().filter(|d| globs.iter().any(|g| units::glob_match(g, &d.name))).map(|d| format!("{} loaded {} dwarf", d.name, word(d.state))).collect();
+    let sh = spira_world::sysctl::count_live_dwarves(&lines);
+
+    assert_eq!((sh, call), (5, 5), "dwarves.sh {sh} and sentinel-call {call} must both count the 5 live dwarves (3 scheduler-started, 2 by name)");
+}
