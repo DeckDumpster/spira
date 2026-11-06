@@ -546,6 +546,7 @@ pub mod archive {
         let tries: [(&str, &'static str, Vec<String>); 2] = [("zstd", ".zst", vec!["-q".into(), "-c".into(), s.clone()]), ("gzip", ".gz", vec!["-n".into(), "-q".into(), "-c".into(), s])];
         let mut why = vec![];
         for (prog, ext, args) in tries {
+            // batch-job: compresses a whole archived file; it runs as long as the file is large
             match proc.run(&ProcSpec { prog: prog.into(), args, stdin: vec![], deadline: Duration::from_secs(240) }) {
                 Ok(o) if o.code == Some(0) => {
                     let dest = PathBuf::from(format!("{}{ext}", dest_stem.display()));

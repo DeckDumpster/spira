@@ -394,6 +394,7 @@ fn sets_done(view: &Projection, ev: &Event) -> bool {
 struct ProcHost;
 
 impl spira_submission::provision::Host for ProcHost {
+    // batch-job: tailscale cert blocks on certificate issuance (spira-submission's provision carried the same mark)
     fn run(&self, argv: &[&str]) -> Result<String, String> {
         use runtime::ports::Proc;
         let (prog, args) = argv.split_first().ok_or("empty command")?;

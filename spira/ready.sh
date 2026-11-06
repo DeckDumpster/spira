@@ -71,7 +71,7 @@ fi
 # `world scheduler-status` reads `scheduler status` on SPIRA_RUNTIME_SOCKET: exit 0 running,
 # 2 halted, 1 not answering. The call path is the sentinel-call task; a scheduler without it
 # can never call work.
-_sched_out="$(timeout 10 world scheduler-status 2>&1)"
+_sched_out="$(timeout 5 world scheduler-status 2>&1)"
 _sched_rc=$?
 case "$_sched_rc" in
     0)

@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -198,7 +198,7 @@ fn env_or(key: &str, default: &str) -> String {
 pub fn content(args: &[&str]) -> Option<String> {
     if let Ok(fixture) = std::env::var("SPIRA_BDJSON_FIXTURE") {
         if !fixture.is_empty() {
-            let out = Command::new(spira_config::release_env::tool("bdsim").ok()?)
+            let out = spira_config::bounded::bounded(spira_config::release_env::tool("bdsim").ok()?)
                 .arg(&fixture)
                 .args(args)
                 .stdin(Stdio::null())

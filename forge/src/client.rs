@@ -97,6 +97,7 @@ pub fn call(cmd: &str, repo: &Path, args: &[&str], input: Option<&[u8]>) -> Repl
 }
 
 // FORK-EDGE: fixture stand-in — a declared SPIRA_FORGE script (suites only; production holds `forge`)
+// batch-job: the stand-in fakes the whole forge binary, so it runs as long as the verb it fakes (a push, a PR create)
 fn program(bin: &Path, cmd: &str, repo: &Path, args: &[&str], input: Option<&[u8]>) -> Reply {
     let mut c = Command::new(bin);
     c.arg(cmd).arg(repo).args(args);

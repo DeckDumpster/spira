@@ -218,6 +218,7 @@ fn file_bead(title: &str, body: &str) -> Result<(), String> {
     use runtime::ports::{Proc, ProcSpec, SysProc};
     let bead_sh = spira_config::resolve::locate_home_for_process()?.join("bead.sh");
     // FORK-EDGE: bead.sh is the operator tool for filing (rune, repo and lifecycle row in one); it stays.
+    // batch-job: bead.sh shells into conf.sh, which outlasts a 5 s call deadline on a loaded host
     let o = SysProc.run(&ProcSpec { prog: bead_sh.display().to_string(), args: ["file", title, "--for", "builder", "--repo", "spira", "--body-file", "-"].iter().map(|s| s.to_string()).collect(), stdin: body.as_bytes().to_vec(), deadline: std::time::Duration::from_secs(60) })?;
     if o.code == Some(0) { Ok(()) } else { Err(format!("bead.sh file exited {:?}", o.code)) }
 }

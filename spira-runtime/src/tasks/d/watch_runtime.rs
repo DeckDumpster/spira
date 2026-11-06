@@ -260,8 +260,10 @@ pub fn filed(carry: &Carry, spec: &EffectSpec, outcome: &str) -> Carry {
 }
 
 const TERMINAL: [&str; 4] = ["LANDED", "SUPERSEDED", "DROPPED", "DONE"];
+// batch-job: an upstream download, not a store read (runtime-watch's own fetch carried the same mark)
 const CURL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
-const GIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+/// A local git read: the 5 s call cap runtime-watch's `bounded("git")` held it to.
+const GIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// One child: the git and curl class stay processes (W1), run through the `Proc` port.
 fn child(prog: &str, args: &[&str], deadline: std::time::Duration) -> Result<String, String> {

@@ -21,7 +21,7 @@
 //! `{require_ok:[(pattern, matched)], free_mib, candidates:[{path, bytes, age, verdict}], podman_bytes, cache:[{mtime, bytes, path}]}`.
 //! - `require_ok` is the positive control. Each `--require` pattern must match something, or the
 //!   pass removes nothing (`reclaim/src/lib.rs:200-204`). Today that is `--require
-//!   /home/ryan/spira/run/worktree` (unit ExecStart).
+//!   $SPIRA_RUN/worktree` (unit ExecStart).
 //! - `free_mib` is `spira_config::room::statvfs_mib` on the first existing ancestor of the first
 //!   glob (`reclaim/src/main.rs:76-79`).
 //! - `candidates` is `plan(patterns, now, idle_secs, held, lease_dir)` (`lib.rs:125-129`), oldest
@@ -365,6 +365,7 @@ pub fn podman_prune(p: &Pinned, proc: &dyn runtime::ports::Proc, why: &str) -> R
     if p.podman.is_empty() {
         return Err("SPIRA_RECLAIM_PODMAN is empty — refusing".into());
     }
+    // batch-job: a prune of tens of GB of images runs as long as its work, under the unit's CPUQuota
     let spec = runtime::ports::ProcSpec { prog: p.podman.clone(), args: reclaim::PODMAN_PRUNE_ARGS.iter().map(|a| a.to_string()).collect(), stdin: vec![], deadline: std::time::Duration::from_secs(600) };
     let out = proc.run(&spec)?;
     let text = String::from_utf8_lossy(&out.stdout);

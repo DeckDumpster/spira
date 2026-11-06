@@ -719,6 +719,7 @@ impl ProcessUnits {
         ProcessUnits { clock, units: Mutex::new(BTreeMap::new()), ended: Mutex::new(VecDeque::new()) }
     }
 
+    // batch-job: a unit's process runs for its task's life; UnitProps' own timeout bounds it, not a call cap
     fn spawn(name: &str, spec: &UnitSpec, capture: bool, props: &UnitProps) -> Result<(Child, Option<Captured>)> {
         let (prog, args) = spec.argv.split_first().ok_or_else(|| RuntimeError::refused(format!("unit for task {} has an empty argv", spec.task)))?;
         let mut c = Command::new(prog);
@@ -762,6 +763,7 @@ impl ProcessUnits {
 
     /// `ExecStopPost`: each command runs once the main process has ended, with the unit's own
     /// environment, and is reaped on a thread of its own so the end is not held by it.
+    // batch-job: ExecStopPost cleanup runs to its own exit on a reaper thread, never on the caller's path
     fn stop_post(name: &str, r: &Running) {
         for argv in &r.props.exec_stop_post {
             let Some((prog, args)) = argv.split_first() else { continue };
@@ -2527,8 +2529,8 @@ mod tests {
             let (a, t) = ("/org/freedesktop/systemd1/unit/a", "/org/freedesktop/systemd1/unit/t");
             f.answer("ListUnitsByPatterns /org/freedesktop/systemd1 ", vec![Val::Arr(vec![listed("spira-a.service", "active", a), listed("spira-t.timer", "active", t)])]);
             f.answer("ListUnitFilesByPatterns /org/freedesktop/systemd1 ", vec![Val::Arr(vec![
-                Val::Struct(vec![Val::S("/home/u/.config/systemd/user/spira-a.service".into()), Val::S("enabled".into())]),
-                Val::Struct(vec![Val::S("/home/u/.config/systemd/user/spira-off.service".into()), Val::S("disabled".into())]),
+                Val::Struct(vec![Val::S("/etc/systemd/user/spira-a.service".into()), Val::S("enabled".into())]),
+                Val::Struct(vec![Val::S("/etc/systemd/user/spira-off.service".into()), Val::S("disabled".into())]),
             ])]);
             f.answer(&format!("GetAll {a} {UNIT}"), vec![dict(&[("LoadState", Val::S("loaded".into())), ("ActiveState", Val::S("active".into())), ("UnitFileState", Val::S("enabled".into()))])]);
             f.answer(&format!("GetAll {t} {UNIT}"), vec![dict(&[("LoadState", Val::S("loaded".into())), ("ActiveState", Val::S("active".into()))])]);

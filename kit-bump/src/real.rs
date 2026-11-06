@@ -57,6 +57,7 @@ pub fn fetch_release(registry: &str, crate_name: &str) -> Result<Option<String>,
             Err(e) => return Err(format!("{url}: {e}")),
         }
     } else {
+        // batch-job: an upstream registry download, not a store read
         match ureq::get(&url).timeout(std::time::Duration::from_secs(25)).call() {
             Ok(r) => r.into_string().map_err(|e| format!("{url}: {e}"))?,
             Err(ureq::Error::Status(404 | 410, _)) => return Ok(None),

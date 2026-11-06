@@ -667,6 +667,7 @@ pub fn commands(state: EventKindTag, before: &Carry, after: &Carry, cmds: Vec<Co
 // ───────────────────────────── runners ─────────────────────────────
 
 /// `git -C <repo> <args>`: git stays a child, through the runtime's process port.
+// batch-job: cert_full's detached checkout and worktree add write a whole tree, as long as its size
 pub fn git(repo: &str, args: &[&str]) -> Result<String, String> {
     use runtime::ports::Proc;
     let spec = runtime::ports::ProcSpec { prog: "git".into(), args: ["-C", repo].iter().chain(args).map(|s| s.to_string()).collect(), stdin: vec![], deadline: std::time::Duration::from_secs(60) };
