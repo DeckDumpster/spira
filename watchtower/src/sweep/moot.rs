@@ -111,7 +111,7 @@ pub fn sweep(cfg: &MootCfg, apply: bool) -> Summary {
         match check(cfg, &pred) {
             Some((0, out)) if apply => {
                 let reason = format!("auto-resolved: MOOT-WHEN predicate cleared — {pred} → exit 0. Evidence: {}", short(&out));
-                let ok = Command::new(&cfg.resolve).arg(&id).arg(&reason).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|st| st.success());
+                let ok = spira_config::bounded::bounded(&cfg.resolve).arg(&id).arg(&reason).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|st| st.success());
                 if ok {
                     s.resolved += 1;
                 } else {
@@ -136,13 +136,18 @@ mod tests {
     #[test]
     fn only_open_labelled_asks_with_a_predicate_are_checked() {
         let rows = serde_json::Value::Array(vec![
+            // literal-ok: test fixture label
             ask("sp-1", "open", &["needs-ryan"], "why\n  MOOT-WHEN:  test -e /x  \nmore"),
+            // literal-ok: test fixture label
             ask("sp-2", "open", &["needs-ryan"], "no predicate"),
+            // literal-ok: test fixture label
             ask("sp-3", "closed", &["needs-ryan"], "MOOT-WHEN: true"),
             ask("sp-4", "open", &["insight"], "MOOT-WHEN: true"),
         ]);
         let text = format!("warning: something\n{rows}");
+        // literal-ok: test fixture label
         assert_eq!(asks_of(&text, "needs-ryan"), vec![("sp-1".to_string(), "test -e /x".to_string())]);
+        // literal-ok: test fixture label
         assert!(asks_of("not json", "needs-ryan").is_empty());
     }
 
@@ -151,8 +156,11 @@ mod tests {
         let d = testkit::TempDir::new("wt-moot");
         std::fs::create_dir_all(d.join("db/.beads")).unwrap();
         let rows = serde_json::Value::Array(vec![
+            // literal-ok: test fixture label
             ask("sp-c", "open", &["needs-ryan"], "MOOT-WHEN: echo gone"),
+            // literal-ok: test fixture label
             ask("sp-l", "open", &["needs-ryan"], "MOOT-WHEN: false"),
+            // literal-ok: test fixture label
             ask("sp-t", "open", &["needs-ryan"], "MOOT-WHEN: sleep 5"),
         ]);
         let (t, lc) = crate::lc::scripted::scripted(0, &rows.to_string());
@@ -160,6 +168,7 @@ mod tests {
         let cfg = MootCfg {
             db: Some(d.join("db").to_string_lossy().into_owned()),
             lc,
+            // literal-ok: test fixture label
             ask_label: "needs-ryan".into(),
             timeout_s: 1,
             resolve: d.join("resolve").to_string_lossy().into_owned(),
@@ -167,6 +176,7 @@ mod tests {
         assert_eq!(sweep(&cfg, true), Summary { found: 3, resolved: 1, errors: 1 });
         let resolved = std::fs::read_to_string(d.join("resolved")).unwrap();
         assert_eq!(resolved, "sp-c|auto-resolved: MOOT-WHEN predicate cleared — echo gone → exit 0. Evidence: gone\n");
+        // literal-ok: test fixture label
         assert_eq!(t.seen.lock().unwrap()[0], vec!["content", "list", "--all", "--limit", "0", "--label-any", "insight,needs-ryan,overseer", "--json"]);
     }
 

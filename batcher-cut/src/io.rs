@@ -2701,7 +2701,7 @@ pub fn lifecycle_tests_env(dir: &Path) -> Env {
         home: dir.to_path_buf(),
         run: dir.to_path_buf(),
         queue_dir: dir.join("queue"),
-        forge: PathBuf::from("forge"),
+        forge: dir.join("forge"),
         tsd_bin: None,
         round_vm: dir.join("round-vm"),
         queue_bin: dir.join("queue"),

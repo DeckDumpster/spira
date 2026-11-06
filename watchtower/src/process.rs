@@ -134,7 +134,10 @@ pub fn sweep_cfg() -> Result<sweep::Cfg, String> {
         suites_sh: getenv("SPIRA_SUITES_SH"),
         cockpit_db: spira_config::process::cfg("COCKPIT_DB").ok().filter(|d| !d.is_empty()),
         moot_timeout_s: getenv_i64("SPIRA_MOOT_TIMEOUT", 30).max(1) as u64,
-        resolve_bin: getenv("SPIRA_RESOLVE_SH").unwrap_or_else(|| "resolve".to_string()),
+        resolve_bin: match getenv("SPIRA_RESOLVE_SH") {
+            Some(r) => r,
+            None => spira_config::release_env::tool("resolve")?,
+        },
         lc: spira_config::lc_call::LcClient::configured()?,
         branch_guard_sh: getenv("SPIRA_BRANCH_GUARD_SH"),
         lc_bin: spira_config::lifecycle_row::lc_bin()?,
