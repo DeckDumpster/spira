@@ -23,19 +23,23 @@ const NOW: u64 = 1_793_000_000_000;
 fn idle() -> Snapshot {
     Snapshot {
         beads: Some(vec![]),
-        rows: Some(vec![Row { id: "sp-a".into(), state: "CLAIMED".into(), version: 3, holder: Some("dwarf-1".into()), lease_until_ms: Some(NOW + 600_000), ..Row::default() }]),
+        rows: Some(vec![Row { id: "sp-a".into(), state: "WORKING".into(), version: 3, holder: Some("dwarf-1".into()), lease_until_ms: Some(NOW + 600_000), ..Row::default() }]),
         plan_ready: Some(0),
         holder_alive: [("sp-a".to_string(), true)].into(),
         landing_active: true,
         world_running: true,
         now_ms: NOW,
+        labels: Labels { queue_wait: QUEUE_WAIT.into() },
         ..Snapshot::default()
     }
 }
 
+/// `SPIRA_QUEUE_WAIT_LABEL`'s production value (`spira/conf.d/SPIRA_QUEUE_WAIT_LABEL`).
+const QUEUE_WAIT: &str = "spira-queue-waiting";
+
 /// A lease long past grace whose holder is still alive.
 fn busy() -> Snapshot {
-    Snapshot { rows: Some(vec![Row { id: "sp-a".into(), state: "CLAIMED".into(), version: 3, holder: Some("dwarf-1".into()), lease_until_ms: Some(NOW - 3_600_000), ..Row::default() }]), ..idle() }
+    Snapshot { rows: Some(vec![Row { id: "sp-a".into(), state: "WORKING".into(), version: 3, holder: Some("dwarf-1".into()), lease_until_ms: Some(NOW - 3_600_000), ..Row::default() }]), ..idle() }
 }
 
 #[test]
@@ -69,20 +73,47 @@ fn t5_check2_stops_a_live_holder_before_reclaiming() {
     assert!(acts.iter().all(|a| !(a.effect == LC_EVENT && a.key.starts_with("sp-a"))), "a live holder is never reclaimed in the pass that stops it: {acts:?}");
 }
 
-/// `tests.rs` `close_landed_queue_waiters_reads_the_label_not_bd_status`: a queue waiter whose
-/// wait landed is released by its label, not by bd status.
+/// `tests.rs` `close_landed_queue_waiters_reads_the_label_not_bd_status`: a labeled waiter whose
+/// own row is LANDED is closed and released by its label and row, whatever bd says (sp-w is
+/// LANDED with bd status open); a labeled WORKING one (sp-x) is not closed.
 #[test]
 fn t5_check3b_releases_a_landed_queue_waiter_by_its_label() {
     let snap = Snapshot {
         beads: Some(vec![
-            Bead { id: "sp-w".into(), title: "waiter".into(), labels: vec!["queue-wait".into()], deps: vec!["sp-l".into()], status: "open".into() },
-            Bead { id: "sp-l".into(), title: "landed".into(), labels: vec![], deps: vec![], status: "open".into() },
+            Bead { id: "sp-w".into(), title: "waiter".into(), labels: vec![QUEUE_WAIT.into()], deps: vec!["sp-l".into()], status: "open".into() },
+            Bead { id: "sp-x".into(), title: "working".into(), labels: vec![QUEUE_WAIT.into()], deps: vec![], status: "open".into() },
         ]),
-        rows: Some(vec![Row { id: "sp-l".into(), state: "DELIVERED".into(), version: 9, ..Row::default() }]),
+        rows: Some(vec![Row { id: "sp-w".into(), state: "LANDED".into(), version: 9, ..Row::default() }, Row { id: "sp-x".into(), state: "WORKING".into(), version: 2, holder: Some("dwarf-2".into()), lease_until_ms: Some(NOW + 600_000), ..Row::default() }]),
+        holder_alive: [("sp-x".to_string(), true)].into(),
         ..idle()
     };
     let (_, acts) = decide(&Carry::default(), &snap);
-    assert!(acts.iter().any(|a| [CONTENT_LABEL, CONTENT_CLOSE, LC_UNHOLD].contains(&a.effect.as_str()) && a.key.starts_with("sp-w")), "{acts:?}");
+    for e in [CONTENT_LABEL, CONTENT_CLOSE, LC_UNHOLD] {
+        assert!(acts.iter().any(|a| a.effect == e && a.key.starts_with("sp-w")), "{e} for sp-w: {acts:?}");
+    }
+    assert!(acts.iter().all(|a| a.effect != CONTENT_CLOSE || !a.key.starts_with("sp-x")), "{acts:?}");
+}
+
+/// `waiters.rs` `labeled_set_is_claimable_by_the_lifecycle_row`: the waiter set is the labeled
+/// beads whose row is claimable; a labeled bead with no lifecycle row is left alone, whatever
+/// its content status.
+#[test]
+fn t5_check3b_leaves_a_waiter_with_no_lifecycle_row_alone() {
+    let snap = Snapshot { beads: Some(vec![Bead { id: "sp-n".into(), title: "no row".into(), labels: vec![QUEUE_WAIT.into()], deps: vec![], status: "open".into() }]), ..idle() };
+    let (_, acts) = decide(&Carry::default(), &snap);
+    assert!(acts.iter().all(|a| !a.key.starts_with("sp-n")), "a waiter with no row is not touched: {acts:?}");
+}
+
+/// The production spellings only: `WORKING` is the leased state (a `CLAIMED` row is not one),
+/// and the waiting label has no default — it is the pinned `SPIRA_QUEUE_WAIT_LABEL`.
+#[test]
+fn t5_the_checks_read_the_production_spellings_only() {
+    assert_eq!(Labels::default().queue_wait, "", "no fixture default for the label");
+    let claimed = Snapshot { rows: Some(vec![Row { state: "CLAIMED".into(), ..busy().rows.unwrap().remove(0) }]), ..busy() };
+    let (_, acts) = decide(&Carry::default(), &claimed);
+    assert!(acts.iter().all(|a| a.effect != STOP_HOLDER), "CLAIMED is not an alias of WORKING: {acts:?}");
+    let (_, acts) = decide(&Carry::default(), &busy());
+    assert!(acts.iter().any(|a| a.effect == STOP_HOLDER), "WORKING is the leased state: {acts:?}");
 }
 
 /// CHECK 7 (`pass.rs:520`): plan beads ready hand off to the call as `call.wanted`, never a fork.

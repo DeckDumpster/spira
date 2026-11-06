@@ -239,17 +239,12 @@ pub struct LandingStatus {
     pub progress_at_ms: Option<u64>,
 }
 
-/// The labels the checks read, as pinned; the default is the spellings the contract's fixtures use.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// The labels the checks read, as pinned (`SPIRA_QUEUE_WAIT_LABEL`). No default spelling: an
+/// unpinned label is empty, and a check whose label is empty does not run.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Labels {
     pub queue_wait: String,
-}
-
-impl Default for Labels {
-    fn default() -> Self {
-        Labels { queue_wait: "queue-wait".into() }
-    }
 }
 
 /// The observe snapshot. `beads` or `rows` that could not be read are `None`: no lifecycle
@@ -335,12 +330,11 @@ pub fn step(state: State, event: Trigger) -> Result<State, String> {
     TABLE.iter().find(|(s, e, _)| *s == state && *e == event).map(|(_, _, to)| *to).ok_or_else(|| format!("{NAME}: {event:?} is not a move from state {state:?}"))
 }
 
-/// A row as the sentinel's checks read it. The contract's fixtures name the leased state
-/// `CLAIMED`; the machine's word is `WORKING`, and both are read as the leased state.
+/// A row as the sentinel's checks read it, in the machine's own words (`WORKING` is the leased state).
 fn lc_row(r: &Row) -> sentinel::model::LcRow {
     sentinel::model::LcRow {
         bead_id: r.id.clone(),
-        state: if r.state == "CLAIMED" { "WORKING".into() } else { r.state.clone() },
+        state: r.state.clone(),
         holder: r.holder.clone(),
         lease_until: r.lease_until_ms.map(|ms| (ms / 1000) as i64),
         holds: r.holds.clone(),
@@ -409,10 +403,9 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
             if !label.is_empty() {
                 let labeled: Vec<&Bead> = beads.iter().filter(|b| b.labels.contains(label)).collect();
                 let active = sentinel::checks::active_blockers_lc(&lc);
-                let mut waiting: HashSet<String> = sentinel::checks::labeled_claimable(&lc, labeled.iter().map(|b| model_bead(b)).collect());
-                // A waiter with no lifecycle row yet is read by its content status, as bd's
-                // `--status open` was read before the rows existed.
-                waiting.extend(labeled.iter().filter(|b| b.status == "open" && !rows.iter().any(|r| r.id == b.id)).map(|b| b.id.clone()));
+                // The waiters are the labeled beads whose row is claimable; one with no lifecycle
+                // row is left alone (`waiters.rs`, `labeled_set_is_claimable_by_the_lifecycle_row`).
+                let waiting: HashSet<String> = sentinel::checks::labeled_claimable(&lc, labeled.iter().map(|b| model_bead(b)).collect());
                 let ready: Vec<sentinel::model::Bead> = if active.is_empty() { vec![] } else { beads.iter().filter(|b| snap.ready_raw.contains(&b.id)).map(model_bead).collect() };
                 for (add, id) in sentinel::checks::decide(&active, &waiting, &ready) {
                     let (op, hold) = if add { ("add", LC_HOLD) } else { ("remove", LC_UNHOLD) };
