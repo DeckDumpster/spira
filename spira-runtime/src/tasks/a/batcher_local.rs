@@ -93,7 +93,7 @@ use std::collections::BTreeMap;
 use batcher::core;
 use batcher_cut::pace;
 use runtime::event::*;
-use runtime::units::{Exit, UnitRan};
+use runtime::units::{Exit, UnitRan, UNIT_RAN};
 use serde::{Deserialize, Serialize};
 
 use super::kit::{self, Act, Cadence, Shape};
@@ -150,6 +150,8 @@ pub const ACTS: &[(&str, u64)] = &[
     (INBOX_APPEND, 10_000),
 ];
 pub const EMITS: &[EventKindTag] = &[];
+/// Hand-offs that wake it at once, besides its tick: a submission sifted, a batch settled.
+pub const WAKES: &[EventKindTag] = &[kit::WORK_SUBMITTED, super::queue_step::CUT_WANTED];
 pub const EFFECTS: &[&str] = &[OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, EJECT, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, PAUSE, INBOX_APPEND];
 pub const KEYS: &[&str] = &[
     "SPIRA_RUN",
@@ -545,12 +547,6 @@ pub fn unit_key(repo: &str, round: &str, what: &str, run: u32) -> String {
     format!("{repo}.{}.{what}{run}", &digest(round)[..12])
 }
 
-/// The exit of the carried leg, when a `unit.ran` for it is among `ran`.
-pub fn leg_exit(task: &str, leg: Option<&str>, ran: &[UnitRan]) -> Option<Exit> {
-    let leg = leg?;
-    ran.iter().find(|r| r.key_for(task).as_deref() == Some(leg)).map(|r| r.exit)
-}
-
 pub fn green(exit: Exit) -> bool {
     exit == Exit::Code(0)
 }
@@ -655,18 +651,12 @@ impl Machine<'_> {
         self.finish(pace::Outcome::Red, why);
     }
 
-    /// A tick's observe, for the states that read the world.
-    fn observe(&mut self, policy: &Policy, repo: &Repo, ran: &[UnitRan]) {
+    /// A tick's observe, for the states that read the world. A leg's end arrives as its own
+    /// `unit.ran` (`on_ran`); a leg past its wall and grace with none is judged lost here.
+    fn observe(&mut self, policy: &Policy, repo: &Repo) {
         match self.rc.state {
             State::Idle | State::Held => self.idle(policy, repo),
-            State::Corpus | State::Attributing | State::Certifying => {
-                let lost = self.now_ms.saturating_sub(self.rc.leg_at_ms) > policy.wall_ms + LEG_GRACE_MS;
-                match leg_exit(NAME, self.rc.leg.as_deref(), ran) {
-                    Some(exit) => self.leg_ended(exit),
-                    None if lost => self.leg_ended(Exit::Unknown),
-                    None => {}
-                }
-            }
+            State::Corpus | State::Attributing | State::Certifying if self.now_ms.saturating_sub(self.rc.leg_at_ms) > policy.wall_ms + LEG_GRACE_MS => self.leg_ended(Exit::Unknown),
             _ => {}
         }
     }
@@ -882,15 +872,15 @@ fn store(carry: &mut Carry, repo: &str, rc: RepoCarry) {
 }
 
 pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
-    decide_with(&Policy::default(), carry, snap, &[])
+    decide_with(&Policy::default(), carry, snap)
 }
 
-/// `decide` with the pinned policy and the `unit.ran`s seen since the carry was recorded.
-pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot, ran: &[UnitRan]) -> (Carry, Vec<Act>) {
+/// `decide` with the pinned policy.
+pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     let (mut next, mut acts) = (carry.clone(), vec![]);
     for (name, repo) in &snap.repos {
         let mut m = Machine { repo: name, rc: carry.repos.get(name).cloned().unwrap_or_default(), acts: vec![], now_ms: snap.now_ms };
-        m.observe(policy, repo, ran);
+        m.observe(policy, repo);
         store(&mut next, name, m.rc);
         acts.extend(m.acts);
     }
@@ -907,9 +897,17 @@ pub fn on_outcome(carry: &Carry, effect: &str, ok: bool, body: &str, leg: &Leg, 
     (next, acts)
 }
 
-/// Every `unit.ran` in the view, for the P2 tasks that read their legs' ends at observe.
-pub fn units_ran(view: &Projection) -> Vec<UnitRan> {
-    view.events(&StreamKey(runtime::sources::UNITS_STREAM.into())).iter().filter_map(|e| UnitRan::from_event_kind(&e.kind)).collect()
+/// The machine's answer to the end of one of its own legs, delivered on this task's stream: the
+/// repo whose carried leg it is moves at once. A run that is no carried leg changes nothing.
+pub fn on_ran(carry: &Carry, ran: &UnitRan, now_ms: u64) -> Option<(Carry, Vec<Act>)> {
+    let key = ran.key_for(NAME)?;
+    let (repo, rc) = carry.repos.iter().find(|(_, rc)| rc.leg.as_deref() == Some(key.as_str()) && matches!(rc.state, State::Corpus | State::Attributing | State::Certifying))?;
+    let mut next = carry.clone();
+    let mut m = Machine { repo, rc: rc.clone(), acts: vec![], now_ms };
+    m.leg_ended(ran.exit);
+    let acts = m.acts;
+    store(&mut next, repo, m.rc);
+    Some((next, acts))
 }
 
 /// The fixed names a family-A P2 task's handler is driven by.
@@ -919,21 +917,45 @@ pub struct P2<'a> {
     pub acts: &'a [(&'a str, u64)],
     pub emits: &'a [EventKindTag],
     pub effects: &'a [&'a str],
+    /// Hand-offs from other tasks that ask for an observe now, without re-arming the tick.
+    pub wakes: &'a [EventKindTag],
 }
 
-/// The shared handler body of the family-A P2 tasks: the tick's probe, the observe answer through
-/// `observed`, and each outcome of one of `effects` through `outcome`.
-pub fn handle_p2<C>(p: &P2, view: &Projection, ev: &Event, observed: impl FnOnce(&C, &str) -> Option<(C, Vec<Act>)>, outcome: impl FnOnce(&C, &str, bool, &str, &str) -> (C, Vec<Act>)) -> Vec<Command>
+/// What a family-A P2 task's handler does with each kind of event it hears.
+pub struct On<O, U, R> {
+    /// The observe answer.
+    pub observed: O,
+    /// The outcome of one of its effects.
+    pub outcome: U,
+    /// A `unit.ran` delivered on its own stream (the source routes each run to the task its unit
+    /// name parses to): the leg's end advances the machine at once, not at the next observe.
+    pub ran: R,
+}
+
+/// The shared handler body of the family-A P2 tasks: the tick's probe, the observe answer, each
+/// outcome of one of `effects`, and the end of each of its own unit legs.
+pub fn handle_p2<C, O, U, R>(p: &P2, view: &Projection, ev: &Event, on: On<O, U, R>) -> Vec<Command>
 where
     C: Serialize + serde::de::DeserializeOwned + Default + PartialEq,
+    O: FnOnce(&C, &str) -> Option<(C, Vec<Act>)>,
+    U: FnOnce(&C, &str, bool, &str, &str) -> (C, Vec<Act>),
+    R: FnOnce(&C, &UnitRan) -> Option<(C, Vec<Act>)>,
 {
     let (shape, cadence, acts, emits, effects) = (p.shape, p.cadence, p.acts, p.emits, p.effects);
+    let On { observed, outcome, ran } = on;
     if ev.stream.0 != shape.stream {
         return vec![];
     }
     let carry: C = kit::carry(shape, view);
     if ev.kind.tag == shape.tick {
         return kit::on_tick(shape, serde_json::to_string(&carry).unwrap_or_default(), cadence.next_after(ev.at));
+    }
+    if p.wakes.contains(&ev.kind.tag.as_str()) {
+        return vec![Command::Probe(EffectSpec { name: shape.observe.into(), input: serde_json::to_string(&carry).unwrap_or_default(), deadline_ms: shape.observe_deadline_ms })];
+    }
+    if let Some(r) = UnitRan::from_event_kind(&ev.kind) {
+        let Some((next, out)) = ran(&carry, &r) else { return vec![] };
+        return kit::commands(shape, acts, emits, &carry, &next, out);
     }
     let Some(spec) = crate::watchers::answered_spec(view, ev) else { return vec![] };
     let (next, out) = if spec.name == shape.observe {
@@ -952,9 +974,10 @@ where
     kit::commands(shape, acts, emits, &carry, &next, out)
 }
 
-/// The tags every family-A P2 task listens for: its tick and its effects' outcomes.
-pub const fn interests(tick: EventKindTag) -> [EventKindTag; 4] {
-    [tick, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
+/// The tags every family-A P2 task listens for: its tick, its effects' outcomes, its own
+/// units' ends, and the hand-offs that wake it.
+pub fn interests(tick: EventKindTag, wakes: &[EventKindTag]) -> Vec<EventKindTag> {
+    [tick, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT, UNIT_RAN].into_iter().chain(wakes.iter().copied()).collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -962,12 +985,12 @@ pub struct BatcherLocal {
     pub cadence: Cadence,
     pub pinned: BTreeMap<String, String>,
     pub policy: Policy,
-    interests: [EventKindTag; 4],
+    interests: Vec<EventKindTag>,
 }
 
 impl BatcherLocal {
     pub fn new(pinned: BTreeMap<String, String>) -> Self {
-        BatcherLocal { cadence: Cadence::Every(CADENCE_MS), policy: Policy::pinned(&pinned), pinned, interests: interests(TICK) }
+        BatcherLocal { cadence: Cadence::Every(CADENCE_MS), policy: Policy::pinned(&pinned), pinned, interests: interests(TICK, WAKES) }
     }
 
     pub fn from_settings(settings: &crate::Settings) -> Self {
@@ -989,12 +1012,13 @@ impl Handler for BatcherLocal {
     }
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        let observed = |carry: &Carry, body: &str| serde_json::from_str::<Snapshot>(body).ok().map(|snap| decide_with(&self.policy, carry, &snap, &units_ran(view)));
+        let observed = |carry: &Carry, body: &str| serde_json::from_str::<Snapshot>(body).ok().map(|snap| decide_with(&self.policy, carry, &snap));
         let outcome = |carry: &Carry, effect: &str, ok: bool, body: &str, input: &str| match serde_json::from_str::<Leg>(input) {
             Ok(leg) => on_outcome(carry, effect, ok, body, &leg, ev.at),
             Err(_) => (Carry { repos: carry.repos.clone() }, vec![]),
         };
-        handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS }, view, ev, observed, outcome)
+        let ran = |carry: &Carry, r: &UnitRan| on_ran(carry, r, ev.at);
+        handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran })
     }
 }
 

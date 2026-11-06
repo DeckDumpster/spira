@@ -138,7 +138,8 @@ pub const OBSERVE_DEADLINE_MS: u64 = 120_000;
 pub const SEND_BACK_CAP: u8 = sift::SEND_BACK_CAP as u8;
 
 pub const ACTS: &[(&str, u64)] = &[(FETCH_BASE, 60_000), (NOTE, 10_000), (SEND_BACK, 10_000), (RECORD_PASS, 10_000), (SUPERSEDE, 10_000), (INBOX_APPEND, 10_000)];
-pub const EMITS: &[EventKindTag] = &[RECORD];
+/// `work.submitted` goes to both batchers when a pass is recorded: the bead is cuttable now.
+pub const EMITS: &[EventKindTag] = &[RECORD, kit::WORK_SUBMITTED];
 pub const EFFECTS: &[&str] = &[OBSERVE, FETCH_BASE, NOTE, SEND_BACK, RECORD_PASS, SUPERSEDE, INBOX_APPEND];
 pub const KEYS: &[&str] = &["SPIRA_RUN", "SPIRA_LC_TIMEOUT", "SPIRA_WIKI", "SPIRA_IDENTITY_PROJECTS", "SPIRA_CONCIERGE_INBOX", "SPIRA_REPO_MAP"];
 pub const UNREGISTERED: &[&str] = &[];
@@ -483,6 +484,12 @@ impl Handler for Sift {
         if ev.kind.tag == TICK {
             let input = ObserveIn { carry: carry.clone(), pinned: self.pinned.clone() };
             return kit::on_tick(&SHAPE, serde_json::to_string(&input).unwrap_or_default(), self.cadence.next_after(ev.at));
+        }
+        // A recorded pass made a submission cuttable: the batchers are woken now, not at their tick.
+        if let Some(spec) = crate::watchers::answered_spec(view, ev).filter(|s| s.name == RECORD_PASS && ev.kind.tag == EFFECT_SUCCEEDED) {
+            let Ok(w) = serde_json::from_str::<Write>(&spec.input) else { return vec![] };
+            let handoff = Act::new(kit::WORK_SUBMITTED, format!("{}:{}", w.id, w.tip)).with_input(serde_json::json!({ "id": w.id, "tip": w.tip }).to_string());
+            return kit::commands(&SHAPE, ACTS, EMITS, &carry, &carry, vec![handoff]);
         }
         if let Some(spec) = crate::watchers::answered_spec(view, ev).filter(|s| s.name == NOTE) {
             let Ok(w) = serde_json::from_str::<Write>(&spec.input) else { return vec![] };

@@ -89,10 +89,28 @@ pub fn deadline(acts: &[(&str, u64)], effect: &str) -> Option<u64> {
     acts.iter().find(|(n, _)| *n == effect).map(|(_, d)| *d)
 }
 
+/// `work.submitted`: a submission became cuttable (sift recorded its pass), so the batchers look now.
+pub const WORK_SUBMITTED: EventKindTag = "work.submitted";
+
+/// Where each cross-task hand-off is delivered: the streams of the tasks it wakes. A hand-off
+/// lands on the target's own stream (`Command::EmitTo`), where its handler hears it; one listed
+/// nowhere stays on the emitter's stream.
+pub fn targets(tag: &str) -> &'static [&'static str] {
+    use super::{batcher_forge, batcher_local, publish, queue_step, sentinel_call};
+    match tag {
+        sentinel_call::CALL_WANTED | super::czar::CALL_REQUESTED => &[sentinel_call::STREAM],
+        WORK_SUBMITTED | queue_step::CUT_WANTED => &[batcher_local::STREAM, batcher_forge::STREAM],
+        queue_step::PUBLISH_WANTED => &[publish::STREAM],
+        batcher_forge::SETTLE_WANTED => &[queue_step::STREAM],
+        _ => &[],
+    }
+}
+
 /// `decide`'s answer as commands: the carry emitted only when it changed, an act named in `emits` as
-/// an `Emit` of that tag (a hand-off such as `call.wanted`), and every other act as a
-/// journaled effect under the deadline its Act table row gives. An act the table does not name
-/// is a bug in `decide`, so it panics naming it rather than running under a made-up deadline.
+/// a hand-off of that tag (`call.wanted`, `work.submitted`, ...) delivered to each of its
+/// [`targets`], and every other act as a journaled effect under the deadline its Act table row
+/// gives. An act the table does not name is a bug in `decide`, so it panics naming it rather
+/// than running under a made-up deadline.
 pub fn commands<C: Serialize + PartialEq>(shape: &Shape, table: &[(&str, u64)], emits: &[EventKindTag], old: &C, new: &C, acts: Vec<Act>) -> Vec<Command> {
     let mut out = vec![];
     if old != new {
@@ -100,7 +118,11 @@ pub fn commands<C: Serialize + PartialEq>(shape: &Shape, table: &[(&str, u64)], 
     }
     for a in acts {
         if emits.contains(&a.effect.as_str()) {
-            out.push(Command::Emit(EventKind::new(&a.effect, &a.input)));
+            let kind = EventKind::new(&a.effect, &a.input);
+            match targets(&a.effect) {
+                [] => out.push(Command::Emit(kind)),
+                to => out.extend(to.iter().map(|s| Command::EmitTo { stream: StreamKey(s.to_string()), kind: kind.clone() })),
+            }
             continue;
         }
         let deadline_ms = deadline(table, &a.effect).unwrap_or_else(|| panic!("{}: decide asked for {}, which its Act table does not name", shape.name, a.effect));
@@ -339,6 +361,32 @@ mod tests {
             let _ = (t.build)(&s);
         }
         assert!(std::panic::catch_unwind(|| pin(&s, "t", &["SPIRA_PLANTED_NOT_A_KEY"])).is_err(), "a key the settings lack refuses");
+    }
+
+    /// A hand-off lands on each target's own stream; one with no target stays on the emitter's.
+    #[test]
+    fn a_hand_off_is_delivered_to_the_streams_it_wakes() {
+        use super::super::{batcher_forge, batcher_local, czar, queue_step, sentinel_call};
+        let shape = Shape { name: "t", stream: "s", tick: "t.tick", state: "t.state", observe: "t.observe", observe_deadline_ms: 1 };
+        let to = |tag: &'static str| -> Vec<String> {
+            commands(&shape, &[], &[tag], &0, &0, vec![Act::new(tag, "k")])
+                .into_iter()
+                .map(|c| match c {
+                    Command::EmitTo { stream, kind } if kind.tag == tag => stream.0,
+                    Command::Emit(kind) if kind.tag == tag => "<own>".into(),
+                    _ => panic!("{tag}: a command other than its hand-off"),
+                })
+                .collect()
+        };
+        assert_eq!(to(sentinel_call::CALL_WANTED), [sentinel_call::STREAM]);
+        assert_eq!(to(czar::CALL_REQUESTED), [sentinel_call::STREAM]);
+        assert_eq!(to(WORK_SUBMITTED), [batcher_local::STREAM, batcher_forge::STREAM]);
+        assert_eq!(to(queue_step::CUT_WANTED), [batcher_local::STREAM, batcher_forge::STREAM]);
+        assert_eq!(to(batcher_forge::SETTLE_WANTED), [queue_step::STREAM]);
+        assert_eq!(to("t.planted_local"), ["<own>"], "a hand-off with no target stays on the emitter's stream");
+        for (tag, wakes) in [(WORK_SUBMITTED, batcher_local::WAKES), (WORK_SUBMITTED, batcher_forge::WAKES), (batcher_forge::SETTLE_WANTED, queue_step::WAKES), (queue_step::PUBLISH_WANTED, super::super::publish::WAKES)] {
+            assert!(wakes.contains(&tag), "{tag} is delivered where nobody listens");
+        }
     }
 
     #[test]

@@ -103,7 +103,7 @@ use runtime::event::*;
 use runtime::units::{Exit, UnitRan};
 use serde::{Deserialize, Serialize};
 
-use super::batcher_local::{P2, digest, green, handle_p2, interests, leg_exit, page_line, select, table_step, unit_key, units_ran, Assembled, Leg, Policy, LEG_GRACE_MS};
+use super::batcher_local::{P2, digest, green, handle_p2, interests, page_line, select, table_step, unit_key, Assembled, On, Leg, Policy, LEG_GRACE_MS};
 use super::kit::{self, Act, Cadence, Shape};
 
 pub use super::batcher_local::Member;
@@ -145,6 +145,8 @@ pub const ACTS: &[(&str, u64)] = &[
     (INBOX_APPEND, 10_000),
 ];
 pub const EMITS: &[EventKindTag] = &[SETTLE_WANTED];
+/// Hand-offs that wake it at once, besides its tick: a submission sifted, a batch settled.
+pub const WAKES: &[EventKindTag] = &[kit::WORK_SUBMITTED, super::queue_step::CUT_WANTED];
 pub const EFFECTS: &[&str] = &[OBSERVE, ARM, FETCH, ASSEMBLE, CORPUS, WITHDRAW, SHOTS, BATCH_OPEN, FILE, VERDICT_WRITE, INBOX_APPEND];
 pub const KEYS: &[&str] = &[
     "SPIRA_RUN",
@@ -342,7 +344,7 @@ impl Machine<'_> {
         self.rc = RepoCarry { state: keep.0, held: keep.1, base_moved: keep.2, conflict_streaks: keep.3, held_keys: keep.4, ..RepoCarry::default() };
     }
 
-    fn observe(&mut self, policy: &Policy, enabled: bool, repo: &Repo, ran: &[UnitRan]) {
+    fn observe(&mut self, policy: &Policy, enabled: bool, repo: &Repo) {
         if !enabled && matches!(self.rc.state, State::Idle | State::Disabled) {
             self.go(Trigger::ForgeDisabled);
             // `page_held` (`main.rs:1235-1254`): once per change of the waiting CERTIFIED set.
@@ -364,14 +366,9 @@ impl Machine<'_> {
                 self.go(Trigger::BatchSettled);
                 self.reset();
             }
-            State::Corpus | State::Attributing => {
-                let lost = self.now_ms.saturating_sub(self.rc.leg_at_ms) > policy.wall_ms + LEG_GRACE_MS;
-                match leg_exit(NAME, self.rc.leg.as_deref(), ran) {
-                    Some(exit) => self.leg_ended(exit),
-                    None if lost => self.leg_ended(Exit::Unknown),
-                    None => {}
-                }
-            }
+            // A leg's end arrives as its own `unit.ran` (`on_ran`); one past its wall and grace
+            // with none is judged lost here.
+            State::Corpus | State::Attributing if self.now_ms.saturating_sub(self.rc.leg_at_ms) > policy.wall_ms + LEG_GRACE_MS => self.leg_ended(Exit::Unknown),
             _ => {}
         }
     }
@@ -498,19 +495,32 @@ fn store(carry: &mut Carry, repo: &str, rc: RepoCarry) {
 }
 
 pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
-    decide_with(&Policy::default(), carry, snap, &[])
+    decide_with(&Policy::default(), carry, snap)
 }
 
-/// `decide` with the pinned policy and the `unit.ran`s seen since the carry was recorded.
-pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot, ran: &[UnitRan]) -> (Carry, Vec<Act>) {
+/// `decide` with the pinned policy.
+pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     let (mut next, mut acts) = (carry.clone(), vec![]);
     for (name, repo) in &snap.repos {
         let mut m = Machine { repo: name, rc: carry.repos.get(name).cloned().unwrap_or_default(), acts: vec![], now_ms: snap.now_ms };
-        m.observe(policy, snap.enabled, repo, ran);
+        m.observe(policy, snap.enabled, repo);
         store(&mut next, name, m.rc);
         acts.extend(m.acts);
     }
     (next, acts)
+}
+
+/// The end of one of its own legs, delivered on this task's stream: the repo whose carried
+/// leg it is moves at once.
+pub fn on_ran(carry: &Carry, ran: &UnitRan, now_ms: u64) -> Option<(Carry, Vec<Act>)> {
+    let key = ran.key_for(NAME)?;
+    let (repo, rc) = carry.repos.iter().find(|(_, rc)| rc.leg.as_deref() == Some(key.as_str()) && matches!(rc.state, State::Corpus | State::Attributing))?;
+    let mut next = carry.clone();
+    let mut m = Machine { repo, rc: rc.clone(), acts: vec![], now_ms };
+    m.leg_ended(ran.exit);
+    let acts = m.acts;
+    store(&mut next, repo, m.rc);
+    Some((next, acts))
 }
 
 pub fn on_outcome(carry: &Carry, effect: &str, ok: bool, body: &str, leg: &Leg, now_ms: u64) -> (Carry, Vec<Act>) {
@@ -527,12 +537,12 @@ pub struct BatcherForge {
     pub cadence: Cadence,
     pub pinned: BTreeMap<String, String>,
     pub policy: Policy,
-    interests: [EventKindTag; 4],
+    interests: Vec<EventKindTag>,
 }
 
 impl BatcherForge {
     pub fn new(pinned: BTreeMap<String, String>) -> Self {
-        BatcherForge { cadence: Cadence::Every(CADENCE_MS), policy: Policy::pinned(&pinned), pinned, interests: interests(TICK) }
+        BatcherForge { cadence: Cadence::Every(CADENCE_MS), policy: Policy::pinned(&pinned), pinned, interests: interests(TICK, WAKES) }
     }
 
     pub fn from_settings(settings: &crate::Settings) -> Self {
@@ -554,12 +564,13 @@ impl Handler for BatcherForge {
     }
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        let observed = |carry: &Carry, body: &str| serde_json::from_str::<Snapshot>(body).ok().map(|snap| decide_with(&self.policy, carry, &snap, &units_ran(view)));
+        let observed = |carry: &Carry, body: &str| serde_json::from_str::<Snapshot>(body).ok().map(|snap| decide_with(&self.policy, carry, &snap));
         let outcome = |carry: &Carry, effect: &str, ok: bool, body: &str, input: &str| match serde_json::from_str::<Leg>(input) {
             Ok(leg) => on_outcome(carry, effect, ok, body, &leg, ev.at),
             Err(_) => (carry.clone(), vec![]),
         };
-        handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS }, view, ev, observed, outcome)
+        let ran = |carry: &Carry, r: &UnitRan| on_ran(carry, r, ev.at);
+        handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran })
     }
 }
 

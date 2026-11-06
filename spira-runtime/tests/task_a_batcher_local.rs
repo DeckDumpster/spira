@@ -97,3 +97,42 @@ fn t5_an_unsifted_tip_is_set_aside() {
     let assemble = acts.iter().find(|a| a.effect == ASSEMBLE).expect("one member still cuts");
     assert!(assemble.input.contains("sp-a") && !assemble.input.contains("sp-b"), "{assemble:?}");
 }
+
+/// A leg's `unit.ran`, delivered on this task's own stream, advances the machine at once: the
+/// green corpus starts the certify leg with no tick and no observe in between (the old workaround
+/// read the `units` stream at the next 30-s observe).
+#[test]
+fn t3_a_corpus_unit_ran_on_its_own_stream_starts_certify_at_once() {
+    use runtime::units::{Exit, UnitHandle, UnitRan};
+    let snaps = std::sync::Mutex::new(vec![busy()]);
+    let assembled = Assembled { merged: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "/w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
+    let mut r = TaskRig::new(1, registration())
+        .unwrap()
+        .double(OBSERVE, move |_| Ok(serde_json::to_string(&snaps.lock().unwrap().pop().unwrap_or_else(idle)).unwrap()))
+        .double(ASSEMBLE, move |_| Ok(serde_json::to_string(&assembled).unwrap()))
+        .double(ROUND_OPEN, |_| Ok(serde_json::to_string(&Opened { batch: "r9".into() }).unwrap()));
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE, ASSEMBLE, ROUND_OPEN].contains(e)) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    let corpus: Leg = serde_json::from_str(&r.requested().iter().find(|q| q.name == CORPUS).expect("the corpus leg started").input).unwrap();
+    let asked = r.requested().len();
+    let ran = UnitRan { handle: UnitHandle::of(NAME, &corpus.unit).unwrap(), exit: Exit::Code(0), duration_ms: 1_000 };
+    r.tick(STREAM, ran.event_kind()).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    let after: Vec<&str> = r.requested()[asked..].iter().map(|q| q.name.as_str()).collect();
+    assert_eq!(after, [CERTIFY], "the green corpus's unit.ran starts certify at once, with no observe between");
+}
+
+/// `work.submitted` (sift's hand-off when a pass is recorded) on this task's stream asks for an
+/// observe at once, without re-arming the tick.
+#[test]
+fn t3_work_submitted_wakes_an_observe_at_once() {
+    let mut r = rig(1, idle());
+    let asked = r.requested().iter().filter(|q| q.name == OBSERVE).count();
+    let timer = r.engine().next_timer_at();
+    r.tick(STREAM, EventKind::new("work.submitted", r#"{"id":"sp-a","tip":"t1"}"#)).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    assert_eq!(r.requested().iter().filter(|q| q.name == OBSERVE).count(), asked + 1, "the hand-off observes now");
+    assert_eq!(r.engine().next_timer_at(), timer, "the tick is not re-armed");
+}

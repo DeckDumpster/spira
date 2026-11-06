@@ -1292,6 +1292,8 @@ fn spawned_units_are_pinned_to_current_not_the_callers_release() {
     assert!(!argv.contains(&old), "no token may name the caller's release: {argv}");
     assert!(argv.contains("--property=IOSchedulingClass=idle"), "{argv}");
     assert!(argv.contains("--property=IOWeight=10"), "{argv}");
+    // The `--call-only` re-exec on the dwarf's stop is retired: its end is an event now.
+    assert!(!argv.contains("ExecStopPost") && !argv.contains("--call-only"), "no stop-post re-exec: {argv}");
 }
 
 /// sp-mve9i: close_landed_queue_waiters finds the labeled beads as content (`list --all

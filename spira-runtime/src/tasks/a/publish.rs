@@ -116,7 +116,7 @@ use queue::ops::publish as core;
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
 
-use super::batcher_local::{P2, handle_p2, interests, table_step};
+use super::batcher_local::{handle_p2, interests, table_step, On, P2};
 use super::kit::{self, Act, Cadence, Shape};
 
 pub const NAME: &str = "publish";
@@ -141,6 +141,8 @@ pub const OBSERVE_DEADLINE_MS: u64 = 60_000;
 
 pub const ACTS: &[(&str, u64)] = &[(PUSH_BRANCH, 60_000), (PUSH_FORGE, 60_000), (PR_CREATE, 60_000), (PR_CLOSE, 30_000), (CANCEL_RUNS, 30_000), (RERUN, 30_000), (RECORD, 2_000), (NOTIFY, 5_000)];
 pub const EMITS: &[EventKindTag] = &[];
+/// Hand-offs that wake it at once, besides its tick: queue.step wants a publish.
+pub const WAKES: &[EventKindTag] = &[PUBLISH_WANTED];
 pub const EFFECTS: &[&str] = &[OBSERVE, PUSH_BRANCH, PUSH_FORGE, PR_CREATE, PR_CLOSE, CANCEL_RUNS, RERUN, RECORD, NOTIFY];
 pub const KEYS: &[&str] = &["SPIRA_PUBLISH_SETTLE_DEFER_MAX", "SPIRA_FORGE", "SPIRA_QUEUE_DIR", "SPIRA_RUN", "SPIRA_MAIL_SESSION_MAILBOX", "SPIRA_QUEUE_LOCK_WAIT", "SPIRA_REPO_MAP"];
 pub const UNREGISTERED: &[&str] = &[];
@@ -581,12 +583,12 @@ pub struct Publish {
     pub cadence: Cadence,
     pub pinned: BTreeMap<String, String>,
     pub policy: Policy,
-    interests: [EventKindTag; 4],
+    interests: Vec<EventKindTag>,
 }
 
 impl Publish {
     pub fn new(pinned: BTreeMap<String, String>) -> Self {
-        Publish { cadence: Cadence::Every(CADENCE_MS), policy: Policy::pinned(&pinned), pinned, interests: interests(TICK) }
+        Publish { cadence: Cadence::Every(CADENCE_MS), policy: Policy::pinned(&pinned), pinned, interests: interests(TICK, WAKES) }
     }
 
     pub fn from_settings(settings: &crate::Settings) -> Self {
@@ -613,7 +615,9 @@ impl Handler for Publish {
             Ok(p) => on_outcome(carry, effect, ok, body, &p),
             Err(_) => (carry.clone(), vec![]),
         };
-        handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS }, view, ev, observed, outcome)
+        // Publish starts no unit leg, so no `unit.ran` is its own.
+        let ran = |_: &Carry, _: &runtime::units::UnitRan| None;
+        handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran })
     }
 }
 

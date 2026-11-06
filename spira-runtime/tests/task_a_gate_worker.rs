@@ -113,3 +113,11 @@ fn t5_a_claim_is_asked_for_the_picked_job() {
     assert_eq!(acts.iter().filter(|a| a.effect == CLAIM).map(|a| a.key.as_str()).collect::<Vec<_>>(), ["spira.a.a-tip"]);
     assert_eq!(carry.slots.iter().filter(|s| s.state == State::Claimed).count(), 1);
 }
+
+/// Its own legs' `unit.ran` (routed to its stream by unit name) wakes it: the slot's status is
+/// read at once, not at the next tick.
+#[test]
+fn t3_its_own_leg_unit_ran_is_heard() {
+    let reg = registration();
+    assert!(reg.handler.interests().contains(&runtime::units::UNIT_RAN), "gate.worker listens for its legs' ends");
+}

@@ -129,3 +129,13 @@ fn t5_unreadable_rows_decide_nothing_about_leases() {
     let (_, acts) = decide(&Carry::default(), &Snapshot { rows: None, ..busy() });
     assert!(acts.iter().all(|a| ![STOP_HOLDER, LC_EVENT, LC_FACT].contains(&a.effect.as_str())), "{acts:?}");
 }
+
+/// CHECK 7's hand-off lands on sentinel-call's own stream (`Command::EmitTo`), where its handler
+/// hears it; on this task's stream nobody would.
+#[test]
+fn t5_check7_call_wanted_is_delivered_to_the_call() {
+    let r = rig(1, Snapshot { plan_ready: Some(3), ..idle() });
+    kit::assert_unpoisoned(&r, STREAM);
+    let to: Vec<String> = r.journaled().into_iter().filter(|e| e.kind.tag == CALL_WANTED).map(|e| e.stream.0).collect();
+    assert_eq!(to, [spira_runtime::tasks::a::sentinel_call::STREAM], "call.wanted goes to sentinel-call's stream");
+}

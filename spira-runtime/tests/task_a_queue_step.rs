@@ -115,3 +115,23 @@ fn t5_an_unchanged_pending_check_records_once() {
     let (_, again) = decide(&carry, &pending);
     assert!(!effects(&again).contains(&RECORD), "{again:?}");
 }
+
+/// The judgement leg's `unit.ran`, on this task's own stream, moves the judging repo at once: a
+/// green one is recorded and wants the cut on the base it was judged on; another task's run, or
+/// a leg this repo is not judging, changes nothing.
+#[test]
+fn t3_the_judgement_unit_ran_moves_the_machine_at_once() {
+    use runtime::units::{Exit, UnitHandle, UnitRan};
+    let rc = RepoCarry { state: State::Judging, leg: Some("spira.j1".into()), base: "b2".into(), mode: "queue.local".into(), batch: Some("b-1:3".into()), ..RepoCarry::default() };
+    let carry = Carry { repos: [("spira".to_string(), rc)].into() };
+    let ran = |task: &str, key: &str, exit| UnitRan { handle: UnitHandle::of(task, key).unwrap(), exit, duration_ms: 5 };
+    let (next, acts) = on_ran(&carry, &ran(NAME, "spira.j1", Exit::Code(0)), 1).expect("its own leg");
+    let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+    assert!(names.contains(&RECORD) && names.contains(&CUT_WANTED) && names.contains(&PUBLISH_WANTED), "{names:?}");
+    assert!(acts.iter().any(|a| a.effect == PUBLISH_WANTED && a.key.ends_with("/b2")), "the cut is on the judged base: {acts:?}");
+    assert_ne!(next.repos.get("spira").map(|r| r.state), Some(State::Judging));
+    let (_, acts) = on_ran(&carry, &ran(NAME, "spira.j1", Exit::Code(1)), 1).expect("its own leg");
+    assert!(acts.iter().any(|a| a.effect == NOTIFY), "a failed judgement notifies: {acts:?}");
+    assert!(on_ran(&carry, &ran("batcher.local", "spira.j1", Exit::Code(0)), 1).is_none(), "another task's run");
+    assert!(on_ran(&carry, &ran(NAME, "spira.other", Exit::Code(0)), 1).is_none(), "a leg not being judged");
+}

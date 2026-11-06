@@ -123,10 +123,10 @@
 use std::collections::BTreeMap;
 
 use runtime::event::*;
-use runtime::units::UnitRan;
+use runtime::units::{Exit, UnitRan};
 use serde::{Deserialize, Serialize};
 
-use super::batcher_local::{P2, green, handle_p2, interests, leg_exit, table_step, unit_key, units_ran};
+use super::batcher_local::{green, handle_p2, interests, table_step, unit_key, On, P2};
 use super::kit::{self, Act, Cadence, Shape};
 
 pub const NAME: &str = "queue.step";
@@ -177,6 +177,8 @@ pub const ACTS: &[(&str, u64)] = &[
     (RECORD, 2_000),
 ];
 pub const EMITS: &[EventKindTag] = &[CUT_WANTED, PUBLISH_WANTED];
+/// Hand-offs that wake it at once, besides its tick: batcher.forge left a batch to settle.
+pub const WAKES: &[EventKindTag] = &[super::batcher_forge::SETTLE_WANTED];
 pub const EFFECTS: &[&str] = &[OBSERVE, PUSH, LAND, CLOSE_BEAD, GH_CLOSEOUT, PR_CLOSE, CANCEL_RUNS, RERUN, JUDGEMENT, OBSERVE_FLAKE, EJECT, RECONCILE, SWEEP, FILE_BUG, NOTIFY, RECORD];
 pub const KEYS: &[&str] = &[
     "SPIRA_QUEUE_CI_MAXSEC",
@@ -368,6 +370,12 @@ pub struct RepoCarry {
     pub leg: Option<String>,
     #[serde(default)]
     pub leg_at_ms: u64,
+    /// The base the judged batch was read on, for the cut its green judgement wants.
+    #[serde(default)]
+    pub base: String,
+    /// The repo's mode when the judgement started (`queue.local` cuts and publishes, a forge repo cuts).
+    #[serde(default)]
+    pub mode: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -482,21 +490,30 @@ impl Machine<'_> {
         self.notify(format!("judgement for {} failed", b.batch), why.to_string(), &b.batch);
         self.rc.settled = self.rc.batch.take();
         self.rc.leg = None;
+        self.rc.base.clear();
+        self.rc.mode.clear();
     }
 
-    fn observe(&mut self, policy: &Policy, repo: &Repo, ran: &[UnitRan]) {
+    /// The judgement leg ended with `exit` (its `unit.ran`, on this task's stream): a green
+    /// judgement is recorded and the cut wanted on the base the batch was judged on.
+    fn judged(&mut self, exit: Exit) {
+        if green(exit) {
+            self.go(Trigger::JudgementRanOk);
+            let leg = self.rc.leg.clone().unwrap_or_default();
+            self.acts.push(Step { subject: "judgement".into(), body: leg, key: format!("{}/judgement", self.repo), ..self.step_of() }.act(RECORD));
+            let base = std::mem::take(&mut self.rc.base);
+            self.rc.mode.clear();
+            self.cut(&base);
+        } else {
+            self.judgement_failed("the batcher's judgement of a red batch failed; the batch waits for a hand");
+        }
+    }
+
+    fn observe(&mut self, policy: &Policy, repo: &Repo) {
         if self.rc.state == State::Judging {
-            let lost = self.now_ms.saturating_sub(self.rc.leg_at_ms) > JUDGEMENT_CAP_MS;
-            match leg_exit(NAME, self.rc.leg.as_deref(), ran) {
-                Some(exit) if green(exit) => {
-                    self.go(Trigger::JudgementRanOk);
-                    let leg = self.rc.leg.clone().unwrap_or_default();
-                    self.acts.push(Step { subject: "judgement".into(), body: leg, key: format!("{}/judgement", self.repo), ..self.step_of() }.act(RECORD));
-                    self.cut(&repo.base_sha);
-                }
-                Some(_) => self.judgement_failed("the batcher's judgement of a red batch failed; the batch waits for a hand"),
-                None if lost => self.judgement_failed("the batcher's judgement of a red batch did not finish in time; the batch waits for a hand"),
-                None => {}
+            // The leg's end arrives as its own `unit.ran` (`on_ran`); none by the cap is a failure.
+            if self.now_ms.saturating_sub(self.rc.leg_at_ms) > JUDGEMENT_CAP_MS {
+                self.judgement_failed("the batcher's judgement of a red batch did not finish in time; the batch waits for a hand");
             }
             return;
         }
@@ -552,6 +569,8 @@ impl Machine<'_> {
                 let unit = unit_key(self.repo, &format!("{}/{}", b.id, b.sealed_head), "judgement", 1);
                 self.rc.leg = Some(unit.clone());
                 self.rc.leg_at_ms = self.now_ms;
+                self.rc.base = repo.base_sha.clone();
+                self.rc.mode = self.mode.clone();
                 self.acts.push(Step { key: unit.clone(), unit, ..at }.act(JUDGEMENT));
             }
             Check::HarnessFault => {
@@ -615,22 +634,34 @@ fn store(carry: &mut Carry, repo: &str, rc: RepoCarry) {
 }
 
 pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
-    decide_with(&Policy::default(), carry, snap, &[], 0)
+    decide_with(&Policy::default(), carry, snap, 0)
 }
 
-/// `decide` with the pinned policy, the `unit.ran`s seen, and the observe's time.
-pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot, ran: &[UnitRan], now_ms: u64) -> (Carry, Vec<Act>) {
+/// `decide` with the pinned policy and the observe's time.
+pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot, now_ms: u64) -> (Carry, Vec<Act>) {
     let (mut next, mut acts) = (carry.clone(), vec![]);
     if !snap.world_running {
         return (next, acts);
     }
     for (name, repo) in snap.repos.iter().filter(|(_, r)| r.lc_ok) {
         let mut m = Machine { repo: name, mode: repo.mode.clone(), rc: carry.repos.get(name).cloned().unwrap_or_default(), acts: vec![], now_ms };
-        m.observe(policy, repo, ran);
+        m.observe(policy, repo);
         store(&mut next, name, m.rc);
         acts.extend(m.acts);
     }
     (next, acts)
+}
+
+/// The judgement leg's end, delivered on this task's stream: the repo judging it moves at once.
+pub fn on_ran(carry: &Carry, ran: &UnitRan, now_ms: u64) -> Option<(Carry, Vec<Act>)> {
+    let key = ran.key_for(NAME)?;
+    let (repo, rc) = carry.repos.iter().find(|(_, rc)| rc.state == State::Judging && rc.leg.as_deref() == Some(key.as_str()))?;
+    let mut next = carry.clone();
+    let mut m = Machine { repo, mode: rc.mode.clone(), rc: rc.clone(), acts: vec![], now_ms };
+    m.judged(ran.exit);
+    let acts = m.acts;
+    store(&mut next, repo, m.rc);
+    Some((next, acts))
 }
 
 pub fn on_outcome(carry: &Carry, effect: &str, ok: bool, body: &str, s: &Step, now_ms: u64) -> (Carry, Vec<Act>) {
@@ -647,12 +678,12 @@ pub struct QueueStep {
     pub cadence: Cadence,
     pub pinned: BTreeMap<String, String>,
     pub policy: Policy,
-    interests: [EventKindTag; 4],
+    interests: Vec<EventKindTag>,
 }
 
 impl QueueStep {
     pub fn new(pinned: BTreeMap<String, String>) -> Self {
-        QueueStep { cadence: Cadence::Every(CADENCE_MS), policy: Policy::pinned(&pinned), pinned, interests: interests(TICK) }
+        QueueStep { cadence: Cadence::Every(CADENCE_MS), policy: Policy::pinned(&pinned), pinned, interests: interests(TICK, WAKES) }
     }
 
     pub fn from_settings(settings: &crate::Settings) -> Self {
@@ -674,12 +705,13 @@ impl Handler for QueueStep {
     }
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        let observed = |carry: &Carry, body: &str| serde_json::from_str::<Snapshot>(body).ok().map(|snap| decide_with(&self.policy, carry, &snap, &units_ran(view), ev.at));
+        let observed = |carry: &Carry, body: &str| serde_json::from_str::<Snapshot>(body).ok().map(|snap| decide_with(&self.policy, carry, &snap, ev.at));
         let outcome = |carry: &Carry, effect: &str, ok: bool, body: &str, input: &str| match serde_json::from_str::<Step>(input) {
             Ok(s) => on_outcome(carry, effect, ok, body, &s, ev.at),
             Err(_) => (carry.clone(), vec![]),
         };
-        handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS }, view, ev, observed, outcome)
+        let ran = |carry: &Carry, r: &UnitRan| on_ran(carry, r, ev.at);
+        handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran })
     }
 }
 

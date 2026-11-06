@@ -517,7 +517,7 @@ impl GateWorker {
 
 impl Handler for GateWorker {
     fn interests(&self) -> &[EventKindTag] {
-        &[TICK, GATE_QUEUED, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
+        &[TICK, GATE_QUEUED, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT, runtime::units::UNIT_RAN]
     }
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
@@ -529,7 +529,13 @@ impl Handler for GateWorker {
         let mut carry: Carry = kit::carry(&SHAPE, view);
         let keep = carry.slots.iter().rposition(|s| s.job.is_some()).map_or(0, |i| i + 1);
         carry.slots.resize(self.slots.max(keep), Slot::default());
-        if ev.kind.tag == TICK || ev.kind.tag == GATE_QUEUED {
+        // One of its own legs ended (its `unit.ran`, routed to this stream by unit name): the
+        // slot's status is read now, so the slot moves on at once rather than at the next tick.
+        let own_leg_ran = runtime::units::UnitRan::from_event_kind(&ev.kind).is_some_and(|r| r.key_for(NAME).is_some());
+        if ev.kind.tag == runtime::units::UNIT_RAN && !own_leg_ran {
+            return vec![];
+        }
+        if ev.kind.tag == TICK || ev.kind.tag == GATE_QUEUED || own_leg_ran {
             let mut out = vec![Command::Probe(EffectSpec { name: OBSERVE.into(), input: serde_json::to_string(&carry).unwrap_or_default(), deadline_ms: OBSERVE_DEADLINE_MS })];
             if ev.kind.tag == TICK {
                 out.push(Command::Timer { at: self.cadence.next_after(ev.at), kind: EventKind::new(TICK, "") });

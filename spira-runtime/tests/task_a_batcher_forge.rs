@@ -93,3 +93,17 @@ fn t5_a_certified_pool_is_fetched_then_assembled() {
     assert_eq!(order, [FETCH, ASSEMBLE], "{acts:?}");
     assert_eq!(carry.repos["deckdumpster"].state, State::Assembling);
 }
+
+/// A corpus leg's `unit.ran`, on this task's own stream, moves the repo at once; another
+/// task's run or a leg not carried changes nothing.
+#[test]
+fn t3_a_corpus_unit_ran_moves_the_machine_at_once() {
+    use runtime::units::{Exit, UnitHandle, UnitRan};
+    let rc = RepoCarry { state: State::Corpus, leg: Some("spira.c1".into()), ..RepoCarry::default() };
+    let carry = Carry { repos: [("spira".to_string(), rc)].into() };
+    let ran = |task: &str, key: &str| UnitRan { handle: UnitHandle::of(task, key).unwrap(), exit: Exit::Code(0), duration_ms: 5 };
+    let (next, _) = on_ran(&carry, &ran(NAME, "spira.c1"), 1).expect("its own leg");
+    assert_ne!(next.repos.get("spira").map(|r| r.state), Some(State::Corpus), "the green corpus moved on");
+    assert!(on_ran(&carry, &ran("batcher.local", "spira.c1"), 1).is_none());
+    assert!(on_ran(&carry, &ran(NAME, "spira.other"), 1).is_none());
+}

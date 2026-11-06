@@ -422,31 +422,11 @@ impl<'a> Sentinel<'a> {
         }
     }
 
-    fn current_path(&self) -> String {
-        let path = self.cfg.raw("PATH");
-        match self.release_skew() {
-            Some(s) => spira_config::release_skew::repoint_path(path, &s),
-            None => path.to_string(),
-        }
-    }
-
-    /// call_refill_argv -> the ExecStopPost property that refills this slot the instant
-    /// the dwarf it is attached to exits (lib.sh:1141; sp-0y2av). The resolved path, not the
-    /// bare name: systemd validates an ExecStopPost command line itself and refuses a bare
-    /// "systemd-run" as "not an absolute path".
-    fn call_refill_argv(&self) -> String {
-        let path = self.current_path();
-        let call_bin = pass::on_path(&self.cfg.call, &path);
-        let sentinel_bin = pass::on_path("sentinel", &path);
-        let release = self.current_release();
-        let toml = self.cfg.raw("SPIRA_TOML");
-        format!(
-            "--property=ExecStopPost={call_bin} --user --collect --quiet --setenv=SPIRA_RELEASE={release} --setenv=SPIRA_TOML={toml} --setenv=PATH={path} {sentinel_bin} --call-only"
-        )
-    }
-
     /// call_argv <rune> -> the systemd-run property/setenv flags shared by every call
     /// path (lib.sh:1150: `call_rune`, `dwarf --escape`), one argv token per element.
+    /// No `ExecStopPost`: the `sentinel --call-only` re-exec that refilled the slot when the dwarf
+    /// exited is retired. The scheduler's `sentinel-call` hears a dwarf's end as its own
+    /// `unit.ran` and calls again at once; a dwarf this CLI path starts is refilled by its minute.
     pub fn call_argv(&self, f: &str) -> Vec<String> {
         let timeout = spira_config::runes::rune_get(&self.cfg.home, f, "RUNE_TIMEOUT_SECONDS", "3600");
         let release = self.current_release();
@@ -454,7 +434,6 @@ impl<'a> Sentinel<'a> {
             format!("--property=TimeoutStartSec={timeout}"),
             "--property=IOSchedulingClass=idle".to_string(),
             "--property=IOWeight=10".to_string(),
-            self.call_refill_argv(),
             format!("--setenv=SPIRA_RELEASE={release}"),
             format!("--setenv=PATH={release}/bin:{release}/spira:/usr/local/bin:/usr/bin:/bin"),
             format!("--setenv=HOME={}", self.cfg.raw("HOME")),
@@ -626,7 +605,7 @@ impl<'a> Sentinel<'a> {
         args.push("--home".into());
         args.push(self.cfg.home.to_string_lossy().into_owned());
         args.push(f.to_string());
-        // FORK-EDGE: the CLI's own call (`--call`, `--call-only`, the full pass). The machine leg
+        // FORK-EDGE: the CLI's own call (`--call`, the full pass). The machine leg
         // is the scheduler's `sentinel-call` task (`unit.start` under the naming rule, finished by
         // its `unit.ran`); this path stays for `dwarf --escape` and the suites until they retire.
         let o = self.h.run(
