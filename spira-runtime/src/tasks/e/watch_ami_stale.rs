@@ -112,9 +112,51 @@ pub struct Carry {
     pub said: Option<String>,
 }
 
+const INBOX_DEADLINE_MS: u64 = 10_000;
+/// The spill modes that send rounds to EC2 (`spira/round-ami-stale.sh:29`); any other is idle.
+pub const EC2_SPILLS: &[&str] = &["ec2", "ec2-always", "ec2-only"];
+
+/// The line a verdict says, before [`SUFFIX`]; `None` for fresh. An unreadable listing is
+/// composed as the script did (`round-ami-stale.sh:34-36`): never read as fresh.
+pub fn line(v: &Verdict) -> Option<String> {
+    match v {
+        Verdict::Fresh => None,
+        Verdict::Stale { line } => Some(line.clone()),
+        Verdict::Unreadable { rc, out } => Some(format!("round AMI check could not read the images: 'round-vm ami-check' exited {rc}: {out}")),
+    }
+}
+
 /// `Fresh` clears; a stale or unreadable line other than `said` is said once.
-pub fn decide(_carry: &Carry, _snap: &Snapshot, _now_ms: u64, _cfg: &Config) -> (Carry, Vec<EffectSpec>) {
-    unimplemented!("watch.ami_stale: not ported yet")
+pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, _cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+    if !EC2_SPILLS.contains(&snap.spill.as_str()) {
+        return (carry.clone(), vec![]);
+    }
+    let Some(l) = line(&snap.verdict) else { return (Carry { said: None }, vec![]) };
+    if carry.said.as_deref() == Some(l.as_str()) {
+        return (carry.clone(), vec![]);
+    }
+    let say = EffectSpec { name: INBOX_APPEND.into(), input: pattern::inbox_line(now_ms, INBOX_TAG, &format!("{l}{SUFFIX}")), deadline_ms: INBOX_DEADLINE_MS };
+    (Carry { said: Some(l) }, vec![say])
+}
+
+/// The verdict from round-vm's own `ami-check` in-process (`round_vm::cli::ami_check_answer`):
+/// exit 0 fresh; exit 1 with a last non-empty line stale; anything else unreadable, its output
+/// squeezed to single spaces and cut at 400 characters (`round-ami-stale.sh:31-36`). With spill
+/// not on EC2, no AWS call.
+pub fn observe() -> Result<String, String> {
+    let spill = cfg("SPIRA_ROUND_VM_SPILL")?;
+    let verdict = if EC2_SPILLS.contains(&spill.as_str()) { verdict(round_vm::cli::ami_check_answer()) } else { Verdict::Fresh };
+    serde_json::to_string(&Snapshot { spill, verdict }).map_err(|e| e.to_string())
+}
+
+/// `(rc, output)` of `ami-check` as the script read it.
+pub fn verdict((rc, out): (i32, String)) -> Verdict {
+    let last = out.lines().rfind(|l| !l.is_empty()).unwrap_or_default().to_string();
+    match rc {
+        0 => Verdict::Fresh,
+        1 if !last.is_empty() => Verdict::Stale { line: last },
+        _ => Verdict::Unreadable { rc, out: out.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(400).collect() },
+    }
 }
 
 pub struct WatchAmiStale {
