@@ -494,6 +494,7 @@ jobs:
         # suite mid-run costs the run's whole wall clock on a paid machine.
         env:
           SELECTED: ${{ needs.select.outputs.suites }}
+          SPIRA_TOML: ${{ runner.temp }}/ci-config.toml
         run: testenv preflight --suites "$SELECTED" --dir spira
 
       - name: Resolve the registry path
