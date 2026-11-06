@@ -92,10 +92,11 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
-/// `cap::breaches` on the `cap.rs` cases and `report`'s line (`cap_main.rs:23-37`), no tag.
+/// `cap::breaches` on the `cap.rs` cases and `report`'s line (`cap_main.rs:23-37`), no tag. A gate run
+/// carries its cap plus `SETTLE` (`cap.rs:16`): 300 + 30 + slot wait 30 + grace 60 = 420.
 #[test]
 fn t5_the_breaches_and_the_line_are_the_ones_testenv_cap_made() {
-    let procs = vec![run(1, 751, SUITE), run(2, 750, SUITE), run(3, 391, GATE), run(4, 390, GATE)];
+    let procs = vec![run(1, 751, SUITE), run(2, 750, SUITE), run(3, 421, GATE), run(4, 420, GATE)];
     let r = rig(1, world(procs), killed);
     acc::assert_healthy(&r, STREAM);
     let kills = asked(&r, KILL);

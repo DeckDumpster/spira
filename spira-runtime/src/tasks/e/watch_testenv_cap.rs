@@ -67,7 +67,7 @@ use serde::{Deserialize, Serialize};
 use spira_config::process::{cfg, cfg_parse};
 
 use crate::tasks::d::pattern;
-use crate::watchers::{answered_spec, INBOX_APPEND};
+use crate::watchers::{answered_spec, iso8601, INBOX_APPEND};
 
 pub const NAME: &str = "watch.testenv_cap";
 pub const STREAM: &str = "watch.testenv_cap";
@@ -120,14 +120,69 @@ pub struct Snapshot {
     pub procs: Vec<Proc>,
 }
 
+/// What `kill` is asked to verify and kill, and what the line and the metric say after it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Kill {
+    pub proc: Proc,
+    pub tier: String,
+    pub cap_s: u64,
+}
+
+/// The outcome `kill` answers when the pid was verified and signalled.
+pub const KILLED: &str = "killed";
+/// The outcome `kill` answers when the pid no longer is the run that was judged.
+pub const REFUSED: &str = "refused: identity changed";
+const ACT_DEADLINE_MS: u64 = 5_000;
+const INBOX_DEADLINE_MS: u64 = 10_000;
+
+fn to_cap(p: &Proc) -> testenv::cap::Proc {
+    testenv::cap::Proc { pid: p.pid, start_ticks: p.start_ticks, argv: p.argv.clone(), age_secs: p.age_secs }
+}
+
+fn from_cap(p: &testenv::cap::Proc) -> Proc {
+    Proc { pid: p.pid, start_ticks: p.start_ticks, argv: p.argv.clone(), age_secs: p.age_secs }
+}
+
 /// `cap::breaches` over the runs: one `kill` per breach, and nothing else.
-pub fn decide(_snap: &Snapshot, _cfg: &Config) -> Vec<EffectSpec> {
-    unimplemented!("watch.testenv_cap: not ported yet")
+pub fn decide(snap: &Snapshot, cfg: &Config) -> Vec<EffectSpec> {
+    let procs: Vec<testenv::cap::Proc> = snap.procs.iter().map(to_cap).collect();
+    testenv::cap::breaches(&procs, cfg.suite_cap_s, cfg.gate_cap_s, cfg.load_wait_s, cfg.slot_wait_s, GRACE_S, None)
+        .into_iter()
+        .map(|b| Kill { proc: from_cap(&b.proc), tier: b.tier.into(), cap_s: b.cap })
+        .map(|k| EffectSpec { name: KILL.into(), input: serde_json::to_string(&k).unwrap_or_default(), deadline_ms: ACT_DEADLINE_MS })
+        .collect()
+}
+
+/// `report`'s line (`testenv/src/cap_main.rs:23-37`): no `[watch:…]` tag, as today.
+pub fn line(k: &Kill, now_ms: u64) -> String {
+    format!("{} testenv over-cap killed: pid {} tier={} wall={}s cap={}s cmd={}", iso8601(now_ms / 1000), k.proc.pid, k.tier, k.proc.age_secs, k.cap_s, k.proc.argv.join(" "))
 }
 
 /// On a `kill` that answered `killed`: the inbox line and the metric; nothing for a refused kill.
-pub fn killed(_kill: &EffectSpec, _outcome: &str, _now_ms: u64, _cfg: &Config) -> Vec<EffectSpec> {
-    unimplemented!("watch.testenv_cap: not ported yet")
+pub fn killed(kill: &EffectSpec, outcome: &str, now_ms: u64, _cfg: &Config) -> Vec<EffectSpec> {
+    if outcome != KILLED {
+        return vec![];
+    }
+    let Ok(k) = serde_json::from_str::<Kill>(&kill.input) else { return vec![] };
+    vec![EffectSpec { name: INBOX_APPEND.into(), input: line(&k, now_ms), deadline_ms: INBOX_DEADLINE_MS }, EffectSpec { name: METRIC.into(), input: k.tier, deadline_ms: ACT_DEADLINE_MS }]
+}
+
+/// The runs procfs shows, filtered to `testenv` runs (`cap::live`, `cap::is_run`).
+pub fn observe() -> Result<String, String> {
+    let procs = testenv::cap::live().into_iter().filter(|p| testenv::cap::is_run(&p.argv)).map(|p| from_cap(&p)).collect();
+    serde_json::to_string(&Snapshot { procs }).map_err(|e| e.to_string())
+}
+
+/// Kills the judged run only when its argv and start ticks still match (`cap::kill_verified`).
+pub fn kill(input: &str) -> Result<String, String> {
+    let k: Kill = serde_json::from_str(input).map_err(|e| format!("{KILL}: bad input: {e}"))?;
+    Ok(if testenv::cap::kill_verified(&to_cap(&k.proc)) { KILLED } else { REFUSED }.into())
+}
+
+/// `spira_testenv_over_cap_kills{tier}` +1, as `cap_main.rs:52` pushed it.
+pub fn metric(tier: &str) -> Result<String, String> {
+    testenv::telemetry::push_over_cap(&testenv::telemetry::sink(), tier);
+    Ok(format!("over-cap kill pushed for tier {tier}"))
 }
 
 pub struct WatchTestenvCap {
