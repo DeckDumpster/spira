@@ -263,7 +263,8 @@ fn with_ports<R>(env: &Env, f: impl FnOnce(&incident::alarms_pass::Ports) -> R) 
     let instance = spira_world::instance()?;
     let timer_on = || {
         let unit = spira_config::unit::resolve_unit(GOODPUT_UNIT, "timer", &instance, &spira_world::sysctl::systemctl_bin());
-        unit != "?" && spira_world::sysctl::unit_exists(&unit) && spira_world::sysctl::run_ok(&["is-enabled", "--quiet", &unit])
+        // `is-enabled` is non-zero for a unit systemd does not know, so it needs no existence probe.
+        unit != "?" && spira_world::sysctl::run_ok(&["is-enabled", "--quiet", &unit])
     };
     let run_dir = std::path::PathBuf::from(&env.spira_run);
     let switch = FileSwitch { run_dir: &run_dir, timer_on: &timer_on };
