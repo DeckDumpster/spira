@@ -808,6 +808,43 @@ pub fn probe(p: &Ports, cfg: &Config, mailbox: &str) -> Result<String, String> {
     deliver(p, cfg, PROBE_CALLER, PROBE, &format!("probe:{mailbox}"), &m, false)
 }
 
+/// [`probe`] with only the ports it uses, the primary path and the clock: the scheduler's
+/// `incident.probe.send`. Every other port refuses, so a probe that reached for one fails loudly.
+pub fn probe_primary(primary: &dyn Primary, clock: &dyn Clock, run_dir: &Path, host: &str, mailbox: &str) -> Result<String, String> {
+    struct Unused;
+    impl Lc for Unused {
+        fn call(&self, _: &[String]) -> (i32, Value) {
+            (-1, json!({ "cannot_tell": "the probe reads no store" }))
+        }
+    }
+    impl Fallback for Unused {
+        fn deliver(&self, _: &Message) -> Result<String, String> {
+            Err("the probe has no fallback".into())
+        }
+    }
+    impl Http for Unused {
+        fn get(&self, url: &str, _: Duration) -> Result<String, String> {
+            Err(format!("the probe makes no HTTP call ({url})"))
+        }
+    }
+    impl Switch for Unused {
+        fn observability_halted(&self) -> bool {
+            false
+        }
+        fn goodput_timer_on(&self) -> bool {
+            false
+        }
+    }
+    let ports = Ports { lc: &Unused, primary, fallback: &Unused, http: &Unused, switch: &Unused, clock };
+    let cfg = Config { run_dir: run_dir.into(), host: host.into(), deadman_secs: 0, heartbeat_url: String::new(), fallback: false, floor_proposal: None };
+    probe(&ports, &cfg, mailbox)
+}
+
+/// The latest attempt the probe recorded in `run_dir`, the record [`probe_health`] reads.
+pub fn last_probe(run_dir: &Path) -> Option<Attempt> {
+    tsd::alarm::read(run_dir).into_iter().rev().find(|a| a.caller == PROBE_CALLER)
+}
+
 /// Whether the latest probe in `run_dir` delivered within `max_age_secs` of `now`.
 pub fn probe_health(run_dir: &Path, now: u64, max_age_secs: u64) -> Result<(), String> {
     let all = tsd::alarm::read(run_dir);

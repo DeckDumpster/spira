@@ -4,14 +4,12 @@
 //! task's contract (`wiki/projects/spira/designs/tasks/<task>.md`), written in the shapes of
 //! `tasks::d::pattern` and tested through `tasks::d::acceptance`.
 //!
-//! Every row's runners are stubs until the task is ported, so every row waits in [`PENDING`];
-//! porting one moves it to [`TASKS`]. `inbox.append` and the `unit.*` effects are served by
-//! `tasks::SHARED`, so none appears on a row here.
+//! Every row is ported and lives in [`TASKS`]; [`PENDING`] is empty. `inbox.append` and the
+//! `unit.*` effects are served by `tasks::SHARED`, so none appears on a row here.
 
-use super::d::stub;
 use super::Task;
-pub mod alert;
 
+pub mod alert;
 pub mod inbox_notify;
 pub mod incident_probe;
 pub mod watch_ami_stale;
@@ -25,6 +23,7 @@ pub mod watch_warm_full;
 pub static TASKS: &[Task] = &[
     Task { name: inbox_notify::NAME, boot: inbox_notify::InboxNotify::boot, cadence_ms: |_| inbox_notify::CADENCE_MS, effects: inbox_notify::EFFECTS, runners: &[(inbox_notify::OBSERVE, |e, _, _| inbox_notify::observe(e.units.as_deref())), (inbox_notify::ASK, |_, _, s| inbox_notify::ask(&s.input)), (inbox_notify::SOP_MATCH, |_, _, s| inbox_notify::sop_match(&s.input)), (inbox_notify::SOP_APPLIED, |_, _, s| inbox_notify::sop_applied(&s.input)), (inbox_notify::CONCIERGE_NOTE, |_, _, s| inbox_notify::concierge_note(&s.input)), (inbox_notify::MAIL_HEALTH, |_, _, _| inbox_notify::mail_health())], keys: &[inbox_notify::KEYS], build: |_| inbox_notify::InboxNotify::pinned().registration() },
     Task { name: watch_ami_stale::NAME, boot: watch_ami_stale::WatchAmiStale::boot, cadence_ms: |_| watch_ami_stale::CADENCE_MS, effects: watch_ami_stale::EFFECTS, runners: &[(watch_ami_stale::OBSERVE, |_, _, _| watch_ami_stale::observe())], keys: &[watch_ami_stale::KEYS], build: |_| watch_ami_stale::WatchAmiStale::pinned().registration() },
+    Task { name: incident_probe::NAME, boot: incident_probe::IncidentProbe::boot, cadence_ms: |_| incident_probe::CADENCE_MS, effects: incident_probe::EFFECTS, runners: &[(incident_probe::OBSERVE, |_, _, _| incident_probe::observe()), (incident_probe::SEND, |_, _, s| incident_probe::send(&s.input))], keys: &[incident_probe::KEYS], build: |_| incident_probe::IncidentProbe::pinned().registration() },
     Task { name: watch_backup_age::NAME, boot: watch_backup_age::WatchBackupAge::boot, cadence_ms: |_| watch_backup_age::CADENCE_MS, effects: watch_backup_age::EFFECTS, runners: &[(watch_backup_age::OBSERVE, |_, _, _| watch_backup_age::observe()), (watch_backup_age::MAIL, |e, _, s| alert::send(e, &s.input))], keys: &[watch_backup_age::KEYS], build: |_| watch_backup_age::WatchBackupAge::pinned().registration() },
     Task { name: watch_ci_spill::NAME, boot: watch_ci_spill::WatchCiSpill::boot, cadence_ms: |_| watch_ci_spill::CADENCE_MS, effects: watch_ci_spill::EFFECTS, runners: &[(watch_ci_spill::OBSERVE, |e, _, s| watch_ci_spill::observe(e, &s.input))], keys: &[watch_ci_spill::KEYS], build: |_| watch_ci_spill::WatchCiSpill::pinned().registration() },
     Task { name: watch_pass_rate::NAME, boot: watch_pass_rate::WatchPassRate::boot, cadence_ms: |_| watch_pass_rate::CADENCE_MS, effects: watch_pass_rate::EFFECTS, runners: &[(watch_pass_rate::OBSERVE, |_, _, _| watch_pass_rate::observe()), (watch_pass_rate::MAIL, |e, _, s| alert::send(e, &s.input))], keys: &[watch_pass_rate::KEYS], build: |_| watch_pass_rate::WatchPassRate::pinned().registration() },
@@ -33,7 +32,5 @@ pub static TASKS: &[Task] = &[
     Task { name: watch_warm_full::NAME, boot: watch_warm_full::WatchWarmFull::boot, cadence_ms: |_| watch_warm_full::CADENCE_MS, effects: watch_warm_full::EFFECTS, runners: &[(watch_warm_full::OBSERVE, |_, _, _| watch_warm_full::observe()), (watch_warm_full::REAP, |_, _, s| watch_warm_full::reap(&s.input))], keys: &[watch_warm_full::KEYS], build: |_| watch_warm_full::WatchWarmFull::pinned().registration() },
 ];
 
-/// The family's rows, written from their contracts and not yet ported; see `tasks`.
-pub static PENDING: &[Task] = &[
-    Task { name: incident_probe::NAME, boot: incident_probe::IncidentProbe::boot, cadence_ms: |_| incident_probe::CADENCE_MS, effects: incident_probe::EFFECTS, runners: &[stub!(incident_probe::OBSERVE), stub!(incident_probe::SEND)], keys: &[incident_probe::KEYS], build: |_| incident_probe::IncidentProbe::pinned().registration() },
-];
+/// Every row of the family is ported; see `tasks`.
+pub static PENDING: &[Task] = &[];

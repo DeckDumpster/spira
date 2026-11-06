@@ -27,14 +27,6 @@ pub mod watch_sop_lint;
 pub mod watch_statute_audit;
 pub mod watch_tower;
 
-/// A runner not yet ported: the effect name is the panic message.
-macro_rules! stub {
-    ($name:expr) => {
-        ($name, |_, _, spec| unimplemented!("{}: not ported yet", spec.name))
-    };
-}
-pub(crate) use stub;
-
 pub static TASKS: &[Task] = &[
     Task { name: cert_sample::NAME, boot: cert_sample::CertSample::boot, cadence_ms: |_| cert_sample::next_tick(0), effects: cert_sample::EFFECTS, runners: &[(cert_sample::OBSERVE, cert_sample::observe), (cert_sample::BRANCH, cert_sample::branch), (cert_sample::FILE_BEAD, cert_sample::file_bead), (cert_sample::RECORD, cert_sample::record)], keys: &[cert_sample::KEYS], build: |_| cert_sample::CertSample::pinned().registration() },
     Task { name: cert_full::NAME, boot: cert_full::CertFull::boot, cadence_ms: |_| cert_full::next_tick(0), effects: cert_full::EFFECTS, runners: &[(cert_full::OBSERVE, cert_full::observe), (cert_full::CHECKOUT, cert_full::checkout), (cert_full::FILE_BEAD, cert_full::file_bead), (cert_full::RECORD, cert_full::record)], keys: &[cert_full::KEYS], build: |_| cert_full::CertFull::pinned().registration() },

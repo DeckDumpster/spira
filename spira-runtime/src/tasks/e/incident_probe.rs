@@ -114,9 +114,54 @@ pub struct Snapshot {
     pub last_probe: Option<Probe>,
 }
 
+const SEND_DEADLINE_MS: u64 = 30_000;
+
+/// What `send` is asked: the note `alarms_pass::probe` sends, under the tick's key.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Send {
+    pub key: String,
+    pub mailbox: String,
+    pub subject: String,
+    pub body: String,
+}
+
 /// Every tick sends once, keyed by the tick that asked: `incident_probe/<tick event id>`.
-pub fn decide(_snap: &Snapshot, _tick_id: &str, _cfg: &Config) -> Vec<EffectSpec> {
-    unimplemented!("incident.probe: not ported yet")
+pub fn decide(_snap: &Snapshot, tick_id: &str, _cfg: &Config) -> Vec<EffectSpec> {
+    let send = Send { key: format!("incident_probe/{tick_id}"), mailbox: MAILBOX.into(), subject: SUBJECT.into(), body: BODY.into() };
+    vec![EffectSpec { name: SEND.into(), input: serde_json::to_string(&send).unwrap_or_default(), deadline_ms: SEND_DEADLINE_MS }]
+}
+
+/// The latest probe attempt in the alarm-attempt family, the record `probe_health` reads.
+pub fn observe() -> Result<String, String> {
+    let config = Config::pinned()?;
+    let last_probe = incident::alarms_pass::last_probe(std::path::Path::new(&config.run)).and_then(|a| {
+        let outcome = match a.outcome {
+            tsd::alarm::Outcome::Delivered { id } => Outcome::Delivered { id },
+            tsd::alarm::Outcome::Failed { reason } => Outcome::Failed { reason },
+            tsd::alarm::Outcome::DeliveredFallback => return None,
+        };
+        Some(Probe { at: a.at, outcome })
+    });
+    serde_json::to_string(&Snapshot { last_probe }).map_err(|e| e.to_string())
+}
+
+/// `alarms_pass::probe` through the primary path alone, in-process: the mail environment and
+/// `bdq` as `incident page` built them (`incident/src/main.rs:257-262`). Refuses any mailbox but
+/// the probe's own; the outcome body is the line the loop printed.
+pub fn send(input: &str) -> Result<String, String> {
+    let s: Send = serde_json::from_str(input).map_err(|e| format!("{SEND}: bad input: {e}"))?;
+    if s.mailbox != MAILBOX {
+        return Err(format!("{SEND}: refused: mailbox {} is not {MAILBOX}", s.mailbox));
+    }
+    let config = Config::pinned()?;
+    let env = mail::env::Env::load()?;
+    let bd = mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: env.bd_conn_retries };
+    let primary = incident::alarms_pass::MailPrimary { env, bd };
+    let host = incident::intake::hostname();
+    match incident::alarms_pass::probe_primary(&primary, &runtime::ports::WallClock, std::path::Path::new(&config.run), &host, &s.mailbox) {
+        Ok(id) => Ok(format!("probe delivered as {id}")),
+        Err(e) => Err(format!("probe FAILED: {e}")),
+    }
 }
 
 pub struct IncidentProbe {

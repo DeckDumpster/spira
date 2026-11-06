@@ -33,7 +33,14 @@ pub fn parse(value: &str) -> Result<BTreeMap<String, Mode>, String> {
 /// row ahead of its port, so moving a row into `TASKS` touches no config line. A pending name
 /// boots nothing; a name in neither is refused.
 pub fn apply(regs: Vec<Registration>, table: &BTreeMap<String, Mode>) -> Result<Vec<Registration>, String> {
-    let known = |k: &str| regs.iter().any(|r| r.name == k) || crate::tasks::pending().any(|t| t.name == k);
+    let pending: Vec<&str> = crate::tasks::pending().map(|t| t.name).collect();
+    apply_with(regs, table, &pending)
+}
+
+/// [`apply`] against an explicit set of pending names, so the rule holds and is tested whether or
+/// not any row is still pending.
+fn apply_with(regs: Vec<Registration>, table: &BTreeMap<String, Mode>, pending: &[&str]) -> Result<Vec<Registration>, String> {
+    let known = |k: &str| regs.iter().any(|r| r.name == k) || pending.contains(&k);
     if let Some(stray) = table.keys().find(|k| !known(k)) {
         return Err(format!("{KEY} names {stray}, which no task registers"));
     }
@@ -88,11 +95,13 @@ mod tests {
 
     #[test]
     fn a_pending_row_may_be_named_before_it_is_ported_and_is_not_booted() {
-        let pending = crate::tasks::pending().next().expect("a pending row").name;
+        // Every family's rows are ported, so the pending set is planted rather than read.
+        let pending = "planted.pending_row";
         let table = parse(&format!("heartbeat=act {pending}=act")).unwrap();
-        let out = apply(regs(&["heartbeat"]), &table).expect("a pending name is known, not stray");
+        let out = apply_with(regs(&["heartbeat"]), &table, &[pending]).expect("a pending name is known, not stray");
         assert_eq!(out.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["heartbeat"], "a pending row is named, not registered");
-        let err = apply(regs(&["heartbeat"]), &parse(&format!("heartbeat=act {pending}x=act")).unwrap()).err().expect("a name in neither table is refused");
+        assert!(apply(regs(&["heartbeat"]), &table).is_err(), "the same name is stray once no row is pending under it");
+        let err = apply_with(regs(&["heartbeat"]), &parse(&format!("heartbeat=act {pending}x=act")).unwrap(), &[pending]).err().expect("a name in neither table is refused");
         assert!(err.contains(&format!("{pending}x")), "{err}");
     }
 

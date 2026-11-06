@@ -6,7 +6,7 @@
 use std::sync::{Arc, Mutex};
 
 use runtime::taskrig::{assert_deterministic, assert_journal_budget, effects_runnable, TaskRig, DAY_MS};
-use runtime::{EFFECT_REQUESTED, EFFECT_SUCCEEDED};
+use runtime::{EFFECT_FAILED, EFFECT_REQUESTED, EFFECT_SUCCEEDED};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::incident_probe::*;
 
@@ -97,10 +97,33 @@ fn t5_the_probe_is_the_note_the_alarms_component_sent() {
     assert_eq!(sends(&r).len(), 1, "the last outcome does not gate the send");
 }
 
+/// The contract's T6: seven virtual days with the primary down for three hours once. Each send
+/// journals its request and its outcome, and the boot tick sends too: 2 × (7 × 24 + 1) events in
+/// 168 h, two over 2/h, so the exact count is pinned and the ceiling is 3/h.
 #[test]
-fn t6_two_days_replay_identically_at_one_send_an_hour() {
-    let r = assert_deterministic(|seed| rig(seed, none(), delivered), 7, 2);
+fn t6_seven_days_with_a_three_hour_outage_replay_identically_at_one_send_an_hour() {
+    const DAYS: u64 = 7;
+    let make = |seed| {
+        let n = Arc::new(Mutex::new(0u64));
+        let world = none();
+        let (_, stream, kind) = IncidentProbe::boot();
+        let mut r = TaskRig::new(seed, IncidentProbe::new(config()).registration())
+            .unwrap()
+            .double(OBSERVE, move |_| Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap()))
+            .double(SEND, move |_| {
+                let mut n = n.lock().unwrap();
+                *n += 1;
+                if (50..53).contains(&*n) { Err("primary down".into()) } else { Ok(format!("msg-{n}")) }
+            });
+        r.tick(stream, kind).unwrap();
+        r
+    };
+    let r = assert_deterministic(make, 7, DAYS);
     acc::assert_healthy(&r, STREAM);
-    assert_eq!(sends(&r).len() as u64, 2 * DAY_MS / CADENCE_MS + 1);
-    assert_journal_budget(&r, 2);
+    let per_hour = DAYS * DAY_MS / CADENCE_MS + 1;
+    assert_eq!(sends(&r).len() as u64, per_hour, "one send an hour, the outage's hours included");
+    let failed = r.trace().iter().filter(|e| e.2 == EFFECT_FAILED).count();
+    assert_eq!(failed, 3, "the three hours down fail, and no retry or fallback adds a send");
+    assert_eq!(r.trace().len() as u64, 2 * per_hour);
+    assert_journal_budget(&r, 3);
 }
