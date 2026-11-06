@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 
 use bead::claimdesc;
 use bead::bdq::{
-    check_destructive, check_repo_label, check_schema_delete, creates_beads, creates_closed, creates_rowless_type, id_bearing_args, czar_fence_class, is_create, json_count, json_only,
+    check_destructive, check_repo_label, check_schema_delete, creates_beads, creates_closed, creates_rowless_type, id_bearing_args, is_create, json_count, json_only,
     should_retry, retryable, backoff_ms, is_write, WRITER_LOCK_BUSY,
 };
 use spira_config::repos::Registry;
@@ -353,18 +353,13 @@ fn cmd_bdq(args: &[String]) -> i32 {
     }
 
     // The czar fence: a live SPIRA_RUNE=czar session with a class mutating the queue
-    // (reopen always; update/close unless it is the trigger bead itself) must pass
-    // czar-fence.sh first (ported: `bead::bdq::czar_fence`). Its own exit code is NOT propagated — bdq always
-    // normalizes a refusal here to 1, matching the bash's bare `|| return 1`.
-    let rune = env_or("SPIRA_RUNE", "");
-    let czar_class = env_or("SPIRA_CZAR_CLASS", "");
-    let czar_trigger = env_or("SPIRA_CZAR_TRIGGER_BEAD", "");
-    if let Some(class) = czar_fence_class(&rune, &czar_class, &czar_trigger, args) {
-        // The fence read the stage from the environment bdq hands every child, as the script did.
-        if let Err(why) = bead::bdq::czar_fence(class, &|var| std::env::var(var).ok()) {
-            eprintln!("{why}");
-            return 1;
-        }
+    // (reopen always; update/close unless it is the trigger bead itself) passes only in the
+    // class's act stage. `bead::guard::czar` is the one implementation, shared with the content
+    // door; its refusal is exit 1, matching the bash's bare `|| return 1`. The stage is read
+    // from the environment bdq hands every child, as the script did.
+    if let Err(r) = bead::guard::czar(args, &|var| std::env::var(var).ok()) {
+        eprint!("{}", r.text);
+        return r.code;
     }
 
     // SPIRA_BDJSON_FIXTURE routes every call to the fixture engine instead of the real bd.
@@ -436,25 +431,25 @@ fn cmd_bdq(args: &[String]) -> i32 {
     let mut call_args: Vec<String> = args.to_vec();
     let mut forced: Option<(String, claimdesc::LiveClaim, String)> = None;
     if args.first().map(String::as_str) == Some("update") {
-        let u = claimdesc::parse_update_args(&args[1..]);
-        call_args = std::iter::once("update".to_string()).chain(u.passthrough.iter().cloned()).collect();
-        if let (true, Some(id)) = (u.touches_description, u.id.as_ref()) {
-            // The claim is the lifecycle row's (sp-mve9i). A machine that cannot answer refuses
-            // nothing, as a failed bd show refused nothing before it.
-            let row = spira_config::lc_state::row(id).unwrap_or_else(|e| {
-                eprintln!("bdq: lifecycle state unreadable for {id} ({e}); not checking for a live claim");
-                None
-            });
-            if let Some(claim) = claimdesc::live_claim(row.as_ref(), now_epoch()) {
-                match u.force {
-                    None => {
-                        eprint!("{}", claimdesc::refusal(id, &claim));
-                        return 1;
-                    }
-                    Some(reason) => forced = Some((id.clone(), claim, reason)),
-                }
-            }
+        // bd has no --force-claimed: spira's own flag never reaches it.
+        call_args = std::iter::once("update".to_string()).chain(claimdesc::parse_update_args(&args[1..]).passthrough).collect();
+    }
+    // The claim is the lifecycle row's (sp-mve9i). A machine that cannot answer refuses
+    // nothing, as a failed bd show refused nothing before it. `bead::guard::claim` is the one
+    // implementation, shared with the content door.
+    let rows = |id: &str| {
+        spira_config::lc_state::row(id).unwrap_or_else(|e| {
+            eprintln!("bdq: lifecycle state unreadable for {id} ({e}); not checking for a live claim");
+            None
+        })
+    };
+    match bead::guard::claim(args, &rows, now_epoch()) {
+        Err(r) => {
+            eprint!("{}", r.text);
+            return r.code;
         }
+        Ok(bead::guard::Claim::Forced { id, claim, reason }) => forced = Some((id, claim, reason)),
+        Ok(bead::guard::Claim::Free) => {}
     }
     let id_args = id_bearing_args(&call_args);
     let args = &id_args[..];

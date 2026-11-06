@@ -386,9 +386,8 @@ pub fn creates_rowless_type(args: &[String]) -> bool {
 }
 
 // =========================================================================================
-// The czar fence's dispatch decision (the fence itself is `czar-fence.sh`, a subprocess —
-// see `src/bin/bdq.rs`). Pure: "should the caller shell out to czar-fence.sh at all, and
-// with which class."
+// The czar fence's dispatch decision: whether the fence applies to a call at all, and with
+// which class. The fence itself is `crate::guard::czar`, which bdq and the content door share.
 // =========================================================================================
 
 /// Whether `bdq`'s czar-fence dispatch applies to this call, and the class to pass
@@ -420,18 +419,10 @@ pub fn czar_fence_class<'a>(
 
 /// `czar-fence.sh <class>`, in-process: `Ok(())` when `SPIRA_CZAR_STAGE_<CLASS>` (hyphens to
 /// underscores, upper-cased) reads `act`; otherwise the refusal line the script printed. An
-/// unset stage is shadow (law-guard-binds-the-caller: a new class starts contained).
+/// unset stage is shadow (law-guard-binds-the-caller: a new class starts contained). The one
+/// implementation is [`crate::guard::czar_stage`].
 pub fn czar_fence(class: &str, stage_of: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
-    if class.is_empty() {
-        return Err("czar-fence: class required".into());
-    }
-    let var = format!("SPIRA_CZAR_STAGE_{}", class.replace('-', "_").to_uppercase());
-    let stage = stage_of(&var).filter(|v| !v.is_empty()).unwrap_or_else(|| "shadow".into());
-    match stage.as_str() {
-        "act" => Ok(()),
-        "shadow" => Err(format!("czar-fence: {class} is shadow — mutation refused ({var}=act to enable)")),
-        other => Err(format!("czar-fence: unknown stage {other} in {var} (shadow or act)")),
-    }
+    crate::guard::czar_stage(class, stage_of).map_err(|r| r.text.trim_end().to_string())
 }
 
 /// `(SPIRA_HOME_REPO, SPIRA_REPO_MAP)` resolved for a home and repo.

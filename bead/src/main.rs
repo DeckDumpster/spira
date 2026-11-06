@@ -44,6 +44,15 @@ fn main() {
         "lint" => cmd_lint(&home, &rest),
         "judge-create" => cmd_judge_create(&home, &rest),
         "event" => cmd_event(&rest),
+        // `czar-fence.sh <class>`'s answer: 0 act, 1 shadow (the default), 2 otherwise, read
+        // from this process's environment as the script read it (bead::guard::czar_stage).
+        "czar-fence" => match bead::guard::czar_stage(rest.first().map(String::as_str).unwrap_or(""), &|k| env::var(k).ok()) {
+            Ok(()) => 0,
+            Err(r) => {
+                eprint!("{}", r.text);
+                r.code
+            }
+        },
         "dep" => match rest.first().map(String::as_str) {
             Some("add") => cmd_dep_add(&home, &rest[1..]),
             Some("remove") => cmd_dep_remove(&home, &rest[1..]),
