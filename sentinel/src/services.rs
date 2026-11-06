@@ -167,15 +167,27 @@ impl Services for RealServices {
         let _ = pusher.push(family, &tsd::now_iso(), fields);
     }
 
+    /// The concierge ask. A send that does not happen is said on stderr: the escalation is the
+    /// one report of a stalled leg, so its own failure must not be silent.
     fn mail(&self, ask: &Ask) -> bool {
-        let Ok(mut env) = mail::env::Env::load() else { return false };
+        let refused = |e: &str| {
+            eprintln!("sentinel: mail send concierge: {}", first_line(e));
+            false
+        };
+        let mut env = match mail::env::Env::load() {
+            Ok(e) => e,
+            Err(e) => return refused(&e),
+        };
         if ask.own_dedup {
             env.repeat_considered = Some("sentinel-own-dedup".into());
         }
-        if mail::maildir::mailbox_valid("concierge").is_err() {
-            return false;
+        if let Err(e) = mail::maildir::mailbox_valid("concierge") {
+            return refused(&e);
         }
-        let Ok(bdq) = spira_config::release_env::tool("bdq") else { return false };
+        let bdq = match spira_config::release_env::tool("bdq") {
+            Ok(b) => b,
+            Err(e) => return refused(&e),
+        };
         let bd = mail::bead::BdCli { bdq, conn_retries: env.bd_conn_retries };
         let args = mail::cmds::SendArgs {
             mailbox: "concierge",
@@ -198,6 +210,9 @@ impl Services for RealServices {
                 eprintln!("sentinel: mail send attempt not recorded: {}", first_line(&e));
             }
         }
-        result.is_ok()
+        match result {
+            Ok(_) => true,
+            Err(e) => refused(&e),
+        }
     }
 }
