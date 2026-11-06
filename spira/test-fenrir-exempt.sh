@@ -65,7 +65,8 @@ file_incident() {  # file_incident <ref> <title> <payload> [VAR=val ...]
     local ref="$1" title="$2" payload="$3"; shift 3
     # SPIRA_BD/SPIRA_DB/SPIRA_RUN are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
     # CONFIG): declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
-    tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_MAIL="$MAILROOT"
+    tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_MAIL="$MAILROOT" \
+        SPIRA_MAIL_KINDS="$HERE/mail/kinds" SPIRA_MAIL_INDEX="$TMP/mail-index" SPIRA_MAIL_MUTE=0
     printf '%s' "$payload" | \
         env -i SPIRA_RELEASE="$(PATH="$PATH" tl_release)" HOME="$HOME" PATH="$PATH" \
         STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
