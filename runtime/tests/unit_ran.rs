@@ -133,3 +133,60 @@ fn a_scope_runs_tails_ride_its_unit_ran_through_the_source() {
     assert!(units::RanOutput::from_event_kind(&due[1].kind).unwrap().is_empty(), "a plain start carries no tails");
     assert!(!due[1].kind.body.contains("tail"));
 }
+
+/// A P2-shaped stub that owns one stream and answers only what arrives on it: `go` starts its
+/// unit, and its own `unit.ran` moves it to `done`, journaled on that same stream.
+struct Owned {
+    task: &'static str,
+    stream: &'static str,
+}
+
+impl Handler for Owned {
+    fn interests(&self) -> &[EventKindTag] {
+        &["go", UNIT_RAN]
+    }
+
+    fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+        if ev.stream.0 != self.stream {
+            return vec![];
+        }
+        match ev.kind.tag.as_str() {
+            "go" => {
+                let spec = UnitSpec { task: self.task.into(), key: "k".into(), argv: vec![format!("/bin/{}", self.task)], env: vec![], cwd: None };
+                vec![Command::Effect(EffectSpec { name: UNIT_START.into(), input: serde_json::to_string(&spec).unwrap(), deadline_ms: 5_000 })]
+            }
+            UNIT_RAN => match UnitRan::from_event_kind(&ev.kind).and_then(|r| r.key_for(self.task)) {
+                Some(k) => vec![Command::Emit(EventKind::new("done", &format!("{}:{k}", self.task)))],
+                None => vec![],
+            },
+            _ => vec![],
+        }
+    }
+}
+
+#[test]
+fn a_routed_unit_ran_lands_on_its_tasks_own_stream_and_moves_only_that_task() {
+    let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(0));
+    let c: Arc<dyn Clock> = Arc::new(clock.clone());
+    let scripted = Arc::new(ScriptedUnits::new(c.clone()));
+    scripted.script("alpha", 5_000, Exit::Code(0));
+    scripted.script("gamma", 6_000, Exit::Code(0));
+    let regs = vec![Registration::new("alpha", Owned { task: "alpha", stream: "alpha-s" }), Registration::new("beta", Owned { task: "beta", stream: "beta-s" })];
+    let engine = Engine::open(j.clone(), c.clone(), regs, 1).unwrap();
+    units::effect(&*scripted, UNIT_START, r#"{"task":"gamma","key":"g","argv":["/bin/g"],"env":[],"cwd":null}"#).unwrap();
+    let mut sources = Sources::default();
+    sources.register(Box::new(ScriptedSource::new("go", c.clone(), vec![(100, Submit::new("go-alpha", "alpha-s", EventKind::new("go", "")))]))).unwrap();
+    let streams = |task: &str| match task {
+        "alpha" => Some("alpha-s".to_string()),
+        "beta" => Some("beta-s".to_string()),
+        _ => None,
+    };
+    sources.register(Box::new(UnitRanSource::scripted("unit-ran", scripted.clone(), c.clone()).routed(streams))).unwrap();
+    let mut v = VirtualDriver::new(engine, clock.clone(), Arc::new(UnitRunner(scripted.clone()))).with_sources(sources).unwrap();
+    v.run_until(60_000).unwrap();
+
+    let ran: Vec<String> = tags(&*j, UNIT_RAN).into_iter().map(|(s, _, _)| s).collect();
+    assert_eq!(ran, ["alpha-s", UNITS_STREAM], "alpha's run on alpha's stream; gamma, no task the resolver knows, on units");
+    let done: Vec<(String, String)> = tags(&*j, "done").into_iter().map(|(s, b, _)| (s, b)).collect();
+    assert_eq!(done, [("alpha-s".to_string(), "alpha:k".to_string())], "alpha moved on its own stream; beta, owning another stream, did not");
+}

@@ -139,9 +139,14 @@ impl Scripted for ScriptedSource {
     }
 }
 
-/// The stream every `unit.ran` is submitted on. A task recognises its own runs by the unit's
-/// name ([`UnitRan::key_for`]), not by the stream.
+/// The stream a `unit.ran` is submitted on when its unit names no task the source's resolver
+/// knows (or the source has none). A run of a known task goes to that task's own stream
+/// ([`UnitRanSource::routed`]), so the commands its handler answers with land there too; the
+/// task still recognises its own runs by the unit's name ([`UnitRan::key_for`]).
 pub const UNITS_STREAM: &str = "units";
+
+/// Task name to the stream that task's handler owns; `None` for a task it does not host.
+pub type StreamOf = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
 
 enum Face {
     /// A backend that reads the world: drained every `every` on the source's thread.
@@ -158,21 +163,36 @@ pub struct UnitRanSource {
     completions: Arc<dyn UnitCompletions>,
     clock: Arc<dyn Clock>,
     face: Face,
+    stream_of: Option<StreamOf>,
 }
 
 impl UnitRanSource {
     /// A real backend (systemd, child processes), drained every `every`.
     pub fn polled(name: &str, completions: Arc<dyn UnitCompletions>, clock: Arc<dyn Clock>, every: Duration) -> Self {
-        UnitRanSource { name: name.into(), completions, clock, face: Face::Polled { every } }
+        UnitRanSource { name: name.into(), completions, clock, face: Face::Polled { every }, stream_of: None }
     }
 
     /// The simulator's backend: runs under a virtual-time driver, delivering each end when due.
     pub fn scripted(name: &str, units: Arc<ScriptedUnits>, clock: Arc<dyn Clock>) -> Self {
-        UnitRanSource { name: name.into(), completions: units.clone(), clock, face: Face::Scripted(units) }
+        UnitRanSource { name: name.into(), completions: units.clone(), clock, face: Face::Scripted(units), stream_of: None }
+    }
+
+    /// Submit each run on the stream `stream_of` gives the task its unit name parses to
+    /// ([`crate::units::parse_unit_name`]); a name that parses to no task, or to one `stream_of`
+    /// does not know, stays on [`UNITS_STREAM`]. Either face.
+    pub fn routed(mut self, stream_of: impl Fn(&str) -> Option<String> + Send + Sync + 'static) -> Self {
+        self.stream_of = Some(Arc::new(stream_of));
+        self
+    }
+
+    /// The stream `r` is submitted on.
+    pub fn stream_for(&self, r: &UnitRan) -> String {
+        let task = r.handle.owner().map(|(task, _)| task);
+        task.and_then(|t| self.stream_of.as_ref().and_then(|f| f(&t))).unwrap_or_else(|| UNITS_STREAM.to_string())
     }
 
     fn submit_of(&self, r: &UnitRan, out: &RanOutput, now_ms: u64) -> Submit {
-        Submit::new(&format!("{UNIT_RAN}/{}/{now_ms}", r.handle.name), UNITS_STREAM, r.event_kind_with(out))
+        Submit::new(&format!("{UNIT_RAN}/{}/{now_ms}", r.handle.name), &self.stream_for(r), r.event_kind_with(out))
     }
 
     /// Every run ended since the last drain, as submissions; a backend fault drains nothing and
