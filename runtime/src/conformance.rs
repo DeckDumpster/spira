@@ -445,6 +445,101 @@ pub fn halt_holds_writes_runs_probes_and_resume_releases_once_in_order(rig: &dyn
     assert_eq!(count_tag(&*j, EFFECT_REQUESTED), 6);
 }
 
+/// On `wake`, wherever it lands: a `nudge` onto stream `y`, carrying the waking event's id.
+struct Sender;
+impl Handler for Sender {
+    fn interests(&self) -> &[EventKindTag] {
+        &["wake"]
+    }
+    fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+        vec![Command::EmitTo { stream: StreamKey("y".into()), kind: EventKind::new("nudge", &ev.id.0) }]
+    }
+}
+
+/// On `nudge`: counts it and answers `heard` on the stream it arrived on.
+struct Hearer(Counter);
+impl Handler for Hearer {
+    fn interests(&self) -> &[EventKindTag] {
+        &["nudge"]
+    }
+    fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        vec![Command::Emit(EventKind::new("heard", &ev.kind.body))]
+    }
+}
+
+fn cross(heard: &Counter, mode: Mode) -> Vec<Registration> {
+    vec![Registration::new("sender", Sender).with_mode(mode), Registration::new("hearer", Hearer(heard.clone()))]
+}
+
+/// Stream `y` exists before anything is sent to it, as a task's own stream does.
+fn wake(x: &mut dyn Executor, id: &str) {
+    x.submit("y0", "y", EventKind::new("y.boot", "")).unwrap();
+    x.submit(id, "x", EventKind::new("wake", "")).unwrap();
+}
+
+pub fn emit_to_wakes_another_stream_once_across_a_crash(rig: &dyn Rig) {
+    let (j, clock, heard) = (rig.journal(), VirtualClock::new(0), Counter::default());
+    let mut x = rig.boot(j.clone(), &clock, 3, cross(&heard, Mode::Act)).unwrap();
+    wake(&mut *x, "w1");
+    x.run_until_idle().unwrap();
+    let t = trace(&*j);
+    let nudges: Vec<_> = t.iter().filter(|e| e.2 == "nudge").collect();
+    assert_eq!(nudges.len(), 1, "one nudge: {t:?}");
+    assert_eq!((nudges[0].0.as_str(), nudges[0].1.as_str(), nudges[0].3.as_str()), (derive_id("w1/sender/0>y".into()).as_str(), "y", "w1"), "on the target stream, its id from the cause and the target");
+    assert_eq!(heard.load(Ordering::SeqCst), 1, "the target stream's handler hears it once");
+    assert_eq!(t.iter().filter(|e| e.2 == "heard").map(|e| e.1.as_str()).collect::<Vec<_>>(), vec!["y"]);
+    let first = t;
+    drop(x);
+
+    let (k, again) = (rig.journal(), Counter::default());
+    let faulty = FaultyJournal::new(k.clone());
+    let mut x = rig.boot(faulty.clone(), &clock, 3, cross(&again, Mode::Act)).unwrap();
+    wake(&mut *x, "w1");
+    faulty.fail_next("mark_applied");
+    assert!(x.run_until_idle().is_err(), "the crash lands after the nudge is appended and before it is dispatched");
+    assert_eq!(count_tag(&*k, "nudge"), 1);
+    assert_eq!(again.load(Ordering::SeqCst), 0);
+    drop(x);
+    let mut y = rig.boot(k.clone(), &clock, 3, cross(&again, Mode::Act)).unwrap();
+    y.run_until_idle().unwrap();
+    assert_eq!(count_tag(&*k, "nudge"), 1, "the replayed sender appends the same id, not a second nudge");
+    assert_eq!(again.load(Ordering::SeqCst), 1, "and the target hears it once");
+    assert_eq!(trace(&*k), first, "a crash and restart land the trace of an uninterrupted run");
+    drop(y);
+
+    k.set_cursor(0).unwrap();
+    let mut z = rig.boot(k.clone(), &clock, 3, cross(&again, Mode::Act)).unwrap();
+    z.run_until_idle().unwrap();
+    assert_eq!(trace(&*k), first, "replaying the whole journal adds nothing");
+    assert_eq!(again.load(Ordering::SeqCst), 1);
+}
+
+pub fn emit_to_is_shadowed_under_observe_and_runs_under_halt(rig: &dyn Rig) {
+    let (j, clock, heard) = (rig.journal(), VirtualClock::new(0), Counter::default());
+    let mut x = rig.boot(j.clone(), &clock, 1, cross(&heard, Mode::Observe)).unwrap();
+    wake(&mut *x, "w1");
+    x.run_until_idle().unwrap();
+    let t = trace(&*j);
+    let shadowed: Vec<_> = t.iter().filter(|e| e.2 == EMIT_SHADOWED).collect();
+    assert_eq!(shadowed.len(), 1, "an observing task's cross-stream emit is recorded: {t:?}");
+    assert_eq!((shadowed[0].0.as_str(), shadowed[0].1.as_str()), (derive_id("w1/sender/0>y".into()).as_str(), "x"), "on its own stream, with the id the emit would have had");
+    let body: ShadowedEmit = serde_json::from_str(&shadowed[0].3).expect("the shadowed body names the target");
+    assert_eq!(body, ShadowedEmit { stream: StreamKey("y".into()), kind: EventKind::new("nudge", "w1") });
+    assert_eq!(count_tag(&*j, "nudge"), 0, "and never lands on the target");
+    assert_eq!(heard.load(Ordering::SeqCst), 0);
+    drop(x);
+
+    let (k, heard) = (rig.journal(), Counter::default());
+    let mut y = rig.boot(k.clone(), &clock, 1, cross(&heard, Mode::Act)).unwrap();
+    y.submit("h1", HALT_STREAM, EventKind::new(SCHEDULER_HALTED, "test")).unwrap();
+    wake(&mut *y, "w1");
+    y.run_until_idle().unwrap();
+    assert_eq!(count_tag(&*k, "nudge"), 1, "a halt holds effects, not events");
+    assert_eq!(heard.load(Ordering::SeqCst), 1);
+    assert_eq!(count_tag(&*k, EFFECT_HELD), 0);
+}
+
 pub fn run_all(rig: &dyn Rig) {
     redelivery_of_any_event(rig);
     crash_between_append_and_dispatch(rig);
@@ -457,4 +552,6 @@ pub fn run_all(rig: &dyn Rig) {
     schedule_rows_survive_restart_and_fire_once(rig);
     observe_shadows_writes_runs_probes_and_never_replays_them(rig);
     halt_holds_writes_runs_probes_and_resume_releases_once_in_order(rig);
+    emit_to_wakes_another_stream_once_across_a_crash(rig);
+    emit_to_is_shadowed_under_observe_and_runs_under_halt(rig);
 }

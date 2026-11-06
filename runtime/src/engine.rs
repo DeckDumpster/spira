@@ -559,6 +559,15 @@ impl Engine {
                     self.carry(handler, &ev.stream, &kind);
                     self.append_derived(id, &ev.stream, kind, ev, ev.at)?;
                 }
+                Command::EmitTo { stream, kind } => {
+                    let id = derive_id(format!("{}/{handler}/{i}>{}", ev.id.0, stream.0));
+                    if mode == Mode::Act {
+                        self.append_derived(id, &stream, kind, ev, ev.at)?;
+                    } else {
+                        let body = serde_json::to_string(&ShadowedEmit { stream, kind }).map_err(|e| RuntimeError::new(e.to_string()))?;
+                        self.append_derived(id, &ev.stream, EventKind::new(EMIT_SHADOWED, &body), ev, ev.at)?;
+                    }
+                }
                 Command::Effect(spec) if mode == Mode::Act && self.halted => {
                     let body = serde_json::to_string(&HeldBody { stream: ev.stream.clone(), task: handler.into(), spec }).map_err(|e| RuntimeError::new(e.to_string()))?;
                     self.append_derived(id, &StreamKey(HALT_STREAM.into()), EventKind::new(EFFECT_HELD, &body), ev, ev.at)?;
@@ -663,6 +672,7 @@ impl Engine {
                 Ok(cmds) => {
                     let count = |f: fn(&Command) -> bool| cmds.iter().filter(|c| f(c)).count();
                     wide.set("commands.emit", count(|c| matches!(c, Command::Emit(_))));
+                    wide.set("commands.emit_to", count(|c| matches!(c, Command::EmitTo { .. })));
                     wide.set("commands.effect", count(|c| matches!(c, Command::Effect(_))));
                     wide.set("commands.schedule", count(|c| matches!(c, Command::Schedule { .. })));
                     let done = self.apply(cmds, ev, &name, mode).and_then(|()| if at.is_some() { self.journal.mark_applied(&name, &ev.id) } else { Ok(()) });

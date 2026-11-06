@@ -47,6 +47,9 @@ pub const EFFECT_TIMED_OUT: EventKindTag = "effect.timed_out";
 /// A write an `Observe` task asked for and the engine recorded instead of running. It is never
 /// an open effect: no restart, and no later switch to `Act`, runs it.
 pub const EFFECT_SHADOWED: EventKindTag = "effect.shadowed";
+/// A cross-stream emit an `Observe` task asked for, recorded on its own stream instead of
+/// landing on the target; its body is a [`ShadowedEmit`]. Nothing ever delivers it.
+pub const EMIT_SHADOWED: EventKindTag = "emit.shadowed";
 /// A write an `Act` task asked for while the scheduler was halted; resuming requests it.
 pub const EFFECT_HELD: EventKindTag = "effect.held";
 
@@ -86,11 +89,23 @@ pub struct EffectSpec {
     pub deadline_ms: u64,
 }
 
-/// `Emit`, `Effect` and `Schedule` are journaled and survive a restart. `Note`, `Probe` and
+/// The body of an [`EMIT_SHADOWED`] event: where the emit would have gone, and what.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowedEmit {
+    pub stream: StreamKey,
+    pub kind: EventKind,
+}
+
+/// `Emit`, `EmitTo`, `Effect` and `Schedule` are journaled and survive a restart. `Note`, `Probe` and
 /// `Timer` live in the engine's memory only: a restart forgets them, so they are for work the
 /// next poll repeats anyway, and a handler that must not lose a fact emits it.
 pub enum Command {
     Emit(EventKind),
+    /// An event on another stream: how one task wakes another. Its id is the causing event's,
+    /// the handler, the command's index and the target stream, so a replayed handler appends
+    /// nothing twice. A halt does not hold it (it is not an effect); under `Observe` it is
+    /// journaled as [`EMIT_SHADOWED`] on the handler's own stream and never delivered.
+    EmitTo { stream: StreamKey, kind: EventKind },
     Effect(EffectSpec),
     Schedule { at: u64, kind: EventKind },
     Note(EventKind),
