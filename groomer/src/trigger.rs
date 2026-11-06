@@ -43,17 +43,18 @@ pub fn printed_id(out: &str) -> Option<String> {
 /// Files `f` and returns its id. A persona bead then gets the labels `bead file` did not write
 /// over the content door; any other bead gets its lifecycle row over the store's door.
 pub fn file(lc: &LcClient, f: &Filing) -> Result<String, String> {
-    let tool = if f.persona.is_some() { "bead" } else { "bdq" };
-    let program = spira_config::release_env::tool(tool)?;
-    // FORK-EDGE: the content verb refuses `create` (spira-lc/src/content.rs `check`), so a new
-    // bead still goes through `bead file` / `bdq create`, the only writers of a bead's content.
-    let mut child = spira_config::bounded::bounded(&program).args(argv(f)).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("cannot run {tool}: {e}"))?;
-    child.stdin.take().ok_or("no stdin")?.write_all(f.body.as_bytes()).map_err(|e| format!("{tool}: writing the body: {e}"))?;
-    let out = child.wait_with_output().map_err(|e| format!("{tool}: {e}"))?;
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    if !out.status.success() {
-        return Err(format!("{tool} exited {}: {}", out.status, String::from_utf8_lossy(&out.stderr).lines().next().unwrap_or("")));
-    }
+    let (tool, stdout) = match f.persona {
+        Some(_) => ("bead", file_persona(f)?),
+        None => {
+            // The store's content door: every protection bdq applies, the body as the request body.
+            let a: Vec<String> = std::iter::once("content".to_string()).chain(argv(f)).collect();
+            let r = lc.call_stdin(&a, f.body).map_err(|e| format!("content create: {e}"))?;
+            if r.code != 0 {
+                return Err(format!("content create exited {}: {}", r.code, r.why()));
+            }
+            ("content create", r.out)
+        }
+    };
     let id = printed_id(&stdout).ok_or_else(|| format!("{tool} printed no id"))?;
     if f.persona.is_some() {
         let mut a: Vec<String> = vec!["content".into(), "update".into(), id.clone()];
@@ -80,9 +81,47 @@ pub fn file(lc: &LcClient, f: &Filing) -> Result<String, String> {
     Ok(id)
 }
 
+/// A persona bead through `bead file --for <persona>`: the filing tool's own contract (the
+/// rune's labels, lane admission), which the content door does not apply. Its stdout.
+fn file_persona(f: &Filing) -> Result<String, String> {
+    let program = spira_config::release_env::tool("bead")?;
+    // FORK-EDGE: `bead file` is the operator filing tool — its contract (rune labels, lane admission) is not the content door's
+    let mut child = spira_config::bounded::bounded(&program).args(argv(f)).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("cannot run bead: {e}"))?;
+    child.stdin.take().ok_or("no stdin")?.write_all(f.body.as_bytes()).map_err(|e| format!("bead: writing the body: {e}"))?;
+    let out = child.wait_with_output().map_err(|e| format!("bead: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("bead exited {}: {}", out.status, String::from_utf8_lossy(&out.stderr).lines().next().unwrap_or("")));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The store as a scripted transport: records each request and its body.
+    struct Script(std::sync::Mutex<Vec<(Vec<String>, Option<String>)>>);
+
+    impl spira_config::lc_call::Transport for Script {
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, _: std::time::Duration) -> Result<spira_config::lc_call::Reply, String> {
+            self.0.lock().unwrap().push((argv.to_vec(), stdin.map(str::to_string)));
+            let out = if argv.first().map(String::as_str) == Some("content") { "sp-new\n".to_string() } else { String::new() };
+            Ok(spira_config::lc_call::Reply { code: 0, out, err: String::new() })
+        }
+    }
+
+    #[test]
+    fn a_plain_trigger_is_filed_through_the_content_door_and_forks_nothing() {
+        let l = labels();
+        let f = Filing { title: "T", kind: "task", priority: 3, labels: &l, body: "the body", persona: None, repo: Some("spira") };
+        let script = std::sync::Arc::new(Script(Default::default()));
+        let lc = LcClient::over(script.clone(), true);
+        assert_eq!(file(&lc, &f), Ok("sp-new".to_string()));
+        let calls = script.0.lock().unwrap();
+        assert_eq!(calls[0].0, ["content", "create", "T", "--type", "task", "--label", "spira,warden-sweep", "--silent", "--priority", "3", "--body-file", "-"]);
+        assert_eq!(calls[0].1.as_deref(), Some("the body"), "the body is the request body");
+        assert_eq!(calls[1].0[..2], ["create-bead", "sp-new"], "then its row, as before");
+    }
 
     fn labels() -> Vec<String> {
         vec!["spira".into(), "warden-sweep".into()]
