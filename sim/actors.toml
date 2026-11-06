@@ -1,59 +1,18 @@
-[[actor]]
-name = "landing-pass"
-command = "landing-pass --pass"
-timer = "spira-landing-pass.timer"
-duration = "land.land-local"
+# Actors the world scenarios (`spira/sim`, `real_actors`) run as processes on their own timers.
+#
+# Every unit the loop used to run on a shipped timer (landing-pass, gate-worker, sentinel-call,
+# sentinel-landing, sift, rounds, publish, reconciler-goodput) is a task of `spira-runtime serve`
+# now, and its timer is gone from systemd/. Ruling D6 of the scheduler consolidation design: the
+# simulator drives those tasks' real registrations with effect doubles (sim/tests/whole_loop.rs),
+# never an actor process, so none has a row here. `actors::parse_specs` refuses an actor whose
+# units would be shipped ones.
 
-[[actor]]
-name = "gate-worker"
-command = "gate-worker run"
-timer = "spira-gate-worker.timer"
-duration = "gate.ran"
-staged = true
-
-[[actor]]
-name = "sentinel-call"
-command = "sentinel --call-only"
-timer = "spira-call.timer"
-duration = "land.phase.tools"
-
-[[actor]]
-name = "sentinel-landing"
-command = "landing-pass land"
-timer = "spira-sentinel.timer"
-duration = "land.land-local"
-
-[[actor]]
-name = "sift"
-command = "round-controller sifts"
-timer = "spira-sift.timer"
-duration = "land.phase.fences"
-
-[[actor]]
-name = "rounds"
-command = "batcher rounds"
-timer = "spira-rounds.timer"
-duration = "land.phase.gate"
-
-[[actor]]
-name = "publish"
-command = "queue publish-settle"
-timer = "spira-publish.timer"
-duration = "land.phase.tools"
-
-# The round controller, run only by world scenarios that select it through real_actors. Its
-# units live under sim/units, which nothing installs: it is never a production shadow run.
+# The round controller, run only by world scenarios that select it through real_actors. It is
+# no task of the service; its units live under sim/units, which nothing installs: it is never a
+# production shadow run.
 [[actor]]
 name = "round-controller"
 command = "round-controller pass"
 timer = "spira-round-controller.timer"
 duration = "land.phase.tools"
 sim_only = true
-
-# The reconciler's goodput pass, run only by world scenarios that name it in real_actors, on
-# the timer it ships with.
-[[actor]]
-name = "reconciler-goodput"
-command = "reconciler goodput-pass"
-timer = "spira-reconciler-goodput.timer"
-duration = "land.phase.tools"
