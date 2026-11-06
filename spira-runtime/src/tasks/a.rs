@@ -110,6 +110,18 @@ pub static TASKS: &[Task] = &[
         keys: &[gate_check::KEYS],
         build: |_| gate_check::GateCheck::from_cfg().registration(),
     },
+    Task {
+        name: batcher_local::NAME,
+        boot: batcher_local::BatcherLocal::boot,
+        cadence_ms: |_| batcher_local::CADENCE_MS,
+        effects: batcher_local::EFFECTS,
+        runners: {
+            use batcher_local::{edge as x, *};
+            &[(OBSERVE, x::observe), (FETCH, x::fetch), (ASSEMBLE, x::assemble), (ROUND_OPEN, x::round_open), (CORPUS, x::corpus), (STAGE, x::stage), (STAGE_TEST, x::stage_test), (EJECT, x::eject), (WITHDRAW, x::withdraw), (REBASE_STALE, x::rebase_stale), (CERTIFY, x::certify), (LC_CERTIFY, x::lc_certify), (LAND, x::land), (ABANDON, x::abandon), (PROMOTE, x::promote), (REDRIVE, x::redrive), (FILE, x::file), (PAUSE, x::pause)]
+        },
+        keys: &[batcher_local::KEYS],
+        build: |_| batcher_local::BatcherLocal::from_cfg().registration(),
+    },
 ];
 
 /// Family A's rows, built from their contracts and waiting for their ports.
@@ -149,15 +161,6 @@ pub static PENDING: &[Task] = &[
         runners: stubs!(sift: OBSERVE, FETCH_BASE, NOTE, SEND_BACK, RECORD_PASS, SUPERSEDE),
         keys: &[sift::KEYS],
         build: |_| sift::Sift::from_cfg().registration(),
-    },
-    Task {
-        name: batcher_local::NAME,
-        boot: batcher_local::BatcherLocal::boot,
-        cadence_ms: |_| batcher_local::CADENCE_MS,
-        effects: batcher_local::EFFECTS,
-        runners: stubs!(batcher_local: OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, EJECT, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, PAUSE),
-        keys: &[batcher_local::KEYS],
-        build: |_| batcher_local::BatcherLocal::from_cfg().registration(),
     },
     Task {
         name: batcher_forge::NAME,

@@ -2695,9 +2695,9 @@ mod wait_lock_tests {
     }
 }
 
-/// A scratch Env for the unit tests: nothing points anywhere real.
-#[cfg(test)]
-pub(crate) fn lifecycle_tests_env(dir: &Path) -> Env {
+/// A scratch Env for unit tests, this crate's and its binary's: nothing points anywhere real.
+#[doc(hidden)]
+pub fn lifecycle_tests_env(dir: &Path) -> Env {
     Env {
         home: dir.to_path_buf(),
         run: dir.to_path_buf(),
