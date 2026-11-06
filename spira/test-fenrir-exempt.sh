@@ -50,29 +50,25 @@ mkdir -p "$TMP/home" "$TMP/run"
 ln -s "$HERE/conf.d" "$TMP/home/conf.d"
 ln -s "$HERE/conf.toml.d" "$TMP/home/conf.toml.d"
 
-export STUB_BD_STATE="$TMP/state.json" STUB_BD_LOG="$TMP/bd.log" MAIL_LOG="$TMP/mail.log"
+export STUB_BD_STATE="$TMP/state.json" STUB_BD_LOG="$TMP/bd.log"
 # sp-jgjvh: incident beads are work beads, so incident's dedup reads each one's state from
 # its lifecycle row, never bd status. A stand-in spira-lc tells the stub store's story in
 # lifecycle terms (testlib.sh lc_mirror_bd: open → READY, closed → LANDED); with no machine
 # every filing would stay spooled.
 lc_mirror_bd "$TMP/lc"
-cat > "$TMP/home/mail" <<'M'
-#!/usr/bin/env bash
-[ "${1:-}" = send ] || exit 0
-printf '%s\n' "$*" >> "$MAIL_LOG"
-cat >> "$MAIL_LOG"
-M
-chmod +x "$TMP/home/mail"
+# The escalation is a mail send incident makes in-process (the mail library), delivered into
+# the suite's own mail root: every message any mailbox received is what an ask reads back.
+MAILROOT="$TMP/mail"
+asks() { cat "$MAILROOT"/*/new/* 2>/dev/null; }
 
 file_incident() {  # file_incident <ref> <title> <payload> [VAR=val ...]
     local ref="$1" title="$2" payload="$3"; shift 3
     # SPIRA_BD/SPIRA_DB/SPIRA_RUN are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
     # CONFIG): declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
-    tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run"
+    tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_MAIL="$MAILROOT"
     printf '%s' "$payload" | \
         env -i SPIRA_RELEASE="$(PATH="$PATH" tl_release)" HOME="$HOME" PATH="$PATH" \
         STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
-        MAIL_LOG="$MAIL_LOG" \
         SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH" SPIRA_RELEASE="$(PATH="$TMP/home:$PATH" tl_release)" \
         SPIRA_INCIDENT_REF="$ref" \
@@ -123,14 +119,14 @@ if [ -n "$bid" ]; then
     has_label "$bid" fenrir && ok "the non-exempt bead gets the fenrir label" \
         || bad "the non-exempt bead gets the fenrir label" "labels: $(labels_of "$bid")"
     is "the recurrence counter reached $FENRIR_AT" "$FENRIR_AT" "$(recur_max "$bid")"
-    want "the ask was filed" "recurred" "$(cat "$MAIL_LOG" 2>/dev/null)"
+    want "the ask was filed" "recurred" "$(asks)"
 fi
 
 # ======================================================================================
 echo
 echo "an exempt ref does NOT reach FENRIR:"
 # ======================================================================================
-rm -f "$STUB_BD_STATE" "$STUB_BD_LOG" "$TMP/lc/facts.tsv"; : > "$MAIL_LOG"
+rm -f "$STUB_BD_STATE" "$STUB_BD_LOG" "$TMP/lc/facts.tsv"; rm -rf "$MAILROOT"
 ref="incident:test-exempt-fenrir"
 title="exempt incident"
 for i in $(seq 1 "$(( FENRIR_AT + 1 ))"); do
@@ -144,7 +140,7 @@ if [ -n "$bid" ]; then
     has_label "$bid" fenrir && bad "the exempt bead does NOT get the fenrir label" "labels: $(labels_of "$bid")" \
         || ok "the exempt bead does NOT get the fenrir label"
     is "the recurrence counter still advances" "$FENRIR_AT" "$(recur_max "$bid")"
-    is "the ask was NOT filed" "" "$(cat "$MAIL_LOG" 2>/dev/null | tr -d '[:space:]')"
+    is "the ask was NOT filed" "" "$(asks | tr -d '[:space:]')"
 fi
 
 # ======================================================================================

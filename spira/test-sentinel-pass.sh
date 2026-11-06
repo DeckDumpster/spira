@@ -45,7 +45,10 @@ cat > "$STUBS/spira-lc" <<'LCSTUB'
 #!/bin/sh
 if [ "$1 ${2:-}" = "plan items" ]; then
     ids=; while [ $# -gt 0 ]; do [ "$1" = --ids ] && ids="${2:-}"; shift; done
-    out="$("${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --id "$ids" --status all --limit 0 --json)" || exit $?
+    # The store is the suite's declared config: a release tool runs this stub with no
+    # SPIRA_DB/SPIRA_BD in its environment.
+    bd="$(spira-config get spira.bd)" && db="$(spira-config get spira.db)" || exit 2
+    out="$("${bd:-bd}" -C "$db" list --id "$ids" --status all --limit 0 --json)" || exit $?
     printf '{"watermark":0,"items":%s}\n' "${out:-[]}"; exit 0
 fi
 if [ "$1" = list ]; then

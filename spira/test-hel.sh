@@ -201,8 +201,9 @@ git -C "$REPO" remote add origin "$REMOTE"
 timeout 5 git -C "$REPO" push -q origin main
 git -C "$REPO" remote set-head origin main
 mkdir -p "$RUN/worktree" "$RUN/landstate"
-export SPIRA_REAPLOG="$RUN/reap.log"
-tl_config SPIRA_RUN="$RUN"
+# The reap log is registered config (the hel tasks read it): declared, never exported.
+SPIRA_REAPLOG="$RUN/reap.log"
+tl_config SPIRA_RUN="$RUN" SPIRA_REAPLOG="$SPIRA_REAPLOG"
 
 OTHER="$TMP/other"; git init -q -b main "$OTHER"   # no remote, no commit: base unresolvable
 
@@ -572,9 +573,9 @@ DHOME="$(basename "$DREPO")"
 printf '%s | %s | push | main | |\n' "$DHOME" "$DREPO" > "$TMP/dry-repo-map"
 
 tl_config SPIRA_RUN="$DRUN" SPIRA_BD="$STUB_BD" SPIRA_HOME_REPO="$DHOME" \
-    SPIRA_REPO_MAP="$TMP/dry-repo-map"
+    SPIRA_REPO_MAP="$TMP/dry-repo-map" SPIRA_REAPLOG="$DRUN/reap.log"
 dry_out="$(SPIRA_HOME="$HERE" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_REPO="$DREPO" SPIRA_REAPLOG="$DRUN/reap.log" \
+    SPIRA_REPO="$DREPO" \
         command hel --dry-run --no-fetch 2>&1)"
 want "dry-run reports WOULD, not SENT"  "WOULD  sp-dry  send branch" "$dry_out"
 nowant "dry-run never reports SENT"     "SENT sp-dry"                "$dry_out"
@@ -612,9 +613,9 @@ FHOME="$(basename "$FREPO")"
 printf '%s | %s | push | main | |\n' "$FHOME" "$FREPO" > "$TMP/fail-repo-map"
 
 tl_config SPIRA_RUN="$FRUN" SPIRA_BD="$STUB_BD" SPIRA_HOME_REPO="$FHOME" \
-    SPIRA_REPO_MAP="$TMP/fail-repo-map"
+    SPIRA_REPO_MAP="$TMP/fail-repo-map" SPIRA_REAPLOG="$FRUN/reap.log"
 fail_out="$(SPIRA_HOME="$HERE" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_REPO="$FREPO" SPIRA_REAPLOG="$FRUN/reap.log" \
+    SPIRA_REPO="$FREPO" \
         command hel --no-fetch 2>&1)"
 fail_rc=$?
 want "sp-fail is reported FAILED" "FAILED sp-fail" "$fail_out"
