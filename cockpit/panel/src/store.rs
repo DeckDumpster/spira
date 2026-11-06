@@ -168,24 +168,16 @@ pub fn child_path(cfg: &Cfg) -> String {
     cfg.path.join(":")
 }
 
-fn run(cmd: &str, args: &[&str], cfg: &Cfg) -> Result<String, String> {
-    // FORK-EDGE: unserved verb content — the runner for the bead-content reads only.
-    let mut c = spira_config::bounded::bounded(bin(cmd, cfg));
-    c.args(args).env("PATH", child_path(cfg));
-    // NO `current_dir`. It existed so `gt` could resolve its town, and `gt` is gone from this
-    // panel; `bd` takes its database from `-C`, so a working directory here could only ever
-    // decide something by accident.
-    match c.output() {
-        Err(e) => Err(format!("{cmd}: {e}")),
-        Ok(o) if !o.status.success() && o.stdout.is_empty() => Err(format!(
-            "{cmd}: {}",
-            String::from_utf8_lossy(&o.stderr)
-                .lines()
-                .next()
-                .unwrap_or("failed")
-        )),
-        Ok(o) => Ok(String::from_utf8_lossy(&o.stdout).to_string()),
+/// One call through the store's content door (`content <args>`), in-process over the declared
+/// socket: its stdout, unless it failed and printed nothing.
+pub fn content(args: &[&str]) -> Result<String, String> {
+    let lc = spira_config::lc_call::LcClient::configured()?;
+    let argv: Vec<&str> = std::iter::once("content").chain(args.iter().copied()).collect();
+    let r = lc.call(&argv).map_err(|e| format!("spira-lc content: {e}"))?;
+    if r.code != 0 && r.out.is_empty() {
+        return Err(format!("spira-lc content: {}", r.why()));
     }
+    Ok(r.out)
 }
 
 /// `bd --json` can print human warnings on stdout before the payload.
@@ -207,9 +199,8 @@ fn rows(text: &str, key: &str) -> Result<Vec<Value>, String> {
 /// One call against one database. An error here is a real error and reaches the pane as one:
 /// there is no other database whose rows could stand in for these, so silently returning an
 /// empty list would render "nothing is waiting" over an unread queue.
-fn fetch_beads(cfg: &Cfg) -> Result<Vec<Value>, String> {
-    // FORK-EDGE: unserved verb content (the socket does not serve bead content).
-    let out = run("spira-lc", &["content", "list", "--all", "--limit", "0", "--json"], cfg)?;
+fn fetch_beads() -> Result<Vec<Value>, String> {
+    let out = content(&["list", "--all", "--limit", "0", "--json"])?;
     rows(&out, "issues")
 }
 
@@ -272,10 +263,8 @@ fn fetch_threads(beads: &[Value], cfg: &Cfg) -> std::collections::HashMap<String
     let handles: Vec<_> = wanted
         .into_iter()
         .map(|id| {
-            let cfg = cfg.clone();
             thread::spawn(move || {
-                // FORK-EDGE: unserved verb content (comment threads are bead content).
-                let out = run("spira-lc", &["content", "comments", &id, "--json"], &cfg).ok()?;
+                let out = content(&["comments", &id, "--json"]).ok()?;
                 Some((id, rows(&out, "comments").ok()?))
             })
         })
@@ -364,7 +353,7 @@ pub fn refresh(shared: &Shared, cfg: &Cfg) {
     thread::spawn(move || {
         // ONE call. There was a `thread::spawn` here to overlap this with `gt mail inbox`;
         // with the mail fetch gone the concurrency was overlapping a query with nothing.
-        let b = fetch_beads(&cfg);
+        let b = fetch_beads();
         let conds = fetch_conditions(&cfg);
         // Only for beads that actually have comments — `comment_count` is already in the
         // list payload, so this is usually two or three extra calls, not one per bead.

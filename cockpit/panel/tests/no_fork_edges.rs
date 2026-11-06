@@ -120,3 +120,26 @@ fn the_scan_catches_a_planted_site_and_passes_a_marked_one() {
     let git = "fn f() { Command::new(\"git\"); format!(\"mail {x}\"); }\n";
     assert!(unmarked(git).is_empty());
 }
+
+/// The marked fork edges left in `src` (sp-ipwlic): a flip onto the store's door removes a mark
+/// and lowers this; a new edge raises it only on purpose.
+const MARKED_EDGES: usize = 4;
+
+fn marks(dir: &std::path::Path) -> usize {
+    let mut n = 0;
+    for e in std::fs::read_dir(dir).expect("read src").flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            n += marks(&p);
+        } else if p.extension().is_some_and(|x| x == "rs") {
+            let text = std::fs::read_to_string(&p).expect("read file");
+            n += text.lines().take_while(|l| !l.trim_start().starts_with("#[cfg(test)]")).filter(|l| l.contains("FORK-EDGE:")).count();
+        }
+    }
+    n
+}
+
+#[test]
+fn the_marked_fork_edges_only_shrink() {
+    assert_eq!(marks(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src")), MARKED_EDGES, "a FORK-EDGE mark was added or removed: move MARKED_EDGES with it");
+}

@@ -406,7 +406,7 @@ impl App {
         );
         *inflight.lock().unwrap() += 1;
         thread::spawn(move || {
-            if let Err(e) = model::act_all(view, &ids, dismissed, &cfg) {
+            if let Err(e) = model::act_all(view, &ids, dismissed) {
                 errors.lock().unwrap().push(e);
             }
             *inflight.lock().unwrap() -= 1;

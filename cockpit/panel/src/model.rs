@@ -267,32 +267,11 @@ pub struct Item {
     pub labels: Vec<String>,
 }
 
-fn run(cmd: &str, args: &[&str], cfg: &Cfg) -> Result<(), String> {
-    run_as(cmd, args, None, cfg)
-}
-
-/// `actor` sets BEADS_ACTOR, which is the name a comment is recorded under.
-fn run_as(cmd: &str, args: &[&str], actor: Option<&str>, cfg: &Cfg) -> Result<(), String> {
-    // Absolute path: tmux's global PATH has no ~/.local/bin, so a respawned pane cannot
-    // find `bd` by name. See store::bin.
-    // FORK-EDGE: content store write — the runner for bead-content writes (comments, labels).
-    let mut c = spira_config::bounded::bounded(crate::store::bin(cmd, cfg));
-    c.args(args);
-    c.env("PATH", crate::store::child_path(cfg));
-    if let Some(a) = actor {
-        c.env("BEADS_ACTOR", a);
-    }
-    match c.output() {
-        Err(e) => Err(format!("{cmd}: {e}")),
-        Ok(o) if !o.status.success() => Err(format!(
-            "{cmd}: {}",
-            String::from_utf8_lossy(&o.stderr)
-                .lines()
-                .next()
-                .unwrap_or("failed")
-        )),
-        Ok(_) => Ok(()),
-    }
+/// One bead-content write through the store's content door (`content <args>`), which applies
+/// every protection bdq applies. The comment's author is the store's: BEADS_ACTOR does not
+/// cross the socket, as it did not when this ran the `spira-lc` CLI, which forwarded there.
+fn content(args: &[&str]) -> Result<(), String> {
+    crate::store::content(args).map(drop)
 }
 
 /// A VERDICT IS NEVER BLOCKED, AND IS NEVER DISCARDED. Both halves were learned from one
@@ -340,8 +319,7 @@ fn close_decision(db: &str, item: &Item, reason: &str, cfg: &Cfg) -> Result<(), 
         }
         Err(e) => e,
     };
-    // FORK-EDGE: content store write
-    match run_as("spira-lc", &["content", "comments", "add", id, reason], Some(actor), cfg) {
+    match content(&["comments", "add", id, reason]) {
         Ok(()) => Err(format!("{e} — still open; your answer is kept as a comment")),
         Err(_) => Err(format!("{e} — AND THE ANSWER WAS NOT SAVED: {reason}")),
     }
@@ -358,8 +336,7 @@ fn record_answer(item: &Item, reason: &str, actor: &str, cfg: &Cfg) {
         .env("PATH", crate::store::child_path(cfg));
     let (code, out) = spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT);
     if !matches!(code, 0 | 1 | 3) {
-        // FORK-EDGE: content store write
-        let _ = run_as("spira-lc", &["content", "comments", "add", &item.id, &format!("[answer not recorded on the ask machine: exit {code}: {}]", out.trim())], Some(actor), cfg);
+            let _ = content(&["comments", "add", &item.id, &format!("[answer not recorded on the ask machine: exit {code}: {}]", out.trim())]);
     }
 }
 
@@ -385,8 +362,7 @@ fn lift_work_holds(_db: &str, item: &Item, actor: &str, cfg: &Cfg) {
             (code, out) => Some(format!("exit {code}: {}", out.trim())),
         };
         if let Some(e) = failed {
-            // FORK-EDGE: content store write
-            let _ = run_as("spira-lc", &["content", "comments", "add", &item.id, &format!("[ask hold on {w} not lifted: {e}]")], Some(actor), cfg);
+                    let _ = content(&["comments", "add", &item.id, &format!("[ask hold on {w} not lifted: {e}]")]);
         }
     }
 }
@@ -411,18 +387,7 @@ fn notify_concierge(id: &str, subject: &str, from: &str, body: &str, _cfg: &Cfg)
 fn notify_or_log(_db: &str, item: &Item, verb: &str, text: &str, actor: &str, cfg: &Cfg) {
     let subject = format!("{verb} on {}: {}", item.id, item.title);
     if let Err(e) = notify_concierge(&item.id, &subject, actor, text, cfg) {
-        let _ = run_as(
-            "spira-lc",
-            &[
-                "content",
-                "comments",
-                "add",
-                &item.id,
-                &format!("[mail to concierge failed: {e}]"),
-            ],
-            Some(actor),
-            cfg,
-        );
+        let _ = content(&["comments", "add", &item.id, &format!("[mail to concierge failed: {e}]")]);
     }
 }
 
@@ -431,17 +396,12 @@ fn notify_or_log(_db: &str, item: &Item, verb: &str, text: &str, actor: &str, cf
 /// `dismissed` is the history toggle: in the history the same key restores all. Only valid
 /// for record views (Insights, Notifications) — closing every decision at once would discard
 /// verdicts, and there is no undo.
-pub fn act_all(view: View, ids: &[String], dismissed: bool, cfg: &Cfg) -> Result<(), String> {
+pub fn act_all(view: View, ids: &[String], dismissed: bool) -> Result<(), String> {
     match view {
         View::Insights | View::Notifications if !ids.is_empty() => {
             let flag = if dismissed { "--remove-label" } else { "--add-label" };
-            let mut args: Vec<&str> = vec!["content", "update"];
-            for id in ids {
-                args.push(id.as_str());
-            }
-            args.extend(&[flag, ARCHIVED]);
-            // FORK-EDGE: content store write
-            run("spira-lc", &args, cfg)
+            // One update per bead: the content door takes one id per update.
+            ids.iter().try_for_each(|id| content(&["update", id, flag, ARCHIVED]))
         }
         View::Insights | View::Notifications => Ok(()),
         _ => Err("bulk clear is only for record views".into()),
@@ -486,17 +446,7 @@ pub fn act(
         // on its own echo, and it is silent because the text reads exactly like a
         // real verdict.
         (View::Decisions, _) => close_decision(db, item, reason, cfg),
-        (View::Insights | View::Notifications, _) => run(
-            "spira-lc",
-            &[
-                "content",
-                "update",
-                &item.id,
-                if dismissed { "--remove-label" } else { "--add-label" },
-                ARCHIVED,
-            ],
-            cfg,
-        ),
+        (View::Insights | View::Notifications, _) => content(&["update", &item.id, if dismissed { "--remove-label" } else { "--add-label" }, ARCHIVED]),
 
         // SILENCING WRITES A DEADLINE, NOT A FLAG: `silent_until` expires by being read, so
         // nothing has to run to lift it, and re-silencing replaces the old deadline.
@@ -549,8 +499,7 @@ fn condition_with(client: &spira_config::lc_call::LcClient, args: &[&str]) -> Re
 /// `why` is the training signal, not required — an empty string is fine: the `p` prompt
 /// says so, so pressing ⏎ immediately records `premise-rejected` with no trailing text.
 pub fn reject_premise(item: &Item, why: &str, cfg: &Cfg) -> Result<(), String> {
-    // FORK-EDGE: content store write
-    run("spira-lc", &["content", "update", &item.id, "--add-label", PREMISE_REJECTED], cfg)?;
+    content(&["update", &item.id, "--add-label", PREMISE_REJECTED])?;
     let reason = if why.trim().is_empty() {
         PREMISE_REJECTED.to_string()
     } else {
@@ -693,19 +642,7 @@ pub fn enact(item: &Item, slug: &str, text: &str, cfg: &Cfg) -> Result<(), Strin
     let rule = rule_sh()?;
     run_verbose(&rule, &["enact", slug, text, "--tool", "none", "--reason", PANEL_NO_TOOL], cfg)?;
     let key = format!("{ENACTED}law-{}", slug.trim_start_matches("law-"));
-    run(
-        "spira-lc",
-        &[
-            "content",
-            "update",
-            &item.id,
-            "--add-label",
-            &key,
-            "--add-label",
-            ARCHIVED,
-        ],
-        cfg,
-    )
+    content(&["update", &item.id, "--add-label", &key, "--add-label", ARCHIVED])
     .map_err(|e| format!("enacted law-{slug} but could not label {}: {e}", item.id))
 }
 
@@ -873,12 +810,7 @@ pub fn comment(view: View, item: &Item, text: &str, cfg: &Cfg) -> Result<(), Str
         // tellable apart, or a reply of the agent's reads as an answer.
         _ => {
             let actor = &cfg.operator_actor;
-            run_as(
-                "spira-lc",
-                &["content", "comments", "add", &item.id, text],
-                Some(actor),
-                cfg,
-            )?;
+            content(&["comments", "add", &item.id, text])?;
             notify_or_log(&cfg.db, item, "comment", text, actor, cfg);
             Ok(())
         }
