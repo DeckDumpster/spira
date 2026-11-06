@@ -8,4 +8,3 @@
 1 cockpit-collect/src/probes/unsent.rs
 1 cockpit-collect/src/supervisor.rs
 1 lifecycle-guard/src/shell.rs
-2 sentinel/src/waiters.rs

@@ -6,7 +6,6 @@ cockpit/ops/src/health/sections.rs
 czar-pass/src/main.rs
 loom/src/ops.rs
 release/src/acceptance/phases.rs
-spira-world/src/bin/world.rs
 spira-world/src/proc.rs
 strand/src/classify.rs
 watchtower/src/cpu_throttle.rs
