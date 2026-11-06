@@ -29,7 +29,7 @@ Each repository has a mode (`[repo.<name>].mode`, or the registry file's third c
 
 | Mode | What the landing pass does with a finished branch |
 |---|---|
-| `pr` | rebase, confine, force-push, open or refresh the pull request; the PR's CI is the gate (`landing-pass --pass`, its own timer) |
+| `pr` | rebase, confine, force-push, open or refresh the pull request; the PR's CI is the gate (`landing-pass --pass`, the `landing` task) |
 | `push` (default) | rebase, confine, gate, merge in a private landing worktree, push to the base |
 | `hold` | rebase, confine, gate, note "gated and held"; never advances the base. `held.sh [--summary] [<repo>]` lists; `held.sh --merge <bead-id>` fast-forwards after confirmation |
 | `queue.forge` (alias `queue`) | certify the tip once; the forge's merge queue lands rounds; `queue step` settles open rounds |
@@ -101,9 +101,9 @@ one owning command (see the lint rules in [development](development.md)).
 
 ## The goodput loop
 
-The reconciler's goodput pass (`spira-reconciler-goodput.timer`, every minute) and the
-lifecycle section (`spira-lifecycle-section.timer`) run on the observability plane, so a world
-stop never silences them. Every section kind on `SPIRA_RECONCILER_SHADOW_KINDS` (by default
+The reconciler's goodput pass (the `reconcile.goodput` task, every minute) and the
+lifecycle section (the `reconcile.section` task) run in `spira-runtime serve`; a world stop (`scheduler halt`) holds their effects while they
+keep observing. Every section kind on `SPIRA_RECONCILER_SHADOW_KINDS` (by default
 `RoundController Lifecycle Alarms`) is planned and recorded as a would-step, and nothing is
 written to `intents/` for it.
 
@@ -113,7 +113,7 @@ written to `intents/` for it.
 | Read the pass record | `spira-lc section snapshot` (`pass` is the latest record); the day of history: `spira-lc pass history` |
 | Arm a kind | `reconciler arm-check <Kind>`: it checks that the kind's sections are fresh, that the dead-man and heartbeat are green, and that shadow passes recorded the kind. It prints the kind's would-be steps for review and the one `spira-config set spira.reconciler_shadow_kinds ...` that takes the kind off the list and shadows every old remedy it replaces. arm-check itself writes nothing, and it exits non-zero naming each unmet precondition. spira-runtime reads the key only at start, so swap with no moment of two actuators: stop the goodput timer, run the printed command, restart spira-runtime, then start the timer. The key holds old remedies back; it does not silence the old kinds' alerts. |
 | Disarm a kind | `reconciler arm-check <Kind> --disarm` prints the reverse write. `queue-mergeable` stays shadowed, because the cutover shadowed it. Run the write in the same order as arming. |
-| Answer a dead-man page | the `reconciler` page means the latest pass record is older than three intervals. Check `systemctl --user status spira-reconciler-goodput.timer` and the tail of `reconciler-goodput.log` in the run directory. A standby line names the holder of `locks/reconciler` (`spira-lc lock show reconciler`). A timer the operator stopped reads as WAITING, not stale. |
+| Answer a dead-man page | the `reconciler` page means the latest pass record is older than three intervals. Check the `reconcile.goodput` row of `world scheduler-status` (last fired, lag, last outcome) and the tail of `spira-runtime.log` in the run directory. A standby line names the holder of `locks/reconciler` (`spira-lc lock show reconciler`). A timer the operator stopped reads as WAITING, not stale. |
 
 ## Restoring a dolt store from its off-box backup
 

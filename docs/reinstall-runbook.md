@@ -227,7 +227,7 @@ bead.sh file "install proof: add install-proof.txt" --for builder --repo <home_r
 ID=<the id it printed>
 spira-lc history "$ID"                                   # READY
 spira-claim rune-ready builder --json | grep -c "$ID"   # 1 = claimable
-systemctl --user start spira-sentinel-prod.service
+world scheduler-status                                   # sentinel-pass / sentinel-call fire on their own cadence
 git -C <home_repo_path> show-ref "refs/heads/spira/$ID"  # the dwarf's branch appears
 spira-lc history "$ID" | tee <work>/proof-history.json
 git -C <home_repo_path> fetch origin; git -C <home_repo_path> log --format='%H %s' "$BASE..<home_repo_base>" | grep "$ID"
@@ -240,10 +240,11 @@ audit pass after the push); and a commit naming `<ID>` is on the base ref after 
 
 **If it fails:** `repo:<x> is not in the repo map` means `--repo` must equal `home_repo`
 (`spira-config repo names`). No branch after about five minutes: check the `ready.sh` agent
-row, `journalctl --user -u spira-sentinel-prod.service -n 60`, and that the agent is logged in.
-Stuck at `SUBMITTED`: `journalctl --user -u spira-gate-worker-prod.service -n 80`. `CERTIFIED`
-without `LANDED` is usually the push; read `spira-landing-pass-prod.service` for an auth
-error. In every case leave the world running and do not hand-edit bead state.
+row, the `sentinel-pass` and `sentinel-call` rows of `world scheduler-status` (last fired, lag,
+last outcome), `journalctl --user -u spira-runtime-prod.service -n 60`, and that the agent is
+logged in. Stuck at `SUBMITTED`: the `gate.worker` row of `world scheduler-status` and
+`$SPIRA_RUN/spira-runtime.log`. `CERTIFIED` without `LANDED` is usually the push; read the
+`landing` row of `world scheduler-status` and `$SPIRA_RUN/spira-runtime.log` for an auth error. In every case leave the world running and do not hand-edit bead state.
 
 ## 8. Rollback
 

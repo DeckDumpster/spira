@@ -1,20 +1,20 @@
 ## 4.8 Maintenance timers
 
-Each timer runs the service of the same name. "boot+X" is `OnBootSec`; "every X" is
-`OnUnitActiveSec` (X after the last pass *ended*). Timers named in 4.1–4.7 are not repeated
-here unless they have no other home.
+Each row is a task in `spira-runtime serve` (the scheduler), named as `world scheduler-status`
+shows it. The cadences are those of the timers the tasks replaced: "boot+X" was `OnBootSec`;
+"every X" was `OnUnitActiveSec` (X after the last pass *ended*). Tasks named in 4.1–4.7 are
+not repeated here unless they have no other home.
 
-| Timer | Runs | Cadence | Purpose |
+| Task | Runs | Cadence | Purpose |
 |---|---|---|---|
-| `spira-archive` | `archive.sh sweep` | boot+5 min, every 20 min | index session transcripts |
-| `spira-escape-census` | `escape-classify.sh census` | weekly | escape-by-class census |
-| `spira-export-beads` | `export-beads.sh` | every 6 h | regenerate the bead mirror |
-| `spira-nix-gc` | `nix-gc.sh` | weekly | collect Nix garbage keeping the current and previous environment |
-| `spira-sop-lint` | `sop-lint-watch.sh` | every 1 h | lint the SOP shelf |
-| `spira-statute-audit` | `rule audit --file --for builder --max 5` | weekly | statutes naming tools that do not exist |
-| `spira-incident-settle` | `incident settle` | every 5 min | close incidents whose fix landed and detector is quiet |
+| `sweep.archive` | `archive.sh sweep` | boot+5 min, every 20 min | index session transcripts |
+| `sweep.escape_census` | `escape-classify.sh census` | weekly | escape-by-class census |
+| `sweep.export_beads` | `export-beads.sh` | every 6 h | regenerate the bead mirror |
+| `sweep.nix_gc` | `nix-gc.sh` | weekly | collect Nix garbage keeping the current and previous environment |
+| `watch.sop_lint` | `sop-lint-watch.sh` | every 1 h | lint the SOP shelf |
+| `watch.statute_audit` | `rule audit --file --for builder --max 5` | weekly | statutes naming tools that do not exist |
+| `incident.settle` | `incident settle` | every 5 min | close incidents whose fix landed and detector is quiet |
 
-Long-running services with no timer: `dolt-beads`, `dolt-persist`,
+Long-running services with no timer: `spira-runtime`, `dolt-beads`, `dolt-persist`,
 `lc-serve` / `spira-lc` (+ sockets), `sccache-dav`, `spira-loom`, `spira-cockpit`,
-`spira-mail-deliver`, `spira-submission`, `spira-metrics-*`, `spira-unit-run-dbus`,
-`spira-watch@<name>`.
+`spira-mail-deliver`, `spira-metrics-*`, `spira-unit-run-dbus`, `spira-watch@<name>`.
