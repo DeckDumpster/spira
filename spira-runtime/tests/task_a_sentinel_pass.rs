@@ -168,12 +168,16 @@ fn effects(acts: &[Act], e: &str) -> Vec<Act> {
     acts.iter().filter(|a| a.effect == e).cloned().collect()
 }
 
-/// An epic of the partition whose every child is closed, and one still open.
+/// An epic of the partition whose every child is over, and one still open. A work child is
+/// over when its lifecycle row is terminal, never by its bd status (038cf5ca2), so each child
+/// carries a LANDED row.
 fn pilgrimage_world() -> Snapshot {
     let epic = Bead { kind: "epic".into(), ..bead("sp-e", &["spira"], "open") };
     let kids = [Bead { parents: vec!["sp-e".into()], ..bead("sp-c1", &[], "closed") }, Bead { parents: vec!["sp-e".into()], ..bead("sp-c2", &[], "closed") }];
     let other = Bead { kind: "epic".into(), ..bead("sp-o", &["gastown"], "open") };
-    Snapshot { beads: Some([vec![epic, other], kids.to_vec()].concat()), ..idle() }
+    let base = idle();
+    let rows = [base.rows.clone().unwrap_or_default(), vec![row("sp-c1", "LANDED"), row("sp-c2", "LANDED")]].concat();
+    Snapshot { beads: Some([vec![epic, other], kids.to_vec()].concat()), rows: Some(rows), ..base }
 }
 
 /// CHECK 1 (`pilgrimage.sh check`): a complete epic of the partition is announced once and
