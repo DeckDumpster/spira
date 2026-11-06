@@ -37,6 +37,15 @@ macro_rules! stubs {
 
 pub static TASKS: &[Task] = &[
     Task {
+        name: sift::NAME,
+        boot: sift::Sift::boot,
+        cadence_ms: |_| sift::CADENCE_MS,
+        effects: sift::EFFECTS,
+        runners: &[(sift::OBSERVE, |e, _, s| sift::observe(e, &s.input)), (sift::FETCH_BASE, |_, _, s| sift::fetch_base(&s.input)), (sift::NOTE, |e, _, s| sift::note(e, s)), (sift::SEND_BACK, |e, _, s| sift::send_back(e, s)), (sift::RECORD_PASS, |e, _, s| sift::record_pass(e, s)), (sift::SUPERSEDE, |e, _, s| sift::supersede(e, s))],
+        keys: &[sift::KEYS],
+        build: |_| sift::Sift::from_cfg().registration(),
+    },
+    Task {
         name: czar::NAME,
         boot: czar::Czar::boot,
         cadence_ms: |_| czar::CADENCE_MS,
@@ -208,17 +217,7 @@ pub static TASKS: &[Task] = &[
 ];
 
 /// Family A's rows, built from their contracts and waiting for their ports.
-pub static PENDING: &[Task] = &[
-    Task {
-        name: sift::NAME,
-        boot: sift::Sift::boot,
-        cadence_ms: |_| sift::CADENCE_MS,
-        effects: sift::EFFECTS,
-        runners: stubs!(sift: OBSERVE, FETCH_BASE, NOTE, SEND_BACK, RECORD_PASS, SUPERSEDE),
-        keys: &[sift::KEYS],
-        build: |_| sift::Sift::from_cfg().registration(),
-    },
-];
+pub static PENDING: &[Task] = &[];
 
 #[cfg(test)]
 mod tests {
