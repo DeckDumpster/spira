@@ -195,7 +195,7 @@ do_cut() {
         printf 'utc: %s\n' "$ts"
         if [ -n "$pr" ]; then printf 'pr: %s\n' "$pr"; fi
         if [ -n "$branches" ]; then
-            printf '%s' "$branches" | tr ',' '\n' | while IFS= read -r _b; do
+            printf '%s' "$branches" | tr ',' '\n' | while IFS= read -r _b || [ -n "$_b" ]; do
                 _b="${_b#"${_b%%[![:space:]]*}"}"; _b="${_b%"${_b##*[![:space:]]}"}"
                 if [ -n "$_b" ]; then printf 'branch: %s\n' "$_b"; fi
             done
