@@ -17,13 +17,13 @@ pub struct RealBd {
 }
 
 impl RealBd {
-    /// `BD_TIMEOUT`/`SPIRA_BDQ_CONN_RETRIES` carry no `spira/conf.d/<KEY>` entry, so they
-    /// stay ad hoc environment reads.
+    /// `BD_TIMEOUT` carries no `spira/conf.d/<KEY>` entry, so it stays an ad hoc environment
+    /// read; `SPIRA_BDQ_CONN_RETRIES` is registered config.
     pub fn from_env() -> Result<RealBd, String> {
         Ok(RealBd {
             bdq: spira_config::release_env::tool("bdq")?,
             timeout_secs: std::env::var("BD_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(180),
-            retries: std::env::var("SPIRA_BDQ_CONN_RETRIES").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
+            retries: spira_config::process::cfg("SPIRA_BDQ_CONN_RETRIES").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
             lc: None,
         })
     }

@@ -201,7 +201,7 @@ fn pass(f: &Flags) -> Result<ExitCode, String> {
     if mode != "full" && mode != "subset" {
         return Err("--mode must be full or subset".into());
     }
-    let repo = flag(f, "repo").map(str::to_string).or_else(|| std::env::var("SPIRA_REPO").ok()).ok_or("--repo or SPIRA_REPO is required")?;
+    let repo = flag(f, "repo").map(str::to_string).or_else(|| spira_config::process::cfg("SPIRA_REPO").ok().filter(|r| !r.is_empty())).ok_or("--repo or SPIRA_REPO is required")?;
     let base = match flag(f, "base") {
         Some(b) => b.to_string(),
         None => landing_ref(&repo),

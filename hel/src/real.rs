@@ -336,7 +336,7 @@ const REAPLOG_NAME: &str = "reap.log";
 
 /// `$SPIRA_REAPLOG`, else `reap.log` under `run`.
 pub fn reaplog_path_in(run: &Path) -> PathBuf {
-    match std::env::var("SPIRA_REAPLOG") {
+    match spira_config::process::cfg("SPIRA_REAPLOG") {
         Ok(rl) if !rl.is_empty() => PathBuf::from(rl),
         _ => run.join(REAPLOG_NAME),
     }

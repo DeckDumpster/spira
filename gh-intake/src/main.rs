@@ -340,8 +340,7 @@ fn dispatch() -> ExitCode {
             }
         };
     }
-    // SPIRA_MAIL_BIN is not a registered config key (no spira/conf.d entry).
-    let mail_stand_in = std::env::var("SPIRA_MAIL_BIN").ok().filter(|m| !m.is_empty());
+    let mail_stand_in = spira_config::process::cfg("SPIRA_MAIL_BIN").ok().filter(|m| !m.is_empty());
 
     let repo = cfg_or_refuse!("SPIRA_GH_INTAKE_REPO");
     let scope = cfg_or_refuse!("SPIRA_SCOPE_LABEL");
@@ -352,8 +351,7 @@ fn dispatch() -> ExitCode {
         eprintln!("gh-intake: SPIRA_GH_INTAKE_PRIORITY is {priority} — it must be 0-4");
         return ExitCode::from(2);
     }
-    // SPIRA_GH_INTAKE_API is not a registered config key (no spira/conf.d entry).
-    let api = std::env::var("SPIRA_GH_INTAKE_API").unwrap_or_else(|_| logic::GITHUB_API.to_string());
+    let api = spira_config::process::cfg("SPIRA_GH_INTAKE_API").ok().filter(|a| !a.is_empty()).unwrap_or_else(|| logic::GITHUB_API.to_string());
 
     let cfg = Config {
         repo,

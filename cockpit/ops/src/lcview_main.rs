@@ -262,7 +262,7 @@ fn gather() -> Snapshot {
     let started = std::time::Instant::now();
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let mut s = Snapshot { now, ..Default::default() };
-    s.release = std::env::var("SPIRA_RELEASE")
+    s.release = spira_config::release_env::release_root_for_process()
         .ok()
         .and_then(|p| std::fs::canonicalize(p).ok())
         .and_then(|p| p.file_name().map(|f| f.to_string_lossy().into_owned()))

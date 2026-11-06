@@ -182,7 +182,7 @@ impl RealSim {
         for k in PRODUCTION_LOCATORS {
             c.env_remove(k);
         }
-        if let Ok(r) = std::env::var("SPIRA_RELEASE") {
+        if let Ok(r) = spira_config::release_env::release_root_for_process() {
             c.env("SPIRA_SIM_RELEASE", r);
         }
         c

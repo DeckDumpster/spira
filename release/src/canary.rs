@@ -353,12 +353,13 @@ pub fn canary_worker() -> Result<(), String> {
     log(&format!("claimed {id}"));
 
     let branch = format!("spira/{id}");
-    let repo = std::env::var("SPIRA_REPO").unwrap_or_default();
-    if repo.is_empty() {
+    // The canary is hermetic (config-env-read-exceptions): SPIRA_REPO comes from its own
+    // environment, and unset is a refusal, never a default.
+    let Some(repo) = std::env::var("SPIRA_REPO").ok().filter(|r| !r.is_empty()) else {
         log("SPIRA_REPO not set");
         release_bead(&id, &holder);
         return Err("SPIRA_REPO not set".into());
-    }
+    };
     let checkout = |args: &[&str]| spira_config::bounded::bounded("git").current_dir(&repo).args(args).status().map(|s| s.success()).unwrap_or(false);
     if !checkout(&["checkout", "-q", "-b", &branch, "origin/main"]) && !checkout(&["checkout", "-q", &branch]) {
         log(&format!("could not create branch {branch}"));

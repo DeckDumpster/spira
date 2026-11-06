@@ -1092,7 +1092,12 @@ fn cmd_writeback(candidate: &str) -> ExitCode {
     let config_write = env::var("SPIRA_CONFIG_WRITE").map(|v| v == "1").unwrap_or(false);
     let home = PathBuf::from(env::var("SPIRA_HOME").unwrap_or_default());
     let prod = env::var("SPIRA_PROD").ok().filter(|v| !v.is_empty()).map(PathBuf::from);
-    let repo = PathBuf::from(env::var("SPIRA_REPO").unwrap_or_default());
+    // Unset is no repository, not a default one: an empty path is never writable, so the
+    // write is never redirected there (writeback::is_writable).
+    let repo = match env::var("SPIRA_REPO") {
+        Ok(r) => PathBuf::from(r),
+        Err(_) => PathBuf::new(),
+    };
     let xdg = env::var("XDG_CONFIG_HOME")
         .ok()
         .filter(|v| !v.is_empty())
