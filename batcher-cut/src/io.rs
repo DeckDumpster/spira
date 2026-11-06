@@ -562,8 +562,17 @@ fn parse_members(s: &str) -> Vec<(String, String)> {
 /// The repo's open batch from the store's projection, its batch records read afresh each time
 /// (this pass writes batches through the queue between reads; no lifecycle row is reloaded for
 /// it); `None` when there is none. Err when the store could not say — a view it cannot vouch for
-/// is never read as no batch.
-pub fn read_open_batch(_env: &Env, repo: &str) -> Result<Option<OpenBatch>, String> {
+/// is never read as no batch. Before the cutover (`SPIRA_LC_LIFECYCLE_ON_STORE=0`, the default)
+/// the store views refuse, and the record is the queue's: `queue batch show` reads it wherever
+/// the queue keeps it.
+pub fn read_open_batch(env: &Env, repo: &str) -> Result<Option<OpenBatch>, String> {
+    if spira_config::process::cfg_parse::<u8>("SPIRA_LC_LIFECYCLE_ON_STORE")? == 0 {
+        let run = queue_verb(env, &["batch", "show", "--repo", repo], "", &[])?;
+        if run.code != Some(0) {
+            return Err(verb_failed("queue batch show", &run));
+        }
+        return Ok(open_batch_from(&run.out));
+    }
     let views = store_view::Projection::configured(spira_config::lc_call::LcClient::configured()?)?;
     views.refresh_batches().map_err(|e| format!("could not say: {e}"))?;
     open_batch_of(views.batch_view(repo).map(|r| r.value))
