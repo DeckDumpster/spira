@@ -251,6 +251,10 @@ fn cutover(p: &Ports, mode: &cutover_check::Mode) -> Result<i32, String> {
         }),
         views: spira_config::lc_call::LcClient::for_bin(&spira_config::lifecycle_row::lc_bin()?)
             .and_then(store_view::Projection::configured),
+        queue: match spira_config::process::cfg_parse::<u8>("SPIRA_LC_LIFECYCLE_ON_STORE")? {
+            0 => Some(spira_config::release_env::tool("queue")?),
+            _ => None,
+        },
         spira_lc: spira_config::release_env::tool("spira-lc")?,
     };
     match mode {

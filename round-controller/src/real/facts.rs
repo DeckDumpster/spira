@@ -12,6 +12,7 @@ use crate::real::git::Locate;
 
 const GIT_DEADLINE: Duration = Duration::from_secs(5);
 const LC_DEADLINE: Duration = Duration::from_secs(5);
+const QUEUE_DEADLINE: Duration = Duration::from_secs(5);
 
 /// The registry's `queue.local` and `queue.forge` repos, in registry order.
 pub fn round_repos(reg: &Registry) -> Result<Vec<String>, String> {
@@ -28,6 +29,10 @@ pub struct RealFacts {
     pub locate: Box<Locate>,
     /// The store's round/batch views, or why there are none.
     pub views: Result<store_view::Projection, String>,
+    /// The release's `queue`, when the lifecycle is not on the control store
+    /// (`SPIRA_LC_LIFECYCLE_ON_STORE=0`): the batch records are then the queue's, and the store
+    /// views refuse, so `queue batch show` answers. `None` on the store, where the views do.
+    pub queue: Option<String>,
     pub spira_lc: String,
 }
 
@@ -102,6 +107,21 @@ impl Facts for RealFacts {
     }
 
     fn open_batch(&self, repo: &str) -> Result<Option<String>, String> {
+        if let Some(queue) = &self.queue {
+            let args = ["batch", "show", "--repo", repo].map(String::from).to_vec();
+            // FORK-EDGE: before the cutover the batch records are the queue's files, read through queue batch show (the views refuse off the store)
+            return match self.run(queue, args, QUEUE_DEADLINE)? {
+                (Some(0), out, _) if out.trim().is_empty() => Ok(None),
+                (Some(0), out, _) => Ok(Some(
+                    out.lines()
+                        .find_map(|l| l.strip_prefix("batch_id="))
+                        .map(|id| id.trim().to_string())
+                        .filter(|id| !id.is_empty())
+                        .unwrap_or_else(|| "open".into()),
+                )),
+                (code, out, err) => Err(format!("queue batch show exited {code:?}: {} {err}", out.trim())),
+            };
+        }
         let views = self.views.as_ref().map_err(|e| format!("could not say: {e}"))?;
         views.refresh_batches().map_err(|e| format!("could not say: {e}"))?;
         let read = views.batch_view(repo).map_err(|e| format!("could not say: {e}"))?;
@@ -190,6 +210,7 @@ mod tests {
             repos: Ok(vec!["alpha".into()]),
             locate: Box::new(|r| (r == "alpha").then(|| ("/r/alpha".into(), "local/main".into()))),
             views: Err("this test holds no store views".into()),
+            queue: None,
             spira_lc: "spira-lc".into(),
         };
         Under { facts, script }
@@ -275,6 +296,23 @@ mod tests {
         assert!(f.open_batch("alpha").unwrap_err().starts_with("could not say:"));
         assert!(crate::lock(&f.script.seen).is_empty(), "no queue process");
         assert!(facts(&[]).open_batch("alpha").unwrap_err().contains("could not say: this test holds no store views"));
+    }
+
+    /// Before the cutover the views refuse and the record is the queue's: `queue batch show`
+    /// answers, and a failed answer is refused, never read as no batch.
+    #[test]
+    fn off_the_store_the_open_batch_is_read_from_queue_batch_show() {
+        let with_queue = |answers: &[(&str, Result<ProcOutput, String>)]| {
+            let mut f = facts(answers);
+            f.facts.queue = Some("queue".into());
+            f
+        };
+        assert_eq!(with_queue(&[("queue", out(0, "", ""))]).open_batch("alpha"), Ok(None));
+        let f = with_queue(&[("queue", out(0, "batch_id=deck-1\npr=12\n", ""))]);
+        assert_eq!(f.open_batch("alpha"), Ok(Some("deck-1".into())));
+        let spec = crate::lock(&f.script.seen).last().cloned().unwrap();
+        assert_eq!((spec.prog.as_str(), spec.args.join(" ")), ("queue", "batch show --repo alpha".into()));
+        assert!(with_queue(&[("queue", out(1, "", "no queue"))]).open_batch("alpha").unwrap_err().contains("queue batch show exited"));
     }
 
     #[test]
