@@ -62,7 +62,11 @@ fn release_bin() -> &'static Path {
     BIN.get_or_init(|| {
         let bin = Path::new(env!("CARGO_BIN_EXE_sim")).parent().unwrap().to_path_buf();
         let target = bin.parent().unwrap();
-        let o = Command::new(env!("CARGO"))
+        // The cargo running this test (cargo test sets CARGO for it), not the one that compiled
+        // it: a cached compile carries another host's toolchain path (the round VM's
+        // integration run spawned a cargo that did not exist there).
+        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| env!("CARGO").into());
+        let o = Command::new(cargo)
             .args(["build", "--offline", "-q", "-p", "spira-config", "--bin", "spira-config", "--target-dir"])
             .arg(target)
             .current_dir(root())
