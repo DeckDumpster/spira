@@ -48,11 +48,14 @@ fn run_render(args: &[String]) -> Result<String, String> {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let op = args.first().cloned().unwrap_or_else(|| "usage".into());
+    let metered = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "watchdog", &op);
     let result = match args.first().map(String::as_str) {
         Some("pass") => run_pass(),
         Some("render") => run_render(&args[1..]),
         _ => Err("usage: spira-watchdog pass | render <os> <program> <every-secs>".into()),
     };
+    metered.end(if result.is_ok() { "ok" } else { "error" });
     match result {
         Ok(line) => println!("{}", line.trim_end()),
         Err(e) => {
