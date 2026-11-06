@@ -59,6 +59,9 @@ struct Opts {
     evidence: Option<String>,
     reds: Option<PathBuf>,
     record: Option<PathBuf>,
+    wt: Option<PathBuf>,
+    base: Option<String>,
+    batch: Option<String>,
 }
 
 fn usage() -> ExitCode {
@@ -68,6 +71,7 @@ fn usage() -> ExitCode {
     eprintln!("       batcher sifts [--run DIR] [--db DIR] [--home DIR]");
     eprintln!("       batcher judgement-ci <repo> --suites CSV --members CSV --evidence TEXT [--run DIR] [--db DIR] [--home DIR]");
     eprintln!("       batcher path-attribute <repo> --members id:tip,... --reds FILE [--record FILE] [--run DIR] [--db DIR] [--home DIR]");
+    eprintln!("       batcher attribute <repo> --members id:tip,... --wt DIR --base SHA [--batch ID] [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
     ExitCode::from(2)
 }
 
@@ -91,6 +95,9 @@ fn parse() -> Result<Opts, String> {
         evidence: None,
         reds: None,
         record: None,
+        wt: None,
+        base: None,
+        batch: None,
     };
     while let Some(f) = a.next() {
         let mut val = || a.next().ok_or(format!("{f} needs a value"));
@@ -104,6 +111,9 @@ fn parse() -> Result<Opts, String> {
             "--evidence" => o.evidence = Some(val()?),
             "--reds" => o.reds = Some(val()?.into()),
             "--record" => o.record = Some(val()?.into()),
+            "--wt" => o.wt = Some(val()?.into()),
+            "--base" => o.base = Some(val()?),
+            "--batch" => o.batch = Some(val()?),
             other => return Err(format!("unknown flag {other}")),
         }
     }
@@ -1203,7 +1213,7 @@ fn rounds(o: &Opts, pass: Pass) -> Result<(), String> {
             settle_batch(&env_, name).and(armed)
         }
         Step::Cut => {
-            let one = Opts { cmd: "cut".into(), repo: name.to_string(), run: o.run.clone(), db: o.db.clone(), home: o.home.clone(), round_vm: o.round_vm.clone(), suites: None, members: None, evidence: None, reds: None, record: None };
+            let one = Opts { cmd: "cut".into(), repo: name.to_string(), run: o.run.clone(), db: o.db.clone(), home: o.home.clone(), round_vm: o.round_vm.clone(), suites: None, members: None, evidence: None, reds: None, record: None, wt: None, base: None, batch: None };
             if paced && reg.land(name) == "queue.local" {
                 paced_cut(&env_, name, &one)
             } else {
@@ -1243,7 +1253,7 @@ fn sifts(o: &Opts) -> Result<(), String> {
         if !matches!(reg.land(&name).as_str(), "queue" | "queue.local") {
             continue;
         }
-        let one = Opts { cmd: "sift".into(), repo: name.clone(), run: o.run.clone(), db: o.db.clone(), home: o.home.clone(), round_vm: o.round_vm.clone(), suites: None, members: None, evidence: None, reds: None, record: None };
+        let one = Opts { cmd: "sift".into(), repo: name.clone(), run: o.run.clone(), db: o.db.clone(), home: o.home.clone(), round_vm: o.round_vm.clone(), suites: None, members: None, evidence: None, reds: None, record: None, wt: None, base: None, batch: None };
         if let Err(e) = sift_one(&one) {
             eprintln!("batcher sifts: {name}: {e}");
             failed.push(name);
@@ -1274,6 +1284,80 @@ fn judgement_ci(o: &Opts) -> Result<(), String> {
     let repo = find_repo(&env_, &o.repo)?;
     let id = io::file_judgement(&env_, &repo, &j, &members, &evidence)?;
     println!("id={id}");
+    Ok(())
+}
+
+/// `batcher attribute <repo> --members id:tip,... --wt DIR --base SHA [--batch ID]`: the
+/// attribution of a round whose corpus was red, as the scheduler's batcher tasks run it — one
+/// unit leg, not a blocking pass. The round tree `--wt` holds `--members` merged on `--base`;
+/// `drive::attribute_round` attributes each red on the round VM, ejects its owners (from round
+/// `--batch` when one is open, else from the forge pool) or hands them to their menders, and
+/// re-runs only the owners' suites on the survivors. The outcome is the last stdout line
+/// (`attribute::Attribution::line`); exit 0 whenever an outcome was printed.
+fn attribute(o: &Opts) -> Result<(), String> {
+    use batcher_cut::attribute::{parse_members, Attribution};
+    let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
+    let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
+    if o.repo.is_empty() {
+        return Err("repo name required".into());
+    }
+    let wt = o.wt.clone().ok_or("--wt names the round tree")?;
+    let start_sha = o.base.clone().ok_or("--base names the round's base")?;
+    let given = parse_members(o.members.as_deref().unwrap_or(""))?;
+    if given.is_empty() {
+        return Err("--members names no member".into());
+    }
+    let env_ = env_for(o, home, run)?;
+    let repo = find_repo(&env_, &o.repo)?;
+    // The pool's own rows carry each member's stack and blockers (the attribution shape); a
+    // member the pool no longer holds is attributed as an unstacked one at the given tip.
+    let pool = io::certified_pool(&env_, &repo).unwrap_or_default();
+    let members: Vec<Member> = given
+        .iter()
+        .map(|(id, tip)| {
+            let known = pool.iter().find(|m| &m.id == id).cloned();
+            Member { tip: tip.clone(), ..known.unwrap_or(Member { id: id.clone(), tip: tip.clone(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: vec![] }) }
+        })
+        .collect();
+    let round = now().to_string();
+    let round_branch = format!("spira/batcher-attr/{}-{round}", repo.name);
+    io::set_branch(&repo, &round_branch, &io::head_of(&wt)?);
+    let history = std::fs::read_to_string(tsd::family_path(&env_.run, "suite-timing")).unwrap_or_default();
+    let suites = order::longest_first(&io::all_suites(&repo, &round_branch), &history).list;
+    if suites.is_empty() {
+        println!("{}", Attribution::Blocked("the round tree has no test-*.sh suites to attribute".into()).line());
+        return Ok(());
+    }
+    let changed: BTreeMap<String, Vec<String>> = members.iter().map(|m| (m.id.clone(), io::changed_paths(&repo, &start_sha, &m.tip))).collect();
+    let mut runner = vm::VmRunner::new(&env_, &repo, &wt, &start_sha, &round, changed.clone())?;
+    let mut ops = LiveOps {
+        env: &env_,
+        repo: &repo,
+        wt: &wt,
+        start_sha: start_sha.clone(),
+        round_branch,
+        evidence: runner.results.display().to_string(),
+        round,
+        changed,
+        first_red: None,
+        key: batcher::core::round_key(&given),
+        batch: o.batch.as_deref(),
+        prior: batcher::mender::Prior::default(),
+    };
+    let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
+    let end = drive::attribute_round(&mut runner, &mut ops, &suites, members.clone(), budget);
+    if end.is_err() && runner.install_failed() {
+        let fault = attribute_install(&mut runner, &members, &suites);
+        install_fault_outcome(&repo, &mut ops, &members, &fault);
+    }
+    runner.close();
+    let mended = ops.prior != batcher::mender::Prior::default();
+    let outcome = match end {
+        Ok(drive::RoundEnd::Land { members, attribution_secs }) => Attribution::Land { members: members.into_iter().map(|m| (m.id, m.tip)).collect(), attribution_secs, mended },
+        Ok(drive::RoundEnd::Blocked(why)) => Attribution::Blocked(why),
+        Err(e) => Attribution::Blocked(format!("the attribution did not finish: {e}")),
+    };
+    println!("{}", outcome.line());
     Ok(())
 }
 
@@ -1383,6 +1467,7 @@ fn dispatch() -> ExitCode {
         "rounds-local" => rounds(&o, Pass::Local),
         "rounds-forge" => rounds(&o, Pass::Forge),
         "judgement-ci" => judgement_ci(&o),
+        "attribute" => attribute(&o),
         "sift" => sift_one(&o),
         "sifts" => sifts(&o),
         _ => return usage(),

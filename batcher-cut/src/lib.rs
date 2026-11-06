@@ -6,6 +6,7 @@
 
 #[allow(dead_code)]
 pub mod endpass;
+pub mod attribute;
 pub mod flip;
 pub mod io;
 pub mod order;
