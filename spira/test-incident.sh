@@ -77,7 +77,7 @@ ILOG="$RUN/incident.log"
 # box cannot override any key the suite sets explicitly.
 inc() {
     tl_config SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$RUN" \
-        SPIRA_MAIL="$TMP/mail"
+        SPIRA_MAIL="$TMP/mail" SPIRA_INCIDENT_LOG="$ILOG"
     local extra=() _a
     for _a in "$@"; do
         case "$_a" in
@@ -89,7 +89,6 @@ inc() {
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/nonexistent.conf" \
         SPIRA_SPOOL="$SPOOL" \
-        SPIRA_INCIDENT_LOG="$ILOG" \
         SPIRA_INCIDENT_LOCK="$LOCK" \
         SPIRA_HOME="$HERE" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" \
@@ -191,12 +190,11 @@ _cross_title="cross repo dedup test"
 _cross_ref="incident:cross-repo-dedup-test"
 _cross_env() {
     tl_config SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$REPO_MAP" \
-        SPIRA_RUN="$RUN" SPIRA_MAIL="$TMP/mail"
+        SPIRA_RUN="$RUN" SPIRA_MAIL="$TMP/mail" SPIRA_INCIDENT_LOG="$ILOG"
     env -i SPIRA_RELEASE="$(tl_release)" HOME="$HOME" PATH="$PATH" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/nonexistent.conf" \
         SPIRA_SPOOL="$SPOOL" \
-        SPIRA_INCIDENT_LOG="$ILOG" \
         SPIRA_INCIDENT_LOCK="$LOCK" \
         SPIRA_HOME="$HERE" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" \
