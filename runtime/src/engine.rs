@@ -139,19 +139,7 @@ pub struct SchedulerStatus {
     pub classes: Vec<ClassStatus>,
 }
 
-/// The status as of the engine's last turn, for a reader on another thread.
-#[derive(Default)]
-pub struct StatusBoard(std::sync::Mutex<Option<SchedulerStatus>>);
-
-impl StatusBoard {
-    pub fn get(&self) -> Option<SchedulerStatus> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
-    }
-
-    fn put(&self, s: SchedulerStatus) {
-        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(s);
-    }
-}
+pub use crate::status_board::StatusBoard;
 
 pub type Classifier = Arc<dyn Fn(&EffectSpec) -> String + Send + Sync>;
 

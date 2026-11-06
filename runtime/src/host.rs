@@ -63,6 +63,7 @@ impl std::fmt::Debug for Submit {
 /// Journals `s` and answers its reply. A refusal is answered and absorbed; a fault is answered
 /// and returned, since it may clear on restart.
 fn accept(engine: &mut Engine, s: Submit) -> Result<()> {
+    // loop-safe: accept runs on the offload pool (Host) or under virtual time (VirtualDriver), never on the loop thread
     let r = engine.submit(&s.id, &s.stream, s.kind);
     if let Some(reply) = s.reply {
         let _ = reply.send(r.as_ref().map(|_| ()).map_err(|e| e.to_string()));
@@ -447,6 +448,7 @@ impl VirtualDriver {
     /// Runs the engine and answers every pending effect until none is left at this instant.
     pub fn settle(&mut self) -> Result<()> {
         for _ in 0..SETTLE_LIMIT {
+            // loop-safe: VirtualDriver runs under virtual time (sim and tests); it has no event loop
             self.engine.run_until_idle()?;
             let pending: Vec<PendingEffect> = self.engine.pending_effects().into_iter().filter(|p| !self.held.contains(&p.spec.name)).collect();
             if pending.is_empty() {
@@ -459,6 +461,7 @@ impl VirtualDriver {
                     Err(e) => Outcome::Failed(e),
                 };
                 self.effects_run += 1;
+                // loop-safe: VirtualDriver runs under virtual time (sim and tests); it has no event loop
                 self.engine.complete(&p.key, outcome)?;
             }
         }

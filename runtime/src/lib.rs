@@ -19,6 +19,7 @@ pub mod ports;
 pub mod scheduler;
 pub mod socket;
 pub mod sources;
+pub mod status_board;
 pub mod taskrig;
 pub mod units;
 pub mod wide;
