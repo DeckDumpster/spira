@@ -81,7 +81,7 @@ pub mod reconcile_section;
 use asks_verify::AsksVerify;
 use incident_alarms::IncidentAlarms;
 use incident_settle::IncidentSettle;
-use kit::{build, cadence_ms, not_ported};
+use kit::{build, cadence_ms};
 use mail_reconcile::MailReconcile;
 use reconcile_content::ReconcileContent;
 use reconcile_continuity::ReconcileContinuity;
@@ -181,6 +181,25 @@ pub static TASKS: &[Task] = &[
         keys: &[incident_settle::KEYS],
         build: build::<IncidentSettle>,
     },
+    Task {
+        name: incident_alarms::NAME,
+        boot: IncidentAlarms::boot,
+        cadence_ms: cadence_ms::<IncidentAlarms>,
+        effects: incident_alarms::EFFECTS,
+        runners: &[
+            (incident_alarms::OBSERVE, |e, _, s| incident_alarms::observe_with(&lc(e), &e.world.run_dir, &s.input, now_ms())),
+            (incident_alarms::PAGE, |e, _, s| incident_alarms::send(&incident_alarms::Delivery::configured(&lc(e), &e.world.run_dir)?, &s.input)),
+            (incident_alarms::NOTE, |e, _, s| incident_alarms::note(&incident_alarms::Delivery::configured(&lc(e), &e.world.run_dir)?, &s.input)),
+            (incident_alarms::FLOOR_ASK, |e, _, s| incident_alarms::send(&incident_alarms::Delivery::configured(&lc(e), &e.world.run_dir)?, &s.input)),
+            (incident_alarms::RETRY, |e, _, s| incident_alarms::retry(&incident_alarms::Delivery::configured(&lc(e), &e.world.run_dir)?, &s.input)),
+            (incident_alarms::ATTEMPT, |e, _, s| incident_alarms::attempt(&e.world.run_dir, &s.input)),
+            (incident_alarms::KNOB_INIT, |e, _, _| incident_alarms::knob_init(&lc(e))),
+            (incident_alarms::PUBLISH, |e, _, s| incident_alarms::publish(&lc(e), &s.input)),
+            (incident_alarms::HEARTBEAT, |_, _, s| incident_alarms::heartbeat(&s.input)),
+        ],
+        keys: &[incident_alarms::KEYS],
+        build: build::<IncidentAlarms>,
+    },
 ];
 
 /// Wall time in ms, for a runner whose reading is an age (the effect itself runs on the host).
@@ -196,25 +215,6 @@ pub fn lc(e: &crate::Effects) -> spira_config::lc_call::LcClient {
 
 /// The family's rows, complete but not yet in `TASKS` (see the module doc).
 pub static PENDING: &[Task] = &[
-    Task {
-        name: incident_alarms::NAME,
-        boot: IncidentAlarms::boot,
-        cadence_ms: cadence_ms::<IncidentAlarms>,
-        effects: incident_alarms::EFFECTS,
-        runners: &[
-            (incident_alarms::OBSERVE, not_ported::<IncidentAlarms>),
-            (incident_alarms::PAGE, not_ported::<IncidentAlarms>),
-            (incident_alarms::NOTE, not_ported::<IncidentAlarms>),
-            (incident_alarms::FLOOR_ASK, not_ported::<IncidentAlarms>),
-            (incident_alarms::RETRY, not_ported::<IncidentAlarms>),
-            (incident_alarms::ATTEMPT, not_ported::<IncidentAlarms>),
-            (incident_alarms::KNOB_INIT, not_ported::<IncidentAlarms>),
-            (incident_alarms::PUBLISH, not_ported::<IncidentAlarms>),
-            (incident_alarms::HEARTBEAT, not_ported::<IncidentAlarms>),
-        ],
-        keys: &[incident_alarms::KEYS],
-        build: build::<IncidentAlarms>,
-    },
 ];
 
 /// The shape every family B and C stub shares. A task supplies its [`kit::Spec`], its types
