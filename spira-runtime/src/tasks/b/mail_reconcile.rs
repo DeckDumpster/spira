@@ -1,7 +1,6 @@
 //! # mail.reconcile — contract
 //!
-//! Family B of the scheduler consolidation, red-first: `decide` is not ported yet. The
-//! sections below are the contract page `wiki/projects/spira/designs/tasks/mail-reconcile.md`;
+//! Family B of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/mail-reconcile.md`;
 //! its Acceptance section is the test file `tests/task_b_mail_reconcile.rs`.
 //!
 //! ## Tick
@@ -99,7 +98,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use runtime::event::EventKindTag;
 use serde::{Deserialize, Serialize};
 
-use super::kit::{Cadence, Cfg, Decision, Input, Spec};
+use super::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
 
 pub const NAME: &str = "mail.reconcile";
 pub const STREAM: &str = "task.mail.reconcile";
@@ -190,9 +189,169 @@ pub struct MailReconcile {
     pub cfg: Cfg,
 }
 
-/// The branch structure of `apply` lifted out of IO.
-pub fn decide(_cfg: &Cfg, _carry: &Carry, _input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
-    unimplemented!("mail.reconcile: not ported yet")
+/// One store or host act for one reply's step: the effect input of every act but the observe.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Job {
+    pub key: String,
+    /// The ledger line the act marks on success (`note-orig`, `close`, …), or for `mark` the line.
+    pub step: String,
+    pub bead: String,
+    pub kind: String,
+    pub work_bead: String,
+    pub actor: String,
+    pub para: String,
+    pub subject: String,
+    /// A note's text, or an inbox row's body.
+    pub text: String,
+    pub conn_retries: u32,
+}
+
+fn job(r: &Reply, step: &str, text: String, retries: u32) -> Job {
+    let o = r.orig.clone().unwrap_or_default();
+    Job { key: r.key.clone(), step: step.into(), bead: o.bead, kind: o.kind, work_bead: o.work_bead, actor: r.actor.clone(), para: r.para.clone(), subject: o.subject, text, conn_retries: retries }
+}
+
+fn act(name: &str, j: &Job, deadline_ms: u64) -> Act {
+    Act { name: name.into(), input: serde_json::to_string(j).unwrap_or_default(), deadline_ms, probe: false }
+}
+
+const STORE_MS: u64 = 15_000;
+const INBOX_MS: u64 = 10_000;
+const MARK_MS: u64 = 5_000;
+
+/// The acts one reply still needs, by the branch structure of `mail::reconcile::apply`: each
+/// step the ledger has not recorded, an abandoned step said once, nothing once all are done.
+pub fn plan(r: &Reply, retries: u32) -> Vec<Act> {
+    let Some(o) = &r.orig else { return vec![] };
+    let mut acts = vec![];
+    let mut abandoned: Vec<&str> = vec![];
+    let mut want = |name: &'static str, step: &'static str, text: String, deadline: u64, acts: &mut Vec<Act>| {
+        if r.done.contains(step) {
+            return;
+        }
+        if r.fails.get(step).copied().unwrap_or(0) >= MAX_ATTEMPTS {
+            abandoned.push(step);
+            return;
+        }
+        acts.push(act(name, &job(r, step, text, retries), deadline));
+    };
+    let tracked = matches!(o.kind.as_str(), "question" | "decision" | "suit");
+    let (actor, subject, para) = (&r.actor, &o.subject, &r.para);
+    if !o.bead.is_empty() && !tracked {
+        want(NOTE, "note-orig", format!("Reply from {actor} to \"{subject}\": {para}"), STORE_MS, &mut acts);
+    } else if !o.bead.is_empty() && !r.done.contains("close") {
+        if r.done.contains("close:refused") {
+            if r.done.contains("refused-note") && r.done.contains("refused-inbox") {
+                acts.push(act(MARK, &job(r, "close", String::new(), retries), MARK_MS));
+            }
+            let bead = &o.bead;
+            want(NOTE, "refused-note", format!("Answer from {actor} to \"{subject}\" (not applied as a close: the lifecycle refused it): {para}"), STORE_MS, &mut acts);
+            let mut inbox = job(r, "refused-inbox", format!("{actor} replied to \"{subject}\" (thread bead {bead}); the lifecycle refused the close.\nThe answer is noted on {bead}:\n{para}"), retries);
+            inbox.subject = format!("Mail reply to {bead} refused as a close");
+            if !r.done.contains("refused-inbox") {
+                acts.push(act(INBOX, &inbox, INBOX_MS));
+            }
+        } else {
+            want(CLOSE, "close", String::new(), STORE_MS, &mut acts);
+        }
+    }
+    if !o.work_bead.is_empty() {
+        if o.bead.is_empty() {
+            want(NOTE, "note-work", format!("Answer from {actor} to \"{subject}\": {para}"), STORE_MS, &mut acts);
+        }
+        want(LIFT, "lift", String::new(), STORE_MS, &mut acts);
+    }
+    if !o.bead.is_empty() && matches!(o.kind.as_str(), "question" | "decision") {
+        want(ANSWER, "answer", String::new(), STORE_MS, &mut acts);
+    }
+    if !abandoned.is_empty() && !r.done.contains("abandoned-inbox") {
+        let mut j = job(r, "abandoned-inbox", format!("Reply {} to \"{subject}\": steps [{}] failed {MAX_ATTEMPTS} times and were abandoned; apply by hand.", r.key, abandoned.join(", ")), retries);
+        j.subject = "Mail reply reconciliation gave up".into();
+        acts.push(act(INBOX, &j, INBOX_MS));
+    }
+    acts
+}
+
+/// `key/step` from an act's answer: its success body, or the head of its failure.
+fn key_step(body: &str) -> Option<(String, String, String)> {
+    let (head, why) = body.split_once(": ").unwrap_or((body, ""));
+    let (key, step) = head.rsplit_once('/')?;
+    Some((key.to_string(), step.to_string(), why.to_string()))
+}
+
+/// The branch structure of `apply` lifted out of IO: an observed reply asks for the steps its
+/// ledger lacks; a step's outcome is marked in the ledger (`<step>`, `fail:<step>`, or
+/// `close:refused` for a lifecycle refusal). A reply already `complete` is refused.
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
+    let retries = cfg.get("SPIRA_BDQ_CONN_RETRIES").and_then(|v| v.trim().parse().ok()).unwrap_or(1);
+    match input {
+        Input::Fire => Ok((carry.clone(), vec![])),
+        Input::Observed(s) => {
+            if cfg.get("SPIRA_DB").is_some_and(|d| d.is_empty()) {
+                return Ok((carry.clone(), vec![]));
+            }
+            if let Some(r) = s.replies.iter().find(|r| r.done.contains("complete")) {
+                return Err(format!("{NAME}: reply {} is already in state complete; recording it again is refused", r.key));
+            }
+            Ok((carry.clone(), s.replies.iter().flat_map(|r| plan(r, retries)).collect()))
+        }
+        Input::Outcome { effect, .. } if effect == MARK => Ok((carry.clone(), vec![])),
+        Input::Outcome { effect, ok, body } if EFFECTS.contains(&effect.as_str()) => {
+            let Some((key, step, why)) = key_step(body) else { return Ok((carry.clone(), vec![])) };
+            let line = if *ok {
+                step
+            } else if effect == CLOSE && mail::reconcile::is_refusal(&why) {
+                "close:refused".into()
+            } else {
+                format!("fail:{step}")
+            };
+            Ok((carry.clone(), vec![act(MARK, &Job { key, step: line, conn_retries: retries, ..Job::default() }, MARK_MS)]))
+        }
+        Input::Outcome { effect, .. } => Err(format!("{NAME}: in state pending no outcome of {effect} is expected")),
+        Input::Ran(r) => Err(format!("{NAME}: in state pending no unit is expected, got {r:?}")),
+    }
+}
+
+/// The ledger directory under the run dir (`main.rs`'s `<SPIRA_RUN>/mail-reconcile`).
+fn ledger(e: &crate::Effects) -> std::path::PathBuf {
+    e.world.run_dir.join("mail-reconcile")
+}
+
+/// The observe: the maildir and the ledger, read in-process.
+pub fn observe(e: &crate::Effects) -> Result<String, String> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    serde_json::to_string(&serde_json::json!({ "replies": mail::reconcile::pending(&e.world.mail, &ledger(e), now) })).map_err(|e| e.to_string())
+}
+
+/// Every act's runner, by `spec.name`: the mail library's own steps. Success answers
+/// `key/step`; a failure is `key/step: why`, so the outcome marks the ledger.
+pub fn run(e: &crate::Effects, spec: &runtime::EffectSpec) -> Result<String, String> {
+    if spec.name == OBSERVE {
+        return observe(e);
+    }
+    let j: Job = serde_json::from_str(&spec.input).map_err(|e| e.to_string())?;
+    let tag = format!("{}/{}", j.key, j.step);
+    let bd = || -> Result<mail::bead::BdCli, String> { Ok(mail::bead::BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: j.conn_retries.max(1) }) };
+    let client = super::lc(e);
+    let lc = mail::lc::Routed { client: Ok(&client), unserved: &mail::lc::LcProgram };
+    let out = match spec.name.as_str() {
+        MARK => {
+            mail::reconcile::mark(&ledger(e), &j.key, &j.step);
+            Ok(())
+        }
+        NOTE => bd().and_then(|bd| mail::bead::note(&bd, if j.step == "note-work" { &j.work_bead } else { &j.bead }, &j.text)),
+        CLOSE => bd().and_then(|bd| match mail::bead::sendmail_close_bead(&bd, true, &j.bead, &j.kind, &j.para) {
+            Ok(_) => Ok(()),
+            Err(_) if mail::bead::bead_status(&bd, true, &j.bead).as_deref() == Some("closed") => Ok(()),
+            Err(e) => Err(e),
+        }),
+        LIFT => mail::lc::lift_ask(&lc, &j.work_bead, mail::lc::Lift::Reply { message_id: &j.key }, &j.actor).map_or(Ok(()), Err),
+        ANSWER => mail::lc::answer_ask(&lc, &j.bead, &j.para, &j.actor, "mail", &j.key).map_or(Ok(()), Err),
+        INBOX => mail::reconcile::inbox_row(&e.world.mail, &j.subject, &j.text),
+        other => Err(format!("{NAME}: no runner for {other}")),
+    };
+    out.map(|_| tag.clone()).map_err(|why| format!("{tag}: {why}"))
 }
 
 super::hosted!(MailReconcile);

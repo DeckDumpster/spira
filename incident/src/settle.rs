@@ -82,7 +82,9 @@ pub fn settle_one(s: &dyn Settler, c: &Candidate) -> Outcome {
                 dropped.push(fix.clone());
                 continue;
             }
-            Ok(FixState::Unlanded(st)) => return wait(format!("{fix} is {st}")),
+            // The fix's own state is left out of the reason, so a standing wait reads the same while
+            // the fix moves between unlanded states and is said once.
+            Ok(FixState::Unlanded(_)) => return wait(format!("fix {fix} not landed")),
             Err(e) => return skip(format!("cannot read {fix}: {e}")),
         }
         match s.landing_in_force(fix) {

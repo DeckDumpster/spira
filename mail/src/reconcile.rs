@@ -101,11 +101,13 @@ fn tally<'a>(s: Step, name: &'a str, converged: &mut bool, abandoned: &mut Vec<&
     }
 }
 
-fn is_refusal(err: &str) -> bool {
+/// Whether `err` is the lifecycle machine's refusal (exit 3), which is reported, not retried.
+pub fn is_refusal(err: &str) -> bool {
     err.contains("exited 3")
 }
 
-fn inbox_row(mail_root: &Path, subject: &str, body: &str) -> Result<(), String> {
+/// One alert row in the Concierge's mailbox under `mail_root`.
+pub fn inbox_row(mail_root: &Path, subject: &str, body: &str) -> Result<(), String> {
     let dir = mail_root.join("concierge");
     maildir::mail_ensure(&dir).map_err(|e| format!("cannot ensure concierge mailbox: {e}"))?;
     let msgid = maildir::mint_msgid();
@@ -190,6 +192,83 @@ fn apply(bd: &dyn Bd, lc: &dyn Lc, mail_root: &Path, reply: &str, key: &str, don
         let _ = step(done, "abandoned-inbox", || inbox_row(mail_root, "Mail reply reconciliation gave up", &format!("Reply {key} to \"{orig_subject}\": steps [{names}] failed {MAX_ATTEMPTS} times and were abandoned; apply by hand.")));
     }
     converged
+}
+
+/// The mail a reply answers, as its headers name it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Orig {
+    pub bead: String,
+    pub kind: String,
+    pub work_bead: String,
+    pub subject: String,
+}
+
+/// One reply [`pass`] would apply, read from the maildir and its ledger alone: what a
+/// scheduler's observe hands its decision (the steps are the decision's, not this read's).
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Pending {
+    pub key: String,
+    pub in_reply_to: String,
+    pub actor: String,
+    pub para: String,
+    pub orig: Option<Orig>,
+    /// The ledger's lines other than `fail:*`.
+    pub done: std::collections::BTreeSet<String>,
+    /// How often each step has failed.
+    pub fails: std::collections::BTreeMap<String, u32>,
+}
+
+/// Every reply in `mail_root`'s mailboxes younger than [`WINDOW_S`] whose ledger under
+/// `state_dir` is not `complete`, in [`pass`]'s order and by its rules.
+pub fn pending(mail_root: &Path, state_dir: &Path, now_s: u64) -> Vec<Pending> {
+    let mut out = vec![];
+    let mut mailboxes: Vec<String> = fs::read_dir(mail_root).into_iter().flatten().filter_map(|e| e.ok()).filter(|e| e.path().is_dir()).filter_map(|e| e.file_name().into_string().ok()).collect();
+    mailboxes.sort();
+    for sub in ["new", "cur"] {
+        for mbox in &mailboxes {
+            for f in maildir::sorted_entries(&mail_root.join(mbox).join(sub)) {
+                if now_s.saturating_sub(maildir::mtime_secs(&f)) > WINDOW_S {
+                    continue;
+                }
+                let Ok(text) = fs::read_to_string(&f) else { continue };
+                if message::header_ci_before_blank(&text, "in-reply-to").is_empty() || message::header_ci_before_blank(&text, "x-spira-kind") == "revision" {
+                    continue;
+                }
+                let own: String = message::header_ci_before_blank(&text, "message-id").chars().filter(|c| *c != '<' && *c != '>').collect();
+                let key = if own.is_empty() { f.file_name().and_then(|n| n.to_str()).unwrap_or("").split(':').next().unwrap_or("").to_string() } else { own };
+                if key.is_empty() || out.iter().any(|p: &Pending| p.key == key) {
+                    continue;
+                }
+                let done = Done::load(state_dir, &key);
+                if done.has("complete") {
+                    continue;
+                }
+                let in_reply_to: String = message::header_ci_before_blank(&text, "in-reply-to").chars().filter(|c| *c != '<' && *c != '>').collect();
+                let orig = find_message_by_id(mail_root, &in_reply_to).map(|p| {
+                    let o = fs::read_to_string(p).unwrap_or_default();
+                    Orig { bead: message::header_ci_before_blank(&o, "x-spira-bead"), kind: message::header_ci_before_blank(&o, "x-spira-kind"), work_bead: message::header_ci_before_blank(&o, "x-spira-work-bead"), subject: message::header_ci_before_blank(&o, "subject") }
+                });
+                let mut para = first_paragraph(&text);
+                if para.is_empty() {
+                    para = format!("answered by mail <{in_reply_to}> \"{}\" (reply body empty)", orig.as_ref().map(|o| o.subject.as_str()).unwrap_or_default());
+                }
+                let mut fails = std::collections::BTreeMap::new();
+                for l in &done.failures {
+                    *fails.entry(l.trim_start_matches("fail:").to_string()).or_insert(0u32) += 1;
+                }
+                let lines = done.lines.iter().filter(|l| !l.starts_with("fail:")).cloned().collect();
+                out.push(Pending { key, in_reply_to, actor: lc::actor_of(&message::header_ci_before_blank(&text, "from"), "operator"), para, orig, done: lines, fails });
+            }
+        }
+    }
+    out
+}
+
+/// Appends `line` (a step, `fail:<step>` or `complete`) to `key`'s ledger under `state_dir`.
+pub fn mark(state_dir: &Path, key: &str, line: &str) {
+    Done::load(state_dir, key).mark(line);
 }
 
 /// One pass over every mailbox's recent replies. Safe to run at any cadence and concurrently

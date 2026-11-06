@@ -134,6 +134,53 @@ pub static TASKS: &[Task] = &[
         keys: &[reconcile_heimdall::KEYS],
         build: build::<ReconcileHeimdall>,
     },
+    Task {
+        name: mail_reconcile::NAME,
+        boot: MailReconcile::boot,
+        cadence_ms: cadence_ms::<MailReconcile>,
+        effects: mail_reconcile::EFFECTS,
+        runners: &[
+            (mail_reconcile::OBSERVE, |e, _, s| mail_reconcile::run(e, s)),
+            (mail_reconcile::NOTE, |e, _, s| mail_reconcile::run(e, s)),
+            (mail_reconcile::CLOSE, |e, _, s| mail_reconcile::run(e, s)),
+            (mail_reconcile::LIFT, |e, _, s| mail_reconcile::run(e, s)),
+            (mail_reconcile::ANSWER, |e, _, s| mail_reconcile::run(e, s)),
+            (mail_reconcile::INBOX, |e, _, s| mail_reconcile::run(e, s)),
+            (mail_reconcile::MARK, |e, _, s| mail_reconcile::run(e, s)),
+        ],
+        keys: &[mail_reconcile::KEYS],
+        build: build::<MailReconcile>,
+    },
+    Task {
+        name: asks_verify::NAME,
+        boot: AsksVerify::boot,
+        cadence_ms: cadence_ms::<AsksVerify>,
+        effects: asks_verify::EFFECTS,
+        runners: &[
+            (asks_verify::OBSERVE, |e, _, _| asks_verify::observe(e, &e.world.ask_label)),
+            (asks_verify::CHECK, |e, _, s| asks_verify::run(e, s)),
+            (asks_verify::CLOSE, |e, _, s| asks_verify::run(e, s)),
+            (asks_verify::WITHDRAW, |e, _, s| asks_verify::run(e, s)),
+            (asks_verify::NOTE, |e, _, s| asks_verify::run(e, s)),
+        ],
+        keys: &[asks_verify::KEYS],
+        build: build::<AsksVerify>,
+    },
+    Task {
+        name: incident_settle::NAME,
+        boot: IncidentSettle::boot,
+        cadence_ms: cadence_ms::<IncidentSettle>,
+        effects: incident_settle::EFFECTS,
+        runners: &[
+            (incident_settle::OBSERVE, |e, _, _| incident_settle::observe(e)),
+            (incident_settle::CLOSE, |e, _, s| incident_settle::run(e, s)),
+            (incident_settle::NOTE, |e, _, s| incident_settle::run(e, s)),
+            (incident_settle::LABEL, |e, _, s| incident_settle::run(e, s)),
+            (incident_settle::LOG, |e, _, s| incident_settle::run(e, s)),
+        ],
+        keys: &[incident_settle::KEYS],
+        build: build::<IncidentSettle>,
+    },
 ];
 
 /// Wall time in ms, for a runner whose reading is an age (the effect itself runs on the host).
@@ -149,21 +196,6 @@ pub fn lc(e: &crate::Effects) -> spira_config::lc_call::LcClient {
 
 /// The family's rows, complete but not yet in `TASKS` (see the module doc).
 pub static PENDING: &[Task] = &[
-    Task {
-        name: incident_settle::NAME,
-        boot: IncidentSettle::boot,
-        cadence_ms: cadence_ms::<IncidentSettle>,
-        effects: incident_settle::EFFECTS,
-        runners: &[
-            (incident_settle::OBSERVE, not_ported::<IncidentSettle>),
-            (incident_settle::CLOSE, not_ported::<IncidentSettle>),
-            (incident_settle::NOTE, not_ported::<IncidentSettle>),
-            (incident_settle::LABEL, not_ported::<IncidentSettle>),
-            (incident_settle::LOG, not_ported::<IncidentSettle>),
-        ],
-        keys: &[incident_settle::KEYS],
-        build: build::<IncidentSettle>,
-    },
     Task {
         name: incident_alarms::NAME,
         boot: IncidentAlarms::boot,
@@ -182,38 +214,6 @@ pub static PENDING: &[Task] = &[
         ],
         keys: &[incident_alarms::KEYS],
         build: build::<IncidentAlarms>,
-    },
-    Task {
-        name: mail_reconcile::NAME,
-        boot: MailReconcile::boot,
-        cadence_ms: cadence_ms::<MailReconcile>,
-        effects: mail_reconcile::EFFECTS,
-        runners: &[
-            (mail_reconcile::OBSERVE, not_ported::<MailReconcile>),
-            (mail_reconcile::NOTE, not_ported::<MailReconcile>),
-            (mail_reconcile::CLOSE, not_ported::<MailReconcile>),
-            (mail_reconcile::LIFT, not_ported::<MailReconcile>),
-            (mail_reconcile::ANSWER, not_ported::<MailReconcile>),
-            (mail_reconcile::INBOX, not_ported::<MailReconcile>),
-            (mail_reconcile::MARK, not_ported::<MailReconcile>),
-        ],
-        keys: &[mail_reconcile::KEYS],
-        build: build::<MailReconcile>,
-    },
-    Task {
-        name: asks_verify::NAME,
-        boot: AsksVerify::boot,
-        cadence_ms: cadence_ms::<AsksVerify>,
-        effects: asks_verify::EFFECTS,
-        runners: &[
-            (asks_verify::OBSERVE, not_ported::<AsksVerify>),
-            (asks_verify::CHECK, not_ported::<AsksVerify>),
-            (asks_verify::CLOSE, not_ported::<AsksVerify>),
-            (asks_verify::WITHDRAW, not_ported::<AsksVerify>),
-            (asks_verify::NOTE, not_ported::<AsksVerify>),
-        ],
-        keys: &[asks_verify::KEYS],
-        build: build::<AsksVerify>,
     },
 ];
 
