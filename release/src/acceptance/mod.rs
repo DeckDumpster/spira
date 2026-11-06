@@ -417,6 +417,13 @@ pub fn ready_has(ready_json: &str, id: &str) -> bool {
     bd_json(ready_json).is_some_and(|v| v.iter().any(|b| b.get("id").and_then(|x| x.as_str()) == Some(id)))
 }
 
+/// `last_fired_at` of `task` in a `scheduler status` document (`world scheduler-status --json`):
+/// `None` when the task has not fired, is not registered, or the document does not parse.
+pub fn fired_at(status_json: &str, task: &str) -> Option<u64> {
+    let v: serde_json::Value = serde_json::from_str(status_json).ok()?;
+    v.get("tasks")?.as_array()?.iter().find(|t| t.get("name").and_then(serde_json::Value::as_str) == Some(task))?.get("last_fired_at")?.as_u64()
+}
+
 /// The states a bead passed through per `spira-lc history <id>`: the first applied event's
 /// `from_state`, then every applied event's `to_state`, consecutive repeats collapsed.
 /// Unreadable is empty. A bead's row is created READY without an event, so READY is only

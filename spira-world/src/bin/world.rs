@@ -19,7 +19,7 @@
 //!   world.sh pause --reserve BEAD[,BEAD...] --reason WHY [--until CONDITION] [--owner O]
 //!   world.sh unpause --repo R [--lanes ...] | --reserve BEAD[,BEAD...]
 //!   world.sh status
-//!   world.sh scheduler-status   (exit 0 running, 1 not answering, 2 halted)
+//!   world.sh scheduler-status [--json]   (exit 0 running, 1 not answering, 2 halted)
 //!   world.sh guard        (every work unit's ExecStartPre: refuses while the work plane is halted)
 //!
 //! SCOPED PAUSES are recorded state (`spira_config::scoped_stop`), never halts: one repo's
@@ -286,7 +286,7 @@ fn notify_dwarves(notifier: &mut spira_world::notice::Notifier, what: &str, elap
     });
 }
 
-const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--until WHAT] [--owner O] [--owner-pid PID | --owner-unit UNIT] [--reboot] [--timeout SECS | --deadline SECS] | drain-check | resume | start [--work|--observability|--maintenance|--all] | pause --repo R [--lanes claims,rounds,publish] --reason WHY --until COND [--owner O] | pause --reserve BEADS --reason WHY [--owner O] | unpause --repo R [--lanes L] | unpause --reserve BEADS | status | scheduler-status | guard | keep-units | freeze-store | thaw-store}";
+const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--until WHAT] [--owner O] [--owner-pid PID | --owner-unit UNIT] [--reboot] [--timeout SECS | --deadline SECS] | drain-check | resume | start [--work|--observability|--maintenance|--all] | pause --repo R [--lanes claims,rounds,publish] --reason WHY --until COND [--owner O] | pause --reserve BEADS --reason WHY [--owner O] | unpause --repo R [--lanes L] | unpause --reserve BEADS | status | scheduler-status [--json] | guard | keep-units | freeze-store | thaw-store}";
 
 fn cmd_stop(args: &[String]) -> i32 {
     let mut why = String::new();
@@ -1059,11 +1059,21 @@ fn main() {
         // that says running (0), not answering (1) or halted (2).
         "scheduler-status" => {
             let sock = runtime_socket_or_die();
-            let (rc, lines) = scheduler::report(&scheduler::Socket(&sock));
-            for l in lines {
-                println!("{l}");
+            if rest.iter().any(|a| a == "--json") {
+                let (rc, doc) = scheduler::raw(&scheduler::Socket(&sock));
+                if rc == scheduler::RC_UNANSWERED {
+                    eprintln!("{doc}");
+                } else {
+                    println!("{doc}");
+                }
+                rc
+            } else {
+                let (rc, lines) = scheduler::report(&scheduler::Socket(&sock));
+                for l in lines {
+                    println!("{l}");
+                }
+                rc
             }
-            rc
         }
         // The keep list, one unit per line: what a world stop never stops.
         "keep-units" => {

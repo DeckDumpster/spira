@@ -168,6 +168,18 @@ pub fn report(c: &dyn Control) -> (i32, Vec<String>) {
     }
 }
 
+/// `world scheduler-status --json`: the document as the scheduler sent it, for a caller that
+/// parses it, with the same exit codes as [`report`]; the error line when it does not answer.
+pub fn raw(c: &dyn Control) -> (i32, String) {
+    match c.call(&["scheduler", "status"]) {
+        Ok(doc) => match parse_status(&doc) {
+            Ok(s) => (if s.halted { RC_HALTED } else { RC_RUNNING }, doc),
+            Err(e) => (RC_UNANSWERED, format!("spira: scheduler UNKNOWN — {e}")),
+        },
+        Err(e) => (RC_UNANSWERED, format!("spira: scheduler UNKNOWN — {e}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,6 +303,16 @@ mod tests {
         assert_eq!(rc, RC_UNANSWERED);
         assert!(lines[0].contains("UNKNOWN") && lines[0].contains("not answering"), "{lines:?}");
         assert_eq!(report(&Fake::ok("garbage")).0, RC_UNANSWERED);
+    }
+
+    #[test]
+    fn raw_hands_back_the_document_with_reports_exit_codes() {
+        assert_eq!(raw(&Fake::ok(DOC)), (RC_HALTED, DOC.to_string()));
+        let running = DOC.replace(r#""halted":true"#, r#""halted":false"#);
+        assert_eq!(raw(&Fake::ok(&running)), (RC_RUNNING, running.clone()));
+        let down = Fake { calls: RefCell::new(Vec::new()), reply: Err("not answering".into()) };
+        assert_eq!(raw(&down).0, RC_UNANSWERED);
+        assert_eq!(raw(&Fake::ok("garbage")).0, RC_UNANSWERED);
     }
 
     #[test]
