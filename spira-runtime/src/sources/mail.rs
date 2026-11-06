@@ -111,6 +111,25 @@ mod tests {
         assert_eq!(kind_of("From: x\n\nX-Spira-Kind: event\n"), None, "a body line is not a header");
     }
 
+    /// A watch that says when the source first waits: by then every mailbox is added and caught up.
+    struct Waiting {
+        inner: super::super::watch::ListingWatch,
+        first_wait: Option<std::sync::mpsc::Sender<()>>,
+    }
+
+    impl Watch for Waiting {
+        fn add(&mut self, dir: &Path) -> Result<(), String> {
+            self.inner.add(dir)
+        }
+
+        fn wait(&mut self, timeout: Duration) -> Result<Vec<(PathBuf, Vec<String>)>, String> {
+            if let Some(tx) = self.first_wait.take() {
+                let _ = tx.send(());
+            }
+            self.inner.wait(timeout)
+        }
+    }
+
     #[test]
     fn a_delivery_after_the_catch_up_is_submitted_with_its_kind() {
         let dir = testkit::TempDir::new("mail-arrived-live");
@@ -118,8 +137,10 @@ mod tests {
         std::fs::create_dir_all(&new).unwrap();
         let (tx, mut rx) = mpsc::channel(4);
         let boxes = vec![("ops".to_string(), dir.path().join("ops"))];
-        let h = std::thread::spawn(move || run(&boxes, Box::new(super::super::watch::ListingWatch::default()), tx));
-        std::thread::sleep(Duration::from_millis(100));
+        let (waiting_tx, waiting) = std::sync::mpsc::channel();
+        let watch = Waiting { inner: super::super::watch::ListingWatch::default(), first_wait: Some(waiting_tx) };
+        let h = std::thread::spawn(move || run(&boxes, Box::new(watch), tx));
+        waiting.recv().expect("the source caught up and waits");
         std::fs::write(new.join("m1"), "X-Spira-Kind: event\n\nhi\n").unwrap();
         let got = rx.blocking_recv().expect("the arrival");
         drop(rx);

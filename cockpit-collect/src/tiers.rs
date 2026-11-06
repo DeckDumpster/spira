@@ -221,11 +221,25 @@ pub fn append_history(run_dir: &Path) {
 mod tests {
     use super::*;
 
+    /// Holds the `slow` probe until the test opens it, so an overrun is a fact of the test and
+    /// not of the box's load.
+    fn gate() -> &'static (Mutex<bool>, std::sync::Condvar) {
+        static G: OnceLock<(Mutex<bool>, std::sync::Condvar)> = OnceLock::new();
+        G.get_or_init(|| (Mutex::new(false), std::sync::Condvar::new()))
+    }
+
+    fn open_gate() {
+        let (m, cv) = gate();
+        *m.lock().unwrap() = true;
+        cv.notify_all();
+    }
+
     fn quick(name: &str) -> Option<Kv> {
         match name {
             "fast" => Some(vec![("SP_FAST".into(), "1".into())]),
             "slow" => {
-                std::thread::sleep(Duration::from_millis(400));
+                let (m, cv) = gate();
+                let _open = cv.wait_while(m.lock().unwrap(), |open| !*open).unwrap();
                 Some(vec![("SP_SLOW".into(), "1".into())])
             }
             "boom" => panic!("probe failed"),
@@ -242,7 +256,17 @@ mod tests {
         assert_eq!(got[0].kv, vec![("SP_FAST".to_string(), "1".to_string())]);
         let again = observe_with(&probes(50), quick);
         assert_eq!(again[1].status, "timeout", "a probe still running is skipped, not stacked");
-        std::thread::sleep(Duration::from_millis(500));
+        open_gate();
+        let mut done = false;
+        for _ in 0..1000 {
+            if !lock().running.contains("slow") {
+                done = true;
+                break;
+            }
+            // clock-safe: a cap on the wait for the named signal, the slow probe leaving `running`
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(done, "the released slow probe finished");
         let third = observe_with(&probes(5_000), quick);
         assert_eq!((third[1].status, third[1].killed), ("ok", false));
         lock().running.insert("slow".into());

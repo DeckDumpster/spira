@@ -109,6 +109,7 @@ mod tests {
             let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
             let dead = stat.is_empty() || stat.rsplit(')').next().is_some_and(|r| r.trim_start().starts_with('Z'));
             if !dead {
+                // clock-safe: a 1 s cap on the wait for the named signal, the grandchild's exit
                 std::thread::sleep(Duration::from_millis(20));
             }
             dead
