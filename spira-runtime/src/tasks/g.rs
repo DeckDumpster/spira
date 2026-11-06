@@ -11,10 +11,8 @@
 
 pub use super::f::{cadence_ms, pinned, refuse, Transition};
 
-/// The real sources (S9). Their files live under `src/sources/`, declared here because the
-/// sources' event shapes are this family's.
-#[path = "../sources/mod.rs"]
-pub mod sources;
+/// The real sources (S9) are `crate::sources`; their event shapes are this family's.
+pub use crate::sources;
 use super::Task;
 
 pub mod cockpit_tier_5s;

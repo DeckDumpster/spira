@@ -8,6 +8,7 @@ pub mod notify;
 pub mod reconcile_host;
 pub mod settings;
 pub mod sink;
+pub mod sources;
 pub mod status;
 pub use store_view as store;
 pub mod tasks;

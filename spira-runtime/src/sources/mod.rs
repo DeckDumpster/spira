@@ -1,7 +1,8 @@
 //! The scheduler's real sources (design S9): what submits events to the host from outside it.
 //! Each runs on its own thread under `runtime::sources::Sources::start`, and each is refused under
-//! virtual time, where a `ScriptedSource` stands in. Declared in `tasks::g` (the module's event
-//! shapes and contracts live beside the cockpit tiers in family G); the real reads live here.
+//! virtual time, where a `ScriptedSource` stands in. The event shapes and contracts live beside
+//! the cockpit tiers in family G (`tasks::g`, which re-exports this module); the real reads
+//! live here.
 //!
 //! | Source | Backend | Module |
 //! |---|---|---|
@@ -23,6 +24,20 @@ pub mod mail;
 pub mod smtp;
 pub mod units;
 pub mod watch;
+
+/// Every config key [`real`] reads, so `check-config` (through `Settings::keys`) checks them.
+pub const KEYS: &[&str] = &[
+    "SPIRA_MAIL_READERS",
+    "SPIRA_MAIL",
+    "SPIRA_SUBMISSION_ADDR",
+    "SPIRA_SUBMISSION_PORT",
+    "SPIRA_SUBMISSION_CERT",
+    "SPIRA_SUBMISSION_KEY",
+    "SPIRA_SUBMISSION_PASSWORD_FILE",
+    "SPIRA_SUBMISSION_USER",
+    "SPIRA_SUBMISSION_FROM",
+    "SPIRA_SUBMISSION_RCPT_DOMAIN",
+];
 
 /// The three real sources, from pinned config read once here: the registered mailboxes
 /// (`SPIRA_MAIL_READERS` under `SPIRA_MAIL`), the unit manager's completions (`completions`, the
