@@ -37,12 +37,15 @@ bad_rendered="$(printf '%s\n' "$rendered" \
     | grep -v '^spira-.*-test\.' || true)"
 is "naming: all rendered spira-* units have -test suffix" "" "$bad_rendered"
 
-n="$(printf '%s\n' "$rendered" | grep -c '^===== spira-.*-test\.' || true)"
-if [ "${n:-0}" -ge 14 ]; then
-    ok "naming: at least 14 spira-*-test units rendered ($n)"
-else
-    bad "naming: at least 14 spira-*-test units rendered" "got ${n:-0}"
-fi
+# NON-VACUOUS: the suffix check above passes on an empty render, so every spira-* unit the
+# manifest pushes unconditionally must be present under its -test name. A count floor ("at
+# least 14") stood here while the loop shipped a timer per task; the consolidation
+# (scheduler-consolidation-2026-11-03 §1) left the scheduler, its watchdog and the clients,
+# so the units are named instead (install/src/manifest.rs build()).
+for u in spira-runtime-test.service spira-watchdog-test.service spira-watchdog-test.timer \
+         spira-cockpit-test.service spira-exec-census-test.service; do
+    want "naming: $u rendered" "===== $u =====" "$rendered"
+done
 
 want "naming: cockpit-ensure.service present (shared, plain name)" \
      "===== cockpit-ensure.service =====" "$rendered"

@@ -147,8 +147,12 @@ inst() {
         shift
     done
     [ "${1:-}" = "--" ] && shift
+    # SPIRA_MAIL TOO: units-install ensures the concierge mailbox before the landref fence, and
+    # the complete fixture's own default is a fixed /fixture/... path this suite cannot write.
+    # The fixture's bin/ once stubbed `mail` because a retired spira-mail-* unit exec'd it
+    # (sp-ipwlic); the real `mail ensure` now runs, so its mail root must be declared.
     tl_config SPIRA_REPO_MAP=/nonexistent SPIRA_RUN="$TMP/run" \
-        SPIRA_DOLT_DATA=""
+        SPIRA_DOLT_DATA="" SPIRA_MAIL="$TMP/run/mail"
     env -i \
         SPIRA_TOML="${INST_TOML:-$SPIRA_TOML}" \
         "PATH=$MOCK_BIN:$FIXTURE/bin:$FIXTURE/spira:$GIT_BIN:$PATH" \
