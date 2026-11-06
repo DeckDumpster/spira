@@ -106,17 +106,30 @@
 //!
 //! ## The port
 //!
-//! Ported: CHECK 2's reaper (`sentinel::checks::stale_leases`: a live holder is stopped and
-//! reclaimed on a later pass, a dead one reclaimed now), CHECK 3b's queue waiters
-//! (`sentinel::checks::decide` over the active blockers, and a labeled bead whose own row
-//! LANDED closed), CHECK 6's dispatch of the landing leg (`unit.start` of
-//! `spira-run-sentinel-pass-landing` under `landing_props` — `RuntimeMaxSec=SPIRA_LAND_MAXSEC`,
-//! output appended to `landing.log`, as `systemd-run` started it — matched back by
-//! `UnitRan::key_for`) and CHECK 7's
-//! hand-off. Not ported, and so never asked for by decide: CHECK 1 (pilgrimage.sh), 2b
-//! (strand), 2c and 2d, 3 and 3c, the twelve watchtower checks and CHECK 8's judgement; their
-//! runners refuse naming what is missing. The content door serves list and show only, so
-//! the label, close and recompute writes refuse rather than fork bd.
+//! Every check of the pass, in today's order, over the sentinel library's pure entries:
+//! CHECK 1 (`sentinel::pilgrimage`, `pilgrimage.sh check` ported: the label-scoped epics of the
+//! content rows, a live unlanded push-mode child branch read in the probe defers, the marker is
+//! the carry's `announced`, dropped when the epic grows or its close fails); CHECK 2's reaper
+//! (`sentinel::checks::stale_leases`: a live holder is stopped and reclaimed on a later pass, a
+//! dead one reclaimed now); 2b (strand's classification in the probe, `strand check` in-process
+//! as the act when anything is stranded); 2c (`checks::inconsistent`, detect only: the carry's
+//! `inconsistent`, journaled when it changes); 2d (`pass_checks::stale_ask_holds`, the
+//! `AskWithdrawn` event and the ask label off; `stale_conflicts` and `starvation` as
+//! `queue.starved` events); 3 (`should_recompute`); 6 (the landing leg as a unit under
+//! `landing_props` — `RuntimeMaxSec=SPIRA_LAND_MAXSEC`, output appended to `landing.log`, as
+//! `systemd-run` started it — matched back by `UnitRan::key_for`; the twelve watchtower
+//! detectors run in the probe through `sentinel::tower`, since each reads and files in one call
+//! and a pass must stay silent when nothing changed, so the probe's deadline is the pass budget,
+//! 60 s); 3b (queue waiters); 3c (`open_children` over the claimable rows in scope plus the
+//! claim's ready answer, `landed_red_trackers` closed); 7's hand-off; and 8
+//! (`should_judge` with the carry's cooldown, the leg `sentinel --reflect <ids>` — `reflect.sh`
+//! ported into `sentinel::reflect` — started as a unit appending to `reflect.log`).
+//!
+//! The label, note and close writes go through the store's content door; `recompute-blocked`
+//! has no door yet, so CHECK 3's act refuses naming the verb rather than fork bd. CHECK 1's
+//! subscribers are `SPIRA_DEFAULT_WATCHERS` (else the operator): the per-epic `spira.watch.*`
+//! keys lived in bd's kv, which the store does not serve, so an epic silenced there is not
+//! silenced here.
 //!
 //! ## Reverse
 //!
@@ -166,7 +179,9 @@ pub const PHASE_METRIC: &str = "sentinel-pass.phase_metric";
 /// `OnUnitActiveSec=2min`. The task row has no first-boot delay, so the old timer's
 /// `OnBootSec=180s` is not modelled: the boot tick arms the first pass one cadence later.
 pub const CADENCE_MS: u64 = 120_000;
-pub const OBSERVE_DEADLINE_MS: u64 = 15_000;
+/// The pass budget (`SPIRA_SENTINEL_PASS_TARGET_SECS`, 60 s) is the probe deadline: the probe also runs
+/// CHECK 6's twelve watchtower detectors and CHECK 2b's strand classification.
+pub const OBSERVE_DEADLINE_MS: u64 = 60_000;
 
 pub const ACTS: &[(&str, u64)] = &[
     (LC_EVENT, 5_000),
@@ -207,12 +222,13 @@ pub const KEYS: &[&str] = &[
     "SPIRA_REPO_MAP",
     "SPIRA_GH",
     "SPIRA_BATCH_MAXPAR",
+    "SPIRA_OPERATOR_ACTOR",
 ];
-pub const UNREGISTERED: &[&str] = &["SPIRA_LAND_UNIT", "SPIRA_LAND_STALE", "SPIRA_LAND_ESCALATE_EVERY", "SPIRA_INFERENCE_EVERY", "SPIRA_SENTINEL_PASS_TARGET_SECS", "SPIRA_SKIP_RECLAIM"];
+pub const UNREGISTERED: &[&str] = &["SPIRA_LAND_UNIT", "SPIRA_LAND_STALE", "SPIRA_LAND_ESCALATE_EVERY", "SPIRA_INFERENCE_EVERY", "SPIRA_SENTINEL_PASS_TARGET_SECS", "SPIRA_SKIP_RECLAIM", "SPIRA_EPIC_LABELS", "SPIRA_DEFAULT_WATCHERS"];
 
 pub const SHAPE: Shape = Shape { name: NAME, stream: STREAM, tick: TICK, state: STATE, observe: OBSERVE, observe_deadline_ms: OBSERVE_DEADLINE_MS };
 
-/// One bead's content row: labels, dependencies, title.
+/// One bead's content row: labels, `blocks` dependencies, title, its type and its parents.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Bead {
     pub id: String,
@@ -220,6 +236,12 @@ pub struct Bead {
     pub labels: Vec<String>,
     pub deps: Vec<String>,
     pub status: String,
+    /// `issue_type`: an `epic` is CHECK 1's, an `epic`/`event` is never plan work.
+    #[serde(default)]
+    pub kind: String,
+    /// Its parents, by the row's `parent` and its `parent-child` dependencies (CHECK 1, 3c).
+    #[serde(default)]
+    pub parents: Vec<String>,
 }
 
 /// One lifecycle row: state, holds, holder, lease, stack, and the CAS version.
@@ -232,6 +254,13 @@ pub struct Row {
     pub holder: Option<String>,
     pub lease_until_ms: Option<u64>,
     pub stack: Vec<String>,
+    /// The hold's reason, its last update and the recorded tip (CHECK 2d, 3c).
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub updated_at_ms: Option<u64>,
+    #[serde(default)]
+    pub tip: Option<String>,
 }
 
 /// The landing leg's last status, as its `unit.ran` body or the `landing` task's carry reports it.
@@ -247,6 +276,14 @@ pub struct LandingStatus {
 #[serde(default)]
 pub struct Labels {
     pub queue_wait: String,
+    /// `SPIRA_ASK_LABEL` (CHECK 2d), `SPIRA_SCOPE_LABEL` (the plan and the scoped ready set),
+    /// `SPIRA_OPEN_CHILDREN_LABEL` and `SPIRA_RED_TRACKER_LABEL` (CHECK 3c).
+    pub ask: String,
+    pub scope: String,
+    pub open_children: String,
+    pub red_tracker: String,
+    /// `SPIRA_EPIC_LABELS`, AND-scoped: CHECK 1's partition.
+    pub epics: Vec<String>,
 }
 
 /// The observe snapshot. `beads` or `rows` that could not be read are `None`: no lifecycle
@@ -275,6 +312,19 @@ pub struct Snapshot {
     /// `SPIRA_LAND_MAXSEC`, as pinned: the landing leg's `RuntimeMaxSec`.
     pub land_maxsec: u64,
     pub labels: Labels,
+    /// CHECK 1: each epic's children whose push-mode branch is live and not LANDED in the
+    /// lifecycle record (`spira/<child>` in `<repo>`), for the complete epics only.
+    pub unlanded: BTreeMap<String, Vec<String>>,
+    /// CHECK 1: who a completion is announced to (`SPIRA_DEFAULT_WATCHERS`, else the operator).
+    pub watchers: Vec<String>,
+    /// CHECK 2d: each repository an unmapped-repo ask hold waits on, and whether it resolves now.
+    pub repo_resolves: BTreeMap<String, bool>,
+    /// CHECK 2d: each prerequisite's stack-conflict marker, (recorded tip, age in seconds).
+    pub conflict_markers: BTreeMap<String, (String, u64)>,
+    /// CHECK 6: each watchtower check this pass ran, with what it said.
+    pub tower: Vec<String>,
+    /// CHECK 8: `SPIRA_INFERENCE_EVERY`, the judgement cooldown in seconds.
+    pub inference_every_secs: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -328,6 +378,11 @@ pub struct Carry {
     pub inference_last_ms: Option<u64>,
     pub land_escalated_at_ms: Option<u64>,
     pub roster_warned: Vec<String>,
+    /// CHECK 1's completion markers (`spira.landed.<epic>` in the script's kv): an epic is
+    /// announced once, and a marker is dropped when the epic grows again or its close failed.
+    pub announced: Vec<String>,
+    /// CHECK 2c's last finding: rows whose holder and state disagree, recorded when it changes.
+    pub inconsistent: Vec<String>,
 }
 
 pub fn step(state: State, event: Trigger) -> Result<State, String> {
@@ -344,20 +399,31 @@ fn lc_row(r: &Row) -> sentinel::model::LcRow {
         holds: r.holds.clone(),
         stack: r.stack.clone(),
         version: Some(r.version.to_string()),
-        ..sentinel::model::LcRow::default()
+        tip: r.tip.clone(),
+        reason: r.reason.clone(),
+        updated_at: r.updated_at_ms.map(|ms| (ms / 1000) as i64),
     }
 }
 
 fn model_bead(b: &Bead) -> sentinel::model::Bead {
+    let dep = |t: &String, kind: &str| sentinel::model::Dep { depends_on_id: Some(t.clone()), r#type: Some(kind.into()), ..sentinel::model::Dep::default() };
     sentinel::model::Bead {
         id: b.id.clone(),
         title: Some(b.title.clone()),
         status: b.status.clone(),
+        issue_type: (!b.kind.is_empty()).then(|| b.kind.clone()),
         labels: b.labels.clone(),
         dependency_count: b.deps.len() as u64,
-        dependencies: b.deps.iter().map(|d| sentinel::model::Dep { depends_on_id: Some(d.clone()), r#type: Some("blocks".into()), ..sentinel::model::Dep::default() }).collect(),
+        dependencies: b.deps.iter().map(|d| dep(d, "blocks")).chain(b.parents.iter().map(|p| dep(p, "parent-child"))).collect(),
         ..sentinel::model::Bead::default()
     }
+}
+
+/// The plan labels (`<scope,>plan`) CHECK 3, 7 and 8 count.
+fn plan_labels(labels: &Labels) -> Vec<String> {
+    let mut out: Vec<String> = labels.scope.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect();
+    out.push("plan".into());
+    out
 }
 
 /// What a store write's runner is handed.
@@ -375,68 +441,201 @@ pub struct Write {
     /// The landing leg's `RuntimeMaxSec`, in seconds.
     #[serde(default)]
     pub max_secs: u64,
+    /// CHECK 1's notice and CHECK 2d's event title.
+    #[serde(default)]
+    pub subject: String,
+    /// CHECK 1: the addresses a completion is delivered to.
+    #[serde(default)]
+    pub subscribers: Vec<String>,
+    /// CHECK 1: the epic's child count.
+    #[serde(default)]
+    pub total: usize,
+    /// CHECK 8: the open plan beads judgement is shown.
+    #[serde(default)]
+    pub ids: Vec<String>,
 }
 
 fn act(effect: &str, key: impl Into<String>, w: Write) -> Act {
     Act::new(effect, key).with_input(serde_json::to_string(&w).unwrap_or_default())
 }
 
-/// The checks in today's order (2, 3b, 6, 7), from the snapshot alone.
+/// The acts that are progress for CHECK 8: a reclaim, a withdrawn hold, a close, strand's fix. A
+/// recompute is not: the old pass counted it only once it freed a bead, which decide cannot know.
+fn progress(acts: &[Act]) -> u32 {
+    acts.iter().filter(|a| matches!(a.effect.as_str(), LC_EVENT | PILGRIMAGE_CLOSE | STRAND | LC_CLOSE | CONTENT_CLOSE)).count() as u32
+}
+
+/// CHECK 1 (`pilgrimage.sh check`): each complete epic of the partition announced and closed
+/// once; a marker dropped when its epic grew again.
+fn check1(next: &mut Carry, beads: &[sentinel::model::Bead], snap: &Snapshot, acts: &mut Vec<Act>) {
+    use sentinel::pilgrimage::{self, Step};
+    let epics = pilgrimage::epics(beads, &snap.labels.epics);
+    let announced: std::collections::BTreeSet<String> = next.announced.iter().cloned().collect();
+    for step in pilgrimage::check(&epics, &announced, &snap.unlanded, &|_| snap.watchers.clone()) {
+        match step {
+            Step::Reopened { id } => next.announced.retain(|a| *a != id),
+            Step::Deferred { .. } => {}
+            Step::Complete { id, subject, body, total, subscribers } => {
+                next.announced.push(id.clone());
+                acts.push(act(PILGRIMAGE_CLOSE, &id, Write { id: id.clone(), subject, text: body, total, subscribers, ..Write::default() }));
+            }
+        }
+    }
+}
+
+/// CHECK 2: a live holder is stopped first, and never reclaimed in the pass that stops it.
+fn check2(rows: &[Row], lc: &[sentinel::model::LcRow], snap: &Snapshot, now: i64, acts: &mut Vec<Act>) {
+    let alive = |id: &str| snap.holder_alive.get(id).copied().unwrap_or(false);
+    let gone = |h: &str| snap.session_gone.get(h).copied().unwrap_or(false);
+    for (id, ago) in sentinel::checks::stale_leases(lc, now, snap.reclaim_grace_secs as i64, alive, gone) {
+        if alive(&id) {
+            acts.push(act(STOP_HOLDER, &id, Write { id: id.clone(), ..Write::default() }));
+            continue;
+        }
+        let Some(row) = rows.iter().find(|r| r.id == id) else { continue };
+        let expect = lc_row(row).state;
+        acts.push(act(LC_EVENT, format!("{id}:{}:HolderDead", row.version), Write { id: id.clone(), expect, version: row.version, kind: sentinel::lifecycle_events::HOLDER_DEAD.into(), ..Write::default() }));
+        acts.push(act(LC_FACT, format!("{id}:reclaimed:stale-lease:{now}"), Write { id: id.clone(), kind: "reclaimed".into(), cause: "stale-lease".into(), ..Write::default() }));
+        let text = if ago > 0 { format!("Reclaimed by CHECK 2: in_progress with a lease that expired {}m ago and was never released.", ago / 60) } else { "Reclaimed by CHECK 2: the holder's session is gone and never released the claim.".to_string() };
+        acts.push(act(CONTENT_NOTE, format!("{id}:{}", text.len()), Write { id, text, ..Write::default() }));
+    }
+}
+
+/// `lib.sh spira_event`'s act: one cooled-down incident event line.
+fn event(kind: &str, target: &str, title: &str, detail: &str) -> Act {
+    act(INCIDENT_EVENT, format!("{kind}:{target}:{title}"), Write { kind: kind.into(), id: target.into(), subject: title.into(), text: detail.into(), ..Write::default() })
+}
+
+/// CHECK 2d (`holds.rs`): stale ask holds withdrawn, stale stack conflicts and a starved
+/// queue announced.
+fn check2d(rows: &[Row], v: &sentinel::pass_checks::View, snap: &Snapshot, now: i64, acts: &mut Vec<Act>) {
+    use sentinel::pass_checks as pc;
+    let resolves = |name: &str| snap.repo_resolves.get(name).copied().unwrap_or(false);
+    for (id, why) in pc::stale_ask_holds(v, &snap.labels.ask, now, snap.reclaim_grace_secs as i64, &resolves) {
+        let Some(row) = rows.iter().find(|r| r.id == id) else { continue };
+        acts.push(act(LC_EVENT, format!("{id}:{}:AskWithdrawn", row.version), Write { id: id.clone(), expect: row.state.clone(), version: row.version, kind: "\"AskWithdrawn\"".into(), text: why, ..Write::default() }));
+        if v.get(&id).is_some_and(|b| b.has(&snap.labels.ask)) {
+            acts.push(act(CONTENT_LABEL, format!("{id}:{}:remove", snap.labels.ask), Write { id, label: snap.labels.ask.clone(), op: "remove".into(), ..Write::default() }));
+        }
+    }
+    let marker = |id: &str| snap.conflict_markers.get(id).cloned();
+    for (bead, prereq, age) in pc::stale_conflicts(v, &marker, spira_config::stack_conflict::REPORT_AGE.as_secs()) {
+        let title = format!("{bead} is excluded from the ready set by a stack-conflict marker on {prereq}, {age}s old");
+        acts.push(event("queue.starved", &bead, &title, "the marker lapses on its own; the next claim attempt re-records it if the conflict stands"));
+    }
+    let (held, ready, starved) = pc::starvation(v.rows);
+    if starved {
+        let title = format!("{held} of {ready} READY beads are held — the builder queue is starved");
+        acts.push(event("queue.starved", "-", &title, "withdraw holds whose cause is gone: spira-lc list --hold ask"));
+    }
+}
+
+/// CHECK 3b: queue waiters.
+fn check3b(beads: &[Bead], rows: &[Row], lc: &[sentinel::model::LcRow], snap: &Snapshot, acts: &mut Vec<Act>) {
+    let label = &snap.labels.queue_wait;
+    if label.is_empty() {
+        return;
+    }
+    let labeled: Vec<&Bead> = beads.iter().filter(|b| b.labels.contains(label)).collect();
+    let active = sentinel::checks::active_blockers_lc(lc);
+    // The waiters are the labeled beads whose row is claimable; one with no lifecycle
+    // row is left alone (`waiters.rs`, `labeled_set_is_claimable_by_the_lifecycle_row`).
+    let waiting: HashSet<String> = sentinel::checks::labeled_claimable(lc, labeled.iter().map(|b| model_bead(b)).collect());
+    let ready: Vec<sentinel::model::Bead> = if active.is_empty() { vec![] } else { beads.iter().filter(|b| snap.ready_raw.contains(&b.id)).map(model_bead).collect() };
+    for (add, id) in sentinel::checks::decide(&active, &waiting, &ready) {
+        let (op, hold) = if add { ("add", LC_HOLD) } else { ("remove", LC_UNHOLD) };
+        acts.push(act(CONTENT_LABEL, format!("{id}:{label}:{op}"), Write { id: id.clone(), label: label.clone(), op: op.into(), ..Write::default() }));
+        acts.push(act(hold, format!("{id}:wait"), Write { id, kind: "wait".into(), text: "blocker certified or batched, not yet landed".into(), ..Write::default() }));
+    }
+    for b in labeled.iter().filter(|b| rows.iter().any(|r| r.id == b.id && r.state == "LANDED")) {
+        acts.push(act(CONTENT_LABEL, format!("{}:{label}:remove", b.id), Write { id: b.id.clone(), label: label.clone(), op: "remove".into(), ..Write::default() }));
+        acts.push(act(LC_UNHOLD, format!("{}:wait", b.id), Write { id: b.id.clone(), kind: "wait".into(), ..Write::default() }));
+        acts.push(act(CONTENT_CLOSE, &b.id, Write { id: b.id.clone(), text: "Content already on main (LANDED); no branch remained to land.".into(), ..Write::default() }));
+    }
+}
+
+/// CHECK 3c (`open_children.rs`, `red_trackers.rs`): the open-children label over the scoped
+/// ready set (the claimable rows in scope, and the claim's ready answer), and the red trackers
+/// whose every fix landed closed.
+fn check3c(v: &sentinel::pass_checks::View, snap: &Snapshot, acts: &mut Vec<Act>) {
+    use sentinel::pass_checks::{self as pc, Change};
+    let scope = &snap.labels.scope;
+    let in_scope = |id: &str| scope.is_empty() || v.get(id).is_some_and(|b| b.has(scope));
+    let mut ready: Vec<String> = snap.ready_raw.iter().filter(|id| in_scope(id)).cloned().collect();
+    ready.extend(v.rows.iter().filter(|r| spira_config::lc_state::is_claimable(&r.state) && in_scope(&r.bead_id) && !snap.ready_raw.contains(&r.bead_id)).map(|r| r.bead_id.clone()));
+    let label = &snap.labels.open_children;
+    for c in pc::open_children(v, &ready, label) {
+        let (id, op) = match c {
+            Change::Add(id) => (id, "add"),
+            Change::Remove(id) => (id, "remove"),
+        };
+        acts.push(act(CONTENT_LABEL, format!("{id}:{label}:{op}"), Write { id, label: label.clone(), op: op.into(), ..Write::default() }));
+    }
+    for (id, fixes) in pc::landed_red_trackers(v, &snap.labels.red_tracker) {
+        acts.push(act(LC_CLOSE, &id, Write { id: id.clone(), text: pc::red_tracker_reason(&fixes), ..Write::default() }));
+    }
+}
+
+/// The checks in today's order (1, 2, 2b, 2c, 2d, 3, 6, 3b, 3c, 7, 8), from the snapshot alone.
+/// CHECK 6's twelve watchtower detectors ran in the probe (they read and file in one call),
+/// so their answer is in `snap.tower` and nothing here re-asks for them.
 pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
+    use sentinel::pass_checks::{self as pc, Judge};
     let mut acts = vec![];
+    let mut next = carry.clone();
     let now = (snap.now_ms / 1000) as i64;
     let mut landing = false;
+    let beads: Vec<sentinel::model::Bead> = snap.beads.iter().flatten().map(model_bead).collect();
+    // CHECK 1.
+    if snap.beads.is_some() {
+        check1(&mut next, &beads, snap, &mut acts);
+    }
+    // CHECK 2, 2b, 2c, 2d over the lifecycle rows; unreadable rows decide nothing about them.
+    let lc: Vec<sentinel::model::LcRow> = snap.rows.iter().flatten().map(lc_row).collect();
+    let view = pc::View::new(&beads, &lc);
     if let Some(rows) = &snap.rows {
-        let lc: Vec<sentinel::model::LcRow> = rows.iter().map(lc_row).collect();
-        // CHECK 2: a live holder is stopped first, and never reclaimed in the pass that stops it.
         if !snap.skip_reclaim {
-            let alive = |id: &str| snap.holder_alive.get(id).copied().unwrap_or(false);
-            let gone = |h: &str| snap.session_gone.get(h).copied().unwrap_or(false);
-            for (id, ago) in sentinel::checks::stale_leases(&lc, now, snap.reclaim_grace_secs as i64, alive, gone) {
-                if alive(&id) {
-                    acts.push(act(STOP_HOLDER, &id, Write { id: id.clone(), ..Write::default() }));
-                    continue;
-                }
-                let Some(row) = rows.iter().find(|r| r.id == id) else { continue };
-                let expect = lc_row(row).state;
-                acts.push(act(LC_EVENT, format!("{id}:{}:HolderDead", row.version), Write { id: id.clone(), expect, version: row.version, kind: sentinel::lifecycle_events::HOLDER_DEAD.into(), ..Write::default() }));
-                acts.push(act(LC_FACT, format!("{id}:reclaimed:stale-lease:{now}"), Write { id: id.clone(), kind: "reclaimed".into(), cause: "stale-lease".into(), ..Write::default() }));
-                let text = if ago > 0 { format!("Reclaimed by CHECK 2: in_progress with a lease that expired {}m ago and was never released.", ago / 60) } else { "Reclaimed by CHECK 2: the holder's session is gone and never released the claim.".to_string() };
-                acts.push(act(CONTENT_NOTE, format!("{id}:{}", text.len()), Write { id, text, ..Write::default() }));
-            }
+            check2(rows, &lc, snap, now, &mut acts);
         }
-        // CHECK 3b: queue waiters.
-        if let (Some(beads), label) = (&snap.beads, &snap.labels.queue_wait) {
-            if !label.is_empty() {
-                let labeled: Vec<&Bead> = beads.iter().filter(|b| b.labels.contains(label)).collect();
-                let active = sentinel::checks::active_blockers_lc(&lc);
-                // The waiters are the labeled beads whose row is claimable; one with no lifecycle
-                // row is left alone (`waiters.rs`, `labeled_set_is_claimable_by_the_lifecycle_row`).
-                let waiting: HashSet<String> = sentinel::checks::labeled_claimable(&lc, labeled.iter().map(|b| model_bead(b)).collect());
-                let ready: Vec<sentinel::model::Bead> = if active.is_empty() { vec![] } else { beads.iter().filter(|b| snap.ready_raw.contains(&b.id)).map(model_bead).collect() };
-                for (add, id) in sentinel::checks::decide(&active, &waiting, &ready) {
-                    let (op, hold) = if add { ("add", LC_HOLD) } else { ("remove", LC_UNHOLD) };
-                    acts.push(act(CONTENT_LABEL, format!("{id}:{label}:{op}"), Write { id: id.clone(), label: label.clone(), op: op.into(), ..Write::default() }));
-                    acts.push(act(hold, format!("{id}:wait"), Write { id, kind: "wait".into(), text: "blocker certified or batched, not yet landed".into(), ..Write::default() }));
-                }
-                for b in labeled.iter().filter(|b| rows.iter().any(|r| r.id == b.id && r.state == "LANDED")) {
-                    acts.push(act(CONTENT_LABEL, format!("{}:{label}:remove", b.id), Write { id: b.id.clone(), label: label.clone(), op: "remove".into(), ..Write::default() }));
-                    acts.push(act(LC_UNHOLD, format!("{}:wait", b.id), Write { id: b.id.clone(), kind: "wait".into(), ..Write::default() }));
-                    acts.push(act(CONTENT_CLOSE, &b.id, Write { id: b.id.clone(), text: "Content already on main (LANDED); no branch remained to land.".into(), ..Write::default() }));
-                }
-            }
+    }
+    if !snap.strand.is_empty() {
+        acts.push(Act::new(STRAND, format!("strand:{now}")).with_input(serde_json::json!({ "stranded": snap.strand }).to_string()));
+    }
+    if let Some(rows) = &snap.rows {
+        next.inconsistent = sentinel::checks::inconsistent(&lc);
+        if snap.beads.is_some() {
+            check2d(rows, &view, snap, now, &mut acts);
         }
+    }
+    // CHECK 3: the starved plan's stale blocked flags.
+    let plan = plan_labels(&snap.labels);
+    let open_plan = if snap.skip_reclaim { vec![] } else { pc::plan_open(&view, &plan) };
+    let plan_inprog = if snap.skip_reclaim { 0 } else { pc::plan_inprog(&view, &plan) };
+    let plan_ready = snap.plan_ready.map(|n| n as usize);
+    if snap.rows.is_some() && pc::should_recompute(snap.skip_reclaim, plan_ready, plan_inprog, open_plan.len()) {
+        acts.push(Act::new(RECOMPUTE_BLOCKED, format!("recompute:{now}")));
     }
     // CHECK 6: the landing leg, unless one is in flight or this is not the current release.
     if snap.world_running && snap.skew.is_none() && !snap.landing_active {
         acts.push(act(LANDING_START, LANDING_UNIT, Write { max_secs: snap.land_maxsec, ..Write::default() }));
         landing = true;
     }
+    // CHECK 3b and 3c.
+    if let (Some(rows), Some(content)) = (&snap.rows, &snap.beads) {
+        check3b(content, rows, &lc, snap, &mut acts);
+        check3c(&view, snap, &mut acts);
+    }
     // CHECK 7: plan beads ready hand off to the call.
     if snap.plan_ready.is_some_and(|n| n > 0) {
         acts.push(Act::new(CALL_WANTED, format!("plan_ready:{now}")).with_input(serde_json::json!({"plan_ready": snap.plan_ready}).to_string()));
     }
-    let mut next = carry.clone();
+    // CHECK 8: judgement, when the plan is starved and nothing moved, once per cooldown.
+    let last = carry.inference_last_ms.map_or(0, |ms| (ms / 1000) as i64);
+    if snap.rows.is_some() && pc::should_judge(plan_ready, plan_inprog, open_plan.len(), progress(&acts), last, now, snap.inference_every_secs as i64) == Judge::Yes {
+        next.inference_last_ms = Some(snap.now_ms);
+        let ids: Vec<String> = open_plan.iter().take(pc::REFLECT_IDS).cloned().collect();
+        acts.push(act(REFLECT, format!("reflect:{now}"), Write { ids, ..Write::default() }));
+    }
     next.state = if landing { State::AwaitingLanding } else if acts.is_empty() { State::Idle } else { State::Acting };
     (next, acts)
 }
@@ -482,7 +681,7 @@ impl SentinelPass {
 
 impl Handler for SentinelPass {
     fn interests(&self) -> &[EventKindTag] {
-        &[TICK, UNIT_RAN, EFFECT_SUCCEEDED]
+        &[TICK, UNIT_RAN, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
     }
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
@@ -503,6 +702,15 @@ impl Handler for SentinelPass {
                 return vec![];
             }
             return self.observe(&carry, self.cadence.next_after(ev.at));
+        }
+        // CHECK 1's close failed (a subscriber unreached, the store refusing): its marker is
+        // dropped so the next pass retries, as the script left the epic open unmarked.
+        if ev.kind.tag != EFFECT_SUCCEEDED {
+            let Some(spec) = crate::watchers::answered_spec(view, ev).filter(|s| s.name == PILGRIMAGE_CLOSE) else { return vec![] };
+            let Ok(w) = serde_json::from_str::<Write>(&spec.input) else { return vec![] };
+            let mut next = carry.clone();
+            next.announced.retain(|a| *a != w.id);
+            return kit::commands(&SHAPE, ACTS, EMITS, &carry, &next, vec![]);
         }
         let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else { return vec![] };
         let (next, acts) = decide(&carry, &snap);
@@ -537,20 +745,37 @@ fn landing_handle() -> Result<units::UnitHandle, String> {
 pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     let req: ObserveIn = serde_json::from_str(input).unwrap_or_default();
     let pin = |k: &str| req.pinned.get(k).cloned().unwrap_or_default();
+    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+    let list = |s: &str| s.split(',').map(str::trim).filter(|x| !x.is_empty()).map(str::to_string).collect::<Vec<_>>();
     let lc = client(e, 5_000);
     let run = e.world.run_dir.clone();
     let mut snap = Snapshot {
         now_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64),
         world_running: !run.join("world.halted").is_file() && !run.join("world.draining").is_file(),
         reclaim_grace_secs: pin("SPIRA_RECLAIM_GRACE_SECS").trim().parse().unwrap_or(10_800),
+        skip_reclaim: env("SPIRA_SKIP_RECLAIM").as_deref() == Some("1"),
         land_maxsec: pin("SPIRA_LAND_MAXSEC").trim().parse().unwrap_or(0),
-        labels: Labels { queue_wait: pin("SPIRA_QUEUE_WAIT_LABEL") },
+        labels: Labels {
+            queue_wait: pin("SPIRA_QUEUE_WAIT_LABEL"),
+            ask: pin("SPIRA_ASK_LABEL"),
+            scope: pin("SPIRA_SCOPE_LABEL"),
+            open_children: pin("SPIRA_OPEN_CHILDREN_LABEL"),
+            red_tracker: pin("SPIRA_RED_TRACKER_LABEL"),
+            epics: list(&env("SPIRA_EPIC_LABELS").unwrap_or_else(|| "spira".into())),
+        },
+        watchers: list(&env("SPIRA_DEFAULT_WATCHERS").unwrap_or_else(|| pin("SPIRA_OPERATOR_ACTOR"))),
+        inference_every_secs: env("SPIRA_INFERENCE_EVERY").and_then(|v| v.trim().parse().ok()).unwrap_or(3_600),
         ..Snapshot::default()
     };
     snap.skew = std::env::var(spira_config::RELEASE_ENV).ok().filter(|r| !r.is_empty()).and_then(|r| spira_config::release_skew::skew(std::path::Path::new(&r))).map(|s| s.describe());
-    snap.beads = answer(&lc, &["content", "list", "--all", "--limit", "0", "--json"]).ok().and_then(|t| sentinel::model::parse_beads(&t).ok()).map(|v| {
-        v.into_iter()
-            .map(|b| Bead { deps: b.dependencies.iter().filter(|d| d.r#type.as_deref() == Some("blocks")).filter_map(|d| d.target().map(str::to_string)).collect(), title: b.title.clone().unwrap_or_default(), status: b.status.clone(), labels: b.labels.clone(), id: b.id })
+    let content = answer(&lc, &["content", "list", "--all", "--limit", "0", "--json"]).ok().and_then(|t| sentinel::model::parse_beads(&t).ok());
+    snap.beads = content.as_ref().map(|v| {
+        v.iter()
+            .map(|b| {
+                let mut parents: Vec<String> = b.parent.iter().filter(|p| !p.is_empty()).cloned().collect();
+                parents.extend(b.dependencies.iter().filter(|d| d.r#type.as_deref() == Some("parent-child")).filter_map(|d| d.target().map(str::to_string)));
+                Bead { deps: b.dependencies.iter().filter(|d| d.r#type.as_deref() == Some("blocks")).filter_map(|d| d.target().map(str::to_string)).collect(), title: b.title.clone().unwrap_or_default(), status: b.status.clone(), labels: b.labels.clone(), id: b.id.clone(), kind: b.typ().to_string(), parents }
+            })
             .collect()
     });
     let rows = answer(&lc, &["list"]).ok().and_then(|t| sentinel::model::parse_lc_rows(&t).ok());
@@ -561,17 +786,54 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
                 snap.session_gone.insert(h.clone(), spira_config::session::session_gone(h, &spira_config::admission::RealProcs));
             }
         }
+        // CHECK 2d's outside facts: whether each unmapped repo resolves now, and each prerequisite's marker.
+        let home = spira_config::resolve::locate_home_for_process().ok();
+        let reg = home.as_ref().map(|h| spira_config::repos::Registry::from_env(std::env::vars().chain(req.pinned.clone()).collect(), h));
+        for name in sentinel::pass_checks::unmapped_repos(rows) {
+            let ok = reg.as_ref().and_then(|r| r.root(&name)).is_some_and(|p| std::path::Path::new(&p).join(".git").exists());
+            snap.repo_resolves.insert(name, ok);
+        }
+        for p in sentinel::pass_checks::conflict_prereqs(rows) {
+            if let Some((tip, age)) = spira_config::stack_conflict::recorded(&run, &p.bead_id) {
+                snap.conflict_markers.insert(p.bead_id.clone(), (tip, age.as_secs()));
+            }
+        }
+        // CHECK 1's assertion: a complete epic's child with a live push-mode branch must be LANDED.
+        if let (Some(content), Some(reg)) = (&content, &reg) {
+            let state = |id: &str| rows.iter().find(|r| r.bead_id == id).map(|r| r.state.as_str());
+            for epic in sentinel::pilgrimage::epics(content, &snap.labels.epics).into_iter().filter(|e| e.complete()) {
+                let mut live = vec![];
+                for child in &epic.children {
+                    for name in reg.names().into_iter().filter(|n| reg.land(n) == "push") {
+                        let Some(root) = reg.root(&name) else { continue };
+                        let present = super::gate_check::git_out(std::path::Path::new(&root), &["show-ref", "--verify", "--quiet", &format!("refs/heads/spira/{child}")], 10).is_ok_and(|(code, _, _)| code == Some(0));
+                        if present && state(child) != Some("LANDED") {
+                            live.push(format!("spira/{child} in {name}"));
+                        }
+                    }
+                }
+                if !live.is_empty() {
+                    snap.unlanded.insert(epic.id, live);
+                }
+            }
+        }
     }
     snap.rows = rows.map(|v| {
         v.into_iter()
-            .map(|r| Row { version: r.version.as_deref().and_then(|v| v.parse().ok()).unwrap_or(0), lease_until_ms: r.lease_until.map(|s| s.max(0) as u64 * 1000), id: r.bead_id, state: r.state, holds: r.holds, holder: r.holder, stack: r.stack })
+            .map(|r| Row { version: r.version.as_deref().and_then(|v| v.parse().ok()).unwrap_or(0), lease_until_ms: r.lease_until.map(|s| s.max(0) as u64 * 1000), updated_at_ms: r.updated_at.map(|s| s.max(0) as u64 * 1000), id: r.bead_id, state: r.state, holds: r.holds, holder: r.holder, stack: r.stack, reason: r.reason, tip: r.tip })
             .collect()
     });
-    let scope = pin("SPIRA_SCOPE_LABEL");
-    let plan = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
+    let plan = plan_labels(&snap.labels).join(",");
     let lookup = |k: &str| req.pinned.get(k).cloned().or_else(|| spira_config::process::cfg(k).ok()).or_else(|| std::env::var(k).ok());
     let o = sentinel::claim::dispatch_in(&["ready-count".to_string(), plan], &mut std::io::empty(), &lookup);
     snap.plan_ready = (o.code == 0).then(|| o.out.trim().parse().ok()).flatten();
+    // CHECK 2b's read: what strand would act on or escalate; unreadable is nothing to act on.
+    snap.strand = sentinel::edge::strand_observe().unwrap_or_default();
+    // CHECK 6's twelve watchtower detectors: each reads and files in one call, so they run here.
+    snap.tower = sentinel::tower::CHECKS.iter().map(|c| match sentinel::tower::run(c) {
+        Ok(m) => m,
+        Err(e) => format!("watchtower: {c} refused — {e}"),
+    }).collect();
     let unitp = e.units.as_deref().ok_or("no unit manager configured")?;
     snap.landing_active = matches!(unitp.facts(&landing_handle()?).map(|f| f.state), Ok(units::UnitState::Active | units::UnitState::Activating));
     serde_json::to_string(&snap).map_err(|e| e.to_string())
@@ -619,15 +881,93 @@ pub fn content_note(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     if r.code == 0 { Ok(r.out) } else { Err(format!("spira-lc work {} note exited {}: {}", w.id, r.code, r.why())) }
 }
 
-/// The content writes the store's `content` door does not serve (it answers list and show):
-/// refused, never a bd child.
-pub fn unserved(spec: &EffectSpec) -> Result<String, String> {
-    Err(format!("{}: unserved — the store's content door serves list and show only", spec.name))
+/// `sentinel-pass.content_label`: a label added or removed through the store's content door.
+pub fn content_label(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
+    let w = write_of(&spec.input, CONTENT_LABEL)?;
+    let op = if w.op == "add" { "add" } else { "remove" };
+    answer(&client(e, spec.deadline_ms), &["content", "label", op, &w.id, &w.label])
 }
 
-/// The checks this task does not port yet: refused, naming what is missing.
-pub fn not_ported(spec: &EffectSpec) -> Result<String, String> {
-    Err(format!("{}: not ported — its check needs a library entry (pilgrimage, strand, watchtower, reflect, mail, event)", spec.name))
+/// `sentinel-pass.content_close`: a bead's content closed, with its reason, through the content door.
+pub fn content_close(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
+    let w = write_of(&spec.input, CONTENT_CLOSE)?;
+    answer(&client(e, spec.deadline_ms), &["content", "close", &w.id, "--reason", &w.text])
+}
+
+/// `sentinel-pass.recompute_blocked` (bd `recompute-blocked`): the store's content door does
+/// not serve the verb, so it is refused naming it, never a bd child.
+pub fn recompute_blocked(spec: &EffectSpec) -> Result<String, String> {
+    Err(format!("{}: unserved — the store's content door has no `recompute-blocked` verb", spec.name))
+}
+
+/// `sentinel-pass.watchtower`: one of CHECK 6's detectors by name (`input` is its name), in
+/// process. The pass runs all twelve in its probe; this runs one on its own.
+pub fn watchtower(input: &str) -> Result<String, String> {
+    let check: String = serde_json::from_str(input).unwrap_or_else(|_| input.trim().to_string());
+    sentinel::tower::run(&check)
+}
+
+/// `sentinel-pass.strand`: CHECK 2b's act, strand's own check in-process.
+pub fn strand(_: &EffectSpec) -> Result<String, String> {
+    sentinel::edge::strand_act()
+}
+
+/// `sentinel-pass.pilgrimage_close`: CHECK 1's delivery, then the close. Every subscriber is
+/// told first; one that cannot be reached leaves the epic open with a note and fails the
+/// effect, so the marker drops and the next pass retries.
+pub fn pilgrimage_close(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
+    use sentinel::pilgrimage::{self, Address};
+    let w = write_of(&spec.input, PILGRIMAGE_CLOSE)?;
+    let lc = client(e, spec.deadline_ms);
+    let operator = spira_config::process::cfg("SPIRA_OPERATOR_ACTOR").unwrap_or_default();
+    let mut failed = vec![];
+    for addr in &w.subscribers {
+        let delivered = match pilgrimage::address(addr, &operator) {
+            Address::Operator => {
+                let body = pilgrimage::note_body(&w.subject, &w.id, &w.text);
+                sentinel::ask::send(&sentinel::ask::Mail { mailbox: "operator", from: "Pilgrimage <pilgrimage@spira>", subject: &w.subject, kind: "note", default: "", body: &body, bead: "", own_dedup: false })
+            }
+            Address::Bead(id) => lc.call_stdin(&["content", "note", &id, "--stdin"], &format!("{}\n{}", w.subject, w.text)).map_err(|e| e.to_string()).and_then(|r| if r.code == 0 { Ok(()) } else { Err(r.why()) }),
+            Address::Log => Ok(()),
+            Address::Unknown(a) => Err(format!("unknown subscriber address '{a}'")),
+        };
+        if let Err(why) = delivered {
+            failed.push(format!("{addr}: {why}"));
+        }
+    }
+    if !failed.is_empty() {
+        let _ = lc.call_stdin(&["content", "note", &w.id, "--stdin"], pilgrimage::UNDELIVERED_NOTE);
+        return Err(format!("{}: DELIVERY FAILED — {}", w.id, failed.join("; ")));
+    }
+    answer(&lc, &["close-epic", &w.id, &pilgrimage::close_reason(w.total, &w.subscribers)]).map(|_| w.subject.clone())
+}
+
+/// `sentinel-pass.ask`: one question to the Concierge, in-process over the mail library.
+/// `subject`, `text` (the body), `cause` (the default) and `id` (the bead it is about).
+pub fn ask(spec: &EffectSpec) -> Result<String, String> {
+    let w = write_of(&spec.input, ASK)?;
+    sentinel::ask::send(&sentinel::ask::Mail { mailbox: "concierge", from: "Sentinel <sentinel@spira>", subject: &w.subject, kind: "question", default: &w.cause, body: &w.text, bead: &w.id, own_dedup: true }).map(|()| w.subject.clone())
+}
+
+/// `sentinel-pass.incident_event`: lib.sh `spira_event`, in-process.
+pub fn incident_event(spec: &EffectSpec) -> Result<String, String> {
+    let w = write_of(&spec.input, INCIDENT_EVENT)?;
+    sentinel::edge::incident_event(&w.kind, &w.id, &w.subject, &w.text)
+}
+
+/// `sentinel-pass.reflect`: CHECK 8's inference leg as a unit (`sentinel --reflect <ids>`, the
+/// ported `reflect.sh`), appending to `$SPIRA_RUN/reflect.log`; one model call runs for minutes.
+pub fn reflect(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
+    let w = write_of(&spec.input, REFLECT)?;
+    let sentinel_bin = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).map(|d| d.join("sentinel")).find(|p| p.is_file()).ok_or("sentinel not found on PATH")?;
+    let pass_env = ["PATH", "SPIRA_RELEASE", "SPIRA_TOML", "HOME", "SPIRA_HOME", "SPIRA_RUN"];
+    let env = pass_env.iter().filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v))).collect();
+    let mut argv = vec![sentinel_bin.to_string_lossy().into_owned(), "--reflect".into()];
+    argv.extend(w.ids.iter().cloned());
+    let unit = units::UnitSpec { task: NAME.into(), key: format!("reflect-{:016x}", runtime::event::fnv1a(&spec.input)), argv, env, cwd: None };
+    let props = units::UnitProps { output_append: Some(e.world.run_dir.join("reflect.log")), runtime_max_ms: Some((sentinel::reflect::AGENT_TIMEOUT_SECS + 60) * 1000), ..units::UnitProps::default() };
+    let input = serde_json::to_string(&units::StartSpec { unit, props }).map_err(|e| e.to_string())?;
+    e.unit(&EffectSpec { name: units::UNIT_START.into(), input, deadline_ms: spec.deadline_ms })
 }
 
 /// `sentinel-pass.stop_holder`: hel stops whatever still works in the bead's worktree.
