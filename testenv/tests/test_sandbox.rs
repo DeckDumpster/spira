@@ -45,7 +45,7 @@ fn visible_beyond(dir: &Path, keep: &[PathBuf], out: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else { return };
     for e in entries {
         let p = e.unwrap().path();
-        if keep.iter().any(|k| *k == p) {
+        if keep.contains(&p) {
             continue;
         }
         if keep.iter().any(|k| k.starts_with(&p)) {
