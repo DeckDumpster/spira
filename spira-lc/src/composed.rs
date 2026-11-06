@@ -48,6 +48,10 @@ pub trait Content {
     /// A `content` write: bd's own argv, and the request body as its stdin when there is one.
     fn write_stdin(&self, args: &[String], stdin: Option<&str>) -> Result<String, String>;
     fn delete(&self, ids: &[String]) -> Result<(), String>;
+    /// The ask label (`SPIRA_ASK_LABEL`) a content write is judged against.
+    fn ask_label(&self) -> Result<String, String>;
+    /// The repo map a create's `repo:` label is judged against.
+    fn registry(&self) -> spira_config::repos::Registry;
 }
 
 /// bd itself, as this process's configuration declares it.
@@ -69,6 +73,16 @@ impl Content for LiveContent {
             (rc, out) => Err(format!("bdq delete exited {rc}: {out}")),
         }
     }
+    fn ask_label(&self) -> Result<String, String> {
+        spira_config::process::cfg("SPIRA_ASK_LABEL")
+    }
+    /// This installation's map, resolved the way bdq resolves it for a bare process
+    /// (`Registry::from_env`), from this process's own environment and configuration.
+    fn registry(&self) -> spira_config::repos::Registry {
+        let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let home = std::path::PathBuf::from(env.get("SPIRA_HOME").cloned().unwrap_or_default());
+        spira_config::repos::Registry::from_env(env, &home)
+    }
 }
 
 /// Everything a composed verb reaches: the primitives, bd's bead half, the content store, the
@@ -84,6 +98,9 @@ pub struct Ports<'a> {
     /// caller's environment (`bead::guard`).
     pub caller: &'a std::collections::BTreeMap<String, String>,
 }
+
+/// The pause before a lifecycle row write is retried (bdq's `ensure_row_retrying` backoff).
+const ROW_BACKOFF_MS: u64 = 250;
 
 /// Answer one composed verb (`argv[0]` is the verb).
 pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
@@ -134,8 +151,12 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
             Err(e) => Answer { code: callers::CANNOT_TELL, stderr: format!("spira-lc content purge-alerts: {e}\n"), ..Default::default() },
         },
         "content" => {
-            let mut guard = |a: &[String]| crate::content::guard(a, caller, &mut *m, now);
-            crate::content::run(rest, stdin, &mut guard, &|a| content.read(a), &|a, body| content.write_stdin(a, body))
+            let (ask_label, registry) = (|| content.ask_label(), || content.registry());
+            let guards = crate::content::Guards { caller, ask_label: &ask_label, registry: &registry, now };
+            let (m, bd) = (std::cell::RefCell::new(m), std::cell::RefCell::new(bd));
+            let mut guard = |a: &[String], body: Option<&str>| crate::content::guard(a, body, &guards, &mut **m.borrow_mut());
+            let mut after = |a: &[String], out: &str| crate::content::after(a, out, &mut **m.borrow_mut(), &mut **bd.borrow_mut(), ROW_BACKOFF_MS);
+            crate::content::run(rest, stdin, &mut guard, &mut after, &|a| content.read(a), &|a, body| content.write_stdin(a, body))
         }
         "close-epic" => callers::close_epic(rest, m, bd),
         "drop" => callers::drop_cmd(rest, m, bd),

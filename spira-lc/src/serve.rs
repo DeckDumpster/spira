@@ -674,6 +674,12 @@ mod tests {
         fn delete(&self, _: &[String]) -> Result<(), String> {
             Ok(())
         }
+        fn ask_label(&self) -> Result<String, String> {
+            Ok("needs-ryan".into())
+        }
+        fn registry(&self) -> spira_config::repos::Registry {
+            spira_config::repos::Registry::new(Some("spira|/r/spira|main|gate.sh\n"), &Default::default(), std::path::Path::new("/r/spira"))
+        }
     }
 
     /// One request through the server's own reader, answer and writer, with `w` as its store and
@@ -806,10 +812,96 @@ mod tests {
         written(&["update", "sp-a", "--add-label", "x", "--remove-label", "y"], None, "update sp-a --add-label x --remove-label y");
     }
 
+    /// bd as the content door writes it, over `World`'s planning plane: a create files the
+    /// bead and prints its id, a close closes it.
+    struct Filing<'w>(&'w World, &'w str);
+
+    impl crate::composed::Content for Filing<'_> {
+        fn read(&self, _: &[String]) -> Result<String, String> {
+            Ok(String::new())
+        }
+        fn write(&self, _: &[&str]) -> Result<String, String> {
+            Ok(String::new())
+        }
+        fn write_stdin(&self, args: &[String], _: Option<&str>) -> Result<String, String> {
+            match args.first().map(String::as_str) {
+                Some("create") => {
+                    self.0.file(self.1, "task", None, &[]);
+                    Ok(format!("{}\n", self.1))
+                }
+                Some("close") => {
+                    let mut b = self.0;
+                    crate::callers::Bd::close(&mut b, &args[1], "")?;
+                    Ok(String::new())
+                }
+                _ => Ok(String::new()),
+            }
+        }
+        fn delete(&self, _: &[String]) -> Result<(), String> {
+            Ok(())
+        }
+        fn ask_label(&self) -> Result<String, String> {
+            Ok("needs-ryan".into())
+        }
+        fn registry(&self) -> spira_config::repos::Registry {
+            spira_config::repos::Registry::new(Some("spira|/r/spira|main|gate.sh\n"), &Default::default(), std::path::Path::new("/r/spira"))
+        }
+    }
+
+    fn served(w: &World, c: &dyn crate::composed::Content, argv: &[&str], caller: &[(&str, &str)]) -> super::Answer {
+        let req = super::Request {
+            argv: std::iter::once("content").chain(argv.iter().copied()).map(str::to_string).collect(),
+            stdin: None,
+            caller: caller.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+        };
+        let (mut m, mut b) = (w, w);
+        super::answer(req, &mut m, &mut b, c, &|| Err("no run dir here".to_string()))
+    }
+
+    fn state(w: &World, id: &str) -> Option<spira_config::lc_state::Row> {
+        match w.lc(&["show", id]) {
+            (0, out) => spira_config::lc_state::parse_show(&out).unwrap(),
+            _ => None,
+        }
+    }
+
+    /// A create through the door leaves the lifecycle state a create through bdq leaves: the
+    /// row, READY, written by the server in the same request.
     #[test]
-    fn content_close_is_written_by_the_server() {
-        written(&["close", "sp-a"], None, "close sp-a");
-        written(&["close", "sp-a", "--reason", "landed"], None, "close sp-a --reason landed");
+    fn a_content_create_gets_its_lifecycle_row_in_the_same_request() {
+        let w = World::new();
+        let ans = served(&w, &Filing(&w, "sp-new"), &["create", "T", "--type", "task", "--silent"], &[]);
+        assert_eq!((ans.code, ans.stdout.as_str(), ans.stderr.as_str()), (0, "sp-new\n", ""), "{ans:?}");
+        assert_eq!(state(&w, "sp-new").map(|r| r.state), Some("READY".to_string()), "the row bdq's after_create_ids writes");
+        let ans = served(&w, &Filing(&w, "sp-ev"), &["create", "Probe", "--type", "event", "--silent"], &[]);
+        assert_eq!(ans.code, 0, "{ans:?}");
+        assert!(state(&w, "sp-ev").is_none(), "a rowless type gets no row, as through bdq");
+    }
+
+    #[test]
+    fn a_lifecycle_row_the_server_cannot_write_is_reported_and_bds_create_stands() {
+        let w = World::new();
+        let ans = served(&w, &Filing(&w, "not an id"), &["create", "T", "--silent"], &[]);
+        assert_eq!((ans.code, ans.stdout.as_str()), (0, "not an id\n"), "bd's create stands: no retry of it");
+        assert!(ans.stderr.starts_with("spira-lc content: LIFECYCLE: cannot read any created bead id"), "reported, never swallowed: {ans:?}");
+    }
+
+    /// A close is a state verb: refused as bdq refuses it unless the caller overrides, and an
+    /// overridden close leaves the row terminal, as bdq's after_close does.
+    #[test]
+    fn a_content_close_is_refused_unless_overridden_and_then_its_row_is_terminal() {
+        let w = World::new();
+        filed(&w, "sp-a");
+        let f = Filing(&w, "sp-a");
+        let ans = served(&w, &f, &["close", "sp-a", "--reason", "landed"], &[]);
+        assert_eq!(ans.code, 1);
+        assert!(ans.stderr.starts_with("spira: bdq refuses `close`"), "{ans:?}");
+        assert_eq!(w.status("sp-a"), "open", "nothing written");
+        let ans = served(&w, &f, &["close", "sp-a", "--reason", "landed"], &[("SPIRA_BDQ_STATE_WRITE", "test")]);
+        assert_eq!(ans.code, 0, "{ans:?}");
+        assert_eq!(ans.stderr, "spira-lc content: STATE WRITE OVERRIDE (close sp-a --reason landed) — bd's status moved outside the lifecycle machine: test\n", "the override is logged");
+        assert_eq!(w.status("sp-a"), "closed");
+        assert!(state(&w, "sp-a").is_some_and(|r| r.terminal()), "the row follows the close: {:?}", state(&w, "sp-a"));
     }
 
     #[test]
