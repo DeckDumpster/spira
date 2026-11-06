@@ -144,8 +144,10 @@ branch() {
     printf '%s\n' "$c" > "$RUN/worktree/$id/$f"
     git -C "$RUN/worktree/$id" add -A
     git -C "$RUN/worktree/$id" commit -q -m "feat: $id — work"
+    # A HUMAN TITLE, not the id: an escalation's subject leads with the bead's title, and the
+    # real mail library refuses a subject that leads with a bead id (mail lint).
     printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-epic","type":"parent-child"}]}\n' \
-        "$id" "$id" "$id" | testdb_seed
+        "$id" "work on $id" "$id" | testdb_seed
     # The builder's hand-off is the bead's lifecycle row, not bd `closed` (sp-mve9i).
     lc_bead SUBMITTED "$id" "$(git -C "$RUN/worktree/$id" rev-parse HEAD 2>/dev/null)" 0
 }
@@ -214,7 +216,7 @@ branch_two_commits() {
     git -C "$RUN/worktree/$id" add -A
     git -C "$RUN/worktree/$id" commit -q -m "feat: $id — shared file"
     printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-epic","type":"parent-child"}]}\n' \
-        "$id" "$id" "$id" | testdb_seed
+        "$id" "work on $id" "$id" | testdb_seed
     # The builder's hand-off is the bead's lifecycle row, not bd `closed` (sp-mve9i).
     lc_bead SUBMITTED "$id" "$(git -C "$RUN/worktree/$id" rev-parse HEAD 2>/dev/null)" 0
 }
