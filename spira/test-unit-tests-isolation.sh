@@ -74,12 +74,14 @@ want "and lists A's test" "test tests::alpha_only ... ok" "$out"
 nowant "and not B's" "beta_only" "$out"
 
 echo "5. a tree that cannot be hashed is cleaned, never trusted:"
-mkdir -p "$WS/sealed" && printf 'x\n' > "$WS/sealed/f" && chmod 000 "$WS/sealed/f"
-if [ -r "$WS/sealed/f" ]; then
+# Inside a workspace crate: the record hashes the crates' own files, the build inputs and what
+# their dep-info names (sp-ipwlic: a file outside every crate is no build input, and is not read).
+mkdir -p "$WS/app/sealed" && printf 'x\n' > "$WS/app/sealed/f" && chmod 000 "$WS/app/sealed/f"
+if [ -r "$WS/app/sealed/f" ]; then
     bad "an unreadable file is needed to prove the fallback" "running as uid $(id -u), which reads every file"
 fi
 out="$(run_unit)"; rc=$?
-chmod 600 "$WS/sealed/f"
+chmod 600 "$WS/app/sealed/f"
 wantrc "tree A passes" 0 "$rc"
 want "after recompiling the workspace" "Compiling app" "$out"
 
