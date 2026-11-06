@@ -44,6 +44,9 @@
 //!
 //! Release rollback restores the unit, together with re-enabling it; a listener cannot shadow.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+
 use runtime::event::{EventKind, EventKindTag};
 use runtime::host::Submit;
 use runtime::sources::Source;
@@ -111,6 +114,38 @@ impl Refused {
     }
 }
 
+/// Reloads asked of the source, counted. The `submission-provision` task's restart bumps it
+/// ([`reload`]); the running source ends its listener and reads its config anew when it moves.
+static RELOADS: AtomicU64 = AtomicU64::new(0);
+
+/// How often a dormant source reads its config anew on its own, so a first configuration
+/// written by `spira-submission provision` from outside the scheduler is picked up too.
+pub const DORMANT_RECHECK: Duration = Duration::from_secs(60);
+
+/// Asks the running `source` to reload. Only this source reloads; any other name is refused.
+pub fn reload(source: &str) -> Result<String, String> {
+    if source != NAME {
+        return Err(format!("no source {source:?} reloads here (only {NAME:?}) — refused"));
+    }
+    let n = RELOADS.fetch_add(1, Ordering::SeqCst) + 1;
+    Ok(format!("reloaded source {NAME} (reload {n})"))
+}
+
+/// The reloads asked so far.
+pub fn reloads() -> u64 {
+    RELOADS.load(Ordering::SeqCst)
+}
+
+/// Serves until `closed`: each round reads the config anew (`fresh`) and serves it until the
+/// channel closes or a reload is asked (`serve` is handed that stop condition).
+pub fn serve_reloading<C>(mut fresh: impl FnMut() -> C, mut serve: impl FnMut(C, &dyn Fn() -> bool), closed: &dyn Fn() -> bool) {
+    while !closed() {
+        let seen = reloads();
+        let cfg = fresh();
+        serve(cfg, &|| closed() || reloads() != seen);
+    }
+}
+
 /// The real source: the SMTP submission listener.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Submission {
@@ -123,13 +158,70 @@ impl Source for Submission {
         NAME
     }
 
-    /// Dormant, until `tx` closes, when no address is configured; otherwise the listener, with
-    /// the rest of its config (certificate, key, password, sender, recipient domain) and the mail
-    /// environment it delivers into read once as it starts.
+    /// The listener, its config (address, certificate, key, password, sender, recipient domain)
+    /// and the mail environment it delivers into read anew on every reload; the certificate, key
+    /// and password files themselves are read per connection. Dormant while unconfigured, reading
+    /// its config again every [`DORMANT_RECHECK`].
     fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) {
-        let configured = !self.addr.is_empty() && self.port != 0;
-        let cfg = if configured { spira_submission::Config::from_spira().unwrap_or_else(|e| { eprintln!("spira-runtime: source {NAME}: {e}"); None }) } else { None };
-        let delivery = cfg.as_ref().and_then(|_| mail::env::Env::load().inspect_err(|e| eprintln!("spira-runtime: source {NAME}: mail: {e}")).ok()).map(|e| super::sources::smtp::Delivery::of(&e));
-        super::sources::smtp::run(cfg, delivery, tx)
+        let fresh = || spira_submission::Config::from_spira_fresh().unwrap_or_else(|e| {
+            eprintln!("spira-runtime: source {NAME}: {e}");
+            None
+        });
+        let serve = |cfg: Option<spira_submission::Config>, stop: &dyn Fn() -> bool| {
+            let usable = cfg.as_ref().is_some_and(|c| c.cert.is_file() && c.key.is_file());
+            let delivery = cfg.as_ref().filter(|_| usable).and_then(|_| mail::env::Env::load().inspect_err(|e| eprintln!("spira-runtime: source {NAME}: mail: {e}")).ok()).map(|e| super::sources::smtp::Delivery::of(&e));
+            let since = std::time::Instant::now(); // clock-safe: a real source's own thread; refused under virtual time
+            super::sources::smtp::run_until(cfg, delivery, &tx, &|| stop() || (!usable && since.elapsed() >= DORMANT_RECHECK))
+        };
+        serve_reloading(fresh, serve, &|| tx.is_closed())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::{Cell, RefCell};
+
+    #[test]
+    fn only_the_submission_source_reloads() {
+        let before = reloads();
+        assert!(reload("mail.arrived").is_err());
+        assert_eq!(reloads(), before, "a refused reload asks nothing");
+        assert!(reload(NAME).unwrap().contains(NAME));
+        assert!(reloads() > before);
+    }
+
+    #[test]
+    fn a_reload_ends_the_serve_and_the_next_one_reads_the_config_anew() {
+        let reads = Cell::new(0);
+        let served = RefCell::new(Vec::new());
+        let closed = Cell::new(false);
+        serve_reloading(
+            || {
+                reads.set(reads.get() + 1);
+                reads.get()
+            },
+            |cfg, stop| {
+                served.borrow_mut().push(cfg);
+                assert!(!stop(), "a fresh serve is not stopped");
+                if cfg == 1 {
+                    reload(NAME).unwrap();
+                    assert!(stop(), "a reload stops the serve");
+                } else {
+                    closed.set(true);
+                    assert!(stop(), "a closed channel stops the serve");
+                }
+            },
+            &|| closed.get(),
+        );
+        assert_eq!(*served.borrow(), vec![1, 2], "the second serve has the config read after the reload");
+    }
+
+    #[test]
+    fn the_provision_tasks_restart_is_this_sources_reload_not_a_unit() {
+        let before = reloads();
+        let r = crate::tasks::a::submission_provision::unit_restart(&crate::Effects::default(), NAME);
+        assert!(r.as_deref().is_ok_and(|m| m.contains("reloaded source submission")), "{r:?}");
+        assert!(reloads() > before);
     }
 }

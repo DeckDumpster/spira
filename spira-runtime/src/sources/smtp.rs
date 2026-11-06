@@ -96,9 +96,9 @@ impl Sink for EventSink {
     }
 }
 
-/// Parks until `tx` closes: the source registered but not configured.
-fn dormant(tx: &mpsc::Sender<Submit>) {
-    while !tx.is_closed() {
+/// Parks until `stop`: the source registered but not configured, or its listener unbound.
+fn dormant(stop: &dyn Fn() -> bool) {
+    while !stop() {
         std::thread::sleep(IDLE); // clock-safe: a dormant source's own thread, waiting for shutdown
     }
 }
@@ -107,19 +107,25 @@ fn dormant(tx: &mpsc::Sender<Submit>) {
 /// `spira_submission::Config::from_spira` says) is dormant, never a failure. A listener that
 /// cannot bind is said once and the source parks dormant.
 pub fn run(cfg: Option<spira_submission::Config>, delivery: Option<Delivery>, tx: mpsc::Sender<Submit>) {
-    let Some(cfg) = cfg.filter(|c| c.cert.is_file() && c.key.is_file()) else { return dormant(&tx) };
-    if tx.is_closed() {
+    run_until(cfg, delivery, &tx, &|| tx.is_closed())
+}
+
+/// [`run`] until `stop` says so: the channel closed, or the source asked to reload. The
+/// listener is dropped on return, so the next round can bind the same address.
+pub fn run_until(cfg: Option<spira_submission::Config>, delivery: Option<Delivery>, tx: &mpsc::Sender<Submit>, stop: &dyn Fn() -> bool) {
+    let Some(cfg) = cfg.filter(|c| c.cert.is_file() && c.key.is_file()) else { return dormant(stop) };
+    if stop() {
         return;
     }
     let listener = match TcpListener::bind(cfg.socket()).and_then(|l| l.set_nonblocking(true).map(|_| l)) {
         Ok(l) => l,
         Err(e) => {
             eprintln!("spira-runtime: source submission: bind {}: {e}", cfg.socket());
-            return dormant(&tx);
+            return dormant(stop);
         }
     };
     let cfg = Arc::new(cfg);
-    while !tx.is_closed() {
+    while !stop() {
         match listener.accept() {
             Ok((tcp, _)) => {
                 let _ = tcp.set_nonblocking(false);

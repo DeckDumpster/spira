@@ -40,6 +40,17 @@ impl Config {
         Config::from_values(&|k| get(k), vec!["mail".into(), "sendmail".into()])
     }
 
+    /// [`Config::from_spira`] resolved anew rather than from the process's resolution, which is
+    /// read once: for a long-lived listener that must see values provisioning set after it
+    /// started.
+    pub fn from_spira_fresh() -> Result<Option<Config>, String> {
+        let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let home = spira_config::resolve::locate_home_for_process()?;
+        let repo = spira_config::resolve::derive_home_repo(&home, &env);
+        let r = spira_config::resolve::resolve_for_process(&home, &repo, &env)?;
+        Config::from_values(&|k| r.values.get(k).cloned().ok_or_else(|| format!("{k} is not a registered config key (spira/conf.d) — refusing")), vec!["mail".into(), "sendmail".into()])
+    }
+
     pub fn from_values(get: &dyn Fn(&str) -> Result<String, String>, sendmail: Vec<String>) -> Result<Option<Config>, String> {
         let addr = get("SPIRA_SUBMISSION_ADDR")?;
         if addr.trim().is_empty() {

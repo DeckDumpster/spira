@@ -40,7 +40,7 @@
 //!    (`provision.rs:307-318`);
 //! 4. password drifted/missing/mode → `password.write` (`provision.rs:323-336`);
 //! 5. firewall `Closed` → `firewall.open` (`provision.rs:339-345`);
-//! 6. any set or renewal → `unit.restart` (`provision.rs:355-360`).
+//! 6. any set or renewal → `unit_restart`, which reloads the scheduler's `submission` source.
 //!
 //! Step 3 depends on the outcome of step 2 (files present after `tailscale cert`), so decide
 //! runs twice: once on the snapshot, once on `cert.renew`'s outcome. Carried state: none.
@@ -54,14 +54,15 @@
 //! | `submission-provision.config_set` | host | 10 s | `spira.<key>=<value>` | non-empty current value (only empties are set, `provision.rs:315`) |
 //! | `submission-provision.password_write` | host | 5 s | digest of the derived line | no users file (`NoSource`, `provision.rs:326`) |
 //! | `submission-provision.firewall_open` | host | 10 s | `<iface>/<port>` | ufw absent or already open (`provision.rs:345`) |
-//! | `submission-provision.unit_restart` | unit | 30 s | `restart/<day>` | nothing set or renewed |
+//! | `submission-provision.unit_restart` | host | 30 s | `restart/<day>` | nothing set or renewed; any source but `submission` |
 //! | `submission-provision.note` → `inbox.append` | store | 10 s | line text | — |
 //!
 //! `config_set` today forks the release's `spira-config set spira.<key> <value> <layer>`
 //! (`provision.rs:82`, `provision.rs:259`) — a Spira→Spira child; it becomes a library call into
-//! `spira-config`. `unit_restart` restarts `spira-submission` (`provision.rs:81`); once
-//! submission is a source of this scheduler, that becomes "restart the `submission` source",
-//! not a systemd call.
+//! `spira-config`. `unit_restart` once restarted the retired `spira-submission` unit; it is now
+//! the `submission` source's reload (`tasks::g::submission::reload`): the source reads its config
+//! anew, in this process. The certificate, key and password need no reload at all — the listener
+//! reads them per connection.
 //!
 //! ## Silence
 //!
@@ -144,6 +145,8 @@ pub struct Plan {
     pub user: String,
     pub rcpt_domain: String,
     pub users_file: String,
+    /// The scheduler source a restart reloads (`tasks::g::submission::NAME`); the
+    /// `spira-submission` unit it once named is retired.
     pub unit: String,
 }
 
@@ -300,8 +303,10 @@ fn password_and_firewall(carry: &mut Carry, snap: &Snapshot, acts: &mut Vec<Act>
     }
 }
 
+/// The submission listener is the scheduler's `submission` source, so the restart is that
+/// source's reload, never a unit; the effect keeps its contract name.
 fn restart(snap: &Snapshot) -> Act {
-    Act::new(UNIT_RESTART, format!("restart/{}", snap.day)).with_input(snap.plan.unit.clone())
+    Act::new(UNIT_RESTART, format!("restart/{}", snap.day)).with_input(crate::tasks::g::submission::NAME.to_string())
 }
 
 /// Branches 1, 2, 4, 5 and 6 of `provision` over the snapshot. A due certificate is renewed
@@ -426,7 +431,6 @@ fn the_day(now: i64) -> String {
 pub fn observe() -> Result<String, String> {
     use spira_submission::provision as p;
     let get = |k: &str| spira_config::process::cfg(k).map(|v| v.trim().to_string());
-    let instance = get("SPIRA_INSTANCE")?;
     let plan = Plan {
         port: get("SPIRA_SUBMISSION_PORT")?,
         addr: get("SPIRA_SUBMISSION_ADDR")?,
@@ -437,7 +441,7 @@ pub fn observe() -> Result<String, String> {
         user: get("SPIRA_SUBMISSION_USER")?,
         rcpt_domain: get("SPIRA_SUBMISSION_RCPT_DOMAIN")?,
         users_file: get("SPIRA_SUBMISSION_USERS_FILE")?,
-        unit: spira_config::unit::unit_name("submission", "service", &instance),
+        unit: crate::tasks::g::submission::NAME.to_string(),
     };
     let host = ProcHost;
     let now = p::Host::now(&host);
@@ -459,7 +463,7 @@ pub fn observe() -> Result<String, String> {
     let firewall = match &iface {
         None => Firewall::Absent,
         Some(i) => {
-            let lib_plan = p::Plan { toml_spec: String::new(), addr: plan.addr.clone(), cert: String::new(), key: String::new(), password_file: String::new(), from: String::new(), user: plan.user.clone(), port: plan.port.parse().map_err(|e| format!("SPIRA_SUBMISSION_PORT does not parse: {e}"))?, rcpt_domain: String::new(), users_file: String::new(), dir: dir.clone(), ufw_conf: "/etc/ufw/ufw.conf".into(), unit: plan.unit.clone(), spira_config: String::new() };
+            let lib_plan = p::Plan { toml_spec: String::new(), addr: plan.addr.clone(), cert: String::new(), key: String::new(), password_file: String::new(), from: String::new(), user: plan.user.clone(), port: plan.port.parse().map_err(|e| format!("SPIRA_SUBMISSION_PORT does not parse: {e}"))?, rcpt_domain: String::new(), users_file: String::new(), dir: dir.clone(), ufw_conf: "/etc/ufw/ufw.conf".into(), spira_config: String::new() };
             match p::firewall_state(&host, &lib_plan, i) {
                 p::Firewall::Closed => Firewall::Closed,
                 p::Firewall::Open => Firewall::Open,
@@ -525,11 +529,10 @@ pub fn firewall_open(input: &str) -> Result<String, String> {
     spira_submission::provision::Host::run(&ProcHost, &argv).map(|_| format!("opened {port}/tcp on {}", f.iface))
 }
 
-/// Restart the submission unit through the Units port.
-pub fn unit_restart(e: &crate::Effects, input: &str) -> Result<String, String> {
-    let units = e.units.as_deref().ok_or("no unit manager configured")?;
-    units.restart(&runtime::units::UnitHandle::named(input.trim())).map_err(|e| e.0)?;
-    Ok(format!("restarted {}", input.trim()))
+/// The listener is the scheduler's `submission` source: the restart asks that source to reload,
+/// reading its config anew. No unit, and no restart of the scheduler.
+pub fn unit_restart(_: &crate::Effects, input: &str) -> Result<String, String> {
+    crate::tasks::g::submission::reload(input.trim())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -595,8 +598,8 @@ impl Handler for SubmissionProvision {
                 }
             }
             (State::Setting, CONFIG_SET) if sets_done(view, ev) => {
-                // The restart names the unit as pinned at boot (`SPIRA_INSTANCE`).
-                let snap = Snapshot { plan: Plan { unit: self.pinned.get("SPIRA_INSTANCE").map(|i| spira_config::unit::unit_name("submission", "service", i)).unwrap_or_default(), ..Plan::default() }, day: the_day(ev.at as i64 / 1000), ..Snapshot::default() };
+                // The restart reloads the scheduler's own submission source.
+                let snap = Snapshot { day: the_day(ev.at as i64 / 1000), ..Snapshot::default() };
                 (Carry { state: State::Restarting, ..carry.clone() }, vec![restart(&snap)])
             }
             (State::Restarting, UNIT_RESTART) => (Carry { state: State::Idle, ..carry.clone() }, vec![]),

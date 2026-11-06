@@ -38,6 +38,9 @@ pub fn defaults(dir: &Path, cert: &str, key: &str, user: &str, rcpt_domain: &str
     ]
 }
 
+/// What a provisioning run that changed the listener's inputs says instead of restarting it.
+pub const SOURCE_PICKS_UP: &str = "the scheduler's submission source picks this up: the certificate, key and password on its next connection, a first configuration on its next config read";
+
 pub const OPERATOR_NOTE: &str = "tailscale will not issue a certificate to this user; run once: sudo tailscale set --operator=$USER";
 
 pub fn needs_operator(err: &str) -> bool {
@@ -83,7 +86,6 @@ pub struct Plan {
     pub users_file: String,
     pub dir: PathBuf,
     pub ufw_conf: PathBuf,
-    pub unit: String,
     /// The `spira-config` that writes the provisioned values: the declared release's.
     pub spira_config: String,
 }
@@ -106,7 +108,6 @@ impl Plan {
             users_file: s("SPIRA_SUBMISSION_USERS_FILE")?,
             dir,
             ufw_conf,
-            unit: spira_config::unit::unit_name("submission", "service", get("SPIRA_INSTANCE")?.trim()),
             spira_config: spira_config::release_env::tool("spira-config")?,
         })
     }
@@ -290,7 +291,10 @@ pub struct Report {
 
 pub fn provision(host: &dyn Host, plan: &Plan) -> Report {
     let mut r = Report::default();
-    let mut restart = false;
+    // Whether a value the listener reads changed: said once, never a restart. The listener is the
+    // scheduler's `submission` source; it reads the certificate, key and password per
+    // connection and re-reads its config while dormant, so nothing here restarts anything.
+    let mut changed = false;
     let layer = plan.toml_spec.rsplit(':').next().unwrap_or("").to_string();
     let mut eff = plan.clone();
 
@@ -300,11 +304,11 @@ pub fn provision(host: &dyn Host, plan: &Plan) -> Report {
         r.notes.push("tailscale is not up: no tailnet address, certificate or firewall rule to provision".into());
     }
 
-    let set = |r: &mut Report, key: &str, value: &str, restart: &mut bool| -> bool {
+    let set = |r: &mut Report, key: &str, value: &str, changed: &mut bool| -> bool {
         match host.run(&[&plan.spira_config, "set", &format!("spira.{key}"), value, &layer]) {
             Ok(_) => {
                 r.notes.push(format!("set spira.{key} = {value}"));
-                *restart = true;
+                *changed = true;
                 true
             }
             Err(e) => {
@@ -334,7 +338,7 @@ pub fn provision(host: &dyn Host, plan: &Plan) -> Report {
                         let after = (std::fs::read(&cert).ok(), std::fs::read(&key).ok());
                         if after != before {
                             r.notes.push(format!("renewed the certificate for {name}"));
-                            restart = true;
+                            changed = true;
                         } else {
                             r.notes.push(format!("tailscale cert left the certificate unchanged ({} days left)", cert_days(Path::new(&cert), now).map_or("?".into(), |d| d.to_string())));
                         }
@@ -348,7 +352,7 @@ pub fn provision(host: &dyn Host, plan: &Plan) -> Report {
 
         if obtained {
             for ((k, default), cur) in [("submission_cert", cert), ("submission_key", key), password, from, addr].into_iter().zip([&mut eff.cert, &mut eff.key, &mut eff.password_file, &mut eff.from, &mut eff.addr]) {
-                if cur.is_empty() && set(&mut r, k, &default, &mut restart) {
+                if cur.is_empty() && set(&mut r, k, &default, &mut changed) {
                     *cur = default;
                 }
             }
@@ -390,11 +394,8 @@ pub fn provision(host: &dyn Host, plan: &Plan) -> Report {
         }
     }
 
-    if restart {
-        match host.run(&["systemctl", "--user", "restart", &plan.unit]) {
-            Ok(_) => r.notes.push(format!("restarted {}", plan.unit)),
-            Err(e) => r.errors.push(format!("cannot restart {}: {e}", plan.unit)),
-        }
+    if changed {
+        r.notes.push(SOURCE_PICKS_UP.into());
     }
     r
 }
