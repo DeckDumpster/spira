@@ -234,6 +234,8 @@ is   "the bead stays closed"                            closed "$(status_of sp-r
 # sp-recut2 touches 2 files; with the threshold lowered to 1 the escalation must say so.
 want "and the escalation suggests decomposition, not another hand rebase" \
      "smaller beads" "$(delivered)"
+# A send the mail library refused says why, as TAP comments: the pass's own mail lines.
+[ -n "$(delivered)" ] || printf '%s\n' "$out" | grep -i 'mail' | sed 's/^/# /'
 drop_branch sp-recut2
 
 # A BRANCH A DWARF TOOK WHILE THE PASS RAN IS NEVER REWRITTEN.
