@@ -52,6 +52,8 @@ BD_LOG="$T/bd.log"
 cat > "$STUB_BD" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$BD_LOG_PATH"
+# A note through the content door carries its text on stdin (`note <id> --stdin`): record it.
+case " $* " in *" --stdin "*) cat >> "$BD_LOG_PATH"; printf '\n' >> "$BD_LOG_PATH" ;; esac
 
 # Handle 'show' command with JSON output for testing.
 # The command may come in as: bd -C /path/to/db show <id> --json
