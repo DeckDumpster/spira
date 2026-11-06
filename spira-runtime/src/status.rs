@@ -22,6 +22,7 @@ pub fn document(s: &SchedulerStatus) -> serde_json::Value {
                 "name": t.name,
                 "mode": t.mode.as_str(),
                 "plane": t.plane.as_str(),
+                "effects": t.effects.iter().map(|(name, plane)| serde_json::json!({ "name": name, "plane": plane.as_str() })).collect::<Vec<_>>(),
                 "state": t.state.as_ref().map(|c| serde_json::json!({ "stream": c.stream, "tag": c.tag, "body_len": c.body_len })),
                 "last_fired_at": t.last_fired_at,
                 "last_due_at": t.last_due_at,

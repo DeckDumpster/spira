@@ -287,6 +287,7 @@ pub fn wake(proc: &dyn runtime::ports::Proc, input: &str) -> Result<String, Stri
 pub const ROW: Task = Task {
     name: NAME,
     plane: runtime::Plane::Signal,
+    signal: &[],
     boot: MailWake::boot,
     cadence_ms: |s| super::refuse(NAME, MailWake::from_settings(s)).cadence_ms(),
     effects: EFFECTS,

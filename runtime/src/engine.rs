@@ -109,6 +109,8 @@ pub struct TaskStatus {
     pub name: String,
     pub mode: Mode,
     pub plane: Plane,
+    /// Each declared effect and the plane a halt reads for it.
+    pub effects: Vec<(String, Plane)>,
     pub state: Option<CarriedState>,
     /// Engine clock when the task last handled an event, and that event's own time.
     pub last_fired_at: Option<u64>,
@@ -340,6 +342,7 @@ impl Engine {
                     name: r.name.clone(),
                     mode: r.mode,
                     plane: r.plane,
+                    effects: r.effects.iter().map(|e| (e.to_string(), r.plane_of(e))).collect(),
                     state: t.and_then(|t| t.state.clone()),
                     last_fired_at: t.and_then(|t| t.fired_at),
                     last_due_at: t.and_then(|t| t.due_at),
@@ -602,7 +605,7 @@ impl Engine {
                     let mine = own && e.stream == ev.stream;
                     self.wrote(mine, e, false);
                 }
-                Command::Effect(spec) if mode == Mode::Act && self.halted && reg.held_by_halt(&spec.name) => {
+                Command::Effect(spec) if mode == Mode::Act && self.halted && reg.plane_of(&spec.name) == Plane::Work => {
                     let body = serde_json::to_string(&HeldBody { stream: ev.stream.clone(), task: handler.into(), spec }).map_err(|e| RuntimeError::new(e.to_string()))?;
                     self.append_derived(id, &StreamKey(HALT_STREAM.into()), EventKind::new(EFFECT_HELD, &body), ev, ev.at)?;
                 }

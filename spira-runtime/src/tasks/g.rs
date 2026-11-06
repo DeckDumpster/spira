@@ -28,6 +28,7 @@ pub static TASKS: &[Task] = &[
     Task {
         name: cockpit_tier_5s::NAME,
         plane: runtime::Plane::Work,
+        signal: &[],
         boot: cockpit_tier_5s::CockpitTier5s::boot,
         cadence_ms: |s| super::f::cadence(s, cockpit_tier_5s::CADENCE_KEY),
         effects: cockpit_tier_5s::EFFECTS,
@@ -38,6 +39,7 @@ pub static TASKS: &[Task] = &[
     Task {
         name: cockpit_tier_60s::NAME,
         plane: runtime::Plane::Work,
+        signal: &[],
         boot: cockpit_tier_60s::CockpitTier60s::boot,
         cadence_ms: |s| super::f::cadence(s, cockpit_tier_60s::CADENCE_KEY),
         effects: cockpit_tier_60s::EFFECTS,
@@ -48,6 +50,7 @@ pub static TASKS: &[Task] = &[
     Task {
         name: cockpit_tier_600s::NAME,
         plane: runtime::Plane::Work,
+        signal: &[],
         boot: cockpit_tier_600s::CockpitTier600s::boot,
         cadence_ms: |s| super::f::cadence(s, cockpit_tier_600s::CADENCE_KEY),
         effects: cockpit_tier_600s::EFFECTS,

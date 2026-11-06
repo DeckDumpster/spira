@@ -31,10 +31,10 @@ pub use settings::Settings;
 const FOREIGN_POLL_MS: u64 = 30_000;
 
 /// Every task in `tasks::all()`, in family order, each in the mode `SPIRA_TASK_MODES` gives it,
-/// on its row's plane, with the shared signal effects let through a halt.
+/// on its row's plane, with its row's signal effects and the shared ones let through a halt.
 /// `Settings::from_lookup` refuses a table that does not name every task exactly.
 pub fn registrations(s: &Settings) -> Vec<Registration> {
-    modes::apply(tasks::all().map(|t| (t.build)(s).with_plane(t.plane).with_signal_effects(tasks::SIGNAL_EFFECTS)).collect(), &s.task_modes).expect("Settings::from_lookup checked the task modes")
+    modes::apply(tasks::all().map(|t| (t.build)(s).with_plane(t.plane).with_signal_effects(t.signal).with_signal_effects(tasks::SIGNAL_EFFECTS).with_effects(t.effects)).collect(), &s.task_modes).expect("Settings::from_lookup checked the task modes")
 }
 
 /// The control socket's submit: one `Submit` on the host's channel, answered once the host has

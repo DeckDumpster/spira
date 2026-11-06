@@ -283,17 +283,20 @@ pub struct Registration {
     pub name: String,
     pub handler: Box<dyn Handler>,
     pub mode: Mode,
+    /// The task's plane: `Signal` is shorthand for every one of its effects on the signal plane.
     pub plane: Plane,
-    /// Effects that run through a halt whatever the task's plane: a runner several tasks share
-    /// that only signals (the inbox append).
-    pub signal_effects: &'static [&'static str],
+    /// The effects on the signal plane whatever the task's plane: those whose only act is to
+    /// page, send mail or append to the inbox.
+    pub signal_effects: Vec<&'static str>,
+    /// Every effect the task declares, for `status`; the plane of each is [`Self::plane_of`].
+    pub effects: Vec<&'static str>,
 }
 
 impl Registration {
     /// In `Act` on the `Work` plane; a service takes the mode of every task from its configured
     /// table and the plane from its task row.
     pub fn new(name: &str, handler: impl Handler + 'static) -> Self {
-        Registration { name: name.into(), handler: Box::new(handler), mode: Mode::Act, plane: Plane::Work, signal_effects: &[] }
+        Registration { name: name.into(), handler: Box::new(handler), mode: Mode::Act, plane: Plane::Work, signal_effects: vec![], effects: vec![] }
     }
 
     pub fn with_mode(mut self, mode: Mode) -> Self {
@@ -306,13 +309,28 @@ impl Registration {
         self
     }
 
-    pub fn with_signal_effects(mut self, names: &'static [&'static str]) -> Self {
-        self.signal_effects = names;
+    /// Adds `names` to the effects on the signal plane.
+    pub fn with_signal_effects(mut self, names: &[&'static str]) -> Self {
+        for n in names {
+            if !self.signal_effects.contains(n) {
+                self.signal_effects.push(n);
+            }
+        }
         self
     }
 
-    /// Whether a halt holds this task's effect `name`.
-    pub fn held_by_halt(&self, name: &str) -> bool {
-        self.plane == Plane::Work && !self.signal_effects.contains(&name)
+    /// The effects the task declares, listed in `status` with their planes.
+    pub fn with_effects(mut self, names: &[&'static str]) -> Self {
+        self.effects = names.to_vec();
+        self
+    }
+
+    /// The plane of this task's effect `name`: a halt holds it only on `Work`.
+    pub fn plane_of(&self, name: &str) -> Plane {
+        if self.plane == Plane::Signal || self.signal_effects.contains(&name) {
+            Plane::Signal
+        } else {
+            Plane::Work
+        }
     }
 }

@@ -35,8 +35,8 @@ fn profile() {
     let hours: u64 = std::env::var("H").ok().and_then(|h| h.parse().ok()).unwrap_or(1);
     let mut sim = Sim::new(3);
     for r in registrations(&common::settings()) {
-        let Registration { name, handler, mode, plane, signal_effects } = r;
-        sim.add_workflow(Registration { name: name.clone(), handler: Box::new(Timed(name, handler)), mode, plane, signal_effects });
+        let Registration { name, handler, mode, plane, signal_effects, effects } = r;
+        sim.add_workflow(Registration { name: name.clone(), handler: Box::new(Timed(name, handler)), mode, plane, signal_effects, effects });
     }
     sim.set_effects(Arc::new(sim::doubles::service()));
     for (_, stream, kind) in tasks::boots() {

@@ -695,22 +695,35 @@ pub fn an_outcome_is_offered_only_to_the_task_that_asked(rig: &dyn Rig) {
     assert_eq!(trace(&*j), first, "replaying the whole journal adds nothing");
 }
 
+/// On `start`, a `page` and a `write`.
+struct Pager;
+impl Handler for Pager {
+    fn interests(&self) -> &[EventKindTag] {
+        &["start"]
+    }
+    fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+        ["page", "write"].iter().map(|n| Command::Effect(EffectSpec { name: n.to_string(), input: ev.kind.body.clone(), deadline_ms: 1000 })).collect()
+    }
+}
+
 fn planes() -> Vec<Registration> {
     vec![
         Registration::new("work", Writer),
         Registration::new("signal", Writer).with_plane(Plane::Signal),
-        Registration::new("shared", Writer).with_signal_effects(&["write"]),
+        Registration::new("mixed", Pager).with_signal_effects(&["page"]),
     ]
 }
 
+/// Each waiting effect as `<task>.<effect>`, sorted.
 fn writers(x: &dyn Executor) -> Vec<String> {
-    let mut w: Vec<String> = x.pending_effects().into_iter().filter(|p| p.spec.name == "write").map(|p| p.key.split('/').nth(1).unwrap_or_default().to_string()).collect();
+    let mut w: Vec<String> = x.pending_effects().into_iter().filter(|p| p.spec.name != "read").map(|p| format!("{}.{}", p.key.split('/').nth(1).unwrap_or_default(), p.spec.name)).collect();
     w.sort();
     w
 }
 
-/// While halted, a `Signal` task's write runs, as does an effect a task names as a signal; a
-/// `Work` task's write is held, and the resume releases it once, also across a restart.
+/// While halted, a `Signal` task's write runs, and so does a `Work` task's `Signal` effect;
+/// a `Work` effect is held (the `Work` task's write and the mixed task's write), and the resume
+/// releases each once, also across a restart.
 pub fn a_halt_holds_work_and_lets_signals_through(rig: &dyn Rig) {
     let (j, clock) = (rig.journal(), VirtualClock::new(0));
     let mut x = rig.boot(j.clone(), &clock, 1, planes()).unwrap();
@@ -719,17 +732,17 @@ pub fn a_halt_holds_work_and_lets_signals_through(rig: &dyn Rig) {
     clock.advance(10);
     x.submit("s1", "s", EventKind::new("start", "now")).unwrap();
     x.run_until_idle().unwrap();
-    assert_eq!(writers(&*x), ["shared", "signal"], "the signal writes are requested under the halt");
-    assert_eq!(count_tag(&*j, EFFECT_HELD), 1, "and only the work write is held");
+    assert_eq!(writers(&*x), ["mixed.page", "signal.write"], "the signal effects are requested under the halt");
+    assert_eq!(count_tag(&*j, EFFECT_HELD), 2, "and the work effects are held, the mixed task's write among them");
     drop(x);
 
     let mut y = rig.boot(j.clone(), &clock, 1, planes()).unwrap();
-    assert_eq!(writers(&*y), ["shared", "signal"], "a restart while halted holds nothing more");
+    assert_eq!(writers(&*y), ["mixed.page", "signal.write"], "a restart while halted holds nothing more");
     clock.advance(10);
     y.submit("r1", HALT_STREAM, EventKind::new(SCHEDULER_RESUMED, "")).unwrap();
     y.run_until_idle().unwrap();
-    assert_eq!(writers(&*y), ["shared", "signal", "work"], "the resume releases the work write");
-    assert_eq!(count_tag(&*j, EFFECT_REQUESTED), 3, "each write is requested once");
+    assert_eq!(writers(&*y), ["mixed.page", "mixed.write", "signal.write", "work.write"], "the resume releases the work effects");
+    assert_eq!(count_tag(&*j, EFFECT_REQUESTED), 4, "each effect is requested once");
 }
 
 pub fn run_all(rig: &dyn Rig) {
