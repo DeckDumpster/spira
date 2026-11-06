@@ -230,7 +230,7 @@ mod tests {
     }
 
     const DOC: &str = r#"{"schema":1,"at":1000000,"halted":true,"held":3,"tasks":[
-        {"name":"sentinel.call","mode":"act","state":null,"last_fired_at":940000,"last_due_at":940000,"lag_ms":1200,"next_due_at":1060000,"last_outcome":"succeeded","in_flight":false},
+        {"name":"sentinel-call","mode":"act","state":null,"last_fired_at":940000,"last_due_at":940000,"lag_ms":1200,"next_due_at":1060000,"last_outcome":"succeeded","in_flight":false},
         {"name":"watch.tower","mode":"observe","state":null,"last_fired_at":null,"last_due_at":null,"lag_ms":null,"next_due_at":900000,"last_outcome":null,"in_flight":true}
     ],"classes":[]}"#;
 
@@ -239,7 +239,7 @@ mod tests {
         let s = parse_status(DOC).unwrap();
         assert!(s.halted);
         assert_eq!((s.at, s.held, s.tasks.len()), (1_000_000, 3, 2));
-        assert_eq!(s.tasks[0].name, "sentinel.call");
+        assert_eq!(s.tasks[0].name, "sentinel-call");
         assert_eq!(s.tasks[0].last_fired_at, Some(940_000));
         assert_eq!(s.tasks[1].last_fired_at, None);
         assert!(s.tasks[1].in_flight);
@@ -255,7 +255,7 @@ mod tests {
     fn task_lines_read_last_fired_next_due_and_lag_against_the_documents_time() {
         let s = parse_status(DOC).unwrap();
         let a = task_line(&s.tasks[0], s.at);
-        assert!(a.contains("sentinel.call") && a.contains("fired 60s ago") && a.contains("due in 60s") && a.contains("lag 1s") && a.contains("succeeded"), "{a}");
+        assert!(a.contains("sentinel-call") && a.contains("fired 60s ago") && a.contains("due in 60s") && a.contains("lag 1s") && a.contains("succeeded"), "{a}");
         let b = task_line(&s.tasks[1], s.at);
         assert!(b.contains("fired never") && b.contains("100s overdue") && b.contains("(in flight)"), "{b}");
     }
@@ -283,7 +283,7 @@ mod tests {
         let (rc, lines) = report(&Fake::ok(DOC));
         assert_eq!(rc, RC_HALTED);
         assert!(lines[0].contains("HALTED"), "{lines:?}");
-        assert!(lines.iter().any(|l| l.contains("sentinel.call")), "{lines:?}");
+        assert!(lines.iter().any(|l| l.contains("sentinel-call")), "{lines:?}");
         let running = DOC.replace(r#""halted":true"#, r#""halted":false"#);
         assert_eq!(report(&Fake::ok(&running)).0, RC_RUNNING);
         let down = Fake { calls: RefCell::new(Vec::new()), reply: Err("not answering".into()) };

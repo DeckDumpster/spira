@@ -14,7 +14,7 @@
 #
 # CHECKS (each names what it read):
 #
-#   scheduler   — the spira-runtime unit active; `scheduler status` running, sentinel.call registered
+#   scheduler   — the spira-runtime unit active; `scheduler status` running, sentinel-call registered
 #   timers      — every active spira-*-<instance>.timer (the watchdog's) still has a next trigger
 #   world       — not halted; stamp file named with its mtime when present
 #   database    — readable (bead count); statutes in force
@@ -69,17 +69,17 @@ else
 fi
 
 # `world scheduler-status` reads `scheduler status` on SPIRA_RUNTIME_SOCKET: exit 0 running,
-# 2 halted, 1 not answering. The call path is the sentinel.call task; a scheduler without it
+# 2 halted, 1 not answering. The call path is the sentinel-call task; a scheduler without it
 # can never call work.
 _sched_out="$(timeout 10 world scheduler-status 2>&1)"
 _sched_rc=$?
 case "$_sched_rc" in
     0)
         _n_tasks="$(printf '%s\n' "$_sched_out" | grep -c '^  ')"
-        if printf '%s\n' "$_sched_out" | grep -qE '^  sentinel\.call '; then
-            PASS "scheduler status — running, $_n_tasks task(s), sentinel.call registered"
+        if printf '%s\n' "$_sched_out" | grep -qE '^  sentinel-call '; then
+            PASS "scheduler status — running, $_n_tasks task(s), sentinel-call registered"
         else
-            FAIL "scheduler status — running but sentinel.call is not registered ($_n_tasks task(s))" \
+            FAIL "scheduler status — running but sentinel-call is not registered ($_n_tasks task(s))" \
                  "The call path is missing; nothing will be called. Check: world scheduler-status"
         fi
         ;;
