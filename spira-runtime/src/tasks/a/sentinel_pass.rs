@@ -12,7 +12,8 @@
 //!
 //! ## Tick
 //!
-//! Every 2 min, first at boot+180 s (`spira-sentinel-prod.timer`); single-flight (today oneshot,
+//! Every 2 min, first at boot+180 s (`spira-sentinel-prod.timer`; the port arms the first pass at
+//! boot+2 min, since a task row carries one cadence and no first-boot delay); single-flight (today oneshot,
 //! `TimeoutStartSec=900`). Also woken by `unit.ran(spira-landing)` (CHECK 6's leg finished).
 //! Budget warning at `SPIRA_SENTINEL_PASS_TARGET_SECS` (`pass.rs:541-549`) becomes the probe deadline.
 //!
@@ -160,9 +161,9 @@ pub const INCIDENT_EVENT: &str = "sentinel-pass.incident_event";
 pub const REFLECT: &str = "sentinel-pass.reflect";
 pub const PHASE_METRIC: &str = "sentinel-pass.phase_metric";
 
+/// `OnUnitActiveSec=2min`. The task row has no first-boot delay, so the old timer's
+/// `OnBootSec=180s` is not modelled: the boot tick arms the first pass one cadence later.
 pub const CADENCE_MS: u64 = 120_000;
-/// The first tick after boot (`OnBootSec=180s`).
-pub const BOOT_DELAY_MS: u64 = 180_000;
 pub const OBSERVE_DEADLINE_MS: u64 = 15_000;
 
 pub const ACTS: &[(&str, u64)] = &[
@@ -452,13 +453,12 @@ pub struct ObserveIn {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SentinelPass {
     pub cadence: Cadence,
-    pub boot_delay_ms: u64,
     pub pinned: BTreeMap<String, String>,
 }
 
 impl SentinelPass {
     pub fn new(pinned: BTreeMap<String, String>) -> Self {
-        SentinelPass { cadence: Cadence::Every(CADENCE_MS), boot_delay_ms: BOOT_DELAY_MS, pinned }
+        SentinelPass { cadence: Cadence::Every(CADENCE_MS), pinned }
     }
 
     pub fn from_cfg() -> Self {
@@ -469,7 +469,7 @@ impl SentinelPass {
         Registration::new(NAME, self)
     }
 
-    /// The boot tick only arms the first pass, `BOOT_DELAY_MS` later.
+    /// The boot tick only arms the first pass, one cadence later (the row's `cadence_ms`).
     pub fn boot() -> (&'static str, &'static str, EventKind) {
         ("sentinel-pass/boot", STREAM, EventKind::new(TICK, "boot"))
     }
@@ -492,7 +492,7 @@ impl Handler for SentinelPass {
             return vec![];
         }
         if ev.kind.tag == TICK && ev.kind.body == "boot" {
-            return vec![Command::Timer { at: ev.at + self.boot_delay_ms, kind: EventKind::new(TICK, "") }];
+            return vec![Command::Timer { at: self.cadence.next_after(ev.at), kind: EventKind::new(TICK, "") }];
         }
         let carry: Carry = kit::carry(&SHAPE, view);
         if ev.kind.tag == TICK {

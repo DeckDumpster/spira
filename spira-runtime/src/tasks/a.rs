@@ -28,32 +28,7 @@ pub mod sift;
 pub mod submission_provision;
 pub mod sweep_target;
 
-/// Every effect of module `$m` listed, each with a runner that refuses until it is ported.
-macro_rules! stubs {
-    ($m:ident: $($e:ident),* $(,)?) => {
-        &[$(($m::$e, |_, _, _| unimplemented!("{}: runner for {} not ported yet", $m::NAME, $m::$e))),*]
-    };
-}
-
 pub static TASKS: &[Task] = &[
-    Task {
-        name: sift::NAME,
-        boot: sift::Sift::boot,
-        cadence_ms: |_| sift::CADENCE_MS,
-        effects: sift::EFFECTS,
-        runners: &[(sift::OBSERVE, |e, _, s| sift::observe(e, &s.input)), (sift::FETCH_BASE, |_, _, s| sift::fetch_base(&s.input)), (sift::NOTE, |e, _, s| sift::note(e, s)), (sift::SEND_BACK, |e, _, s| sift::send_back(e, s)), (sift::RECORD_PASS, |e, _, s| sift::record_pass(e, s)), (sift::SUPERSEDE, |e, _, s| sift::supersede(e, s))],
-        keys: &[sift::KEYS],
-        build: |_| sift::Sift::from_cfg().registration(),
-    },
-    Task {
-        name: czar::NAME,
-        boot: czar::Czar::boot,
-        cadence_ms: |_| czar::CADENCE_MS,
-        effects: czar::EFFECTS,
-        runners: &[(czar::OBSERVE, |e, _, s| czar::observe(e, &s.input)), (czar::FILE_INCIDENT, |_, _, s| czar::file(&s.input)), (czar::FILE_BASE_RED, |_, _, s| czar::file(&s.input)), (czar::RERUN_WORKFLOW, |_, _, s| czar::rerun_workflow(&s.input)), (czar::RESTART_LANDING, |e, _, _| czar::restart_landing(e)), (czar::STATUS, |e, _, s| czar::status(e, &s.input))],
-        keys: &[czar::KEYS],
-        build: |_| czar::Czar::from_cfg().registration(),
-    },
     Task {
         name: sentinel_call::NAME,
         boot: sentinel_call::SentinelCall::boot,
@@ -93,78 +68,22 @@ pub static TASKS: &[Task] = &[
         build: |_| sentinel_pass::SentinelPass::from_cfg().registration(),
     },
     Task {
-        name: sweep_target::NAME,
-        boot: sweep_target::SweepTarget::boot,
-        cadence_ms: |_| sweep_target::CADENCE_MS,
-        effects: sweep_target::EFFECTS,
-        runners: &[(sweep_target::OBSERVE, |e, _, _| sweep_target::observe(&e.world.run_dir)), (sweep_target::REMOVE_TARGET, |_, _, s| sweep_target::remove_target(&s.input)), (sweep_target::REMOVE_FOREIGN_RUN, |_, _, s| sweep_target::remove_foreign_run(&s.input))],
-        keys: &[sweep_target::KEYS],
-        build: |_| sweep_target::SweepTarget::from_cfg().registration(),
+        name: czar::NAME,
+        boot: czar::Czar::boot,
+        cadence_ms: |_| czar::CADENCE_MS,
+        effects: czar::EFFECTS,
+        runners: &[(czar::OBSERVE, |e, _, s| czar::observe(e, &s.input)), (czar::FILE_INCIDENT, |_, _, s| czar::file(&s.input)), (czar::FILE_BASE_RED, |_, _, s| czar::file(&s.input)), (czar::RERUN_WORKFLOW, |_, _, s| czar::rerun_workflow(&s.input)), (czar::RESTART_LANDING, |e, _, _| czar::restart_landing(e)), (czar::STATUS, |e, _, s| czar::status(e, &s.input))],
+        keys: &[czar::KEYS],
+        build: |_| czar::Czar::from_cfg().registration(),
     },
     Task {
-        name: landing::NAME,
-        boot: landing::Landing::boot,
-        cadence_ms: |_| landing::CADENCE_MS,
-        effects: landing::EFFECTS,
-        runners: {
-            use landing::*;
-            &[
-                (OBSERVE, |e, _, _| observe(e)),
-                (FETCH, |_, _, s| fetch(&s.input)),
-                (DELIVER_PR_MERGED, |_, _, s| deliver_pr_merged(&s.input)),
-                (DELIVER_PR_CLOSED, |_, _, s| deliver_pr_closed(&s.input)),
-                (DELIVER_BY_CONTENT, |_, _, s| deliver_by_content(&s.input)),
-                (REOPEN, |_, _, s| reopen(&s.input)),
-                (EVENT, |e, _, s| event(e, &s.input)),
-                (NOTE, |_, _, s| note(&s.input)),
-                (BUMP_REQUEUE, |_, _, s| bump_requeue(&s.input)),
-                (ASK, |e, _, s| ask(e, &s.input)),
-                (REBASE, |_, _, s| rebase_branch(&s.input)),
-                (CONFINE, |_, _, s| confine(&s.input)),
-                (FORCE_PUSH, |_, _, s| force_push(&s.input)),
-                (PR_CREATE, |_, _, s| pr_create(&s.input)),
-                (PR_AUTOMERGE, |_, _, s| pr_automerge(&s.input)),
-            ]
-        },
-        keys: &[landing::KEYS],
-        build: |_| landing::Landing::from_cfg().registration(),
-    },
-    Task {
-        name: submission_provision::NAME,
-        boot: submission_provision::SubmissionProvision::boot,
-        // The daily calendar; its first tick is the boot tick's, two minutes after start.
-        cadence_ms: |_| runtime::taskrig::DAY_MS,
-        effects: submission_provision::EFFECTS,
-        runners: {
-            use submission_provision::*;
-            &[(OBSERVE, |_, _, _| observe()), (CERT_RENEW, |_, _, s| cert_renew(&s.input)), (CONFIG_SET, |_, _, s| config_set(&s.input)), (PASSWORD_WRITE, |_, _, s| password_write(&s.input)), (FIREWALL_OPEN, |_, _, s| firewall_open(&s.input)), (UNIT_RESTART, |e, _, s| unit_restart(e, &s.input))]
-        },
-        keys: &[submission_provision::KEYS],
-        build: |_| submission_provision::SubmissionProvision::from_cfg().registration(),
-    },
-    Task {
-        name: gate_worker::NAME,
-        boot: gate_worker::GateWorker::boot,
-        cadence_ms: |_| gate_worker::CADENCE_MS,
-        effects: gate_worker::EFFECTS,
-        runners: {
-            use gate_worker::*;
-            &[(OBSERVE, |e, _, s| observe(e, &s.input)), (TIP, |_, _, s| tip(&s.input)), (CLAIM, |e, _, s| claim(e, &s.input)), (DISCARD, |e, _, s| discard(e, &s.input)), (RETAIN_OUTPUT, |e, _, s| retain_output(e, &s.input)), (COMPLETE, |e, _, s| complete(e, &s.input)), (RECOVER, |e, _, s| recover(e, &s.input))]
-        },
-        keys: &[gate_worker::KEYS],
-        build: |_| gate_worker::GateWorker::from_cfg().registration(),
-    },
-    Task {
-        name: gate_check::NAME,
-        boot: gate_check::GateCheck::boot,
-        cadence_ms: |_| gate_check::CADENCE_MS,
-        effects: gate_check::EFFECTS,
-        runners: {
-            use gate_check::*;
-            &[(OBSERVE, |e, _, _| observe(e)), (DISCOVER, |e, k, s| discover(e, k, &s.input)), (RESOLVE, |e, k, s| resolve(e, k, &s.input)), (CI_FAILED, |e, _, s| ci_failed(e, &s.input)), (FILE_BEAD, |e, k, s| file_bead(e, k, &s.input)), (RAISE_PRIORITY, |e, k, s| raise_priority(e, k, &s.input)), (NOTE, |e, _, s| note(e, &s.input)), (TSD_INGEST, |e, k, s| tsd_ingest(e, k, &s.input))]
-        },
-        keys: &[gate_check::KEYS],
-        build: |_| gate_check::GateCheck::from_cfg().registration(),
+        name: sift::NAME,
+        boot: sift::Sift::boot,
+        cadence_ms: |_| sift::CADENCE_MS,
+        effects: sift::EFFECTS,
+        runners: &[(sift::OBSERVE, |e, _, s| sift::observe(e, &s.input)), (sift::FETCH_BASE, |_, _, s| sift::fetch_base(&s.input)), (sift::NOTE, |e, _, s| sift::note(e, s)), (sift::SEND_BACK, |e, _, s| sift::send_back(e, s)), (sift::RECORD_PASS, |e, _, s| sift::record_pass(e, s)), (sift::SUPERSEDE, |e, _, s| sift::supersede(e, s))],
+        keys: &[sift::KEYS],
+        build: |_| sift::Sift::from_cfg().registration(),
     },
     Task {
         name: batcher_local::NAME,
@@ -213,6 +132,81 @@ pub static TASKS: &[Task] = &[
         },
         keys: &[publish::KEYS],
         build: |_| publish::Publish::from_cfg().registration(),
+    },
+    Task {
+        name: sweep_target::NAME,
+        boot: sweep_target::SweepTarget::boot,
+        cadence_ms: |_| sweep_target::CADENCE_MS,
+        effects: sweep_target::EFFECTS,
+        runners: &[(sweep_target::OBSERVE, |e, _, _| sweep_target::observe(&e.world.run_dir)), (sweep_target::REMOVE_TARGET, |_, _, s| sweep_target::remove_target(&s.input)), (sweep_target::REMOVE_FOREIGN_RUN, |_, _, s| sweep_target::remove_foreign_run(&s.input))],
+        keys: &[sweep_target::KEYS],
+        build: |_| sweep_target::SweepTarget::from_cfg().registration(),
+    },
+    Task {
+        name: gate_worker::NAME,
+        boot: gate_worker::GateWorker::boot,
+        cadence_ms: |_| gate_worker::CADENCE_MS,
+        effects: gate_worker::EFFECTS,
+        runners: {
+            use gate_worker::*;
+            &[(OBSERVE, |e, _, s| observe(e, &s.input)), (TIP, |_, _, s| tip(&s.input)), (CLAIM, |e, _, s| claim(e, &s.input)), (DISCARD, |e, _, s| discard(e, &s.input)), (RETAIN_OUTPUT, |e, _, s| retain_output(e, &s.input)), (COMPLETE, |e, _, s| complete(e, &s.input)), (RECOVER, |e, _, s| recover(e, &s.input))]
+        },
+        keys: &[gate_worker::KEYS],
+        build: |_| gate_worker::GateWorker::from_cfg().registration(),
+    },
+    Task {
+        name: gate_check::NAME,
+        boot: gate_check::GateCheck::boot,
+        cadence_ms: |_| gate_check::CADENCE_MS,
+        effects: gate_check::EFFECTS,
+        runners: {
+            use gate_check::*;
+            &[(OBSERVE, |e, _, _| observe(e)), (DISCOVER, |e, k, s| discover(e, k, &s.input)), (RESOLVE, |e, k, s| resolve(e, k, &s.input)), (CI_FAILED, |e, _, s| ci_failed(e, &s.input)), (FILE_BEAD, |e, k, s| file_bead(e, k, &s.input)), (RAISE_PRIORITY, |e, k, s| raise_priority(e, k, &s.input)), (NOTE, |e, _, s| note(e, &s.input)), (TSD_INGEST, |e, k, s| tsd_ingest(e, k, &s.input))]
+        },
+        keys: &[gate_check::KEYS],
+        build: |_| gate_check::GateCheck::from_cfg().registration(),
+    },
+    Task {
+        name: landing::NAME,
+        boot: landing::Landing::boot,
+        cadence_ms: |_| landing::CADENCE_MS,
+        effects: landing::EFFECTS,
+        runners: {
+            use landing::*;
+            &[
+                (OBSERVE, |e, _, _| observe(e)),
+                (FETCH, |_, _, s| fetch(&s.input)),
+                (DELIVER_PR_MERGED, |_, _, s| deliver_pr_merged(&s.input)),
+                (DELIVER_PR_CLOSED, |_, _, s| deliver_pr_closed(&s.input)),
+                (DELIVER_BY_CONTENT, |_, _, s| deliver_by_content(&s.input)),
+                (REOPEN, |_, _, s| reopen(&s.input)),
+                (EVENT, |e, _, s| event(e, &s.input)),
+                (NOTE, |_, _, s| note(&s.input)),
+                (BUMP_REQUEUE, |_, _, s| bump_requeue(&s.input)),
+                (ASK, |e, _, s| ask(e, &s.input)),
+                (REBASE, |_, _, s| rebase_branch(&s.input)),
+                (CONFINE, |_, _, s| confine(&s.input)),
+                (FORCE_PUSH, |_, _, s| force_push(&s.input)),
+                (PR_CREATE, |_, _, s| pr_create(&s.input)),
+                (PR_AUTOMERGE, |_, _, s| pr_automerge(&s.input)),
+            ]
+        },
+        keys: &[landing::KEYS],
+        build: |_| landing::Landing::from_cfg().registration(),
+    },
+    Task {
+        name: submission_provision::NAME,
+        boot: submission_provision::SubmissionProvision::boot,
+        // The daily calendar's first tick, as every calendar row gives it: the boot tick's, two
+        // minutes after start (`OnBootSec=2min`); the calendar arms each day after that.
+        cadence_ms: |_| submission_provision::BOOT_DELAY_MS,
+        effects: submission_provision::EFFECTS,
+        runners: {
+            use submission_provision::*;
+            &[(OBSERVE, |_, _, _| observe()), (CERT_RENEW, |_, _, s| cert_renew(&s.input)), (CONFIG_SET, |_, _, s| config_set(&s.input)), (PASSWORD_WRITE, |_, _, s| password_write(&s.input)), (FIREWALL_OPEN, |_, _, s| firewall_open(&s.input)), (UNIT_RESTART, |e, _, s| unit_restart(e, &s.input))]
+        },
+        keys: &[submission_provision::KEYS],
+        build: |_| submission_provision::SubmissionProvision::from_cfg().registration(),
     },
 ];
 
