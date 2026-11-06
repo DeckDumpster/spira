@@ -105,7 +105,7 @@ pub fn convert_command(conf: &Path, home: &Path, out: &Path, repo_map: Option<&P
 /// a pinned path that is not a file means "no config", not "keep looking"), else
 /// `$XDG_CONFIG_HOME/spira/spira.toml` (`$HOME/.config` when `XDG_CONFIG_HOME` is unset), else
 /// `/etc/spira/spira.toml` — first of these that exists. The one search order every host-wide
-/// reader (`queue-watch`) shares, so two daemons can never disagree about which file is in
+/// reader shares, so two daemons can never disagree about which file is in
 /// force on the same host, and the same search `conf.sh`'s `spira_toml_file` runs (sp-hconl;
 /// **no `$SPIRA_REPO` tier** — removed from bash by sp-9hwim, "the running system must not
 /// read [from beside the checkout] at all"; this function still offered one until this bead).

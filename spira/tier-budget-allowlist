@@ -214,7 +214,6 @@ test-queue-ops.sh	T1	12.5
 test-queue-protect.sh	T1	2.0
 test-queue-sort-large.sh	T1	2.5
 test-queue-submit.sh	T1	5.0
-test-queue-watch.sh	T1	61.5
 # literal-ok: a real suite filename, not a use of the configured label it happens to contain
 test-reclaim-needs-ryan.sh	T1	2.0
 test-ref-guard.sh	T1	3.0

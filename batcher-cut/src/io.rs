@@ -291,8 +291,7 @@ fn prereq_is_finished(env: &Env, id: &str) -> bool {
 
 // ---------------------------------------------------------------------------------------
 // The round pool: the lifecycle machine's unheld SUBMITTED and CERTIFIED beads, narrowed to this repo, with
-// title/priority from the bead store and express from the lifecycle row. Same construction as queue-watch's
-// snapshot(), which this borrows from directly.
+// title/priority from the bead store and express from the lifecycle row.
 // ---------------------------------------------------------------------------------------
 
 fn holds_empty(r: &serde_json::Value) -> bool {

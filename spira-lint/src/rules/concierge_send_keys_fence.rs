@@ -131,11 +131,11 @@ mod tests {
     fn comments_and_tests_are_silent() {
         assert!(scan("spira/x.sh", b"# tmux send-keys is forbidden\n").is_empty());
         assert!(!in_scope("spira/test-x.sh"));
-        assert!(in_scope("concierge-guard/src/main.rs"));
+        assert!(in_scope("heimdall/src/main.rs"));
     }
 
     #[test]
-    fn the_guard_is_in_scope_so_a_send_keys_there_is_caught() {
-        assert_eq!(scan("concierge-guard/src/main.rs", b"Command::new(\"tmux\").arg(\"send-keys\");\n").len(), 1);
+    fn a_component_outside_the_allowed_set_is_in_scope_so_a_send_keys_there_is_caught() {
+        assert_eq!(scan("heimdall/src/main.rs", b"Command::new(\"tmux\").arg(\"send-keys\");\n").len(), 1);
     }
 }

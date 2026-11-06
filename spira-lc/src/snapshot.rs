@@ -219,8 +219,8 @@ mod tests {
         let callers: [(&str, &[&str], &[&str]); 7] = [
             ("lc-view", &["list", "--live", "--snapshot"], &["sp-a", "sp-b", "sp-c"]),
             ("watchtower", &["list", "--state", "READY", "--snapshot"], &["sp-b", "sp-c"]),
-            ("queue-watch certified", &["list", "--state", "CERTIFIED", "--snapshot"], &[]),
-            ("queue-watch express", &["list", "--express", "--live", "--snapshot"], &["sp-b"]),
+            ("certified list", &["list", "--state", "CERTIFIED", "--snapshot"], &[]),
+            ("express list", &["list", "--express", "--live", "--snapshot"], &["sp-b"]),
             ("batcher-cut", &["list", "--state", "SUBMITTED,CERTIFIED", "--snapshot"], &[]),
             ("hold-sweep", &["list", "--hold", "wait", "--live", "--snapshot"], &["sp-b"]),
             ("supersede-duty", &["list", "--live", "--hold", "manual", "--snapshot"], &[]),

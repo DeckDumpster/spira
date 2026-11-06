@@ -264,7 +264,7 @@ escalation; the class of an ask (`permissions`, `policy`, `destructive`, `design
 whether it goes to the operator or first to the Concierge.
 
 The **Concierge** is the operator's long-lived session (`concierge.sh start`, kept up by
-`concierge.timer`; `concierge-guard` mails the operator if its inbox waiter lapses). It is not
+`concierge.timer`). It is not
 called for a bead and claims none. Its brief tells it to reach Spira by *filing* beads, not
 by claiming them or running dwarves itself. It also holds the break-glass powers: an ungated
 landing requires `SPIRA_LAND_UNGATED_BY` to name the Concierge or the operator, plus evidence

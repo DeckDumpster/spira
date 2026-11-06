@@ -327,7 +327,6 @@ SPIRA_HOME install/src/bootstrap.rs
 SPIRA_HOME install/src/values.rs
 SPIRA_HOME landing-pass/src/main.rs
 SPIRA_HOME landing-pass/src/real.rs
-SPIRA_HOME queue-watch/src/main.rs
 SPIRA_HOME rebase-stale/src/main.rs
 SPIRA_HOME release/src/activate.rs
 SPIRA_HOME release/src/canary.rs
@@ -371,7 +370,6 @@ SPIRA_INCIDENT testenv/src/suites/real.rs
 SPIRA_INCIDENT_ACTOR batcher-cut/src/io.rs
 SPIRA_INCIDENT_ACTOR czar-pass/src/main.rs
 SPIRA_INCIDENT_ACTOR incident/src/main.rs
-SPIRA_INCIDENT_ACTOR queue-watch/src/main.rs
 SPIRA_INCIDENT_ACTOR sentinel/src/detect.rs
 SPIRA_INCIDENT_ACTOR spira-lc/src/ops.rs
 SPIRA_INCIDENT_ACTOR testenv/src/suites/real.rs
@@ -379,7 +377,6 @@ SPIRA_INCIDENT_ACTOR watchtower/src/incident.rs
 SPIRA_INCIDENT_CAUSE batcher-cut/src/io.rs
 SPIRA_INCIDENT_CAUSE czar-pass/src/main.rs
 SPIRA_INCIDENT_CAUSE incident/src/main.rs
-SPIRA_INCIDENT_CAUSE queue-watch/src/main.rs
 SPIRA_INCIDENT_CAUSE release/src/canary.rs
 SPIRA_INCIDENT_CAUSE sentinel/src/detect.rs
 SPIRA_INCIDENT_CAUSE spira-lc/src/ops.rs
@@ -407,7 +404,6 @@ SPIRA_INCIDENT_PATH testenv/src/suites/real.rs
 SPIRA_INCIDENT_REF batcher-cut/src/io.rs
 SPIRA_INCIDENT_REF czar-pass/src/main.rs
 SPIRA_INCIDENT_REF incident/src/main.rs
-SPIRA_INCIDENT_REF queue-watch/src/main.rs
 SPIRA_INCIDENT_REF release/src/canary.rs
 SPIRA_INCIDENT_REF sentinel/src/detect.rs
 SPIRA_INCIDENT_REF spira-lc/src/ops.rs
@@ -418,7 +414,6 @@ SPIRA_INCIDENT_REPO batcher-cut/src/io.rs
 SPIRA_INCIDENT_REPO czar-pass/src/main.rs
 SPIRA_INCIDENT_REPO dwarf/src/run.rs
 SPIRA_INCIDENT_REPO incident/src/main.rs
-SPIRA_INCIDENT_REPO queue-watch/src/main.rs
 SPIRA_INCIDENT_REPO release/src/canary.rs
 SPIRA_INCIDENT_REPO sentinel/src/detect.rs
 SPIRA_INCIDENT_REPO spira-lc/src/ops.rs
@@ -426,13 +421,11 @@ SPIRA_INCIDENT_REPO spira/escape-classify.sh
 SPIRA_INCIDENT_REPO testenv/src/run.rs
 SPIRA_INCIDENT_REPO testenv/src/suites/real.rs
 SPIRA_INCIDENT_REPO watchtower/src/incident.rs
-SPIRA_INCIDENT_SH queue-watch/src/main.rs
 SPIRA_INCIDENT_SH sentinel/src/cfg.rs
 SPIRA_INCIDENT_SH watchtower/src/main.rs
 SPIRA_INCIDENT_TYPE batcher-cut/src/io.rs
 SPIRA_INCIDENT_TYPE czar-pass/src/main.rs
 SPIRA_INCIDENT_TYPE incident/src/main.rs
-SPIRA_INCIDENT_TYPE queue-watch/src/main.rs
 SPIRA_INCIDENT_TYPE release/src/canary.rs
 SPIRA_INCIDENT_TYPE sentinel/src/detect.rs
 SPIRA_INCIDENT_TYPE spira-lc/src/ops.rs
@@ -498,7 +491,6 @@ SPIRA_LC_ADMIN_USER spira/sim/src/world.rs
 SPIRA_LC_BACKUP_LOCK_WAIT_SECS spira/lc-backup.sh
 SPIRA_LC_BIN cockpit-collect/src/io.rs
 SPIRA_LC_BIN cockpit-collect/src/probes/lc.rs
-SPIRA_LC_BIN queue-watch/src/main.rs
 SPIRA_LC_BIN spira-config/src/convert.rs
 SPIRA_LC_BIN spira-config/src/lifecycle_row.rs
 SPIRA_LC_BIN spira/groom-trigger.sh
@@ -571,7 +563,6 @@ SPIRA_MAIL_LINT_CONSIDERED mail/src/env.rs
 SPIRA_MAIL_LINT_CONSIDERED spira-world/src/bin/world.rs
 SPIRA_MAIL_LINT_CONSIDERED spira-world/src/notice.rs
 SPIRA_MAIL_LOCK_TIMEOUT_MS mail/src/env.rs
-SPIRA_MAIL_OPERATOR_CONSIDERED concierge-guard/src/main.rs
 SPIRA_MAIL_OPERATOR_CONSIDERED mail/src/env.rs
 SPIRA_MAIL_REPEAT_CONSIDERED mail/src/env.rs
 SPIRA_MAIL_REPEAT_CONSIDERED sentinel/src/pass.rs

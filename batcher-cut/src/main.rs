@@ -5,7 +5,7 @@
 //!
 //!   batcher cut <repo>   [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]
 //!
-//! Common flags mirror queue-watch's: --run (SPIRA_RUN), --db (SPIRA_DB), --home
+//! Common flags: --run (SPIRA_RUN), --db (SPIRA_DB), --home
 //! (SPIRA_HOME, where lib.sh and forge.sh live). Repo config comes from lib.sh's own
 //! SPIRA_REPO_MAP-backed lookups, not spira.toml — see find_repo.
 //!
