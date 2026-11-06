@@ -170,7 +170,7 @@ pub const SIGNAL_SAFE: &[(&str, &str)] = &[
     (e::inbox_notify::ASK, "mails the operator a question (watchd send)"),
     (e::inbox_notify::CONCIERGE_NOTE, "mails the Concierge a note (watchd send)"),
     (pr_notify::OPERATOR_NOTE, "mails the operator a note (mail send)"),
-    (CONCIERGE_WAKE, "runs concierge.sh wake, which wakes the Concierge's reader"),
+    (CONCIERGE_WAKE, "runs the Concierge's wake verb, which wakes its reader"),
     (e::watch_backup_age::MAIL, "mails an alert (alert::send)"),
     (e::watch_pass_rate::MAIL, "mails an alert (alert::send)"),
     (f::asks_ideas::ASK, "mails the operator the idea prompt (idea_prompt send)"),

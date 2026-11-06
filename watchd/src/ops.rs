@@ -582,10 +582,10 @@ mod real_tests {
     #[test]
     fn inbox_pushes_only_with_a_wake_and_a_matching_pattern() {
         let pat = r"\bP0\b|RED on|PAUSED";
-        assert!(inbox_pushes("watchd: P0 down", "concierge.sh wake", pat));
-        assert!(!inbox_pushes("watchd: P01 down", "concierge.sh wake", pat));
+        assert!(inbox_pushes("watchd: P0 down", "a-wake-command", pat));
+        assert!(!inbox_pushes("watchd: P01 down", "a-wake-command", pat));
         assert!(!inbox_pushes("watchd: P0 down", "", pat));
-        assert!(!inbox_pushes("watchd: P0 down", "concierge.sh wake", "("));
+        assert!(!inbox_pushes("watchd: P0 down", "a-wake-command", "("));
     }
 
     #[test]
