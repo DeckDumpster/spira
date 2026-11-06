@@ -44,11 +44,14 @@ Dolt on its port, and **adopts** any `~/.config/spira/spira.toml` it finds.
 mkdir -p <work> && cd <work>
 systemctl --user list-unit-files --no-legend --plain \
   'spira-*' 'dolt-*' 'lc-serve*' 'concierge*' 'cockpit*' 'beads-push*' | awk '{print $1}' | sort -u > old-units.txt
-systemctl --user cat 'spira-sentinel-*.service' | grep -oE 'SPIRA_(DB|RUN|DOLT_DATA|RELEASES)=[^ ]*' | sort -u
+systemctl --user cat 'spira-runtime-*.service' | grep -oE 'SPIRA_(DB|RUN|DOLT_DATA|RELEASE)=[^ ]*' | sort -u
 ```
 
 Write the answers as literal paths in `<work>/old.sh` (`OLD_DB`, `OLD_DOLT`, `OLD_RUN`,
-`OLD_RELEASES`, `OLD_RELEASE`) and `. <work>/old.sh`.
+`OLD_RELEASES`, `OLD_RELEASE`) and `. <work>/old.sh`. `OLD_RELEASE` is the unit's
+`SPIRA_RELEASE`; `OLD_RELEASES` is the directory that holds it. A unit rendered before the
+scheduler's unit carried `SPIRA_DB` and `SPIRA_DOLT_DATA` lacks them: read those two from
+`spira.db` and `spira.dolt_data` in the instance's `spira.toml`.
 
 **2b. Stop everything, the database included:**
 

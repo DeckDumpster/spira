@@ -10,6 +10,10 @@ Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=SPIRA_HOME=@SPIRA_PROD@
 Environment=SPIRA_RUN=@SPIRA_RUN@
+# Where this instance keeps its store, named on the unit so a reinstall can read them off it
+# (docs/reinstall-runbook.md, step 2a). The values are the config file's own.
+Environment=SPIRA_DB=@SPIRA_DB@
+Environment=SPIRA_DOLT_DATA=@SPIRA_DOLT_DATA@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 # Type=notify, and the dispatch loop itself sends WATCHDOG=1: a hung handler stops the kicks
 # and systemd restarts the service; the in-flight marker then quarantines a call that stalls twice.

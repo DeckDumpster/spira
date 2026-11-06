@@ -87,7 +87,7 @@ worktree: merging does not deploy, activation does.
 | Question | Look here |
 |---|---|
 | What is in each state, and what is stuck beyond its normal dwell? | Loom (`SPIRA_LOOM_ADDR`): `/`, `/stuck`, `/states`, `/lifecycle`, `/dwarves`, `/units`, `/rounds`, `/rounds/<repo>/<batch>` (+ `/log`), `/beads/<id>`; JSON under `/api/` (`stuck states lifecycle dwarves units ops rounds/<repo>/<batch>`) |
-| Work claimed but nobody is working it | `strand report [--json]`; `strand check --dry-run` (`strand check` is the timer path) |
+| Work claimed but nobody is working it | `strand report [--json]`; `strand check --dry-run` (the `sentinel-pass` task runs `strand check`) |
 | Which failure classes keep recurring | `census [--with-suppressed]` |
 | What the watchers saw | `watchd status`; `watchd peek [name] [--all] [--limit N]`; `watchd tail <name>` (stream from the cursor; one reader per watcher); `watchd next <name> [--timeout SECS]`; `watchd drain [name] [--all]` |
 | Operator-facing questions and alerts | `mail list operator --unread`, `mail read operator [<message>]`, `mail count operator`; asks: `spira-lc list-asks [--state S]`, `spira-lc show-ask <id>` |
@@ -98,6 +98,22 @@ worktree: merging does not deploy, activation does.
 
 Never read state from the files, logs or process lists another component owns; each state has
 one owning command (see the lint rules in [development](development.md)).
+
+## Pausing one task, or all of them
+
+Every loop step is a task inside `spira-runtime serve`, and `SPIRA_TASK_MODES` gives each one
+`act` or `observe`. To pause one task, set it to `observe` and restart the scheduler:
+
+```bash
+spira-config set spira.task_modes "<the current list, with that task's entry changed to name=observe>"
+systemctl --user restart spira-runtime-<instance>.service
+```
+
+An `observe` task keeps observing, and its effects are shadowed: each one is recorded as
+`effect.shadowed` and none of them runs. Setting the task back to `act` and restarting again
+resumes it. `world scheduler-status` shows each task's mode. To pause everything, run
+`world stop`: it sends `scheduler halt`, which holds every task's effects while observation
+continues, and `world start` lifts it.
 
 ## The goodput loop
 
@@ -111,9 +127,9 @@ written to `intents/` for it.
 |---|---|
 | Read a section | `spira-lc section get <Kind>/<name>`; every section with its age: `spira-lc section list [--kind K]` |
 | Read the pass record | `spira-lc section snapshot` (`pass` is the latest record); the day of history: `spira-lc pass history` |
-| Arm a kind | `reconciler arm-check <Kind>`: it checks that the kind's sections are fresh, that the dead-man and heartbeat are green, and that shadow passes recorded the kind. It prints the kind's would-be steps for review and the one `spira-config set spira.reconciler_shadow_kinds ...` that takes the kind off the list and shadows every old remedy it replaces. arm-check itself writes nothing, and it exits non-zero naming each unmet precondition. spira-runtime reads the key only at start, so swap with no moment of two actuators: stop the goodput timer, run the printed command, restart spira-runtime, then start the timer. The key holds old remedies back; it does not silence the old kinds' alerts. |
+| Arm a kind | `reconciler arm-check <Kind>`: it checks that the kind's sections are fresh, that the dead-man and heartbeat are green, and that shadow passes recorded the kind. It prints the kind's would-be steps for review and the one `spira-config set spira.reconciler_shadow_kinds ...` that takes the kind off the list and shadows every old remedy it replaces. arm-check itself writes nothing, and it exits non-zero naming each unmet precondition. spira-runtime reads the key only at start, so swap with no moment of two actuators: pause `reconcile.goodput` (below), run the printed command, then set it back to `act` and restart spira-runtime once more. The key holds old remedies back; it does not silence the old kinds' alerts. |
 | Disarm a kind | `reconciler arm-check <Kind> --disarm` prints the reverse write. `queue-mergeable` stays shadowed, because the cutover shadowed it. Run the write in the same order as arming. |
-| Answer a dead-man page | the `reconciler` page means the latest pass record is older than three intervals. Check the `reconcile.goodput` row of `world scheduler-status` (last fired, lag, last outcome) and the tail of `spira-runtime.log` in the run directory. A standby line names the holder of `locks/reconciler` (`spira-lc lock show reconciler`). A timer the operator stopped reads as WAITING, not stale. |
+| Answer a dead-man page | the `reconciler` page means the latest pass record is older than three intervals. Check the `reconcile.goodput` row of `world scheduler-status` (last fired, lag, last outcome) and the tail of `spira-runtime.log` in the run directory. A standby line names the holder of `locks/reconciler` (`spira-lc lock show reconciler`). A task the operator paused reads as WAITING, not stale. |
 
 ## Restoring a dolt store from its off-box backup
 
