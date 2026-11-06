@@ -47,6 +47,24 @@ fi
 ro=() rw=()
 [ -n "${RUSTUP_HOME:-}" ] && ro+=("$RUSTUP_HOME")
 [ -n "${CARGO_HOME:-}" ] && ro+=("$CARGO_HOME/bin") && rw+=("$CARGO_HOME/registry" "$CARGO_HOME/git")
+# Without a declared RUSTUP_HOME (cargo started straight from a toolchain, not through rustup's
+# proxy, as the round VM does) the toolchain is still bound by where it really is: $CARGO, and
+# what $CARGO_HOME/bin's cargo and rustc link to. Binding bin alone leaves those links dangling
+# when the toolchain sits under a hidden home, and a test that spawns $CARGO finds nothing. A
+# link that resolves to rustup itself names no toolchain and binds nothing here; rustup's own
+# default home is bound for it instead.
+toolchain_of() {
+    local r
+    r="$(readlink -f "$1" 2>/dev/null)" && [ -f "$r" ] && [ "${r##*/}" = "${1##*/}" ] && [ "${r%/bin/*}" != "$r" ] &&
+        printf '%s\n' "${r%/bin/*}"
+}
+if [ -z "${RUSTUP_HOME:-}" ]; then
+    for b in ${CARGO:+"$CARGO"} ${CARGO_HOME:+"$CARGO_HOME/bin/cargo" "$CARGO_HOME/bin/rustc"}; do
+        # Never CARGO_HOME itself (a cargo installed straight into its bin): it holds credentials.
+        t="$(toolchain_of "$b")" && [ "$t" != "${CARGO_HOME:-}" ] && ro+=("$t")
+    done
+    [ -d "$home/.rustup" ] && ro+=("$home/.rustup")
+fi
 ro+=("$home/.local/lib/spira-env")
 path="$home/.local/lib/spira-env/bin:${CARGO_HOME:+$CARGO_HOME/bin:}/usr/local/bin:/usr/bin:/bin"
 [ -n "${CARGO:-}" ] && path="$(dirname "$CARGO"):$path"
