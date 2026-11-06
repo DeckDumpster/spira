@@ -634,7 +634,6 @@ reclaim_podman_dir
 reclaim_require
 reclaim_target_free_gib
 release
-repo
 runtime_asks_ideas_secs
 runtime_asks_moot_secs
 runtime_asks_verify_secs

@@ -184,7 +184,6 @@ runtime_trigger_groom_secs = 21600
 runtime_trigger_warden_secs = 7200
 runtime_trigger_mimir_secs = 900
 runtime_persona_ops_secs = 300
-repo = "/fixture/userhome/spira"
 runtime_persona_archivist_secs = 300
 runtime_asks_ideas_secs = 300
 ideas_idle_secs = 1800

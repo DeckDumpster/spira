@@ -275,7 +275,6 @@ reclaim_podman_dir = ""
 reclaim_require = ""
 reclaim_target_free_gib = 100
 release = ""
-repo = ""
 runtime_asks_ideas_secs = 300
 runtime_asks_moot_secs = 900
 runtime_asks_verify_secs = 900
