@@ -665,9 +665,17 @@ impl EffectRunner for Timed {
     }
 }
 
+/// The complete fixture (`spira/testlib/complete.toml`) of the checkout this process runs in,
+/// found the way a bare scenario name is (`drive::scenario_path`): the sim is a binary, and the
+/// tree it was compiled in (`process::complete_fixture_text`) is not where it runs under testenv.
+fn complete_fixture_text() -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+    cwd.ancestors().map(|d| d.join("spira/testlib/complete.toml")).find(|p| p.is_file()).and_then(|p| std::fs::read_to_string(p).ok())
+}
+
 /// `key`'s value under `[spira]` in the complete fixture (`spira/testlib/complete.toml`).
 fn complete_fixture(key: &str) -> Option<String> {
-    let doc: toml::Value = spira_config::parse_foreign(&spira_config::process::complete_fixture_text()).ok()?;
+    let doc: toml::Value = spira_config::parse_foreign(&complete_fixture_text()?).ok()?;
     let v = doc.get("spira")?.get(spira_config::registry::field_of(key))?;
     Some(v.as_str().map_or_else(|| v.to_string(), str::to_string))
 }
