@@ -25,9 +25,8 @@ pub struct Message<'a> {
 /// wake was delivered".
 pub fn send(m: &Message) -> Result<(), String> {
     let env = Env::load()?;
-    // FORK-EDGE: content store write — the mail library files an ask's bead through bdq; the
-    // child is the mail library's, named here only as `mail send` named it.
-    let bd = BdCli { bdq: spira_config::release_env::tool("bdq")?, conn_retries: env.bd_conn_retries };
+    // The ask's bead is filed through the store's content door (mail's BdCli).
+    let bd = BdCli::configured(env.bd_conn_retries)?;
     send_under(&env, &bd, m)
 }
 
