@@ -747,6 +747,24 @@ fn a_delta_value_of_the_wrong_type_is_refused_at_load_naming_the_key_and_file() 
     assert!(e.contains("config-delta.toml") && e.contains("spira.local_backlog_ref_max_age") && e.contains("u32"), "{e}");
 }
 
+/// The scheduler consolidation's production delta: activation carries every key a task pins.
+/// A box whose config and running release know none of this tree's keys still converges, so
+/// every REQUIRED key is declared (`complete` refuses one that is not), the values pass the
+/// release's own validation, every task runs in act (ruling D4) and the units run on systemd.
+#[test]
+fn the_shipped_delta_carries_every_required_key_with_every_task_in_act_on_systemd() {
+    let tree = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let d = config_delta::load(&tree).unwrap().expect("the tree ships a delta");
+    let nothing_known = TempDir::new("no-active-release");
+    let done = config_delta::complete(&[toml::map::Map::new()], &tree, Some(nothing_known.path()), Some(d.clone()));
+    assert!(done.is_ok(), "{}", done.unwrap_err());
+    assert_eq!(d.added.get("spira.units"), Some(&toml::Value::String("systemd".into())));
+    let modes = d.added.get("spira.task_modes").and_then(|v| v.as_str()).expect("task_modes is declared");
+    let pairs: Vec<&str> = modes.split_whitespace().collect();
+    assert!(pairs.len() >= 82, "every task is named: {}", pairs.len());
+    assert!(pairs.iter().all(|p| p.ends_with("=act")), "every task runs in act: {modes}");
+}
+
 #[test]
 fn an_undo_record_in_the_old_added_shape_still_loads_for_a_rollback() {
     let tmp = TempDir::new("legacy-undo");
