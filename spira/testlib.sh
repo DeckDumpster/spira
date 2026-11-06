@@ -647,9 +647,10 @@ STUB
 lc_path_stub() {   # lc_path_stub <bindir> <fixdir>
     local bindir="${1:?lc_path_stub needs a bin dir}" fix="${2:?lc_path_stub needs a fixture dir}"
     LC_FIX="$fix"; mkdir -p "$bindir" "$fix/bead" "$fix/delivery" "$fix/show"; : > "$fix/calls.log"
-    # The two verbs that never touch the lifecycle machine's rows through this stub's
-    # fixture — close-on-land (bd close + reap, sp-2c1n0) and content-landed (git only) —
-    # go to the real spira-lc, the first one on PATH that is not this stub.
+    # The verbs that never touch the lifecycle machine's rows through this stub's fixture —
+    # close-on-land (bd close + reap, sp-2c1n0), content-landed (git only) and content (the
+    # planning store's reads and writes, bd underneath: what bdq answered before the callers
+    # moved onto spira-lc) — go to the real spira-lc, the first one on PATH that is not this stub.
     local real="" c
     while IFS= read -r c; do [ "$c" -ef "$bindir/spira-lc" ] || { real="$c"; break; }; done < <(type -ap spira-lc 2>/dev/null)
     printf '#!/usr/bin/env bash\n%s\nexit 2\n' "$_LC_FACTS_BODY" > "$fix/facts-lc"; chmod +x "$fix/facts-lc"
@@ -658,7 +659,7 @@ lc_path_stub() {   # lc_path_stub <bindir> <fixdir>
 LC_FIX="$fix"
 printf '%s\\n' "\$*" >> "\$LC_FIX/calls.log"
 case "\$1" in fact|facts|facts-query) exec "$fix/facts-lc" "\$@" ;; esac
-case "\$1" in close-on-land|content-landed) [ -n "$real" ] && exec "$real" "\$@" ;; esac
+case "\$1" in close-on-land|content-landed|content) [ -n "$real" ] && exec "$real" "\$@" ;; esac
 # reopen (sp-swh8b8): the door reopens the store after the row; here the row is the fixture's,
 # so only the store half runs.
 if [ "\$1" = reopen ]; then
