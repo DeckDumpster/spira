@@ -149,8 +149,12 @@ impl Seam for LibSeam {
         let _ = self.lib("bump_requeue", &[id, reason], None);
     }
 
+    /// Through the store's content door (every protection bdq applies), the text as the
+    /// request body. Best-effort, as the lib.sh `bdq note` it replaces was.
     fn note(&self, id: &str, text: &str) {
-        let _ = self.lib("bdq", &["note", id], Some(text));
+        if let Ok(lc) = spira_config::lc_call::LcClient::for_bin(&self.lc_bin) {
+            let _ = lc.call_stdin(&["content", "note", id, "--stdin"], text);
+        }
     }
 
     fn submit(&self, branch: &str, repo_name: &str) -> (Gate, String) {
@@ -175,5 +179,17 @@ impl Seam for LibSeam {
             }
             Err(e) => (Gate::Red, format!("queue submit could not run: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod door_tests {
+    /// A note reaches the store's content door, never a forked bdq through lib.sh (sp-ipwlic).
+    #[test]
+    fn a_note_goes_through_the_content_door() {
+        let src = include_str!("seam.rs");
+        let at = src.find("    fn note(&self, id: &str, text: &str) {").expect("fn note");
+        let body = &src[at..at + src[at..].find("\n    }\n").expect("end of fn note")];
+        assert!(!body.contains("self.lib(") && body.contains("\"content\", \"note\""), "{body}");
     }
 }
