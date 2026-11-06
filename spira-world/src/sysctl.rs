@@ -63,29 +63,40 @@ pub fn run_lines(args: &[&str]) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Parse `list-units` lines into the live `spira-dwarf-*` service units (instance-qualified
-/// included). Header-less, column-split: first field is the unit, the third is ACTIVE.
+/// The `list-units` patterns that together name every dwarf unit: the `spira-dwarf-*` units
+/// started by name and the units the scheduler's `sentinel-call` starts under the naming rule
+/// (`runtime::units::dwarf_globs`).
+pub fn dwarf_globs() -> Vec<String> {
+    runtime::units::dwarf_globs().to_vec()
+}
+
+/// Parse `list-units` lines into the live dwarf units, by either name. Header-less,
+/// column-split: first field is the unit, the third is ACTIVE; liveness is
+/// `runtime::units::is_live_dwarf`, the rule the fleet ceiling counts by.
 pub fn parse_dwarf_units(lines: &[String]) -> Vec<String> {
     lines
         .iter()
         .filter_map(|l| {
             let f: Vec<&str> = l.split_whitespace().map(|t| t.trim_start_matches('●')).filter(|t| !t.is_empty()).collect();
             let unit = *f.first()?;
-            if !unit.starts_with("spira-dwarf-") || !unit.ends_with(".service") {
-                return None;
-            }
-            match f.get(2) {
-                Some(&"active") | Some(&"activating") | Some(&"deactivating") | Some(&"reloading") => Some(unit.to_string()),
-                _ => None,
-            }
+            runtime::units::is_live_dwarf(unit, runtime::units::state_of_word(f.get(2)?)).then(|| unit.to_string())
         })
         .collect()
+}
+
+/// dwarves.sh's "live now": the live dwarves among `list-units` lines over [`dwarf_globs`].
+pub fn count_live_dwarves(lines: &[String]) -> usize {
+    parse_dwarf_units(lines).len()
 }
 
 /// Live dwarves according to systemd — the authority; a /proc argv scan is blind to any
 /// dwarf whose command line is not the script path.
 pub fn live_dwarf_units() -> Vec<String> {
-    parse_dwarf_units(&run_lines(&["list-units", "spira-dwarf-*", "--no-legend", "--plain", "--no-pager"]))
+    let globs = dwarf_globs();
+    let mut args = vec!["list-units"];
+    args.extend(globs.iter().map(String::as_str));
+    args.extend(["--no-legend", "--plain", "--no-pager"]);
+    parse_dwarf_units(&run_lines(&args))
 }
 
 /// `is-active` / `is-enabled`-style column 1 of a `list-units --no-legend` line.
@@ -174,6 +185,8 @@ mod tests {
         .map(|s| s.to_string())
         .collect();
         assert_eq!(parse_dwarf_units(&l), vec!["spira-dwarf-sp-1.service", "spira-dwarf-sp-3.service"]);
+        let own = vec!["spira-run-sentinel_2dcall-builder_2d1_2d0.service loaded active running spira task".to_string()];
+        assert_eq!(parse_dwarf_units(&own).len(), 1, "a dwarf the scheduler started is a dwarf");
     }
 
     #[test]

@@ -40,7 +40,7 @@ fn load_doc() -> Result<(PathBuf, SpiraToml), String> {
 }
 
 fn live_now() -> String {
-    sysctl::run_lines(&["list-units", "spira-dwarf-*", "--no-legend"]).len().to_string()
+    sysctl::live_dwarf_units().len().to_string()
 }
 
 fn lane_caps(lib_sh: Option<&std::path::Path>) -> (u32, String) {
