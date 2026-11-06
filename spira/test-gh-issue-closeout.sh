@@ -82,6 +82,8 @@ exit 0
 MAILSTUB
 chmod +x "$TMP/bin/mail"
 export PATH="$TMP/bin:$PATH"
+# gh-intake sends in-process unless its registered SPIRA_MAIL_BIN names a stand-in (sp-ipwlic).
+tl_config SPIRA_MAIL_BIN="$TMP/bin/mail"
 
 # The lifecycle machine mirrors the throwaway store (sp-mve9i: which GitHub beads the
 # builder handed on is the lifecycle state, not bd status): a bead bd shows closed is one its

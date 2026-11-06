@@ -26,10 +26,6 @@ fn usage() -> ExitCode {
     ExitCode::from(0)
 }
 
-fn env_nonempty(key: &str) -> Option<String> {
-    std::env::var(key).ok().filter(|v| !v.is_empty())
-}
-
 /// SPIRA_HOME/SPIRA_RUN, neither a registered key: SPIRA_HOME names where to find
 /// `$SPIRA_TOML` in the first place, and SPIRA_RUN's resolution (`resolve_run_dir`) also
 /// judges the result against the instance's containment.
@@ -275,9 +271,16 @@ fn provenance_cmd(args: &[String]) -> ExitCode {
     }
 }
 
+/// The fixture's stand-in mail program (`SPIRA_MAIL_BIN`, registered config); none (empty)
+/// sends in-process.
+fn mail_stand_in() -> Option<String> {
+    spira_config::process::cfg("SPIRA_MAIL_BIN").ok().filter(|m| !m.is_empty())
+}
+
 #[allow(clippy::type_complexity)]
 fn ports(home: String) -> Result<(RealBd, RealGh, RealGit, RealRepo, RealMail), String> {
-    let mail = RealMail::new(env_nonempty("SPIRA_MAIL_BIN"));
+    // SPIRA_MAIL_BIN is registered config, read where the intake pass reads it: one source.
+    let mail = RealMail::new(mail_stand_in());
     let bdq = spira_config::release_env::tool("bdq")?;
     Ok((RealBd { bdq: bdq.clone() }, RealGh { bdq_bin: bdq }, RealGit, RealRepo { spira_home: home }, mail))
 }
@@ -340,7 +343,7 @@ fn dispatch() -> ExitCode {
             }
         };
     }
-    let mail_stand_in = spira_config::process::cfg("SPIRA_MAIL_BIN").ok().filter(|m| !m.is_empty());
+    let stand_in = mail_stand_in();
 
     let repo = cfg_or_refuse!("SPIRA_GH_INTAKE_REPO");
     let scope = cfg_or_refuse!("SPIRA_SCOPE_LABEL");
@@ -373,7 +376,7 @@ fn dispatch() -> ExitCode {
         }
     };
     let repo_port = RealRepo { spira_home };
-    let mail = RealMail::new(mail_stand_in);
+    let mail = RealMail::new(stand_in);
 
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
     let run_dir = match spira_config::resolve::locate_home_for_process().and_then(|h| spira_config::resolve::resolve_run_dir(&env, &h)) {
