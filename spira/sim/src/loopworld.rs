@@ -145,7 +145,7 @@ pub struct Script {
 
 /// A loop scenario file: `driver = "loop"` and the [`Script`] keys.
 pub fn parse(text: &str) -> Result<Script, String> {
-    let s: Script = toml::from_str(text).map_err(|e| format!("loop scenario: {e}"))?;
+    let s: Script = spira_config::parse_foreign(text).map_err(|e| format!("loop scenario: {e}"))?;
     if s.driver != DRIVER {
         return Err(format!("loop scenario: driver is {:?}, not {DRIVER:?}", s.driver));
     }
@@ -178,7 +178,7 @@ pub fn is_loop(text: &str) -> bool {
         #[serde(default)]
         driver: String,
     }
-    toml::from_str::<Driver>(text).is_ok_and(|d| d.driver == DRIVER)
+    spira_config::parse_foreign::<Driver>(text).is_ok_and(|d| d.driver == DRIVER)
 }
 
 pub enum Due {
@@ -667,7 +667,7 @@ impl EffectRunner for Timed {
 
 /// `key`'s value under `[spira]` in the complete fixture (`spira/testlib/complete.toml`).
 fn complete_fixture(key: &str) -> Option<String> {
-    let doc: toml::Value = toml::from_str(&spira_config::process::complete_fixture_text()).ok()?;
+    let doc: toml::Value = spira_config::parse_foreign(&spira_config::process::complete_fixture_text()).ok()?;
     let v = doc.get("spira")?.get(spira_config::registry::field_of(key))?;
     Some(v.as_str().map_or_else(|| v.to_string(), str::to_string))
 }
