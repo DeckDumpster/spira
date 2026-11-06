@@ -239,8 +239,9 @@ teardown() {
 # ======================================================================================
 echo "structural:"
 
+# The first STATEMENT (to its `;`), so a guard around the call does not hide it.
 first_action="$(sed -n '/^\s*\/\/ ---- 1\. the disposition/,/^\s*\/\/ ---- 2/p' "$SLAY" \
-                | grep -vE '^\s*(//|$)' | head -1)"
+                | grep -vE '^\s*(//|$)' | tr '\n' ' ' | cut -d';' -f1)"
 want "the slain disposition is the first action" 'slain' "$first_action"
 
 # ======================================================================================

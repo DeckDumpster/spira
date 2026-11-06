@@ -193,9 +193,9 @@ fn main() {
     }
 
     let mut fail = false;
+    let lc = spira_config::lc_call::LcClient::configured();
 
     // ---- 1. the disposition: the row says why the session ends -------------------------
-    let lc = spira_config::lc_call::LcClient::configured();
     if let Ok(c) = &lc {
         let _ = c.call(&["disposition", id, "slain", &args.why, "slay"]);
     }
