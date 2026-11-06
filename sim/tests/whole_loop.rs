@@ -115,14 +115,12 @@ impl Lc {
 }
 
 /// What a scenario scripts: the beads it files (at what time), how many dwarves the rune may
-/// run at once, which member's change turns the corpus red (none: green), and until when the
-/// repo's `rounds` lane is stopped (a scoped stop; 0: never).
+/// run at once, and which member's change turns the corpus red (none: green).
 #[derive(Clone)]
 struct Script {
     file: Vec<(u64, &'static str)>,
     max_concurrent: u32,
     guilty: Option<&'static str>,
-    stopped_until: u64,
 }
 
 struct World {
@@ -241,7 +239,7 @@ fn batcher_observe(w: &World, input: &str) -> Result<String, String> {
         .map(|r| bl::Member { id: r.bead_id.clone(), state: r.state.as_str().into(), version: r.version, tip: r.tip.clone().unwrap_or_default(), sifted_tip: r.sifted_tip.clone(), title: r.bead_id.clone(), priority: 2, ..bl::Member::default() })
         .collect();
     let open_round = lc.round.as_ref().map(|(id, m)| bl::Round { id: id.clone(), members: m.iter().map(|(i, _)| i.clone()).collect(), head: BASE.into(), worktree: format!("/sim/wt/{id}"), driven: held.as_ref() == Some(id) });
-    let repo = bl::Repo { pool, open_round, base_sha: BASE.into(), stopped: w.now() < w.script.stopped_until, ..bl::Repo::default() };
+    let repo = bl::Repo { pool, open_round, base_sha: BASE.into(), ..bl::Repo::default() };
     json(&bl::Snapshot { repos: [(REPO.to_string(), repo)].into(), now_ms: w.now() })
 }
 
@@ -455,7 +453,7 @@ fn dump(r: &Run) -> String {
 
 #[test]
 fn one_bead_is_filed_claimed_submitted_cut_certified_and_landed_on_the_service_tasks() {
-    let script = Script { file: vec![(30_000, "sp-w3a")], max_concurrent: 1, guilty: None, stopped_until: 0 };
+    let script = Script { file: vec![(30_000, "sp-w3a")], max_concurrent: 1, guilty: None };
     let a = run(11, script.clone());
     let b = run(11, script);
     println!("green scenario: wall {:?} and {:?} for {} virtual minutes", a.wall, b.wall, UNTIL_MS / MIN);
@@ -480,13 +478,12 @@ fn one_bead_is_filed_claimed_submitted_cut_certified_and_landed_on_the_service_t
     assert!(a.wall.as_secs() < 30, "the scenario ran in {:?}", a.wall);
 }
 
-/// Two members in one round, one of them red. The repo's `rounds` lane is stopped (a scoped
-/// stop) until both are sifted, so the cut that follows the stop's lift takes both: the corpus
-/// goes red, the attribution leg ejects the guilty member (GateRed: REWORK) and names the
-/// survivor, which is certified and landed.
+/// Two members in one round, one of them red. Both are sifted in one pass, so the one cut takes
+/// both: the corpus goes red, the attribution leg ejects the guilty member (GateRed: REWORK) and
+/// names the survivor, which is certified and landed.
 #[test]
 fn a_red_round_attributes_ejects_the_guilty_member_and_lands_the_rest() {
-    let script = Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], max_concurrent: 2, guilty: Some("sp-w3b"), stopped_until: 15 * MIN };
+    let script = Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], max_concurrent: 2, guilty: Some("sp-w3b") };
     let a = run(12, script.clone());
     let b = run(12, script);
     println!("red scenario: wall {:?} and {:?} for {} virtual minutes", a.wall, b.wall, UNTIL_MS / MIN);
@@ -494,9 +491,7 @@ fn a_red_round_attributes_ejects_the_guilty_member_and_lands_the_rest() {
     assert_eq!(lifecycle_of(&a, "sp-w3a"), ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"], "{}", dump(&a));
     assert_eq!(lifecycle_of(&a, "sp-w3b"), ["READY", "WORKING", "SUBMITTED", "REWORK"], "{}", dump(&a));
     assert!(a.refused.is_empty(), "the store refused nothing: {:?}", a.refused);
-    // Held → Released → Idle → Cut is one decide (the observe after the stop lifts), so the
-    // carry next emitted is Assembling.
-    assert_eq!(batcher_states(&a.trace), ["Held", "Assembling", "Opened", "Corpus", "Attributing", "Certifying", "Landing", "Idle"], "{}", dump(&a));
+    assert_eq!(batcher_states(&a.trace), ["Assembling", "Opened", "Corpus", "Attributing", "Certifying", "Landing", "Idle"], "{}", dump(&a));
     let opens = a.asked.iter().filter(|n| *n == bl::ROUND_OPEN).count();
     assert_eq!(opens, 1, "one round was opened for the two members");
     assert_no_process(&a);
@@ -507,16 +502,13 @@ fn a_red_round_attributes_ejects_the_guilty_member_and_lands_the_rest() {
 
 /// The contract's single-flight per repo, when two members are sifted in one pass: sift hands
 /// `work.submitted` to the batcher once per member, both wakes ask for an observe at one
-/// instant, and the machine must cut once. Today it cuts twice (see the report on sp-ipwlic):
-/// both observe answers are memory-only and queued together, and the engine dispatches its whole
-/// local queue before it reads the journal again, so the second answer is decided against the
-/// carry from before the first answer's `Emit` (Idle, not Assembling). The second cut's
-/// `round_open` is refused, which moves the machine Opened → Done → Idle and forgets the round
-/// whose corpus leg is running; that leg's `unit.ran` then matches no carried leg.
+/// instant, and the machine must cut once. Both observe answers are memory-only and queued
+/// together; the second is decided against the carry the first answer emitted (Assembling, not
+/// Idle), because the engine places a handler's writes in the projection before its stream's
+/// next event (`runtime::conformance::a_handlers_writes_are_seen_before_its_streams_next_event`).
 #[test]
-#[ignore = "engine defect: a handler's Emit is not in the projection its next queued memory-only event is dispatched with (runtime/src/engine.rs pump_all)"]
 fn two_members_sifted_in_one_pass_are_cut_into_one_round() {
-    let script = Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], max_concurrent: 2, guilty: None, stopped_until: 0 };
+    let script = Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], max_concurrent: 2, guilty: None };
     let a = run(12, script);
     show("one-pass", &a);
     let opens = a.asked.iter().filter(|n| *n == bl::ROUND_OPEN).count();

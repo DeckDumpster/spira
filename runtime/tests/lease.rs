@@ -27,6 +27,7 @@ mod conformance {
         determinism_under_replay,
         schedule_rows_survive_restart_and_fire_once,
         observe_shadows_writes_runs_probes_and_never_replays_them,
-        halt_holds_writes_runs_probes_and_resume_releases_once_in_order
+        halt_holds_writes_runs_probes_and_resume_releases_once_in_order,
+        a_handlers_writes_are_seen_before_its_streams_next_event
     );
 }

@@ -540,6 +540,83 @@ pub fn emit_to_is_shadowed_under_observe_and_runs_under_halt(rig: &dyn Rig) {
     assert_eq!(count_tag(&*k, EFFECT_HELD), 0);
 }
 
+/// Counts on its stream: each `bump` and each probe answer emits `count` one past the newest
+/// `count` it sees; `start` asks two probes. A `bump` whose body is `crash` arms a fault on the
+/// next append, when it was handed the journal to fault: its own `count` is then never written.
+struct Tally(Option<Arc<FaultyJournal>>);
+impl Handler for Tally {
+    fn interests(&self) -> &[EventKindTag] {
+        &["bump", "start", EFFECT_SUCCEEDED]
+    }
+    fn handle(&self, _: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
+        if ev.kind.tag == "start" {
+            return (0..2).map(|i| Command::Probe(EffectSpec { name: "read".into(), input: i.to_string(), deadline_ms: 1000 })).collect();
+        }
+        if let (Some(f), "crash") = (&self.0, ev.kind.body.as_str()) {
+            f.fail_next("append");
+        }
+        let seen: u64 = view.events(&ev.stream).iter().rev().find(|e| e.kind.tag == "count").map_or(0, |e| e.kind.body.parse().unwrap_or(0));
+        vec![Command::Emit(EventKind::new("count", &(seen + 1).to_string()))]
+    }
+}
+
+fn tally(faults: Option<Arc<FaultyJournal>>) -> Vec<Registration> {
+    vec![Registration::new("tally", Tally(faults))]
+}
+
+fn counts(j: &dyn Journal) -> Vec<String> {
+    trace(j).into_iter().filter(|t| t.2 == "count").map(|t| t.3).collect()
+}
+
+/// Two bumps in the journal together, the second arming the fault when the task holds one.
+fn bump_twice(x: &mut dyn Executor) {
+    x.submit("b1", "t", EventKind::new("bump", "")).unwrap();
+    x.submit("b2", "t", EventKind::new("bump", "crash")).unwrap();
+    let _ = x.run_until_idle();
+}
+
+/// Two probe answers in memory together.
+fn answer_twice(x: &mut dyn Executor) {
+    x.submit("go", "t", EventKind::new("start", "")).unwrap();
+    x.run_until_idle().unwrap();
+    for p in x.pending_effects() {
+        x.complete(&p.key, Outcome::Succeeded(p.spec.input.clone())).unwrap();
+    }
+    x.run_until_idle().unwrap();
+}
+
+/// Per-stream sequential consistency: a handler's commands for one event are in the projection
+/// before it sees the next event on its stream, whether the two were journaled together or
+/// answered in memory together, and a crash between them replays to the same trace.
+pub fn a_handlers_writes_are_seen_before_its_streams_next_event(rig: &dyn Rig) {
+    let (j, clock) = (rig.journal(), VirtualClock::new(0));
+    let mut x = rig.boot(j.clone(), &clock, 1, tally(None)).unwrap();
+    bump_twice(&mut *x);
+    assert_eq!(counts(&*j), ["1", "2"], "the second bump sees the first bump's count, though it was journaled before it");
+    answer_twice(&mut *x);
+    assert_eq!(counts(&*j), ["1", "2", "3", "4"], "the second probe answer sees the first answer's count");
+    let first = trace(&*j);
+    drop(x);
+
+    let k = rig.journal();
+    let faulty = FaultyJournal::new(k.clone());
+    let mut x = rig.boot(faulty.clone(), &clock, 1, tally(Some(faulty.clone()))).unwrap();
+    bump_twice(&mut *x);
+    assert_eq!(counts(&*k), ["1"], "the crash lands after the first bump's count and before the second's");
+    drop(x);
+    let mut y = rig.boot(k.clone(), &clock, 1, tally(None)).unwrap();
+    y.run_until_idle().unwrap();
+    assert_eq!(counts(&*k), ["1", "2"], "the replayed second bump sees the count written for the first before the crash");
+    answer_twice(&mut *y);
+    assert_eq!(trace(&*k), first, "a crash and restart land the trace of an uninterrupted run");
+    drop(y);
+
+    k.set_cursor(0).unwrap();
+    let mut z = rig.boot(k.clone(), &clock, 1, tally(None)).unwrap();
+    z.run_until_idle().unwrap();
+    assert_eq!(trace(&*k), first, "replaying the whole journal adds nothing");
+}
+
 pub fn run_all(rig: &dyn Rig) {
     redelivery_of_any_event(rig);
     crash_between_append_and_dispatch(rig);
@@ -554,4 +631,5 @@ pub fn run_all(rig: &dyn Rig) {
     halt_holds_writes_runs_probes_and_resume_releases_once_in_order(rig);
     emit_to_wakes_another_stream_once_across_a_crash(rig);
     emit_to_is_shadowed_under_observe_and_runs_under_halt(rig);
+    a_handlers_writes_are_seen_before_its_streams_next_event(rig);
 }

@@ -20,6 +20,8 @@ use crate::{Result, RuntimeError};
 
 const BATCH: usize = 256;
 
+type Rows = Vec<(Offset, Event)>;
+
 /// A stream's poison state is asked again after this long, or when the journal brings events.
 const POISON_RECHECK_MS: u64 = 300_000;
 
@@ -198,6 +200,13 @@ pub struct Engine {
     refusals: BTreeMap<String, u64>,
     classifier: Option<Classifier>,
     board: Option<Arc<StatusBoard>>,
+    /// Events in the projection ahead of their own dispatch: what a handler wrote on its own
+    /// stream, placed right after the event that caused it.
+    early: BTreeSet<EventId>,
+    /// What the event being dispatched has had written on its stream so far; `true` is local.
+    written: Vec<(Event, bool)>,
+    /// On a replay, what each event still to be dispatched had written on its stream before.
+    rewritten: BTreeMap<EventId, Vec<Event>>,
 }
 
 fn mix(seed: u64, parts: &[&str]) -> u64 {
@@ -258,6 +267,9 @@ impl Engine {
             refusals: BTreeMap::new(),
             classifier: None,
             board: None,
+            early: BTreeSet::new(),
+            written: vec![],
+            rewritten: BTreeMap::new(),
         };
         let cursor = e.journal.cursor()?;
         e.cursor = cursor;
@@ -551,22 +563,28 @@ impl Engine {
         Ok(ev)
     }
 
+    /// Run a handler's commands for `ev`. What lands on `ev`'s own stream is also recorded in
+    /// `written`, so the projection holds it before `ev`'s stream is dispatched again.
     fn apply(&mut self, cmds: Vec<Command>, ev: &Event, handler: &str, mode: Mode) -> Result<()> {
+        let own = ev.stream.0 != HALT_STREAM;
         for (i, cmd) in cmds.into_iter().enumerate() {
             let id = derive_id(format!("{}/{handler}/{i}", ev.id.0));
             match cmd {
                 Command::Emit(kind) => {
                     self.carry(handler, &ev.stream, &kind);
-                    self.append_derived(id, &ev.stream, kind, ev, ev.at)?;
+                    let e = self.append_derived(id, &ev.stream, kind, ev, ev.at)?;
+                    self.wrote(own, e, false);
                 }
                 Command::EmitTo { stream, kind } => {
                     let id = derive_id(format!("{}/{handler}/{i}>{}", ev.id.0, stream.0));
-                    if mode == Mode::Act {
-                        self.append_derived(id, &stream, kind, ev, ev.at)?;
+                    let e = if mode == Mode::Act {
+                        self.append_derived(id, &stream, kind, ev, ev.at)?
                     } else {
                         let body = serde_json::to_string(&ShadowedEmit { stream, kind }).map_err(|e| RuntimeError::new(e.to_string()))?;
-                        self.append_derived(id, &ev.stream, EventKind::new(EMIT_SHADOWED, &body), ev, ev.at)?;
-                    }
+                        self.append_derived(id, &ev.stream, EventKind::new(EMIT_SHADOWED, &body), ev, ev.at)?
+                    };
+                    let mine = own && e.stream == ev.stream;
+                    self.wrote(mine, e, false);
                 }
                 Command::Effect(spec) if mode == Mode::Act && self.halted => {
                     let body = serde_json::to_string(&HeldBody { stream: ev.stream.clone(), task: handler.into(), spec }).map_err(|e| RuntimeError::new(e.to_string()))?;
@@ -581,6 +599,7 @@ impl Engine {
                         self.owners.insert(req.id.0.clone(), handler.into());
                     }
                     self.track_effect(&req)?;
+                    self.wrote(own, req, false);
                 }
                 Command::Schedule { at, kind } => {
                     let row = ScheduleRow { id, at, stream: ev.stream.clone(), kind, cause: Some(ev.id.clone()), correlation: ev.correlation.clone() };
@@ -590,7 +609,8 @@ impl Engine {
                 Command::Note(kind) => {
                     self.carry(handler, &ev.stream, &kind);
                     let note = self.local_event(&ev.stream, kind, ev.at, Some(ev));
-                    self.local.push_back(note);
+                    self.local.push_back(note.clone());
+                    self.wrote(own, note, true);
                 }
                 Command::Probe(spec) => {
                     let deadline_at = ev.at.saturating_add(spec.deadline_ms);
@@ -610,30 +630,122 @@ impl Engine {
         Ok(())
     }
 
+    fn wrote(&mut self, own: bool, e: Event, local: bool) {
+        if own {
+            self.written.push((e, local));
+        }
+    }
+
     fn carry(&mut self, handler: &str, stream: &StreamKey, kind: &EventKind) {
         self.tracks.entry(handler.into()).or_default().state = Some(CarriedState { stream: stream.0.clone(), tag: kind.tag.clone(), body_len: kind.body.len() });
     }
 
+    /// Push `ev` into the projection unless it is there already, offer it, then place what its
+    /// handlers wrote on its stream right after it: per stream, a handler sees every event its
+    /// stream's handlers wrote for an earlier event before it sees a later one, whatever the
+    /// journal offsets. Nothing reorders appends; only the view is ordered by cause.
     fn dispatch(&mut self, ev: &Event, at: Option<(Offset, Offset)>) -> Result<()> {
         if let Some(at) = at {
             if !self.loaded.contains(&ev.stream) {
-                for (_, past) in self.journal.read_stream(&ev.stream, at.0, WINDOW)? {
-                    self.projection.push(&past);
-                }
-                self.loaded.insert(ev.stream.clone());
+                self.load(&ev.stream, at.0)?;
             }
         }
-        if at.is_some() {
-            self.projection.push(ev);
-        } else {
-            self.projection.push_local(ev, LOCAL_KEEP, |id| ev.cause.as_ref() == Some(id) || self.pending.contains_key(&id.0) || self.local.iter().any(|q| q.cause.as_ref() == Some(id)));
+        if !self.early.remove(&ev.id) {
+            if at.is_some() {
+                self.projection.push(ev);
+            } else {
+                self.push_local(ev);
+            }
         }
         if let (Some((off, _)), true) = (at, ev.stream.0 == HALT_STREAM) {
             self.gate(ev, off)?;
         }
-        if self.is_poisoned(&ev.stream)? {
+        let offered = if self.is_poisoned(&ev.stream)? { Ok(()) } else { self.offer(ev, at) };
+        self.place(ev);
+        offered
+    }
+
+    fn push_local(&mut self, ev: &Event) {
+        let (pending, local) = (&self.pending, &self.local);
+        self.projection.push_local(ev, LOCAL_KEEP, |id| ev.cause.as_ref() == Some(id) || pending.contains_key(&id.0) || local.iter().any(|q| q.cause.as_ref() == Some(id)));
+    }
+
+    /// What `ev`'s handlers wrote on its stream, this run or (on a replay) the run before, into
+    /// the projection in the order it was written.
+    fn place(&mut self, ev: &Event) {
+        let mut writes: Vec<(Event, bool)> = self.rewritten.remove(&ev.id).unwrap_or_default().into_iter().map(|e| (e, false)).collect();
+        for w in std::mem::take(&mut self.written) {
+            if !writes.iter().any(|(e, _)| e.id == w.0.id) {
+                writes.push(w);
+            }
+        }
+        for (e, local) in writes {
+            if !self.early.insert(e.id.clone()) {
+                continue;
+            }
+            if local {
+                self.push_local(&e);
+            } else {
+                self.projection.push(&e);
+            }
+        }
+    }
+
+    /// A stream's newest `WINDOW` events below `below`, in the order a run that dispatched them
+    /// placed them: each event, then what its handlers wrote on the stream. On a replay the
+    /// events still to be dispatched are read too, so a handler's writes for an event before
+    /// the crash are placed where that run placed them.
+    fn load(&mut self, stream: &StreamKey, below: Offset) -> Result<()> {
+        self.loaded.insert(stream.clone());
+        let (past, ahead) = self.read_window(stream, below)?;
+        if stream.0 == HALT_STREAM {
+            for (_, e) in &past {
+                self.projection.push(e);
+            }
             return Ok(());
         }
+        let ids: BTreeSet<&EventId> = past.iter().chain(&ahead).map(|(_, e)| &e.id).collect();
+        let mut writes: BTreeMap<EventId, Vec<(Offset, Event)>> = BTreeMap::new();
+        for (o, e) in past.iter().chain(&ahead) {
+            if let Some(c) = e.cause.as_ref().filter(|c| ids.contains(c) && written_by_handler_of(c, &e.id)) {
+                writes.entry(c.clone()).or_default().push((*o, e.clone()));
+            }
+        }
+        let mut placed: BTreeSet<EventId> = BTreeSet::new();
+        for (_, e) in &past {
+            if placed.insert(e.id.clone()) {
+                self.projection.push(e);
+            }
+            for (o, w) in writes.remove(&e.id).unwrap_or_default() {
+                if placed.insert(w.id.clone()) {
+                    self.projection.push(&w);
+                    if o >= below {
+                        self.early.insert(w.id.clone());
+                    }
+                }
+            }
+        }
+        for (c, ws) in writes {
+            self.rewritten.insert(c, ws.into_iter().map(|(_, w)| w).collect());
+        }
+        Ok(())
+    }
+
+    /// `stream`'s newest `WINDOW` events below `from`, and on a replay its events from `from`
+    /// to the end the journal had at open, in one read: that stretch holds at most as many of
+    /// the stream's events as it has offsets.
+    fn read_window(&self, stream: &StreamKey, from: Offset) -> Result<(Rows, Rows)> {
+        if from >= self.check_applied_below {
+            return Ok((self.journal.read_stream(stream, from, WINDOW)?, vec![]));
+        }
+        let stretch = usize::try_from(self.check_applied_below - from).unwrap_or(usize::MAX);
+        let mut past = self.journal.read_stream(stream, self.check_applied_below, WINDOW.saturating_add(stretch))?;
+        let ahead = past.split_off(past.partition_point(|(o, _)| *o < from));
+        let skip = past.len().saturating_sub(WINDOW);
+        Ok((past.split_off(skip), ahead))
+    }
+
+    fn offer(&mut self, ev: &Event, at: Option<(Offset, Offset)>) -> Result<()> {
         for i in 0..self.regs.len() {
             let (name, mode) = (self.regs[i].name.clone(), self.regs[i].mode);
             if !self.regs[i].handler.interests().contains(&ev.kind.tag.as_str()) || (at.is_some_and(|(off, _)| off < self.check_applied_below) && self.journal.applied(&name, &ev.id)?) {

@@ -38,6 +38,14 @@ pub fn derive_id(plain: String) -> String {
     format!("{head}#{:016x}", fnv1a(&plain))
 }
 
+/// Whether `id` is one a handler wrote while handling `parent`: an id derived from the parent's
+/// (`{parent}/{handler}/{i}`, kept to its first `KEPT` chars when long) and not its outcome's.
+pub(crate) fn written_by_handler_of(parent: &EventId, id: &EventId) -> bool {
+    let p = &parent.0;
+    let head = if p.chars().count() < KEPT { format!("{p}/") } else { p.chars().take(KEPT).collect() };
+    id.0.starts_with(&head) && id.0 != derive_id(format!("{p}/outcome"))
+}
+
 pub type EventKindTag = &'static str;
 
 pub const EFFECT_REQUESTED: EventKindTag = "effect.requested";
