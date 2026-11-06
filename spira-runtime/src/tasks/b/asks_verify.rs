@@ -308,7 +308,7 @@ pub fn parse_rows(doc: &serde_json::Value, label: &str) -> (Vec<Ask>, Vec<(Strin
     let (mut asks, mut bogus) = (vec![], vec![]);
     for r in rows {
         let labels: Vec<String> = r["labels"].as_array().map(|a| a.iter().filter_map(|l| l.as_str().map(str::to_string)).collect()).unwrap_or_default();
-        if !labels.iter().any(|l| l == label) || r["status"].as_str() == Some("closed") {
+        if !labels.iter().any(|l| l == label) || spira_config::nonwork::row_closed(spira_config::nonwork::Kind::Ask, &r) {
             continue;
         }
         let id = r["id"].as_str().unwrap_or_default().to_string();

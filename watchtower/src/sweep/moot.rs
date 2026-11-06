@@ -41,7 +41,7 @@ pub fn asks_of(rows: &str, ask_label: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for r in rows {
         let labelled = r.get("labels").and_then(|l| l.as_array()).is_some_and(|l| l.iter().any(|x| x.as_str() == Some(ask_label)));
-        if !labelled || r.get("status").and_then(|s| s.as_str()).unwrap_or("") != "open" {
+        if !labelled || !spira_config::nonwork::is_open(spira_config::nonwork::Kind::Ask, spira_config::nonwork::status_of(spira_config::nonwork::Kind::Ask, &r)) {
             continue;
         }
         let desc = r.get("description").and_then(|d| d.as_str()).unwrap_or("");

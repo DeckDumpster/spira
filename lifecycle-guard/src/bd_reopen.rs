@@ -6,9 +6,10 @@
 //!
 //! The shell half is `direct-write` (shell.rs). Same shape as `bd_close.rs`: line-oriented over
 //! the masked source with short literals restored, a gh line excluded, test code and the
-//! machine's own door out of scope.
+//! machine's own door out of scope. A vector handed to the machine itself — `LcClient::call_stdin`,
+//! or the `spira-lc`/`spira-claim` program by name — is not bd's (`bd_close::machine_door`).
 
-use crate::bd_close::{gh_close, in_scope};
+use crate::bd_close::{gh_close, in_scope, without_doors};
 use crate::bd_status::{is_test_file, restore_short_literals};
 use crate::finding::{Class, Finding};
 use crate::landstate::mask_rust;
@@ -57,7 +58,7 @@ pub fn scan_text(rel: &str, text: &str) -> Vec<Finding> {
         if ["const ", "pub const ", "static ", "pub static "].iter().any(|p| decl.starts_with(p)) {
             continue;
         }
-        let callee = if reopen_arg().is_match(n) && !gh_close().is_match(n) {
+        let callee = if reopen_arg().is_match(&without_doors(n)) && !gh_close().is_match(n) {
             "reopen"
         } else if clearing_assign().is_match(n) {
             "assign"
@@ -101,5 +102,18 @@ mod tests {
         let door = r#"fn r(id: &str) { run(&["reopen", id, cause]) }"#;
         assert!(!in_scope("spira-config/src/lifecycle_row.rs"));
         assert_eq!(lines("spira-claim/src/store.rs", door), vec![1]);
+    }
+
+    /// `spira-claim reopen` and the lc-serve client are the machine's reopen; bd's is refused.
+    #[test]
+    fn a_bd_reopen_is_refused_and_the_machines_reopen_is_not() {
+        let machine = r#"fn a() { match tool(REOPEN, "spira-claim", &["reopen", &leg.id, cause, &note], 5)? { _ => 0 } }
+fn b(lc: &LcClient) { lc.call_stdin(&["reopen", id, cause], ""); }
+"#;
+        assert!(lines("x/src/a.rs", machine).is_empty(), "{:?}", scan_text("x/src/a.rs", machine));
+        let bd = r#"fn a() { tool(REOPEN, "bd", &["reopen", &leg.id], 5); }
+fn b() { bdq(seam, &["reopen", id]); }
+"#;
+        assert_eq!(lines("x/src/a.rs", bd), vec![1, 2]);
     }
 }

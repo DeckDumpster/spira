@@ -49,15 +49,15 @@ fn t2_standing_waits_and_skips_are_the_probe_alone() {
 #[test]
 fn t3_open_waits_persists_closes_and_a_second_persist_for_one_fix_set_is_refused() {
     let h = t::handler::<H>(SET);
-    let landed = || fix("sp-f1", "LANDED", Landing::InForce("abc123".into()));
+    let fix_in_force = || fix("sp-f1", "LANDED", Landing::InForce("abc123".into()));
     let (c, _) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { incidents: vec![inc("sp-i1", vec![fix("sp-f1", "SUBMITTED", Landing::NotInRelease)], Detector::NoProbe)] }), TICK).unwrap();
     assert_eq!(c.incidents.get("sp-i1"), Some(&Phase::Waiting));
-    let (c, acts) = task::decide(&h.cfg, &c, &Input::Observed(Snapshot { incidents: vec![inc("sp-i1", vec![landed()], Detector::Firing("failed".into()))] }), 2 * TICK).unwrap();
+    let (c, acts) = task::decide(&h.cfg, &c, &Input::Observed(Snapshot { incidents: vec![inc("sp-i1", vec![fix_in_force()], Detector::Firing("failed".into()))] }), 2 * TICK).unwrap();
     assert_eq!((c.incidents.get("sp-i1").copied(), names(&acts)), (Some(Phase::Persists), vec![task::NOTE]));
-    let fired = Inc { labels: vec!["incident".into(), format!("{}x", task::FIRED_PREFIX)], ..inc("sp-i1", vec![landed()], Detector::Firing("failed".into())) };
+    let fired = Inc { labels: vec!["incident".into(), format!("{}x", task::FIRED_PREFIX)], ..inc("sp-i1", vec![fix_in_force()], Detector::Firing("failed".into())) };
     let refused = task::decide(&h.cfg, &Carry { incidents: BTreeMap::from([("sp-i1".into(), Phase::Persists)]), ..Carry::default() }, &Input::Observed(Snapshot { incidents: vec![fired] }), 3 * TICK).unwrap_err();
     assert!(refused.contains(task::FIRED_PREFIX), "{refused}");
-    let (c, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { incidents: vec![inc("sp-i3", vec![landed()], Detector::Quiet)] }), TICK).unwrap();
+    let (c, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { incidents: vec![inc("sp-i3", vec![fix_in_force()], Detector::Quiet)] }), TICK).unwrap();
     assert_eq!((c.incidents.get("sp-i3").copied(), names(&acts)), (Some(Phase::Closing), vec![task::CLOSE]));
     let ran = UnitRan { handle: UnitHandle::of(task::NAME, "sp-i3").unwrap(), exit: Exit::Code(0), duration_ms: 1_000 };
     assert_eq!(ran.key_for(task::NAME).as_deref(), Some("sp-i3"));

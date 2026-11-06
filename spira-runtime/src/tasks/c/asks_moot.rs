@@ -294,7 +294,7 @@ pub fn moot_asks(list_json: &str, ask_label: &str) -> Result<Vec<Ask>, String> {
     let mut out = vec![];
     for r in rows {
         let labels: Vec<&str> = r.get("labels").and_then(|l| l.as_array()).map(|l| l.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default();
-        if !labels.contains(&ask_label) || r.get("status").and_then(|s| s.as_str()) != Some("open") {
+        if !labels.contains(&ask_label) || !spira_config::nonwork::is_open(spira_config::nonwork::Kind::Ask, spira_config::nonwork::status_of(spira_config::nonwork::Kind::Ask, &r)) {
             continue;
         }
         let desc = r.get("description").and_then(|d| d.as_str()).unwrap_or_default();

@@ -152,6 +152,12 @@ fn now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
 
+/// The prompt's blocked list: every live lifecycle row carrying a hold, one line each
+/// (`<id> <STATE> held: <holds>`), at most 40.
+pub fn blocked_rows(rows: &[spira_config::lc_state::Row]) -> String {
+    rows.iter().filter(|r| !r.terminal() && !r.holds.is_empty()).take(40).map(|r| format!("{} {} held: {}", r.bead_id, r.state, r.holds.join(","))).collect::<Vec<_>>().join("\n")
+}
+
 /// The leg: `reflect.sh "<ids>"` end to end. Prints the run's header and the model's answer
 /// (the unit's output is the reflect log), files a recurring check, mails an escalation.
 pub fn run(ids: &[String]) -> Result<String, String> {
@@ -163,7 +169,9 @@ pub fn run(ids: &[String]) -> Result<String, String> {
     let lc = spira_config::lc_call::LcClient::configured()?;
     let show = |args: &[&str]| lc.call(args).ok().filter(|r| r.code == 0).map(|r| r.out).unwrap_or_default();
     let state: String = ids.iter().map(|id| format!("{}\n", clean_show(&show(&["content", "show", id])))).collect();
-    let blocked: String = show(&["content", "list", "--status", "blocked", "--limit", "0"]).lines().filter(|l| l.starts_with('[') || l.contains("sp-")).take(40).collect::<Vec<_>>().join("\n");
+    // What holds work back is the lifecycle machine's account (its held rows), not bd's
+    // status field, which is inert for a work bead (design §3.4).
+    let blocked = blocked_rows(&spira_config::lc_state::list_on(&lc).unwrap_or_default());
     let text = prompt(&state, &blocked, &cfg.design, &cfg.operator);
     let args = ["-p", "--model", &cfg.model, "--settings", DENY, "--dangerously-skip-permissions"].iter().map(|s| s.to_string()).collect();
     let o = SysProc.run(&ProcSpec { prog: cfg.agent.clone(), args, stdin: text.into_bytes(), deadline: std::time::Duration::from_secs(AGENT_TIMEOUT_SECS) })?;
@@ -258,5 +266,13 @@ mod tests {
         let p = prompt("sp-a open", "[sp-b] blocked", "", "Ryan");
         assert!(p.contains("## Open beads\n\nsp-a open") && p.contains("[sp-b] blocked") && p.contains("only Ryan can make"));
         assert_eq!(clean_show("sp-a\n💡 hint\nwarning: x\n  Fix it\nbody"), "sp-a\nbody");
+    }
+
+    #[test]
+    fn the_blocked_list_is_the_machines_held_rows() {
+        use spira_config::lc_state::Row as Lc;
+        let row = |id: &str, state: &str, holds: &[&str]| Lc { bead_id: id.into(), state: state.into(), holds: holds.iter().map(|h| h.to_string()).collect(), ..Lc::default() };
+        let rows = [row("sp-a", "READY", &["ask", "blocker"]), row("sp-b", "READY", &[]), row("sp-c", "LANDED", &["ask"])];
+        assert_eq!(blocked_rows(&rows), "sp-a READY held: ask,blocker");
     }
 }

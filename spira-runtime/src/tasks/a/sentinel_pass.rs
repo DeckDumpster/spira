@@ -469,7 +469,8 @@ fn progress(acts: &[Act]) -> u32 {
 /// once; a marker dropped when its epic grew again.
 fn check1(next: &mut Carry, beads: &[sentinel::model::Bead], snap: &Snapshot, acts: &mut Vec<Act>) {
     use sentinel::pilgrimage::{self, Step};
-    let epics = pilgrimage::epics(beads, &snap.labels.epics);
+    let state = |id: &str| snap.rows.iter().flatten().find(|r| r.id == id).map(|r| r.state.clone());
+    let epics = pilgrimage::epics(beads, &snap.labels.epics, &state);
     let announced: std::collections::BTreeSet<String> = next.announced.iter().cloned().collect();
     for step in pilgrimage::check(&epics, &announced, &snap.unlanded, &|_| snap.watchers.clone()) {
         match step {
@@ -801,7 +802,8 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         // CHECK 1's assertion: a complete epic's child with a live push-mode branch must be LANDED.
         if let (Some(content), Some(reg)) = (&content, &reg) {
             let state = |id: &str| rows.iter().find(|r| r.bead_id == id).map(|r| r.state.as_str());
-            for epic in sentinel::pilgrimage::epics(content, &snap.labels.epics).into_iter().filter(|e| e.complete()) {
+            let row_state = |id: &str| state(id).map(str::to_string);
+            for epic in sentinel::pilgrimage::epics(content, &snap.labels.epics, &row_state).into_iter().filter(|e| e.complete()) {
                 let mut live = vec![];
                 for child in &epic.children {
                     for name in reg.names().into_iter().filter(|n| reg.land(n) == "push") {
