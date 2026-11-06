@@ -57,6 +57,10 @@ incident = { path = "../incident" }
 watchtower = { path = "../watchtower" }
 runtime-watch = { path = "../runtime-watch" }
 refusal-watch = { path = "../refusal-watch" }
+# Family D watchers (sop-lint, statute-audit, the cert sweeps): their libraries.
+sop = { path = "../sop" }
+rule = { path = "../rule" }
+cert-sweep = { path = "../cert-sweep" }
 release = { path = "../release" }
 cockpit-collect = { path = "../cockpit-collect" }
 groomer = { path = "../groomer" }

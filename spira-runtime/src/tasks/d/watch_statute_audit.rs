@@ -130,9 +130,80 @@ pub struct Snapshot {
     pub repo: String,
 }
 
+/// What `file_bead` takes: `bead.sh file <title> --for <persona> --repo <repo> --body-file -`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Filing {
+    pub title: String,
+    pub body: String,
+    pub persona: String,
+    pub repo: String,
+}
+
+const FILE_DEADLINE_MS: u64 = 60_000;
+
 /// `rule::audit::audit` over the book, then `cmd_audit`'s open-title skip and bound of `max`.
-pub fn decide(_snap: &Snapshot, _cfg: &Config) -> Vec<EffectSpec> {
-    unimplemented!("watch.statute_audit: not ported yet")
+/// A missing persona or repo files nothing, as `audit --file` refused.
+pub fn decide(snap: &Snapshot, cfg: &Config) -> Vec<EffectSpec> {
+    let persona = if snap.persona.is_empty() { cfg.persona.clone() } else { snap.persona.clone() };
+    if persona.is_empty() || snap.repo.is_empty() {
+        return vec![];
+    }
+    let book: BTreeMap<String, serde_json::Value> = snap.memories.iter().map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone()))).collect();
+    let findings = rule::audit::audit(&book, &|tool: &str| snap.release.get(tool).cloned());
+    let (batch, _) = rule::audit::to_file(&findings, &snap.open_titles, cfg.max);
+    batch
+        .into_iter()
+        .map(|f| {
+            let title = rule::audit::finding_title(f);
+            let filing = Filing { body: rule::audit::bead_body(&title), title, persona: persona.clone(), repo: snap.repo.clone() };
+            EffectSpec { name: FILE_BEAD.into(), input: serde_json::to_string(&filing).unwrap_or_default(), deadline_ms: FILE_DEADLINE_MS }
+        })
+        .collect()
+}
+
+/// The persona a scheduler filing is made under on the store's `work - file` verb: one the
+/// broker's allow table lets file work for another persona.
+pub const FILER: &str = "ops";
+
+/// A work bead filed through the store's brokered `work - file` verb (it runs `bead.sh file` and
+/// creates the lifecycle row), over the socket with the effect's own deadline: `priority` and
+/// `extra` (`--json`, say) join the argv as `bead.sh file` takes them. Answers the verb's stdout.
+pub fn file_work(lc_socket: &std::path::Path, f: &Filing, priority: Option<&str>, deadline_ms: u64) -> Result<String, String> {
+    let mut argv: Vec<String> = ["work", "-", "file", &f.title, "--for", &f.persona, "--repo", &f.repo].iter().map(|s| s.to_string()).collect();
+    if let Some(p) = priority {
+        argv.extend(["--priority".to_string(), p.to_string()]);
+    }
+    argv.extend(["--body-file", "-", "--stdin", &f.body, "--actor", FILER].iter().map(|s| s.to_string()));
+    let stream = std::os::unix::net::UnixStream::connect(lc_socket).map_err(|e| format!("cannot tell: the lifecycle service is not answering on {}: {e}", lc_socket.display()))?;
+    let wait = Some(std::time::Duration::from_millis(deadline_ms.max(1)));
+    stream.set_read_timeout(wait).and_then(|_| stream.set_write_timeout(wait)).map_err(|e| e.to_string())?;
+    let reply = spira_config::lc_call::exchange(stream, &argv, None)?;
+    match reply.code {
+        0 => Ok(reply.out),
+        _ => Err(format!("work file {:?}: {}", f.title, reply.why())),
+    }
+}
+
+/// The probe: the book over `content memories --json` (unreadable is a failed probe, never an
+/// empty book), each tool it names read from the activated release, the open titles over
+/// `content list`, and the repo from `SPIRA_HOME_REPO`'s basename.
+pub fn observe(e: &crate::Effects, _key: &str, _spec: &EffectSpec) -> Result<String, String> {
+    let lc = spira_config::lc_call::LcClient::socket(&e.world.lc_socket);
+    let raw = lc.answer(&["content", "memories", "--json"]).map_err(|e| format!("the statute book could not be read: {e}"))?;
+    let book: BTreeMap<String, serde_json::Value> = serde_json::from_str(&raw).map_err(|e| format!("the statute book did not parse: {e}"))?;
+    let home = spira_config::resolve::locate_home_for_process()?;
+    let lookup = rule::audit::release_lookup(&home.to_string_lossy());
+    let release = rule::audit::named_tools(&book).into_iter().filter_map(|t| lookup(&t).map(|c| (t, c))).collect();
+    let listed = lc.answer(&["content", "list", "--json", "--limit", "0"]).map_err(|e| format!("the open beads could not be listed: {e}"))?;
+    let open_titles = serde_json::from_str::<Vec<serde_json::Value>>(&listed).unwrap_or_default().iter().filter_map(|b| b["title"].as_str().map(str::to_string)).collect();
+    let repo = cfg("SPIRA_HOME_REPO").ok().and_then(|p| std::path::Path::new(&p).file_name().map(|n| n.to_string_lossy().into_owned())).unwrap_or_default();
+    let memories = book.into_iter().filter_map(|(k, v)| v.as_str().map(|t| (k, t.to_string()))).collect();
+    serde_json::to_string(&Snapshot { memories, release, open_titles, persona: PERSONA.into(), repo }).map_err(|e| e.to_string())
+}
+
+pub fn file_bead(e: &crate::Effects, _key: &str, spec: &EffectSpec) -> Result<String, String> {
+    let f: Filing = serde_json::from_str(&spec.input).map_err(|e| format!("{FILE_BEAD}: bad input: {e}"))?;
+    file_work(&e.world.lc_socket, &f, None, spec.deadline_ms)
 }
 
 pub struct WatchStatuteAudit {

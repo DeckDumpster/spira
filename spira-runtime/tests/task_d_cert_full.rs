@@ -129,9 +129,16 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
 #[test]
 fn t5_the_event_lines_are_the_ones_cert_sweep_recorded() {
     let mut r = rig(1, Arc::new(Mutex::new(new_tip(Some(vec![row("r2", C2, "t2", "fail")])))));
-    r.tick(STREAM, ran(&r)).unwrap();
-    r.advance(3 * 60 * MIN).unwrap();
+    // Every leg the red adds (three reruns, then the probe at the last green round) ends with
+    // its own unit.ran, as the D-Bus source reports it; the rig's unit.start double ends none.
+    let mut legs = 0;
+    while asked(&r, UNIT_START).len() > legs && legs < 10 {
+        legs = asked(&r, UNIT_START).len();
+        r.tick(STREAM, ran(&r)).unwrap();
+        r.advance(MIN).unwrap();
+    }
     acc::assert_healthy(&r, STREAM);
+    assert_eq!(legs, 5, "the pass, three reruns, and the probe at the last green round");
     let all: Vec<String> = r.requested().iter().map(|q| q.input.clone()).collect();
     assert!(all.iter().any(|i| i.contains("NEW RED test-a.sh: last green round r1 (111111111), first red round r2 (222222222)")), "{all:?}");
     let mut r = rig(1, Arc::new(Mutex::new(new_tip(Some(vec![])))));
