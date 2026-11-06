@@ -74,16 +74,11 @@ pub static FAMILIES: &[&[Task]] = &[CORE, a::TASKS, b::TASKS, c::TASKS, d::TASKS
 /// Every family's rows not yet ported, in the same family order. A new family file joins here too.
 ///
 /// Pending rows that declare a key in [`Settings::UNDECLARABLE`], which `from_lookup` refuses
-/// once the row is in `TASKS`. The port renames or drops each key before its row moves:
+/// once the row is in `TASKS`. The port renames or drops each key before its row moves. The
+/// block below is `tests::undeclarable_table()` over the current rows, and
+/// `the_undeclarable_table_in_the_docs_is_the_rows` fails when it is stale:
 ///
-/// | Key | Declared in `KEYS` by | Also named (its `UNREGISTERED`) by |
-/// |---|---|---|
-/// | `BD_TIMEOUT` | `persona.ops` (f), `cockpit-tier-60s` (g) | `landing`, `queue.step` (a) |
-/// | `SPIRA_COCKPIT_TICK` | `cockpit-tier-5s` (g), as its `CADENCE_KEY` | |
-/// | `SPIRA_COCKPIT_FORCE` | `cockpit-tier-5s` (g) | |
-/// | `SPIRA_COCKPIT_WINDOW_HOURS` | `cockpit-tier-5s` (g) | |
-/// | `SPIRA_COCKPIT_SLOW_CONCURRENT` | `cockpit-tier-600s` (g) | |
-/// | `SPIRA_LC_BIN` | `cockpit-tier-60s` (g) | |
+/// No pending row declares one today.
 ///
 /// Dropping the last row's use of a key also drops it from `UNDECLARABLE`, or
 /// `every_key_a_pending_row_declares_is_registered_and_the_fixture_resolves_it` calls it stale.
@@ -235,21 +230,56 @@ mod tests {
         assert_eq!(contract_page("cockpit-tier-5s"), "cockpit-tier-5s");
     }
 
+    /// What breaks "pending ∪ ported = the contract pages, disjoint": a pending row with no page,
+    /// a page (less the `source-*` pages) with no row, a row both pending and ported. `ported`
+    /// is every booted row, so the service's own rows, which have no page, are in it harmlessly.
+    fn contract_cover(pending: &[&str], ported: &[&str]) -> Vec<String> {
+        let mut out = vec![];
+        out.extend(pending.iter().filter(|n| !CONTRACT_PAGES.contains(&contract_page(n).as_str())).map(|n| format!("pending {n} has no contract page")));
+        let rows: Vec<String> = pending.iter().chain(ported).map(|n| contract_page(n)).collect();
+        out.extend(CONTRACT_PAGES.iter().filter(|p| !p.starts_with("source-") && !rows.contains(&p.to_string())).map(|p| format!("page {p} has no row")));
+        out.extend(pending.iter().filter(|n| ported.contains(n)).map(|n| format!("{n} is both pending and ported")));
+        out
+    }
+
     #[test]
     fn every_pending_row_has_a_contract_page_and_no_row_is_both_pending_and_ported() {
-        let pages = |names: &[&str]| names.iter().filter(|n| !CONTRACT_PAGES.contains(&contract_page(n).as_str())).map(|n| n.to_string()).collect::<Vec<_>>();
-        assert_eq!(pages(&["planted.no_such_task"]), ["planted.no_such_task"], "a name with no page must be caught");
+        let rows: Vec<&str> = CONTRACT_PAGES.iter().copied().filter(|p| !p.starts_with("source-")).collect();
+        assert_eq!(contract_cover(&[], &rows), Vec::<String>::new(), "every page ported and none pending is the end state, not a fault");
+        assert_eq!(contract_cover(&rows, &[]), Vec::<String>::new(), "every page pending is the start state");
+        assert_eq!(contract_cover(&["planted.no_such_task"], &rows), ["pending planted.no_such_task has no contract page"], "a name with no page must be caught");
+        assert_eq!(contract_cover(&rows[1..], &[]), [format!("page {} has no row", rows[0])], "a page with no row must be caught");
+        assert_eq!(contract_cover(&rows, &rows[..1]), [format!("{} is both pending and ported", rows[0])], "a row in both must be caught");
         let names: Vec<&str> = pending().map(|t| t.name).collect();
-        assert!(names.len() >= 60, "the scan must see every family's pending rows: {names:?}");
-        assert_eq!(pages(&names), Vec::<String>::new(), "pending rows with no contract page");
-        let rows: Vec<String> = pending().chain(all()).map(|t| contract_page(t.name)).collect();
-        let unstubbed: Vec<&&str> = CONTRACT_PAGES.iter().filter(|p| !p.starts_with("source-") && !rows.contains(&p.to_string())).collect();
-        assert!(unstubbed.is_empty(), "contract pages with no row, pending or ported: {unstubbed:?}");
-        let both: Vec<&str> = names.iter().copied().filter(|n| all().any(|t| t.name == *n)).collect();
-        assert_eq!(both, Vec::<&str>::new(), "rows both pending and in tasks::all()");
+        let ported: Vec<&str> = all().map(|t| t.name).collect();
+        assert_eq!(contract_cover(&names, &ported), Vec::<String>::new());
         let mut every: Vec<&[Task]> = FAMILIES.to_vec();
         every.extend(PENDING_FAMILIES);
         assert_eq!(clashes(&every), Vec::<String>::new(), "a pending row shares a name or a stream");
+    }
+
+    /// The doc block above `PENDING_FAMILIES`, built from the rows: each key of
+    /// `Settings::UNDECLARABLE` with the pending rows whose `keys` declare it, by family letter.
+    fn undeclarable_table() -> String {
+        let rows: Vec<String> = Settings::UNDECLARABLE
+            .iter()
+            .map(|k| {
+                let by: Vec<String> = PENDING_FAMILIES.iter().zip('a'..).flat_map(|(f, letter)| f.iter().filter(|t| t.keys.iter().any(|ks| ks.contains(k))).map(move |t| format!("`{}` ({letter})", t.name))).collect();
+                format!("/// | `{k}` | {} |\n", by.join(", "))
+            })
+            .collect();
+        if rows.is_empty() {
+            return "/// No pending row declares one today.\n".into();
+        }
+        format!("/// | Key | Declared in `KEYS` by |\n/// |---|---|\n{}", rows.concat())
+    }
+
+    #[test]
+    fn the_undeclarable_table_in_the_docs_is_the_rows() {
+        let src = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tasks.rs")).unwrap();
+        let doc = src.split("pub static FAMILIES:").nth(1).and_then(|r| r.split("pub static PENDING_FAMILIES:").next()).unwrap_or("");
+        let want = undeclarable_table();
+        assert!(doc.contains(&want), "the table above PENDING_FAMILIES is stale; it is:\n{want}");
     }
 
     #[test]
@@ -301,11 +331,25 @@ mod tests {
         rows.iter().map(|(n, es)| format!("    ({n:?}, &[{}]),\n", es.iter().map(|e| format!("{e:?}")).collect::<Vec<_>>().join(", "))).collect()
     }
 
+    /// Whether `have` names the same rows with the same effects as `want`.
+    fn same_task_effects(have: &[(&str, Vec<&str>)], want: &[(&str, Vec<&str>)]) -> bool {
+        fn set(rows: &[(&str, Vec<&str>)]) -> std::collections::BTreeSet<(String, Vec<String>)> {
+            rows.iter().map(|(n, es)| (n.to_string(), es.iter().map(|e| e.to_string()).collect())).collect()
+        }
+        have.len() == want.len() && set(have) == set(want)
+    }
+
     #[test]
     fn the_sim_names_a_double_for_every_effect_of_every_row_ported_or_pending() {
         let want: Vec<(&str, Vec<&str>)> = all().chain(pending()).map(|t| (t.name, t.effects.to_vec())).collect();
         let have: Vec<(&str, Vec<&str>)> = sim::doubles::TASK_EFFECTS.iter().map(|(n, es)| (*n, es.to_vec())).collect();
-        assert!(have == want, "sim::doubles::TASK_EFFECTS must name every row's effects, in tasks::all() then tasks::pending() order:\n{}", task_effects_literal(&want));
+        let mut moved = want.clone();
+        moved.rotate_left(1);
+        assert!(same_task_effects(&moved, &want), "a row moved from PENDING to TASKS changes the table's order, not its rows");
+        let mut lost = want.clone();
+        lost.pop();
+        assert!(!same_task_effects(&lost, &want), "a row missing from TASK_EFFECTS must be caught");
+        assert!(same_task_effects(&have, &want), "sim::doubles::TASK_EFFECTS must name every row's effects, in any order:\n{}", task_effects_literal(&want));
         assert!(sim::doubles::Doubles::for_tasks(&["planted.no_such_task"]).is_err(), "a task the sim does not know is refused");
         let names: Vec<&str> = all().chain(pending()).map(|t| t.name).collect();
         let doubles = sim::doubles::Doubles::for_tasks(&names).unwrap().names();

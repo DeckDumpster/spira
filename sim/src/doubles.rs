@@ -42,8 +42,9 @@ impl EffectRunner for Doubles {
     }
 }
 
-/// Every task row of the service (spira-runtime's `tasks::all()`, then `tasks::pending()`) with
-/// the effects its row declares, by name. Named here, not read from the table, so a task that
+/// Every task row of the service (spira-runtime's `tasks::all()` and `tasks::pending()`) with
+/// the effects its row declares, by name, in any order: the check compares the rows as a set, so
+/// porting a row (moving it from `PENDING` to `TASKS`) needs no edit here. Named here, not read from the table, so a task that
 /// gains an effect fails T4 until the simulator can answer it; spira-runtime's
 /// `the_sim_names_a_double_for_every_effect_of_every_row_ported_or_pending` prints this list
 /// when the two disagree.
