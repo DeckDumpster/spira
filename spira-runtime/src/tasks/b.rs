@@ -91,7 +91,55 @@ use reconcile_section::ReconcileSection;
 
 pub static TASKS: &[Task] = &[
     Task { name: reconcile_section::NAME, boot: ReconcileSection::boot, cadence_ms: cadence_ms::<ReconcileSection>, effects: reconcile_section::EFFECTS, runners: &[(reconcile_section::PUBLISH, |e, _, _| reconcile_section::publish(&lc(e)))], keys: &[reconcile_section::KEYS], build: build::<ReconcileSection> },
+    Task { name: reconcile_continuity::NAME, boot: ReconcileContinuity::boot, cadence_ms: cadence_ms::<ReconcileContinuity>, effects: reconcile_continuity::EFFECTS, runners: &[(reconcile_continuity::OBSERVE, |e, _, _| reconcile_continuity::observe(&lc(e)))], keys: &[reconcile_continuity::KEYS], build: build::<ReconcileContinuity> },
+    Task {
+        name: reconcile_content::NAME,
+        boot: ReconcileContent::boot,
+        cadence_ms: cadence_ms::<ReconcileContent>,
+        effects: reconcile_content::EFFECTS,
+        runners: &[(reconcile_content::OBSERVE, |e, _, _| reconcile_content::observe(&lc(e), &e.world.run_dir)), (reconcile_content::SKEW_CHECK, |e, _, _| reconcile_content::skew_check(&lc(e))), (reconcile_content::CLOSE, |e, _, s| reconcile_content::close(&lc(e), &s.input))],
+        keys: &[reconcile_content::KEYS],
+        build: build::<ReconcileContent>,
+    },
+    Task {
+        name: reconcile_goodput::NAME,
+        boot: ReconcileGoodput::boot,
+        cadence_ms: cadence_ms::<ReconcileGoodput>,
+        effects: reconcile_goodput::EFFECTS,
+        runners: &[
+            (reconcile_goodput::OBSERVE, |e, _, _| reconcile_goodput::observe(&lc(e), &e.world.run_dir)),
+            (reconcile_goodput::LOCK, |e, _, s| reconcile_goodput::lock(&lc(e), &s.input)),
+            (reconcile_goodput::STANDBY, |e, _, s| reconcile_goodput::standby(&lc(e), &s.input)),
+            (reconcile_goodput::JUDGE, |e, _, s| reconcile_goodput::judge(&lc(e), &s.input)),
+            (reconcile_goodput::PUT, |e, _, s| reconcile_goodput::put(&lc(e), &s.input)),
+            (reconcile_goodput::RECORD, |e, _, s| reconcile_goodput::record(&lc(e), &s.input)),
+            (reconcile_goodput::RELEASE, |e, _, s| reconcile_goodput::release(&lc(e), &s.input)),
+        ],
+        keys: &[reconcile_goodput::KEYS],
+        build: build::<ReconcileGoodput>,
+    },
+    Task {
+        name: reconcile_heimdall::NAME,
+        boot: ReconcileHeimdall::boot,
+        cadence_ms: cadence_ms::<ReconcileHeimdall>,
+        effects: reconcile_heimdall::EFFECTS,
+        runners: &[
+            (reconcile_heimdall::OBSERVE, |e, _, s| reconcile_heimdall::observe(&lc(e), &e.world.run_dir, &s.input, now_ms())),
+            (reconcile_heimdall::RAISE, |e, _, s| reconcile_heimdall::raise(&lc(e), &s.input)),
+            (reconcile_heimdall::CLEAR, |e, _, s| reconcile_heimdall::clear(&lc(e), &s.input)),
+            (reconcile_heimdall::REFRESH, |e, _, s| reconcile_heimdall::raise(&lc(e), &s.input)),
+            (reconcile_heimdall::FALLBACK, |e, _, s| reconcile_heimdall::fallback(&e.world.run_dir, &s.input)),
+            (reconcile_heimdall::HEARTBEAT, |e, _, s| reconcile_heimdall::heartbeat(&e.world.run_dir, &s.input)),
+        ],
+        keys: &[reconcile_heimdall::KEYS],
+        build: build::<ReconcileHeimdall>,
+    },
 ];
+
+/// Wall time in ms, for a runner whose reading is an age (the effect itself runs on the host).
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+}
 
 /// The store client every family B runner reaches lc-serve through: the world's socket, with the
 /// socket client's 5 s deadline.
@@ -101,49 +149,6 @@ pub fn lc(e: &crate::Effects) -> spira_config::lc_call::LcClient {
 
 /// The family's rows, complete but not yet in `TASKS` (see the module doc).
 pub static PENDING: &[Task] = &[
-    Task {
-        name: reconcile_goodput::NAME,
-        boot: ReconcileGoodput::boot,
-        cadence_ms: cadence_ms::<ReconcileGoodput>,
-        effects: reconcile_goodput::EFFECTS,
-        runners: &[
-            (reconcile_goodput::OBSERVE, not_ported::<ReconcileGoodput>),
-            (reconcile_goodput::LOCK, not_ported::<ReconcileGoodput>),
-            (reconcile_goodput::STANDBY, not_ported::<ReconcileGoodput>),
-            (reconcile_goodput::JUDGE, not_ported::<ReconcileGoodput>),
-            (reconcile_goodput::PUT, not_ported::<ReconcileGoodput>),
-            (reconcile_goodput::RECORD, not_ported::<ReconcileGoodput>),
-            (reconcile_goodput::RELEASE, not_ported::<ReconcileGoodput>),
-        ],
-        keys: &[reconcile_goodput::KEYS],
-        build: build::<ReconcileGoodput>,
-    },
-    Task {
-        name: reconcile_content::NAME,
-        boot: ReconcileContent::boot,
-        cadence_ms: cadence_ms::<ReconcileContent>,
-        effects: reconcile_content::EFFECTS,
-        runners: &[(reconcile_content::OBSERVE, not_ported::<ReconcileContent>), (reconcile_content::SKEW_CHECK, not_ported::<ReconcileContent>), (reconcile_content::CLOSE, not_ported::<ReconcileContent>)],
-        keys: &[reconcile_content::KEYS],
-        build: build::<ReconcileContent>,
-    },
-    Task {
-        name: reconcile_heimdall::NAME,
-        boot: ReconcileHeimdall::boot,
-        cadence_ms: cadence_ms::<ReconcileHeimdall>,
-        effects: reconcile_heimdall::EFFECTS,
-        runners: &[
-            (reconcile_heimdall::OBSERVE, not_ported::<ReconcileHeimdall>),
-            (reconcile_heimdall::RAISE, not_ported::<ReconcileHeimdall>),
-            (reconcile_heimdall::CLEAR, not_ported::<ReconcileHeimdall>),
-            (reconcile_heimdall::REFRESH, not_ported::<ReconcileHeimdall>),
-            (reconcile_heimdall::FALLBACK, not_ported::<ReconcileHeimdall>),
-            (reconcile_heimdall::HEARTBEAT, not_ported::<ReconcileHeimdall>),
-        ],
-        keys: &[reconcile_heimdall::KEYS],
-        build: build::<ReconcileHeimdall>,
-    },
-    Task { name: reconcile_continuity::NAME, boot: ReconcileContinuity::boot, cadence_ms: cadence_ms::<ReconcileContinuity>, effects: reconcile_continuity::EFFECTS, runners: &[(reconcile_continuity::OBSERVE, not_ported::<ReconcileContinuity>)], keys: &[reconcile_continuity::KEYS], build: build::<ReconcileContinuity> },
     Task {
         name: incident_settle::NAME,
         boot: IncidentSettle::boot,

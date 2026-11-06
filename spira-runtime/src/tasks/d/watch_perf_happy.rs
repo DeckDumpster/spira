@@ -90,10 +90,7 @@ pub const TEARDOWN: &str = "watch.perf_happy.teardown";
 pub const LOG: &str = "watch.perf_happy.log";
 pub const HISTORY: &str = "watch.perf_happy.history";
 pub const EFFECTS: &[&str] = &[OBSERVE, CHECKOUT, UNIT_START, TEARDOWN, LOG, HISTORY];
-/// The checkout's source is the home repo from the pinned repo map (`World::home_path`), not
-/// `SPIRA_REPO`: that is a per-copy fact the config door never resolves, so declaring it here
-/// would refuse the service's settings whole.
-pub const KEYS: &[&str] = &["SPIRA_RUN", "SPIRA_RELEASE"];
+pub const KEYS: &[&str] = &["SPIRA_RUN", "SPIRA_REPO", "SPIRA_RELEASE"];
 /// `OnUnitActiveSec=1h`.
 pub const CADENCE_MS: u64 = 3_600_000;
 const OBSERVE_DEADLINE_MS: u64 = 5_000;
@@ -318,10 +315,10 @@ pub fn observe(e: &crate::Effects, _: &str, _: &EffectSpec) -> Result<String, St
 
 /// `watch.perf_happy.checkout`: the release tree staged as a git checkout under the scratch
 /// directory (`happy::checkout`), and the release's sim binary.
-pub fn checkout(e: &crate::Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
-    let (repo, release) = (e.world.home_path()?, cfg("SPIRA_RELEASE")?);
+pub fn checkout(_: &crate::Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+    let (repo, release) = (cfg("SPIRA_REPO")?, cfg("SPIRA_RELEASE")?);
     std::fs::create_dir_all(&spec.input).map_err(|e| format!("{}: {e}", spec.input))?;
-    let cwd = happy::checkout(&repo, std::path::Path::new(&spec.input))?;
+    let cwd = happy::checkout(std::path::Path::new(&repo), std::path::Path::new(&spec.input))?;
     serde_json::to_string(&Checkout { cwd: cwd.display().to_string(), sim: format!("{release}/bin/sim") }).map_err(|e| e.to_string())
 }
 

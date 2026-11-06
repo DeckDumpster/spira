@@ -7,6 +7,7 @@ pub mod judge;
 pub mod fallback;
 pub mod gather;
 pub mod heartbeat;
+pub mod hosted;
 pub mod reconcile;
 pub mod restart;
 pub mod state;

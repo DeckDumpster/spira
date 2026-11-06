@@ -112,19 +112,16 @@
 
 use std::collections::BTreeMap;
 
-use queue::ops::publish as core;
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
 
-use super::batcher_local::{P2, handle_p2, interests, table_step};
 use super::kit::{self, Act, Cadence, Shape};
 
 pub const NAME: &str = "publish";
 pub const STREAM: &str = "task.publish";
 pub const TICK: EventKindTag = "publish.tick";
 pub const STATE: EventKindTag = "publish.state";
-/// [`super::queue_step`]'s wake, after a verdict pass on a `queue.local` repo. It lands on
-/// queue.step's own stream, so this task's tick is what re-observes.
+/// [`super::queue_step`]'s wake, after a verdict pass on a `queue.local` repo.
 pub const PUBLISH_WANTED: EventKindTag = super::queue_step::PUBLISH_WANTED;
 pub const OBSERVE: &str = "publish.observe";
 pub const PUSH_BRANCH: &str = "publish.push_branch";
@@ -160,17 +157,6 @@ pub enum Pr {
     Gone,
     #[default]
     Unknown,
-}
-
-impl Pr {
-    /// The queue's own reading of this PR.
-    fn core(&self) -> core::Pr {
-        match self {
-            Pr::Open { ci, behind, tries } => core::Pr::Open { ci: if ci == "untested" { core::Ci::Untested } else { core::ci_of(ci) }, behind: *behind, tries: u8::try_from(*tries).unwrap_or(u8::MAX) },
-            Pr::Gone => core::Pr::Gone,
-            Pr::Unknown => core::Pr::Unknown,
-        }
-    }
 }
 
 /// `decide(Option<Pr>) -> Settle` (`ops/publish.rs:391`).
@@ -287,10 +273,6 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Adopting, Trigger::EffectSucceeded, State::Open),
     (State::Rerun, Trigger::Tick, State::Observing),
     (State::Alarmed, Trigger::Tick, State::Observing),
-    // Nor a failed close (the next tick re-observes), nor the end of a direct push (nothing
-    // is left open to settle).
-    (State::Superseding, Trigger::EffectFailed, State::Refused),
-    (State::Opening, Trigger::EffectSucceeded, State::Idle),
 ];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -298,12 +280,6 @@ pub struct RepoCarry {
     pub state: State,
     /// Today `queue/<repo>/publish-deferred`.
     pub deferred_ticks: u32,
-    /// The PR this machine retired: a record still naming it is stale, not acted on twice.
-    #[serde(default)]
-    pub retired: Option<u64>,
-    /// The head a refusal was last told about: one note per head.
-    #[serde(default)]
-    pub refused_head: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -311,282 +287,29 @@ pub struct Carry {
     pub repos: BTreeMap<String, RepoCarry>,
 }
 
-/// Everything one act carries as its input.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Pub {
-    pub repo: String,
-    #[serde(default)]
-    pub key: String,
-    #[serde(default)]
-    pub pr: u64,
-    #[serde(default)]
-    pub head: String,
-    #[serde(default)]
-    pub base: String,
-    #[serde(default)]
-    pub branch: String,
-    /// RECORD: the record's fields to set (`rerun`, `alarmed`), or `adopt`.
-    #[serde(default)]
-    pub record: BTreeMap<String, String>,
-    #[serde(default)]
-    pub subject: String,
-    #[serde(default)]
-    pub body: String,
-}
-
-impl Pub {
-    fn on(repo: &str) -> Pub {
-        Pub { repo: repo.into(), ..Pub::default() }
-    }
-
-    fn act(&self, effect: &str) -> Act {
-        Act::new(effect, self.key.clone()).with_input(serde_json::to_string(self).unwrap_or_default())
-    }
-}
-
-/// What `pr_create` answers.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Created {
-    #[serde(default)]
-    pub pr: u64,
-}
-
-/// The pinned values `decide` reads.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Policy {
-    pub defer_max: u32,
-}
-
-impl Default for Policy {
-    /// The registered default (`spira/conf.d/SPIRA_PUBLISH_SETTLE_DEFER_MAX`).
-    fn default() -> Self {
-        Policy { defer_max: 3 }
-    }
-}
-
-impl Policy {
-    pub fn pinned(pinned: &BTreeMap<String, String>) -> Policy {
-        Policy { defer_max: pinned.get("SPIRA_PUBLISH_SETTLE_DEFER_MAX").and_then(|v| v.trim().parse().ok()).unwrap_or(Policy::default().defer_max) }
-    }
-}
-
-pub fn step(state: State, event: Trigger) -> Result<State, String> {
-    table_step(NAME, TABLE, state, event)
+pub fn step(_state: State, _event: Trigger) -> Result<State, String> {
+    crate::not_ported!(NAME)
 }
 
 /// The pure core `decide(Option<Pr>) -> Settle`.
-pub fn settle(pr: Option<&Pr>) -> Settle {
-    match core::decide(pr.map(Pr::core)) {
-        core::Settle::Open => Settle::Open,
-        core::Settle::Wait => Settle::Wait,
-        core::Settle::Parked => Settle::Parked,
-        core::Settle::Rerun => Settle::Rerun,
-        core::Settle::Alarm => Settle::Alarm,
-        core::Settle::Retire => Settle::Retire,
-        core::Settle::Supersede => Settle::Supersede,
-    }
-}
-
-struct Machine<'a> {
-    repo: &'a str,
-    rc: RepoCarry,
-    acts: Vec<Act>,
-}
-
-impl Machine<'_> {
-    fn go(&mut self, on: Trigger) -> bool {
-        step(self.rc.state, on).map(|to| self.rc.state = to).is_ok()
-    }
-
-    fn notify(&mut self, pr: u64, subject: String, body: String) {
-        self.acts.push(Pub { key: format!("{}/{pr}/{subject}", self.repo), pr, subject, body, ..Pub::on(self.repo) }.act(NOTIFY));
-    }
-
-    fn observe(&mut self, policy: &Policy, r: &Repo) {
-        if !matches!(self.rc.state, State::Idle | State::Deferred | State::Refused | State::Rerun | State::Alarmed) {
-            return;
-        }
-        self.go(Trigger::Tick);
-        let rec = r.publish_rec.as_ref().filter(|rec| Some(rec.pr) != self.rc.retired);
-        // `:39-50`, `:54`: a repo that does not publish, or whose publish lane is stopped.
-        if r.mode != "queue.local" || r.unpublished || r.stopped {
-            self.go(Trigger::NothingToDo);
-            return;
-        }
-        if r.publish_rec.is_some() && rec.is_none() {
-            // The record still names the PR this machine retired: the next one is in flight.
-            self.go(Trigger::NothingToDo);
-            return;
-        }
-        // `:563-643`: no record, but publish PRs open on the forge: adopt the newest, close the rest.
-        if rec.is_none() && !r.open_publish_prs.is_empty() {
-            self.go(Trigger::AdoptOne);
-            let newest = r.open_publish_prs.iter().copied().max().unwrap_or_default();
-            self.acts.push(Pub { pr: newest, key: format!("{}/{newest}", self.repo), record: [("adopt".to_string(), newest.to_string())].into(), ..Pub::on(self.repo) }.act(RECORD));
-            for older in r.open_publish_prs.iter().copied().filter(|p| *p != newest) {
-                self.acts.push(Pub { pr: older, key: format!("{}/{older}", self.repo), ..Pub::on(self.repo) }.act(PR_CLOSE));
-            }
-            return;
-        }
-        if rec.is_none() && r.forge_sha.as_deref() == Some(r.head_sha.as_str()) {
-            self.go(Trigger::NothingToDo);
-            return;
-        }
-        // `:166-174`: red on this very head with its fix-forward live: wait for the fix.
-        if r.red_marker.as_deref() == Some(r.head_sha.as_str()) && r.fix_forward_live {
-            self.go(Trigger::RedFixForwardLive);
-            return;
-        }
-        let act = settle(rec.map(|_| &r.pr));
-        // `:506-527`: an act that writes is deferred while a round holds the hypervisor.
-        if !matches!(act, Settle::Wait | Settle::Parked | Settle::Alarm) && r.round_holds_hypervisor && self.rc.deferred_ticks < policy.defer_max {
-            self.go(Trigger::RoundHoldsHypervisor);
-            self.rc.deferred_ticks += 1;
-            return;
-        }
-        self.rc.deferred_ticks = 0;
-        let pr = rec.map_or(0, |rec| rec.pr);
-        match act {
-            Settle::Open => self.open(r),
-            Settle::Wait => {
-                // The open PR's CI is queue.step's to settle (`settle_publish`).
-                self.go(Trigger::SettleWait);
-                self.go(Trigger::QueueStepSettled);
-            }
-            Settle::Parked => {
-                self.go(Trigger::SettleParked);
-            }
-            Settle::Rerun => {
-                self.go(Trigger::SettleRerun);
-                let branch = rec.map(|r| r.branch.clone()).unwrap_or_default();
-                self.acts.push(Pub { pr, branch, key: format!("{}/{pr}", self.repo), record: [("rerun".to_string(), "1".to_string())].into(), ..Pub::on(self.repo) }.act(RERUN));
-            }
-            Settle::Alarm => {
-                self.go(Trigger::SettleAlarm);
-                self.notify(pr, format!("publish PR {pr} for {} untested twice", self.repo), format!("CI never tested {} after one re-run; the record is parked until a hand moves it.", r.head_sha));
-                self.acts.push(Pub { pr, key: format!("{}/{pr}", self.repo), record: [("alarmed".to_string(), "1".to_string())].into(), ..Pub::on(self.repo) }.act(RECORD));
-            }
-            Settle::Retire | Settle::Supersede => {
-                self.go(Trigger::SettleRetireOrSupersede);
-                let branch = rec.map(|r| r.branch.clone()).unwrap_or_default();
-                self.rc.retired = Some(pr);
-                self.acts.push(Pub { pr, branch: branch.clone(), key: format!("{}/{branch}", self.repo), ..Pub::on(self.repo) }.act(CANCEL_RUNS));
-                self.acts.push(Pub { pr, branch, head: r.head_sha.clone(), base: r.forge_sha.clone().unwrap_or_default(), key: format!("{}/{pr}", self.repo), ..Pub::on(self.repo) }.act(PR_CLOSE));
-            }
-        }
-    }
-
-    /// `Settle::Open`: guard the push (`:116-138`), then publish by PR or by fast-forward.
-    fn open(&mut self, r: &Repo) {
-        if r.forge_sha.as_deref() == Some(r.head_sha.as_str()) {
-            self.go(Trigger::NothingToDo);
-            return;
-        }
-        if r.diverged != Some(false) {
-            self.go(Trigger::DivergedOrUnchecked);
-            if self.rc.refused_head.as_deref() != Some(r.head_sha.as_str()) {
-                self.rc.refused_head = Some(r.head_sha.clone());
-                let why = if r.diverged.is_none() { "divergence could not be checked" } else { "the forge branch is not an ancestor of the local head" };
-                self.notify(0, format!("publish refused for {}", self.repo), format!("{why} ({} vs {}); nothing was pushed.", r.forge_sha.clone().unwrap_or_default(), r.head_sha));
-            }
-            return;
-        }
-        self.rc.refused_head = None;
-        let at = Pub { head: r.head_sha.clone(), base: r.forge_sha.clone().unwrap_or_default(), ..Pub::on(self.repo) };
-        if r.publish_mode == "push" {
-            self.go(Trigger::OpenPush);
-            self.acts.push(Pub { key: format!("{}/forge/{}", self.repo, r.head_sha), ..at }.act(PUSH_FORGE));
-        } else {
-            self.go(Trigger::OpenAncestor);
-            self.acts.push(Pub { key: format!("{}/branch/{}", self.repo, r.head_sha), ..at }.act(PUSH_BRANCH));
-        }
-    }
-
-    fn outcome(&mut self, effect: &str, ok: bool, body: &str, p: &Pub) {
-        match (self.rc.state, effect, ok) {
-            (State::Adopting, RECORD, true) => {
-                self.go(Trigger::EffectSucceeded);
-                self.go(Trigger::QueueStepSettled);
-            }
-            (State::Superseding, PR_CLOSE, true) => {
-                self.go(Trigger::EffectSucceeded);
-                self.acts.push(Pub { key: format!("{}/branch/{}", self.repo, p.head), ..p.clone() }.act(PUSH_BRANCH));
-            }
-            (State::Superseding, PR_CLOSE, false) => {
-                self.go(Trigger::EffectFailed);
-                self.rc.retired = None;
-            }
-            (State::Opening, PUSH_BRANCH, true) => {
-                self.go(Trigger::PushSucceeded);
-                let branch: Pub = serde_json::from_str(body).unwrap_or_default();
-                self.acts.push(Pub { branch: branch.branch, key: format!("{}/{}", self.repo, p.head), ..p.clone() }.act(PR_CREATE));
-            }
-            (State::Opening, PR_CREATE, true) => {
-                let c: Created = serde_json::from_str(body).unwrap_or_default();
-                self.go(Trigger::PrCreated);
-                self.acts.push(Pub { pr: c.pr, key: format!("{}/{}", self.repo, c.pr), ..p.clone() }.act(RECORD));
-                // The opened PR's CI is queue.step's to settle.
-                self.go(Trigger::QueueStepSettled);
-            }
-            (State::Opening, PUSH_FORGE, true) => {
-                self.go(Trigger::EffectSucceeded);
-            }
-            (State::Opening, PUSH_BRANCH | PUSH_FORGE | PR_CREATE, false) => {
-                self.go(Trigger::EffectFailed);
-                self.notify(p.pr, format!("publish {} failed for {}", effect.trim_start_matches("publish."), self.repo), body.trim().to_string());
-            }
-            _ => {}
-        }
-    }
-}
-
-fn store(carry: &mut Carry, repo: &str, rc: RepoCarry) {
-    if rc == RepoCarry::default() {
-        carry.repos.remove(repo);
-    } else {
-        carry.repos.insert(repo.to_string(), rc);
-    }
+pub fn settle(_pr: Option<&Pr>) -> Settle {
+    crate::not_ported!(NAME)
 }
 
 /// The per-repo decision: the open-path guards, the deferral rule, then `settle`.
-pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
-    decide_with(&Policy::default(), carry, snap)
-}
-
-pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
-    let (mut next, mut acts) = (carry.clone(), vec![]);
-    if !snap.world_running {
-        return (next, acts);
-    }
-    for (name, repo) in &snap.repos {
-        let mut m = Machine { repo: name, rc: carry.repos.get(name).cloned().unwrap_or_default(), acts: vec![] };
-        m.observe(policy, repo);
-        store(&mut next, name, m.rc);
-        acts.extend(m.acts);
-    }
-    (next, acts)
-}
-
-pub fn on_outcome(carry: &Carry, effect: &str, ok: bool, body: &str, p: &Pub) -> (Carry, Vec<Act>) {
-    let mut next = carry.clone();
-    let mut m = Machine { repo: &p.repo, rc: carry.repos.get(&p.repo).cloned().unwrap_or_default(), acts: vec![] };
-    m.outcome(effect, ok, body, p);
-    let acts = m.acts;
-    store(&mut next, &p.repo, m.rc);
-    (next, acts)
+pub fn decide(_carry: &Carry, _snap: &Snapshot) -> (Carry, Vec<Act>) {
+    crate::not_ported!(NAME)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Publish {
     pub cadence: Cadence,
     pub pinned: BTreeMap<String, String>,
-    pub policy: Policy,
-    interests: [EventKindTag; 4],
 }
 
 impl Publish {
     pub fn new(pinned: BTreeMap<String, String>) -> Self {
-        Publish { cadence: Cadence::Every(CADENCE_MS), policy: Policy::pinned(&pinned), pinned, interests: interests(TICK) }
+        Publish { cadence: Cadence::Every(CADENCE_MS), pinned }
     }
 
     pub fn from_cfg() -> Self {
@@ -604,190 +327,19 @@ impl Publish {
 
 impl Handler for Publish {
     fn interests(&self) -> &[EventKindTag] {
-        &self.interests
+        &[TICK, EFFECT_SUCCEEDED]
     }
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        let observed = |carry: &Carry, body: &str| serde_json::from_str::<Snapshot>(body).ok().map(|snap| decide_with(&self.policy, carry, &snap));
-        let outcome = |carry: &Carry, effect: &str, ok: bool, body: &str, input: &str| match serde_json::from_str::<Pub>(input) {
-            Ok(p) => on_outcome(carry, effect, ok, body, &p),
-            Err(_) => (carry.clone(), vec![]),
-        };
-        handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS }, view, ev, observed, outcome)
-    }
-}
-
-/// The runners: git as a child through the Proc port, forge verbs through `forge::client`, the
-/// record in the queue directory, mail in-process; the shared plumbing is queue.step's.
-pub mod edge {
-    use std::collections::BTreeMap;
-    use std::time::Duration;
-
-    use super::super::queue_step::edge::{forge, forge_call, git, queue_kv, registry, root};
-    use super::{Created, Pr, Pub, PublishRec, Repo, Snapshot};
-    use crate::{Effects, EffectSpec};
-
-    fn input(spec: &EffectSpec) -> Result<Pub, String> {
-        serde_json::from_str(&spec.input).map_err(|e| format!("{}: bad input: {e}", spec.name))
-    }
-
-    fn json<T: serde::Serialize>(v: &T) -> Result<String, String> {
-        serde_json::to_string(v).map_err(|e| e.to_string())
-    }
-
-    /// The remote and branch a repo publishes to (`spira_publish_forge`), or why it does not.
-    fn target(reg: &spira_config::repos::Registry, repo: &str) -> Result<(String, String), String> {
-        spira_config::repos::publish_forge(reg, repo, &BTreeMap::new()).ok_or_else(|| format!("{repo} publishes nowhere"))
-    }
-
-    /// The probe: per `queue.local` repo, its record, its PR on the forge, the two heads and
-    /// whether a round holds the hypervisor.
-    pub fn observe(e: &Effects, _: &str, _: &EffectSpec) -> Result<String, String> {
-        let reg = registry()?;
-        let rounds = store_view::Projection::configured(super::super::queue_step::edge::lc(e))?;
-        rounds.refresh_batches().map_err(|e| e.to_string())?;
-        let mut snap = Snapshot { world_running: !e.world.run_dir.join("world.halted").exists(), ..Snapshot::default() };
-        let local: Vec<String> = reg.names().into_iter().filter(|n| reg.land(n) == "queue.local").collect();
-        let holds = local.iter().any(|n| rounds.round_view(n).is_ok_and(|v| !v.value.rounds.is_empty()));
-        for name in local {
-            let dir = root(&reg, &name)?;
-            let landref = spira_config::repos::landref(&reg, &name).unwrap_or_default();
-            let head_sha = git(&dir, &["rev-parse", &landref], Duration::from_secs(10))?;
-            let target = spira_config::repos::publish_forge(&reg, &name, &BTreeMap::new());
-            let publish_mode = match spira_config::repos::publish_mode(&reg, &name) {
-                spira_config::PublishMode::Push => "push",
-                _ => "pr",
-            };
-            let forge_sha = target.as_ref().and_then(|(remote, branch)| {
-                git(&dir, &["fetch", "--quiet", remote, branch], Duration::from_secs(30)).ok()?;
-                git(&dir, &["rev-parse", &format!("{remote}/{branch}")], Duration::from_secs(10)).ok()
-            });
-            let diverged = forge_sha.as_ref().map(|f| git(&dir, &["merge-base", "--is-ancestor", f, &head_sha], Duration::from_secs(10)).is_err());
-            let kv = queue_kv(e, &name, "publish");
-            let publish_rec = kv.as_ref().and_then(|kv| Some(PublishRec { pr: kv.get("pr")?.trim_start_matches('#').parse().ok()?, head: kv.get("head").cloned().unwrap_or_default(), branch: kv.get("branch").cloned().unwrap_or_default(), rerun: kv.get("rerun").is_some_and(|v| v == "1"), alarmed: kv.get("alarmed").is_some_and(|v| v == "1") }));
-            let pr = match &publish_rec {
-                None => Pr::Unknown,
-                Some(rec) => {
-                    let n = rec.pr.to_string();
-                    match forge_call(&dir, "pr-state", &[&n], None)?.stdout().map(|s| s.trim().to_ascii_uppercase()) {
-                        Some(s) if s == "OPEN" => {
-                            let status = forge_call(&dir, "check-status", &[&n, &rec.branch], None)?.stdout().unwrap_or_default();
-                            let first = status.lines().next().unwrap_or("").trim();
-                            let ci = match queue::ops::verdict::normalize_status(first) {
-                                "harness_fault" => "untested",
-                                "green" => "green",
-                                "red" => "red",
-                                _ => "pending",
-                            };
-                            Pr::Open { ci: ci.into(), behind: rec.head != head_sha, tries: u32::from(rec.rerun) + u32::from(rec.alarmed) }
-                        }
-                        Some(_) => Pr::Gone,
-                        None => Pr::Unknown,
-                    }
-                }
-            };
-            let open_publish_prs = forge_call(&dir, "pr-list-open", &[], None)?.stdout().unwrap_or_default().lines().filter_map(|l| l.split_once(' ')).filter(|(_, b)| b.starts_with("spira/publish/")).filter_map(|(n, _)| n.trim_start_matches('#').parse().ok()).collect();
-            let red_marker = queue_kv(e, &name, "publish-red").and_then(|kv| kv.get("head").cloned());
-            let fix_forward_live = queue_kv(e, &name, "publish-red").and_then(|kv| kv.get("bead").cloned()).is_some_and(|bead| {
-                super::super::queue_step::edge::lc(e).answer(&["show", &bead]).ok().and_then(|o| serde_json::from_str::<serde_json::Value>(&o).ok()).and_then(|v| v["bead"]["state"].as_str().map(str::to_string)).is_some_and(|s| s != "CLOSED" && s != "LANDED")
-            });
-            let stopped = spira_config::scoped_stop::stop_for(&e.world.run_dir, &name, "publish").is_some();
-            snap.repos.insert(name.clone(), Repo { mode: "queue.local".into(), publish_mode: publish_mode.into(), unpublished: target.is_none(), stopped, publish_rec, pr, open_publish_prs, forge_sha, head_sha, diverged, red_marker, fix_forward_live, round_holds_hypervisor: holds });
+        if ev.stream.0 != STREAM {
+            return vec![];
         }
-        json(&snap)
-    }
-
-    /// The head pushed to a fresh `spira/publish/<stamp>` branch; answers the branch.
-    pub fn push_branch(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
-        let p = input(spec)?;
-        let reg = registry()?;
-        let (remote, _) = target(&reg, &p.repo)?;
-        let branch = format!("spira/publish/{}", spira_config::vtime::now_epoch());
-        git(&root(&reg, &p.repo)?, &["push", &remote, &format!("{}:refs/heads/{branch}", p.head)], Duration::from_secs(55))?;
-        json(&Pub { branch, ..p })
-    }
-
-    /// `publish_mode = push`: the forge branch fast-forwarded to the head (`:224-245`).
-    pub fn push_forge(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
-        let p = input(spec)?;
-        let reg = registry()?;
-        let (remote, branch) = target(&reg, &p.repo)?;
-        git(&root(&reg, &p.repo)?, &["push", &remote, &format!("{}:refs/heads/{branch}", p.head)], Duration::from_secs(55))?;
-        Ok("{}".into())
-    }
-
-    /// The publish PR from the pushed branch onto the forge branch, preflighted.
-    pub fn pr_create(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
-        let p = input(spec)?;
-        let reg = registry()?;
-        let dir = root(&reg, &p.repo)?;
-        let (_, forge_branch) = target(&reg, &p.repo)?;
-        let pre = forge_call(&dir, "pr-preflight", &[&p.branch], None)?;
-        if !pre.ok() {
-            return Err(format!("pr-preflight {}: {}", p.branch, pre.err.trim()));
+        let carry: Carry = kit::carry(&SHAPE, view);
+        if ev.kind.tag == TICK {
+            return kit::on_tick(&SHAPE, serde_json::to_string(&carry).unwrap_or_default(), self.cadence.next_after(ev.at));
         }
-        let range = if p.base.is_empty() { p.head.clone() } else { format!("{}..{}", p.base, p.head) };
-        let subjects = git(&dir, &["log", "--format=%s", &range], Duration::from_secs(10)).unwrap_or_default();
-        let body = format!("Publish queue: {} landed on the local base since the last publish, for {}.\n\nThese commits already fast-forwarded the base locally; CI here is confirmation, not the gate. A red run files a fix-forward bead — it never rolls back production.\n\n{}", p.head, p.repo, subjects.lines().map(|s| format!("- {s}\n")).collect::<String>());
-        let title = format!("publish: {} for {}", &p.head[..p.head.len().min(12)], p.repo);
-        let r = forge_call(&dir, "pr-create", &[&p.branch, &forge_branch, &title], Some(body.trim_end().as_bytes()))?;
-        if !r.ok() {
-            return Err(format!("pr-create {}: rc={}: {}", p.branch, r.code, r.err.trim()));
-        }
-        let pr = r.out.trim().trim_start_matches('#').parse().map_err(|_| format!("forge returned no PR number for {}", p.branch))?;
-        json(&Created { pr })
-    }
-
-    pub fn pr_close(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
-        let p = input(spec)?;
-        let r = forge_call(&root(&registry()?, &p.repo)?, "pr-close", &[&p.pr.to_string()], None)?;
-        r.ok().then(|| "{}".to_string()).ok_or_else(|| format!("pr-close {}: {}", p.pr, r.err.trim()))
-    }
-
-    pub fn cancel_runs(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
-        let p = input(spec)?;
-        let dir = root(&registry()?, &p.repo)?;
-        queue::ops::helpers::cancel_branch_runs(&forge()?, &dir, &p.branch, "publish").then(|| "{}".to_string()).ok_or_else(|| format!("{}: not every run on {} was cancelled", p.repo, p.branch))
-    }
-
-    /// The publish branch's run, re-run once; the record then says `rerun=1`.
-    pub fn rerun(e: &Effects, k: &str, spec: &EffectSpec) -> Result<String, String> {
-        let p = input(spec)?;
-        let dir = root(&registry()?, &p.repo)?;
-        let run = forge_call(&dir, "run-id", &[&p.branch], None)?.stdout().map(|o| o.trim().to_string()).filter(|r| !r.is_empty()).ok_or_else(|| format!("no run on {}", p.branch))?;
-        let r = forge_call(&dir, "workflow-rerun", &[&run], None)?;
-        if !r.ok() {
-            return Err(format!("workflow-rerun {run}: {}", r.err.trim()));
-        }
-        record(e, k, spec)
-    }
-
-    /// `queue/<repo>/publish`: a new PR's record, an adoption, or fields set on the open one.
-    pub fn record(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
-        let p = input(spec)?;
-        let dir = e.world.queue_dir.join(&p.repo);
-        let path = dir.join("publish");
-        let mut lines: Vec<(String, String)> = std::fs::read_to_string(&path).unwrap_or_default().lines().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect();
-        if p.record.is_empty() || p.record.contains_key("adopt") {
-            lines = vec![("pr".into(), p.pr.to_string()), ("head".into(), p.head.clone()), ("base".into(), p.base.clone()), ("branch".into(), p.branch.clone()), ("opened".into(), spira_config::vtime::now_epoch().to_string())];
-        } else {
-            for (k, v) in &p.record {
-                match lines.iter_mut().find(|(f, _)| f == k) {
-                    Some(l) => l.1 = v.clone(),
-                    None => lines.push((k.clone(), v.clone())),
-                }
-            }
-        }
-        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        let tmp = dir.join(".publish.tmp");
-        std::fs::write(&tmp, lines.iter().map(|(k, v)| format!("{k}={v}\n")).collect::<String>()).and_then(|_| std::fs::rename(&tmp, &path)).map_err(|e| format!("{}: {e}", path.display()))?;
-        Ok("{}".into())
-    }
-
-    pub fn notify(e: &Effects, k: &str, spec: &EffectSpec) -> Result<String, String> {
-        let p = input(spec)?;
-        let s = super::super::queue_step::Step { repo: p.repo, subject: p.subject, body: p.body, ..Default::default() };
-        let spec = EffectSpec { name: spec.name.clone(), input: serde_json::to_string(&s).map_err(|e| e.to_string())?, deadline_ms: spec.deadline_ms };
-        super::super::queue_step::edge::notify(e, k, &spec)
+        let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else { return vec![] };
+        let (next, acts) = decide(&carry, &snap);
+        kit::commands(&SHAPE, ACTS, EMITS, &carry, &next, acts)
     }
 }

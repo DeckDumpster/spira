@@ -1,13 +1,12 @@
 //! cert-sweep core: verdicts, the history row, and the classification that turns a new result
 //! plus the history into at most one event. Pure; the IO seam is main.rs.
 
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const FAMILY: &str = "cert-history";
 pub const EVENT_FAMILY: &str = "cert-event";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
     Ok,
     Red,
@@ -50,7 +49,7 @@ impl Verdict {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
     pub suite: String,
     pub verdict: Verdict,
@@ -99,7 +98,7 @@ pub fn runner_declined(text: &str) -> bool {
     runner_verdict(text).is_some_and(|v| v.split_whitespace().any(|w| w == "reason=scratch-short" || w == "reason=image-not-ready"))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
     pub commit: String,
     pub round: String,
@@ -140,7 +139,7 @@ impl Row {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     /// A suite went red: the culprit window is (last_green, first_red].
     NewRed { suite: String, last_green_round: String, last_green_commit: String, first_red_round: String, first_red_commit: String },
@@ -323,7 +322,7 @@ pub fn bead_body(e: &Event) -> String {
     format!("{}\n{tail}", e.render())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Judgement {
     /// A rerun of the red went green: green and red on one commit.
     Flaky,
@@ -342,7 +341,7 @@ pub fn judge(reruns: &[Verdict]) -> Judgement {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Member {
     pub commit: String,
     pub bead: Option<String>,
@@ -386,7 +385,7 @@ pub fn first_fail_line(text: &str) -> Option<String> {
     text.lines().map(str::trim).find(|l| l.contains("FAIL")).map(str::to_string)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilingKind {
     Flip,
     Red,
@@ -417,7 +416,7 @@ pub fn open_duplicate<'a>(open: &'a [(String, String)], suite: &str, kind: Filin
     open.iter().find(|(_, t)| t.contains(suite) && words.iter().any(|w| t.to_lowercase().contains(w))).map(|(id, _)| id.as_str())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Culprit {
     pub suite: String,
     pub round: String,
@@ -445,88 +444,6 @@ pub fn culprit_body(c: &Culprit, e: &Event) -> String {
 
 pub fn red_body(e: &Event, first_fail: Option<&str>, note: &str) -> String {
     format!("{}\n\n{note}\nFirst FAIL line: {}\n", e.render(), first_fail.unwrap_or("(none captured)"))
-}
-
-/// The body a filed bead carries: the finding, then the `## Build` section the builder reads.
-pub fn filing_text(body: &str) -> String {
-    format!("{body}\n\n## Build\n\nFix the red the certification sweep reported above, in this repository, and land the fix.\n")
-}
-
-/// The id in what `bead.sh file --json` printed, never scanned from its prose.
-pub fn filed_id(text: &str) -> Result<String, String> {
-    let start = text.find(['{', '[']).ok_or("bead.sh file: no JSON in output")?;
-    let v: Value = serde_json::from_str(&text[start..]).map_err(|e| format!("bead.sh file: {e}"))?;
-    let v = if let Value::Array(a) = v { a.into_iter().next().unwrap_or(Value::Null) } else { v };
-    v.get("id").and_then(Value::as_str).map(str::to_string).ok_or_else(|| "bead.sh file: no id in output".into())
-}
-
-/// The `cert-event` row of an event: its kind, its rendered text, and its suite.
-pub fn event_fields(e: &Event) -> Vec<(String, Value)> {
-    let mut f = vec![("kind".to_string(), Value::String(e.kind().into())), ("text".to_string(), Value::String(e.render()))];
-    if let Some(s) = e.suite() {
-        f.push(("suite".to_string(), Value::String(s.into())));
-    }
-    f
-}
-
-/// The history and event families on disk: the tsd family files under the run dir, appended
-/// under an exclusive flock, so the full and subset sweeps never interleave a row.
-pub mod store {
-    use std::fs::{self, OpenOptions};
-    use std::io::Write;
-    use std::os::unix::io::AsRawFd;
-    use std::path::Path;
-
-    use serde_json::Value;
-
-    use super::{parse_result_file, Outcome, Row, FAMILY};
-
-    extern "C" {
-        fn flock(fd: i32, operation: i32) -> i32;
-    }
-    const LOCK_EX: i32 = 2;
-
-    /// Every history row that parses; a line it cannot place is skipped.
-    pub fn read_history(run: &Path) -> Vec<Row> {
-        fs::read_to_string(tsd::family_path(run, FAMILY)).map(|t| t.lines().filter_map(Row::from_json).collect()).unwrap_or_default()
-    }
-
-    /// One row of `family`, stamped `iso` on `host`, appended under the file's flock.
-    pub fn append(run: &Path, family: &str, iso: &str, host: &str, fields: &[(String, Value)]) -> Result<(), String> {
-        let path = tsd::family_path(run, family);
-        fs::create_dir_all(path.parent().unwrap_or(run)).map_err(|e| format!("{}: {e}", path.display()))?;
-        let line = tsd::build_row(iso, host, family, fields)?;
-        let mut f = OpenOptions::new().create(true).append(true).open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        // SAFETY: flock(2) on a descriptor this function owns.
-        unsafe { flock(f.as_raw_fd(), LOCK_EX) };
-        f.write_all(format!("{line}\n").as_bytes()).map_err(|e| format!("{}: {e}", path.display()))
-    }
-
-    /// The history's named lock, held while a pass reads the history and appends its rows.
-    pub fn lock_history(run: &Path) -> Result<fs::File, String> {
-        let p = tsd::family_path(run, FAMILY).with_extension("lock");
-        fs::create_dir_all(p.parent().unwrap_or(run)).map_err(|e| e.to_string())?;
-        let f = OpenOptions::new().create(true).append(true).open(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-        // SAFETY: flock(2) on a descriptor this function owns.
-        unsafe { flock(f.as_raw_fd(), LOCK_EX) };
-        Ok(f)
-    }
-
-    /// Every `<suite>.result` in a results dir, by suite.
-    pub fn results_in(dir: &Path) -> Vec<Outcome> {
-        let mut v: Vec<Outcome> = fs::read_dir(dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter_map(|e| {
-                let name = e.file_name().to_string_lossy().to_string();
-                let suite = name.strip_suffix(".result")?.to_string();
-                parse_result_file(&suite, &fs::read_to_string(e.path()).ok()?)
-            })
-            .collect();
-        v.sort_by(|a, b| a.suite.cmp(&b.suite));
-        v
-    }
 }
 
 #[cfg(test)]

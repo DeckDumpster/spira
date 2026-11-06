@@ -1,7 +1,6 @@
 //! # reconcile.goodput — contract
 //!
-//! Family B of the scheduler consolidation, red-first: `decide` is not ported yet. The
-//! sections below are the contract page `wiki/projects/spira/designs/tasks/reconcile-goodput.md`;
+//! Family B of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/reconcile-goodput.md`;
 //! its Acceptance section is the test file `tests/task_b_reconcile_goodput.rs`.
 //!
 //! ## Tick
@@ -98,7 +97,7 @@
 use runtime::event::EventKindTag;
 use serde::{Deserialize, Serialize};
 
-use super::kit::{Cadence, Cfg, Decision, Input, Spec};
+use super::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
 
 pub const NAME: &str = "reconcile.goodput";
 pub const STREAM: &str = "task.reconcile.goodput";
@@ -187,6 +186,10 @@ pub struct Carry {
     /// The lock grant's token and the pass deadline it set, while a pass is in flight.
     pub token: Option<String>,
     pub deadline_at: Option<u64>,
+    /// This pass's identity on the lock, `reconcile.goodput/<tick ms>`, while a pass is in flight.
+    pub holder: Option<String>,
+    /// The in-flight pass saw the world halted: it records `Mode::Halted` and judges nothing.
+    pub halted: bool,
 }
 
 pub struct ReconcileGoodput {
@@ -194,9 +197,217 @@ pub struct ReconcileGoodput {
     pub cfg: Cfg,
 }
 
-/// `assemble` → `interim_ranking` → `select`, one leg per outcome.
-pub fn decide(_cfg: &Cfg, _carry: &Carry, _input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
-    unimplemented!("reconcile.goodput: not ported yet")
+fn phase_name(p: Phase) -> &'static str {
+    match p {
+        Phase::Idle => "idle",
+        Phase::Locking => "locking",
+        Phase::Standby => "standby",
+        Phase::Judging => "judging",
+        Phase::Stepping => "stepping",
+        Phase::Recording => "recording",
+        Phase::Releasing => "releasing",
+    }
+}
+
+fn secs(cfg: &Cfg, key: &str) -> Result<u64, String> {
+    cfg.get(key).and_then(|v| v.trim().parse::<u64>().ok()).filter(|v| *v > 0).ok_or_else(|| format!("{key} must be a positive integer"))
+}
+
+fn shadow(cfg: &Cfg) -> Vec<String> {
+    cfg.get(SHADOW_KINDS_KEY).map(|v| v.split_whitespace().map(String::from).collect()).unwrap_or_default()
+}
+
+fn act(name: &str, input: &impl Serialize) -> Result<Act, String> {
+    Ok(Act { name: name.into(), input: serde_json::to_string(input).map_err(|e| e.to_string())?, deadline_ms: LEG_DEADLINE_MS, probe: false })
+}
+
+/// Every leg's deadline: one store call (5 s), or for the judge and step legs a few in a row,
+/// each bounded by the socket client's own 5 s.
+pub const LEG_DEADLINE_MS: u64 = 30_000;
+
+/// Whether the snapshot has work for a pass: a halt (Mode::Halted still records), a judgement or
+/// step due, or open gaps and refusals that differ from the last record. A snapshot the strict
+/// parser refuses is read for its due intents and stale sections alone, so an unreadable answer
+/// never takes the lock every minute.
+pub fn has_work(cfg: &Cfg, carry: &Carry, snap: &Snapshot, now_ms: u64) -> bool {
+    if snap.halted {
+        return true;
+    }
+    match reconciler_engine::goodput_pass::legs::preview(&snap.section_snapshot, now_ms, &shadow(cfg), false) {
+        Ok(p) => p.judgements > 0 || p.steps > 0 || p.gaps != carry.last.gaps || p.refused != carry.last.refused,
+        Err(_) => {
+            let listed = |f: &str| snap.section_snapshot.get(f).and_then(serde_json::Value::as_array).cloned().unwrap_or_default();
+            listed("intents").iter().any(|i| i.get("due").and_then(serde_json::Value::as_bool) == Some(true)) || listed("sections").iter().any(|x| x.get("fresh").and_then(serde_json::Value::as_bool) == Some(false))
+        }
+    }
+}
+
+/// The legs' inputs, as the runners read them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LockIn {
+    pub holder: String,
+    pub ttl_secs: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReleaseIn {
+    pub token: String,
+    pub holder: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StepIn {
+    pub leg: reconciler_engine::goodput_pass::legs::LegConfig,
+    pub judged: reconciler_engine::goodput_pass::legs::Judged,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RecordIn {
+    pub token: String,
+    pub record: reconciler_engine::pass_record::PassRecord,
+}
+
+fn digest(r: &reconciler_engine::pass_record::PassRecord) -> PassDigest {
+    use reconciler_engine::goodput_pass::legs::refusal_key;
+    PassDigest { n: r.n, list_rev: r.list_rev, gaps: r.gaps.iter().map(|g| g.section.clone()).collect(), steps: r.steps.iter().map(|s| format!("{}/{}", s.section, s.action)).collect(), judged: r.judged.iter().map(|j| j.intent.clone()).collect(), refused: r.refused.iter().map(refusal_key).collect() }
+}
+
+/// `assemble` → `interim_ranking` → `select`, one leg per outcome: lock, judge, step, record,
+/// release. A leg's outcome after the pass deadline is refused naming it; the next observe
+/// releases the lock of a pass that ran past it.
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
+    use reconciler_engine::goodput_pass::legs::{Judged, LegConfig};
+    let leg = |c: &Carry| -> Result<LegConfig, String> {
+        Ok(LegConfig { token: c.token.clone().ok_or("no token is carried")?, holder: c.holder.clone().unwrap_or_default(), shadow: shadow(cfg), halted: c.halted, deadline_at_ms: c.deadline_at.unwrap_or(0) })
+    };
+    let idle = |c: &Carry| Carry { phase: Phase::Idle, token: None, deadline_at: None, holder: None, halted: false, ..c.clone() };
+    match input {
+        Input::Fire => Ok((carry.clone(), vec![])),
+        Input::Observed(snap) => {
+            if carry.phase != Phase::Idle {
+                if carry.deadline_at.is_some_and(|d| now_ms >= d) && carry.token.is_some() {
+                    let release = ReleaseIn { token: carry.token.clone().unwrap_or_default(), holder: carry.holder.clone().unwrap_or_default() };
+                    return Ok((Carry { phase: Phase::Releasing, ..carry.clone() }, vec![act(RELEASE, &release)?]));
+                }
+                if carry.deadline_at.is_none_or(|d| now_ms >= d) {
+                    return Ok((idle(carry), vec![]));
+                }
+                return Ok((carry.clone(), vec![]));
+            }
+            if !has_work(cfg, carry, snap, now_ms) {
+                return Ok((carry.clone(), vec![]));
+            }
+            let timeout = secs(cfg, PASS_TIMEOUT_KEY)?;
+            let holder = format!("{NAME}/{now_ms}");
+            let next = Carry { phase: Phase::Locking, holder: Some(holder.clone()), token: None, deadline_at: Some(now_ms + timeout * 1000), halted: snap.halted, ..carry.clone() };
+            Ok((next, vec![act(LOCK, &LockIn { holder, ttl_secs: timeout })?]))
+        }
+        Input::Outcome { effect, ok, body } => {
+            let expected = match carry.phase {
+                Phase::Locking => LOCK,
+                Phase::Standby => STANDBY,
+                Phase::Judging => JUDGE,
+                Phase::Stepping => PUT,
+                Phase::Recording => RECORD,
+                Phase::Releasing => RELEASE,
+                Phase::Idle => "",
+            };
+            if effect != expected {
+                return Err(format!("{NAME}: in state {} no outcome of {effect} is expected", phase_name(carry.phase)));
+            }
+            let under_lock = matches!(carry.phase, Phase::Judging | Phase::Stepping | Phase::Recording);
+            if under_lock && carry.deadline_at.is_some_and(|d| now_ms >= d) {
+                return Err(format!("{NAME}: in state {} the pass deadline passed at {} ms; no further write is made", phase_name(carry.phase), carry.deadline_at.unwrap_or(0)));
+            }
+            let release = |c: &Carry| -> Result<(Carry, Vec<Act>), String> {
+                let r = ReleaseIn { token: c.token.clone().unwrap_or_default(), holder: c.holder.clone().unwrap_or_default() };
+                Ok((Carry { phase: Phase::Releasing, ..c.clone() }, vec![act(RELEASE, &r)?]))
+            };
+            match carry.phase {
+                Phase::Locking if *ok => {
+                    let v: serde_json::Value = serde_json::from_str(body.trim()).map_err(|e| format!("{NAME}: the lock grant is not JSON: {e}"))?;
+                    let token = v.get("token").and_then(serde_json::Value::as_str).ok_or_else(|| format!("{NAME}: the lock grant names no token"))?.to_string();
+                    let next = Carry { phase: Phase::Judging, token: Some(token), ..carry.clone() };
+                    Ok((next.clone(), vec![act(JUDGE, &leg(&next)?)?]))
+                }
+                Phase::Locking if body.contains("locked") => Ok((Carry { phase: Phase::Standby, ..carry.clone() }, vec![act(STANDBY, &LockIn { holder: carry.holder.clone().unwrap_or_default(), ttl_secs: 0 })?])),
+                Phase::Locking | Phase::Standby => Ok((idle(carry), vec![])),
+                Phase::Judging if *ok => {
+                    let judged: Judged = serde_json::from_str(body).map_err(|e| format!("{NAME}: the judge leg's answer does not decode: {e}"))?;
+                    let l = leg(carry)?;
+                    if judged.steps.is_empty() {
+                        return Ok((Carry { phase: Phase::Recording, ..carry.clone() }, vec![act(RECORD, &RecordIn { token: l.token, record: judged.record })?]));
+                    }
+                    Ok((Carry { phase: Phase::Stepping, ..carry.clone() }, vec![act(PUT, &StepIn { leg: l, judged })?]))
+                }
+                Phase::Stepping if *ok => {
+                    let record: reconciler_engine::pass_record::PassRecord = serde_json::from_str(body).map_err(|e| format!("{NAME}: the step leg's answer does not decode: {e}"))?;
+                    Ok((Carry { phase: Phase::Recording, ..carry.clone() }, vec![act(RECORD, &RecordIn { token: leg(carry)?.token, record })?]))
+                }
+                Phase::Recording if *ok => {
+                    let last = serde_json::from_str::<RecordIn>(body).map(|r| digest(&r.record)).unwrap_or_else(|_| carry.last.clone());
+                    release(&Carry { last, recorded_at: Some(now_ms), ..carry.clone() })
+                }
+                Phase::Judging | Phase::Stepping | Phase::Recording => release(carry),
+                Phase::Releasing => Ok((idle(carry), vec![])),
+                Phase::Idle => unreachable!("an idle task expects no outcome, refused above"),
+            }
+        }
+        Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {r:?}", phase_name(carry.phase))),
+    }
+}
+
+use reconciler_engine::goodput_pass::Socket;
+
+/// The runner of [`OBSERVE`]: the halt stamp and the store's `section snapshot`. It never
+/// takes the lock.
+pub fn observe(lc: &spira_config::lc_call::LcClient, run_dir: &std::path::Path) -> Result<String, String> {
+    let section_snapshot: serde_json::Value = serde_json::from_str(lc.answer(&["section", "snapshot"]).map_err(String::from)?.trim()).map_err(|e| format!("section snapshot answered non-JSON: {e}"))?;
+    serde_json::to_string(&Snapshot { halted: run_dir.join("world.halted").exists(), section_snapshot, lock: LockAnswer::default() }).map_err(|e| e.to_string())
+}
+
+/// The runner of [`LOCK`]: the grant's `{"token"}`, or a failure reading `locked`.
+pub fn lock(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, String> {
+    use reconciler_engine::goodput_pass::legs::{acquire, Lock};
+    let i: LockIn = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    match acquire(&Socket(lc.clone()), &i.holder, i.ttl_secs)? {
+        Lock::Granted(token) => Ok(serde_json::json!({ "token": token }).to_string()),
+        Lock::Locked => Err("locked".into()),
+    }
+}
+
+/// The runner of [`STANDBY`].
+pub fn standby(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, String> {
+    let i: LockIn = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    reconciler_engine::goodput_pass::legs::standby(&Socket(lc.clone()), &i.holder).map(|v| v.to_string())
+}
+
+/// The runner of [`JUDGE`]: the snapshot under the lock, the plan and the judgements.
+pub fn judge(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, String> {
+    let l: reconciler_engine::goodput_pass::legs::LegConfig = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    let judged = reconciler_engine::goodput_pass::legs::judge(&Socket(lc.clone()), &runtime::ports::WallClock, &l)?;
+    serde_json::to_string(&judged).map_err(|e| e.to_string())
+}
+
+/// The runner of [`PUT`]: every planned step written and read back; the record with them.
+pub fn put(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, String> {
+    let i: StepIn = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    let (record, _) = reconciler_engine::goodput_pass::legs::step(&Socket(lc.clone()), &runtime::ports::WallClock, &i.leg, i.judged);
+    serde_json::to_string(&record).map_err(|e| e.to_string())
+}
+
+/// The runner of [`RECORD`]: `pass record`; the answer echoes the record so the carry keeps
+/// its digest.
+pub fn record(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, String> {
+    let i: RecordIn = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    reconciler_engine::goodput_pass::legs::record(&Socket(lc.clone()), &i.token, &i.record)?;
+    Ok(input.to_string())
+}
+
+/// The runner of [`RELEASE`].
+pub fn release(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, String> {
+    let i: ReleaseIn = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    reconciler_engine::goodput_pass::legs::release(&Socket(lc.clone()), &i.token, &i.holder).map(|()| "released".into())
 }
 
 super::hosted!(ReconcileGoodput);

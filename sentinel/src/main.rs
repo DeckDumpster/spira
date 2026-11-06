@@ -28,7 +28,7 @@ mod holds;
 mod host;
 mod judge;
 mod lifecycle;
-use sentinel::model;
+mod model;
 mod open_children;
 mod red_trackers;
 mod pass;

@@ -37,62 +37,6 @@ macro_rules! stubs {
 
 pub static TASKS: &[Task] = &[
     Task {
-        name: sift::NAME,
-        boot: sift::Sift::boot,
-        cadence_ms: |_| sift::CADENCE_MS,
-        effects: sift::EFFECTS,
-        runners: &[(sift::OBSERVE, |e, _, s| sift::observe(e, &s.input)), (sift::FETCH_BASE, |_, _, s| sift::fetch_base(&s.input)), (sift::NOTE, |e, _, s| sift::note(e, s)), (sift::SEND_BACK, |e, _, s| sift::send_back(e, s)), (sift::RECORD_PASS, |e, _, s| sift::record_pass(e, s)), (sift::SUPERSEDE, |e, _, s| sift::supersede(e, s))],
-        keys: &[sift::KEYS],
-        build: |_| sift::Sift::from_cfg().registration(),
-    },
-    Task {
-        name: czar::NAME,
-        boot: czar::Czar::boot,
-        cadence_ms: |_| czar::CADENCE_MS,
-        effects: czar::EFFECTS,
-        runners: &[(czar::OBSERVE, |e, _, s| czar::observe(e, &s.input)), (czar::FILE_INCIDENT, |_, _, s| czar::file(&s.input)), (czar::FILE_BASE_RED, |_, _, s| czar::file(&s.input)), (czar::RERUN_WORKFLOW, |_, _, s| czar::rerun_workflow(&s.input)), (czar::RESTART_LANDING, |e, _, _| czar::restart_landing(e)), (czar::STATUS, |e, _, s| czar::status(e, &s.input))],
-        keys: &[czar::KEYS],
-        build: |_| czar::Czar::from_cfg().registration(),
-    },
-    Task {
-        name: sentinel_call::NAME,
-        boot: sentinel_call::SentinelCall::boot,
-        cadence_ms: |_| 60_000,
-        effects: sentinel_call::EFFECTS,
-        runners: &[(sentinel_call::OBSERVE, |e, _, s| sentinel_call::observe(e, &s.input)), (sentinel_call::UNIT_START, |e, _, s| sentinel_call::unit_start(e, s)), (sentinel_call::PREEMPT, |e, _, s| sentinel_call::preempt(e, &s.input)), (sentinel_call::PREEMPT_LOG, |e, _, s| sentinel_call::preempt_log(e, &s.input)), (sentinel_call::METRIC, |e, _, s| sentinel_call::metric(e, &s.input))],
-        keys: &[sentinel_call::KEYS],
-        build: |_| sentinel_call::SentinelCall::from_cfg().registration(),
-    },
-    Task {
-        name: sentinel_pass::NAME,
-        boot: sentinel_pass::SentinelPass::boot,
-        cadence_ms: |_| sentinel_pass::CADENCE_MS,
-        effects: sentinel_pass::EFFECTS,
-        runners: &[
-            (sentinel_pass::OBSERVE, |e, _, s| sentinel_pass::observe(e, &s.input)),
-            (sentinel_pass::LC_EVENT, |e, _, s| sentinel_pass::lc_event(e, s)),
-            (sentinel_pass::LC_HOLD, |e, _, s| sentinel_pass::lc_hold(e, s)),
-            (sentinel_pass::LC_UNHOLD, |e, _, s| sentinel_pass::lc_unhold(e, s)),
-            (sentinel_pass::LC_FACT, |e, _, s| sentinel_pass::lc_fact(e, s)),
-            (sentinel_pass::LC_CLOSE, |e, _, s| sentinel_pass::lc_close(e, s)),
-            (sentinel_pass::CONTENT_LABEL, |_, _, s| sentinel_pass::unserved(s)),
-            (sentinel_pass::CONTENT_NOTE, |e, _, s| sentinel_pass::content_note(e, s)),
-            (sentinel_pass::CONTENT_CLOSE, |_, _, s| sentinel_pass::unserved(s)),
-            (sentinel_pass::RECOMPUTE_BLOCKED, |_, _, s| sentinel_pass::unserved(s)),
-            (sentinel_pass::STOP_HOLDER, |e, _, s| sentinel_pass::stop_holder(e, s)),
-            (sentinel_pass::LANDING_START, |e, _, s| sentinel_pass::landing_start(e, s)),
-            (sentinel_pass::WATCHTOWER, |_, _, s| sentinel_pass::not_ported(s)),
-            (sentinel_pass::STRAND, |_, _, s| sentinel_pass::not_ported(s)),
-            (sentinel_pass::PILGRIMAGE_CLOSE, |_, _, s| sentinel_pass::not_ported(s)),
-            (sentinel_pass::ASK, |_, _, s| sentinel_pass::not_ported(s)),
-            (sentinel_pass::INCIDENT_EVENT, |_, _, s| sentinel_pass::not_ported(s)),
-            (sentinel_pass::REFLECT, |_, _, s| sentinel_pass::not_ported(s)),
-            (sentinel_pass::PHASE_METRIC, |e, _, s| sentinel_pass::phase_metric(e, &s.input)),
-        ],
-        keys: &[sentinel_pass::KEYS],
-        build: |_| sentinel_pass::SentinelPass::from_cfg().registration(),
-    },
-    Task {
         name: sweep_target::NAME,
         boot: sweep_target::SweepTarget::boot,
         cadence_ms: |_| sweep_target::CADENCE_MS,
@@ -166,15 +110,52 @@ pub static TASKS: &[Task] = &[
         keys: &[gate_check::KEYS],
         build: |_| gate_check::GateCheck::from_cfg().registration(),
     },
+];
+
+/// Family A's rows, built from their contracts and waiting for their ports.
+pub static PENDING: &[Task] = &[
+    Task {
+        name: sentinel_call::NAME,
+        boot: sentinel_call::SentinelCall::boot,
+        cadence_ms: |_| 60_000,
+        effects: sentinel_call::EFFECTS,
+        runners: stubs!(sentinel_call: OBSERVE, UNIT_START, PREEMPT, PREEMPT_LOG, METRIC),
+        keys: &[sentinel_call::KEYS],
+        build: |_| sentinel_call::SentinelCall::from_cfg().registration(),
+    },
+    Task {
+        name: sentinel_pass::NAME,
+        boot: sentinel_pass::SentinelPass::boot,
+        cadence_ms: |_| sentinel_pass::CADENCE_MS,
+        effects: sentinel_pass::EFFECTS,
+        runners: stubs!(sentinel_pass: OBSERVE, LC_EVENT, LC_HOLD, LC_UNHOLD, LC_FACT, LC_CLOSE, CONTENT_LABEL, CONTENT_NOTE, CONTENT_CLOSE, RECOMPUTE_BLOCKED, STOP_HOLDER, LANDING_START, WATCHTOWER, STRAND, PILGRIMAGE_CLOSE, ASK, INCIDENT_EVENT, REFLECT, PHASE_METRIC),
+        keys: &[sentinel_pass::KEYS],
+        build: |_| sentinel_pass::SentinelPass::from_cfg().registration(),
+    },
+    Task {
+        name: czar::NAME,
+        boot: czar::Czar::boot,
+        cadence_ms: |_| czar::CADENCE_MS,
+        effects: czar::EFFECTS,
+        runners: stubs!(czar: OBSERVE, FILE_INCIDENT, FILE_BASE_RED, RERUN_WORKFLOW, RESTART_LANDING, STATUS),
+        keys: &[czar::KEYS],
+        build: |_| czar::Czar::from_cfg().registration(),
+    },
+    Task {
+        name: sift::NAME,
+        boot: sift::Sift::boot,
+        cadence_ms: |_| sift::CADENCE_MS,
+        effects: sift::EFFECTS,
+        runners: stubs!(sift: OBSERVE, FETCH_BASE, NOTE, SEND_BACK, RECORD_PASS, SUPERSEDE),
+        keys: &[sift::KEYS],
+        build: |_| sift::Sift::from_cfg().registration(),
+    },
     Task {
         name: batcher_local::NAME,
         boot: batcher_local::BatcherLocal::boot,
         cadence_ms: |_| batcher_local::CADENCE_MS,
         effects: batcher_local::EFFECTS,
-        runners: {
-            use batcher_local::{edge as x, *};
-            &[(OBSERVE, x::observe), (FETCH, x::fetch), (ASSEMBLE, x::assemble), (ROUND_OPEN, x::round_open), (CORPUS, x::corpus), (STAGE, x::stage), (STAGE_TEST, x::stage_test), (EJECT, x::eject), (WITHDRAW, x::withdraw), (REBASE_STALE, x::rebase_stale), (CERTIFY, x::certify), (LC_CERTIFY, x::lc_certify), (LAND, x::land), (ABANDON, x::abandon), (PROMOTE, x::promote), (REDRIVE, x::redrive), (FILE, x::file), (PAUSE, x::pause)]
-        },
+        runners: stubs!(batcher_local: OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, EJECT, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, PAUSE),
         keys: &[batcher_local::KEYS],
         build: |_| batcher_local::BatcherLocal::from_cfg().registration(),
     },
@@ -183,10 +164,7 @@ pub static TASKS: &[Task] = &[
         boot: batcher_forge::BatcherForge::boot,
         cadence_ms: |_| batcher_forge::CADENCE_MS,
         effects: batcher_forge::EFFECTS,
-        runners: {
-            use batcher_forge::{edge as x, *};
-            &[(OBSERVE, x::observe), (ARM, x::arm), (FETCH, x::fetch), (ASSEMBLE, x::assemble), (CORPUS, x::corpus), (WITHDRAW, x::withdraw), (SHOTS, x::shots), (BATCH_OPEN, x::batch_open), (FILE, x::file), (VERDICT_WRITE, x::verdict_write)]
-        },
+        runners: stubs!(batcher_forge: OBSERVE, ARM, FETCH, ASSEMBLE, CORPUS, WITHDRAW, SHOTS, BATCH_OPEN, FILE, VERDICT_WRITE),
         keys: &[batcher_forge::KEYS],
         build: |_| batcher_forge::BatcherForge::from_cfg().registration(),
     },
@@ -195,10 +173,7 @@ pub static TASKS: &[Task] = &[
         boot: queue_step::QueueStep::boot,
         cadence_ms: |_| queue_step::CADENCE_MS,
         effects: queue_step::EFFECTS,
-        runners: {
-            use queue_step::{edge as x, *};
-            &[(OBSERVE, x::observe), (PUSH, x::push), (LAND, x::land), (CLOSE_BEAD, x::close_bead), (GH_CLOSEOUT, x::gh_closeout), (PR_CLOSE, x::pr_close), (CANCEL_RUNS, x::cancel_runs), (RERUN, x::rerun), (JUDGEMENT, x::judgement), (OBSERVE_FLAKE, x::observe_flake), (EJECT, x::eject), (RECONCILE, x::reconcile), (SWEEP, x::sweep), (FILE_BUG, x::file_bug), (NOTIFY, x::notify), (RECORD, x::record)]
-        },
+        runners: stubs!(queue_step: OBSERVE, PUSH, LAND, CLOSE_BEAD, GH_CLOSEOUT, PR_CLOSE, CANCEL_RUNS, RERUN, JUDGEMENT, OBSERVE_FLAKE, EJECT, RECONCILE, SWEEP, FILE_BUG, NOTIFY, RECORD),
         keys: &[queue_step::KEYS],
         build: |_| queue_step::QueueStep::from_cfg().registration(),
     },
@@ -207,17 +182,11 @@ pub static TASKS: &[Task] = &[
         boot: publish::Publish::boot,
         cadence_ms: |_| publish::CADENCE_MS,
         effects: publish::EFFECTS,
-        runners: {
-            use publish::{edge as x, *};
-            &[(OBSERVE, x::observe), (PUSH_BRANCH, x::push_branch), (PUSH_FORGE, x::push_forge), (PR_CREATE, x::pr_create), (PR_CLOSE, x::pr_close), (CANCEL_RUNS, x::cancel_runs), (RERUN, x::rerun), (RECORD, x::record), (NOTIFY, x::notify)]
-        },
+        runners: stubs!(publish: OBSERVE, PUSH_BRANCH, PUSH_FORGE, PR_CREATE, PR_CLOSE, CANCEL_RUNS, RERUN, RECORD, NOTIFY),
         keys: &[publish::KEYS],
         build: |_| publish::Publish::from_cfg().registration(),
     },
 ];
-
-/// Family A's rows, built from their contracts and waiting for their ports.
-pub static PENDING: &[Task] = &[];
 
 #[cfg(test)]
 mod tests {

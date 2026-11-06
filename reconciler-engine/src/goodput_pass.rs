@@ -124,8 +124,8 @@ fn as_step(p: &Planned, intent: Option<String>) -> Step {
 struct Pass<'a> {
     lc: &'a dyn Lc,
     clock: &'a dyn Clock,
-    started_ms: u64,
-    timeout_ms: u64,
+    /// The pass's deadline on the injected clock: the lock grant plus its TTL.
+    deadline_at_ms: u64,
     token: String,
     deadline_hit: bool,
     failed: Vec<Refused>,
@@ -134,7 +134,7 @@ struct Pass<'a> {
 impl Pass<'_> {
     /// Whether a write may still be made: once the deadline passes, none is.
     fn may_write(&mut self) -> bool {
-        if self.clock.now_ms().saturating_sub(self.started_ms) >= self.timeout_ms {
+        if self.clock.now_ms() >= self.deadline_at_ms {
             self.deadline_hit = true;
         }
         !self.deadline_hit
@@ -190,86 +190,212 @@ impl Pass<'_> {
 }
 
 /// One pass. `Err` when the lock or the snapshot cannot be read, or the pass record or the
-/// release did not commit; the lock is released on every path that read its token.
+/// release did not commit; the lock is released on every path that read its token. It is the
+/// [`legs`] run back to back in one process.
 pub fn run(lc: &dyn Lc, clock: &dyn Clock, cfg: &PassConfig) -> Result<Outcome, String> {
     let started_ms = clock.now_ms();
-    let ttl = cfg.timeout_secs.to_string();
-    let (code, v) = lc.call(&argv(&["lock", "acquire", RECONCILER_LOCK, "--ttl", &ttl, "--holder", &cfg.holder]));
-    if code != 0 {
-        if refusal_code(&v) != Some("locked") {
-            return Err(format!("lock acquire: {}", explain(code, &v)));
+    let token = match legs::acquire(lc, &cfg.holder, cfg.timeout_secs)? {
+        legs::Lock::Granted(token) => token,
+        legs::Lock::Locked => return Ok(Outcome::Standby { held_by: legs::standby(lc, &cfg.holder)? }),
+    };
+    let leg = legs::LegConfig { token: token.clone(), holder: cfg.holder.clone(), shadow: cfg.shadow.clone(), halted: cfg.halted, deadline_at_ms: started_ms.saturating_add(cfg.timeout_secs.saturating_mul(1000)) };
+    let mut deadline_hit = false;
+    let result = legs::judge(lc, clock, &leg).map(|judged| {
+        let (record, hit) = legs::step(lc, clock, &leg, judged);
+        deadline_hit = hit;
+        record
+    });
+    let recorded = match &result {
+        Ok(record) if clock.now_ms() < leg.deadline_at_ms => legs::record(lc, &token, record).is_ok(),
+        Ok(_) => {
+            deadline_hit = true;
+            false
         }
-        let (code, s) = lc.call(&argv(&["pass", "standby", "--holder", &cfg.holder]));
-        if code != 0 {
-            return Err(format!("pass standby: {}", explain(code, &s)));
-        }
-        return Ok(Outcome::Standby { held_by: s.get("held_by").cloned().unwrap_or(Value::Null) });
+        Err(_) => false,
+    };
+    let released = legs::release(lc, &token, &cfg.holder).is_ok();
+    let record = result?;
+    if !released || (!recorded && !deadline_hit) {
+        return Err(format!("pass {}: recorded={recorded} released={released}", record.n));
     }
-    let token = v.get("token").and_then(Value::as_str).ok_or("lock acquire answered no token")?.to_string();
-    let mut pass = Pass { lc, clock, started_ms, timeout_ms: cfg.timeout_secs.saturating_mul(1000), token, deadline_hit: false, failed: Vec::new() };
-    let result = pass_under_lock(&mut pass, clock, cfg);
-    let release = argv(&["lock", "release", RECONCILER_LOCK, "--token", &pass.token, "--holder", &cfg.holder]);
-    let released = lc.call(&release).0 == 0;
-    let mut p = result?;
-    p.released = released;
-    p.deadline_hit = pass.deadline_hit;
-    if !released || (!p.recorded && !p.deadline_hit) {
-        return Err(format!("pass {}: recorded={} released={released}", p.record.n, p.recorded));
-    }
-    Ok(Outcome::Passed(Box::new(p)))
+    Ok(Outcome::Passed(Box::new(Passed { record, deadline_hit, recorded, released })))
 }
 
-fn pass_under_lock(pass: &mut Pass, clock: &dyn Clock, cfg: &PassConfig) -> Result<Passed, String> {
-    let (code, v) = pass.lc.call(&argv(&["section", "snapshot"]));
-    if code != 0 {
-        return Err(format!("section snapshot: {}", explain(code, &v)));
-    }
-    let now_ms = clock.now_ms();
-    let a = assemble(&Snapshot::parse(&v)?, now_ms);
-    let gaps = interim_ranking(&a);
-    let plan = select(&Inputs { assembled: &a, gaps: &gaps, shadow: &cfg.shadow, halted: cfg.halted, now_ms, token: &pass.token });
-
-    let judged = pass.judge(&plan, &cfg.shadow, cfg.halted);
-    let mut refused = plan.refused.clone();
-    refused.append(&mut pass.failed);
-    let mut steps = Vec::new();
-    for p in &plan.steps {
-        match pass.step(p) {
-            Ok(s) => steps.push(s),
-            Err(r) => refused.push(r),
-        }
-    }
-    let mode = if cfg.halted {
+fn mode_of(halted: bool, steps: &[Step], would_step: &[Step]) -> Mode {
+    if halted {
         Mode::Halted
-    } else if steps.is_empty() && !plan.would_step.is_empty() {
+    } else if steps.is_empty() && !would_step.is_empty() {
         Mode::Shadow
     } else {
         Mode::Acting
-    };
-    let open: Vec<&RankedGap> = gaps.iter().filter(|g| g.open).collect();
-    let record = PassRecord {
-        n: a.n,
-        list_rev: a.list_rev,
-        at: format_rfc3339(now_ms / 1000),
-        holder: cfg.holder.clone(),
-        mode,
-        goodput: goodput(&a),
-        binding: open.first().map(|g| g.section.clone()),
-        gaps: open.iter().map(|g| Gap { section: g.section.clone(), distance: g.distance, score: g.score }).collect(),
-        steps,
-        would_step: plan.would_step.iter().map(|p| as_step(p, None)).collect(),
-        judged,
-        acks_refused: plan.acks_refused.clone(),
-        refused,
-        exhausted: plan.exhausted.clone(),
-        no_lever: plan.no_lever.clone(),
-        ages: a.ages.clone(),
-        shadow_kinds: cfg.shadow.clone(),
-    };
-    let mut recorded = false;
-    if pass.may_write() {
-        let args = with_body(argv(&["pass", "record", "--token", &pass.token, "--actor", RECONCILER]), &record);
-        recorded = pass.lc.call(&args).0 == 0;
     }
-    Ok(Passed { record, deadline_hit: false, recorded, released: false })
+}
+
+/// The pass split at its writes, so a scheduler runs each leg as one effect and decides the
+/// next on its outcome: acquire, then judge (snapshot, assemble, rank, select and the
+/// judgements), then step (every put and its read-back), then record, then release. Each leg
+/// reads time only from the clock it is handed and writes only with the lock's token.
+pub mod legs {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+
+    /// What the lock answered.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub enum Lock {
+        Granted(String),
+        /// Another holder has it: the pass stands by.
+        Locked,
+    }
+
+    /// The fixed facts every leg of one pass carries.
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct LegConfig {
+        pub token: String,
+        pub holder: String,
+        pub shadow: Vec<String>,
+        pub halted: bool,
+        /// The lock grant plus its TTL; no write is made at or after it.
+        pub deadline_at_ms: u64,
+    }
+
+    /// The judge leg's answer: the record so far, and the steps still to write.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    pub struct Judged {
+        pub record: PassRecord,
+        pub steps: Vec<Planned>,
+    }
+
+    /// What a pass on snapshot `v` would do, read without the lock and writing nothing: the open
+    /// gaps, the refusals by `section/action/code`, and how many judgements and steps are due.
+    /// A scheduler asks this to tell an idle minute from one with work.
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    pub struct Preview {
+        pub gaps: Vec<String>,
+        pub refused: Vec<String>,
+        pub judgements: usize,
+        pub steps: usize,
+    }
+
+    /// The `section/action/code` a refusal is told apart by.
+    pub fn refusal_key(r: &Refused) -> String {
+        format!("{}/{}/{}", r.section, r.action, r.code)
+    }
+
+    pub fn preview(v: &Value, now_ms: u64, shadow: &[String], halted: bool) -> Result<Preview, String> {
+        let a = assemble(&Snapshot::parse(v)?, now_ms);
+        let gaps = interim_ranking(&a);
+        let plan = select(&Inputs { assembled: &a, gaps: &gaps, shadow, halted, now_ms, token: "" });
+        Ok(Preview { gaps: gaps.iter().filter(|g| g.open).map(|g| g.section.clone()).collect(), refused: plan.refused.iter().map(refusal_key).collect(), judgements: plan.judged.len(), steps: plan.steps.len() })
+    }
+
+    /// `lock acquire` for `holder` with `ttl_secs`.
+    pub fn acquire(lc: &dyn Lc, holder: &str, ttl_secs: u64) -> Result<Lock, String> {
+        let ttl = ttl_secs.to_string();
+        let (code, v) = lc.call(&argv(&["lock", "acquire", RECONCILER_LOCK, "--ttl", &ttl, "--holder", holder]));
+        if code == 0 {
+            return v.get("token").and_then(Value::as_str).map(|t| Lock::Granted(t.to_string())).ok_or_else(|| "lock acquire answered no token".to_string());
+        }
+        if refusal_code(&v) == Some("locked") {
+            return Ok(Lock::Locked);
+        }
+        Err(format!("lock acquire: {}", explain(code, &v)))
+    }
+
+    /// `pass standby`: the record that names who holds the lock.
+    pub fn standby(lc: &dyn Lc, holder: &str) -> Result<Value, String> {
+        let (code, s) = lc.call(&argv(&["pass", "standby", "--holder", holder]));
+        if code != 0 {
+            return Err(format!("pass standby: {}", explain(code, &s)));
+        }
+        Ok(s.get("held_by").cloned().unwrap_or(Value::Null))
+    }
+
+    /// The snapshot under the lock, the plan, and the judgements written.
+    pub fn judge(lc: &dyn Lc, clock: &dyn Clock, cfg: &LegConfig) -> Result<Judged, String> {
+        let (code, v) = lc.call(&argv(&["section", "snapshot"]));
+        if code != 0 {
+            return Err(format!("section snapshot: {}", explain(code, &v)));
+        }
+        let now_ms = clock.now_ms();
+        let a = assemble(&Snapshot::parse(&v)?, now_ms);
+        let gaps = interim_ranking(&a);
+        let plan = select(&Inputs { assembled: &a, gaps: &gaps, shadow: &cfg.shadow, halted: cfg.halted, now_ms, token: &cfg.token });
+        let mut pass = Pass { lc, clock, deadline_at_ms: cfg.deadline_at_ms, token: cfg.token.clone(), deadline_hit: false, failed: Vec::new() };
+        let judged = pass.judge(&plan, &cfg.shadow, cfg.halted);
+        let mut refused = plan.refused.clone();
+        refused.append(&mut pass.failed);
+        let open: Vec<&RankedGap> = gaps.iter().filter(|g| g.open).collect();
+        let would_step: Vec<Step> = plan.would_step.iter().map(|p| as_step(p, None)).collect();
+        let record = PassRecord {
+            n: a.n,
+            list_rev: a.list_rev,
+            at: format_rfc3339(now_ms / 1000),
+            holder: cfg.holder.clone(),
+            mode: mode_of(cfg.halted, &[], &would_step),
+            goodput: goodput(&a),
+            binding: open.first().map(|g| g.section.clone()),
+            gaps: open.iter().map(|g| Gap { section: g.section.clone(), distance: g.distance, score: g.score }).collect(),
+            steps: Vec::new(),
+            would_step,
+            judged,
+            acks_refused: plan.acks_refused.clone(),
+            refused,
+            exhausted: plan.exhausted.clone(),
+            no_lever: plan.no_lever.clone(),
+            ages: a.ages.clone(),
+            shadow_kinds: cfg.shadow.clone(),
+        };
+        Ok(Judged { record, steps: plan.steps })
+    }
+
+    /// Every planned step written and read back; a step that fails is refused in the record.
+    /// The second value is whether the deadline stopped a write.
+    pub fn step(lc: &dyn Lc, clock: &dyn Clock, cfg: &LegConfig, judged: Judged) -> (PassRecord, bool) {
+        let mut pass = Pass { lc, clock, deadline_at_ms: cfg.deadline_at_ms, token: cfg.token.clone(), deadline_hit: false, failed: Vec::new() };
+        let mut record = judged.record;
+        for p in &judged.steps {
+            match pass.step(p) {
+                Ok(s) => record.steps.push(s),
+                Err(r) => record.refused.push(r),
+            }
+        }
+        record.mode = mode_of(cfg.halted, &record.steps, &record.would_step);
+        (record, pass.deadline_hit)
+    }
+
+    /// `pass record` under the token.
+    pub fn record(lc: &dyn Lc, token: &str, record: &PassRecord) -> Result<(), String> {
+        let (code, v) = lc.call(&with_body(argv(&["pass", "record", "--token", token, "--actor", RECONCILER]), record));
+        if code == 0 {
+            Ok(())
+        } else {
+            Err(format!("pass record: {}", explain(code, &v)))
+        }
+    }
+
+    /// `lock release` of the token; attempted on every path that read it.
+    pub fn release(lc: &dyn Lc, token: &str, holder: &str) -> Result<(), String> {
+        let (code, v) = lc.call(&argv(&["lock", "release", RECONCILER_LOCK, "--token", token, "--holder", holder]));
+        if code == 0 {
+            Ok(())
+        } else {
+            Err(format!("lock release: {}", explain(code, &v)))
+        }
+    }
+}
+
+/// [`Lc`] over the store's socket client: every verb the pass speaks (`intent`, `lock`, `pass`,
+/// `section`) is served there. A non-JSON answer is a cannot-tell value, never a guess.
+pub struct Socket(pub spira_config::lc_call::LcClient);
+
+impl Lc for Socket {
+    fn call(&self, args: &[String]) -> (i32, Value) {
+        match self.0.call(args) {
+            Ok(r) => {
+                let v = serde_json::from_str(r.out.trim()).unwrap_or_else(|_| serde_json::json!({ "cannot_tell": format!("the lifecycle store answered non-JSON: {}", r.why()) }));
+                (r.code, v)
+            }
+            Err(e) => (-1, serde_json::json!({ "cannot_tell": e.to_string() })),
+        }
+    }
 }

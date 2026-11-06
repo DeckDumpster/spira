@@ -277,8 +277,8 @@ impl<'a> Sentinel<'a> {
             // program (the release's), or the bare name for systemd to refuse, naming it.
             a.push(crate::pass::on_path(&self.cfg.landing_bin, self.cfg.raw("PATH")));
             a.push("land".into());
-            // FORK-EDGE: the CLI pass's own dispatch. The machine leg is the scheduler's
-            // `sentinel-pass` task (`unit.start` of its `landing` unit, matched back by `unit.ran`).
+            // FORK-EDGE: needs UnitSpec properties and an installed unit name (the landing unit is
+            // launched by systemd-run with setenv/property flags the port cannot carry yet).
             let o = self.h.run(
                 Spec::args_owned(self.cfg.launch.clone(), a)
                     .out(Io::Inherit)

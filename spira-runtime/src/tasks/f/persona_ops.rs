@@ -99,7 +99,7 @@ pub const EFFECTS: &[&str] = &[OBSERVE, INTAKE_INSTALL, INCIDENT_DRAIN, BRIEF, U
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_PERSONA_OPS_SECS";
 /// `BD_TIMEOUT` is dropped: no step of the sweep calls bd with a deadline any more (statutes
 /// come over the store's socket, the drain's bd calls carry their own).
-pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_AGENT", "SPIRA_MEMORIES_CACHE", "SPIRA_MEMORIES_CACHE_AGE", "SPIRA_STATUTE_CORE", "SPIRA_STATUTE_CORE_LOCAL", "SPIRA_BDQ_CONN_RETRIES", "SPIRA_ALERT_GLOB", "SPIRA_RUN"];
+pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_AGENT", "SPIRA_MEMORIES_CACHE", "SPIRA_MEMORIES_CACHE_AGE", "SPIRA_STATUTE_CORE", "SPIRA_STATUTE_CORE_LOCAL", "SPIRA_REPO", "SPIRA_BDQ_CONN_RETRIES", "SPIRA_ALERT_GLOB", "SPIRA_RUN"];
 
 /// The first line of a prompt that means there is nothing to sweep.
 pub const NOMINAL: &str = "SWEEP:NOMINAL";
@@ -558,9 +558,7 @@ pub fn run_brief(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, Stri
         memories_cache_age: get(cfg, "SPIRA_MEMORIES_CACHE_AGE").parse().unwrap_or(0),
         statute_core: get(cfg, "SPIRA_STATUTE_CORE").to_string(),
         statute_core_local: get(cfg, "SPIRA_STATUTE_CORE_LOCAL").to_string(),
-        // The home repo's checkout from the pinned repo map, not `SPIRA_REPO`: that is a
-        // per-copy fact the config door never resolves, so declaring it refused the settings whole.
-        harness_repo: e.world.home_path().map(|p| p.display().to_string()).unwrap_or_default(),
+        harness_repo: get(cfg, "SPIRA_REPO").to_string(),
         toml: spira_config::process::cfg("SPIRA_TOML").unwrap_or_default(),
     };
     let lc = spira_config::lc_call::LcClient::socket(&e.world.lc_socket);

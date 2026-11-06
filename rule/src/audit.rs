@@ -127,40 +127,6 @@ pub fn finding_title(f: &Finding) -> String {
     format!("Statute {} names a tool or verb that does not exist: {}", f.slug, f.missing.join(", "))
 }
 
-/// Every tool name the book's statutes name, by the base name the lookup is asked for: what a
-/// caller holding the release must read so [`audit`] can be served from memory.
-pub fn named_tools(memories: &BTreeMap<String, serde_json::Value>) -> std::collections::BTreeSet<String> {
-    memories
-        .iter()
-        .filter(|(k, _)| k.starts_with("law-"))
-        .filter_map(|(_, v)| v.as_str())
-        .flat_map(extract_refs)
-        .map(|r| base(&r.tool).to_string())
-        .collect()
-}
-
-/// The activated release as `audit --file` reads it: `SPIRA_HOME`, its parent, then the parent's
-/// `bin/` and `model-bin/`, the first regular file of that name.
-pub fn release_lookup(home: &str) -> impl Fn(&str) -> Option<String> {
-    let home = std::path::Path::new(home);
-    let root = home.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
-    let dirs = [home.to_path_buf(), root.clone(), root.join("bin"), root.join("model-bin")];
-    move |name: &str| dirs.iter().map(|d| d.join(name)).find(|p| p.is_file()).map(|p| String::from_utf8_lossy(&std::fs::read(p).unwrap_or_default()).into_owned())
-}
-
-/// The findings `audit --file` files, in order: a finding whose slug appears in any open title
-/// is skipped, and at most `max` are kept; the second value is whether the bound cut the rest.
-pub fn to_file<'a>(findings: &'a [Finding], open_titles: &[String], max: usize) -> (Vec<&'a Finding>, bool) {
-    let fresh: Vec<&Finding> = findings.iter().filter(|f| !open_titles.iter().any(|t| t.contains(&f.slug))).collect();
-    let bounded = fresh.len() > max;
-    (fresh.into_iter().take(max).collect(), bounded)
-}
-
-/// The body of the bead filed for a finding titled `title`.
-pub fn bead_body(title: &str) -> String {
-    format!("{title}\n\nThe statute names the above and the activated release has no such tool or verb. Build it, or amend the statute to name what exists (rule.sh enact with --tool).\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

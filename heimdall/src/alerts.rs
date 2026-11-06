@@ -11,18 +11,26 @@ use crate::util;
 ///
 /// NO MARKDOWN IN THE TRAILER. It is read in a tmux pane, which renders no emphasis.
 pub fn body_of(key: &str, first: i64, flaps: i64, evidence: &str, tz: &str) -> String {
+    body_with(key, &util::iso_display(first, tz), flaps, evidence)
+}
+
+/// [`body_of`] with the first-seen time already rendered as `first_seen`.
+pub fn body_with(key: &str, first_seen: &str, flaps: i64, evidence: &str) -> String {
     format!(
-        "**Condition:** `{key}`\n**First seen:** {}  ·  **Fired:** {flaps} time(s)\n\n```\n{}\n```\n\nRaised by Heimdall (bin/heimdall; replaces spira/heimdall.sh), which watches the loop and only\nspeaks - it repairs nothing. It clears this itself when the condition passes,\nso nothing is owed. Clearing it by hand acknowledges it: Heimdall will not raise\nit again until the condition has cleared and returned.\n",
-        util::iso_display(first, tz),
+        "**Condition:** `{key}`\n**First seen:** {first_seen}  ·  **Fired:** {flaps} time(s)\n\n```\n{}\n```\n\nRaised by Heimdall (bin/heimdall; replaces spira/heimdall.sh), which watches the loop and only\nspeaks - it repairs nothing. It clears this itself when the condition passes,\nso nothing is owed. Clearing it by hand acknowledges it: Heimdall will not raise\nit again until the condition has cleared and returned.\n",
         evidence.trim(),
     )
 }
 
 /// The close reason for a cleared alert.
 pub fn clear_reason(first: i64, flaps: i64, clear_n: i64, tz: &str) -> String {
+    clear_reason_with(&util::iso_display(first, tz), flaps, clear_n)
+}
+
+/// [`clear_reason`] with the raise time already rendered as `raised`.
+pub fn clear_reason_with(raised: &str, flaps: i64, clear_n: i64) -> String {
     format!(
-        "Cleared by Heimdall: the condition stopped holding for {clear_n} consecutive checks.\nRaised {}, fired {flaps} time(s).\nNothing was repaired by Heimdall — it only reports. Either the loop recovered on its own\nor something else fixed it.\n",
-        util::iso_display(first, tz),
+        "Cleared by Heimdall: the condition stopped holding for {clear_n} consecutive checks.\nRaised {raised}, fired {flaps} time(s).\nNothing was repaired by Heimdall — it only reports. Either the loop recovered on its own\nor something else fixed it.\n",
     )
 }
 

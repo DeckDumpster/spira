@@ -105,83 +105,9 @@ pub struct Snapshot {
     pub word_cap: u64,
 }
 
-/// What `file_incident` takes: `incident file <title> -` with `body` on stdin, as a library call.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Filing {
-    pub title: String,
-    pub body: String,
-}
-
-const FILE_DEADLINE_MS: u64 = 60_000;
-
-/// The shelf as `sop lint` reads it, from the snapshot: `None` is the unreadable shelf.
-struct Shelf<'a>(Option<&'a BTreeMap<String, String>>);
-
-impl sop::ports::Bd for Shelf<'_> {
-    fn remember(&self, _: &str, _: &str) -> Result<(), String> {
-        Err("watch.sop_lint reads the shelf only".into())
-    }
-    fn recall(&self, key: &str) -> Option<String> {
-        self.0?.get(key).cloned()
-    }
-    fn forget(&self, _: &str) -> bool {
-        false
-    }
-    fn memories_json(&self) -> Option<String> {
-        self.0.and_then(|m| serde_json::to_string(m).ok())
-    }
-    fn note(&self, _: &str, _: &str) -> bool {
-        false
-    }
-}
-
-/// What `sop lint 2>&1` printed and its exit code, from `sop::logic::lint` over `snap`'s shelf.
-pub fn lint(snap: &Snapshot) -> (i32, String) {
-    let cap = usize::try_from(snap.word_cap).unwrap_or(usize::MAX);
-    let r = sop::logic::lint(&Shelf(snap.shelf.as_ref()), cap);
-    (r.code, r.out.iter().chain(&r.err).cloned().collect::<Vec<_>>().join("\n"))
-}
-
 /// `sop::logic::lint` over the shelf: nothing, file(blind) or file(finding); nothing while halted.
-pub fn decide(snap: &Snapshot, _cfg: &Config) -> Vec<EffectSpec> {
-    if snap.halted {
-        return vec![];
-    }
-    let (code, out) = lint(snap);
-    // `sop-lint-watch.sh:13-18`: the blind refusal is read from the output, before the code.
-    let title = if out.contains("could not read the shelf") {
-        BLIND_TITLE
-    } else if code != 0 {
-        FINDING_TITLE
-    } else {
-        return vec![];
-    };
-    let input = serde_json::to_string(&Filing { title: title.into(), body: out }).unwrap_or_default();
-    vec![EffectSpec { name: FILE_INCIDENT.into(), input, deadline_ms: FILE_DEADLINE_MS }]
-}
-
-/// The sop word cap `sop lint` applies when `SOP_WORD_CAP` is unset (`sop/src/main.rs:47`); the
-/// key is not registered config, so the default is the one production ran.
-pub const WORD_CAP: u64 = 250;
-
-/// The probe: the halt stamp, and the shelf over the store's `content memories --json`. A failed
-/// or unparseable read is `shelf: None`, the blind case, never an empty shelf.
-pub fn observe(e: &crate::Effects, _key: &str, _spec: &EffectSpec) -> Result<String, String> {
-    let halted = e.world.run_dir.join("world.halted").exists();
-    let shelf = if halted {
-        None
-    } else {
-        spira_config::lc_call::LcClient::socket(&e.world.lc_socket).answer(&["content", "memories", "--json"]).ok().and_then(|raw| sop::shelf::parse(&raw))
-    };
-    serde_json::to_string(&Snapshot { halted, shelf, word_cap: WORD_CAP }).map_err(|e| e.to_string())
-}
-
-/// The filing, in-process as `incident file <title> -` files it: deduplicated on the incident
-/// reference, spooled when the store is down.
-pub fn file_incident(_e: &crate::Effects, _key: &str, spec: &EffectSpec) -> Result<String, String> {
-    let f: Filing = serde_json::from_str(&spec.input).map_err(|e| format!("{FILE_INCIDENT}: bad input: {e}"))?;
-    incident::intake::file_payload(&f.title, f.body.as_bytes())?;
-    Ok(format!("filed: {}", f.title))
+pub fn decide(_snap: &Snapshot, _cfg: &Config) -> Vec<EffectSpec> {
+    unimplemented!("watch.sop_lint: not ported yet")
 }
 
 pub struct WatchSopLint {

@@ -92,18 +92,6 @@
 //! `run/reconciler-state.json`. The `--lint-default` verb (`cp:37-44`) is an operator tool and
 //! stays in the binary.
 //!
-//! ## The port
-//!
-//! `decide` judges each invariant with the `czar_pass` library's detectors (the binary's own,
-//! moved there) and advances its hysteresis with `reconciler_engine::core::step`, carried per
-//! key; the ladder phase is the carry's reading of that state. A filing, a rerun or a shadow
-//! line is made once per streak: when a key first becomes a gap, and again when the remedy it
-//! tried did not close it. An act-stage inference also emits `call.requested`. The probe reads
-//! the landing log, the reconciler's pass stamp, the open batches from the store projection,
-//! the certified pool over `LcClient`, and the forge (the edge) for each open batch's CI and
-//! each base. `czar.restart_landing` has a runner and is not asked for: the landing loop is a
-//! task now, and its stall is filed rather than restarted.
-//!
 //! ## Reverse
 //!
 //! Release rollback restores the unit and timer. Per task: `Observe` mode (S4) journals each effect
@@ -113,12 +101,10 @@
 
 use std::collections::BTreeMap;
 
-use reconciler_engine::core::{record_remedy, step, HysteresisState, RawStatus, Verdict};
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
 
 use super::kit::{self, Act, Cadence, Shape};
-use crate::Effects;
 
 pub const NAME: &str = "czar";
 pub const STREAM: &str = "task.czar";
@@ -195,10 +181,6 @@ pub struct LandingEvent {
     pub repo: String,
     pub at_ms: u64,
 }
-
-pub const DEADLOCK_EVENT: &str = "verdict.deadlock";
-pub const REQUEUED_ALL_EVENT: &str = "verdict.requeued_all";
-pub const SORT_FAILED_EVENT: &str = "queue.sort_failed";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Batch {
@@ -282,10 +264,6 @@ impl Policy {
             queue_round_stall_secs: secs("SPIRA_QUEUE_ROUND_STALL_SECS")?,
         })
     }
-
-    fn stage(&self, class: &str) -> Stage {
-        self.stages.get(class).copied().unwrap_or_default()
-    }
 }
 
 /// One key's place on the remedy ladder.
@@ -314,300 +292,40 @@ pub static LADDER: &[(Phase, Phase)] = &[
 ];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
 pub struct KeyState {
     pub phase: Phase,
     pub since_ms: u64,
-    /// The engine's own streak memory for this key.
-    pub hysteresis: HysteresisState,
 }
 
 /// Carried between ticks: the hysteresis of every key, and the landing cursor.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
 pub struct Carry {
     pub keys: BTreeMap<String, KeyState>,
     pub cursor_ms: Option<u64>,
 }
 
 /// Move `key` from `from` to `to`, or refuse naming the key and the phase.
-pub fn advance(key: &str, from: Phase, to: Phase) -> Result<Phase, String> {
-    if from == to || LADDER.contains(&(from, to)) {
-        Ok(to)
-    } else {
-        Err(format!("{key}: {from:?} cannot move to {to:?}"))
-    }
+pub fn advance(_key: &str, _from: Phase, _to: Phase) -> Result<Phase, String> {
+    crate::not_ported!(NAME)
 }
 
-/// One pass of decide: the carry being built and the acts asked for.
-struct Pass<'a> {
-    policy: &'a Policy,
-    now: u64,
-    iso: String,
-    next: Carry,
-    acts: Vec<Act>,
-    labels: String,
-}
-
-/// The remedy a gap gets this tick.
-enum Remedy {
-    /// Re-dispatch a workflow run: (repo, run id).
-    Rerun(String, String),
-    /// File an inference.
-    File(czar_pass::Filing),
-}
-
-impl Pass<'_> {
-    /// `key` judged by one engine step; the verdict, and whether this tick is the streak's first
-    /// gap or the one its remedy was found to have failed on (the ticks a remedy is made on).
-    fn judge(&mut self, key: &str, raw: RawStatus, grace: u64) -> (Verdict, bool) {
-        let prev = self.next.keys.get(key).cloned().unwrap_or_default();
-        let (v, h) = step(self.now, raw, grace, prev.hysteresis.clone());
-        if !v.is_gap {
-            if h == HysteresisState::default() {
-                self.next.keys.remove(key);
-            } else {
-                self.next.keys.insert(key.into(), KeyState { phase: Phase::Satisfied, since_ms: v.since.unwrap_or(0) * 1000, hysteresis: h });
-            }
-            return (v, false);
-        }
-        let fresh = matches!(prev.phase, Phase::Satisfied) || v.remedy_failed;
-        let phase = if v.remedy_failed { Phase::RemedyFailed } else if prev.phase == Phase::Satisfied { Phase::Gap } else { prev.phase };
-        self.next.keys.insert(key.into(), KeyState { phase, since_ms: v.since.unwrap_or(self.now) * 1000, hysteresis: h });
-        (v, fresh)
-    }
-
-    fn set_phase(&mut self, key: &str, to: Phase) {
-        if let Some(k) = self.next.keys.get_mut(key) {
-            if let Ok(p) = advance(key, k.phase, to) {
-                k.phase = p;
-            }
-        }
-    }
-
-    /// The remedy of a gap that is fresh this tick, by stage: act files or reruns, shadow writes
-    /// the `CZAR-WOULD` line only.
-    fn remedy(&mut self, class: &str, key: &str, remedy: Remedy) {
-        let act = self.policy.stage(class) == Stage::Act;
-        match remedy {
-            Remedy::Rerun(repo, run) => {
-                let desc = format!("workflow-rerun {run} ({repo})");
-                if act {
-                    self.acts.push(Act::new(RERUN_WORKFLOW, format!("{repo}:{run}")).with_input(serde_json::json!({"repo": repo, "run_id": run}).to_string()));
-                } else {
-                    self.would(class, "det", &desc);
-                }
-                if let Some(k) = self.next.keys.get_mut(key) {
-                    record_remedy(&mut k.hysteresis, self.now, &desc);
-                }
-                self.set_phase(key, Phase::Remedied);
-            }
-            Remedy::File(mut f) => {
-                f.labels = self.labels.clone();
-                if act {
-                    let effect = if f.cause == "base-red" { FILE_BASE_RED } else { FILE_INCIDENT };
-                    self.acts.push(Act::new(effect, f.reference.clone()).with_input(serde_json::to_string(&f).unwrap_or_default()));
-                    self.acts.push(Act::new(CALL_REQUESTED, "czar").with_input(serde_json::json!({"rune": "czar"}).to_string()));
-                } else {
-                    self.would(class, "inference", &f.subject);
-                }
-                self.set_phase(key, Phase::Inferred);
-            }
-        }
-    }
-
-    fn would(&mut self, class: &str, kind: &str, desc: &str) {
-        let line = czar_pass::would_line(&self.iso, class, kind, desc);
-        self.acts.push(Act::new(INBOX_APPEND, &line).with_input(line));
-    }
-
-    fn status(&mut self, key: &str, v: &Verdict, before: Option<&KeyState>) {
-        let after = self.next.keys.get(key);
-        if after.map(|k| k.phase) != before.map(|k| k.phase) {
-            let word = match &v.status {
-                RawStatus::Satisfied => "satisfied",
-                RawStatus::Gap { .. } => "gap",
-                RawStatus::Unobservable { .. } => "unobservable",
-                RawStatus::Deliberate { .. } => "deliberate",
-            };
-            self.acts.push(Act::new(STATUS, format!("{key}:{}", self.now)).with_input(serde_json::json!({"key": key, "status": word, "since": v.since}).to_string()));
-        }
-    }
-
-    /// Judge `key`, remedy it on a fresh gap, and report its status when its phase moved.
-    fn run(&mut self, class: &str, key: &str, raw: RawStatus, grace: u64, remedy: impl FnOnce(&Verdict) -> Remedy) {
-        let before = self.next.keys.get(key).cloned();
-        let unobservable = matches!(raw, RawStatus::Unobservable { .. });
-        let (v, fresh) = self.judge(key, raw, grace);
-        if v.is_gap && fresh && !(unobservable && class != "base-red") {
-            let r = remedy(&v);
-            self.remedy(class, key, r);
-        }
-        self.status(key, &v, before.as_ref());
-    }
-}
-
-fn read<T: Clone>(r: Option<&Read<T>>) -> Result<Option<T>, String> {
-    match r {
-        None => Ok(None),
-        Some(Read::Observed(t)) => Ok(Some(t.clone())),
-        Some(Read::Unobservable(why)) => Err(why.clone()),
-    }
-}
-
-fn unobservable(why: impl Into<String>) -> RawStatus {
-    RawStatus::Unobservable { reason: why.into() }
-}
-
-/// The nine detectors over the snapshot, each key's hysteresis advanced once.
-pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
-    let now = snap.now_ms / 1000;
-    let mut p = Pass { policy, now, iso: czar_pass::iso_of(now), next: carry.clone(), acts: vec![], labels: String::new() };
-    // The probe reads the landing outcomes after the carried cursor; the cursor moves to the last.
-    let cursor = carry.cursor_ms.unwrap_or(0);
-    let events: Result<Vec<LandingEvent>, String> = match &snap.landing_events {
-        Read::Observed(e) => Ok(e.clone()),
-        Read::Unobservable(why) => Err(why.clone()),
-    };
-    if let Ok(e) = &events {
-        if let Some(last) = e.iter().map(|e| e.at_ms).max() {
-            p.next.cursor_ms = Some(last.max(cursor));
-        }
-    }
-    let seen = |kind: &str| events.as_ref().map(|e| e.iter().any(|x| x.kind == kind));
-    let line_class = |p: &mut Pass, class: &str, kind: &str, raw: fn(bool) -> RawStatus, filing: (&str, &str), body: &str| {
-        let raw = match seen(kind) {
-            Ok(s) => raw(s),
-            Err(why) => unobservable(why),
-        };
-        let (reference, subject) = filing;
-        p.run(class, class, raw, 0, |_| Remedy::File(czar_pass::Filing::queue(class, reference, subject, body, "")));
-    };
-    // deadlock: a rerun of the open batch's run first, then an inference.
-    {
-        let raw = match seen(DEADLOCK_EVENT) {
-            Ok(s) => czar_pass::deadlock(s),
-            Err(why) => unobservable(why),
-        };
-        let rerun = snap.open_batch.iter().find_map(|(repo, b)| match (b, snap.ci.get(repo)) {
-            (Read::Observed(Some(_)), Some(Read::Observed(Ci { run_id: Some(r), .. }))) => Some((repo.clone(), r.clone())),
-            _ => None,
-        });
-        let (reference, subject) = czar_pass::deadlock_filing();
-        let body = "verdict left the batch PR open after a red with no attributable suite.\nThe queue cannot advance until the batch is closed or requeued by hand.\n";
-        p.run("deadlock", "deadlock", raw, 0, |v| match rerun {
-            Some((repo, run)) if !v.remedy_failed => Remedy::Rerun(repo, run),
-            _ => Remedy::File(czar_pass::Filing::queue("deadlock", reference, subject, body, "")),
-        });
-    }
-    line_class(&mut p, "attribution-failed", REQUEUED_ALL_EVENT, czar_pass::attribution_failed, czar_pass::attribution_filing(), "Attribution found no branch to isolate the offender.\nThe entire batch was requeued with the failing member still in it; this loops.\n");
-    line_class(&mut p, "sort-failed", SORT_FAILED_EVENT, czar_pass::sort_failed, czar_pass::sort_filing(), "The queue sorter failed and fell back to unranked order.\nPriority ordering is suspended until the sorter recovers.\n");
-    {
-        let raw = match &snap.last_landing_pass_at_ms {
-            Read::Observed(at) => czar_pass::loop_stalled(now, at.map(|ms| ms / 1000), policy.loop_stall_secs),
-            Read::Unobservable(why) => unobservable(why.clone()),
-        };
-        let stall = policy.loop_stall_secs;
-        p.run("loop-stalled", "loop-stalled", raw, 0, |v| {
-            let age = v.since.map_or(0, |s| now.saturating_sub(s));
-            Remedy::File(czar_pass::Filing::queue("loop-stalled", "loop-stalled", &format!("QUEUE: landing loop stalled — no pass for {age}s"), &format!("No landing pass completed in the last {age}s (threshold: {stall}s).\n"), ""))
-        });
-    }
-    for (repo, batch) in &snap.open_batch {
-        let safe = czar_pass::repo_safe(repo);
-        let (cis_key, cir_key) = (format!("ci-stalled:{safe}"), format!("ci-red:{safe}"));
-        let (cis, cir, run_id) = match (batch, snap.ci.get(repo)) {
-            (Read::Observed(None), _) => continue,
-            (Read::Unobservable(why), _) => (unobservable(format!("{repo}: whether a batch is open: {why}")), unobservable(format!("{repo}: whether a batch is open: {why}")), None),
-            (Read::Observed(Some(_)), None) => continue,
-            (Read::Observed(Some(_)), Some(Read::Unobservable(why))) => (unobservable(format!("{repo}: batch-ci-status: {why}")), unobservable(format!("{repo}: batch-ci-status: {why}")), None),
-            (Read::Observed(Some(_)), Some(Read::Observed(ci))) => (
-                czar_pass::ci_stalled(now, repo, ci.queued_since_ms.map(|ms| ms / 1000), policy.ci_queued_max_secs),
-                czar_pass::ci_red(now, repo, ci.conclusion.as_deref(), ci.completed_at_ms.map(|ms| ms / 1000), policy.ci_red_max_secs),
-                ci.run_id.clone(),
-            ),
-        };
-        let max = policy.ci_queued_max_secs;
-        p.run("ci-stalled", &cis_key, cis, 0, |v| match &run_id {
-            Some(run) if !v.remedy_failed => Remedy::Rerun(repo.clone(), run.clone()),
-            _ => {
-                let age = v.since.map_or(0, |s| now.saturating_sub(s));
-                Remedy::File(czar_pass::Filing::queue("ci-stalled", &format!("ci-stalled-{safe}"), &format!("QUEUE: CI job queued with no runner for {age}s ({repo})"), &format!("A CI job for the open batch in {repo} has been queued for {age}s (threshold: {max}s).\nCancel the stuck run and re-dispatch the whole workflow.\n"), ""))
-            }
-        });
-        p.run("ci-red", &cir_key, cir, 0, |v| {
-            let age = v.since.map_or(0, |s| now.saturating_sub(s));
-            Remedy::File(czar_pass::Filing::queue("ci-red", &format!("ci-red-{safe}"), &format!("QUEUE: CI run completed red, verdict not acting for {age}s ({repo})"), &format!("CI run completed red for the open batch in {repo}.\nRed for {age}s; verdict has not acted.\n"), ""))
-        });
-    }
-    for (repo, base) in &snap.base_ci {
-        let safe = czar_pass::repo_safe(repo);
-        let key = format!("base-red:{safe}");
-        match base {
-            Read::Observed(b) if b.conclusion.is_some() => {
-                let raw = czar_pass::base_red(repo, "base", b.conclusion.as_deref());
-                let suites = czar_pass::suite_key(&b.red_suites);
-                let body = format!("{repo}'s own base gate run completed red.\n\nfailing suites   {suites}\nbase sha         {}\nrun url          {}\n", b.head_sha, b.run_url.as_deref().unwrap_or("(no run url)"));
-                p.run("base-red", &key, raw, 0, |_| Remedy::File(czar_pass::Filing::base_red(&format!("{repo}:{suites}"), &format!("QUEUE: {repo}'s base is red — {suites}"), &body, repo, "")));
-            }
-            other => {
-                let why = match other {
-                    Read::Unobservable(w) => w.clone(),
-                    _ => format!("{repo}'s base CI status returned no run information"),
-                };
-                let body = format!("{repo}'s base CI status could not be read: {why}.\nA base whose status cannot be read is treated as failed, not green.\n");
-                p.run("base-red", &key, unobservable(why), policy.base_ci_unreadable_grace_secs, |_| Remedy::File(czar_pass::Filing::base_red(&format!("{repo}:unreadable"), &format!("QUEUE: {repo}'s base CI status could not be read"), &body, repo, "")));
-            }
-        }
-    }
-    for (repo, certified) in &snap.certified {
-        let safe = czar_pass::repo_safe(repo);
-        let key = format!("pool-idle:{safe}");
-        let raw = match (read(snap.open_batch.get(repo)), certified) {
-            (Ok(open), Read::Observed(c)) => czar_pass::pool_idle(repo, open.flatten().is_some(), c.len() as u64, policy.queue_round_min_n),
-            (Err(why), _) => unobservable(format!("{repo}: {why}")),
-            (_, Read::Unobservable(why)) => unobservable(format!("{repo}: {why}")),
-        };
-        let min_n = policy.queue_round_min_n;
-        p.run("pool-idle", &key, raw, policy.queue_round_stall_secs, |v| {
-            let age = v.since.map_or(0, |s| now.saturating_sub(s));
-            Remedy::File(czar_pass::Filing::queue("pool-idle", &format!("pool-idle-{safe}"), &format!("QUEUE: {repo}'s certified pool idle {age}s with no round cut"), &format!("{repo}'s certified pool has sat at the round threshold ({min_n}) for {age}s with no batch open.\n"), ""))
-        });
-    }
-    {
-        let raw = match &snap.reconciler_last_pass_ms {
-            Read::Observed(at) => czar_pass::reconciler_stale(now, at.map(|ms| ms / 1000), policy.reconciler_grace_secs),
-            Read::Unobservable(why) => unobservable(why.clone()),
-        };
-        let grace = policy.reconciler_grace_secs;
-        p.run("reconciler-stale", "reconciler-stale", raw, grace, |_| Remedy::File(czar_pass::Filing::queue("reconciler-stale", "reconciler-stale", "RECONCILER: no pass completed — reconciler is not running", &format!("The reconciler has not completed a pass within {grace}s.\n"), "")));
-    }
-    let Pass { next, acts, .. } = p;
-    (next, acts)
-}
-
-/// The labels a filing carries: the scope label, then the czar's (`infer`'s `labels`).
-fn labels(pinned: &BTreeMap<String, String>) -> String {
-    let get = |k: &str| pinned.get(k).cloned().unwrap_or_default();
-    let (scope, czar) = (get("SPIRA_SCOPE_LABEL"), get("SPIRA_CZAR_LABEL"));
-    if scope.is_empty() { czar } else { format!("{scope},{czar}") }
+pub fn decide(_policy: &Policy, _carry: &Carry, _snap: &Snapshot) -> (Carry, Vec<Act>) {
+    crate::not_ported!(NAME)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Czar {
     pub cadence: Cadence,
     pub policy: Policy,
-    pub pinned: BTreeMap<String, String>,
 }
 
 impl Czar {
     pub fn new(policy: Policy) -> Self {
-        Czar { cadence: Cadence::Every(CADENCE_MS), policy, pinned: BTreeMap::new() }
+        Czar { cadence: Cadence::Every(CADENCE_MS), policy }
     }
 
     pub fn from_cfg() -> Self {
-        let pinned = kit::pin(NAME, KEYS);
-        Czar { pinned: pinned.clone(), ..Self::new(Policy::from_pinned(&pinned).unwrap_or_else(|e| panic!("{NAME} refuses to build: {e}"))) }
+        Self::new(Policy::from_pinned(&kit::pin(NAME, KEYS)).unwrap_or_else(|e| panic!("{NAME} refuses to build: {e}")))
     }
 
     pub fn registration(self) -> Registration {
@@ -617,15 +335,6 @@ impl Czar {
     pub fn boot() -> (&'static str, &'static str, EventKind) {
         ("czar/boot", STREAM, EventKind::new(TICK, ""))
     }
-}
-
-/// The observe probe's input: the carry (which T3 reads back) and the pinned config.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct ObserveIn {
-    #[serde(flatten)]
-    pub carry: Carry,
-    #[serde(default)]
-    pub pinned: BTreeMap<String, String>,
 }
 
 impl Handler for Czar {
@@ -639,182 +348,10 @@ impl Handler for Czar {
         }
         let carry: Carry = kit::carry(&SHAPE, view);
         if ev.kind.tag == TICK {
-            let input = ObserveIn { carry: carry.clone(), pinned: self.pinned.clone() };
-            return kit::on_tick(&SHAPE, serde_json::to_string(&input).unwrap_or_default(), self.cadence.next_after(ev.at));
+            return kit::on_tick(&SHAPE, serde_json::to_string(&carry).unwrap_or_default(), self.cadence.next_after(ev.at));
         }
         let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else { return vec![] };
-        let (next, mut acts) = decide(&self.policy, &carry, &snap);
-        let labels = labels(&self.pinned);
-        for a in acts.iter_mut().filter(|a| a.effect == FILE_INCIDENT || a.effect == FILE_BASE_RED) {
-            if let Ok(mut f) = serde_json::from_str::<czar_pass::Filing>(&a.input) {
-                f.labels = if a.effect == FILE_BASE_RED { format!("{}plan", if self.pinned.get("SPIRA_SCOPE_LABEL").is_some_and(|s| !s.is_empty()) { format!("{},", self.pinned["SPIRA_SCOPE_LABEL"]) } else { String::new() }) } else { labels.clone() };
-                a.input = serde_json::to_string(&f).unwrap_or_default();
-            }
-        }
+        let (next, acts) = decide(&self.policy, &carry, &snap);
         kit::commands(&SHAPE, ACTS, EMITS, &carry, &next, acts)
     }
-}
-
-// ---------------------------------------------------------------------------------------------
-// The runners.
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
-}
-
-/// The landing log's outcomes, and its last completed pass, read in-process.
-fn landing_log(run: &std::path::Path) -> (Read<Vec<LandingEvent>>, Read<Option<u64>>) {
-    let path = run.join("landing.log");
-    let text = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (Read::Observed(vec![]), Read::Observed(None)),
-        Err(e) => return (Read::Unobservable(format!("{}: {e}", path.display())), Read::Unobservable(format!("{}: {e}", path.display()))),
-    };
-    let at = |l: &str| l.get(..20).and_then(czar_pass::parse_iso_to_epoch).map(|s| s * 1000);
-    let mut events = vec![];
-    for l in text.lines() {
-        let kind = if l.contains(czar_pass::DEADLOCK_LINE) {
-            DEADLOCK_EVENT
-        } else if czar_pass::requeued_all(l) {
-            REQUEUED_ALL_EVENT
-        } else if l.contains(czar_pass::SORT_FAILED_LINE) {
-            SORT_FAILED_EVENT
-        } else {
-            continue;
-        };
-        if let Some(at_ms) = at(l) {
-            events.push(LandingEvent { kind: kind.into(), repo: String::new(), at_ms });
-        }
-    }
-    let last = match text.lines().rfind(|l| l.contains(czar_pass::PASS_COMPLETE_LINE)) {
-        None => Read::Observed(None),
-        Some(l) => match at(l) {
-            Some(ms) => Read::Observed(Some(ms)),
-            None => Read::Unobservable(format!("landing.log timestamp unparseable: {:?}", l.get(..20))),
-        },
-    };
-    (Read::Observed(events), last)
-}
-
-fn forge_status(forge: &str, repo_path: &str, branch: &str) -> Result<String, String> {
-    czar_pass::batch_ci_status(forge, repo_path, branch)
-}
-
-/// `czar.observe`: the landing log, the reconciler's stamp, each queue repository's open batch
-/// (the store projection), certified pool (`LcClient`) and CI (the forge).
-pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
-    let req: ObserveIn = serde_json::from_str(input).unwrap_or_default();
-    let run = e.world.run_dir.clone();
-    let (landing_events, last_landing_pass_at_ms) = landing_log(&run);
-    let cursor = req.carry.cursor_ms.unwrap_or(0);
-    let landing_events = match landing_events {
-        Read::Observed(e) => Read::Observed(e.into_iter().filter(|e| e.at_ms > cursor).collect()),
-        other => other,
-    };
-    let mut snap = Snapshot { landing_events, last_landing_pass_at_ms, now_ms: now_ms(), ..Snapshot::default() };
-    let stamp = run.join("reconciler-pass.stamp");
-    snap.reconciler_last_pass_ms = match std::fs::read_to_string(&stamp) {
-        Ok(t) => match t.trim().parse::<u64>() {
-            Ok(at) => Read::Observed(Some(at * 1000)),
-            Err(_) => Read::Unobservable(format!("{} unparseable", stamp.display())),
-        },
-        Err(_) => Read::Observed(None),
-    };
-    let lc = spira_config::lc_call::LcClient::socket(&e.world.lc_socket).within(std::time::Duration::from_secs(5));
-    let views = store_view::Projection::configured(lc.clone());
-    let refreshed = views.as_ref().map_err(Clone::clone).and_then(|v| v.refresh_batches().map_err(String::from));
-    let home = spira_config::resolve::locate_home_for_process()?;
-    let reg = spira_config::repos::Registry::from_env(std::env::vars().chain(req.pinned.clone()).collect(), &home);
-    let forge = req.pinned.get("SPIRA_FORGE").cloned().unwrap_or_else(|| "forge".into());
-    for name in reg.all() {
-        let land = reg.land(&name);
-        let Some(path) = reg.root(&name).filter(|p| !p.is_empty()) else { continue };
-        let batch = match (&views, &refreshed) {
-            (Ok(v), Ok(())) => match v.batch_view(&name) {
-                Ok(view) => {
-                    let shown = view.value.shown();
-                    let kv: BTreeMap<&str, &str> = shown.lines().filter_map(|l| l.split_once('=')).collect();
-                    Read::Observed((!shown.trim().is_empty()).then(|| Batch { pr: kv.get("pr").and_then(|p| p.trim().parse().ok()), branch: kv.get("branch").unwrap_or(&"").to_string(), members: kv.get("members").map(|m| m.split_whitespace().map(str::to_string).collect()).unwrap_or_default() }))
-                }
-                Err(err) => Read::Unobservable(format!("could not say: {err}")),
-            },
-            (Err(err), _) | (_, Err(err)) => Read::Unobservable(format!("could not say: {err}")),
-        };
-        if let Read::Observed(Some(b)) = &batch {
-            if !b.branch.is_empty() {
-                let ci = match forge_status(&forge, &path, &b.branch) {
-                    Ok(out) => {
-                        let num = |k: &str| czar_pass::parse_field(&out, k).and_then(|v| v.trim().parse::<u64>().ok()).map(|s| s * 1000);
-                        Read::Observed(Ci { queued_since_ms: num("queued-since"), run_id: czar_pass::parse_field(&out, "run-id").filter(|r| !r.is_empty()), conclusion: czar_pass::parse_field(&out, "run-conclusion"), completed_at_ms: num("run-completed-at") })
-                    }
-                    Err(err) => Read::Unobservable(err),
-                };
-                snap.ci.insert(name.clone(), ci);
-            }
-        }
-        if let Some(base) = spira_config::repos::landref(&reg, &name).filter(|b| !b.is_empty()) {
-            let branch = base.split_once('/').map_or(base.as_str(), |(_, b)| b).to_string();
-            let read = match forge_status(&forge, &path, &branch) {
-                Ok(out) if czar_pass::parse_field(&out, "run-id").is_some() => Read::Observed(BaseCi {
-                    conclusion: czar_pass::parse_field(&out, "run-conclusion"),
-                    head_sha: czar_pass::parse_field(&out, "head-sha").unwrap_or_else(|| "unknown".into()),
-                    run_url: czar_pass::parse_field(&out, "run-url"),
-                    red_suites: out.lines().filter_map(|l| l.strip_prefix("red-suite: ").map(str::to_string)).collect(),
-                }),
-                Ok(_) => Read::Observed(BaseCi::default()),
-                Err(err) => Read::Unobservable(err),
-            };
-            snap.base_ci.insert(name.clone(), read);
-        }
-        if matches!(land.as_str(), "queue" | "queue.local") {
-            let certified = match lc.call(&["list", "--state", "CERTIFIED", "--repo", name.as_str()]) {
-                Ok(r) if r.code == 0 => match serde_json::from_str::<serde_json::Value>(&r.out) {
-                    Ok(v) => Read::Observed(v.as_array().into_iter().flatten().filter(|r| r["holds"].as_array().is_none_or(|h| h.is_empty())).filter_map(|r| r["bead_id"].as_str().map(str::to_string)).collect()),
-                    Err(err) => Read::Unobservable(format!("spira-lc list: {err}")),
-                },
-                Ok(r) => Read::Unobservable(r.why()),
-                Err(err) => Read::Unobservable(err.to_string()),
-            };
-            snap.certified.insert(name.clone(), certified);
-        }
-        snap.open_batch.insert(name, batch);
-    }
-    serde_json::to_string(&snap).map_err(|e| e.to_string())
-}
-
-fn filing(input: &str) -> Result<czar_pass::Filing, String> {
-    serde_json::from_str(input).map_err(|e| format!("czar filing: {e}"))
-}
-
-/// `czar.file_incident` and `czar.file_base_red`: the incident library, in-process.
-pub fn file(input: &str) -> Result<String, String> {
-    czar_pass::file(&filing(input)?)
-}
-
-/// `czar.rerun_workflow`: the forge library re-dispatches the run.
-pub fn rerun_workflow(input: &str) -> Result<String, String> {
-    let v: serde_json::Value = serde_json::from_str(input).map_err(|e| format!("{RERUN_WORKFLOW}: {e}"))?;
-    let repo = v["repo"].as_str().unwrap_or_default();
-    let home = spira_config::resolve::locate_home_for_process()?;
-    let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home);
-    let path = reg.root(repo).filter(|p| !p.is_empty()).ok_or_else(|| format!("{RERUN_WORKFLOW}: {repo} has no checkout registered"))?;
-    let forge = spira_config::process::cfg("SPIRA_FORGE").unwrap_or_else(|_| "forge".into());
-    czar_pass::rerun_workflow(&forge, &path, v["run_id"].as_str().unwrap_or_default())
-}
-
-/// `czar.restart_landing`: reset and start the installed landing unit through the Units port.
-pub fn restart_landing(e: &Effects) -> Result<String, String> {
-    let units = e.units.as_deref().ok_or("no unit manager configured")?;
-    let h = runtime::units::UnitHandle::named("spira-landing.service");
-    units.reset_failed(&h).map_err(|e| e.to_string())?;
-    units.start_installed(&h).map_err(|e| e.to_string())?;
-    Ok("restarted spira-landing.service".into())
-}
-
-/// `czar.status`: one key's status row in the metrics store.
-pub fn status(e: &Effects, input: &str) -> Result<String, String> {
-    let v: serde_json::Value = serde_json::from_str(input).map_err(|e| format!("{STATUS}: {e}"))?;
-    let fields: Vec<(String, serde_json::Value)> = ["key", "status", "since"].iter().map(|k| (k.to_string(), v[*k].clone())).collect();
-    tsd::store::Pusher::new(e.world.metrics_endpoint.clone()).push("czar-status", &tsd::now_iso(), &fields).map_err(|e| e.to_string())?;
-    Ok(v["key"].as_str().unwrap_or_default().to_string())
 }

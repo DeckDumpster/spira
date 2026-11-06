@@ -1,7 +1,6 @@
 //! # reconcile.content — contract
 //!
-//! Family B of the scheduler consolidation, red-first: `decide` is not ported yet. The
-//! sections below are the contract page `wiki/projects/spira/designs/tasks/reconcile-content.md`;
+//! Family B of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/reconcile-content.md`;
 //! its Acceptance section is the test file `tests/task_b_reconcile_content.rs`.
 //!
 //! ## Tick
@@ -98,7 +97,7 @@ use std::collections::BTreeMap;
 use runtime::event::EventKindTag;
 use serde::{Deserialize, Serialize};
 
-use super::kit::{Cadence, Cfg, Decision, Input, Spec};
+use super::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
 
 pub const NAME: &str = "reconcile.content";
 pub const STREAM: &str = "task.reconcile.content";
@@ -159,6 +158,9 @@ pub struct Carry {
     pub beads: BTreeMap<String, Phase>,
     /// Closes held until the skew check answers.
     pub pending: Vec<Close>,
+    /// When the skew check last answered red: closes wait one full-pass interval after it, so
+    /// a store whose planes disagree is not asked again every tick.
+    pub skew_red_at: Option<u64>,
 }
 
 pub struct ReconcileContent {
@@ -166,9 +168,133 @@ pub struct ReconcileContent {
     pub cfg: Cfg,
 }
 
-/// The closes `reconcile_content` computes, split at its `apply` branch.
-pub fn decide(_cfg: &Cfg, _carry: &Carry, _input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
-    unimplemented!("reconcile.content: not ported yet")
+/// How many closed ids the carry keeps once they leave the store's listing; a closed id is
+/// kept so a listing that lags the close never closes it twice.
+pub const CLOSED_KEEP: usize = 1_000;
+
+fn phase_name(p: Phase) -> &'static str {
+    match p {
+        Phase::Open => "open",
+        Phase::CloseRequested => "close_requested",
+        Phase::Closed => "closed",
+        Phase::Failed => "failed",
+    }
+}
+
+/// The closes `reconcile_content` computes, split at its `apply` branch: the probe lists them
+/// (the store's dry run), the batch waits on the skew check, and each close is its own effect.
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
+    match input {
+        Input::Fire => Ok((carry.clone(), vec![])),
+        Input::Observed(snap) => {
+            let full_ms = cfg.get(FULL_PASS_KEY).and_then(|v| v.trim().parse::<u64>().ok()).filter(|v| *v > 0).ok_or_else(|| format!("{FULL_PASS_KEY} must be a positive integer"))? * 1000;
+            if snap.world_halted || carry.skew_red_at.is_some_and(|at| now_ms < at + full_ms) {
+                return Ok((carry.clone(), vec![]));
+            }
+            let mut next = carry.clone();
+            let listed: Vec<&Close> = snap.work.iter().chain(&snap.asks).chain(&snap.epics).collect();
+            let fresh: Vec<Close> = listed.iter().filter(|c| matches!(carry.beads.get(&c.id).copied().unwrap_or_default(), Phase::Open | Phase::Failed)).map(|c| (*c).clone()).collect();
+            if next.beads.len() > CLOSED_KEEP {
+                next.beads.retain(|id, p| *p != Phase::Closed || listed.iter().any(|c| &c.id == id));
+            }
+            if fresh.is_empty() {
+                return Ok((next, vec![]));
+            }
+            next.through_seq = carry.through_seq.max(snap.through_seq);
+            next.pending = fresh;
+            Ok((next, vec![Act { name: SKEW_CHECK.into(), input: String::new(), deadline_ms: 5_000, probe: false }]))
+        }
+        Input::Outcome { effect, ok, .. } if effect == SKEW_CHECK => {
+            let mut next = Carry { pending: vec![], skew_red_at: None, ..carry.clone() };
+            if !ok {
+                return Ok((Carry { skew_red_at: Some(now_ms), ..next }, vec![]));
+            }
+            let mut acts = vec![];
+            for c in &carry.pending {
+                match carry.beads.get(&c.id).copied().unwrap_or_default() {
+                    Phase::Open | Phase::Failed => {}
+                    p => return Err(format!("{NAME}: {} is {}; a second close is refused", c.id, phase_name(p))),
+                }
+                next.beads.insert(c.id.clone(), Phase::CloseRequested);
+                acts.push(Act { name: CLOSE.into(), input: serde_json::to_string(c).map_err(|e| e.to_string())?, deadline_ms: CLOSE_DEADLINE_MS, probe: false });
+            }
+            Ok((next, acts))
+        }
+        Input::Outcome { effect, ok, body } if effect == CLOSE => {
+            let id = closed_id(body);
+            match carry.beads.get(id).copied().unwrap_or_default() {
+                Phase::CloseRequested => {
+                    let mut next = carry.clone();
+                    next.beads.insert(id.to_string(), if *ok { Phase::Closed } else { Phase::Failed });
+                    Ok((next, vec![]))
+                }
+                p => Err(format!("{NAME}: a close outcome for {id}, which is {}", phase_name(p))),
+            }
+        }
+        Input::Outcome { effect, .. } => Err(format!("{NAME}: no outcome of {effect} is expected")),
+        Input::Ran(r) => Err(format!("{NAME}: no unit is expected, got {r:?}")),
+    }
+}
+
+/// The id a close outcome names: the success body is the id, and a failure starts `<id>: `.
+pub fn closed_id(body: &str) -> &str {
+    let b = body.trim();
+    b.split_once(": ").map_or(b, |(id, _)| id)
+}
+
+/// A close's deadline: bd's write bound (`WRITE_SECS`), which the store's apply rides.
+pub const CLOSE_DEADLINE_MS: u64 = 60_000;
+
+/// The store's dry run as closes: each `would close <id> (<why>)` line. The reason is the
+/// store's own, written when it closes the id.
+pub fn parse_dry_run(out: &str) -> Vec<Close> {
+    out.lines()
+        .filter_map(|l| l.trim().strip_prefix("would close "))
+        .map(|rest| {
+            let (id, why) = rest.split_once(' ').unwrap_or((rest, ""));
+            let why = why.trim().trim_start_matches('(').trim_end_matches(')').to_string();
+            Close { id: id.to_string(), reason: why.clone(), why }
+        })
+        .collect()
+}
+
+/// The runner of [`OBSERVE`]: the halt stamp, then the store's `reconcile-content --dry-run`
+/// and `event-seq`, over the socket. A cannot-tell on the ask or epic half still lists the
+/// work closes, as the store's own pass does.
+pub fn observe(lc: &spira_config::lc_call::LcClient, run_dir: &std::path::Path) -> Result<String, String> {
+    if run_dir.join("world.halted").exists() {
+        return serde_json::to_string(&Snapshot { world_halted: true, ..Snapshot::default() }).map_err(|e| e.to_string());
+    }
+    let sweep = lc.within(spira_config::lc_call::SWEEP_DEADLINE);
+    let r = sweep.call(&["reconcile-content", "--dry-run"]).map_err(String::from)?;
+    let cannot_tell = match r.code {
+        0 => None,
+        spira_config::lc_call::CANNOT_TELL if r.out.contains("would close") || r.out.contains("reconcile-content: ") => Some(r.why()),
+        _ => return Err(format!("reconcile-content --dry-run: exit {}: {}", r.code, r.why())),
+    };
+    let seq = lc.answer(&["event-seq"]).map_err(String::from)?;
+    let through_seq = serde_json::from_str::<serde_json::Value>(seq.trim()).ok().and_then(|v| v["seq"].as_u64());
+    serde_json::to_string(&Snapshot { world_halted: false, through_seq, work: parse_dry_run(&r.out), asks: vec![], epics: vec![], cannot_tell }).map_err(|e| e.to_string())
+}
+
+/// The runner of [`SKEW_CHECK`]: the store's `skew-check`; exit 3 (the planes disagree) fails it.
+pub fn skew_check(lc: &spira_config::lc_call::LcClient) -> Result<String, String> {
+    lc.answer(&["skew-check"]).map_err(String::from)
+}
+
+/// The runner of [`CLOSE`]: the store's `reconcile-content --apply <id>`, which re-derives the
+/// close for that one id behind its own skew guard and writes it with its own reason. An id the
+/// store no longer lists is already closed, which is success (the idempotency rule).
+pub fn close(lc: &spira_config::lc_call::LcClient, input: &str) -> Result<String, String> {
+    let c: Close = serde_json::from_str(input).map_err(|e| format!("close input: {e}"))?;
+    if c.id.is_empty() || c.id.starts_with('-') {
+        return Err(format!("{}: not a bead id", c.id));
+    }
+    let r = lc.within(spira_config::lc_call::SWEEP_DEADLINE).call(&["reconcile-content", "--apply", c.id.as_str()]).map_err(|e| format!("{}: {e}", c.id))?;
+    match r.code {
+        0 => Ok(c.id),
+        _ => Err(format!("{}: exit {}: {}", c.id, r.code, r.why())),
+    }
 }
 
 super::hosted!(ReconcileContent);

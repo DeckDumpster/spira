@@ -37,7 +37,7 @@ pub fn unhold_event(kind: &str) -> Option<String> {
     Some(format!("{{\"Unhold\":{{\"kind\":\"{tag}\"}}}}"))
 }
 
-pub use sentinel::lifecycle_events::HOLDER_DEAD;
+pub const HOLDER_DEAD: &str = "\"HolderDead\"";
 
 /// CHECK 2 (protect-waiting half): which WORKING beads to wait-hold or release. `held` is
 /// the wait-held set; each bead's dependency facts come from the snapshot join.
@@ -107,7 +107,46 @@ pub fn wait_decisions(
     out
 }
 
-pub use sentinel::checks::{inconsistent, stale_leases};
+/// CHECK 2 (reaper half): WORKING rows, not wait-held, whose lease expired more than `grace`
+/// ago, or has expired at all with no live holder → (id, seconds since expiry).
+/// A holder whose session is provably gone (`gone`) is reaped at once, lease or no lease.
+pub fn stale_leases(rows: &[LcRow], now: i64, grace: i64, alive: impl Fn(&str) -> bool, gone: impl Fn(&str) -> bool) -> Vec<(String, i64)> {
+    rows.iter()
+        .filter(|r| r.state == "WORKING" && !r.holds.iter().any(|h| h == "wait"))
+        .filter_map(|r| {
+            let past = now - r.lease_until.unwrap_or(now);
+            let session_gone = r.holder.as_deref().is_some_and(&gone);
+            (session_gone || (r.lease_until.is_some() && (past > grace || (past > 0 && !alive(&r.bead_id))))).then(|| (r.bead_id.clone(), past))
+        })
+        .collect()
+}
+
+/// SUBMITTED, CERTIFIED and IN_DELIVERY keep the holder on purpose (branch affinity); only
+/// the states the lifecycle machine clears it on are a violation.
+fn holder_forbidden(state: &str) -> bool {
+    matches!(state, "OPEN" | "READY" | "REWORK" | "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE")
+}
+
+/// CHECK 2c: rows whose holder and state disagree.
+pub fn inconsistent(rows: &[LcRow]) -> Vec<String> {
+    rows.iter()
+        .filter_map(|r| {
+            if r.state == "WORKING" && r.holder.is_none() {
+                Some(format!(
+                    "INCONSISTENT\t{}\tWORKING with no holder",
+                    r.bead_id
+                ))
+            } else if holder_forbidden(&r.state) && r.holder.is_some() {
+                Some(format!(
+                    "INCONSISTENT\t{}\t{} with a holder still set",
+                    r.bead_id, r.state
+                ))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
 
 impl<'a> Sentinel<'a> {
     /// The pass's one lifecycle read. The machine is authoritative, so an absent binary or a

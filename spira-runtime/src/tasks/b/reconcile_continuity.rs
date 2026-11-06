@@ -1,7 +1,6 @@
 //! # reconcile.continuity — contract
 //!
-//! Family B of the scheduler consolidation, red-first: `decide` is not ported yet. The
-//! sections below are the contract page `wiki/projects/spira/designs/tasks/reconcile-continuity.md`;
+//! Family B of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/reconcile-continuity.md`;
 //! its Acceptance section is the test file `tests/task_b_reconcile_continuity.rs`.
 //!
 //! ## Tick
@@ -84,7 +83,7 @@ use std::collections::BTreeMap;
 use runtime::event::EventKindTag;
 use serde::{Deserialize, Serialize};
 
-use super::kit::{Cadence, Cfg, Decision, Input, Spec};
+use super::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
 pub use crate::watchers::INBOX_APPEND;
 
 pub const NAME: &str = "reconcile.continuity";
@@ -147,9 +146,94 @@ pub struct ReconcileContinuity {
     pub cfg: Cfg,
 }
 
-/// One line per new unacknowledged break, once.
-pub fn decide(_cfg: &Cfg, _carry: &Carry, _input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
-    unimplemented!("reconcile.continuity: not ported yet")
+/// The carry key of `b`: `machine/key/seq`.
+pub fn key_of(b: &Break) -> String {
+    format!("{}/{}/{}", b.machine, b.key, b.seq)
+}
+
+fn phase_name(p: Phase) -> &'static str {
+    match p {
+        Phase::Unseen => "unseen",
+        Phase::Announced => "announced",
+        Phase::Acknowledged => "acknowledged",
+        Phase::Gone => "gone",
+    }
+}
+
+/// One line per new unacknowledged break, once. Breaks are taken in the store's order, so a
+/// break listed unacknowledged and then acknowledged ends acknowledged; a break the store no
+/// longer lists leaves the carried set.
+pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
+    match input {
+        Input::Fire => Ok((carry.clone(), vec![])),
+        Input::Observed(snap) => {
+            let mut next = Carry::default();
+            let mut acts = vec![];
+            for b in &snap.breaks {
+                let key = key_of(b);
+                let was = next.breaks.get(&key).or_else(|| carry.breaks.get(&key)).copied().unwrap_or_default();
+                let now = match (was, b.acknowledged.is_some()) {
+                    (_, true) => Phase::Acknowledged,
+                    (Phase::Unseen | Phase::Gone, false) => {
+                        let line = format!("{} {TAG} event continuity broken: {} {} seq {} event {} from {} after {}", crate::watchers::iso8601(now_ms / 1000), b.machine, b.key, b.seq, b.event, b.from_state, b.previous_to_state);
+                        acts.push(Act { name: INBOX_APPEND.into(), input: line, deadline_ms: INBOX_DEADLINE_MS, probe: false });
+                        Phase::Announced
+                    }
+                    (p, false) => p,
+                };
+                next.breaks.insert(key, now);
+            }
+            Ok((next, acts))
+        }
+        Input::Outcome { effect, ok, body } if effect == INBOX_APPEND => match carry.breaks.get(body.trim()) {
+            Some(p @ (Phase::Announced | Phase::Acknowledged)) if *ok => Err(format!("{NAME}: break {} is {}; it is announced once", body.trim(), phase_name(*p))),
+            _ => Ok((carry.clone(), vec![])),
+        },
+        Input::Outcome { effect, .. } => Err(format!("{NAME}: no outcome of {effect} is expected")),
+        Input::Ran(r) => Err(format!("{NAME}: no unit is expected, got {r:?}")),
+    }
+}
+
+/// `inbox.append`'s deadline (the shared runner's, 10 s).
+pub const INBOX_DEADLINE_MS: u64 = 10_000;
+
+/// One line of `event-continuity` as the store prints it (`seq` is a string there).
+#[derive(Deserialize)]
+struct Wire {
+    #[serde(default)]
+    machine: String,
+    #[serde(default)]
+    key: String,
+    #[serde(default)]
+    seq: String,
+    #[serde(default)]
+    event: String,
+    #[serde(default)]
+    from_state: String,
+    #[serde(default)]
+    previous_to_state: String,
+    acknowledged: Option<String>,
+}
+
+/// The store's `event-continuity` answer as a snapshot: one JSON line per first break per key;
+/// exit 0 when every break is acknowledged, 3 when one is not. Anything else is no answer.
+pub fn parse(code: i32, out: &str) -> Result<Snapshot, String> {
+    if code != 0 && code != spira_config::lc_call::REFUSED {
+        return Err(format!("event-continuity: exit {code}: {}", out.trim()));
+    }
+    let mut breaks = vec![];
+    for l in out.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let w: Wire = serde_json::from_str(l).map_err(|e| format!("event-continuity: unreadable line {l:?}: {e}"))?;
+        let seq = w.seq.trim().parse().map_err(|_| format!("event-continuity: seq {:?} is not a number", w.seq))?;
+        breaks.push(Break { machine: w.machine, key: w.key, seq, event: w.event, from_state: w.from_state, previous_to_state: w.previous_to_state, acknowledged: w.acknowledged });
+    }
+    Ok(Snapshot { breaks })
+}
+
+/// The runner of [`OBSERVE`]: `event-continuity` over the socket.
+pub fn observe(lc: &spira_config::lc_call::LcClient) -> Result<String, String> {
+    let r = lc.call(&["event-continuity"]).map_err(String::from)?;
+    serde_json::to_string(&parse(r.code, &r.out)?).map_err(|e| e.to_string())
 }
 
 super::hosted!(ReconcileContinuity);
