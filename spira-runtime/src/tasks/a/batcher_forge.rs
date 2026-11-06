@@ -100,10 +100,11 @@ use std::collections::BTreeMap;
 
 use batcher::core;
 use runtime::event::*;
-use runtime::units::{Exit, UnitRan};
+use batcher_cut::attribute::Attribution;
+use runtime::units::{Exit, RanOutput, UnitRan};
 use serde::{Deserialize, Serialize};
 
-use super::batcher_local::{P2, digest, green, handle_p2, interests, page_line, select, table_step, unit_key, Assembled, On, Leg, Policy, LEG_GRACE_MS};
+use super::batcher_local::{P2, digest, green, handle_p2, interests, page_line, select, table_step, unit_key, Assembled, On, Leg, Policy, ATTRIBUTE, LEG_GRACE_MS};
 use super::kit::{self, Act, Cadence, Shape};
 
 pub use super::batcher_local::Member;
@@ -320,11 +321,22 @@ impl Machine<'_> {
     }
 
     fn corpus(&mut self, run: u32) {
+        self.leg_of(run, "corpus", "");
+    }
+
+    /// The attribution leg (`batcher attribute` with no open round: its owners are withdrawn
+    /// from the pool), a corpus leg marked `ATTRIBUTE`.
+    fn attribute(&mut self) {
+        let run = self.rc.run + 1;
+        self.leg_of(run, "attribute", ATTRIBUTE);
+    }
+
+    fn leg_of(&mut self, run: u32, what: &str, why: &str) {
         self.rc.run = run;
-        let unit = unit_key(self.repo, self.rc.round_key.as_deref().unwrap_or_default(), "corpus", run);
+        let unit = unit_key(self.repo, self.rc.round_key.as_deref().unwrap_or_default(), what, run);
         self.rc.leg = Some(unit.clone());
         self.rc.leg_at_ms = self.now_ms;
-        let leg = Leg { key: unit.clone(), unit, ..self.leg() };
+        let leg = Leg { key: unit.clone(), unit, why: why.into(), ..self.leg() };
         self.acts.push(leg.act(CORPUS));
     }
 
@@ -398,30 +410,40 @@ impl Machine<'_> {
     }
 
     fn leg_ended(&mut self, exit: Exit) {
+        self.leg_ended_with(exit, "");
+    }
+
+    /// A leg ended with `exit`, having written `out` (its captured stdout tail): the attribution
+    /// leg is judged by its own line.
+    fn leg_ended_with(&mut self, exit: Exit, out: &str) {
         match (self.rc.state, green(exit)) {
             (State::Corpus, true) => {
                 self.go(Trigger::LegGreen);
                 self.open();
             }
             (State::Corpus, false) => {
+                // Contract: Corpus × red → Attributing (the owners withdrawn, the rest re-run).
                 self.go(Trigger::LegRed);
-                // A lone member owns any red: it is withdrawn while the rest re-run.
-                if let [(bead, tip)] = &self.rc.members[..] {
-                    self.acts.push(Leg { bead: bead.clone(), head: tip.clone(), key: bead.clone(), why: "the round's corpus was red".into(), ..Leg::on(self.repo) }.act(WITHDRAW));
+                self.attribute();
+            }
+            (State::Attributing, _) => match Attribution::parse(out) {
+                Some(Attribution::Land { members, .. }) if !members.is_empty() => {
+                    self.go(Trigger::RerunLands);
+                    self.rc.members = members;
+                    self.rc.round_key = Some(core::round_key(&self.rc.members));
+                    self.open();
                 }
-                let run = self.rc.run + 1;
-                self.corpus(run);
-            }
-            (State::Attributing, true) => {
-                self.go(Trigger::RerunLands);
-                self.open();
-            }
-            (State::Attributing, false) => {
-                self.go(Trigger::RerunBlocked);
-                self.acts.push(Leg { key: format!("judgement:{}", digest(self.rc.round_key.as_deref().unwrap_or_default())), why: "the round's corpus was red twice".into(), ..self.leg() }.act(FILE));
-                self.verdict("red", "local corpus red — held before reaching CI");
-                self.reset();
-            }
+                outcome => {
+                    self.go(Trigger::RerunBlocked);
+                    let why = match outcome {
+                        Some(Attribution::Blocked(why)) => why,
+                        Some(Attribution::Land { .. }) => "attribution withdrew every member".into(),
+                        None => format!("the attribution leg ended ({exit:?}) with no outcome"),
+                    };
+                    self.verdict("red", &format!("local corpus red — held before reaching CI: {why}"));
+                    self.reset();
+                }
+            },
             _ => {}
         }
     }
@@ -513,11 +535,16 @@ pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, V
 /// The end of one of its own legs, delivered on this task's stream: the repo whose carried
 /// leg it is moves at once.
 pub fn on_ran(carry: &Carry, ran: &UnitRan, now_ms: u64) -> Option<(Carry, Vec<Act>)> {
+    on_ran_with(carry, ran, &RanOutput::default(), now_ms)
+}
+
+/// [`on_ran`] with what the leg wrote (its captured stdout tail).
+pub fn on_ran_with(carry: &Carry, ran: &UnitRan, out: &RanOutput, now_ms: u64) -> Option<(Carry, Vec<Act>)> {
     let key = ran.key_for(NAME)?;
     let (repo, rc) = carry.repos.iter().find(|(_, rc)| rc.leg.as_deref() == Some(key.as_str()) && matches!(rc.state, State::Corpus | State::Attributing))?;
     let mut next = carry.clone();
     let mut m = Machine { repo, rc: rc.clone(), acts: vec![], now_ms };
-    m.leg_ended(ran.exit);
+    m.leg_ended_with(ran.exit, out.stdout_tail.as_deref().unwrap_or_default());
     let acts = m.acts;
     store(&mut next, repo, m.rc);
     Some((next, acts))
@@ -569,7 +596,8 @@ impl Handler for BatcherForge {
             Ok(leg) => on_outcome(carry, effect, ok, body, &leg, ev.at),
             Err(_) => (carry.clone(), vec![]),
         };
-        let ran = |carry: &Carry, r: &UnitRan| on_ran(carry, r, ev.at);
+        let out = RanOutput::from_event_kind(&ev.kind).unwrap_or_default();
+        let ran = |carry: &Carry, r: &UnitRan| on_ran_with(carry, r, &out, ev.at);
         handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran })
     }
 }

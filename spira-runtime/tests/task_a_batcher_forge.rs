@@ -107,3 +107,34 @@ fn t3_a_corpus_unit_ran_moves_the_machine_at_once() {
     assert!(on_ran(&carry, &ran("batcher.local", "spira.c1"), 1).is_none());
     assert!(on_ran(&carry, &ran(NAME, "spira.other"), 1).is_none());
 }
+
+/// Contract: Corpus × `unit.ran` red → Attributing, the owners withdrawn by the attribution leg
+/// (`batcher attribute` with no open round) and the rest re-run on the survivors.
+#[test]
+fn t3_a_red_corpus_enters_attribution() {
+    use runtime::units::{Exit, UnitHandle, UnitRan};
+    let rc = RepoCarry { state: State::Corpus, leg: Some("spira.c1".into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], run: 1, ..RepoCarry::default() };
+    let carry = Carry { repos: [("spira".to_string(), rc)].into() };
+    let (next, acts) = on_ran(&carry, &UnitRan { handle: UnitHandle::of(NAME, "spira.c1").unwrap(), exit: Exit::Code(1), duration_ms: 5 }, 1).expect("its own leg");
+    assert_eq!(next.repos["spira"].state, State::Attributing);
+    let legs: Vec<(String, spira_runtime::tasks::a::batcher_local::Leg)> = acts.iter().map(|a| (a.effect.clone(), serde_json::from_str(&a.input).unwrap())).collect();
+    assert_eq!(legs.iter().map(|(e, l)| (e.as_str(), l.why.as_str())).collect::<Vec<_>>(), [(CORPUS, "attribute")], "{legs:?}");
+}
+
+/// Attributing × `unit.ran`: survivors open the batch PR; a blocked round is Idle, verdict red.
+#[test]
+fn t3_the_attribution_line_opens_or_blocks() {
+    use batcher_cut::attribute::Attribution;
+    use runtime::units::{Exit, RanOutput, UnitHandle, UnitRan};
+    let rc = RepoCarry { state: State::Attributing, leg: Some("spira.a2".into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], run: 2, ..RepoCarry::default() };
+    let carry = Carry { repos: [("spira".to_string(), rc)].into() };
+    let ran = UnitRan { handle: UnitHandle::of(NAME, "spira.a2").unwrap(), exit: Exit::Code(0), duration_ms: 5 };
+    let land = Attribution::Land { members: vec![("sp-b".into(), "t2".into())], attribution_secs: None, mended: false };
+    let (next, acts) = on_ran_with(&carry, &ran, &RanOutput::captured(land.line().as_bytes(), b""), 1).expect("its own leg");
+    assert_eq!(next.repos["spira"].state, State::Opening);
+    let open: spira_runtime::tasks::a::batcher_local::Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == BATCH_OPEN).expect("the batch opens").input).unwrap();
+    assert_eq!(open.members, [("sp-b".to_string(), "t2".to_string())], "the survivors open the PR");
+    let (next, acts) = on_ran_with(&carry, &ran, &RanOutput::captured(Attribution::Blocked("unattributed".into()).line().as_bytes(), b""), 1).expect("its own leg");
+    assert!(next.repos.get("spira").is_none_or(|r| r.state == State::Idle));
+    assert!(acts.iter().any(|a| a.effect == VERDICT_WRITE && a.input.contains("red")), "{acts:?}");
+}

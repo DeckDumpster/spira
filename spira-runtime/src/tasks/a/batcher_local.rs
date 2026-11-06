@@ -93,7 +93,8 @@ use std::collections::BTreeMap;
 use batcher::core;
 use batcher_cut::pace;
 use runtime::event::*;
-use runtime::units::{Exit, UnitRan, UNIT_RAN};
+use batcher_cut::attribute::Attribution;
+use runtime::units::{Exit, RanOutput, UnitRan, UNIT_RAN};
 use serde::{Deserialize, Serialize};
 
 use super::kit::{self, Act, Cadence, Shape};
@@ -524,6 +525,11 @@ impl Policy {
     }
 }
 
+/// The `why` of a [`CORPUS`] leg that is the attribution (`batcher attribute`), not the corpus.
+pub const ATTRIBUTE: &str = "attribute";
+/// The line `queue round certify` names its red output file by (`io::round_certify`).
+pub const RED_OUTPUT: &str = "red-output=";
+
 /// How long past its wall a leg with no `unit.ran` is given before it is judged lost.
 pub const LEG_GRACE_MS: u64 = 120_000;
 
@@ -616,6 +622,18 @@ impl Machine<'_> {
     fn corpus(&mut self, run: u32) {
         self.rc.run = run;
         self.start(CORPUS, "corpus");
+    }
+
+    /// The attribution leg: `batcher attribute` (`drive::attribute_round`) on the red round, a
+    /// corpus leg marked [`ATTRIBUTE`] so it runs under the same effect, captured.
+    fn attribute(&mut self) {
+        self.rc.run += 1;
+        self.start(CORPUS, "attribute");
+        if let Some(a) = self.acts.last_mut() {
+            let mut leg: Leg = serde_json::from_str(&a.input).unwrap_or_default();
+            leg.why = ATTRIBUTE.into();
+            a.input = serde_json::to_string(&leg).unwrap_or_default();
+        }
     }
 
     fn certify(&mut self) {
@@ -714,6 +732,12 @@ impl Machine<'_> {
     }
 
     fn leg_ended(&mut self, exit: Exit) {
+        self.leg_ended_with(exit, "");
+    }
+
+    /// A leg ended with `exit`, having written `out` (its captured stdout tail, empty when none
+    /// came back): the attribution and certify legs are judged by what they said.
+    fn leg_ended_with(&mut self, exit: Exit, out: &str) {
         let ok = green(exit);
         match (self.rc.state, ok) {
             (State::Corpus, true) => {
@@ -721,23 +745,39 @@ impl Machine<'_> {
                 self.certify();
             }
             (State::Corpus, false) => {
+                // Contract: Corpus × red → Attributing. The attribution leg ejects each red's
+                // owners from the round (or hands them to their menders) and re-runs only their
+                // suites on the survivors.
                 self.go(Trigger::LegRed);
-                let run = self.rc.run + 1;
-                self.corpus(run);
+                self.attribute();
             }
-            (State::Attributing, true) => {
-                self.go(Trigger::RerunCertifying);
-                self.certify();
-            }
-            (State::Attributing, false) => {
-                self.go(Trigger::RerunBlocked);
-                // A lone member owns any red (`io::implicated`): it leaves the round charged.
-                if let [(bead, tip)] = &self.rc.members[..] {
-                    let leg = Leg { bead: bead.clone(), head: tip.clone(), key: format!("{}:{bead}", self.rc.batch.clone().unwrap_or_default()), why: "the round's corpus was red twice".into(), ..self.leg() };
-                    self.acts.push(leg.act(EJECT));
+            (State::Attributing, _) => match Attribution::parse(out) {
+                Some(Attribution::Land { members, mended, .. }) if !members.is_empty() => {
+                    self.rc.members = members;
+                    self.rc.round_key = Some(core::round_key(&self.rc.members));
+                    if mended {
+                        // The menders' pass was settled inside the leg (`settle_mending`): Mending
+                        // is entered and left on the same outcome.
+                        self.go(Trigger::RerunMending);
+                        self.go(Trigger::MendingSettled);
+                    } else {
+                        self.go(Trigger::RerunCertifying);
+                    }
+                    self.certify();
                 }
-                self.red("local corpus red — held before reaching CI");
-            }
+                Some(Attribution::Land { .. }) => {
+                    self.go(Trigger::RerunBlocked);
+                    self.red("attribution ejected every member — nothing is left to land");
+                }
+                Some(Attribution::Blocked(why)) => {
+                    self.go(Trigger::RerunBlocked);
+                    self.red(&format!("local corpus red — held before reaching CI: {why}"));
+                }
+                None => {
+                    self.go(Trigger::RerunBlocked);
+                    self.red(&format!("local corpus red — the attribution leg ended ({exit:?}) with no outcome"));
+                }
+            },
             (State::Certifying, true) => {
                 self.go(Trigger::CertifyGreen);
                 let key = self.rc.round_key.clone().unwrap_or_default();
@@ -746,6 +786,12 @@ impl Machine<'_> {
             }
             (State::Certifying, false) => {
                 self.go(Trigger::CertifyRed);
+                // The guilty leave the round charged: the members whose files the repository's
+                // red output names (`io::implicated`, as `finish_local_round` ejects them).
+                if let Some(output) = out.lines().rev().find_map(|l| l.strip_prefix(RED_OUTPUT)) {
+                    let leg = Leg { why: output.trim().to_string(), key: format!("{}:{}:guilty", self.repo, self.rc.batch.clone().unwrap_or_default()), ..self.leg() };
+                    self.acts.push(leg.act(EJECT));
+                }
                 self.red("queue round certify judged the round red");
             }
             _ => {}
@@ -900,11 +946,17 @@ pub fn on_outcome(carry: &Carry, effect: &str, ok: bool, body: &str, leg: &Leg, 
 /// The machine's answer to the end of one of its own legs, delivered on this task's stream: the
 /// repo whose carried leg it is moves at once. A run that is no carried leg changes nothing.
 pub fn on_ran(carry: &Carry, ran: &UnitRan, now_ms: u64) -> Option<(Carry, Vec<Act>)> {
+    on_ran_with(carry, ran, &RanOutput::default(), now_ms)
+}
+
+/// [`on_ran`] with what the leg wrote (its `unit.ran`'s captured stdout tail): the attribution
+/// and certify legs are judged by their own lines.
+pub fn on_ran_with(carry: &Carry, ran: &UnitRan, out: &RanOutput, now_ms: u64) -> Option<(Carry, Vec<Act>)> {
     let key = ran.key_for(NAME)?;
     let (repo, rc) = carry.repos.iter().find(|(_, rc)| rc.leg.as_deref() == Some(key.as_str()) && matches!(rc.state, State::Corpus | State::Attributing | State::Certifying))?;
     let mut next = carry.clone();
     let mut m = Machine { repo, rc: rc.clone(), acts: vec![], now_ms };
-    m.leg_ended(ran.exit);
+    m.leg_ended_with(ran.exit, out.stdout_tail.as_deref().unwrap_or_default());
     let acts = m.acts;
     store(&mut next, repo, m.rc);
     Some((next, acts))
@@ -1017,7 +1069,8 @@ impl Handler for BatcherLocal {
             Ok(leg) => on_outcome(carry, effect, ok, body, &leg, ev.at),
             Err(_) => (Carry { repos: carry.repos.clone() }, vec![]),
         };
-        let ran = |carry: &Carry, r: &UnitRan| on_ran(carry, r, ev.at);
+        let out = RanOutput::from_event_kind(&ev.kind).unwrap_or_default();
+        let ran = |carry: &Carry, r: &UnitRan| on_ran_with(carry, r, &out, ev.at);
         handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran })
     }
 }
@@ -1067,6 +1120,25 @@ pub mod edge {
             }
         }
         runtime::units::effect(units, UNIT_START, &json(&unit)?)
+    }
+
+    /// A leg whose stdout comes back on its `unit.ran` (`UNIT_RUN_SCOPE`): the attribution and
+    /// certify legs, judged by their own lines. Under the round's CPU quota when one is set.
+    pub fn start_scope(e: &Effects, task: &str, key: &str, argv: Vec<String>, vars: Vec<(String, String)>, cwd: Option<PathBuf>) -> Result<String, String> {
+        let units = e.units.as_deref().ok_or("no unit manager configured")?;
+        let quota = std::env::var("ROUND_CPU_QUOTA").ok().and_then(|q| q.trim().trim_end_matches('%').parse::<u32>().ok());
+        let scope = ScopeSpec { unit: UnitSpec { task: task.into(), key: key.into(), argv, env: vars, cwd }, cpu_quota_pct: quota, memory_max_bytes: None };
+        runtime::units::effect(units, UNIT_RUN_SCOPE, &json(&scope)?)
+    }
+
+    /// `batcher attribute` on the red round: `drive::attribute_round` as one captured leg.
+    pub fn attribute_for(task: &str, e: &Effects, env: &Env, leg: &Leg) -> Result<String, String> {
+        let batcher = spira_config::release_env::tool("batcher")?;
+        let mut argv = vec![batcher, "attribute".into(), leg.repo.clone(), "--members".into(), batcher_cut::attribute::members_arg(&leg.members), "--wt".into(), leg.wt.clone(), "--base".into(), leg.base.clone(), "--round-vm".into(), env.round_vm.display().to_string()];
+        if !leg.batch.is_empty() {
+            argv.extend(["--batch".into(), leg.batch.clone()]);
+        }
+        start_scope(e, task, &leg.unit, argv, home_vars(env), None)
     }
 
     fn home_vars(env: &Env) -> Vec<(String, String)> {
@@ -1173,6 +1245,9 @@ pub mod edge {
     /// The corpus leg of `task`'s round.
     pub fn corpus_for(task: &str, e: &Effects, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
+        if leg.why == super::ATTRIBUTE {
+            return attribute_for(task, e, &env, &leg);
+        }
         let repo = repo_of(&env, &leg)?;
         let wt = PathBuf::from(&leg.wt);
         let history = std::fs::read_to_string(tsd::family_path(&env.run, "suite-timing")).unwrap_or_default();
@@ -1200,6 +1275,17 @@ pub mod edge {
 
     pub fn eject(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
+        if leg.bead.is_empty() {
+            // The guilty of a red certify: the members whose files its output names.
+            let repo = repo_of(&env, &leg)?;
+            let text = std::fs::read_to_string(&leg.why).map_err(|e| format!("{}: {e}", leg.why))?;
+            let changed: Vec<(String, Vec<String>)> = leg.members.iter().map(|(id, tip)| (id.clone(), io::changed_paths(&repo, &leg.base, tip))).collect();
+            let guilty = io::implicated(&text, &changed);
+            for id in &guilty {
+                io::round_eject(&env, &repo, &leg.batch, id, &["ci".to_string()], &[], true)?;
+            }
+            return Ok(serde_json::json!({ "ejected": guilty }).to_string());
+        }
         io::round_eject(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.bead, &[], &[], true)?;
         Ok("{}".into())
     }
@@ -1221,7 +1307,7 @@ pub mod edge {
     pub fn certify(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
         let argv = vec![env.queue_bin.display().to_string(), "round".into(), "certify".into(), leg.batch.clone(), leg.repo.clone()];
-        start_unit(e, super::NAME, &leg.unit, argv, home_vars(&env), None)
+        start_scope(e, super::NAME, &leg.unit, argv, home_vars(&env), None)
     }
 
     pub fn lc_certify(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {

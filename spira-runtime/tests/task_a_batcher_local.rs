@@ -136,3 +136,87 @@ fn t3_work_submitted_wakes_an_observe_at_once() {
     assert_eq!(r.requested().iter().filter(|q| q.name == OBSERVE).count(), asked + 1, "the hand-off observes now");
     assert_eq!(r.engine().next_timer_at(), timer, "the tick is not re-armed");
 }
+
+/// A rig whose carry is `carry` (recorded as the task's own state event), every effect
+/// succeeding with `{}` and the observe answering the idle world.
+fn carried(carry: &Carry) -> TaskRig {
+    let mut r = TaskRig::new(1, registration()).unwrap().double(OBSERVE, |_| Ok(serde_json::to_string(&idle()).unwrap()));
+    for e in EFFECTS.iter().filter(|e| **e != OBSERVE) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.tick(STREAM, EventKind::new(STATE, &serde_json::to_string(carry).unwrap())).unwrap();
+    r
+}
+
+/// The repo `spira` in `state`, driving round `r9` on `/w` from base `b1`, its leg `leg`.
+fn driving(state: State, leg: &str) -> Carry {
+    let rc = RepoCarry { state, round_key: Some("k".into()), batch: Some("r9".into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "/w".into(), base: "b1".into(), leg: Some(leg.into()), leg_at_ms: 0, run: 1, ..RepoCarry::default() };
+    Carry { repos: [("spira".to_string(), rc)].into() }
+}
+
+/// `leg` of this task ended with `exit`, its stdout `out`.
+fn ended(leg: &str, exit: runtime::units::Exit, out: &str) -> EventKind {
+    let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, leg).unwrap(), exit, duration_ms: 1 };
+    ran.event_kind_with(&runtime::units::RanOutput::captured(out.as_bytes(), b""))
+}
+
+/// The acts requested after `from`, as (effect, leg).
+fn asked_after(r: &TaskRig, from: usize) -> Vec<(String, Leg)> {
+    r.requested()[from..].iter().filter(|q| q.journaled).map(|q| (q.name.clone(), serde_json::from_str(&q.input).unwrap_or_default())).collect()
+}
+
+/// Contract: Corpus × `unit.ran` red → Attributing. The red corpus starts the attribution leg
+/// (`batcher attribute`, `drive::attribute_round`) on the round, not a blind re-run.
+#[test]
+fn t3_a_red_corpus_enters_attribution() {
+    let mut r = carried(&driving(State::Corpus, "spira.c1"));
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.c1", runtime::units::Exit::Code(1), "")).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    let after = asked_after(&r, n);
+    assert_eq!(after.iter().map(|(e, l)| (e.as_str(), l.why.as_str())).collect::<Vec<_>>(), [(CORPUS, "attribute")], "{after:?}");
+    assert_eq!(after[0].1.members.len(), 2, "every member is attributed");
+}
+
+/// Attributing × `unit.ran`: the attribution's own line decides. Survivors go on to certify
+/// (alone, the owners ejected by the leg); a mender pass goes through Mending to certify; a
+/// blocked round is Done, red.
+#[test]
+fn t3_the_attribution_line_decides_certify_mending_or_blocked() {
+    use batcher_cut::attribute::Attribution;
+    let land = Attribution::Land { members: vec![("sp-b".into(), "t2".into())], attribution_secs: Some(9), mended: false };
+    for (line, mended) in [(land.line(), false), (Attribution::Land { members: vec![("sp-b".into(), "t2".into())], attribution_secs: None, mended: true }.line(), true)] {
+        let mut r = carried(&driving(State::Attributing, "spira.a2"));
+        let n = r.requested().len();
+        r.tick(STREAM, ended("spira.a2", runtime::units::Exit::Code(0), &format!("batcher spira: attributing\n{line}\n"))).unwrap();
+        kit::assert_unpoisoned(&r, STREAM);
+        let after = asked_after(&r, n);
+        assert_eq!(after.iter().map(|(e, _)| e.as_str()).collect::<Vec<_>>(), [CERTIFY], "mended={mended}: {after:?}");
+        assert_eq!(after[0].1.members, [("sp-b".to_string(), "t2".to_string())], "the survivors certify");
+    }
+    let mut r = carried(&driving(State::Attributing, "spira.a2"));
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.a2", runtime::units::Exit::Code(0), &Attribution::Blocked("unattributed red test-x.sh".into()).line())).unwrap();
+    let after: Vec<String> = asked_after(&r, n).into_iter().map(|(e, _)| e).collect();
+    assert!(after.contains(&ABANDON.to_string()) && !after.contains(&CERTIFY.to_string()), "blocked is red: {after:?}");
+    let mut r = carried(&driving(State::Attributing, "spira.a2"));
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.a2", runtime::units::Exit::Code(1), "batcher: spira-lc unreachable")).unwrap();
+    let after: Vec<String> = asked_after(&r, n).into_iter().map(|(e, _)| e).collect();
+    assert!(after.contains(&ABANDON.to_string()), "an attribution with no outcome blocks the round: {after:?}");
+}
+
+/// Certifying × `unit.ran` red: the guilty are ejected from the round by the certify output
+/// `queue round certify` names (`red-output=`, `io::implicated`), then the round is abandoned.
+#[test]
+fn t3_a_red_certify_ejects_the_guilty_then_abandons() {
+    let mut r = carried(&driving(State::Certifying, "spira.c3"));
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "verdict=red\nred-output=/run/certify-r9.out\n")).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    let after = asked_after(&r, n);
+    let names: Vec<&str> = after.iter().map(|(e, _)| e.as_str()).collect();
+    let eject = names.iter().position(|e| *e == EJECT).unwrap_or_else(|| panic!("no eject: {names:?}"));
+    assert!(names[eject..].contains(&ABANDON), "{names:?}");
+    assert_eq!((after[eject].1.why.as_str(), after[eject].1.bead.as_str()), ("/run/certify-r9.out", ""), "the guilty are read from the output");
+}
