@@ -67,7 +67,10 @@ gate_fixture_run() {
     local kv k toml
     for kv in "$@"; do
         k="${kv%%=*}"
-        if [ -f "$HERE/conf.d/$k" ]; then
+        # SPIRA_REPO and SPIRA_RELEASE are registered (for the runtime tasks that read them)
+        # but are the launcher's declarations to the gate: resolve takes them from the
+        # environment, so a layer would never reach it.
+        if [ -f "$HERE/conf.d/$k" ] && [ "$k" != SPIRA_REPO ] && [ "$k" != SPIRA_RELEASE ]; then
             decl+=("$kv")
         else
             env_extra+=("$kv")

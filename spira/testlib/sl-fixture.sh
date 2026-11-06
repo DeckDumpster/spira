@@ -9,8 +9,13 @@ testdb_require "$SL_SUITE"
 TMP="$(mktemp -d)"
 SERVE_PID=""
 trap '[ -n "$SERVE_PID" ] && kill "$SERVE_PID" >/dev/null 2>&1; lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# ONE SERVER FOR BOTH STORES, as in production: the tree's `spira-lc serve` answers every verb
+# over the socket (sp-ipwlic: none falls through to a program), and its planning reads (`plan
+# items`, the dwarf's ready set) read the bead store over the lifecycle connection, which sees
+# the beads only when both databases live on one server.
+export SPIRA_TESTDB_MODE=server
 testdb_up submittedlands || { echo "$SL_SUITE: could not build a fixture database"; exit 1; }
-lcfix_up || { echo "$SL_SUITE: could not build a lifecycle fixture"; exit 1; }
+lcfix_up_on_testdb || { echo "$SL_SUITE: could not build a lifecycle fixture"; exit 1; }
 LC_SOCK="$TMP/lc.sock"
 tl_config SPIRA_LC_SOCKET="$LC_SOCK"
 spira-lc serve "$LC_SOCK" > "$TMP/serve.log" 2>&1 &
