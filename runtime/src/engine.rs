@@ -108,6 +108,7 @@ pub struct CarriedState {
 pub struct TaskStatus {
     pub name: String,
     pub mode: Mode,
+    pub plane: Plane,
     pub state: Option<CarriedState>,
     /// Engine clock when the task last handled an event, and that event's own time.
     pub last_fired_at: Option<u64>,
@@ -338,6 +339,7 @@ impl Engine {
                 TaskStatus {
                     name: r.name.clone(),
                     mode: r.mode,
+                    plane: r.plane,
                     state: t.and_then(|t| t.state.clone()),
                     last_fired_at: t.and_then(|t| t.fired_at),
                     last_due_at: t.and_then(|t| t.due_at),
@@ -578,7 +580,8 @@ impl Engine {
 
     /// Run a handler's commands for `ev`. What lands on `ev`'s own stream is also recorded in
     /// `written`, so the projection holds it before `ev`'s stream is dispatched again.
-    fn apply(&mut self, cmds: Vec<Command>, ev: &Event, handler: &str, mode: Mode) -> Result<()> {
+    fn apply(&mut self, cmds: Vec<Command>, ev: &Event, reg: &Registration) -> Result<()> {
+        let (handler, mode) = (reg.name.as_str(), reg.mode);
         let own = ev.stream.0 != HALT_STREAM;
         for (i, cmd) in cmds.into_iter().enumerate() {
             let id = derive_id(format!("{}/{handler}/{i}", ev.id.0));
@@ -599,7 +602,7 @@ impl Engine {
                     let mine = own && e.stream == ev.stream;
                     self.wrote(mine, e, false);
                 }
-                Command::Effect(spec) if mode == Mode::Act && self.halted => {
+                Command::Effect(spec) if mode == Mode::Act && self.halted && reg.held_by_halt(&spec.name) => {
                     let body = serde_json::to_string(&HeldBody { stream: ev.stream.clone(), task: handler.into(), spec }).map_err(|e| RuntimeError::new(e.to_string()))?;
                     self.append_derived(id, &StreamKey(HALT_STREAM.into()), EventKind::new(EFFECT_HELD, &body), ev, ev.at)?;
                 }
@@ -838,7 +841,7 @@ impl Engine {
                     wide.set("commands.emit_to", count(|c| matches!(c, Command::EmitTo { .. })));
                     wide.set("commands.effect", count(|c| matches!(c, Command::Effect(_))));
                     wide.set("commands.schedule", count(|c| matches!(c, Command::Schedule { .. })));
-                    let done = self.apply(cmds, ev, name, mode).and_then(|()| if at.is_some() { self.journal.mark_applied(name, &ev.id) } else { Ok(()) });
+                    let done = self.apply(cmds, ev, reg).and_then(|()| if at.is_some() { self.journal.mark_applied(name, &ev.id) } else { Ok(()) });
                     if matches!(&done, Err(e) if e.is_refused()) {
                         let message = done.unwrap_err().0;
                         wide.set("outcome", "refused");

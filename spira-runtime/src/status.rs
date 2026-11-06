@@ -21,6 +21,7 @@ pub fn document(s: &SchedulerStatus) -> serde_json::Value {
             serde_json::json!({
                 "name": t.name,
                 "mode": t.mode.as_str(),
+                "plane": t.plane.as_str(),
                 "state": t.state.as_ref().map(|c| serde_json::json!({ "stream": c.stream, "tag": c.tag, "body_len": c.body_len })),
                 "last_fired_at": t.last_fired_at,
                 "last_due_at": t.last_due_at,

@@ -29,6 +29,7 @@ pub mod trigger_warden;
 pub static TASKS: &[Task] = &[
     Task {
         name: intake_gh::NAME,
+        plane: runtime::Plane::Work,
         boot: intake_gh::IntakeGh::boot,
         cadence_ms: |s| cadence(s, intake_gh::CADENCE_KEY),
         effects: intake_gh::EFFECTS,
@@ -46,6 +47,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: persona_ops::NAME,
+        plane: runtime::Plane::Work,
         boot: persona_ops::PersonaOps::boot,
         cadence_ms: |s| cadence(s, persona_ops::CADENCE_KEY),
         effects: persona_ops::EFFECTS,
@@ -62,6 +64,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: trigger_groom::NAME,
+        plane: runtime::Plane::Work,
         boot: trigger_groom::TriggerGroom::boot,
         cadence_ms: |s| cadence(s, trigger_groom::CADENCE_KEY),
         effects: trigger_groom::EFFECTS,
@@ -74,6 +77,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: trigger_warden::NAME,
+        plane: runtime::Plane::Work,
         boot: trigger_warden::TriggerWarden::boot,
         cadence_ms: |s| cadence(s, trigger_warden::CADENCE_KEY),
         effects: trigger_warden::EFFECTS,
@@ -86,6 +90,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: trigger_mimir::NAME,
+        plane: runtime::Plane::Work,
         boot: trigger_mimir::TriggerMimir::boot,
         cadence_ms: |s| cadence(s, trigger_mimir::CADENCE_KEY),
         effects: trigger_mimir::EFFECTS,
@@ -98,6 +103,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: asks_ideas::NAME,
+        plane: runtime::Plane::Work,
         boot: asks_ideas::AsksIdeas::boot,
         cadence_ms: |s| cadence(s, asks_ideas::CADENCE_KEY),
         effects: asks_ideas::EFFECTS,
@@ -110,6 +116,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: intake_filings::NAME,
+        plane: runtime::Plane::Work,
         boot: intake_filings::IntakeFilings::boot,
         cadence_ms: |s| cadence(s, intake_filings::CADENCE_KEY),
         effects: intake_filings::EFFECTS,
@@ -124,6 +131,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: intake_kit_bump::NAME,
+        plane: runtime::Plane::Work,
         boot: intake_kit_bump::IntakeKitBump::boot,
         cadence_ms: |s| cadence(s, intake_kit_bump::CADENCE_KEY),
         effects: intake_kit_bump::EFFECTS,
@@ -137,6 +145,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: persona_archivist::NAME,
+        plane: runtime::Plane::Work,
         boot: persona_archivist::PersonaArchivist::boot,
         cadence_ms: |s| cadence(s, persona_archivist::CADENCE_KEY),
         effects: persona_archivist::EFFECTS,

@@ -286,6 +286,7 @@ pub fn wake(proc: &dyn runtime::ports::Proc, input: &str) -> Result<String, Stri
 /// The row that registers this task: `tasks::g::TASKS` lists it.
 pub const ROW: Task = Task {
     name: NAME,
+    plane: runtime::Plane::Signal,
     boot: MailWake::boot,
     cadence_ms: |s| super::refuse(NAME, MailWake::from_settings(s)).cadence_ms(),
     effects: EFFECTS,

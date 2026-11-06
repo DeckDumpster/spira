@@ -90,10 +90,11 @@ use reconcile_heimdall::ReconcileHeimdall;
 use reconcile_section::ReconcileSection;
 
 pub static TASKS: &[Task] = &[
-    Task { name: reconcile_section::NAME, boot: ReconcileSection::boot, cadence_ms: cadence_ms::<ReconcileSection>, effects: reconcile_section::EFFECTS, runners: &[(reconcile_section::PUBLISH, |e, _, _| reconcile_section::publish(&lc(e)))], keys: &[reconcile_section::KEYS], build: build::<ReconcileSection> },
-    Task { name: reconcile_continuity::NAME, boot: ReconcileContinuity::boot, cadence_ms: cadence_ms::<ReconcileContinuity>, effects: reconcile_continuity::EFFECTS, runners: &[(reconcile_continuity::OBSERVE, |e, _, _| reconcile_continuity::observe(&lc(e)))], keys: &[reconcile_continuity::KEYS], build: build::<ReconcileContinuity> },
+    Task { name: reconcile_section::NAME, plane: runtime::Plane::Work, boot: ReconcileSection::boot, cadence_ms: cadence_ms::<ReconcileSection>, effects: reconcile_section::EFFECTS, runners: &[(reconcile_section::PUBLISH, |e, _, _| reconcile_section::publish(&lc(e)))], keys: &[reconcile_section::KEYS], build: build::<ReconcileSection> },
+    Task { name: reconcile_continuity::NAME, plane: runtime::Plane::Work, boot: ReconcileContinuity::boot, cadence_ms: cadence_ms::<ReconcileContinuity>, effects: reconcile_continuity::EFFECTS, runners: &[(reconcile_continuity::OBSERVE, |e, _, _| reconcile_continuity::observe(&lc(e)))], keys: &[reconcile_continuity::KEYS], build: build::<ReconcileContinuity> },
     Task {
         name: reconcile_content::NAME,
+        plane: runtime::Plane::Work,
         boot: ReconcileContent::boot,
         cadence_ms: cadence_ms::<ReconcileContent>,
         effects: reconcile_content::EFFECTS,
@@ -103,6 +104,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: reconcile_goodput::NAME,
+        plane: runtime::Plane::Work,
         boot: ReconcileGoodput::boot,
         cadence_ms: cadence_ms::<ReconcileGoodput>,
         effects: reconcile_goodput::EFFECTS,
@@ -120,6 +122,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: reconcile_heimdall::NAME,
+        plane: runtime::Plane::Work,
         boot: ReconcileHeimdall::boot,
         cadence_ms: cadence_ms::<ReconcileHeimdall>,
         effects: reconcile_heimdall::EFFECTS,
@@ -136,6 +139,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: mail_reconcile::NAME,
+        plane: runtime::Plane::Work,
         boot: MailReconcile::boot,
         cadence_ms: cadence_ms::<MailReconcile>,
         effects: mail_reconcile::EFFECTS,
@@ -153,6 +157,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: asks_verify::NAME,
+        plane: runtime::Plane::Work,
         boot: AsksVerify::boot,
         cadence_ms: cadence_ms::<AsksVerify>,
         effects: asks_verify::EFFECTS,
@@ -168,6 +173,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: incident_settle::NAME,
+        plane: runtime::Plane::Work,
         boot: IncidentSettle::boot,
         cadence_ms: cadence_ms::<IncidentSettle>,
         effects: incident_settle::EFFECTS,
@@ -183,6 +189,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: incident_alarms::NAME,
+        plane: runtime::Plane::Work,
         boot: IncidentAlarms::boot,
         cadence_ms: cadence_ms::<IncidentAlarms>,
         effects: incident_alarms::EFFECTS,

@@ -259,20 +259,60 @@ impl Mode {
     }
 }
 
+/// What a halt does to a task's effects. `Work` (claim, round, land, sweeps) is held while the
+/// scheduler is halted; `Signal` (waking a reader, paging, mailing the operator) keeps running,
+/// so a stopped world can still reach the operator.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Plane {
+    #[default]
+    Work,
+    Signal,
+}
+
+impl Plane {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Plane::Work => "work",
+            Plane::Signal => "signal",
+        }
+    }
+}
+
 pub struct Registration {
     pub name: String,
     pub handler: Box<dyn Handler>,
     pub mode: Mode,
+    pub plane: Plane,
+    /// Effects that run through a halt whatever the task's plane: a runner several tasks share
+    /// that only signals (the inbox append).
+    pub signal_effects: &'static [&'static str],
 }
 
 impl Registration {
-    /// In `Act`; a service takes the mode of every task from its configured table.
+    /// In `Act` on the `Work` plane; a service takes the mode of every task from its configured
+    /// table and the plane from its task row.
     pub fn new(name: &str, handler: impl Handler + 'static) -> Self {
-        Registration { name: name.into(), handler: Box::new(handler), mode: Mode::Act }
+        Registration { name: name.into(), handler: Box::new(handler), mode: Mode::Act, plane: Plane::Work, signal_effects: &[] }
     }
 
     pub fn with_mode(mut self, mode: Mode) -> Self {
         self.mode = mode;
         self
+    }
+
+    pub fn with_plane(mut self, plane: Plane) -> Self {
+        self.plane = plane;
+        self
+    }
+
+    pub fn with_signal_effects(mut self, names: &'static [&'static str]) -> Self {
+        self.signal_effects = names;
+        self
+    }
+
+    /// Whether a halt holds this task's effect `name`.
+    pub fn held_by_halt(&self, name: &str) -> bool {
+        self.plane == Plane::Work && !self.signal_effects.contains(&name)
     }
 }

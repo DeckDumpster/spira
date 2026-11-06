@@ -33,11 +33,22 @@ fn serve(control: status::Control, dir: &testkit::TempDir) -> std::path::PathBuf
     path
 }
 
+/// Hears nothing: a task on the signal plane whose row is all `status` reads.
+struct Silent;
+impl runtime::Handler for Silent {
+    fn interests(&self) -> &[runtime::EventKindTag] {
+        &[]
+    }
+    fn handle(&self, _: &runtime::Ctx, _: &runtime::Projection, _: &runtime::Event) -> Vec<runtime::Command> {
+        vec![]
+    }
+}
+
 #[test]
 fn status_halt_and_resume_round_trip_over_the_socket() {
     let (j, clock) = (MemJournal::new(), VirtualClock::new(0));
     let board = Arc::new(StatusBoard::default());
-    let mut e = Engine::open(j, Arc::new(clock.clone()), vec![Registration::new("ticker", Ticker)], 1).unwrap().with_status_board(board.clone());
+    let mut e = Engine::open(j, Arc::new(clock.clone()), vec![Registration::new("ticker", Ticker), Registration::new("pager", Silent).with_plane(runtime::Plane::Signal)], 1).unwrap().with_status_board(board.clone());
     let queue: Queue = Arc::default();
     let q = queue.clone();
     let submit: status::SubmitFn = Arc::new(move |id: &str, stream: &str, kind: EventKind| {
@@ -60,6 +71,8 @@ fn status_halt_and_resume_round_trip_over_the_socket() {
     let t = &doc["tasks"][0];
     assert_eq!(t["name"], "ticker");
     assert_eq!(t["mode"], "act");
+    assert_eq!(t["plane"], "work");
+    assert_eq!((doc["tasks"][1]["name"].as_str(), doc["tasks"][1]["plane"].as_str()), (Some("pager"), Some("signal")), "status names each task's plane");
     assert_eq!((t["last_due_at"].as_u64(), t["last_fired_at"].as_u64(), t["lag_ms"].as_u64()), (Some(0), Some(40), Some(40)));
     assert_eq!(t["next_due_at"], 1000);
     assert_eq!(t["state"]["tag"], "ticked");

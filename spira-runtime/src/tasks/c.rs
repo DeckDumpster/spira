@@ -40,6 +40,7 @@ use sweep_tsd::SweepTsd;
 pub static TASKS: &[Task] = &[
     Task {
         name: hel_sweep::NAME,
+        plane: runtime::Plane::Work,
         boot: HelSweep::boot,
         cadence_ms: cadence_ms::<HelSweep>,
         effects: hel_sweep::EFFECTS,
@@ -59,6 +60,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: hel_reap_terminal::NAME,
+        plane: runtime::Plane::Work,
         boot: HelReapTerminal::boot,
         cadence_ms: cadence_ms::<HelReapTerminal>,
         effects: hel_reap_terminal::EFFECTS,
@@ -73,6 +75,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: hel_reap_stale::NAME,
+        plane: runtime::Plane::Work,
         boot: HelReapStale::boot,
         cadence_ms: cadence_ms::<HelReapStale>,
         effects: hel_reap_stale::EFFECTS,
@@ -86,6 +89,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: roundvm_ami_prune::NAME,
+        plane: runtime::Plane::Work,
         boot: RoundvmAmiPrune::boot,
         cadence_ms: cadence_ms::<RoundvmAmiPrune>,
         effects: roundvm_ami_prune::EFFECTS,
@@ -93,9 +97,10 @@ pub static TASKS: &[Task] = &[
         keys: &[roundvm_ami_prune::KEYS],
         build: build::<RoundvmAmiPrune>,
     },
-    Task { name: roundvm_drain::NAME, boot: RoundvmDrain::boot, cadence_ms: cadence_ms::<RoundvmDrain>, effects: roundvm_drain::EFFECTS, runners: &[(roundvm_drain::OBSERVE, |e, _, _| roundvm_drain::observe(&e.world.run_dir, &pinned("SPIRA_ROUND_VM_SPILL")?, &pinned("SPIRA_ROUND_VM_WARM_IDLE_SECS")?)), (roundvm_drain::RELEASE, |_, _, s| roundvm_drain::release(&s.input))], keys: &[roundvm_drain::KEYS], build: build::<RoundvmDrain> },
+    Task { name: roundvm_drain::NAME, plane: runtime::Plane::Work, boot: RoundvmDrain::boot, cadence_ms: cadence_ms::<RoundvmDrain>, effects: roundvm_drain::EFFECTS, runners: &[(roundvm_drain::OBSERVE, |e, _, _| roundvm_drain::observe(&e.world.run_dir, &pinned("SPIRA_ROUND_VM_SPILL")?, &pinned("SPIRA_ROUND_VM_WARM_IDLE_SECS")?)), (roundvm_drain::RELEASE, |_, _, s| roundvm_drain::release(&s.input))], keys: &[roundvm_drain::KEYS], build: build::<RoundvmDrain> },
     Task {
         name: sweep_reclaim::NAME,
+        plane: runtime::Plane::Work,
         boot: SweepReclaim::boot,
         cadence_ms: cadence_ms::<SweepReclaim>,
         effects: sweep_reclaim::EFFECTS,
@@ -108,10 +113,11 @@ pub static TASKS: &[Task] = &[
         keys: &[sweep_reclaim::KEYS],
         build: build::<SweepReclaim>,
     },
-    Task { name: sweep_tsd::NAME, boot: SweepTsd::boot, cadence_ms: cadence_ms::<SweepTsd>, effects: sweep_tsd::EFFECTS, runners: &[(sweep_tsd::OBSERVE, |e, _, _| sweep_tsd::observe(&e.world.run_dir, &pinned(sweep_tsd::KEEP_DAYS_KEY)?, &pinned(sweep_tsd::BY_FAMILY_KEY)?)), (sweep_tsd::PRUNE, |e, _, s| sweep_tsd::prune(&e.world.run_dir, &s.input))], keys: &[sweep_tsd::KEYS], build: build::<SweepTsd> },
-    Task { name: mail_tidy::NAME, boot: MailTidy::boot, cadence_ms: cadence_ms::<MailTidy>, effects: mail_tidy::EFFECTS, runners: &[(mail_tidy::OBSERVE, |e, _, s| serde_json::to_string(&mail_tidy::observe(&crate::tasks::b::lc(e), &s.input, mail_tidy::wall_secs())).map_err(|e| e.to_string())), (mail_tidy::ARCHIVE, |_, _, s| mail_tidy::archive(&s.input))], keys: &[mail_tidy::KEYS], build: build::<MailTidy> },
+    Task { name: sweep_tsd::NAME, plane: runtime::Plane::Work, boot: SweepTsd::boot, cadence_ms: cadence_ms::<SweepTsd>, effects: sweep_tsd::EFFECTS, runners: &[(sweep_tsd::OBSERVE, |e, _, _| sweep_tsd::observe(&e.world.run_dir, &pinned(sweep_tsd::KEEP_DAYS_KEY)?, &pinned(sweep_tsd::BY_FAMILY_KEY)?)), (sweep_tsd::PRUNE, |e, _, s| sweep_tsd::prune(&e.world.run_dir, &s.input))], keys: &[sweep_tsd::KEYS], build: build::<SweepTsd> },
+    Task { name: mail_tidy::NAME, plane: runtime::Plane::Work, boot: MailTidy::boot, cadence_ms: cadence_ms::<MailTidy>, effects: mail_tidy::EFFECTS, runners: &[(mail_tidy::OBSERVE, |e, _, s| serde_json::to_string(&mail_tidy::observe(&crate::tasks::b::lc(e), &s.input, mail_tidy::wall_secs())).map_err(|e| e.to_string())), (mail_tidy::ARCHIVE, |_, _, s| mail_tidy::archive(&s.input))], keys: &[mail_tidy::KEYS], build: build::<MailTidy> },
     Task {
         name: asks_moot::NAME,
+        plane: runtime::Plane::Work,
         boot: AsksMoot::boot,
         cadence_ms: cadence_ms::<AsksMoot>,
         effects: asks_moot::EFFECTS,
@@ -121,6 +127,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: sweep_archive::NAME,
+        plane: runtime::Plane::Work,
         boot: SweepArchive::boot,
         cadence_ms: cadence_ms::<SweepArchive>,
         effects: sweep_archive::EFFECTS,
@@ -134,6 +141,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: sweep_nix_gc::NAME,
+        plane: runtime::Plane::Work,
         boot: SweepNixGc::boot,
         cadence_ms: cadence_ms::<SweepNixGc>,
         effects: sweep_nix_gc::EFFECTS,
@@ -146,6 +154,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: sweep_export_beads::NAME,
+        plane: runtime::Plane::Work,
         boot: SweepExportBeads::boot,
         cadence_ms: cadence_ms::<SweepExportBeads>,
         effects: sweep_export_beads::EFFECTS,
@@ -162,6 +171,7 @@ pub static TASKS: &[Task] = &[
     // RETIRE-CANDIDATE
     Task {
         name: sweep_escape_census::NAME,
+        plane: runtime::Plane::Work,
         boot: SweepEscapeCensus::boot,
         cadence_ms: cadence_ms::<SweepEscapeCensus>,
         effects: sweep_escape_census::EFFECTS,

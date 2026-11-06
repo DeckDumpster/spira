@@ -31,6 +31,7 @@ pub mod sweep_target;
 pub static TASKS: &[Task] = &[
     Task {
         name: sentinel_call::NAME,
+        plane: runtime::Plane::Work,
         boot: sentinel_call::SentinelCall::boot,
         cadence_ms: |_| 60_000,
         effects: sentinel_call::EFFECTS,
@@ -40,6 +41,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: sentinel_pass::NAME,
+        plane: runtime::Plane::Work,
         boot: sentinel_pass::SentinelPass::boot,
         cadence_ms: |_| sentinel_pass::CADENCE_MS,
         effects: sentinel_pass::EFFECTS,
@@ -69,6 +71,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: czar::NAME,
+        plane: runtime::Plane::Work,
         boot: czar::Czar::boot,
         cadence_ms: |_| czar::CADENCE_MS,
         effects: czar::EFFECTS,
@@ -78,6 +81,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: sift::NAME,
+        plane: runtime::Plane::Work,
         boot: sift::Sift::boot,
         cadence_ms: |_| sift::CADENCE_MS,
         effects: sift::EFFECTS,
@@ -87,6 +91,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: batcher_local::NAME,
+        plane: runtime::Plane::Work,
         boot: batcher_local::BatcherLocal::boot,
         cadence_ms: |_| batcher_local::CADENCE_MS,
         effects: batcher_local::EFFECTS,
@@ -99,6 +104,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: batcher_forge::NAME,
+        plane: runtime::Plane::Work,
         boot: batcher_forge::BatcherForge::boot,
         cadence_ms: |_| batcher_forge::CADENCE_MS,
         effects: batcher_forge::EFFECTS,
@@ -111,6 +117,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: queue_step::NAME,
+        plane: runtime::Plane::Work,
         boot: queue_step::QueueStep::boot,
         cadence_ms: |_| queue_step::CADENCE_MS,
         effects: queue_step::EFFECTS,
@@ -123,6 +130,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: publish::NAME,
+        plane: runtime::Plane::Work,
         boot: publish::Publish::boot,
         cadence_ms: |_| publish::CADENCE_MS,
         effects: publish::EFFECTS,
@@ -135,6 +143,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: sweep_target::NAME,
+        plane: runtime::Plane::Work,
         boot: sweep_target::SweepTarget::boot,
         cadence_ms: |_| sweep_target::CADENCE_MS,
         effects: sweep_target::EFFECTS,
@@ -144,6 +153,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: gate_worker::NAME,
+        plane: runtime::Plane::Work,
         boot: gate_worker::GateWorker::boot,
         cadence_ms: |_| gate_worker::CADENCE_MS,
         effects: gate_worker::EFFECTS,
@@ -156,6 +166,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: gate_check::NAME,
+        plane: runtime::Plane::Work,
         boot: gate_check::GateCheck::boot,
         cadence_ms: |_| gate_check::CADENCE_MS,
         effects: gate_check::EFFECTS,
@@ -168,6 +179,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: landing::NAME,
+        plane: runtime::Plane::Work,
         boot: landing::Landing::boot,
         cadence_ms: |_| landing::CADENCE_MS,
         effects: landing::EFFECTS,
@@ -196,6 +208,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: submission_provision::NAME,
+        plane: runtime::Plane::Work,
         boot: submission_provision::SubmissionProvision::boot,
         // The daily calendar's first tick, as every calendar row gives it: the boot tick's, two
         // minutes after start (`OnBootSec=2min`); the calendar arms each day after that.
