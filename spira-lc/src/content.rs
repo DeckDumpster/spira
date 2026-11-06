@@ -88,11 +88,35 @@ pub fn takes_body(args: &[String]) -> bool {
     matches!(check(args), Ok(Kind::Write { body: true }))
 }
 
-/// One content call. A read goes to `read`; a write goes to `write`, with the request body
-/// when the sub-verb takes one — and refused, before bd runs, when none was sent.
+/// bdq's write guards on a content write (`bead::guard`): the czar fence, then the
+/// claimed-description check, judged on the caller's guard variables and the lifecycle row the
+/// machine `m` holds for the bead, at `now`. A refusal is bdq's: exit 1 and its text, so a
+/// write through this door is refused whenever the same write through bdq would be.
+pub fn guard(args: &[String], caller: &std::collections::BTreeMap<String, String>, m: &mut dyn crate::callers::Machine, now: i64) -> Result<(), Answer> {
+    let rows = std::cell::RefCell::new(m);
+    let row = |id: &str| match rows.borrow_mut().call(&["show".to_string(), id.to_string()]) {
+        (0, out) => spira_config::lc_state::parse_show(&out).ok().flatten(),
+        _ => None,
+    };
+    match bead::guard::write(args, &|k| caller.get(k).cloned(), &row, now) {
+        Ok(bead::guard::Claim::Free) => Ok(()),
+        // The door takes no --force-claimed (`check`), so an acknowledged edit never reaches
+        // here; were one to, it is refused rather than written without its acknowledgment.
+        Ok(bead::guard::Claim::Forced { id, .. }) => Err(Answer { code: REFUSED, stderr: format!("spira-lc content: {id}: a claimed edit is acknowledged only through bdq's --force-claimed\n"), ..Default::default() }),
+        Err(r) => Err(Answer { code: r.code, stderr: r.text, ..Default::default() }),
+    }
+}
+
+/// A content write's guards: `Err` is the refusal answered instead of the write.
+pub type Guard<'a> = &'a mut dyn FnMut(&[String]) -> Result<(), Answer>;
+
+/// One content call. A read goes to `read`; a write passes `guard` (bdq's write guards) and
+/// then goes to `write`, with the request body when the sub-verb takes one — and refused,
+/// before bd runs, when none was sent.
 pub fn run(
     args: &[String],
     stdin: &mut dyn FnMut() -> Result<String, String>,
+    guard: Guard<'_>,
     read: &dyn Fn(&[String]) -> Result<String, String>,
     write: Write<'_>,
 ) -> Answer {
@@ -103,6 +127,11 @@ pub fn run(
         Ok(k) => k,
         Err(e) => return Answer { code: REFUSED, stderr: format!("spira-lc content: {e}\n"), ..Default::default() },
     };
+    if kind != Kind::Read {
+        if let Err(refused) = guard(args) {
+            return refused;
+        }
+    }
     let res = match kind {
         Kind::Read => read(args),
         Kind::Write { body: false } => write(args, None),
@@ -301,16 +330,133 @@ mod tests {
         }
     }
 
+    /// The lifecycle machine as the guard reads it: `show <id>` answers `row`, or exit 1.
+    struct Rows(Option<serde_json::Value>);
+
+    impl crate::callers::Machine for Rows {
+        fn call(&mut self, args: &[String]) -> (i32, String) {
+            assert_eq!(args.first().map(String::as_str), Some("show"), "the guard only reads a row: {args:?}");
+            match &self.0 {
+                Some(r) => (0, serde_json::json!({"bead": r, "delivery": null}).to_string()),
+                None => (1, String::new()),
+            }
+        }
+    }
+
+    const NOW: i64 = 1_800_000_000;
+
+    fn caller(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    /// A write's verdict: admitted, or refused with an exit code and its text.
+    type Verdict = Result<(), (i32, String)>;
+
+    /// bdq's guards in bdq's own order, as `src/bin/bdq.rs` calls them: the czar fence on the
+    /// process environment, then the claimed-description check on the lifecycle row.
+    fn through_bdq(args: &[String], env: &BTreeMap<String, String>, row: Option<&serde_json::Value>) -> Verdict {
+        let vars = |k: &str| env.get(k).cloned();
+        bead::guard::czar(args, &vars).map_err(|r| (r.code, r.text))?;
+        let rows = |_: &str| row.and_then(|r| spira_config::lc_state::parse_show(&serde_json::json!({"bead": r}).to_string()).ok().flatten());
+        bead::guard::claim(args, &rows, NOW).map(|_| ()).map_err(|r| (r.code, r.text))
+    }
+
+    /// The content door's guard, as the server runs it: the caller's variables off the request,
+    /// the row off the machine.
+    fn through_content(args: &[String], env: &BTreeMap<String, String>, row: Option<&serde_json::Value>) -> Verdict {
+        guard(args, env, &mut Rows(row.cloned()), NOW).map_err(|a| (a.code, a.stderr))
+    }
+
+    #[test]
+    fn the_content_guard_reaches_bdqs_verdict_on_every_write() {
+        let czar = |stage: Option<&str>| {
+            let mut c = caller(&[("SPIRA_RUNE", "czar"), ("SPIRA_CZAR_CLASS", "loop-stalled"), ("SPIRA_CZAR_TRIGGER_BEAD", "sp-t")]);
+            if let Some(s) = stage {
+                c.insert("SPIRA_CZAR_STAGE_LOOP_STALLED".into(), s.into());
+            }
+            c
+        };
+        let contexts = [
+            ("no rune", caller(&[])),
+            ("builder", caller(&[("SPIRA_RUNE", "builder"), ("SPIRA_CZAR_CLASS", "loop-stalled")])),
+            ("czar, class unset", caller(&[("SPIRA_RUNE", "czar")])),
+            ("czar shadow (unset)", czar(None)),
+            ("czar shadow", czar(Some("shadow"))),
+            ("czar act", czar(Some("act"))),
+            ("czar unknown stage", czar(Some("loud"))),
+        ];
+        let held = serde_json::json!({"bead_id": "sp-a", "state": "WORKING", "holder": "dwarf-sp-a", "lease_until": NOW + 600});
+        let lapsed = serde_json::json!({"bead_id": "sp-a", "state": "WORKING", "holder": "dwarf-sp-a", "lease_until": NOW - 1});
+        let ready = serde_json::json!({"bead_id": "sp-a", "state": "READY"});
+        let rows = [None, Some(&held), Some(&lapsed), Some(&ready)];
+        let writes: &[&[&str]] = &[
+            &["close", "sp-a"],
+            &["close", "sp-a", "--reason", "r"],
+            &["close", "sp-t"],
+            &["update", "sp-a", "--add-label", "x"],
+            &["update", "sp-a", "--remove-label", "x"],
+            &["update", "sp-a", "--set-metadata", "k=v"],
+            &["update", "sp-t", "--set-metadata", "k=v"],
+            &["update", "sp-a", "--title", "T"],
+            &["update", "sp-a", "--body-file", "f"],
+            &["update", "sp-a", "-d", "x"],
+            &["update", "sp-t", "--title", "T"],
+            &["label", "add", "sp-a", "x"],
+            &["label", "remove", "sp-a", "x"],
+            &["note", "sp-a", "t"],
+            &["note", "sp-a", "--stdin"],
+            &["comments", "add", "sp-a", "t"],
+            &["create", "T", "--type", "task"],
+            &["reopen", "sp-a"],
+        ];
+        let (mut czar_refused, mut claim_refused, mut admitted) = (0, 0, 0);
+        for (name, env) in &contexts {
+            for row in rows {
+                for w in writes {
+                    let args = v(w);
+                    let (bdq, content) = (through_bdq(&args, env, row), through_content(&args, env, row));
+                    assert_eq!(content, bdq, "{name}, row {row:?}: {w:?}");
+                    match &bdq {
+                        Ok(()) => admitted += 1,
+                        Err((1, t)) if t.starts_with("czar-fence: ") => czar_refused += 1,
+                        Err((1, t)) if t.contains("is claimed by dwarf-sp-a") => claim_refused += 1,
+                        Err(other) => panic!("a refusal neither guard gives: {other:?}"),
+                    }
+                }
+            }
+        }
+        assert!(czar_refused > 0 && claim_refused > 0 && admitted > 0, "the table exercises both refusals and admissions: {czar_refused}/{claim_refused}/{admitted}");
+        let shadow = through_content(&v(&["close", "sp-a"]), &czar(None), None);
+        assert_eq!(shadow, Err((1, "czar-fence: loop-stalled is shadow — mutation refused (SPIRA_CZAR_STAGE_LOOP_STALLED=act to enable)\n".into())));
+        assert_eq!(through_content(&v(&["close", "sp-t"]), &czar(None), None), Ok(()), "the trigger bead itself passes");
+    }
+
+    #[test]
+    fn a_guard_refusal_is_the_answer_and_bd_never_runs() {
+        let never_w = |_: &[String], _: Option<&str>| -> Result<String, String> { panic!("bd must not run") };
+        let never = |_: &[String]| -> Result<String, String> { panic!("bd must not run") };
+        let env = caller(&[("SPIRA_RUNE", "czar"), ("SPIRA_CZAR_CLASS", "deadlock")]);
+        let mut machine = Rows(None);
+        let mut g = |a: &[String]| guard(a, &env, &mut machine, NOW);
+        let mut body = || Ok::<String, String>("never read".into());
+        let ans = run(&v(&["close", "sp-a", "--reason", "r"]), &mut body, &mut g, &never, &never_w);
+        assert_eq!((ans.code, ans.stderr.as_str()), (1, "czar-fence: deadlock is shadow — mutation refused (SPIRA_CZAR_STAGE_DEADLOCK=act to enable)\n"));
+        let mut refuse_all = |_: &[String]| Err(Answer { code: 1, stderr: "no\n".into(), ..Default::default() });
+        let ans = run(&v(&["show", "sp-a"]), &mut body, &mut refuse_all, &|_| Ok("read".into()), &never_w);
+        assert_eq!((ans.code, ans.stdout.as_str()), (0, "read"), "a read is never guarded");
+    }
+
     #[test]
     fn run_refuses_before_calling_bd() {
         let never = |_: &[String]| -> Result<String, String> { panic!("bd must not run") };
         let never_w = |_: &[String], _: Option<&str>| -> Result<String, String> { panic!("bd must not run") };
         let mut no_stdin = || Err::<String, String>("nothing was sent".into());
-        let ans = run(&v(&["delete", "sp-a"]), &mut no_stdin, &never, &never_w);
+        let mut admit = |_: &[String]| Ok(());
+        let ans = run(&v(&["delete", "sp-a"]), &mut no_stdin, &mut admit, &never, &never_w);
         assert_eq!(ans.code, REFUSED);
-        let ans = run(&v(&["note", "sp-a", "--stdin"]), &mut no_stdin, &never, &never_w);
+        let ans = run(&v(&["note", "sp-a", "--stdin"]), &mut no_stdin, &mut admit, &never, &never_w);
         assert_eq!((ans.code, ans.stderr.as_str()), (CANNOT_TELL, "spira-lc content: stdin: nothing was sent\n"));
-        let ans = run(&v(&["show", "sp-a"]), &mut no_stdin, &|a| Ok(format!("ran {}", a.join(" "))), &never_w);
+        let ans = run(&v(&["show", "sp-a"]), &mut no_stdin, &mut admit, &|a| Ok(format!("ran {}", a.join(" "))), &never_w);
         assert_eq!((ans.code, ans.stdout.as_str()), (0, "ran show sp-a"));
     }
 }

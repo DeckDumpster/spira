@@ -107,10 +107,8 @@ fn split((code, out): (i32, String)) -> (i32, String, String) {
 /// bypass the service's live rows.
 pub(crate) fn exchange(stream: UnixStream, args: &[String], stdin: Option<&str>) -> (i32, String, String) {
     let lost = |why: &str| split((2, format!("cannot tell: the service took the request but its reply was lost ({why})")));
-    let request = match stdin {
-        None => serde_json::to_string(args),
-        Some(body) => serde_json::to_string(&serde_json::json!({"argv": args, "len": body.len()})),
-    };
+    // A content write carries the guard variables bdq would have read here (bead::guard).
+    let request = spira_config::lc_call::request_head(args, stdin.map(str::len), &spira_config::lc_call::caller_of(args));
     let Ok(request) = request else { return lost("unserialisable request") };
     let Ok(mut writer) = stream.try_clone() else { return lost("clone") };
     let mut bytes = format!("{request}\n").into_bytes();

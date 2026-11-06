@@ -332,7 +332,7 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
             let who = caller.clone();
             let began = Arc::clone(&started_work);
             let limit = request_deadline(&argv);
-            let req = Request { argv, stdin: req.stdin };
+            let req = Request { argv, stdin: req.stdin, caller: req.caller };
             within(limit.saturating_sub(received.elapsed()), move || {
                 *began.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                 crate::slow::set_caller(&who);
@@ -359,6 +359,9 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
 pub(crate) struct Request {
     pub argv: Vec<String>,
     pub stdin: Option<String>,
+    /// The caller's guard variables (`spira_config::lc_call::GUARD_VARS`), which a content
+    /// write is judged on as bdq judged it in the caller's own process.
+    pub caller: std::collections::BTreeMap<String, String>,
 }
 
 /// Longest request body read: a claim-verdicts batch or a section spec, never a file transfer.
@@ -374,14 +377,21 @@ fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (
     }
     let bad = |e: &dyn std::fmt::Display| (line.len(), format!("bad request: {e}"));
     let head: serde_json::Value = serde_json::from_str(line.trim()).map_err(|e| bad(&e))?;
-    let (argv, len) = match head {
-        serde_json::Value::Array(_) => (head, None),
+    let (argv, len, caller) = match head {
+        serde_json::Value::Array(_) => (head, None, Default::default()),
         serde_json::Value::Object(mut o) => {
-            let len = o.get("len").and_then(serde_json::Value::as_u64).ok_or_else(|| bad(&"a request object needs a numeric len"))?;
-            if len > MAX_BODY {
+            let len = match o.get("len") {
+                None if o.contains_key("caller") => None,
+                l => Some(l.and_then(serde_json::Value::as_u64).ok_or_else(|| bad(&"a request object needs a numeric len"))?),
+            };
+            if let Some(len) = len.filter(|&l| l > MAX_BODY) {
                 return Err(bad(&format!("a {len}-byte body is over the {MAX_BODY}-byte bound")));
             }
-            (o.remove("argv").unwrap_or_default(), Some(len))
+            let caller = match o.remove("caller") {
+                None => Default::default(),
+                Some(c) => serde_json::from_value(c).map_err(|e| bad(&format!("caller: {e}")))?,
+            };
+            (o.remove("argv").unwrap_or_default(), len, caller)
         }
         _ => return Err(bad(&"a request is an argv array or an {argv, len} object")),
     };
@@ -395,7 +405,7 @@ fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (
         }
     };
     let size = line.len() + stdin.as_ref().map_or(0, String::len);
-    Ok(Some((Request { argv, stdin }, size)))
+    Ok(Some((Request { argv, stdin, caller }, size)))
 }
 
 /// The primitives, in this process against its own connection: a composed verb's reads and
@@ -418,7 +428,7 @@ pub(crate) fn answer(
     content: &dyn crate::composed::Content,
     run_dir: &dyn Fn() -> Result<std::path::PathBuf, String>,
 ) -> Answer {
-    let Request { argv, stdin } = req;
+    let Request { argv, stdin, caller } = req;
     if !argv.first().is_some_and(|v| crate::composed::is_served(v)) {
         let argv = match stdin {
             Some(body) => crate::cutover::inline_payload_from(argv, &mut body.as_bytes()),
@@ -430,7 +440,7 @@ pub(crate) fn answer(
     let mut body = stdin;
     let mut read_stdin = move || body.take().ok_or_else(|| "nothing was sent".to_string());
     let now = crate::db::now_epoch();
-    let ports = crate::composed::Ports { m, bd, content, stdin: &mut read_stdin, run_dir, now };
+    let ports = crate::composed::Ports { m, bd, content, stdin: &mut read_stdin, run_dir, now, caller: &caller };
     let mut ans = crate::composed::run(&argv, ports);
     let id = argv.get(1).map(String::as_str).unwrap_or("");
     if let Some(e) = crate::composed::write_cert_log(id, &ans, run_dir(), now) {
@@ -739,6 +749,38 @@ mod tests {
         assert_eq!(*c.0.borrow(), ["note sp-a hello"]);
     }
 
+    /// A content write's guard variables ride the request to the server, which refuses the
+    /// czar's shadow-stage mutation with bdq's exit code and text, and writes nothing.
+    #[test]
+    fn a_czar_content_write_is_judged_on_the_callers_variables_on_the_server() {
+        let (w, c) = (World::new(), Content::default());
+        let caller: std::collections::BTreeMap<String, String> =
+            [("SPIRA_RUNE", "czar"), ("SPIRA_CZAR_CLASS", "deadlock"), ("SPIRA_CZAR_TRIGGER_BEAD", "sp-t")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let argv: Vec<String> = ["content", "update", "sp-a", "--add-label", "x"].iter().map(|s| s.to_string()).collect();
+        let line = spira_config::lc_call::request_head(&argv, None, &caller).unwrap();
+        let mut wire = std::io::Cursor::new(format!("{line}\n").into_bytes());
+        let (req, _) = super::read_request(&mut wire).unwrap().unwrap();
+        assert_eq!(req.caller, caller, "the variables survive the wire");
+        assert_eq!(req.stdin, None, "no len, no body");
+        let (mut m, mut b) = (&w, &w);
+        let ans = super::answer(req, &mut m, &mut b, &c, &|| Err("no run dir here".to_string()));
+        assert_eq!((ans.code, ans.stderr.as_str()), (1, "czar-fence: deadlock is shadow — mutation refused (SPIRA_CZAR_STAGE_DEADLOCK=act to enable)\n"));
+        assert!(c.0.borrow().is_empty(), "nothing was written");
+
+        let mut acting = caller.clone();
+        acting.insert("SPIRA_CZAR_STAGE_DEADLOCK".into(), "act".into());
+        let req = super::Request { argv: argv.clone(), stdin: None, caller: acting };
+        let ans = super::answer(req, &mut m, &mut b, &c, &|| Err("no run dir here".to_string()));
+        assert_eq!(ans.code, 0, "{ans:?}");
+        assert_eq!(*c.0.borrow(), ["update sp-a --add-label x"]);
+
+        let line = spira_config::lc_call::request_head(&argv, Some(2), &caller).unwrap();
+        let mut wire = std::io::Cursor::new(format!("{line}\nhi").into_bytes());
+        assert_eq!(super::read_request(&mut wire).unwrap().unwrap().0.stdin.as_deref(), Some("hi"), "a body still rides with its len");
+        let mut wire = std::io::Cursor::new(b"{\"argv\":[\"list\"]}\n".to_vec());
+        assert!(super::read_request(&mut wire).is_err(), "an object with neither len nor caller is still refused");
+    }
+
     // ---- content writes over the socket: one test per sub-verb ------------------------------
 
     /// `argv` (after `content`) over the socket: the answer, and what the server wrote to bd.
@@ -828,7 +870,7 @@ mod tests {
         }
         let w = World::new();
         let (mut rec, mut bd) = (Rec(Vec::new()), &w);
-        let req = super::Request { argv: vec!["claim-verdicts".into()], stdin: Some("[{\"bead_id\":\"sp-a\"}]".into()) };
+        let req = super::Request { argv: vec!["claim-verdicts".into()], stdin: Some("[{\"bead_id\":\"sp-a\"}]".into()), caller: Default::default() };
         super::answer(req, &mut rec, &mut bd, &Content::default(), &|| Err(String::new()));
         assert_eq!(rec.0, vec![vec!["claim-verdicts".to_string(), "--json".into(), "[{\"bead_id\":\"sp-a\"}]".into()]]);
     }

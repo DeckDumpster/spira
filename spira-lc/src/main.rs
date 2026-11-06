@@ -176,6 +176,7 @@ fn main() {
                     stdin: &mut stdin,
                     run_dir: &lifecycle_run_dir,
                     now: db::now_epoch(),
+                    caller: &spira_config::lc_call::guard_vars(std::env::vars()),
                 };
                 let ans = composed::run(&args, ports);
                 std::process::exit(emit(&args[1..], ans));

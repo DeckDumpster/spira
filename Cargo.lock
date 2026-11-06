@@ -2052,6 +2052,7 @@ dependencies = [
 name = "spira-lc"
 version = "1.0.0"
 dependencies = [
+ "bead",
  "incident",
  "lifecycle",
  "opentelemetry-proto",

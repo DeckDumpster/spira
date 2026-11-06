@@ -3,6 +3,7 @@
 //! process. Running `spira-lc` bounded, without resolving anything through the caller's PATH,
 //! survives here only as the declared stand-in route.
 
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
@@ -88,6 +89,46 @@ impl Transport for Socket {
     }
 }
 
+/// The caller's environment a `content` write carries to the service: the variables bdq's write
+/// guards read from their own environment (`bead::guard`) — the rune, the czar class and
+/// trigger bead, and every czar stage. The service judges the write on these, as bdq would have
+/// in this process.
+pub const GUARD_VARS: &[&str] = &["SPIRA_RUNE", "SPIRA_CZAR_CLASS", "SPIRA_CZAR_TRIGGER_BEAD"];
+/// Every `SPIRA_CZAR_STAGE_<CLASS>` is a guard variable.
+pub const GUARD_PREFIX: &str = "SPIRA_CZAR_STAGE_";
+
+/// The guard variables among `env`.
+pub fn guard_vars(env: impl IntoIterator<Item = (String, String)>) -> BTreeMap<String, String> {
+    env.into_iter().filter(|(k, _)| GUARD_VARS.contains(&k.as_str()) || k.starts_with(GUARD_PREFIX)).collect()
+}
+
+/// What a request for `argv` carries of this process's environment: its guard variables for a
+/// `content` call, nothing for any other.
+pub fn caller_of(argv: &[String]) -> BTreeMap<String, String> {
+    if argv.first().map(String::as_str) == Some("content") {
+        guard_vars(std::env::vars())
+    } else {
+        BTreeMap::new()
+    }
+}
+
+/// A request's first line: the argv as a JSON array, or, with a body or caller variables, an
+/// `{"argv"[, "len"][, "caller"]}` object (`len` only when a body follows).
+pub fn request_head(argv: &[String], body_len: Option<usize>, caller: &BTreeMap<String, String>) -> Result<String, serde_json::Error> {
+    if body_len.is_none() && caller.is_empty() {
+        return serde_json::to_string(argv);
+    }
+    let mut o = serde_json::Map::new();
+    o.insert("argv".into(), serde_json::json!(argv));
+    if let Some(n) = body_len {
+        o.insert("len".into(), n.into());
+    }
+    if !caller.is_empty() {
+        o.insert("caller".into(), serde_json::json!(caller));
+    }
+    serde_json::to_string(&o)
+}
+
 /// One request on `stream`: the argv as one JSON line, or, with `stdin`, a `{"argv", "len"}`
 /// line followed by exactly `len` bytes of it. The answer is a `{"exit_code", "len"[,
 /// "err_len"]}` line, then `len` bytes of stdout and `err_len` of stderr.
@@ -96,11 +137,7 @@ impl Transport for Socket {
 /// lost reply is "cannot tell", never a retry.
 pub fn exchange(stream: UnixStream, argv: &[String], stdin: Option<&str>) -> Result<Reply, String> {
     let lost = |why: &str| format!("cannot tell: the lifecycle service took the request but its reply was lost ({why})");
-    let request = match stdin {
-        None => serde_json::to_string(argv),
-        Some(body) => serde_json::to_string(&serde_json::json!({"argv": argv, "len": body.len()})),
-    }
-    .map_err(|_| lost("unserialisable request"))?;
+    let request = request_head(argv, stdin.map(str::len), &caller_of(argv)).map_err(|_| lost("unserialisable request"))?;
     let mut bytes = format!("{request}\n").into_bytes();
     bytes.extend_from_slice(stdin.unwrap_or_default().as_bytes());
     (&stream).write_all(&bytes).map_err(|_| lost("write"))?;
@@ -408,6 +445,24 @@ mod tests {
         assert_eq!((r.code, r.out.as_str()), (0, "claim-verdicts stdin=[{\"bead_id\":\"sp-a\"}]\nsecond line"));
         assert_eq!(launched(), before, "no program ran");
         assert_eq!(seen.lock().unwrap().len(), 2);
+    }
+
+    /// A content write carries the caller's guard variables — the rune, the czar context and
+    /// every stage — and nothing else of its environment; any other request is unchanged.
+    #[test]
+    fn a_content_request_carries_the_guard_variables_and_nothing_else() {
+        let env = [("SPIRA_RUNE", "czar"), ("SPIRA_CZAR_CLASS", "deadlock"), ("SPIRA_CZAR_TRIGGER_BEAD", "sp-t"), ("SPIRA_CZAR_STAGE_DEADLOCK", "act"), ("SPIRA_DB", "/db"), ("HOME", "/h")];
+        let vars = guard_vars(env.iter().map(|(k, v)| (k.to_string(), v.to_string())));
+        assert_eq!(vars.keys().map(String::as_str).collect::<Vec<_>>(), ["SPIRA_CZAR_CLASS", "SPIRA_CZAR_STAGE_DEADLOCK", "SPIRA_CZAR_TRIGGER_BEAD", "SPIRA_RUNE"]);
+        let argv: Vec<String> = ["content", "close", "sp-a"].iter().map(|s| s.to_string()).collect();
+        let head: serde_json::Value = serde_json::from_str(&request_head(&argv, None, &vars).unwrap()).unwrap();
+        assert_eq!(head["argv"], serde_json::json!(argv));
+        assert_eq!(head["caller"]["SPIRA_CZAR_STAGE_DEADLOCK"], "act");
+        assert!(head.get("len").is_none(), "no body, no len");
+        let head: serde_json::Value = serde_json::from_str(&request_head(&argv, Some(4), &vars).unwrap()).unwrap();
+        assert_eq!(head["len"], 4);
+        assert_eq!(request_head(&argv, None, &BTreeMap::new()).unwrap(), r#"["content","close","sp-a"]"#, "no caller variables: the plain array");
+        assert!(caller_of(&["list".to_string()]).is_empty(), "only a content call carries them");
     }
 
     #[test]

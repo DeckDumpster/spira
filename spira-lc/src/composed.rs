@@ -80,13 +80,16 @@ pub struct Ports<'a> {
     pub stdin: &'a mut dyn FnMut() -> Result<String, String>,
     pub run_dir: &'a dyn Fn() -> Result<std::path::PathBuf, String>,
     pub now: i64,
+    /// The caller's guard variables: what bdq's write guards would have read from the
+    /// caller's environment (`bead::guard`).
+    pub caller: &'a std::collections::BTreeMap<String, String>,
 }
 
 /// Answer one composed verb (`argv[0]` is the verb).
 pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
     let verb = argv.first().map(String::as_str).unwrap_or("");
     let rest = argv.get(1..).unwrap_or(&[]);
-    let Ports { m, bd, content, stdin, run_dir, now } = p;
+    let Ports { m, bd, content, stdin, run_dir, now, caller } = p;
     match verb {
         "unclaim" => callers::unclaim(rest, m),
         "reconcile-closed" => callers::reconcile_closed(rest, m, bd),
@@ -130,7 +133,10 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
             Ok(dir) => crate::content::purge_alerts(&rest[1..], &|a| content.read(a), &|ids| content.delete(ids), &dir, now),
             Err(e) => Answer { code: callers::CANNOT_TELL, stderr: format!("spira-lc content purge-alerts: {e}\n"), ..Default::default() },
         },
-        "content" => crate::content::run(rest, stdin, &|a| content.read(a), &|a, body| content.write_stdin(a, body)),
+        "content" => {
+            let mut guard = |a: &[String]| crate::content::guard(a, caller, &mut *m, now);
+            crate::content::run(rest, stdin, &mut guard, &|a| content.read(a), &|a, body| content.write_stdin(a, body))
+        }
         "close-epic" => callers::close_epic(rest, m, bd),
         "drop" => callers::drop_cmd(rest, m, bd),
         v if is_served(v) => callers::run(v, rest, m),
