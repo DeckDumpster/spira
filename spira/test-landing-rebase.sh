@@ -50,6 +50,14 @@ stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; 
 stub confine.sh 'exit 0'
 stub mail '[ "${1:-}" = send ] || exit 0; printf "%s\n" "$*" >> "$EMITTED"; cat >> "$EMITTED"; printf "\n" >> "$EMITTED"'
 export EMITTED="$TMP/events"; : > "$EMITTED"
+# THE ESCALATIONS ARE THE MAIL LIBRARY, IN-PROCESS (sp-ipwlic): landing-pass no longer execs a
+# `mail` program the stub above could stand in for, so its sends go to a mailbox tree of this
+# suite's own (mail is registered config: SPIRA_MAIL and its kinds, index and mute), and the
+# outcome stream is what was delivered there.
+MAILROOT="$TMP/mail"; mkdir -p "$MAILROOT"
+tl_config SPIRA_MAIL="$MAILROOT" SPIRA_MAIL_KINDS="$HERE/mail/kinds" SPIRA_MAIL_INDEX="$MAILROOT/index" SPIRA_MAIL_MUTE=0
+delivered() { find "$MAILROOT" -path '*/new/*' -type f -exec cat {} + 2>/dev/null; }
+forget_delivered() { find "$MAILROOT" -path '*/new/*' -type f -delete 2>/dev/null; : > "$EMITTED"; }
 stub gh 'exit 1'
 
 # The gate protocol's fixed exit-code constants (spira-config/src/resolve.rs: always 75/76,
@@ -215,7 +223,7 @@ printf 'main version\n' > "$REPO/shared-recut.txt"
 git -C "$REPO" add shared-recut.txt
 git -C "$REPO" commit -q -m "main writes shared-recut.txt"
 timeout 5 git -C "$REPO" push -q origin main; timeout 5 git -C "$REPO" fetch -q origin
-: > "$EMITTED"
+forget_delivered
 tl_config SPIRA_REBASE_DECOMPOSE_FILES=1
 out="$(landing)"
 spira-config unset spira.rebase_decompose_files "$_TL_CONF_OVERRIDE" >/dev/null
@@ -225,7 +233,7 @@ is   "the bead stays closed"                            closed "$(status_of sp-r
 # A BRANCH WIDE ENOUGH TO RACE EVERY LANDING IS TOLD TO SPLIT, NOT REBASE AGAIN.
 # sp-recut2 touches 2 files; with the threshold lowered to 1 the escalation must say so.
 want "and the escalation suggests decomposition, not another hand rebase" \
-     "smaller beads" "$(cat "$EMITTED")"
+     "smaller beads" "$(delivered)"
 drop_branch sp-recut2
 
 # A BRANCH A DWARF TOOK WHILE THE PASS RAN IS NEVER REWRITTEN.
@@ -357,11 +365,11 @@ SPIRA_HOME="$SH" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" SPIRA_RELEASE="$(PATH="
              bump_requeue sp-escl merge-conflict >/dev/null 2>&1
              bump_requeue sp-escl merge-conflict >/dev/null 2>&1' \
     _ "$SH"
-: > "$EMITTED"
+forget_delivered
 tl_config SPIRA_REBASE_ESCALATE_AT=3
 landing >/dev/null 2>&1 || true
 is   "escalate path reopens the bead"   open "$(status_of sp-escl)"
-want "and fires the escalation ask"     "rebase loop" "$(cat "$EMITTED")"
+want "and fires the escalation ask"     "rebase loop" "$(delivered)"
 drop_branch sp-escl
 
 tl_summary
