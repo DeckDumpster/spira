@@ -143,3 +143,16 @@ fn happy_path_the_shipped_loop_scenario_lands_and_publishes_and_logs_its_effects
     assert!(log.contains(" publish.pr_create exit status: 0 in "), "{log}");
     assert_no_process(&r);
 }
+
+/// A script's `settings` reach the service `run_with` boots, over the loop's own defaults
+/// (its batcher wall included).
+#[test]
+fn a_scripts_settings_reach_the_service_the_run_boots() {
+    let set = |k: &str, v: &str| Script { settings: [(k.to_string(), v.to_string())].into(), ..Script::default() };
+    let booted = loopworld::settings_for(&set("SPIRA_RUNTIME_HEARTBEAT_SECS", "11")).expect("the script's settings resolve");
+    assert_eq!(booted.heartbeat_secs, 11, "the script's value is the one booted");
+    assert_eq!(loopworld::settings_for(&Script::default()).expect("resolved").heartbeat_secs, 300, "and not the loop's default");
+    let wall = loopworld::settings_for(&set("SPIRA_BATCHER_WALL_SECS", "60")).expect("resolved");
+    assert_eq!(wall, loopworld::settings_with(&[("SPIRA_BATCHER_WALL_SECS", "60")]).expect("resolved"), "a script's batcher wall wins over the loop's 3600");
+    assert_ne!(wall, loopworld::settings_for(&Script::default()).expect("resolved"));
+}

@@ -12,13 +12,12 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use lifecycle::bead::{BeadEventKind, BeadRow, BeadState, BreakGlass, HoldKind};
+use lifecycle::bead::{BeadEventKind, BeadState, BreakGlass, HoldKind};
 use lifecycle::reason::HoldCause;
 use sim::doubles::Doubles;
-use spira_runtime::tasks::a::sentinel_call as sc;
 use spira_runtime::watchers::supersede_duty::{self as sd, Act, Held, Reading, Verb};
 use spira_runtime::watchers::INBOX_APPEND;
-use spira_sim::loopworld::{self, Bead, Run, Script, World, MIN, RUNE};
+use spira_sim::loopworld::{self, Bead, Run, Script, World, MIN};
 
 /// What the doubles saw besides the store: each bead's applied events (its history's
 /// evidence), the bd side (closes and notes) and every inbox line.
@@ -49,12 +48,10 @@ fn apply(w: &World, s: &Shared, id: &str, actor: &str, kind: BeadEventKind) -> R
     Ok(())
 }
 
-/// A bead filed outside the loop's own dwarf work: no dwarf is called for it.
+/// A bead filed outside the scenario's script, on the loop's own store.
 fn file(w: &World, id: &str) {
     let now = w.now();
-    let mut lc = w.lc();
-    lc.rows.insert(id.into(), BeadRow::filed(id));
-    lc.history.push((now, id.into(), "-".into(), BeadState::Ready.as_str().into()));
+    w.lc().file(now, id);
 }
 
 /// `work superseded-by`: a manual hold whose cause is supersede-request, the successor its detail.
@@ -118,35 +115,10 @@ fn act(w: &World, s: &Shared, input: &str) -> Result<String, String> {
     Ok("done".into())
 }
 
-/// The sentinel's probe as spira-claim ranks the world: only the beads the scenario files for a
-/// dwarf, READY or REWORK and under no hold. A held bead is not claimable, and one filed outside
-/// the loop is not the dwarf's work.
-fn sentinel_observe(w: &World) -> Result<String, String> {
-    let now = w.now();
-    let lc = w.lc();
-    let live: Vec<String> = lc.dwarves.iter().filter(|(_, end)| **end > now).map(|(u, _)| u.clone()).collect();
-    let ready = lc.rows.values().filter(|r| w.bead(&r.bead_id).is_some() && r.holds.is_empty() && matches!(r.state, BeadState::Ready | BeadState::Rework)).count() as u32;
-    let snap = sc::Snapshot {
-        live_by_rune: [(RUNE.to_string(), live.len() as u32)].into(),
-        ready_by_rune: [(RUNE.to_string(), Some(ready))].into(),
-        urgent: Some(vec![]),
-        express_ready: Some(0),
-        max_live: Some(4),
-        lanes_max_live: Some(4),
-        max_dwarves: Some(4),
-        roster: vec![RUNE.into()],
-        runes: [(RUNE.to_string(), sc::RuneCfg { lane: false, max_concurrent: w.script.max_concurrent, elastic: false })].into(),
-        live_units: live,
-        now_ms: now,
-        ..sc::Snapshot::default()
-    };
-    serde_json::to_string(&snap).map_err(|e| e.to_string())
-}
-
-/// The loop's doubles with supersede-duty's, the inbox and the sentinel's probe laid over them;
+/// The loop's doubles with supersede-duty's and the inbox laid over them;
 /// `step` runs before each observe, for what the scenario does between the duty's ticks.
 fn duty(d: Doubles, w: &Arc<World>, s: &Shared, step: fn(&World, &Shared)) -> Doubles {
-    let (w1, s1, w2, s2, s3, w4) = (w.clone(), s.clone(), w.clone(), s.clone(), s.clone(), w.clone());
+    let (w1, s1, w2, s2, s3) = (w.clone(), s.clone(), w.clone(), s.clone(), s.clone());
     d.double(sd::OBSERVE, move |input| {
         step(&w1, &s1);
         observe(&w1, &s1, input)
@@ -156,7 +128,6 @@ fn duty(d: Doubles, w: &Arc<World>, s: &Shared, step: fn(&World, &Shared)) -> Do
         side(&s3).inbox.push(line.to_string());
         Ok(String::new())
     })
-    .double(sc::OBSERVE, move |_| sentinel_observe(&w4))
 }
 
 fn run(seed: u64, script: Script, s: &Shared, setup: fn(&World, &Shared), step: fn(&World, &Shared)) -> Run {
@@ -243,7 +214,9 @@ fn supersede_holds_an_unlanded_self_or_absent_successor_lifts_the_hold_and_an_op
     }
     fn none(_: &World, _: &Shared) {}
     let s: Shared = Arc::default();
-    let script = Script { max_concurrent: 1, until: 16 * MIN, ..Script::default() };
+    // No dwarf runs: these beads are the duty's to adjudicate, and an unheld READY one
+    // (sp-su04, or a bead whose hold was lifted) would otherwise be claimed.
+    let script = Script { max_concurrent: 0, until: 16 * MIN, ..Script::default() };
     let r = run(32, script, &s, holds, none);
     let g = side(&s);
     println!("supersede-holds: wall {:?}", r.wall);
@@ -267,5 +240,24 @@ fn supersede_holds_an_unlanded_self_or_absent_successor_lifts_the_hold_and_an_op
     let polls = (16 * MIN).div_ceil(interval) as usize;
     assert!(g.observed_at.len() >= polls && g.observed_at.windows(2).all(|p| p[1] - p[0] == interval), "the duty polls every {interval} ms through the span (check-liveness): {:?}", g.observed_at);
     assert!(r.refused.is_empty(), "{:?}", r.refused);
+    assert_no_process(&r);
+}
+
+/// The loop's own dwarf offers no held bead (spira-claim's ranking): a READY bead under an
+/// operator's manual hold is never claimed, however many sentinel ticks and free slots follow,
+/// and the duty leaves the operator's hold alone.
+#[test]
+fn a_held_ready_bead_is_never_claimed_by_the_loops_dwarf() {
+    fn parked(w: &World, s: &Shared) {
+        file(w, "sp-hd01");
+        apply(w, s, "sp-hd01", "operator", BeadEventKind::Hold { kind: HoldKind::Manual, cause: HoldCause::ManualHold, detail: Some("operator parked it".into()) }).expect("the operator's hold");
+    }
+    fn none(_: &World, _: &Shared) {}
+    let s: Shared = Arc::default();
+    let script = Script { max_concurrent: 1, until: 30 * MIN, ..Script::default() };
+    let r = run(33, script, &s, parked, none);
+    assert_eq!(r.lifecycle_of("sp-hd01"), ["READY"], "the held bead was never claimed: {}", r.dump());
+    assert_eq!(r.rows["sp-hd01"].holds.iter().copied().collect::<Vec<_>>(), [HoldKind::Manual]);
+    assert!(r.refused.is_empty(), "no claim was tried on it: {:?}", r.refused);
     assert_no_process(&r);
 }

@@ -138,6 +138,9 @@ pub struct Script {
     pub verdicts: Vec<VerdictAt>,
     /// Where the run stops, in virtual ms.
     pub until: u64,
+    /// Settings the service boots with over [`settings_with`]'s defaults, by key.
+    #[serde(default)]
+    pub settings: BTreeMap<String, String>,
 }
 
 /// A loop scenario file: `driver = "loop"` and the [`Script`] keys.
@@ -233,7 +236,8 @@ impl Lc {
 }
 
 impl Lc {
-    fn file(&mut self, now: u64, id: &str) {
+    /// A bead filed READY at `now`, with no session of its own until a dwarf claims it.
+    pub fn file(&mut self, now: u64, id: &str) {
         self.rows.insert(id.into(), BeadRow::filed(id));
         self.items.insert(id.into(), format!("{id}: the scenario's work\n"));
         self.history.push((now, id.into(), "-".into(), BeadState::Ready.as_str().into()));
@@ -296,9 +300,14 @@ impl Lc {
         }
     }
 
+    /// The rows `spira-claim` would offer a dwarf: READY or REWORK and under no hold.
+    fn open_rows(&self) -> impl Iterator<Item = &BeadRow> {
+        self.rows.values().filter(|r| r.holds.is_empty() && matches!(r.state, BeadState::Ready | BeadState::Rework))
+    }
+
     fn claimable(&self, script: &Script) -> Option<String> {
         let prio = |id: &str| script.beads.iter().find(|b| b.id == id).map_or(u8::MAX, |b| b.priority);
-        let mut open: Vec<&BeadRow> = self.rows.values().filter(|r| matches!(r.state, BeadState::Ready | BeadState::Rework)).collect();
+        let mut open: Vec<&BeadRow> = self.open_rows().collect();
         open.sort_by_key(|r| (prio(&r.bead_id), r.bead_id.clone()));
         open.first().map(|r| r.bead_id.clone())
     }
@@ -342,7 +351,7 @@ fn sentinel_observe(w: &World) -> Result<String, String> {
     let now = w.now();
     let lc = w.lc();
     let live: Vec<String> = lc.dwarves.iter().filter(|(_, end)| **end > now).map(|(u, _)| u.clone()).collect();
-    let ready = lc.rows.values().filter(|r| matches!(r.state, BeadState::Ready | BeadState::Rework)).count() as u32;
+    let ready = lc.open_rows().count() as u32;
     let snap = sc::Snapshot {
         live_by_rune: [(RUNE.to_string(), live.len() as u32)].into(),
         ready_by_rune: [(RUNE.to_string(), Some(ready))].into(),
@@ -360,7 +369,7 @@ fn sentinel_observe(w: &World) -> Result<String, String> {
     json(&snap)
 }
 
-/// The dwarf claims the first claimable bead in priority order (READY or REWORK, as
+/// The dwarf claims the first claimable bead in priority order (READY or REWORK and unheld, as
 /// `spira-claim` ranks them) and submits at each of the bead's scripted offsets.
 fn sentinel_unit_start(w: &World, input: &str) -> Result<String, String> {
     let start: sc::Start = parse_json(sc::UNIT_START, input)?;
@@ -665,11 +674,11 @@ fn complete_fixture(key: &str) -> Option<String> {
 
 /// The settings the loop boots the service's task table with: every task acts, so its effects
 /// reach the doubles; the container cap is the host run ceiling; a calendar key holds the
-/// complete fixture's spec; `set` overrides; every other key is 300.
+/// complete fixture's spec; `set` overrides, its last entry for a key winning; every other key is 300.
 pub fn settings_with(set: &[(&str, &str)]) -> Result<Settings, String> {
     let modes: Vec<String> = tasks::all().map(|t| format!("{}=act", t.name)).collect();
     Settings::from_lookup(&|k| {
-        if let Some((_, v)) = set.iter().find(|(s, _)| *s == k) {
+        if let Some((_, v)) = set.iter().rev().find(|(s, _)| *s == k) {
             return Ok(v.to_string());
         }
         Ok(match k {
@@ -701,6 +710,13 @@ pub struct Run {
     pub wall: std::time::Duration,
 }
 
+/// The settings [`run_with`] boots the service with: the loop's batcher wall, then the script's own.
+pub fn settings_for(script: &Script) -> Result<Settings, String> {
+    let mut set = vec![("SPIRA_BATCHER_WALL_SECS", "3600")];
+    set.extend(script.settings.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+    settings_with(&set)
+}
+
 /// One run of `script` under `seed` on the loop's doubles.
 pub fn run(seed: u64, script: Script) -> Result<Run, String> {
     run_with(seed, script, |d, _| d)
@@ -720,11 +736,11 @@ pub fn run_with(seed: u64, script: Script, extra: impl FnOnce(Doubles, &Arc<Worl
     for v in &script.verdicts {
         lc.due.push((v.at, Due::Verdict { bead: v.bead.clone(), verdict: v.verdict }));
     }
+    let settings = settings_for(&script)?;
     let world = Arc::new(World { clock: clock.clone(), units: units.clone(), lc: Mutex::new(lc), script, proc: CountingProc::refusing() });
     let inner = Arc::new(extra(doubles(&world), &world));
     let runner = Arc::new(Timed { inner: inner.clone(), clock: clock.clone(), log: Mutex::new(vec![]) });
     let journal: Arc<dyn Journal> = MemJournal::new();
-    let settings = settings_with(&[("SPIRA_BATCHER_WALL_SECS", "3600")])?;
     let mut engine = Engine::open(journal.clone(), c.clone(), registrations(&settings), seed).map_err(|e| format!("the service's registrations: {e:?}"))?;
     for (_, stream, kind) in tasks::boots() {
         engine.start(stream, kind);
