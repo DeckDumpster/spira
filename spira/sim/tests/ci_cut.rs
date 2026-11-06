@@ -223,9 +223,9 @@ fn assert_cut(c: &Cut, code: i32, log: &str) {
     assert_eq!(tag, "spira-0.1.1", "the home repository's first numbered release");
     assert_eq!(at, &c.sha, "the tag names the merged head");
     let msg = c.tag_message(tag);
-    // Not asserted: a `branch: <publish branch>` line. release.sh writes the --branches list
-    // through `tr ',' '\n' | while read`, which drops the last entry (it has no newline), so a
-    // single-branch cut records none; no reader of the line exists today.
+    // A single-branch cut records its branch: release.sh's `while read` takes the last,
+    // unterminated entry of the --branches list too.
+    assert!(msg.contains(&format!("\nbranch: {BRANCH}\n")), "the tag names the publish branch:\n{msg}");
     assert!(msg.starts_with("spira release: spira\n") && msg.contains("\npr: 1\n") && msg.contains(&format!("bead: {BEAD}")), "the tag names the repository, the PR and the bead:\n{msg}");
     assert!(log.contains("suite results found in queue PR run"), "the gate assertion ran:\n{log}");
 }
