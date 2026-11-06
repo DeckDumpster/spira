@@ -65,8 +65,15 @@ fn probe() {
 }
 EOF
 mkdir -p "$TMP/target/debug/deps"
+# Building the probe is setup, not a case: on a loaded round VM the compile alone has taken 40s
+# and more, so inside a case it sat on the per-case deadline (law-no-wall-clock-budgets-in-the-
+# corpus). The deadline is off for the compile only and comes back as it was, so every case below
+# still runs under it; a hung compile is still stopped by the suite's own cap.
+case_deadline="$(spira-config get spira.test_case_deadline)"
+tl_config SPIRA_TEST_CASE_DEADLINE=0
 rustc --edition 2021 --test -o "$TMP/target/debug/deps/probe-0" "$TMP/probe.rs" >"$TMP/rustc.out" 2>&1 ||
     bail "the probe did not compile: $(cat "$TMP/rustc.out")"
+tl_config SPIRA_TEST_CASE_DEADLINE="$case_deadline"
 probe=("$TMP/target/debug/deps/probe-0" --exact probe --nocapture --test-threads=1)
 
 # The caller's own environment carries the live install's keys; none of them may get in.
