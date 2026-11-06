@@ -650,9 +650,15 @@ lc_path_stub() {   # lc_path_stub <bindir> <fixdir>
     # The verbs that never touch the lifecycle machine's rows through this stub's fixture —
     # close-on-land (bd close + reap, sp-2c1n0), content-landed (git only) and content (the
     # planning store's reads and writes, bd underneath: what bdq answered before the callers
-    # moved onto spira-lc) — go to the real spira-lc, the first one on PATH that is not this stub.
+    # moved onto spira-lc) — go to the real spira-lc: the staged release's, else the first one on
+    # PATH that is not this stub. Never another stand-in ahead on PATH: a mirror that hands its own
+    # unknown verbs to the next spira-lc on PATH would hand them back here, forever.
     local real="" c
-    while IFS= read -r c; do [ "$c" -ef "$bindir/spira-lc" ] || { real="$c"; break; }; done < <(type -ap spira-lc 2>/dev/null)
+    if [ -n "${_TL_STAGED_RELEASE:-}" ] && [ -x "$_TL_STAGED_RELEASE/bin/spira-lc" ]; then
+        real="$_TL_STAGED_RELEASE/bin/spira-lc"
+    else
+        while IFS= read -r c; do [ "$c" -ef "$bindir/spira-lc" ] || { real="$c"; break; }; done < <(type -ap spira-lc 2>/dev/null)
+    fi
     printf '#!/usr/bin/env bash\n%s\nexit 2\n' "$_LC_FACTS_BODY" > "$fix/facts-lc"; chmod +x "$fix/facts-lc"
     cat > "$bindir/spira-lc" <<STUB
 #!/usr/bin/env bash
