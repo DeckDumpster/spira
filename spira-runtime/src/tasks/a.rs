@@ -146,6 +146,18 @@ pub static TASKS: &[Task] = &[
         keys: &[queue_step::KEYS],
         build: |_| queue_step::QueueStep::from_cfg().registration(),
     },
+    Task {
+        name: publish::NAME,
+        boot: publish::Publish::boot,
+        cadence_ms: |_| publish::CADENCE_MS,
+        effects: publish::EFFECTS,
+        runners: {
+            use publish::{edge as x, *};
+            &[(OBSERVE, x::observe), (PUSH_BRANCH, x::push_branch), (PUSH_FORGE, x::push_forge), (PR_CREATE, x::pr_create), (PR_CLOSE, x::pr_close), (CANCEL_RUNS, x::cancel_runs), (RERUN, x::rerun), (RECORD, x::record), (NOTIFY, x::notify)]
+        },
+        keys: &[publish::KEYS],
+        build: |_| publish::Publish::from_cfg().registration(),
+    },
 ];
 
 /// Family A's rows, built from their contracts and waiting for their ports.
@@ -185,15 +197,6 @@ pub static PENDING: &[Task] = &[
         runners: stubs!(sift: OBSERVE, FETCH_BASE, NOTE, SEND_BACK, RECORD_PASS, SUPERSEDE),
         keys: &[sift::KEYS],
         build: |_| sift::Sift::from_cfg().registration(),
-    },
-    Task {
-        name: publish::NAME,
-        boot: publish::Publish::boot,
-        cadence_ms: |_| publish::CADENCE_MS,
-        effects: publish::EFFECTS,
-        runners: stubs!(publish: OBSERVE, PUSH_BRANCH, PUSH_FORGE, PR_CREATE, PR_CLOSE, CANCEL_RUNS, RERUN, RECORD, NOTIFY),
-        keys: &[publish::KEYS],
-        build: |_| publish::Publish::from_cfg().registration(),
     },
 ];
 
