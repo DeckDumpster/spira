@@ -113,6 +113,6 @@ echo "RENDER FALLBACK — empty SPIRA_PROD renders as SPIRA_HOME:"
 render_fb_out="$(TEST_PROD= inst --render)"; render_fb_rc=$?
 iszero "render fallback: --render exits 0 with empty SPIRA_PROD" "$render_fb_rc"
 nowant "render fallback: the watcher manifest was read" "manifest is malformed" "$render_fb_out"
-want   "render fallback: sentinel ExecStart derives from SPIRA_HOME" "ExecStart=$(dirname "$HERE")/bin/sentinel" "$render_fb_out"
+want   "render fallback: the scheduler's ExecStart derives from SPIRA_HOME" "ExecStart=$(dirname "$HERE")/bin/spira-runtime serve" "$render_fb_out"
 
 tl_summary
