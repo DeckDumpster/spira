@@ -226,26 +226,26 @@ nowant  "force override: no daemon-reload when no file changed"     "daemon-relo
 echo
 echo "ONESHOT DRAIN — changed timer; backing service is a running oneshot:"
 # ==========================================================================
-# Alter the sentinel timer content so it appears changed.
-printf '# altered for drain test\n' >> "$DEST/spira-sentinel-prod.timer"
-# Tell the mock that spira-sentinel-prod.service is a running oneshot that transitions
+# Alter the cockpit-ensure timer content (a oneshot pair every install ships) so it appears changed.
+printf '# altered for drain test\n' >> "$DEST/cockpit-ensure.timer"
+# Tell the mock that cockpit-ensure.service is a running oneshot that transitions
 # to inactive after the first is-active probe.
 printf 'active\n' > "$DRAIN_STATE"
 
 drain_out="$(MOCK_DWARVES= MOCK_IS_ACTIVE=active MOCK_FORCE= \
-              MOCK_ONESHOT_SVC=spira-sentinel-prod.service inst)"
+              MOCK_ONESHOT_SVC=cockpit-ensure.service inst)"
 drain_rc=$?
 drain_log="$(cat "$MOCK_LOG")"
 
 isz     "drain: exit 0 after draining the oneshot"                  "$drain_rc"
-want    "drain: is-active was queried on the backing service"        "is-active spira-sentinel-prod.service" "$drain_log"
+want    "drain: is-active was queried on the backing service"        "is-active cockpit-ensure.service" "$drain_log"
 want    "drain: drain message emitted"                              "mid-pass" "$drain_out"
-want    "drain: timer was applied after drain"                      "spira-sentinel-prod.timer" "$drain_log"
+want    "drain: timer was applied after drain"                      "cockpit-ensure.timer" "$drain_log"
 
 # Restore the timer to baseline (from the cached render) so the end-state check below
 # sees the normal, unaltered fixture.
-rendered_timer="$(printf '%s\n' "$rendered" | awk '/^===== spira-sentinel-prod.timer =====$/{found=1;next} /^===== /{found=0} found')"
-printf '%s\n' "$rendered_timer" > "$DEST/spira-sentinel-prod.timer"
+rendered_timer="$(printf '%s\n' "$rendered" | awk '/^===== cockpit-ensure.timer =====$/{found=1;next} /^===== /{found=0} found')"
+printf '%s\n' "$rendered_timer" > "$DEST/cockpit-ensure.timer"
 
 # ==========================================================================
 echo
@@ -260,7 +260,7 @@ want    "end-state: output names the failure"                      "not active" 
 # active is polled once and the verdict follows at once, rather than after the shipped 45 s.
 # Two lines: the apply pass probes each unit once before the end-state check polls it.
 is      "end-state: each unit is polled once under a 0 s wait"     2 \
-        "$(grep -c 'is-active spira-sentinel-prod.timer$' "$MOCK_LOG")"
+        "$(grep -c 'is-active cockpit-ensure.timer$' "$MOCK_LOG")"
 
 # The path the wait exists for: a unit still starting (Type=notify readiness) when the
 # install reaches its check is polled again and passes once it reports active. It answers
@@ -269,11 +269,11 @@ is      "end-state: each unit is polled once under a 0 s wait"     2 \
 # (law-no-wall-clock-budgets-in-the-corpus).
 printf '2\n' > "$ACTIVATE_STATE"
 ready_out="$(SPIRA_TOML="$(tl_layer SPIRA_INSTALL_ACTIVE_WAIT=5)" MOCK_DWARVES= MOCK_IS_ACTIVE=active \
-             MOCK_FORCE= MOCK_ONESHOT_SVC=__none__ MOCK_ACTIVATING_SVC=spira-sentinel-prod.timer inst)"
+             MOCK_FORCE= MOCK_ONESHOT_SVC=__none__ MOCK_ACTIVATING_SVC=cockpit-ensure.timer inst)"
 ready_rc=$?
 wantrc  "end-state: a unit that turns active inside the wait passes" 0 "$ready_rc"
 is      "end-state: the starting unit is polled until it is active"  3 \
-        "$(grep -c 'is-active spira-sentinel-prod.timer$' "$MOCK_LOG")"
+        "$(grep -c 'is-active cockpit-ensure.timer$' "$MOCK_LOG")"
 
 # ==========================================================================
 tl_summary

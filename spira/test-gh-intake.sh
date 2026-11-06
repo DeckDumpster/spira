@@ -20,7 +20,7 @@
 #      the ambient GITHUB_TOKEN canary never reaches the wire — a behavioural check.
 #
 # tier: T1
-# covers: gh-intake/src/*.rs systemd/spira-gh-intake.service systemd/spira-gh-intake.timer UC-dispatch-06
+# covers: gh-intake/src/*.rs UC-dispatch-06
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -208,23 +208,11 @@ is "exits 1" "1" "$rc"
 want "names the unresolved repo" "no-such-repo" "$out"
 
 echo
-echo "5. systemd unit points at the built binary, not a deleted script"
-SERVICE="$HERE/../systemd/spira-gh-intake.service"
-if [ -f "$SERVICE" ] && grep -q '@SPIRA_PROD_ROOT@/bin/gh-intake' "$SERVICE"; then
-    ok "spira-gh-intake.service ExecStarts @SPIRA_PROD_ROOT@/bin/gh-intake"
-else
-    bad "spira-gh-intake.service ExecStarts @SPIRA_PROD_ROOT@/bin/gh-intake" "not found in $SERVICE"
-fi
+echo "5. the script is gone (the pass is the scheduler's intake.gh task, with no unit of its own)"
 if [ -e "$HERE/gh-intake.sh" ]; then
     bad "gh-intake.sh is deleted" "still present at $HERE/gh-intake.sh"
 else
     ok "gh-intake.sh is deleted"
-fi
-
-if grep -q '^Environment=SPIRA_DB=@SPIRA_DB@$' "$SERVICE"; then
-    ok "spira-gh-intake.service sets SPIRA_DB (binary exits without it)"
-else
-    bad "spira-gh-intake.service sets SPIRA_DB (binary exits without it)" "Environment=SPIRA_DB=@SPIRA_DB@ missing from $SERVICE"
 fi
 
 tl_summary

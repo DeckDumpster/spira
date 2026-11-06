@@ -14,7 +14,7 @@
 #   7. Act mode: deterministic remedy executed; inference bead filed.
 #   8. World halted: pass exits 0 without acting.
 #   9. SPIRA_LOOP_STALL_SECS and SPIRA_CI_RED_MAX_SECS are in conf.sh allowlist.
-#  10. spira-czar-pass.timer and .service exist in systemd/.
+#  10. the czar pass has no unit of its own (it is the scheduler's czar task).
 #  11. watchtower --queue-checks is deleted (not even a stub; sp-lnmbq).
 #  12. sentinel no longer calls watchtower --queue-checks.
 #  16-21. base-red: the base ref's OWN gate run, not a batch's. Positive control
@@ -49,7 +49,7 @@
 # verifies detection. A detector that fires on empty data is not a detector.
 #
 # tier: T1
-# covers: czar-pass/src/main.rs reconciler-engine/src/**.rs spira/conf.sh spira/testlib/lc-fixture.sh spira/testlib/forge-batch.sh sentinel/src/* watchtower/src/* systemd/spira-czar-pass.service systemd/spira-czar-pass.timer UC-ops-detection-remediation-23 UC-ops-detection-remediation-24
+# covers: czar-pass/src/main.rs reconciler-engine/src/**.rs spira/conf.sh spira/testlib/lc-fixture.sh spira/testlib/forge-batch.sh sentinel/src/* watchtower/src/* UC-ops-detection-remediation-23 UC-ops-detection-remediation-24
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
@@ -265,17 +265,14 @@ for key in SPIRA_LOOP_STALL_SECS SPIRA_CI_RED_MAX_SECS; do
 done
 
 # ==========================================================================================
-printf '\n%s\n' "10. systemd unit files exist"
+printf '\n%s\n' "10. the czar pass has no unit of its own"
 # ==========================================================================================
+# It is the scheduler's `czar` task (spira-runtime); its 30 s cadence is T1 there.
 _sd="$HERE/../systemd"
-[ -f "$_sd/spira-czar-pass.timer" ] \
-    && ok "spira-czar-pass.timer exists" \
-    || bad "spira-czar-pass.timer not found"
-[ -f "$_sd/spira-czar-pass.service" ] \
-    && ok "spira-czar-pass.service exists" \
-    || bad "spira-czar-pass.service not found"
-_timer="$(cat "$_sd/spira-czar-pass.timer" 2>/dev/null)"
-want "timer: OnUnitActiveSec=30s" "OnUnitActiveSec=30s" "$_timer"
+[ -f "$_sd/spira-runtime.service" ] && ok "positive control: the systemd/ templates are readable" || bad "systemd/spira-runtime.service is readable" "not found in $_sd"
+[ ! -e "$_sd/spira-czar-pass.timer" ] && [ ! -e "$_sd/spira-czar-pass.service" ] \
+    && ok "spira-czar-pass.timer and .service are retired" \
+    || bad "spira-czar-pass.timer and .service are retired" "still in $_sd"
 
 # ==========================================================================================
 printf '\n%s\n' "11. watchtower --queue-checks is deleted, not retired (sp-lnmbq)"

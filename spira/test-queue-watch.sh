@@ -24,7 +24,7 @@
 #      (SPIRA_CI_QUEUED_MAX_SECS) rather than the much longer head-stall window — and the
 #      finding is handed to a fake incident.sh, not left in the log for a reader who has to be
 #      tailing it.
-#   6. The watchd manifest row expands, and names queue-watch bare.
+#   6. The watchd manifest has no queue-watch row: the watcher is retired (sp-kq4cll).
 #
 # QUEUE_WATCH_BIN may point at another binary; pointing it at a stub that prints nothing is
 # how every assertion below was seen to fail first.
@@ -313,8 +313,10 @@ want "the incident names the repo"                        "repo=qs" "$ilog"
 want "the incident carries the queued wording, not just the log line" "with no runner ever assigned" "$ilog"
 
 # --- 6. wiring -------------------------------------------------------------------------------
-row="$(command grep -E '^queue-watch\|daemon\|' "$HERE/watchers" || true)"
-want "watchd row runs the binary by name"         "|queue-watch watch --run @SPIRA_RUN@" "$row"
-want "watchd row carries a health probe"          "|queue-watch health --run @SPIRA_RUN@" "$row"
+# queue-watch is retired (sp-kq4cll, scheduler consolidation §3 P5): nothing runs it, so the
+# manifest has no row for it.
+grep -q '^concierge-inbox|' "$HERE/watchers" && ok "positive control: the manifest is readable" || bad "the manifest names concierge-inbox" "no row in $HERE/watchers"
+row="$(command grep -E '^queue-watch\|' "$HERE/watchers" || true)"
+is "the watchd manifest has no queue-watch row" "" "$row"
 
 tl_summary

@@ -122,13 +122,13 @@ is "back to clean: exits 0" "0" "$rc"
 echo
 echo "units — sanctioned drop-ins (intake, cadence) are not flagged:"
 # ==========================================================================
-mkdir -p "$UNITDIR/spira-groom-prod.service.d" "$UNITDIR/spira-groom-prod.timer.d"
-printf '# installed by install-intake.sh\n' > "$UNITDIR/spira-groom-prod.service.d/50-spira-intake.conf"
-printf '# installed by cadence.sh\n'        > "$UNITDIR/spira-groom-prod.timer.d/cadence.conf"
+mkdir -p "$UNITDIR/spira-dolt-boot-check-prod.service.d" "$UNITDIR/spira-dolt-boot-check-prod.timer.d"
+printf '# installed by install-intake.sh\n' > "$UNITDIR/spira-dolt-boot-check-prod.service.d/50-spira-intake.conf"
+printf '# installed by cadence.sh\n'        > "$UNITDIR/spira-dolt-boot-check-prod.timer.d/cadence.conf"
 out="$(drift units "$UNITDIR")"; rc=$?
 is "sanctioned drop-ins alone: exits 0" "0" "$rc"
 nowant "sanctioned drop-ins: not reported UNSHIPPED" "UNSHIPPED" "$out"
-rm -rf "$UNITDIR/spira-groom-prod.service.d" "$UNITDIR/spira-groom-prod.timer.d"
+rm -rf "$UNITDIR/spira-dolt-boot-check-prod.service.d" "$UNITDIR/spira-dolt-boot-check-prod.timer.d"
 
 # ==========================================================================
 echo

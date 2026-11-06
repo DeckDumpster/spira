@@ -2,7 +2,7 @@
 # test-nix-gc.sh — nix-gc.sh collects only when the current spira-env resolves, and the
 # unit that runs it is fenced and weekly.
 # tier: T1
-# covers: spira/nix-gc.sh systemd/spira-nix-gc.service systemd/spira-nix-gc.timer
+# covers: spira/nix-gc.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -41,8 +41,6 @@ out="$(nix_gc_main 2>&1)"; rc=$?
 [ "$rc" = 1 ] && [[ "$out" == *"$TMP/fakebin"* && "$out" == *"$TMP/spira-env/bin"* ]] && ok "neither present: fails naming both places" || bad "neither present: fails naming both places" "rc=$rc out=$out"
 mv "$TMP/hidden" "$TMP/fakebin"
 
-svc="$HERE/../systemd/spira-nix-gc.service"; tmr="$HERE/../systemd/spira-nix-gc.timer"
-grep -q '^CPUQuota=' "$svc" && ok "unit is CPU-fenced" || bad "unit is CPU-fenced" "no CPUQuota"
-grep -q '^OnCalendar=weekly' "$tmr" && ok "timer is weekly" || bad "timer is weekly" "no weekly OnCalendar"
+# The weekly cadence and the fence are the scheduler's sweep.nix_gc task now (spira-runtime/tests).
 
 tl_summary

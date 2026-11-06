@@ -166,30 +166,18 @@ want   "check used --repo flag for gate A"         "--repo org-a/repo-a"  "$gh_c
 want   "check used --repo flag for gate B too"     "--repo org-b/repo-b"  "$gh_calls"
 
 # ======================================================================================
-# PART 4: the systemd timer for gate-check exists.
+# PART 4: gate-check runs on a schedule.
 #
-# bd gate check must run on a schedule; the bespoke awaiting-ci sweep has been removed.
-# An installed unit tells readers the cadence; a missing one means the check never fires.
+# bd gate check must run on a schedule; the bespoke awaiting-ci sweep has been removed. The
+# schedule is the scheduler's gate.check task now (spira-runtime, T1), not a timer unit, and
+# the unit that once carried it is retired.
 # ======================================================================================
 echo
-echo "gate-check timer and service exist:"
+echo "gate-check has no timer of its own:"
 
 SYSTEMD="$HERE/../systemd"
-[ -f "$SYSTEMD/spira-gate-check.service" ] \
-    && ok "spira-gate-check.service exists" \
-    || bad "spira-gate-check.service exists" "file not found"
-[ -f "$SYSTEMD/spira-gate-check.timer" ] \
-    && ok "spira-gate-check.timer exists" \
-    || bad "spira-gate-check.timer exists" "file not found"
-
-# THE CONTENT IS THE CONTRACT. A timer that references the wrong service name installs
-# but never fires — asserting on the file's content is the one check that catches that.
-if [ -f "$SYSTEMD/spira-gate-check.timer" ]; then
-    want "timer references gate-check service" "spira-gate-check" \
-         "$(cat "$SYSTEMD/spira-gate-check.timer")"
-fi
-if [ -f "$SYSTEMD/spira-gate-check.service" ]; then
-    want "service ExecStart names gate-check.sh" "gate-check.sh" \
-         "$(cat "$SYSTEMD/spira-gate-check.service")"
-fi
+[ -f "$SYSTEMD/spira-runtime.service" ] && ok "positive control: the systemd/ templates are readable" || bad "systemd/spira-runtime.service is readable" "not found in $SYSTEMD"
+[ ! -e "$SYSTEMD/spira-gate-check.timer" ] && [ ! -e "$SYSTEMD/spira-gate-check.service" ] \
+    && ok "spira-gate-check.timer and .service are retired" \
+    || bad "spira-gate-check.timer and .service are retired" "still in $SYSTEMD"
 tl_summary

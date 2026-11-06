@@ -85,16 +85,16 @@ _un_user="${USER:-$(id -un 2>/dev/null || true)}"
 
 # ---------------------------------------------------------------------------
 # INSTANCE AUTO-DETECTION. When no instance was given, scan UNITDIR for
-# installed spira-sentinel-*.service files and extract the instance names from
-# them. Exactly one → use it. Zero or many → refuse rather than guess.
+# installed spira-runtime-*.service files (the scheduler, one per instance) and extract the
+# instance names from them. Exactly one → use it. Zero or many → refuse rather than guess.
 # ---------------------------------------------------------------------------
 if [ -z "${SPIRA_INSTANCE:-}" ] || [ "${SPIRA_INSTANCE}" = "prod" ]; then
     # Re-scan in case the default 'prod' was set because nothing was provided.
     _un_instances=()
-    for _f in "$UNITDIR"/spira-sentinel-*.service; do
+    for _f in "$UNITDIR"/spira-runtime-*.service; do
         [ -e "$_f" ] || continue
         _b="$(basename "$_f")"
-        # spira-sentinel-<instance>.service — extract instance after last '-'
+        # spira-runtime-<instance>.service — extract instance after last '-'
         _inst="${_b%.service}"; _inst="${_inst##*-}"
         _un_instances+=("$_inst")
     done

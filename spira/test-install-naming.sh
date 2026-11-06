@@ -62,7 +62,7 @@ tl_config SPIRA_INSTANCE=test SPIRA_DOLT_DATA="" SPIRA_RUN="$TMP/run" \
 enable_arr="$(env -i SPIRA_RELEASE="$(tl_release)" PATH="$PATH" HOME="$HOME" SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
     SPIRA_CONF=/nonexistent SPIRA_INSTANCE=test \
     units-install --list-enable 2>/dev/null | tr '\n' ' ')"
-want   "naming: ENABLE includes spira-sentinel-test.timer" "spira-sentinel-test.timer" "$enable_arr"
-nowant "naming: ENABLE does not include plain spira-sentinel.timer" "spira-sentinel.timer" "$enable_arr"
+want   "naming: ENABLE includes spira-watchdog-test.timer" "spira-watchdog-test.timer" "$enable_arr"
+nowant "naming: ENABLE does not include plain spira-watchdog.timer" "spira-watchdog.timer" "$enable_arr"
 
 tl_summary

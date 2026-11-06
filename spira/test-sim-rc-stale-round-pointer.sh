@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tier: T2
 # requires: testenv
-# covers: round-controller/src/sifts.rs spira/sim/scenarios/rc-stale-round-pointer.toml spira/sim/scenarios/steps/rc-stale-round.sh spira/sim/** spira/sim-scenario-lib.sh spira/lib.sh sim/actors.toml sim/durations.toml queue/src/** release/src/round_recert.rs landing-pass/src/** lifecycle/src/** spira-lc/src/** batcher/src/** gate-worker/** systemd/spira-sentinel.* systemd/spira-sift.*
+# covers: round-controller/src/sifts.rs spira/sim/scenarios/rc-stale-round-pointer.toml spira/sim/scenarios/steps/rc-stale-round.sh spira/sim/** spira/sim-scenario-lib.sh spira/lib.sh sim/actors.toml sim/durations.toml queue/src/** release/src/round_recert.rs landing-pass/src/** lifecycle/src/** spira-lc/src/** batcher/src/** gate-worker/**
 # lane: sim
 # pids: 400
 #
