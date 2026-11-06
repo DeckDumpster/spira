@@ -109,11 +109,12 @@ impl Settings {
         "SPIRA_POOL_CAP_CONTAINER",
     ];
 
-    /// Every key `from_lookup` may read, each once: the service's and every task's. Each must be
+    /// Every key `from_lookup` may read, each once: the service's, its real sources'
+    /// (`sources::KEYS`, read by `sources::real`, not by `from_lookup`) and every task's. Each must be
     /// registered in spira/conf.d.
     pub fn keys() -> Vec<&'static str> {
         let mut out: Vec<&'static str> = vec![];
-        for k in Self::SERVICE_KEYS.iter().chain(crate::tasks::all().flat_map(|t| t.keys.iter().flat_map(|ks| ks.iter()))) {
+        for k in Self::SERVICE_KEYS.iter().chain(crate::sources::KEYS).chain(crate::tasks::all().flat_map(|t| t.keys.iter().flat_map(|ks| ks.iter()))) {
             if !out.contains(k) {
                 out.push(k);
             }
@@ -133,13 +134,13 @@ impl Settings {
         out
     }
 
-    /// Keys pending rows declare that the one config door cannot carry, so none is registered:
-    /// the config file spells a field `SPIRA_<FIELD>`, or `COCKPIT_<FIELD>` when the field starts
-    /// `cockpit_`, so `BD_TIMEOUT` and every `SPIRA_COCKPIT_*` key has no field that reads back
-    /// as it; `SPIRA_LC_BIN` is retired (sp-gypjk: tools are invoked by name) and the loader
-    /// drops it. Each row's contract names them; the port renames or drops each before its row
-    /// moves to `TASKS`, where `from_lookup` would refuse it.
-    pub const UNDECLARABLE: &'static [&'static str] = &["BD_TIMEOUT", "SPIRA_COCKPIT_TICK", "SPIRA_COCKPIT_FORCE", "SPIRA_COCKPIT_WINDOW_HOURS", "SPIRA_COCKPIT_SLOW_CONCURRENT", "SPIRA_LC_BIN"];
+    /// Keys a pending row may declare that the one config door cannot carry, so none is
+    /// registered: the config file spells a field `SPIRA_<FIELD>`, or `COCKPIT_<FIELD>` when the
+    /// field starts `cockpit_`, so a key such as `BD_TIMEOUT` or `SPIRA_COCKPIT_TICK` has no
+    /// field that reads back as it. A row's port renames or drops each before the row moves to
+    /// `TASKS`, where `from_lookup` would refuse it. Empty since every row that declared one
+    /// (`BD_TIMEOUT`, the `SPIRA_COCKPIT_*` keys, the retired `SPIRA_LC_BIN`) dropped it.
+    pub const UNDECLARABLE: &'static [&'static str] = &[];
 
     pub fn load() -> Result<Settings, String> {
         let mut settings = Self::from_lookup(&cfg)?.with_environment(&|k| std::env::var(k).ok().filter(|v| !v.is_empty()))?;
@@ -314,11 +315,31 @@ pub(crate) fn fixture() -> Settings {
     Settings::from_lookup(&tests::lookup("7")).expect("fixture settings")
 }
 
+/// Resolves this test process's config door (`$SPIRA_TOML`, `$SPIRA_HOME`) over the complete
+/// fixture, once, before anything reads it: a ported row whose `build` pins its keys through
+/// `spira_config::process::cfg` (family A's `kit::pin`) then builds under `from_lookup` in a
+/// test as it does in the service.
+#[cfg(test)]
+pub(crate) fn fixture_config_door() {
+    static DOOR: std::sync::OnceLock<testkit::TempDir> = std::sync::OnceLock::new();
+    DOOR.get_or_init(|| {
+        let dir = testkit::TempDir::new("runtime-settings-door");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_LC_SOCKET", "/d/sock")]);
+        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        // The door resolves once per process and keeps what it read, so the environment
+        // needs to name the fixture only while it does.
+        let _env = testkit::env(&[("SPIRA_TOML", Some(&toml.to_string_lossy())), ("SPIRA_HOME", Some(&home.to_string_lossy()))]);
+        spira_config::process::config().expect("the complete fixture resolves");
+        dir
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     pub(crate) fn lookup(secs: &'static str) -> impl Fn(&str) -> Result<String, String> {
+        super::fixture_config_door();
         move |k| {
             if k == crate::modes::KEY {
                 return Ok(fixture_modes());
@@ -354,11 +375,17 @@ mod tests {
                 "SPIRA_COCKPIT_WINDOW_HOURS" => "24",
                 "SPIRA_COCKPIT_SLOW_CONCURRENT" => "1",
                 "SPIRA_LC_BIN" => "spira-lc",
-                k if Settings::pending_keys().contains(&k) => return complete_fixture(k).ok_or_else(|| format!("{k} has no value in spira/testlib/complete.toml")),
+                k if row_declares(k) => return complete_fixture(k).ok_or_else(|| format!("{k} has no value in spira/testlib/complete.toml")),
                 _ => return Err(format!("{k} unknown")),
             }
             .to_string())
         }
+    }
+
+    /// Whether a row in `tasks::all()` or `tasks::pending()` declares `k`: the keys whose value is
+    /// the complete fixture's, so moving a row from `PENDING` to `TASKS` keeps its keys resolved.
+    fn row_declares(k: &str) -> bool {
+        crate::sources::KEYS.contains(&k) || crate::tasks::all().chain(crate::tasks::pending()).any(|t| t.keys.iter().any(|ks| ks.contains(&k)))
     }
 
     /// The fixture's task modes: `asks` and `view` observe, and every other task, ported or
@@ -392,7 +419,6 @@ mod tests {
         assert_eq!(complete_fixture("SPIRA_POOL_CAP_CONTAINER").as_deref(), Some("2"), "the fixture reader must find a known key");
         assert_eq!(complete_fixture("SPIRA_PLANTED_NOT_A_KEY"), None);
         let pending = Settings::pending_keys();
-        assert!(pending.len() >= 50, "the scan must see the pending rows' keys: {pending:?}");
         let conf_d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d");
         let unregistered: Vec<&str> = pending.iter().copied().filter(|k| !conf_d.join(k).is_file() && !Settings::UNDECLARABLE.contains(k)).collect();
         assert!(unregistered.is_empty(), "keys pending rows declare that spira/conf.d does not register: {unregistered:?}");
@@ -401,6 +427,15 @@ mod tests {
         let get = lookup("7");
         let unresolved: Vec<&str> = Settings::keys().into_iter().chain(pending).filter(|k| get(k).is_err()).collect();
         assert!(unresolved.is_empty(), "keys of CORE and the pending rows the settings fixture does not resolve: {unresolved:?}");
+    }
+
+    #[test]
+    fn every_key_a_ported_or_pending_row_declares_resolves_in_the_fixture() {
+        let get = lookup("7");
+        let rows: Vec<&str> = crate::tasks::all().chain(crate::tasks::pending()).flat_map(|t| t.keys.iter().flat_map(|ks| ks.iter().copied())).collect();
+        assert!(rows.len() > Settings::pending_keys().len(), "the scan must see the ported rows' keys as well as the pending ones");
+        let unresolved: Vec<&str> = rows.into_iter().filter(|k| get(k).is_err()).collect();
+        assert!(unresolved.is_empty(), "keys of rows in tasks::all() or tasks::pending() the settings fixture does not resolve: {unresolved:?}");
     }
 
     /// Values for the keys the reconciler reads; none is the shipped default.
