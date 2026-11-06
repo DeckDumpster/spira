@@ -720,7 +720,10 @@ impl Machine<'_> {
             Some((pool, key)) if !self.rc.held_keys.contains(&key) => {
                 self.go(Trigger::Cut);
                 self.rc.round_key = Some(key.clone());
-                let members: Vec<(String, String)> = pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
+                // In merge order (`topo_order`: express, priority, prerequisites first): the
+                // assemble effect rebuilds its members from `(id, tip)` alone, so the leg's
+                // order is the order they merge in and the order a conflict is decided by.
+                let members: Vec<(String, String)> = core::topo_order(&pool).iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
                 let versions = repo.pool.iter().filter(|m| members.iter().any(|(id, _)| id == &m.id)).map(|m| (m.id.clone(), m.version)).collect();
                 self.acts.push(Leg { key: format!("{}:{}", self.repo, repo.base_sha), base: repo.base_sha.clone(), ..Leg::on(self.repo) }.act(FETCH));
                 self.acts.push(Leg { key: format!("{}:{}", self.repo, digest(&key)), members, versions, round_key: key, base: repo.base_sha.clone(), ..Leg::on(self.repo) }.act(ASSEMBLE));

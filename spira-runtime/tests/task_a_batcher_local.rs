@@ -98,6 +98,22 @@ fn t5_an_unsifted_tip_is_set_aside() {
     assert!(assemble.input.contains("sp-a") && !assemble.input.contains("sp-b"), "{assemble:?}");
 }
 
+/// `core.rs` `order_key`, as `batcher rounds` merged a round (`topo_order` of the full members):
+/// express first, then priority, so of two siblings that change one file the higher-priority one
+/// merges and the other conflicts (sim scenario `conflicting-siblings`, ported to
+/// `sim/tests/loop_ports.rs`). The assemble effect rebuilds its members from `(id, tip)` alone
+/// (`core_members`: no priority, no stack), so the merge order is the leg's own order.
+#[test]
+fn t5_the_assemble_leg_lists_its_members_in_merge_order_priority_first() {
+    let mut s = busy();
+    s.repos.get_mut("spira").unwrap().pool[1].priority = 0;
+    let (_, acts) = decide(&Carry::default(), &s);
+    let assemble = acts.iter().find(|a| a.effect == ASSEMBLE).expect("a cut");
+    let leg: Leg = serde_json::from_str(&assemble.input).expect("an assemble leg");
+    let ids: Vec<&str> = leg.members.iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(ids, ["sp-b", "sp-a"], "the priority-0 member merges first: {leg:?}");
+}
+
 /// A leg's `unit.ran`, delivered on this task's own stream, advances the machine at once: the
 /// green corpus starts the certify leg with no tick and no observe in between (the old workaround
 /// read the `units` stream at the next 30-s observe).
