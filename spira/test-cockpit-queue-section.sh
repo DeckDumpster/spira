@@ -50,6 +50,10 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t
 export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 BASE_PATH="$PATH"
 lcfix_up || bail "could not build a lifecycle fixture"
+# cockpit-collect reads the open batch from the store's views in-process (sp-ipwlic: no `queue
+# batch show` child), and the views watch the control store only, so the batch machine and
+# every CERTIFIED row this suite seeds live there.
+fb_store_up || bail "could not put the batch machine on the control store"
 LC_ENV=($(lcfix_env))
 
 REPO="$TMP/repo"
@@ -82,14 +86,12 @@ cat > "$TMP/beads.json" <<JSON
 ]
 JSON
 
-NOW_EPOCH="$(date +%s)"
-EPOCH_C1=$(( NOW_EPOCH - 600 ))
-EPOCH_C2=$(( NOW_EPOCH - 300 ))
 TIP_C1="$(git -C "$REPO" rev-parse spira/sp-c1)"
 TIP_C2="$(git -C "$REPO" rev-parse spira/sp-c2)"
 
-lcfix_seed sp-c1 CERTIFIED "$TIP_C1" "$EPOCH_C1"
-lcfix_seed sp-c2 CERTIFIED "$TIP_C2" "$EPOCH_C2"
+# sp-c1 is certified first, so it is the older of the two.
+fb_certify sp-c1 "$TIP_C1" || bail "could not certify sp-c1"
+fb_certify sp-c2 "$TIP_C2" || bail "could not certify sp-c2"
 
 # The open batch: PR 42, members sp-b1 sp-b2 sp-b3 sp-bopen, opened 180s ago (ABSORBED FROM
 # test-cockpit-queue.sh: a non-zero SP_QUEUE_BATCH_AGE), cut on spira-lc as IN_DELIVERY.
@@ -204,11 +206,10 @@ git -C "$REPO2" checkout -q main
 
 RUN2="$TMP2/run"
 mkdir -p "$RUN2" "$TMP2/queue"
-NOW2="$(date +%s)"
 for i in $(seq 1 "$N_CERT"); do
     bid="$(printf 'sp-e%02d' "$i")"
     tip="$(git -C "$REPO2" rev-parse "spira/$bid")"
-    lcfix_seed "$bid" CERTIFIED "$tip" "$(( NOW2 - i ))"
+    fb_certify "$bid" "$tip" || bail "could not certify $bid"
 done
 
 MAP2="$TMP2/repo-map"
