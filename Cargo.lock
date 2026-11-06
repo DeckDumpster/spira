@@ -2101,6 +2101,8 @@ name = "spira-runtime"
 version = "1.0.0"
 dependencies = [
  "base64",
+ "batcher",
+ "batcher-cut",
  "forge",
  "heimdall",
  "hel",
@@ -2108,6 +2110,7 @@ dependencies = [
  "libc",
  "mail",
  "perf-watch",
+ "queue",
  "reclaim",
  "reconciler",
  "reconciler-engine",

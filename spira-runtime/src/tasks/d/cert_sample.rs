@@ -69,15 +69,15 @@
 //! - A release rollback restores the unit.
 //! - In Observe mode, `unit.start`, `file_bead` and `record` are shadowed.
 
-use std::collections::BTreeMap;
-
 use runtime::event::*;
-use runtime::units::{UnitRan, UNIT_RAN, UNIT_START};
+use runtime::units::{UnitSpec, UNIT_RAN, UNIT_START};
 use serde::{Deserialize, Serialize};
 use spira_config::process::cfg;
 
-use super::cert_full::HistoryRow;
+pub use super::cert_full::HistoryRow;
 use super::pattern;
+pub use super::sweep::{Carry, Phase};
+use super::sweep::{self, Leg, Prepared, Sweep};
 use crate::watchers::carried;
 
 pub const NAME: &str = "cert.sample";
@@ -86,6 +86,8 @@ pub const TICK: EventKindTag = "cert.sample.tick";
 pub const STATE: EventKindTag = "cert.sample.state";
 /// A move the transition table refuses, its body naming the state it was refused in.
 pub const REFUSED: EventKindTag = "cert.sample.refused";
+/// Never armed: a host leg is bounded by testenv's own `--deadline`. Named for the shared machine.
+pub const WATCH: EventKindTag = "cert.sample.watch";
 pub const OBSERVE: &str = "cert.sample.observe";
 pub const BRANCH: &str = "cert.sample.branch";
 pub const FILE_BEAD: &str = "cert.sample.file_bead";
@@ -103,6 +105,8 @@ pub const BRANCH_NAME: &str = "cert-sweep/tip";
 pub const REPO_NAME: &str = "spira";
 pub const RERUNS: u32 = 3;
 pub const MAX_BEADS: usize = 5;
+/// `--priority`'s default, which the sample unit does not pass.
+pub const PRIORITY: u32 = 1;
 
 /// When the tick after one at `at_ms` is due.
 pub fn next_tick(at_ms: u64) -> u64 {
@@ -130,55 +134,59 @@ pub struct Snapshot {
     pub results: Option<Vec<HistoryRow>>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Phase {
-    #[default]
-    Idle,
-    Running,
-    Collect,
-    Attribute,
-    File,
-    Record,
-}
+pub type Input = sweep::Input<Snapshot>;
 
-/// `{ phase, tip, round, picks, pending, reruns, bisect, held, filed }`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Carry {
-    pub phase: Phase,
-    pub tip: String,
-    pub round: String,
-    pub picks: Vec<String>,
-    pub seq: u32,
-    pub pending: Vec<String>,
-    pub reruns: BTreeMap<String, Vec<String>>,
-    pub bisect: BTreeMap<String, (String, String)>,
-    pub held: Vec<String>,
-    pub filed: u32,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Input {
-    Observed(Snapshot),
-    Ran(UnitRan),
-}
-
-/// The contract's state table, as data.
+/// The contract's state table, as data; the rows past the pass leg are the shared sweep's.
 pub static TRANSITIONS: pattern::Table<Phase> = &[
     (Phase::Idle, "tick no-suites", Phase::Idle),
     (Phase::Idle, "tick", Phase::Running),
-    (Phase::Running, "unit.ran results", Phase::Collect),
-    (Phase::Running, "unit.ran no-results declined", Phase::Idle),
-    (Phase::Running, "unit.ran no-results", Phase::Idle),
-    (Phase::Collect, "red", Phase::Attribute),
+    (Phase::Running, "prepared", Phase::Running),
+    (Phase::Running, "unit.ran", Phase::Collect),
+    (Phase::Running, "prepare failed", Phase::Collect),
+    (Phase::Collect, "no results declined", Phase::Idle),
+    (Phase::Collect, "no results", Phase::Idle),
+    (Phase::Collect, "results", Phase::Attribute),
+    (Phase::Collect, "verdict", Phase::Attribute),
+    (Phase::Attribute, "leg", Phase::Running),
     (Phase::Attribute, "judged file", Phase::File),
     (Phase::Attribute, "judged bisect", Phase::Attribute),
-    (Phase::File, "filed", Phase::Record),
+    (Phase::Attribute, "flaky", Phase::File),
+    (Phase::Attribute, "reproducible", Phase::Attribute),
+    (Phase::Attribute, "inconclusive", Phase::File),
+    (Phase::Attribute, "file", Phase::File),
+    (Phase::Attribute, "done", Phase::Record),
+    (Phase::File, "next", Phase::Attribute),
+    (Phase::File, "filed", Phase::Attribute),
+    (Phase::File, "held", Phase::Attribute),
     (Phase::Record, "done", Phase::Idle),
 ];
 
+/// `testenv --deadline 1200 --suites <csv> cert-sweep/tip spira`, on the host.
+fn unit(leg: &Leg, p: &Prepared) -> UnitSpec {
+    let program = if p.program.is_empty() { "testenv".to_string() } else { p.program.clone() };
+    let argv = vec![program, "--deadline".into(), DEADLINE_S.to_string(), "--suites".into(), leg.suites.join(","), BRANCH_NAME.into(), REPO_NAME.into()];
+    UnitSpec { task: NAME.into(), key: leg.key.clone(), argv, env: vec![], cwd: None }
+}
+
+pub fn sweep(cfg: &Config) -> Sweep {
+    Sweep { task: NAME, mode: "subset", table: TRANSITIONS, observe: OBSERVE, prepare: BRANCH, file_bead: FILE_BEAD, record: RECORD, reruns: RERUNS, max_beads: MAX_BEADS as u32, priority: PRIORITY, unit, silence_ms: None, watch: WATCH, run_dir: cfg.run.clone() }
+}
+
 /// One move of the machine. `seed` is the subset pick's seed, drawn from `Ctx::rand_u64`.
-pub fn decide(_carry: &Carry, _input: &Input, _now_ms: u64, _seed: u64, _cfg: &Config) -> Result<(Carry, Vec<EffectSpec>), String> {
-    unimplemented!("cert.sample: not ported yet")
+pub fn decide(carry: &Carry, input: &Input, now_ms: u64, seed: u64, cfg: &Config) -> Result<(Carry, Vec<Command>), String> {
+    let sw = sweep(cfg);
+    match (carry.phase, input) {
+        (Phase::Idle, sweep::Input::Observed(snap)) => {
+            if snap.suites.is_empty() {
+                pattern::transition(TRANSITIONS, NAME, Phase::Idle, "tick no-suites")?;
+                return Ok((carry.clone(), vec![]));
+            }
+            let picks = cert_sweep::pick_subset(&snap.suites, SUBSET_DIV, seed);
+            sw.begin(&mut carry.clone(), now_ms, &snap.tip, &snap.round, picks, "tick")
+        }
+        (_, sweep::Input::Observed(snap)) => sw.step(carry, &sweep::Input::Observed((snap.history.clone(), snap.results.clone())), now_ms),
+        (_, other) => sw.step(carry, &super::cert_full::relabel(other), now_ms),
+    }
 }
 
 pub struct CertSample {
@@ -205,21 +213,21 @@ impl CertSample {
 
 impl Handler for CertSample {
     fn interests(&self) -> &[EventKindTag] {
-        &[TICK, EFFECT_SUCCEEDED, UNIT_RAN]
+        &[TICK, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT, UNIT_RAN]
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
         if ev.stream.0 != STREAM {
             return vec![];
         }
+        let carry = carried::<Carry>(view, &ev.stream, STATE);
         if ev.kind.tag == TICK {
+            // Single-flight: a tick while a pass is in flight re-arms only.
+            if carry.phase != Phase::Idle {
+                return vec![Command::Timer { at: next_tick(ev.at), kind: EventKind::new(TICK, "") }];
+            }
             return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, next_tick(ev.at));
         }
-        let input = match (pattern::answer::<Snapshot>(view, ev, OBSERVE), pattern::unit_ran(ev, NAME)) {
-            (Some(snap), _) => Input::Observed(snap),
-            (None, Some((_, ran))) => Input::Ran(ran),
-            _ => return vec![],
-        };
         let config = match &self.config {
             Ok(c) => c,
             Err(e) => {
@@ -227,10 +235,46 @@ impl Handler for CertSample {
                 return vec![];
             }
         };
-        let carry = carried::<Carry>(view, &ev.stream, STATE);
+        let Some(input) = sweep::input_of::<Snapshot>(&sweep(config), view, ev) else { return vec![] };
         match decide(&carry, &input, ev.at, ctx.rand_u64(), config) {
-            Ok((next, acts)) => pattern::commands(STATE, &carry, &next, acts),
+            Ok((next, cmds)) => sweep::commands(STATE, &carry, &next, cmds),
             Err(why) => vec![Command::Emit(EventKind::new(REFUSED, &why))],
         }
     }
+}
+
+// ───────────────────────────── runners ─────────────────────────────
+
+/// The tick's snapshot (no certified short-circuit and no lease read in subset mode), or a
+/// leg's parsed testenv stdout with the history.
+pub fn observe(e: &crate::Effects, _key: &str, spec: &EffectSpec) -> Result<String, String> {
+    let cfg = Config::pinned()?;
+    let look: sweep::Look = if spec.input.is_empty() { sweep::Look::default() } else { serde_json::from_str(&spec.input).map_err(|err| format!("{OBSERVE}: bad input: {err}"))? };
+    let history = sweep::history(&cfg.run).iter().map(|r| sweep::history_row(r, "")).collect();
+    let snap = if look.results_dir.is_some() || look.stdout.is_some() {
+        Snapshot { history, results: sweep::results(&Look { results_dir: None, ..look }), ..Snapshot::default() }
+    } else {
+        let (tip, round, suites) = sweep::tip_of(&sweep::repo(e)?)?;
+        Snapshot { tip, round, suites, history, results: None }
+    };
+    serde_json::to_string(&snap).map_err(|err| err.to_string())
+}
+
+use sweep::Look;
+
+/// `git branch -f cert-sweep/tip <commit>`, and the window's members when asked.
+pub fn branch(e: &crate::Effects, _key: &str, spec: &EffectSpec) -> Result<String, String> {
+    let p: sweep::Prepare = serde_json::from_str(&spec.input).map_err(|err| format!("{BRANCH}: bad input: {err}"))?;
+    let repo = sweep::repo(e)?;
+    sweep::git(&repo, &["branch", "-f", BRANCH_NAME, &p.commit])?;
+    let out = Prepared { program: spira_config::release_env::tool("testenv")?, tree: repo.clone(), members: sweep::members(&repo, &p.window) };
+    serde_json::to_string(&out).map_err(|err| err.to_string())
+}
+
+pub fn file_bead(e: &crate::Effects, _key: &str, spec: &EffectSpec) -> Result<String, String> {
+    sweep::file_bead(e, spec)
+}
+
+pub fn record(_e: &crate::Effects, _key: &str, spec: &EffectSpec) -> Result<String, String> {
+    sweep::record_rows(&Config::pinned()?.run, spec)
 }

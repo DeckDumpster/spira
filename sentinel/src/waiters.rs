@@ -17,66 +17,15 @@
 
 use std::collections::HashSet;
 
-use crate::model::{parse_beads, Bead, LcRow};
+use crate::model::{parse_beads, Bead};
 use crate::pass::Sentinel;
 use crate::store;
-use spira_config::lc_state;
 
-/// Active queue blockers: spira-lc rows in CERTIFIED or IN_DELIVERY — the queue pipeline's
-/// states. A tipless design/diagnosis bead reaches a terminal state, never these.
-pub fn active_blockers_lc(rows: &[LcRow]) -> HashSet<String> {
-    rows.iter()
-        .filter(|r| matches!(r.state.as_str(), "CERTIFIED" | "IN_DELIVERY"))
-        .map(|r| r.bead_id.clone())
-        .collect()
-}
-
-/// One decision per ready bead (add when it blocks on an active blocker and is not yet
-/// labeled, remove when it no longer does but is), plus an unconditional remove for every
-/// labeled id absent from the ready set (lib.sh: "ready dep data is authoritative; a
-/// labeled-only bead gets no dep check — removing the label is safe since the bead is not
-/// claimable"). `true` = add, `false` = remove.
-pub fn decide(active: &HashSet<String>, labeled: &HashSet<String>, ready: &[Bead]) -> Vec<(bool, String)> {
-    let mut by_id: std::collections::HashMap<&str, &Bead> = std::collections::HashMap::new();
-    for b in ready {
-        by_id.insert(b.id.as_str(), b);
-    }
-    let mut out = Vec::new();
-    for (id, b) in &by_id {
-        let currently = labeled.contains(*id);
-        let want = !active.is_empty()
-            && b.dependencies.iter().any(|d| {
-                d.r#type.as_deref() == Some("blocks")
-                    && d.target().map(|t| active.contains(t)).unwrap_or(false)
-            });
-        if want && !currently {
-            out.push((true, id.to_string()));
-        } else if !want && currently {
-            out.push((false, id.to_string()));
-        }
-    }
-    for id in labeled {
-        if !by_id.contains_key(id.as_str()) {
-            out.push((false, id.clone()));
-        }
-    }
-    out
-}
+pub use sentinel::checks::{active_blockers_lc, decide, labeled_claimable};
 
 /// `bd list --all --label <label>`: who carries the label, read as content.
 fn labeled_args(label: &str) -> Vec<String> {
     ["list", "--all", "--label", label, "--limit", "0"].iter().map(|s| s.to_string()).collect()
-}
-
-/// The labeled beads whose lifecycle row is claimable (READY/REWORK).
-pub fn labeled_claimable(rows: &[LcRow], labeled: Vec<Bead>) -> HashSet<String> {
-    let mut out = HashSet::new();
-    for b in labeled {
-        if rows.iter().any(|r| r.bead_id == b.id && lc_state::is_claimable(&r.state)) {
-            out.insert(b.id);
-        }
-    }
-    out
 }
 
 impl<'a> Sentinel<'a> {
@@ -204,6 +153,7 @@ impl<'a> Sentinel<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::LcRow;
     use crate::model::parse_beads;
 
     fn bead(id: &str, deps: &[(&str, &str)]) -> Bead {

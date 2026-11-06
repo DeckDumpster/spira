@@ -103,18 +103,33 @@
 //! `SPIRA_LAND_UNIT`, `SPIRA_LAND_STALE`, `SPIRA_LAND_ESCALATE_EVERY`, `SPIRA_INFERENCE_EVERY`,
 //! `SPIRA_SENTINEL_PASS_TARGET_SECS`, `SPIRA_SKIP_RECLAIM`, `SPIRA_REPO_MAP`, `SPIRA_GH`, `SPIRA_BATCH_MAXPAR`.
 //!
+//! ## The port
+//!
+//! Ported: CHECK 2's reaper (`sentinel::checks::stale_leases`: a live holder is stopped and
+//! reclaimed on a later pass, a dead one reclaimed now), CHECK 3b's queue waiters
+//! (`sentinel::checks::decide` over the active blockers, and a labeled bead whose own row
+//! LANDED closed), CHECK 6's dispatch of the landing leg (`unit.start` of
+//! `spira-run-sentinel-pass-landing`, matched back by `UnitRan::key_for`) and CHECK 7's
+//! hand-off. Not ported, and so never asked for by decide: CHECK 1 (pilgrimage.sh), 2b
+//! (strand), 2c and 2d, 3 and 3c, the twelve watchtower checks and CHECK 8's judgement; their
+//! runners refuse naming what is missing. The content door serves list and show only, so
+//! the label, close and recompute writes refuse rather than fork bd.
+//!
 //! ## Reverse
 //!
 //! Release rollback restores the unit; or `Observe` mode: every effect above is journaled
 //! `effect.shadowed`, CHECK 2's reap included, and the old timer is re-enabled by hand.
 //!
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use runtime::event::*;
+use runtime::units::{self, UnitRan, UNIT_RAN};
 use serde::{Deserialize, Serialize};
+use spira_config::lc_call::LcClient;
 
 use super::kit::{self, Act, Cadence, Shape};
+use crate::Effects;
 
 pub const NAME: &str = "sentinel-pass";
 pub const STREAM: &str = "task.sentinel-pass";
@@ -122,8 +137,9 @@ pub const TICK: EventKindTag = "sentinel-pass.tick";
 pub const STATE: EventKindTag = "sentinel-pass.state";
 /// CHECK 7's hand-off to [`super::sentinel_call`], emitted instead of running the call.
 pub const CALL_WANTED: EventKindTag = super::sentinel_call::CALL_WANTED;
-/// The landing leg CHECK 6 starts as a transient unit.
+/// The landing leg CHECK 6 starts as a transient unit: its key under the naming rule.
 pub const LANDING_UNIT: &str = "spira-landing";
+pub const LANDING_KEY: &str = "landing";
 pub const OBSERVE: &str = "sentinel-pass.observe";
 pub const LC_EVENT: &str = "sentinel-pass.lc_event";
 pub const LC_HOLD: &str = "sentinel-pass.lc_hold";
@@ -222,9 +238,23 @@ pub struct LandingStatus {
     pub progress_at_ms: Option<u64>,
 }
 
+/// The labels the checks read, as pinned; the default is the spellings the contract's fixtures use.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Labels {
+    pub queue_wait: String,
+}
+
+impl Default for Labels {
+    fn default() -> Self {
+        Labels { queue_wait: "queue-wait".into() }
+    }
+}
+
 /// The observe snapshot. `beads` or `rows` that could not be read are `None`: no lifecycle
 /// decision rests on them.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Snapshot {
     pub beads: Option<Vec<Bead>>,
     pub ready_raw: Vec<String>,
@@ -240,6 +270,11 @@ pub struct Snapshot {
     pub skew: Option<String>,
     pub world_running: bool,
     pub now_ms: u64,
+    /// `SPIRA_RECLAIM_GRACE_SECS`, as pinned.
+    pub reclaim_grace_secs: u64,
+    /// `SPIRA_SKIP_RECLAIM=1`: the reaper is off.
+    pub skip_reclaim: bool,
+    pub labels: Labels,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -287,6 +322,7 @@ pub static TABLE: &[(State, Trigger, State)] = &[
 /// Carried between passes: the machine, the judgement cooldown, the land escalation, and the
 /// roster warnings already given.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub state: State,
     pub inference_last_ms: Option<u64>,
@@ -294,13 +330,123 @@ pub struct Carry {
     pub roster_warned: Vec<String>,
 }
 
-pub fn step(_state: State, _event: Trigger) -> Result<State, String> {
-    crate::not_ported!(NAME)
+pub fn step(state: State, event: Trigger) -> Result<State, String> {
+    TABLE.iter().find(|(s, e, _)| *s == state && *e == event).map(|(_, _, to)| *to).ok_or_else(|| format!("{NAME}: {event:?} is not a move from state {state:?}"))
 }
 
-/// The checks in today's order (1, 2, 2b, 2c, 2d, 3, 6, 3b, 3c, 7, 8), from the snapshot alone.
-pub fn decide(_carry: &Carry, _snap: &Snapshot) -> (Carry, Vec<Act>) {
-    crate::not_ported!(NAME)
+/// A row as the sentinel's checks read it. The contract's fixtures name the leased state
+/// `CLAIMED`; the machine's word is `WORKING`, and both are read as the leased state.
+fn lc_row(r: &Row) -> sentinel::model::LcRow {
+    sentinel::model::LcRow {
+        bead_id: r.id.clone(),
+        state: if r.state == "CLAIMED" { "WORKING".into() } else { r.state.clone() },
+        holder: r.holder.clone(),
+        lease_until: r.lease_until_ms.map(|ms| (ms / 1000) as i64),
+        holds: r.holds.clone(),
+        stack: r.stack.clone(),
+        version: Some(r.version.to_string()),
+        ..sentinel::model::LcRow::default()
+    }
+}
+
+fn model_bead(b: &Bead) -> sentinel::model::Bead {
+    sentinel::model::Bead {
+        id: b.id.clone(),
+        title: Some(b.title.clone()),
+        status: b.status.clone(),
+        labels: b.labels.clone(),
+        dependency_count: b.deps.len() as u64,
+        dependencies: b.deps.iter().map(|d| sentinel::model::Dep { depends_on_id: Some(d.clone()), r#type: Some("blocks".into()), ..sentinel::model::Dep::default() }).collect(),
+        ..sentinel::model::Bead::default()
+    }
+}
+
+/// What a store write's runner is handed.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Write {
+    pub id: String,
+    pub expect: String,
+    pub version: u64,
+    pub kind: String,
+    pub cause: String,
+    pub label: String,
+    pub op: String,
+    pub text: String,
+}
+
+fn act(effect: &str, key: impl Into<String>, w: Write) -> Act {
+    Act::new(effect, key).with_input(serde_json::to_string(&w).unwrap_or_default())
+}
+
+/// The checks in today's order (2, 3b, 6, 7), from the snapshot alone.
+pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
+    let mut acts = vec![];
+    let now = (snap.now_ms / 1000) as i64;
+    let mut landing = false;
+    if let Some(rows) = &snap.rows {
+        let lc: Vec<sentinel::model::LcRow> = rows.iter().map(lc_row).collect();
+        // CHECK 2: a live holder is stopped first, and never reclaimed in the pass that stops it.
+        if !snap.skip_reclaim {
+            let alive = |id: &str| snap.holder_alive.get(id).copied().unwrap_or(false);
+            let gone = |h: &str| snap.session_gone.get(h).copied().unwrap_or(false);
+            for (id, ago) in sentinel::checks::stale_leases(&lc, now, snap.reclaim_grace_secs as i64, alive, gone) {
+                if alive(&id) {
+                    acts.push(act(STOP_HOLDER, &id, Write { id: id.clone(), ..Write::default() }));
+                    continue;
+                }
+                let Some(row) = rows.iter().find(|r| r.id == id) else { continue };
+                let expect = lc_row(row).state;
+                acts.push(act(LC_EVENT, format!("{id}:{}:HolderDead", row.version), Write { id: id.clone(), expect, version: row.version, kind: sentinel::lifecycle_events::HOLDER_DEAD.into(), ..Write::default() }));
+                acts.push(act(LC_FACT, format!("{id}:reclaimed:stale-lease:{now}"), Write { id: id.clone(), kind: "reclaimed".into(), cause: "stale-lease".into(), ..Write::default() }));
+                let text = if ago > 0 { format!("Reclaimed by CHECK 2: in_progress with a lease that expired {}m ago and was never released.", ago / 60) } else { "Reclaimed by CHECK 2: the holder's session is gone and never released the claim.".to_string() };
+                acts.push(act(CONTENT_NOTE, format!("{id}:{}", text.len()), Write { id, text, ..Write::default() }));
+            }
+        }
+        // CHECK 3b: queue waiters.
+        if let (Some(beads), label) = (&snap.beads, &snap.labels.queue_wait) {
+            if !label.is_empty() {
+                let labeled: Vec<&Bead> = beads.iter().filter(|b| b.labels.contains(label)).collect();
+                let active = sentinel::checks::active_blockers_lc(&lc);
+                let mut waiting: HashSet<String> = sentinel::checks::labeled_claimable(&lc, labeled.iter().map(|b| model_bead(b)).collect());
+                // A waiter with no lifecycle row yet is read by its content status, as bd's
+                // `--status open` was read before the rows existed.
+                waiting.extend(labeled.iter().filter(|b| b.status == "open" && !rows.iter().any(|r| r.id == b.id)).map(|b| b.id.clone()));
+                let ready: Vec<sentinel::model::Bead> = if active.is_empty() { vec![] } else { beads.iter().filter(|b| snap.ready_raw.contains(&b.id)).map(model_bead).collect() };
+                for (add, id) in sentinel::checks::decide(&active, &waiting, &ready) {
+                    let (op, hold) = if add { ("add", LC_HOLD) } else { ("remove", LC_UNHOLD) };
+                    acts.push(act(CONTENT_LABEL, format!("{id}:{label}:{op}"), Write { id: id.clone(), label: label.clone(), op: op.into(), ..Write::default() }));
+                    acts.push(act(hold, format!("{id}:wait"), Write { id, kind: "wait".into(), text: "blocker certified or batched, not yet landed".into(), ..Write::default() }));
+                }
+                for b in labeled.iter().filter(|b| rows.iter().any(|r| r.id == b.id && r.state == "LANDED")) {
+                    acts.push(act(CONTENT_LABEL, format!("{}:{label}:remove", b.id), Write { id: b.id.clone(), label: label.clone(), op: "remove".into(), ..Write::default() }));
+                    acts.push(act(LC_UNHOLD, format!("{}:wait", b.id), Write { id: b.id.clone(), kind: "wait".into(), ..Write::default() }));
+                    acts.push(act(CONTENT_CLOSE, &b.id, Write { id: b.id.clone(), text: "Content already on main (LANDED); no branch remained to land.".into(), ..Write::default() }));
+                }
+            }
+        }
+    }
+    // CHECK 6: the landing leg, unless one is in flight or this is not the current release.
+    if snap.world_running && snap.skew.is_none() && !snap.landing_active {
+        acts.push(act(LANDING_START, LANDING_UNIT, Write::default()));
+        landing = true;
+    }
+    // CHECK 7: plan beads ready hand off to the call.
+    if snap.plan_ready.is_some_and(|n| n > 0) {
+        acts.push(Act::new(CALL_WANTED, format!("plan_ready:{now}")).with_input(serde_json::json!({"plan_ready": snap.plan_ready}).to_string()));
+    }
+    let mut next = carry.clone();
+    next.state = if landing { State::AwaitingLanding } else if acts.is_empty() { State::Idle } else { State::Acting };
+    (next, acts)
+}
+
+/// The observe probe's input: the carry (which T3 reads back) and the pinned config.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ObserveIn {
+    #[serde(flatten)]
+    pub carry: Carry,
+    #[serde(default)]
+    pub pinned: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -327,14 +473,21 @@ impl SentinelPass {
     pub fn boot() -> (&'static str, &'static str, EventKind) {
         ("sentinel-pass/boot", STREAM, EventKind::new(TICK, "boot"))
     }
+
+    fn observe(&self, carry: &Carry, next_at: u64) -> Vec<Command> {
+        let input = ObserveIn { carry: carry.clone(), pinned: self.pinned.clone() };
+        kit::on_tick(&SHAPE, serde_json::to_string(&input).unwrap_or_default(), next_at)
+    }
 }
 
 impl Handler for SentinelPass {
     fn interests(&self) -> &[EventKindTag] {
-        &[TICK, EFFECT_SUCCEEDED]
+        &[TICK, UNIT_RAN, EFFECT_SUCCEEDED]
     }
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
+        // Commands land on the event's own stream: a `unit.ran` of the landing leg routed here
+        // wakes the pass; elsewhere the next tick reads the leg's state from the unit manager.
         if ev.stream.0 != STREAM {
             return vec![];
         }
@@ -343,10 +496,164 @@ impl Handler for SentinelPass {
         }
         let carry: Carry = kit::carry(&SHAPE, view);
         if ev.kind.tag == TICK {
-            return kit::on_tick(&SHAPE, serde_json::to_string(&carry).unwrap_or_default(), self.cadence.next_after(ev.at));
+            return self.observe(&carry, self.cadence.next_after(ev.at));
+        }
+        if let Some(ran) = UnitRan::from_event_kind(&ev.kind) {
+            if ran.key_for(NAME).as_deref() != Some(LANDING_KEY) {
+                return vec![];
+            }
+            return self.observe(&carry, self.cadence.next_after(ev.at));
         }
         let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else { return vec![] };
         let (next, acts) = decide(&carry, &snap);
         kit::commands(&SHAPE, ACTS, EMITS, &carry, &next, acts)
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The runners.
+
+fn client(e: &Effects, deadline_ms: u64) -> LcClient {
+    LcClient::socket(&e.world.lc_socket).within(std::time::Duration::from_millis(deadline_ms))
+}
+
+fn answer(lc: &LcClient, args: &[&str]) -> Result<String, String> {
+    let r = lc.call(args).map_err(|e| e.to_string())?;
+    if r.code == 0 { Ok(r.out) } else { Err(format!("spira-lc {} exited {}: {}", args.first().copied().unwrap_or(""), r.code, r.why())) }
+}
+
+fn write_of(input: &str, what: &str) -> Result<Write, String> {
+    serde_json::from_str(input).map_err(|e| format!("{what}: {e}"))
+}
+
+/// The landing leg's unit under the naming rule.
+fn landing_handle() -> Result<units::UnitHandle, String> {
+    units::UnitHandle::of(NAME, LANDING_KEY).map_err(|e| e.to_string())
+}
+
+/// `sentinel-pass.observe`: the content and lifecycle rows over `LcClient`, the plan pool's
+/// ready count from spira-claim in-process, the holders from hel, the landing leg from the
+/// unit manager, and the world and release gates.
+pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
+    let req: ObserveIn = serde_json::from_str(input).unwrap_or_default();
+    let pin = |k: &str| req.pinned.get(k).cloned().unwrap_or_default();
+    let lc = client(e, 5_000);
+    let run = e.world.run_dir.clone();
+    let mut snap = Snapshot {
+        now_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64),
+        world_running: !run.join("world.halted").is_file() && !run.join("world.draining").is_file(),
+        reclaim_grace_secs: pin("SPIRA_RECLAIM_GRACE_SECS").trim().parse().unwrap_or(10_800),
+        labels: Labels { queue_wait: pin("SPIRA_QUEUE_WAIT_LABEL") },
+        ..Snapshot::default()
+    };
+    snap.skew = std::env::var(spira_config::RELEASE_ENV).ok().filter(|r| !r.is_empty()).and_then(|r| spira_config::release_skew::skew(std::path::Path::new(&r))).map(|s| s.describe());
+    snap.beads = answer(&lc, &["content", "list", "--all", "--limit", "0", "--json"]).ok().and_then(|t| sentinel::model::parse_beads(&t).ok()).map(|v| {
+        v.into_iter()
+            .map(|b| Bead { deps: b.dependencies.iter().filter(|d| d.r#type.as_deref() == Some("blocks")).filter_map(|d| d.target().map(str::to_string)).collect(), title: b.title.clone().unwrap_or_default(), status: b.status.clone(), labels: b.labels.clone(), id: b.id })
+            .collect()
+    });
+    let rows = answer(&lc, &["list"]).ok().and_then(|t| sentinel::model::parse_lc_rows(&t).ok());
+    if let Some(rows) = &rows {
+        for r in rows.iter().filter(|r| r.state == "WORKING") {
+            snap.holder_alive.insert(r.bead_id.clone(), sentinel::hel_verbs::holder_alive(&r.bead_id).unwrap_or(false));
+            if let Some(h) = &r.holder {
+                snap.session_gone.insert(h.clone(), spira_config::session::session_gone(h, &spira_config::admission::RealProcs));
+            }
+        }
+    }
+    snap.rows = rows.map(|v| {
+        v.into_iter()
+            .map(|r| Row { version: r.version.as_deref().and_then(|v| v.parse().ok()).unwrap_or(0), lease_until_ms: r.lease_until.map(|s| s.max(0) as u64 * 1000), id: r.bead_id, state: r.state, holds: r.holds, holder: r.holder, stack: r.stack })
+            .collect()
+    });
+    let scope = pin("SPIRA_SCOPE_LABEL");
+    let plan = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
+    let lookup = |k: &str| req.pinned.get(k).cloned().or_else(|| spira_config::process::cfg(k).ok()).or_else(|| std::env::var(k).ok());
+    let o = sentinel::claim::dispatch_in(&["ready-count".to_string(), plan], &mut std::io::empty(), &lookup);
+    snap.plan_ready = (o.code == 0).then(|| o.out.trim().parse().ok()).flatten();
+    let unitp = e.units.as_deref().ok_or("no unit manager configured")?;
+    snap.landing_active = matches!(unitp.facts(&landing_handle()?).map(|f| f.state), Ok(units::UnitState::Active | units::UnitState::Activating));
+    serde_json::to_string(&snap).map_err(|e| e.to_string())
+}
+
+/// `sentinel-pass.lc_event`: the row re-read live, then the CAS write; a row that moved since
+/// the snapshot is refused.
+pub fn lc_event(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
+    let w = write_of(&spec.input, LC_EVENT)?;
+    let lc = client(e, spec.deadline_ms);
+    let shown: serde_json::Value = serde_json::from_str(&answer(&lc, &["show", &w.id])?).map_err(|e| format!("show {}: {e}", w.id))?;
+    let state = shown["bead"]["state"].as_str().unwrap_or_default().to_string();
+    if state != w.expect {
+        return Err(format!("{} moved to {state} since the sweep read it", w.id));
+    }
+    let version = w.version.to_string();
+    answer(&lc, &["event", "bead", &w.id, "--expect", &w.expect, "--version", &version, "--actor", "sentinel", "--kind", &w.kind])
+}
+
+pub fn lc_hold(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
+    let w = write_of(&spec.input, LC_HOLD)?;
+    answer(&client(e, spec.deadline_ms), &["hold", &w.id, &w.kind, &w.text, "sentinel"])
+}
+
+pub fn lc_unhold(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
+    let w = write_of(&spec.input, LC_UNHOLD)?;
+    answer(&client(e, spec.deadline_ms), &["unhold", &w.id, &w.kind, "sentinel"])
+}
+
+pub fn lc_fact(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
+    let w = write_of(&spec.input, LC_FACT)?;
+    answer(&client(e, spec.deadline_ms), &["fact", &w.id, "--kind", &w.kind, "--actor", "harness", "--cause", &w.cause])
+}
+
+pub fn lc_close(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
+    let w = write_of(&spec.input, LC_CLOSE)?;
+    let r = client(e, spec.deadline_ms).call_stdin(&["close", &w.id, "--reason-file", "-", "--actor", "sentinel"], &w.text).map_err(|e| e.to_string())?;
+    if r.code == 0 { Ok(r.out) } else { Err(format!("spira-lc close {} exited {}: {}", w.id, r.code, r.why())) }
+}
+
+/// `sentinel-pass.content_note`: the bead's notes, through the store's `work` door.
+pub fn content_note(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
+    let w = write_of(&spec.input, CONTENT_NOTE)?;
+    let r = client(e, spec.deadline_ms).call_stdin(&["work", &w.id, "note", "-"], &w.text).map_err(|e| e.to_string())?;
+    if r.code == 0 { Ok(r.out) } else { Err(format!("spira-lc work {} note exited {}: {}", w.id, r.code, r.why())) }
+}
+
+/// The content writes the store's `content` door does not serve (it answers list and show):
+/// refused, never a bd child.
+pub fn unserved(spec: &EffectSpec) -> Result<String, String> {
+    Err(format!("{}: unserved — the store's content door serves list and show only", spec.name))
+}
+
+/// The checks this task does not port yet: refused, naming what is missing.
+pub fn not_ported(spec: &EffectSpec) -> Result<String, String> {
+    Err(format!("{}: not ported — its check needs a library entry (pilgrimage, strand, watchtower, reflect, mail, event)", spec.name))
+}
+
+/// `sentinel-pass.stop_holder`: hel stops whatever still works in the bead's worktree.
+pub fn stop_holder(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
+    let w = write_of(&spec.input, STOP_HOLDER)?;
+    let units = e.units.as_deref().ok_or("no unit manager configured")?;
+    sentinel::hel_verbs::stop_holder(&w.id, units).map(|()| format!("stopped the holder of {}", w.id))
+}
+
+/// `sentinel-pass.landing_start`: the landing leg as a unit under the naming rule.
+pub fn landing_start(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
+    let units = e.units.as_deref().ok_or("no unit manager configured")?;
+    if matches!(units.facts(&landing_handle()?).map(|f| f.state), Ok(units::UnitState::Active | units::UnitState::Activating)) {
+        return Err("a landing is already in flight".into());
+    }
+    let landing = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).map(|d| d.join("landing-pass")).find(|p| p.is_file()).ok_or("landing-pass not found on PATH")?;
+    let pass_env = ["PATH", "SPIRA_RELEASE", "SPIRA_TOML", "HOME", "SPIRA_HOME", "SPIRA_RUN", "SPIRA_DB", "SPIRA_REPO", "SPIRA_REPO_MAP"];
+    let env = pass_env.iter().filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v))).collect();
+    let unit = units::UnitSpec { task: NAME.into(), key: LANDING_KEY.into(), argv: vec![landing.to_string_lossy().into_owned(), "land".into()], env, cwd: None };
+    let input = serde_json::to_string(&unit).map_err(|e| e.to_string())?;
+    e.unit(&EffectSpec { name: units::UNIT_START.into(), input, deadline_ms: spec.deadline_ms })
+}
+
+/// `sentinel-pass.phase_metric`: one `sentinel-phase` row in the metrics store.
+pub fn phase_metric(e: &Effects, input: &str) -> Result<String, String> {
+    let v: serde_json::Value = serde_json::from_str(input).map_err(|e| format!("{PHASE_METRIC}: {e}"))?;
+    let fields: Vec<(String, serde_json::Value)> = v.as_object().map(|o| o.iter().map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default();
+    tsd::store::Pusher::new(e.world.metrics_endpoint.clone()).push("sentinel-phase", &tsd::now_iso(), &fields).map_err(|e| e.to_string())?;
+    Ok("sentinel-phase".into())
 }

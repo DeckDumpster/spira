@@ -7,6 +7,7 @@
 // record, the lifecycle machine (spira-lc), and at most 2 gh API calls (forge.sh batch-ci-status) for the
 // open batch's run.
 
+use czar_pass::{iso_of, parse_field, parse_iso_to_epoch};
 use reconciler_engine::core::{last_remedy, record_remedy, step, HysteresisState, RawStatus, Verdict};
 use reconciler_engine::io::{append_status, load_state, save_state, StateMap};
 use reconciler_engine::paths;
@@ -275,37 +276,6 @@ fn unix_now() -> u64 {
 
 fn compute_now_iso() -> String {
     iso_of(unix_now())
-}
-
-/// Days since 1970-01-01 → (year, month, day), proleptic Gregorian (Howard Hinnant's civil_from_days).
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (yoe + era * 400 + i64::from(m <= 2), m, d)
-}
-
-/// (year, month, day) → days since 1970-01-01 (Hinnant's days_from_civil).
-fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y.rem_euclid(400);
-    let mp = i64::from(if m > 2 { m - 3 } else { m + 9 });
-    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
-/// `date -u +%Y-%m-%dT%H:%M:%SZ` of an epoch second.
-fn iso_of(epoch: u64) -> String {
-    let (days, rem) = ((epoch / 86_400) as i64, epoch % 86_400);
-    let (y, m, d) = civil_from_days(days);
-    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
 }
 
 fn log_print(msg: &str) {
@@ -595,35 +565,6 @@ fn forge_shown(forge: &str, args: &[&str]) {
     eprint!("{}", r.err);
 }
 
-fn parse_field(output: &str, key: &str) -> Option<String> {
-    let prefix = format!("{}: ", key);
-    output
-        .lines()
-        .find(|l| l.starts_with(&prefix))
-        .map(|l| l[prefix.len()..].trim().to_string())
-}
-
-/// A UTC `YYYY-MM-DDTHH:MM:SS[Z]` stamp (the landing log's own, `T` or a space between) as
-/// epoch seconds; `None` for anything else, which the caller reads as unobservable.
-fn parse_iso_to_epoch(ts: &str) -> Option<u64> {
-    let ts = ts.trim();
-    let ts = ts.strip_suffix('Z').unwrap_or(ts);
-    let b = ts.as_bytes();
-    if b.len() != 19 || b[4] != b'-' || b[7] != b'-' || !matches!(b[10], b'T' | b' ') || b[13] != b':' || b[16] != b':' {
-        return None;
-    }
-    let num = |r: std::ops::Range<usize>| -> Option<u32> { ts.get(r).filter(|s| s.bytes().all(|c| c.is_ascii_digit()))?.parse().ok() };
-    let (y, mo, d, h, mi, s) = (num(0..4)?, num(5..7)?, num(8..10)?, num(11..13)?, num(14..16)?, num(17..19)?);
-    if !(1..=12).contains(&mo) || d == 0 || d > 31 || h > 23 || mi > 59 || s > 60 {
-        return None;
-    }
-    let days = days_from_civil(i64::from(y), mo, d);
-    if civil_from_days(days) != (i64::from(y), mo, d) {
-        return None;
-    }
-    u64::try_from(days * 86_400 + i64::from(h * 3600 + mi * 60 + s)).ok()
-}
-
 // ──────────────────────────────────────────────────────────────────────────────
 // Main pass
 // ──────────────────────────────────────────────────────────────────────────────
@@ -739,16 +680,8 @@ fn read_new_lines(qc_log: &Path, prev: &str) -> String {
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn detect_deadlock(cfg: &Config, state: &mut StateMap, new_lines: &str) -> (Verdict, &'static str, &'static str) {
-    let trigger = "no suites identified; leaving batch open";
-    let raw = if new_lines.contains(trigger) {
-        RawStatus::Gap {
-            desired: "batch closed or requeued".into(),
-            observed: trigger.into(),
-            since_hint: None,
-        }
-    } else {
-        RawStatus::Satisfied
-    };
+    let trigger = czar_pass::DEADLOCK_LINE;
+    let raw = czar_pass::deadlock(new_lines.contains(trigger));
     let verdict = evaluate(cfg, state, "deadlock", raw, 0);
     if !verdict.is_gap {
         return (verdict, "none", "det");
@@ -818,23 +751,7 @@ fn detect_deadlock(cfg: &Config, state: &mut StateMap, new_lines: &str) -> (Verd
 
 fn detect_attribution_failed(cfg: &Config, state: &mut StateMap, new_lines: &str) -> (Verdict, &'static str, &'static str) {
     // grep -qE 'ejected 0, requeued [1-9]'
-    let detected = new_lines.lines().any(|l| {
-        if let Some(pos) = l.find("ejected 0, requeued ") {
-            let rest = &l[pos + "ejected 0, requeued ".len()..];
-            rest.chars().next().map(|c| c.is_ascii_digit() && c != '0').unwrap_or(false)
-        } else {
-            false
-        }
-    });
-    let raw = if detected {
-        RawStatus::Gap {
-            desired: "attribution ejects the offender".into(),
-            observed: "ejected 0, requeued the whole batch".into(),
-            since_hint: None,
-        }
-    } else {
-        RawStatus::Satisfied
-    };
+    let raw = czar_pass::attribution_failed(czar_pass::requeued_all(new_lines));
     let verdict = evaluate(cfg, state, "attribution-failed", raw, 0);
     if !verdict.is_gap {
         return (verdict, "none", "det");
@@ -866,15 +783,7 @@ fn detect_attribution_failed(cfg: &Config, state: &mut StateMap, new_lines: &str
 }
 
 fn detect_sort_failed(cfg: &Config, state: &mut StateMap, new_lines: &str) -> (Verdict, &'static str, &'static str) {
-    let raw = if new_lines.contains("queue_sort_rows: ranking failed") {
-        RawStatus::Gap {
-            desired: "queue sorted by priority".into(),
-            observed: "queue_sort_rows: ranking failed".into(),
-            since_hint: None,
-        }
-    } else {
-        RawStatus::Satisfied
-    };
+    let raw = czar_pass::sort_failed(new_lines.contains(czar_pass::SORT_FAILED_LINE));
     let verdict = evaluate(cfg, state, "sort-failed", raw, 0);
     if !verdict.is_gap {
         return (verdict, "none", "det");
@@ -926,18 +835,7 @@ fn detect_loop_stalled(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static
         None => RawStatus::Satisfied,
         Some(ts) => match parse_iso_to_epoch(ts) {
             None => RawStatus::Unobservable { reason: format!("landing.log timestamp unparseable: {:?}", ts) },
-            Some(ts_epoch) => {
-                let age = cfg.now_secs.saturating_sub(ts_epoch);
-                if age > cfg.stall_secs {
-                    RawStatus::Gap {
-                        desired: format!("a landing pass within {}s", cfg.stall_secs),
-                        observed: format!("last pass {}s ago ({})", age, ts),
-                        since_hint: Some(ts_epoch),
-                    }
-                } else {
-                    RawStatus::Satisfied
-                }
-            }
+            Some(ts_epoch) => czar_pass::loop_stalled(cfg.now_secs, Some(ts_epoch), cfg.stall_secs),
         },
     };
 
@@ -984,29 +882,7 @@ fn detect_loop_stalled(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static
     }
 }
 
-/// Rolls per-repo verdicts up into the one CLASS= line czar.log has always printed per
-/// invariant. Each repo's own verdict — its own since-when, its own grace period, its own
-/// remedy history — is tracked and recorded separately; this never re-derives is_gap from a
-/// fresh grace check (that already bypassed a per-repo grace period once — sp-pu7v6 — by
-/// re-running the worst raw reading through the engine at grace_secs=0 regardless of what
-/// grace the per-repo verdict itself was actually judged against). A gap already past its
-/// own grace outranks one still inside it, which outranks "could not tell", which outranks
-/// satisfied.
-fn rollup(verdicts: &[Verdict]) -> Verdict {
-    if let Some(v) = verdicts.iter().find(|v| v.is_gap) {
-        return v.clone();
-    }
-    if let Some(v) = verdicts.iter().find(|v| !matches!(v.status, RawStatus::Satisfied)) {
-        return v.clone();
-    }
-    Verdict {
-        status: RawStatus::Satisfied,
-        since: None,
-        is_gap: false,
-        just_closed: verdicts.iter().any(|v| v.just_closed),
-        remedy_failed: false,
-    }
-}
+use czar_pass::rollup;
 
 fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'static str, Verdict, &'static str, &'static str) {
     let mut cis_remedy: &'static str = "none";
@@ -1050,21 +926,7 @@ fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'st
             let queued_since = parse_field(&ci_out, "queued-since").and_then(|s| s.parse::<u64>().ok());
 
             // ci-stalled: job queued with no runner > threshold
-            let cis_raw = match queued_since {
-                Some(qs) => {
-                    let stalled_s = cfg.now_secs.saturating_sub(qs);
-                    if stalled_s > cfg.ci_queued_max {
-                        RawStatus::Gap {
-                            desired: format!("CI job picked up within {}s", cfg.ci_queued_max),
-                            observed: format!("{}: queued {}s", repo_name, stalled_s),
-                            since_hint: Some(qs),
-                        }
-                    } else {
-                        RawStatus::Satisfied
-                    }
-                }
-                None => RawStatus::Satisfied,
-            };
+            let cis_raw = czar_pass::ci_stalled(cfg.now_secs, &repo_name, queued_since, cfg.ci_queued_max);
             let cis_v = evaluate(cfg, state, &cis_key, cis_raw, 0);
             cis_verdicts.push(cis_v.clone());
             if cis_v.is_gap {
@@ -1108,21 +970,7 @@ fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'st
             // below, which is a repo's base ref, not a batch's PR, and unobservable there.
             let conclusion = parse_field(&ci_out, "run-conclusion");
             let completed_secs = parse_field(&ci_out, "run-completed-at").and_then(|s| s.trim().parse::<u64>().ok());
-            let cir_raw = match (conclusion.as_deref(), completed_secs) {
-                (Some("failure"), Some(completed_secs)) => {
-                    let red_age = cfg.now_secs.saturating_sub(completed_secs);
-                    if red_age > cfg.ci_red_max {
-                        RawStatus::Gap {
-                            desired: "verdict acts on a red run".into(),
-                            observed: format!("{}: red for {}s", repo_name, red_age),
-                            since_hint: Some(completed_secs),
-                        }
-                    } else {
-                        RawStatus::Satisfied
-                    }
-                }
-                _ => RawStatus::Satisfied,
-            };
+            let cir_raw = czar_pass::ci_red(cfg.now_secs, &repo_name, conclusion.as_deref(), completed_secs, cfg.ci_red_max);
             let cir_v = evaluate(cfg, state, &cir_key, cir_raw, 0);
             cir_verdicts.push(cir_v.clone());
             if cir_v.is_gap {
@@ -1222,15 +1070,7 @@ fn detect_base_red(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str
             let ci_out = ci_out.expect("run_id.is_some() implies ci_out was Ok");
 
             let conclusion = parse_field(&ci_out, "run-conclusion");
-            let raw = if conclusion.as_deref() == Some("failure") {
-                RawStatus::Gap {
-                    desired: format!("{}'s base gate is green", repo_name),
-                    observed: format!("{}'s base ({}) gate run completed red", repo_name, base_branch),
-                    since_hint: None,
-                }
-            } else {
-                RawStatus::Satisfied
-            };
+            let raw = czar_pass::base_red(&repo_name, &base_branch, conclusion.as_deref());
             let v = evaluate(cfg, state, &key, raw, 0);
             verdicts.push(v.clone());
             if v.is_gap {
@@ -1240,9 +1080,9 @@ fn detect_base_red(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str
                     .lines()
                     .filter_map(|l| l.strip_prefix("red-suite: ").map(|s| s.to_string()))
                     .collect();
+                let suite_key = czar_pass::suite_key(&suites);
                 suites.sort();
                 suites.dedup();
-                let suite_key = if suites.is_empty() { "unknown".to_string() } else { suites.join(",") };
                 let suite_list = if suites.is_empty() { "(suite names unavailable)".to_string() } else { suites.join(", ") };
 
                 let body = format!(
@@ -1479,15 +1319,7 @@ fn detect_pool_idle(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static st
         };
         let depth = certified_depth(cfg, &repo_path);
 
-        let raw = if !batch_open && depth >= cfg.round_min_n {
-            RawStatus::Gap {
-                desired: format!("{}'s certified pool cuts a round at {}", repo_name, cfg.round_min_n),
-                observed: format!("{}'s certified pool sits at {} with no batch open", repo_name, depth),
-                since_hint: None,
-            }
-        } else {
-            RawStatus::Satisfied
-        };
+        let raw = czar_pass::pool_idle(&repo_name, batch_open, u64::from(depth), u64::from(cfg.round_min_n));
         let v = evaluate(cfg, state, &key, raw, cfg.round_stall_secs);
         verdicts.push(v.clone());
         if v.is_gap {

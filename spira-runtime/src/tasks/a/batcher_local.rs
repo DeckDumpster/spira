@@ -90,7 +90,10 @@
 
 use std::collections::BTreeMap;
 
+use batcher::core;
+use batcher_cut::pace;
 use runtime::event::*;
+use runtime::units::{Exit, UnitRan};
 use serde::{Deserialize, Serialize};
 
 use super::kit::{self, Act, Cadence, Shape};
@@ -121,8 +124,9 @@ pub const INBOX_APPEND: &str = crate::watchers::INBOX_APPEND;
 
 pub const CADENCE_MS: u64 = 30_000;
 pub const OBSERVE_DEADLINE_MS: u64 = 10_000;
-/// The unit legs (`corpus`, `stage`, `stage_test`, `certify`) run under `SPIRA_BATCHER_WALL_SECS`;
-/// until it is pinned into the handler the table carries the unit start's own deadline.
+/// The unit legs (`corpus`, `stage`, `stage_test`, `certify`) are started under this deadline;
+/// the leg itself runs under `SPIRA_BATCHER_WALL_SECS` ([`Policy::wall_ms`]) and ends on its
+/// `unit.ran`.
 pub const UNIT_START_DEADLINE_MS: u64 = 10_000;
 
 pub const ACTS: &[(&str, u64)] = &[
@@ -134,7 +138,7 @@ pub const ACTS: &[(&str, u64)] = &[
     (STAGE_TEST, UNIT_START_DEADLINE_MS),
     (EJECT, 30_000),
     (WITHDRAW, 10_000),
-    (REBASE_STALE, 600_000),
+    (REBASE_STALE, UNIT_START_DEADLINE_MS),
     (CERTIFY, UNIT_START_DEADLINE_MS),
     (LC_CERTIFY, 10_000),
     (LAND, 900_000),
@@ -166,7 +170,9 @@ pub const KEYS: &[&str] = &[
     "SPIRA_ROUNDS_PACING",
     "SPIRA_CONCIERGE_INBOX",
 ];
-/// The unregistered env reads the contract says to register.
+/// The unregistered env reads the contract says to register. The seam
+/// (`batcher_cut::env_from_cfg`) still reads them as bare environment with its defaults; the
+/// task itself reads none of them.
 pub const UNREGISTERED: &[&str] = &["SPIRA_BATCHER_ROUND_SLOTS", "SPIRA_BATCHER_POLL_SECS", "SPIRA_BATCHER_LAND_LOCK_ATTEMPTS", "SPIRA_BATCHER_LAND_LOCK_WAIT", "SPIRA_BATCHER_LAND_UNPAUSE", "SPIRA_BATCHER_MEND_DEADLINE_SECS", "SPIRA_VERDICTS", "ROUND_CPU_QUOTA"];
 
 pub const SHAPE: Shape = Shape { name: NAME, stream: STREAM, tick: TICK, state: STATE, observe: OBSERVE, observe_deadline_ms: OBSERVE_DEADLINE_MS };
@@ -182,8 +188,25 @@ pub struct Member {
     pub title: String,
     pub priority: u8,
     pub deps: Vec<String>,
+    /// Stacked prerequisites as `id:tip`, the tip this member's own work was built on.
     pub stack: Vec<String>,
     pub gate_red: bool,
+    /// The fix for an open base-red bead (`basefail:<repo>:`): it lands alone (`base_fix_lane`).
+    #[serde(default)]
+    pub base_fix: bool,
+    #[serde(default)]
+    pub express: bool,
+    #[serde(default)]
+    pub certified_at: u64,
+}
+
+impl Member {
+    /// The pure core's view of this member; `blockers` are the repo's unlanded beads.
+    pub fn core(&self, blockers: &[String]) -> core::Member {
+        let stack = self.stack.iter().map(|s| s.split_once(':').map_or((s.clone(), String::new()), |(i, t)| (i.to_string(), t.to_string()))).collect();
+        let blocked_by = self.deps.iter().filter(|d| blockers.contains(d)).cloned().collect();
+        core::Member { id: self.id.clone(), tip: self.tip.clone(), title: self.title.clone(), priority: Some(self.priority), express: self.express, base_fix: self.base_fix, certified_at: self.certified_at, stack, blocked_by }
+    }
 }
 
 /// The round projection's open round.
@@ -207,9 +230,12 @@ pub struct Repo {
     pub open_round: Option<Round>,
     pub branch_tips: BTreeMap<String, String>,
     pub base_sha: String,
-    /// The scoped stop for the repo's `rounds` lane.
+    /// The scoped stop for the repo's `rounds` lane, or the pace's pause file.
     pub stopped: bool,
     pub declares_own_testenv: bool,
+    /// Why `round certify` would refuse the open round at once (`round_certifiable`), if it would.
+    #[serde(default)]
+    pub unfit: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -253,6 +279,9 @@ pub enum Trigger {
     Assembled,
     OpenedWithSuites,
     OpenedOwnTestenv,
+    /// `round_open` refused, or the merged tree has no suites and declares no testenv (not in the
+    /// contract's table, which gives `Opened` no failure exit).
+    OpenFailed,
     LegRed,
     LegGreenMenders,
     LegGreen,
@@ -268,6 +297,8 @@ pub enum Trigger {
     LandRefused,
     PromotedToCorpus,
     PromotedToCertifying,
+    /// `round promote` named no round (not in the contract's table): the cut goes on from the pool.
+    PromoteFailed,
     Advanced,
     /// A leg event whose `round_key` is not the carried round's.
     ForeignLeg,
@@ -275,6 +306,7 @@ pub enum Trigger {
 
 pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Idle, Trigger::Stopped, State::Held),
+    (State::Held, Trigger::Stopped, State::Held),
     (State::Held, Trigger::Released, State::Idle),
     (State::Idle, Trigger::OpenRoundDriven, State::Idle),
     (State::Idle, Trigger::OpenRoundUndriven, State::Orphan),
@@ -285,6 +317,7 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Assembling, Trigger::Assembled, State::Opened),
     (State::Opened, Trigger::OpenedWithSuites, State::Corpus),
     (State::Opened, Trigger::OpenedOwnTestenv, State::Certifying),
+    (State::Opened, Trigger::OpenFailed, State::Done),
     (State::Corpus, Trigger::LegRed, State::Attributing),
     (State::Corpus, Trigger::LegGreenMenders, State::Mending),
     (State::Corpus, Trigger::LegGreen, State::Certifying),
@@ -300,6 +333,7 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Landing, Trigger::LandRefused, State::Done),
     (State::Promoting, Trigger::PromotedToCorpus, State::Corpus),
     (State::Promoting, Trigger::PromotedToCertifying, State::Certifying),
+    (State::Promoting, Trigger::PromoteFailed, State::Done),
     (State::Done, Trigger::Advanced, State::Idle),
 ];
 
@@ -308,9 +342,41 @@ pub static TABLE: &[(State, Trigger, State)] = &[
 pub struct Pace {
     pub infra: u32,
     pub backoff_until_ms: Option<u64>,
+    /// The open round already paged as stranded (`paged_open`), at most one.
     pub paged: Vec<String>,
+    /// The open round seen undriven (`orphan`), at most one.
     pub orphan: Vec<String>,
     pub refusals: Vec<u64>,
+    #[serde(default)]
+    pub orphan_since_ms: u64,
+    #[serde(default)]
+    pub redriven: String,
+}
+
+impl Pace {
+    pub fn core(&self) -> pace::State {
+        pace::State {
+            infra: self.infra,
+            backoff_until: self.backoff_until_ms.map_or(0, |ms| ms / 1000),
+            paged_open: self.paged.first().cloned().unwrap_or_default(),
+            orphan: self.orphan.first().cloned().unwrap_or_default(),
+            orphan_since: self.orphan_since_ms / 1000,
+            redriven: self.redriven.clone(),
+        }
+    }
+
+    pub fn of(st: &pace::State, refusals: &[u64]) -> Pace {
+        let one = |s: &str| if s.is_empty() { vec![] } else { vec![s.to_string()] };
+        Pace {
+            infra: st.infra,
+            backoff_until_ms: (st.backoff_until > 0).then_some(st.backoff_until * 1000),
+            paged: one(&st.paged_open),
+            orphan: one(&st.orphan),
+            refusals: refusals.to_vec(),
+            orphan_since_ms: st.orphan_since * 1000,
+            redriven: st.redriven.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -319,8 +385,27 @@ pub struct RepoCarry {
     pub round_key: Option<String>,
     pub pace: Pace,
     pub base_moved: Option<(String, u64)>,
-    pub conflict_streaks: BTreeMap<String, u32>,
+    /// Per member: the tip that last conflicted and how many cuts in a row it did.
+    pub conflict_streaks: BTreeMap<String, (String, u32)>,
     pub held_keys: Vec<String>,
+    /// The round the machine is driving: its batch, members, tree and base.
+    #[serde(default)]
+    pub batch: Option<String>,
+    #[serde(default)]
+    pub members: Vec<(String, String)>,
+    #[serde(default)]
+    pub wt: String,
+    #[serde(default)]
+    pub base: String,
+    #[serde(default)]
+    pub own_testenv: bool,
+    /// The unit key of the live leg, when it started, and which run of the corpus it is.
+    #[serde(default)]
+    pub leg: Option<String>,
+    #[serde(default)]
+    pub leg_at_ms: u64,
+    #[serde(default)]
+    pub run: u32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -328,23 +413,561 @@ pub struct Carry {
     pub repos: BTreeMap<String, RepoCarry>,
 }
 
-pub fn step(_state: State, _event: Trigger) -> Result<State, String> {
-    crate::not_ported!(NAME)
+/// Everything one act of this task (and of [`super::batcher_forge`]) carries as its input.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Leg {
+    pub repo: String,
+    /// The act's idempotency key, as the contract's Act table gives it.
+    #[serde(default)]
+    pub key: String,
+    #[serde(default)]
+    pub members: Vec<(String, String)>,
+    #[serde(default)]
+    pub versions: BTreeMap<String, u64>,
+    #[serde(default)]
+    pub round_key: String,
+    #[serde(default)]
+    pub batch: String,
+    #[serde(default)]
+    pub base: String,
+    #[serde(default)]
+    pub wt: String,
+    #[serde(default)]
+    pub bead: String,
+    #[serde(default)]
+    pub why: String,
+    /// The unit a leg runs under (`unit_key`), for the legs that start one.
+    #[serde(default)]
+    pub unit: String,
+    #[serde(default)]
+    pub head: String,
 }
 
-pub fn decide(_carry: &Carry, _snap: &Snapshot) -> (Carry, Vec<Act>) {
-    crate::not_ported!(NAME)
+impl Leg {
+    pub fn on(repo: &str) -> Leg {
+        Leg { repo: repo.to_string(), ..Leg::default() }
+    }
+
+    pub fn act(&self, effect: &str) -> Act {
+        Act::new(effect, self.key.clone()).with_input(serde_json::to_string(self).unwrap_or_default())
+    }
+}
+
+/// What `assemble` answers: the members that merged cleanly on `base`, in `wt`, and the facts the
+/// cut's set-asides need.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Assembled {
+    #[serde(default)]
+    pub merged: Vec<(String, String)>,
+    #[serde(default)]
+    pub wt: String,
+    #[serde(default)]
+    pub base: String,
+    /// The merged tree has `test-*.sh` suites.
+    #[serde(default)]
+    pub suites: bool,
+    #[serde(default)]
+    pub own_testenv: bool,
+    /// Members whose merge conflicted with the round's own accumulation, at their tips.
+    #[serde(default)]
+    pub conflicts: Vec<(String, String)>,
+    /// Members whose merge conflicted with the base itself: the rebase path's.
+    #[serde(default)]
+    pub base_conflicts: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Opened {
+    #[serde(default)]
+    pub batch: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Landed {
+    /// The round `land` left staged behind it, to promote.
+    #[serde(default)]
+    pub staged: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Promoted {
+    #[serde(default)]
+    pub batch: String,
+    #[serde(default)]
+    pub members: Vec<(String, String)>,
+    #[serde(default)]
+    pub attested: bool,
+}
+
+/// The pinned values `decide` reads, from the task's keys.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Policy {
+    pub orphan_wait_s: u64,
+    pub wall_ms: u64,
+    pub max_members: usize,
+}
+
+impl Default for Policy {
+    /// The registered defaults (`spira/conf.d/SPIRA_BATCHER_ORPHAN_REDRIVE_SECS`, `_WALL_SECS`).
+    fn default() -> Self {
+        Policy { orphan_wait_s: 600, wall_ms: 3_600_000, max_members: batcher_cut::MAX_CUT_MEMBERS }
+    }
+}
+
+impl Policy {
+    pub fn pinned(pinned: &BTreeMap<String, String>) -> Policy {
+        let d = Policy::default();
+        let num = |k: &str| pinned.get(k).and_then(|v| v.trim().parse::<u64>().ok());
+        Policy { orphan_wait_s: num("SPIRA_BATCHER_ORPHAN_REDRIVE_SECS").unwrap_or(d.orphan_wait_s), wall_ms: num("SPIRA_BATCHER_WALL_SECS").map_or(d.wall_ms, |s| s * 1000), ..d }
+    }
+}
+
+/// How long past its wall a leg with no `unit.ran` is given before it is judged lost.
+pub const LEG_GRACE_MS: u64 = 120_000;
+
+pub fn step(state: State, event: Trigger) -> Result<State, String> {
+    table_step(NAME, TABLE, state, event)
+}
+
+/// The row of `table` for `(state, event)`, or a refusal naming the state.
+pub fn table_step<S: Copy + PartialEq + std::fmt::Debug, T: Copy + PartialEq + std::fmt::Debug>(task: &str, table: &[(S, T, S)], state: S, event: T) -> Result<S, String> {
+    table.iter().find(|(s, t, _)| *s == state && *t == event).map(|(_, _, to)| *to).ok_or_else(|| format!("{task}: {event:?} is not legal in state {state:?}"))
+}
+
+/// A short stable digest of `s` (FNV-1a), so a unit name stays under systemd's bound.
+pub fn digest(s: &str) -> String {
+    let h = s.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3));
+    format!("{h:016x}")
+}
+
+/// The unit key of a leg: repo, round, what, run. Parsed back from `unit.ran` by `key_for`.
+pub fn unit_key(repo: &str, round: &str, what: &str, run: u32) -> String {
+    format!("{repo}.{}.{what}{run}", &digest(round)[..12])
+}
+
+/// The exit of the carried leg, when a `unit.ran` for it is among `ran`.
+pub fn leg_exit(task: &str, leg: Option<&str>, ran: &[UnitRan]) -> Option<Exit> {
+    let leg = leg?;
+    ran.iter().find(|r| r.key_for(task).as_deref() == Some(leg)).map(|r| r.exit)
+}
+
+pub fn green(exit: Exit) -> bool {
+    exit == Exit::Code(0)
+}
+
+/// The inbox line a page is, as `pace.rs`'s `page` wrote it.
+pub fn page_line(now_ms: u64, text: &str) -> String {
+    format!("{} [watch:rounds] {text}", batcher_cut::io::utc_stamp(now_ms / 1000))
+}
+
+/// The cut `screen::cut_pool` → `base_fix_lane` → `select_round` → `refuse_blocked` →
+/// `cap_round` → `should_cut` selects from `repo`, with its round key; `None` when nothing triggers.
+pub fn select(repo: &Repo, max_members: usize) -> Option<(Vec<core::Member>, String)> {
+    let pool: Vec<core::Member> = repo.pool.iter().filter(|m| !m.gate_red).map(|m| m.core(&repo.blockers)).collect();
+    let sifted: BTreeMap<String, String> = repo.pool.iter().filter_map(|m| m.sifted_tip.clone().map(|t| (m.id.clone(), t))).collect();
+    let (pool, _) = core::select_round(core::base_fix_lane(batcher_cut::screen::cut_pool(pool, &sifted)));
+    let (pool, _) = core::refuse_blocked(pool);
+    let (pool, _) = core::cap_round(pool, max_members);
+    core::should_cut(&core::TriggerInputs { pool: &pool, main_red: false, batch_open: false })?;
+    let key = core::round_key(&pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect::<Vec<_>>());
+    Some((pool, key))
+}
+
+/// How many recent held round keys the carry keeps.
+pub const HELD_KEYS: usize = 8;
+
+fn hold_key(rc: &mut RepoCarry, key: &str) {
+    if !rc.held_keys.iter().any(|k| k == key) {
+        rc.held_keys.push(key.to_string());
+    }
+    let over = rc.held_keys.len().saturating_sub(HELD_KEYS);
+    rc.held_keys.drain(..over);
+}
+
+/// One repo's machine, advanced by one event.
+struct Machine<'a> {
+    repo: &'a str,
+    rc: RepoCarry,
+    acts: Vec<Act>,
+    now_ms: u64,
+}
+
+impl Machine<'_> {
+    fn go(&mut self, on: Trigger) -> bool {
+        match step(self.rc.state, on) {
+            Ok(to) => {
+                self.rc.state = to;
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    fn leg(&self) -> Leg {
+        Leg { batch: self.rc.batch.clone().unwrap_or_default(), members: self.rc.members.clone(), wt: self.rc.wt.clone(), base: self.rc.base.clone(), round_key: self.rc.round_key.clone().unwrap_or_default(), ..Leg::on(self.repo) }
+    }
+
+    /// Start a unit leg: `what` names it, and its key is the carried leg from here on.
+    fn start(&mut self, effect: &str, what: &str) {
+        let round = self.rc.batch.clone().or_else(|| self.rc.round_key.clone()).unwrap_or_default();
+        let unit = unit_key(self.repo, &round, what, self.rc.run.max(1));
+        self.rc.leg = Some(unit.clone());
+        self.rc.leg_at_ms = self.now_ms;
+        let leg = Leg { key: unit.clone(), unit, ..self.leg() };
+        self.acts.push(leg.act(effect));
+    }
+
+    fn corpus(&mut self, run: u32) {
+        self.rc.run = run;
+        self.start(CORPUS, "corpus");
+    }
+
+    fn certify(&mut self) {
+        self.start(CERTIFY, "certify");
+    }
+
+    fn abandon(&mut self, why: &str) {
+        if self.rc.batch.is_some() {
+            let leg = Leg { why: why.to_string(), key: format!("{}:{}", self.repo, self.rc.batch.clone().unwrap_or_default()), ..self.leg() };
+            self.acts.push(leg.act(ABANDON));
+        }
+    }
+
+    /// `Done`: the pace advances on the round's outcome, its pages and pause are written, and the
+    /// machine is Idle with the round forgotten.
+    fn finish(&mut self, outcome: pace::Outcome, detail: &str) {
+        let (st, fx) = pace::advance(&self.rc.pace.core(), &outcome, self.repo, self.now_ms / 1000, detail);
+        self.rc.pace = Pace::of(&st, &self.rc.pace.refusals);
+        if fx.pause || fx.stop {
+            let leg = Leg { why: detail.to_string(), key: format!("{}:rounds", self.repo), bead: if fx.stop { "stop".into() } else { "pause".into() }, ..Leg::on(self.repo) };
+            self.acts.push(leg.act(PAUSE));
+        }
+        for p in &fx.pages {
+            self.acts.push(Act::new(INBOX_APPEND, p.clone()).with_input(page_line(self.now_ms, p)));
+        }
+        self.go(Trigger::Advanced);
+        let keep = (self.rc.pace.clone(), self.rc.base_moved.clone(), self.rc.conflict_streaks.clone(), self.rc.held_keys.clone());
+        self.rc = RepoCarry { pace: keep.0, base_moved: keep.1, conflict_streaks: keep.2, held_keys: keep.3, ..RepoCarry::default() };
+    }
+
+    fn red(&mut self, why: &str) {
+        self.abandon(why);
+        self.finish(pace::Outcome::Red, why);
+    }
+
+    /// A tick's observe, for the states that read the world.
+    fn observe(&mut self, policy: &Policy, repo: &Repo, ran: &[UnitRan]) {
+        match self.rc.state {
+            State::Idle | State::Held => self.idle(policy, repo),
+            State::Corpus | State::Attributing | State::Certifying => {
+                let lost = self.now_ms.saturating_sub(self.rc.leg_at_ms) > policy.wall_ms + LEG_GRACE_MS;
+                match leg_exit(NAME, self.rc.leg.as_deref(), ran) {
+                    Some(exit) => self.leg_ended(exit),
+                    None if lost => self.leg_ended(Exit::Unknown),
+                    None => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn idle(&mut self, policy: &Policy, repo: &Repo) {
+        let now_s = self.now_ms / 1000;
+        let st = self.rc.pace.core();
+        if pace::hold(false, repo.stopped, &st, now_s).is_some() {
+            self.go(Trigger::Stopped);
+            return;
+        }
+        if self.rc.state == State::Held {
+            self.go(Trigger::Released);
+        }
+        if let Some(open) = &repo.open_round {
+            if open.driven {
+                self.go(Trigger::OpenRoundDriven);
+                if !st.orphan.is_empty() {
+                    self.rc.pace = Pace::of(&pace::State { orphan: String::new(), orphan_since: 0, ..st }, &self.rc.pace.refusals);
+                }
+                return;
+            }
+            self.go(Trigger::OpenRoundUndriven);
+            let fit = repo.unfit.clone().map_or(Ok(()), Err);
+            let (mut next, verdict) = pace::orphan_step(&st, &open.id, now_s, policy.orphan_wait_s, fit);
+            let leg = Leg { batch: open.id.clone(), wt: open.worktree.clone(), ..Leg::on(self.repo) };
+            match verdict {
+                pace::Orphan::Wait => {}
+                pace::Orphan::Redrive => self.acts.push(Leg { key: format!("{}:{}", self.repo, open.id), ..leg }.act(REDRIVE)),
+                pace::Orphan::Incident(why) if next.paged_open != open.id => {
+                    next.paged_open = open.id.clone();
+                    self.acts.push(Leg { key: format!("round-orphan:{}:{}", self.repo, open.id), why: why.clone(), ..leg }.act(FILE));
+                    let page = format!("ROUND OPEN {} {} with no driver — finish, eject or abandon it ({why})", self.repo, open.id);
+                    self.acts.push(Act::new(INBOX_APPEND, page.clone()).with_input(page_line(self.now_ms, &page)));
+                }
+                pace::Orphan::Incident(_) => {}
+            }
+            self.rc.pace = Pace::of(&next, &self.rc.pace.refusals);
+            self.go(Trigger::OrphanStepped);
+            return;
+        }
+        match select(repo, policy.max_members) {
+            Some((pool, key)) if !self.rc.held_keys.contains(&key) => {
+                self.go(Trigger::Cut);
+                self.rc.round_key = Some(key.clone());
+                let members: Vec<(String, String)> = pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
+                let versions = repo.pool.iter().filter(|m| members.iter().any(|(id, _)| id == &m.id)).map(|m| (m.id.clone(), m.version)).collect();
+                self.acts.push(Leg { key: format!("{}:{}", self.repo, repo.base_sha), base: repo.base_sha.clone(), ..Leg::on(self.repo) }.act(FETCH));
+                self.acts.push(Leg { key: format!("{}:{}", self.repo, digest(&key)), members, versions, round_key: key, base: repo.base_sha.clone(), ..Leg::on(self.repo) }.act(ASSEMBLE));
+            }
+            _ => {
+                self.go(Trigger::NoTrigger);
+            }
+        }
+    }
+
+    fn leg_ended(&mut self, exit: Exit) {
+        let ok = green(exit);
+        match (self.rc.state, ok) {
+            (State::Corpus, true) => {
+                self.go(Trigger::LegGreen);
+                self.certify();
+            }
+            (State::Corpus, false) => {
+                self.go(Trigger::LegRed);
+                let run = self.rc.run + 1;
+                self.corpus(run);
+            }
+            (State::Attributing, true) => {
+                self.go(Trigger::RerunCertifying);
+                self.certify();
+            }
+            (State::Attributing, false) => {
+                self.go(Trigger::RerunBlocked);
+                // A lone member owns any red (`io::implicated`): it leaves the round charged.
+                if let [(bead, tip)] = &self.rc.members[..] {
+                    let leg = Leg { bead: bead.clone(), head: tip.clone(), key: format!("{}:{bead}", self.rc.batch.clone().unwrap_or_default()), why: "the round's corpus was red twice".into(), ..self.leg() };
+                    self.acts.push(leg.act(EJECT));
+                }
+                self.red("local corpus red — held before reaching CI");
+            }
+            (State::Certifying, true) => {
+                self.go(Trigger::CertifyGreen);
+                let key = self.rc.round_key.clone().unwrap_or_default();
+                self.acts.push(Leg { key: format!("round:{key}"), ..self.leg() }.act(LC_CERTIFY));
+                self.acts.push(Leg { key: self.rc.batch.clone().unwrap_or_default(), ..self.leg() }.act(LAND));
+            }
+            (State::Certifying, false) => {
+                self.go(Trigger::CertifyRed);
+                self.red("queue round certify judged the round red");
+            }
+            _ => {}
+        }
+    }
+
+    /// The outcome of one of this task's own effects.
+    fn outcome(&mut self, effect: &str, ok: bool, body: &str, leg: &Leg) {
+        match (self.rc.state, effect) {
+            (State::Assembling, ASSEMBLE) if !ok => {
+                self.go(Trigger::AssembledEmpty);
+                self.rc.round_key = None;
+            }
+            (State::Assembling, ASSEMBLE) => {
+                let a: Assembled = serde_json::from_str(body).unwrap_or_default();
+                self.assembled(a, leg);
+            }
+            (State::Opened, ROUND_OPEN) => {
+                let o: Opened = if ok { serde_json::from_str(body).unwrap_or_default() } else { Opened::default() };
+                if o.batch.is_empty() {
+                    self.go(Trigger::OpenFailed);
+                    self.finish(pace::Outcome::OpenFailed, if ok { "queue round open named no batch" } else { body });
+                    return;
+                }
+                self.rc.batch = Some(o.batch);
+                if leg.why == "suites" {
+                    self.go(Trigger::OpenedWithSuites);
+                    self.corpus(1);
+                } else if self.rc.own_testenv {
+                    self.go(Trigger::OpenedOwnTestenv);
+                    self.certify();
+                } else {
+                    self.go(Trigger::OpenFailed);
+                    self.red("round blocked — the merged tree has no test-*.sh suites; an empty corpus certifies nothing");
+                }
+            }
+            (State::Corpus | State::Attributing, CORPUS) | (State::Certifying, CERTIFY) if !ok && self.rc.leg.as_deref() == Some(leg.unit.as_str()) => self.leg_ended(Exit::Unknown),
+            (State::Landing, LAND) if ok => {
+                let l: Landed = serde_json::from_str(body).unwrap_or_default();
+                match l.staged {
+                    Some(staged) => {
+                        self.go(Trigger::LandedStaged);
+                        self.acts.push(Leg { batch: staged.clone(), key: staged, ..Leg::on(self.repo) }.act(PROMOTE));
+                    }
+                    None => {
+                        self.go(Trigger::Landed);
+                        self.finish(pace::Outcome::Quiet, "");
+                    }
+                }
+            }
+            (State::Landing, LAND) => {
+                self.go(Trigger::LandRefused);
+                self.red(&format!("NOT LANDED: {}", body.trim()));
+            }
+            (State::Promoting, PROMOTE) => {
+                let p: Promoted = if ok { serde_json::from_str(body).unwrap_or_default() } else { Promoted::default() };
+                if p.batch.is_empty() {
+                    self.go(Trigger::PromoteFailed);
+                    self.finish(pace::Outcome::Quiet, "");
+                    return;
+                }
+                self.rc.batch = Some(p.batch);
+                self.rc.members = p.members;
+                self.rc.round_key = Some(core::round_key(&self.rc.members));
+                if p.attested {
+                    self.go(Trigger::PromotedToCertifying);
+                    self.certify();
+                } else {
+                    self.go(Trigger::PromotedToCorpus);
+                    self.corpus(1);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn assembled(&mut self, a: Assembled, leg: &Leg) {
+        if !a.base.is_empty() && self.rc.base_moved.as_ref().map(|b| &b.0) != Some(&a.base) {
+            self.rc.base_moved = Some((a.base.clone(), self.now_ms));
+        }
+        for (id, tip) in &a.conflicts {
+            let prev = self.rc.conflict_streaks.get(id).map(|(t, n)| (t.as_str(), *n));
+            let streak = core::conflict_streak(prev, tip);
+            if streak >= core::CONFLICT_EJECT_ROUNDS {
+                self.rc.conflict_streaks.remove(id);
+                let version = leg.versions.get(id).copied().unwrap_or_default();
+                self.acts.push(Leg { bead: id.clone(), head: tip.clone(), key: format!("{id}:{version}"), why: format!("conflicted with the round {streak} cuts running"), versions: [(id.clone(), version)].into(), ..Leg::on(self.repo) }.act(WITHDRAW));
+            } else {
+                self.rc.conflict_streaks.insert(id.clone(), (tip.clone(), streak));
+            }
+        }
+        for id in a.merged.iter().map(|(id, _)| id) {
+            self.rc.conflict_streaks.remove(id);
+        }
+        for bead in &a.base_conflicts {
+            let unit = unit_key(self.repo, &format!("{bead}:{}", a.base), "rebase", 1);
+            self.acts.push(Leg { bead: bead.clone(), base: a.base.clone(), key: unit.clone(), unit, ..Leg::on(self.repo) }.act(REBASE_STALE));
+        }
+        let key = core::round_key(&a.merged);
+        if a.merged.is_empty() || self.rc.held_keys.contains(&key) {
+            hold_key(&mut self.rc, &leg.round_key);
+            self.go(Trigger::AssembledEmpty);
+            self.rc.round_key = None;
+            return;
+        }
+        self.go(Trigger::Assembled);
+        self.rc.round_key = Some(key.clone());
+        self.rc.members = a.merged;
+        self.rc.wt = a.wt;
+        self.rc.base = a.base;
+        self.rc.own_testenv = a.own_testenv;
+        let why = if a.suites { "suites" } else { "" };
+        self.acts.push(Leg { key: format!("{}:{}", self.repo, digest(&key)), why: why.into(), ..self.leg() }.act(ROUND_OPEN));
+    }
+}
+
+/// `rc` stored under `repo`, or removed when it is the default: an idle repo carries nothing.
+fn store(carry: &mut Carry, repo: &str, rc: RepoCarry) {
+    if rc == RepoCarry::default() {
+        carry.repos.remove(repo);
+    } else {
+        carry.repos.insert(repo.to_string(), rc);
+    }
+}
+
+pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
+    decide_with(&Policy::default(), carry, snap, &[])
+}
+
+/// `decide` with the pinned policy and the `unit.ran`s seen since the carry was recorded.
+pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot, ran: &[UnitRan]) -> (Carry, Vec<Act>) {
+    let (mut next, mut acts) = (carry.clone(), vec![]);
+    for (name, repo) in &snap.repos {
+        let mut m = Machine { repo: name, rc: carry.repos.get(name).cloned().unwrap_or_default(), acts: vec![], now_ms: snap.now_ms };
+        m.observe(policy, repo, ran);
+        store(&mut next, name, m.rc);
+        acts.extend(m.acts);
+    }
+    (next, acts)
+}
+
+/// The machine's answer to the outcome of one of its own effects, whose input was `leg`.
+pub fn on_outcome(carry: &Carry, effect: &str, ok: bool, body: &str, leg: &Leg, now_ms: u64) -> (Carry, Vec<Act>) {
+    let mut next = carry.clone();
+    let mut m = Machine { repo: &leg.repo, rc: carry.repos.get(&leg.repo).cloned().unwrap_or_default(), acts: vec![], now_ms };
+    m.outcome(effect, ok, body, leg);
+    let acts = m.acts;
+    store(&mut next, &leg.repo, m.rc);
+    (next, acts)
+}
+
+/// Every `unit.ran` in the view, for the P2 tasks that read their legs' ends at observe.
+pub fn units_ran(view: &Projection) -> Vec<UnitRan> {
+    view.events(&StreamKey(runtime::sources::UNITS_STREAM.into())).iter().filter_map(|e| UnitRan::from_event_kind(&e.kind)).collect()
+}
+
+/// The fixed names a family-A P2 task's handler is driven by.
+pub struct P2<'a> {
+    pub shape: &'a Shape,
+    pub cadence: &'a Cadence,
+    pub acts: &'a [(&'a str, u64)],
+    pub emits: &'a [EventKindTag],
+    pub effects: &'a [&'a str],
+}
+
+/// The shared handler body of the family-A P2 tasks: the tick's probe, the observe answer through
+/// `observed`, and each outcome of one of `effects` through `outcome`.
+pub fn handle_p2<C>(p: &P2, view: &Projection, ev: &Event, observed: impl FnOnce(&C, &str) -> Option<(C, Vec<Act>)>, outcome: impl FnOnce(&C, &str, bool, &str, &str) -> (C, Vec<Act>)) -> Vec<Command>
+where
+    C: Serialize + serde::de::DeserializeOwned + Default + PartialEq,
+{
+    let (shape, cadence, acts, emits, effects) = (p.shape, p.cadence, p.acts, p.emits, p.effects);
+    if ev.stream.0 != shape.stream {
+        return vec![];
+    }
+    let carry: C = kit::carry(shape, view);
+    if ev.kind.tag == shape.tick {
+        return kit::on_tick(shape, serde_json::to_string(&carry).unwrap_or_default(), cadence.next_after(ev.at));
+    }
+    let Some(spec) = crate::watchers::answered_spec(view, ev) else { return vec![] };
+    let (next, out) = if spec.name == shape.observe {
+        if ev.kind.tag != EFFECT_SUCCEEDED {
+            return vec![];
+        }
+        match observed(&carry, &ev.kind.body) {
+            Some(d) => d,
+            None => return vec![],
+        }
+    } else if effects.contains(&spec.name.as_str()) {
+        outcome(&carry, &spec.name, ev.kind.tag == EFFECT_SUCCEEDED, &ev.kind.body, &spec.input)
+    } else {
+        return vec![];
+    };
+    kit::commands(shape, acts, emits, &carry, &next, out)
+}
+
+/// The tags every family-A P2 task listens for: its tick and its effects' outcomes.
+pub const fn interests(tick: EventKindTag) -> [EventKindTag; 4] {
+    [tick, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BatcherLocal {
     pub cadence: Cadence,
     pub pinned: BTreeMap<String, String>,
+    pub policy: Policy,
+    interests: [EventKindTag; 4],
 }
 
 impl BatcherLocal {
     pub fn new(pinned: BTreeMap<String, String>) -> Self {
-        BatcherLocal { cadence: Cadence::Every(CADENCE_MS), pinned }
+        BatcherLocal { cadence: Cadence::Every(CADENCE_MS), policy: Policy::pinned(&pinned), pinned, interests: interests(TICK) }
     }
 
     pub fn from_cfg() -> Self {
@@ -362,19 +985,276 @@ impl BatcherLocal {
 
 impl Handler for BatcherLocal {
     fn interests(&self) -> &[EventKindTag] {
-        &[TICK, EFFECT_SUCCEEDED]
+        &self.interests
     }
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        if ev.stream.0 != STREAM {
-            return vec![];
+        let observed = |carry: &Carry, body: &str| serde_json::from_str::<Snapshot>(body).ok().map(|snap| decide_with(&self.policy, carry, &snap, &units_ran(view)));
+        let outcome = |carry: &Carry, effect: &str, ok: bool, body: &str, input: &str| match serde_json::from_str::<Leg>(input) {
+            Ok(leg) => on_outcome(carry, effect, ok, body, &leg, ev.at),
+            Err(_) => (Carry { repos: carry.repos.clone() }, vec![]),
+        };
+        handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS }, view, ev, observed, outcome)
+    }
+}
+
+/// The runners: each effect's real work, in this process. The seam is `batcher_cut::io`, the
+/// batcher's own IO library (git as a child, the store through `spira-lc`'s socket, the queue's
+/// round verbs where the store has no door yet); every long leg is a unit on `Effects::units`.
+pub mod edge {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    use batcher_cut::io::{self, Env};
+    use runtime::units::{ScopeSpec, UnitSpec, UNIT_RUN_SCOPE, UNIT_START};
+
+    use super::{Assembled, Landed, Leg, Member, Opened, Promoted, Repo, Round, Snapshot};
+    use crate::{Effects, EffectSpec};
+
+    /// The seam's environment from the pinned config, as the `batcher` binary builds it.
+    pub fn env() -> Result<Env, String> {
+        let home = spira_config::resolve::locate_home_for_process()?;
+        let run = PathBuf::from(spira_config::process::cfg("SPIRA_RUN")?);
+        batcher_cut::env_from_cfg(home, run, None)
+    }
+
+    pub fn leg(spec: &EffectSpec) -> Result<Leg, String> {
+        serde_json::from_str(&spec.input).map_err(|e| format!("{}: bad input: {e}", spec.name))
+    }
+
+    fn json<T: serde::Serialize>(v: &T) -> Result<String, String> {
+        serde_json::to_string(v).map_err(|e| e.to_string())
+    }
+
+    fn core_members(members: &[(String, String)]) -> Vec<batcher::core::Member> {
+        members.iter().map(|(id, tip)| batcher::core::Member { id: id.clone(), tip: tip.clone(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: vec![] }).collect()
+    }
+
+    /// One unit leg under the naming rule: a scope with the round's CPU quota when the backend
+    /// runs scopes, else a plain transient unit.
+    pub fn start_unit(e: &Effects, task: &str, key: &str, argv: Vec<String>, vars: Vec<(String, String)>, cwd: Option<PathBuf>) -> Result<String, String> {
+        let units = e.units.as_deref().ok_or("no unit manager configured")?;
+        let unit = UnitSpec { task: task.into(), key: key.into(), argv, env: vars, cwd };
+        let quota = std::env::var("ROUND_CPU_QUOTA").ok().and_then(|q| q.trim().trim_end_matches('%').parse::<u32>().ok());
+        if quota.is_some() {
+            let scope = ScopeSpec { unit: unit.clone(), cpu_quota_pct: quota, memory_max_bytes: None };
+            if let Ok(h) = runtime::units::effect(units, UNIT_RUN_SCOPE, &json(&scope)?) {
+                return Ok(h);
+            }
         }
-        let carry: Carry = kit::carry(&SHAPE, view);
-        if ev.kind.tag == TICK {
-            return kit::on_tick(&SHAPE, serde_json::to_string(&carry).unwrap_or_default(), self.cadence.next_after(ev.at));
+        runtime::units::effect(units, UNIT_START, &json(&unit)?)
+    }
+
+    fn home_vars(env: &Env) -> Vec<(String, String)> {
+        vec![("SPIRA_HOME".into(), env.home.display().to_string()), ("SPIRA_RUN".into(), env.run.display().to_string())]
+    }
+
+    /// The probe: every admitted `queue.local` repo's pool, open round, base and hold.
+    pub fn observe(_: &Effects, _: &str, _: &EffectSpec) -> Result<String, String> {
+        let env = env()?;
+        io::lc_forget(&env);
+        let enabled = spira_config::process::cfg("SPIRA_BATCHER_ENABLE")?.trim() != "0";
+        let reg = io::registry(&env);
+        let mut snap = Snapshot { now_ms: spira_config::vtime::now_epoch() * 1000, ..Snapshot::default() };
+        for name in reg.names().into_iter().filter(|n| reg.land(n) == "queue.local" && (enabled || n != reg.home_repo())) {
+            let repo = batcher_cut::find_repo(&env, &name)?;
+            snap.repos.insert(name.clone(), observe_repo(&env, &repo)?);
         }
-        let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else { return vec![] };
-        let (next, acts) = decide(&carry, &snap);
-        kit::commands(&SHAPE, ACTS, EMITS, &carry, &next, acts)
+        json(&snap)
+    }
+
+    fn observe_repo(env: &Env, repo: &batcher_cut::io::Repo) -> Result<Repo, String> {
+        let sifted = io::sifted_tips(env)?;
+        let pool: Vec<Member> = io::certified_pool(env, repo)?
+            .into_iter()
+            .map(|m| Member {
+                state: "CERTIFIED".into(),
+                sifted_tip: sifted.get(&m.id).cloned(),
+                title: m.title.clone(),
+                priority: m.priority.unwrap_or(u8::MAX),
+                deps: m.blocked_by.clone(),
+                stack: m.stack.iter().map(|(i, t)| format!("{i}:{t}")).collect(),
+                base_fix: m.base_fix,
+                express: m.express,
+                certified_at: m.certified_at,
+                id: m.id,
+                tip: m.tip,
+                ..Member::default()
+            })
+            .collect();
+        let blockers = pool.iter().flat_map(|m| m.deps.clone()).collect();
+        let branch_tips = pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
+        let open_round = match io::open_round_id(env, repo)? {
+            Some(id) => {
+                let members = io::round_members(env, repo, &id).unwrap_or_default();
+                let driven = io::certify_driven(env, &repo.name, &id);
+                let unfit = io::round_certifiable(env, repo, &id).err();
+                return Ok(Repo { pool, blockers, branch_tips, base_sha: io::resolve_base_sha(repo).unwrap_or_default(), stopped: stopped(env, &repo.name), unfit, open_round: Some(Round { id, members, driven, ..Round::default() }), ..Repo::default() });
+            }
+            None => None,
+        };
+        Ok(Repo { pool, blockers, branch_tips, open_round, base_sha: io::resolve_base_sha(repo)?, stopped: stopped(env, &repo.name), ..Repo::default() })
+    }
+
+    fn stopped(env: &Env, repo: &str) -> bool {
+        let files = batcher_cut::pace::Files::new(&env.run, repo);
+        files.stopped() || files.pause_file().exists()
+    }
+
+    fn repo_of(env: &Env, leg: &Leg) -> Result<batcher_cut::io::Repo, String> {
+        batcher_cut::find_repo(env, &leg.repo)
+    }
+
+    pub fn fetch(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        io::fetch_base(&repo_of(&env, &leg)?)?;
+        Ok("{}".into())
+    }
+
+    /// The cut's git half (`cut_new_round_inner` up to the open): the round tree reset to the
+    /// base, each member merged in topological order, the core's `combine` over the merges.
+    pub fn assemble(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        let repo = repo_of(&env, &leg)?;
+        let Some(_lock) = io::try_lock(&env, &repo.name)? else { return Err(format!("{}: another operation holds the lock", repo.name)) };
+        let base = io::resolve_base_sha(&repo)?;
+        let sorted = batcher::core::topo_order(&core_members(&leg.members));
+        let sequenced = batcher::core::stack_sequencing(&sorted);
+        let wt = env.run.join("worktree").join(format!(".batcher-{}", repo.name));
+        io::worktree_reset(&repo, &wt, &base)?;
+        if let Err(e) = io::template_refresh(&env, &wt) {
+            eprintln!("batcher.local {}: template refresh before the lease failed ({e}) — cutting on the template as it stands", repo.name);
+        }
+        let merges: BTreeMap<String, batcher::core::MergeResult> = sorted.iter().map(|m| (m.id.clone(), io::merge_member(&env, &wt, &m.id, &m.tip))).collect();
+        let combined = batcher::core::combine(&batcher::core::CombineInput { pool: &sorted, merges: &merges, deleted_suites: &BTreeMap::new(), sequenced: &sequenced, siblings: &BTreeMap::new() });
+        let conflicts = sorted.iter().filter(|m| merges.get(&m.id) == Some(&batcher::core::MergeResult::Conflict)).map(|m| (m.id.clone(), m.tip.clone())).collect::<Vec<_>>();
+        let base_conflicts = conflicts.iter().filter(|(_, tip)| io::base_conflict(&repo, &base, tip).is_some()).map(|(id, _)| id.clone()).collect();
+        let suites = !io::suites_in(&wt, "HEAD").is_empty();
+        json(&Assembled { merged: combined.merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect(), own_testenv: batcher_cut::declares_own_testenv(&wt), wt: wt.display().to_string(), base, suites, conflicts, base_conflicts })
+    }
+
+    pub fn round_open(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        let repo = repo_of(&env, &leg)?;
+        let Some(_lock) = io::try_lock(&env, &repo.name)? else { return Err(format!("{}: another operation holds the lock", repo.name)) };
+        let batch = io::round_open(&env, &repo, std::path::Path::new(&leg.wt), &core_members(&leg.members))?;
+        json(&Opened { batch })
+    }
+
+    /// The corpus leg: `round-vm run` on the round tree, as a unit; it ends on its `unit.ran`.
+    pub fn corpus(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        corpus_for(super::NAME, e, spec)
+    }
+
+    /// The corpus leg of `task`'s round.
+    pub fn corpus_for(task: &str, e: &Effects, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        let repo = repo_of(&env, &leg)?;
+        let wt = PathBuf::from(&leg.wt);
+        let history = std::fs::read_to_string(tsd::family_path(&env.run, "suite-timing")).unwrap_or_default();
+        let suites = batcher_cut::order::longest_first(&io::suites_in(&wt, "HEAD"), &history).list;
+        let results = wt.join(format!(".round-results-{}", leg.unit));
+        let argv = ["timeout", "-k", "10", &env.wall_secs.to_string()].iter().map(|s| s.to_string()).chain([env.round_vm.display().to_string(), "run".into(), wt.display().to_string(), "--suites".into(), suites.join(","), "--maxpar".into(), env.maxpar.to_string(), "--results-dir".into(), results.display().to_string(), "--base".into(), repo.base.clone()]).collect();
+        start_unit(e, task, &leg.unit, argv, home_vars(&env), None)
+    }
+
+    /// A round staged behind the open one: `queue round stage`, as a unit.
+    pub fn stage(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        let file = env.run.join(format!("round-stage-{}.members", leg.unit));
+        std::fs::write(&file, leg.members.iter().map(|(i, t)| format!("{i}:{t}\n")).collect::<String>()).map_err(|e| format!("{}: {e}", file.display()))?;
+        let argv = vec![env.queue_bin.display().to_string(), "round".into(), "stage".into(), leg.repo.clone(), "--members-file".into(), file.display().to_string(), "--worktree".into(), leg.wt.clone()];
+        start_unit(e, super::NAME, &leg.unit, argv, home_vars(&env), None)
+    }
+
+    /// The staged round's own pass: `queue round stage-test`, as a unit.
+    pub fn stage_test(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        let argv = vec![env.queue_bin.display().to_string(), "round".into(), "stage-test".into(), leg.repo.clone()];
+        start_unit(e, super::NAME, &leg.unit, argv, home_vars(&env), None)
+    }
+
+    pub fn eject(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        io::round_eject(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.bead, &[], &[], true)?;
+        Ok("{}".into())
+    }
+
+    pub fn withdraw(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        io::lc_withdraw(&env, &leg.bead);
+        Ok("{}".into())
+    }
+
+    /// `rebase-stale <bead> <repo>`, as a unit.
+    pub fn rebase_stale(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        let argv = vec![env.rebase_stale_bin.display().to_string(), leg.bead.clone(), leg.repo.clone()];
+        start_unit(e, super::NAME, &leg.unit, argv, home_vars(&env), None)
+    }
+
+    /// `queue round certify <batch> <repo>`, as a unit: the repo's own testenv or the gate.
+    pub fn certify(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        let argv = vec![env.queue_bin.display().to_string(), "round".into(), "certify".into(), leg.batch.clone(), leg.repo.clone()];
+        start_unit(e, super::NAME, &leg.unit, argv, home_vars(&env), None)
+    }
+
+    pub fn lc_certify(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        io::lc_certify_round(&env, &leg.members, &leg.round_key);
+        Ok("{}".into())
+    }
+
+    /// `queue round land`, retried while another operation holds the lock; a refusal is an `Err`.
+    pub fn land(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        let run = io::round_land(&env, &repo_of(&env, &leg)?, &leg.batch)?;
+        match run.outcome {
+            io::LandOutcome::Refused => Err(run.refusal),
+            io::LandOutcome::Landed | io::LandOutcome::DeployFault => json(&Landed { staged: None }),
+        }
+    }
+
+    pub fn abandon(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        io::round_abandon(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.why, "red");
+        io::write_local_verdict(&env, &leg.repo, "red", &leg.why);
+        Ok("{}".into())
+    }
+
+    pub fn promote(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        let p = io::round_promote(&env, &repo_of(&env, &leg)?).ok_or("queue round promote named no round")?;
+        json(&Promoted { batch: p.batch, members: p.members, attested: p.attested })
+    }
+
+    /// `round-recert`: it starts the round's driver in its own unit and returns.
+    pub fn redrive(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        io::redrive_round(&repo_of(&env, &leg)?, &leg.batch)?;
+        Ok("{}".into())
+    }
+
+    /// The incident for a round left open with no driver, keyed by the round.
+    pub fn file(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        io::file_orphan_round_incident(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.why)
+    }
+
+    /// The pace's hold: the pause file on a red, the scoped stop on repeated infra faults.
+    pub fn pause(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        let files = batcher_cut::pace::Files::new(&env.run, &leg.repo);
+        if leg.bead == "stop" {
+            files.stop_rounds(&leg.why, spira_config::vtime::now_epoch())?;
+        } else {
+            let p = files.pause_file();
+            if let Some(d) = p.parent() {
+                std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
+            }
+            std::fs::write(&p, &leg.why).map_err(|e| format!("{}: {e}", p.display()))?;
+        }
+        Ok("{}".into())
     }
 }

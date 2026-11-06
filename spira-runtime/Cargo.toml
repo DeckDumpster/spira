@@ -21,11 +21,20 @@ base64 = "0.22"
 install = { path = "../install" }
 libc = "0.2"
 mail = { path = "../mail" }
+# Family A's landing tasks (batcher.local/forge, queue.step, publish): their libraries.
+batcher = { path = "../batcher" }
+batcher-cut = { path = "../batcher-cut" }
+queue = { path = "../queue" }
 reconciler = { path = "../reconciler" }
 reconciler-engine = { path = "../reconciler-engine" }
 reconciler-flow = { path = "../reconciler-flow" }
 # Family B reconcilers: heimdall's in-scheduler checks as a library.
 heimdall = { path = "../heimdall" }
+# Family A's loop core (sentinel, czar, sift): the crates its tasks call as libraries.
+sentinel = { path = "../sentinel" }
+czar-pass = { path = "../czar-pass" }
+round-controller = { path = "../round-controller" }
+sift = { path = "../sift" }
 runtime = { path = "../runtime" }
 unit-run = { path = "../unit-run" }
 spira-config = { path = "../spira-config" }
@@ -59,6 +68,10 @@ incident = { path = "../incident" }
 watchtower = { path = "../watchtower" }
 runtime-watch = { path = "../runtime-watch" }
 refusal-watch = { path = "../refusal-watch" }
+# Family D watchers (sop-lint, statute-audit, the cert sweeps): their libraries.
+sop = { path = "../sop" }
+rule = { path = "../rule" }
+cert-sweep = { path = "../cert-sweep" }
 release = { path = "../release" }
 cockpit-collect = { path = "../cockpit-collect" }
 groomer = { path = "../groomer" }

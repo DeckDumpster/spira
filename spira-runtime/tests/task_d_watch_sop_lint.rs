@@ -96,5 +96,7 @@ fn t6_a_finding_standing_two_days_replays_identically_at_one_filing_an_hour() {
     let r = assert_deterministic(|seed| rig(seed, Arc::new(Mutex::new(shelf(&[("sop-bad", "SYMPTOM: only this\n")])))), 7, 2);
     acc::assert_healthy(&r, STREAM);
     assert_eq!(filed(&r).len() as u64, 2 * DAY_MS / CADENCE_MS + 1, "a standing finding re-files every hour, as today");
-    assert_journal_budget(&r, 2);
+    // 49 filings (the boot tick and 48 hourly ones) journal a request and an outcome each: 98
+    // events in 48 h, over a budget of 2/h by the fence post, so the ceiling is 3/h.
+    assert_journal_budget(&r, 3);
 }
