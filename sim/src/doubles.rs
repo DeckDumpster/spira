@@ -131,6 +131,7 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("cockpit-tier-5s", &["cockpit-tier-5s.observe", "cockpit-tier-5s.publish"]),
     ("cockpit-tier-60s", &["cockpit-tier-60s.observe", "cockpit-tier-60s.publish", "cockpit-tier-60s.slots_sample"]),
     ("cockpit-tier-600s", &["cockpit-tier-600s.observe", "cockpit-tier-600s.publish"]),
+    ("mail.wake", &["mail.wake.observe", "mail.wake.wake"]),
 ];
 
 /// The effects several tasks share (spira-runtime's `tasks::SHARED`): the inbox line and the
