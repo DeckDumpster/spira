@@ -25,9 +25,6 @@ pub struct Inputs {
     pub dolt_data_set: bool,
     /// `SPIRA_DOLT_DURABLE` is non-empty: the store is RAM-backed and store-persist keeps its copy.
     pub dolt_durable_set: bool,
-    /// `inotifywait` is on `PATH`. No unit depends on it since mail delivery moved into the
-    /// scheduler; kept so the callers that probe for it need no change.
-    pub inotify_present: bool,
     /// `SPIRA_SCCACHE_DAV_ADDR` is non-empty (sp-xtdqi): this box names its own LAN address
     /// for the shared compilation cache.
     pub sccache_dav_addr_set: bool,
@@ -53,7 +50,7 @@ pub struct Inputs {
 
 impl Default for Inputs {
     fn default() -> Self {
-        Inputs { instance: String::new(), dolt_data_set: false, dolt_durable_set: false, inotify_present: false, sccache_dav_addr_set: false, repo_is_git_checkout: false, lc_system_mode: false, watch_names: Ok(Vec::new()) }
+        Inputs { instance: String::new(), dolt_data_set: false, dolt_durable_set: false, sccache_dav_addr_set: false, repo_is_git_checkout: false, lc_system_mode: false, watch_names: Ok(Vec::new()) }
     }
 }
 
@@ -66,7 +63,7 @@ pub struct Manifest {
     /// choice; one that is in neither `units` nor `optional` is a forgotten row).
     pub optional: Vec<String>,
     /// The subset of `optional` that is absent only because something buildable is missing
-    /// right now (e.g. `inotifywait`) — an uninstall must still remove these if they were
+    /// right now — an uninstall must still remove these if they were
     /// installed by an earlier run that had the dependency.
     pub unbuilt: Vec<String>,
     /// Plain watcher names (e.g. "testview"), one per manifest row.
@@ -217,9 +214,8 @@ impl Manifest {
     }
 }
 
-/// Every template name any combination of this box's FIVE conditional inputs (dolt data,
-/// `inotifywait`, `SPIRA_SCCACHE_DAV_ADDR`, `--system-user`, `repo_is_git_
-/// checkout`) could ever push into `Manifest::units` — the same completeness union
+/// Every template name any combination of this box's FOUR conditional inputs (dolt data,
+/// `SPIRA_SCCACHE_DAV_ADDR`, `--system-user`, `repo_is_git_checkout`) could ever push into `Manifest::units` — the same completeness union
 /// `--list-optional`/`--list-union` already compute for a human,
 /// factored out here so a REMOVAL caller gets it too (sp-da4y0).
 ///
@@ -234,14 +230,12 @@ impl Manifest {
 pub fn union_template_names() -> Vec<String> {
     let mut set = std::collections::BTreeSet::new();
     for dolt in [false, true] {
-        for inotify in [false, true] {
-            for sccache in [false, true] {
-                for lc_system in [false, true] {
-                    for repo_git in [false, true] {
-                        let inputs = Inputs { dolt_data_set: dolt, dolt_durable_set: dolt, inotify_present: inotify, sccache_dav_addr_set: sccache, lc_system_mode: lc_system, repo_is_git_checkout: repo_git, ..Default::default() };
-                        if let Ok(m) = build(&inputs) {
-                            set.extend(m.units.into_iter().map(|u| u.name).filter(|n| n != "spira-watch@.service"));
-                        }
+        for sccache in [false, true] {
+            for lc_system in [false, true] {
+                for repo_git in [false, true] {
+                    let inputs = Inputs { dolt_data_set: dolt, dolt_durable_set: dolt, sccache_dav_addr_set: sccache, lc_system_mode: lc_system, repo_is_git_checkout: repo_git, ..Default::default() };
+                    if let Ok(m) = build(&inputs) {
+                        set.extend(m.units.into_iter().map(|u| u.name).filter(|n| n != "spira-watch@.service"));
                     }
                 }
             }
@@ -290,7 +284,6 @@ mod tests {
             instance: "prod".into(),
             dolt_data_set: true,
             dolt_durable_set: false,
-            inotify_present: true,
             sccache_dav_addr_set: false,
             repo_is_git_checkout: true,
             lc_system_mode: false,
@@ -421,14 +414,11 @@ mod tests {
     }
 
     #[test]
-    fn mail_delivery_ships_no_unit_whether_or_not_inotifywait_is_present() {
-        for present in [true, false] {
-            let mut i = inputs();
-            i.inotify_present = present;
-            let m = build(&i).unwrap();
-            assert!(!m.template_names().iter().any(|n| n.starts_with("spira-mail-deliver")), "inotify_present={present}");
-            assert!(!m.optional.iter().chain(&m.unbuilt).any(|n| n.starts_with("spira-mail-deliver")), "inotify_present={present}");
-        }
+    fn mail_delivery_ships_no_unit() {
+        let m = build(&inputs()).unwrap();
+        assert!(!m.template_names().iter().any(|n| n.starts_with("spira-mail-deliver")));
+        assert!(!m.optional.iter().chain(&m.unbuilt).any(|n| n.starts_with("spira-mail-deliver")));
+        assert!(!union_template_names().iter().any(|n| n.starts_with("spira-mail-deliver")), "no box's manifest ships it");
     }
 
     #[test]

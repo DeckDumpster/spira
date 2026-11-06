@@ -813,7 +813,7 @@ mod tests {
         write_templates(&tmpl_dir);
         fs::write(tmpl_dir.join("spira-runtime.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
 
-        let mut manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
+        let mut manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
         manifest.units.retain(|u| u.name == "spira-runtime.service");
         manifest.units.extend(tiny_manifest().units);
         let h = host();
@@ -867,7 +867,7 @@ mod tests {
     /// registration is removed.
     #[test]
     fn the_watchdog_timer_is_registered_written_and_enabled() {
-        let m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
+        let m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
         assert!(m.units.iter().any(|u| u.name == "spira-watchdog.timer" && u.enable), "the watchdog timer is registered and enabled");
         assert!(m.units.iter().any(|u| u.name == "spira-watchdog.service" && !u.enable), "its service is installed, started by the timer");
         assert!(m.enable("prod").contains(&"spira-watchdog-prod.timer".to_string()));
@@ -921,7 +921,7 @@ mod tests {
         let tmpl_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
         let td = tempdir();
         let unit_dir = td.join("units");
-        let manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: true, dolt_durable_set: true, inotify_present: true, sccache_dav_addr_set: true, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(shipped_daemon_rows(&["repo-events"])) }).unwrap();
+        let manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: true, dolt_durable_set: true, sccache_dav_addr_set: true, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(shipped_daemon_rows(&["repo-events"])) }).unwrap();
         let h = host();
         let sc = FakeSystemctl::default();
         let no_suspend = |_: &str| false;
@@ -939,7 +939,7 @@ mod tests {
 
     #[test]
     fn the_reconciler_has_no_timer_in_the_manifest() {
-        let m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
+        let m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
         assert!(!m.units.iter().any(|u| u.name.starts_with("spira-reconciler.")), "the runtime hosts the pass; its timer and service are retired");
         assert!(m.units.iter().any(|u| u.name == "spira-watchdog.timer"), "positive control: the manifest still ships timers");
         assert!(!m.enable("prod").iter().any(|u| u == "spira-reconciler-prod.timer"));

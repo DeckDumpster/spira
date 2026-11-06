@@ -180,7 +180,7 @@ mod tests {
             std::fs::write(unit_dir.join(u), "[Service]\nExecStart=/bin/true\n").unwrap();
         }
         std::fs::write(unit_dir.join(".spira-installed-units"), "spira-sentinel-prod.service\nspira-sentinel-prod.timer\nspira-watch-queue-watch-prod.service\nspira-mail-deliver-prod.service\n").unwrap();
-        let manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: true, dolt_durable_set: true, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
+        let manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: true, dolt_durable_set: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
         let h = host();
         let sc = FakeSystemctl::default();
         let no_suspend = |_: &str| false;

@@ -319,7 +319,6 @@ fn is_exec(p: &Path) -> bool {
 /// Build this box's manifest from the environment, printing units.sh's own informational
 /// notes to stderr.
 pub fn manifest_from_env(instance: &str) -> Result<Manifest, String> {
-    let inotify_present = which("inotifywait").is_some();
     // Same resolution host_from_env gives `--repo` (the repo map's home-repo root when it is
     // a git checkout, else the release dir): a failure to resolve it at all means the rest of
     // the install fails too, so treating it as "not a checkout" here costs nothing extra.
@@ -328,7 +327,6 @@ pub fn manifest_from_env(instance: &str) -> Result<Manifest, String> {
         instance: instance.to_string(),
         dolt_data_set: declared("SPIRA_DOLT_DATA").is_some(),
         dolt_durable_set: declared("SPIRA_DOLT_DURABLE").is_some(),
-        inotify_present,
         sccache_dav_addr_set: !sccache_dav_addr()?.is_empty(),
         repo_is_git_checkout,
         lc_system_mode: spira_config::resolve::lc_system_mode(),
