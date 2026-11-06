@@ -29,6 +29,7 @@ fn idle() -> Snapshot {
         landing_active: true,
         world_running: true,
         now_ms: NOW,
+        // literal-ok: test fixture label
         labels: Labels { queue_wait: QUEUE_WAIT.into(), ask: "needs-operator".into(), open_children: "spira-open-children".into(), red_tracker: "spira-red-tracker".into(), epics: vec!["spira".into()], ..Labels::default() },
         watchers: vec!["ryan".into()],
         inference_every_secs: 3_600,

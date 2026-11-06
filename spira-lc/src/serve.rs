@@ -675,6 +675,7 @@ mod tests {
             Ok(())
         }
         fn ask_label(&self) -> Result<String, String> {
+            // literal-ok: test fixture label
             Ok("needs-ryan".into())
         }
         fn registry(&self) -> spira_config::repos::Registry {
@@ -841,6 +842,7 @@ mod tests {
             Ok(())
         }
         fn ask_label(&self) -> Result<String, String> {
+            // literal-ok: test fixture label
             Ok("needs-ryan".into())
         }
         fn registry(&self) -> spira_config::repos::Registry {

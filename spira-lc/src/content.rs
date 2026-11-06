@@ -427,6 +427,7 @@ mod tests {
     /// A write's verdict: admitted, or refused with an exit code and its text.
     type Verdict = Result<(), (i32, String)>;
 
+    // literal-ok: test fixture label
     const ASK: &str = "needs-ryan";
 
     fn registry() -> spira_config::repos::Registry {

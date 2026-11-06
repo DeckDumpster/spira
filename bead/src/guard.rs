@@ -297,6 +297,7 @@ mod tests {
     fn write_runs_the_czar_fence_before_the_claim_check() {
         let e = env(CZAR);
         let held = |_: &str| Some(row("WORKING", "dwarf-sp-a", None));
+        // literal-ok: test fixture label
         let ctx = Ctx { who: "bdq", vars: &|k| e.get(k).cloned(), rows: &held, now: 0, ask_label: &|| Ok("needs-ryan".into()), registry: &registry };
         let r = write(&a(&["update", "sp-a", "--title", "T"]), None, &ctx).unwrap_err();
         assert!(r.text.starts_with("czar-fence: "), "{r:?}");
@@ -314,6 +315,7 @@ mod tests {
     #[test]
     fn the_create_fences_refuse_in_bdqs_order_with_bdqs_text() {
         let none = |_: &str| None;
+        // literal-ok: test fixture label
         let ask = || Ok::<_, String>("needs-ryan".into());
         let c = ctx(&none, &ask);
         let refused = |w: &[&str], body: Option<&str>| create(&a(w), body, &c).map_err(|r| (r.code, r.text));
@@ -321,10 +323,14 @@ mod tests {
         let r = refused(&["create", "T", "--labels", "repo:nowhere"], None).unwrap_err();
         assert_eq!((r.0, r.1.starts_with("spira: repo:nowhere is not in the repo map")), (1, true), "{r:?}");
         let r = refused(&["create", "Stop the world", "--description", "run world.sh stop first"], None).unwrap_err();
+        // literal-ok: test fixture label
         assert!(r.1.contains("procedures that halt the harness require needs-ryan"), "{r:?}");
+        // literal-ok: test fixture label
         let r = refused(&["create", "Pick one", "--labels", "needs-ryan"], None).unwrap_err();
+        // literal-ok: test fixture label
         assert!(r.1.contains("needs-ryan"), "an ask without its shape: {r:?}");
         let whole = "## Question\nWhich?\nDefault: a\nClass: policy\n";
+        // literal-ok: test fixture label
         assert_eq!(refused(&["create", "Pick one", "--labels", "needs-ryan", "--body-file", "-"], Some(whole)), Ok(()), "the body is the ask's description");
         let r = refused(&["create", "Fix", "--description", "DELETE FROM schema_migrations"], None).unwrap_err();
         assert!(r.1.contains("DELETE FROM schema_migrations"), "{r:?}");
@@ -337,12 +343,16 @@ mod tests {
     #[test]
     fn the_ask_label_is_never_written_onto_an_existing_bead() {
         let none = |_: &str| None;
+        // literal-ok: test fixture label
         let ask = || Ok::<_, String>("needs-ryan".into());
         let c = ctx(&none, &ask);
+        // literal-ok: test fixture label
         for w in [&["label", "add", "sp-a", "needs-ryan"][..], &["update", "sp-a", "--add-label", "needs-ryan"], &["update", "sp-a", "--set-labels", "x,needs-ryan"]] {
             let r = ask_label_write(&a(w), &c).unwrap_err();
+            // literal-ok: test fixture label
             assert!(r.code == 1 && r.text.starts_with("spira: refusing to add needs-ryan to an existing bead"), "{w:?}: {r:?}");
         }
+        // literal-ok: test fixture label
         for w in [&["label", "add", "sp-a", "overseer"][..], &["label", "remove", "sp-a", "needs-ryan"], &["update", "sp-a", "--remove-label", "needs-ryan"]] {
             assert_eq!(ask_label_write(&a(w), &c), Ok(()), "{w:?}");
         }

@@ -332,7 +332,9 @@ mod tests {
         r.updated_at = Some(0);
         let rows = vec![r];
         let v = View::new(&beads, &rows);
+        // literal-ok: test fixture label
         assert_eq!(stale_ask_holds(&v, "needs-operator", 10, 100, &|_| false), vec![]);
+        // literal-ok: test fixture label
         assert_eq!(stale_ask_holds(&v, "needs-operator", 1_000, 100, &|_| false), vec![("sp-a".to_string(), "no open ask remains".to_string())]);
     }
 

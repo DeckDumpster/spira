@@ -770,7 +770,9 @@ mod door_tests {
     fn the_content_door_takes_every_verb_it_serves_and_bdq_keeps_the_rest() {
         let v = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         assert_eq!(door(&v(&["show", "sp-a", "--json"]), None), Door::Content(v(&["show", "sp-a", "--json"]), None));
+        // literal-ok: test fixture label
         assert_eq!(door(&v(&["list", "--all", "--label", "needs-ryan", "--json"]), None), Door::Content(v(&["list", "--all", "--label", "needs-ryan", "--json"]), None));
+        // literal-ok: test fixture label
         let create = v(&["create", "Q?", "-l", "needs-ryan", "--type", "decision", "--body-file", "-", "--silent"]);
         assert_eq!(door(&create, Some("body")), Door::Content(create.clone(), Some("body".into())));
         assert_eq!(door(&v(&["note", "sp-a", "-- a note that looks like a flag"]), None), Door::Content(v(&["note", "sp-a", "--stdin"]), Some("-- a note that looks like a flag".into())));
