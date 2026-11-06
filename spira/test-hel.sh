@@ -110,7 +110,8 @@ lc_row_state() { lc_root_sql --use-db spira_lifecycle sql -q "SELECT state FROM 
 
 # --------------------------------------------------------------------------------------
 # THE STUB BD. hel.sh's remaining bd seams are `bdjson show <id>` (read) and
-# `bdq label add/remove <id> <label>` (write, for branch: affinity only now — content-landed
+# `bdq label add/remove <id> <label>` or the content door's `update <id> --remove-label <l>`
+# (write, for branch: affinity only now — content-landed
 # is a real spira-lc event, above). One JSON object per id, under $STUB_BEADS_DIR/<id>.json;
 # label add/remove mutate it in place, so the branch: label assertions read back what
 # hel.sh actually wrote — a real seam contract, not a canned answer
@@ -128,7 +129,7 @@ for a in "$@"; do
     case "$a" in
         -C)          skip_next=1 ;;
         --json)      ;;
-        show|label|list)  cmd="$a" ;;
+        show|label|list|update)  cmd="$a" ;;
         *)           argv+=("$a") ;;
     esac
 done
@@ -150,6 +151,21 @@ d = json.load(open(f))
 labs = d.get("labels") or []
 if sub == "add" and lbl not in labs: labs.append(lbl)
 if sub == "remove" and lbl in labs: labs.remove(lbl)
+d["labels"] = labs
+json.dump(d, open(f, "w"))
+PY
+        ;;
+    update) # the content door's form of a label write: update <id> --add-label/--remove-label <l>
+        f="$dir/${argv[0]:-}.json"
+        [ -f "$f" ] || exit 0
+        python3 - "$f" "${argv[@]:1}" <<'PY'
+import json, sys
+f, rest = sys.argv[1], sys.argv[2:]
+d = json.load(open(f))
+labs = d.get("labels") or []
+for flag, lbl in zip(rest[::2], rest[1::2]):
+    if flag == "--add-label" and lbl not in labs: labs.append(lbl)
+    if flag == "--remove-label" and lbl in labs: labs.remove(lbl)
 d["labels"] = labs
 json.dump(d, open(f, "w"))
 PY

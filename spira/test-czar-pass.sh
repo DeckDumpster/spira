@@ -70,6 +70,9 @@ T="$(mktemp -d)"; trap 'lcfix_down; rm -rf "$T"' EXIT INT TERM
 . "$HERE/testlib/lc-fixture.sh"
 . "$HERE/testlib/forge-batch.sh"
 lcfix_up || { printf 'test-czar-pass: could not build a lifecycle fixture\n' >&2; exit 2; }
+# czar-pass reads each repo's open batch from the store's own projection, which watches the
+# control store and refuses (unobservable) when the lifecycle is not on it — as production runs.
+fb_store_up || { printf 'test-czar-pass: could not put the batch machine on the control store\n' >&2; exit 2; }
 
 # czar-pass is found directly on this suite's PATH (sp-gypjk).
 
@@ -201,7 +204,7 @@ printf 'testrepo | %s | push | origin/main | |\n' "$T/testrepo" > "$SPIRA_REPO_M
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
 "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
-want "ci-stalled: DETECTED=yes in czar.log" "CLASS=ci-stalled DETECTED=yes" "$_log"
+want "ci-stalled: DETECTED=yes in czar.log" "CLASS=ci-stalled DETECTED=yes STATUS=gap" "$_log"
 
 # ==========================================================================================
 printf '\n%s\n' "6. shadow mode: CZAR-WOULD written, no bead filed"
@@ -350,7 +353,7 @@ chmod +x "$STUB_FORGE"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
 "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
-want "ci-red: DETECTED=yes when run red >threshold" "CLASS=ci-red DETECTED=yes" "$_log"
+want "ci-red: DETECTED=yes when run red >threshold" "CLASS=ci-red DETECTED=yes STATUS=gap" "$_log"
 lack "ci-red: interval is not ~1800s (batch-open age)" "not acting for 1" "$_log"
 want "ci-red: czar.log shows 'not acting for 7'" "not acting for 7" "$_log"
 
@@ -378,7 +381,7 @@ chmod +x "$STUB_FORGE"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
 "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
-want "coexistence: ci-stalled still DETECTED=yes" "CLASS=ci-stalled DETECTED=yes" "$_log"
+want "coexistence: ci-stalled still DETECTED=yes" "CLASS=ci-stalled DETECTED=yes STATUS=gap" "$_log"
 want "coexistence: ci-red stays DETECTED=no (run only 60s red)" "CLASS=ci-red DETECTED=no" "$_log"
 
 # ==========================================================================================
@@ -444,7 +447,7 @@ tl_config SPIRA_CZAR_STAGE_BASE_RED=act
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
 want "base-red: the fire calls the czar (sentinel --call czar)" "--call czar" "$(cat "$CALL_LOG" 2>/dev/null || true)"
-want "base-red: DETECTED=yes when base's own run is red" "CLASS=base-red DETECTED=yes" "$_log"
+want "base-red: DETECTED=yes when base's own run is red" "CLASS=base-red DETECTED=yes STATUS=gap" "$_log"
 want "base-red: bead filed with cause=base-red" "cause=base-red" "$_inc_log"
 want "base-red: filed at priority 0 (P0)" "priority=0" "$_inc_log"
 want "base-red: filed express, as lifecycle state" "express=1" "$_inc_log"
