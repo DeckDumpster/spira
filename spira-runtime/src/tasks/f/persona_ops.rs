@@ -327,8 +327,8 @@ pub struct PersonaOps {
 }
 
 impl PersonaOps {
-    pub fn from_cfg() -> Result<Self, String> {
-        Ok(PersonaOps { interval_ms: super::cadence_ms(CADENCE_KEY)?, config: super::pinned(KEYS)? })
+    pub fn from_settings(settings: &crate::Settings) -> Result<Self, String> {
+        Ok(PersonaOps { interval_ms: super::cadence_ms(settings, CADENCE_KEY)?, config: super::pinned(settings, KEYS)? })
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {

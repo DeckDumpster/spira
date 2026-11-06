@@ -1,4 +1,4 @@
-//! The service's own task table, booted as the service boots it, run for virtual days in the
+//! The service's own task table, booted as the service boots it, run for virtual hours in the
 //! simulator with every effect answered by the quiet world's doubles: one seed gives one trace,
 //! and no process is spawned.
 
@@ -7,23 +7,15 @@ use std::sync::Arc;
 use runtime::ports::{CountingProc, Proc, ProcSpec};
 use runtime::{Command, Ctx, EffectSpec, Event, EventKindTag, Handler, Projection, Registration};
 use sim::Sim;
-use spira_runtime::{registrations, tasks, Settings};
+use spira_runtime::{registrations, tasks};
 
-const DAY: u64 = 86_400_000;
+mod common;
+use common::settings;
 
-/// Every task acts, so its effects reach the doubles; the container cap is the host run
-/// ceiling; every other key is 300.
-fn settings() -> Settings {
-    let modes: Vec<String> = tasks::all().map(|t| format!("{}=act", t.name)).collect();
-    Settings::from_lookup(&|k| {
-        Ok(match k {
-            "SPIRA_TASK_MODES" => modes.join(","),
-            "SPIRA_POOL_CAP_CONTAINER" => "2".into(),
-            _ => "300".into(),
-        })
-    })
-    .expect("every key answered")
-}
+/// Virtual hours, not days: with all 82 rows booted a virtual hour costs about 7 s of wall time
+/// in a debug build (every effect outcome is dispatched to every handler interested in its tag,
+/// each dispatch building a wide event), so days would take minutes per run.
+const HOUR: u64 = 3_600_000;
 
 struct Run {
     trace: Vec<(String, String, String, String, u64)>,
@@ -31,7 +23,7 @@ struct Run {
     spawned: u64,
 }
 
-fn run(seed: u64, days: u64, extra: Option<Registration>) -> Run {
+fn run(seed: u64, hours: u64, extra: Option<Registration>) -> Run {
     let proc = CountingProc::refusing();
     let forks = proc.clone();
     let doubles = Arc::new(sim::doubles::service().double("fork", move |_| {
@@ -44,19 +36,19 @@ fn run(seed: u64, days: u64, extra: Option<Registration>) -> Run {
     }
     if let Some(r) = extra {
         sim.add_workflow(r);
-        sim.submit(DAY / 2, "plant", "plant", "plant", "");
+        sim.submit(HOUR / 2, "plant", "plant", "plant", "");
     }
     sim.set_effects(doubles.clone());
     for (_, stream, kind) in tasks::boots() {
         sim.boot_workflow(0, stream, &kind.tag, &kind.body);
     }
-    sim.run_until(days * DAY);
+    sim.run_until(hours * HOUR);
     assert!(sim.effects_run() > 0);
     Run { trace: sim.workflow_trace(), asked: doubles.asked(), spawned: proc.spawned() }
 }
 
 #[test]
-fn the_task_table_runs_virtual_days_deterministically_and_spawns_nothing() {
+fn the_task_table_runs_virtual_hours_deterministically_and_spawns_nothing() {
     let regs = registrations(&settings()).len();
     assert!(regs >= 15, "the service's tasks: {regs}");
     assert_eq!(tasks::boots().len(), regs, "every task is booted");

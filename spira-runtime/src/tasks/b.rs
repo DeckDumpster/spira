@@ -348,18 +348,20 @@ pub mod kit {
         raw.trim().parse::<u64>().ok().filter(|s| *s > 0).map(|s| Cadence::Every(s * 1000)).ok_or_else(|| format!("{key} must be a positive integer, got {raw:?}"))
     }
 
-    /// `T` from the process's pinned config. Only called after `Settings::load` has resolved
-    /// every row key, so a refusal here is a broken table, not a missing value.
-    pub fn built<T: Stub>() -> T {
-        T::from_cfg(&spira_config::process::cfg).unwrap_or_else(|e| panic!("{}: {e}", T::SPEC.name))
+    /// `T` from the `Settings` its row is built with: each key as `Settings::from_lookup` read
+    /// it into `task_config`, never the process's own config door. A key the settings lack (no
+    /// row of `tasks::all()` declares it) is a broken table, and refuses the build naming it.
+    pub fn built<T: Stub>(settings: &Settings) -> T {
+        let get = |k: &str| settings.task_config.get(k).cloned().ok_or_else(|| format!("{k} is not in the settings (no row of tasks::all() declares it)"));
+        T::from_cfg(&get).unwrap_or_else(|e| panic!("{}: {e}", T::SPEC.name))
     }
 
-    pub fn build<T: Stub>(_: &Settings) -> Registration {
-        built::<T>().registration()
+    pub fn build<T: Stub>(settings: &Settings) -> Registration {
+        built::<T>(settings).registration()
     }
 
-    pub fn cadence_ms<T: Stub>(_: &Settings) -> u64 {
-        built::<T>().cadence().first_ms()
+    pub fn cadence_ms<T: Stub>(settings: &Settings) -> u64 {
+        built::<T>(settings).cadence().first_ms()
     }
 
     pub fn boot<T: Stub>() -> (&'static str, &'static str, EventKind) {
@@ -558,6 +560,30 @@ pub mod kit {
                 at = c.next_after(at);
             }
             out
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// Every family-B and family-C row (both build through this kit) builds from the
+        /// `Settings` it is handed, with no config door resolved: a planted value there is the
+        /// value pinned, and a key the settings lack refuses the build.
+        #[test]
+        fn built_reads_the_settings_it_is_given_not_the_process_config() {
+            use crate::tasks::b::reconcile_section::{ReconcileSection, CADENCE_KEY};
+            let mut s = crate::settings::fixture();
+            s.task_config.insert(CADENCE_KEY.into(), "4242".into());
+            let t = built::<ReconcileSection>(&s);
+            assert_eq!(t.cfg()[CADENCE_KEY], "4242", "the row pins what the settings hold");
+            assert_eq!(cadence_ms::<ReconcileSection>(&s), 4_242_000);
+            for row in crate::tasks::b::TASKS.iter().chain(crate::tasks::c::TASKS) {
+                let _ = (row.build)(&s);
+                let _ = (row.cadence_ms)(&s);
+            }
+            s.task_config.remove(CADENCE_KEY);
+            assert!(std::panic::catch_unwind(|| built::<ReconcileSection>(&s)).is_err(), "a key the settings lack refuses");
         }
     }
 }

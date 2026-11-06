@@ -238,8 +238,8 @@ pub struct TriggerGroom {
 }
 
 impl TriggerGroom {
-    pub fn from_cfg() -> Result<Self, String> {
-        Ok(TriggerGroom { interval_ms: super::cadence_ms(CADENCE_KEY)?, config: super::pinned(KEYS)? })
+    pub fn from_settings(settings: &crate::Settings) -> Result<Self, String> {
+        Ok(TriggerGroom { interval_ms: super::cadence_ms(settings, CADENCE_KEY)?, config: super::pinned(settings, KEYS)? })
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {

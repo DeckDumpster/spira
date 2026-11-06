@@ -12,7 +12,6 @@ use std::collections::BTreeMap;
 
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
-use spira_config::process::{cfg, cfg_parse};
 
 use super::Task;
 use crate::watchers::{answers_observe, INBOX_APPEND};
@@ -31,7 +30,7 @@ pub static TASKS: &[Task] = &[
     Task {
         name: intake_gh::NAME,
         boot: intake_gh::IntakeGh::boot,
-        cadence_ms: |_| cadence(intake_gh::CADENCE_KEY),
+        cadence_ms: |s| cadence(s, intake_gh::CADENCE_KEY),
         effects: intake_gh::EFFECTS,
         runners: &[
             (intake_gh::OBSERVE, intake_gh::run_observe),
@@ -43,12 +42,12 @@ pub static TASKS: &[Task] = &[
             (intake_gh::UNVERIFIABLE, intake_gh::run_unverifiable),
         ],
         keys: &[intake_gh::KEYS],
-        build: |_| refuse(intake_gh::NAME, intake_gh::IntakeGh::from_cfg()).registration(),
+        build: |s| refuse(intake_gh::NAME, intake_gh::IntakeGh::from_settings(s)).registration(),
     },
     Task {
         name: persona_ops::NAME,
         boot: persona_ops::PersonaOps::boot,
-        cadence_ms: |_| cadence(persona_ops::CADENCE_KEY),
+        cadence_ms: |s| cadence(s, persona_ops::CADENCE_KEY),
         effects: persona_ops::EFFECTS,
         runners: &[
             (persona_ops::OBSERVE, persona_ops::run_observe),
@@ -59,60 +58,60 @@ pub static TASKS: &[Task] = &[
             (persona_ops::CLEANUP, persona_ops::run_cleanup),
         ],
         keys: &[persona_ops::KEYS],
-        build: |_| refuse(persona_ops::NAME, persona_ops::PersonaOps::from_cfg()).registration(),
+        build: |s| refuse(persona_ops::NAME, persona_ops::PersonaOps::from_settings(s)).registration(),
     },
     Task {
         name: trigger_groom::NAME,
         boot: trigger_groom::TriggerGroom::boot,
-        cadence_ms: |_| cadence(trigger_groom::CADENCE_KEY),
+        cadence_ms: |s| cadence(s, trigger_groom::CADENCE_KEY),
         effects: trigger_groom::EFFECTS,
         runners: &[
             (trigger_groom::OBSERVE, trigger_groom::run_observe),
             (trigger_groom::FILE, trigger_groom::run_file),
         ],
         keys: &[trigger_groom::KEYS],
-        build: |_| refuse(trigger_groom::NAME, trigger_groom::TriggerGroom::from_cfg()).registration(),
+        build: |s| refuse(trigger_groom::NAME, trigger_groom::TriggerGroom::from_settings(s)).registration(),
     },
     Task {
         name: trigger_warden::NAME,
         boot: trigger_warden::TriggerWarden::boot,
-        cadence_ms: |_| cadence(trigger_warden::CADENCE_KEY),
+        cadence_ms: |s| cadence(s, trigger_warden::CADENCE_KEY),
         effects: trigger_warden::EFFECTS,
         runners: &[
             (trigger_warden::OBSERVE, trigger_warden::run_observe),
             (trigger_warden::FILE, trigger_warden::run_file),
         ],
         keys: &[trigger_warden::KEYS],
-        build: |_| refuse(trigger_warden::NAME, trigger_warden::TriggerWarden::from_cfg()).registration(),
+        build: |s| refuse(trigger_warden::NAME, trigger_warden::TriggerWarden::from_settings(s)).registration(),
     },
     Task {
         name: trigger_mimir::NAME,
         boot: trigger_mimir::TriggerMimir::boot,
-        cadence_ms: |_| cadence(trigger_mimir::CADENCE_KEY),
+        cadence_ms: |s| cadence(s, trigger_mimir::CADENCE_KEY),
         effects: trigger_mimir::EFFECTS,
         runners: &[
             (trigger_mimir::OBSERVE, trigger_mimir::run_observe),
             (trigger_mimir::FILE, trigger_mimir::run_file),
         ],
         keys: &[trigger_mimir::KEYS],
-        build: |_| refuse(trigger_mimir::NAME, trigger_mimir::TriggerMimir::from_cfg()).registration(),
+        build: |s| refuse(trigger_mimir::NAME, trigger_mimir::TriggerMimir::from_settings(s)).registration(),
     },
     Task {
         name: asks_ideas::NAME,
         boot: asks_ideas::AsksIdeas::boot,
-        cadence_ms: |_| cadence(asks_ideas::CADENCE_KEY),
+        cadence_ms: |s| cadence(s, asks_ideas::CADENCE_KEY),
         effects: asks_ideas::EFFECTS,
         runners: &[
             (asks_ideas::OBSERVE, asks_ideas::run_observe),
             (asks_ideas::ASK, asks_ideas::run_ask),
         ],
         keys: &[asks_ideas::KEYS],
-        build: |_| refuse(asks_ideas::NAME, asks_ideas::AsksIdeas::from_cfg()).registration(),
+        build: |s| refuse(asks_ideas::NAME, asks_ideas::AsksIdeas::from_settings(s)).registration(),
     },
     Task {
         name: intake_filings::NAME,
         boot: intake_filings::IntakeFilings::boot,
-        cadence_ms: |_| cadence(intake_filings::CADENCE_KEY),
+        cadence_ms: |s| cadence(s, intake_filings::CADENCE_KEY),
         effects: intake_filings::EFFECTS,
         runners: &[
             (intake_filings::OBSERVE, intake_filings::run_observe),
@@ -121,12 +120,12 @@ pub static TASKS: &[Task] = &[
             (intake_filings::ACK, intake_filings::run_ack),
         ],
         keys: &[intake_filings::KEYS],
-        build: |_| refuse(intake_filings::NAME, intake_filings::IntakeFilings::from_cfg()).registration(),
+        build: |s| refuse(intake_filings::NAME, intake_filings::IntakeFilings::from_settings(s)).registration(),
     },
     Task {
         name: intake_kit_bump::NAME,
         boot: intake_kit_bump::IntakeKitBump::boot,
-        cadence_ms: |_| cadence(intake_kit_bump::CADENCE_KEY),
+        cadence_ms: |s| cadence(s, intake_kit_bump::CADENCE_KEY),
         effects: intake_kit_bump::EFFECTS,
         runners: &[
             (intake_kit_bump::OBSERVE, intake_kit_bump::run_observe),
@@ -134,12 +133,12 @@ pub static TASKS: &[Task] = &[
             (intake_kit_bump::AMEND, intake_kit_bump::run_amend),
         ],
         keys: &[intake_kit_bump::KEYS],
-        build: |_| refuse(intake_kit_bump::NAME, intake_kit_bump::IntakeKitBump::from_cfg()).registration(),
+        build: |s| refuse(intake_kit_bump::NAME, intake_kit_bump::IntakeKitBump::from_settings(s)).registration(),
     },
     Task {
         name: persona_archivist::NAME,
         boot: persona_archivist::PersonaArchivist::boot,
-        cadence_ms: |_| cadence(persona_archivist::CADENCE_KEY),
+        cadence_ms: |s| cadence(s, persona_archivist::CADENCE_KEY),
         effects: persona_archivist::EFFECTS,
         runners: &[
             (persona_archivist::OBSERVE, persona_archivist::run_observe),
@@ -151,7 +150,7 @@ pub static TASKS: &[Task] = &[
             (persona_archivist::FORGET, persona_archivist::run_forget),
         ],
         keys: &[persona_archivist::KEYS],
-        build: |_| refuse(persona_archivist::NAME, persona_archivist::PersonaArchivist::from_cfg()).registration(),
+        build: |s| refuse(persona_archivist::NAME, persona_archivist::PersonaArchivist::from_settings(s)).registration(),
     },
 ];
 
@@ -193,16 +192,22 @@ pub enum Decision {
     File(Bead),
 }
 
-/// Every key in `keys`, each read through the one config door (pinned at boot). The first key
-/// that does not resolve refuses, naming it; there is no default.
-pub fn pinned(keys: &[&str]) -> Result<BTreeMap<String, String>, String> {
-    keys.iter().map(|k| cfg(k).map(|v| (k.to_string(), v))).collect()
+/// Every key in `keys`, each read from the `Settings` the row is built with (`task_config`, as
+/// `Settings::from_lookup` read it), never the process's own config door. The first key the
+/// settings do not hold refuses, naming it; there is no default.
+pub fn pinned(settings: &crate::Settings, keys: &[&str]) -> Result<BTreeMap<String, String>, String> {
+    keys.iter().map(|k| setting(settings, k).map(|v| (k.to_string(), v))).collect()
 }
 
-/// A cadence key in seconds, as milliseconds, read through the one config door. A value that is
-/// not a positive integer refuses, naming the key.
-pub fn cadence_ms(key: &str) -> Result<u64, String> {
-    match cfg_parse::<u64>(key)? {
+fn setting(settings: &crate::Settings, key: &str) -> Result<String, String> {
+    settings.task_config.get(key).cloned().ok_or_else(|| format!("{key} is not in the settings (no row of tasks::all() declares it) — refusing"))
+}
+
+/// A cadence key in seconds, as milliseconds, read from `settings`. A value that is not a
+/// positive integer refuses, naming the key.
+pub fn cadence_ms(settings: &crate::Settings, key: &str) -> Result<u64, String> {
+    let raw = setting(settings, key)?;
+    match raw.trim().parse::<u64>().map_err(|_| format!("{key} must be a positive number of seconds, got {raw:?} — refusing"))? {
         0 => Err(format!("{key} must be a positive number of seconds — refusing")),
         s => Ok(s * 1000),
     }
@@ -210,8 +215,8 @@ pub fn cadence_ms(key: &str) -> Result<u64, String> {
 
 /// [`cadence_ms`] for a row's `cadence_ms`, which cannot return an error: `check-config` has
 /// already refused an unresolvable key at boot, so reaching the panic is a boot refusal.
-pub fn cadence(key: &str) -> u64 {
-    cadence_ms(key).unwrap_or_else(|e| panic!("{e}"))
+pub fn cadence(settings: &crate::Settings, key: &str) -> u64 {
+    cadence_ms(settings, key).unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// A row's `build`, which cannot return an error: the refusal is raised at boot, naming the task.
@@ -256,4 +261,25 @@ pub fn commands<C: Serialize + PartialEq>(before: &C, after: &C, tag: EventKindT
     }
     out.extend(acts.into_iter().map(Command::Effect));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    /// Every family-F and family-G row builds from the `Settings` it is handed, with no config
+    /// door resolved: a planted value there is the cadence pinned, and a key the settings lack
+    /// refuses.
+    #[test]
+    fn the_helpers_read_the_settings_they_are_given_not_the_process_config() {
+        let mut s = crate::settings::fixture();
+        s.task_config.insert(super::asks_ideas::CADENCE_KEY.into(), "42".into());
+        assert_eq!(super::cadence(&s, super::asks_ideas::CADENCE_KEY), 42_000);
+        assert_eq!(super::asks_ideas::AsksIdeas::from_settings(&s).map(|t| t.interval_ms), Ok(42_000), "the row pins what the settings hold");
+        for row in super::TASKS.iter().chain(super::super::g::TASKS) {
+            let _ = (row.build)(&s);
+            let _ = (row.cadence_ms)(&s);
+        }
+        assert!(super::pinned(&s, &["SPIRA_PLANTED_NOT_A_KEY"]).is_err(), "a key the settings lack refuses");
+        s.task_config.insert(super::asks_ideas::CADENCE_KEY.into(), "0".into());
+        assert!(super::cadence_ms(&s, super::asks_ideas::CADENCE_KEY).is_err());
+    }
 }
