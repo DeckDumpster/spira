@@ -164,6 +164,39 @@ mod tests {
         assert!(unit_dir.join("spira-example-prod.timer").exists());
     }
 
+    /// An existing host converges on activation (`release activate` runs `unit-ensure --retire`):
+    /// against the real manifest and the real templates, every unit a previous release installed
+    /// and this one no longer renders — a ported loop timer and its service, a retired timer
+    /// (watch-refresh), a retired watchd daemon instance (queue-watch) — is stopped, disabled and
+    /// removed, ledgered or not, while the scheduler's own unit stays.
+    #[test]
+    fn activation_retires_every_installed_unit_the_manifest_dropped_and_keeps_the_scheduler() {
+        let base = td();
+        let unit_dir = base.join("units");
+        std::fs::create_dir_all(&unit_dir).unwrap();
+        let tmpl_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
+        let dropped = ["spira-sentinel-prod.service", "spira-sentinel-prod.timer", "spira-refresh-prod.timer", "spira-watch-queue-watch-prod.service"];
+        for u in dropped {
+            std::fs::write(unit_dir.join(u), "[Service]\nExecStart=/bin/true\n").unwrap();
+        }
+        std::fs::write(unit_dir.join(".spira-installed-units"), "spira-sentinel-prod.service\nspira-sentinel-prod.timer\nspira-watch-queue-watch-prod.service\n").unwrap();
+        let manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: true, dolt_durable_set: true, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
+        let h = host();
+        let sc = FakeSystemctl::default();
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let r = run(&ctx, true);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        for u in dropped {
+            assert!(r.retired.contains(&u.to_string()), "{u} not retired: {:?}", r.retired);
+            assert!(!unit_dir.join(u).exists(), "{u} still on disk");
+            assert!(sc.disabled_now.borrow().contains(&u.to_string()), "{u} not stopped and disabled");
+        }
+        assert!(unit_dir.join("spira-runtime-prod.service").exists(), "the scheduler is installed");
+        assert!(!r.retired.iter().any(|u| u.starts_with("spira-runtime-")), "{:?}", r.retired);
+        assert!(run(&ctx, true).retired.is_empty(), "a second activation has nothing left to retire");
+    }
+
     #[test]
     fn without_retire_a_dropped_unit_is_left_alone() {
         let (_base, unit_dir, _sc, r) = retire_fixture(false);
