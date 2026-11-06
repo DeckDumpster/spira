@@ -57,7 +57,7 @@ pub fn which(prog: &str) -> Option<String> {
 /// every single unit with this bogus home baked in and reported DIFFERS across the board.
 /// Falls back to the same release-relative resolution `templates_dir()` uses — `<release>/
 /// spira` beside the binary's own `bin/`, verified by requiring `conf.sh` there, exactly as
-/// `templates_dir`'s own fallback requires `spira-sentinel.service` under its `systemd/`
+/// `templates_dir`'s own fallback requires `spira-runtime.service` under its `systemd/`
 /// candidate — and refuses outright when even that fails, rather than ever rendering
 /// "/spira" again.
 ///
@@ -261,7 +261,7 @@ pub fn templates_dir_from(home: Option<String>, repo: Option<String>, exe: Optio
 }
 
 fn systemd_above(exe: &Path) -> Option<PathBuf> {
-    exe.ancestors().skip(1).map(|a| a.join("systemd")).find(|d| d.join("spira-sentinel.service").is_file())
+    exe.ancestors().skip(1).map(|a| a.join("systemd")).find(|d| d.join("spira-runtime.service").is_file())
 }
 
 /// `argv[0]`, resolved to where it actually sits, but with every symlink component left
@@ -354,7 +354,7 @@ mod templates_dir_tests {
         let rel = t.path().join("rel");
         std::fs::create_dir_all(rel.join("bin")).unwrap();
         std::fs::create_dir_all(rel.join("systemd")).unwrap();
-        std::fs::write(rel.join("systemd/spira-sentinel.service"), "[Unit]\n").unwrap();
+        std::fs::write(rel.join("systemd/spira-runtime.service"), "[Unit]\n").unwrap();
         let got = templates_dir_from(None, None, Some(&rel.join("bin/units-install")));
         assert_eq!(got, rel.join("systemd").canonicalize().unwrap());
     }

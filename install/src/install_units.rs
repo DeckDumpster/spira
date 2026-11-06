@@ -257,11 +257,6 @@ pub fn run(ctx: &Ctx) -> Report {
     let mut ordered: Vec<String> = ctx.manifest.enable(&ctx.host.instance);
     ordered.sort_by_key(|u| if u == "dolt-beads.service" { 0 } else { 1 });
 
-    let provision = inst_name("spira-submission-provision.service", &ctx.host.instance);
-    if !ctx.world_halted && ordered.contains(&inst_name("spira-submission-provision.timer", &ctx.host.instance)) {
-        let _ = ctx.systemctl.start(&provision);
-    }
-
     let new_by_inst: std::collections::BTreeSet<&String> = new_units.iter().collect();
     for u in &ordered {
         if masked.contains(u) {
@@ -652,14 +647,12 @@ mod tests {
     }
 
     fn tiny_manifest() -> Manifest {
-        let mut m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
-        m.units.retain(|u| u.name == "spira-sentinel.service" || u.name == "spira-sentinel.timer");
-        m
+        crate::manifest::Manifest { units: vec![crate::manifest::Template { name: "spira-example.service".into(), enable: false }, crate::manifest::Template { name: "spira-example.timer".into(), enable: true }], ..Default::default() }
     }
 
     fn write_templates(dir: &Path) {
-        fs::write(dir.join("spira-sentinel.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
-        fs::write(dir.join("spira-sentinel.timer"), "[Unit]\nUnit=spira-sentinel.service\n[Timer]\nOnCalendar=*:0/5\n").unwrap();
+        fs::write(dir.join("spira-example.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
+        fs::write(dir.join("spira-example.timer"), "[Unit]\nUnit=spira-example.service\n[Timer]\nOnCalendar=*:0/5\n").unwrap();
     }
 
     #[test]
@@ -696,7 +689,7 @@ mod tests {
         assert!(unit_dir.join("unrelated.service").exists());
         assert!(!sc.disabled_now.borrow().contains(&"unrelated.service".to_string()));
         let ledger = fs::read_to_string(unit_dir.join(LEDGER)).unwrap();
-        assert!(ledger.contains("spira-sentinel-prod.timer") && !ledger.contains("beads-push"));
+        assert!(ledger.contains("spira-example-prod.timer") && !ledger.contains("beads-push"));
         assert!(run(&ctx).retired.is_empty());
     }
 
@@ -724,34 +717,6 @@ mod tests {
         assert!(!unit_dir.join("spira-round-template-prod.timer").exists());
         assert!(!unit_dir.join("spira-round-template-prod.service.d").exists());
         assert!(sc.disabled_now.borrow().contains(&"spira-round-template-prod.timer".to_string()));
-    }
-
-    #[test]
-    fn submission_provisioning_runs_before_loom_starts() {
-        let td = tempdir();
-        let unit_dir = td.join("units");
-        let tmpl_dir = td.join("templates");
-        fs::create_dir_all(&unit_dir).unwrap();
-        fs::create_dir_all(&tmpl_dir).unwrap();
-        for n in ["spira-loom.service", "spira-submission-provision.service"] {
-            fs::write(tmpl_dir.join(n), "[Service]\nExecStart=/bin/true\n").unwrap();
-        }
-        fs::write(tmpl_dir.join("spira-submission-provision.timer"), "[Unit]\nUnit=spira-submission-provision.service\n[Timer]\nOnCalendar=daily\n").unwrap();
-        let mut manifest = tiny_manifest();
-        manifest.units = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) })
-            .unwrap()
-            .units
-            .into_iter()
-            .filter(|u| u.name == "spira-loom.service" || u.name.starts_with("spira-submission-provision"))
-            .collect();
-        let h = host();
-        let sc = FakeSystemctl::default();
-        let no_suspend = |_: &str| false;
-        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
-        run(&ctx);
-        let order = sc.order.borrow().clone();
-        let at = |what: &str| order.iter().position(|o| o == what).unwrap_or_else(|| panic!("{what} not in {order:?}"));
-        assert!(at("start spira-submission-provision-prod.service") < at("enable_now spira-loom-prod.service"), "{order:?}");
     }
 
     #[test]
@@ -827,15 +792,15 @@ mod tests {
         let r1 = run(&ctx);
         assert!(r1.errors.is_empty(), "{:?}", r1.errors);
         assert_eq!(r1.written.len(), 2);
-        assert!(unit_dir.join("spira-sentinel-prod.service").exists());
-        assert!(sc.enabled_now.borrow().contains(&"spira-sentinel-prod.timer".to_string()));
+        assert!(unit_dir.join("spira-example-prod.service").exists());
+        assert!(sc.enabled_now.borrow().contains(&"spira-example-prod.timer".to_string()));
 
         let r2 = run(&ctx);
         assert!(r2.errors.is_empty());
         assert_eq!(r2.written.len(), 0);
         assert_eq!(r2.unchanged, 2);
         // Already active and unchanged: Skip, no second enable/restart call recorded.
-        assert!(matches!(r2.enabled_actions.iter().find(|(u, _)| u == "spira-sentinel-prod.timer").unwrap().1, Action::Skip));
+        assert!(matches!(r2.enabled_actions.iter().find(|(u, _)| u == "spira-example-prod.timer").unwrap().1, Action::Skip));
     }
 
     #[test]
@@ -849,20 +814,21 @@ mod tests {
         fs::write(tmpl_dir.join("spira-runtime.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
 
         let mut manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
-        manifest.units.retain(|u| u.name.starts_with("spira-sentinel.") || u.name == "spira-runtime.service");
+        manifest.units.retain(|u| u.name == "spira-runtime.service");
+        manifest.units.extend(tiny_manifest().units);
         let h = host();
         let sc = FakeSystemctl::default();
         let no_suspend = |_: &str| false;
         let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
         assert!(run(&ctx).errors.is_empty());
 
-        for (t, kind) in [("spira-sentinel-prod.timer", "oneshot"), ("spira-runtime-prod.service", "notify")] {
+        for (t, kind) in [("spira-example-prod.timer", "oneshot"), ("spira-runtime-prod.service", "notify")] {
             sc.set(t, FakeUnit { active: false, enabled: Some("disabled".into()), kind: kind.into(), file_listed: true });
         }
         let r = run(&ctx);
         let act = |r: &Report, u: &str| r.enabled_actions.iter().find(|(n, _)| n == u).unwrap().1;
         assert!(matches!(act(&r, "spira-runtime-prod.service"), Action::EnableNow), "{:?}", act(&r, "spira-runtime-prod.service"));
-        assert!(matches!(act(&r, "spira-sentinel-prod.timer"), Action::OperatorDisabled));
+        assert!(matches!(act(&r, "spira-example-prod.timer"), Action::OperatorDisabled));
 
         let only_runtime = |s: &str| s == "spira-runtime";
         let ctx2 = Ctx { suspended: &only_runtime, ..ctx };
@@ -915,7 +881,8 @@ mod tests {
         write_templates(&tmpl_dir);
         testkit::write_exe(td.join("rel/bin/spira-watchdog"), "exit 0\n");
         let mut manifest = m.clone();
-        manifest.units.retain(|u| u.name.starts_with("spira-sentinel.") || u.name.starts_with("spira-watchdog."));
+        manifest.units.retain(|u| u.name.starts_with("spira-watchdog."));
+        manifest.units.extend(tiny_manifest().units);
         let h = watchdog_host(&td.join("rel/spira").to_string_lossy());
         let sc = FakeSystemctl::default();
         let no_suspend = |_: &str| false;
@@ -934,7 +901,7 @@ mod tests {
     fn the_reconciler_has_no_timer_in_the_manifest() {
         let m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
         assert!(!m.units.iter().any(|u| u.name.starts_with("spira-reconciler.")), "the runtime hosts the pass; its timer and service are retired");
-        assert!(m.units.iter().any(|u| u.name == "spira-czar-pass.timer"), "positive control: the manifest still ships timers");
+        assert!(m.units.iter().any(|u| u.name == "spira-watchdog.timer"), "positive control: the manifest still ships timers");
         assert!(!m.enable("prod").iter().any(|u| u == "spira-reconciler-prod.timer"));
     }
 
@@ -994,7 +961,7 @@ mod tests {
         fs::create_dir_all(&unit_dir).unwrap();
         fs::create_dir_all(&tmpl_dir).unwrap();
         write_templates(&tmpl_dir);
-        std::os::unix::fs::symlink("/dev/null", unit_dir.join("spira-sentinel-prod.service")).unwrap();
+        std::os::unix::fs::symlink("/dev/null", unit_dir.join("spira-example-prod.service")).unwrap();
 
         let manifest = tiny_manifest();
         let h = host();
@@ -1003,8 +970,8 @@ mod tests {
         let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
         let r = run(&ctx);
         assert!(r.errors.is_empty());
-        assert!(r.masked.contains(&"spira-sentinel-prod.service".to_string()));
-        assert!(!r.written.contains(&"spira-sentinel-prod.service".to_string()));
+        assert!(r.masked.contains(&"spira-example-prod.service".to_string()));
+        assert!(!r.written.contains(&"spira-example-prod.service".to_string()));
     }
 
     #[test]
@@ -1022,19 +989,19 @@ mod tests {
         // never match a per-instance name, which never contains '@' — a dead check the
         // original bash carried after the per-instance naming migration; this port drops it
         // rather than preserving a check that can no longer fire).
-        fs::write(unit_dir.join("spira-sentinel-prod.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
-        fs::write(unit_dir.join("spira-sentinel-prod.timer"), "[Unit]\nUnit=spira-sentinel-prod.service\n[Timer]\nOnCalendar=*:0/1\n").unwrap();
+        fs::write(unit_dir.join("spira-example-prod.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
+        fs::write(unit_dir.join("spira-example-prod.timer"), "[Unit]\nUnit=spira-example-prod.service\n[Timer]\nOnCalendar=*:0/1\n").unwrap();
 
         let manifest = tiny_manifest();
         let h = host();
         let sc = FakeSystemctl::default();
-        sc.set("spira-sentinel-prod.timer", FakeUnit { active: true, enabled: Some("enabled".into()), kind: "oneshot".into(), file_listed: true });
+        sc.set("spira-example-prod.timer", FakeUnit { active: true, enabled: Some("enabled".into()), kind: "oneshot".into(), file_listed: true });
         let no_suspend = |_: &str| false;
         let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
         let r = run(&ctx);
         assert!(r.errors.is_empty(), "{:?}", r.errors);
-        assert!(sc.restarts.borrow().contains(&"spira-sentinel-prod.timer".to_string()));
-        assert!(matches!(r.enabled_actions.iter().find(|(u, _)| u == "spira-sentinel-prod.timer").unwrap().1, Action::Restart));
+        assert!(sc.restarts.borrow().contains(&"spira-example-prod.timer".to_string()));
+        assert!(matches!(r.enabled_actions.iter().find(|(u, _)| u == "spira-example-prod.timer").unwrap().1, Action::Restart));
     }
 
     fn tempdir() -> testkit::TempDir {
@@ -1065,11 +1032,11 @@ mod tests {
     fn inside_a_test_fixture_a_non_watcher_unit_still_faults() {
         let not_active = vec![
             "spira-watch-pr-notify-abc123.service".to_string(),
-            "spira-sentinel-abc123.service".to_string(),
+            "spira-example-abc123.service".to_string(),
         ];
         let split = split_not_active(&not_active, true, "t");
         assert_eq!(split.warn_only, vec!["spira-watch-pr-notify-abc123.service".to_string()]);
-        assert_eq!(split.fatal, vec!["spira-sentinel-abc123.service".to_string()]);
+        assert_eq!(split.fatal, vec!["spira-example-abc123.service".to_string()]);
     }
 
     #[test]

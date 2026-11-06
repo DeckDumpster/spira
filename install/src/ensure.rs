@@ -94,9 +94,7 @@ mod tests {
     }
 
     fn tiny_manifest() -> crate::manifest::Manifest {
-        let mut m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
-        m.units.retain(|u| u.name == "spira-sentinel.service" || u.name == "spira-sentinel.timer");
-        m
+        crate::manifest::Manifest { units: vec![crate::manifest::Template { name: "spira-example.service".into(), enable: false }, crate::manifest::Template { name: "spira-example.timer".into(), enable: true }], ..Default::default() }
     }
 
     fn td() -> testkit::TempDir {
@@ -110,8 +108,8 @@ mod tests {
         let tmpl_dir = base.join("templates");
         std::fs::create_dir_all(&unit_dir).unwrap();
         std::fs::create_dir_all(&tmpl_dir).unwrap();
-        std::fs::write(tmpl_dir.join("spira-sentinel.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
-        std::fs::write(tmpl_dir.join("spira-sentinel.timer"), "[Unit]\nUnit=spira-sentinel.service\n").unwrap();
+        std::fs::write(tmpl_dir.join("spira-example.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
+        std::fs::write(tmpl_dir.join("spira-example.timer"), "[Unit]\nUnit=spira-example.service\n").unwrap();
 
         let manifest = tiny_manifest();
         let h = host();
@@ -122,7 +120,7 @@ mod tests {
         let r = run(&ctx, false);
         assert!(r.errors.is_empty(), "{:?}", r.errors);
         assert_eq!(r.installed.len(), 2);
-        assert!(r.enabled_started.contains(&"spira-sentinel-prod.timer".to_string()));
+        assert!(r.enabled_started.contains(&"spira-example-prod.timer".to_string()));
         assert_eq!(sc.restarts.borrow().len(), 0);
 
         // A second run with the template unchanged: no-op.
@@ -132,9 +130,9 @@ mod tests {
         assert_eq!(r2.unchanged, 2);
 
         // A changed template installs but does NOT restart or re-enable (operator's call).
-        std::fs::write(tmpl_dir.join("spira-sentinel.service"), "[Service]\nExecStart=/bin/false\n").unwrap();
+        std::fs::write(tmpl_dir.join("spira-example.service"), "[Service]\nExecStart=/bin/false\n").unwrap();
         let r3 = run(&ctx, false);
-        assert_eq!(r3.updated, vec!["spira-sentinel-prod.service".to_string()]);
+        assert_eq!(r3.updated, vec!["spira-example-prod.service".to_string()]);
         assert_eq!(sc.restarts.borrow().len(), 0);
     }
 
@@ -144,8 +142,8 @@ mod tests {
         let tmpl_dir = base.join("templates");
         std::fs::create_dir_all(&unit_dir).unwrap();
         std::fs::create_dir_all(&tmpl_dir).unwrap();
-        std::fs::write(tmpl_dir.join("spira-sentinel.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
-        std::fs::write(tmpl_dir.join("spira-sentinel.timer"), "[Unit]\nUnit=spira-sentinel.service\n").unwrap();
+        std::fs::write(tmpl_dir.join("spira-example.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
+        std::fs::write(tmpl_dir.join("spira-example.timer"), "[Unit]\nUnit=spira-example.service\n").unwrap();
         std::fs::write(unit_dir.join("spira-dropped-prod.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
         let manifest = tiny_manifest();
         let h = host();
@@ -162,8 +160,8 @@ mod tests {
         let (_base, unit_dir, _sc, r) = retire_fixture(true);
         assert_eq!(r.retired, vec!["spira-dropped-prod.service".to_string()]);
         assert!(!unit_dir.join("spira-dropped-prod.service").exists());
-        assert!(unit_dir.join("spira-sentinel-prod.service").exists());
-        assert!(unit_dir.join("spira-sentinel-prod.timer").exists());
+        assert!(unit_dir.join("spira-example-prod.service").exists());
+        assert!(unit_dir.join("spira-example-prod.timer").exists());
     }
 
     #[test]

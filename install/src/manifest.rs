@@ -36,6 +36,9 @@ pub struct Inputs {
     /// install with no mapped harness checkout resolves `--repo` to the release directory,
     /// which has no `.git`, so both units failed every run with "not a git repository"
     /// (sp-8lztt). False on a fresh install with no harness checkout mapped.
+    ///
+    /// No template is gated on it since the cert sweeps became scheduler tasks (`cert.full`,
+    /// `cert.sample`); the field stays because the root installer and acceptance still report it.
     pub repo_is_git_checkout: bool,
     /// The root installer's `--system-user` phase has installed the SYSTEM spira-lc unit
     /// (`spira_config::resolve::lc_system_mode`). Off is same-user mode, the default: this
@@ -77,29 +80,15 @@ pub struct Manifest {
 pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     let mut m = Manifest::default();
 
-    m.units.push(t("spira-sentinel.service", false));
-    m.units.push(t("spira-sentinel.timer", true));
-    m.units.push(t("spira-call.service", false));
-    m.units.push(t("spira-call.timer", true));
-    m.units.push(t("spira-ops.service", false));
-    m.units.push(t("spira-ops.timer", true));
-    m.units.push(t("spira-heimdall.service", false));
-    m.units.push(t("spira-heimdall.timer", true));
-    m.units.push(t("spira-watchtower.service", false));
-    m.units.push(t("spira-watchtower.timer", true));
-    m.units.push(t("spira-skew.service", false));
-    m.units.push(t("spira-skew.timer", true));
-    m.units.push(t("spira-archivist.service", false));
-    m.units.push(t("spira-archivist.timer", true));
-    m.units.push(t("spira-czar-pass.service", false));
-    m.units.push(t("spira-czar-pass.timer", true));
+    // The loop itself is `spira-runtime serve`: every timer and watchd daemon its tasks replace
+    // is gone from this list (scheduler-consolidation-2026-11-03 §1, §3 P5), and the install
+    // that drops one retires it from a host that has it (`install_units::retire_dropped_units`).
+    // What remains is the scheduler, its outside watchdog, the store and its door, the sources
+    // the scheduler does not yet host, the clients (loom, the pane, the metrics stack,
+    // exec-census) and the Concierge's own timers.
     m.units.push(t("spira-cockpit.service", true));
     // spira-watch@.service is the template, not an installed unit — never enabled directly.
     m.units.push(t("spira-watch@.service", false));
-    m.units.push(t("spira-notify.service", false));
-    m.units.push(t("spira-notify.timer", true));
-    m.units.push(t("spira-refresh.service", false));
-    m.units.push(t("spira-refresh.timer", true));
     m.units.push(t("cockpit-ensure.service", false));
     m.units.push(t("cockpit-ensure.timer", true));
     m.units.push(t("concierge.service", false));
@@ -108,89 +97,12 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("lc-backup.timer", true));
     m.units.push(t("lc-backup-drill.service", false));
     m.units.push(t("lc-backup-drill.timer", true));
-    m.units.push(t("spira-archive.service", false));
-    m.units.push(t("spira-archive.timer", true));
-    m.units.push(t("spira-export-beads.service", false));
-    m.units.push(t("spira-export-beads.timer", true));
-    m.units.push(t("spira-statute-audit.service", false));
-    m.units.push(t("spira-statute-audit.timer", true));
-    m.units.push(t("spira-groom.service", false));
-    m.units.push(t("spira-groom.timer", true));
-    m.units.push(t("spira-mimir.service", false));
-    m.units.push(t("spira-mimir.timer", true));
-    m.units.push(t("spira-warden.service", false));
-    m.units.push(t("spira-warden.timer", true));
-    m.units.push(t("spira-nix-gc.service", false));
-    m.units.push(t("spira-nix-gc.timer", true));
-    m.units.push(t("spira-moot-sweep.service", false));
-    m.units.push(t("spira-moot-sweep.timer", true));
-    m.units.push(t("spira-incident-settle.service", false));
-    m.units.push(t("spira-incident-settle.timer", true));
-    m.units.push(t("spira-verify-asks.service", false));
-    m.units.push(t("spira-verify-asks.timer", true));
-    m.units.push(t("spira-gate-check.service", false));
-    m.units.push(t("spira-gate-check.timer", true));
-    m.units.push(t("spira-mail-tidy.service", false));
-    m.units.push(t("spira-mail-tidy.timer", true));
-    m.units.push(t("spira-mail-reconcile.service", false));
-    m.units.push(t("spira-mail-reconcile.timer", true));
-    m.units.push(t("spira-gh-intake.service", false));
-    m.units.push(t("spira-gh-intake.timer", true));
-    m.units.push(t("spira-verdict.service", false));
-    m.units.push(t("spira-verdict.timer", true));
-    m.units.push(t("spira-publish.service", false));
-    m.units.push(t("spira-publish.timer", true));
-    m.units.push(t("spira-worktree-reaper.service", false));
-    m.units.push(t("spira-worktree-reaper.timer", true));
-    m.units.push(t("spira-straggler-sweep.service", false));
-    m.units.push(t("spira-straggler-sweep.timer", true));
-    m.units.push(t("spira-reap-terminal.service", false));
-    m.units.push(t("spira-reap-terminal.timer", true));
-    m.units.push(t("spira-reconcile-content.service", false));
-    m.units.push(t("spira-reconcile-content.timer", true));
-    m.units.push(t("spira-sop-lint.service", false));
-    m.units.push(t("spira-sop-lint.timer", true));
-    m.units.push(t("spira-event-continuity.service", false));
-    m.units.push(t("spira-event-continuity.timer", true));
-    m.units.push(t("spira-alarms.service", false));
-    m.units.push(t("spira-alarms.timer", true));
-    // Both run every kind in shadow until the arm step takes one off SPIRA_RECONCILER_SHADOW_KINDS.
-    m.units.push(t("spira-lifecycle-section.service", false));
-    m.units.push(t("spira-lifecycle-section.timer", true));
-    m.units.push(t("spira-reconciler-goodput.service", false));
-    m.units.push(t("spira-reconciler-goodput.timer", true));
-    m.units.push(t("spira-concierge-guard.service", false));
-    m.units.push(t("spira-concierge-guard.timer", true));
-    m.units.push(t("spira-mend-watch.service", false));
-    m.units.push(t("spira-mend-watch.timer", true));
-    m.units.push(t("spira-escape-census.service", false));
-    m.units.push(t("spira-escape-census.timer", true));
-    m.units.push(t("spira-tsd-prune.service", false));
-    m.units.push(t("spira-tsd-prune.timer", true));
-    m.units.push(t("spira-perf-watch.service", false));
-    m.units.push(t("spira-perf-watch.timer", true));
-    m.units.push(t("spira-perf-happy-path.service", false));
-    m.units.push(t("spira-perf-happy-path.timer", true));
     m.units.push(t("spira-exec-census.service", true));
     m.units.push(t("spira-runtime.service", true));
     // The one timer outside the scheduler (S15): it restarts and pages when the scheduler is
     // wedged or absent. Rendered from watchdog::render, not from a template file.
     m.units.push(t("spira-watchdog.service", false));
     m.units.push(t("spira-watchdog.timer", true));
-    m.units.push(t("spira-reclaim.service", false));
-    m.units.push(t("spira-reclaim.timer", true));
-    m.units.push(t("spira-refusal-watch.service", false));
-    m.units.push(t("spira-refusal-watch.timer", true));
-    m.units.push(t("spira-idea-prompt.service", false));
-    m.units.push(t("spira-idea-prompt.timer", true));
-    m.units.push(t("spira-filings-collect.service", false));
-    m.units.push(t("spira-filings-collect.timer", true));
-    m.units.push(t("spira-kit-bump.service", false));
-    m.units.push(t("spira-kit-bump.timer", true));
-    m.units.push(t("spira-runtime-watch.service", false));
-    m.units.push(t("spira-runtime-watch.timer", true));
-    m.units.push(t("spira-target-reap.service", false));
-    m.units.push(t("spira-target-reap.timer", true));
 
     // spira-lc.service: a SYSTEM unit installed by the root installer's --system-user phase,
     // never by the per-instance flow this manifest drives.
@@ -211,6 +123,9 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
         m.units.push(t("lc-serve.service", false));
     }
 
+    // mail-deliver stays: the scheduler's `mail.arrived` source submits arrivals, but the
+    // `mail.wake` handler that would settle and wake the reader is not a task yet, so the
+    // daemon is still what wakes a registered reader.
     if inputs.inotify_present {
         m.units.push(t("spira-mail-deliver.service", true));
     } else {
@@ -249,10 +164,9 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     }
 
     m.units.push(t("spira-loom.service", true));
+    // unit-run-dbus stays: the scheduler's `unit.ran` source submits completions but writes no
+    // `unit-run-dbus` row to the metrics store, and loom's /units page reads those rows.
     m.units.push(t("spira-unit-run-dbus.service", true));
-    m.units.push(t("spira-submission.service", true));
-    m.units.push(t("spira-submission-provision.service", false));
-    m.units.push(t("spira-submission-provision.timer", true));
     m.units.push(t("spira-metrics-vm.service", true));
     m.units.push(t("spira-metrics-logs.service", true));
     m.units.push(t("spira-metrics-collector.service", true));
@@ -272,44 +186,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
         m.notes.push("SPIRA_SCCACHE_DAV_ADDR is empty — not installing sccache-dav.service.".into());
         m.notes.push("Set it in spira.conf (this box's own LAN address, e.g. 192.168.1.56:9431) and re-run install.".into());
     }
-
-    // spira-cert-sweep-{full,sample}: both run `git rev-parse --repo` against the resolved
-    // `SPIRA_REPO` on every tick. A fresh install with no harness checkout mapped
-    // (`SPIRA_REPO_MAP`) resolves `--repo` to the release directory, which has no `.git`, so
-    // both units exited 2 on every run with "not a git repository" and acceptance phase B
-    // refused on them (sp-8lztt) — the same shape as sp-7i16g/sp-b2jsl's render-time fix,
-    // which only helps boxes that DO have a mapped checkout. Declined like
-    // sccache-dav.service until one exists; an inert unit that would run forever is noise.
-    if inputs.repo_is_git_checkout {
-        m.units.push(t("spira-cert-sweep-full.service", false));
-        m.units.push(t("spira-cert-sweep-full.timer", true));
-        m.units.push(t("spira-cert-sweep-sample.service", false));
-        m.units.push(t("spira-cert-sweep-sample.timer", true));
-    } else {
-        m.optional.push("spira-cert-sweep-full.service".into());
-        m.optional.push("spira-cert-sweep-full.timer".into());
-        m.optional.push("spira-cert-sweep-sample.service".into());
-        m.optional.push("spira-cert-sweep-sample.timer".into());
-        m.notes.push("SPIRA_REPO is not a git checkout — not installing the cert-sweep units.".into());
-        m.notes.push("Map a real harness checkout (SPIRA_REPO_MAP) and re-run install to enable continuous certification.".into());
-    }
-
-    m.units.push(t("spira-landing-pass.service", false));
-    m.units.push(t("spira-landing-pass.timer", true));
-    m.units.push(t("spira-rounds.service", false));
-    m.units.push(t("spira-rounds.timer", true));
-    m.units.push(t("spira-rounds-forge.service", false));
-    m.units.push(t("spira-rounds-forge.timer", true));
-    m.units.push(t("spira-round-vm-drain.service", false));
-    m.units.push(t("spira-round-vm-drain.timer", true));
-    m.units.push(t("spira-round-vm-ami-prune.service", false));
-    m.units.push(t("spira-round-vm-ami-prune.timer", true));
-    m.units.push(t("spira-sift.service", false));
-    m.units.push(t("spira-sift.timer", true));
-
-    m.units.push(t("spira-gate-worker.service", false));
-    m.units.push(t("spira-gate-worker.timer", true));
-
 
     m.watch_names = inputs.watch_names.clone()?;
 
@@ -448,33 +324,6 @@ mod tests {
         assert!(!m2.optional.contains(&"sccache-dav.service".to_string()));
     }
 
-    /// sp-8lztt: on a fresh install with no harness checkout mapped, the resolved
-    /// `SPIRA_REPO` is the release directory, which has no `.git` — both cert-sweep units
-    /// then run `git rev-parse --repo` against a non-repository on every tick and fail.
-    /// They must be declined (like `sccache-dav.service`, `dolt-beads.service`) rather than
-    /// installed when `repo_is_git_checkout` is false; this must fail against manifest.rs
-    /// before this bead, which installs them unconditionally.
-    #[test]
-    fn cert_sweep_units_are_installed_only_when_the_repo_is_a_git_checkout() {
-        let cert_sweep_names = ["spira-cert-sweep-full.service", "spira-cert-sweep-full.timer", "spira-cert-sweep-sample.service", "spira-cert-sweep-sample.timer"];
-
-        let m = build(&inputs()).unwrap();
-        for n in cert_sweep_names {
-            assert!(m.units.iter().any(|u| u.name == n), "a mapped git checkout: {n} is installed");
-            assert!(!m.optional.contains(&n.to_string()));
-        }
-
-        let mut i = inputs();
-        i.repo_is_git_checkout = false;
-        let m2 = build(&i).unwrap();
-        for n in cert_sweep_names {
-            assert!(!m2.units.iter().any(|u| u.name == n), "no git checkout: {n} must not be installed");
-            assert!(m2.optional.contains(&n.to_string()), "{n} must be declared optional, not just absent");
-        }
-        assert!(m2.notes.iter().any(|n| n.contains("SPIRA_REPO") && n.contains("git checkout")), "{:?}", m2.notes);
-        assert!(m2.unlisted(cert_sweep_names).is_empty(), "declined units must never be UNLISTED");
-    }
-
     /// The flow pass runs inside spira-runtime; a timer that still fired the binary would run it twice.
     #[test]
     fn the_reconciler_flow_timer_and_service_are_not_shipped() {
@@ -482,6 +331,34 @@ mod tests {
         let shipped: Vec<&str> = m.units.iter().map(|u| u.name.as_str()).filter(|n| n.starts_with("spira-reconciler-flow")).collect();
         assert!(shipped.is_empty(), "{shipped:?}");
         assert!(!std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd/spira-reconciler-flow.timer").exists());
+    }
+
+    /// The scheduler consolidation (`scheduler-consolidation-2026-11-03` §1, §3 P5): every loop
+    /// timer a `spira-runtime serve` task replaces, the two retired timers (watch-refresh,
+    /// concierge-guard) and the SMTP listener the `submission` source now owns. Activation runs
+    /// the scheduler and not both, so none of them is in the manifest or on disk.
+    const RETIRED_BY_THE_SCHEDULER: [&str; 58] = [
+        "alarms", "archive", "archivist", "call", "cert-sweep-full", "cert-sweep-sample", "concierge-guard", "czar-pass", "escape-census", "event-continuity",
+        "export-beads", "filings-collect", "gate-check", "gate-worker", "gh-intake", "groom", "heimdall", "idea-prompt", "incident-settle", "kit-bump",
+        "landing-pass", "lifecycle-section", "mail-reconcile", "mail-tidy", "mend-watch", "mimir", "moot-sweep", "nix-gc", "notify", "ops",
+        "perf-happy-path", "perf-watch", "publish", "reap-terminal", "reclaim", "reconcile-content", "reconciler-goodput", "refresh", "refusal-watch", "round-vm-ami-prune",
+        "round-vm-drain", "rounds-forge", "rounds", "runtime-watch", "sentinel", "sift", "skew", "sop-lint", "statute-audit", "straggler-sweep",
+        "submission-provision", "target-reap", "tsd-prune", "verdict", "verify-asks", "warden", "watchtower", "worktree-reaper",
+    ];
+
+    #[test]
+    fn no_unit_the_scheduler_replaces_is_shipped() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
+        let union = union_template_names();
+        let mut names: Vec<String> = RETIRED_BY_THE_SCHEDULER.iter().flat_map(|b| [format!("spira-{b}.service"), format!("spira-{b}.timer")]).collect();
+        names.push("spira-submission.service".into());
+        for n in &names {
+            assert!(!union.contains(n), "{n} is still in the manifest");
+            assert!(!dir.join(n).exists(), "{n} is still a template");
+        }
+        for keep in ["spira-runtime.service", "spira-watchdog.timer", "spira-dolt-boot-check.timer", "spira-unit-run-dbus.service", "spira-mail-deliver.service", "spira-loom.service", "spira-cockpit.service", "spira-exec-census.service", "concierge.timer", "cockpit-ensure.timer"] {
+            assert!(union.iter().any(|n| n == keep), "positive control: {keep} is still shipped");
+        }
     }
 
     #[test]
@@ -516,31 +393,6 @@ mod tests {
         let mut i = inputs();
         i.watch_names = Err("the watcher manifest is malformed".into());
         assert!(build(&i).is_err());
-    }
-
-    #[test]
-    fn the_lifecycle_section_and_the_goodput_pass_run_every_minute_on_the_observability_plane() {
-        let m = build(&inputs()).unwrap();
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("systemd");
-        for (unit, exec) in [("spira-lifecycle-section", "/bin/spira-lc publish-section lifecycle"), ("spira-reconciler-goodput", "/bin/reconciler goodput-pass")] {
-            assert!(m.units.iter().any(|u| u.name == format!("{unit}.service") && !u.enable), "{unit}.service");
-            assert!(m.units.iter().any(|u| u.name == format!("{unit}.timer") && u.enable), "{unit}.timer ships enabled");
-            let svc = std::fs::read_to_string(root.join(format!("{unit}.service"))).unwrap();
-            assert!(svc.lines().any(|l| l.starts_with("ExecStart=") && l.ends_with(exec)), "{svc}");
-            let timer = std::fs::read_to_string(root.join(format!("{unit}.timer"))).unwrap();
-            for line in ["OnUnitActiveSec=60s", &format!("Unit={unit}.service"), "Plane=observability"] {
-                assert!(timer.lines().any(|l| l == line), "{unit}.timer lacks {line}: {timer}");
-            }
-        }
-    }
-
-    #[test]
-    fn the_straggler_sweep_covers_every_repository() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("systemd");
-        let svc = std::fs::read_to_string(root.join("spira-straggler-sweep.service")).unwrap();
-        let exec = svc.lines().find(|l| l.starts_with("ExecStart=")).unwrap();
-        assert!(exec.contains("hel --budget-secs"));
-        assert!(!exec.contains("--queue-only") && !exec.contains("--skip-queue"), "{exec}");
     }
 
     #[test]
@@ -592,30 +444,17 @@ mod tests {
         let m = build(&i).unwrap();
         let strays: Vec<&str> = m.template_names().into_iter().filter(|n| n.starts_with("spira-watch-")).collect();
         assert!(strays.is_empty(), "manifest units the watcher glob would match: {strays:?}");
-        assert!(m.template_names().contains(&"spira-refresh.timer"));
-        assert!(m.template_names().contains(&"spira-notify.timer"));
-    }
-
-    #[test]
-    fn the_target_reap_timer_is_installed_enabled_and_runs_the_floor_mode() {
-        let m = build(&inputs()).unwrap();
-        assert!(m.units.iter().any(|u| u.name == "spira-target-reap.service" && !u.enable));
-        assert!(m.units.iter().any(|u| u.name == "spira-target-reap.timer" && u.enable));
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
-        let svc = std::fs::read_to_string(dir.join("spira-target-reap.service")).unwrap();
-        assert!(svc.contains("bin/target-reap --if-below-floor"));
-        let timer = std::fs::read_to_string(dir.join("spira-target-reap.timer")).unwrap();
-        assert!(timer.contains("OnUnitActiveSec=2min") && timer.contains("Unit=spira-target-reap.service"));
+        assert!(m.template_names().contains(&"spira-runtime.service"), "positive control: the manifest still ships spira-* units");
     }
 
     #[test]
     fn enable_lists_per_instance_names_then_watchers_in_manifest_order() {
         let m = build(&inputs()).unwrap();
         let en = m.enable("prod");
-        assert!(en.contains(&"spira-sentinel-prod.timer".to_string()));
+        assert!(en.contains(&"spira-watchdog-prod.timer".to_string()));
         assert!(en.contains(&"cockpit-ensure.timer".to_string())); // shared unit, no suffix
         assert!(en.contains(&"spira-watch-testview-prod.service".to_string()));
-        assert!(!en.iter().any(|u| u == "spira-sentinel.timer")); // never the un-suffixed name
+        assert!(!en.iter().any(|u| u == "spira-watchdog.timer")); // never the un-suffixed name
     }
 
     #[test]
@@ -629,7 +468,7 @@ mod tests {
     #[test]
     fn unlisted_finds_a_forgotten_unit_file_but_not_a_declined_one() {
         let m = build(&inputs()).unwrap();
-        let on_disk = ["spira-sentinel.service", "spira-cockpit-new.service", "spira-lc.service"];
+        let on_disk = ["spira-runtime.service", "spira-cockpit-new.service", "spira-lc.service"];
         let u = m.unlisted(on_disk);
         assert_eq!(u, vec!["spira-cockpit-new.service".to_string()]);
     }
@@ -644,21 +483,20 @@ mod tests {
         assert_eq!(m.unlisted(on_disk), Vec::<String>::new());
     }
 
-    /// sp-da4y0: the cert-sweep units are declined under SOME resolutions of
-    /// `repo_is_git_checkout` (see `cert_sweep_units_are_installed_only_when_the_repo_is_a_
-    /// git_checkout` above) — exactly the shape a removal pass must not miss. The union must
-    /// carry them regardless, and resolve them to this instance's installed names.
+    /// sp-da4y0: the dolt, mail-deliver, sccache and lc-serve units are declined under SOME
+    /// resolutions of the inputs — exactly the shape a removal pass must not miss. The union
+    /// must carry them regardless, and resolve them to this instance's installed names.
     #[test]
     fn union_template_names_carries_a_conditionally_declined_template() {
         let names = union_template_names();
-        for n in ["spira-cert-sweep-full.service", "spira-cert-sweep-full.timer", "spira-cert-sweep-sample.service", "spira-cert-sweep-sample.timer", "sccache-dav.service", "dolt-beads.service", "spira-mail-deliver.service", "lc-serve.service", "lc-serve.socket"] {
+        for n in ["spira-dolt-boot-check.service", "spira-dolt-boot-check.timer", "sccache-dav.service", "dolt-beads.service", "spira-mail-deliver.service", "lc-serve.service", "lc-serve.socket"] {
             assert!(names.contains(&n.to_string()), "{n} missing from union: {names:?}");
         }
         assert!(!names.iter().any(|n| n == "spira-watch@.service"), "the watcher template itself must never appear");
 
         let installed = union_installed_names("test");
-        assert!(installed.contains(&"spira-cert-sweep-full-test.service".to_string()));
-        assert!(installed.contains(&"spira-cert-sweep-sample-test.timer".to_string()));
+        assert!(installed.contains(&"spira-dolt-boot-check-test.service".to_string()));
+        assert!(installed.contains(&"spira-mail-deliver-test.service".to_string()));
         assert!(installed.contains(&"lc-serve.service".to_string()), "shared name, never instance-suffixed");
     }
 
