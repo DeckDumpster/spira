@@ -805,10 +805,13 @@ pub fn rerun_workflow(input: &str) -> Result<String, String> {
 /// `czar.restart_landing`: reset and start the installed landing unit through the Units port.
 pub fn restart_landing(e: &Effects) -> Result<String, String> {
     let units = e.units.as_deref().ok_or("no unit manager configured")?;
-    let h = runtime::units::UnitHandle::named("spira-landing.service");
+    let home = spira_config::resolve::locate_home_for_process()?;
+    let instance = spira_config::resolve::resolve_instance(&std::env::vars().collect(), &home)?;
+    let name = spira_config::unit::unit_name("landing", "service", &instance);
+    let h = runtime::units::UnitHandle::named(&name);
     units.reset_failed(&h).map_err(|e| e.to_string())?;
     units.start_installed(&h).map_err(|e| e.to_string())?;
-    Ok("restarted spira-landing.service".into())
+    Ok(format!("restarted {name}"))
 }
 
 /// `czar.status`: one key's status row in the metrics store.
