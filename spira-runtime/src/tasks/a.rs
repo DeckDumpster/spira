@@ -122,6 +122,18 @@ pub static TASKS: &[Task] = &[
         keys: &[batcher_local::KEYS],
         build: |_| batcher_local::BatcherLocal::from_cfg().registration(),
     },
+    Task {
+        name: batcher_forge::NAME,
+        boot: batcher_forge::BatcherForge::boot,
+        cadence_ms: |_| batcher_forge::CADENCE_MS,
+        effects: batcher_forge::EFFECTS,
+        runners: {
+            use batcher_forge::{edge as x, *};
+            &[(OBSERVE, x::observe), (ARM, x::arm), (FETCH, x::fetch), (ASSEMBLE, x::assemble), (CORPUS, x::corpus), (WITHDRAW, x::withdraw), (SHOTS, x::shots), (BATCH_OPEN, x::batch_open), (FILE, x::file), (VERDICT_WRITE, x::verdict_write)]
+        },
+        keys: &[batcher_forge::KEYS],
+        build: |_| batcher_forge::BatcherForge::from_cfg().registration(),
+    },
 ];
 
 /// Family A's rows, built from their contracts and waiting for their ports.
@@ -161,15 +173,6 @@ pub static PENDING: &[Task] = &[
         runners: stubs!(sift: OBSERVE, FETCH_BASE, NOTE, SEND_BACK, RECORD_PASS, SUPERSEDE),
         keys: &[sift::KEYS],
         build: |_| sift::Sift::from_cfg().registration(),
-    },
-    Task {
-        name: batcher_forge::NAME,
-        boot: batcher_forge::BatcherForge::boot,
-        cadence_ms: |_| batcher_forge::CADENCE_MS,
-        effects: batcher_forge::EFFECTS,
-        runners: stubs!(batcher_forge: OBSERVE, ARM, FETCH, ASSEMBLE, CORPUS, WITHDRAW, SHOTS, BATCH_OPEN, FILE, VERDICT_WRITE),
-        keys: &[batcher_forge::KEYS],
-        build: |_| batcher_forge::BatcherForge::from_cfg().registration(),
     },
     Task {
         name: queue_step::NAME,
