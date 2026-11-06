@@ -1,10 +1,11 @@
-//! A world halt stops the work plane and leaves the detectors running. Plane membership is
-//! each shipped unit's own `[X-Spira] Plane=`, read through `systemctl cat`; this suite
-//! drives the real `world` binary against a stub systemctl serving the real shipped unit
-//! files, so a unit that loses (or never gains) its declaration fails here.
+//! The loop is the scheduler's tasks, so no shipped unit is left on the work plane for a world
+//! halt to stop, and none carries the old `world guard` start check: the scheduler's halt is
+//! the one gate (S14). Plane membership is each shipped unit's own `[X-Spira] Plane=`; this
+//! suite reads the real shipped unit files, so a unit that loses its declaration fails here.
 
 use std::path::{Path, PathBuf};
 
+use spira_world::scheduler::{is_kept, keep_units};
 use spira_world::sysctl::{plane_from_unit_text, Plane};
 
 fn unit_dir() -> PathBuf {
@@ -41,13 +42,21 @@ fn halt_guard_lines(unit: &str) -> Vec<String> {
 }
 
 #[test]
-fn every_work_service_carries_the_halt_guard_and_no_other_does() {
-    let services: Vec<String> = shipped_units().into_iter().filter(|u| u.ends_with(".service")).collect();
-    let work: Vec<&String> = services.iter().filter(|u| plane_of_shipped(u) == Some(Plane::Work)).collect();
-    assert!(work.iter().any(|u| *u == "spira-rounds.service"), "positive control: the scan finds the work services");
-    let unguarded: Vec<_> = work.iter().filter(|u| halt_guard_lines(u).len() != 1).collect();
-    assert!(unguarded.is_empty(), "work services without exactly one halt check: {unguarded:?}");
-    let stray: Vec<_> = services.iter().filter(|u| plane_of_shipped(u) != Some(Plane::Work) && !halt_guard_lines(u).is_empty()).collect();
-    assert!(stray.is_empty(), "a unit off the work plane must keep running through a halt: {stray:?}");
-    assert_eq!(plane_of_shipped("spira-mail-deliver.service"), Some(Plane::Observability), "mail delivery stays up through a halt");
+fn no_shipped_unit_is_left_on_the_work_plane_or_carries_the_old_halt_guard() {
+    let services = shipped_units();
+    assert!(services.iter().any(|u| u == "spira-runtime.service"), "positive control: the scan finds the shipped units");
+    let work: Vec<_> = services.iter().filter(|u| plane_of_shipped(u) == Some(Plane::Work)).collect();
+    assert!(work.is_empty(), "the loop is the scheduler's tasks; a work-plane unit left would run outside its halt: {work:?}");
+    let guarded: Vec<_> = services.iter().filter(|u| !halt_guard_lines(u).is_empty()).collect();
+    assert!(guarded.is_empty(), "the scheduler's halt is the one gate (S14); no unit re-implements it: {guarded:?}");
+}
+
+#[test]
+fn the_scheduler_ships_and_is_on_the_keep_list() {
+    assert!(unit_dir().join("spira-runtime.service").is_file());
+    assert!(unit_dir().join("lc-serve.socket").is_file());
+    assert!(unit_dir().join("dolt-beads.service").is_file());
+    for u in keep_units("-prod") {
+        assert!(is_kept(&u, "-prod"), "{u}");
+    }
 }
