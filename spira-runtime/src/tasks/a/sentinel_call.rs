@@ -97,9 +97,10 @@
 //! Each call is a `unit.start` through the Units port under the naming rule
 //! `spira-run-sentinel-call-<rune>-<at>-<n>` (`runtime::units::unit_name`), carried in
 //! `in_flight` until its `unit.ran` (matched by `UnitRan::key_for`) or until the observe no
-//! longer lists it live. The dwarf's systemd properties (`TimeoutStartSec`, the idle IO class)
-//! and its `ExecStopPost` refill are not carried: `UnitSpec` has no properties, and the refill
-//! is this task's minute calendar plus the `unit.ran` wake. `SPIRA_CALL`, `SPIRA_SYSTEMCTL`
+//! longer lists it live. The dwarf starts under the properties `call_argv` gave it
+//! (`dwarf_props`: `TimeoutStartSec` from `RUNE_TIMEOUT_SECONDS`, the idle IO class, IO weight
+//! 10) as `UnitProps` on the start; its `ExecStopPost` refill (the `--call-only` re-exec) is
+//! retired: the refill is the dwarf's own `unit.ran` on this stream, and the minute calendar. `SPIRA_CALL`, `SPIRA_SYSTEMCTL`
 //! and `SPIRA_SENTINEL_PASS_BUDGET_SECS` are retired (the port replaces the first two, decide
 //! is O(runes)); the throttle stamp and the capacity pause are the paths under `SPIRA_RUN`
 //! the binary defaulted them to; `SPIRA_LANES` only named the lanes in a log line and is dropped.
@@ -671,8 +672,17 @@ pub fn unit_start(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
         env.push(("SPIRA_REQUIRE_EXPRESS".into(), "1".into()));
     }
     let unit = UnitSpec { task: NAME.into(), key: start.key.clone(), argv: vec![dwarf.to_string_lossy().into_owned(), "--home".into(), home.to_string_lossy().into_owned(), start.rune.clone()], env, cwd: None };
-    let input = serde_json::to_string(&unit).map_err(|e| e.to_string())?;
+    let timeout = spira_config::runes::rune_get(&home, &start.rune, "RUNE_TIMEOUT_SECONDS", "3600");
+    let input = serde_json::to_string(&units::StartSpec { unit, props: dwarf_props(&timeout)? }).map_err(|e| e.to_string())?;
     e.unit(&EffectSpec { name: units::UNIT_START.into(), input, deadline_ms: spec.deadline_ms })
+}
+
+/// The properties `call_argv` gave every dwarf call (`sentinel/src/call.rs`): the rune's
+/// `RUNE_TIMEOUT_SECONDS` as `TimeoutStartSec`, the idle IO class, IO weight 10. No
+/// `ExecStopPost`: the `--call-only` re-exec is retired, and the dwarf's end is its `unit.ran`.
+pub fn dwarf_props(timeout_secs: &str) -> Result<units::UnitProps, String> {
+    let secs: u64 = timeout_secs.trim().parse().map_err(|_| format!("RUNE_TIMEOUT_SECONDS must be whole seconds, got {timeout_secs:?}"))?;
+    Ok(units::UnitProps { start_timeout_ms: Some(secs * 1000), io_class: Some("idle".into()), io_weight: Some(10), ..units::UnitProps::default() })
 }
 
 /// `sentinel-call.preempt`: stop the unit the lane dwarf on `bead` runs in, found by the pid

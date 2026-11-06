@@ -34,7 +34,7 @@ const SUFFIX: &str = ".service";
 /// systemd refuses a longer unit name.
 const NAME_MAX: usize = 255;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnitSpec {
     pub task: String,
     /// The idempotency key: the same (task, key) names the same unit.
@@ -42,6 +42,88 @@ pub struct UnitSpec {
     pub argv: Vec<String>,
     pub env: Vec<(String, String)>,
     pub cwd: Option<PathBuf>,
+}
+
+/// The properties a unit starts under besides its command: what `systemd-run --property=` gave
+/// a dwarf call and the landing leg. A struct beside [`UnitSpec`] rather than new fields on it,
+/// so every crate that builds a `UnitSpec` literal keeps compiling; [`StartSpec`] carries both as
+/// the `unit.start` input, and an input with no `props` is a plain `UnitSpec`.
+///
+/// [`SystemdUnits`] sets each as a transient-unit property; [`ProcessUnits`] applies what a plain
+/// child can honour (the two timeouts, `ExecStopPost`, the output file) and refuses the rest;
+/// [`ScriptedUnits`] records them ([`ScriptedUnits::props`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UnitProps {
+    /// `TimeoutStartSec=`: how long the start may take.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_timeout_ms: Option<u64>,
+    /// `RuntimeMaxSec=`: the run is stopped once it has run this long.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_max_ms: Option<u64>,
+    /// `IOSchedulingClass=`: `realtime`, `best-effort` or `idle`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub io_class: Option<String>,
+    /// `IOWeight=`, 1 to 10000.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub io_weight: Option<u64>,
+    /// `Nice=`, -20 to 19.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nice: Option<i32>,
+    /// `CPUQuota=` as a percentage of one CPU: 200 is two CPUs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_quota_pct: Option<u32>,
+    /// `MemoryMax=` in bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_max_bytes: Option<u64>,
+    /// `ExecStopPost=`: each argv runs once the main process has ended, however it ended.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub exec_stop_post: Vec<Vec<String>>,
+    /// `StandardOutput=append:` and `StandardError=append:` this file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_append: Option<PathBuf>,
+}
+
+/// IOSchedulingClass's words and the numbers the property carries.
+pub const IO_CLASSES: [(&str, i32); 3] = [("realtime", 1), ("best-effort", 2), ("idle", 3)];
+
+impl UnitProps {
+    pub fn is_empty(&self) -> bool {
+        *self == UnitProps::default()
+    }
+
+    /// The properties set, by their systemd names.
+    pub fn names(&self) -> Vec<&'static str> {
+        [
+            (self.start_timeout_ms.is_some(), "TimeoutStartSec"),
+            (self.runtime_max_ms.is_some(), "RuntimeMaxSec"),
+            (self.io_class.is_some(), "IOSchedulingClass"),
+            (self.io_weight.is_some(), "IOWeight"),
+            (self.nice.is_some(), "Nice"),
+            (self.cpu_quota_pct.is_some(), "CPUQuota"),
+            (self.memory_max_bytes.is_some(), "MemoryMax"),
+            (!self.exec_stop_post.is_empty(), "ExecStopPost"),
+            (self.output_append.is_some(), "StandardOutput"),
+        ]
+        .into_iter()
+        .filter(|(on, _)| *on)
+        .map(|(_, n)| n)
+        .collect()
+    }
+
+    /// The `IOSchedulingClass` number, or a refusal naming a word systemd does not know.
+    pub fn io_class_number(&self) -> Result<Option<i32>> {
+        self.io_class.as_deref().map(|c| IO_CLASSES.iter().find(|(w, _)| *w == c).map(|(_, n)| *n).ok_or_else(|| RuntimeError::refused(format!("IOSchedulingClass {c:?} is not one of realtime, best-effort, idle")))).transpose()
+    }
+}
+
+/// The `unit.start` input: the unit and the properties it starts under.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StartSpec {
+    #[serde(flatten)]
+    pub unit: UnitSpec,
+    #[serde(default, skip_serializing_if = "UnitProps::is_empty")]
+    pub props: UnitProps,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -278,6 +360,15 @@ fn unsupported(backend: &str, what: &str) -> RuntimeError {
 /// before them still compiles; each backend here answers what it honestly can.
 pub trait Units: Send + Sync {
     fn start(&self, spec: &UnitSpec) -> Result<UnitHandle>;
+
+    /// `start` under `props`. A backend that cannot honour a property refuses the start naming
+    /// it, never starts the unit without it; with no properties this is `start`.
+    fn start_with(&self, spec: &UnitSpec, props: &UnitProps) -> Result<UnitHandle> {
+        if props.is_empty() {
+            return self.start(spec);
+        }
+        Err(unsupported("this backend", &format!("start task {} under {}", spec.task, props.names().join(", "))))
+    }
     fn stop(&self, h: &UnitHandle) -> Result<()>;
     fn restart(&self, h: &UnitHandle) -> Result<()>;
     fn facts(&self, h: &UnitHandle) -> Result<UnitFacts>;
@@ -402,7 +493,10 @@ pub fn effect(units: &dyn Units, name: &str, input: &str) -> std::result::Result
         serde_json::to_string(v).map_err(|e| e.to_string())
     }
     match name {
-        UNIT_START => out(&units.start(&arg::<UnitSpec>(name, input)?).map_err(|e| e.0)?),
+        UNIT_START => {
+            let s = arg::<StartSpec>(name, input)?;
+            out(&units.start_with(&s.unit, &s.props).map_err(|e| e.0)?)
+        }
         UNIT_STOP => units.stop(&arg(name, input)?).map(|_| String::new()).map_err(|e| e.0),
         UNIT_RESTART => units.restart(&arg(name, input)?).map(|_| String::new()).map_err(|e| e.0),
         UNIT_FACTS => out(&units.facts(&arg(name, input)?).map_err(|e| e.0)?),
@@ -590,6 +684,13 @@ struct Running {
     /// A scope run: its output is captured, and captured again on restart.
     scope: bool,
     captured: Option<Captured>,
+    /// The properties it was started under, as far as a plain child honours them.
+    props: UnitProps,
+}
+
+/// What a plain child cannot honour: its scheduling and its cgroup.
+fn process_refuses(p: &UnitProps) -> Vec<&'static str> {
+    [(p.io_class.is_some(), "IOSchedulingClass"), (p.io_weight.is_some(), "IOWeight"), (p.nice.is_some(), "Nice"), (p.cpu_quota_pct.is_some(), "CPUQuota"), (p.memory_max_bytes.is_some(), "MemoryMax")].into_iter().filter(|(on, _)| *on).map(|(_, n)| n).collect()
 }
 
 pub struct ProcessUnits {
@@ -618,12 +719,15 @@ impl ProcessUnits {
         ProcessUnits { clock, units: Mutex::new(BTreeMap::new()), ended: Mutex::new(VecDeque::new()) }
     }
 
-    fn spawn(name: &str, spec: &UnitSpec, capture: bool) -> Result<(Child, Option<Captured>)> {
+    fn spawn(name: &str, spec: &UnitSpec, capture: bool, props: &UnitProps) -> Result<(Child, Option<Captured>)> {
         let (prog, args) = spec.argv.split_first().ok_or_else(|| RuntimeError::refused(format!("unit for task {} has an empty argv", spec.task)))?;
         let mut c = Command::new(prog);
         c.args(args).envs(spec.env.iter().map(|(k, v)| (k, v))).stdin(Stdio::null());
         if capture {
             c.stdout(Stdio::piped()).stderr(Stdio::piped());
+        } else if let Some(path) = &props.output_append {
+            let open = || std::fs::OpenOptions::new().create(true).append(true).open(path).map_err(|e| RuntimeError::new(format!("{name}: output {}: {e}", path.display())));
+            c.stdout(open()?).stderr(open()?);
         }
         if let Some(d) = &spec.cwd {
             c.current_dir(d);
@@ -652,10 +756,28 @@ impl ProcessUnits {
         r.exit = Some(exit);
         r.ended_ms = Some(now);
         let out = r.captured.take().map(|c| drain(&c)).unwrap_or_default();
+        Self::stop_post(name, r);
         lock(&self.ended).push_back((UnitRan { handle: UnitHandle::named(name), exit, duration_ms: now.saturating_sub(r.started_ms) }, out));
     }
 
+    /// `ExecStopPost`: each command runs once the main process has ended, with the unit's own
+    /// environment, and is reaped on a thread of its own so the end is not held by it.
+    fn stop_post(name: &str, r: &Running) {
+        for argv in &r.props.exec_stop_post {
+            let Some((prog, args)) = argv.split_first() else { continue };
+            let mut c = Command::new(prog);
+            c.args(args).envs(r.spec.env.iter().map(|(k, v)| (k, v))).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+            if let Some(d) = &r.spec.cwd {
+                c.current_dir(d);
+            }
+            if let Ok(mut child) = c.spawn() {
+                let _ = std::thread::Builder::new().name(format!("unit-post-{name}")).spawn(move || child.wait());
+            }
+        }
+    }
+
     fn reap(&self) {
+        let now = self.clock.now_ms();
         let mut units = lock(&self.units);
         for (name, r) in units.iter_mut() {
             let done = match r.child.as_mut().map(Child::try_wait) {
@@ -665,6 +787,9 @@ impl ProcessUnits {
             };
             if let Some(exit) = done {
                 self.end(name, r, exit);
+            } else if r.child.is_some() && r.props.runtime_max_ms.is_some_and(|max| now.saturating_sub(r.started_ms) >= max) {
+                // `RuntimeMaxSec`: a run past its bound is killed, as systemd stops it.
+                self.kill(name, r);
             }
         }
     }
@@ -677,15 +802,19 @@ impl ProcessUnits {
         }
     }
 
-    fn launch(&self, spec: &UnitSpec, scope: bool) -> Result<UnitHandle> {
+    fn launch(&self, spec: &UnitSpec, scope: bool, props: &UnitProps) -> Result<UnitHandle> {
+        let refused = process_refuses(props);
+        if !refused.is_empty() {
+            return Err(unsupported(PROCESS, &format!("honour {} for task {}: a plain process has no scheduler class or cgroup of its own", refused.join(", "), spec.task)));
+        }
         let h = UnitHandle::of(&spec.task, &spec.key)?;
         self.reap();
         let mut units = lock(&self.units);
         if units.get(&h.name).is_some_and(|r| r.child.is_some()) {
             return Err(RuntimeError::refused(format!("{} is already running", h.name)));
         }
-        let (child, captured) = Self::spawn(&h.name, spec, scope)?;
-        units.insert(h.name.clone(), Running { spec: spec.clone(), pid: Some(child.id()), child: Some(child), started_ms: self.clock.now_ms(), exit: None, ended_ms: None, scope, captured });
+        let (child, captured) = Self::spawn(&h.name, spec, scope, props)?;
+        units.insert(h.name.clone(), Running { spec: spec.clone(), pid: Some(child.id()), child: Some(child), started_ms: self.clock.now_ms(), exit: None, ended_ms: None, scope, captured, props: props.clone() });
         Ok(h)
     }
 
@@ -697,7 +826,13 @@ impl ProcessUnits {
 
 impl Units for ProcessUnits {
     fn start(&self, spec: &UnitSpec) -> Result<UnitHandle> {
-        self.launch(spec, false)
+        self.launch(spec, false, &UnitProps::default())
+    }
+
+    /// The two timeouts, `ExecStopPost` and the output file are honoured (a start of a child is
+    /// immediate, so `TimeoutStartSec` always holds); scheduling and cgroup properties refuse.
+    fn start_with(&self, spec: &UnitSpec, props: &UnitProps) -> Result<UnitHandle> {
+        self.launch(spec, false, props)
     }
 
     fn stop(&self, h: &UnitHandle) -> Result<()> {
@@ -711,7 +846,7 @@ impl Units for ProcessUnits {
         let mut units = lock(&self.units);
         let r = units.get_mut(&h.name).ok_or_else(|| RuntimeError::refused(format!("{} was not started by this backend", h.name)))?;
         self.kill(&h.name, r);
-        let (child, captured) = Self::spawn(&h.name, &r.spec, r.scope)?;
+        let (child, captured) = Self::spawn(&h.name, &r.spec, r.scope, &r.props)?;
         r.pid = Some(child.id());
         r.child = Some(child);
         r.captured = captured;
@@ -771,7 +906,7 @@ impl Units for ProcessUnits {
         if !limits.is_empty() {
             return Err(unsupported(PROCESS, &format!("enforce {} for task {}: a plain process has no cgroup", limits.join(", "), spec.unit.task)));
         }
-        Ok(ScopeHandle { unit: self.launch(&spec.unit, true)? })
+        Ok(ScopeHandle { unit: self.launch(&spec.unit, true, &UnitProps::default())? })
     }
 }
 
@@ -805,6 +940,8 @@ struct Script {
     installed: BTreeMap<String, UnitDetail>,
     timers: BTreeMap<String, TimerFacts>,
     scopes: Vec<ScopeSpec>,
+    /// The properties each unit was last started under, by unit name.
+    props: BTreeMap<String, UnitProps>,
     /// A run's exit, its start and its end.
     last: BTreeMap<String, (Exit, u64, u64)>,
     calls: Vec<String>,
@@ -852,6 +989,11 @@ impl ScriptedUnits {
     /// Every scope started, with the limits it asked for.
     pub fn scopes(&self) -> Vec<ScopeSpec> {
         lock(&self.s).scopes.clone()
+    }
+
+    /// The properties unit `name` was last started under; empty for one started without any.
+    pub fn props(&self, name: &str) -> UnitProps {
+        lock(&self.s).props.get(name).cloned().unwrap_or_default()
     }
 
     /// Every call that changes a unit, in order, as `<verb> <unit>`.
@@ -917,7 +1059,16 @@ fn set_state(d: &mut UnitDetail, state: UnitState, now: u64) {
 
 impl Units for ScriptedUnits {
     fn start(&self, spec: &UnitSpec) -> Result<UnitHandle> {
-        self.launch(spec, "start", |_| RanOutput::default())
+        self.start_with(spec, &UnitProps::default())
+    }
+
+    /// Every property is accepted and recorded ([`ScriptedUnits::props`]); a bad
+    /// `IOSchedulingClass` word refuses, as the manager would.
+    fn start_with(&self, spec: &UnitSpec, props: &UnitProps) -> Result<UnitHandle> {
+        props.io_class_number()?;
+        let h = self.launch(spec, "start", |_| RanOutput::default())?;
+        lock(&self.s).props.insert(h.name.clone(), props.clone());
+        Ok(h)
     }
 
     fn stop(&self, h: &UnitHandle) -> Result<()> {
@@ -1043,7 +1194,7 @@ impl UnitCompletions for ScriptedUnits {
 // SystemdUnits: the user manager over D-Bus, with unit-run's connection and signal tracker.
 
 #[cfg(target_os = "linux")]
-pub use systemd::{encode_args, encode_call_body, scope_args, start_transient_args, Arg, Bus, SystemdUnits};
+pub use systemd::{encode_args, encode_call_body, scope_args, start_transient_args, start_transient_args_with, Arg, Bus, SystemdUnits};
 
 #[cfg(target_os = "linux")]
 mod systemd {
@@ -1067,6 +1218,7 @@ mod systemd {
         S(String),
         B(bool),
         U32(u32),
+        I32(i32),
         T(u64),
         Arr(&'static str, Vec<Arg>),
         Struct(Vec<Arg>),
@@ -1079,6 +1231,7 @@ mod systemd {
                 Arg::S(_) => "s".into(),
                 Arg::B(_) => "b".into(),
                 Arg::U32(_) => "u".into(),
+                Arg::I32(_) => "i".into(),
                 Arg::T(_) => "t".into(),
                 Arg::Arr(elem, _) => format!("a{elem}"),
                 Arg::Struct(f) => format!("({})", f.iter().map(Arg::sig).collect::<String>()),
@@ -1122,6 +1275,7 @@ mod systemd {
             }
             Arg::B(b) => put_u32(buf, u32::from(*b)),
             Arg::U32(v) => put_u32(buf, *v),
+            Arg::I32(v) => put_u32(buf, *v as u32),
             Arg::T(v) => {
                 align(buf, 8);
                 buf.extend_from_slice(&v.to_le_bytes());
@@ -1171,6 +1325,46 @@ mod systemd {
 
     fn strings(v: &[String]) -> Arg {
         Arg::Arr("s", v.iter().cloned().map(Arg::S).collect())
+    }
+
+    /// `StartTransientUnit(name, "fail", properties, [])` for `spec` under `props`: each
+    /// [`UnitProps`] field as the transient-unit property `systemd-run --property=` set.
+    pub fn start_transient_args_with(spec: &UnitSpec, props: &UnitProps) -> Result<Vec<Arg>> {
+        let mut args = start_transient_args(spec)?;
+        let io_class = props.io_class_number()?;
+        if let Some(Arg::Arr(_, p)) = args.get_mut(2) {
+            let usec = |ms: u64| Arg::T(ms.saturating_mul(1000));
+            if let Some(ms) = props.start_timeout_ms {
+                p.push(prop("TimeoutStartUSec", usec(ms)));
+            }
+            if let Some(ms) = props.runtime_max_ms {
+                p.push(prop("RuntimeMaxUSec", usec(ms)));
+            }
+            if let Some(c) = io_class {
+                p.push(prop("IOSchedulingClass", Arg::I32(c)));
+            }
+            if let Some(w) = props.io_weight {
+                p.push(prop("IOWeight", Arg::T(w)));
+            }
+            if let Some(n) = props.nice {
+                p.push(prop("Nice", Arg::I32(n)));
+            }
+            if let Some(pct) = props.cpu_quota_pct {
+                p.push(prop("CPUQuotaPerSecUSec", Arg::T(u64::from(pct) * 10_000)));
+            }
+            if let Some(max) = props.memory_max_bytes {
+                p.push(prop("MemoryMax", Arg::T(max)));
+            }
+            let post: Vec<Arg> = props.exec_stop_post.iter().filter_map(|argv| argv.first().map(|prog| Arg::Struct(vec![Arg::S(prog.clone()), strings(argv), Arg::B(false)]))).collect();
+            if !post.is_empty() {
+                p.push(prop("ExecStopPost", Arg::Arr("(sasb)", post)));
+            }
+            if let Some(path) = &props.output_append {
+                p.push(prop("StandardOutputFileToAppend", Arg::S(path.display().to_string())));
+                p.push(prop("StandardErrorFileToAppend", Arg::S(path.display().to_string())));
+            }
+        }
+        Ok(args)
     }
 
     /// `StartTransientUnit(name, "fail", properties, [])` for `spec`.
@@ -1439,7 +1633,11 @@ mod systemd {
 
     impl<B: Bus> Units for SystemdUnits<B> {
         fn start(&self, spec: &UnitSpec) -> Result<UnitHandle> {
-            let args = start_transient_args(spec)?;
+            self.start_with(spec, &UnitProps::default())
+        }
+
+        fn start_with(&self, spec: &UnitSpec, props: &UnitProps) -> Result<UnitHandle> {
+            let args = start_transient_args_with(spec, props)?;
             self.manager("StartTransientUnit", &args)?;
             UnitHandle::of(&spec.task, &spec.key)
         }
@@ -1818,6 +2016,60 @@ mod tests {
         assert_eq!(u.facts(&UnitHandle::named("other.service")).unwrap().state, UnitState::Absent);
     }
 
+    /// A plain child honours `RuntimeMaxSec` (killed once past it on the backend's clock),
+    /// `ExecStopPost` (run after the end) and the output file; scheduling and cgroup
+    /// properties refuse the start rather than run without them.
+    #[test]
+    fn a_process_unit_applies_what_a_child_can_and_refuses_the_rest() {
+        let dir = testkit::TempDir::new("units-props");
+        let (log, post) = (dir.path().join("out.log"), dir.path().join("post"));
+        let clock = VirtualClock::new(0);
+        let u = ProcessUnits::new(Arc::new(clock.clone()));
+        let props = UnitProps { runtime_max_ms: Some(1_000), start_timeout_ms: Some(5_000), exec_stop_post: vec![vec!["touch".into(), post.display().to_string()]], output_append: Some(log.clone()), ..UnitProps::default() };
+        let h = u.start_with(&spec("t", "k", &["sh", "-c", "echo hello; sleep 30"]), &props).unwrap();
+        for _ in 0..500 {
+            if std::fs::read_to_string(&log).unwrap_or_default().contains("hello") {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5)); // clock-safe: waits for the real child's first line, capped at 2.5 s
+        }
+        assert!(u.ran().unwrap().is_empty(), "within RuntimeMaxSec the run goes on");
+        clock.advance(1_000);
+        let mut got = vec![];
+        for _ in 0..500 {
+            got.extend(u.ran().unwrap());
+            if !got.is_empty() && post.exists() && std::fs::read_to_string(&log).unwrap_or_default().contains("hello") {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5)); // clock-safe: polls a real child's end and its stop-post, capped at 2.5 s
+        }
+        assert_eq!(got.iter().map(|r| (r.handle.clone(), r.exit)).collect::<Vec<_>>(), [(h, Exit::Signal(9))], "past RuntimeMaxSec the run is killed");
+        assert!(post.exists(), "ExecStopPost ran after the end");
+        assert!(std::fs::read_to_string(&log).unwrap().contains("hello"), "stdout appended to the output file");
+        for refused in [UnitProps { nice: Some(5), ..UnitProps::default() }, UnitProps { io_class: Some("idle".into()), ..UnitProps::default() }, UnitProps { cpu_quota_pct: Some(100), ..UnitProps::default() }, UnitProps { memory_max_bytes: Some(1), ..UnitProps::default() }] {
+            let names = refused.names();
+            let err = u.start_with(&spec("t", "r", &["true"]), &refused).unwrap_err();
+            assert!(err.is_refused() && err.0.contains(names[0]), "{err:?}");
+        }
+        assert_eq!(u.facts(&UnitHandle::of("t", "r").unwrap()).unwrap().state, UnitState::Absent, "a refused start starts nothing");
+    }
+
+    /// `unit.start` reads a plain `UnitSpec` or one with `props`; the scripted backend records
+    /// what it was started under.
+    #[test]
+    fn the_start_effect_carries_props_and_a_bare_spec_still_starts() {
+        let u = ScriptedUnits::new(Arc::new(VirtualClock::new(0)));
+        u.script("t", 10, Exit::Code(0));
+        let bare = serde_json::to_string(&spec("t", "a", &["x"])).unwrap();
+        effect(&u, UNIT_START, &bare).unwrap();
+        assert!(u.props(&unit_name("t", "a").unwrap()).is_empty());
+        let props = UnitProps { io_class: Some("idle".into()), io_weight: Some(10), ..UnitProps::default() };
+        let with = serde_json::to_string(&StartSpec { unit: spec("t", "b", &["x"]), props: props.clone() }).unwrap();
+        effect(&u, UNIT_START, &with).unwrap();
+        assert_eq!(u.props(&unit_name("t", "b").unwrap()), props);
+        assert_eq!(serde_json::to_string(&StartSpec { unit: spec("t", "a", &["x"]), props: UnitProps::default() }).unwrap(), bare, "a start with no props is the bare spec");
+    }
+
     #[test]
     fn a_stopped_process_unit_ends_on_a_signal() {
         let u = ProcessUnits::new(Arc::new(VirtualClock::new(0)));
@@ -2074,6 +2326,44 @@ mod tests {
             assert_eq!(f[2], Val::B(false));
             assert_eq!(get("Environment"), Val::Var(Box::new(Val::Arr(vec![Val::S("A=1".into())]))));
             assert_eq!(m.body[3], Val::Arr(vec![]));
+        }
+
+        /// The properties a dwarf call and the landing leg carried under `systemd-run`, as the
+        /// transient unit's own: each set when given, and none when not.
+        #[test]
+        fn start_props_encode_as_transient_unit_properties() {
+            let sp = spec("sentinel-call", "k", &["/bin/dwarf"]);
+            let props = UnitProps {
+                start_timeout_ms: Some(3_600_000),
+                runtime_max_ms: Some(900_000),
+                io_class: Some("idle".into()),
+                io_weight: Some(10),
+                nice: Some(5),
+                cpu_quota_pct: Some(200),
+                memory_max_bytes: Some(1 << 30),
+                exec_stop_post: vec![vec!["/bin/true".into(), "x".into()]],
+                output_append: Some("/run/landing.log".into()),
+            };
+            let raw = encode_call_body(3, "d", "/p", "i", "StartTransientUnit", &start_transient_args_with(&sp, &props).unwrap());
+            let m = decode(&raw).unwrap();
+            let got = m.body[2].dict();
+            let get = |k: &str| got.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_else(|| panic!("{k} not set"));
+            let var = |v: Val| Val::Var(Box::new(v));
+            assert_eq!(get("TimeoutStartUSec"), var(Val::U(3_600_000_000)));
+            assert_eq!(get("RuntimeMaxUSec"), var(Val::U(900_000_000)));
+            assert_eq!(get("IOSchedulingClass"), var(Val::I(3)));
+            assert_eq!(get("IOWeight"), var(Val::U(10)));
+            assert_eq!(get("Nice"), var(Val::I(5)));
+            assert_eq!(get("CPUQuotaPerSecUSec"), var(Val::U(2_000_000)));
+            assert_eq!(get("MemoryMax"), var(Val::U(1 << 30)));
+            assert_eq!(get("StandardOutputFileToAppend"), var(Val::S("/run/landing.log".into())));
+            assert_eq!(get("StandardErrorFileToAppend"), var(Val::S("/run/landing.log".into())));
+            let Val::Var(post) = get("ExecStopPost") else { panic!("ExecStopPost not a variant") };
+            let Val::Arr(cmds) = *post else { panic!("ExecStopPost not an array") };
+            assert_eq!(cmds.len(), 1);
+            let bare = start_transient_args_with(&sp, &UnitProps::default()).unwrap();
+            assert_eq!(bare, start_transient_args(&sp).unwrap(), "no properties is the plain start");
+            assert!(start_transient_args_with(&sp, &UnitProps { io_class: Some("lazy".into()), ..UnitProps::default() }).is_err(), "an unknown IO class refuses");
         }
 
         fn d(pairs: &[(&str, Val)]) -> Vec<(String, Val)> {

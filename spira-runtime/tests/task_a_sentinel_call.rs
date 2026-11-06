@@ -79,3 +79,13 @@ fn t5_a_full_fleet_calls_nobody_and_an_open_one_calls_the_ready_rune() {
     assert!(starts(&acts) >= 1 && acts.iter().any(|a| a.effect == UNIT_START && a.input.contains("builder")), "{acts:?}");
     assert_eq!(carry.in_flight.len(), starts(&acts), "every started unit is carried in flight");
 }
+
+/// A dwarf call starts under `call_argv`'s properties: the rune's timeout as `TimeoutStartSec`,
+/// the idle IO class, IO weight 10, and no `ExecStopPost` re-exec.
+#[test]
+fn t5_a_dwarf_call_carries_call_argvs_properties() {
+    let p = dwarf_props("3600").unwrap();
+    assert_eq!((p.start_timeout_ms, p.io_class.as_deref(), p.io_weight), (Some(3_600_000), Some("idle"), Some(10)));
+    assert!(p.exec_stop_post.is_empty(), "the --call-only re-exec is retired");
+    assert!(dwarf_props("soon").is_err(), "a timeout that is not seconds refuses");
+}

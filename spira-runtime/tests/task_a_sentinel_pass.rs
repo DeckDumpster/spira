@@ -139,3 +139,16 @@ fn t5_check7_call_wanted_is_delivered_to_the_call() {
     let to: Vec<String> = r.journaled().into_iter().filter(|e| e.kind.tag == CALL_WANTED).map(|e| e.stream.0).collect();
     assert_eq!(to, [spira_runtime::tasks::a::sentinel_call::STREAM], "call.wanted goes to sentinel-call's stream");
 }
+
+/// CHECK 6's leg starts under the properties `systemd-run` gave it (`dispatch.rs`): the pinned
+/// `SPIRA_LAND_MAXSEC` as `RuntimeMaxSec`, both streams appended to `landing.log`.
+#[test]
+fn t5_check6_the_landing_leg_carries_its_runtime_bound_and_its_log() {
+    let (_, acts) = decide(&Carry::default(), &Snapshot { landing_active: false, land_maxsec: 900, ..idle() });
+    let start = acts.iter().find(|a| a.effect == LANDING_START).expect("the landing leg starts");
+    let w: Write = serde_json::from_str(&start.input).unwrap();
+    let props = landing_props(&w, std::path::Path::new("/run/spira"));
+    assert_eq!(props.runtime_max_ms, Some(900_000));
+    assert_eq!(props.output_append.as_deref(), Some(std::path::Path::new("/run/spira/landing.log")));
+    assert_eq!(landing_props(&Write::default(), std::path::Path::new("/r")).runtime_max_ms, None, "0 is no bound");
+}

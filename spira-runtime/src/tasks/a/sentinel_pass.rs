@@ -110,7 +110,9 @@
 //! reclaimed on a later pass, a dead one reclaimed now), CHECK 3b's queue waiters
 //! (`sentinel::checks::decide` over the active blockers, and a labeled bead whose own row
 //! LANDED closed), CHECK 6's dispatch of the landing leg (`unit.start` of
-//! `spira-run-sentinel-pass-landing`, matched back by `UnitRan::key_for`) and CHECK 7's
+//! `spira-run-sentinel-pass-landing` under `landing_props` — `RuntimeMaxSec=SPIRA_LAND_MAXSEC`,
+//! output appended to `landing.log`, as `systemd-run` started it — matched back by
+//! `UnitRan::key_for`) and CHECK 7's
 //! hand-off. Not ported, and so never asked for by decide: CHECK 1 (pilgrimage.sh), 2b
 //! (strand), 2c and 2d, 3 and 3c, the twelve watchtower checks and CHECK 8's judgement; their
 //! runners refuse naming what is missing. The content door serves list and show only, so
@@ -270,6 +272,8 @@ pub struct Snapshot {
     pub reclaim_grace_secs: u64,
     /// `SPIRA_SKIP_RECLAIM=1`: the reaper is off.
     pub skip_reclaim: bool,
+    /// `SPIRA_LAND_MAXSEC`, as pinned: the landing leg's `RuntimeMaxSec`.
+    pub land_maxsec: u64,
     pub labels: Labels,
 }
 
@@ -368,6 +372,9 @@ pub struct Write {
     pub label: String,
     pub op: String,
     pub text: String,
+    /// The landing leg's `RuntimeMaxSec`, in seconds.
+    #[serde(default)]
+    pub max_secs: u64,
 }
 
 fn act(effect: &str, key: impl Into<String>, w: Write) -> Act {
@@ -422,7 +429,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     }
     // CHECK 6: the landing leg, unless one is in flight or this is not the current release.
     if snap.world_running && snap.skew.is_none() && !snap.landing_active {
-        acts.push(act(LANDING_START, LANDING_UNIT, Write::default()));
+        acts.push(act(LANDING_START, LANDING_UNIT, Write { max_secs: snap.land_maxsec, ..Write::default() }));
         landing = true;
     }
     // CHECK 7: plan beads ready hand off to the call.
@@ -536,6 +543,7 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         now_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64),
         world_running: !run.join("world.halted").is_file() && !run.join("world.draining").is_file(),
         reclaim_grace_secs: pin("SPIRA_RECLAIM_GRACE_SECS").trim().parse().unwrap_or(10_800),
+        land_maxsec: pin("SPIRA_LAND_MAXSEC").trim().parse().unwrap_or(0),
         labels: Labels { queue_wait: pin("SPIRA_QUEUE_WAIT_LABEL") },
         ..Snapshot::default()
     };
@@ -639,8 +647,16 @@ pub fn landing_start(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     let pass_env = ["PATH", "SPIRA_RELEASE", "SPIRA_TOML", "HOME", "SPIRA_HOME", "SPIRA_RUN", "SPIRA_DB", "SPIRA_REPO", "SPIRA_REPO_MAP"];
     let env = pass_env.iter().filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v))).collect();
     let unit = units::UnitSpec { task: NAME.into(), key: LANDING_KEY.into(), argv: vec![landing.to_string_lossy().into_owned(), "land".into()], env, cwd: None };
-    let input = serde_json::to_string(&unit).map_err(|e| e.to_string())?;
+    let props = landing_props(&write_of(&spec.input, LANDING_START)?, &e.world.run_dir);
+    let input = serde_json::to_string(&units::StartSpec { unit, props }).map_err(|e| e.to_string())?;
     e.unit(&EffectSpec { name: units::UNIT_START.into(), input, deadline_ms: spec.deadline_ms })
+}
+
+/// The properties CHECK 6's `systemd-run` gave the landing leg (`sentinel/src/dispatch.rs`):
+/// `RuntimeMaxSec=SPIRA_LAND_MAXSEC` (none when it is 0) and both streams appended to
+/// `$SPIRA_RUN/landing.log`, the tail the land escalation quotes.
+pub fn landing_props(w: &Write, run_dir: &std::path::Path) -> units::UnitProps {
+    units::UnitProps { runtime_max_ms: (w.max_secs > 0).then_some(w.max_secs * 1000), output_append: Some(run_dir.join("landing.log")), ..units::UnitProps::default() }
 }
 
 /// `sentinel-pass.phase_metric`: one `sentinel-phase` row in the metrics store.
