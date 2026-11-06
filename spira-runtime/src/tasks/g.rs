@@ -19,6 +19,7 @@ pub mod cockpit_tier_5s;
 pub mod cockpit_tier_600s;
 pub mod cockpit_tier_60s;
 pub mod mail_arrived;
+pub mod mail_wake;
 pub mod submission;
 pub mod unit_ran;
 
