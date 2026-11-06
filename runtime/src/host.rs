@@ -124,7 +124,11 @@ fn run_turn(mut t: Turn) -> TurnOut {
         }
         t.engine.run_until_idle() // loop-safe: runs on the offload pool
     })();
-    let launch = t.engine.pending_effects().into_iter().filter(|p| !t.in_flight.contains(&p.key)).collect();
+    let launch: Vec<PendingEffect> = t.engine.pending_effects().into_iter().filter(|p| !t.in_flight.contains(&p.key)).collect();
+    // The host now owns each of these until it starts: its deadline waits for the runner.
+    for p in &launch {
+        t.engine.note_queued(&p.key);
+    }
     let next_timer_at = t.engine.next_timer_at();
     TurnOut { engine: t.engine, result, launch, next_timer_at }
 }
@@ -264,7 +268,7 @@ pub async fn serve_with(
                     match pools.try_take(runner.class(&p.spec)) {
                         Ok(permit) => {
                             in_flight.insert(p.key.clone());
-                            launch_effect(&workers, permit, &runner, &done_tx, clock.now_ms(), p);
+                            launch_effect(&workers, permit, &runner, &done_tx, p);
                         }
                         Err(d) => {
                             emit(deferred_record(&p, &d, pools.deferred_total(d.class)));
@@ -313,22 +317,39 @@ fn deferred_record(p: &PendingEffect, d: &Deferred, total: u64) -> Fields {
     f
 }
 
-fn launch_effect(workers: &Arc<Pool>, permit: OwnedSemaphorePermit, runner: &Arc<dyn EffectRunner>, tx: &mpsc::UnboundedSender<Done>, now: u64, p: PendingEffect) {
+/// Runs `p` on `workers` under `permit`. Its deadline counts from the moment a worker starts the
+/// runner, so time spent queued for a worker is not charged to it. The permit is given back when
+/// the runner returns or when the deadline writes it off, whichever is first: a runner still
+/// stuck past its deadline no longer holds its class's capacity.
+fn launch_effect(workers: &Arc<Pool>, permit: OwnedSemaphorePermit, runner: &Arc<dyn EffectRunner>, tx: &mpsc::UnboundedSender<Done>, p: PendingEffect) {
     let (workers, runner, tx) = (workers.clone(), runner.clone(), tx.clone());
-    let until = tokio::time::Instant::now() + Duration::from_millis(p.deadline_at.saturating_sub(now));
+    let deadline = Duration::from_millis(p.spec.deadline_ms);
+    let permit = Arc::new(Mutex::new(Some(permit)));
     tokio::spawn(async move {
         let outcome = async {
-            let (r, k, spec) = (runner, p.key.clone(), p.spec.clone());
-            let mut h = match workers.offload("effect", Some(permit), move || r.run(&k, &spec)) {
+            let (r, k, spec, held) = (runner, p.key.clone(), p.spec.clone(), permit.clone());
+            let (began_tx, began) = oneshot::channel::<()>();
+            let job = move || {
+                let _ = began_tx.send(());
+                let out = r.run(&k, &spec);
+                drop(held.lock().unwrap_or_else(|e| e.into_inner()).take()); // loop-safe: runs on the offload pool; the lock is held only to take the permit
+                out
+            };
+            let mut h = match workers.offload("effect", None, job) {
                 Ok(h) => h,
                 Err(sp) => {
                     let _ = tx.send(Done::Spilled(p.key.clone(), sp));
                     return None;
                 }
             };
+            // A job dropped unrun answers `h` with an error at once, so this wait always ends.
+            let _ = began.await;
             let _ = tx.send(Done::Started(p.key.clone()));
-            Some(match tokio::time::timeout_at(until, &mut h).await {
-                Err(_) => Outcome::TimedOut,
+            Some(match tokio::time::timeout(deadline, &mut h).await {
+                Err(_) => {
+                    drop(permit.lock().unwrap_or_else(|e| e.into_inner()).take()); // loop-safe: uncontended except for the instant the runner returns
+                    Outcome::TimedOut
+                }
                 Ok(Ok(Ok(d))) => Outcome::Succeeded(d),
                 Ok(Ok(Err(e))) => Outcome::Failed(e),
                 Ok(Err(e)) => Outcome::Failed(format!("effect task: {e}")),

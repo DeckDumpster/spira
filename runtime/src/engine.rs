@@ -207,6 +207,9 @@ pub struct Engine {
     rewritten: BTreeMap<EventId, Vec<Event>>,
     /// The task that requested each effect not yet answered, as far as this run has seen.
     requesters: BTreeMap<String, String>,
+    /// Effects an executor has taken and not yet started: waiting for a permit or a worker.
+    /// Their deadline is not running, so `tick` never times them out.
+    queued: BTreeSet<String>,
     rss: TurnRss,
 }
 
@@ -272,6 +275,7 @@ impl Engine {
             written: vec![],
             rewritten: BTreeMap::new(),
             requesters: BTreeMap::new(),
+            queued: BTreeSet::new(),
             rss: TurnRss::default(),
         };
         let cursor = e.journal.cursor()?;
@@ -407,9 +411,28 @@ impl Engine {
         Ok(self)
     }
 
-    /// The executor started the runner for effect `key`.
+    /// The executor has taken effect `key` and will start it once its class has a permit. Until
+    /// [`note_attempt`](Self::note_attempt) its deadline does not run: queue wait never times
+    /// an effect out.
+    pub fn note_queued(&mut self, key: &str) {
+        if self.pending.contains_key(key) {
+            self.queued.insert(key.into());
+        }
+    }
+
+    /// The executor started the runner for effect `key`; its deadline counts from now.
     pub fn note_attempt(&mut self, key: &str) {
         *self.attempts.entry(key.into()).or_insert(0) += 1;
+        self.queued.remove(key);
+        let now = self.clock.now_ms();
+        if let Some(p) = self.pending.get_mut(key) {
+            p.deadline_at = now.saturating_add(p.spec.deadline_ms);
+        }
+    }
+
+    /// The deadline of every effect whose deadline is running.
+    fn running_deadlines(&self) -> impl Iterator<Item = (u64, &String)> {
+        self.pending.values().filter(|p| !self.queued.contains(&p.key)).map(|p| (p.deadline_at, &p.key))
     }
 
     fn unit(&self, unit: &str, ev: Option<&Event>, offset: Option<(Offset, Offset)>) -> Wide {
@@ -454,6 +477,7 @@ impl Engine {
         } else if matches!(ev.kind.tag.as_str(), EFFECT_SUCCEEDED | EFFECT_FAILED | EFFECT_TIMED_OUT) {
             if let Some(c) = &ev.cause {
                 self.pending.remove(&c.0);
+                self.queued.remove(&c.0);
             }
         }
         Ok(())
@@ -540,7 +564,7 @@ impl Engine {
     }
 
     pub fn next_timer_at(&self) -> Option<u64> {
-        let deadline = self.pending.values().map(|p| p.deadline_at).min();
+        let deadline = self.running_deadlines().map(|(d, _)| d).min();
         let timer = self.timers.values().map(|r| r.at).min();
         match (self.scheduler.next_at().into_iter().chain(timer).min(), deadline) {
             (Some(a), Some(b)) => Some(a.min(b)),
@@ -995,7 +1019,7 @@ impl Engine {
                 n += 1;
             }
         }
-        let mut late: Vec<_> = self.pending.values().filter(|p| p.deadline_at <= now).map(|p| (p.deadline_at, p.key.clone())).collect();
+        let mut late: Vec<_> = self.running_deadlines().filter(|(d, _)| *d <= now).map(|(d, k)| (d, k.clone())).collect();
         late.sort();
         for (_, key) in late {
             if self.complete(&key, Outcome::TimedOut)? {
@@ -1055,6 +1079,7 @@ impl Executor for Engine {
             self.appended = true;
         }
         self.pending.remove(key);
+        self.queued.remove(key);
         if let Some(owner) = self.owners.remove(key) {
             self.tracks.entry(owner).or_default().outcome = Some(match outcome {
                 Outcome::Succeeded(_) => LastOutcome::Succeeded,

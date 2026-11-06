@@ -2,6 +2,7 @@
 //! systemd notifier the dispatch loop kicks, and the OTLP log sink for wide events.
 
 pub mod forge;
+pub mod classes;
 pub mod hunk;
 pub mod modes;
 pub mod notify;
@@ -264,5 +265,11 @@ impl EffectRunner for Effects {
             Some(runner) => runner(self, key, spec),
             None => Err(format!("no runner for effect {}", spec.name)),
         }
+    }
+
+    /// The class in [`classes::CLASSES`]. A name no task registers has no runner either; it
+    /// runs, and fails at once, under Host.
+    fn class(&self, spec: &EffectSpec) -> runtime::pools::EffectClass {
+        classes::class_of(&spec.name).unwrap_or(runtime::pools::EffectClass::Host)
     }
 }
