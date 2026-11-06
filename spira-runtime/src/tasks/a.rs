@@ -134,6 +134,18 @@ pub static TASKS: &[Task] = &[
         keys: &[batcher_forge::KEYS],
         build: |_| batcher_forge::BatcherForge::from_cfg().registration(),
     },
+    Task {
+        name: queue_step::NAME,
+        boot: queue_step::QueueStep::boot,
+        cadence_ms: |_| queue_step::CADENCE_MS,
+        effects: queue_step::EFFECTS,
+        runners: {
+            use queue_step::{edge as x, *};
+            &[(OBSERVE, x::observe), (PUSH, x::push), (LAND, x::land), (CLOSE_BEAD, x::close_bead), (GH_CLOSEOUT, x::gh_closeout), (PR_CLOSE, x::pr_close), (CANCEL_RUNS, x::cancel_runs), (RERUN, x::rerun), (JUDGEMENT, x::judgement), (OBSERVE_FLAKE, x::observe_flake), (EJECT, x::eject), (RECONCILE, x::reconcile), (SWEEP, x::sweep), (FILE_BUG, x::file_bug), (NOTIFY, x::notify), (RECORD, x::record)]
+        },
+        keys: &[queue_step::KEYS],
+        build: |_| queue_step::QueueStep::from_cfg().registration(),
+    },
 ];
 
 /// Family A's rows, built from their contracts and waiting for their ports.
@@ -173,15 +185,6 @@ pub static PENDING: &[Task] = &[
         runners: stubs!(sift: OBSERVE, FETCH_BASE, NOTE, SEND_BACK, RECORD_PASS, SUPERSEDE),
         keys: &[sift::KEYS],
         build: |_| sift::Sift::from_cfg().registration(),
-    },
-    Task {
-        name: queue_step::NAME,
-        boot: queue_step::QueueStep::boot,
-        cadence_ms: |_| queue_step::CADENCE_MS,
-        effects: queue_step::EFFECTS,
-        runners: stubs!(queue_step: OBSERVE, PUSH, LAND, CLOSE_BEAD, GH_CLOSEOUT, PR_CLOSE, CANCEL_RUNS, RERUN, JUDGEMENT, OBSERVE_FLAKE, EJECT, RECONCILE, SWEEP, FILE_BUG, NOTIFY, RECORD),
-        keys: &[queue_step::KEYS],
-        build: |_| queue_step::QueueStep::from_cfg().registration(),
     },
     Task {
         name: publish::NAME,
