@@ -78,3 +78,22 @@ fn the_scan_catches_a_planted_site_and_passes_a_marked_one() {
     let marked = format!("    // FORK-EDGE: unserved verb held\n    spira_config::bounded::bounded({q}spira-lc{q});\n");
     assert!(unmarked(&marked).is_empty());
 }
+
+/// The body of `fn <name>(` in `text`: up to the next item at the same indent.
+fn body_of<'a>(text: &'a str, name: &str) -> &'a str {
+    let start = text.find(&format!("    fn {name}(")).unwrap_or_else(|| panic!("no fn {name}"));
+    let rest = &text[start + 1..];
+    let end = rest.find("\n    fn ").or_else(|| rest.find("\n}")).unwrap_or(rest.len());
+    &rest[..end]
+}
+
+/// Every verb the store's content door serves reaches it, never a forked bdq (sp-ipwlic): the
+/// door applies bdq's protections and writes a create's lifecycle row itself.
+#[test]
+fn the_verbs_the_content_door_serves_never_fork_bdq() {
+    let real = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/real.rs")).unwrap();
+    for f in ["create", "note", "show_json", "list_asks"] {
+        let body = body_of(&real, f);
+        assert!(!body.contains("self.cmd()") && body.contains("\"content\""), "RealBd::{f} forks bdq:\n{body}");
+    }
+}

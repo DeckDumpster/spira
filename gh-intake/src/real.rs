@@ -191,9 +191,21 @@ pub fn list_all_on(lc: &spira_config::lc_call::LcClient) -> Option<serde_json::V
 
 impl RealBd {
     fn cmd(&self) -> Command {
-        // FORK-EDGE: content store write (create/note/dep)
+        // FORK-EDGE: dep remove / dep relate — the content door serves no dep verb
         Command::new(&self.bdq)
     }
+}
+
+/// One call through the store's content door, which applies every protection bdq applies and
+/// writes a create's lifecycle row itself: its stdout when it applied, `None` otherwise.
+fn content<S: AsRef<str>>(argv: &[S], body: Option<&str>) -> Option<String> {
+    let lc = spira_config::lc_call::LcClient::configured().ok()?;
+    let r = match body {
+        Some(b) => lc.call_stdin(argv, b),
+        None => lc.call(argv),
+    }
+    .ok()?;
+    (r.code == 0).then_some(r.out)
 }
 
 impl Bd for RealBd {
@@ -203,47 +215,12 @@ impl Bd for RealBd {
     }
 
     fn create(&self, title: &str, external_ref: &str, labels: &str, priority: &str, body: &[u8]) -> bool {
-        let mut child = match self
-            .cmd()
-            .arg("create")
-            .arg(title)
-            .arg("--external-ref")
-            .arg(external_ref)
-            .arg("--labels")
-            .arg(labels)
-            .arg("-t")
-            .arg("bug")
-            .arg("-p")
-            .arg(priority)
-            .arg("--body-file")
-            .arg("-")
-            .arg("--silent")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(_) => return false,
-        };
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(body);
-        }
-        let Ok(out) = child.wait_with_output() else { return false };
-        out.status.success()
+        let argv = ["content", "create", title, "--external-ref", external_ref, "--labels", labels, "-t", "bug", "-p", priority, "--body-file", "-", "--silent"];
+        content(&argv, Some(&String::from_utf8_lossy(body))).is_some()
     }
 
     fn note(&self, id: &str, text: &str) -> bool {
-        let status = self
-            .cmd()
-            .arg("note")
-            .arg(id)
-            .arg(text)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        matches!(status, Ok(s) if s.success())
+        content(&["content", "note", id, "--stdin"], Some(text)).is_some()
     }
 
     // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
@@ -252,28 +229,15 @@ impl Bd for RealBd {
     }
 
     fn show_json(&self, id: &str) -> Option<serde_json::Value> {
-        let out = self.cmd().arg("show").arg(id).arg("--json").stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        serde_json::from_slice(&out.stdout).ok()
+        serde_json::from_str(&content(&["content", "show", id, "--json"], None)?).ok()
     }
 
     fn list_asks(&self, which: spira_config::nonwork::Which, label: &str) -> Option<serde_json::Value> {
         use spira_config::nonwork::{status_args, Kind};
-        let out = self
-            .cmd()
-            .arg("list")
-            .args(status_args(Kind::Ask, which))
-            .args(["--label", label, "--limit", "0", "--json"])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        serde_json::from_slice(&out.stdout).ok()
+        let mut argv: Vec<String> = vec!["content".into(), "list".into()];
+        argv.extend(status_args(Kind::Ask, which));
+        argv.extend(["--label", label, "--limit", "0", "--json"].map(String::from));
+        serde_json::from_str(&content(&argv, None)?).ok()
     }
 
     fn dep_remove(&self, id: &str, other: &str) -> bool {
