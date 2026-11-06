@@ -592,8 +592,13 @@ fn publish_pr_create(w: &World, input: &str) -> Result<String, String> {
     json(&pb::Created { pr })
 }
 
+/// A new PR's record: refused, as queue's `settle_publish` would refuse the record, unless the
+/// act carries the PR, its branch, its head and the base its members are read from.
 fn publish_record(w: &World, input: &str) -> Result<String, String> {
     let p: pb::Pub = parse_json(pb::RECORD, input)?;
+    if p.record.is_empty() && (p.pr == 0 || p.branch.is_empty() || p.head.is_empty() || p.base.is_empty()) {
+        return Err(format!("{}: a new publish record without its PR, branch, head or base: {p:?}", pb::RECORD));
+    }
     w.lc().published.push((p.pr, p.head));
     Ok("{}".into())
 }

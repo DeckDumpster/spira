@@ -111,3 +111,27 @@ fn t5_a_round_on_the_hypervisor_defers() {
     assert!(acts.is_empty(), "{acts:?}");
     assert_eq!((carry.repos["spira"].state, carry.repos["spira"].deferred_ticks), (State::Deferred, 1));
 }
+
+/// The record a PR's creation writes is the one queue's `settle_publish` reads: every field it
+/// refuses a record without is there, and the red path (`settle_publish_red`, `kv.members()`)
+/// finds the range's members.
+#[test]
+fn the_record_a_created_pr_writes_passes_settle_publish_and_names_its_members() {
+    let opening = Carry { repos: [("spira".to_string(), RepoCarry { state: State::Opening, ..RepoCarry::default() })].into() };
+    let pushed = Pub { repo: "spira".into(), head: "h1".into(), base: "f0".into(), branch: "spira/publish/1700000000".into(), ..Pub::default() };
+    let (_, acts) = on_outcome(&opening, PR_CREATE, true, r#"{"pr":42}"#, &pushed);
+    let act = acts.iter().find(|a| a.effect == RECORD).expect("a created PR is recorded");
+    let p: Pub = serde_json::from_str(&act.input).expect("the record's input is a Pub");
+    let dir = testkit::TempDir::new("publish-record");
+    let fresh = edge::Fresh { remote: "origin".into(), forge_branch: "main".into(), members: vec![queue::model::Member { id: "sp-a1".into(), tip: "t1".into() }, queue::model::Member { id: "sp-b2".into(), tip: "t2".into() }] };
+    edge::write_record(dir.path(), &p, Some(&fresh), 1_700_000_100).expect("the record is written");
+    let kv = queue::records::read_kv(&dir.path().join("spira").join("publish")).expect("readable").expect("the record exists");
+    assert_eq!(queue::ops::verdict::publish_record_missing(&kv), None, "settle_publish takes it: {kv:?}");
+    assert_eq!((kv.get("pr"), kv.get("head"), kv.get("base"), kv.get("remote"), kv.get("forge_branch")), (Some("42"), Some("h1"), Some("f0"), Some("origin"), Some("main")));
+    assert_eq!(kv.members().into_iter().map(|m| (m.id, m.tip)).collect::<Vec<_>>(), [("sp-a1".to_string(), "t1".to_string()), ("sp-b2".to_string(), "t2".to_string())], "the red path's members");
+    // A later rerun sets its field on the whole record and keeps the rest.
+    let rerun = Pub { repo: "spira".into(), pr: 42, record: [("rerun".to_string(), "1".to_string())].into(), ..Pub::default() };
+    edge::write_record(dir.path(), &rerun, None, 1_700_000_200).expect("the rerun is recorded");
+    let kv = queue::records::read_kv(&dir.path().join("spira").join("publish")).expect("readable").expect("the record exists");
+    assert_eq!((queue::ops::verdict::publish_record_missing(&kv), kv.get("rerun"), kv.members().len()), (None, Some("1"), 2), "{kv:?}");
+}

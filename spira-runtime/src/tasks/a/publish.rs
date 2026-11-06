@@ -767,25 +767,84 @@ pub mod edge {
     }
 
     /// `queue/<repo>/publish`: a new PR's record, an adoption, or fields set on the open one.
+    /// A whole record carries what queue's `settle_publish` refuses one without (`remote`,
+    /// `forge_branch`) and the `members` its red path files the fix-forward for, as
+    /// `queue publish` and `queue publish-settle`'s adoption wrote them.
     pub fn record(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
-        let p = input(spec)?;
-        let dir = e.world.queue_dir.join(&p.repo);
-        let path = dir.join("publish");
-        let mut lines: Vec<(String, String)> = std::fs::read_to_string(&path).unwrap_or_default().lines().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect();
-        if p.record.is_empty() || p.record.contains_key("adopt") {
-            lines = vec![("pr".into(), p.pr.to_string()), ("head".into(), p.head.clone()), ("base".into(), p.base.clone()), ("branch".into(), p.branch.clone()), ("opened".into(), spira_config::vtime::now_epoch().to_string())];
+        let mut p = input(spec)?;
+        let fresh = if p.record.is_empty() || p.record.contains_key("adopt") {
+            let reg = registry()?;
+            let dir = root(&reg, &p.repo)?;
+            let (remote, forge_branch) = target(&reg, &p.repo)?;
+            if p.record.contains_key("adopt") {
+                adopted(&dir, &remote, &forge_branch, &mut p)?;
+            }
+            let members = range_members(e, &dir, &p.base, &p.head)?;
+            Some(Fresh { remote, forge_branch, members })
         } else {
+            None
+        };
+        write_record(&e.world.queue_dir, &p, fresh.as_ref(), spira_config::vtime::now_epoch())?;
+        Ok("{}".into())
+    }
+
+    /// The adopted PR's branch from the forge's open list, and its head and base as the remote
+    /// holds them (`adopt_forge_publish`).
+    fn adopted(dir: &std::path::Path, remote: &str, forge_branch: &str, p: &mut Pub) -> Result<(), String> {
+        let listed = forge_call(dir, "pr-list-open", &[], None)?.stdout().unwrap_or_default();
+        p.branch = listed.lines().filter_map(|l| l.split_once(' ')).find(|(n, _)| n.trim_start_matches('#').parse::<u64>() == Ok(p.pr)).map(|(_, b)| b.trim().to_string()).ok_or_else(|| format!("{}: PR {} is not among the forge's open PRs", p.repo, p.pr))?;
+        for b in [p.branch.as_str(), forge_branch] {
+            git(dir, &["fetch", "--quiet", remote, b], Duration::from_secs(30))?;
+        }
+        p.head = git(dir, &["rev-parse", &format!("refs/remotes/{remote}/{}", p.branch)], Duration::from_secs(10))?;
+        p.base = git(dir, &["rev-parse", &format!("refs/remotes/{remote}/{forge_branch}")], Duration::from_secs(10))?;
+        Ok(())
+    }
+
+    /// The members of base..head from its land commits, a LANDED row's tip taken when it is in
+    /// the range (queue's `range_members`).
+    fn range_members(e: &Effects, dir: &std::path::Path, base: &str, head: &str) -> Result<Vec<queue::model::Member>, String> {
+        use queue::ports::Lc as _;
+        let range = if base.is_empty() { head.to_string() } else { format!("{base}..{head}") };
+        let commits = queue::publish_range::parse_log(&git(dir, &["log", "-z", "--format=%H%x1f%P%x1f%s", &range], Duration::from_secs(10))?);
+        let lc = queue::real::RealLc { bin: None, client: Some(super::super::queue_step::edge::lc(e)) };
+        let rows = lc.bead_rows(Some("LANDED"))?.into_iter().map(|r| (r.bead_id.clone(), r)).collect();
+        let ok = |args: &[&str]| git(dir, args, Duration::from_secs(10)).is_ok();
+        let in_range = |t: &str| queue::ident::check("tip", t).is_ok() && ok(&["cat-file", "-e", &format!("{t}^{{commit}}")]) && ok(&["merge-base", "--is-ancestor", t, head]) && (base.is_empty() || !ok(&["merge-base", "--is-ancestor", t, base]));
+        Ok(queue::publish_range::members(&commits, &rows, &in_range))
+    }
+
+    /// What a new record carries beyond the act's input: where it publishes and who is in it.
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    pub struct Fresh {
+        pub remote: String,
+        pub forge_branch: String,
+        pub members: Vec<queue::model::Member>,
+    }
+
+    /// The record written under `queue_dir/<repo>/publish`: whole when `p.record` is empty (a
+    /// new PR) or names an adoption, from `fresh`; else `p.record`'s fields set on the record
+    /// there, the rest kept.
+    pub fn write_record(queue_dir: &std::path::Path, p: &Pub, fresh: Option<&Fresh>, opened: u64) -> Result<(), String> {
+        let path = queue_dir.join(&p.repo).join("publish");
+        let rec = if p.record.is_empty() || p.record.contains_key("adopt") {
+            let f = fresh.ok_or_else(|| format!("{}: a new publish record needs its remote, forge branch and members", p.repo))?;
+            let mut rec = queue::records::Kv::default();
+            for (k, v) in [("pr", p.pr.to_string()), ("head", p.head.clone()), ("base", p.base.clone()), ("members", queue::model::render_members(&f.members)), ("opened", opened.to_string()), ("branch", p.branch.clone()), ("remote", f.remote.clone()), ("forge_branch", f.forge_branch.clone())] {
+                rec.push(k, &v);
+            }
+            rec
+        } else {
+            let mut rec = queue::records::read_kv(&path)?.unwrap_or_default();
             for (k, v) in &p.record {
-                match lines.iter_mut().find(|(f, _)| f == k) {
+                match rec.lines.iter_mut().find(|(f, _)| f == k) {
                     Some(l) => l.1 = v.clone(),
-                    None => lines.push((k.clone(), v.clone())),
+                    None => rec.push(k, v),
                 }
             }
-        }
-        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        let tmp = dir.join(".publish.tmp");
-        std::fs::write(&tmp, lines.iter().map(|(k, v)| format!("{k}={v}\n")).collect::<String>()).and_then(|_| std::fs::rename(&tmp, &path)).map_err(|e| format!("{}: {e}", path.display()))?;
-        Ok("{}".into())
+            rec
+        };
+        queue::records::write_atomic(&path, &rec.render())
     }
 
     pub fn notify(e: &Effects, k: &str, spec: &EffectSpec) -> Result<String, String> {
