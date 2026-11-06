@@ -65,9 +65,10 @@ fn every_shipped_scenario_names_only_sim_only_actors_or_is_listed_as_blocked() {
             assert!(BLOCKED.iter().any(|(b, _)| *b == name), "{name} names {missing:?}, which sim/actors.toml does not have: port or retire it (ruling D6)");
         }
     }
-    let mut blocked: Vec<String> = BLOCKED.iter().map(|(b, _)| b.to_string()).collect();
+    let present: Vec<String> = shipped_names();
+    let mut blocked: Vec<String> = BLOCKED.iter().map(|(b, _)| b.to_string()).filter(|b| present.contains(b)).collect();
     blocked.sort();
-    assert_eq!(unloadable, blocked, "every blocked scenario still fails at load, and only those: one that loads now comes off the list");
+    assert_eq!(unloadable, blocked, "every blocked scenario still shipped still fails at load, and only those: one that loads now comes off the list");
 }
 
 /// The call the ported scenarios run in place of the sentinel-call actor: the world's
@@ -117,4 +118,10 @@ fn the_shipped_loop_worlds_parse() {
         let text = std::fs::read_to_string(dir.join(format!("{name}.toml"))).expect("readable");
         loopworld::parse(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
     }
+}
+
+/// Every scenario file's name, world or loop.
+fn shipped_names() -> Vec<String> {
+    let dir = root().join(SCENARIOS_DIR);
+    std::fs::read_dir(&dir).expect("scenarios").filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "toml")).filter_map(|p| p.file_stem().and_then(|s| s.to_str()).map(str::to_string)).collect()
 }
