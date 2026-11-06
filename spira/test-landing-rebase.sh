@@ -232,10 +232,10 @@ is   "the merge-base moved to current main after recut" yes "$(on_base sp-recut2
 is   "the bead stays closed"                            closed "$(status_of sp-recut2)"
 # A BRANCH WIDE ENOUGH TO RACE EVERY LANDING IS TOLD TO SPLIT, NOT REBASE AGAIN.
 # sp-recut2 touches 2 files; with the threshold lowered to 1 the escalation must say so.
+# A send the mail library refused says why, as TAP comments: the pass's own mail lines.
+[ -n "$(delivered)" ] || printf '%s\n' "$out" | grep -i 'mail\|recut2' | sed 's/^/# /'
 want "and the escalation suggests decomposition, not another hand rebase" \
      "smaller beads" "$(delivered)"
-# A send the mail library refused says why, as TAP comments: the pass's own mail lines.
-[ -n "$(delivered)" ] || printf '%s\n' "$out" | grep -i 'mail' | sed 's/^/# /'
 drop_branch sp-recut2
 
 # A BRANCH A DWARF TOOK WHILE THE PASS RAN IS NEVER REWRITTEN.
