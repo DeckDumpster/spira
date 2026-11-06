@@ -47,8 +47,9 @@ START=$SECONDS
 out="$(sim_here "$RUN_LIMIT" run happy-path --seed "$SEED" --keep 2>&1)"; rc=$?
 echo "# sim run took $((SECONDS - START))s"
 printf '%s\n' "$out" | grep '^sim: profile' | cut -c1-300 | sed 's/^/# /'
-wantrc "sim run happy-path exits 0 (killed at ${RUN_LIMIT}s if it hangs: rc 124)" 0 "$rc"
+# Said before the assertion: the first failing case ends the suite, so a line after it never prints.
 [ "$rc" = 0 ] || printf '%s\n' "$out" | tail -6 | cut -c1-300 | sed 's/^/# run: /'
+wantrc "sim run happy-path exits 0 (killed at ${RUN_LIMIT}s if it hangs: rc 124)" 0 "$rc"
 is "sim run prints the seed first" "sim seed: $SEED" "$(printf '%s\n' "$out" | head -1)"
 want "sim run says ok for the seed" "sim: ok seed $SEED" "$out"
 
