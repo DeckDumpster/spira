@@ -13,6 +13,8 @@ tsd = { path = "../tsd" }
 forge = { path = "../forge" }
 runtime = { path = "../runtime" }
 store-view = { path = "../store-view" }
+incident = { path = "../incident" }
+serde = { version = "1", features = ["derive"] }
 
 [profile.release]
 opt-level = "z"

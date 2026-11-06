@@ -37,6 +37,15 @@ macro_rules! stubs {
 
 pub static TASKS: &[Task] = &[
     Task {
+        name: czar::NAME,
+        boot: czar::Czar::boot,
+        cadence_ms: |_| czar::CADENCE_MS,
+        effects: czar::EFFECTS,
+        runners: &[(czar::OBSERVE, |e, _, s| czar::observe(e, &s.input)), (czar::FILE_INCIDENT, |_, _, s| czar::file(&s.input)), (czar::FILE_BASE_RED, |_, _, s| czar::file(&s.input)), (czar::RERUN_WORKFLOW, |_, _, s| czar::rerun_workflow(&s.input)), (czar::RESTART_LANDING, |e, _, _| czar::restart_landing(e)), (czar::STATUS, |e, _, s| czar::status(e, &s.input))],
+        keys: &[czar::KEYS],
+        build: |_| czar::Czar::from_cfg().registration(),
+    },
+    Task {
         name: sentinel_call::NAME,
         boot: sentinel_call::SentinelCall::boot,
         cadence_ms: |_| 60_000,
@@ -200,15 +209,6 @@ pub static TASKS: &[Task] = &[
 
 /// Family A's rows, built from their contracts and waiting for their ports.
 pub static PENDING: &[Task] = &[
-    Task {
-        name: czar::NAME,
-        boot: czar::Czar::boot,
-        cadence_ms: |_| czar::CADENCE_MS,
-        effects: czar::EFFECTS,
-        runners: stubs!(czar: OBSERVE, FILE_INCIDENT, FILE_BASE_RED, RERUN_WORKFLOW, RESTART_LANDING, STATUS),
-        keys: &[czar::KEYS],
-        build: |_| czar::Czar::from_cfg().registration(),
-    },
     Task {
         name: sift::NAME,
         boot: sift::Sift::boot,
