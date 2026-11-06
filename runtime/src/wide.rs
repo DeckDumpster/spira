@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// An OTLP attribute value: a scalar or an array of one scalar type.
 #[derive(Clone, Debug, PartialEq)]
@@ -46,9 +47,9 @@ fn valid_key(k: &str) -> bool {
 }
 
 /// The record being built. Write-only to everything but the executor that opened it, so an
-/// annotation can never change behaviour.
-#[derive(Clone, Default)]
-pub struct Wide(Arc<Mutex<Fields>>);
+/// annotation can never change behaviour. An empty one allocates nothing.
+#[derive(Default)]
+pub struct Wide(Mutex<Fields>);
 
 impl Wide {
     pub fn set(&self, key: &str, value: impl Into<Value>) {
@@ -62,6 +63,23 @@ impl Wide {
 
     pub(crate) fn take(&self) -> Fields {
         std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
+    }
+
+    /// Every field of `other` over this record's, a rejected key appended to the list.
+    pub(crate) fn merge(&self, other: Fields) {
+        let mut f = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        for (k, v) in other {
+            match (k.as_str(), v, f.get_mut(REJECTED_KEYS)) {
+                (REJECTED_KEYS, Value::Strs(more), Some(Value::Strs(had))) => had.extend(more),
+                (_, v, _) => {
+                    f.insert(k, v);
+                }
+            }
+        }
     }
 }
 
@@ -92,6 +110,30 @@ impl MemSink {
 impl WideSink for MemSink {
     fn emit(&self, fields: &Fields) {
         self.0.lock().unwrap_or_else(|e| e.into_inner()).push(fields.clone());
+    }
+}
+
+/// [`rss_kb`] read at most once per turn: `reset` starts a turn, and the first `get` of it reads.
+#[derive(Default)]
+pub struct TurnRss(AtomicU64);
+
+impl TurnRss {
+    const UNREAD: u64 = 0;
+
+    pub fn reset(&self) {
+        self.0.store(Self::UNREAD, Ordering::Relaxed);
+    }
+
+    /// The turn's reading, stored one above its value so 0 can mean unread.
+    pub fn get(&self) -> u64 {
+        match self.0.load(Ordering::Relaxed) {
+            Self::UNREAD => {
+                let kb = rss_kb();
+                self.0.store(kb.saturating_add(1), Ordering::Relaxed);
+                kb
+            }
+            stored => stored - 1,
+        }
     }
 }
 

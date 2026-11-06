@@ -617,6 +617,84 @@ pub fn a_handlers_writes_are_seen_before_its_streams_next_event(rig: &dyn Rig) {
     assert_eq!(trace(&*k), first, "replaying the whole journal adds nothing");
 }
 
+/// On `ask`, one write and one probe. Every outcome it is offered becomes `heard`, whose body
+/// names the hearer and the outcome's body (`<requester>:<effect>`).
+struct Asker(&'static str, bool);
+impl Handler for Asker {
+    fn interests(&self) -> &[EventKindTag] {
+        &["ask", EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
+    }
+    fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+        if ev.kind.tag == "ask" {
+            let spec = |name: &str| EffectSpec { name: name.into(), input: self.0.into(), deadline_ms: 1000 };
+            return vec![Command::Effect(spec("write")), Command::Probe(spec("read"))];
+        }
+        vec![Command::Emit(EventKind::new("heard", &format!("{}<-{}", self.0, ev.kind.body)))]
+    }
+    fn watches_foreign_outcomes(&self) -> bool {
+        self.1
+    }
+}
+
+fn askers() -> Vec<Registration> {
+    vec![Registration::new("asker", Asker("asker", false)), Registration::new("other", Asker("other", false)), Registration::new("watcher", Asker("watcher", true))]
+}
+
+fn heard(j: &dyn Journal) -> Vec<String> {
+    let mut h: Vec<String> = trace(j).into_iter().filter(|t| t.2 == "heard").map(|t| t.3).collect();
+    h.sort();
+    h
+}
+
+/// Answer every waiting effect (`only`: those named so) with `<requester>:<effect>`.
+fn answer(x: &mut dyn Executor, only: Option<&str>) {
+    for p in x.pending_effects().into_iter().filter(|p| only.is_none_or(|n| p.spec.name == n)) {
+        x.complete(&p.key, Outcome::Succeeded(format!("{}:{}", p.spec.input, p.spec.name))).unwrap();
+    }
+    x.run_until_idle().unwrap();
+}
+
+/// An effect's outcome, journaled or memory-only, is offered to the task that asked for it and
+/// to no other task listening on its stream, except one that opts in to every outcome. The
+/// routing holds after a restart between the request and its outcome, and on a full replay.
+pub fn an_outcome_is_offered_only_to_the_task_that_asked(rig: &dyn Rig) {
+    let (j, clock) = (rig.journal(), VirtualClock::new(0));
+    let mut x = rig.boot(j.clone(), &clock, 1, askers()).unwrap();
+    x.submit("a1", "s", EventKind::new("ask", "")).unwrap();
+    x.run_until_idle().unwrap();
+    assert_eq!(x.pending_effects().len(), 6, "each task's write and probe wait");
+    answer(&mut *x, None);
+    let mut want: Vec<String> = vec![];
+    for asker in ["asker", "other", "watcher"] {
+        for effect in ["read", "write"] {
+            want.push(format!("watcher<-{asker}:{effect}"));
+            if asker != "watcher" {
+                want.push(format!("{asker}<-{asker}:{effect}"));
+            }
+        }
+    }
+    want.sort();
+    assert_eq!(heard(&*j), want, "each outcome reaches its requester, and the watcher hears them all");
+    let first = trace(&*j);
+    drop(x);
+
+    let k = rig.journal();
+    let mut x = rig.boot(k.clone(), &clock, 1, askers()).unwrap();
+    x.submit("a1", "s", EventKind::new("ask", "")).unwrap();
+    x.run_until_idle().unwrap();
+    drop(x);
+    let mut y = rig.boot(k.clone(), &clock, 1, askers()).unwrap();
+    answer(&mut *y, Some("write"));
+    let writes: Vec<String> = want.iter().filter(|w| w.ends_with(":write")).cloned().collect();
+    assert_eq!(heard(&*k), writes, "after a restart the journaled request still names the task that asked");
+    drop(y);
+
+    j.set_cursor(0).unwrap();
+    let mut z = rig.boot(j.clone(), &clock, 1, askers()).unwrap();
+    z.run_until_idle().unwrap();
+    assert_eq!(trace(&*j), first, "replaying the whole journal adds nothing");
+}
+
 pub fn run_all(rig: &dyn Rig) {
     redelivery_of_any_event(rig);
     crash_between_append_and_dispatch(rig);
@@ -632,4 +710,5 @@ pub fn run_all(rig: &dyn Rig) {
     emit_to_wakes_another_stream_once_across_a_crash(rig);
     emit_to_is_shadowed_under_observe_and_runs_under_halt(rig);
     a_handlers_writes_are_seen_before_its_streams_next_event(rig);
+    an_outcome_is_offered_only_to_the_task_that_asked(rig);
 }

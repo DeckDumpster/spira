@@ -15,7 +15,7 @@ use crate::marker::{Mark, Marker, NullMarker};
 use crate::offload::Busy;
 use crate::ports::Clock;
 use crate::scheduler::Scheduler;
-use crate::wide::{rss_kb, Fields, NullSink, Value, Wide, WideSink};
+use crate::wide::{Fields, NullSink, TurnRss, Value, Wide, WideSink};
 use crate::{Result, RuntimeError};
 
 const BATCH: usize = 256;
@@ -68,6 +68,13 @@ pub struct PendingEffect {
 struct RequestBody {
     spec: EffectSpec,
     deadline_at: u64,
+    /// The task that asked: the one handler its outcome is offered to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    task: Option<String>,
+}
+
+fn is_outcome(tag: &str) -> bool {
+    matches!(tag, EFFECT_SUCCEEDED | EFFECT_FAILED | EFFECT_TIMED_OUT)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -207,6 +214,9 @@ pub struct Engine {
     written: Vec<(Event, bool)>,
     /// On a replay, what each event still to be dispatched had written on its stream before.
     rewritten: BTreeMap<EventId, Vec<Event>>,
+    /// The task that requested each effect not yet answered, as far as this run has seen.
+    requesters: BTreeMap<String, String>,
+    rss: TurnRss,
 }
 
 fn mix(seed: u64, parts: &[&str]) -> u64 {
@@ -270,6 +280,8 @@ impl Engine {
             early: BTreeSet::new(),
             written: vec![],
             rewritten: BTreeMap::new(),
+            requesters: BTreeMap::new(),
+            rss: TurnRss::default(),
         };
         let cursor = e.journal.cursor()?;
         e.cursor = cursor;
@@ -413,7 +425,7 @@ impl Engine {
         for (k, v) in &self.baseline {
             w.set(k, v.clone());
         }
-        w.set("process.rss_kb", rss_kb());
+        w.set("process.rss_kb", self.rss.get());
         w.set("process.uptime_ms", self.started.elapsed().as_millis() as u64);
         if let Some(e) = ev {
             w.set("event.id", e.id.0.as_str());
@@ -491,9 +503,10 @@ impl Engine {
         }
         let b: HeldBody = serde_json::from_str(&held.kind.body).map_err(|e| RuntimeError::new(format!("bad held effect {}: {e}", held.id.0)))?;
         let deadline_at = at.saturating_add(b.spec.deadline_ms);
-        let body = serde_json::to_string(&RequestBody { spec: b.spec, deadline_at }).map_err(|e| RuntimeError::new(e.to_string()))?;
+        let body = serde_json::to_string(&RequestBody { spec: b.spec, deadline_at, task: Some(b.task.clone()) }).map_err(|e| RuntimeError::new(e.to_string()))?;
         let task = b.task;
         let req = self.append_derived(derive_id(format!("{}/released", held.id.0)), &b.stream, EventKind::new(EFFECT_REQUESTED, &body), held, at)?;
+        self.requesters.insert(req.id.0.clone(), task.clone());
         self.owners.insert(req.id.0.clone(), task);
         self.track_effect(&req)?;
         self.journal.mark_applied(RELEASE, &held.id)?;
@@ -592,11 +605,12 @@ impl Engine {
                 }
                 Command::Effect(spec) => {
                     let deadline_at = ev.at.saturating_add(spec.deadline_ms);
-                    let body = serde_json::to_string(&RequestBody { spec, deadline_at }).map_err(|e| RuntimeError::new(e.to_string()))?;
+                    let body = serde_json::to_string(&RequestBody { spec, deadline_at, task: Some(handler.into()) }).map_err(|e| RuntimeError::new(e.to_string()))?;
                     let tag = if mode == Mode::Act { EFFECT_REQUESTED } else { EFFECT_SHADOWED };
                     let req = self.append_derived(id, &ev.stream, EventKind::new(tag, &body), ev, ev.at)?;
                     if mode == Mode::Act {
                         self.owners.insert(req.id.0.clone(), handler.into());
+                        self.requesters.insert(req.id.0.clone(), handler.into());
                     }
                     self.track_effect(&req)?;
                     self.wrote(own, req, false);
@@ -614,11 +628,12 @@ impl Engine {
                 }
                 Command::Probe(spec) => {
                     let deadline_at = ev.at.saturating_add(spec.deadline_ms);
-                    let body = serde_json::to_string(&RequestBody { spec, deadline_at }).map_err(|e| RuntimeError::new(e.to_string()))?;
+                    let body = serde_json::to_string(&RequestBody { spec, deadline_at, task: Some(handler.into()) }).map_err(|e| RuntimeError::new(e.to_string()))?;
                     let req = self.local_event(&ev.stream, EventKind::new(EFFECT_REQUESTED, &body), ev.at, Some(ev));
                     self.projection.push_local(&req, LOCAL_KEEP, |id| self.pending.contains_key(&id.0) || self.local.iter().any(|q| q.cause.as_ref() == Some(id)));
                     self.memory_only.insert(req.id.0.clone());
                     self.owners.insert(req.id.0.clone(), handler.into());
+                    self.requesters.insert(req.id.0.clone(), handler.into());
                     self.track_effect(&req)?;
                 }
                 Command::Timer { at, kind } => {
@@ -745,41 +760,77 @@ impl Engine {
         Ok((past.split_off(skip), ahead))
     }
 
+    /// The task that requested the effect `ev` is the outcome of, when it is one and the
+    /// request named its task.
+    fn requester(&mut self, ev: &Event) -> Option<String> {
+        if !is_outcome(&ev.kind.tag) {
+            return None;
+        }
+        let cause = ev.cause.as_ref()?;
+        if let Some(t) = self.requesters.remove(&cause.0) {
+            return Some(t);
+        }
+        let req = self.projection.events(&ev.stream).iter().rev().find(|e| &e.id == cause && e.kind.tag == EFFECT_REQUESTED)?;
+        serde_json::from_str::<RequestBody>(&req.kind.body).ok()?.task
+    }
+
+    /// Offer `ev` to every handler interested in it, an outcome only to the task that asked
+    /// for it (and those that watch every outcome).
     fn offer(&mut self, ev: &Event, at: Option<(Offset, Offset)>) -> Result<()> {
-        for i in 0..self.regs.len() {
-            let (name, mode) = (self.regs[i].name.clone(), self.regs[i].mode);
-            if !self.regs[i].handler.interests().contains(&ev.kind.tag.as_str()) || (at.is_some_and(|(off, _)| off < self.check_applied_below) && self.journal.applied(&name, &ev.id)?) {
+        let regs = std::mem::take(&mut self.regs);
+        let r = self.offer_to(&regs, ev, at);
+        self.regs = regs;
+        r
+    }
+
+    fn offer_to(&mut self, regs: &[Registration], ev: &Event, at: Option<(Offset, Offset)>) -> Result<()> {
+        let requester = self.requester(ev);
+        for reg in regs {
+            let (name, mode, handler) = (reg.name.as_str(), reg.mode, &reg.handler);
+            if !handler.interests().contains(&ev.kind.tag.as_str()) {
                 continue;
             }
-            let key = (ev.id.clone(), name.clone());
-            let stalls = self.suspects.get(&key).copied().unwrap_or(0);
-            let wide = self.unit("dispatch", Some(ev), at);
-            wide.set("handler", name.as_str());
-            wide.set("task.mode", mode.as_str());
+            if requester.as_deref().is_some_and(|r| r != name) && !handler.watches_foreign_outcomes() {
+                continue;
+            }
+            if at.is_some_and(|(off, _)| off < self.check_applied_below) && self.journal.applied(name, &ev.id)? {
+                continue;
+            }
+            let stalls = if self.suspects.is_empty() { 0 } else { self.suspects.get(&(ev.id.clone(), name.to_string())).copied().unwrap_or(0) };
             if stalls >= self.stall_limit {
                 let message = format!("stalled {stalls} times in {name}");
-                self.quarantine(ev, &name, &message)?;
-                wide.set("stall.count", stalls);
+                self.quarantine(ev, name, &message)?;
+                let wide = self.dispatch_unit(ev, at, name, mode, stalls);
                 wide.set("outcome", "quarantined");
                 self.finish(&wide);
                 return Ok(());
             }
-            if stalls > 0 {
-                wide.set("stall.count", stalls);
-            }
-            self.marker.set(&Mark { event: ev.id.clone(), handler: name.clone(), stream: ev.stream.clone(), stalls })?;
+            self.marker.set(&Mark { event: ev.id.clone(), handler: name.to_string(), stream: ev.stream.clone(), stalls })?;
             let now = self.clock.now_ms();
-            let track = self.tracks.entry(name.clone()).or_default();
-            (track.fired_at, track.due_at) = (Some(now), Some(ev.at));
+            match self.tracks.get_mut(name) {
+                Some(t) => (t.fired_at, t.due_at) = (Some(now), Some(ev.at)),
+                None => {
+                    self.tracks.insert(name.to_string(), Track { fired_at: Some(now), due_at: Some(ev.at), ..Track::default() });
+                }
+            }
             self.busy.enter();
-            let ctx = Ctx::with(ev.at, mix(self.seed, &[&ev.id.0, &name]), at.map_or(0, |(off, _)| off), wide.clone());
+            let ctx = Ctx::with(ev.at, mix(self.seed, &[&ev.id.0, name]), at.map_or(0, |(off, _)| off), Wide::default());
             let began = Instant::now();
-            let handler = &self.regs[i].handler;
             let view = &self.projection;
             let called = catch_unwind(AssertUnwindSafe(|| handler.handle(&ctx, view, ev)));
             self.busy.exit();
             self.marker.clear()?;
-            wide.set("duration_us", began.elapsed().as_micros() as u64);
+            let elapsed = began.elapsed();
+            let set = ctx.into_event();
+            if stalls == 0 && set.is_empty() && matches!(&called, Ok(c) if c.is_empty()) {
+                if at.is_some() {
+                    self.journal.mark_applied(name, &ev.id)?;
+                }
+                continue;
+            }
+            let wide = self.dispatch_unit(ev, at, name, mode, stalls);
+            wide.merge(set.take());
+            wide.set("duration_us", elapsed.as_micros() as u64);
             match called {
                 Ok(cmds) => {
                     let count = |f: fn(&Command) -> bool| cmds.iter().filter(|c| f(c)).count();
@@ -787,30 +838,43 @@ impl Engine {
                     wide.set("commands.emit_to", count(|c| matches!(c, Command::EmitTo { .. })));
                     wide.set("commands.effect", count(|c| matches!(c, Command::Effect(_))));
                     wide.set("commands.schedule", count(|c| matches!(c, Command::Schedule { .. })));
-                    let done = self.apply(cmds, ev, &name, mode).and_then(|()| if at.is_some() { self.journal.mark_applied(&name, &ev.id) } else { Ok(()) });
+                    let done = self.apply(cmds, ev, name, mode).and_then(|()| if at.is_some() { self.journal.mark_applied(name, &ev.id) } else { Ok(()) });
                     if matches!(&done, Err(e) if e.is_refused()) {
                         let message = done.unwrap_err().0;
                         wide.set("outcome", "refused");
                         self.finish(&wide);
-                        self.quarantine(ev, &name, &message)?;
+                        self.quarantine(ev, name, &message)?;
                         return Ok(());
                     }
                     wide.set("outcome", if done.is_ok() { "ok" } else { "error" });
                     self.finish(&wide);
                     done?;
-                    self.suspects.remove(&key);
+                    if stalls > 0 {
+                        self.suspects.remove(&(ev.id.clone(), name.to_string()));
+                    }
                 }
                 Err(p) => {
                     let message = panic_message(&*p);
                     wide.set("outcome", "panic");
                     wide.set("panic.message", message.as_str());
                     self.finish(&wide);
-                    self.quarantine(ev, &name, &message)?;
+                    self.quarantine(ev, name, &message)?;
                     return Ok(());
                 }
             }
         }
         Ok(())
+    }
+
+    /// The wide event of one handler call that did something.
+    fn dispatch_unit(&self, ev: &Event, at: Option<(Offset, Offset)>, name: &str, mode: Mode, stalls: u32) -> Wide {
+        let wide = self.unit("dispatch", Some(ev), at);
+        wide.set("handler", name);
+        wide.set("task.mode", mode.as_str());
+        if stalls > 0 {
+            wide.set("stall.count", stalls);
+        }
+        wide
     }
 
     fn is_poisoned(&mut self, stream: &StreamKey) -> Result<bool> {
@@ -964,6 +1028,7 @@ impl Executor for Engine {
     }
 
     fn run_until_idle(&mut self) -> Result<()> {
+        self.rss.reset();
         let run = (|| loop {
             let fired = self.tick()?;
             let dispatched = self.pump()?;

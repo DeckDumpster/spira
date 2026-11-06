@@ -150,6 +150,10 @@ impl Ctx {
         &self.wide
     }
 
+    pub(crate) fn into_event(self) -> Wide {
+        self.wide
+    }
+
     pub fn now(&self) -> u64 {
         self.now
     }
@@ -229,6 +233,12 @@ impl Projection {
 pub trait Handler: Send + Sync {
     fn interests(&self) -> &[EventKindTag];
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command>;
+
+    /// An effect's outcome is offered to the handler that requested it and to no other, unless
+    /// this says `true`: then every outcome it is interested in is offered to it, whoever asked.
+    fn watches_foreign_outcomes(&self) -> bool {
+        false
+    }
 }
 
 /// `Observe` runs a task's probes and records its writes as `effect.shadowed` without running

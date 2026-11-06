@@ -275,8 +275,36 @@ pub struct Slot {
 
 /// One slot per `certify_par`, each single-flight.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "WrittenCarry", into = "WrittenCarry")]
 pub struct Carry {
     pub slots: Vec<Slot>,
+}
+
+/// A carry as it is written (its state event, the observe's input, read back on every outcome):
+/// the slots up to the last one in use, and how many slots there are. A wide pool of idle slots
+/// is then a number, not one record each to write and parse.
+#[derive(Serialize, Deserialize)]
+struct WrittenCarry {
+    slots: Vec<Slot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    width: Option<usize>,
+}
+
+impl From<Carry> for WrittenCarry {
+    fn from(c: Carry) -> Self {
+        let width = c.slots.len();
+        let mut slots = c.slots;
+        slots.truncate(slots.iter().rposition(|s| *s != Slot::default()).map_or(0, |i| i + 1));
+        WrittenCarry { width: (slots.len() < width).then_some(width), slots }
+    }
+}
+
+impl From<WrittenCarry> for Carry {
+    fn from(w: WrittenCarry) -> Self {
+        let mut slots = w.slots;
+        slots.resize(slots.len().max(w.width.unwrap_or(0)), Slot::default());
+        Carry { slots }
+    }
 }
 
 fn word(state: State) -> String {
