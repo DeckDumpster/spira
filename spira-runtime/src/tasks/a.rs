@@ -37,6 +37,44 @@ macro_rules! stubs {
 
 pub static TASKS: &[Task] = &[
     Task {
+        name: sentinel_call::NAME,
+        boot: sentinel_call::SentinelCall::boot,
+        cadence_ms: |_| 60_000,
+        effects: sentinel_call::EFFECTS,
+        runners: &[(sentinel_call::OBSERVE, |e, _, s| sentinel_call::observe(e, &s.input)), (sentinel_call::UNIT_START, |e, _, s| sentinel_call::unit_start(e, s)), (sentinel_call::PREEMPT, |e, _, s| sentinel_call::preempt(e, &s.input)), (sentinel_call::PREEMPT_LOG, |e, _, s| sentinel_call::preempt_log(e, &s.input)), (sentinel_call::METRIC, |e, _, s| sentinel_call::metric(e, &s.input))],
+        keys: &[sentinel_call::KEYS],
+        build: |_| sentinel_call::SentinelCall::from_cfg().registration(),
+    },
+    Task {
+        name: sentinel_pass::NAME,
+        boot: sentinel_pass::SentinelPass::boot,
+        cadence_ms: |_| sentinel_pass::CADENCE_MS,
+        effects: sentinel_pass::EFFECTS,
+        runners: &[
+            (sentinel_pass::OBSERVE, |e, _, s| sentinel_pass::observe(e, &s.input)),
+            (sentinel_pass::LC_EVENT, |e, _, s| sentinel_pass::lc_event(e, s)),
+            (sentinel_pass::LC_HOLD, |e, _, s| sentinel_pass::lc_hold(e, s)),
+            (sentinel_pass::LC_UNHOLD, |e, _, s| sentinel_pass::lc_unhold(e, s)),
+            (sentinel_pass::LC_FACT, |e, _, s| sentinel_pass::lc_fact(e, s)),
+            (sentinel_pass::LC_CLOSE, |e, _, s| sentinel_pass::lc_close(e, s)),
+            (sentinel_pass::CONTENT_LABEL, |_, _, s| sentinel_pass::unserved(s)),
+            (sentinel_pass::CONTENT_NOTE, |e, _, s| sentinel_pass::content_note(e, s)),
+            (sentinel_pass::CONTENT_CLOSE, |_, _, s| sentinel_pass::unserved(s)),
+            (sentinel_pass::RECOMPUTE_BLOCKED, |_, _, s| sentinel_pass::unserved(s)),
+            (sentinel_pass::STOP_HOLDER, |e, _, s| sentinel_pass::stop_holder(e, s)),
+            (sentinel_pass::LANDING_START, |e, _, s| sentinel_pass::landing_start(e, s)),
+            (sentinel_pass::WATCHTOWER, |_, _, s| sentinel_pass::not_ported(s)),
+            (sentinel_pass::STRAND, |_, _, s| sentinel_pass::not_ported(s)),
+            (sentinel_pass::PILGRIMAGE_CLOSE, |_, _, s| sentinel_pass::not_ported(s)),
+            (sentinel_pass::ASK, |_, _, s| sentinel_pass::not_ported(s)),
+            (sentinel_pass::INCIDENT_EVENT, |_, _, s| sentinel_pass::not_ported(s)),
+            (sentinel_pass::REFLECT, |_, _, s| sentinel_pass::not_ported(s)),
+            (sentinel_pass::PHASE_METRIC, |e, _, s| sentinel_pass::phase_metric(e, &s.input)),
+        ],
+        keys: &[sentinel_pass::KEYS],
+        build: |_| sentinel_pass::SentinelPass::from_cfg().registration(),
+    },
+    Task {
         name: sweep_target::NAME,
         boot: sweep_target::SweepTarget::boot,
         cadence_ms: |_| sweep_target::CADENCE_MS,
@@ -162,24 +200,6 @@ pub static TASKS: &[Task] = &[
 
 /// Family A's rows, built from their contracts and waiting for their ports.
 pub static PENDING: &[Task] = &[
-    Task {
-        name: sentinel_call::NAME,
-        boot: sentinel_call::SentinelCall::boot,
-        cadence_ms: |_| 60_000,
-        effects: sentinel_call::EFFECTS,
-        runners: stubs!(sentinel_call: OBSERVE, UNIT_START, PREEMPT, PREEMPT_LOG, METRIC),
-        keys: &[sentinel_call::KEYS],
-        build: |_| sentinel_call::SentinelCall::from_cfg().registration(),
-    },
-    Task {
-        name: sentinel_pass::NAME,
-        boot: sentinel_pass::SentinelPass::boot,
-        cadence_ms: |_| sentinel_pass::CADENCE_MS,
-        effects: sentinel_pass::EFFECTS,
-        runners: stubs!(sentinel_pass: OBSERVE, LC_EVENT, LC_HOLD, LC_UNHOLD, LC_FACT, LC_CLOSE, CONTENT_LABEL, CONTENT_NOTE, CONTENT_CLOSE, RECOMPUTE_BLOCKED, STOP_HOLDER, LANDING_START, WATCHTOWER, STRAND, PILGRIMAGE_CLOSE, ASK, INCIDENT_EVENT, REFLECT, PHASE_METRIC),
-        keys: &[sentinel_pass::KEYS],
-        build: |_| sentinel_pass::SentinelPass::from_cfg().registration(),
-    },
     Task {
         name: czar::NAME,
         boot: czar::Czar::boot,

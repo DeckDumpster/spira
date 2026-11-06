@@ -28,6 +28,8 @@ queue = { path = "../queue" }
 reconciler = { path = "../reconciler" }
 reconciler-engine = { path = "../reconciler-engine" }
 reconciler-flow = { path = "../reconciler-flow" }
+# Family A's loop core (sentinel, czar, sift): the crates its tasks call as libraries.
+sentinel = { path = "../sentinel" }
 runtime = { path = "../runtime" }
 unit-run = { path = "../unit-run" }
 spira-config = { path = "../spira-config" }

@@ -9,22 +9,7 @@ use crate::host::{Io, Spec};
 use crate::pass::{self, Sentinel};
 
 
-pub fn parse_cache(text: &str) -> Vec<(String, usize)> {
-    text.lines()
-        .filter_map(|l| {
-            let mut it = l.split_whitespace();
-            Some((it.next()?.to_string(), it.next()?.parse().ok()?))
-        })
-        .collect()
-}
-
-pub fn render_cache(counts: &[(String, usize)]) -> String {
-    counts.iter().fold(String::new(), |mut s, (f, n)| {
-        use std::fmt::Write;
-        let _ = writeln!(s, "{f} {n}");
-        s
-    })
-}
+pub use sentinel::plan::{check7_pool_decision, ck7_fill_cap, ck7_pool, ck7_throttled, lane_rotate, parse_cache, render_cache};
 
 /// One row of `spira-claim urgent`: a P0 or REWORK bead. Only `p0` or `express` hold the lanes.
 struct Urgent {
@@ -118,57 +103,6 @@ enum ReadyAnswer {
     Count(i64),
     NoRune,
     Failed(String),
-}
-
-/// check7_pool_decision <throttled> <free> <express-ready> -> the task pool CHECK 7 grants
-/// this pass (lib.sh:474). An express grant sets the pool to EXACTLY 1, never whatever
-/// `free` already held (sp-zcvh1's own fix).
-pub fn check7_pool_decision(throttled: bool, free: i64, express_ready: bool) -> i64 {
-    if throttled {
-        i64::from(express_ready)
-    } else {
-        free
-    }
-}
-
-/// lane_rotate <last> <lanes> -> this pass's lane evaluation order (lib.sh:489): `last`
-/// (and everything before it) rotates to the end, so the lane that won last pass draws
-/// last this pass and the collective cap cannot be monopolised by whichever lane happens
-/// to sort first. `last` absent from `lanes` (or empty) leaves the order unchanged.
-pub fn lane_rotate(last: &str, lanes: &[String]) -> Vec<String> {
-    if last.is_empty() || lanes.is_empty() {
-        return lanes.to_vec();
-    }
-    match lanes.iter().position(|l| l == last) {
-        Some(i) => lanes[i + 1..].iter().chain(lanes[..=i].iter()).cloned().collect(),
-        None => lanes.to_vec(),
-    }
-}
-
-/// ck7_pool <max-dwarves> <task-live> -> the task pool's starting size, floored at 0
-/// (lib.sh:517). `None` when no pool is configured — every persona's own concurrency cap
-/// applies unchanged, exactly as before this pool existed.
-pub fn ck7_pool(max_dwarves: Option<i64>, task_live: i64) -> Option<i64> {
-    max_dwarves.map(|m| (m - task_live).max(0))
-}
-
-/// ck7_throttled <stamp-exists> <override> -> true when the admission throttle stamp holds
-/// the task pool at 0 this pass (lib.sh:526). `SPIRA_QUEUE_THROTTLE_OVERRIDE=off` pins the
-/// pass unthrottled regardless of the stamp.
-pub fn ck7_throttled(stamp_exists: bool, override_: &str) -> bool {
-    stamp_exists && override_ != "off"
-}
-
-/// ck7_fill_cap <fill> <pool> <max-live-dwarves> -> true ("stop") once the pool (if bounded)
-/// is spent or `fill` has reached the per-persona-per-pass cap (lib.sh:536, default 4 —
-/// the caller resolves `SPIRA_MAX_LIVE_DWARVES` with that default before calling this).
-pub fn ck7_fill_cap(fill: i64, pool: Option<i64>, max_live_dwarves: i64) -> bool {
-    if let Some(p) = pool {
-        if p <= 0 {
-            return true;
-        }
-    }
-    fill >= max_live_dwarves
 }
 
 /// `command -v <name>` strictly: `None` when nothing executable is found, never a bare-name
@@ -692,10 +626,9 @@ impl<'a> Sentinel<'a> {
         args.push("--home".into());
         args.push(self.cfg.home.to_string_lossy().into_owned());
         args.push(f.to_string());
-        // FORK-EDGE: needs UnitSpec properties (TimeoutStartSec, IOSchedulingClass, IOWeight,
-        // ExecStopPost) and an installed unit name (`spira-dwarf-<rune>-<now>`, which unit_name's
-        // `spira-run-` prefix cannot carry). The ExecStopPost re-exec `sentinel --call-only` is a
-        // state the sentinel-call task will own (`unit.ran` of the dwarf unit).
+        // FORK-EDGE: the CLI's own call (`--call`, `--call-only`, the full pass). The machine leg
+        // is the scheduler's `sentinel-call` task (`unit.start` under the naming rule, finished by
+        // its `unit.ran`); this path stays for `dwarf --escape` and the suites until they retire.
         let o = self.h.run(
             Spec::args_owned(self.cfg.call.clone(), args)
                 .out(Io::Inherit)
