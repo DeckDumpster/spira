@@ -18,7 +18,16 @@ use crate::sop_run::{self, Verdict};
 
 /// How many actionable lines of one watcher go into an ask — the evidence is read in a
 /// pane, so a three-hundred-line backlog would bury the decision it is evidence for.
-const NOTIFY_MAX: usize = 12;
+pub const NOTIFY_MAX: usize = 12;
+
+/// The backlog ask (`escalate`): subject, default and why, as mailed.
+pub const BACKLOG_SUBJECT: &str = "Events a watcher produced have reached no reader";
+pub const BACKLOG_DEFAULT: &str = "read them below and act on them here — nothing has been marked read, so the next session to latch still gets them; if a line of this kind is never worth waking anyone for, narrow SPIRA_ACTIONABLE rather than lengthening SPIRA_NOTIFY_AGE";
+pub const BACKLOG_WHY: &str = "delivery of a watcher's events otherwise depends on a session existing to drain them, and a session hook fires at a session boundary — so an event produced while nothing is running waits for the next session to open, which for a headless agent never comes. Nothing else will surface these.";
+/// The health ask (`notify_health`): subject, default and why, as mailed.
+pub const HEALTH_SUBJECT: &str = "A watcher has stopped producing events";
+pub const HEALTH_DEFAULT: &str = "restart it with `watchd restart <name>`, then read the last line above. A unit that restarts without ever becoming active is usually a second copy started by hand holding its lock — retiring that copy is the fix, and `Restart=always` respawns on a clean exit too, so the loop never ends on its own. If the watcher is meant to be stopped, take its row out of the manifest instead of leaving a unit systemd will respawn forever.";
+pub const HEALTH_WHY: &str = "a watcher that is not running produces no events, and a watcher producing no events is indistinguishable from one with nothing to say. Nothing else escalates this: the other half of `notify` reports events that WERE produced, so the failure that stops production is exactly the one it cannot see.";
 
 /// FNV-1a 64-bit, hex-encoded — a stable, dependency-free fingerprint for the escalation
 /// dedupe stamps (`_wd_ask`'s `cksum`, which is not reproduced bit-for-bit here because
@@ -64,9 +73,9 @@ fn escalate(ops: &dyn Ops, run: &str, key: &str, report: &str) -> Result<bool, S
         run,
         "notify.escalated",
         key,
-        "Events a watcher produced have reached no reader",
-        "read them below and act on them here — nothing has been marked read, so the next session to latch still gets them; if a line of this kind is never worth waking anyone for, narrow SPIRA_ACTIONABLE rather than lengthening SPIRA_NOTIFY_AGE",
-        "delivery of a watcher's events otherwise depends on a session existing to drain them, and a session hook fires at a session boundary — so an event produced while nothing is running waits for the next session to open, which for a headless agent never comes. Nothing else will surface these.",
+        BACKLOG_SUBJECT,
+        BACKLOG_DEFAULT,
+        BACKLOG_WHY,
         report,
     )
 }
@@ -307,9 +316,9 @@ fn notify_health(rows: &[Row], ops: &dyn Ops, ctx: &Context) -> Result<NotifyOut
         &ctx.run,
         "notify-health.escalated",
         &key,
-        "A watcher has stopped producing events",
-        "restart it with `watchd restart <name>`, then read the last line above. A unit that restarts without ever becoming active is usually a second copy started by hand holding its lock — retiring that copy is the fix, and `Restart=always` respawns on a clean exit too, so the loop never ends on its own. If the watcher is meant to be stopped, take its row out of the manifest instead of leaving a unit systemd will respawn forever.",
-        "a watcher that is not running produces no events, and a watcher producing no events is indistinguishable from one with nothing to say. Nothing else escalates this: the other half of `notify` reports events that WERE produced, so the failure that stops production is exactly the one it cannot see.",
+        HEALTH_SUBJECT,
+        HEALTH_DEFAULT,
+        HEALTH_WHY,
         &report,
     )?;
     Ok(NotifyOutcome { report, code: 1 })

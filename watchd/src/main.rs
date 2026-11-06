@@ -1,23 +1,7 @@
 //! `watchd` — the watcher manifest, and the face over the logs and cursors systemd fills.
 //! See `DESIGN.md` for the contract. Replaces `spira/watchd.sh` (sp-48f6g).
 
-mod commands;
-mod context;
-mod cursor;
-mod filter;
-mod fs_ops;
-mod health;
-mod iso8601;
-mod lock;
-mod manifest;
-mod next;
-mod notify;
-mod ops;
-mod paths;
-mod send;
-mod rows;
-mod sop_run;
-mod tail;
+use watchd::{commands, context, filter, manifest, next, notify, ops, tail};
 
 use manifest::Row;
 use ops::Real;

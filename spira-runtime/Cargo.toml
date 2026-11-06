@@ -50,6 +50,7 @@ hel = { path = "../hel" }
 reclaim = { path = "../reclaim" }
 round-vm = { path = "../round-vm" }
 testenv = { path = "../testenv" }
+watchd = { path = "../watchd" }
 # Family A's gate, landing, reap and provision tasks: their libraries.
 gate-check = { path = "../gate-check" }
 bead = { path = "../bead" }

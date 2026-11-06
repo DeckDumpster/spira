@@ -207,6 +207,7 @@ dependencies = [
 name = "cert-sweep"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "serde_json",
  "spira-config",
  "spira-otel",
@@ -310,8 +311,10 @@ name = "czar-pass"
 version = "1.0.0"
 dependencies = [
  "forge",
+ "incident",
  "reconciler-engine",
  "runtime",
+ "serde",
  "serde_json",
  "spira-config",
  "spira-otel",
@@ -832,6 +835,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "inotify"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cc00ea907cab49550b7da656f80ebb97be1b997d931fbcd28d39734e17ce592"
+dependencies = [
+ "bitflags",
+ "inotify-sys",
+ "libc",
+]
+
+[[package]]
+name = "inotify-sys"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c033f80b2c113cdf91ab7a33faa9cbc014726dcad99880c8609af2a370edf37d"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "install"
 version = "0.1.0"
 dependencies = [
@@ -889,6 +912,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "testkit",
+ "ureq",
 ]
 
 [[package]]
@@ -1790,8 +1814,10 @@ dependencies = [
  "spira-claim",
  "spira-config",
  "spira-otel",
+ "strand",
  "testkit",
  "tsd",
+ "watchtower",
 ]
 
 [[package]]
@@ -2101,16 +2127,33 @@ dependencies = [
 name = "spira-runtime"
 version = "1.0.0"
 dependencies = [
+ "archivist",
  "base64",
  "batcher",
  "batcher-cut",
+ "bead",
+ "cert-sweep",
+ "cockpit-collect",
  "cockpit-ops",
+ "czar-pass",
+ "dwarf",
+ "filings-collect",
  "forge",
+ "gate-check",
+ "gate-worker",
+ "gh-intake",
+ "groomer",
  "heimdall",
  "hel",
+ "idea-prompt",
+ "incident",
+ "inotify",
  "install",
+ "kit-bump",
+ "landing-pass",
  "libc",
  "mail",
+ "mimir-trigger",
  "perf-watch",
  "queue",
  "reclaim",
@@ -2120,21 +2163,29 @@ dependencies = [
  "refusal-watch",
  "release",
  "ring",
+ "round-controller",
  "round-vm",
+ "rule",
  "runtime",
  "runtime-watch",
+ "sentinel",
  "serde",
  "serde_json",
+ "sift",
  "sim",
  "skew",
+ "sop",
  "spira-config",
  "spira-otel",
+ "spira-submission",
  "store-view",
+ "testenv",
  "testkit",
  "tokio",
  "tsd",
  "unit-run",
  "ureq",
+ "watchd",
  "watchtower",
 ]
 
