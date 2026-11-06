@@ -7,7 +7,7 @@
 //! into [`TASKS`].
 
 use super::Task;
-use crate::tasks::b::kit::{build, cadence_ms, not_ported};
+use crate::tasks::b::kit::{build, cadence_ms};
 
 pub mod asks_moot;
 pub mod hel_reap_stale;
@@ -109,7 +109,73 @@ pub static TASKS: &[Task] = &[
         build: build::<SweepReclaim>,
     },
     Task { name: sweep_tsd::NAME, boot: SweepTsd::boot, cadence_ms: cadence_ms::<SweepTsd>, effects: sweep_tsd::EFFECTS, runners: &[(sweep_tsd::OBSERVE, |e, _, _| sweep_tsd::observe(&e.world.run_dir, &pinned(sweep_tsd::KEEP_DAYS_KEY)?, &pinned(sweep_tsd::BY_FAMILY_KEY)?)), (sweep_tsd::PRUNE, |e, _, s| sweep_tsd::prune(&e.world.run_dir, &s.input))], keys: &[sweep_tsd::KEYS], build: build::<SweepTsd> },
+    Task { name: mail_tidy::NAME, boot: MailTidy::boot, cadence_ms: cadence_ms::<MailTidy>, effects: mail_tidy::EFFECTS, runners: &[(mail_tidy::OBSERVE, |e, _, s| serde_json::to_string(&mail_tidy::observe(&crate::tasks::b::lc(e), &s.input, mail_tidy::wall_secs())).map_err(|e| e.to_string())), (mail_tidy::ARCHIVE, |_, _, s| mail_tidy::archive(&s.input))], keys: &[mail_tidy::KEYS], build: build::<MailTidy> },
+    Task {
+        name: asks_moot::NAME,
+        boot: AsksMoot::boot,
+        cadence_ms: cadence_ms::<AsksMoot>,
+        effects: asks_moot::EFFECTS,
+        runners: &[(asks_moot::OBSERVE, |e, _, _| asks_moot::observe(&crate::tasks::b::lc(e))), (asks_moot::CHECK, |_, _, s| asks_moot::check(&runtime::ports::SysProc, &s.input)), (asks_moot::RESOLVE, |e, _, s| asks_moot::resolve(&crate::tasks::b::lc(e), &s.input)), (asks_moot::WITHDRAW, |e, _, s| asks_moot::withdraw(&crate::tasks::b::lc(e), &s.input))],
+        keys: &[asks_moot::KEYS],
+        build: build::<AsksMoot>,
+    },
+    Task {
+        name: sweep_archive::NAME,
+        boot: SweepArchive::boot,
+        cadence_ms: cadence_ms::<SweepArchive>,
+        effects: sweep_archive::EFFECTS,
+        runners: &[
+            (sweep_archive::OBSERVE, |_, _, _| sweep_archive::observe(&archive_paths()?)),
+            (sweep_archive::STORE, |_, _, s| sweep_archive::store(&archive_paths()?, &runtime::ports::SysProc, &s.input)),
+            (sweep_archive::INDEX, |_, _, _| sweep_archive::archive::index(&archive_paths()?)),
+        ],
+        keys: &[sweep_archive::KEYS],
+        build: build::<SweepArchive>,
+    },
+    Task {
+        name: sweep_nix_gc::NAME,
+        boot: SweepNixGc::boot,
+        cadence_ms: cadence_ms::<SweepNixGc>,
+        effects: sweep_nix_gc::EFFECTS,
+        runners: &[
+            (sweep_nix_gc::OBSERVE, |_, _, _| serde_json::to_string(&sweep_nix_gc::observe(&spira_config::process::cfg("SPIRA_NIX_ENV_LINK")?, &spira_config::process::cfg("SPIRA_NIX_PROFILE_BIN")?)).map_err(|e| e.to_string())),
+            (sweep_nix_gc::COLLECT, |e, _, s| sweep_nix_gc::collect(e.units.as_deref(), &spira_config::process::cfg("SPIRA_NIX_ENV_LINK")?, &spira_config::process::cfg("SPIRA_NIX_PROFILE_BIN")?, &s.input)),
+        ],
+        keys: &[sweep_nix_gc::KEYS],
+        build: build::<SweepNixGc>,
+    },
+    Task {
+        name: sweep_export_beads::NAME,
+        boot: SweepExportBeads::boot,
+        cadence_ms: cadence_ms::<SweepExportBeads>,
+        effects: sweep_export_beads::EFFECTS,
+        runners: &[
+            (sweep_export_beads::OBSERVE, |e, _, _| sweep_export_beads::observe(&crate::tasks::b::lc(e).within(std::time::Duration::from_secs(300)), &spira_config::process::cfg("SPIRA_WIKI")?)),
+            (sweep_export_beads::WRITE, |e, _, s| sweep_export_beads::write(&crate::tasks::b::lc(e), &spira_config::process::cfg("SPIRA_WIKI")?, &s.input, crate::tasks::c::mail_tidy::wall_secs())),
+            (sweep_export_beads::COMMIT, |_, _, s| sweep_export_beads::commit(&runtime::ports::SysProc, &spira_config::process::cfg("SPIRA_WIKI")?, &spira_config::process::cfg("SPIRA_EXPORT_GIT_RETRY_WAIT")?, &s.input, crate::tasks::c::mail_tidy::wall_secs())),
+            (sweep_export_beads::PUBLISH, |_, _, s| sweep_export_beads::publish(&runtime::ports::SysProc, &spira_config::process::cfg("SPIRA_WIKI")?, &s.input)),
+            (sweep_export_beads::TOUCH, |_, _, _| sweep_export_beads::touch(&spira_config::process::cfg("SPIRA_WIKI")?)),
+        ],
+        keys: &[sweep_export_beads::KEYS],
+        build: build::<SweepExportBeads>,
+    },
+    // RETIRE-CANDIDATE
+    Task {
+        name: sweep_escape_census::NAME,
+        boot: SweepEscapeCensus::boot,
+        cadence_ms: cadence_ms::<SweepEscapeCensus>,
+        effects: sweep_escape_census::EFFECTS,
+        runners: &[(sweep_escape_census::OBSERVE, |e, _, _| sweep_escape_census::observe(&e.world.run_dir, e.world.metrics_endpoint.as_deref(), crate::tasks::c::mail_tidy::wall_secs())), (sweep_escape_census::REPORT, |e, _, s| sweep_escape_census::report(&e.world.run_dir, &s.input))],
+        keys: &[sweep_escape_census::KEYS],
+        build: build::<SweepEscapeCensus>,
+    },
 ];
+
+/// `sweep.archive`'s paths from the pinned config; the home directory names the default
+/// transcript directory the sweep does not refuse on.
+fn archive_paths() -> Result<sweep_archive::archive::Paths, String> {
+    sweep_archive::paths(&spira_config::process::cfg, &std::env::home_dir().unwrap_or_default())
+}
 
 /// The hel world the hel tasks act through: this run, the pinned release, the store's socket.
 pub fn hel_world(e: &crate::Effects) -> Result<hel::real::Real, String> {
@@ -126,44 +192,6 @@ pub fn pinned(key: &str) -> Result<String, String> {
     spira_config::process::cfg(key)
 }
 
-
-/// The family's rows, complete but not yet in `TASKS`.
+/// The family's rows not yet ported: none; every C row is in `TASKS`.
 pub static PENDING: &[Task] = &[
-    Task {
-        name: asks_moot::NAME,
-        boot: AsksMoot::boot,
-        cadence_ms: cadence_ms::<AsksMoot>,
-        effects: asks_moot::EFFECTS,
-        runners: &[(asks_moot::OBSERVE, not_ported::<AsksMoot>), (asks_moot::CHECK, not_ported::<AsksMoot>), (asks_moot::RESOLVE, not_ported::<AsksMoot>), (asks_moot::WITHDRAW, not_ported::<AsksMoot>)],
-        keys: &[asks_moot::KEYS],
-        build: build::<AsksMoot>,
-    },
-    Task { name: mail_tidy::NAME, boot: MailTidy::boot, cadence_ms: cadence_ms::<MailTidy>, effects: mail_tidy::EFFECTS, runners: &[(mail_tidy::OBSERVE, not_ported::<MailTidy>), (mail_tidy::ARCHIVE, not_ported::<MailTidy>)], keys: &[mail_tidy::KEYS], build: build::<MailTidy> },
-    Task {
-        name: sweep_archive::NAME,
-        boot: SweepArchive::boot,
-        cadence_ms: cadence_ms::<SweepArchive>,
-        effects: sweep_archive::EFFECTS,
-        runners: &[(sweep_archive::OBSERVE, not_ported::<SweepArchive>), (sweep_archive::STORE, not_ported::<SweepArchive>), (sweep_archive::INDEX, not_ported::<SweepArchive>)],
-        keys: &[sweep_archive::KEYS],
-        build: build::<SweepArchive>,
-    },
-    Task { name: sweep_nix_gc::NAME, boot: SweepNixGc::boot, cadence_ms: cadence_ms::<SweepNixGc>, effects: sweep_nix_gc::EFFECTS, runners: &[(sweep_nix_gc::OBSERVE, not_ported::<SweepNixGc>), (sweep_nix_gc::COLLECT, not_ported::<SweepNixGc>)], keys: &[sweep_nix_gc::KEYS], build: build::<SweepNixGc> },
-    Task {
-        name: sweep_export_beads::NAME,
-        boot: SweepExportBeads::boot,
-        cadence_ms: cadence_ms::<SweepExportBeads>,
-        effects: sweep_export_beads::EFFECTS,
-        runners: &[
-            (sweep_export_beads::OBSERVE, not_ported::<SweepExportBeads>),
-            (sweep_export_beads::WRITE, not_ported::<SweepExportBeads>),
-            (sweep_export_beads::COMMIT, not_ported::<SweepExportBeads>),
-            (sweep_export_beads::PUBLISH, not_ported::<SweepExportBeads>),
-            (sweep_export_beads::TOUCH, not_ported::<SweepExportBeads>),
-        ],
-        keys: &[sweep_export_beads::KEYS],
-        build: build::<SweepExportBeads>,
-    },
-    // RETIRE-CANDIDATE
-    Task { name: sweep_escape_census::NAME, boot: SweepEscapeCensus::boot, cadence_ms: cadence_ms::<SweepEscapeCensus>, effects: sweep_escape_census::EFFECTS, runners: &[(sweep_escape_census::OBSERVE, not_ported::<SweepEscapeCensus>), (sweep_escape_census::REPORT, not_ported::<SweepEscapeCensus>)], keys: &[sweep_escape_census::KEYS], build: build::<SweepEscapeCensus> },
 ];

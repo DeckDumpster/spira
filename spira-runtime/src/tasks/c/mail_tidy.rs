@@ -1,7 +1,6 @@
 //! # mail.tidy — contract
 //!
-//! Family C of the scheduler consolidation, red-first: `decide` is not ported yet. The
-//! sections below are the contract page `wiki/projects/spira/designs/tasks/mail-tidy.md`;
+//! Family C of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/mail-tidy.md`;
 //! its Acceptance section is the test file `tests/task_c_mail_tidy.rs`.
 //!
 //! ## Tick
@@ -83,7 +82,7 @@ use std::collections::BTreeSet;
 use runtime::event::EventKindTag;
 use serde::{Deserialize, Serialize};
 
-use crate::tasks::b::kit::{Cadence, Cfg, Decision, Input, Spec};
+use crate::tasks::b::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
 
 pub const NAME: &str = "mail.tidy";
 pub const STREAM: &str = "task.mail.tidy";
@@ -156,9 +155,89 @@ pub struct MailTidy {
     pub cfg: Cfg,
 }
 
-/// The keep rule; everything else is archived, in one batched effect.
-pub fn decide(_cfg: &Cfg, _carry: &Carry, _input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
-    unimplemented!("mail.tidy: not ported yet")
+/// What [`ARCHIVE`] carries: the mail root and every message the pass archives, in one batch.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Archive {
+    pub mail: String,
+    pub paths: Vec<String>,
+}
+
+fn phase_name(p: Phase) -> &'static str {
+    match p {
+        Phase::Observe => "observe",
+        Phase::Refused => "refused",
+        Phase::Decided => "decided",
+        Phase::Archived => "archived",
+    }
+}
+
+/// The keep rule (`mail::tidy::keeps`); everything else is archived, in one batched effect. A
+/// snapshot error, or no open ask with a failing positive control, decides nothing.
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
+    match input {
+        Input::Fire => Ok((Carry { phase: Phase::Observe }, vec![])),
+        Input::Observed(s) => {
+            if s.error.is_some() || (s.open_asks.is_empty() && !s.store_ok) {
+                return Ok((Carry { phase: Phase::Refused }, vec![]));
+            }
+            let fresh_s: u64 = cfg.get(FRESH_KEY).and_then(|v| v.trim().parse().ok()).ok_or_else(|| format!("{FRESH_KEY} must be a number of seconds"))?;
+            let seen: Vec<mail::tidy::Seen> = s.messages.iter().map(|m| mail::tidy::Seen { path: m.path.clone().into(), mtime: m.mtime, subject: m.subject.clone(), bead: m.bead.clone().unwrap_or_default(), unread: m.unread, urgent: m.urgent }).collect();
+            let closed: BTreeSet<&str> = s.messages.iter().filter(|m| m.bead_closed == Some(true)).filter_map(|m| m.bead.as_deref()).collect();
+            let keeps = mail::tidy::keeps(&seen, &|id| s.open_asks.contains(id), s.now, fresh_s, &mut |id| closed.contains(id));
+            let paths: Vec<String> = s.messages.iter().zip(keeps).filter(|(_, k)| !k).map(|(m, _)| m.path.clone()).collect();
+            if paths.is_empty() {
+                // Everything kept: the pass changes nothing, so the carry does not move either.
+                return Ok((carry.clone(), vec![]));
+            }
+            let body = Archive { mail: cfg.get("SPIRA_MAIL").cloned().unwrap_or_default(), paths };
+            Ok((Carry { phase: Phase::Decided }, vec![Act { name: ARCHIVE.into(), input: serde_json::to_string(&body).map_err(|e| e.to_string())?, deadline_ms: 5_000, probe: false }]))
+        }
+        Input::Outcome { effect, ok, .. } if effect == ARCHIVE && carry.phase == Phase::Decided => Ok((Carry { phase: if *ok { Phase::Archived } else { Phase::Decided } }, vec![])),
+        Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} no outcome of {effect} is expected", phase_name(carry.phase))),
+        Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase_name(carry.phase), r.handle)),
+    }
+}
+
+fn cfg(key: &str) -> Result<String, String> {
+    spira_config::process::cfg(key)
+}
+
+/// The runner of [`OBSERVE`]: the open asks over the store's `content` door (with the positive
+/// control), the mailbox `mailbox` newest first, and for each fresh message naming a bead
+/// whether the store reports it closed. A refusal is the snapshot's error.
+pub fn observe(lc: &spira_config::lc_call::LcClient, mailbox: &str, now: u64) -> Snapshot {
+    let read = || -> Result<Snapshot, String> {
+        let (root, label, prefix, db, fresh) = (cfg("SPIRA_MAIL")?, cfg("SPIRA_ASK_LABEL")?, cfg("SPIRA_ID_PREFIX")?, cfg("SPIRA_DB")?, cfg(FRESH_KEY)?);
+        let fresh_s: u64 = fresh.trim().parse().map_err(|_| format!("{FRESH_KEY} must be a number of seconds, got {fresh:?}"))?;
+        if label.trim().is_empty() {
+            return Err("SPIRA_ASK_LABEL is unresolved — refusing to move any mail".into());
+        }
+        let bd = mail::content::ContentBd { lc };
+        let open_asks = mail::tidy::open_asks(&bd, !db.trim().is_empty(), &label)?;
+        let prefix = if prefix.is_empty() { "sp".to_string() } else { prefix };
+        let seen = mail::tidy::scan(std::path::Path::new(&root), mailbox, &prefix)?;
+        let messages = seen
+            .into_iter()
+            .map(|m| {
+                let bead_closed = (!m.bead.is_empty() && m.fresh(now, fresh_s) && !open_asks.contains(&m.bead)).then(|| mail::bead::bead_is_closed(&bd, &m.bead));
+                Msg { path: m.path.display().to_string(), mtime: m.mtime, subject: m.subject, bead: Some(m.bead).filter(|b| !b.is_empty()), unread: m.unread, urgent: m.urgent, bead_closed }
+            })
+            .collect();
+        Ok(Snapshot { store_ok: true, open_asks: open_asks.into_iter().collect(), messages, now, error: None })
+    };
+    read().unwrap_or_else(|e| Snapshot { error: Some(e), now, ..Snapshot::default() })
+}
+
+/// The wall clock in seconds, the age every message is measured against.
+pub fn wall_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// The runner of [`ARCHIVE`]: every path in the batch into `<mail>/archive/cur`.
+pub fn archive(input: &str) -> Result<String, String> {
+    let a: Archive = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    let paths: Vec<std::path::PathBuf> = a.paths.iter().map(Into::into).collect();
+    mail::tidy::archive(std::path::Path::new(&a.mail), &paths).map(|n| format!("archived {n}"))
 }
 
 crate::tasks::b::hosted!(MailTidy);

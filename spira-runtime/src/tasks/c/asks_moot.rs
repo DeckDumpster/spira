@@ -1,7 +1,6 @@
 //! # asks.moot — contract
 //!
-//! Family C of the scheduler consolidation, red-first: `decide` is not ported yet. The
-//! sections below are the contract page `wiki/projects/spira/designs/tasks/asks-moot.md`;
+//! Family C of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/asks-moot.md`;
 //! its Acceptance section is the test file `tests/task_c_asks_moot.rs`.
 //!
 //! ## Tick
@@ -80,7 +79,10 @@ use std::collections::BTreeMap;
 use runtime::event::EventKindTag;
 use serde::{Deserialize, Serialize};
 
-use crate::tasks::b::kit::{Cadence, Cfg, Decision, Input, Spec};
+use runtime::ports::{Proc, ProcSpec};
+use spira_config::lc_call::LcClient;
+
+use crate::tasks::b::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
 
 pub const NAME: &str = "asks.moot";
 pub const STREAM: &str = "task.asks.moot";
@@ -159,6 +161,9 @@ pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[
 pub struct Carry {
     pub asks: BTreeMap<String, Phase>,
     pub timeouts: BTreeMap<String, u32>,
+    /// The predicate and work beads of each ask the pass holds, for the resolve reason and the
+    /// withdraw that follow its check.
+    pub held: BTreeMap<String, Ask>,
 }
 
 pub struct AsksMoot {
@@ -166,9 +171,236 @@ pub struct AsksMoot {
     pub cfg: Cfg,
 }
 
+/// What [`CHECK`] carries: the predicate run under `bash -c`, bounded at `timeout_s`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Check {
+    pub id: String,
+    pub pred: String,
+    pub timeout_s: u64,
+}
+
+/// What [`RESOLVE`] carries.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Resolve {
+    pub id: String,
+    pub reason: String,
+}
+
+/// What [`WITHDRAW`] carries: the ask resolved and the work beads its hold is lifted from.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Withdraw {
+    pub ask: String,
+    pub works: Vec<String>,
+}
+
+/// The evidence a reason quotes: the first 300 bytes of the predicate's output (`head -c 300`).
+pub const EVIDENCE_BYTES: usize = 300;
+
+/// The actor every moot resolve records (invariant 3).
+pub const ACTOR: &str = "claude";
+
+fn phase_name(p: Phase) -> String {
+    serde_json::to_value(p).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
+}
+
+fn act(name: &str, body: &impl Serialize, deadline_ms: u64) -> Result<Act, String> {
+    Ok(Act { name: name.into(), input: serde_json::to_string(body).map_err(|e| e.to_string())?, deadline_ms, probe: false })
+}
+
+/// `bytes` cut to at most `n`, on a char boundary.
+fn head(text: &str, n: usize) -> &str {
+    let mut end = text.len().min(n);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
 /// One check per MOOT-WHEN ask; `rc == 0` resolves, 124 is a timeout, any other rc is live.
-pub fn decide(_cfg: &Cfg, _carry: &Carry, _input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
-    unimplemented!("asks.moot: not ported yet")
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
+    let mut next = carry.clone();
+    match input {
+        Input::Fire => Ok((next, vec![])),
+        Input::Observed(s) => {
+            let timeout_s: u64 = cfg.get("SPIRA_MOOT_TIMEOUT").and_then(|v| v.trim().parse().ok()).filter(|t| *t > 0).ok_or("SPIRA_MOOT_TIMEOUT must be a positive number of seconds")?;
+            // An ask still resolving keeps its place; every other one the store no longer
+            // lists as open with a predicate is done with.
+            next.asks.retain(|id, p| matches!(p, Phase::Cleared | Phase::Resolved) && !s.asks.iter().any(|a| &a.id == id));
+            next.held.retain(|id, _| next.asks.contains_key(id));
+            next.timeouts.retain(|id, _| s.asks.iter().any(|a| &a.id == id));
+            let mut acts = vec![];
+            for a in s.asks.iter().filter(|a| !a.pred.trim().is_empty()) {
+                next.asks.insert(a.id.clone(), Phase::Checking);
+                next.held.insert(a.id.clone(), a.clone());
+                acts.push(act(CHECK, &Check { id: a.id.clone(), pred: a.pred.clone(), timeout_s }, timeout_s * 1000 + 5_000)?);
+            }
+            Ok((next, acts))
+        }
+        Input::Outcome { ok: false, .. } => Ok((next, vec![])),
+        Input::Outcome { effect, body, .. } if effect == CHECK => {
+            let out: CheckOutcome = serde_json::from_str(body).map_err(|e| format!("{NAME}: a check outcome that does not parse: {e}"))?;
+            let phase = carry.asks.get(&out.id).copied();
+            if phase != Some(Phase::Checking) {
+                return Err(format!("{NAME}: {} is in state {}, not checking; its check outcome is refused", out.id, phase.map_or("unknown".into(), phase_name)));
+            }
+            match out.rc {
+                0 => {
+                    next.timeouts.remove(&out.id);
+                    next.asks.insert(out.id.clone(), Phase::Cleared);
+                    let pred = carry.held.get(&out.id).map(|a| a.pred.as_str()).unwrap_or_default();
+                    let reason = format!("auto-resolved: MOOT-WHEN predicate cleared — {pred} → exit 0. Evidence: {}", head(&out.output, EVIDENCE_BYTES));
+                    Ok((next, vec![act(RESOLVE, &Resolve { id: out.id, reason }, 15_000)?]))
+                }
+                TIMED_OUT_RC => {
+                    *next.timeouts.entry(out.id.clone()).or_default() += 1;
+                    next.asks.insert(out.id, Phase::TimedOut);
+                    Ok((next, vec![]))
+                }
+                _ => {
+                    next.timeouts.remove(&out.id);
+                    next.asks.insert(out.id, Phase::Live);
+                    Ok((next, vec![]))
+                }
+            }
+        }
+        Input::Outcome { effect, body, .. } if effect == RESOLVE || effect == WITHDRAW => {
+            let id = body.trim();
+            let (want, to) = if effect == RESOLVE { (Phase::Cleared, Phase::Resolved) } else { (Phase::Resolved, Phase::Withdrawn) };
+            let phase = carry.asks.get(id).copied();
+            if phase != Some(want) {
+                return Err(format!("{NAME}: {id} is in state {}; a {effect} outcome needs {}", phase.map_or("unknown".into(), phase_name), phase_name(want)));
+            }
+            next.asks.insert(id.to_string(), to);
+            let works = carry.held.get(id).map(|a| a.works.clone()).unwrap_or_default();
+            if to == Phase::Resolved && !works.is_empty() {
+                return Ok((next, vec![act(WITHDRAW, &Withdraw { ask: id.to_string(), works }, 15_000)?]));
+            }
+            Ok((next, vec![]))
+        }
+        Input::Outcome { effect, .. } => Err(format!("{NAME}: no outcome of {effect} is expected")),
+        Input::Ran(r) => Err(format!("{NAME}: no unit is expected, got {:?}", r.handle)),
+    }
+}
+
+/// The asks a `content list --json` answer holds that this task checks: ask-labelled, status
+/// exactly `open`, carrying a `MOOT-WHEN:` line (moot-sweep.sh's filter). An ask without one
+/// never enters the snapshot (invariant 1).
+pub fn moot_asks(list_json: &str, ask_label: &str) -> Result<Vec<Ask>, String> {
+    let doc: serde_json::Value = serde_json::from_str(list_json).map_err(|e| format!("content list did not answer JSON: {e}"))?;
+    let rows = match &doc {
+        serde_json::Value::Array(a) => a.clone(),
+        other => other.get("issues").and_then(|i| i.as_array()).cloned().unwrap_or_default(),
+    };
+    let mut out = vec![];
+    for r in rows {
+        let labels: Vec<&str> = r.get("labels").and_then(|l| l.as_array()).map(|l| l.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default();
+        if !labels.contains(&ask_label) || r.get("status").and_then(|s| s.as_str()) != Some("open") {
+            continue;
+        }
+        let desc = r.get("description").and_then(|d| d.as_str()).unwrap_or_default();
+        let Some(pred) = desc.lines().find_map(|l| l.trim_start().strip_prefix("MOOT-WHEN:").map(str::trim).filter(|p| !p.is_empty())) else { continue };
+        let works = labels.iter().filter_map(|l| l.strip_prefix("work-bead:")).map(str::to_string).collect();
+        out.push(Ask { id: r.get("id").and_then(|i| i.as_str()).unwrap_or_default().to_string(), pred: pred.to_string(), works });
+    }
+    Ok(out)
+}
+
+/// The runner of [`OBSERVE`]: the attention beads over the store's `content` door, filtered.
+pub fn observe(lc: &LcClient) -> Result<String, String> {
+    let (db, label) = (spira_config::process::cfg("SPIRA_DB")?, spira_config::process::cfg("SPIRA_ASK_LABEL")?);
+    if db.trim().is_empty() {
+        return Err("no beads database (SPIRA_DB) — checked nothing".into());
+    }
+    let labels = format!("insight,{label},overseer");
+    let rows = lc.answer(&["content", "list", "--all", "--limit", "0", "--label-any", &labels, "--json"]).map_err(|e| format!("the beads database is not reachable — checked nothing: {e}"))?;
+    serde_json::to_string(&Snapshot { asks: moot_asks(&rows, &label)? }).map_err(|e| e.to_string())
+}
+
+/// The runner of [`CHECK`]: `bash -c <pred>` through `proc`, bounded at its timeout; a deadline
+/// passed is rc 124 and a program that could not run is 127, so a failed probe never reads 0.
+pub fn check(proc: &dyn Proc, input: &str) -> Result<String, String> {
+    let c: Check = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    if c.pred.trim().is_empty() {
+        return Err(format!("{}: an empty predicate is refused", c.id));
+    }
+    let spec = ProcSpec { prog: "bash".into(), args: vec!["-c".into(), c.pred.clone()], stdin: vec![], deadline: std::time::Duration::from_secs(c.timeout_s) };
+    let (rc, output) = match proc.run(&spec) {
+        Ok(o) => (o.code.unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
+        Err(e) if e.contains("deadline") => (TIMED_OUT_RC, e),
+        Err(e) => (127, e),
+    };
+    serde_json::to_string(&CheckOutcome { id: c.id, rc, output: head(&output, EVIDENCE_BYTES).to_string() }).map_err(|e| e.to_string())
+}
+
+/// `cockpit_ops::resolve::run`'s store, over the socket. The per-work-bead withdraw is left to
+/// [`WITHDRAW`], so here it answers 1 (nothing to lift), which `run` treats as quiet.
+struct Store<'a>(&'a LcClient);
+
+impl cockpit_ops::resolve::Closer for Store<'_> {
+    fn close(&self, _: &std::path::Path, id: &str, reason: &str) -> cockpit_ops::resolve::BdResult {
+        match self.0.call_stdin(&["close", id, "--reason-file", "-", "--actor", ACTOR], reason) {
+            Ok(r) if r.code == 0 => cockpit_ops::resolve::BdResult { success: true, combined: String::new() },
+            Ok(r) => cockpit_ops::resolve::BdResult { success: false, combined: format!("spira-lc close exit {}: {}", r.code, r.why()) },
+            Err(e) => cockpit_ops::resolve::BdResult { success: false, combined: e.to_string() },
+        }
+    }
+    fn show_json(&self, _: &std::path::Path, id: &str) -> String {
+        self.0.call(&["content", "show", id, "--json"]).map(|r| r.out).unwrap_or_default()
+    }
+    fn withdraw_ask(&self, _: &str) -> (i32, String) {
+        (1, "withdrawn by asks.moot.withdraw".into())
+    }
+    fn has_lifecycle_row(&self, id: &str) -> Result<bool, String> {
+        codes(self.0, &["show", id])
+    }
+    fn is_ask(&self, id: &str) -> Result<bool, String> {
+        codes(self.0, &["show-ask", id])
+    }
+    fn withdraw_ask_row(&self, id: &str, reason: &str) -> (i32, String) {
+        match self.0.call(&["close-ask", id, "--exit", "withdrawn", "--quote", reason, "--actor", ACTOR]) {
+            Ok(r) => (r.code, r.text()),
+            Err(e) => (spira_config::lc_call::CANNOT_TELL, e.to_string()),
+        }
+    }
+}
+
+/// Exit 0 is yes, 1 is no, anything else cannot tell.
+fn codes(lc: &LcClient, argv: &[&str]) -> Result<bool, String> {
+    let r = lc.call(argv).map_err(|e| e.to_string())?;
+    match r.code {
+        0 => Ok(true),
+        1 => Ok(false),
+        c => Err(format!("spira-lc {} exit {c}: {}", argv[0], r.why())),
+    }
+}
+
+/// The runner of [`RESOLVE`]: `cockpit_ops::resolve::run` as `claude`; answers the ask id.
+pub fn resolve(lc: &LcClient, input: &str) -> Result<String, String> {
+    let r: Resolve = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    let db = spira_config::process::cfg("SPIRA_DB")?;
+    match cockpit_ops::resolve::run(&r.id, &r.reason, std::path::Path::new(&db), &Store(lc)) {
+        cockpit_ops::resolve::Outcome::Closed(_) => Ok(r.id),
+        cockpit_ops::resolve::Outcome::Failed(why) => Err(why),
+    }
+}
+
+/// The runner of [`WITHDRAW`]: `withdraw-ask <work> claude` per work bead; exit 1 (no row) and
+/// 3 (no ask hold, or a terminal row) are quiet. Answers the ask id.
+pub fn withdraw(lc: &LcClient, input: &str) -> Result<String, String> {
+    let w: Withdraw = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    let mut failed = vec![];
+    for work in &w.works {
+        match lc.call(&["withdraw-ask", work, ACTOR]) {
+            Ok(r) if matches!(r.code, 0 | 1 | 3) => {}
+            Ok(r) => failed.push(format!("{work}: exit {}: {}", r.code, r.why())),
+            Err(e) => failed.push(format!("{work}: {e}")),
+        }
+    }
+    if failed.is_empty() {
+        Ok(w.ask)
+    } else {
+        Err(format!("the ask hold was not lifted on {}", failed.join("; ")))
+    }
 }
 
 crate::tasks::b::hosted!(AsksMoot);

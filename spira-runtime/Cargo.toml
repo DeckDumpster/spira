@@ -21,6 +21,7 @@ base64 = "0.22"
 install = { path = "../install" }
 libc = "0.2"
 mail = { path = "../mail" }
+cockpit-ops = { path = "../cockpit/ops" }
 # Family A's landing tasks (batcher.local/forge, queue.step, publish): their libraries.
 batcher = { path = "../batcher" }
 batcher-cut = { path = "../batcher-cut" }

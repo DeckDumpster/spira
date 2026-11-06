@@ -11,6 +11,14 @@ fn dump(ids: &[&str], mirrored_count: usize, mirror_sha: &str) -> Snapshot {
     Snapshot { content: ids.iter().map(|id| serde_json::json!({"id": id, "title": format!("bead {id}")})).collect(), mirrored_count, mirror_bytes_sha: mirror_sha.into(), ..Snapshot::default() }
 }
 
+/// A dump whose render is byte-equal to what is mirrored now: the probe reports the sha256 of the
+/// mirror's bytes, so an unchanged mirror carries the sha of this very render.
+fn current(ids: &[&str], mirrored_count: usize) -> Snapshot {
+    let mut s = dump(ids, mirrored_count, "");
+    s.mirror_bytes_sha = task::sha_hex(task::render(&s).unwrap().as_bytes());
+    s
+}
+
 fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
@@ -23,7 +31,7 @@ fn t1_registered_boots_and_arms_a_6h_tick() {
 #[test]
 fn t2_a_render_identical_to_the_mirror_touches_and_commits_nothing() {
     let h = t::handler::<H>(SET);
-    let unchanged = dump(&["sp-a", "sp-b"], 2, "the-sha-of-this-render");
+    let unchanged = current(&["sp-a", "sp-b"], 2);
     let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(unchanged.clone()), TICK).unwrap();
     assert_eq!(names(&acts), [task::TOUCH], "an unchanged pass bumps the mirror's mtime only");
     let mut rig = t::rig::<H>(1, SET, &json(&unchanged));
@@ -68,5 +76,5 @@ fn t5_a_changed_dump_writes_sorted_by_id_and_a_half_shrink_refuses() {
 
 #[test]
 fn t6_two_virtual_days_are_deterministic_and_within_1_event_an_hour() {
-    t::t6_deterministic::<H>(|seed| t::rig::<H>(seed, SET, &json(&dump(&["sp-a"], 1, "the-sha-of-this-render"))), 2, 1);
+    t::t6_deterministic::<H>(|seed| t::rig::<H>(seed, SET, &json(&current(&["sp-a"], 1))), 2, 1);
 }

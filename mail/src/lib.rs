@@ -3,6 +3,7 @@
 
 pub mod bead;
 pub mod cmds;
+pub mod content;
 pub mod env;
 pub mod kinds;
 pub mod lc;

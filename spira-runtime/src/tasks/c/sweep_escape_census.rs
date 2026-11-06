@@ -1,7 +1,6 @@
 //! # sweep.escape_census — contract
 //!
-//! Family C of the scheduler consolidation, red-first: `decide` is not ported yet. The
-//! sections below are the contract page `wiki/projects/spira/designs/tasks/sweep-escape-census.md`;
+//! Family C of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/sweep-escape-census.md`;
 //! its Acceptance section is the test file `tests/task_c_sweep_escape_census.rs`.
 //!
 //! ## Tick
@@ -61,14 +60,15 @@
 //!
 
 // RETIRE-CANDIDATE: no reader of the census line was found (design, "Corrections from the
-// contracts": escape-census joins the retire list). Kept as a stub until the ruling lands.
+// contracts": escape-census joins the retire list). Ported as its contract says until the
+// ruling lands; retiring it removes this module, its row and its test file.
 
 use std::collections::BTreeMap;
 
 use runtime::event::EventKindTag;
 use serde::{Deserialize, Serialize};
 
-use crate::tasks::b::kit::{Cadence, Cfg, Decision, Input, Spec};
+use crate::tasks::b::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
 
 pub const NAME: &str = "sweep.escape_census";
 pub const STREAM: &str = "task.sweep.escape_census";
@@ -123,9 +123,51 @@ pub struct SweepEscapeCensus {
     pub cfg: Cfg,
 }
 
+/// The window the census counts, in hours (the script's default).
+pub const HOURS: u64 = 168;
+
+/// The census line: each class in [`CLASSES`] order, an absent class counted 0.
+pub fn line(snap: &Snapshot) -> String {
+    CLASSES.iter().map(|c| format!("{} {c}", snap.counts.get(*c).copied().unwrap_or(0))).collect::<Vec<_>>().join(", ")
+}
+
 /// `"<n> mapping_gap, <n> gate_gap, <n> environment_gap, <n> flake"`, absent class → 0.
-pub fn decide(_cfg: &Cfg, _carry: &Carry, _input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
-    unimplemented!("sweep.escape_census: not ported yet")
+pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
+    let phase = |p: Phase| if p == Phase::Idle { "idle" } else { "reported" };
+    match input {
+        Input::Fire => Ok((carry.clone(), vec![])),
+        Input::Observed(snap) => {
+            let week = crate::tasks::c::sweep_nix_gc::iso_week(now_ms);
+            if carry.phase == Phase::Reported && carry.week.as_deref() == Some(week.as_str()) {
+                return Err(format!("{NAME}: {week} is already reported; a second census that week is refused"));
+            }
+            let text = format!("{} {}", crate::watchers::iso8601(now_ms / 1000), line(snap));
+            Ok((Carry { phase: Phase::Reported, last_fired: Some(now_ms), week: Some(week) }, vec![Act { name: REPORT.into(), input: text, deadline_ms: 5_000, probe: false }]))
+        }
+        Input::Outcome { effect, .. } if effect == REPORT => Ok((carry.clone(), vec![])),
+        Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} no outcome of {effect} is expected", phase(carry.phase))),
+        Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase(carry.phase), r.handle)),
+    }
+}
+
+/// The runner of [`OBSERVE`]: `tsd::query::count_by` over the escape family, in-process. A
+/// family that cannot be read counts nothing, as the script's census printed zeros.
+pub fn observe(run_dir: &std::path::Path, metrics_endpoint: Option<&str>, now_secs: u64) -> Result<String, String> {
+    let reader = tsd::store::Reader::new(metrics_endpoint).ok();
+    let src = tsd::query::Source { reader: reader.as_ref(), root: run_dir };
+    let counts = tsd::query::count_by(&src, "escape", "class", now_secs, Some(HOURS))
+        .map(|tsv| tsv.lines().filter_map(|l| l.split_once('\t')).filter_map(|(c, n)| Some((c.to_string(), n.trim().parse().ok()?))).collect())
+        .unwrap_or_default();
+    serde_json::to_string(&Snapshot { counts, hours: HOURS }).map_err(|e| e.to_string())
+}
+
+/// The runner of [`REPORT`]: the line appended to `run/escape-census.log`, its read contract.
+pub fn report(run_dir: &std::path::Path, text: &str) -> Result<String, String> {
+    use std::io::Write;
+    let path = run_dir.join("escape-census.log");
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    writeln!(f, "{text}").map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok("appended".into())
 }
 
 crate::tasks::b::hosted!(SweepEscapeCensus);

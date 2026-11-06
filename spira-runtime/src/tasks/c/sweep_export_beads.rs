@@ -1,7 +1,6 @@
 //! # sweep.export_beads — contract
 //!
-//! Family C of the scheduler consolidation, red-first: `decide` is not ported yet. The
-//! sections below are the contract page `wiki/projects/spira/designs/tasks/sweep-export-beads.md`;
+//! Family C of the scheduler consolidation, ported. The sections below are the contract page `wiki/projects/spira/designs/tasks/sweep-export-beads.md`;
 //! its Acceptance section is the test file `tests/task_c_sweep_export_beads.rs`.
 //!
 //! ## Tick
@@ -83,7 +82,12 @@ use std::collections::BTreeMap;
 use runtime::event::EventKindTag;
 use serde::{Deserialize, Serialize};
 
-use crate::tasks::b::kit::{Cadence, Cfg, Decision, Input, Spec};
+use std::time::Duration;
+
+use runtime::ports::{Proc, ProcSpec};
+use spira_config::lc_call::LcClient;
+
+use crate::tasks::b::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
 
 pub const NAME: &str = "sweep.export_beads";
 pub const STREAM: &str = "task.sweep.export_beads";
@@ -146,10 +150,246 @@ pub struct SweepExportBeads {
     pub cfg: Cfg,
 }
 
+/// The mirror, relative to the wiki checkout.
+pub const REL: &str = "raw/spira-beads/spira.jsonl";
+pub const MANIFEST: &str = "raw/spira-beads/manifest.md";
+
+/// The JSONL mirror of `snap`: every `sp-` bead sorted by id, each with its `lifecycle_state`,
+/// keys sorted and compact, then the memories sorted by key. `Err` is the refusal: `no-sp`
+/// when the store returned no `sp-` bead, `shrink` when it returned fewer than half the beads
+/// already mirrored.
+pub fn render(snap: &Snapshot) -> Result<String, &'static str> {
+    use crate::tasks::c::sweep_archive::archive::py_json;
+    let id = |v: &serde_json::Value| v.get("id").and_then(|i| i.as_str()).map(str::to_string).unwrap_or_default();
+    let mut issues: Vec<serde_json::Value> = snap.content.iter().filter(|v| id(v).starts_with("sp-")).cloned().collect();
+    if issues.is_empty() {
+        return Err("no-sp");
+    }
+    if snap.mirrored_count > 0 && issues.len() * 2 < snap.mirrored_count {
+        return Err("shrink");
+    }
+    issues.sort_by_key(|v| id(v));
+    let mut out = String::new();
+    for mut i in issues {
+        let state = snap.lifecycle.get(&id(&i)).cloned().unwrap_or_default();
+        if let Some(m) = i.as_object_mut() {
+            m.insert("lifecycle_state".into(), serde_json::Value::String(state));
+        }
+        out.push_str(&py_json(&i, ",", ":"));
+        out.push('\n');
+    }
+    for (k, v) in &snap.memories {
+        out.push_str(&py_json(&serde_json::json!({"_type": "memory", "key": k, "value": v}), ",", ":"));
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+/// The sha256 of `text`, as lowercase hex: what the probe reports of the mirror's bytes.
+pub fn sha_hex(text: &[u8]) -> String {
+    ring::digest::digest(&ring::digest::SHA256, text).as_ref().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn phase_name(p: Phase) -> &'static str {
+    match p {
+        Phase::Rendered => "rendered",
+        Phase::Written => "written",
+        Phase::Committed => "committed",
+        Phase::Published => "published",
+        Phase::Refused => "refused",
+    }
+}
+
+fn act(name: &str, input: String, deadline_ms: u64) -> Act {
+    Act { name: name.into(), input, deadline_ms, probe: false }
+}
+
 /// `Unchanged | Write(jsonl, manifest) | Refuse(reason)`, sorted by id, refusing without an
-/// `sp-` bead or below half the mirrored count.
-pub fn decide(_cfg: &Cfg, _carry: &Carry, _input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
-    unimplemented!("sweep.export_beads: not ported yet")
+/// `sp-` bead or below half the mirrored count. An unchanged render finishes a pass a failed
+/// commit or push left behind before it only touches the mirror.
+pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
+    match input {
+        Input::Fire => Ok((carry.clone(), vec![])),
+        Input::Observed(s) if s.disabled => Ok((carry.clone(), vec![])),
+        Input::Observed(s) => match render(s) {
+            Err(why) => Ok((Carry { phase: Phase::Refused, sha: None, refused: Some(why.into()) }, vec![])),
+            Ok(text) => {
+                let sha = sha_hex(text.as_bytes());
+                if sha != s.mirror_bytes_sha {
+                    return Ok((Carry { phase: Phase::Rendered, sha: Some(sha), refused: None }, vec![act(WRITE, text, 30_000)]));
+                }
+                let pending = carry.sha.as_deref() == Some(sha.as_str());
+                match carry.phase {
+                    Phase::Written if pending => Ok((carry.clone(), vec![act(COMMIT, sha, 60_000)])),
+                    Phase::Committed if pending => Ok((carry.clone(), vec![act(PUBLISH, sha, 150_000)])),
+                    _ => Ok((carry.clone(), vec![act(TOUCH, String::new(), 5_000)])),
+                }
+            }
+        },
+        Input::Outcome { effect, ok, body } if [WRITE, COMMIT, PUBLISH].contains(&effect.as_str()) => {
+            let (want, to, then) = match effect.as_str() {
+                WRITE => (Phase::Rendered, Phase::Written, Some((COMMIT, 60_000))),
+                COMMIT => (Phase::Written, Phase::Committed, Some((PUBLISH, 150_000))),
+                _ => (Phase::Committed, Phase::Published, None),
+            };
+            if carry.phase != want {
+                return Err(format!("{NAME}: in state {} a {effect} outcome is refused; it needs {}", phase_name(carry.phase), phase_name(want)));
+            }
+            if !*ok {
+                return Ok((carry.clone(), vec![]));
+            }
+            let sha = carry.sha.clone().unwrap_or_default();
+            if body.trim() != sha {
+                return Err(format!("{NAME}: in state {} the {effect} answered {} for render {sha}", phase_name(carry.phase), body.trim()));
+            }
+            let next = Carry { phase: to, ..carry.clone() };
+            Ok((next, then.map(|(n, d)| vec![act(n, sha, d)]).unwrap_or_default()))
+        }
+        Input::Outcome { effect, .. } if effect == TOUCH => Ok((carry.clone(), vec![])),
+        Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} no outcome of {effect} is expected", phase_name(carry.phase))),
+        Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase_name(carry.phase), r.handle)),
+    }
+}
+
+/// The runner of [`OBSERVE`]: the content, lifecycle and memory dumps and the planes'
+/// watermarks over the socket, and what is mirrored now.
+pub fn observe(lc: &LcClient, wiki: &str) -> Result<String, String> {
+    if wiki.trim().is_empty() {
+        return serde_json::to_string(&Snapshot { disabled: true, ..Snapshot::default() }).map_err(|e| e.to_string());
+    }
+    let content: Vec<serde_json::Value> = serde_json::from_str(&lc.answer(&["content", "list", "--all", "--json"]).map_err(|e| format!("content list failed: {e}"))?).map_err(|e| format!("content list did not answer JSON: {e}"))?;
+    let lifecycle = lc
+        .answer(&["list-all"])
+        .map_err(|e| format!("lifecycle list failed: {e}"))?
+        .lines()
+        .filter_map(|l| {
+            let mut parts = l.split('\t');
+            let (id, state) = (parts.next()?, parts.next()?);
+            id.starts_with("sp-").then(|| (id.to_string(), state.to_string()))
+        })
+        .collect();
+    let memories = lc
+        .answer(&["content", "memories", "--json"])
+        .ok()
+        .and_then(|t| serde_json::from_str::<BTreeMap<String, serde_json::Value>>(&t).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(k, v)| (k, v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())))
+        .collect();
+    let watermarks = match lc.call(&["plane-watermarks", "--manifest"]) {
+        Ok(r) if r.code == 0 => r.text(),
+        Ok(r) => format!("Planning watermarks: unreadable ({}).", r.text()),
+        Err(e) => format!("Planning watermarks: unreadable ({e})."),
+    };
+    let mirror = std::fs::read(std::path::Path::new(wiki).join(REL)).unwrap_or_default();
+    let text = String::from_utf8_lossy(&mirror);
+    let mirrored_count = text.lines().filter(|l| l.split("\"id\":").nth(1).is_some_and(|r| r.trim_start().starts_with("\"sp-"))).count();
+    let mirror_bytes_sha = if mirror.is_empty() { String::new() } else { sha_hex(&mirror) };
+    serde_json::to_string(&Snapshot { content, lifecycle, memories, watermarks, mirrored_count, mirror_bytes_sha, disabled: false }).map_err(|e| e.to_string())
+}
+
+fn mirror_lines(text: &str) -> impl Iterator<Item = &str> {
+    text.lines().filter(|l| l.contains("\"id\":\"sp-"))
+}
+
+/// The runner of [`WRITE`]: the mirror replaced atomically and its manifest rewritten. Answers
+/// the render's sha.
+pub fn write(lc: &LcClient, wiki: &str, text: &str, now_secs: u64) -> Result<String, String> {
+    let root = std::path::Path::new(wiki);
+    if !root.is_dir() {
+        return Err(format!("SPIRA_WIKI '{wiki}' is not a directory"));
+    }
+    let out = root.join(REL);
+    let dir = out.parent().unwrap_or(root);
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let tmp = out.with_extension("jsonl.tmp");
+    std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let count = mirror_lines(text).count();
+    let newest = mirror_lines(text).filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).filter_map(|v| v.get("created_at").and_then(|c| c.as_str()).map(str::to_string)).max().unwrap_or_default();
+    let watermarks = match lc.call(&["plane-watermarks", "--manifest"]) {
+        Ok(r) if r.code == 0 => r.text(),
+        Ok(r) => format!("Planning watermarks: unreadable ({}).", r.text()),
+        Err(e) => format!("Planning watermarks: unreadable ({e})."),
+    };
+    let stamp = crate::tasks::c::sweep_archive::archive::fmt_ts(now_secs as i64);
+    let manifest = format!(
+        "# Spira beads — JSONL mirror\n\nMachine-written by `spira-runtime` (task `{NAME}`). **Do not hand-edit**: the next run overwrites it.\n\nSnapshot: **{} {} UTC** — {count} beads, newest created {newest}.\n\n{watermarks}\n\n`spira.jsonl` is the current mirror. A `spira-pre-*.jsonl` beside it is frozen history from before\na store reset, never current. Each bead carries `lifecycle_state` (authoritative) beside the\ncontent store's `status`; dependencies and comments are not mirrored.\n",
+        &stamp[..10],
+        &stamp[11..16]
+    );
+    std::fs::write(root.join(MANIFEST), manifest).map_err(|e| format!("{MANIFEST}: {e}"))?;
+    Ok(sha_hex(text.as_bytes()))
+}
+
+/// `git -C <wiki> <args>` through `proc`: `Ok` on exit 0, else git's own words.
+fn git(proc: &dyn Proc, wiki: &str, args: &[&str], secs: u64) -> Result<String, String> {
+    let mut argv = vec!["-C".to_string(), wiki.to_string()];
+    argv.extend(args.iter().map(|a| a.to_string()));
+    let o = proc.run(&ProcSpec { prog: "git".into(), args: argv, stdin: vec![], deadline: Duration::from_secs(secs) })?;
+    let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+    if o.code == Some(0) {
+        Ok(text)
+    } else {
+        Err(text.trim().to_string())
+    }
+}
+
+/// A git step retried only on `index.lock` contention, three tries `wait` apart.
+fn git_step(proc: &dyn Proc, wiki: &str, args: &[&str], wait: Duration) -> Result<(), String> {
+    for n in 1..=3 {
+        match git(proc, wiki, args, 30) {
+            Ok(_) => return Ok(()),
+            Err(e) if n < 3 && e.contains("index.lock") => std::thread::sleep(wait),
+            Err(e) => return Err(format!("git {} failed (try {n} of 3): {e}", args[0])),
+        }
+    }
+    Ok(())
+}
+
+/// The runner of [`COMMIT`]: the mirror and manifest staged and committed, when the wiki is a
+/// git checkout (otherwise nothing to do). Answers the sha.
+pub fn commit(proc: &dyn Proc, wiki: &str, retry_wait: &str, sha: &str, now_secs: u64) -> Result<String, String> {
+    if git(proc, wiki, &["rev-parse", "--git-dir"], 10).is_err() {
+        return Ok(sha.to_string());
+    }
+    let wait = Duration::from_secs(retry_wait.trim().parse().map_err(|_| format!("SPIRA_EXPORT_GIT_RETRY_WAIT must be seconds, got {retry_wait:?}"))?);
+    let text = std::fs::read_to_string(std::path::Path::new(wiki).join(REL)).map_err(|e| format!("{REL}: {e}"))?;
+    if sha_hex(text.as_bytes()) != sha {
+        return Err(format!("the mirror is no longer render {sha} — refusing to commit it"));
+    }
+    let date = &crate::tasks::c::sweep_archive::archive::fmt_ts(now_secs as i64)[..10];
+    let msg = format!("chore: spira beads JSONL mirror {date} ({} beads)", mirror_lines(&text).count());
+    git_step(proc, wiki, &["add", "--", REL, MANIFEST], wait)?;
+    git_step(proc, wiki, &["commit", "-q", "-m", &msg, "--", REL, MANIFEST], wait)?;
+    Ok(sha.to_string())
+}
+
+/// The runner of [`PUBLISH`]: pull-rebase and push the brain remote, two attempts; a failed
+/// pull aborts its rebase. Nothing to do without a checkout or a remote. Answers the sha.
+pub fn publish(proc: &dyn Proc, wiki: &str, sha: &str) -> Result<String, String> {
+    if git(proc, wiki, &["rev-parse", "--git-dir"], 10).is_err() || git(proc, wiki, &["remote"], 10).map(|r| r.trim().is_empty()).unwrap_or(true) {
+        return Ok(sha.to_string());
+    }
+    let mut last = String::new();
+    for _ in 0..2 {
+        if let Err(e) = git(proc, wiki, &["pull", "--rebase", "--autostash"], 60) {
+            let _ = git(proc, wiki, &["rebase", "--abort"], 10);
+            return Err(format!("git pull --rebase failed: {e}"));
+        }
+        match git(proc, wiki, &["push"], 60) {
+            Ok(_) => return Ok(sha.to_string()),
+            Err(e) => last = e,
+        }
+    }
+    Err(format!("git push refused or failed: {last}"))
+}
+
+/// The runner of [`TOUCH`]: the mirror's mtime bumped, which heimdall's `mirror-stale` reads.
+pub fn touch(wiki: &str) -> Result<String, String> {
+    let out = std::path::Path::new(wiki).join(REL);
+    std::fs::OpenOptions::new().append(true).open(&out).and_then(|f| f.set_modified(std::time::SystemTime::now())).map_err(|e| format!("{}: {e}", out.display()))?;
+    Ok("touched".into())
 }
 
 crate::tasks::b::hosted!(SweepExportBeads);
