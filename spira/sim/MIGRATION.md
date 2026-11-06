@@ -125,7 +125,7 @@ The trace now carries the world's `run/` directory: `run_verdicts` (tree certifi
 files, `held` read from `/proc/locks`), `run_gate_log` and `run_landing_log` (each line once, at the
 snapshot that first saw it). `[[expect]]` and `[[invariant]]` query them like `bead_state`. Two
 built-in invariants read them: `inv_round_land_has_certificate` and `inv_no_lock_held_between_events`;
-`run-state-trail` is the scenario, and `test-sim-controls.sh` plants a forged landing line and a held
+`run-state-trail` was the scenario (retired under sp-ipwlic, below), and the table controls plant a forged landing line and a held
 lock to see each go red.
 
 No bash suite is retired by this step. The sole-G14 suites, and what each still lacks:
@@ -264,4 +264,9 @@ serve`; `sim/actors.toml` keeps only sim-only actors, so a scenario naming one n
 | `claim-vs-batch` | retired: lifecycle's `in_delivery_is_left_only_by_a_delivery_exit_event`, `stale_version_never_mutates`, `release_and_holder_dead_both_return_to_ready` |
 | `dwarf-brief`, `dwarf-slain`, `claim-rank`, `builder-excludes-qa-proposed`, `rc-cutover-readiness`, `submit-from-other-cwd`, `rebase-loop-note` | world kept: the `call` actor runs what sentinel-call's `unit_start` starts, through the `SPIRA_CALL` seam; the property is the dwarf's, spira-claim's or the CLI's, and the world stops at SUBMITTED |
 | `happy-path` | a loop world (`driver = "loop"`, `src/loopworld.rs`): `sim run happy-path` drives the service's registrations on doubles, lands the bead and publishes its head by PR; `watch.perf_happy` measures it; `tests/loop_ports.rs` `happy_path_…` |
-| `cut-in-bare-env`, `publish-then-cut`, `push-lands`, `repo-modes`, `run-state-trail`, `rc-stale-round-pointer`, `rc-attributing-redrive`, `rc-fences-in-vm`, `supersede` | blocked: each needs a bead landed by the real `landing-pass land`, round VM or release tools, which only the tasks drive now; `scenarios_load.rs` `BLOCKED` names what each proves and its partial cover |
+| `push-lands` | retired: landing-pass's `push_mode_records_deliveries_through_the_machine` and `push_lands_records_first_and_closes_and_rebases_survivors_once_per_pass` (push to `landing:main`, delivered through the machine); sentinel-pass's `t5_check6_the_landing_leg_carries_its_runtime_bound_and_its_log` starts the landing |
+| `repo-modes` | ported to landing-pass: `a_push_repo_with_a_master_trunk_lands_on_its_master_and_never_on_a_main`; the hold half is `hold_gates_notes_and_does_not_advance_the_base` |
+| `rc-stale-round-pointer`, `rc-attributing-redrive`, `rc-fences-in-vm`, `run-state-trail` | ported: `tests/loop_rounds.rs` on batcher.local's machine; `run-state-trail`'s `members=` line is asserted by queue's `open_certify_land_is_one_round_the_whole_way`; porting it found the publish task's record missing `members`, `remote` and `forge_branch` (reported) |
+| `supersede`, `supersede-holds` | ported: `tests/loop_supersede.rs` on the supersede-duty task |
+| `gate-verdict-red`, `gate-verdict-silent` | ported: `tests/loop_gate.rs` on the gate.worker task |
+| `cut-in-bare-env`, `publish-then-cut` | ported: `tests/ci_cut.rs`, gate.yml's cut job on a scripted git and forge (bare env, and with built binaries standing for the release), with refusal controls |

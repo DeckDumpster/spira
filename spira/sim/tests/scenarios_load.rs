@@ -1,32 +1,22 @@
 //! Every scenario shipped under `spira/sim/scenarios/` loads: it parses, and every `real_actors`
 //! name is a sim-only actor of the tree's `sim/actors.toml`. The loop's units (sentinel-call,
-//! sentinel-landing, sift, rounds, gate-worker, publish) are tasks of `spira-runtime serve` now
-//! and the simulator drives them in-process (ruling D6, `sim/tests/whole_loop.rs` and
-//! `spira/sim/tests/loop_ports.rs`), so a scenario that still names one fails at load. The scenarios
-//! that named one were ported (the loop's half to `loop_ports.rs`, the effect's half kept here
-//! with the call's effect as an actor) or retired with their cover; the ones in [`BLOCKED`] are
-//! neither yet, and say why.
+//! sentinel-landing, sift, rounds, gate-worker, publish, supersede-duty) are tasks of
+//! `spira-runtime serve` now and the simulator drives them in-process (ruling D6: the loop world,
+//! `spira/sim/src/loopworld.rs`, and `sim/tests/whole_loop.rs`), so a scenario that still names
+//! one, or runs one as an inline actor, is refused here. The scenarios that did were ported to
+//! loop worlds and `spira/sim/tests/loop_*.rs`, kept as world scenarios with the call's effect as
+//! their actor, or retired with their cover (`spira/sim/MIGRATION.md`); [`BLOCKED`] lists any not
+//! yet done, and says why.
 
 use spira_sim::call::{dwarf_command, rune_of};
 use spira_sim::drive::{parse_scenario, Scenario, SCENARIOS_DIR};
 use spira_sim::loopworld;
 use std::path::{Path, PathBuf};
 
-/// Scenarios that still name a migrated actor, each with what it proves and why it is not
-/// ported: each needs a bead landed through the real `landing-pass land`, round VM or release
-/// tools, which only the loop's tasks drive now, and a world does not run the service. Their
-/// property is reported, not dropped; the cover named is partial.
-const BLOCKED: &[(&str, &str)] = &[
-    ("cut-in-bare-env", "gate.yml's cut job (steps/cut.sh) succeeds in a bare env after a landing; no cover"),
-    ("publish-then-cut", "the cut job with the release on PATH after a landing; no cover"),
-    ("push-lands", "a push-mode repo lands on its origin trunk; landing-pass tests cover it on fakes only"),
-    ("repo-modes", "push to a master trunk creates no main and a hold repo never lands; push to landing:master untested"),
-    ("run-state-trail", "ROUND-LAND logged with its member, certificate on disk before it; the members= log line untested"),
-    ("rc-stale-round-pointer", "a round lands past an abandoned round's record; queue round tests cover land/certify, not round-recert --drive"),
-    ("rc-attributing-redrive", "a re-drive from ATTRIBUTING lands and never returns the member; queue covers the re-drive, not the land"),
-    ("rc-fences-in-vm", "fences run in the round VM, never on the host; no negative check of a host gate call"),
-    ("supersede", "only a LANDED successor supersedes, with its bd note, close and inbox line; decide covered, the writes not"),
-];
+/// Scenarios that still name a migrated actor, each with what it proves and why it is not yet
+/// ported. None: every one was ported or retired (`spira/sim/MIGRATION.md`). A row here must
+/// name what the scenario proves and its partial cover, so a property is reported, never dropped.
+const BLOCKED: &[(&str, &str)] = &[];
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -124,4 +114,17 @@ fn the_shipped_loop_worlds_parse() {
 fn shipped_names() -> Vec<String> {
     let dir = root().join(SCENARIOS_DIR);
     std::fs::read_dir(&dir).expect("scenarios").filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "toml")).filter_map(|p| p.file_stem().and_then(|s| s.to_str()).map(str::to_string)).collect()
+}
+
+/// What the loop's migrated units ran as processes. A world scenario's inline actor running one
+/// would bring the unit back as an actor process under another name (ruling D6).
+const MIGRATED_COMMANDS: &[&str] = &["sentinel --call-only", "landing-pass land", "landing-pass --pass", "round-controller sifts", "batcher rounds", "gate-worker run", "queue publish-settle", "supersede-duty.sh", "reconciler goodput-pass"];
+
+#[test]
+fn no_shipped_scenario_runs_a_migrated_unit_as_an_inline_actor() {
+    let found: Vec<(String, String)> = shipped()
+        .into_iter()
+        .flat_map(|(n, sc)| sc.actors.into_iter().filter(|a| MIGRATED_COMMANDS.iter().any(|m| a.command.contains(m))).map(move |a| (n.clone(), a.command)))
+        .collect();
+    assert!(found.is_empty(), "these inline actors run a unit that is a task of spira-runtime serve: {found:?}");
 }

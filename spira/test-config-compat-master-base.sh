@@ -9,7 +9,8 @@
 #
 # TWO ROWS: the batcher's cut (batch.sh's own merge onto spira_landref, retired sp-vsob2) and
 # queue verdict's fast-forward, each driving the real binary against a repo whose base is
-# `master`. The push-mode landing row is the sim scenario repo-modes.
+# `master`. The push-mode landing row is landing-pass's
+# a_push_repo_with_a_master_trunk_lands_on_its_master_and_never_on_a_main.
 #
 # tier: T2
 # covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* landing-pass/src/* spira/lib.sh spira/testlib/lc-fixture.sh spira/testlib/forge-batch.sh UC-landing-merge-queue-45
