@@ -1249,7 +1249,7 @@ def shown(bid):
     return [b for b in bd(["show", bid]) if isinstance(b, dict) and b.get("id") == bid]
 def flag(args, name):
     return args[args.index(name) + 1] if name in args[:-1] else ""
-def answer(args):
+def answer(args, body=None):
     if args[:1] == ["show"] and len(args) > 1:
         hit = [b for b in shown(args[1]) if b.get("issue_type") not in NO_ROW]
         return (0, json.dumps({"bead": row(hit[0]), "delivery": None})) if hit else (1, "{}")
@@ -1282,6 +1282,13 @@ def answer(args):
         elif kind in ("Release", "HolderDead"):
             moved[bid] = "READY"
         return 0, ""
+    if args[:1] == ["content"] and len(args) > 1:
+        # The store's content door (sp-ipwlic): the bd argv after `content`, run against this
+        # suite's store, its request body on bd's stdin.
+        env = dict(os.environ, BD_IGNORE_SCHEMA_SKEW="1")
+        o = subprocess.run([os.environ.get("SPIRA_BD") or "bd", "-C", os.environ.get("SPIRA_DB") or ".", *args[1:]],
+                           input=body, capture_output=True, text=True, env=env, timeout=30)
+        return o.returncode, o.stdout
     return 2, "cannot tell: stand-in lifecycle service"
 srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 srv.bind(path)
@@ -1289,8 +1296,11 @@ srv.listen(16)
 while True:
     c, _ = srv.accept()
     try:
-        f = c.makefile("rw")
-        code, out = answer(json.loads(f.readline() or "[]"))
+        f = c.makefile("rb")
+        head = json.loads(f.readline().decode() or "[]")
+        # A request with a body is {"argv", "len"[, "caller"]} and then len bytes of it.
+        body = f.read(head.get("len") or 0).decode() if isinstance(head, dict) else None
+        code, out = answer(head.get("argv", []) if isinstance(head, dict) else head, body)
         body = out.encode()
         c.sendall(json.dumps({"exit_code": code, "len": len(body)}).encode() + b"\n" + body)
     except Exception as e:
@@ -1331,7 +1341,10 @@ case " \$* " in
 esac
 exit 0
 STUB
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$d/lc-ask-stub"
+    # The store's content door (sp-ipwlic): mail's reads and creates reach the store as
+    # `content <bd argv>` on the lifecycle machine, so the stand-in machine answers them
+    # from the same stub store bd would have.
+    printf '#!/usr/bin/env bash\n[ "${1:-}" = content ] && { shift; exec "%s/bd-ask-stub" "$@"; }\nexit 0\n' "$d" > "$d/lc-ask-stub"
     chmod +x "$d/bd-ask-stub" "$d/lc-ask-stub"
     export SPIRA_BD="$d/bd-ask-stub" SPIRA_LC_BIN="$d/lc-ask-stub"
     tl_config SPIRA_BD="$SPIRA_BD"
