@@ -897,6 +897,46 @@ mod tests {
         assert!(fs::read_to_string(unit_dir.join(LEDGER)).unwrap().contains("spira-watchdog-prod.timer"), "a later release that drops it retires it");
     }
 
+    /// The watcher names a box installs from the shipped manifest's `daemon` rows plus `overlay`.
+    fn shipped_daemon_rows(overlay: &[&str]) -> Vec<String> {
+        let text = fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/watchers")).unwrap();
+        let mut names: Vec<String> = text.lines().filter(|l| !l.trim_start().starts_with('#')).filter_map(|l| l.split('|').collect::<Vec<_>>().get(..2).filter(|f| f[1].trim() == "daemon").map(|f| f[0].trim().trim_start_matches('?').to_string())).collect();
+        names.extend(overlay.iter().map(|s| s.to_string()));
+        names
+    }
+
+    /// The `spira-*-<instance>.timer` and `spira-watch-*` units `rendered` holds outside the
+    /// scheduler's keep list (design W2): its watchdog, the store's boot check, and the
+    /// operator's repo-events overlay row.
+    fn outside_the_keep_list(rendered: &[(String, String, String)]) -> Vec<String> {
+        const KEEP: [&str; 3] = ["spira-watchdog-prod.timer", "spira-dolt-boot-check-prod.timer", "spira-watch-repo-events-prod.service"];
+        rendered.iter().map(|(u, _, _)| u.as_str()).filter(|u| (u.starts_with("spira-") && u.ends_with("-prod.timer")) || u.starts_with("spira-watch-")).filter(|u| !KEEP.contains(u)).map(str::to_string).collect()
+    }
+
+    /// W2 of the scheduler consolidation: rendering the manifest, with every conditional input
+    /// on, the shipped watchers and the operator's one overlay row, yields no loop timer and no
+    /// watcher unit outside the keep list. The loop runs in `spira-runtime serve`.
+    #[test]
+    fn rendering_the_manifest_yields_no_loop_timer_and_no_watcher_outside_the_keep_list() {
+        let tmpl_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
+        let td = tempdir();
+        let unit_dir = td.join("units");
+        let manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: true, dolt_durable_set: true, inotify_present: true, sccache_dav_addr_set: true, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(shipped_daemon_rows(&["repo-events"])) }).unwrap();
+        let h = host();
+        let sc = FakeSystemctl::default();
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let rendered = render_all(&ctx).unwrap();
+        assert!(rendered.iter().any(|(u, _, _)| u == "spira-runtime-prod.service"), "positive control: the scheduler renders");
+        assert!(rendered.iter().any(|(u, _, _)| u == "spira-watchdog-prod.timer"), "positive control: a kept timer renders");
+        let mut planted = rendered.clone();
+        planted.push(("spira-sentinel-prod.timer".into(), "spira-sentinel.timer".into(), String::new()));
+        planted.push(("spira-watch-queue-watch-prod.service".into(), "spira-watch@.service".into(), String::new()));
+        assert_eq!(outside_the_keep_list(&planted).len(), outside_the_keep_list(&rendered).len() + 2, "positive control: the check sees a loop timer and a watcher");
+        let strays = outside_the_keep_list(&rendered);
+        assert!(strays.is_empty(), "units the scheduler replaces are still rendered: {strays:?}");
+    }
+
     #[test]
     fn the_reconciler_has_no_timer_in_the_manifest() {
         let m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
