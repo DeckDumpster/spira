@@ -24,9 +24,9 @@ fn plan() -> Plan {
         cert: "/c/cert.pem".into(),
         key: "/c/key.pem".into(),
         password_file: "/c/pw".into(),
-        from: "spira@gantt.pub".into(),
+        from: "spira@example.org".into(),
         user: "spira".into(),
-        rcpt_domain: "gantt.pub".into(),
+        rcpt_domain: "example.org".into(),
         users_file: "/c/users".into(),
         unit: "spira-submission".into(),
     }

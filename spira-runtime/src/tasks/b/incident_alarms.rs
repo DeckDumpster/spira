@@ -13,7 +13,7 @@
 //! ask ids, the floor's binding and ask, the retries in flight, and the last status asked for.
 //! The dead-man reads the goodput task's last fired time from `scheduler status` (`deadman_of`),
 //! not the pass record's age behind a timer unit: an idle goodput task no longer writes a record
-//! every minute. Code wins where code and contract disagree (per Ryan, 2026-11-06).
+//! every minute. Code wins where code and contract disagree (sp-ipwlic).
 //!
 //! ## Tick
 //!
