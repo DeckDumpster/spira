@@ -60,8 +60,6 @@ mod store_write;
 mod unpublished;
 mod snapshot;
 mod work;
-#[cfg(test)]
-mod store_only_tests;
 
 use db::Conn;
 use lifecycle::{batch, bead, delivery};
@@ -302,9 +300,6 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
             Some("list-asks") => plan::with_ask_titles(answer, conn),
             _ => answer,
         };
-    }
-    if let Some(refused) = args.first().and_then(|v| control::served::refuse_unserved(v)) {
-        return refused;
     }
     if let Some(refused) = round_fields_unserved(args) {
         return refused;
@@ -867,9 +862,6 @@ pub(crate) fn apply_bead_event(conn: &Conn, key: &str, actor: &str, kind: bead::
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
     };
     let kind_json = serde_json::to_string(&kind).unwrap_or_default();
-    if let Some(answer) = control::served::apply_event("bead", key, row.state.as_str(), row.version, actor, &kind_json) {
-        return answer;
-    }
     run_bead_event(conn, key, row.state.as_str(), row.version, actor, &kind_json, db::now_epoch())
 }
 
