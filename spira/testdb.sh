@@ -60,14 +60,11 @@ TESTDB_MODE="${TESTDB_MODE:-}"
 # private server, data and workspace). Reset and drop hand it back to testenv.
 TESTDB_FIXTURE="${TESTDB_FIXTURE:-}"
 
-# _testdb_testenv — the testenv that owns server-mode fixtures, never found through the
-# caller's PATH. TESTDB_TESTENV overrides (a suite's stub); then the release's bin/, then
-# the one beside this script's release (a worktree has no SPIRA_RELEASE), then this directory.
+# _testdb_testenv — testenv from the release, never the caller's PATH. TESTDB_TESTENV overrides.
 _testdb_testenv() {
     local _c
     if [ -n "${TESTDB_TESTENV:-}" ]; then printf '%s\n' "$TESTDB_TESTENV"; return 0; fi
-    for _c in "${SPIRA_RELEASE:+$SPIRA_RELEASE/bin/testenv}" \
-              "$_TESTDB_HERE/../bin/testenv" "$_TESTDB_HERE/testenv"; do
+    for _c in "${SPIRA_RELEASE:+$SPIRA_RELEASE/bin/testenv}" "$_TESTDB_HERE/../bin/testenv"; do
         [ -n "$_c" ] && [ -f "$_c" ] && [ -x "$_c" ] && { printf '%s\n' "$_c"; return 0; }
     done
     return 1

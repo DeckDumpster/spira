@@ -38,4 +38,9 @@ out="$(run_up "$T/nowhere")"; rc=$?
 is "testdb_up refuses when no testenv can be resolved" 1 "$rc"
 want "the refusal names testenv" "no testenv binary" "$out"
 is "nothing was called" "" "$(cat "$T/calls")"
+
+cp "$T/rel/bin/testenv" "$T/tools/testenv"
+out="$(run_up "$T/nowhere")"; rc=$?
+is "a testenv on the caller's PATH is not used" 1 "$rc"
+is "the PATH testenv was not called" "" "$(cat "$T/calls")"
 tl_summary
