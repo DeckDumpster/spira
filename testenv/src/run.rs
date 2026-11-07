@@ -699,6 +699,21 @@ fn pid_alive(pid: &str) -> bool {
         && Path::new("/proc").join(pid).exists()
 }
 
+#[derive(Debug, PartialEq)]
+enum SweepPlacement {
+    WarmRefill,
+    Detached,
+}
+
+/// A held warm slot's refill sweeps; any other run spawns the sweep detached (D12), since
+/// every podman call of a sweep waits on podman's global locks and cannot be cut.
+fn sweep_placement(warm_slot: Option<usize>) -> SweepPlacement {
+    match warm_slot {
+        Some(_) => SweepPlacement::WarmRefill,
+        None => SweepPlacement::Detached,
+    }
+}
+
 /// Both arms of the orphan sweep: owner file with a dead pid; no owner file and old enough.
 fn sweep_orphans(s: &Settings, deps: &Deps) {
     if let Ok(rd) = fs::read_dir(&deps.owner_dir) {
@@ -1680,19 +1695,9 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     // The batch's own owner file: one live run per key, warm or cold (§4.2).
     let key_owner = deps.owner_dir.join(format!("{}.owner", session.name));
     let warm_slot = wt.warm_index();
-    if warm_slot.is_none() && setup_cutoff.get().is_some() {
-        // D12 (sp-t26yx): every podman call of the sweep takes podman's global locks, and
-        // under load one sweep ran nine minutes — past the trial's whole budget, since no
-        // podman call in it can be cut. A gate trial spawns it detached, like the refill.
+    if sweep_placement(warm_slot) == SweepPlacement::Detached {
         (deps.spawn_sweep)(&s.run);
-        deps.log("orphan sweep spawned detached — off the trial's critical path");
-    } else if warm_slot.is_none() {
-        sweep_orphans(&s, deps);
-        ph.mark("sweep");
-        if past_cutoff() {
-            share_note("sweep", &ph);
-            return Finish::fault(2, deadline_reason("sweep"), 0);
-        }
+        deps.log("orphan sweep spawned detached — off the run's critical path");
     }
     if !claim_owner(&key_owner) {
         deps.log(&format!("{} is already claimed by a live pid — a concurrent run with the same tree+selection is in flight; refusing to share its container", session.name));

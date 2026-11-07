@@ -950,12 +950,11 @@ container (<step> <s>, …) — podman exec overhead <s>`.
 
 ### 11.5 Decisions (sp-t26yx)
 
-* **D12 — a gate trial never sweeps inline.** Off the warm path (a scratch slot, all warm
-  slots busy) a `--deadline` trial spawns `testenv warm sweep` detached (one sweeper at a
+* **D12 — a run never sweeps inline.** Off the warm path (a scratch slot, all warm
+  slots busy) every run, deadline or not, spawns `testenv warm sweep` detached (one sweeper at a
   time, `flock` on `$SPIRA_RUN/testenv-sweep.lock`) instead of running both orphan sweeps on
-  its critical path: their podman calls cannot be cut, and one sweep ran **nine minutes**
-  (10:53–11:02Z), past the trial's whole 300 s budget. Without `--deadline` the sweep is
-  unchanged.
+  its critical path: their podman calls cannot be cut, and one sweep ran **nine minutes**,
+  past the trial's whole 300 s budget.
 * **D13 — one exec, not a faster exec.** *Rejected:* longer setup share or timeouts (the
   operator rule; the cost is lock queueing, which a longer wait only hides); one
   `podman exec` per step with retries (multiplies the toll); running setup through
