@@ -119,6 +119,11 @@ mod published {
                 .pipe(|rows| format!("[{rows}]")),
                 ["list", "--ids", _] => r#"[{"bead_id":"sp-w","state":"WORKING","holds":[]}]"#.to_string(),
                 ["plan", "watermark"] => r#"{"watermark":7}"#.to_string(),
+                ["plan", "edges", "--ids", "sp-w", "--dependents"] => r#"{"watermark":7,"edges":[
+                    {"issue_id":"sp-r","depends_on_id":"sp-w","type":"blocks"},
+                    {"issue_id":"sp-s","depends_on_id":"sp-w","type":"parent-child"},
+                    {"issue_id":"sp-x","depends_on_id":"sp-w","type":"related"}]}"#
+                    .to_string(),
                 ["plan", "items", "--ids", ids] if ids.contains("sp-r") => [
                     r#"{"id":"sp-r","dependencies":[{"issue_id":"sp-r","depends_on_id":"sp-w","type":"blocks"}]}"#,
                     r#"{"id":"sp-c"}"#,
@@ -148,7 +153,7 @@ mod published {
         let config = Config { control_store, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
         let env = Env { stdin: &mut stdin, config, lookup: &none };
         let a = Args::parse(&[]).unwrap();
-        let (_, entries) = judge_rows(&a, &env, &st).unwrap();
+        let (_, entries) = judge_rows(&a, &env, &st, None).unwrap();
         let seen = svc.0.lock().unwrap().clone();
         (seen, entries)
     }
@@ -182,5 +187,21 @@ mod published {
         let (seen, entries) = judged(false);
         assert!(published(&seen).is_none());
         assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn republish_dependents_judges_and_publishes_only_the_records_that_wait_on_or_descend_from_the_changed() {
+        let svc = Arc::new(Service(Mutex::new(Vec::new())));
+        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1) };
+        let mut stdin = std::io::empty();
+        let none = |_: &str| None;
+        let config = Config { control_store: true, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
+        let env = Env { stdin: &mut stdin, config, lookup: &none };
+        let a = Args::parse(&["--changed".into(), "sp-w".into()]).unwrap();
+        assert_eq!(republish_dependents(&a, &env, &st), Ok(2));
+        let p = published(&svc.0.lock().unwrap()).expect("no publish-readiness call");
+        let mut ids: Vec<&str> = p["entries"].as_array().unwrap().iter().map(|e| e["id"].as_str().unwrap()).collect();
+        ids.sort();
+        assert_eq!(ids, ["sp-r", "sp-s"], "sp-c is neither waiting on sp-w nor under it, and a related edge holds nothing back");
     }
 }

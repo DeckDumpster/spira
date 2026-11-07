@@ -221,6 +221,24 @@ impl Store {
         v["watermark"].as_u64().ok_or_else(|| "spira-lc plan watermark: no watermark".to_string())
     }
 
+    /// The beads that wait on, or descend from, any of `ids`: the sources of the planning
+    /// plane's edges into them that block, and its parent-child edges.
+    pub fn dependents_of(&self, ids: &[String]) -> Result<std::collections::BTreeSet<String>, String> {
+        let mut out = std::collections::BTreeSet::new();
+        for chunk in ids.chunks(LIST_CHUNK) {
+            let text = self.lc_run(&["plan", "edges", "--ids", &chunk.join(","), "--dependents"]).map_err(|e| format!("spira-lc plan edges: {e}"))?;
+            let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| format!("spira-lc plan edges: not JSON: {e}"))?;
+            let edges = v.get("edges").and_then(serde_json::Value::as_array).ok_or("spira-lc plan edges: no edges array")?;
+            for e in edges {
+                let kind = e["type"].as_str().unwrap_or("");
+                if kind == "parent-child" || spira_config::edges::blocks(spira_config::edges::Edge::Dep(kind)) {
+                    out.extend(e["issue_id"].as_str().map(str::to_string));
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Hands one readiness pass to the control store.
     pub fn lc_publish_readiness(&self, payload: &str) -> Result<(), String> {
         let r = self.lc.call_stdin(&["publish-readiness"], payload).map_err(|e| format!("spira-lc publish-readiness: {e}"))?;
