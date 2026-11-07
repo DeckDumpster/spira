@@ -479,3 +479,55 @@ fn a_preflight_red_certify_attributed_is_recorded_once_with_no_sub_pass_and_its_
     ])
     .unwrap();
 }
+
+/// A runner that answers red for a tree with every member and green for a tree without one.
+struct RedWhole(Vec<(u64, bool)>);
+
+impl RoundRunner for RedWhole {
+    fn set_members(&mut self, _: &[RoundMember]) {}
+    fn set_base(&mut self, _: &str) {}
+    fn start_main(&mut self, _: batcher::drive::MainKind, _: &[String]) -> Result<(), String> {
+        Ok(())
+    }
+    fn poll_main(&mut self) -> Result<batcher::drive::MainPoll, String> {
+        Ok(batcher::drive::MainPoll::default())
+    }
+    fn stop_main(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    fn launch(&mut self, job: &Job) -> Result<(), String> {
+        self.0.push((job.id, job.removal.is_empty()));
+        Ok(())
+    }
+    fn poll_jobs(&mut self) -> Vec<(u64, JobResult)> {
+        self.0.drain(..).map(|(id, whole)| (id, if whole { JobResult::Red } else { JobResult::Green })).collect()
+    }
+    fn now(&self) -> u64 {
+        0
+    }
+    fn wait(&mut self) {}
+}
+
+#[test]
+fn a_refused_eject_is_kept_in_the_progress_for_the_section_to_read() {
+    let mut w = world();
+    let refuse = |text: &str| crate::sim::verbs::VerbScript {
+        verb: "eject".into(),
+        repo: None,
+        batch: None,
+        ok: None,
+        refuse: Some(crate::sim::verbs::Refuse { code: Some(1), text: text.into() }),
+        lock_hold_ms: 0,
+    };
+    let vm = crate::sim::FakeVm::new(vec![], crate::sim::profiles().unwrap().remove(0), w.clock.clone());
+    w.verbs = crate::sim::FakeVerbs::new(vec![refuse("--suites names ci")], vm, w.clock.clone()).unwrap();
+    let r = round(&["sp-a"]);
+    let p = ports(&w, &w.store, &w.ledger);
+    let j = judge(&p, &mut RedWhole(vec![]), &r, &pass(1, &["ci"], None));
+    assert!(matches!(&j, Judged::Held { .. }), "{j:?}");
+    let kept: Progress = serde_json::from_value(w.store.get(&r.progress_key()).unwrap().unwrap().value.data).unwrap();
+    assert_eq!(
+        kept.held,
+        Some(EjectHeld { member: "sp-a".into(), suites: vec!["ci".into()], text: "--suites names ci".into() })
+    );
+}

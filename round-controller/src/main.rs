@@ -158,7 +158,7 @@ fn dispatch(args: &[String]) -> i32 {
                 eprintln!("round-controller cut: {e}\n{USAGE}");
                 2
             }
-            Ok((repo, members)) => match with_ports(|p| Ok(cut::explicit(p, &repo, members))) {
+            Ok((repo, members)) => match with_ports(|p| Ok(cut::explicit_recorded(p, &repo, members))) {
                 Ok(Ok(o)) => {
                     println!("batch={}\nhead={}", o.batch, o.head);
                     0

@@ -1,0 +1,172 @@
+description = "each of the controller's eight contradictions held for fifty passes: every one is a keyed section condition and the alarms component's page rule sends exactly one page for it, carrying the verb's own text or both answers"
+repos = ["home"]
+
+[run]
+epoch = 1800000000
+passes = 50
+every_secs = 30
+
+[lease]
+ttl_secs = 600
+pass_wall_max_secs = 4000
+redrive_retries = 2
+ec2_max_lifetime_secs = 8000
+
+[lease.deadline_secs]
+boot = 40
+build = 50
+suites = 90
+subpass = 70
+certify = 30
+
+[[store]]
+key = "lanes/home"
+data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
+
+[[git]]
+repo = "home"
+landing = "base-0"
+
+# LandRefused: a GREEN round the land verb refuses with a word the Lander does not act on.
+[[store]]
+key = "batches/home/g1"
+data = { batch_id = "g1", repo = "home", state = "Green", head = "g1-h", base = "base-0", pass = 1, version = 3, tested_base = "base-0", members = [{ id = "sp-g", tip = "g1" }] }
+
+[[verb]]
+verb = "land"
+batch = "g1"
+refuse = { code = 1, text = "land: refused: certificate head g1-h is not a descendant of the landing ref" }
+
+# EjectRefused: the Judge's refused eject, as it leaves it in the round's progress.
+[[store]]
+key = "batches/home/e1"
+data = { batch_id = "e1", repo = "home", state = "Attributing", head = "e1-h", base = "base-0", pass = 1, version = 4, tested_base = "base-0", members = [{ id = "sp-e", tip = "e1" }] }
+
+[[store]]
+key = "batches/home/e1/progress"
+data = { pass = 1, runs = [], held = { member = "sp-e", suites = ["ci"], text = "could not eject sp-e: --suites names ci" } }
+
+[[round_lease]]
+repo = "home"
+batch = "e1"
+
+# TwoAnswersOpenRound: a round record file after the store took over, beside a round the store holds.
+[[off.round_record]]
+repo = "home"
+name = "round"
+
+# CutOfJudgedRed: the refusal an explicit cut that named a judged-red member left standing.
+[[store]]
+key = "telemetry/round-controller/home/cut"
+ttl_secs = 604800
+data = { word = "cut-of-judged-red", key = "verdicts/home/by-member/sp-r/r1", since = 1800000000000 }
+
+# LaneBlocked: a standing lane fault.
+[[store]]
+key = "faults/home/base-0/sha256:img-0"
+data = { cause = { cause = "base" }, evidence = "the base is red on its own", since = 1800000000000 }
+
+# StuckRunner: a runner that hangs at 100 s keeps its lease and makes no progress.
+[[store]]
+key = "batches/home/s1"
+data = { batch_id = "s1", repo = "home", state = "CiRunning", head = "s1-h", base = "base-0", pass = 1, version = 2, tested_base = "base-0", members = [{ id = "sp-s", tip = "s1" }] }
+
+[[runner]]
+repo = "home"
+batch = "s1"
+phase = "suites"
+start_secs = 0
+marks_every_secs = 10
+hangs_secs = 100
+hold_secs = 86400
+
+# PriorRunnerAlive: an orphan whose old runner's unit is still active.
+[[store]]
+key = "batches/home/o1"
+data = { batch_id = "o1", repo = "home", state = "CiRunning", head = "o1-h", base = "base-0", pass = 1, version = 2, tested_base = "base-0", members = [{ id = "sp-o", tip = "o1" }], last_lease_token = { main = 7, sub = 0 } }
+
+[[unit]]
+name = "round-controller-run-o1-7-0"
+state = "active"
+
+# RedriveExhausted: an orphan whose launches fail until the retries run out.
+[[store]]
+key = "batches/home/o2"
+data = { batch_id = "o2", repo = "home", state = "CiRunning", head = "o2-h", base = "base-0", pass = 1, version = 2, tested_base = "base-0", members = [{ id = "sp-p", tip = "o2" }], last_lease_token = { main = 8, sub = 0 } }
+
+[[launch]]
+refuse = "systemd-run: exit 1"
+
+[[launch]]
+refuse = "systemd-run: exit 1"
+
+[[expect]]
+name = "eight-pages-in-all"
+count = "pages"
+equals = 8
+
+[[expect]]
+name = "one-page-for-land-refused"
+count = "pages:LandRefused"
+equals = 1
+
+[[expect]]
+name = "one-page-for-eject-refused"
+count = "pages:EjectRefused"
+equals = 1
+
+[[expect]]
+name = "one-page-for-two-answers"
+count = "pages:TwoAnswersOpenRound"
+equals = 1
+
+[[expect]]
+name = "one-page-for-cut-of-judged-red"
+count = "pages:CutOfJudgedRed"
+equals = 1
+
+[[expect]]
+name = "one-page-for-lane-blocked"
+count = "pages:LaneBlocked"
+equals = 1
+
+[[expect]]
+name = "one-page-for-stuck-runner"
+count = "pages:StuckRunner"
+equals = 1
+
+[[expect]]
+name = "one-page-for-prior-runner-alive"
+count = "pages:PriorRunnerAlive"
+equals = 1
+
+[[expect]]
+name = "one-page-for-redrive-exhausted"
+count = "pages:RedriveExhausted"
+equals = 1
+
+[[expect]]
+name = "the-eject-page-carries-the-verbs-text"
+count = "page-text:could not eject sp-e: --suites names ci"
+equals = 1
+
+[[expect]]
+name = "the-land-page-carries-the-verbs-text"
+count = "page-text:is not a descendant of the landing ref"
+equals = 1
+
+[[expect]]
+name = "the-two-answers-page-carries-both-answers"
+count = "page-text:run/queue/home/round exists but the store holds"
+equals = 1
+
+[[expect]]
+name = "every-page-links-its-runbook"
+count = "page-text:round-controller/runbook-controller#"
+equals = 8
+
+[[expect]]
+name = "inverted-two-pages-for-one-condition"
+count = "pages:LaneBlocked"
+equals = 2
+inverted = true

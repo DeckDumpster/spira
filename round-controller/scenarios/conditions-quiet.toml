@@ -1,0 +1,73 @@
+description = "what is not a contradiction pages nothing: a GREEN round held because the round below it has not landed, a round superseded because its base moved, and a live lease on a round that turned terminal less than one TTL ago"
+repos = ["home"]
+
+[run]
+epoch = 1800000000
+passes = 20
+every_secs = 30
+
+[lease]
+ttl_secs = 600
+pass_wall_max_secs = 4000
+redrive_retries = 2
+ec2_max_lifetime_secs = 8000
+
+[lease.deadline_secs]
+boot = 40
+build = 50
+suites = 90
+subpass = 70
+certify = 30
+
+[[store]]
+key = "lanes/home"
+data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
+
+[[git]]
+repo = "home"
+landing = "base-0"
+
+# A round that turned terminal with its runner's lease still live, released inside one TTL.
+[[store]]
+key = "batches/home/t1"
+data = { batch_id = "t1", repo = "home", state = "Landed", head = "t1-h", base = "base-0", pass = 1, version = 9, tested_base = "base-0", members = [{ id = "sp-t", tip = "t1" }] }
+
+[[round_lease]]
+repo = "home"
+batch = "t1"
+
+[[lease_release]]
+repo = "home"
+batch = "t1"
+secs = 300
+
+[[expect]]
+name = "no-page"
+count = "pages"
+equals = 0
+
+[[expect]]
+name = "the-lander-held-the-stacked-round"
+count = "blockers:stacked-on-unlanded"
+equals = 1
+
+[[expect]]
+name = "the-moved-base-was-superseded"
+count = "outcomes:superseded"
+equals = 1
+
+[[expect]]
+name = "the-section-was-published"
+count = "section-writes"
+at_most = 20
+
+[[expect]]
+name = "inverted-nothing-was-published"
+count = "section-writes"
+equals = 0
+inverted = true
+
+[[expect]]
+name = "no-contradiction-was-raised"
+count = "section-raised:EjectRefused"
+equals = 0

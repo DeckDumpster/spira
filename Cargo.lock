@@ -1589,6 +1589,7 @@ version = "0.1.0"
 dependencies = [
  "batcher",
  "forge",
+ "incident",
  "lifecycle",
  "migration-numbers",
  "reconciler-engine",

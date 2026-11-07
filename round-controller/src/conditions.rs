@@ -20,7 +20,6 @@ use crate::refusal::{self, Refusal, STANDING_TTL_SECS};
 use crate::resources::{round_key, Round};
 use crate::section::Cond;
 use crate::stack::{self, Live};
-use crate::switches::ROUND_RECORD_PREFIX;
 
 fn raised(type_: &'static str, key: String, reason: String) -> Cond {
     Cond {

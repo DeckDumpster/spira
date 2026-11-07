@@ -33,6 +33,11 @@ pub enum SectionCount {
     Acks(&'static str),
     /// `acks-stale:<json>`: intents in the store acked refused as stale at that knob value.
     Stale(Value),
+    /// `pages` / `pages:<Type>`: pages the alarms component's rule sends for the committed
+    /// sections, of every condition type or one.
+    Pages(Option<String>),
+    /// `page-text:<text>`: pages whose body carries that text.
+    PageText(String),
     /// `opened-with:<member>`: round records whose members include that bead.
     OpenedWith(String),
 }
@@ -52,6 +57,11 @@ impl SectionCount {
             ("section-green-with-blocker", None) => Some(SectionCount::GreenWithBlocker),
             ("acks", Some(w)) => ACKS.into_iter().find(|a| *a == w).map(SectionCount::Acks),
             ("acks-stale", Some(v)) => serde_json::from_str(v).ok().map(SectionCount::Stale),
+            ("pages", None) => Some(SectionCount::Pages(None)),
+            ("pages", Some(t)) if lookup(NAME).is_some_and(|k| k.condition(t).is_some()) => {
+                Some(SectionCount::Pages(Some(t.to_string())))
+            }
+            ("page-text", Some(t)) if !t.is_empty() => Some(SectionCount::PageText(t.to_string())),
             ("opened-with", Some(m)) if !m.is_empty() => {
                 Some(SectionCount::OpenedWith(m.to_string()))
             }
@@ -100,6 +110,14 @@ impl SectionCount {
             SectionCount::Stale(v) => listed(b, INTENTS_PREFIX)
                 .iter()
                 .filter(|i| i.pointer("/ack/result/refused/stale") == Some(v))
+                .count() as u64,
+            SectionCount::Pages(t) => crate::sim::pages::pages(&published)
+                .iter()
+                .filter(|pg| t.as_ref().is_none_or(|t| pg.condition == *t))
+                .count() as u64,
+            SectionCount::PageText(t) => crate::sim::pages::pages(&published)
+                .iter()
+                .filter(|pg| pg.body.contains(t.as_str()))
                 .count() as u64,
             SectionCount::OpenedWith(m) => listed(b, "batches/")
                 .iter()

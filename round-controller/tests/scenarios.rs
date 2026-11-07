@@ -56,6 +56,8 @@ scenario!(
     scenario_switch_andon_pulled,
     scenario_switch_andon_absent,
     scenario_launch_fail_releases,
+    scenario_conditions_eight,
+    scenario_conditions_quiet,
 );
 
 #[test]
