@@ -1088,7 +1088,9 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             .unwrap_or_else(|| args.branch.clone());
         let size = s.max_runs.unwrap_or_else(|| admission::derive(admission::Pool::Run, admission::Host::read()));
         let out_of_time = || cancelled() || deadline_at.get().is_some_and(|d| Instant::now() >= d);
-        match crate::runslot::take(&s.run, std::process::id(), &who, size, &admission::RealProcs, deps.sleep, &out_of_time, &mut |l: &str| deps.log(l)) {
+        let size_of = || size;
+        let seams = admission::Seams { size_of: &size_of, procs: &admission::RealProcs, sleep: deps.sleep };
+        match crate::runslot::take(&crate::runslot::request(&s.run, std::process::id(), &who), &seams, &out_of_time, &mut |l: &str| deps.log(l)) {
             Ok(slot) => {
                 if slot.0.waited > 0 {
                     deps.log(&format!("queue-wait={}s pool=run", slot.0.waited));
