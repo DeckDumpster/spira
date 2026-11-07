@@ -74,14 +74,7 @@ pub fn dwarf_globs() -> Vec<String> {
 /// column-split: first field is the unit, the third is ACTIVE; liveness is
 /// `runtime::units::is_live_dwarf`, the rule the fleet ceiling counts by.
 pub fn parse_dwarf_units(lines: &[String]) -> Vec<String> {
-    lines
-        .iter()
-        .filter_map(|l| {
-            let f: Vec<&str> = l.split_whitespace().map(|t| t.trim_start_matches('●')).filter(|t| !t.is_empty()).collect();
-            let unit = *f.first()?;
-            runtime::units::is_live_dwarf(unit, runtime::units::state_of_word(f.get(2)?)).then(|| unit.to_string())
-        })
-        .collect()
+    lines.iter().filter_map(|l| runtime::units::live_dwarf_in_list_line(l)).map(str::to_string).collect()
 }
 
 /// dwarves.sh's "live now": the live dwarves among `list-units` lines over [`dwarf_globs`].

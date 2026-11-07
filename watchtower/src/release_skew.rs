@@ -18,9 +18,7 @@ impl Cfg {
     }
 }
 
-const DWARF_UNIT_PREFIX: &str = "spira-dwarf-";
-
-/// A dwarf that started before `activated` and is within `dwarf_max_secs` of its start finishes
+/// A dwarf (either name, `runtime::units::is_dwarf_unit`) that started before `activated` and is within `dwarf_max_secs` of its start finishes
 /// on the release it was called from by design; it is not skew. Sessions renew their lease while
 /// they work, so this bound is the longest a healthy session runs, and is wider than `Cfg::max_secs`.
 pub struct Grace {
@@ -32,7 +30,7 @@ pub struct Grace {
 impl Grace {
     fn excuses(&self, id: &str, started: Option<i64>) -> bool {
         match (self.activated, started) {
-            (Some(act), Some(st)) => id.starts_with(DWARF_UNIT_PREFIX) && st < act && self.now - st <= self.dwarf_max_secs,
+            (Some(act), Some(st)) => runtime::units::is_dwarf_unit(id) && st < act && self.now - st <= self.dwarf_max_secs,
             _ => false,
         }
     }
@@ -196,6 +194,14 @@ mod tests {
     fn an_dwarf_started_before_the_activation_is_not_skew() {
         let show = unit("spira-dwarf-a-1.service", "A", 900) + &unit("spira-watchd.service", "B", 1000);
         assert_eq!(releases_of(&show), 1);
+    }
+
+    #[test]
+    fn sp_li4zys_a_scheduler_started_dwarf_before_the_activation_is_not_skew() {
+        let show = unit("spira-run-sentinel_2dcall-builder_2d1794009721297_2d1.service", "A", 900) + &unit("spira-watchd.service", "B", 1000);
+        assert_eq!(releases_of(&show), 1, "a scheduler-named dwarf finishes on the release it was called from");
+        let show = unit("spira-run-sentinel_2dpass-landing.service", "A", 900) + &unit("spira-watchd.service", "B", 1000);
+        assert_eq!(releases_of(&show), 2, "a landing pass is not a dwarf and has no grace");
     }
 
     #[test]

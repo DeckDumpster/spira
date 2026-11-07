@@ -595,6 +595,42 @@ pub fn is_live_dwarf(name: &str, state: UnitState) -> bool {
     is_dwarf_unit(name) && matches!(state, UnitState::Active | UnitState::Activating | UnitState::Deactivating)
 }
 
+/// The rune a dwarf [`DWARF_TASK`] started was called for: its key is `<rune>-<at>-<n>`.
+/// `None` for a `spira-dwarf-*` unit (its rune is a `RUNE_NAME` prefix, see [`is_dwarf_of`])
+/// and for anything that is not a dwarf.
+pub fn dwarf_rune(name: &str) -> Option<String> {
+    let (task, key) = parse_unit_name(name)?;
+    if task != DWARF_TASK {
+        return None;
+    }
+    key.rsplitn(3, '-').nth(2).filter(|r| !r.is_empty()).map(str::to_string)
+}
+
+/// Whether `name` is a dwarf of `rune`: a unit [`DWARF_TASK`] started for `rune`, or a unit
+/// started by name as `spira-dwarf-<rune_name>-….service` (`rune_name` is the rune's
+/// `RUNE_NAME`, the name such units carry; most runes leave it as the rune id).
+pub fn is_dwarf_of(name: &str, rune: &str, rune_name: &str) -> bool {
+    match dwarf_rune(name) {
+        Some(r) => r == rune,
+        None => name.strip_prefix(DWARF_PREFIX).is_some_and(|rest| rest.ends_with(SUFFIX) && rest.starts_with(&format!("{rune_name}-"))),
+    }
+}
+
+/// The live dwarf one `systemctl list-units --no-legend [--plain]` line names, if it names
+/// one: the first field is the unit (a leading `●` dropped), the third its `ActiveState`, and
+/// liveness is [`is_live_dwarf`].
+pub fn live_dwarf_in_list_line(line: &str) -> Option<&str> {
+    let mut f = line.split_whitespace().map(|t| t.trim_start_matches('●')).filter(|t| !t.is_empty());
+    let unit = f.next()?;
+    let active = f.nth(1)?;
+    is_live_dwarf(unit, state_of_word(active)).then_some(unit)
+}
+
+/// The dwarf units a `/proc/<pid>/cgroup` text runs under, in path order.
+pub fn dwarf_units_in_cgroup(cgroup: &str) -> Vec<&str> {
+    cgroup.split(|c: char| c == '/' || c.is_whitespace()).filter(|seg| is_dwarf_unit(seg)).collect()
+}
+
 /// The state systemd's `ActiveState` word names, as the systemd backend reads it.
 pub fn state_of_word(word: &str) -> UnitState {
     match word {
@@ -1960,6 +1996,22 @@ mod tests {
         assert_eq!(g, "spira-run-sentinel_2dcall-*");
         assert!(glob_match(&g, &unit_name("sentinel-call", "builder-1-0").unwrap()));
         assert!(!glob_match(&g, &unit_name("sentinel-pass", "k").unwrap()));
+    }
+
+    #[test]
+    fn sp_li4zys_a_dwarf_names_its_rune_its_line_and_its_cgroup() {
+        let own = "spira-run-sentinel_2dcall-czar_2descape_2d1794009721297_2d1.service";
+        assert_eq!(dwarf_rune(own).as_deref(), Some("czar-escape"));
+        assert_eq!(dwarf_rune("spira-dwarf-builder-17.service"), None);
+        assert_eq!(dwarf_rune("spira-run-sentinel_2dpass-builder_2d1_2d2.service"), None, "not sentinel-call's");
+        assert!(is_dwarf_of(own, "czar-escape", "czar-escape") && !is_dwarf_of(own, "czar", "czar"));
+        assert!(is_dwarf_of("spira-dwarf-brokk-17.service", "builder", "brokk") && !is_dwarf_of("spira-dwarf-brokk-17.service", "builder", "builder"));
+        assert_eq!(live_dwarf_in_list_line(&format!("● {own} loaded active running dwarf")), Some(own));
+        assert_eq!(live_dwarf_in_list_line(&format!("{own} loaded failed failed dwarf")), None);
+        assert_eq!(live_dwarf_in_list_line("spira-run-sentinel_2dpass-landing.service loaded active running x"), None);
+        let cg = format!("0::/user.slice/user-1000.slice/user@1000.service/app.slice/{own}\n");
+        assert_eq!(dwarf_units_in_cgroup(&cg), vec![own]);
+        assert!(dwarf_units_in_cgroup("0::/app.slice/spira-run-sentinel_2dpass-landing.service\n").is_empty());
     }
 
     #[test]
