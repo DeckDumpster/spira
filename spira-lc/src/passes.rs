@@ -103,6 +103,24 @@ mod tests {
     }
 
     #[test]
+    fn a_second_pass_in_its_suites_is_the_last_pass_with_no_verdict_and_the_phase_clock_at_its_start() {
+        let events = vec![
+            ev("PassStarted", json!({"n": 1, "head": "h1"}), 100),
+            ev("SuitesStarted", json!({"n": 1}), 130),
+            ev("PassRed", json!({"n": 1, "red_suites": ["test-x.sh"], "suites_s": 90, "build_s": 30}), 220),
+            ev("Eject", json!({"bead_id": "sp-1", "reason": "r"}), 230),
+            ev("PassRebuilt", json!({"head": "h2"}), 240),
+            ev("PassStarted", json!({"n": 2, "head": "h2"}), 250),
+            ev("SuitesStarted", json!({"n": 2}), 270),
+        ];
+        let (passes, since) = fold(&events);
+        let last = passes.last().unwrap();
+        assert_eq!((last["n"].as_u64(), last["suites_at"].as_i64(), &last["verdict"]), (Some(2), Some(270), &Value::Null));
+        assert_eq!(since, Some(270));
+        assert_eq!(passes.iter().map(|p| p["ejects"].as_u64().unwrap()).collect::<Vec<_>>(), [1, 0]);
+    }
+
+    #[test]
     fn an_incomplete_pass_is_neither_red_nor_green() {
         let events = vec![
             ev("PassStarted", json!({"n": 1, "head": "h"}), 10),
