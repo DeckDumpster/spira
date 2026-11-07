@@ -269,7 +269,6 @@ pub fn load(dir: &Path) -> Result<Vec<(u64, Record)>, String> {
     Ok(out)
 }
 
-/// A round that has not reached a terminal state.
 /// `LoopEvent` is hashed through its `Debug` text so the goodput library need not derive `Hash`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Events(pub Vec<LoopEvent>);
@@ -295,6 +294,7 @@ impl std::ops::DerefMut for Events {
     }
 }
 
+/// A round that has not reached a terminal state.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct OpenRound {
     pub repo: String,

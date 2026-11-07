@@ -33,14 +33,16 @@ fn tolerance_per_day(days: &[Day]) -> i64 {
     days.iter().filter(|d| !d.cause.contains("unexplained")).map(|d| (d.lifecycle_landed - d.git_land).abs()).max().unwrap_or(0)
 }
 
-fn outside(days: &[Day], tolerance: i64, landed: impl Fn(&Day) -> i64) -> Vec<String> {
-    days.iter().filter(|d| (landed(d) - d.git_land).abs() > tolerance).map(|d| d.day.clone()).collect()
+fn outside(days: &[Day], tolerance: i64, count: impl Fn(&Day) -> i64) -> Vec<String> {
+    days.iter().filter(|d| (count(d) - d.git_land).abs() > tolerance).map(|d| d.day.clone()).collect()
 }
 
 fn day_start(d: &Day) -> u64 {
     parse_rfc3339(&format!("{}T07:00:00Z", d.day)).unwrap()
 }
 
+/// A counting check, not a replay: the table keeps counts and no ids or reds, so this proves
+/// goodput's landed count and window arithmetic agree with git, not its harm handling.
 /// One stream of all twenty days' landings, `lifecycle_landed` distinct beads spread over each
 /// Pacific day (07:00Z to 07:00Z, the last cut at `CUT`): the table keeps counts, not bead ids.
 fn landings(days: &[Day]) -> Vec<LoopEvent> {
