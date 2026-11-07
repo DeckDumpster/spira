@@ -520,6 +520,8 @@ impl<'a> Run<'a> {
             return Err(1);
         }
         let until = (self.now() + self.rune.lease_seconds()).to_string();
+        let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
+        let delay = Duration::from_secs(self.conf.i("SPIRA_CLAIM_RETRY_DELAY_S").max(0) as u64);
         let mut stacks = std::collections::BTreeMap::new();
         let (won, logs, unreachable) = claim::lc_claim_loop(ids, resumable, tier, who, |id| {
             let p = self.stack_proposal(id, who);
@@ -532,7 +534,7 @@ impl<'a> Run<'a> {
                 &s(&[id, &holder, &until, &stack::stack_json(&p.stack), &p.stack_depth.to_string(), &p.stack_max_depth.to_string(), &self.rune.name]),
             );
             stacks.insert(id.to_string(), p.stack);
-            rc
+            claim::settle_claim(rc, self.d.exec, id, &holder, tries, delay, self.d.sleep)
         });
         for l in logs {
             self.log(&l);
@@ -546,8 +548,6 @@ impl<'a> Run<'a> {
             return Ok(None);
         };
         self.s.stack = stacks.remove(&id).unwrap_or_default();
-        let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
-        let delay = Duration::from_secs(self.conf.i("SPIRA_CLAIM_RETRY_DELAY_S").max(0) as u64);
         let mut raw = String::new();
         let mut row = None;
         for i in 1..=tries {
@@ -577,9 +577,12 @@ impl<'a> Run<'a> {
 
     /// The holds on a just-claimed row that make it unclaimable: the Claim event does not
     /// read holds, so a hold applied between the ready read and the claim is caught here.
-    fn blocking_holds(&self, id: &str) -> Vec<String> {
-        let o = self.d.exec.exec("spira-lc", &s(&["holds", id]), None, None);
-        o.stdout.lines().map(str::trim).filter(|h| !h.is_empty() && *h != "wait").map(String::from).collect()
+    /// A store that cannot tell is retried, then `Unknown`: never read as a hold, so it never
+    /// releases the claim (sp-druc64).
+    fn blocking_holds(&self, id: &str) -> claim::Holds {
+        let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
+        let delay = Duration::from_secs(self.conf.i("SPIRA_CLAIM_RETRY_DELAY_S").max(0) as u64);
+        claim::read_holds(self.d.exec, id, tries, delay, self.d.sleep)
     }
 
     fn claim(&mut self) -> Result<(), i32> {
@@ -627,12 +630,17 @@ impl<'a> Run<'a> {
         }
 
         // Read-after-claim: the predicate and the claim are not atomic.
-        let held = self.blocking_holds(&c.id);
-        if !held.is_empty() {
-            self.release();
-            self.log(&format!("{who}: {} carries a {} hold — released immediately after claim (race with the hold)", c.id, held.join(",")));
-            self.ledger_done(0, "hold-raced");
-            return Err(0);
+        match self.blocking_holds(&c.id) {
+            claim::Holds::Known(held) if !held.is_empty() => {
+                self.release();
+                self.log(&format!("{who}: {} carries a {} hold — released immediately after claim (race with the hold)", c.id, held.join(",")));
+                self.ledger_done(0, "hold-raced");
+                return Err(0);
+            }
+            claim::Holds::Known(_) => {}
+            claim::Holds::Unknown(why) => {
+                self.log(&format!("{who}: {} holds cannot be read ({why}) — keeping the claim; a hold is not assumed and nothing is released", c.id));
+            }
         }
 
         if let Some(rc) = self.build_spec_gate(&c) {
