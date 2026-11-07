@@ -1219,8 +1219,9 @@ run without `--deadline`, `SPIRA_TESTENV_GATE_CAP` (+30 s settle, so the run's o
 first) for one with it. A run without `--deadline` first waits on host load (at most
 `SPIRA_TESTENV_LOAD_WAIT`), and its cap starts only once that admission lets it in: the queue is
 a bounded wait of its own, not this run's suites. Likewise the cap's clock stands still while the
-run waits for an admission slot (unit, test or compile), for at most `SPIRA_TESTENV_SLOT_WAIT` in
-all; waiting past that counts. At the cap the run cancels through the signal path, killing its
+run waits for an admission slot (unit, test or compile), for the whole of every such wait: a run
+admitted after any queue gets its full cap, and its verdict line carries `slot_wait=<N>s suite=<N>s`.
+`SPIRA_TESTENV_SLOT_WAIT` bounds only the scan's allowance below. At the cap the run cancels through the signal path, killing its
 containers, and finishes `VERDICT FAULT rc=2 reason=over-cap`, logging
 `over-cap: <tier/suite or phase> was still running at the <N>s cap`; the verdict is recorded in
 `run.events`. If it has not unwound 30 s later it kills its descendants and exits itself.

@@ -5,9 +5,10 @@
 //! signal takes) and finishes `FAULT reason=over-cap`, naming what was running. `testenv-cap`
 //! scans live runs and kills any that outlive their cap plus [`GRACE`], plus the load-wait
 //! bound for a suite-tier run, whose cap starts only once load admission lets it in, plus the
-//! slot-wait bound: the cap's clock stands still while the run waits for an admission slot
-//! ([`hold`]), up to that bound.
+//! slot-wait bound. The run's own clock stands still for the whole of every admission-slot
+//! wait ([`hold`]); the scan, which cannot see the waits, bounds the run's total age instead.
 
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -149,17 +150,47 @@ pub fn over_cap_line(what: &str, secs: u64, source: &str) -> String {
 
 type Trip = Arc<Mutex<Option<(String, u64)>>>;
 
-/// Wall time since arming, less the slot waits it excuses, which total at most `allowance`.
+/// Wall time since arming, less every slot wait: the cap meters work, not queueing.
 struct Clock {
     start: Instant,
     held_since: Option<Instant>,
     excused: Duration,
-    allowance: Duration,
+    ledger: Option<PathBuf>,
+}
+
+fn epoch() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// Where a run publishes its slot waits, for the scan, which cannot see them from outside.
+pub fn ledger_path(run: &Path, pid: u32) -> PathBuf {
+    run.join("testenv-slot-wait").join(pid.to_string())
+}
+
+/// `<start ticks> <seconds excused> <epoch a wait began, or 0>`; a failed write only means the
+/// scan falls back to its flat bound.
+fn publish(k: &Clock) {
+    let Some(path) = &k.ledger else { return };
+    let ticks = start_ticks(std::process::id()).unwrap_or(0);
+    let since = k.held_since.map_or(0, |t| epoch().saturating_sub(t.elapsed().as_secs()));
+    let _ = path.parent().map(std::fs::create_dir_all);
+    let _ = std::fs::write(path, format!("{ticks} {} {since}", k.excused.as_secs()));
+}
+
+/// Seconds of `p`'s age that were slot waiting, as it published them; 0 when unpublished or
+/// when the ledger belongs to an earlier process that had the same pid.
+pub fn excused_secs(run: &Path, p: &Proc) -> u64 {
+    let Ok(text) = std::fs::read_to_string(ledger_path(run, p.pid)) else { return 0 };
+    let f: Vec<u64> = text.split_whitespace().filter_map(|v| v.parse().ok()).collect();
+    match f.as_slice() {
+        [ticks, done, since] if *ticks == p.start_ticks => done + if *since > 0 { epoch().saturating_sub(*since) } else { 0 },
+        _ => 0,
+    }
 }
 
 impl Clock {
     fn excused(&self) -> Duration {
-        (self.excused + self.held_since.map_or(Duration::ZERO, |t| t.elapsed())).min(self.allowance)
+        self.excused + self.held_since.map_or(Duration::ZERO, |t| t.elapsed())
     }
 
     fn counted(&self) -> Duration {
@@ -168,12 +199,11 @@ impl Clock {
 
     #[cfg(test)]
     fn counting(&self) -> bool {
-        self.held_since.is_none() || self.excused() >= self.allowance
+        self.held_since.is_none()
     }
 }
 
-/// While this lives the cap armed on this thread does not count, until its slot-wait
-/// allowance is spent.
+/// While this lives the cap armed on this thread does not count.
 pub struct Held(Option<Arc<Mutex<Clock>>>);
 
 /// Stops the clock of the cap armed on this thread while the run waits for an admission slot.
@@ -182,6 +212,7 @@ pub fn hold() -> Held {
         let mut k = k.lock().unwrap();
         k.held_since.is_none() && {
             k.held_since = Some(Instant::now());
+            publish(&k);
             true
         }
     });
@@ -194,18 +225,27 @@ impl Drop for Held {
             let mut k = k.lock().unwrap();
             if let Some(t) = k.held_since.take() {
                 k.excused += t.elapsed();
+                publish(&k);
             }
         }
     }
 }
 
-pub struct Armed(Arc<AtomicBool>, Trip);
+pub struct Armed(Arc<AtomicBool>, Trip, Arc<Mutex<Clock>>);
 
 impl Armed {
+    /// Time spent held for admission slots so far.
+    pub fn waited(&self) -> Duration {
+        self.2.lock().unwrap().excused()
+    }
+
     /// Stops the watchdog; what was running when the cap fired, if it did.
     pub fn finish(self) -> Option<(String, u64)> {
         self.0.store(true, Ordering::SeqCst);
         CURRENT.with(|c| c.borrow_mut().take());
+        if let Some(path) = &self.2.lock().unwrap().ledger {
+            let _ = std::fs::remove_file(path);
+        }
         let trip = self.1.lock().unwrap().take();
         if trip.is_some() {
             TRIPPED.store(false, Ordering::SeqCst);
@@ -214,8 +254,8 @@ impl Armed {
     }
 }
 
-/// Arms the cap on this thread; [`hold`] excuses at most `slot_wait` seconds of it.
-pub fn arm(cap: Cap, slot_wait: u64) -> Armed {
+/// Arms the cap on this thread; [`hold`] stops its clock.
+pub fn arm(cap: Cap, ledger: Option<PathBuf>) -> Armed {
     let limit = Duration::from_secs(cap.secs);
     let source = cap.source;
     let done = Arc::new(AtomicBool::new(false));
@@ -226,8 +266,9 @@ pub fn arm(cap: Cap, slot_wait: u64) -> Armed {
         start: Instant::now(),
         held_since: None,
         excused: Duration::ZERO,
-        allowance: Duration::from_secs(slot_wait),
+        ledger,
     }));
+    let shared = clock.clone();
     CURRENT.with(|c| *c.borrow_mut() = Some(clock.clone()));
     std::thread::spawn(move || {
         let wait = |more: &dyn Fn() -> bool| {
@@ -260,7 +301,7 @@ pub fn arm(cap: Cap, slot_wait: u64) -> Armed {
             unsafe { libc::_exit(2) };
         }
     });
-    Armed(done, trip)
+    Armed(done, trip, shared)
 }
 
 fn children(pid: u32) -> Vec<u32> {
@@ -455,27 +496,42 @@ mod tests {
     }
 
     #[test]
-    fn a_hold_stops_the_clock_only_up_to_its_allowance() {
-        let held = |allowance: u64| {
-            let armed = arm(Cap { secs: 9_999, source: "test" }, allowance);
-            assert!(armed_here());
-            let h = hold();
-            let during = armed_here();
-            drop(h);
-            let after = armed_here();
-            armed.finish();
-            (during, after, armed_here())
-        };
-        assert_eq!(held(60), (false, true, false));
-        assert_eq!(held(0), (true, true, false), "a zero allowance excuses nothing");
+    fn a_hold_stops_the_clock_until_it_is_released() {
+        let armed = arm(Cap { secs: 9_999, source: "test" }, None);
+        assert!(armed_here());
+        let h = hold();
+        assert!(!armed_here());
+        drop(h);
+        assert!(armed_here());
+        armed.finish();
+        assert!(!armed_here());
+    }
+
+    #[test]
+    fn a_run_admitted_after_a_slot_wait_longer_than_the_cap_gets_its_whole_cap() {
         let ago = |s| Instant::now() - Duration::from_secs(s);
-        let k = Clock {
-            start: ago(100),
-            held_since: Some(ago(70)),
-            excused: Duration::from_secs(20),
-            allowance: Duration::from_secs(60),
-        };
-        assert_eq!(k.counted().as_secs(), 40, "excused waits stop at the allowance");
+        let admitted = Clock { start: ago(1_212 + 5), held_since: None, excused: Duration::from_secs(1_212), ledger: None };
+        assert!(admitted.counted() < Duration::from_secs(10), "the wait is not the run's time");
+        let queued = Clock { start: ago(1_212), held_since: Some(ago(1_212)), excused: Duration::ZERO, ledger: None };
+        assert!(queued.counted() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn the_scan_does_not_count_the_slot_waits_a_run_published() {
+        let dir = testkit::TempDir::new("testenv-cap-ledger");
+        let run = dir.path().to_path_buf();
+        let me = std::process::id();
+        let mine = live().into_iter().find(|q| q.pid == me).unwrap();
+        assert_eq!(excused_secs(&run, &mine), 0, "nothing published");
+        let armed = arm(Cap { secs: 9_999, source: "test" }, Some(ledger_path(&run, me)));
+        drop(hold());
+        assert!(ledger_path(&run, me).exists());
+        std::fs::write(ledger_path(&run, me), format!("{} 1212 0", mine.start_ticks)).unwrap();
+        assert_eq!(excused_secs(&run, &mine), 1212);
+        std::fs::write(ledger_path(&run, me), format!("{} 1212 0", mine.start_ticks + 1)).unwrap();
+        assert_eq!(excused_secs(&run, &mine), 0, "another process's ledger under a reused pid");
+        armed.finish();
+        assert!(!ledger_path(&run, me).exists(), "a finished run leaves none");
     }
 
     #[test]

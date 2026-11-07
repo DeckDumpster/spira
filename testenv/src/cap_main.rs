@@ -43,8 +43,13 @@ fn report(inbox: &str, b: &Breach) {
 fn scan(dry: bool, grace: u64, exe: Option<&str>) -> Result<usize, String> {
     let (suite, gate, load_wait, slot_wait) = caps()?;
     let inbox = spira_config::process::cfg("SPIRA_CONCIERGE_INBOX")?;
+    let run = std::path::PathBuf::from(spira_config::process::cfg("SPIRA_RUN")?);
+    let procs: Vec<cap::Proc> = cap::live()
+        .into_iter()
+        .map(|p| cap::Proc { age_secs: p.age_secs.saturating_sub(cap::excused_secs(&run, &p)), ..p })
+        .collect();
     let mut killed = 0;
-    for b in cap::breaches(&cap::live(), suite, gate, load_wait, slot_wait, grace, exe) {
+    for b in cap::breaches(&procs, suite, gate, load_wait, slot_wait, grace, exe) {
         if dry {
             println!("would kill pid {} tier={} wall={}s cap={}s", b.proc.pid, b.tier, b.proc.age_secs, b.cap);
         } else if cap::kill_verified(&b.proc) {
