@@ -104,7 +104,7 @@ before="$(cat "$TMP/live.toml")"
 env -i PATH="$PATH" HOME="$TMP/home" SPIRA_TOML="$TMP/live.toml" SPIRA_HOME="$RELEASES/$NEW/spira" SPIRA_REPO="$RELEASES/$NEW" \
     spira-config validate >/dev/null 2>&1
 wantrc "planted offender: validate accepts the config" 0 "$?"
-want "while resolve rejects it" "zz_nodefault_secs" "$(resolve_under "$NEW")"
+want "while resolve rejects it" "is not declared" "$(resolve_under "$NEW")"
 out="$(go_live "$NEW")"; rc=$?
 [ "$rc" -ne 0 ] && ok "activation refuses" || bad "activation refuses" "rc=$rc: $out"
 want "the refusal names the key" "zz_nodefault_secs" "$out"
