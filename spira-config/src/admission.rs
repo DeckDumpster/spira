@@ -1114,7 +1114,7 @@ pub fn is_gate_token(t: &str) -> bool {
 /// Does this rustc argument list compile a crate? The probes (`-vV`, `--print …`) that
 /// `cargo metadata` makes too are not builds and never queue (DESIGN-admission.md D6).
 pub fn is_compile(args: &[String]) -> bool {
-    args.iter().any(|a| a == "--crate-name")
+    args.first().map(String::as_str) != Some("-") && args.iter().any(|a| a == "--crate-name")
 }
 
 #[cfg(test)]

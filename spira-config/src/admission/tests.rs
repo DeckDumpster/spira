@@ -235,7 +235,10 @@ fn only_a_crate_compile_is_a_build() {
     let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     assert!(is_compile(&v(&["--crate-name", "gate", "--edition=2021", "gate/src/main.rs"])));
     assert!(!is_compile(&v(&["-vV"])));
-    assert!(!is_compile(&v(&["-", "--crate-name___", "--print=file-names"])));
+    let cargo_probe = ["-", "--crate-name", "___", "--print=file-names", "--crate-type", "bin", "--print=sysroot", "--print=cfg", "-Wwarnings"];
+    assert!(!is_compile(&v(&cargo_probe)), "cargo's first probe needs no config and no slot");
+    assert_eq!(wrapper_action(None, &v(&cargo_probe)), WrapperAction::Exec);
+    assert!(is_compile(&v(&["--crate-name", "x", "src/main.rs", "--print=native-static-libs"])), "a compile that prints is still a compile");
 }
 
 #[test]
