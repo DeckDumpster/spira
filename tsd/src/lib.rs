@@ -141,11 +141,13 @@ const LOCK_EX: i32 = 2;
 const LOCK_UN: i32 = 8;
 
 pub mod alarm;
+pub mod land;
 pub mod pass;
 pub mod prune;
 pub mod query;
 pub mod store;
 pub mod report;
+pub mod stop;
 pub mod testrun;
 
 pub fn default_host() -> String {

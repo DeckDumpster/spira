@@ -110,6 +110,16 @@ impl<B: Backend> Rig<B> {
         v
     }
 
+    fn publish_from(&self, outside: &dyn Outside) -> Value {
+        self.n.set(self.n.get() + 1);
+        let request = format!("t/{}", self.n.get());
+        let args: Vec<String> = ["publish-section", "lifecycle"].map(String::from).to_vec();
+        let call = Call { now_ms: self.clock.now_ms(), request: &request, metrics: &self.sink };
+        let (code, out) = run(&self.store, &args, &call, outside);
+        assert_eq!(code, 0, "{out}");
+        serde_json::from_str(&out).unwrap()
+    }
+
     fn section(&self) -> Value {
         let (code, v) = self.call(&["section", "get", "Lifecycle/all"], None);
         assert_eq!(code, 0, "{v}");
@@ -316,4 +326,84 @@ fn the_run_directory_reads_the_halt_stamp_and_missing_families_as_empty() {
     let rows = [pass("r-9", &[], "over-cap", "2026-10-31T13:00:00Z").to_string()].join("\n");
     std::fs::write(tmp.join("tsd").join("cert-pass.jsonl"), rows).unwrap();
     assert_eq!(dir.rounds(0).unwrap().len(), 1);
+}
+
+fn write_rows(dir: &std::path::Path, family: &str, rows: &[Value]) {
+    std::fs::create_dir_all(dir.join("tsd")).unwrap();
+    let text: Vec<String> = rows.iter().map(Value::to_string).collect();
+    std::fs::write(dir.join("tsd").join(format!("{family}.jsonl")), text.join("\n")).unwrap();
+}
+
+fn stop_row(kind: &str, at: u64, repo: Option<&str>, bead: Option<&str>) -> Value {
+    json!({
+        "ts": tsd::iso_utc(at), "host": "h", "family": "loop-stop",
+        "kind": kind, "reason": "operator", "actor": "world", "repo": repo, "bead": bead, "detail": "",
+    })
+}
+
+fn land_row(at: u64, bead: &str, commit: &str, reverts: Option<&str>) -> Value {
+    json!({ "ts": tsd::iso_utc(at), "host": "h", "family": "land", "repo": "harness", "bead": bead, "commit": commit, "reverts": reverts })
+}
+
+#[test]
+fn a_halt_that_was_released_is_excluded_from_the_trailing_day_by_the_typed_stop_records_alone() {
+    let r = rig();
+    let now = r.now();
+    for (i, ago) in [3 * H, 4 * H, 5 * H, 6 * H].into_iter().enumerate() {
+        r.land(&format!("in-{i}"), "harness", now - ago - MIN, now - ago);
+    }
+    r.land("before-halt", "harness", now - 28 * H - MIN, now - 28 * H);
+    let tmp = testkit::TempDir::new("lifecycle-halt-released");
+    let dir = RunDir(tmp.path().to_path_buf());
+    assert!(dir.records_releases(), "the run directory records releases of the world");
+    r.publish_from(&dir);
+    let unrecorded = value(&r.status()["goodput_rate_24h"]);
+    assert_eq!(unrecorded, 4.0, "with no stop record the halt reads as running time and the old landing is out of the day");
+
+    r.advance(2 * MIN);
+    write_rows(tmp.path(), "loop-stop", &[stop_row("halt", now - 12 * H, None, None), stop_row("release", now - 7 * H, None, None)]);
+    r.publish_from(&dir);
+    let st = r.status();
+    assert_eq!(value(&st["goodput_rate_24h"]), 5.0, "five hours of halt are not counted, so the day reaches back to the old landing: {st}");
+    assert_eq!(value(&st["landed_24h"]), 5.0);
+}
+
+#[test]
+fn a_revert_whose_landing_names_the_reverted_commit_charges_the_reverted_bead() {
+    let r = rig();
+    let now = r.now();
+    r.land("bad", "harness", now - 3 * H - MIN, now - 3 * H);
+    r.land("undo", "harness", now - 2 * H - MIN, now - 2 * H);
+    let tmp = testkit::TempDir::new("lifecycle-reverts");
+    write_rows(tmp.path(), "land", &[land_row(now - 3 * H, "bad", "abcdef0123456789", None), land_row(now - 2 * H, "undo", "0123456789abcdef", Some("abcdef0"))]);
+    r.publish_from(&RunDir(tmp.path().to_path_buf()));
+    let harmful = r.status()["harmful"].clone();
+    let beads: Vec<&str> = harmful.as_array().unwrap().iter().map(|h| h["bead"].as_str().unwrap()).collect();
+    assert_eq!(beads, vec!["bad"], "{harmful}");
+    assert_eq!(harmful[0]["evidence"][0]["signal"], "revert");
+}
+
+#[test]
+fn a_revert_subject_without_the_typed_field_charges_nothing() {
+    let r = rig();
+    let now = r.now();
+    r.land("bad", "harness", now - 3 * H - MIN, now - 3 * H);
+    r.land("undo", "harness", now - 2 * H - MIN, now - 2 * H);
+    let tmp = testkit::TempDir::new("lifecycle-revert-prose");
+    let mut prose = land_row(now - 2 * H, "undo", "0123456789abcdef", None);
+    prose["subject"] = json!("Revert \"bad\" (abcdef0123456789)");
+    write_rows(tmp.path(), "land", &[land_row(now - 3 * H, "bad", "abcdef0123456789", None), prose]);
+    r.publish_from(&RunDir(tmp.path().to_path_buf()));
+    assert!(r.status().get("harmful").is_none(), "{}", r.status());
+}
+
+#[test]
+fn the_typed_stop_rows_replace_the_halt_stamp_and_a_pause_names_its_repo_and_bead() {
+    let tmp = testkit::TempDir::new("lifecycle-stop-rows");
+    let dir = RunDir(tmp.path().to_path_buf());
+    write_rows(tmp.path(), "loop-stop", &[stop_row("halt", 100, None, None), stop_row("release", 200, None, None), stop_row("pause", 300, Some("harness"), Some("b-9")), json!({"ts": tsd::iso_utc(400), "family": "loop-stop", "kind": "halt", "reason": "because"})]);
+    let stops = dir.stops().unwrap();
+    let kinds: Vec<(StopKind, u64)> = stops.iter().map(|e| match e { LoopEvent::Stop { kind, at, .. } => (*kind, *at), _ => panic!() }).collect();
+    assert_eq!(kinds, vec![(StopKind::Halt, 100), (StopKind::Release, 200), (StopKind::Pause, 300)], "a reason outside the closed set is no stop: {stops:?}");
+    assert!(matches!(&stops[2], LoopEvent::Stop { repo: Some(r), bead: Some(b), .. } if r == "harness" && b == "b-9"));
 }
