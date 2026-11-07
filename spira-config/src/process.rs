@@ -47,7 +47,10 @@ pub fn cfg(key: &str) -> Result<String, String> {
         .values
         .get(key)
         .cloned()
-        .ok_or_else(|| format!("{key} is not a registered config key (spira/conf.d) — refusing"))
+        .ok_or_else(|| {
+            let registry = crate::resolve::locate_home_for_process().map(|h| h.join("conf.d").display().to_string()).unwrap_or_else(|e| e);
+            format!("{key} is not a registered config key (spira/conf.d) — refusing; registry read: {registry}")
+        })
 }
 
 /// The startup self-check of a long-running binary: this process's registry loads (refusing with
