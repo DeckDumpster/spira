@@ -341,6 +341,42 @@ mod tests {
         build(NOW, &events, &dwell, &p95)
     }
 
+    /// The `ops_dwell` rows and `ops_dwell_p95` the where-stuck replays produce: twenty
+    /// landed beads give each state its measured p95, five fresh live beads sit inside it.
+    fn replay_p95() -> BTreeMap<String, i64> {
+        p95_map(&[
+            json!({"state": "CERTIFIED", "p95_s": 618}), json!({"state": "IN_DELIVERY", "p95_s": 318}), json!({"state": "SUBMITTED", "p95_s": 100}),
+            json!({"state": "READY", "p95_s": 78}), json!({"state": "WORKING", "p95_s": 1800}),
+        ])
+    }
+    fn replay_dwell(id: &str, state: &str, ago: i64) -> Value {
+        json!({"bead_id": id, "state": state, "holds": "[]", "priority": null, "title": null, "entered_at": NOW - ago, "p95_s": replay_p95()[state], "samples": 20})
+    }
+    fn fresh_beads() -> Vec<Value> {
+        ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY"].iter().map(|s| replay_dwell(&format!("ws-fresh-{}", s.to_lowercase()), s, 30)).collect()
+    }
+    fn flagged(dwell: &[Value]) -> Vec<String> {
+        let mut rows: Vec<String> = build(NOW, &[], dwell, &replay_p95()).iter().filter(|r| r.stuck).map(|r| format!("{}:{}", r.bead_id, r.state)).collect();
+        rows.sort();
+        rows
+    }
+
+    #[test]
+    fn a_clean_history_flags_no_bead() {
+        assert!(flagged(&fresh_beads()).is_empty());
+        assert!(build(NOW, &[], &fresh_beads(), &replay_p95()).is_empty(), "a live bead inside its p95 with no event in the window is not listed");
+    }
+
+    #[test]
+    fn each_stuck_case_is_flagged_and_nothing_else() {
+        let mut dwell = fresh_beads();
+        dwell.extend([
+            replay_dwell("sp-2cah6", "CERTIFIED", 20 * H), replay_dwell("sp-penudq", "CERTIFIED", 23 * H),
+            replay_dwell("sp-h4umcj", "WORKING", 30 * H), replay_dwell("ws-strand", "IN_DELIVERY", 10 * H),
+        ]);
+        assert_eq!(flagged(&dwell), ["sp-2cah6:CERTIFIED", "sp-h4umcj:WORKING", "sp-penudq:CERTIFIED", "ws-strand:IN_DELIVERY"]);
+    }
+
     #[test]
     fn a_bar_is_outlined_only_past_its_own_states_p95() {
         let rows = intent();

@@ -118,6 +118,16 @@ pub fn refuse_no_record_type(args: &[String], read: &mut PlanReader) -> Option<(
     })
 }
 
+fn priority_arg(args: &[String]) -> Result<Option<i64>, (i32, String)> {
+    match flag(args, "--priority") {
+        None => Ok(None),
+        Some(p) => match p.parse::<i64>() {
+            Ok(n) if (0..=4).contains(&n) => Ok(Some(n)),
+            _ => Err((CANNOT_TELL, format!("create-bead: --priority takes 0..4, got {p:?}"))),
+        },
+    }
+}
+
 /// `create-bead <bead-id> [--title T] [--priority 0..4] [--repo NAME] [--submitted-tip SHA]`. With a tip the
 /// row is born SUBMITTED at it (an untouched READY row is promoted), so no claimable READY window exists.
 pub fn cmd_create_bead(args: &[String], conn: &Conn) -> (i32, String) {
@@ -127,12 +137,9 @@ pub fn cmd_create_bead(args: &[String], conn: &Conn) -> (i32, String) {
     if !is_row_key(id) {
         return (CANNOT_TELL, format!("create-bead: {id:?} is not a bead id"));
     }
-    let priority = match flag(args, "--priority") {
-        None => None,
-        Some(p) => match p.parse::<i64>() {
-            Ok(n) if (0..=4).contains(&n) => Some(n),
-            _ => return (CANNOT_TELL, format!("create-bead: --priority takes 0..4, got {p:?}")),
-        },
+    let priority = match priority_arg(args) {
+        Ok(p) => p,
+        Err(refusal) => return refusal,
     };
     let at = crate::db::now_epoch();
     let script = create_bead_script(id, at, flag(args, "--title").as_deref(), priority, flag(args, "--submitted-tip").as_deref(), flag(args, "--repo").as_deref());
@@ -1708,6 +1715,16 @@ mod tests {
         assert!(s.starts_with("INSERT IGNORE INTO bead"), "{s}");
         assert!(!s.contains("NOT EXISTS"), "{s}");
         assert_eq!(s.matches(';').count(), 1);
+    }
+
+    #[test]
+    fn a_priority_outside_zero_to_four_is_refused_before_any_sql() {
+        let args = |p: &str| ["sp-a", "--priority", p].map(String::from).to_vec();
+        assert_eq!(priority_arg(&args("9")).unwrap_err().0, 2);
+        assert_eq!(priority_arg(&args("-1")).unwrap_err().0, 2);
+        assert_eq!(priority_arg(&args("high")).unwrap_err().0, 2);
+        assert_eq!(priority_arg(&args("4")), Ok(Some(4)));
+        assert_eq!(priority_arg(&["sp-a".to_string()]), Ok(None));
     }
 
     #[test]

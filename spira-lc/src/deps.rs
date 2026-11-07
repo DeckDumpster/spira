@@ -105,6 +105,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dep_add_refuses_a_non_key_before_any_sql() {
+        let args = |a: &str, b: &str| [a, b].map(String::from).to_vec();
+        assert_eq!(keys("dep-add", &args("sp-B", "not a key")).unwrap_err().0, 2);
+        assert_eq!(keys("dep-add", &args("not a key", "sp-A")).unwrap_err().0, 2);
+        assert_eq!(keys("dep-add", &["sp-B".to_string()]).unwrap_err().0, 2);
+        assert_eq!(keys("dep-add", &args("sp-B", "sp-A")), Ok(("sp-B", "sp-A")));
+    }
+
+    #[test]
     fn bd_dep_list_gives_target_and_type_in_either_spelling() {
         let json = r#"[{"depends_on_id":"sp-a","type":"blocks"},{"id":"sp-b","dependency_type":"parent-child"},{"id":"sp-c"},{"id":"not a key"}]"#;
         assert_eq!(parse_edges(json), [("sp-a".into(), "blocks".into()), ("sp-b".into(), "parent-child".into()), ("sp-c".into(), "blocks".into())]);

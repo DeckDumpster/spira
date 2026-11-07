@@ -48,11 +48,16 @@ pub fn cmd_ops_snapshot(_args: &[String], conn: &Conn) -> (i32, String) {
     (0, Value::Object(out).to_string())
 }
 
+fn view_arg(args: &[String]) -> Result<&'static str, (i32, String)> {
+    args.first().and_then(|a| VIEWS.iter().find(|v| **v == a.as_str())).copied().ok_or_else(|| (2, format!("ops-view: takes one of {}", VIEWS.join(" | "))))
+}
+
 /// `ops-view <view> [--epics]`: one view as a JSON array; with `--epics`, an object
 /// `{"rows": [...], "epics": [...]}` so the pane gets the epic rollup on a call it already makes.
 pub fn cmd_ops_view(args: &[String], conn: &Conn) -> (i32, String) {
-    let Some(view) = args.first().and_then(|a| VIEWS.iter().find(|v| **v == a.as_str())) else {
-        return (2, format!("ops-view: takes one of {}", VIEWS.join(" | ")));
+    let view = match view_arg(args) {
+        Ok(v) => v,
+        Err(refusal) => return refusal,
     };
     let rows = match conn.live().and_then(|l| l.ops_view(view, crate::db::now_epoch())) {
         Some(rows) => rows,
@@ -550,7 +555,21 @@ mod tests {
     fn the_graph_is_json_edges_with_state_names_and_events() {
         let out = graph_json();
         let edges: Vec<Value> = serde_json::from_str(&out).unwrap();
-        assert!(edges.iter().any(|e| e["from"] == "READY" && e["event"] == "Claim" && e["to"] == "WORKING"), "{out}");
+        let has = |f: &str, ev: &str, t: &str| edges.iter().any(|e| e["from"] == f && e["event"] == ev && e["to"] == t);
+        assert!(has("READY", "Claim", "WORKING"), "{out}");
+        assert!(has("SUBMITTED", "GatePass", "CERTIFIED"), "{out}");
+        assert!(has("CERTIFIED", "GateRed", "REWORK"), "{out}");
+        let terminal = ["LANDED", "DROPPED", "SUPERSEDED", "DONE"];
+        assert!(!edges.iter().any(|e| terminal.iter().any(|t| e["from"] == *t)), "no exit from a terminal state: {out}");
+    }
+
+    #[test]
+    fn ops_view_refuses_anything_but_its_views_before_any_sql() {
+        for v in VIEWS {
+            assert_eq!(view_arg(&[v.to_string()]), Ok(v));
+        }
+        assert_eq!(view_arg(&["bead".to_string()]).unwrap_err().0, 2);
+        assert_eq!(view_arg(&[]).unwrap_err().0, 2);
     }
 
     #[test]

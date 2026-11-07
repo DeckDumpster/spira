@@ -239,7 +239,7 @@ CREATE TABLE IF NOT EXISTS bead_dep (
 CREATE INDEX IF NOT EXISTS bead_dep_target_idx ON bead_dep (depends_on);
 
 -- The ops read model; migrations/0007-ops-read-model.sql makes the same views on an existing
--- database (ops_live as replaced by 0009), and the two are asserted identical by test-ops-read-model.sh.
+-- database (ops_live as replaced by 0009), and the two are asserted identical by lifecycle/tests/schema_views.rs.
 -- Each view takes its keys from the covering (state, since) index, then reads the rows by
 -- primary key: with the hint the plan is the same whether or not the optimizer has table
 -- statistics, which on a mostly-terminal table would otherwise choose a scan.
@@ -274,7 +274,7 @@ SELECT /*+ JOIN_ORDER(r,t) LOOKUP_JOIN(r,t) */
   JOIN bead t ON t.bead_id = r.bead_id;
 
 -- The where-stuck read model; migrations/0009-where-stuck.sql and 0013-ops-edges-event.sql make the
--- same views on an existing database, and the two are asserted identical by test-ops-read-model.sh.
+-- same views on an existing database, and the two are asserted identical by lifecycle/tests/schema_views.rs.
 CREATE OR REPLACE VIEW ops_edges AS
 SELECT 'applied' AS kind, from_state, to_state, event, NULL AS refusal,
        SUM(at >= UNIX_TIMESTAMP() - 3600) AS n_1h, COUNT(*) AS n_24h, MAX(at) AS last_at
