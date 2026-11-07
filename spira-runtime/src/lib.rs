@@ -175,7 +175,7 @@ impl Effects {
             None => reconciler::Seams::production()?,
         }, run, r.home.clone(), at, reconciler_engine::clock::iso_of(at))?.with_desired_state().with_host(Arc::new(host));
         cfg = cfg.with_memo(self.memo.clone());
-        cfg.skip_units = vec![runtime_unit(&instance)];
+        cfg.skip_units = own_skip_units(&instance);
         let observation = reconciler::observe(&cfg, &input.reminded);
         serde_json::to_string(&observation).map_err(|e| e.to_string())
     }
@@ -288,14 +288,14 @@ impl EffectRunner for Effects {
 }
 
 /// The runtime's own unit, which its reconciler must not treat as a subject.
-fn runtime_unit(instance: &str) -> String {
-    spira_config::unit::unit_name("runtime", "service", instance)
+fn own_skip_units(instance: &str) -> Vec<String> {
+    vec![spira_config::unit::unit_name("runtime", "service", instance)]
 }
 
 #[cfg(test)]
 mod own_unit_tests {
     #[test]
-    fn runtime_unit_is_the_installed_runtime_service_name() {
-        assert_eq!(super::runtime_unit("prod"), "spira-runtime-prod.service");
+    fn skip_list_holds_the_installed_runtime_service_name() {
+        assert_eq!(super::own_skip_units("prod"), vec!["spira-runtime-prod.service".to_string()]);
     }
 }
