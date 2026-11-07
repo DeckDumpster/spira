@@ -85,23 +85,30 @@ JSON
 fresh
 is "a later successful launch supersedes an earlier refusal" "" "$(rskp pass)"
 mkdir -p "$TMP/state"
-printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && exit "${TC_RC:-0}"\nsleep 30\n' > "$TMP/stub/round-vm"
 rskd() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_ROUND_VM_SPILL=ec2-only SPIRA_ROUND_VM_STATE_DIR="$TMP/state" SPIRA_ROUND_VM_EC2_LAUNCH_WINDOW=3600 \
-        SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9 SPIRA_ROUND_VM_EC2_PROBE_DEADLINE=1
+        SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9 ${DLD:+SPIRA_ROUND_VM_EC2_PROBE_DEADLINE=$DLD}
     env -i SPIRA_RELEASE="$(tl_release)" PATH="$TMP/stub:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" "$@" 2>&1
 }
 echo "$((now + 30 * 86400))" > "$KEY.expires"
+printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && exit "${TC_RC:-0}"\necho "$*" >> "%s/probe.log"\nexit 0\n' "$TMP" > "$TMP/stub/round-vm"
+printf '{"events":[]}\n' > "$TMP/state/pool.json"
+fresh; rm -f "$TMP/probe.log"
+rskd pass >/dev/null
+want "with no launch recorded the recording stub is probed" "ec2-probe --dry-run" "$(cat "$TMP/probe.log" 2>/dev/null)"
 cat > "$TMP/state/pool.json" <<JSON
 {"events":[{"vm":"ec2-dd","to":"provisioning","reason":"spilled to ec2: x","at":$((now2 - 700))},{"vm":"ec2-dd","to":"leased","reason":"spilled to ec2: x (provider: ec2)","at":$((now2 - 600))}]}
 JSON
-fresh
-is "a hung round-vm and a timing-out probe stay quiet when pool.json holds a recent lease" "" "$(rskd pass)"
+fresh; rm -f "$TMP/probe.log"
+is "a recent lease in pool.json keeps the watcher quiet" "" "$(rskd pass)"
+nowant "a recent lease in pool.json never runs the probe" "ec2-probe" "$(cat "$TMP/probe.log" 2>/dev/null)"
+nowant "a recent lease in pool.json raises no launch alarm" "ROUND SPILL LAUNCH" "$(cat "$INBOX" 2>/dev/null)"
+printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && exit "${TC_RC:-0}"\nsleep 30\n' > "$TMP/stub/round-vm"
 cat > "$TMP/state/pool.json" <<JSON
 {"events":[]}
 JSON
 fresh
-out="$(rskd pass)"
+out="$(DLD=1 rskd pass)"
 want "no launch in pool.json and a timing-out probe alarms" "probe could not decide" "$out"
 want "the alarm names the window" "last 3600s" "$out"
 rm -f "$TMP/probe.log"
