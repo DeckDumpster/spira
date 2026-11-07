@@ -78,7 +78,8 @@ fn the_matcher_sees_a_view_that_differs() {
 fn ops_live_carries_the_columns_the_now_rows_render() {
     let schema = fs::read_to_string(root().join("schema.sql")).unwrap();
     let live = view_text(&schema, "ops_live").unwrap();
-    for col in ["t.persona,", " AS rework", " AS claimable", " AS blocker"] {
-        assert!(live.contains(col), "ops_live lacks {col:?}: {live}");
+    let select_list = live.split(" FROM ").next().unwrap();
+    for col in ["t.persona", "AS rework", "AS claimable", "AS blocker"] {
+        assert!(select_list.contains(col), "ops_live select list lacks {col:?}: {select_list}");
     }
 }

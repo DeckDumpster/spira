@@ -49,11 +49,9 @@ want "the second run finds nothing pending" "already applied" "$again"
 
 is "migrating the pre-0007 store gives ops_live its claimable and blocker" "blocker claimable" "$(lcfix_sql -r csv -q "SELECT column_name FROM information_schema.columns WHERE table_name = 'ops_live' AND column_name IN ('claimable','blocker') ORDER BY 1" | sed 1d | paste -sd' ')"
 
-# SEED: 12 beads and 24 events, generated in the store. The mix is 6 live beads (OPEN..IN_DELIVERY
-# in turn), 4 landed in the last day, then landed three days ago and dropped in turn; 2 titled;
-# 2 of the 24 events inside the window, the rest 20 days old. The plans held with and without
-# statistics at every size tried, 300 beads / 3,000 events down to 12 beads / 3 events: none
-# changed, so the floor is the mix, not a plan.
+# SEED: 12 beads, 24 events: 6 live beads (OPEN..IN_DELIVERY), 4 landed in the last day, then one landed
+# 3 days ago and one dropped; 2 events inside the window, 22 older. No plan changed from 300 beads /
+# 3,000 events down to 12 / 3; 12 is the smallest that holds every state, 24 keeps both sides of the window.
 NOW="$(date +%s)"
 SEED_BEADS=12
 SEED_EVENTS=24
