@@ -805,11 +805,7 @@ impl<'a> Run<'a> {
     {
         let bead = self.s.bead.clone();
         let mail = self.conf.s("SPIRA_MAIL");
-        if !mail.is_empty() {
-            for sub in ["new", "cur", "tmp"] {
-                let _ = std::fs::create_dir_all(Path::new(&mail).join(format!("dwarf-{bead}")).join(sub));
-            }
-        }
+        crate::mailbox::open(&mail, &bead);
         self.d.env.set("BEAD_ID", &bead);
         self.d.env.set("SPIRA_MAIL", &mail);
         self.d.env.set("SPIRA_MAIL_FROM", &self.rune.mail_from());

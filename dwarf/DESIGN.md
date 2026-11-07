@@ -677,7 +677,7 @@ Kept, although they look wrong (flagged for the operator):
     `test-dwarf-worktree-collision.sh:57`, `test-dwarf-world-stop.sh:94`,
     `test-dwarf-teardown-e2e.sh:515`, `test-dwarf-sweep.sh:52`, `test-cross-repo.sh:141`,
     `test-epic-claim-order.sh:261`, `test-groom-escalation-check.sh:101`,
-    `test-holds.sh:210`, `test-lifecycle-enforce-gate.sh:93`, `test-mail-dwarf.sh:151`,
+    `test-holds.sh:210`, `test-lifecycle-enforce-gate.sh:93`,
     `test-ops-closing.sh:82`, `test-persona-model.sh:183,233`, `test-spike.sh:77`,
     `test-submitted-lands.sh:105`, `test-thrash-teardown.sh:110,192`, `test-timeout.sh:188`,
     `test-world-drain-deadline.sh:89,119`. Those that `cp "$HERE/dwarf.sh" "$SPIRA_HOME/"`
@@ -993,7 +993,7 @@ Kept, although they look wrong (flagged for the operator):
     `test-dwarf-worktree-collision.sh:57`, `test-dwarf-world-stop.sh:94`,
     `test-dwarf-teardown-e2e.sh:515`, `test-dwarf-sweep.sh:52`, `test-cross-repo.sh:141`,
     `test-epic-claim-order.sh:261`, `test-groom-escalation-check.sh:101`,
-    `test-holds.sh:210`, `test-lifecycle-enforce-gate.sh:93`, `test-mail-dwarf.sh:151`,
+    `test-holds.sh:210`, `test-lifecycle-enforce-gate.sh:93`,
     `test-ops-closing.sh:82`, `test-persona-model.sh:183,233`, `test-spike.sh:77`,
     `test-submitted-lands.sh:105`, `test-thrash-teardown.sh:110,192`, `test-timeout.sh:188`,
     `test-world-drain-deadline.sh:89,119`. Those that `cp "$HERE/dwarf.sh" "$SPIRA_HOME/"`

@@ -1216,10 +1216,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
                 .chain([id.clone(), n.clone()])
                 .collect::<Vec<_>>(),
         );
-        if !changed.is_empty() {
-            changed.push_str("\n\n");
-        }
-        changed.push_str(n);
+        bead::claimdesc::append_change(&mut changed, n);
     }
     if body_file.is_some() || append_file.is_some() {
         let (_, out) = bdq_capture(home, &s(&["show", &id, "--json"]));
@@ -1259,10 +1256,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         if let Some(t) = staged {
             let _ = std::fs::remove_file(t);
         }
-        if !changed.is_empty() {
-            changed.push_str("\n\n");
-        }
-        changed.push_str(if append_file.is_some() { "Description appended." } else { "Description updated." });
+        bead::claimdesc::append_change(&mut changed, if append_file.is_some() { "Description appended." } else { "Description updated." });
     }
 
     // Best-effort notification, same as bdq's own `acknowledge_forced_edit`: the real

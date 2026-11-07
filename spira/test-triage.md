@@ -147,7 +147,6 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 | test-mimir-closed-record.sh | 32 | the closed-record INVALID-CLOSED trigger and allowlist | unit | A trigger over rows. |
 | test-yield.sh | 32 | a gate red lands in the right column; an unreadable record says `?` | unit | Panel column rule. |
 | test-holds.sh | 42 | holds reports open beads whose branch touches a set of paths | unit | Path-overlap set logic. |
-| test-mail-dwarf.sh | 36 | amend mails the live dwarf; the mailbox is removed on exit | sim | A message hand-off with a lifecycle end. |
 | test-verdict-flow.sh | 36 | mail sendmail: bead closing and decision-bead verdict flow back | sim | Hand-off across mail, bead and sentinel. |
 
 ### I — lifecycle store (Dolt)
