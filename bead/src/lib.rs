@@ -925,6 +925,12 @@ mod tests {
     }
 
     #[test]
+    fn find_id_by_title_returns_the_row_whose_title_matches_not_the_first() {
+        let rows = r#"[{"id":"sp-a","title":"first"},{"id":"sp-b","title":"second"}]"#;
+        assert_eq!(find_id_by_title(rows, "second").as_deref(), Some("sp-b"));
+    }
+
+    #[test]
     fn parse_list_ids_excludes_events() {
         let json = r#"[{"id":"sp-a","issue_type":"task"},{"id":"sp-ev.1","issue_type":"event"},{"id":"sp-b","issue_type":"bug"}]"#;
         assert_eq!(
