@@ -340,8 +340,8 @@ echo "bdi — an uncapped bulk disk is named, a capped one is not:"
 # ==========================================================================
 SYS="$TMP/bdi"; mkdir -p "$SYS/8:32" "$SYS/8:48"
 bdi() {
-    env -i SPIRA_RELEASE="$(PATH="$PATH" tl_release)" PATH="$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent \
-        SPIRA_BDI_SYSFS="$SYS" SPIRA_BDI_MAX_RATIO=7 SPIRA_BDI_CAPPED="$CAPPED" bash "$HERE/drift.sh" "$@"
+    env -i SPIRA_RELEASE="$(PATH="$PATH" tl_release)" PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="$(tl_layer SPIRA_BDI_SYSFS="$SYS" SPIRA_BDI_MAX_RATIO=7 SPIRA_BDI_CAPPED="$CAPPED")" bash "$HERE/drift.sh" "$@"
 }
 echo 1 > "$SYS/8:32/strict_limit"; echo 7 > "$SYS/8:32/max_ratio"
 echo 0 > "$SYS/8:48/strict_limit"; echo 100 > "$SYS/8:48/max_ratio"
