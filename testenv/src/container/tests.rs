@@ -1538,7 +1538,7 @@ fn an_absent_image_in_a_bounded_trial_names_itself_and_the_build_command() {
     assert_eq!(Driver { host: &f, conf: &c }.acquire_image(false), None);
     let e = f.errs();
     assert!(e.contains("IMAGE-ABSENT localhost/spira-testenv:"), "{e}");
-    assert!(e.contains("`testenv image`"), "{e}");
+    assert!(e.contains("`testenv container image --tree <checkout>`"), "{e}");
 }
 
 // ---- the image comes from the tree under test, not the installed release (sp-etl70a) ----
@@ -1588,4 +1588,20 @@ fn up_runs_the_image_of_the_checkouts_own_containerfile() {
         run.iter().any(|a| a == &format!("localhost/spira-testenv:{want}")),
         "run used {run:?}"
     );
+}
+
+#[test]
+fn image_builds_the_trees_own_tag_and_a_malformed_tree_flag_is_usage() {
+    let f = Fake::new();
+    harness(&f, "/h");
+    harness(&f, "/t");
+    f.file("/t/spira/testenv/Containerfile", "FROM ubuntu:24.04\nRUN apt-get install bubblewrap\n");
+    f.when(&["image", "exists"], 1, "");
+    let c = conf("/h");
+    let d = Driver { host: &f, conf: &c };
+    let want = tree_tag(&f, &c, "/t");
+    assert_eq!(d.dispatch(&args(&["image", "--tree", "/t"])), 0);
+    assert_eq!(f.out.borrow().last().cloned(), Some(format!("localhost/spira-testenv:{want}")));
+    assert_eq!(d.dispatch(&args(&["tag", "--tree"])), 1);
+    assert_eq!(d.dispatch(&args(&["tag", "--tree", ""])), 1);
 }
