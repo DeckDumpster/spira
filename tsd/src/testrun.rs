@@ -1,7 +1,7 @@
 // testrun — the per-test record. One `test-run` row per case per round, keyed by the test's id;
 // the suite a case lives in is a label on the row and nothing is aggregated by it.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde_json::{json, Value};
 
@@ -79,7 +79,6 @@ pub fn test_stats(rows: &[Value], test: &str) -> Value {
     let flips = runs.windows(2).filter(|w| status(w[0]) != status(w[1])).count();
     let secs: Vec<f64> = runs.iter().filter_map(|r| num(r, "seconds")).collect();
     let rate = |k: usize, d: usize| (d > 0).then(|| k as f64 / d as f64);
-    let covered: BTreeSet<&str> = runs.iter().filter_map(|r| text(r, "covered")).flat_map(|c| c.split(',')).filter(|u| !u.is_empty()).collect();
     json!({
         "test": test,
         "runs": n,
@@ -88,7 +87,6 @@ pub fn test_stats(rows: &[Value], test: &str) -> Value {
         "pass_rate": rate(count("pass"), n),
         "red_rate": rate(count("fail"), n),
         "flip_rate": rate(flips, n.saturating_sub(1)),
-        "covered": covered,
     })
 }
 

@@ -35,13 +35,13 @@ fn thousands(n: i64) -> String {
     out
 }
 
-/// `10,914 tests  +12/-3 today  4 red  slowest a.sh::x 4.2s` from `tsd-read tests`. The count is
+/// `10,914 tests  +12/-3 on 2026-11-06  4 red  slowest a.sh::x 4.2s` from `tsd-read tests`. The count is
 /// the latest round's own; no suite count is ever added to it.
 fn tests_line(inv: &Value) -> Option<String> {
     let total = inv.get("total")?.as_i64().filter(|t| *t > 0)?;
     let mut line = format!("{} tests", thousands(total));
     if let Some(d) = inv.get("days")?.as_array()?.last() {
-        line.push_str(&format!("  +{}/-{} today", d.get("added")?.as_i64()?, d.get("removed")?.as_i64()?));
+        line.push_str(&format!("  +{}/-{} on {}", d.get("added")?.as_i64()?, d.get("removed")?.as_i64()?, d.get("day")?.as_str()?));
     }
     line.push_str(&format!("  {} red", inv.get("red")?.as_i64()?));
     if let Some(s) = inv.get("slowest")?.as_array()?.first() {
@@ -123,7 +123,7 @@ mod tests {
                 "[]".to_string()
             })
         });
-        assert_eq!(get(&kv, "SP_TSD_TESTS"), "10,914 tests  +12/-3 today  4 red  slowest a.sh::x 4.2s");
+        assert_eq!(get(&kv, "SP_TSD_TESTS"), "10,914 tests  +12/-3 on 2026-11-06  4 red  slowest a.sh::x 4.2s");
         assert_eq!(get(&tsd_keys_with(|_| None), "SP_TSD_TESTS"), "?");
     }
 

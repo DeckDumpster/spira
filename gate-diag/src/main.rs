@@ -93,7 +93,7 @@ fn record_tests(root: &std::path::Path, run: Option<PathBuf>) {
     let Ok(jsonl) = std::fs::read_to_string(root.join("results.jsonl")) else { return };
     let (ts, host) = (tsd::now_iso(), tsd::default_host());
     let path = tsd::family_path(&run, tsd::testrun::FAMILY);
-    for row in tsd::testrun::rows_from_results(&jsonl, &ts, &ts, &host) {
+    for row in tsd::testrun::rows_from_results(&jsonl, &format!("{ts} {}", root.display()), &ts, &host) {
         if let Err(e) = tsd::append_line(&path, &row) {
             eprintln!("gate-diag: test-run rows not recorded: {e}");
             return;
