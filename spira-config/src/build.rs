@@ -459,19 +459,40 @@ fn empty_dir(dir: &Path) {
     }
 }
 
-/// Hold a slot to `cap_mib` while a build runs by dropping its regenerable `incremental`
-/// trees. Never anything else: emptying a slot under a running build deletes the cargo
-/// fingerprints it is writing and leaves the worktree's `target/` links dangling; the full
-/// reset is [`reap_over_cap`], at session start. True when the slot was over the cap.
+/// Newest modification time of any file under `p`, not following symlinks.
+fn newest_file(p: &Path) -> Option<std::time::SystemTime> {
+    let md = std::fs::symlink_metadata(p).ok()?;
+    if !md.is_dir() {
+        return md.modified().ok();
+    }
+    std::fs::read_dir(p).ok()?.flatten().filter_map(|e| newest_file(&e.path())).max()
+}
+
+/// Hold a slot to `cap_mib` while a build runs. Whole profiles the build is not writing go
+/// first, least recently written first; the most recently written profile is the live one, and
+/// its `incremental` tree is dropped only if the slot is still over. Deleting a live
+/// `incremental` makes rustc fail as if the code were broken, and anything else under a running
+/// build deletes the fingerprints it is writing; the full reset is [`reap_over_cap`], at session
+/// start. True when the slot was over the cap.
 pub fn enforce_cap(slot: &Path, cap_mib: u64) -> bool {
     let slot = &resolved(slot);
-    if size_of(slot) <= cap_mib * 1024 * 1024 {
+    let cap = cap_mib * 1024 * 1024;
+    if size_of(slot) <= cap {
         return false;
     }
-    if let Ok(profiles) = std::fs::read_dir(slot) {
-        for p in profiles.flatten() {
-            let _ = std::fs::remove_dir_all(p.path().join("incremental"));
+    let mut profiles: Vec<(Option<std::time::SystemTime>, PathBuf)> = std::fs::read_dir(slot)
+        .map(|rd| rd.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).map(|e| (newest_file(&e.path()), e.path())).collect())
+        .unwrap_or_default();
+    profiles.sort();
+    let live = profiles.pop();
+    for (_, p) in &profiles {
+        if size_of(slot) <= cap {
+            return true;
         }
+        let _ = std::fs::remove_dir_all(p);
+    }
+    if let Some((_, p)) = live.filter(|_| size_of(slot) > cap) {
+        let _ = std::fs::remove_dir_all(p.join("incremental"));
     }
     true
 }
@@ -550,6 +571,43 @@ mod tests {
         fill(&slot.join("debug/deps/c"), 3072);
         assert!(enforce_cap(&slot, 2));
         assert!(slot.join("debug/deps/c").exists(), "still over: a running build's artifacts are never deleted");
+    }
+
+    fn age(p: &Path, secs: u64) {
+        let f = std::fs::OpenOptions::new().write(true).open(p).unwrap();
+        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(secs)).unwrap();
+    }
+
+    #[test]
+    fn a_stale_profile_goes_before_the_live_builds_incremental_tree() {
+        let d = testkit::TempDir::new("warm-stale");
+        let slot = d.path().join("slot.1");
+        fill(&slot.join("dwarf/deps/old"), 2048);
+        age(&slot.join("dwarf/deps/old"), 3600);
+        fill(&slot.join("older/deps/x"), 1024);
+        age(&slot.join("older/deps/x"), 7200);
+        fill(&slot.join("debug/incremental/live/dep-graph.bin"), 1024);
+        fill(&slot.join("debug/deps/b"), 512);
+        assert!(enforce_cap(&slot, 3), "over the cap is acted on");
+        assert!(!slot.join("older").exists(), "the least recently written profile goes first");
+        assert!(!slot.join("dwarf").exists(), "then the next, until the slot is under");
+        assert!(slot.join("debug/incremental/live/dep-graph.bin").exists(), "a running build's incremental tree survives");
+        assert!(slot.join("debug/deps/b").exists());
+    }
+
+    #[test]
+    fn trimming_stops_at_the_first_stale_profile_that_brings_the_slot_under() {
+        let d = testkit::TempDir::new("warm-stale-one");
+        let slot = d.path().join("slot.1");
+        fill(&slot.join("dwarf/deps/old"), 2048);
+        age(&slot.join("dwarf/deps/old"), 7200);
+        fill(&slot.join("release/deps/r"), 512);
+        age(&slot.join("release/deps/r"), 3600);
+        fill(&slot.join("debug/incremental/live"), 1024);
+        assert!(enforce_cap(&slot, 3));
+        assert!(!slot.join("dwarf").exists());
+        assert!(slot.join("release/deps/r").exists(), "under the cap once the oldest went: nothing more is removed");
+        assert!(slot.join("debug/incremental/live").exists());
     }
 
     #[test]
