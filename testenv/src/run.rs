@@ -2890,8 +2890,7 @@ fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume:
     let _ = fs::create_dir_all(&target);
     crate::sandbox::touch(&target);
     let threads = (deps.env)("RUST_TEST_THREADS").and_then(|v| v.trim().parse().ok()).unwrap_or(4);
-    let mut profile = crate::sandbox::Profile::for_run(tree, &target, Path::new(&home), threads);
-    profile.cache = crate::sandbox::Cache::under(Path::new(root), Path::new(&home));
+    let profile = crate::sandbox::Profile::for_run(tree, &target, Path::new(root), Path::new(&home), threads);
     let out = results.join(format!("{script}.out"));
     deps.log(&format!("unit-tests: runner=sandbox tree={} target={}", tree.display(), target.display()));
     let ran = match crate::sandbox::run("bwrap", &profile, &crate::sandbox::mounted_script(script), &out, args.deadline.map(Duration::from_secs)) {
