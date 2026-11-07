@@ -292,7 +292,7 @@ fn classify_one(
             t.beads, t.classified, t.skipped, t.beads as f64 / secs
         );
     }
-    let existing = match rows::fetch_bead(conn, id) {
+    let existing = match crate::plane::bead(conn, id) {
         Ok(Some(row)) if parsed.reclassify => Some(row),
         Ok(Some(_)) => {
             t.skipped += 1;

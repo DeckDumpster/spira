@@ -48,6 +48,7 @@ mod mending;
 mod migrate;
 mod ops;
 mod passes;
+mod plane;
 mod pause_sweep;
 mod reconcile_content;
 mod wire;
@@ -855,7 +856,14 @@ fn run_bead_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &st
 /// view it captured earlier. `run_bead_event` above stays the CLI/testable primitive that
 /// takes `expect`/`version` explicitly, because the (state, event) transition table and
 /// stale-version refusal need a caller who can name a wrong one on purpose.
+/// On the declared plane (plane.rs): the control store's own `event` verb while lifecycle is on
+/// it, the dolt row otherwise (sp-cxfgj5).
 pub(crate) fn apply_bead_event(conn: &Conn, key: &str, actor: &str, kind: bead::BeadEventKind) -> (i32, String) {
+    plane::apply(conn, key, actor, kind)
+}
+
+/// [`apply_bead_event`] against the dolt lifecycle tables: pre-cutover and direct mode only.
+pub(crate) fn dolt_apply_bead_event(conn: &Conn, key: &str, actor: &str, kind: bead::BeadEventKind) -> (i32, String) {
     let row = match rows::fetch_bead(conn, key) {
         Ok(Some(r)) => r,
         Ok(None) => return (CANNOT_TELL, format!("work: no bead row for {key}")),
