@@ -126,6 +126,13 @@ codegen-units = 16
 # units per crate instead of the default 256, so one rustc does not fan out across every core.
 [profile.dev]
 codegen-units = 4
+# Unit-test builds (spira/unit-tests.sh) use this profile, and each bead's target starts cold:
+# full debug info made each linked test binary up to 464 MB and one bead's deps 36 GB
+# (2026-11-07). Line tables keep panic file:line and backtraces; dependencies need none.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
 
 # dwarf and gate runs (sp-zv7j4): fast, incremental builds of a worktree that is thrown
 # away after its suites run — none of release's link-time cost buys anything here. No debug
