@@ -396,11 +396,10 @@ fn registry_keys(rel: &Path) -> Result<Vec<spira_config::registry::RegistryKey>,
     Ok(keys)
 }
 
-/// The release's delta plus the registry default of every key its registry declares that the
-/// active release's registry (`active`) does not, the layers lack and the delta does not
+/// The release's delta plus the registry default of every key its registry declares, the layers lack and the delta does not
 /// mention, so a key added to the registry without a delta entry still reaches the config.
-/// A key the running release already declared is left alone: it runs without it today. A new
-/// key whose default is absent or computed refuses, naming it. `None` when there is nothing
+/// A key the running release already declared is added too: the new release resolves every key.
+/// A new key whose default is absent or computed refuses, naming it. `None` when there is nothing
 /// to apply.
 pub fn complete(original: &[Table], rel: &Path, active: Option<&Path>, delta: Option<Delta>) -> Result<Option<Delta>, String> {
     let mut d = delta.unwrap_or_default();
@@ -411,7 +410,13 @@ pub fn complete(original: &[Table], rel: &Path, active: Option<&Path>, delta: Op
     };
     for k in registry_keys(rel)? {
         let path = format!("spira.{}", k.name.strip_prefix("SPIRA_").unwrap_or(&k.name).to_ascii_lowercase());
-        if known.contains(&k.name) || d.added.contains_key(&path) || d.removed.contains(&path) || original.iter().any(|t| get(t, &path).is_some()) {
+        if d.added.contains_key(&path) || d.removed.contains(&path) || original.iter().any(|t| get(t, &path).is_some()) {
+            continue;
+        }
+        if known.contains(&k.name) {
+            if let Ok(v) = literal_default(&k) {
+                d.added.insert(path, v);
+            }
             continue;
         }
         if k.required && active.is_some() {
@@ -421,9 +426,8 @@ pub fn complete(original: &[Table], rel: &Path, active: Option<&Path>, delta: Op
         if let Ok(v) = literal_default(&k) {
             d.added.insert(path, v);
         }
-        //             // No literal default, or one computed on the box: the key is optional and its code
-            // supplies the value (hotfix_alert_hours defaults to 4 in code). Refusing it blocked
-            // every round VM, which has no active release (r-auto-107 and r-auto-110, 2026-10-10).
+        // No literal default, or one computed on the box: the key is optional and its code supplies
+        // the value; refusing it would block a host with no active release.
     }
     if !unset.is_empty() {
         return Err(format!(
@@ -432,6 +436,12 @@ pub fn complete(original: &[Table], rel: &Path, active: Option<&Path>, delta: Op
         ));
     }
     Ok((!d.is_empty()).then_some(d))
+}
+
+/// Whether `rel` carries a registry and `cfg` names the config to resolve it against: such a
+/// release is checked for resolving every key even when it declares no change.
+pub fn must_resolve(cfg: &Config, rel: &Path) -> bool {
+    cfg.toml_spec().is_some() && REGISTRY_DIRS.iter().any(|d| rel.join(d).is_dir()) && fsutil::is_executable(&rel.join("bin/spira-config"))
 }
 
 /// [`complete`] against the layers `cfg` names; `delta` as it stands when no layer is named.
@@ -504,7 +514,24 @@ impl Txn {
         let spec = self.stage(scratch)?;
         // batch-job: the new binary's config load, bounded at 60 s by timeout(1).
         let mut cmd = Command::new("timeout");
-        cmd.arg("60").arg(bin).arg("validate").env("SPIRA_TOML", spec);
+        cmd.arg("60").arg(bin).arg("validate").env("SPIRA_TOML", &spec);
+        for (k, v) in crate::verify::pre_activate_env(cfg, rel)? {
+            cmd.env(k, v);
+        }
+        let out = cmd.output().map_err(|e| format!("cannot run {}: {e}", bin.display()))?;
+        if !out.status.success() {
+            return Err(self.refusal("cannot load the config with its declared changes applied", &out.stderr));
+        }
+        // `validate` is green on a config missing a registered key; only `resolve` refuses it.
+        // batch-job: the new binary's resolution of every key, bounded at 60 s by timeout(1).
+        let mut cmd = Command::new("timeout");
+        cmd.arg("60").arg(bin).args(["resolve", "--sh-all"]).env_clear().env("SPIRA_TOML", spec);
+        cmd.envs(crate::activate::resolve_env(rel));
+        for var in ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"] {
+            if let Some(v) = std::env::var_os(var) {
+                cmd.env(var, v);
+            }
+        }
         for (k, v) in crate::verify::pre_activate_env(cfg, rel)? {
             cmd.env(k, v);
         }
@@ -512,13 +539,17 @@ impl Txn {
         if out.status.success() {
             return Ok(());
         }
-        let err = String::from_utf8_lossy(&out.stderr);
+        Err(self.refusal("cannot resolve every config key with its declared changes applied", &out.stderr))
+    }
+
+    fn refusal(&self, what: &str, stderr: &[u8]) -> String {
+        let err = String::from_utf8_lossy(stderr);
         let tail: Vec<&str> = err.lines().rev().take(5).collect::<Vec<_>>().into_iter().rev().collect();
-        Err(format!(
-            "this release cannot load the config with its declared changes applied ({}); nothing changed: {}",
+        format!(
+            "this release {what} ({}); nothing changed: {}",
             self.files.iter().map(|f| f.display().to_string()).collect::<Vec<_>>().join(":"),
             tail.join(" | ")
-        ))
+        )
     }
 
     fn write_layer(&self, i: usize, text: &str) -> Result<(), String> {
