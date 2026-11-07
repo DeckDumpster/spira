@@ -137,6 +137,18 @@ case "$_RUN_OUT" in
     *) bad "ms: each case is followed by its elapsed milliseconds, after any failure detail" "$_RUN_OUT" ;;
 esac
 
+_run <<'EOF3'
+sleep 0.4
+tl_setup_done
+ok "after setup"
+tl_summary
+EOF3
+case "$_RUN_OUT" in
+    *"ok 1 - after setup"$'\n'"#ms="[3-9][0-9][0-9]*) bad "tl_setup_done: the next case's #ms starts at the call, not at the previous case" "$_RUN_OUT" ;;
+    *"ok 1 - after setup"$'\n'"#ms="[0-9]*) ok "tl_setup_done: the next case's #ms starts at the call, not at the previous case" ;;
+    *) bad "tl_setup_done: the next case's #ms starts at the call, not at the previous case" "$_RUN_OUT" ;;
+esac
+
 # --- skip(): a skip is never a pass -------------------------------------------------
 _run <<'EOF'
 skip "no docker on this host"

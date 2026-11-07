@@ -172,7 +172,7 @@ version_probe = "readlink -f \"$(command -v habits)\""
 [[dep]]
 name = "jq"
 tier = "optional"
-purpose = "optional JSON convenience"
+purpose = "reads the JSON spira-lc prints in suites (test-ops-read-model.sh)"
 version_min = ""
 version_probe = "jq --version"
 
