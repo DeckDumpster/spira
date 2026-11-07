@@ -150,6 +150,8 @@ mod tests {
     fn one_urgent_line_then_quiet_ticks_is_due_once() {
         let mut f = Flush::new(30, 2);
         assert_eq!(due_after(&mut f, [10, 10, 10]), [false, false, true]);
+        let mut again = Flush::new(30, 2);
+        assert_eq!(due_after(&mut again, [10, 10, 10]).iter().filter(|d| **d).count(), 1);
     }
 
     #[test]

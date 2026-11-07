@@ -75,6 +75,9 @@ Replaces the body of `spira/inbox-append.sh`, which becomes `exec inbox-triage a
   size has not changed for `SPIRA_CONCIERGE_PUSH_IDLE` seconds or `SPIRA_CONCIERGE_PUSH_WINDOW`
   seconds have passed (five ticks a second). It then runs `$SPIRA_CONCIERGE_PUSH_WAKE
   "[inbox-push] <n> urgent event(s): <lines, each followed by ;>"`.
+* `inbox-triage flush` is the flusher's own entry (spawned by `append`, not for callers).
+* `SPIRA_CONCIERGE_PUSH_PATTERN` is matched with the `regex` crate, as `watchd` already does, where
+  the script used `grep -E`; a pattern it rejects pushes nothing.
 * The timing rule is the pure `inbox_rules::Flush` (time is its `tick` count), the line, urgency
   and wake text are `inbox_rules::{line, is_urgent, wake_text}`; only the binary sleeps.
 
