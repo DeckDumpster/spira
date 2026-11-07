@@ -73,6 +73,50 @@ impl Dedup {
     }
 }
 
+/// The inbox line for an event: `<ISO-8601 Z> <text>`.
+pub fn line(now_utc: &str, text: &str) -> String {
+    format!("{now_utc} {text}")
+}
+
+/// Whether an event also wakes the session, not only lands in the inbox.
+pub fn is_urgent(text: &str, pattern: &regex::Regex) -> bool {
+    pattern.is_match(text)
+}
+
+/// When a spooled burst is due: the spool has stopped growing for `idle_ticks`, or
+/// `window_ticks` have passed. Time is the number of `tick` calls; the caller sleeps.
+pub struct Flush {
+    window_ticks: u32,
+    idle_ticks: u32,
+    waited: u32,
+    quiet: u32,
+    last: Option<u64>,
+}
+
+impl Flush {
+    pub fn new(window_ticks: u32, idle_ticks: u32) -> Flush {
+        Flush { window_ticks, idle_ticks, waited: 0, quiet: 0, last: None }
+    }
+
+    /// Observe the spool's size once per tick; true when the batch is due.
+    pub fn tick(&mut self, spool_size: u64) -> bool {
+        self.waited += 1;
+        if self.last == Some(spool_size) {
+            self.quiet += 1;
+        } else {
+            self.quiet = 0;
+        }
+        self.last = Some(spool_size);
+        self.waited >= self.window_ticks || self.quiet >= self.idle_ticks
+    }
+}
+
+/// The one wake a batch of spooled lines becomes.
+pub fn wake_text(lines: &[String]) -> String {
+    let joined: String = lines.iter().map(|l| format!("{l};")).collect();
+    format!("[inbox-push] {} urgent event(s): {joined}", lines.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,5 +133,52 @@ mod tests {
         assert!(should_drop("[watch:pr-notify] sp-abc12 OPENED against main"));
         assert!(should_drop("pool: NEW CERTIFIED sp-abc12"));
         assert!(!should_drop("[watch:round-duty] asks: NEW ASK sp-f63uj: something"));
+    }
+
+    fn due_after(f: &mut Flush, sizes: impl IntoIterator<Item = u64>) -> Vec<bool> {
+        sizes.into_iter().map(|s| f.tick(s)).collect()
+    }
+
+    #[test]
+    fn a_non_urgent_line_is_not_urgent() {
+        let pat = regex::Regex::new("URGENT-[0-9]+").unwrap();
+        assert!(is_urgent("URGENT-3 burst", &pat), "positive control");
+        assert!(!is_urgent("plain event, not urgent", &pat));
+    }
+
+    #[test]
+    fn one_urgent_line_then_quiet_ticks_is_due_once() {
+        let mut f = Flush::new(30, 2);
+        assert_eq!(due_after(&mut f, [10, 10, 10]), [false, false, true]);
+    }
+
+    #[test]
+    fn ten_appends_one_tick_apart_inside_the_window_are_one_batch() {
+        let mut f = Flush::new(30, 2);
+        let mut lines = Vec::new();
+        let mut size = 0;
+        for k in 1..=10 {
+            lines.push(format!("T URGENT-{k} burst"));
+            size += 20;
+            assert!(!f.tick(size), "still growing at append {k}");
+            assert!(!f.tick(size), "one quiet tick after append {k} is inside the idle gap");
+        }
+        assert!(f.tick(size), "due once the spool is quiet");
+        let text = wake_text(&lines);
+        assert!(text.starts_with("[inbox-push] 10 urgent event(s): "), "{text}");
+        for k in [1, 5, 10] {
+            assert!(text.contains(&format!("URGENT-{k} burst")), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_spool_that_keeps_growing_is_due_at_the_window() {
+        let mut f = Flush::new(5, 2);
+        assert_eq!(due_after(&mut f, [1, 2, 3, 4, 5]), [false, false, false, false, true]);
+    }
+
+    #[test]
+    fn a_line_carries_an_iso_z_prefix_and_the_text() {
+        assert_eq!(line("2026-11-06T01:02:03Z", "hello world"), "2026-11-06T01:02:03Z hello world");
     }
 }

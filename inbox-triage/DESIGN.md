@@ -60,10 +60,26 @@ this bead's reach) — see the delivery report for the specific case found at re
 * **No inotify crate is vendored** in this workspace's registry cache (DESIGN.md precedent:
   `watchd/DESIGN.md` "Decisions"); a 200 ms poll meets a Monitor's latency need.
 
+## `inbox-triage append <text>`
+
+Replaces the body of `spira/inbox-append.sh`, which becomes `exec inbox-triage append "$*"`
+(every caller keeps the name, the arguments and exit 0).
+
+* Appends `<ISO-8601 Z> <text>` to `SPIRA_CONCIERGE_INBOX`, creating the parent directory;
+  never truncates.
+* If `SPIRA_CONCIERGE_PUSH_WAKE` is non-empty and the text matches
+  `SPIRA_CONCIERGE_PUSH_PATTERN`, the same line is also appended to `$SPIRA_CONCIERGE_INBOX.push`
+  and a single detached flusher is started; `append` returns at once, exit 0.
+* The flusher takes a non-blocking lock on `$SPIRA_CONCIERGE_INBOX.push.lock` (a holder already
+  draining means it exits) and drains the spool until it is gone. A batch is due when the spool
+  size has not changed for `SPIRA_CONCIERGE_PUSH_IDLE` seconds or `SPIRA_CONCIERGE_PUSH_WINDOW`
+  seconds have passed (five ticks a second). It then runs `$SPIRA_CONCIERGE_PUSH_WAKE
+  "[inbox-push] <n> urgent event(s): <lines, each followed by ;>"`.
+* The timing rule is the pure `inbox_rules::Flush` (time is its `tick` count), the line, urgency
+  and wake text are `inbox_rules::{line, is_urgent, wake_text}`; only the binary sleeps.
+
 ## Test strategy
 
 Unit: timestamp stripping, the three DROP patterns, the dedup key normalisation, and the
-dedup window itself (inject a clock). Not verified here: the live Monitor loop against a real
-`tail -F`-style growing file — covered by running the binary in the same way
-`test-concierge-inbox.sh` exercised the bash (repointed, not retired, since it is the only
-place this binary's actual streaming behaviour is exercised end to end).
+dedup window itself (inject a clock); the coalescer by tick count; `append_line` against a
+tempdir. The live Monitor loop against a growing file is not covered by a suite.

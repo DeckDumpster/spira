@@ -8,6 +8,8 @@ description = "inbox-triage — the concierge's in-session Monitor over SPIRA_CO
 inbox-rules = { path = "../inbox-rules" }
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
+libc = "0.2"
+regex = "1"
 
 [profile.release]
 opt-level = "z"
