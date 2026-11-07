@@ -585,10 +585,23 @@ mod tests {
     }
 
     #[test]
-    fn the_template_config_declares_the_toolchain_path_with_nix_defined_first() {
-        let cfg = TEMPLATE_SCRIPT.split("<<TEMPLATECFG\n").nth(1).and_then(|r| r.split("\nTEMPLATECFG").next()).expect("the heredoc");
-        assert!(cfg.contains("path = \"$nix_bin:$CARGO_HOME/bin:$HOME/.cargo/bin\""), "{cfg}");
-        assert!(TEMPLATE_SCRIPT.find("nix_bin=/nix").unwrap() < TEMPLATE_SCRIPT.find("<<TEMPLATECFG").unwrap(), "an unquoted heredoc renders $nix_bin when written");
+    fn the_rendered_template_config_declares_the_toolchain_path_nix_first() {
+        let start = TEMPLATE_SCRIPT.find("nix_bin=/nix").expect("nix_bin is assigned").min(TEMPLATE_SCRIPT.find("cat > \"$work/template-config.toml\"").unwrap());
+        let end = TEMPLATE_SCRIPT.find("\nTEMPLATECFG\n").unwrap() + "\nTEMPLATECFG\n".len();
+        let tmp = testkit::TempDir::new("template-cfg");
+        let dir = tmp.path();
+        let out = std::process::Command::new("bash")
+            .args(["-c", &TEMPLATE_SCRIPT[start..end]])
+            .env_clear()
+            .env("work", dir)
+            .env("CARGO_HOME", "/opt/cargo")
+            .env("HOME", "/home/r")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let rendered = std::fs::read_to_string(dir.join("template-config.toml")).unwrap();
+        let cfg: toml::Table = toml::from_str(&rendered).unwrap_or_else(|e| panic!("{e}\n{rendered}"));
+        assert_eq!(cfg["spira"]["path"].as_str(), Some("/nix/var/nix/profiles/default/bin:/opt/cargo/bin:/home/r/.cargo/bin"));
     }
 
     #[test]
