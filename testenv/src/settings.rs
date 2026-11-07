@@ -47,6 +47,8 @@ pub struct Settings {
     /// Per-core load ceiling, percent, before a capped run starts; 0 disables.
     pub load_max_pct: u64,
     pub load_wait: u64,
+    /// Runs admitted at once, host-wide; absent derives it from the host's cores.
+    pub max_runs: Option<u64>,
     /// The most admission-slot waiting the cap excuses.
     pub slot_wait: u64,
     pub maxpar_requested: Option<i64>,
@@ -197,6 +199,7 @@ impl Settings {
             gate_cap: cfg_parse("SPIRA_TESTENV_GATE_CAP")?,
             load_max_pct: cfg_parse("SPIRA_TESTENV_LOAD_MAX_PCT")?,
             load_wait: cfg_parse("SPIRA_TESTENV_LOAD_WAIT")?,
+            max_runs: optional_num("SPIRA_TESTENV_MAX_RUNS", &cfg("SPIRA_TESTENV_MAX_RUNS")?)?.filter(|n| *n > 0),
             slot_wait: cfg_parse("SPIRA_TESTENV_SLOT_WAIT")?,
             maxpar_requested,
             maxpar_refusal,

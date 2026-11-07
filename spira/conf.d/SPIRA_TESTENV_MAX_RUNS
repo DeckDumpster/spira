@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=testenv
+DOC=HOW MANY testenv runs may be admitted at once, host-wide; empty = the host's cores divided by one run's cargo jobs
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY testenv runs may be admitted at once, host-wide, across every builder: a run
+    # past the ceiling waits at admission, it is never refused. Empty derives the ceiling from
+    # the box, nproc divided by the cargo jobs one run uses (6), at least 1.
+    : "${SPIRA_TESTENV_MAX_RUNS:=}"
+SPIRA_CONF_DEFAULT_EOF

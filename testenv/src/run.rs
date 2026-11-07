@@ -1077,6 +1077,32 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     let named = br;
     let br = &commit;
 
+    // ---- the run ceiling: a CPU slot before any disk or build work ------------------------
+    let _run_slot = if (deps.env)(admission::INHERIT_ENV).as_deref().is_some_and(admission::is_gate_token) {
+        None
+    } else {
+        let _held = cap::hold();
+        let who = [admission::WHO_ENV, "SPIRA_WORK_BEAD_ID", "BEAD_ID"]
+            .iter()
+            .find_map(|k| (deps.env)(k).filter(|v| !v.trim().is_empty()))
+            .unwrap_or_else(|| args.branch.clone());
+        let size = s.max_runs.unwrap_or_else(|| admission::derive(admission::Pool::Run, admission::Host::read()));
+        let out_of_time = || cancelled() || deadline_at.get().is_some_and(|d| Instant::now() >= d);
+        match crate::runslot::take(&s.run, std::process::id(), &who, size, &admission::RealProcs, deps.sleep, &out_of_time, &mut |l: &str| deps.log(l)) {
+            Ok(slot) => {
+                if slot.0.waited > 0 {
+                    deps.log(&format!("queue-wait={}s pool=run", slot.0.waited));
+                }
+                Some(slot)
+            }
+            Err(_) if cancelled() => return Finish::fault(2, "interrupted", 0),
+            Err(e) => {
+                deps.log(&e.line());
+                return Finish::fault(2, "deadline-slot", 0);
+            }
+        }
+    };
+
     // ---- worktree ------------------------------------------------------------------
     let wreq = worktree::Request {
         repo: &repo.path,
