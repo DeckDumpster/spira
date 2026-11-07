@@ -860,7 +860,6 @@ fn deadline_reason(phase: &str) -> &'static str {
     match phase {
         "build" => "deadline-build",
         "tag" => "deadline-tag",
-        "sweep" => "deadline-sweep",
         "up" => "deadline-up",
         "install" => "deadline-install",
         "requirements" => "deadline-requirements",
