@@ -585,6 +585,13 @@ mod tests {
     }
 
     #[test]
+    fn the_template_config_declares_the_toolchain_path_with_nix_defined_first() {
+        let cfg = TEMPLATE_SCRIPT.split("<<TEMPLATECFG\n").nth(1).and_then(|r| r.split("\nTEMPLATECFG").next()).expect("the heredoc");
+        assert!(cfg.contains("path = \"$nix_bin:$CARGO_HOME/bin:$HOME/.cargo/bin\""), "{cfg}");
+        assert!(TEMPLATE_SCRIPT.find("nix_bin=/nix").unwrap() < TEMPLATE_SCRIPT.find("<<TEMPLATECFG").unwrap(), "an unquoted heredoc renders $nix_bin when written");
+    }
+
+    #[test]
     fn the_script_builds_rather_than_loads_and_reports_the_image_last() {
         assert!(TEMPLATE_SCRIPT.contains("-p testenv -- container image"));
         assert!(!TEMPLATE_SCRIPT.contains("podman load"));

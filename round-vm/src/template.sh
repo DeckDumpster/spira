@@ -29,14 +29,15 @@ fi
 export PATH="$CARGO_HOME/bin:$PATH"
 export SPIRA_HOME="$work/spira"
 mkdir -p "$work/.runtime/spira"
+nix_bin=/nix/var/nix/profiles/default/bin
 cat > "$work/template-config.toml" <<TEMPLATECFG
 [spira]
 run = "$work/.runtime/spira"
 releases = "$work/.runtime/releases"
 home_repo = "spira"
+path = "$nix_bin:$CARGO_HOME/bin:$HOME/.cargo/bin"
 TEMPLATECFG
 export SPIRA_TOML="$work/spira/testlib/complete.toml:$work/template-config.toml"
-nix_bin=/nix/var/nix/profiles/default/bin
 if [ ! -x "$nix_bin/nix" ]; then
     echo "round-vm template: installing nix (multi-user)" >&2
     nix_installer="$(mktemp -d)/install"
