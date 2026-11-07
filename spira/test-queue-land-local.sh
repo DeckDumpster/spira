@@ -191,7 +191,7 @@ tl_config SPIRA_REPO_MAP="$RMAP"
 
 # ============================================================================
 echo
-echo "4 — the per-repo lock is held: land-local refuses rather than race it"
+echo "4 — the per-repo lock is held for section 5 (the refusal is a unit test in queue)"
 # ============================================================================
 testdb_reset
 seed sp-lloc4
@@ -208,12 +208,6 @@ mk_bins "$HEAD4" round-4-bin
 mkdir -p "$QDIR/fixq"
 exec 8>"$QDIR/fixq/lock"
 flock -n 8
-
-out="$(run land-local fixq --head "$HEAD4" --members "sp-lloc4:$HEAD4" --worktree "$(bins_wt "$HEAD4")")"; rc=$?
-[ "$rc" -ne 0 ] && ok "4: refused while another operation holds the lock" \
-    || bad "4: refused while another operation holds the lock" "got rc=$rc out=$out"
-want "4: names the lock contention" "holds the lock" "$out"
-is "4: local/main is unchanged while locked" "$HEAD1" "$(localmain)"
 
 # ============================================================================
 echo
