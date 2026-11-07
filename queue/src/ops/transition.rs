@@ -185,8 +185,10 @@ pub fn to_forge(w: &World, repo: Option<&str>) -> i32 {
         ));
         return FAIL;
     };
-    let Ok(_g) = take_lock(w, "to-forge", &c, " — stop cutting local rounds first") else {
-        return FAIL;
+    let _g = match take_lock(w, "to-forge", &c, " — stop cutting local rounds first") {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
 
     // Re-read under the lock.
@@ -326,8 +328,10 @@ pub fn to_local(w: &World, repo: Option<&str>) -> i32 {
         w.err(format!("queue.sh to-local: {new_base} already exists as a local branch — refused, nothing changed"));
         return FAIL;
     }
-    let Ok(_g) = take_lock(w, "to-local", &c, "") else {
-        return FAIL;
+    let _g = match take_lock(w, "to-local", &c, "") {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
     let Ok(c) = resolve(w, "to-local", Some(&name)) else {
         return FAIL;

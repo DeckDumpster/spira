@@ -543,8 +543,10 @@ pub fn claim(w: &World, repo: Option<&str>, reason: &Text, force: bool) -> i32 {
     if repo_path(w, "claim", &c).is_err() {
         return FAIL;
     }
-    let Ok(_g) = take_lock(w, "claim", &c, "") else {
-        return FAIL;
+    let _g = match take_lock(w, "claim", &c, "") {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
     let open = match super::forge_batch::read(w, &c) {
         Ok(Some(o)) => o,
@@ -790,8 +792,10 @@ pub fn rework(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text) 
     if super::require_lc(w, "rework").is_err() {
         return FAIL;
     }
-    let Ok(_g) = take_lock(w, "rework", &c, "") else {
-        return FAIL;
+    let _g = match take_lock(w, "rework", &c, "") {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
     let rounds = match super::round::live_records(w, &c) {
         Ok(r) => r,
@@ -992,8 +996,10 @@ pub fn absolve(
     if super::require_lc(w, "absolve").is_err() {
         return FAIL;
     }
-    let Ok(_g) = take_lock(w, "absolve", &c, "") else {
-        return FAIL;
+    let _g = match take_lock(w, "absolve", &c, "") {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
     let Some(row) = w.lc.bead_row(id) else {
         w.err(format!(
@@ -1061,8 +1067,10 @@ pub fn release(w: &World, repo: Option<&str>) -> i32 {
     if repo_path(w, "release", &c).is_err() {
         return FAIL;
     }
-    let Ok(_g) = take_lock(w, "release", &c, "") else {
-        return FAIL;
+    let _g = match take_lock(w, "release", &c, "") {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
     let open = match super::forge_batch::read(w, &c) {
         Ok(Some(o)) => o,

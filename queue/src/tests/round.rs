@@ -1943,7 +1943,11 @@ fn round_verbs_belong_to_queue_local() {
 fn a_caller_holding_the_lock_runs_the_verbs_under_it() {
     let t = round_world();
     let _held = t.hold_lock();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 1);
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        crate::ops::LOCK_BUSY,
+        "a busy lock has its own exit, so a caller retries on the code, never on the words"
+    );
     assert!(
         t.err().contains("another queue operation holds the lock"),
         "{}",
@@ -4483,7 +4487,7 @@ fn a_later_round_is_cut_on_the_earlier_rounds_head_and_lands_after_it_with_one_c
         "the second round is stacked on the first round's head"
     );
     let runs = vm_runs(&t);
-    assert_eq!(t.run(&["round", "land", "r-2"]), 1);
+    assert_eq!(t.run(&["round", "land", "r-2"]), crate::ops::LAND_STACKED);
     assert!(
         t.err()
             .contains("stacked on round r-1, which has not landed"),
@@ -4634,7 +4638,7 @@ fn a_stacked_round_whose_parent_was_abandoned_is_rebuilt_without_it_and_certifie
     t.lc.batch_states.borrow_mut().insert("r-1".into(), ("ABANDONED".into(), "9".into()));
     tree_of(&t, "merged-tb");
     let runs = vm_runs(&t);
-    assert_eq!(t.run(&["round", "land", "r-2"]), 1);
+    assert_eq!(t.run(&["round", "land", "r-2"]), crate::ops::LAND_BASE_MOVED);
     assert!(t.err().contains("it is not landed"), "{}", t.err());
     assert_eq!(
         t.landed_ref().as_deref(),
@@ -4672,7 +4676,7 @@ fn a_stacked_round_is_recut_on_the_head_its_parent_was_rebuilt_to() {
     }
     crate::records::write_atomic(&t.qfile("round"), &kv.render()).unwrap();
     tree_of(&t, "merged-tb@rebuilt-ta");
-    assert_eq!(t.run(&["round", "land", "r-2"]), 1);
+    assert_eq!(t.run(&["round", "land", "r-2"]), crate::ops::LAND_BASE_MOVED);
     let rec = kv_of(&t, "round.r-2");
     assert_eq!(
         (
@@ -6480,8 +6484,8 @@ fn an_eject_naming_the_testenv_run_of_a_repo_that_judges_itself_is_accepted() {
     assert!(t.lc.has("eject-member r-1"), "{:?}", t.lc.calls.borrow());
 }
 
-/// `queue round land` as the Lander calls it (round-controller's `RealVerbs::land` argv), and
-/// the word the Lander classifies its refusal by: stderr's first word, a trailing colon stripped.
+/// `queue round land` as the Lander calls it (round-controller's `RealVerbs::land` argv): the
+/// exit the Lander classifies its refusal by, and stderr's first word, which is for the operator.
 fn land_as_the_lander(t: &T, batch: &str, token: Option<&str>) -> (i32, String) {
     let mut argv = vec!["round", "land", batch, "spira"];
     argv.extend(token.map(|t| ["--lease-token", t]).into_iter().flatten());
@@ -6491,21 +6495,21 @@ fn land_as_the_lander(t: &T, batch: &str, token: Option<&str>) -> (i32, String) 
 }
 
 #[test]
-fn each_land_refusal_starts_with_the_word_the_lander_acts_on() {
+fn each_land_refusal_exits_with_the_code_the_lander_acts_on() {
     let t = concurrent_world();
     two_green_stacked_rounds(&t);
     for b in ["r-1", "r-2"] {
         leased_by(&t, b, "round-controller", "5-0");
     }
     let lander = |token| land_as_the_lander(&t, "r-2", Some(token));
-    assert_eq!(lander("5-0"), (1, "stacked".into()), "{}", t.err());
+    assert_eq!(lander("5-0"), (crate::ops::LAND_STACKED, "stacked".into()), "{}", t.err());
     assert_eq!(lander("6-0"), (1, "refused".into()), "another holder's lease");
     // The parent ends outside the queue's verbs, which would have voided the child with it.
     t.lc.batch_states.borrow_mut().insert("r-1".into(), ("ABANDONED".into(), "9".into()));
     tree_of(&t, "merged-tb");
     assert_eq!(
         lander("5-0"),
-        (1, "base-moved".into()),
+        (crate::ops::LAND_BASE_MOVED, "base-moved".into()),
         "the parent ended unlanded, so the round was rebuilt on the landing ref: {}",
         t.err()
     );
@@ -6538,7 +6542,7 @@ fn a_round_cut_before_its_base_moved_refuses_land_as_base_moved() {
     t.git.ancestor("b0", "b1");
     assert_eq!(
         land_as_the_lander(&t, &batch, None),
-        (1, "base-moved".into()),
+        (crate::ops::LAND_BASE_MOVED, "base-moved".into()),
         "{}",
         t.err()
     );

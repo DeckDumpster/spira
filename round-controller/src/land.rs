@@ -23,6 +23,12 @@ pub const STEP: &str = "land";
 /// `queue::ops::DEPLOY_FAULT`: the landing stands and the release was not activated.
 pub const DEPLOY_FAULT_EXIT: i32 = 3;
 
+/// `queue::ops::LAND_STACKED`: stacked on a round that has not landed; it waits for it.
+pub const LAND_STACKED_EXIT: i32 = 7;
+
+/// `queue::ops::LAND_BASE_MOVED`: its base can no longer become the landing ref; it is cut again.
+pub const LAND_BASE_MOVED_EXIT: i32 = 8;
+
 /// Why a GREEN round was not landed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "blocker")]
@@ -307,7 +313,8 @@ impl Held<'_> {
         }
     }
 
-    /// A refusal is classified by its exit and its first word only (law-a-matcher-reads-code-not-prose).
+    /// A refusal is classified by its exit code only; the text is carried for the operator
+    /// (law-a-matcher-reads-code-not-prose, law-lifecycle-state-is-not-text).
     fn refused(&self, head: &str, r: VerbRefusal, token: &str) -> Result<Landing, Refusal> {
         let (p, repo, batch) = (self.p, self.repo, self.batch);
         let Some(code) = r.code else {
@@ -331,9 +338,8 @@ impl Held<'_> {
                 Ok(false) => self.hold(why),
             };
         }
-        let word = r.text.split_whitespace().next().unwrap_or("");
-        match word.trim_end_matches(':') {
-            "stacked" => {
+        match code {
+            LAND_STACKED_EXIT => {
                 let parent = parent_of(p, repo, self.inputs.parent.as_deref())?;
                 let parent_leased = match &parent {
                     Some(q) => leased(p, repo, &q.batch)?,
@@ -345,7 +351,7 @@ impl Held<'_> {
                     parent_leased,
                 })
             }
-            "base-moved" => {
+            LAND_BASE_MOVED_EXIT => {
                 let s = p.verbs.supersede(repo, batch, Some(token));
                 p.log.write(&Outcome::of(
                     p.clock.now_ms(),
@@ -360,7 +366,7 @@ impl Held<'_> {
                         refusal,
                     })
             }
-            // `refused`, and any word the Lander does not know, holds the round as it is.
+            // A plain refusal, and any exit the Lander does not know, holds the round as it is.
             _ => self.hold(Blocker::Refused {
                 text: r.text.trim().to_string(),
             }),

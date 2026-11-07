@@ -106,3 +106,12 @@ fn t5_an_unobservable_ci_is_not_satisfied() {
     let (carry, _) = decide(&policy(Stage::Shadow), &Carry::default(), &blind);
     assert_ne!(carry.keys.get("ci-stalled:spira").map(|k| k.phase), Some(Phase::Satisfied));
 }
+
+/// law-lifecycle-state-is-not-text (sp-mijstw): the certified pool counts only unheld rows, and a
+/// hold written as the JSON-encoded string spira-lc may emit is still a hold.
+#[test]
+fn t7_a_hold_in_string_form_keeps_its_row_out_of_the_certified_pool() {
+    let list = r#"[{"bead_id":"sp-a","state":"CERTIFIED","holds":[]},{"bead_id":"sp-b","state":"CERTIFIED","holds":"[\"poison\"]"},{"bead_id":"sp-c","state":"CERTIFIED","holds":["ask"]},{"bead_id":"sp-d","state":"CERTIFIED","holds":"[]"}]"#;
+    assert_eq!(unheld_ids(list), Ok(vec!["sp-a".to_string(), "sp-d".to_string()]));
+    assert!(unheld_ids("cannot tell: deadline").is_err());
+}

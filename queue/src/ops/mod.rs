@@ -30,6 +30,12 @@ pub const FAIL: i32 = 1;
 pub const USAGE: i32 = 2;
 /// land-local's exit when the landing is recorded but its release was not activated.
 pub const DEPLOY_FAULT: i32 = 3;
+/// Any verb's exit when another queue operation holds the repo's lock past the wait: try again.
+pub const LOCK_BUSY: i32 = 6;
+/// `round land`'s exit when the round is stacked on a round that has not landed: it waits.
+pub const LAND_STACKED: i32 = 7;
+/// `round land`'s exit when the round's base can no longer become the landing ref: cut it again.
+pub const LAND_BASE_MOVED: i32 = 8;
 
 /// Resolved settings plus the named (or home) repository.
 pub struct Ctx {
@@ -239,7 +245,7 @@ pub fn take_lock(w: &World, label: &str, c: &Ctx, busy_suffix: &str) -> Result<O
                     "queue.sh {label}: another queue operation holds the lock for {}{busy_suffix} (waited {waited}s; {held})",
                     c.r.name
                 ));
-                return Err(FAIL);
+                return Err(LOCK_BUSY);
             }
             Acquire::Unopenable => {
                 w.err(format!(

@@ -158,7 +158,7 @@ fn with_the_store_no_ended_round_counts_toward_the_limit_or_is_a_parent() {
         rec.kv
     );
     t.lc.store.get().unwrap().set_state("spira", &batch, "GREEN");
-    assert_eq!(t.run(&["round", "land", &batch]), 1);
+    assert_eq!(t.run(&["round", "land", &batch]), crate::ops::LAND_STACKED);
     assert!(
         t.err().contains(&format!("round {batch} is stacked on round spira-open, which has not landed")),
         "{}",
