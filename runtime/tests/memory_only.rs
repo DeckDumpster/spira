@@ -168,3 +168,36 @@ fn the_newest_note_of_a_kind_outlives_any_amount_of_later_local_chatter() {
     assert_eq!(read.len(), runtime::engine::LOCAL_KEEP * 3);
     assert!(read.iter().all(|s| s == "carried"), "a handler's carried state was evicted");
 }
+
+struct Emitter {
+    read: Arc<Mutex<Vec<String>>>,
+}
+
+impl Handler for Emitter {
+    fn interests(&self) -> &[EventKindTag] {
+        &["boot", "again"]
+    }
+
+    fn handle(&self, _: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
+        if ev.kind.tag == "boot" {
+            return vec![Command::Emit(EventKind::new("state", "journaled"))];
+        }
+        let state = view.events(&ev.stream).iter().rev().find(|e| e.kind.tag == "state").map(|e| e.kind.body.clone());
+        self.read.lock().unwrap().push(state.unwrap_or_default());
+        vec![]
+    }
+}
+
+#[test]
+fn a_restarted_engine_shows_a_memory_only_first_event_the_state_the_last_run_journaled() {
+    let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
+    let read = Arc::new(Mutex::new(vec![]));
+    let open = || Engine::open(journal.clone(), Arc::new(clock.clone()), vec![Registration::new("emitter", Emitter { read: read.clone() })], 0).unwrap();
+    let mut first = open();
+    first.start("s", EventKind::new("boot", ""));
+    first.run_until_idle().unwrap();
+    let mut second = open();
+    second.start("s", EventKind::new("again", ""));
+    second.run_until_idle().unwrap();
+    assert_eq!(*read.lock().unwrap(), ["journaled"]);
+}
