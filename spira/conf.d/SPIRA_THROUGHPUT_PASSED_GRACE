@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=batch
+DOC=Seconds a round that passed CI may sit unlanded before it is paged.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_THROUGHPUT_PASSED_GRACE:=300}"
+SPIRA_CONF_DEFAULT_EOF

@@ -52,33 +52,55 @@ pub fn round_files(queue_dir: &Path) -> Vec<RoundFile> {
     out
 }
 
-/// The files to delete; Err names each file whose round the store holds open, or cannot say
-/// about, and the step that clears it. `state` answers a batch's machine state (`Ok(None)`: the
-/// store holds no such round, so the file is stale).
-pub fn plan(
+/// The files safe to delete and, for each other, why it is held: its round is open on the store,
+/// or the store cannot say. `state` answers a batch's machine state (`Ok(None)`: the store holds
+/// no such round, so the file is stale).
+pub struct Partition {
+    pub clear: Vec<PathBuf>,
+    pub held: Vec<String>,
+}
+
+pub fn partition(
     files: &[RoundFile],
     state: impl Fn(&str) -> Result<Option<String>, String>,
-) -> Result<Vec<PathBuf>, String> {
+) -> Partition {
     let mut held = Vec::new();
+    let mut clear = Vec::new();
     // A batch PR the store holds no batch for is still open on the forge: its record is this file.
     for f in files.iter().filter(|f| f.batch.is_empty() && !f.pr.is_empty()) {
         held.push(format!("{} names batch PR {}, recorded by no batch on the store", f.path.display(), f.pr));
     }
-    for f in files.iter().filter(|f| !f.batch.is_empty()) {
+    for f in files {
+        if f.batch.is_empty() {
+            if f.pr.is_empty() {
+                clear.push(f.path.clone());
+            }
+            continue;
+        }
         match state(&f.batch) {
-            Ok(None) => {}
-            Ok(Some(s)) if BatchState::from_str(&s).is_some_and(BatchState::is_terminal) => {}
+            Ok(None) => clear.push(f.path.clone()),
+            Ok(Some(s)) if BatchState::from_str(&s).is_some_and(BatchState::is_terminal) => clear.push(f.path.clone()),
             Ok(Some(s)) => held.push(format!("{} names round {}, which is {s}", f.path.display(), f.batch)),
             Err(e) => held.push(format!("{} names round {}, whose state the store cannot tell: {e}", f.path.display(), f.batch)),
         }
     }
+    Partition { clear, held }
+}
+
+/// The files to delete; Err names each file whose round the store holds open, or cannot say
+/// about, and the step that clears it.
+pub fn plan(
+    files: &[RoundFile],
+    state: impl Fn(&str) -> Result<Option<String>, String>,
+) -> Result<Vec<PathBuf>, String> {
+    let Partition { clear, held } = partition(files, state);
     if !held.is_empty() {
         return Err(format!(
             "{} — drain first: land or abandon each, a round with `queue round land|abandon <batch>` until `queue round status` reads round=none, a forge batch with `queue verdict <repo>` once its PR merges or `queue abandon <repo>`, then install again",
             held.join("; ")
         ));
     }
-    Ok(files.iter().map(|f| f.path.clone()).collect())
+    Ok(clear)
 }
 
 #[cfg(test)]
@@ -155,5 +177,16 @@ mod tests {
         assert!(!e.contains("spira-landed") && e.contains("drain first"), "{e}");
         let e = plan(&files, |_| Err("lc-serve is down".to_string())).unwrap_err();
         assert!(e.contains("whose state the store cannot tell: lc-serve is down"), "{e}");
+    }
+
+    #[test]
+    fn a_partition_clears_what_the_store_has_ended_and_holds_the_rest_by_name() {
+        let d = queue_dir("partition");
+        let files = round_files(d.path());
+        let p = partition(&files, states("CI_RUNNING"));
+        let rel = |v: &[PathBuf]| v.iter().map(|f| f.strip_prefix(d.path()).unwrap().display().to_string()).collect::<Vec<_>>();
+        assert_eq!(rel(&p.clear), ["other/round", "spira/round"]);
+        assert_eq!(p.held.len(), 1);
+        assert!(p.held[0].contains("round.spira-settled names round spira-settled, which is CI_RUNNING"), "{:?}", p.held);
     }
 }

@@ -708,3 +708,6 @@ dwarf_build_base
 dwarf_build_budget_gib
 watchdog_unit_log
 runtime_dwarf_usage_secs
+throughput_ratio_min_pct
+throughput_ratio_min_runs
+throughput_passed_grace
