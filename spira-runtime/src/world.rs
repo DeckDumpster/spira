@@ -736,13 +736,7 @@ impl World {
         let blind = ThroughputSnapshot { readable: false, ..Default::default() };
         let halted = self.run_dir.join("world.halted").exists();
         let Ok(rows) = ::reconciler_flow::io::stage_rows(self.metrics_endpoint.as_deref()) else { return to_json(&ThroughputSnapshot { halted, ..blind }) };
-        let mut hourly = vec![0u64; 24];
-        for r in rows.iter().filter(|r| r["machine"] == "bead" && r["to_state"] == "LANDED" && tsd::query::flag(r, "applied")) {
-            let Some(t) = tsd::query::ts_of(r) else { continue };
-            if let Some(age) = p.now.checked_sub(t).filter(|a| *a < day) {
-                hourly[(23 - age / 3600) as usize] += 1;
-            }
-        }
+        let hourly = hourly_landed(&rows, p.now);
         let Ok(prefix) = spira_config::process::cfg("SPIRA_ID_PREFIX") else { return to_json(&ThroughputSnapshot { halted, ..blind }) };
         let Ok(map) = fs::read_to_string(&self.repo_map) else { return to_json(&ThroughputSnapshot { halted, ..blind }) };
         let mut named = BTreeSet::new();
@@ -786,6 +780,18 @@ fn to_json(s: &ThroughputSnapshot) -> Result<String, String> {
     serde_json::to_string(s).map_err(|e| e.to_string())
 }
 
+/// Applied bead LANDED transitions per hour over the 24 h ending `now`, the oldest hour first.
+pub fn hourly_landed(rows: &[Value], now: u64) -> Vec<u64> {
+    let mut hourly = vec![0u64; 24];
+    for r in rows.iter().filter(|r| r["machine"] == "bead" && r["to_state"] == "LANDED" && tsd::query::flag(r, "applied")) {
+        let Some(t) = tsd::query::ts_of(r) else { continue };
+        if let Some(age) = now.checked_sub(t).filter(|a| *a < 24 * 3600) {
+            hourly[(23 - age / 3600) as usize] += 1;
+        }
+    }
+    hourly
+}
+
 /// The distinct bead ids (`<prefix>-<word>`) named in commit subjects.
 pub fn bead_ids(subjects: &str, prefix: &str) -> BTreeSet<String> {
     let lead = format!("{prefix}-");
@@ -796,13 +802,14 @@ pub fn bead_ids(subjects: &str, prefix: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// Per repo: rounds cut over the batch rows' day, how each ended, and how many ended inside `recent_s`.
+/// Per repo: rounds cut over the batch rows' day, how each ended, and how many ended inside
+/// `recent_s` (by the batch's last applied event, not by when it was cut).
 pub fn round_counts(batches: &[Value], now: u64, recent_s: u64) -> Vec<RepoRounds> {
     let mut by: BTreeMap<String, RepoRounds> = BTreeMap::new();
     for b in batches {
         let Some(repo) = b["repo"].as_str() else { continue };
         let r = by.entry(repo.to_string()).or_insert_with(|| RepoRounds { repo: repo.to_string(), ..Default::default() });
-        let recent = now.saturating_sub(as_num(&b["opened_at"]) as u64) <= recent_s;
+        let recent = b["last_at"].as_i64().is_some_and(|t| now.saturating_sub(t.max(0) as u64) <= recent_s);
         r.cut += 1;
         match b["state"].as_str() {
             Some("ABANDONED") => {

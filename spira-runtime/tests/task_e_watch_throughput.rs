@@ -176,9 +176,20 @@ fn bead_ids_are_the_prefixed_words_in_commit_subjects_and_nothing_near_them() {
 #[test]
 fn round_counts_split_a_repos_rounds_by_how_they_ended_and_how_recently() {
     use spira_runtime::world::round_counts;
-    let b = |repo: &str, state: &str, opened: u64| serde_json::json!({ "repo": repo, "state": state, "opened_at": opened });
+    let b = |repo: &str, state: &str, last: u64| serde_json::json!({ "repo": repo, "state": state, "opened_at": 1, "last_at": last });
     let rows = [b("a", "ABANDONED", 9_900), b("a", "ABANDONED", 1_000), b("a", "LANDED", 9_000), b("a", "CI_RUNNING", 9_990), b("b", "SETTLED", 100)];
     let got = round_counts(&rows, 10_000, 7_200);
     assert_eq!(got[0], RepoRounds { repo: "a".into(), cut: 4, abandoned: 2, landed: 1, abandoned_recent: 1, landed_recent: 1 });
     assert_eq!(got[1], RepoRounds { repo: "b".into(), cut: 1, abandoned: 0, landed: 1, abandoned_recent: 0, landed_recent: 0 });
+}
+
+#[test]
+fn landed_rows_are_bucketed_by_hour_with_the_newest_hour_last() {
+    use spira_runtime::world::hourly_landed;
+    let now = 1_000_000u64;
+    let iso = |t: u64| spira_runtime::watchers::iso8601(t);
+    let row = |t: u64, machine: &str, state: &str, applied: bool| serde_json::json!({ "ts": iso(t), "machine": machine, "to_state": state, "applied": applied });
+    let rows = [row(now - 10, "bead", "LANDED", true), row(now - 3_599, "bead", "LANDED", true), row(now - 3_600, "bead", "LANDED", true), row(now - 86_399, "bead", "LANDED", true), row(now - 86_400, "bead", "LANDED", true), row(now - 5, "bead", "LANDED", false), row(now - 5, "batch", "LANDED", true), row(now - 5, "bead", "SUBMITTED", true)];
+    let h = hourly_landed(&rows, now);
+    assert_eq!((h.len(), h[23], h[22], h[0], h.iter().sum::<u64>()), (24, 2, 1, 1, 4), "{h:?}");
 }
