@@ -17,7 +17,7 @@ state_of() {  # state_of <bead>
     env -u SPIRA_DB -u SPIRA_LC_SOCKET -u SPIRA_LC_PASSWORD_FILE sim probe "$SIM_WORLD" | tr -d ' ' | grep "\"bead\":\"$1\"" | grep -o '"lc_state":"[A-Z_]*"' | cut -d'"' -f4
 }
 book() {  # book <entry> [NAME=value ...] — that runbook entry, with this world's names
-    REPO="$repo" REV=sim-rev WHY="cutover drill" bash "$here/runbook.sh" "$@"
+    REPO="$repo" REV=42 WHY="cutover drill" bash "$here/runbook.sh" "$@"
 }
 
 # world stop and world status ask systemd for the timers they act on; the world has no user bus, so
