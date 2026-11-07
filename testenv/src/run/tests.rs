@@ -141,3 +141,9 @@ fn a_green_run_records_a_full_suite_pass_only_when_it_selected_every_suite() {
     record_full_suite_pass(&run, "aaaa", &names(&["test-b.sh", "test-a.sh"]), &dir, &|_| {});
     assert_eq!(check(&run, Kind::FullSuite, "aaaa", None, "u", "0"), Ok(Verdict::Passed));
 }
+
+#[test]
+fn a_run_with_no_warm_slot_and_no_deadline_never_sweeps_inline() {
+    assert_eq!(sweep_placement(None), SweepPlacement::Detached);
+    assert_eq!(sweep_placement(Some(0)), SweepPlacement::WarmRefill);
+}
