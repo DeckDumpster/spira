@@ -795,10 +795,9 @@ fn cmd_pause(args: &[String]) -> i32 {
                     return 64;
                 }
             };
-            match spira_config::scoped_stop::pause_repo(&run, repo, &lanes, owner, reason, until, now) {
+            let cause = cause_or_die(args, tsd::stop::Reason::Operator);
+            match spira_config::scoped_stop::pause_repo_typed(&run, repo, &lanes, owner, reason, until, now, cause, flag(args, "--bead")) {
                 Ok(s) => {
-                    let cause = cause_or_die(args, tsd::stop::Reason::Operator);
-                    record_stop(tsd::stop::Kind::Pause, cause, owner, Some(repo), flag(args, "--bead"), reason);
                     println!("spira: paused {} lane(s) of {repo}: now stopped [{}]; lift with: world.sh unpause --repo {repo}", lanes.join(","), s.lanes.join(","));
                     0
                 }

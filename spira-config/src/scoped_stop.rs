@@ -103,6 +103,13 @@ fn reserve_path(run: &Path, bead: &str) -> PathBuf {
 /// Records a stop of `lanes` for `repo`; lanes already stopped keep their record's lane set
 /// merged in, with the newest owner, reason and release condition.
 pub fn pause_repo(run: &Path, repo: &str, lanes: &[String], owner: &str, reason: &str, until: &str, now: u64) -> Result<RepoStop, String> {
+    pause_repo_typed(run, repo, lanes, owner, reason, until, now, tsd::stop::Reason::Landing, None)
+}
+
+/// [`pause_repo`] with the closed reason and the bead the stop is charged to, both written to the
+/// `loop-stop` family beside the stop's current-state file.
+#[allow(clippy::too_many_arguments)]
+pub fn pause_repo_typed(run: &Path, repo: &str, lanes: &[String], owner: &str, reason: &str, until: &str, now: u64, cause: tsd::stop::Reason, bead: Option<&str>) -> Result<RepoStop, String> {
     if !valid_name(repo) {
         return Err(format!("bad repo name {repo:?}"));
     }
@@ -131,6 +138,8 @@ pub fn pause_repo(run: &Path, repo: &str, lanes: &[String], owner: &str, reason:
         since: prev.map(|p| p.since).unwrap_or(now),
     };
     write_atomic(&repo_path(run, repo), &serde_json::to_string_pretty(&stop).map_err(|e| e.to_string())?)?;
+    let typed = tsd::stop::StopRecord { kind: tsd::stop::Kind::Pause, reason: cause, actor: owner.into(), repo: Some(repo.into()), bead: bead.map(str::to_string), detail: reason.into() };
+    typed.write(run, &tsd::default_host(), &tsd::iso_utc(now)).map_err(|e| format!("the stop is in force but its typed record failed: {e}"))?;
     Ok(stop)
 }
 
@@ -262,6 +271,17 @@ mod tests {
 
     fn lanes(s: &str) -> Vec<String> {
         parse_lanes(s).unwrap()
+    }
+
+    #[test]
+    fn every_pause_leaves_a_typed_row_whoever_made_it() {
+        let d = testkit::TempDir::new("scoped-stop-typed");
+        pause_repo(d.path(), "spira", &lanes("rounds"), "pace", "why", "fix lands", 100).unwrap();
+        pause_repo_typed(d.path(), "cubby", &lanes("claims"), "o", "r", "u", 200, tsd::stop::Reason::Incident, Some("sp-x")).unwrap();
+        let text = std::fs::read_to_string(tsd::family_path(d.path(), tsd::stop::FAMILY)).unwrap();
+        let rows: Vec<_> = text.lines().map(|l| tsd::stop::StopRecord::from_row(&serde_json::from_str(l).unwrap()).unwrap()).collect();
+        let got: Vec<_> = rows.iter().map(|r| (r.reason, r.repo.as_deref(), r.bead.as_deref())).collect();
+        assert_eq!(got, vec![(tsd::stop::Reason::Landing, Some("spira"), None), (tsd::stop::Reason::Incident, Some("cubby"), Some("sp-x"))]);
     }
 
     #[test]

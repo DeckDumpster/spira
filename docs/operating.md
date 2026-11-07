@@ -123,6 +123,12 @@ keep observing. Every section kind on `SPIRA_RECONCILER_SHADOW_KINDS` (by defaul
 `RoundController Lifecycle Alarms`) is planned and recorded as a would-step, and nothing is
 written to `intents/` for it.
 
+Goodput charges halted time and reverts from typed records alone. Every `world` stop, drain,
+start, resume and repo pause appends a `loop-stop` row (kind and reason from closed sets; `world
+stop --cause` and `world pause --cause/--bead` choose them). A landing appends a `land` row per
+member; it is a revert when the bead carries a `reverts:<commit>` label naming the reverted
+member's tip. A "Revert ..." title or subject without that label charges no one.
+
 | Task | Do |
 |---|---|
 | Read a section | `spira-lc section get <Kind>/<name>`; every section with its age: `spira-lc section list [--kind K]` |
