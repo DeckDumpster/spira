@@ -247,6 +247,7 @@ dependencies = [
  "libc",
  "mail",
  "regex",
+ "runtime",
  "serde",
  "serde_json",
  "spira-claim",
@@ -341,6 +342,7 @@ dependencies = [
  "bead",
  "libc",
  "regex",
+ "runtime",
  "serde",
  "serde_json",
  "sha2",
@@ -853,6 +855,7 @@ version = "0.1.0"
 dependencies = [
  "lifecycle",
  "release",
+ "runtime",
  "serde_json",
  "spira-config",
  "spira-otel",
@@ -2279,6 +2282,7 @@ dependencies = [
  "hel",
  "libc",
  "regex",
+ "runtime",
  "serde",
  "serde_json",
  "spira-config",
@@ -2783,6 +2787,7 @@ name = "watchtower"
 version = "1.0.0"
 dependencies = [
  "libc",
+ "runtime",
  "serde",
  "serde_json",
  "spira-config",

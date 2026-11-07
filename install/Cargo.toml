@@ -36,6 +36,7 @@ spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
 serde_json = "1"
 watchdog = { path = "../watchdog" }
+runtime = { path = "../runtime" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

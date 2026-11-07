@@ -236,16 +236,19 @@ pub fn holder_alive(run: &Path, id: &str) -> bool {
     hel::reap::holder_alive(run, id)
 }
 
-fn unit_count(cfg: &Config, pattern: &str, exclude: Option<&str>) -> u32 {
-    let o = run("timeout", &["5", &cfg.systemctl, "--user", "list-units", pattern, "--no-legend"], None, &[]);
-    o.stdout
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter(|l| match exclude {
-            Some(ex) => l.split_whitespace().next() != Some(ex),
-            None => true,
-        })
-        .count() as u32
+/// The live dwarves systemd lists that `keep` admits, `exclude` left out. The set and the
+/// liveness rule are `runtime::units::{dwarf_globs, live_dwarf_in_list_line}`, the ones the
+/// fleet ceiling and dwarves.sh count by: a dwarf runs as `spira-dwarf-*` or as the
+/// scheduler's `spira-run-sentinel_2dcall-*` (sp-li4zys: listing only `spira-dwarf-*` read 0
+/// live with 4 running, and the reconciler and strand check alarmed on it).
+fn unit_count(cfg: &Config, keep: &dyn Fn(&str) -> bool, exclude: Option<&str>) -> u32 {
+    let globs = runtime::units::dwarf_globs();
+    let mut args = vec!["5", cfg.systemctl.as_str(), "--user", "list-units"];
+    args.extend(globs.iter().map(String::as_str));
+    args.push("--no-legend");
+    let o = run("timeout", &args, None, &[]);
+    let live: HashSet<&str> = o.stdout.lines().filter_map(runtime::units::live_dwarf_in_list_line).filter(|u| keep(u) && Some(*u) != exclude).collect();
+    live.len() as u32
 }
 
 /// Live dwarves of one persona: the unit list under systemd-run (the pidfile lags the unit),
@@ -257,17 +260,23 @@ fn unit_count(cfg: &Config, pattern: &str, exclude: Option<&str>) -> u32 {
 /// systemd-run branch, exactly as the bash original — the pidfile fallback never sees the
 /// race it guards against (dwarf.sh writes its own pidfile only after this check runs).
 pub fn dwarf_count(cfg: &Config, rune: &str, exclude: Option<&str>) -> u32 {
+    dwarf_count_named(cfg, rune, rune, exclude)
+}
+
+/// [`dwarf_count`] for a rune whose by-name units carry `rune_name` (its `RUNE_NAME`): the
+/// scheduler names its units by the rune id, `spira-dwarf-*` units by `RUNE_NAME`.
+fn dwarf_count_named(cfg: &Config, rune: &str, rune_name: &str, exclude: Option<&str>) -> u32 {
     if cfg.call == "systemd-run" {
-        return unit_count(cfg, &format!("spira-dwarf-{rune}-*"), exclude);
+        return unit_count(cfg, &|u| runtime::units::is_dwarf_of(u, rune, rune_name), exclude);
     }
     let Some(run_dir) = cfg.run.as_ref() else { return 0 };
-    pidfiles(run_dir, &format!("dwarf-{rune}-"), ".pid").iter().filter(|p| dwarf_alive(p)).count() as u32
+    pidfiles(run_dir, &format!("dwarf-{rune_name}-"), ".pid").iter().filter(|p| dwarf_alive(p)).count() as u32
 }
 
 /// How many dwarves exist right now, across every persona and every lane.
 pub fn dwarves_live_total(cfg: &Config) -> u32 {
     if cfg.call == "systemd-run" {
-        return unit_count(cfg, "spira-dwarf-*", None);
+        return unit_count(cfg, &|_| true, None);
     }
     let Some(run_dir) = cfg.run.as_ref() else { return 0 };
     pidfiles(run_dir, "dwarf-", ".pid").iter().filter(|p| dwarf_alive(p)).count() as u32
@@ -283,7 +292,7 @@ pub fn dwarves_live_lanes(cfg: &Config) -> u32 {
         .split_whitespace()
         .map(|f| {
             let name = spira_config::runes::rune_get(home, f, "RUNE_NAME", f);
-            dwarf_count(cfg, &name, None)
+            dwarf_count_named(cfg, f, &name, None)
         })
         .sum()
 }
@@ -467,6 +476,38 @@ mod tests {
         let cfg = Config { call: "mock".into(), run: Some(run.clone()), ..Config::test_fixture() };
         assert_eq!(dwarf_count(&cfg, "builder", None), 0, "no pidfiles at all");
         assert_eq!(dwarf_count(&cfg, "builder", Some("anything")), 0, "exclude is a no-op off the systemd-run branch");
+    }
+
+    /// A `systemctl` that answers `list-units <glob>...` as systemd does: the units matching
+    /// any glob, one line each, `name load active sub description`.
+    fn fake_systemctl(dir: &Path, units: &[(&str, &str)]) -> String {
+        let table: String = units.iter().map(|(n, st)| format!("{n} loaded {st} running dwarf\n")).collect();
+        std::fs::write(dir.join("units"), table).unwrap();
+        let script = dir.join("systemctl");
+        let body = format!(
+            "#!/bin/sh\nfor g in \"$@\"; do case \"$g\" in -*|list-units) ;; *) while read -r n rest; do case \"$n\" in $g) echo \"$n $rest\";; esac; done < '{}';; esac; done\n",
+            dir.join("units").display()
+        );
+        testkit::write_exe(&script, &body);
+        script.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn sp_li4zys_dwarves_the_scheduler_started_are_counted() {
+        let t = testkit::TempDir::new("strand-sp-li4zys");
+        let b1 = "spira-run-sentinel_2dcall-builder_2d1794009721297_2d1.service";
+        let units = [
+            (b1, "active"),
+            ("spira-run-sentinel_2dcall-builder_2d1794012840137_2d0.service", "activating"),
+            ("spira-run-sentinel_2dcall-ops_2d1794012840137_2d2.service", "active"),
+            ("spira-run-sentinel_2dcall-builder_2d1794000000000_2d0.service", "failed"),
+            ("spira-run-sentinel_2dpass-landing.service", "active"),
+        ];
+        let cfg = Config { call: "systemd-run".into(), systemctl: fake_systemctl(&t, &units), ..Config::test_fixture() };
+        assert_eq!(dwarf_count(&cfg, "builder", None), 2, "two live builder dwarves, one failed");
+        assert_eq!(dwarf_count(&cfg, "builder", Some(b1)), 1, "the caller's own unit is excluded");
+        assert_eq!(dwarf_count(&cfg, "ops", None), 1);
+        assert_eq!(dwarves_live_total(&cfg), 3, "every live dwarf; the landing pass is not one");
     }
 
     #[test]

@@ -1454,7 +1454,10 @@ pub fn view(s: &Snapshot) -> View {
                             it.age = age(s.now - a.started);
                             it
                         }
-                        None => Item { id: "?".into(), who: a.unit.trim_start_matches("spira-dwarf-").trim_end_matches(".service").into(), note: phase, age: age(s.now - a.started), ..Default::default() },
+                        None => {
+                            let who = runtime::units::dwarf_rune(&a.unit).unwrap_or_else(|| a.unit.trim_start_matches(runtime::units::DWARF_PREFIX).trim_end_matches(".service").into());
+                            Item { id: "?".into(), who, note: phase, age: age(s.now - a.started), ..Default::default() }
+                        }
                     }
                 })
                 .collect();
@@ -2072,6 +2075,14 @@ mod tests {
         assert!(v.now_items[0].note.starts_with("closeout · build-fence"), "{:?}", v.now_items[0].note);
         assert_eq!(holder_pid("dwarf-dvalin@111.5"), Some(111));
         assert_eq!(holder_pid("concierge"), None);
+    }
+
+    #[test]
+    fn sp_li4zys_a_scheduler_started_dwarf_with_no_bead_yet_shows_its_rune() {
+        let mut s = snap(vec![]);
+        s.live = Some(vec![LiveDwarf { unit: "spira-run-sentinel_2dcall-builder_2d1794009721297_2d1.service".into(), pid: 333, started: 99_000, phase: "claim".into() }]);
+        let v = view(&s);
+        assert_eq!(v.now_items.iter().map(|i| i.who.as_str()).collect::<Vec<_>>(), ["builder"]);
     }
 
     #[test]

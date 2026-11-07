@@ -11,6 +11,7 @@ libc = "0.2"
 spira-config = { path = "../spira-config" }
 spira-ctrl = { path = "../spira-ctrl" }
 strand = { path = "../strand" }
+runtime = { path = "../runtime" }
 
 [lib]
 name = "watchtower"

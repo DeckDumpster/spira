@@ -49,6 +49,7 @@ hel = { path = "../../hel" }
 spira-claim = { path = "../../spira-claim" }
 mail = { path = "../../mail" }
 spira-world = { path = "../../spira-world" }
+runtime = { path = "../../runtime" }
 
 [dev-dependencies]
 testkit = { path = "../../testkit" }
