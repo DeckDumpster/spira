@@ -53,4 +53,13 @@ kill -KILL "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
 settle "$B3"
 is "a killed suite leaves its temp directory empty" 0 "$(leftovers "$B3")"
 
+B4="$FIX/group-base"; mkdir -p "$B4"
+rm -f "$FIX/killed.ready"
+setsid env TMPDIR="$B4" bash "$FIX/leaky.sh" killed >/dev/null 2>&1 &
+gpid=$!
+for _ in $(seq 1 100); do [ -e "$FIX/killed.ready" ] && break; sleep 0.1; done   # waits-on: the fixture's ready file; cap 10s
+kill -KILL -- "-$gpid" 2>/dev/null; wait "$gpid" 2>/dev/null
+settle "$B4"
+is "a suite killed with its whole process group leaves its temp directory empty" 0 "$(leftovers "$B4")"
+
 tl_summary
