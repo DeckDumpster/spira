@@ -47,6 +47,16 @@ if [ ! -x "$rel/bin/round-recert" ]; then
     rm -f "$rel/bin/round-recert" && cp "$(readlink -f "$src/bin/round-recert")" "$rel/bin/round-recert" || exit 9
 fi
 export PATH="$stub:$rel/bin:$PATH"
+
+# world stop journals a scheduler halt on the runtime's control socket; this world runs no
+# scheduler, so a stand-in answers there until the walk is done.
+ctl=$(spira-config get spira.runtime_socket "$SPIRA_TOML") && [ -n "$ctl" ] || ctl="$SIM_WORLD/home/spira/run/runtime-control.sock"
+if [ "$phase" != done ] && [ ! -S "$ctl" ]; then
+    mkdir -p "$(dirname "$ctl")" || exit 9
+    nohup python3 -I "$here/rc-cutover-control.py" "$ctl" "$phase_file" 200 >"$SIM_WORLD/cutover-control.err" 2>&1 </dev/null &
+    for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$ctl" ] && break; sleep 0.2; done
+    [ -S "$ctl" ] || { cat "$SIM_WORLD/cutover-control.err" >&2; fail "the stand-in control socket did not come up"; }
+fi
 [ -z "$final" ] || [ "$phase" = done ] || fail "the walk never finished"
 
 while :; do

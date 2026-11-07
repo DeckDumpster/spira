@@ -5,22 +5,37 @@
 # cutover mode laid, and a round of the other bead is abandoned as a rollback would. Every move is
 # a checked block of docs/runbooks/rounds.md (steps/runbook.sh).
 epoch = 1800000000
-horizon = 1500000
-real_actors = ["sentinel-call", "sift"]
+horizon = 800000
 
 [[actor]]
 name = "gate-worker"
 command = "gate-worker run"
 first = 20000
-every = 30000
+every = 60000
 duration_min = 2000
 duration_max = 10000
+
+[[actor]]
+name = "sift"
+command = "batcher sifts"
+first = 5000
+every = 60000
+duration_min = 1000
+duration_max = 3000
+
+[[actor]]
+name = "sentinel-call"
+command = "sh spira/sim/scenarios/steps/rc-cutover-actor.sh claims sentinel --call-only"
+first = 10000
+every = 60000
+duration_min = 1000
+duration_max = 3000
 
 [[actor]]
 name = "landing"
 command = "sh spira/sim/scenarios/steps/rc-cutover-actor.sh land landing-pass land"
 first = 15000
-every = 30000
+every = 60000
 duration_min = 1000
 duration_max = 3000
 
@@ -28,7 +43,7 @@ duration_max = 3000
 name = "czar-pass"
 command = "sh spira/sim/scenarios/steps/rc-cutover-actor.sh czar czar-pass --pass"
 first = 25000
-every = 30000
+every = 60000
 duration_min = 1000
 duration_max = 2000
 
@@ -36,7 +51,7 @@ duration_max = 2000
 name = "reconciler"
 command = "sh spira/sim/scenarios/steps/rc-cutover-actor.sh remedies reconciler --pass"
 first = 35000
-every = 30000
+every = 60000
 duration_min = 1000
 duration_max = 2000
 
@@ -177,60 +192,10 @@ name = "move-20"
 at = 720000
 command = "bash spira/sim/scenarios/steps/rc-cutover-mode.sh sim sp-cm01 sp-cm02 sp-cm03"
 
-[[step]]
-name = "move-21"
-at = 750000
-command = "bash spira/sim/scenarios/steps/rc-cutover-mode.sh sim sp-cm01 sp-cm02 sp-cm03"
-
-[[step]]
-name = "move-22"
-at = 780000
-command = "bash spira/sim/scenarios/steps/rc-cutover-mode.sh sim sp-cm01 sp-cm02 sp-cm03"
-
-[[step]]
-name = "move-23"
-at = 810000
-command = "bash spira/sim/scenarios/steps/rc-cutover-mode.sh sim sp-cm01 sp-cm02 sp-cm03"
-
-[[step]]
-name = "move-24"
-at = 840000
-command = "bash spira/sim/scenarios/steps/rc-cutover-mode.sh sim sp-cm01 sp-cm02 sp-cm03"
-
-[[step]]
-name = "move-25"
-at = 870000
-command = "bash spira/sim/scenarios/steps/rc-cutover-mode.sh sim sp-cm01 sp-cm02 sp-cm03"
-
-[[step]]
-name = "move-26"
-at = 900000
-command = "bash spira/sim/scenarios/steps/rc-cutover-mode.sh sim sp-cm01 sp-cm02 sp-cm03"
-
-[[step]]
-name = "move-27"
-at = 930000
-command = "bash spira/sim/scenarios/steps/rc-cutover-mode.sh sim sp-cm01 sp-cm02 sp-cm03"
-
-[[step]]
-name = "move-28"
-at = 960000
-command = "bash spira/sim/scenarios/steps/rc-cutover-mode.sh sim sp-cm01 sp-cm02 sp-cm03"
-
-[[step]]
-name = "move-29"
-at = 990000
-command = "bash spira/sim/scenarios/steps/rc-cutover-mode.sh sim sp-cm01 sp-cm02 sp-cm03"
-
-[[step]]
-name = "move-30"
-at = 1020000
-command = "bash spira/sim/scenarios/steps/rc-cutover-mode.sh sim sp-cm01 sp-cm02 sp-cm03"
-
 # Every move is done by now: the world is halted, cutover mode's stops are gone, the bead stayed unclaimed.
 [[step]]
 name = "rehalted"
-at = 1200000
+at = 760000
 command = "bash spira/sim/scenarios/steps/rc-cutover-mode.sh sim sp-cm01 sp-cm02 sp-cm03 final"
 
 [[invariant]]
@@ -239,7 +204,7 @@ sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (
 
 [[invariant]]
 name = "a_held_actor_ran_under_cutover_mode"
-sql = "SELECT seq, actor, exit FROM events WHERE kind = 'complete' AND actor IN ('landing', 'czar-pass', 'reconciler') AND exit <> 0"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'complete' AND actor IN ('sentinel-call', 'landing', 'czar-pass', 'reconciler') AND exit <> 0"
 
 [[invariant]]
 name = "the_window_claimed_a_bead"
