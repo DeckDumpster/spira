@@ -163,38 +163,42 @@ pub fn cmd_show_batch(args: &[String], conn: &Conn) -> (i32, String) {
         return (CANNOT_TELL, "show-batch: missing <batch-id>".into());
     };
     match rows::fetch_batch(conn, batch_id) {
-        // Built field-by-field, not a derive-serialize of BatchRow: BatchState's derived
-        // Serialize prints the Rust variant name ("Open"), while every `--expect`/`state`
-        // string elsewhere in this CLI (and the value a caller must feed back into
-        // `--expect`) is `.as_str()`'s upper-snake form ("OPEN"). Two spellings of the same
-        // state would make a caller's own string compare silently always fail.
-        Ok(Some(row)) => {
-            let progress = match conn.query(&format!("SELECT progress FROM batch WHERE batch_id = {}", q(batch_id))) {
-                Ok(r) => r.first().and_then(|r| r.get("progress")).and_then(|p| p.as_str()).and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok()),
-                Err(e) => return cannot_tell(e),
-            };
-            (
-            0,
-            serde_json::json!({
-                "batch_id": row.batch_id,
-                "repo": row.repo,
-                "state": row.state.as_str(),
-                "parent": row.parent,
-                "head": row.head,
-                "base": row.base,
-                "run": row.run,
-                "reason": row.reason,
-                "pass": row.pass,
-                "phase": row.phase.map(|p| p.as_str()),
-                "progress": progress,
-                "version": row.version,
-            })
-            .to_string(),
-            )
-        }
-        Ok(None) => (1, "{}".to_string()),
+        Ok(Some(row)) => match conn.query(&format!("SELECT progress FROM batch WHERE batch_id = {}", q(batch_id))) {
+            Ok(r) => {
+                let progress = r.first().and_then(|r| r.get("progress")).and_then(|p| p.as_str()).and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok());
+                show_batch_reply(Some((&row, progress)))
+            }
+            Err(e) => cannot_tell(e),
+        },
+        Ok(None) => show_batch_reply(None),
         Err(e) => cannot_tell(e),
     }
+}
+
+/// A missing batch is exit 1 with `{}`: the miss a caller's guard fails closed on. Built
+/// field-by-field, not a derive-serialize of BatchRow: that prints the Rust variant name
+/// ("Open"), while every `--expect`/`state` string in this CLI, which a caller feeds back, is
+/// `.as_str()`'s upper-snake form ("OPEN").
+fn show_batch_reply(found: Option<(&batch::BatchRow, Option<serde_json::Value>)>) -> (i32, String) {
+    let Some((row, progress)) = found else { return (1, "{}".to_string()) };
+    (
+        0,
+        serde_json::json!({
+            "batch_id": row.batch_id,
+            "repo": row.repo,
+            "state": row.state.as_str(),
+            "parent": row.parent,
+            "head": row.head,
+            "base": row.base,
+            "run": row.run,
+            "reason": row.reason,
+            "pass": row.pass,
+            "phase": row.phase.map(|p| p.as_str()),
+            "progress": progress,
+            "version": row.version,
+        })
+        .to_string(),
+    )
 }
 
 /// The service never sees this process's stdin, so `batch-progress`'s payload is read here and
@@ -258,8 +262,109 @@ pub fn cmd_batch_progress(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
-/// `cut <batch-id> --repo R --head H --base B --members "id:tip,id:tip" --actor A [--parent P]`
-///
+/// What a verb will write, built from rows already read and never touching the store.
+pub(crate) struct Plan {
+    pub preamble: String,
+    pub steps: Vec<CascadeStep>,
+    /// `"applied": null` marks where the run's result is written, so the key order is the plan's.
+    pub summary: serde_json::Value,
+}
+
+/// A verb's refusal. `record` is the refused event the store keeps; it is absent when the verb
+/// refused before any event was tried.
+pub(crate) struct Refused {
+    pub code: i32,
+    pub text: String,
+    pub record: Option<Box<EventRecord>>,
+}
+
+impl From<(i32, String)> for Refused {
+    fn from((code, text): (i32, String)) -> Self {
+        Refused { code, text, record: None }
+    }
+}
+
+type Planned = Result<Plan, Refused>;
+
+fn run_plan(conn: &Conn, mut plan: Plan) -> (i32, String) {
+    match conn.cascade(&plan.preamble, &plan.steps) {
+        Ok(applied) => {
+            let all_ok = applied.iter().all(|a| *a);
+            if plan.summary.get("applied").is_some() {
+                plan.summary["applied"] = serde_json::json!(applied);
+            }
+            (if all_ok { 0 } else { REFUSED }, plan.summary.to_string())
+        }
+        Err(e) => cannot_tell(e),
+    }
+}
+
+fn refuse(conn: &Conn, r: Refused) -> (i32, String) {
+    match r.record {
+        Some(rec) => match conn.insert_refusal_event(&rec) {
+            Ok(()) => (r.code, r.text),
+            Err(e) => cannot_tell(e),
+        },
+        None => (r.code, r.text),
+    }
+}
+
+
+/// The bead and delivery rows of the beads a verb touches, by id; an id with no row is absent.
+#[derive(Default)]
+pub(crate) struct Roster {
+    pub beads: std::collections::BTreeMap<String, bead::BeadRow>,
+    pub deliveries: std::collections::BTreeMap<String, delivery::DeliveryRow>,
+}
+
+/// Everything `land`, `settle`, `abandon-batch`, `eject-member`, `stack` and `promote` read.
+/// `contained` is the git fact `branch_containment` computes and `returned` the members whose
+/// last `Returned` came after their last `Deliver`.
+pub(crate) struct Rows {
+    pub batch: batch::BatchRow,
+    pub members: Vec<(String, String)>,
+    pub roster: Roster,
+    pub contained: std::collections::BTreeSet<(String, String)>,
+    pub returned: std::collections::BTreeSet<String>,
+}
+
+fn fetch_roster<'a>(conn: &Conn, ids: impl IntoIterator<Item = &'a String>) -> Result<Roster, DbError> {
+    let mut roster = Roster::default();
+    for id in ids {
+        if let Some(row) = rows::fetch_bead(conn, id)? {
+            roster.beads.insert(id.clone(), row);
+        }
+        if let Some(row) = rows::fetch_delivery(conn, id)? {
+            roster.deliveries.insert(id.clone(), row);
+        }
+    }
+    Ok(roster)
+}
+
+/// The batch's own members and every member and `extra` id's rows.
+fn fetch_rows(conn: &Conn, batch: batch::BatchRow, extra: &[String]) -> Result<Rows, DbError> {
+    let members = fetch_members(conn, &batch.batch_id)?;
+    let roster = fetch_roster(conn, members.iter().map(|(id, _)| id).chain(extra))?;
+    Ok(Rows { batch, members, roster, contained: Default::default(), returned: Default::default() })
+}
+
+fn member_ids(members: &[(String, String)]) -> Vec<&String> {
+    members.iter().map(|(i, _)| i).collect()
+}
+
+fn insert_member_sql(batch_id: &str, id: &str, tip: &str) -> String {
+    format!("INSERT INTO batch_member (batch_id, bead_id, tip) VALUES ({}, {}, {});\n", q(batch_id), q(id), q(tip))
+}
+
+pub(crate) struct StageArgs {
+    pub batch_id: String,
+    pub repo: String,
+    pub head: String,
+    pub base: String,
+    pub members: Vec<(String, String)>,
+    pub parent: String,
+}
+
 /// `stage <batch-id> --repo R --head H --base B --members "id:tip,..." --actor A --parent P`
 ///
 /// A round assembled behind the still-running round `P`: the batch row is written STAGED with
@@ -280,31 +385,40 @@ pub fn cmd_stage(args: &[String], conn: &Conn) -> (i32, String) {
     if members.is_empty() {
         return (CANNOT_TELL, "stage: --members must name at least one bead".into());
     }
-    if let Err(early) = fetch_certified_members(conn, &members, true) {
-        return early;
+    let roster = match fetch_roster(conn, members.iter().map(|(id, _)| id)) {
+        Ok(r) => r,
+        Err(e) => return cannot_tell(e),
+    };
+    let stage = StageArgs { batch_id: batch_id.clone(), repo, head, base, members, parent };
+    match plan_stage(&roster, &stage, crate::db::now_epoch()) {
+        Ok(plan) => run_plan(conn, plan),
+        Err(r) => refuse(conn, r),
     }
-    let at = crate::db::now_epoch();
+}
+
+pub(crate) fn plan_stage(roster: &Roster, args: &StageArgs, at: i64) -> Planned {
+    admit_members(&args.members, roster, true)?;
     let mut preamble = format!(
         "INSERT INTO batch (batch_id, repo, state, parent, head, base, run, version, opened_at)\n\
-         VALUES ({batch_id}, {repo}, 'STAGED', {parent}, {head}, {base}, NULL, 0, {at});\n",
-        batch_id = q(batch_id),
-        repo = q(&repo),
-        parent = q(&parent),
-        head = q(&head),
-        base = q(&base),
+         VALUES ({}, {}, 'STAGED', {}, {}, {}, NULL, 0, {at});\n",
+        q(&args.batch_id),
+        q(&args.repo),
+        q(&args.parent),
+        q(&args.head),
+        q(&args.base),
     );
-    for (id, tip) in &members {
-        preamble.push_str(&format!(
-            "INSERT INTO batch_member (batch_id, bead_id, tip) VALUES ({}, {}, {});\n",
-            q(batch_id),
-            q(id),
-            q(tip),
-        ));
+    for (id, tip) in &args.members {
+        preamble.push_str(&insert_member_sql(&args.batch_id, id, tip));
     }
-    match conn.cascade(&preamble, &[]) {
-        Ok(_) => (0, serde_json::json!({"batch_id": batch_id, "members": members.iter().map(|(i, _)| i).collect::<Vec<_>>()}).to_string()),
-        Err(e) => cannot_tell(e),
-    }
+    let summary = serde_json::json!({"batch_id": args.batch_id, "members": member_ids(&args.members)});
+    Ok(Plan { preamble, steps: Vec::new(), summary })
+}
+
+pub(crate) struct PromoteArgs {
+    pub batch_id: String,
+    pub head: String,
+    pub base: String,
+    pub actor: String,
 }
 
 /// `promote <batch-id> --head H --base B --actor A`
@@ -325,31 +439,34 @@ pub fn cmd_promote(args: &[String], conn: &Conn) -> (i32, String) {
         Ok(None) => return (CANNOT_TELL, format!("promote: no batch row for {batch_id}")),
         Err(e) => return cannot_tell(e),
     };
-    if batch_row.state != batch::BatchState::Staged {
-        return (REFUSED, format!("refused: {batch_id} is {} not STAGED", batch_row.state.as_str()));
-    }
-    let members = match fetch_members(conn, batch_id) {
-        Ok(m) => m,
+    let rows = match fetch_rows(conn, batch_row, &[]) {
+        Ok(r) => r,
         Err(e) => return cannot_tell(e),
     };
-    let bead_rows = match fetch_certified_members(conn, &members, true) {
-        Ok(r) => r,
-        Err(early) => return early,
-    };
-    let delivery_rows = match fetch_cuttable_deliveries(conn, &members) {
-        Ok(r) => r,
-        Err(early) => return early,
-    };
-    let at = crate::db::now_epoch();
+    let promote = PromoteArgs { batch_id: batch_id.clone(), head, base, actor };
+    match plan_promote(&rows, &promote, crate::db::now_epoch()) {
+        Ok(plan) => run_plan(conn, plan),
+        Err(r) => refuse(conn, r),
+    }
+}
+
+pub(crate) fn plan_promote(rows: &Rows, args: &PromoteArgs, at: i64) -> Planned {
+    let batch_row = &rows.batch;
+    let batch_id = &args.batch_id;
+    if batch_row.state != batch::BatchState::Staged {
+        return Err((REFUSED, format!("refused: {batch_id} is {} not STAGED", batch_row.state.as_str())).into());
+    }
+    let bead_rows = admit_members(&rows.members, &rows.roster, true)?;
+    let delivery_rows = admit_deliveries(&rows.members, &rows.roster)?;
     let promote_ev = batch::BatchEvent {
         expect: batch::BatchState::Staged,
         version: batch_row.version,
-        kind: batch::BatchEventKind::Promote { head, base },
-        actor: actor.clone(),
+        kind: batch::BatchEventKind::Promote { head: args.head.clone(), base: args.base.clone() },
+        actor: args.actor.clone(),
     };
-    let outcome = batch::apply(&batch_row, &promote_ev);
+    let outcome = batch::apply(batch_row, &promote_ev);
     if !outcome.applied {
-        return (REFUSED, format!("refused: {:?}", outcome.refusal));
+        return Err((REFUSED, format!("refused: {:?}", outcome.refusal)).into());
     }
     let mut steps = vec![CascadeStep {
         table: "batch",
@@ -358,27 +475,31 @@ pub fn cmd_promote(args: &[String], conn: &Conn) -> (i32, String) {
         old_version: batch_row.version,
         set_clause: rows::batch_set_clause(&outcome.row),
         applied_to_state: outcome.row.state.as_str().to_string(),
-        event: EventRecord::of_apply("batch", batch_id, "Promote", "STAGED", batch_row.state.as_str(), None, serde_json::to_value(&promote_ev.kind).unwrap_or_default(), &actor, at),
+        event: EventRecord::of_apply("batch", batch_id, "Promote", "STAGED", batch_row.state.as_str(), None, serde_json::to_value(&promote_ev.kind).unwrap_or_default(), &args.actor, at),
     }];
     let mut preamble = String::new();
-    match member_added_steps(batch_id, outcome.row, &members, &bead_rows, &delivery_rows, &actor, at, &mut preamble, "promote") {
-        Ok(more) => steps.extend(more),
-        Err(early) => return early,
-    }
-    match conn.cascade(&preamble, &steps) {
-        Ok(applied) => {
-            let summary = serde_json::json!({"batch_id": batch_id, "members": members.iter().map(|(i, _)| i).collect::<Vec<_>>(), "applied": applied});
-            (if applied.iter().all(|a| *a) { 0 } else { REFUSED }, summary.to_string())
-        }
-        Err(e) => cannot_tell(e),
-    }
+    steps.extend(member_added_steps(batch_id, outcome.row, &rows.members, &bead_rows, &delivery_rows, &args.actor, at, &mut preamble, "promote")?);
+    let summary = serde_json::json!({"batch_id": batch_id, "members": member_ids(&rows.members), "applied": null});
+    Ok(Plan { preamble, steps, summary })
 }
 
-/// Every named member must currently be CERTIFIED at exactly the given tip — checked before
+pub(crate) struct CutArgs {
+    pub batch_id: String,
+    pub repo: String,
+    pub head: String,
+    pub base: String,
+    pub members: Vec<(String, String)>,
+    pub parent: Option<String>,
+    pub actor: String,
+}
+
+/// `cut <batch-id> --repo R --head H --base B --members "id:tip,id:tip" --actor A [--parent P]`
+///
+/// Every named member must currently be CERTIFIED (or SUBMITTED) at exactly the given tip — checked before
 /// anything is written, so a stale caller refuses cleanly instead of cutting a batch with
 /// the wrong content. On success, in one transaction: the batch row is created (OPEN), one
 /// `batch_member` row and one `MemberAdded` batch event per member, the bead's `Deliver`
-/// event (CERTIFIED -> IN_DELIVERY), and the delivery row's `Cut` event (fresh -> BATCHED).
+/// event, and the delivery row's `Cut` event (fresh -> BATCHED).
 pub fn cmd_cut(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(batch_id) = args.first() else {
         return (CANNOT_TELL, "cut: missing <batch-id>".into());
@@ -395,59 +516,45 @@ pub fn cmd_cut(args: &[String], conn: &Conn) -> (i32, String) {
     if members.is_empty() {
         return (CANNOT_TELL, "cut: --members must name at least one bead".into());
     }
-
-    let bead_rows = match fetch_certified_members(conn, &members, true) {
+    let roster = match fetch_roster(conn, members.iter().map(|(id, _)| id)) {
         Ok(r) => r,
-        Err(early) => return early,
+        Err(e) => return cannot_tell(e),
     };
-    let delivery_rows = match fetch_cuttable_deliveries(conn, &members) {
-        Ok(r) => r,
-        Err(early) => return early,
-    };
+    let cut = CutArgs { batch_id: batch_id.clone(), repo, head, base, members, parent, actor };
+    match plan_cut(&roster, &cut, crate::db::now_epoch()) {
+        Ok(plan) => run_plan(conn, plan),
+        Err(r) => refuse(conn, r),
+    }
+}
 
-    let at = crate::db::now_epoch();
+pub(crate) fn plan_cut(roster: &Roster, args: &CutArgs, at: i64) -> Planned {
+    let bead_rows = admit_members(&args.members, roster, true)?;
+    let delivery_rows = admit_deliveries(&args.members, roster)?;
     let mut preamble = format!(
         "INSERT INTO batch (batch_id, repo, state, parent, head, base, run, version, opened_at)\n\
-         VALUES ({batch_id}, {repo}, 'OPEN', {parent}, {head}, {base}, NULL, 0, {at});\n",
-        batch_id = q(batch_id),
-        repo = q(&repo),
-        parent = parent.as_deref().map(q).unwrap_or_else(|| "NULL".into()),
-        head = q(&head),
-        base = q(&base),
-        at = at,
+         VALUES ({}, {}, 'OPEN', {}, {}, {}, NULL, 0, {at});\n",
+        q(&args.batch_id),
+        q(&args.repo),
+        args.parent.as_deref().map(q).unwrap_or_else(|| "NULL".into()),
+        q(&args.head),
+        q(&args.base),
     );
-    for (id, tip) in &members {
-        preamble.push_str(&format!(
-            "INSERT INTO batch_member (batch_id, bead_id, tip) VALUES ({batch_id}, {id}, {tip});\n",
-            batch_id = q(batch_id),
-            id = q(id),
-            tip = q(tip),
-        ));
+    for (id, tip) in &args.members {
+        preamble.push_str(&insert_member_sql(&args.batch_id, id, tip));
     }
+    let mut batch_row = batch::BatchRow::cut(args.batch_id.as_str(), args.repo.as_str(), args.head.as_str(), args.base.as_str());
+    // `cut()` has no way to know this is a bisect child; every step's SET clause is built from
+    // this row, so the parent must be on it or the first step writes the constructor's NULL back.
+    batch_row.parent = args.parent.clone();
+    let steps = member_added_steps(&args.batch_id, batch_row, &args.members, &bead_rows, &delivery_rows, &args.actor, at, &mut preamble, "cut")?;
+    let summary = serde_json::json!({"batch_id": args.batch_id, "members": member_ids(&args.members), "applied": null});
+    Ok(Plan { preamble, steps, summary })
+}
 
-    let mut batch_row = batch::BatchRow::cut(batch_id.as_str(), repo.as_str(), head.as_str(), base.as_str());
-    // `cut()` always sets `parent: None` — it has no way to know this is a bisect child.
-    // Patch it in before the first `MemberAdded` clones this row, so every subsequent
-    // cascade step's SET clause (built from that clone) keeps carrying it forward instead
-    // of writing the constructor's NULL back over the preamble's own INSERT.
-    batch_row.parent = parent.clone();
-    let steps = match member_added_steps(batch_id, batch_row, &members, &bead_rows, &delivery_rows, &actor, at, &mut preamble, "cut") {
-        Ok(s) => s,
-        Err(early) => return early,
-    };
-
-    match conn.cascade(&preamble, &steps) {
-        Ok(applied) => {
-            let all_ok = applied.iter().all(|a| *a);
-            let summary = serde_json::json!({"batch_id": batch_id, "members": members.iter().map(|(i,_)| i).collect::<Vec<_>>(), "applied": applied});
-            if all_ok {
-                (0, serde_json::to_string(&summary).unwrap())
-            } else {
-                (REFUSED, serde_json::to_string(&summary).unwrap())
-            }
-        }
-        Err(e) => cannot_tell(e),
-    }
+pub(crate) struct StackArgs {
+    pub batch_id: String,
+    pub members: Vec<(String, String)>,
+    pub actor: String,
 }
 
 /// `stack <batch-id> --members "id:tip,id:tip" --actor A`
@@ -470,53 +577,37 @@ pub fn cmd_stack(args: &[String], conn: &Conn) -> (i32, String) {
     if members.is_empty() {
         return (CANNOT_TELL, "stack: --members must name at least one bead".into());
     }
-
     let batch_row = match rows::fetch_batch(conn, batch_id) {
         Ok(Some(r)) => r,
         Ok(None) => return (CANNOT_TELL, format!("stack: no batch row for {batch_id}")),
         Err(e) => return cannot_tell(e),
     };
-    if batch_row.state != batch::BatchState::Open {
-        return (REFUSED, format!("refused: {batch_id} is {} not OPEN", batch_row.state.as_str()));
+    let roster = match fetch_roster(conn, members.iter().map(|(id, _)| id)) {
+        Ok(r) => r,
+        Err(e) => return cannot_tell(e),
+    };
+    let rows = Rows { batch: batch_row, members: Vec::new(), roster, contained: Default::default(), returned: Default::default() };
+    let stack = StackArgs { batch_id: batch_id.clone(), members, actor };
+    match plan_stack(&rows, &stack, crate::db::now_epoch()) {
+        Ok(plan) => run_plan(conn, plan),
+        Err(r) => refuse(conn, r),
     }
+}
 
-    let bead_rows = match fetch_certified_members(conn, &members, false) {
-        Ok(r) => r,
-        Err(early) => return early,
-    };
-    let delivery_rows = match fetch_cuttable_deliveries(conn, &members) {
-        Ok(r) => r,
-        Err(early) => return early,
-    };
-
-    let at = crate::db::now_epoch();
+pub(crate) fn plan_stack(rows: &Rows, args: &StackArgs, at: i64) -> Planned {
+    let batch_id = &args.batch_id;
+    if rows.batch.state != batch::BatchState::Open {
+        return Err((REFUSED, format!("refused: {batch_id} is {} not OPEN", rows.batch.state.as_str())).into());
+    }
+    let bead_rows = admit_members(&args.members, &rows.roster, false)?;
+    let delivery_rows = admit_deliveries(&args.members, &rows.roster)?;
     let mut preamble = String::new();
-    for (id, tip) in &members {
-        preamble.push_str(&format!(
-            "INSERT INTO batch_member (batch_id, bead_id, tip) VALUES ({batch_id}, {id}, {tip});\n",
-            batch_id = q(batch_id),
-            id = q(id),
-            tip = q(tip),
-        ));
+    for (id, tip) in &args.members {
+        preamble.push_str(&insert_member_sql(batch_id, id, tip));
     }
-
-    let steps = match member_added_steps(batch_id, batch_row, &members, &bead_rows, &delivery_rows, &actor, at, &mut preamble, "stack") {
-        Ok(s) => s,
-        Err(early) => return early,
-    };
-
-    match conn.cascade(&preamble, &steps) {
-        Ok(applied) => {
-            let all_ok = applied.iter().all(|a| *a);
-            let summary = serde_json::json!({"batch_id": batch_id, "members": members.iter().map(|(i,_)| i).collect::<Vec<_>>(), "applied": applied});
-            if all_ok {
-                (0, serde_json::to_string(&summary).unwrap())
-            } else {
-                (REFUSED, serde_json::to_string(&summary).unwrap())
-            }
-        }
-        Err(e) => cannot_tell(e),
-    }
+    let steps = member_added_steps(batch_id, rows.batch.clone(), &args.members, &bead_rows, &delivery_rows, &args.actor, at, &mut preamble, "stack")?;
+    let summary = serde_json::json!({"batch_id": batch_id, "members": member_ids(&args.members), "applied": null});
+    Ok(Plan { preamble, steps, summary })
 }
 
 /// Every named member must currently be CERTIFIED at exactly the given tip — checked
@@ -524,13 +615,11 @@ pub fn cmd_stack(args: &[String], conn: &Conn) -> (i32, String) {
 /// cleanly instead of admitting a member with the wrong content.
 /// `cut` passes `allow_submitted`: a round takes SUBMITTED beads directly, its own full suite
 /// being the certification (law-a-round-is-feature-first-then-catch-all); `stack` does not.
-fn fetch_certified_members(conn: &Conn, members: &[(String, String)], allow_submitted: bool) -> Result<Vec<bead::BeadRow>, (i32, String)> {
+fn admit_members(members: &[(String, String)], roster: &Roster, allow_submitted: bool) -> Result<Vec<bead::BeadRow>, (i32, String)> {
     let mut bead_rows = Vec::new();
     for (id, tip) in members {
-        let row = match rows::fetch_bead(conn, id) {
-            Ok(Some(r)) => r,
-            Ok(None) => return Err((REFUSED, format!("refused: no bead row for {id}"))),
-            Err(e) => return Err(cannot_tell(e)),
+        let Some(row) = roster.beads.get(id) else {
+            return Err((REFUSED, format!("refused: no bead row for {id}")));
         };
         let admitted = row.state == bead::BeadState::Certified || (allow_submitted && row.state == bead::BeadState::Submitted);
         if !admitted {
@@ -540,7 +629,7 @@ fn fetch_certified_members(conn: &Conn, members: &[(String, String)], allow_subm
         if row.tip.as_deref() != Some(tip.as_str()) {
             return Err((REFUSED, format!("refused: {id}'s certified tip does not match {tip}")));
         }
-        bead_rows.push(row);
+        bead_rows.push(row.clone());
     }
     Ok(bead_rows)
 }
@@ -548,14 +637,11 @@ fn fetch_certified_members(conn: &Conn, members: &[(String, String)], allow_subm
 /// Each member's existing delivery row, or None. A row still BATCHED in another batch is
 /// that batch's member: the cut refuses, naming the batch. Only a QUEUED or EXITED row can
 /// be cut.
-fn fetch_cuttable_deliveries(conn: &Conn, members: &[(String, String)]) -> Result<Vec<Option<delivery::DeliveryRow>>, (i32, String)> {
+fn admit_deliveries(members: &[(String, String)], roster: &Roster) -> Result<Vec<Option<delivery::DeliveryRow>>, (i32, String)> {
     let mut out = Vec::new();
     for (id, _) in members {
-        let row = match rows::fetch_delivery(conn, id) {
-            Ok(r) => r,
-            Err(e) => return Err(cannot_tell(e)),
-        };
-        if let Some(r) = &row {
+        let row = roster.deliveries.get(id);
+        if let Some(r) = row {
             match r.state {
                 delivery::DeliveryState::Queued | delivery::DeliveryState::Exited => {}
                 delivery::DeliveryState::Batched => {
@@ -564,11 +650,10 @@ fn fetch_cuttable_deliveries(conn: &Conn, members: &[(String, String)]) -> Resul
                 s => return Err((REFUSED, format!("refused: {id}'s delivery is {} and cannot be cut", s.as_str()))),
             }
         }
-        out.push(row);
+        out.push(row.cloned());
     }
     Ok(out)
 }
-
 /// The `MemberAdded` (batch) + `Deliver` (bead) + `Enqueued`/`Cut` (delivery) cascade steps for each of `members`, folded
 /// onto `batch_row` in order so each step's CAS'd version follows the last. Shared by
 /// `cut` (a freshly constructed OPEN row) and `stack` (an existing one fetched from the
@@ -682,6 +767,14 @@ fn member_added_steps(
     Ok(steps)
 }
 
+pub(crate) struct LandArgs {
+    pub batch_id: String,
+    pub expect: batch::BatchState,
+    pub version: u64,
+    pub actor: String,
+    pub sha: String,
+}
+
 /// `land <batch-id> --expect S --version V --actor A --sha SHA`
 ///
 /// One transaction: `FastForward{sha}` on the batch (S -> LANDED), and for every member,
@@ -707,46 +800,51 @@ pub fn cmd_land(args: &[String], conn: &Conn) -> (i32, String) {
         Ok(None) => return (CANNOT_TELL, format!("land: no batch row for {batch_id}")),
         Err(e) => return cannot_tell(e),
     };
-    let at = crate::db::now_epoch();
+    let rows = match fetch_rows(conn, batch_row, &[]) {
+        Ok(r) => r,
+        Err(e) => return cannot_tell(e),
+    };
+    let land = LandArgs { batch_id: batch_id.clone(), expect: expect_state, version, actor, sha };
+    let plan = match plan_land(&rows, &land, crate::db::now_epoch()) {
+        Ok(p) => p,
+        Err(r) => return refuse(conn, r),
+    };
+    let out = run_plan(conn, plan);
+    if out.0 == 0 {
+        crate::cycle::push_landed(conn, &rows.members.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>());
+    }
+    out
+}
+
+pub(crate) fn plan_land(rows: &Rows, args: &LandArgs, at: i64) -> Planned {
+    let (batch_id, actor, sha) = (&args.batch_id, &args.actor, &args.sha);
+    let expect = args.expect.as_str();
     let ff_ev = batch::BatchEvent {
-        expect: expect_state,
-        version,
+        expect: args.expect,
+        version: args.version,
         kind: batch::BatchEventKind::FastForward { sha: sha.clone() },
         actor: actor.clone(),
     };
-    let outcome = batch::apply(&batch_row, &ff_ev);
+    let outcome = batch::apply(&rows.batch, &ff_ev);
     let evidence = serde_json::to_value(&ff_ev.kind).unwrap_or_default();
     if !outcome.applied {
-        let rec = EventRecord::of_apply("batch", batch_id, "FastForward", &expect, batch_row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, &actor, at);
-        return match conn.insert_refusal_event(&rec) {
-            Ok(()) => (REFUSED, format!("refused: {:?}", outcome.refusal)),
-            Err(e) => cannot_tell(e),
-        };
+        let record = EventRecord::of_apply("batch", batch_id, "FastForward", expect, rows.batch.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, actor, at);
+        return Err(Refused { code: REFUSED, text: format!("refused: {:?}", outcome.refusal), record: Some(Box::new(record)) });
     }
-
-    let members = match fetch_members(conn, batch_id) {
-        Ok(m) => m,
-        Err(e) => return cannot_tell(e),
-    };
 
     let mut steps = vec![CascadeStep {
         table: "batch",
         key_column: "batch_id",
         key: batch_id.clone(),
-        old_version: version,
+        old_version: args.version,
         set_clause: rows::batch_set_clause(&outcome.row),
         applied_to_state: outcome.row.state.as_str().to_string(),
-        event: EventRecord::of_apply("batch", batch_id, "FastForward", &expect, batch_row.state.as_str(), None, evidence, &actor, at),
+        event: EventRecord::of_apply("batch", batch_id, "FastForward", expect, rows.batch.state.as_str(), None, evidence, actor, at),
     }];
 
-    for (id, tip) in &members {
-        let Some(delivery_row) = (match rows::fetch_delivery(conn, id) {
-            Ok(r) => r,
-            Err(e) => return cannot_tell(e),
-        }) else {
-            continue;
-        };
-        if !still_in_batch(&delivery_row, batch_id) {
+    for (id, tip) in &rows.members {
+        let Some(delivery_row) = rows.roster.deliveries.get(id) else { continue };
+        if !still_in_batch(delivery_row, batch_id) {
             continue;
         }
         let delivered_ev = delivery::DeliveryEvent {
@@ -755,7 +853,7 @@ pub fn cmd_land(args: &[String], conn: &Conn) -> (i32, String) {
             kind: delivery::DeliveryEventKind::Delivered { merge_sha: sha.clone(), proof: format!("queue-fast-forward:{tip}") },
             actor: actor.clone(),
         };
-        let d_outcome = delivery::apply(&delivery_row, &delivered_ev);
+        let d_outcome = delivery::apply(delivery_row, &delivered_ev);
         if d_outcome.applied {
             steps.push(cascade_step(
                 "delivery",
@@ -768,17 +866,12 @@ pub fn cmd_land(args: &[String], conn: &Conn) -> (i32, String) {
                 "Delivered",
                 delivery_row.state.as_str(),
                 &delivered_ev.kind,
-                &actor,
+                actor,
                 at,
             ));
         }
 
-        let Some(bead_row) = (match rows::fetch_bead(conn, id) {
-            Ok(r) => r,
-            Err(e) => return cannot_tell(e),
-        }) else {
-            continue;
-        };
+        let Some(bead_row) = rows.roster.beads.get(id) else { continue };
         let bead_delivered_ev = bead::BeadEvent {
             expect: bead_row.state,
             version: bead_row.version,
@@ -786,7 +879,7 @@ pub fn cmd_land(args: &[String], conn: &Conn) -> (i32, String) {
             actor: actor.clone(),
             at: Some(at),
         };
-        let b_outcome = bead::apply(&bead_row, &bead_delivered_ev);
+        let b_outcome = bead::apply(bead_row, &bead_delivered_ev);
         if b_outcome.applied {
             steps.push(cascade_step(
                 "bead",
@@ -799,25 +892,23 @@ pub fn cmd_land(args: &[String], conn: &Conn) -> (i32, String) {
                 "Delivered",
                 bead_row.state.as_str(),
                 &bead_delivered_ev.kind,
-                &actor,
+                actor,
                 at,
             ));
         }
     }
 
-    match conn.cascade("", &steps) {
-        Ok(applied) => {
-            let all_ok = applied.iter().all(|a| *a);
-            let summary = serde_json::json!({"batch_id": batch_id, "steps": steps.len(), "applied": applied});
-            if all_ok {
-                crate::cycle::push_landed(conn, &members.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>());
-                (0, serde_json::to_string(&summary).unwrap())
-            } else {
-                (REFUSED, serde_json::to_string(&summary).unwrap())
-            }
-        }
-        Err(e) => cannot_tell(e),
-    }
+    let summary = serde_json::json!({"batch_id": batch_id, "steps": steps.len(), "applied": null});
+    Ok(Plan { preamble: String::new(), steps, summary })
+}
+
+pub(crate) struct SettleArgs {
+    pub batch_id: String,
+    pub expect: batch::BatchState,
+    pub version: u64,
+    pub actor: String,
+    pub eject: Vec<String>,
+    pub requeue: Vec<String>,
 }
 
 /// `settle <batch-id> --expect S --version V --actor A [--eject "id,id"] [--requeue "id,id"]`
@@ -838,93 +929,84 @@ pub fn cmd_settle(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(expect_state) = batch::BatchState::from_str(&expect) else {
         return (CANNOT_TELL, format!("settle: unknown batch state {expect:?}"));
     };
-    let eject_ids = parse_ids(&flag(args, "--eject").unwrap_or_default());
-    let requeue_ids = parse_ids(&flag(args, "--requeue").unwrap_or_default());
+    let eject = parse_ids(&flag(args, "--eject").unwrap_or_default());
+    let requeue = parse_ids(&flag(args, "--requeue").unwrap_or_default());
 
     let batch_row = match rows::fetch_batch(conn, batch_id) {
         Ok(Some(r)) => r,
         Ok(None) => return (CANNOT_TELL, format!("settle: no batch row for {batch_id}")),
         Err(e) => return cannot_tell(e),
     };
-    let at = crate::db::now_epoch();
-    let settle_ev = batch::BatchEvent { expect: expect_state, version, kind: batch::BatchEventKind::Settle, actor: actor.clone() };
-    let outcome = batch::apply(&batch_row, &settle_ev);
+    let mut rows = match fetch_rows(conn, batch_row, &eject) {
+        Ok(r) => r,
+        Err(e) => return cannot_tell(e),
+    };
+    rows.contained = branch_containment(&rows.batch, &rows.members);
+    let settle = SettleArgs { batch_id: batch_id.clone(), expect: expect_state, version, actor, eject, requeue };
+    match plan_settle(&rows, &settle, crate::db::now_epoch()) {
+        Ok(plan) => run_plan(conn, plan),
+        Err(r) => refuse(conn, r),
+    }
+}
+
+pub(crate) fn plan_settle(rows: &Rows, args: &SettleArgs, at: i64) -> Planned {
+    let (batch_id, actor) = (&args.batch_id, &args.actor);
+    let expect = args.expect.as_str();
+    let settle_ev = batch::BatchEvent { expect: args.expect, version: args.version, kind: batch::BatchEventKind::Settle, actor: actor.clone() };
+    let outcome = batch::apply(&rows.batch, &settle_ev);
     if !outcome.applied {
-        let rec = EventRecord::of_apply("batch", batch_id, "Settle", &expect, batch_row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), serde_json::Value::String("Settle".into()), &actor, at);
-        return match conn.insert_refusal_event(&rec) {
-            Ok(()) => (REFUSED, format!("refused: {:?}", outcome.refusal)),
-            Err(e) => cannot_tell(e),
-        };
+        let record = EventRecord::of_apply("batch", batch_id, "Settle", expect, rows.batch.state.as_str(), outcome.refusal.as_ref().map(refusal_name), serde_json::Value::String("Settle".into()), actor, at);
+        return Err(Refused { code: REFUSED, text: format!("refused: {:?}", outcome.refusal), record: Some(Box::new(record)) });
     }
 
     let mut steps = vec![CascadeStep {
         table: "batch",
         key_column: "batch_id",
         key: batch_id.clone(),
-        old_version: version,
+        old_version: args.version,
         set_clause: rows::batch_set_clause(&outcome.row),
         applied_to_state: outcome.row.state.as_str().to_string(),
-        event: EventRecord::of_apply("batch", batch_id, "Settle", &expect, batch_row.state.as_str(), None, serde_json::Value::String("Settle".into()), &actor, at),
+        event: EventRecord::of_apply("batch", batch_id, "Settle", expect, rows.batch.state.as_str(), None, serde_json::Value::String("Settle".into()), actor, at),
     }];
 
     // Closure (design stacked-dependents-2026-09-28 §3): ejecting a member ejects every
-    // member of this same round stacked on it, transitively. Attribution names only the
-    // red member(s) in `--eject`; this is what makes its dependents follow automatically,
-    // regardless of which member attribution blamed.
-    let cascade: Vec<(String, String)> = match stacked_dependents_in_batch(conn, &batch_row, &eject_ids) {
-        Ok(ids) => ids.into_iter().filter(|(id, _)| !eject_ids.contains(id)).collect(),
-        Err(e) => return cannot_tell(e),
-    };
+    // member of this same round stacked on it, transitively, whichever member attribution blamed.
+    let cascade: Vec<(String, String)> =
+        stacked_dependents_in_batch(rows, &args.eject).into_iter().filter(|(id, _)| !args.eject.contains(id)).collect();
     let cascade_ids: Vec<String> = cascade.iter().map(|(id, _)| id.clone()).collect();
-    let requeue_ids: Vec<String> =
-        requeue_ids.into_iter().filter(|id| !cascade_ids.contains(id) && !eject_ids.contains(id)).collect();
+    let requeue_ids: Vec<&String> = args.requeue.iter().filter(|id| !cascade_ids.contains(id) && !args.eject.contains(id)).collect();
 
-    for id in &eject_ids {
-        if let Err(e) = add_exit_steps(conn, &mut steps, id, delivery::DeliveryEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BatchEjectedRed }, &actor, at) { return cannot_tell(e); }
+    for id in &args.eject {
+        exit_steps(&rows.roster, &mut steps, id, delivery::DeliveryEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BatchEjectedRed }, actor, at);
     }
     // A stacked dependent is collateral, not itself red: `base-withdrawn`, not
     // `batch-ejected`, so the reconciler's rework-by-cause query can tell them apart.
     for id in &cascade_ids {
-        if let Err(e) = add_exit_steps(conn, &mut steps, id, delivery::DeliveryEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BaseWithdrawn }, &actor, at) { return cannot_tell(e); }
+        exit_steps(&rows.roster, &mut steps, id, delivery::DeliveryEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BaseWithdrawn }, actor, at);
     }
     name_prerequisites(&mut steps, &cascade);
-    for id in &requeue_ids {
-        let tip = match fetch_members(conn, batch_id) {
-            Ok(m) => m.into_iter().find(|(mid, _)| mid == id).map(|(_, t)| t),
-            Err(e) => return cannot_tell(e),
-        };
-        let Some(tip) = tip else { continue };
-        if let Err(e) = add_exit_steps(conn, &mut steps, id, delivery::DeliveryEventKind::Requeued { tip }, &actor, at) { return cannot_tell(e); }
+    for id in requeue_ids {
+        let Some((_, tip)) = rows.members.iter().find(|(mid, _)| mid == id) else { continue };
+        exit_steps(&rows.roster, &mut steps, id, delivery::DeliveryEventKind::Requeued { tip: tip.clone() }, actor, at);
     }
 
-    match conn.cascade("", &steps) {
-        Ok(applied) => {
-            let all_ok = applied.iter().all(|a| *a);
-            // The meter (design §3: "a stack_depth and base_withdrawn count per round"):
-            // how many members this settle carried down as collateral, and how deep each
-            // ejected/cascaded member's own stack was.
-            let mut stack_depth = serde_json::Map::new();
-            for id in eject_ids.iter().chain(cascade_ids.iter()) {
-                if let Ok(Some(row)) = rows::fetch_bead(conn, id) {
-                    stack_depth.insert(id.clone(), serde_json::json!(row.stack_depth));
-                }
-            }
-            let summary = serde_json::json!({
-                "batch_id": batch_id,
-                "steps": steps.len(),
-                "applied": applied,
-                "base_withdrawn": cascade_ids.len(),
-                "stacked_on": cascade.iter().cloned().collect::<std::collections::BTreeMap<_, _>>(),
-                "stack_depth": stack_depth,
-            });
-            if all_ok {
-                (0, serde_json::to_string(&summary).unwrap())
-            } else {
-                (REFUSED, serde_json::to_string(&summary).unwrap())
-            }
+    // The meter (design §3): how many members this settle carried down as collateral, and how
+    // deep each ejected or cascaded member's own stack was.
+    let mut stack_depth = serde_json::Map::new();
+    for id in args.eject.iter().chain(cascade_ids.iter()) {
+        if let Some(row) = rows.roster.beads.get(id) {
+            stack_depth.insert(id.clone(), serde_json::json!(row.stack_depth));
         }
-        Err(e) => cannot_tell(e),
     }
+    let summary = serde_json::json!({
+        "batch_id": batch_id,
+        "steps": steps.len(),
+        "applied": null,
+        "base_withdrawn": cascade_ids.len(),
+        "stacked_on": cascade.iter().cloned().collect::<std::collections::BTreeMap<_, _>>(),
+        "stack_depth": stack_depth,
+    });
+    Ok(Plan { preamble: String::new(), steps, summary })
 }
 
 /// True when the bead's last `Returned` came after its last `Deliver`: the queue ejected it
@@ -940,19 +1022,31 @@ fn returned_since_delivery(conn: &Conn, id: &str) -> Result<bool, DbError> {
 
 /// The exit a member takes when its round is released: an ejected bead keeps its verdict
 /// (`Returned`), any other returns to where it entered delivery (`Requeued`).
-fn release_kind(conn: &Conn, id: &str, tip: String) -> Result<delivery::DeliveryEventKind, DbError> {
-    Ok(if returned_since_delivery(conn, id)? {
+fn release_kind_of(returned: bool, tip: String) -> delivery::DeliveryEventKind {
+    if returned {
         delivery::DeliveryEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BatchEjectedRed }
     } else {
         delivery::DeliveryEventKind::Requeued { tip }
-    })
+    }
+}
+
+fn release_kind(conn: &Conn, id: &str, tip: String) -> Result<delivery::DeliveryEventKind, DbError> {
+    Ok(release_kind_of(returned_since_delivery(conn, id)?, tip))
+}
+
+pub(crate) struct AbandonArgs {
+    pub batch_id: String,
+    pub expect: batch::BatchState,
+    pub version: u64,
+    pub actor: String,
+    pub reason: String,
 }
 
 /// `abandon-batch <batch-id> --expect S --version V --actor A --reason R`
 ///
 /// One transaction: `Abandon{reason}` on the batch (any non-terminal S -> ABANDONED), and
-/// `Requeued` for every member's delivery and bead row (tip unchanged, so every one returns
-/// to CERTIFIED).
+/// for every member's delivery and bead row the exit `release_kind` picks: `Requeued` to the
+/// state it entered delivery from, or `Returned` for a member the queue had ejected.
 pub fn cmd_abandon_batch(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(batch_id) = args.first() else {
         return (CANNOT_TELL, "abandon-batch: missing <batch-id>".into());
@@ -974,55 +1068,51 @@ pub fn cmd_abandon_batch(args: &[String], conn: &Conn) -> (i32, String) {
         Ok(None) => return (CANNOT_TELL, format!("abandon-batch: no batch row for {batch_id}")),
         Err(e) => return cannot_tell(e),
     };
-    let at = crate::db::now_epoch();
-    let ev = batch::BatchEvent { expect: expect_state, version, kind: batch::BatchEventKind::Abandon { reason: reason.clone() }, actor: actor.clone() };
-    let outcome = batch::apply(&batch_row, &ev);
-    let evidence = serde_json::to_value(&ev.kind).unwrap_or_default();
-    if !outcome.applied {
-        let rec = EventRecord::of_apply("batch", batch_id, "Abandon", &expect, batch_row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, &actor, at);
-        return match conn.insert_refusal_event(&rec) {
-            Ok(()) => (REFUSED, format!("refused: {:?}", outcome.refusal)),
-            Err(e) => cannot_tell(e),
-        };
-    }
-
-    let members = match fetch_members(conn, batch_id) {
-        Ok(m) => m,
+    let mut rows = match fetch_rows(conn, batch_row, &[]) {
+        Ok(r) => r,
         Err(e) => return cannot_tell(e),
     };
+    for (id, _) in &rows.members {
+        match returned_since_delivery(conn, id) {
+            Ok(true) => {
+                rows.returned.insert(id.clone());
+            }
+            Ok(false) => {}
+            Err(e) => return cannot_tell(e),
+        }
+    }
+    let abandon = AbandonArgs { batch_id: batch_id.clone(), expect: expect_state, version, actor, reason };
+    match plan_abandon(&rows, &abandon, crate::db::now_epoch()) {
+        Ok(plan) => run_plan(conn, plan),
+        Err(r) => refuse(conn, r),
+    }
+}
+
+pub(crate) fn plan_abandon(rows: &Rows, args: &AbandonArgs, at: i64) -> Planned {
+    let (batch_id, actor) = (&args.batch_id, &args.actor);
+    let expect = args.expect.as_str();
+    let ev = batch::BatchEvent { expect: args.expect, version: args.version, kind: batch::BatchEventKind::Abandon { reason: args.reason.clone() }, actor: actor.clone() };
+    let outcome = batch::apply(&rows.batch, &ev);
+    let evidence = serde_json::to_value(&ev.kind).unwrap_or_default();
+    if !outcome.applied {
+        let record = EventRecord::of_apply("batch", batch_id, "Abandon", expect, rows.batch.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, actor, at);
+        return Err(Refused { code: REFUSED, text: format!("refused: {:?}", outcome.refusal), record: Some(Box::new(record)) });
+    }
 
     let mut steps = vec![CascadeStep {
         table: "batch",
         key_column: "batch_id",
         key: batch_id.clone(),
-        old_version: version,
+        old_version: args.version,
         set_clause: rows::batch_set_clause(&outcome.row),
         applied_to_state: outcome.row.state.as_str().to_string(),
-        event: EventRecord::of_apply("batch", batch_id, "Abandon", &expect, batch_row.state.as_str(), None, evidence, &actor, at),
+        event: EventRecord::of_apply("batch", batch_id, "Abandon", expect, rows.batch.state.as_str(), None, evidence, actor, at),
     }];
-
-    for (id, tip) in &members {
-        let kind = match release_kind(conn, id, tip.clone()) {
-            Ok(k) => k,
-            Err(e) => return cannot_tell(e),
-        };
-        if let Err(e) = add_exit_steps(conn, &mut steps, id, kind, &actor, at) {
-            return cannot_tell(e);
-        }
+    for (id, tip) in &rows.members {
+        exit_steps(&rows.roster, &mut steps, id, release_kind_of(rows.returned.contains(id), tip.clone()), actor, at);
     }
-
-    match conn.cascade("", &steps) {
-        Ok(applied) => {
-            let all_ok = applied.iter().all(|a| *a);
-            let summary = serde_json::json!({"batch_id": batch_id, "steps": steps.len(), "applied": applied});
-            if all_ok {
-                (0, serde_json::to_string(&summary).unwrap())
-            } else {
-                (REFUSED, serde_json::to_string(&summary).unwrap())
-            }
-        }
-        Err(e) => cannot_tell(e),
-    }
+    let summary = serde_json::json!({"batch_id": batch_id, "steps": steps.len(), "applied": null});
+    Ok(Plan { preamble: String::new(), steps, summary })
 }
 
 /// A round that opened and then showed no sign of life: no PR, no run, no pass, no phase.
@@ -1230,6 +1320,15 @@ pub fn cmd_reconcile_landed(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
+pub(crate) struct EjectArgs {
+    pub batch_id: String,
+    pub bead_id: String,
+    pub expect: batch::BatchState,
+    pub version: u64,
+    pub actor: String,
+    pub reason: String,
+}
+
 /// `eject-member <batch-id> --bead-id ID --expect S --version V --actor A --reason R`
 ///
 /// One transaction: `Eject{bead_id,reason}` on the batch (OPEN, CI_RUNNING or GREEN; only a
@@ -1265,80 +1364,67 @@ pub fn cmd_eject_member(args: &[String], conn: &Conn) -> (i32, String) {
         Ok(None) => return (CANNOT_TELL, format!("eject-member: no batch row for {batch_id}")),
         Err(e) => return cannot_tell(e),
     };
-    let members = match fetch_members(conn, batch_id) {
-        Ok(m) => m,
+    let mut rows = match fetch_rows(conn, batch_row, std::slice::from_ref(&bead_id)) {
+        Ok(r) => r,
         Err(e) => return cannot_tell(e),
     };
-    let Some(tip) = members.iter().find(|(id, _)| id == &bead_id).map(|(_, t)| t.clone()) else {
-        return (CANNOT_TELL, format!("eject-member: {bead_id} is not a member of {batch_id}"));
-    };
+    rows.contained = branch_containment(&rows.batch, &rows.members);
+    let eject = EjectArgs { batch_id: batch_id.clone(), bead_id, expect: expect_state, version, actor, reason };
+    match plan_eject_member(&rows, &eject, crate::db::now_epoch()) {
+        Ok(plan) => run_plan(conn, plan),
+        Err(r) => refuse(conn, r),
+    }
+}
 
-    let at = crate::db::now_epoch();
+pub(crate) fn plan_eject_member(rows: &Rows, args: &EjectArgs, at: i64) -> Planned {
+    let (batch_id, bead_id, actor) = (&args.batch_id, &args.bead_id, &args.actor);
+    let expect = args.expect.as_str();
+    let Some(tip) = rows.members.iter().find(|(id, _)| id == bead_id).map(|(_, t)| t.clone()) else {
+        return Err((CANNOT_TELL, format!("eject-member: {bead_id} is not a member of {batch_id}")).into());
+    };
     let ev = batch::BatchEvent {
-        expect: expect_state,
-        version,
-        kind: batch::BatchEventKind::Eject { bead_id: bead_id.clone(), reason: reason.clone() },
+        expect: args.expect,
+        version: args.version,
+        kind: batch::BatchEventKind::Eject { bead_id: bead_id.clone(), reason: args.reason.clone() },
         actor: actor.clone(),
     };
-    let outcome = batch::apply(&batch_row, &ev);
+    let outcome = batch::apply(&rows.batch, &ev);
     let evidence = serde_json::to_value(&ev.kind).unwrap_or_default();
     if !outcome.applied {
-        let rec = EventRecord::of_apply("batch", batch_id, "Eject", &expect, batch_row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, &actor, at);
-        return match conn.insert_refusal_event(&rec) {
-            Ok(()) => (REFUSED, format!("refused: {:?}", outcome.refusal)),
-            Err(e) => cannot_tell(e),
-        };
+        let record = EventRecord::of_apply("batch", batch_id, "Eject", expect, rows.batch.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, actor, at);
+        return Err(Refused { code: REFUSED, text: format!("refused: {:?}", outcome.refusal), record: Some(Box::new(record)) });
     }
 
     let mut steps = vec![CascadeStep {
         table: "batch",
         key_column: "batch_id",
         key: batch_id.clone(),
-        old_version: version,
+        old_version: args.version,
         set_clause: rows::batch_set_clause(&outcome.row),
         applied_to_state: outcome.row.state.as_str().to_string(),
-        event: EventRecord::of_apply("batch", batch_id, "Eject", &expect, batch_row.state.as_str(), None, evidence, &actor, at),
+        event: EventRecord::of_apply("batch", batch_id, "Eject", expect, rows.batch.state.as_str(), None, evidence, actor, at),
     }];
+    exit_steps(&rows.roster, &mut steps, bead_id, delivery::DeliveryEventKind::Requeued { tip }, actor, at);
 
-    if let Err(e) = add_exit_steps(conn, &mut steps, &bead_id, delivery::DeliveryEventKind::Requeued { tip }, &actor, at) {
-        return cannot_tell(e);
-    }
-
-    // A hand eject cascades exactly like a settle's own attribution does (design §3): every
-    // member of this round stacked on `bead_id`, transitively, follows it out as collateral
-    // rework — `base-withdrawn`, never `batch-ejected`, since this member's own content was
-    // never accused of anything.
-    let cascade: Vec<(String, String)> = match stacked_dependents_in_batch(conn, &batch_row, std::slice::from_ref(&bead_id)) {
-        Ok(ids) => ids,
-        Err(e) => return cannot_tell(e),
-    };
+    // A hand eject cascades like a settle's own attribution: every member stacked on `bead_id`,
+    // transitively, follows it out as `base-withdrawn`, never `batch-ejected` — this member's own
+    // content was never accused of anything.
+    let cascade = stacked_dependents_in_batch(rows, std::slice::from_ref(bead_id));
     let cascade_ids: Vec<String> = cascade.iter().map(|(id, _)| id.clone()).collect();
     for id in &cascade_ids {
-        if let Err(e) = add_exit_steps(conn, &mut steps, id, delivery::DeliveryEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BaseWithdrawn }, &actor, at) {
-            return cannot_tell(e);
-        }
+        exit_steps(&rows.roster, &mut steps, id, delivery::DeliveryEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BaseWithdrawn }, actor, at);
     }
     name_prerequisites(&mut steps, &cascade);
 
-    match conn.cascade("", &steps) {
-        Ok(applied) => {
-            let all_ok = applied.iter().all(|a| *a);
-            let summary = serde_json::json!({
-                "batch_id": batch_id,
-                "bead_id": bead_id,
-                "steps": steps.len(),
-                "applied": applied,
-                "base_withdrawn": cascade_ids.len(),
-                "stacked_on": cascade.iter().cloned().collect::<std::collections::BTreeMap<_, _>>(),
-            });
-            if all_ok {
-                (0, serde_json::to_string(&summary).unwrap())
-            } else {
-                (REFUSED, serde_json::to_string(&summary).unwrap())
-            }
-        }
-        Err(e) => cannot_tell(e),
-    }
+    let summary = serde_json::json!({
+        "batch_id": batch_id,
+        "bead_id": bead_id,
+        "steps": steps.len(),
+        "applied": null,
+        "base_withdrawn": cascade_ids.len(),
+        "stacked_on": cascade.iter().cloned().collect::<std::collections::BTreeMap<_, _>>(),
+    });
+    Ok(Plan { preamble: String::new(), steps, summary })
 }
 
 /// `batches-of <bead-id>` — the not-yet-finished batches naming the bead as a member, as a JSON
@@ -1393,19 +1479,11 @@ fn fetch_members(conn: &Conn, batch_id: &str) -> Result<Vec<(String, String)>, D
 /// `P` at exactly the tip this batch recorded for `P` (re-checked, since a prerequisite can
 /// move between assembly and settle), or when `M`'s branch contains a commit of `P`'s own
 /// range whether or not anyone declared it. `roots` themselves are never returned.
-fn stacked_dependents_in_batch(conn: &Conn, batch_row: &batch::BatchRow, roots: &[String]) -> Result<Vec<(String, String)>, DbError> {
-    let members = fetch_members(conn, &batch_row.batch_id)?;
-    let tips: std::collections::BTreeMap<String, String> = members.iter().cloned().collect();
-
-    let mut member_stacks = Vec::new();
-    for (id, _) in &members {
-        if let Some(row) = rows::fetch_bead(conn, id)? {
-            member_stacks.push((id.clone(), row));
-        }
-    }
-
-    let contained = branch_containment(batch_row, &members);
-    Ok(stacked_dependents_from(&member_stacks, &tips, &contained, roots))
+fn stacked_dependents_in_batch(rows: &Rows, roots: &[String]) -> Vec<(String, String)> {
+    let tips: std::collections::BTreeMap<String, String> = rows.members.iter().cloned().collect();
+    let member_stacks: Vec<(String, bead::BeadRow)> =
+        rows.members.iter().filter_map(|(id, _)| rows.roster.beads.get(id).map(|r| (id.clone(), r.clone()))).collect();
+    stacked_dependents_from(&member_stacks, &tips, &rows.contained, roots)
 }
 
 /// `(dependent, prerequisite)` for every pair of members where the dependent's branch holds a
@@ -1613,19 +1691,571 @@ mod tests {
         assert_eq!(steps[0].event.evidence()["stacked_on"], "a");
         assert!(steps[0].event.evidence().get("Returned").is_some());
     }
+
+    // ── the cascade plans: rows in, steps out, no store ──────────────────────────────────
+
+    use super::batch::BatchState as BS;
+    use super::bead::BeadState as Bd;
+
+    const AT: i64 = 1_000;
+
+    fn certified(id: &str, tip: &str) -> bead::BeadRow {
+        let mut r = bead::BeadRow::filed(id);
+        r.state = Bd::Certified;
+        r.tip = Some(tip.into());
+        r.gate_key = Some("k1".into());
+        r.version = 3;
+        r
+    }
+
+    fn submitted(id: &str, tip: &str) -> bead::BeadRow {
+        let mut r = bead::BeadRow::filed(id);
+        r.state = Bd::Submitted;
+        r.tip = Some(tip.into());
+        r.version = 2;
+        r
+    }
+
+    fn stacked_on(mut r: bead::BeadRow, prereq: &str, prereq_tip: &str) -> bead::BeadRow {
+        r.stack.insert(prereq.into(), prereq_tip.into());
+        r
+    }
+
+    fn tipped(beads: &[bead::BeadRow]) -> Vec<(String, String)> {
+        beads.iter().map(|b| (b.bead_id.clone(), b.tip.clone().unwrap())).collect()
+    }
+
+    fn roster_of(beads: &[bead::BeadRow], deliveries: &[delivery::DeliveryRow]) -> Roster {
+        Roster {
+            beads: beads.iter().map(|b| (b.bead_id.clone(), b.clone())).collect(),
+            deliveries: deliveries.iter().map(|d| (d.bead_id.clone(), d.clone())).collect(),
+        }
+    }
+
+    fn delivery_in(id: &str, state: delivery::DeliveryState, version: u64) -> delivery::DeliveryRow {
+        let mut d = delivery::DeliveryRow::start_queue(id);
+        d.state = state;
+        d.version = version;
+        d
+    }
+
+    fn cut_args(batch_id: &str, beads: &[bead::BeadRow], parent: Option<&str>) -> CutArgs {
+        CutArgs {
+            batch_id: batch_id.into(),
+            repo: "spira".into(),
+            head: "H".into(),
+            base: "B".into(),
+            members: tipped(beads),
+            parent: parent.map(String::from),
+            actor: "test".into(),
+        }
+    }
+
+    /// The rows a round holds once cut, built by the machines' own `Deliver` and `Cut` events.
+    fn round(state: BS, version: u64, beads: &[bead::BeadRow]) -> Rows {
+        let mut batch_row = batch::BatchRow::cut("b-1", "spira", "H", "B");
+        batch_row.state = state;
+        batch_row.version = version;
+        let mut roster = Roster::default();
+        for b in beads {
+            let deliver = bead::BeadEvent { expect: b.state, version: b.version, kind: bead::BeadEventKind::Deliver, actor: "t".into(), at: Some(AT) };
+            let entered = bead::apply(b, &deliver).row;
+            let cut = delivery::DeliveryEvent {
+                expect: delivery::DeliveryState::Queued,
+                version: 0,
+                kind: delivery::DeliveryEventKind::Cut { batch_id: "b-1".into() },
+                actor: "t".into(),
+            };
+            roster.deliveries.insert(b.bead_id.clone(), delivery::apply(&delivery::DeliveryRow::start_queue(&b.bead_id), &cut).row);
+            roster.beads.insert(b.bead_id.clone(), entered);
+        }
+        Rows { batch: batch_row, members: tipped(beads), roster, contained: Default::default(), returned: Default::default() }
+    }
+
+    fn refused(r: Planned) -> Refused {
+        match r {
+            Err(r) => r,
+            Ok(_) => panic!("expected a refusal"),
+        }
+    }
+
+    fn planned(r: Planned) -> Plan {
+        match r {
+            Ok(p) => p,
+            Err(r) => panic!("refused {}: {}", r.code, r.text),
+        }
+    }
+
+    fn steps_on<'a>(p: &'a Plan, table: &str, key: &str) -> Vec<&'a CascadeStep> {
+        p.steps.iter().filter(|s| s.table == table && s.key == key).collect()
+    }
+
+    fn only<'a>(p: &'a Plan, table: &str, key: &str) -> &'a CascadeStep {
+        let v = steps_on(p, table, key);
+        assert_eq!(v.len(), 1, "{table} {key}: {} steps", v.len());
+        v[0]
+    }
+
+    fn bead_ends(p: &Plan, id: &str) -> String {
+        only(p, "bead", id).applied_to_state.clone()
+    }
+
+    fn bead_reason(p: &Plan, id: &str, reason: &str) -> bool {
+        only(p, "bead", id).set_clause.contains(&format!("reason = '{reason}'"))
+    }
+
+    fn settle_args(eject: &[&str], requeue: &[&str]) -> SettleArgs {
+        SettleArgs {
+            batch_id: "b-1".into(),
+            expect: BS::Attributing,
+            version: 9,
+            actor: "t".into(),
+            eject: eject.iter().map(|s| s.to_string()).collect(),
+            requeue: requeue.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    // cut
+
+    #[test]
+    fn a_cut_admits_a_submitted_member_beside_a_certified_one() {
+        let beads = [submitted("sp-sub", "t1"), certified("sp-cer", "t2")];
+        let plan = planned(plan_cut(&roster_of(&beads, &[]), &cut_args("b-1", &beads, None), AT));
+        assert_eq!(plan.steps.len(), 6, "a MemberAdded, a Deliver and a Cut per member");
+        assert_eq!(bead_ends(&plan, "sp-sub"), "IN_DELIVERY");
+        assert_eq!(bead_ends(&plan, "sp-cer"), "IN_DELIVERY");
+    }
+
+    #[test]
+    fn a_cut_still_refuses_a_rework_member() {
+        let mut rw = submitted("sp-rw", "t1");
+        rw.state = Bd::Rework;
+        let r = refused(plan_cut(&roster_of(&[rw.clone()], &[]), &cut_args("b-1", &[rw], None), AT));
+        assert_eq!(r.code, REFUSED);
+        assert!(r.text.contains("sp-rw is REWORK not SUBMITTED or CERTIFIED"), "{}", r.text);
+    }
+
+    #[test]
+    fn a_cut_refuses_a_member_that_is_not_certified_and_writes_no_batch_row() {
+        let ready = bead::BeadRow::filed("sp-new");
+        let mut args = cut_args("b-1", &[], None);
+        args.members = vec![("sp-new".into(), "t1".into())];
+        let r = refused(plan_cut(&roster_of(&[ready], &[]), &args, AT));
+        assert_eq!(r.code, REFUSED);
+        assert!(r.record.is_none(), "a refusal before any event is not an event");
+    }
+
+    #[test]
+    fn a_cut_refuses_a_member_with_no_bead_row() {
+        let args = CutArgs { members: vec![("sp-none".into(), "t".into())], ..cut_args("b-1", &[], None) };
+        let r = refused(plan_cut(&Roster::default(), &args, AT));
+        assert_eq!((r.code, r.text.as_str()), (REFUSED, "refused: no bead row for sp-none"));
+    }
+
+    #[test]
+    fn a_cut_refuses_a_member_whose_certified_tip_moved() {
+        let args = CutArgs { members: vec![("sp-a".into(), "other".into())], ..cut_args("b-1", &[], None) };
+        let r = refused(plan_cut(&roster_of(&[certified("sp-a", "t1")], &[]), &args, AT));
+        assert_eq!(r.text, "refused: sp-a's certified tip does not match other");
+    }
+
+    #[test]
+    fn a_cut_over_a_member_batched_in_another_batch_is_refused_naming_it() {
+        let beads = [certified("sp-bx", "t1")];
+        let mut elsewhere = delivery_in("sp-bx", delivery::DeliveryState::Batched, 1);
+        elsewhere.batch_id = Some("batch-elsewhere".into());
+        let r = refused(plan_cut(&roster_of(&beads, &[elsewhere]), &cut_args("b-1", &beads, None), AT));
+        assert_eq!(r.code, REFUSED);
+        assert!(r.text.contains("batch-elsewhere"), "{}", r.text);
+    }
+
+    #[test]
+    fn a_cut_over_an_exited_delivery_requeues_it_then_cuts_it_at_version_6() {
+        let beads = [certified("sp-ex", "t1")];
+        let plan = planned(plan_cut(&roster_of(&beads, &[delivery_in("sp-ex", delivery::DeliveryState::Exited, 4)]), &cut_args("b-1", &beads, None), AT));
+        let d = steps_on(&plan, "delivery", "sp-ex");
+        assert_eq!(d.len(), 2);
+        assert_eq!((d[0].event.event_name(), d[0].event.from_state(), d[0].old_version), ("Enqueued", "EXITED", 4));
+        assert_eq!(d[0].applied_to_state, "QUEUED");
+        assert_eq!((d[1].event.event_name(), d[1].event.from_state(), d[1].old_version), ("Cut", "QUEUED", 5));
+        assert_eq!(d[1].applied_to_state, "BATCHED");
+        assert!(d[1].set_clause.contains("batch_id = 'b-1'") && d[1].set_clause.contains("version = 6"), "{}", d[1].set_clause);
+    }
+
+    #[test]
+    fn a_delivers_logged_from_state_is_the_beads_own() {
+        let beads = [submitted("sp-sub", "t1"), certified("sp-cer", "t2")];
+        let plan = planned(plan_cut(&roster_of(&beads, &[]), &cut_args("b-1", &beads, None), AT));
+        let sub = only(&plan, "bead", "sp-sub");
+        assert_eq!((sub.event.event_name(), sub.event.from_state(), sub.event.expect()), ("Deliver", "SUBMITTED", "SUBMITTED"));
+        let cer = only(&plan, "bead", "sp-cer");
+        assert_eq!((cer.event.from_state(), cer.event.expect()), ("CERTIFIED", "CERTIFIED"));
+    }
+
+    #[test]
+    fn a_delivery_row_that_did_not_exist_is_enqueued_from_none_then_cut_from_queued() {
+        let beads = [submitted("sp-sub", "t1")];
+        let plan = planned(plan_cut(&roster_of(&beads, &[]), &cut_args("b-1", &beads, None), AT));
+        assert!(plan.preamble.contains("'Enqueued', 'NONE', 'NONE'"), "{}", plan.preamble);
+        let cut = only(&plan, "delivery", "sp-sub");
+        assert_eq!((cut.event.event_name(), cut.event.from_state()), ("Cut", "QUEUED"));
+        assert_eq!(cut.applied_to_state, "BATCHED");
+    }
+
+    #[test]
+    fn a_cut_carries_its_parent_on_the_row_and_every_batch_step() {
+        let beads = [certified("sp-lo", "t1"), certified("sp-hi", "t2")];
+        let plan = planned(plan_cut(&roster_of(&beads, &[]), &cut_args("b-lo", &beads, Some("b-parent")), AT));
+        assert!(plan.preamble.contains("'OPEN', 'b-parent'"), "{}", plan.preamble);
+        let batch_steps = steps_on(&plan, "batch", "b-lo");
+        assert_eq!(batch_steps.len(), 2);
+        assert!(batch_steps.iter().all(|s| s.set_clause.contains("parent = 'b-parent'")), "a step wrote the constructor's NULL over the parent");
+        let orphan = planned(plan_cut(&roster_of(&beads, &[]), &cut_args("b-lo", &beads, None), AT));
+        assert!(orphan.preamble.contains("'OPEN', NULL"), "{}", orphan.preamble);
+    }
+
+    #[test]
+    fn a_cut_of_one_member_leaves_the_batch_at_version_1() {
+        let beads = [certified("sp-s1", "t1")];
+        let plan = planned(plan_cut(&roster_of(&beads, &[]), &cut_args("b-1", &beads, None), AT));
+        let b = only(&plan, "batch", "b-1");
+        assert_eq!((b.event.event_name(), b.old_version, b.applied_to_state.as_str()), ("MemberAdded", 0, "OPEN"));
+        assert!(b.set_clause.contains("version = 1"), "{}", b.set_clause);
+    }
+
+    // land
+
+    #[test]
+    fn a_land_exits_every_members_delivery_and_lands_its_bead_with_the_merge_sha() {
+        let rows = round(BS::Green, 4, &[certified("sp-1", "t1"), certified("sp-2", "t2")]);
+        let args = LandArgs { batch_id: "b-1".into(), expect: BS::Green, version: 4, actor: "t".into(), sha: "sha-green-1".into() };
+        let plan = planned(plan_land(&rows, &args, AT));
+        assert_eq!(plan.steps.len(), 5);
+        let b = only(&plan, "batch", "b-1");
+        assert_eq!((b.event.event_name(), b.old_version, b.applied_to_state.as_str()), ("FastForward", 4, "LANDED"));
+        for id in ["sp-1", "sp-2"] {
+            let d = only(&plan, "delivery", id);
+            assert_eq!((d.event.event_name(), d.applied_to_state.as_str()), ("Delivered", "EXITED"));
+            assert!(d.set_clause.contains("merge_sha = 'sha-green-1'"), "{}", d.set_clause);
+            assert_eq!(bead_ends(&plan, id), "LANDED");
+        }
+        assert_eq!(plan.summary["steps"], 5);
+    }
+
+    #[test]
+    fn a_land_against_a_landed_batch_is_refused_and_touches_no_member() {
+        let rows = round(BS::Landed, 5, &[certified("sp-1", "t1")]);
+        let args = LandArgs { batch_id: "b-1".into(), expect: BS::Green, version: 4, actor: "t".into(), sha: "sha-green-2".into() };
+        let r = refused(plan_land(&rows, &args, AT));
+        assert_eq!(r.code, REFUSED);
+        let rec = r.record.expect("the refusal is kept as an event");
+        assert_eq!((rec.event_name(), rec.from_state(), rec.expect()), ("FastForward", "LANDED", "GREEN"));
+        assert!(rec.refusal().is_some());
+    }
+
+    #[test]
+    fn a_land_skips_a_member_whose_delivery_left_the_batch() {
+        let mut rows = round(BS::Green, 4, &[certified("sp-1", "t1"), certified("sp-2", "t2")]);
+        rows.roster.deliveries.get_mut("sp-2").unwrap().state = delivery::DeliveryState::Exited;
+        let args = LandArgs { batch_id: "b-1".into(), expect: BS::Green, version: 4, actor: "t".into(), sha: "s".into() };
+        let plan = planned(plan_land(&rows, &args, AT));
+        assert!(steps_on(&plan, "bead", "sp-2").is_empty() && steps_on(&plan, "delivery", "sp-2").is_empty());
+        assert_eq!(bead_ends(&plan, "sp-1"), "LANDED");
+    }
+
+    // settle
+
+    #[test]
+    fn a_settle_returns_the_ejected_to_rework_and_certifies_the_requeued() {
+        let rows = round(BS::Attributing, 9, &[certified("sp-e", "t1"), certified("sp-r1", "t2"), certified("sp-r2", "t3")]);
+        let plan = planned(plan_settle(&rows, &settle_args(&["sp-e"], &["sp-r1", "sp-r2"]), AT));
+        let b = only(&plan, "batch", "b-1");
+        assert_eq!((b.event.event_name(), b.applied_to_state.as_str(), b.old_version), ("Settle", "SETTLED", 9));
+        assert_eq!(only(&plan, "delivery", "sp-e").applied_to_state, "EXITED");
+        assert_eq!(bead_ends(&plan, "sp-e"), "REWORK");
+        assert!(bead_reason(&plan, "sp-e", "batch-ejected-red"));
+        assert_eq!(bead_ends(&plan, "sp-r1"), "CERTIFIED");
+        assert_eq!(bead_ends(&plan, "sp-r2"), "CERTIFIED");
+        assert_eq!(plan.summary["base_withdrawn"], 0);
+    }
+
+    #[test]
+    fn a_settle_carries_a_stacked_dependent_the_caller_requeued_into_rework() {
+        let a = certified("sp-a", "tA");
+        let b = stacked_on(certified("sp-b", "tB"), "sp-a", "tA");
+        let x = certified("sp-x", "tX");
+        let rows = round(BS::Attributing, 9, &[a, b, x]);
+        let plan = planned(plan_settle(&rows, &settle_args(&["sp-a"], &["sp-b", "sp-x"]), AT));
+        assert_eq!(bead_ends(&plan, "sp-a"), "REWORK");
+        assert!(bead_reason(&plan, "sp-a", "batch-ejected-red"));
+        assert_eq!(bead_ends(&plan, "sp-b"), "REWORK", "the dependent follows its prerequisite despite --requeue");
+        assert!(bead_reason(&plan, "sp-b", "base-withdrawn"));
+        assert_eq!(only(&plan, "bead", "sp-b").event.evidence()["stacked_on"], "sp-a");
+        assert_eq!(bead_ends(&plan, "sp-x"), "CERTIFIED", "an unrelated member is merely requeued");
+        assert_eq!(plan.summary["base_withdrawn"], 1);
+        assert_eq!(plan.summary["stacked_on"]["sp-b"], "sp-a");
+    }
+
+    #[test]
+    fn a_settle_walks_a_three_deep_chain_to_its_tip() {
+        let a = certified("sp-a", "tA");
+        let b = stacked_on(certified("sp-b", "tB"), "sp-a", "tA");
+        let c = stacked_on(certified("sp-c", "tC"), "sp-b", "tB");
+        let x = certified("sp-x", "tX");
+        let rows = round(BS::Attributing, 9, &[a, b, c, x]);
+        let plan = planned(plan_settle(&rows, &settle_args(&["sp-a"], &["sp-b", "sp-c", "sp-x"]), AT));
+        assert_eq!(bead_ends(&plan, "sp-a"), "REWORK");
+        for id in ["sp-b", "sp-c"] {
+            assert_eq!(bead_ends(&plan, id), "REWORK", "{id}");
+            assert!(bead_reason(&plan, id, "base-withdrawn"), "{id}");
+        }
+        assert_eq!(only(&plan, "bead", "sp-c").event.evidence()["stacked_on"], "sp-b");
+        assert_eq!(bead_ends(&plan, "sp-x"), "CERTIFIED");
+        assert_eq!(plan.summary["base_withdrawn"], 2);
+    }
+
+    #[test]
+    fn a_settle_requeuing_every_member_returns_the_whole_pool_for_a_bisect_to_recut() {
+        let beads = [certified("sp-b1", "t1"), certified("sp-b2", "t2"), certified("sp-b3", "t3"), certified("sp-b4", "t4")];
+        let rows = round(BS::Attributing, 9, &beads);
+        let plan = planned(plan_settle(&rows, &settle_args(&[], &["sp-b1", "sp-b2", "sp-b3", "sp-b4"]), AT));
+        assert_eq!(only(&plan, "batch", "b-1").applied_to_state, "SETTLED");
+        for b in &beads {
+            assert_eq!(bead_ends(&plan, &b.bead_id), "CERTIFIED", "{}", b.bead_id);
+            assert_eq!(only(&plan, "delivery", &b.bead_id).applied_to_state, "EXITED");
+        }
+    }
+
+    #[test]
+    fn a_settle_meters_each_cascaded_members_stack_depth() {
+        let a = certified("sp-a", "tA");
+        let mut b = stacked_on(certified("sp-b", "tB"), "sp-a", "tA");
+        b.stack_depth = 1;
+        let rows = round(BS::Attributing, 9, &[a, b]);
+        let plan = planned(plan_settle(&rows, &settle_args(&["sp-a"], &[]), AT));
+        assert_eq!(plan.summary["stack_depth"]["sp-b"], 1);
+        assert_eq!(plan.summary["stack_depth"]["sp-a"], 0);
+    }
+
+    #[test]
+    fn a_settle_of_a_batch_not_awaiting_attribution_is_refused_with_its_event() {
+        let rows = round(BS::Open, 1, &[certified("sp-a", "tA")]);
+        let r = refused(plan_settle(&rows, &settle_args(&[], &["sp-a"]), AT));
+        assert_eq!(r.code, REFUSED);
+        assert_eq!(r.record.expect("kept").event_name(), "Settle");
+    }
+
+    // stack
+
+    fn stack_rows(batch_state: BS, version: u64, members: &[bead::BeadRow]) -> Rows {
+        let mut batch_row = batch::BatchRow::cut("b-1", "spira", "H", "B");
+        batch_row.state = batch_state;
+        batch_row.version = version;
+        Rows { batch: batch_row, members: Vec::new(), roster: roster_of(members, &[]), contained: Default::default(), returned: Default::default() }
+    }
+
+    fn stack_args(beads: &[bead::BeadRow]) -> StackArgs {
+        StackArgs { batch_id: "b-1".into(), members: tipped(beads), actor: "t".into() }
+    }
+
+    #[test]
+    fn a_stack_writes_steps_against_the_open_row_and_advances_its_version_by_the_member_count() {
+        let beads = [certified("sp-s2", "t2"), certified("sp-s3", "t3")];
+        let plan = planned(plan_stack(&stack_rows(BS::Open, 1, &beads), &stack_args(&beads), AT));
+        assert!(!plan.preamble.contains("INTO batch ("), "no second batch row: {}", plan.preamble);
+        assert_eq!(plan.preamble.matches("INTO batch_member").count(), 2);
+        let b = steps_on(&plan, "batch", "b-1");
+        assert_eq!((b[0].old_version, b[1].old_version), (1, 2));
+        assert!(b[1].set_clause.contains("version = 3") && b[1].applied_to_state == "OPEN", "{}", b[1].set_clause);
+        assert!(steps_on(&plan, "bead", "sp-s1").is_empty(), "the original member is untouched");
+        assert_eq!(plan.steps.len(), 6);
+    }
+
+    #[test]
+    fn a_stack_refuses_a_member_whose_tip_does_not_match_and_writes_nothing() {
+        let mut args = stack_args(&[]);
+        args.members = vec![("sp-s5".into(), "tip-does-not-match".into())];
+        let r = refused(plan_stack(&stack_rows(BS::Open, 3, &[certified("sp-s5", "t5")]), &args, AT));
+        assert_eq!(r.code, REFUSED);
+        assert!(r.text.contains("does not match"), "{}", r.text);
+    }
+
+    #[test]
+    fn a_stack_refuses_a_batch_that_is_settled_not_open() {
+        let beads = [certified("sp-s4", "t4")];
+        let r = refused(plan_stack(&stack_rows(BS::Settled, 4, &beads), &stack_args(&beads), AT));
+        assert_eq!((r.code, r.text.as_str()), (REFUSED, "refused: b-1 is SETTLED not OPEN"));
+    }
+
+    #[test]
+    fn a_stack_does_not_admit_a_submitted_member() {
+        let beads = [submitted("sp-s6", "t6")];
+        let r = refused(plan_stack(&stack_rows(BS::Open, 1, &beads), &stack_args(&beads), AT));
+        assert_eq!(r.text, "refused: sp-s6 is SUBMITTED not CERTIFIED");
+    }
+
+    // stage, promote
+
+    fn stage_args(beads: &[bead::BeadRow]) -> StageArgs {
+        StageArgs { batch_id: "b-st".into(), repo: "spira".into(), head: "headG".into(), base: "baseG".into(), members: tipped(beads), parent: "b-running".into() }
+    }
+
+    #[test]
+    fn a_stage_writes_a_staged_row_behind_its_parent_and_delivers_no_member() {
+        let beads = [certified("sp-g1", "t1"), certified("sp-g2", "t2")];
+        let plan = planned(plan_stage(&roster_of(&beads, &[]), &stage_args(&beads), AT));
+        assert!(plan.preamble.contains("'STAGED', 'b-running'"), "{}", plan.preamble);
+        assert_eq!(plan.preamble.matches("INTO batch_member").count(), 2);
+        assert!(plan.steps.is_empty(), "a staged round that is discarded returns nothing");
+    }
+
+    #[test]
+    fn a_stage_refuses_a_member_whose_tip_does_not_match_and_writes_no_row() {
+        let mut args = stage_args(&[]);
+        args.members = vec![("sp-g1".into(), "tip-does-not-match".into())];
+        let r = refused(plan_stage(&roster_of(&[certified("sp-g1", "t1")], &[]), &args, AT));
+        assert_eq!(r.code, REFUSED);
+    }
+
+    fn staged_rows(state: BS, beads: &[bead::BeadRow]) -> Rows {
+        let mut batch_row = batch::BatchRow::staged("b-st", "spira", "headG", "baseG", "b-running");
+        batch_row.state = state;
+        Rows { batch: batch_row, members: tipped(beads), roster: roster_of(beads, &[]), contained: Default::default(), returned: Default::default() }
+    }
+
+    fn promote_args() -> PromoteArgs {
+        PromoteArgs { batch_id: "b-st".into(), head: "headG2".into(), base: "baseG2".into(), actor: "t".into() }
+    }
+
+    #[test]
+    fn a_promote_opens_the_round_at_the_rebuilt_head_and_delivers_every_member() {
+        let beads = [certified("sp-g1", "t1"), certified("sp-g2", "t2")];
+        let plan = planned(plan_promote(&staged_rows(BS::Staged, &beads), &promote_args(), AT));
+        let first = &plan.steps[0];
+        assert_eq!((first.table, first.event.event_name(), first.applied_to_state.as_str()), ("batch", "Promote", "OPEN"));
+        assert!(first.set_clause.contains("head = 'headG2'") && first.set_clause.contains("base = 'baseG2'"), "{}", first.set_clause);
+        for id in ["sp-g1", "sp-g2"] {
+            assert_eq!(bead_ends(&plan, id), "IN_DELIVERY");
+            assert_eq!(only(&plan, "delivery", id).applied_to_state, "BATCHED");
+        }
+    }
+
+    #[test]
+    fn a_promote_refuses_a_round_that_is_already_open_or_discarded() {
+        let beads = [certified("sp-g1", "t1")];
+        for state in [BS::Open, BS::Discarded] {
+            let r = refused(plan_promote(&staged_rows(state, &beads), &promote_args(), AT));
+            assert_eq!(r.code, REFUSED, "{state:?}");
+            assert!(r.text.ends_with(&format!("{} not STAGED", state.as_str())), "{}", r.text);
+        }
+    }
+
+    #[test]
+    fn a_promote_refuses_a_member_that_moved_since_it_was_staged() {
+        let mut moved = certified("sp-g1", "t1");
+        moved.tip = Some("t-new".into());
+        let mut rows = staged_rows(BS::Staged, &[certified("sp-g1", "t1")]);
+        rows.roster = roster_of(&[moved], &[]);
+        assert_eq!(refused(plan_promote(&rows, &promote_args(), AT)).code, REFUSED);
+    }
+
+    // eject-member
+
+    fn eject_args(bead_id: &str, expect: BS, version: u64) -> EjectArgs {
+        EjectArgs { batch_id: "b-1".into(), bead_id: bead_id.into(), expect, version, actor: "queue".into(), reason: "manual eject".into() }
+    }
+
+    #[test]
+    fn a_hand_eject_from_open_requeues_only_the_ejected_member() {
+        let rows = round(BS::Open, 2, &[certified("sp-e1", "t1"), certified("sp-e2", "t2")]);
+        let plan = planned(plan_eject_member(&rows, &eject_args("sp-e1", BS::Open, 2), AT));
+        let b = only(&plan, "batch", "b-1");
+        assert_eq!((b.event.event_name(), b.applied_to_state.as_str()), ("Eject", "OPEN"));
+        assert_eq!(bead_ends(&plan, "sp-e1"), "CERTIFIED");
+        assert!(steps_on(&plan, "bead", "sp-e2").is_empty() && steps_on(&plan, "delivery", "sp-e2").is_empty(), "the survivor is untouched");
+    }
+
+    #[test]
+    fn a_hand_eject_from_green_returns_the_batch_to_open() {
+        let rows = round(BS::Green, 4, &[certified("sp-e2", "t2")]);
+        let plan = planned(plan_eject_member(&rows, &eject_args("sp-e2", BS::Green, 4), AT));
+        assert_eq!(only(&plan, "batch", "b-1").applied_to_state, "OPEN");
+        assert_eq!(bead_ends(&plan, "sp-e2"), "CERTIFIED");
+    }
+
+    #[test]
+    fn a_hand_eject_from_a_terminal_batch_is_refused() {
+        let rows = round(BS::Abandoned, 5, &[certified("sp-e2", "t2")]);
+        let r = refused(plan_eject_member(&rows, &eject_args("sp-e2", BS::Abandoned, 5), AT));
+        assert_eq!(r.code, REFUSED);
+        assert_eq!(r.record.expect("kept").event_name(), "Eject");
+    }
+
+    #[test]
+    fn a_hand_eject_of_a_non_member_cannot_be_told() {
+        let rows = round(BS::Open, 2, &[certified("sp-e1", "t1")]);
+        assert_eq!(refused(plan_eject_member(&rows, &eject_args("sp-nobody", BS::Open, 2), AT)).code, CANNOT_TELL);
+    }
+
+    #[test]
+    fn a_hand_eject_sends_a_stacked_dependent_to_rework_as_base_withdrawn() {
+        let ha = certified("sp-ha", "tA");
+        let hb = stacked_on(certified("sp-hb", "tB"), "sp-ha", "tA");
+        let rows = round(BS::Open, 2, &[ha, hb]);
+        let plan = planned(plan_eject_member(&rows, &eject_args("sp-ha", BS::Open, 2), AT));
+        assert_eq!(only(&plan, "batch", "b-1").applied_to_state, "OPEN");
+        assert_eq!(bead_ends(&plan, "sp-ha"), "CERTIFIED", "tip unchanged, no rework of its own");
+        assert_eq!(bead_ends(&plan, "sp-hb"), "REWORK");
+        assert!(bead_reason(&plan, "sp-hb", "base-withdrawn"));
+        assert_eq!(plan.summary["base_withdrawn"], 1);
+    }
+
+    // abandon-batch
+
+    fn abandon_args(expect: BS, version: u64) -> AbandonArgs {
+        AbandonArgs { batch_id: "b-1".into(), expect, version, actor: "queue".into(), reason: "test abandon".into() }
+    }
+
+    #[test]
+    fn an_abandon_returns_every_member_to_the_state_it_entered_delivery_from() {
+        let rows = round(BS::Open, 2, &[submitted("sp-sub", "t1"), certified("sp-cer", "t2")]);
+        let plan = planned(plan_abandon(&rows, &abandon_args(BS::Open, 2), AT));
+        let b = only(&plan, "batch", "b-1");
+        assert_eq!((b.event.event_name(), b.applied_to_state.as_str()), ("Abandon", "ABANDONED"));
+        assert_eq!(bead_ends(&plan, "sp-sub"), "SUBMITTED", "a SUBMITTED member is never promoted");
+        assert_eq!(bead_ends(&plan, "sp-cer"), "CERTIFIED");
+        assert_eq!(only(&plan, "delivery", "sp-cer").applied_to_state, "EXITED");
+    }
+
+    #[test]
+    fn an_abandon_keeps_the_verdict_of_a_member_the_queue_had_ejected() {
+        let mut rows = round(BS::Open, 2, &[certified("sp-red", "t1")]);
+        rows.returned.insert("sp-red".into());
+        let plan = planned(plan_abandon(&rows, &abandon_args(BS::Open, 2), AT));
+        assert_eq!(bead_ends(&plan, "sp-red"), "REWORK");
+    }
+
+    #[test]
+    fn an_abandon_of_a_landed_batch_is_refused() {
+        let rows = round(BS::Landed, 5, &[certified("sp-cer", "t2")]);
+        assert_eq!(refused(plan_abandon(&rows, &abandon_args(BS::Landed, 5), AT)).code, REFUSED);
+    }
+
+    #[test]
+    fn show_batch_of_a_batch_that_was_never_cut_exits_1_so_a_guard_fails_closed() {
+        assert_eq!(show_batch_reply(None), (1, "{}".to_string()));
+        let row = batch::BatchRow::cut("b-1", "spira", "H", "B");
+        let (rc, out) = show_batch_reply(Some((&row, None)));
+        assert_eq!(rc, 0);
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!((v["state"].as_str(), v["version"].as_u64()), (Some("OPEN"), Some(0)));
+    }
 }
 
 /// The delivery exit + matching bead exit for one member, appended to `steps`. `Delivered`
 /// is deliberately not accepted here — `land` is the only caller with a merge_sha to hand,
 /// and adding it would let a caller build a `Delivered` cascade without one.
-fn add_exit_steps(
-    conn: &Conn,
-    steps: &mut Vec<CascadeStep>,
-    id: &str,
-    kind: delivery::DeliveryEventKind,
-    actor: &str,
-    at: i64,
-) -> Result<(), DbError> {
+fn exit_steps(roster: &Roster, steps: &mut Vec<CascadeStep>, id: &str, kind: delivery::DeliveryEventKind, actor: &str, at: i64) {
     let bead_kind = match &kind {
         delivery::DeliveryEventKind::Returned { reason } => bead::BeadEventKind::Returned { reason: *reason },
         delivery::DeliveryEventKind::Requeued { tip } => bead::BeadEventKind::Requeued { tip: tip.clone() },
@@ -1635,7 +2265,7 @@ fn add_exit_steps(
         | delivery::DeliveryEventKind::PublishCi { .. }
         | delivery::DeliveryEventKind::Published { .. }
         | delivery::DeliveryEventKind::PublishRed { .. } => {
-            return Ok(()); // not a settle/abandon exit shape — never reached by this module's callers
+            return; // not a settle/abandon exit shape — never reached by this module's callers
         }
     };
     let event_name = match &kind {
@@ -1644,9 +2274,9 @@ fn add_exit_steps(
         _ => unreachable!(),
     };
     // A missing or already-exited delivery row never keeps the bead in IN_DELIVERY.
-    if let Some(delivery_row) = rows::fetch_delivery(conn, id)? {
+    if let Some(delivery_row) = roster.deliveries.get(id) {
         let ev = delivery::DeliveryEvent { expect: delivery_row.state, version: delivery_row.version, kind: kind.clone(), actor: actor.to_string() };
-        let outcome = delivery::apply(&delivery_row, &ev);
+        let outcome = delivery::apply(delivery_row, &ev);
         if outcome.applied {
             steps.push(cascade_step(
                 "delivery",
@@ -1665,9 +2295,9 @@ fn add_exit_steps(
         }
     }
 
-    let Some(bead_row) = rows::fetch_bead(conn, id)? else { return Ok(()) };
+    let Some(bead_row) = roster.beads.get(id) else { return };
     let bead_ev = bead::BeadEvent { expect: bead_row.state, version: bead_row.version, kind: bead_kind.clone(), actor: actor.to_string(), at: Some(at) };
-    let bead_outcome = bead::apply(&bead_row, &bead_ev);
+    let bead_outcome = bead::apply(bead_row, &bead_ev);
     if bead_outcome.applied {
         steps.push(cascade_step(
             "bead",
@@ -1684,6 +2314,12 @@ fn add_exit_steps(
             at,
         ));
     }
+}
+
+/// `exit_steps` over the rows as the store holds them now.
+fn add_exit_steps(conn: &Conn, steps: &mut Vec<CascadeStep>, id: &str, kind: delivery::DeliveryEventKind, actor: &str, at: i64) -> Result<(), DbError> {
+    let roster = fetch_roster(conn, [&id.to_string()])?;
+    exit_steps(&roster, steps, id, kind, actor, at);
     Ok(())
 }
 
