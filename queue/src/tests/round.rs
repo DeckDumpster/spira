@@ -5047,10 +5047,49 @@ fn an_eject_red_on_unit_tests_records_the_step_as_the_requirement() {
 }
 
 #[test]
-fn a_round_only_step_is_proven_only_by_a_recorded_pass_at_the_tip() {
+fn a_bead_ejected_on_a_round_only_step_resubmits_with_a_note_not_a_refusal() {
+    for step in ["spira-lint", "workspace-build", "fence-forge-batch-readers"] {
+        let t = rework_world(&["manual"]);
+        spira_config::proof::record_failing(&proof_run(&t), "sp-a", &[step.to_string()]).unwrap();
+        let tip_arg = format!("--tip={T_FIX}");
+        let args = [
+            "resubmit",
+            "sp-a",
+            &tip_arg,
+            "--by=concierge",
+            "--reason=hand-built fix",
+            "--evidence=cargo build 1/0",
+            &ev_tip(),
+        ];
+        assert_eq!(t.run(&args), 0, "{step}: {}", t.err());
+        assert!(
+            t.out().contains(&format!(
+                "queue.sh resubmit: {step} passes only in the round that carries {T_FIX}"
+            )),
+            "{step}: {}",
+            t.out()
+        );
+        assert!(
+            !t.scripts
+                .calls
+                .borrow()
+                .iter()
+                .any(|c| c.starts_with(&format!("suite_run {step}"))),
+            "a round-only step is never run as a suite"
+        );
+    }
+}
+
+#[test]
+fn a_round_only_step_does_not_excuse_a_host_runnable_check_that_is_red() {
     let t = rework_world(&["manual"]);
-    spira_config::proof::record_failing(&proof_run(&t), "sp-a", &["workspace-build".to_string()])
-        .unwrap();
+    spira_config::proof::record_failing(
+        &proof_run(&t),
+        "sp-a",
+        &["spira-lint".to_string(), "unit-tests".to_string()],
+    )
+    .unwrap();
+    t.scripts.suite_red.borrow_mut().push("unit-tests".into());
     let tip_arg = format!("--tip={T_FIX}");
     let args = [
         "resubmit",
@@ -5058,27 +5097,11 @@ fn a_round_only_step_is_proven_only_by_a_recorded_pass_at_the_tip() {
         &tip_arg,
         "--by=concierge",
         "--reason=hand-built fix",
-        "--evidence=cargo build 1/0",
+        "--evidence=cargo test 1/0",
         &ev_tip(),
     ];
     assert_eq!(t.run(&args), 1);
-    assert!(
-        t.err()
-            .contains("workspace-build has no green round recorded"),
-        "{}",
-        t.err()
-    );
-    assert!(
-        !t.scripts
-            .calls
-            .borrow()
-            .iter()
-            .any(|c| c.starts_with("suite_run workspace-build")),
-        "a round-only step is never run as a suite"
-    );
-    spira_config::proof::record_run(&proof_run(&t), "sp-a", T_FIX, "workspace-build", 0, "ok")
-        .unwrap();
-    assert_eq!(t.run(&args), 0, "{}", t.err());
+    assert!(t.err().contains("unit-tests failed at"), "{}", t.err());
 }
 
 #[test]

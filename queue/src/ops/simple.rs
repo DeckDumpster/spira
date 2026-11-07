@@ -163,7 +163,7 @@ pub fn lint_passed(w: &World, verb: &str, path: &std::path::Path, tip: &str, ver
 
 /// The checks an ejection named must each pass at `tip` before the bead is resubmitted: the
 /// missing ones are run here, recorded with their summary line, and any still red or unrun
-/// refuses by name.
+/// refuses by name. A round-only check cannot be run on the host: it is noted, not refused.
 fn checks_proven(
     w: &World,
     verb: &str,
@@ -178,7 +178,7 @@ fn checks_proven(
     let mut unverified = Vec::new();
     for check in proof::unproven(run, id, tip) {
         if super::round::ROUND_ONLY_STEPS.contains(&check.as_str()) || check.starts_with("fence-") {
-            notes.push(format!("{check} has no green round recorded at {tip}; it passes only in a round that contains this tip"));
+            notes.push(format!("queue.sh {verb}: {check} passes only in the round that carries {tip}"));
             continue;
         }
         let first_check = !proof::recorded(run, id, tip, &check);
@@ -203,7 +203,10 @@ fn checks_proven(
             }
         }
     }
-    if notes.is_empty() && failed.is_empty() && unverified.is_empty() {
+    if failed.is_empty() && unverified.is_empty() {
+        for note in &notes {
+            w.out(note);
+        }
         return true;
     }
     if !failed.is_empty() {
