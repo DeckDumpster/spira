@@ -14,7 +14,6 @@
 1 output install/src/bin/install.rs
 1 output landing-pass/src/real.rs
 1 output release/src/canary.rs
-1 output release/src/round_recert.rs
 1 output sentinel/src/lifecycle.rs
 1 output sentinel/src/pass.rs
 1 output sentinel/src/waiters.rs
@@ -41,7 +40,6 @@
 1 unit-name watchtower/src/cpu_throttle.rs
 2 output bead/src/main.rs
 2 output cockpit/ops/src/lcview_main.rs
-2 output gh-intake/src/real.rs
 2 output spira-claim/src/unpoison.rs
 2 unit-name doctor/src/lib.rs
 2 unit-name install/src/bin/units_install.rs

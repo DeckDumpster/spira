@@ -28,7 +28,7 @@
 //!   `bdq list --limit 1` (`bead.rs:483-490`, `tidy.rs:43-47`). In-process: `content list
 //!   --limit 1`.
 //! - `messages`: `<SPIRA_MAIL>/<mailbox>/{new,cur}` newest first (`tidy.rs:57-65`); bead id from
-//!   `X-Spira-Bead` else the first `<prefix>-[a-z0-9]{4,}` in the body (`tidy.rs:82-86`).
+//!   `X-Spira-Bead`, never an id scraped from the body (sp-uzxf1o).
 //! - `bead_closed`: per message that is fresh and names a bead — `bdq show <id> --json`
 //!   (`bead.rs:473-478`). In-process: `content show`. Unknown/unreadable = not closed.
 //! - Refusals carried as a snapshot error, not an empty set: store not configured
@@ -207,15 +207,14 @@ fn cfg(key: &str) -> Result<String, String> {
 /// whether the store reports it closed. A refusal is the snapshot's error.
 pub fn observe(lc: &spira_config::lc_call::LcClient, mailbox: &str, now: u64) -> Snapshot {
     let read = || -> Result<Snapshot, String> {
-        let (root, label, prefix, db, fresh) = (cfg("SPIRA_MAIL")?, cfg("SPIRA_ASK_LABEL")?, cfg("SPIRA_ID_PREFIX")?, cfg("SPIRA_DB")?, cfg(FRESH_KEY)?);
+        let (root, label, db, fresh) = (cfg("SPIRA_MAIL")?, cfg("SPIRA_ASK_LABEL")?, cfg("SPIRA_DB")?, cfg(FRESH_KEY)?);
         let fresh_s: u64 = fresh.trim().parse().map_err(|_| format!("{FRESH_KEY} must be a number of seconds, got {fresh:?}"))?;
         if label.trim().is_empty() {
             return Err("SPIRA_ASK_LABEL is unresolved — refusing to move any mail".into());
         }
         let bd = mail::content::ContentBd { lc };
         let open_asks = mail::tidy::open_asks(&bd, !db.trim().is_empty(), &label)?;
-        let prefix = if prefix.is_empty() { "sp".to_string() } else { prefix };
-        let seen = mail::tidy::scan(std::path::Path::new(&root), mailbox, &prefix)?;
+        let seen = mail::tidy::scan(std::path::Path::new(&root), mailbox)?;
         let messages = seen
             .into_iter()
             .map(|m| {

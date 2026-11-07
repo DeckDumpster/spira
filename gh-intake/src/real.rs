@@ -300,7 +300,7 @@ impl Repo for RealRepo {
 
     /// `spira_landrefs <repo-path>` (family W, sp-j3fim) — in-process; flattens the
     /// (base, local-counterpart) pair `spira_config::repos::landrefs` returns into the
-    /// list of refs `Git::landing_commit` greps.
+    /// list of refs to search.
     fn landrefs(&self, repo_path: &str) -> Vec<String> {
         let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), std::path::Path::new(&self.spira_home));
         match spira_config::repos::landrefs(&reg, repo_path) {
@@ -481,29 +481,6 @@ impl Git for RealGit {
     fn subject_of(&self, repo: &Path, sha: &str) -> Option<String> {
         let o = Self::cmd(repo).args(["log", "--format=%s", "-1", sha]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
         o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
-    }
-
-    fn landing_commit(&self, repo: &Path, id: &str, refs: &[String]) -> Option<String> {
-        if refs.is_empty() {
-            return None;
-        }
-        let grep = format!("--grep={id}");
-        let mut args: Vec<&str> = vec!["log", "--format=%H%x09%s", grep.as_str(), "-F"];
-        args.extend(refs.iter().map(String::as_str));
-        let o = Self::cmd(repo).args(&args).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-        if !o.status.success() {
-            return None;
-        }
-        let out = String::from_utf8_lossy(&o.stdout);
-        let land = format!("spira: land {id}");
-        let own = format!("{id}:");
-        for line in out.lines() {
-            let Some((sha, subj)) = line.split_once('\t') else { continue };
-            if subj == land || subj.starts_with(&format!("{land} ")) || subj.starts_with(&own) {
-                return Some(sha.to_string());
-            }
-        }
-        None
     }
 
     fn grep_ancestor(&self, repo: &Path, id: &str, land_ref: &str) -> Option<String> {

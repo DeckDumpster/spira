@@ -18,8 +18,9 @@ pub struct BdResult {
 
 pub trait Closer {
     fn close(&self, db: &Path, id: &str, reason: &str) -> BdResult;
-    /// `bd show <id> --json`'s text, for the `work-bead:` labels the ask carries.
-    fn show_json(&self, db: &Path, id: &str) -> String;
+    /// `bd show <id> --json`'s text, for the `work-bead:` labels the ask carries. `Err` is a
+    /// show that gave no answer: cannot tell, never "no labels".
+    fn show_json(&self, db: &Path, id: &str) -> Result<String, String>;
     /// `spira-lc withdraw-ask <work-bead> claude` → its exit code and output.
     fn withdraw_ask(&self, work_bead: &str) -> (i32, String);
     /// Whether the bead has a lifecycle row (`spira-lc show` exit 0). `Err` is a cannot-tell.
@@ -32,13 +33,26 @@ pub trait Closer {
     fn withdraw_ask_row(&self, id: &str, reason: &str) -> (i32, String);
 }
 
-/// The work beads an ask names on its `work-bead:<id>` labels (written by `mail send` on
-/// the tracking bead of a question about a work bead), read out of `bd show --json`.
-pub fn work_beads(show_json: &str) -> Vec<String> {
-    let re = regex::Regex::new(r#""work-bead:([A-Za-z0-9][A-Za-z0-9.\-]*)""#).expect("static regex");
-    let mut out: Vec<String> = re.captures_iter(show_json).map(|c| c[1].to_string()).collect();
+/// The work beads an ask names on its own `work-bead:<id>` labels (written by `mail send` on
+/// the tracking bead of a question about a work bead), read from the `labels` field of the
+/// bead `id` in `bd show --json` — never a label some other bead in the show carries
+/// (law-lifecycle-state-is-not-text). `Err` when the show is not a bead's JSON.
+pub fn work_beads(id: &str, show_json: &str) -> Result<Vec<String>, String> {
+    let v: serde_json::Value = serde_json::from_str(show_json).map_err(|e| format!("bd show {id} --json is not JSON: {e}"))?;
+    let bead = match &v {
+        serde_json::Value::Array(rows) => rows.iter().find(|r| r["id"].as_str() == Some(id)),
+        serde_json::Value::Object(_) if v["id"].as_str().is_none_or(|i| i == id) => Some(&v),
+        _ => None,
+    };
+    let Some(bead) = bead else { return Ok(Vec::new()) };
+    let labels = match &bead["labels"] {
+        serde_json::Value::Null => return Ok(Vec::new()),
+        serde_json::Value::Array(l) => l,
+        other => return Err(format!("bd show {id} --json: labels is not a list: {other}")),
+    };
+    let mut out: Vec<String> = labels.iter().filter_map(|l| l.as_str()?.strip_prefix("work-bead:")).filter(|w| !w.is_empty()).map(str::to_string).collect();
     out.dedup();
-    out
+    Ok(out)
 }
 
 pub enum Outcome {
@@ -57,7 +71,12 @@ pub fn run(id: &str, reason: &str, db: &Path, closer: &dyn Closer) -> Outcome {
         Ok(a) => a,
         Err(e) => return Outcome::Failed(format!("resolve: cannot tell whether {id} is an ask ({}); nothing was changed", e.trim())),
     };
-    let legacy_ask = !on_ask_machine && !work_beads(&closer.show_json(db, id)).is_empty();
+    let named = if on_ask_machine { Ok(Vec::new()) } else { closer.show_json(db, id).and_then(|j| work_beads(id, &j)) };
+    let named = match named {
+        Ok(n) => n,
+        Err(e) => return Outcome::Failed(format!("resolve: cannot tell which work beads {id} names ({}); nothing was changed", e.trim())),
+    };
+    let legacy_ask = !named.is_empty();
     match closer.has_lifecycle_row(id) {
         Ok(false) => {}
         Ok(true) if legacy_ask || on_ask_machine => {}
@@ -91,7 +110,7 @@ To lift an ask hold on a work bead use `reply`; nothing was changed"
                 }
             };
         }
-        for w in work_beads(&closer.show_json(db, id)) {
+        for w in named {
             match closer.withdraw_ask(&w) {
                 (0, _) => msg.push_str(&format!("\nwithdrew the ask hold on {w}")),
                 (1, _) | (3, _) => {}
@@ -131,8 +150,8 @@ mod tests {
         fn close(&self, _db: &Path, _id: &str, _reason: &str) -> BdResult {
             BdResult { success: self.success, combined: self.combined.to_string() }
         }
-        fn show_json(&self, _db: &Path, _id: &str) -> String {
-            String::new()
+        fn show_json(&self, _db: &Path, _id: &str) -> Result<String, String> {
+            Ok("[]".into())
         }
         fn withdraw_ask(&self, _w: &str) -> (i32, String) {
             panic!("no work bead, no withdraw")
@@ -157,8 +176,8 @@ mod tests {
         fn close(&self, _db: &Path, _id: &str, _reason: &str) -> BdResult {
             BdResult { success: true, combined: String::new() }
         }
-        fn show_json(&self, _db: &Path, _id: &str) -> String {
-            format!(r#"[{{"id":"sp-ask1","labels":[{}]}}]"#, self.labels)
+        fn show_json(&self, _db: &Path, _id: &str) -> Result<String, String> {
+            Ok(format!(r#"[{{"id":"sp-ask1","labels":[{}]}}]"#, self.labels))
         }
         fn withdraw_ask(&self, w: &str) -> (i32, String) {
             self.withdrawn.borrow_mut().push(w.to_string());
@@ -183,8 +202,8 @@ mod tests {
             self.closed.set(true);
             BdResult { success: true, combined: String::new() }
         }
-        fn show_json(&self, _db: &Path, _id: &str) -> String {
-            String::new()
+        fn show_json(&self, _db: &Path, _id: &str) -> Result<String, String> {
+            Ok("[]".into())
         }
         fn withdraw_ask(&self, _w: &str) -> (i32, String) {
             panic!("refused before any write")
@@ -205,8 +224,8 @@ mod tests {
         fn close(&self, _db: &Path, _id: &str, _reason: &str) -> BdResult {
             BdResult { success: true, combined: String::new() }
         }
-        fn show_json(&self, _db: &Path, _id: &str) -> String {
-            r#"{"labels":["work-bead:sp-w1"]}"#.into()
+        fn show_json(&self, _db: &Path, _id: &str) -> Result<String, String> {
+            Ok(r#"{"labels":["work-bead:sp-w1"]}"#.into())
         }
         fn withdraw_ask(&self, _w: &str) -> (i32, String) {
             (0, String::new())
@@ -232,8 +251,8 @@ mod tests {
         fn close(&self, _db: &Path, _id: &str, _reason: &str) -> BdResult {
             BdResult { success: true, combined: String::new() }
         }
-        fn show_json(&self, _db: &Path, _id: &str) -> String {
-            r#"[{"id":"sp-ask1","labels":["overseer"]}]"#.into()
+        fn show_json(&self, _db: &Path, _id: &str) -> Result<String, String> {
+            Ok(r#"[{"id":"sp-ask1","labels":["overseer"]}]"#.into())
         }
         fn withdraw_ask(&self, _w: &str) -> (i32, String) {
             panic!("the ask row names its work bead; close-ask lifts the hold")
@@ -248,6 +267,41 @@ mod tests {
             self.closed.borrow_mut().push((id.to_string(), reason.to_string()));
             (self.code, "cannot tell".into())
         }
+    }
+
+    /// A work bead whose show carries a `work-bead:` label only on a bead it depends on: that
+    /// label is not the bead's own, so it is no ask, and resolve must refuse it.
+    struct DependsOnAnAsk {
+        closed: std::cell::Cell<bool>,
+    }
+    impl Closer for DependsOnAnAsk {
+        fn close(&self, _db: &Path, _id: &str, _reason: &str) -> BdResult {
+            self.closed.set(true);
+            BdResult { success: true, combined: String::new() }
+        }
+        fn show_json(&self, _db: &Path, _id: &str) -> Result<String, String> {
+            Ok(r#"[{"id":"sp-w1","labels":["builder"],"dependencies":[{"id":"sp-ask9","labels":["work-bead:sp-w1"]}]}]"#.into())
+        }
+        fn withdraw_ask(&self, _w: &str) -> (i32, String) {
+            panic!("a work bead withdraws nothing")
+        }
+        fn has_lifecycle_row(&self, _id: &str) -> Result<bool, String> {
+            Ok(true)
+        }
+        fn is_ask(&self, _id: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+        fn withdraw_ask_row(&self, _id: &str, _reason: &str) -> (i32, String) {
+            panic!("no ask row")
+        }
+    }
+
+    #[test]
+    fn a_work_bead_is_no_ask_for_a_label_another_bead_in_its_show_carries() {
+        let c = DependsOnAnAsk { closed: Default::default() };
+        let Outcome::Failed(s) = run("sp-w1", "moot", Path::new("/db"), &c) else { panic!("a work bead was closed as an ask") };
+        assert!(s.contains("is a work bead"), "{s}");
+        assert!(!c.closed.get());
     }
 
     #[test]
