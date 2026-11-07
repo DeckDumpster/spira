@@ -159,6 +159,20 @@ struct Standing {
     since: u64,
 }
 
+/// The refusal standing for `step` on `repo`: its word and key.
+pub fn standing(p: &Ports, repo: &str, step: &str) -> Result<Option<(String, String)>, Refusal> {
+    let key = standing_key(repo, step);
+    p.store
+        .get(&key)
+        .map_err(|e| Refusal::unreadable(&key, e))?
+        .map(|i| {
+            serde_json::from_value::<Standing>(i.value.data)
+                .map(|s| (s.word, s.key))
+                .map_err(|e| Refusal::unreadable(&key, e))
+        })
+        .transpose()
+}
+
 /// Tells `step`'s refusal for `repo` once: logged and kept only when it is not already the
 /// standing one; `None` clears whatever stood. A store that cannot keep it costs a repeated
 /// line, never a lost one.

@@ -41,6 +41,9 @@ const DAY_MS: u64 = 86_400_000;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cond {
     pub type_: &'static str,
+    /// What one of a type's conditions is about; empty for a type with a single one.
+    pub key: String,
+    pub runbook: String,
     pub raised: Option<String>,
 }
 
@@ -62,7 +65,12 @@ fn day(v: f64) -> Value {
 }
 
 fn cond(type_: &'static str, raised: Option<String>) -> Cond {
-    Cond { type_, raised }
+    Cond {
+        type_,
+        key: String::new(),
+        runbook: String::new(),
+        raised,
+    }
 }
 
 /// A round a runner drives, so a child stacked on it waits on that runner: not GREEN (the
@@ -143,15 +151,17 @@ pub fn build(p: &Ports, repo: &str) -> Result<Option<Built>, Refusal> {
             serde_json::to_value(&repeats.holds).unwrap_or_default(),
         ),
     ]);
+    let mut conditions = vec![
+        cond(STACKED_ON_UNDRIVEN_PARENT, stacked),
+        cond(REPEAT_IDENTITY, repeats.open.first().cloned()),
+        cond(SLOTS_SATURATED, saturated),
+        cond(HALTED, halted),
+        cond(STOPPED, stopped),
+    ];
+    conditions.extend(crate::conditions::raise(p, repo)?);
     Ok(Some(Built {
         fields,
-        conditions: vec![
-            cond(STACKED_ON_UNDRIVEN_PARENT, stacked),
-            cond(REPEAT_IDENTITY, repeats.open.first().cloned()),
-            cond(SLOTS_SATURATED, saturated),
-            cond(HALTED, halted),
-            cond(STOPPED, stopped),
-        ],
+        conditions,
         green_unlanded_minutes: minutes,
         repeat_identity_passes_24h: repeats.planner_24h,
     }))
@@ -447,13 +457,15 @@ pub fn section(repo: &str, built: &Built, prev: Option<&Section>, now_ms: u64) -
                     p.status
                         .conditions
                         .iter()
-                        .find(|x| x.type_ == c.type_ && x.status == status)
+                        .find(|x| x.type_ == c.type_ && x.key == c.key && x.status == status)
                 })
                 .map_or_else(|| at.clone(), |x| x.last_transition_time.clone());
             Condition {
                 type_: c.type_.into(),
                 status,
                 reason: c.raised.clone().unwrap_or_default(),
+                key: c.key.clone(),
+                runbook: c.runbook.clone(),
                 last_transition_time: since,
             }
         })

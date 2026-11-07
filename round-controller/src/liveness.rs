@@ -53,6 +53,19 @@ pub const PASS_WALL_KEY: &str = "SPIRA_ROUND_PASS_WALL_MAX_SECS";
 pub const RETRIES_KEY: &str = "SPIRA_ROUND_REDRIVE_RETRIES";
 pub const EC2_LIFETIME_KEY: &str = "SPIRA_ROUND_VM_EC2_MAX_LIFETIME_SECS";
 
+/// The runner's latest progress mark, kept where `pass` can read it: the lease it was written
+/// under, the phase it is in, and when the child last showed progress.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RunnerMark {
+    pub token: state_store::Rev,
+    pub phase: String,
+    pub at_ms: u64,
+}
+
+pub fn mark_key(repo: &str, batch: &str) -> String {
+    format!("batches/{repo}/{batch}/mark")
+}
+
 /// The lease keys' values, in milliseconds.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LeaseSettings {

@@ -112,6 +112,9 @@ impl Stops for FakeSwitches<'_> {
     fn scoped(&self, repo: &str, lane: &str) -> Option<spira_config::scoped_stop::RepoStop> {
         self.world.scoped(repo, lane)
     }
+    fn round_records(&self, repo: &str) -> Vec<String> {
+        self.world.round_records(repo)
+    }
 }
 
 /// The sub-pass runner: each launch takes the next scripted answer for its removal set and

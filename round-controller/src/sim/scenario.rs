@@ -178,6 +178,16 @@ pub struct OffSpec {
     pub halted: bool,
     #[serde(default)]
     pub stop: Vec<StopSeed>,
+    /// Round record files the pre-R4 queue left under `run/queue/<repo>/`.
+    #[serde(default)]
+    pub round_record: Vec<RoundRecordSeed>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoundRecordSeed {
+    pub repo: String,
+    pub name: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -866,6 +876,9 @@ fn run_with(sc: &Scenario, profile: &Profile, seed: u64, go: &Pass) -> Result<Re
     }
     for s in &sc.off.stop {
         b.stops.stop(&s.repo, &s.owner, &s.reason, &s.until);
+    }
+    for r in &sc.off.round_record {
+        b.stops.round_record(&r.repo, &r.name);
     }
     for g in &sc.git {
         b.git.seed(g);

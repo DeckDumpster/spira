@@ -93,11 +93,11 @@ name = "the-round-is-not-abandoned"
 count = "calls:abandon"
 equals = 0
 
-# The round and the pass in hand.
+# The round, the pass in hand and the runner's last mark.
 [[expect]]
 name = "the-round-stays"
 count = "keys:batches/lane/"
-equals = 2
+equals = 3
 
 [[expect]]
 name = "inverted-a-sub-pass-started"

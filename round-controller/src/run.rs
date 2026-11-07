@@ -323,6 +323,8 @@ struct Keeper<'a, 'p> {
     /// The last renewal of both that held.
     renewed: u64,
     vm: Option<String>,
+    /// The mark last written to the store.
+    marked: Option<(u64, Phase)>,
 }
 
 impl Keeper<'_, '_> {
@@ -376,6 +378,29 @@ impl Keeper<'_, '_> {
 
     fn lost_why(&self) -> Lost {
         lost_why(self.p, self.a)
+    }
+
+    /// Keeps the child's latest progress mark where `pass` reads it, written only when it moves.
+    fn note_mark(&mut self, at: u64, phase: Phase) {
+        if self.marked == Some((at, phase)) {
+            return;
+        }
+        let mark = crate::liveness::RunnerMark {
+            token: self.lease.token(),
+            phase: phase.word().into(),
+            at_ms: at,
+        };
+        let t = fenced_txn(
+            self.lease,
+            vec![],
+            vec![state_store::Op::Put(
+                crate::liveness::mark_key(&self.a.repo, &self.a.batch),
+                state_store::Object::new(serde_json::to_value(&mark).unwrap_or_default()),
+            )],
+        );
+        if matches!(self.p.store.txn(&t, &request(self.p, "mark")), Ok(r) if r.succeeded) {
+            self.marked = Some((at, phase));
+        }
     }
 
     fn note_vm(&mut self, vm: Option<&str>) {
@@ -743,6 +768,7 @@ pub fn run<R: SubPasses>(p: &Ports, env: &RunEnv, subs: &mut R, a: &RunArgs) -> 
         next_renew: started + p.leases.renew_every_ms(),
         renewed: started,
         vm: None,
+        marked: None,
     };
     let (pass_result, round) = match resumed {
         Some(r) => (r, round_of(&view, &lane, a)),
@@ -887,6 +913,7 @@ fn main_pass(
             break end;
         }
         let (at, phase) = mark.map_or((k.started, Phase::Boot), |m| (m.at_ms, phase_of(&m.phase)));
+        k.note_mark(at, phase);
         if let Err(l) = k.tick(at, phase) {
             let killed = kill_child(p, env, &*child, &mut || k.keep_slot());
             return Err(Ended::Lost(l, killed));
