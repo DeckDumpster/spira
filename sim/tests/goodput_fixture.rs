@@ -1,19 +1,39 @@
 //! Goodput over the captured 10-31 day: the numbers come from `fixtures/replay/1031`, the same
-//! typed records the replay applies, run through `spira_lc::goodput`.
+//! typed records the replay applies, run through `spira_lc::goodput`. The landing-stop bead is
+//! the manifest's `b-1226` (the bead `sp-w2fute` names); the join check substitutes the
+//! lifecycle's attribution rows for the TSD `round-attribution` family, which carries no batch id.
 
 use std::collections::BTreeSet;
 
 use sim::replay::{fixtures_root, load, Attribution, CertPass, Record, ReplayWorld, Slice};
-use spira_lc::goodput::{goodput, Goodput, LoopEvent, Measure, Scope, Signal, Window, DAY_SECS};
+use spira_lc::goodput::{goodput, Goodput, LoopEvent, Measure, Scope, Signal, StopKind, Window, DAY_SECS};
 
 const LANDING_STOP_BEAD: &str = "b-1226";
 
-fn oct31_events() -> Vec<LoopEvent> {
+fn oct31_world() -> ReplayWorld {
     let mut world = ReplayWorld::default();
     for (at, r) in load(&fixtures_root().join(Slice::Oct31.dir())).unwrap() {
         world.apply(at, &r);
     }
-    world.loop_events
+    world
+}
+
+fn oct31_events() -> Vec<LoopEvent> {
+    oct31_world().loop_events
+}
+
+/// The landing-stop bead's stop, in seconds: from its pause to the landing of the revert that
+/// names it.
+fn stop_secs(events: &[LoopEvent]) -> u64 {
+    let paused = events.iter().find_map(|e| match e {
+        LoopEvent::Stop { kind: StopKind::Pause, bead: Some(b), at, .. } if b == LANDING_STOP_BEAD => Some(*at),
+        _ => None,
+    });
+    let reverted = events.iter().find_map(|e| match e {
+        LoopEvent::Landed { reverts: Some(b), at, .. } if b == LANDING_STOP_BEAD => Some(*at),
+        _ => None,
+    });
+    reverted.unwrap() - paused.unwrap()
 }
 
 fn day(events: &[LoopEvent]) -> (Window, Goodput) {
@@ -36,7 +56,8 @@ fn the_landing_stop_beads_cost_is_its_typed_stop_window_and_it_pulls_the_days_ra
     let (w, g) = day(&events);
     let harm = g.harmful.iter().find(|h| h.bead == LANDING_STOP_BEAD).expect("the landing-stop bead is harmful");
     let stop: u64 = harm.evidence.iter().filter(|e| e.signal == Signal::LandingStop).map(|e| e.secs).sum();
-    assert_eq!(stop, 15 * 3600 + 32 * 60 + 49 - (11 * 3600 + 23 * 60 + 43), "the stop runs from the first over-cap pass to the revert's landing");
+    assert_eq!(stop, stop_secs(&events), "the charge is the stop's window");
+    assert!((249 * 60..250 * 60).contains(&stop), "the fixture's stop is about 249 min, not the design prose's 647: {stop} s");
     assert!(harm.cost_secs >= stop, "{harm:?}");
 
     let without: Vec<LoopEvent> = events
@@ -70,8 +91,7 @@ fn one_recorded_red_that_cost_an_innocent_member_moves_the_days_ratio_by_under_a
     let (_, g) = day(&with_red);
     let moved = 1.0 - ratio(&g);
     assert!(moved > 0.0 && moved < 0.02, "one red moved the ratio by {moved}");
-    let stop_secs = 14_946.0;
-    assert!(moved < stop_secs / DAY_SECS as f64 / 10.0, "one red moved the ratio by {moved}");
+    assert!(moved < stop_secs(&oct31_events()) as f64 / DAY_SECS as f64 / 10.0, "one red moved the ratio by {moved}");
     assert_eq!(g.harmful.len(), 1, "the owner is charged: {:?}", g.harmful);
 }
 
@@ -132,4 +152,19 @@ fn the_join_check_names_an_attributed_red_whose_pass_no_red_cert_pass_carries() 
     records.push((from + 1, Record::Attribution(Attribution { pass, ..a })));
     let (_, orphans, _) = unjoined(&records, from);
     assert_eq!(orphans, [format!("{batch} pass {pass}")]);
+}
+
+#[test]
+fn a_recorded_red_is_charged_to_its_owner_in_that_owners_repo_scope() {
+    let world = oct31_world();
+    let owners: BTreeSet<&str> = world.loop_events.iter().filter_map(|e| if let LoopEvent::RedAttributed { bead, .. } = e { Some(bead.as_str()) } else { None }).collect();
+    assert!(!owners.is_empty());
+    for o in &owners {
+        assert!(world.bead_repo.contains_key(*o), "{o} has no repo, so a repo scope would charge it nothing");
+    }
+    let (_, end) = Slice::Oct31.window();
+    let w = Window::new(&world.loop_events, end, DAY_SECS);
+    let g = goodput(&world.loop_events, &w, Scope::Repo("repo-a"), &world.bead_repo);
+    let harm = g.harmful.iter().find(|h| h.bead == LANDING_STOP_BEAD).expect("the landing-stop bead is charged in its own repo");
+    assert!(harm.evidence.iter().any(|e| e.signal == Signal::RedWithInnocents || e.signal == Signal::RepeatEject), "{harm:?}");
 }

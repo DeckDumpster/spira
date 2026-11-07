@@ -49,8 +49,7 @@ fn fields(hour: &Goodput, day: &Goodput) -> Fields {
 pub fn status(w: &ReplayWorld, now_s: u64) -> Status {
     let events = &w.loop_events;
     let (hour, day) = (Window::new(events, now_s, HOUR_SECS), Window::new(events, now_s, DAY_SECS));
-    let repo_of = Default::default();
-    let measure = |scope| (goodput::goodput(events, &hour, scope, &repo_of), goodput::goodput(events, &day, scope, &repo_of));
+    let measure = |scope| (goodput::goodput(events, &hour, scope, &w.bead_repo), goodput::goodput(events, &day, scope, &w.bead_repo));
     let (h, d) = measure(Scope::All);
     let mut out = Status::default();
     out.set_total(fields(&h, &d));

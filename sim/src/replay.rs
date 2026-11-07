@@ -341,6 +341,8 @@ pub struct ReplayWorld {
     pub alarms: BTreeMap<(String, String, String), u32>,
     /// The typed events goodput is computed from, in the order the records arrived.
     pub loop_events: Vec<LoopEvent>,
+    /// The repo each bead was cut into or landed in, for the events that name only a bead.
+    pub bead_repo: BTreeMap<String, String>,
     pub applied: usize,
 }
 
@@ -430,6 +432,9 @@ impl ReplayWorld {
             lane.last_landed = Some(at);
         }
 
+        for m in &r.members {
+            self.bead_repo.entry(m.bead.clone()).or_insert_with(|| r.repo.clone());
+        }
         let before: BTreeSet<Member> = self.rounds.get(&r.batch).map(|o| o.members.iter().cloned().collect()).unwrap_or_default();
         for m in r.members.iter().filter(|m| !before.contains(m)) {
             self.cut(at, &r.repo, m);

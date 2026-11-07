@@ -37,17 +37,34 @@ fn outside(days: &[Day], tolerance: i64, landed: impl Fn(&Day) -> i64) -> Vec<St
     days.iter().filter(|d| (landed(d) - d.git_land).abs() > tolerance).map(|d| d.day.clone()).collect()
 }
 
-/// goodput's landed count for the day: `lifecycle_landed` distinct beads spread over the
-/// Pacific day (07:00Z to 07:00Z), none harmful.
-fn goodput_landed(d: &Day) -> i64 {
-    let start = parse_rfc3339(&format!("{}T07:00:00Z", d.day)).unwrap();
-    let end = if d.day == "2026-10-31" { parse_rfc3339(CUT).unwrap() } else { start + DAY_SECS };
-    let step = (end - start) / (d.lifecycle_landed as u64 + 1);
-    let events: Vec<LoopEvent> = (1..=d.lifecycle_landed as u64)
-        .map(|i| LoopEvent::Landed { bead: format!("b-{}-{i}", d.day), repo: "repo-a".into(), at: start + i * step, reverts: None, subject: String::new() })
-        .collect();
-    let window = Window::new(&events, start + DAY_SECS, DAY_SECS);
-    match goodput(&events, &window, Scope::All, &Default::default()).landed {
+fn day_start(d: &Day) -> u64 {
+    parse_rfc3339(&format!("{}T07:00:00Z", d.day)).unwrap()
+}
+
+/// One stream of all twenty days' landings, `lifecycle_landed` distinct beads spread over each
+/// Pacific day (07:00Z to 07:00Z, the last cut at `CUT`): the table keeps counts, not bead ids.
+fn landings(days: &[Day]) -> Vec<LoopEvent> {
+    days.iter()
+        .flat_map(|d| {
+            let start = day_start(d);
+            let end = if d.day == "2026-10-31" { parse_rfc3339(CUT).unwrap() } else { start + DAY_SECS };
+            let step = (end - start) / (d.lifecycle_landed as u64 + 1);
+            (1..=d.lifecycle_landed as u64).map(move |i| LoopEvent::Landed {
+                bead: format!("b-{}-{i}", d.day),
+                repo: "repo-a".into(),
+                at: start + i * step,
+                reverts: None,
+                subject: String::new(),
+            })
+        })
+        .collect()
+}
+
+/// What goodput counts as landed in the 24 h ending when `d`'s Pacific day does, over the whole
+/// stream.
+fn goodput_landed(events: &[LoopEvent], d: &Day) -> i64 {
+    let window = Window::new(events, day_start(d) + DAY_SECS, DAY_SECS);
+    match goodput(events, &window, Scope::All, &Default::default()).landed {
         Measure::Value(n) => n as i64,
         other => panic!("{}: landed is {other:?}", d.day),
     }
@@ -70,8 +87,10 @@ fn the_agreement_check_names_a_day_that_disagrees_by_more_than_the_tolerance() {
 #[test]
 fn every_days_goodput_landed_is_within_the_tolerance_of_git() {
     let days = days();
-    assert_eq!(outside(&days, TOLERANCE_PER_DAY, goodput_landed), Vec::<String>::new());
+    let events = landings(&days);
+    let counted = |d: &Day| goodput_landed(&events, d);
+    assert_eq!(outside(&days, TOLERANCE_PER_DAY, counted), Vec::<String>::new());
     for d in &days {
-        assert_eq!(goodput_landed(d), d.lifecycle_landed, "{}: goodput counts every bead the lifecycle landed", d.day);
+        assert_eq!(counted(d), d.lifecycle_landed, "{}: goodput counts every bead the lifecycle landed that day", d.day);
     }
 }
