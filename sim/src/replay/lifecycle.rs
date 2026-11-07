@@ -65,7 +65,7 @@ pub fn status(w: &ReplayWorld, now_s: u64) -> Status {
         let (h, d) = measure(Scope::Repo(repo));
         out.repos.insert(repo.to_string(), fields(&h, &d));
     }
-    out.warming_up_until = day.warming_until.max(hour.warming_until).map(|u| format_rfc3339(u));
+    out.warming_up_until = day.warming_until.max(hour.warming_until).map(format_rfc3339);
     out
 }
 
