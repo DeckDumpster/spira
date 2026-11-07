@@ -146,7 +146,7 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let Some(tip) = flag(args, "--tip") else {
         return (CANNOT_TELL, "work submit: --tip is required (the client reads it from the worktree; the verb itself never takes one)".into());
     };
-    let row = match rows::fetch_bead(conn, bead_id) {
+    let row = match crate::plane::bead(conn, bead_id) {
         Ok(Some(r)) => r,
         Ok(None) => return (CANNOT_TELL, format!("work submit: no bead row for {bead_id}")),
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
@@ -160,7 +160,7 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let mut stack_tips: Vec<String> = Vec::new();
     if !row.stack.is_empty() {
         let ids: Vec<&String> = row.stack.keys().collect();
-        let prereqs = match ids.iter().map(|id| rows::fetch_bead(conn, id)).collect::<Result<Vec<_>, _>>() {
+        let prereqs = match ids.iter().map(|id| crate::plane::bead(conn, id)).collect::<Result<Vec<_>, _>>() {
             Ok(rs) => rs.into_iter().flatten().collect::<Vec<_>>(),
             Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
         };
@@ -301,7 +301,7 @@ fn owed_tiers(tip: &str, repo: &str, actor: &str) -> Result<Vec<String>, (i32, S
 }
 
 fn submit_repo(conn: &Conn, bead_id: &str) -> Result<String, (i32, String)> {
-    match rows::bead_repo(conn, bead_id) {
+    match crate::plane::repo(conn, bead_id) {
         Ok(Some(r)) => Ok(r),
         Ok(None) => match crate::bd::repo_label(bead_id) {
             Ok(Some(r)) => Ok(r),
@@ -329,8 +329,8 @@ fn branch_refusal(conn: &Conn, bead_id: &str, tip: &str, stack_tips: &[String]) 
 /// sibling is in flight — submitted, certified, in a round, or landed — in the same repository.
 fn sibling_in_flight(conn: &Conn, id: &str, repo: &str) -> bool {
     use bead::BeadState::{Certified, InDelivery, Landed, Submitted};
-    rows::bead_repo(conn, id).ok().flatten().as_deref() == Some(repo)
-        && rows::fetch_bead(conn, id)
+    crate::plane::repo(conn, id).ok().flatten().as_deref() == Some(repo)
+        && crate::plane::bead(conn, id)
             .ok()
             .flatten()
             .is_some_and(|r| matches!(r.state, Submitted | Certified | InDelivery | Landed))
@@ -453,7 +453,7 @@ fn mender_calls_closed(conn: &Conn, bead_id: &str, actor: &str, verb: &str) -> O
     if actor != "mender" {
         return None;
     }
-    match rows::fetch_bead(conn, bead_id) {
+    match crate::plane::bead(conn, bead_id) {
         Ok(Some(row)) if row.state.is_terminal() => Some((0, format!("{bead_id} is already {}; work {verb} has nothing to do", row.state.as_str()))),
         _ => None,
     }
@@ -509,7 +509,7 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let Some(delivers) = flag(args, "--delivers") else {
         return (CANNOT_TELL, "work done: --delivers <path> is required".into());
     };
-    match rows::fetch_bead(conn, bead_id) {
+    match crate::plane::bead(conn, bead_id) {
         Ok(Some(row)) => {
             if let Some(noop) = already_finished_noop(bead_id, row.state) {
                 return noop;
@@ -525,7 +525,7 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
             Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
         }
     }
-    match rows::fetch_bead(conn, bead_id) {
+    match crate::plane::bead(conn, bead_id) {
         Ok(Some(row)) => {
             if let Some(refusal) = working_exit_refusal("done", "DONE", &row, &actor) {
                 return refusal;
@@ -695,7 +695,7 @@ fn cmd_blocked(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
 /// reporting it failed, so a timed-out write never reads as an absent hold.
 fn apply_ask_hold(conn: &Conn, bead_id: &str, actor: &str, hold: BeadEventKind) -> (i32, String) {
     let out = apply_bead_event(conn, bead_id, actor, hold);
-    if out.0 != 0 && matches!(rows::fetch_bead(conn, bead_id), Ok(Some(r)) if r.holds.contains(&HoldKind::Ask)) {
+    if out.0 != 0 && matches!(crate::plane::bead(conn, bead_id), Ok(Some(r)) if r.holds.contains(&HoldKind::Ask)) {
         return (0, String::new());
     }
     out
@@ -1485,7 +1485,7 @@ fn uncited_bead(args: &[String], conn: &Conn) -> Option<(i32, String)> {
     }
     let at = args.iter().position(|a| a == "--bead")?;
     let bead = args.get(at + 1)?;
-    match rows::fetch_bead(conn, bead) {
+    match crate::plane::bead(conn, bead) {
         Ok(Some(_)) => None,
         Ok(None) => Some((REFUSED, format!("refused: work ask --bead {bead}: no such bead; nothing was sent"))),
         Err(e) => Some((CANNOT_TELL, format!("cannot tell: whether {bead} exists ({e:?}); nothing was sent"))),
