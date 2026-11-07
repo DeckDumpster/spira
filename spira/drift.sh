@@ -6,6 +6,8 @@
 #   drift.sh checkout [<repo>]     untracked or modified paths in a production checkout
 #   drift.sh units    [<unitdir>]  installed unit files and drop-ins this install does not ship
 #   drift.sh check    [<repo>] [<unitdir>]   both, combined
+#   drift.sh bdi                   bulk-write disks missing their per-device dirty cap
+#   drift.sh bdi-rule              the udev rule that would set it (printed; never installed)
 #
 # Operator-local overrides declared in $SPIRA_LOCAL_UNITS ([[unit]] path/reason/bead) are
 # accepted by `units`; one whose retiring bead has landed is reported RETIRE-NOW.
@@ -171,9 +173,55 @@ check() {
     return 0
 }
 
+# bdi_id <entry> -> the MAJ:MIN of the whole disk behind a mount point, or the entry itself
+# when it already is a MAJ:MIN. Dirty-page accounting is per disk, not per partition.
+bdi_id() {
+    local e="$1" src
+    if [[ "$e" =~ ^[0-9]+:[0-9]+$ ]]; then echo "$e"; return 0; fi
+    src="$(findmnt -nro SOURCE -T "$e" 2>/dev/null)" && [ -n "$src" ] || return 1
+    lsblk -snro MAJ:MIN "$src" 2>/dev/null | tail -n 1 | grep -E '^[0-9]+:[0-9]+$'
+}
+
+# bdi -> one UNCAPPED line per declared bulk disk whose bdi lacks strict_limit=1 and the
+# configured max_ratio. The kernel's dirty limit is host-wide, so an uncapped bulk writer
+# stalls every other disk's writers; this only detects, an operator installs the rule.
+bdi() {
+    local want="${SPIRA_BDI_MAX_RATIO:-5}" sys="${SPIRA_BDI_SYSFS:-/sys/class/bdi}" rc=0 e id sl mr
+    [[ "$want" =~ ^[0-9]+$ ]] || { echo "drift: SPIRA_BDI_MAX_RATIO=$want is not a number" >&2; return 3; }
+    [ -d "$sys" ] || { echo "drift: $sys does not exist — cannot read bdi limits" >&2; return 3; }
+    local -a entries=()
+    read -ra entries <<< "${SPIRA_BDI_CAPPED:-}"
+    for e in "${entries[@]}"; do
+        id="$(bdi_id "$e")" || { echo "drift: cannot resolve $e to a disk" >&2; return 3; }
+        sl="$(cat "$sys/$id/strict_limit" 2>/dev/null)" && mr="$(cat "$sys/$id/max_ratio" 2>/dev/null)" || {
+            echo "drift: cannot read $sys/$id for $e" >&2; return 3; }
+        if [ "$sl" != 1 ] || [ "$mr" != "$want" ]; then
+            printf 'UNCAPPED %s (bdi %s: strict_limit=%s max_ratio=%s, want 1 and %s)\n' "$e" "$id" "$sl" "$mr" "$want"
+            rc=1
+        fi
+    done
+    [ "$rc" = 0 ] && echo "drift: bdi clean — ${#entries[@]} bulk disk(s) capped"
+    return "$rc"
+}
+
+# bdi_rule -> the udev rule lines for every declared bulk disk, for the operator to install.
+bdi_rule() {
+    local want="${SPIRA_BDI_MAX_RATIO:-5}" e id name
+    local -a entries=()
+    read -ra entries <<< "${SPIRA_BDI_CAPPED:-}"
+    for e in "${entries[@]}"; do
+        id="$(bdi_id "$e")" || { echo "drift: cannot resolve $e to a disk" >&2; return 3; }
+        name="$(lsblk -dnro NAME "/dev/block/$id" 2>/dev/null)" && [ -n "$name" ] || {
+            echo "drift: no block device for $id" >&2; return 3; }
+        printf 'ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="%s", ATTR{bdi/strict_limit}="1", ATTR{bdi/max_ratio}="%s"\n' "$name" "$want"
+    done
+}
+
 case "${1:-check}" in
     checkout) shift; checkout "$@" ;;
     units)    shift; units "$@" ;;
     check)    shift; check "$@" ;;
+    bdi)      bdi ;;
+    bdi-rule) bdi_rule ;;
     *)        sed -n '2,7p' "$0" >&2; exit 2 ;;
 esac
