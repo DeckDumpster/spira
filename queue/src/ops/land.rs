@@ -540,7 +540,7 @@ fn record_land(w: &World, run: &Path, repo: &str, m: &Member) {
     }
     let reverts = w
         .bd
-        .show(&[m.id.clone()])
+        .show(std::slice::from_ref(&m.id))
         .ok()
         .and_then(|rows| rows.into_iter().find(|r| r.id == m.id))
         .and_then(|r| r.labels.iter().find_map(|l| l.strip_prefix("reverts:").map(str::to_string)));

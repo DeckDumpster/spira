@@ -40,7 +40,7 @@ mod tests {
 
     #[test]
     fn a_halt_and_its_release_are_two_rows_the_lifecycle_section_reads_as_one_interval() {
-        let tmp = testkit::TempDir::new("world-stoprec");
+        let tmp = testkit::TempDir::new("halt-release-rows");
         record(tmp.path(), 1_000, Kind::Halt, Reason::Drain, ACTOR, None, None, "free text").unwrap();
         record(tmp.path(), 2_000, Kind::Release, Reason::Operator, ACTOR, None, None, "").unwrap();
         let text = std::fs::read_to_string(tsd::family_path(tmp.path(), tsd::stop::FAMILY)).unwrap();
