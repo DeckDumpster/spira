@@ -86,10 +86,10 @@ testdb_up census-tz-boundary || {
     exit $?
 }
 
-. "$HERE/testlib/lc-fixture.sh"
-lcfix_up || bail "lc-fixture: the lifecycle store did not come up"
-lcfix_follow_testdb
-trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+. "$HERE/testlib/lc-dolt-fixture.sh"
+lcdolt_up || bail "lc-fixture: the lifecycle store did not come up"
+lcdolt_follow_testdb
+trap 'lcdolt_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 
 _insert_event_at() {   # _insert_event_at <bead_id> <event_type> <cause> <utc_ts>
     local id="$1" etype="$2" cause="$3" ts="$4"

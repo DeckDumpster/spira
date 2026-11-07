@@ -33,80 +33,28 @@
 # defect: sp-mqsl, sp-e5ow0, sp-796o, sp-kq8l, sp-bjzj, sp-3gih, sp-hl92, sp-1smg
 # tier: T2
 # covers: hel/src/* spira/lib.sh UC-landed-audit-reaping-14 UC-landed-audit-reaping-16 UC-landed-audit-reaping-17 UC-landed-audit-reaping-18 UC-landed-audit-reaping-19 UC-landed-audit-reaping-20 UC-landed-audit-reaping-21 UC-landed-audit-reaping-22
-# host-reason: starts its own disposable `dolt sql-server`, same shape as test-lc-hold.sh
-#   (sp-ki12s) — testenv-batch.sh already provides the container.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
-[ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
-
+. "$HERE/testlib/lc-fixture.sh"
 TMP="$(mktemp -d)"
-LC_SERVER_PID=""
-trap '[ -n "$LC_SERVER_PID" ] && kill "$LC_SERVER_PID" >/dev/null 2>&1; rm -rf "$TMP"' EXIT INT TERM
+trap 'lcfix_down; rm -rf "$TMP"' EXIT INT TERM
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 export SPIRA_CONF="$TMP/no-such-conf"
 
-# --------------------------------------------------------------------------------------
-# A THROWAWAY spira-lc/Dolt SERVER, the same shape test-lc-hold.sh and
-# test-check2-reaper.sh use. Exported so the `hel.sh` subprocess the
-# `hel()` helper below spawns inherits it too.
-# --------------------------------------------------------------------------------------
-LCREPO="$(cd "$HERE/.." && pwd)"
-# A literal base port, not 3309's conf.sh default: conf.sh is not sourced
-# yet at this point in the suite (its own SPIRA_CONF points at a no-such-conf on purpose,
-# further down), so nothing has given that variable a value here.
-LC_PORT=$((23309 + (RANDOM % 400)))
-LC_TMP="$TMP/lc"; mkdir -p "$LC_TMP/data"
-cat > "$LC_TMP/server.yaml" <<YAML
-log_level: warning
-listener:
-  port: $LC_PORT
-  max_connections: 50
-  read_timeout_millis: 30000
-  write_timeout_millis: 30000
-data_dir: "$LC_TMP/data"
-behavior:
-  dolt_transaction_commit: false
-  event_scheduler: "OFF"
-YAML
-"$DOLT_BIN" sql-server --config "$LC_TMP/server.yaml" > "$LC_TMP/server.log" 2>&1 & # batch-job: fixture dolt call against the suite's private store
-LC_SERVER_PID=$!
-lc_up=0
-for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then # batch-job: fixture dolt call against the suite's private store
-        lc_up=1; break
-    fi
-    sleep 0.2
-done
-[ "$lc_up" = 1 ] || bail "dolt sql-server for spira_lifecycle never came up: $(cat "$LC_TMP/server.log")"
-lc_root_sql() { "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls "$@"; } # batch-job: fixture dolt call against the suite's private store
-
+# A THROWAWAY control store; its config is declared in this suite's own layer, which the `hel.sh`
+# subprocess the `hel()` helper below spawns inherits.
 command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
-export SPIRA_LC_HOST=127.0.0.1
-export SPIRA_LC_PORT="$LC_PORT"
-export SPIRA_LC_DB=spira_lifecycle
-export SPIRA_LC_DATA_DIR="$LC_TMP"
-export SPIRA_LC_USER=root
-export SPIRA_LC_PASSWORD=""
-unset SPIRA_LC_SOCKET
-# SPIRA_LC_PASSWORD_FILE is registered and resolves ambiently via cfg() to the complete
-# fixture's own nonexistent path, preferred over SPIRA_LC_PASSWORD above unless cleared
-# (sfail round 3, pattern 7 — same cause as test-canary.sh).
-tl_config SPIRA_LC_PASSWORD_FILE=""
-spira-lc admin-apply-ddl "$LCREPO/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
-wantrc "spira_lifecycle schema applies cleanly" 0 $?
+lcfix_up || bail "the control store did not come up"
 
 # Every fixture bead carries its lifecycle row (sp-mve9i): hel's claim witness reads the
 # row, never bd status — bd open → READY, in_progress → WORKING, closed (the builder's submit)
 # → SUBMITTED; a bead with no row is one nothing proves unclaimed, so it would be HELD.
 seed_lc() {   # seed_lc <bead-id> <state>
-    lc_root_sql --use-db spira_lifecycle sql -q "DELETE FROM bead WHERE bead_id = '$1'" >/dev/null 2>&1
-    lc_root_sql --use-db spira_lifecycle sql -q \
-        "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('$1','$2','[]',0,0)" >/dev/null 2>&1
+    lcfix_seed "$1" "$2" || bail "could not seed $1 $2"
 }
-lc_row_state() { lc_root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='$1'" -r csv 2>/dev/null | tail -1; }
+lc_row_state() { lcfix_state "$1"; }
 
 # --------------------------------------------------------------------------------------
 # THE STUB BD. hel.sh's remaining bd seams are `bdjson show <id>` (read) and

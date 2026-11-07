@@ -40,8 +40,7 @@ DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 . "$HERE/testdb.sh"
 testdb_require test-deadlock-sweep
 TMP="$(mktemp -d)"
-LC_SERVER_PID=""
-trap 'testdb_drop; [ -n "$LC_SERVER_PID" ] && kill "$LC_SERVER_PID" >/dev/null 2>&1; rm -rf "$TMP"' EXIT; trap 'exit 143' INT TERM
+trap 'exit 143' INT TERM
 export PATH="$PATH:$(dirname "$DOLT_BIN")"
 unset SPIRA_LC_SOCKET
 # attempts_of/requeues_of read the events table via bd sql, which embedded mode refuses.
@@ -53,51 +52,17 @@ testdb_up deadlocksweep || {
 }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
-# ── a throwaway spira-lc/Dolt server, the same shape test-lc-hold.sh uses ─────────────
-SRC_ROOT="$(cd "$HERE/.." && pwd)"
-LC_PORT=$((3309 + 1600 + (RANDOM % 300)))
-LC_TMP="$TMP/lc"; mkdir -p "$LC_TMP/data"
-cat > "$LC_TMP/server.yaml" <<YAML
-log_level: warning
-listener:
-  port: $LC_PORT
-  max_connections: 50
-  read_timeout_millis: 30000
-  write_timeout_millis: 30000
-data_dir: "$LC_TMP/data"
-behavior:
-  dolt_transaction_commit: false
-  event_scheduler: "OFF"
-YAML
-"$DOLT_BIN" sql-server --config "$LC_TMP/server.yaml" > "$LC_TMP/server.log" 2>&1 & # batch-job: long-lived fixture listener, killed by the suite teardown
-LC_SERVER_PID=$!
-lc_up=0
-for _ in $(seq 1 50); do
-    if timeout 5 "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
-        lc_up=1; break
-    fi
-    sleep 0.2
-done
-[ "$lc_up" = 1 ] || bail "dolt sql-server for spira_lifecycle never came up: $(cat "$LC_TMP/server.log")"
-
-# spira-lc is the tree under test's own build, by name on the suite's PATH (sp-gypjk).
-export SPIRA_LC_HOST=127.0.0.1
-export SPIRA_LC_PORT="$LC_PORT"
-export SPIRA_LC_DB=spira_lifecycle
-export SPIRA_LC_DATA_DIR="$LC_TMP"
-export SPIRA_LC_USER=root
-export SPIRA_LC_PASSWORD=""
-# round 3 fix (pattern 7): SPIRA_LC_PASSWORD_FILE is a registered key; undeclared, it
-# resolves to the complete fixture's placeholder /fixture/userhome/.../spira-lc.credential,
-# which does not exist. Declare this suite's own (empty-password) credential file.
-: > "$LC_TMP/credential"
-tl_config SPIRA_LC_PASSWORD_FILE="$LC_TMP/credential"
-spira-lc admin-apply-ddl "$SRC_ROOT/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
-wantrc "spira_lifecycle schema applies cleanly" 0 $?
+# ── the beads are the control store's; the attempt-history facts are still the dolt lifecycle
+# database's, on the bead store's own server ─────────────────────────────────────────────────
+. "$HERE/testlib/lc-dolt-fixture.sh"
+. "$HERE/testlib/lc-fixture.sh"
+trap 'testdb_drop; lcfix_down; lcdolt_down; rm -rf "$TMP"' EXIT
+lcdolt_up_on_testdb || bail "the dolt lifecycle database did not come up"
+lcfix_up || bail "the control store did not come up"
 # mkpoison <id> — a fresh READY row, then a real Hold{Poison} event through `spira-lc hold`, the
 # same shape test-poison.sh's own mkpoison uses.
 mkpoison() {
-    spira-lc create-bead "$1" >/dev/null 2>&1
+    spira-lc create-bead "$1" --ready >/dev/null 2>&1
     spira-lc hold "$1" poison "seed" test >/dev/null 2>&1
 }
 lcheld() { spira-lc held "$1" poison; }

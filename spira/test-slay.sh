@@ -27,11 +27,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 tl_config SPIRA_TEST_CASE_DEADLINE=120
 SLAY="$HERE/../spira-world/src/bin/slay.rs"
 
-# T2 below proves slay.sh's release against a real spira-lc (the tree's, on PATH) and a
-# throwaway dolt server. Checked here, before T1 runs any case, so
-# a missing dependency is a clean skip (testlib refuses skip once cases have already run).
-DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
-[ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
 # ===========================================================================================
 echo "T1: argument parsing — before testdb/bd is ever touched, no store"
@@ -91,61 +86,14 @@ testdb_require test-slay
 TMP="$(mktemp -d)"
 testdb_up slay || { echo "test-slay: could not build a fixture database"; exit 1; }
 
-# A REAL spira-lc against a throwaway Dolt server (sp-rlyl0): slay.sh's release now goes
-# through HolderDead/Drop on the lifecycle row, not bd reopen/close, and
-# spira_holder_witnesses (lib.sh) trusts the row over a stale bd in_progress once one
-# exists — so the destroy step below only proceeds when this fixture is real.
-#
-# conf.sh (sourced above by testdb.sh) rebuilds PATH from scratch, dropping whatever
-# DOLT_BIN's own directory the top-of-file check found — re-added here, after that reset.
-export PATH="$(dirname "$DOLT_BIN"):$PATH"
-unset SPIRA_LC_SOCKET
-
-LCREPO="$(cd "$HERE/.." && pwd)"
-LCPORT=$((3309 + 1200 + (RANDOM % 300)))
-LC_SERVER_PID=""
-trap 'testdb_drop; [ -n "$LC_SERVER_PID" ] && kill "$LC_SERVER_PID" >/dev/null 2>&1; rm -rf "$TMP"' EXIT INT TERM
-
-mkdir -p "$TMP/lc-data"
-cat > "$TMP/lc-server.yaml" <<YAML
-log_level: warning
-listener:
-  port: $LCPORT
-  max_connections: 20
-  read_timeout_millis: 30000
-  write_timeout_millis: 30000
-data_dir: "$TMP/lc-data"
-behavior:
-  dolt_transaction_commit: false
-  event_scheduler: "OFF"
-YAML
-"$DOLT_BIN" sql-server --config "$TMP/lc-server.yaml" > "$TMP/lc-server.log" 2>&1 & # batch-job: fixture dolt call against the suite's private store
-LC_SERVER_PID=$!
-lc_up=0
-for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then # batch-job: fixture dolt call against the suite's private store
-        lc_up=1; break
-    fi
-    sleep 0.2
-done
-[ "$lc_up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/lc-server.log")"
-lc_root_sql() { "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls "$@"; } # batch-job: fixture dolt call against the suite's private store
-
+# A REAL spira-lc against a throwaway control store (sp-rlyl0): slay.sh's release goes through
+# HolderDead/Drop on the lifecycle row, not bd reopen/close, and spira_holder_witnesses (lib.sh)
+# trusts the row over a stale bd in_progress once one exists — so the destroy step below only
+# proceeds when this fixture is real.
+. "$HERE/testlib/lc-fixture.sh"
+trap 'testdb_drop; lcfix_down; rm -rf "$TMP"' EXIT INT TERM
 command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
-export SPIRA_LC_HOST=127.0.0.1
-export SPIRA_LC_PORT="$LCPORT"
-export SPIRA_LC_DB=spira_lifecycle
-export SPIRA_LC_DATA_DIR="$TMP/lc-data"
-export SPIRA_LC_USER=root
-export SPIRA_LC_PASSWORD=""
-# SPIRA_LC_PASSWORD_FILE is declared config now (spira/conf.d), read only from $SPIRA_TOML
-# (spira-lc/src/db.rs password_from) — the complete fixture's own declared path does not
-# exist for this suite's throwaway server. testlib/lc-fixture.sh's own pattern: an empty
-# (root, no password) credential file, declared (SPIRA_LC_SOCKET already unset above).
-: > "$TMP/lc-credential"
-tl_config SPIRA_LC_PASSWORD_FILE="$TMP/lc-credential" SPIRA_LC_SOCKET=""
-spira-lc admin-apply-ddl "$LCREPO/lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1
-wantrc "spira-lc schema applies cleanly" 0 $?
+lcfix_up || bail "the control store did not come up"
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
@@ -193,8 +141,7 @@ has_label() { local _all; _all="$(bdq label list "$1" 2>/dev/null)"; [[ "$_all" 
 
 lc_state_of() { spira-lc state "$1"; }
 lc_seed_working() {   # lc_seed_working <bead-id> — the lifecycle row a real Claim would leave
-    lc_root_sql --use-db spira_lifecycle sql -q \
-        "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('$1','WORKING','[]',0,0)" >/dev/null 2>&1
+    lcfix_seed "$1" WORKING
 }
 
 seed() {

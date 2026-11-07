@@ -21,6 +21,7 @@ testdb_require test-queue-open-batch
 TMP="$(mktemp -d)"; trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up openbatch || { echo "test-queue-open-batch: could not build fixture database"; exit 1; }
 lcfix_up || { echo "test-queue-open-batch: could not build a lifecycle fixture"; exit 1; }
+lcfix_round_files
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
@@ -127,7 +128,7 @@ clean_case() {
     rm -f "$(open_batch_file)" "$TMP/live-prs"
     : > "$FORGE_LOG"; : > "$BODY_LOG"; : > "$GATE_COUNT"; printf '0\n' > "$GATE_RC_FILE"
     local t
-    for t in event delivery batch_member batch bead; do lcfix_sql -q "DELETE FROM $t" >/dev/null 2>&1; done
+    lcfix_reset
     local wt
     for wt in "$RUN/worktree"/sp-* "$RUN/worktree"/.open-batch-*; do
         [ -e "$wt" ] && git -C "$REPO" worktree remove -f "$wt" 2>/dev/null || true

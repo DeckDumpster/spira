@@ -37,17 +37,17 @@ export SPIRA_POISON_ASKED="$TMP/poison-asked"; mkdir -p "$SPIRA_POISON_ASKED"
 # lc.sh's own exit code. It lives on the bead store's own server, as in production: the ask
 # listing reads its titles from the beads over the lifecycle connection, and unpoison finds the
 # poisoning's ask by that title.
+. "$HERE/testlib/lc-dolt-fixture.sh"
 . "$HERE/testlib/lc-fixture.sh"
-trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+trap 'lcfix_down; lcdolt_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 
 SPIRA_RUN="$TMP/run"; tl_config SPIRA_RUN="$SPIRA_RUN"; mkdir -p "$SPIRA_RUN"
-lcfix_up_on_testdb
-wantrc "spira-lc schema applies cleanly" 0 $?
+# The attempt-history facts are still the dolt lifecycle database's; the beads are the store's.
+lcdolt_up_on_testdb || bail "the dolt lifecycle database did not come up"
+lcfix_up || bail "the control store did not come up"
 
-lc_seed_working_poisoned() {   # lc_seed_working_poisoned <bead-id> [holder]
-    local holder="NULL"; [ -n "${2:-}" ] && holder="'$2'"
-    lcfix_sql -q \
-        "INSERT INTO bead (bead_id, state, holder, holds, version, updated_at) VALUES ('$1','WORKING',$holder,'[\"poison\"]',0,0)" >/dev/null 2>&1
+lc_seed_poisoned() {   # lc_seed_poisoned <bead-id> <READY|WORKING> [holder]
+    LCFIX_HOLDER="${3:-}" lcfix_seed "$1" "$2" && lcfix_hold "$1" "$2" Poison || bail "could not seed $1 poisoned"
 }
 
 seedt() {   # seedt <id> <event_type> <new_value> <created_at>
@@ -80,9 +80,9 @@ done
 # CHECK 4's ask is its control-plane record, opened as mail opens it beside the decision bead.
 spira-lc create-ask sp-pzask --work-bead sp-pz1 >/dev/null 2>&1
 is "SEEN OPEN: the poisoning's ask is open in the control plane" "OPEN" "$(ask_state sp-pzask)"
-lc_seed_working_poisoned sp-pz1
-# sp-pz3 is held: the claim is the row's WORKING holder, never bd's in_progress (sp-mve9i).
-lc_seed_working_poisoned sp-pz3 dwarf-test
+lc_seed_poisoned sp-pz1 READY
+# sp-pz3 is held: the claim is the row's WORKING holder, never bd's in_progress (sp-mve9i); sp-pz1 is not.
+lc_seed_poisoned sp-pz3 WORKING dwarf-test
 
 echo
 echo "CONTROL — removing only the label leaves CHECK 4 about to re-poison:"
@@ -102,8 +102,8 @@ nowant "the vestigial label is removed too" "spira-poison" "$(labels_of sp-pz1)"
 is   "attempt count floored to 0" "0" "$(attempts_of sp-pz1)"
 nowant "check4 no longer decides poison" "poison" "$(decide sp-pz1)"
 nowant "the lifecycle poison hold is released, against a real spira-lc" "poison" "$(spira-lc holds sp-pz1)"
-is   "...and the lifecycle row's WORKING state is undisturbed by releasing the hold" \
-     "WORKING" "$(spira-lc state sp-pz1)"
+is   "...and the lifecycle row's state is undisturbed by releasing the hold" \
+     "READY" "$(spira-lc state sp-pz1)"
 is   "the poisoning's operator ask is resolved in the control plane" "WITHDRAWN" "$(ask_state sp-pzask)"
 is   "...and its decision bead follows the ask record in bd" "closed" "$(status_of sp-pzask)"
 want "the cause is recorded on the bead" "every session ended its turn" "$(bdjson show sp-pz1 | python3 -c 'import sys,json

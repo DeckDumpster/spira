@@ -39,72 +39,19 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-# Resolve cargo/dolt BEFORE conf.sh, same hazard as test-lifecycle-container.sh: conf.sh
-# can overwrite PATH with the harness's own tool directories.
-DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
-[ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — needed for spira_lifecycle's own throwaway server"
-
+. "$HERE/testlib/lc-fixture.sh"
 TMP="$(mktemp -d)"
+trap 'lcfix_down; rm -rf "$TMP"' EXIT INT TERM
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t
 export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 BASE_PATH="$PATH"
-export PATH="$(dirname "$DOLT_BIN"):$BASE_PATH"
 
-# spira_lifecycle's own throwaway server — the same shape test-census.sh's own section 5
-# and test-lc-hold.sh use. A distinct store on its own port, never dolt-beads.service.
-LC_PORT=$((3309 + (RANDOM % 500)))
-LC_SERVER_PID=""
-mkdir -p "$TMP/lc-data"
-cat > "$TMP/lc-server.yaml" <<YAML
-log_level: warning
-listener:
-  port: $LC_PORT
-  max_connections: 50
-  read_timeout_millis: 30000
-  write_timeout_millis: 30000
-data_dir: "$TMP/lc-data"
-behavior:
-  dolt_transaction_commit: false
-  event_scheduler: "OFF"
-YAML
-"$DOLT_BIN" sql-server --config "$TMP/lc-server.yaml" > "$TMP/lc-server.log" 2>&1 & # batch-job: long-lived fixture listener, killed by the suite teardown
-LC_SERVER_PID=$!
-_lc_stop() { [ -n "$LC_SERVER_PID" ] && kill "$LC_SERVER_PID" >/dev/null 2>&1; }
-trap '_lc_stop; rm -rf "$TMP"' EXIT INT TERM
-
-lc_up=0
-for _ in $(seq 1 50); do
-    if timeout 5 "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
-        lc_up=1
-        break
-    fi
-    sleep 0.2
-done
-[ "$lc_up" = 1 ] || bail "spira_lifecycle's throwaway dolt sql-server never came up: $(cat "$TMP/lc-server.log")"
-
-REPO="$(cd "$HERE/.." && pwd)"
 LC_BIN="$(command -v spira-lc 2>/dev/null)"; [ -n "$LC_BIN" ] || { echo "spira-lc is not on PATH (the tree's build provides it)" >&2; exit 1; }
+lcfix_up || bail "the control store did not come up"
 
-# round 3 fix (pattern 7): SPIRA_LC_PASSWORD_FILE is a registered key; undeclared, it
-# resolves to the complete fixture's placeholder /fixture/userhome/.../spira-lc.credential,
-# which does not exist. Declare this suite's own (empty-password) credential file.
-: > "$TMP/lc-data/credential"
-tl_config SPIRA_LC_PASSWORD_FILE="$TMP/lc-data/credential"
-SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" SPIRA_LC_DB=spira_lifecycle \
-SPIRA_LC_DATA_DIR="$TMP/lc-data" SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
-SPIRA_LC_DOLT_BIN="$DOLT_BIN" \
-    "$LC_BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1
-wantrc "spira_lifecycle schema applies cleanly" 0 $?
-
-# lc_seed_bead <id> <STATE> -> a direct row insert, the same shape test-lifecycle-container.sh
-# and test-census.sh's own seed_bead use: this suite is about cockpit's reading of the row's
-# presence/state, not about proving the transition table.
-lc_seed_bead() {
-    timeout 5 "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls \
-        --use-db spira_lifecycle sql -q \
-        "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('$1','$2','[]',0,0)
-         ON DUPLICATE KEY UPDATE state='$2'" >/dev/null 2>&1
-}
+# lc_seed_bead <id> <STATE> [at-epoch] -> the row, brought to STATE at that time: this suite is
+# about cockpit's reading of the row's presence/state, not about proving the transition table.
+lc_seed_bead() { SPIRA_NOW="${3:-$(date +%s)}" lcfix_seed "$1" "$2" || bail "could not seed $1 $2"; }
 
 ALPHA="$TMP/alpha"; BETA="$TMP/beta"
 
@@ -132,7 +79,8 @@ git -C "$ALPHA" branch spira/sp-nnn main
 lc_seed_bead sp-nnn SUBMITTED
 lc_seed_bead sp-fff CERTIFIED
 for b in sp-aaa sp-ccc; do lc_seed_bead "$b" SUBMITTED; done
-for b in sp-bbb sp-oldd sp-eee; do lc_seed_bead "$b" LANDED; done
+for b in sp-bbb sp-eee; do lc_seed_bead "$b" LANDED; done
+lc_seed_bead sp-oldd LANDED $(( $(date +%s) - 48 * 3600 ))
 
 # Beta: master-based. sp-ddd has a branch but no spira-lc row (anomaly).
 git init -q -b master "$BETA"
@@ -188,9 +136,7 @@ unlanded() {    # unlanded <fixture-file>
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$ALPHA" \
         SPIRA_BDJSON_FIXTURE="$1" \
-        SPIRA_LC_BIN="$LC_BIN" SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" \
-        SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP/lc-data" \
-        SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" SPIRA_LC_DOLT_BIN="$DOLT_BIN" \
+        SPIRA_LC_BIN="$LC_BIN" SPIRA_LC_PASSWORD=unused \
         SPIRA_TOML="$SPIRA_TOML" \
         cockpit-collect probe unsent 2>/dev/null
 }

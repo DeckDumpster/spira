@@ -72,7 +72,6 @@ T="$(mktemp -d)"; trap 'lcfix_down; rm -rf "$T"' EXIT INT TERM
 lcfix_up || { printf 'test-czar-pass: could not build a lifecycle fixture\n' >&2; exit 2; }
 # czar-pass reads each repo's open batch from the store's own projection, which watches the
 # control store and refuses (unobservable) when the lifecycle is not on it — as production runs.
-fb_store_up || { printf 'test-czar-pass: could not put the batch machine on the control store\n' >&2; exit 2; }
 
 # czar-pass is found directly on this suite's PATH (sp-gypjk).
 

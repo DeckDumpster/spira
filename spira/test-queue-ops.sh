@@ -101,7 +101,7 @@ TIP03="eeff003300000000000000000000000000000003"
 
 # The queue the seeding opens batches through reads the same layer every case's own call does.
 tl_config SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$QUEUEDIR"
-batch_state() { lcfix_sql -q "SELECT state FROM batch WHERE batch_id='$1'" -r csv 2>/dev/null | sed -n 2p; }
+batch_state() { lcfix_batch_state "$1"; }
 
 # =============================================================================
 # EJECT — recording-bd stub, real spira-lc (UC-29).
@@ -199,13 +199,10 @@ ab01_comments="$(B comments sp-ab01 2>/dev/null || true)"
 want "G7: abandon posted no comment to sp-ab01" "No comments" "$ab01_comments"
 
 # =============================================================================
-# THE SWITCH ON — last, since it moves the bead and batch machines for the rest of the suite:
-# with SPIRA_LC_LIFECYCLE_ON_STORE on, the same seeding opens the batch as its own record on
-# the control store, and no open file is written; an abandon ends that record.
+# THE BATCH IS THE STORE'S OWN RECORD: no open file is written, and an abandon ends the record.
 # =============================================================================
 echo
-echo "the batch machine on the control store: a seeded batch is its record, and abandon ends it:"
-fb_store_up || bad "store: the control store is up" "fb_store_up failed"
+echo "a seeded batch is its record on the control store, and abandon ends it:"
 rec="$(seed_forge_batch "$REPONAME" sp-st01 --pr 77)" || bad "store: the batch is seeded" "no batch opened"
 want "store: queue batch show prints the seeded PR" "pr=77" "$rec"
 want "store: the record is the store's own (only a store record carries forge.phase), past its PR" \

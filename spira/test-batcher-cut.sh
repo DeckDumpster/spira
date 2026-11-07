@@ -326,6 +326,7 @@ cut_repo() {
     # (16, "the Concierge's own proven parallelism") is declared explicitly because K1 below
     # asserts it as the no-override behaviour, not merely whatever the fixture happens to carry.
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" \
+        SPIRA_LC_LIFECYCLE_ON_STORE=0 \
         SPIRA_QUEUE_DIR="$QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 \
         SPIRA_FORGE="$SH/forge-fixture.sh" \
         SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-16}" \
@@ -381,9 +382,8 @@ certify() {   # certify <id> <tip-sha> [epoch]
     [ -f "$RUN/lc-taken" ] && { grep -vx "$1" "$RUN/lc-taken" > "$RUN/lc-taken.n" || true; mv "$RUN/lc-taken.n" "$RUN/lc-taken"; }
 }
 
-lc_certify() {   # lc_certify <id> <tip-sha> [epoch] — a CERTIFIED row on the real machine
-    lcfix_seed "$1" CERTIFIED "$2"
-    lcfix_sql -q "UPDATE bead SET updated_at=${3:-$(date +%s)}, sifted_tip='$2' WHERE bead_id='$1'" >/dev/null 2>&1
+lc_certify() {   # lc_certify <id> <tip-sha> [epoch] — a CERTIFIED row on the real machine, certified at <epoch>
+    SPIRA_NOW="${3:-$(date +%s)}" lcfix_seed "$1" CERTIFIED "$2" && SPIRA_NOW="${3:-$(date +%s)}" lcfix_sifted "$1" "$2"
 }
 
 echo "test-batcher-cut.sh ($CUT_PART)"
@@ -410,7 +410,7 @@ locland   | $LREPO | queue.local | local/main  | | |
 RMAP
 
     cut_local() {
-        tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" \
+        tl_config SPIRA_LC_LIFECYCLE_ON_STORE=0 SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" \
             SPIRA_QUEUE_DIR="$QUEUEDIR" \
             SPIRA_QUEUE_BATCH_WAIT="${SPIRA_QUEUE_BATCH_WAIT_OVERRIDE:-999999}" \
             SPIRA_RELEASES="$LRELEASES" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
@@ -623,7 +623,7 @@ localmode  | $LREPO | queue.local | local/main  | | |
 RMAP
 
 cut_other() {
-    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" \
+    tl_config SPIRA_LC_LIFECYCLE_ON_STORE=0 SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" \
         SPIRA_QUEUE_DIR="$QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 SPIRA_FORGE="$SH/forge-fixture.sh" \
         SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
     PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" \
@@ -748,11 +748,10 @@ git -C "$LREPO" worktree remove -f "$RUN/worktree/sp-cmcc3"
 # Certified in the order C, A, B — certified_at deliberately reversed against dependency
 # order, so a sort on order_key alone (no stack awareness) would try to merge C first.
 plant sp-cmcc3; plant sp-cmaa1; plant sp-cmbb2
-lc_certify sp-cmcc3 "$tip_mc" 100
+# A claim names its prerequisites' live rows, so they are certified first, each stamped with its own time.
 lc_certify sp-cmaa1 "$tip_ma" 200
-lc_certify sp-cmbb2 "$tip_mb" 300
-lcfix_sql -q "UPDATE bead SET stack='{\"sp-cmaa1\":\"$tip_ma\"}', stack_depth=1 WHERE bead_id='sp-cmbb2'" >/dev/null 2>&1
-lcfix_sql -q "UPDATE bead SET stack='{\"sp-cmbb2\":\"$tip_mb\"}', stack_depth=1 WHERE bead_id='sp-cmcc3'" >/dev/null 2>&1
+LCFIX_STACK="{\"sp-cmaa1\":\"$tip_ma\"}" lc_certify sp-cmbb2 "$tip_mb" 300
+LCFIX_STACK="{\"sp-cmbb2\":\"$tip_mb\"}" lc_certify sp-cmcc3 "$tip_mc" 100
 
 out_m="$(STUB_INSTALL_BINS=1 cut_local)"
 want   "M: reports landing locally"                             "landed locally"  "$out_m"

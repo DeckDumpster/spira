@@ -53,7 +53,6 @@ lcfix_up || bail "could not build a lifecycle fixture"
 # cockpit-collect reads the open batch from the store's views in-process (sp-ipwlic: no `queue
 # batch show` child), and the views watch the control store only, so the batch machine and
 # every CERTIFIED row this suite seeds live there.
-fb_store_up || bail "could not put the batch machine on the control store"
 LC_ENV=($(lcfix_env))
 
 REPO="$TMP/repo"
@@ -206,7 +205,7 @@ git -C "$REPO2" checkout -q main
 
 # A fresh control store: section (a)'s open batch and CERTIFIED rows live on the store now,
 # and this case is 32 certified with no open batch.
-fb_store_up || bail "could not make a fresh control store for (e)"
+lcfix_reset || bail "could not make a fresh control store for (e)"
 
 RUN2="$TMP2/run"
 mkdir -p "$RUN2" "$TMP2/queue"
