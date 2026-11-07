@@ -27,6 +27,11 @@ functions = ["judge", "type_pass", "type_lane_fault", "judge_red", "removal_sets
 path = "round-controller/src/cut.rs"
 functions = ["cut", "plan", "explicit", "select"]
 
+# The contradictions: `raise` and each condition's arm.
+[[scope]]
+path = "round-controller/src/conditions.rs"
+functions = ["raise", "land_refused", "eject_refused", "two_answers", "cut_of_judged_red", "lane_blocked", "stuck_runner", "orphaned"]
+
 [[scope]]
 path = "round-controller/src/supersede.rs"
 functions = ["check"]
