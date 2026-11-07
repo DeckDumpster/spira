@@ -187,6 +187,10 @@ pub struct Declared {
     pub red_tracker: String,
     pub work_types: Vec<String>,
     pub reclaim_grace: i64,
+    /// `SPIRA_OPEN_PROMOTE_GRACE_SECS`: how long a record may stay OPEN before the sweep acts.
+    pub open_promote_grace: i64,
+    /// `SPIRA_LC_STORE_PATH` is set: the control store serves the lifecycle.
+    pub control_store: bool,
     pub land_maxsec: String,
     pub max_dwarves: Option<i64>,
     pub max_live_dwarves: Option<i64>,
@@ -235,6 +239,8 @@ impl Declared {
                 .map(str::to_string)
                 .collect(),
             reclaim_grace: spira_config::process::cfg_parse::<i64>("SPIRA_RECLAIM_GRACE_SECS")?,
+            open_promote_grace: spira_config::process::cfg_parse::<i64>("SPIRA_OPEN_PROMOTE_GRACE_SECS")?,
+            control_store: !spira_config::process::cfg("SPIRA_LC_STORE_PATH")?.is_empty(),
             land_maxsec: spira_config::process::cfg("SPIRA_LAND_MAXSEC")?,
             max_dwarves: opt_i64("SPIRA_MAX_DWARVES")?,
             max_live_dwarves: opt_i64("SPIRA_MAX_LIVE_DWARVES")?,
@@ -267,6 +273,8 @@ impl Declared {
             red_tracker: String::new(),
             work_types: vec!["task".into(), "bug".into(), "feature".into()],
             reclaim_grace: 10800,
+            open_promote_grace: 300,
+            control_store: false,
             land_maxsec: "5400".into(),
             max_dwarves: None,
             max_live_dwarves: None,
@@ -300,6 +308,10 @@ pub struct Cfg {
     /// SPIRA_RED_TRACKER_LABEL; empty disables the tracker close.
     pub red_tracker: String,
     pub reclaim_grace: i64,
+    /// `SPIRA_OPEN_PROMOTE_GRACE_SECS`: how long a record may stay OPEN before the sweep acts.
+    pub open_promote_grace: i64,
+    /// `SPIRA_LC_STORE_PATH` is set: the control store serves the lifecycle.
+    pub control_store: bool,
     pub inference_every: i64,
     pub land_unit: String,
     pub land_maxsec: String,
@@ -431,6 +443,8 @@ impl Cfg {
             open_children: d.open_children,
             red_tracker: d.red_tracker,
             reclaim_grace: d.reclaim_grace,
+            open_promote_grace: d.open_promote_grace,
+            control_store: d.control_store,
             inference_every: num("SPIRA_INFERENCE_EVERY", 3600),
             land_unit: or("SPIRA_LAND_UNIT", "spira-landing"),
             land_maxsec: d.land_maxsec,

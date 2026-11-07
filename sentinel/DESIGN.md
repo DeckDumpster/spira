@@ -226,6 +226,7 @@ names live as plain `Cfg` fields so a unit test can point one at a fixture.
 | `SPIRA_REQUEUE_AT` | 5 | CHECK 4 |
 | `SPIRA_RECLAIM_AT` | 5 | CHECK 4 |
 | `SPIRA_RECLAIM_GRACE_SECS` | 10800 | CHECK 2 |
+| `SPIRA_OPEN_PROMOTE_GRACE_SECS` | 300 | CHECK 2 (control store: `sweep-open`) |
 | `SPIRA_INFERENCE_EVERY` | 3600 | CHECK 8 |
 | `SPIRA_LAND_UNIT` | `spira-landing` | CHECK 6 |
 | `SPIRA_LAND_MAXSEC` | 3600 | CHECK 6 |

@@ -250,6 +250,8 @@ impl World {
             ("SPIRA_SUBMITTED_LABEL", "spira-submitted"),
             ("SPIRA_WORK_CLOSE_TYPES", "task bug feature"),
             ("SPIRA_RECLAIM_GRACE_SECS", "10800"),
+            ("SPIRA_OPEN_PROMOTE_GRACE_SECS", "300"),
+            ("SPIRA_LC_STORE_PATH", ""),
             ("SPIRA_CHECK5_MAX_FILE", "5"),
             // literal-ok: the pre-migration Rust default this fixture stands in for, so
             // existing argv assertions (dispatch tests' RuntimeMaxSec=3600) don't drift.
@@ -296,6 +298,8 @@ impl World {
             red_tracker: get("SPIRA_RED_TRACKER_LABEL"),
             work_types: get("SPIRA_WORK_CLOSE_TYPES").split_whitespace().map(str::to_string).collect(),
             reclaim_grace: get("SPIRA_RECLAIM_GRACE_SECS").parse().unwrap_or(10800),
+            open_promote_grace: get("SPIRA_OPEN_PROMOTE_GRACE_SECS").parse().unwrap_or(300),
+            control_store: !get("SPIRA_LC_STORE_PATH").is_empty(),
             land_maxsec: get("SPIRA_LAND_MAXSEC"),
             max_dwarves: opt("SPIRA_MAX_DWARVES"),
             max_live_dwarves: opt("SPIRA_MAX_LIVE_DWARVES"),
@@ -975,6 +979,100 @@ fn on_check2_reaps_stale_leases_and_2c_reports_desync() {
     assert!(sink.has("ACT reclaimed 1 stale lease(s)"));
     assert!(sink.has("INCONSISTENT\tsp-c\tREADY with a holder still set"));
     assert!(sink.has("CHECK2c: 1 spira-lc row(s) with holder/state out of sync"));
+}
+
+// ---------------------------------------------------------------------------------------
+// CHECK 2 on the control store: expire-claims and sweep-open
+
+const STORE: &[(&str, &str)] = &[("SPIRA_LC_STORE_PATH", "/control/store.db"), ("SPIRA_OPEN_PROMOTE_GRACE_SECS", "90")];
+
+fn lc_verbs(r: &FakeRunner, verb: &str) -> Vec<Vec<String>> {
+    r.calls.borrow().iter().cloned().filter(|s| s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some(verb)).map(|s| s.args).collect()
+}
+
+#[test]
+fn on_the_control_store_check2_returns_stale_claims_through_expire_claims() {
+    let (w, r, sink, clock) = setup("check2-expire");
+    let lease = NOW - 20_000;
+    r.on(move |s| {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
+            return ok(&format!(r#"[{{"bead_id":"sp-b","state":"WORKING","holder":"dwarf-1","lease_until":"{lease}","holds":"[]","version":"3"}}]"#));
+        }
+        if s.prog == "spira-lc" && s.args[0] == "show" {
+            return ok(r#"{"bead":{"state":"WORKING","version":"3"}}"#);
+        }
+        if s.prog == "spira-lc" && s.args[0] == "expire-claims" {
+            return ok(r#"{"returned":["sp-b"]}"#);
+        }
+        None
+    });
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, STORE, None);
+    assert_eq!(lc_verbs(&r, "expire-claims"), vec![vec!["expire-claims", "--stopped", "sp-b", "--actor", "sentinel"]], "{}", sink.text());
+    assert!(lc_verbs(&r, "event").is_empty(), "the sweep returns the claim, not a per-record event: {}", sink.text());
+    assert!(sink.has("ACT reclaimed 1 stale lease(s)"), "{}", sink.text());
+}
+
+#[test]
+fn off_the_control_store_check2_still_reaps_by_event_and_sweeps_nothing_open() {
+    let (w, r, sink, clock) = setup("check2-off");
+    let lease = NOW - 20_000;
+    r.on(move |s| {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
+            return ok(&format!(
+                r#"[{{"bead_id":"sp-b","state":"WORKING","holder":"dwarf-1","lease_until":"{lease}","holds":"[]","version":"3"}},{{"bead_id":"sp-o","state":"OPEN","holds":"[]","version":"1","updated_at":"{}"}}]"#,
+                NOW - 10_000
+            ));
+        }
+        if s.prog == "spira-lc" && s.args[0] == "show" {
+            return ok(r#"{"bead":{"state":"WORKING","version":"3"}}"#);
+        }
+        None
+    });
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
+    assert_eq!(lc_verbs(&r, "event").len(), 1);
+    assert!(lc_verbs(&r, "expire-claims").is_empty() && lc_verbs(&r, "sweep-open").is_empty());
+}
+
+fn open_row_world(plan_items: &'static str) -> (World, FakeRunner, FakeSink, FakeClock) {
+    let (w, r, sink, clock) = setup("check2-open");
+    r.on(move |s| {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
+            return ok(r#"[{"bead_id":"sp-o","state":"OPEN","holds":"[]","version":"1"},{"bead_id":"sp-g","state":"OPEN","holds":"[]","version":"1"}]"#);
+        }
+        if s.prog == "spira-lc" && s.args[0] == "plan" && s.args[1] == "items" {
+            return ok(plan_items);
+        }
+        if s.prog == "spira-lc" && s.args[0] == "sweep-open" {
+            return ok(if s.args.iter().any(|a| a == "--escalated") { r#"{"promoted":[],"escalated":["sp-g"],"escalate":[]}"# } else { r#"{"promoted":["sp-o"],"escalated":[],"escalate":["sp-g"]}"# });
+        }
+        None
+    });
+    (w, r, sink, clock)
+}
+
+#[test]
+fn sentinel_sweeps_open_records_past_the_grace_with_the_planning_planes_answer() {
+    let (w, r, sink, clock) = open_row_world(r#"{"watermark":4,"items":[{"id":"sp-o"}]}"#);
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, STORE, None);
+    let sweeps = lc_verbs(&r, "sweep-open");
+    assert_eq!(sweeps[0], ["sweep-open", "--grace-secs", "90", "--open", "sp-o", "--gone", "sp-g", "--actor", "sentinel"], "{}", sink.text());
+    assert!(sink.has("promoted sp-o"), "{}", sink.text());
+}
+
+#[test]
+fn a_record_with_no_open_bead_is_escalated_once_and_then_marked() {
+    let (w, r, sink, clock) = open_row_world(r#"{"watermark":4,"items":[{"id":"sp-o"}]}"#);
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, STORE, None);
+    let sweeps = lc_verbs(&r, "sweep-open");
+    assert_eq!(sweeps.len(), 2, "{}", sink.text());
+    assert!(sweeps[1].windows(2).any(|p| p == ["--escalated", "sp-g"]), "{:?}", sweeps[1]);
+}
+
+#[test]
+fn an_unanswered_planning_read_sweeps_nothing() {
+    let (w, r, sink, clock) = open_row_world("not json");
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, STORE, None);
+    assert!(lc_verbs(&r, "sweep-open").is_empty(), "{}", sink.text());
 }
 
 // ---------------------------------------------------------------------------------------

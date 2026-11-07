@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=reclaim
+DOC=How long a control-store record may sit OPEN before the sentinel's sweep promotes it, or names it for escalation when no open bead stands behind it. Longer than a filing takes, so a filing still in progress is never promoted from under its creator.
+SCHEMA=Seconds a record may stay OPEN before the sentinel promotes it (unit: seconds; integer; default 300; sane range 60-3600). Parsed as an integer, so it must not be empty.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_OPEN_PROMOTE_GRACE_SECS:=300}"
+SPIRA_CONF_DEFAULT_EOF
