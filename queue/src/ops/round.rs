@@ -1015,13 +1015,18 @@ fn sweep(w: &World, c: &Ctx, spare: Option<&str>) {
     let Ok(all) = w.lc.batches(&c.r.name) else {
         return;
     };
+    let held: Vec<PathBuf> = all
+        .iter()
+        .filter(|b| !b.is_terminal() || Some(b.id.as_str()) == spare)
+        .map(|b| worktree_of(&b.kv))
+        .collect();
     for b in all.iter().filter(|b| b.is_terminal() && Some(b.id.as_str()) != spare) {
         let wt = worktree_of(&b.kv);
         let has_tree = !wt.as_os_str().is_empty() && wt.exists();
         if !has_tree && !running_marker(c, &b.id).exists() {
             continue;
         }
-        if let (Some(repo), true) = (&c.r.path, has_tree) {
+        if let (Some(repo), true) = (&c.r.path, has_tree && !held.contains(&wt)) {
             w.git.worktree_remove(repo, &wt);
         }
         finish(w, c, &b.id, End::Abandoned("swept"), &format!("ended: {} on the lifecycle; record swept", b.state));
@@ -1259,6 +1264,29 @@ pub(super) fn csv(ms: &[Member]) -> String {
 
 pub(super) fn worktree_of(kv: &Kv) -> PathBuf {
     PathBuf::from(kv.get("worktree").unwrap_or(""))
+}
+
+/// Removes `ending`'s worktree `wt` unless a round still open on the repo records the same path:
+/// rounds share a path (`.round-<repo>` by default, the batcher's one tree), and an ended round's
+/// tree is then the live round's. When the open rounds cannot be read the tree stays.
+fn remove_unheld_tree(w: &World, c: &Ctx, path: &Path, wt: &Path, ending: &str) {
+    let held = live_records(w, c).map(|open| {
+        open.iter()
+            .filter(|kv| kv.get("batch_id") != Some(ending))
+            .map(worktree_of)
+            .collect::<Vec<_>>()
+    });
+    match held {
+        Ok(held) if !held.iter().any(|h| h == wt) => w.git.worktree_remove(path, wt),
+        Ok(_) => w.out(format!(
+            "queue.sh: round {ending} ended; its worktree {} is kept — an open round stands in it",
+            wt.display()
+        )),
+        Err(e) => w.err(format!(
+            "queue.sh: round {ending} ended; its worktree {} is kept — the open rounds cannot be read: {e}",
+            wt.display()
+        )),
+    }
 }
 
 /// The round's tree rebuilt from `base_sha` with `members` merged in order, in `wt`. A
@@ -3605,7 +3633,7 @@ fn eject(
             Err((rc, out)) => w.err(format!("queue.sh {label}: spira-lc abandon-batch refused for the emptied round {batch} (rc={rc}): {out} — the round is recorded ended; round open retries the abandon")),
         }
         drop_or_warn(w, label, &c, batch, "emptied");
-        w.git.worktree_remove(&path, &wt);
+        remove_unheld_tree(w, &c, &path, &wt, batch);
         finish(w, &c, batch, End::Abandoned("emptied"), &format!("{id} ejected, no member remains"));
         stage::discard_behind(w, &c, &path, batch, &format!("round {batch} was emptied"));
         w.out(format!(
@@ -4160,7 +4188,7 @@ fn land_round(
     };
     retire_menders(w, &c, batch, "round landed");
     drop_or_warn(w, label, &c, batch, END_LANDED);
-    w.git.worktree_remove(&path, &wt);
+    remove_unheld_tree(w, &c, &path, &wt, batch);
     if recorded {
         crate::lock::remove_certify_lock(&c.s.queue_dir, &c.r.name, batch);
     }
@@ -4483,7 +4511,7 @@ fn close_abandoned(w: &World, label: &str, c: &Ctx, path: &Path, kv: &Kv, reason
     }
     retire_menders(w, c, batch, "round abandoned");
     drop_or_warn(w, label, c, batch, "abandoned");
-    w.git.worktree_remove(path, &worktree_of(kv));
+    remove_unheld_tree(w, c, path, &worktree_of(kv), batch);
     finish(w, c, batch, End::Abandoned(cause), reason);
     stage::discard_behind(
         w,
