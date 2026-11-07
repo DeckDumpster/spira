@@ -450,6 +450,27 @@ mod tests {
         assert!(matches!(dead.call(&["list"]), Err(LcError::Fault(m)) if m.contains("not answering")));
     }
 
+    fn closer(argv: &[String]) -> (i32, String) {
+        match (argv[0].as_str(), argv.get(1).map(String::as_str)) {
+            ("close", Some("sp-ok")) => (0, String::new()),
+            ("close", Some("sp-refused")) => (3, "\x00a terminal row\n".into()),
+            _ => (2, "cannot tell: not served".into()),
+        }
+    }
+
+    /// sp-cxfgj5: a close's refusal and its fault are variants a caller matches, never
+    /// "exited 3" in a string.
+    #[test]
+    fn a_close_answers_a_typed_refusal_or_fault_never_text_to_match() {
+        let dir = testkit::TempDir::new("lc-client-close");
+        let (path, _) = serve(&dir, closer);
+        let c = LcClient::socket(&path);
+        let close = |id: &str| crate::lifecycle_row::close_on(&c, id, "why", "t", &[]);
+        assert_eq!(close("sp-ok"), Ok(()));
+        assert!(matches!(close("sp-refused"), Err(LcError::Refused(_))));
+        assert!(matches!(close("sp-other"), Err(LcError::Fault(_))));
+    }
+
     /// The verbs the CLI once answered itself go to the service like any other, and a body
     /// rides the socket to exactly its length.
     #[test]
