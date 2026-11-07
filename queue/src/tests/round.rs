@@ -1045,26 +1045,41 @@ fn open_skips_what_is_not_certified_or_does_not_merge() {
         .borrow_mut()
         .insert("tb".into(), vec!["list.txt".into()]);
     assert_eq!(
-        t.run(&["round", "open", "--members", "sp-a,sp-b,sp-d,sp-zz"]),
-        0,
+        t.run(&["round", "open", "--members", "sp-a,sp-d,sp-zz"]),
+        1,
         "{}",
         t.err()
     );
-    let o = t.out();
+    let o = t.err();
     assert!(
-        o.contains("sp-b: conflicts with the round")
-            && o.contains("sp-d: lifecycle state=REWORK")
-            && o.contains("sp-zz: no lifecycle row"),
+        o.contains("sp-d: lifecycle state=REWORK")
+            && o.contains("sp-zz: no lifecycle row")
+            && o.contains("2 of 3 named members"),
         "{o}"
     );
-    assert!(o.contains("members=sp-a:ta"), "{o}");
+    assert!(!t.lc.has("cut") && !t.qfile("round").exists());
+
+    let t = round_world();
+    t.git.merge_fail.borrow_mut().insert("tb".into());
+    t.git
+        .rebase_fail
+        .borrow_mut()
+        .insert("tb".into(), vec!["list.txt".into()]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 1);
+    assert!(
+        t.err().contains("sp-b: conflicts with the round")
+            && !t.lc.has("cut")
+            && !t.qfile("round").exists(),
+        "{}",
+        t.err()
+    );
 
     let t = round_world();
     t.git.merge_fail.borrow_mut().insert("ta".into());
     t.git.rebase_fail.borrow_mut().insert("ta".into(), vec![]);
     assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 1);
     assert!(
-        t.err().contains("nothing admissible") && !t.lc.has("cut") && !t.qfile("round").exists()
+        t.err().contains("1 of 1 named members") && !t.lc.has("cut") && !t.qfile("round").exists()
     );
 }
 
@@ -1121,20 +1136,74 @@ fn block(t: &T, id: &str, by: &[&str]) {
 }
 
 #[test]
+fn open_refuses_a_member_given_at_a_tip_other_than_its_recorded_tip_and_creates_no_round() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:rebuilt"]),
+        1,
+        "{}",
+        t.err()
+    );
+    let e = t.err();
+    assert!(
+        e.contains("sp-b: rebuilt is not its row's tip tb") && e.contains("1 of 2 named members"),
+        "{e}"
+    );
+    assert!(!t.lc.has("cut") && !t.qfile("round").exists());
+}
+
+#[test]
+fn open_refuses_every_member_it_cannot_admit_in_one_message() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:x1,sp-b:x2,sp-c:tc"]),
+        1,
+        "{}",
+        t.err()
+    );
+    let e = t.err();
+    assert!(e.contains("sp-a: x1 is not") && e.contains("sp-b: x2 is not"), "{e}");
+}
+
+#[test]
+fn open_refuses_a_space_separated_members_value() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta sp-b:tb"]),
+        2,
+        "{}",
+        t.err()
+    );
+    assert!(t.err().contains("whitespace"), "{}", t.err());
+    assert!(!t.lc.has("cut") && !t.qfile("round").exists());
+}
+
+#[test]
+fn open_refuses_a_member_token_that_runs_two_pairs_together() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta:sp-b:tb"]),
+        2,
+        "{}",
+        t.err()
+    );
+    assert!(t.err().contains("holds a second colon"), "{}", t.err());
+    assert!(!t.qfile("round").exists());
+}
+
+#[test]
 fn open_skips_a_member_whose_blocker_has_not_landed_and_names_it() {
     let t = round_world();
     block(&t, "sp-b", &["sp-eeg"]);
     assert_eq!(
         t.run(&["round", "open", "--members", "sp-a,sp-b"]),
-        0,
+        1,
         "{}",
         t.err()
     );
-    let o = t.out();
+    let o = t.err();
     assert!(
-        o.contains("skip — sp-b: depends on sp-eeg (")
-            && o.contains("members=sp-a:ta")
-            && !o.contains("sp-b:tb"),
+        o.contains("sp-b: depends on sp-eeg (") && !t.lc.has("cut") && !t.qfile("round").exists(),
         "{o}"
     );
 }
@@ -1145,13 +1214,13 @@ fn open_skips_a_member_whose_blocker_is_only_a_co_member_of_the_round() {
     block(&t, "sp-b", &["sp-a"]);
     assert_eq!(
         t.run(&["round", "open", "--members", "sp-a,sp-b"]),
-        0,
+        1,
         "{}",
         t.err()
     );
-    let o = t.out();
+    let o = t.err();
     assert!(
-        o.contains("skip — sp-b: depends on sp-a (") && !o.contains("sp-b:tb"),
+        o.contains("sp-b: depends on sp-a (") && !t.qfile("round").exists(),
         "{o}"
     );
 }
@@ -1181,11 +1250,12 @@ fn open_returns_a_base_conflict_to_rework_and_keeps_a_round_conflict_queued() {
         .insert("tc".into(), vec!["c.txt".into(), "d.txt".into()]);
     assert_eq!(
         t.run(&["round", "open", "--members", "sp-a,sp-b,sp-c"]),
-        0,
+        1,
         "{}",
         t.err()
     );
-    let o = t.out();
+    let o = t.err();
+    assert!(!t.qfile("round").exists() && !t.lc.has("cut"), "{o}");
     assert!(o.contains("sp-b: conflicts with base — returned to rework") && o.contains("sp-c: conflicts with the round, and with a rebase onto its head — paths: c.txt d.txt\n"), "{o}");
     assert!(
         t.lc.has(
@@ -1216,14 +1286,13 @@ fn open_fails_and_does_not_claim_a_return_the_lifecycle_refused_or_ignored() {
             t.err()
         );
         assert!(
-            !t.out().contains("returned to rework")
-                && t.out().contains("sp-b: conflicts with base ("),
+            !t.err().contains("— returned to rework")
+                && t.err().contains("sp-b: conflicts with base ("),
             "{}",
-            t.out()
+            t.err()
         );
         assert!(
-            t.err().contains("could not be returned to rework")
-                && !t.lc.has("cut")
+            !t.lc.has("cut")
                 && !t.qfile("round").exists(),
             "{}",
             t.err()
@@ -1329,12 +1398,13 @@ fn open_skips_a_member_at_a_tip_that_already_went_red_in_a_batch() {
     std::fs::write(t.qfile("red-tips"), "sp-r tsp-r\n").unwrap();
     assert_eq!(
         t.run(&["round", "open", "--members", "sp-a,sp-r"]),
-        0,
+        1,
         "{}",
         t.err()
     );
-    let o = t.out();
+    let o = t.err();
     assert!(o.contains("sp-r: tsp-r already went red in a batch"), "{o}");
+    assert!(!t.qfile("round").exists());
 }
 
 #[test]
@@ -1359,15 +1429,29 @@ fn open_skips_a_submitted_member_whose_gate_is_fail_at_its_current_tip_and_only_
             "--members",
             "sp-a,sp-f,sp-old,sp-base,sp-nov"
         ]),
+        1,
+        "{}",
+        t.err()
+    );
+    let o = t.err();
+    assert!(
+        o.contains("sp-f: its gate is FAIL at tsp-f (branch-red)")
+            && o.contains("1 of 5 named members"),
+        "{o}"
+    );
+    assert!(!t.qfile("round").exists());
+    assert_eq!(
+        t.run(&[
+            "round",
+            "open",
+            "--members",
+            "sp-a,sp-old,sp-base,sp-nov"
+        ]),
         0,
         "{}",
         t.err()
     );
     let o = t.out();
-    assert!(
-        o.contains("sp-f: its gate is FAIL at tsp-f (branch-red)"),
-        "{o}"
-    );
     let members = o.lines().find_map(|l| l.strip_prefix("members=")).unwrap();
     assert!(
         members.contains("sp-a:")
@@ -3945,7 +4029,7 @@ fn a_rework_bead_held_manual_is_retipped_and_admitted_to_a_round() {
     let tip_arg = format!("--tip={T_FIX}");
     t.run(&["round", "open", "--members", &format!("sp-a:{T_FIX}")]);
     assert!(
-        t.err().contains("nothing admissible") && !t.qfile("round").exists(),
+        t.err().contains("1 of 1 named members") && !t.qfile("round").exists(),
         "a REWORK row is not admitted: {}",
         t.err()
     );
@@ -4735,36 +4819,35 @@ fn a_member_whose_tip_is_a_recorded_ejected_red_tip_is_not_offered_to_the_cut() 
         .ejected_red_tip = Some("tb".into());
     assert_eq!(
         t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]),
-        0,
+        1,
         "{}",
         t.err()
     );
     assert!(
-        t.out().contains("sp-b: tb is a recorded ejected-red tip"),
+        t.err().contains("sp-b: tb is a recorded ejected-red tip"),
         "{}",
-        t.out()
+        t.err()
     );
-    assert!(t.out().contains("members=sp-a:ta sp-c:tc"), "{}", t.out());
+    assert!(!t.qfile("round").exists());
 }
 
 #[test]
-fn a_member_spira_lc_refuses_at_the_cut_is_dropped_and_the_round_opens_with_the_rest() {
+fn a_member_spira_lc_refuses_at_the_cut_refuses_the_whole_open_naming_it() {
     let t = round_world();
     t.lc.cut_refuses_member.set(Some("sp-b"));
     t.lc.no_batch_row.set(true);
     assert_eq!(
         t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]),
-        0,
+        1,
         "{}",
         t.err()
     );
     assert!(
-        t.out()
-            .contains("sp-b: spira-lc refused it at the cut — dropped from the round"),
+        t.err().contains("spira-lc cut refused") && t.err().contains("sp-b"),
         "{}",
-        t.out()
+        t.err()
     );
-    assert!(t.out().contains("members=sp-a:ta sp-c:tc"), "{}", t.out());
+    assert!(!t.qfile("round").exists());
 }
 
 #[test]
@@ -5624,7 +5707,7 @@ fn open_files_one_integration_with_both_members_context_instead_of_skipping_one(
         .insert("tc".into(), vec!["child.rs".into()]);
     assert_eq!(
         t.run(&["round", "open", "--members", "sp-a,sp-b,sp-c"]),
-        0,
+        1,
         "{}",
         t.err()
     );
@@ -5654,18 +5737,14 @@ fn open_files_one_integration_with_both_members_context_instead_of_skipping_one(
         "{:?}",
         t.lc.calls.borrow()
     );
-    let o = t.out();
-    assert!(
-        o.contains("members=sp-b:tb\n"),
-        "only the unrelated member rounds: {o}"
-    );
+    assert!(!t.qfile("round").exists(), "a refused open cuts nothing");
 
     let t2 = round_world();
     t2.git.merge_fail.borrow_mut().insert("tc".into());
     t2.git.rebase_fail.borrow_mut().insert("tc".into(), vec![]);
     assert_eq!(
         t2.run(&["round", "open", "--members", "sp-a,sp-b,sp-c"]),
-        0,
+        1,
         "{}",
         t2.err()
     );
@@ -5673,7 +5752,6 @@ fn open_files_one_integration_with_both_members_context_instead_of_skipping_one(
         integration_bugs(&t2).is_empty(),
         "no readable overlap files nothing"
     );
-    assert!(t2.out().contains("members=sp-a:ta sp-b:tb"), "{}", t2.out());
 }
 
 #[test]
@@ -5685,17 +5763,16 @@ fn a_carried_member_is_not_admitted_and_a_second_integration_is_not_filed_while_
     fs::write(t.qfile("integrations"), "sp-int sp-a sp-c\n").unwrap();
     assert_eq!(
         t.run(&["round", "open", "--members", "sp-a,sp-b,sp-c"]),
-        0,
+        1,
         "{}",
         t.err()
     );
-    let o = t.out();
+    let o = t.err();
     assert!(
         o.contains("sp-a: carried by integration sp-int")
             && o.contains("sp-c: carried by integration sp-int"),
         "{o}"
     );
-    assert!(o.contains("members=sp-b:tb\n"), "{o}");
     assert!(
         integration_bugs(&t).is_empty(),
         "{:?}",
