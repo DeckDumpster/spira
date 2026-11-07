@@ -1485,6 +1485,7 @@ dependencies = [
  "spira-desired-state",
  "spira-otel",
  "testkit",
+ "toml",
  "tsd",
 ]
 

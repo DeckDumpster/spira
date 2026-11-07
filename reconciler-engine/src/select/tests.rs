@@ -90,7 +90,7 @@ fn plan(sections: Vec<serde_json::Value>, knobs: serde_json::Value) -> Plan {
     }))
     .unwrap();
     let a = crate::assemble::assemble(&snap, T0);
-    let gaps = crate::goodput_pass::interim_ranking(&a);
+    let gaps = crate::rank::rank(&a, &crate::causal_map::CausalMap::seed().unwrap()).gaps;
     select(&Inputs { assembled: &a, gaps: &gaps, shadow: &[], halted: false, now_ms: T0, token: "1.0" })
 }
 
@@ -150,7 +150,7 @@ fn among_candidates_the_one_attempted_longest_ago_goes_first_never_declaration_o
     }))
     .unwrap();
     let a = crate::assemble::assemble(&snap, T0);
-    let gaps = crate::goodput_pass::interim_ranking(&a);
+    let gaps = crate::rank::rank(&a, &crate::causal_map::CausalMap::seed().unwrap()).gaps;
     let p = select(&Inputs { assembled: &a, gaps: &gaps, shadow: &[], halted: false, now_ms: T0, token: "1.0" });
     assert_eq!(p.steps.iter().map(|s| s.action.as_str()).collect::<Vec<_>>(), ["b-first"], "never attempted beats attempted a day ago");
 }

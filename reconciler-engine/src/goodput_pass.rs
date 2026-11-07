@@ -6,13 +6,14 @@
 use runtime::ports::Clock;
 use serde_json::Value;
 use spira_desired_state::intent::{JudgementResult, RECONCILER, RECONCILER_LOCK};
-use spira_desired_state::section::{self, Freshness, Section};
-use spira_desired_state::sections::{self, lifecycle};
+use spira_desired_state::sections::lifecycle;
 use spira_desired_state::store::format_rfc3339;
 
 use crate::assemble::{assemble, Assembled, Snapshot};
 use crate::pass_record::{Gap, Goodput, Judged, Mode, PassRecord, Refused, Step};
-use crate::select::{select, Inputs, Plan, Planned, RankedGap};
+use crate::causal_map::CausalMap;
+use crate::rank::{rank, RankedGap};
+use crate::select::{select, Inputs, Plan, Planned};
 
 /// One `spira-lc` call: the answer's exit code and its JSON.
 pub trait Lc {
@@ -61,46 +62,6 @@ fn refusal_code(v: &Value) -> Option<&str> {
 
 fn explain(code: i32, v: &Value) -> String {
     format!("exit {code}: {v}")
-}
-
-/// The ranking the selector walks until the causal map ranks it: score is the distance, a
-/// gap opens above `open` and stays open down to `close`, and a section that is stale or whose
-/// distance cannot be evaluated is an open gap scored at its `open`, never zero.
-pub fn interim_ranking(a: &Assembled) -> Vec<RankedGap> {
-    let was_open = |r: &str| a.prev.as_ref().is_some_and(|p| p.gaps.iter().any(|g| g.section == r));
-    let mut gaps = Vec::new();
-    for (r, cur) in &a.current.sections {
-        let Some(d) = &cur.distance else {
-            if cur.freshness != Freshness::Fresh {
-                gaps.push(RankedGap { section: r.clone(), distance: 0.0, score: 0.0, open: true });
-            }
-            continue;
-        };
-        if cur.freshness != Freshness::Fresh {
-            gaps.push(RankedGap { section: r.clone(), distance: d.open, score: d.open, open: true });
-            continue;
-        }
-        let kind = r.split_once('/').map_or(r.as_str(), |(k, _)| k);
-        let s = Section {
-            api_version: section::API_VERSION.into(),
-            kind: kind.into(),
-            metadata: cur.metadata.clone(),
-            spec: Default::default(),
-            status: cur.status.clone(),
-            flow: cur.flow.clone(),
-            distance: cur.distance.clone(),
-            actions: cur.actions.clone(),
-        };
-        let value = sections::lookup(kind).and_then(|k| s.distance_value(k)).and_then(Result::ok);
-        let Some(v) = value else {
-            gaps.push(RankedGap { section: r.clone(), distance: d.open, score: d.open, open: true });
-            continue;
-        };
-        let open = v > d.open || (v >= d.close && was_open(r));
-        gaps.push(RankedGap { section: r.clone(), distance: v, score: v, open });
-    }
-    gaps.sort_by(|x, y| y.score.total_cmp(&x.score).then_with(|| x.section.cmp(&y.section)));
-    gaps
 }
 
 fn goodput(a: &Assembled) -> Option<Goodput> {
@@ -283,7 +244,7 @@ pub mod legs {
 
     pub fn preview(v: &Value, now_ms: u64, shadow: &[String], halted: bool) -> Result<Preview, String> {
         let a = assemble(&Snapshot::parse(v)?, now_ms);
-        let gaps = interim_ranking(&a);
+        let gaps = rank(&a, &CausalMap::seed()?).gaps;
         let plan = select(&Inputs { assembled: &a, gaps: &gaps, shadow, halted, now_ms, token: "" });
         Ok(Preview { gaps: gaps.iter().filter(|g| g.open).map(|g| g.section.clone()).collect(), refused: plan.refused.iter().map(refusal_key).collect(), judgements: plan.judged.len(), steps: plan.steps.len() })
     }
@@ -318,7 +279,8 @@ pub mod legs {
         }
         let now_ms = clock.now_ms();
         let a = assemble(&Snapshot::parse(&v)?, now_ms);
-        let gaps = interim_ranking(&a);
+        let ranking = rank(&a, &CausalMap::seed()?);
+        let gaps = ranking.gaps;
         let plan = select(&Inputs { assembled: &a, gaps: &gaps, shadow: &cfg.shadow, halted: cfg.halted, now_ms, token: &cfg.token });
         let mut pass = Pass { lc, clock, deadline_at_ms: cfg.deadline_at_ms, token: cfg.token.clone(), deadline_hit: false, failed: Vec::new() };
         let judged = pass.judge(&plan, &cfg.shadow, cfg.halted);
@@ -333,8 +295,8 @@ pub mod legs {
             holder: cfg.holder.clone(),
             mode: mode_of(cfg.halted, &[], &would_step),
             goodput: goodput(&a),
-            binding: open.first().map(|g| g.section.clone()),
-            gaps: open.iter().map(|g| Gap { section: g.section.clone(), distance: g.distance, score: g.score }).collect(),
+            binding: ranking.binding,
+            gaps: open.iter().map(|g| Gap { section: g.section.clone(), distance: g.distance, score: g.score, path_to_goodput: g.path_to_goodput.clone() }).collect(),
             steps: Vec::new(),
             would_step,
             judged,

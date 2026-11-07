@@ -73,6 +73,9 @@ pub struct Gap {
     pub section: String,
     pub distance: f64,
     pub score: f64,
+    /// The `produces` chain from this section to `lifecycle/landed`; empty when none.
+    #[serde(default)]
+    pub path_to_goodput: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

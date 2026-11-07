@@ -8,15 +8,18 @@
 pub mod alert;
 pub mod arm;
 pub mod assemble;
+pub mod causal_map;
 pub mod clock;
 pub mod core;
 pub mod effect;
+pub mod flow;
 pub mod goodput_pass;
 pub mod holds;
 pub mod io;
 pub mod mail;
 pub mod pass_record;
 pub mod paths;
+pub mod rank;
 pub mod select;
 
 pub use alert::{classify_escalation, compose_alert, should_alert, EscalationClass};
