@@ -693,7 +693,7 @@ pub mod edge {
             let open_publish_prs = forge_call(&dir, "pr-list-open", &[], None)?.stdout().unwrap_or_default().lines().filter_map(|l| l.split_once(' ')).filter(|(_, b)| b.starts_with("spira/publish/")).filter_map(|(n, _)| n.trim_start_matches('#').parse().ok()).collect();
             let red_marker = queue_kv(e, &name, "publish-red").and_then(|kv| kv.get("head").cloned());
             let fix_forward_live = queue_kv(e, &name, "publish-red").and_then(|kv| kv.get("bead").cloned()).is_some_and(|bead| {
-                super::super::queue_step::edge::lc(e).answer(&["show", &bead]).ok().and_then(|o| serde_json::from_str::<serde_json::Value>(&o).ok()).and_then(|v| v["bead"]["state"].as_str().map(str::to_string)).is_some_and(|s| s != "CLOSED" && s != "LANDED")
+                super::super::queue_step::edge::lc(e).answer(&["show", &bead]).ok().is_some_and(|o| super::fix_forward_live(&o))
             });
             let stopped = spira_config::scoped_stop::stop_for(&e.world.run_dir, &name, "publish").is_some();
             snap.repos.insert(name.clone(), Repo { mode: "queue.local".into(), publish_mode: publish_mode.into(), unpublished: target.is_none(), stopped, publish_rec, pr, open_publish_prs, forge_sha, head_sha, diverged, red_marker, fix_forward_live, round_holds_hypervisor: holds });
@@ -853,4 +853,11 @@ pub mod edge {
         let spec = EffectSpec { name: spec.name.clone(), input: serde_json::to_string(&s).map_err(|e| e.to_string())?, deadline_ms: spec.deadline_ms };
         super::super::queue_step::edge::notify(e, k, &spec)
     }
+}
+
+/// Whether the publish-red fix-forward bead is still live, from `spira-lc show`'s typed row: a
+/// row in any terminal state (LANDED, SUPERSEDED, DROPPED, DONE) is not, so the red is filed
+/// again; an unreadable answer or no row is not live either.
+pub fn fix_forward_live(show_json: &str) -> bool {
+    spira_config::lc_state::parse_show(show_json).ok().flatten().is_some_and(|r| !r.terminal())
 }

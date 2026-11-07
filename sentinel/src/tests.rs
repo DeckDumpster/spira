@@ -808,6 +808,24 @@ fn call_cmd_a_claim_error_is_loud_and_never_reads_as_a_routine_skip() {
     assert!(!sink.has("skipped"), "a claim-error must not read like a routine skip: {}", sink.text());
 }
 
+/// law-lifecycle-state-is-not-text (sp-mijstw): `rune-ready`'s answer is an integer on exit
+/// 0. Anything else on stdout is no answer, never "0 ready" — a garbled reply read as zero
+/// left the persona uncalled with work ready, logged as the routine "nothing ready".
+#[test]
+fn call_cmd_a_ready_count_that_is_not_a_number_is_a_claim_error_not_zero() {
+    let (w, r, sink, clock) = setup("call-ready-garbled");
+    r.on(|s| {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("rune-ready") {
+            Some(Out { rc: 0, stdout: "warning: ready cache stale\n".into(), stderr: String::new() })
+        } else {
+            None
+        }
+    });
+    run_mode(&w, &r, &sink, &clock, Mode::Call { rune: "builder".into(), pool: None, require_express: false }, &[], None);
+    assert!(!sink.has("nothing ready in its partition"), "a non-number read as zero ready: {}", sink.text());
+    assert!(sink.has("CLAIM-ERROR"), "{}", sink.text());
+}
+
 #[test]
 fn named_unit_stop_cmd_stops_every_match_and_says_so_when_there_is_none() {
     let (w, r, sink, clock) = setup("nus");

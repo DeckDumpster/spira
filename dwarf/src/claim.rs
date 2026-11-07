@@ -173,27 +173,32 @@ pub enum Holds {
     Unknown(String),
 }
 
-/// An answer the store gave, or why it gave none: a non-zero exit, or "cannot tell" text on
-/// stdout (an error is never data, whatever stream it arrived on).
-fn answered(o: &Out) -> Result<&str, String> {
-    let said = |o: &Out| o.stderr.lines().chain(o.stdout.lines()).map(str::trim).find(|l| !l.is_empty()).unwrap_or("").to_string();
-    if o.code != 0 {
-        return Err(format!("rc={}: {}", o.code, said(o)));
+/// One bead's lifecycle row, read as `spira-lc show <id>`'s JSON and nothing else: a non-zero
+/// exit, or stdout that is not the `{"bead": …}` object, is no answer (an error is never data,
+/// whatever stream it arrived on, and no word in it is matched). `Ok(None)`: the machine
+/// answered and has no row for `id`.
+fn show_row(o: &Out) -> Result<Option<spira_config::lc_state::Row>, String> {
+    let said = || o.stderr.lines().chain(o.stdout.lines()).map(str::trim).find(|l| !l.is_empty()).unwrap_or("").to_string();
+    match o.code {
+        0 => spira_config::lc_state::parse_show(&o.stdout).map_err(|e| format!("{e} ({})", said())),
+        1 => Ok(None),
+        rc => Err(format!("rc={rc}: {}", said())),
     }
-    if o.stdout.lines().any(|l| l.trim_start().starts_with("cannot tell")) {
-        return Err(said(o));
-    }
-    Ok(&o.stdout)
 }
 
-/// `call`, retried on a non-answer with a doubling backoff from `delay`, `tries` in all.
-fn ask(tries: u32, delay: Duration, sleep: &(dyn Fn(Duration) + Sync), call: impl Fn() -> Out) -> Result<String, String> {
+/// `spira-lc show <id>`, retried on a non-answer with a doubling backoff from `delay`, `tries` in all.
+fn ask_row(
+    exec: &dyn Exec,
+    id: &str,
+    tries: u32,
+    delay: Duration,
+    sleep: &(dyn Fn(Duration) + Sync),
+) -> Result<Option<spira_config::lc_state::Row>, String> {
     let mut wait = delay;
     let mut why = String::new();
     for i in 1..=tries.max(1) {
-        let o = call();
-        match answered(&o) {
-            Ok(text) => return Ok(text.to_string()),
+        match show_row(&exec.exec("spira-lc", &crate::ports::s(&["show", id]), None, None)) {
+            Ok(row) => return Ok(row),
             Err(e) => why = e,
         }
         if i < tries {
@@ -204,11 +209,13 @@ fn ask(tries: u32, delay: Duration, sleep: &(dyn Fn(Duration) + Sync), call: imp
     Err(why)
 }
 
-/// The holds on a bead, `wait` excluded (it does not block a claim). A store that cannot
-/// tell is retried; one that still cannot tell is `Unknown`, never a list of hold names.
+/// The holds on a bead, `wait` excluded (it does not block a claim), from the row's typed
+/// `holds` field. A store that cannot tell is retried; one that still cannot tell, or that has
+/// no row for the bead, is `Unknown`, never a list of hold names.
 pub fn read_holds(exec: &dyn Exec, id: &str, tries: u32, delay: Duration, sleep: &(dyn Fn(Duration) + Sync)) -> Holds {
-    match ask(tries, delay, sleep, || exec.exec("spira-lc", &crate::ports::s(&["holds", id]), None, None)) {
-        Ok(text) => Holds::Known(text.lines().map(str::trim).filter(|h| !h.is_empty() && *h != "wait").map(String::from).collect()),
+    match ask_row(exec, id, tries, delay, sleep) {
+        Ok(Some(r)) => Holds::Known(r.holds.into_iter().filter(|h| h != "wait").collect()),
+        Ok(None) => Holds::Unknown(format!("spira-lc has no lifecycle row for {id}")),
         Err(why) => Holds::Unknown(why),
     }
 }
@@ -221,13 +228,26 @@ pub fn settle_claim(rc: i32, exec: &dyn Exec, id: &str, holder: &str, tries: u32
     if rc == LC_APPLIED || rc == LC_REFUSED {
         return rc;
     }
-    let row = ask(tries, delay, sleep, || exec.exec("spira-lc", &crate::ports::s(&["show", id]), None, None))
-        .and_then(|text| spira_config::lc_state::parse_show(&text));
-    match row {
-        Ok(Some(r)) if r.state == "WORKING" && r.holder.as_deref() == Some(holder) => LC_APPLIED,
+    match ask_row(exec, id, tries, delay, sleep) {
+        Ok(Some(r)) if r.working() && r.holder.as_deref() == Some(holder) => LC_APPLIED,
         Ok(_) => LC_REFUSED,
         Err(_) => LC_UNKNOWN,
     }
+}
+
+/// Which WORKING row, if any, `mine`'s name holds under another session still running, read
+/// from `spira-lc list --state WORKING`'s JSON rows. Err when the machine cannot answer: a
+/// claim that cannot check for a double hold refuses rather than assume there is none.
+pub fn double_hold(exec: &dyn Exec, mine: &str, live: &dyn Fn(&str) -> bool) -> Result<Option<String>, String> {
+    let o = exec.exec("spira-lc", &crate::ports::s(&["list", "--state", "WORKING"]), None, None);
+    if o.code != 0 {
+        return Err(format!("spira-lc list --state WORKING exited {}: {}", o.code, o.first_err_line()));
+    }
+    let rows = spira_config::lc_state::parse_rows(&o.stdout)?;
+    Ok(rows.into_iter().find_map(|r| {
+        let holder = r.holder.as_deref().filter(|_| r.working())?;
+        (live(holder) && spira_config::session::same_name_other_session(holder, mine)).then_some(r.bead_id)
+    }))
 }
 
 /// The lifecycle claim loop: one Claim event per ranked candidate until one applies. The row
@@ -379,6 +399,11 @@ mod tests {
         holds: Vec<String>,
         cannot_tell_holds: Mutex<u32>,
         cannot_tell_show: Mutex<u32>,
+        /// What the client-side `spira-lc holds` text view prints instead of the hold names:
+        /// a usage line, or nothing at all when its own `show` failed (exit 0 either way).
+        holds_text: Option<String>,
+        /// `spira-lc list --state WORKING`'s answer, when a test scripts it.
+        list: Option<Out>,
         calls: Mutex<Vec<String>>,
     }
     impl Store {
@@ -425,16 +450,17 @@ mod tests {
                     if Store::take(&self.cannot_tell_holds) {
                         return cannot();
                     }
-                    Out::ok(self.holds.join("\n"))
+                    Out::ok(self.holds_text.clone().unwrap_or_else(|| self.holds.join("\n")))
                 }
                 "show" => {
-                    if Store::take(&self.cannot_tell_show) {
+                    if Store::take(&self.cannot_tell_show) || Store::take(&self.cannot_tell_holds) {
                         return cannot();
                     }
                     let rows = self.rows.lock().unwrap();
                     let (st, h) = rows.get(&args[1]).cloned().unwrap_or_default();
-                    Out::ok(serde_json::json!({"bead": {"bead_id": args[1], "state": st, "holder": h}}).to_string())
+                    Out::ok(serde_json::json!({"bead": {"bead_id": args[1], "state": st, "holder": h, "holds": self.holds}}).to_string())
                 }
+                "list" => self.list.clone().expect("unscripted spira-lc list"),
                 other => panic!("unscripted spira-lc {other}"),
             }
         }
@@ -500,5 +526,46 @@ mod tests {
         });
         assert_eq!(won.as_deref(), Some("sp-b"));
         assert_eq!(st.held_by(me), vec!["sp-b"]);
+    }
+
+    #[test]
+    fn holds_are_the_rows_typed_field_never_words_on_stdout() {
+        // `spira-lc holds` once printed its usage text at exit 0, and the words read as holds.
+        let st = Store { holds_text: Some("usage: spira-lc holds <bead-id>\n".into()), ..Store::ready(&["sp-a"]) };
+        assert_eq!(read_holds(&st, "sp-a", 1, Duration::ZERO, &no_sleep), Holds::Known(vec![]));
+        let st = Store { holds: vec!["poison".into(), "wait".into()], holds_text: Some("usage\n".into()), ..Store::ready(&["sp-a"]) };
+        assert_eq!(read_holds(&st, "sp-a", 1, Duration::ZERO, &no_sleep), Holds::Known(vec!["poison".into()]));
+    }
+
+    #[test]
+    fn holds_whose_row_cannot_be_read_is_unknown_even_at_exit_0() {
+        // The client-side `holds` answers exit 0 with empty output when its own show fails.
+        let st = Store { holds_text: Some(String::new()), cannot_tell_show: Mutex::new(u32::MAX), ..Store::ready(&["sp-a"]) };
+        let h = read_holds(&st, "sp-a", 2, Duration::ZERO, &no_sleep);
+        assert!(matches!(h, Holds::Unknown(_)), "a row that cannot be read is not a row with no holds: {h:?}");
+    }
+
+    fn working(id: &str, holder: &str) -> serde_json::Value {
+        serde_json::json!({"bead_id": id, "state": "WORKING", "holder": holder})
+    }
+
+    #[test]
+    fn double_hold_reads_the_typed_working_rows() {
+        let me = "dwarf-eitri@100.5";
+        let rows = serde_json::json!([working("sp-x", "dwarf-other@7.7"), working("sp-y", "dwarf-eitri@200.9")]).to_string();
+        let st = Store { list: Some(Out::ok(rows.clone())), ..Store::default() };
+        assert_eq!(double_hold(&st, me, &|_| true), Ok(Some(String::from("sp-y"))));
+        assert_eq!(double_hold(&st, me, &|_| false), Ok::<_, String>(None), "a dead session's row is the reaper's");
+        let st = Store { list: Some(Out::ok(String::from("[]"))), ..Store::default() };
+        assert_eq!(double_hold(&st, me, &|_| true), Ok::<_, String>(None));
+    }
+
+    #[test]
+    fn double_hold_that_cannot_read_the_rows_refuses() {
+        let me = "dwarf-eitri@100.5";
+        let st = Store { list: Some(Out { code: 2, stdout: String::new(), stderr: "cannot tell: deadline".into() }), ..Store::default() };
+        assert!(double_hold(&st, me, &|_| true).is_err(), "no answer is not 'no double hold'");
+        let st = Store { list: Some(Out::ok(String::from("sp-y\tWORKING\tdwarf-eitri@200.9\n"))), ..Store::default() };
+        assert!(double_hold(&st, me, &|_| true).is_err(), "a text view is not the typed rows");
     }
 }

@@ -102,3 +102,48 @@ fn t5_a_live_holder_defers() {
 fn t5_forge_disabled_does_nothing() {
     assert_eq!(decide(&Carry::default(), &Snapshot { forge_enabled: false, ..busy() }).1, Vec::<Act>::new());
 }
+
+/// law-lifecycle-state-is-not-text (sp-mijstw): a rebase step's outcome is a typed body, never
+/// the first word of text. A rebase whose effect failed (a timeout, `rebase-stale` usage/config
+/// exit 2, a tool that never ran) is no verdict on the branch: it ends the pass without sending
+/// the bead back to rework. Only a reported conflict reopens it.
+fn rebasing(id: &str) -> (Carry, String) {
+    let leg = serde_json::json!({"repo": "pokedumpster", "path": "/r/poke", "landref": "main", "base_fq": "origin/main", "base_sha": "b1", "br": format!("spira/{id}"), "id": id, "tip": format!("{id}-tip"), "pr_state": "none", "version": 4});
+    let mut carry = Carry::default();
+    carry.branches.insert(format!("spira/{id}"), BranchCarry { state: State::Rebasing, ..BranchCarry::default() });
+    (carry, leg.to_string())
+}
+
+#[test]
+fn t7_a_rebase_that_could_not_run_is_not_a_conflict() {
+    let (carry, leg) = rebasing("pd-a");
+    let (next, acts) = on_outcome(&carry, REBASE, &leg, false, "landing.rebase: rebase-stale timed out");
+    assert!(!effects(&acts).contains(&REOPEN), "an infra failure sent the bead to rework: {acts:?}");
+    assert_eq!(next.branches["spira/pd-a"].state, State::Done);
+}
+
+#[test]
+fn t7_rebase_outcomes_are_read_from_the_typed_body() {
+    let (carry, leg) = rebasing("pd-a");
+    let (next, acts) = on_outcome(&carry, REBASE, &leg, true, r#"{"outcome":"ok"}"#);
+    assert_eq!(effects(&acts), vec![CONFINE], "ok rebases go on to confine");
+    assert_eq!(next.branches["spira/pd-a"].state, State::Confining);
+    let (_, acts) = on_outcome(&carry, REBASE, &leg, true, r#"{"outcome":"conflict","detail":"src/a.rs"}"#);
+    assert_eq!(effects(&acts), vec![REOPEN], "a reported conflict reopens");
+    let (_, acts) = on_outcome(&carry, REBASE, &leg, true, "ok but not the body");
+    assert!(!effects(&acts).contains(&REOPEN), "an unreadable body is no verdict: {acts:?}");
+}
+
+#[test]
+fn t7_confine_outcomes_are_read_from_the_typed_body() {
+    let (mut carry, leg) = rebasing("pd-a");
+    carry.branches.get_mut("spira/pd-a").unwrap().state = State::Confining;
+    let (next, acts) = on_outcome(&carry, CONFINE, &leg, true, r#"{"status":0,"detail":""}"#);
+    assert_eq!(effects(&acts), vec![FORCE_PUSH]);
+    assert_eq!(next.branches["spira/pd-a"].state, State::Pushing);
+    let (_, acts) = on_outcome(&carry, CONFINE, &leg, true, r#"{"status":2,"detail":"touches gate.steps"}"#);
+    assert_eq!(effects(&acts), vec![REOPEN]);
+    let (next, acts) = on_outcome(&carry, CONFINE, &leg, true, "0 clean");
+    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(next.branches["spira/pd-a"].state, State::Done, "an unreadable confine body is inconclusive");
+}
