@@ -27,8 +27,8 @@ spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
 round-controller = { path = "../round-controller" }
 state-store = { path = "../state-store" }
+runtime = { path = "../runtime" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
 round-controller = { path = "../round-controller", features = ["sim"] }
-runtime = { path = "../runtime" }

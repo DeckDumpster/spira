@@ -12,6 +12,7 @@ use round_controller::liveness::Phase;
 use round_controller::ports::{Mark, Ports};
 use round_controller::run::{phase_of, token_of_word};
 use round_controller::slots::{grant_for_hand, Pool, Slot, SlotGrant};
+use runtime::units::UnitState;
 use state_store::Rev;
 
 pub const USAGE: &str = "usage: round-recert --batch <id> --repo <repo>";
@@ -44,6 +45,9 @@ pub trait Sys {
     fn now_ms(&self) -> u64;
     /// round-vm's latest progress mark, if it has written one.
     fn progress(&self) -> Option<Mark>;
+    /// The user manager's typed state of `unit` (its `ActiveState` property, over the unit
+    /// port); `Err` when the manager gave no answer, which is "cannot tell", never "inactive".
+    fn unit_state(&self, unit: &str) -> Result<UnitState, String>;
 }
 
 pub fn valid_token(s: &str) -> bool {
@@ -239,9 +243,30 @@ pub struct Launch<'a> {
     pub toml: &'a str,
 }
 
-fn active(sys: &dyn Sys, unit: &str) -> bool {
-    let o = sys.exec("systemctl", &["--user".into(), "is-active".into(), unit.into()], 20);
-    matches!(o.text.lines().next().map(str::trim), Some("active" | "activating" | "reloading"))
+/// Whether a driver runs under `unit`, read from the unit's typed state (law-lifecycle-state-is-not-text).
+#[derive(Debug, PartialEq, Eq)]
+pub enum Driver {
+    Running,
+    NotRunning,
+    /// The user manager did not answer: no second driver may be started on the guess.
+    CannotTell(String),
+}
+
+pub fn driver(sys: &dyn Sys, unit: &str) -> Driver {
+    match sys.unit_state(unit) {
+        Ok(UnitState::Active | UnitState::Activating) => Driver::Running,
+        Ok(UnitState::Deactivating | UnitState::Inactive | UnitState::Failed | UnitState::Absent) => Driver::NotRunning,
+        Err(why) => Driver::CannotTell(why),
+    }
+}
+
+/// [`driver`], with "cannot tell" as the refusal that starts nothing.
+fn running(sys: &dyn Sys, unit: &str) -> Result<bool, String> {
+    match driver(sys, unit) {
+        Driver::Running => Ok(true),
+        Driver::NotRunning => Ok(false),
+        Driver::CannotTell(why) => Err(format!("cannot tell whether {unit} is running ({why}); nothing was started")),
+    }
 }
 
 /// Refuses a round that is not open; finds a running driver or starts one. With `pools`, the
@@ -256,7 +281,7 @@ pub fn start(sys: &dyn Sys, l: &Launch, batch: &str, repo: &str, pools: Option<&
     };
     let mut hold = hold;
     let unit = unit_for(batch, hold.as_ref().map(|h| h.lease.token()));
-    if hold.is_none() && active(sys, &unit) {
+    if hold.is_none() && running(sys, &unit)? {
         return Ok(Started::Running(unit));
     }
     // The slot names its unit before the unit exists: a holder that recorded none is taken to
@@ -290,7 +315,7 @@ pub fn start(sys: &dyn Sys, l: &Launch, batch: &str, repo: &str, pools: Option<&
     if o.code == Some(0) {
         return Ok(Started::Started(unit));
     }
-    if hold.is_none() && active(sys, &unit) {
+    if hold.is_none() && running(sys, &unit)? {
         return Ok(Started::Running(unit));
     }
     if let (Some(h), Some(p)) = (hold, pools) {
@@ -493,6 +518,12 @@ impl Sys for Real {
         let file = self.run.as_ref()?.join(round_controller::real::child::PROGRESS_FILE);
         round_controller::real::child::mark_of(&std::fs::read_to_string(file).ok()?)
     }
+
+    fn unit_state(&self, unit: &str) -> Result<UnitState, String> {
+        let clock: std::sync::Arc<dyn runtime::ports::Clock> = std::sync::Arc::new(runtime::ports::WallClock);
+        let units = runtime::units::from_env(clock).map_err(|e| format!("the user manager: {e}"))?.units();
+        units.facts(&runtime::units::UnitHandle::named(unit)).map(|f| f.state).map_err(|e| format!("{unit}: {e}"))
+    }
 }
 
 struct Args {
@@ -653,6 +684,9 @@ mod tests {
         fn progress(&self) -> Option<Mark> {
             None
         }
+        fn unit_state(&self, _: &str) -> Result<UnitState, String> {
+            Ok(UnitState::Inactive)
+        }
     }
 
     #[test]
@@ -700,10 +734,7 @@ mod tests {
     impl Sys for Recorder {
         fn exec(&self, prog: &str, args: &[String], _: u64) -> Out {
             self.0.borrow_mut().push((prog.to_string(), args.to_vec()));
-            match prog {
-                "systemctl" => Out { code: Some(3), text: "inactive".into() },
-                _ => Out { code: Some(0), text: "batch_id=b\nphase=opened\n".into() },
-            }
+            Out { code: Some(0), text: "batch_id=b\nphase=opened\n".into() }
         }
         fn exec_ticking(&self, p: &str, a: &[String], d: u64, _: u64, _: &mut dyn FnMut() -> bool) -> Out {
             self.exec(p, a, d)
@@ -715,6 +746,9 @@ mod tests {
         fn progress(&self) -> Option<Mark> {
             None
         }
+        fn unit_state(&self, _: &str) -> Result<UnitState, String> {
+            Ok(UnitState::Inactive)
+        }
     }
 
     #[test]
@@ -725,6 +759,42 @@ mod tests {
         let calls = rec.0.borrow();
         let run = calls.iter().find(|(p, _)| p == "systemd-run").expect("systemd-run was called");
         assert!(run.1.join(" ").ends_with("/rel/bin/release round-recert --drive --batch b --repo r"), "{:?}", run.1);
+    }
+
+    /// systemd answering nothing about the driver's unit is "cannot tell", never "not running":
+    /// read as not running, a second driver is started on a batch that may already have one.
+    struct Manager(RefCell<Vec<String>>, Result<UnitState, String>);
+
+    impl Sys for Manager {
+        fn exec(&self, prog: &str, _: &[String], _: u64) -> Out {
+            self.0.borrow_mut().push(prog.to_string());
+            Out { code: Some(0), text: "batch_id=b\nphase=opened\n".into() }
+        }
+        fn exec_ticking(&self, p: &str, a: &[String], d: u64, _: u64, _: &mut dyn FnMut() -> bool) -> Out {
+            self.exec(p, a, d)
+        }
+        fn sleep(&self, _: u64) {}
+        fn now_ms(&self) -> u64 {
+            0
+        }
+        fn progress(&self) -> Option<Mark> {
+            None
+        }
+        fn unit_state(&self, _: &str) -> Result<UnitState, String> {
+            self.1.clone()
+        }
+    }
+
+    #[test]
+    fn a_driver_unit_systemd_cannot_answer_for_is_never_started_again() {
+        let sys = Manager(RefCell::new(vec![]), Err("Failed to connect to bus: No medium found".into()));
+        let l = Launch { exe: Path::new("/rel/bin/release"), toml: "t.toml" };
+        let e = start(&sys, &l, "b", "r", None).unwrap_err();
+        assert!(e.contains("cannot tell whether round-recert-b is running"), "{e}");
+        assert!(!sys.0.borrow().iter().any(|p| p == "systemd-run"), "nothing is started: {:?}", sys.0.borrow());
+        let up = Manager(RefCell::new(vec![]), Ok(UnitState::Activating));
+        assert_eq!(start(&up, &l, "b", "r", None), Ok(Started::Running("round-recert-b".into())));
+        assert!(!up.0.borrow().iter().any(|p| p == "systemd-run"), "a running driver is not started twice");
     }
 
     #[test]
@@ -783,7 +853,6 @@ mod tests {
         fn exec(&self, prog: &str, args: &[String], _: u64) -> Out {
             self.calls.borrow_mut().push(args.to_vec());
             match (prog, args.get(1).map(String::as_str)) {
-                ("systemctl", _) => Out { code: Some(3), text: "inactive".into() },
                 ("queue", Some("status")) if self.landed.get() => Out { code: Some(0), text: "round=none\n".into() },
                 _ => Out { code: Some(0), text: OPEN.into() },
             }
@@ -818,6 +887,9 @@ mod tests {
         fn sleep(&self, _: u64) {}
         fn now_ms(&self) -> u64 {
             self.bench.clock.now_ms()
+        }
+        fn unit_state(&self, _: &str) -> Result<UnitState, String> {
+            Ok(UnitState::Inactive)
         }
         fn progress(&self) -> Option<Mark> {
             let at_ms = if self.stalled { 0 } else { self.now_ms() };
