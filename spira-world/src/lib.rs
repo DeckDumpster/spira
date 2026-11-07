@@ -8,7 +8,6 @@
 
 pub mod checkpoint;
 pub mod clock;
-pub mod cutover;
 pub mod drain;
 pub mod fleet;
 pub mod freeze;

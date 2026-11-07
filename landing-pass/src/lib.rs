@@ -21,7 +21,6 @@ pub mod records;
 pub mod report;
 pub mod seam;
 pub mod signals;
-pub mod stops;
 pub mod util;
 
 #[cfg(test)]

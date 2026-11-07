@@ -18,15 +18,9 @@
 //!   world.sh pause --repo R [--lanes claims,rounds,publish] --reason WHY --until CONDITION [--owner O]
 //!   world.sh pause --reserve BEAD[,BEAD...] --reason WHY [--until CONDITION] [--owner O]
 //!   world.sh unpause --repo R [--lanes ...] | --reserve BEAD[,BEAD...]
-//!   world.sh cutover-mode --rev REV --reason WHY [--owner O]
 //!   world.sh status
 //!   world.sh scheduler-status [--json]   (exit 0 running, 1 not answering, 2 halted)
 //!   world.sh guard        (every work unit's ExecStartPre: refuses while the work plane is halted)
-//!
-//! CUTOVER MODE holds a stopped world with scoped stops instead of the halt stamp
-//! (`spira_world::cutover`): every lane but `rounds` stopped on every registered repo, the
-//! dwarves kept slain, `world.halted` removed so a round driver passes the halt check. Only
-//! `world stop` leaves it; `start` refuses while it holds.
 //!
 //! SCOPED PAUSES are recorded state (`spira_config::scoped_stop`), never halts: one repo's
 //! claims, rounds or publish lane, or named beads no dwarf may claim. Running work is never
@@ -284,7 +278,7 @@ fn notify_dwarves(notifier: &mut spira_world::notice::Notifier, what: &str, elap
     });
 }
 
-const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--until WHAT] [--owner O] [--owner-pid PID | --owner-unit UNIT] [--reboot] [--timeout SECS | --deadline SECS] | drain-check | resume | start [--work|--observability|--maintenance|--all] | pause --repo R [--lanes claims,rounds,publish] --reason WHY --until COND [--owner O] | pause --reserve BEADS --reason WHY [--owner O] | unpause --repo R [--lanes L] | unpause --reserve BEADS | cutover-mode --rev REV --reason WHY [--owner O] | status | scheduler-status [--json] | guard | keep-units | freeze-store | thaw-store}";
+const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--until WHAT] [--owner O] [--owner-pid PID | --owner-unit UNIT] [--reboot] [--timeout SECS | --deadline SECS] | drain-check | resume | start [--work|--observability|--maintenance|--all] | pause --repo R [--lanes claims,rounds,publish] --reason WHY --until COND [--owner O] | pause --reserve BEADS --reason WHY [--owner O] | unpause --repo R [--lanes L] | unpause --reserve BEADS | status | scheduler-status [--json] | guard | keep-units | freeze-store | thaw-store}";
 
 fn cmd_stop(args: &[String]) -> i32 {
     let mut why = String::new();
@@ -362,16 +356,6 @@ fn cmd_stop(args: &[String]) -> i32 {
     // The loop is the scheduler's tasks: a work halt is one `scheduler halt`, which holds
     // every task's effects and keeps observing. The scheduler has no per-plane halt.
     let halt_failed = halts_work && !halt_scheduler(if why.is_empty() { "world stop" } else { &why });
-    if halts_work {
-        match spira_world::cutover::leave(&run) {
-            Ok(Some(rec)) => println!("spira: left cutover mode (store revision {}): lifted its stops on {} repo(s)", rec.rev, rec.stops.len()),
-            Ok(None) => {}
-            Err(e) => {
-                eprintln!("spira: stop INCOMPLETE — the world is halted but cutover mode could not be left: {e}");
-                return 1;
-            }
-        }
-    }
 
     if halts_work && grace > 0 {
         let mut notifier = spira_world::notice::Notifier::default();
@@ -479,17 +463,6 @@ fn cmd_stop(args: &[String]) -> i32 {
 
 fn cmd_start(args: &[String]) -> i32 {
     let planes = selected_planes(args, &[Plane::Work, Plane::Observability]);
-    match spira_world::cutover::read(&run_or_die()) {
-        Ok(None) => {}
-        Ok(Some(rec)) => {
-            eprintln!("spira: REFUSING to start — the world is in cutover mode (store revision {}); leave it with world stop first", rec.rev);
-            return 1;
-        }
-        Err(e) => {
-            eprintln!("spira: REFUSING to start — the cutover-mode record cannot be read: {e}");
-            return 1;
-        }
-    }
     println!("spira: starting {}", plane_names(&planes));
 
     // Lift before resuming: a reader not yet converted to `scheduler status` still gates on
@@ -877,48 +850,6 @@ fn cmd_unpause(args: &[String]) -> i32 {
     }
 }
 
-fn cmd_cutover_mode(args: &[String]) -> i32 {
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--rev" | "--reason" | "--owner" if i + 1 < args.len() => i += 2,
-            other => {
-                eprintln!("spira: cutover-mode: unrecognised argument {other:?}; nothing was changed\n{USAGE}");
-                return 64;
-            }
-        }
-    }
-    let run = run_or_die();
-    let stamp = halt_stamp_or_die();
-    let home = spira_config::resolve::locate_home_for_process().unwrap_or_else(|e| die(&e));
-    let repos = spira_config::repos::Registry::from_env(env::vars().collect(), &home).all();
-    let mut live = live_beads();
-    live.extend(sysctl::live_dwarf_units());
-    let e = spira_world::cutover::Enter {
-        run: &run,
-        halt_stamp: &stamp,
-        repos: &repos,
-        live_dwarves: &live,
-        rev: flag(args, "--rev").unwrap_or(""),
-        reason: flag(args, "--reason").unwrap_or(""),
-        owner: flag(args, "--owner").unwrap_or("concierge"),
-        now: now_epoch(),
-    };
-    match spira_world::cutover::enter(&e) {
-        Ok(rec) => {
-            for o in &rec.stops {
-                println!("  held {} [{}]", o.repo, spira_world::cutover::LANES.join(","));
-            }
-            println!("spira: CUTOVER MODE (store revision {}) — world.halted lifted; rounds run, nothing else lands, claims or remediates. Leave with: world stop", rec.rev);
-            0
-        }
-        Err(err) => {
-            eprintln!("spira: cutover-mode refused: {err}");
-            1
-        }
-    }
-}
-
 fn print_scoped_stops() {
     let run = run_or_die();
     let review = spira_config::process::cfg_parse::<u64>("SPIRA_SCOPED_STOP_REVIEW_SECS").unwrap_or_else(|e| die(&e));
@@ -932,11 +863,6 @@ fn print_scoped_stops() {
 }
 
 fn cmd_status() -> i32 {
-    match spira_world::cutover::read(&run_or_die()) {
-        Ok(Some(rec)) => println!("spira: {}", rec.describe(now_epoch())),
-        Ok(None) => {}
-        Err(e) => println!("spira: CUTOVER MODE record unreadable: {e}"),
-    }
     print_scoped_stops();
     if drain_stamp_or_die().is_file() {
         let text = std::fs::read_to_string(drain_stamp_or_die()).unwrap_or_default();
@@ -1078,7 +1004,6 @@ fn main() {
         "drain-check" => cmd_drain_check(),
         "pause" => cmd_pause(rest),
         "unpause" => cmd_unpause(rest),
-        "cutover-mode" => cmd_cutover_mode(rest),
         "status" => cmd_status(),
         "guard" => cmd_guard(),
         "freeze-store" => cmd_store(spira_world::freeze::freeze),
@@ -1115,7 +1040,7 @@ fn main() {
             64
         }
     };
-    if rc == 0 && matches!(cmd.as_str(), "stop" | "start" | "drain" | "resume" | "cutover-mode") {
+    if rc == 0 && matches!(cmd.as_str(), "stop" | "start" | "drain" | "resume") {
         spira_otel::oneshot::event("spira_world_state_changes", 1, &[("to", &cmd)]);
     }
     spira_otel::oneshot::exit(rc);

@@ -114,8 +114,8 @@ fn which(name: &str, path: &str) -> Option<String> {
 }
 
 impl<'a> Sentinel<'a> {
-    /// world_gate <rune> <log-prefix> -> true if calls are permitted, false if halted,
-    /// draining, or the claims lane is stopped on every repo (lib.sh:1102). Both stamps hold until `world.sh start` / `resume`: no clock
+    /// world_gate <rune> <log-prefix> -> true if calls are permitted, false if halted or
+    /// draining (lib.sh:1102). Both stamps hold until `world.sh start` / `resume`: no clock
     /// lifts either, whatever the stamp's age or contents.
     pub fn world_gate(&self, f: &str, prefix: &str) -> bool {
         if self.cfg.run.join("world.halted").is_file() {
@@ -124,11 +124,6 @@ impl<'a> Sentinel<'a> {
         }
         if self.cfg.run.join("world.draining").is_file() {
             self.log(&format!("{prefix} {f}: draining — not calling (world.sh resume to lift)"));
-            return false;
-        }
-        let repos: Vec<&str> = self.ctx.repos.iter().map(|r| r.name.as_str()).collect();
-        if let Some(stop) = spira_config::scoped_stop::stop_everywhere(&self.cfg.run, &repos, "claims") {
-            self.log(&format!("{prefix} {}", spira_config::scoped_stop::skip_line(f, "claims", &stop)));
             return false;
         }
         true
