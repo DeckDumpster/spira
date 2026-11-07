@@ -344,8 +344,8 @@ impl cockpit_ops::resolve::Closer for Store<'_> {
             Err(e) => cockpit_ops::resolve::BdResult { success: false, combined: e.to_string() },
         }
     }
-    fn show_json(&self, _: &std::path::Path, id: &str) -> String {
-        self.0.call(&["content", "show", id, "--json"]).map(|r| r.out).unwrap_or_default()
+    fn show_json(&self, _: &std::path::Path, id: &str) -> Result<String, String> {
+        self.0.answer(&["content", "show", id, "--json"]).map_err(|e| format!("content show {id}: {e}"))
     }
     fn withdraw_ask(&self, _: &str) -> (i32, String) {
         (1, "withdrawn by asks.moot.withdraw".into())

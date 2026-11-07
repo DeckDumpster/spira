@@ -123,12 +123,13 @@ fn real_main() -> ExitCode {
             Some("call-deadline") => ("call-deadline", spira_lint::rules::call_deadline::render_allow),
             Some("hash-iter-output") => ("hash-iter-output", spira_lint::rules::hash_iter_output::render_allow),
             Some("config-key-registered") => ("config-key-registered", spira_lint::rules::config_key_registered::render_allow),
+            Some("state-from-text") => ("state-from-text", spira_lint::rules::state_from_text::render_allow),
             Some("loop-blocking") => {
                 print!("{}", spira_lint::rules::loop_blocking::render_allow(&tree, "sp-<bead>"));
                 return ExitCode::SUCCESS;
             }
             _ => {
-                eprintln!("spira-lint: --emit-allow is only supported with --only call-deadline, hash-iter-output, config-key-registered or loop-blocking\n{USAGE}");
+                eprintln!("spira-lint: --emit-allow is only supported with --only call-deadline, hash-iter-output, config-key-registered, state-from-text or loop-blocking\n{USAGE}");
                 return ExitCode::from(2);
             }
         };

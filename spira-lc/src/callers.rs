@@ -135,8 +135,10 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
             }
             let message_id = a(1);
             if let Some(seq) = message_id.strip_prefix("seq:") {
-                if !hold_event_exists(m, &a(0), seq) {
-                    return Answer { code: REFUSED, stderr: format!("lc: {} has no Hold event with seq {seq} — nothing sent\n", a(0)), ..Default::default() };
+                match hold_event_exists(m, &a(0), seq) {
+                    Ok(true) => {}
+                    Ok(false) => return Answer { code: REFUSED, stderr: format!("lc: {} has no Hold event with seq {seq} — nothing sent\n", a(0)), ..Default::default() },
+                    Err(why) => return Answer { code: CANNOT_TELL, stderr: format!("cannot tell: lc: {}'s history could not be read ({why}) — nothing sent\n", a(0)), ..Default::default() },
                 }
             }
             with_row(m, &a(0), &actor_or(args.get(2), "sentinel"), |_| Ok(BeadEventKind::Reply { message_id: message_id.clone() }))
@@ -197,35 +199,39 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
             let by = a(1);
             with_row(m, &a(0), &actor_or(args.get(2), "groomer"), |_| Ok(BeadEventKind::Supersede { by: by.clone() }))
         }
-        "state" => {
-            if !need(1) {
-                return usage("state <bead-id>");
+        // `state` and `holds` take `--json`: the typed answer (lc_state::HoldsAnswer), exit 0;
+        // no row is exit 1 and "cannot tell" exit 2, neither printing anything on stdout. The
+        // text forms are unchanged for their readers, except that a read that failed is exit 2,
+        // never an empty answer (sp-cxfgj5).
+        "state" | "holds" => {
+            let (json, pos) = json_flag(args);
+            if pos.is_empty() || pos[0].is_empty() {
+                return usage(&format!("{verb} <bead-id> [--json]"));
             }
-            match show(m, &a(0)) {
-                Err(rc) => Answer::code(rc),
-                Ok(v) => match bead_field(&v, "state") {
-                    s if s.is_empty() => Answer::code(NO_ROW),
-                    s => Answer::out(0, s),
-                },
-            }
-        }
-        "holds" => {
-            if !need(1) {
-                return usage("holds <bead-id>");
-            }
-            match show(m, &a(0)) {
-                Err(_) => Answer::code(0),
-                Ok(v) => Answer::out(0, holds_of(v.get("bead").and_then(|b| b.get("holds"))).join("\n")),
+            let b = match typed_show(m, &pos[0]) {
+                Ok(b) => b,
+                Err(rc) if rc == NO_ROW && verb == "holds" && !json => return Answer::code(0),
+                Err(rc) => return cannot_read(rc, verb, &pos[0]),
+            };
+            if json {
+                Answer::out(0, serde_json::to_string(&lc_state::HoldsAnswer::of(&b)).unwrap_or_default())
+            } else if verb == "state" {
+                Answer::out(0, b.state.as_str().into())
+            } else {
+                Answer::out(0, b.holds.iter().map(|h| h.as_str()).collect::<Vec<_>>().join("\n"))
             }
         }
         "held" => {
             if !need(2) {
                 return usage("held <bead-id> <kind>");
             }
-            let kind = a(1);
-            match show(m, &a(0)) {
-                Ok(v) if holds_of(v.get("bead").and_then(|b| b.get("holds"))).contains(&kind) => Answer::code(0),
-                _ => Answer::code(1),
+            let Some(kind) = lc_state::hold_kind(&a(1)) else {
+                return Answer::code(1);
+            };
+            match typed_show(m, &a(0)) {
+                Ok(b) if b.held(kind) => Answer::code(0),
+                Ok(_) | Err(NO_ROW) => Answer::code(1),
+                Err(rc) => cannot_read(rc, verb, &a(0)),
             }
         }
         "list-held" => {
@@ -341,13 +347,31 @@ fn is_iso_date(v: &str) -> bool {
         && !v.contains(char::is_whitespace)
 }
 
-fn hold_event_exists(m: &mut dyn Machine, id: &str, seq: &str) -> bool {
+/// Whether the bead's history has a Hold event at `seq`. Err: the history could not be read
+/// (a non-zero exit, or an answer that is not a JSON array) — "cannot tell", never "no".
+fn hold_event_exists(m: &mut dyn Machine, id: &str, seq: &str) -> Result<bool, String> {
     let (rc, out) = m.call(&["history".into(), id.into(), "--machine".into(), "bead".into()]);
     if rc != 0 {
-        return false;
+        return Err(format!("history exited {rc}"));
     }
-    let v: Value = serde_json::from_str(out.trim()).unwrap_or(Value::Null);
-    v.as_array().is_some_and(|rows| rows.iter().any(|r| s(r, "seq") == seq && s(r, "event") == "Hold"))
+    let v: Value = serde_json::from_str(out.trim()).map_err(|e| format!("history: not JSON: {e}"))?;
+    let rows = v.as_array().ok_or("history: not a JSON array")?;
+    Ok(rows.iter().any(|r| s(r, "seq") == seq && s(r, "event") == "Hold"))
+}
+
+/// `--json` out of a verb's argv: whether it was given, and the rest in order.
+fn json_flag(args: &[String]) -> (bool, Vec<String>) {
+    let json = args.iter().any(|a| a == "--json");
+    (json, args.iter().filter(|a| *a != "--json").cloned().collect())
+}
+
+/// A verb that could not read the row it answers about: exit 1 for no row, exit 2 otherwise,
+/// with the reason on stderr — nothing on stdout a caller could take for an answer.
+fn cannot_read(rc: i32, verb: &str, id: &str) -> Answer {
+    if rc == NO_ROW {
+        return Answer { code: NO_ROW, stderr: format!("lc: {verb}: {id} has no lifecycle row\n"), ..Default::default() };
+    }
+    Answer { code: CANNOT_TELL, stderr: format!("cannot tell: lc: {verb}: {id}'s row could not be read (exit {rc}) — nothing answered\n"), ..Default::default() }
 }
 
 pub(crate) fn usage(what: &str) -> Answer {
@@ -390,23 +414,38 @@ fn holds_of(v: Option<&Value>) -> Vec<String> {
     parsed.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default()
 }
 
-/// `spira-lc show <id>` parsed. Err(rc): 1 no row, 2 cannot tell (or an unparseable answer).
+/// `spira-lc show <id>` parsed. Err(rc): 1 no row, 2 cannot tell — a non-zero exit other than
+/// 1, or an exit-0 answer whose bead does not type-check (lc_state::bead_from: unknown state or
+/// hold, a holds column that is not an array): a row read wrong is never a row read.
 pub(crate) fn show(m: &mut dyn Machine, id: &str) -> Result<Value, i32> {
-    let (rc, out) = m.call(&["show".into(), id.into()]);
-    if rc != 0 {
-        return Err(rc);
-    }
-    serde_json::from_str(out.trim()).map_err(|_| CANNOT_TELL)
+    show_typed(m, id).map(|(v, _)| v)
 }
 
+/// [`show`] with the row typed.
+fn typed_show(m: &mut dyn Machine, id: &str) -> Result<lc_state::Bead, i32> {
+    show_typed(m, id).map(|(_, b)| b)
+}
+
+fn show_typed(m: &mut dyn Machine, id: &str) -> Result<(Value, lc_state::Bead), i32> {
+    let (rc, out) = m.call(&["show".into(), id.into()]);
+    match lc_state::bead_from(rc, &out, "") {
+        lc_state::Lookup::Found(b) => serde_json::from_str(out.trim()).map(|v| (v, b)).map_err(|_| CANNOT_TELL),
+        lc_state::Lookup::NoRow => Err(NO_ROW),
+        lc_state::Lookup::CannotTell(_) => Err(CANNOT_TELL),
+    }
+}
+
+/// A bulk list: a machine that did not answer, or answered something that is not a JSON array
+/// of rows, is exit 2 — never an empty list (sp-cxfgj5).
 fn list(m: &mut dyn Machine, args: &[String], line: impl Fn(&Value) -> String) -> Answer {
     let (rc, out) = m.call(args);
     if rc != 0 {
-        return Answer::code(0);
+        return Answer { code: CANNOT_TELL, stderr: format!("cannot tell: lc: {} exited {rc} — nothing listed\n", args.join(" ")), ..Default::default() };
     }
-    let v: Value = serde_json::from_str(out.trim()).unwrap_or(Value::Null);
-    let lines: Vec<String> = v.as_array().map(|a| a.iter().map(&line).collect()).unwrap_or_default();
-    Answer::out(0, lines.join("\n"))
+    match serde_json::from_str::<Value>(out.trim()) {
+        Ok(Value::Array(rows)) if lc_state::beads_of(&out).is_ok() => Answer::out(0, rows.iter().map(&line).collect::<Vec<_>>().join("\n")),
+        _ => Answer { code: CANNOT_TELL, stderr: format!("cannot tell: lc: {} answered something that is not a list — nothing listed\n", args.join(" ")), ..Default::default() },
+    }
 }
 
 /// Apply one bead event under the CAS of the row as read. The event may depend on the row
@@ -567,7 +606,15 @@ fn deliver(args: &[String], m: &mut dyn Machine) -> Answer {
     let actor = deliver_actor(sub);
     // _lc_deliver: no row, or a row not in the state this exit applies to, is logged and
     // skipped rather than forced.
-    let rec = show(m, &id).ok().and_then(|v| {
+    // One read decides: no bead row is no delivery row, but a read that could not tell is
+    // "cannot tell" — never "no row, inert" (sp-cxfgj5).
+    let shown = match show(m, &id) {
+        Ok(v) => Some(v),
+        Err(NO_ROW) => None,
+        Err(rc) => return cannot_read(rc, "deliver", &id),
+    };
+    let bead_state = shown.as_ref().map(|v| bead_field(v, "state")).unwrap_or_default();
+    let rec = shown.as_ref().and_then(|v| {
         let d = v.get("delivery").filter(|d| !d.is_null())?.clone();
         Some((s(&d, "state"), match d.get("version") {
             Some(Value::Null) | None => "0".to_string(),
@@ -581,7 +628,7 @@ fn deliver(args: &[String], m: &mut dyn Machine) -> Answer {
         // CERTIFIED with its commit on the base. Record the landing on the bead itself, with
         // the ancestry proof; every other no-row case is unchanged.
         if sub == "push-delivered" {
-            let certified = show(m, &id).ok().is_some_and(|v| bead_field(&v, "state") == "CERTIFIED");
+            let certified = bead_state == "CERTIFIED";
             if certified {
                 let proof = format!("ancestry:{}", a(2));
                 let ans = with_row(m, &id, actor, |_| Ok(BeadEventKind::ContentOnBase { proof: proof.clone() }));
@@ -597,7 +644,7 @@ fn deliver(args: &[String], m: &mut dyn Machine) -> Answer {
         // write leaves READY) and only on content proof from the landing ref: a merge since
         // reverted proves nothing.
         if sub == "pr-merged" {
-            let waiting = show(m, &id).ok().is_some_and(|v| !matches!(bead_field(&v, "state").as_str(), "" | "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE"));
+            let waiting = !matches!(bead_state.as_str(), "" | "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE");
             let repo_arg = a(1);
             let repo = std::path::Path::new(&repo_arg);
             // A deleted branch leaves no patch to test; the merge commit's place in the landing ref is the proof.
@@ -708,11 +755,14 @@ fn certify(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str
         return a;
     }
     if outcome == "infra" && state == "SUBMITTED" {
-        if let Some((_, _, row)) = state_version(m, id) {
-            let row_tip = bead_field(&row, "tip");
-            if row_tip != tip {
-                return Answer::cert(REFUSED, "skip", format!("infra tip={tip} — stale, row is at {row_tip}"));
-            }
+        // The stale-tip check is a read: one that could not tell refuses to apply, never skips
+        // the check (sp-cxfgj5).
+        let Some((_, _, row)) = state_version(m, id) else {
+            return Answer::cert(CANNOT_TELL, "cannot-tell", format!("infra tip={tip} — the row's tip could not be read"));
+        };
+        let row_tip = bead_field(&row, "tip");
+        if row_tip != tip {
+            return Answer::cert(REFUSED, "skip", format!("infra tip={tip} — stale, row is at {row_tip}"));
         }
     }
     let kind = match outcome {

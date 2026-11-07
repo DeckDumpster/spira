@@ -158,7 +158,7 @@ fn with_the_store_no_ended_round_counts_toward_the_limit_or_is_a_parent() {
         rec.kv
     );
     t.lc.store.get().unwrap().set_state("spira", &batch, "GREEN");
-    assert_eq!(t.run(&["round", "land", &batch]), 1);
+    assert_eq!(t.run(&["round", "land", &batch]), crate::ops::LAND_STACKED);
     assert!(
         t.err().contains(&format!("round {batch} is stacked on round spira-open, which has not landed")),
         "{}",
@@ -364,4 +364,31 @@ fn with_the_store_unreadable_a_passes_members_are_an_error_not_none() {
         let e = crate::ops::round::pass_members(w, &c, "spira-open").unwrap_err();
         assert!(e.contains("cannot tell"), "{e}");
     });
+}
+
+/// sp-av82ny: every round on a repo opens at `.round-<repo>` by default, so an abandoned round's
+/// record names the very tree the next round stands in. Its sweep under certify's lock never
+/// removes a tree an unended round records.
+#[test]
+fn with_the_store_an_abandoned_rounds_sweep_spares_the_next_rounds_tree_at_the_same_path() {
+    let t = round_world();
+    let d = t.lc.store.get_or_init(MemDoor::default);
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
+    let first = opened(&t, "spira-stale", "sp-a:ta");
+    assert_eq!(t.run(&["round", "abandon", &first, "--reason", "stale"]), 0, "{}", t.err());
+    assert_eq!(d.find(&first).unwrap().1, "ABANDONED");
+    let second = opened(&t, "spira-live", "sp-b:tb");
+    let tree = |b: &str| batches::batch(d, "spira", b).unwrap().unwrap().kv.get("worktree").unwrap_or("").to_string();
+    assert_eq!(tree(&first), tree(&second), "both rounds took the default path");
+    let wt = PathBuf::from(tree(&second));
+    fs::create_dir_all(&wt).unwrap();
+    t.git.calls.borrow_mut().clear();
+    t.run(&["round", "certify", &second]);
+    let removes: Vec<String> = t.git.calls.borrow().iter().filter(|c| c.starts_with("worktree-remove")).cloned().collect();
+    assert!(
+        !removes.contains(&format!("worktree-remove {}", wt.display())),
+        "the abandoned round's sweep removed the live round's tree: {removes:?}\n{}",
+        t.err()
+    );
 }

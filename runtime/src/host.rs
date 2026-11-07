@@ -2,7 +2,7 @@
 //! every effect, runs on the offload pool; the loop awaits results, kicks and keeps time.
 //! Work the pool refuses stays undone in the journal and is re-offered with a growing backoff.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -82,7 +82,9 @@ pub struct ServeOpts {
     pub max_sleep_ms: Option<u64>,
     /// Receives the loop's own records: long turns and offload spills. Must not block.
     pub sink: Option<Arc<dyn WideSink>>,
-    /// The pool engine turns and effects run on; the process-wide one when `None`.
+    /// The pool effects run on; the process-wide one when `None`. Engine turns never run
+    /// here: each host gives its turns a worker of their own, so a pool full of long effects
+    /// cannot hold the loop's turn.
     pub pool: Option<Arc<Pool>>,
 }
 
@@ -124,7 +126,11 @@ fn run_turn(mut t: Turn) -> TurnOut {
         }
         t.engine.run_until_idle() // loop-safe: runs on the offload pool
     })();
-    let launch = t.engine.pending_effects().into_iter().filter(|p| !t.in_flight.contains(&p.key)).collect();
+    let launch: Vec<PendingEffect> = t.engine.pending_effects().into_iter().filter(|p| !t.in_flight.contains(&p.key)).collect();
+    // The host now owns each of these until it starts: its deadline waits for the runner.
+    for p in &launch {
+        t.engine.note_queued(&p.key);
+    }
     let next_timer_at = t.engine.next_timer_at();
     TurnOut { engine: t.engine, result, launch, next_timer_at }
 }
@@ -159,12 +165,15 @@ pub async fn serve_with(
     opts: ServeOpts,
 ) -> Result<()> {
     let workers = opts.pool.clone().unwrap_or_else(Pool::global);
+    // One turn runs at a time, so one worker and one slot are enough.
+    let turns = Pool::new(1, 1);
     let engine = classified(engine, &runner);
     let busy = engine.busy();
     let max_sleep = opts.max_sleep_ms.map(Duration::from_millis);
     let pools = ClassPools::new(caps.into());
     let (done_tx, mut done_rx) = mpsc::unbounded_channel::<Done>();
-    let mut in_flight: BTreeSet<String> = BTreeSet::new();
+    // Each effect in flight, with the stream (the task) that asked for it.
+    let mut in_flight: BTreeMap<String, String> = BTreeMap::new();
     let mut engine = Some(engine);
     let mut running: Option<Running> = None;
     let (mut subs, mut done): (Vec<Submit>, Vec<Done>) = (vec![], vec![]);
@@ -195,11 +204,11 @@ pub async fn serve_with(
             dirty = true;
         }
         if let Some(e) = engine.take_if(|_| running.is_none() && (dirty || !subs.is_empty() || !done.is_empty()) && Instant::now() >= retry_at) {
-            let turn = Turn { engine: e, subs: std::mem::take(&mut subs), done: std::mem::take(&mut done), in_flight: in_flight.clone() };
+            let turn = Turn { engine: e, subs: std::mem::take(&mut subs), done: std::mem::take(&mut done), in_flight: in_flight.keys().cloned().collect() };
             let slot = Arc::new(Mutex::new(Some(turn)));
             let s = slot.clone();
             let job = move || run_turn(s.lock().unwrap_or_else(|e| e.into_inner()).take().expect("the turn is put in the slot before it is offered")); // loop-safe: the slot is uncontended; the pool takes it after the offer
-            match workers.offload("engine.turn", None, job) {
+            match turns.offload("engine.turn", None, job) {
                 Ok(handle) => {
                     backoff = BACKOFF_FIRST;
                     dirty = false;
@@ -261,10 +270,16 @@ pub async fn serve_with(
                 }
                 out.result?;
                 for p in out.launch {
-                    match pools.try_take(runner.class(&p.spec)) {
+                    let class = runner.class(&p.spec);
+                    let mine = in_flight.values().filter(|s| **s == p.stream.0).count();
+                    if mine >= task_fan_out(pools.cap(class)) {
+                        // Held back unrefused: one of the task's own outcomes wakes the next offer.
+                        continue;
+                    }
+                    match pools.try_take(class) {
                         Ok(permit) => {
-                            in_flight.insert(p.key.clone());
-                            launch_effect(&workers, permit, &runner, &done_tx, clock.now_ms(), p);
+                            in_flight.insert(p.key.clone(), p.stream.0.clone());
+                            launch_effect(&workers, permit, &runner, &done_tx, p);
                         }
                         Err(d) => {
                             emit(deferred_record(&p, &d, pools.deferred_total(d.class)));
@@ -294,6 +309,14 @@ pub async fn serve_with(
     }
 }
 
+/// The most effects one task may have in flight in a class of cap `cap`: half of it, at least
+/// one, so a task fanning out one effect per item (sweep.archive stores one per transcript)
+/// leaves the rest of the class to the others. The rest stay pending and are offered again as
+/// the task's own effects finish.
+pub fn task_fan_out(cap: usize) -> usize {
+    (cap / 2).max(1)
+}
+
 /// The engine reports each effect under the class the runner gives it.
 fn classified(engine: Engine, runner: &Arc<dyn EffectRunner>) -> Engine {
     let r = runner.clone();
@@ -313,22 +336,39 @@ fn deferred_record(p: &PendingEffect, d: &Deferred, total: u64) -> Fields {
     f
 }
 
-fn launch_effect(workers: &Arc<Pool>, permit: OwnedSemaphorePermit, runner: &Arc<dyn EffectRunner>, tx: &mpsc::UnboundedSender<Done>, now: u64, p: PendingEffect) {
+/// Runs `p` on `workers` under `permit`. Its deadline counts from the moment a worker starts the
+/// runner, so time spent queued for a worker is not charged to it. The permit is given back when
+/// the runner returns or when the deadline writes it off, whichever is first: a runner still
+/// stuck past its deadline no longer holds its class's capacity.
+fn launch_effect(workers: &Arc<Pool>, permit: OwnedSemaphorePermit, runner: &Arc<dyn EffectRunner>, tx: &mpsc::UnboundedSender<Done>, p: PendingEffect) {
     let (workers, runner, tx) = (workers.clone(), runner.clone(), tx.clone());
-    let until = tokio::time::Instant::now() + Duration::from_millis(p.deadline_at.saturating_sub(now));
+    let deadline = Duration::from_millis(p.spec.deadline_ms);
+    let permit = Arc::new(Mutex::new(Some(permit)));
     tokio::spawn(async move {
         let outcome = async {
-            let (r, k, spec) = (runner, p.key.clone(), p.spec.clone());
-            let mut h = match workers.offload("effect", Some(permit), move || r.run(&k, &spec)) {
+            let (r, k, spec, held) = (runner, p.key.clone(), p.spec.clone(), permit.clone());
+            let (began_tx, began) = oneshot::channel::<()>();
+            let job = move || {
+                let _ = began_tx.send(());
+                let out = r.run(&k, &spec);
+                drop(held.lock().unwrap_or_else(|e| e.into_inner()).take()); // loop-safe: runs on the offload pool; the lock is held only to take the permit
+                out
+            };
+            let mut h = match workers.offload("effect", None, job) {
                 Ok(h) => h,
                 Err(sp) => {
                     let _ = tx.send(Done::Spilled(p.key.clone(), sp));
                     return None;
                 }
             };
+            // A job dropped unrun answers `h` with an error at once, so this wait always ends.
+            let _ = began.await;
             let _ = tx.send(Done::Started(p.key.clone()));
-            Some(match tokio::time::timeout_at(until, &mut h).await {
-                Err(_) => Outcome::TimedOut,
+            Some(match tokio::time::timeout(deadline, &mut h).await {
+                Err(_) => {
+                    drop(permit.lock().unwrap_or_else(|e| e.into_inner()).take()); // loop-safe: uncontended except for the instant the runner returns
+                    Outcome::TimedOut
+                }
                 Ok(Ok(Ok(d))) => Outcome::Succeeded(d),
                 Ok(Ok(Err(e))) => Outcome::Failed(e),
                 Ok(Err(e)) => Outcome::Failed(format!("effect task: {e}")),

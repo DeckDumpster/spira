@@ -135,3 +135,18 @@ fn the_record_a_created_pr_writes_passes_settle_publish_and_names_its_members() 
     let kv = queue::records::read_kv(&dir.path().join("spira").join("publish")).expect("readable").expect("the record exists");
     assert_eq!((queue::ops::verdict::publish_record_missing(&kv), kv.get("rerun"), kv.members().len()), (None, Some("1"), 2), "{kv:?}");
 }
+
+/// law-lifecycle-state-is-not-text (sp-mijstw): the fix-forward bead is live only while its typed
+/// row is not terminal. A DROPPED or SUPERSEDED fix-forward read as live left the publish red
+/// with no live fix, never filed again.
+#[test]
+fn t7_a_terminal_fix_forward_is_not_live() {
+    let show = |state: &str| format!(r#"{{"bead":{{"bead_id":"sp-ff","state":"{state}"}},"delivery":null}}"#);
+    for state in ["LANDED", "SUPERSEDED", "DROPPED", "DONE"] {
+        assert!(!fix_forward_live(&show(state)), "{state} is terminal, not a live fix-forward");
+    }
+    for state in ["READY", "WORKING", "SUBMITTED", "IN_DELIVERY"] {
+        assert!(fix_forward_live(&show(state)), "{state} is live");
+    }
+    assert!(!fix_forward_live("cannot tell: deadline"), "no answer is not a live bead");
+}

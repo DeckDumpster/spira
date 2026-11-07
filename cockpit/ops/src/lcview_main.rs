@@ -220,12 +220,8 @@ fn on_base_cached(root: &str, base: &str) -> Result<HashMap<String, String>, Str
 fn live_dwarves() -> Option<Vec<LiveDwarf>> {
     // FORK-EDGE: needs Units::list(prefix) with MainPID and ActiveEnterTimestamp — the port
     // reads one named unit, and the dwarves are found by their unit-name prefix.
-    let units: Vec<String> = run("systemctl", &["--user", "list-units", "spira-dwarf-*", "--no-legend", "--plain"])
-        .ok()?
-        .lines()
-        .filter_map(|l| l.split_whitespace().next().map(String::from))
-        .filter(|u| u.ends_with(".service"))
-        .collect();
+    let args = dwarf_list_args();
+    let units = dwarf_units_in(&run("systemctl", &args.iter().map(String::as_str).collect::<Vec<_>>()).ok()?);
     if units.is_empty() {
         return Some(Vec::new());
     }
@@ -244,6 +240,22 @@ fn live_dwarves() -> Option<Vec<LiveDwarf>> {
         out.push(LiveDwarf { unit: get("Id"), pid, started, phase: String::new() });
     }
     Some(out)
+}
+
+/// The `systemctl` argv that lists the dwarf units, by either name
+/// (`runtime::units::dwarf_globs`, sp-li4zys).
+fn dwarf_list_args() -> Vec<String> {
+    let mut a: Vec<String> = ["--user", "list-units"].iter().map(|s| s.to_string()).collect();
+    a.extend(runtime::units::dwarf_globs());
+    a.extend(["--no-legend".to_string(), "--plain".to_string()]);
+    a
+}
+
+/// The live dwarf units in `list-units` output (`runtime::units::live_dwarf_in_list_line`).
+fn dwarf_units_in(list: &str) -> Vec<String> {
+    let mut units: Vec<String> = list.lines().filter_map(runtime::units::live_dwarf_in_list_line).map(String::from).collect();
+    units.dedup();
+    units
 }
 
 fn gather_menders(s: &mut Snapshot) {
@@ -651,6 +663,20 @@ mod tests {
             found.push("spira-claim");
         }
         found
+    }
+
+    /// What systemd answers `list-units <globs>`: the units matching any `prefix*suffix` glob.
+    fn listed(args: &[String], units: &[(&str, &str)]) -> String {
+        let globs: Vec<&String> = args.iter().filter(|a| a.contains('*')).collect();
+        let hit = |n: &str| globs.iter().any(|g| g.split_once('*').is_some_and(|(p, s)| n.starts_with(p) && n.ends_with(s)));
+        units.iter().filter(|(n, _)| hit(n)).map(|(n, st)| format!("{n} loaded {st} running dwarf\n")).collect()
+    }
+
+    #[test]
+    fn sp_li4zys_the_live_dwarves_the_scheduler_started_are_listed() {
+        let own = "spira-run-sentinel_2dcall-builder_2d1794009721297_2d1.service";
+        let units = [(own, "active"), ("spira-run-sentinel_2dcall-builder_2d1794000000000_2d0.service", "failed"), ("spira-run-sentinel_2dpass-landing.service", "active")];
+        assert_eq!(super::dwarf_units_in(&listed(&super::dwarf_list_args(), &units)), vec![own.to_string()], "the live scheduler-named dwarf only");
     }
 
     #[test]

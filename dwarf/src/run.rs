@@ -498,28 +498,29 @@ impl<'a> Run<'a> {
 
     /// A WORKING bead this name holds under another session that is still running: claiming
     /// a second would silently double-hold. A dead session's row is the reaper's, not a refusal.
-    fn double_hold(&self, mine: &str) -> Option<String> {
-        let o = self.d.exec.exec("spira-lc", &s(&["list-all"]), None, None);
-        if o.code != 0 {
-            return None;
-        }
-        o.stdout.lines().find_map(|l| {
-            let mut f = l.split('\t');
-            let (id, state, holder) = (f.next()?, f.next()?, f.next()?);
-            let live = !spira_config::session::session_gone(holder, &spira_config::admission::RealProcs);
-            (state == "WORKING" && live && spira_config::session::same_name_other_session(holder, mine)).then(|| id.to_string())
-        })
+    fn double_hold(&self, mine: &str) -> Result<Option<String>, String> {
+        claim::double_hold(self.d.exec, mine, &|holder| !spira_config::session::session_gone(holder, &spira_config::admission::RealProcs))
     }
 
     /// The lifecycle claim: a Claim event per ranked candidate, carrying its stack proposal,
     /// until one applies. bd is read afterwards for the bead's content only. Ok(None): idle.
     fn lc_claim(&mut self, ids: &[String], resumable: &[String], tier: Option<&str>, who: &str) -> Result<Option<claim::Claimed>, i32> {
         let holder = self.s.holder.clone();
-        if let Some(held) = self.double_hold(&holder) {
-            self.log(&format!("{who}: refusing to claim — {held} is already WORKING under another live session of {}", self.s.dwarf));
-            return Err(1);
+        match self.double_hold(&holder) {
+            Ok(None) => {}
+            Ok(Some(held)) => {
+                self.log(&format!("{who}: refusing to claim — {held} is already WORKING under another live session of {}", self.s.dwarf));
+                return Err(1);
+            }
+            Err(e) => {
+                self.log(&format!("{who}: claim-error cannot tell whether another live session of {} holds a bead ({e}) — not claiming", self.s.dwarf));
+                self.ledger.awake(self.now(), self.f(), "claim-error double-hold read failed");
+                return Err(1);
+            }
         }
         let until = (self.now() + self.rune.lease_seconds()).to_string();
+        let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
+        let delay = Duration::from_secs(self.conf.i("SPIRA_CLAIM_RETRY_DELAY_S").max(0) as u64);
         let mut stacks = std::collections::BTreeMap::new();
         let (won, logs, unreachable) = claim::lc_claim_loop(ids, resumable, tier, who, |id| {
             let p = self.stack_proposal(id, who);
@@ -532,7 +533,7 @@ impl<'a> Run<'a> {
                 &s(&[id, &holder, &until, &stack::stack_json(&p.stack), &p.stack_depth.to_string(), &p.stack_max_depth.to_string(), &self.rune.name]),
             );
             stacks.insert(id.to_string(), p.stack);
-            rc
+            claim::settle_claim(rc, self.d.exec, id, &holder, tries, delay, self.d.sleep)
         });
         for l in logs {
             self.log(&l);
@@ -546,8 +547,6 @@ impl<'a> Run<'a> {
             return Ok(None);
         };
         self.s.stack = stacks.remove(&id).unwrap_or_default();
-        let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
-        let delay = Duration::from_secs(self.conf.i("SPIRA_CLAIM_RETRY_DELAY_S").max(0) as u64);
         let mut raw = String::new();
         let mut row = None;
         for i in 1..=tries {
@@ -577,9 +576,12 @@ impl<'a> Run<'a> {
 
     /// The holds on a just-claimed row that make it unclaimable: the Claim event does not
     /// read holds, so a hold applied between the ready read and the claim is caught here.
-    fn blocking_holds(&self, id: &str) -> Vec<String> {
-        let o = self.d.exec.exec("spira-lc", &s(&["holds", id]), None, None);
-        o.stdout.lines().map(str::trim).filter(|h| !h.is_empty() && *h != "wait").map(String::from).collect()
+    /// A store that cannot tell is retried, then `Unknown`: never read as a hold, so it never
+    /// releases the claim (sp-druc64).
+    fn blocking_holds(&self, id: &str) -> claim::Holds {
+        let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
+        let delay = Duration::from_secs(self.conf.i("SPIRA_CLAIM_RETRY_DELAY_S").max(0) as u64);
+        claim::read_holds(self.d.exec, id, tries, delay, self.d.sleep)
     }
 
     fn claim(&mut self) -> Result<(), i32> {
@@ -627,12 +629,17 @@ impl<'a> Run<'a> {
         }
 
         // Read-after-claim: the predicate and the claim are not atomic.
-        let held = self.blocking_holds(&c.id);
-        if !held.is_empty() {
-            self.release();
-            self.log(&format!("{who}: {} carries a {} hold — released immediately after claim (race with the hold)", c.id, held.join(",")));
-            self.ledger_done(0, "hold-raced");
-            return Err(0);
+        match self.blocking_holds(&c.id) {
+            claim::Holds::Known(held) if !held.is_empty() => {
+                self.release();
+                self.log(&format!("{who}: {} carries a {} hold — released immediately after claim (race with the hold)", c.id, held.join(",")));
+                self.ledger_done(0, "hold-raced");
+                return Err(0);
+            }
+            claim::Holds::Known(_) => {}
+            claim::Holds::Unknown(why) => {
+                self.log(&format!("{who}: {} holds cannot be read ({why}) — keeping the claim; a hold is not assumed and nothing is released", c.id));
+            }
         }
 
         if let Some(rc) = self.build_spec_gate(&c) {

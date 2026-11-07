@@ -2666,7 +2666,7 @@ fn a_lock_held_past_the_deadline_refuses_naming_its_recorded_holder() {
         _ => panic!("lock"),
     };
     let start = t.clock.now();
-    assert_eq!(t.run(&["eject", "sp-a"]), 1);
+    assert_eq!(t.run(&["eject", "sp-a"]), crate::ops::LOCK_BUSY);
     let want = "verb=round certify".to_string();
     assert!(
         t.err().contains(&want) && t.err().contains("pid="),
@@ -2685,7 +2685,7 @@ fn eject_refuses_while_another_queue_operation_holds_the_lock() {
     let t = T::new(LandMode::Queue);
     open_batch_record(&t);
     let _g = t.hold_lock();
-    assert_eq!(t.run(&["eject", "sp-a"]), 1);
+    assert_eq!(t.run(&["eject", "sp-a"]), crate::ops::LOCK_BUSY);
     assert!(t
         .err()
         .contains("another queue operation holds the lock for spira"));
@@ -2983,7 +2983,7 @@ fn land_local_refuses_while_another_operation_holds_the_lock() {
     let start = t.clock.now();
     assert_eq!(
         t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
-        1
+        crate::ops::LOCK_BUSY
     );
     assert!(
         t.err()
@@ -3363,7 +3363,7 @@ fn land_local_skips_its_lock_only_when_the_caller_holds_it() {
     let _g = t.hold_lock();
     assert_eq!(
         t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
-        1
+        crate::ops::LOCK_BUSY
     );
     assert!(t.err().contains("another queue operation holds the lock"));
     t.var("SPIRA_QUEUE_LOCK_HELD", "1");

@@ -9,13 +9,14 @@ use crate::model::LcBeadRow;
 const ACTOR: &str = "rebase-stale";
 const CLAIM_LEASE_SECS: u64 = 600;
 
+/// A bead still waiting for a round: SUBMITTED or CERTIFIED, or REWORK because a gate found its
+/// tip does not merge onto the landing ref — its reason is GateRed's `NoRebase`, parsed as the
+/// typed reason, never matched as a word in free text.
 fn waiting(row: &LcBeadRow) -> bool {
+    use lifecycle::reason::GateRedReason;
     match row.state.as_str() {
         "SUBMITTED" | "CERTIFIED" => true,
-        "REWORK" => row
-            .reason
-            .as_deref()
-            .is_some_and(|r| r.contains("no-rebase")),
+        "REWORK" => row.reason.as_deref().and_then(GateRedReason::from_str) == Some(GateRedReason::NoRebase),
         _ => false,
     }
 }
@@ -365,5 +366,27 @@ fn stack_waiting(w: &World, label: &str, path: &std::path::Path, c: &super::Ctx,
             break;
         }
         pending = next;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(state: &str, reason: Option<&str>) -> LcBeadRow {
+        LcBeadRow { state: state.into(), reason: reason.map(str::to_string), ..LcBeadRow::default() }
+    }
+
+    /// law-lifecycle-state-is-not-text (sp-mijstw): a REWORK row waits for a rebase only when its
+    /// reason is the GateRed reason NoRebase, read as the typed enum — never because free text
+    /// happens to contain the word, which moved an unrelated REWORK bead back to SUBMITTED.
+    #[test]
+    fn only_a_no_rebase_gate_red_reason_waits_for_a_rebase() {
+        assert!(waiting(&row("REWORK", Some("no-rebase"))));
+        assert!(waiting(&row("SUBMITTED", None)) && waiting(&row("CERTIFIED", None)));
+        assert!(!waiting(&row("REWORK", Some("operator: was no-rebase, now a real red in src/a.rs"))));
+        assert!(!waiting(&row("REWORK", Some("suites-failed"))));
+        assert!(!waiting(&row("REWORK", None)));
+        assert!(!waiting(&row("WORKING", Some("no-rebase"))));
     }
 }

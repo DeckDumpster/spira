@@ -252,7 +252,11 @@ impl<'a> Sentinel<'a> {
     fn rune_ready(&self, f: &str) -> ReadyAnswer {
         let o = self.h.claim(&["rune-ready".into(), f.to_string()]);
         match o.rc {
-            0 => ReadyAnswer::Count(o.stdout.trim().parse().unwrap_or(0)),
+            // The answer is an integer; anything else on stdout is no answer, never zero.
+            0 => match o.stdout.trim().parse() {
+                Ok(n) => ReadyAnswer::Count(n),
+                Err(_) => ReadyAnswer::Failed(format!("rune-ready answered {:?}, not a count", o.stdout.trim())),
+            },
             2 => ReadyAnswer::NoRune,
             _ => ReadyAnswer::Failed(o.stderr.trim().to_string()),
         }

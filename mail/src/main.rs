@@ -334,7 +334,7 @@ fn run_tidy(args: &[String]) -> ExitCode {
         Err(e) => return fail(e),
     };
     let db_configured = !env.db.is_empty();
-    match tidy::tidy(&bd, db_configured, &env.mail_root, &mailbox, &env.ask_label, env.tidy_fresh_s, env.id_prefix_for_regex(), dry_run) {
+    match tidy::tidy(&bd, db_configured, &env.mail_root, &mailbox, &env.ask_label, env.tidy_fresh_s, dry_run) {
         Ok(r) => {
             println!("tidy: archived {}, kept {}", r.archived, r.kept);
             ExitCode::SUCCESS

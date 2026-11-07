@@ -12,7 +12,6 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::bead::{self, Bd};
-use crate::lint::bead_id_regex;
 use crate::maildir;
 use crate::message;
 
@@ -31,7 +30,7 @@ pub struct Seen {
     pub path: std::path::PathBuf,
     pub mtime: u64,
     pub subject: String,
-    /// `X-Spira-Bead`, else the first bead id in the body; empty when neither.
+    /// `X-Spira-Bead`; empty when the mail has none.
     pub bead: String,
     pub unread: bool,
     pub urgent: bool,
@@ -46,7 +45,7 @@ impl Seen {
 }
 
 /// `<mail_root>/<mailbox>/{new,cur}`, newest first. Refuses a mailbox that was never created.
-pub fn scan(mail_root: &Path, mailbox: &str, id_prefix: &str) -> Result<Vec<Seen>, String> {
+pub fn scan(mail_root: &Path, mailbox: &str) -> Result<Vec<Seen>, String> {
     let inbox_dir = mail_root.join(mailbox);
     if !(inbox_dir.join("cur").is_dir() && inbox_dir.join("new").is_dir()) {
         return Err(format!("{mailbox}: mailbox not found"));
@@ -60,16 +59,12 @@ pub fn scan(mail_root: &Path, mailbox: &str, id_prefix: &str) -> Result<Vec<Seen
     // `sort -rn` on "<mtime>\t<path>" lines: newest first. Rust's sort_by is stable, so
     // same-mtime files keep the new/-then-cur, filename-sorted order collected above.
     files.sort_by_key(|f| std::cmp::Reverse(f.0));
-    let bead_re = bead_id_regex(id_prefix);
     Ok(files
         .into_iter()
         .map(|(mtime, path)| {
             let text = fs::read_to_string(&path).unwrap_or_default();
-            let mut bead = message::header_line_sed(&text, "X-Spira-Bead");
-            if bead.is_empty() {
-                let (_, body) = message::split_headers_body(&text);
-                bead = bead_re.find(body).map(|m| m.as_str().to_string()).unwrap_or_default();
-            }
+            // The mail's bead is its header's, never an id scraped from the body's prose.
+            let bead = message::header_line_sed(&text, "X-Spira-Bead");
             let urgent = !message::header_line_sed(&text, "X-Spira-Urgent").is_empty();
             Seen { unread: maildir::is_unread(&path), subject: message::header_line_sed(&text, "Subject"), bead, urgent, mtime, path }
         })
@@ -142,11 +137,10 @@ pub fn tidy(
     mailbox: &str,
     ask_label: &str,
     fresh_s: u64,
-    id_prefix: &str,
     dry_run: bool,
 ) -> Result<TidyReport, String> {
     let ask_ids = open_asks(bd, db_configured, ask_label)?;
-    let seen = scan(mail_root, mailbox, id_prefix)?;
+    let seen = scan(mail_root, mailbox)?;
     let archive_dir = mail_root.join("archive");
     maildir::mail_ensure(&archive_dir).map_err(|e| format!("cannot create archive mailbox: {e}"))?;
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
@@ -214,7 +208,7 @@ mod tests {
     fn refuses_without_a_configured_store() {
         let d = testkit::TempDir::new("mail-tidy");
         let bd = FakeBd::new(vec![]);
-        let err = tidy(&bd, false, d.path(), "operator", "asks", 3600, "sp", false).unwrap_err();
+        let err = tidy(&bd, false, d.path(), "operator", "asks", 3600, false).unwrap_err();
         assert!(err.contains("not configured"), "{err}");
     }
 
@@ -222,7 +216,7 @@ mod tests {
     fn refuses_when_the_mailbox_was_never_created() {
         let d = testkit::TempDir::new("mail-tidy");
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok(r#"[{"id":"probe"}]"#)]);
-        let err = tidy(&bd, true, d.path(), "operator", "asks", 3600, "sp", false).unwrap_err();
+        let err = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap_err();
         assert!(err.contains("mailbox not found"), "{err}");
     }
 
@@ -231,7 +225,7 @@ mod tests {
         let d = testkit::TempDir::new("mail-tidy");
         setup(d.path(), "operator");
         let bd = FakeBd::new(vec![BdOut::fail(1, "boom")]);
-        let err = tidy(&bd, true, d.path(), "operator", "asks", 3600, "sp", false).unwrap_err();
+        let err = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap_err();
         assert!(err.contains("refusing"), "{err}");
     }
 
@@ -240,7 +234,7 @@ mod tests {
         let d = testkit::TempDir::new("mail-tidy");
         setup(d.path(), "operator");
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::fail(1, "down")]);
-        let err = tidy(&bd, true, d.path(), "operator", "asks", 3600, "sp", false).unwrap_err();
+        let err = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap_err();
         assert!(err.contains("positive control"), "{err}");
     }
 
@@ -249,7 +243,7 @@ mod tests {
         let d = testkit::TempDir::new("mail-tidy");
         setup(d.path(), "operator");
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::fail(3, "Error 1045: Access denied for user 'spira_lc'")]);
-        let err = tidy(&bd, true, d.path(), "operator", "asks", 3600, "sp", false).unwrap_err();
+        let err = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap_err();
         assert!(err.contains("bd exit 3"), "{err}");
         assert!(err.contains("Access denied for user 'spira_lc'"), "{err}");
     }
@@ -261,7 +255,7 @@ mod tests {
         seed_message(&d.path().join("operator"), "new", "a", "Open question", Some("sp-open1"), false, 10);
         seed_message(&d.path().join("operator"), "new", "b", "Closed question", Some("sp-closed1"), false, 7200);
         let bd = FakeBd::new(vec![BdOut::ok(r#"[{"id":"sp-open1"}]"#)]);
-        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, "sp", false).unwrap();
+        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap();
         assert_eq!((report.archived, report.kept), (1, 1));
         assert!(d.path().join("operator/new/a").exists());
         assert!(!d.path().join("operator/new/b").exists());
@@ -274,7 +268,7 @@ mod tests {
         setup(d.path(), "operator");
         seed_message(&d.path().join("operator"), "new", "fresh", "Fresh note", None, false, 5);
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok(r#"[{"id":"probe"}]"#)]);
-        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, "sp", false).unwrap();
+        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap();
         assert_eq!((report.archived, report.kept), (0, 1));
     }
 
@@ -290,11 +284,25 @@ mod tests {
             BdOut::ok(r#"[{"id":"sp-closed2","status":"closed"}]"#),
             BdOut::ok(r#"[{"id":"sp-closed1","status":"closed"}]"#),
         ]);
-        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, "sp", false).unwrap();
+        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap();
         assert_eq!((report.archived, report.kept), (2, 1));
         assert!(d.path().join("operator/new/o").exists());
         assert!(d.path().join("archive/cur/c").exists());
         assert!(d.path().join("archive/cur/u").exists());
+    }
+
+    /// A bead id in the body is prose, not the mail's subject bead: a fresh unread note that
+    /// mentions a closed bead is not that bead's mail, and is kept.
+    #[test]
+    fn a_bead_named_only_in_the_body_is_not_the_mails_bead() {
+        let d = testkit::TempDir::new("mail-tidy");
+        setup(d.path(), "operator");
+        let path = d.path().join("operator/new/n");
+        fs::write(&path, "Subject: Disk is filling\n\nUnrelated to sp-closed1, which closed last week.\n").unwrap();
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok(r#"[{"id":"probe"}]"#), BdOut::ok(r#"[{"id":"sp-closed1","status":"closed"}]"#)]);
+        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap();
+        assert_eq!((report.archived, report.kept), (0, 1), "the note is kept");
+        assert!(path.exists());
     }
 
     #[test]
@@ -303,7 +311,7 @@ mod tests {
         setup(d.path(), "operator");
         seed_message(&d.path().join("operator"), "new", "x", "Unknown", Some("sp-gone1"), false, 5);
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok(r#"[{"id":"probe"}]"#), BdOut::fail(1, "no such bead")]);
-        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, "sp", false).unwrap();
+        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap();
         assert_eq!((report.archived, report.kept), (0, 1));
     }
 
@@ -317,7 +325,7 @@ mod tests {
         seed_message(&d.path().join("operator"), "cur", "in:2,S", "Urgent still fresh", None, true, inside);
         seed_message(&d.path().join("operator"), "cur", "out:2,S", "Urgent expired", None, true, outside);
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok(r#"[{"id":"probe"}]"#)]);
-        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, "sp", false).unwrap();
+        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap();
         assert_eq!((report.archived, report.kept), (1, 1));
         assert!(d.path().join("operator/cur/in:2,S").exists());
         assert!(!d.path().join("operator/cur/out:2,S").exists());
@@ -331,7 +339,7 @@ mod tests {
         seed_message(&d.path().join("operator"), "new", "e2", "Daily report", None, false, 7200);
         seed_message(&d.path().join("operator"), "new", "e3", "Daily report", None, false, 10);
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok(r#"[{"id":"probe"}]"#)]);
-        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, "sp", false).unwrap();
+        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap();
         assert_eq!((report.archived, report.kept), (2, 1));
         assert!(d.path().join("operator/new/e3").exists());
         assert!(!d.path().join("operator/new/e1").exists());
@@ -344,7 +352,7 @@ mod tests {
         setup(d.path(), "operator");
         seed_message(&d.path().join("operator"), "new", "old", "Dry run test", None, false, 7200);
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok(r#"[{"id":"probe"}]"#)]);
-        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, "sp", true).unwrap();
+        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, true).unwrap();
         assert_eq!(report.archived, 1);
         assert!(d.path().join("operator/new/old").exists());
         let _ = Duration::from_secs(0);

@@ -115,8 +115,10 @@ pub fn eject(
     if !dry_run && require_lc(w, "eject").is_err() {
         return FAIL;
     }
-    let Ok(_g) = take_lock(w, "eject", &c, "") else {
-        return FAIL;
+    let _g = match take_lock(w, "eject", &c, "") {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
 
     let open = match super::forge_batch::read(w, &c) {
@@ -405,8 +407,10 @@ pub fn abandon(w: &World, repo: Option<&str>, reason: &Text, dry_run: bool) -> i
     if !dry_run && require_lc(w, "abandon").is_err() {
         return FAIL;
     }
-    let Ok(_g) = take_lock(w, "abandon", &c, "") else {
-        return FAIL;
+    let _g = match take_lock(w, "abandon", &c, "") {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
     abandon_locked(w, &c, &path, &reason, &actor, dry_run, "abandon")
 }
@@ -695,8 +699,9 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
         true => Ok(None),
         false => take_lock(w, "open-batch", &c, ""),
     };
-    let Ok(_g) = lock else {
-        return FAIL;
+    let _g = match lock {
+        Ok(g) => g,
+        Err(rc) => return rc,
     };
     let store = super::forge_batch::on_store(w);
     if a.lease_token.is_some() && !store {
@@ -1342,8 +1347,10 @@ pub fn batch_sweep(w: &World, repo: Option<&str>) -> i32 {
     if require_lc(w, LABEL).is_err() {
         return FAIL;
     }
-    let Ok(_g) = take_lock(w, LABEL, &c, "") else {
-        return FAIL;
+    let _g = match take_lock(w, LABEL, &c, "") {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
     sweep_locked(w, &c, &path)
 }

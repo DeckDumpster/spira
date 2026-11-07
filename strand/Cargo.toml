@@ -11,6 +11,7 @@ regex = "1"
 libc = "0.2"
 spira-config = { path = "../spira-config" }
 hel = { path = "../hel" }
+runtime = { path = "../runtime" }
 
 [lib]
 name = "strand"

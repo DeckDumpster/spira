@@ -206,6 +206,21 @@ fn with_its_slot_held_a_cut_opens_the_pool_on_the_landing_ref() {
     assert_eq!(r.round.tested_base.as_deref(), Some("base-0"));
 }
 
+/// law-lifecycle-state-is-not-text (sp-mijstw): a lifecycle record may carry its holds as an
+/// array or as the JSON-encoded string spira-lc writes; either form that names a hold keeps the
+/// member out of a round, and a string that is no list is not read as "no holds".
+#[test]
+fn a_hold_in_either_form_keeps_its_member_out_of_the_cut() {
+    let w = World::new(vec![open_ok("r1")]);
+    w.member("sp-a", json!({}));
+    w.member("sp-str-held", json!({ "holds": "[\"poison\"]" }));
+    w.member("sp-str-empty", json!({ "holds": "[]" }));
+    w.member("sp-str-garbled", json!({ "holds": "poison" }));
+    w.member("sp-null", json!({ "holds": null }));
+    w.cut().unwrap().unwrap();
+    assert_eq!(w.opened_members(), ["sp-a", "sp-null", "sp-str-empty"]);
+}
+
 #[test]
 fn a_member_of_a_live_round_is_not_in_the_pool_and_an_empty_pool_cuts_nothing() {
     let w = World::new(vec![]);

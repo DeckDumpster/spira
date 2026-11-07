@@ -538,13 +538,13 @@ pub fn occupants(proc_root: &Path, work: &Path) -> Vec<u32> {
     pids
 }
 
-/// The `spira-dwarf-*.service` units the given pids run under, from their cgroups.
+/// The dwarf units the given pids run under, from their cgroups, by either name
+/// (`runtime::units::is_dwarf_unit`).
 pub fn dwarf_units(proc_root: &Path, pids: &[u32]) -> Vec<String> {
     let mut units: Vec<String> = pids
         .iter()
         .filter_map(|p| std::fs::read_to_string(proc_root.join(p.to_string()).join("cgroup")).ok())
-        .flat_map(|t| t.split(|c: char| c == '/' || c.is_whitespace()).map(str::to_string).collect::<Vec<_>>())
-        .filter(|seg| seg.starts_with("spira-dwarf-") && seg.ends_with(".service"))
+        .flat_map(|t| runtime::units::dwarf_units_in_cgroup(&t).into_iter().map(str::to_string).collect::<Vec<_>>())
         .collect();
     units.sort();
     units.dedup();
@@ -710,6 +710,21 @@ mod tests {
         assert_eq!(r, Ok(()));
         assert_eq!(stopped, vec!["spira-dwarf-andvari-sp-a-1.service"]);
         assert!(stop_occupants(&proc, &work, &mut |_| panic!("nothing to stop"), 3, &|| {}).is_ok());
+    }
+
+    #[test]
+    fn sp_li4zys_the_unit_of_a_scheduler_started_dwarf_is_found_and_stopped() {
+        let t = tempdir();
+        let proc = t.join("proc");
+        let work = t.join("worktree/sp-a");
+        std::fs::create_dir_all(&work).unwrap();
+        let own = "spira-run-sentinel_2dcall-builder_2d1794009721297_2d1.service";
+        for (pid, unit) in [("100", own), ("101", "spira-run-sentinel_2dpass-landing.service")] {
+            std::fs::create_dir_all(proc.join(pid)).unwrap();
+            std::os::unix::fs::symlink(&work, proc.join(pid).join("cwd")).unwrap();
+            std::fs::write(proc.join(pid).join("cgroup"), format!("0::/user.slice/user-1000.slice/user@1000.service/app.slice/{unit}\n")).unwrap();
+        }
+        assert_eq!(dwarf_units(&proc, &[100, 101]), vec![own.to_string()], "the scheduler-named dwarf is a dwarf; the landing pass is not");
     }
 
     #[test]

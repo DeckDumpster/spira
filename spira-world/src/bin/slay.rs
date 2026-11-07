@@ -235,7 +235,11 @@ fn main() {
             name = std::fs::read_to_string(&name_file).unwrap_or_default().trim().to_string();
         }
         if !pid.is_empty() {
-            for u in sysctl::run_lines(&["list-units", "spira-dwarf-*", "--no-legend"]) {
+            let globs = sysctl::dwarf_globs();
+            let mut args = vec!["list-units"];
+            args.extend(globs.iter().map(String::as_str));
+            args.push("--no-legend");
+            for u in sysctl::run_lines(&args) {
                 if let Some(unit_name) = sysctl::first_field(&u) {
                     if sysctl::run(&["show", "-p", "MainPID", "--value", unit_name]) == pid {
                         unit = unit_name.to_string();

@@ -181,18 +181,29 @@ impl Source for Submission {
 mod tests {
     use super::*;
     use std::cell::{Cell, RefCell};
+    use std::sync::{Mutex, MutexGuard};
+
+    /// RELOADS is process-global: every test that calls [`reload`] or reads [`reloads`] holds this,
+    /// so no sibling's reload lands between a test's own read and its assertion (sp-anhnd6).
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    fn serial() -> MutexGuard<'static, ()> {
+        SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     #[test]
     fn only_the_submission_source_reloads() {
+        let _serial = serial();
         let before = reloads();
         assert!(reload("mail.arrived").is_err());
         assert_eq!(reloads(), before, "a refused reload asks nothing");
         assert!(reload(NAME).unwrap().contains(NAME));
-        assert!(reloads() > before);
+        assert_eq!(reloads(), before + 1, "its own reload, and only that");
     }
 
     #[test]
     fn a_reload_ends_the_serve_and_the_next_one_reads_the_config_anew() {
+        let _serial = serial();
         let reads = Cell::new(0);
         let served = RefCell::new(Vec::new());
         let closed = Cell::new(false);
@@ -219,9 +230,10 @@ mod tests {
 
     #[test]
     fn the_provision_tasks_restart_is_this_sources_reload_not_a_unit() {
+        let _serial = serial();
         let before = reloads();
         let r = crate::tasks::a::submission_provision::unit_restart(&crate::Effects::default(), NAME);
         assert!(r.as_deref().is_ok_and(|m| m.contains("reloaded source submission")), "{r:?}");
-        assert!(reloads() > before);
+        assert_eq!(reloads(), before + 1, "its own reload, and only that");
     }
 }

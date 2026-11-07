@@ -270,11 +270,15 @@ fn operation_of(args: &[String]) -> String {
     }
 }
 
-/// `dwarf_own_unit`: the spira-dwarf-*.service this process runs under, from its cgroup.
+/// `dwarf_own_unit`: the dwarf unit this process runs under, from its cgroup — by either name
+/// (`runtime::units::is_dwarf_unit`): `spira-dwarf-*` or the scheduler's
+/// `spira-run-sentinel_2dcall-*` (sp-li4zys).
 fn own_unit_from_cgroup() -> String {
-    let t = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
-    let re = regex::Regex::new(r"spira-dwarf-[^/\s]+\.service").unwrap();
-    re.find_iter(&t).last().map(|m| m.as_str().to_string()).unwrap_or_default()
+    own_unit_in(&std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default())
+}
+
+fn own_unit_in(t: &str) -> String {
+    runtime::units::dwarf_units_in_cgroup(t).last().map(|u| u.to_string()).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -283,6 +287,16 @@ mod tests {
 
     fn a(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn sp_li4zys_a_dwarf_the_scheduler_started_finds_its_own_unit() {
+        let own = "spira-run-sentinel_2dcall-builder_2d1794009721297_2d1.service";
+        let cg = format!("0::/user.slice/user-1000.slice/user@1000.service/app.slice/{own}\n");
+        assert_eq!(own_unit_in(&cg), own, "a scheduler-named dwarf's cgroup names its unit");
+        let by_name = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/spira-dwarf-builder-17.service\n";
+        assert_eq!(own_unit_in(by_name), "spira-dwarf-builder-17.service");
+        assert_eq!(own_unit_in("0::/user.slice/user-1000.slice/user@1000.service/app.slice/spira-run-sentinel_2dpass-landing.service\n"), "", "a landing pass is not a dwarf");
     }
 
     #[test]

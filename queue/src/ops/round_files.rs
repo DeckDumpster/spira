@@ -81,6 +81,14 @@ pub(super) fn keep(_: &Path, _: &Kv) {}
 /// marker), but `spare`'s, and hands `round` to the oldest live one. The caller holds the
 /// queue lock.
 pub(super) fn sweep(w: &World, c: &Ctx, spare: Option<&str>) {
+    // Rounds share a worktree path, so an ended round's tree may be the one a live round stands in.
+    let mut held: Vec<PathBuf> = Vec::new();
+    let open = live_records(w, c, |_, kv| {
+        if kv.get("batch_id") == spare {
+            held.push(worktree_of(kv));
+        }
+    });
+    held.extend(open.iter().map(|(_, kv)| worktree_of(kv)));
     let live = live_records(w, c, |p, kv| {
         let batch = kv.get("batch_id").unwrap_or("");
         if Some(batch) == spare {
@@ -88,7 +96,7 @@ pub(super) fn sweep(w: &World, c: &Ctx, spare: Option<&str>) {
         }
         let _ = fs::remove_file(p);
         let wt = worktree_of(kv);
-        if let (Some(repo), false) = (&c.r.path, wt.as_os_str().is_empty()) {
+        if let (Some(repo), false) = (&c.r.path, wt.as_os_str().is_empty() || held.contains(&wt)) {
             w.git.worktree_remove(repo, &wt);
         }
         let state = w.lc.batch_state(batch).map(|(s, _)| s).unwrap_or_default();

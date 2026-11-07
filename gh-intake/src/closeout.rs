@@ -548,6 +548,11 @@ pub fn gh_resolve_stale_asks(d: &Deps, ctx: &Ctx) -> Vec<String> {
 /// (`lc_state::past_builder`): what bd `closed` used to mean here. `Ok(None)` for a bead
 /// still READY/WORKING/REWORK, and for one with no row — no row is no evidence the work is
 /// done, so it is neither closed out nor asked about.
+/// A LANDED row that names the commit it landed as.
+fn landed_sha(b: &LcBead) -> bool {
+    b.state == "LANDED" && !b.sha.is_empty()
+}
+
 fn handed_on(d: &Deps, id: &str) -> Result<Option<LcBead>, String> {
     Ok(d.lc.bead(id)?.filter(|b| spira_config::lc_state::past_builder(&b.state)))
 }
@@ -572,17 +577,14 @@ pub fn gh_unlanded_scan(d: &Deps, ctx: &Ctx, now: i64) -> Vec<String> {
             }
         };
 
+        // Landed is the machine's word, and the sha is its delivery's: a commit subject on a
+        // land ref is not a landing (a reverted or re-submitted bead still has one).
         if let Some(rp) = d.repo.root_with_git(&row.repo_label) {
-            let refs = d.repo.landrefs(&rp);
-            if let Some(sha) = d.git.landing_commit(Path::new(&rp), &row.id, &refs) {
-                log.extend(gh_issue_closeout(d, ctx, &row.id, &sha, Path::new(&rp)));
+            let superseder = || row.superseder.as_deref().filter(|s| !s.is_empty()).and_then(|sup| d.lc.bead(sup).ok().flatten());
+            let landed = ls.clone().filter(landed_sha).or_else(|| superseder().filter(landed_sha));
+            if let Some(b) = landed {
+                log.extend(gh_issue_closeout(d, ctx, &row.id, &b.sha, Path::new(&rp)));
                 continue;
-            }
-            if let Some(sup) = row.superseder.as_deref().filter(|s| !s.is_empty()) {
-                if let Some(sha) = d.git.landing_commit(Path::new(&rp), sup, &refs) {
-                    log.extend(gh_issue_closeout(d, ctx, &row.id, &sha, Path::new(&rp)));
-                    continue;
-                }
             }
         }
 
@@ -628,7 +630,7 @@ pub fn gh_unlanded_scan(d: &Deps, ctx: &Ctx, now: i64) -> Vec<String> {
 
 /// `gh-issue-backfill.sh` (sp-j3fim): apply `gh_issue_closeout` to existing closed+landed
 /// beads, with its OWN looser ancestry search — see `Git::grep_ancestor`'s doc comment for
-/// why this is deliberately not `gh_unlanded_scan`'s `landing_commit`. Returns the report lines
+/// why this is deliberately not `gh_unlanded_scan`'s lifecycle read. Returns the report lines
 /// plus (found, closed, skipped, would-close) for the summary line's counts.
 pub fn backfill(d: &Deps, ctx: &Ctx, dry_run: bool) -> (Vec<String>, u32, u32, u32, u32) {
     let snap = Snapshot::of(d.lc);
@@ -926,7 +928,7 @@ mod tests {
 
     #[derive(Default)]
     struct FakeGit {
-        /// repo-path -> id -> sha, for `landing_commit`/`grep_ancestor`.
+        /// repo-path -> id -> sha, for `grep_ancestor`.
         landed: RefCell<BTreeMap<String, BTreeMap<String, String>>>,
         subjects: RefCell<BTreeMap<String, String>>,
     }
@@ -943,12 +945,6 @@ mod tests {
         }
         fn subject_of(&self, _repo: &Path, sha: &str) -> Option<String> {
             self.subjects.borrow().get(sha).cloned()
-        }
-        fn landing_commit(&self, repo: &Path, id: &str, refs: &[String]) -> Option<String> {
-            if refs.is_empty() {
-                return None;
-            }
-            self.landed.borrow().get(&repo.display().to_string()).and_then(|m| m.get(id)).cloned()
         }
         fn grep_ancestor(&self, repo: &Path, id: &str, _land_ref: &str) -> Option<String> {
             self.landed.borrow().get(&repo.display().to_string()).and_then(|m| m.get(id)).cloned()
@@ -1252,7 +1248,7 @@ mod tests {
         repo.add("fixture", "/r", "origin/main");
         let mail = FakeMail::default();
         // Both handed on by their builders (sp-mve9i: the machine's answer, not bd's status).
-        let lc = FakeLc::with("sp-landed", "SUBMITTED", "").and("sp-unlanded", "DROPPED", "");
+        let lc = FakeLc::with("sp-landed", "LANDED", "cafebabe").and("sp-unlanded", "DROPPED", "");
         let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         let now = 2_000_000_000; // long after both fixture timestamps
 
@@ -1261,6 +1257,42 @@ mod tests {
         assert!(log.iter().any(|l| l.contains("asked operator about github:fixture/testrepo#95")), "unlanded bead should be asked about: {log:?}");
         assert!(run_state::mark_exists(&run, "sp-landed"));
         assert!(!run_state::mark_exists(&run, "sp-unlanded"));
+    }
+
+    /// A commit subject is not a landing: a bead the machine holds in REWORK (its landing
+    /// reverted) still has "spira: land <id>" on main, and its issue must not be closed.
+    #[test]
+    fn unlanded_scan_closes_an_issue_only_for_a_bead_the_machine_says_landed() {
+        let tmp = testkit::TempDir::new("gh-intake-scan-landed-by-state");
+        let run = tmp.path().join("run");
+        let bd = FakeBd::default();
+        bd.show.borrow_mut().insert("sp-rev".into(), serde_json::json!({"external_ref": "github:fixture/testrepo#71"}));
+        bd.show.borrow_mut().insert("sp-sub".into(), serde_json::json!({"external_ref": "github:fixture/testrepo#72"}));
+        bd.show.borrow_mut().insert("sp-done".into(), serde_json::json!({"external_ref": "github:fixture/testrepo#73"}));
+        seed_closed_github(
+            &bd,
+            vec![
+                serde_json::json!({"id":"sp-rev","status":"closed","external_ref":"github:fixture/testrepo#71","labels":["repo:fixture"],"closed_at":"2000-01-01T00:00:00Z"}),
+                serde_json::json!({"id":"sp-sub","status":"closed","external_ref":"github:fixture/testrepo#72","labels":["repo:fixture"],"closed_at":"2000-01-01T00:00:00Z"}),
+                serde_json::json!({"id":"sp-done","status":"closed","external_ref":"github:fixture/testrepo#73","labels":["repo:fixture"],"closed_at":"2000-01-01T00:00:00Z"}),
+            ],
+        );
+        let gh = FakeGh::default();
+        for n in ["71", "72", "73"] {
+            gh.set_state("fixture/testrepo", n, "OPEN");
+        }
+        let git = FakeGit::default();
+        git.seed_landed("/r", "sp-rev", "deadbeef");
+        git.seed_landed("/r", "sp-sub", "feedface");
+        let repo = FakeRepo::default();
+        repo.add("fixture", "/r", "origin/main");
+        let mail = FakeMail::default();
+        let lc = FakeLc::with("sp-rev", "DROPPED", "deadbeef").and("sp-sub", "SUBMITTED", "feedface").and("sp-done", "LANDED", "c0ffee00");
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
+        let log = gh_unlanded_scan(&d, &ctx(&run), 2_000_000_000);
+        assert!(!log.iter().any(|l| l.contains("closed github:fixture/testrepo#71")), "a dropped bead is not landed: {log:?}");
+        assert!(!log.iter().any(|l| l.contains("closed github:fixture/testrepo#72")), "a submitted bead is not landed: {log:?}");
+        assert!(log.iter().any(|l| l.contains("closed github:fixture/testrepo#73")), "a LANDED row closes its issue on its merge sha: {log:?}");
     }
 
     #[test]

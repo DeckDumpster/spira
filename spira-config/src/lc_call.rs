@@ -303,8 +303,16 @@ pub fn print_answer(code: i32, out: &str) {
     }
 }
 
-pub fn is_refusal(code: i32, out: &str) -> bool {
-    code != 0 && out.starts_with("cannot tell")
+/// Whether an answer is "cannot tell": its exit code, never its text (sp-cxfgj5,
+/// law-lifecycle-state-is-not-text). `out` is kept for the callers that pass it; it decides
+/// nothing.
+pub fn is_refusal(code: i32, _out: &str) -> bool {
+    cannot_tell(code)
+}
+
+/// Exit 2: the machine could not answer, whatever it printed.
+pub fn cannot_tell(code: i32) -> bool {
+    code == CANNOT_TELL
 }
 
 /// `SPIRA_LC_BIN`, else `spira-lc` in `$SPIRA_RELEASE`; a refusal naming the key otherwise.
@@ -358,6 +366,16 @@ mod tests {
         assert!(is_refusal(2, "cannot tell: deadline"));
         assert!(!is_refusal(0, "sp-abc12"), "an id is data");
         assert!(!is_refusal(1, "sp-abc12"));
+    }
+
+    /// sp-cxfgj5: exit 2 is "cannot tell" whatever it printed, and text never makes an
+    /// answer a refusal.
+    #[test]
+    fn cannot_tell_is_the_exit_code_not_the_text() {
+        assert!(is_refusal(2, "deadline exceeded"), "exit 2 never reaches stdout as data");
+        assert!(is_refusal(2, ""));
+        assert!(!is_refusal(0, "cannot tell: this is a bead title"), "an applied answer's text is data");
+        assert!(cannot_tell(CANNOT_TELL) && !cannot_tell(REFUSED) && !cannot_tell(0));
     }
 
     use std::sync::Mutex;

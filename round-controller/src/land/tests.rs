@@ -314,7 +314,7 @@ fn a_stacked_refusal_holds_naming_the_parent_and_an_unknown_word_holds_as_refuse
     let b = bench(vec![
         refuse(
             "k1",
-            Some(1),
+            Some(LAND_STACKED_EXIT),
             "stacked: round k1 is on round k0, which has not landed",
         ),
         refuse("k2", Some(1), "the queue lock is busy"),
@@ -350,7 +350,7 @@ fn base_moved_supersedes_the_round_through_the_verb_and_never_abandons_it() {
     let b = bench(vec![
         refuse(
             "k1",
-            Some(1),
+            Some(LAND_BASE_MOVED_EXIT),
             "base-moved: local/main is at base-1, not base-0",
         ),
         ok("supersede", "k1"),
@@ -365,7 +365,7 @@ fn base_moved_supersedes_the_round_through_the_verb_and_never_abandons_it() {
     assert!(b.store.get("batches/lane/k1").unwrap().is_none());
     assert_eq!(b.log.outcomes()[0].kind.word(), "superseded");
 
-    let b = bench(vec![refuse("k1", Some(1), "base-moved")]);
+    let b = bench(vec![refuse("k1", Some(LAND_BASE_MOVED_EXIT), "base-moved")]);
     round(&b, "k1", "Green", "k1-h", "base-0", None);
     assert!(matches!(
         land(&b.ports(), "lane"),
@@ -597,4 +597,29 @@ fn a_held_round_whose_head_landed_outside_the_lander_is_recorded_landed_from_git
     );
     assert_eq!((state(&b, "k1"), landing_ref(&b)), (BatchState::Landed, "k1-h".to_string()));
     assert_eq!(lands(&b), 1, "recorded from git, with no second land call");
+}
+
+/// law-lifecycle-state-is-not-text (sp-mijstw): a land refusal is classified by its exit code.
+/// The words on stderr are for the operator: "base-moved" in the text of a plain refusal never
+/// supersedes the round (releasing its members), and an exit that names base-moved does, whatever
+/// the text says.
+#[test]
+fn a_land_refusal_is_classified_by_its_exit_code_never_by_the_words_on_stderr() {
+    let b = bench(vec![refuse("k1", Some(1), "base-moved: but the exit is a plain refusal")]);
+    round(&b, "k1", "Green", "k1-h", "base-0", None);
+    assert_eq!(
+        land(&b.ports(), "lane").unwrap(),
+        [("k1".into(), Landing::Held(Blocker::Refused { text: "base-moved: but the exit is a plain refusal".into() }))],
+        "a plain refusal holds the round, whatever its first word"
+    );
+    let verbs: Vec<_> = b.verbs.calls().iter().map(|c| c.verb).collect();
+    assert_eq!(verbs, [Verb::Land], "never superseded on a word");
+
+    let b = bench(vec![refuse("k1", Some(LAND_BASE_MOVED_EXIT), "local/main moved"), ok("supersede", "k1")]);
+    round(&b, "k1", "Green", "k1-h", "base-0", None);
+    assert_eq!(land(&b.ports(), "lane").unwrap(), [("k1".into(), Landing::Superseded)]);
+
+    let b = bench(vec![refuse("k1", Some(LAND_STACKED_EXIT), "waiting on k0")]);
+    round(&b, "k1", "Green", "k1-h", "base-0", Some("k0"));
+    assert!(matches!(&land(&b.ports(), "lane").unwrap()[0].1, Landing::Held(Blocker::StackedOnUnlanded { .. })));
 }

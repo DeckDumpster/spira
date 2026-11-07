@@ -132,8 +132,10 @@ pub fn stage(
     if require_lc(w, label).is_err() {
         return FAIL;
     }
-    let Ok(_g) = lock(w, label, &c) else {
-        return FAIL;
+    let _g = match lock(w, label, &c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
     let open = match live_records(w, &c) {
         Ok(open) => open,
@@ -300,9 +302,11 @@ pub fn stage_test(w: &World, repo: Option<&str>) -> i32 {
         return FAIL;
     }
     let (batch, head, wt) = {
-        let Ok(_g) = lock(w, label, &c) else {
-            return FAIL;
-        };
+        let _g = match lock(w, label, &c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
+    };
         let Some(mut kv) = staged_record(&c) else {
             w.err(format!(
                 "queue.sh {label}: no staged round for {}",
@@ -396,8 +400,10 @@ pub fn stage_test(w: &World, repo: Option<&str>) -> i32 {
     reds.sort();
     reds.dedup();
 
-    let Ok(_g) = lock(w, label, &c) else {
-        return FAIL;
+    let _g = match lock(w, label, &c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
     let Some(mut kv) = staged_record(&c) else {
         w.err(format!("queue.sh {label}: the staged round {batch} was promoted or discarded while it was tested — the result is dropped"));
@@ -539,8 +545,10 @@ pub fn discard(w: &World, repo: Option<&str>, reason: &Text) -> i32 {
     if require_lc(w, label).is_err() {
         return FAIL;
     }
-    let Ok(_g) = lock(w, label, &c) else {
-        return FAIL;
+    let _g = match lock(w, label, &c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
     let Some(kv) = staged_record(&c) else {
         w.err(format!(
@@ -574,9 +582,11 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
     }
     let repo_name = c.r.name.clone();
     let (batch, head, attested_from) = {
-        let Ok(_g) = lock(w, label, &c) else {
-            return FAIL;
-        };
+        let _g = match lock(w, label, &c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
+    };
         let Some(kv) = staged_record(&c) else {
             w.err(format!("queue.sh {label}: no staged round for {repo_name}"));
             return FAIL;

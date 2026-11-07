@@ -407,8 +407,10 @@ where
     if idents(w, label, &[("batch id", batch)]).is_err() || require_lc(w, label).is_err() {
         return FAIL;
     }
-    let Ok(_g) = lock(w, label, &c) else {
-        return FAIL;
+    let _g = match lock(w, label, &c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
     let Ok(kv) = load(w, label, &c, batch) else {
         return FAIL;
@@ -1015,13 +1017,18 @@ fn sweep(w: &World, c: &Ctx, spare: Option<&str>) {
     let Ok(all) = w.lc.batches(&c.r.name) else {
         return;
     };
+    let held: Vec<PathBuf> = all
+        .iter()
+        .filter(|b| !b.is_terminal() || Some(b.id.as_str()) == spare)
+        .map(|b| worktree_of(&b.kv))
+        .collect();
     for b in all.iter().filter(|b| b.is_terminal() && Some(b.id.as_str()) != spare) {
         let wt = worktree_of(&b.kv);
         let has_tree = !wt.as_os_str().is_empty() && wt.exists();
         if !has_tree && !running_marker(c, &b.id).exists() {
             continue;
         }
-        if let (Some(repo), true) = (&c.r.path, has_tree) {
+        if let (Some(repo), true) = (&c.r.path, has_tree && !held.contains(&wt)) {
             w.git.worktree_remove(repo, &wt);
         }
         finish(w, c, &b.id, End::Abandoned("swept"), &format!("ended: {} on the lifecycle; record swept", b.state));
@@ -1261,6 +1268,29 @@ pub(super) fn worktree_of(kv: &Kv) -> PathBuf {
     PathBuf::from(kv.get("worktree").unwrap_or(""))
 }
 
+/// Removes `ending`'s worktree `wt` unless a round still open on the repo records the same path:
+/// rounds share a path (`.round-<repo>` by default, the batcher's one tree), and an ended round's
+/// tree is then the live round's. When the open rounds cannot be read the tree stays.
+fn remove_unheld_tree(w: &World, c: &Ctx, path: &Path, wt: &Path, ending: &str) {
+    let held = live_records(w, c).map(|open| {
+        open.iter()
+            .filter(|kv| kv.get("batch_id") != Some(ending))
+            .map(worktree_of)
+            .collect::<Vec<_>>()
+    });
+    match held {
+        Ok(held) if !held.iter().any(|h| h == wt) => w.git.worktree_remove(path, wt),
+        Ok(_) => w.out(format!(
+            "queue.sh: round {ending} ended; its worktree {} is kept — an open round stands in it",
+            wt.display()
+        )),
+        Err(e) => w.err(format!(
+            "queue.sh: round {ending} ended; its worktree {} is kept — the open rounds cannot be read: {e}",
+            wt.display()
+        )),
+    }
+}
+
 /// The round's tree rebuilt from `base_sha` with `members` merged in order, in `wt`. A
 /// member that no longer merges leaves `wt` as it was (at `fallback`) and is the Err.
 /// Merges a member and renumbers any migration whose number the round already holds; a merge
@@ -1453,8 +1483,10 @@ fn open(
     if require_lc(w, label).is_err() {
         return FAIL;
     }
-    let Ok(_g) = lock(w, label, &c) else {
-        return FAIL;
+    let _g = match lock(w, label, &c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
     let open_now = match live_records(w, &c) {
         Ok(open) => open,
@@ -2682,9 +2714,11 @@ pub(super) fn certify(
     let mut over = None;
     let mut rc = certify_pass(w, label, &c, &path, batch, attest, attested_ran, rehead, &mut over);
     while let Some(unreached) = over.take() {
-        let Ok(_g) = lock(w, label, &c) else {
-            return FAIL;
-        };
+        let _g = match lock(w, label, &c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
+    };
         let Ok(mut kv) = load(w, label, &c, batch) else {
             return FAIL;
         };
@@ -2749,9 +2783,11 @@ fn certify_pass(
     }
 
     let (head, wt, run_id, pass) = {
-        let Ok(_g) = lock(w, label, c) else {
-            return FAIL;
-        };
+        let _g = match lock(w, label, c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
+    };
         let Ok(mut kv) = load(w, label, c, batch) else {
             return FAIL;
         };
@@ -3106,8 +3142,10 @@ fn certify_pass(
         reds.dedup();
     }
 
-    let Ok(_g) = lock(w, label, c) else {
-        return FAIL;
+    let _g = match lock(w, label, c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
     let Ok(kv) = load(w, label, c, batch) else {
         return FAIL;
@@ -3442,8 +3480,10 @@ fn eject(
     if let Err(rc) = lease.guard(w, label, &c, batch) {
         return rc;
     }
-    let Ok(_g) = lock(w, label, &c) else {
-        return FAIL;
+    let _g = match lock(w, label, &c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
     let Ok(mut kv) = load(w, label, &c, batch) else {
         return FAIL;
@@ -3605,7 +3645,7 @@ fn eject(
             Err((rc, out)) => w.err(format!("queue.sh {label}: spira-lc abandon-batch refused for the emptied round {batch} (rc={rc}): {out} — the round is recorded ended; round open retries the abandon")),
         }
         drop_or_warn(w, label, &c, batch, "emptied");
-        w.git.worktree_remove(&path, &wt);
+        remove_unheld_tree(w, &c, &path, &wt, batch);
         finish(w, &c, batch, End::Abandoned("emptied"), &format!("{id} ejected, no member remains"));
         stage::discard_behind(w, &c, &path, batch, &format!("round {batch} was emptied"));
         w.out(format!(
@@ -3762,9 +3802,11 @@ fn preempt(
     }
 
     let (wt, head, tips) = {
-        let Ok(_g) = lock(w, label, &c) else {
-            return FAIL;
-        };
+        let _g = match lock(w, label, &c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
+    };
         let Ok(kv) = load(w, label, &c, batch) else {
             return FAIL;
         };
@@ -3835,9 +3877,11 @@ fn preempt(
     reds.dedup();
 
     {
-        let Ok(_g) = lock(w, label, &c) else {
-            return FAIL;
-        };
+        let _g = match lock(w, label, &c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
+    };
         let Ok(mut kv) = load(w, label, &c, batch) else {
             return FAIL;
         };
@@ -4022,8 +4066,8 @@ pub(super) fn reconcile_unrecorded(w: &World, c: &Ctx, path: &Path) {
     }
 }
 
-/// Why `round land` landed nothing, as the first word of its stderr: a lander acts on the word
-/// and the exit, never on the prose after them (law-a-matcher-reads-code-not-prose).
+/// Why `round land` landed nothing: its exit ([`LandRefusal::exit`]) is what a lander acts on;
+/// the word that starts its stderr is for the operator (law-a-matcher-reads-code-not-prose).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LandRefusal {
     /// Stacked on a round that has not landed: it waits for it.
@@ -4035,6 +4079,16 @@ pub enum LandRefusal {
 }
 
 impl LandRefusal {
+    /// The exit a lander classifies the refusal by: stacked and base-moved have their own, a
+    /// plain refusal keeps the exit the refusing step gave (law-lifecycle-state-is-not-text).
+    pub fn exit(self, rc: i32) -> i32 {
+        match self {
+            LandRefusal::Stacked => super::LAND_STACKED,
+            LandRefusal::BaseMoved => super::LAND_BASE_MOVED,
+            LandRefusal::Refused => rc,
+        }
+    }
+
     pub fn word(self) -> &'static str {
         match self {
             LandRefusal::Stacked => "stacked",
@@ -4076,11 +4130,11 @@ fn land(w: &World, batch: &str, repo: Option<&str>, token: Option<&str>) -> i32 
         }
         Err((why, rc)) if text.is_empty() => {
             w.io.err(&format!("{}: queue.sh round land: {batch} not landed\n", why.word()));
-            rc
+            why.exit(rc)
         }
         Err((why, rc)) => {
             w.io.err(&format!("{}: {text}", why.word()));
-            rc
+            why.exit(rc)
         }
     }
 }
@@ -4160,7 +4214,7 @@ fn land_round(
     };
     retire_menders(w, &c, batch, "round landed");
     drop_or_warn(w, label, &c, batch, END_LANDED);
-    w.git.worktree_remove(&path, &wt);
+    remove_unheld_tree(w, &c, &path, &wt, batch);
     if recorded {
         crate::lock::remove_certify_lock(&c.s.queue_dir, &c.r.name, batch);
     }
@@ -4378,8 +4432,9 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text, token: Opt
     if let Err(rc) = LeaseCheck::Check(token).guard(w, label, &c, batch) {
         return rc;
     }
-    let Ok(_g) = lock_sparing(w, label, &c, Some(batch)) else {
-        return FAIL;
+    let _g = match lock_sparing(w, label, &c, Some(batch)) {
+        Ok(g) => g,
+        Err(rc) => return rc,
     };
     let abandoned = match abandoned_record(w, &c, batch) {
         Ok(a) => a,
@@ -4483,7 +4538,7 @@ fn close_abandoned(w: &World, label: &str, c: &Ctx, path: &Path, kv: &Kv, reason
     }
     retire_menders(w, c, batch, "round abandoned");
     drop_or_warn(w, label, c, batch, "abandoned");
-    w.git.worktree_remove(path, &worktree_of(kv));
+    remove_unheld_tree(w, c, path, &worktree_of(kv), batch);
     finish(w, c, batch, End::Abandoned(cause), reason);
     stage::discard_behind(
         w,
