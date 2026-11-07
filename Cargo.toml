@@ -128,12 +128,13 @@ codegen-units = 16
 codegen-units = 4
 
 # dwarf and gate runs (sp-zv7j4): fast, incremental builds of a worktree that is thrown
-# away after its suites run — none of release's link-time cost buys anything here.
+# away after its suites run — none of release's link-time cost buys anything here. No debug
+# info: it was most of a gate tree's bytes, and that tree sits on a shared tmpfs.
 [profile.dwarf]
 inherits = "dev"
 opt-level = 0
 incremental = true
-debug = "line-tables-only"
+debug = false
 
 # lifecycle-guard runs as a gate fence over the whole tree (gate.steps, sp-ts2qr), built in
 # this profile by the gate's tools phase. At opt-level 0 the tree-sitter bash parse of the

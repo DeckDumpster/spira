@@ -599,7 +599,7 @@ cargo and `testenv.sh`, as hygiene against a stale shell.
 
 ## 6. Build profile (`[profile.dwarf]`, already in the workspace Cargo.toml)
 
-`inherits = "dev"`, `opt-level = 0`, `incremental = true`, `debug = "line-tables-only"`;
+`inherits = "dev"`, `opt-level = 0`, `incremental = true`, `debug = false`;
 outputs to `target/dwarf` (the profile's name); `dev` maps to cargo's `debug` directory.
 Measured in this worktree, 2026-09-28, full workspace (`cargo build --profile dwarf
 --workspace`), host rustc 1.82.0:
