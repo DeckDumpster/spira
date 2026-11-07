@@ -1,7 +1,7 @@
 #!/bin/sh
 # rc-ledger.sh — drive the verdict ledger through the round controller's store door and check each
-# answer. A red identity is refused by its own hash and by its proven member on another selection;
-# a transient fault backs its identity off; an identity that differs only in its base is admitted.
+# answer. A red identity is refused; a transient fault backs its identity off; an identity that
+# differs in its selection, its base or its members is admitted.
 # Exit 0 when every answer is the expected one, 9 on the first that is not.
 set -u
 id="--repo sim --members rl-a@t1 --base rl-base-0 --image-digest rl-img-0 --harness-version rl-h"

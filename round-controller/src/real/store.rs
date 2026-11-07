@@ -373,6 +373,31 @@ mod tests {
         }
 
         #[test]
+        fn the_debug_verbs_print_the_ledgers_answer_for_a_fixture_round() {
+            use crate::ledger_verbs::{parse_record, parse_refuses, record, refuses};
+            let b = Bench::new();
+            let (_f, lc) = file(&b);
+            let p = Ports { store: &lc, ..b.ports() };
+            let policy = FaultPolicy { backoff_secs: 10, retries: 2 };
+            let id = ["--repo", "r", "--members", "sp-a@t1", "--base", "b0", "--image-digest", "d1", "--harness-version", "h", "--selection", "all"];
+            let hash = identity().hash();
+            let with = |extra: &[&'static str]| [id.as_slice(), extra].concat();
+            assert_eq!(refuses(&p, &parse_refuses(&id).unwrap()), Ok(format!("hash={hash}\nrefuses=none")));
+            let red = parse_record(&with(&["--batch", "b1", "--class", "red:build"])).unwrap();
+            assert_eq!(record(&p, &policy, &red), Ok(format!("hash={hash}\nattempt=1\nclass=red\nbackoff=none")));
+            assert_eq!(
+                refuses(&p, &parse_refuses(&id).unwrap()),
+                Ok(format!("hash={hash}\nrefuses=red-identity step=build"))
+            );
+            let mut vm = id;
+            vm[11] = "some";
+            let at = b.clock.now_ms();
+            let fault = parse_record(&[vm.as_slice(), &["--batch", "b2", "--class", "fault:vm"]].concat()).unwrap();
+            let want = format!("hash={}\nattempt=1\nclass=fault\nbackoff=until={}", fault.identity.hash(), at + 10_000);
+            assert_eq!(record(&p, &policy, &fault), Ok(want));
+        }
+
+        #[test]
         fn a_lane_fault_stands_on_the_file_and_clearing_it_admits_the_lane() {
             let b = Bench::new();
             let (_f, lc) = file(&b);

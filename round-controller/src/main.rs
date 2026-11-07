@@ -201,7 +201,10 @@ fn dispatch(args: &[String]) -> i32 {
         ["ledger", verb @ ("record" | "refuses"), rest @ ..] => {
             let answer = match *verb {
                 "record" => ledger_verbs::parse_record(rest)
-                    .and_then(|r| with_ports(|p| ledger_verbs::record(p, &r))),
+                    .and_then(|r| {
+                        let policy = FaultPolicy::from_config()?;
+                        with_ports(|p| ledger_verbs::record(p, &policy, &r))
+                    }),
                 _ => ledger_verbs::parse_refuses(rest)
                     .and_then(|id| with_ports(|p| ledger_verbs::refuses(p, &id))),
             };

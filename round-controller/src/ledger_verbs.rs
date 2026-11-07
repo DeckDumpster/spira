@@ -149,7 +149,7 @@ pub fn render_refusal(r: &Option<LedgerRefusal>) -> String {
     }
 }
 
-pub fn record(p: &Ports, r: &Record) -> Result<String, String> {
+pub fn record(p: &Ports, policy: &FaultPolicy, r: &Record) -> Result<String, String> {
     let attempt = Attempt {
         class: r.class.clone(),
         initiated_by: InitiatedBy::Judge,
@@ -157,8 +157,7 @@ pub fn record(p: &Ports, r: &Record) -> Result<String, String> {
         evidence: r.evidence.clone(),
         at: p.clock.now_ms(),
     };
-    let policy = FaultPolicy::from_config()?;
-    let rec = ledger::record_attempt(p, &r.identity, &r.batch, &attempt, &policy)
+    let rec = ledger::record_attempt(p, &r.identity, &r.batch, &attempt, policy)
         .map_err(|e| e.to_string())?;
     Ok(format!(
         "hash={}\nattempt={}\nclass={}\nbackoff={}",
