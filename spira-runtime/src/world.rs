@@ -389,6 +389,30 @@ impl World {
         serde_json::to_string(&design_asks::Snapshot { failure: None, asks, pages }).map_err(|e| e.to_string())
     }
 
+    /// One readiness-dependents pass: the records with an event since `input`'s revision have
+    /// their dependents judged again. With no revision yet the pass only reads the head.
+    pub fn readiness_dependents(&self, input: &str) -> Result<String, String> {
+        use crate::watchers::readiness_dependents::Pass;
+        const BASELINE: &str = "18446744073709551615";
+        const CHUNK: usize = 100;
+        let asked: Pass = serde_json::from_str(input).map_err(|e| format!("readiness-dependents input: {e}"))?;
+        if spira_config::process::cfg("SPIRA_LC_STORE_PATH")?.is_empty() {
+            return serde_json::to_string(&asked).map_err(|e| e.to_string());
+        }
+        let since = asked.through.map_or(BASELINE.to_string(), |t| t.to_string());
+        let seen = self.lc_json(&["event-seq", "--since", &since])?;
+        let through = seen["seq"].as_u64().ok_or("event-seq: no seq")?;
+        let keys: Vec<&str> = seen["keys"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+        for chunk in keys.chunks(CHUNK) {
+            let argv = ["republish-dependents".to_string(), "--changed".into(), chunk.join(",")];
+            let out = spira_claim::cli::dispatch_in(&argv, &mut std::io::empty(), &|k| std::env::var(k).ok());
+            if out.code != 0 {
+                return Err(format!("republish-dependents: exit {}: {}", out.code, out.err.lines().next().unwrap_or("no message")));
+            }
+        }
+        serde_json::to_string(&Pass { through: Some(through), changed: keys.len() as u64 }).map_err(|e| e.to_string())
+    }
+
     /// One `overrides.sh apply` pass; a failed override fails the pass, and its stdout and stderr say which.
     pub fn overrides_apply(&self) -> Result<String, String> {
         overrides_apply()

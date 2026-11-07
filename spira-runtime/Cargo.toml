@@ -33,6 +33,7 @@ reconciler-flow = { path = "../reconciler-flow" }
 heimdall = { path = "../heimdall" }
 # Family A's loop core (sentinel, czar, sift): the crates its tasks call as libraries.
 sentinel = { path = "../sentinel" }
+spira-claim = { path = "../spira-claim" }
 czar-pass = { path = "../czar-pass" }
 round-controller = { path = "../round-controller" }
 sift = { path = "../sift" }
