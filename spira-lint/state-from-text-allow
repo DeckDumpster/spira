@@ -12,10 +12,7 @@
 1 unit-name cockpit/ops/src/lcview.rs
 2 output cockpit/ops/src/lcview_main.rs
 2 unit-name doctor/src/lib.rs
-1 output dwarf/src/claim.rs
-1 cannot-tell dwarf/src/claim.rs
 1 unit-name dwarf/src/main.rs
-1 output dwarf/src/run.rs
 1 unit-name exec-census/src/lib.rs
 1 output gate-check/src/real.rs
 2 output gh-intake/src/real.rs
