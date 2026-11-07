@@ -16,7 +16,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
 
-CHECKS=6
+CHECKS=9
 
 command -v sim-replay >/dev/null 2>&1 || bail "sim-replay is not on PATH"
 

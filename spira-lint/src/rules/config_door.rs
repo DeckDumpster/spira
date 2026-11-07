@@ -18,6 +18,7 @@ const OWN_SOURCE: &str = "spira-lint/src/rules/config_door.rs";
 /// Files whose `toml::from_str` parses a document that is not the config.
 const EXEMPT_TOML_FROM_STR: &[&str] = &[
     "desired-state/src/store.rs",
+    "reconciler-engine/src/causal_map.rs",
     "reconciler-flow/src/io.rs",
     "spira-lint/src/rules/lockfile_lint.rs",
     "sim/src/actors.rs",

@@ -84,13 +84,19 @@ fn andon(reason: &str) -> serde_json::Value {
     }})
 }
 
+/// The ranking under a map that weighs `Probe` at 2, a weight the seed does not give it.
+fn ranked(a: &crate::assemble::Assembled) -> Vec<crate::rank::RankedGap> {
+    let map = crate::causal_map::CausalMap::load("[[weight]]\nkind = \"Probe\"\nweight = 2.0\nunit = \"u\"\nsource = \"s\"\n", &[]).unwrap();
+    crate::rank::rank(a, &map).gaps
+}
+
 fn plan(sections: Vec<serde_json::Value>, knobs: serde_json::Value) -> Plan {
     let snap = crate::assemble::Snapshot::parse(&json!({
         "list_rev": 4, "sections": sections, "intents": [], "pass": null, "knobs": knobs, "undecodable": [],
     }))
     .unwrap();
     let a = crate::assemble::assemble(&snap, T0);
-    let gaps = crate::goodput_pass::interim_ranking(&a);
+    let gaps = ranked(&a);
     select(&Inputs { assembled: &a, gaps: &gaps, shadow: &[], halted: false, now_ms: T0, token: "1.0" })
 }
 
@@ -150,7 +156,7 @@ fn among_candidates_the_one_attempted_longest_ago_goes_first_never_declaration_o
     }))
     .unwrap();
     let a = crate::assemble::assemble(&snap, T0);
-    let gaps = crate::goodput_pass::interim_ranking(&a);
+    let gaps = ranked(&a);
     let p = select(&Inputs { assembled: &a, gaps: &gaps, shadow: &[], halted: false, now_ms: T0, token: "1.0" });
     assert_eq!(p.steps.iter().map(|s| s.action.as_str()).collect::<Vec<_>>(), ["b-first"], "never attempted beats attempted a day ago");
 }

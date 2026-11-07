@@ -1,0 +1,20 @@
+# The causal map: one static weight per section kind, in goodput per day lost per unit of
+# distance. Changed by a reviewed edit only; nothing learns it from step outcomes.
+
+[[weight]]
+kind = "RoundController"
+weight = 10.0
+unit = "landed per day per unit of distance"
+source = "defect loops (re-cut red and the stale pointer) are worth +5-15 a day on the stuck repos; the midpoint"
+
+[[weight]]
+kind = "Alarms"
+weight = 1.0
+unit = "landed per day per unit of distance"
+source = "judgement, not measured: an undelivered page delays the human by one window"
+
+[[weight]]
+kind = "Lifecycle"
+weight = 0.0
+unit = "landed per day per unit of distance"
+source = "the outcome, not a cause: its distance is the goodput gap every other weight is measured in"

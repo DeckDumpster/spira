@@ -16,3 +16,16 @@ functions = ["backoff_secs", "knob_key", "section_of", "kind_of", "value_of", "f
 [[scope]]
 path = "reconciler-engine/src/goodput_pass.rs"
 functions = ["argv", "with_body", "refusal_code", "explain", "interim_ranking", "goodput", "as_step", "Pass::may_write", "Pass::judge", "Pass::step", "run", "pass_under_lock"]
+
+# The ranking and the flow graph (the ranking bead's own gate).
+[[scope]]
+path = "reconciler-engine/src/causal_map.rs"
+functions = ["CausalMap::load", "CausalMap::seed", "CausalMap::weight"]
+
+[[scope]]
+path = "reconciler-engine/src/flow.rs"
+functions = ["capacity", "Flow::of", "Flow::consumes", "Flow::upstream", "Flow::path_to_goodput", "Flow::neighbourhood", "Flow::upstream_sections"]
+
+[[scope]]
+path = "reconciler-engine/src/rank.rs"
+functions = ["RankedGap::cannot_see", "kind_of", "as_section", "distance_of", "rank"]

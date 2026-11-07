@@ -13,22 +13,14 @@ use spira_desired_state::sections::ANDON;
 use spira_desired_state::store::format_rfc3339;
 
 use crate::assemble::{Assembled, Current, Derived};
+use crate::flow::Flow;
+use crate::rank::RankedGap;
 use crate::pass_record::{AckRefused, NoLever, Refused};
 
 /// The condition the assembler derives for intents an owner has not acknowledged in time.
 pub const INTENTS_UNACKNOWLEDGED: &str = "IntentsUnacknowledged";
 /// Back-off never exceeds a day; intents outlive it, so the history it reads is always there.
 pub const BACKOFF_CAP_SECS: u64 = 24 * 3600;
-
-/// One ranked section: the ranking's output, walked from the top. Each open gap gets at most
-/// one step; NoLever annotates the gap's unaddressed conditions beside whatever it gets.
-#[derive(Clone, Debug, PartialEq)]
-pub struct RankedGap {
-    pub section: String,
-    pub distance: f64,
-    pub score: f64,
-    pub open: bool,
-}
 
 pub struct Inputs<'a> {
     pub assembled: &'a Assembled,
@@ -280,51 +272,6 @@ impl Attempts {
     }
 }
 
-/// A flow graph over the assembled sections: who produces each resource.
-struct Flow<'a> {
-    a: &'a Assembled,
-}
-
-impl Flow<'_> {
-    fn producers(&self, resource: &str) -> Vec<&str> {
-        self.a
-            .current
-            .sections
-            .iter()
-            .filter(|(_, c)| c.flow.produces.iter().any(|p| p == resource))
-            .map(|(r, _)| r.as_str())
-            .collect()
-    }
-
-    fn consumes(&self, section: &str) -> &[String] {
-        self.a.current.sections.get(section).map_or(&[], |c| c.flow.consumes.as_slice())
-    }
-
-    /// A step's neighbourhood is its target and, for a capacity step, every resource its section
-    /// consumes and every section that produces one.
-    fn neighbourhood(&self, section: &str, class: ActionClass, target: &str) -> BTreeSet<String> {
-        let mut n = BTreeSet::from([format!("target:{target}")]);
-        if matches!(class, ActionClass::CapacityRaise | ActionClass::CapacityLower) {
-            for r in self.consumes(section) {
-                n.insert(format!("resource:{r}"));
-                for p in self.producers(r) {
-                    n.insert(format!("section:{p}"));
-                }
-            }
-        }
-        n
-    }
-
-    fn neighbour_sections(&self, section: &str, class: ActionClass) -> Vec<&str> {
-        match class {
-            ActionClass::CapacityRaise | ActionClass::CapacityLower => {
-                self.consumes(section).iter().flat_map(|r| self.producers(r)).collect()
-            }
-            ActionClass::Local | ActionClass::Destructive => Vec::new(),
-        }
-    }
-}
-
 fn open_conditions(cur: &Current) -> Vec<String> {
     let mut open: Vec<String> = cur
         .status
@@ -398,7 +345,7 @@ pub fn step_to(step: &str, from: &Value) -> Option<Value> {
 
 struct Selector<'a> {
     inp: &'a Inputs<'a>,
-    flow: Flow<'a>,
+    flow: Flow,
     now: u64,
     attempts: BTreeMap<(String, String, String), Attempts>,
     /// Neighbourhood members held by an intent in flight, and the intent holding each.
@@ -417,7 +364,7 @@ impl<'a> Selector<'a> {
         }
         if act.class == ActionClass::CapacityRaise {
             for r in self.flow.consumes(section) {
-                let producers = self.flow.producers(r);
+                let producers = self.flow.upstream(r);
                 if producers.is_empty() {
                     return Err(Refusal::UpstreamAbsent(r.clone()));
                 }
@@ -431,7 +378,7 @@ impl<'a> Selector<'a> {
                 }
             }
         }
-        for n in self.flow.neighbour_sections(section, act.class) {
+        for n in self.flow.upstream_sections(section, act.class) {
             if !fresh(a.current.sections.get(n)) {
                 return Err(Refusal::StaleInput(n.into()));
             }
@@ -449,7 +396,7 @@ impl<'a> Selector<'a> {
             return Err(Refusal::BackOff { until });
         }
         let hood = self.flow.neighbourhood(section, act.class, &target);
-        if let Some(k) = hood.iter().find_map(|m| self.held.get(m)) {
+        if let Some(k) = hood.members.iter().find_map(|m| self.held.get(m)) {
             return Err(Refusal::InFlight(k.clone()));
         }
         if act.class == ActionClass::Destructive && andons.is_empty() {
@@ -495,7 +442,7 @@ impl<'a> Selector<'a> {
     }
 
     fn claim(&mut self, section: &str, act: &Action, p: &Planned) {
-        for m in self.flow.neighbourhood(section, act.class, &p.intent.target) {
+        for m in self.flow.neighbourhood(section, act.class, &p.intent.target).members {
             self.held.insert(m, p.key.clone());
         }
     }
@@ -560,7 +507,7 @@ impl<'a> Selector<'a> {
 }
 
 fn hold(held: &mut BTreeMap<String, String>, flow: &Flow, section: &str, class: ActionClass, key: &str, target: &str) {
-    for m in flow.neighbourhood(section, class, target) {
+    for m in flow.neighbourhood(section, class, target).members {
         held.insert(m, key.to_string());
     }
 }
@@ -570,7 +517,7 @@ pub fn select(inp: &Inputs) -> Plan {
     let now = inp.now_ms / 1000;
     let mut plan = Plan::default();
     let history = History { a, now };
-    let flow = Flow { a };
+    let flow = Flow::of(a);
     let mut attempts: BTreeMap<(String, String, String), Attempts> = BTreeMap::new();
     let mut held = BTreeMap::new();
     for li in &a.intents {

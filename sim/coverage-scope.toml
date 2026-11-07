@@ -26,3 +26,7 @@ functions = ["status", "blocker", "cond", "section", "Publisher::publish"]
 [[scope]]
 path = "desired-state/src/sections/round_controller.rs"
 functions = ["check_spec", "check_status"]
+
+[[scope]]
+path = "sim/src/replay/lifecycle.rs"
+functions = ["Publisher::publish"]
