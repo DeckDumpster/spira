@@ -1943,7 +1943,11 @@ fn round_verbs_belong_to_queue_local() {
 fn a_caller_holding_the_lock_runs_the_verbs_under_it() {
     let t = round_world();
     let _held = t.hold_lock();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 1);
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        crate::ops::LOCK_BUSY,
+        "a busy lock has its own exit, so a caller retries on the code, never on the words"
+    );
     assert!(
         t.err().contains("another queue operation holds the lock"),
         "{}",

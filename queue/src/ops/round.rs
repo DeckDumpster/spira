@@ -407,8 +407,10 @@ where
     if idents(w, label, &[("batch id", batch)]).is_err() || require_lc(w, label).is_err() {
         return FAIL;
     }
-    let Ok(_g) = lock(w, label, &c) else {
-        return FAIL;
+    let _g = match lock(w, label, &c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
     let Ok(kv) = load(w, label, &c, batch) else {
         return FAIL;
@@ -1453,8 +1455,10 @@ fn open(
     if require_lc(w, label).is_err() {
         return FAIL;
     }
-    let Ok(_g) = lock(w, label, &c) else {
-        return FAIL;
+    let _g = match lock(w, label, &c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
     let open_now = match live_records(w, &c) {
         Ok(open) => open,
@@ -2682,9 +2686,11 @@ pub(super) fn certify(
     let mut over = None;
     let mut rc = certify_pass(w, label, &c, &path, batch, attest, attested_ran, rehead, &mut over);
     while let Some(unreached) = over.take() {
-        let Ok(_g) = lock(w, label, &c) else {
-            return FAIL;
-        };
+        let _g = match lock(w, label, &c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
+    };
         let Ok(mut kv) = load(w, label, &c, batch) else {
             return FAIL;
         };
@@ -2749,9 +2755,11 @@ fn certify_pass(
     }
 
     let (head, wt, run_id, pass) = {
-        let Ok(_g) = lock(w, label, c) else {
-            return FAIL;
-        };
+        let _g = match lock(w, label, c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
+    };
         let Ok(mut kv) = load(w, label, c, batch) else {
             return FAIL;
         };
@@ -3106,8 +3114,10 @@ fn certify_pass(
         reds.dedup();
     }
 
-    let Ok(_g) = lock(w, label, c) else {
-        return FAIL;
+    let _g = match lock(w, label, c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
     let Ok(kv) = load(w, label, c, batch) else {
         return FAIL;
@@ -3442,8 +3452,10 @@ fn eject(
     if let Err(rc) = lease.guard(w, label, &c, batch) {
         return rc;
     }
-    let Ok(_g) = lock(w, label, &c) else {
-        return FAIL;
+    let _g = match lock(w, label, &c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
     };
     let Ok(mut kv) = load(w, label, &c, batch) else {
         return FAIL;
@@ -3762,9 +3774,11 @@ fn preempt(
     }
 
     let (wt, head, tips) = {
-        let Ok(_g) = lock(w, label, &c) else {
-            return FAIL;
-        };
+        let _g = match lock(w, label, &c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
+    };
         let Ok(kv) = load(w, label, &c, batch) else {
             return FAIL;
         };
@@ -3835,9 +3849,11 @@ fn preempt(
     reds.dedup();
 
     {
-        let Ok(_g) = lock(w, label, &c) else {
-            return FAIL;
-        };
+        let _g = match lock(w, label, &c) {
+        Ok(g) => g,
+        // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
+        Err(rc) => return rc,
+    };
         let Ok(mut kv) = load(w, label, &c, batch) else {
             return FAIL;
         };
@@ -4388,8 +4404,9 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text, token: Opt
     if let Err(rc) = LeaseCheck::Check(token).guard(w, label, &c, batch) {
         return rc;
     }
-    let Ok(_g) = lock_sparing(w, label, &c, Some(batch)) else {
-        return FAIL;
+    let _g = match lock_sparing(w, label, &c, Some(batch)) {
+        Ok(g) => g,
+        Err(rc) => return rc,
     };
     let abandoned = match abandoned_record(w, &c, batch) {
         Ok(a) => a,

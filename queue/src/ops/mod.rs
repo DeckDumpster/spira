@@ -245,7 +245,7 @@ pub fn take_lock(w: &World, label: &str, c: &Ctx, busy_suffix: &str) -> Result<O
                     "queue.sh {label}: another queue operation holds the lock for {}{busy_suffix} (waited {waited}s; {held})",
                     c.r.name
                 ));
-                return Err(FAIL);
+                return Err(LOCK_BUSY);
             }
             Acquire::Unopenable => {
                 w.err(format!(

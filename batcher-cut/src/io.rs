@@ -1688,7 +1688,7 @@ fn round_eject_with(env: &Env, repo: &Repo, batch: &str, id: &str, reason: &str,
     let attempts = env.land_lock_attempts.max(1);
     let mut last = round_verb(env, &args, reason)?;
     for n in 1..attempts {
-        if last.code == Some(0) || !last.err.contains(LOCK_BUSY) {
+        if !lock_busy(last.code) {
             break;
         }
         println!("batcher {}: queue round eject refused ({}) — retry {n}/{attempts}", repo.name, refusal_line(&last.err));
@@ -2035,12 +2035,20 @@ pub struct LandRun {
     pub refusal: String,
 }
 
-pub const LOCK_BUSY: &str = "holds the lock";
+/// Must equal queue::ops::LOCK_BUSY: another queue operation held the repo's lock past the wait.
+pub const QUEUE_LOCK_BUSY_EXIT: i32 = 6;
 
+/// Whether a queue verb's refusal was a busy lock, to be retried: read from its exit code
+/// (law-lifecycle-state-is-not-text). Every other refusal is final.
+pub fn lock_busy(code: Option<i32>) -> bool {
+    code == Some(QUEUE_LOCK_BUSY_EXIT)
+}
+
+/// The line a refusal is reported by, for the operator: the last non-empty stderr line.
 fn refusal_line(err: &str) -> String {
     err.lines()
-        .find(|l| l.contains(LOCK_BUSY))
-        .or_else(|| err.lines().rev().find(|l| !l.trim().is_empty()))
+        .rev()
+        .find(|l| !l.trim().is_empty())
         .unwrap_or("(no stderr)")
         .trim()
         .to_string()
@@ -2054,7 +2062,7 @@ pub fn round_land(env: &Env, repo: &Repo, batch: &str) -> Result<LandRun, String
     for n in 1..=attempts {
         let run = round_verb(env, &["land", batch, &repo.name], "")?;
         last = LandRun { outcome: classify_land_exit(run.code), refusal: refusal_line(&run.err) };
-        let busy = last.outcome == LandOutcome::Refused && last.refusal.contains(LOCK_BUSY);
+        let busy = lock_busy(run.code);
         if !busy || n == attempts {
             break;
         }
@@ -2416,6 +2424,18 @@ mod land_tests {
 #[cfg(test)]
 mod pool_parity_tests {
     use super::*;
+
+    /// law-lifecycle-state-is-not-text (sp-mijstw): a busy lock is retried on queue's exit code;
+    /// a final refusal whose words mention a lock is not retried, and a busy exit is retried
+    /// whatever its words. A final refusal misread as busy re-ran it; a busy lock misread as
+    /// final abandoned the round as land-refused.
+    #[test]
+    fn a_busy_lock_is_its_exit_code_never_its_words() {
+        assert!(lock_busy(Some(QUEUE_LOCK_BUSY_EXIT)));
+        assert!(!lock_busy(Some(1)));
+        assert!(!lock_busy(Some(0)));
+        assert!(!lock_busy(None));
+    }
 
     #[test]
     fn tip_current_admits_the_live_tip_and_excludes_a_moved_one() {
