@@ -27,7 +27,6 @@
 1 unit-name cockpit/ops/src/lcview.rs
 1 unit-name dwarf/src/main.rs
 1 unit-name exec-census/src/lib.rs
-1 unit-name hel/src/reap.rs
 1 unit-name install/src/bin/install.rs
 1 unit-name install/src/bootstrap.rs
 1 unit-name install/src/guards.rs
@@ -39,7 +38,7 @@
 1 unit-name spira-world/src/sysctl.rs
 1 unit-name watchtower/src/cpu_throttle.rs
 2 output bead/src/main.rs
-2 output cockpit/ops/src/lcview_main.rs
+1 output cockpit/ops/src/lcview_main.rs
 2 output spira-claim/src/unpoison.rs
 2 unit-name doctor/src/lib.rs
 2 unit-name install/src/bin/units_install.rs
