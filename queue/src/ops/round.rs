@@ -1393,7 +1393,7 @@ fn recipe_inputs_touched(w: &World, repo: &Path, base: &str, tip: &str) -> Vec<S
 
 fn refuse_open(w: &World, label: &str, repo: &str, named: usize, skips: &[String]) -> i32 {
     w.err(format!(
-        "queue.sh {label}: refused — {} of {named} named members cannot be admitted to a round for {repo}; no round opened:",
+        "queue.sh {label}: refused — {} of {named} named members cannot be admitted to a round for {repo}; no round opened (members already returned to rework, and integrations already filed, stay so):",
         skips.len()
     ));
     for s in skips {

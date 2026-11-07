@@ -1187,6 +1187,7 @@ fn open_refuses_a_member_token_that_runs_two_pairs_together() {
         "{}",
         t.err()
     );
+    assert!(t.err().contains("holds a second colon"), "{}", t.err());
     assert!(!t.qfile("round").exists());
 }
 
@@ -4837,7 +4838,11 @@ fn a_member_spira_lc_refuses_at_the_cut_refuses_the_whole_open_naming_it() {
         "{}",
         t.err()
     );
-    assert!(t.err().contains("sp-b"), "{}", t.err());
+    assert!(
+        t.err().contains("spira-lc cut refused") && t.err().contains("sp-b"),
+        "{}",
+        t.err()
+    );
     assert!(!t.qfile("round").exists());
 }
 
