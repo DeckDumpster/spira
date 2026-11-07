@@ -605,7 +605,9 @@ if [ "$got" != "$SPIRA_RELEASE/bin/spira-config" ]; then
     echo "round-vm: spira-config resolves to ${got:-nothing}, not the staged release $SPIRA_RELEASE" >&2
     exit 2
 fi
-printf 'export SPIRA_RELEASE=%q\nexport SPIRA_REPO=%q\nexport PATH=%q\n' "$SPIRA_RELEASE" "$SPIRA_REPO" "$PATH" > ~/round-launcher.env
+# The attribution reruns (spool.rs REMOTE_ATTR_SCRIPT) source this and run the batch, which
+# refuses without the round's config: SPIRA_TOML rides with the release (sp-anhnd6).
+printf 'export SPIRA_RELEASE=%q\nexport SPIRA_REPO=%q\nexport SPIRA_TOML=%q\nexport PATH=%q\n' "$SPIRA_RELEASE" "$SPIRA_REPO" "$SPIRA_TOML" "$PATH" > ~/round-launcher.env
 echo "round-vm: launcher: SPIRA_RELEASE=$SPIRA_RELEASE" >&2
 phase image
 tag="$(testenv container tag)" || tag=""

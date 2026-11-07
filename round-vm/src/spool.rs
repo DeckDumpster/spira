@@ -84,7 +84,7 @@ pub struct AttrJob {
 /// `round` also restages `~/round-bins/`.
 pub const REMOTE_ATTR_SCRIPT: &str = r#"set -euo pipefail
 host_addr="$1" port="$2" job="$3" ref="$4" suites="$5" build="$6" toolchain="$7"
-# The launcher the corpus set up (run.rs REMOTE_SCRIPT): the round's staged release on PATH.
+# The launcher the corpus set up (run.rs REMOTE_SCRIPT): the round's staged release on PATH and its SPIRA_TOML.
 . "$HOME/round-launcher.env" || { echo "round-vm: no staged release on this VM (round-launcher.env)" >&2; exit 2; }
 if [ -n "$toolchain" ]; then export RUSTUP_TOOLCHAIN="$toolchain"; fi
 export SPIRA_VERDICT_TTL=0 SPIRA_BATCH_MAXPAR=1 SPIRA_BATCH_RESULTS="$HOME/attr-results/$job"
@@ -353,6 +353,37 @@ pub fn linger<'s, 'a: 's>(server: &mut Server<'a>, sc: &'s Scope<'s, 'a>, linger
 mod tests {
     use super::*;
     use crate::testutil::TempDir;
+
+    /// sp-anhnd6: the corpus writes `round-launcher.env` and every rerun sources it; a launcher
+    /// without SPIRA_TOML refused all 640 reruns of a round with "batch: SPIRA_TOML is not set".
+    /// The corpus's own line writes the file, and the rerun's own line reads it in a bare env.
+    #[test]
+    fn a_rerun_sourcing_the_launcher_env_finds_the_rounds_spira_toml() {
+        let line_of = |script: &str, needle: &str| script.lines().find(|l| l.contains(needle)).unwrap_or_else(|| panic!("no line with {needle:?}")).to_string();
+        let write = line_of(crate::run::REMOTE_SCRIPT, "> ~/round-launcher.env");
+        let source = line_of(REMOTE_ATTR_SCRIPT, ". \"$HOME/round-launcher.env\"");
+        let d = TempDir::new();
+        let toml = "/vm/round-work/spira/testlib/complete.toml:/vm/round config.toml";
+        let wrote = std::process::Command::new("bash")
+            .args(["-c", &format!("set -euo pipefail\n{write}")])
+            .env("HOME", d.path())
+            .env("SPIRA_RELEASE", "/r/rel")
+            .env("SPIRA_REPO", "/r/work")
+            .env("SPIRA_TOML", toml)
+            .status()
+            .unwrap();
+        assert!(wrote.success(), "the corpus's launcher line runs");
+        let env = std::fs::read_to_string(d.path().join(crate::run::LAUNCHER_ENV)).unwrap();
+        assert!(env.contains("export SPIRA_TOML="), "the launcher env carries SPIRA_TOML:\n{env}");
+        let out = std::process::Command::new("bash")
+            .args(["-c", &format!("set -euo pipefail\n{source}\nprintf %s \"${{SPIRA_TOML:?batch: SPIRA_TOML is not set}}\"")])
+            .env_clear()
+            .env("HOME", d.path())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "the rerun sees SPIRA_TOML: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), toml, "the rerun sees the corpus's value, intact");
+    }
 
     #[test]
     fn a_request_names_its_branch_suites_and_build() {
