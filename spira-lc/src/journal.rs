@@ -187,6 +187,48 @@ fn read(conn: &Conn, op: &str, sql: &str) -> Result<Vec<Value>, String> {
     conn.query(sql).map_err(|e| failed(op, sql, None, e))
 }
 
+fn mark_applied_sql(handler: &str, id: &str) -> Result<String, String> {
+    check_text("mark-applied", "handler", handler, HANDLER_MAX)?;
+    check_text("mark-applied", "event_id", id, ID_MAX)?;
+    let (h, i) = (lit(handler), lit(id));
+    Ok(format!("INSERT INTO runtime_applied (handler, event_id) SELECT {h}, {i} FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM runtime_applied WHERE handler = {h} AND event_id = {i})"))
+}
+
+fn cursor_sql(next: u64) -> String {
+    format!("INSERT INTO runtime_cursor (id, `next`) VALUES (1, {next}) ON DUPLICATE KEY UPDATE `next` = {next}")
+}
+
+/// `journal batch`'s staged writes (sp-rkb6wl): `{"applied": [[handler, event_id], ...],
+/// "cursor": n|null}`, every one checked before any is written, so a refusal writes nothing.
+pub fn staged_sql(staged: &Value) -> Result<Vec<String>, String> {
+    let mut sqls = vec![];
+    for pair in staged.get("applied").and_then(Value::as_array).map_or(&[][..], Vec::as_slice) {
+        let (h, i) = (pair.get(0).and_then(Value::as_str), pair.get(1).and_then(Value::as_str));
+        let (Some(h), Some(i)) = (h.filter(|s| !s.is_empty()), i.filter(|s| !s.is_empty())) else {
+            return Err(format!("journal: batch refused: an applied mark is not [handler, event_id]: {pair}"));
+        };
+        sqls.push(mark_applied_sql(h, i)?);
+    }
+    match staged.get("cursor") {
+        None | Some(Value::Null) => {}
+        Some(c) => sqls.push(cursor_sql(c.as_u64().ok_or_else(|| format!("journal: batch refused: cursor {c} is not a non-negative integer"))?)),
+    }
+    Ok(sqls)
+}
+
+/// The offset of `ev`, just appended (or already there).
+fn appended_seq(conn: &Conn, op: &str, ev: &Value) -> Result<String, String> {
+    let id = field(ev, "id")?;
+    let rows = read(conn, op, &format!("SELECT seq FROM runtime_event WHERE event_id = {}", lit(id)))?;
+    match rows.first() {
+        Some(r) => Ok(num(r, "seq").to_string()),
+        None => {
+            let warnings = read(conn, op, &format!("SELECT seq FROM runtime_event WHERE event_id = {}; SHOW WARNINGS", lit(id))).map_or_else(|e| e, |w| Value::Array(w).to_string());
+            Err(format!("journal: appended event not found; {}; warnings={warnings}", describe(ev)))
+        }
+    }
+}
+
 fn run(args: &[String], conn: &Conn) -> Result<String, String> {
     let op = args.first().map(String::as_str).unwrap_or("");
     let (read, write) = (|c: &Conn, s: &str| read(c, op, s), |c: &Conn, s: &str, who: Option<&Value>| write(c, op, s, who));
@@ -194,14 +236,23 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
     match op {
         "append" => {
             let ev = parse(a(1), "event")?;
-            let id = field(&ev, "id")?.to_string();
             write(conn, &append_sql(&ev)?, Some(&ev))?;
-            let rows = read(conn, &format!("SELECT seq FROM runtime_event WHERE event_id = {}", lit(&id)))?;
-            match rows.first() {
-                Some(r) => Ok(num(r, "seq").to_string()),
-                None => {
-                    let warnings = read(conn, &format!("SELECT seq FROM runtime_event WHERE event_id = {}; SHOW WARNINGS", lit(&id))).map_or_else(|e| e, |w| Value::Array(w).to_string());
-                    Err(format!("journal: appended event not found; {}; warnings={warnings}", describe(&ev)))
+            appended_seq(conn, op, &ev)
+        }
+        "batch" => {
+            let mut sqls = staged_sql(&parse(a(1), "staged writes")?)?;
+            let inner = &args[2..];
+            match inner.first().map(String::as_str) {
+                Some("batch") => Err("journal: batch refused: a batch inside a batch".into()),
+                Some("append") => {
+                    let ev = parse(inner.get(1), "event")?;
+                    sqls.push(append_sql(&ev)?);
+                    conn.append_events(&sqls).map_err(|e| failed(op, &sqls.join(";\n"), Some(&ev), e))?;
+                    appended_seq(conn, op, &ev)
+                }
+                rest => {
+                    conn.append_events(&sqls).map_err(|e| failed(op, &sqls.join(";\n"), None, e))?;
+                    if rest.is_none() { Ok(String::new()) } else { run(inner, conn) }
                 }
             }
         }
@@ -230,10 +281,7 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
         "applied" | "mark-applied" => {
             let (handler, id) = (text_arg(a(1), "handler")?, text_arg(a(2), "event id")?);
             if op == "mark-applied" {
-                check_text("mark-applied", "handler", handler, HANDLER_MAX)?;
-                check_text("mark-applied", "event_id", id, ID_MAX)?;
-                let (h, i) = (lit(handler), lit(id));
-                write(conn, &format!("INSERT INTO runtime_applied (handler, event_id) SELECT {h}, {i} FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM runtime_applied WHERE handler = {h} AND event_id = {i})"), None)?;
+                write(conn, &mark_applied_sql(handler, id)?, None)?;
                 return Ok(String::new());
             }
             let rows = read(conn, &format!("SELECT 1 AS hit FROM runtime_applied WHERE handler = {} AND event_id = {}", lit(handler), lit(id)))?;
@@ -244,8 +292,7 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
             Ok(rows.first().map_or(0, |r| num(r, "next").as_u64().unwrap_or(0)).to_string())
         }
         "set-cursor" => {
-            let next = arg_u64(a(1), "cursor")?;
-            write(conn, &format!("INSERT INTO runtime_cursor (id, `next`) VALUES (1, {next}) ON DUPLICATE KEY UPDATE `next` = {next}"), None)?;
+            write(conn, &cursor_sql(arg_u64(a(1), "cursor")?), None)?;
             Ok(String::new())
         }
         "schedule" => {
@@ -291,7 +338,7 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
             let rows = read(conn, &format!("SELECT stream, event_id, handler, message FROM runtime_poison WHERE stream = {}", lit(text_arg(a(1), "stream")?)))?;
             Ok(rows.first().map_or("null".into(), |r| json!({ "stream": cell(r, "stream"), "event": cell(r, "event_id"), "handler": cell(r, "handler"), "message": cell(r, "message") }).to_string()))
         }
-        _ => Err(format!("journal: unknown op {op:?} (append|read|stream|end|open-effects|applied|mark-applied|cursor|set-cursor|schedule|due|mark-fired|poison|poisoned)")),
+        _ => Err(format!("journal: unknown op {op:?} (append|batch|read|stream|end|open-effects|applied|mark-applied|cursor|set-cursor|schedule|due|mark-fired|poison|poisoned)")),
     }
 }
 
@@ -370,6 +417,18 @@ mod tests {
         for table in ["runtime_event", "runtime_applied", "runtime_poison"] {
             let bad = src.lines().filter(|l| l.contains(&format!("INSERT INTO {table}")) && l.contains("DUPLICATE KEY")).count();
             assert_eq!(bad, 0, "{table} is granted SELECT, INSERT only; ON DUPLICATE KEY UPDATE is denied");
+        }
+    }
+
+    #[test]
+    fn staged_writes_become_one_statement_each_and_a_bad_one_refuses_them_all() {
+        let sqls = staged_sql(&json!({"applied": [["h1", "e1"], ["h2", "e'2"]], "cursor": 9})).unwrap();
+        assert_eq!(sqls.len(), 3, "{sqls:?}");
+        assert!(sqls[0].starts_with("INSERT INTO runtime_applied") && sqls[1].contains("'e\\'2'") && sqls[2].contains("VALUES (1, 9)"), "{sqls:?}");
+        assert!(staged_sql(&json!({})).unwrap().is_empty(), "nothing staged writes nothing");
+        assert!(staged_sql(&json!({"cursor": null})).unwrap().is_empty());
+        for bad in [json!({"applied": [["h"]]}), json!({"applied": [["", "e"]]}), json!({"cursor": -1}), json!({"applied": [["h".repeat(129), "e"]]})] {
+            assert!(staged_sql(&bad).unwrap_err().starts_with("journal:"), "{bad}");
         }
     }
 

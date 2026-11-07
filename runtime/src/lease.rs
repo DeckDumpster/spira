@@ -154,6 +154,10 @@ impl Journal for NodeJournal {
         self.inner.mark_applied(handler, id)
     }
 
+    fn flush(&self) -> Result<()> {
+        self.inner.flush()
+    }
+
     fn cursor(&self) -> Result<Offset> {
         Ok(self.cursor.load(Ordering::SeqCst))
     }

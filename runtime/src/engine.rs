@@ -555,8 +555,8 @@ impl Engine {
         self.halted
     }
 
-    pub fn into_registrations(self) -> Vec<Registration> {
-        self.regs
+    pub fn into_registrations(mut self) -> Vec<Registration> {
+        std::mem::take(&mut self.regs)
     }
 
     pub fn projection(&self) -> &Projection {
@@ -1044,6 +1044,14 @@ impl Engine {
             }
         }
         Ok(n)
+    }
+}
+
+/// What the journal staged for its next request is sent on the way out, so a clean stop leaves
+/// the cursor where this engine had it; a crash leaves it behind, and the replay re-derives it.
+impl Drop for Engine {
+    fn drop(&mut self) {
+        let _ = self.journal.flush();
     }
 }
 

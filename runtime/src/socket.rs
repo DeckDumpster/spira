@@ -1,10 +1,14 @@
 //! The journal through spira-lc's socket: one request per call to the one door onto
-//! `spira_lifecycle`. No process is launched; an idle runtime holds no database connection.
+//! `spira_lifecycle`, the idempotent marks and cursor riding the next request ([`Staged`]). No process is launched; an idle runtime holds no database connection.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
 
 use crate::event::*;
 use crate::journal::{Journal, Offset, Poison, ScheduleRow};
@@ -16,19 +20,90 @@ const REFUSED: i64 = 3;
 /// law-calls-have-deadlines: the service stops at 3 s, a client waits 5 s.
 const DEADLINE: Duration = Duration::from_secs(5);
 
+/// Widths spira-lc refuses past (spira-lc/src/journal.rs, migrations/0030-runtime-journal.sql).
+/// A mark is staged only inside them, so a staged write is never the one a batch refuses.
+const ID_MAX: usize = 255;
+const HANDLER_MAX: usize = 128;
+
+/// The idempotent writes waiting for the next request (sp-rkb6wl): `applied` marks and the
+/// cursor. They ride whatever request goes next, in its one transaction and before its own op,
+/// so every read sees them, and a turn costs one store round-trip, not one per consuming handler.
+/// Until then a crash loses only marks and a cursor advance, and a replay re-derives both.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Staged {
+    #[serde(default)]
+    pub applied: Vec<(String, String)>,
+    #[serde(default)]
+    pub cursor: Option<Offset>,
+}
+
+impl Staged {
+    pub fn is_empty(&self) -> bool {
+        self.applied.is_empty() && self.cursor.is_none()
+    }
+
+    /// Put back writes a failed request carried, ahead of any staged since: a newer cursor wins.
+    fn restore(&mut self, older: Staged) {
+        let newer = std::mem::replace(&mut self.applied, older.applied);
+        self.applied.extend(newer);
+        self.cursor = self.cursor.or(older.cursor);
+    }
+}
+
 pub struct SocketJournal {
     path: PathBuf,
+    staged: Mutex<Staged>,
+    /// False once spira-lc answered that it has no `journal batch` (a service older than this
+    /// client): staged writes then go one request each, as they did before.
+    batch: AtomicBool,
 }
 
 impl SocketJournal {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        SocketJournal { path: path.into() }
+        SocketJournal { path: path.into(), staged: Mutex::default(), batch: AtomicBool::new(true) }
     }
 
-    fn call(&self, args: &[&str]) -> Result<String> {
+    fn staged(&self) -> MutexGuard<'_, Staged> {
+        self.staged.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn send(&self, args: &[&str]) -> Result<String> {
         let mut argv = vec!["journal"];
         argv.extend_from_slice(args);
         lc_call(&self.path, &argv)
+    }
+
+    /// One request: `args` (none for a bare flush), carrying the staged writes. Every staged
+    /// write is idempotent, so a request that failed puts them back to ride the next.
+    fn call(&self, args: &[&str]) -> Result<String> {
+        let staged = std::mem::take(&mut *self.staged());
+        if staged.is_empty() {
+            return if args.is_empty() { Ok(String::new()) } else { self.send(args) };
+        }
+        let r = self.carry(&staged, args);
+        if r.is_err() {
+            self.staged().restore(staged);
+        }
+        r
+    }
+
+    fn carry(&self, staged: &Staged, args: &[&str]) -> Result<String> {
+        if self.batch.load(Ordering::Relaxed) {
+            let writes = enc(staged)?;
+            let mut argv = vec!["batch", writes.as_str()];
+            argv.extend_from_slice(args);
+            match self.send(&argv) {
+                Err(e) if e.is_refused() && e.0.contains("unknown op \"batch\"") => self.batch.store(false, Ordering::Relaxed),
+                r => return r,
+            }
+        }
+        for (h, id) in &staged.applied {
+            self.send(&["mark-applied", h, id])?;
+        }
+        if let Some(c) = staged.cursor {
+            self.send(&["set-cursor", &c.to_string()])?;
+        }
+        if args.is_empty() { Ok(String::new()) } else { self.send(args) }
     }
 
     fn json<T: serde::de::DeserializeOwned>(&self, args: &[&str]) -> Result<T> {
@@ -144,7 +219,12 @@ impl Journal for SocketJournal {
     }
 
     fn mark_applied(&self, handler: &str, id: &EventId) -> Result<()> {
-        self.call(&["mark-applied", handler, &id.0]).map(|_| ())
+        let fits = |s: &str, max: usize| !s.is_empty() && !s.contains('\0') && s.chars().count() <= max;
+        if !(fits(handler, HANDLER_MAX) && fits(&id.0, ID_MAX)) {
+            return self.call(&["mark-applied", handler, &id.0]).map(|_| ());
+        }
+        self.staged().applied.push((handler.into(), id.0.clone()));
+        Ok(())
     }
 
     fn cursor(&self) -> Result<Offset> {
@@ -152,7 +232,12 @@ impl Journal for SocketJournal {
     }
 
     fn set_cursor(&self, next: Offset) -> Result<()> {
-        self.call(&["set-cursor", &next.to_string()]).map(|_| ())
+        self.staged().cursor = Some(next);
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<()> {
+        self.call(&[]).map(|_| ())
     }
 
     fn schedule(&self, row: &ScheduleRow) -> Result<()> {
