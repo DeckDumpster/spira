@@ -7,9 +7,9 @@ use super::*;
 
 #[test]
 fn the_verdict_line_records_slot_wait_and_suite_time_separately() {
-    let timed = Finish { timing: Some((1212, 62)), ..Finish::green(1) };
+    let timed = Finish { timing: Some(Box::new((1212, 62))), ..Finish::green(1) };
     assert_eq!(timed.verdict_line(), "VERDICT GREEN ran=1 slot_wait=1212s suite=62s");
-    let fault = Finish { timing: Some((7, 600)), ..Finish::fault(2, "over-cap", 0) };
+    let fault = Finish { timing: Some(Box::new((7, 600))), ..Finish::fault(2, "over-cap", 0) };
     assert_eq!(fault.verdict_line(), "VERDICT FAULT rc=2 ran=0 reason=over-cap slot_wait=7s suite=600s");
 }
 

@@ -57,7 +57,7 @@ pub struct Finish {
     /// On RED: the first red suite and the case it stopped at, from its `.tap.json`.
     pub first_red: Option<Box<str>>,
     /// Seconds spent queued for admission slots, and seconds of the run itself, from `run`.
-    pub timing: Option<(u64, u64)>,
+    pub timing: Option<Box<(u64, u64)>>,
 }
 
 impl Finish {
@@ -136,7 +136,7 @@ impl Finish {
             .unwrap_or_default();
         let skipped = if self.skipped > 0 { format!(" skipped={}", self.skipped) } else { Default::default() };
         let tests = tests.map(|t| format!(" tests={t}")).unwrap_or_default();
-        let timing = self.timing.map(|(w, r)| format!(" slot_wait={w}s suite={r}s")).unwrap_or_default();
+        let timing = self.timing.as_deref().map(|(w, r)| format!(" slot_wait={w}s suite={r}s")).unwrap_or_default();
         let tests = format!("{tests}{timing}");
         match self.rc {
             0 => {
@@ -909,7 +909,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         deps.log(&cap::over_cap_line(&what, secs, cap.source));
         fin = Finish::fault(2, "over-cap", fin.ran);
     }
-    fin.timing = Some((queued, began.elapsed().as_secs().saturating_sub(queued)));
+    fin.timing = Some(Box::new((queued, began.elapsed().as_secs().saturating_sub(queued))));
     if let Some(dir) = results.into_inner() {
         let (word, reason, session) = fin.verdict_parts();
         note(RunLog::in_dir(&dir).record(RunEvent::Verdict { word, reason, session }, now_epoch()));
@@ -1826,6 +1826,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     let out_fn = deps.out;
     let sim_log = move |m: &str| out_fn(&format!("{} spira: batch: {m}", iso_utc(now_epoch())));
     let sim_steps = std::sync::Mutex::new(Vec::<String>::new());
+    #[allow(clippy::result_large_err)]
     let bring_sim = |ss: &Session| -> Result<Fixtures, Finish> {
         sim_log(&format!(
             "starting sim-lane container {} (pids {}, memory {}, slots {})",
@@ -1864,6 +1865,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         })
     };
     let setup_log = std::sync::Mutex::new(Vec::<String>::new());
+    #[allow(clippy::result_large_err)]
     let (up, setup_res, sim_res) = std::thread::scope(|sc| {
         let sim = sim_session.as_ref().map(|ss| sc.spawn(|| bring_sim(ss)));
         let up = if claimed {

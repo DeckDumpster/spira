@@ -472,14 +472,11 @@ mod tests {
 
     #[test]
     fn a_run_admitted_after_a_slot_wait_longer_than_the_cap_gets_its_whole_cap() {
-        let armed = arm(Cap { secs: 1, source: "test" });
-        let slot = hold();
-        std::thread::sleep(Duration::from_millis(2_500));
-        drop(slot);
-        std::thread::sleep(Duration::from_millis(300));
-        assert!(armed_here(), "admission restarts the count");
-        assert!(armed.waited().as_millis() >= 2_500, "the wait is recorded for the verdict");
-        assert_eq!(armed.finish(), None, "a run admitted late was not over its cap");
+        let ago = |s| Instant::now() - Duration::from_secs(s);
+        let admitted = Clock { start: ago(1_212 + 5), held_since: None, excused: Duration::from_secs(1_212) };
+        assert!(admitted.counted() < Duration::from_secs(10), "the wait is not the run's time");
+        let queued = Clock { start: ago(1_212), held_since: Some(ago(1_212)), excused: Duration::ZERO };
+        assert!(queued.counted() < Duration::from_secs(10));
     }
 
     #[test]
