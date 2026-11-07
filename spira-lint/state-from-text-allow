@@ -7,7 +7,7 @@
 # SHRINK-ONLY. Never add a line for new code. A count goes down as a site moves to a typed
 # read (spira_config::lc_state / LcClient, `--json` into a struct, an exit-code enum); a file
 # under its count fails until the line is lowered or removed.
-2 output bead/src/main.rs
+1 output bead/src/main.rs
 1 unit-name cert-sweep/src/lib.rs
 1 unit-name cockpit/ops/src/lcview.rs
 2 output cockpit/ops/src/lcview_main.rs
@@ -42,7 +42,6 @@
 1 output sentinel/src/waiters.rs
 1 unit-name sim/src/units.rs
 2 output spira-claim/src/unpoison.rs
-1 cannot-tell spira-config/src/lc_call.rs
 2 unit-name spira-config/src/release_tag.rs
 1 output spira-runtime/src/reconcile_host.rs
 1 unit-name spira-runtime/src/tasks/f/persona_ops.rs

@@ -1648,7 +1648,8 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
             home,
             &["show".to_string(), id.clone(), "--json".to_string()],
         );
-        if code != 0 || out.trim().is_empty() {
+        // An empty answer does not parse as a row, so parse_show_row below refuses it too.
+        if code != 0 {
             eprintln!("bead: {id}: unreadable (bd show failed)");
             bad += 1;
             rc = 1;
@@ -1677,8 +1678,15 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
             }
         }
 
-        let (_, deps_out) =
+        // A dep list that failed is unreadable, never "no blockers" (sp-cxfgj5).
+        let (dcode, deps_out) =
             bdq_capture(home, &s(&["dep", "list", id, "--type", "blocks", "--json"]));
+        if dcode != 0 {
+            eprintln!("bead: {id}: unreadable (bd dep list failed)");
+            bad += 1;
+            rc = 1;
+            continue;
+        }
         let blocks_targets = parse_blocks_targets(&deps_out);
         for oid in &blocks_targets {
             label_cache.entry(oid.clone()).or_insert_with(|| {
@@ -1740,8 +1748,14 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
             rc = 1;
         }
         if row.labels.iter().any(|l| l == &incident_label) && !lc_done(&mut lc, id) {
-            let (_, rel_out) =
+            let (rel_code, rel_out) =
                 bdq_capture(home, &s(&["dep", "list", id, "--type", "relates-to", "--json"]));
+            if rel_code != 0 {
+                eprintln!("bead: {id}: unreadable (bd dep list --type relates-to failed)");
+                bad += 1;
+                rc = 1;
+                continue;
+            }
             for oid in parse_blocks_targets(&rel_out) {
                 if blocks_targets.contains(&oid) {
                     continue;
