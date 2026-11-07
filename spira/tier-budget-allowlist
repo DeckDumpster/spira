@@ -100,7 +100,6 @@ test-cockpit-gate.sh	T1	17.5
 test-cockpit-history-leak.sh	T1	1.5
 test-cockpit-landed.sh	T1	13.0
 test-cockpit-layout-conf.sh	T1	5.5
-test-cockpit-layout-ensure-focus.sh	T1	4.5
 test-cockpit-layout-identity.sh	T1	3.5
 test-cockpit-layout-mail.sh	T1	6.0
 test-cockpit-probe-fault.sh	T1	13.0

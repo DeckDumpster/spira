@@ -266,6 +266,11 @@ id = "UC-cockpit-observability-41"
 tier = "T1"
 statement = "pane identity comes from the process a pane actually runs, not argv text that merely mentions `health.sh`; `ensure` untags an impostor, logs it, and never kills the session pane"
 
+[use_case.uncovered]
+reason = "suite test-cockpit-layout-ensure-focus.sh deleted for flipping green/red on one commit (law-a-test-that-flips-is-deleted); a deterministic replacement is owed as a follow-on"
+date = "2026-11-07"
+bead = "sp-unusla"
+
 [[use_case]]
 id = "UC-cockpit-observability-42"
 tier = "T2"
@@ -276,15 +281,30 @@ id = "UC-cockpit-observability-43"
 tier = "T1"
 statement = "`ensure` detaches ghost clients idle longer than `COCKPIT_CLIENT_IDLE_SECS`, keeps the live client's height, logs the tty, and does not move the operator's active pane when there is nothing to repair"
 
+[use_case.uncovered]
+reason = "suite test-cockpit-layout-ensure-focus.sh deleted for flipping green/red on one commit (law-a-test-that-flips-is-deleted); a deterministic replacement is owed as a follow-on"
+date = "2026-11-07"
+bead = "sp-unusla"
+
 [[use_case]]
 id = "UC-cockpit-observability-44"
 tier = "T1"
 statement = "the health pane command carries `SPIRA_CONF`; mouse mode defaults on, can be switched off with off/no/0, and never fails the caller"
 
+[use_case.uncovered]
+reason = "suite test-cockpit-layout-ensure-focus.sh deleted for flipping green/red on one commit (law-a-test-that-flips-is-deleted); a deterministic replacement is owed as a follow-on"
+date = "2026-11-07"
+bead = "sp-unusla"
+
 [[use_case]]
 id = "UC-cockpit-observability-45"
 tier = "T1"
 statement = "a copy of the `layout` binary refuses `ensure` and names the installed path"
+
+[use_case.uncovered]
+reason = "suite test-cockpit-layout-ensure-focus.sh deleted for flipping green/red on one commit (law-a-test-that-flips-is-deleted); a deterministic replacement is owed as a follow-on"
+date = "2026-11-07"
+bead = "sp-unusla"
 
 [[use_case]]
 id = "UC-cockpit-observability-46"
