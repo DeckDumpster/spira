@@ -29,7 +29,7 @@ pub fn clock(spira_now: Option<u64>) -> Box<dyn Clock> {
 pub struct Unserved;
 
 fn unserved<T>() -> state_store::Result<T> {
-    Err(Error::Backend("the control-plane store has no spira-lc door yet: round-controller reads and writes nothing".into()))
+    Err(Error::Backend("this store is the Unserved test double, with no spira-lc door: nothing is read or written".into()))
 }
 
 impl Store for Unserved {
@@ -58,14 +58,13 @@ impl Lc for Unserved {
     fn call(&self, _: &[String]) -> (i32, serde_json::Value) {
         (
             2,
-            serde_json::json!({ "cannot_tell": "the control-plane store has no spira-lc door yet: round-controller publishes no section" }),
+            serde_json::json!({ "cannot_tell": "this store is the Unserved test double, with no spira-lc door: no section is published" }),
         )
     }
 }
 
-/// The ledger rides the same unserved door.
 fn unledgered<T>() -> Result<T, String> {
-    Err("the verdict ledger has no spira-lc door yet: round-controller records no verdict".into())
+    Err("the Unserved ledger has no spira-lc door: no verdict is recorded".into())
 }
 
 impl Ledger for Unserved {

@@ -1604,6 +1604,7 @@ dependencies = [
  "spira-lc",
  "spira-otel",
  "state-store",
+ "state-store-sqlite",
  "store-view",
  "testkit",
  "toml",

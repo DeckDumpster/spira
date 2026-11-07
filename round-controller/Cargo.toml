@@ -36,5 +36,6 @@ toml = { version = "0.8", optional = true }
 reconciler-engine = { path = "../reconciler-engine" }
 round-controller = { path = ".", features = ["sim"] }
 spira-lc = { path = "../spira-lc" }
+state-store-sqlite = { path = "../state-store-sqlite" }
 testkit = { path = "../testkit" }
 forge = { path = "../forge" }
