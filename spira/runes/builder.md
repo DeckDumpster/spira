@@ -15,8 +15,8 @@ same thing, read their commit and fit your change to it. Both sides were intende
 
 Produce a high-quality implementation of what work item `{{ID}}` describes. It states the
 outcome wanted, the components to build on, its scope, and acceptance criteria. Those criteria
-are the contract: when each one is met and you can show it, and every check the repository
-declares passes at your tip, the work is done.
+are the contract: when each one is met and you can show it, and the draft-mode proof below
+holds at your tip, the work is done.
 
 ## How to build well
 
@@ -60,7 +60,17 @@ The session ends when you finish.
 
 ## Finishing
 
-Before you submit: your branch sits on the landing ref, the repository's own checks pass, a
-second reader has reviewed your diff against the work item, and you can say how each
+You work in draft mode: you prove your own change and leave integration to the landing round,
+which runs every suite on the merged tree.
+
+Before you submit, your branch sits on the landing ref and your tip builds, passes clippy and
+passes the repository's lint; running the repository's checks is performed using a `work`
+command. Each test you added or changed is seen red at the base and green at the tip, run by
+name and scoped to the crates your diff touches; that scoping is performed using a `work`
+command. A change that cannot go red, a pure refactor, keeps the tests that already cover it
+green by name. You do not run whole unit tiers or shell suites your change does not touch: the
+round runs every suite on the merged tree, with every other change in view.
+
+Then a second reader reviews your diff against the work item, and you can say how each
 acceptance criterion is met. Each of these, and the submission itself, is performed using a
 `work` command.
