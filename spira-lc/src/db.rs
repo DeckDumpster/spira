@@ -789,6 +789,7 @@ pub(crate) enum ScriptFailure {
     CannotTell(String),
 }
 
+#[derive(Debug, Clone)]
 pub struct EventRecord {
     machine: String,
     key: String,
@@ -820,6 +821,16 @@ impl EventRecord {
 
     pub fn event_name(&self) -> &str {
         &self.event
+    }
+
+    #[cfg(test)]
+    pub fn actor(&self) -> &str {
+        &self.actor
+    }
+
+    #[cfg(test)]
+    pub fn machine(&self) -> &str {
+        &self.machine
     }
 
     #[cfg(test)]
