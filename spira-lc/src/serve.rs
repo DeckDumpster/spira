@@ -142,16 +142,23 @@ pub fn run(args: &[String]) -> i32 {
     // A request may spawn a child (`work blocked` runs `mail`) that calls back into this
     // socket; serving one connection at a time deadlocks on that. The session mutex still
     // serializes the queries themselves.
-    match conn.live_load() {
-        Ok(n) => eprintln!("spira-lc serve: {n} live rows in memory"),
-        Err(e) => eprintln!("spira-lc serve: live rows not loaded, reads go to Dolt until they are: {e}"),
+    let on_store = crate::control::served::lifecycle_store().is_some();
+    if on_store {
+        eprintln!("spira-lc serve: the lifecycle is on the control store: no dolt lifecycle rows are loaded or swept");
+    } else {
+        match conn.live_load() {
+            Ok(n) => eprintln!("spira-lc serve: {n} live rows in memory"),
+            Err(e) => eprintln!("spira-lc serve: live rows not loaded, reads go to Dolt until they are: {e}"),
+        }
     }
     std::thread::scope(|scope| {
         let checker = Arc::clone(&conn);
-        scope.spawn(move || loop {
-            std::thread::sleep(check_every);
-            live_tick(&checker);
-        });
+        if !on_store {
+            scope.spawn(move || loop {
+                std::thread::sleep(check_every);
+                live_tick(&checker);
+            });
+        }
         match (spira_config::process::cfg_parse::<u64>("SPIRA_LC_SNAPSHOT_SECS"), spira_config::process::cfg("SPIRA_LC_SNAPSHOT")) {
             (Ok(secs), Ok(path)) if secs > 0 && !path.is_empty() => {
                 let refresher = Arc::clone(&conn);
@@ -186,11 +193,23 @@ pub fn run(args: &[String]) -> i32 {
         let sweeper = Arc::clone(&conn);
         scope.spawn(move || loop {
             std::thread::sleep(SWEEP_EVERY);
+            alarm_tick();
+            if on_store {
+                match crate::control::served::lifecycle_store() {
+                    Some(Ok(store)) => match store_sweep(&store, crate::db::now_epoch()) {
+                        Ok(n) if n > 0 => eprintln!("spira-lc serve: {n} overdue mending rows expired"),
+                        Ok(_) => {}
+                        Err(e) => eprintln!("spira-lc serve: mending sweep: {e}"),
+                    },
+                    Some(Err(e)) => eprintln!("spira-lc serve: mending sweep: the control store: {e}"),
+                    None => {}
+                }
+                continue;
+            }
             cold_tick(&sweeper);
             continuity_tick(&sweeper);
             crate::ops::epics_tick(&sweeper);
             crate::ops::views_tick(&sweeper);
-            alarm_tick();
             if let Err(e) = crate::mending::expire_overdue(&sweeper, "spira-lc.sweep") {
                 eprintln!("spira-lc serve: mending sweep: {e:?}");
             }
@@ -217,6 +236,20 @@ fn gc_tick<B: state_store::Backend>(store: &crate::control::store::Store<B>) {
     let contract = store.contract();
     if let Err(e) = state_store::gc::Controller::new(contract).tick(contract.now_ms()) {
         eprintln!("spira-lc serve: control-store gc: {e}");
+    }
+}
+
+/// The sweeper's work on the store: the machine's `Expire` on every overdue MENDING row.
+/// live_tick, cold_tick, views_tick and epics_tick keep dolt-side caches that no store verb
+/// reads, and continuity_tick feeds `event-continuity`, which the store does not serve: all
+/// five are retired here. Epics are reconciled by the `reconcile-content` verb, not a sweep.
+fn store_sweep<B: state_store::Backend>(store: &crate::control::store::Store<B>, now: i64) -> Result<usize, String> {
+    let request = crate::control::served::request_id();
+    let call = crate::control::state::Call { now, request: &request };
+    let argv: Vec<String> = ["mending", "sweep", "--actor", "spira-lc.sweep"].iter().map(|s| s.to_string()).collect();
+    match crate::control::state::run(store, &argv, &call) {
+        (0, out) => out.trim().parse().map_err(|_| format!("sweep answered {out:?}")),
+        (code, out) => Err(format!("exit {code}: {out}")),
     }
 }
 
@@ -548,6 +581,43 @@ fn write_response(mut stream: &UnixStream, exit_code: i32, stdout: &str, stderr:
 
 #[cfg(test)]
 mod tests {
+    fn lc(store: &crate::control::store::Store<state_store::MemBackend>, argv: &[&str], now: i64) -> String {
+        let args: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+        let request = crate::control::served::request_id();
+        let (code, out) = crate::control::state::run(store, &args, &crate::control::state::Call { now, request: &request });
+        assert_eq!(code, 0, "{argv:?}: {out}");
+        out
+    }
+
+    #[test]
+    fn the_store_sweep_expires_an_overdue_mending_row_and_leaves_a_live_one() {
+        use state_store::{Config, Contract, MemBackend, Ports};
+        const AT: i64 = 1_767_225_600;
+        let clock = runtime::ports::VirtualClock::new(AT as u64 * 1_000);
+        let contract = Contract::open(MemBackend::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        let store = crate::control::store::Store::new(contract, 1_000);
+        let tip = "1".repeat(40);
+        let run = |argv: &[&str]| lc(&store, argv, AT);
+        run(&["create-bead", "sp-a", "--repo", "spira", "--ready"]);
+        run(&["event", "bead", "sp-a", "--expect", "READY", "--version", "0", "--actor", "t", "--kind", r#"{"Claim":{"holder":"dwarf-1","lease_until":1767229200}}"#]);
+        run(&["event", "bead", "sp-a", "--expect", "WORKING", "--version", "1", "--actor", "t", "--kind", &format!(r#"{{"Submit":{{"tip":"{tip}"}}}}"#)]);
+        run(&["cut", "b-1", "--repo", "spira", "--head", "H", "--base", "B", "--members", &format!("sp-a:{tip}"), "--actor", "t"]);
+        let round = |expect: &str, v: u64, kind: &str| run(&["event", "batch", "b-1", "--expect", expect, "--version", &v.to_string(), "--actor", "t", "--kind", kind]);
+        round("OPEN", 1, r#"{"PassStarted":{"n":1,"head":"H"}}"#);
+        round("CI_RUNNING", 2, r#"{"SuitesStarted":{"n":1}}"#);
+        round("CI_RUNNING", 3, r#"{"Failed":{"suite":"test-a.sh","n":1}}"#);
+        round("CI_RUNNING", 4, r#"{"Failed":{"suite":"test-b.sh","n":1}}"#);
+        for (suite, secs) in [("test-a.sh", "60"), ("test-b.sh", "3600")] {
+            run(&["mending", "pickup", "b-1", "--pass", "1", "--suite", suite, "--deadline-secs", secs, "--actor", "mender"]);
+        }
+        let state = |suite: &str| store.mending("b-1", 1, suite).unwrap().unwrap().row.state.as_str().to_string();
+        assert_eq!(super::store_sweep(&store, AT), Ok(0), "nothing is overdue yet");
+        assert_eq!(super::store_sweep(&store, AT + 61), Ok(1));
+        assert_ne!(state("test-a.sh"), "MENDING", "the overdue row expired");
+        assert_eq!(state("test-b.sh"), "MENDING", "the row within its deadline is left");
+        assert_eq!(super::store_sweep(&store, AT + 61), Ok(0), "a second sweep finds nothing overdue");
+    }
+
     fn ask(sink: Option<&spira_otel::Sink>, request: &str) -> (String, i32) {
         use std::io::{Read, Write};
         let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
