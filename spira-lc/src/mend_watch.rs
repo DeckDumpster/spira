@@ -60,6 +60,20 @@ pub fn with_retries<T, E>(attempts: u32, pause: std::time::Duration, mut read: i
     last
 }
 
+/// Overdue rows (deadline at or before `now`) then beads over the daily cap, as breaches.
+pub(crate) fn collect(overdue: &[serde_json::Value], mends: &[serde_json::Value], now: i64) -> Vec<Breach> {
+    let mut breaches: Vec<Breach> = overdue
+        .iter()
+        .filter(|r| text(r, "deadline").parse().map_or(true, |d: i64| d <= now))
+        .map(|r| overdue_breach(&text(r, "batch_id"), &text(r, "pass"), &text(r, "suite"), text(r, "deadline").parse().unwrap_or(now), now))
+        .collect();
+    breaches.extend(mends.iter().filter_map(|r| {
+        let bead = text(r, "bead");
+        (!bead.is_empty() && bead != "null").then(|| mends_breach(&bead, text(r, "n").parse().unwrap_or(0))).flatten()
+    }));
+    breaches
+}
+
 pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
     let now = now_epoch();
     let overdue_sql = format!("SELECT batch_id, pass, suite, deadline FROM mending WHERE state = 'MENDING' AND awaiting_ask IS NULL AND deadline <= {now} ORDER BY deadline");
@@ -70,14 +84,7 @@ pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
         (Ok(o), Ok(m)) => (o, m),
         (Err(e), _) | (_, Err(e)) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
     };
-    let mut breaches: Vec<Breach> = overdue
-        .iter()
-        .map(|r| overdue_breach(&text(r, "batch_id"), &text(r, "pass"), &text(r, "suite"), text(r, "deadline").parse().unwrap_or(now), now))
-        .collect();
-    breaches.extend(mends.iter().filter_map(|r| {
-        let bead = text(r, "bead");
-        (!bead.is_empty() && bead != "null").then(|| mends_breach(&bead, text(r, "n").parse().unwrap_or(0))).flatten()
-    }));
+    let breaches = collect(&overdue, &mends, now);
     let Some(path) = flag(args, "--seen") else {
         return (0, breaches.iter().map(|b| b.line.as_str()).collect::<Vec<_>>().join("\n"));
     };
@@ -121,5 +128,35 @@ mod tests {
     #[test]
     fn the_overdue_line_says_how_late() {
         assert!(overdue_breach("b", "1", "s", 10, 70).line.contains("60s past its deadline"));
+    }
+
+    fn overdue_row(deadline: i64) -> serde_json::Value {
+        serde_json::json!({"batch_id": "batch-mend", "pass": "1", "suite": "test-f.sh", "deadline": deadline.to_string()})
+    }
+
+    #[test]
+    fn a_row_inside_its_deadline_is_no_breach() {
+        assert!(collect(&[overdue_row(1_100)], &[], 1_000).is_empty());
+    }
+
+    #[test]
+    fn an_overdue_row_fires_the_alarm_naming_its_key() {
+        let bs = collect(&[overdue_row(970)], &[], 1_000);
+        assert_eq!(bs.len(), 1);
+        assert!(bs[0].line.starts_with("MEND-WATCH OVERDUE batch-mend#1#test-f.sh "), "{}", bs[0].line);
+    }
+
+    #[test]
+    fn without_a_seen_set_every_breach_is_reported() {
+        let bs = collect(&[overdue_row(970)], &[], 1_000);
+        assert_eq!(fresh(&bs, &BTreeSet::new()).len(), 1);
+    }
+
+    #[test]
+    fn a_third_mend_in_a_day_fires_the_alarm_and_two_do_not() {
+        let mends = [serde_json::json!({"bead": "sp-twice", "n": "2"}), serde_json::json!({"bead": "sp-loop", "n": "3"})];
+        let bs = collect(&[], &mends, 1_000);
+        assert_eq!(bs.len(), 1);
+        assert!(bs[0].line.starts_with("MEND-WATCH MENDS sp-loop was mended 3 times"), "{}", bs[0].line);
     }
 }

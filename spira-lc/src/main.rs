@@ -921,11 +921,34 @@ fn run_batch_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &s
         if let Err(e) = mending::check_widths(key, *n, suite) {
             return e;
         }
-        match mending::fetch(conn, key, *n, suite) {
-            Ok(Some(_)) => return (0, format!("already recorded: {suite} failed in pass {n}")),
-            Ok(None) => {}
+        let recorded = match mending::fetch(conn, key, *n, suite) {
+            Ok(r) => r,
             Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+        };
+        let (outcome, rec, opens) = match mending::plan_failed(&row, (expect, expect_state, version), actor, &kind, recorded.as_ref(), at) {
+            mending::FailedPlan::Recorded(already) => return (0, already),
+            mending::FailedPlan::Planned { outcome, record, opens } => (outcome, record, opens),
+        };
+        if !outcome.applied {
+            if let Err(e) = conn.insert_refusal_event(&rec) {
+                return (CANNOT_TELL, format!("cannot tell: {e:?}"));
+            }
+            return (REFUSED, format!("refused: {:?}", outcome.refusal));
         }
+        let step = db::CascadeStep {
+            table: "batch",
+            key_column: "batch_id",
+            key: key.into(),
+            old_version: version,
+            set_clause: rows::batch_set_clause(&outcome.row),
+            applied_to_state: outcome.row.state.as_str().into(),
+            event: rec,
+        };
+        return match mending::open_with_failed(conn, step, &opens, at) {
+            Ok(true) => (0, String::new()),
+            Ok(false) => (REFUSED, "refused: lost the race to another writer".into()),
+            Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
+        };
     }
     let ev = batch::BatchEvent { expect: expect_state, version, kind: kind.clone(), actor: actor.to_string() };
     let outcome = batch::apply(&row, &ev);
@@ -938,22 +961,6 @@ fn run_batch_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &s
         return (REFUSED, format!("refused: {:?}", outcome.refusal));
     }
     let set = rows::batch_set_clause(&outcome.row);
-    if let batch::BatchEventKind::Failed { suite, n } = &kind {
-        let step = db::CascadeStep {
-            table: "batch",
-            key_column: "batch_id",
-            key: key.into(),
-            old_version: version,
-            set_clause: set,
-            applied_to_state: outcome.row.state.as_str().into(),
-            event: rec,
-        };
-        return match mending::open_with_failed(conn, step, suite, *n, at) {
-            Ok(true) => (0, String::new()),
-            Ok(false) => (REFUSED, "refused: lost the race to another writer".into()),
-            Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
-        };
-    }
     match conn.cas_update_and_log("batch", "batch_id", key, version, &set, &rec, outcome.row.state.as_str()) {
         Ok(true) => (0, String::new()),
         Ok(false) => (REFUSED, "refused: lost the race to another writer".into()),

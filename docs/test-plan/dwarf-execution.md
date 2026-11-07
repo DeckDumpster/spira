@@ -311,7 +311,7 @@ Verified: `bash spira/testenv-batch.sh --suites test-dwarf-disposition.sh,test-a
 test-timeout.sh,test-thrash.sh,test-dwarf-decision-blocked.sh,test-dwarf-operator-wait.sh,
 test-dwarf-presession-death.sh,test-dwarf-yield-headless.sh,test-dwarf-gate-close-silent.sh,
 test-plan-lint.sh,test-requeue.sh,test-covers-entries.sh,test-host-reason.sh,
-test-gate-verdict.sh,test-inventory.sh,test-literal-lint.sh,test-units-lint.sh spira/sp-eq8a4.2.1`
+test-gate-verdict.sh,test-inventory.sh,test-literal-lint.sh spira/sp-eq8a4.2.1`
 in testenv — all green. Before/after suite-seconds: the touched existing suites are
 unchanged in cost (still their full DB/e2e runs; file consolidation is sp-eq8a4.2.6's job),
 plus one new T1 suite at ~1-2s covering eight previously-untested gaps — not the full §7

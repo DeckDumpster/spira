@@ -294,12 +294,11 @@ fn width_and_defaults_read_like_the_bash() {
 }
 
 /// Part F of the retired test-gate-touched.sh: the real corpus's declaration — a
-/// unit-installer-only diff selects test-units-lint.sh. sp-31dm0:
-/// systemd/install.sh is retired; the unit installer is install/src/bin/units_install.rs now.
+/// unit-installer-only diff is never unselected.
 #[test]
-fn the_real_unit_lint_suite_claims_the_unit_installer() {
+fn the_real_corpus_claims_the_unit_installer() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-    let c = Corpus::load_named(&dir, &["test-units-lint.sh".into()]).unwrap();
+    let c = Corpus::load_named(&dir, &["test-units-optional.sh".into()]).unwrap();
     let s = select::select(
         &c,
         &[select::Change::modified("install/src/bin/units_install.rs")],
@@ -311,7 +310,7 @@ fn the_real_unit_lint_suite_claims_the_unit_installer() {
         },
     )
     .unwrap();
-    assert_eq!(s.suites, ["test-units-lint.sh"]);
+    assert_eq!(s.suites, ["test-units-optional.sh"]);
 }
 
 #[test]
