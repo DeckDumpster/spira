@@ -34,6 +34,81 @@ pub fn done_argv(run: &str) -> Vec<String> {
     habits::config::argv(run, &[])
 }
 
+/// The ref `work checks` selects the affected crates against, as `work crates` does.
+pub const CHECKS_BASE: &str = "local/main";
+/// The per-worktree file (under the worktree's git dir) a passing `work checks` is recorded in.
+pub const CHECKS_PASS_FILE: &str = "spira-checks.pass";
+/// The token in a `[[check]]` row's `run` that becomes the crates the diff affects.
+pub const AFFECTED: &str = "{affected}";
+
+/// The crates a branch's diff affects, as `{affected}` in a `[[check]]` row expands it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Affected {
+    /// A workspace-wide build input changed (root `Cargo.toml`, `Cargo.lock`, the toolchain pin,
+    /// `.cargo/`): `--workspace`.
+    Workspace,
+    /// The touched crates and every transitive dependent; empty when no crate is touched.
+    Crates(Vec<String>),
+}
+
+/// sp-8oc3xj: the round's unit tier's own selection (`testenv::unit::write_crates`, which writes
+/// `target/unit-tests.crates`, calls `gate::compose::select_crates(.., true)`), so the submit
+/// lint and the round check the same crates (law-test-selection-and-plan-are-one-source).
+pub fn affected_scope(diff_raw: &[u8], metadata_json: &str) -> Result<Affected, String> {
+    use gate::compose::{classify, parse_diff_raw, parse_metadata, select_crates, Class};
+    let members = parse_metadata(metadata_json)?;
+    if parse_diff_raw(diff_raw).iter().any(|c| classify(c, &members) == Class::Workspace) {
+        return Ok(Affected::Workspace);
+    }
+    select_crates(diff_raw, metadata_json, true).map(Affected::Crates)
+}
+
+/// A row's argv with `{affected}` expanded to `--workspace` or `-p <crate>` words. `None`: the
+/// row names `{affected}` and the diff affects no crate, so there is nothing for it to check.
+pub fn check_argv(run: &str, affected: &Affected) -> Option<Vec<String>> {
+    let argv = done_argv(run);
+    if !argv.iter().any(|t| t == AFFECTED) {
+        return Some(argv);
+    }
+    let words: Vec<String> = match affected {
+        Affected::Workspace => vec!["--workspace".to_string()],
+        Affected::Crates(c) if c.is_empty() => return None,
+        Affected::Crates(c) => c.iter().flat_map(|c| ["-p".to_string(), c.clone()]).collect(),
+    };
+    Some(argv.into_iter().flat_map(|t| if t == AFFECTED { words.clone() } else { vec![t] }).collect())
+}
+
+/// What a pass of `work checks` is recorded against: the tip, the base the crates were selected
+/// against, and the checks file's text.
+pub fn checks_pass_key(head: &str, base: &str, checks_toml: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    checks_toml.hash(&mut h);
+    format!("{head} {base} {:016x}", h.finish())
+}
+
+/// Whether `work submit` may skip the checks: they passed at this exact key and the tree holds
+/// no tracked change, so what passed is the tip submitted.
+pub fn checks_already_passed(recorded: Option<&str>, key: &str, clean: bool) -> bool {
+    clean && recorded.map(str::trim) == Some(key)
+}
+
+/// A cargo row run under `spira-admit run` when builds are admitted (`RUSTC_WRAPPER` is
+/// spira-admit): the row waits for its compile slot first, and its `timeout` starts only once
+/// admitted; the rustcs under it inherit the lease and never queue or yield again.
+pub fn admitted(argv: Vec<String>, rustc_wrapper: Option<&str>, who: &str) -> Vec<String> {
+    let Some(w) = rustc_wrapper.filter(|w| std::path::Path::new(w).file_name().is_some_and(|n| n == "spira-admit")) else { return argv };
+    [w, "run", "--pool", "compile", "--who", who, "--"].iter().map(|s| s.to_string()).chain(argv).collect()
+}
+
+/// The longest wait spira-admit reported (`admitted to compile slot N after Ns`).
+pub fn admission_wait_secs(stderr: &str) -> Option<u64> {
+    stderr
+        .lines()
+        .filter_map(|l| l.split_once("admitted to compile slot ")?.1.split_once(" after ")?.1.strip_suffix('s')?.trim().parse().ok())
+        .max()
+}
+
 /// The one enforcement point for "a verb naming any bead other than the bound one is
 /// refused" (acceptance criterion): every token in the verb's own arguments is checked,
 /// not just a designated slot, because a designated slot can be bypassed by whatever else
@@ -401,6 +476,58 @@ mod tests {
 
     fn raw(paths: &[&str]) -> Vec<u8> {
         paths.iter().map(|p| format!(":100644 100644 aaa bbb M\0{p}\0")).collect::<String>().into_bytes()
+    }
+
+    fn repo_clippy_row() -> String {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        habits::config::load_checks(root).unwrap().into_iter().find(|r| r.name == "clippy").expect("a clippy check row").run
+    }
+
+    #[test]
+    fn the_clippy_check_names_only_a_touched_leaf_and_its_dependents() {
+        let scope = affected_scope(&raw(&["a/src/lib.rs"]), META).unwrap();
+        assert_eq!(check_argv(&repo_clippy_row(), &scope).unwrap(), v(&["cargo", "clippy", "-p", "a", "-p", "b", "--all-targets", "--", "-D", "warnings"]));
+    }
+
+    #[test]
+    fn the_clippy_check_falls_back_to_the_workspace_only_on_a_workspace_input() {
+        for input in ["Cargo.lock", "Cargo.toml", "rust-toolchain.toml", ".cargo/config.toml"] {
+            let scope = affected_scope(&raw(&["c/src/lib.rs", input]), META).unwrap();
+            assert_eq!(scope, Affected::Workspace, "{input}");
+            assert_eq!(check_argv(&repo_clippy_row(), &scope).unwrap(), v(&["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]));
+        }
+    }
+
+    #[test]
+    fn the_clippy_check_is_skipped_when_the_diff_affects_no_crate() {
+        let scope = affected_scope(&raw(&["docs/x.md", "spira/x.sh"]), META).unwrap();
+        assert_eq!(scope, Affected::Crates(vec![]));
+        assert_eq!(check_argv(&repo_clippy_row(), &scope), None);
+        assert_eq!(check_argv("spira-lint --diff x", &scope).unwrap(), v(&["spira-lint", "--diff", "x"]));
+    }
+
+    #[test]
+    fn submit_does_not_rerun_checks_that_already_passed_at_this_tip() {
+        let key = checks_pass_key("t1", "b1", "[[check]]");
+        assert!(checks_already_passed(Some(&key), &key, true), "work checks passed at this tip: submit runs nothing again");
+        assert!(!checks_already_passed(Some(&key), &key, false), "a dirty tree is not the tip that passed");
+        assert!(!checks_already_passed(None, &key, true));
+        for other in [checks_pass_key("t2", "b1", "[[check]]"), checks_pass_key("t1", "b2", "[[check]]"), checks_pass_key("t1", "b1", "[[check]]\nx")] {
+            assert!(!checks_already_passed(Some(&key), &other, true), "another tip, base or checks file runs them again");
+        }
+    }
+
+    #[test]
+    fn a_cargo_check_waits_for_admission_before_its_budget_starts() {
+        let argv = v(&["timeout", "900", "cargo", "clippy", "-p", "a"]);
+        assert_eq!(
+            admitted(argv.clone(), Some("/r/bin/spira-admit"), "sp-x"),
+            v(&["/r/bin/spira-admit", "run", "--pool", "compile", "--who", "sp-x", "--", "timeout", "900", "cargo", "clippy", "-p", "a"])
+        );
+        assert_eq!(admitted(argv.clone(), Some("sccache"), "sp-x"), argv, "builds that are not admitted are run as they are");
+        assert_eq!(admitted(argv.clone(), None, "sp-x"), argv);
+        assert_eq!(admission_wait_secs("x\nspira-admit: admitted to compile slot 2 after 244s\n"), Some(244));
+        assert_eq!(admission_wait_secs("nothing waited"), None);
     }
 
     #[test]
