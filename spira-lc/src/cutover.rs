@@ -14,10 +14,11 @@
 use lifecycle::{batch, bead, delivery};
 
 use crate::db::{CascadeStep, Conn, DbError, EventRecord};
+use std::collections::{BTreeMap, BTreeSet};
 use crate::{refusal_name, rows};
 
 const CANNOT_TELL: i32 = 2;
-const REFUSED: i32 = 3;
+pub(crate) const REFUSED: i32 = 3;
 
 pub fn flag(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
@@ -1030,10 +1031,6 @@ fn release_kind_of(returned: bool, tip: String) -> delivery::DeliveryEventKind {
     }
 }
 
-fn release_kind(conn: &Conn, id: &str, tip: String) -> Result<delivery::DeliveryEventKind, DbError> {
-    Ok(release_kind_of(returned_since_delivery(conn, id)?, tip))
-}
-
 pub(crate) struct AbandonArgs {
     pub batch_id: String,
     pub expect: batch::BatchState,
@@ -1139,90 +1136,167 @@ pub fn cmd_requeue_orphans(args: &[String], conn: &Conn) -> (i32, String) {
             _ => return (CANNOT_TELL, "requeue-orphans: --stale-secs must be a non-negative integer".into()),
         },
     };
-    let sql = "SELECT bead_id FROM bead WHERE state = 'IN_DELIVERY' AND bead_id NOT IN \
-               (SELECT bm.bead_id FROM batch_member bm JOIN batch b ON b.batch_id = bm.batch_id \
-                WHERE b.state NOT IN ('LANDED', 'SETTLED', 'ABANDONED')) ORDER BY bead_id";
-    let found = match conn.query(sql) {
+    let read = match read_orphan_facts(conn) {
         Ok(r) => r,
         Err(e) => return cannot_tell(e),
     };
-    let mut orphans = Vec::new();
-    for r in &found {
+    let plan = plan_requeue_orphans(&read.in_delivery, &read.deliveries, &read.open_batches, &read.returned, crate::db::now_epoch(), stale_secs, &actor);
+    run_requeue_plan(&plan, apply, &mut |steps| matches!(conn.cascade("", steps), Ok(a) if !a.is_empty() && a.iter().all(|x| *x)))
+}
+
+struct OrphanFacts {
+    in_delivery: Vec<bead::BeadRow>,
+    deliveries: BTreeMap<String, delivery::DeliveryRow>,
+    open_batches: Vec<OpenBatch>,
+    returned: BTreeSet<String>,
+}
+
+fn read_orphan_facts(conn: &Conn) -> Result<OrphanFacts, DbError> {
+    let mut in_delivery = Vec::new();
+    for r in conn.query("SELECT bead_id FROM bead WHERE state = 'IN_DELIVERY' ORDER BY bead_id")? {
         let Some(id) = r.get("bead_id").and_then(|v| v.as_str()) else { continue };
-        match rows::fetch_delivery(conn, id) {
-            Ok(Some(d)) if d.mode != delivery::Mode::Queue && !d.state.is_terminal() => continue,
-            Ok(_) => orphans.push(id.to_string()),
-            Err(e) => return cannot_tell(e),
+        in_delivery.extend(rows::fetch_bead(conn, id)?);
+    }
+    let mut deliveries = BTreeMap::new();
+    let mut returned = BTreeSet::new();
+    for b in &in_delivery {
+        if let Some(d) = rows::fetch_delivery(conn, &b.bead_id)? {
+            deliveries.insert(b.bead_id.clone(), d);
+        }
+        if returned_since_delivery(conn, &b.bead_id)? {
+            returned.insert(b.bead_id.clone());
         }
     }
-
-    let phantom_sql = format!(
-        "SELECT batch_id, version FROM batch WHERE state = 'OPEN' AND pr IS NULL AND run IS NULL AND pass = 0 AND phase IS NULL \
-         AND opened_at < {} ORDER BY batch_id",
-        crate::db::now_epoch() - stale_secs
-    );
-    let phantoms = match conn.query(&phantom_sql) {
-        Ok(r) => r,
-        Err(e) => return cannot_tell(e),
-    };
-    let mut phantom_batches: Vec<(String, String)> = Vec::new();
-    for r in &phantoms {
-        let (Some(id), Some(v)) = (r.get("batch_id").and_then(|v| v.as_str()), r.get("version").and_then(|v| v.as_str())) else { continue };
-        phantom_batches.push((id.to_string(), v.to_string()));
+    let mut open_batches = Vec::new();
+    let live = conn.query("SELECT batch_id, pr, opened_at FROM batch WHERE state NOT IN ('LANDED', 'SETTLED', 'ABANDONED') ORDER BY batch_id")?;
+    for r in &live {
+        let Some(id) = r.get("batch_id").and_then(|v| v.as_str()) else { continue };
+        let Some(row) = rows::fetch_batch(conn, id)? else { continue };
+        open_batches.push(OpenBatch { row, pr: rows::number(r, "pr"), opened_at: rows::number(r, "opened_at").unwrap_or(0), members: fetch_members(conn, id)? });
     }
-    let mut phantom_members: Vec<String> = Vec::new();
-    for (batch_id, _) in &phantom_batches {
-        match fetch_members(conn, batch_id) {
-            Ok(m) => phantom_members.extend(m.into_iter().map(|(id, _)| id)),
-            Err(e) => return cannot_tell(e),
+    Ok(OrphanFacts { in_delivery, deliveries, open_batches, returned })
+}
+
+/// A batch that has not reached a terminal state, with the columns the lifecycle row does not
+/// carry and the members it holds.
+pub(crate) struct OpenBatch {
+    pub row: batch::BatchRow,
+    pub pr: Option<i64>,
+    pub opened_at: i64,
+    pub members: Vec<(String, String)>,
+}
+
+pub(crate) struct Release {
+    pub bead_id: String,
+    pub steps: Vec<CascadeStep>,
+}
+
+pub(crate) struct PhantomBatch {
+    pub batch_id: String,
+    pub members: Vec<String>,
+    pub steps: Vec<CascadeStep>,
+}
+
+#[derive(Default)]
+pub(crate) struct OrphanPlan {
+    pub orphans: Vec<String>,
+    pub phantoms: Vec<PhantomBatch>,
+    pub releases: Vec<Release>,
+}
+
+fn is_phantom(b: &OpenBatch, now: i64, stale_secs: i64) -> bool {
+    let r = &b.row;
+    r.state == batch::BatchState::Open && b.pr.is_none() && r.run.is_none() && r.pass == 0 && r.phase.is_none() && b.opened_at < now - stale_secs
+}
+
+/// Which IN_DELIVERY beads are held by nothing, which open batches never began, and the steps
+/// that release each. Reads nothing and writes nothing.
+pub(crate) fn plan_requeue_orphans(
+    in_delivery: &[bead::BeadRow],
+    deliveries: &BTreeMap<String, delivery::DeliveryRow>,
+    open_batches: &[OpenBatch],
+    returned: &BTreeSet<String>,
+    now: i64,
+    stale_secs: i64,
+    actor: &str,
+) -> OrphanPlan {
+    let held: BTreeSet<&str> = open_batches.iter().flat_map(|b| b.members.iter().map(|(id, _)| id.as_str())).collect();
+    let mut plan = OrphanPlan::default();
+    let mut released = Vec::new();
+    for b in in_delivery.iter().filter(|b| !held.contains(b.bead_id.as_str())) {
+        if matches!(deliveries.get(&b.bead_id), Some(d) if d.mode != delivery::Mode::Queue && !d.state.is_terminal()) {
+            continue;
         }
+        released.push(b);
     }
-    orphans.extend(phantom_members.iter().filter(|id| !orphans.contains(id)).cloned().collect::<Vec<_>>());
-    orphans.sort();
+    let roster = Roster { beads: in_delivery.iter().map(|b| (b.bead_id.clone(), b.clone())).collect(), deliveries: deliveries.clone() };
+    for ob in open_batches.iter().filter(|b| is_phantom(b, now, stale_secs)) {
+        let rows = Rows {
+            batch: ob.row.clone(),
+            members: ob.members.clone(),
+            roster: Roster {
+                beads: roster.beads.iter().filter(|(id, _)| ob.members.iter().any(|(m, _)| m == *id)).map(|(k, v)| (k.clone(), v.clone())).collect(),
+                deliveries: roster.deliveries.iter().filter(|(id, _)| ob.members.iter().any(|(m, _)| m == *id)).map(|(k, v)| (k.clone(), v.clone())).collect(),
+            },
+            contained: Default::default(),
+            returned: ob.members.iter().filter(|(id, _)| returned.contains(id)).map(|(id, _)| id.clone()).collect(),
+        };
+        let abandon = AbandonArgs {
+            batch_id: ob.row.batch_id.clone(),
+            expect: batch::BatchState::Open,
+            version: ob.row.version,
+            actor: actor.to_string(),
+            reason: format!("requeue-orphans: opened and never began (no PR, run, pass or phase in {stale_secs}s)"),
+        };
+        let steps = plan_abandon(&rows, &abandon, now).map(|p| p.steps).unwrap_or_default();
+        plan.phantoms.push(PhantomBatch { batch_id: ob.row.batch_id.clone(), members: ob.members.iter().map(|(id, _)| id.clone()).collect(), steps });
+    }
+    plan.orphans = released.iter().map(|b| b.bead_id.clone()).collect();
+    for p in &plan.phantoms {
+        plan.orphans.extend(p.members.iter().filter(|id| !plan.orphans.contains(id)).cloned().collect::<Vec<_>>());
+    }
+    plan.orphans.sort();
+    for b in released {
+        let kind = release_kind_of(returned.contains(&b.bead_id), b.tip.clone().unwrap_or_default());
+        let mut steps = Vec::new();
+        exit_steps(&roster, &mut steps, &b.bead_id, kind, actor, now);
+        plan.releases.push(Release { bead_id: b.bead_id.clone(), steps });
+    }
+    plan
+}
 
+/// Reports the plan, and with `apply` runs each transaction through `exec`, which says whether
+/// it committed in full.
+fn run_requeue_plan(plan: &OrphanPlan, apply: bool, exec: &mut dyn FnMut(&[CascadeStep]) -> bool) -> (i32, String) {
     let mut requeued = Vec::new();
     let mut failed = Vec::new();
     let mut abandoned = Vec::new();
     if apply {
-        for (batch_id, version) in &phantom_batches {
-            let why = format!("requeue-orphans: opened and never began (no PR, run, pass or phase in {stale_secs}s)");
-            let abandon_args: Vec<String> =
-                [batch_id.as_str(), "--expect", "OPEN", "--version", version, "--actor", &actor, "--reason", &why].iter().map(|s| s.to_string()).collect();
-            match cmd_abandon_batch(&abandon_args, conn) {
-                (0, _) => abandoned.push(batch_id.clone()),
-                _ => failed.push(batch_id.clone()),
+        for p in &plan.phantoms {
+            if !p.steps.is_empty() && exec(&p.steps) {
+                abandoned.push(p.batch_id.clone());
+            } else {
+                failed.push(p.batch_id.clone());
             }
         }
-        for id in &orphans {
-            if phantom_members.contains(id) {
-                if !phantom_batches.iter().any(|(b, _)| failed.contains(b)) {
+        let phantom_failed = !failed.is_empty();
+        for id in &plan.orphans {
+            if plan.phantoms.iter().any(|p| p.members.contains(id)) {
+                if !phantom_failed {
                     requeued.push(id.clone());
                 }
                 continue;
             }
-            let at = crate::db::now_epoch();
-            let tip = match rows::fetch_bead(conn, id) {
-                Ok(Some(b)) => b.tip.unwrap_or_default(),
-                Ok(None) => continue,
-                Err(e) => return cannot_tell(e),
-            };
-            let mut steps = Vec::new();
-            let kind = match release_kind(conn, id, tip) {
-                Ok(k) => k,
-                Err(e) => return cannot_tell(e),
-            };
-            if let Err(e) = add_exit_steps(conn, &mut steps, id, kind, &actor, at) {
-                return cannot_tell(e);
-            }
-            match conn.cascade("", &steps) {
-                Ok(applied) if !applied.is_empty() && applied.iter().all(|a| *a) => requeued.push(id.clone()),
-                _ => failed.push(id.clone()),
+            match plan.releases.iter().find(|r| &r.bead_id == id) {
+                Some(r) if !r.steps.is_empty() && exec(&r.steps) => requeued.push(id.clone()),
+                Some(_) => failed.push(id.clone()),
+                None => {}
             }
         }
     }
     let summary = serde_json::json!({
-        "orphans": orphans,
-        "phantom_batches": phantom_batches.iter().map(|(b, _)| b).collect::<Vec<_>>(),
+        "orphans": plan.orphans,
+        "phantom_batches": plan.phantoms.iter().map(|p| &p.batch_id).collect::<Vec<_>>(),
         "abandoned": abandoned,
         "requeued": requeued,
         "failed": failed,
@@ -1254,48 +1328,82 @@ pub fn cmd_reconcile_landed(args: &[String], conn: &Conn) -> (i32, String) {
         },
         (None, None) => return (CANNOT_TELL, "reconcile-landed: --repo-path or --repo is required".into()),
     };
-    if !crate::git_evidence::is_ancestor(&repo_path, &sha, &base) {
-        return (REFUSED, format!("refused: {sha} is not reachable from {base}"));
-    }
-    if !crate::git_evidence::commit_names_bead(&repo_path, &sha, bead_id) {
-        return (REFUSED, format!("refused: the commit message of {sha} does not name {bead_id}"));
-    }
-
-    let bead_row = match rows::fetch_bead(conn, bead_id) {
-        Ok(Some(r)) => r,
-        Ok(None) => return (REFUSED, format!("refused: no bead row for {bead_id}")),
-        Err(e) => return cannot_tell(e),
+    let on_ref = crate::git_evidence::is_ancestor(&repo_path, &sha, &base);
+    let names_bead = on_ref && crate::git_evidence::commit_names_bead(&repo_path, &sha, bead_id);
+    let (bead_row, delivery_row) = if on_ref && names_bead {
+        match (rows::fetch_bead(conn, bead_id), rows::fetch_delivery(conn, bead_id)) {
+            (Ok(b), Ok(d)) => (b, d),
+            (Err(e), _) | (_, Err(e)) => return cannot_tell(e),
+        }
+    } else {
+        (None, None)
     };
     let at = crate::db::now_epoch();
+    let landing = LandingEvidence { bead_id, sha: &sha, base: &base, on_ref, names_bead };
+    let steps = match plan_reconcile_landed(bead_row.as_ref(), delivery_row.as_ref(), &landing, &actor, at) {
+        Ok(s) => s,
+        Err(msg) => return (REFUSED, msg),
+    };
+    match conn.cascade("", &steps) {
+        Ok(applied) => {
+            let summary = serde_json::json!({"bead_id": bead_id, "sha": sha, "steps": steps.len(), "applied": applied});
+            (if applied.iter().all(|a| *a) { 0 } else { REFUSED }, summary.to_string())
+        }
+        Err(e) => cannot_tell(e),
+    }
+}
+
+/// What git said about the claimed landing: the two facts and the names they were asked with.
+pub(crate) struct LandingEvidence<'a> {
+    pub bead_id: &'a str,
+    pub sha: &'a str,
+    pub base: &'a str,
+    pub on_ref: bool,
+    pub names_bead: bool,
+}
+
+/// The steps that land a bead whose work verifiably merged. Either git fact false refuses
+/// before the rows are consulted.
+pub(crate) fn plan_reconcile_landed(
+    bead_row: Option<&bead::BeadRow>,
+    delivery_row: Option<&delivery::DeliveryRow>,
+    landing: &LandingEvidence,
+    actor: &str,
+    at: i64,
+) -> Result<Vec<CascadeStep>, String> {
+    let LandingEvidence { bead_id, sha, base, on_ref, names_bead } = *landing;
+    if !on_ref {
+        return Err(format!("refused: {sha} is not reachable from {base}"));
+    }
+    if !names_bead {
+        return Err(format!("refused: the commit message of {sha} does not name {bead_id}"));
+    }
+    let Some(bead_row) = bead_row else { return Err(format!("refused: no bead row for {bead_id}")) };
     let proof = format!("reconcile-landed:{sha}");
     let bead_ev = bead::BeadEvent {
         expect: bead_row.state,
         version: bead_row.version,
         kind: bead::BeadEventKind::ContentOnBase { proof: proof.clone() },
-        actor: actor.clone(),
+        actor: actor.to_string(),
         at: Some(at),
     };
-    let bead_outcome = bead::apply(&bead_row, &bead_ev);
+    let bead_outcome = bead::apply(bead_row, &bead_ev);
     if !bead_outcome.applied {
-        return (REFUSED, format!("refused: {:?}", bead_outcome.refusal));
+        return Err(format!("refused: {:?}", bead_outcome.refusal));
     }
 
     let mut steps = Vec::new();
-    match rows::fetch_delivery(conn, bead_id) {
-        Ok(Some(d)) => {
-            let ev = delivery::DeliveryEvent {
-                expect: d.state,
-                version: d.version,
-                kind: delivery::DeliveryEventKind::Delivered { merge_sha: sha.clone(), proof },
-                actor: actor.clone(),
-            };
-            let outcome = delivery::apply(&d, &ev);
-            if outcome.applied {
-                steps.push(cascade_step("delivery", "bead_id", bead_id, d.version, rows::delivery_set_clause(&outcome.row), outcome.row.state.as_str(), "delivery", "Delivered", d.state.as_str(), &ev.kind, &actor, at));
-            }
+    if let Some(d) = delivery_row {
+        let ev = delivery::DeliveryEvent {
+            expect: d.state,
+            version: d.version,
+            kind: delivery::DeliveryEventKind::Delivered { merge_sha: sha.to_string(), proof },
+            actor: actor.to_string(),
+        };
+        let outcome = delivery::apply(d, &ev);
+        if outcome.applied {
+            steps.push(cascade_step("delivery", "bead_id", bead_id, d.version, rows::delivery_set_clause(&outcome.row), outcome.row.state.as_str(), "delivery", "Delivered", d.state.as_str(), &ev.kind, actor, at));
         }
-        Ok(None) => {}
-        Err(e) => return cannot_tell(e),
     }
     steps.push(cascade_step(
         "bead",
@@ -1308,16 +1416,10 @@ pub fn cmd_reconcile_landed(args: &[String], conn: &Conn) -> (i32, String) {
         "ContentOnBase",
         bead_row.state.as_str(),
         &bead_ev.kind,
-        &actor,
+        actor,
         at,
     ));
-    match conn.cascade("", &steps) {
-        Ok(applied) => {
-            let summary = serde_json::json!({"bead_id": bead_id, "sha": sha, "steps": steps.len(), "applied": applied});
-            (if applied.iter().all(|a| *a) { 0 } else { REFUSED }, summary.to_string())
-        }
-        Err(e) => cannot_tell(e),
-    }
+    Ok(steps)
 }
 
 pub(crate) struct EjectArgs {
@@ -1559,7 +1661,6 @@ fn name_prerequisites(steps: &mut [CascadeStep], cascade: &[(String, String)]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
 
     #[test]
     fn only_a_member_still_batched_in_this_batch_is_delivered() {
@@ -2241,6 +2342,220 @@ mod tests {
         assert_eq!(refused(plan_abandon(&rows, &abandon_args(BS::Landed, 5), AT)).code, REFUSED);
     }
 
+    const TIP: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const NOW: i64 = 100_000;
+    const STALE: i64 = 1800;
+
+    fn held(id: &str, certified: bool) -> bead::BeadRow {
+        let mut r = bead::BeadRow::filed(id);
+        r.state = bead::BeadState::InDelivery;
+        r.tip = Some(TIP.into());
+        r.gate_key = certified.then(|| "k1".to_string());
+        r.version = 4;
+        r
+    }
+
+    fn batched(id: &str, batch_id: &str) -> delivery::DeliveryRow {
+        let mut d = delivery::DeliveryRow::start_queue(id);
+        d.state = delivery::DeliveryState::Batched;
+        d.batch_id = Some(batch_id.into());
+        d.version = 2;
+        d
+    }
+
+    fn open_batch(id: &str, age: i64, members: &[&str]) -> OpenBatch {
+        let mut row = batch::BatchRow::cut(id, "r", "h", "b");
+        row.version = 3;
+        OpenBatch { row, pr: None, opened_at: NOW - age, members: members.iter().map(|m| (m.to_string(), TIP.to_string())).collect() }
+    }
+
+    struct World {
+        beads: Vec<bead::BeadRow>,
+        deliveries: BTreeMap<String, delivery::DeliveryRow>,
+        batches: Vec<OpenBatch>,
+        returned: BTreeSet<String>,
+    }
+
+    impl World {
+        fn new() -> Self {
+            World { beads: vec![], deliveries: BTreeMap::new(), batches: vec![], returned: BTreeSet::new() }
+        }
+        fn bead(mut self, id: &str, certified: bool, batch_id: Option<&str>) -> Self {
+            self.beads.push(held(id, certified));
+            self.deliveries.insert(id.into(), match batch_id {
+                Some(b) => batched(id, b),
+                None => delivery::DeliveryRow::start_queue(id),
+            });
+            self
+        }
+        fn plan(&self) -> OrphanPlan {
+            plan_requeue_orphans(&self.beads, &self.deliveries, &self.batches, &self.returned, NOW, STALE, "t")
+        }
+    }
+
+    fn landed_state(steps: &[CascadeStep], table: &str) -> Vec<(String, String)> {
+        steps.iter().filter(|s| s.table == table).map(|s| (s.key.clone(), s.applied_to_state.clone())).collect()
+    }
+
+    #[test]
+    fn a_submitted_and_a_certified_orphan_are_named_and_a_bead_in_an_open_batch_is_not() {
+        let mut w = World::new().bead("sp-sub", false, None).bead("sp-cert", true, None).bead("sp-held", true, Some("b-1"));
+        w.batches.push(open_batch("b-1", 10, &["sp-held"]));
+        let plan = w.plan();
+        assert_eq!(plan.orphans, ["sp-cert", "sp-sub"]);
+        assert!(plan.phantoms.is_empty());
+        assert!(plan.releases.iter().all(|r| r.bead_id != "sp-held"), "the held member stays IN_DELIVERY");
+    }
+
+    #[test]
+    fn applying_returns_each_orphan_to_the_state_it_entered_from() {
+        let w = World::new().bead("sp-sub", false, None).bead("sp-cert", true, None);
+        let plan = w.plan();
+        let got: BTreeMap<_, _> = plan.releases.iter().flat_map(|r| landed_state(&r.steps, "bead")).collect();
+        assert_eq!(got["sp-sub"], "SUBMITTED");
+        assert_eq!(got["sp-cert"], "CERTIFIED");
+        let delivered: Vec<_> = plan.releases.iter().flat_map(|r| landed_state(&r.steps, "delivery")).collect();
+        assert!(delivered.iter().all(|(_, s)| s == "EXITED"), "{delivered:?}");
+    }
+
+    #[test]
+    fn a_dry_run_executes_nothing_and_apply_runs_one_transaction_per_orphan_and_phantom() {
+        let mut w = World::new().bead("sp-sub", false, None).bead("sp-cert", true, None).bead("sp-ph", true, Some("b-ph"));
+        w.batches.push(open_batch("b-ph", STALE + 1, &["sp-ph"]));
+        let plan = w.plan();
+        let mut calls = 0;
+        let (code, out) = run_requeue_plan(&plan, false, &mut |_| { calls += 1; true });
+        assert_eq!((code, calls), (0, 0));
+        assert!(out.contains(r#""requeued":[]"#) && out.contains(r#""abandoned":[]"#), "{out}");
+        assert!(out.contains(r#""phantom_batches":["b-ph"]"#) && out.contains("sp-ph") && out.contains("sp-sub") && out.contains("sp-cert"), "a dry run names what it would release: {out}");
+        let (code, out) = run_requeue_plan(&plan, true, &mut |_| { calls += 1; true });
+        assert_eq!((code, calls), (0, 3));
+        assert!(out.contains(r#""requeued":["sp-cert","sp-ph","sp-sub"]"#), "{out}");
+    }
+
+    #[test]
+    fn an_orphan_whose_transaction_fails_is_reported_failed_and_exits_refused() {
+        let plan = World::new().bead("sp-sub", false, None).plan();
+        let (code, out) = run_requeue_plan(&plan, true, &mut |_| false);
+        assert_eq!(code, REFUSED);
+        assert!(out.contains(r#""failed":["sp-sub"]"#), "{out}");
+    }
+
+    #[test]
+    fn a_delivery_live_outside_a_batch_is_not_an_orphan() {
+        let mut w = World::new().bead("sp-pr", true, None);
+        let d = w.deliveries.get_mut("sp-pr").unwrap();
+        d.mode = delivery::Mode::Pr;
+        d.state = delivery::DeliveryState::PrOpen;
+        assert!(w.plan().orphans.is_empty());
+    }
+
+    #[test]
+    fn an_aged_open_batch_with_no_pass_is_a_phantom_and_is_abandoned_with_its_members_released() {
+        let mut w = World::new().bead("sp-a", true, Some("b-ph"));
+        w.batches.push(open_batch("b-ph", STALE + 1, &["sp-a"]));
+        let plan = w.plan();
+        assert_eq!(plan.orphans, ["sp-a"]);
+        assert_eq!(plan.phantoms.len(), 1);
+        let steps = &plan.phantoms[0].steps;
+        assert_eq!(landed_state(steps, "batch"), [("b-ph".to_string(), "ABANDONED".to_string())]);
+        assert_eq!(landed_state(steps, "bead"), [("sp-a".to_string(), "CERTIFIED".to_string())]);
+        assert_eq!(landed_state(steps, "delivery"), [("sp-a".to_string(), "EXITED".to_string())]);
+        let mut calls = 0;
+        let (code, out) = run_requeue_plan(&plan, true, &mut |_| { calls += 1; true });
+        assert_eq!((code, calls), (0, 1), "the batch is one transaction and its member rides it: {out}");
+        assert!(out.contains(r#""abandoned":["b-ph"]"#) && out.contains(r#""requeued":["sp-a"]"#), "{out}");
+    }
+
+    #[test]
+    fn a_fresh_open_batch_is_not_a_phantom() {
+        let mut w = World::new().bead("sp-a", true, Some("b-new"));
+        w.batches.push(open_batch("b-new", STALE - 1, &["sp-a"]));
+        let plan = w.plan();
+        assert!(plan.phantoms.is_empty() && plan.orphans.is_empty());
+    }
+
+    #[test]
+    fn an_aged_batch_with_a_pass_in_flight_is_not_a_phantom() {
+        let mut w = World::new().bead("sp-a", true, Some("b-run")).bead("sp-b", true, Some("b-pr")).bead("sp-c", true, Some("b-ph"));
+        let mut passing = open_batch("b-run", STALE * 2, &["sp-a"]);
+        passing.row.pass = 1;
+        let mut with_pr = open_batch("b-pr", STALE * 2, &["sp-b"]);
+        with_pr.pr = Some(7);
+        let mut running = open_batch("b-ph", STALE * 2, &["sp-c"]);
+        running.row.run = Some("run-1".into());
+        w.batches.extend([passing, with_pr, running]);
+        let plan = w.plan();
+        assert!(plan.phantoms.is_empty() && plan.orphans.is_empty());
+    }
+
+    #[test]
+    fn an_ejected_member_of_a_phantom_stays_rework_and_its_co_member_returns_certified() {
+        let mut w = World::new().bead("sp-out", true, Some("b-ph")).bead("sp-in", true, Some("b-ph"));
+        w.batches.push(open_batch("b-ph", STALE + 1, &["sp-out", "sp-in"]));
+        w.returned.insert("sp-out".into());
+        let steps = &w.plan().phantoms[0].steps;
+        let beads: BTreeMap<_, _> = landed_state(steps, "bead").into_iter().collect();
+        assert_eq!(beads["sp-out"], "REWORK");
+        assert_eq!(beads["sp-in"], "CERTIFIED");
+        let deliveries: BTreeMap<_, _> = landed_state(steps, "delivery").into_iter().collect();
+        assert_eq!((deliveries["sp-out"].as_str(), deliveries["sp-in"].as_str()), ("EXITED", "EXITED"));
+    }
+
+    fn landing<'a>(on_ref: bool, names_bead: bool) -> LandingEvidence<'a> {
+        LandingEvidence { bead_id: "sp-x", sha: "abc", base: "main", on_ref, names_bead }
+    }
+
+    fn submitted_bead(id: &str) -> bead::BeadRow {
+        let mut r = bead::BeadRow::filed(id);
+        r.state = bead::BeadState::Submitted;
+        r.tip = Some(TIP.into());
+        r
+    }
+
+    #[test]
+    fn a_commit_off_the_landing_ref_is_refused_and_the_bead_stays_put() {
+        let err = plan_reconcile_landed(Some(&submitted_bead("sp-x")), None, &landing(false, true), "t", NOW).unwrap_err();
+        assert_eq!(err, "refused: abc is not reachable from main");
+    }
+
+    #[test]
+    fn a_commit_that_does_not_name_the_bead_is_refused() {
+        let err = plan_reconcile_landed(Some(&submitted_bead("sp-x")), None, &landing(true, false), "t", NOW).unwrap_err();
+        assert_eq!(err, "refused: the commit message of abc does not name sp-x");
+    }
+
+    #[test]
+    fn a_submitted_bead_on_the_ref_that_names_it_lands() {
+        let steps = plan_reconcile_landed(Some(&submitted_bead("sp-x")), None, &landing(true, true), "t", NOW).unwrap();
+        assert_eq!(landed_state(&steps, "bead"), [("sp-x".to_string(), "LANDED".to_string())]);
+        assert!(landed_state(&steps, "delivery").is_empty());
+    }
+
+    #[test]
+    fn a_bead_batched_in_a_phantom_lands_and_its_delivery_exits_with_the_merge_sha() {
+        let mut b = submitted_bead("sp-x");
+        b.state = bead::BeadState::InDelivery;
+        let d = batched("sp-x", "b-ph");
+        let steps = plan_reconcile_landed(Some(&b), Some(&d), &landing(true, true), "t", NOW).unwrap();
+        assert_eq!(landed_state(&steps, "delivery"), [("sp-x".to_string(), "EXITED".to_string())]);
+        assert_eq!(landed_state(&steps, "bead"), [("sp-x".to_string(), "LANDED".to_string())]);
+        let delivery_step = steps.iter().find(|s| s.table == "delivery").unwrap();
+        assert!(delivery_step.set_clause.contains("merge_sha = 'abc'"), "{}", delivery_step.set_clause);
+    }
+
+    #[test]
+    fn an_already_terminal_bead_is_refused() {
+        let mut b = submitted_bead("sp-x");
+        b.state = bead::BeadState::Landed;
+        assert!(plan_reconcile_landed(Some(&b), None, &landing(true, true), "t", NOW).unwrap_err().starts_with("refused:"));
+    }
+
+    #[test]
+    fn a_bead_with_no_row_is_refused() {
+        assert_eq!(plan_reconcile_landed(None, None, &landing(true, true), "t", NOW).unwrap_err(), "refused: no bead row for sp-x");
+    }
+
     #[test]
     fn show_batch_of_a_batch_that_was_never_cut_exits_1_so_a_guard_fails_closed() {
         assert_eq!(show_batch_reply(None), (1, "{}".to_string()));
@@ -2316,13 +2631,6 @@ fn exit_steps(roster: &Roster, steps: &mut Vec<CascadeStep>, id: &str, kind: del
     }
 }
 
-/// `exit_steps` over the rows as the store holds them now.
-fn add_exit_steps(conn: &Conn, steps: &mut Vec<CascadeStep>, id: &str, kind: delivery::DeliveryEventKind, actor: &str, at: i64) -> Result<(), DbError> {
-    let roster = fetch_roster(conn, [&id.to_string()])?;
-    exit_steps(&roster, steps, id, kind, actor, at);
-    Ok(())
-}
-
 #[allow(clippy::too_many_arguments)]
 fn cascade_step(
     table: &'static str,
@@ -2359,20 +2667,14 @@ pub fn cmd_event_continuity(args: &[String], conn: &Conn) -> (i32, String) {
         Ok(d) => d.join("event-continuity.acknowledged"),
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
-    let mut acked = std::collections::HashMap::new();
-    match std::fs::read_to_string(&ack_path) {
-        Ok(t) => {
-            for l in t.lines().filter(|l| !l.trim().is_empty()) {
-                let f: Vec<&str> = l.splitn(4, '\t').collect();
-                if f.len() != 4 {
-                    return (CANNOT_TELL, format!("cannot tell: {} has a malformed row: {l}", ack_path.display()));
-                }
-                acked.insert((f[1].to_string(), f[2].to_string(), f[0].to_string()), f[3].to_string());
-            }
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+    let acked = match std::fs::read_to_string(&ack_path) {
+        Ok(t) => match crate::continuity::parse_acked(&t) {
+            Ok(a) => a,
+            Err(l) => return (CANNOT_TELL, format!("cannot tell: {} has a malformed row: {l}", ack_path.display())),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {}: {e}", ack_path.display())),
-    }
+    };
     let found = match conn.live.as_ref() {
         Some(l) => crate::continuity::current(conn, l.continuity()),
         None => crate::continuity::scan(conn).map(|t| t.breaks()),
@@ -2382,18 +2684,10 @@ pub fn cmd_event_continuity(args: &[String], conn: &Conn) -> (i32, String) {
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
     if args.iter().any(|a| a == "--acknowledge") {
-        let (Some(reason), Some(through)) = (flag(args, "--reason"), flag(args, "--through").and_then(|t| t.parse::<i64>().ok())) else {
-            return (REFUSED, "refused: --acknowledge needs --reason R and --through SEQ".to_string());
+        let rows = match crate::continuity::ack_rows(&breaks, &acked, flag(args, "--reason"), flag(args, "--through")) {
+            Ok(r) => r,
+            Err(m) => return (REFUSED, m),
         };
-        if reason.trim().is_empty() || reason.contains(['\t', '\n']) {
-            return (REFUSED, "refused: --reason must be one non-empty line".to_string());
-        }
-        let mut rows = String::new();
-        for (m, k, seq, _) in &breaks {
-            if seq.parse::<i64>().unwrap_or(i64::MAX) <= through && !acked.contains_key(&(m.clone(), k.clone(), seq.clone())) {
-                rows.push_str(&format!("{seq}\t{m}\t{k}\t{reason}\n"));
-            }
-        }
         use std::io::Write;
         let wrote = std::fs::OpenOptions::new().create(true).append(true).open(&ack_path).and_then(|mut f| f.write_all(rows.as_bytes()));
         return match wrote {
@@ -2401,17 +2695,8 @@ pub fn cmd_event_continuity(args: &[String], conn: &Conn) -> (i32, String) {
             Err(e) => (CANNOT_TELL, format!("cannot tell: {}: {e}", ack_path.display())),
         };
     }
-    let mut fresh = false;
-    let mut lines = Vec::new();
-    for (m, k, seq, mut j) in breaks {
-        match acked.get(&(m, k, seq)) {
-            Some(reason) => j["acknowledged"] = serde_json::Value::String(reason.clone()),
-            None => fresh = true,
-        }
-        lines.push(j.to_string());
-    }
-    let out = lines.join("\n");
-    if fresh { (REFUSED, out) } else { (0, out) }
+    let (code, report) = crate::continuity::judge(&breaks, &acked);
+    (code, crate::continuity::render(&report))
 }
 
 #[cfg(test)]

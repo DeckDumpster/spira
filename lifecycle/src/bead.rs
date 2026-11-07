@@ -2983,6 +2983,7 @@ mod tests {
         let out = apply(&r, &phase_ev("dwarf-b", &r, DwarfPhase::Building));
         assert!(!out.applied);
         assert!(matches!(out.refusal, Some(Refusal::NotHolder { .. })));
+        assert_eq!(out.row, r, "the refused move leaves the phase where it was");
     }
 
     #[test]

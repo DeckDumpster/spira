@@ -1047,4 +1047,20 @@ mod tests {
         assert_eq!(ids.into_iter().collect::<Vec<_>>(), ["a", "c"]);
         assert!(express_ids("nope").is_err());
     }
+
+    /// The row `spira-lc list` prints (the fixture its own test pins), through the same
+    /// parse and claimability rule `select --blockers machine` runs.
+    fn epic_blocked_count(epic_status: &str) -> usize {
+        let lc = parse_lifecycle(include_str!("../tests/fixtures/lc-list-row.json")).unwrap();
+        let ready = parse_ready(r#"[{"id":"sp-epicb","priority":1,"labels":["repo:spira"],"issue_type":"task","dependencies":[{"issue_id":"sp-epicb","depends_on_id":"sp-epic","type":"blocks"}]}]"#).unwrap();
+        let records = parse_ready(&format!(r#"[{{"id":"sp-epic","status":"{epic_status}","issue_type":"epic","labels":["repo:spira"]}}]"#)).unwrap();
+        let bd = index_rows(records);
+        ready.iter().filter(|r| matches!(claimable(r, &lc, &bd, 0), Verdict::Claimable { .. })).count()
+    }
+
+    #[test]
+    fn a_candidate_blocked_on_an_open_epic_stays_blocked_and_is_admitted_once_the_epic_closes() {
+        assert_eq!(epic_blocked_count("open"), 0);
+        assert_eq!(epic_blocked_count("closed"), 1);
+    }
 }

@@ -605,6 +605,37 @@ mod tests {
         assert_eq!(rows[0].as_object().unwrap().keys().next_back().unwrap(), "blocked_by");
     }
 
+    fn stored(fields: &[(&str, &str)]) -> Value {
+        let mut b = bead("sp-epicb", "READY", 0, 1_761_858_000);
+        for (k, v) in fields {
+            b[*k] = Value::String((*v).into());
+        }
+        b
+    }
+
+    #[test]
+    fn a_ready_row_lists_exactly_as_spira_claim_reads_it() {
+        let live = loaded(vec![stored(&[("title", "B"), ("priority", "1"), ("repo", "spira")])], vec![]);
+        let rows = live.list(&ListFilter::default()).unwrap();
+        let fixture: Value = serde_json::from_str(include_str!("../../spira-claim/tests/fixtures/lc-list-row.json")).unwrap();
+        assert_eq!(Value::Array(rows), fixture);
+    }
+
+    #[test]
+    fn list_state_working_carries_the_phase_and_the_disposition() {
+        let working = stored(&[("state", "WORKING"), ("dwarf_phase", "building"), ("disposition", "slain"), ("disposition_note", "by hand")]);
+        let live = loaded(vec![working, bead("sp-other", "READY", 0, NOW)], vec![]);
+        let rows = live.list(&filter_from_flags(Some("WORKING"), None, None, false, None)).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!((text(&rows[0], "dwarf_phase"), text(&rows[0], "disposition"), text(&rows[0], "disposition_note")), ("building", "slain", "by hand"));
+        let judged = loaded(vec![stored(&[("claim_verdict", "blocked"), ("claim_blocker", "sp-lc-blocker"), ("claim_at", "2026-10-30T22:20:00Z")])], vec![]);
+        let row = &judged.list(&ListFilter::default()).unwrap()[0];
+        assert_eq!((text(row, "claim_verdict"), text(row, "claim_blocker"), text(row, "claim_at"), &row["claim_runes"]), ("blocked", "sp-lc-blocker", "2026-10-30T22:20:00Z", &Value::Null));
+        let ready = live.list(&filter_from_flags(Some("READY"), None, None, false, None)).unwrap();
+        assert_eq!(ready[0]["claim_verdict"], Value::Null, "a row nobody judged carries no verdict");
+        assert_eq!(ready[0]["dwarf_phase"], Value::Null);
+    }
+
     #[test]
     fn the_flag_filters_match_the_sql_they_replace() {
         let mut held = bead("sp-h", "READY", 0, NOW);

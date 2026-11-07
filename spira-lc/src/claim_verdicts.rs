@@ -124,4 +124,56 @@ mod tests {
         let body = r#"{"computed_at":"2026-10-30T22:20:00Z","entries":[]}"#;
         assert_eq!(cmd_claim_verdicts(&["--json".into(), body.into()], &conn).0, 0);
     }
+
+    fn one(computed_at: &str, entry: &str) -> Payload {
+        payload(&format!(r#"{{"computed_at":"{computed_at}","entries":[{entry}]}}"#))
+    }
+
+    #[test]
+    fn a_bead_the_pass_does_not_name_is_not_touched() {
+        let (sql, ids) = script(&one("2026-10-30T22:20:00Z", r#"{"id":"sp-a","verdict":"claimable"}"#)).unwrap();
+        assert_eq!(ids, ["sp-a"]);
+        assert_eq!(sql.matches("UPDATE").count(), 1);
+        assert!(sql.contains("sp-a") && !sql.contains("sp-b"), "{sql}");
+        assert_eq!(script(&one("2026-10-30T22:20:00Z", "")).unwrap(), (String::new(), vec![]), "a pass naming nobody writes nothing");
+    }
+
+    #[test]
+    fn a_pass_writes_the_verdict_the_blocker_the_runes_and_the_stamp() {
+        let (sql, _) = script(&one("2026-10-30T22:20:00Z", r#"{"id":"sp-lc-ph","verdict":"blocked","blocker":"sp-lc-blocker"}"#)).unwrap();
+        assert_eq!(
+            sql,
+            "UPDATE bead SET claim_verdict = 'blocked', claim_blocker = 'sp-lc-blocker', claim_runes = NULL, claim_at = '2026-10-30T22:20:00Z' WHERE bead_id = 'sp-lc-ph';\n"
+        );
+    }
+
+    #[test]
+    fn the_next_pass_replaces_the_verdict_whole_nulls_included() {
+        let (sql, _) = script(&one("2026-10-30T22:21:00Z", r#"{"id":"sp-lc-ph","verdict":"claimable","runes":["builder","ops"]}"#)).unwrap();
+        assert_eq!(
+            sql,
+            "UPDATE bead SET claim_verdict = 'claimable', claim_blocker = NULL, claim_runes = 'builder,ops', claim_at = '2026-10-30T22:21:00Z' WHERE bead_id = 'sp-lc-ph';\n"
+        );
+    }
+
+    #[test]
+    fn a_bad_stamp_is_refused_naming_it() {
+        let err = script(&one("yesterday", r#"{"id":"sp-a","verdict":"claimable"}"#)).err().unwrap();
+        assert!(err.contains("yesterday"), "{err}");
+        assert!(checked(r#"{"computed_at":"2026-10-30 22:20:00Z","entries":[]}"#).is_err());
+    }
+
+    #[test]
+    fn the_script_never_touches_the_version() {
+        let (sql, _) = script(&one("2026-10-30T22:20:00Z", r#"{"id":"sp-a","verdict":"claimable","blocker":"sp-b","runes":["x"]}"#)).unwrap();
+        for col in ["version", "updated_at", "state"] {
+            assert!(!sql.contains(col), "{col} in {sql}");
+        }
+    }
+
+    #[test]
+    fn one_malformed_entry_refuses_the_whole_pass_and_writes_nothing() {
+        let body = r#"{"computed_at":"2026-10-30T22:20:00Z","entries":[{"id":"sp-a","verdict":"claimable"},{"id":"sp-b","verdict":"NOT A WORD"}]}"#;
+        assert!(checked(body).is_err());
+    }
 }
