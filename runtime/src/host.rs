@@ -2,7 +2,7 @@
 //! every effect, runs on the offload pool; the loop awaits results, kicks and keeps time.
 //! Work the pool refuses stays undone in the journal and is re-offered with a growing backoff.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -82,7 +82,9 @@ pub struct ServeOpts {
     pub max_sleep_ms: Option<u64>,
     /// Receives the loop's own records: long turns and offload spills. Must not block.
     pub sink: Option<Arc<dyn WideSink>>,
-    /// The pool engine turns and effects run on; the process-wide one when `None`.
+    /// The pool effects run on; the process-wide one when `None`. Engine turns never run
+    /// here: each host gives its turns a worker of their own, so a pool full of long effects
+    /// cannot hold the loop's turn.
     pub pool: Option<Arc<Pool>>,
 }
 
@@ -163,12 +165,15 @@ pub async fn serve_with(
     opts: ServeOpts,
 ) -> Result<()> {
     let workers = opts.pool.clone().unwrap_or_else(Pool::global);
+    // One turn runs at a time, so one worker and one slot are enough.
+    let turns = Pool::new(1, 1);
     let engine = classified(engine, &runner);
     let busy = engine.busy();
     let max_sleep = opts.max_sleep_ms.map(Duration::from_millis);
     let pools = ClassPools::new(caps.into());
     let (done_tx, mut done_rx) = mpsc::unbounded_channel::<Done>();
-    let mut in_flight: BTreeSet<String> = BTreeSet::new();
+    // Each effect in flight, with the stream (the task) that asked for it.
+    let mut in_flight: BTreeMap<String, String> = BTreeMap::new();
     let mut engine = Some(engine);
     let mut running: Option<Running> = None;
     let (mut subs, mut done): (Vec<Submit>, Vec<Done>) = (vec![], vec![]);
@@ -199,11 +204,11 @@ pub async fn serve_with(
             dirty = true;
         }
         if let Some(e) = engine.take_if(|_| running.is_none() && (dirty || !subs.is_empty() || !done.is_empty()) && Instant::now() >= retry_at) {
-            let turn = Turn { engine: e, subs: std::mem::take(&mut subs), done: std::mem::take(&mut done), in_flight: in_flight.clone() };
+            let turn = Turn { engine: e, subs: std::mem::take(&mut subs), done: std::mem::take(&mut done), in_flight: in_flight.keys().cloned().collect() };
             let slot = Arc::new(Mutex::new(Some(turn)));
             let s = slot.clone();
             let job = move || run_turn(s.lock().unwrap_or_else(|e| e.into_inner()).take().expect("the turn is put in the slot before it is offered")); // loop-safe: the slot is uncontended; the pool takes it after the offer
-            match workers.offload("engine.turn", None, job) {
+            match turns.offload("engine.turn", None, job) {
                 Ok(handle) => {
                     backoff = BACKOFF_FIRST;
                     dirty = false;
@@ -265,9 +270,15 @@ pub async fn serve_with(
                 }
                 out.result?;
                 for p in out.launch {
-                    match pools.try_take(runner.class(&p.spec)) {
+                    let class = runner.class(&p.spec);
+                    let mine = in_flight.values().filter(|s| **s == p.stream.0).count();
+                    if mine >= task_fan_out(pools.cap(class)) {
+                        // Held back unrefused: one of the task's own outcomes wakes the next offer.
+                        continue;
+                    }
+                    match pools.try_take(class) {
                         Ok(permit) => {
-                            in_flight.insert(p.key.clone());
+                            in_flight.insert(p.key.clone(), p.stream.0.clone());
                             launch_effect(&workers, permit, &runner, &done_tx, p);
                         }
                         Err(d) => {
@@ -296,6 +307,14 @@ pub async fn serve_with(
             }
         }
     }
+}
+
+/// The most effects one task may have in flight in a class of cap `cap`: half of it, at least
+/// one, so a task fanning out one effect per item (sweep.archive stores one per transcript)
+/// leaves the rest of the class to the others. The rest stay pending and are offered again as
+/// the task's own effects finish.
+pub fn task_fan_out(cap: usize) -> usize {
+    (cap / 2).max(1)
 }
 
 /// The engine reports each effect under the class the runner gives it.

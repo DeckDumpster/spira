@@ -586,6 +586,23 @@ impl Engine {
         self.local.push_back(ev);
     }
 
+    /// The engine's clock now.
+    pub fn now_ms(&self) -> u64 {
+        self.clock.now_ms()
+    }
+
+    /// [`start`](Self::start), but handed over at `at` rather than now: a memory-only timer, so
+    /// a process that boots many tasks can spread their first ticks instead of firing them all
+    /// at one instant. A task's own timer for the same tick replaces it, as any re-arm does.
+    pub fn start_at(&mut self, stream: &str, kind: EventKind, at: u64) {
+        if at <= self.clock.now_ms() {
+            return self.start(stream, kind);
+        }
+        let id = format!("{stream}/{}", kind.tag);
+        let correlation = CorrelationId(derive_id(format!("start/{id}/{at}")));
+        self.timers.insert(id.clone(), ScheduleRow { id, at, stream: StreamKey(stream.into()), kind, cause: None, correlation });
+    }
+
     fn append_derived(&mut self, id: String, stream: &StreamKey, kind: EventKind, cause: &Event, at: u64) -> Result<Event> {
         let ev = Event { id: EventId(id), stream: stream.clone(), kind, at, cause: Some(cause.id.clone()), correlation: cause.correlation.clone() };
         self.journal.append(&ev)?;
