@@ -1,6 +1,8 @@
 //! `inbox-triage` — the concierge's in-session Monitor over `SPIRA_CONCIERGE_INBOX`. See
 //! `DESIGN.md`. Replaces `spira/inbox-triage.sh` (sp-48f6g).
 
+mod append;
+
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -35,6 +37,19 @@ fn now_secs() -> u64 {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let verb = match args.first().map(String::as_str) {
+        Some("append") => Some(append::run(&args[1..].join(" "))),
+        Some("flush") => Some(append::flush()),
+        _ => None,
+    };
+    if let Some(r) = verb {
+        if let Err(e) = r {
+            eprintln!("inbox-triage: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let cfg = match load_config() {
         Ok(c) => c,
         Err(e) => {

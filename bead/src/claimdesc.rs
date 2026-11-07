@@ -150,27 +150,37 @@ pub fn parse_iso(s: &str) -> Option<i64> {
 /// 2026-10-05: one source of config); callers resolve them through
 /// `spira_config::process::cfg` at their own top level.
 pub fn notify_live_dwarf(id: &str, message: &str, run: &str, mail: &str) {
-    if id.is_empty() || message.is_empty() || run.is_empty() {
+    if message.is_empty() {
         return;
     }
-    let Ok(entries) = std::fs::read_dir(run) else { return };
+    if let Some(to) = live_dwarf_mailbox(id, run, mail) {
+        mail_send(&to, message);
+    }
+}
+
+/// Adds one change to the amend message, set off from what is already there by a blank line.
+pub fn append_change(message: &mut String, change: &str) {
+    if !message.is_empty() {
+        message.push_str("\n\n");
+    }
+    message.push_str(change);
+}
+
+/// The mailbox of the first live dwarf holding `id`, `dwarf-<id>`, when its `new/` is open.
+pub fn live_dwarf_mailbox(id: &str, run: &str, mail: &str) -> Option<String> {
+    if id.is_empty() || run.is_empty() {
+        return None;
+    }
     let suffix = format!("-{id}.pid");
-    let mut candidates: Vec<String> = entries
+    let mut candidates: Vec<String> = std::fs::read_dir(run)
+        .ok()?
         .filter_map(|e| e.ok())
         .filter_map(|e| e.file_name().into_string().ok())
         .filter(|n| n.starts_with("dwarf-") && n.ends_with(&suffix))
         .collect();
     candidates.sort();
-    for name in candidates {
-        if !dwarf_alive(&format!("{run}/{name}")) {
-            continue;
-        }
-        if !Path::new(&format!("{mail}/dwarf-{id}/new")).is_dir() {
-            break;
-        }
-        mail_send(&format!("dwarf-{id}"), message);
-        break;
-    }
+    candidates.into_iter().find(|n| dwarf_alive(&format!("{run}/{n}")))?;
+    Path::new(&format!("{mail}/dwarf-{id}/new")).is_dir().then(|| format!("dwarf-{id}"))
 }
 
 pub fn dwarf_alive(pidfile: &str) -> bool {
@@ -217,6 +227,63 @@ pub fn live_dwarf(id: &str, run: &str, mail: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fixture(live: bool, mailbox: bool) -> (testkit::TempDir, String, String) {
+        let t = testkit::TempDir::new("live-dwarf-mailbox");
+        let run = t.path().join("run");
+        let mail = t.path().join("mail");
+        std::fs::create_dir_all(&run).unwrap();
+        std::fs::create_dir_all(&mail).unwrap();
+        if live {
+            let pf = run.join("dwarf-builder-sp-amend2.pid");
+            std::fs::write(&pf, std::process::id().to_string()).unwrap();
+            std::fs::write(pf.with_extension("lease"), "99999999999").unwrap();
+        }
+        if mailbox {
+            std::fs::create_dir_all(mail.join("dwarf-sp-amend2/new")).unwrap();
+        }
+        let (r, m) = (run.to_str().unwrap().to_string(), mail.to_str().unwrap().to_string());
+        (t, r, m)
+    }
+
+    // covers: UC-operator-channel-12
+    #[test]
+    fn a_live_dwarf_with_an_open_mailbox_is_mailed() {
+        let (_t, run, mail) = fixture(true, true);
+        assert_eq!(live_dwarf_mailbox("sp-amend2", &run, &mail).as_deref(), Some("dwarf-sp-amend2"));
+    }
+
+    // covers: UC-operator-channel-12
+    #[test]
+    fn no_live_dwarf_means_no_mail_and_no_mailbox_made() {
+        let (_t, run, mail) = fixture(false, false);
+        assert_eq!(live_dwarf_mailbox("sp-amend2", &run, &mail), None);
+        assert!(!Path::new(&mail).join("dwarf-sp-amend2").exists());
+    }
+
+    // covers: UC-operator-channel-12
+    #[test]
+    fn an_expired_lease_is_not_a_live_dwarf() {
+        let (_t, run, mail) = fixture(true, true);
+        std::fs::write(Path::new(&run).join("dwarf-builder-sp-amend2.lease"), "1").unwrap();
+        assert_eq!(live_dwarf_mailbox("sp-amend2", &run, &mail), None);
+    }
+
+    // covers: UC-operator-channel-12
+    #[test]
+    fn a_live_dwarf_without_a_mailbox_is_not_mailed() {
+        let (_t, run, mail) = fixture(true, false);
+        assert_eq!(live_dwarf_mailbox("sp-amend2", &run, &mail), None);
+    }
+
+    // covers: UC-operator-channel-12
+    #[test]
+    fn the_amend_message_carries_the_note_text() {
+        let mut m = String::new();
+        append_change(&mut m, "Marked express.");
+        append_change(&mut m, "Scope expanded: add acceptance tests");
+        assert_eq!(m, "Marked express.\n\nScope expanded: add acceptance tests");
+    }
 
     fn a(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()

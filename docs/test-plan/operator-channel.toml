@@ -93,7 +93,7 @@ statement = "Dwarf mailbox: the PostToolUse hook injects each message into the r
 
 [[use_case]]
 id = "UC-operator-channel-12"
-tier = "T3"
+tier = "T1"
 statement = "bead.sh amend on an in-progress bead mails its live dwarf and sends nothing when no dwarf is alive. The dwarf's mailbox is removed when the dwarf exits."
 
 [[use_case]]

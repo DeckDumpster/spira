@@ -100,7 +100,7 @@ The "file::case" entries use the mapper's case names. The cost column shows ci_s
 
 | UC | Existing tests | Level & cost now | Verdict |
 |---|---|---|---|
-| 01 | test-mail.sh::send lands in new/, read, list, unread-age; test-mail-kinds.sh::count 0/1/3; test-mail-dwarf.sh (send lands) | T2, 5 s + 3 s | **KEEP** in test-mail.sh (Maildir half) |
+| 01 | test-mail.sh::send lands in new/, read, list, unread-age; test-mail-kinds.sh::count 0/1/3; `mail` crate `maildir::tests::deliver_lands_in_new_when_unmuted_and_cur_seen_when_muted` (send lands) | T2, 5 s + 3 s | **KEEP** in test-mail.sh (Maildir half) |
 | 02 | test-mail.sh::missing From/Subject, subject bead id, sparse bead id, bare display name, group syntax, --from fallback | T2 fork-per-case, 5 s | **DEMOTE-TO-T1**: table-driven over `_lint_check` |
 | 03 | test-mail-kinds.sh::unknown kind, template, decision without --default, empty ## Note/## Grounds, urgent, ask-below, custom kind; test-mail.sh::decision/question default, ask-below promise | T2, 3 s + dup in 5 s | **MERGE-INTO test-mail.sh** as rows of the same T1 table (DEMOTE-TO-T1) |
 | 04 | test-mail.sh::lint override; test-mail-kinds.sh::lint override + header | T2, dup | MERGE-INTO test-mail.sh (one row, which also checks the header) |
@@ -110,8 +110,8 @@ The "file::case" entries use the mapper's case names. The cost column shows ci_s
 | 08 | test-mail-tidy.sh::open-ask kept, A..E3, unreadable store, dry-run; ::service/timer/units.sh greps | T3 (embedded Dolt), 9 s | **DEMOTE-TO-T2** with a stub `bd` answering the ask-label list. Unit greps **→ T0 unit lint**. Stop counting setup steps as passes |
 | 09 | test-mail-health.sh (all) | T2, 3 s | KEEP (canonical path for "aged unread"; see cluster D4). Use the standard summary line |
 | 10 | test-mail-deliver.sh::SuccessExitStatus grep, start-branch greps (5), escalation fires/no dup/empty mailbox | T2 + source grep, 3 s | **SOURCE-GREP**: replace the 5 `world.sh start` greps with a behavioural `world.sh start` against the systemctl mock. Keep the notify cases |
-| 11 | test-mail-dwarf.sh::SEEN RED (a) hook, SEEN GREEN (e), once not twice, BEAD_ID empty, dwarf:<id> live/absent | T3 file, 16 s (hook cases take ms) | **DEMOTE-TO-T2**: split into test-mail-dwarf-hook.sh (no testdb) |
-| 12 | test-mail-dwarf.sh::SEEN RED (b) amend, SEEN GREEN (c), SEEN RED (d) mailbox gone | T3, remainder of 16 s | KEEP T3. Add a positive control that the mailbox existed during the run (case d) |
+| 11 | test-mail-dwarf-hook.sh::SEEN RED (a) hook, SEEN GREEN (e), once not twice, BEAD_ID empty, dwarf:<id> live/absent | T3 file, 16 s (hook cases take ms) | **DEMOTE-TO-T2**: split into test-mail-dwarf-hook.sh (no testdb) |
+| 12 | test-mail-dwarf.sh::SEEN RED (b) amend, SEEN GREEN (c), SEEN RED (d) mailbox gone | T3, remainder of 16 s | **RETIRED**: unit tests `bead::claimdesc::tests` (live_dwarf_mailbox) and `dwarf::mailbox::tests` (open/close) |
 | 13 | test-brief-mail-options.sh (all); test-migrate-ask.sh::no ask.sh callers, ask.sh deleted | T0, 4 s + 1 s | KEEP both as **T0** in the lint stage. Parse `cmd_send` options once, not once per brief |
 | 14 | test-mail-decision-ask.sh::X-Spira-Bead, 0 blocking deps, override blocks; test-archivist-cited-bead.sh (all 7) | T3, 15 s + 8 s | **DELETE test-archivist-cited-bead.sh** (subset; never runs archivist.sh). Move its "guard logged the refusal" assert into decision-ask |
 | 15 | test-mail-decision-ask.sh::sendmail closes decision bead, unblocks, verdict note; test-mail-sendmail.sh::reply closes tracking bead, accept-default verdict note | T3, 15 s + 20 s (two testdbs) | **MERGE**: test-mail-decision-ask.sh MERGE-INTO test-mail-sendmail.sh → one `test-verdict-flow.sh` on one testdb |
@@ -214,7 +214,7 @@ answers-premise-rejected 18 + answers-silent-seed 5 + archivist-cited-bead 8 + b
 | test-mail.sh (T1 lint table + T2 Maildir, repeat, routing) | mail 5 + kinds 3 + repeat 2 + migrate-ask 1 = 11 | 5 | lint rows in-process; about 15 Maildir forks remain |
 | test-verdict-flow.sh (one testdb) | decision-ask 15 + sendmail 20 + sentinel 5 + archivist 8 = 48 | 20 | one testdb_up (~5 s) + ~25 bd round-trips |
 | test-answers.sh | premise 18 + silent-seed 5 = 23 | 4 | T1 fixture JSON; 2 short T2 loop runs |
-| test-mail-dwarf (hook T2 + lifecycle T3) | 16 | 13 | the dwarf.sh run and testdb stay |
+| test-mail-dwarf (hook T2 + lifecycle T3) | 16 | 13 | lifecycle half retired to unit tests; hook half is test-mail-dwarf-hook.sh |
 | test-mail-tidy.sh (stub bd) | 9 | 2 | no testdb |
 | test-mail-deliver.sh / test-mail-health.sh / test-skew-escalate.sh | 3 + 3 + 2 | 3 + 3 + 2 | unchanged |
 | test-brief-mail-options.sh (T0) | 4 | 1 | parse cmd_send once |

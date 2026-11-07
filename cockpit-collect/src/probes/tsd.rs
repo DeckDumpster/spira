@@ -6,14 +6,48 @@ use crate::io;
 use serde_json::Value;
 
 pub fn tsd_keys() -> Kv {
-    tsd_keys_with(|q| io::run_tool("tsd-query.sh", &[q], None))
+    tsd_keys_with(|q| match q {
+        "tests" => io::run_tool("tsd-read", &["tests", TESTS_WINDOW_HOURS], None),
+        q => io::run_tool("tsd-query.sh", &[q], None),
+    })
 }
 
 fn tsd_keys_with(run: impl Fn(&str) -> Option<String>) -> Kv {
     let mut out = Kv::new();
     push(&mut out, "SP_TSD_WHERE", rows(run("where")).and_then(|r| where_line(&r)).unwrap_or_else(unread));
     push(&mut out, "SP_TSD_REWORK", rows(run("rework")).and_then(|r| rework_line(&r)).unwrap_or_else(unread));
+    let tests = run("tests").and_then(|raw| serde_json::from_str::<Value>(raw.trim()).ok()).and_then(|v| tests_line(&v));
+    push(&mut out, "SP_TSD_TESTS", tests.unwrap_or_else(unread));
     out
+}
+
+const TESTS_WINDOW_HOURS: &str = "72";
+
+fn thousands(n: i64) -> String {
+    let d = n.to_string();
+    let mut out = String::new();
+    for (i, c) in d.chars().enumerate() {
+        if i > 0 && (d.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// `10,914 tests  +12/-3 on 2026-11-06  4 red  slowest a.sh::x 4.2s` from `tsd-read tests`. The count is
+/// the latest round's own; no suite count is ever added to it.
+fn tests_line(inv: &Value) -> Option<String> {
+    let total = inv.get("total")?.as_i64().filter(|t| *t > 0)?;
+    let mut line = format!("{} tests", thousands(total));
+    if let Some(d) = inv.get("days")?.as_array()?.last() {
+        line.push_str(&format!("  +{}/-{} on {}", d.get("added")?.as_i64()?, d.get("removed")?.as_i64()?, d.get("day")?.as_str()?));
+    }
+    line.push_str(&format!("  {} red", inv.get("red")?.as_i64()?));
+    if let Some(s) = inv.get("slowest")?.as_array()?.first() {
+        line.push_str(&format!("  slowest {} {:.1}s", s.get("test")?.as_str()?, s.get("seconds")?.as_f64()?));
+    }
+    Some(line)
 }
 
 fn unread() -> String {
@@ -78,6 +112,19 @@ mod tests {
         });
         assert_eq!(get(&kv, "SP_TSD_WHERE"), "WORKING 3 (12m) \u{b7} REWORK 1 (2h)");
         assert_eq!(get(&kv, "SP_TSD_REWORK"), "3 reopened / 9 landed  gate-red 2, ejected 1");
+    }
+
+    #[test]
+    fn the_tests_headline_is_the_latest_rounds_test_count_alone() {
+        let kv = tsd_keys_with(|q| {
+            Some(if q == "tests" {
+                r#"{"total":10914,"red":4,"days":[{"day":"2026-11-05","total":10900,"added":5,"removed":0},{"day":"2026-11-06","total":10914,"added":12,"removed":3}],"slowest":[{"test":"a.sh::x","seconds":4.25}],"flakiest":[]}"#.to_string()
+            } else {
+                "[]".to_string()
+            })
+        });
+        assert_eq!(get(&kv, "SP_TSD_TESTS"), "10,914 tests  +12/-3 on 2026-11-06  4 red  slowest a.sh::x 4.2s");
+        assert_eq!(get(&tsd_keys_with(|_| None), "SP_TSD_TESTS"), "?");
     }
 
     #[test]

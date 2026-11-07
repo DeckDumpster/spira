@@ -2976,6 +2976,33 @@ fn land_local_accepts_a_round_green_for_the_head_tree() {
 }
 
 #[test]
+fn land_local_refuses_while_another_operation_holds_the_lock() {
+    let t = T::new(LandMode::QueueLocal);
+    local_repo(&t);
+    let _g = t.hold_lock();
+    let start = t.clock.now();
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+        1
+    );
+    assert!(
+        t.err()
+            .contains("another queue operation holds the lock for spira"),
+        "{}",
+        t.err()
+    );
+    assert_eq!(t.landed_ref().as_deref(), Some("b0"), "nothing moved");
+    assert!(!t.lc.has("certify") && !t.lc.has("event"));
+    assert!(!t.qfile("round-seq").exists());
+    assert!(t.git.get("refs/archive/rounds/1").is_none());
+    assert_eq!(
+        t.clock.now() - start,
+        t.s().verdict.lock_wait,
+        "waited the whole deadline on the fake clock"
+    );
+}
+
+#[test]
 fn land_local_syncs_the_boundary_wiki_page_only_for_the_home_repo() {
     let t = T::new(LandMode::QueueLocal);
     local_repo(&t);

@@ -368,8 +368,7 @@ mod tests {
 
     #[test]
     fn sentinel_timer_status_unknown_when_resolved_but_is_active_prints_nothing() {
-        // test-heimdall.sh's own SPIRA_SYSTEMCTL=true fixture: every call succeeds (so
-        // is-enabled resolves the unit) but prints nothing — heimdall.sh's own
+        // A systemctl on which every call succeeds (so is-enabled resolves the unit) but prints nothing — heimdall.sh's own
         // `[ -n "$sentinel_timer" ] || sentinel_timer=unknown` fallback, not "active".
         let sc = FakeSc { enabled: vec!["spira-sentinel-prod.timer"], ..Default::default() };
         assert_eq!(sentinel_timer_status(&sc, "prod"), "unknown");

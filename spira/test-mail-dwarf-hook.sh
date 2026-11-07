@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-mail-dwarf-hook.sh — dwarf mail delivery: the PostToolUse hook and dwarf:<id> routing.
-# Split out of test-mail-dwarf.sh (coverage-map row 11, DEMOTE-TO-T2): neither the hook nor
-# `mail send dwarf:<id>` touches a bead store, so this half never pays for testdb_up.
+# Neither the hook nor `mail send dwarf:<id>` touches a bead store, so no testdb_up.
 #
 # Acceptance criteria (each seen red first):
 #   (a) message dropped into the dwarf's new/ appears in the hook's additionalContext exactly once

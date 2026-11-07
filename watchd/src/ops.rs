@@ -124,7 +124,7 @@ fn release_bin_tool(program: &str) -> Result<std::path::PathBuf, String> {
     }
 }
 
-// FORK-EDGE: needs Units list-by-pattern, is-enabled, disable and NRestarts (only facts/start/stop/restart exist), and a config-selected test double: SPIRA_SYSTEMCTL stubs in test-heimdall.sh and test-launchers-as-launched.sh would be bypassed onto the live user manager.
+// FORK-EDGE: needs Units list-by-pattern, is-enabled, disable and NRestarts (only facts/start/stop/restart exist), and a config-selected test double: SPIRA_SYSTEMCTL stubs in test-launchers-as-launched.sh would be bypassed onto the live user manager.
 fn systemctl_cmd(systemctl: &str) -> Command {
     let mut c = Command::new(systemctl);
     c.arg("--user");

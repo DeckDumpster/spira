@@ -49,7 +49,7 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
     BD_NON_INTERACTIVE=1 timeout 5 bd -C "$TMP/srv" list --json >/dev/null 2>&1 & # batch-job: trips the breaker against a closed port
 done
 wait
-flag="/tmp/beads-circuit/beads-dolt-circuit-127-0-0-1-${port}-${name}.json"
+flag="${TMPDIR:-/tmp}/beads-circuit/beads-dolt-circuit-127-0-0-1-${port}-${name}.json"
 if [ -f "$flag" ]; then
     ok "positive control: repeated failures write a breaker file"
     tripped="$(BD_NON_INTERACTIVE=1 timeout 5 bd -C "$TMP/srv" list --json 2>&1)" # batch-job: probe with breaker open

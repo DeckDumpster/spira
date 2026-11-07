@@ -475,13 +475,7 @@ impl Run<'_> {
         let mail = self.conf.s("SPIRA_MAIL");
         if !self.s.bead.is_empty() {
             let _ = self.d.exec.exec("bead.sh", &s(&["amend", &self.s.bead, "--settle"]), None, None);
-            let box_dir = Path::new(&mail).join(format!("dwarf-{}", self.s.bead));
-            if let Ok(rd) = std::fs::read_dir(&box_dir) {
-                for e in rd.filter_map(|e| e.ok()).filter(|e| e.file_name() != "amend") {
-                    let _ = std::fs::remove_dir_all(e.path()).or_else(|_| std::fs::remove_file(e.path()));
-                }
-            }
-            let _ = std::fs::remove_dir(&box_dir);
+            crate::mailbox::close(&mail, &self.s.bead);
         }
     }
 

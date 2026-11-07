@@ -142,19 +142,17 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 | test-incident.sh | 80 | the intake dedupe holds against two concurrent filers of the same ref | keep | A real race on a real store; two connections are the point. |
 | test-census.sh | 31 | census against a real bd fixture for three ops-detection use cases | keep | Declared the one server-mode census suite. |
 | test-census-events.sh | 78 | census reads requeue/reclaim/recur events written by `bump_*` | unit | Event classification; dominated by seeding a store. |
-| test-heimdall.sh | 75 | the watchdog reconciler raises, clears and re-raises against a real bd | sim | A watcher over time; the classifier is already pure. |
 | test-groom-escalation-check.sh | 71 | the groom ask label is a conf key defaulting to `groom-asked` | unit | One config key; the plan asks fixtures pin a non-default. |
 | test-mimir-closed-record.sh | 32 | the closed-record INVALID-CLOSED trigger and allowlist | unit | A trigger over rows. |
 | test-yield.sh | 32 | a gate red lands in the right column; an unreadable record says `?` | unit | Panel column rule. |
 | test-holds.sh | 42 | holds reports open beads whose branch touches a set of paths | unit | Path-overlap set logic. |
-| test-mail-dwarf.sh | 36 | amend mails the live dwarf; the mailbox is removed on exit | sim | A message hand-off with a lifecycle end. |
 | test-verdict-flow.sh | 36 | mail sendmail: bead closing and decision-bead verdict flow back | sim | Hand-off across mail, bead and sentinel. |
 
 ### I — lifecycle store (Dolt)
 
 | suite | wall | property | target | reason |
 | --- | ---: | --- | --- | --- |
-| test-lifecycle-cutover.sh | 43 | batch cascades `cut`, `land`, `settle`, `abandon-batch` as the spira_lc user | keep | Real grants; the cascades' logic is already covered by `sim`. |
+| test-lifecycle-cutover.sh | 43 | event continuity, requeue-orphans, reconcile-landed, mending as the spira_lc user | keep | Real grants. The batch cascades (`cut`, `land`, `settle`, `abandon-batch`, …) are unit tests over `plan_*` in `spira-lc/src/cutover.rs`; the racing land is in test-lifecycle-container.sh. |
 | test-lifecycle-container.sh | 42 | real Dolt, real grants, and properties that need a second connection | keep | Real dependency. |
 | test-ops-read-model.sh | 33 | the ops_live/ops_round/ops_recent and where-stuck views over 12,000 beads and 100,000 events | keep | The scale is the point; seed once per run, not per row. |
 | test-spike.sh | 49 | the spike persona's partition is its own and its branch carries a document only | unit | A path allowlist. |

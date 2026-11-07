@@ -537,6 +537,8 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "testenv",
+ "testkit",
+ "tsd",
 ]
 
 [[package]]
@@ -793,8 +795,11 @@ name = "inbox-triage"
 version = "1.0.0"
 dependencies = [
  "inbox-rules",
+ "libc",
+ "regex",
  "spira-config",
  "spira-otel",
+ "spira-world",
  "testkit",
 ]
 

@@ -18,6 +18,8 @@
 #     spira_lc's own grants are asserted unchanged by the checks above;
 #   - two writers racing `spira-lc event` on one row yield exactly one applied transition,
 #     and the event log has exactly one applied row and the rest refused;
+#   - six `spira-lc land`s racing on one GREEN batch apply exactly once and each leaves a
+#     FastForward event row;
 #   - a transaction killed after its UPDATE but before COMMIT leaves no trace: the row and
 #     the event log are exactly as they were;
 #
@@ -282,6 +284,35 @@ is "the row's version advanced by exactly one applied transition" "1" "$final_ve
 
 event_count="$(root_sql --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM event WHERE lc_key='sp-race'" -r json | python3 -c 'import json,sys; print(json.load(sys.stdin)["rows"][0]["n"])' 2>/dev/null)"
 is "every racing attempt left exactly one event row, applied or refused" "$N" "$event_count"
+
+# ── six racing lands on one GREEN batch: exactly one applies, every one is logged ────
+"$BIN" create-bead sp-land-race >/dev/null
+"$BIN" event bead sp-land-race --expect READY --version 0 --actor test --kind '{"Claim":{"holder":"dwarf-1","lease_until":1}}' >/dev/null
+"$BIN" event bead sp-land-race --expect WORKING --version 1 --actor test --kind '{"Submit":{"tip":"b625a334a1c85ebed2c326293c484f7d773c5851"}}' >/dev/null
+"$BIN" cut batch-land-race --repo spira --head H --base B --members "sp-land-race:b625a334a1c85ebed2c326293c484f7d773c5851" --actor test >/dev/null
+batch_version() { root_sql --use-db spira_lifecycle sql -q "SELECT version AS v FROM batch WHERE batch_id='batch-land-race'" -r json | python3 -c 'import json,sys; print(json.load(sys.stdin)["rows"][0]["v"])' 2>/dev/null; }
+"$BIN" event batch batch-land-race --expect OPEN --version "$(batch_version)" --actor test --kind '{"CiStarted":{"run":"r1"}}' >/dev/null
+"$BIN" event batch batch-land-race --expect CI_RUNNING --version "$(batch_version)" --actor test --kind '"Green"' >/dev/null
+green_version="$(batch_version)"
+LN=6
+land_pids=()
+for i in $(seq 1 "$LN"); do
+    (
+        "$BIN" land batch-land-race --expect GREEN --version "$green_version" --actor "verdict-$i" --sha "sha-land-$i" >"$TMP/land-$i.rc" 2>&1
+        echo $? >> "$TMP/land-$i.rc"
+    ) &
+    land_pids+=("$!")
+done
+wait "${land_pids[@]}"
+
+landed_count=0
+for i in $(seq 1 "$LN"); do
+    [ "$(tail -n1 "$TMP/land-$i.rc")" = "0" ] && landed_count=$((landed_count + 1))
+done
+is "exactly one racing land applies" "1" "$landed_count"
+is "the batch's version advanced by exactly one applied land" "$((green_version + 1))" "$(batch_version)"
+ff_count="$(root_sql --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM event WHERE machine='batch' AND lc_key='batch-land-race' AND event='FastForward'" -r json | python3 -c 'import json,sys; print(json.load(sys.stdin)["rows"][0]["n"])' 2>/dev/null)"
+is "every racing land left its own FastForward event row, applied or refused" "$LN" "$ff_count"
 
 # ── a transaction killed before COMMIT leaves no trace ────────────────────────────────
 seed_bead sp-kill

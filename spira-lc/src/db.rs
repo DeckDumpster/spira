@@ -827,6 +827,22 @@ impl EventRecord {
         &self.evidence
     }
 
+    #[cfg(test)]
+    pub fn expect(&self) -> &str {
+        &self.expect
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::wrong_self_convention)]
+    pub fn from_state(&self) -> &str {
+        &self.from_state
+    }
+
+    #[cfg(test)]
+    pub fn refusal(&self) -> Option<&str> {
+        self.refusal.as_deref()
+    }
+
     pub fn evidence_mut(&mut self) -> &mut serde_json::Value {
         &mut self.evidence
     }

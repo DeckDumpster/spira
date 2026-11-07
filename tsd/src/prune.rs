@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 /// window, so they are floored at the default retention.
 pub const READER_WINDOW_DAYS: &[(&str, u32)] = &[
     ("suite-timing", 30),
+    ("test-run", 30),
     ("gate-run", 30),
     ("cert-pass", 30),
     ("batch-round", 30),

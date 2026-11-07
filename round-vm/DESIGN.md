@@ -104,7 +104,9 @@ testenv declares `default-run`.
 tree's own `spira-lint --base origin/base` before the suites. A hit makes the round red: a
 `spira-lint.result` (status `red`) and `spira-lint.out` land in the results beside the suites,
 each finding is printed as `member=<bead> <finding>` for the first member commit (first-parent
-walk of `base..HEAD`) whose diff touches the file — `the base itself` when none does — and the
+walk of `base..HEAD`) whose diff touches the file, else the first whose diff changes the finding's rule (its
+`spira-lint/src/rules/*.rs` source or an allow list that source names) — `the base itself` when
+none does — and the
 step's wall time is reported as `LINT: <n>s of the 900s cap`. Without `--base` no lint runs.
 `queue round certify` and `batcher-cut` both pass it.
 
