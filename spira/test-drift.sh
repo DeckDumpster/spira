@@ -334,4 +334,43 @@ done
 is "release directory: checkout half retired, no incident" "" "$(inc_calls)"
 [ -z "$(inc_calls)" ] || note "the last run said: $rel_out"
 
+# ==========================================================================
+echo
+echo "bdi — an uncapped bulk disk is named, a capped one is not:"
+# ==========================================================================
+SYS="$TMP/bdi"; mkdir -p "$SYS/8:32" "$SYS/8:48"
+bdi() {
+    env -i SPIRA_RELEASE="$(PATH="$PATH" tl_release)" PATH="$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent \
+        SPIRA_BDI_SYSFS="$SYS" SPIRA_BDI_MAX_RATIO=7 SPIRA_BDI_CAPPED="$CAPPED" bash "$HERE/drift.sh" "$@"
+}
+echo 1 > "$SYS/8:32/strict_limit"; echo 7 > "$SYS/8:32/max_ratio"
+echo 0 > "$SYS/8:48/strict_limit"; echo 100 > "$SYS/8:48/max_ratio"
+
+CAPPED="8:32"
+out="$(bdi bdi)"; rc=$?
+is "capped disk: exits 0" "0" "$rc"
+want "capped disk: says clean" "clean" "$out"
+
+CAPPED="8:32 8:48"
+out="$(bdi bdi)"; rc=$?
+is "uncapped disk: exits 1" "1" "$rc"
+want "uncapped disk: named with its live values" "UNCAPPED 8:48 (bdi 8:48: strict_limit=0 max_ratio=100, want 1 and 7)" "$out"
+nowant "capped sibling: not named" "UNCAPPED 8:32" "$out"
+
+echo 5 > "$SYS/8:32/max_ratio"; CAPPED="8:32"
+out="$(bdi bdi)"; rc=$?
+is "ratio differing from the configured one: exits 1" "1" "$rc"
+
+CAPPED="8:99"
+out="$(bdi bdi 2>&1)"; rc=$?
+is "disk with no bdi entry: cannot-check, exit 3" "3" "$rc"
+
+CAPPED="/"
+out="$(bdi bdi 2>&1)"; rc=$?
+is "mount point resolves to a disk (cannot-check or a finding, never clean on an empty sysfs)" "1" "$([ "$rc" = 0 ] && echo 0 || echo 1)"
+
+CAPPED=""
+out="$(bdi bdi)"; rc=$?
+is "nothing declared: exits 0" "0" "$rc"
+
 tl_summary
