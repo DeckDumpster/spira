@@ -1391,6 +1391,17 @@ fn recipe_inputs_touched(w: &World, repo: &Path, base: &str, tip: &str) -> Vec<S
         .collect()
 }
 
+fn refuse_open(w: &World, label: &str, repo: &str, named: usize, skips: &[String]) -> i32 {
+    w.err(format!(
+        "queue.sh {label}: refused — {} of {named} named members cannot be admitted to a round for {repo}; no round opened:",
+        skips.len()
+    ));
+    for s in skips {
+        w.err(format!("queue.sh {label}:   {s}"));
+    }
+    FAIL
+}
+
 fn open(
     w: &World,
     repo: Option<&str>,
@@ -1406,8 +1417,19 @@ fn open(
             return USAGE;
         }
     };
+    if let Text::Arg(a) = members_arg {
+        if a.trim().contains(char::is_whitespace) {
+            w.err(format!("queue.sh {label}: --members takes one comma-separated value, but {a:?} holds whitespace — a space-separated list names one member, not several; refused, nothing changed"));
+            return USAGE;
+        }
+    }
     let mut wanted: Vec<Member> = Vec::new();
-    for m in parse_members(&text) {
+    let named = parse_members(&text);
+    if let Some(bad) = named.iter().find(|m| m.tip.contains(':')) {
+        w.err(format!("queue.sh {label}: {}:{} holds a second colon — one id:tip per member, separated by commas; refused, nothing changed", bad.id, bad.tip));
+        return USAGE;
+    }
+    for m in named {
         match wanted.iter_mut().find(|h| h.id == m.id) {
             Some(h) if h.tip.starts_with(&m.tip) => {}
             Some(h) if m.tip.starts_with(&h.tip) => h.tip = m.tip,
@@ -1546,6 +1568,7 @@ fn open(
         }
     }
 
+    let named_count = wanted.len();
     let mut skips: Vec<String> = Vec::new();
     let mut admitted: Vec<Member> = Vec::new();
     for m in wanted {
@@ -1586,6 +1609,10 @@ fn open(
         }
     }
 
+    if !skips.is_empty() {
+        return refuse_open(w, label, &repo_name, named_count, &skips);
+    }
+
     let batch = name
         .map(str::to_string)
         .unwrap_or_else(|| format!("{repo_name}-{}", w.clock.stamp()));
@@ -1614,7 +1641,6 @@ fn open(
         .map(|m| (m.id.clone(), m.tip.clone()))
         .collect();
     let mut merged: Vec<Member> = Vec::new();
-    let mut unreturned = false;
     let mut collided: Vec<(Member, String)> = Vec::new();
     for m in admitted {
         if !super::simple::lint_passed(w, label, &path, &m.tip, false) {
@@ -1631,10 +1657,7 @@ fn open(
             if w.lib.base_conflict(&path, &landed_sha, &m.tip) {
                 skips.push(match return_to_rework(w, &m) {
                     Ok(()) => format!("{}: conflicts with base — returned to rework", m.id),
-                    Err(e) => {
-                        unreturned = true;
-                        format!("{}: conflicts with base ({e})", m.id)
-                    }
+                    Err(e) => format!("{}: conflicts with base ({e})", m.id),
                 });
             } else {
                 let onto = w
@@ -1683,9 +1706,6 @@ fn open(
             }
         }
     }
-    for s in &skips {
-        w.out(format!("queue.sh {label}: skip — {s}"));
-    }
     if let Some((blocked, _)) = collided.first() {
         let mut involved = super::integrate::colliding(w, &path, &base_sha, blocked, &merged);
         involved.push(blocked.clone());
@@ -1698,37 +1718,15 @@ fn open(
             .map(|(_, y)| y.as_str())
             .collect::<Vec<_>>()
             .join("\n");
-        if super::integrate::file(
+        super::integrate::file(
             w, label, &c, &path, &base_sha, &involved, &source, &evidence,
-        )
-        .is_some()
-        {
-            merged.retain(|m| !involved.iter().any(|i| i.id == m.id));
-            if !merged.is_empty() {
-                match assemble(w, &c, &path, &wt, &base_sha, &merged, &base_sha) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        w.err(format!("queue.sh {label}: cannot reassemble the round without the integrated members: {e}"));
-                        w.git.worktree_remove(&path, &wt);
-                        return FAIL;
-                    }
-                }
-            }
-        }
+        );
     }
-    if unreturned {
-        w.err(format!("queue.sh {label}: a member that conflicts with base could not be returned to rework — no round opened for {repo_name}"));
+    if !skips.is_empty() {
         w.git.worktree_remove(&path, &wt);
-        return FAIL;
+        return refuse_open(w, label, &repo_name, named_count, &skips);
     }
-    if merged.is_empty() {
-        w.err(format!(
-            "queue.sh {label}: no round — nothing admissible for {repo_name}"
-        ));
-        w.git.worktree_remove(&path, &wt);
-        return FAIL;
-    }
-    let mut head = w.git.rev_parse(&wt, "HEAD").unwrap_or_default();
+    let head = w.git.rev_parse(&wt, "HEAD").unwrap_or_default();
     let now = w.clock.now().to_string();
     let record = |head: &str, merged: &[Member]| {
         let mut kv = Kv::default();
@@ -1745,9 +1743,9 @@ fn open(
         kv.push("opened", &now);
         kv
     };
-    let mut kv;
-    let mut carried = false;
-    let cut = loop {
+    let kv;
+    let carried;
+    let cut = {
         let cut_members: Vec<Member> = merged
             .iter()
             .map(|m| Member {
@@ -1770,32 +1768,8 @@ fn open(
             LC_ACTOR,
             ride.fields(),
         ));
-        let Err((rc, out)) = cut else {
-            carried = ride.carried.get();
-            break Ok(());
-        };
-        let refused = merged
-            .iter()
-            .position(|m| out.contains(&format!("Deliver refused unexpectedly for {}:", m.id)));
-        let Some(i) = refused.filter(|_| merged.len() > 1) else {
-            break Err((rc, out));
-        };
-        let dropped = merged.remove(i);
-        let line = format!(
-            "{}: spira-lc refused it at the cut — dropped from the round: {}",
-            dropped.id,
-            one_line(&out)
-        );
-        w.out(format!("queue.sh {label}: skip — {line}"));
-        match assemble(w, &c, &path, &wt, &base_sha, &merged, &base_sha) {
-            Ok(h) => head = h,
-            Err(e) => {
-                break Err((
-                    rc,
-                    format!("{out}; reassembling without {}: {e}", dropped.id),
-                ))
-            }
-        }
+        carried = ride.carried.get();
+        cut
     };
     if let Err((rc, out)) = cut {
         w.err(format!(
