@@ -122,6 +122,7 @@ pub trait Host {
 }
 
 /// What the subcommands read (DESIGN.md §12.2).
+#[derive(Clone)]
 pub struct Conf {
     /// The harness root: `<root>/spira/testenv/Containerfile`. None = not found.
     pub harness: Option<PathBuf>,
@@ -186,8 +187,8 @@ pub const USAGE: &[&str] = &[
     "  down    [--name NAME] [--volumes | --volumes-of NAME] [--no-grace] [--force-foreign]",
     "  exec    [--name NAME] [--user USER] CMD ARGS...",
     "  probe   [--name NAME]",
-    "  tag              # print the computed image tag (the build closure hash)",
-    "  image            # acquire the image (pull if configured, else build); print its ref",
+    "  tag     [--tree PATH]  # print the computed image tag (the build closure hash) of PATH's Containerfile",
+    "  image   [--tree PATH]  # acquire the image (pull if configured, else build); print its ref",
     "  publish          # push the image to SPIRA_TESTENV_REGISTRY under that tag",
     "  prune   [--current REF]  # remove superseded and dangling images; sweep the unit target volumes to their cap",
 ];
@@ -388,7 +389,7 @@ impl Driver<'_> {
         }
         if !build {
             self.err(&format!(
-                "testenv: IMAGE-ABSENT {img} — a bounded trial does not build it; build it once with `testenv image` from this tree (about twenty minutes cold)"
+                "testenv: IMAGE-ABSENT {img} — a bounded trial does not build it; build it once with `testenv container image --tree <checkout>` (about twenty minutes cold)"
             ));
             return None;
         }
@@ -594,6 +595,13 @@ impl Driver<'_> {
             st.sweep_target_volumes(self.conf.target_cap);
         });
         0
+    }
+
+    /// The conf that builds from `tree`'s own `spira/testenv/Containerfile`; the installed
+    /// harness when `tree` carries none (a registered repository that is not this one).
+    fn conf_for_tree(&self, tree: &Path) -> Conf {
+        let own = self.host.is_file(&tree.join(HARNESS_MARKER));
+        Conf { harness: own.then(|| tree.to_path_buf()).or_else(|| self.conf.harness.clone()), ..self.conf.clone() }
     }
 
     pub fn cmd_tag(&self) -> i32 {
@@ -903,7 +911,8 @@ impl Driver<'_> {
             self.err(&format!("testenv: {name} already exists; nothing to do"));
             return 0;
         }
-        let Some(img) = self.acquire_image(build) else {
+        let conf = self.conf_for_tree(Path::new(&checkout));
+        let Some(img) = (Driver { host: self.host, conf: &conf }).acquire_image(build) else {
             return if build { 1 } else { RC_IMAGE_NOT_READY };
         };
         if !self.admit(queue_bound) {
@@ -1215,13 +1224,22 @@ impl Driver<'_> {
 
     pub fn dispatch(&self, args: &[String]) -> i32 {
         let rest = args.get(1..).unwrap_or(&[]);
+        if let (Some(verb @ ("tag" | "image")), [flag, tree]) =
+            (args.first().map(String::as_str), rest)
+        {
+            if flag == "--tree" && !tree.is_empty() {
+                let conf = self.conf_for_tree(Path::new(tree));
+                let d = Driver { host: self.host, conf: &conf };
+                return if verb == "tag" { d.cmd_tag() } else { d.cmd_image() };
+            }
+        }
         match args.first().map(String::as_str) {
             Some("up") => self.cmd_up(rest),
             Some("down") => self.cmd_down(rest),
             Some("exec") => self.cmd_exec(rest),
             Some("probe") => self.cmd_probe(rest),
-            Some("tag") => self.cmd_tag(),
-            Some("image") => self.cmd_image(),
+            Some("tag") if rest.is_empty() => self.cmd_tag(),
+            Some("image") if rest.is_empty() => self.cmd_image(),
             Some("publish") => self.cmd_publish(),
             Some("prune") => self.cmd_prune(rest),
             _ => {
