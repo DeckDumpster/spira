@@ -76,9 +76,7 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
         let (settings, clock, sink, board) = (settings.clone(), clock.clone(), sink.clone(), board.clone());
         move || -> Result<runtime::Engine, String> {
             let mut engine = open_engine(&settings, journal, clock, Arc::new(FileMarker(settings.marker_path())), sink, vec![]).map_err(|e| e.to_string())?.with_status_board(board);
-            for (_, stream, kind) in spira_runtime::tasks::boots() {
-                engine.start(stream, kind);
-            }
+            spira_runtime::start_tasks(&mut engine);
             Ok(engine)
         }
     };

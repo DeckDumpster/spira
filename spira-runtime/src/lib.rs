@@ -65,6 +65,19 @@ pub fn spawn_control(path: &std::path::Path, control: status::Control) -> Result
         .map_err(|e| format!("control thread: {e}"))
 }
 
+/// The gap between one task's first tick and the next at boot, so the tasks do not all fire
+/// at the same instant and fill every class at once.
+pub const BOOT_STAGGER_MS: u64 = 250;
+
+/// Hands every task its first tick, in `tasks::all()` order, [`BOOT_STAGGER_MS`] apart: the
+/// first now, the last about `BOOT_STAGGER_MS` times the task count later.
+pub fn start_tasks(engine: &mut Engine) {
+    let now = engine.now_ms();
+    for (i, (_, stream, kind)) in tasks::boots().into_iter().enumerate() {
+        engine.start_at(stream, kind, now + i as u64 * BOOT_STAGGER_MS);
+    }
+}
+
 pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, extra: Vec<Registration>) -> runtime::Result<Engine> {
     let mut regs = registrations(s);
     regs.extend(extra);
