@@ -39,6 +39,11 @@ pub trait Outside {
     /// Whether a release of the world is recorded. Without it a past halt is invisible, its
     /// time reads as running, and the trailing day drains to 0 after every release.
     fn records_releases(&self) -> bool;
+    /// Each landed bead that reverts another, as `(reverting, reverted)`, from the typed
+    /// `reverts` of its landing record.
+    fn reverts(&self) -> Result<BTreeMap<String, String>, String> {
+        Ok(BTreeMap::new())
+    }
 }
 
 pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call, outside: &dyn Outside) -> (i32, String) {
@@ -218,6 +223,10 @@ fn publish_lifecycle<B: Backend>(store: &Store<B>, call: &Call, outside: &dyn Ou
         Ok((r, _)) => r,
         Err(e) => return cannot(e),
     };
+    let reverts = match outside.reverts() {
+        Ok(r) => r,
+        Err(e) => return cannot(format!("the loop's landings: {e}")),
+    };
     let mut repo_of = BTreeMap::new();
     let mut stays = Vec::new();
     for r in &records {
@@ -232,7 +241,7 @@ fn publish_lifecycle<B: Backend>(store: &Store<B>, call: &Call, outside: &dyn Ou
                     bead: row.bead_id.clone(),
                     repo: r.value.repo.clone().unwrap_or_default(),
                     at,
-                    reverts: None,
+                    reverts: reverts.get(&row.bead_id).cloned(),
                     subject: String::new(),
                 });
                 if day.contains(at) {
@@ -310,8 +319,7 @@ fn publish_lifecycle<B: Backend>(store: &Store<B>, call: &Call, outside: &dyn Ou
     publish(store.contract(), &args, call, section)
 }
 
-/// The production source: the run directory's own typed records. Until halts and landing stops
-/// are recorded as a family, the world's halt is read from its stamp alone.
+/// The production source: the run directory's own typed records.
 pub struct RunDir(pub PathBuf);
 
 impl RunDir {
@@ -333,18 +341,57 @@ fn mtime_secs(m: &std::fs::Metadata) -> Result<u64, String> {
         .map_err(|e| e.to_string())
 }
 
+/// The stops and releases the `loop-stop` rows record. A row outside the closed shape is no stop.
+pub fn stop_events(rows: &[Value]) -> Vec<LoopEvent> {
+    use tsd::stop::{Kind, StopRecord};
+    rows.iter()
+        .filter_map(|row| {
+            let (rec, at) = (StopRecord::from_row(row).ok()?, tsd::query::ts_of(row)?);
+            let kind = match rec.kind {
+                Kind::Halt => StopKind::Halt,
+                Kind::Release => StopKind::Release,
+                Kind::Pause => StopKind::Pause,
+            };
+            Some(LoopEvent::Stop { kind, repo: rec.repo, bead: rec.bead, at, reason: rec.detail })
+        })
+        .collect()
+}
+
+/// Each bead whose landing record carries `reverts`, mapped to the bead whose landing it
+/// reverts: the record whose commit is the one named. A commit no landing names charges no one.
+pub fn revert_map(rows: &[Value]) -> BTreeMap<String, String> {
+    let lands: Vec<tsd::land::LandRecord> = rows.iter().filter_map(|r| tsd::land::LandRecord::from_row(r).ok()).collect();
+    let mut out = BTreeMap::new();
+    for l in &lands {
+        let Some(target) = &l.reverts else { continue };
+        if let Some(hit) = lands.iter().find(|o| o.bead != l.bead && tsd::land::same_commit(&o.commit, target)) {
+            out.insert(l.bead.clone(), hit.bead.clone());
+        }
+    }
+    out
+}
+
 impl Outside for RunDir {
     fn stops(&self) -> Result<Vec<LoopEvent>, String> {
+        let mut out = stop_events(&self.rows(tsd::stop::FAMILY)?);
         let stamp = self.0.join("world.halted");
         match std::fs::metadata(&stamp) {
-            Ok(m) => Ok(vec![LoopEvent::Stop { kind: StopKind::Halt, repo: None, bead: None, at: mtime_secs(&m)?, reason: String::new() }]),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-            Err(e) => Err(format!("{}: {e}", stamp.display())),
+            Ok(m) if !out.iter().any(|e| matches!(e, LoopEvent::Stop { kind: StopKind::Halt, .. })) => {
+                out.push(LoopEvent::Stop { kind: StopKind::Halt, repo: None, bead: None, at: mtime_secs(&m)?, reason: String::new() });
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("{}: {e}", stamp.display())),
         }
+        Ok(out)
     }
 
     fn records_releases(&self) -> bool {
-        false
+        true
+    }
+
+    fn reverts(&self) -> Result<BTreeMap<String, String>, String> {
+        Ok(revert_map(&self.rows(tsd::land::FAMILY)?))
     }
 
     fn rounds(&self, since: u64) -> Result<Vec<LoopEvent>, String> {

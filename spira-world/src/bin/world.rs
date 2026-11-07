@@ -100,6 +100,16 @@ fn resolved_prod(home: &std::path::Path) -> PathBuf {
     spira_prod_or_home(home, &prod)
 }
 
+fn record_stop(kind: tsd::stop::Kind, reason: tsd::stop::Reason, actor: &str, repo: Option<&str>, bead: Option<&str>, detail: &str) {
+    if let Err(e) = spira_world::stoprec::record(&run_or_die(), now_epoch(), kind, reason, actor, repo, bead, detail) {
+        eprintln!("spira: WARNING — this {} is not in the loop-stop family, so goodput cannot charge it: {e}", kind.as_str());
+    }
+}
+
+fn cause_or_die(args: &[String], default: tsd::stop::Reason) -> tsd::stop::Reason {
+    spira_world::stoprec::cause(args, default).unwrap_or_else(|e| die(&e))
+}
+
 fn now_iso() -> String {
     spira_world::clock::utc_iso(spira_world::clock::now())
 }
@@ -278,9 +288,10 @@ fn notify_dwarves(notifier: &mut spira_world::notice::Notifier, what: &str, elap
     });
 }
 
-const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--until WHAT] [--owner O] [--owner-pid PID | --owner-unit UNIT] [--reboot] [--timeout SECS | --deadline SECS] | drain-check | resume | start [--work|--observability|--maintenance|--all] | pause --repo R [--lanes claims,rounds,publish] --reason WHY --until COND [--owner O] | pause --reserve BEADS --reason WHY [--owner O] | unpause --repo R [--lanes L] | unpause --reserve BEADS | status | scheduler-status [--json] | guard | keep-units | freeze-store | thaw-store}";
+const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--cause operator|incident|deploy|reboot|drain|landing] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--until WHAT] [--owner O] [--owner-pid PID | --owner-unit UNIT] [--reboot] [--timeout SECS | --deadline SECS] | drain-check | resume | start [--work|--observability|--maintenance|--all] | pause --repo R [--lanes claims,rounds,publish] [--bead B] [--cause C] --reason WHY --until COND [--owner O] | pause --reserve BEADS --reason WHY [--owner O] | unpause --repo R [--lanes L] | unpause --reserve BEADS | status | scheduler-status [--json] | guard | keep-units | freeze-store | thaw-store}";
 
 fn cmd_stop(args: &[String]) -> i32 {
+    let cause = cause_or_die(args, tsd::stop::Reason::Operator);
     let mut why = String::new();
     let planes = selected_planes(args, &[Plane::Work]);
     let halts_work = planes.contains(&Plane::Work);
@@ -295,6 +306,7 @@ fn cmd_stop(args: &[String]) -> i32 {
                 why = args.get(i + 1).cloned().unwrap_or_default();
                 i += 2;
             }
+            "--cause" => i += 2,
             "--grace" => {
                 grace = args.get(i + 1).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
                 i += 2;
@@ -352,6 +364,9 @@ fn cmd_stop(args: &[String]) -> i32 {
     let _ = std::fs::create_dir_all(&run);
     for plane in &planes {
         let _ = std::fs::write(plane_stamp(*plane), format!("{}\nwhy: {}\n", now_iso(), if why.is_empty() { "unstated" } else { &why }));
+    }
+    if halts_work {
+        record_stop(tsd::stop::Kind::Halt, cause, spira_world::stoprec::ACTOR, None, None, &why);
     }
     // The loop is the scheduler's tasks: a work halt is one `scheduler halt`, which holds
     // every task's effects and keeps observing. The scheduler has no per-plane halt.
@@ -469,6 +484,9 @@ fn cmd_start(args: &[String]) -> i32 {
     // the stamp, so the scheduler's first act after the resume must already find it gone.
     for plane in &planes {
         let _ = std::fs::remove_file(plane_stamp(*plane));
+    }
+    if planes.contains(&Plane::Work) {
+        record_stop(tsd::stop::Kind::Release, tsd::stop::Reason::Operator, spira_world::stoprec::ACTOR, None, None, "world start");
     }
     let mut degraded = Vec::new();
     if planes.contains(&Plane::Work) && !resume_scheduler() {
@@ -609,6 +627,8 @@ fn cmd_drain(args: &[String]) -> i32 {
         let marker = spira_world::reboot_marker().unwrap_or_else(|e| die(&e));
         let _ = std::fs::write(&marker, format!("{}\nplanned reboot; lift with: cockpit.sh resume\n", now_iso()));
     }
+    let drain_reason = if reboot { tsd::stop::Reason::Reboot } else { tsd::stop::Reason::Drain };
+    record_stop(tsd::stop::Kind::Halt, drain_reason, &drain.owner, None, None, &drain.until);
     println!("spira: draining — no new dwarves; live dwarves finish, the scheduler observes but holds its effects");
     let drain_why = format!("world drain: {}", drain.until);
     if !halt_scheduler(&drain_why) {
@@ -732,6 +752,9 @@ fn cmd_resume() -> i32 {
         println!("spira: {} — the world is stopped; the scheduler stays halted until: world.sh start", if was_draining { "drain lifted" } else { "was not draining" });
         return 0;
     }
+    if was_draining {
+        record_stop(tsd::stop::Kind::Release, tsd::stop::Reason::Operator, spira_world::stoprec::ACTOR, None, None, "world resume");
+    }
     let resumed = resume_scheduler();
     if was_draining {
         println!("spira: calls resumed");
@@ -772,7 +795,8 @@ fn cmd_pause(args: &[String]) -> i32 {
                     return 64;
                 }
             };
-            match spira_config::scoped_stop::pause_repo(&run, repo, &lanes, owner, reason, until, now) {
+            let cause = cause_or_die(args, tsd::stop::Reason::Operator);
+            match spira_config::scoped_stop::pause_repo_typed(&run, repo, &lanes, owner, reason, until, now, cause, flag(args, "--bead")) {
                 Ok(s) => {
                     println!("spira: paused {} lane(s) of {repo}: now stopped [{}]; lift with: world.sh unpause --repo {repo}", lanes.join(","), s.lanes.join(","));
                     0

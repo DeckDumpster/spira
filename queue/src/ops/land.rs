@@ -448,6 +448,7 @@ pub fn land_local_deferring(
     let _ = write_atomic(&seqfile, &format!("{n}\n"));
 
     for m in &ms {
+        record_land(w, &c.s.run, &name, m);
         w.lib.gh_issue_closeout(&m.id, &head, &path);
         super::helpers::close_on_land(w, &c.s.submitted_label, &m.id, &head);
         w.out(format!("queue.sh land-local: {} landed at {head}", m.id));
@@ -529,6 +530,24 @@ pub fn land_local_deferring(
         return (FAIL, pending);
     }
     (OK, pending)
+}
+
+/// The member's `land` record: its tip, and the commit its `reverts:` label names. The record is
+/// goodput's only source of a revert, so a failed write is said, never silent.
+fn record_land(w: &World, run: &Path, repo: &str, m: &Member) {
+    if m.tip.is_empty() {
+        return;
+    }
+    let reverts = w
+        .bd
+        .show(std::slice::from_ref(&m.id))
+        .ok()
+        .and_then(|rows| rows.into_iter().find(|r| r.id == m.id))
+        .and_then(|r| r.labels.iter().find_map(|l| l.strip_prefix("reverts:").map(str::to_string)));
+    let rec = tsd::land::LandRecord { repo: repo.into(), bead: m.id.clone(), commit: m.tip.clone(), reverts };
+    if let Err(e) = rec.write(run, &tsd::default_host(), &tsd::iso_utc(w.clock.now())) {
+        w.err(format!("queue.sh land-local: {}: the landing is not recorded for goodput: {e}", m.id));
+    }
 }
 
 /// A landed member's walk on spira-lc: Deliver (CERTIFIED -> IN_DELIVERY) then Delivered

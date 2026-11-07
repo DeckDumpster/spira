@@ -9,10 +9,7 @@ pub const DAY_SECS: u64 = 86_400;
 pub const NO_LANDINGS: &str = "no landings in window";
 pub const NO_CERTIFIED_EXITS: &str = "no bead left CERTIFIED in window";
 
-/// Only the halt has a production source yet: the stamp. Releases and landing stops arrive with
-/// the typed stop family.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub enum StopKind {
     /// The world halted.
     Halt,
