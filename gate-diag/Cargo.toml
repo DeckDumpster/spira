@@ -13,6 +13,10 @@ spira-otel = { path = "../spira-otel" }
 spira-config = { path = "../spira-config" }
 serde_json = "1"
 testenv = { path = "../testenv" }
+tsd = { path = "../tsd" }
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
 
 [profile.release]
 opt-level = "z"

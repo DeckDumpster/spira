@@ -146,6 +146,7 @@ pub mod prune;
 pub mod query;
 pub mod store;
 pub mod report;
+pub mod testrun;
 
 pub fn default_host() -> String {
     std::fs::read_to_string("/proc/sys/kernel/hostname")

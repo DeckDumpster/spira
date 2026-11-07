@@ -9,6 +9,8 @@
 //        tsd-read dwell <family> <field> <p> [<hours>]
 //        tsd-read by-group <family> <group> <field> [<hours>]
 //        tsd-read count-by <family> <group> [<hours>]
+//        tsd-read tests [<hours>]                 the live test inventory: total, per-day added/removed, slowest, flakiest
+//        tsd-read test <id> [<hours>]             one test's runs, p50/p90, pass/red/flip rates, measured coverage
 //        tsd-read moved <family>                  exit 0 when the family lives in the metrics store
 //        tsd-read rows <family> [<hours>]        the family's rows, one JSON object per line
 //
@@ -89,9 +91,22 @@ fn run(args: &[String]) -> Result<String, Failure> {
             let rows = src.rows(family(a(1))?, now.saturating_sub(hours(a(2))?.unwrap_or(DEFAULT_HOURS) * 3600))?;
             Ok(rows.iter().map(|r| format!("{r}\n")).collect())
         }
+        Some("tests") => {
+            let rows = src.rows(tsd::testrun::FAMILY, since_of(now, hours(a(1))?))?;
+            json(Ok(tsd::testrun::inventory(&rows, 10)))
+        }
+        Some("test") => {
+            let id = a(1).ok_or_else(usage)?;
+            let rows = src.rows(tsd::testrun::FAMILY, since_of(now, hours(a(2))?))?;
+            json(Ok(tsd::testrun::test_stats(&rows, id)))
+        }
         Some("count-by") => query::count_by(&src, family(a(1))?, ident(a(2), "group")?, now, hours(a(3))?),
         _ => Err(usage()),
     }
+}
+
+fn since_of(now: u64, hours: Option<u64>) -> u64 {
+    now.saturating_sub(hours.unwrap_or(DEFAULT_HOURS) * 3600)
 }
 
 fn main() -> ExitCode {
