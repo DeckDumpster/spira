@@ -34,7 +34,7 @@
 //!
 //! ## Decide
 //!
-//! `decide(carry, snapshot, cfg) -> (Carry, Plan)`: `assemble` (`assemble.rs:181`) → `interim_ranking`
+//! `decide(carry, snapshot, cfg) -> (Carry, Plan)`: `assemble` (`assemble.rs:181`) → `rank`
 //! (`goodput_pass.rs:69`) → `select` (`reconciler-engine/src/select.rs:567`). Already pure; it reads
 //! time only from `now_ms` passed in. Output: judgements, steps, would-steps, refusals, the
 //! `PassRecord` (`goodput_pass.rs:250-268`).
@@ -272,7 +272,7 @@ fn digest(r: &reconciler_engine::pass_record::PassRecord) -> PassDigest {
     PassDigest { n: r.n, list_rev: r.list_rev, gaps: r.gaps.iter().map(|g| g.section.clone()).collect(), steps: r.steps.iter().map(|s| format!("{}/{}", s.section, s.action)).collect(), judged: r.judged.iter().map(|j| j.intent.clone()).collect(), refused: r.refused.iter().map(refusal_key).collect() }
 }
 
-/// `assemble` → `interim_ranking` → `select`, one leg per outcome: lock, judge, step, record,
+/// `assemble` → `rank` → `select`, one leg per outcome: lock, judge, step, record,
 /// release. A leg's outcome after the pass deadline is refused naming it; the next observe
 /// releases the lock of a pass that ran past it.
 pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
