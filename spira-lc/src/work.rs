@@ -151,6 +151,9 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         Ok(None) => return (CANNOT_TELL, format!("work submit: no bead row for {bead_id}")),
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
     };
+    if let Some(refusal) = submit_state_refusal(&row, &tip) {
+        return refusal;
+    }
     if let Some(refusal) = working_exit_refusal("submit", "SUBMITTED", &row, &actor) {
         return refusal;
     }
@@ -560,6 +563,22 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
 
 /// A bead leaves WORKING only by an exit its claiming rune declares (`RUNE_WORKING_EXITS`);
 /// the refusal names the rune, the attempted state and the exits it may take.
+/// Asks the bead machine itself whether this row's state takes a submit, before any check
+/// spends time on a tip that could never be recorded.
+fn submit_state_refusal(row: &bead::BeadRow, tip: &str) -> Option<(i32, String)> {
+    let ev = bead::BeadEvent { expect: row.state, version: row.version, kind: BeadEventKind::Submit { tip: tip.to_string() }, actor: String::new(), at: None };
+    let Some(lifecycle::Refusal::IllegalTransition { .. } | lifecycle::Refusal::Terminal { .. }) = bead::apply(row, &ev).refusal else {
+        return None;
+    };
+    let (id, state) = (&row.bead_id, row.state.as_str());
+    let way_out = match row.state {
+        bead::BeadState::Ready | bead::BeadState::Rework => "claim it first".to_string(),
+        s if s.is_terminal() => format!("it is already {state}; there is nothing left to submit"),
+        _ => format!("{state} is not the holder's to move"),
+    };
+    Some((REFUSED, format!("refused: {id} is {state}, not WORKING — {way_out}")))
+}
+
 fn working_exit_refusal(verb: &str, exit: &str, row: &bead::BeadRow, actor: &str) -> Option<(i32, String)> {
     if row.state != bead::BeadState::Working {
         return None;
@@ -1673,6 +1692,26 @@ mod tests {
         assert!(msg.contains("spike") && msg.contains("SUBMITTED") && msg.contains("DONE ask park hold"), "{msg}");
         assert!(working_exit_check("done", "DONE", "spike", &exits).is_none());
         assert!(working_exit_check("submit", "SUBMITTED", "builder", &v(&["SUBMITTED", "ask"])).is_none());
+    }
+
+    #[test]
+    fn submit_from_ready_is_refused_naming_the_state_and_the_way_out() {
+        let tip = "a".repeat(40);
+        let mut row = bead::BeadRow::filed("sp-x");
+        row.state = bead::BeadState::Ready;
+        let (code, msg) = submit_state_refusal(&row, &tip).expect("a READY submit is refused");
+        assert_eq!(code, REFUSED);
+        assert!(msg.contains("sp-x is READY, not WORKING") && msg.contains("claim it first"), "{msg}");
+        row.state = bead::BeadState::Rework;
+        let (_, msg) = submit_state_refusal(&row, &tip).unwrap();
+        assert!(msg.contains("REWORK") && msg.contains("claim it first"), "{msg}");
+        row.state = bead::BeadState::Landed;
+        let (_, msg) = submit_state_refusal(&row, &tip).unwrap();
+        assert!(msg.contains("LANDED") && !msg.contains("claim it first"), "{msg}");
+        for legal in [bead::BeadState::Working, bead::BeadState::Submitted, bead::BeadState::Certified] {
+            row.state = legal;
+            assert!(submit_state_refusal(&row, &tip).is_none(), "{legal:?}");
+        }
     }
 
     fn working_row(persona: &str) -> bead::BeadRow {

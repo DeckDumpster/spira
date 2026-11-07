@@ -175,6 +175,17 @@ want "note: text landed on the bd bead" "left by the container-tier suite" "$not
 after_events="$(root_sql --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM event WHERE lc_key='$BID'" -r json 2>&1)"
 is "note: emits no lifecycle event (bd, non-lifecycle, per design §3.5)" "$before_events" "$after_events"
 
+PRE_WT="$TMP/ready-worktree"
+mkdir -p "$PRE_WT"
+git -C "$PRE_WT" init -q
+git -C "$PRE_WT" -c user.email=dwarf@spira.local -c user.name=dwarf commit -q --allow-empty -m "fixture commit"
+out="$(cd "$PRE_WT" && work_as "$BID" submit 2>&1)"; rc=$?
+wantrc "submit from READY: refused (exit 3), never a silent exit 0" "3" "$rc"
+want "submit from READY: the refusal names READY" "READY" "$out"
+want "submit from READY: the refusal names the way out" "claim it first" "$out"
+row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='$BID'" -r json 2>&1)"
+want "submit from READY: the row stays READY" "READY" "$row"
+
 # submit is legal only from WORKING (lifecycle/src/bead.rs) — seed_bead leaves BID at
 # READY, same as every other fixture bead here; move it to WORKING first.
 root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='dwarf-test', version=1 WHERE bead_id='$BID'" >/dev/null 2>&1
