@@ -5,7 +5,7 @@
 #
 #   drift.sh checkout [<repo>]     untracked or modified paths in a production checkout
 #   drift.sh units    [<unitdir>]  installed unit files and drop-ins this install does not ship
-#   drift.sh check    [<repo>] [<unitdir>]   both, combined
+#   drift.sh check    [<repo>] [<unitdir>]   all three, combined
 #   drift.sh bdi                   bulk-write disks missing their per-device dirty cap
 #   drift.sh bdi-rule              the udev rule that would set it (printed; never installed)
 #
@@ -168,18 +168,27 @@ check() {
     un_out="$(units "$unitdir")"; un_rc=$?
     printf '%s\n' "$co_out"
     printf '%s\n' "$un_out"
-    if [ "$co_rc" = 3 ] || [ "$un_rc" = 3 ]; then return 3; fi
-    if [ "$co_rc" = 1 ] || [ "$un_rc" = 1 ]; then return 1; fi
+    local bd_out bd_rc
+    bd_out="$(bdi)"; bd_rc=$?
+    printf '%s\n' "$bd_out"
+    if [ "$co_rc" = 3 ] || [ "$un_rc" = 3 ] || [ "$bd_rc" = 3 ]; then return 3; fi
+    if [ "$co_rc" = 1 ] || [ "$un_rc" = 1 ] || [ "$bd_rc" = 1 ]; then return 1; fi
     return 0
 }
 
-# bdi_id <entry> -> the MAJ:MIN of the whole disk behind a mount point, or the entry itself
+# bdi_id <entry> -> the MAJ:MIN of the first non-partition device behind a mount point (a
+# device-mapper volume has its own bdi; a partition shares its disk's), or the entry itself
 # when it already is a MAJ:MIN. Dirty-page accounting is per disk, not per partition.
 bdi_id() {
     local e="$1" src
     if [[ "$e" =~ ^[0-9]+:[0-9]+$ ]]; then echo "$e"; return 0; fi
     src="$(findmnt -nro SOURCE -T "$e" 2>/dev/null)" && [ -n "$src" ] || return 1
-    lsblk -snro MAJ:MIN "$src" 2>/dev/null | tail -n 1 | grep -E '^[0-9]+:[0-9]+$'
+    local row
+    while read -r row; do
+        [[ "$row" =~ ^[0-9]+:[0-9]+$ ]] || continue
+        [ -e "/sys/dev/block/$row/partition" ] || { echo "$row"; return 0; }
+    done < <(lsblk -snro MAJ:MIN "$src" 2>/dev/null)
+    return 1
 }
 
 # bdi -> one UNCAPPED line per declared bulk disk whose bdi lacks strict_limit=1 and the
@@ -223,5 +232,5 @@ case "${1:-check}" in
     check)    shift; check "$@" ;;
     bdi)      bdi ;;
     bdi-rule) bdi_rule ;;
-    *)        sed -n '2,7p' "$0" >&2; exit 2 ;;
+    *)        sed -n '2,10p' "$0" >&2; exit 2 ;;
 esac
