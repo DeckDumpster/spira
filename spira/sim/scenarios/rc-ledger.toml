@@ -1,0 +1,20 @@
+# The round controller's world twin of its ledger-attempts scenario: one step records attempts on
+# the world's control store through `round-controller ledger record` and asks the ledger whether
+# the Planner may open each identity through `round-controller ledger refuses`, both over
+# `spira-lc rc`. The step exits 0 only when every answer is the ledger's: a red identity refused,
+# a faulted one backing off, an identity that differs only in its base admitted.
+epoch = 1800000000
+horizon = 60000
+
+[[step]]
+name = "ledger"
+at = 1000
+command = "sh spira/sim/scenarios/steps/rc-ledger.sh"
+
+[[invariant]]
+name = "the_ledger_step_failed"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit <> 0"
+
+[[expect]]
+name = "the_ledger_answered_as_recorded"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND actor = 'ledger' AND exit = 0"
