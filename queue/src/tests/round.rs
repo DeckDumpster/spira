@@ -5104,6 +5104,43 @@ fn a_round_only_step_does_not_excuse_a_host_runnable_check_that_is_red() {
     assert!(t.err().contains("unit-tests failed at"), "{}", t.err());
 }
 
+fn resubmit_args_for(tip_arg: &str) -> Vec<String> {
+    ["resubmit", "sp-a", tip_arg, "--by=concierge", "--reason=hand-built fix", "--evidence=cargo build 1/0"]
+        .iter()
+        .map(|s| s.to_string())
+        .chain(std::iter::once(ev_tip()))
+        .collect()
+}
+
+#[test]
+fn a_bead_ejected_on_spira_lint_is_still_refused_when_the_host_lint_is_red_at_the_tip() {
+    let t = rework_world(&["manual"]);
+    spira_config::proof::record_failing(&proof_run(&t), "sp-a", &["spira-lint".to_string()])
+        .unwrap();
+    t.scripts
+        .lint_red
+        .borrow_mut()
+        .insert(T_FIX.into(), "src/x.rs:1:1".into());
+    let args = resubmit_args_for(&format!("--tip={T_FIX}"));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    assert_eq!(t.run(&args), 1);
+    assert!(t.err().contains("src/x.rs:1:1"), "{}", t.err());
+}
+
+#[test]
+fn a_round_only_note_is_not_printed_for_a_resubmit_that_is_refused_later() {
+    let t = rework_world(&["manual"]);
+    spira_config::proof::record_failing(&proof_run(&t), "sp-a", &["spira-lint".to_string()])
+        .unwrap();
+    let args = resubmit_args_for(&format!("--tip={T_FIX}"));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    t.lc.rows.borrow_mut().as_mut().unwrap().retain(|r| r.bead_id != "sp-a");
+    t.lc_row("sp-a", "WORKING", "ta", 100);
+    assert_eq!(t.run(&args), 1);
+    assert!(t.err().contains("held by a live dwarf"), "{}", t.err());
+    assert!(!t.out().contains("passes only in the round"), "{}", t.out());
+}
+
 #[test]
 fn a_bead_ejected_on_unit_tests_resubmits_after_a_green_runner_run_and_not_after_a_red_one() {
     let t = rework_world(&["manual"]);
