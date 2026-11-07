@@ -169,3 +169,15 @@ fn a_section_only_an_unacknowledged_intent_names_is_one_gap_even_when_the_last_p
     assert_eq!(names(&r).iter().filter(|n| **n == "Probe/gone").count(), 1);
     assert_eq!(gap(&r, "Probe/gone").distance, UNSEEN_DISTANCE, "no distance to keep, so a unit one: never zero");
 }
+
+#[test]
+fn a_stale_term_still_ranks_as_cannot_see_and_binds_when_nothing_else_is_open() {
+    let mut term = lifecycle_term("all");
+    term["section"]["metadata"]["observedAt"] = json!("2026-10-31T18:00:00Z");
+    term["section"]["distance"] = json!({ "fn": "0.5", "open": 0.05, "close": 0.02 });
+    let r = rank(&assembled(vec![term, probe("healthy", 0.2, NOW, &[])], Value::Null), &map(&[("Probe", 1.0), ("Lifecycle", 0.0)]));
+    let g = gap(&r, "Lifecycle/all");
+    assert!(g.open && g.cannot_see().is_some_and(|s| s.contains("max_age")));
+    assert_eq!(g.score, 0.0, "its weight is zero, so what it cannot see never outranks a cause");
+    assert_eq!(r.binding.as_deref(), Some("Lifecycle/all"), "yet with no cause open it is what binds");
+}

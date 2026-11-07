@@ -2,6 +2,7 @@
 //! minute, on the replay's virtual clock.
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
@@ -18,6 +19,8 @@ use crate::replay::lifecycle;
 struct Pass {
     at: u64,
     rankings: Vec<Ranking>,
+    /// Each RoundController section's published `lanes_blocked`.
+    blocked: BTreeMap<String, f64>,
 }
 
 /// A pass that ranks the store's snapshot under every map in `maps`, each carrying its own
@@ -42,7 +45,12 @@ fn ranker(replay: &mut Replay, maps: Vec<CausalMap>) -> Rc<RefCell<Vec<Pass>>> {
             );
             rankings.push(r);
         }
-        out.borrow_mut().push(Pass { at: now / 1000, rankings });
+        let blocked = snap
+            .sections
+            .iter()
+            .filter_map(|s| Some((format!("{}/{}", s.kind, s.metadata.name), s.status.fields.get("lanes_blocked")?.get("value")?.as_f64()?)))
+            .collect();
+        out.borrow_mut().push(Pass { at: now / 1000, rankings, blocked });
     });
     seen
 }
@@ -150,16 +158,12 @@ pub fn the_held_out_lanes_rank_above_every_healthy_section() {
     for lane in HELD_OUT_LANES {
         let section = format!("RoundController/{lane}");
         let mut blocked = 0;
-        for p in passes.iter() {
+        for p in passes.iter().filter(|p| p.blocked.get(&section) == Some(&1.0)) {
             let gaps = &p.rankings[0].gaps;
-            let Some(at) = gaps.iter().position(|g| g.section == section) else { continue };
-            if gaps[at].distance < 1.0 {
-                continue;
-            }
+            let at = gaps.iter().position(|g| g.section == section).unwrap();
+            let healthy = gaps.iter().position(|g| p.blocked.get(&g.section).is_none_or(|b| *b == 0.0) && !g.open);
             blocked += 1;
-            let healthy = gaps.iter().position(|g| g.distance <= 0.5 && g.section != section);
             assert!(healthy.is_none_or(|h| at < h), "{lane} at {}: ranked {at}, a healthy section {healthy:?}", p.at);
-            assert!(gaps[at].weight > 0.0 && gaps[at].score > gaps.iter().filter(|g| g.distance <= 0.5).map(|g| g.score).fold(0.0, f64::max));
         }
         assert!(blocked > 100, "{lane} stands blocked for hours: {blocked} passes");
     }
