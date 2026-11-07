@@ -116,6 +116,7 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 # ── Base: system init, session bus, core tools ─────────────────────────────
 # All from the distro archive; no external download scripts.
 # python3 and git: required by install.sh (template rendering, repo root detection).
+# jq: suites read the JSON that spira-lc prints with it (test-ops-read-model.sh).
 # flock: serialises writers sharing one path — landing gate per-repository tree.
 # Rust is provided above via rustup; cargo and rustc are NOT installed from apt
 #   so that only one compiler exists on PATH.
@@ -140,6 +141,7 @@ RUN apt-get update -q && \
         dbus-user-session \
         sudo \
         python3 \
+        jq \
         git \
         curl \
         ca-certificates \

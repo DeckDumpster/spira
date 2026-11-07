@@ -325,6 +325,10 @@ _tl_case_ms() {
     _TL_LAST_US=$now
 }
 
+# tl_setup_done — the work since the last case was arranging, not testing: the next case's
+# #ms starts here.
+tl_setup_done() { _TL_LAST_US="${EPOCHREALTIME/./}"; }
+
 # _tl_jsonl <case> <status> [detail] -> append one row, or do nothing when no sink is set.
 _tl_jsonl() {
     [ -n "$_TL_JSONL" ] || return 0
