@@ -633,50 +633,53 @@ struct ContainerGuard<'a> {
     key_owner: Option<PathBuf>,
     home: PathBuf,
     deps: &'a Deps<'a>,
+    /// Set where the run has its verdict: only then may the removal be detached.
+    settled: std::cell::Cell<bool>,
+    _held: cap::Holding,
+}
+
+impl<'a> ContainerGuard<'a> {
+    fn new(session: &'a Session<'a>, owner_file: PathBuf, key_owner: Option<PathBuf>, home: PathBuf, deps: &'a Deps<'a>) -> Self {
+        let _held = cap::holding(&session.name);
+        ContainerGuard { session, owner_file, key_owner, home, deps, settled: std::cell::Cell::new(false), _held }
+    }
+
+    fn settle(self) {
+        self.settled.set(true);
+    }
 }
 
 impl Drop for ContainerGuard<'_> {
     fn drop(&mut self) {
+        use crate::fixture::Teardown;
         let mine = fs::read_to_string(&self.owner_file)
             .map(|s| s.trim() == std::process::id().to_string())
             .unwrap_or(false);
-        // sp-ikh6qw: the removal is detached, so the verdict never waits on it. The rename
-        // frees the name, so this run's owner file goes with it: the next run of the same
-        // key is not blocked, and a failed removal is an ownerless orphan the sweep removes.
-        let mut detached = None;
+        let name = &self.session.name;
+        let mut gone = false;
         if mine {
-            detached = self.session.down_detached();
-            if detached.is_none() {
-                self.deps.log(&format!(
-                    "could not rename {} out of the next run's way (gone, or podman refused) — removing it inline",
-                    self.session.name
-                ));
-                if !self.session.down().ok() {
+            match self.session.teardown(self.settled.get()) {
+                Teardown::Detached(reap) => {
                     self.deps.log(&format!(
-                        "teardown failed for {} — checking whether it survived",
-                        self.session.name
+                        "container {name} renamed {reap}, removed detached (rm -f -t 0); the orphan sweep removes it if that fails"
                     ));
+                    gone = true;
                 }
+                Teardown::Removed => {
+                    self.deps.log(&format!("container {name} removed before the verdict"));
+                    gone = true;
+                }
+                Teardown::Survived => self.deps.log(&format!(
+                    "container {name} survived teardown — leaving owner file for the orphan sweep"
+                )),
             }
         } else {
             self.deps.log(&format!(
-                "{}'s owner file no longer names this run — leaving teardown to its real owner",
-                self.session.name
+                "{name}'s owner file no longer names this run — leaving teardown to its real owner"
             ));
         }
         let _ = fs::remove_dir_all(&self.home);
-        if let Some(reap) = &detached {
-            self.deps.log(&format!(
-                "container {} renamed {reap}, removed detached (rm -f -t 0); the orphan sweep removes it if that fails",
-                self.session.name
-            ));
-            let _ = fs::remove_file(&self.owner_file);
-        } else if self.session.rt.exists(&self.session.name) {
-            self.deps.log(&format!(
-                "container {} survived teardown — leaving owner file for the orphan sweep",
-                self.session.name
-            ));
-        } else if mine {
+        if gone {
             let _ = fs::remove_file(&self.owner_file);
         }
         if let Some(k) = self.key_owner.as_ref().filter(|k| **k != self.owner_file) {
@@ -1742,13 +1745,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     }
     let home = deps.owner_dir.join(format!("spira-batch-{instance}"));
     let _ = fs::create_dir_all(&home);
-    let guard = ContainerGuard {
-        session: &session,
-        owner_file,
-        key_owner: Some(key_owner),
-        home,
-        deps,
-    };
+    let guard = ContainerGuard::new(&session, owner_file, Some(key_owner), home, deps);
 
     let in_sim = |n: &&String| {
         schedule::is_sim(&Job {
@@ -1795,7 +1792,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         ss.testdb_cache = session.testdb_cache.clone();
         ss
     });
-    let mut _sim_guard = None;
+    let mut sim_guard = None;
     if let Some(ss) = &sim_session {
         let owner_file = deps.owner_dir.join(format!("{}.owner", ss.name));
         if !claim_owner(&owner_file) {
@@ -1804,7 +1801,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         }
         let home = deps.owner_dir.join(format!("spira-batch-{}", ss.instance));
         let _ = fs::create_dir_all(&home);
-        _sim_guard = Some(ContainerGuard { session: ss, owner_file, key_owner: None, home, deps });
+        sim_guard = Some(ContainerGuard::new(ss, owner_file, None, home, deps));
     }
     let runner = match crate::plan::stage_runner(&wt.path, &deps.runner_exe) {
         Ok(_) => format!("{WORKSPACE}/{}", crate::plan::RUNNER_REL),
@@ -1991,7 +1988,10 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
                     .is_some_and(|r| matches!(r.status, Status::Skip | Status::SkipReq))
             })
             .count();
-        drop(guard);
+        guard.settle();
+        if let Some(g) = sim_guard.take() {
+            g.settle();
+        }
         if reds.is_empty() {
             deps.log("all suites pre-empted by unmet requirements — nothing to run");
             return Finish::empty(skipped_count);
@@ -2429,7 +2429,10 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     deps.log(&format!("testdb: {} used", fixtures.describe()));
     ph.mark("post");
     let t_down = Instant::now();
-    drop(guard);
+    guard.settle();
+    if let Some(g) = sim_guard.take() {
+        g.settle();
+    }
     ph.mark("teardown");
     deps.log(&format!("tail: teardown {}s", t_down.elapsed().as_secs()));
     let batch_wall = t_batch.elapsed().as_secs();

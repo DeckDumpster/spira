@@ -1146,6 +1146,24 @@ impl<'a> Session<'a> {
         )
     }
 
+    /// Removes the container. Detached only for a run that settled its own verdict and was not
+    /// cancelled: a fault's verdict must mean nothing of the run is still running.
+    pub fn teardown(&self, settled: bool) -> Teardown {
+        if settled && !crate::runtime::cancelled() {
+            if let Some(reap) = self.down_detached() {
+                return Teardown::Detached(reap);
+            }
+        }
+        if !self.down().ok() || self.rt.exists(&self.name) {
+            self.rt.purge(&self.name);
+        }
+        if self.rt.exists(&self.name) {
+            Teardown::Survived
+        } else {
+            Teardown::Removed
+        }
+    }
+
     /// Teardown off the run's critical path (sp-ikh6qw): rename the container to
     /// [`reap_name`], which frees its name for the next run of the same key at once, then
     /// remove it with `rm -f -t 0` in a detached `testenv container down` this run never
@@ -1167,6 +1185,14 @@ impl<'a> Session<'a> {
         ]);
         Some(reap)
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Teardown {
+    /// Renamed to this and removed by a detached `down`.
+    Detached(String),
+    Removed,
+    Survived,
 }
 
 /// The name a torn-down container is renamed to before its detached removal (sp-ikh6qw):
@@ -1488,6 +1514,47 @@ mod tests {
         assert_eq!(volume_base("spira-batch-abc123"), "spira-batch-abc123");
         assert_eq!(volume_base("spira-batch-x-reap-"), "spira-batch-x-reap-");
         assert_eq!(volume_base("spira-batch-x-reap-1a"), "spira-batch-x-reap-1a");
+    }
+
+    fn timed_out_setup(settled: bool) -> (Teardown, Vec<String>, usize, std::sync::mpsc::Sender<()>) {
+        let rt = FakeRuntime::new();
+        let s = Session::new(&rt, "capped", "debug");
+        rt.containers.lock().unwrap().push(s.name.clone());
+        let (hold, held) = std::sync::mpsc::channel();
+        *rt.detached_hold.lock().unwrap() = Some(held);
+        let cut = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        crate::runtime::LOCAL_CANCEL.with(|l| *l.borrow_mut() = Some(cut.clone()));
+        let trip = cut.clone();
+        rt.on(|_| true, move |_| {
+            trip.store(true, std::sync::atomic::Ordering::SeqCst);
+            ExecOutcome { rc: crate::runtime::RC_CANCELLED, output: String::new() }
+        });
+        let runner = rt.exec(&ExecRequest::new(&s.name, &["/workspace/runner"]));
+        assert_eq!(runner.rc, crate::runtime::RC_CANCELLED);
+        if settled {
+            cut.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+        let t = s.teardown(settled);
+        crate::runtime::LOCAL_CANCEL.with(|l| *l.borrow_mut() = None);
+        let left = rt.containers.lock().unwrap().clone();
+        let detached = rt.detached.lock().unwrap().len();
+        (t, left, detached, hold)
+    }
+
+    #[test]
+    fn a_timed_out_setup_runner_has_its_container_removed_before_the_verdict() {
+        let (t, left, detached, _hold) = timed_out_setup(false);
+        assert_eq!(t, Teardown::Removed);
+        assert!(left.is_empty(), "still running after teardown returned: {left:?}");
+        assert_eq!(detached, 0, "a fault's removal is never left in flight");
+    }
+
+    #[test]
+    fn only_a_settled_uncancelled_run_leaves_its_removal_in_flight() {
+        let (t, left, detached, _hold) = timed_out_setup(true);
+        assert!(matches!(t, Teardown::Detached(_)), "{t:?}");
+        assert_eq!(left.len(), 1, "the held detached removal is still in flight");
+        assert_eq!(detached, 1);
     }
 
     #[test]
