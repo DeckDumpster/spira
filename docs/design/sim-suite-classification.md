@@ -202,7 +202,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | cockpit-health-restart | no | - | 5 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-health-term-size | no | - | ? | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-hotfix | no | - | ? | cockpit/pane rendering and its probes: no loop actor changes state |
-| cockpit-layout-ensure-focus | no | - | 2 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-layout-mail | no | - | 8 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-layout | no | - | 6 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-probe-fault | no | - | 12 | cockpit/pane rendering and its probes: no loop actor changes state |
