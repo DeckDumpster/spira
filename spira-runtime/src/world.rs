@@ -59,6 +59,8 @@ pub struct World {
     pub scope_label: String,
     pub desired_dir: PathBuf,
     pub export_bin: String,
+    /// The batch machine is served from the control store, so a round the store does not hold is stale.
+    pub batches_on_store: bool,
 }
 
 struct MapRow {
@@ -839,13 +841,18 @@ impl World {
         answer(&wt::snapshot_of(&dwell, activated).unwrap_or_else(|e| wt::blind(&e)))
     }
 
-    fn round_record_partition(&self) -> install::round_records::Partition {
-        let files = install::round_records::round_files(&self.queue_dir);
-        install::round_records::partition(&files, |batch| match self.lc_json(&["show-batch", batch]) {
+    pub fn round_record_partition(&self) -> install::round_records::Partition {
+        if !self.batches_on_store {
+            return install::round_records::Partition { clear: vec![], held: vec![] };
+        }
+        let (named, bare): (Vec<_>, Vec<_>) = install::round_records::round_files(&self.queue_dir).into_iter().partition(|f| !f.batch.is_empty() || !f.pr.is_empty());
+        let mut parts = install::round_records::partition(&named, |batch| match self.lc_json(&["show-batch", batch]) {
             Ok(v) => Ok(v["state"].as_str().map(str::to_string)),
             Err(e) if e.trim() == "{}" => Ok(None),
             Err(e) => Err(e),
-        })
+        });
+        parts.held.extend(bare.iter().map(|f| format!("{} names no round, so it cannot be told from a live record", f.path.display())));
+        parts
     }
 
     /// Removes the round record files in `input` (a JSON list of paths) that the store still says
