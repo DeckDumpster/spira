@@ -104,7 +104,6 @@ spira/testlib/gate-fixture.sh
 spira/testlib.sh
 spira/test-livelock.sh
 spira/test-mimir-trigger.sh
-spira/test-mail-dwarf.sh
 spira/test-ops-closing.sh
 spira/test-park-unmapped.sh
 spira/test-pr-notify.sh
