@@ -437,9 +437,21 @@ pub fn decide_with(carry: &Carry, snap: &Snapshot, refresh_max: u32) -> (Carry, 
     (next, acts)
 }
 
-/// How a step answered: a rebase's `ok`/`conflict`, a confine's status, or a push's.
-fn outcome_word(body: &str) -> &str {
-    body.trim().split([':', ' ', '\n']).next().unwrap_or("")
+/// A rebase step's answer, as its effect body (law-lifecycle-state-is-not-text): `rebase-stale
+/// rebase-branch` exit 0 is `Ok`, exit 1 (a named failure) is `Conflict`. Any other exit, or no
+/// exit at all, is the effect failing — no verdict on the branch.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum RebaseOutcome {
+    Ok,
+    Conflict { detail: String },
+}
+
+/// A confine step's answer: `confine.sh`'s exit status and its last line.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfineOutcome {
+    pub status: i32,
+    pub detail: String,
 }
 
 /// A branch's next step on its current step's outcome: rebase → confine → force-push → the
@@ -451,11 +463,27 @@ pub fn on_outcome(carry: &Carry, effect: &str, input: &str, ok: bool, body: &str
     let Ok(leg) = serde_json::from_str::<Leg>(input) else { return (next, acts) };
     let Some(c) = next.branches.get_mut(&leg.br) else { return (next, acts) };
     let trigger = match (c.state, effect, ok) {
-        (State::Rebasing, REBASE, true) if outcome_word(body) == "ok" => Trigger::RebaseOk,
-        (State::Rebasing, REBASE, _) => Trigger::Conflict,
-        (State::Confining, CONFINE, true) if outcome_word(body) == "0" => Trigger::ConfineOk,
-        (State::Confining, CONFINE, true) if outcome_word(body) == "2" => Trigger::Violation,
-        (State::Confining, CONFINE, _) => Trigger::Inconclusive,
+        (State::Rebasing, REBASE, true) => match serde_json::from_str::<RebaseOutcome>(body) {
+            Ok(RebaseOutcome::Ok) => Trigger::RebaseOk,
+            Ok(RebaseOutcome::Conflict { .. }) => Trigger::Conflict,
+            // An unreadable answer is no verdict: end this pass; the next tick starts again.
+            Err(_) => {
+                c.state = State::Done;
+                return (next, acts);
+            }
+        },
+        // The rebase never answered (a timeout, a usage or config exit, a tool that did not
+        // run): not a conflict, so the bead is not sent back to rework.
+        (State::Rebasing, REBASE, false) => {
+            c.state = State::Done;
+            return (next, acts);
+        }
+        (State::Confining, CONFINE, true) => match serde_json::from_str::<ConfineOutcome>(body) {
+            Ok(ConfineOutcome { status: 0, .. }) => Trigger::ConfineOk,
+            Ok(ConfineOutcome { status: 2, .. }) => Trigger::Violation,
+            _ => Trigger::Inconclusive,
+        },
+        (State::Confining, CONFINE, false) => Trigger::Inconclusive,
         (State::Pushing, FORCE_PUSH, true) => Trigger::PushOk,
         // A refused push ends the machine for this pass (exit 1); the next tick starts again.
         (State::Pushing, FORCE_PUSH, false) => {
@@ -472,8 +500,17 @@ pub fn on_outcome(carry: &Carry, effect: &str, input: &str, ok: bool, body: &str
     let Ok(to) = step(c.state, trigger) else { return (next, acts) };
     match trigger {
         Trigger::RebaseOk => acts.push(act(CONFINE, format!("{}/{}", leg.id, leg.tip), &leg)),
-        Trigger::Conflict => acts.push(act(REOPEN, format!("{}/rebase-conflict", leg.id), &Leg { cause: format!("rebase-conflict: {}", body.trim()), ..leg.clone() })),
-        Trigger::Violation => acts.push(act(REOPEN, format!("{}/confine-violation", leg.id), &Leg { cause: format!("confine-violation: {}", body.trim()), ..leg.clone() })),
+        Trigger::Conflict => {
+            let detail = match serde_json::from_str::<RebaseOutcome>(body) {
+                Ok(RebaseOutcome::Conflict { detail }) => detail,
+                _ => String::new(),
+            };
+            acts.push(act(REOPEN, format!("{}/rebase-conflict", leg.id), &Leg { cause: format!("rebase-conflict: conflict: {detail}"), ..leg.clone() }))
+        }
+        Trigger::Violation => {
+            let detail = serde_json::from_str::<ConfineOutcome>(body).map(|o| o.detail).unwrap_or_default();
+            acts.push(act(REOPEN, format!("{}/confine-violation", leg.id), &Leg { cause: format!("confine-violation: 2 {detail}"), ..leg.clone() }))
+        }
         Trigger::ConfineOk => acts.push(act(FORCE_PUSH, format!("{}/{}", leg.br, leg.tip), &leg)),
         Trigger::PushOk if leg.pr_state == PrState::None => acts.push(act(PR_CREATE, format!("{}/{}", leg.repo, leg.br), &leg)),
         Trigger::PushOk => acts.push(act(PR_AUTOMERGE, format!("{}/{}", leg.repo, leg.br), &leg)),
@@ -663,23 +700,26 @@ pub fn ask(e: &crate::Effects, input: &str) -> Result<String, String> {
     mail::cmds::send(&bd, env, &args, body).map(|o| o.delivered_path.display().to_string())
 }
 
-/// `rebase_branch <br> <onto> <repo> <name>` (`rebase-stale rebase-branch`): `ok`, or
-/// `conflict: <files>`.
+/// `rebase_branch <br> <onto> <repo> <name>` (`rebase-stale rebase-branch`): a [`RebaseOutcome`]
+/// body; any exit but 0 or 1 is the effect failing.
 pub fn rebase_branch(input: &str) -> Result<String, String> {
     let leg = leg_of(input, REBASE)?;
     let fmt = registry()?.format(&leg.repo).unwrap_or_default();
-    match tool(REBASE, "rebase-stale", &["rebase-branch", &leg.br, &leg.base_fq, &leg.path, &leg.repo, &fmt], 115)? {
-        (Some(0), _) => Ok("ok".into()),
-        (_, out) => Ok(format!("conflict: {}", out.lines().last().unwrap_or("").trim())),
-    }
+    let outcome = match tool(REBASE, "rebase-stale", &["rebase-branch", &leg.br, &leg.base_fq, &leg.path, &leg.repo, &fmt], 115)? {
+        (Some(0), _) => RebaseOutcome::Ok,
+        (Some(1), out) => RebaseOutcome::Conflict { detail: out.lines().last().unwrap_or("").trim().to_string() },
+        (code, out) => return Err(format!("{REBASE}: rebase-stale rebase-branch exited {code:?}: {}", out.trim())),
+    };
+    serde_json::to_string(&outcome).map_err(|e| format!("{REBASE}: {e}"))
 }
 
-/// `confine.sh <id> <br> <repo> <base> <labels>`: its status, `0` clean, `2` a violation, `5`
-/// inconclusive.
+/// `confine.sh <id> <br> <repo> <base> <labels>`: a [`ConfineOutcome`] body — status `0` clean,
+/// `2` a violation, `5` inconclusive.
 pub fn confine(input: &str) -> Result<String, String> {
     let leg = leg_of(input, CONFINE)?;
     let (code, out) = tool(CONFINE, "confine.sh", &[&leg.id, &leg.br, &leg.path, &leg.base_fq, ""], 55)?;
-    Ok(format!("{} {}", code.unwrap_or(5), out.lines().last().unwrap_or("").trim()))
+    let outcome = ConfineOutcome { status: code.unwrap_or(5), detail: out.lines().last().unwrap_or("").trim().to_string() };
+    serde_json::to_string(&outcome).map_err(|e| format!("{CONFINE}: {e}"))
 }
 
 /// `spira_git_push --force-with-lease -u <remote> <br>` (`queue-helpers git-push`).
