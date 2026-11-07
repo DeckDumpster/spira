@@ -54,6 +54,11 @@ count = "vm-torn-down"
 equals = 0
 
 [[expect]]
+name = "the-runners-last-mark-is-kept-for-the-section"
+count = "keys:batches/lane/b1/mark"
+equals = 1
+
+[[expect]]
 name = "the-pass-in-hand-is-recorded"
 count = "keys:batches/lane/b1/progress"
 equals = 1

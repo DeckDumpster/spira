@@ -1,5 +1,5 @@
 description = "what is not a contradiction pages nothing: a GREEN round held because the round below it has not landed, a round superseded because its base moved, and a live lease on a round that turned terminal less than one TTL ago"
-repos = ["home"]
+repos = ["lane"]
 
 [run]
 epoch = 1800000000
@@ -20,30 +20,30 @@ subpass = 70
 certify = 30
 
 [[store]]
-key = "lanes/home"
+key = "lanes/lane"
 data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
 
 [[git]]
-repo = "home"
+repo = "lane"
 landing = "base-0"
 
 # Stacked on a round that has not landed: the Lander holds it, which is not a refusal.
 [[store]]
-key = "batches/home/p1"
-data = { batch_id = "p1", repo = "home", state = "CiRunning", head = "p1-h", base = "base-0", pass = 1, version = 2, tested_base = "base-0", members = [{ id = "sp-p", tip = "p1" }] }
+key = "batches/lane/p1"
+data = { batch_id = "p1", repo = "lane", state = "CiRunning", head = "p1-h", base = "base-0", pass = 1, version = 2, tested_base = "base-0", members = [{ id = "sp-p", tip = "p1" }] }
 
 [[round_lease]]
-repo = "home"
+repo = "lane"
 batch = "p1"
 
 [[store]]
-key = "batches/home/g1"
-data = { batch_id = "g1", repo = "home", state = "Green", parent = "p1", head = "g1-h", base = "p1-h", pass = 1, version = 3, tested_base = "p1-h", members = [{ id = "sp-g", tip = "g1" }] }
+key = "batches/lane/g1"
+data = { batch_id = "g1", repo = "lane", state = "Green", parent = "p1", head = "g1-h", base = "p1-h", pass = 1, version = 3, tested_base = "p1-h", members = [{ id = "sp-g", tip = "g1" }] }
 
 # Its base moved: the controller supersedes it and cuts its members again.
 [[store]]
-key = "batches/home/m1"
-data = { batch_id = "m1", repo = "home", state = "CiRunning", head = "m1-h", base = "old-base", pass = 1, version = 2, tested_base = "old-base", members = [{ id = "sp-m", tip = "m1" }] }
+key = "batches/lane/m1"
+data = { batch_id = "m1", repo = "lane", state = "CiRunning", head = "m1-h", base = "old-base", pass = 1, version = 2, tested_base = "old-base", members = [{ id = "sp-m", tip = "m1" }] }
 
 [[verb]]
 verb = "supersede"
@@ -52,15 +52,15 @@ ok = {}
 
 # A round that turned terminal with its runner's lease still live, released inside one TTL.
 [[store]]
-key = "batches/home/t1"
-data = { batch_id = "t1", repo = "home", state = "Landed", head = "t1-h", base = "base-0", pass = 1, version = 9, tested_base = "base-0", members = [{ id = "sp-t", tip = "t1" }] }
+key = "batches/lane/t1"
+data = { batch_id = "t1", repo = "lane", state = "Landed", head = "t1-h", base = "base-0", pass = 1, version = 9, tested_base = "base-0", members = [{ id = "sp-t", tip = "t1" }] }
 
 [[round_lease]]
-repo = "home"
+repo = "lane"
 batch = "t1"
 
 [[lease_release]]
-repo = "home"
+repo = "lane"
 batch = "t1"
 secs = 300
 

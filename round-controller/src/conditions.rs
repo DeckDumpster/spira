@@ -97,9 +97,9 @@ fn observed_key(repo: &str, batch: &str) -> String {
     format!("{}/terminal-lease/{batch}", refusal::standing_key(repo, "").trim_end_matches('/'))
 }
 
-fn put_observed(p: &Ports, key: &str, t: Txn) {
+fn put_observed(p: &Ports, key: &str, t: Txn) -> Result<(), Refusal> {
     let req = Request::new(&format!("terminal-lease-{key}-{}", p.next_u64()), "round-controller", "terminal-lease");
-    let _ = p.store.txn(&t, &req);
+    p.store.txn(&t, &req).map(|_| ()).map_err(|e| Refusal::unreadable(key, e))
 }
 
 fn two_answers(p: &Ports, repo: &str, rounds: &[Live]) -> Result<Vec<Cond>, Refusal> {
@@ -137,7 +137,7 @@ fn two_answers(p: &Ports, repo: &str, rounds: &[Live]) -> Result<Vec<Cond>, Refu
             .map_err(|e| Refusal::unreadable(&okey, e))?
             .and_then(|i| i.value.data.get("since").and_then(serde_json::Value::as_u64));
         let Some(since) = since else {
-            put_observed(p, &okey, Txn::new().put(&okey, Object::new(json!({ "since": now })).with_ttl(STANDING_TTL_SECS)));
+            put_observed(p, &okey, Txn::new().put(&okey, Object::new(json!({ "since": now })).with_ttl(STANDING_TTL_SECS)))?;
             continue;
         };
         if now.saturating_sub(since) > p.leases.ttl_ms {
@@ -156,7 +156,7 @@ fn two_answers(p: &Ports, repo: &str, rounds: &[Live]) -> Result<Vec<Cond>, Refu
     let ostem = observed_key(repo, "");
     let (kept, _) = p.store.list(&[ostem.as_str()], &Selector::Everything).map_err(|e| Refusal::unreadable(&ostem, e))?;
     for i in kept.iter().filter(|i| !seen.iter().any(|b| i.key == observed_key(repo, b))) {
-        put_observed(p, &i.key, Txn::new().delete(&i.key));
+        put_observed(p, &i.key, Txn::new().delete(&i.key))?;
     }
     Ok(out)
 }

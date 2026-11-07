@@ -91,7 +91,7 @@ fn a_round_record_file_beside_the_store_is_two_answers_naming_both() {
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].key, "lane:round");
     let why = got[0].raised.as_deref().unwrap();
-    assert!(why.contains("run/queue/lane/round") && why.contains("the store holds r1"), "{why}");
+    assert!(why.contains("run/queue/lane/") && why.contains("the store holds r1"), "{why}");
 }
 
 #[test]

@@ -1,5 +1,5 @@
 description = "each of the controller's eight contradictions held for fifty passes: every one is a keyed section condition and the alarms component's page rule sends exactly one page for it, carrying the verb's own text or both answers"
-repos = ["home"]
+repos = ["lane"]
 
 [run]
 epoch = 1800000000
@@ -20,17 +20,17 @@ subpass = 70
 certify = 30
 
 [[store]]
-key = "lanes/home"
+key = "lanes/lane"
 data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version = "harness-0" }
 
 [[git]]
-repo = "home"
+repo = "lane"
 landing = "base-0"
 
 # LandRefused: a GREEN round the land verb refuses with a word the Lander does not act on.
 [[store]]
-key = "batches/home/g1"
-data = { batch_id = "g1", repo = "home", state = "Green", head = "g1-h", base = "base-0", pass = 1, version = 3, tested_base = "base-0", members = [{ id = "sp-g", tip = "g1" }] }
+key = "batches/lane/g1"
+data = { batch_id = "g1", repo = "lane", state = "Green", head = "g1-h", base = "base-0", pass = 1, version = 3, tested_base = "base-0", members = [{ id = "sp-g", tip = "g1" }] }
 
 [[verb]]
 verb = "land"
@@ -39,40 +39,40 @@ refuse = { code = 1, text = "land: refused: certificate head g1-h is not a desce
 
 # EjectRefused: the Judge's refused eject, as it leaves it in the round's progress.
 [[store]]
-key = "batches/home/e1"
-data = { batch_id = "e1", repo = "home", state = "Attributing", head = "e1-h", base = "base-0", pass = 1, version = 4, tested_base = "base-0", members = [{ id = "sp-e", tip = "e1" }] }
+key = "batches/lane/e1"
+data = { batch_id = "e1", repo = "lane", state = "Attributing", head = "e1-h", base = "base-0", pass = 1, version = 4, tested_base = "base-0", members = [{ id = "sp-e", tip = "e1" }] }
 
 [[store]]
-key = "batches/home/e1/progress"
+key = "batches/lane/e1/progress"
 data = { pass = 1, runs = [], held = { member = "sp-e", suites = ["ci"], text = "could not eject sp-e: --suites names ci" } }
 
 [[round_lease]]
-repo = "home"
+repo = "lane"
 batch = "e1"
 
 # TwoAnswersOpenRound: a round record file after the store took over, beside a round the store holds.
 [[off.round_record]]
-repo = "home"
+repo = "lane"
 name = "round"
 
 # CutOfJudgedRed: the refusal an explicit cut that named a judged-red member left standing.
 [[store]]
-key = "telemetry/round-controller/home/cut"
+key = "telemetry/round-controller/lane/cut"
 ttl_secs = 604800
-data = { word = "cut-of-judged-red", key = "verdicts/home/by-member/sp-r/r1", since = 1800000000000 }
+data = { word = "cut-of-judged-red", key = "verdicts/lane/by-member/sp-r/r1", since = 1800000000000 }
 
 # LaneBlocked: a standing lane fault.
 [[store]]
-key = "faults/home/base-0/sha256:img-0"
+key = "faults/lane/base-0/sha256:img-0"
 data = { cause = { cause = "base" }, evidence = "the base is red on its own", since = 1800000000000 }
 
 # StuckRunner: a runner that hangs at 100 s keeps its lease and makes no progress.
 [[store]]
-key = "batches/home/s1"
-data = { batch_id = "s1", repo = "home", state = "CiRunning", head = "s1-h", base = "base-0", pass = 1, version = 2, tested_base = "base-0", members = [{ id = "sp-s", tip = "s1" }] }
+key = "batches/lane/s1"
+data = { batch_id = "s1", repo = "lane", state = "CiRunning", head = "s1-h", base = "base-0", pass = 1, version = 2, tested_base = "base-0", members = [{ id = "sp-s", tip = "s1" }] }
 
 [[runner]]
-repo = "home"
+repo = "lane"
 batch = "s1"
 phase = "suites"
 start_secs = 0
@@ -82,8 +82,8 @@ hold_secs = 86400
 
 # PriorRunnerAlive: an orphan whose old runner's unit is still active.
 [[store]]
-key = "batches/home/o1"
-data = { batch_id = "o1", repo = "home", state = "CiRunning", head = "o1-h", base = "base-0", pass = 1, version = 2, tested_base = "base-0", members = [{ id = "sp-o", tip = "o1" }], last_lease_token = { main = 7, sub = 0 } }
+key = "batches/lane/o1"
+data = { batch_id = "o1", repo = "lane", state = "CiRunning", head = "o1-h", base = "base-0", pass = 1, version = 2, tested_base = "base-0", members = [{ id = "sp-o", tip = "o1" }], last_lease_token = { main = 7, sub = 0 } }
 
 [[unit]]
 name = "round-controller-run-o1-7-0"
@@ -91,8 +91,8 @@ state = "active"
 
 # RedriveExhausted: an orphan whose launches fail until the retries run out.
 [[store]]
-key = "batches/home/o2"
-data = { batch_id = "o2", repo = "home", state = "CiRunning", head = "o2-h", base = "base-0", pass = 1, version = 2, tested_base = "base-0", members = [{ id = "sp-p", tip = "o2" }], last_lease_token = { main = 8, sub = 0 } }
+key = "batches/lane/o2"
+data = { batch_id = "o2", repo = "lane", state = "CiRunning", head = "o2-h", base = "base-0", pass = 1, version = 2, tested_base = "base-0", members = [{ id = "sp-p", tip = "o2" }], last_lease_token = { main = 8, sub = 0 } }
 
 [[launch]]
 refuse = "systemd-run: exit 1"
@@ -157,7 +157,7 @@ equals = 1
 
 [[expect]]
 name = "the-two-answers-page-carries-both-answers"
-count = "page-text:run/queue/home/round exists but the store holds"
+count = "page-text:run/queue/lane/round exists but the store holds"
 equals = 1
 
 [[expect]]
