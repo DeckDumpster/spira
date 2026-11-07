@@ -2796,7 +2796,7 @@ pub fn warm_sweep(deps: &Deps) -> i32 {
 /// SPIRA_SCRATCH_SWEEP_MIN_AGE_HOURS): a crashed suite's leftovers must not fill the
 /// shared tmpfs for the next gate.
 fn sweep_scratch(deps: &Deps) {
-    const DEFAULT: &str = "testenv-testdb-priv spira-toml loom-shim loom-fake spira-claim-unpoison spira-claim-test batcher-cut- sop-test queue-test- install-units-test strand-lc work-switch";
+    const DEFAULT: &str = "testenv-testdb-priv spira-toml loom-shim loom-fake spira-claim-unpoison spira-claim-test batcher-cut- sop-test queue-test- install-units-test strand-lc work-switch tl-run.";
     let var = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
     let prefixes = var("SPIRA_SCRATCH_SWEEP_PREFIXES").unwrap_or_else(|| DEFAULT.into());
     let hours = var("SPIRA_SCRATCH_SWEEP_MIN_AGE_HOURS").and_then(|v| v.parse::<u64>().ok()).unwrap_or(24);

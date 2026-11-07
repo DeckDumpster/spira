@@ -200,7 +200,21 @@ _TL_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=init.defaultBranch GIT_CONFIG_VALUE_0=main
 _TL_CONF_BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/spira/testlib/complete.toml"
 [ -f "$_TL_CONF_BASE" ] || { echo "testlib: no complete fixture at $_TL_CONF_BASE" >&2; exit 1; }
-_TL_CONF_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tl-conf.XXXXXX")"
+# Everything a suite makes through TMPDIR lives in its one run directory. This process, not an
+# EXIT trap a suite may replace, removes it when the suite's shell is gone however it ended;
+# a fixture's read-only trees are made writable first or rm leaves them behind.
+_tl_reap_run() {   # _tl_reap_run <suite-pid> <run-dir>
+    while kill -0 "$1" 2>/dev/null; do sleep 1; done
+    chmod -R u+rwX "$2" 2>/dev/null
+    rm -rf "$2"
+}
+
+_TL_RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tl-run.XXXXXX")" || { echo "testlib: cannot make a run directory" >&2; exit 1; }
+export TMPDIR="$_TL_RUN_DIR"
+_TL_CONF_DIR="$_TL_RUN_DIR/conf"
+mkdir -p "$_TL_CONF_DIR"
+( _tl_reap_run "$_TL_TOP" "$_TL_RUN_DIR" ) >/dev/null 2>&1 </dev/null &
+disown $! 2>/dev/null
 _TL_CONF_OVERRIDE="$_TL_CONF_DIR/$(basename "${BASH_SOURCE[1]:-$0}" .sh).override.toml"
 printf '[spira]\n' > "$_TL_CONF_OVERRIDE"
 export SPIRA_TOML="$_TL_CONF_BASE:$_TL_CONF_OVERRIDE"

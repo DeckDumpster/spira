@@ -33,6 +33,21 @@ pub fn held_by_process(p: &Path) -> bool {
     false
 }
 
+/// A fixture may leave a tree with the write bit off, which `remove_dir_all` cannot empty.
+fn make_writable(dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let Ok(md) = fs::symlink_metadata(dir) else { return };
+    if !md.is_dir() {
+        return;
+    }
+    let _ = fs::set_permissions(dir, fs::Permissions::from_mode(md.permissions().mode() | 0o700));
+    if let Ok(rd) = fs::read_dir(dir) {
+        for e in rd.flatten() {
+            make_writable(&e.path());
+        }
+    }
+}
+
 /// Remove entries of `root` whose name starts with one of `prefixes`, whose mtime is older
 /// than `min_age`, and that no live process holds. Returns the names removed.
 pub fn sweep(root: &Path, prefixes: &[&str], min_age: Duration, held: &dyn Fn(&Path) -> bool) -> Vec<String> {
@@ -49,7 +64,12 @@ pub fn sweep(root: &Path, prefixes: &[&str], min_age: Duration, held: &dyn Fn(&P
         if !old || held(&e.path()) {
             continue;
         }
-        let r = if md.is_dir() { fs::remove_dir_all(e.path()) } else { fs::remove_file(e.path()) };
+        let r = if md.is_dir() {
+            make_writable(&e.path());
+            fs::remove_dir_all(e.path())
+        } else {
+            fs::remove_file(e.path())
+        };
         if r.is_ok() {
             gone.push(name);
         }
@@ -83,6 +103,18 @@ mod tests {
         let gone = sweep(&d, &["spira-"], Duration::ZERO, &held);
         assert_eq!(gone, vec!["spira-old".to_string()]);
         assert!(d.join("spira-held").exists() && d.join("other-old").exists());
+    }
+
+    #[test]
+    fn sweep_removes_a_tree_whose_write_bit_is_off() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tmp("ro");
+        fs::create_dir_all(d.join("spira-ro/bin")).unwrap();
+        fs::write(d.join("spira-ro/bin/tool"), "x").unwrap();
+        fs::set_permissions(d.join("spira-ro/bin"), fs::Permissions::from_mode(0o555)).unwrap();
+        fs::set_permissions(d.join("spira-ro"), fs::Permissions::from_mode(0o555)).unwrap();
+        let gone = sweep(&d, &["spira-"], Duration::ZERO, &|_| false);
+        assert_eq!(gone, vec!["spira-ro".to_string()]);
     }
 
     #[test]
