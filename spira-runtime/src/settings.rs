@@ -263,7 +263,11 @@ impl Settings {
             scope_label: get("SPIRA_SCOPE_LABEL")?,
             desired_dir: PathBuf::from(get("SPIRA_DESIRED_DIR")?),
             export_bin: "tsd-lifecycle-export".into(),
-            batches_on_store: get("SPIRA_LC_LIFECYCLE_ON_STORE")?.trim().parse::<u8>().map_err(|_| "SPIRA_LC_LIFECYCLE_ON_STORE must be 0 or 1".to_string())? != 0,
+            batches_on_store: match get("SPIRA_LC_LIFECYCLE_ON_STORE")?.trim() {
+                "0" => false,
+                "1" => true,
+                _ => return Err("SPIRA_LC_LIFECYCLE_ON_STORE must be 0 or 1".into()),
+            },
             ..World::default()
         };
         let control_socket = get("SPIRA_RUNTIME_SOCKET")?;
