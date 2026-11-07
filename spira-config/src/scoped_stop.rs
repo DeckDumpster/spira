@@ -202,6 +202,15 @@ pub fn repo_stops(run: &Path) -> Vec<RepoStop> {
     entries(run, "repo-").iter().filter_map(|p| read_repo(p)).collect()
 }
 
+/// Every repo stop, or an error naming the first file that cannot be read: a caller about to
+/// overwrite stops must not treat an unreadable one as absent.
+pub fn repo_stops_strict(run: &Path) -> Result<Vec<RepoStop>, String> {
+    entries(run, "repo-")
+        .iter()
+        .map(|p| fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display())).and_then(|t| serde_json::from_str(&t).map_err(|e| format!("{}: {e}", p.display()))))
+        .collect()
+}
+
 pub fn reservations(run: &Path) -> Vec<Reservation> {
     entries(run, "reserve-").iter().filter_map(|p| serde_json::from_str(&fs::read_to_string(p).ok()?).ok()).collect()
 }

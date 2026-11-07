@@ -87,11 +87,11 @@ every row is green. After a cutover, `--since-rev` waits for one landed round pe
 
 <!-- check: cutover-check -->
 ```sh
-round-controller cutover-check --readiness   # not checked: cutover-check is not yet a verb of round-controller
-round-controller cutover-check --since-rev "$REV"   # not checked: cutover-check is not yet a verb of round-controller
+round-controller cutover-check --readiness   # exits 1
+round-controller cutover-check --since-rev "$REV"   # exits 1
 ```
 
-**Success:** every row green, exit 0.
+**Success:** every row green, exit 0. Any row not green, exit 1 with the failing rows printed; the checked block runs in a world that is not yet green and expects 1.
 **If it fails:** a red row names the repo and the precondition; fix that repo first.
 
 ## Enter and leave cutover mode

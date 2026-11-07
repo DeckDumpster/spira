@@ -87,7 +87,7 @@ fn stand_down_for(run: &std::path::Path, stop: impl FnOnce() -> Option<spira_con
     if world_halted(run) {
         return Some("world is halted".into());
     }
-    stop().map(|s| format!("the {DETECTORS_LANE} lane of {} is stopped on purpose by {} ({}); lifts on: {}", s.repo, s.owner, s.reason, s.until))
+    stop().map(|s| spira_config::scoped_stop::skip_line("watchtower", DETECTORS_LANE, &s))
 }
 
 /// `process::sweep_cfg`, refusing the process on a key that does not resolve.

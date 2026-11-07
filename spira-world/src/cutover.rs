@@ -94,11 +94,12 @@ pub fn enter(e: &Enter) -> Result<Record, String> {
         return Err("no registered repos to hold".into());
     }
     let lanes: Vec<String> = LANES.iter().map(|l| l.to_string()).collect();
+    let existing = scoped_stop::repo_stops_strict(e.run).map_err(|err| format!("{err} — an unreadable stop would be overwritten and could not be restored"))?;
     let stops: Vec<Overlay> = e
         .repos
         .iter()
         .map(|repo| {
-            let prior = scoped_stop::repo_stops(e.run).into_iter().find(|s| &s.repo == repo);
+            let prior = existing.iter().find(|s| &s.repo == repo).cloned();
             let had = prior.as_ref().map(|p| p.lanes.clone()).unwrap_or_default();
             Overlay { repo: repo.clone(), lanes: lanes.iter().filter(|l| !had.contains(l)).cloned().collect(), prior }
         })
@@ -173,6 +174,19 @@ mod tests {
         let e = w.enter(&[]).unwrap_err();
         assert!(e.contains("not stopped"), "{e}");
         assert!(scoped_stop::repo_stops(w.run()).is_empty() && read(w.run()).unwrap().is_none(), "a refusal writes nothing");
+    }
+
+    #[test]
+    fn cutover_mode_refuses_to_overwrite_a_stop_file_it_cannot_read() {
+        let w = W::new("cutover-unreadable-stop");
+        let dir = scoped_stop::dir(w.run());
+        std::fs::create_dir_all(&dir).unwrap();
+        let bad = dir.join("repo-spira.json");
+        std::fs::write(&bad, "{ not json").unwrap();
+        let e = w.enter(&[]).unwrap_err();
+        assert!(e.contains("repo-spira.json"), "{e}");
+        assert_eq!(std::fs::read_to_string(&bad).unwrap(), "{ not json", "the unreadable stop is left as it was");
+        assert!(w.d.join("world.halted").is_file() && read(w.run()).unwrap().is_none(), "a refusal writes nothing");
     }
 
     #[test]
