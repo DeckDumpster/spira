@@ -4704,3 +4704,28 @@ fn queue_starts_no_spira_child_that_is_not_a_named_fork_edge() {
     let got = forge::fork_scan::scan(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
     assert!(got.is_empty(), "unmarked children:\n{}", got.join("\n"));
 }
+
+fn land_rows(t: &T) -> Vec<serde_json::Value> {
+    let text = std::fs::read_to_string(tsd::family_path(&t.s().run, tsd::land::FAMILY)).unwrap_or_default();
+    text.lines().map(|l| serde_json::from_str(l).unwrap()).collect()
+}
+
+#[test]
+fn land_local_records_each_member_with_the_commit_its_reverts_label_names() {
+    let t = T::new(LandMode::QueueLocal);
+    local_repo(&t);
+    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-b".into(), labels: vec!["repo:spira".into(), "reverts:abcdef0123456".into()], ..BeadRow::default() });
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let rows = land_rows(&t);
+    let got: Vec<_> = rows.iter().map(|r| (r["bead"].as_str().unwrap(), r["commit"].as_str().unwrap(), r["reverts"].as_str())).collect();
+    assert_eq!(got, vec![("sp-a", "ta", None), ("sp-b", "tb", Some("abcdef0123456"))]);
+}
+
+#[test]
+fn land_local_takes_no_reverts_from_a_title_that_says_revert() {
+    let t = T::new(LandMode::QueueLocal);
+    local_repo(&t);
+    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), title: Some("Revert \"x\" abcdef0123456".into()), labels: vec!["repo:spira".into()], ..BeadRow::default() });
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert_eq!(land_rows(&t).iter().map(|r| r["reverts"].is_null()).collect::<Vec<_>>(), vec![true]);
+}
