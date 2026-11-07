@@ -285,7 +285,6 @@ INSERT INTO event (machine,lc_key,event,expect,from_state,to_state,applied,refus
 COMMIT;
 SQL
 }
-ws_history_sql | lcfix_sql >/dev/null 2>"$TMP/ws.err" || bail "history seed failed: $(head -c 400 "$TMP/ws.err")"
 
 ws_history_sql | lcfix_sql >/dev/null 2>"$TMP/ws.err" || bail "history seed failed: $(head -c 400 "$TMP/ws.err")"
 tl_setup_done
