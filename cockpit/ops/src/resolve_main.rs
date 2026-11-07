@@ -22,11 +22,8 @@ impl Closer for RealBd {
     }
 
     /// Through the store's content door, in-process; empty when it does not answer.
-    fn show_json(&self, _db: &Path, id: &str) -> String {
-        match cockpit_ops::lcio::client().map(|c| c.call(&["content", "show", id, "--json"])) {
-            Ok(Ok(r)) => r.out,
-            _ => String::new(),
-        }
+    fn show_json(&self, _db: &Path, id: &str) -> Result<String, String> {
+        cockpit_ops::lcio::client()?.answer(&["content", "show", id, "--json"]).map_err(|e| format!("content show {id}: {e}"))
     }
 
     fn has_lifecycle_row(&self, id: &str) -> Result<bool, String> {
