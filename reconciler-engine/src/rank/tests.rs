@@ -152,3 +152,20 @@ fn inverting_the_weights_changes_what_binds() {
     assert_eq!(right.binding.as_deref(), Some("Probe/cause"));
     assert_eq!(wrong.binding.as_deref(), Some("Lifecycle/all"));
 }
+
+#[test]
+fn a_section_only_an_unacknowledged_intent_names_is_one_gap_even_when_the_last_pass_named_it_too() {
+    let intent = json!({ "key": "intents/Probe/gone/1", "mod_rev": 2, "intent": {
+        "id": "1", "action": "a", "target": "knobs/Probe/gone/a", "from": 0, "to": 1, "moves": "depth",
+        "baseline": 3.0, "expected_effect": -1.0, "horizon": "10m", "addresses": ["Deep"],
+        "taken_at": "2026-10-30T19:40:00Z", "by": { "pass": "1", "lock_token": "1.0" },
+    }});
+    let snap = Snapshot::parse(&json!({
+        "list_rev": 4, "sections": [probe("here", 0.0, NOW, &[])], "intents": [intent],
+        "pass": prev(&[("Probe/gone", 0.0)]), "knobs": {}, "undecodable": [],
+    }))
+    .unwrap();
+    let r = rank(&assemble(&snap, T0), &map(&[("Probe", 2.0)]));
+    assert_eq!(names(&r).iter().filter(|n| **n == "Probe/gone").count(), 1);
+    assert_eq!(gap(&r, "Probe/gone").distance, UNSEEN_DISTANCE, "no distance to keep, so a unit one: never zero");
+}

@@ -28,6 +28,7 @@ serde_json = "1"
 spira-desired-state = { path = "../desired-state" }
 spira-lc = { path = "../spira-lc" }
 state-store = { path = "../state-store" }
+reconciler-engine = { path = "../reconciler-engine" }
 
 [dev-dependencies]
 spira-runtime = { path = "../spira-runtime" }

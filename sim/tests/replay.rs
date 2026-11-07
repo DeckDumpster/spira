@@ -24,6 +24,9 @@ slice_sized!(
     an_applied_ack_changes_nothing_in_the_replayed_world_and_no_record_is_dropped,
     two_runs_with_one_seed_trace_the_same,
     hooks_run_at_their_periods_across_the_whole_day_and_the_pass_reads_what_was_published,
+    the_stacked_repos_round_controller_section_binds_from_its_first_refused_round,
+    the_inverted_map_fails_the_stacked_repo_ranking_check,
+    the_held_out_lanes_rank_above_every_healthy_section,
 );
 
 #[test]
@@ -33,5 +36,5 @@ fn every_slice_check_is_named_for_its_test() {
     for n in &names {
         assert!(src.contains(&format!("    {n},\n")), "{n} has no ignored test here");
     }
-    assert_eq!(names.len(), 6);
+    assert_eq!(names.len(), 9);
 }

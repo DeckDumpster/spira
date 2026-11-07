@@ -6,6 +6,7 @@
 //! recorded day did, and what a reader of its sections would have seen.
 
 pub mod checks;
+pub mod lifecycle;
 pub mod round_controller;
 
 use std::cell::{Ref, RefCell, RefMut};

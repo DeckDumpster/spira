@@ -30,6 +30,7 @@ fn a_line_that_cannot_be_a_weight_is_refused_by_what_is_wrong_with_it() {
     assert!(CausalMap::load(&all(&line("Nonesuch", "2")), &KINDS).unwrap_err().contains("Nonesuch"));
     assert!(CausalMap::load(&all("").replace("weight = 10", "weight = -1"), &KINDS).unwrap_err().contains("RoundController"));
     assert!(CausalMap::load(&all("").replace("source = \"s\"", "source = \" \""), &KINDS).is_err());
+    assert!(CausalMap::load(&all("").replace("unit = \"u\"", "unit = \"\""), &KINDS).is_err());
     assert!(CausalMap::load("not toml [", &KINDS).unwrap_err().contains("does not parse"));
     assert!(CausalMap::load(&all("").replace("weight = 10", "weight = inf"), &KINDS).is_err());
 }
