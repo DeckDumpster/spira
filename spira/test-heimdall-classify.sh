@@ -25,8 +25,8 @@
 #                            from regressing to an inference about an absent line.
 #
 # This suite needs nothing but the heimdall binary — `heimdall classify` is a pure function, and nothing
-# here reaches a database or a file outside $TMP. The reconciler (raising, clearing and
-# reopening real beads against it) is test-heimdall.sh.
+# here reaches a database or a file outside $TMP. The reconciler is the unit
+# tests in heimdall/src/pass.rs.
 # tier: T1
 # covers: heimdall/src/* spira/testdata/sentinel-healthy.log spira/testdata/sentinel-pre-check7.log UC-ops-detection-remediation-18
 set -uo pipefail
