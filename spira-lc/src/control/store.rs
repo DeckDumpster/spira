@@ -1178,7 +1178,7 @@ mod sweeps;
 
 pub use asks::{AskClose, AskRecord};
 pub use direct::{Edge, RepoSet};
-pub use mending::{MendRecord, MendingRecord, Move, Stepped};
+pub use mending::{MendingRecord, Move, Stepped};
 pub use readiness::{Judged, Pass};
 pub use rounds::{Cut, Ran, Turned, Withdrawn};
 pub use sweeps::Filing;

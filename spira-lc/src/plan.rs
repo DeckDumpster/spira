@@ -53,6 +53,9 @@ pub fn database_of(db: &std::path::Path) -> Result<String, String> {
     }
     Ok(format!("`{name}`"))
 }
+/// The planning fields a plain list joins onto a lifecycle row.
+pub const JOINED: [&str; 2] = ["title", "priority"];
+
 const RFC3339: &str = "%Y-%m-%dT%H:%i:%sZ";
 
 fn s<'a>(row: &'a Value, col: &str) -> Option<&'a str> {
@@ -95,16 +98,6 @@ pub fn assemble(issues: &[Value], labels: &[Value], deps: &[Value]) -> Vec<Value
             }))
         })
         .collect()
-}
-
-/// The content store's edges plus the lifecycle's mirrored ones (`spira-lc dep-add` writes only
-/// the latter), one per `(issue, target)`; the content store's row wins.
-pub fn union_edges(deps: Vec<Value>, mirrored: Vec<Value>) -> Vec<Value> {
-    let key = |d: &Value| (s(d, "issue_id").map(str::to_string), s(d, "depends_on_id").map(str::to_string));
-    let seen: std::collections::BTreeSet<_> = deps.iter().map(key).collect();
-    let mut out = deps;
-    out.extend(mirrored.into_iter().filter(|d| !seen.contains(&key(d))));
-    out
 }
 
 /// `plan items|edges|children|watermark|stamp|schema …`: JSON with the watermark on every read.
@@ -168,12 +161,11 @@ fn edges_where(conn: &Conn, ids: &[&str], into: bool) -> Result<Vec<Value>, Stri
     let q = |sql: String| conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"));
     // bd's column is depends_on_issue_id (beside depends_on_wisp_id / depends_on_external);
     // only issue-to-issue edges are planning edges between beads.
-    let (bd_side, lc_side) = if into { ("depends_on_issue_id", "depends_on") } else { ("issue_id", "bead_id") };
+    let bd_side = if into { "depends_on_issue_id" } else { "issue_id" };
     let deps = q(format!(
         "SELECT issue_id, depends_on_issue_id AS depends_on_id, `type` FROM {cdb}.dependencies WHERE {bd_side} IN ({list}) AND depends_on_issue_id IS NOT NULL ORDER BY issue_id, depends_on_issue_id"
     ))?;
-    let mirrored = q(format!("SELECT bead_id AS issue_id, depends_on AS depends_on_id, dep_type AS `type` FROM bead_dep WHERE {lc_side} IN ({list}) ORDER BY bead_id, depends_on"))?;
-    Ok(union_edges(deps, mirrored)
+    Ok(deps
         .into_iter()
         .map(|d| json!({ "issue_id": s(&d, "issue_id"), "depends_on_id": s(&d, "depends_on_id"), "type": s(&d, "type").unwrap_or("blocks") }))
         .collect())
@@ -607,14 +599,6 @@ fn by_type(conn: &Conn, kind: &str, full: bool, open: bool) -> Result<Vec<Value>
     fetch_with(conn, &ids, full, open)
 }
 
-/// Every bead the planning plane types as never having a lifecycle record (`NO_ROW_TYPES`).
-pub fn no_record_ids(conn: &Conn) -> Result<std::collections::BTreeSet<String>, String> {
-    let cdb = content_db()?;
-    let types = spira_config::nonwork::NO_ROW_TYPES.iter().map(|t| format!("'{}'", rows::escape(t))).collect::<Vec<_>>().join(",");
-    let found = conn.query(&format!("SELECT id FROM {cdb}.issues WHERE issue_type IN ({types})")).map_err(|e| format!("cannot tell: {e:?}"))?;
-    Ok(found.iter().filter_map(|r| s(r, "id")).map(str::to_string).collect())
-}
-
 fn fetch_with(conn: &Conn, ids: &[&str], full: bool, open: bool) -> Result<Vec<Value>, String> {
     // An empty id list is an empty answer: it needs no store, so it is decided before the
     // content database is resolved (r-auto-148: an unconfigured test process was refused here).
@@ -812,21 +796,5 @@ mod merge_tests {
         assert_eq!(tail, ["title", "priority", "repo"], "{keys:?}");
         assert_eq!((rows[0]["title"].clone(), rows[0]["priority"].clone()), (json!("the title"), json!(1)));
         assert_eq!((rows[1]["title"].clone(), rows[1]["priority"].clone()), (Value::Null, Value::Null), "a record bd does not know stays untitled");
-    }
-}
-
-#[cfg(test)]
-mod union_tests {
-    use super::*;
-
-    #[test]
-    fn a_mirrored_edge_blocks_and_a_duplicate_is_not_doubled() {
-        let deps = vec![json!({"issue_id": "sp-b", "depends_on_id": "sp-a", "type": "blocks"})];
-        let mirrored = vec![
-            json!({"issue_id": "sp-b", "depends_on_id": "sp-a", "type": "blocks"}),
-            json!({"issue_id": "sp-b", "depends_on_id": "sp-c", "type": "blocks"}),
-        ];
-        let rows = assemble(&[json!({"id": "sp-b"})], &[], &union_edges(deps, mirrored));
-        assert_eq!(rows[0]["dependencies"].as_array().unwrap().len(), 2);
     }
 }

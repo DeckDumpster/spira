@@ -153,13 +153,13 @@ fn parent_labels(home: &str, id: &str) -> Vec<String> {
 /// set that incident is wired to block on the new bead in the same step
 /// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
 #[allow(clippy::too_many_arguments)]
-fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, stack_after: Option<&str>, mirror: Option<(&str, i64)>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
-    if incident.is_none() && stack_after.is_none() && mirror.is_none() && !express {
+fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, stack_after: Option<&str>, title: Option<&str>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
+    if incident.is_none() && stack_after.is_none() && title.is_none() && !express {
         return bdq_status(home, args);
     }
     let (code, mut stdout) = bdq_capture_with(home, args, Stdio::inherit());
     if parse_created_id(&stdout).is_none() {
-        if let Some((title, _)) = mirror {
+        if let Some(title) = title {
             let (_, listing) = bdq_capture(home, &s(&["list", "--limit", "0", "--json"]));
             if let Some(found) = find_id_by_title(&listing, title) {
                 eprintln!("bead: file: bd create printed no id; found {found} by its title and creating its lifecycle row");
@@ -172,11 +172,11 @@ fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, 
     }
     if code != 0 {
         // bd may have written the content bead before it errored; without a row the loop cannot see it.
-        if let (Some(id), Some((title, priority))) = (parse_created_id(&stdout), mirror) {
-            if submitted_tip.is_none() && create_row_retrying(&id, Some(title), priority, None, repo).is_ok() {
+        if let (Some(id), Some(_)) = (parse_created_id(&stdout), title) {
+            if submitted_tip.is_none() && create_row_retrying(&id, None, repo).is_ok() {
                 eprintln!("bead: file: bd create exited {code} after creating {id}; its lifecycle row was created");
             } else {
-                eprintln!("bead: file: bd create exited {code} after creating {id}; repair: spira-lc create-bead {id} --priority {priority} --title \"{title}\"");
+                eprintln!("bead: file: bd create exited {code} after creating {id}; repair: spira-lc create-bead {id} --ready");
             }
         }
         return code;
@@ -190,22 +190,22 @@ fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, 
             eprintln!("bead: file: created a remedy for incident {incident} but could not read its id; add the edge: bd dep add {incident} <id>");
             return 1;
         }
-        eprintln!("bead: file: created, but could not read its id to mirror its title or mark it express; `spira-lc backfill-titles` fills the title, `bead.sh amend <id> --express` marks it");
+        eprintln!("bead: file: created, but could not read its id to create its lifecycle row or mark it express; `spira-lc create-bead <id> --ready` creates the row, `bead.sh amend <id> --express` marks it");
         return 0;
     };
     let mut rc = 0;
-    if let Some((title, priority)) = mirror {
+    if title.is_some() {
         match submitted_tip {
             Some(tip) => {
-                if let Err(e) = create_row_retrying(&new_id, Some(title), priority, Some(tip), repo) {
+                if let Err(e) = create_row_retrying(&new_id, Some(tip), repo) {
                     eprintln!("bead: file: {new_id} filed but its lifecycle row was not created SUBMITTED: {e}; no id is printed. Once the lifecycle store answers: spira-lc create-bead {new_id} --submitted-tip {tip}");
                     return 1;
                 }
                 print!("{stdout}");
             }
             None => {
-                if let Err(e) = create_row_retrying(&new_id, Some(title), priority, None, repo) {
-                    eprintln!("bead: file: {new_id} filed but its lifecycle row was not created: {e}; the loop cannot see it and a retry would duplicate it. Repair: spira-lc create-bead {new_id} --priority {priority} --title \"{title}\"");
+                if let Err(e) = create_row_retrying(&new_id, None, repo) {
+                    eprintln!("bead: file: {new_id} filed but its lifecycle row was not created: {e}; the loop cannot see it and a retry would duplicate it. Repair: spira-lc create-bead {new_id} --ready");
                     return 1;
                 }
             }
@@ -233,7 +233,7 @@ fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, 
         }
         rc |= r;
     }
-    if mirror.is_some() && submitted_tip.is_none() {
+    if title.is_some() && submitted_tip.is_none() {
         if let Err(e) = spira_config::lifecycle_row::promote(&new_id) {
             eprintln!("bead: file: {new_id} filed but its row was not promoted from OPEN: {e}; the OPEN sweep promotes it, or: spira-lc promote-filed {new_id}");
         }
@@ -241,35 +241,22 @@ fn bdq_create(home: &str, args: &[String], incident: Option<(&str, &[String])>, 
     rc
 }
 
-/// bd's priority when `-p` is not given.
-const BD_DEFAULT_PRIORITY: i64 = 2;
-
 /// The lifecycle store's client: its socket in production, the declared stand-in in a fixture.
 fn lc() -> Result<spira_config::lc_call::LcClient, String> {
     spira_config::lc_call::LcClient::configured()
 }
 
-/// Write the bead's title and priority into its lifecycle row, which the ops views read
-/// instead of bd. One point write over the socket, which pays no connect (the detached child
-/// it replaces existed because a second connect overran filing's server deadline). A write
-/// that fails is repaired by `spira-lc backfill-titles`.
-fn mirror_to_lifecycle(id: &str, title: Option<&str>, priority: i64, repo: Option<&str>) {
-    if lc().and_then(|c| bead::lc::create_row(&c, id, title, priority, None, repo)).is_err() {
-        eprintln!("bead: {id} filed, but its title and priority were not mirrored to the lifecycle store; `spira-lc backfill-titles` fills them");
-    }
-}
-
 const ROW_ATTEMPTS: u32 = 3;
 
 /// Filing is two writes; a transient store error on the second must not strand the first.
-fn create_row_retrying(id: &str, title: Option<&str>, priority: i64, tip: Option<&str>, repo: Option<&str>) -> Result<(), String> {
+fn create_row_retrying(id: &str, tip: Option<&str>, repo: Option<&str>) -> Result<(), String> {
     let client = lc()?;
     let mut last = String::new();
     for attempt in 0..ROW_ATTEMPTS {
         if attempt > 0 {
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
-        match bead::lc::create_row(&client, id, title, priority, tip, repo) {
+        match bead::lc::create_row(&client, id, tip, repo) {
             Ok(()) => return Ok(()),
             Err(e) => last = e,
         }
@@ -805,7 +792,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             labels.push(',');
             labels.push_str(&cfg_label("SPIRA_SUBMITTED_LABEL"));
         }
-        let title_for_mirror = title.clone();
+        let title_for_row = title.clone();
         let mut bd_args = s(&["create"]);
         bd_args.push(title);
         bd_args.push("-l".into());
@@ -828,8 +815,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        let mirror_priority = priority.as_deref().and_then(bead::parse_priority_arg).unwrap_or(BD_DEFAULT_PRIORITY);
-        let rc = bdq_create(home, &bd_args, incident_parent, stack_after.as_deref(), Some((&title_for_mirror, mirror_priority)), express, tip.as_deref(), Some(repo.as_str()));
+        let rc = bdq_create(home, &bd_args, incident_parent, stack_after.as_deref(), Some(&title_for_row), express, tip.as_deref(), Some(repo.as_str()));
         if rc == 0 {
             spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", &for_rune), ("repo", &repo), ("kind", "work")]);
         }
@@ -1190,13 +1176,9 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
             .filter(|a| !a.is_empty())
             .or_else(|| std::env::var("USER").ok().filter(|a| !a.is_empty()))
             .unwrap_or_else(|| "unknown".to_string());
-        let has_row = bead::carries_lifecycle_row(&out);
         let upd = bdq_status(home, &s(&["update", &id, "-p", &new.to_string()]));
         rc |= upd;
         if upd == 0 {
-            if has_row {
-                mirror_to_lifecycle(&id, None, new, None);
-            }
             let text = bead::priority_note(&actor, Some(old), new, note.as_deref());
             rc |= bdq_status(home, &s(&["note", &id, &text]));
             changed.push_str(&text);
@@ -1756,7 +1738,7 @@ fn dep_type_name(t: &str) -> &str {
     }
 }
 
-/// Mirror one dependency edge into the lifecycle store, which `ops_live` reads for `claimable`
+/// Mirror one dependency edge into the lifecycle store, which the readiness verbs read for the claim.
 /// and `blocker`. bd already holds the edge, so a failed mirror is reported and repaired by
 /// `spira-lc backfill-deps --force`, never turned into a failed `dep`.
 fn mirror_dep(verb: &str, id: &str, depid: &str, dep_type: Option<&str>) {
@@ -1768,7 +1750,7 @@ fn mirror_dep(verb: &str, id: &str, depid: &str, dep_type: Option<&str>) {
         }
     };
     if !bead::lc::mirror_dep(&client, verb, id, depid, dep_type) {
-        eprintln!("bead: {verb}: {id} -> {depid} is in bd but was not mirrored to the lifecycle store; `spira-lc backfill-deps --force` repairs it");
+        eprintln!("bead: {verb}: {id} -> {depid} is in bd but was not mirrored to the lifecycle store; re-run the `dep` verb to mirror it");
     }
 }
 

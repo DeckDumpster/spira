@@ -70,13 +70,13 @@ pub fn file(lc: &LcClient, f: &Filing) -> Result<String, String> {
         }
         return Ok(id);
     }
-    let mut row = vec!["create-bead".to_string(), id.clone(), "--title".into(), f.title.into(), "--priority".into(), f.priority.to_string()];
+    let mut row = vec!["create-bead".to_string(), id.clone(), "--ready".into()];
     if let Some(r) = f.repo {
         row.extend(["--repo".into(), r.into()]);
     }
-    let r = lc.call(&row).map_err(|e| format!("{id} filed but its lifecycle row was not created: {e}; repair: spira-lc create-bead {id} --priority {}", f.priority))?;
+    let r = lc.call(&row).map_err(|e| format!("{id} filed but its lifecycle row was not created: {e}; repair: spira-lc create-bead {id} --ready"))?;
     if r.code != 0 {
-        return Err(format!("{id} filed but its lifecycle row was not created: {}; repair: spira-lc create-bead {id} --priority {}", r.why(), f.priority));
+        return Err(format!("{id} filed but its lifecycle row was not created: {}; repair: spira-lc create-bead {id} --ready", r.why()));
     }
     Ok(id)
 }
@@ -120,7 +120,7 @@ mod tests {
         let calls = script.0.lock().unwrap();
         assert_eq!(calls[0].0, ["content", "create", "T", "--type", "task", "--label", "spira,warden-sweep", "--silent", "--priority", "3", "--body-file", "-"]);
         assert_eq!(calls[0].1.as_deref(), Some("the body"), "the body is the request body");
-        assert_eq!(calls[1].0[..2], ["create-bead", "sp-new"], "then its row, as before");
+        assert_eq!(calls[1].0, ["create-bead", "sp-new", "--ready", "--repo", "spira"], "then its row, with no planning field");
     }
 
     fn labels() -> Vec<String> {

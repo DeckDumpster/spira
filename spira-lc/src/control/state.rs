@@ -455,7 +455,7 @@ fn event<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, St
         at: Some(call.now),
     };
     let req = Request::new(call.request, &actor, "lc.event");
-    answer(match &ev.kind {
+    let outcome = match &ev.kind {
         BeadEventKind::Claim { .. } => store.claim(key, &ev, &req).map(|(o, _)| o),
         BeadEventKind::Renew { .. } => match store.holder_fence(key) {
             Ok(Some(fence)) => store.renew_lease(key, &fence, &ev, &req),
@@ -463,7 +463,27 @@ fn event<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, St
             Err(e) => Err(e),
         },
         _ => store.apply(key, &ev, &req),
-    })
+    };
+    if let (BeadEventKind::BaseWithdrawn { prereq, tip }, Ok(Outcome::Applied { record, .. })) = (&ev.kind, &outcome) {
+        tell_holder_of_withdrawn_base(key, &record.row, prereq, tip);
+    }
+    answer(outcome)
+}
+
+/// A base_withdrawn that leaves the record WORKING does not itself unblock its holder: the
+/// eventual submit is refused until it rebases. Nothing else surfaces that mid-session, so the
+/// holder is told once. Best-effort: a note that fails to post does not undo an applied move.
+fn tell_holder_of_withdrawn_base(key: &str, row: &lifecycle::bead::BeadRow, prereq: &str, tip: &str) {
+    if row.state != BeadState::Working {
+        return;
+    }
+    let holder = row.holder.as_deref().unwrap_or("its holder");
+    let _ = crate::bd::note(
+        key,
+        &format!(
+            "Base withdrawn: {prereq}'s certified tip {tip} — the one this claim's stack was built on — no longer stands. {holder} is still WORKING, but its eventual submit is refused until it rebases onto the current stack."
+        ),
+    );
 }
 
 /// A renewal with no live claim lock: the machine's refusal when it has one, as the dolt path
@@ -488,11 +508,11 @@ fn unfenced_renew<B: Backend>(
     }
 }
 
-/// `create-bead <id> [--title T] [--priority 0..4] [--repo R] [--submitted-tip SHA] [--ready]`.
+/// `create-bead <id> [--repo R] [--submitted-tip SHA] [--ready]`.
 /// The record is born OPEN, unclaimable until `promote-filed` says filing has finished; `--ready` is
 /// for a creator whose bead was filed whole before, and a submitted tip is born SUBMITTED. A
-/// record that already exists is left as it is, as the dolt path's insert-or-ignore leaves it;
-/// title and priority are planning-plane fields, checked and not kept.
+/// record that already exists is left as it is. Title and priority are planning-plane fields:
+/// `--title` and `--priority` are refused.
 fn create<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
     let Some(id) = args.first() else {
         return (CANNOT_TELL, "create-bead: missing <bead-id>".into());
@@ -500,13 +520,11 @@ fn create<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, S
     if !crate::cutover::is_row_key(id) {
         return (CANNOT_TELL, format!("create-bead: {id:?} is not a bead id"));
     }
-    if let Some(p) = flag(args, "--priority") {
-        if !p.parse::<i64>().is_ok_and(|n| (0..=4).contains(&n)) {
-            return (
-                CANNOT_TELL,
-                format!("create-bead: --priority takes 0..4, got {p:?}"),
-            );
-        }
+    if let Some(planning) = ["--title", "--priority"].into_iter().find(|f| args.iter().any(|a| a == f)) {
+        return (
+            REFUSED,
+            format!("create-bead: {planning} is a planning-plane field; the lifecycle record keeps none"),
+        );
     }
     let req = Request::new(call.request, "bead.sh", "lc.create-bead");
     let (repo, tip) = (flag(args, "--repo"), flag(args, "--submitted-tip"));

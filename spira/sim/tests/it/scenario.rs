@@ -17,7 +17,7 @@ fn a_file_step_creates_the_bead_in_both_stores_under_the_given_id() {
     let cmd = shell("file = \"sp-hp01\"").unwrap();
     assert!(cmd.contains("create 'sim sp-hp01' --id sp-hp01"), "{cmd}");
     assert!(cmd.contains("-l repo:sim") && cmd.contains("$SIM_BEADS_DB"), "{cmd}");
-    assert!(cmd.ends_with("&& spira-lc create-bead sp-hp01"), "{cmd}");
+    assert!(cmd.ends_with("&& spira-lc create-bead sp-hp01 --ready"), "{cmd}");
 }
 
 #[test]
@@ -156,7 +156,7 @@ fn a_scenario_declares_repositories_and_routes_its_beads_to_them() {
     let text = |extra: &str| format!("epoch = 1\nhorizon = 2\nrepos = [\"docs:push:master\"]\n{extra}");
     let ok = parse_scenario(&text("[[step]]\nat = 0\nfile = \"sp-a\"\nrepo = \"docs\"\n")).unwrap();
     assert_eq!(scenario_repos(&ok, &[]).unwrap().len(), 2);
-    assert!(ok.steps[0].shell().unwrap().contains("-l repo:docs ") && ok.steps[0].shell().unwrap().ends_with("create-bead sp-a --repo docs"));
+    assert!(ok.steps[0].shell().unwrap().contains("-l repo:docs ") && ok.steps[0].shell().unwrap().ends_with("create-bead sp-a --repo docs --ready"));
     assert!(!shell("file = \"sp-a\"").unwrap().contains("--repo"), "the world's own repository is the default");
     let claim = parse_scenario(&text("[[step]]\nat = 0\nclaim = \"sp-a\"\nrepo = \"docs\"\nscript = [\"submit\"]\n")).unwrap();
     assert!(claim.steps[0].shell().unwrap().contains("'sp-a repo docs' 'sp-a submit'"));

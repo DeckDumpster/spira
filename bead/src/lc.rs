@@ -1,13 +1,14 @@
 //! The lifecycle store's writes `bead` makes, through [`LcClient`] in-process: the row a filed
-//! bead gets, the dependency edges it mirrors, and the repo a `repo:` label names. Each was a
+//! bead gets, the dependency edges it mirrors, and the repo a `repo:` label names. The row
+//! keeps no title or priority: those are the planning plane's. Each was a
 //! `timeout spira-lc …` child; the store's socket answers them now.
 
 use spira_config::lc_call::{LcClient, LcError};
 
-/// `create-bead <id> --priority N [--title T] [--submitted-tip S] [--repo R]`.
-pub fn create_bead_argv(id: &str, title: Option<&str>, priority: i64, tip: Option<&str>, repo: Option<&str>) -> Vec<String> {
-    let mut argv = vec!["create-bead".to_string(), id.to_string(), "--priority".into(), priority.to_string()];
-    for (flag, v) in [("--title", title), ("--submitted-tip", tip), ("--repo", repo)] {
+/// `create-bead <id> [--submitted-tip S] [--repo R]`.
+pub fn create_bead_argv(id: &str, tip: Option<&str>, repo: Option<&str>) -> Vec<String> {
+    let mut argv = vec!["create-bead".to_string(), id.to_string()];
+    for (flag, v) in [("--submitted-tip", tip), ("--repo", repo)] {
         if let Some(v) = v {
             argv.extend([flag.to_string(), v.to_string()]);
         }
@@ -16,8 +17,8 @@ pub fn create_bead_argv(id: &str, title: Option<&str>, priority: i64, tip: Optio
 }
 
 /// The bead's lifecycle row; `Err` names why it was not written.
-pub fn create_row(lc: &LcClient, id: &str, title: Option<&str>, priority: i64, tip: Option<&str>, repo: Option<&str>) -> Result<(), String> {
-    match lc.call(&create_bead_argv(id, title, priority, tip, repo)) {
+pub fn create_row(lc: &LcClient, id: &str, tip: Option<&str>, repo: Option<&str>) -> Result<(), String> {
+    match lc.call(&create_bead_argv(id, tip, repo)) {
         Ok(r) if r.code == 0 => Ok(()),
         Ok(r) => Err(format!("spira-lc create-bead exited {}: {}", r.code, r.text())),
         Err(e) => Err(e.to_string()),
@@ -97,12 +98,12 @@ mod tests {
     #[test]
     fn create_row_sends_the_cli_argv_over_the_socket_and_reports_a_refusal() {
         let (lc, t) = client(0, "");
-        assert_eq!(create_row(&lc, "sp-1", Some("T"), 2, Some("abc"), Some("spira")), Ok(()));
-        assert_eq!(t.seen.lock().unwrap()[0], ["create-bead", "sp-1", "--priority", "2", "--title", "T", "--submitted-tip", "abc", "--repo", "spira"]);
+        assert_eq!(create_row(&lc, "sp-1", Some("abc"), Some("spira")), Ok(()));
+        assert_eq!(t.seen.lock().unwrap()[0], ["create-bead", "sp-1", "--submitted-tip", "abc", "--repo", "spira"]);
         let (lc, _) = client(3, "refused: exists");
-        assert!(create_row(&lc, "sp-1", None, 2, None, None).unwrap_err().contains("refused: exists"));
+        assert!(create_row(&lc, "sp-1", None, None).unwrap_err().contains("refused: exists"));
         let (lc, _) = client(-1, "");
-        assert!(create_row(&lc, "sp-1", None, 2, None, None).is_err());
+        assert!(create_row(&lc, "sp-1", None, None).is_err());
     }
 
     #[test]

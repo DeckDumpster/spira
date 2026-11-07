@@ -263,6 +263,13 @@ mod retired_keys {
     }
 
     #[test]
+    fn a_config_written_while_lc_serve_held_live_rows_still_validates() {
+        let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nlc_live_check_secs = 60\n")
+            .expect("a retired key must validate, not error");
+        assert!(warnings.iter().any(|w| w.contains("lc_live_check_secs is retired (sp-kti9ip)")), "got {warnings:?}");
+    }
+
+    #[test]
     fn a_misspelt_key_warns_and_is_ignored() {
         let (_, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_batch_idle_cutt = 1\n").unwrap();
         assert!(w.iter().any(|m| m.starts_with("spira.queue_batch_idle_cutt")), "{w:?}");

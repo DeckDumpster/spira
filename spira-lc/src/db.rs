@@ -58,7 +58,6 @@ pub fn set_request_deadline(at: Option<Instant>) {
 /// One caller's write, queued for the session; the thread that runs its group fills `result`.
 struct Pending {
     script: String,
-    touch: Option<crate::live::Touch>,
     deadline: Option<Instant>,
     result: Mutex<Option<Result<Sets, ScriptFailure>>>,
 }
@@ -102,8 +101,6 @@ pub struct Conn {
     /// The socket read/write limit for this connection: the query deadline, or
     /// [`ADMIN_IO_TIMEOUT`] for the admin batch verbs.
     pub io_timeout: std::time::Duration,
-    /// The live bead rows, present only in the serving process (see `live.rs`).
-    pub live: Option<crate::live::Live>,
 }
 
 /// A query's server-side deadline: a statement that has not answered in this long is
@@ -132,6 +129,11 @@ fn refused_for_good(e: &ScriptFailure) -> bool {
     matches!(e, ScriptFailure::CannotTell(m) if m.starts_with("Error 1049 ") || m.starts_with("Error 1045 "))
 }
 
+/// Error 1049: the database named at connect does not exist on the server.
+fn unknown_database(e: &ScriptFailure) -> bool {
+    matches!(e, ScriptFailure::CannotTell(m) if m.contains("1049") || m.contains("database not found"))
+}
+
 fn refused_login(e: &ScriptFailure) -> bool {
     matches!(e, ScriptFailure::CannotTell(m) if m.starts_with("Error 1045 "))
 }
@@ -149,7 +151,7 @@ fn connect_backoff(attempt: u32) -> std::time::Duration {
 /// The socket limit a verb's connection uses.
 pub fn io_timeout_for(verb: &str) -> std::time::Duration {
     match verb {
-        "admin-apply-ddl" | "admin-migrate" | "admin-import" => ADMIN_IO_TIMEOUT,
+        "admin-apply-ddl" | "admin-migrate" => ADMIN_IO_TIMEOUT,
         "facts-query" => FACTS_QUERY_IO_TIMEOUT,
         _ => QUERY_DEADLINE,
     }
@@ -184,7 +186,7 @@ impl Conn {
         let password = password_from(password_file.clone(), std::env::var("SPIRA_LC_PASSWORD").ok(), |p| std::fs::read_to_string(p))
             .map_err(DbError::CannotTell)?;
         let database = std::env::var("SPIRA_LC_DB").unwrap_or_else(|_| "spira_lifecycle".to_string());
-        Ok(Conn { host, port, user, password: Mutex::new(password), password_file: password_file.filter(|p| !p.is_empty()), database, session: Mutex::new(None), read_sessions: std::array::from_fn(|_| Mutex::new(None)), read_turn: std::sync::atomic::AtomicUsize::new(0), writes: WriteQueue::default(), io_timeout: QUERY_DEADLINE, live: None })
+        Ok(Conn { host, port, user, password: Mutex::new(password), password_file: password_file.filter(|p| !p.is_empty()), database, session: Mutex::new(None), read_sessions: std::array::from_fn(|_| Mutex::new(None)), read_turn: std::sync::atomic::AtomicUsize::new(0), writes: WriteQueue::default(), io_timeout: QUERY_DEADLINE })
     }
 
     /// A second connection to the same server and database under other credentials — the
@@ -202,7 +204,6 @@ impl Conn {
             read_sessions: std::array::from_fn(|_| Mutex::new(None)), read_turn: std::sync::atomic::AtomicUsize::new(0),
             writes: WriteQueue::default(),
             io_timeout: self.io_timeout,
-            live: None,
         }
     }
 
@@ -220,67 +221,13 @@ impl Conn {
             read_sessions: std::array::from_fn(|_| Mutex::new(None)), read_turn: std::sync::atomic::AtomicUsize::new(0),
             writes: WriteQueue::default(),
             io_timeout: std::time::Duration::from_millis(200),
-            live: None,
         }
-    }
-
-    /// Turns on the in-memory live rows; call once, before the connection is shared.
-    pub fn enable_live(&mut self) {
-        self.live = Some(crate::live::Live::default());
     }
 
     /// Turns on group commit's window (group.rs); call once, before the connection is shared.
     /// Without it writes still queue, but a lone write never waits for company.
     pub fn enable_group_commit(&mut self) {
         self.writes.window = Some(crate::group::WINDOW);
-    }
-
-    /// The live rows, once loaded; `None` makes every caller read Dolt as before.
-    pub fn live(&self) -> Option<&crate::live::Live> {
-        self.live.as_ref().filter(|l| l.is_loaded())
-    }
-
-    /// (Re)loads the live rows from Dolt through the write session, so no write commits between
-    /// the read and the swap.
-    pub fn live_load(&self) -> Result<usize, String> {
-        let live = self.live.as_ref().ok_or("the live rows are not enabled")?;
-        self.with_write_wire(|wire| live.load(now_epoch(), |sql| wire.exec(sql).map_err(|_| ())))
-    }
-
-    /// Reads every older terminal row on a plain read session, so a slow read holds no write:
-    /// the writes that commit meanwhile are tracked by [`crate::live::Live`] and win over it.
-    pub fn live_load_cold(&self) -> Result<usize, String> {
-        let live = self.live.as_ref().ok_or("the live rows are not enabled")?;
-        live.cold_begin();
-        let fetched = match self.run_script_on(self.read_slot(), &crate::live::cold_sql()) {
-            Ok(sets) => Ok(sets),
-            Err(ScriptFailure::LostRace) => Err("serialization conflict on a plain read".to_string()),
-            Err(ScriptFailure::CannotTell(e)) => Err(e),
-        };
-        live.cold_finish(fetched)
-    }
-
-    /// Compares memory with Dolt through the write session (quiescent against writes) and
-    /// reloads on a mismatch; the caller raises the incident.
-    pub fn live_check(&self) -> Result<crate::live::Check, String> {
-        let live = self.live.as_ref().ok_or("the live rows are not enabled")?;
-        self.with_write_wire(|wire| live.check(now_epoch(), |sql| wire.exec(sql).map_err(|_| ())))
-    }
-
-    fn with_write_wire<T>(&self, f: impl FnOnce(&mut Wire) -> Result<T, String>) -> Result<T, String> {
-        let mut guard = self.session.lock().unwrap_or_else(|e| e.into_inner());
-        #[allow(clippy::manual_filter)]
-        let reusable = guard.take().and_then(|mut w| if w.idle_too_long() && !w.ping() { None } else { Some(w) });
-        let mut wire = match reusable.map(Ok).unwrap_or_else(|| self.connect(Some(&self.database))) {
-            Ok(w) => w,
-            Err(ScriptFailure::CannotTell(e)) => return Err(e),
-            Err(ScriptFailure::LostRace) => return Err("serialization conflict on connect".into()),
-        };
-        let out = f(&mut wire);
-        if out.is_ok() {
-            *guard = Some(wire);
-        }
-        out
     }
 
     fn connect(&self, database: Option<&str>) -> Result<Wire, ScriptFailure> {
@@ -303,7 +250,12 @@ impl Conn {
     /// if it now holds a different password, the login is retried with it and it is kept.
     fn connect_once(&self, database: Option<&str>) -> Result<Wire, ScriptFailure> {
         let current = self.password.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let first = Wire::connect_with(&self.host, self.port, &self.user, &current, database, self.io_timeout);
+        let mut first = Wire::connect_with(&self.host, self.port, &self.user, &current, database, self.io_timeout);
+        // The connection serves planning reads, which name their database in the query: a server
+        // with no lifecycle database is opened without a default one rather than refused.
+        if database.is_some() && first.as_ref().is_err_and(unknown_database) {
+            first = Wire::connect_with(&self.host, self.port, &self.user, &current, None, self.io_timeout);
+        }
         match (&first, self.password_file.as_deref()) {
             (Err(e), Some(file)) if refused_login(e) => {
                 let Some(fresh) = reloaded_password(file, &current, |p| std::fs::read_to_string(p)) else { return first };
@@ -334,16 +286,10 @@ impl Conn {
         }
     }
 
-    /// Run a write script that touches no live row, returning each result set's rows in
-    /// script order (statements that return no rows contribute none). See [`Self::write`].
+    /// Run a write script, returning each result set's rows in script order (statements that
+    /// return no rows contribute none). See [`Self::write`].
     fn run_script(&self, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure> {
-        self.write(script, None)
-    }
-
-    /// A write: once it commits, the live rows it touched are re-read from Dolt on the same
-    /// session, still holding it, so refreshes land in commit order.
-    fn run_write(&self, script: &str, touch: crate::live::Touch) -> Result<Vec<Vec<Value>>, ScriptFailure> {
-        self.write(script, Some(touch))
+        self.write(script)
     }
 
     /// Every write goes through here (group commit, group.rs): queue it, then take the write
@@ -352,9 +298,9 @@ impl Conn {
     /// may find its write already done by the holder before it. Writes that arrive while a
     /// commit is in flight form the next group; when serving, a write that finds nothing else
     /// waiting holds the session open for the group window first.
-    fn write(&self, script: &str, touch: Option<crate::live::Touch>) -> Result<Sets, ScriptFailure> {
+    fn write(&self, script: &str) -> Result<Sets, ScriptFailure> {
         let deadline = REQUEST_DEADLINE.with(|d| d.get());
-        let me = Arc::new(Pending { script: script.to_string(), touch, deadline, result: Mutex::new(None) });
+        let me = Arc::new(Pending { script: script.to_string(), deadline, result: Mutex::new(None) });
         self.writes.waiting.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::clone(&me));
         let mut guard = self.session.lock().unwrap_or_else(|e| e.into_inner());
         loop {
@@ -412,7 +358,6 @@ impl Conn {
             }
         };
         crate::slow::record(session_started.elapsed(), "CONNECT");
-        let touch = union_touch(&members);
         let started = Instant::now();
         let outcome = crate::group::run(&bodies, |sql| wire.exec(sql));
         crate::slow::record(started.elapsed(), &format!("GROUP COMMIT of {}", members.len()));
@@ -420,13 +365,7 @@ impl Conn {
             crate::group::Group::Committed(outs) => {
                 COMMITS.fetch_add(1, Ordering::Relaxed);
                 GROUPS.fetch_add(1, Ordering::Relaxed);
-                let keep = match (&touch, &self.live) {
-                    (Some(t), Some(live)) => live.after_commit(t, |sql| wire.exec(sql)),
-                    _ => true,
-                };
-                if keep {
-                    **guard = Some(wire);
-                }
+                **guard = Some(wire);
                 for (m, out) in members.iter().zip(outs) {
                     m.answer(Ok(out));
                 }
@@ -440,9 +379,6 @@ impl Conn {
                 }
             }
             crate::group::Group::Unknown(why) => {
-                if let (Some(t), Some(live)) = (&touch, &self.live) {
-                    live.write_failed(t);
-                }
                 for m in &members {
                     m.answer(Err(ScriptFailure::CannotTell(why.clone())));
                 }
@@ -453,16 +389,16 @@ impl Conn {
     /// One write on its own, exactly as every write ran before group commit.
     fn run_alone(&self, guard: &mut MutexGuard<'_, Option<Wire>>, m: &Pending) -> Result<Sets, ScriptFailure> {
         COMMITS.fetch_add(1, Ordering::Relaxed);
-        self.run_locked(guard, &m.script, m.touch.as_ref())
+        self.run_locked(guard, &m.script)
     }
 
     fn run_script_on(&self, session: &Mutex<Option<Wire>>, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure> {
         let mut guard = session.lock().unwrap_or_else(|e| e.into_inner());
-        self.run_locked(&mut guard, script, None)
+        self.run_locked(&mut guard, script)
     }
 
     /// Times only the statements: the wait for the session lock is queueing, not a slow query.
-    fn run_locked(&self, guard: &mut MutexGuard<'_, Option<Wire>>, script: &str, touch: Option<&crate::live::Touch>) -> Result<Vec<Vec<Value>>, ScriptFailure> {
+    fn run_locked(&self, guard: &mut MutexGuard<'_, Option<Wire>>, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure> {
         let session_started = std::time::Instant::now();
         #[allow(clippy::manual_filter)]
         let reusable = guard.take().and_then(|mut w| if w.idle_too_long() && !w.ping() { None } else { Some(w) });
@@ -471,17 +407,8 @@ impl Conn {
         match wire {
             Ok(mut wire) => {
                 let started = std::time::Instant::now();
-                let (out, keep) = match (touch, &self.live) {
-                    (Some(touch), Some(live)) => match live.write_through(touch, script, |sql| wire.exec(sql)) {
-                        Ok((sets, refreshed)) => (Ok(sets), refreshed),
-                        Err(e) => (Err(e), false),
-                    },
-                    _ => {
-                        let out = wire.exec(script);
-                        let keep = out.is_ok();
-                        (out, keep)
-                    }
-                };
+                let out = wire.exec(script);
+                let keep = out.is_ok();
                 crate::slow::record(started.elapsed(), script);
                 if keep {
                     **guard = Some(wire);
@@ -578,7 +505,7 @@ impl Conn {
             at = ev.at,
         );
 
-        match self.run_write(&script, touch_of(table, &[key])) {
+        match self.run_script(&script) {
             Ok(sets) => {
                 let rows = sets.last().cloned().unwrap_or_default();
                 let applied = rows.first().and_then(|r| r.get("applied")).and_then(|v| v.as_str()).map(|s| s != "0").unwrap_or(false);
@@ -635,7 +562,7 @@ impl Conn {
             at = ev.at,
         );
 
-        match self.run_write(&script, touch_of(table, &[ev.key.as_str()])) {
+        match self.run_script(&script) {
             Ok(sets) => {
                 let rows = sets.last().cloned().unwrap_or_default();
                 let applied = rows.first().and_then(|r| r.get("applied")).and_then(|v| v.as_str()).map(|s| s != "0").unwrap_or(false);
@@ -681,12 +608,7 @@ impl Conn {
     /// competes with another writer on the same key by construction (row creation, keyed by
     /// an id nothing else mints).
     pub fn run_plain(&self, script: &str) -> Result<(), DbError> {
-        self.run_plain_touching(script, crate::live::Touch::All)
-    }
-
-    /// [`Self::run_plain`] for a script whose only effect on the live rows is on `keys`.
-    pub fn run_plain_touching(&self, script: &str, touch: crate::live::Touch) -> Result<(), DbError> {
-        match self.run_write(script, touch) {
+        match self.run_script(script) {
             Ok(_) => Ok(()),
             Err(ScriptFailure::LostRace) => Err(DbError::CannotTell("a plain insert unexpectedly lost a race".into())),
             Err(ScriptFailure::CannotTell(e)) => Err(DbError::CannotTell(e)),
@@ -736,13 +658,7 @@ impl Conn {
         }
         script.push_str("COMMIT;\n");
 
-        let touch = if preamble.is_empty() {
-            let keys: Vec<&str> = steps.iter().filter(|st| is_live_table(st.table)).map(|st| st.key.as_str()).collect();
-            touch_of("bead", &keys)
-        } else {
-            crate::live::Touch::All
-        };
-        match self.run_write(&script, touch) {
+        match self.run_script(&script) {
             Ok(blocks) => {
                 Ok(steps
                     .iter()
@@ -913,32 +829,6 @@ impl EventRecord {
     }
 }
 
-/// The live rows a group's writes changed together: `None` when no member touches any.
-fn union_touch(members: &[Arc<Pending>]) -> Option<crate::live::Touch> {
-    let mut keys = Vec::new();
-    let mut any = false;
-    for t in members.iter().filter_map(|m| m.touch.as_ref()) {
-        any = true;
-        match t {
-            crate::live::Touch::All => return Some(crate::live::Touch::All),
-            crate::live::Touch::Keys(k) => keys.extend(k.iter().cloned()),
-        }
-    }
-    keys.sort();
-    keys.dedup();
-    any.then_some(crate::live::Touch::Keys(keys))
-}
-
-fn is_live_table(table: &str) -> bool {
-    matches!(table, "bead" | "delivery")
-}
-
-/// The live rows a write to `table` keyed `keys` changes: bead and delivery rows share the
-/// bead id as their key; any other table holds none of them.
-fn touch_of(table: &str, keys: &[&str]) -> crate::live::Touch {
-    crate::live::Touch::Keys(if is_live_table(table) { keys.iter().map(|k| k.to_string()).collect() } else { Vec::new() })
-}
-
 fn batch_script(insert_sqls: &[String]) -> Option<String> {
     if insert_sqls.is_empty() {
         return None;
@@ -1060,24 +950,6 @@ mod io_timeout_tests {
 }
 
 #[cfg(test)]
-mod group_commit_tests {
-    use super::*;
-    use crate::live::Touch;
-
-    fn pending(touch: Option<Touch>) -> Arc<Pending> {
-        Arc::new(Pending { script: String::new(), touch, deadline: None, result: Mutex::new(None) })
-    }
-
-    #[test]
-    fn a_group_refreshes_the_union_of_its_members_rows() {
-        let keys = |k: &[&str]| Some(Touch::Keys(k.iter().map(|s| s.to_string()).collect()));
-        assert_eq!(union_touch(&[pending(None), pending(None)]), None, "no member touches a live row");
-        assert_eq!(union_touch(&[pending(keys(&["b", "a"])), pending(None), pending(keys(&["a", "c"]))]), keys(&["a", "b", "c"]));
-        assert_eq!(union_touch(&[pending(keys(&["a"])), pending(Some(Touch::All))]), Some(Touch::All));
-    }
-}
-
-#[cfg(test)]
 mod batch_tests {
     use super::batch_script;
 
@@ -1092,5 +964,19 @@ mod batch_tests {
     #[test]
     fn an_empty_batch_writes_nothing() {
         assert_eq!(batch_script(&[]), None);
+    }
+}
+
+#[cfg(test)]
+mod unknown_database_tests {
+    use super::*;
+
+    #[test]
+    fn only_a_missing_database_is_retried_without_one() {
+        let missing = ScriptFailure::CannotTell("Error 1049 (HY000): database not found: spira_lifecycle".into());
+        let denied = ScriptFailure::CannotTell("Error 1045 (28000): Access denied for user".into());
+        assert!(unknown_database(&missing));
+        assert!(!unknown_database(&denied), "the control: a refused login is not a missing database");
+        assert!(!unknown_database(&ScriptFailure::LostRace));
     }
 }

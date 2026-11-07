@@ -1,7 +1,7 @@
 //! Which plane a semantic verb reads a bead's lifecycle row from and writes its events to.
 //!
 //! The primitive verbs (`show`, `list`, `event`) reach the control store through
-//! `control::served::dispatch` once `SPIRA_LC_LIFECYCLE_ON_STORE` is on. The semantic verbs —
+//! `control::served::dispatch`. The semantic verbs —
 //! `work <id> submit|done|blocked|…`, the ask close's hold lift, the classifier and the mend
 //! retirement — are handed the dolt connection instead, and read the row with
 //! `rows::fetch_bead` and wrote with `run_bead_event` against it: with lifecycle on the store,
@@ -87,7 +87,7 @@ impl<B: Backend> Plane<'_, B> {
 
 /// The plane the configuration declares: the control store while lifecycle is on it.
 fn configured() -> Option<Result<Arc<Store<crate::control::served::Served>>, String>> {
-    crate::control::served::lifecycle_store()
+    crate::control::served::configured()
 }
 
 /// Run `f` on the declared plane; a declared store that cannot be opened is cannot tell.

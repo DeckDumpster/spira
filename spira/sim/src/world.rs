@@ -430,8 +430,7 @@ impl Steps for ProcessSteps {
         spira_config::set_paths_in_file(file, &pairs)
     }
 
-    fn lifecycle(&self, release: &Path, fixture: &str, lifecycle: &Path, config: &Path) -> Result<(), String> {
-        let port = std::fs::read_to_string(Path::new(fixture).join("server.port")).map_err(|e| format!("fixture has no server.port: {e}"))?;
+    fn lifecycle(&self, release: &Path, _fixture: &str, _lifecycle: &Path, config: &Path) -> Result<(), String> {
         let toml = config.join("lc.toml");
         let credential = config.join("lc-credential");
         std::fs::write(&credential, "").map_err(|e| e.to_string())?;
@@ -444,13 +443,8 @@ impl Steps for ProcessSteps {
         }
         self.config_set(release, &toml, "spira.lc_password_file", &credential.display().to_string())?;
         self.config_set(release, &toml, "spira.lc_socket", "")?;
-        let lc = |verb: &str, arg: PathBuf| run(lc_command(release, config, &port).arg(verb).arg(arg), CALL_DEADLINE).map(|_| ());
-        let t = Instant::now();
-        lc("admin-apply-ddl", lifecycle.join("schema.sql"))?;
-        mark(world, "up.lifecycle-schema.apply-ddl", t);
-        let t = Instant::now();
-        lc("admin-migrate", lifecycle.join("migrations"))?;
-        mark(world, "up.lifecycle-schema.migrate", t);
+        self.config_set(release, &toml, "spira.lc_store_path", &control_store(world).display().to_string())?;
+        self.config_set(release, &toml, "spira.lc_lifecycle_on_store", "1")?;
         Ok(())
     }
 
@@ -1055,17 +1049,17 @@ pub fn home_settings(world: &Path, fixture: &str, bd: &Path) -> Vec<(String, Str
 
 /// The world's own lifecycle locators (sp-hq1v76), written over the complete base so none of
 /// them is the base's value: its socket, the empty credential world up
-/// wrote, its run dir and its control store. The bead-state verbs stay on the world's Dolt
-/// fixture: `lc_lifecycle_on_store` is the cutover switch, and it is off. `SPIRA_LC_HOST`/`PORT`/`USER` in `sim.env` name the world's own
-/// Dolt fixture for a reader that declares direct mode (`spira.lc_socket = ""`); a declared
-/// socket never falls back to it (sp-yvyvzd).
+/// wrote, its run dir and its control store, which holds the lifecycle. `SPIRA_LC_HOST`/`PORT`/
+/// `USER` in `sim.env` name the world's own Dolt fixture, which serves planning reads, for a
+/// reader that declares direct mode (`spira.lc_socket = ""`); a declared socket never falls back
+/// to it (sp-yvyvzd).
 pub fn lc_settings(world: &Path) -> Vec<(String, String)> {
     vec![
         ("spira.lc_socket".to_string(), lc_socket(world).display().to_string()),
         ("spira.lc_password_file".to_string(), world.join("config/lc-credential").display().to_string()),
         ("spira.run".to_string(), world.join("run").display().to_string()),
         ("spira.lc_store_path".to_string(), control_store(world).display().to_string()),
-        ("spira.lc_lifecycle_on_store".to_string(), "0".to_string()),
+        ("spira.lc_lifecycle_on_store".to_string(), "1".to_string()),
     ]
 }
 

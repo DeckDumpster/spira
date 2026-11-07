@@ -247,10 +247,6 @@ check_self_test() {
 # --- lifecycle: pending schema migrations, applied before the flip; failure refuses it ---
 check_lifecycle() {
     local lc="$REL/bin/spira-lc" mig="$REL/lifecycle/migrations"
-    lc_backfill() {
-        out="$("$lc" backfill-deps 2>&1)" || printf 'pre-activate: warn: %s\n' "$out"
-        out="$("$lc" backfill-titles 2>&1)" || printf 'pre-activate: warn: %s\n' "$out"
-    }
     if [ "$FAIL" -ne 0 ]; then
         printf 'pre-activate: skip lifecycle (another check failed; migrations not applied)\n'
         return
@@ -273,7 +269,6 @@ check_lifecycle() {
         done
         if [ "${#pending[@]}" -eq 0 ]; then
             ok "lifecycle (every migration carried unchanged from the live release ${live##*/}, applied when it went live)"
-            lc_backfill
             return
         fi
     else
@@ -286,7 +281,6 @@ check_lifecycle() {
     rc=$?
     if [ "$rc" -eq 0 ]; then
         ok "lifecycle ($(printf '%s' "$out" | tail -1))"
-        lc_backfill
     else
         fail lifecycle "$out"
     fi
