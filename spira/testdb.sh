@@ -40,7 +40,8 @@
 # REQUIRES bd-embedded FOR EMBEDDED MODE. The standard binary is built CGO_ENABLED=0 and
 # refuses embedded mode. Install: npm install -g @beads/bd (or the project's install.sh).
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/conf.sh"
+_TESTDB_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$_TESTDB_HERE/conf.sh"
 
 TESTDB_BD="${TESTDB_BD:-${SPIRA_TESTDB_BD:-bd-embedded}}"
 # bd binary for server mode: the standard binary (not bd-embedded) talks to dolt sql-server.
@@ -59,14 +60,17 @@ TESTDB_MODE="${TESTDB_MODE:-}"
 # private server, data and workspace). Reset and drop hand it back to testenv.
 TESTDB_FIXTURE="${TESTDB_FIXTURE:-}"
 
-# _testdb_testenv — the testenv that owns server-mode fixtures. TESTDB_TESTENV overrides (a
-# suite's stub); then the release's own bin/, which no caller PATH can hide; PATH last.
+# _testdb_testenv — the testenv that owns server-mode fixtures, never found through the
+# caller's PATH. TESTDB_TESTENV overrides (a suite's stub); then the release's bin/, then
+# the one beside this script's release (a worktree has no SPIRA_RELEASE), then this directory.
 _testdb_testenv() {
+    local _c
     if [ -n "${TESTDB_TESTENV:-}" ]; then printf '%s\n' "$TESTDB_TESTENV"; return 0; fi
-    if [ -n "${SPIRA_RELEASE:-}" ] && [ -x "$SPIRA_RELEASE/bin/testenv" ]; then
-        printf '%s\n' "$SPIRA_RELEASE/bin/testenv"; return 0
-    fi
-    command -v testenv
+    for _c in "${SPIRA_RELEASE:+$SPIRA_RELEASE/bin/testenv}" \
+              "$_TESTDB_HERE/../bin/testenv" "$_TESTDB_HERE/testenv"; do
+        [ -n "$_c" ] && [ -f "$_c" ] && [ -x "$_c" ] && { printf '%s\n' "$_c"; return 0; }
+    done
+    return 1
 }
 
 # _testdb_kv <KEY> <text> — the value of KEY=value in testenv's report.
