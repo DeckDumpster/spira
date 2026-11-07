@@ -81,13 +81,13 @@ fn oct31() -> &'static [Pass] {
     })
 }
 
-struct Stack {
-    from: u64,
-    until: u64,
+pub(super) struct Stack {
+    pub(super) from: u64,
+    pub(super) until: u64,
 }
 
 /// From the stacked repo's first refused round until the parent it is stacked on ends.
-fn stack() -> Stack {
+pub(super) fn stack() -> Stack {
     let rounds = rounds(Slice::Oct31);
     let (start, _) = Slice::Oct31.window();
     let first = rounds

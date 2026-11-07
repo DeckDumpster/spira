@@ -27,6 +27,7 @@ slice_sized!(
     the_stacked_repos_round_controller_section_binds_from_its_first_refused_round,
     the_inverted_map_fails_the_stacked_repo_ranking_check,
     the_held_out_lanes_rank_above_every_healthy_section,
+    the_lifecycle_sections_one_hour_rate_falls_below_its_day_rate_while_the_stacked_pointer_stands,
 );
 
 #[test]
@@ -36,5 +37,5 @@ fn every_slice_check_is_named_for_its_test() {
     for n in &names {
         assert!(src.contains(&format!("    {n},\n")), "{n} has no ignored test here");
     }
-    assert_eq!(names.len(), 9);
+    assert_eq!(names.len(), 10);
 }
