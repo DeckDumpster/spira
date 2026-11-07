@@ -51,6 +51,7 @@ export PATH="$stub:$rel/bin:$PATH"
 # world stop journals a scheduler halt on the runtime's control socket; this world runs no
 # scheduler, so a stand-in answers there until the walk is done.
 ctl="$HOME/spira/run/runtime-control.sock"
+echo "dbg: ctl=$ctl HOME=$HOME ls=$(ls -la "$(dirname "$ctl")" 2>&1 | head -5 | tr "\n" "|")" >&2
 if [ "$phase" != done ] && [ ! -S "$ctl" ]; then
     mkdir -p "$(dirname "$ctl")" || exit 9
     nohup python3 -I "$here/rc-cutover-control.py" "$ctl" "$phase_file" 200 >"$SIM_WORLD/cutover-control.err" 2>&1 </dev/null &
