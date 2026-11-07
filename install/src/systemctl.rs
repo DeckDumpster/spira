@@ -11,6 +11,14 @@ pub trait Systemctl {
     fn is_enabled(&self, unit: &str) -> Option<String>;
     fn enable(&self, unit: &str) -> Result<(), String>;
     fn enable_now(&self, unit: &str) -> Result<(), String>;
+    /// [`Self::is_enabled`] for each of `units`, in order.
+    fn is_enabled_many(&self, units: &[String]) -> Vec<Option<String>> {
+        units.iter().map(|u| self.is_enabled(u)).collect()
+    }
+    /// [`Self::is_active`] for each of `units`, in order.
+    fn is_active_many(&self, units: &[String]) -> Vec<bool> {
+        units.iter().map(|u| self.is_active(u)).collect()
+    }
     fn disable_now(&self, unit: &str) -> Result<(), String>;
     /// `systemctl disable` — unlike [`Self::disable_now`], leaves a running unit running
     /// (`unit-ensure`'s producer guard: withdrawing the opt-in stops it firing again, not
@@ -45,6 +53,19 @@ impl RealSystemctl {
         RealSystemctl { program: std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".into()) }
     }
 
+    /// One query for many units; `None` when stdout is not one line per unit (a unit
+    /// systemd cannot find may print nothing), so the caller asks unit by unit.
+    fn one_line_each(&self, verb: &str, units: &[String]) -> Option<Vec<String>> {
+        if units.is_empty() {
+            return Some(Vec::new());
+        }
+        let mut args: Vec<&str> = vec![verb];
+        args.extend(units.iter().map(String::as_str));
+        let out = self.run(&args).1;
+        let lines: Vec<String> = out.lines().map(|l| l.trim().to_string()).collect();
+        (lines.len() == units.len()).then_some(lines)
+    }
+
     fn run(&self, args: &[&str]) -> (bool, String, String) {
         match spira_config::bounded::bounded(&self.program).arg("--user").args(args).output() {
             Ok(out) => (out.status.success(), String::from_utf8_lossy(&out.stdout).to_string(), String::from_utf8_lossy(&out.stderr).to_string()),
@@ -72,6 +93,18 @@ impl Systemctl for RealSystemctl {
             None
         } else {
             Some(s.to_string())
+        }
+    }
+    fn is_enabled_many(&self, units: &[String]) -> Vec<Option<String>> {
+        match self.one_line_each("is-enabled", units) {
+            Some(lines) => lines.into_iter().map(|l| Some(l).filter(|s| !s.is_empty())).collect(),
+            None => units.iter().map(|u| self.is_enabled(u)).collect(),
+        }
+    }
+    fn is_active_many(&self, units: &[String]) -> Vec<bool> {
+        match self.one_line_each("is-active", units) {
+            Some(lines) => lines.iter().map(|l| l == "active").collect(),
+            None => units.iter().map(|u| self.is_active(u)).collect(),
         }
     }
     fn enable(&self, unit: &str) -> Result<(), String> {
@@ -169,6 +202,8 @@ pub struct FakeSystemctl {
     pub enabled_now: std::cell::RefCell<Vec<String>>,
     pub disabled_now: std::cell::RefCell<Vec<String>>,
     pub disabled: std::cell::RefCell<Vec<String>>,
+    pub single_queries: std::cell::Cell<u32>,
+    pub batched_queries: std::cell::Cell<u32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -191,10 +226,22 @@ impl Systemctl for FakeSystemctl {
         Ok(())
     }
     fn is_active(&self, unit: &str) -> bool {
+        self.single_queries.set(self.single_queries.get() + 1);
         self.units.borrow().get(unit).map(|u| u.active).unwrap_or(false)
     }
     fn is_enabled(&self, unit: &str) -> Option<String> {
+        self.single_queries.set(self.single_queries.get() + 1);
         self.units.borrow().get(unit).and_then(|u| u.enabled.clone())
+    }
+    fn is_active_many(&self, units: &[String]) -> Vec<bool> {
+        self.batched_queries.set(self.batched_queries.get() + 1);
+        let m = self.units.borrow();
+        units.iter().map(|u| m.get(u).map(|u| u.active).unwrap_or(false)).collect()
+    }
+    fn is_enabled_many(&self, units: &[String]) -> Vec<Option<String>> {
+        self.batched_queries.set(self.batched_queries.get() + 1);
+        let m = self.units.borrow();
+        units.iter().map(|u| m.get(u).and_then(|u| u.enabled.clone())).collect()
     }
     fn enable(&self, unit: &str) -> Result<(), String> {
         self.units.borrow_mut().entry(unit.to_string()).or_default().enabled = Some("enabled".into());
@@ -262,5 +309,43 @@ impl Systemctl for FakeSystemctl {
             .map(|(n, _)| n.clone())
             .filter(|n| if pat.is_empty() { n.as_str() == glob } else { n.starts_with(pre) && n.ends_with(suf) })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stub(body: &str) -> (testkit::TempDir, RealSystemctl, std::path::PathBuf) {
+        let dir = testkit::TempDir::new("systemctl-stub");
+        let log = dir.path().join("calls");
+        let prog = dir.path().join("systemctl");
+        testkit::write_exe(&prog, &format!("#!/bin/sh\necho \"$*\" >> {}\n{body}\n", log.display()));
+        (dir, RealSystemctl { program: prog.display().to_string() }, log)
+    }
+
+    fn calls(log: &std::path::Path) -> usize {
+        std::fs::read_to_string(log).unwrap().lines().count()
+    }
+
+    fn names(n: &[&str]) -> Vec<String> {
+        n.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn many_units_are_asked_about_in_one_call_and_keep_their_own_answers() {
+        let (_d, sc, log) = stub("case \"$2\" in is-active) printf 'active\\ninactive\\n';; is-enabled) printf 'enabled\\ndisabled\\n';; esac");
+        let u = names(&["a.service", "b.service"]);
+        assert_eq!(sc.is_active_many(&u), vec![true, false]);
+        assert_eq!(sc.is_enabled_many(&u), vec![Some("enabled".into()), Some("disabled".into())]);
+        assert_eq!(calls(&log), 2);
+    }
+
+    #[test]
+    fn an_answer_with_a_line_missing_falls_back_to_one_call_per_unit() {
+        let (_d, sc, log) = stub("case \"$*\" in *a.service*b.service*) printf 'enabled\\n';; *a.service) echo enabled;; esac");
+        let got = sc.is_enabled_many(&names(&["a.service", "b.service"]));
+        assert_eq!(got, vec![Some("enabled".into()), None]);
+        assert_eq!(calls(&log), 3);
     }
 }

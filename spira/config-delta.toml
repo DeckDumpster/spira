@@ -98,6 +98,10 @@ scoped_stop_review_secs = 86400
 batcher_forge_enable = "1"
 pass_rate_max_pct = 150
 pass_rate_window = 86400
+throughput_floor_per_day = 150
+throughput_abandon_count = 5
+throughput_abandon_window = 7200
+throughput_restop_after = 3600
 lc_backup_url = ""
 dolt_durable = ""
 dwarf_warm_base = ""
@@ -320,7 +324,7 @@ runtime_trigger_groom_secs = 21600
 runtime_trigger_mimir_secs = 900
 runtime_trigger_warden_secs = 7200
 store_view_stale_ms = 10000
-task_modes = "heartbeat=act round-duty=act inbox-keeper=act pr-notify=act asks=act design-asks=act brain-dirty=act supersede-duty=act bead-sweep=act publish-backlog=act repo-events=act overrides=act view=act reconciler=act reconciler-flow=act asks.ideas=act asks.moot=act asks.verify=act batcher.forge=act batcher.local=act cert.full=act cert.sample=act cockpit-tier-5s=act cockpit-tier-600s=act cockpit-tier-60s=act czar=act gate.check=act gate.worker=act hel.reap_stale=act hel.reap_terminal=act hel.sweep=act inbox.notify=act incident.alarms=act incident.probe=act incident.settle=act intake.filings=act intake.gh=act intake.kit_bump=act landing=act mail.reconcile=act mail.tidy=act mail.wake=act persona.archivist=act persona.ops=act publish=act queue.step=act reconcile.content=act reconcile.continuity=act reconcile.goodput=act reconcile.heimdall=act reconcile.section=act roundvm.ami_prune=act roundvm.drain=act sentinel-call=act sentinel-pass=act sift=act submission-provision=act sweep.archive=act sweep.escape_census=act sweep.export_beads=act sweep.nix_gc=act sweep.reclaim=act sweep.target=act sweep.tsd=act trigger.groom=act trigger.mimir=act trigger.warden=act watch.ami_stale=act watch.backup_age=act watch.ci_spill=act watch.mend=act watch.pass_rate=act watch.perf=act watch.perf_happy=act watch.refusals=act watch.runtime=act watch.skew=act watch.sop_lint=act watch.spill_key=act watch.statute_audit=act watch.testenv_cap=act watch.tower=act watch.warm_full=act"
+task_modes = "heartbeat=act round-duty=act inbox-keeper=act pr-notify=act asks=act design-asks=act brain-dirty=act supersede-duty=act bead-sweep=act publish-backlog=act repo-events=act overrides=act view=act reconciler=act reconciler-flow=act asks.ideas=act asks.moot=act asks.verify=act batcher.forge=act batcher.local=act cert.full=act cert.sample=act cockpit-tier-5s=act cockpit-tier-600s=act cockpit-tier-60s=act czar=act gate.check=act gate.worker=act hel.reap_stale=act hel.reap_terminal=act hel.sweep=act inbox.notify=act incident.alarms=act incident.probe=act incident.settle=act intake.filings=act intake.gh=act intake.kit_bump=act landing=act mail.reconcile=act mail.tidy=act mail.wake=act persona.archivist=act persona.ops=act publish=act queue.step=act reconcile.content=act reconcile.continuity=act reconcile.goodput=act reconcile.heimdall=act reconcile.section=act roundvm.ami_prune=act roundvm.drain=act sentinel-call=act sentinel-pass=act sift=act submission-provision=act sweep.archive=act sweep.escape_census=act sweep.export_beads=act sweep.nix_gc=act sweep.reclaim=act sweep.target=act sweep.tsd=act trigger.groom=act trigger.mimir=act trigger.warden=act watch.ami_stale=act watch.backup_age=act watch.ci_spill=act watch.mend=act watch.pass_rate=act watch.perf=act watch.perf_happy=act watch.refusals=act watch.runtime=act watch.skew=act watch.sop_lint=act watch.spill_key=act watch.statute_audit=act watch.testenv_cap=act watch.throughput=act watch.tower=act watch.warm_full=act"
 trace_mark = "=== spira attempt"
 units = "systemd"
 watchdog_bound_secs = 300

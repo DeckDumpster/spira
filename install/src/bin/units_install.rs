@@ -406,7 +406,7 @@ fn run_main() -> ExitCode {
     // leave enough wall-clock time for this to never matter in practice; this port does the
     // same steps faster, so the wait that was accidental there is explicit here instead.
     if !world_halted {
-        let candidates: Vec<String> = manifest
+        let live: Vec<String> = manifest
             .enable(&instance)
             .into_iter()
             .filter(|u| {
@@ -414,11 +414,14 @@ fn run_main() -> ExitCode {
                     return false;
                 }
                 let subject = u.strip_suffix(&format!("-{instance}.service")).or_else(|| u.strip_suffix(&format!("-{instance}.timer"))).or_else(|| u.strip_suffix(".service")).or_else(|| u.strip_suffix(".timer")).unwrap_or(u.as_str());
-                if suspended.contains(subject) {
-                    return false;
-                }
-                !(systemctl.is_enabled(u).as_deref() == Some("disabled") && !report.written.contains(u))
+                !suspended.contains(subject)
             })
+            .collect();
+        let candidates: Vec<String> = live
+            .iter()
+            .zip(systemctl.is_enabled_many(&live))
+            .filter(|(u, enabled)| !(enabled.as_deref() == Some("disabled") && !report.written.contains(*u)))
+            .map(|(u, _)| u.clone())
             .collect();
         let max_wait = match spira_config::process::cfg_parse::<u64>("SPIRA_INSTALL_ACTIVE_WAIT") {
             Ok(w) => w,
@@ -429,10 +432,11 @@ fn run_main() -> ExitCode {
         };
         let start = std::time::Instant::now();
         let in_testenv = nonempty_env("SPIRA_IN_TESTENV").is_some();
-        let mut not_active: Vec<String> = candidates.iter().filter(|u| !systemctl.is_active(u)).cloned().collect();
+        let inactive = |units: &[String]| -> Vec<String> { units.iter().zip(systemctl.is_active_many(units)).filter(|(_, up)| !up).map(|(u, _)| u.clone()).collect() };
+        let mut not_active = inactive(&candidates);
         while !install_units::split_not_active(&not_active, in_testenv, &instance).fatal.is_empty() && start.elapsed().as_secs() < max_wait {
             std::thread::sleep(std::time::Duration::from_secs(1));
-            not_active = candidates.iter().filter(|u| !systemctl.is_active(u)).cloned().collect();
+            not_active = inactive(&candidates);
         }
         if !not_active.is_empty() {
             // sp-e5v53-4: inside a test fixture, a watcher (every `spira-watch-*` instance

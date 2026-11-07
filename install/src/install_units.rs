@@ -258,6 +258,14 @@ pub fn run(ctx: &Ctx) -> Report {
     ordered.sort_by_key(|u| if u == "dolt-beads.service" { 0 } else { 1 });
 
     let new_by_inst: std::collections::BTreeSet<&String> = new_units.iter().collect();
+    let live: Vec<String> = ordered.iter().filter(|u| !masked.contains(*u)).cloned().collect();
+    let enabled_all: BTreeMap<&String, Option<String>> = live.iter().zip(ctx.systemctl.is_enabled_many(&live)).collect();
+    // The service behind each timer rides along: `drain_oneshot` asks whether it is running.
+    let mut active_names: Vec<String> = live.iter().flat_map(|u| [Some(u.clone()), u.strip_suffix(".timer").map(|b| format!("{b}.service"))]).flatten().collect();
+    active_names.sort();
+    active_names.dedup();
+    let active_all: BTreeMap<&String, bool> = active_names.iter().zip(ctx.systemctl.is_active_many(&active_names)).collect();
+
     for u in &ordered {
         if masked.contains(u) {
             r.enabled_actions.push((u.clone(), Action::Masked));
@@ -265,14 +273,12 @@ pub fn run(ctx: &Ctx) -> Report {
         }
         let subject = ctrl_subject(u, &ctx.host.instance);
         let suspended = (ctx.suspended)(&subject);
-        let enabled_str = ctx.systemctl.is_enabled(u);
-        let disabled = enabled_str.as_deref() == Some("disabled") && !new_by_inst.contains(u) && !is_convergence_root(u, &ctx.host.instance);
+        let disabled = enabled_all[u].as_deref() == Some("disabled") && !new_by_inst.contains(u) && !is_convergence_root(u, &ctx.host.instance);
         // A changed template (spira-watch@.service) counts as a change to every instance.
         let tmpl_of_u = rendered.iter().find(|(inst, _, _)| inst == u).map(|(_, t, _)| t.clone());
         let changed = tmpl_of_u.as_deref().map(|t| changed_templates.contains(t)).unwrap_or(false);
-        let active = ctx.systemctl.is_active(u);
-        let action = decide(State { changed, masked: false, suspended, disabled, halted: ctx.world_halted, active });
-        apply(ctx, u, action);
+        let action = decide(State { changed, masked: false, suspended, disabled, halted: ctx.world_halted, active: active_all[u] });
+        apply(ctx, u, action, &active_all);
         r.enabled_actions.push((u.clone(), action));
         if u == "dolt-beads.service" && !ctx.world_halted {
             db_server_wait(ctx);
@@ -282,19 +288,19 @@ pub fn run(ctx: &Ctx) -> Report {
     r
 }
 
-fn apply(ctx: &Ctx, unit: &str, action: Action) {
+fn apply(ctx: &Ctx, unit: &str, action: Action, was_active: &BTreeMap<&String, bool>) {
     match action {
         Action::Masked | Action::Suspended | Action::OperatorDisabled | Action::Skip => {}
         Action::Enable => {
             let _ = ctx.systemctl.enable(unit);
         }
         Action::Restart => {
-            drain_oneshot(ctx, unit);
+            drain_oneshot(ctx, unit, was_active);
             let _ = ctx.systemctl.enable(unit);
             restart_active(ctx, unit);
         }
         Action::EnableNow => {
-            drain_oneshot(ctx, unit);
+            drain_oneshot(ctx, unit, was_active);
             let _ = ctx.systemctl.enable_now(unit);
         }
     }
@@ -324,9 +330,10 @@ fn restart_active(ctx: &Ctx, unit: &str) {
 /// A long-running (non-oneshot) service is not drained; restarted directly. `SPIRA_DRAIN_INTERVAL`
 /// overrides the 2-second poll interval (tests set it to 0 to poll without sleeping); bounded
 /// at 300s, after which this proceeds anyway and says so.
-fn drain_oneshot(ctx: &Ctx, unit: &str) {
+fn drain_oneshot(ctx: &Ctx, unit: &str, was_active: &BTreeMap<&String, bool>) {
     let svc = if unit.ends_with(".timer") { format!("{}.service", unit.trim_end_matches(".timer")) } else { unit.to_string() };
-    if !ctx.systemctl.is_active(&svc) || ctx.systemctl.unit_type(&svc) != "oneshot" {
+    let running = was_active.get(&svc).copied().unwrap_or_else(|| ctx.systemctl.is_active(&svc));
+    if !running || ctx.systemctl.unit_type(&svc) != "oneshot" {
         return;
     }
     println!("install: {svc} is mid-pass — waiting for it to finish");
@@ -640,6 +647,46 @@ mod tests {
     use super::*;
     use crate::manifest::{build, Inputs};
     use crate::systemctl::{FakeSystemctl, FakeUnit};
+    #[test]
+    fn the_enable_loop_asks_systemd_about_every_unit_in_two_calls_not_two_per_unit() {
+        let td = tempdir();
+        let unit_dir = td.join("units");
+        let tmpl_dir = td.join("templates");
+        fs::create_dir_all(&unit_dir).unwrap();
+        fs::create_dir_all(&tmpl_dir).unwrap();
+        write_templates(&tmpl_dir);
+        let manifest = tiny_manifest();
+        let h = host();
+        let sc = FakeSystemctl::default();
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+
+        let r = run(&ctx);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(!r.enabled_actions.is_empty(), "positive control: units were walked");
+        assert_eq!(sc.batched_queries.get(), 2);
+        assert_eq!(sc.single_queries.get(), 0);
+    }
+
+    #[test]
+    fn the_drain_of_a_running_oneshot_reads_the_batched_answer_then_polls_live() {
+        let td = tempdir();
+        let manifest = tiny_manifest();
+        let h = host();
+        let sc = FakeSystemctl::default();
+        sc.set("spira-sentinel-prod.service", FakeUnit { active: false, enabled: None, kind: "oneshot".into(), file_listed: true });
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &td, templates_dir: &td, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let svc = "spira-sentinel-prod.service".to_string();
+        let _env = testkit::env(&[("SPIRA_DRAIN_INTERVAL", Some("0"))]);
+
+        drain_oneshot(&ctx, "spira-sentinel-prod.timer", &BTreeMap::from([(&svc, true)]));
+        assert_eq!(sc.single_queries.get(), 1, "one live poll to see it finished; the was-running answer came from the batch");
+
+        drain_oneshot(&ctx, "spira-sentinel-prod.timer", &BTreeMap::from([(&svc, false)]));
+        assert_eq!(sc.single_queries.get(), 1, "a service the batch saw idle is not polled");
+    }
+
     use std::fs;
 
     fn host() -> HostValues {

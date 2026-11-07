@@ -594,6 +594,11 @@ pub fn delegate_target_in(releases: &Path, sha: &str, me: &Path) -> Result<Optio
     Ok(Some(bin))
 }
 
+/// The home and repo a release's own `spira-config resolve` is pointed at: the release itself.
+pub(crate) fn resolve_env(rel: &Path) -> [(&'static str, PathBuf); 2] {
+    [("SPIRA_HOME", rel.join("spira")), ("SPIRA_REPO", rel.to_path_buf())]
+}
+
 /// `release activate <sha> [--hotfix <reason>]`.
 pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Switched, String> {
     let state = ctx.cfg.state_dir()?;
@@ -603,7 +608,7 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
     let after = hotfix_rule(ctx, standing, sha, hotfix_reason)?;
     let mut history = read_history(&state)?;
     let delta = config_delta::complete_for(ctx.cfg, &rel, config_delta::load(&rel)?)?;
-    let delta = delta.or_else(|| (!config_delta::load_retired(&state).is_empty()).then(config_delta::Delta::default));
+    let delta = delta.or_else(|| (!config_delta::load_retired(&state).is_empty() || config_delta::must_resolve(ctx.cfg, &rel)).then(config_delta::Delta::default));
     let txn = delta.as_ref().map(|d| config_delta::prepare(ctx.cfg, &rel, d, true)).transpose()?;
     let (out, late) = switch_with_config(ctx, sha, txn.as_ref(), true)?;
     if let Some(t) = &txn {

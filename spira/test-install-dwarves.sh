@@ -114,20 +114,24 @@ case "$*" in
             printf 'simple\n'
         fi
         ;;
-    *is-active*"${MOCK_ONESHOT_SVC:-__none__}"*)
-        # Transition: "active" on first query, then "inactive".
-        state="$(cat "${DRAIN_STATE}" 2>/dev/null || printf 'inactive')"
-        printf '%s\n' "$state"
-        printf 'inactive\n' > "${DRAIN_STATE}"
-        ;;
-    *is-active*"${MOCK_ACTIVATING_SVC:-__none__}")
-        # Readiness: "activating" for the first N queries, then "active" (a Type=notify unit).
-        left="$(cat "${ACTIVATE_STATE}" 2>/dev/null || printf 0)"
-        if [ "$left" -gt 0 ]; then printf 'activating\n'; else printf 'active\n'; fi
-        printf '%s\n' "$(( left > 0 ? left - 1 : 0 ))" > "${ACTIVATE_STATE}"
-        ;;
     *is-active*)
-        printf '%s\n' "${MOCK_IS_ACTIVE:-active}"
+        # One answer line per unit named, as real systemctl gives a batched query.
+        shift_args=("$@"); for u in "${shift_args[@]}"; do
+            case "$u" in
+                --user|is-active) continue ;;
+                "${MOCK_ONESHOT_SVC:-__none__}")
+                    # Transition: "active" on first query, then "inactive".
+                    state="$(cat "${DRAIN_STATE}" 2>/dev/null || printf 'inactive')"
+                    printf '%s\n' "$state"
+                    printf 'inactive\n' > "${DRAIN_STATE}" ;;
+                "${MOCK_ACTIVATING_SVC:-__none__}")
+                    # Readiness: "activating" for the first N queries, then "active" (a Type=notify unit).
+                    left="$(cat "${ACTIVATE_STATE}" 2>/dev/null || printf 0)"
+                    if [ "$left" -gt 0 ]; then printf 'activating\n'; else printf 'active\n'; fi
+                    printf '%s\n' "$(( left > 0 ? left - 1 : 0 ))" > "${ACTIVATE_STATE}" ;;
+                *) printf '%s\n' "${MOCK_IS_ACTIVE:-active}" ;;
+            esac
+        done
         ;;
     *list-timers*)
         true
@@ -260,7 +264,7 @@ want    "end-state: output names the failure"                      "not active" 
 # active is polled once and the verdict follows at once, rather than after the shipped 45 s.
 # Two lines: the apply pass probes each unit once before the end-state check polls it.
 is      "end-state: each unit is polled once under a 0 s wait"     2 \
-        "$(grep -c 'is-active cockpit-ensure.timer$' "$MOCK_LOG")"
+        "$(grep -c 'is-active .*cockpit-ensure.timer' "$MOCK_LOG")"
 
 # The path the wait exists for: a unit still starting (Type=notify readiness) when the
 # install reaches its check is polled again and passes once it reports active. It answers
@@ -273,7 +277,7 @@ ready_out="$(SPIRA_TOML="$(tl_layer SPIRA_INSTALL_ACTIVE_WAIT=5)" MOCK_DWARVES= 
 ready_rc=$?
 wantrc  "end-state: a unit that turns active inside the wait passes" 0 "$ready_rc"
 is      "end-state: the starting unit is polled until it is active"  3 \
-        "$(grep -c 'is-active cockpit-ensure.timer$' "$MOCK_LOG")"
+        "$(grep -c 'is-active .*cockpit-ensure.timer' "$MOCK_LOG")"
 
 # ==========================================================================
 tl_summary

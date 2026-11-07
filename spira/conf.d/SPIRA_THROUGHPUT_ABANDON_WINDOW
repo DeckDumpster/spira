@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=batch
+DOC=Seconds the per-repo abandoned-rounds condition looks back over.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_THROUGHPUT_ABANDON_WINDOW:=7200}"
+SPIRA_CONF_DEFAULT_EOF

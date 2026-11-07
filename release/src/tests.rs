@@ -782,3 +782,31 @@ fn a_delta_with_a_nested_table_round_trips_through_render() {
     assert!(d.added.contains_key("persona.x.model") && d.added.contains_key("spira.k"));
     assert_eq!(config_delta::Delta::parse(&d.render()).unwrap(), d);
 }
+
+fn tree_declaring(root: &Path, names: &[&str]) -> PathBuf {
+    let dir = root.join("spira/conf.d");
+    for n in names {
+        file(&dir.join(n), &format!("TYPE=u32\nDOC={n}\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${{{n}:=600}}\"\nSPIRA_CONF_DEFAULT_EOF\n"));
+    }
+    root.to_path_buf()
+}
+
+#[test]
+fn completion_adds_a_key_the_active_registry_declares_and_the_config_lacks_at_its_default() {
+    let tmp = TempDir::new("complete");
+    let new = tree_declaring(&tmp.path().join("new"), &["SPIRA_ORPHAN_SECS"]);
+    let active = tree_declaring(&tmp.path().join("old"), &["SPIRA_ORPHAN_SECS"]);
+    let cfg: toml::Table = "[spira]\nid_prefix = \"sp\"\n".parse().unwrap();
+    let d = config_delta::complete(&[cfg], &new, Some(&active), None).unwrap().expect("a delta");
+    assert_eq!(d.added.get("spira.orphan_secs"), Some(&toml::Value::Integer(600)));
+}
+
+#[test]
+fn completion_leaves_a_key_the_config_already_sets() {
+    let tmp = TempDir::new("complete");
+    let new = tree_declaring(&tmp.path().join("new"), &["SPIRA_ORPHAN_SECS", "SPIRA_OTHER_SECS"]);
+    let cfg: toml::Table = "[spira]\norphan_secs = 5\n".parse().unwrap();
+    let d = config_delta::complete(&[cfg], &new, Some(&new), None).unwrap().expect("a delta");
+    assert!(!d.added.contains_key("spira.orphan_secs"));
+    assert_eq!(d.added.get("spira.other_secs"), Some(&toml::Value::Integer(600)));
+}

@@ -728,6 +728,36 @@ impl World {
         Ok("forgot".into())
     }
 
+    /// The day's landings and rounds for `watch.throughput`: lifecycle LANDED transitions by hour,
+    /// the beads named on each landing ref, and every repo's rounds from the batch rows.
+    pub fn throughput_snapshot(&self, input: &str) -> Result<String, String> {
+        let p: ThroughputParams = serde_json::from_str(input).map_err(|e| format!("throughput params unparsed: {e}"))?;
+        let day = 24 * 3600;
+        let blind = ThroughputSnapshot { readable: false, ..Default::default() };
+        let halted = self.run_dir.join("world.halted").exists();
+        let Ok(rows) = ::reconciler_flow::io::stage_rows(self.metrics_endpoint.as_deref()) else { return to_json(&ThroughputSnapshot { halted, ..blind }) };
+        let hourly = hourly_landed(&rows, p.now);
+        let Ok(prefix) = spira_config::process::cfg("SPIRA_ID_PREFIX") else { return to_json(&ThroughputSnapshot { halted, ..blind }) };
+        let Ok(map) = fs::read_to_string(&self.repo_map) else { return to_json(&ThroughputSnapshot { halted, ..blind }) };
+        let mut named = BTreeSet::new();
+        for row in map_rows(&map) {
+            let since = format!("--since=@{}", p.now - day);
+            let Ok((Some(0), out)) = git(Path::new(&row.path), &["log", &row.land, &since, "--format=%s"]) else { return to_json(&ThroughputSnapshot { halted, ..blind }) };
+            named.extend(bead_ids(&String::from_utf8_lossy(&out), &prefix).into_iter().map(|id| (row.name.clone(), id)));
+        }
+        let Ok(batches) = self.lc_json(&["list", "--batches", "--window", &day.to_string()]) else { return to_json(&ThroughputSnapshot { halted, ..blind }) };
+        let repos = round_counts(batches.as_array().map(Vec::as_slice).unwrap_or_default(), p.now, p.abandon_window_s);
+        to_json(&ThroughputSnapshot { readable: true, halted, hourly, landed_refs: named.len() as u64, repos })
+    }
+
+    /// Writes the `world.halted` stamp as `world stop` does: the time, then the reason.
+    pub fn halt_stamp(&self, why: &str) -> Result<String, String> {
+        let stamp = self.run_dir.join("world.halted");
+        let now = crate::watchers::iso8601(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()));
+        fs::write(&stamp, format!("{now}\nwhy: {why}\n")).map_err(|e| format!("{}: {e}", stamp.display()))?;
+        Ok("stamped".into())
+    }
+
     pub fn inbox_append(&self, line: &str) -> Result<String, String> {
         if let Some(dir) = self.inbox.parent() {
             fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -736,6 +766,64 @@ impl World {
         writeln!(f, "{line}").map_err(|e| e.to_string())?;
         Ok("appended".into())
     }
+}
+
+#[derive(serde::Deserialize)]
+struct ThroughputParams {
+    now: u64,
+    abandon_window_s: u64,
+}
+
+use crate::tasks::e::watch_throughput::{RepoRounds, Snapshot as ThroughputSnapshot};
+
+fn to_json(s: &ThroughputSnapshot) -> Result<String, String> {
+    serde_json::to_string(s).map_err(|e| e.to_string())
+}
+
+/// Applied bead LANDED transitions per hour over the 24 h ending `now`, the oldest hour first.
+pub fn hourly_landed(rows: &[Value], now: u64) -> Vec<u64> {
+    let mut hourly = vec![0u64; 24];
+    for r in rows.iter().filter(|r| r["machine"] == "bead" && r["to_state"] == "LANDED" && tsd::query::flag(r, "applied")) {
+        let Some(t) = tsd::query::ts_of(r) else { continue };
+        if let Some(age) = now.checked_sub(t).filter(|a| *a < 24 * 3600) {
+            hourly[(23 - age / 3600) as usize] += 1;
+        }
+    }
+    hourly
+}
+
+/// The distinct bead ids (`<prefix>-<word>`) named in commit subjects.
+pub fn bead_ids(subjects: &str, prefix: &str) -> BTreeSet<String> {
+    let lead = format!("{prefix}-");
+    subjects
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '.'))
+        .filter(|w| w.starts_with(&lead) && w.len() > lead.len() && w[lead.len()..].chars().all(|c| c.is_ascii_alphanumeric() || c == '.'))
+        .map(|w| w.trim_end_matches('.').to_string())
+        .collect()
+}
+
+/// Per repo: rounds cut over the batch rows' day, how each ended, and how many ended inside
+/// `recent_s` (by the batch's last applied event, not by when it was cut).
+pub fn round_counts(batches: &[Value], now: u64, recent_s: u64) -> Vec<RepoRounds> {
+    let mut by: BTreeMap<String, RepoRounds> = BTreeMap::new();
+    for b in batches {
+        let Some(repo) = b["repo"].as_str() else { continue };
+        let r = by.entry(repo.to_string()).or_insert_with(|| RepoRounds { repo: repo.to_string(), ..Default::default() });
+        let recent = b["last_at"].as_i64().is_some_and(|t| now.saturating_sub(t.max(0) as u64) <= recent_s);
+        r.cut += 1;
+        match b["state"].as_str() {
+            Some("ABANDONED") => {
+                r.abandoned += 1;
+                r.abandoned_recent += u64::from(recent);
+            }
+            Some("LANDED" | "SETTLED") => {
+                r.landed += 1;
+                r.landed_recent += u64::from(recent);
+            }
+            _ => {}
+        }
+    }
+    by.into_values().collect()
 }
 
 /// A JSON number, or a string of digits, as a float; anything else is zero.
