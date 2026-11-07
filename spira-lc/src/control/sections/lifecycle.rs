@@ -298,6 +298,8 @@ fn publish_lifecycle<B: Backend>(store: &Store<B>, call: &Call, outside: &dyn Ou
         type_: BELOW_FLOOR.into(),
         status: cond,
         reason,
+        key: String::new(),
+        runbook: String::new(),
         last_transition_time: since,
     }];
 

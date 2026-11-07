@@ -18,6 +18,31 @@ pub const SLOTS_SATURATED: &str = "SlotsSaturated";
 pub const LANE_BLOCKED: &str = "LaneBlocked";
 pub const HALTED: &str = "Halted";
 pub const STOPPED: &str = "Stopped";
+pub const LAND_REFUSED: &str = "LandRefused";
+pub const EJECT_REFUSED: &str = "EjectRefused";
+pub const TWO_ANSWERS_OPEN_ROUND: &str = "TwoAnswersOpenRound";
+pub const CUT_OF_JUDGED_RED: &str = "CutOfJudgedRed";
+pub const STUCK_RUNNER: &str = "StuckRunner";
+pub const PRIOR_RUNNER_ALIVE: &str = "PriorRunnerAlive";
+pub const REDRIVE_EXHAUSTED: &str = "RedriveExhausted";
+
+/// The contradictions: states the controller cannot resolve itself. Each is paged when it
+/// is raised, and none pulls a cord.
+pub const CONTRADICTIONS: [&str; 8] = [
+    LAND_REFUSED,
+    EJECT_REFUSED,
+    TWO_ANSWERS_OPEN_ROUND,
+    CUT_OF_JUDGED_RED,
+    LANE_BLOCKED,
+    STUCK_RUNNER,
+    PRIOR_RUNNER_ALIVE,
+    REDRIVE_EXHAUSTED,
+];
+
+/// The runbook entry for a condition type.
+pub fn runbook(type_: &str) -> String {
+    format!("round-controller/runbook-controller#{}", type_.to_ascii_lowercase())
+}
 
 /// The two actions the section declares, by the names its intents carry.
 pub const HOLD_MEMBER: &str = "hold-member";
@@ -149,6 +174,34 @@ pub const KIND: SectionKind = SectionKind {
             type_: STOPPED,
             page_on_raise: false,
         },
+        ConditionDecl {
+            type_: LAND_REFUSED,
+            page_on_raise: true,
+        },
+        ConditionDecl {
+            type_: EJECT_REFUSED,
+            page_on_raise: true,
+        },
+        ConditionDecl {
+            type_: TWO_ANSWERS_OPEN_ROUND,
+            page_on_raise: true,
+        },
+        ConditionDecl {
+            type_: CUT_OF_JUDGED_RED,
+            page_on_raise: true,
+        },
+        ConditionDecl {
+            type_: STUCK_RUNNER,
+            page_on_raise: true,
+        },
+        ConditionDecl {
+            type_: PRIOR_RUNNER_ALIVE,
+            page_on_raise: true,
+        },
+        ConditionDecl {
+            type_: REDRIVE_EXHAUSTED,
+            page_on_raise: true,
+        },
     ],
     fields: &[
         ("green_unlanded", FieldShape::List),
@@ -219,6 +272,15 @@ mod tests {
         assert_eq!(kind.name, super::NAME);
         assert!((s.distance_value(kind).unwrap().unwrap() - 3.0).abs() < 1e-9);
         assert!(kind.condition(super::LANE_BLOCKED).unwrap().page_on_raise);
+    }
+
+    #[test]
+    fn every_contradiction_is_declared_and_pages_on_raise() {
+        let kind = crate::sections::lookup(super::NAME).unwrap();
+        for t in super::CONTRADICTIONS {
+            assert!(kind.condition(t).unwrap().page_on_raise, "{t}");
+        }
+        assert_eq!(super::runbook("EjectRefused"), "round-controller/runbook-controller#ejectrefused");
     }
 
     #[test]
