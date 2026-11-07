@@ -54,7 +54,7 @@ fn cmd_show(bead_id: &str, conn: &Conn) -> (i32, String) {
         Ok(text) => text,
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
-    match crate::cmd_show(&[bead_id.to_string()], conn) {
+    match crate::dispatch(&[s("show"), bead_id.to_string()], conn) {
         (0, row) => (0, with_lifecycle(&text, &row)),
         (1, _) => (0, format!("{text}\nLIFECYCLE: no row\n")),
         (_, e) => (CANNOT_TELL, e),
@@ -436,6 +436,9 @@ fn record_target_verdict(bead_id: &str, verb: &str, args: &[String]) -> Result<(
 }
 
 fn ejected_reasons(conn: &Conn, bead_id: &str, tip: &str) -> Option<String> {
+    if crate::control::served::lifecycle_store().is_some() {
+        return None;
+    }
     let sql = format!(
         "SELECT JSON_UNQUOTE(JSON_EXTRACT(e.evidence, '$.Eject.reason')) AS reason FROM event e \
          JOIN batch_member m ON m.batch_id = e.lc_key \
@@ -611,6 +614,11 @@ fn red_tracker_done_refusal(bead_id: &str) -> Option<(i32, String)> {
 }
 
 fn released_on_ask_history(conn: &Conn, bead_id: &str) -> bool {
+    if let Some(found) = crate::rows::on_store(|s| s.history(bead_id, Some("bead"))) {
+        let Ok(changes) = found else { return true };
+        let history: Vec<(String, String)> = changes.iter().filter(|c| c.audit.applied).map(|c| (c.audit.event.clone(), c.audit.evidence.to_string())).collect();
+        return released_on_ask(&history);
+    }
     let sql = format!(
         "SELECT event, evidence FROM event WHERE machine = 'bead' AND lc_key = '{}' AND applied = 1 ORDER BY seq",
         rows::escape(bead_id)
@@ -727,7 +735,7 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
     let body = split_reserved(args).stdin;
     let parent = if after_landing { None } else { Some(bead_id) };
     match crate::bd::file_child(title, &persona, &repo, parent, body.as_deref()) {
-        Ok(new_id) => match crate::cutover::cmd_create_bead(std::slice::from_ref(&new_id), conn) {
+        Ok(new_id) => match crate::dispatch(&[s("create-bead"), new_id.clone()], conn) {
             (0, _) if after_landing => match crate::bd::add_blocker(&new_id, bead_id) {
                 Ok(()) => (0, new_id),
                 Err(e) => (CANNOT_TELL, format!("{new_id} was filed but could not be made to wait on {bead_id} (do not file it again; add the dependency): {e}")),
@@ -1412,7 +1420,7 @@ fn list_with_content(conn: &Conn, states: &[String], all: bool, bd_args: &[Strin
     } else {
         vec![s("--live")]
     };
-    let (rc, rows) = crate::cmd_list(&narrowing, conn);
+    let (rc, rows) = crate::dispatch(&[vec![s("list")], narrowing].concat(), conn);
     if rc != 0 {
         return (rc, rows);
     }
@@ -1554,7 +1562,7 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
             }
             Step::CreateRow => {
                 let new_id = out.trim().to_string();
-                match crate::cutover::cmd_create_bead(std::slice::from_ref(&new_id), conn) {
+                match crate::dispatch(&[s("create-bead"), new_id.clone()], conn) {
                     (0, _) => (0, String::new()),
                     (_, e) => (
                         CANNOT_TELL,

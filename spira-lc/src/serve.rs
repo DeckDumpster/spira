@@ -142,16 +142,23 @@ pub fn run(args: &[String]) -> i32 {
     // A request may spawn a child (`work blocked` runs `mail`) that calls back into this
     // socket; serving one connection at a time deadlocks on that. The session mutex still
     // serializes the queries themselves.
-    match conn.live_load() {
-        Ok(n) => eprintln!("spira-lc serve: {n} live rows in memory"),
-        Err(e) => eprintln!("spira-lc serve: live rows not loaded, reads go to Dolt until they are: {e}"),
+    let on_store = crate::control::served::lifecycle_store().is_some();
+    if on_store {
+        eprintln!("spira-lc serve: the lifecycle is on the control store: no dolt lifecycle rows are loaded or swept");
+    } else {
+        match conn.live_load() {
+            Ok(n) => eprintln!("spira-lc serve: {n} live rows in memory"),
+            Err(e) => eprintln!("spira-lc serve: live rows not loaded, reads go to Dolt until they are: {e}"),
+        }
     }
     std::thread::scope(|scope| {
         let checker = Arc::clone(&conn);
-        scope.spawn(move || loop {
-            std::thread::sleep(check_every);
-            live_tick(&checker);
-        });
+        if !on_store {
+            scope.spawn(move || loop {
+                std::thread::sleep(check_every);
+                live_tick(&checker);
+            });
+        }
         match (spira_config::process::cfg_parse::<u64>("SPIRA_LC_SNAPSHOT_SECS"), spira_config::process::cfg("SPIRA_LC_SNAPSHOT")) {
             (Ok(secs), Ok(path)) if secs > 0 && !path.is_empty() => {
                 let refresher = Arc::clone(&conn);
@@ -186,11 +193,14 @@ pub fn run(args: &[String]) -> i32 {
         let sweeper = Arc::clone(&conn);
         scope.spawn(move || loop {
             std::thread::sleep(SWEEP_EVERY);
+            alarm_tick();
+            if on_store {
+                continue;
+            }
             cold_tick(&sweeper);
             continuity_tick(&sweeper);
             crate::ops::epics_tick(&sweeper);
             crate::ops::views_tick(&sweeper);
-            alarm_tick();
             if let Err(e) = crate::mending::expire_overdue(&sweeper, "spira-lc.sweep") {
                 eprintln!("spira-lc serve: mending sweep: {e:?}");
             }

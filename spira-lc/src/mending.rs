@@ -42,6 +42,9 @@ pub(crate) fn from_json(row: &Value) -> Result<MendingRow, DbError> {
 }
 
 pub fn fetch(conn: &Conn, batch: &str, pass: u32, suite: &str) -> Result<Option<MendingRow>, DbError> {
+    if let Some(r) = crate::rows::on_store(|s| s.mending(batch, pass, suite)) {
+        return r.map(|m| m.map(|m| m.row));
+    }
     let rows = conn.query(&format!(
         "SELECT {COLUMNS} FROM mending WHERE batch_id = '{}' AND pass = {pass} AND suite = '{}'",
         escape(batch),
