@@ -218,9 +218,9 @@ fn on_base_cached(root: &str, base: &str) -> Result<HashMap<String, String>, Str
 /// The live dwarves: every `spira-dwarf-*` unit's main pid and start (one systemctl call), and its
 /// phase read from its process tree (status only, never its work).
 fn live_dwarves() -> Option<Vec<LiveDwarf>> {
+    let args = dwarf_list_args();
     // FORK-EDGE: needs Units::list(prefix) with MainPID and ActiveEnterTimestamp — the port
     // reads one named unit, and the dwarves are found by their unit-name prefix.
-    let args = dwarf_list_args();
     let units = dwarf_units_in(&run("systemctl", &args.iter().map(String::as_str).collect::<Vec<_>>()).ok()?);
     if units.is_empty() {
         return Some(Vec::new());

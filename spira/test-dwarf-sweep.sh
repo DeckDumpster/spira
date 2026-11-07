@@ -236,7 +236,9 @@ if [ "$2" = list-units ]; then
     glob="$3"
     while IFS= read -r line; do
         [ -n "$line" ] || continue
-        case "$line" in $glob) printf '%s\n' "$line" ;; esac
+        # The real `list-units --no-legend` shape: unit, LOAD, ACTIVE, SUB, description.
+        # The live count reads ACTIVE (runtime::units::live_dwarf_in_list_line, sp-bpnmzg).
+        case "$line" in $glob) printf '%s loaded active running mock dwarf\n' "$line" ;; esac
     done < "$MOCK_UNITS_FILE"
 fi
 MOCK

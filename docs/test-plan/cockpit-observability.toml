@@ -256,6 +256,11 @@ id = "UC-cockpit-observability-40"
 tier = "T1"
 statement = "`cockpit/resolve.sh` exits non-zero and relays bd's complaint on a failed close, and prints 'resolved' on success"
 
+[use_case.uncovered]
+reason = "suite test-resolve-output.sh deleted at sp-kgwa49: it asserted resolve relays bd's close failure, but resolve now refuses at its content read before any close and the bd close path is retired; moot under the delete-moot-tests ruling"
+date = "2026-11-07"
+bead = "sp-kgwa49"
+
 [[use_case]]
 id = "UC-cockpit-observability-41"
 tier = "T1"
