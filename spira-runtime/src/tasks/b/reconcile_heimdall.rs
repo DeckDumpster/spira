@@ -38,7 +38,7 @@
 //!
 //! **Carry** is `heimdall::state::State`: `first_run`, per-key `KeyState{seen, unseen, state, first, flaps, refreshed, bead}`, restart baselines and `probe_id`. Today it is the file `$SPIRA_RUN/heimdall.state` (`main.rs:156,178-182,357`). It becomes a journaled `reconcile.heimdall.state` Emit, written only when it changes.
 //!
-//! **Fixtures** are the existing tests in `reconcile.rs`, `judge.rs`, `restart.rs` and `spira/test-heimdall.sh`.
+//! **Fixtures** are the existing tests in `reconcile.rs`, `judge.rs`, `restart.rs` and `pass.rs`.
 //!
 //! ## Act
 //!

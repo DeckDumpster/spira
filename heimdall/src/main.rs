@@ -1,17 +1,14 @@
 //! heimdall — `heimdall [--home DIR] [--report]` | `heimdall classify` (observations on stdin). See DESIGN.md and each module's own doc
 //! comment for the design this ports from (spira/heimdall.sh, retired in the same change).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use heimdall::alerts::{self, ProbeOutcome};
-use heimdall::conditions::{Conditions, LcConditions};
+use heimdall::conditions::LcConditions;
 use heimdall::classify::{self, Mirror as ObsMirror, Observation, RestartAlert as ObsRestartAlert, Thresholds};
-use heimdall::fallback;
 use heimdall::gather::{self, RealSystemctl, Systemctl};
-use heimdall::heartbeat::{self, Heartbeat};
-use heimdall::reconcile::{self, Trigger};
+use heimdall::pass::{self, PassInput, PassPaths};
 use heimdall::state::State;
 use heimdall::util::{self, Sink, StdSink};
 
@@ -176,10 +173,6 @@ fn pass() -> i32 {
     // ---- state -----------------------------------------------------------------------
     let state_text = std::fs::read_to_string(&state_path).unwrap_or_default();
     let mut state = State::parse(&state_text);
-    if state.first_run == 0 {
-        state.first_run = now;
-    }
-
     // ---- gather ------------------------------------------------------------------------
     let log_tail = gather::read_log_tail(&sentinel_log_path, tail_bytes);
     let sc = RealSystemctl { bin: systemctl_bin.clone(), timeout: Duration::from_secs(5), units: host_units() };
@@ -201,28 +194,7 @@ fn pass() -> i32 {
         }
     }
 
-    // THE ALERT QUERY IS ALSO THE READ PROBE: asking a second, separate "is the store
-    // readable" question would be a second thing to get out of step with the first.
     let ops = LcConditions { client: lc.within(Duration::from_secs(store_timeout as u64)) };
-    let mut db_saturated = false;
-    let (db_reachable, db_error, alert_rows) = match ops.list() {
-        Ok(rows) => (true, String::new(), rows),
-        Err(f) => {
-            if f == heimdall::conditions::Failure::Saturated {
-                db_saturated = true;
-            }
-            (false, "spira-lc condition list did not answer".to_string(), Vec::new())
-        }
-    };
-
-    // THE WRITE PROBE, unconditional on every pass (§ alerts.rs's own doc).
-    let probe = if db_reachable { alerts::maintain_probe(&ops) } else { ProbeOutcome { id: None, write_ok: None, saturated: false } };
-    state.probe_id = probe.id.clone().unwrap_or_default();
-    if probe.saturated {
-        db_saturated = true;
-    }
-
-    // ---- classify ------------------------------------------------------------------------
     let obs = Observation {
         now,
         heimdall_first: state.first_run,
@@ -232,8 +204,8 @@ fn pass() -> i32 {
         sentinel_log_mtime: log_tail.mtime,
         sentinel_log_path: sentinel_log_path.display().to_string(),
         sentinel_timer,
-        db_reachable,
-        db_error,
+        db_reachable: false,
+        db_error: String::new(),
         db_path: db.clone(),
         fallback_path: fallback_path.display().to_string(),
         mirror: ObsMirror { configured: mirror.configured, exists: mirror.exists, mtime: mirror.mtime, path: mirror_path.display().to_string(), exporter: exporter.clone() },
@@ -245,134 +217,38 @@ fn pass() -> i32 {
         world_drain_at: world.drain_at,
         thresholds,
     };
-    let firing = classify::run(&obs);
-    let firing_keys: BTreeSet<String> = firing.iter().map(|f| f.key.clone()).collect();
-    let titles: BTreeMap<String, String> = firing.iter().map(|f| (f.key.clone(), f.title.clone())).collect();
-    let evidence_of = |k: &str| firing.iter().find(|f| f.key == k).map(|f| f.evidence.clone()).unwrap_or_default();
+    let inp = PassInput { obs, confirm, clear_n, refresh, tz, render_time: util::iso_display, report_only: report };
+    let paths = PassPaths { fallback: fallback_path, heartbeat: status_path };
+    let rep = pass::run(&inp, &ops, &mut state, &paths, now);
+    for l in &rep.out {
+        sink.out(l);
+    }
+    for l in &rep.err {
+        sink.err(l);
+    }
 
     if report {
-        if firing.is_empty() {
+        if rep.firing.is_empty() {
             println!(
                 "heimdall: nothing firing (sentinel timer {}, db read: {} write: {})",
-                obs.sentinel_timer,
-                if db_reachable { "ok" } else { "UNREACHABLE" },
-                match probe.write_ok {
+                inp.obs.sentinel_timer,
+                if rep.db_reachable { "ok" } else { "UNREACHABLE" },
+                match rep.probe.write_ok {
                     Some(true) => "ok",
                     Some(false) => "FAILED",
                     None => "unknown",
                 }
             );
         } else {
-            for f in &firing {
+            for f in &rep.firing {
                 println!("\n=== {} ===\n{}\n\n{}\n", f.key, f.title, f.evidence);
             }
         }
         return 0;
     }
 
-    // ---- reconcile -------------------------------------------------------------------
-    let steps = reconcile::step_keys(now, confirm.max(1), clear_n.max(1), refresh.max(1), db_reachable, &firing_keys, &state.keys);
-    let mut beads_ok = true;
-    let mut acted: i64 = 0;
-    state.keys.clear();
-    for step in &steps {
-        let key = &step.key;
-        let existing = alerts::find_by_key(&alert_rows, key);
-        match step.trigger {
-            Trigger::None => {
-                state.keys.insert(key.clone(), step.counters.clone());
-            }
-            Trigger::ConfirmRaise => {
-                let title = titles.get(key).cloned().unwrap_or_else(|| key.clone());
-                let body = alerts::body_of(key, step.counters.first, step.counters.flaps, &evidence_of(key), &tz);
-                match alerts::alert_write(&ops, key, &title, &body) {
-                    Ok(id) => {
-                        sink.out(&util::log_line(now, &format!("HEIMDALL raised {key} as {id}")));
-                        let mut k = step.on_success(now);
-                        k.bead = id;
-                        state.keys.insert(key.clone(), k);
-                        acted += 1;
-                    }
-                    Err(_) => {
-                        sink.err(&util::log_line(now, &format!("HEIMDALL could not raise the alert condition for {key}")));
-                        state.keys.insert(key.clone(), step.on_failure());
-                        beads_ok = false;
-                    }
-                }
-            }
-            Trigger::ConfirmClear => match alerts::alert_clear(&ops, existing, step.counters.first, step.counters.flaps, clear_n, &tz) {
-                Ok(()) => {
-                    if let Some(row) = existing {
-                        sink.out(&util::log_line(now, &format!("HEIMDALL cleared {key} ({})", row.key)));
-                    }
-                    state.keys.insert(key.clone(), step.on_success(now));
-                    acted += 1;
-                }
-                Err(_) => {
-                    state.keys.insert(key.clone(), step.on_failure());
-                    beads_ok = false;
-                }
-            },
-            Trigger::Refresh => {
-                let closed_by_hand = existing.is_some_and(|r| !r.firing());
-                if closed_by_hand {
-                    state.keys.insert(key.clone(), step.on_refresh_skip_closed(now));
-                } else {
-                    let title = titles.get(key).cloned().unwrap_or_else(|| key.clone());
-                    let body = alerts::body_of(key, step.counters.first, step.counters.flaps, &evidence_of(key), &tz);
-                    match alerts::alert_write(&ops, key, &title, &body) {
-                        Ok(id) => {
-                            sink.out(&util::log_line(now, &format!("HEIMDALL re-raised {key} on {id}")));
-                            let mut k = step.on_success(now);
-                            k.bead = id;
-                            state.keys.insert(key.clone(), k);
-                        }
-                        Err(_) => {
-                            state.keys.insert(key.clone(), step.counters.clone());
-                            beads_ok = false;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // ---- the fallback file -------------------------------------------------------------
-    let fallback_needed = !db_reachable || !beads_ok || probe.write_ok == Some(false);
-    if fallback_needed {
-        let doc = fallback::build(now, db_reachable, probe.write_ok, &firing);
-        match fallback::write(&fallback_path, &doc) {
-            Ok(()) => sink.out(&util::log_line(
-                now,
-                &format!("HEIMDALL wrote the fallback channel — db_read={} db_write={:?}", if db_reachable { "ok" } else { "DOWN" }, probe.write_ok),
-            )),
-            Err(e) => sink.err(&util::log_line(now, &format!("HEIMDALL could not write the fallback channel: {e}"))),
-        }
-    } else {
-        fallback::remove(&fallback_path);
-    }
-
-    // ---- state, then the heartbeat (written on every run, including a failing one) -----
     let _ = std::fs::write(&state_path, state.render());
-
-    let db_read_status = heartbeat::db_read_status(db_reachable, db_saturated);
-    let db_write_status = heartbeat::db_write_status(probe.write_ok, db_saturated);
-    let firing_keys_vec: Vec<String> = firing_keys.iter().cloned().collect();
-    FIRING.store(firing_keys_vec.len() as u64, std::sync::atomic::Ordering::Relaxed);
-    let hb = Heartbeat { at: now, firing_keys: &firing_keys_vec, db_read: db_read_status, db_write: db_write_status, db_saturated, fallback_written: fallback_needed, acted };
-    let _ = heartbeat::write(&status_path, &hb.render());
-
-    sink.out(&util::log_line(
-        now,
-        &format!(
-            "heimdall: {} firing [{}], {} change(s), db_read={} db_write={}",
-            firing_keys_vec.len(),
-            firing_keys_vec.join(","),
-            acted,
-            db_read_status.as_str(),
-            db_write_status.as_str()
-        ),
-    ));
+    FIRING.store(rep.firing.len() as u64, std::sync::atomic::Ordering::Relaxed);
     0
 }
 

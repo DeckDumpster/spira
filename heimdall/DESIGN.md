@@ -145,10 +145,9 @@ re-raise), `condition clear <key>`, and `condition set heimdall-write-probe --ty
 
 ## 4. Parity evidence
 
-See the delivery report (bead sp-zpaq0) for the `testenv` run of `test-heimdall.sh`
-(repointed from `bash "$SH/heimdall.sh"` to `command heimdall --home "$SH"`, its fixture
-otherwise unchanged) against this binary, and the wall-clock comparison of one pass
-old vs new.
+The reconcile pass is `pass::run`, driven by the unit tests in `heimdall/src/pass.rs` over an
+in-memory `Conditions` store with `now` passed in; the classifier half is
+`spira/test-heimdall-classify.sh`.
 
 ## 5. Tests
 

@@ -22,12 +22,7 @@ pub fn body_with(key: &str, first_seen: &str, flaps: i64, evidence: &str) -> Str
     )
 }
 
-/// The close reason for a cleared alert.
-pub fn clear_reason(first: i64, flaps: i64, clear_n: i64, tz: &str) -> String {
-    clear_reason_with(&util::iso_display(first, tz), flaps, clear_n)
-}
-
-/// [`clear_reason`] with the raise time already rendered as `raised`.
+/// The close reason for a cleared alert, with the raise time already rendered as `raised`.
 pub fn clear_reason_with(raised: &str, flaps: i64, clear_n: i64) -> String {
     format!(
         "Cleared by Heimdall: the condition stopped holding for {clear_n} consecutive checks.\nRaised {raised}, fired {flaps} time(s).\nNothing was repaired by Heimdall — it only reports. Either the loop recovered on its own\nor something else fixed it.\n",
@@ -53,9 +48,9 @@ pub fn alert_write(ops: &dyn Conditions, key: &str, title: &str, body: &str) -> 
 }
 
 /// Clears the alert for `key`: a no-op success when there is none or it is not firing.
-pub fn alert_clear(ops: &dyn Conditions, existing: Option<&Condition>, first: i64, flaps: i64, clear_n: i64, tz: &str) -> Result<(), Failure> {
+pub fn alert_clear_with(ops: &dyn Conditions, existing: Option<&Condition>, reason: &str) -> Result<(), Failure> {
     let Some(c) = existing.filter(|c| c.firing()) else { return Ok(()) };
-    ops.clear(&c.key, "Cleared", &clear_reason(first, flaps, clear_n, tz))
+    ops.clear(&c.key, "Cleared", reason)
 }
 
 // ---- the write probe --------------------------------------------------------------------
@@ -81,59 +76,15 @@ pub fn maintain_probe(ops: &dyn Conditions) -> ProbeOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    /// The store's conditions, by key, and every call made.
-    #[derive(Default)]
-    struct Fake {
-        rows: Mutex<Vec<Condition>>,
-        calls: Mutex<Vec<String>>,
-        fail: Option<Failure>,
-    }
-
-    impl Fake {
-        fn status(&self, key: &str) -> Option<String> {
-            self.rows.lock().unwrap().iter().find(|c| c.key == key).map(|c| c.status.clone())
-        }
-    }
-
-    impl Conditions for Fake {
-        fn list(&self) -> Result<Vec<Condition>, Failure> {
-            self.calls.lock().unwrap().push("list".into());
-            Ok(self.rows.lock().unwrap().clone())
-        }
-        fn set(&self, key: &str, kind: &str, _reason: &str, _message: &str, firing: bool) -> Result<(), Failure> {
-            self.calls.lock().unwrap().push(format!("set {key} {kind} {firing}"));
-            if let Some(f) = self.fail {
-                return Err(f);
-            }
-            let mut rows = self.rows.lock().unwrap();
-            let status = if firing { "True" } else { "False" }.to_string();
-            match rows.iter_mut().find(|c| c.key == key) {
-                Some(c) => {
-                    c.flaps += u64::from(firing && !c.firing());
-                    c.status = status;
-                }
-                None => rows.push(Condition { key: key.into(), kind: kind.into(), status, flaps: u64::from(firing) }),
-            }
-            Ok(())
-        }
-        fn clear(&self, key: &str, _reason: &str, _message: &str) -> Result<(), Failure> {
-            self.calls.lock().unwrap().push(format!("clear {key}"));
-            if let Some(c) = self.rows.lock().unwrap().iter_mut().find(|c| c.key == key) {
-                c.status = "False".into();
-            }
-            Ok(())
-        }
-    }
+    use crate::testing::{Fake, Mode};
 
     #[test]
     fn a_clear_with_nothing_firing_writes_nothing() {
         let ops = Fake::default();
-        alert_clear(&ops, None, 1, 1, 2, "UTC").unwrap();
+        alert_clear_with(&ops, None, "r").unwrap();
         let off = Condition { key: "k".into(), kind: ALERT.into(), status: "False".into(), flaps: 1 };
-        alert_clear(&ops, Some(&off), 1, 1, 2, "UTC").unwrap();
-        assert!(ops.calls.lock().unwrap().is_empty());
+        alert_clear_with(&ops, Some(&off), "r").unwrap();
+        assert!(ops.calls().is_empty());
     }
 
     #[test]
@@ -146,9 +97,9 @@ mod tests {
         let ops = Fake::default();
         assert_eq!(maintain_probe(&ops), ProbeOutcome { id: Some(PROBE_KEY.into()), write_ok: Some(true), saturated: false });
         assert_eq!(ops.status(PROBE_KEY).as_deref(), Some("False"));
-        let busy = Fake { fail: Some(Failure::Saturated), ..Fake::default() };
+        let busy = Fake::in_mode(Mode::WriteFails(Failure::Saturated));
         assert_eq!(maintain_probe(&busy), ProbeOutcome { id: None, write_ok: Some(false), saturated: true });
-        let down = Fake { fail: Some(Failure::Other), ..Fake::default() };
+        let down = Fake::in_mode(Mode::WriteFails(Failure::Other));
         assert!(!maintain_probe(&down).saturated);
     }
 }
