@@ -248,7 +248,7 @@ pub static ENTRIES: &[Entry] = &[
     Entry {
         verb: "checks",
         group: Group::Verify,
-        does: "Runs each `[[check]]` row the repository declares in `.spira/checks.toml`, each bounded by its budget, and prints `-- <name>: ok` or `FAIL` per row. A row with `build = \"<package>\"` runs the binary built from this worktree; every other program resolves from the release `bin/`.",
+        does: "Runs each `[[check]]` row the repository declares in `.spira/checks.toml`, each bounded by its budget, and prints `-- <name>: ok` or `FAIL` per row. A row with `build = \"<package>\"` runs the binary built from this worktree; every other program resolves from the release `bin/`. `{affected}` in a row becomes `-p` for each crate the diff against `local/main` touches plus its dependents (the round's unit-tier selection), or `--workspace` when a workspace-wide input changed; a row naming it is skipped when the diff affects no crate. A cargo row waits for its compile slot before its budget starts. A pass is recorded for the tip, so `work submit` on that clean tip does not run the checks again.",
         when: "Before you submit, to run the checks the repository itself asks of a finished change. `--list` prints the rows without running them.",
         args: &["[--list]"],
         checks: &["run it inside your worktree", "exits non-zero when any row fails, naming each failed row"],

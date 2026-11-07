@@ -90,7 +90,7 @@ fn main() {
     };
     let actor = std::env::var("SPIRA_RUNE").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "dwarf".to_string());
 
-    if verb == "submit" && checks(&[]) != 0 {
+    if verb == "submit" && !checks_passed_at_tip() && checks(&[]) != 0 {
         eprintln!("work submit: refused: the repository's done checks failed (output above) — fix them, commit, and run `work submit` again; `work checks` runs them alone");
         { let code = REFUSED; spira_otel::run::finish(code); std::process::exit(code) };
     }
@@ -476,13 +476,22 @@ fn checks(args: &[String]) -> i32 {
         return 0;
     }
     let mut failed = Vec::new();
+    let mut scope: Option<work::Affected> = None;
     for row in &rows {
         if list_only {
             println!("{}: {} (budget {} ms)", row.name, row.run, row.budget_ms);
             continue;
         }
         println!("== {}: {}", row.name, row.run);
-        let argv = work::done_argv(&row.run);
+        let none = work::Affected::Crates(Vec::new());
+        let scope = if row.run.contains(work::AFFECTED) { &*scope.get_or_insert_with(|| affected_scope(work::CHECKS_BASE)) } else { &none };
+        let Some(argv) = work::check_argv(&row.run, scope) else {
+            println!("-- {}: ok (the diff affects no crate; nothing to check)", row.name);
+            continue;
+        };
+        if argv != work::done_argv(&row.run) {
+            println!("runs: {}", argv.join(" "));
+        }
         let Some((prog, rest)) = argv.split_first() else {
             println!("-- {}: FAIL (empty run)", row.name);
             failed.push(row.name.clone());
@@ -510,11 +519,24 @@ fn checks(args: &[String]) -> i32 {
                 found.unwrap_or_else(|| std::path::PathBuf::from(prog))
             }
         };
-        let out = spira_config::bounded::bounded_for(&exe, &secs).args(rest).env("PATH", work::trusted::join_path(&dirs)).current_dir(root).output();
+        // A cargo row waits for its compile slot BEFORE its budget starts: the budget bounds the
+        // check, never the queue (sp-8oc3xj).
+        let mut bounded = vec!["timeout".to_string(), secs, exe.to_string_lossy().into_owned()];
+        bounded.extend(rest.iter().cloned());
+        if prog == "cargo" {
+            let who = std::env::var("SPIRA_WORK_BEAD_ID").unwrap_or_else(|_| "work-checks".into());
+            bounded = work::admitted(bounded, std::env::var("RUSTC_WRAPPER").ok().as_deref(), &who);
+        }
+        // batch-job: bounded by the row's budget through `timeout`; the admission wait ahead of it is reported below
+        let out = Command::new(&bounded[0]).args(&bounded[1..]).env("PATH", work::trusted::join_path(&dirs)).current_dir(root).output();
         match out {
             Ok(o) => {
                 print!("{}", String::from_utf8_lossy(&o.stdout));
-                eprint!("{}", String::from_utf8_lossy(&o.stderr));
+                let err = String::from_utf8_lossy(&o.stderr);
+                eprint!("{err}");
+                if let Some(w) = work::admission_wait_secs(&err) {
+                    println!("{}: waited {w}s for a compile slot before its {} ms budget started", row.name, row.budget_ms);
+                }
                 if o.status.success() {
                     println!("-- {}: ok", row.name);
                 } else {
@@ -529,11 +551,64 @@ fn checks(args: &[String]) -> i32 {
         }
     }
     if failed.is_empty() {
+        if !list_only {
+            record_checks_pass();
+        }
         0
     } else {
         eprintln!("work checks: failed: {}", failed.join(", "));
         REFUSED
     }
+}
+
+/// What `{affected}` expands to for this worktree's diff against `base`. A diff or a workspace
+/// that cannot be read checks the whole workspace: the safe direction.
+fn affected_scope(base: &str) -> work::Affected {
+    let run = |argv: &[&str]| spira_config::bounded::bounded(argv[0]).args(&argv[1..]).output().ok().filter(|o| o.status.success()).map(|o| o.stdout);
+    let diff = run(&["git", "diff", "--raw", "-z", "--no-renames", &format!("{base}...HEAD")]);
+    let meta = run(&["cargo", "metadata", "--format-version", "1", "--no-deps"]);
+    let (Some(diff), Some(meta)) = (diff, meta) else {
+        println!("work checks: cannot read the diff against {base} or the cargo workspace; checking the whole workspace");
+        return work::Affected::Workspace;
+    };
+    work::affected_scope(&diff, &String::from_utf8_lossy(&meta)).unwrap_or_else(|e| {
+        println!("work checks: cannot select the affected crates ({e}); checking the whole workspace");
+        work::Affected::Workspace
+    })
+}
+
+fn git_line(args: &[&str]) -> Option<String> {
+    let o = spira_config::bounded::bounded("git").args(args).output().ok().filter(|o| o.status.success())?;
+    Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+/// The tip, the base and the checks file a pass is recorded against, the per-worktree file it
+/// is recorded in, and whether the tree is the tip (no tracked change).
+fn checks_pass_state() -> Option<(String, std::path::PathBuf, bool)> {
+    let root = git_line(&["rev-parse", "--show-toplevel"])?;
+    let head = git_line(&["rev-parse", "HEAD"])?;
+    let base = git_line(&["rev-parse", "--verify", "--quiet", work::CHECKS_BASE]).unwrap_or_default();
+    let toml = std::fs::read_to_string(std::path::Path::new(&root).join(".spira/checks.toml")).unwrap_or_default();
+    let file = std::path::Path::new(&root).join(git_line(&["rev-parse", "--git-path", work::CHECKS_PASS_FILE])?);
+    let clean = git_line(&["status", "--porcelain", "--untracked-files=no"]).is_some_and(|s| s.is_empty());
+    Some((work::checks_pass_key(&head, &base, &toml), file, clean))
+}
+
+fn record_checks_pass() {
+    if let Some((key, file, true)) = checks_pass_state() {
+        let _ = std::fs::write(file, format!("{key}\n"));
+    }
+}
+
+/// `work submit` after a passing `work checks` at the same tip runs them once, not twice.
+fn checks_passed_at_tip() -> bool {
+    let Some((key, file, clean)) = checks_pass_state() else { return false };
+    let recorded = std::fs::read_to_string(&file).ok();
+    let passed = work::checks_already_passed(recorded.as_deref(), &key, clean);
+    if passed {
+        println!("work submit: the repository's checks already passed at this tip (`work checks`); not run again");
+    }
+    passed
 }
 
 /// A slot is reused across worktrees, and cargo may judge another branch's artifact fresh, so each
