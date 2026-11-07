@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=batch
+DOC=Abandoned rounds in the abandon window with no landing in the same repo before the Concierge is paged.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_THROUGHPUT_ABANDON_COUNT:=5}"
+SPIRA_CONF_DEFAULT_EOF

@@ -18,6 +18,7 @@ pub mod watch_ci_spill;
 pub mod watch_pass_rate;
 pub mod watch_spill_key;
 pub mod watch_testenv_cap;
+pub mod watch_throughput;
 pub mod watch_warm_full;
 
 pub static TASKS: &[Task] = &[
@@ -29,6 +30,7 @@ pub static TASKS: &[Task] = &[
     Task { name: watch_pass_rate::NAME, plane: runtime::Plane::Work, signal: &[watch_pass_rate::MAIL], boot: watch_pass_rate::WatchPassRate::boot, cadence_ms: |_| watch_pass_rate::CADENCE_MS, effects: watch_pass_rate::EFFECTS, runners: &[(watch_pass_rate::OBSERVE, |_, _, _| watch_pass_rate::observe()), (watch_pass_rate::MAIL, |e, _, s| alert::send(e, &s.input))], keys: &[watch_pass_rate::KEYS], build: |_| watch_pass_rate::WatchPassRate::pinned().registration() },
     Task { name: watch_spill_key::NAME, plane: runtime::Plane::Work, signal: &[], boot: watch_spill_key::WatchSpillKey::boot, cadence_ms: |_| watch_spill_key::CADENCE_MS, effects: watch_spill_key::EFFECTS, runners: &[(watch_spill_key::OBSERVE, |_, _, s| watch_spill_key::observe(&s.input))], keys: &[watch_spill_key::KEYS], build: |_| watch_spill_key::WatchSpillKey::pinned().registration() },
     Task { name: watch_testenv_cap::NAME, plane: runtime::Plane::Work, signal: &[], boot: watch_testenv_cap::WatchTestenvCap::boot, cadence_ms: |_| watch_testenv_cap::CADENCE_MS, effects: watch_testenv_cap::EFFECTS, runners: &[(watch_testenv_cap::OBSERVE, |_, _, _| watch_testenv_cap::observe()), (watch_testenv_cap::KILL, |_, _, s| watch_testenv_cap::kill(&s.input)), (watch_testenv_cap::METRIC, |_, _, s| watch_testenv_cap::metric(&s.input))], keys: &[watch_testenv_cap::KEYS], build: |_| watch_testenv_cap::WatchTestenvCap::pinned().registration() },
+    Task { name: watch_throughput::NAME, plane: runtime::Plane::Work, signal: &[watch_throughput::STAMP], boot: watch_throughput::WatchThroughput::boot, cadence_ms: |_| watch_throughput::CADENCE_MS, effects: watch_throughput::EFFECTS, runners: &[(watch_throughput::OBSERVE, |e, _, s| e.world.throughput_snapshot(&s.input)), (watch_throughput::STAMP, |e, _, s| e.world.halt_stamp(&s.input))], keys: &[watch_throughput::KEYS], build: |_| watch_throughput::WatchThroughput::pinned().registration() },
     Task { name: watch_warm_full::NAME, plane: runtime::Plane::Work, signal: &[], boot: watch_warm_full::WatchWarmFull::boot, cadence_ms: |_| watch_warm_full::CADENCE_MS, effects: watch_warm_full::EFFECTS, runners: &[(watch_warm_full::OBSERVE, |_, _, _| watch_warm_full::observe()), (watch_warm_full::REAP, |_, _, s| watch_warm_full::reap(&s.input))], keys: &[watch_warm_full::KEYS], build: |_| watch_warm_full::WatchWarmFull::pinned().registration() },
 ];
 
