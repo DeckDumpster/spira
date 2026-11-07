@@ -18,7 +18,8 @@ cat > "$FIX/leaky.sh" <<FIXTURE
 trap 'echo mine' EXIT
 d="\$(mktemp -d)"; mkdir -p "\$d/bin"; : > "\$d/bin/tool"; chmod a-w "\$d/bin" "\$d"
 : > "\${TMPDIR:-/tmp}/fixed-name.tar"
-f="\$(mktemp)"; echo "\$f" > "$FIX/\$1.path"
+f="\$(mktemp)"; : > "$FIX/\$1.ready"
+[ "\$1" != killed ] || sleep 60
 FIXTURE
 # The same litter from a script that never sources the library: the matcher's positive control.
 cat > "$FIX/plain.sh" <<'FIXTURE'
@@ -46,6 +47,8 @@ is "a finished suite leaves its temp directory empty" 0 "$(leftovers "$B2")"
 B3="$FIX/killed-base"; mkdir -p "$B3"
 env TMPDIR="$B3" bash "$FIX/leaky.sh" killed >/dev/null 2>&1 &
 pid=$!
+for _ in $(seq 1 100); do [ -e "$FIX/killed.ready" ] && break; sleep 0.1; done   # waits-on: the fixture's ready file; cap 10s
+is "the killed suite got as far as making its scratch" 1 "$([ -e "$FIX/killed.ready" ] && echo 1 || echo 0)"
 kill -KILL "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
 settle "$B3"
 is "a killed suite leaves its temp directory empty" 0 "$(leftovers "$B3")"

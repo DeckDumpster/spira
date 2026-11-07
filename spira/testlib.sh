@@ -204,7 +204,7 @@ _TL_CONF_BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/spira/testlib
 # EXIT trap a suite may replace, removes it when the suite's shell is gone however it ended;
 # a fixture's read-only trees are made writable first or rm leaves them behind.
 _tl_reap_run() {   # _tl_reap_run <suite-pid> <run-dir>
-    while kill -0 "$1" 2>/dev/null; do sleep 1; done
+    tail --pid="$1" -f /dev/null
     chmod -R u+rwX "$2" 2>/dev/null
     rm -rf "$2"
 }
