@@ -50,11 +50,23 @@ pub fn run(text: &str) -> Result<(), String> {
     append_line(Path::new(&inbox), &line).map_err(|e| format!("cannot append to {inbox}: {e}"))?;
 
     // the line is already recorded; a push key that will not parse must not fail the caller
-    let Ok(push) = push_config() else { return Ok(()) };
+    let push = match push_config() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("inbox-triage append: push disabled: {e}");
+            return Ok(());
+        }
+    };
     if push.wake.is_empty() {
         return Ok(());
     }
-    let Ok(pattern) = regex::Regex::new(&push.pattern) else { return Ok(()) };
+    let pattern = match regex::Regex::new(&push.pattern) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("inbox-triage append: push disabled: bad SPIRA_CONCIERGE_PUSH_PATTERN: {e}");
+            return Ok(());
+        }
+    };
     if !inbox_rules::is_urgent(text, &pattern) {
         return Ok(());
     }
