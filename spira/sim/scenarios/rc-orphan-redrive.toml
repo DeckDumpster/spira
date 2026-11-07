@@ -1,0 +1,50 @@
+# The round controller's world twin of its prior-runner-alive scenario, on the real store: an orphan
+# (a round whose last lease is held by no one) beside a round never leased, in the world's control
+# store, then the sim-only actor's pass and a second pass inside the check step. The binary has no
+# VM records, so no old runner is shown gone: the orphan is held, not re-driven, and no lease, slot,
+# attempt or unit follows. A round never leased is not an orphan and is not named.
+epoch = 1800000000
+horizon = 150000
+real_actors = ["round-controller"]
+
+[[step]]
+name = "write-orphan"
+at = 0
+command = "sh spira/sim/scenarios/steps/rc-orphan-redrive.sh write"
+
+[[step]]
+name = "orphan-held"
+at = 100000
+command = "sh spira/sim/scenarios/steps/rc-orphan-redrive.sh check"
+
+[[actor]]
+name = "rc-pass"
+command = "round-controller pass"
+first = 20000
+every = 200000
+duration_min = 1000
+duration_max = 2000
+
+[[invariant]]
+name = "a_step_failed"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit <> 0"
+
+[[invariant]]
+name = "rc_pass_exited_nonzero"
+sql = "SELECT seq, exit FROM events WHERE actor = 'rc-pass' AND kind = 'complete' AND exit <> 0"
+
+[[invariant]]
+name = "rc_started_a_unit_for_the_orphan"
+sql = "SELECT seq, name FROM run_units WHERE name LIKE 'round-controller-run-od-%'"
+
+[[invariant]]
+name = "rc_changed_run_state"
+sql = "SELECT seq, 'queue' AS family, key AS what FROM run_queue UNION ALL SELECT seq, 'locks', name FROM run_locks UNION ALL SELECT seq, 'ejected', bead FROM run_ejected UNION ALL SELECT seq, 'verdicts', key FROM run_verdicts UNION ALL SELECT seq, 'gate-log', text FROM run_gate_log UNION ALL SELECT seq, 'landing-log', text FROM run_landing_log"
+
+[[expect]]
+name = "rc_orphan_held"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND actor = 'orphan-held' AND exit = 0"
+
+[[expect]]
+name = "rc_pass_visited_the_repo"
+sql = "SELECT 1 FROM events WHERE actor = 'rc-pass' AND kind = 'complete' AND exit = 0"
