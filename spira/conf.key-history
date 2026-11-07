@@ -686,3 +686,7 @@ watchdog_unit
 runtime_cockpit_tier_5s_secs
 runtime_cockpit_tier_write
 pr_refresh_max
+throughput_floor_per_day
+throughput_abandon_count
+throughput_abandon_window
+throughput_restop_after
