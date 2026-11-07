@@ -99,6 +99,10 @@ pub fn configured() -> Option<Result<Arc<Store<SqliteBackend>>, String>> {
 /// The control store while the bead-state verbs answer from it (`SPIRA_LC_LIFECYCLE_ON_STORE`),
 /// opened; `None` while they answer from dolt.
 pub fn lifecycle_store() -> Option<Result<Arc<Store<SqliteBackend>>, String>> {
+    #[cfg(test)]
+    if let Some(forced) = testing::forced() {
+        return forced;
+    }
     let path = match store_path()? {
         Ok(p) => p,
         Err(e) => return Some(Err(e)),
@@ -108,6 +112,46 @@ pub fn lifecycle_store() -> Option<Result<Arc<Store<SqliteBackend>>, String>> {
         Ok(false) => None,
         Err(e) => Some(Err(e)),
     }
+}
+
+/// Verbs that stay on dolt while the lifecycle is on the store, each with why: the store has no
+/// fact table, and claiming, poison counters and the sentinel read these.
+pub const DOLT_BY_DESIGN: &[&str] = &["fact", "facts", "facts-query", "journal"];
+
+/// Verbs whose lifecycle reads and writes the handler itself sends to the store, or that read
+/// the planning plane and no lifecycle state.
+pub const STORE_ROUTED: &[&str] = &["work", "reconcile-landed", "plan", "content", "stats"];
+
+/// The refusal for a verb the store does not serve while the lifecycle is on it, or `None` when
+/// the verb is served, routed, or on dolt by design. Without it the verb would open the dolt
+/// connection and read or write a plane nothing reads.
+pub fn refuse_unserved(verb: &str) -> Option<(i32, String)> {
+    if DOLT_BY_DESIGN.contains(&verb) || STORE_ROUTED.contains(&verb) {
+        return None;
+    }
+    match lifecycle_store()? {
+        Ok(_) => Some((
+            REFUSED,
+            format!("refused: {verb} is not served by the control store, and SPIRA_LC_LIFECYCLE_ON_STORE is on: it would read or write dolt"),
+        )),
+        Err(e) => Some((CANNOT_TELL, format!("cannot tell: {verb}: {e}"))),
+    }
+}
+
+/// A bead-machine event, applied to the control store from wherever the bead is now.
+/// `None` while the lifecycle is on dolt.
+pub fn apply_event(machine: &str, key: &str, expect: &str, version: u64, actor: &str, kind_json: &str) -> Option<(i32, String)> {
+    let store = match lifecycle_store()? {
+        Ok(s) => s,
+        Err(e) => return Some((CANNOT_TELL, format!("cannot tell: the control store: {e}"))),
+    };
+    let request = request_id();
+    let call = state::Call { now: crate::db::now_epoch(), request: &request };
+    let argv: Vec<String> = ["event", machine, key, "--expect", expect, "--version", &version.to_string(), "--actor", actor, "--kind", kind_json]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    Some(state::run(&store, &argv, &call))
 }
 
 /// `admin-create-store`: a new, empty control store at `SPIRA_LC_STORE_PATH`, which no verb
@@ -218,23 +262,19 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
     if !lifecycle && !verbs::VERBS.contains(&verb.as_str()) {
         return None;
     }
-    let path = match store_path() {
-        Some(Ok(p)) => p,
-        Some(Err(e)) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
-        None if STORE_ONLY.contains(&verb.as_str()) => return Some((
-            CANNOT_TELL,
-            format!("cannot tell: {verb} is served by the control store, and SPIRA_LC_STORE_PATH is unset or unreadable"),
-        )),
-        None => return None,
-    };
-    if !STORE_ONLY.contains(&verb.as_str()) {
-        match lifecycle_on_store() {
-            Ok(true) => {}
-            Ok(false) => return None,
-            Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
+    let opened = if STORE_ONLY.contains(&verb.as_str()) {
+        match store_path() {
+            Some(Ok(p)) => opened(&p),
+            Some(Err(e)) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
+            None => return Some((
+                CANNOT_TELL,
+                format!("cannot tell: {verb} is served by the control store, and SPIRA_LC_STORE_PATH is unset or unreadable"),
+            )),
         }
-    }
-    Some(match opened(&path) {
+    } else {
+        lifecycle_store()?
+    };
+    Some(match opened {
         Ok(store) if lifecycle => {
             let request = request_id();
             let call = state::Call {
@@ -298,6 +338,34 @@ fn dispatch_sections(args: &[String]) -> (i32, String) {
             }
         }
         Err(e) => sections::cannot_tell(&format!("the control store: {e}")),
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod testing {
+    use super::*;
+    use std::cell::RefCell;
+
+    type Forced = Option<Result<Arc<Store<SqliteBackend>>, String>>;
+
+    thread_local! {
+        static FORCED: RefCell<Option<Forced>> = const { RefCell::new(None) };
+    }
+
+    pub fn forced() -> Option<Forced> {
+        FORCED.with(|f| f.borrow().clone())
+    }
+
+    /// Runs `f` on this thread with the lifecycle on a fresh store file under `dir`.
+    pub fn with_store<T>(dir: &Path, f: impl FnOnce(&Arc<Store<SqliteBackend>>) -> T) -> T {
+        let backend = SqliteBackend::open(&dir.join("control.db"), Options::default()).unwrap();
+        let ports = Ports { mono: Arc::new(MonotonicClock::new()), wall: Arc::new(Wall) };
+        let contract = Contract::open(backend, ports, Config { min_lock_ttl_ms: 1 }).unwrap();
+        let store = Arc::new(Store::new(contract, 1));
+        FORCED.with(|c| *c.borrow_mut() = Some(Some(Ok(Arc::clone(&store)))));
+        let out = f(&store);
+        FORCED.with(|c| *c.borrow_mut() = None);
+        out
     }
 }
 

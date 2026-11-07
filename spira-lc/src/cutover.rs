@@ -1190,6 +1190,9 @@ pub fn cmd_reconcile_landed(args: &[String], conn: &Conn) -> (i32, String) {
         return (REFUSED, format!("refused: {:?}", bead_outcome.refusal));
     }
 
+    if crate::control::served::lifecycle_store().is_some() {
+        return reconcile_on_store(bead_id, &sha, &actor, &bead_ev, &proof, conn);
+    }
     let mut steps = Vec::new();
     match rows::fetch_delivery(conn, bead_id) {
         Ok(Some(d)) => {
@@ -1228,6 +1231,37 @@ pub fn cmd_reconcile_landed(args: &[String], conn: &Conn) -> (i32, String) {
         }
         Err(e) => cannot_tell(e),
     }
+}
+
+/// The landing recorded on the control store: the delivery first, then the bead. Two commits
+/// where dolt had one transaction, so a failure between them leaves a landed delivery on an
+/// unlanded bead, which a rerun finishes (the delivery step then has nothing to apply).
+pub(crate) fn reconcile_on_store(bead_id: &str, sha: &str, actor: &str, bead_ev: &bead::BeadEvent, proof: &str, conn: &Conn) -> (i32, String) {
+    let served = crate::control::served::apply_event;
+    let mut steps = 0;
+    match rows::fetch_delivery(conn, bead_id) {
+        Ok(Some(d)) => {
+            let kind = delivery::DeliveryEventKind::Delivered { merge_sha: sha.to_string(), proof: proof.to_string() };
+            let ev = delivery::DeliveryEvent { expect: d.state, version: d.version, kind: kind.clone(), actor: actor.to_string() };
+            if delivery::apply(&d, &ev).applied {
+                let kind_json = serde_json::to_string(&kind).unwrap_or_default();
+                match served("delivery", bead_id, d.state.as_str(), d.version, actor, &kind_json) {
+                    Some((0, _)) => steps += 1,
+                    Some(failed) => return failed,
+                    None => return (CANNOT_TELL, "cannot tell: the control store is not configured".into()),
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(e) => return cannot_tell(e),
+    }
+    let kind_json = serde_json::to_string(&bead_ev.kind).unwrap_or_default();
+    match served("bead", bead_id, bead_ev.expect.as_str(), bead_ev.version, actor, &kind_json) {
+        Some((0, _)) => steps += 1,
+        Some(failed) => return failed,
+        None => return (CANNOT_TELL, "cannot tell: the control store is not configured".into()),
+    }
+    (0, serde_json::json!({"bead_id": bead_id, "sha": sha, "steps": steps, "applied": vec![true; steps]}).to_string())
 }
 
 /// `eject-member <batch-id> --bead-id ID --expect S --version V --actor A --reason R`

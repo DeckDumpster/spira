@@ -38,12 +38,26 @@ pub(crate) fn json_col(row: &Value, col: &str) -> Value {
 
 /// The repository the bead's lifecycle row names (`bead.repo`); `None` when the row names none
 /// or there is no row. The lifecycle row, not the content store, is what every caller can read.
+pub(crate) fn on_store<T>(read: impl FnOnce(&crate::control::store::Store<state_store_sqlite::SqliteBackend>) -> state_store::Result<T>) -> Option<Result<T, DbError>> {
+    let store = match crate::control::served::lifecycle_store()? {
+        Ok(s) => s,
+        Err(e) => return Some(Err(DbError::CannotTell(e))),
+    };
+    Some(read(&store).map_err(|e| DbError::CannotTell(e.to_string())))
+}
+
 pub fn bead_repo(conn: &Conn, bead_id: &str) -> Result<Option<String>, DbError> {
+    if let Some(r) = on_store(|s| s.record(bead_id)) {
+        return r.map(|rec| rec.and_then(|r| r.value.repo));
+    }
     let rows = conn.query(&format!("SELECT repo FROM bead WHERE bead_id = '{}'", escape(bead_id)))?;
     Ok(rows.first().and_then(|r| text(r, "repo")))
 }
 
 pub fn fetch_bead(conn: &Conn, bead_id: &str) -> Result<Option<BeadRow>, DbError> {
+    if let Some(r) = on_store(|s| s.record(bead_id)) {
+        return r.map(|rec| rec.map(|r| r.value.row));
+    }
     let rows = conn.query(&format!(
         "SELECT bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, since, express, dwarf_phase, disposition, disposition_note, ejected_red_tip, sifted_tip, claimed_from FROM bead WHERE bead_id = '{}'",
         escape(bead_id)
@@ -116,6 +130,9 @@ pub fn bead_set_clause(row: &BeadRow) -> String {
 }
 
 pub fn fetch_delivery(conn: &Conn, bead_id: &str) -> Result<Option<DeliveryRow>, DbError> {
+    if let Some(r) = on_store(|s| s.delivery(bead_id)) {
+        return r.map(|d| d.map(|d| d.value));
+    }
     let rows = conn.query(&format!(
         "SELECT bead_id, mode, state, batch_id, pr, merge_sha, ci, version FROM delivery WHERE bead_id = '{}'",
         escape(bead_id)

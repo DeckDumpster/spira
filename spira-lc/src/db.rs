@@ -165,6 +165,12 @@ pub enum DbError {
     CannotTell(String),
 }
 
+#[cfg(test)]
+thread_local! {
+    /// The logins this thread has attempted to the dolt server.
+    pub static DIALS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 pub fn now_epoch() -> i64 {
     spira_config::vtime::now_epoch() as i64
 }
@@ -302,6 +308,8 @@ impl Conn {
     /// would lock it out until restarted: on a refusal the credential file is read again and,
     /// if it now holds a different password, the login is retried with it and it is kept.
     fn connect_once(&self, database: Option<&str>) -> Result<Wire, ScriptFailure> {
+        #[cfg(test)]
+        DIALS.with(|d| d.set(d.get() + 1));
         let current = self.password.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let first = Wire::connect_with(&self.host, self.port, &self.user, &current, database, self.io_timeout);
         match (&first, self.password_file.as_deref()) {
