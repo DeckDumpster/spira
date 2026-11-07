@@ -1398,7 +1398,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
 
     // ---- key, results dir ----------------------------------------------------------
     let image_tag = {
-        let o = deps.rt.testenv(&["tag".into()], setup_cutoff.get());
+        let o = deps.rt.testenv(&["tag".into(), "--tree".into(), wt.path.display().to_string()], setup_cutoff.get());
         if o.rc == RC_DEADLINE {
             share_note("tag", &ph);
             return Finish::fault(2, deadline_reason("tag"), 0);
